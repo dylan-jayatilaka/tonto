@@ -169,7 +169,7 @@ public final class FooToFortran {
         final Path fooPath, foofilesDir;
         final Map<String, Parsed> parentCache = new HashMap<>();
 
-        String fooModuleName, selfFooType, currentProc;
+        String fooModuleName, selfFooType, currentProc, selfModuleName;
         boolean isVirtual;
         boolean inheritInjectPending; String inheritParent;
         Set<String> currentArgs = new LinkedHashSet<>();
@@ -191,6 +191,7 @@ public final class FooToFortran {
             // For a submodule (MOLECULE.BASE) self's type is the main type (MOLECULE).
             selfFooType   = fooModuleName.contains(".")
                 ? fooModuleName.substring(0, fooModuleName.indexOf('.')) : fooModuleName;
+            selfModuleName = fortranTypeName(fooModuleName) + "_MODULE";
             // `virtual module X` is a get_from template: parsed, but not compiled.
             if (mod.IDENTIFIER() != null
                     && mod.IDENTIFIER().getText().equalsIgnoreCase("virtual")) {
@@ -723,13 +724,24 @@ public final class FooToFortran {
             FooParser.HeadContext head = p.head();
             StringBuilder out = new StringBuilder();
             String curType = null;
-            String pendingCall = null;           // a `.method` awaiting its (args)
+            String pendingCall = null;           // a `.method`/`MOD:method` awaiting its (args)
+            boolean pendingNoRecv = false;       // pendingCall has no receiver (module call)
             boolean isCall = false;
 
             if (head.callHead() != null) {
                 FooParser.CallHeadContext chx = head.callHead();
-                if (chx.DOT() != null && chx.name() != null && chx.qualifier() == null
-                        && chx.COLON() == null && chx.DCOLON() == null) {
+                boolean hasQual = chx.qualifier() != null;
+                boolean colon = chx.COLON() != null, dcolon = chx.DCOLON() != null;
+                boolean dot = chx.DOT() != null;
+                if (hasQual && (colon || dcolon) && !dot) {
+                    // MODULE:method (generic) / MODULE::method (non-generic)
+                    String modFoo = chx.qualifier().getText();
+                    String method = nameText(chx.name());
+                    if (colon) { pendingCall = method + "_"; recordUse(fortranModName(modFoo), method + "_"); }
+                    else { pendingCall = fortranTypeName(modFoo) + "_" + method;
+                           recordUse(fortranModName(modFoo), pendingCall); }
+                    pendingNoRecv = true; isCall = true;
+                } else if (dot && chx.name() != null && !hasQual && !colon && !dcolon) {
                     String sel = nameText(chx.name());
                     String ip;
                     if (types.isComponent(selfFooType, sel)) {
@@ -742,7 +754,7 @@ public final class FooToFortran {
                         out.append("self"); isCall = true;
                     }
                 } else {
-                    out.append(head.getText());          // qualified call: TODO faithful
+                    out.append(head.getText());          // submodule / :method forms: TODO
                 }
             } else if (head.NOT() != null) {
                 out.append("NOT ").append(translatePostfix(head.postfix(), false).text);
@@ -777,9 +789,11 @@ public final class FooToFortran {
                 } else if (tr.LPAREN() != null) {
                     String inner = tr.argList() != null ? renderArgList(tr.argList()) : "";
                     if (pendingCall != null) {
-                        out = new StringBuilder(pendingCall + "(" + out
-                              + (inner.isEmpty() ? "" : "," + inner) + ")");
-                        pendingCall = null;
+                        String recv = out.toString();
+                        String args = pendingNoRecv ? inner
+                            : (recv.isEmpty() ? inner : (inner.isEmpty() ? recv : recv + "," + inner));
+                        out = new StringBuilder(pendingCall + "(" + args + ")");
+                        pendingCall = null; pendingNoRecv = false;
                     } else out.append('(').append(inner).append(')');
                 } else if (tr.LBRACKET() != null) {
                     String inner = tr.argList() != null ? renderArgList(tr.argList()) : "";
@@ -788,7 +802,8 @@ public final class FooToFortran {
                     out.append(tr.getText());
                 }
             }
-            if (pendingCall != null) out = new StringBuilder(pendingCall + "(" + out + ")");
+            if (pendingCall != null)
+                out = new StringBuilder(pendingCall + "(" + (pendingNoRecv ? "" : out) + ")");
 
             ch.fooType = curType; ch.isCall = isCall;
             String s = out.toString();
@@ -833,8 +848,13 @@ public final class FooToFortran {
 
         void recordCall(String fooType, String method) {
             if (fooType == null) return;
-            useOnly.computeIfAbsent(fortranModName(fooType), k -> new LinkedHashSet<>())
-                   .add(method + "_");
+            recordUse(fortranModName(fooType), method + "_");
+        }
+
+        /** Record a `use <mod>, only: <symbol>` dependency (skip self-use). */
+        void recordUse(String fortranMod, String symbol) {
+            if (fortranMod.equals(selfModuleName)) return;        // don't use own module
+            useOnly.computeIfAbsent(fortranMod, k -> new java.util.TreeSet<>()).add(symbol);
         }
 
         // ---- .int / .use ----------------------------------------------
@@ -855,11 +875,10 @@ public final class FooToFortran {
             if (!selfMod.equals("TYPES")) use.append("   use TYPES_MODULE\n");
             if (!selfMod.equals("SYSTEM") && !selfMod.equals("TYPES"))
                 use.append("   use SYSTEM_MODULE\n");
-            for (Map.Entry<String, Set<String>> e : useOnly.entrySet()) {
-                List<String> only = new ArrayList<>(e.getValue()); only.sort(null);
-                use.append("   use ").append(e.getKey()).append(", only: ")
-                   .append(String.join(",", only)).append('\n');
-            }
+            // one line per (module, symbol), sorted (matches foo.pl)
+            for (Map.Entry<String, Set<String>> e : useOnly.entrySet())
+                for (String sym : e.getValue())
+                    use.append("   use ").append(e.getKey()).append(", only: ").append(sym).append('\n');
         }
 
         // ---- attr signature comment helper (for get_from matching) -----
