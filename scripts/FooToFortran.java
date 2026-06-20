@@ -303,7 +303,7 @@ public final class FooToFortran {
                 sc.flushHidden(f90, endTok, 0);
                 emitInheritedBody(a, func);
             } else {
-                renderBody(main, pd, /*inherited=*/false, null);
+                renderBody(main, pd, /*inherited=*/false, null, a.selfless);
             }
             c.pos = Math.max(c.pos, endTok + 1);
             f90.append(func ? "   end function\n" : "   end subroutine\n");
@@ -364,7 +364,7 @@ public final class FooToFortran {
                 FooParser.ProcDefContext target = findOverload(parent, routine, a.signatureComment);
                 if (target != null) {
                     subst = buildSubst(a.getFromAttr, pr.module);
-                    renderBody(parent, target, true, pr.module);
+                    renderBody(parent, target, true, pr.module, a.selfless);
                     subst = new LinkedHashMap<>();
                     return;
                 }
@@ -442,7 +442,8 @@ public final class FooToFortran {
         // ---- body rendering -------------------------------------------
 
         /** Render a procedure body (decls + statements + hidden tokens). */
-        void renderBody(Parsed src, FooParser.ProcDefContext pd, boolean inherited, String parentName) {
+        void renderBody(Parsed src, FooParser.ProcDefContext pd, boolean inherited,
+                        String parentName, boolean selfless) {
             List<FooParser.ProcBodyContext> body = pd.procBody();
             Cursor c = new Cursor(src.toks);
             c.pos = pd.procHeader().getStop().getTokenIndex() + 1;
@@ -452,9 +453,23 @@ public final class FooToFortran {
                 // skip the parent's own signature comment (we emit the inheriting
                 // file's), starting at the first body element.
                 if (!body.isEmpty()) c.pos = body.get(0).getStart().getTokenIndex();
+            } else if (!body.isEmpty()) {
+                // flush the leading signature comment before any implicit self decl
+                c.flushHidden(f90, body.get(0).getStart().getTokenIndex(), 6);
             }
+            // self is declared implicitly when the body doesn't declare it itself
+            if (!selfless && !bodyDeclaresSelf(body))
+                f90.append("      ").append(selfDeclType()).append(" :: self\n");
             emitBodyList(body, c, 6);
             c.flushHidden(f90, pd.getStop().getTokenIndex(), 6);   // trailing comments
+        }
+
+        boolean bodyDeclaresSelf(List<FooParser.ProcBodyContext> body) {
+            for (FooParser.ProcBodyContext b : body)
+                if (b.localDecl() != null)
+                    for (FooParser.DeclNameContext dn : b.localDecl().identList().declName())
+                        if (nameText(dn.name()).equals("self")) return true;
+            return false;
         }
 
         /** Emit a list of body elements (decls/statements) at a given indent. */
