@@ -824,8 +824,13 @@ public final class FooToFortran {
                         pendingCall = sel + "_"; recordCall(selfFooType, sel);
                         out.append("self"); isCall = true;
                     }
+                } else if (!hasQual && !colon && !dcolon && !dot && chx.name() != null) {
+                    // bare name (local var or `self`); track self's type for chains
+                    String nm = nameText(chx.name());
+                    out.append(nm);
+                    if (nm.equals("self")) curType = selfFooType;
                 } else {
-                    out.append(head.getText());          // submodule / :method forms: TODO
+                    out.append(head.getText());          // other forms: TODO
                 }
             } else if (head.NOT() != null) {
                 out.append("NOT ").append(translatePostfix(head.postfix(), false).text);
@@ -886,7 +891,12 @@ public final class FooToFortran {
                             : (recv.isEmpty() ? inner : (inner.isEmpty() ? recv : recv + "," + inner));
                         out = new StringBuilder(pendingCall + "(" + args + ")");
                         pendingCall = null; pendingNoRecv = false;
-                    } else out.append('(').append(inner).append(')');
+                    } else {
+                        out.append('(').append(inner).append(')');
+                        // indexing an array-typed receiver yields its element type
+                        ArrayType at = curType != null ? parseArray(canon(curType)) : null;
+                        curType = at != null ? at.elem : null;
+                    }
                 } else if (tr.LBRACKET() != null) {
                     String inner = tr.argList() != null ? renderArgList(tr.argList()) : "";
                     out.append('(').append(inner).append(')');     // [] index -> ()
@@ -1053,6 +1063,7 @@ public final class FooToFortran {
                     case "private":   a.privateAcc = true; break;
                     case "public":    a.publicAcc = true; break;
                     case "template":  a.template = true; break;
+                    case "inlined_by_foo": a.template = true; break;  // inlined at call sites, not emitted
                     default: break;
                 }
             }
