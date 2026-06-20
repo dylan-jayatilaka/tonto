@@ -741,6 +741,12 @@ public final class FooToFortran {
                     else { pendingCall = fortranTypeName(modFoo) + "_" + method;
                            recordUse(fortranModName(modFoo), pendingCall); }
                     pendingNoRecv = true; isCall = true;
+                } else if (dot && (colon || dcolon)) {
+                    // submodule call on self: .SET:proc / .:proc / .MAIN:proc
+                    String method = nameText(chx.name());
+                    pendingCall = colon ? method + "_" : method;
+                    recordUse(submoduleModule(hasQual ? chx.qualifier().getText() : null), pendingCall);
+                    out.append("self"); isCall = true;
                 } else if (dot && chx.name() != null && !hasQual && !colon && !dcolon) {
                     String sel = nameText(chx.name());
                     String ip;
@@ -771,9 +777,23 @@ public final class FooToFortran {
             }
 
             for (FooParser.TrailerContext tr : p.trailer()) {
+                boolean colonTr = (tr.DOT() != null || tr.PERCENT() != null)
+                                  && (tr.COLON() != null || tr.DCOLON() != null);
                 boolean dotSel = (tr.DOT() != null || tr.PERCENT() != null)
                                  && tr.COLON() == null && tr.DCOLON() == null && !tr.name().isEmpty();
-                if (dotSel) {
+                if (colonTr) {
+                    // object submodule call: recv.SUBMOD:method / recv.:method
+                    List<FooParser.NameContext> ns = tr.name();
+                    String submod = ns.size() == 2 ? nameText(ns.get(0)) : null;
+                    String method = nameText(ns.get(ns.size() - 1));
+                    pendingCall = tr.COLON() != null ? method + "_" : method;
+                    if (curType != null) {
+                        String base = fortranTypeName(curType);
+                        recordUse(submod == null || submod.equalsIgnoreCase("MAIN")
+                                  ? base + "_MODULE" : base + "_" + submod + "_MODULE", pendingCall);
+                    }
+                    isCall = true; curType = null;          // recv stays in `out`; args via next LPAREN
+                } else if (dotSel) {
                     String sel = nameText(tr.name(0));
                     String ip;
                     if (curType != null && types.isComponent(curType, sel)) {
@@ -849,6 +869,15 @@ public final class FooToFortran {
         void recordCall(String fooType, String method) {
             if (fooType == null) return;
             recordUse(fortranModName(fooType), method + "_");
+        }
+
+        /** Fortran module for a submodule qualifier on self: .SET->MOLECULE_SET_MODULE,
+         *  .MAIN->MOLECULE_MODULE, .: (null) -> the current module (same submodule). */
+        String submoduleModule(String qual) {
+            String base = fortranTypeName(selfFooType);
+            if (qual == null) return selfModuleName;
+            if (qual.equalsIgnoreCase("MAIN")) return base + "_MODULE";
+            return base + "_" + qual + "_MODULE";
         }
 
         /** Record a `use <mod>, only: <symbol>` dependency (skip self-use). */
