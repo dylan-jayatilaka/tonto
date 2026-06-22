@@ -223,6 +223,7 @@ public final class FooToFortran {
         String fooModuleName, selfFooType, currentProc, currentProcBase, selfModuleName;
         boolean isVirtual;
         boolean inComponent;   // true while emitting derived-type components
+        List<String> selectKeywords;   // case labels of the enclosing select (for UNKNOWN)
         boolean inheritInjectPending; String inheritParent;
         Set<String> currentArgs = new LinkedHashSet<>();
         Map<String, String> localVarTypes = new HashMap<>();   // local/arg name -> base foo type
@@ -834,6 +835,17 @@ public final class FooToFortran {
                 // Keep ';'-separated statements on one line, as foo.pl does.
                 List<String> parts = new ArrayList<>();
                 for (FooParser.LineStmtContext ls : s.simpleLine().lineStmt()) {
+                    // a bare UNKNOWN(x) inside a select-case body expands to the
+                    // known-keyword list + unknown_ call (multi-line)
+                    String ua = ls.simpleStmt() != null ? unknownArg(ls.simpleStmt()) : null;
+                    if (ua != null && selectKeywords != null) {
+                        if (!parts.isEmpty()) {
+                            f90.append(sp(indent)).append(String.join("; ", parts)).append('\n');
+                            parts.clear();
+                        }
+                        emitUnknownExpansion(ua, indent);
+                        continue;
+                    }
                     String txt = renderLineStmt(ls);
                     if (txt != null && !txt.isBlank() && !txt.equalsIgnoreCase("end")) parts.add(txt);
                 }
@@ -918,21 +930,56 @@ public final class FooToFortran {
             f90.append(sp(indent)).append("select case (").append(renderExpr(x.expr())).append(")");
             appendHeaderComment(c, x.NEWLINE().isEmpty() ? null : x.NEWLINE(0));
             f90.append('\n');
+            // collect the case-label keyword strings, for any UNKNOWN(x) expansion
+            List<String> savedKw = selectKeywords;
+            List<String> kw = new ArrayList<>();
+            for (FooParser.CaseClauseContext cc : x.caseClause())
+                if (cc.caseLabel().DEFAULT() == null)
+                    for (FooParser.ArgContext a : cc.caseLabel().arg()) kw.add(renderArg(a));
+            selectKeywords = kw;
             for (FooParser.CaseClauseContext cc : x.caseClause()) {
                 c.flushHidden(f90, cc.getStart().getTokenIndex(), indent + 3);
                 StringBuilder line = new StringBuilder(sp(indent + 3)).append(renderCaseLabel(cc.caseLabel()));
+                List<String> unknowns = new ArrayList<>();
                 for (FooParser.SimpleStmtContext ss : cc.simpleStmt()) {
+                    String ua = unknownArg(ss);
+                    if (ua != null) { unknowns.add(ua); continue; }   // expand below the label line
                     String t = renderSimpleStmt(ss);
                     if (t != null && !t.isBlank() && !t.equalsIgnoreCase("end")) line.append("; ").append(t);
                 }
                 f90.append(line);
                 appendHeaderComment(c, cc.NEWLINE());
                 f90.append('\n');
+                for (String ua : unknowns) emitUnknownExpansion(ua, indent + 6);
                 emitBodyList(cc.procBody(), c, indent + 6, false);
                 c.pos = Math.max(c.pos, cc.getStop().getTokenIndex() + 1);
                 c.lastLine = cc.getStop().getLine();
             }
+            selectKeywords = savedKw;
             f90.append(sp(indent)).append("end select\n");
+        }
+
+        /** If `ss` is an `UNKNOWN(x)` call, return its (rendered) argument; else null. */
+        String unknownArg(FooParser.SimpleStmtContext ss) {
+            if (ss == null || ss.postfix() == null || ss.postfix().head().callHead() == null) return null;
+            FooParser.NameContext n = ss.postfix().head().callHead().name();
+            if (n == null || !nameText(n).equals("UNKNOWN")) return null;
+            for (FooParser.TrailerContext tr : ss.postfix().trailer())
+                if (tr.LPAREN() != null) return tr.argList() != null ? renderArgList(tr.argList()) : "";
+            return "";
+        }
+
+        /** foo.pl expands `UNKNOWN(x)` in a select-case into the known-keyword list
+         *  (built from the case labels) plus a call to unknown_. */
+        void emitUnknownExpansion(String arg, int indent) {
+            List<String> kw = selectKeywords != null ? selectKeywords : new ArrayList<>();
+            f90.append(sp(indent)).append("allocate(tonto%known_keywords(").append(kw.size()).append("))\n");
+            for (int i = 0; i < kw.size(); i++)
+                f90.append(sp(indent)).append("tonto%known_keywords(").append(i + 1)
+                   .append(") = ").append(kw.get(i)).append('\n');
+            f90.append(sp(indent)).append("call unknown_(tonto,").append(arg).append(",\"")
+               .append(fooModuleName).append(":").append(currentProcBase).append("\")\n");
+            f90.append(sp(indent)).append("deallocate(tonto%known_keywords)\n");
         }
 
         String renderCaseLabel(FooParser.CaseLabelContext cl) {
