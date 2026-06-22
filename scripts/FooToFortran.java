@@ -1071,6 +1071,14 @@ public final class FooToFortran {
                         pendingCall = sel + "_"; recordCall(selfFooType, sel);
                         out.append("self"); isCall = true;
                     }
+                } else if (!hasQual && (colon || dcolon) && !dot && chx.name() != null) {
+                    // same-module reference/call with the qualifier omitted:
+                    //   :proc  -> generic name proc_   ;   ::proc -> specific name proc
+                    // A following `(args)` trailer makes it a call; bare (e.g. a
+                    // procedure passed by name as an argument) stays just the name.
+                    String method = nameText(chx.name());
+                    out.append(colon ? method + "_" : method);
+                    isCall = true;
                 } else if (!hasQual && !colon && !dcolon && !dot && chx.name() != null) {
                     // bare name (local var, `self`, or a cross-module global); track type
                     String nm = nameText(chx.name());
