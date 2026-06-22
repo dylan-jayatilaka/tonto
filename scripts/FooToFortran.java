@@ -1123,9 +1123,14 @@ public final class FooToFortran {
                 } else if (dot && chx.name() != null && !hasQual && !colon && !dcolon) {
                     String sel = nameText(chx.name());
                     String ip;
+                    String elemComp;
                     if (types.isComponent(selfFooType, sel)) {
                         out.append("self%").append(sel);
                         curType = types.componentType(selfFooType, sel);
+                    } else if ((elemComp = selfElemComponent(sel)) != null) {
+                        // self is an array VEC{T}; sel is a component of element T
+                        out.append("self%").append(sel);
+                        curType = elemComp;
                     } else if ((ip = intrinsicProp(sel, "self")) != null) {
                         out.append(ip);                       // .dim -> size(self), etc.
                     } else {
@@ -1191,10 +1196,14 @@ public final class FooToFortran {
                     isCall = true; curType = null;          // recv stays in `out`; args via next LPAREN
                 } else if (dotSel) {
                     String sel = nameText(tr.name(0));
-                    String ip;
+                    String ip, elemComp;
                     if (curType != null && types.isComponent(curType, sel)) {
                         out.append('%').append(sel);
                         curType = types.componentType(curType, sel);
+                    } else if ((elemComp = elemComponent(curType, sel)) != null) {
+                        // recv is an array VEC{T}; sel is a component of element T
+                        out.append('%').append(sel);
+                        curType = elemComp;
                     } else if ((ip = intrinsicProp(sel, out.toString())) != null) {
                         out = new StringBuilder(ip); curType = null;
                     } else {
@@ -1288,6 +1297,18 @@ public final class FooToFortran {
                 }
             }
             return hasLetter;
+        }
+
+        /** When self is an array VEC{T}/MAT{T}…, the component type of `sel` on the
+         *  element type T (so `self.charge` on a VEC{ATOM} -> self%charge), else null. */
+        String selfElemComponent(String sel) { return elemComponent(selfFooType, sel); }
+
+        String elemComponent(String type, String sel) {
+            if (type == null) return null;
+            ArrayType at = parseArray(canon(type));
+            if (at != null && at.elem != null && types.isComponent(at.elem, sel))
+                return types.componentType(at.elem, sel);
+            return null;
         }
 
         /** Array/pointer inquiry methods that map to Fortran intrinsics, or null. */
