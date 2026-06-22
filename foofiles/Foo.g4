@@ -529,9 +529,12 @@ literal
 
 // Array constructor: ["'",'"',"{"], the old-style (/ 1, 2, 3 /), or with an
 // implied-do element [(expr, i=1,n)].
+// Modern bracket form only: `[a, b, (expr, i=1,n)]`. (The legacy `(/ … /)`
+// form has been replaced by `[ … ]` throughout the sources.) A bracketed group
+// in trailer position instead means encapsulated-element access (a(i)[j] ->
+// a(i)%element(j)); that is handled in `trailer`, distinguished by position.
 arrayConstructor
     : LBRACKET (acElem (COMMA acElem)*)? RBRACKET
-    | ARRAY_OPEN (acElem (COMMA acElem)*)? ARRAY_CLOSE
     ;
 
 acElem
@@ -625,8 +628,6 @@ TRIPLE_COLON : ':::' ;
 ARROW : '=>' ;
 COLON : ':' ;
 COMMA : ',' ;
-ARRAY_OPEN : '(/' ;
-ARRAY_CLOSE : '/)' ;
 LPAREN : '(' ;
 RPAREN : ')' ;
 LBRACE : '{' ;
