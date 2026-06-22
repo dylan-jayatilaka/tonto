@@ -1008,8 +1008,14 @@ public final class FooToFortran {
                         curType = at != null ? at.elem : null;
                     }
                 } else if (tr.LBRACKET() != null) {
+                    // encapsulated-element access: a(i)[j] -> a(i)%element(j)
                     String inner = tr.argList() != null ? renderArgList(tr.argList()) : "";
-                    out.append('(').append(inner).append(')');     // [] index -> ()
+                    out.append("%element(").append(inner).append(')');
+                    // `element` is an array component; indexing it yields its elem type
+                    if (curType != null && types.isComponent(curType, "element")) {
+                        ArrayType at = parseArray(canon(types.componentType(curType, "element")));
+                        curType = at != null ? at.elem : null;
+                    } else curType = null;
                 } else {
                     out.append(tr.getText());
                 }
