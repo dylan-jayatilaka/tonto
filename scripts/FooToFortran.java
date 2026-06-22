@@ -363,7 +363,7 @@ public final class FooToFortran {
                 Cursor sc = new Cursor(main.toks);
                 sc.pos = h.getStop().getTokenIndex() + 1;
                 sc.flushHidden(f90, endTok, 0);
-                emitInheritedBody(a, func);
+                emitInheritedBody(a, func, args);
             } else {
                 renderBody(main, pd, /*inherited=*/false, null, a.selfless);
             }
@@ -444,12 +444,12 @@ public final class FooToFortran {
         }
 
         /** Resolve and splice the parent body for get_from(...). */
-        void emitInheritedBody(Attrs a, boolean func) {
+        void emitInheritedBody(Attrs a, boolean func, List<String> args) {
             ParentRef pr = ParentRef.parse(a.getFromTarget, fooModuleName);
             String routine = pr.routine != null ? pr.routine : currentProcBase;
             try {
                 Parsed parent = loadModule(pr.module);
-                FooParser.ProcDefContext target = findOverload(parent, routine, a.signatureComment);
+                FooParser.ProcDefContext target = findOverload(parent, routine, a.signatureComment, args);
                 if (target != null) {
                     subst = buildSubst(a.getFromAttr, pr.module);
                     renderBody(parent, target, true, pr.module, a.selfless);
@@ -508,15 +508,35 @@ public final class FooToFortran {
         }
 
         /** Find a procDef of given name; if several, match by signature comment. */
-        FooParser.ProcDefContext findOverload(Parsed src, String name, String sigComment) {
+        FooParser.ProcDefContext findOverload(Parsed src, String name, String sigComment, List<String> args) {
             List<FooParser.ProcDefContext> matches = new ArrayList<>();
             for (FooParser.ProcDefContext pd : descendants(src.tree, FooParser.ProcDefContext.class))
                 if (pd.procHeader().IDENTIFIER().getText().equals(name)) matches.add(pd);
             if (matches.isEmpty()) return null;
-            if (matches.size() == 1 || sigComment == null) return matches.get(0);
-            for (FooParser.ProcDefContext pd : matches)
-                if (sigComment.equals(signatureComment(src, pd))) return pd;
-            return matches.get(0);
+            if (matches.size() == 1) return matches.get(0);
+            // 1) narrow to templates with the exact argument-name list (a get_from
+            //    proc shares its template's arg names, e.g. (a,transpose_a,dagger_a))
+            List<FooParser.ProcDefContext> pool = new ArrayList<>();
+            if (args != null)
+                for (FooParser.ProcDefContext pd : matches)
+                    if (args.equals(procArgNames(pd))) pool.add(pd);
+            if (pool.isEmpty()) pool = matches;           // arg list didn't disambiguate
+            if (pool.size() == 1) return pool.get(0);
+            // 2) among the survivors, the signature (doc) comment is the tiebreaker
+            if (sigComment != null)
+                for (FooParser.ProcDefContext pd : pool)
+                    if (sigComment.equals(signatureComment(src, pd))) return pd;
+            return pool.get(0);
+        }
+
+        /** The declared argument names of a procedure header. */
+        List<String> procArgNames(FooParser.ProcDefContext pd) {
+            List<String> r = new ArrayList<>();
+            FooParser.ProcHeaderContext h = pd.procHeader();
+            if (h.procArgs() != null && h.procArgs().identList() != null)
+                for (FooParser.DeclNameContext dn : h.procArgs().identList().declName())
+                    r.add(nameText(dn.name()));
+            return r;
         }
 
         /** The `! ...` signature comment immediately after a proc header. */
