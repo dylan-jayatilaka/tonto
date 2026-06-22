@@ -936,8 +936,10 @@ public final class FooToFortran {
                 out.append('(')
                    .append(head.argList() != null ? renderArgList(head.argList()) : "")
                    .append(')');
+            } else if (head.arrayConstructor() != null) {
+                out.append(renderArrayConstructor(head.arrayConstructor()));
             } else {
-                out.append(head.getText());              // literal / array constructor
+                out.append(head.getText());              // literal
             }
 
             for (FooParser.TrailerContext tr : p.trailer()) {
@@ -1006,6 +1008,19 @@ public final class FooToFortran {
             if (statementPos && isCall) s = "call " + s;
             ch.text = s;
             return ch;
+        }
+
+        /** `[a, b, (expr, i=1,n)]` with each element translated. Keeps the
+         *  bracket form foo.pl emits. */
+        String renderArrayConstructor(FooParser.ArrayConstructorContext ac) {
+            List<String> parts = new ArrayList<>();
+            for (FooParser.AcElemContext e : ac.acElem()) {
+                if (e.loopHeader() != null)          // implied-do: (expr, i=1,n)
+                    parts.add("(" + renderExpr(e.expr()) + "," + renderLoopHeader(e.loopHeader()) + ")");
+                else
+                    parts.add(renderExpr(e.expr()));
+            }
+            return "[" + String.join(",", parts) + "]";
         }
 
         String renderArgList(FooParser.ArgListContext al) {
