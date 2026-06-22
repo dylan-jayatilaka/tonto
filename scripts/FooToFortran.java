@@ -283,7 +283,11 @@ public final class FooToFortran {
                     if (mi.implicitStmt() != null) { emitImplicitBlock(stem); implicitDone = true; }
                     else if (mi.useStmt() != null) emitModuleUse(mi.useStmt());
                     else if (mi.typeDef() != null) emitTypeDef(mi.typeDef(), c);
-                    else if (mi.varDecl() != null) emitDecl(mi.varDecl().identList(), mi.varDecl().declTail(), 3);
+                    else if (mi.varDecl() != null) {
+                        int before = f90.length();
+                        emitDecl(mi.varDecl().identList(), mi.varDecl().declTail(), 3);
+                        spliceTrailingComment(c, mi.getStop().getTokenIndex(), before);
+                    }
                     else if (mi.dataStmt() != null) emitDataStmt(mi.dataStmt(), 3);
                     c.pos = Math.max(c.pos, mi.getStop().getTokenIndex() + 1);
                     c.lastLine = mi.getStop().getLine();
@@ -585,11 +589,11 @@ public final class FooToFortran {
                 } else if (b.localDecl() != null) {
                     int before = f90.length();
                     emitDecl(b.localDecl().identList(), b.localDecl().declTail(), indent);
-                    spliceTrailingComment(c, b, before);
+                    spliceTrailingComment(c, b.getStop().getTokenIndex(), before);
                 } else {
                     int before = f90.length();
                     emitStmt(b.stmt(), c, indent);
-                    spliceTrailingComment(c, b, before);
+                    spliceTrailingComment(c, b.getStop().getTokenIndex(), before);
                 }
                 c.pos = Math.max(c.pos, b.getStop().getTokenIndex() + 1);
                 c.lastLine = b.getStop().getLine();
@@ -600,9 +604,9 @@ public final class FooToFortran {
         /** Append a same-line trailing comment to the just-emitted statement
          *  line (foo.pl keeps `stmt   ! note` together). `before` is f90's length
          *  prior to emitting the element; if nothing was emitted, do nothing. */
-        void spliceTrailingComment(Cursor c, FooParser.ProcBodyContext b, int before) {
+        void spliceTrailingComment(Cursor c, int stopTok, int before) {
             if (f90.length() <= before || f90.charAt(f90.length() - 1) != '\n') return;
-            String tc = trailingComment(c, b.getStop().getTokenIndex());
+            String tc = trailingComment(c, stopTok);
             if (tc != null) f90.insert(f90.length() - 1, tc);
         }
 
@@ -739,11 +743,14 @@ public final class FooToFortran {
         void emitStmt(FooParser.StmtContext s, Cursor c, int indent) {
             beforeStmt(indent);
             if (s.simpleLine() != null) {
+                // Keep ';'-separated statements on one line, as foo.pl does.
+                List<String> parts = new ArrayList<>();
                 for (FooParser.LineStmtContext ls : s.simpleLine().lineStmt()) {
                     String txt = renderLineStmt(ls);
-                    if (txt != null && !txt.isBlank() && !txt.equalsIgnoreCase("end"))
-                        f90.append(sp(indent)).append(txt).append('\n');
+                    if (txt != null && !txt.isBlank() && !txt.equalsIgnoreCase("end")) parts.add(txt);
                 }
+                if (!parts.isEmpty())
+                    f90.append(sp(indent)).append(String.join("; ", parts)).append('\n');
                 return;
             }
             if (s.ifStmt()     != null) { emitIf(s.ifStmt(), c, indent); return; }
