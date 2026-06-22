@@ -812,10 +812,17 @@ public final class FooToFortran {
                     // MODULE:method (generic) / MODULE::method (non-generic)
                     String modFoo = chx.qualifier().getText();
                     String method = nameText(chx.name());
-                    if (colon) { pendingCall = method + "_"; recordUse(fortranModName(modFoo), method + "_"); }
-                    else { pendingCall = fortranTypeName(modFoo) + "_" + method;
-                           recordUse(fortranModName(modFoo), pendingCall); }
-                    pendingNoRecv = true; isCall = true;
+                    if (colon && !isModuleLikeQualifier(modFoo)) {
+                        // A lowercase qualifier before a single ':' is not a module
+                        // call but an array-section range `lb:ub` that callHead's
+                        // qualified-call alternative greedily swallowed.
+                        out.append(modFoo).append(':').append(method);
+                    } else {
+                        if (colon) { pendingCall = method + "_"; recordUse(fortranModName(modFoo), method + "_"); }
+                        else { pendingCall = fortranTypeName(modFoo) + "_" + method;
+                               recordUse(fortranModName(modFoo), pendingCall); }
+                        pendingNoRecv = true; isCall = true;
+                    }
                 } else if (dot && (colon || dcolon)) {
                     // submodule call on self: .SET:proc / .:proc / .MAIN:proc
                     String method = nameText(chx.name());
@@ -943,6 +950,23 @@ public final class FooToFortran {
                 return sb.toString();
             }
             return a.getText();      // '*' / ':' forms — passthrough
+        }
+
+        /** True if a qualifier before ':' names a module/type (uppercase base, per
+         *  Foo convention) rather than a lower bound in an array-section range. */
+        boolean isModuleLikeQualifier(String q) {
+            int i = 0;
+            while (i < q.length() && q.charAt(i) != '{' && q.charAt(i) != '(') i++;
+            String base = q.substring(0, i);
+            boolean hasLetter = false;
+            for (int k = 0; k < base.length(); k++) {
+                char c = base.charAt(k);
+                if (Character.isLetter(c)) {
+                    hasLetter = true;
+                    if (Character.isLowerCase(c)) return false;
+                }
+            }
+            return hasLetter;
         }
 
         /** Array/pointer inquiry methods that map to Fortran intrinsics, or null. */
