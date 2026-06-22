@@ -404,12 +404,26 @@ public final class FooToFortran {
 
         /** A Fortran data statement: data name(dims)/ v1, v2, … / (one line, compilable). */
         void emitDataStmt(FooParser.DataStmtContext d, int indent) {
-            StringBuilder s = new StringBuilder(sp(indent)).append("data ").append(nameText(d.name()));
-            if (d.dimSpec() != null) s.append(d.dimSpec().getText());
+            String head = sp(indent) + "data " + nameText(d.name())
+                        + (d.dimSpec() != null ? d.dimSpec().getText() : "") + "/";
             List<String> vals = new ArrayList<>();
             for (FooParser.DataValueContext dv : d.dataValue()) vals.add(dv.getText());
-            s.append("/").append(String.join(",", vals)).append("/");
-            f90.append(s).append('\n');
+            // Wrap so no physical line (incl. trailing " &") exceeds Fortran's 132.
+            // Break only after a comma — never mid-value — so strings stay intact.
+            final int MAX = 128;
+            StringBuilder out = new StringBuilder(), line = new StringBuilder(head);
+            int prefixLen = line.length();
+            for (int i = 0; i < vals.size(); i++) {
+                String piece = vals.get(i) + (i == vals.size() - 1 ? "/" : ",");
+                if (line.length() > prefixLen && line.length() + piece.length() > MAX) {
+                    out.append(line).append(" &\n");
+                    line = new StringBuilder(sp(indent));
+                    prefixLen = line.length();
+                }
+                line.append(piece);
+            }
+            if (vals.isEmpty()) line.append("/");
+            f90.append(out).append(line).append('\n');
         }
 
         /** Resolve and splice the parent body for get_from(...). */
