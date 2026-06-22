@@ -101,6 +101,55 @@ public final class FooToFortran {
     }
     static String fortranModName(String fooType) { return fortranTypeName(fooType) + "_MODULE"; }
 
+    /** Scan every *.foo for module-level `public` variable declarations (the
+     *  cross-module globals: stdin/stdout/stderr, tonto, std_time, the
+     *  gaussian_data tables, etc.). Returns name -> {canon foo type, fortran
+     *  module}. A fast text scan (no parse): module-level decls sit at exactly
+     *  3-space indent, before `contains`, and carry the `public` attribute. */
+    static Map<String, String[]> buildGlobalTable(Path foofilesDir) {
+        Map<String, String[]> g = new HashMap<>();
+        java.io.File[] files = foofilesDir.toFile().listFiles((d, n) -> n.endsWith(".foo"));
+        if (files == null) return g;
+        java.util.regex.Pattern modPat =
+            java.util.regex.Pattern.compile("^\\s*(?:virtual\\s+)?(?:array\\s+)?module\\s+(\\S+)");
+        java.util.regex.Pattern declPat =
+            java.util.regex.Pattern.compile("^ {3}([A-Za-z]\\w*)\\s*::([^:].*)$");
+        for (java.io.File f : files) {
+            String fooMod = null; boolean past = false;
+            List<String> lines;
+            try { lines = Files.readAllLines(f.toPath(), StandardCharsets.UTF_8); }
+            catch (Exception e) {
+                try { lines = Files.readAllLines(f.toPath(), StandardCharsets.ISO_8859_1); }
+                catch (Exception e2) { continue; }
+            }
+            for (String line : lines) {
+                if (fooMod == null) {
+                    java.util.regex.Matcher m = modPat.matcher(line);
+                    if (m.find()) { fooMod = m.group(1); continue; }
+                }
+                if (line.strip().equalsIgnoreCase("contains")) { past = true; continue; }
+                if (past || fooMod == null) continue;
+                java.util.regex.Matcher m = declPat.matcher(line);
+                if (!m.find()) continue;
+                String rest = m.group(2);                      // after '::', e.g. "TEXTFILE@, public"
+                int depth = 0, cut = rest.length();
+                for (int i = 0; i < rest.length(); i++) {
+                    char c = rest.charAt(i);
+                    if (c == '{' || c == '(') depth++;
+                    else if (c == '}' || c == ')') depth--;
+                    else if (c == ',' && depth == 0) { cut = i; break; }
+                }
+                String typeSpec = rest.substring(0, cut).trim();   // type (+ptr suffix)
+                String attrs = rest.substring(Math.min(cut + 1, rest.length()));
+                if (!attrs.matches(".*\\bpublic\\b.*")) continue;
+                String fooType = canon(typeSpec).replace("@", "").replace("*", "").replace("?", "");
+                if (fooType.isEmpty()) continue;
+                g.putIfAbsent(m.group(1), new String[]{fooType, fortranModName(fooMod)});
+            }
+        }
+        return g;
+    }
+
     static final Set<String> INTRINSIC_SCALAR = Set.of("INT", "REAL", "CPX", "BIN", "STR");
     static boolean isIntrinsicScalar(String t) { return INTRINSIC_SCALAR.contains(canon(t)); }
 
@@ -144,7 +193,9 @@ public final class FooToFortran {
         TypeTable types = new TypeTable();
         if (Files.exists(typesPath)) buildTypeTable(types, typesPath);
 
-        ModuleEmitter em = new ModuleEmitter(types, parseFile(fooPath), fooPath, foofilesDir);
+        Map<String, String[]> globals = buildGlobalTable(foofilesDir);
+
+        ModuleEmitter em = new ModuleEmitter(types, parseFile(fooPath), fooPath, foofilesDir, globals);
         em.emit();
         if (em.isVirtual) return;          // virtual modules are inlined via get_from, not compiled
 
@@ -181,8 +232,12 @@ public final class FooToFortran {
         final Map<String, List<String>> interfaceProcs = new LinkedHashMap<>(); // base -> specific names
         final Map<String, Set<String>> useOnly = new TreeMap<>();
 
-        ModuleEmitter(TypeTable types, Parsed main, Path fooPath, Path foofilesDir) {
+        final Map<String, String[]> globals;   // global var name -> {canon foo type, fortran module}
+
+        ModuleEmitter(TypeTable types, Parsed main, Path fooPath, Path foofilesDir,
+                      Map<String, String[]> globals) {
             this.types = types; this.main = main; this.fooPath = fooPath; this.foofilesDir = foofilesDir;
+            this.globals = globals;
         }
 
         void emit() {
@@ -826,11 +881,17 @@ public final class FooToFortran {
                     // MODULE:method (generic) / MODULE::method (non-generic)
                     String modFoo = chx.qualifier().getText();
                     String method = nameText(chx.name());
+                    String[] gi = globals.get(method);
                     if (colon && !isModuleLikeQualifier(modFoo)) {
                         // A lowercase qualifier before a single ':' is not a module
                         // call but an array-section range `lb:ub` that callHead's
                         // qualified-call alternative greedily swallowed.
                         out.append(modFoo).append(':').append(method);
+                    } else if (gi != null && gi[1].equals(fortranModName(modFoo))) {
+                        // qualified access to a cross-module global variable (e.g.
+                        // GAUSSIAN_DATA::spherical_harmonics_for) -> emit unqualified.
+                        out.append(method); curType = gi[0];
+                        recordUse(gi[1], method);
                     } else {
                         if (colon) { pendingCall = method + "_"; recordUse(fortranModName(modFoo), method + "_"); }
                         else { pendingCall = fortranTypeName(modFoo) + "_" + method;
@@ -856,11 +917,12 @@ public final class FooToFortran {
                         out.append("self"); isCall = true;
                     }
                 } else if (!hasQual && !colon && !dcolon && !dot && chx.name() != null) {
-                    // bare name (local var or `self`); track its type for chains
+                    // bare name (local var, `self`, or a cross-module global); track type
                     String nm = nameText(chx.name());
                     out.append(nm);
                     if (nm.equals("self")) curType = selfFooType;
                     else if (localVarTypes.containsKey(nm)) curType = localVarTypes.get(nm);
+                    else { String gt = resolveGlobal(nm); if (gt != null) curType = gt; }
                 } else {
                     out.append(head.getText());          // other forms: TODO
                 }
@@ -1014,7 +1076,19 @@ public final class FooToFortran {
         /** Record a `use <mod>, only: <symbol>` dependency (skip self-use). */
         void recordUse(String fortranMod, String symbol) {
             if (fortranMod.equals(selfModuleName)) return;        // don't use own module
+            // TYPES and SYSTEM are pulled in wholesale (`use X_MODULE`), so they
+            // never get an `only:` clause (matches foo.pl).
+            if (fortranMod.equals("TYPES_MODULE") || fortranMod.equals("SYSTEM_MODULE")) return;
             useOnly.computeIfAbsent(fortranMod, k -> new java.util.TreeSet<>()).add(symbol);
+        }
+
+        /** If `nm` is a cross-module global, set curType to its type, record the
+         *  `only:` use dependency, and return true. */
+        String resolveGlobal(String nm) {
+            String[] gi = globals.get(nm);
+            if (gi == null) return null;
+            recordUse(gi[1], nm);
+            return gi[0];
         }
 
         // ---- .int / .use ----------------------------------------------
