@@ -983,7 +983,12 @@ public final class FooToFortran {
 
         void buildInterfaceFile() {
             intf.append("   private\n\n");
-            for (Map.Entry<String, List<String>> e : interfaceProcs.entrySet()) {
+            // foo.pl sorts the interface blocks by the emitted name (NAME_),
+            // strict ASCII order (LC_ALL=C: uppercase before lowercase).
+            List<Map.Entry<String, List<String>>> entries =
+                new ArrayList<>(interfaceProcs.entrySet());
+            entries.sort((a, b) -> (a.getKey() + "_").compareTo(b.getKey() + "_"));
+            for (Map.Entry<String, List<String>> e : entries) {
                 intf.append("   public    ").append(e.getKey()).append("_\n");
                 intf.append("   interface ").append(e.getKey()).append("_\n");
                 for (String spec : e.getValue())
