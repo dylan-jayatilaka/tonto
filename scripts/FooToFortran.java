@@ -663,7 +663,7 @@ public final class FooToFortran {
 
         void emitDecl(FooParser.IdentListContext ids, FooParser.DeclTailContext tail, int indent) {
             List<String> vars = new ArrayList<>();
-            for (FooParser.DeclNameContext dn : ids.declName()) vars.add(dn.getText());
+            for (FooParser.DeclNameContext dn : ids.declName()) vars.add(renderDeclName(dn));
 
             boolean isArg = !ids.declName().isEmpty()
                 && currentArgs.contains(nameText(ids.declName(0).name()));
@@ -736,7 +736,39 @@ public final class FooToFortran {
         /** Is this a Foo derived type — defined in types.foo or parameterised? */
         boolean isFooType(String c) { return types.get(c) != null || c.contains("{"); }
 
-        String attrText(FooParser.AttrContext at) { return at.getText(); }
+        String attrText(FooParser.AttrContext at) {
+            // dimension(.n_roots+1, …): translate the bound expressions
+            if (at.name() != null && at.dimSpec() != null)
+                return at.name().getText() + renderDimSpec(at.dimSpec());
+            return at.getText();
+        }
+
+        /** A dimension/type-parameter spec with its bound expressions translated
+         *  (so `(.n_roots+1, 0:n)` -> `(self%n_roots+1, 0:n)`). */
+        String renderDimSpec(FooParser.DimSpecContext ds) {
+            List<String> parts = new ArrayList<>();
+            for (FooParser.DimArgContext da : ds.dimArg()) parts.add(renderDimArg(da));
+            return "(" + String.join(",", parts) + ")";
+        }
+
+        String renderDimArg(FooParser.DimArgContext da) {
+            if (da.STAR() != null) return "*";
+            if (da.IDENTIFIER() != null && da.EQUAL() != null)
+                return da.IDENTIFIER().getText() + "=" + renderExpr(da.expr(0));
+            if (da.COLON() != null) {                       // expr? : expr?
+                int col = da.COLON().getSymbol().getTokenIndex();
+                String lo = "", hi = "";
+                for (FooParser.ExprContext e : da.expr())
+                    if (e.getStop().getTokenIndex() < col) lo = renderExpr(e); else hi = renderExpr(e);
+                return lo + ":" + hi;
+            }
+            return da.expr() != null && !da.expr().isEmpty() ? renderExpr(da.expr(0)) : da.getText();
+        }
+
+        /** A declared name with its dimension expressions translated. */
+        String renderDeclName(FooParser.DeclNameContext dn) {
+            return nameText(dn.name()) + (dn.dimSpec() != null ? renderDimSpec(dn.dimSpec()) : "");
+        }
 
         // ---- statements ------------------------------------------------
 
