@@ -222,6 +222,7 @@ public final class FooToFortran {
 
         String fooModuleName, selfFooType, currentProc, currentProcBase, selfModuleName;
         boolean isVirtual;
+        boolean inComponent;   // true while emitting derived-type components
         boolean inheritInjectPending; String inheritParent;
         Set<String> currentArgs = new LinkedHashSet<>();
         Map<String, String> localVarTypes = new HashMap<>();   // local/arg name -> base foo type
@@ -392,7 +393,14 @@ public final class FooToFortran {
 
         /** A derived-type definition: `type IRREP_TYPE … end type`. */
         void emitTypeDef(FooParser.TypeDefContext td, Cursor c) {
-            f90.append("   type ").append(fortranTypeName(td.typeSpec().getText())).append("_TYPE\n");
+            // `array type VEC{…}` only signals to the legacy translator that such
+            // array types occur; foo.pl emits no derived type for it (just any
+            // body comment). Emit no type/end type wrapper, but keep the comment.
+            boolean isArray = td.IDENTIFIER() != null
+                && td.IDENTIFIER().getText().equalsIgnoreCase("array");
+            if (!isArray)
+                f90.append("   type ").append(fortranTypeName(td.typeSpec().getText())).append("_TYPE\n");
+            inComponent = true;
             for (int i = 0; i < td.getChildCount(); i++) {
                 ParseTree ch = td.getChild(i);
                 if (ch instanceof FooParser.VarDeclContext) {
@@ -403,7 +411,12 @@ public final class FooToFortran {
                     c.lastLine = vd.getStop().getLine();
                 }
             }
-            f90.append("   end type\n");
+            // trailing comments in the type body (after the last component, or a
+            // comment-only body like the `array type …` declarations)
+            inComponent = false;
+            if (td.endKw() != null)
+                c.flushHidden(f90, td.endKw().getStart().getTokenIndex(), 6);
+            if (!isArray) f90.append("   end type\n");
         }
 
         /** A Fortran data statement: data name(dims)/ v1, v2, … / (one line, compilable). */
@@ -693,6 +706,10 @@ public final class FooToFortran {
                     for (FooParser.AttrContext at : tail.attr()) addAttrOrInit(at, attrs, inits);
             }
             if (tail.initSuffix() != null) inits.add("= " + renderExpr(tail.initSuffix().expr()));
+            // a pointer component with no explicit initializer defaults to null
+            if (inComponent && tail.ptrSuffix() != null
+                && tail.ptrSuffix().getText().equals("*") && inits.isEmpty())
+                inits.add("DEFAULT_NULL");
             StringBuilder d = new StringBuilder(sp(indent)).append(ftype);
             for (String at : attrs) d.append(", ").append(at);
             d.append(" :: ").append(String.join(",", vars));
@@ -702,8 +719,13 @@ public final class FooToFortran {
 
         /** A DEFAULT(...) attribute is a trailing initializer (after the var), not an attr. */
         void addAttrOrInit(FooParser.AttrContext at, List<String> attrs, List<String> inits) {
-            if (at.name() != null && at.name().getText().equalsIgnoreCase("DEFAULT"))
-                inits.add(at.getText());
+            String nm = at.name() != null ? at.name().getText() : "";
+            if (nm.regionMatches(true, 0, "DEFAULT", 0, Math.min(7, nm.length())) && nm.length() >= 7)
+                inits.add(at.getText());            // DEFAULT(...) and DEFAULT_NULL
+            else if (nm.equalsIgnoreCase("readonly"))
+                ;   // Foo-only access control; not a Fortran attribute (foo.pl drops it)
+            else if (inComponent && nm.equalsIgnoreCase("private"))
+                ;   // per-component `private` is dropped (foo.pl); `public` is kept
             else attrs.add(attrText(at));
         }
 
