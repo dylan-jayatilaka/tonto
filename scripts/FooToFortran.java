@@ -642,6 +642,7 @@ public final class FooToFortran {
             if (s.ifStmt()     != null) { emitIf(s.ifStmt(), c, indent); return; }
             if (s.doStmt()     != null) { emitDo(s.doStmt(), c, indent); return; }
             if (s.selectStmt() != null) { emitSelect(s.selectStmt(), c, indent); return; }
+            if (s.whereStmt()  != null) { emitWhere(s.whereStmt(), c, indent); return; }
             // forallStmt: TODO
             f90.append(sp(indent)).append("! TODO stmt: ").append(oneLine(s.getText())).append('\n');
         }
@@ -684,6 +685,19 @@ public final class FooToFortran {
             f90.append(line).append('\n');
             emitBodyList(x.procBody(), c, indent + 3, false);
             f90.append(sp(indent)).append("end do\n");
+        }
+
+        void emitWhere(FooParser.WhereStmtContext x, Cursor c, int indent) {
+            StringBuilder line = new StringBuilder(sp(indent))
+                .append("where (").append(renderExpr(x.expr())).append(')');
+            emitInlineThenBody(line, x.inlineBody(), c, indent);
+            for (FooParser.ElsewhereClauseContext ew : x.elsewhereClause()) {
+                c.flushHidden(f90, ew.getStart().getTokenIndex(), indent);
+                StringBuilder el = new StringBuilder(sp(indent)).append("elsewhere");
+                if (ew.expr() != null) el.append(" (").append(renderExpr(ew.expr())).append(')');
+                emitInlineThenBody(el, ew.inlineBody(), c, indent);
+            }
+            f90.append(sp(indent)).append("end where\n");
         }
 
         String renderLoopHeader(FooParser.LoopHeaderContext lh) {

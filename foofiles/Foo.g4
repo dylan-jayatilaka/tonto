@@ -231,7 +231,11 @@ declName
 // operator, etc.; a block `end` by a newline).
 name
     : IDENTIFIER QUESTION?
-    | END
+    // `end` is a soft keyword (variable `end`, `end+1`, `end,f,l :: INT`); but a
+    // block-closing `end` is followed by a NEWLINE. Excluding that case lets a
+    // procBody/block body terminate at its `end` instead of swallowing it as a
+    // statement (which collapsed consecutive no-`:::` procedures into one).
+    | {_input.LA(2) != NEWLINE}? END
     | DATA
     | RESULT
     | TYPE
@@ -321,6 +325,7 @@ stmt
     | doStmt
     | forallStmt
     | selectStmt
+    | whereStmt
     | simpleLine
     ;
 
@@ -413,6 +418,21 @@ selectStmt
     : SELECT CASE LPAREN expr RPAREN NEWLINE
       (caseClause | NEWLINE)*
       endKw NEWLINE?
+    ;
+
+// A masked-assignment block:  where (mask) … [elsewhere (mask2) …] [elsewhere …] end
+// Mirrors ifStmt (inlineBody handles both `where (m)\n…` and the compact
+// `where (m); stmt` / `elsewhere; stmt` forms). The space-separated one-liner
+// `where (m) stmt` is handled by oneLineWhere within lineStmt. The closing `end`
+// is rendered as `end where`.
+whereStmt
+    : WHERE LPAREN expr RPAREN inlineBody
+      elsewhereClause*
+      endKw NEWLINE?
+    ;
+
+elsewhereClause
+    : ELSEWHERE (LPAREN expr RPAREN)? inlineBody
     ;
 
 // A case clause: an inline body (`case (0); res=1`), a block body
@@ -574,6 +594,7 @@ WHERE : 'where' | 'WHERE' ;
 FORALL : 'forall' | 'FORALL' ;
 // `else if` (spaced) and `elseif` (glued) both lex as one ELSEIF token.
 ELSEIF : ('else' | 'ELSE') [ \t]* ('if' | 'IF') ;
+ELSEWHERE : 'elsewhere' | 'ELSEWHERE' ;
 ELSE : 'else' | 'ELSE' ;
 SELECT : 'select' | 'SELECT' ;
 CASE : 'case' | 'CASE' ;
