@@ -1030,8 +1030,22 @@ public final class FooToFortran {
             if (lp <= 0) return stmt;
             String head = stmt.substring(0, lp);
             if (!ASSERT_MACROS.contains(head)) return stmt;
-            int q = stmt.indexOf('"', lp);
-            if (q < 0) return stmt;
+            // The message is the LAST argument; insert the prefix into ITS opening
+            // string — not the first quote, which may sit inside the condition
+            // (e.g. ENSURE(next_item_(stdin)=="{", "...")).
+            int depth = 0, lastComma = -1, close = -1;
+            boolean inStr = false; char sc = 0;
+            for (int i = lp; i < stmt.length(); i++) {
+                char ch = stmt.charAt(i);
+                if (inStr) { if (ch == sc) inStr = false; continue; }
+                if (ch == '"' || ch == '\'') { inStr = true; sc = ch; }
+                else if (ch == '(') depth++;
+                else if (ch == ')') { if (--depth == 0) { close = i; break; } }
+                else if (ch == ',' && depth == 1) lastComma = i;
+            }
+            int from = lastComma >= 0 ? lastComma + 1 : lp + 1;
+            int q = stmt.indexOf('"', from);
+            if (q < 0 || (close >= 0 && q > close)) return stmt;   // message isn't a string
             String pre = fooModuleName + ":" + currentProc + " ... ";   // raw Foo name
             return stmt.substring(0, q + 1) + pre + stmt.substring(q + 1);
         }
