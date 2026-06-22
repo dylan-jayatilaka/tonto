@@ -688,7 +688,7 @@ public final class FooToFortran {
             boolean typeIsAttr = tail.typeSpec() != null
                 && ATTR_WORDS.contains(canon(tail.typeSpec().getText()).toLowerCase(Locale.ROOT));
             if (tail.typeSpec() != null && !typeIsAttr) {
-                ftype = fortranType(tail.typeSpec().getText(), isArg);
+                ftype = fortranType(typeSpecText(tail.typeSpec()), isArg);
                 if (tail.ptrSuffix() != null)
                     attrs.add(tail.ptrSuffix().getText().equals("@") ? "allocatable" : "PTR");
                 if (tail.attrSuffix() != null)
@@ -767,6 +767,16 @@ public final class FooToFortran {
             if (at.name() != null && at.dimSpec() != null)
                 return at.name().getText() + renderDimSpec(at.dimSpec());
             return at.getText();
+        }
+
+        /** Type text with a translated array dimension, so expressions in the
+         *  dimension (e.g. `VEC{BIN}(neighbours.dim)`) are resolved rather than
+         *  copied verbatim. */
+        String typeSpecText(FooParser.TypeSpecContext ts) {
+            String t = ts.baseType().getText();
+            if (ts.QUESTION() != null) t += "?";
+            if (ts.dimSpec() != null) t += renderDimSpec(ts.dimSpec());
+            return t;
         }
 
         /** A dimension/type-parameter spec with its bound expressions translated
@@ -1199,6 +1209,9 @@ public final class FooToFortran {
                 case "dim2": return "size(" + recv + ",2)";
                 case "dim3": return "size(" + recv + ",3)";
                 case "dim4": return "size(" + recv + ",4)";
+                case "dim5": return "size(" + recv + ",5)";
+                case "dim6": return "size(" + recv + ",6)";
+                case "dim7": return "size(" + recv + ",7)";
                 case "allocated": return "allocated(" + recv + ")";
                 case "deallocated": return "NOT allocated(" + recv + ")";
                 case "associated": return "associated(" + recv + ")";
