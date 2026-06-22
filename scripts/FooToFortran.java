@@ -719,7 +719,7 @@ public final class FooToFortran {
             ArrayType at = parseArray(c);
             if (at != null) {
                 String dims = at.dimSpec != null ? at.dimSpec : repeatColon(at.ndim);
-                return at.head + "(" + fortranElement(at.elem) + "," + dims + ")";
+                return at.head + "(" + fortranElement(at.elem, isArg) + "," + dims + ")";
             }
             // A known Foo derived type (in types.foo) or a parameterised type
             // becomes type(X_TYPE); an unknown plain identifier is an external/kind
@@ -729,9 +729,9 @@ public final class FooToFortran {
         }
 
         /** Element type inside VEC{...}/MAT{...}: intrinsic kept, else type(X_TYPE). */
-        String fortranElement(String elem) {
+        String fortranElement(String elem, boolean isArg) {
             String e = canon(elem).replace("?", "");
-            if (e.equals("STR")) return "STR(len=*)";
+            if (e.equals("STR")) return isArg ? "STR(len=*)" : "STR(len=STR_SIZE)";
             if (isIntrinsicScalar(e)) return e;
             if (isFooType(e)) return "type(" + fortranTypeName(e) + "_TYPE)";
             return e;
@@ -1178,7 +1178,9 @@ public final class FooToFortran {
                 case "dim3": return "size(" + recv + ",3)";
                 case "dim4": return "size(" + recv + ",4)";
                 case "allocated": return "allocated(" + recv + ")";
+                case "deallocated": return "NOT allocated(" + recv + ")";
                 case "associated": return "associated(" + recv + ")";
+                case "disassociated": return "NOT associated(" + recv + ")";
                 default: return null;
             }
         }
