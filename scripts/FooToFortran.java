@@ -476,7 +476,11 @@ public final class FooToFortran {
             keys.sort((x, y) -> Integer.compare(y.length(), x.length()));  // longest first
             for (String k : keys) {
                 String base = k.endsWith("?") ? k.substring(0, k.length() - 1) : k;
-                String rx = "\\b" + java.util.regex.Pattern.quote(base) + (k.endsWith("?") ? "\\?" : "\\b");
+                // For `?`-keys match the base with an OPTIONAL trailing '?': the body
+                // may still carry it (raw text) or have had it stripped by nameText
+                // (rendered text). Non-'?' keys match the bare word.
+                String rx = "\\b" + java.util.regex.Pattern.quote(base)
+                          + (k.endsWith("?") ? "\\b\\??" : "\\b");
                 s = s.replaceAll(rx, java.util.regex.Matcher.quoteReplacement(subst.get(k)));
             }
             return s;
