@@ -583,14 +583,52 @@ public final class FooToFortran {
                 if (isPre) {
                     preconds.add(b.stmt());                   // store; re-emitted at firstActive
                 } else if (b.localDecl() != null) {
+                    int before = f90.length();
                     emitDecl(b.localDecl().identList(), b.localDecl().declTail(), indent);
+                    spliceTrailingComment(c, b, before);
                 } else {
+                    int before = f90.length();
                     emitStmt(b.stmt(), c, indent);
+                    spliceTrailingComment(c, b, before);
                 }
                 c.pos = Math.max(c.pos, b.getStop().getTokenIndex() + 1);
                 c.lastLine = b.getStop().getLine();
             }
             for (FooParser.StmtContext pc : preconds) emitPrecond(pc);   // no executable: emit at end
+        }
+
+        /** Append a same-line trailing comment to the just-emitted statement
+         *  line (foo.pl keeps `stmt   ! note` together). `before` is f90's length
+         *  prior to emitting the element; if nothing was emitted, do nothing. */
+        void spliceTrailingComment(Cursor c, FooParser.ProcBodyContext b, int before) {
+            if (f90.length() <= before || f90.charAt(f90.length() - 1) != '\n') return;
+            String tc = trailingComment(c, b.getStop().getTokenIndex());
+            if (tc != null) f90.insert(f90.length() - 1, tc);
+        }
+
+        /** Splice a trailing comment onto a block-header line (`do … ! note`).
+         *  `nl` is the NEWLINE token closing the header. */
+        void appendHeaderComment(Cursor c, org.antlr.v4.runtime.tree.TerminalNode nl) {
+            if (nl == null) return;
+            String tc = trailingComment(c, nl.getSymbol().getTokenIndex());
+            if (tc != null) f90.append(tc);
+        }
+
+        /** A COMMENT trailing the statement's NEWLINE (hidden channel, same source
+         *  line). Consumes it from the cursor and returns "  <text>", else null. */
+        String trailingComment(Cursor c, int stopTok) {
+            if (stopTok < 0 || stopTok >= c.toks.size()) return null;
+            int line = c.toks.get(stopTok).getLine();
+            for (int i = stopTok - 1; i >= 0; i--) {
+                Token t = c.toks.get(i);
+                if (t.getChannel() != Token.HIDDEN_CHANNEL) break;   // reached code
+                if (t.getLine() != line) break;
+                if (t.getType() == FooLexer.COMMENT) {
+                    c.pos = Math.max(c.pos, i + 1);
+                    return "  " + t.getText();
+                }
+            }
+            return null;
         }
 
         /** True if a statement is a single ENSURE/DIE/WARN assertion call. */
@@ -743,7 +781,9 @@ public final class FooToFortran {
                 String t = renderSimpleStmt(ss);
                 if (t != null && !t.isBlank() && !t.equalsIgnoreCase("end")) header.append("; ").append(t);
             }
-            f90.append(header).append('\n');
+            f90.append(header);
+            appendHeaderComment(c, ib.NEWLINE());
+            f90.append('\n');
             emitBodyList(ib.procBody(), c, indent + 3, false);
         }
 
@@ -751,7 +791,9 @@ public final class FooToFortran {
             StringBuilder line = new StringBuilder(sp(indent)).append("do");
             if (x.loopHeader() != null) line.append(' ').append(renderLoopHeader(x.loopHeader()));
             else if (x.WHILE() != null) line.append(" while (").append(renderExpr(x.expr())).append(')');
-            f90.append(line).append('\n');
+            f90.append(line);
+            appendHeaderComment(c, x.NEWLINE().isEmpty() ? null : x.NEWLINE(0));
+            f90.append('\n');
             emitBodyList(x.procBody(), c, indent + 3, false);
             f90.append(sp(indent)).append("end do\n");
         }
@@ -778,7 +820,9 @@ public final class FooToFortran {
         }
 
         void emitSelect(FooParser.SelectStmtContext x, Cursor c, int indent) {
-            f90.append(sp(indent)).append("select case (").append(renderExpr(x.expr())).append(")\n");
+            f90.append(sp(indent)).append("select case (").append(renderExpr(x.expr())).append(")");
+            appendHeaderComment(c, x.NEWLINE().isEmpty() ? null : x.NEWLINE(0));
+            f90.append('\n');
             for (FooParser.CaseClauseContext cc : x.caseClause()) {
                 c.flushHidden(f90, cc.getStart().getTokenIndex(), indent + 3);
                 StringBuilder line = new StringBuilder(sp(indent + 3)).append(renderCaseLabel(cc.caseLabel()));
@@ -786,7 +830,9 @@ public final class FooToFortran {
                     String t = renderSimpleStmt(ss);
                     if (t != null && !t.isBlank() && !t.equalsIgnoreCase("end")) line.append("; ").append(t);
                 }
-                f90.append(line).append('\n');
+                f90.append(line);
+                appendHeaderComment(c, cc.NEWLINE());
+                f90.append('\n');
                 emitBodyList(cc.procBody(), c, indent + 6, false);
                 c.pos = Math.max(c.pos, cc.getStop().getTokenIndex() + 1);
                 c.lastLine = cc.getStop().getLine();
