@@ -476,6 +476,9 @@ public final class FooToFortran {
                     if (ga.ARROW() != null && ga.getFromKey() != null) {
                         String key = ga.getFromKey().getText() + (ga.QUESTION() != null ? "?" : "");
                         String val = ga.getFromVal() != null ? ga.getFromVal().getText() : "";
+                        // a self-component value (ARG?=>.use_BFGS / self.x) -> self%use_BFGS
+                        if (val.matches("\\.\\w+(\\.\\w+)*")) val = "self%" + val.substring(1).replace(".", "%");
+                        else if (val.matches("self(\\.\\w+)+")) val = val.replace(".", "%");
                         m.put(key, val);
                     }
                 }
