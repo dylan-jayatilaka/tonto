@@ -525,10 +525,12 @@ public final class FooToFortran {
                                      java.util.regex.Matcher.quoteReplacement(m + "(self)"));
                     continue;
                 }
-                // For `?`-keys match the base with an OPTIONAL trailing '?': the body
-                // may still carry it (raw text) or have had it stripped by nameText
-                // (rendered text). Non-'?' keys match the bare word.
-                String rx = "\\b" + qb + (k.endsWith("?") ? "\\b\\??" : "\\b");
+                // For `?`-keys match the base with an OPTIONAL trailing '?' (the body
+                // may carry it, or nameText stripped it) — UNLESS the base also names
+                // a real arg/local of this proc (e.g. V? type-key vs. the V argument),
+                // in which case require the '?' so the variable is not substituted.
+                boolean isVar = currentArgs.contains(base) || localVarTypes.containsKey(base);
+                String rx = "\\b" + qb + (k.endsWith("?") ? (isVar ? "\\?" : "\\b\\??") : "\\b");
                 s = s.replaceAll(rx, java.util.regex.Matcher.quoteReplacement(v));
             }
             return s;
