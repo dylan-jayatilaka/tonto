@@ -591,10 +591,40 @@ public final class FooToFortran {
                         localVarTypes.put(nameText(dn.name()), t);
                 }
             // self is declared implicitly when the body doesn't declare it itself
-            if (!selfless && !bodyDeclaresSelf(body))
+            // (but not for `routinal` procs, where self is a function arg given an
+            // interface block in the body)
+            boolean routinal = Attrs.parse(pd.procHeader().procAttrs()).routinal;
+            if (!selfless && !routinal && !bodyDeclaresSelf(body))
                 f90.append("      ").append(selfDeclType()).append(" :: self\n");
             emitBodyList(body, c, 6, true);
             c.flushHidden(f90, pd.getStop().getTokenIndex(), 6);   // trailing comments
+        }
+
+        /** Emit a `routinal` function-argument interface block. */
+        void emitInterfaceBlock(FooParser.InterfaceBlockContext ib, int indent) {
+            f90.append(sp(indent)).append("interface\n");
+            if (ib.abstractItem() != null)
+                for (FooParser.AbstractItemContext ai : ib.abstractItem())
+                    if (ai.procDef() != null) emitInterfaceProc(ai.procDef(), indent + 3);
+            f90.append(sp(indent)).append("end interface\n");
+        }
+
+        void emitInterfaceProc(FooParser.ProcDefContext pd, int indent) {
+            FooParser.ProcHeaderContext h = pd.procHeader();
+            List<String> args = procArgNames(pd);
+            boolean func = h.procResult() != null;
+            StringBuilder hdr = new StringBuilder(sp(indent))
+                .append(func ? "function " : "subroutine ").append(h.IDENTIFIER().getText())
+                .append('(').append(String.join(",", args)).append(')');
+            if (func) hdr.append(" result (").append(h.procResult().IDENTIFIER().getText()).append(')');
+            f90.append(hdr).append('\n');
+            Set<String> saved = currentArgs;
+            currentArgs = new LinkedHashSet<>(args);
+            for (FooParser.ProcBodyContext b : pd.procBody())
+                if (b.localDecl() != null)
+                    emitDecl(b.localDecl().identList(), b.localDecl().declTail(), indent + 3);
+            currentArgs = saved;
+            f90.append(sp(indent)).append(func ? "end function\n" : "end subroutine\n");
         }
 
         boolean bodyDeclaresSelf(List<FooParser.ProcBodyContext> body) {
@@ -621,6 +651,13 @@ public final class FooToFortran {
             List<FooParser.StmtContext> preconds = new ArrayList<>();
             for (int i = 0; i < elems.size(); i++) {
                 FooParser.ProcBodyContext b = elems.get(i);
+                if (b.interfaceBlock() != null) {           // `routinal` function-arg interface
+                    c.flushHidden(f90, b.getStart().getTokenIndex(), indent);
+                    emitInterfaceBlock(b.interfaceBlock(), indent);
+                    c.pos = Math.max(c.pos, b.getStop().getTokenIndex() + 1);
+                    c.lastLine = b.getStop().getLine();
+                    continue;
+                }
                 if (b.localDecl() == null && b.stmt() == null) continue;   // blank / unhandled
                 c.flushHidden(f90, b.getStart().getTokenIndex(), indent);
                 if (i == firstActive) {                       // emit hoisted preconditions here
@@ -1456,7 +1493,7 @@ public final class FooToFortran {
     // ----------------------------------------------------- attribute parsing
 
     static final class Attrs {
-        boolean pure, PURE, elemental, ELEMENTAL, recursive, leaky, selfless;
+        boolean pure, PURE, elemental, ELEMENTAL, recursive, leaky, selfless, routinal;
         boolean privateAcc, publicAcc, template, inherited;
         String getFromTarget, signatureComment;
         FooParser.AttrContext getFromAttr;
@@ -1478,6 +1515,7 @@ public final class FooToFortran {
                     case "recursive": a.recursive = true; break;
                     case "leaky":     a.leaky = true; break;
                     case "selfless":  a.selfless = true; break;
+                    case "routinal":  a.routinal = true; break;   // self is a function arg (interface)
                     case "private":   a.privateAcc = true; break;
                     case "public":    a.publicAcc = true; break;
                     case "template":  a.template = true; break;
