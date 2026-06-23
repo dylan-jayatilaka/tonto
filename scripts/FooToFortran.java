@@ -1002,17 +1002,21 @@ public final class FooToFortran {
             for (FooParser.CaseClauseContext cc : x.caseClause()) {
                 c.flushHidden(f90, cc.getStart().getTokenIndex(), indent + 3);
                 StringBuilder line = new StringBuilder(sp(indent + 3)).append(renderCaseLabel(cc.caseLabel()));
-                List<String> unknowns = new ArrayList<>();
+                List<String> unkLines = null;
                 for (FooParser.SimpleStmtContext ss : cc.simpleStmt()) {
                     String ua = unknownArg(ss);
-                    if (ua != null) { unknowns.add(ua); continue; }   // expand below the label line
+                    if (ua != null) { unkLines = unknownLines(ua); continue; }   // expand below
                     String t = renderSimpleStmt(ss);
                     if (t != null && !t.isBlank() && !t.equalsIgnoreCase("end")) line.append("; ").append(t);
                 }
+                // foo.pl inlines the first expansion line: `case default; allocate(...)`
+                if (unkLines != null && !unkLines.isEmpty()) line.append("; ").append(unkLines.get(0));
                 f90.append(line);
                 appendHeaderComment(c, cc.NEWLINE());
                 f90.append('\n');
-                for (String ua : unknowns) emitUnknownExpansion(ua, indent + 6);
+                if (unkLines != null)
+                    for (int i = 1; i < unkLines.size(); i++)
+                        f90.append(sp(indent + 3)).append(unkLines.get(i)).append('\n');
                 emitBodyList(cc.procBody(), c, indent + 6, false);
                 c.pos = Math.max(c.pos, cc.getStop().getTokenIndex() + 1);
                 c.lastLine = cc.getStop().getLine();
@@ -1033,15 +1037,19 @@ public final class FooToFortran {
 
         /** foo.pl expands `UNKNOWN(x)` in a select-case into the known-keyword list
          *  (built from the case labels) plus a call to unknown_. */
-        void emitUnknownExpansion(String arg, int indent) {
+        List<String> unknownLines(String arg) {
             List<String> kw = selectKeywords != null ? selectKeywords : new ArrayList<>();
-            f90.append(sp(indent)).append("allocate(tonto%known_keywords(").append(kw.size()).append("))\n");
+            List<String> r = new ArrayList<>();
+            r.add("allocate(tonto%known_keywords(" + kw.size() + "))");
             for (int i = 0; i < kw.size(); i++)
-                f90.append(sp(indent)).append("tonto%known_keywords(").append(i + 1)
-                   .append(") = ").append(kw.get(i)).append('\n');
-            f90.append(sp(indent)).append("call unknown_(tonto,").append(arg).append(",\"")
-               .append(fooModuleName).append(":").append(currentProcBase).append("\")\n");
-            f90.append(sp(indent)).append("deallocate(tonto%known_keywords)\n");
+                r.add("tonto%known_keywords(" + (i + 1) + ") = " + kw.get(i));
+            r.add("call unknown_(tonto," + arg + ",\"" + fooModuleName + ":" + currentProcBase + "\")");
+            r.add("deallocate(tonto%known_keywords)");
+            return r;
+        }
+
+        void emitUnknownExpansion(String arg, int indent) {
+            for (String l : unknownLines(arg)) f90.append(sp(indent)).append(l).append('\n');
         }
 
         String renderCaseLabel(FooParser.CaseLabelContext cl) {
