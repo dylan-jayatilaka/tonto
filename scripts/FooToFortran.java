@@ -893,8 +893,12 @@ public final class FooToFortran {
                     String txt = renderLineStmt(ls);
                     if (txt != null && !txt.isBlank() && !txt.equalsIgnoreCase("end")) parts.add(txt);
                 }
-                if (!parts.isEmpty())
-                    f90.append(sp(indent)).append(String.join("; ", parts)).append('\n');
+                if (!parts.isEmpty()) {
+                    String line = String.join("; ", parts);
+                    // preserve a trailing ';' (empty final statement) as foo.pl does
+                    if (s.simpleLine().SEMI().size() >= s.simpleLine().lineStmt().size()) line += ";";
+                    f90.append(sp(indent)).append(line).append('\n');
+                }
                 return;
             }
             if (s.ifStmt()     != null) { emitIf(s.ifStmt(), c, indent); return; }
