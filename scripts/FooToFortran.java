@@ -689,16 +689,21 @@ public final class FooToFortran {
             FooParser.DeclNameContext dn = ld.identList().declName(0);
             if (dn.dimSpec() != null || !isModuleLikeQualifier(nameText(dn.name()))) return false;
             FooParser.TypeSpecContext ts = ld.declTail().typeSpec();
-            return ts != null && ts.dimSpec() != null && ts.baseType() != null
-                && !isModuleLikeQualifier(ts.baseType().getText());
+            // The "type" after :: must be a lowercase method name (not a real type),
+            // with no ptr/attr/initialiser — then it's actually a TYPE::method call,
+            // with args `(…)` (a dimSpec) or none.
+            return ts != null && ts.baseType() != null
+                && !isModuleLikeQualifier(ts.baseType().getText())
+                && ld.declTail().ptrSuffix() == null && ld.declTail().attrSuffix() == null
+                && ld.declTail().initSuffix() == null;
         }
 
         void emitTypeQualifiedCallStmt(FooParser.LocalDeclContext ld, int indent) {
             String type = nameText(ld.identList().declName(0).name());
             FooParser.TypeSpecContext ts = ld.declTail().typeSpec();
             String method = ts.baseType().getText();           // non-generic (`::`) -> specific name
-            f90.append(sp(indent)).append("call ").append(method)
-               .append(renderDimSpec(ts.dimSpec())).append('\n');
+            String args = ts.dimSpec() != null ? renderDimSpec(ts.dimSpec()) : "";   // no parens if no args
+            f90.append(sp(indent)).append("call ").append(method).append(args).append('\n');
             recordUse(fortranModName(type), method);
         }
 
