@@ -228,6 +228,7 @@ public final class FooToFortran {
         boolean inheritInjectPending; String inheritParent;
         Set<String> currentArgs = new LinkedHashSet<>();
         Map<String, String> localVarTypes = new HashMap<>();   // local/arg name -> base foo type
+        final Map<String, String> moduleVars = new HashMap<>();   // this module's own vars -> foo type
         Map<String, String> subst = new LinkedHashMap<>();   // type-param substitutions (get_from)
         final StringBuilder f90 = new StringBuilder(), intf = new StringBuilder(), use = new StringBuilder();
         final Map<String, Integer> overloadCount = new HashMap<>();   // base name -> overload count
@@ -271,6 +272,17 @@ public final class FooToFortran {
                 if (pa.template) continue;
                 overloadCount.merge(pd.procHeader().IDENTIFIER().getText(), 1, Integer::sum);
                 if (pa.selfless) selflessProcs.add(pd.procHeader().IDENTIFIER().getText());
+            }
+            // record this module's own module-level variables (public AND private)
+            // so `connections_for(X).element` resolves to connections_for(X)%element
+            for (int ci = 0; ci < mod.getChildCount(); ci++) {
+                ParseTree ch = mod.getChild(ci);
+                if (!(ch instanceof FooParser.ModuleDataItemContext)) continue;
+                FooParser.ModuleDataItemContext mi = (FooParser.ModuleDataItemContext) ch;
+                if (mi.varDecl() == null || mi.varDecl().declTail().typeSpec() == null) continue;
+                String t = canon(mi.varDecl().declTail().typeSpec().getText()).replace("?", "");
+                for (FooParser.DeclNameContext dn : mi.varDecl().identList().declName())
+                    moduleVars.put(nameText(dn.name()), t);
             }
 
             f90.append("module ").append(fortranTypeName(fooModuleName)).append("_MODULE\n\n");
@@ -1211,9 +1223,11 @@ public final class FooToFortran {
                         out.append(method); curType = gi[0];
                         recordUse(gi[1], method);
                     } else {
-                        if (colon) { pendingCall = method + "_"; recordUse(fortranModName(modFoo), method + "_"); }
-                        else { pendingCall = fortranTypeName(modFoo) + "_" + method;
-                               recordUse(fortranModName(modFoo), pendingCall); }
+                        // MODULE:method (generic interface, method_) /
+                        // MODULE::method (non-generic, the specific name) — never a
+                        // TYPE_-prefixed name.
+                        pendingCall = colon ? method + "_" : method;
+                        recordUse(fortranModName(modFoo), pendingCall);
                         pendingNoRecv = true; isCall = true;
                     }
                 } else if (dot && (colon || dcolon)) {
@@ -1253,6 +1267,7 @@ public final class FooToFortran {
                     out.append(nm);
                     if (nm.equals("self")) curType = selfFooType;
                     else if (localVarTypes.containsKey(nm)) curType = localVarTypes.get(nm);
+                    else if (moduleVars.containsKey(nm)) curType = moduleVars.get(nm);
                     else { String gt = resolveGlobal(nm); if (gt != null) curType = gt; }
                 } else {
                     out.append(head.getText());          // other forms: TODO
