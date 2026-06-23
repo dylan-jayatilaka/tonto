@@ -515,23 +515,33 @@ public final class FooToFortran {
                 String base = k.endsWith("?") ? k.substring(0, k.length() - 1) : k;
                 String v = subst.get(k);
                 String qb = java.util.regex.Pattern.quote(base);
-                // A self-method value (`.set_x`) used as a call `KEY(args)` becomes
-                // set_x_(self,args); a bare `KEY` becomes set_x_(self).
-                if (v.matches("\\.\\w+")) {
-                    String m = v.substring(1) + "_";
+                // A method-reference value — `.set_x` (self-method) or `:make_grid`
+                // (same-module generic). Two body forms:
+                //   .KEY?(a) already rendered KEY_(self,a) -> just rename the stem;
+                //    KEY?(a) (bare placeholder) -> m_(self,a); bare KEY -> m_(self).
+                if (v.matches("[.:]\\w+")) {
+                    String m = v.substring(1);
+                    s = s.replaceAll("\\b" + qb + "(?=_)", java.util.regex.Matcher.quoteReplacement(m));
                     s = s.replaceAll("\\b" + qb + "\\??\\s*\\(",
-                                     java.util.regex.Matcher.quoteReplacement(m + "(self,"));
+                                     java.util.regex.Matcher.quoteReplacement(m + "_(self,"));
                     s = s.replaceAll("\\b" + qb + "\\??",
-                                     java.util.regex.Matcher.quoteReplacement(m + "(self)"));
+                                     java.util.regex.Matcher.quoteReplacement(m + "_(self)"));
                     continue;
                 }
-                // For `?`-keys match the base with an OPTIONAL trailing '?' (the body
-                // may carry it, or nameText stripped it) — UNLESS the base also names
-                // a real arg/local of this proc (e.g. V? type-key vs. the V argument),
-                // in which case require the '?' so the variable is not substituted.
+                String repl = java.util.regex.Matcher.quoteReplacement(v);
+                if (!k.endsWith("?")) {                       // positional type arg
+                    s = s.replaceAll("\\b" + qb + "\\b", repl);
+                    continue;
+                }
+                // Explicit `KEY?` (raw text) is always replaced.
+                s = s.replaceAll("\\b" + qb + "\\?", repl);
+                // `KEY` with the '?' stripped by nameText: bare (followed by a
+                // non-word) or a generic-call stem `KEY_` (a method placeholder
+                // `.GRID?(..)` renders as GRID_(self,..); keep the trailing '_').
+                // Skip this if the base also names a real arg/local (V? vs the V arg).
                 boolean isVar = currentArgs.contains(base) || localVarTypes.containsKey(base);
-                String rx = "\\b" + qb + (k.endsWith("?") ? (isVar ? "\\?" : "\\b\\??") : "\\b");
-                s = s.replaceAll(rx, java.util.regex.Matcher.quoteReplacement(v));
+                if (!isVar)
+                    s = s.replaceAll("\\b" + qb + "(?=_|[^A-Za-z0-9_]|$)", repl);
             }
             return s;
         }
@@ -1135,12 +1145,13 @@ public final class FooToFortran {
          *  (KEY whose substitution value is a self-method `.x`). */
         boolean methodRefStmtCall(FooParser.SimpleStmtContext st) {
             if (st.postfix() == null || st.postfix().head().callHead() == null) return false;
+            if (st.postfix().head().callHead().DOT() != null) return false;  // dotted -> already a call
             FooParser.NameContext n = st.postfix().head().callHead().name();
             if (n == null) return false;
             String nm = nameText(n);
             String v = subst.get(nm);
             if (v == null) v = subst.get(nm + "?");
-            return v != null && v.matches("\\.\\w+");
+            return v != null && v.matches("[.:]\\w+");
         }
 
         String renderIoTail(FooParser.IoTailContext t) {
