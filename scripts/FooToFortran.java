@@ -480,8 +480,12 @@ public final class FooToFortran {
                     if (ga.ARROW() != null && ga.getFromKey() != null) {
                         String key = ga.getFromKey().getText() + (ga.QUESTION() != null ? "?" : "");
                         String val = ga.getFromVal() != null ? ga.getFromVal().getText() : "";
-                        // a self-component value (ARG?=>.use_BFGS / self.x) -> self%use_BFGS
-                        if (val.matches("\\.\\w+(\\.\\w+)*")) val = "self%" + val.substring(1).replace(".", "%");
+                        // A self-component value (ARG?=>.use_BFGS) -> self%use_BFGS. A
+                        // self-method value (SET?=>.set_x) is left as ".set_x" — applySubst
+                        // turns the call site KEY(args) into set_x_(self,args).
+                        if (val.matches("\\.\\w+(\\.\\w+)*")
+                            && types.isComponent(selfFooType, val.substring(1).split("\\.")[0]))
+                            val = "self%" + val.substring(1).replace(".", "%");
                         else if (val.matches("self(\\.\\w+)+")) val = val.replace(".", "%");
                         m.put(key, val);
                     }
@@ -497,12 +501,23 @@ public final class FooToFortran {
             keys.sort((x, y) -> Integer.compare(y.length(), x.length()));  // longest first
             for (String k : keys) {
                 String base = k.endsWith("?") ? k.substring(0, k.length() - 1) : k;
+                String v = subst.get(k);
+                String qb = java.util.regex.Pattern.quote(base);
+                // A self-method value (`.set_x`) used as a call `KEY(args)` becomes
+                // set_x_(self,args); a bare `KEY` becomes set_x_(self).
+                if (v.matches("\\.\\w+")) {
+                    String m = v.substring(1) + "_";
+                    s = s.replaceAll("\\b" + qb + "\\??\\s*\\(",
+                                     java.util.regex.Matcher.quoteReplacement(m + "(self,"));
+                    s = s.replaceAll("\\b" + qb + "\\??",
+                                     java.util.regex.Matcher.quoteReplacement(m + "(self)"));
+                    continue;
+                }
                 // For `?`-keys match the base with an OPTIONAL trailing '?': the body
                 // may still carry it (raw text) or have had it stripped by nameText
                 // (rendered text). Non-'?' keys match the bare word.
-                String rx = "\\b" + java.util.regex.Pattern.quote(base)
-                          + (k.endsWith("?") ? "\\b\\??" : "\\b");
-                s = s.replaceAll(rx, java.util.regex.Matcher.quoteReplacement(subst.get(k)));
+                String rx = "\\b" + qb + (k.endsWith("?") ? "\\b\\??" : "\\b");
+                s = s.replaceAll(rx, java.util.regex.Matcher.quoteReplacement(v));
             }
             return s;
         }
@@ -1083,9 +1098,26 @@ public final class FooToFortran {
                 else if (st.ARROW() != null) txt = head.text + " => " + renderExpr(st.expr());
                 else if (st.ioTail() != null) txt = head.text + " " + renderIoTail(st.ioTail());
                 else txt = head.text;
-                return assertPrefix(applySubst(txt));
+                txt = assertPrefix(applySubst(txt));
+                // a statement that is a method-reference placeholder call (SET?(val))
+                // becomes a subroutine call and needs the `call` prefix
+                if (st.EQUAL() == null && st.ARROW() == null && st.ioTail() == null
+                    && methodRefStmtCall(st)) txt = "call " + txt;
+                return txt;
             }
             return null;
+        }
+
+        /** True if a statement is a bare call of a method-reference placeholder
+         *  (KEY whose substitution value is a self-method `.x`). */
+        boolean methodRefStmtCall(FooParser.SimpleStmtContext st) {
+            if (st.postfix() == null || st.postfix().head().callHead() == null) return false;
+            FooParser.NameContext n = st.postfix().head().callHead().name();
+            if (n == null) return false;
+            String nm = nameText(n);
+            String v = subst.get(nm);
+            if (v == null) v = subst.get(nm + "?");
+            return v != null && v.matches("\\.\\w+");
         }
 
         String renderIoTail(FooParser.IoTailContext t) {
