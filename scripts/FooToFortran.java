@@ -224,6 +224,7 @@ public final class FooToFortran {
         boolean isVirtual;
         boolean inComponent;   // true while emitting derived-type components
         List<String> selectKeywords;   // case labels of the enclosing select (for UNKNOWN)
+        final Set<String> selflessProcs = new LinkedHashSet<>();   // selfless proc names in this module
         boolean inheritInjectPending; String inheritParent;
         Set<String> currentArgs = new LinkedHashSet<>();
         Map<String, String> localVarTypes = new HashMap<>();   // local/arg name -> base foo type
@@ -263,10 +264,13 @@ public final class FooToFortran {
             Cursor c = new Cursor(main.toks);
             c.flushHidden(f90, mod.MODULE().getSymbol().getTokenIndex(), 0);  // doc block
 
-            // pre-pass: count overloads per procedure name (templates excluded)
+            // pre-pass: count overloads per procedure name (templates excluded);
+            // also record which procedures are `selfless` (no self argument)
             for (FooParser.ProcDefContext pd : descendants(mod, FooParser.ProcDefContext.class)) {
-                if (Attrs.parse(pd.procHeader().procAttrs()).template) continue;
+                Attrs pa = Attrs.parse(pd.procHeader().procAttrs());
+                if (pa.template) continue;
                 overloadCount.merge(pd.procHeader().IDENTIFIER().getText(), 1, Integer::sum);
+                if (pa.selfless) selflessProcs.add(pd.procHeader().IDENTIFIER().getText());
             }
 
             f90.append("module ").append(fortranTypeName(fooModuleName)).append("_MODULE\n\n");
@@ -1178,7 +1182,8 @@ public final class FooToFortran {
                 // A pending method call whose args are NOT a following `(...)` is
                 // closed now (e.g. `.x.destroy.something` -> destroy_(self%x) then …).
                 if (pendingCall != null && tr.LPAREN() == null) {
-                    out = new StringBuilder(pendingCall + "(" + (pendingNoRecv ? "" : out) + ")");
+                    { String inner = pendingNoRecv ? "" : out.toString();
+                  out = new StringBuilder(inner.isEmpty() ? pendingCall : pendingCall + "(" + inner + ")"); }
                     pendingCall = null; pendingNoRecv = false;
                 }
                 boolean colonTr = (tr.DOT() != null || tr.PERCENT() != null)
@@ -1186,12 +1191,22 @@ public final class FooToFortran {
                 boolean dotSel = (tr.DOT() != null || tr.PERCENT() != null)
                                  && tr.COLON() == null && tr.DCOLON() == null && !tr.name().isEmpty();
                 if (colonTr) {
-                    // object submodule call: recv.SUBMOD:method / recv.:method
+                    // submodule call: recv.SUBMOD:method / recv.:method
                     List<FooParser.NameContext> ns = tr.name();
                     String submod = ns.size() == 2 ? nameText(ns.get(0)) : null;
                     String method = nameText(ns.get(ns.size() - 1));
                     pendingCall = tr.COLON() != null ? method + "_" : method;
-                    if (curType != null) {
+                    String recv = out.toString();
+                    if (recv.equals(fortranTypeName(selfFooType))) {
+                        // Type-qualified call on self (DIFFRACTION_DATA.READ:proc): the
+                        // qualifier names the module, not a receiver object. Pass self
+                        // (or nothing, for a selfless target).
+                        recordUse(submod == null || submod.equalsIgnoreCase("MAIN")
+                                  ? fortranTypeName(selfFooType) + "_MODULE"
+                                  : fortranTypeName(selfFooType) + "_" + submod + "_MODULE", pendingCall);
+                        if (selflessProcs.contains(method)) { out = new StringBuilder(); pendingNoRecv = true; }
+                        else out = new StringBuilder("self");
+                    } else if (curType != null) {
                         String base = fortranTypeName(curType);
                         recordUse(submod == null || submod.equalsIgnoreCase("MAIN")
                                   ? base + "_MODULE" : base + "_" + submod + "_MODULE", pendingCall);
@@ -1243,7 +1258,8 @@ public final class FooToFortran {
                 }
             }
             if (pendingCall != null)
-                out = new StringBuilder(pendingCall + "(" + (pendingNoRecv ? "" : out) + ")");
+                { String inner = pendingNoRecv ? "" : out.toString();
+                  out = new StringBuilder(inner.isEmpty() ? pendingCall : pendingCall + "(" + inner + ")"); }
 
             ch.fooType = curType; ch.isCall = isCall;
             String s = out.toString();
