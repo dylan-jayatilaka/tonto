@@ -580,12 +580,21 @@ public final class FooToFortran {
         String signatureComment(Parsed src, FooParser.ProcDefContext pd) {
             int from = pd.procHeader().getStop().getTokenIndex();
             int to = pd.getStop().getTokenIndex();
+            StringBuilder sb = new StringBuilder();
+            boolean started = false;
             for (int i = from + 1; i <= to; i++) {
                 Token t = src.toks.get(i);
-                if (t.getChannel() == Token.HIDDEN_CHANNEL && t.getType() == FooLexer.COMMENT)
-                    return t.getText().trim();
+                int ty = t.getType();
+                if (ty == FooLexer.NEWLINE) continue;
+                if (t.getChannel() == Token.HIDDEN_CHANNEL) {
+                    // collect the whole leading comment block (the first line alone
+                    // is often shared between overloads — e.g. change_basis_to)
+                    if (ty == FooLexer.COMMENT) { sb.append(t.getText().trim()).append('\n'); started = true; }
+                    continue;
+                }
+                break;   // a real declaration/statement -> end of the comment block
             }
-            return null;
+            return started ? sb.toString() : null;
         }
 
         // ---- body rendering -------------------------------------------
