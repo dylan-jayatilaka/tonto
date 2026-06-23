@@ -675,6 +675,27 @@ public final class FooToFortran {
             f90.append(sp(indent)).append(func ? "end function\n" : "end subroutine\n");
         }
 
+        /** A `TYPE::method(args)` statement mis-parsed as a declaration: the
+         *  declared "name" is an uppercase TYPE and the "type" is a lowercase
+         *  method with an argument list. */
+        boolean misparsedTypeCall(FooParser.LocalDeclContext ld) {
+            if (ld.identList().declName().size() != 1) return false;
+            FooParser.DeclNameContext dn = ld.identList().declName(0);
+            if (dn.dimSpec() != null || !isModuleLikeQualifier(nameText(dn.name()))) return false;
+            FooParser.TypeSpecContext ts = ld.declTail().typeSpec();
+            return ts != null && ts.dimSpec() != null && ts.baseType() != null
+                && !isModuleLikeQualifier(ts.baseType().getText());
+        }
+
+        void emitTypeQualifiedCallStmt(FooParser.LocalDeclContext ld, int indent) {
+            String type = nameText(ld.identList().declName(0).name());
+            FooParser.TypeSpecContext ts = ld.declTail().typeSpec();
+            String method = ts.baseType().getText();           // non-generic (`::`) -> specific name
+            f90.append(sp(indent)).append("call ").append(method)
+               .append(renderDimSpec(ts.dimSpec())).append('\n');
+            recordUse(fortranModName(type), method);
+        }
+
         boolean bodyDeclaresSelf(List<FooParser.ProcBodyContext> body) {
             for (FooParser.ProcBodyContext b : body)
                 if (b.localDecl() != null)
@@ -716,6 +737,12 @@ public final class FooToFortran {
                                 && b.stmt() != null && isAssertionStmt(b.stmt());
                 if (isPre) {
                     preconds.add(b.stmt());                   // store; re-emitted at firstActive
+                } else if (b.localDecl() != null && misparsedTypeCall(b.localDecl())) {
+                    // `TYPE::method(args)` on its own line parses as a declaration
+                    // (identList :: declTail) — re-emit it as the call it really is.
+                    int before = f90.length();
+                    emitTypeQualifiedCallStmt(b.localDecl(), indent);
+                    spliceTrailingComment(c, b.getStop().getTokenIndex(), before);
                 } else if (b.localDecl() != null) {
                     int before = f90.length();
                     emitDecl(b.localDecl().identList(), b.localDecl().declTail(), indent);
@@ -1473,6 +1500,7 @@ public final class FooToFortran {
                 case "dim5": return "size(" + recv + ",5)";
                 case "dim6": return "size(" + recv + ",6)";
                 case "dim7": return "size(" + recv + ",7)";
+                case "trim": return "trim(" + recv + ")";
                 case "allocated": return "allocated(" + recv + ")";
                 case "deallocated": return "NOT allocated(" + recv + ")";
                 case "associated": return "associated(" + recv + ")";
