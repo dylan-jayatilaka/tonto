@@ -659,18 +659,24 @@ public final class FooToFortran {
 
         void emitInterfaceProc(FooParser.ProcDefContext pd, int indent) {
             FooParser.ProcHeaderContext h = pd.procHeader();
+            Attrs a = Attrs.parse(h.procAttrs());
             List<String> args = procArgNames(pd);
             boolean func = h.procResult() != null;
-            StringBuilder hdr = new StringBuilder(sp(indent))
-                .append(func ? "function " : "subroutine ").append(h.IDENTIFIER().getText())
-                .append('(').append(String.join(",", args)).append(')');
+            StringBuilder hdr = new StringBuilder(sp(indent));
+            if (a.prefix() != null) hdr.append(a.prefix()).append(' ');
+            hdr.append(func ? "function " : "subroutine ").append(h.IDENTIFIER().getText())
+               .append('(').append(String.join(",", args)).append(')');
             if (func) hdr.append(" result (").append(h.procResult().IDENTIFIER().getText()).append(')');
             f90.append(hdr).append('\n');
             Set<String> saved = currentArgs;
             currentArgs = new LinkedHashSet<>(args);
-            for (FooParser.ProcBodyContext b : pd.procBody())
-                if (b.localDecl() != null)
+            for (FooParser.ProcBodyContext b : pd.procBody()) {
+                if (b.useStmt() != null)
+                    f90.append(sp(indent)).append("use ")
+                       .append(fortranModName(b.useStmt().moduleRef().getText())).append('\n');
+                else if (b.localDecl() != null)
                     emitDecl(b.localDecl().identList(), b.localDecl().declTail(), indent + 3);
+            }
             currentArgs = saved;
             f90.append(sp(indent)).append(func ? "end function\n" : "end subroutine\n");
         }
@@ -1261,9 +1267,11 @@ public final class FooToFortran {
                     String modFoo = chx.qualifier().getText();
                     String method = nameText(chx.name());
                     String[] gi = globals.get(method);
-                    if (colon && !isModuleLikeQualifier(modFoo)) {
-                        // A lowercase qualifier before a single ':' is not a module
-                        // call but an array-section range `lb:ub` that callHead's
+                    if (colon && (!isModuleLikeQualifier(modFoo)
+                                  || currentArgs.contains(modFoo) || localVarTypes.containsKey(modFoo))) {
+                        // A single ':' whose qualifier is lowercase OR a known
+                        // arg/local (e.g. an uppercase loop index L) is not a module
+                        // call but an array-section range `lo:hi` that callHead's
                         // qualified-call alternative greedily swallowed.
                         out.append(modFoo).append(':').append(method);
                     } else if (gi != null && gi[1].equals(fortranModName(modFoo))) {
