@@ -943,13 +943,27 @@ public final class FooToFortran {
         }
 
         void emitDo(FooParser.DoStmtContext x, Cursor c, int indent) {
+            boolean parallel = false;
+            for (FooParser.NameContext n : x.name()) if (nameText(n).equals("parallel")) parallel = true;
             StringBuilder line = new StringBuilder(sp(indent)).append("do");
-            if (x.loopHeader() != null) line.append(' ').append(renderLoopHeader(x.loopHeader()));
-            else if (x.WHILE() != null) line.append(" while (").append(renderExpr(x.expr())).append(')');
+            if (parallel && x.loopHeader() != null) {
+                // `parallel do v = lo,hi` -> bounded by the PARALLEL_DO_* macros
+                FooParser.LoopHeaderContext lh = x.loopHeader();
+                line.append(' ').append(lh.IDENTIFIER().getText())
+                    .append(" = PARALLEL_DO_START(").append(renderExpr(lh.expr(0))).append(",1),")
+                    .append(renderExpr(lh.expr(1))).append(",PARALLEL_DO_STRIDE(1)");
+            } else if (x.loopHeader() != null) {
+                line.append(' ').append(renderLoopHeader(x.loopHeader()));
+            } else if (x.WHILE() != null) {
+                line.append(" while (").append(renderExpr(x.expr())).append(')');
+            }
             f90.append(line);
             appendHeaderComment(c, x.NEWLINE().isEmpty() ? null : x.NEWLINE(0));
             f90.append('\n');
+            String tag = "\"" + fooModuleName + ":" + currentProcBase + "\"";
+            if (parallel) f90.append(sp(indent)).append("LOCK_PARALLEL_DO(").append(tag).append(")\n");
             emitBodyList(x.procBody(), c, indent + 3, false);
+            if (parallel) f90.append(sp(indent)).append("UNLOCK_PARALLEL_DO(").append(tag).append(")\n");
             f90.append(sp(indent)).append("end do\n");
         }
 
