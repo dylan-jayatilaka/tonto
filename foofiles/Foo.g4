@@ -240,11 +240,7 @@ name
     // explicit forms `end do` / `end if` / `end select` ... Excluding those lets a
     // block body terminate at its `end` instead of swallowing it as a statement
     // (e.g. `end do` was matching doStmt's `name? DO` as opening a loop).
-    | {_input.LA(2) != NEWLINE
-        && _input.LA(2) != FooParser.IF && _input.LA(2) != FooParser.DO
-        && _input.LA(2) != FooParser.SELECT && _input.LA(2) != FooParser.INTERFACE
-        && _input.LA(2) != FooParser.MODULE && _input.LA(2) != FooParser.TYPE
-        && _input.LA(2) != FooParser.FORALL}? END
+    | {_input.LA(2) != NEWLINE}? END
     | DATA
     | RESULT
     | TYPE
