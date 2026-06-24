@@ -1053,7 +1053,7 @@ public final class FooToFortran {
             if (parallel) f90.append(sp(indent)).append("LOCK_PARALLEL_DO(").append(tag).append(")\n");
             emitBodyList(x.procBody(), c, indent + 3, false);
             if (parallel) f90.append(sp(indent)).append("UNLOCK_PARALLEL_DO(").append(tag).append(")\n");
-            f90.append(sp(indent)).append("end do\n");
+            f90.append(sp(indent)).append("end do").append(loopLabel != null ? " " + loopLabel : "").append('\n');
         }
 
         void emitWhere(FooParser.WhereStmtContext x, Cursor c, int indent) {
