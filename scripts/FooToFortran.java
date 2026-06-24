@@ -478,12 +478,23 @@ public final class FooToFortran {
                .append(") — parent body not found\n");
         }
 
+        /** Pair a parent type-arg with the child's, recursing into nested params. */
+        void pairTypeArgs(Map<String, String> m, String parent, String child) {
+            parent = canon(parent); child = canon(child);
+            if (parent.equals(child)) return;
+            m.putIfAbsent(parent, child);
+            List<String> p = typeArgsOf(parent), c = typeArgsOf(child);
+            for (int i = 0; i < Math.min(p.size(), c.size()); i++) pairTypeArgs(m, p.get(i), c.get(i));
+        }
+
         /** Build the placeholder substitution map for a get_from(...) directive. */
         Map<String, String> buildSubst(FooParser.AttrContext gf, String parentModule) {
             Map<String, String> m = new LinkedHashMap<>();
-            // positional type-arg substitution: parent type args -> child (self) type args
+            // positional type-arg substitution: parent type args -> child (self) type
+            // args, recursing into nested params so e.g. MAP{VEC{KEY},VEC{VAL}} vs
+            // MAP{VEC{INT},VEC{INT}} yields KEY->INT and VAL->INT (not just VEC{KEY}->..).
             List<String> p = typeArgsOf(parentModule), c = typeArgsOf(selfFooType);
-            for (int i = 0; i < Math.min(p.size(), c.size()); i++) m.put(p.get(i), c.get(i));
+            for (int i = 0; i < Math.min(p.size(), c.size()); i++) pairTypeArgs(m, p.get(i), c.get(i));
             // named substitutions from `KEY?=>VAL` arguments (skip arg 0 = the module)
             if (gf != null) {
                 List<FooParser.GetFromArgContext> args = gf.getFromArg();
