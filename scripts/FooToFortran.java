@@ -1523,7 +1523,10 @@ public final class FooToFortran {
                 case "dim5": return "size(" + recv + ",5)";
                 case "dim6": return "size(" + recv + ",6)";
                 case "dim7": return "size(" + recv + ",7)";
-                case "trim": return "trim(" + recv + ")";
+                // NB: .trim / .scan are NOT intrinsics here — a `.proc` always
+                // resolves to a `proc_` call (an explicit interface in STR, e.g.
+                // trim_ -> trim_blanks_from_end), even when the name coincides
+                // with a Fortran intrinsic. So they fall through to method calls.
                 case "allocated": return "allocated(" + recv + ")";
                 case "deallocated": return "NOT allocated(" + recv + ")";
                 case "associated": return "associated(" + recv + ")";
