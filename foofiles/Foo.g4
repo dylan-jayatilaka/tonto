@@ -364,8 +364,8 @@ oneLineWhere
 // statement.
 simpleStmt
     : {("write".equalsIgnoreCase(_input.LT(1).getText()) || "read".equalsIgnoreCase(_input.LT(1).getText()))
-        && _input.LT(2).getType()==LPAREN && _input.LT(4).getType()==EQUAL}?
-        name LPAREN argList? RPAREN ioTail?          // Fortran I/O: write(unit=..,fmt=..) out-list
+        && _input.LT(2).getType()==LPAREN}?
+        name LPAREN argList? RPAREN ioTail?          // bare read/write = Fortran I/O: pass through, expand exprs
     | postfix (EQUAL expr | ARROW expr | ioTail)?
     | EXIT name?
     | CYCLE name?
