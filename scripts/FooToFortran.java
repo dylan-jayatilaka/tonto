@@ -161,7 +161,12 @@ public final class FooToFortran {
     static final Set<String> ASSERT_MACROS = Set.of(
         "ENSURE", "DIE_IF", "WARN_IF", "DIE", "WARN");
 
-    static String nameText(FooParser.NameContext n) { return n.getText().replace("?", ""); }
+    static String nameText(FooParser.NameContext n) {
+        // strip only a TRAILING '?' (the placeholder marker); keep any embedded
+        // '?' (e.g. make_Hirshfeld?_atom_ED_grid) so applySubst can substitute it.
+        String t = n.getText();
+        return t.endsWith("?") ? t.substring(0, t.length() - 1) : t;
+    }
 
     static String outStem(String fooName) {
         // vec{real}.foo -> vec_real ; diffraction_data.set.foo -> diffraction_data.set
@@ -555,8 +560,10 @@ public final class FooToFortran {
                     s = s.replaceAll("\\b" + qb + "\\b", repl);
                     continue;
                 }
-                // Explicit `KEY?` (raw text) is always replaced.
-                s = s.replaceAll("\\b" + qb + "\\?", repl);
+                // Explicit `KEY?` (raw text) is always replaced. No leading \b so an
+                // embedded placeholder (make_Hirshfeld?_atom) matches even when
+                // preceded by '_'; longest-first ordering avoids suffix over-matches.
+                s = s.replaceAll(qb + "\\?", repl);
                 // `KEY` with the '?' stripped by nameText: bare (followed by a
                 // non-word) or a generic-call stem `KEY_` (a method placeholder
                 // `.GRID?(..)` renders as GRID_(self,..); keep the trailing '_').

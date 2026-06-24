@@ -230,7 +230,11 @@ declName
 // token that follows it (a variable `end` is followed by '=', ',', '(', an
 // operator, etc.; a block `end` by a newline).
 name
-    : IDENTIFIER QUESTION?
+    // IDENTIFIER, optionally with a trailing `?` placeholder, and also with
+    // placeholders embedded mid-name: make_Hirshfeld?_atom_ED_grid (a get_from
+    // key spliced into a routine name). The (QUESTION IDENTIFIER)* glues the
+    // pieces; nameText keeps the embedded '?' so applySubst can substitute it.
+    : IDENTIFIER (QUESTION IDENTIFIER)* QUESTION?
     // `end` is a soft keyword (variable `end`, `end+1`, `end,f,l :: INT`); but a
     // block-closing `end` is followed by a NEWLINE. Excluding that case lets a
     // procBody/block body terminate at its `end` instead of swallowing it as a
