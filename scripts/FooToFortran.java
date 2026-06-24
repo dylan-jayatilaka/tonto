@@ -1165,6 +1165,13 @@ public final class FooToFortran {
             if (st.EXIT()   != null) return st.name() == null ? "exit"  : "exit "  + nameText(st.name());
             if (st.CYCLE()  != null) return st.name() == null ? "cycle" : "cycle " + nameText(st.name());
             if (st.RETURN() != null) return "return";
+            if (st.name() != null && st.LPAREN() != null) {   // Fortran I/O: write(ctrl) out-list
+                StringBuilder s = new StringBuilder(nameText(st.name())).append('(');
+                if (st.argList() != null) s.append(renderArgList(st.argList()));
+                s.append(')');
+                if (st.ioTail() != null) s.append(' ').append(renderIoTail(st.ioTail()));
+                return applySubst(s.toString());
+            }
             if (st.postfix() != null) {
                 Chain head = translatePostfix(st.postfix(), /*statementPos=*/true);
                 String txt;
