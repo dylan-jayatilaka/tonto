@@ -478,6 +478,17 @@ public final class FooToFortran {
                .append(") — parent body not found\n");
         }
 
+        /** Resolve a `.selector` that is a get_from placeholder to its substitution
+         *  value (plain identifier only) before deciding component-vs-method, so
+         *  `self(a).TEST?` with TEST?=>basis becomes self(a)%basis (basis is a
+         *  component), matching foo.pl's substitute-then-translate order. */
+        String substSelector(String sel) {
+            if (subst.isEmpty()) return sel;
+            String v = subst.get(sel);
+            if (v == null) v = subst.get(sel + "?");
+            return (v != null && v.matches("\\w+")) ? v : sel;
+        }
+
         /** Pair a parent type-arg with the child's, recursing into nested params. */
         void pairTypeArgs(Map<String, String> m, String parent, String child) {
             parent = canon(parent); child = canon(child);
@@ -1320,7 +1331,7 @@ public final class FooToFortran {
                     recordUse(submoduleModule(hasQual ? chx.qualifier().getText() : null), pendingCall);
                     out.append("self"); isCall = true;
                 } else if (dot && chx.name() != null && !hasQual && !colon && !dcolon) {
-                    String sel = nameText(chx.name());
+                    String sel = substSelector(nameText(chx.name()));
                     String ip;
                     String elemComp;
                     if (types.isComponent(selfFooType, sel)) {
@@ -1406,7 +1417,7 @@ public final class FooToFortran {
                     }
                     isCall = true; curType = null;          // recv stays in `out`; args via next LPAREN
                 } else if (dotSel) {
-                    String sel = nameText(tr.name(0));
+                    String sel = substSelector(nameText(tr.name(0)));
                     String ip, elemComp;
                     if (curType != null && types.isComponent(curType, sel)) {
                         out.append('%').append(sel);
