@@ -1031,7 +1031,10 @@ public final class FooToFortran {
         void emitDo(FooParser.DoStmtContext x, Cursor c, int indent) {
             boolean parallel = false;
             for (FooParser.NameContext n : x.name()) if (nameText(n).equals("parallel")) parallel = true;
-            StringBuilder line = new StringBuilder(sp(indent)).append("do");
+            String loopLabel = x.COLON() != null ? nameText(x.name(0)) : null;   // `main: do …`
+            StringBuilder line = new StringBuilder(sp(indent));
+            if (loopLabel != null) line.append(loopLabel).append(": ");
+            line.append("do");
             if (parallel && x.loopHeader() != null) {
                 // `parallel do v = lo,hi` -> bounded by the PARALLEL_DO_* macros
                 FooParser.LoopHeaderContext lh = x.loopHeader();
@@ -1046,7 +1049,7 @@ public final class FooToFortran {
             f90.append(line);
             appendHeaderComment(c, x.NEWLINE().isEmpty() ? null : x.NEWLINE(0));
             f90.append('\n');
-            String tag = "\"" + fooModuleName + ":" + currentProcBase + "\"";
+            String tag = "\"" + fooModuleName + ":" + currentProc + "\"";   // overload-specific name
             if (parallel) f90.append(sp(indent)).append("LOCK_PARALLEL_DO(").append(tag).append(")\n");
             emitBodyList(x.procBody(), c, indent + 3, false);
             if (parallel) f90.append(sp(indent)).append("UNLOCK_PARALLEL_DO(").append(tag).append(")\n");
@@ -1159,8 +1162,8 @@ public final class FooToFortran {
         }
 
         String renderSimpleStmt(FooParser.SimpleStmtContext st) {
-            if (st.EXIT()   != null) return "exit";
-            if (st.CYCLE()  != null) return "cycle";
+            if (st.EXIT()   != null) return st.name() == null ? "exit"  : "exit "  + nameText(st.name());
+            if (st.CYCLE()  != null) return st.name() == null ? "cycle" : "cycle " + nameText(st.name());
             if (st.RETURN() != null) return "return";
             if (st.postfix() != null) {
                 Chain head = translatePostfix(st.postfix(), /*statementPos=*/true);
