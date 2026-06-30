@@ -1020,7 +1020,7 @@ public final class FooToFortran {
             if (s.doStmt()     != null) { emitDo(s.doStmt(), c, indent); return; }
             if (s.selectStmt() != null) { emitSelect(s.selectStmt(), c, indent); return; }
             if (s.whereStmt()  != null) { emitWhere(s.whereStmt(), c, indent); return; }
-            // forallStmt: TODO
+            if (s.forallStmt() != null) { emitForall(s.forallStmt(), c, indent); return; }
             f90.append(sp(indent)).append("! TODO stmt: ").append(oneLine(s.getText())).append('\n');
         }
 
@@ -1083,6 +1083,27 @@ public final class FooToFortran {
             emitBodyList(x.procBody(), c, indent + 3, false);
             if (parallel) f90.append(sp(indent)).append("UNLOCK_PARALLEL_DO(").append(tag).append(")\n");
             f90.append(sp(indent)).append("end do").append(loopLabel != null ? " " + loopLabel : "").append('\n');
+        }
+
+        String renderForallHeader(FooParser.ForallHeaderContext h) {
+            StringBuilder s = new StringBuilder(h.IDENTIFIER().getText()).append('=')
+                .append(renderExpr(h.expr(0))).append(':').append(renderExpr(h.expr(1)));
+            if (h.expr().size() > 2) s.append(':').append(renderExpr(h.expr(2)));
+            return s.toString();
+        }
+
+        void emitForall(FooParser.ForallStmtContext x, Cursor c, int indent) {
+            String hdr = renderForallHeader(x.forallHeader());
+            if (x.simpleStmt() != null) {                 // single-statement forall
+                f90.append(sp(indent)).append("forall (").append(hdr).append(") ")
+                   .append(renderSimpleStmt(x.simpleStmt())).append('\n');
+                return;
+            }
+            f90.append(sp(indent)).append("forall (").append(hdr).append(')');
+            appendHeaderComment(c, x.NEWLINE().isEmpty() ? null : x.NEWLINE(0));
+            f90.append('\n');
+            emitBodyList(x.procBody(), c, indent + 3, false);
+            f90.append(sp(indent)).append("end forall\n");
         }
 
         void emitWhere(FooParser.WhereStmtContext x, Cursor c, int indent) {
