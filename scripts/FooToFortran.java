@@ -821,6 +821,7 @@ public final class FooToFortran {
             if (stopTok < 0 || stopTok >= c.toks.size()) return null;
             int line = c.toks.get(stopTok).getLine();
             for (int i = stopTok - 1; i >= 0; i--) {
+                if (i < c.pos) break;                                // already consumed/emitted
                 Token t = c.toks.get(i);
                 if (t.getChannel() != Token.HIDDEN_CHANNEL) break;   // reached code
                 if (t.getLine() != line) break;
@@ -1081,8 +1082,12 @@ public final class FooToFortran {
             String tag = "\"" + fooModuleName + ":" + currentProc + "\"";   // overload-specific name
             if (parallel) f90.append(sp(indent)).append("LOCK_PARALLEL_DO(").append(tag).append(")\n");
             emitBodyList(x.procBody(), c, indent + 3, false);
-            if (parallel) f90.append(sp(indent)).append("UNLOCK_PARALLEL_DO(").append(tag).append(")\n");
+            int beforeEnd = f90.length();
             f90.append(sp(indent)).append("end do").append(loopLabel != null ? " " + loopLabel : "").append('\n');
+            // keep the end's trailing comment on `end do` (consume it) before the
+            // UNLOCK, which goes AFTER the end do (outside the loop), matching foo.pl
+            spliceTrailingComment(c, x.getStop().getTokenIndex(), beforeEnd);
+            if (parallel) f90.append(sp(indent)).append("UNLOCK_PARALLEL_DO(").append(tag).append(")\n");
         }
 
         String renderForallHeader(FooParser.ForallHeaderContext h) {
