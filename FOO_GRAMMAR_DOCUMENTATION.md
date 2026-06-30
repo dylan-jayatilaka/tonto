@@ -1,502 +1,421 @@
-# Foo Language ANTLR4 Grammar Documentation
+# The Foo Language
 
-## Overview
+Foo is the custom object-oriented preprocessor language in which the scientific
+code of **Tonto** (a quantum-chemistry / crystallography package) is written.
+Each `*.foo` source is translated to modern Fortran (95 / 2003+) and then
+compiled.
 
-This document describes the **Foo language**, a custom preprocessor language that compiles to Fortran 90+. The grammar has been extracted by analyzing:
-- The Perl converter script (`scripts/foo.pl`) 
-- Sample foo language files from `foofiles/`
-- Corresponding generated Fortran code in `release/`
-- Type macro definitions in `include/macros.in`
+**At the expression and statement level, Foo is essentially modern Fortran** —
+the same operators, intrinsics, `if`/`do`/`select case` control flow, array
+syntax and `//` string concatenation. What Foo adds on top is a light
+object-oriented layer (modules-as-classes with an implicit `self`, dot-method
+call notation, generic/overloaded procedures, and template inheritance via
+`get_from`), a compact type notation for parameterised arrays, and a set of
+C-preprocessor macros (assertions, memory tracking, MPI parallelism).
 
-## Key Language Features
+Stylistically the array/type notation (`VEC{REAL}`, `MAT{T}`, element access
+written as a *type with an `element` component*) is reminiscent of the defunct
+**Sather** language and of **Julia** — both of which influenced how Foo writes
+parameterised array types in text.
 
-### 1. Reverse Variable Declaration
+This document describes the language as accepted by the **new ANTLR4 translator**
+(`foogrammar/Foo.g4` + `foogrammar/FooToFortran.java`), and notes where it
+deliberately differs from the legacy Perl translator (`scripts/foo.pl`).
 
-The defining feature of Foo is **reverse declaration syntax** compared to standard Fortran:
+---
 
-**Foo syntax:**
+## Contents
+
+1. [Translators and how to run them](#1-translators-and-how-to-run-them)
+2. [Source layout and conventions](#2-source-layout-and-conventions)
+3. [Lexical conventions](#3-lexical-conventions)
+4. [The type system](#4-the-type-system)
+5. [Declarations and attributes](#5-declarations-and-attributes)
+6. [Modules and submodules](#6-modules-and-submodules)
+7. [Procedures](#7-procedures)
+8. [Generic interfaces and overloading](#8-generic-interfaces-and-overloading)
+9. [`get_from` template inheritance](#9-get_from-template-inheritance)
+10. [Statements and control flow](#10-statements-and-control-flow)
+11. [Expressions, calls and the dot/percent selectors](#11-expressions-calls-and-the-dotpercent-selectors)
+12. [Parallelism (`parallel do`, MPI)](#12-parallelism-parallel-do-mpi)
+13. [Assertions and other C macros](#13-assertions-and-other-c-macros)
+14. [`use` / `USE` and the `.use` mechanism](#14-use--use-and-the-use-mechanism)
+15. [Foo → Fortran conversion summary](#15-foo--fortran-conversion-summary)
+16. [Caveats, edge cases and known `foo.pl` bugs](#16-caveats-edge-cases-and-known-foopl-bugs)
+17. [Grammar structure (`Foo.g4`)](#17-grammar-structure-foog4)
+18. [References](#18-references)
+
+---
+
+## 1. Translators and how to run them
+
+There are two translators producing the same Fortran:
+
+| | Path | Status |
+|---|---|---|
+| **Legacy** | `scripts/foo.pl` (Perl) | The historical reference; its output is the `release/` snapshot. **It can no longer be run** — it is kept only as the behavioural reference to reproduce. |
+| **New** | `foogrammar/Foo.g4` (ANTLR4 grammar) + `foogrammar/FooToFortran.java` | The current translator. Parses with an ANTLR4-generated parser and walks the parse tree to emit Fortran. |
+
+### Output files
+
+For each `module.foo` the translator emits three files:
+
+- `module.F90` — the Fortran source. The file stem is *underscored*: `vec{real}.foo` → `vec_real.F90`; submodule dots are kept (`molecule.grid.F90`).
+- `module.int` — the module's generic interface blocks.
+- `module.use` — `use` statements for procedures pulled in from *other* modules.
+
+`module.int` and `module.use` keep the brace form of the name (`vec{real}.int`)
+and are `#include`d into the `.F90` **by the C preprocessor at compile time**.
+Consequently the translator output (and the `release/` reference) is **pre-CPP**:
+the macros in `include/macros.in` and the `#include` directives are left intact
+for the Fortran build to expand. Reproducing CPP/macro expansion is *not* part of
+translation.
+
+### Running the new translator
+
+It runs **automatically as part of the CMake build** (the `antlr4-fortran`
+target generates the parser, compiles the translator, and runs it over every
+`foofiles/*.foo` into the build tree). Manually:
+
+```bash
+# generate the parser + compile the translator (into build/translator/)
+scripts/build_translator.sh
+
+# translate one module into antlr4-release/
+scripts/build_translator.sh foofiles/irrep.foo
+```
+
+Equivalent explicit invocation:
+
+```bash
+JAR=/usr/local/lib/antlr-4.13.2-complete.jar
+( cd foogrammar && java -cp "$JAR" org.antlr.v4.Tool -visitor -o ../build/translator/gen Foo.g4 )
+javac -cp "$JAR" -d build/translator/classes build/translator/gen/*.java foogrammar/FooToFortran.java
+java -cp "$JAR:build/translator/classes" FooToFortran \
+     --types foofiles/types.foo --foo foofiles/irrep.foo --out-dir antlr4-release
+```
+
+`types.foo` **must** be supplied (`--types`) so the derived-type table is built
+before any module is translated (see §4) — the translator needs to know every
+type's components to resolve `.component` access.
+
+---
+
+## 2. Source layout and conventions
+
+- Foo sources live in `foofiles/` (`*.foo`). Every file is one module.
+- **All derived types are declared in `foofiles/types.foo`** (see §4). A module
+  file `atom.foo` defines the *procedures* of type `ATOM`; the *components* of
+  `ATOM` live in `types.foo`.
+- The grammar and translator live in `foogrammar/`.
+
+### Three-space indentation
+
+The conventional indentation unit is **3 spaces**, and a new scope is opened by a
+block keyword (`module`, a procedure header, `interface`, `if`, `do`, …) and
+closed by `end`. Note however that **the grammar is whitespace-insensitive**:
+block structure is determined by the `end` keywords, not by indentation. Real
+sources indent somewhat inconsistently; 3 spaces is the house style, not a rule
+the parser enforces. `contains` sits in column 0.
+
+### Documentation comments
+
+By convention a `!` comment describing a procedure or a type component comes
+**immediately after** the procedure header (or the component declaration), as the
+first line(s) of its body:
+
 ```foo
-varname :: TYPE
+n_items result (res) ::: pure
+   ! Return the number of items in the string
+   self :: IN
+   res  :: INT
+   ...
+end
 ```
 
-**Standard Fortran:**
-```fortran
-TYPE :: varname
-```
-
-**Examples:**
 ```foo
-i :: INT
-x :: REAL
-s :: STR
-matrix :: MAT{REAL}
+   cpu_start_time :: REAL, readonly  DEFAULT(ZERO)
+   ! Contains CPU start time, in seconds
 ```
 
-### 2. Module Declaration
+The translator preserves these (including trailing inline comments after a
+statement), since they are useful to the human reader.
 
-Modules are defined with the `module` keyword and contain procedures and global variables.
+---
+
+## 3. Lexical conventions
+
+- **Comments**: `!` to end of line, standalone or trailing.
+- **Statement separation**: newline; `;` separates several statements on one line.
+- **Continuation**: a line ending in `&` continues on the next.
+- **Constants**: `TRUE`, `FALSE`, `ZERO`, `ONE`, `NULL`.
+- **Array constructors**: `[ ... ]` (square brackets), e.g. `["'",'"',"{"]`.
+
+### Case sensitivity — the important subtleties
+
+Foo was historically described as "case-insensitive keywords, identifier case
+preserved", but this is **not quite true**, and several cases carry meaning:
+
+- **Control / structure keywords** — `module, interface, contains, implicit,
+  none, result, get_from, if, then, while, where, forall, else, select, case,
+  do, exit, cycle, return, data, end` — are written **lowercase** (the grammar
+  now accepts only the lowercase spelling).
+- **Type and intent keywords** are **uppercase**: `INT, REAL, CPX, BIN, STR`,
+  `VEC, MAT, MAT3…MAT7`, `OBJECT`, `INTRINSIC`, and `IN, OUT, INOUT`.
+- **Operators** are written **uppercase** as words: `AND, OR, NOT, EQV, NEQV,
+  EQ, NE` (the `.and.`/`.or.`/… spellings are also accepted).
+- **`pure` vs `PURE`, `elemental` vs `ELEMENTAL`** — *case is semantic* (see §7):
+  lowercase ones are real Fortran keywords; uppercase ones are C macros.
+- **`DEFAULT` vs `default`** — `DEFAULT(x)` is a C macro (a component initialiser,
+  uppercase); `case default` is the lowercase control keyword.
+- **`use` vs `USE`** — a readability convention (see §14): `USE` for external
+  Fortran modules, lowercase `use` for the auto-generated repo dependencies.
+
+---
+
+## 4. The type system
+
+### Primitive (intrinsic) types
+
+| Foo | Fortran |
+|---|---|
+| `INT` | `integer(INT_KIND)` |
+| `REAL` | `real(REAL_KIND)` (double precision) |
+| `CPX` | `complex(CPX_KIND)` |
+| `BIN` | `logical` |
+| `STR` | `character(len=…)` |
+
+### Parameterised array types — `{ … }`
+
+Array element type goes in braces; array rank is encoded in the head name:
+
+- `VEC{T}` — 1-D, `MAT{T}` — 2-D, `MAT3{T}` … `MAT7{T}` — 3-D … 7-D.
+- Nestable: `VEC{VEC{REAL}}`, `MAT{EVEC{INT}}`.
+- `MAP{KEY,VAL}` — a map parameterised by two types.
+
+```foo
+v      :: VEC{REAL}
+matrix :: MAT{INT}
+tensor :: MAT3{CPX}
+```
+
+Dimensions and length parameters go in `( … )` *after* the braces:
+
+```foo
+s :: STR(len=256)        ! a 256-char string
+v :: VEC{STR}(len=1,6)   ! 6 strings, each length 1  ->  VEC(STR(len=1),6)
+m :: MAT{REAL}(3,4)      ! 3x4 real matrix           ->  MAT(REAL,3,4)
+```
+
+A leading `len=` in the parameter list belongs to a **`STR` element only**; for a
+non-`STR` element it does not apply and is dropped (`VEC{INT}(len=…)` →
+`VEC(INT,:)`).
+
+### Derived types — declared in `types.foo`
+
+Every derived type, and its components, is declared in `foofiles/types.foo`:
+
+```foo
+type ATOM
+   start_time5 :: VEC{INT}(5), readonly  DEFAULT(0)
+   ! Real start time, in Julian day,h,m,s,ms
+   cpu_start_time :: REAL, readonly  DEFAULT(ZERO)
+   ! CPU start time, in seconds
+end
+```
+
+- `readonly` — the component may not be *assigned* outside the defining module
+  (it may still be read via dot notation).
+- `private` — the component may not even be *referenced* by dot notation outside
+  the defining module.
+- `DEFAULT(x)` — a C macro giving the component initialiser (`= x` in Fortran).
+
+`types.foo` must be processed first so the translator knows the components of
+every type when resolving `obj.component` access.
+
+### Arrays of arrays, and element access
+
+An "array of arrays" is really an array of a one-component derived type whose
+single component (named `element`) is the inner array:
+
+```foo
+type EVEC{REAL}
+   element :: VEC{REAL}@      ! the encapsulated vector
+end
+```
+
+So `VEC{EVEC{REAL}}` is an array of `EVEC{REAL}`. Such "array-of-array" types are
+also declared in `types.foo` purely to inform the translator; they **emit no
+Fortran**.
+
+Element access has a shorthand that avoids writing `%element` — `a(i)[j]`:
+
+```foo
+nested :: VEC{VEC{REAL}}@
+nested.create(3,4)
+val = nested(i)%element(j)
+val = nested(i)[j]            ! identical:  a(i)[j]  ->  a(i)%element(j)
+nested.destroy
+```
+
+(`create`/`destroy` are the conventional allocate/deallocate methods.)
+
+### Pointer (`*`) and allocatable (`@`) suffixes
+
+```foo
+ptr :: INT*          ! pointer        (equivalent to , POINTER  — rare)
+arr :: VEC{REAL}@    ! allocatable    (equivalent to , ALLOCATABLE)
+```
+
+---
+
+## 5. Declarations and attributes
+
+### Reverse declarations
+
+The defining surface feature: the **name comes before the type**, opposite to
+Fortran.
+
+```foo
+i      :: INT                 ! Fortran:  integer :: i
+matrix :: MAT{REAL}           ! Fortran:  ...     :: matrix
+```
+
+### Variable attributes (after the type, comma-separated)
+
+```foo
+x    :: INT, IN
+y    :: REAL, OUT
+z    :: STR, INOUT
+flag :: BIN, private
+arr  :: VEC{REAL}, ALLOCATABLE     ! or the @ shorthand
+```
+
+| Attribute | Meaning |
+|---|---|
+| `IN` / `OUT` / `INOUT` | argument intent |
+| `PRIVATE` | private visibility |
+| `READONLY` | read-only component (assignment only inside the defining module) |
+| `POINTER` | pointer — prefer the `*` shorthand |
+| `TARGET` | may be a pointer target |
+| `SAVE` | static / saved |
+| `ALLOCATABLE` | allocatable — prefer the `@` shorthand |
+| `OPTIONAL` | optional argument |
+
+### Initialisers
+
+```foo
+letters :: STR(len=52) = "abc…XYZ"
+opening :: VEC{STR}(len=1,6) = ["'",'"',"{","(","[","<"]
+coeffs  :: VEC{REAL}(0:6) = [1.0d0, 76.18d0, -86.50d0, …]
+```
+
+---
+
+## 6. Modules and submodules
+
+A module is a class:
 
 ```foo
 module STR
    implicit none
-   
-   ! Global variables
-   opening :: VEC{STR}(len=1,6) = [...]
-   
-   ! Procedures and interfaces
+
+   opening :: VEC{STR}(len=1,6) = ["'",'"',"{","(","[","<"]   ! module data
+
    interface trim
       trim_blanks_from_end
    end
-   
+
 contains
-
-   ! Procedure definitions follow
-   ! Functions always used the result (res) syntax, subroutines do not.
-   
+   ! procedure definitions
 end
 ```
 
-### 3. Type System
+The file name maps to the Fortran module name: `str.foo` → `STR_MODULE`.
 
-#### Primitive Types
-- `INT` - Integer
-- `REAL` - Double precision real
-- `CPX` - Complex numbers
-- `BIN` - Logical/Boolean
-- `STR` - Character strings
+### Submodules
 
-#### Array Types (Parameterized)
-Array types use curly braces for type parameters:
+A large class may be split across files. `molecule.base.foo` declares
+`module MOLECULE.BASE`, a submodule of `MOLECULE` (file-name head = lowercase
+type name). Submodule-qualified calls are described in §11.
 
-- `VEC{T}` - 1D vector of type T
-- `MAT{T}` - 2D matrix of type T
-- `MAT3{T}` - 3D tensor
-- `MAT4{T}` - 4D tensor
-- `MAT5{T}` - 5D tensor
-- `MAT6{T}`, `MAT7{T}` - Higher dimensional tensors
+---
 
-#### Parameterized types
+## 7. Procedures
 
-- MAP{KEY,VAL} is a type MAP parameterized by types KEY and VAL.
-
-
-**Examples:**
-```foo
-v :: VEC{REAL}
-matrix :: MAT{INT}
-tensor :: MAT3{CPX}
-nested :: VEC{VEC{REAL}}
-```
-
-#### Derived Types (Parameterized)
-These are defined in the `types.foo` file as combinations of primitive
-or other derived types. An example is below:
-```
-   type ATOM
-
-     start_time5 :: VEC{INT}(5), readonly  DEFAULT(0)
-     ! Contains real start time, in Julian day,h,m,s,ms
-
-     stop_time5 :: VEC{INT}(5), readonly  DEFAULT(0)
-     ! Contains real stop time, in Julian day,h,m,s,ms
-
-     cpu_start_time :: REAL, readonly  DEFAULT(ZERO)
-     ! Contains CPU start time, in seconds
-
-     cpu_stop_time :: REAL, readonly  DEFAULT(ZERO)
-     ! Contains CPU stop time, in seconds
-
-   end
-```
-The `readonly` attribute specifies that it is illegal to directly change this field outside the defining module.
-
-The DEFAULT macro specifies a DEFAULT(X) value for the type component, which evaluates to `= X` in Fortran
-as defined in the `include/macros.in` C preprocessor file.
-
-The `private` attribute (not shown) means that the type compnent may not even be used by dot notation outside the dining module.
-
-#### Array of array types
-Arrays of arrays are, in fact, arrays of derivaewd types which contain arrays. Thus an EVEC{REAL} is
-
-```
-type EVEC{REAL}
-
-     element :: VEC{REAL}@
-     ! Encapsulated vec type
-
-end
-```
-
-And a VEC{EVEC{REAL}} is an Array of EVEC{REAL} derived types.
-
-They are defined in the `types.foo` file only to indicate that they will be used in the library later on to help the translator; such declarations produce no Fortran code.
-
-**Examples:**
-```
-val :: REAL
-i,j :: INT
-nested :: VEC{VEC{REAL}}@
-
-nested.create(3,4)
-val = nested(i)%element(j)
-val = nested(i)[j]
-nested.destroy
-```
-Note that the second assignment to `val` is equiovalent to the first and defines the square-bracket simplification to avoid the use of the `element` array component. This scheme extend to multidimensional arrays. The create method called by dot notation is used to allocate the object, while destroy is used to deallocate. These are standard names, by convention.
-
-#### Type Parameters
-
-Array types can have parameters:
+A procedure header is the name, optional `(args)`, optional `result (res)`, then
+attributes after `:::`. Functions use `result (...)`; subroutines do not.
 
 ```foo
-s :: STR(len=256)           ! String of length 256
-v :: VEC{STR}(len=1,6)     ! Vector of 6 strings, each length 1
-m :: MAT{REAL}(3,4)        ! 3x4 real matrix
-```
-
-#### Pointer and Allocatable Types
-
-```foo
-ptr :: INT*                 ! Pointer to integer
-arr :: VEC{REAL}@          ! Allocatable vector
-```
-
-### 4. Procedure Declarations
-
-Procedures (functions and subroutines) start with the procedure name, followed by optional arguments and result specification, with attributes after `:::`.
-
-#### Function Declaration
-
-```foo
-n_items result (res) ::: PURE
-   ! Return the number of items in the string
+n_items result (res) ::: pure          ! a function
+   ! Return the number of items
    self :: IN
-   res :: INT
-   
-   ! ... implementation
-   
+   res  :: INT
+   ...
 end
-```
 
-Note that the `self` variable of the same type as the module is an implicit first argument to the function. It's intent must be IN for functions.
-
-#### Subroutine Declaration
-
-```foo
-multiply(factor) ::: pure
+multiply(factor) ::: pure              ! a subroutine
    ! Multiply self by factor
-   self :: INOUT
+   self   :: INOUT
    factor :: REAL, IN
-   
-   ! ... implementation
-   
+   ...
 end
 ```
 
-Note that the `self` variable of the same type as the module is an implicit first argument to the function. It's intent should be declared.
+### `self`
 
-#### Procedure arguments to procedures
-If the argument of a procedure is itself procedure, it's calling interface amust be specified.
-An example is shown below.
-```
-   line_search(dself,alphamax,x,p,c1,c2,b) ::: routinal, public
-   ! Given a real vector, x, function f, gradient function
-   ! df, calculaes the ideal stepping scale alpha, given
-   ! stepping p and constants c1, c2.
-   ! Interface for vector functions   
-      interface
-         self(x,res)
-            x :: VEC{REAL}, IN
-            res :: REAL, OUT
-         end
+Every ordinary procedure has an implicit first argument `self`, of the module's
+type. Its intent is declared (`IN` for functions, usually `INOUT` for mutating
+subroutines). A `selfless` procedure has no `self`.
+
+### Procedure attributes (after `:::`)
+
+| Attribute | Meaning |
+|---|---|
+| `pure` / `elemental` | **Fortran** keywords — the procedure must be side-effect free (see the assertion note below) |
+| `PURE` / `ELEMENTAL` | **C macros** (uppercase) — expand at compile time; *not* subject to the Fortran purity constraint |
+| `get_from(MODULE, …)` | inherit the body from a template (see §9) |
+| `selfless` | no implicit `self` argument |
+| `routinal` / `functional` | the first argument is a *procedure* (with an explicit interface), not a `self` variable |
+| `leaky` | the procedure is allowed to leave memory allocated (suppresses leak checking) |
+| `public` / `private` | visibility |
+
+> **Assertions in `pure`/`elemental` (lowercase):** because `ENSURE`/`DIE`/`WARN`
+> expand to error-message calls (a side effect), they are **illegal** in a true
+> Fortran `pure`/`elemental` procedure and must be commented out (`! ENSURE…`),
+> kept only as documentation. In an uppercase-`PURE`/`ELEMENTAL` procedure (a C
+> macro) they are allowed. This is exactly why the case is significant.
+
+### Procedure arguments that are themselves procedures
+
+If an argument is a procedure, its calling interface is declared with an
+`interface` block (`routinal`/`functional` mark which argument is the procedure):
+
+```foo
+line_search(dself,alphamax,x,p,c1,c2,b) ::: routinal, public
+   ! ... self and dself are functions ...
+   interface
+      self(x,res)
+         x   :: VEC{REAL}, IN
+         res :: REAL, OUT
       end
-      interface
-         dself(x,res)
-            x :: VEC{REAL}, IN
-            res :: VEC{REAL}, OUT
-         end
+   end
+   interface
+      dself(x,res)
+         x   :: VEC{REAL}, IN
+         res :: VEC{REAL}, OUT
       end
-      x :: VEC{REAL}, IN
-      p :: VEC{REAL}, IN
-      c1,c2,alphamax :: REAL, IN
-      b :: REAL, OUT
-```
-Here the procedure has the `routinal` attribute which means the `self` argumant is a function, not a variable.
-The procedure takes another function argument `dself` whose explicit interface is also declared.
-Noe the three character indentation and the `end` keyword to terminate the interface scope.
-
-#### Procedure Attributes
-
-Attributes are specified after `:::`:
-- `PURE` - Pure function (no side effects)
-- `ELEMENTAL` - Can operate on arrays element-wise
-- `get_from(MODULE)` - Inherit from another module
-- `selfless` - the procedure lacks an implicit `self` argument
-- `functional` or `routinal` - the procedure takea a function argument as the first argument rather than a `self` variable.
-
-### 5. Variable Attributes
-
-Variables can have multiple attributes after the type:
-
-```foo
-x :: INT, IN              ! Input parameter
-y :: REAL, OUT            ! Output parameter
-z :: STR, INOUT           ! Input/Output parameter
-ptr :: INT, POINTER       ! Pointer attribute
-arr :: VEC{REAL}, ALLOCATABLE
-flag :: BIN, private      ! Private component
-```
-
-The declaration of the ptr and array may be simplified:
-
-```foo
-ptr :: INT*   
-arr :: VEC{REAL}@
-```
-The use of pointers is very rare.
-
-#### Common Attributes:
-- `IN` - Input (intent in)
-- `OUT` - Output (intent out)
-- `INOUT` - Input/Output
-- `PRIVATE` - Private visibility
-- `READONLY` - Read-only component
-- `POINTER` - Pointer declaration. Prefer to use * as abbreviation.
-- `TARGET` - Can be target of pointer
-- `SAVE` - Static/saved variable
-- `ALLOCATABLE` - Dynamically allocated. Prefer to use @ as abbreviation.
-- `OPTIONAL` - Optional argument
-
-### 6. Generic Interfaces
-
-Generic interfaces are declared with the `interface` keyword:
-
-```foo
-interface trim
-   trim_blanks_from_end
-end
-
-interface scan
-   index_of_character_in
+   end
+   x  :: VEC{REAL}, IN
+   ...
 end
 ```
 
-### 7. Initialization
+---
 
-Variables can be initialized at declaration:
+## 8. Generic interfaces and overloading
 
-```foo
-letters :: STR(len=52) = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-opening :: VEC{STR}(len=1,6) = ["'",'"',"{","(","[","<"]
-coefficients :: VEC{REAL}(0:6) = [1.0d0, 76.18d0, -86.50d0, ...]
-```
-
-### 8. Control Structures
-
-Standard Fortran-like control structures:
-
-#### If Statement
-```foo
-if (condition) then
-   ! statements
-else if (other_condition) then
-   ! statements
-else
-   ! statements
-end
-```
-
-#### Select Case
-```foo
-select case (variable)
-case (value1)
-      ! statements
-case (value2)
-      ! statements
-case default
-      ! statements
-end
-```
-
-Note the preferred indentation style.
-
-#### Do Loop
-```foo
-do i = 1, n
-   ! statements
-end
-
-do  ! infinite loop
-   ! statements
-   if (condition) exit
-end
-```
-
-### 9. Comments
-
-Comments start with `!` and continue to end of line:
-
-```foo
-! This is a comment
-self :: IN  ! Comment after code
-```
-
-### 10. Method Calls and Expressions
-
-Expressions follow Fortran rules with standard operators:
-
-```foo
-! Assignment
-res = self == i
-
-! Method calls
-.get_next_item(item, f, l)
-self(end+1:).get_next_item(...)
-
-! Arithmetic
-res = ONE
-res = res * self
-res = ONE / res
-
-! Logical
-same = self == i
-res = mod(self, 2) == 0
-```
-
-Note that `.get_next_item(item, f, l)` is equivalent to `self.get_next_item(item, f, l)`.
-
-Explicit procedure calls are also allowed and equivalent e.g. `STR:get_next_item(self,item, f, l)`.
-Note that the `self` argument appears explicitly. A single colon indicates that a generic funtion call is used
-i.e. there may be other calls with the same name but with different arguments.
-
-Explicit non-generic function calls are also permitted e.g. `STR::get_next_item(self,item, f, l)`.
-In this case the name `get_next_item` must not be overloaded. Non-generic funtion calls may
-ionly appear in the module they are defined in.
-
-Explicit calls within the module they are defined may be simplified to 
-`:get_next_item(self,item, f, l)` or `::get_next_item(self,item, f, l)` for
-generic and non-generic calls, respectively.
-
-Dot notation foer procedures in submodules must be modified to specify the particular submodule in which
-the proceudre appears e.g. in the examp[le below from file `diffraction_data.inq.foo` defining the
-corresponding submodule DIFFRACTION_DATA.INQ
-```
-!      ! Clean up leak here
-!      .SET:delete_atom_SCF_archives
-```
-the call .SET:delete_atom_SCF_archives refers to method `delete_atom_SCF_archives` in file `diffraction_data.set.foo`
-defining `DIFFRACTION_DATA.SET`. This is a generic call. As before a non-generic call is with two colons.
-
-Generic dot methods calls to a submodule procedure of a given type are written `.MAIN:setup(basis_library_dir)` or, if within
-the same submodule, `.:setup(basis_library_dir)`. Non-generic calls use the double colon.
-
-#### Special Constants
-- `TRUE`, `FALSE` - Boolean values
-- `ZERO`, `ONE` - Numeric constants
-- `NULL` - Null pointer
-
-## Grammar Structure
-
-The ANTLR4 grammar (`Foo.g4`) is organized into sections:
-
-### Program Structure
-- `program` - Top-level program node
-- `module_declaration` - Module definition
-- `module_content` - Module body items
-
-### Declarations
-- `global_variable_declaration` - Module-level variables
-- `local_variable_declaration` - Procedure-level variables
-- `procedure_declaration` - Function/subroutine definitions
-
-### Procedures
-- `procedure_signature` - Procedure header
-- `procedure_arguments` - Parameter list
-- `procedure_result` - Function result specification
-- `procedure_body` - Procedure implementation
-
-### Types and Attributes
-- `type_declaration` - Type specification
-- `primitive_type` - Basic types (INT, REAL, etc.)
-- `parameterized_type` - Generic types with parameters (VEC{T})
-- `array_type` - Array type declarations
-- `attribute` - Variable attributes
-
-### Expressions
-- `expression` - Full expression grammar
-- Operators: arithmetic, relational, logical
-- Method calls
-- Array constructors
-
-### Control Flow
-- `if_statement` - Conditional
-- `select_case_statement` - Case selection
-- `do_loop_statement` - Looping
-- `exit_statement`, `cycle_statement` - Loop control
-
-## Conversion to Fortran 90+
-
-The Perl script `scripts/foo.pl` performs the following transformations:
-
-### 1. Reverse Declaration Conversion
-```
-foo:       varname :: TYPE
-fortran:   TYPE :: varname
-```
-
-### 2. Module Naming
-```
-foo file: str.foo
-fortran module: STR_MODULE
-```
-
-### 3. Procedure Transformation
-```
-foo:       n_items result (res) ::: PURE
-fortran:   PURE function n_items(self) result (res)
-```
-
-### 4. Type Parameterization
-```
-foo:       VEC{STR}(len=1,6)
-fortran:   VEC(STR(len=1),6)
-```
-
-### 5. Macro Expansion
-Type declarations use C-style macros:
-```c
-#define INT integer(INT_KIND)
-#define REAL real(REAL_KIND)
-#define VEC(T,N) type(vector_T_N)
-```
-
-## Multi-Pass Processing
-
-The Perl script processes foo files in **two passes**:
-
-### Pass 1: Analysis
-- Extract procedure signatures and interfaces
-- Build symbol tables
-- Analyze type information
-- Determine generic routine overloads
-
-### Pass 2: Code Generation
-- Generate Fortran 90+ code
-- Expand macros
-- Generate `.int` (interface) files
-- Generate `.use` (usage) files
-
-## Output Files
-
-For each `module.foo` input file, the compiler generates:
-- `module.F90` - Main Fortran source
-- `module.int` - Fortran interface definitions
-- `module.use` - Fortran usage interface blocks
-
-## Notable Features
-
-### 1. Generic Procedures
-Multiple procedures with the same name can be grouped under a generic interface:
+Several procedures with the same generic name are grouped in an `interface`:
 
 ```foo
 interface to_str
@@ -506,89 +425,334 @@ interface to_str
 end
 ```
 
-### 2. Attribute Inheritance
-The `get_from` directive allows inheriting procedure implementations:
+The translator numbers overloads `name_0`, `name_1`, … and emits a generic
+interface `name_` selecting among them. A *generic* call uses the bare/`:` form;
+a *non-generic* call (`::`) names a specific procedure.
+
+---
+
+## 9. `get_from` template inheritance
+
+`get_from` lets a procedure inherit a body from a **template** module (often a
+`virtual module` such as `VEC{INTRINSIC}`, `MAT{INTRINSIC}`, `OBJECT`):
 
 ```foo
-to_str result (string) ::: get_from(INTRINSIC, FMT=>*), pure
-! Implementation inherited from INTRINSIC module
+to_str result (string) ::: get_from(INTRINSIC, FMT?=>*), pure
 end
 ```
 
-Here FMT is a macro partameter whose value is substituted when the code is inherited from file `intrinsic.foo`.
+**Inheritance is text inclusion with macro substitution — it is not recursive.**
+The template body is rendered with the substitutions applied.
 
-It is preferred that the macro partameter should be defined as FMT? rather than FMT.
+### Placeholder keys: `KEY?=>VALUE`
 
-Inheritance is simply text inclusion with macro substitution. It is not recursive.
+A substitution key is written with a trailing `?` to mark it as a template
+**placeholder**: `FMT?=>*`, `V_TYPE?=>MAT{REAL}`. The `?` distinguishes the
+placeholder from an ordinary identifier of the same spelling. Positional type
+parameters are also paired automatically and **recursively** — inheriting
+`MAP{VEC{KEY},VEC{VAL}}` as `MAP{VEC{INT},VEC{INT}}` substitutes `KEY→INT` and
+`VAL→INT` (not just the top-level `VEC{KEY}`).
 
-### 3. String Handling
-Special handling for strings with arbitrary length:
+### Conventions and caveats
+
+- **Name your type placeholders `KEY_TYPE?`**, not bare `KEY?`, when the key
+  shares a spelling with a real argument or variable. The classic hazard:
+  ```foo
+  change_basis_using(V) ::: get_from(MAT{INTRINSIC}, V?=>MAT{REAL})
+  ```
+  here `V` is the matrix *argument* and `V?` is the placeholder for *its type* —
+  the substitution can collide with the variable `V` in the body. Writing
+  `V_TYPE?` removes the ambiguity. (The translator guards against the collision,
+  but the explicit name is clearer.)
+- **Embedded placeholders** are allowed *inside* a name:
+  `.RHO:make_Hirshfeld?_atom_ED_grid(...)` with `Hirshfeld?=>Becke` becomes
+  `make_Becke_atom_ED_grid_(self,…)`.
+- A placeholder **value** may be a method reference: `SET?=>.set_x` (a self
+  method) or `GRID?=>:make_grid` (a same-module generic). Used as a call in the
+  template, these become `set_x_(self,…)` / `make_grid_(self,…)`.
+- A non-`?` substitution (e.g. `TRANSPOSE_A=>DAGGER_A`) is applied as a plain
+  text replacement, **except** where the token is a keyword-argument *name*
+  (`…, TRANSPOSE_A=TRUE`) — see §16.
+
+---
+
+## 10. Statements and control flow
+
+Standard Fortran-like control flow. **Every block closes with a bare `end`** —
+the explicit `end if` / `end do` forms have been normalised away in the sources
+(the translator emits the correct `end if`/`end do`/`end subroutine`/… in the
+Fortran output from the block type, not from the source).
 
 ```foo
-! Strings can be parameters
-s :: STR
-s(end+1:).get_next_item(...)  ! Substring operations
+if (condition) then
+   ...
+else if (other) then
+   ...
+else
+   ...
+end
+
+select case (variable)
+case (value1)
+   ...
+case default
+   ...
+end
+
+do i = 1,n
+   ...
+end
+
+do                 ! infinite loop
+   if (done) exit
+end
 ```
 
-`get_next_item` is a method defined in the file `str.foo` which defined module `STR`.
+### Named loops
 
-### 4. Pointer and Allocatable Arrays
+A `do` may be labelled, and `exit`/`cycle` may name the label; the closing `end`
+carries it too:
+
 ```foo
-data :: VEC{REAL}*           ! Pointer to vector
-matrix :: MAT{REAL}@         ! Allocatable matrix
+main: do
+   pair_products: do
+      if (j==m) exit pair_products
+   end
+   if (i==m) exit main
+end
 ```
 
-## Known Limitations
+### `forall` and `where`
 
-Based on the grammar extraction, the following features are currently captured:
+```foo
+forall (i=1:n_bonds)
+   nAB(i) = self.n2(pair(i,1),pair(i,2))
+end
 
-1. ✅ Basic variable declarations
-2. ✅ Module structure
-3. ✅ Parameterized types
-4. ✅ Procedure declarations with results
-5. ✅ Attributes and visibility
-6. ✅ Control structures
-7. ✅ Expressions
-8. ✅ Comments
-
-Potential areas for refinement:
-- Complex nested type parameters
-- Advanced `get_from` directive parameters
-- Special case handling for function result types
-- Optional parameters in type declarations
-- Advanced macro expansion contexts
-
-## Grammar Usage
-
-The ANTLR4 grammar can be compiled with:
-
-```bash
-antlr4 -Dlanguage=Python3 Foo.g4
-# or
-antlr4 -Dlanguage=Java Foo.g4
-# or
-antlr4 -Dlanguage=Cpp Foo.g4
+where (mask) a = b
 ```
 
-This generates lexer and parser classes that can be used to:
-- Parse foo language files
-- Build abstract syntax trees (ASTs)
-- Implement analysis and transformation tools
-- Create IDE support (syntax highlighting, code completion)
-- Develop new code generators
+---
 
-## References
+## 11. Expressions, calls and the dot/percent selectors
 
-- Source Perl script: `scripts/foo.pl`
-- Sample modules: `foofiles/` directory
-- Generated Fortran: `release/` directory
-- Type definitions: `include/macros.in`
+Expressions are **Fortran**: the same arithmetic, relational and logical
+operators, intrinsics, and `//` string concatenation.
 
-## Grammar Validation
+```foo
+res  = ONE / res
+same = self == i
+res  = mod(self,2) == 0
+res  = trim(prop) // ",isovalue=" // to_str_(self.iso_value,"f10.5")
+```
 
-The grammar was validated against actual foo language files including:
-- `str.foo`, `bin.foo`, `int.foo`, `real.foo` - Basic type modules
-- `atom.foo`, `basis.foo`, `molecule.*.foo` - Complex domain modules
-- Type system with nested generics: `vec{emat{real}}`, `mat{evec{int}}`
+### Dot-method calls — `.proc`
 
+`.proc(args)` is a method call on `self`; `obj.proc(args)` on `obj`. **A
+`.procedure` always resolves to a `procedure_` call** (the generic-interface
+name with a trailing underscore), passing the receiver as the first argument:
 
+```foo
+.get_next_item(item,f,l)        ! -> get_next_item_(self, item, f, l)
+arch.read(.NOs)                 ! -> read_(arch, self%NOs)
+```
+
+This holds **even when the method name coincides with a Fortran intrinsic**:
+`prop.trim` → `trim_(prop)` (an explicit interface in `STR` for
+`trim_blanks_from_end`), `fmt.scan` → `scan_(fmt)`. They are *not* the Fortran
+intrinsics.
+
+### Intrinsic pseudo-properties
+
+A small fixed set of `.name` selectors map to Fortran intrinsics rather than to
+method calls:
+
+| Foo | Fortran |
+|---|---|
+| `.dim`, `.dim1` … `.dim7` | `size(x)`, `size(x,1)` … |
+| `.allocated` / `.deallocated` | `allocated(x)` / `NOT allocated(x)` |
+| `.associated` / `.disassociated` | `associated(x)` / `NOT associated(x)` |
+
+### The `.` vs `%` component selector
+
+`.` is used for both **component access** and **method calls**; the translator
+decides which from the type table (a component → `%`, otherwise a method). A
+literal `%` in source is also accepted (and means component access). So
+`self.io_file.record` → `self%io_file%record` (a component chain), while
+`self.trim` → `trim_(self)` (a method).
+
+### Explicit and submodule-qualified calls
+
+```foo
+STR:get_next_item(self,item,f,l)     ! explicit GENERIC call  (single colon)
+STR::get_next_item(self,item,f,l)    ! explicit NON-generic call (double colon)
+:get_next_item(self,…)               ! same, within the defining module
+::get_next_item(self,…)
+```
+
+- A single `:` is a *generic* call (the `name_` interface); `::` is a
+  *non-generic* call naming a specific procedure (only within its own module,
+  and the name must not be overloaded).
+- **Submodule** calls put the submodule before the colon:
+  `.SET:delete_atom_SCF_archives` (generic call into submodule `SET`),
+  `.MAIN:setup(...)` (into the main module), `.:setup(...)` / `.::setup(...)`
+  within the same submodule.
+
+---
+
+## 12. Parallelism (`parallel do`, MPI)
+
+Tonto supports MPI parallelism through macros. A `parallel do` distributes loop
+iterations across processes:
+
+```foo
+parallel do k = 1,.ab_n_gaussian_pairs
+   ...
+   v11 = v11 + ...
+end
+```
+
+becomes (pre-CPP):
+
+```fortran
+   do k = PARALLEL_DO_START(1,1),self%ab_n_gaussian_pairs,PARALLEL_DO_STRIDE(1)
+   LOCK_PARALLEL_DO("MODULE:proc")
+      ...
+   end do
+   UNLOCK_PARALLEL_DO("MODULE:proc")        ! after the loop
+   PARALLEL_SUM(v11)                         ! reduction, written explicitly
+```
+
+The `LOCK_PARALLEL_DO` is emitted just inside the loop and the matching
+`UNLOCK_PARALLEL_DO` **after** the `end do`. Reductions (`PARALLEL_SUM`, etc.)
+and the lower-level MPI calls live in the `SYSTEM`/`PARALLEL` modules.
+
+---
+
+## 13. Assertions and other C macros
+
+The C preprocessor (`include/macros.in`) provides, among others:
+
+- **Assertions**: `ENSURE(cond,"msg")`, `DIE_IF(cond,"msg")`, `WARN_IF`, `DIE`,
+  `WARN`, `VERIFY`. A *precondition* assertion is written at the top of a
+  procedure (before the first executable statement). These compile out unless
+  `-DUSE_PRE_AND_POST_CONDITIONS` / `-DUSE_PRECONDITIONS` is set. **They must not
+  appear in lowercase `pure`/`elemental` procedures** (see §7).
+- **`UNKNOWN(word)`** — used in the `case default` of a keyword dispatcher; it
+  builds an "unknown keyword, known are: …" error from the enclosing
+  `select case` labels.
+- **`DEFAULT(x)`** — a component initialiser.
+- **Memory**: `create`/`destroy` map to allocate/deallocate with tracking.
+
+---
+
+## 14. `use` / `USE` and the `.use` mechanism
+
+There are two independent paths, and they should not be confused:
+
+1. **Explicit source `use`/`USE` statements** are passed **verbatim into the
+   `.F90`** (case preserved). In practice these are reserved for **external
+   Fortran modules** the translator cannot resolve, and written **uppercase**:
+   ```foo
+   USE mpi, only: MPI_CHARACTER
+   ```
+2. **The `.use` file is auto-generated** from the cross-module procedure *calls*
+   the translator detects — never from source `use` statements. It always uses
+   hardcoded lowercase `use X_MODULE, only: proc` (plus a wholesale
+   `use TYPES_MODULE` / `use SYSTEM_MODULE`).
+
+So **capital `USE` is a readability convention, not a requirement** for `.use`
+generation: it flags an explicit external module versus the auto-generated repo
+dependencies. (Fortran is case-insensitive, so either spelling compiles the
+same; the convention is kept for consistency.) Do **not** hand-write a lowercase
+`use SOME_REPO_MODULE` in a source file — it would be copied verbatim into the
+`.F90` and double up with the auto-generated `.use` entry.
+
+---
+
+## 15. Foo → Fortran conversion summary
+
+| Foo | Fortran |
+|---|---|
+| `varname :: TYPE` | `TYPE :: varname` |
+| `str.foo` | module `STR_MODULE` |
+| `n_items result (res) ::: pure` | `pure function n_items(self) result (res)` |
+| `VEC{STR}(len=1,6)` | `VEC(STR(len=1),6)` |
+| `.proc(a)` | `proc_(self,a)` |
+| `a(i)[j]` | `a(i)%element(j)` |
+| `obj.component` | `obj%component` |
+| `parallel do …` | `do … = PARALLEL_DO_START(...) … PARALLEL_DO_STRIDE(...)` + LOCK/UNLOCK |
+
+The translator builds the derived-type table from `types.foo` first, then
+translates each module from its parse tree (resolving components, overloads,
+inheritance and cross-module `use` dependencies). The legacy `foo.pl` did this in
+two passes (pass 1 analysis, pass 2 generation).
+
+---
+
+## 16. Caveats, edge cases and known `foo.pl` bugs
+
+The bar for the new translator is **equivalent, compilable Fortran — not a
+byte-exact match** to `release/`. In a number of places `foo.pl` has defects, and
+the new translator deliberately emits the *correct* result instead. Known cases:
+
+- **`MPI_SENDRECV` dropped paren** — `foo.pl` drops the closing `)` of a
+  `len(...)`/`size(...)` argument when it occurs inside a `get_from` value
+  (`LEN1?=>len(sendbuf)`), producing unbalanced `MPI_SENDRECV(sendbuf,len(sendbuf,…`.
+  The new translator keeps it balanced.
+- **`.trim`/`.scan` as intrinsics** — `foo.pl` renders these as the Fortran
+  intrinsics `trim(...)`/`scan(...)`; correctly they are the `STR` methods
+  `trim_`/`scan_` (a `.proc` always → `proc_`). The new translator emits the
+  method form.
+- **`UNKNOWN` keyword list** — `foo.pl` drops `case` labels that sit on
+  continuation (`&`) lines, so its known-keyword list is truncated. The new
+  translator includes the full list.
+- **`TRANSPOSE_A=>DAGGER_A` in keyword-argument position** — a non-`?`
+  substitution where the token is a keyword-arg *name* (`to_product_of_(…,
+  TRANSPOSE_A=TRUE)`): `foo.pl` does not substitute it (leaving the wrong
+  `TRANSPOSE_A` for a complex change-of-basis). The new translator applies it
+  (`DAGGER_A`).
+- **`pure`/`elemental` precondition assertions** — illegal as a side effect;
+  commented out in the sources (and the new translator omits any that are
+  inherited from a template into a lowercase-`pure` procedure).
+
+Other deliberate normalisations in the sources: all block terminators are bare
+`end`; component access via `%` or `.` (translator-resolved); array constructors
+use `[ ]`.
+
+---
+
+## 17. Grammar structure (`Foo.g4`)
+
+The ANTLR4 grammar is organised roughly as:
+
+- **Program / module**: `program`, `moduleDef`, `moduleName`, `moduleDataItem`,
+  `moduleProcItem`, `typeDef`, `interfaceBlock`.
+- **Declarations**: `varDecl` / `localDecl` (`identList :: declTail`), `declTail`
+  (`typeSpec ptrSuffix? attrSuffix? initSuffix?`), `dataStmt`.
+- **Procedures**: `procDef`, `procHeader`, `procArgs`, `procResult`, `procAttrs`,
+  `attr`, `getFromArg`/`getFromKey`/`getFromVal`.
+- **Statements**: `stmt` → `ifStmt`, `doStmt`, `forallStmt`, `selectStmt`,
+  `whereStmt`, `simpleLine`; `simpleStmt` (assignment, I/O tail, `exit`/`cycle`/
+  `return`, and a bare `read`/`write(ctrl) iolist` I/O form).
+- **Expressions**: `expr`, `postfix` (`head trailer*`), `callHead`, `trailer`
+  (the `.name` / `%name` / `(args)` / `[args]` selectors), `name`, `arg`.
+- **Lexer**: keyword tokens (lowercase control keywords; uppercase type/intent
+  keywords; word and `.op.` operators), `IDENTIFIER` (with optional `?` and
+  embedded-placeholder support), literals, and the `::`/`:::`/`=>` punctuators.
+
+Soft keywords (`end`, `data`, `type`, `case`, `where`, `result`, `default`, …)
+double as ordinary names where context allows (`end+1`, `self(end:)`).
+
+---
+
+## 18. References
+
+- Grammar + translator: `foogrammar/Foo.g4`, `foogrammar/FooToFortran.java`.
+- Legacy reference translator: `scripts/foo.pl` (no longer runnable).
+- Macros: `include/macros.in`.
+- Foo sources: `foofiles/`; type declarations: `foofiles/types.foo`.
+- Reference Fortran: `release/` (from `foo.pl`); new-translator output:
+  `antlr4-release/`.
+- Companion docs: `FOO_QUICK_REFERENCE.md`, `FOO_GRAMMAR_VALIDATION.md`,
+  `CLAUDE.md` (build/run details).
