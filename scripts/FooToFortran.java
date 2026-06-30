@@ -921,8 +921,23 @@ public final class FooToFortran {
             if (isIntrinsicScalar(c)) return c;
             ArrayType at = parseArray(c);
             if (at != null) {
-                String dims = at.dimSpec != null ? at.dimSpec : repeatColon(at.ndim);
-                return at.head + "(" + fortranElement(at.elem, isArg) + "," + dims + ")";
+                // A leading `len=...` parameter is the STR element's length; for a
+                // non-STR element it does not apply and is dropped. The rest are the
+                // array dimensions. e.g. VEC{STR}(len=1,6) -> VEC(STR(len=1),6);
+                // VEC{INT}(len=len(self(1))) -> VEC(INT,:).
+                String lenParam = null, dims = at.dimSpec;
+                if (dims != null) {
+                    List<String> parts = splitTopComma(dims);
+                    if (!parts.isEmpty() && parts.get(0).replace(" ", "").startsWith("len=")) {
+                        lenParam = parts.get(0).replace(" ", "").substring(4);
+                        parts = parts.subList(1, parts.size());
+                    }
+                    dims = parts.isEmpty() ? null : String.join(",", parts);
+                }
+                if (dims == null) dims = repeatColon(at.ndim);
+                String elem = (lenParam != null && canon(at.elem).replace("?", "").equals("STR"))
+                            ? "STR(len=" + lenParam + ")" : fortranElement(at.elem, isArg);
+                return at.head + "(" + elem + "," + dims + ")";
             }
             // A known Foo derived type (in types.foo) or a parameterised type
             // becomes type(X_TYPE); an unknown plain identifier is an external/kind
@@ -1761,6 +1776,20 @@ public final class FooToFortran {
     static String oneLine(String s) { return s.replaceAll("\\s+", " ").trim(); }
 
     static String sp(int n) { StringBuilder b = new StringBuilder(); for (int i = 0; i < n; i++) b.append(' '); return b.toString(); }
+
+    /** Split on top-level commas (ignoring those inside (), {}, []). */
+    static List<String> splitTopComma(String s) {
+        List<String> out = new ArrayList<>();
+        int depth = 0, start = 0;
+        for (int i = 0; i < s.length(); i++) {
+            char ch = s.charAt(i);
+            if (ch == '(' || ch == '{' || ch == '[') depth++;
+            else if (ch == ')' || ch == '}' || ch == ']') depth--;
+            else if (ch == ',' && depth == 0) { out.add(s.substring(start, i)); start = i + 1; }
+        }
+        out.add(s.substring(start));
+        return out;
+    }
 
     static String repeatColon(int n) {
         StringBuilder b = new StringBuilder();
