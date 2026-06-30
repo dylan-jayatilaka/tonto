@@ -918,6 +918,10 @@ public final class FooToFortran {
             String c = canon(applySubst(foo)).replace("?", "");
             if (c.equals("STR")) return isArg ? "STR(len=*)" : "STR(len=STR_SIZE)";
             if (c.startsWith("STR(")) return c;
+            // a non-STR intrinsic scalar never takes a (len=...) param (it leaks from
+            // an INTRINSIC template instantiated as INT/REAL/...): REAL(len=..) -> REAL
+            for (String sc : new String[]{"INT", "REAL", "CPX", "BIN"})
+                if (c.startsWith(sc + "(")) return sc;
             if (isIntrinsicScalar(c)) return c;
             ArrayType at = parseArray(c);
             if (at != null) {
