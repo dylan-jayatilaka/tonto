@@ -579,18 +579,18 @@ binOp
 // Lexer
 // ===========================================================================
 
-MODULE : 'module' | 'MODULE' ;
+MODULE : 'module' ;
 // `end`, plus the glued block-end forms `endif` / `enddo`. (Maximal munch keeps
 // longer identifiers like `endpoint` intact.) Spaced forms `end if` / `end do`
 // are handled by the `endKw` parser rule.
-END : ('end' | 'END') (('if' | 'IF') | ('do' | 'DO'))? ;
+END : 'end' ('if' | 'do')? ;
 USE : 'use' | 'USE' ;
-INTERFACE : 'interface' | 'INTERFACE' ;
-CONTAINS : 'contains' | 'CONTAINS' ;
-IMPLICIT : 'implicit' | 'IMPLICIT' ;
-NONE : 'none' | 'NONE' ;
-RESULT : 'result' | 'RESULT' ;
-GET_FROM : 'get_from' | 'GET_FROM' ;
+INTERFACE : 'interface' ;
+CONTAINS : 'contains' ;
+IMPLICIT : 'implicit' ;
+NONE : 'none' ;
+RESULT : 'result' ;
+GET_FROM : 'get_from' ;
 // Most attribute words (pure, elemental, private, public, allocatable,
 // readonly, target, pointer, save, dimension, …) are NOT reserved: they are
 // ordinary identifiers handled by the `attr` rule, so they can also be used as
@@ -598,23 +598,23 @@ GET_FROM : 'get_from' | 'GET_FROM' ;
 IN : 'IN' ;
 OUT : 'OUT' ;
 INOUT : 'INOUT' ;
-IF : 'if' | 'IF' ;
-THEN : 'then' | 'THEN' ;
-WHILE : 'while' | 'WHILE' ;
-WHERE : 'where' | 'WHERE' ;
-FORALL : 'forall' | 'FORALL' ;
+IF : 'if' ;
+THEN : 'then' ;
+WHILE : 'while' ;
+WHERE : 'where' ;
+FORALL : 'forall' ;
 // `else if` (spaced) and `elseif` (glued) both lex as one ELSEIF token.
-ELSEIF : ('else' | 'ELSE') [ \t]* ('if' | 'IF') ;
-ELSEWHERE : 'elsewhere' | 'ELSEWHERE' ;
-ELSE : 'else' | 'ELSE' ;
-SELECT : 'select' | 'SELECT' ;
-CASE : 'case' | 'CASE' ;
+ELSEIF : 'else' [ \t]* 'if' ;
+ELSEWHERE : 'elsewhere' ;
+ELSE : 'else' ;
+SELECT : 'select' ;
+CASE : 'case' ;
 DEFAULT : 'default' | 'DEFAULT' ;
-DO : 'do' | 'DO' ;
-EXIT : 'exit' | 'EXIT' ;
-CYCLE : 'cycle' | 'CYCLE' ;
-RETURN : 'return' | 'RETURN' ;
-DATA : 'data' | 'DATA' ;
+DO : 'do' ;
+EXIT : 'exit' ;
+CYCLE : 'cycle' ;
+RETURN : 'return' ;
+DATA : 'data' ;
 INT : 'INT' ;
 REAL : 'REAL' ;
 CPX : 'CPX' ;
