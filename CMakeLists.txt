@@ -144,8 +144,9 @@ configure_file(
 
 # Foo source files
 set(FOO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/foofiles)
+set(FOOGRAMMAR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/foogrammar)
 set(FOO_TYPES_FILE ${FOO_DIR}/types.foo)
-set(FOO_ANTLR4_GRAMMAR ${FOO_DIR}/Foo.g4)
+set(FOO_ANTLR4_GRAMMAR ${FOOGRAMMAR_DIR}/Foo.g4)
 set(FORTRAN_TYPES_FILE types.F90)
 set(FOO_SRC
     ${FOO_DIR}/types.foo
@@ -516,7 +517,7 @@ set(ANTLR4_VALIDATION_DIR ${CMAKE_CURRENT_BINARY_DIR}/antlr4-validation)
 set(ANTLR4_CLASSES_DIR ${CMAKE_CURRENT_BINARY_DIR}/antlr4-classes)
 set(ANTLR4_VALIDATION_STAMP ${ANTLR4_VALIDATION_DIR}/FooParser.stamp)
 set(ANTLR4_TRANSLATOR_STAMP ${ANTLR4_CLASSES_DIR}/FooToFortran.stamp)
-set(FOO_TRANSLATOR_JAVA ${CMAKE_CURRENT_SOURCE_DIR}/scripts/FooToFortran.java)
+set(FOO_TRANSLATOR_JAVA ${FOOGRAMMAR_DIR}/FooToFortran.java)
 
 add_custom_command(
     OUTPUT ${ANTLR4_VALIDATION_STAMP}
@@ -524,7 +525,7 @@ add_custom_command(
     COMMAND ${Java_JAVA_EXECUTABLE} -jar ${ANTLR4_JAR} -Dlanguage=Java -visitor -listener -o ${ANTLR4_VALIDATION_DIR} Foo.g4
     COMMAND ${CMAKE_COMMAND} -E touch ${ANTLR4_VALIDATION_STAMP}
     DEPENDS ${FOO_ANTLR4_GRAMMAR}
-    WORKING_DIRECTORY ${FOO_DIR}
+    WORKING_DIRECTORY ${FOOGRAMMAR_DIR}
     COMMENT "Generating ANTLR4 parser sources from Foo.g4"
     VERBATIM
 )

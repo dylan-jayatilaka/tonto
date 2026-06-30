@@ -30,8 +30,8 @@ macros (`include/macros.in`) and `#include`s are left intact for the Fortran bui
 Replace `foo.pl` with an ANTLR4-based Foo→Fortran translator that reproduces the legacy
 output. Two deliverables:
 
-1. A correct ANTLR4 grammar — `foofiles/Foo.g4`.
-2. A translator — `scripts/FooToFortran.java` — whose Fortran matches `foo.pl`'s.
+1. A correct ANTLR4 grammar — `foogrammar/Foo.g4`.
+2. A translator — `foogrammar/FooToFortran.java` — whose Fortran matches `foo.pl`'s.
 
 Directory roles:
 
@@ -94,7 +94,7 @@ Other build types: `debug`, `release-static`, and MPI (`-DCMAKE_Fortran_COMPILER
 ## 5. Validation (for the `antlr4` task)
 
 - Generate the `*.F90`, `*.int` and `*.use` files with the new translator
-  (`scripts/FooToFortran.java`) into `antlr4-release/`, and compare them against the
+  (`foogrammar/FooToFortran.java`) into `antlr4-release/`, and compare them against the
   reference files in `release/` produced by `foo.pl`.
 - The bar is **equivalent, compilable Fortran — not a byte-exact match.**
 - The target is **every** generated file, not only the examples named in the docs
@@ -114,8 +114,7 @@ Other build types: `debug`, `release-static`, and MPI (`-DCMAKE_Fortran_COMPILER
 - During a normal build, generated Fortran lands in `build/`; do not hand-edit it. (`release/`
   and `antlr4-release/` are the reference vs. new-translator snapshots used for this task —
   see §2.)
-- `external/*` are git submodules (sbf, dftd3-lib, lapack-release, libcint, libxc, antlr4);
-  clone with `--recursive`.
+- `external/*` are git submodules (sbf, lapack-release, antlr4); clone with `--recursive`.
 - Note that the files can be translated independently *provided* the `types.foo` file
 which defines all the derived types is processed first. The legacy translator uses
 two passes through the module file but it is not clear whether ANTLR4 needs two passes
@@ -144,8 +143,8 @@ scripts/build_translator.sh foofiles/irrep.foo
 
 # Equivalent manual invocation:
 JAR=/usr/local/lib/antlr-4.13.2-complete.jar
-( cd foofiles && java -cp "$JAR" org.antlr.v4.Tool -visitor -o ../build/translator/gen Foo.g4 )
-javac -cp "$JAR" -d build/translator/classes build/translator/gen/*.java scripts/FooToFortran.java
+( cd foogrammar && java -cp "$JAR" org.antlr.v4.Tool -visitor -o ../build/translator/gen Foo.g4 )
+javac -cp "$JAR" -d build/translator/classes build/translator/gen/*.java foogrammar/FooToFortran.java
 java -cp "$JAR:build/translator/classes" FooToFortran \
      --types foofiles/types.foo --foo foofiles/irrep.foo --out-dir antlr4-release
 ```
@@ -158,9 +157,9 @@ not byte-exact). `types.foo` must be passed so the derived-type table is built f
 
 **Milestones**
 
-1. `foofiles/Foo.g4` parses **every** file in `foofiles/` without error — including the
+1. `foogrammar/Foo.g4` parses **every** file in `foofiles/` without error — including the
    submodule files (`molecule.*`, `diffraction_data.*`).
-2. `scripts/FooToFortran.java` emits `.F90` / `.int` / `.use` into `antlr4-release/` that are
+2. `foogrammar/FooToFortran.java` emits `.F90` / `.int` / `.use` into `antlr4-release/` that are
    **equivalent** (compilable, same behaviour) to the reference in `release/`.
 
 > Confirm milestone wording — your note was cut off at "There are two milestones. release/".
