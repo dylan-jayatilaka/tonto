@@ -141,7 +141,6 @@ configure_file(
     ${MACROS}
 )
 
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/)
 
 # Foo source files
 set(FOO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/foofiles)
@@ -593,14 +592,13 @@ add_library(tonto
 )
 
 if(COMPILE_LAPACK)
-	target_link_libraries(tonto dftd3 lapack blas ${MPI_Fortran_LIBRARIES})
+	target_link_libraries(tonto lapack blas ${MPI_Fortran_LIBRARIES})
 else()
-	target_link_libraries(tonto dftd3 ${MPI_Fortran_LIBRARIES})
-endif()	
+	target_link_libraries(tonto ${MPI_Fortran_LIBRARIES})
+endif()
 
 # Build directory
 target_include_directories(tonto PUBLIC ${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR}/external)
-target_include_directories(tonto PUBLIC ${DFTD3_MODULE_DIRECTORY})
 
 
 # Standard executables
