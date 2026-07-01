@@ -80,11 +80,14 @@ To compile a particular branch, like the release branch, which is highly recomme
 
 While waiting, make sure you have all the other software installed:
 
-The following is recommended: `make`, `perl` (for the `foo` preprocessor language), `gfortran`, `blas`, `lapack`, `python3` (for testing) and `gnuplot` (for graphs and plots).
+The following is recommended: `make`, a Java JDK (for the ANTLR4-based `foo`→Fortran translator; provides `java` and `javac`), `perl` (used by the legacy `foo.pl` translator), `gfortran`, `blas`, `lapack`, `python3` (for testing) and `gnuplot` (for graphs and plots).
 
 ```
-   sudo apt install make perl gfortran libblas-dev liblapack-dev python3 gnuplot
+   sudo apt install make default-jdk perl gfortran libblas-dev liblapack-dev python3 gnuplot
 ```
+
+The build fetches the ANTLR4 tool jar automatically (into `external/`) the first
+time you run `cmake`, so an internet connection is needed for that first configure.
 
 It is recommended to compile a parallel version of the program via openmpi and friends:
 
