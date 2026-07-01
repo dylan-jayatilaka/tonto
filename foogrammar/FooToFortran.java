@@ -1171,8 +1171,10 @@ public final class FooToFortran {
                     for (FooParser.ArgContext a : cc.caseLabel().arg()) kw.add(renderArg(a));
             selectKeywords = kw;
             for (FooParser.CaseClauseContext cc : x.caseClause()) {
-                c.flushHidden(f90, cc.getStart().getTokenIndex(), indent + 3);
-                StringBuilder line = new StringBuilder(sp(indent + 3)).append(renderCaseLabel(cc.caseLabel()));
+                // case labels sit at the select-case level (not indented a further 3),
+                // matching foo.pl; the case body is one level (3) deeper.
+                c.flushHidden(f90, cc.getStart().getTokenIndex(), indent);
+                StringBuilder line = new StringBuilder(sp(indent)).append(renderCaseLabel(cc.caseLabel()));
                 List<String> unkLines = null;
                 for (FooParser.SimpleStmtContext ss : cc.simpleStmt()) {
                     String ua = unknownArg(ss);
@@ -1187,8 +1189,8 @@ public final class FooToFortran {
                 f90.append('\n');
                 if (unkLines != null)
                     for (int i = 1; i < unkLines.size(); i++)
-                        f90.append(sp(indent + 3)).append(unkLines.get(i)).append('\n');
-                emitBodyList(cc.procBody(), c, indent + 6, false);
+                        f90.append(sp(indent)).append(unkLines.get(i)).append('\n');
+                emitBodyList(cc.procBody(), c, indent + 3, false);
                 c.pos = Math.max(c.pos, cc.getStop().getTokenIndex() + 1);
                 c.lastLine = cc.getStop().getLine();
             }
