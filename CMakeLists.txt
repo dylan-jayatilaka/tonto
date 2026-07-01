@@ -614,6 +614,17 @@ add_library(tonto
    ${MACROS}
 )
 
+# Generate ALL Foo->Fortran output (every .F90 and its co-generated .int/.use)
+# before compiling any object. The .use files carry the inter-module `use`
+# statements (e.g. system.use has `use TYPES_MODULE`) and are pulled in via
+# `#include "<mod>.use"`. CMake's Fortran dependency scanner can only follow
+# that include - and thus discover that system.F90 must compile after types.F90 -
+# if the .use file already exists on disk when the scan runs. Forcing the whole
+# antlr4-fortran generation step first guarantees every include is present, so the
+# module compile order is derived correctly instead of falling back to list order
+# (where system.F90 precedes types.F90 and type(SYSTEM_TYPE) is undefined).
+add_dependencies(tonto antlr4-fortran)
+
 if(COMPILE_LAPACK)
 	target_link_libraries(tonto lapack blas ${MPI_Fortran_LIBRARIES})
 else()
