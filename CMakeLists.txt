@@ -31,10 +31,18 @@ option(COMPILE_LAPACK "Use the reference implementation of lapack provided" OFF)
 
 # Java and ANTLR4
 find_package(Java REQUIRED COMPONENTS Runtime Development)
-set(ANTLR4_SUBMODULE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/antlr4)
+# The ANTLR4 tool is a single "complete" jar. It is a release artefact (NOT part
+# of the antlr4 source repo), so we cannot get it from a git submodule. If it is
+# not already present, download it into external/ (git-ignored) and verify its
+# checksum. A system copy or a manually-placed jar is used in preference.
+set(ANTLR4_VERSION 4.13.2)
+set(ANTLR4_JAR_NAME antlr-${ANTLR4_VERSION}-complete.jar)
+set(ANTLR4_JAR_CACHE ${CMAKE_CURRENT_SOURCE_DIR}/external/${ANTLR4_JAR_NAME})
+set(ANTLR4_JAR_SHA256 eae2dfa119a64327444672aff63e9ec35a20180dc5b8090b7a6ab85125df4d76)
 set(ANTLR4_JAR_CANDIDATES
-    ${ANTLR4_SUBMODULE_DIR}/antlr-4.13.2-complete.jar
-    /usr/local/lib/antlr-4.13.2-complete.jar
+    ${ANTLR4_JAR_CACHE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/antlr4/${ANTLR4_JAR_NAME}
+    /usr/local/lib/${ANTLR4_JAR_NAME}
 )
 unset(ANTLR4_JAR CACHE)
 foreach(ANTLR4_JAR_CANDIDATE ${ANTLR4_JAR_CANDIDATES})
@@ -44,9 +52,23 @@ foreach(ANTLR4_JAR_CANDIDATE ${ANTLR4_JAR_CANDIDATES})
     endif()
 endforeach()
 if(NOT ANTLR4_JAR)
-    message(FATAL_ERROR
-        "ANTLR4 jar not found. Populate external/antlr4 as a submodule or install /usr/local/lib/antlr-4.13.2-complete.jar")
+    message(STATUS "ANTLR4 jar not found locally; downloading ${ANTLR4_JAR_NAME} into external/ ...")
+    file(DOWNLOAD
+        https://www.antlr.org/download/${ANTLR4_JAR_NAME}
+        ${ANTLR4_JAR_CACHE}
+        SHOW_PROGRESS
+        EXPECTED_HASH SHA256=${ANTLR4_JAR_SHA256}
+        STATUS ANTLR4_DL_STATUS)
+    list(GET ANTLR4_DL_STATUS 0 ANTLR4_DL_CODE)
+    if(NOT ANTLR4_DL_CODE EQUAL 0)
+        file(REMOVE ${ANTLR4_JAR_CACHE})
+        list(GET ANTLR4_DL_STATUS 1 ANTLR4_DL_MSG)
+        message(FATAL_ERROR "Failed to download ANTLR4 jar (${ANTLR4_DL_MSG}). "
+            "Place ${ANTLR4_JAR_NAME} in external/ manually and re-run cmake.")
+    endif()
+    set(ANTLR4_JAR ${ANTLR4_JAR_CACHE})
 endif()
+message(STATUS "Using ANTLR4 jar: ${ANTLR4_JAR}")
 
 # Git
 find_package(Git)
