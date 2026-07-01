@@ -202,10 +202,18 @@ public final class FooToFortran {
 
         ModuleEmitter em = new ModuleEmitter(types, parseFile(fooPath), fooPath, foofilesDir, globals);
         em.emit();
-        if (em.isVirtual) return;          // virtual modules are inlined via get_from, not compiled
-
         Files.createDirectories(outDir);
         String name = fooPath.getFileName().toString();
+        if (em.isVirtual) {
+            // Virtual (get_from template) modules are inlined into their heirs and
+            // never compiled (foo.pl emits no .F90 for them either). But the build
+            // declares a per-file .F90 output for every source, so emit an empty
+            // stub to satisfy that rule; it is excluded from the compiled sources.
+            Files.writeString(outDir.resolve(outStem(name) + ".F90"),
+                "! " + name + " is a virtual (get_from) template module - no compiled code\n",
+                StandardCharsets.UTF_8);
+            return;
+        }
         // .F90 file is underscored; .int/.use keep the brace form (match foo.pl).
         Files.writeString(outDir.resolve(outStem(name) + ".F90"), em.f90.toString(), StandardCharsets.UTF_8);
         Files.writeString(outDir.resolve(braceStem(name) + ".int"), em.intf.toString(), StandardCharsets.UTF_8);

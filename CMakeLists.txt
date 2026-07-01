@@ -590,10 +590,10 @@ foreach(foopath ${SRC})
         COMMAND ${Java_JAVA_EXECUTABLE}
         -cp ${ANTLR4_CLASSES_DIR}:${ANTLR4_JAR}
         FooToFortran
+        --types "${FOO_TYPES_FILE}"
         --foo "${foopath}"
-        --out "${CMAKE_CURRENT_BINARY_DIR}/${F90file}"
-        --reference-dir "${CMAKE_CURRENT_SOURCE_DIR}/release"
-        DEPENDS ${foopath} ${ANTLR4_TRANSLATOR_STAMP}
+        --out-dir "${CMAKE_CURRENT_BINARY_DIR}"
+        DEPENDS ${foopath} ${FOO_TYPES_FILE} ${ANTLR4_TRANSLATOR_STAMP}
         VERBATIM
     )
     if(foopath MATCHES "^${FOO_DIR}/")
