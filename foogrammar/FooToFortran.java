@@ -96,8 +96,24 @@ public final class FooToFortran {
 
     static String fortranTypeName(String fooType) {
         String s = canon(fooType).replace("?", "").replace("@", "").replace("*", "");
+        s = stripDimensionSpec(s);   // STR(len=len(self)) -> STR ; MAT{REAL}(3,4) -> MAT{REAL}
         s = s.replace("{", "_").replace("}", "").replace(",", "_").replace(".", "_");
         return s.replaceAll("_+", "_").replaceAll("_$", "");
+    }
+
+    /** Drop a trailing top-level (...) dimension/kind/len spec from a type — it is
+     *  not part of the type's module/type identity (STR(len=..) and MAT{REAL}(3,4)
+     *  live in STR_MODULE / MAT_REAL_MODULE). A '(' inside {...} (an element-type
+     *  param, e.g. VEC{STR(len=STR_SIZE)}) is kept. */
+    static String stripDimensionSpec(String s) {
+        int depth = 0;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '{') depth++;
+            else if (c == '}') depth--;
+            else if (c == '(' && depth == 0) return s.substring(0, i);
+        }
+        return s;
     }
     static String fortranModName(String fooType) { return fortranTypeName(fooType) + "_MODULE"; }
 
@@ -519,6 +535,14 @@ public final class FooToFortran {
             // MAP{VEC{INT},VEC{INT}} yields KEY->INT and VAL->INT (not just VEC{KEY}->..).
             List<String> p = typeArgsOf(parentModule), c = typeArgsOf(selfFooType);
             for (int i = 0; i < Math.min(p.size(), c.size()); i++) pairTypeArgs(m, p.get(i), c.get(i));
+            // The bare universal self-type placeholders INTRINSIC / OBJECT map to the
+            // inheriting type: get_from(INTRINSIC) in module INT makes INTRINSIC -> INT,
+            // so a template declaration `v :: VEC{INTRINSIC}` becomes `VEC{INT}`. (The
+            // parameterised case VEC{INTRINSIC} inherited by VEC{REAL} is already
+            // handled positionally above.)
+            String pBase = canon(parentModule);
+            if ((pBase.equals("INTRINSIC") || pBase.equals("OBJECT")) && !pBase.equals(canon(selfFooType)))
+                m.putIfAbsent(pBase, selfFooType);
             // named substitutions from `KEY?=>VAL` arguments (skip arg 0 = the module)
             if (gf != null) {
                 List<FooParser.GetFromArgContext> args = gf.getFromArg();
@@ -657,10 +681,18 @@ public final class FooToFortran {
                 c.lastLine = -1;                // suppress spurious leading blanks
                 // skip the parent's own signature comment (we emit the inheriting
                 // file's): jump to the first real (decl/stmt) body element, past
-                // any leading blank lines and the parent comment.
+                // any leading blank lines and the parent comment. BUT a preprocessor
+                // directive (#ifdef ...) preceding that first statement is code
+                // structure, not documentation — stop at it so it survives, else a
+                // leading `#ifdef MPI` is dropped while its `#endif` remains.
+                int hdrEnd = pd.procHeader().getStop().getTokenIndex() + 1;
                 for (FooParser.ProcBodyContext b : body)
                     if (b.localDecl() != null || b.stmt() != null) {
-                        c.pos = b.getStart().getTokenIndex(); break;
+                        int firstStmt = b.getStart().getTokenIndex();
+                        c.pos = firstStmt;
+                        for (int i = hdrEnd; i < firstStmt; i++)
+                            if (src.toks.get(i).getType() == FooLexer.PP_LINE) { c.pos = i; break; }
+                        break;
                     }
             } else if (!body.isEmpty()) {
                 // flush the leading signature comment before any implicit self decl
@@ -1070,6 +1102,10 @@ public final class FooToFortran {
                 StringBuilder el = new StringBuilder(sp(indent)).append("else");
                 emitInlineThenBody(el, ec.inlineBody(), c, indent);
             }
+            // flush hidden tokens (trailing comments / #endif etc.) sitting between
+            // the last body statement and the `end` keyword, else e.g. a closing
+            // #endif is dropped and the matching #ifdef is left unterminated.
+            c.flushHidden(f90, x.endKw().getStart().getTokenIndex(), indent + 3);
             f90.append(sp(indent)).append("end if\n");
         }
 
@@ -1389,9 +1425,15 @@ public final class FooToFortran {
                 } else if (dot && (colon || dcolon)) {
                     // submodule call on self: .SET:proc / .:proc / .MAIN:proc
                     String method = nameText(chx.name());
-                    pendingCall = colon ? method + "_" : method;
-                    recordUse(submoduleModule(hasQual ? chx.qualifier().getText() : null), pendingCall);
-                    out.append("self"); isCall = true;
+                    String ip = !hasQual ? intrinsicProp(method, "self") : null;
+                    if (ip != null) {
+                        // inlined_by_foo on self: `.:destroyed` -> NOT associated(self)
+                        out.append(ip);
+                    } else {
+                        pendingCall = colon ? method + "_" : method;
+                        recordUse(submoduleModule(hasQual ? chx.qualifier().getText() : null), pendingCall);
+                        out.append("self"); isCall = true;
+                    }
                 } else if (dot && chx.name() != null && !hasQual && !colon && !dcolon) {
                     String sel = substSelector(nameText(chx.name()));
                     String ip;
@@ -1415,8 +1457,14 @@ public final class FooToFortran {
                     // A following `(args)` trailer makes it a call; bare (e.g. a
                     // procedure passed by name as an argument) stays just the name.
                     String method = nameText(chx.name());
-                    out.append(colon ? method + "_" : method);
-                    isCall = true;
+                    String ip = intrinsicProp(method, "self");
+                    if (ip != null) {
+                        // inlined_by_foo on self, e.g. `.:destroyed` -> NOT associated(self)
+                        out.append(ip);
+                    } else {
+                        out.append(colon ? method + "_" : method);
+                        isCall = true;
+                    }
                 } else if (!hasQual && !colon && !dcolon && !dot && chx.name() != null) {
                     // bare name (local var, `self`, or a cross-module global); track type
                     String nm = nameText(chx.name());
@@ -1613,7 +1661,9 @@ public final class FooToFortran {
                 // with a Fortran intrinsic. So they fall through to method calls.
                 case "allocated": return "allocated(" + recv + ")";
                 case "deallocated": return "NOT allocated(" + recv + ")";
+                case "created":                                 // pointer create/destroy
                 case "associated": return "associated(" + recv + ")";
+                case "destroyed":                               // inlined_by_foo: .destroyed
                 case "disassociated": return "NOT associated(" + recv + ")";
                 default: return null;
             }
@@ -1654,7 +1704,11 @@ public final class FooToFortran {
         // ---- .int / .use ----------------------------------------------
 
         void buildInterfaceFile() {
-            intf.append("   private\n\n");
+            // foo.pl: the interface list defaults to `private`, EXCEPT for the TYPES
+            // module, which is `public` so that every derived type it declares is
+            // exported to all modules that `use` it. A bare `private` here would make
+            // all types private and nothing could reference type(SYSTEM_TYPE) etc.
+            intf.append(fooModuleName.equalsIgnoreCase("TYPES") ? "   public\n\n" : "   private\n\n");
             // foo.pl sorts the interface blocks by the emitted name (NAME_),
             // strict ASCII order (LC_ALL=C: uppercase before lowercase).
             List<Map.Entry<String, List<String>>> entries =
