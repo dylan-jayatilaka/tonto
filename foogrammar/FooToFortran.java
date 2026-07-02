@@ -1574,12 +1574,17 @@ public final class FooToFortran {
                         pendingCall = null; pendingNoRecv = false;
                     } else {
                         out.append('(').append(inner).append(')');
-                        // A single subscript x(i) yields the element type. A section or
-                        // substring x(a:b) / x(i,:) keeps the array/string type, so a
-                        // following `.method` still resolves to the right module
-                        // (self(2:).foo stays VEC{INT} -> VEC_INT_MODULE, not INT_MODULE;
-                        // s(a+1:).foo stays STR).
-                        if (!inner.contains(":")) {
+                        // A single scalar subscript x(i) yields the element type. A
+                        // section/substring x(a:b) / x(i,:) OR a vector subscript x(v)
+                        // (v an array-valued index) yields an array, keeping the type so
+                        // a following `.method` resolves to the right module
+                        // (self(2:).foo and self(small).foo stay VEC{INT}, not INT).
+                        boolean sectionOrVector = inner.contains(":");
+                        if (!sectionOrVector) {
+                            String idxType = localVarTypes.get(inner.trim());  // vector subscript?
+                            sectionOrVector = idxType != null && parseArray(canon(idxType)) != null;
+                        }
+                        if (!sectionOrVector) {
                             ArrayType at = curType != null ? parseArray(canon(curType)) : null;
                             curType = at != null ? at.elem : null;
                         }
