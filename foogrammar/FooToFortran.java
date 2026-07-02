@@ -634,6 +634,14 @@ public final class FooToFortran {
             for (FooParser.ProcDefContext pd : descendants(src.tree, FooParser.ProcDefContext.class))
                 if (pd.procHeader().IDENTIFIER().getText().equals(name)) matches.add(pd);
             if (matches.isEmpty()) return null;
+            // A get_from proc has no body to inherit, so it must never be chosen as
+            // the parent to inline. When a name has both a `template` (real body) and
+            // its own get_from instantiation (e.g. read_all_quantity in TEXTFILE),
+            // pick the bodied one. (Fall back to all if every match is a get_from.)
+            List<FooParser.ProcDefContext> bodied = new ArrayList<>();
+            for (FooParser.ProcDefContext pd : matches)
+                if (!Attrs.parse(pd.procHeader().procAttrs()).inherited) bodied.add(pd);
+            if (!bodied.isEmpty()) matches = bodied;
             if (matches.size() == 1) return matches.get(0);
             // 1) narrow to templates with the exact argument-name list (a get_from
             //    proc shares its template's arg names, e.g. (a,transpose_a,dagger_a))
