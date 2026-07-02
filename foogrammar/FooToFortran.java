@@ -1574,9 +1574,15 @@ public final class FooToFortran {
                         pendingCall = null; pendingNoRecv = false;
                     } else {
                         out.append('(').append(inner).append(')');
-                        // indexing an array-typed receiver yields its element type
-                        ArrayType at = curType != null ? parseArray(canon(curType)) : null;
-                        curType = at != null ? at.elem : null;
+                        // A single subscript x(i) yields the element type. A section or
+                        // substring x(a:b) / x(i,:) keeps the array/string type, so a
+                        // following `.method` still resolves to the right module
+                        // (self(2:).foo stays VEC{INT} -> VEC_INT_MODULE, not INT_MODULE;
+                        // s(a+1:).foo stays STR).
+                        if (!inner.contains(":")) {
+                            ArrayType at = curType != null ? parseArray(canon(curType)) : null;
+                            curType = at != null ? at.elem : null;
+                        }
                     }
                 } else if (tr.LBRACKET() != null) {
                     // encapsulated-element access: a(i)[j] -> a(i)%element(j)
