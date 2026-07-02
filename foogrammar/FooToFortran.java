@@ -336,6 +336,18 @@ public final class FooToFortran {
                         spliceTrailingComment(c, mi.getStop().getTokenIndex(), before);
                     }
                     else if (mi.dataStmt() != null) emitDataStmt(mi.dataStmt(), 3);
+                    else if (mi.interfaceBlock() != null && mi.interfaceBlock().IDENTIFIER() != null) {
+                        // Explicit module-level generic interface
+                        //   `interface NAME  m1  m2  … end`
+                        // groups distinctly-named specifics under one generic. Register
+                        // NAME -> {m1,m2,…} so buildInterfaceFile emits `interface NAME_`.
+                        // foo.pl drops these, so `.NAME` calls have no generic to resolve.
+                        String gname = mi.interfaceBlock().IDENTIFIER().getText();
+                        for (FooParser.GenericItemContext gi : mi.interfaceBlock().genericItem())
+                            for (FooParser.ProcHeaderContext ph : gi.procHeader())
+                                interfaceProcs.computeIfAbsent(gname, k -> new ArrayList<>())
+                                              .add(ph.IDENTIFIER().getText());
+                    }
                     c.pos = Math.max(c.pos, mi.getStop().getTokenIndex() + 1);
                     c.lastLine = mi.getStop().getLine();
                 } else if (ch instanceof org.antlr.v4.runtime.tree.TerminalNode
@@ -708,10 +720,12 @@ public final class FooToFortran {
                         localVarTypes.put(nameText(dn.name()), t);
                 }
             // self is declared implicitly when the body doesn't declare it itself
-            // (but not for `routinal` procs, where self is a function arg given an
-            // interface block in the body)
-            boolean routinal = Attrs.parse(pd.procHeader().procAttrs()).routinal;
-            if (!selfless && !routinal && !bodyDeclaresSelf(body))
+            // (but not for `routinal`/`functional` procs, where self is a procedure
+            // argument given an interface block in the body — a scalar `TYPE :: self`
+            // there would clash with the dummy procedure; foo.pl emits it anyway,
+            // which is a bug).
+            Attrs pAttrs = Attrs.parse(pd.procHeader().procAttrs());
+            if (!selfless && !pAttrs.routinal && !pAttrs.functional && !bodyDeclaresSelf(body))
                 f90.append("      ").append(selfDeclType()).append(" :: self\n");
             emitBodyList(body, c, 6, true);
             c.flushHidden(f90, pd.getStop().getTokenIndex(), 6);   // trailing comments
@@ -1795,7 +1809,7 @@ public final class FooToFortran {
     // ----------------------------------------------------- attribute parsing
 
     static final class Attrs {
-        boolean pure, PURE, elemental, ELEMENTAL, recursive, leaky, selfless, routinal;
+        boolean pure, PURE, elemental, ELEMENTAL, recursive, leaky, selfless, routinal, functional;
         boolean privateAcc, publicAcc, template, inherited;
         String getFromTarget, signatureComment;
         FooParser.AttrContext getFromAttr;
@@ -1817,7 +1831,8 @@ public final class FooToFortran {
                     case "recursive": a.recursive = true; break;
                     case "leaky":     a.leaky = true; break;
                     case "selfless":  a.selfless = true; break;
-                    case "routinal":  a.routinal = true; break;   // self is a function arg (interface)
+                    case "routinal":  a.routinal = true; break;   // self is a subroutine arg (interface)
+                    case "functional": a.functional = true; break; // self is a function arg (interface)
                     case "private":   a.privateAcc = true; break;
                     case "public":    a.publicAcc = true; break;
                     case "template":  a.template = true; break;
