@@ -577,6 +577,14 @@ add_custom_target(antlr4-translator DEPENDS ${ANTLR4_TRANSLATOR_STAMP})
 
 set(FOO_GENERATED_F90_OUTPUTS "")
 foreach(foopath ${SRC})
+    # Virtual (get_from template) modules - e.g. object.foo, vec{intrinsic}.foo,
+    # map{key,val}.foo - are inlined into their heirs and never compiled. Skip
+    # them so nothing is generated for them and they are never handed to the
+    # Fortran compiler. (They are also absent from FORTRAN_SRC.)
+    file(STRINGS "${foopath}" _foo_virtual REGEX "^[ \t]*virtual[ \t]+module")
+    if(_foo_virtual)
+        continue()
+    endif()
     get_filename_component(foofile ${foopath} NAME)
     string(REGEX REPLACE ".foo\$" ".F90" F90file ${foofile})
     # This is just so Make doesn't panic about unescaped { or ,
@@ -585,16 +593,20 @@ foreach(foopath ${SRC})
     string(REGEX REPLACE "___" "_" F90file ${F90file})
     string(REGEX REPLACE "__" "_" F90file ${F90file})
     string(REGEX REPLACE "_.F90" ".F90" F90file ${F90file})
+    # NB: no VERBATIM here. Foo file names contain shell brace-expansion syntax
+    # (e.g. map{int,int}.foo, map{vec{key},vec{val}}.foo). VERBATIM would leave
+    # the path unquoted and /bin/sh (bash) would brace-expand it into multiple
+    # args. Emit explicit double quotes around the paths so the shell treats each
+    # as a single literal argument.
     add_custom_command(
         OUTPUT ${F90file}
         COMMAND ${Java_JAVA_EXECUTABLE}
-        -cp ${ANTLR4_CLASSES_DIR}:${ANTLR4_JAR}
+        -cp "${ANTLR4_CLASSES_DIR}:${ANTLR4_JAR}"
         FooToFortran
-        --types "${FOO_TYPES_FILE}"
-        --foo "${foopath}"
-        --out-dir "${CMAKE_CURRENT_BINARY_DIR}"
+        --types \"${FOO_TYPES_FILE}\"
+        --foo \"${foopath}\"
+        --out-dir \"${CMAKE_CURRENT_BINARY_DIR}\"
         DEPENDS ${foopath} ${FOO_TYPES_FILE} ${ANTLR4_TRANSLATOR_STAMP}
-        VERBATIM
     )
     if(foopath MATCHES "^${FOO_DIR}/")
         list(APPEND FOO_GENERATED_F90_OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/${F90file})
