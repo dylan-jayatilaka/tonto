@@ -1447,6 +1447,9 @@ public final class FooToFortran {
                         curType = elemComp;
                     } else if ((ip = intrinsicProp(sel, "self")) != null) {
                         out.append(ip);                       // .dim -> size(self), etc.
+                    } else if (INTRINSIC_FNS.contains(sel.toLowerCase())) {
+                        pendingCall = sel;                    // .sin -> sin(self), .trim -> trim(self)
+                        out.append("self"); isCall = true;
                     } else {
                         pendingCall = sel + "_"; recordCall(selfFooType, sel);
                         out.append("self"); isCall = true;
@@ -1538,6 +1541,9 @@ public final class FooToFortran {
                         curType = elemComp;
                     } else if ((ip = intrinsicProp(sel, out.toString())) != null) {
                         out = new StringBuilder(ip); curType = null;
+                    } else if (INTRINSIC_FNS.contains(sel.toLowerCase())) {
+                        // tonto intrinsic: X.scan(s) -> scan(X,s), X.trim -> trim(X)
+                        pendingCall = sel; isCall = true; curType = null;
                     } else {
                         // method call on `out`: defer wrapping so a following
                         // `(args)` trailer is folded in -> sel_(out, args)
@@ -1643,6 +1649,15 @@ public final class FooToFortran {
                 return types.componentType(at.elem, sel);
             return null;
         }
+
+        /** Tonto intrinsic functions (foo.pl @tonto_intrinsic_functions): a
+         *  `.method(args)` on them drops the `_` and passes the receiver as the
+         *  first arg — X.sin -> sin(X), X.scan(s) -> scan(X,s), X.trim -> trim(X).
+         *  The argumentless inquiry/pointer ones (size/dim, allocated, associated,
+         *  created, destroyed, …) are handled by intrinsicProp instead. */
+        static final Set<String> INTRINSIC_FNS = Set.of(
+            "abs", "acos", "asin", "atan", "cos", "sin", "tan",
+            "mod", "modulo", "scan", "trim", "verify", "nullify");
 
         /** Array/pointer inquiry methods that map to Fortran intrinsics, or null. */
         String intrinsicProp(String name, String recv) {
