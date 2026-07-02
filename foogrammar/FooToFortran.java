@@ -263,6 +263,7 @@ public final class FooToFortran {
         final Map<String, Integer> overloadCount = new HashMap<>();   // base name -> overload count
         final Map<String, Integer> overloadIdx = new HashMap<>();     // base name -> running index
         final Map<String, List<String>> interfaceProcs = new LinkedHashMap<>(); // base -> specific names
+        final Map<String, List<String>> explicitAliases = new LinkedHashMap<>(); // generic -> member base names
         final Map<String, Set<String>> useOnly = new TreeMap<>();
 
         final Map<String, String[]> globals;   // global var name -> {canon foo type, fortran module}
@@ -345,8 +346,8 @@ public final class FooToFortran {
                         String gname = mi.interfaceBlock().IDENTIFIER().getText();
                         for (FooParser.GenericItemContext gi : mi.interfaceBlock().genericItem())
                             for (FooParser.ProcHeaderContext ph : gi.procHeader())
-                                interfaceProcs.computeIfAbsent(gname, k -> new ArrayList<>())
-                                              .add(ph.IDENTIFIER().getText());
+                                explicitAliases.computeIfAbsent(gname, k -> new ArrayList<>())
+                                               .add(ph.IDENTIFIER().getText());
                     }
                     c.pos = Math.max(c.pos, mi.getStop().getTokenIndex() + 1);
                     c.lastLine = mi.getStop().getLine();
@@ -1574,20 +1575,7 @@ public final class FooToFortran {
                         pendingCall = null; pendingNoRecv = false;
                     } else {
                         out.append('(').append(inner).append(')');
-                        // A single scalar subscript x(i) yields the element type. A
-                        // section/substring x(a:b) / x(i,:) OR a vector subscript x(v)
-                        // (v an array-valued index) yields an array, keeping the type so
-                        // a following `.method` resolves to the right module
-                        // (self(2:).foo and self(small).foo stay VEC{INT}, not INT).
-                        boolean sectionOrVector = inner.contains(":");
-                        if (!sectionOrVector) {
-                            String idxType = localVarTypes.get(inner.trim());  // vector subscript?
-                            sectionOrVector = idxType != null && parseArray(canon(idxType)) != null;
-                        }
-                        if (!sectionOrVector) {
-                            ArrayType at = curType != null ? parseArray(canon(curType)) : null;
-                            curType = at != null ? at.elem : null;
-                        }
+                        curType = indexResultType(curType, inner);
                     }
                 } else if (tr.LBRACKET() != null) {
                     // encapsulated-element access: a(i)[j] -> a(i)%element(j)
@@ -1666,6 +1654,27 @@ public final class FooToFortran {
         /** When self is an array VEC{T}/MAT{T}…, the component type of `sel` on the
          *  element type T (so `self.charge` on a VEC{ATOM} -> self%charge), else null. */
         String selfElemComponent(String sel) { return elemComponent(selfFooType, sel); }
+
+        /** Type of indexing an array/string `type` with rendered index list `inner`.
+         *  Result rank = number of section (contains ':') or vector-subscript
+         *  (array-valued index) arguments: 0 -> element type; full rank -> same type;
+         *  in between -> reduced-rank array (MAT{T}(:,i) -> VEC{T}). A non-array (STR)
+         *  keeps its type for a substring x(a:b), else element (null). */
+        String indexResultType(String type, String inner) {
+            if (type == null) return null;
+            int rank = 0;
+            for (String a : splitTopComma(inner)) {
+                a = a.trim();
+                if (a.contains(":")) rank++;
+                else { String t = localVarTypes.get(a);
+                       if (t != null && parseArray(canon(t)) != null) rank++; }
+            }
+            ArrayType at = parseArray(canon(type));
+            if (at == null) return rank > 0 ? type : null;   // STR(a:b) keeps STR; STR(i) -> null
+            if (rank == 0) return at.elem;
+            if (rank >= at.ndim) return type;
+            return headForRank(rank) + "{" + at.elem + "}";
+        }
 
         String elemComponent(String type, String sel) {
             if (type == null) return null;
@@ -1749,10 +1758,24 @@ public final class FooToFortran {
             // exported to all modules that `use` it. A bare `private` here would make
             // all types private and nothing could reference type(SYSTEM_TYPE) etc.
             intf.append(fooModuleName.equalsIgnoreCase("TYPES") ? "   public\n\n" : "   private\n\n");
+            // Combine the auto-generated per-base generics with explicit
+            // `interface NAME  member … end` aliases. An alias member is a base name,
+            // so expand it to that method's actual specific procedures (accounting for
+            // overload numbering: trace_product_with -> trace_product_with_0..3), else
+            // `module procedure <base>` would name a non-existent procedure.
+            Map<String, List<String>> all = new LinkedHashMap<>();
+            for (Map.Entry<String, List<String>> e : interfaceProcs.entrySet())
+                all.put(e.getKey(), new ArrayList<>(e.getValue()));
+            for (Map.Entry<String, List<String>> al : explicitAliases.entrySet()) {
+                List<String> specs = all.computeIfAbsent(al.getKey(), k -> new ArrayList<>());
+                for (String member : al.getValue())
+                    for (String s : interfaceProcs.getOrDefault(member, List.of(member)))
+                        if (!specs.contains(s)) specs.add(s);
+            }
             // foo.pl sorts the interface blocks by the emitted name (NAME_),
             // strict ASCII order (LC_ALL=C: uppercase before lowercase).
             List<Map.Entry<String, List<String>>> entries =
-                new ArrayList<>(interfaceProcs.entrySet());
+                new ArrayList<>(all.entrySet());
             entries.sort((a, b) -> (a.getKey() + "_").compareTo(b.getKey() + "_"));
             for (Map.Entry<String, List<String>> e : entries) {
                 intf.append("   public    ").append(e.getKey()).append("_\n");
@@ -1935,6 +1958,12 @@ public final class FooToFortran {
 
     private static final String[] ARRAY_HEADS = {"MAT7","MAT6","MAT5","MAT4","MAT3","MAT","VEC"};
     private static final int[]    ARRAY_NDIM  = {7, 6, 5, 4, 3, 2, 1};
+
+    /** Array-type head for a given rank: 1->VEC, 2->MAT, 3->MAT3, … */
+    static String headForRank(int r) {
+        for (int i = 0; i < ARRAY_NDIM.length; i++) if (ARRAY_NDIM[i] == r) return ARRAY_HEADS[i];
+        return "VEC";
+    }
 
     /** Parse `VEC{REAL}`, `MAT{REAL}(1:3,1:4)`, `VEC{EVEC{INT}}` … or null. */
     static ArrayType parseArray(String c) {
