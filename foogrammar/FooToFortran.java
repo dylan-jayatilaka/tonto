@@ -1524,13 +1524,15 @@ public final class FooToFortran {
             } else if (head.PLUS() != null) {
                 out.append('+').append(translatePostfix(head.postfix(), false).text);
             } else if (head.LPAREN() != null) {
-                out.append('(')
-                   .append(head.argList() != null ? renderArgList(head.argList()) : "")
-                   .append(')');
+                String inner = head.argList() != null ? renderArgList(head.argList()) : "";
+                out.append('(').append(inner).append(')');
+                if (isStringLiteral(inner.trim())) curType = "STR";   // ("...").method -> STR
             } else if (head.arrayConstructor() != null) {
                 out.append(renderArrayConstructor(head.arrayConstructor()));
             } else {
-                out.append(head.getText());              // literal
+                String lit = head.getText();
+                out.append(lit);                         // literal
+                if (isStringLiteral(lit)) curType = "STR";            // "...".method -> STR
             }
 
             for (FooParser.TrailerContext tr : p.trailer()) {
@@ -1947,6 +1949,11 @@ public final class FooToFortran {
     static String sp(int n) { StringBuilder b = new StringBuilder(); for (int i = 0; i < n; i++) b.append(' '); return b.toString(); }
 
     /** Split on top-level commas (ignoring those inside (), {}, []). */
+    /** A Foo/Fortran string literal starts with a single or double quote. */
+    static boolean isStringLiteral(String s) {
+        return s != null && !s.isEmpty() && (s.charAt(0) == '"' || s.charAt(0) == '\'');
+    }
+
     static List<String> splitTopComma(String s) {
         List<String> out = new ArrayList<>();
         int depth = 0, start = 0;
