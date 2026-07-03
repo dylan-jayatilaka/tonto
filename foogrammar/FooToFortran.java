@@ -554,13 +554,15 @@ public final class FooToFortran {
             // MAP{VEC{INT},VEC{INT}} yields KEY->INT and VAL->INT (not just VEC{KEY}->..).
             List<String> p = typeArgsOf(parentModule), c = typeArgsOf(selfFooType);
             for (int i = 0; i < Math.min(p.size(), c.size()); i++) pairTypeArgs(m, p.get(i), c.get(i));
-            // The bare universal self-type placeholders INTRINSIC / OBJECT map to the
-            // inheriting type: get_from(INTRINSIC) in module INT makes INTRINSIC -> INT,
-            // so a template declaration `v :: VEC{INTRINSIC}` becomes `VEC{INT}`. (The
-            // parameterised case VEC{INTRINSIC} inherited by VEC{REAL} is already
-            // handled positionally above.)
+            // The parent template's own type is a self placeholder: references to it in
+            // the inherited body map to the inheriting type. get_from(INTRINSIC) in INT
+            // makes VEC{INTRINSIC} -> VEC{INT}; get_from(BASIS) in SLATERBASIS makes an
+            // arg `b :: BASIS` -> SLATERBASIS. Only for a bare (non-parameterised) type
+            // name (uppercase; a lowercase parent like `prune` is a routine, not a
+            // type); the parameterised case VEC{OBJECT} is handled positionally above.
             String pBase = canon(parentModule);
-            if ((pBase.equals("INTRINSIC") || pBase.equals("OBJECT")) && !pBase.equals(canon(selfFooType)))
+            if (!pBase.isEmpty() && !pBase.contains("{") && Character.isUpperCase(pBase.charAt(0))
+                && !pBase.equals(canon(selfFooType)))
                 m.putIfAbsent(pBase, selfFooType);
             // named substitutions from `KEY?=>VAL` arguments (skip arg 0 = the module)
             if (gf != null) {
