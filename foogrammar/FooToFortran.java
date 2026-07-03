@@ -256,6 +256,7 @@ public final class FooToFortran {
         final Set<String> selflessProcs = new LinkedHashSet<>();   // selfless proc names in this module
         boolean inheritInjectPending; String inheritParent;
         Set<String> currentArgs = new LinkedHashSet<>();
+        boolean currentSelfless;   // true while rendering a `selfless` procedure body
         Map<String, String> localVarTypes = new HashMap<>();   // local/arg name -> base foo type
         final Map<String, String> moduleVars = new HashMap<>();   // this module's own vars -> foo type
         Map<String, String> subst = new LinkedHashMap<>();   // type-param substitutions (get_from)
@@ -694,6 +695,7 @@ public final class FooToFortran {
         /** Render a procedure body (decls + statements + hidden tokens). */
         void renderBody(Parsed src, FooParser.ProcDefContext pd, boolean inherited,
                         String parentName, boolean selfless) {
+            currentSelfless = selfless;
             List<FooParser.ProcBodyContext> body = pd.procBody();
             Cursor c = new Cursor(src.toks);
             c.pos = pd.procHeader().getStop().getTokenIndex() + 1;
@@ -840,6 +842,14 @@ public final class FooToFortran {
                                 && b.stmt() != null && isAssertionStmt(b.stmt());
                 if (isPre) {
                     preconds.add(b.stmt());                   // store; re-emitted at firstActive
+                } else if (b.localDecl() != null && currentSelfless && !currentArgs.contains("self")
+                           && b.localDecl().identList().declName().size() == 1
+                           && nameText(b.localDecl().identList().declName(0).name()).equals("self")) {
+                    // A selfless procedure has no implicit `self` dummy, so a stray
+                    // `self :: …` declaration would put an intent on a non-dummy — drop
+                    // it. BUT a selfless proc may still pass `self` as an EXPLICIT named
+                    // argument (char_array_to_str(self)); then self IS a dummy and the
+                    // declaration must stay — hence the currentArgs.contains("self") guard.
                 } else if (b.localDecl() != null && misparsedTypeCall(b.localDecl())) {
                     // `TYPE::method(args)` on its own line parses as a declaration
                     // (identList :: declTail) — re-emit it as the call it really is.
