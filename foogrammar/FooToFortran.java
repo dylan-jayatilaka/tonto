@@ -1482,7 +1482,7 @@ public final class FooToFortran {
                     } else if ((elemComp = selfElemComponent(sel)) != null) {
                         // self is an array VEC{T}; sel is a component of element T
                         out.append("self%").append(sel);
-                        curType = elemComp;
+                        curType = arrayOfComponent(selfFooType, elemComp);
                     } else if ((ip = intrinsicProp(sel, "self")) != null) {
                         out.append(ip);                       // .dim -> size(self), etc.
                     } else if (INTRINSIC_FNS.contains(sel.toLowerCase())) {
@@ -1576,7 +1576,7 @@ public final class FooToFortran {
                     } else if ((elemComp = elemComponent(curType, sel)) != null) {
                         // recv is an array VEC{T}; sel is a component of element T
                         out.append('%').append(sel);
-                        curType = elemComp;
+                        curType = arrayOfComponent(curType, elemComp);
                     } else if ((ip = intrinsicProp(sel, out.toString())) != null) {
                         out = new StringBuilder(ip); curType = null;
                     } else if (INTRINSIC_FNS.contains(sel.toLowerCase())) {
@@ -1697,6 +1697,17 @@ public final class FooToFortran {
             if (rank == 0) return at.elem;
             if (rank >= at.ndim) return type;
             return headForRank(rank) + "{" + at.elem + "}";
+        }
+
+        /** Component access on an array receiver yields an array of the component,
+         *  with the receiver's array head: VEC{ATOM}%charge -> VEC{REAL}, so a
+         *  following `.method` resolves to the array module. A non-array receiver or
+         *  an already-array component is returned unchanged. */
+        String arrayOfComponent(String receiverType, String componentType) {
+            ArrayType rat = receiverType != null ? parseArray(canon(receiverType)) : null;
+            if (rat != null && componentType != null && parseArray(canon(componentType)) == null)
+                return rat.head + "{" + componentType + "}";
+            return componentType;
         }
 
         String elemComponent(String type, String sel) {
