@@ -265,6 +265,7 @@ public final class FooToFortran {
         final Map<String, Integer> overloadIdx = new HashMap<>();     // base name -> running index
         final Map<String, List<String>> interfaceProcs = new LinkedHashMap<>(); // base -> specific names
         final Map<String, List<String>> explicitAliases = new LinkedHashMap<>(); // generic -> member base names
+        final Set<String> publicSpecs = new LinkedHashSet<>();  // specific names to also export `public`
         final Map<String, Set<String>> useOnly = new TreeMap<>();
 
         final Map<String, String[]> globals;   // global var name -> {canon foo type, fortran module}
@@ -388,6 +389,10 @@ public final class FooToFortran {
             currentProc = specName;                               // overload-specific (for ENSURE prefix)
             currentProcBase = name;                               // base name (for get_from parent lookup)
             interfaceProcs.computeIfAbsent(name, k -> new ArrayList<>()).add(specName);
+            // A `public` proc also exports its SPECIFIC name (not just the generic
+            // `name_`), so it can be referenced by name, e.g. MODULE::proc passed as
+            // an argument. foo.pl: specific_access == "public".
+            if (a.publicAcc) publicSpecs.add(specName);
 
             // section comments / blanks preceding this procedure
             int hdrTok = h.getStart().getTokenIndex();
@@ -1797,6 +1802,9 @@ public final class FooToFortran {
             entries.sort((a, b) -> (a.getKey() + "_").compareTo(b.getKey() + "_"));
             for (Map.Entry<String, List<String>> e : entries) {
                 intf.append("   public    ").append(e.getKey()).append("_\n");
+                for (String spec : e.getValue())
+                    if (publicSpecs.contains(spec))
+                        intf.append("   public    ").append(spec).append('\n');
                 intf.append("   interface ").append(e.getKey()).append("_\n");
                 for (String spec : e.getValue())
                     intf.append("      module procedure ").append(spec).append('\n');
