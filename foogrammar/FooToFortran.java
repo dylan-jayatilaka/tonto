@@ -257,6 +257,7 @@ public final class FooToFortran {
         boolean inheritInjectPending; String inheritParent;
         Set<String> currentArgs = new LinkedHashSet<>();
         boolean currentSelfless;   // true while rendering a `selfless` procedure body
+        boolean suppressUse;       // true while probing an expression's type only
         Map<String, String> localVarTypes = new HashMap<>();   // local/arg name -> base foo type
         final Map<String, String> moduleVars = new HashMap<>();   // this module's own vars -> foo type
         Map<String, String> subst = new LinkedHashMap<>();   // type-param substitutions (get_from)
@@ -1621,7 +1622,7 @@ public final class FooToFortran {
                         pendingCall = null; pendingNoRecv = false;
                     } else {
                         out.append('(').append(inner).append(')');
-                        curType = indexResultType(curType, inner);
+                        curType = indexResultType(curType, inner, tr.argList());
                     }
                 } else if (tr.LBRACKET() != null) {
                     // encapsulated-element access: a(i)[j] -> a(i)%element(j)
@@ -1701,25 +1702,43 @@ public final class FooToFortran {
          *  element type T (so `self.charge` on a VEC{ATOM} -> self%charge), else null. */
         String selfElemComponent(String sel) { return elemComponent(selfFooType, sel); }
 
-        /** Type of indexing an array/string `type` with rendered index list `inner`.
-         *  Result rank = number of section (contains ':') or vector-subscript
-         *  (array-valued index) arguments: 0 -> element type; full rank -> same type;
-         *  in between -> reduced-rank array (MAT{T}(:,i) -> VEC{T}). A non-array (STR)
-         *  keeps its type for a substring x(a:b), else element (null). */
-        String indexResultType(String type, String inner) {
+        /** Type of indexing an array/string `type` with index list `al`.
+         *  Result rank = number of section (a:b, :) or vector-subscript (array-valued
+         *  index) arguments: 0 -> element type; full rank -> same type; in between ->
+         *  reduced-rank array (MAT{T}(:,i) -> VEC{T}; VEC{ATOM}(vec_of_int) -> VEC{ATOM}).
+         *  A non-array (STR) keeps its type for a substring x(a:b), else element (null). */
+        String indexResultType(String type, String inner, FooParser.ArgListContext al) {
             if (type == null) return null;
+            // Rank per index arg: a section shows a ':' in its rendered text (reliable
+            // whether the ':' is an arg-level range or an inner binOp); otherwise probe
+            // the arg's type for a vector subscript (array-valued index).
+            List<String> texts = splitTopComma(inner);
+            List<FooParser.ArgContext> args = al != null ? al.arg() : java.util.List.of();
             int rank = 0;
-            for (String a : splitTopComma(inner)) {
-                a = a.trim();
-                if (a.contains(":")) rank++;
-                else { String t = localVarTypes.get(a);
-                       if (t != null && parseArray(canon(t)) != null) rank++; }
+            for (int i = 0; i < texts.size(); i++) {
+                if (texts.get(i).contains(":")) { rank++; continue; }   // section
+                if (i < args.size()) {
+                    String t = indexArgFooType(args.get(i));            // vector subscript?
+                    if (t != null && parseArray(canon(t)) != null) rank++;
+                }
             }
             ArrayType at = parseArray(canon(type));
             if (at == null) return rank > 0 ? type : null;   // STR(a:b) keeps STR; STR(i) -> null
             if (rank == 0) return at.elem;
             if (rank >= at.ndim) return type;
             return headForRank(rank) + "{" + at.elem + "}";
+        }
+
+        /** Foo type of a single-expression index argument (for vector-subscript
+         *  detection), computed by re-translating its postfix with side effects
+         *  (recordUse) suppressed. Returns null for keyword/section/multi-postfix args. */
+        String indexArgFooType(FooParser.ArgContext a) {
+            if (a.name() != null || a.expr() == null || a.expr().size() != 1) return null;
+            FooParser.ExprContext e = a.expr(0);
+            if (e.postfix() == null || e.postfix().size() != 1) return null;   // not a lone postfix
+            boolean save = suppressUse; suppressUse = true;
+            try { return translatePostfix(e.postfix(0), false).fooType; }
+            finally { suppressUse = save; }
         }
 
         /** Component access on an array receiver yields an array of the component,
@@ -1791,6 +1810,7 @@ public final class FooToFortran {
 
         /** Record a `use <mod>, only: <symbol>` dependency (skip self-use). */
         void recordUse(String fortranMod, String symbol) {
+            if (suppressUse) return;                              // type-probe: no side effects
             if (fortranMod.equals(selfModuleName)) return;        // don't use own module
             // TYPES and SYSTEM are pulled in wholesale (`use X_MODULE`), so they
             // never get an `only:` clause (matches foo.pl).
