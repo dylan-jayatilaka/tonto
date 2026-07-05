@@ -1487,12 +1487,6 @@ public final class FooToFortran {
                     if (ip != null) {
                         // inlined_by_foo on self: `.:destroyed` -> NOT associated(self)
                         out.append(ip);
-                    } else if (types.isComponent(selfFooType, method)) {
-                        // a (readonly) component reached via a submodule qualifier,
-                        // e.g. .INQ:refine_positions_only, is a component access — not
-                        // a procedure call in that submodule.
-                        out.append("self%").append(method);
-                        curType = types.componentType(selfFooType, method);
                     } else {
                         pendingCall = colon ? method + "_" : method;
                         recordUse(submoduleModule(hasQual ? chx.qualifier().getText() : null), pendingCall);
