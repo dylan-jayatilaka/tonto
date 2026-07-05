@@ -1438,9 +1438,13 @@ public final class FooToFortran {
                 boolean colon = chx.COLON() != null, dcolon = chx.DCOLON() != null;
                 boolean dot = chx.DOT() != null;
                 if (hasQual && (colon || dcolon) && !dot) {
-                    // MODULE:method (generic) / MODULE::method (non-generic)
+                    // MODULE:method (generic) / MODULE::method (non-generic). Resolve a
+                    // get_from placeholder in the method name (REFLECTION:SHOW? with
+                    // SHOW?=>stl -> REFLECTION:stl) BEFORE recording the use, so the
+                    // dependency is `use REFLECTION_MODULE, only: stl_`, not on the
+                    // placeholder name.
                     String modFoo = chx.qualifier().getText();
-                    String method = nameText(chx.name());
+                    String method = substSelector(nameText(chx.name()));
                     String[] gi = globals.get(method);
                     if (colon && (!isModuleLikeQualifier(modFoo)
                                   || currentArgs.contains(modFoo) || localVarTypes.containsKey(modFoo))) {
