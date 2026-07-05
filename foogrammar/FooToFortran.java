@@ -1487,6 +1487,12 @@ public final class FooToFortran {
                     if (ip != null) {
                         // inlined_by_foo on self: `.:destroyed` -> NOT associated(self)
                         out.append(ip);
+                    } else if (types.isComponent(selfFooType, method)) {
+                        // a (readonly) component reached via a submodule qualifier,
+                        // e.g. .INQ:refine_positions_only, is a component access — not
+                        // a procedure call in that submodule.
+                        out.append("self%").append(method);
+                        curType = types.componentType(selfFooType, method);
                     } else {
                         pendingCall = colon ? method + "_" : method;
                         recordUse(submoduleModule(hasQual ? chx.qualifier().getText() : null), pendingCall);
@@ -1557,7 +1563,10 @@ public final class FooToFortran {
                 if (isStringLiteral(lit)) curType = "STR";            // "...".method -> STR
             }
 
-            for (FooParser.TrailerContext tr : p.trailer()) {
+            for (int ti = 0; ti < p.trailer().size(); ti++) {
+                FooParser.TrailerContext tr = p.trailer().get(ti);
+                boolean nextIsCall = ti + 1 < p.trailer().size()
+                                     && p.trailer().get(ti + 1).LPAREN() != null;
                 // A pending method call whose args are NOT a following `(...)` is
                 // closed now (e.g. `.x.destroy.something` -> destroy_(self%x) then …).
                 if (pendingCall != null && tr.LPAREN() == null) {
@@ -1583,6 +1592,14 @@ public final class FooToFortran {
                         recordUse(submod == null || submod.equalsIgnoreCase("MAIN")
                                   ? fortranTypeName(selfFooType) + "_MODULE"
                                   : fortranTypeName(selfFooType) + "_" + submod + "_MODULE", pendingCall);
+                        if (tr.DCOLON() != null && !nextIsCall) {
+                            // a bare TYPE.SUBMOD::proc (not followed by `(...)`) is a
+                            // procedure passed BY NAME, not a call:
+                            // DIFFRACTION_DATA.INQ::chi2F given to min_BFGS -> `chi2F`.
+                            out = new StringBuilder(method);
+                            pendingCall = null; isCall = false; curType = null;
+                            continue;
+                        }
                         if (selflessProcs.contains(method)) { out = new StringBuilder(); pendingNoRecv = true; }
                         else out = new StringBuilder("self");
                     } else if (curType != null) {
