@@ -537,6 +537,19 @@ public final class FooToFortran {
             return (v != null && v.matches("\\w+")) ? v : sel;
         }
 
+        /** Type of a get_from placeholder used as a receiver head, e.g.
+         *  TO?=>.slaterbasis (subst value "self%slaterbasis") -> SLATERBASIS, so a
+         *  following `.method` records the right use. Handles a self-component value;
+         *  null otherwise. */
+        String substReceiverType(String nm) {
+            if (subst.isEmpty()) return null;
+            String v = subst.get(nm);
+            if (v == null) v = subst.get(nm + "?");
+            if (v == null) return null;
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("self%(\\w+)").matcher(v);
+            return m.matches() ? types.componentType(selfFooType, m.group(1)) : null;
+        }
+
         /** Pair a parent type-arg with the child's, recursing into nested params. */
         void pairTypeArgs(Map<String, String> m, String parent, String child) {
             parent = canon(parent); child = canon(child);
@@ -1516,9 +1529,11 @@ public final class FooToFortran {
                     // bare name (local var, `self`, or a cross-module global); track type
                     String nm = nameText(chx.name());
                     out.append(nm);
+                    String subRecv;
                     if (nm.equals("self")) curType = selfFooType;
                     else if (localVarTypes.containsKey(nm)) curType = localVarTypes.get(nm);
                     else if (moduleVars.containsKey(nm)) curType = moduleVars.get(nm);
+                    else if ((subRecv = substReceiverType(nm)) != null) curType = subRecv;
                     else { String gt = resolveGlobal(nm); if (gt != null) curType = gt; }
                 } else {
                     out.append(head.getText());          // other forms: TODO
