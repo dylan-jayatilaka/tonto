@@ -29,3 +29,9 @@ block compilation; they are correctness-of-match or robustness refinements.
 - Operator spacing in re-parsed template bodies is canonicalised (`a==b`), which
   matches release's convention but differs from the pre-substitution spacing in a
   few `EQ=>==` template cases (e.g. test_parallel).
+
+## Program / module-variable handling
+- **stdin/stdout/stderr as known module variables.** The archaic form
+  `TEXTFILE:destroy(stdout)` now works. The modern `stdout.destroy` form needs
+  stdin/stdout/stderr recognised as global module variables (foo.pl keeps such a
+  table) so the receiver type resolves; verify buildGlobalTable captures them.

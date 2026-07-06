@@ -497,7 +497,8 @@ public final class FooToFortran {
             localVarTypes = new HashMap<>();
             List<FooParser.ProcBodyContext> body = prog.procBody();
             for (FooParser.ProcBodyContext b : body)
-                if (b.localDecl() != null && b.localDecl().declTail().typeSpec() != null) {
+                if (b.localDecl() != null && !misparsedTypeCall(b.localDecl())
+                        && b.localDecl().declTail().typeSpec() != null) {
                     String t = canon(b.localDecl().declTail().typeSpec().getText()).replace("?", "");
                     for (FooParser.DeclNameContext dn : b.localDecl().identList().declName())
                         localVarTypes.put(nameText(dn.name()), t);
@@ -1010,7 +1011,8 @@ public final class FooToFortran {
             // `localvar.component` -> `localvar%component`)
             localVarTypes = new HashMap<>();
             for (FooParser.ProcBodyContext b : body)
-                if (b.localDecl() != null && b.localDecl().declTail().typeSpec() != null) {
+                if (b.localDecl() != null && !misparsedTypeCall(b.localDecl())
+                        && b.localDecl().declTail().typeSpec() != null) {
                     String t = canon(applySubst(b.localDecl().declTail().typeSpec().getText())).replace("?", "");
                     for (FooParser.DeclNameContext dn : b.localDecl().identList().declName())
                         localVarTypes.put(nameText(dn.name()), t);
