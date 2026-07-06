@@ -339,6 +339,59 @@ A large class may be split across files. `molecule.base.foo` declares
 `module MOLECULE.BASE`, a submodule of `MOLECULE` (file-name head = lowercase
 type name). Submodule-qualified calls are described in §11.
 
+**A submodule-split type has no base module.** Each submodule file becomes its
+own Fortran module — `MOLECULE.MAIN` → `MOLECULE_MAIN_MODULE`, `MOLECULE.GRID` →
+`MOLECULE_GRID_MODULE`, and so on. **Nothing declares a plain `module MOLECULE`,
+so there is no `MOLECULE_MODULE`.** (The derived type itself, `MOLECULE_TYPE`,
+lives in `types.foo`/`TYPES_MODULE`, so `type(MOLECULE_TYPE)` is always available;
+it is only the *procedure* home module that is split.)
+
+Consequently, a method call on a `MOLECULE` object — `.make_ED_grid`, or
+`mol.make_fock` — must `use` the *submodule* that actually defines it, not a base
+module. The translator scans every `molecule.*.foo` file up front to build a
+`method → submodule` registry:
+
+- defined in the **current** submodule → no `use` (a same-module call);
+- defined in **another** submodule → `use MOLECULE_XXX_MODULE, only: method_`;
+- a call whose home can't be found falls back to `<TYPE>_MODULE` — which, for a
+  split type, does not exist, so an unresolved `use MOLECULE_MODULE` is the tell
+  that a method was mis-resolved.
+
+`.MAIN:proc` therefore resolves to `MOLECULE_MAIN_MODULE` (the `molecule.main.foo`
+submodule), **not** a base `MOLECULE_MODULE`.
+
+### Main programs — `runfiles/run_XXX.foo`
+
+The executables' entry points live in `runfiles/`, are always named `run_XXX.foo`,
+and begin with `program <NAME>` (not `module`):
+
+```foo
+program run_HAR
+   implicit none
+
+   default_basis :: STR  DEFAULT("def2-SVP")
+   m            :: MOLECULE@
+   ...
+   TONTO_CREATE
+   ...
+   MOLECULE.MAIN:cleanup
+   TEXTFILE:destroy(stdout)
+   TONTO_DESTROY
+end
+```
+
+A program is a body of declarations and **executable statements** (like a
+procedure body) ending in a bare `end`; it has **no `contains`** and no internal
+procedures. It is emitted as a real Fortran main program (`program NAME … end
+program`, with its own `_main` so the executable links) rather than a module. The
+CMake targets rename the outputs: `run_molecule` → **tonto**, `run_har` → **hart**,
+`run_rgbi` → **rgbi**.
+
+Because a program is a *consumer* of the modules (which live with `types.foo`), the
+translator derives its module registries from the `--types` file's directory, not
+the input file's directory — otherwise a `run_XXX.foo` in `runfiles/` would look
+for `MOLECULE`'s submodules in the wrong place.
+
 ---
 
 ## 7. Procedures
@@ -381,10 +434,16 @@ subroutines). A `selfless` procedure has no `self`.
 | `public` / `private` | visibility |
 
 > **Assertions in `pure`/`elemental` (lowercase):** because `ENSURE`/`DIE`/`WARN`
-> expand to error-message calls (a side effect), they are **illegal** in a true
-> Fortran `pure`/`elemental` procedure and must be commented out (`! ENSURE…`),
-> kept only as documentation. In an uppercase-`PURE`/`ELEMENTAL` procedure (a C
-> macro) they are allowed. This is exactly why the case is significant.
+> expand to error-message calls (`call ensure_(tonto,…)`, a side effect), they are
+> **illegal** in a true Fortran `pure`/`elemental` procedure — gfortran reports
+> "no specific subroutine for the generic `ensure_`" (the non-pure specific is
+> excluded in a pure context). The lowercase attribute is *always* applied (it is a
+> real Fortran keyword); the **uppercase** `PURE`/`ELEMENTAL` are C macros that a
+> debug build switches off, so their assertions are always legal. The translator
+> therefore **emits any assertion in a lowercase `pure`/`elemental` procedure
+> commented out** (`! ENSURE…`, kept as documentation) — including ones inherited
+> from a template — and keeps them live everywhere else. This is exactly why the
+> case is significant.
 
 ### Procedure arguments that are themselves procedures
 
@@ -429,7 +488,28 @@ The translator numbers overloads `name_0`, `name_1`, … and emits a generic
 interface `name_` selecting among them. A *generic* call uses the bare/`:` form;
 a *non-generic* call (`::`) names a specific procedure.
 
----
+**Two kinds of explicit `interface NAME … end` block** (declared in the module's
+data section, before `contains`):
+
+- **Multi-member** — groups *distinct* procedures under one umbrella generic, e.g.
+  `interface to_str { to_str_int_0; to_str_int_1; to_str_int_2 }` → the generic
+  `to_str_` that other modules call. This must be emitted so those calls resolve.
+- **Single-member** — a *procedure rename*: an alternate call-site name for one
+  procedure, e.g. `interface diagonal_plus { increment_diagonal_by }` or
+  `interface uncompress_from_pyramid { symmetric_unzip_triangle }`. The generic
+  `NAME_` is emitted too (so a call `x.uncompress_from_pyramid` resolves via
+  `uncompress_from_pyramid_` → the member's procedures).
+
+> Note: `foo.pl`'s module-interface-scope handler is a no-op, so `release/` omits
+> these interface blocks from the `.int` — which is why some of its own `.F90`
+> executables fail to link. The new translator emits them (a small, deliberate
+> `.int` deviation) so the calls resolve and the build links.
+
+**Visibility in the `.int`.** The generic interface `name_` is `public` by default
+and `private` only when **every** overload carries the `private` attribute (one
+`public` overload makes the whole generic public). An `elemental` procedure's
+generic is public — it is meant to be used in an array/VEC context outside its
+module — but its scalar *specific* name is not separately exported.
 
 ## 9. `get_from` template inheritance
 
@@ -441,8 +521,20 @@ to_str result (string) ::: get_from(INTRINSIC, FMT?=>*), pure
 end
 ```
 
-**Inheritance is text inclusion with macro substitution — it is not recursive.**
-The template body is rendered with the substitutions applied.
+**Inheritance is macro-expand-then-reparse, mirroring `foo.pl`'s two passes.** The
+translator takes the parent template's *source text*, applies the substitutions
+(`KEY?→VALUE` and the paired type parameters) to that **text**, then re-lexes and
+re-parses the expanded source with a fresh lexer/parser and translates the
+resulting concrete subtree like ordinary code. This matters because no placeholder
+token ever reaches semantic analysis, so the emitted calls and `use` dependencies
+are derived from the *real* substituted names — an earlier "walk the template tree
+then patch the output string" approach mis-recorded uses of the raw placeholder
+(e.g. a spurious `use MOLECULE_MODULE, only: GRID_`).
+
+**Comments in a template are left verbatim** — they are *not* substituted. `foo.pl`
+does the same: an inherited body keeps `! The following code is inherited from
+VEC{OBJECT}` and documentation like `"conjg" is replaced with "1*"` unchanged, even
+though the code around them is substituted.
 
 ### Placeholder keys: `KEY?=>VALUE`
 
@@ -562,16 +654,29 @@ This holds **even when the method name coincides with a Fortran intrinsic**:
 `trim_blanks_from_end`), `fmt.scan` → `scan_(fmt)`. They are *not* the Fortran
 intrinsics.
 
+**The exceptions are a hand-maintained set of real intrinsic functions** that the
+translator *does* map through, `.name` → `name(x)`: `abs`, `sin`/`cos`/`tan`,
+`asin`/`acos`/`atan`, `mod`/`modulo`, `nullify`, and the Fortran-2008 error
+functions `erf`/`erfc` (`r1.erfc` → `erfc(r1)`). Fortran intrinsic return types
+cannot be derived from the sources, so this table (and the one below) is extended
+by hand as new intrinsics are encountered.
+
 ### Intrinsic pseudo-properties
 
 A small fixed set of `.name` selectors map to Fortran intrinsics rather than to
-method calls:
+method calls. Each **carries a result type** so a *chained* method resolves — e.g.
+`.dim.is_even` is `size(self)` (an `INT`), so `is_even` resolves in `INT_MODULE`
+(`is_even_(size(self))`):
 
-| Foo | Fortran |
-|---|---|
-| `.dim`, `.dim1` … `.dim7` | `size(x)`, `size(x,1)` … |
-| `.allocated` / `.deallocated` | `allocated(x)` / `NOT allocated(x)` |
-| `.associated` / `.disassociated` | `associated(x)` / `NOT associated(x)` |
+| Foo | Fortran | result type |
+|---|---|---|
+| `.dim`, `.dim1` … `.dim7` | `size(x)`, `size(x,1)` … | `INT` |
+| `.allocated` / `.deallocated` | `allocated(x)` / `NOT allocated(x)` | `BIN` |
+| `.associated` / `.disassociated` | `associated(x)` / `NOT associated(x)` | `BIN` |
+
+`NOT` expands (via a C macro) to `.not.`; two adjacent `.not.` are rejected by
+gfortran, so `NOT .x.deallocated` (i.e. `NOT (NOT allocated(x))`) is emitted
+parenthesised.
 
 ### The `.` vs `%` component selector
 
@@ -595,8 +700,17 @@ STR::get_next_item(self,item,f,l)    ! explicit NON-generic call (double colon)
   and the name must not be overloaded).
 - **Submodule** calls put the submodule before the colon:
   `.SET:delete_atom_SCF_archives` (generic call into submodule `SET`),
-  `.MAIN:setup(...)` (into the main module), `.:setup(...)` / `.::setup(...)`
-  within the same submodule.
+  `.MAIN:setup(...)` (into the `MAIN` submodule → `MOLECULE_MAIN_MODULE`),
+  `.:setup(...)` / `.::setup(...)` within the same submodule. The target module is
+  resolved through the cross-submodule registry (§6), so the correct
+  `MOLECULE_XXX_MODULE` is used (or the call is a same-module one and no `use` is
+  emitted).
+- A **type-qualified** call `TYPE.SUBMOD:proc` (no leading dot — e.g.
+  `MOLECULE.MAIN:cleanup`, `TEXTFILE:destroy(stdout)`) names the *module*, not a
+  receiver object, and in practice targets a `selfless` procedure (there is no
+  other way to call one). The translator recognises selfless targets and passes no
+  `self`. A genuine non-selfless exception should be rewritten with `.SUBMOD:proc`
+  (leading dot) in the source.
 
 ---
 
@@ -712,9 +826,30 @@ the new translator deliberately emits the *correct* result instead. Known cases:
   TRANSPOSE_A=TRUE)`): `foo.pl` does not substitute it (leaving the wrong
   `TRANSPOSE_A` for a complex change-of-basis). The new translator applies it
   (`DAGGER_A`).
-- **`pure`/`elemental` precondition assertions** — illegal as a side effect;
-  commented out in the sources (and the new translator omits any that are
-  inherited from a template into a lowercase-`pure` procedure).
+- **`pure`/`elemental` precondition assertions** — illegal as a side effect; the
+  translator emits them commented out in any lowercase-`pure`/`elemental`
+  procedure (§7), whether written locally or inherited from a template.
+
+Further edge cases discovered while getting the whole tree to compile (debug
+build, which turns *on* preconditions and turns *off* the `PURE`/`ELEMENTAL`
+macros, and so exercises far more code than a release build):
+
+- **`TYPE::method` mis-parses as a declaration.** A statement like
+  `TEXTFILE::create_stdout` looks like `identList :: declTail`, i.e. a variable
+  `TEXTFILE` of type `create_stdout`. The translator recognises this shape and
+  re-emits it as the call it really is — and, crucially, does **not** enter such a
+  "variable" into the local-variable table (otherwise a later
+  `TEXTFILE:destroy(stdout)` would see `TEXTFILE` as a known local and mis-read the
+  `:` as an array-section `lo:hi`, emitting the statement verbatim).
+- **Double `NOT`.** `NOT` is a macro for `.not.`; `NOT .x.deallocated` becomes
+  `.not. .not. allocated(x)`, which gfortran rejects — the translator parenthesises
+  it as `NOT (NOT allocated(x))`. (The clean source alternative is `.x.allocated`.)
+- **`stdin`/`stdout`/`stderr`** are global module variables; the archaic
+  `TEXTFILE:destroy(stdout)` and the modern `stdout.destroy` should both resolve.
+- **Chained intrinsic pseudo-properties** (`.dim.is_even`) require the pseudo-
+  property to carry a result type (§11); otherwise the chained method's home
+  module is unknown and no `use` is recorded (harmless in release, where the
+  containing `ENSURE` is compiled out, but a hard error in a debug build).
 
 Other deliberate normalisations in the sources: all block terminators are bare
 `end`; component access via `%` or `.` (translator-resolved); array constructors
@@ -726,8 +861,11 @@ use `[ ]`.
 
 The ANTLR4 grammar is organised roughly as:
 
-- **Program / module**: `program`, `moduleDef`, `moduleName`, `moduleDataItem`,
-  `moduleProcItem`, `typeDef`, `interfaceBlock`.
+- **Program / module**: `program` (the file: a sequence of `moduleDef` or
+  `programDef`), `moduleDef`, `programDef` (`PROGRAM moduleName; procBody*; end`
+  for a main program), `moduleName`, `moduleDataItem`, `moduleProcItem`, `typeDef`,
+  `interfaceBlock`. A `procBody` also allows an `implicitStmt`, so a program's
+  `implicit none` parses.
 - **Declarations**: `varDecl` / `localDecl` (`identList :: declTail`), `declTail`
   (`typeSpec ptrSuffix? attrSuffix? initSuffix?`), `dataStmt`.
 - **Procedures**: `procDef`, `procHeader`, `procArgs`, `procResult`, `procAttrs`,
