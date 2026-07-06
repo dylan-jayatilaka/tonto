@@ -2070,14 +2070,23 @@ public final class FooToFortran {
             // so expand it to that method's actual specific procedures (accounting for
             // overload numbering: trace_product_with -> trace_product_with_0..3), else
             // `module procedure <base>` would name a non-existent procedure.
-            // foo.pl's .int is built purely from %overload_count (real procedure
-            // names). Explicit `interface NAME  m1 m2 … end` alias blocks are NOT
-            // emitted (its module-interface-scope handler is a no-op); NAME is only an
-            // alternate call-site name for its members, not a separate generic. So we
-            // do not merge explicitAliases here (release emits e.g. no diagonal_plus_).
+            // An explicit `interface NAME  m1 m2 … end` block with MULTIPLE members is
+            // a real umbrella generic that groups distinct procedures (e.g.
+            // `interface to_str { to_str_int_0 to_str_int_1 to_str_int_2 }` -> the
+            // generic `to_str_` that other modules call). It MUST be emitted or those
+            // calls are unresolved. A SINGLE-member block is just a procedure rename
+            // (e.g. `interface diagonal_plus { increment_diagonal_by }`) — an alternate
+            // call-site name, not a separate generic — so it is not emitted.
             Map<String, List<String>> all = new LinkedHashMap<>();
             for (Map.Entry<String, List<String>> e : interfaceProcs.entrySet())
                 all.put(e.getKey(), new ArrayList<>(e.getValue()));
+            for (Map.Entry<String, List<String>> al : explicitAliases.entrySet()) {
+                if (al.getValue().size() < 2) continue;          // single member = rename, skip
+                List<String> specs = all.computeIfAbsent(al.getKey(), k -> new ArrayList<>());
+                for (String member : al.getValue())
+                    for (String s : interfaceProcs.getOrDefault(member, List.of(member)))
+                        if (!specs.contains(s)) specs.add(s);
+            }
             // foo.pl sorts the interface blocks by the emitted name (NAME_),
             // strict ASCII order (LC_ALL=C: uppercase before lowercase).
             List<Map.Entry<String, List<String>>> entries =
