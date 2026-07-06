@@ -286,7 +286,12 @@ public final class FooToFortran {
         if (fooPath == null || outDir == null)
             throw new IllegalArgumentException("Usage: FooToFortran --foo <f.foo> --out-dir <d> "
                 + "[--types <types.foo>] [--foofiles-dir <d>]");
-        if (foofilesDir == null) foofilesDir = fooPath.toAbsolutePath().getParent();
+        // The registries (types, cross-submodule methods, selfless, globals) describe
+        // the MODULES, which live alongside types.foo. A main program in runfiles/ is a
+        // consumer, so derive foofilesDir from the types file (not the input's parent),
+        // else a run_XXX.foo would scan runfiles/ and miss MOLECULE's submodules.
+        if (foofilesDir == null)
+            foofilesDir = (typesPath != null ? typesPath : fooPath).toAbsolutePath().getParent();
         if (typesPath == null)   typesPath   = foofilesDir.resolve("types.foo");
 
         TypeTable types = new TypeTable();
