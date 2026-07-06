@@ -35,3 +35,34 @@ block compilation; they are correctness-of-match or robustness refinements.
   `TEXTFILE:destroy(stdout)` now works. The modern `stdout.destroy` form needs
   stdin/stdout/stderr recognised as global module variables (foo.pl keeps such a
   table) so the receiver type resolves; verify buildGlobalTable captures them.
+
+## In progress: explicit `self :: INOUT` for non-selfless subroutines (cosmetic tidy)
+
+**Goal (user):** for every non-selfless *subroutine* whose body does not explicitly
+declare `self`, emit `self :: INOUT` (i.e. `type(X_TYPE), INOUT :: self`). Does NOT
+apply to `functional`/`routinal` procs. This intentionally breaks the regression
+vs `release/`; the new translator output is to become the canonical reference.
+
+**One-line change** (reverted for now to keep the tree compiling): in `renderBody`,
+the implicit self-decl branch — emit `, INOUT :: self` for a subroutine
+(`pd.procHeader().procResult()==null`), plain `:: self` for a function.
+
+**Blocker found — a blanket rule does not compile.** Some non-selfless subroutines
+are *read-only* in `self` (they read the object, e.g. a solver). Example:
+`MAT{REAL}` `solve_linear_equation` is called `solve_linear_equation_(self(list,list),…)`
+where `self(list,list)` is a **vector-subscripted section** — illegal as an
+`INOUT`/`OUT` actual argument, so gfortran reports "no specific subroutine for the
+generic". With no intent it compiled.
+
+**Options to decide (tomorrow):**
+1. Apply the INOUT rule, then declare `self :: IN` explicitly in the *source* for
+   the read-only subroutines (find them by iterating compile errors). Matches the
+   "where self is not explicitly declared" wording — exceptions declare it.
+2. Only mark `self` INOUT when the body actually assigns to self / a component
+   (translator-side analysis); read-only subroutines get IN.
+3. Decide the function case too: currently functions keep no-intent; for full
+   consistency they could be `self :: IN` (but IN risks breaking any function that
+   writes self, so validate by rebuild).
+
+Whichever is chosen, re-verify the DEBUG build still compiles+links before
+committing, since the output is now the canonical reference.
