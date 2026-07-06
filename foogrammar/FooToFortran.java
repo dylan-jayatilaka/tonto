@@ -166,6 +166,60 @@ public final class FooToFortran {
         return g;
     }
 
+    /** For a type split across submodule files (MOLECULE.GRID, MOLECULE.RHO, …),
+     *  map its base type -> (method name -> the set of submodule Fortran modules
+     *  that define it). A method call on such a type (`.make_ED_grid`, or
+     *  `mol.make_fock`) must `use` the submodule that actually defines it, not the
+     *  base MODULE (which has no source file). Non-submodule types are absent and
+     *  fall back to `<TYPE>_MODULE`. Scanned by lines (like buildGlobalTable) since
+     *  files are translated independently. */
+    static Map<String, Map<String, Set<String>>> buildSubmethodTable(Path foofilesDir) {
+        Map<String, Map<String, Set<String>>> reg = new HashMap<>();
+        java.io.File[] files = foofilesDir.toFile().listFiles((d, n) -> n.endsWith(".foo"));
+        if (files == null) return reg;
+        java.util.regex.Pattern modPat =
+            java.util.regex.Pattern.compile("^\\s*(?:virtual\\s+)?(?:array\\s+)?module\\s+(\\S+)");
+        // A procedure header: 3-space indent, a name, then '(' args, ':::' attrs,
+        // 'result', a trailing comment, or end-of-line. A `name :: TYPE` decl (only
+        // two colons) and deeper-indented body statements are excluded.
+        java.util.regex.Pattern procPat =
+            java.util.regex.Pattern.compile("^ {3}([A-Za-z]\\w*)\\s*(\\(|:::|result\\b|!|$)");
+        Set<String> kw = Set.of("end", "contains", "interface", "use", "module",
+            "result", "then", "else", "elsewhere", "do", "select", "case", "where",
+            "forall", "if", "subroutine", "function", "type", "data");
+        for (java.io.File f : files) {
+            List<String> lines;
+            try { lines = Files.readAllLines(f.toPath(), StandardCharsets.UTF_8); }
+            catch (Exception e) {
+                try { lines = Files.readAllLines(f.toPath(), StandardCharsets.ISO_8859_1); }
+                catch (Exception e2) { continue; }
+            }
+            String fooMod = null; boolean past = false; String base = null, mod = null;
+            for (String line : lines) {
+                if (fooMod == null) {
+                    java.util.regex.Matcher m = modPat.matcher(line);
+                    if (m.find()) {
+                        fooMod = m.group(1);
+                        if (!fooMod.contains(".")) break;   // not a submodule file
+                        base = canon(fooMod.substring(0, fooMod.indexOf('.')));
+                        mod = fortranTypeName(fooMod) + "_MODULE";
+                    }
+                    continue;
+                }
+                if (line.strip().equalsIgnoreCase("contains")) { past = true; continue; }
+                if (!past) continue;
+                java.util.regex.Matcher m = procPat.matcher(line);
+                if (!m.find()) continue;
+                String name = m.group(1);
+                if (kw.contains(name.toLowerCase(Locale.ROOT))) continue;
+                final String fmod = mod;
+                reg.computeIfAbsent(base, k -> new HashMap<>())
+                   .computeIfAbsent(name, k -> new java.util.HashSet<>()).add(fmod);
+            }
+        }
+        return reg;
+    }
+
     static final Set<String> INTRINSIC_SCALAR = Set.of("INT", "REAL", "CPX", "BIN", "STR");
     static boolean isIntrinsicScalar(String t) { return INTRINSIC_SCALAR.contains(canon(t)); }
 
@@ -215,8 +269,9 @@ public final class FooToFortran {
         if (Files.exists(typesPath)) buildTypeTable(types, typesPath);
 
         Map<String, String[]> globals = buildGlobalTable(foofilesDir);
+        Map<String, Map<String, Set<String>>> subMethods = buildSubmethodTable(foofilesDir);
 
-        ModuleEmitter em = new ModuleEmitter(types, parseFile(fooPath), fooPath, foofilesDir, globals);
+        ModuleEmitter em = new ModuleEmitter(types, parseFile(fooPath), fooPath, foofilesDir, globals, subMethods);
         em.emit();
         Files.createDirectories(outDir);
         String name = fooPath.getFileName().toString();
@@ -270,11 +325,13 @@ public final class FooToFortran {
         final Map<String, Set<String>> useOnly = new TreeMap<>();
 
         final Map<String, String[]> globals;   // global var name -> {canon foo type, fortran module}
+        // base type -> (method -> submodule Fortran modules that define it)
+        final Map<String, Map<String, Set<String>>> subMethods;
 
         ModuleEmitter(TypeTable types, Parsed main, Path fooPath, Path foofilesDir,
-                      Map<String, String[]> globals) {
+                      Map<String, String[]> globals, Map<String, Map<String, Set<String>>> subMethods) {
             this.types = types; this.main = main; this.fooPath = fooPath; this.foofilesDir = foofilesDir;
-            this.globals = globals;
+            this.globals = globals; this.subMethods = subMethods;
         }
 
         void emit() {
@@ -382,7 +439,16 @@ public final class FooToFortran {
             FooParser.ProcHeaderContext h = pd.procHeader();
             String name = h.IDENTIFIER().getText();
             Attrs a = Attrs.parse(h.procAttrs());
-            if (a.template) return;
+            if (a.template) {
+                // A `template` (or `inlined_by_foo`) proc is inlined into its heirs /
+                // call sites, never emitted. Keep any preceding out-of-procedure /
+                // section comments (flush up to the header), then drop the proc's OWN
+                // doc/body comments so they are not leaked before the next procedure.
+                c.flushHidden(f90, h.getStart().getTokenIndex(), 0);
+                c.pos = Math.max(c.pos, pd.getStop().getTokenIndex() + 1);
+                c.lastLine = pd.getStop().getLine();
+                return;
+            }
             int nOver = overloadCount.getOrDefault(name, 1);
             int idx = overloadIdx.getOrDefault(name, 0);
             overloadIdx.put(name, idx + 1);
@@ -460,12 +526,16 @@ public final class FooToFortran {
         /** A derived-type definition: `type IRREP_TYPE … end type`. */
         void emitTypeDef(FooParser.TypeDefContext td, Cursor c) {
             // `array type VEC{…}` only signals to the legacy translator that such
-            // array types occur; foo.pl emits no derived type for it (just any
-            // body comment). Emit no type/end type wrapper, but keep the comment.
+            // array types occur; it defines no derived type. Emit nothing at all
+            // (not even its body comment) and skip its tokens.
             boolean isArray = td.IDENTIFIER() != null
                 && td.IDENTIFIER().getText().equalsIgnoreCase("array");
-            if (!isArray)
-                f90.append("   type ").append(fortranTypeName(td.typeSpec().getText())).append("_TYPE\n");
+            if (isArray) {
+                c.pos = Math.max(c.pos, td.getStop().getTokenIndex() + 1);
+                c.lastLine = td.getStop().getLine();
+                return;
+            }
+            f90.append("   type ").append(fortranTypeName(td.typeSpec().getText())).append("_TYPE\n");
             inComponent = true;
             for (int i = 0; i < td.getChildCount(); i++) {
                 ParseTree ch = td.getChild(i);
@@ -517,6 +587,15 @@ public final class FooToFortran {
                 Parsed parent = loadModule(pr.module);
                 FooParser.ProcDefContext target = findOverload(parent, routine, a.signatureComment, args);
                 if (target != null) {
+                    // Primary path — mirror foo.pl's two passes: macro-expand the
+                    // parent template's SOURCE TEXT (KEY?->VAL, type-arg subst), then
+                    // re-lex+parse it with a fresh FooLexer/FooParser and translate
+                    // that concrete subtree normally. No placeholder token ever
+                    // reaches the semantic stage, so calls/uses are derived from real
+                    // names (fixes e.g. spurious `use MOLECULE_MODULE, only: GRID_`).
+                    if (emitInheritedByReparse(a, pr, target)) return;
+                    // Fallback — legacy walk-parent-tree + patch-the-string. Kept as a
+                    // safety net when the substituted text fails to re-parse.
                     subst = buildSubst(a.getFromAttr, pr.module);
                     renderBody(parent, target, true, pr.module, a.selfless);
                     subst = new LinkedHashMap<>();
@@ -525,6 +604,107 @@ public final class FooToFortran {
             } catch (IOException ignored) { }
             f90.append("      ! get_from(").append(a.getFromTarget)
                .append(") — parent body not found\n");
+        }
+
+        /** Re-parse expansion of a get_from parent body. Returns false (having
+         *  emitted nothing) if the substituted text does not parse, so the caller
+         *  can fall back to the legacy path. */
+        boolean emitInheritedByReparse(Attrs a, ParentRef pr, FooParser.ProcDefContext target) {
+            Map<String, String> tm = buildTextSubst(a.getFromAttr, pr.module);
+            org.antlr.v4.runtime.CharStream cs = target.getStart().getInputStream();
+            int aIdx = target.getStart().getStartIndex();
+            int bIdx = target.getStop().getStopIndex();
+            if (cs == null || bIdx < aIdx) return false;
+            String raw = cs.getText(org.antlr.v4.runtime.misc.Interval.of(aIdx, bIdx));
+            String expanded = expandTemplateText(raw, tm);
+            try {
+                FooLexer lex = new FooLexer(CharStreams.fromString(expanded));
+                CommonTokenStream ntoks = new CommonTokenStream(lex);
+                FooParser np = new FooParser(ntoks);
+                np.removeErrorListeners();          // don't spam stderr on the fallback
+                FooParser.ProcDefContext npd = np.procDef();
+                if (npd == null || np.getNumberOfSyntaxErrors() > 0) return false;
+                Map<String, String> saved = subst;
+                subst = new LinkedHashMap<>();      // substitution already done in text
+                try { renderBody(new Parsed(null, ntoks), npd, true, pr.module, a.selfless); }
+                finally { subst = saved; }
+                return true;
+            } catch (RuntimeException reparseFailed) {
+                return false;
+            }
+        }
+
+        /** Build the raw-TEXT substitution map for macro-expanding a get_from parent
+         *  body (used by the re-parse path). Unlike buildSubst, values are kept
+         *  verbatim Foo source (`:make_ED_grid`, `.set_x`, a type name) so the fresh
+         *  parse resolves them like any hand-written call. */
+        Map<String, String> buildTextSubst(FooParser.AttrContext gf, String parentModule) {
+            Map<String, String> m = new LinkedHashMap<>();
+            // positional type-arg substitution (parent params -> this type's params)
+            List<String> p = typeArgsOf(parentModule), c = typeArgsOf(selfFooType);
+            for (int i = 0; i < Math.min(p.size(), c.size()); i++) pairTypeArgs(m, p.get(i), c.get(i));
+            // the parent template's own bare type name -> the inheriting type
+            String pBase = canon(parentModule);
+            if (!pBase.isEmpty() && !pBase.contains("{") && Character.isUpperCase(pBase.charAt(0))
+                && !pBase.equals(canon(selfFooType)))
+                m.putIfAbsent(pBase, selfFooType);
+            // named KEY?=>VAL pairs, value kept as raw Foo text
+            if (gf != null) {
+                List<FooParser.GetFromArgContext> args = gf.getFromArg();
+                for (int i = 1; i < args.size(); i++) {
+                    FooParser.GetFromArgContext ga = args.get(i);
+                    if (ga.ARROW() != null && ga.getFromKey() != null) {
+                        String key = ga.getFromKey().getText() + (ga.QUESTION() != null ? "?" : "");
+                        String val = ga.getFromVal() != null ? ga.getFromVal().getText() : "";
+                        m.put(key, val);
+                    }
+                }
+            }
+            return m;
+        }
+
+        /** Apply a raw-text substitution map to a fragment of Foo source (longest
+         *  key first). A named placeholder `KEY?` is replaced wherever it occurs
+         *  (even spliced into a name, `make_KEY?_atom`); a positional type arg is
+         *  replaced as a whole word. Comments (`!` to end of line) are left verbatim:
+         *  foo.pl emits template comments unchanged (release keeps e.g. `! inherited
+         *  from VEC{OBJECT}` and `"conjg" is replaced …` unsubstituted). */
+        String expandTemplateText(String s, Map<String, String> tm) {
+            if (tm.isEmpty()) return s;
+            List<String> keys = new ArrayList<>(tm.keySet());
+            keys.sort((x, y) -> Integer.compare(y.length(), x.length()));
+            String[] lines = s.split("\n", -1);
+            StringBuilder out = new StringBuilder();
+            for (int li = 0; li < lines.length; li++) {
+                String line = lines[li];
+                int cut = commentStart(line);
+                String code = cut < 0 ? line : line.substring(0, cut);
+                String comment = cut < 0 ? "" : line.substring(cut);
+                for (String k : keys) {
+                    String v = java.util.regex.Matcher.quoteReplacement(tm.get(k));
+                    if (k.endsWith("?")) {
+                        String base = java.util.regex.Pattern.quote(k.substring(0, k.length() - 1));
+                        code = code.replaceAll(base + "\\?", v);
+                    } else {
+                        code = code.replaceAll("\\b" + java.util.regex.Pattern.quote(k) + "\\b", v);
+                    }
+                }
+                out.append(code).append(comment);
+                if (li < lines.length - 1) out.append('\n');
+            }
+            return out.toString();
+        }
+
+        /** Index of the first `!` not inside a string literal (comment start), or -1. */
+        int commentStart(String line) {
+            boolean dq = false, sq = false;
+            for (int i = 0; i < line.length(); i++) {
+                char c = line.charAt(i);
+                if (c == '"' && !sq) dq = !dq;
+                else if (c == '\'' && !dq) sq = !sq;
+                else if (c == '!' && !dq && !sq) return i;
+            }
+            return -1;
         }
 
         /** Resolve a `.selector` that is a get_from placeholder to its substitution
@@ -854,11 +1034,11 @@ public final class FooToFortran {
                     continue;
                 }
                 if (b.localDecl() == null && b.stmt() == null) continue;   // blank / unhandled
+                if (i == firstActive) {                       // hoisted preconditions belong to the
+                    for (FooParser.StmtContext pc : preconds) emitPrecond(pc);   // signature: emit them
+                    preconds.clear();                          // right after the last declaration,
+                }                                              // BEFORE the first executable's comments
                 c.flushHidden(f90, b.getStart().getTokenIndex(), indent);
-                if (i == firstActive) {                       // emit hoisted preconditions here
-                    for (FooParser.StmtContext pc : preconds) emitPrecond(pc);
-                    preconds.clear();
-                }
                 boolean isPre = hoist && firstActive >= 0 && i < firstActive
                                 && b.stmt() != null && isAssertionStmt(b.stmt());
                 if (isPre) {
@@ -1489,7 +1669,7 @@ public final class FooToFortran {
                         out.append(ip);
                     } else {
                         pendingCall = colon ? method + "_" : method;
-                        recordUse(submoduleModule(hasQual ? chx.qualifier().getText() : null), pendingCall);
+                        recordUse(trailerCallModule(selfFooType, hasQual ? chx.qualifier().getText() : null, method), pendingCall);
                         out.append("self"); isCall = true;
                     }
                 } else if (dot && chx.name() != null && !hasQual && !colon && !dcolon) {
@@ -1583,9 +1763,7 @@ public final class FooToFortran {
                         // Type-qualified call on self (DIFFRACTION_DATA.READ:proc): the
                         // qualifier names the module, not a receiver object. Pass self
                         // (or nothing, for a selfless target).
-                        recordUse(submod == null || submod.equalsIgnoreCase("MAIN")
-                                  ? fortranTypeName(selfFooType) + "_MODULE"
-                                  : fortranTypeName(selfFooType) + "_" + submod + "_MODULE", pendingCall);
+                        recordUse(trailerCallModule(selfFooType, submod, method), pendingCall);
                         if (tr.DCOLON() != null && !nextIsCall) {
                             // a bare TYPE.SUBMOD::proc (not followed by `(...)`) is a
                             // procedure passed BY NAME, not a call:
@@ -1597,16 +1775,12 @@ public final class FooToFortran {
                         if (selflessProcs.contains(method)) { out = new StringBuilder(); pendingNoRecv = true; }
                         else out = new StringBuilder("self");
                     } else if (curType != null) {
-                        String base = fortranTypeName(curType);
-                        recordUse(submod == null || submod.equalsIgnoreCase("MAIN")
-                                  ? base + "_MODULE" : base + "_" + submod + "_MODULE", pendingCall);
+                        recordUse(trailerCallModule(curType, submod, method), pendingCall);
                     } else if (isModuleLikeQualifier(recv)) {
                         // TYPE.SUBMOD:method where TYPE is ANOTHER module (recv is a bare
                         // type name, not an object): a selfless module-qualified call,
                         // e.g. DIFFRACTION_DATA.PUT:put_refinement_header. No receiver.
-                        recordUse(submod == null || submod.equalsIgnoreCase("MAIN")
-                                  ? fortranTypeName(recv) + "_MODULE"
-                                  : fortranTypeName(recv) + "_" + submod + "_MODULE", pendingCall);
+                        recordUse(trailerCallModule(recv, submod, method), pendingCall);
                         out = new StringBuilder(); pendingNoRecv = true;
                     }
                     isCall = true; curType = null;          // recv stays in `out`; args via next LPAREN
@@ -1815,6 +1989,19 @@ public final class FooToFortran {
 
         void recordCall(String fooType, String method) {
             if (fooType == null) return;
+            // A submodule-split type (MOLECULE) has no base <TYPE>_MODULE; resolve the
+            // call to the submodule that actually defines it. If the current submodule
+            // defines it, recordUse skips it (self-use). Fall back to <TYPE>_MODULE for
+            // ordinary (non-split) types.
+            Map<String, Set<String>> byMethod = subMethods.get(canon(fooType));
+            if (byMethod != null) {
+                Set<String> mods = byMethod.get(method);
+                if (mods != null) {
+                    String mod = mods.contains(selfModuleName) ? selfModuleName : mods.iterator().next();
+                    recordUse(mod, method + "_");
+                    return;
+                }
+            }
             recordUse(fortranModName(fooType), method + "_");
         }
 
@@ -1825,6 +2012,25 @@ public final class FooToFortran {
             if (qual == null) return selfModuleName;
             if (qual.equalsIgnoreCase("MAIN")) return base + "_MODULE";
             return base + "_" + qual + "_MODULE";
+        }
+
+        /** Fortran module for a trailer call `recv.SUBMOD:method` / `recv.:method`
+         *  / `recv.MAIN:method`, where recv has foo type recvFooType. A named
+         *  submodule is used verbatim. For `.:` (same submodule) or `.MAIN:` on a
+         *  submodule-split type (MOLECULE), resolve via the registry to the submodule
+         *  that actually defines `method` — preferring the current one so recordUse
+         *  self-skips. Non-split types fall back to <TYPE>_MODULE. */
+        String trailerCallModule(String recvFooType, String submod, String method) {
+            if (submod != null && !submod.equalsIgnoreCase("MAIN"))
+                return fortranTypeName(recvFooType) + "_" + submod + "_MODULE";
+            Map<String, Set<String>> byMethod = subMethods.get(canon(recvFooType));
+            if (byMethod != null) {
+                Set<String> mods = byMethod.get(method);
+                if (mods != null)
+                    return mods.contains(selfModuleName) ? selfModuleName : mods.iterator().next();
+                return selfModuleName;   // unknown -> assume the current submodule
+            }
+            return fortranTypeName(recvFooType) + "_MODULE";
         }
 
         /** Record a `use <mod>, only: <symbol>` dependency (skip self-use). */
@@ -1943,7 +2149,7 @@ public final class FooToFortran {
 
     static final class Attrs {
         boolean pure, PURE, elemental, ELEMENTAL, recursive, leaky, selfless, routinal, functional;
-        boolean privateAcc, publicAcc, template, inherited;
+        boolean privateAcc, publicAcc, template, inherited, inlinedByFoo;
         String getFromTarget, signatureComment;
         FooParser.AttrContext getFromAttr;
 
@@ -1969,7 +2175,7 @@ public final class FooToFortran {
                     case "private":   a.privateAcc = true; break;
                     case "public":    a.publicAcc = true; break;
                     case "template":  a.template = true; break;
-                    case "inlined_by_foo": a.template = true; break;  // inlined at call sites, not emitted
+                    case "inlined_by_foo": a.template = true; a.inlinedByFoo = true; break;  // inlined at call sites, not emitted
                     default: break;
                 }
             }
