@@ -1690,6 +1690,7 @@ public final class FooToFortran {
                         curType = arrayOfComponent(selfFooType, elemComp);
                     } else if ((ip = intrinsicProp(sel, "self")) != null) {
                         out.append(ip);                       // .dim -> size(self), etc.
+                        curType = intrinsicPropType(sel);     // so a chained `.is_even` resolves
                     } else if (INTRINSIC_FNS.contains(sel.toLowerCase())) {
                         pendingCall = sel;                    // .sin -> sin(self), .trim -> trim(self)
                         out.append("self"); isCall = true;
@@ -1800,7 +1801,7 @@ public final class FooToFortran {
                         out.append('%').append(sel);
                         curType = arrayOfComponent(curType, elemComp);
                     } else if ((ip = intrinsicProp(sel, out.toString())) != null) {
-                        out = new StringBuilder(ip); curType = null;
+                        out = new StringBuilder(ip); curType = intrinsicPropType(sel);
                     } else if (INTRINSIC_FNS.contains(sel.toLowerCase())) {
                         // tonto intrinsic: X.scan(s) -> scan(X,s), X.trim -> trim(X)
                         pendingCall = sel; isCall = true; curType = null;
@@ -1988,6 +1989,18 @@ public final class FooToFortran {
                 case "associated": return "associated(" + recv + ")";
                 case "destroyed":                               // inlined_by_foo: .destroyed
                 case "disassociated": return "NOT associated(" + recv + ")";
+                default: return null;
+            }
+        }
+
+        /** Foo result type of an intrinsic property (for chaining, e.g. `.dim.is_even`
+         *  -> size(self) is INT, so is_even_ resolves in INT_MODULE). Null if unknown. */
+        String intrinsicPropType(String name) {
+            if (name.matches("dim[1-7]?")) return "INT";
+            switch (name) {
+                case "allocated": case "deallocated":
+                case "created": case "destroyed":
+                case "associated": case "disassociated": return "BIN";
                 default: return null;
             }
         }
