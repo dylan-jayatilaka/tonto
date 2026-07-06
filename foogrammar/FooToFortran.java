@@ -1978,7 +1978,8 @@ public final class FooToFortran {
          *  created, destroyed, …) are handled by intrinsicProp instead. */
         static final Set<String> INTRINSIC_FNS = Set.of(
             "abs", "acos", "asin", "atan", "cos", "sin", "tan",
-            "mod", "modulo", "scan", "trim", "verify", "nullify");
+            "mod", "modulo", "scan", "trim", "verify", "nullify",
+            "erf", "erfc");   // Fortran 2008 error functions (REAL intrinsics)
 
         /** Array/pointer inquiry methods that map to Fortran intrinsics, or null. */
         String intrinsicProp(String name, String recv) {
