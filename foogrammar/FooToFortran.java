@@ -2100,18 +2100,16 @@ public final class FooToFortran {
             // so expand it to that method's actual specific procedures (accounting for
             // overload numbering: trace_product_with -> trace_product_with_0..3), else
             // `module procedure <base>` would name a non-existent procedure.
-            // An explicit `interface NAME  m1 m2 … end` block with MULTIPLE members is
-            // a real umbrella generic that groups distinct procedures (e.g.
-            // `interface to_str { to_str_int_0 to_str_int_1 to_str_int_2 }` -> the
-            // generic `to_str_` that other modules call). It MUST be emitted or those
-            // calls are unresolved. A SINGLE-member block is just a procedure rename
-            // (e.g. `interface diagonal_plus { increment_diagonal_by }`) — an alternate
-            // call-site name, not a separate generic — so it is not emitted.
+            // An explicit `interface NAME  m1 m2 … end` block groups its members under
+            // the generic NAME_ (a real umbrella generic like `to_str_`, or an alias
+            // like `uncompress_from_pyramid_` -> symmetric_unzip_triangle). Emit them
+            // all: a call to NAME_ from another module needs the interface to resolve.
+            // (Aliases that are never called — e.g. diagonal_plus_ — become harmless
+            // unused interfaces; release omits them, a minor .int-only deviation.)
             Map<String, List<String>> all = new LinkedHashMap<>();
             for (Map.Entry<String, List<String>> e : interfaceProcs.entrySet())
                 all.put(e.getKey(), new ArrayList<>(e.getValue()));
             for (Map.Entry<String, List<String>> al : explicitAliases.entrySet()) {
-                if (al.getValue().size() < 2) continue;          // single member = rename, skip
                 List<String> specs = all.computeIfAbsent(al.getKey(), k -> new ArrayList<>());
                 for (String member : al.getValue())
                     for (String s : interfaceProcs.getOrDefault(member, List.of(member)))
