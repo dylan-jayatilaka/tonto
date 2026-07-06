@@ -312,6 +312,8 @@ public final class FooToFortran {
         boolean inheritInjectPending; String inheritParent;
         Set<String> currentArgs = new LinkedHashSet<>();
         boolean currentSelfless;   // true while rendering a `selfless` procedure body
+        boolean currentProcPure;   // true while rendering a lowercase `pure`/`elemental` proc
+                                   // (real Fortran pure) — assert macros are illegal there
         boolean suppressUse;       // true while probing an expression's type only
         Map<String, String> localVarTypes = new HashMap<>();   // local/arg name -> base foo type
         final Map<String, String> moduleVars = new HashMap<>();   // this module's own vars -> foo type
@@ -456,6 +458,10 @@ public final class FooToFortran {
             String specName = nOver > 1 ? name + "_" + idx : name; // overloads -> name_0, name_1
             currentProc = specName;                               // overload-specific (for ENSURE prefix)
             currentProcBase = name;                               // base name (for get_from parent lookup)
+            // A lowercase `pure`/`elemental` proc is REAL Fortran pure — assert macros
+            // (ENSURE/DIE/WARN) expand to non-pure calls (call ensure_(tonto,…)) and are
+            // illegal there. UPPERCASE PURE/ELEMENTAL are macros, so keep their asserts.
+            currentProcPure = a.pure || a.elemental;
             interfaceProcs.computeIfAbsent(name, k -> new ArrayList<>()).add(specName);
             // The generic NAME_ is private iff EVERY overload has the `private`
             // attribute; one public overload makes the whole generic public (foo.pl:
@@ -1123,8 +1129,14 @@ public final class FooToFortran {
 
         /** Emit a hoisted precondition (ENSURE/DIE/WARN) at column 3. */
         void emitPrecond(FooParser.StmtContext s) {
+            // In a lowercase pure/elemental proc the assert macro is illegal Fortran;
+            // emit it commented (documentation only) and record no use for its symbols.
+            boolean saved = suppressUse;
+            if (currentProcPure) suppressUse = true;
             String t = renderSimpleStmt(s.simpleLine().lineStmt(0).simpleStmt());
-            if (t != null && !t.isBlank()) f90.append("   ").append(t).append('\n');
+            suppressUse = saved;
+            if (t != null && !t.isBlank())
+                f90.append(currentProcPure ? "   ! " : "   ").append(t).append('\n');
         }
 
         /** Inject the get_from inherited-code comment before the first statement. */
