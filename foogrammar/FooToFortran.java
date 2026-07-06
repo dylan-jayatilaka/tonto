@@ -1738,7 +1738,11 @@ public final class FooToFortran {
                     out.append(head.getText());          // other forms: TODO
                 }
             } else if (head.NOT() != null) {
-                out.append("NOT ").append(translatePostfix(head.postfix(), false).text);
+                // `NOT` expands (CPP) to `.not.`; two adjacent `.not.` (e.g. NOT applied
+                // to `.deallocated` -> NOT (NOT allocated(..))) is rejected by gfortran,
+                // so parenthesise an operand that already begins with NOT.
+                String inner = translatePostfix(head.postfix(), false).text;
+                out.append("NOT ").append(inner.startsWith("NOT ") ? "(" + inner + ")" : inner);
             } else if (head.MINUS() != null) {
                 out.append('-').append(translatePostfix(head.postfix(), false).text);
             } else if (head.PLUS() != null) {
