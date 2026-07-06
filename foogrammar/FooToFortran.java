@@ -1600,6 +1600,14 @@ public final class FooToFortran {
                         String base = fortranTypeName(curType);
                         recordUse(submod == null || submod.equalsIgnoreCase("MAIN")
                                   ? base + "_MODULE" : base + "_" + submod + "_MODULE", pendingCall);
+                    } else if (isModuleLikeQualifier(recv)) {
+                        // TYPE.SUBMOD:method where TYPE is ANOTHER module (recv is a bare
+                        // type name, not an object): a selfless module-qualified call,
+                        // e.g. DIFFRACTION_DATA.PUT:put_refinement_header. No receiver.
+                        recordUse(submod == null || submod.equalsIgnoreCase("MAIN")
+                                  ? fortranTypeName(recv) + "_MODULE"
+                                  : fortranTypeName(recv) + "_" + submod + "_MODULE", pendingCall);
+                        out = new StringBuilder(); pendingNoRecv = true;
                     }
                     isCall = true; curType = null;          // recv stays in `out`; args via next LPAREN
                 } else if (dotSel) {
