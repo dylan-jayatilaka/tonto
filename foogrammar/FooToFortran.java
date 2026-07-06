@@ -365,8 +365,16 @@ public final class FooToFortran {
         }
 
         void emit() {
-            FooParser.ModuleDefContext mod =
-                descendants(main.tree, FooParser.ModuleDefContext.class).get(0);
+            List<FooParser.ModuleDefContext> mods =
+                descendants(main.tree, FooParser.ModuleDefContext.class);
+            if (mods.isEmpty()) {
+                // A main program (runfiles/run_XXX.foo): `program NAME` … end.
+                List<FooParser.ProgramDefContext> progs =
+                    descendants(main.tree, FooParser.ProgramDefContext.class);
+                if (!progs.isEmpty()) emitProgram(progs.get(0));
+                return;
+            }
+            FooParser.ModuleDefContext mod = mods.get(0);
             fooModuleName = mod.moduleName().getText();
             // For a submodule (MOLECULE.BASE) self's type is the main type (MOLECULE).
             selfFooType   = fooModuleName.contains(".")
@@ -460,6 +468,39 @@ public final class FooToFortran {
             f90.append("\nend module\n");
 
             buildInterfaceFile();
+            buildUseFile();
+        }
+
+        /** A main program (runfiles/run_XXX.foo): `program NAME`, a body of decls +
+         *  executable statements, then `end`. Emitted as a Fortran main program (with
+         *  its own `_main`), not a module — so the executable links. */
+        void emitProgram(FooParser.ProgramDefContext prog) {
+            fooModuleName = prog.moduleName().getText();          // run_HAR
+            selfFooType = fooModuleName;
+            selfModuleName = fortranTypeName(fooModuleName) + "_MODULE";   // unused
+            String stem = braceStem(fooPath.getFileName().toString());
+            Cursor c = new Cursor(main.toks);
+            c.flushHidden(f90, prog.PROGRAM().getSymbol().getTokenIndex(), 0);   // doc block
+            f90.append("program ").append(fooModuleName).append("\n\n");
+            f90.append("#  include \"").append(stem).append(".use\"\n\n");
+            f90.append("   implicit none\n\n");
+            f90.append("#  include \"macros\"\n\n");
+            // Program body: declarations + executable statements. No self, no args.
+            currentArgs = new LinkedHashSet<>();
+            currentSelfless = false; currentProcPure = false;
+            currentProc = fooModuleName; currentProcBase = fooModuleName;
+            localVarTypes = new HashMap<>();
+            List<FooParser.ProcBodyContext> body = prog.procBody();
+            for (FooParser.ProcBodyContext b : body)
+                if (b.localDecl() != null && b.localDecl().declTail().typeSpec() != null) {
+                    String t = canon(b.localDecl().declTail().typeSpec().getText()).replace("?", "");
+                    for (FooParser.DeclNameContext dn : b.localDecl().identList().declName())
+                        localVarTypes.put(nameText(dn.name()), t);
+                }
+            c.pos = prog.moduleName().getStop().getTokenIndex() + 1;
+            emitBodyList(body, c, 3, true);
+            c.flushHidden(f90, prog.endKw().getStart().getTokenIndex(), 3);   // trailing comments
+            f90.append("\nend program\n");
             buildUseFile();
         }
 

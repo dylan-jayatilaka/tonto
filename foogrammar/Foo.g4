@@ -24,7 +24,15 @@ grammar Foo;
 // (a get_from template, never compiled to its own .F90). Both are moduleDef
 // (the optional leading IDENTIFIER carries the `virtual` modifier).
 program
-    : (moduleDef | NEWLINE)* EOF
+    : (moduleDef | programDef | NEWLINE)* EOF
+    ;
+
+// A main program (runfiles/run_XXX.foo): `program NAME`, a body of declarations
+// and executable statements (like a procedure body), then `end`. No `contains`.
+programDef
+    : PROGRAM moduleName NEWLINE
+      procBody*
+      endKw NEWLINE?
     ;
 
 // A Foo module has a data (specification) section, then `contains`, then a
@@ -176,6 +184,7 @@ procBody
     : localDecl
     | dataStmt
     | useStmt
+    | implicitStmt
     | interfaceBlock
     | stmt
     | NEWLINE
@@ -580,6 +589,7 @@ binOp
 // ===========================================================================
 
 MODULE : 'module' ;
+PROGRAM : 'program' ;
 // `end`, plus the glued block-end forms `endif` / `enddo`. (Maximal munch keeps
 // longer identifiers like `endpoint` intact.) Spaced forms `end if` / `end do`
 // are handled by the `endKw` parser rule.
