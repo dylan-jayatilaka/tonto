@@ -322,6 +322,7 @@ public final class FooToFortran {
         final Map<String, List<String>> interfaceProcs = new LinkedHashMap<>(); // base -> specific names
         final Map<String, List<String>> explicitAliases = new LinkedHashMap<>(); // generic -> member base names
         final Set<String> publicSpecs = new LinkedHashSet<>();  // specific names to also export `public`
+        final Map<String, Boolean> genericPrivate = new LinkedHashMap<>();  // base name -> generic NAME_ is private (all overloads private)
         final Map<String, Set<String>> useOnly = new TreeMap<>();
 
         final Map<String, String[]> globals;   // global var name -> {canon foo type, fortran module}
@@ -456,6 +457,10 @@ public final class FooToFortran {
             currentProc = specName;                               // overload-specific (for ENSURE prefix)
             currentProcBase = name;                               // base name (for get_from parent lookup)
             interfaceProcs.computeIfAbsent(name, k -> new ArrayList<>()).add(specName);
+            // The generic NAME_ is private iff EVERY overload has the `private`
+            // attribute; one public overload makes the whole generic public (foo.pl:
+            // a public overload overwrites generic_access to public).
+            genericPrivate.merge(name, a.privateAcc, (old, cur) -> old && cur);
             // A `public` proc also exports its SPECIFIC name (not just the generic
             // `name_`), so it can be referenced by name, e.g. MODULE::proc passed as
             // an argument. foo.pl: specific_access == "public".
@@ -2080,7 +2085,8 @@ public final class FooToFortran {
                 new ArrayList<>(all.entrySet());
             entries.sort((a, b) -> (a.getKey() + "_").compareTo(b.getKey() + "_"));
             for (Map.Entry<String, List<String>> e : entries) {
-                intf.append("   public    ").append(e.getKey()).append("_\n");
+                String gacc = Boolean.TRUE.equals(genericPrivate.get(e.getKey())) ? "private" : "public";
+                intf.append("   ").append(gacc).append("    ").append(e.getKey()).append("_\n");
                 for (String spec : e.getValue())
                     if (publicSpecs.contains(spec))
                         intf.append("   public    ").append(spec).append('\n');
