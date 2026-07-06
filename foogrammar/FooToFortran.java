@@ -220,6 +220,30 @@ public final class FooToFortran {
         return reg;
     }
 
+    /** Names of all `selfless` procedures across every foofile. A submodule call to
+     *  such a proc (MOLECULE.TD:test_MGS_QR) must NOT pass self, but the defining
+     *  module is a different file, so this global set lets the caller decide. */
+    static Set<String> buildSelflessMethods(Path foofilesDir) {
+        Set<String> s = new java.util.HashSet<>();
+        java.io.File[] files = foofilesDir.toFile().listFiles((d, n) -> n.endsWith(".foo"));
+        if (files == null) return s;
+        java.util.regex.Pattern p = java.util.regex.Pattern.compile(
+            "^ {3}([A-Za-z]\\w*)\\b[^\\n]*:::[^\\n]*\\bselfless\\b");
+        for (java.io.File f : files) {
+            List<String> lines;
+            try { lines = Files.readAllLines(f.toPath(), StandardCharsets.UTF_8); }
+            catch (Exception e) {
+                try { lines = Files.readAllLines(f.toPath(), StandardCharsets.ISO_8859_1); }
+                catch (Exception e2) { continue; }
+            }
+            for (String line : lines) {
+                java.util.regex.Matcher m = p.matcher(line);
+                if (m.find()) s.add(m.group(1));
+            }
+        }
+        return s;
+    }
+
     static final Set<String> INTRINSIC_SCALAR = Set.of("INT", "REAL", "CPX", "BIN", "STR");
     static boolean isIntrinsicScalar(String t) { return INTRINSIC_SCALAR.contains(canon(t)); }
 
@@ -270,8 +294,9 @@ public final class FooToFortran {
 
         Map<String, String[]> globals = buildGlobalTable(foofilesDir);
         Map<String, Map<String, Set<String>>> subMethods = buildSubmethodTable(foofilesDir);
+        Set<String> selflessGlobal = buildSelflessMethods(foofilesDir);
 
-        ModuleEmitter em = new ModuleEmitter(types, parseFile(fooPath), fooPath, foofilesDir, globals, subMethods);
+        ModuleEmitter em = new ModuleEmitter(types, parseFile(fooPath), fooPath, foofilesDir, globals, subMethods, selflessGlobal);
         em.emit();
         Files.createDirectories(outDir);
         String name = fooPath.getFileName().toString();
@@ -330,11 +355,13 @@ public final class FooToFortran {
         final Map<String, String[]> globals;   // global var name -> {canon foo type, fortran module}
         // base type -> (method -> submodule Fortran modules that define it)
         final Map<String, Map<String, Set<String>>> subMethods;
+        final Set<String> selflessGlobal;   // selfless proc names across all foofiles
 
         ModuleEmitter(TypeTable types, Parsed main, Path fooPath, Path foofilesDir,
-                      Map<String, String[]> globals, Map<String, Map<String, Set<String>>> subMethods) {
+                      Map<String, String[]> globals, Map<String, Map<String, Set<String>>> subMethods,
+                      Set<String> selflessGlobal) {
             this.types = types; this.main = main; this.fooPath = fooPath; this.foofilesDir = foofilesDir;
-            this.globals = globals; this.subMethods = subMethods;
+            this.globals = globals; this.subMethods = subMethods; this.selflessGlobal = selflessGlobal;
         }
 
         void emit() {
@@ -1794,8 +1821,9 @@ public final class FooToFortran {
                             pendingCall = null; isCall = false; curType = null;
                             continue;
                         }
-                        if (selflessProcs.contains(method)) { out = new StringBuilder(); pendingNoRecv = true; }
-                        else out = new StringBuilder("self");
+                        if (selflessProcs.contains(method) || selflessGlobal.contains(method)) {
+                            out = new StringBuilder(); pendingNoRecv = true;   // selfless target: no self
+                        } else out = new StringBuilder("self");
                     } else if (curType != null) {
                         recordUse(trailerCallModule(curType, submod, method), pendingCall);
                     } else if (isModuleLikeQualifier(recv)) {
