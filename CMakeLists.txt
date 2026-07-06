@@ -643,7 +643,10 @@ else()
 	target_link_libraries(tonto ${MPI_Fortran_LIBRARIES})
 endif()
 
-# Build directory
+# Build directory. Ensure the external-module include dir exists so gfortran does
+# not warn about a nonexistent include path when external deps (lapack/sbf/MPI) are
+# not built as subdirectories (system-provided) and thus never create build/external.
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/external)
 target_include_directories(tonto PUBLIC ${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR}/external)
 
 
