@@ -549,7 +549,15 @@ public final class FooToFortran {
             // section comments / blanks preceding this procedure
             int hdrTok = h.getStart().getTokenIndex();
             f90.append('\n');
+            int beforeHidden = c.lastLine;
             c.flushHidden(f90, hdrTok, 0);
+            // Keep a source blank line between the section comment(s) and the
+            // header. flushHidden only blanks BEFORE comments, so a blank AFTER
+            // them (before the code header) is otherwise lost. Fire only when
+            // comments were actually emitted (lastLine advanced), so a
+            // comment-less procedure is not double-blanked by the `\n` above.
+            if (c.lastLine != beforeHidden && c.lastLine >= 0
+                    && h.getStart().getLine() > c.lastLine + 1) f90.append('\n');
 
             List<String> args = new ArrayList<>();
             if (h.procArgs() != null && h.procArgs().identList() != null)
@@ -640,8 +648,32 @@ public final class FooToFortran {
             if (!isArray) f90.append("   end type\n");
         }
 
-        /** A Fortran data statement: data name(dims)/ v1, v2, … / (one line, compilable). */
+        /** A Fortran data statement: data name(dims)/ v1, v2, … /.
+         *  A Foo `data` statement is already valid Fortran, so we emit the
+         *  ORIGINAL source span verbatim: this preserves the author's line
+         *  breaks, column alignment and inline `!` comments (e.g. the
+         *  periodic-table layouts in atom.foo / becke_grid.foo), which a
+         *  token-by-token reconstruction destroys. The lexer routes `&`
+         *  continuations and comments to hidden channels, but the CharStream
+         *  still holds every character, so getText() over the statement's
+         *  interval returns the source exactly as written. */
         void emitDataStmt(FooParser.DataStmtContext d, int indent) {
+            org.antlr.v4.runtime.Token start = d.getStart();
+            // End at the closing '/' (last SLASH); everything between start and
+            // it — commas, continuations, comments, alignment — is copied as-is.
+            org.antlr.v4.runtime.Token end =
+                d.SLASH().get(d.SLASH().size() - 1).getSymbol();
+            org.antlr.v4.runtime.CharStream cs = start.getInputStream();
+            String raw = cs.getText(org.antlr.v4.runtime.misc.Interval.of(
+                start.getStartIndex(), end.getStopIndex()));
+            // The leading indent of the first line is re-supplied here; the
+            // continuation lines keep their own source indentation inside `raw`.
+            f90.append(sp(indent)).append(raw).append('\n');
+
+            /* --- Legacy token-reconstruction (reflows values to <=128 cols;
+             *     loses the source layout and inline comments). Kept, commented
+             *     out, because a different translation target (e.g. C++) will
+             *     need the parsed values rather than verbatim Fortran source.
             String head = sp(indent) + "data " + nameText(d.name())
                         + (d.dimSpec() != null ? d.dimSpec().getText() : "") + "/";
             List<String> vals = new ArrayList<>();
@@ -662,6 +694,7 @@ public final class FooToFortran {
             }
             if (vals.isEmpty()) line.append("/");
             f90.append(out).append(line).append('\n');
+            */
         }
 
         /** Resolve and splice the parent body for get_from(...). */
@@ -1525,6 +1558,7 @@ public final class FooToFortran {
             f90.append(sp(indent)).append("select case (").append(renderExpr(x.expr())).append(")");
             appendHeaderComment(c, x.NEWLINE().isEmpty() ? null : x.NEWLINE(0));
             f90.append('\n');
+            c.lastLine = x.getStart().getLine();   // header emitted; anchor blank-line accounting here
             // collect the case-label keyword strings, for any UNKNOWN(x) expansion
             List<String> savedKw = selectKeywords;
             List<String> kw = new ArrayList<>();
@@ -1536,6 +1570,10 @@ public final class FooToFortran {
                 // case labels sit at the select-case level (not indented a further 3),
                 // matching foo.pl; the case body is one level (3) deeper.
                 c.flushHidden(f90, cc.getStart().getTokenIndex(), indent);
+                // Keep a source blank line that precedes this case label
+                // (flushHidden only blanks before comments, not code).
+                if (c.lastLine >= 0 && cc.getStart().getLine() > c.lastLine + 1)
+                    f90.append('\n');
                 StringBuilder line = new StringBuilder(sp(indent)).append(renderCaseLabel(cc.caseLabel()));
                 List<String> unkLines = null;
                 for (FooParser.SimpleStmtContext ss : cc.simpleStmt()) {
@@ -1549,6 +1587,10 @@ public final class FooToFortran {
                 f90.append(line);
                 appendHeaderComment(c, cc.NEWLINE());
                 f90.append('\n');
+                // Case header emitted: anchor blank-line accounting to this
+                // line so a comment on the NEXT source line isn't treated as
+                // gapped (which would insert a spurious blank after the case).
+                c.lastLine = cc.getStart().getLine();
                 if (unkLines != null)
                     for (int i = 1; i < unkLines.size(); i++)
                         f90.append(sp(indent)).append(unkLines.get(i)).append('\n');
