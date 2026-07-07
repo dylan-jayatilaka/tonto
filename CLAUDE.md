@@ -161,6 +161,16 @@ not byte-exact). `types.foo` must be passed so the derived-type table is built f
    submodule files (`molecule.*`, `diffraction_data.*`).
 2. `foogrammar/FooToFortran.java` emits `.F90` / `.int` / `.use` into `antlr4-release/` that are
    **equivalent** (compilable, same behaviour) to the reference in `release/`.
+3. **The test suite passes against a binary built from the translator's output.** A `debug`
+   build of `tonto` compiled from the ANTLR4-generated Fortran runs the jobs in `tests/`
+   (`ctest`) and reproduces each reference `stdout` under `scripts/test.py`'s comparison
+   (numeric tolerance + junk-line filtering). This is the end-to-end proof that the
+   translator reproduces `foo.pl`'s *behaviour*, not just its source text. Track progress
+   in a working notes file; expect two failure classes to separate real translator bugs
+   from harness artifacts: (a) genuine output differences (e.g. runtime field-width
+   defaults), and (b) lines the comparison should ignore but doesn't (e.g. `Warning …`
+   banners and their surrounding blank lines — see `prefixes_to_ignore` in
+   `scripts/test.py`).
 
 > Confirm milestone wording — your note was cut off at "There are two milestones. release/".
 
