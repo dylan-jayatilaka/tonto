@@ -32,9 +32,9 @@ suffixes_to_ignore = [ '---', '___', '===' ]
 test_categories = ['short', 'cx', 'long', 'geminal', 'relativistic']
 
 def is_junk(line):
-    return (any(map(line.startswith, prefixes_to_ignore)) or 
-            any(map(line.startswith, suffixes_to_ignore)) or 
-            line.strip == '')
+    return (any(map(line.startswith, prefixes_to_ignore)) or
+            any(map(line.startswith, suffixes_to_ignore)) or
+            line.strip() == '')
 
 
 def isclose(a, b, abs_tol=0.0, rel_tol=0.0):
