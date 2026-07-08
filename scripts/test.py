@@ -12,6 +12,7 @@ import subprocess
 import difflib
 import datetime
 import time
+import re
 
 log = logging.getLogger('test')
 
@@ -76,18 +77,111 @@ def equivalent(s1, s2, **kwargs):
         return isclose(float(s1), float(s2), **kwargs)
     else:
         return s1 == s2
-    
 
-def check_numbers(line1, line2, **kwargs):
-    tokens1 = line1.strip('+- ').split()
-    tokens2 = line2.strip('+- ').split()
-    if len(tokens1) != len(tokens2):
-        return False
 
-    else:
-        return all(
-                equivalent(t1, t2, **kwargs) 
-                for t1, t2 in zip(tokens1, tokens2))
+def num_decimals(s):
+    """Number of digits after the decimal point in the number as PRINTED,
+    i.e. the place value of its last significant digit (10**-num_decimals).
+    Handles a trailing exponent (1.23e-4 -> 6 decimals)."""
+    s = s.strip().lstrip('+-')
+    m = re.match(r'^\d*\.?(\d*)(?:[eE]([+-]?\d+))?$', s)
+    if not m:
+        return 0
+    dec = len(m.group(1) or '')
+    if m.group(2):
+        dec -= int(m.group(2))
+    return dec
+
+
+def token_agreement(a_str, b_str, rel_tol, abs_tol, last_digit_tol):
+    """Agreement of one numeric token pair (b_str = reference value).
+    Returns a dict of verdicts + metrics, or None if the pair is non-numeric.
+
+      exact  : values are exactly equal
+      rel_ok : |a-b| <= rel_tol*max(|a|,|b|)          (loose relative, e.g. 0.01%)
+      ld_ok  : |a-b| <= last_digit_tol * 10**-d(b)    (a couple of last places)
+      loose  : rel_ok OR ld_ok  (OR within abs_tol, for near-zero values)
+    """
+    if not (is_float(a_str) and is_float(b_str)):
+        return None
+    a, b = float(a_str), float(b_str)
+    diff = abs(a - b)
+    denom = max(abs(a), abs(b))
+    rel = 0.0 if denom == 0 else diff / denom
+    ulp = 10.0 ** (-num_decimals(b_str))
+    ulp_dev = 0.0 if diff == 0 else (diff / ulp if ulp > 0 else float('inf'))
+    near_zero = diff <= abs_tol
+    rel_ok = (diff <= rel_tol * denom) or near_zero
+    ld_ok = (diff <= last_digit_tol * ulp) or near_zero
+    return {
+        'exact': (a == b),
+        'rel': rel, 'ulp': ulp_dev,
+        'rel_ok': rel_ok, 'ld_ok': ld_ok, 'loose_ok': rel_ok or ld_ok,
+    }
+
+
+def agreement_report(lines1, lines2, rel_tol, abs_tol, last_digit_tol):
+    """Compare two filtered line lists across all three criteria at once.
+    Pairs +/- lines from difflib.ndiff, then compares them token-by-token.
+    Returns a result dict with per-criterion verdicts and worst-case metrics."""
+    diff = list(difflib.ndiff(lines1, lines2))
+    del1 = [x for x in diff if x.startswith('-')]
+    del2 = [x for x in diff if x.startswith('+')]
+    res = {
+        'exact': True, 'rel_pass': True, 'ld_pass': True, 'loose_pass': True,
+        'n_num': 0, 'n_struct': 0,
+        'max_rel': 0.0, 'max_ulp': 0.0, 'worst_rel': None, 'worst_ulp': None,
+        'diff_text': ''.join(a + b for a, b in zip(del1, del2)),
+    }
+    for l1, l2 in zip_longest(del1, del2, fillvalue=''):
+        t1 = l1.strip('+- ').split()
+        t2 = l2.strip('+- ').split()
+        if len(t1) != len(t2):
+            # differing token counts: a structural/alignment mismatch, not a
+            # numeric-tolerance question. Fails every criterion.
+            res['exact'] = res['rel_pass'] = res['ld_pass'] = res['loose_pass'] = False
+            res['n_struct'] += 1
+            continue
+        for a, b in zip(t1, t2):
+            ag = token_agreement(a, b, rel_tol, abs_tol, last_digit_tol)
+            if ag is None:                       # non-numeric tokens must match
+                if a != b:
+                    res['exact'] = res['rel_pass'] = res['ld_pass'] = res['loose_pass'] = False
+                    res['n_struct'] += 1
+                continue
+            res['n_num'] += 1
+            if not ag['exact']:   res['exact'] = False
+            if not ag['rel_ok']:  res['rel_pass'] = False
+            if not ag['ld_ok']:   res['ld_pass'] = False
+            if not ag['loose_ok']: res['loose_pass'] = False
+            if ag['rel'] > res['max_rel']:
+                res['max_rel'], res['worst_rel'] = ag['rel'], (a, b)
+            if ag['ulp'] > res['max_ulp']:
+                res['max_ulp'], res['worst_ulp'] = ag['ulp'], (a, b)
+    return res
+
+
+def format_agreement(name, res, rel_tol, last_digit_tol):
+    """A single self-describing columnar line summarising the degree of
+    agreement under each criterion, plus optional detail notes."""
+    yn = lambda ok: 'PASS' if ok else 'FAIL'
+    row = ('AGREEMENT %-44s  exact=%-4s  rel<=%.3g%%=%-4s(max %7.3g%%)  '
+           'lastdig<=%g=%-4s(max %7.3g ulp)  =>  LOOSE=%-4s'
+           % (name[:44], yn(res['exact']),
+              rel_tol * 100, yn(res['rel_pass']), res['max_rel'] * 100,
+              last_digit_tol, yn(res['ld_pass']), res['max_ulp'],
+              yn(res['loose_pass'])))
+    notes = ''
+    if not res['exact'] and res['worst_rel']:
+        notes += ('    worst relative : %s vs %s  (%.3g%%)\n'
+                  % (res['worst_rel'][1], res['worst_rel'][0], res['max_rel'] * 100))
+    if not res['exact'] and res['worst_ulp']:
+        notes += ('    worst last-digit: %s vs %s  (%.3g ulp)\n'
+                  % (res['worst_ulp'][1], res['worst_ulp'][0], res['max_ulp']))
+    if res['n_struct']:
+        notes += ('    %d structural/alignment mismatch(es) (non-numeric or token-count) '
+                  '-- separate from numeric tolerance\n' % res['n_struct'])
+    return row, notes
 
 
 def diff_sbf(file1, file2, args): 
@@ -106,30 +200,36 @@ def is_sbf(filename):
             return True
     return False
 
-def diff_files(file1, file2, args, print_diffs=True, **kwargs):
-    """Find the differences between two output files, delegating
-    to sbftool for sbf files"""
-    verbose = kwargs.get('verbose', False)
+def diff_files(file1, file2, args, print_diffs=True):
+    """Compare two output files under all three agreement criteria (exact,
+    loose-relative, loose-last-digit), print a columnar agreement report, and
+    return the LOOSE verdict (which drives the pass/exit status). SBF files are
+    delegated to sbftool as a single binary verdict."""
+    name = os.path.basename(args.test_directory.rstrip('/')) or os.path.basename(file2)
     if is_sbf(file1) and is_sbf(file2):
         log.debug('Diffing with sbftool')
-        return diff_sbf(file1, file2, args)
-    lines1 = get_lines(file1)
-    lines2 = get_lines(file2)
-    diff = list(difflib.ndiff(lines1, lines2))
-    if verbose:
-        for line in diff:
-            print(line.strip())
-    del1 = [x for x in diff if x.startswith('-')]
-    del2 = [x for x in diff if x.startswith('+')]
-    diffs = [check_numbers(l1, l2, **kwargs) for l1, l2 in zip_longest(del1, del2, fillvalue='')]
-    correct = all(diffs)
+        ok = diff_sbf(file1, file2, args)
+        res = {'exact': ok, 'rel_pass': ok, 'ld_pass': ok, 'loose_pass': ok,
+               'n_num': 0, 'n_struct': 0 if ok else 1,
+               'max_rel': 0.0, 'max_ulp': 0.0, 'worst_rel': None, 'worst_ulp': None,
+               'diff_text': ''}
+    else:
+        lines1 = get_lines(file1)
+        lines2 = get_lines(file2)
+        res = agreement_report(lines1, lines2, args.rel_tol, args.abs_tol,
+                               args.last_digit_tol)
+        if print_diffs and res['diff_text']:
+            log.info('Diff:\n%s', res['diff_text'])
 
-    if print_diffs:
-        log.info('Diff:\n%s', ''.join(a + b for a, b in zip(del1,del2)))
+    row, notes = format_agreement(name, res, args.rel_tol, args.last_digit_tol)
+    sys.stdout.write(row + '\n')
+    if notes:
+        sys.stdout.write(notes)
+    sys.stdout.flush()
 
-    if not correct:
-        log.debug('Found differences in %s and %s', file1, file2)
-    return correct
+    if not res['loose_pass']:
+        log.debug('Found (loose) differences in %s and %s', file1, file2)
+    return res['loose_pass']
 
 
 class working_directory:
@@ -180,7 +280,7 @@ def compare_outputs(f1, f2, args):
         return (subprocess.check_call([args.compare_program, f1, f2]) == 0)
     else:
         log.debug('Using builtin diffing or sbftool')
-        d = diff_files(f1, f2, args, rel_tol=args.rel_tol, abs_tol=args.abs_tol)
+        d = diff_files(f1, f2, args)
         log.debug('diff_files returned: %s', d)
         return d
 
@@ -262,9 +362,13 @@ def main():
     parser.add_argument('--mpi', '-m', default=False, action='store_true',
                         help='Test with mpirun')
     parser.add_argument('--abs-tol', type=float, default=1e-7,
-                        help='Absolute tolerance for numerical differences')
-    parser.add_argument('--rel-tol', type=float, default=1e-3,
-                        help='Relative tolerance for numerical differences')
+                        help='Absolute tolerance (near-zero floor) for numerical differences')
+    parser.add_argument('--rel-tol', type=float, default=1e-4,
+                        help='Loose RELATIVE tolerance (fraction; default 1e-4 = 0.01%%)')
+    parser.add_argument('--last-digit-tol', type=float, default=2.0,
+                        help='Loose LAST-DIGIT tolerance: allowed units of the '
+                             'last printed decimal place (default 2). A number '
+                             'passes loose if it is within rel-tol OR last-digit-tol.')
     args = parser.parse_args()
     args.sbftool = os.path.abspath(args.sbftool)
     logging.basicConfig(level=args.log_level)
