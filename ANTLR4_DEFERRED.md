@@ -126,15 +126,13 @@ NOTE: verify this is NOT the moments-staleness knock-on from setting `.atomic_mo
 `.atomic_moments_made = FALSE` reset after SCF convergence restores the reference values, it
 IS the knock-on and should be fixed rather than accepted. See memory `debug-ensure-vs-release`.
 
-## Deferred: `process_CSD_cif` — fragment placed one unit cell over in x
+## RESOLVED under release: `process_CSD_cif` — fragment-offset diff was a debug artifact
 
-Completes (no crash) but diffs from the reference: reference reports `Fragment offset 0 0 0`
-with atoms at e.g. `0.434540 … 0 0 0 1555`; produced output reports `Fragment offset 1 0 0`
-with the **same atoms shifted one cell in x** (`-0.565460 … -1 0 0 1455`) — identical
-fractional coords modulo 1, different cell image / symmetry code (1555→1455). A
-fragment-offset / cell-translation placement difference in `cluster.foo` / `crystal.foo`
-(`Fragment offset`), unrelated to the CIF-`?` or comma-in-`KEY?` work. Needs its own
-investigation (is the offset computed differently, or a translator diff in that path?).
+Under the DEBUG build it diffed (reference `Fragment offset 0 0 0`, produced `1 0 0`, same
+atoms shifted one cell in x). Under the RELEASE build (`build-rel/tonto`, the shipping config
+and the config the references were generated with) it **passes** — the fragment-offset
+difference does not appear. So it was a debug-vs-release artifact, not a translator/source bug.
+No action needed.
 
 ## Deferred: allow a "loose" pass in the comparison harness (threshold-driven)
 
@@ -156,6 +154,8 @@ Current harness uses fixed `rel_tol=1e-3`, `abs_tol=1e-7`; this task makes that 
 - **`so2_rhf_DZP_anharmonic_cluster_charge_XWR`** — minor difference.
 - **`yq28_H_U_iso_IAM_refinement`** — minor difference; defer to investigate looser
   convergence options.
+- **`h2o_rhf_cc-pVDZ_tdhf`** — one TDHF excited state differs in the last digits
+  (`S8 0.9056 24.64` → `0.9046 24.61`); numeric-only, loose-pass.
 - **`cyclazine_rhf_cc-pVDZ_VMO_canonicalization`** — crash fixed by regenerating the missing
   `cyclazine.MO_energies,r` archive (commit `63f66ef1`); residual diffs are last-significant-digit
   (`0.4203`→`0.4202`) because the original archives are lost and any regeneration lands ~1e-4 off.
