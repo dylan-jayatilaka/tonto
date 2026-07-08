@@ -1,6 +1,24 @@
 # Test-suite validation notes (milestone 3)
 
-## MILESTONE 3 RESULT — full RELEASE sweep 2026-07-08: 119 / 124 pass (96%)
+## MILESTONE 3 — LOOSE release sweep 2026-07-08: 121 / 124 pass (98%)
+
+With the new three-criteria comparator (`scripts/test.py`; loose = rel <= 0.2% OR last-digit
+<= 2 units) the full release sweep (build-rel/tonto) is **121 pass / 3 fail**. Per suite:
+short 49/51, rgbi 13/13, cx 32/32, long 27/28. The loose method absorbs the last-digit and
+small-numeric diffs (h2o_tdhf 0.122%, cyclazine VMO 1 ulp both flip to PASS).
+
+The 3 remaining loose-fails, by the report's own signature:
+- `cyclazine_rhf_cc-pVDZ_tddft_state_selection` — rel 100% / 5.4e8 ulp = **structural** (variable
+  casing), not a numeric-tolerance issue.
+- `gly_ala_fragHAR_rhf_STO-3G` — rel 100% / 1.4e8 ulp = **structural** (table column-width shift
+  misaligns ndiff pairing) — the alignment axis, separate from numeric tolerance.
+- `urea_ccsd_pob-TZVP_Salvador_properties` — rel 4.48% = **genuine** longstanding grid/partition
+  numeric difference (deferred).
+
+No residual last-digit numeric failures remain; the two structural cases need alignment-robust
+line pairing / the casing fix, and the Salvador diff is a real (deferred) numerical issue.
+
+## MILESTONE 3 RESULT — full RELEASE sweep 2026-07-08 (strict exact): 119 / 124 pass (96%)
 
 Binary: `build-rel/tonto` (RELEASE build from the ANTLR4-generated Fortran). All four suites
 (short, rgbi, cx, long) run under `scripts/test.py`. **Every remaining failure is a minor
