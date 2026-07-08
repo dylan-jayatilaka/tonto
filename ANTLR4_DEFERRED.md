@@ -156,6 +156,9 @@ Current harness uses fixed `rel_tol=1e-3`, `abs_tol=1e-7`; this task makes that 
 - **`so2_rhf_DZP_anharmonic_cluster_charge_XWR`** — minor difference.
 - **`yq28_H_U_iso_IAM_refinement`** — minor difference; defer to investigate looser
   convergence options.
+- **`cyclazine_rhf_cc-pVDZ_VMO_canonicalization`** — crash fixed by regenerating the missing
+  `cyclazine.MO_energies,r` archive (commit `63f66ef1`); residual diffs are last-significant-digit
+  (`0.4203`→`0.4202`) because the original archives are lost and any regeneration lands ~1e-4 off.
 - **`urea_rhf_DZP_consistent-cluster-charge_HAF`** — completes; diffs are last-significant-digit
   numeric changes (`E_e -349.2012`→`-349.2013`, `8.1522`→`8.1521`) plus a 1-space column-width
   shift in the last ADP column (`U_yz`), which misaligns the ndiff pairing. A tokenizing fuzzy
