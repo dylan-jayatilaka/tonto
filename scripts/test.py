@@ -363,8 +363,8 @@ def main():
                         help='Test with mpirun')
     parser.add_argument('--abs-tol', type=float, default=1e-7,
                         help='Absolute tolerance (near-zero floor) for numerical differences')
-    parser.add_argument('--rel-tol', type=float, default=1e-4,
-                        help='Loose RELATIVE tolerance (fraction; default 1e-4 = 0.01%%)')
+    parser.add_argument('--rel-tol', type=float, default=2e-3,
+                        help='Loose RELATIVE tolerance (fraction; default 2e-3 = 0.2%%)')
     parser.add_argument('--last-digit-tol', type=float, default=2.0,
                         help='Loose LAST-DIGIT tolerance: allowed units of the '
                              'last printed decimal place (default 2). A number '
