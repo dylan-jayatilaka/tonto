@@ -123,17 +123,26 @@ that already write `1:no`. Verified: MOo→25×5, back-transform conformant, num
 one source edit covers it. **Translator-level fix still worth doing** (see below) so any future
 open-lower slice is handled — but it would diverge antlr4 output from `foo.pl`.
 
-## Deferred: translator open-lower-bound array-slice bug (`:EXPR` → `EXPR:`)
+## RESOLVED: translator open-lower-bound array-slice bug (`:EXPR` → `EXPR:`)
 
-The ANTLR4 translator (like `foo.pl`) mistranslates an **open-lower-bound** array slice
-`array(:EXPR)` to `array(EXPR:)` — it moves the single bound to the lower position and leaves
-the upper open, inverting the range. Confirmed via `MOo = .MOs.r(:,:.n_a)` →
-`self%MOs%r(:,self%n_a:)` (should be `:self%n_a`). Only one live site exists today (now fixed
-in source), so this is low-urgency, but fixing it in `FooToFortran.java`'s slice/range emission
-would make the translator *more correct than `foo.pl`* for this construct. Caveat: doing so
-makes antlr4 output diverge from `foo.pl`/`release/` on any such slice (there are none live),
-so weigh against the "reproduce foo.pl" bar. Open-upper (`EXPR:`) and explicit (`lo:hi`) forms
-translate correctly; only the empty-lower `:hi` form is affected.
+**Fixed 2026-07-08 in `foogrammar/FooToFortran.java` `renderArg`.** The translator (like
+`foo.pl`) mistranslated an **open-lower-bound** array slice `array(:EXPR)` to `array(EXPR:)` —
+the old code unconditionally appended the colon *after* the expression, so a leading colon
+moved to the trailing position and inverted the range. Now `renderArg` interleaves the COLON
+and `expr` children in **source order**, so the bound stays on the correct side of the colon.
+Open-upper (`EXPR:`) and explicit (`lo:hi`) forms already translated correctly and are byte-
+identical after the fix (verified by regenerating all 184 foofiles and diffing vs `debug/`).
+
+**This caught a SECOND latent bug** beyond the CPHF `MOo` one: `molecule.prop.foo:4510`
+`MO_a(:.n_bf,:) = .MOs.r(:,1:n_a)` (block-diagonal dimer merge, paired with
+`MO_b(.n_bf+1:,:)`) was being emitted as `MO_a(self%n_bf:,:)` (wrong block); now correctly
+`MO_a(:self%n_bf,:)`. No source change needed there — the translator fix flows through.
+(My earlier grep missed this site because of whitespace: `MO_a(       :.n_bf,:)`.)
+
+Note: antlr4 output now diverges from `foo.pl`/`release/` on these two slices — intentionally,
+because antlr4 is now *more correct*. The `molecule.cp.foo` site was ALSO made explicit
+(`1:.n_a`) in source so a future `foo.pl` build is correct too; `molecule.prop.foo` relies on
+the translator fix alone.
 
 ## (former) Deferred: `h2o_rhf_cc-pVDZ_dipole_polarisabilities` hyperpolarisability crash — original analysis
 

@@ -2003,15 +2003,24 @@ public final class FooToFortran {
         String renderArg(FooParser.ArgContext a) {
             if (a.name() != null && a.EQUAL() != null)          // keyword arg
                 return nameText(a.name()) + "=" + (a.expr(0) != null ? renderExpr(a.expr(0)) : "*");
-            if (a.expr() != null && !a.expr().isEmpty()) {
-                StringBuilder sb = new StringBuilder(renderExpr(a.expr(0)));
-                // array section a:b:c
-                for (int i = 1; i < a.expr().size(); i++) sb.append(':').append(renderExpr(a.expr(i)));
-                if (a.expr().size() == 1 && a.COLON() != null && !a.COLON().isEmpty())
-                    sb.append(':');
+            if ((a.expr() != null && !a.expr().isEmpty())
+                || (a.COLON() != null && !a.COLON().isEmpty())) {
+                // Array-section range (a, a:b, a:b:c, :b, ::c, :, …). Interleave the
+                // COLON and expr children in SOURCE ORDER so a leading-colon bound
+                // (:b) stays on the correct side of the colon — emitting it as `b:`
+                // inverts the range (a longstanding foo.pl bug we do not reproduce).
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < a.getChildCount(); i++) {
+                    org.antlr.v4.runtime.tree.ParseTree ch = a.getChild(i);
+                    if (ch instanceof FooParser.ExprContext)
+                        sb.append(renderExpr((FooParser.ExprContext) ch));
+                    else if (ch instanceof org.antlr.v4.runtime.tree.TerminalNode
+                             && ((org.antlr.v4.runtime.tree.TerminalNode) ch).getSymbol().getType() == FooParser.COLON)
+                        sb.append(':');
+                }
                 return sb.toString();
             }
-            return a.getText();      // '*' / ':' forms — passthrough
+            return a.getText();      // '*' form — passthrough
         }
 
         /** True if a qualifier before ':' names a module/type (uppercase base, per
