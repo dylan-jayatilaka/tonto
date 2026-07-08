@@ -144,39 +144,37 @@ because antlr4 is now *more correct*. The `molecule.cp.foo` site was ALSO made e
 (`1:.n_a`) in source so a future `foo.pl` build is correct too; `molecule.prop.foo` relies on
 the translator fix alone.
 
-## (former) Deferred: `h2o_rhf_cc-pVDZ_dipole_polarisabilities` hyperpolarisability crash — original analysis
+## RESOLVED: `put_CX_data` / Crystal-Explorer surface crash cluster (comma-in-`KEY?` hack)
 
-**Symptom (debug only):** `Error in MAT{REAL}:back_transform_to_2 ... incompatible sizes`
-at stdin keyword `put_scf_dipole_hyperpolarisability`.
+**Fixed 2026-07-08 in `foofiles/isosurface.foo` (commit `81d9e857`).** The whole `tests/cx`
+surface family crashed under debug with `Error in BUFFER:put_str ... cursor beyond buffer end`
+at keyword `put_CX_data`. Root cause: `ISOSURFACE:put_vertex_property`'s MAT{INT}/MAT{REAL}
+instantiations used `get_from(..., PUT?=>prop,transpose=TRUE)` with body `stdout.put(PUT?)`;
+the **comma** in the substitution value makes both `foo.pl` and antlr4 read `transpose=TRUE`
+as a separate (ignored) get_from argument, so `PUT?` collapses to `prop` and the emitted call
+drops the transpose. The vertex matrix is stored `(3,N)`, so without transpose it is written as
+3 rows of N (~6500 chars) instead of N rows of 3 — overflowing the 256-char BUFFER (debug
+ENSURE abort; release overflowed silently). Fixed by rewriting the two MAT versions as explicit
+routines (no get_from → no comma-in-substitution) calling `stdout.put(prop,transpose=TRUE)`
+directly — same pattern as the earlier `ARG?`/`get_auto_width` rewrite.
 
-**Ruled out — translator.** Every routine on this path is **byte-identical** between
-`foo.pl` (`release/molecule.cp.F90`) and ANTLR4 (`debug/molecule.cp.F90`):
-`make_SCF_dipole_hyperpol`, `get_MO_dipole_matrices`, `add_A_times_U` all diff clean.
-A debug build from `foo.pl` output would crash identically. Confirmed via
-`diff <(awk .../release) <(awk .../debug)`.
+**Verified:** full `tests/cx` + `urea_read_cif_and_make_Hirshfeld_surface` sweep = **30 passed,
+3 failed**; every buffer-overflow crash is gone; produced `.cxs` vertices now one-per-line,
+matching the reference format. Also removed 16 dead `ARG?` placeholders from `textfile.foo`
+(commit `cb1ef8b5`, byte-identical output).
 
-**Ruled out — Hirshfeld moments.** Entirely separate code path: CPHF hyperpolarisability
-never touches atomic moments / `atomic_moments_made`.
+**Scan result:** the isosurface case was the ONLY live, harmful comma-in-`KEY?` substitution in
+`foofiles/`. Type-parameter commas (`MAT{REAL}(3,3)`) are inside balanced parens and translate
+fine; the `textfile.foo` `ARG?=>,.style.real_precision` leftovers were dead (now removed).
 
-**Same class as the Nx crash: debug-ENSURE-vs-release.** The reference `stdout` (made under
-**release**, ENSURE compiled out) contains the full hyperpolarisability output (|beta|=35.4987),
-so the arithmetic ran to completion under release. Nobody had run this test under **debug**
-before, so the ENSURE never fired. See memory `debug-ensure-vs-release`.
+## Deferred: 3 remaining surface failures (separate root causes, NOT the buffer overflow)
 
-**Crash site pinned.** `add_A_times_U` is called from exactly one place —
-`make_SCF_dipole_hyperpol` (molecule.cp.foo:1047) — so it is exercised *only* by the
-hyperpolarisability keyword (the polarisability keyword that printed the "JJM" block never
-calls it). The failing precondition is one of the four in `back_transform_to(new,L,R)`
-(mat{intrinsic}.foo:4231-4234), reached at molecule.cp.foo:1810
-`U(:,:,n).back_transform_to(W,MOv,MOo)`.
-
-**Leading hypothesis (needs a backtrace to confirm which ENSURE):** a dimension-convention
-mismatch. `U` (= `.U_electric_dipole`) is dimensioned `nv=.n_bf-.n_a` by `no=.n_a`, but
-`MOv=.MOs.r(:,.n_a+1:)` / `MOo=.MOs.r(:,:.n_a)` are sized by the *actual MO count*. If the
-number of MOs differs from `.n_bf` (or `.U_electric_dipole` is carried over from the previous
-`put_scf_dipole_polarisability` keyword with an incompatible shape), `.dim1==L.dim2` fails.
-Unlike the Nx case this may be a *genuine* latent bug (silently wrong or reading past bounds
-in release), so it warrants a real fix, not an ENSURE relaxation. Deferred.
+From the 2026-07-08 cx sweep (30/33 pass), these 3 fail for reasons unrelated to `put_CX_data`:
+- **`actinide_surface`**, **`lanthanide_surface`** — different signature
+  `Error in BUFFER:get_int ... expected integer in input` (an input-parse/read issue, e.g.
+  `File buffer = ? ? ? ?`), not a buffer overflow. Investigate as its own item.
+- **`process_CSD_cif`** — runs to completion then differs from the reference (a diff, not a
+  crash); candidate for the loose-pass harness or a reference check.
 
 ## Deferred: allow a "loose" pass in the comparison harness (threshold-driven)
 
@@ -193,5 +191,16 @@ Current harness uses fixed `rel_tol=1e-3`, `abs_tol=1e-7`; this task makes that 
 - **`tests/rgbi/ylid`** — minor difference, ignore.
 - **`L_alanine_IAM_scale_factor_test`** — minor difference, regard as a pass.
 - **`YLID_IAM_plus_anomalous_residual_density`** — minor difference, regard as a pass.
+- **`gly_ala_fragHAR_rhf_STO-3G`** — minor difference, regard as a pass.
+- **`karrikinolide_blyp_6-31G(d)_Salvador_properties`** — minor difference (loose-pass).
+- **`so2_rhf_DZP_anharmonic_cluster_charge_XWR`** — minor difference.
+- **`yq28_H_U_iso_IAM_refinement`** — minor difference; defer to investigate looser
+  convergence options.
   (All are candidates for the "loose pass" threshold mechanism above rather than
   reference rewrites.)
+
+  Re-verified 2026-07-08 on the current debug binary (after the CPHF/translator/isosurface
+  fixes): `tests/rgbi/ylid`, `L_alanine_IAM_scale_factor_test`,
+  `YLID_IAM_plus_anomalous_residual_density` **still fail** with small numerical differences
+  (as expected) — they are genuinely minor-diff, not yet crash/logic bugs, so they remain
+  here awaiting the loose-pass harness rather than being marked solved.

@@ -74,10 +74,18 @@ make many `auto_width` tests "fail" regardless of translator correctness. Option
 - `OUTPUT_STYLE_TYPE` default inits (`real_width=16`, etc.) are **identical** in
   `release/types.F90` and `debug/types.F90`. `real_width` is set; `auto_width` overrides it.
 
-## ACTIVE cluster (NOT deferred): `put_CX_data` buffer overflow — the Crystal-Explorer / surface tests
+## RESOLVED cluster: `put_CX_data` buffer overflow — the Crystal-Explorer / surface tests
 
-**Signature:** `Error in BUFFER:put_str ... cursor beyond buffer end`, keyword `put_CX_data`,
-while "Writing Crystal Explorer data file: <name>.cxs".
+**Fixed 2026-07-08 (commit `81d9e857`).** Root cause was the comma-in-`KEY?` get_from hack
+in `ISOSURFACE:put_vertex_property` (`PUT?=>prop,transpose=TRUE` → transpose dropped → the
+(3,N) vertex matrix written as 3 N-wide rows, overflowing the 256-char BUFFER). Fixed by
+rewriting the MAT{INT}/MAT{REAL} versions as explicit routines calling
+`stdout.put(prop,transpose=TRUE)`. Full cx sweep: **30/33 pass**; the 3 remaining
+(`actinide_surface`, `lanthanide_surface`: `BUFFER:get_int` input-parse; `process_CSD_cif`:
+completes-then-diffs) are separate root causes — see ANTLR4_DEFERRED.md.
+
+**Original signature:** `Error in BUFFER:put_str ... cursor beyond buffer end`, keyword
+`put_CX_data`, while "Writing Crystal Explorer data file: <name>.cxs".
 
 **Members (one bug, ~20+ tests):** `urea_read_cif_and_make_Hirshfeld_surface`,
 `1st_row_transition_metal_surface`, and the whole `tests/cx` surface family
