@@ -3,6 +3,34 @@
 Tracked for later attention once the full debug build compiles. None of these
 block compilation; they are correctness-of-match or robustness refinements.
 
+## Build/CMake: gfortran warns about a nonexistent `external/` include directory
+
+**Symptom (user-flagged):** on some machines the f95/gfortran compile warns about a **missing
+include directory** (`external/`, i.e. `build/external` or a `build/external/<dep>` subdir).
+It appears to correlate with the machine having the Java compiler already installed — more
+likely the real trigger is *how the external deps resolve*: when `lapack-release`/`sbf` are
+built as CMake subdirectories they create `build/external/...`, but when they are
+**system-provided** (found, not built as subdirs) `build/external` is never created, so the
+`-I` flag points at a nonexistent path and gfortran warns.
+
+**Where it comes from:** `CMakeLists.txt:650`
+`target_include_directories(tonto PUBLIC ${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR}/external)`
+adds `build/external` unconditionally. There is already a partial mitigation at line 649
+(`file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/external)`) which evidently does not cover
+this configuration (perhaps the missing dir is a *subdir* like `build/external/lapack-release`,
+or the dir is created but the referenced include is deeper).
+
+**Goal (user):** silence the warning by making the include path valid in every configuration —
+NOT by adding `-w`/suppressing the compiler warning flag, because a genuinely missing include
+directory can legitimately flag a real problem elsewhere.
+
+**Fix direction (to investigate):** either (a) only add each `build/external/...` include dir
+when the corresponding external dep is actually built as a subdirectory (guard the
+`target_include_directories` entry behind the same condition that adds the subdir), or
+(b) `file(MAKE_DIRECTORY ...)` the exact path(s) that are referenced (verify which subdir the
+warning names). Confirm by reproducing on the affected machine (system lapack/sbf, no subdir
+build) and checking the exact path in the gfortran warning text.
+
 ## Call resolution
 - **`MODULE.SUBMOD:proc(...)` selfless assumption.** These calls usually target
   selfless procedures (they can't be called any other way). We currently detect
