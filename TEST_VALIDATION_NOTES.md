@@ -73,3 +73,76 @@ make many `auto_width` tests "fail" regardless of translator correctness. Option
 ## Not the cause (ruled out)
 - `OUTPUT_STYLE_TYPE` default inits (`real_width=16`, etc.) are **identical** in
   `release/types.F90` and `debug/types.F90`. `real_width` is set; `auto_width` overrides it.
+
+## ACTIVE cluster (NOT deferred): `put_CX_data` buffer overflow — the Crystal-Explorer / surface tests
+
+**Signature:** `Error in BUFFER:put_str ... cursor beyond buffer end`, keyword `put_CX_data`,
+while "Writing Crystal Explorer data file: <name>.cxs".
+
+**Members (one bug, ~20+ tests):** `urea_read_cif_and_make_Hirshfeld_surface`,
+`1st_row_transition_metal_surface`, and the whole `tests/cx` surface family
+(urea_surface*, benzene_surface*, ethanol_deformation, separated_atom, cigar, disordered,
+hydroquinone_void, urea_HOMO_surface, urea_esp_property*, etc.). The `actinide_surface` /
+`lanthanide_surface` pair shows a *different* signature (`BUFFER:get_int ... expected integer`)
+— treat as a possibly-separate sub-case.
+
+**Classification:** the crash is an **ENSURE** — `foofiles/buffer.foo:514`
+`ENSURE(.item_end+len(string)<=BSTR_SIZE,"cursor beyond buffer end")`, `BSTR_SIZE=256`
+(`include/macros.in:56`). Debug-only (release compiles it out and writes the over-long line),
+which is why the references exist. **But this is a genuine bug to FIX, not a stale-reference
+artifact** — same compiler-driven root-cause *family* as the 4AP `auto_width` issue, on a
+different code path.
+
+**Root cause (strong hypothesis):** `put_CX_data` (`foofiles/molecule.ce.foo:463`) does
+`stdout.set_using_fields(FALSE)` (line 505) then writes rows of reals to the `.cxs` buffer.
+With `using_fields=FALSE`, `TEXTFILE:put_text` (`textfile.foo:3669`) puts each value's string
+**as-is, space-separated, with no width cap** — so a real rendered at gfortran-14's wide
+list-directed width (18–19 significant digits, ~25 chars each) makes a multi-real row exceed
+256 and overflow the buffer. The earlier `get_auto_width` fix only covered the *auto-width
+table* path; the `using_fields=FALSE` `.cxs` path still leaks the wide list-directed real.
+
+**Next step to confirm & fix:** trace `TEXTFILE:put(REAL)` under `using_fields=FALSE` — verify
+it formats via the list-directed/`get_str` route rather than `real_width`/`real_precision`, then
+make that path honour `real_width`/`real_precision` (as `set_real_width(12)`,
+`set_real_precision(5)` at ce.foo:503-504 already request). That both fixes the overflow and
+matches the reference `.cxs` widths. Verify a foo.pl debug build overflows identically (it
+should — the generated ce/textfile/buffer routines are equivalent), confirming source/runtime,
+not translator.
+
+## `cyclazine_rhf_cc-pVDZ_VMO_canonicalization` (tests/long) — MISSING INPUT FILE (not translator)
+
+**Signature:** `Error in ARCHIVE:read_4 ... no binary archive MO_energies` at the first `scf`.
+
+**Cause:** `initial_MOs= restricted` → `MOLECULE.SCF:read_old_MOs` (`molecule.scf.foo:4541`)
+reads the `MOs` archive (present: `cyclazine.MOs,r`) **and** the `MO_energies` archive
+(`molecule.scf.foo:4562`). The file `cyclazine.MO_energies,r` is **not in the test dir and was
+never committed** (`git log --diff-filter=A` shows only `cyclazine.MOs,r`, IO, stdin, stdout).
+The read guard is an ENSURE (`archive.foo:334`) but `open_for("read-only")` follows immediately,
+so **release would also fail** on the missing file — the reference `stdout` (with real archived
+"HF MO energies": 0.3670, 0.4203, …) proves a `cyclazine.MO_energies,r` existed at generation
+time and has since been lost. NOT the debug/release class, NOT a translator bug.
+(The sibling `tests/short/cyclazine_rhf_cc-pVDZ_tddft_state_selection` ships a
+`cyclazine.MO_energies,r`, but its `cyclazine.MOs,r` **differs** → different calc, wrong file.)
+
+**Fix options:** (a) regenerate/restore the matching `cyclazine.MO_energies,r` for this test;
+or (b) guard the initial-guess `MO_energies` read at `molecule.scf.foo:4562` with an
+`arch.exists` test (mirroring the optional `M0s` read at `molecule.read.foo:2219`) — the SCF
+recomputes MO energies anyway, so the initial read is inessential and (b) is the cleaner,
+data-independent fix. Verify the produced "HF MO energies" then still match the reference.
+
+## Running failure catalogue (debug, `tests/`), with disposition
+
+- **FIX (translator/source):** `put_CX_data` buffer-overflow cluster (above) — highest value.
+- **FIXED (2026-07-08):** `h2o_rhf_cc-pVDZ_dipole_polarisabilities` **and**
+  `nhfcl_rhf_DZP_unit_cell_refractive_indices` — both crashed at `back_transform_to_2` in the
+  shared CPHF routine `add_A_times_U`. Root cause: **open-lower-bound array-slice
+  mistranslation** — `MOo = .MOs.r(:,:.n_a)` emitted as `self%MOs%r(:,self%n_a:)` (25×21) by
+  both foo.pl and antlr4; should be `:self%n_a` (25×5). Fixed in `molecule.cp.foo` with the
+  explicit form `MOo = .MOs.r(:,1:.n_a)`. Both tests now pass (exit 0, numbers match reference).
+  See ANTLR4_DEFERRED.md "open-lower-bound array-slice bug".
+- **TEST DATA:** `cyclazine_rhf_cc-pVDZ_VMO_canonicalization` missing `MO_energies` archive (above).
+- **MINOR / loose-pass (defer):** `ylid`, `L_alanine_IAM_scale_factor_test`,
+  `YLID_IAM_plus_anomalous_residual_density`, `gly_ala_fragHAR_rhf_STO-3G`,
+  `karrikinolide_blyp_6-31G(d)_Salvador_properties`, `so2_rhf_DZP_anharmonic_cluster_charge_XWR`,
+  `yq28_H_U_iso_IAM_refinement` (looser convergence), `urea_ccsd_pob-TZVP_Salvador_properties` —
+  all candidates for the deferred threshold-driven "loose pass" harness mode.

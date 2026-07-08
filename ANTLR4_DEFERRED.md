@@ -97,3 +97,92 @@ NOTE: verify this is NOT the moments-staleness knock-on from setting `.atomic_mo
 (the flag now suppresses moment re-making that release always did). If a targeted
 `.atomic_moments_made = FALSE` reset after SCF convergence restores the reference values, it
 IS the knock-on and should be fixed rather than accepted. See memory `debug-ensure-vs-release`.
+
+## RESOLVED: `h2o_rhf_cc-pVDZ_dipole_polarisabilities` hyperpolarisability crash — open-bound slice mistranslation
+
+**Fixed 2026-07-08. Test passes (exit 0), `|beta|=35.4987` matches the reference.**
+
+Root cause was an **array-slice open-bound translation error**, not the ENSURE (the four
+`back_transform_to_2` ENSUREs are exactly the matmul-conformance conditions and are correct).
+Diagnostic prints before `molecule.cp.foo` `add_A_times_U`'s `back_transform_to` gave, for
+h2o/cc-pVDZ (`n_bf=25`, `n_a=5`):
+`U`=20×5 ✓, `MOv`=25×20 ✓, but **`MOo`=25×21** (should be 25×5).
+
+The Foo source was `MOo = .MOs.r(:,:.n_a)` — an **open-lower-bound** slice meaning columns
+`1:n_a`. Both `foo.pl` **and** the ANTLR4 translator emit it as `self%MOs%r(:,self%n_a:)`
+(columns `n_a:`, i.e. 5..25 = 21 wide) — the bound landed on the wrong side of the colon.
+So this is a shared `foo.pl`/antlr4 defect, not an antlr4 regression; the checked-in
+reference `stdout` predates it / was made when this path emitted `1:no`.
+
+**Fix (source):** make the lower bound explicit — `MOo = .MOs.r(:,1:.n_a)` — which both
+translators emit correctly as `self%MOs%r(:,1:self%n_a)` (25×5). Matches the sibling sites
+that already write `1:no`. Verified: MOo→25×5, back-transform conformant, numbers match ref.
+
+**Blast radius:** the only *live* open-lower-bound slice with a real upper bound in all of
+`foofiles/` was this one line; every other `(:X)` / `,:X)` occurrence is commented out. So the
+one source edit covers it. **Translator-level fix still worth doing** (see below) so any future
+open-lower slice is handled — but it would diverge antlr4 output from `foo.pl`.
+
+## Deferred: translator open-lower-bound array-slice bug (`:EXPR` → `EXPR:`)
+
+The ANTLR4 translator (like `foo.pl`) mistranslates an **open-lower-bound** array slice
+`array(:EXPR)` to `array(EXPR:)` — it moves the single bound to the lower position and leaves
+the upper open, inverting the range. Confirmed via `MOo = .MOs.r(:,:.n_a)` →
+`self%MOs%r(:,self%n_a:)` (should be `:self%n_a`). Only one live site exists today (now fixed
+in source), so this is low-urgency, but fixing it in `FooToFortran.java`'s slice/range emission
+would make the translator *more correct than `foo.pl`* for this construct. Caveat: doing so
+makes antlr4 output diverge from `foo.pl`/`release/` on any such slice (there are none live),
+so weigh against the "reproduce foo.pl" bar. Open-upper (`EXPR:`) and explicit (`lo:hi`) forms
+translate correctly; only the empty-lower `:hi` form is affected.
+
+## (former) Deferred: `h2o_rhf_cc-pVDZ_dipole_polarisabilities` hyperpolarisability crash — original analysis
+
+**Symptom (debug only):** `Error in MAT{REAL}:back_transform_to_2 ... incompatible sizes`
+at stdin keyword `put_scf_dipole_hyperpolarisability`.
+
+**Ruled out — translator.** Every routine on this path is **byte-identical** between
+`foo.pl` (`release/molecule.cp.F90`) and ANTLR4 (`debug/molecule.cp.F90`):
+`make_SCF_dipole_hyperpol`, `get_MO_dipole_matrices`, `add_A_times_U` all diff clean.
+A debug build from `foo.pl` output would crash identically. Confirmed via
+`diff <(awk .../release) <(awk .../debug)`.
+
+**Ruled out — Hirshfeld moments.** Entirely separate code path: CPHF hyperpolarisability
+never touches atomic moments / `atomic_moments_made`.
+
+**Same class as the Nx crash: debug-ENSURE-vs-release.** The reference `stdout` (made under
+**release**, ENSURE compiled out) contains the full hyperpolarisability output (|beta|=35.4987),
+so the arithmetic ran to completion under release. Nobody had run this test under **debug**
+before, so the ENSURE never fired. See memory `debug-ensure-vs-release`.
+
+**Crash site pinned.** `add_A_times_U` is called from exactly one place —
+`make_SCF_dipole_hyperpol` (molecule.cp.foo:1047) — so it is exercised *only* by the
+hyperpolarisability keyword (the polarisability keyword that printed the "JJM" block never
+calls it). The failing precondition is one of the four in `back_transform_to(new,L,R)`
+(mat{intrinsic}.foo:4231-4234), reached at molecule.cp.foo:1810
+`U(:,:,n).back_transform_to(W,MOv,MOo)`.
+
+**Leading hypothesis (needs a backtrace to confirm which ENSURE):** a dimension-convention
+mismatch. `U` (= `.U_electric_dipole`) is dimensioned `nv=.n_bf-.n_a` by `no=.n_a`, but
+`MOv=.MOs.r(:,.n_a+1:)` / `MOo=.MOs.r(:,:.n_a)` are sized by the *actual MO count*. If the
+number of MOs differs from `.n_bf` (or `.U_electric_dipole` is carried over from the previous
+`put_scf_dipole_polarisability` keyword with an incompatible shape), `.dim1==L.dim2` fails.
+Unlike the Nx case this may be a *genuine* latent bug (silently wrong or reading past bounds
+in release), so it warrants a real fix, not an ENSURE relaxation. Deferred.
+
+## Deferred: allow a "loose" pass in the comparison harness (threshold-driven)
+
+**Goal (user):** modify the test comparison (`scripts/test.py`) so a test can pass "loosely"
+depending on configurable thresholds — i.e. a per-test (or per-line) numeric tolerance band
+that counts small, known numerical differences as a pass rather than a hard fail. This is the
+principled home for the longstanding numerical-difference cases below (Salvador, and the
+minor-difference tests the user has flagged as acceptable): instead of overwriting reference
+files to match produced values, keep the reference and widen tolerance where justified.
+Current harness uses fixed `rel_tol=1e-3`, `abs_tol=1e-7`; this task makes that adjustable.
+
+## Minor differences — treat as PASS (user-flagged, ignore)
+
+- **`tests/rgbi/ylid`** — minor difference, ignore.
+- **`L_alanine_IAM_scale_factor_test`** — minor difference, regard as a pass.
+- **`YLID_IAM_plus_anomalous_residual_density`** — minor difference, regard as a pass.
+  (All are candidates for the "loose pass" threshold mechanism above rather than
+  reference rewrites.)
