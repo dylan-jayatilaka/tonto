@@ -98,52 +98,6 @@ NOTE: verify this is NOT the moments-staleness knock-on from setting `.atomic_mo
 `.atomic_moments_made = FALSE` reset after SCF convergence restores the reference values, it
 IS the knock-on and should be fixed rather than accepted. See memory `debug-ensure-vs-release`.
 
-## RESOLVED: `h2o_rhf_cc-pVDZ_dipole_polarisabilities` hyperpolarisability crash — open-bound slice mistranslation
-
-**Fixed 2026-07-08. Test passes (exit 0), `|beta|=35.4987` matches the reference.**
-
-Root cause was an **array-slice open-bound translation error**, not the ENSURE (the four
-`back_transform_to_2` ENSUREs are exactly the matmul-conformance conditions and are correct).
-Diagnostic prints before `molecule.cp.foo` `add_A_times_U`'s `back_transform_to` gave, for
-h2o/cc-pVDZ (`n_bf=25`, `n_a=5`):
-`U`=20×5 ✓, `MOv`=25×20 ✓, but **`MOo`=25×21** (should be 25×5).
-
-The Foo source was `MOo = .MOs.r(:,:.n_a)` — an **open-lower-bound** slice meaning columns
-`1:n_a`. Both `foo.pl` **and** the ANTLR4 translator emit it as `self%MOs%r(:,self%n_a:)`
-(columns `n_a:`, i.e. 5..25 = 21 wide) — the bound landed on the wrong side of the colon.
-So this is a shared `foo.pl`/antlr4 defect, not an antlr4 regression; the checked-in
-reference `stdout` predates it / was made when this path emitted `1:no`.
-
-**Fix (source):** make the lower bound explicit — `MOo = .MOs.r(:,1:.n_a)` — which both
-translators emit correctly as `self%MOs%r(:,1:self%n_a)` (25×5). Matches the sibling sites
-that already write `1:no`. Verified: MOo→25×5, back-transform conformant, numbers match ref.
-
-**Blast radius:** the only *live* open-lower-bound slice with a real upper bound in all of
-`foofiles/` was this one line; every other `(:X)` / `,:X)` occurrence is commented out. So the
-one source edit covers it. **Translator-level fix still worth doing** (see below) so any future
-open-lower slice is handled — but it would diverge antlr4 output from `foo.pl`.
-
-## RESOLVED: translator open-lower-bound array-slice bug (`:EXPR` → `EXPR:`)
-
-**Fixed 2026-07-08 in `foogrammar/FooToFortran.java` `renderArg`.** The translator (like
-`foo.pl`) mistranslated an **open-lower-bound** array slice `array(:EXPR)` to `array(EXPR:)` —
-the old code unconditionally appended the colon *after* the expression, so a leading colon
-moved to the trailing position and inverted the range. Now `renderArg` interleaves the COLON
-and `expr` children in **source order**, so the bound stays on the correct side of the colon.
-Open-upper (`EXPR:`) and explicit (`lo:hi`) forms already translated correctly and are byte-
-identical after the fix (verified by regenerating all 184 foofiles and diffing vs `debug/`).
-
-**This caught a SECOND latent bug** beyond the CPHF `MOo` one: `molecule.prop.foo:4510`
-`MO_a(:.n_bf,:) = .MOs.r(:,1:n_a)` (block-diagonal dimer merge, paired with
-`MO_b(.n_bf+1:,:)`) was being emitted as `MO_a(self%n_bf:,:)` (wrong block); now correctly
-`MO_a(:self%n_bf,:)`. No source change needed there — the translator fix flows through.
-(My earlier grep missed this site because of whitespace: `MO_a(       :.n_bf,:)`.)
-
-Note: antlr4 output now diverges from `foo.pl`/`release/` on these two slices — intentionally,
-because antlr4 is now *more correct*. The `molecule.cp.foo` site was ALSO made explicit
-(`1:.n_a`) in source so a future `foo.pl` build is correct too; `molecule.prop.foo` relies on
-the translator fix alone.
-
 ## RESOLVED: `put_CX_data` / Crystal-Explorer surface crash cluster (comma-in-`KEY?` hack)
 
 **Fixed 2026-07-08 in `foofiles/isosurface.foo` (commit `81d9e857`).** The whole `tests/cx`
