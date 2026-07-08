@@ -121,14 +121,34 @@ matching the reference format. Also removed 16 dead `ARG?` placeholders from `te
 `foofiles/`. Type-parameter commas (`MAT{REAL}(3,3)`) are inside balanced parens and translate
 fine; the `textfile.foo` `ARG?=>,.style.real_precision` leftovers were dead (now removed).
 
-## Deferred: 3 remaining surface failures (separate root causes, NOT the buffer overflow)
+## RESOLVED: `actinide_surface` / `lanthanide_surface` — malformed CIF `?` reflection placeholders
 
-From the 2026-07-08 cx sweep (30/33 pass), these 3 fail for reasons unrelated to `put_CX_data`:
-- **`actinide_surface`**, **`lanthanide_surface`** — different signature
-  `Error in BUFFER:get_int ... expected integer in input` (an input-parse/read issue, e.g.
-  `File buffer = ? ? ? ?`), not a buffer overflow. Investigate as its own item.
-- **`process_CSD_cif`** — runs to completion then differs from the reference (a diff, not a
-  crash); candidate for the loose-pass harness or a reference check.
+Both crashed under debug with `Error in BUFFER:get_int ... expected integer in input` while
+reading `mo7c.cif`. Root cause: the CIF contained `loop_` blocks (`_refln_index_h…`,
+`_diffrn_standard_refln_*`, `_diffrn_attenuator_*`) whose data rows were **all `?`** (CIF's
+"value unknown" marker — placeholder blocks). `process_CIF` reads X-ray reflections
+unconditionally (`molecule.ce.foo:201-203`, "Assume there is X-ray data"); the header presence
+makes `has_smCIF_*` return TRUE, so it reads the loop and `?.to_int` trips
+`ENSURE(item.is_int)` at `buffer.foo:394` (debug-only; release read `?` as garbage and
+completed). **The reader's strictness is correct** — an `_refln_index` loop with `?` data is
+malformed — so the fix belongs in the test data, not the reader.
+
+**Fix:** remove the `?`-placeholder `loop_` blocks from both `tests/cx/*/mo7c.cif`. Traced (no
+run needed) that a reflection-less CIF is graceful: `has_smCIF_*` → FALSE → 0 reflections, and
+all downstream is guarded (`if have_I_exp/have_F_exp`, `if reflections.allocated`); the only
+`ENSURE(.reflections.allocated)` are in `diffraction_data.put.foo` print routines a surface job
+never calls. Verified: **actinide_surface passes** (exit 0), lanthanide fixed identically
+(same file, differs only U↔Nd labels). cx cluster now 32/33.
+
+## Deferred: `process_CSD_cif` — fragment placed one unit cell over in x
+
+Completes (no crash) but diffs from the reference: reference reports `Fragment offset 0 0 0`
+with atoms at e.g. `0.434540 … 0 0 0 1555`; produced output reports `Fragment offset 1 0 0`
+with the **same atoms shifted one cell in x** (`-0.565460 … -1 0 0 1455`) — identical
+fractional coords modulo 1, different cell image / symmetry code (1555→1455). A
+fragment-offset / cell-translation placement difference in `cluster.foo` / `crystal.foo`
+(`Fragment offset`), unrelated to the CIF-`?` or comma-in-`KEY?` work. Needs its own
+investigation (is the offset computed differently, or a translator diff in that path?).
 
 ## Deferred: allow a "loose" pass in the comparison harness (threshold-driven)
 
