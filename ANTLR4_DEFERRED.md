@@ -98,48 +98,6 @@ NOTE: verify this is NOT the moments-staleness knock-on from setting `.atomic_mo
 `.atomic_moments_made = FALSE` reset after SCF convergence restores the reference values, it
 IS the knock-on and should be fixed rather than accepted. See memory `debug-ensure-vs-release`.
 
-## RESOLVED: `put_CX_data` / Crystal-Explorer surface crash cluster (comma-in-`KEY?` hack)
-
-**Fixed 2026-07-08 in `foofiles/isosurface.foo` (commit `81d9e857`).** The whole `tests/cx`
-surface family crashed under debug with `Error in BUFFER:put_str ... cursor beyond buffer end`
-at keyword `put_CX_data`. Root cause: `ISOSURFACE:put_vertex_property`'s MAT{INT}/MAT{REAL}
-instantiations used `get_from(..., PUT?=>prop,transpose=TRUE)` with body `stdout.put(PUT?)`;
-the **comma** in the substitution value makes both `foo.pl` and antlr4 read `transpose=TRUE`
-as a separate (ignored) get_from argument, so `PUT?` collapses to `prop` and the emitted call
-drops the transpose. The vertex matrix is stored `(3,N)`, so without transpose it is written as
-3 rows of N (~6500 chars) instead of N rows of 3 — overflowing the 256-char BUFFER (debug
-ENSURE abort; release overflowed silently). Fixed by rewriting the two MAT versions as explicit
-routines (no get_from → no comma-in-substitution) calling `stdout.put(prop,transpose=TRUE)`
-directly — same pattern as the earlier `ARG?`/`get_auto_width` rewrite.
-
-**Verified:** full `tests/cx` + `urea_read_cif_and_make_Hirshfeld_surface` sweep = **30 passed,
-3 failed**; every buffer-overflow crash is gone; produced `.cxs` vertices now one-per-line,
-matching the reference format. Also removed 16 dead `ARG?` placeholders from `textfile.foo`
-(commit `cb1ef8b5`, byte-identical output).
-
-**Scan result:** the isosurface case was the ONLY live, harmful comma-in-`KEY?` substitution in
-`foofiles/`. Type-parameter commas (`MAT{REAL}(3,3)`) are inside balanced parens and translate
-fine; the `textfile.foo` `ARG?=>,.style.real_precision` leftovers were dead (now removed).
-
-## RESOLVED: `actinide_surface` / `lanthanide_surface` — malformed CIF `?` reflection placeholders
-
-Both crashed under debug with `Error in BUFFER:get_int ... expected integer in input` while
-reading `mo7c.cif`. Root cause: the CIF contained `loop_` blocks (`_refln_index_h…`,
-`_diffrn_standard_refln_*`, `_diffrn_attenuator_*`) whose data rows were **all `?`** (CIF's
-"value unknown" marker — placeholder blocks). `process_CIF` reads X-ray reflections
-unconditionally (`molecule.ce.foo:201-203`, "Assume there is X-ray data"); the header presence
-makes `has_smCIF_*` return TRUE, so it reads the loop and `?.to_int` trips
-`ENSURE(item.is_int)` at `buffer.foo:394` (debug-only; release read `?` as garbage and
-completed). **The reader's strictness is correct** — an `_refln_index` loop with `?` data is
-malformed — so the fix belongs in the test data, not the reader.
-
-**Fix:** remove the `?`-placeholder `loop_` blocks from both `tests/cx/*/mo7c.cif`. Traced (no
-run needed) that a reflection-less CIF is graceful: `has_smCIF_*` → FALSE → 0 reflections, and
-all downstream is guarded (`if have_I_exp/have_F_exp`, `if reflections.allocated`); the only
-`ENSURE(.reflections.allocated)` are in `diffraction_data.put.foo` print routines a surface job
-never calls. Verified: **actinide_surface passes** (exit 0), lanthanide fixed identically
-(same file, differs only U↔Nd labels). cx cluster now 32/33.
-
 ## Deferred: `process_CSD_cif` — fragment placed one unit cell over in x
 
 Completes (no crash) but diffs from the reference: reference reports `Fragment offset 0 0 0`
@@ -170,6 +128,10 @@ Current harness uses fixed `rel_tol=1e-3`, `abs_tol=1e-7`; this task makes that 
 - **`so2_rhf_DZP_anharmonic_cluster_charge_XWR`** — minor difference.
 - **`yq28_H_U_iso_IAM_refinement`** — minor difference; defer to investigate looser
   convergence options.
+- **`urea_rhf_DZP_consistent-cluster-charge_HAF`** — completes; diffs are last-significant-digit
+  numeric changes (`E_e -349.2012`→`-349.2013`, `8.1522`→`8.1521`) plus a 1-space column-width
+  shift in the last ADP column (`U_yz`), which misaligns the ndiff pairing. A tokenizing fuzzy
+  numeric comparator (whitespace-insensitive) covers both — no source fix warranted.
   (All are candidates for the "loose pass" threshold mechanism above rather than
   reference rewrites.)
 
