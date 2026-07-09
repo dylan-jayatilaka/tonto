@@ -179,11 +179,13 @@ public final class FooToFortran {
         if (files == null) return reg;
         java.util.regex.Pattern modPat =
             java.util.regex.Pattern.compile("^\\s*(?:virtual\\s+)?(?:array\\s+)?module\\s+(\\S+)");
-        // A procedure header: 3-space indent, a name, then '(' args, ':::' attrs,
-        // 'result', a trailing comment, or end-of-line. A `name :: TYPE` decl (only
-        // two colons) and deeper-indented body statements are excluded.
+        // A procedure header: 3-space indent, a name, then '(' args, '::' attrs,
+        // 'result', a trailing comment, or end-of-line. This scan runs only on lines
+        // AFTER `contains` (the `past` guard below), where variable declarations
+        // cannot appear, so a 3-space `name :: ...` line here is always a proc header.
+        // (Deeper-indented body statements have >3 leading spaces and are excluded.)
         java.util.regex.Pattern procPat =
-            java.util.regex.Pattern.compile("^ {3}([A-Za-z]\\w*)\\s*(\\(|:::|result\\b|!|$)");
+            java.util.regex.Pattern.compile("^ {3}([A-Za-z]\\w*)\\s*(\\(|::|result\\b|!|$)");
         Set<String> kw = Set.of("end", "contains", "interface", "use", "module",
             "result", "then", "else", "elsewhere", "do", "select", "case", "where",
             "forall", "if", "subroutine", "function", "type", "data");
@@ -228,7 +230,7 @@ public final class FooToFortran {
         java.io.File[] files = foofilesDir.toFile().listFiles((d, n) -> n.endsWith(".foo"));
         if (files == null) return s;
         java.util.regex.Pattern p = java.util.regex.Pattern.compile(
-            "^ {3}([A-Za-z]\\w*)\\b[^\\n]*:::[^\\n]*\\bselfless\\b");
+            "^ {3}([A-Za-z]\\w*)\\b[^\\n]*::[^\\n]*\\bselfless\\b");
         for (java.io.File f : files) {
             List<String> lines;
             try { lines = Files.readAllLines(f.toPath(), StandardCharsets.UTF_8); }

@@ -131,7 +131,7 @@ procResult
     ;
 
 procAttrs
-    : TRIPLE_COLON attrList
+    : DCOLON attrList
     ;
 
 // Attributes are separated by commas or whitespace; a stray '.' between two
@@ -642,7 +642,6 @@ MAT6 : 'MAT6' ;
 MAT7 : 'MAT7' ;
 
 DCOLON : '::' ;
-TRIPLE_COLON : ':::' ;
 ARROW : '=>' ;
 COLON : ':' ;
 COMMA : ',' ;
