@@ -109,22 +109,6 @@ generic". With no intent it compiled.
 Whichever is chosen, re-verify the DEBUG build still compiles+links before
 committing, since the output is now the canonical reference.
 
-## Deferred: rename `atomic_moments_made` -> `partition_info_made` (source clarity)
-
-**Goal (user):** the MOLECULE flag `atomic_moments_made` (types.foo) actually gates whether
-the whole *atom partition info* has been prepared — not merely the moments — so it reads
-confusingly. Investigate and rename `.atomic_moments_made` -> `.partition_info_made`
-throughout (declaration in `types.foo`, the setter `set_atomic_moments_made`, all
-`if (NOT .atomic_moments_made)` guards, the `ENSURE`s, and the FALSE-resets).
-
-**Context:** this surfaced while fixing the debug-only crash
-`MOLECULE.SCF:make_cluster_charge_mx ... no Hirshfeld atom moments`. Root cause: the flag was
-set TRUE *nowhere* in the source (release compiles out the ENSURE, so it never showed there —
-see memory `debug-ensure-vs-release`). Fixed by setting `.atomic_moments_made = TRUE` at the
-end of `make_atom_partition_info` (molecule.scf.foo) — which is exactly why the name is wrong:
-it's set where the *partition info* is made, not where moments are computed. Rename when
-convenient; it's cosmetic, so batch it with a full rebuild + test rerun.
-
 ## Deferred: small numerical differences in Salvador properties (longstanding)
 
 **Test:** `urea_ccsd_pob-TZVP_Salvador_properties`. After the cluster-charge moments crash was
