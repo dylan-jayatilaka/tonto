@@ -125,7 +125,7 @@ By convention a `!` comment describing a procedure or a type component comes
 first line(s) of its body:
 
 ```foo
-n_items result (res) ::: pure
+n_items result (res) :: pure
    ! Return the number of items in the string
    self :: IN
    res  :: INT
@@ -397,17 +397,17 @@ for `MOLECULE`'s submodules in the wrong place.
 ## 7. Procedures
 
 A procedure header is the name, optional `(args)`, optional `result (res)`, then
-attributes after `:::`. Functions use `result (...)`; subroutines do not.
+attributes after `::`. Functions use `result (...)`; subroutines do not.
 
 ```foo
-n_items result (res) ::: pure          ! a function
+n_items result (res) :: pure          ! a function
    ! Return the number of items
    self :: IN
    res  :: INT
    ...
 end
 
-multiply(factor) ::: pure              ! a subroutine
+multiply(factor) :: pure              ! a subroutine
    ! Multiply self by factor
    self   :: INOUT
    factor :: REAL, IN
@@ -421,7 +421,7 @@ Every ordinary procedure has an implicit first argument `self`, of the module's
 type. Its intent is declared (`IN` for functions, usually `INOUT` for mutating
 subroutines). A `selfless` procedure has no `self`.
 
-### Procedure attributes (after `:::`)
+### Procedure attributes (after `::`)
 
 | Attribute | Meaning |
 |---|---|
@@ -451,7 +451,7 @@ If an argument is a procedure, its calling interface is declared with an
 `interface` block (`routinal`/`functional` mark which argument is the procedure):
 
 ```foo
-line_search(dself,alphamax,x,p,c1,c2,b) ::: routinal, public
+line_search(dself,alphamax,x,p,c1,c2,b) :: routinal, public
    ! ... self and dself are functions ...
    interface
       self(x,res)
@@ -517,7 +517,7 @@ module — but its scalar *specific* name is not separately exported.
 `virtual module` such as `VEC{INTRINSIC}`, `MAT{INTRINSIC}`, `OBJECT`):
 
 ```foo
-to_str result (string) ::: get_from(INTRINSIC, FMT?=>*), pure
+to_str result (string) :: get_from(INTRINSIC, FMT?=>*), pure
 end
 ```
 
@@ -550,7 +550,7 @@ parameters are also paired automatically and **recursively** — inheriting
 - **Name your type placeholders `KEY_TYPE?`**, not bare `KEY?`, when the key
   shares a spelling with a real argument or variable. The classic hazard:
   ```foo
-  change_basis_using(V) ::: get_from(MAT{INTRINSIC}, V?=>MAT{REAL})
+  change_basis_using(V) :: get_from(MAT{INTRINSIC}, V?=>MAT{REAL})
   ```
   here `V` is the matrix *argument* and `V?` is the placeholder for *its type* —
   the substitution can collide with the variable `V` in the body. Writing
@@ -801,7 +801,7 @@ same; the convention is kept for consistency.) Do **not** hand-write a lowercase
 |---|---|
 | `varname :: TYPE` | `TYPE :: varname` |
 | `str.foo` | module `STR_MODULE` |
-| `n_items result (res) ::: pure` | `pure function n_items(self) result (res)` |
+| `n_items result (res) :: pure` | `pure function n_items(self) result (res)` |
 | `VEC{STR}(len=1,6)` | `VEC(STR(len=1),6)` |
 | `.proc(a)` | `proc_(self,a)` |
 | `a(i)[j]` | `a(i)%element(j)` |
@@ -888,7 +888,7 @@ The ANTLR4 grammar is organised roughly as:
   (the `.name` / `%name` / `(args)` / `[args]` selectors), `name`, `arg`.
 - **Lexer**: keyword tokens (lowercase control keywords; uppercase type/intent
   keywords; word and `.op.` operators), `IDENTIFIER` (with optional `?` and
-  embedded-placeholder support), literals, and the `::`/`:::`/`=>` punctuators.
+  embedded-placeholder support), literals, and the `::`/`=>` punctuators.
 
 Soft keywords (`end`, `data`, `type`, `case`, `where`, `result`, `default`, …)
 double as ordinary names where context allows (`end+1`, `self(end:)`).
