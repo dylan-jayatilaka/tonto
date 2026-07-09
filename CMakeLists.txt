@@ -643,11 +643,15 @@ else()
 	target_link_libraries(tonto ${MPI_Fortran_LIBRARIES})
 endif()
 
-# Build directory. Ensure the external-module include dir exists so gfortran does
-# not warn about a nonexistent include path when external deps (lapack/sbf/MPI) are
-# not built as subdirectories (system-provided) and thus never create build/external.
-file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/external)
-target_include_directories(tonto PUBLIC ${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR}/external)
+# tonto's generated Fortran (.F90/.int/.use) and .mod files all live in the build
+# root, which is the only include path the compile needs. A former
+# ${CMAKE_CURRENT_BINARY_DIR}/external entry was vestigial: no external dependency
+# puts includable files there (system LAPACK is linked as a library; a subdir
+# lapack-release build lands in build/external/lapack-release, and reference LAPACK
+# has no Fortran modules anyway). That entry only made gfortran warn about a
+# nonexistent include directory when the deps were system-provided (so build/external
+# was never created) -- removed rather than papered over with an empty directory.
+target_include_directories(tonto PUBLIC ${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 
 
 # Standard executables
