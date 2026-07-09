@@ -711,6 +711,17 @@ STR::get_next_item(self,item,f,l)    ! explicit NON-generic call (double colon)
   other way to call one). The translator recognises selfless targets and passes no
   `self`. A genuine non-selfless exception should be rewritten with `.SUBMOD:proc`
   (leading dot) in the source.
+- **How selfless targets are detected — and why a wrong guess can't ship silently.**
+  Selfless targets are found by scanning every `.foo` for procedure headers carrying
+  an explicit `:: selfless` attribute (`buildSelflessMethods` in the translator). A
+  procedure that is selfless *only* by virtue of interface-block nesting (`foo.pl`
+  treats routines nested more than two scopes deep as selfless) is **not**
+  auto-detected. This is not a silent-bug risk, though: a wrong self / no-self
+  decision emits a call with the wrong argument count, so gfortran rejects it with an
+  argument mismatch or *"no specific subroutine for the generic call"*. A clean build
+  therefore proves every `TYPE.SUBMOD:proc` call actually present in the sources
+  resolves correctly. If a genuine non-selfless procedure ever needs to be reached
+  this way, rewrite the call with the leading-dot `.SUBMOD:proc` form in the source.
 
 ---
 
@@ -887,10 +898,10 @@ double as ordinary names where context allows (`end+1`, `self(end:)`).
 ## 18. References
 
 - Grammar + translator: `foogrammar/Foo.g4`, `foogrammar/FooToFortran.java`.
-- Legacy reference translator: `scripts/foo.pl` (no longer runnable).
+- Legacy reference translator: `foo.pl` (removed from the repo; its frozen output
+  survives in `release/`).
 - Macros: `include/macros.in`.
 - Foo sources: `foofiles/`; type declarations: `foofiles/types.foo`.
 - Reference Fortran: `release/` (from `foo.pl`); new-translator output:
   `antlr4-release/`.
-- Companion docs: `FOO_QUICK_REFERENCE.md`, `FOO_GRAMMAR_VALIDATION.md`,
-  `CLAUDE.md` (build/run details).
+- Companion doc: `CLAUDE.md` (build/run details).

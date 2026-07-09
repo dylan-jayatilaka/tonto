@@ -126,8 +126,6 @@ once the Parse tree is generated.
 ## 7. Reference docs in this repo
 
 - `docs/FOO_GRAMMAR_DOCUMENTATION.md` — full language description and Foo→Fortran conversion rules.
-- `docs/FOO_GRAMMAR_VALIDATION.md` — worked `.foo` examples mapped to grammar rules.
-- `docs/FOO_QUICK_REFERENCE.md` — concise syntax cheat-sheet.
 - `README.md` — install/build/test/run instructions.
 - Project wiki — building on macOS/Windows, how to run tonto (linked from `README.md`).
 
