@@ -4,6 +4,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -246,6 +247,60 @@ public final class FooToFortran {
         return s;
     }
 
+    /** Per emitted Fortran module, the procedure names whose EVERY (non-template)
+     *  overload is `selfless`. Module-aware — unlike the name-based `selflessGlobal`,
+     *  which cannot tell that `chemical_symbol` is `selfless` in one module yet a
+     *  normal self-method in ATOM. A bare `.proc` self-call that resolves to module M
+     *  may drop self iff `proc` is in this set for M. Same line-scan + module-naming as
+     *  buildSubmethodTable; the all-overloads test mirrors the emit-time local pre-pass
+     *  so self-module calls stay consistent. */
+    static Map<String, Set<String>> buildSelflessByModule(Path foofilesDir) {
+        Map<String, Set<String>> result = new HashMap<>();
+        java.io.File[] files = foofilesDir.toFile().listFiles((d, n) -> n.endsWith(".foo"));
+        if (files == null) return result;
+        java.util.regex.Pattern modPat =
+            java.util.regex.Pattern.compile("^\\s*(?:virtual\\s+)?(?:array\\s+)?module\\s+(\\S+)");
+        java.util.regex.Pattern procPat =
+            java.util.regex.Pattern.compile("^ {3}([A-Za-z]\\w*)\\s*(\\(|::|result\\b|!|$)");
+        Set<String> kw = Set.of("end", "contains", "interface", "use", "module",
+            "result", "then", "else", "elsewhere", "do", "select", "case", "where",
+            "forall", "if", "subroutine", "function", "type", "data");
+        for (java.io.File f : files) {
+            List<String> lines;
+            try { lines = Files.readAllLines(f.toPath(), StandardCharsets.UTF_8); }
+            catch (Exception e) {
+                try { lines = Files.readAllLines(f.toPath(), StandardCharsets.ISO_8859_1); }
+                catch (Exception e2) { continue; }
+            }
+            String fooMod = null, mod = null; boolean past = false;
+            Map<String, Integer> total = new HashMap<>(), selfless = new HashMap<>();
+            for (String line : lines) {
+                if (fooMod == null) {
+                    java.util.regex.Matcher m = modPat.matcher(line);
+                    if (m.find()) { fooMod = m.group(1); mod = fortranTypeName(fooMod) + "_MODULE"; }
+                    continue;
+                }
+                if (line.strip().equalsIgnoreCase("contains")) { past = true; continue; }
+                if (!past) continue;
+                java.util.regex.Matcher m = procPat.matcher(line);
+                if (!m.find()) continue;
+                String name = m.group(1);
+                if (kw.contains(name.toLowerCase(Locale.ROOT))) continue;
+                // templates are excluded from the emit-time local selfless pre-pass
+                if (line.matches("^ {3}[A-Za-z]\\w*\\b.*::.*\\btemplate\\b.*")) continue;
+                total.merge(name, 1, Integer::sum);
+                if (line.matches("^ {3}[A-Za-z]\\w*\\b.*::.*\\bselfless\\b.*"))
+                    selfless.merge(name, 1, Integer::sum);
+            }
+            if (mod == null) continue;
+            final String fmod = mod;
+            for (Map.Entry<String, Integer> e : selfless.entrySet())
+                if (e.getValue().equals(total.get(e.getKey())))
+                    result.computeIfAbsent(fmod, k -> new java.util.HashSet<>()).add(e.getKey());
+        }
+        return result;
+    }
+
     static final Set<String> INTRINSIC_SCALAR = Set.of("INT", "REAL", "CPX", "BIN", "STR");
     static boolean isIntrinsicScalar(String t) { return INTRINSIC_SCALAR.contains(canon(t)); }
 
@@ -275,37 +330,86 @@ public final class FooToFortran {
     // ------------------------------------------------------------------- main
 
     public static void main(String[] argv) throws Exception {
-        Path typesPath = null, fooPath = null, outDir = null, foofilesDir = null;
+        Path typesPath = null, outDir = null, foofilesDir = null, fooDir = null, listFile = null;
+        List<Path> fooPaths = new ArrayList<>();
         for (int i = 0; i < argv.length; i++) {
             switch (argv[i]) {
                 case "--types":        typesPath   = Paths.get(argv[++i]); break;
-                case "--foo":          fooPath     = Paths.get(argv[++i]); break;
+                case "--foo":          fooPaths.add(Paths.get(argv[++i])); break;
                 case "--out-dir":      outDir      = Paths.get(argv[++i]); break;
                 case "--foofiles-dir": foofilesDir = Paths.get(argv[++i]); break;
+                case "--foo-dir":      fooDir      = Paths.get(argv[++i]); break;
+                case "--foo-list":     listFile    = Paths.get(argv[++i]); break;
                 default: throw new IllegalArgumentException("unknown arg: " + argv[i]);
             }
         }
-        if (fooPath == null || outDir == null)
-            throw new IllegalArgumentException("Usage: FooToFortran --foo <f.foo> --out-dir <d> "
-                + "[--types <types.foo>] [--foofiles-dir <d>]");
+        // Batch inputs: an explicit list file (one .foo path per line, blanks/`#`
+        // ignored) and/or every *.foo under --foo-dir, in addition to any --foo.
+        if (listFile != null)
+            for (String ln : Files.readAllLines(listFile, StandardCharsets.UTF_8)) {
+                String s = ln.trim();
+                if (!s.isEmpty() && !s.startsWith("#")) fooPaths.add(Paths.get(s));
+            }
+        if (fooDir != null) {
+            java.io.File[] fs = fooDir.toFile().listFiles((d, n) -> n.endsWith(".foo"));
+            if (fs != null) { Arrays.sort(fs); for (java.io.File f : fs) fooPaths.add(f.toPath()); }
+        }
+        if (fooPaths.isEmpty() || outDir == null)
+            throw new IllegalArgumentException("Usage: FooToFortran (--foo <f.foo> | --foo-dir <d> "
+                + "| --foo-list <file>)... --out-dir <d> [--types <types.foo>] [--foofiles-dir <d>]");
         // The registries (types, cross-submodule methods, selfless, globals) describe
         // the MODULES, which live alongside types.foo. A main program in runfiles/ is a
         // consumer, so derive foofilesDir from the types file (not the input's parent),
         // else a run_XXX.foo would scan runfiles/ and miss MOLECULE's submodules.
         if (foofilesDir == null)
-            foofilesDir = (typesPath != null ? typesPath : fooPath).toAbsolutePath().getParent();
+            foofilesDir = (typesPath != null ? typesPath : fooPaths.get(0)).toAbsolutePath().getParent();
         if (typesPath == null)   typesPath   = foofilesDir.resolve("types.foo");
 
+        // Registries are input-independent, so build them ONCE and reuse across every
+        // file in the batch (this is what makes --foo-dir a single-JVM speedup; the
+        // per-file emission below is byte-identical to running each file alone).
         TypeTable types = new TypeTable();
         if (Files.exists(typesPath)) buildTypeTable(types, typesPath);
-
         Map<String, String[]> globals = buildGlobalTable(foofilesDir);
         Map<String, Map<String, Set<String>>> subMethods = buildSubmethodTable(foofilesDir);
         Set<String> selflessGlobal = buildSelflessMethods(foofilesDir);
+        Map<String, Set<String>> selflessByMod = buildSelflessByModule(foofilesDir);
 
-        ModuleEmitter em = new ModuleEmitter(types, parseFile(fooPath), fooPath, foofilesDir, globals, subMethods, selflessGlobal);
-        em.emit();
         Files.createDirectories(outDir);
+        int ok = 0, fail = 0;
+        // module-dependency graph (node = emitted Fortran module; edge = `use`),
+        // collected across the batch so a circular `use` — illegal Fortran, and the
+        // hazard auto-qualification could introduce — is caught here with a clear
+        // chain instead of as a cryptic gfortran "cannot open .mod" mid-build.
+        Map<String, Set<String>> useGraph = new TreeMap<>();
+        for (Path fooPath : fooPaths) {
+            try {
+                ModuleEmitter em = translateOne(fooPath, outDir, types, foofilesDir, globals, subMethods, selflessGlobal, selflessByMod);
+                ok++;
+                if (em != null && !em.isVirtual && em.selfModuleName != null)
+                    useGraph.put(em.selfModuleName, new java.util.TreeSet<>(em.useOnly.keySet()));
+            } catch (Exception e) {
+                fail++;
+                System.err.println("FAILED " + fooPath + ": " + e);
+            }
+        }
+        if (fooPaths.size() > 1) System.err.println("OK=" + ok + " FAIL=" + fail);
+        // Cycle check only makes sense with the whole module set in hand (batch mode).
+        int cyclic = fooPaths.size() > 1 ? reportUseCycles(useGraph) : 0;
+        if (fail > 0 || cyclic > 0) System.exit(1);
+    }
+
+    /** Translate one .foo file, write its .F90/.int/.use into outDir, and return the
+     *  emitter (so the batch driver can read its module name + `use` edges for the
+     *  cycle check). Uses the shared (pre-built) registries; behaviour is identical
+     *  whether called once or as part of a --foo-dir batch. */
+    static ModuleEmitter translateOne(Path fooPath, Path outDir, TypeTable types, Path foofilesDir,
+                             Map<String, String[]> globals,
+                             Map<String, Map<String, Set<String>>> subMethods,
+                             Set<String> selflessGlobal,
+                             Map<String, Set<String>> selflessByMod) throws Exception {
+        ModuleEmitter em = new ModuleEmitter(types, parseFile(fooPath), fooPath, foofilesDir, globals, subMethods, selflessGlobal, selflessByMod);
+        em.emit();
         String name = fooPath.getFileName().toString();
         if (em.isVirtual) {
             // Virtual (get_from template) modules are inlined into their heirs and
@@ -315,12 +419,76 @@ public final class FooToFortran {
             Files.writeString(outDir.resolve(outStem(name) + ".F90"),
                 "! " + name + " is a virtual (get_from) template module - no compiled code\n",
                 StandardCharsets.UTF_8);
-            return;
+            return em;
         }
         // .F90 file is underscored; .int/.use keep the brace form (match foo.pl).
         Files.writeString(outDir.resolve(outStem(name) + ".F90"), em.f90.toString(), StandardCharsets.UTF_8);
         Files.writeString(outDir.resolve(braceStem(name) + ".int"), em.intf.toString(), StandardCharsets.UTF_8);
         Files.writeString(outDir.resolve(braceStem(name) + ".use"), em.use.toString(), StandardCharsets.UTF_8);
+        return em;
+    }
+
+    /** Detect circular `use` dependencies in the emitted module graph (Tarjan SCC).
+     *  Any strongly-connected component of size > 1 (or a self-loop) is an illegal
+     *  circular `use` in Fortran. Prints each offending cycle chain and returns the
+     *  number of cycles found (0 = acyclic). TYPES_MODULE/SYSTEM_MODULE are pulled in
+     *  wholesale and excluded from `useOnly`, so — being universal sinks — they
+     *  correctly sit outside every cycle. */
+    static int reportUseCycles(Map<String, Set<String>> graph) {
+        Map<String, Integer> index = new HashMap<>(), low = new HashMap<>();
+        Set<String> onStack = new java.util.HashSet<>();
+        java.util.Deque<String> stack = new java.util.ArrayDeque<>();
+        int[] counter = {0};
+        List<List<String>> sccs = new ArrayList<>();
+        // iterative Tarjan (avoid deep recursion on ~165 nodes with long chains)
+        for (String root : graph.keySet()) {
+            if (index.containsKey(root)) continue;
+            java.util.Deque<String> work = new java.util.ArrayDeque<>();
+            java.util.Deque<java.util.Iterator<String>> iters = new java.util.ArrayDeque<>();
+            work.push(root); iters.push(graph.getOrDefault(root, java.util.Collections.emptySet()).iterator());
+            index.put(root, counter[0]); low.put(root, counter[0]); counter[0]++;
+            stack.push(root); onStack.add(root);
+            while (!work.isEmpty()) {
+                String v = work.peek();
+                java.util.Iterator<String> it = iters.peek();
+                if (it.hasNext()) {
+                    String w = it.next();
+                    if (!graph.containsKey(w)) continue;   // edge to a leaf sink (e.g. TYPES) — no node
+                    if (!index.containsKey(w)) {
+                        index.put(w, counter[0]); low.put(w, counter[0]); counter[0]++;
+                        stack.push(w); onStack.add(w);
+                        work.push(w); iters.push(graph.getOrDefault(w, java.util.Collections.emptySet()).iterator());
+                    } else if (onStack.contains(w)) {
+                        low.put(v, Math.min(low.get(v), index.get(w)));
+                    }
+                } else {
+                    if (low.get(v).equals(index.get(v))) {
+                        List<String> comp = new ArrayList<>();
+                        String w;
+                        do { w = stack.pop(); onStack.remove(w); comp.add(w); } while (!w.equals(v));
+                        sccs.add(comp);
+                    }
+                    work.pop(); iters.pop();
+                    if (!work.isEmpty()) low.put(work.peek(), Math.min(low.get(work.peek()), low.get(v)));
+                }
+            }
+        }
+        int cycles = 0;
+        for (List<String> comp : sccs) {
+            boolean selfLoop = comp.size() == 1 && graph.getOrDefault(comp.get(0), java.util.Collections.emptySet()).contains(comp.get(0));
+            if (comp.size() > 1 || selfLoop) {
+                cycles++;
+                java.util.Collections.sort(comp);
+                System.err.println("CIRCULAR use DEPENDENCY (illegal Fortran): "
+                    + String.join(" -> ", comp) + " -> " + comp.get(0));
+                Set<String> s = new java.util.HashSet<>(comp);
+                for (String a : comp)
+                    for (String b : graph.getOrDefault(a, java.util.Collections.emptySet()))
+                        if (s.contains(b)) System.err.println("    edge: " + a + " -> " + b);
+            }
+        }
+        if (cycles > 0) System.err.println("CYCLE CHECK FAILED: " + cycles + " circular use dependency(ies).");
+        return cycles;
     }
 
     /** Brace-form stem: the .foo file name without its extension (vec{diis}). */
@@ -363,12 +531,15 @@ public final class FooToFortran {
         // base type -> (method -> submodule Fortran modules that define it)
         final Map<String, Map<String, Set<String>>> subMethods;
         final Set<String> selflessGlobal;   // selfless proc names across all foofiles
+        // fortran module -> proc names selfless in ALL overloads there (module-aware)
+        final Map<String, Set<String>> selflessByMod;
 
         ModuleEmitter(TypeTable types, Parsed main, Path fooPath, Path foofilesDir,
                       Map<String, String[]> globals, Map<String, Map<String, Set<String>>> subMethods,
-                      Set<String> selflessGlobal) {
+                      Set<String> selflessGlobal, Map<String, Set<String>> selflessByMod) {
             this.types = types; this.main = main; this.fooPath = fooPath; this.foofilesDir = foofilesDir;
             this.globals = globals; this.subMethods = subMethods; this.selflessGlobal = selflessGlobal;
+            this.selflessByMod = selflessByMod;
         }
 
         void emit() {
@@ -401,13 +572,21 @@ public final class FooToFortran {
             c.flushHidden(f90, mod.MODULE().getSymbol().getTokenIndex(), 0);  // doc block
 
             // pre-pass: count overloads per procedure name (templates excluded);
-            // also record which procedures are `selfless` (no self argument)
+            // also record which procedures are `selfless` (no self argument). A name
+            // counts as selfless for BARE `.proc` self-calls only if EVERY overload is
+            // selfless: a mixed name (e.g. `chemical_symbol` — a self-based no-arg
+            // overload plus a `selfless` (Z,A) overload) must keep self on its
+            // non-selfless overload, so name-based dropping would be wrong.
+            Map<String, Integer> selflessOverloads = new HashMap<>();
             for (FooParser.ProcDefContext pd : descendants(mod, FooParser.ProcDefContext.class)) {
                 Attrs pa = Attrs.parse(pd.procHeader().procAttrs());
                 if (pa.template) continue;
-                overloadCount.merge(pd.procHeader().IDENTIFIER().getText(), 1, Integer::sum);
-                if (pa.selfless) selflessProcs.add(pd.procHeader().IDENTIFIER().getText());
+                String nm = pd.procHeader().IDENTIFIER().getText();
+                overloadCount.merge(nm, 1, Integer::sum);
+                if (pa.selfless) selflessOverloads.merge(nm, 1, Integer::sum);
             }
+            for (Map.Entry<String, Integer> e : selflessOverloads.entrySet())
+                if (e.getValue().equals(overloadCount.get(e.getKey()))) selflessProcs.add(e.getKey());
             // record this module's own module-level variables (public AND private)
             // so `connections_for(X).element` resolves to connections_for(X)%element
             for (int ci = 0; ci < mod.getChildCount(); ci++) {
@@ -1814,6 +1993,24 @@ public final class FooToFortran {
                     if (ip != null) {
                         // inlined_by_foo on self: `.:destroyed` -> NOT associated(self)
                         out.append(ip);
+                    } else if (dcolon && !statementPos && (p.trailer().isEmpty() || p.trailer(0).LPAREN() == null)) {
+                        // `.::proc` in VALUE/ARGUMENT position, not immediately called: a
+                        // SPECIFIC procedure passed BY NAME (e.g. `.::chi2F` handed to
+                        // min_BFGS -> `chi2F`), mirroring the type-qualified trailer path. In
+                        // STATEMENT position `.::proc` is instead a no-arg call (`.TD::do_r_CIS`
+                        // -> call do_r_CIS_(self)), so this branch excludes statementPos. Emit
+                        // just the name; record the use so the specific proc is imported.
+                        recordUse(trailerCallModule(selfFooType, hasQual ? chx.qualifier().getText() : null, method), method);
+                        out.append(method); curType = null;
+                    } else if (isSelflessCall(trailerCallModule(selfFooType, hasQual ? chx.qualifier().getText() : null, method), method)) {
+                        // selfless submodule target on self (.SET:proc / .::proc where proc
+                        // is `selfless`): pass no self, like the type-qualified path (below).
+                        // Module-aware (isSelflessCall): checks the RESOLVED module's
+                        // all-overloads-selfless set, so a same-named normal method in
+                        // another module is not false-dropped.
+                        pendingCall = colon ? method + "_" : method;
+                        recordUse(trailerCallModule(selfFooType, hasQual ? chx.qualifier().getText() : null, method), pendingCall);
+                        pendingNoRecv = true; isCall = true;
                     } else {
                         pendingCall = colon ? method + "_" : method;
                         recordUse(trailerCallModule(selfFooType, hasQual ? chx.qualifier().getText() : null, method), pendingCall);
@@ -1836,6 +2033,14 @@ public final class FooToFortran {
                     } else if (INTRINSIC_FNS.contains(sel.toLowerCase())) {
                         pendingCall = sel;                    // .sin -> sin(self), .trim -> trim(self)
                         out.append("self"); isCall = true;
+                    } else if (isSelflessCall(callModule(selfFooType, sel), sel)) {
+                        // selfless dot-method on self (`.docu_X(die)` where docu_X is
+                        // `selfless`): pass no self — `docu_X_(die)`, not `docu_X_(self,die)`.
+                        // Module-aware: checks the RESOLVED module's all-overloads-selfless
+                        // set (handles cross-submodule selfless; won't false-drop a
+                        // same-named normal method like ATOM's `chemical_symbol`).
+                        pendingCall = sel + "_"; recordCall(selfFooType, sel);
+                        pendingNoRecv = true; isCall = true;
                     } else {
                         pendingCall = sel + "_"; recordCall(selfFooType, sel);
                         out.append("self"); isCall = true;
@@ -2162,22 +2367,35 @@ public final class FooToFortran {
             }
         }
 
-        void recordCall(String fooType, String method) {
-            if (fooType == null) return;
-            // A submodule-split type (MOLECULE) has no base <TYPE>_MODULE; resolve the
-            // call to the submodule that actually defines it. If the current submodule
-            // defines it, recordUse skips it (self-use). Fall back to <TYPE>_MODULE for
-            // ordinary (non-split) types.
+        /** Fortran module a `.method` call on a receiver of foo type `fooType`
+         *  resolves to. A submodule-split type (MOLECULE) has no base <TYPE>_MODULE, so
+         *  resolve to the submodule that actually defines `method` (preferring the
+         *  current one so a self-call self-skips); ordinary types fall back to
+         *  <TYPE>_MODULE. Null if fooType is unknown. */
+        String callModule(String fooType, String method) {
+            if (fooType == null) return null;
             Map<String, Set<String>> byMethod = subMethods.get(canon(fooType));
             if (byMethod != null) {
                 Set<String> mods = byMethod.get(method);
-                if (mods != null) {
-                    String mod = mods.contains(selfModuleName) ? selfModuleName : mods.iterator().next();
-                    recordUse(mod, method + "_");
-                    return;
-                }
+                if (mods != null)
+                    return mods.contains(selfModuleName) ? selfModuleName : mods.iterator().next();
             }
-            recordUse(fortranModName(fooType), method + "_");
+            return fortranModName(fooType);
+        }
+
+        void recordCall(String fooType, String method) {
+            String mod = callModule(fooType, method);
+            if (mod != null) recordUse(mod, method + "_");
+        }
+
+        /** True if EVERY overload of `method` in Fortran module `mod` is `selfless`
+         *  (module-aware; from buildSelflessByModule). A bare `.proc` self-call
+         *  resolving to `mod` then drops self. Falls back to the local (validated)
+         *  selflessProcs for the current module. */
+        boolean isSelflessCall(String mod, String method) {
+            if (selflessProcs.contains(method)) return true;   // local, AST-based
+            Set<String> s = mod == null ? null : selflessByMod.get(mod);
+            return s != null && s.contains(method);
         }
 
         /** Fortran module for a submodule qualifier on self: .SET->MOLECULE_SET_MODULE,
