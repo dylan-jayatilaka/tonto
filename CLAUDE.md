@@ -11,7 +11,10 @@ in **Foo**, a custom object-oriented preprocessor language that is translated to
 Fortran (95 / 2003+) and then compiled.
 
 - Foo sources live in `foofiles/` (`*.foo`). Maintainer: Dylan Jayatilaka.
-- Legacy translator: `scripts/foo.pl` (Perl) — the reference behaviour to reproduce.
+- Legacy translator: `foo.pl` (Perl) — the reference behaviour to reproduce. The
+  script itself has been removed from the repo now that the ANTLR4 translator
+  drives the build; its frozen output survives in `release/`, which remains the
+  reference snapshot to match.
 - Executables: `build/tonto` (main program), `build/hart` (standalone Hirshfeld atom
   refinement; `hart -help`).
 - Run scripts: `runfiles/`. Test jobs: `tests/`.

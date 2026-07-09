@@ -1,7 +1,5 @@
 # Welcome to Tonto!
 
-[![Build Status](https://travis-ci.org/dylan-jayatilaka/tonto.svg?branch=master)](https://travis-ci.org/dylan-jayatilaka/tonto)
-
 # Erice 2025 workshop people!
 
 If you are a workshop attendee, the lab folder and instructions are [here](https://drive.google.com/drive/folders/17OWncmSsFbKAlW8mZb9EKzJuW0GAjykG).
@@ -80,10 +78,10 @@ To compile a particular branch, like the release branch, which is highly recomme
 
 While waiting, make sure you have all the other software installed:
 
-The following is recommended: `make`, a Java JDK (for the ANTLR4-based `foo`→Fortran translator; provides `java` and `javac`), `perl` (used by the legacy `foo.pl` translator), `gfortran`, `blas`, `lapack`, `python3` (for testing) and `gnuplot` (for graphs and plots).
+The following is recommended: `make`, a Java JDK (for the ANTLR4-based `foo`→Fortran translator; provides `java` and `javac`), `gfortran`, `blas`, `lapack`, `python3` (for testing) and `gnuplot` (for graphs and plots).
 
 ```
-   sudo apt install make default-jdk perl gfortran libblas-dev liblapack-dev python3 gnuplot
+   sudo apt install make default-jdk gfortran libblas-dev liblapack-dev python3 gnuplot
 ```
 
 The build fetches the ANTLR4 tool jar automatically (into `external/`) the first
@@ -129,6 +127,19 @@ Set your compiler and start compiling:
    make -j
 ```
 Then wait, and when the screen finishes churning, you are done.
+
+**A note on `-j`.** A bare `make -j` launches an unbounded number of jobs. The
+Foo→Fortran translation step runs one Java (JVM) process per `.foo` file, and
+too many at once can exhaust memory and thrash the machine. It is safer to cap
+both the job count and the load average, for example:
+
+```
+   make -j4 -l8      # at most 4 parallel jobs, and don't start new ones while load > 8
+```
+
+Tune the numbers to your machine (a common choice is `-j` = number of cores and
+`-l` = twice that). If a build stalls or the machine becomes unresponsive, lower
+`-j` first.
 
 I recommend to also make a `debug` version which prints error messages. In the `tonto` folder type:
 
@@ -210,6 +221,65 @@ Here is a nice thing for problem tests: you may use `ctest` in the `build/` fold
    ctest -L short    # this will run all tests with the label short.
    ctest -R h2o      # this will run all tests with h2o in their name.
    ctest -L long -j4 # this will run all long tests with 4 jobs at a time.
+```
+
+### How close is "close enough"? (exact / loose / last-digit)
+
+Because two correct builds can differ in the last printed digits (compiler,
+BLAS, grid ordering), the comparison in `scripts/test.py` reports each numeric
+difference under **three** criteria instead of a bare pass/fail:
+
+- **exact** — every printed digit is identical.
+- **loose** — within a *relative* tolerance (default **0.2 %**) **OR** within a
+  *last-digit* tolerance (see below). **This criterion decides pass/fail** (the
+  test's exit status), so a test that differs only in known, tiny numerical
+  noise still passes.
+- **last-digit** — within **±K units** of the last printed decimal place
+  (default **K = 2**), which is the sensible band for numbers quoted to low
+  precision (e.g. `0.4203` vs `0.4202`).
+
+The tolerances are options on `scripts/test.py` (defaults shown):
+
+```
+   --rel-tol         0.002    # loose RELATIVE tolerance (fraction; 0.002 = 0.2%)
+   --last-digit-tol  2        # loose LAST-DIGIT tolerance (units of the last place)
+   --abs-tol         1e-7     # absolute near-zero floor
+```
+
+For example, to insist on a tighter 0.05 % relative match:
+
+```
+   python3 scripts/test.py -t tests/short/h2o_rhf_STO-3G -p build/tonto \
+           --basis-sets basis_sets --rel-tol 5e-4
+```
+
+### A per-suite agreement report
+
+`ctest` prints a flat list. For a grouped view — a header per suite (`short`,
+`rgbi`, `long`, `cx`) and the exact / loose / last-digit verdict plus the worst
+relative and last-digit deviation in the last columns — use the reporting
+driver:
+
+```
+   python3 scripts/compare_test_outputs.py --program build/tonto
+```
+
+It accepts the same `--rel-tol`, `--last-digit-tol` and `--abs-tol` options, and
+`--suites` to select a subset, e.g.:
+
+```
+   python3 scripts/compare_test_outputs.py -p build/tonto --suites short rgbi
+```
+
+Sample output:
+
+```
+   SUITE: short   (51 tests)
+   test                                    exact  loose  lastdig   max rel%    max ulp
+   h2o_rhf_STO-3G                          PASS   PASS   PASS             0          0
+   h2o_rhf_6-31G(d)_normal_mode_analysis   FAIL   PASS   FAIL        0.0017          3
+   ...
+   short subtotal:  loose 49/51   (exact 47, lastdig 46)
 ```
 
 ## 8. Problems, bugs, contributions
