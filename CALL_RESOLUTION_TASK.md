@@ -36,24 +36,50 @@ reached from a program entry point, likely cutting compile time.
 
 ## 3. Decouple into two phases (different risk profiles)
 
-### Phase A — auto-resolve submodule calls (drop `.SUBMOD:` / `.:`)
+### Phase A — auto-resolve qualified calls (drop `.SUBMOD:` / `.:` AND `TYPE:proc`)
 
 Low risk. It is a **source-notation change that must produce byte-identical
 Fortran**, so validate exactly like the `:::`→`::` change: regenerate all files
 before/after and assert **zero diff** in the generated `.F90`/`.int`/`.use`, then
 build + run the suite.
 
+**In scope (maintainer):** both the dot-qualified submodule forms
+(`.SUBMOD:proc`, `.SUBMOD::proc`, `.:proc`, `.::proc`, `.MAIN:proc`) **and** the
+explicit module-qualified forms (`TYPE:proc`, `TYPE::proc`, e.g.
+`TEXTFILE:destroy(stdout)`, `STR:proc(self,…)`). For the `TYPE:proc` case the
+call registry is used to determine which submodule module actually provides
+`proc` and therefore which `USE` to emit.
+
 Steps:
-1. Build/extend the per-class submodule→procedure registry (see §5 — partial
-   infrastructure already exists in `buildSubmoduleProcRegistry`).
-2. Make a bare `.proc(...)` resolve through that registry to the correct
-   `MOLECULE_XXX_MODULE` (emit the right `use`), preserving the existing
-   generic (`:`) vs non-generic (`::`) and selfless/self-passing behaviour.
-3. Keep the grammar **accepting** the old `.SUBMOD:` forms during the transition
-   so sources can be converted incrementally and diffed at each step; tighten the
-   grammar to reject them only at the very end.
-4. Convert the `.foo` sources: strip the `SUBMOD:` qualifier (and `.:`/`.::`) to
-   the bare `.proc` form.
+1. **Registry.** Build/extend the per-class submodule→procedure registry (see §5
+   — partial infrastructure already exists in `buildSubmoduleProcRegistry`),
+   including return types (already tracked) and the generic/non-generic and
+   selfless attributes needed to reproduce current emission.
+2. **Resolve dot-forms.** Make a bare `.proc(...)` resolve through the registry
+   to the correct `MOLECULE_XXX_MODULE` (emit the right `use`), preserving the
+   existing generic (`:`) vs non-generic (`::`) and selfless/self-passing
+   behaviour.
+3. **Resolve `TYPE:proc` forms.** Resolve explicit module-qualified calls the
+   same way — the registry says which submodule module provides `proc`, so the
+   correct `USE MOLECULE_XXX_MODULE` is emitted instead of relying on the
+   author's qualifier.
+4. **Cycle-detection sanity check (new sub-task).** Fortran forbids circular
+   `use` dependencies; they do not occur now, but auto-qualification is exactly
+   where one could be introduced. The registry already knows every `use` edge the
+   translator emits, so build the directed module-dependency graph (nodes = the
+   emitted Fortran modules, incl. per-submodule modules; edges = `use`) and detect
+   cycles — DFS with a recursion stack, or Tarjan SCC (any SCC of size > 1, or a
+   self-loop, is illegal). On a cycle, fail translation with the offending
+   module chain (e.g. `MOLECULE_SCF_MODULE → MOLECULE_FOCK_MODULE →
+   MOLECULE_SCF_MODULE`). `TYPES_MODULE` is a universal sink (everything uses it;
+   it uses ~nothing) and should sit outside any cycle. Note `only:` clauses do
+   not exempt an edge — a circular `use` is illegal regardless.
+5. **Grammar transition.** Keep the grammar **accepting** the old `.SUBMOD:` /
+   `TYPE:` forms during the transition so sources can be converted incrementally
+   and diffed at each step; tighten the grammar to reject them only at the very
+   end.
+6. **Convert sources.** Strip the qualifiers (`.SUBMOD:`, `.:`/`.::`, and
+   `TYPE:`) to the bare `.proc` form.
 
 ### Phase B — dead-code elimination
 
@@ -108,10 +134,12 @@ Qualified call sites in `foofiles/` (to convert in Phase A):
 - `.SUBMOD::proc` (non-generic, double colon): **9**
 - `.:proc` / `.::proc` (same submodule): **~688**
 - `TYPE:proc` / `TYPE::proc` explicit module-qualified (e.g. `TEXTFILE:destroy`,
-  `STR:proc`): ~5178 — mostly a *separate* concern; decide whether these are in
-  scope (they name a module explicitly and already resolve). Bulk is in
+  `STR:proc`): ~5178 — **in scope** (maintainer). Resolve via the registry (which
+  submodule module provides `proc` ⇒ which `USE` to emit). Bulk is in
   `molecule.main`, `molecule.scf`, `diffraction_data.read`, `molecule.grid`,
-  `molecule.fock`, `molecule.prop`.
+  `molecule.fock`, `molecule.prop`. (This count is a rough upper bound from a
+  regex; refine it in the new conversation — it may include `get_from(OBJECT:set,…)`
+  and `MAT{REAL}`-style tokens that are not calls.)
 
 Translator infrastructure that already exists (in `foogrammar/FooToFortran.java`):
 - **`buildSubmoduleProcRegistry`** (~line 180): a line-scan building
@@ -128,6 +156,8 @@ Translator infrastructure that already exists (in `foogrammar/FooToFortran.java`
 - [ ] Phase A: regenerate-all before/after ⇒ **zero diff** in `.F90`/`.int`/`.use`
       (the intended source-notation change must not alter emitted Fortran).
 - [ ] `scripts/collision_scan.py` reports **0** collisions after renames.
+- [ ] Cycle check: the emitted module `use`-graph is acyclic (translator fails
+      loudly with the offending chain if not).
 - [ ] Debug + release builds compile and link.
 - [ ] `tests/` suite unchanged under the loose criterion (`make report` /
       `scripts/compare_test_outputs.py`).
