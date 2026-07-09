@@ -48,7 +48,12 @@ function(add_all_tests)
             --test-directory "${CMAKE_CURRENT_SOURCE_DIR}/${D}"
             --basis-sets     "${BASIS_SETS}"
             --program        "${TONTO_EXE}"
-            --log-level=DEBUG
+            # WARNING (not DEBUG): keeps test.py's captured output to just the
+            # one-line AGREEMENT row (+ worst-offender notes), which test.py prints
+            # regardless of log level. So `ctest --output-on-failure` / `ctest -V`
+            # show a concise per-test agreement line instead of dumping the full
+            # numeric diff. (Plain `ctest` is still pass/fail-only -- unavoidable.)
+            --log-level=WARNING
             ${MPI_FLAG})
         set_tests_properties(\"${N}\" PROPERTIES 
             LABELS ${LABELS})
