@@ -47,6 +47,19 @@ _ROW = re.compile(
     r'LOOSE=(?P<loose>\w+)')
 
 
+class _Tee:
+    """Write to several streams at once — used to mirror the report to stdout and
+    a log file simultaneously."""
+    def __init__(self, *streams):
+        self._streams = streams
+    def write(self, s):
+        for st in self._streams:
+            st.write(s)
+    def flush(self):
+        for st in self._streams:
+            st.flush()
+
+
 def score_test(test_py, test_dir, args):
     """Run test.py on one test dir; return an aggregated verdict dict."""
     cmd = ['python3', test_py,
@@ -101,12 +114,24 @@ def main():
                     help='loose LAST-DIGIT tolerance (units of last place; default 2)')
     ap.add_argument('--abs-tol', type=float, default=1e-7,
                     help='absolute near-zero floor (default 1e-7)')
+    ap.add_argument('--log', default='tests.log',
+                    help='also write the report to this file (default: tests.log in '
+                         'the current directory)')
+    ap.add_argument('--no-log', action='store_true',
+                    help='print to stdout only; do not write a log file')
     args = ap.parse_args()
 
     args.program = os.path.abspath(args.program)
     if not os.path.exists(args.program):
         sys.exit('error: program not found: %s' % args.program)
     test_py = os.path.join(here, 'test.py')
+
+    # By default mirror the whole report into tests.log as well as stdout, so a
+    # plain run leaves a log behind (matches `ctest >& tests.log` muscle memory).
+    logf = None
+    if not args.no_log:
+        logf = open(args.log, 'w')
+        sys.stdout = _Tee(sys.__stdout__, logf)
 
     relpct = args.rel_tol * 100
     ldk = args.last_digit_tol
@@ -160,6 +185,10 @@ def main():
           % (grand['loose'], grand['n'], grand['exact'], grand['ld'],
              ', ERROR %d' % grand['err'] if grand['err'] else ''))
     print('=' * 96)
+    if logf:
+        print('\n(report written to %s)' % os.path.abspath(args.log))
+        sys.stdout = sys.__stdout__
+        logf.close()
     # Exit non-zero if any test failed the loose (pass-deciding) criterion.
     sys.exit(0 if grand['loose'] == grand['n'] else 1)
 

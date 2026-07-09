@@ -61,3 +61,27 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/short)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/rgbi)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/long)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/cx)
+
+# Grouped per-suite agreement report.
+#
+# `ctest` gives a flat pass/fail list and hides each test's stdout (the concise
+# AGREEMENT line printed by test.py). This target instead runs
+# scripts/compare_test_outputs.py over every suite and writes a compact
+# per-suite table (exact / loose / last-digit + worst rel% and ulp) to
+# tests.log in the build tree -- one line per test, not the whole run.
+#
+#   cmake --build . --target report        (or:  make report)
+#
+# It builds the tonto executable first, then reports.  tests.log is written
+# fully before the driver exits; the driver's exit code is non-zero if any test
+# failed the loose criterion (so `make report` mirrors ctest's pass/fail status).
+add_custom_target(report
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/compare_test_outputs.py
+            --program    ${TONTO_EXE}
+            --tests-dir  ${CMAKE_CURRENT_SOURCE_DIR}
+            --basis-sets ${BASIS_SETS}
+            --log        ${PROJECT_BINARY_DIR}/tests.log
+    WORKING_DIRECTORY ${PROJECT_BINARY_DIR}
+    USES_TERMINAL
+    COMMENT "Tonto per-suite agreement report -> tests.log")
+add_dependencies(report run_molecule)

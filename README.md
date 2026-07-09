@@ -253,25 +253,37 @@ For example, to insist on a tighter 0.05 % relative match:
            --basis-sets basis_sets --rel-tol 5e-4
 ```
 
-### A per-suite agreement report
+### A per-suite agreement report (`make report` → `tests.log`)
 
-`ctest` prints a flat list. For a grouped view — a header per suite (`short`,
-`rgbi`, `long`, `cx`) and the exact / loose / last-digit verdict plus the worst
-relative and last-digit deviation in the last columns — use the reporting
-driver:
+`ctest` prints a flat pass/fail list and hides each test's stdout (so the concise
+`AGREEMENT` line `test.py` prints is not shown; `ctest --output-on-failure` would
+dump each failing test's *entire* run, which is far too much). For a compact,
+grouped view — a header per suite (`short`, `rgbi`, `long`, `cx`) and the exact /
+loose / last-digit verdict plus the worst relative and last-digit deviation in the
+last columns — use the reporting driver, wired in as a build target:
+
+```
+   cmake --build . --target report      # or, in the build dir:  make report
+```
+
+This builds `tonto` if needed, runs `scripts/compare_test_outputs.py` over every
+suite, and writes the grouped table to **`tests.log`** in the build directory
+(one line per test — not the whole run). You can also run the driver directly:
 
 ```
    python3 scripts/compare_test_outputs.py --program build/tonto
 ```
 
-It accepts the same `--rel-tol`, `--last-digit-tol` and `--abs-tol` options, and
-`--suites` to select a subset, e.g.:
+By default it writes `tests.log` in the current directory as well as printing to
+the screen (use `--no-log` for stdout only, or `--log PATH` to redirect). It
+accepts the same `--rel-tol`, `--last-digit-tol` and `--abs-tol` options as
+`test.py`, plus `--suites` to select a subset:
 
 ```
    python3 scripts/compare_test_outputs.py -p build/tonto --suites short rgbi
 ```
 
-Sample output:
+Sample output (also written to `tests.log`):
 
 ```
    SUITE: short   (51 tests)
