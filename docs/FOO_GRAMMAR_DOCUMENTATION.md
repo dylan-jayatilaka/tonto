@@ -724,32 +724,37 @@ STR::get_next_item(self,item,f,l)    ! explicit NON-generic call (double colon)
 ```
 
 - A single `:` is a *generic* call (the `name_` interface); `::` is a
-  *non-generic* call naming a specific procedure (only within its own module,
-  and the name must not be overloaded).
-- **Submodule** calls put the submodule before the colon:
-  `.SET:delete_atom_SCF_archives` (generic call into submodule `SET`),
-  `.MAIN:setup(...)` (into the `MAIN` submodule → `MOLECULE_MAIN_MODULE`),
-  `.:setup(...)` / `.::setup(...)` within the same submodule. The target module is
-  resolved through the cross-submodule registry (§6), so the correct
-  `MOLECULE_XXX_MODULE` is used (or the call is a same-module one and no `use` is
-  emitted).
-- A **type-qualified** call `TYPE.SUBMOD:proc` (no leading dot — e.g.
-  `MOLECULE.MAIN:cleanup`, `TEXTFILE:destroy(stdout)`) names the *module*, not a
-  receiver object, and in practice targets a `selfless` procedure (there is no
-  other way to call one). The translator recognises selfless targets and passes no
-  `self`. A genuine non-selfless exception should be rewritten with `.SUBMOD:proc`
-  (leading dot) in the source.
-- **How selfless targets are detected — and why a wrong guess can't ship silently.**
-  Selfless targets are found by scanning every `.foo` for procedure headers carrying
-  an explicit `:: selfless` attribute (`buildSelflessMethods` in the translator). A
-  procedure that is selfless *only* by virtue of interface-block nesting (`foo.pl`
-  treats routines nested more than two scopes deep as selfless) is **not**
-  auto-detected. This is not a silent-bug risk, though: a wrong self / no-self
-  decision emits a call with the wrong argument count, so gfortran rejects it with an
-  argument mismatch or *"no specific subroutine for the generic call"*. A clean build
-  therefore proves every `TYPE.SUBMOD:proc` call actually present in the sources
-  resolves correctly. If a genuine non-selfless procedure ever needs to be reached
-  this way, rewrite the call with the leading-dot `.SUBMOD:proc` form in the source.
+  *non-generic* call naming a specific procedure (the name must not be overloaded).
+  The double-colon form is also how a specific procedure is passed **by name** as an
+  argument (`min_BFGS(self, .::chi2F, .::d_chi2F, …)` → `chi2F`).
+- **Submodule calls are now auto-resolved — write the bare dot form.** A cross-
+  submodule call on `self` is just `.proc(...)` (generic) or `.::proc(...)`
+  (non-generic); on a receiver, `recv.proc(...)`. The translator resolves the target
+  through the cross-submodule `method → submodule` registry (§6) and emits the right
+  `use MOLECULE_XXX_MODULE, only: proc_` (or no `use` for a same-submodule call). The
+  author no longer names the submodule.
+- **Legacy explicit qualifiers still parse but are no longer used in the sources.**
+  The older submodule-qualified forms — `.SET:proc` (named submodule), `.MAIN:proc`,
+  `.:proc` / `.::proc`, and the type-qualified `TYPE.SUBMOD:proc` /
+  `TYPE:proc(self,…)` (e.g. `MOLECULE.MAIN:cleanup`, `TEXTFILE:destroy(stdout)`) —
+  are still accepted by the grammar for backward compatibility, but every occurrence
+  in `foofiles/` has been converted to the bare form above. (Module-*namespace*
+  access like `GAUSSIAN_DATA::nx` and non-submodule `TYPE:proc` method calls are a
+  separate case and remain qualified.)
+- **Selfless targets are handled automatically, module-aware.** A bare `.proc`
+  self-call drops `self` iff **every** overload of `proc` is `selfless` in the module
+  it resolves to (`buildSelflessByModule` in the translator — a `(module, proc) →
+  selfless` map). This is stricter than a name-based check: `chemical_symbol` is
+  `selfless` in one module yet a normal self-method in `ATOM`, so it keeps `self`
+  there. A procedure that is selfless *only* by interface-block nesting (`foo.pl`
+  treats routines nested more than two scopes deep as selfless) still needs an
+  explicit `:: selfless` attribute to be seen. A wrong self / no-self decision emits a
+  call with the wrong argument count, so gfortran rejects it (argument mismatch or
+  *"no specific subroutine for the generic call"*) — a clean build proves every call
+  resolves correctly.
+- **Cycle safety.** Auto-qualification could in principle introduce a circular `use`
+  (illegal Fortran). The translator builds the emitted module `use`-graph in batch
+  mode and fails with the offending chain (Tarjan SCC) if any cycle appears.
 
 ---
 
