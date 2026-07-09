@@ -45,15 +45,6 @@ highlighting and tighter editor integration. The repo already ships some vim sup
 - **Integration niceties (optional):** a command/`makeprg` to translate the current `.foo`
   with `FooToFortran` and jump to errors; folding on scope; matchit for `... end` blocks.
 
-## Call resolution
-- **`MODULE.SUBMOD:proc(...)` selfless assumption.** These calls usually target
-  selfless procedures (they can't be called any other way). We currently detect
-  selfless targets via a global scan of `::: selfless` headers
-  (`buildSelflessMethods`). A proc that is selfless *by being inside an interface
-  block* (foo.pl: routines nested >2 scopes are selfless) is NOT caught yet.
-  Conversely, any genuine non-selfless `MODULE.SUBMOD:proc` exception should be
-  rewritten in the `.foo` with different syntax. (User-flagged.)
-
 ## .int generation (deviations vs release/, non-blocking)
 - **Uncalled single-member alias interfaces** (e.g. `diagonal_plus_`) are now
   emitted (needed for the *called* ones like `uncompress_from_pyramid_`); release
