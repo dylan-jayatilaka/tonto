@@ -507,9 +507,37 @@ data section, before `contains`):
 
 **Visibility in the `.int`.** The generic interface `name_` is `public` by default
 and `private` only when **every** overload carries the `private` attribute (one
-`public` overload makes the whole generic public). An `elemental` procedure's
-generic is public — it is meant to be used in an array/VEC context outside its
-module — but its scalar *specific* name is not separately exported.
+`public` overload makes the whole generic public). A procedure's scalar *specific*
+name is additionally exported (`public <name>`) exactly when that procedure is
+declared `public`, so it can be referenced by its specific name (passed as an
+actual argument, or called as `MODULE::proc`).
+
+### `.int` fidelity vs the `release/` reference
+
+The generated `.int` files are equivalent and compilable, but a few
+interface/visibility choices **deliberately differ** from `foo.pl`'s `release/`
+output. None affect correctness or linking:
+
+- **Alias interfaces are always emitted, including uncalled ones.** A single-member
+  rename interface (above) is emitted even when no call site uses it, because some
+  are needed to support ones that *are* used and the translator does not (yet) do
+  the call-usage analysis to tell them apart. `release/` prunes the never-called
+  ones.
+- **Elemental specifics are exported when `public`.** `foo.pl` omits the
+  `public <name>` for an `elemental` procedure (exporting only the generic
+  `name_`); the translator exports both when the procedure is declared `public`.
+  This is harmless (an extra export) and keeps the visibility rule uniform across
+  elemental and non-elemental procedures.
+- **Private, never-called interfaces are kept.** Both translators keep them; an
+  unused-symbol pass could drop those never referenced within the module.
+- **The translator is sometimes *more* correct than `release/`.** e.g.
+  `quote_position_` is `private` in the source and used only within `STR`, so the
+  translator marks it `private`; `release/` marks it `public`, which looks like
+  stale reference output.
+
+Matching `release/` byte-for-byte here would require call-usage and access-pruning
+passes; since the bar is equivalent, compilable Fortran (not byte-exact), these are
+left as documented, intentional deviations.
 
 ## 9. `get_from` template inheritance
 
