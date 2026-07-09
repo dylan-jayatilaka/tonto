@@ -419,7 +419,15 @@ public final class FooToFortran {
             }
 
             f90.append("module ").append(fortranTypeName(fooModuleName)).append("_MODULE\n\n");
-            f90.append("#  include \"").append(stem).append(".use\"\n");
+            // Preamble order (blank-line separated for visibility):
+            //   #include "macros"   -- CPP #defines, in scope for everything below
+            //   include  "*.use"    -- USE statements (must precede IMPLICIT NONE)
+            //   implicit none
+            //   include  "*.int"    -- interface blocks (specification part)
+            // .use/.int are pure Fortran (no macros) so they use a Fortran INCLUDE;
+            // only "macros" stays a CPP `#include`.
+            f90.append("#  include \"macros\"\n\n");
+            f90.append("   include \"").append(stem).append(".use\"\n");
             c.pos = mod.MODULE().getSymbol().getTokenIndex() + 1;
 
             // Walk the module's children in source order: module-level use/type/
@@ -487,9 +495,11 @@ public final class FooToFortran {
             Cursor c = new Cursor(main.toks);
             c.flushHidden(f90, prog.PROGRAM().getSymbol().getTokenIndex(), 0);   // doc block
             f90.append("program ").append(fooModuleName).append("\n\n");
-            f90.append("#  include \"").append(stem).append(".use\"\n\n");
-            f90.append("   implicit none\n\n");
+            // Same preamble order as modules: macros first, then USE, then implicit
+            // none (USE must precede IMPLICIT NONE).
             f90.append("#  include \"macros\"\n\n");
+            f90.append("   include \"").append(stem).append(".use\"\n\n");
+            f90.append("   implicit none\n\n");
             // Program body: declarations + executable statements. No self, no args.
             currentArgs = new LinkedHashSet<>();
             currentSelfless = false; currentProcPure = false;
@@ -597,9 +607,10 @@ public final class FooToFortran {
         }
 
         void emitImplicitBlock(String stem) {
+            // "macros" is now emitted first (right after the module line); here we
+            // emit only implicit none + the interface include.
             f90.append("\n   implicit none\n\n");
-            f90.append("#  include \"macros\"\n");
-            f90.append("#  include \"").append(stem).append(".int\"\n\n");
+            f90.append("   include \"").append(stem).append(".int\"\n\n");
         }
 
         /** A module-level `use` of an external (non-Foo) module, e.g. `USE mpi`. */
