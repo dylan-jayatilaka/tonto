@@ -58,11 +58,6 @@ highlighting and tighter editor integration. The repo already ships some vim sup
   the proc is only used within STR, so our `private` is arguably more correct than
   release's `public`.
 
-## Cosmetic
-- Operator spacing in re-parsed template bodies is canonicalised (`a==b`), which
-  matches release's convention but differs from the pre-substitution spacing in a
-  few `EQ=>==` template cases (e.g. test_parallel).
-
 ## In progress: explicit `self :: INOUT` for non-selfless subroutines (cosmetic tidy)
 
 **Goal (user):** for every non-selfless *subroutine* whose body does not explicitly
