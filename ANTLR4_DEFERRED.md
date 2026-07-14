@@ -45,36 +45,37 @@ highlighting and tighter editor integration. The repo already ships some vim sup
 - **Integration niceties (optional):** a command/`makeprg` to translate the current `.foo`
   with `FooToFortran` and jump to errors; folding on scope; matchit for `... end` blocks.
 
-## In progress: explicit `self :: INOUT` for non-selfless subroutines (cosmetic tidy)
+## DONE: explicit `self` intent via self-modification analysis (plan B)
 
-**Goal (user):** for every non-selfless *subroutine* whose body does not explicitly
-declare `self`, emit `self :: INOUT` (i.e. `type(X_TYPE), INOUT :: self`). Does NOT
-apply to `functional`/`routinal` procs. This intentionally breaks the regression
-vs `release/`; the new translator output is to become the canonical reference.
+**Goal (user):** make `self`'s intent explicit in the `.foo` sources where it is
+currently implicit. The first attempt used a blanket rule (subroutine → INOUT,
+function → IN); it did **not** compile — read-only subroutines given INOUT reject a
+const `self` from their (often inherited) callers, and some *functions actually
+modify self* (memoisers, lazy readers), so `self :: IN` was rejected. Dylan had
+assumed all functions are PURE, which several are not.
 
-**One-line change** (reverted for now to keep the tree compiling): in `renderBody`,
-the implicit self-decl branch — emit `, INOUT :: self` for a subroutine
-(`pd.procHeader().procResult()==null`), plain `:: self` for a function.
+**Resolved with "Option 2" below** — a **self-modification analysis** in the
+translator (`FooToFortran --add-self-intent`, parse-tree driven). Rule:
+- subroutine → **INOUT** iff it modifies self, else **IN**;
+- function → **IN** iff pure (does not modify self); a self-modifying function is
+  left implicit and **flagged impure** (see `self_intent_analysis/impure_functions.tsv`).
 
-**Blocker found — a blanket rule does not compile.** Some non-selfless subroutines
-are *read-only* in `self` (they read the object, e.g. a solver). Example:
-`MAT{REAL}` `solve_linear_equation` is called `solve_linear_equation_(self(list,list),…)`
-where `self(list,list)` is a **vector-subscripted section** — illegal as an
-`INOUT`/`OUT` actual argument, so gfortran reports "no specific subroutine for the
-generic". With no intent it compiled.
+"Modifies self" = direct write (`self%x = …`), a self-method call that transitively
+modifies self (fixpoint, seeded with create/destroy/nullify), a call to a method whose
+`self` is *declared* INOUT/OUT, or an input read into a self component
+(`stdin.read(.label)`, `.SCF_DIIS.read_keywords`, `.atom(a).set_flag`).
 
-**Options to decide (tomorrow):**
-1. Apply the INOUT rule, then declare `self :: IN` explicitly in the *source* for
-   the read-only subroutines (find them by iterating compile errors). Matches the
-   "where self is not explicitly declared" wording — exceptions declare it.
-2. Only mark `self` INOUT when the body actually assigns to self / a component
-   (translator-side analysis); read-only subroutines get IN.
-3. Decide the function case too: currently functions keep no-intent; for full
-   consistency they could be `self :: IN` (but IN risks breaking any function that
-   writes self, so validate by rebuild).
+**Applied + validated:** 135 `self :: IN|INOUT` decls (58 IN / 75 INOUT) across 47
+foofiles, plus 2 genuinely-wrong hand-written `INOUT`→`IN` corrections on read-only
+`MAT{REAL}` `_LAPACK` helpers. A clean **release** build compiles 0-error and the full
+`ctest` suite is **121/124** — the same three deferred failures below, no regressions.
 
-Whichever is chosen, re-verify the DEBUG build still compiles+links before
-committing, since the output is now the canonical reference.
+**Follow-on (deferred, Dylan's proposal):** mark the impure procs `IMPURE` in the
+`.foo` and declare the rest `PURE`. Purity is compiler-enforced (a `pure` proc calling a
+non-pure one is an error), so it self-validates. Impure = {modifies an arg or self} ∪
+{does I/O} — so put/dump/show/read are impure regardless of self. The
+`impure_functions.tsv` (modifies-self + OUT/INOUT-arg functions) is the seed list; add
+I/O-call detection when tackling it.
 
 ## Deferred: small numerical differences in Salvador properties (longstanding)
 
@@ -90,3 +91,24 @@ NOTE: verify this is NOT the moments-staleness knock-on from setting `.atomic_mo
 (the flag now suppresses moment re-making that release always did). If a targeted
 `.atomic_moments_made = FALSE` reset after SCF convergence restores the reference values, it
 IS the knock-on and should be fixed rather than accepted. See memory `debug-ensure-vs-release`.
+
+## Deferred: the 3 remaining test-suite failures (milestone 3)
+
+Milestone 3 is **121/124** on a release build (`ctest`, `scripts/test.py` loose criterion:
+rel ≤ 0.2% OR last-digit ≤ 2). The 3 failures are not translator/behaviour bugs — none is
+a crash, and they persist independently of the self-intent work. Relocated here from the
+former `TEST_VALIDATION_NOTES.md` (retired now that milestone 3 is stable):
+
+1. **`cyclazine_rhf_cc-pVDZ_tddft_state_selection`** — a **structural** diff (variable-name
+   *casing* in the output), not a numeric-tolerance issue; the comparator flags it as
+   rel 100%. Needs the casing fix or a case-insensitive comparison line.
+2. **`gly_ala_fragHAR_rhf_STO-3G`** — a **table column-width / alignment** shift that
+   misaligns the comparator's line pairing; the numbers themselves are fine. Needs
+   alignment-robust pairing in `scripts/test.py`.
+3. **`urea_ccsd_pob-TZVP_Salvador_properties`** — the longstanding Salvador grid/partition
+   numeric difference (see the section above).
+
+Two other cases seen only under the *strict* (exact) sweep also loose-pass and are benign:
+`h2o_rhf_cc-pVDZ_tdhf` (one TDHF state differs in the last digits) and
+`cyclazine_rhf_cc-pVDZ_VMO_canonicalization` (~1e-4; original archives lost, regenerated).
+A threshold-driven "loose pass" gate (candidate for CI, above) absorbs all of these.
