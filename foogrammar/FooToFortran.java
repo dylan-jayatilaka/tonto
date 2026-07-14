@@ -334,6 +334,7 @@ public final class FooToFortran {
 
     public static void main(String[] argv) throws Exception {
         Path typesPath = null, outDir = null, foofilesDir = null, fooDir = null, listFile = null;
+        boolean selfIntentReport = false, addSelfIntent = false;
         List<Path> fooPaths = new ArrayList<>();
         for (int i = 0; i < argv.length; i++) {
             switch (argv[i]) {
@@ -343,6 +344,12 @@ public final class FooToFortran {
                 case "--foofiles-dir": foofilesDir = Paths.get(argv[++i]); break;
                 case "--foo-dir":      fooDir      = Paths.get(argv[++i]); break;
                 case "--foo-list":     listFile    = Paths.get(argv[++i]); break;
+                // Read-only analysis mode: report each proc's `self` intent (no files
+                // written, --out-dir not required). See runSelfIntentReport.
+                case "--self-intent-report": selfIntentReport = true; break;
+                // Rewrite mode: insert explicit `self :: IN/INOUT` into would-add procs,
+                // writing changed files into --out-dir. See runAddSelfIntent.
+                case "--add-self-intent":    addSelfIntent   = true; break;
                 default: throw new IllegalArgumentException("unknown arg: " + argv[i]);
             }
         }
@@ -356,6 +363,27 @@ public final class FooToFortran {
         if (fooDir != null) {
             java.io.File[] fs = fooDir.toFile().listFiles((d, n) -> n.endsWith(".foo"));
             if (fs != null) { Arrays.sort(fs); for (java.io.File f : fs) fooPaths.add(f.toPath()); }
+        }
+        if (selfIntentReport || addSelfIntent) {
+            if (fooPaths.isEmpty())
+                throw new IllegalArgumentException("--self-intent needs --foo/--foo-dir/--foo-list inputs");
+            Path fd = (typesPath != null ? typesPath : fooPaths.get(0)).toAbsolutePath().getParent();
+            Path tp = typesPath != null ? typesPath : fd.resolve("types.foo");
+            TypeTable types = new TypeTable();
+            if (Files.exists(tp)) buildTypeTable(types, tp);
+            // The self-modification analysis needs EVERY module (self-method calls
+            // resolve across submodules), so scan all foofiles regardless of the input.
+            List<Path> allFoo = new ArrayList<>();
+            java.io.File[] fs = fd.toFile().listFiles((d, n) -> n.endsWith(".foo"));
+            if (fs != null) { Arrays.sort(fs); for (java.io.File f : fs) allFoo.add(f.toPath()); }
+            Map<String, Boolean> modifies = buildModifiesSelf(allFoo, types);
+            if (selfIntentReport) runSelfIntentReport(fooPaths, types, modifies);
+            else {
+                if (outDir == null)
+                    throw new IllegalArgumentException("--add-self-intent needs --out-dir");
+                runAddSelfIntent(fooPaths, outDir, types, modifies);
+            }
+            return;
         }
         if (fooPaths.isEmpty() || outDir == null)
             throw new IllegalArgumentException("Usage: FooToFortran (--foo <f.foo> | --foo-dir <d> "
@@ -400,6 +428,449 @@ public final class FooToFortran {
         // Cycle check only makes sense with the whole module set in hand (batch mode).
         int cyclic = fooPaths.size() > 1 ? reportUseCycles(useGraph) : 0;
         if (fail > 0 || cyclic > 0) System.exit(1);
+    }
+
+    /** Read-only analysis for the "explicit self :: INOUT" goal. For every module
+     *  procedure in the given foofiles, classify its `self` and report the intent the
+     *  goal would make explicit — writing NO files. Everything is parse-tree driven
+     *  (the fragile part of the earlier sed attempt):
+     *    - function vs subroutine   : procHeader.procResult() != null
+     *    - selfless / routinal /    : Attrs.parse (routinal/functional self is a
+     *      functional / template /    procedure ARGUMENT, not a normal receiver)
+     *      inherited(get_from)
+     *    - an existing self decl    : a body localDecl naming `self`, with its intent
+     *      read from the decl's attr contexts (IN/OUT/INOUT)
+     *  Commented-out `! self :: INOUT` lines are on the hidden channel, so — unlike a
+     *  line grep — they are correctly ignored here. Dylan's default rule: a normal
+     *  self-method whose self intent is undeclared is INOUT for a subroutine, IN for a
+     *  function. Emits a TSV to stdout (one row per proc) + a summary to stderr. */
+    static void runSelfIntentReport(List<Path> fooPaths,
+                                    TypeTable types, Map<String, Boolean> modifies) throws IOException {
+        int nFunc = 0, nSub = 0, nSelfless = 0, nIfaceArg = 0, nExplicit = 0,
+            nImplicit = 0, nReview = 0, nPtr = 0;
+        Map<String, Integer> explicitByIntent = new TreeMap<>();
+        System.out.println("module\tfortran_module\tproc\tkind\tself_class\tself_decl\tinferred\twould_add");
+        for (Path p : fooPaths) {
+            Parsed pr;
+            try { pr = parseFile(p); }
+            catch (Exception e) { System.err.println("PARSE-FAIL " + p + ": " + e); continue; }
+            for (FooParser.ModuleDefContext mod
+                    : descendants(pr.tree, FooParser.ModuleDefContext.class)) {
+                String fooMod = mod.moduleName().getText();
+                String selfType = selfTypeOf(mod);
+                String fmod = fortranTypeName(fooMod) + "_MODULE";
+                for (FooParser.ProcDefContext pd
+                        : descendants(mod, FooParser.ProcDefContext.class)) {
+                    if (insideInterfaceBlock(pd)) continue;   // dummy-proc arg, not a module proc
+                    FooParser.ProcHeaderContext h = pd.procHeader();
+                    String name = h.IDENTIFIER().getText();
+                    Attrs a = Attrs.parse(h.procAttrs());
+                    boolean func = h.procResult() != null;
+                    if (func) nFunc++; else nSub++;
+                    String kind = func ? "function" : "subroutine";
+                    String selfClass, selfDecl, inferred, wouldAdd;
+                    if (a.selfless) {
+                        selfClass = "selfless"; nSelfless++;
+                        selfDecl = "n/a"; inferred = "n/a"; wouldAdd = "no";
+                    } else if (a.routinal || a.functional) {
+                        selfClass = "interface-arg"; nIfaceArg++;
+                        selfDecl = "n/a"; inferred = "n/a"; wouldAdd = "no";
+                    } else {
+                        selfClass = "normal";
+                        if (a.template)  selfClass = "normal(template)";
+                        if (a.inherited) selfClass = "normal(inherited)";
+                        List<String> selfAttrs = selfDeclAttrs(pd);  // null if self not declared
+                        // Plan B: intent from self-modification analysis. An impure
+                        // function (modifies self) is left implicit, not given IN.
+                        boolean modSelf = procModifiesSelf(pd, selfType, types, modifies);
+                        inferred = func ? (modSelf ? "impure" : "IN") : (modSelf ? "INOUT" : "IN");
+                        String intent = selfAttrs == null ? null : intentOf(selfAttrs);
+                        boolean ptr = selfAttrs != null && hasAttr(selfAttrs, "PTR");
+                        if (selfAttrs == null) {                     // self not declared here
+                            if (a.inherited || a.template) {
+                                // real body (hence the real self decl) lives in the parent /
+                                // at the inline site — decide there, not here.
+                                selfDecl = "implicit"; nReview++; wouldAdd = "review";
+                            } else if (func && modSelf) {
+                                selfDecl = "implicit"; nReview++; wouldAdd = "no(impure-fn)";
+                            } else {
+                                selfDecl = "implicit"; nImplicit++; wouldAdd = "yes";
+                            }
+                        } else if (intent != null) {                 // explicit intent already
+                            selfDecl = "explicit:" + intent + (ptr ? "+PTR" : "");
+                            inferred = intent;
+                            nExplicit++; explicitByIntent.merge(intent, 1, Integer::sum);
+                            wouldAdd = "no";
+                        } else if (ptr) {                            // `self :: PTR` — leave alone
+                            // Pointer self (create/destroy); PTR recorded, intent never added.
+                            selfDecl = "explicit:PTR"; inferred = "n/a";
+                            nPtr++; wouldAdd = "no(PTR)";
+                        } else {                                     // other attrs, no intent
+                            selfDecl = "explicit-no-intent:" + String.join("+", selfAttrs);
+                            nReview++; wouldAdd = "review";
+                        }
+                    }
+                    System.out.println(fooMod + "\t" + fmod + "\t" + name + "\t" + kind
+                        + "\t" + selfClass + "\t" + selfDecl + "\t" + inferred + "\t" + wouldAdd);
+                }
+            }
+        }
+        System.err.println("── self-intent report ──");
+        System.err.println("procs: functions=" + nFunc + " subroutines=" + nSub
+            + " total=" + (nFunc + nSub));
+        System.err.println("no self: selfless=" + nSelfless
+            + " interface-arg(routinal/functional)=" + nIfaceArg);
+        System.err.println("self intent explicit=" + nExplicit + " " + explicitByIntent);
+        System.err.println("self :: PTR (recorded, left alone)=" + nPtr);
+        System.err.println("self intent implicit -> would add: " + nImplicit
+            + "  (needs review: " + nReview + ")");
+    }
+
+    /** The declared attributes of `self` in a procedure body, or null if `self` is
+     *  not declared there. Each entry is an attr's raw source text (e.g. "IN", "PTR",
+     *  "allocatable"); an empty list means self is declared with a bare type / no
+     *  attrs (e.g. `self :: MOLECULE`). */
+    static List<String> selfDeclAttrs(FooParser.ProcDefContext pd) {
+        for (FooParser.ProcBodyContext b : pd.procBody()) {
+            FooParser.LocalDeclContext ld = b.localDecl();
+            if (ld == null) continue;
+            boolean isSelf = false;
+            for (FooParser.DeclNameContext dn : ld.identList().declName())
+                if (dn.name().getText().equalsIgnoreCase("self")) { isSelf = true; break; }
+            if (!isSelf) continue;
+            List<String> attrs = new ArrayList<>();
+            // `self :: PTR` parses PTR as a typeSpec (not an attr), so capture it too —
+            // else the pointer-self class would be missed. `self :: allocatable, OUT`
+            // likewise puts `allocatable` in the typeSpec and `OUT` in the attrSuffix.
+            if (ld.declTail().typeSpec() != null)
+                attrs.add(ld.declTail().typeSpec().getText());
+            for (FooParser.AttrContext at
+                    : descendants(ld.declTail(), FooParser.AttrContext.class))
+                attrs.add(at.getText());
+            return attrs;
+        }
+        return null;
+    }
+
+    /** The intent among a self-decl's attrs ("IN"/"OUT"/"INOUT"), or null if none.
+     *  Foo keywords are case-insensitive, so compare case-folded. */
+    static String intentOf(List<String> attrs) {
+        for (String s : attrs)
+            switch (s.toUpperCase(Locale.ROOT)) {
+                case "INOUT": return "INOUT";
+                case "IN":    return "IN";
+                case "OUT":   return "OUT";
+                default:      break;
+            }
+        return null;
+    }
+
+    /** True if `attrs` contains the named attribute (case-insensitive). */
+    static boolean hasAttr(List<String> attrs, String want) {
+        for (String s : attrs) if (s.equalsIgnoreCase(want)) return true;
+        return false;
+    }
+
+    /** True if this procDef is nested inside an `interface … end` block (a dummy
+     *  procedure argument of a routinal/functional proc), not a real module proc. */
+    static boolean insideInterfaceBlock(FooParser.ProcDefContext pd) {
+        for (ParseTree r = pd.getParent(); r != null; r = r.getParent())
+            if (r instanceof FooParser.InterfaceBlockContext) return true;
+        return false;
+    }
+
+    // -------------------------------------- self-modification analysis (plan B)
+
+    /** Methods that always modify self (allocate/deallocate/associate it). These are
+     *  usually get_from(OBJECT)-inherited, so their bodies aren't in the type's file;
+     *  seed them so a caller of `.create`/`.destroy`/… is seen to modify self. */
+    static final Set<String> KNOWN_MUTATORS = Set.of(
+        "create", "destroy", "nullify", "create_copy",
+        "destroy_ptr_part", "nullify_ptr_part", "create_ptr_part");
+
+    /** Method-name prefixes that write their receiver, so a call on a self component
+     *  (`.SCF_DIIS.read_keywords`, `.atom(a).set_flag`) modifies self. Deliberately the
+     *  clearly-mutating verbs; read/input is covered here too. */
+    static final List<String> MUTATOR_PREFIXES = List.of(
+        "read", "set", "update", "add", "append", "clear", "reset",
+        "remove", "insert", "delete", "expand", "shrink", "put_back");
+
+    /** The Foo type whose method this module defines — the head before a submodule
+     *  dot (MOLECULE.SCF -> MOLECULE), i.e. the type of `self`. */
+    static String selfTypeOf(FooParser.ModuleDefContext mod) {
+        String m = mod.moduleName().getText();
+        return m.contains(".") ? m.substring(0, m.indexOf('.')) : m;
+    }
+
+    /** True if the proc body DIRECTLY writes self — an assignment (`=`/`=>`) whose
+     *  left side is `self…` or a self component (`.x`, i.e. self%x). */
+    static boolean directModifiesSelf(FooParser.ProcDefContext pd) {
+        for (FooParser.SimpleStmtContext st : descendants(pd, FooParser.SimpleStmtContext.class)) {
+            if (st.EQUAL() == null && st.ARROW() == null) continue;   // assignments only
+            FooParser.PostfixContext lhs = st.postfix();
+            if (lhs == null || lhs.head() == null || lhs.head().callHead() == null) continue;
+            FooParser.CallHeadContext ch = lhs.head().callHead();
+            // `.x = …` (self%x), including `.x(i) = …` / `.x%y = …` (head is `.x`)
+            if (ch.DOT() != null && ch.name() != null
+                    && ch.DCOLON() == null && ch.COLON() == null) return true;
+            // `self = …` / `self%… = …` / `self(…) = …`
+            if (ch.DOT() == null && ch.name() != null
+                    && ch.name().getText().equalsIgnoreCase("self")) return true;
+        }
+        return readsIntoSelf(pd);
+    }
+
+    /** True if the proc reads input INTO a self component — `stdin.read_quantity(.length)`
+     *  / `stdin.read(.label)` -> read_*(…, self%length): the self component is the OUTPUT
+     *  argument of a read-family call, so self is modified. (directModifiesSelf only sees
+     *  `self%x = …` assignments; input reads write self without an assignment.) */
+    static boolean readsIntoSelf(FooParser.ProcDefContext pd) {
+        for (FooParser.PostfixContext pf : descendants(pd, FooParser.PostfixContext.class)) {
+            if (pf.head() == null) continue;
+            FooParser.CallHeadContext ch0 = pf.head().callHead();
+            String method = ch0 != null && ch0.name() != null
+                ? ch0.name().getText().replace("?", "") : null;
+            // Head is a self component (`.X`): a read-family / mutator method called ON it
+            // (`.SCF_DIIS.read_keywords`, `.grid.create`) writes that part of self.
+            boolean headSelfComp = ch0 != null && ch0.DOT() != null && ch0.name() != null
+                && ch0.DCOLON() == null && ch0.COLON() == null;
+            for (FooParser.TrailerContext tr : pf.trailer()) {
+                if (tr.LPAREN() != null) {
+                    // read-family call carrying a self component as an OUTPUT arg
+                    if (method != null && method.toLowerCase(Locale.ROOT).startsWith("read")
+                            && tr.argList() != null && argListHasSelfComponent(tr.argList()))
+                        return true;
+                } else if (!tr.name().isEmpty()) {
+                    String tn = tr.name(0).getText().replace("?", "");
+                    String tnl = tn.toLowerCase(Locale.ROOT);
+                    if (headSelfComp && (KNOWN_MUTATORS.contains(tnl)
+                            || MUTATOR_PREFIXES.stream().anyMatch(tnl::startsWith)))
+                        return true;
+                    method = tn;   // `.method` selector for a following call
+                }
+            }
+        }
+        return false;
+    }
+
+    /** True if any argument is a self component (`.x`) or `self` itself. */
+    static boolean argListHasSelfComponent(FooParser.ArgListContext al) {
+        for (FooParser.ArgContext ar : al.arg())
+            for (FooParser.PostfixContext pf : descendants(ar, FooParser.PostfixContext.class)) {
+                if (pf.head() == null || pf.head().callHead() == null) continue;
+                FooParser.CallHeadContext ch = pf.head().callHead();
+                if (ch.DOT() != null && ch.name() != null
+                        && ch.DCOLON() == null && ch.COLON() == null) return true;
+                if (ch.DOT() == null && ch.name() != null
+                        && ch.name().getText().equalsIgnoreCase("self")) return true;
+            }
+        return false;
+    }
+
+    /** The self-methods this proc calls: `.m(…)` / `.m` (unless m is a self component),
+     *  and the qualifier-less colon forms (`.::m`, `.:m`, `::m`, `:m`) which are all
+     *  calls into self's own (sub)module. Used to propagate modification transitively. */
+    static Set<String> selfMethodCalls(FooParser.ProcDefContext pd, String selfType, TypeTable types) {
+        Set<String> calls = new java.util.HashSet<>();
+        for (FooParser.PostfixContext pf : descendants(pd, FooParser.PostfixContext.class)) {
+            if (pf.head() == null || pf.head().callHead() == null) continue;
+            FooParser.CallHeadContext ch = pf.head().callHead();
+            FooParser.NameContext nm = ch.name();
+            if (nm == null) continue;
+            String name = nm.getText().replace("?", "");
+            boolean colon = ch.DCOLON() != null || ch.COLON() != null;
+            if (colon) {
+                if (ch.qualifier() == null) calls.add(name);   // self (sub)module call
+            } else if (ch.DOT() != null) {
+                // `.m` — a component read (skip) or a self-method call
+                if (!types.isComponent(selfType, name)) calls.add(name);
+            }
+        }
+        return calls;
+    }
+
+    /** Name-level "does this method modify self?" over ALL foofiles, by fixpoint:
+     *  a method modifies self if it does so directly, or calls a self-method that does
+     *  (seeded with KNOWN_MUTATORS). Keyed `canon(selfType)#lowercasename`; overloads of
+     *  a name are OR-merged (conservative). */
+    static Map<String, Boolean> buildModifiesSelf(List<Path> fooPaths, TypeTable types) {
+        Map<String, Boolean> direct = new HashMap<>();
+        Map<String, Set<String>> calls = new HashMap<>();
+        Set<String> typesSeen = new java.util.HashSet<>();
+        for (Path p : fooPaths) {
+            Parsed pr;
+            try { pr = parseFile(p); } catch (Exception e) { continue; }
+            for (FooParser.ModuleDefContext mod
+                    : descendants(pr.tree, FooParser.ModuleDefContext.class)) {
+                String stFoo = selfTypeOf(mod), st = canon(stFoo);
+                typesSeen.add(st);
+                for (FooParser.ProcDefContext pd
+                        : descendants(mod, FooParser.ProcDefContext.class)) {
+                    if (insideInterfaceBlock(pd) || pd.procHeader().IDENTIFIER() == null) continue;
+                    String key = st + "#" + pd.procHeader().IDENTIFIER().getText().toLowerCase(Locale.ROOT);
+                    // A proc whose self is ALREADY declared INOUT/OUT modifies self by
+                    // contract (its body may not show it — e.g. it hands self to an
+                    // external inout arg like LAPACK dgesdd). Seed it so callers that
+                    // invoke it via self (`.m`) are seen to modify self too.
+                    List<String> sa = selfDeclAttrs(pd);
+                    String declInt = sa == null ? null : intentOf(sa);
+                    boolean declaredMut = "INOUT".equals(declInt) || "OUT".equals(declInt);
+                    direct.merge(key, directModifiesSelf(pd) || declaredMut, (o, n) -> o || n);
+                    calls.computeIfAbsent(key, k -> new java.util.HashSet<>())
+                         .addAll(selfMethodCalls(pd, stFoo, types));
+                }
+            }
+        }
+        Map<String, Boolean> modifies = new HashMap<>(direct);
+        for (String st : typesSeen)
+            for (String km : KNOWN_MUTATORS) modifies.put(st + "#" + km, true);
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            for (Map.Entry<String, Set<String>> e : calls.entrySet()) {
+                if (Boolean.TRUE.equals(modifies.get(e.getKey()))) continue;
+                String st = e.getKey().substring(0, e.getKey().indexOf('#'));
+                for (String m : e.getValue()) {
+                    String ml = m.toLowerCase(Locale.ROOT);
+                    if (KNOWN_MUTATORS.contains(ml) || Boolean.TRUE.equals(modifies.get(st + "#" + ml))) {
+                        modifies.put(e.getKey(), true); changed = true; break;
+                    }
+                }
+            }
+        }
+        return modifies;
+    }
+
+    /** Whether a specific proc modifies self: direct write, or a call to a self-method
+     *  that (transitively) modifies self. Per-proc, using the name-level map. */
+    static boolean procModifiesSelf(FooParser.ProcDefContext pd, String selfType,
+                                    TypeTable types, Map<String, Boolean> modifies) {
+        if (directModifiesSelf(pd)) return true;
+        String st = canon(selfType);
+        for (String m : selfMethodCalls(pd, selfType, types)) {
+            String ml = m.toLowerCase(Locale.ROOT);
+            if (KNOWN_MUTATORS.contains(ml) || Boolean.TRUE.equals(modifies.get(st + "#" + ml)))
+                return true;
+        }
+        return false;
+    }
+
+    /** True if a FUNCTION declares any dummy argument with intent OUT or INOUT — an
+     *  "impure" function that mutates an argument (for the deferred PURE/IMPURE pass). */
+    static boolean funcHasOutInoutArg(FooParser.ProcDefContext pd) {
+        Set<String> argNames = new java.util.HashSet<>();
+        FooParser.ProcHeaderContext h = pd.procHeader();
+        if (h.procArgs() != null && h.procArgs().identList() != null)
+            for (FooParser.DeclNameContext dn : h.procArgs().identList().declName())
+                argNames.add(dn.name().getText().replace("?", ""));
+        for (FooParser.ProcBodyContext b : pd.procBody()) {
+            if (b.localDecl() == null) continue;
+            boolean namesAnArg = false;
+            for (FooParser.DeclNameContext dn : b.localDecl().identList().declName())
+                if (argNames.contains(dn.name().getText().replace("?", ""))) { namesAnArg = true; break; }
+            if (!namesAnArg) continue;
+            for (FooParser.AttrContext at
+                    : descendants(b.localDecl().declTail(), FooParser.AttrContext.class))
+                if (at.OUT() != null || at.INOUT() != null) return true;
+        }
+        return false;
+    }
+
+    /** Plan B self intent for a proc — "IN"/"INOUT", or null to add nothing. A clean add
+     *  case: a normal self-method (not selfless/routinal/functional), own body (not
+     *  get_from-inherited, not a template), no existing self decl. Then:
+     *    subroutine -> INOUT if it modifies self else IN;
+     *    function   -> IN if pure (does not modify self); a self-modifying function is
+     *                  left implicit (null) and flagged impure for a hand fix. */
+    static String selfIntentToAdd(FooParser.ProcDefContext pd, String selfType,
+                                  TypeTable types, Map<String, Boolean> modifies) {
+        if (insideInterfaceBlock(pd)) return null;
+        FooParser.ProcHeaderContext h = pd.procHeader();
+        Attrs a = Attrs.parse(h.procAttrs());
+        if (a.selfless || a.routinal || a.functional || a.inherited || a.template) return null;
+        if (selfDeclAttrs(pd) != null) return null;   // self already declared here
+        boolean mod = procModifiesSelf(pd, selfType, types, modifies);
+        if (h.procResult() != null) return mod ? null : "IN";   // impure func -> leave implicit
+        return mod ? "INOUT" : "IN";
+    }
+
+    /** The start token of a procedure body's first real element (a decl or statement,
+     *  skipping blank lines and body comments, which are on the hidden channel), or
+     *  null for an empty body. This is where an inserted `self :: …` decl goes — right
+     *  before the first code line, i.e. after the header and its doc comments. */
+    static org.antlr.v4.runtime.Token firstBodyToken(FooParser.ProcDefContext pd) {
+        for (FooParser.ProcBodyContext b : pd.procBody())
+            if (b.localDecl() != null || b.stmt() != null || b.dataStmt() != null
+                    || b.useStmt() != null || b.implicitStmt() != null
+                    || b.interfaceBlock() != null)
+                return b.getStart();
+        return null;
+    }
+
+    /** Rewrite the given foofiles, inserting an explicit `self :: IN` / `self :: INOUT`
+     *  declaration into every clean would-add proc (see selfIntentToAdd). The new line
+     *  is placed as the first body line — matching the column of the first existing
+     *  code line — so it sits after the header and its doc comments, exactly where the
+     *  hand-written self decls already live. Parse-tree driven; only files with at
+     *  least one insertion are written (into outDir, keeping the original filename),
+     *  so a plain diff shows precisely the added lines. */
+    static void runAddSelfIntent(List<Path> fooPaths, Path outDir,
+                                 TypeTable types, Map<String, Boolean> modifies) throws IOException {
+        Files.createDirectories(outDir);
+        int filesChanged = 0, procsAdded = 0;
+        Map<String, Integer> byIntent = new TreeMap<>();
+        // impure functions (for the deferred PURE/IMPURE pass): TSV rows to stdout.
+        System.out.println("module\tfunction\treason");
+        int impureCount = 0;
+        for (Path p : fooPaths) {
+            Parsed pr;
+            try { pr = parseFile(p); }
+            catch (Exception e) { System.err.println("PARSE-FAIL " + p + ": " + e); continue; }
+            // Each edit: {0-based line index to insert before, text, intent}.
+            List<Object[]> edits = new ArrayList<>();
+            for (FooParser.ModuleDefContext mod
+                    : descendants(pr.tree, FooParser.ModuleDefContext.class)) {
+                String selfType = selfTypeOf(mod);
+                for (FooParser.ProcDefContext pd
+                        : descendants(mod, FooParser.ProcDefContext.class)) {
+                    if (insideInterfaceBlock(pd) || pd.procHeader().IDENTIFIER() == null) continue;
+                    // Flag impure functions (modify self and/or an OUT/INOUT arg).
+                    if (pd.procHeader().procResult() != null) {
+                        boolean modSelf = procModifiesSelf(pd, selfType, types, modifies);
+                        boolean outArg  = funcHasOutInoutArg(pd);
+                        if (modSelf || outArg) {
+                            String reason = (modSelf ? "modifies-self" : "")
+                                + (modSelf && outArg ? "+" : "") + (outArg ? "out/inout-arg" : "");
+                            System.out.println(mod.moduleName().getText() + "\t"
+                                + pd.procHeader().IDENTIFIER().getText() + "\t" + reason);
+                            impureCount++;
+                        }
+                    }
+                    String intent = selfIntentToAdd(pd, selfType, types, modifies);
+                    if (intent == null) continue;
+                    org.antlr.v4.runtime.Token t = firstBodyToken(pd);
+                    int line1, col;
+                    if (t != null) { line1 = t.getLine(); col = t.getCharPositionInLine(); }
+                    else {   // empty body: indent one level (3 spaces) past the header
+                        org.antlr.v4.runtime.Token e = pd.endKw().getStart();
+                        line1 = e.getLine(); col = e.getCharPositionInLine() + 3;
+                    }
+                    edits.add(new Object[]{ line1 - 1, sp(col) + "self :: " + intent, intent });
+                }
+            }
+            if (edits.isEmpty()) continue;
+            List<String> lines = new ArrayList<>(Files.readAllLines(p, StandardCharsets.UTF_8));
+            edits.sort((x, y) -> Integer.compare((int) y[0], (int) x[0]));   // insert bottom-up
+            for (Object[] ed : edits) {
+                lines.add((int) ed[0], (String) ed[1]);
+                procsAdded++; byIntent.merge((String) ed[2], 1, Integer::sum);
+            }
+            Files.write(outDir.resolve(p.getFileName()), lines, StandardCharsets.UTF_8);
+            filesChanged++;
+            System.err.println("  " + p.getFileName() + ": +" + edits.size());
+        }
+        System.err.println("── add-self-intent (plan B) ── files=" + filesChanged
+            + " procs=" + procsAdded + " " + byIntent + "  impure-functions=" + impureCount);
     }
 
     /** Translate one .foo file, write its .F90/.int/.use into outDir, and return the
