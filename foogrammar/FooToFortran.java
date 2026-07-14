@@ -216,8 +216,11 @@ public final class FooToFortran {
                 String name = m.group(1);
                 if (kw.contains(name.toLowerCase(Locale.ROOT))) continue;
                 final String fmod = mod;
+                // Key by lower-case name: Foo/Fortran identifiers are case-insensitive,
+                // so a `.scf` call must resolve to a `SCF`-defined proc. Lookups in
+                // callModule/trailerCallModule lower-case the method the same way.
                 reg.computeIfAbsent(base, k -> new HashMap<>())
-                   .computeIfAbsent(name, k -> new java.util.HashSet<>()).add(fmod);
+                   .computeIfAbsent(name.toLowerCase(Locale.ROOT), k -> new java.util.HashSet<>()).add(fmod);
             }
         }
         return reg;
@@ -2376,7 +2379,7 @@ public final class FooToFortran {
             if (fooType == null) return null;
             Map<String, Set<String>> byMethod = subMethods.get(canon(fooType));
             if (byMethod != null) {
-                Set<String> mods = byMethod.get(method);
+                Set<String> mods = method == null ? null : byMethod.get(method.toLowerCase(Locale.ROOT));
                 if (mods != null)
                     return mods.contains(selfModuleName) ? selfModuleName : mods.iterator().next();
             }
@@ -2418,7 +2421,7 @@ public final class FooToFortran {
                 return fortranTypeName(recvFooType) + "_" + submod + "_MODULE";
             Map<String, Set<String>> byMethod = subMethods.get(canon(recvFooType));
             if (byMethod != null) {
-                Set<String> mods = byMethod.get(method);
+                Set<String> mods = method == null ? null : byMethod.get(method.toLowerCase(Locale.ROOT));
                 if (mods != null)
                     return mods.contains(selfModuleName) ? selfModuleName : mods.iterator().next();
                 return selfModuleName;   // unknown -> assume the current submodule

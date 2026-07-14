@@ -337,3 +337,39 @@ method calls left qualified (out of safe mechanical scope). Grammar NOT yet tigh
 
 Post-A1 gates: `collision_scan → 0`; no live caller references a deleted/renamed
 target; batch regen + build + `tests/` green.
+
+## Fix — case-insensitive submodule registry lookup (2026-07)
+
+**Symptom.** `release/` (release build from ANTLR4 output) failed to compile:
+`Cannot open module file 'molecule_module.mod'`. ~16 `use MOLECULE_MODULE, only: …`
+lines had been emitted across 7 `molecule.*.use` files — but `MOLECULE_MODULE`
+does not exist (MOLECULE is fully split into submodules; there is no base module).
+
+**Root cause.** Auto-resolution stripped explicit submodule qualifiers to bare
+`.proc` calls, then resolved them through the submodule registry (`subMethods`).
+The registry was keyed and looked up **case-sensitively**, but Foo/Fortran
+identifiers are case-insensitive. So call-site `.scf` / `.mp2` /
+`.make_e_polarization_vgrid` never matched their real definitions `SCF` / `MP2` /
+`make_E_polarization_vgrid`, `callModule`/`trailerCallModule` returned the
+fallback `fortranModName(fooType)` = the nonexistent `MOLECULE_MODULE`. All ~16
+were pure case mismatches (`scf`→`SCF`, `mp2`→`MP2`,
+`put_coulomb_energy`→`put_Coulomb_energy`, `read_scf_archives`→`read_SCF_archives`,
+`make_scf_density_mx`→`make_SCF_density_mx`, `put_uc_chi2`→`put_UC_chi2`, …).
+
+**Fix** (`foogrammar/FooToFortran.java`, 3 edits): lower-case the method key in
+`buildSubmethodTable` (registry build) and in the `byMethod.get(...)` lookups in
+`callModule` and `trailerCallModule` (null-safe). Each orphan now resolves to the
+submodule the maintainer had originally qualified: `scf_`→`MOLECULE_SCF_MODULE`,
+`mp2_`→`MOLECULE_MISC_MODULE`, `put_coulomb_energy_`→`MOLECULE_PROP_MODULE`,
+`read_scf_archives_`→`MOLECULE_READ_MODULE`, `make_scf_density_mx_`→
+`MOLECULE_BASE_MODULE`, `put_uc_chi2_`→`MOLECULE_CP_MODULE`,
+`make_e_polarization_vgrid_`→self (grid) so no `use`.
+
+**Verified** at the `.use` level: translator rebuilt clean; regenerated all
+`molecule.*` files → `grep 'use MOLECULE_MODULE\b' *.use` returns nothing, and each
+proc points at the correct submodule module. **Not yet done:** rebuild `release/`
+to confirm the end-to-end Fortran compile (`cd release && make -j`) — resume here.
+
+**Build note.** ANTLR jar lives at `external/antlr-4.13.2-complete.jar` (the
+default `/usr/local/lib/…` path is empty on this box). Build the translator with:
+`ANTLR_JAR="$PWD/external/antlr-4.13.2-complete.jar" scripts/build_translator.sh`.
