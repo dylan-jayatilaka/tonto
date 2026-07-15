@@ -50,9 +50,13 @@ transformation, type parameterization, and C-style macro expansion (`include/mac
 `foo.pl` runs in two passes — pass 1 analyses signatures/interfaces/symbols, pass 2 generates
 code.
 
-**Status** (per commit `7bbf20a4`, verify before trusting): the translator is "untested, not
-working". Refinement work (g-Hirshfeld / g-Salvador) is reported working (`48e30ac2`,
-`53d1bc96`).
+**Status** (2026-07-15): the ANTLR4 translator **works and drives the build**. Milestones 1 & 2
+are done — it parses every `foofiles/` file (submodules included) and emits equivalent,
+compilable Fortran. A release `tonto` built from its output passes **121/124** `ctest` under the
+loose criterion (the 3 known-bad are longstanding, not translator bugs — see
+`ANTLR4_DEFERRED.md`). Milestone 3 (fully-green tests, automated in CI) is what remains — a
+hodgepodge of minor issues, not core translator work. Phase B (per-executable dead-code
+elimination + call/use-graph export) is also done (§8, commit `860922ea`).
 
 ## 3. The Foo language (summary)
 
@@ -105,11 +109,9 @@ Other build types: `debug`, `release-static`, and MPI (`-DCMAKE_Fortran_COMPILER
   earlier Claude attempt whose context was lost.
 - The reference files are **pre-C-preprocessor** (see §1); macro / `#include` expansion
   happens during the Fortran compile, which is **not** part of this task.
-- **Do not run the test jobs (`ctest`).**
-
-> The exact commands to build/run the translator are not yet recorded here. The CMake build
-> drives `foo.pl`, so `CMakeLists.txt` shows how generation is wired up — derive the
-> equivalent invocation for `FooToFortran.java` and record it in §8 once confirmed.
+- **Running `ctest` is now in scope** (it is milestone 3 — see §9) but, like `make`, ask
+  before launching a long build/test run (§8). Use the loose criterion in `scripts/test.py`
+  (rel ≤ 0.2% OR last-digit ≤ 2) as the pass/fail gate, not exact match.
 
 ## 6. Conventions & gotchas
 
@@ -182,29 +184,29 @@ build compiles clean (~32% of procedures dropped, binary 33→25 MB) and passes 
 
 **Milestones**
 
-1. `foogrammar/Foo.g4` parses **every** file in `foofiles/` without error — including the
-   submodule files (`molecule.*`, `diffraction_data.*`).
-2. `foogrammar/FooToFortran.java` emits `.F90` / `.int` / `.use` into `antlr4-release/` that are
+1. ✅ **DONE.** `foogrammar/Foo.g4` parses **every** file in `foofiles/` without error —
+   including the submodule files (`molecule.*`, `diffraction_data.*`).
+2. ✅ **DONE.** `foogrammar/FooToFortran.java` emits `.F90` / `.int` / `.use` that are
    **equivalent** (compilable, same behaviour) to the reference in `release/`.
-3. **The test suite passes against a binary built from the translator's output.** A `debug`
-   build of `tonto` compiled from the ANTLR4-generated Fortran runs the jobs in `tests/`
-   (`ctest`) and reproduces each reference `stdout` under `scripts/test.py`'s comparison
-   (numeric tolerance + junk-line filtering). This is the end-to-end proof that the
-   translator reproduces `foo.pl`'s *behaviour*, not just its source text. Track progress
-   in a working notes file; expect two failure classes to separate real translator bugs
-   from harness artifacts: (a) genuine output differences (e.g. runtime field-width
-   defaults), and (b) lines the comparison should ignore but doesn't (e.g. `Warning …`
-   banners and their surrounding blank lines — see `prefixes_to_ignore` in
-   `scripts/test.py`).
+3. **IN PROGRESS — A fully-green test suite on a translator-built binary, automated in CI.** A `tonto`
+   compiled from the ANTLR4-generated Fortran runs `tests/` (`ctest`) and reproduces each
+   reference `stdout` under `scripts/test.py`'s **loose** comparison (rel ≤ 0.2% OR
+   last-digit ≤ 2, plus junk-line filtering). "Passing binaries" means **passing in CI under
+   that loose script** — not exact match. Current state: **121/124** on release. What remains
+   is a hodgepodge of minor issues, all enumerated in `ANTLR4_DEFERRED.md`: the 3 longstanding
+   known-bad tests, the debug-build (`-O0`) FP-boundary artifacts (suppress-or-tolerate), and
+   the harness junk-filter gaps. Then wire it to CI (GitHub Actions — Travis's OSS offering is
+   defunct; see the CI section in `ANTLR4_DEFERRED.md`) so every push runs the loose gate.
 
-> Confirm milestone wording — your note was cut off at "There are two milestones. release/".
+**Open items** (all milestone-3 polish + future directions; details in `ANTLR4_DEFERRED.md`)
 
-**Open items**
+- **Milestone 3 to fully green + CI** — clear the deferred hodgepodge (3 known-bad tests,
+  debug `-O0` FP-boundary artifacts, harness junk-filter gaps), then a GitHub Actions loose gate.
+- **Grammar still ACCEPTS the old submodule call forms** (`.SET:proc`, `.MAIN:proc`, `STR::proc`)
+  even though they are now auto-resolved away in the sources; not tightened (harmless).
+- Future tasks (own conversations): simplify the DOT call-graph output; introduce Fortran-2008
+  `submodule` constructs; test the MPI parallel build; boilerplate doc comments; and (long-term)
+  a possible move off Fortran. See `ANTLR4_DEFERRED.md` for the first three.
 
-- **Grammar does not yet implement submodules**, although the docs describe them (§3). The
-  `moduleDef` rule is `MODULE IDENTIFIER`, but `IDENTIFIER` excludes `.`, so a dotted header
-  like `module MOLECULE.BASE` will not parse; and the call rules (`callLike` / `path`) have no
-  colon form, so `.SET:proc`, `.MAIN:proc`, `STR::proc` etc. are not recognised. This blocks
-  milestone 1 and must be added.
-- **Translator build/run commands** are not yet recorded — derive from `CMakeLists.txt` (which
-  wires up `foo.pl`) and record the `FooToFortran.java` equivalent in §8.
+> Submodules ARE implemented (dotted headers + colon call forms parse & auto-resolve; commit
+> `4cd995df`), and translator build/run commands are recorded in §8 — both former open items done.

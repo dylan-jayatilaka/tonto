@@ -47,6 +47,40 @@ calls (fixed: `recordSelfCall`); (2) case-sensitive node keys (`reset_IO_status`
 `reset_io_status`; fixed: `node()` lower-cases the method part — motivates the case-cleanup goal
 above). CPP-macro-hidden calls all target `SYSTEM` (always kept), so no macro-root class exists.
 
+## Future task: simplify the DOT call-graph output
+
+**Goal (Dylan):** reduce the complexity of the graphs from `--call-graph-report` (phase B).
+`call_graph.dot` is a **procedure-level** graph — ~7600 nodes / ~24k edges — too dense to read
+as a single image (only `sfdp`/`fdp` lay it out at all). `module_use.dot` (921 edges) and
+`submodule_use.dot` are legible.
+
+**Ideas to pursue (in `writeDotFiles`, FooToFortran.java):** a **module-level call graph**
+(aggregate proc→proc edges to module→module — far more legible, like `module_use.dot` but for
+*calls* not *use*); optionally restrict the proc graph to the reachable set when a root is given
+(shading already exists); per-module or per-subsystem subgraph extraction; edge-bundling hints;
+drop the ubiquitous sinks (SYSTEM/TYPES) to de-clutter. Decide which graphs are worth keeping.
+
+## Future task: introduce Fortran-2008 `submodule` constructs
+
+**Goal (Dylan):** use real Fortran-2008 `submodule` where appropriate. **Concept clash to note
+first:** a Foo "submodule" (e.g. `molecule.base.foo` → `module MOLECULE.BASE`) currently
+translates to a **separate, standalone Fortran module** `MOLECULE_BASE_MODULE`, `use`d like any
+other — NOT an F2008 `submodule`. F2008 `submodule (PARENT) NAME` would instead let the 19
+`MOLECULE.*` pieces share one parent interface and break the `use`-graph coupling (a submodule
+sees its ancestor's specification without a `use`, and changing a submodule body doesn't force
+recompilation of the parent's users). Investigate whether mapping Foo submodules onto F2008
+submodules simplifies the emitted module graph and compile-time dependencies. Touches
+`emit()`/`buildUseFile()`/`buildInterfaceFile()` and the module-naming scheme.
+
+## Future task: test the MPI parallel build
+
+**Goal (Dylan):** verify the MPI build works and its tests pass. Build flags exist
+(CLAUDE.md §4: `-DCMAKE_Fortran_COMPILER=mpifort … -DMPI=1`, optional `-DNO_ERROR_MANAGEMENT`);
+`scripts/test.py` has a `--mpi` path (`mpirun -n 4`), wired via `WITH_MPI` in `tests/CMakeLists.txt`.
+Status is **unverified** for the ANTLR4 translator output. Start by building MPI and running
+`ctest` under it; expect the parallel macros (`PARALLEL_DO_*`, `PARALLEL_SUM`, `broadcast_` — all
+`SYSTEM`/`tonto`-targeted, see `macros.in`) to be the surface area. Compare against a non-MPI run.
+
 ## Infrastructure: reinstate continuous integration (CI)
 
 **Goal (user):** bring back automated CI so every push builds the ANTLR4 translator,

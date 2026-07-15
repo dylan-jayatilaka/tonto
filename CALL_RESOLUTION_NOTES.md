@@ -1,5 +1,12 @@
 # Working notes — automatic call resolution + DCE
 
+> **STATUS: DONE (2026-07-15).** Both halves complete. Call resolution: `.SUBMOD:proc` /
+> `.:proc` / `TYPE.SUBMOD:proc` eliminated & auto-resolved across DIFFRACTION_DATA + all 19
+> MOLECULE submodules (commit `4cd995df`). DCE / phase B: per-executable dead-code elimination
+> + call/use-graph DOT export (commit `860922ea`, validated 121/124). Out of scope, still
+> qualified: `TYPE:proc`. Optional leftover: rebuild `release/` from the converted sources
+> (cosmetic). The phase-by-phase log below is historical.
+
 Companion to `CALL_RESOLUTION_TASK.md` (the handoff brief). This file tracks what
 has actually been done/discovered, phase by phase. Started 2026-07-09.
 
