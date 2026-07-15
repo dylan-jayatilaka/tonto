@@ -26,6 +26,21 @@ the call sites (a targeted, parse-tree-driven edit like `--add-self-intent`, NOT
 so commented-out and string-literal occurrences are left alone). Related: [[submodule-call-autoresolution-done]]
 already hit a case bug in the submodule registry (commit 627db872); this is the same family.
 
+## Deferred: eliminate explicit `TYPE:proc` calls (out of scope so far)
+
+**What:** the submodule-call cleanup (`4cd995df`) auto-resolved `.SUBMOD:proc` etc., but
+explicit **type-qualified** calls `TYPE:proc` / `TYPE::proc` (e.g. `GAUSSIAN_DATA:...`,
+`STR:...` for namespace access + method calls) were left **qualified on purpose**.
+
+**Why it's not just a mechanical `TYPE:proc(x)` → `x.proc` rewrite:** that transform is
+**unsafe** and was tried and reverted. An **elemental** method invoked on a `VEC{T}` array
+receiver resolves against the *receiver's* type (`VEC{T}`), not the element type `T`, so
+`x.proc` can bind a different (array-level) overload than `T:proc` intended — this introduced
+a `use` cycle. See memory `typeproc-elemental-array-hazard`. A correct elimination needs
+**type-aware** resolution that respects elemental/array-receiver semantics (and the
+GAUSSIAN_DATA namespace-access case), not a blind receiver swap. Low priority — the explicit
+form compiles and runs fine; this is a consistency/readability cleanup, not a correctness bug.
+
 ## DONE: phase B — per-executable dead-code elimination
 
 **Goal (Dylan):** eliminate code dead for a specific executable (e.g. `run_molecule`/`tonto`),
