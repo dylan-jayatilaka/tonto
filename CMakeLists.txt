@@ -541,6 +541,14 @@ set(ANTLR4_VALIDATION_STAMP ${ANTLR4_VALIDATION_DIR}/FooParser.stamp)
 set(ANTLR4_TRANSLATOR_STAMP ${ANTLR4_CLASSES_DIR}/FooToFortran.stamp)
 set(FOO_TRANSLATOR_JAVA ${FOOGRAMMAR_DIR}/FooToFortran.java)
 
+# Optional dead-code purge (phase B). Set to a run-file stem (e.g. run_molecule) in a
+# SEPARATE build tree — `cmake .. -DPURGE_DEAD_CODE=run_molecule` — to emit only the
+# procedures reachable from that one executable's entry point, dropping the rest. The
+# normal build (empty PURGE_DEAD_CODE) is unaffected. Per-executable by design: code
+# dead for run_molecule may be live for another program, so never share the build dir.
+set(PURGE_DEAD_CODE "" CACHE STRING
+    "If set to a run-file stem (e.g. run_molecule), emit only code reachable from that executable")
+
 add_custom_command(
     OUTPUT ${ANTLR4_VALIDATION_STAMP}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${ANTLR4_VALIDATION_DIR}
@@ -576,6 +584,7 @@ add_custom_command(
 add_custom_target(antlr4-translator DEPENDS ${ANTLR4_TRANSLATOR_STAMP})
 
 set(FOO_GENERATED_F90_OUTPUTS "")
+set(ALL_F90_OUTPUTS "")
 foreach(foopath ${SRC})
     # Virtual (get_from template) modules - e.g. object.foo, vec{intrinsic}.foo,
     # map{key,val}.foo - are inlined into their heirs and never compiled. Skip
@@ -593,25 +602,48 @@ foreach(foopath ${SRC})
     string(REGEX REPLACE "___" "_" F90file ${F90file})
     string(REGEX REPLACE "__" "_" F90file ${F90file})
     string(REGEX REPLACE "_.F90" ".F90" F90file ${F90file})
+    list(APPEND ALL_F90_OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/${F90file})
+    if(foopath MATCHES "^${FOO_DIR}/")
+        list(APPEND FOO_GENERATED_F90_OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/${F90file})
+    endif()
+    # Per-file generation (normal build). In purge mode a single batch command
+    # (below) supersedes these — cross-file reachability can't be computed one file
+    # at a time — so skip creating the per-file rules.
     # NB: no VERBATIM here. Foo file names contain shell brace-expansion syntax
     # (e.g. map{int,int}.foo, map{vec{key},vec{val}}.foo). VERBATIM would leave
     # the path unquoted and /bin/sh (bash) would brace-expand it into multiple
     # args. Emit explicit double quotes around the paths so the shell treats each
     # as a single literal argument.
+    if(NOT PURGE_DEAD_CODE)
+        add_custom_command(
+            OUTPUT ${F90file}
+            COMMAND ${Java_JAVA_EXECUTABLE}
+            -cp "${ANTLR4_CLASSES_DIR}:${ANTLR4_JAR}"
+            FooToFortran
+            --types \"${FOO_TYPES_FILE}\"
+            --foo \"${foopath}\"
+            --out-dir \"${CMAKE_CURRENT_BINARY_DIR}\"
+            DEPENDS ${foopath} ${FOO_TYPES_FILE} ${ANTLR4_TRANSLATOR_STAMP}
+        )
+    endif()
+endforeach(foopath)
+
+# Purge mode: a single batch command emits EVERY .F90/.int/.use with procedures
+# unreachable from ${PURGE_DEAD_CODE} dropped. It depends on all sources (global
+# reachability), and produces the whole ALL_F90_OUTPUTS set at once.
+if(PURGE_DEAD_CODE)
+    message(STATUS "Dead-code purge ACTIVE: emitting only code reachable from ${PURGE_DEAD_CODE}")
     add_custom_command(
-        OUTPUT ${F90file}
+        OUTPUT ${ALL_F90_OUTPUTS}
         COMMAND ${Java_JAVA_EXECUTABLE}
         -cp "${ANTLR4_CLASSES_DIR}:${ANTLR4_JAR}"
         FooToFortran
         --types \"${FOO_TYPES_FILE}\"
-        --foo \"${foopath}\"
+        --purge-dead-code \"${RUNFILE_DIR}/${PURGE_DEAD_CODE}.foo\"
         --out-dir \"${CMAKE_CURRENT_BINARY_DIR}\"
-        DEPENDS ${foopath} ${FOO_TYPES_FILE} ${ANTLR4_TRANSLATOR_STAMP}
+        DEPENDS ${SRC} ${FOO_TYPES_FILE} ${ANTLR4_TRANSLATOR_STAMP}
     )
-    if(foopath MATCHES "^${FOO_DIR}/")
-        list(APPEND FOO_GENERATED_F90_OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/${F90file})
-    endif()
-endforeach(foopath)
+endif()
 
 add_custom_target(antlr4-fortran
     DEPENDS ${ANTLR4_TRANSLATOR_STAMP} ${FOO_GENERATED_F90_OUTPUTS}
@@ -619,6 +651,34 @@ add_custom_target(antlr4-fortran
 
 add_dependencies(antlr4-fortran antlr4-grammar)
 add_dependencies(antlr4-fortran antlr4-translator)
+
+# On-demand documentation graphs: `make callgraphs` regenerates the Graphviz DOT
+# files (procedure call graph; module use graph with submodules collapsed to their
+# parent; expanded submodule use graph) plus a dead-code reachability report for
+# run_molecule, into build/callgraphs/. If Graphviz `dot` is present, the two small
+# use graphs are also rendered to SVG.
+find_program(DOT_EXE dot)
+add_custom_target(callgraphs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/callgraphs
+    COMMAND ${Java_JAVA_EXECUTABLE}
+        -cp "${ANTLR4_CLASSES_DIR}:${ANTLR4_JAR}"
+        FooToFortran
+        --types \"${FOO_TYPES_FILE}\"
+        --dead-code-report \"${RUNFILE_DIR}/run_molecule.foo\"
+        --call-graph-report
+        --out-dir \"${CMAKE_CURRENT_BINARY_DIR}/callgraphs\"
+    DEPENDS ${ANTLR4_TRANSLATOR_STAMP}
+    COMMENT "Generating Foo call/use graphs (DOT) + dead-code report -> build/callgraphs/"
+)
+if(DOT_EXE)
+    add_custom_command(TARGET callgraphs POST_BUILD
+        COMMAND ${DOT_EXE} -Tsvg ${CMAKE_CURRENT_BINARY_DIR}/callgraphs/module_use.dot
+                -o ${CMAKE_CURRENT_BINARY_DIR}/callgraphs/module_use.svg
+        COMMAND ${DOT_EXE} -Tsvg ${CMAKE_CURRENT_BINARY_DIR}/callgraphs/submodule_use.dot
+                -o ${CMAKE_CURRENT_BINARY_DIR}/callgraphs/submodule_use.svg
+        COMMENT "Rendering module/submodule use graphs to SVG")
+endif()
+add_dependencies(callgraphs antlr4-translator)
 
 # Target libtonto
 add_library(tonto

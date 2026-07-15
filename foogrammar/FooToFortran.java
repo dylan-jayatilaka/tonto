@@ -334,7 +334,8 @@ public final class FooToFortran {
 
     public static void main(String[] argv) throws Exception {
         Path typesPath = null, outDir = null, foofilesDir = null, fooDir = null, listFile = null;
-        boolean selfIntentReport = false, addSelfIntent = false;
+        Path dceRoot = null, purgeRoot = null;
+        boolean selfIntentReport = false, addSelfIntent = false, callGraphReport = false;
         List<Path> fooPaths = new ArrayList<>();
         for (int i = 0; i < argv.length; i++) {
             switch (argv[i]) {
@@ -350,6 +351,14 @@ public final class FooToFortran {
                 // Rewrite mode: insert explicit `self :: IN/INOUT` into would-add procs,
                 // writing changed files into --out-dir. See runAddSelfIntent.
                 case "--add-self-intent":    addSelfIntent   = true; break;
+                // B1 read-only analysis: dead-code reachability from a root program
+                // (needs the root .foo), and/or Graphviz DOT call/use graphs (no root).
+                // See runCallGraphDce.
+                case "--dead-code-report":   dceRoot = Paths.get(argv[++i]); break;
+                case "--call-graph-report":  callGraphReport = true; break;
+                // B2 purge mode: emit only procedures reachable from the root program,
+                // dropping the dead ones, into --out-dir. See runPurge.
+                case "--purge-dead-code":    purgeRoot = Paths.get(argv[++i]); break;
                 default: throw new IllegalArgumentException("unknown arg: " + argv[i]);
             }
         }
@@ -383,6 +392,23 @@ public final class FooToFortran {
                     throw new IllegalArgumentException("--add-self-intent needs --out-dir");
                 runAddSelfIntent(fooPaths, outDir, types, modifies);
             }
+            return;
+        }
+        if (dceRoot != null || callGraphReport) {
+            // Registries describe the MODULES (foofiles/), so derive their dir from
+            // --types (or --foofiles-dir), NOT from a run_XXX.foo root in runfiles/.
+            Path fd = foofilesDir != null ? foofilesDir
+                    : (typesPath != null ? typesPath : (dceRoot != null ? dceRoot : fooPaths.get(0)))
+                          .toAbsolutePath().getParent();
+            runCallGraphDce(fd, dceRoot, callGraphReport, outDir);
+            return;
+        }
+        if (purgeRoot != null) {
+            if (outDir == null)
+                throw new IllegalArgumentException("--purge-dead-code needs --out-dir");
+            Path fd = foofilesDir != null ? foofilesDir
+                    : (typesPath != null ? typesPath : purgeRoot).toAbsolutePath().getParent();
+            runPurge(fd, purgeRoot, outDir);
             return;
         }
         if (fooPaths.isEmpty() || outDir == null)
@@ -873,6 +899,338 @@ public final class FooToFortran {
             + " procs=" + procsAdded + " " + byIntent + "  impure-functions=" + impureCount);
     }
 
+    /** Normalise a recorded call symbol to its generic base name (the DCE/graph node
+     *  granularity). Calls resolve to the generic `name_`; overloads are `name_0/1/…`;
+     *  by-name references are the specific `name`. All collapse to `name` so a single
+     *  node represents every overload of a procedure name in a module.
+     *    trace_product_with_  -> trace_product_with   (generic, trailing '_')
+     *    trace_product_with_2 -> trace_product_with   (overload, '_'<digits>)
+     *    create               -> create               (by-name specific)             */
+    /** Canonical call-graph node id `MODULE:method`. Fortran is case-insensitive but Foo
+     *  preserves identifier case (e.g. `reset_IO_status` defined, `reset_io_status`
+     *  called), so the method part is lower-cased to make caller / callee / existsNode
+     *  keys match — otherwise a case-differing call misses its target and prunes it. */
+    static String node(String fortranMod, String base) {
+        return fortranMod + ":" + base.toLowerCase(Locale.ROOT);
+    }
+
+    static String genericBase(String s) {
+        if (s.endsWith("_")) return s.substring(0, s.length() - 1);
+        int u = s.lastIndexOf('_');
+        if (u > 0 && u + 1 < s.length()) {
+            boolean allDigits = true;
+            for (int i = u + 1; i < s.length(); i++)
+                if (!Character.isDigit(s.charAt(i))) { allDigits = false; break; }
+            if (allDigits) return s.substring(0, u);
+        }
+        return s;
+    }
+
+    /** Modules pulled in wholesale (`use X_MODULE`, no `only:`); their procedures are
+     *  never candidates for pruning and their inbound calls are not edge-recorded. */
+    static boolean alwaysKeepModule(String mod) {
+        return mod == null || mod.equals("TYPES_MODULE") || mod.equals("SYSTEM_MODULE");
+    }
+
+    /** B1 (dead-code / call-graph report). Emits every module (+ an optional root
+     *  program) in-memory with call-graph capture on — NO .F90/.int/.use written —
+     *  then: (a) if `root` given, computes procedure reachability from the program's
+     *  entry calls and prints a per-module live/dead report; (b) if `doDot`, writes
+     *  Graphviz DOT files (proc call graph; module use graph with submodules collapsed
+     *  to their parent; expanded submodule use graph) into `outDir` (or cwd). */
+    static void runCallGraphDce(Path foofilesDir, Path root, boolean doDot, Path outDir) throws Exception {
+        Path typesPath = foofilesDir.resolve("types.foo");
+        TypeTable types = new TypeTable();
+        if (Files.exists(typesPath)) buildTypeTable(types, typesPath);
+        Map<String, String[]> globals = buildGlobalTable(foofilesDir);
+        Map<String, Map<String, Set<String>>> subMethods = buildSubmethodTable(foofilesDir);
+        Set<String> selflessGlobal = buildSelflessMethods(foofilesDir);
+        Map<String, Set<String>> selflessByMod = buildSelflessByModule(foofilesDir);
+
+        List<Path> fooPaths = new ArrayList<>();
+        java.io.File[] fs = foofilesDir.toFile().listFiles((d, n) -> n.endsWith(".foo"));
+        if (fs != null) { Arrays.sort(fs); for (java.io.File f : fs) fooPaths.add(f.toPath()); }
+        Path rootAbs = root == null ? null : root.toAbsolutePath().normalize();
+        if (rootAbs != null) {
+            boolean present = false;
+            for (Path p : fooPaths) if (p.toAbsolutePath().normalize().equals(rootAbs)) present = true;
+            if (!present) fooPaths.add(root);
+        }
+
+        // ---- emit every file with call-graph capture (no files written) ----
+        List<ModuleEmitter> ems = new ArrayList<>();
+        Map<String, Set<String>> edges = new HashMap<>();     // "MOD:base" -> {"MOD:base"}
+        Set<String> existsNode = new LinkedHashSet<>();       // every emittable proc node
+        ModuleEmitter rootEm = null;
+        int done = 0;
+        for (Path p : fooPaths) {
+            ModuleEmitter em;
+            try {
+                em = new ModuleEmitter(types, parseFile(p), p, foofilesDir,
+                        globals, subMethods, selflessGlobal, selflessByMod);
+                em.callEdges = new LinkedHashMap<>();
+                em.emit();
+            } catch (Exception e) {
+                System.err.println("skip " + p.getFileName() + ": " + e);
+                continue;
+            }
+            if (em.isVirtual) continue;
+            ems.add(em);
+            if (rootAbs != null && p.toAbsolutePath().normalize().equals(rootAbs)) rootEm = em;
+            for (Map.Entry<String, Set<String>> e : em.callEdges.entrySet())
+                edges.computeIfAbsent(e.getKey(), k -> new LinkedHashSet<>()).addAll(e.getValue());
+            if (!em.isProgram && em.selfModuleName != null) {
+                for (String base : em.interfaceProcs.keySet())
+                    existsNode.add(node(em.selfModuleName, base));
+                // an explicit generic `interface NAME m1 m2 …` reaches its members
+                for (Map.Entry<String, List<String>> al : em.explicitAliases.entrySet())
+                    for (String mem : al.getValue())
+                        edges.computeIfAbsent(node(em.selfModuleName, al.getKey()), k -> new LinkedHashSet<>())
+                             .add(node(em.selfModuleName, mem));
+            }
+            if (++done % 50 == 0) System.err.println("  … emitted " + done + "/" + fooPaths.size());
+        }
+
+        // ---- reachability from the root program (BFS over the call graph) ----
+        Set<String> reached = null;
+        if (rootAbs != null) {
+            if (rootEm == null) {
+                System.err.println("WARNING: root " + root + " not found/parsed; skipping DCE report");
+            } else {
+                reached = new java.util.HashSet<>();
+                java.util.Deque<String> q = new java.util.ArrayDeque<>();
+                for (Set<String> outs : rootEm.callEdges.values()) q.addAll(outs);
+                while (!q.isEmpty()) {
+                    String n = q.poll();
+                    if (!reached.add(n)) continue;
+                    Set<String> outs = edges.get(n);
+                    if (outs != null) q.addAll(outs);
+                }
+                reportDce(existsNode, reached, outDir);
+            }
+        }
+
+        if (doDot) {
+            Path dir = outDir != null ? outDir : Paths.get(".");
+            Files.createDirectories(dir);
+            writeDotFiles(ems, edges, existsNode, dir, reached);
+        }
+    }
+
+    /** Per-module live/dead procedure counts + the dead list. `reached` holds the
+     *  reachable "MOD:base" nodes; a proc is dead iff it exists, is not reached, and is
+     *  not in an always-keep (wholesale-use) module. The TSV goes to
+     *  `<outDir>/dead_code_report.tsv` when outDir is given (so `make callgraphs`
+     *  doesn't flood the terminal), else to stdout; the one-line summary always to
+     *  stderr. */
+    static void reportDce(Set<String> existsNode, Set<String> reached, Path outDir) throws IOException {
+        Map<String, int[]> perMod = new TreeMap<>();          // module -> {total, live, dead}
+        List<String> dead = new ArrayList<>();
+        for (String node : existsNode) {
+            int c = node.indexOf(':');
+            String mod = node.substring(0, c);
+            int[] t = perMod.computeIfAbsent(mod, k -> new int[3]);
+            t[0]++;
+            boolean live = reached.contains(node) || alwaysKeepModule(mod);
+            if (live) t[1]++; else { t[2]++; dead.add(node); }
+        }
+        int total = 0, live = 0, deadN = 0;
+        StringBuilder sb = new StringBuilder("module\ttotal\tlive\tdead\n");
+        for (Map.Entry<String, int[]> e : perMod.entrySet()) {
+            int[] t = e.getValue();
+            total += t[0]; live += t[1]; deadN += t[2];
+            sb.append(e.getKey()).append('\t').append(t[0]).append('\t').append(t[1]).append('\t').append(t[2]).append('\n');
+        }
+        java.util.Collections.sort(dead);
+        sb.append("# --- dead procedures (").append(deadN).append(") ---\n");
+        for (String d : dead) sb.append("DEAD\t").append(d).append('\n');
+        if (outDir != null) {
+            Files.createDirectories(outDir);
+            Files.writeString(outDir.resolve("dead_code_report.tsv"), sb.toString(), StandardCharsets.UTF_8);
+        } else {
+            System.out.print(sb);
+        }
+        System.err.println("── dead-code report ── procs=" + total + " live=" + live
+            + " dead=" + deadN + " (" + (total == 0 ? 0 : deadN * 100 / total) + "% prunable)"
+            + (outDir != null ? " -> " + outDir.resolve("dead_code_report.tsv") : ""));
+    }
+
+    /** Write the three Graphviz DOT graphs. Node ids/labels are quoted (they contain
+     *  ':' and may contain '?'). If `reached` is non-null, call-graph nodes are shaded
+     *  live (green) / dead (grey). */
+    static void writeDotFiles(List<ModuleEmitter> ems, Map<String, Set<String>> edges,
+                              Set<String> existsNode, Path dir, Set<String> reached) throws IOException {
+        // module -> parent module (submodule MOLECULE.BASE -> MOLECULE_MODULE)
+        Map<String, String> parent = new LinkedHashMap<>();
+        Map<String, List<String>> family = new LinkedHashMap<>();   // parent -> member modules
+        Map<String, String> modOfFoo = new LinkedHashMap<>();
+        for (ModuleEmitter em : ems) {
+            if (em.isProgram || em.selfModuleName == null) continue;
+            String fm = em.fooModuleName;
+            String parentType = fm.contains(".") ? fm.substring(0, fm.indexOf('.')) : fm;
+            String pmod = fortranTypeName(parentType) + "_MODULE";
+            parent.put(em.selfModuleName, pmod);
+            family.computeIfAbsent(pmod, k -> new ArrayList<>()).add(em.selfModuleName);
+            modOfFoo.put(em.selfModuleName, fm);
+        }
+
+        // (1) proc-level call graph, clustered by module, coloured by reachability
+        StringBuilder g = new StringBuilder();
+        g.append("// Foo procedure call graph. Large: render with sfdp/fdp, e.g.\n");
+        g.append("//   sfdp -Goverlap=prism -Tsvg call_graph.dot -o call_graph.svg\n");
+        g.append("digraph call_graph {\n  graph [rankdir=LR];\n  node [shape=box, style=filled, fillcolor=white, fontsize=9];\n");
+        Map<String, List<String>> byMod = new TreeMap<>();
+        for (String n : existsNode) byMod.computeIfAbsent(n.substring(0, n.indexOf(':')), k -> new ArrayList<>()).add(n);
+        for (Map.Entry<String, List<String>> e : byMod.entrySet()) {
+            g.append("  subgraph \"cluster_").append(e.getKey()).append("\" {\n");
+            g.append("    label=\"").append(e.getKey()).append("\"; color=lightgrey;\n");
+            for (String n : e.getValue()) {
+                String base = n.substring(n.indexOf(':') + 1);
+                String fill = reached == null ? "white"
+                        : (reached.contains(n) || alwaysKeepModule(e.getKey()) ? "palegreen" : "grey85");
+                g.append("    \"").append(n).append("\" [label=\"").append(base)
+                 .append("\", fillcolor=").append(fill).append("];\n");
+            }
+            g.append("  }\n");
+        }
+        for (Map.Entry<String, Set<String>> e : edges.entrySet()) {
+            if (!existsNode.contains(e.getKey())) continue;             // only proc->proc edges
+            for (String to : e.getValue())
+                if (existsNode.contains(to))
+                    g.append("  \"").append(e.getKey()).append("\" -> \"").append(to).append("\";\n");
+        }
+        g.append("}\n");
+        Files.writeString(dir.resolve("call_graph.dot"), g.toString(), StandardCharsets.UTF_8);
+
+        // (2) module use graph, submodules collapsed to their parent node
+        Set<String> collapsed = new java.util.TreeSet<>();
+        for (ModuleEmitter em : ems) {
+            if (em.isProgram || em.selfModuleName == null) continue;
+            String from = parent.getOrDefault(em.selfModuleName, em.selfModuleName);
+            for (String u : em.useOnly.keySet()) {
+                String to = parent.getOrDefault(u, u);
+                if (!from.equals(to)) collapsed.add("  \"" + from + "\" -> \"" + to + "\";");
+            }
+        }
+        StringBuilder m = new StringBuilder("digraph module_use {\n  rankdir=LR;\n  node [shape=box, style=rounded];\n");
+        for (String line : collapsed) m.append(line).append('\n');
+        m.append("}\n");
+        Files.writeString(dir.resolve("module_use.dot"), m.toString(), StandardCharsets.UTF_8);
+
+        // (3) expanded submodule use graph: only families with submodules, clustered
+        StringBuilder s = new StringBuilder("digraph submodule_use {\n  rankdir=LR;\n  node [shape=box, fontsize=9];\n");
+        Set<String> subFamilyMods = new LinkedHashSet<>();
+        for (Map.Entry<String, List<String>> fe : family.entrySet()) {
+            if (fe.getValue().size() < 2) continue;                    // not split into submodules
+            s.append("  subgraph \"cluster_").append(fe.getKey()).append("\" {\n");
+            s.append("    label=\"").append(fe.getKey()).append("\"; color=lightblue;\n");
+            for (String mod : fe.getValue()) {
+                subFamilyMods.add(mod);
+                s.append("    \"").append(mod).append("\" [label=\"").append(modOfFoo.getOrDefault(mod, mod)).append("\"];\n");
+            }
+            s.append("  }\n");
+        }
+        Set<String> subEdges = new java.util.TreeSet<>();
+        for (ModuleEmitter em : ems) {
+            if (em.isProgram || em.selfModuleName == null) continue;
+            if (!subFamilyMods.contains(em.selfModuleName)) continue;
+            for (String u : em.useOnly.keySet())
+                if (subFamilyMods.contains(u) && !u.equals(em.selfModuleName))
+                    subEdges.add("  \"" + em.selfModuleName + "\" -> \"" + u + "\";");
+        }
+        for (String line : subEdges) s.append(line).append('\n');
+        s.append("}\n");
+        Files.writeString(dir.resolve("submodule_use.dot"), s.toString(), StandardCharsets.UTF_8);
+
+        System.err.println("── call-graph report ── wrote call_graph.dot, module_use.dot, "
+            + "submodule_use.dot to " + dir);
+    }
+
+    /** B2 dead-code purge. Two passes over (all foofiles + the root program):
+     *  pass 1 emits every file in-memory with call-graph capture on and computes the
+     *  set of procedures reachable from the root program's entry calls; pass 2 re-emits
+     *  each file with the DEAD procedures dropped (translateOne's deadNodes), writing
+     *  the pruned .F90/.int/.use into outDir. The result is a self-consistent,
+     *  compilable Fortran tree holding only code reachable from that one executable.
+     *  Wholesale-use modules (TYPES/SYSTEM) are never pruned. */
+    static void runPurge(Path foofilesDir, Path root, Path outDir) throws Exception {
+        Path typesPath = foofilesDir.resolve("types.foo");
+        TypeTable types = new TypeTable();
+        if (Files.exists(typesPath)) buildTypeTable(types, typesPath);
+        Map<String, String[]> globals = buildGlobalTable(foofilesDir);
+        Map<String, Map<String, Set<String>>> subMethods = buildSubmethodTable(foofilesDir);
+        Set<String> selflessGlobal = buildSelflessMethods(foofilesDir);
+        Map<String, Set<String>> selflessByMod = buildSelflessByModule(foofilesDir);
+
+        List<Path> fooPaths = new ArrayList<>();
+        java.io.File[] fs = foofilesDir.toFile().listFiles((d, n) -> n.endsWith(".foo"));
+        if (fs != null) { Arrays.sort(fs); for (java.io.File f : fs) fooPaths.add(f.toPath()); }
+        Path rootAbs = root.toAbsolutePath().normalize();
+        boolean present = false;
+        for (Path p : fooPaths) if (p.toAbsolutePath().normalize().equals(rootAbs)) present = true;
+        if (!present) fooPaths.add(root);
+
+        // ---- pass 1: build the call graph + reachable set ----
+        Map<String, Set<String>> edges = new HashMap<>();
+        Set<String> existsNode = new LinkedHashSet<>();
+        ModuleEmitter rootEm = null;
+        for (Path p : fooPaths) {
+            ModuleEmitter em;
+            try {
+                em = new ModuleEmitter(types, parseFile(p), p, foofilesDir,
+                        globals, subMethods, selflessGlobal, selflessByMod);
+                em.callEdges = new LinkedHashMap<>();
+                em.emit();
+            } catch (Exception e) { System.err.println("skip " + p.getFileName() + ": " + e); continue; }
+            if (em.isVirtual) continue;
+            if (p.toAbsolutePath().normalize().equals(rootAbs)) rootEm = em;
+            for (Map.Entry<String, Set<String>> e : em.callEdges.entrySet())
+                edges.computeIfAbsent(e.getKey(), k -> new LinkedHashSet<>()).addAll(e.getValue());
+            if (!em.isProgram && em.selfModuleName != null) {
+                for (String base : em.interfaceProcs.keySet())
+                    existsNode.add(node(em.selfModuleName, base));
+                for (Map.Entry<String, List<String>> al : em.explicitAliases.entrySet())
+                    for (String mem : al.getValue())
+                        edges.computeIfAbsent(node(em.selfModuleName, al.getKey()), k -> new LinkedHashSet<>())
+                             .add(node(em.selfModuleName, mem));
+            }
+        }
+        if (rootEm == null) throw new IllegalArgumentException("purge root " + root + " not found/parsed");
+        Set<String> reached = new java.util.HashSet<>();
+        java.util.Deque<String> q = new java.util.ArrayDeque<>();
+        for (Set<String> outs : rootEm.callEdges.values()) q.addAll(outs);
+        while (!q.isEmpty()) {
+            String n = q.poll();
+            if (!reached.add(n)) continue;
+            Set<String> outs = edges.get(n);
+            if (outs != null) q.addAll(outs);
+        }
+        Set<String> deadNodes = new java.util.HashSet<>();
+        for (String node : existsNode) {
+            String mod = node.substring(0, node.indexOf(':'));
+            if (!reached.contains(node) && !alwaysKeepModule(mod)) deadNodes.add(node);
+        }
+
+        // ---- pass 2: re-emit with the dead procedures dropped ----
+        Files.createDirectories(outDir);
+        int ok = 0, fail = 0;
+        Map<String, Set<String>> useGraph = new TreeMap<>();
+        for (Path p : fooPaths) {
+            try {
+                ModuleEmitter em = translateOne(p, outDir, types, foofilesDir,
+                        globals, subMethods, selflessGlobal, selflessByMod, deadNodes);
+                ok++;
+                if (em != null && !em.isVirtual && em.selfModuleName != null)
+                    useGraph.put(em.selfModuleName, new java.util.TreeSet<>(em.useOnly.keySet()));
+            } catch (Exception e) { fail++; System.err.println("FAILED " + p + ": " + e); }
+        }
+        int cyclic = reportUseCycles(useGraph);
+        System.err.println("── purge-dead-code ── root=" + root.getFileName() + " files=" + ok
+            + " fail=" + fail + " dropped=" + deadNodes.size() + "/" + existsNode.size()
+            + " (" + (existsNode.isEmpty() ? 0 : deadNodes.size() * 100 / existsNode.size()) + "% pruned)");
+        if (fail > 0 || cyclic > 0) System.exit(1);
+    }
+
     /** Translate one .foo file, write its .F90/.int/.use into outDir, and return the
      *  emitter (so the batch driver can read its module name + `use` edges for the
      *  cycle check). Uses the shared (pre-built) registries; behaviour is identical
@@ -882,7 +1240,18 @@ public final class FooToFortran {
                              Map<String, Map<String, Set<String>>> subMethods,
                              Set<String> selflessGlobal,
                              Map<String, Set<String>> selflessByMod) throws Exception {
+        return translateOne(fooPath, outDir, types, foofilesDir, globals, subMethods,
+                            selflessGlobal, selflessByMod, null);
+    }
+
+    static ModuleEmitter translateOne(Path fooPath, Path outDir, TypeTable types, Path foofilesDir,
+                             Map<String, String[]> globals,
+                             Map<String, Map<String, Set<String>>> subMethods,
+                             Set<String> selflessGlobal,
+                             Map<String, Set<String>> selflessByMod,
+                             Set<String> deadNodes) throws Exception {
         ModuleEmitter em = new ModuleEmitter(types, parseFile(fooPath), fooPath, foofilesDir, globals, subMethods, selflessGlobal, selflessByMod);
+        em.deadNodes = deadNodes;   // B2: null unless purging
         em.emit();
         String name = fooPath.getFileName().toString();
         if (em.isVirtual) {
@@ -980,6 +1349,14 @@ public final class FooToFortran {
 
         String fooModuleName, selfFooType, currentProc, currentProcBase, selfModuleName;
         boolean isVirtual;
+        boolean isProgram;                            // true for a run_XXX.foo main program
+        // Call-graph capture (B1, dead-code / call-graph report). When non-null,
+        // recordUse also records a per-procedure edge  "MOD:callerBase" -> "MOD:calleeBase"
+        // (captured BEFORE recordUse's self-module skip, so intra-module calls count too).
+        Map<String, Set<String>> callEdges;
+        // Dead-code purge (B2). When non-null, emitProc drops any procedure whose
+        // node "MOD:base" is in this set (unreachable from the purge root program).
+        Set<String> deadNodes;
         boolean inComponent;   // true while emitting derived-type components
         List<String> selectKeywords;   // case labels of the enclosing select (for UNKNOWN)
         final Set<String> selflessProcs = new LinkedHashSet<>();   // selfless proc names in this module
@@ -1143,6 +1520,7 @@ public final class FooToFortran {
          *  executable statements, then `end`. Emitted as a Fortran main program (with
          *  its own `_main`), not a module — so the executable links. */
         void emitProgram(FooParser.ProgramDefContext prog) {
+            isProgram = true;
             fooModuleName = prog.moduleName().getText();          // run_HAR
             selfFooType = fooModuleName;
             selfModuleName = fortranTypeName(fooModuleName) + "_MODULE";   // unused
@@ -1186,6 +1564,16 @@ public final class FooToFortran {
                 // call sites, never emitted. Keep any preceding out-of-procedure /
                 // section comments (flush up to the header), then drop the proc's OWN
                 // doc/body comments so they are not leaked before the next procedure.
+                c.flushHidden(f90, h.getStart().getTokenIndex(), 0);
+                c.pos = Math.max(c.pos, pd.getStop().getTokenIndex() + 1);
+                c.lastLine = pd.getStop().getLine();
+                return;
+            }
+            // Dead-code purge (B2): a procedure unreachable from the root program is
+            // dropped exactly like a template — no body, no interface (.int) entry, no
+            // public export — so the emitted module stays self-consistent. The generic
+            // node is name-granular, so ALL overloads of a dead name go together.
+            if (deadNodes != null && deadNodes.contains(node(selfModuleName, name))) {
                 c.flushHidden(f90, h.getStart().getTokenIndex(), 0);
                 c.pos = Math.max(c.pos, pd.getStop().getTokenIndex() + 1);
                 c.lastLine = pd.getStop().getLine();
@@ -2531,12 +2919,16 @@ public final class FooToFortran {
                         out.append(ip);
                     } else {
                         out.append(colon ? method + "_" : method);
+                        recordSelfCall(method);   // same-module call: no `use`, so capture the edge here
                         isCall = true;
                     }
                 } else if (!hasQual && !colon && !dcolon && !dot && chx.name() != null) {
                     // bare name (local var, `self`, or a cross-module global); track type
                     String nm = nameText(chx.name());
                     out.append(nm);
+                    // A bare `proc(...)` call to a SAME-MODULE selfless proc (e.g. T_TENSOR's
+                    // t0/t1/t2) emits no `use`, so capture the intra-module edge here for DCE.
+                    if (selflessProcs.contains(nm)) recordSelfCall(nm);
                     String subRecv;
                     if (nm.equals("self")) curType = selfFooType;
                     else if (localVarTypes.containsKey(nm)) curType = localVarTypes.get(nm);
@@ -2862,6 +3254,17 @@ public final class FooToFortran {
             if (mod != null) recordUse(mod, method + "_");
         }
 
+        /** Call-graph capture (B1/B2) for a SAME-MODULE call that emits no `use` and so
+         *  never reaches recordUse — the `:proc`/`::proc` qualifier-omitted form and a
+         *  bare selfless-proc call `proc(...)`. Records the intra-module edge directly,
+         *  else dead-code analysis would miss it and prune a proc that a live sibling
+         *  in the same module calls (e.g. TIME's `::current_time5`, T_TENSOR's `t0`). */
+        void recordSelfCall(String method) {
+            if (callEdges != null && currentProcBase != null && selfModuleName != null)
+                callEdges.computeIfAbsent(node(selfModuleName, currentProcBase), k -> new LinkedHashSet<>())
+                         .add(node(selfModuleName, genericBase(method)));
+        }
+
         /** True if EVERY overload of `method` in Fortran module `mod` is `selfless`
          *  (module-aware; from buildSelflessByModule). A bare `.proc` self-call
          *  resolving to `mod` then drops self. Falls back to the local (validated)
@@ -2903,6 +3306,13 @@ public final class FooToFortran {
         /** Record a `use <mod>, only: <symbol>` dependency (skip self-use). */
         void recordUse(String fortranMod, String symbol) {
             if (suppressUse) return;                              // type-probe: no side effects
+            // Call-graph capture (B1): record the caller->callee edge BEFORE the
+            // self-module / TYPES / SYSTEM skips below, so intra-module calls and
+            // universal-sink calls are still visible to reachability analysis.
+            if (callEdges != null && currentProcBase != null)
+                callEdges.computeIfAbsent(node(selfModuleName, currentProcBase),
+                                          k -> new LinkedHashSet<>())
+                         .add(node(fortranMod, genericBase(symbol)));
             if (fortranMod.equals(selfModuleName)) return;        // don't use own module
             // TYPES and SYSTEM are pulled in wholesale (`use X_MODULE`), so they
             // never get an `only:` clause (matches foo.pl).
@@ -2943,9 +3353,13 @@ public final class FooToFortran {
                 all.put(e.getKey(), new ArrayList<>(e.getValue()));
             for (Map.Entry<String, List<String>> al : explicitAliases.entrySet()) {
                 List<String> specs = all.computeIfAbsent(al.getKey(), k -> new ArrayList<>());
-                for (String member : al.getValue())
+                for (String member : al.getValue()) {
+                    // B2: an alias member dropped by the purge is not in interfaceProcs,
+                    // so the List.of(member) fallback would name a non-existent procedure.
+                    if (deadNodes != null && deadNodes.contains(selfModuleName + ":" + member)) continue;
                     for (String s : interfaceProcs.getOrDefault(member, List.of(member)))
                         if (!specs.contains(s)) specs.add(s);
+                }
             }
             // foo.pl sorts the interface blocks by the emitted name (NAME_),
             // strict ASCII order (LC_ALL=C: uppercase before lowercase).
@@ -2953,6 +3367,7 @@ public final class FooToFortran {
                 new ArrayList<>(all.entrySet());
             entries.sort((a, b) -> (a.getKey() + "_").compareTo(b.getKey() + "_"));
             for (Map.Entry<String, List<String>> e : entries) {
+                if (e.getValue().isEmpty()) continue;   // B2: every member dropped by the purge
                 String gacc = Boolean.TRUE.equals(genericPrivate.get(e.getKey())) ? "private" : "public";
                 intf.append("   ").append(gacc).append("    ").append(e.getKey()).append("_\n");
                 for (String spec : e.getValue())

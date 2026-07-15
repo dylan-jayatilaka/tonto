@@ -154,6 +154,30 @@ java -cp "$JAR:build/translator/classes" FooToFortran \
 → `vec_real`). Compare against `release/` (whitespace-insensitive; the bar is equivalent,
 not byte-exact). `types.foo` must be passed so the derived-type table is built first (§6).
 
+**Analysis modes (phase B — call graph / dead-code elimination).** `FooToFortran` also has
+read-only analysis and a purge mode, all built on a cross-module call graph it derives by
+piggybacking on the real call-resolution (`recordUse`/`recordSelfCall`, captured per
+procedure). Call-graph nodes are `MODULE:method` with the method part lower-cased (Foo
+preserves identifier case but Fortran is case-insensitive — a case mismatch would otherwise
+miss the edge; see the `node()` helper).
+
+```bash
+# DOT graphs (no root needed) + dead-code report (root needed); shares one graph build:
+java -cp "$JAR:build/translator/classes" FooToFortran --types foofiles/types.foo \
+     --dead-code-report runfiles/run_molecule.foo --call-graph-report --out-dir <dir>
+# Purge: emit only procedures reachable from run_molecule into <dir>:
+java -cp "$JAR:build/translator/classes" FooToFortran --types foofiles/types.foo \
+     --purge-dead-code runfiles/run_molecule.foo --out-dir <dir>
+```
+Flags: `--call-graph-report` (writes `call_graph.dot`, `module_use.dot`, `submodule_use.dot`);
+`--dead-code-report <root.foo>` (per-module live/dead TSV; needs a root); `--purge-dead-code
+<root.foo>` (two-pass: build graph → re-emit with dead procs dropped at the `emitProc` choke
+point). CMake exposes these as the `callgraphs` target and the `-DPURGE_DEAD_CODE=<stem>`
+option (a **separate** build tree — purge is per-executable). Wholesale-`use` modules
+(`TYPES`/`SYSTEM`) are never pruned. Validated: a `-DPURGE_DEAD_CODE=run_molecule` release
+build compiles clean (~32% of procedures dropped, binary 33→25 MB) and passes the same
+121/124 ctest as the full build.
+
 ## 9. Milestones & open items
 
 **Milestones**

@@ -3,6 +3,50 @@
 Tracked for later attention once the full debug build compiles. None of these
 block compilation; they are correctness-of-match or robustness refinements.
 
+## Cleanup: normalise procedure-name CASE across definition and call sites
+
+**Goal (Dylan):** find every procedure whose **definition case differs from its call-site
+case** (or where call sites disagree among themselves) and make them consistent. Foo/Fortran
+are case-insensitive so these compile and run fine, but the inconsistency is annoying and
+trips case-sensitive tooling.
+
+**Why it matters (concrete):** discovered during phase B (dead-code elimination). `textfile.foo`
+defines `reset_IO_status` (upper `IO`) but `vec{basis}.foo` calls it as `stdin.reset_io_status`
+(lower). The dead-code analysis keyed its call-graph nodes case-sensitively, so the call didn't
+match the definition and the procedure was wrongly pruned — a latent, silent trap. (Worked
+around in the translator by lower-casing the method part of every graph node via `node()`;
+this cleanup would remove the underlying inconsistency in the *sources*.)
+
+**How to tackle (parse-tree driven, reuse phase-B infra):** the translator already walks every
+`ProcDef` (definitions) and every `PostfixContext` (calls). Add a `--case-report` mode that
+records, per lower-cased procedure name, the **set of distinct spellings** seen across its
+definition header and all call sites; flag any name with >1 spelling, listing file:line of each
+variant. Then normalise — the definition's spelling is the natural canonical form — and rewrite
+the call sites (a targeted, parse-tree-driven edit like `--add-self-intent`, NOT a blind sed,
+so commented-out and string-literal occurrences are left alone). Related: [[submodule-call-autoresolution-done]]
+already hit a case bug in the submodule registry (commit 627db872); this is the same family.
+
+## DONE: phase B — per-executable dead-code elimination
+
+**Goal (Dylan):** eliminate code dead for a specific executable (e.g. `run_molecule`/`tonto`),
+in a separate build dir, without affecting the other executables or the normal build.
+
+**Delivered** in `FooToFortran.java` + `CMakeLists.txt`:
+- `--call-graph-report` → Graphviz `call_graph.dot` / `module_use.dot` (submodules collapsed to
+  parent) / `submodule_use.dot`; `--dead-code-report <root.foo>` → per-module live/dead TSV;
+  `--purge-dead-code <root.foo>` → two-pass emit dropping unreachable procs. CMake exposes the
+  `callgraphs` target and `-DPURGE_DEAD_CODE=<stem>` (separate build tree). See README §7b, CLAUDE.md §8.
+- Reachability = BFS from the root program's entry calls over a call graph captured by
+  piggybacking on the real call-resolution. `TYPES`/`SYSTEM` (wholesale-`use`) never pruned.
+
+**Validated:** `-DPURGE_DEAD_CODE=run_molecule` release build compiles 0-error, ~32% of the
+~7600 procedures dropped, binary 33→25 MB, and ctest is **121/124 — identical to the full build**
+(same 3 known-bad). Three reachability-analysis bugs were caught only by the compile+test gate,
+each a call form that bypassed the `use`-based capture: (1) same-module `::proc`/bare-selfless
+calls (fixed: `recordSelfCall`); (2) case-sensitive node keys (`reset_IO_status` vs
+`reset_io_status`; fixed: `node()` lower-cases the method part — motivates the case-cleanup goal
+above). CPP-macro-hidden calls all target `SYSTEM` (always kept), so no macro-root class exists.
+
 ## Infrastructure: reinstate continuous integration (CI)
 
 **Goal (user):** bring back automated CI so every push builds the ANTLR4 translator,
@@ -99,9 +143,15 @@ rel ≤ 0.2% OR last-digit ≤ 2). The 3 failures are not translator/behaviour b
 a crash, and they persist independently of the self-intent work. Relocated here from the
 former `TEST_VALIDATION_NOTES.md` (retired now that milestone 3 is stable):
 
-1. **`cyclazine_rhf_cc-pVDZ_tddft_state_selection`** — a **structural** diff (variable-name
-   *casing* in the output), not a numeric-tolerance issue; the comparator flags it as
-   rel 100%. Needs the casing fix or a case-insensitive comparison line.
+1. **`cyclazine_rhf_cc-pVDZ_tddft_state_selection`** — a **single-line** diff: the TDDFT
+   double-excitation *selection count* `No. of doubles ...... 24355` (reference) vs `22797`
+   (measured 2026-07-15, debug `-O0` build), which the comparator flags as rel 6.4%. This is
+   a **boundary-sensitive count** — the number of double excitations whose contribution
+   exceeds the selection threshold — so a tiny FP difference tips a handful of doubles across
+   the cutoff. Same class as the `-O0` boundary artifacts in the debug section below. Easy to
+   resolve (per Dylan): suppress the single count line in the comparison, or accept the value.
+   (The earlier "variable-name casing / rel 100%" characterisation here was stale — the actual
+   diff is the one `No. of doubles` line.)
 2. **`gly_ala_fragHAR_rhf_STO-3G`** — a **table column-width / alignment** shift that
    misaligns the comparator's line pairing; the numbers themselves are fine. Needs
    alignment-robust pairing in `scripts/test.py`.
@@ -112,3 +162,53 @@ Two other cases seen only under the *strict* (exact) sweep also loose-pass and a
 `h2o_rhf_cc-pVDZ_tdhf` (one TDHF state differs in the last digits) and
 `cyclazine_rhf_cc-pVDZ_VMO_canonicalization` (~1e-4; original archives lost, regenerated).
 A threshold-driven "loose pass" gate (candidate for CI, above) absorbs all of these.
+
+## Deferred: debug-build (`-O0`) test failures — floating-point boundary artifacts
+
+**Context (measured 2026-07-15).** A clean **debug** build (`gfortran-14`, `-O0 -g`, ENSURE
+preconditions live) compiles 0-error and runs the full suite at **116/124**. Every one of the
+8 failures was checked against the **release** binary (`-O3`), and **release reproduces the
+reference exactly** (`exact=PASS`, 0 ulp) for all of them. So **none is a translator bug or a
+crash** — the debug build ran every job to completion with no ENSURE aborts. The *only*
+variable is optimisation level: `-O3` FP contraction / reassociation produces sub-ulp numeric
+differences that, at boundary cases, **flip a discrete decision** in the source. Debug's real
+job — surfacing crashes and precondition violations — passed clean.
+
+**Proven mechanism.** `foofiles/cluster.foo:132` — `.fragment_offset = int(crystal.
+fragment_geometry.mean_column_vector)`. `int()` truncates the fragment-centre mean toward
+zero; when that mean sits on a unit-cell boundary, `-O3` yields e.g. `1.0000001 → 1` while
+`-O0` yields `0.9999999 → 0`. Both are crystallographically valid (differ by a lattice
+vector) but print differently. The ADP-label and count cases below are the same class
+(selecting/counting among near-equal or near-threshold values).
+
+| # | Test (category) | Substantive diff (ref → debug) | Class |
+|---|-----------------|--------------------------------|-------|
+| 113 | `process_CSD_cif` (cx) | `Fragment offset 0 0 0` → `1 0 0`, shifts all frac coords by 1 | boundary `int()` flip (`cluster.foo:132`) |
+| 65 | `L_alanine_IAM_scale_factor_test` (long) | printed ADP label `H5A Uyy` → `Uxx` | near-equal component selection |
+| 69 | `YLID_IAM_plus_anomalous_residual_density` (long) | printed ADP label `H1 Uxx` → `Uzz` | near-equal component selection |
+| 64 | `ylid` (rgbi) | last bond-analysis columns drift ±0.1 (e.g. `74.02`→`73.90`); worst is `0.04`→`0.05` = 20% *relative* on a near-zero value | FP noise amplified by relative metric near zero |
+| 87 | `urea_rhf_DZP_consistent-cluster-charge_HAF` (long) | 1-ulp last digit (`-349.2012`→`-349.2013`) + one column 1 char wider | last-digit rounding + auto-width threshold |
+| 91 | `yq28_H_U_iso_IAM_refinement` (long) | identity matrix width `1.0000`→`1.000` (numbers identical) | auto-width threshold |
+| 5 | `cyclazine_rhf_cc-pVDZ_tddft_state_selection` (short) | `No. of doubles 24355`→`22797` | selection-count at a cutoff (see §"3 remaining", #1) |
+| 72 | `gly_ala_fragHAR_rhf_STO-3G` (long) | pre-existing known-bad (fragHAR) | unrelated |
+
+**Goal (Dylan): make the *debug* tests pass**, probably by **suppressing the offending
+output line(s)** in the comparison — but not so much that the test loses meaning. Notes on the
+options, to think through:
+
+- **Targeted output suppression (Dylan's lead).** Each failure is one or a few identifiable
+  lines: the `Fragment offset` line, the ADP component *label* token, the `No. of doubles`
+  count, the auto-width columns. Adding these to `prefixes_to_ignore` (or a per-test ignore
+  list) in `scripts/test.py` makes debug green while keeping the numeric substance compared.
+  Risk: suppressing a *label* or a *count* removes a genuinely meaningful field — prefer
+  suppressing only the specific line, per-test, not the whole table.
+- **`test.py` near-zero `abs_tol`.** Only helps the pure-numeric near-zero case (`ylid`
+  `0.04` vs `0.05`). Does **not** fix the discrete label/offset/count flips (those are text).
+- **Source hardening (higher value, more invasive).** Replace knife-edge `int()` /
+  component-selection / auto-width thresholds with a small-epsilon-tolerant form so `-O0` and
+  `-O3` agree at boundaries. This has real **portability** value — a boundary that flips
+  between `-O0` and `-O3` could also flip between compilers/platforms even in *release* — but
+  it edits hand-written scientific `.foo` and must be done per-site (start `cluster.foo:132`).
+
+Raw diffs and logs from the 2026-07-15 run are in the session scratchpad
+(`debug_analysis/`): `ctest.log`, `release_compare.log`, per-test summaries.

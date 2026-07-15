@@ -294,6 +294,57 @@ Sample output (also written to `tests.log`):
    short subtotal:  loose 49/51   (exact 47, lastdig 46)
 ```
 
+## 7b. Translator analysis tools: call graphs & dead-code elimination
+
+The ANTLR4 `foo`→Fortran translator can analyse the whole source set, not just
+translate it. Two developer features build on its cross-module call graph.
+
+### Call & module-use graphs (`make callgraphs`)
+
+From a build directory:
+```
+   make callgraphs
+```
+writes into `build/callgraphs/`:
+
+| File | Contents |
+|------|----------|
+| `call_graph.dot`      | procedure-level call graph, clustered by module (large) |
+| `module_use.dot`      | module `use` graph, submodules collapsed into their parent module node |
+| `submodule_use.dot`   | expanded submodule `use` graph, one cluster per split family (MOLECULE, DIFFRACTION_DATA) |
+| `dead_code_report.tsv`| per-module live/dead procedure counts + the dead list, rooted at `run_molecule` |
+
+Render with Graphviz (install it separately). The two use-graphs are auto-rendered to
+SVG if `dot` is on the PATH; the big call graph is best laid out with `sfdp`:
+```
+   sfdp -Goverlap=prism -Tsvg build/callgraphs/call_graph.dot -o call_graph.svg
+   dot  -Tsvg build/callgraphs/module_use.dot -o module_use.svg
+```
+
+The graphs are useful documentation in their own right. (First run reconfigures the
+build dir once — if `make callgraphs` reports "no rule to make target", run `cmake ..`
+in the build dir first, then retry.)
+
+### Dead-code-eliminated executables (`-DPURGE_DEAD_CODE`)
+
+A given executable only reaches a fraction of the code base; the rest is dead *for that
+executable*. Configure a **separate** build tree that emits only the reachable procedures:
+```
+   mkdir build-slim && cd build-slim
+   cmake .. -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=release \
+            -DPURGE_DEAD_CODE=run_molecule
+   make run_molecule
+```
+This computes reachability from the `run_molecule` (=`tonto`) entry point and drops every
+procedure not reachable from it (~1/3 of the ~7600 procedures), producing a smaller binary
+that passes the identical test suite. The purge is **per executable** — code dead for
+`run_molecule` may be live for `run_dc`/`run_sf`/etc. — so always use a dedicated build tree
+and never share it with the normal build. The normal build (no `-DPURGE_DEAD_CODE`) is
+unaffected.
+
+Under the hood these use `FooToFortran` flags `--call-graph-report`,
+`--dead-code-report <root.foo>`, and `--purge-dead-code <root.foo>` (see `CLAUDE.md §8`).
+
 ## 8. Problems, bugs, contributions
 
 Let me know at
