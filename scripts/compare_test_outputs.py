@@ -136,17 +136,25 @@ def main():
     relpct = args.rel_tol * 100
     ldk = args.last_digit_tol
     NAMEW = 50
-    hdr = ('  %-*s  %-6s %-6s %-7s  %9s  %9s'
-           % (NAMEW, 'test', 'exact', 'loose', 'lastdig', 'max rel%', 'max ulp'))
+    hdr = ('%-*s  %-6s %-6s %-7s  %9s  %9s'
+           % (NAMEW, 'test name', 'exact', 'loose', 'lastdig', 'max rel%', 'max LDD'))
     grand = {'n': 0, 'exact': 0, 'loose': 0, 'ld': 0, 'err': 0}
 
-    print('=' * 96)
-    print('  Tonto test-suite agreement report')
-    print('    exact = every digit identical | loose = within %.3g%% OR %g '
-          'last-digit units | lastdig = within %g units of last place'
-          % (relpct, ldk, ldk))
-    print('    program : %s' % args.program)
-    print('=' * 96)
+    print('')
+    print('=================================')
+    print('Tonto test-suite agreement report')
+    print('=================================')
+    print('')
+    print('Testing program : %s' % args.program)
+    print('')
+    print('There are three types of agreement:')
+    print('. exact   = every digit identical')
+    print('. lastdig = within %g units of last-digit place' % (ldk))
+    print('. loose   = within %.3g%% OR lastdig' % (relpct))
+    print('')
+    print('Compared to the reference, we also report:')
+    print('. the maximum relative % disagreement (max rel%)')
+    print('. the maximim last digit difference   (max LDD )')
 
     for suite in args.suites:
         sdir = os.path.join(args.tests_dir, suite)
@@ -154,37 +162,38 @@ def main():
             continue
         tests = sorted(d for d in os.listdir(sdir)
                        if os.path.isfile(os.path.join(sdir, d, 'stdin')))
-        print('\n' + '-' * 96)
-        print('  SUITE: %s   (%d tests)' % (suite, len(tests)))
-        print('-' * 96)
+        print('')
+        print('SUITE: %s (%d tests)' % (suite, len(tests)))
+        print('_' * 95 + '\n')
         print(hdr)
+        print('_' * 95 + '\n')
         sub = {'n': 0, 'exact': 0, 'loose': 0, 'ld': 0, 'err': 0}
         for t in tests:
             r = score_test(test_py, os.path.join(sdir, t), args)
             sub['n'] += 1
             if r['status'] == 'ERROR':
                 sub['err'] += 1
-                print('  %-*s  %-6s %-6s %-7s  %9s  %9s'
+                print('%-*s  %-6s %-6s %-7s  %9s  %9s'
                       % (NAMEW, t[:NAMEW], 'ERROR', 'ERROR', 'ERROR', '-', '-'))
                 continue
             sub['exact'] += r['exact']
             sub['loose'] += r['loose']
             sub['ld'] += r['ld']
-            print('  %-*s  %-6s %-6s %-7s  %9.3g  %9.3g'
+            print('%-*s  %-6s %-6s %-7s  %9.3g  %9.3g'
                   % (NAMEW, t[:NAMEW], yn(r['exact']), yn(r['loose']),
                      yn(r['ld']), r['max_rel'], r['max_ulp']))
-        print('-' * 96)
-        print('  %s subtotal:  loose %d/%d   (exact %d, lastdig %d%s)'
+        print('_' * 95 + '\n')
+        print('%s subtotal:  loose %d/%d   (exact %d, lastdig %d%s)'
               % (suite, sub['loose'], sub['n'], sub['exact'], sub['ld'],
                  ', ERROR %d' % sub['err'] if sub['err'] else ''))
         for k in grand:
             grand[k] += sub[k]
 
-    print('\n' + '=' * 96)
-    print('  GRAND TOTAL:  loose %d/%d   (exact %d, lastdig %d%s)'
+    print('_' * 95 + '\n')
+    print('GRAND TOTAL:  loose %d/%d   (exact %d, lastdig %d%s)'
           % (grand['loose'], grand['n'], grand['exact'], grand['ld'],
              ', ERROR %d' % grand['err'] if grand['err'] else ''))
-    print('=' * 96)
+    print('_' * 95)
     if logf:
         print('\n(report written to %s)' % os.path.abspath(args.log))
         sys.stdout = sys.__stdout__
