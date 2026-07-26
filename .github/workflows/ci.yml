@@ -48,6 +48,48 @@ jobs:
         # memory-heavy on a shared 7 GB runner. Do not raise without watching RAM.
         run: cmake --build build -- -j2
 
+      - name: Diagnostics (toolchain, binary, one raw test)
+        if: always()   # run even if the build failed, so a red run self-diagnoses
+        # Writes everything to the run's Job Summary (front page) so the root
+        # cause is readable without opening step logs or pasting anything.
+        run: |
+          exec > >(tee -a "$GITHUB_STEP_SUMMARY") 2>&1
+          echo '## Diagnostics'
+          echo '```'
+          echo "== toolchain =="
+          gfortran-14 --version | head -1 || echo "gfortran-14 MISSING"
+          java -version 2>&1 | head -1 || echo "java MISSING"
+          python3 --version || true
+          echo
+          echo "== build tree =="
+          ls -la build 2>/dev/null | head -30 || echo "no build/ dir"
+          echo
+          echo "== tonto binary =="
+          if [ -x build/tonto ]; then
+            file build/tonto
+            ldd build/tonto || true
+          else
+            echo "!!! build/tonto MISSING or not executable"
+            echo "    -> the BUILD failed; the cause is in the 'Build' step log above."
+            echo '```'
+            exit 0
+          fi
+          echo
+          echo "== one canonical short test (h2o_rhf_STO-3G), raw =="
+          python3 scripts/test.py -t tests/short/h2o_rhf_STO-3G -p "$PWD/build/tonto" \
+            --basis-sets "$PWD/basis_sets" --log-level=INFO 2>&1 | tail -25 || true
+          echo
+          echo "== reference-vs-.bad diff (first 80 lines) =="
+          bad=$(find tests/short -name '*.bad' 2>/dev/null | head -1)
+          if [ -n "$bad" ]; then
+            echo "diff ${bad%.bad}  vs  $bad :"
+            diff "${bad%.bad}" "$bad" | head -80 || true
+          else
+            echo "(no .bad produced -> h2o_rhf_STO-3G PASSED; failures are test-specific, not universal)"
+          fi
+          echo '```'
+          exit 0
+
       - name: Test (short suite) + agreement report
         # scripts/compare_test_outputs.py runs each job and prints a per-test
         # table with three verdict columns -- Exact / Loose / Last-digit -- plus
@@ -73,9 +115,12 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           exit $status
 
-      - name: Upload agreement report (tests.log)
-        if: always()   # keep the artifact even when the test step went red
+      - name: Upload agreement report + any .bad outputs
+        if: always()   # keep the artifacts even when earlier steps went red
         uses: actions/upload-artifact@v4
         with:
-          name: agreement-report
-          path: tests.log
+          name: ci-diagnostics
+          path: |
+            tests.log
+            tests/**/*.bad
+          if-no-files-found: warn
