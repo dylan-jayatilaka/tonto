@@ -88,7 +88,7 @@ scripts/build_translator.sh foofiles/irrep.foo
 Equivalent explicit invocation:
 
 ```bash
-JAR=/usr/local/lib/antlr-4.13.2-complete.jar
+JAR=external/antlr-4.13.2-complete.jar   # bundled in the repo; override with $ANTLR_JAR
 ( cd foogrammar && java -cp "$JAR" org.antlr.v4.Tool -visitor -o ../build/translator/gen Foo.g4 )
 javac -cp "$JAR" -d build/translator/classes build/translator/gen/*.java foogrammar/FooToFortran.java
 java -cp "$JAR:build/translator/classes" FooToFortran \

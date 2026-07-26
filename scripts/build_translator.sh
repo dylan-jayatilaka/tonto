@@ -8,7 +8,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-JAR="${ANTLR_JAR:-/usr/local/lib/antlr-4.13.2-complete.jar}"
+JAR="${ANTLR_JAR:-external/antlr-4.13.2-complete.jar}"
 GEN=build/translator/gen
 CLS=build/translator/classes
 
