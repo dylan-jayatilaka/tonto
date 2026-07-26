@@ -1,0 +1,81 @@
+name: CI
+
+# Continuous integration for the ANTLR4 Foo->Fortran translator.
+# Every push / PR to these branches: check out (with submodules), install the
+# toolchain, build a release `tonto` from ANTLR4-generated Fortran, and run the
+# short test suite through scripts/compare_test_outputs.py, which prints an
+# Exact/Loose/Last-digit agreement table and exits non-zero iff any test fails
+# the LOOSE gate (rel <= 0.2% OR last-digit <= 2). The table is surfaced on the
+# run's front-page Job Summary and uploaded as an artifact.
+on:
+  push:
+    branches: [antlr4, master, release]
+  pull_request:
+    branches: [antlr4, master, release]
+
+env:
+  BUILD_TYPE: release
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install toolchain
+        # gfortran-14 (Foo->Fortran target compiler), a full JDK (CMake needs
+        # javac to build the translator; the ANTLR jar itself is auto-downloaded
+        # by CMake with a SHA-256 check), BLAS/LAPACK from apt (so the LAPACK
+        # submodule isn't rebuilt from source), plus python3/perl/gnuplot/make.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gfortran-14 libblas-dev liblapack-dev \
+            default-jdk python3 perl gnuplot make cmake
+
+      - name: Configure
+        run: >
+          cmake -B build
+          -DCMAKE_Fortran_COMPILER=gfortran-14
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+
+      - name: Build
+        # -j2 is deliberate: translation spawns one JVM per .foo file, which is
+        # memory-heavy on a shared 7 GB runner. Do not raise without watching RAM.
+        run: cmake --build build -- -j2
+
+      - name: Test (short suite) + agreement report
+        # scripts/compare_test_outputs.py runs each job and prints a per-test
+        # table with three verdict columns -- Exact / Loose / Last-digit -- plus
+        # the worst relative % and worst last-place (ulp) error, with per-suite
+        # subtotals and a grand total. It exits non-zero iff any test fails the
+        # LOOSE gate (rel <= 0.2% OR last-digit <= 2), so that decides red/green.
+        # The table is echoed to the run's front-page Job Summary and also saved
+        # to tests.log (uploaded below), so a red run shows *which* tests broke
+        # and by how much -- the shape of the numeric drift -- at a glance.
+        run: |
+          set -o pipefail
+          {
+            echo '## Test agreement report — short suite'
+            echo ''
+            echo 'Columns: **Exact / Loose / Last-digit**.  Gate = **Loose** (rel ≤ 0.2% OR last-digit ≤ 2).'
+            echo ''
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          python3 scripts/compare_test_outputs.py \
+            --program build/tonto --tests-dir tests --basis-sets basis_sets \
+            --suites short --log tests.log | tee -a "$GITHUB_STEP_SUMMARY"
+          status=${PIPESTATUS[0]}
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      - name: Upload agreement report (tests.log)
+        if: always()   # keep the artifact even when the test step went red
+        uses: actions/upload-artifact@v4
+        with:
+          name: agreement-report
+          path: tests.log

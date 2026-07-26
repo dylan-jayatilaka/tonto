@@ -1,30 +1,6 @@
 # Welcome to Tonto!
 
-# Erice 2025 workshop people!
-
-If you are a workshop attendee, the lab folder and instructions are [here](https://drive.google.com/drive/folders/17OWncmSsFbKAlW8mZb9EKzJuW0GAjykG).
-
-# Developers: How to push with a new token
-
-To set up your local git repo to push to github, use the following
-
-```
-git remote set-url origin https://USERNAME:TOKEN@github.com/USERNAME/REPO.git
-```
-
-Replace USERNAME with your own github user name.
-
-You can get a classic TOKEN from :
-
-Settings photo-> Settings -> develepor-setting -> personal-access-token -> tokens (classic) -> Generate new tokens (classic).
-
-You can get to this location more easily by going to the location below:
-
-```
-https://github.com/settings/tokens
-```
-
-The selections are quite hard to find: at the left, bottom, or top right of the menus.
+[![CI](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml)
 
 # Getting started and Compiling
 
@@ -356,3 +332,46 @@ I apologise, I am not good at responding. Best to contact some people that know 
 # How to run tonto
 
 See [the wiki](https://github.com/dylan-jayatilaka/tonto/wiki/How-to-run-tonto) for details.
+
+# Developers: pushing to GitHub with a token
+
+To push to GitHub over HTTPS you authenticate with a **Personal Access Token**
+(PAT) — GitHub no longer accepts your account password on the command line.
+
+### 1. Create a token
+
+Go to <https://github.com/settings/tokens> (or navigate: profile photo →
+**Settings** → **Developer settings** → **Personal access tokens** → **Tokens
+(classic)** → **Generate new token (classic)**). Give it the **`repo`** scope,
+set an expiry, and generate it. **Copy the token immediately** — GitHub shows it
+only once.
+
+### 2. Point your local repo at it
+
+Set the `origin` URL to embed your username and token:
+
+```
+git remote set-url origin https://USERNAME:TOKEN@github.com/USERNAME/REPO.git
+```
+
+Replace `USERNAME` with your GitHub username, `TOKEN` with the token you just
+copied, and `REPO` with the repository (e.g. `tonto`). Pushes will now
+authenticate automatically.
+
+### 3. Keep the token safe
+
+The token is a password — anyone who has it can push as you. Embedding it in the
+remote URL stores it in **plaintext** in `.git/config`, and it is visible to
+anyone who runs `git remote -v`, so treat that clone as sensitive and never share
+its URL or paste it into logs/issues. If a token ever leaks, revoke it at the
+link above and issue a new one.
+
+**More secure alternative — SSH keys.** SSH keeps no secret in the URL: you
+generate a key pair once, add the *public* key to GitHub, and set `origin` to
+`git@github.com:USERNAME/REPO.git`. See GitHub's
+[Connecting to GitHub with SSH](https://docs.github.com/en/authentication/connecting-to-github-with-ssh)
+guide.
+
+# Erice 2025 workshop people!
+
+If you are a workshop attendee, the lab folder and instructions are [here](https://drive.google.com/drive/folders/17OWncmSsFbKAlW8mZb9EKzJuW0GAjykG).
