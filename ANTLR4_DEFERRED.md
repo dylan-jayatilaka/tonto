@@ -185,61 +185,103 @@ NOTE: verify this is NOT the moments-staleness knock-on from setting `.atomic_mo
 `.atomic_moments_made = FALSE` reset after SCF convergence restores the reference values, it
 IS the knock-on and should be fixed rather than accepted. See memory `debug-ensure-vs-release`.
 
-## Deferred: the 3 remaining test-suite failures (milestone 3)
+## DONE (release): the 3 remaining test-suite failures (milestone 3)
 
-Milestone 3 is **121/124** on a release build (`ctest`, `scripts/test.py` loose criterion:
-rel ≤ 0.2% OR last-digit ≤ 2). The 3 failures are not translator/behaviour bugs — none is
-a crash, and they persist independently of the self-intent work. Relocated here from the
-former `TEST_VALIDATION_NOTES.md` (retired now that milestone 3 is stable):
+**Resolved on release — verified 2026-07-17: a `gfortran-14` release build is 124/124 (`ctest`
+exit 0), up from 121/124.** All three former failures now pass, fixed at the source / in the
+references by Dylan (commits `b3b50dd2` "Fixed no. of doubles test error", `d9dffb3f`,
+`dee5cac9` "Corrected Salvador test", `50988e87` "All short & long tests passing on laptop"):
 
-1. **`cyclazine_rhf_cc-pVDZ_tddft_state_selection`** — a **single-line** diff: the TDDFT
-   double-excitation *selection count* `No. of doubles ...... 24355` (reference) vs `22797`
-   (measured 2026-07-15, debug `-O0` build), which the comparator flags as rel 6.4%. This is
-   a **boundary-sensitive count** — the number of double excitations whose contribution
-   exceeds the selection threshold — so a tiny FP difference tips a handful of doubles across
-   the cutoff. Same class as the `-O0` boundary artifacts in the debug section below. Easy to
-   resolve (per Dylan): suppress the single count line in the comparison, or accept the value.
-   (The earlier "variable-name casing / rel 100%" characterisation here was stale — the actual
-   diff is the one `No. of doubles` line.)
-2. **`gly_ala_fragHAR_rhf_STO-3G`** — a **table column-width / alignment** shift that
-   misaligns the comparator's line pairing; the numbers themselves are fine. Needs
-   alignment-robust pairing in `scripts/test.py`.
+1. **`cyclazine_rhf_cc-pVDZ_tddft_state_selection`** — was a single-line `No. of doubles`
+   diff (`24355` ref vs `22797`). **Not** an `-O0` boundary artifact after all: it was a
+   real **evaluation-order bug in the source**. `foofiles/td_data.foo` computed
+   `n = .no_of_doubles` *after* printing the doubles-window block; commit `b3b50dd2` moved the
+   assignment *before* the block, so the printed count is now correct and stable. (Also fixed
+   two typos in adjacent `stdout.text` lines.)
+2. **`gly_ala_fragHAR_rhf_STO-3G`** — table column-width / alignment shift; reference updated
+   (`50988e87`). Passes (73 s).
 3. **`urea_ccsd_pob-TZVP_Salvador_properties`** — the longstanding Salvador grid/partition
-   numeric difference (see the section above).
+   numeric difference; the reference was updated to the release-produced values (`dee5cac9`),
+   so the release build now matches exactly. **NB:** this "resolves" it only for `-O3`; the
+   ~0.5% `-O0` difference is unchanged and now shows up as a **debug-only** failure — it has
+   moved into the debug section below, not disappeared. The `atomic_moments_made` knock-on
+   question (see the Salvador section above) is still unverified.
 
 Two other cases seen only under the *strict* (exact) sweep also loose-pass and are benign:
 `h2o_rhf_cc-pVDZ_tdhf` (one TDHF state differs in the last digits) and
 `cyclazine_rhf_cc-pVDZ_VMO_canonicalization` (~1e-4; original archives lost, regenerated).
 A threshold-driven "loose pass" gate (candidate for CI, above) absorbs all of these.
 
+What remains for milestone 3 is therefore **not** the release suite (green) but the **debug**
+suite (119/124 — next section) and wiring the release gate into CI.
+
 ## Deferred: debug-build (`-O0`) test failures — floating-point boundary artifacts
 
-**Context (measured 2026-07-15).** A clean **debug** build (`gfortran-14`, `-O0 -g`, ENSURE
-preconditions live) compiles 0-error and runs the full suite at **116/124**. Every one of the
-8 failures was checked against the **release** binary (`-O3`), and **release reproduces the
-reference exactly** (`exact=PASS`, 0 ulp) for all of them. So **none is a translator bug or a
-crash** — the debug build ran every job to completion with no ENSURE aborts. The *only*
-variable is optimisation level: `-O3` FP contraction / reassociation produces sub-ulp numeric
-differences that, at boundary cases, **flip a discrete decision** in the source. Debug's real
-job — surfacing crashes and precondition violations — passed clean.
+> **FIXED & COMMITTED — `process_CSD_cif` (#113) fragment-offset `int()` flip (2026-07-26).**
+> The worst debug failure — the `Fragment offset` `int()` boundary flip (`0.999.../1.000...` truncating
+> to different integers under `-O0` vs `-O3`, cascading a whole lattice-vector shift, 189% rel) — is
+> **fixed at the source**. Root cause: `int(mean_column_vector)` truncates toward zero with its knife-edge
+> exactly on the integers, where a fragment centre can land. Fix: a **toward-zero nudge**,
+> `int(pos*(ONE-TOL(8)))`, at all **6** offset sites (`cluster.foo` 132/163/529, `crystal.foo`
+> 979/10329/10363). This shrinks the centre by `1e-8` (≫ the ~1e-14 `-O0/-O3` reassociation gap,
+> ≪ the 1e-6 coordinate resolution) so both optimisation levels resolve the boundary to the **same**
+> integer, while every non-boundary fragment keeps its exact `int()` value.
+>
+> Rejected alternative: `nint()` (round-to-nearest). It also makes `-O0`==`-O3` but changes the
+> *recentering convention* for **every** fragment (e.g. mean 0.616: `int→0` but `nint→1`), churning
+> ~624 lines across many cluster tests. The nudge is surgical.
+>
+> **Verified:** both trees rebuilt 0-error; on `process_CSD_cif` **release output == debug output**
+> (0 substantive diff — the `-O0/-O3` disagreement is gone) and release is deterministic run-to-run.
+> The `stdout` reference was re-blessed from the release build: it changed only by **one boundary
+> fragment** (offset `0 1 0`→`0 0 0`, a pure lattice relabelling; `iodos.cxc` is unchanged — the offset
+> cancels in absolute coords). No other test moves. Committed (source `cluster.foo`, `crystal.foo`;
+> reference `process_CSD_cif/stdout`).
+>
+> This fix does **not** address the other 4 debug failures (47, 64, 87, 91) — the small-FP / esd-token /
+> convergence-divergence cases in the table below, still open.
 
-**Proven mechanism.** `foofiles/cluster.foo:132` — `.fragment_offset = int(crystal.
-fragment_geometry.mean_column_vector)`. `int()` truncates the fragment-centre mean toward
-zero; when that mean sits on a unit-cell boundary, `-O3` yields e.g. `1.0000001 → 1` while
-`-O0` yields `0.9999999 → 0`. Both are crystallographically valid (differ by a lattice
-vector) but print differently. The ADP-label and count cases below are the same class
-(selecting/counting among near-equal or near-threshold values).
+**Context (re-measured 2026-07-17).** A clean **debug** build (`gfortran-14`, `-O0 -g`, ENSURE
+preconditions live) compiles 0-error and runs the full suite at **119/124** (up from 116/124
+on 2026-07-15 — the same-day release is 124/124). Every remaining failure was checked against
+the **release** binary (`-O3`), and **release reproduces the reference exactly** for all of
+them. So **none is a translator bug or a crash** — the debug build ran every job to completion
+with no ENSURE aborts. The *only* variable is optimisation level: `-O3` FP contraction /
+reassociation produces sub-ulp numeric differences that, at boundary cases, **flip a discrete
+decision** in the source. Debug's real job — surfacing crashes and precondition violations —
+passed clean.
+
+**Changes since 2026-07-15 (net +3):** two ADP-label cases (`L_alanine` #65, `YLID` #69) were
+cleared by Dylan adding `show_IAM_output=FALSE` / `show_IAM_results=TRUE` to their `stdin` —
+this suppresses the per-cycle ADP tables where the near-equal `Uxx`/`Uyy` label flips, while
+keeping the final refined values compared (exactly the "suppress the line, keep the meaning"
+approach below). `cyclazine` #5 was fixed at the source (see the DONE section above). Against
+that, `urea…Salvador` #47 **entered** the debug failure list: its reference was updated to the
+`-O3` values, so `-O0` now differs from the reference by the longstanding ~0.5% grid amount.
+Net: 8 − 4 (65, 69, 5, 72) + 1 (47 gained) = 5 failures; #113 then fixed at the source
+(nudge, above) = **4 failures** (47, 64, 87, 91).
+
+**Proven mechanism** (was `#113`, now fixed — kept as the canonical illustration of the class).
+`foofiles/cluster.foo:132` — `.fragment_offset = int(crystal.fragment_geometry.mean_column_vector)`.
+`int()` truncates the fragment-centre mean toward zero; when that mean sits on a unit-cell boundary,
+`-O3` yields e.g. `1.0000001 → 1` while `-O0` yields `0.9999999 → 0`. Both are crystallographically
+valid (differ by a lattice vector) but print differently. The site now carries the `*(ONE-TOL(8))`
+nudge (above), closing this instance; the remaining ADP-label and count cases below are the same
+class (selecting/counting among near-equal or near-threshold values).
+
+**Current debug failures (4; #113 fixed 2026-07-26, others measured 2026-07-17):**
 
 | # | Test (category) | Substantive diff (ref → debug) | Class |
 |---|-----------------|--------------------------------|-------|
-| 113 | `process_CSD_cif` (cx) | `Fragment offset 0 0 0` → `1 0 0`, shifts all frac coords by 1 | boundary `int()` flip (`cluster.foo:132`) |
-| 65 | `L_alanine_IAM_scale_factor_test` (long) | printed ADP label `H5A Uyy` → `Uxx` | near-equal component selection |
-| 69 | `YLID_IAM_plus_anomalous_residual_density` (long) | printed ADP label `H1 Uxx` → `Uzz` | near-equal component selection |
 | 64 | `ylid` (rgbi) | last bond-analysis columns drift ±0.1 (e.g. `74.02`→`73.90`); worst is `0.04`→`0.05` = 20% *relative* on a near-zero value | FP noise amplified by relative metric near zero |
 | 87 | `urea_rhf_DZP_consistent-cluster-charge_HAF` (long) | 1-ulp last digit (`-349.2012`→`-349.2013`) + one column 1 char wider | last-digit rounding + auto-width threshold |
-| 91 | `yq28_H_U_iso_IAM_refinement` (long) | identity matrix width `1.0000`→`1.000` (numbers identical) | auto-width threshold |
-| 5 | `cyclazine_rhf_cc-pVDZ_tddft_state_selection` (short) | `No. of doubles 24355`→`22797` | selection-count at a cutoff (see §"3 remaining", #1) |
-| 72 | `gly_ala_fragHAR_rhf_STO-3G` (long) | pre-existing known-bad (fragHAR) | unrelated |
+| 91 | `yq28_H_U_iso_IAM_refinement` (long) | identity matrix width `1.0000`→`1.000` (numbers identical); **also** two extra lines `Warning … crystal data already defined!` / `xray_data is already defined` not in the reference — release does not print them, so investigate before assuming FP (may be an ENSURE/precondition path live only in debug, or a junk-filter gap) | auto-width threshold + unexplained debug-only warnings |
+| 47 | `urea_ccsd_pob-TZVP_Salvador_properties` (short/long) | Salvador charges `0.1984`→`0.1974`, `-0.3959`→`-0.3956`, dipoles ~3rd–4th sig-fig (~0.5%) | longstanding grid/partition numerics (see Salvador section); reference now pinned to `-O3` |
+
+**Cleared since 2026-07-15** (kept for the record): #65 `L_alanine` and #69 `YLID` ADP-label
+flips (fixed via `show_IAM_output=FALSE` in their `stdin`); #5 `cyclazine` No.-of-doubles
+(source fix `b3b50dd2`); #72 `gly_ala_fragHAR` (now passes debug too); #113 `process_CSD_cif`
+fragment-offset `int()` flip (source fix — `*(ONE-TOL(8))` nudge, 2026-07-26; see the block above).
 
 **Goal (Dylan): make the *debug* tests pass**, probably by **suppressing the offending
 output line(s)** in the comparison — but not so much that the test loses meaning. Notes on the
@@ -259,5 +301,8 @@ options, to think through:
   between `-O0` and `-O3` could also flip between compilers/platforms even in *release* — but
   it edits hand-written scientific `.foo` and must be done per-site (start `cluster.foo:132`).
 
-Raw diffs and logs from the 2026-07-15 run are in the session scratchpad
-(`debug_analysis/`): `ctest.log`, `release_compare.log`, per-test summaries.
+To reproduce: clean `gfortran-14` debug build (`-DCMAKE_BUILD_TYPE=debug`), `ctest`, then
+`diff tests/<suite>/<test>/stdout tests/<suite>/<test>/stdout.bad` for each failure (the loose
+harness writes `stdout.bad` on a fail). The five listed above are all that remain as of
+2026-07-17; the raw diffs from the original 2026-07-15 run lived in that session's scratchpad
+(`debug_analysis/`) and are not preserved across sessions.
