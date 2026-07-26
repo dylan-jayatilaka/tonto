@@ -8,7 +8,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-JAR="${ANTLR_JAR:-external/antlr-4.13.2-complete.jar}"
+# Absolute path: later steps run inside `( cd foogrammar && ... )`, so a relative
+# jar path would resolve against the wrong dir. $PWD is the repo root (cd'd above).
+JAR="${ANTLR_JAR:-$PWD/external/antlr-4.13.2-complete.jar}"
 GEN=build/translator/gen
 CLS=build/translator/classes
 

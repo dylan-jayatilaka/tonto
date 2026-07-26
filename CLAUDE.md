@@ -145,7 +145,7 @@ scripts/build_translator.sh
 scripts/build_translator.sh foofiles/irrep.foo
 
 # Equivalent manual invocation:
-JAR=external/antlr-4.13.2-complete.jar   # bundled in the repo; override with $ANTLR_JAR
+JAR=$PWD/external/antlr-4.13.2-complete.jar   # absolute (a later step cd's into foogrammar/); override with $ANTLR_JAR
 ( cd foogrammar && java -cp "$JAR" org.antlr.v4.Tool -visitor -o ../build/translator/gen Foo.g4 )
 javac -cp "$JAR" -d build/translator/classes build/translator/gen/*.java foogrammar/FooToFortran.java
 java -cp "$JAR:build/translator/classes" FooToFortran \
