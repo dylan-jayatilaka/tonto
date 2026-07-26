@@ -90,6 +90,11 @@ enable_testing()
 #set(BLA_VENDOR OpenBLAS)
 
 # LAPACK
+# The bundled reference LAPACK (external/lapack-release, netlib 3.8.0) declares an
+# ancient cmake_minimum_required (2.8.x) that CMake >= 4 rejects. Permit configuring
+# such old subprojects without editing the pinned submodule.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "min policy for old subprojects" FORCE)
+set(ENV{CMAKE_POLICY_VERSION_MINIMUM} 3.5)
 string(TOUPPER "${CMAKE_BUILD_TYPE}" TEMP)
 if(TEMP STREQUAL "RELEASE-STATIC")
   set(COMPILE_LAPACK "ON")
