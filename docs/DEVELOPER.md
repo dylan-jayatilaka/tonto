@@ -82,18 +82,50 @@ the command line.
 
 ### SSH keys (recommended)
 
-Generate a key pair once, add the **public** key to GitHub
-(Settings → SSH and GPG keys), and point `origin` at the SSH URL:
+SSH keeps no secret in the URL — you set it up once and never paste a token again.
 
-```
-ssh-keygen -t ed25519 -C "you@example.com"     # if you don't already have a key
-cat ~/.ssh/id_ed25519.pub                        # add this to GitHub
-git remote set-url origin git@github.com:USERNAME/REPO.git
-```
+1. **Generate a key** (skip if you already have `~/.ssh/id_ed25519`):
+   ```
+   ssh-keygen -t ed25519 -C "you@example.com"
+   ```
+   Press Enter to accept the default location; a passphrase is optional but recommended.
 
-See GitHub's [Connecting to GitHub with SSH](https://docs.github.com/en/authentication/connecting-to-github-with-ssh).
+2. **Load it into the ssh-agent** (so you aren't retyping the passphrase):
+   ```
+   eval "$(ssh-agent -s)"
+   ssh-add ~/.ssh/id_ed25519
+   ```
+
+3. **Add the *public* key to GitHub.** Print it and copy the whole line:
+   ```
+   cat ~/.ssh/id_ed25519.pub
+   ```
+   Go to **<https://github.com/settings/keys>** → **New SSH key**, paste it, give it a
+   title (e.g. your machine name), leave the type as **Authentication key**, and click
+   **Add SSH key**.
+
+4. **Check that it works:**
+   ```
+   ssh -T git@github.com
+   ```
+   The first time, confirm the host fingerprint (type `yes`). On success GitHub prints:
+   `Hi USERNAME! You've successfully authenticated, but GitHub does not provide shell access.`
+   (That message is expected — GitHub never gives a shell.)
+
+5. **Point `origin` at the SSH URL** (once per clone), then verify:
+   ```
+   git remote set-url origin git@github.com:USERNAME/REPO.git   # e.g. dylan-jayatilaka/tonto.git
+   git remote -v                                                # should now show git@github.com, no token
+   ```
+   Pushes now authenticate with your key. Nothing sensitive is stored in `.git/config`.
+
+See GitHub's [Connecting to GitHub with SSH](https://docs.github.com/en/authentication/connecting-to-github-with-ssh)
+for macOS/Windows specifics (agent auto-start, keychain).
 
 ### Personal Access Token (HTTPS)
+
+*Fallback only* — use this where SSH is blocked (e.g. a network that only allows
+HTTPS). Prefer SSH above; the embedded-token URL below is the least secure option.
 
 1. **Create it** at <https://github.com/settings/tokens> (Developer settings →
    Personal access tokens → Tokens (classic) → Generate new token). Give it the
