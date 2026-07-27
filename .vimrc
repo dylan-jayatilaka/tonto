@@ -18,6 +18,13 @@ if &t_Co > 1
    syntax on
 endif
 
+let fortran_free_source=1
+let fortran_more_precise=0
+let fortran_have_tabs=1
+" Performance Fixes
+set redrawtime=10000
+set synmaxcol=133
+
 " -----------------------
 " Reopen at last position
 " :h last-position-jump
