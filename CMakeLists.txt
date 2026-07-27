@@ -660,7 +660,7 @@ add_dependencies(antlr4-fortran antlr4-translator)
 # On-demand documentation graphs: `make callgraphs` regenerates the Graphviz DOT
 # files (procedure call graph; module use graph with submodules collapsed to their
 # parent; expanded submodule use graph) plus a dead-code reachability report for
-# run_molecule, into build/callgraphs/. If Graphviz `dot` is present, the two small
+# run_molecule, into <build-dir>/callgraphs/ (the current build tree). If Graphviz `dot` is present, the two small
 # use graphs are also rendered to SVG.
 find_program(DOT_EXE dot)
 add_custom_target(callgraphs
@@ -673,7 +673,7 @@ add_custom_target(callgraphs
         --call-graph-report
         --out-dir \"${CMAKE_CURRENT_BINARY_DIR}/callgraphs\"
     DEPENDS ${ANTLR4_TRANSLATOR_STAMP}
-    COMMENT "Generating Foo call/use graphs (DOT) + dead-code report -> build/callgraphs/"
+    COMMENT "Generating Foo call/use graphs (DOT) + dead-code report -> ${CMAKE_CURRENT_BINARY_DIR}/callgraphs/"
 )
 if(DOT_EXE)
     add_custom_command(TARGET callgraphs POST_BUILD

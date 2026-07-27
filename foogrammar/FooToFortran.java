@@ -3484,10 +3484,11 @@ public final class FooToFortran {
 
     // ------------------------------------------------------- tree utilities
 
-    @SuppressWarnings("unchecked")
     static <T extends ParserRuleContext> List<T> descendants(ParseTree root, Class<T> cls) {
         List<T> out = new ArrayList<>(); collect(root, cls, out); return out;
     }
+    // (T) cast is safe: guarded by cls.isInstance(node) immediately before it
+    @SuppressWarnings("unchecked")
     private static <T extends ParserRuleContext> void collect(ParseTree node, Class<T> cls, List<T> out) {
         if (cls.isInstance(node)) out.add((T) node);
         for (int i = 0; i < node.getChildCount(); i++) collect(node.getChild(i), cls, out);
