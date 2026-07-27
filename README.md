@@ -3,14 +3,19 @@
 [![CI](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml)
 
 Tonto is a quantum chemistry and crystallography package, with a focus on
-X-ray and electron structure refinement (Hirshfeld atom refinement, structure
-factors, wavefunctions). The scientific code is written in **Foo** — an
+Hirshfeld atom refinement, structure factor calculation, and
+X-ray wavefunction refinement.
+
+The code is written in **Foo** — an
 object-oriented preprocessor language translated to modern Fortran.
 
-> **This README covers one thing: getting a working, tested `tonto` binary.**
-> Everything else lives elsewhere — [running Tonto and science how-tos on the
-> **wiki**](https://github.com/dylan-jayatilaka/tonto/wiki), and developer/
-> internals references in [**`docs/`**](docs/).
+**This README covers producing a `tonto` binary on Ubuntu/Linux**
+
+Everything else lives elsewhere:
+
+  - Compiling tonto on Mac and Linux, running Tonto, and science how-tos on the [**wiki**](https://github.com/dylan-jayatilaka/tonto/wiki)
+  
+  - Developer references in [**`docs/`**](docs/).
 
 ---
 
