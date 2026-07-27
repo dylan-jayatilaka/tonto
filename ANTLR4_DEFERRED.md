@@ -345,3 +345,30 @@ To reproduce: clean `gfortran-14` debug build (`-DCMAKE_BUILD_TYPE=debug`), `cte
 harness writes `stdout.bad` on a fail). The five listed above are all that remain as of
 2026-07-17; the raw diffs from the original 2026-07-15 run lived in that session's scratchpad
 (`debug_analysis/`) and are not preserved across sessions.
+
+## Column-0 `#ifdef`/`#endif` inside a program body — benign parser diagnostic
+
+**Date:** 2026-07-28. A release build prints, at ~98%:
+
+```
+[ 98%] Generating run_mpi_test_complete.F90
+line 234:0 extraneous input '<EOF>' expecting {END, USE, 'interface', ... }
+```
+
+**Cause.** `runfiles/run_mpi_test_complete.foo` (and `run_mpi_test.foo`) wrap their executable
+body in a **column-0** `#ifdef MPI ... #endif` that sits between the indented `program` body and
+the final `end program`. Foo block scoping is **indentation-based**; the grammar passes
+`#include`/macros through pre-CPP but does **not** model column-0 `#if*`/`#endif` directives, so
+the indent/dedent tracking can't cleanly match the closing `end program` and the parser reports a
+spurious EOF expectation at the true end of file.
+
+**Impact — benign.** ANTLR error-recovers and still emits valid Fortran (`run_mpi_test_complete.F90`
+ends correctly and the executable links). Only these two MPI test harnesses use the pattern; no
+`foofiles/` module, `tonto`/`hart`, or `ctest` is affected. Not a regression — the files predate
+current work.
+
+**Fix (deferred).** Teach the Foo lexer to treat CPP directive lines
+(`#if`/`#ifdef`/`#ifndef`/`#else`/`#elif`/`#endif`) as passthrough that does not perturb
+indentation/scoping. Low priority. (Separately, 2026-07-28: `run_mpi_test_complete.foo` had its
+variable declarations moved *inside* the `#ifdef MPI` so they don't trigger unused-variable
+warnings in a non-MPI debug build; this does not remove the parser diagnostic above.)

@@ -11,10 +11,12 @@ in **Foo**, a custom object-oriented preprocessor language that is translated to
 Fortran (95 / 2003+) and then compiled.
 
 - Foo sources live in `foofiles/` (`*.foo`). Maintainer: Dylan Jayatilaka.
-- Legacy translator: `foo.pl` (Perl) — the reference behaviour to reproduce. The
-  script itself has been removed from the repo now that the ANTLR4 translator
-  drives the build; its frozen output survives in `release/`, which remains the
-  reference snapshot to match.
+- Legacy translator: `foo.pl` (Perl) — the reference behaviour the ANTLR4 translator was built
+  to reproduce. **Both `foo.pl` and its frozen reference output have since been removed**; the
+  ANTLR4 translator now drives the build and the task is **complete** (validated by build +
+  `ctest` on Linux and CI — see §2). The working-tree `release/` and `debug/` directories are
+  ordinary **out-of-source CMake build trees** (untracked, regenerable); `debug/` is currently
+  out of date. There is **no** reference-snapshot directory to preserve.
 - Executables: `build/tonto` (main program), `build/hart` (standalone Hirshfeld atom
   refinement; `hart -help`).
 - Run scripts: `runfiles/`. Test jobs: `tests/`.
@@ -25,8 +27,8 @@ Fortran (95 / 2003+) and then compiled.
 - `module.use` — procedures pulled in from dependent modules.
 
 The `.int` and `.use` files are `#include`d into the `.F90` by the C preprocessor **at
-compile time**. So the translator output — and the `release/` reference — is **pre-CPP**:
-macros (`include/macros.in`) and `#include`s are left intact for the Fortran build to expand.
+compile time**. So the translator output is **pre-CPP**: macros (`include/macros.in`) and
+`#include`s are left intact for the Fortran build to expand.
 
 ## 2. Current task — the `antlr4` branch
 
@@ -40,9 +42,12 @@ Directory roles:
 
 | Path | Role |
 |------|------|
-| `release/` | Reference Fortran produced by `foo.pl` — the target to reproduce. |
-| `antlr4-release/` | Output of the new ANTLR4 translator — compared against `release/`. |
+| `build/`, `release/`, `debug/` | Local out-of-source CMake build trees (untracked, regenerable). `debug/` is currently out of date. |
 | `external/antlr4` | ANTLR4 itself (git submodule). |
+
+*(Historical: during development the translator's output was written to `antlr4-release/` and
+compared file-by-file against a frozen `foo.pl` reference snapshot. Both the snapshot and `foo.pl`
+are gone — the `release/` name is now just a build tree; validation is build + `ctest`.)*
 
 **Translation rules `foo.pl` applies** (the behaviour to match): reverse declarations
 (`var :: TYPE` → `TYPE :: var`), module renaming (`str.foo` → `STR_MODULE`), procedure-header
@@ -100,27 +105,26 @@ make -j
 Other build types: `debug`, `release-static`, and MPI (`-DCMAKE_Fortran_COMPILER=mpifort …
 -DMPI=1`, optionally `-DNO_ERROR_MANAGEMENT`).
 
-## 5. Validation (for the `antlr4` task)
+## 5. Validation
 
-- Generate the `*.F90`, `*.int` and `*.use` files with the new translator
-  (`foogrammar/FooToFortran.java`) into `antlr4-release/`, and compare them against the
-  reference files in `release/` produced by `foo.pl`.
-- The bar is **equivalent, compilable Fortran — not a byte-exact match.**
-- The target is **every** generated file, not only the examples named in the docs
-  (`str`, `bin`, `int`, `real`, `atom`, `basis`, `molecule.*`); those were produced by an
-  earlier Claude attempt whose context was lost.
-- The reference files are **pre-C-preprocessor** (see §1); macro / `#include` expansion
-  happens during the Fortran compile, which is **not** part of this task.
-- **Running `ctest` is now in scope** (it is milestone 3 — see §9) but, like `make`, ask
-  before launching a long build/test run (§8). Use the loose criterion in `scripts/test.py`
-  (rel ≤ 0.2% OR last-digit ≤ 2) as the pass/fail gate, not exact match.
+The `antlr4` translator task is **complete**; validation is now **build + `ctest`**:
+
+- Build a `release` tree and run `ctest` — but, like `make`, **ask before launching a long
+  build/test run** (§8). Use the loose criterion in `scripts/test.py` (rel ≤ 0.2% OR
+  last-digit ≤ 2) as the pass/fail gate, not exact match.
+- Green on Linux and GitHub Actions CI (short suite 51/51); full release suite 124/124 locally.
+  The debug (`-O0`) build has 4 longstanding FP-boundary/structural failures (see
+  `ANTLR4_DEFERRED.md`) — not translator bugs.
+- *(Historical, no longer applicable: the translator's `*.F90`/`*.int`/`*.use` output was once
+  compared file-by-file — equivalent, not byte-exact — against a `foo.pl` reference snapshot.
+  Both that snapshot and `foo.pl` are gone. The output is pre-C-preprocessor: macros /
+  `#include`s are expanded by the Fortran compile, see §1.)*
 
 ## 6. Conventions & gotchas
 
 - Edit `.foo` sources in `foofiles/`, never the generated Fortran.
-- During a normal build, generated Fortran lands in `build/`; do not hand-edit it. (`release/`
-  and `antlr4-release/` are the reference vs. new-translator snapshots used for this task —
-  see §2.)
+- During a normal build, generated Fortran lands in the build tree (e.g. `build/`, `release/`);
+  do not hand-edit it — edit the `.foo` sources instead.
 - `external/*` are git submodules (sbf, lapack-release, antlr4); clone with `--recursive`.
 - Note that the files can be translated independently *provided* the `types.foo` file
 which defines all the derived types is processed first. The legacy translator uses
@@ -155,8 +159,8 @@ java -cp "$JAR:build/translator/classes" FooToFortran \
 ```
 
 `FooToFortran` writes `<stem>.F90`, `<stem>.int`, `<stem>.use` (stem maps `vec{real}.foo`
-→ `vec_real`). Compare against `release/` (whitespace-insensitive; the bar is equivalent,
-not byte-exact). `types.foo` must be passed so the derived-type table is built first (§6).
+→ `vec_real`) into `antlr4-release/`. `types.foo` must be passed so the derived-type table is
+built first (§6). (This single-module path is a dev/debug aid; the normal build is via CMake, §4.)
 
 **Analysis modes (phase B — call graph / dead-code elimination).** `FooToFortran` also has
 read-only analysis and a purge mode, all built on a cross-module call graph it derives by
@@ -189,7 +193,7 @@ loose ctest suite as the full build.
 1. ✅ **DONE.** `foogrammar/Foo.g4` parses **every** file in `foofiles/` without error —
    including the submodule files (`molecule.*`, `diffraction_data.*`).
 2. ✅ **DONE.** `foogrammar/FooToFortran.java` emits `.F90` / `.int` / `.use` that are
-   **equivalent** (compilable, same behaviour) to the reference in `release/`.
+   **equivalent** (compilable, same behaviour) to the legacy `foo.pl` output (since removed).
 3. ✅ **DONE — A translator-built binary passing the loose suite, automated in CI.** A `tonto`
    compiled from the ANTLR4-generated Fortran runs the short suite under `scripts/test.py`'s
    **loose** comparison (rel ≤ 0.2% OR last-digit ≤ 2, plus junk-line filtering) and passes
