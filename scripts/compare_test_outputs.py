@@ -1,278 +1,206 @@
 #!/usr/bin/env python3
-import logging
-from tempfile import gettempdir
-import getpass
-from getpass import getuser
+"""Run the Tonto test suites and print a per-suite *agreement* report.
+
+`ctest` gives a flat pass/fail list.  This driver instead groups the tests by
+suite (short, rgbi, long, cx), prints a header above each section, and shows —
+in the last columns — how closely each test's output matches its reference
+under three criteria:
+
+    exact    byte-for-byte numeric agreement (every printed digit identical)
+    loose    within the relative tolerance (default 0.2%) OR the last-digit
+             tolerance -- this is the verdict that decides pass/fail
+    lastdig  within +/- K units of the last printed decimal place (default 2),
+             for numbers quoted to low precision
+
+The three criteria and their tolerances are exactly those of
+`scripts/test.py`; this script simply runs test.py per test, parses the
+`AGREEMENT ...` line(s) it prints, and tabulates them by suite.  A test with
+several compared output files is scored on its worst file.
+
+Usage
+-----
+    python3 scripts/compare_test_outputs.py --program build/tonto
+    python3 scripts/compare_test_outputs.py -p build-rel/tonto --suites short rgbi
+    python3 scripts/compare_test_outputs.py --rel-tol 1e-3 --last-digit-tol 1
+
+Tolerances (mirror scripts/test.py):
+    --rel-tol         loose RELATIVE tolerance   (fraction; default 2e-3 = 0.2%)
+    --last-digit-tol  loose LAST-DIGIT tolerance  (units of last place; default 2)
+    --abs-tol         absolute near-zero floor    (default 1e-7)
+"""
+
+import argparse
 import os
-from os.path import abspath, join
-from itertools import zip_longest
-import sys
-import shutil
+import re
 import subprocess
-import difflib
-import datetime
-import time
+import sys
 
-log = logging.getLogger('test')
+SUITES = ['short', 'rgbi', 'long', 'cx']
 
-prefixes_to_ignore = [
-    'Wall-clock', 'CPU time', 
-    'Version', 'Platform', 'Timer', 'Build-date',
-    'Warning', 'https', 'www', 'Peter', 'Daniel', 'Dylan',
-    'WARNINGS', 'Look above', 'time taken for',
-    '_audit_creation_date', 
-    '_audit_creation_method', 
-    '_QCr_software_version',
-    '_QCr_software_platform',
-    '_QCr_software_build_date'
-    ]
-
-suffixes_to_ignore = [ '---', '___', '===' ]
-
-test_categories = ['short', 'cx', 'long', 'geminal', 'relativistic']
-
-def is_junk(line):
-    return (any(map(line.startswith, prefixes_to_ignore)) or 
-            any(map(line.startswith, suffixes_to_ignore)) or 
-            line.strip == '')
+# Parse a test.py "AGREEMENT ..." line, e.g.
+#   AGREEMENT h2o_rhf_STO-3G   exact=PASS  rel<=0.2%=PASS(max  0%)  \
+#             lastdig<=2=PASS(max  0 ulp)  =>  LOOSE=PASS
+_ROW = re.compile(
+    r'exact=(?P<exact>\w+).*?'
+    r'rel<=\S+?=(?P<rel>\w+)\(max\s*(?P<maxrel>[\d.eE+-]+)\s*%\).*?'
+    r'lastdig<=\S+?=(?P<ld>\w+)\(max\s*(?P<maxulp>[\d.eE+-]+)\s*ulp\).*?'
+    r'LOOSE=(?P<loose>\w+)')
 
 
-def isclose(a, b, abs_tol=0.0, rel_tol=0.0):
-    return (abs(a-b) <= max(rel_tol * max(abs(a), abs(b)), abs_tol))
-
-def get_lines(filename):
-    """Read all lines from a file, returning a
-    list of line contents
-
-    Arguments:
-    filename -- name/path of the file to read
-    """
-    lines = []
-    with open(filename) as f:
-        lines = []
-        junk_lines = []
-        for i, line in enumerate(f):
-            if not is_junk(line.strip()):
-                lines.append(line)
-            else:
-                junk_lines.append(i)
-    log.debug('Ignored junk lines: %s', junk_lines)
-    return lines
+class _Tee:
+    """Write to several streams at once — used to mirror the report to stdout and
+    a log file simultaneously."""
+    def __init__(self, *streams):
+        self._streams = streams
+    def write(self, s):
+        for st in self._streams:
+            st.write(s)
+    def flush(self):
+        for st in self._streams:
+            st.flush()
 
 
-def is_float(s):
-    """Check if a string may be converted into a float
+def score_test(test_py, test_dir, args):
+    """Run test.py on one test dir; return an aggregated verdict dict."""
+    cmd = ['python3', test_py,
+           '--test-directory', test_dir,
+           '--basis-sets', args.basis_sets,
+           '--program', args.program,
+           '--log-level=ERROR',
+           '--rel-tol', repr(args.rel_tol),
+           '--last-digit-tol', repr(args.last_digit_tol),
+           '--abs-tol', repr(args.abs_tol)]
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    rows = [m for m in (_ROW.search(l) for l in p.stdout.splitlines()
+                        if l.startswith('AGREEMENT')) if m]
+    if not rows:
+        # No comparison happened -- the job crashed or produced no output.
+        status = 'ERROR' if p.returncode != 0 else 'PASS'
+        return {'status': status, 'exact': p.returncode == 0,
+                'rel': p.returncode == 0, 'ld': p.returncode == 0,
+                'loose': p.returncode == 0, 'max_rel': 0.0, 'max_ulp': 0.0,
+                'rc': p.returncode}
 
-    Arguments:
-    s -- string to be converted"""
-    try:
-        float(s)
-        return True
-    except ValueError:
-        return False
-
-def equivalent(s1, s2, **kwargs):
-    if is_float(s1) and is_float(s2):
-        return isclose(float(s1), float(s2), **kwargs)
-    else:
-        return s1 == s2
-    
-
-def check_numbers(line1, line2, **kwargs):
-    tokens1 = line1.strip('+- ').split()
-    tokens2 = line2.strip('+- ').split()
-    if len(tokens1) != len(tokens2):
-        return False
-
-    else:
-        return all(
-                equivalent(t1, t2, **kwargs) 
-                for t1, t2 in zip(tokens1, tokens2))
-
-
-def diff_sbf(file1, file2, args): 
-    """Find the differences between 2 cxs files using sbftool
-    """
-    verbosity = 1
-    retcode = subprocess.check_call([args.sbftool, '-vc', file1, file2])
-    log.debug('sbftool returned: %s', retcode)
-    return (retcode == 0)
+    def worst(field):
+        return all(m.group(field) == 'PASS' for m in rows)
+    return {'status': 'PASS' if p.returncode == 0 else 'FAIL',
+            'exact': worst('exact'), 'rel': worst('rel'), 'ld': worst('ld'),
+            'loose': p.returncode == 0,
+            'max_rel': max(float(m.group('maxrel')) for m in rows),
+            'max_ulp': max(float(m.group('maxulp')) for m in rows),
+            'rc': p.returncode}
 
 
-def is_sbf(filename):
-    """Check if a file is a SBF by reading the header"""
-    with open(filename, 'rb') as f:
-        if f.read(3) == b'SBF':
-            return True
-    return False
+def yn(ok):
+    return 'PASS' if ok else 'FAIL'
 
-def diff_files(file1, file2, args, print_diffs=True, **kwargs):
-    """Find the differences between two output files, delegating
-    to sbftool for sbf files"""
-    verbose = kwargs.get('verbose', False)
-    if is_sbf(file1) and is_sbf(file2):
-        log.debug('Diffing with sbftool')
-        return diff_sbf(file1, file2, args)
-    lines1 = get_lines(file1)
-    lines2 = get_lines(file2)
-    diff = list(difflib.ndiff(lines1, lines2))
-    if verbose:
-        for line in diff:
-            print(line.strip())
-    del1 = [x for x in diff if x.startswith('-')]
-    del2 = [x for x in diff if x.startswith('+')]
-    diffs = [check_numbers(l1, l2, **kwargs) for l1, l2 in zip_longest(del1, del2, fillvalue='')]
-    correct = all(diffs)
-
-    if print_diffs:
-        log.info('Diff:\n%s', ''.join(a + b for a, b in zip(del1,del2)))
-
-    if not correct:
-        log.debug('Found differences in %s and %s', file1, file2)
-    return correct
-
-
-class working_directory:
-    """ Context manager for temporarily changing the current working directory. """
-    old_directory = None
-
-    def __init__(self, directory, create=False):
-        if directory:
-            self.directory = os.path.expanduser(directory)
-            if not os.path.exists(self.directory) and create:
-                os.makedirs(self.directory)
-        else:
-            self.directory = None
-
-
-    def __enter__(self):
-        self.old_directory = os.getcwd()
-        if self.directory:
-            log.debug('cwd: %s', self.directory)
-            os.chdir(self.directory)
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        os.chdir(self.old_directory)
-
-def temp_test_dir(testname, subdir='tonto-tests'):
-    d = join(gettempdir(), subdir + '-' + getpass.getuser())
-    name = join(d, testname)
-    log.debug('temp_test_dir = %s', name)
-    return name
-
-def parse_IO_file(path):
-    io_files = {
-        'input': set(['stdin']),
-        'output': set(['stdout']),
-        'delete': set(),
-    }
-
-    if os.path.exists(path):
-        with open(path) as f:
-            for line in f:
-                tokens = line.split(':')
-                io_files[tokens[0].strip()].add(tokens[1].strip())
-    return io_files
-
-
-def compare_outputs(f1, f2, args):
-    if args.compare_program:
-        return (subprocess.check_call([args.compare_program, f1, f2]) == 0)
-    else:
-        log.debug('Using builtin diffing or sbftool')
-        d = diff_files(f1, f2, args, rel_tol=args.rel_tol, abs_tol=args.abs_tol)
-        log.debug('diff_files returned: %s', d)
-        return d
-
-
-def run_test(args, test_dir, io_files):
-    env = dict(os.environ)
-    env['TONTO_BASIS_SET_DIRECTORY'] = args.basis_sets
-    kwargs = {
-        'shell': False,
-        'universal_newlines': True,
-        'env': env,
-    }
-    if args.mpi:
-        prog = ['mpiexec', '-np', '2', args.program]
-    else:
-        prog = [args.program]
-
-    timings = {}
-    exec_dir = temp_test_dir(os.path.basename(test_dir.rstrip('/')))
-    timings['start'] = time.time() 
-    with working_directory(exec_dir, create=True):
-        for path in io_files['input']:
-            shutil.copy(abspath(join(test_dir, path)), '.')
-        timings['cp_input'] = time.time() - timings['start']
-
-        log.debug('Running program %s', ' '.join(prog))
-        retcode = subprocess.check_call(prog, **kwargs)
-        completed = (retcode == 0)
-
-        timings['tonto'] = time.time() - sum(t for t in timings.values())
-        files_equivalent = []
-
-        if completed:
-            log.debug('Outputs to check %s', io_files['output'])
-
-            for path in io_files['output']:
-                canonical = abspath(join(test_dir, path))
-                log.debug('Comparing %s to %s', path, canonical)
-                d = compare_outputs(canonical, path, args)
-                log.debug('Same file: %s', d)
-                files_equivalent.append(d)
-        timings['diffs'] = time.time() - sum(t for t in timings.values())
-        success = completed and all(files_equivalent)
-
-        for path, equivalent in zip(io_files['output'], files_equivalent):
-            log.debug('%s: %s', path, 'GOOD' if equivalent else 'BAD')
-            if equivalent:
-                """ shutil.copy(abspath(join('.', path)),
-                        abspath(join(test_dir, path + '.good')))
-                """
-            else:
-                shutil.copy(abspath(join('.', path)),
-                        abspath(join(test_dir, path + '.bad')))
-        timings['cp_output'] = time.time() - sum(t for t in timings.values())
-        log.debug('Time spent:')
-        for k, v in timings.items():
-            if k != 'start':
-                log.debug('%s: \t %f s', k, v)
-    return success
 
 def main():
-    """Show the differences between two test files
-    """
-    import argparse
-    import os
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--program', '-p', default='./tonto',
-                        help='Program to use to run the test jobs i.e. tonto')
-    parser.add_argument('--test-directory', '-t', default='.',
-                        help='Directory in which tests are located')
-    parser.add_argument('--compare-program', '-c', default=None,
-                        help='diff style program to compare outputs')
-    parser.add_argument('--log-level', default='ERROR',
-                        help='Log level for running tests')
-    parser.add_argument('--basis-sets', '-b', default='.',
-                        help='Basis sets directory')
-    parser.add_argument('--sbftool', default='../../external/sbf/src/sbftool',
-                        help='Location of sbftool')
-    parser.add_argument('--mpi', '-m', default=False, action='store_true',
-                        help='Test with mpirun')
-    parser.add_argument('--abs-tol', type=float, default=1e-7,
-                        help='Absolute tolerance for numerical differences')
-    parser.add_argument('--rel-tol', type=float, default=1e-3,
-                        help='Relative tolerance for numerical differences')
-    args = parser.parse_args()
-    args.sbftool = os.path.abspath(args.sbftool)
-    logging.basicConfig(level=args.log_level)
-    io_files = parse_IO_file(join(args.test_directory,'IO'))
-    if run_test(args, args.test_directory, io_files):
-        sys.exit(0)
-    else:
-        sys.exit(1)
+    here = os.path.dirname(os.path.abspath(__file__))
+    root = os.path.dirname(here)
+    ap = argparse.ArgumentParser(
+        description='Per-suite agreement report for the Tonto test jobs.')
+    ap.add_argument('--program', '-p', default=os.path.join(root, 'build', 'tonto'),
+                    help='tonto executable to test (default: build/tonto)')
+    ap.add_argument('--tests-dir', '-t', default=os.path.join(root, 'tests'),
+                    help='root tests directory (default: tests/)')
+    ap.add_argument('--basis-sets', '-b', default=os.path.join(root, 'basis_sets'),
+                    help='basis sets directory')
+    ap.add_argument('--suites', '-s', nargs='+', default=SUITES, choices=SUITES,
+                    help='which suites to run (default: all)')
+    ap.add_argument('--rel-tol', type=float, default=2e-3,
+                    help='loose RELATIVE tolerance (fraction; default 2e-3 = 0.2%%)')
+    ap.add_argument('--last-digit-tol', type=float, default=2.0,
+                    help='loose LAST-DIGIT tolerance (units of last place; default 2)')
+    ap.add_argument('--abs-tol', type=float, default=1e-7,
+                    help='absolute near-zero floor (default 1e-7)')
+    ap.add_argument('--log', default='tests.log',
+                    help='also write the report to this file (default: tests.log in '
+                         'the current directory)')
+    ap.add_argument('--no-log', action='store_true',
+                    help='print to stdout only; do not write a log file')
+    args = ap.parse_args()
+
+    args.program = os.path.abspath(args.program)
+    if not os.path.exists(args.program):
+        sys.exit('error: program not found: %s' % args.program)
+    test_py = os.path.join(here, 'test.py')
+
+    # By default mirror the whole report into tests.log as well as stdout, so a
+    # plain run leaves a log behind (matches `ctest >& tests.log` muscle memory).
+    logf = None
+    if not args.no_log:
+        logf = open(args.log, 'w')
+        sys.stdout = _Tee(sys.__stdout__, logf)
+
+    relpct = args.rel_tol * 100
+    ldk = args.last_digit_tol
+    NAMEW = 50
+    hdr = ('%-*s  %-6s %-6s %-7s  %9s  %9s'
+           % (NAMEW, 'test name', 'exact', 'loose', 'lastdig', 'max rel%', 'max LDD'))
+    grand = {'n': 0, 'exact': 0, 'loose': 0, 'ld': 0, 'err': 0}
+
+    print('')
+    print('=================================')
+    print('Tonto test-suite agreement report')
+    print('=================================')
+    print('')
+    print('Testing program : %s' % args.program)
+    print('')
+    print('There are three types of agreement:')
+    print('. exact   = every digit identical')
+    print('. lastdig = within %g units of last-digit place' % (ldk))
+    print('. loose   = within %.3g%% OR lastdig' % (relpct))
+    print('')
+    print('Compared to the reference, we also report:')
+    print('. the maximum relative % disagreement (max rel%)')
+    print('. the maximim last digit difference   (max LDD )')
+
+    for suite in args.suites:
+        sdir = os.path.join(args.tests_dir, suite)
+        if not os.path.isdir(sdir):
+            continue
+        tests = sorted(d for d in os.listdir(sdir)
+                       if os.path.isfile(os.path.join(sdir, d, 'stdin')))
+        print('')
+        print('SUITE: %s (%d tests)' % (suite, len(tests)))
+        print('_' * 95 + '\n')
+        print(hdr)
+        print('_' * 95 + '\n')
+        sub = {'n': 0, 'exact': 0, 'loose': 0, 'ld': 0, 'err': 0}
+        for t in tests:
+            r = score_test(test_py, os.path.join(sdir, t), args)
+            sub['n'] += 1
+            if r['status'] == 'ERROR':
+                sub['err'] += 1
+                print('%-*s  %-6s %-6s %-7s  %9s  %9s'
+                      % (NAMEW, t[:NAMEW], 'ERROR', 'ERROR', 'ERROR', '-', '-'))
+                continue
+            sub['exact'] += r['exact']
+            sub['loose'] += r['loose']
+            sub['ld'] += r['ld']
+            print('%-*s  %-6s %-6s %-7s  %9.3g  %9.3g'
+                  % (NAMEW, t[:NAMEW], yn(r['exact']), yn(r['loose']),
+                     yn(r['ld']), r['max_rel'], r['max_ulp']))
+        print('_' * 95 + '\n')
+        print('%s subtotal:  loose %d/%d   (exact %d, lastdig %d%s)'
+              % (suite, sub['loose'], sub['n'], sub['exact'], sub['ld'],
+                 ', ERROR %d' % sub['err'] if sub['err'] else ''))
+        for k in grand:
+            grand[k] += sub[k]
+
+    print('_' * 95 + '\n')
+    print('GRAND TOTAL:  loose %d/%d   (exact %d, lastdig %d%s)'
+          % (grand['loose'], grand['n'], grand['exact'], grand['ld'],
+             ', ERROR %d' % grand['err'] if grand['err'] else ''))
+    print('_' * 95)
+    if logf:
+        print('\n(report written to %s)' % os.path.abspath(args.log))
+        sys.stdout = sys.__stdout__
+        logf.close()
+    # Exit non-zero if any test failed the loose (pass-deciding) criterion.
+    sys.exit(0 if grand['loose'] == grand['n'] else 1)
+
 
 if __name__ == '__main__':
     main()

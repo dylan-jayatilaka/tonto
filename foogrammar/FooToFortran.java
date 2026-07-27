@@ -1,0 +1,3590 @@
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+
+import org.antlr.v4.runtime.CharStreams;
+import org.antlr.v4.runtime.CommonTokenStream;
+import org.antlr.v4.runtime.ParserRuleContext;
+import org.antlr.v4.runtime.Token;
+import org.antlr.v4.runtime.tree.ParseTree;
+
+/**
+ * FooToFortran — ANTLR4-based replacement for scripts/foo.pl.
+ *
+ * Translates a Foo module (foofiles/*.foo) into the three pre-CPP Fortran
+ * artefacts foo.pl emits: &lt;stem&gt;.F90, &lt;stem&gt;.int, &lt;stem&gt;.use. Reference
+ * output is release/; the goal is equivalent, compilable Fortran (not byte
+ * exact).
+ *
+ * Coverage: module rename + boilerplate; doc/section/signature comments and
+ * preprocessor (#...) lines (recovered from the hidden channel); direct
+ * procedures (header transform, reversed declarations, implicit self decl,
+ * type-aware dot-&gt;% and generic-call resolution); get_from inheritance
+ * (parent body spliced + type-substituted, ENSURE messages prefixed); .int
+ * and .use generation. Block control flow / arrays / submodules: partial.
+ *
+ * Usage:
+ *   FooToFortran --foo &lt;file.foo&gt; --out-dir &lt;dir&gt;
+ *                [--types &lt;types.foo&gt;] [--foofiles-dir &lt;dir&gt;]
+ */
+public final class FooToFortran {
+
+    // ---------------------------------------------------------------- parsing
+
+    /** A parsed Foo file: tree + token stream (for hidden-channel recovery). */
+    static final class Parsed {
+        final FooParser.ProgramContext tree;
+        final CommonTokenStream toks;
+        Parsed(FooParser.ProgramContext t, CommonTokenStream k) { tree = t; toks = k; }
+    }
+
+    static Parsed parseFile(Path p) throws IOException {
+        FooLexer lexer = new FooLexer(CharStreams.fromPath(p));
+        CommonTokenStream toks = new CommonTokenStream(lexer);
+        FooParser parser = new FooParser(toks);
+        return new Parsed(parser.program(), toks);
+    }
+
+    // -------------------------------------------------------------- type table
+
+    static final class DerivedType {
+        final String fooName;
+        final Map<String, String> components = new LinkedHashMap<>(); // name -> base foo type
+        DerivedType(String n) { fooName = n; }
+    }
+
+    static final class TypeTable {
+        final Map<String, DerivedType> types = new LinkedHashMap<>();
+        DerivedType get(String t) { return types.get(canon(t)); }
+        boolean isComponent(String t, String n) {
+            DerivedType d = get(t); return d != null && d.components.containsKey(n);
+        }
+        String componentType(String t, String n) {
+            DerivedType d = get(t); return d == null ? null : d.components.get(n);
+        }
+    }
+
+    static String canon(String t) { return t == null ? null : t.replaceAll("\\s+", ""); }
+
+    static void buildTypeTable(TypeTable tt, Path typesFoo) throws IOException {
+        Parsed pr = parseFile(typesFoo);
+        for (FooParser.TypeDefContext td : descendants(pr.tree, FooParser.TypeDefContext.class)) {
+            String fooName = td.typeSpec().getText();
+            DerivedType dt = new DerivedType(fooName);
+            for (FooParser.VarDeclContext vd : descendants(td, FooParser.VarDeclContext.class)) {
+                String type = vd.declTail().typeSpec() != null
+                    ? vd.declTail().typeSpec().getText() : vd.declTail().getText();
+                for (FooParser.DeclNameContext dn : vd.identList().declName())
+                    dt.components.put(nameText(dn.name()), type);
+            }
+            tt.types.put(canon(fooName), dt);
+        }
+    }
+
+    // ---------------------------------------------------------------- naming
+
+    static String fortranTypeName(String fooType) {
+        String s = canon(fooType).replace("?", "").replace("@", "").replace("*", "");
+        s = stripDimensionSpec(s);   // STR(len=len(self)) -> STR ; MAT{REAL}(3,4) -> MAT{REAL}
+        s = s.replace("{", "_").replace("}", "").replace(",", "_").replace(".", "_");
+        return s.replaceAll("_+", "_").replaceAll("_$", "");
+    }
+
+    /** Drop a trailing top-level (...) dimension/kind/len spec from a type — it is
+     *  not part of the type's module/type identity (STR(len=..) and MAT{REAL}(3,4)
+     *  live in STR_MODULE / MAT_REAL_MODULE). A '(' inside {...} (an element-type
+     *  param, e.g. VEC{STR(len=STR_SIZE)}) is kept. */
+    static String stripDimensionSpec(String s) {
+        int depth = 0;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '{') depth++;
+            else if (c == '}') depth--;
+            else if (c == '(' && depth == 0) return s.substring(0, i);
+        }
+        return s;
+    }
+    static String fortranModName(String fooType) { return fortranTypeName(fooType) + "_MODULE"; }
+
+    /** Scan every *.foo for module-level `public` variable declarations (the
+     *  cross-module globals: stdin/stdout/stderr, tonto, std_time, the
+     *  gaussian_data tables, etc.). Returns name -> {canon foo type, fortran
+     *  module}. A fast text scan (no parse): module-level decls sit at exactly
+     *  3-space indent, before `contains`, and carry the `public` attribute. */
+    static Map<String, String[]> buildGlobalTable(Path foofilesDir) {
+        Map<String, String[]> g = new HashMap<>();
+        java.io.File[] files = foofilesDir.toFile().listFiles((d, n) -> n.endsWith(".foo"));
+        if (files == null) return g;
+        java.util.regex.Pattern modPat =
+            java.util.regex.Pattern.compile("^\\s*(?:virtual\\s+)?(?:array\\s+)?module\\s+(\\S+)");
+        java.util.regex.Pattern declPat =
+            java.util.regex.Pattern.compile("^ {3}([A-Za-z]\\w*)\\s*::([^:].*)$");
+        for (java.io.File f : files) {
+            String fooMod = null; boolean past = false;
+            List<String> lines;
+            try { lines = Files.readAllLines(f.toPath(), StandardCharsets.UTF_8); }
+            catch (Exception e) {
+                try { lines = Files.readAllLines(f.toPath(), StandardCharsets.ISO_8859_1); }
+                catch (Exception e2) { continue; }
+            }
+            for (String line : lines) {
+                if (fooMod == null) {
+                    java.util.regex.Matcher m = modPat.matcher(line);
+                    if (m.find()) { fooMod = m.group(1); continue; }
+                }
+                if (line.strip().equalsIgnoreCase("contains")) { past = true; continue; }
+                if (past || fooMod == null) continue;
+                java.util.regex.Matcher m = declPat.matcher(line);
+                if (!m.find()) continue;
+                String rest = m.group(2);                      // after '::', e.g. "TEXTFILE@, public"
+                int depth = 0, cut = rest.length();
+                for (int i = 0; i < rest.length(); i++) {
+                    char c = rest.charAt(i);
+                    if (c == '{' || c == '(') depth++;
+                    else if (c == '}' || c == ')') depth--;
+                    else if (c == ',' && depth == 0) { cut = i; break; }
+                }
+                String typeSpec = rest.substring(0, cut).trim();   // type (+ptr suffix)
+                String attrs = rest.substring(Math.min(cut + 1, rest.length()));
+                if (!attrs.matches(".*\\bpublic\\b.*")) continue;
+                String fooType = canon(typeSpec).replace("@", "").replace("*", "").replace("?", "");
+                if (fooType.isEmpty()) continue;
+                g.putIfAbsent(m.group(1), new String[]{fooType, fortranModName(fooMod)});
+            }
+        }
+        return g;
+    }
+
+    /** For a type split across submodule files (MOLECULE.GRID, MOLECULE.RHO, …),
+     *  map its base type -> (method name -> the set of submodule Fortran modules
+     *  that define it). A method call on such a type (`.make_ED_grid`, or
+     *  `mol.make_fock`) must `use` the submodule that actually defines it, not the
+     *  base MODULE (which has no source file). Non-submodule types are absent and
+     *  fall back to `<TYPE>_MODULE`. Scanned by lines (like buildGlobalTable) since
+     *  files are translated independently. */
+    static Map<String, Map<String, Set<String>>> buildSubmethodTable(Path foofilesDir) {
+        Map<String, Map<String, Set<String>>> reg = new HashMap<>();
+        java.io.File[] files = foofilesDir.toFile().listFiles((d, n) -> n.endsWith(".foo"));
+        if (files == null) return reg;
+        java.util.regex.Pattern modPat =
+            java.util.regex.Pattern.compile("^\\s*(?:virtual\\s+)?(?:array\\s+)?module\\s+(\\S+)");
+        // A procedure header: 3-space indent, a name, then '(' args, '::' attrs,
+        // 'result', a trailing comment, or end-of-line. This scan runs only on lines
+        // AFTER `contains` (the `past` guard below), where variable declarations
+        // cannot appear, so a 3-space `name :: ...` line here is always a proc header.
+        // (Deeper-indented body statements have >3 leading spaces and are excluded.)
+        java.util.regex.Pattern procPat =
+            java.util.regex.Pattern.compile("^ {3}([A-Za-z]\\w*)\\s*(\\(|::|result\\b|!|$)");
+        Set<String> kw = Set.of("end", "contains", "interface", "use", "module",
+            "result", "then", "else", "elsewhere", "do", "select", "case", "where",
+            "forall", "if", "subroutine", "function", "type", "data");
+        for (java.io.File f : files) {
+            List<String> lines;
+            try { lines = Files.readAllLines(f.toPath(), StandardCharsets.UTF_8); }
+            catch (Exception e) {
+                try { lines = Files.readAllLines(f.toPath(), StandardCharsets.ISO_8859_1); }
+                catch (Exception e2) { continue; }
+            }
+            String fooMod = null; boolean past = false; String base = null, mod = null;
+            for (String line : lines) {
+                if (fooMod == null) {
+                    java.util.regex.Matcher m = modPat.matcher(line);
+                    if (m.find()) {
+                        fooMod = m.group(1);
+                        if (!fooMod.contains(".")) break;   // not a submodule file
+                        base = canon(fooMod.substring(0, fooMod.indexOf('.')));
+                        mod = fortranTypeName(fooMod) + "_MODULE";
+                    }
+                    continue;
+                }
+                if (line.strip().equalsIgnoreCase("contains")) { past = true; continue; }
+                if (!past) continue;
+                java.util.regex.Matcher m = procPat.matcher(line);
+                if (!m.find()) continue;
+                String name = m.group(1);
+                if (kw.contains(name.toLowerCase(Locale.ROOT))) continue;
+                final String fmod = mod;
+                // Key by lower-case name: Foo/Fortran identifiers are case-insensitive,
+                // so a `.scf` call must resolve to a `SCF`-defined proc. Lookups in
+                // callModule/trailerCallModule lower-case the method the same way.
+                reg.computeIfAbsent(base, k -> new HashMap<>())
+                   .computeIfAbsent(name.toLowerCase(Locale.ROOT), k -> new java.util.HashSet<>()).add(fmod);
+            }
+        }
+        return reg;
+    }
+
+    /** Names of all `selfless` procedures across every foofile. A submodule call to
+     *  such a proc (MOLECULE.TD:test_MGS_QR) must NOT pass self, but the defining
+     *  module is a different file, so this global set lets the caller decide. */
+    static Set<String> buildSelflessMethods(Path foofilesDir) {
+        Set<String> s = new java.util.HashSet<>();
+        java.io.File[] files = foofilesDir.toFile().listFiles((d, n) -> n.endsWith(".foo"));
+        if (files == null) return s;
+        java.util.regex.Pattern p = java.util.regex.Pattern.compile(
+            "^ {3}([A-Za-z]\\w*)\\b[^\\n]*::[^\\n]*\\bselfless\\b");
+        for (java.io.File f : files) {
+            List<String> lines;
+            try { lines = Files.readAllLines(f.toPath(), StandardCharsets.UTF_8); }
+            catch (Exception e) {
+                try { lines = Files.readAllLines(f.toPath(), StandardCharsets.ISO_8859_1); }
+                catch (Exception e2) { continue; }
+            }
+            for (String line : lines) {
+                java.util.regex.Matcher m = p.matcher(line);
+                if (m.find()) s.add(m.group(1));
+            }
+        }
+        return s;
+    }
+
+    /** Per emitted Fortran module, the procedure names whose EVERY (non-template)
+     *  overload is `selfless`. Module-aware — unlike the name-based `selflessGlobal`,
+     *  which cannot tell that `chemical_symbol` is `selfless` in one module yet a
+     *  normal self-method in ATOM. A bare `.proc` self-call that resolves to module M
+     *  may drop self iff `proc` is in this set for M. Same line-scan + module-naming as
+     *  buildSubmethodTable; the all-overloads test mirrors the emit-time local pre-pass
+     *  so self-module calls stay consistent. */
+    static Map<String, Set<String>> buildSelflessByModule(Path foofilesDir) {
+        Map<String, Set<String>> result = new HashMap<>();
+        java.io.File[] files = foofilesDir.toFile().listFiles((d, n) -> n.endsWith(".foo"));
+        if (files == null) return result;
+        java.util.regex.Pattern modPat =
+            java.util.regex.Pattern.compile("^\\s*(?:virtual\\s+)?(?:array\\s+)?module\\s+(\\S+)");
+        java.util.regex.Pattern procPat =
+            java.util.regex.Pattern.compile("^ {3}([A-Za-z]\\w*)\\s*(\\(|::|result\\b|!|$)");
+        Set<String> kw = Set.of("end", "contains", "interface", "use", "module",
+            "result", "then", "else", "elsewhere", "do", "select", "case", "where",
+            "forall", "if", "subroutine", "function", "type", "data");
+        for (java.io.File f : files) {
+            List<String> lines;
+            try { lines = Files.readAllLines(f.toPath(), StandardCharsets.UTF_8); }
+            catch (Exception e) {
+                try { lines = Files.readAllLines(f.toPath(), StandardCharsets.ISO_8859_1); }
+                catch (Exception e2) { continue; }
+            }
+            String fooMod = null, mod = null; boolean past = false;
+            Map<String, Integer> total = new HashMap<>(), selfless = new HashMap<>();
+            for (String line : lines) {
+                if (fooMod == null) {
+                    java.util.regex.Matcher m = modPat.matcher(line);
+                    if (m.find()) { fooMod = m.group(1); mod = fortranTypeName(fooMod) + "_MODULE"; }
+                    continue;
+                }
+                if (line.strip().equalsIgnoreCase("contains")) { past = true; continue; }
+                if (!past) continue;
+                java.util.regex.Matcher m = procPat.matcher(line);
+                if (!m.find()) continue;
+                String name = m.group(1);
+                if (kw.contains(name.toLowerCase(Locale.ROOT))) continue;
+                // templates are excluded from the emit-time local selfless pre-pass
+                if (line.matches("^ {3}[A-Za-z]\\w*\\b.*::.*\\btemplate\\b.*")) continue;
+                total.merge(name, 1, Integer::sum);
+                if (line.matches("^ {3}[A-Za-z]\\w*\\b.*::.*\\bselfless\\b.*"))
+                    selfless.merge(name, 1, Integer::sum);
+            }
+            if (mod == null) continue;
+            final String fmod = mod;
+            for (Map.Entry<String, Integer> e : selfless.entrySet())
+                if (e.getValue().equals(total.get(e.getKey())))
+                    result.computeIfAbsent(fmod, k -> new java.util.HashSet<>()).add(e.getKey());
+        }
+        return result;
+    }
+
+    static final Set<String> INTRINSIC_SCALAR = Set.of("INT", "REAL", "CPX", "BIN", "STR");
+    static boolean isIntrinsicScalar(String t) { return INTRINSIC_SCALAR.contains(canon(t)); }
+
+    /** Identifier attribute words that can be mis-parsed as a (bogus) type. */
+    static final Set<String> ATTR_WORDS = Set.of(
+        "allocatable", "pointer", "ptr", "target", "save", "readonly",
+        "optional", "private", "public", "in", "out", "inout");
+
+    static final Set<String> ASSERT_MACROS = Set.of(
+        "ENSURE", "DIE_IF", "WARN_IF", "DIE", "WARN");
+
+    static String nameText(FooParser.NameContext n) {
+        // strip only a TRAILING '?' (the placeholder marker); keep any embedded
+        // '?' (e.g. make_Hirshfeld?_atom_ED_grid) so applySubst can substitute it.
+        String t = n.getText();
+        return t.endsWith("?") ? t.substring(0, t.length() - 1) : t;
+    }
+
+    static String outStem(String fooName) {
+        // vec{real}.foo -> vec_real ; diffraction_data.set.foo -> diffraction_data.set
+        // (braces/commas become '_', but the submodule '.' is kept).
+        String s = fooName.endsWith(".foo") ? fooName.substring(0, fooName.length() - 4) : fooName;
+        s = s.replace('{', '_').replace('}', '_').replace(',', '_');
+        return s.replaceAll("_+", "_").replaceAll("_(?=\\.|$)", "");
+    }
+
+    // ------------------------------------------------------------------- main
+
+    public static void main(String[] argv) throws Exception {
+        Path typesPath = null, outDir = null, foofilesDir = null, fooDir = null, listFile = null;
+        Path dceRoot = null, purgeRoot = null;
+        boolean selfIntentReport = false, addSelfIntent = false, callGraphReport = false;
+        List<Path> fooPaths = new ArrayList<>();
+        for (int i = 0; i < argv.length; i++) {
+            switch (argv[i]) {
+                case "--types":        typesPath   = Paths.get(argv[++i]); break;
+                case "--foo":          fooPaths.add(Paths.get(argv[++i])); break;
+                case "--out-dir":      outDir      = Paths.get(argv[++i]); break;
+                case "--foofiles-dir": foofilesDir = Paths.get(argv[++i]); break;
+                case "--foo-dir":      fooDir      = Paths.get(argv[++i]); break;
+                case "--foo-list":     listFile    = Paths.get(argv[++i]); break;
+                // Read-only analysis mode: report each proc's `self` intent (no files
+                // written, --out-dir not required). See runSelfIntentReport.
+                case "--self-intent-report": selfIntentReport = true; break;
+                // Rewrite mode: insert explicit `self :: IN/INOUT` into would-add procs,
+                // writing changed files into --out-dir. See runAddSelfIntent.
+                case "--add-self-intent":    addSelfIntent   = true; break;
+                // B1 read-only analysis: dead-code reachability from a root program
+                // (needs the root .foo), and/or Graphviz DOT call/use graphs (no root).
+                // See runCallGraphDce.
+                case "--dead-code-report":   dceRoot = Paths.get(argv[++i]); break;
+                case "--call-graph-report":  callGraphReport = true; break;
+                // B2 purge mode: emit only procedures reachable from the root program,
+                // dropping the dead ones, into --out-dir. See runPurge.
+                case "--purge-dead-code":    purgeRoot = Paths.get(argv[++i]); break;
+                default: throw new IllegalArgumentException("unknown arg: " + argv[i]);
+            }
+        }
+        // Batch inputs: an explicit list file (one .foo path per line, blanks/`#`
+        // ignored) and/or every *.foo under --foo-dir, in addition to any --foo.
+        if (listFile != null)
+            for (String ln : Files.readAllLines(listFile, StandardCharsets.UTF_8)) {
+                String s = ln.trim();
+                if (!s.isEmpty() && !s.startsWith("#")) fooPaths.add(Paths.get(s));
+            }
+        if (fooDir != null) {
+            java.io.File[] fs = fooDir.toFile().listFiles((d, n) -> n.endsWith(".foo"));
+            if (fs != null) { Arrays.sort(fs); for (java.io.File f : fs) fooPaths.add(f.toPath()); }
+        }
+        if (selfIntentReport || addSelfIntent) {
+            if (fooPaths.isEmpty())
+                throw new IllegalArgumentException("--self-intent needs --foo/--foo-dir/--foo-list inputs");
+            Path fd = (typesPath != null ? typesPath : fooPaths.get(0)).toAbsolutePath().getParent();
+            Path tp = typesPath != null ? typesPath : fd.resolve("types.foo");
+            TypeTable types = new TypeTable();
+            if (Files.exists(tp)) buildTypeTable(types, tp);
+            // The self-modification analysis needs EVERY module (self-method calls
+            // resolve across submodules), so scan all foofiles regardless of the input.
+            List<Path> allFoo = new ArrayList<>();
+            java.io.File[] fs = fd.toFile().listFiles((d, n) -> n.endsWith(".foo"));
+            if (fs != null) { Arrays.sort(fs); for (java.io.File f : fs) allFoo.add(f.toPath()); }
+            Map<String, Boolean> modifies = buildModifiesSelf(allFoo, types);
+            if (selfIntentReport) runSelfIntentReport(fooPaths, types, modifies);
+            else {
+                if (outDir == null)
+                    throw new IllegalArgumentException("--add-self-intent needs --out-dir");
+                runAddSelfIntent(fooPaths, outDir, types, modifies);
+            }
+            return;
+        }
+        if (dceRoot != null || callGraphReport) {
+            // Registries describe the MODULES (foofiles/), so derive their dir from
+            // --types (or --foofiles-dir), NOT from a run_XXX.foo root in runfiles/.
+            Path fd = foofilesDir != null ? foofilesDir
+                    : (typesPath != null ? typesPath : (dceRoot != null ? dceRoot : fooPaths.get(0)))
+                          .toAbsolutePath().getParent();
+            runCallGraphDce(fd, dceRoot, callGraphReport, outDir);
+            return;
+        }
+        if (purgeRoot != null) {
+            if (outDir == null)
+                throw new IllegalArgumentException("--purge-dead-code needs --out-dir");
+            Path fd = foofilesDir != null ? foofilesDir
+                    : (typesPath != null ? typesPath : purgeRoot).toAbsolutePath().getParent();
+            runPurge(fd, purgeRoot, outDir);
+            return;
+        }
+        if (fooPaths.isEmpty() || outDir == null)
+            throw new IllegalArgumentException("Usage: FooToFortran (--foo <f.foo> | --foo-dir <d> "
+                + "| --foo-list <file>)... --out-dir <d> [--types <types.foo>] [--foofiles-dir <d>]");
+        // The registries (types, cross-submodule methods, selfless, globals) describe
+        // the MODULES, which live alongside types.foo. A main program in runfiles/ is a
+        // consumer, so derive foofilesDir from the types file (not the input's parent),
+        // else a run_XXX.foo would scan runfiles/ and miss MOLECULE's submodules.
+        if (foofilesDir == null)
+            foofilesDir = (typesPath != null ? typesPath : fooPaths.get(0)).toAbsolutePath().getParent();
+        if (typesPath == null)   typesPath   = foofilesDir.resolve("types.foo");
+
+        // Registries are input-independent, so build them ONCE and reuse across every
+        // file in the batch (this is what makes --foo-dir a single-JVM speedup; the
+        // per-file emission below is byte-identical to running each file alone).
+        TypeTable types = new TypeTable();
+        if (Files.exists(typesPath)) buildTypeTable(types, typesPath);
+        Map<String, String[]> globals = buildGlobalTable(foofilesDir);
+        Map<String, Map<String, Set<String>>> subMethods = buildSubmethodTable(foofilesDir);
+        Set<String> selflessGlobal = buildSelflessMethods(foofilesDir);
+        Map<String, Set<String>> selflessByMod = buildSelflessByModule(foofilesDir);
+
+        Files.createDirectories(outDir);
+        int ok = 0, fail = 0;
+        // module-dependency graph (node = emitted Fortran module; edge = `use`),
+        // collected across the batch so a circular `use` — illegal Fortran, and the
+        // hazard auto-qualification could introduce — is caught here with a clear
+        // chain instead of as a cryptic gfortran "cannot open .mod" mid-build.
+        Map<String, Set<String>> useGraph = new TreeMap<>();
+        for (Path fooPath : fooPaths) {
+            try {
+                ModuleEmitter em = translateOne(fooPath, outDir, types, foofilesDir, globals, subMethods, selflessGlobal, selflessByMod);
+                ok++;
+                if (em != null && !em.isVirtual && em.selfModuleName != null)
+                    useGraph.put(em.selfModuleName, new java.util.TreeSet<>(em.useOnly.keySet()));
+            } catch (Exception e) {
+                fail++;
+                System.err.println("FAILED " + fooPath + ": " + e);
+            }
+        }
+        if (fooPaths.size() > 1) System.err.println("OK=" + ok + " FAIL=" + fail);
+        // Cycle check only makes sense with the whole module set in hand (batch mode).
+        int cyclic = fooPaths.size() > 1 ? reportUseCycles(useGraph) : 0;
+        if (fail > 0 || cyclic > 0) System.exit(1);
+    }
+
+    /** Read-only analysis for the "explicit self :: INOUT" goal. For every module
+     *  procedure in the given foofiles, classify its `self` and report the intent the
+     *  goal would make explicit — writing NO files. Everything is parse-tree driven
+     *  (the fragile part of the earlier sed attempt):
+     *    - function vs subroutine   : procHeader.procResult() != null
+     *    - selfless / routinal /    : Attrs.parse (routinal/functional self is a
+     *      functional / template /    procedure ARGUMENT, not a normal receiver)
+     *      inherited(get_from)
+     *    - an existing self decl    : a body localDecl naming `self`, with its intent
+     *      read from the decl's attr contexts (IN/OUT/INOUT)
+     *  Commented-out `! self :: INOUT` lines are on the hidden channel, so — unlike a
+     *  line grep — they are correctly ignored here. Dylan's default rule: a normal
+     *  self-method whose self intent is undeclared is INOUT for a subroutine, IN for a
+     *  function. Emits a TSV to stdout (one row per proc) + a summary to stderr. */
+    static void runSelfIntentReport(List<Path> fooPaths,
+                                    TypeTable types, Map<String, Boolean> modifies) throws IOException {
+        int nFunc = 0, nSub = 0, nSelfless = 0, nIfaceArg = 0, nExplicit = 0,
+            nImplicit = 0, nReview = 0, nPtr = 0;
+        Map<String, Integer> explicitByIntent = new TreeMap<>();
+        System.out.println("module\tfortran_module\tproc\tkind\tself_class\tself_decl\tinferred\twould_add");
+        for (Path p : fooPaths) {
+            Parsed pr;
+            try { pr = parseFile(p); }
+            catch (Exception e) { System.err.println("PARSE-FAIL " + p + ": " + e); continue; }
+            for (FooParser.ModuleDefContext mod
+                    : descendants(pr.tree, FooParser.ModuleDefContext.class)) {
+                String fooMod = mod.moduleName().getText();
+                String selfType = selfTypeOf(mod);
+                String fmod = fortranTypeName(fooMod) + "_MODULE";
+                for (FooParser.ProcDefContext pd
+                        : descendants(mod, FooParser.ProcDefContext.class)) {
+                    if (insideInterfaceBlock(pd)) continue;   // dummy-proc arg, not a module proc
+                    FooParser.ProcHeaderContext h = pd.procHeader();
+                    String name = h.IDENTIFIER().getText();
+                    Attrs a = Attrs.parse(h.procAttrs());
+                    boolean func = h.procResult() != null;
+                    if (func) nFunc++; else nSub++;
+                    String kind = func ? "function" : "subroutine";
+                    String selfClass, selfDecl, inferred, wouldAdd;
+                    if (a.selfless) {
+                        selfClass = "selfless"; nSelfless++;
+                        selfDecl = "n/a"; inferred = "n/a"; wouldAdd = "no";
+                    } else if (a.routinal || a.functional) {
+                        selfClass = "interface-arg"; nIfaceArg++;
+                        selfDecl = "n/a"; inferred = "n/a"; wouldAdd = "no";
+                    } else {
+                        selfClass = "normal";
+                        if (a.template)  selfClass = "normal(template)";
+                        if (a.inherited) selfClass = "normal(inherited)";
+                        List<String> selfAttrs = selfDeclAttrs(pd);  // null if self not declared
+                        // Plan B: intent from self-modification analysis. An impure
+                        // function (modifies self) is left implicit, not given IN.
+                        boolean modSelf = procModifiesSelf(pd, selfType, types, modifies);
+                        inferred = func ? (modSelf ? "impure" : "IN") : (modSelf ? "INOUT" : "IN");
+                        String intent = selfAttrs == null ? null : intentOf(selfAttrs);
+                        boolean ptr = selfAttrs != null && hasAttr(selfAttrs, "PTR");
+                        if (selfAttrs == null) {                     // self not declared here
+                            if (a.inherited || a.template) {
+                                // real body (hence the real self decl) lives in the parent /
+                                // at the inline site — decide there, not here.
+                                selfDecl = "implicit"; nReview++; wouldAdd = "review";
+                            } else if (func && modSelf) {
+                                selfDecl = "implicit"; nReview++; wouldAdd = "no(impure-fn)";
+                            } else {
+                                selfDecl = "implicit"; nImplicit++; wouldAdd = "yes";
+                            }
+                        } else if (intent != null) {                 // explicit intent already
+                            selfDecl = "explicit:" + intent + (ptr ? "+PTR" : "");
+                            inferred = intent;
+                            nExplicit++; explicitByIntent.merge(intent, 1, Integer::sum);
+                            wouldAdd = "no";
+                        } else if (ptr) {                            // `self :: PTR` — leave alone
+                            // Pointer self (create/destroy); PTR recorded, intent never added.
+                            selfDecl = "explicit:PTR"; inferred = "n/a";
+                            nPtr++; wouldAdd = "no(PTR)";
+                        } else {                                     // other attrs, no intent
+                            selfDecl = "explicit-no-intent:" + String.join("+", selfAttrs);
+                            nReview++; wouldAdd = "review";
+                        }
+                    }
+                    System.out.println(fooMod + "\t" + fmod + "\t" + name + "\t" + kind
+                        + "\t" + selfClass + "\t" + selfDecl + "\t" + inferred + "\t" + wouldAdd);
+                }
+            }
+        }
+        System.err.println("── self-intent report ──");
+        System.err.println("procs: functions=" + nFunc + " subroutines=" + nSub
+            + " total=" + (nFunc + nSub));
+        System.err.println("no self: selfless=" + nSelfless
+            + " interface-arg(routinal/functional)=" + nIfaceArg);
+        System.err.println("self intent explicit=" + nExplicit + " " + explicitByIntent);
+        System.err.println("self :: PTR (recorded, left alone)=" + nPtr);
+        System.err.println("self intent implicit -> would add: " + nImplicit
+            + "  (needs review: " + nReview + ")");
+    }
+
+    /** The declared attributes of `self` in a procedure body, or null if `self` is
+     *  not declared there. Each entry is an attr's raw source text (e.g. "IN", "PTR",
+     *  "allocatable"); an empty list means self is declared with a bare type / no
+     *  attrs (e.g. `self :: MOLECULE`). */
+    static List<String> selfDeclAttrs(FooParser.ProcDefContext pd) {
+        for (FooParser.ProcBodyContext b : pd.procBody()) {
+            FooParser.LocalDeclContext ld = b.localDecl();
+            if (ld == null) continue;
+            boolean isSelf = false;
+            for (FooParser.DeclNameContext dn : ld.identList().declName())
+                if (dn.name().getText().equalsIgnoreCase("self")) { isSelf = true; break; }
+            if (!isSelf) continue;
+            List<String> attrs = new ArrayList<>();
+            // `self :: PTR` parses PTR as a typeSpec (not an attr), so capture it too —
+            // else the pointer-self class would be missed. `self :: allocatable, OUT`
+            // likewise puts `allocatable` in the typeSpec and `OUT` in the attrSuffix.
+            if (ld.declTail().typeSpec() != null)
+                attrs.add(ld.declTail().typeSpec().getText());
+            for (FooParser.AttrContext at
+                    : descendants(ld.declTail(), FooParser.AttrContext.class))
+                attrs.add(at.getText());
+            return attrs;
+        }
+        return null;
+    }
+
+    /** The intent among a self-decl's attrs ("IN"/"OUT"/"INOUT"), or null if none.
+     *  Foo keywords are case-insensitive, so compare case-folded. */
+    static String intentOf(List<String> attrs) {
+        for (String s : attrs)
+            switch (s.toUpperCase(Locale.ROOT)) {
+                case "INOUT": return "INOUT";
+                case "IN":    return "IN";
+                case "OUT":   return "OUT";
+                default:      break;
+            }
+        return null;
+    }
+
+    /** True if `attrs` contains the named attribute (case-insensitive). */
+    static boolean hasAttr(List<String> attrs, String want) {
+        for (String s : attrs) if (s.equalsIgnoreCase(want)) return true;
+        return false;
+    }
+
+    /** True if this procDef is nested inside an `interface … end` block (a dummy
+     *  procedure argument of a routinal/functional proc), not a real module proc. */
+    static boolean insideInterfaceBlock(FooParser.ProcDefContext pd) {
+        for (ParseTree r = pd.getParent(); r != null; r = r.getParent())
+            if (r instanceof FooParser.InterfaceBlockContext) return true;
+        return false;
+    }
+
+    // -------------------------------------- self-modification analysis (plan B)
+
+    /** Methods that always modify self (allocate/deallocate/associate it). These are
+     *  usually get_from(OBJECT)-inherited, so their bodies aren't in the type's file;
+     *  seed them so a caller of `.create`/`.destroy`/… is seen to modify self. */
+    static final Set<String> KNOWN_MUTATORS = Set.of(
+        "create", "destroy", "nullify", "create_copy",
+        "destroy_ptr_part", "nullify_ptr_part", "create_ptr_part");
+
+    /** Method-name prefixes that write their receiver, so a call on a self component
+     *  (`.SCF_DIIS.read_keywords`, `.atom(a).set_flag`) modifies self. Deliberately the
+     *  clearly-mutating verbs; read/input is covered here too. */
+    static final List<String> MUTATOR_PREFIXES = List.of(
+        "read", "set", "update", "add", "append", "clear", "reset",
+        "remove", "insert", "delete", "expand", "shrink", "put_back");
+
+    /** The Foo type whose method this module defines — the head before a submodule
+     *  dot (MOLECULE.SCF -> MOLECULE), i.e. the type of `self`. */
+    static String selfTypeOf(FooParser.ModuleDefContext mod) {
+        String m = mod.moduleName().getText();
+        return m.contains(".") ? m.substring(0, m.indexOf('.')) : m;
+    }
+
+    /** True if the proc body DIRECTLY writes self — an assignment (`=`/`=>`) whose
+     *  left side is `self…` or a self component (`.x`, i.e. self%x). */
+    static boolean directModifiesSelf(FooParser.ProcDefContext pd) {
+        for (FooParser.SimpleStmtContext st : descendants(pd, FooParser.SimpleStmtContext.class)) {
+            if (st.EQUAL() == null && st.ARROW() == null) continue;   // assignments only
+            FooParser.PostfixContext lhs = st.postfix();
+            if (lhs == null || lhs.head() == null || lhs.head().callHead() == null) continue;
+            FooParser.CallHeadContext ch = lhs.head().callHead();
+            // `.x = …` (self%x), including `.x(i) = …` / `.x%y = …` (head is `.x`)
+            if (ch.DOT() != null && ch.name() != null
+                    && ch.DCOLON() == null && ch.COLON() == null) return true;
+            // `self = …` / `self%… = …` / `self(…) = …`
+            if (ch.DOT() == null && ch.name() != null
+                    && ch.name().getText().equalsIgnoreCase("self")) return true;
+        }
+        return readsIntoSelf(pd);
+    }
+
+    /** True if the proc reads input INTO a self component — `stdin.read_quantity(.length)`
+     *  / `stdin.read(.label)` -> read_*(…, self%length): the self component is the OUTPUT
+     *  argument of a read-family call, so self is modified. (directModifiesSelf only sees
+     *  `self%x = …` assignments; input reads write self without an assignment.) */
+    static boolean readsIntoSelf(FooParser.ProcDefContext pd) {
+        for (FooParser.PostfixContext pf : descendants(pd, FooParser.PostfixContext.class)) {
+            if (pf.head() == null) continue;
+            FooParser.CallHeadContext ch0 = pf.head().callHead();
+            String method = ch0 != null && ch0.name() != null
+                ? ch0.name().getText().replace("?", "") : null;
+            // Head is a self component (`.X`): a read-family / mutator method called ON it
+            // (`.SCF_DIIS.read_keywords`, `.grid.create`) writes that part of self.
+            boolean headSelfComp = ch0 != null && ch0.DOT() != null && ch0.name() != null
+                && ch0.DCOLON() == null && ch0.COLON() == null;
+            for (FooParser.TrailerContext tr : pf.trailer()) {
+                if (tr.LPAREN() != null) {
+                    // read-family call carrying a self component as an OUTPUT arg
+                    if (method != null && method.toLowerCase(Locale.ROOT).startsWith("read")
+                            && tr.argList() != null && argListHasSelfComponent(tr.argList()))
+                        return true;
+                } else if (!tr.name().isEmpty()) {
+                    String tn = tr.name(0).getText().replace("?", "");
+                    String tnl = tn.toLowerCase(Locale.ROOT);
+                    if (headSelfComp && (KNOWN_MUTATORS.contains(tnl)
+                            || MUTATOR_PREFIXES.stream().anyMatch(tnl::startsWith)))
+                        return true;
+                    method = tn;   // `.method` selector for a following call
+                }
+            }
+        }
+        return false;
+    }
+
+    /** True if any argument is a self component (`.x`) or `self` itself. */
+    static boolean argListHasSelfComponent(FooParser.ArgListContext al) {
+        for (FooParser.ArgContext ar : al.arg())
+            for (FooParser.PostfixContext pf : descendants(ar, FooParser.PostfixContext.class)) {
+                if (pf.head() == null || pf.head().callHead() == null) continue;
+                FooParser.CallHeadContext ch = pf.head().callHead();
+                if (ch.DOT() != null && ch.name() != null
+                        && ch.DCOLON() == null && ch.COLON() == null) return true;
+                if (ch.DOT() == null && ch.name() != null
+                        && ch.name().getText().equalsIgnoreCase("self")) return true;
+            }
+        return false;
+    }
+
+    /** The self-methods this proc calls: `.m(…)` / `.m` (unless m is a self component),
+     *  and the qualifier-less colon forms (`.::m`, `.:m`, `::m`, `:m`) which are all
+     *  calls into self's own (sub)module. Used to propagate modification transitively. */
+    static Set<String> selfMethodCalls(FooParser.ProcDefContext pd, String selfType, TypeTable types) {
+        Set<String> calls = new java.util.HashSet<>();
+        for (FooParser.PostfixContext pf : descendants(pd, FooParser.PostfixContext.class)) {
+            if (pf.head() == null || pf.head().callHead() == null) continue;
+            FooParser.CallHeadContext ch = pf.head().callHead();
+            FooParser.NameContext nm = ch.name();
+            if (nm == null) continue;
+            String name = nm.getText().replace("?", "");
+            boolean colon = ch.DCOLON() != null || ch.COLON() != null;
+            if (colon) {
+                if (ch.qualifier() == null) calls.add(name);   // self (sub)module call
+            } else if (ch.DOT() != null) {
+                // `.m` — a component read (skip) or a self-method call
+                if (!types.isComponent(selfType, name)) calls.add(name);
+            }
+        }
+        return calls;
+    }
+
+    /** Name-level "does this method modify self?" over ALL foofiles, by fixpoint:
+     *  a method modifies self if it does so directly, or calls a self-method that does
+     *  (seeded with KNOWN_MUTATORS). Keyed `canon(selfType)#lowercasename`; overloads of
+     *  a name are OR-merged (conservative). */
+    static Map<String, Boolean> buildModifiesSelf(List<Path> fooPaths, TypeTable types) {
+        Map<String, Boolean> direct = new HashMap<>();
+        Map<String, Set<String>> calls = new HashMap<>();
+        Set<String> typesSeen = new java.util.HashSet<>();
+        for (Path p : fooPaths) {
+            Parsed pr;
+            try { pr = parseFile(p); } catch (Exception e) { continue; }
+            for (FooParser.ModuleDefContext mod
+                    : descendants(pr.tree, FooParser.ModuleDefContext.class)) {
+                String stFoo = selfTypeOf(mod), st = canon(stFoo);
+                typesSeen.add(st);
+                for (FooParser.ProcDefContext pd
+                        : descendants(mod, FooParser.ProcDefContext.class)) {
+                    if (insideInterfaceBlock(pd) || pd.procHeader().IDENTIFIER() == null) continue;
+                    String key = st + "#" + pd.procHeader().IDENTIFIER().getText().toLowerCase(Locale.ROOT);
+                    // A proc whose self is ALREADY declared INOUT/OUT modifies self by
+                    // contract (its body may not show it — e.g. it hands self to an
+                    // external inout arg like LAPACK dgesdd). Seed it so callers that
+                    // invoke it via self (`.m`) are seen to modify self too.
+                    List<String> sa = selfDeclAttrs(pd);
+                    String declInt = sa == null ? null : intentOf(sa);
+                    boolean declaredMut = "INOUT".equals(declInt) || "OUT".equals(declInt);
+                    direct.merge(key, directModifiesSelf(pd) || declaredMut, (o, n) -> o || n);
+                    calls.computeIfAbsent(key, k -> new java.util.HashSet<>())
+                         .addAll(selfMethodCalls(pd, stFoo, types));
+                }
+            }
+        }
+        Map<String, Boolean> modifies = new HashMap<>(direct);
+        for (String st : typesSeen)
+            for (String km : KNOWN_MUTATORS) modifies.put(st + "#" + km, true);
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            for (Map.Entry<String, Set<String>> e : calls.entrySet()) {
+                if (Boolean.TRUE.equals(modifies.get(e.getKey()))) continue;
+                String st = e.getKey().substring(0, e.getKey().indexOf('#'));
+                for (String m : e.getValue()) {
+                    String ml = m.toLowerCase(Locale.ROOT);
+                    if (KNOWN_MUTATORS.contains(ml) || Boolean.TRUE.equals(modifies.get(st + "#" + ml))) {
+                        modifies.put(e.getKey(), true); changed = true; break;
+                    }
+                }
+            }
+        }
+        return modifies;
+    }
+
+    /** Whether a specific proc modifies self: direct write, or a call to a self-method
+     *  that (transitively) modifies self. Per-proc, using the name-level map. */
+    static boolean procModifiesSelf(FooParser.ProcDefContext pd, String selfType,
+                                    TypeTable types, Map<String, Boolean> modifies) {
+        if (directModifiesSelf(pd)) return true;
+        String st = canon(selfType);
+        for (String m : selfMethodCalls(pd, selfType, types)) {
+            String ml = m.toLowerCase(Locale.ROOT);
+            if (KNOWN_MUTATORS.contains(ml) || Boolean.TRUE.equals(modifies.get(st + "#" + ml)))
+                return true;
+        }
+        return false;
+    }
+
+    /** True if a FUNCTION declares any dummy argument with intent OUT or INOUT — an
+     *  "impure" function that mutates an argument (for the deferred PURE/IMPURE pass). */
+    static boolean funcHasOutInoutArg(FooParser.ProcDefContext pd) {
+        Set<String> argNames = new java.util.HashSet<>();
+        FooParser.ProcHeaderContext h = pd.procHeader();
+        if (h.procArgs() != null && h.procArgs().identList() != null)
+            for (FooParser.DeclNameContext dn : h.procArgs().identList().declName())
+                argNames.add(dn.name().getText().replace("?", ""));
+        for (FooParser.ProcBodyContext b : pd.procBody()) {
+            if (b.localDecl() == null) continue;
+            boolean namesAnArg = false;
+            for (FooParser.DeclNameContext dn : b.localDecl().identList().declName())
+                if (argNames.contains(dn.name().getText().replace("?", ""))) { namesAnArg = true; break; }
+            if (!namesAnArg) continue;
+            for (FooParser.AttrContext at
+                    : descendants(b.localDecl().declTail(), FooParser.AttrContext.class))
+                if (at.OUT() != null || at.INOUT() != null) return true;
+        }
+        return false;
+    }
+
+    /** Plan B self intent for a proc — "IN"/"INOUT", or null to add nothing. A clean add
+     *  case: a normal self-method (not selfless/routinal/functional), own body (not
+     *  get_from-inherited, not a template), no existing self decl. Then:
+     *    subroutine -> INOUT if it modifies self else IN;
+     *    function   -> IN if pure (does not modify self); a self-modifying function is
+     *                  left implicit (null) and flagged impure for a hand fix. */
+    static String selfIntentToAdd(FooParser.ProcDefContext pd, String selfType,
+                                  TypeTable types, Map<String, Boolean> modifies) {
+        if (insideInterfaceBlock(pd)) return null;
+        FooParser.ProcHeaderContext h = pd.procHeader();
+        Attrs a = Attrs.parse(h.procAttrs());
+        if (a.selfless || a.routinal || a.functional || a.inherited || a.template) return null;
+        if (selfDeclAttrs(pd) != null) return null;   // self already declared here
+        boolean mod = procModifiesSelf(pd, selfType, types, modifies);
+        if (h.procResult() != null) return mod ? null : "IN";   // impure func -> leave implicit
+        return mod ? "INOUT" : "IN";
+    }
+
+    /** The start token of a procedure body's first real element (a decl or statement,
+     *  skipping blank lines and body comments, which are on the hidden channel), or
+     *  null for an empty body. This is where an inserted `self :: …` decl goes — right
+     *  before the first code line, i.e. after the header and its doc comments. */
+    static org.antlr.v4.runtime.Token firstBodyToken(FooParser.ProcDefContext pd) {
+        for (FooParser.ProcBodyContext b : pd.procBody())
+            if (b.localDecl() != null || b.stmt() != null || b.dataStmt() != null
+                    || b.useStmt() != null || b.implicitStmt() != null
+                    || b.interfaceBlock() != null)
+                return b.getStart();
+        return null;
+    }
+
+    /** Rewrite the given foofiles, inserting an explicit `self :: IN` / `self :: INOUT`
+     *  declaration into every clean would-add proc (see selfIntentToAdd). The new line
+     *  is placed as the first body line — matching the column of the first existing
+     *  code line — so it sits after the header and its doc comments, exactly where the
+     *  hand-written self decls already live. Parse-tree driven; only files with at
+     *  least one insertion are written (into outDir, keeping the original filename),
+     *  so a plain diff shows precisely the added lines. */
+    static void runAddSelfIntent(List<Path> fooPaths, Path outDir,
+                                 TypeTable types, Map<String, Boolean> modifies) throws IOException {
+        Files.createDirectories(outDir);
+        int filesChanged = 0, procsAdded = 0;
+        Map<String, Integer> byIntent = new TreeMap<>();
+        // impure functions (for the deferred PURE/IMPURE pass): TSV rows to stdout.
+        System.out.println("module\tfunction\treason");
+        int impureCount = 0;
+        for (Path p : fooPaths) {
+            Parsed pr;
+            try { pr = parseFile(p); }
+            catch (Exception e) { System.err.println("PARSE-FAIL " + p + ": " + e); continue; }
+            // Each edit: {0-based line index to insert before, text, intent}.
+            List<Object[]> edits = new ArrayList<>();
+            for (FooParser.ModuleDefContext mod
+                    : descendants(pr.tree, FooParser.ModuleDefContext.class)) {
+                String selfType = selfTypeOf(mod);
+                for (FooParser.ProcDefContext pd
+                        : descendants(mod, FooParser.ProcDefContext.class)) {
+                    if (insideInterfaceBlock(pd) || pd.procHeader().IDENTIFIER() == null) continue;
+                    // Flag impure functions (modify self and/or an OUT/INOUT arg).
+                    if (pd.procHeader().procResult() != null) {
+                        boolean modSelf = procModifiesSelf(pd, selfType, types, modifies);
+                        boolean outArg  = funcHasOutInoutArg(pd);
+                        if (modSelf || outArg) {
+                            String reason = (modSelf ? "modifies-self" : "")
+                                + (modSelf && outArg ? "+" : "") + (outArg ? "out/inout-arg" : "");
+                            System.out.println(mod.moduleName().getText() + "\t"
+                                + pd.procHeader().IDENTIFIER().getText() + "\t" + reason);
+                            impureCount++;
+                        }
+                    }
+                    String intent = selfIntentToAdd(pd, selfType, types, modifies);
+                    if (intent == null) continue;
+                    org.antlr.v4.runtime.Token t = firstBodyToken(pd);
+                    int line1, col;
+                    if (t != null) { line1 = t.getLine(); col = t.getCharPositionInLine(); }
+                    else {   // empty body: indent one level (3 spaces) past the header
+                        org.antlr.v4.runtime.Token e = pd.endKw().getStart();
+                        line1 = e.getLine(); col = e.getCharPositionInLine() + 3;
+                    }
+                    edits.add(new Object[]{ line1 - 1, sp(col) + "self :: " + intent, intent });
+                }
+            }
+            if (edits.isEmpty()) continue;
+            List<String> lines = new ArrayList<>(Files.readAllLines(p, StandardCharsets.UTF_8));
+            edits.sort((x, y) -> Integer.compare((int) y[0], (int) x[0]));   // insert bottom-up
+            for (Object[] ed : edits) {
+                lines.add((int) ed[0], (String) ed[1]);
+                procsAdded++; byIntent.merge((String) ed[2], 1, Integer::sum);
+            }
+            Files.write(outDir.resolve(p.getFileName()), lines, StandardCharsets.UTF_8);
+            filesChanged++;
+            System.err.println("  " + p.getFileName() + ": +" + edits.size());
+        }
+        System.err.println("── add-self-intent (plan B) ── files=" + filesChanged
+            + " procs=" + procsAdded + " " + byIntent + "  impure-functions=" + impureCount);
+    }
+
+    /** Normalise a recorded call symbol to its generic base name (the DCE/graph node
+     *  granularity). Calls resolve to the generic `name_`; overloads are `name_0/1/…`;
+     *  by-name references are the specific `name`. All collapse to `name` so a single
+     *  node represents every overload of a procedure name in a module.
+     *    trace_product_with_  -> trace_product_with   (generic, trailing '_')
+     *    trace_product_with_2 -> trace_product_with   (overload, '_'<digits>)
+     *    create               -> create               (by-name specific)             */
+    /** Canonical call-graph node id `MODULE:method`. Fortran is case-insensitive but Foo
+     *  preserves identifier case (e.g. `reset_IO_status` defined, `reset_io_status`
+     *  called), so the method part is lower-cased to make caller / callee / existsNode
+     *  keys match — otherwise a case-differing call misses its target and prunes it. */
+    static String node(String fortranMod, String base) {
+        return fortranMod + ":" + base.toLowerCase(Locale.ROOT);
+    }
+
+    static String genericBase(String s) {
+        if (s.endsWith("_")) return s.substring(0, s.length() - 1);
+        int u = s.lastIndexOf('_');
+        if (u > 0 && u + 1 < s.length()) {
+            boolean allDigits = true;
+            for (int i = u + 1; i < s.length(); i++)
+                if (!Character.isDigit(s.charAt(i))) { allDigits = false; break; }
+            if (allDigits) return s.substring(0, u);
+        }
+        return s;
+    }
+
+    /** Modules pulled in wholesale (`use X_MODULE`, no `only:`); their procedures are
+     *  never candidates for pruning and their inbound calls are not edge-recorded. */
+    static boolean alwaysKeepModule(String mod) {
+        return mod == null || mod.equals("TYPES_MODULE") || mod.equals("SYSTEM_MODULE");
+    }
+
+    /** B1 (dead-code / call-graph report). Emits every module (+ an optional root
+     *  program) in-memory with call-graph capture on — NO .F90/.int/.use written —
+     *  then: (a) if `root` given, computes procedure reachability from the program's
+     *  entry calls and prints a per-module live/dead report; (b) if `doDot`, writes
+     *  Graphviz DOT files (proc call graph; module use graph with submodules collapsed
+     *  to their parent; expanded submodule use graph) into `outDir` (or cwd). */
+    static void runCallGraphDce(Path foofilesDir, Path root, boolean doDot, Path outDir) throws Exception {
+        Path typesPath = foofilesDir.resolve("types.foo");
+        TypeTable types = new TypeTable();
+        if (Files.exists(typesPath)) buildTypeTable(types, typesPath);
+        Map<String, String[]> globals = buildGlobalTable(foofilesDir);
+        Map<String, Map<String, Set<String>>> subMethods = buildSubmethodTable(foofilesDir);
+        Set<String> selflessGlobal = buildSelflessMethods(foofilesDir);
+        Map<String, Set<String>> selflessByMod = buildSelflessByModule(foofilesDir);
+
+        List<Path> fooPaths = new ArrayList<>();
+        java.io.File[] fs = foofilesDir.toFile().listFiles((d, n) -> n.endsWith(".foo"));
+        if (fs != null) { Arrays.sort(fs); for (java.io.File f : fs) fooPaths.add(f.toPath()); }
+        Path rootAbs = root == null ? null : root.toAbsolutePath().normalize();
+        if (rootAbs != null) {
+            boolean present = false;
+            for (Path p : fooPaths) if (p.toAbsolutePath().normalize().equals(rootAbs)) present = true;
+            if (!present) fooPaths.add(root);
+        }
+
+        // ---- emit every file with call-graph capture (no files written) ----
+        List<ModuleEmitter> ems = new ArrayList<>();
+        Map<String, Set<String>> edges = new HashMap<>();     // "MOD:base" -> {"MOD:base"}
+        Set<String> existsNode = new LinkedHashSet<>();       // every emittable proc node
+        ModuleEmitter rootEm = null;
+        int done = 0;
+        for (Path p : fooPaths) {
+            ModuleEmitter em;
+            try {
+                em = new ModuleEmitter(types, parseFile(p), p, foofilesDir,
+                        globals, subMethods, selflessGlobal, selflessByMod);
+                em.callEdges = new LinkedHashMap<>();
+                em.emit();
+            } catch (Exception e) {
+                System.err.println("skip " + p.getFileName() + ": " + e);
+                continue;
+            }
+            if (em.isVirtual) continue;
+            ems.add(em);
+            if (rootAbs != null && p.toAbsolutePath().normalize().equals(rootAbs)) rootEm = em;
+            for (Map.Entry<String, Set<String>> e : em.callEdges.entrySet())
+                edges.computeIfAbsent(e.getKey(), k -> new LinkedHashSet<>()).addAll(e.getValue());
+            if (!em.isProgram && em.selfModuleName != null) {
+                for (String base : em.interfaceProcs.keySet())
+                    existsNode.add(node(em.selfModuleName, base));
+                // an explicit generic `interface NAME m1 m2 …` reaches its members
+                for (Map.Entry<String, List<String>> al : em.explicitAliases.entrySet())
+                    for (String mem : al.getValue())
+                        edges.computeIfAbsent(node(em.selfModuleName, al.getKey()), k -> new LinkedHashSet<>())
+                             .add(node(em.selfModuleName, mem));
+            }
+            if (++done % 50 == 0) System.err.println("  … emitted " + done + "/" + fooPaths.size());
+        }
+
+        // ---- reachability from the root program (BFS over the call graph) ----
+        Set<String> reached = null;
+        if (rootAbs != null) {
+            if (rootEm == null) {
+                System.err.println("WARNING: root " + root + " not found/parsed; skipping DCE report");
+            } else {
+                reached = new java.util.HashSet<>();
+                java.util.Deque<String> q = new java.util.ArrayDeque<>();
+                for (Set<String> outs : rootEm.callEdges.values()) q.addAll(outs);
+                while (!q.isEmpty()) {
+                    String n = q.poll();
+                    if (!reached.add(n)) continue;
+                    Set<String> outs = edges.get(n);
+                    if (outs != null) q.addAll(outs);
+                }
+                reportDce(existsNode, reached, outDir);
+            }
+        }
+
+        if (doDot) {
+            Path dir = outDir != null ? outDir : Paths.get(".");
+            Files.createDirectories(dir);
+            writeDotFiles(ems, edges, existsNode, dir, reached);
+        }
+    }
+
+    /** Per-module live/dead procedure counts + the dead list. `reached` holds the
+     *  reachable "MOD:base" nodes; a proc is dead iff it exists, is not reached, and is
+     *  not in an always-keep (wholesale-use) module. The TSV goes to
+     *  `<outDir>/dead_code_report.tsv` when outDir is given (so `make callgraphs`
+     *  doesn't flood the terminal), else to stdout; the one-line summary always to
+     *  stderr. */
+    static void reportDce(Set<String> existsNode, Set<String> reached, Path outDir) throws IOException {
+        Map<String, int[]> perMod = new TreeMap<>();          // module -> {total, live, dead}
+        List<String> dead = new ArrayList<>();
+        for (String node : existsNode) {
+            int c = node.indexOf(':');
+            String mod = node.substring(0, c);
+            int[] t = perMod.computeIfAbsent(mod, k -> new int[3]);
+            t[0]++;
+            boolean live = reached.contains(node) || alwaysKeepModule(mod);
+            if (live) t[1]++; else { t[2]++; dead.add(node); }
+        }
+        int total = 0, live = 0, deadN = 0;
+        StringBuilder sb = new StringBuilder("module\ttotal\tlive\tdead\n");
+        for (Map.Entry<String, int[]> e : perMod.entrySet()) {
+            int[] t = e.getValue();
+            total += t[0]; live += t[1]; deadN += t[2];
+            sb.append(e.getKey()).append('\t').append(t[0]).append('\t').append(t[1]).append('\t').append(t[2]).append('\n');
+        }
+        java.util.Collections.sort(dead);
+        sb.append("# --- dead procedures (").append(deadN).append(") ---\n");
+        for (String d : dead) sb.append("DEAD\t").append(d).append('\n');
+        if (outDir != null) {
+            Files.createDirectories(outDir);
+            Files.writeString(outDir.resolve("dead_code_report.tsv"), sb.toString(), StandardCharsets.UTF_8);
+        } else {
+            System.out.print(sb);
+        }
+        System.err.println("── dead-code report ── procs=" + total + " live=" + live
+            + " dead=" + deadN + " (" + (total == 0 ? 0 : deadN * 100 / total) + "% prunable)"
+            + (outDir != null ? " -> " + outDir.resolve("dead_code_report.tsv") : ""));
+    }
+
+    /** Write the three Graphviz DOT graphs. Node ids/labels are quoted (they contain
+     *  ':' and may contain '?'). If `reached` is non-null, call-graph nodes are shaded
+     *  live (green) / dead (grey). */
+    static void writeDotFiles(List<ModuleEmitter> ems, Map<String, Set<String>> edges,
+                              Set<String> existsNode, Path dir, Set<String> reached) throws IOException {
+        // module -> parent module (submodule MOLECULE.BASE -> MOLECULE_MODULE)
+        Map<String, String> parent = new LinkedHashMap<>();
+        Map<String, List<String>> family = new LinkedHashMap<>();   // parent -> member modules
+        Map<String, String> modOfFoo = new LinkedHashMap<>();
+        for (ModuleEmitter em : ems) {
+            if (em.isProgram || em.selfModuleName == null) continue;
+            String fm = em.fooModuleName;
+            String parentType = fm.contains(".") ? fm.substring(0, fm.indexOf('.')) : fm;
+            String pmod = fortranTypeName(parentType) + "_MODULE";
+            parent.put(em.selfModuleName, pmod);
+            family.computeIfAbsent(pmod, k -> new ArrayList<>()).add(em.selfModuleName);
+            modOfFoo.put(em.selfModuleName, fm);
+        }
+
+        // (1) proc-level call graph, clustered by module, coloured by reachability
+        StringBuilder g = new StringBuilder();
+        g.append("// Foo procedure call graph. Large: render with sfdp/fdp, e.g.\n");
+        g.append("//   sfdp -Goverlap=prism -Tsvg call_graph.dot -o call_graph.svg\n");
+        g.append("digraph call_graph {\n  graph [rankdir=LR];\n  node [shape=box, style=filled, fillcolor=white, fontsize=9];\n");
+        Map<String, List<String>> byMod = new TreeMap<>();
+        for (String n : existsNode) byMod.computeIfAbsent(n.substring(0, n.indexOf(':')), k -> new ArrayList<>()).add(n);
+        for (Map.Entry<String, List<String>> e : byMod.entrySet()) {
+            g.append("  subgraph \"cluster_").append(e.getKey()).append("\" {\n");
+            g.append("    label=\"").append(e.getKey()).append("\"; color=lightgrey;\n");
+            for (String n : e.getValue()) {
+                String base = n.substring(n.indexOf(':') + 1);
+                String fill = reached == null ? "white"
+                        : (reached.contains(n) || alwaysKeepModule(e.getKey()) ? "palegreen" : "grey85");
+                g.append("    \"").append(n).append("\" [label=\"").append(base)
+                 .append("\", fillcolor=").append(fill).append("];\n");
+            }
+            g.append("  }\n");
+        }
+        for (Map.Entry<String, Set<String>> e : edges.entrySet()) {
+            if (!existsNode.contains(e.getKey())) continue;             // only proc->proc edges
+            for (String to : e.getValue())
+                if (existsNode.contains(to))
+                    g.append("  \"").append(e.getKey()).append("\" -> \"").append(to).append("\";\n");
+        }
+        g.append("}\n");
+        Files.writeString(dir.resolve("call_graph.dot"), g.toString(), StandardCharsets.UTF_8);
+
+        // (2) module use graph, submodules collapsed to their parent node
+        Set<String> collapsed = new java.util.TreeSet<>();
+        for (ModuleEmitter em : ems) {
+            if (em.isProgram || em.selfModuleName == null) continue;
+            String from = parent.getOrDefault(em.selfModuleName, em.selfModuleName);
+            for (String u : em.useOnly.keySet()) {
+                String to = parent.getOrDefault(u, u);
+                if (!from.equals(to)) collapsed.add("  \"" + from + "\" -> \"" + to + "\";");
+            }
+        }
+        StringBuilder m = new StringBuilder("digraph module_use {\n  rankdir=LR;\n  node [shape=box, style=rounded];\n");
+        for (String line : collapsed) m.append(line).append('\n');
+        m.append("}\n");
+        Files.writeString(dir.resolve("module_use.dot"), m.toString(), StandardCharsets.UTF_8);
+
+        // (3) expanded submodule use graph: only families with submodules, clustered
+        StringBuilder s = new StringBuilder("digraph submodule_use {\n  rankdir=LR;\n  node [shape=box, fontsize=9];\n");
+        Set<String> subFamilyMods = new LinkedHashSet<>();
+        for (Map.Entry<String, List<String>> fe : family.entrySet()) {
+            if (fe.getValue().size() < 2) continue;                    // not split into submodules
+            s.append("  subgraph \"cluster_").append(fe.getKey()).append("\" {\n");
+            s.append("    label=\"").append(fe.getKey()).append("\"; color=lightblue;\n");
+            for (String mod : fe.getValue()) {
+                subFamilyMods.add(mod);
+                s.append("    \"").append(mod).append("\" [label=\"").append(modOfFoo.getOrDefault(mod, mod)).append("\"];\n");
+            }
+            s.append("  }\n");
+        }
+        Set<String> subEdges = new java.util.TreeSet<>();
+        for (ModuleEmitter em : ems) {
+            if (em.isProgram || em.selfModuleName == null) continue;
+            if (!subFamilyMods.contains(em.selfModuleName)) continue;
+            for (String u : em.useOnly.keySet())
+                if (subFamilyMods.contains(u) && !u.equals(em.selfModuleName))
+                    subEdges.add("  \"" + em.selfModuleName + "\" -> \"" + u + "\";");
+        }
+        for (String line : subEdges) s.append(line).append('\n');
+        s.append("}\n");
+        Files.writeString(dir.resolve("submodule_use.dot"), s.toString(), StandardCharsets.UTF_8);
+
+        System.err.println("── call-graph report ── wrote call_graph.dot, module_use.dot, "
+            + "submodule_use.dot to " + dir);
+    }
+
+    /** B2 dead-code purge. Two passes over (all foofiles + the root program):
+     *  pass 1 emits every file in-memory with call-graph capture on and computes the
+     *  set of procedures reachable from the root program's entry calls; pass 2 re-emits
+     *  each file with the DEAD procedures dropped (translateOne's deadNodes), writing
+     *  the pruned .F90/.int/.use into outDir. The result is a self-consistent,
+     *  compilable Fortran tree holding only code reachable from that one executable.
+     *  Wholesale-use modules (TYPES/SYSTEM) are never pruned. */
+    static void runPurge(Path foofilesDir, Path root, Path outDir) throws Exception {
+        Path typesPath = foofilesDir.resolve("types.foo");
+        TypeTable types = new TypeTable();
+        if (Files.exists(typesPath)) buildTypeTable(types, typesPath);
+        Map<String, String[]> globals = buildGlobalTable(foofilesDir);
+        Map<String, Map<String, Set<String>>> subMethods = buildSubmethodTable(foofilesDir);
+        Set<String> selflessGlobal = buildSelflessMethods(foofilesDir);
+        Map<String, Set<String>> selflessByMod = buildSelflessByModule(foofilesDir);
+
+        List<Path> fooPaths = new ArrayList<>();
+        java.io.File[] fs = foofilesDir.toFile().listFiles((d, n) -> n.endsWith(".foo"));
+        if (fs != null) { Arrays.sort(fs); for (java.io.File f : fs) fooPaths.add(f.toPath()); }
+        Path rootAbs = root.toAbsolutePath().normalize();
+        boolean present = false;
+        for (Path p : fooPaths) if (p.toAbsolutePath().normalize().equals(rootAbs)) present = true;
+        if (!present) fooPaths.add(root);
+
+        // ---- pass 1: build the call graph + reachable set ----
+        Map<String, Set<String>> edges = new HashMap<>();
+        Set<String> existsNode = new LinkedHashSet<>();
+        ModuleEmitter rootEm = null;
+        for (Path p : fooPaths) {
+            ModuleEmitter em;
+            try {
+                em = new ModuleEmitter(types, parseFile(p), p, foofilesDir,
+                        globals, subMethods, selflessGlobal, selflessByMod);
+                em.callEdges = new LinkedHashMap<>();
+                em.emit();
+            } catch (Exception e) { System.err.println("skip " + p.getFileName() + ": " + e); continue; }
+            if (em.isVirtual) continue;
+            if (p.toAbsolutePath().normalize().equals(rootAbs)) rootEm = em;
+            for (Map.Entry<String, Set<String>> e : em.callEdges.entrySet())
+                edges.computeIfAbsent(e.getKey(), k -> new LinkedHashSet<>()).addAll(e.getValue());
+            if (!em.isProgram && em.selfModuleName != null) {
+                for (String base : em.interfaceProcs.keySet())
+                    existsNode.add(node(em.selfModuleName, base));
+                for (Map.Entry<String, List<String>> al : em.explicitAliases.entrySet())
+                    for (String mem : al.getValue())
+                        edges.computeIfAbsent(node(em.selfModuleName, al.getKey()), k -> new LinkedHashSet<>())
+                             .add(node(em.selfModuleName, mem));
+            }
+        }
+        if (rootEm == null) throw new IllegalArgumentException("purge root " + root + " not found/parsed");
+        Set<String> reached = new java.util.HashSet<>();
+        java.util.Deque<String> q = new java.util.ArrayDeque<>();
+        for (Set<String> outs : rootEm.callEdges.values()) q.addAll(outs);
+        while (!q.isEmpty()) {
+            String n = q.poll();
+            if (!reached.add(n)) continue;
+            Set<String> outs = edges.get(n);
+            if (outs != null) q.addAll(outs);
+        }
+        Set<String> deadNodes = new java.util.HashSet<>();
+        for (String node : existsNode) {
+            String mod = node.substring(0, node.indexOf(':'));
+            if (!reached.contains(node) && !alwaysKeepModule(mod)) deadNodes.add(node);
+        }
+
+        // ---- pass 2: re-emit with the dead procedures dropped ----
+        Files.createDirectories(outDir);
+        int ok = 0, fail = 0;
+        Map<String, Set<String>> useGraph = new TreeMap<>();
+        for (Path p : fooPaths) {
+            try {
+                ModuleEmitter em = translateOne(p, outDir, types, foofilesDir,
+                        globals, subMethods, selflessGlobal, selflessByMod, deadNodes);
+                ok++;
+                if (em != null && !em.isVirtual && em.selfModuleName != null)
+                    useGraph.put(em.selfModuleName, new java.util.TreeSet<>(em.useOnly.keySet()));
+            } catch (Exception e) { fail++; System.err.println("FAILED " + p + ": " + e); }
+        }
+        int cyclic = reportUseCycles(useGraph);
+        System.err.println("── purge-dead-code ── root=" + root.getFileName() + " files=" + ok
+            + " fail=" + fail + " dropped=" + deadNodes.size() + "/" + existsNode.size()
+            + " (" + (existsNode.isEmpty() ? 0 : deadNodes.size() * 100 / existsNode.size()) + "% pruned)");
+        if (fail > 0 || cyclic > 0) System.exit(1);
+    }
+
+    /** Translate one .foo file, write its .F90/.int/.use into outDir, and return the
+     *  emitter (so the batch driver can read its module name + `use` edges for the
+     *  cycle check). Uses the shared (pre-built) registries; behaviour is identical
+     *  whether called once or as part of a --foo-dir batch. */
+    static ModuleEmitter translateOne(Path fooPath, Path outDir, TypeTable types, Path foofilesDir,
+                             Map<String, String[]> globals,
+                             Map<String, Map<String, Set<String>>> subMethods,
+                             Set<String> selflessGlobal,
+                             Map<String, Set<String>> selflessByMod) throws Exception {
+        return translateOne(fooPath, outDir, types, foofilesDir, globals, subMethods,
+                            selflessGlobal, selflessByMod, null);
+    }
+
+    static ModuleEmitter translateOne(Path fooPath, Path outDir, TypeTable types, Path foofilesDir,
+                             Map<String, String[]> globals,
+                             Map<String, Map<String, Set<String>>> subMethods,
+                             Set<String> selflessGlobal,
+                             Map<String, Set<String>> selflessByMod,
+                             Set<String> deadNodes) throws Exception {
+        ModuleEmitter em = new ModuleEmitter(types, parseFile(fooPath), fooPath, foofilesDir, globals, subMethods, selflessGlobal, selflessByMod);
+        em.deadNodes = deadNodes;   // B2: null unless purging
+        em.emit();
+        String name = fooPath.getFileName().toString();
+        if (em.isVirtual) {
+            // Virtual (get_from template) modules are inlined into their heirs and
+            // never compiled (foo.pl emits no .F90 for them either). But the build
+            // declares a per-file .F90 output for every source, so emit an empty
+            // stub to satisfy that rule; it is excluded from the compiled sources.
+            Files.writeString(outDir.resolve(outStem(name) + ".F90"),
+                "! " + name + " is a virtual (get_from) template module - no compiled code\n",
+                StandardCharsets.UTF_8);
+            return em;
+        }
+        // .F90 file is underscored; .int/.use keep the brace form (match foo.pl).
+        Files.writeString(outDir.resolve(outStem(name) + ".F90"), em.f90.toString(), StandardCharsets.UTF_8);
+        Files.writeString(outDir.resolve(braceStem(name) + ".int"), em.intf.toString(), StandardCharsets.UTF_8);
+        Files.writeString(outDir.resolve(braceStem(name) + ".use"), em.use.toString(), StandardCharsets.UTF_8);
+        return em;
+    }
+
+    /** Detect circular `use` dependencies in the emitted module graph (Tarjan SCC).
+     *  Any strongly-connected component of size > 1 (or a self-loop) is an illegal
+     *  circular `use` in Fortran. Prints each offending cycle chain and returns the
+     *  number of cycles found (0 = acyclic). TYPES_MODULE/SYSTEM_MODULE are pulled in
+     *  wholesale and excluded from `useOnly`, so — being universal sinks — they
+     *  correctly sit outside every cycle. */
+    static int reportUseCycles(Map<String, Set<String>> graph) {
+        Map<String, Integer> index = new HashMap<>(), low = new HashMap<>();
+        Set<String> onStack = new java.util.HashSet<>();
+        java.util.Deque<String> stack = new java.util.ArrayDeque<>();
+        int[] counter = {0};
+        List<List<String>> sccs = new ArrayList<>();
+        // iterative Tarjan (avoid deep recursion on ~165 nodes with long chains)
+        for (String root : graph.keySet()) {
+            if (index.containsKey(root)) continue;
+            java.util.Deque<String> work = new java.util.ArrayDeque<>();
+            java.util.Deque<java.util.Iterator<String>> iters = new java.util.ArrayDeque<>();
+            work.push(root); iters.push(graph.getOrDefault(root, java.util.Collections.emptySet()).iterator());
+            index.put(root, counter[0]); low.put(root, counter[0]); counter[0]++;
+            stack.push(root); onStack.add(root);
+            while (!work.isEmpty()) {
+                String v = work.peek();
+                java.util.Iterator<String> it = iters.peek();
+                if (it.hasNext()) {
+                    String w = it.next();
+                    if (!graph.containsKey(w)) continue;   // edge to a leaf sink (e.g. TYPES) — no node
+                    if (!index.containsKey(w)) {
+                        index.put(w, counter[0]); low.put(w, counter[0]); counter[0]++;
+                        stack.push(w); onStack.add(w);
+                        work.push(w); iters.push(graph.getOrDefault(w, java.util.Collections.emptySet()).iterator());
+                    } else if (onStack.contains(w)) {
+                        low.put(v, Math.min(low.get(v), index.get(w)));
+                    }
+                } else {
+                    if (low.get(v).equals(index.get(v))) {
+                        List<String> comp = new ArrayList<>();
+                        String w;
+                        do { w = stack.pop(); onStack.remove(w); comp.add(w); } while (!w.equals(v));
+                        sccs.add(comp);
+                    }
+                    work.pop(); iters.pop();
+                    if (!work.isEmpty()) low.put(work.peek(), Math.min(low.get(work.peek()), low.get(v)));
+                }
+            }
+        }
+        int cycles = 0;
+        for (List<String> comp : sccs) {
+            boolean selfLoop = comp.size() == 1 && graph.getOrDefault(comp.get(0), java.util.Collections.emptySet()).contains(comp.get(0));
+            if (comp.size() > 1 || selfLoop) {
+                cycles++;
+                java.util.Collections.sort(comp);
+                System.err.println("CIRCULAR use DEPENDENCY (illegal Fortran): "
+                    + String.join(" -> ", comp) + " -> " + comp.get(0));
+                Set<String> s = new java.util.HashSet<>(comp);
+                for (String a : comp)
+                    for (String b : graph.getOrDefault(a, java.util.Collections.emptySet()))
+                        if (s.contains(b)) System.err.println("    edge: " + a + " -> " + b);
+            }
+        }
+        if (cycles > 0) System.err.println("CYCLE CHECK FAILED: " + cycles + " circular use dependency(ies).");
+        return cycles;
+    }
+
+    /** Brace-form stem: the .foo file name without its extension (vec{diis}). */
+    static String braceStem(String fooName) {
+        return fooName.endsWith(".foo") ? fooName.substring(0, fooName.length() - 4) : fooName;
+    }
+
+    // --------------------------------------------------------------- emitter
+
+    static final class ModuleEmitter {
+        final TypeTable types;
+        final Parsed main;
+        final Path fooPath, foofilesDir;
+        final Map<String, Parsed> parentCache = new HashMap<>();
+
+        String fooModuleName, selfFooType, currentProc, currentProcBase, selfModuleName;
+        boolean isVirtual;
+        boolean isProgram;                            // true for a run_XXX.foo main program
+        // Call-graph capture (B1, dead-code / call-graph report). When non-null,
+        // recordUse also records a per-procedure edge  "MOD:callerBase" -> "MOD:calleeBase"
+        // (captured BEFORE recordUse's self-module skip, so intra-module calls count too).
+        Map<String, Set<String>> callEdges;
+        // Dead-code purge (B2). When non-null, emitProc drops any procedure whose
+        // node "MOD:base" is in this set (unreachable from the purge root program).
+        Set<String> deadNodes;
+        boolean inComponent;   // true while emitting derived-type components
+        List<String> selectKeywords;   // case labels of the enclosing select (for UNKNOWN)
+        final Set<String> selflessProcs = new LinkedHashSet<>();   // selfless proc names in this module
+        boolean inheritInjectPending; String inheritParent;
+        Set<String> currentArgs = new LinkedHashSet<>();
+        boolean currentSelfless;   // true while rendering a `selfless` procedure body
+        boolean currentProcPure;   // true while rendering a lowercase `pure`/`elemental` proc
+                                   // (real Fortran pure) — assert macros are illegal there
+        boolean suppressUse;       // true while probing an expression's type only
+        Map<String, String> localVarTypes = new HashMap<>();   // local/arg name -> base foo type
+        final Map<String, String> moduleVars = new HashMap<>();   // this module's own vars -> foo type
+        Map<String, String> subst = new LinkedHashMap<>();   // type-param substitutions (get_from)
+        final StringBuilder f90 = new StringBuilder(), intf = new StringBuilder(), use = new StringBuilder();
+        final Map<String, Integer> overloadCount = new HashMap<>();   // base name -> overload count
+        final Map<String, Integer> overloadIdx = new HashMap<>();     // base name -> running index
+        final Map<String, List<String>> interfaceProcs = new LinkedHashMap<>(); // base -> specific names
+        final Map<String, List<String>> explicitAliases = new LinkedHashMap<>(); // generic -> member base names
+        final Set<String> publicSpecs = new LinkedHashSet<>();  // specific names to also export `public`
+        final Map<String, Boolean> genericPrivate = new LinkedHashMap<>();  // base name -> generic NAME_ is private (all overloads private)
+        final Map<String, Set<String>> useOnly = new TreeMap<>();
+
+        final Map<String, String[]> globals;   // global var name -> {canon foo type, fortran module}
+        // base type -> (method -> submodule Fortran modules that define it)
+        final Map<String, Map<String, Set<String>>> subMethods;
+        final Set<String> selflessGlobal;   // selfless proc names across all foofiles
+        // fortran module -> proc names selfless in ALL overloads there (module-aware)
+        final Map<String, Set<String>> selflessByMod;
+
+        ModuleEmitter(TypeTable types, Parsed main, Path fooPath, Path foofilesDir,
+                      Map<String, String[]> globals, Map<String, Map<String, Set<String>>> subMethods,
+                      Set<String> selflessGlobal, Map<String, Set<String>> selflessByMod) {
+            this.types = types; this.main = main; this.fooPath = fooPath; this.foofilesDir = foofilesDir;
+            this.globals = globals; this.subMethods = subMethods; this.selflessGlobal = selflessGlobal;
+            this.selflessByMod = selflessByMod;
+        }
+
+        void emit() {
+            List<FooParser.ModuleDefContext> mods =
+                descendants(main.tree, FooParser.ModuleDefContext.class);
+            if (mods.isEmpty()) {
+                // A main program (runfiles/run_XXX.foo): `program NAME` … end.
+                List<FooParser.ProgramDefContext> progs =
+                    descendants(main.tree, FooParser.ProgramDefContext.class);
+                if (!progs.isEmpty()) emitProgram(progs.get(0));
+                return;
+            }
+            FooParser.ModuleDefContext mod = mods.get(0);
+            fooModuleName = mod.moduleName().getText();
+            // For a submodule (MOLECULE.BASE) self's type is the main type (MOLECULE).
+            selfFooType   = fooModuleName.contains(".")
+                ? fooModuleName.substring(0, fooModuleName.indexOf('.')) : fooModuleName;
+            selfModuleName = fortranTypeName(fooModuleName) + "_MODULE";
+            // `virtual module X` is a get_from template: parsed, but not compiled.
+            if (mod.IDENTIFIER() != null
+                    && mod.IDENTIFIER().getText().equalsIgnoreCase("virtual")) {
+                isVirtual = true;
+                return;
+            }
+            // The include directives keep the brace form (vec{diis}.use), even
+            // though the .F90 file itself is underscored (vec_diis.F90).
+            String stem = braceStem(fooPath.getFileName().toString());
+
+            Cursor c = new Cursor(main.toks);
+            c.flushHidden(f90, mod.MODULE().getSymbol().getTokenIndex(), 0);  // doc block
+
+            // pre-pass: count overloads per procedure name (templates excluded);
+            // also record which procedures are `selfless` (no self argument). A name
+            // counts as selfless for BARE `.proc` self-calls only if EVERY overload is
+            // selfless: a mixed name (e.g. `chemical_symbol` — a self-based no-arg
+            // overload plus a `selfless` (Z,A) overload) must keep self on its
+            // non-selfless overload, so name-based dropping would be wrong.
+            Map<String, Integer> selflessOverloads = new HashMap<>();
+            for (FooParser.ProcDefContext pd : descendants(mod, FooParser.ProcDefContext.class)) {
+                Attrs pa = Attrs.parse(pd.procHeader().procAttrs());
+                if (pa.template) continue;
+                String nm = pd.procHeader().IDENTIFIER().getText();
+                overloadCount.merge(nm, 1, Integer::sum);
+                if (pa.selfless) selflessOverloads.merge(nm, 1, Integer::sum);
+            }
+            for (Map.Entry<String, Integer> e : selflessOverloads.entrySet())
+                if (e.getValue().equals(overloadCount.get(e.getKey()))) selflessProcs.add(e.getKey());
+            // record this module's own module-level variables (public AND private)
+            // so `connections_for(X).element` resolves to connections_for(X)%element
+            for (int ci = 0; ci < mod.getChildCount(); ci++) {
+                ParseTree ch = mod.getChild(ci);
+                if (!(ch instanceof FooParser.ModuleDataItemContext)) continue;
+                FooParser.ModuleDataItemContext mi = (FooParser.ModuleDataItemContext) ch;
+                if (mi.varDecl() == null || mi.varDecl().declTail().typeSpec() == null) continue;
+                String t = canon(mi.varDecl().declTail().typeSpec().getText()).replace("?", "");
+                for (FooParser.DeclNameContext dn : mi.varDecl().identList().declName())
+                    moduleVars.put(nameText(dn.name()), t);
+            }
+
+            f90.append("module ").append(fortranTypeName(fooModuleName)).append("_MODULE\n\n");
+            // Preamble order (blank-line separated for visibility):
+            //   #include "macros"   -- CPP #defines, in scope for everything below
+            //   include  "*.use"    -- USE statements (must precede IMPLICIT NONE)
+            //   implicit none
+            //   include  "*.int"    -- interface blocks (specification part)
+            // .use/.int are pure Fortran (no macros) so they use a Fortran INCLUDE;
+            // only "macros" stays a CPP `#include`.
+            f90.append("#  include \"macros\"\n\n");
+            f90.append("   include \"").append(stem).append(".use\"\n");
+            c.pos = mod.MODULE().getSymbol().getTokenIndex() + 1;
+
+            // Walk the module's children in source order: module-level use/type/
+            // var/data items (the "data section"), then contains + procedures.
+            boolean implicitDone = false;
+            for (int i = 0; i < mod.getChildCount(); i++) {
+                ParseTree ch = mod.getChild(i);
+                if (ch instanceof FooParser.ModuleDataItemContext) {
+                    FooParser.ModuleDataItemContext mi = (FooParser.ModuleDataItemContext) ch;
+                    if (mi.NEWLINE() != null) continue;
+                    c.flushHidden(f90, mi.getStart().getTokenIndex(), 3);
+                    if (mi.implicitStmt() != null) { emitImplicitBlock(stem); implicitDone = true; }
+                    else if (mi.useStmt() != null) emitModuleUse(mi.useStmt());
+                    else if (mi.typeDef() != null) emitTypeDef(mi.typeDef(), c);
+                    else if (mi.varDecl() != null) {
+                        int before = f90.length();
+                        emitDecl(mi.varDecl().identList(), mi.varDecl().declTail(), 3);
+                        spliceTrailingComment(c, mi.getStop().getTokenIndex(), before);
+                    }
+                    else if (mi.dataStmt() != null) emitDataStmt(mi.dataStmt(), 3);
+                    else if (mi.interfaceBlock() != null && mi.interfaceBlock().IDENTIFIER() != null) {
+                        // Explicit module-level generic interface
+                        //   `interface NAME  m1  m2  … end`
+                        // groups distinctly-named specifics under one generic. Register
+                        // NAME -> {m1,m2,…} so buildInterfaceFile emits `interface NAME_`.
+                        // foo.pl drops these, so `.NAME` calls have no generic to resolve.
+                        String gname = mi.interfaceBlock().IDENTIFIER().getText();
+                        for (FooParser.GenericItemContext gi : mi.interfaceBlock().genericItem())
+                            for (FooParser.ProcHeaderContext ph : gi.procHeader())
+                                explicitAliases.computeIfAbsent(gname, k -> new ArrayList<>())
+                                               .add(ph.IDENTIFIER().getText());
+                    }
+                    c.pos = Math.max(c.pos, mi.getStop().getTokenIndex() + 1);
+                    c.lastLine = mi.getStop().getLine();
+                } else if (ch instanceof org.antlr.v4.runtime.tree.TerminalNode
+                           && ((org.antlr.v4.runtime.tree.TerminalNode) ch).getSymbol().getType() == FooLexer.CONTAINS) {
+                    if (!implicitDone) { emitImplicitBlock(stem); implicitDone = true; }
+                    f90.append("\ncontains\n");
+                    c.pos = Math.max(c.pos, ((org.antlr.v4.runtime.tree.TerminalNode) ch).getSymbol().getTokenIndex() + 1);
+                    c.lastLine = -1;
+                } else if (ch instanceof FooParser.ModuleProcItemContext) {
+                    FooParser.ModuleProcItemContext pi = (FooParser.ModuleProcItemContext) ch;
+                    if (pi.procDef() != null) {
+                        emitProc(pi.procDef(), c);
+                        c.lastLine = pi.procDef().getStop().getLine();
+                    }
+                }
+            }
+            if (!implicitDone) emitImplicitBlock(stem);
+
+            f90.append("\nend module\n");
+
+            buildInterfaceFile();
+            buildUseFile();
+        }
+
+        /** A main program (runfiles/run_XXX.foo): `program NAME`, a body of decls +
+         *  executable statements, then `end`. Emitted as a Fortran main program (with
+         *  its own `_main`), not a module — so the executable links. */
+        void emitProgram(FooParser.ProgramDefContext prog) {
+            isProgram = true;
+            fooModuleName = prog.moduleName().getText();          // run_HAR
+            selfFooType = fooModuleName;
+            selfModuleName = fortranTypeName(fooModuleName) + "_MODULE";   // unused
+            String stem = braceStem(fooPath.getFileName().toString());
+            Cursor c = new Cursor(main.toks);
+            c.flushHidden(f90, prog.PROGRAM().getSymbol().getTokenIndex(), 0);   // doc block
+            f90.append("program ").append(fooModuleName).append("\n\n");
+            // Same preamble order as modules: macros first, then USE, then implicit
+            // none (USE must precede IMPLICIT NONE).
+            f90.append("#  include \"macros\"\n\n");
+            f90.append("   include \"").append(stem).append(".use\"\n\n");
+            f90.append("   implicit none\n\n");
+            // Program body: declarations + executable statements. No self, no args.
+            currentArgs = new LinkedHashSet<>();
+            currentSelfless = false; currentProcPure = false;
+            currentProc = fooModuleName; currentProcBase = fooModuleName;
+            localVarTypes = new HashMap<>();
+            List<FooParser.ProcBodyContext> body = prog.procBody();
+            for (FooParser.ProcBodyContext b : body)
+                if (b.localDecl() != null && !misparsedTypeCall(b.localDecl())
+                        && b.localDecl().declTail().typeSpec() != null) {
+                    String t = canon(b.localDecl().declTail().typeSpec().getText()).replace("?", "");
+                    for (FooParser.DeclNameContext dn : b.localDecl().identList().declName())
+                        localVarTypes.put(nameText(dn.name()), t);
+                }
+            c.pos = prog.moduleName().getStop().getTokenIndex() + 1;
+            emitBodyList(body, c, 3, true);
+            c.flushHidden(f90, prog.endKw().getStart().getTokenIndex(), 3);   // trailing comments
+            f90.append("\nend program\n");
+            buildUseFile();
+        }
+
+        // ---- procedures ------------------------------------------------
+
+        void emitProc(FooParser.ProcDefContext pd, Cursor c) {
+            FooParser.ProcHeaderContext h = pd.procHeader();
+            String name = h.IDENTIFIER().getText();
+            Attrs a = Attrs.parse(h.procAttrs());
+            if (a.template) {
+                // A `template` (or `inlined_by_foo`) proc is inlined into its heirs /
+                // call sites, never emitted. Keep any preceding out-of-procedure /
+                // section comments (flush up to the header), then drop the proc's OWN
+                // doc/body comments so they are not leaked before the next procedure.
+                c.flushHidden(f90, h.getStart().getTokenIndex(), 0);
+                c.pos = Math.max(c.pos, pd.getStop().getTokenIndex() + 1);
+                c.lastLine = pd.getStop().getLine();
+                return;
+            }
+            // Dead-code purge (B2): a procedure unreachable from the root program is
+            // dropped exactly like a template — no body, no interface (.int) entry, no
+            // public export — so the emitted module stays self-consistent. The generic
+            // node is name-granular, so ALL overloads of a dead name go together.
+            if (deadNodes != null && deadNodes.contains(node(selfModuleName, name))) {
+                c.flushHidden(f90, h.getStart().getTokenIndex(), 0);
+                c.pos = Math.max(c.pos, pd.getStop().getTokenIndex() + 1);
+                c.lastLine = pd.getStop().getLine();
+                return;
+            }
+            int nOver = overloadCount.getOrDefault(name, 1);
+            int idx = overloadIdx.getOrDefault(name, 0);
+            overloadIdx.put(name, idx + 1);
+            String specName = nOver > 1 ? name + "_" + idx : name; // overloads -> name_0, name_1
+            currentProc = specName;                               // overload-specific (for ENSURE prefix)
+            currentProcBase = name;                               // base name (for get_from parent lookup)
+            // A lowercase `pure`/`elemental` proc is REAL Fortran pure — assert macros
+            // (ENSURE/DIE/WARN) expand to non-pure calls (call ensure_(tonto,…)) and are
+            // illegal there. UPPERCASE PURE/ELEMENTAL are macros, so keep their asserts.
+            currentProcPure = a.pure || a.elemental;
+            interfaceProcs.computeIfAbsent(name, k -> new ArrayList<>()).add(specName);
+            // The generic NAME_ is private iff EVERY overload has the `private`
+            // attribute; one public overload makes the whole generic public (foo.pl:
+            // a public overload overwrites generic_access to public).
+            genericPrivate.merge(name, a.privateAcc, (old, cur) -> old && cur);
+            // A `public` proc also exports its SPECIFIC name (not just the generic
+            // `name_`), so it can be referenced by name, e.g. MODULE::proc passed as
+            // an argument. foo.pl: specific_access == "public".
+            if (a.publicAcc) publicSpecs.add(specName);
+
+            // section comments / blanks preceding this procedure
+            int hdrTok = h.getStart().getTokenIndex();
+            f90.append('\n');
+            int beforeHidden = c.lastLine;
+            c.flushHidden(f90, hdrTok, 0);
+            // Keep a source blank line between the section comment(s) and the
+            // header. flushHidden only blanks BEFORE comments, so a blank AFTER
+            // them (before the code header) is otherwise lost. Fire only when
+            // comments were actually emitted (lastLine advanced), so a
+            // comment-less procedure is not double-blanked by the `\n` above.
+            if (c.lastLine != beforeHidden && c.lastLine >= 0
+                    && h.getStart().getLine() > c.lastLine + 1) f90.append('\n');
+
+            List<String> args = new ArrayList<>();
+            if (h.procArgs() != null && h.procArgs().identList() != null)
+                for (FooParser.DeclNameContext dn : h.procArgs().identList().declName())
+                    args.add(nameText(dn.name()));
+            boolean func = h.procResult() != null;
+            String result = func ? h.procResult().IDENTIFIER().getText() : null;
+
+            List<String> callArgs = new ArrayList<>();
+            if (!a.selfless) callArgs.add("self");
+            callArgs.addAll(args);
+            currentArgs = new LinkedHashSet<>(callArgs);
+
+            StringBuilder hdr = new StringBuilder("   ");
+            if (a.prefix() != null) hdr.append(a.prefix()).append(' ');
+            hdr.append(func ? "function " : "subroutine ").append(specName);
+            hdr.append('(').append(String.join(",", callArgs)).append(')');
+            if (func) hdr.append(" result (").append(result).append(')');
+            f90.append(hdr).append('\n');
+
+            // advance the main cursor past this stub's tokens (so following
+            // section comments are attributed to the next procedure)
+            int endTok = pd.getStop().getTokenIndex();
+
+            if (a.inherited) {
+                a.signatureComment = signatureComment(main, pd);
+                // signature comment from THIS file (between header NEWLINE and end)
+                Cursor sc = new Cursor(main.toks);
+                sc.pos = h.getStop().getTokenIndex() + 1;
+                sc.flushHidden(f90, endTok, 0);
+                emitInheritedBody(a, func, args);
+            } else {
+                renderBody(main, pd, /*inherited=*/false, null, a.selfless);
+            }
+            c.pos = Math.max(c.pos, endTok + 1);
+            f90.append(func ? "   end function\n" : "   end subroutine\n");
+        }
+
+        void emitImplicitBlock(String stem) {
+            // "macros" is now emitted first (right after the module line); here we
+            // emit only implicit none + the interface include.
+            f90.append("\n   implicit none\n\n");
+            f90.append("   include \"").append(stem).append(".int\"\n\n");
+        }
+
+        /** A module-level `use` of an external (non-Foo) module, e.g. `USE mpi`. */
+        void emitModuleUse(FooParser.UseStmtContext u) {
+            StringBuilder s = new StringBuilder("   ").append(u.USE().getText()).append(' ')
+                .append(u.moduleRef().getText());
+            List<FooParser.NameContext> ns = u.name();
+            if (!ns.isEmpty()) {                    // ..., only: a, b
+                s.append(", ").append(nameText(ns.get(0))).append(": ");
+                List<String> rest = new ArrayList<>();
+                for (int i = 1; i < ns.size(); i++) rest.add(nameText(ns.get(i)));
+                s.append(String.join(",", rest));
+            }
+            f90.append(s).append('\n');
+        }
+
+        /** A derived-type definition: `type IRREP_TYPE … end type`. */
+        void emitTypeDef(FooParser.TypeDefContext td, Cursor c) {
+            // `array type VEC{…}` only signals to the legacy translator that such
+            // array types occur; it defines no derived type. Emit nothing at all
+            // (not even its body comment) and skip its tokens.
+            boolean isArray = td.IDENTIFIER() != null
+                && td.IDENTIFIER().getText().equalsIgnoreCase("array");
+            if (isArray) {
+                c.pos = Math.max(c.pos, td.getStop().getTokenIndex() + 1);
+                c.lastLine = td.getStop().getLine();
+                return;
+            }
+            f90.append("   type ").append(fortranTypeName(td.typeSpec().getText())).append("_TYPE\n");
+            inComponent = true;
+            for (int i = 0; i < td.getChildCount(); i++) {
+                ParseTree ch = td.getChild(i);
+                if (ch instanceof FooParser.VarDeclContext) {
+                    FooParser.VarDeclContext vd = (FooParser.VarDeclContext) ch;
+                    c.flushHidden(f90, vd.getStart().getTokenIndex(), 5);
+                    emitDecl(vd.identList(), vd.declTail(), 5);
+                    c.pos = Math.max(c.pos, vd.getStop().getTokenIndex() + 1);
+                    c.lastLine = vd.getStop().getLine();
+                }
+            }
+            // trailing comments in the type body (after the last component, or a
+            // comment-only body like the `array type …` declarations)
+            inComponent = false;
+            if (td.endKw() != null)
+                c.flushHidden(f90, td.endKw().getStart().getTokenIndex(), 6);
+            if (!isArray) f90.append("   end type\n");
+        }
+
+        /** A Fortran data statement: data name(dims)/ v1, v2, … /.
+         *  A Foo `data` statement is already valid Fortran, so we emit the
+         *  ORIGINAL source span verbatim: this preserves the author's line
+         *  breaks, column alignment and inline `!` comments (e.g. the
+         *  periodic-table layouts in atom.foo / becke_grid.foo), which a
+         *  token-by-token reconstruction destroys. The lexer routes `&`
+         *  continuations and comments to hidden channels, but the CharStream
+         *  still holds every character, so getText() over the statement's
+         *  interval returns the source exactly as written. */
+        void emitDataStmt(FooParser.DataStmtContext d, int indent) {
+            org.antlr.v4.runtime.Token start = d.getStart();
+            // End at the closing '/' (last SLASH); everything between start and
+            // it — commas, continuations, comments, alignment — is copied as-is.
+            org.antlr.v4.runtime.Token end =
+                d.SLASH().get(d.SLASH().size() - 1).getSymbol();
+            org.antlr.v4.runtime.CharStream cs = start.getInputStream();
+            String raw = cs.getText(org.antlr.v4.runtime.misc.Interval.of(
+                start.getStartIndex(), end.getStopIndex()));
+            // The leading indent of the first line is re-supplied here; the
+            // continuation lines keep their own source indentation inside `raw`.
+            f90.append(sp(indent)).append(raw).append('\n');
+
+            /* --- Legacy token-reconstruction (reflows values to <=128 cols;
+             *     loses the source layout and inline comments). Kept, commented
+             *     out, because a different translation target (e.g. C++) will
+             *     need the parsed values rather than verbatim Fortran source.
+            String head = sp(indent) + "data " + nameText(d.name())
+                        + (d.dimSpec() != null ? d.dimSpec().getText() : "") + "/";
+            List<String> vals = new ArrayList<>();
+            for (FooParser.DataValueContext dv : d.dataValue()) vals.add(dv.getText());
+            // Wrap so no physical line (incl. trailing " &") exceeds Fortran's 132.
+            // Break only after a comma — never mid-value — so strings stay intact.
+            final int MAX = 128;
+            StringBuilder out = new StringBuilder(), line = new StringBuilder(head);
+            int prefixLen = line.length();
+            for (int i = 0; i < vals.size(); i++) {
+                String piece = vals.get(i) + (i == vals.size() - 1 ? "/" : ",");
+                if (line.length() > prefixLen && line.length() + piece.length() > MAX) {
+                    out.append(line).append(" &\n");
+                    line = new StringBuilder(sp(indent));
+                    prefixLen = line.length();
+                }
+                line.append(piece);
+            }
+            if (vals.isEmpty()) line.append("/");
+            f90.append(out).append(line).append('\n');
+            */
+        }
+
+        /** Resolve and splice the parent body for get_from(...). */
+        void emitInheritedBody(Attrs a, boolean func, List<String> args) {
+            ParentRef pr = ParentRef.parse(a.getFromTarget, fooModuleName);
+            String routine = pr.routine != null ? pr.routine : currentProcBase;
+            try {
+                Parsed parent = loadModule(pr.module);
+                FooParser.ProcDefContext target = findOverload(parent, routine, a.signatureComment, args);
+                if (target != null) {
+                    // Primary path — mirror foo.pl's two passes: macro-expand the
+                    // parent template's SOURCE TEXT (KEY?->VAL, type-arg subst), then
+                    // re-lex+parse it with a fresh FooLexer/FooParser and translate
+                    // that concrete subtree normally. No placeholder token ever
+                    // reaches the semantic stage, so calls/uses are derived from real
+                    // names (fixes e.g. spurious `use MOLECULE_MODULE, only: GRID_`).
+                    if (emitInheritedByReparse(a, pr, target)) return;
+                    // Fallback — legacy walk-parent-tree + patch-the-string. Kept as a
+                    // safety net when the substituted text fails to re-parse.
+                    subst = buildSubst(a.getFromAttr, pr.module);
+                    renderBody(parent, target, true, pr.module, a.selfless);
+                    subst = new LinkedHashMap<>();
+                    return;
+                }
+            } catch (IOException ignored) { }
+            f90.append("      ! get_from(").append(a.getFromTarget)
+               .append(") — parent body not found\n");
+        }
+
+        /** Re-parse expansion of a get_from parent body. Returns false (having
+         *  emitted nothing) if the substituted text does not parse, so the caller
+         *  can fall back to the legacy path. */
+        boolean emitInheritedByReparse(Attrs a, ParentRef pr, FooParser.ProcDefContext target) {
+            Map<String, String> tm = buildTextSubst(a.getFromAttr, pr.module);
+            org.antlr.v4.runtime.CharStream cs = target.getStart().getInputStream();
+            int aIdx = target.getStart().getStartIndex();
+            int bIdx = target.getStop().getStopIndex();
+            if (cs == null || bIdx < aIdx) return false;
+            String raw = cs.getText(org.antlr.v4.runtime.misc.Interval.of(aIdx, bIdx));
+            String expanded = expandTemplateText(raw, tm);
+            try {
+                FooLexer lex = new FooLexer(CharStreams.fromString(expanded));
+                CommonTokenStream ntoks = new CommonTokenStream(lex);
+                FooParser np = new FooParser(ntoks);
+                np.removeErrorListeners();          // don't spam stderr on the fallback
+                FooParser.ProcDefContext npd = np.procDef();
+                if (npd == null || np.getNumberOfSyntaxErrors() > 0) return false;
+                Map<String, String> saved = subst;
+                subst = new LinkedHashMap<>();      // substitution already done in text
+                try { renderBody(new Parsed(null, ntoks), npd, true, pr.module, a.selfless); }
+                finally { subst = saved; }
+                return true;
+            } catch (RuntimeException reparseFailed) {
+                return false;
+            }
+        }
+
+        /** Build the raw-TEXT substitution map for macro-expanding a get_from parent
+         *  body (used by the re-parse path). Unlike buildSubst, values are kept
+         *  verbatim Foo source (`:make_ED_grid`, `.set_x`, a type name) so the fresh
+         *  parse resolves them like any hand-written call. */
+        Map<String, String> buildTextSubst(FooParser.AttrContext gf, String parentModule) {
+            Map<String, String> m = new LinkedHashMap<>();
+            // positional type-arg substitution (parent params -> this type's params)
+            List<String> p = typeArgsOf(parentModule), c = typeArgsOf(selfFooType);
+            for (int i = 0; i < Math.min(p.size(), c.size()); i++) pairTypeArgs(m, p.get(i), c.get(i));
+            // the parent template's own bare type name -> the inheriting type
+            String pBase = canon(parentModule);
+            if (!pBase.isEmpty() && !pBase.contains("{") && Character.isUpperCase(pBase.charAt(0))
+                && !pBase.equals(canon(selfFooType)))
+                m.putIfAbsent(pBase, selfFooType);
+            // named KEY?=>VAL pairs, value kept as raw Foo text
+            if (gf != null) {
+                List<FooParser.GetFromArgContext> args = gf.getFromArg();
+                for (int i = 1; i < args.size(); i++) {
+                    FooParser.GetFromArgContext ga = args.get(i);
+                    if (ga.ARROW() != null && ga.getFromKey() != null) {
+                        String key = ga.getFromKey().getText() + (ga.QUESTION() != null ? "?" : "");
+                        String val = ga.getFromVal() != null ? ga.getFromVal().getText() : "";
+                        m.put(key, val);
+                    }
+                }
+            }
+            return m;
+        }
+
+        /** Apply a raw-text substitution map to a fragment of Foo source (longest
+         *  key first). A named placeholder `KEY?` is replaced wherever it occurs
+         *  (even spliced into a name, `make_KEY?_atom`); a positional type arg is
+         *  replaced as a whole word. Comments (`!` to end of line) are left verbatim:
+         *  foo.pl emits template comments unchanged (release keeps e.g. `! inherited
+         *  from VEC{OBJECT}` and `"conjg" is replaced …` unsubstituted). */
+        String expandTemplateText(String s, Map<String, String> tm) {
+            if (tm.isEmpty()) return s;
+            List<String> keys = new ArrayList<>(tm.keySet());
+            keys.sort((x, y) -> Integer.compare(y.length(), x.length()));
+            String[] lines = s.split("\n", -1);
+            StringBuilder out = new StringBuilder();
+            for (int li = 0; li < lines.length; li++) {
+                String line = lines[li];
+                int cut = commentStart(line);
+                String code = cut < 0 ? line : line.substring(0, cut);
+                String comment = cut < 0 ? "" : line.substring(cut);
+                for (String k : keys) {
+                    String v = java.util.regex.Matcher.quoteReplacement(tm.get(k));
+                    if (k.endsWith("?")) {
+                        String base = java.util.regex.Pattern.quote(k.substring(0, k.length() - 1));
+                        code = code.replaceAll(base + "\\?", v);
+                    } else {
+                        code = code.replaceAll("\\b" + java.util.regex.Pattern.quote(k) + "\\b", v);
+                    }
+                }
+                out.append(code).append(comment);
+                if (li < lines.length - 1) out.append('\n');
+            }
+            return out.toString();
+        }
+
+        /** Index of the first `!` not inside a string literal (comment start), or -1. */
+        int commentStart(String line) {
+            boolean dq = false, sq = false;
+            for (int i = 0; i < line.length(); i++) {
+                char c = line.charAt(i);
+                if (c == '"' && !sq) dq = !dq;
+                else if (c == '\'' && !dq) sq = !sq;
+                else if (c == '!' && !dq && !sq) return i;
+            }
+            return -1;
+        }
+
+        /** Resolve a `.selector` that is a get_from placeholder to its substitution
+         *  value (plain identifier only) before deciding component-vs-method, so
+         *  `self(a).TEST?` with TEST?=>basis becomes self(a)%basis (basis is a
+         *  component), matching foo.pl's substitute-then-translate order. */
+        String substSelector(String sel) {
+            if (subst.isEmpty()) return sel;
+            String v = subst.get(sel);
+            if (v == null) v = subst.get(sel + "?");
+            return (v != null && v.matches("\\w+")) ? v : sel;
+        }
+
+        /** Type of a get_from placeholder used as a receiver head, e.g.
+         *  TO?=>.slaterbasis (subst value "self%slaterbasis") -> SLATERBASIS, so a
+         *  following `.method` records the right use. Handles a self-component value;
+         *  null otherwise. */
+        String substReceiverType(String nm) {
+            if (subst.isEmpty()) return null;
+            String v = subst.get(nm);
+            if (v == null) v = subst.get(nm + "?");
+            if (v == null) return null;
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("self%(\\w+)").matcher(v);
+            return m.matches() ? types.componentType(selfFooType, m.group(1)) : null;
+        }
+
+        /** Pair a parent type-arg with the child's, recursing into nested params. */
+        void pairTypeArgs(Map<String, String> m, String parent, String child) {
+            parent = canon(parent); child = canon(child);
+            if (parent.equals(child)) return;
+            m.putIfAbsent(parent, child);
+            List<String> p = typeArgsOf(parent), c = typeArgsOf(child);
+            for (int i = 0; i < Math.min(p.size(), c.size()); i++) pairTypeArgs(m, p.get(i), c.get(i));
+        }
+
+        /** Build the placeholder substitution map for a get_from(...) directive. */
+        Map<String, String> buildSubst(FooParser.AttrContext gf, String parentModule) {
+            Map<String, String> m = new LinkedHashMap<>();
+            // positional type-arg substitution: parent type args -> child (self) type
+            // args, recursing into nested params so e.g. MAP{VEC{KEY},VEC{VAL}} vs
+            // MAP{VEC{INT},VEC{INT}} yields KEY->INT and VAL->INT (not just VEC{KEY}->..).
+            List<String> p = typeArgsOf(parentModule), c = typeArgsOf(selfFooType);
+            for (int i = 0; i < Math.min(p.size(), c.size()); i++) pairTypeArgs(m, p.get(i), c.get(i));
+            // The parent template's own type is a self placeholder: references to it in
+            // the inherited body map to the inheriting type. get_from(INTRINSIC) in INT
+            // makes VEC{INTRINSIC} -> VEC{INT}; get_from(BASIS) in SLATERBASIS makes an
+            // arg `b :: BASIS` -> SLATERBASIS. Only for a bare (non-parameterised) type
+            // name (uppercase; a lowercase parent like `prune` is a routine, not a
+            // type); the parameterised case VEC{OBJECT} is handled positionally above.
+            String pBase = canon(parentModule);
+            if (!pBase.isEmpty() && !pBase.contains("{") && Character.isUpperCase(pBase.charAt(0))
+                && !pBase.equals(canon(selfFooType)))
+                m.putIfAbsent(pBase, selfFooType);
+            // named substitutions from `KEY?=>VAL` arguments (skip arg 0 = the module)
+            if (gf != null) {
+                List<FooParser.GetFromArgContext> args = gf.getFromArg();
+                for (int i = 1; i < args.size(); i++) {
+                    FooParser.GetFromArgContext ga = args.get(i);
+                    if (ga.ARROW() != null && ga.getFromKey() != null) {
+                        String key = ga.getFromKey().getText() + (ga.QUESTION() != null ? "?" : "");
+                        String val = ga.getFromVal() != null ? ga.getFromVal().getText() : "";
+                        // A self-component value (ARG?=>.use_BFGS) -> self%use_BFGS. A
+                        // self-method value (SET?=>.set_x) is left as ".set_x" — applySubst
+                        // turns the call site KEY(args) into set_x_(self,args).
+                        if (val.matches("\\.\\w+(\\.\\w+)*")
+                            && types.isComponent(selfFooType, val.substring(1).split("\\.")[0]))
+                            val = "self%" + val.substring(1).replace(".", "%");
+                        else if (val.matches("self(\\.\\w+)+")) val = val.replace(".", "%");
+                        m.put(key, val);
+                    }
+                }
+            }
+            return m;
+        }
+
+        /** Apply the active substitution map (whole-token) to a text fragment. */
+        String applySubst(String s) {
+            if (subst.isEmpty() || s == null) return s;
+            List<String> keys = new ArrayList<>(subst.keySet());
+            keys.sort((x, y) -> Integer.compare(y.length(), x.length()));  // longest first
+            for (String k : keys) {
+                String base = k.endsWith("?") ? k.substring(0, k.length() - 1) : k;
+                String v = subst.get(k);
+                String qb = java.util.regex.Pattern.quote(base);
+                // A method-reference value — `.set_x` (self-method) or `:make_grid`
+                // (same-module generic). Two body forms:
+                //   .KEY?(a) already rendered KEY_(self,a) -> just rename the stem;
+                //    KEY?(a) (bare placeholder) -> m_(self,a); bare KEY -> m_(self).
+                if (v.matches("[.:]\\w+")) {
+                    String m = v.substring(1);
+                    s = s.replaceAll("\\b" + qb + "(?=_)", java.util.regex.Matcher.quoteReplacement(m));
+                    s = s.replaceAll("\\b" + qb + "\\??\\s*\\(",
+                                     java.util.regex.Matcher.quoteReplacement(m + "_(self,"));
+                    s = s.replaceAll("\\b" + qb + "\\??",
+                                     java.util.regex.Matcher.quoteReplacement(m + "_(self)"));
+                    continue;
+                }
+                String repl = java.util.regex.Matcher.quoteReplacement(v);
+                if (!k.endsWith("?")) {                       // positional type arg
+                    s = s.replaceAll("\\b" + qb + "\\b", repl);
+                    continue;
+                }
+                // Explicit `KEY?` (raw text) is always replaced. No leading \b so an
+                // embedded placeholder (make_Hirshfeld?_atom) matches even when
+                // preceded by '_'; longest-first ordering avoids suffix over-matches.
+                s = s.replaceAll(qb + "\\?", repl);
+                // `KEY` with the '?' stripped by nameText: bare (followed by a
+                // non-word) or a generic-call stem `KEY_` (a method placeholder
+                // `.GRID?(..)` renders as GRID_(self,..); keep the trailing '_').
+                // Skip this if the base also names a real arg/local (V? vs the V arg).
+                boolean isVar = currentArgs.contains(base) || localVarTypes.containsKey(base);
+                if (!isVar)
+                    s = s.replaceAll("\\b" + qb + "(?=_|[^A-Za-z0-9_]|$)", repl);
+            }
+            return s;
+        }
+
+        Parsed loadModule(String fooModule) throws IOException {
+            // file head is the lower-cased type name, e.g. OBJECT -> object.foo
+            String file = fooModule.toLowerCase(Locale.ROOT);
+            Parsed p = parentCache.get(file);
+            if (p == null) { p = parseFile(foofilesDir.resolve(file + ".foo")); parentCache.put(file, p); }
+            return p;
+        }
+
+        /** Find a procDef of given name; if several, match by signature comment. */
+        FooParser.ProcDefContext findOverload(Parsed src, String name, String sigComment, List<String> args) {
+            List<FooParser.ProcDefContext> matches = new ArrayList<>();
+            for (FooParser.ProcDefContext pd : descendants(src.tree, FooParser.ProcDefContext.class))
+                if (pd.procHeader().IDENTIFIER().getText().equals(name)) matches.add(pd);
+            if (matches.isEmpty()) return null;
+            // A get_from proc has no body to inherit, so it must never be chosen as
+            // the parent to inline. When a name has both a `template` (real body) and
+            // its own get_from instantiation (e.g. read_all_quantity in TEXTFILE),
+            // pick the bodied one. (Fall back to all if every match is a get_from.)
+            List<FooParser.ProcDefContext> bodied = new ArrayList<>();
+            for (FooParser.ProcDefContext pd : matches)
+                if (!Attrs.parse(pd.procHeader().procAttrs()).inherited) bodied.add(pd);
+            if (!bodied.isEmpty()) matches = bodied;
+            if (matches.size() == 1) return matches.get(0);
+            // 1) narrow to templates with the exact argument-name list (a get_from
+            //    proc shares its template's arg names, e.g. (a,transpose_a,dagger_a))
+            List<FooParser.ProcDefContext> pool = new ArrayList<>();
+            if (args != null)
+                for (FooParser.ProcDefContext pd : matches)
+                    if (args.equals(procArgNames(pd))) pool.add(pd);
+            if (pool.isEmpty()) pool = matches;           // arg list didn't disambiguate
+            if (pool.size() == 1) return pool.get(0);
+            // 2) among the survivors, the signature (doc) comment is the tiebreaker
+            if (sigComment != null)
+                for (FooParser.ProcDefContext pd : pool)
+                    if (sigComment.equals(signatureComment(src, pd))) return pd;
+            return pool.get(0);
+        }
+
+        /** The declared argument names of a procedure header. */
+        List<String> procArgNames(FooParser.ProcDefContext pd) {
+            List<String> r = new ArrayList<>();
+            FooParser.ProcHeaderContext h = pd.procHeader();
+            if (h.procArgs() != null && h.procArgs().identList() != null)
+                for (FooParser.DeclNameContext dn : h.procArgs().identList().declName())
+                    r.add(nameText(dn.name()));
+            return r;
+        }
+
+        /** The `! ...` signature comment immediately after a proc header. */
+        String signatureComment(Parsed src, FooParser.ProcDefContext pd) {
+            int from = pd.procHeader().getStop().getTokenIndex();
+            int to = pd.getStop().getTokenIndex();
+            StringBuilder sb = new StringBuilder();
+            boolean started = false;
+            for (int i = from + 1; i <= to; i++) {
+                Token t = src.toks.get(i);
+                int ty = t.getType();
+                if (ty == FooLexer.NEWLINE) continue;
+                if (t.getChannel() == Token.HIDDEN_CHANNEL) {
+                    // collect the whole leading comment block (the first line alone
+                    // is often shared between overloads — e.g. change_basis_to)
+                    if (ty == FooLexer.COMMENT) { sb.append(t.getText().trim()).append('\n'); started = true; }
+                    continue;
+                }
+                break;   // a real declaration/statement -> end of the comment block
+            }
+            return started ? sb.toString() : null;
+        }
+
+        // ---- body rendering -------------------------------------------
+
+        /** Render a procedure body (decls + statements + hidden tokens). */
+        void renderBody(Parsed src, FooParser.ProcDefContext pd, boolean inherited,
+                        String parentName, boolean selfless) {
+            currentSelfless = selfless;
+            List<FooParser.ProcBodyContext> body = pd.procBody();
+            Cursor c = new Cursor(src.toks);
+            c.pos = pd.procHeader().getStop().getTokenIndex() + 1;
+            inheritInjectPending = inherited; inheritParent = parentName;
+            if (inherited) {
+                c.lastLine = -1;                // suppress spurious leading blanks
+                // skip the parent's own signature comment (we emit the inheriting
+                // file's): jump to the first real (decl/stmt) body element, past
+                // any leading blank lines and the parent comment. BUT a preprocessor
+                // directive (#ifdef ...) preceding that first statement is code
+                // structure, not documentation — stop at it so it survives, else a
+                // leading `#ifdef MPI` is dropped while its `#endif` remains.
+                int hdrEnd = pd.procHeader().getStop().getTokenIndex() + 1;
+                for (FooParser.ProcBodyContext b : body)
+                    if (b.localDecl() != null || b.stmt() != null) {
+                        int firstStmt = b.getStart().getTokenIndex();
+                        c.pos = firstStmt;
+                        for (int i = hdrEnd; i < firstStmt; i++)
+                            if (src.toks.get(i).getType() == FooLexer.PP_LINE) { c.pos = i; break; }
+                        break;
+                    }
+            } else if (!body.isEmpty()) {
+                // flush the leading signature comment before any implicit self decl
+                c.flushHidden(f90, body.get(0).getStart().getTokenIndex(), 6);
+            }
+            // per-procedure symbol table: local/arg variable types (for resolving
+            // `localvar.component` -> `localvar%component`)
+            localVarTypes = new HashMap<>();
+            for (FooParser.ProcBodyContext b : body)
+                if (b.localDecl() != null && !misparsedTypeCall(b.localDecl())
+                        && b.localDecl().declTail().typeSpec() != null) {
+                    String t = canon(applySubst(b.localDecl().declTail().typeSpec().getText())).replace("?", "");
+                    for (FooParser.DeclNameContext dn : b.localDecl().identList().declName())
+                        localVarTypes.put(nameText(dn.name()), t);
+                }
+            // self is declared implicitly when the body doesn't declare it itself
+            // (but not for `routinal`/`functional` procs, where self is a procedure
+            // argument given an interface block in the body — a scalar `TYPE :: self`
+            // there would clash with the dummy procedure; foo.pl emits it anyway,
+            // which is a bug).
+            Attrs pAttrs = Attrs.parse(pd.procHeader().procAttrs());
+            if (!selfless && !pAttrs.routinal && !pAttrs.functional && !bodyDeclaresSelf(body))
+                f90.append("      ").append(selfDeclType()).append(" :: self\n");
+            emitBodyList(body, c, 6, true);
+            c.flushHidden(f90, pd.getStop().getTokenIndex(), 6);   // trailing comments
+        }
+
+        /** Emit a `routinal` function-argument interface block. */
+        void emitInterfaceBlock(FooParser.InterfaceBlockContext ib, int indent) {
+            f90.append(sp(indent)).append("interface\n");
+            if (ib.abstractItem() != null)
+                for (FooParser.AbstractItemContext ai : ib.abstractItem())
+                    if (ai.procDef() != null) emitInterfaceProc(ai.procDef(), indent + 3);
+            f90.append(sp(indent)).append("end interface\n");
+        }
+
+        void emitInterfaceProc(FooParser.ProcDefContext pd, int indent) {
+            FooParser.ProcHeaderContext h = pd.procHeader();
+            Attrs a = Attrs.parse(h.procAttrs());
+            List<String> args = procArgNames(pd);
+            boolean func = h.procResult() != null;
+            StringBuilder hdr = new StringBuilder(sp(indent));
+            if (a.prefix() != null) hdr.append(a.prefix()).append(' ');
+            hdr.append(func ? "function " : "subroutine ").append(h.IDENTIFIER().getText())
+               .append('(').append(String.join(",", args)).append(')');
+            if (func) hdr.append(" result (").append(h.procResult().IDENTIFIER().getText()).append(')');
+            f90.append(hdr).append('\n');
+            Set<String> saved = currentArgs;
+            currentArgs = new LinkedHashSet<>(args);
+            for (FooParser.ProcBodyContext b : pd.procBody()) {
+                if (b.useStmt() != null)
+                    f90.append(sp(indent)).append("use ")
+                       .append(fortranModName(b.useStmt().moduleRef().getText())).append('\n');
+                else if (b.localDecl() != null)
+                    emitDecl(b.localDecl().identList(), b.localDecl().declTail(), indent + 3);
+            }
+            currentArgs = saved;
+            f90.append(sp(indent)).append(func ? "end function\n" : "end subroutine\n");
+        }
+
+        /** A `TYPE::method(args)` statement mis-parsed as a declaration: the
+         *  declared "name" is an uppercase TYPE and the "type" is a lowercase
+         *  method with an argument list. */
+        boolean misparsedTypeCall(FooParser.LocalDeclContext ld) {
+            if (ld.identList().declName().size() != 1) return false;
+            FooParser.DeclNameContext dn = ld.identList().declName(0);
+            if (dn.dimSpec() != null || !isModuleLikeQualifier(nameText(dn.name()))) return false;
+            FooParser.TypeSpecContext ts = ld.declTail().typeSpec();
+            // The "type" after :: must be a lowercase method name (not a real type),
+            // with no ptr/attr/initialiser — then it's actually a TYPE::method call,
+            // with args `(…)` (a dimSpec) or none.
+            return ts != null && ts.baseType() != null
+                && !isModuleLikeQualifier(ts.baseType().getText())
+                && ld.declTail().ptrSuffix() == null && ld.declTail().attrSuffix() == null
+                && ld.declTail().initSuffix() == null;
+        }
+
+        void emitTypeQualifiedCallStmt(FooParser.LocalDeclContext ld, int indent) {
+            String type = nameText(ld.identList().declName(0).name());
+            FooParser.TypeSpecContext ts = ld.declTail().typeSpec();
+            String method = ts.baseType().getText();           // non-generic (`::`) -> specific name
+            String args = ts.dimSpec() != null ? renderDimSpec(ts.dimSpec()) : "";   // no parens if no args
+            f90.append(sp(indent)).append("call ").append(method).append(args).append('\n');
+            recordUse(fortranModName(type), method);
+        }
+
+        boolean bodyDeclaresSelf(List<FooParser.ProcBodyContext> body) {
+            for (FooParser.ProcBodyContext b : body)
+                if (b.localDecl() != null)
+                    for (FooParser.DeclNameContext dn : b.localDecl().identList().declName())
+                        if (nameText(dn.name()).equals("self")) return true;
+            return false;
+        }
+
+        /** Emit a list of body elements (decls/statements) at a given indent.
+         *  When hoist is true (the top-level procedure body), ENSURE/DIE/WARN
+         *  precondition statements that appear before the first executable
+         *  statement are stored and re-emitted (at column 3) after the whole
+         *  declaration block — they assert on the arguments, and Fortran forbids
+         *  an executable before a declaration. */
+        void emitBodyList(List<FooParser.ProcBodyContext> elems, Cursor c, int indent, boolean hoist) {
+            int firstActive = -1;
+            if (hoist)
+                for (int i = 0; i < elems.size(); i++) {
+                    FooParser.ProcBodyContext b = elems.get(i);
+                    if (b.stmt() != null && !isAssertionStmt(b.stmt())) { firstActive = i; break; }
+                }
+            List<FooParser.StmtContext> preconds = new ArrayList<>();
+            for (int i = 0; i < elems.size(); i++) {
+                FooParser.ProcBodyContext b = elems.get(i);
+                if (b.interfaceBlock() != null) {           // `routinal` function-arg interface
+                    c.flushHidden(f90, b.getStart().getTokenIndex(), indent);
+                    emitInterfaceBlock(b.interfaceBlock(), indent);
+                    c.pos = Math.max(c.pos, b.getStop().getTokenIndex() + 1);
+                    c.lastLine = b.getStop().getLine();
+                    continue;
+                }
+                if (b.localDecl() == null && b.stmt() == null) continue;   // blank / unhandled
+                if (i == firstActive) {                       // hoisted preconditions belong to the
+                    for (FooParser.StmtContext pc : preconds) emitPrecond(pc);   // signature: emit them
+                    preconds.clear();                          // right after the last declaration,
+                }                                              // BEFORE the first executable's comments
+                c.flushHidden(f90, b.getStart().getTokenIndex(), indent);
+                boolean isPre = hoist && firstActive >= 0 && i < firstActive
+                                && b.stmt() != null && isAssertionStmt(b.stmt());
+                if (isPre) {
+                    preconds.add(b.stmt());                   // store; re-emitted at firstActive
+                } else if (b.localDecl() != null && currentSelfless && !currentArgs.contains("self")
+                           && b.localDecl().identList().declName().size() == 1
+                           && nameText(b.localDecl().identList().declName(0).name()).equals("self")) {
+                    // A selfless procedure has no implicit `self` dummy, so a stray
+                    // `self :: …` declaration would put an intent on a non-dummy — drop
+                    // it. BUT a selfless proc may still pass `self` as an EXPLICIT named
+                    // argument (char_array_to_str(self)); then self IS a dummy and the
+                    // declaration must stay — hence the currentArgs.contains("self") guard.
+                } else if (b.localDecl() != null && misparsedTypeCall(b.localDecl())) {
+                    // `TYPE::method(args)` on its own line parses as a declaration
+                    // (identList :: declTail) — re-emit it as the call it really is.
+                    int before = f90.length();
+                    emitTypeQualifiedCallStmt(b.localDecl(), indent);
+                    spliceTrailingComment(c, b.getStop().getTokenIndex(), before);
+                } else if (b.localDecl() != null) {
+                    int before = f90.length();
+                    emitDecl(b.localDecl().identList(), b.localDecl().declTail(), indent);
+                    spliceTrailingComment(c, b.getStop().getTokenIndex(), before);
+                } else {
+                    int before = f90.length();
+                    emitStmt(b.stmt(), c, indent);
+                    spliceTrailingComment(c, b.getStop().getTokenIndex(), before);
+                }
+                c.pos = Math.max(c.pos, b.getStop().getTokenIndex() + 1);
+                c.lastLine = b.getStop().getLine();
+            }
+            for (FooParser.StmtContext pc : preconds) emitPrecond(pc);   // no executable: emit at end
+        }
+
+        /** Append a same-line trailing comment to the just-emitted statement
+         *  line (foo.pl keeps `stmt   ! note` together). `before` is f90's length
+         *  prior to emitting the element; if nothing was emitted, do nothing. */
+        void spliceTrailingComment(Cursor c, int stopTok, int before) {
+            if (f90.length() <= before || f90.charAt(f90.length() - 1) != '\n') return;
+            String tc = trailingComment(c, stopTok);
+            if (tc != null) f90.insert(f90.length() - 1, tc);
+        }
+
+        /** Splice a trailing comment onto a block-header line (`do … ! note`).
+         *  `nl` is the NEWLINE token closing the header. */
+        void appendHeaderComment(Cursor c, org.antlr.v4.runtime.tree.TerminalNode nl) {
+            if (nl == null) return;
+            String tc = trailingComment(c, nl.getSymbol().getTokenIndex());
+            if (tc != null) f90.append(tc);
+        }
+
+        /** A COMMENT trailing the statement's NEWLINE (hidden channel, same source
+         *  line). Consumes it from the cursor and returns "  <text>", else null. */
+        String trailingComment(Cursor c, int stopTok) {
+            if (stopTok < 0 || stopTok >= c.toks.size()) return null;
+            int line = c.toks.get(stopTok).getLine();
+            for (int i = stopTok - 1; i >= 0; i--) {
+                if (i < c.pos) break;                                // already consumed/emitted
+                Token t = c.toks.get(i);
+                if (t.getChannel() != Token.HIDDEN_CHANNEL) break;   // reached code
+                if (t.getLine() != line) break;
+                if (t.getType() == FooLexer.COMMENT) {
+                    c.pos = Math.max(c.pos, i + 1);
+                    return "  " + t.getText();
+                }
+            }
+            return null;
+        }
+
+        /** True if a statement is a single ENSURE/DIE/WARN assertion call. */
+        boolean isAssertionStmt(FooParser.StmtContext s) {
+            if (s.simpleLine() == null || s.simpleLine().lineStmt().size() != 1) return false;
+            FooParser.SimpleStmtContext st = s.simpleLine().lineStmt(0).simpleStmt();
+            if (st == null || st.postfix() == null || st.postfix().head().callHead() == null) return false;
+            FooParser.NameContext n = st.postfix().head().callHead().name();
+            return n != null && ASSERT_MACROS.contains(nameText(n));
+        }
+
+        /** Emit a hoisted precondition (ENSURE/DIE/WARN) at column 3. */
+        void emitPrecond(FooParser.StmtContext s) {
+            // In a lowercase pure/elemental proc the assert macro is illegal Fortran;
+            // emit it commented (documentation only) and record no use for its symbols.
+            boolean saved = suppressUse;
+            if (currentProcPure) suppressUse = true;
+            String t = renderSimpleStmt(s.simpleLine().lineStmt(0).simpleStmt());
+            suppressUse = saved;
+            if (t != null && !t.isBlank())
+                f90.append(currentProcPure ? "   ! " : "   ").append(t).append('\n');
+        }
+
+        /** Inject the get_from inherited-code comment before the first statement. */
+        void beforeStmt(int indent) {
+            if (inheritInjectPending) {
+                f90.append('\n').append(sp(indent)).append("! The following code is inherited from ")
+                   .append(inheritParent).append('\n');         // raw Foo name (e.g. VEC{OBJECT})
+                inheritInjectPending = false;
+            }
+        }
+
+        // ---- declarations ----------------------------------------------
+
+        void emitDecl(FooParser.IdentListContext ids, FooParser.DeclTailContext tail, int indent) {
+            List<String> vars = new ArrayList<>();
+            for (FooParser.DeclNameContext dn : ids.declName()) vars.add(renderDeclName(dn));
+
+            boolean isArg = !ids.declName().isEmpty()
+                && currentArgs.contains(nameText(ids.declName(0).name()));
+            String ftype; List<String> attrs = new ArrayList<>(); List<String> inits = new ArrayList<>();
+            boolean typeIsAttr = tail.typeSpec() != null
+                && ATTR_WORDS.contains(canon(tail.typeSpec().getText()).toLowerCase(Locale.ROOT));
+            if (tail.typeSpec() != null && !typeIsAttr) {
+                ftype = fortranType(typeSpecText(tail.typeSpec()), isArg);
+                if (tail.ptrSuffix() != null)
+                    attrs.add(tail.ptrSuffix().getText().equals("@") ? "allocatable" : "PTR");
+                if (tail.attrSuffix() != null)
+                    for (FooParser.AttrContext at : tail.attrSuffix().attr()) addAttrOrInit(at, attrs, inits);
+            } else {
+                // attrs-only declaration (implicit self type), incl. an attribute
+                // word mis-parsed as a type (e.g. `self :: allocatable, OUT`).
+                ftype = selfDeclType();
+                if (typeIsAttr) attrs.add(tail.typeSpec().getText());
+                if (tail.ptrSuffix() != null)
+                    attrs.add(tail.ptrSuffix().getText().equals("@") ? "allocatable" : "PTR");
+                if (tail.attrSuffix() != null)
+                    for (FooParser.AttrContext at : tail.attrSuffix().attr()) addAttrOrInit(at, attrs, inits);
+                if (tail.attr() != null)
+                    for (FooParser.AttrContext at : tail.attr()) addAttrOrInit(at, attrs, inits);
+            }
+            if (tail.initSuffix() != null) inits.add("= " + renderExpr(tail.initSuffix().expr()));
+            // a pointer component with no explicit initializer defaults to null
+            if (inComponent && tail.ptrSuffix() != null
+                && tail.ptrSuffix().getText().equals("*") && inits.isEmpty())
+                inits.add("DEFAULT_NULL");
+            StringBuilder d = new StringBuilder(sp(indent)).append(ftype);
+            for (String at : attrs) d.append(", ").append(at);
+            d.append(" :: ").append(String.join(",", vars));
+            for (String in : inits) d.append(' ').append(in);     // DEFAULT(...) / = init after var
+            f90.append(d).append('\n');
+        }
+
+        /** A DEFAULT(...) attribute is a trailing initializer (after the var), not an attr. */
+        void addAttrOrInit(FooParser.AttrContext at, List<String> attrs, List<String> inits) {
+            String nm = at.name() != null ? at.name().getText() : "";
+            if (nm.regionMatches(true, 0, "DEFAULT", 0, Math.min(7, nm.length())) && nm.length() >= 7)
+                inits.add(at.getText());            // DEFAULT(...) and DEFAULT_NULL
+            else if (nm.equalsIgnoreCase("readonly"))
+                ;   // Foo-only access control; not a Fortran attribute (foo.pl drops it)
+            else if (inComponent && nm.equalsIgnoreCase("private"))
+                ;   // per-component `private` is dropped (foo.pl); `public` is kept
+            else attrs.add(attrText(at));
+        }
+
+        /** The Fortran declaration type for `self` — the module's own type. */
+        String selfDeclType() { return fortranType(selfFooType, /*isArg=*/true); }
+
+        /** Foo type text -> Fortran declaration type (top-level position). */
+        String fortranType(String foo, boolean isArg) {
+            String c = canon(applySubst(foo)).replace("?", "");
+            if (c.equals("STR")) return isArg ? "STR(len=*)" : "STR(len=STR_SIZE)";
+            if (c.startsWith("STR(")) return c;
+            // a non-STR intrinsic scalar never takes a (len=...) param (it leaks from
+            // an INTRINSIC template instantiated as INT/REAL/...): REAL(len=..) -> REAL
+            for (String sc : new String[]{"INT", "REAL", "CPX", "BIN"})
+                if (c.startsWith(sc + "(")) return sc;
+            if (isIntrinsicScalar(c)) return c;
+            ArrayType at = parseArray(c);
+            if (at != null) {
+                // A leading `len=...` parameter is the STR element's length; for a
+                // non-STR element it does not apply and is dropped. The rest are the
+                // array dimensions. e.g. VEC{STR}(len=1,6) -> VEC(STR(len=1),6);
+                // VEC{INT}(len=len(self(1))) -> VEC(INT,:).
+                String lenParam = null, dims = at.dimSpec;
+                if (dims != null) {
+                    List<String> parts = splitTopComma(dims);
+                    if (!parts.isEmpty() && parts.get(0).replace(" ", "").startsWith("len=")) {
+                        lenParam = parts.get(0).replace(" ", "").substring(4);
+                        parts = parts.subList(1, parts.size());
+                    }
+                    dims = parts.isEmpty() ? null : String.join(",", parts);
+                }
+                if (dims == null) dims = repeatColon(at.ndim);
+                String elem = (lenParam != null && canon(at.elem).replace("?", "").equals("STR"))
+                            ? "STR(len=" + lenParam + ")" : fortranElement(at.elem, isArg);
+                return at.head + "(" + elem + "," + dims + ")";
+            }
+            // A known Foo derived type (in types.foo) or a parameterised type
+            // becomes type(X_TYPE); an unknown plain identifier is an external/kind
+            // type (e.g. MPI_ADDRESS, MPI_STATUS) and is kept verbatim.
+            if (isFooType(c)) return "type(" + fortranTypeName(c) + "_TYPE)";
+            return c;
+        }
+
+        /** Element type inside VEC{...}/MAT{...}: intrinsic kept, else type(X_TYPE). */
+        String fortranElement(String elem, boolean isArg) {
+            String e = canon(elem).replace("?", "");
+            if (e.equals("STR")) return isArg ? "STR(len=*)" : "STR(len=STR_SIZE)";
+            if (isIntrinsicScalar(e)) return e;
+            if (isFooType(e)) return "type(" + fortranTypeName(e) + "_TYPE)";
+            return e;
+        }
+
+        /** Is this a Foo derived type — defined in types.foo or parameterised? */
+        boolean isFooType(String c) { return types.get(c) != null || c.contains("{"); }
+
+        String attrText(FooParser.AttrContext at) {
+            // dimension(.n_roots+1, …): translate the bound expressions
+            if (at.name() != null && at.dimSpec() != null)
+                return at.name().getText() + renderDimSpec(at.dimSpec());
+            return at.getText();
+        }
+
+        /** Type text with a translated array dimension, so expressions in the
+         *  dimension (e.g. `VEC{BIN}(neighbours.dim)`) are resolved rather than
+         *  copied verbatim. */
+        String typeSpecText(FooParser.TypeSpecContext ts) {
+            String t = ts.baseType().getText();
+            if (ts.QUESTION() != null) t += "?";
+            if (ts.dimSpec() != null) t += renderDimSpec(ts.dimSpec());
+            return t;
+        }
+
+        /** A dimension/type-parameter spec with its bound expressions translated
+         *  (so `(.n_roots+1, 0:n)` -> `(self%n_roots+1, 0:n)`). */
+        String renderDimSpec(FooParser.DimSpecContext ds) {
+            List<String> parts = new ArrayList<>();
+            for (FooParser.DimArgContext da : ds.dimArg()) parts.add(renderDimArg(da));
+            return "(" + String.join(",", parts) + ")";
+        }
+
+        String renderDimArg(FooParser.DimArgContext da) {
+            if (da.STAR() != null) return "*";
+            if (da.IDENTIFIER() != null && da.EQUAL() != null)
+                return da.IDENTIFIER().getText() + "=" + renderExpr(da.expr(0));
+            if (da.COLON() != null) {                       // expr? : expr?
+                int col = da.COLON().getSymbol().getTokenIndex();
+                String lo = "", hi = "";
+                for (FooParser.ExprContext e : da.expr())
+                    if (e.getStop().getTokenIndex() < col) lo = renderExpr(e); else hi = renderExpr(e);
+                return lo + ":" + hi;
+            }
+            return da.expr() != null && !da.expr().isEmpty() ? renderExpr(da.expr(0)) : da.getText();
+        }
+
+        /** A declared name with its dimension expressions translated. */
+        String renderDeclName(FooParser.DeclNameContext dn) {
+            return nameText(dn.name()) + (dn.dimSpec() != null ? renderDimSpec(dn.dimSpec()) : "");
+        }
+
+        // ---- statements ------------------------------------------------
+
+        void emitStmt(FooParser.StmtContext s, Cursor c, int indent) {
+            beforeStmt(indent);
+            if (s.simpleLine() != null) {
+                // Keep ';'-separated statements on one line, as foo.pl does.
+                List<String> parts = new ArrayList<>();
+                for (FooParser.LineStmtContext ls : s.simpleLine().lineStmt()) {
+                    // a bare UNKNOWN(x) inside a select-case body expands to the
+                    // known-keyword list + unknown_ call (multi-line)
+                    String ua = ls.simpleStmt() != null ? unknownArg(ls.simpleStmt()) : null;
+                    if (ua != null && selectKeywords != null) {
+                        if (!parts.isEmpty()) {
+                            f90.append(sp(indent)).append(String.join("; ", parts)).append('\n');
+                            parts.clear();
+                        }
+                        emitUnknownExpansion(ua, indent);
+                        continue;
+                    }
+                    String txt = renderLineStmt(ls);
+                    if (txt != null && !txt.isBlank() && !txt.equalsIgnoreCase("end")) parts.add(txt);
+                }
+                if (!parts.isEmpty()) {
+                    String line = String.join("; ", parts);
+                    // preserve a trailing ';' (empty final statement) as foo.pl does
+                    if (s.simpleLine().SEMI().size() >= s.simpleLine().lineStmt().size()) line += ";";
+                    f90.append(sp(indent)).append(line).append('\n');
+                }
+                return;
+            }
+            if (s.ifStmt()     != null) { emitIf(s.ifStmt(), c, indent); return; }
+            if (s.doStmt()     != null) { emitDo(s.doStmt(), c, indent); return; }
+            if (s.selectStmt() != null) { emitSelect(s.selectStmt(), c, indent); return; }
+            if (s.whereStmt()  != null) { emitWhere(s.whereStmt(), c, indent); return; }
+            if (s.forallStmt() != null) { emitForall(s.forallStmt(), c, indent); return; }
+            f90.append(sp(indent)).append("! TODO stmt: ").append(oneLine(s.getText())).append('\n');
+        }
+
+        // ---- block control flow ---------------------------------------
+
+        void emitIf(FooParser.IfStmtContext x, Cursor c, int indent) {
+            StringBuilder line = new StringBuilder(sp(indent))
+                .append("if (").append(renderExpr(x.expr())).append(") then");
+            emitInlineThenBody(line, x.inlineBody(), c, indent);
+            for (FooParser.ElseIfClauseContext ei : x.elseIfClause()) {
+                c.flushHidden(f90, ei.getStart().getTokenIndex(), indent);
+                StringBuilder el = new StringBuilder(sp(indent))
+                    .append("else if (").append(renderExpr(ei.expr())).append(") then");
+                emitInlineThenBody(el, ei.inlineBody(), c, indent);
+            }
+            if (x.elseClause() != null) {
+                FooParser.ElseClauseContext ec = x.elseClause();
+                c.flushHidden(f90, ec.getStart().getTokenIndex(), indent);
+                StringBuilder el = new StringBuilder(sp(indent)).append("else");
+                emitInlineThenBody(el, ec.inlineBody(), c, indent);
+            }
+            // flush hidden tokens (trailing comments / #endif etc.) sitting between
+            // the last body statement and the `end` keyword, else e.g. a closing
+            // #endif is dropped and the matching #ifdef is left unterminated.
+            c.flushHidden(f90, x.endKw().getStart().getTokenIndex(), indent + 3);
+            f90.append(sp(indent)).append("end if\n");
+        }
+
+        /** Emit `<header>[; inline...]` then the block body at indent+3. */
+        void emitInlineThenBody(StringBuilder header, FooParser.InlineBodyContext ib, Cursor c, int indent) {
+            for (FooParser.SimpleStmtContext ss : ib.simpleStmt()) {
+                String t = renderSimpleStmt(ss);
+                if (t != null && !t.isBlank() && !t.equalsIgnoreCase("end")) header.append("; ").append(t);
+            }
+            f90.append(header);
+            appendHeaderComment(c, ib.NEWLINE());
+            f90.append('\n');
+            emitBodyList(ib.procBody(), c, indent + 3, false);
+        }
+
+        void emitDo(FooParser.DoStmtContext x, Cursor c, int indent) {
+            boolean parallel = false;
+            for (FooParser.NameContext n : x.name()) if (nameText(n).equals("parallel")) parallel = true;
+            String loopLabel = x.COLON() != null ? nameText(x.name(0)) : null;   // `main: do …`
+            StringBuilder line = new StringBuilder(sp(indent));
+            if (loopLabel != null) line.append(loopLabel).append(": ");
+            line.append("do");
+            if (parallel && x.loopHeader() != null) {
+                // `parallel do v = lo,hi` -> bounded by the PARALLEL_DO_* macros
+                FooParser.LoopHeaderContext lh = x.loopHeader();
+                line.append(' ').append(lh.IDENTIFIER().getText())
+                    .append(" = PARALLEL_DO_START(").append(renderExpr(lh.expr(0))).append(",1),")
+                    .append(renderExpr(lh.expr(1))).append(",PARALLEL_DO_STRIDE(1)");
+            } else if (x.loopHeader() != null) {
+                line.append(' ').append(renderLoopHeader(x.loopHeader()));
+            } else if (x.WHILE() != null) {
+                line.append(" while (").append(renderExpr(x.expr())).append(')');
+            }
+            f90.append(line);
+            appendHeaderComment(c, x.NEWLINE().isEmpty() ? null : x.NEWLINE(0));
+            f90.append('\n');
+            String tag = "\"" + fooModuleName + ":" + currentProc + "\"";   // overload-specific name
+            if (parallel) f90.append(sp(indent)).append("LOCK_PARALLEL_DO(").append(tag).append(")\n");
+            emitBodyList(x.procBody(), c, indent + 3, false);
+            int beforeEnd = f90.length();
+            f90.append(sp(indent)).append("end do").append(loopLabel != null ? " " + loopLabel : "").append('\n');
+            // keep the end's trailing comment on `end do` (consume it) before the
+            // UNLOCK, which goes AFTER the end do (outside the loop), matching foo.pl
+            spliceTrailingComment(c, x.getStop().getTokenIndex(), beforeEnd);
+            if (parallel) f90.append(sp(indent)).append("UNLOCK_PARALLEL_DO(").append(tag).append(")\n");
+        }
+
+        String renderForallHeader(FooParser.ForallHeaderContext h) {
+            StringBuilder s = new StringBuilder(h.IDENTIFIER().getText()).append('=')
+                .append(renderExpr(h.expr(0))).append(':').append(renderExpr(h.expr(1)));
+            if (h.expr().size() > 2) s.append(':').append(renderExpr(h.expr(2)));
+            return s.toString();
+        }
+
+        void emitForall(FooParser.ForallStmtContext x, Cursor c, int indent) {
+            String hdr = renderForallHeader(x.forallHeader());
+            if (x.simpleStmt() != null) {                 // single-statement forall
+                f90.append(sp(indent)).append("forall (").append(hdr).append(") ")
+                   .append(renderSimpleStmt(x.simpleStmt())).append('\n');
+                return;
+            }
+            f90.append(sp(indent)).append("forall (").append(hdr).append(')');
+            appendHeaderComment(c, x.NEWLINE().isEmpty() ? null : x.NEWLINE(0));
+            f90.append('\n');
+            emitBodyList(x.procBody(), c, indent + 3, false);
+            f90.append(sp(indent)).append("end forall\n");
+        }
+
+        void emitWhere(FooParser.WhereStmtContext x, Cursor c, int indent) {
+            StringBuilder line = new StringBuilder(sp(indent))
+                .append("where (").append(renderExpr(x.expr())).append(')');
+            emitInlineThenBody(line, x.inlineBody(), c, indent);
+            for (FooParser.ElsewhereClauseContext ew : x.elsewhereClause()) {
+                c.flushHidden(f90, ew.getStart().getTokenIndex(), indent);
+                StringBuilder el = new StringBuilder(sp(indent)).append("elsewhere");
+                if (ew.expr() != null) el.append(" (").append(renderExpr(ew.expr())).append(')');
+                emitInlineThenBody(el, ew.inlineBody(), c, indent);
+            }
+            f90.append(sp(indent)).append("end where\n");
+        }
+
+        String renderLoopHeader(FooParser.LoopHeaderContext lh) {
+            StringBuilder sb = new StringBuilder(lh.IDENTIFIER().getText()).append(" = ");
+            List<FooParser.ExprContext> e = lh.expr();
+            sb.append(renderExpr(e.get(0)));
+            for (int i = 1; i < e.size(); i++) sb.append(',').append(renderExpr(e.get(i)));
+            return sb.toString();
+        }
+
+        void emitSelect(FooParser.SelectStmtContext x, Cursor c, int indent) {
+            f90.append(sp(indent)).append("select case (").append(renderExpr(x.expr())).append(")");
+            appendHeaderComment(c, x.NEWLINE().isEmpty() ? null : x.NEWLINE(0));
+            f90.append('\n');
+            c.lastLine = x.getStart().getLine();   // header emitted; anchor blank-line accounting here
+            // collect the case-label keyword strings, for any UNKNOWN(x) expansion
+            List<String> savedKw = selectKeywords;
+            List<String> kw = new ArrayList<>();
+            for (FooParser.CaseClauseContext cc : x.caseClause())
+                if (cc.caseLabel().DEFAULT() == null)
+                    for (FooParser.ArgContext a : cc.caseLabel().arg()) kw.add(renderArg(a));
+            selectKeywords = kw;
+            for (FooParser.CaseClauseContext cc : x.caseClause()) {
+                // case labels sit at the select-case level (not indented a further 3),
+                // matching foo.pl; the case body is one level (3) deeper.
+                c.flushHidden(f90, cc.getStart().getTokenIndex(), indent);
+                // Keep a source blank line that precedes this case label
+                // (flushHidden only blanks before comments, not code).
+                if (c.lastLine >= 0 && cc.getStart().getLine() > c.lastLine + 1)
+                    f90.append('\n');
+                StringBuilder line = new StringBuilder(sp(indent)).append(renderCaseLabel(cc.caseLabel()));
+                List<String> unkLines = null;
+                for (FooParser.SimpleStmtContext ss : cc.simpleStmt()) {
+                    String ua = unknownArg(ss);
+                    if (ua != null) { unkLines = unknownLines(ua); continue; }   // expand below
+                    String t = renderSimpleStmt(ss);
+                    if (t != null && !t.isBlank() && !t.equalsIgnoreCase("end")) line.append("; ").append(t);
+                }
+                // foo.pl inlines the first expansion line: `case default; allocate(...)`
+                if (unkLines != null && !unkLines.isEmpty()) line.append("; ").append(unkLines.get(0));
+                f90.append(line);
+                appendHeaderComment(c, cc.NEWLINE());
+                f90.append('\n');
+                // Case header emitted: anchor blank-line accounting to this
+                // line so a comment on the NEXT source line isn't treated as
+                // gapped (which would insert a spurious blank after the case).
+                c.lastLine = cc.getStart().getLine();
+                if (unkLines != null)
+                    for (int i = 1; i < unkLines.size(); i++)
+                        f90.append(sp(indent)).append(unkLines.get(i)).append('\n');
+                emitBodyList(cc.procBody(), c, indent + 3, false);
+                c.pos = Math.max(c.pos, cc.getStop().getTokenIndex() + 1);
+                c.lastLine = cc.getStop().getLine();
+            }
+            selectKeywords = savedKw;
+            f90.append(sp(indent)).append("end select\n");
+        }
+
+        /** If `ss` is an `UNKNOWN(x)` call, return its (rendered) argument; else null. */
+        String unknownArg(FooParser.SimpleStmtContext ss) {
+            if (ss == null || ss.postfix() == null || ss.postfix().head().callHead() == null) return null;
+            FooParser.NameContext n = ss.postfix().head().callHead().name();
+            if (n == null || !nameText(n).equals("UNKNOWN")) return null;
+            for (FooParser.TrailerContext tr : ss.postfix().trailer())
+                if (tr.LPAREN() != null) return tr.argList() != null ? renderArgList(tr.argList()) : "";
+            return "";
+        }
+
+        /** foo.pl expands `UNKNOWN(x)` in a select-case into the known-keyword list
+         *  (built from the case labels) plus a call to unknown_. */
+        List<String> unknownLines(String arg) {
+            List<String> kw = selectKeywords != null ? selectKeywords : new ArrayList<>();
+            List<String> r = new ArrayList<>();
+            r.add("allocate(tonto%known_keywords(" + kw.size() + "))");
+            for (int i = 0; i < kw.size(); i++)
+                r.add("tonto%known_keywords(" + (i + 1) + ") = " + kw.get(i));
+            r.add("call unknown_(tonto," + arg + ",\"" + fooModuleName + ":" + currentProcBase + "\")");
+            r.add("deallocate(tonto%known_keywords)");
+            return r;
+        }
+
+        void emitUnknownExpansion(String arg, int indent) {
+            for (String l : unknownLines(arg)) f90.append(sp(indent)).append(l).append('\n');
+        }
+
+        String renderCaseLabel(FooParser.CaseLabelContext cl) {
+            if (cl.DEFAULT() != null) return "case default";
+            List<String> parts = new ArrayList<>();
+            for (FooParser.ArgContext a : cl.arg()) parts.add(renderArg(a));
+            return "case (" + String.join(",", parts) + ")";
+        }
+
+        String renderLineStmt(FooParser.LineStmtContext ls) {
+            if (ls.oneLineIf() != null) {
+                FooParser.OneLineIfContext x = ls.oneLineIf();
+                return "if (" + renderExpr(x.expr()) + ") " + renderSimpleStmt(x.simpleStmt());
+            }
+            if (ls.oneLineWhere() != null) {
+                FooParser.OneLineWhereContext x = ls.oneLineWhere();
+                return "where (" + renderExpr(x.expr()) + ") " + renderSimpleStmt(x.simpleStmt());
+            }
+            if (ls.simpleStmt() != null) return renderSimpleStmt(ls.simpleStmt());
+            return null;
+        }
+
+        String renderSimpleStmt(FooParser.SimpleStmtContext st) {
+            if (st.EXIT()   != null) return st.name() == null ? "exit"  : "exit "  + nameText(st.name());
+            if (st.CYCLE()  != null) return st.name() == null ? "cycle" : "cycle " + nameText(st.name());
+            if (st.RETURN() != null) return "return";
+            if (st.name() != null && st.LPAREN() != null) {   // Fortran I/O: write(ctrl) out-list
+                StringBuilder s = new StringBuilder(nameText(st.name())).append('(');
+                if (st.argList() != null) s.append(renderArgList(st.argList()));
+                s.append(')');
+                if (st.ioTail() != null) s.append(' ').append(renderIoTail(st.ioTail()));
+                return applySubst(s.toString());
+            }
+            if (st.postfix() != null) {
+                Chain head = translatePostfix(st.postfix(), /*statementPos=*/true);
+                String txt;
+                if (st.EQUAL() != null)      txt = head.text + " = "  + renderExpr(st.expr());
+                else if (st.ARROW() != null) txt = head.text + " => " + renderExpr(st.expr());
+                else if (st.ioTail() != null) txt = head.text + " " + renderIoTail(st.ioTail());
+                else txt = head.text;
+                txt = assertPrefix(applySubst(txt));
+                // a statement that is a method-reference placeholder call (SET?(val))
+                // becomes a subroutine call and needs the `call` prefix
+                if (st.EQUAL() == null && st.ARROW() == null && st.ioTail() == null
+                    && methodRefStmtCall(st)) txt = "call " + txt;
+                return txt;
+            }
+            return null;
+        }
+
+        /** True if a statement is a bare call of a method-reference placeholder
+         *  (KEY whose substitution value is a self-method `.x`). */
+        boolean methodRefStmtCall(FooParser.SimpleStmtContext st) {
+            if (st.postfix() == null || st.postfix().head().callHead() == null) return false;
+            if (st.postfix().head().callHead().DOT() != null) return false;  // dotted -> already a call
+            FooParser.NameContext n = st.postfix().head().callHead().name();
+            if (n == null) return false;
+            String nm = nameText(n);
+            String v = subst.get(nm);
+            if (v == null) v = subst.get(nm + "?");
+            return v != null && v.matches("[.:]\\w+");
+        }
+
+        String renderIoTail(FooParser.IoTailContext t) {
+            List<String> parts = new ArrayList<>();
+            for (FooParser.ArgContext a : t.arg()) parts.add(renderArg(a));
+            return String.join(",", parts);
+        }
+
+        /** Prefix ENSURE/DIE/WARN message strings with "MODULE:proc ... ". */
+        String assertPrefix(String stmt) {
+            int lp = stmt.indexOf('(');
+            if (lp <= 0) return stmt;
+            String head = stmt.substring(0, lp);
+            if (!ASSERT_MACROS.contains(head)) return stmt;
+            // The message is the LAST argument; insert the prefix into ITS opening
+            // string — not the first quote, which may sit inside the condition
+            // (e.g. ENSURE(next_item_(stdin)=="{", "...")).
+            int depth = 0, lastComma = -1, close = -1;
+            boolean inStr = false; char sc = 0;
+            for (int i = lp; i < stmt.length(); i++) {
+                char ch = stmt.charAt(i);
+                if (inStr) { if (ch == sc) inStr = false; continue; }
+                if (ch == '"' || ch == '\'') { inStr = true; sc = ch; }
+                else if (ch == '(') depth++;
+                else if (ch == ')') { if (--depth == 0) { close = i; break; } }
+                else if (ch == ',' && depth == 1) lastComma = i;
+            }
+            int from = lastComma >= 0 ? lastComma + 1 : lp + 1;
+            int q = stmt.indexOf('"', from);
+            if (q < 0 || (close >= 0 && q > close)) return stmt;   // message isn't a string
+            String pre = fooModuleName + ":" + currentProc + " ... ";   // raw Foo name
+            return stmt.substring(0, q + 1) + pre + stmt.substring(q + 1);
+        }
+
+        // ---- expressions ----------------------------------------------
+
+        static final Set<Integer> WORD_OPS = Set.of(
+            FooLexer.AND, FooLexer.OR, FooLexer.EQV, FooLexer.NEQV,
+            FooLexer.EQ, FooLexer.NE, FooLexer.LT_OP, FooLexer.LE_OP,
+            FooLexer.GT_OP, FooLexer.GE_OP);
+
+        String renderExpr(FooParser.ExprContext e) {
+            if (e == null) return "";
+            StringBuilder sb = new StringBuilder();
+            for (ParseTree ch : e.children) {
+                if (ch instanceof FooParser.PostfixContext)
+                    sb.append(translatePostfix((FooParser.PostfixContext) ch, false).text);
+                else if (ch instanceof FooParser.BinOpContext)
+                    sb.append(renderBinOp((FooParser.BinOpContext) ch));
+                else sb.append(ch.getText());
+            }
+            return applySubst(sb.toString());
+        }
+
+        String renderBinOp(FooParser.BinOpContext op) {
+            Token t = op.getStart();
+            String txt = op.getText();
+            return WORD_OPS.contains(t.getType()) ? " " + txt + " " : txt;
+        }
+
+        static final class Chain { String text; String fooType; boolean isCall; }
+
+        /** Render a postfix chain with self-dot and generic-call resolution. */
+        Chain translatePostfix(FooParser.PostfixContext p, boolean statementPos) {
+            Chain ch = new Chain();
+            FooParser.HeadContext head = p.head();
+            StringBuilder out = new StringBuilder();
+            String curType = null;
+            String pendingCall = null;           // a `.method`/`MOD:method` awaiting its (args)
+            boolean pendingNoRecv = false;       // pendingCall has no receiver (module call)
+            boolean isCall = false;
+
+            if (head.callHead() != null) {
+                FooParser.CallHeadContext chx = head.callHead();
+                boolean hasQual = chx.qualifier() != null;
+                boolean colon = chx.COLON() != null, dcolon = chx.DCOLON() != null;
+                boolean dot = chx.DOT() != null;
+                if (hasQual && (colon || dcolon) && !dot) {
+                    // MODULE:method (generic) / MODULE::method (non-generic). Resolve a
+                    // get_from placeholder in the method name (REFLECTION:SHOW? with
+                    // SHOW?=>stl -> REFLECTION:stl) BEFORE recording the use, so the
+                    // dependency is `use REFLECTION_MODULE, only: stl_`, not on the
+                    // placeholder name.
+                    String modFoo = chx.qualifier().getText();
+                    String method = substSelector(nameText(chx.name()));
+                    String[] gi = globals.get(method);
+                    if (colon && (!isModuleLikeQualifier(modFoo)
+                                  || currentArgs.contains(modFoo) || localVarTypes.containsKey(modFoo))) {
+                        // A single ':' whose qualifier is lowercase OR a known
+                        // arg/local (e.g. an uppercase loop index L) is not a module
+                        // call but an array-section range `lo:hi` that callHead's
+                        // qualified-call alternative greedily swallowed.
+                        out.append(modFoo).append(':').append(method);
+                    } else if (gi != null && gi[1].equals(fortranModName(modFoo))) {
+                        // qualified access to a cross-module global variable (e.g.
+                        // GAUSSIAN_DATA::spherical_harmonics_for) -> emit unqualified.
+                        out.append(method); curType = gi[0];
+                        recordUse(gi[1], method);
+                    } else {
+                        // MODULE:method (generic interface, method_) /
+                        // MODULE::method (non-generic, the specific name) — never a
+                        // TYPE_-prefixed name.
+                        pendingCall = colon ? method + "_" : method;
+                        recordUse(fortranModName(modFoo), pendingCall);
+                        pendingNoRecv = true; isCall = true;
+                    }
+                } else if (dot && (colon || dcolon)) {
+                    // submodule call on self: .SET:proc / .:proc / .MAIN:proc
+                    String method = nameText(chx.name());
+                    String ip = !hasQual ? intrinsicProp(method, "self") : null;
+                    if (ip != null) {
+                        // inlined_by_foo on self: `.:destroyed` -> NOT associated(self)
+                        out.append(ip);
+                    } else if (dcolon && !statementPos && (p.trailer().isEmpty() || p.trailer(0).LPAREN() == null)) {
+                        // `.::proc` in VALUE/ARGUMENT position, not immediately called: a
+                        // SPECIFIC procedure passed BY NAME (e.g. `.::chi2F` handed to
+                        // min_BFGS -> `chi2F`), mirroring the type-qualified trailer path. In
+                        // STATEMENT position `.::proc` is instead a no-arg call (`.TD::do_r_CIS`
+                        // -> call do_r_CIS_(self)), so this branch excludes statementPos. Emit
+                        // just the name; record the use so the specific proc is imported.
+                        recordUse(trailerCallModule(selfFooType, hasQual ? chx.qualifier().getText() : null, method), method);
+                        out.append(method); curType = null;
+                    } else if (isSelflessCall(trailerCallModule(selfFooType, hasQual ? chx.qualifier().getText() : null, method), method)) {
+                        // selfless submodule target on self (.SET:proc / .::proc where proc
+                        // is `selfless`): pass no self, like the type-qualified path (below).
+                        // Module-aware (isSelflessCall): checks the RESOLVED module's
+                        // all-overloads-selfless set, so a same-named normal method in
+                        // another module is not false-dropped.
+                        pendingCall = colon ? method + "_" : method;
+                        recordUse(trailerCallModule(selfFooType, hasQual ? chx.qualifier().getText() : null, method), pendingCall);
+                        pendingNoRecv = true; isCall = true;
+                    } else {
+                        pendingCall = colon ? method + "_" : method;
+                        recordUse(trailerCallModule(selfFooType, hasQual ? chx.qualifier().getText() : null, method), pendingCall);
+                        out.append("self"); isCall = true;
+                    }
+                } else if (dot && chx.name() != null && !hasQual && !colon && !dcolon) {
+                    String sel = substSelector(nameText(chx.name()));
+                    String ip;
+                    String elemComp;
+                    if (types.isComponent(selfFooType, sel)) {
+                        out.append("self%").append(sel);
+                        curType = types.componentType(selfFooType, sel);
+                    } else if ((elemComp = selfElemComponent(sel)) != null) {
+                        // self is an array VEC{T}; sel is a component of element T
+                        out.append("self%").append(sel);
+                        curType = arrayOfComponent(selfFooType, elemComp);
+                    } else if ((ip = intrinsicProp(sel, "self")) != null) {
+                        out.append(ip);                       // .dim -> size(self), etc.
+                        curType = intrinsicPropType(sel);     // so a chained `.is_even` resolves
+                    } else if (INTRINSIC_FNS.contains(sel.toLowerCase())) {
+                        pendingCall = sel;                    // .sin -> sin(self), .trim -> trim(self)
+                        out.append("self"); isCall = true;
+                    } else if (isSelflessCall(callModule(selfFooType, sel), sel)) {
+                        // selfless dot-method on self (`.docu_X(die)` where docu_X is
+                        // `selfless`): pass no self — `docu_X_(die)`, not `docu_X_(self,die)`.
+                        // Module-aware: checks the RESOLVED module's all-overloads-selfless
+                        // set (handles cross-submodule selfless; won't false-drop a
+                        // same-named normal method like ATOM's `chemical_symbol`).
+                        pendingCall = sel + "_"; recordCall(selfFooType, sel);
+                        pendingNoRecv = true; isCall = true;
+                    } else {
+                        pendingCall = sel + "_"; recordCall(selfFooType, sel);
+                        out.append("self"); isCall = true;
+                    }
+                } else if (!hasQual && (colon || dcolon) && !dot && chx.name() != null) {
+                    // same-module reference/call with the qualifier omitted:
+                    //   :proc  -> generic name proc_   ;   ::proc -> specific name proc
+                    // A following `(args)` trailer makes it a call; bare (e.g. a
+                    // procedure passed by name as an argument) stays just the name.
+                    String method = nameText(chx.name());
+                    String ip = intrinsicProp(method, "self");
+                    if (ip != null) {
+                        // inlined_by_foo on self, e.g. `.:destroyed` -> NOT associated(self)
+                        out.append(ip);
+                    } else {
+                        out.append(colon ? method + "_" : method);
+                        recordSelfCall(method);   // same-module call: no `use`, so capture the edge here
+                        isCall = true;
+                    }
+                } else if (!hasQual && !colon && !dcolon && !dot && chx.name() != null) {
+                    // bare name (local var, `self`, or a cross-module global); track type
+                    String nm = nameText(chx.name());
+                    out.append(nm);
+                    // A bare `proc(...)` call to a SAME-MODULE selfless proc (e.g. T_TENSOR's
+                    // t0/t1/t2) emits no `use`, so capture the intra-module edge here for DCE.
+                    if (selflessProcs.contains(nm)) recordSelfCall(nm);
+                    String subRecv;
+                    if (nm.equals("self")) curType = selfFooType;
+                    else if (localVarTypes.containsKey(nm)) curType = localVarTypes.get(nm);
+                    else if (moduleVars.containsKey(nm)) curType = moduleVars.get(nm);
+                    else if ((subRecv = substReceiverType(nm)) != null) curType = subRecv;
+                    else { String gt = resolveGlobal(nm); if (gt != null) curType = gt; }
+                } else {
+                    out.append(head.getText());          // other forms: TODO
+                }
+            } else if (head.NOT() != null) {
+                // `NOT` expands (CPP) to `.not.`; two adjacent `.not.` (e.g. NOT applied
+                // to `.deallocated` -> NOT (NOT allocated(..))) is rejected by gfortran,
+                // so parenthesise an operand that already begins with NOT.
+                String inner = translatePostfix(head.postfix(), false).text;
+                out.append("NOT ").append(inner.startsWith("NOT ") ? "(" + inner + ")" : inner);
+            } else if (head.MINUS() != null) {
+                out.append('-').append(translatePostfix(head.postfix(), false).text);
+            } else if (head.PLUS() != null) {
+                out.append('+').append(translatePostfix(head.postfix(), false).text);
+            } else if (head.LPAREN() != null) {
+                String inner = head.argList() != null ? renderArgList(head.argList()) : "";
+                out.append('(').append(inner).append(')');
+                if (isStringLiteral(inner.trim())) curType = "STR";   // ("...").method -> STR
+            } else if (head.arrayConstructor() != null) {
+                out.append(renderArrayConstructor(head.arrayConstructor()));
+            } else {
+                String lit = head.getText();
+                out.append(lit);                         // literal
+                if (isStringLiteral(lit)) curType = "STR";            // "...".method -> STR
+            }
+
+            for (int ti = 0; ti < p.trailer().size(); ti++) {
+                FooParser.TrailerContext tr = p.trailer().get(ti);
+                boolean nextIsCall = ti + 1 < p.trailer().size()
+                                     && p.trailer().get(ti + 1).LPAREN() != null;
+                // A pending method call whose args are NOT a following `(...)` is
+                // closed now (e.g. `.x.destroy.something` -> destroy_(self%x) then …).
+                if (pendingCall != null && tr.LPAREN() == null) {
+                    { String inner = pendingNoRecv ? "" : out.toString();
+                  out = new StringBuilder(inner.isEmpty() ? pendingCall : pendingCall + "(" + inner + ")"); }
+                    pendingCall = null; pendingNoRecv = false;
+                }
+                boolean colonTr = (tr.DOT() != null || tr.PERCENT() != null)
+                                  && (tr.COLON() != null || tr.DCOLON() != null);
+                boolean dotSel = (tr.DOT() != null || tr.PERCENT() != null)
+                                 && tr.COLON() == null && tr.DCOLON() == null && !tr.name().isEmpty();
+                if (colonTr) {
+                    // submodule call: recv.SUBMOD:method / recv.:method
+                    List<FooParser.NameContext> ns = tr.name();
+                    String submod = ns.size() == 2 ? nameText(ns.get(0)) : null;
+                    String method = nameText(ns.get(ns.size() - 1));
+                    pendingCall = tr.COLON() != null ? method + "_" : method;
+                    String recv = out.toString();
+                    if (recv.equals(fortranTypeName(selfFooType))) {
+                        // Type-qualified call on self (DIFFRACTION_DATA.READ:proc): the
+                        // qualifier names the module, not a receiver object. Pass self
+                        // (or nothing, for a selfless target).
+                        recordUse(trailerCallModule(selfFooType, submod, method), pendingCall);
+                        if (tr.DCOLON() != null && !nextIsCall) {
+                            // a bare TYPE.SUBMOD::proc (not followed by `(...)`) is a
+                            // procedure passed BY NAME, not a call:
+                            // DIFFRACTION_DATA.INQ::chi2F given to min_BFGS -> `chi2F`.
+                            out = new StringBuilder(method);
+                            pendingCall = null; isCall = false; curType = null;
+                            continue;
+                        }
+                        if (selflessProcs.contains(method) || selflessGlobal.contains(method)) {
+                            out = new StringBuilder(); pendingNoRecv = true;   // selfless target: no self
+                        } else out = new StringBuilder("self");
+                    } else if (curType != null) {
+                        recordUse(trailerCallModule(curType, submod, method), pendingCall);
+                    } else if (isModuleLikeQualifier(recv)) {
+                        // TYPE.SUBMOD:method where TYPE is ANOTHER module (recv is a bare
+                        // type name, not an object): a selfless module-qualified call,
+                        // e.g. DIFFRACTION_DATA.PUT:put_refinement_header. No receiver.
+                        recordUse(trailerCallModule(recv, submod, method), pendingCall);
+                        out = new StringBuilder(); pendingNoRecv = true;
+                    }
+                    isCall = true; curType = null;          // recv stays in `out`; args via next LPAREN
+                } else if (dotSel) {
+                    String sel = substSelector(nameText(tr.name(0)));
+                    String ip, elemComp;
+                    if (curType != null && types.isComponent(curType, sel)) {
+                        out.append('%').append(sel);
+                        curType = types.componentType(curType, sel);
+                    } else if ((elemComp = elemComponent(curType, sel)) != null) {
+                        // recv is an array VEC{T}; sel is a component of element T
+                        out.append('%').append(sel);
+                        curType = arrayOfComponent(curType, elemComp);
+                    } else if ((ip = intrinsicProp(sel, out.toString())) != null) {
+                        out = new StringBuilder(ip); curType = intrinsicPropType(sel);
+                    } else if (INTRINSIC_FNS.contains(sel.toLowerCase())) {
+                        // tonto intrinsic: X.scan(s) -> scan(X,s), X.trim -> trim(X)
+                        pendingCall = sel; isCall = true; curType = null;
+                    } else {
+                        // method call on `out`: defer wrapping so a following
+                        // `(args)` trailer is folded in -> sel_(out, args)
+                        recordCall(curType, sel);
+                        pendingCall = sel + "_"; isCall = true; curType = null;
+                    }
+                } else if (tr.LPAREN() != null) {
+                    String inner = tr.argList() != null ? renderArgList(tr.argList()) : "";
+                    if (pendingCall != null) {
+                        String recv = out.toString();
+                        String args = pendingNoRecv ? inner
+                            : (recv.isEmpty() ? inner : (inner.isEmpty() ? recv : recv + "," + inner));
+                        out = new StringBuilder(pendingCall + "(" + args + ")");
+                        pendingCall = null; pendingNoRecv = false;
+                    } else {
+                        out.append('(').append(inner).append(')');
+                        curType = indexResultType(curType, inner, tr.argList());
+                    }
+                } else if (tr.LBRACKET() != null) {
+                    // encapsulated-element access: a(i)[j] -> a(i)%element(j)
+                    String inner = tr.argList() != null ? renderArgList(tr.argList()) : "";
+                    out.append("%element(").append(inner).append(')');
+                    // `element` is an array component; indexing it yields its elem type
+                    if (curType != null && types.isComponent(curType, "element")) {
+                        ArrayType at = parseArray(canon(types.componentType(curType, "element")));
+                        curType = at != null ? at.elem : null;
+                    } else curType = null;
+                } else {
+                    out.append(tr.getText());
+                }
+            }
+            if (pendingCall != null)
+                { String inner = pendingNoRecv ? "" : out.toString();
+                  out = new StringBuilder(inner.isEmpty() ? pendingCall : pendingCall + "(" + inner + ")"); }
+
+            ch.fooType = curType; ch.isCall = isCall;
+            String s = out.toString();
+            if (statementPos && isCall) s = "call " + s;
+            ch.text = s;
+            return ch;
+        }
+
+        /** `[a, b, (expr, i=1,n)]` with each element translated. Keeps the
+         *  bracket form foo.pl emits. */
+        String renderArrayConstructor(FooParser.ArrayConstructorContext ac) {
+            List<String> parts = new ArrayList<>();
+            for (FooParser.AcElemContext e : ac.acElem()) {
+                if (e.loopHeader() != null)          // implied-do: (expr, i=1,n)
+                    parts.add("(" + renderExpr(e.expr()) + "," + renderLoopHeader(e.loopHeader()) + ")");
+                else
+                    parts.add(renderExpr(e.expr()));
+            }
+            return "[" + String.join(",", parts) + "]";
+        }
+
+        String renderArgList(FooParser.ArgListContext al) {
+            List<String> parts = new ArrayList<>();
+            for (FooParser.ArgContext a : al.arg()) parts.add(renderArg(a));
+            return String.join(",", parts);
+        }
+
+        String renderArg(FooParser.ArgContext a) {
+            if (a.name() != null && a.EQUAL() != null)          // keyword arg
+                return nameText(a.name()) + "=" + (a.expr(0) != null ? renderExpr(a.expr(0)) : "*");
+            if ((a.expr() != null && !a.expr().isEmpty())
+                || (a.COLON() != null && !a.COLON().isEmpty())) {
+                // Array-section range (a, a:b, a:b:c, :b, ::c, :, …). Interleave the
+                // COLON and expr children in SOURCE ORDER so a leading-colon bound
+                // (:b) stays on the correct side of the colon — emitting it as `b:`
+                // inverts the range (a longstanding foo.pl bug we do not reproduce).
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < a.getChildCount(); i++) {
+                    org.antlr.v4.runtime.tree.ParseTree ch = a.getChild(i);
+                    if (ch instanceof FooParser.ExprContext)
+                        sb.append(renderExpr((FooParser.ExprContext) ch));
+                    else if (ch instanceof org.antlr.v4.runtime.tree.TerminalNode
+                             && ((org.antlr.v4.runtime.tree.TerminalNode) ch).getSymbol().getType() == FooParser.COLON)
+                        sb.append(':');
+                }
+                return sb.toString();
+            }
+            return a.getText();      // '*' form — passthrough
+        }
+
+        /** True if a qualifier before ':' names a module/type (uppercase base, per
+         *  Foo convention) rather than a lower bound in an array-section range. */
+        boolean isModuleLikeQualifier(String q) {
+            int i = 0;
+            while (i < q.length() && q.charAt(i) != '{' && q.charAt(i) != '(') i++;
+            String base = q.substring(0, i);
+            boolean hasLetter = false;
+            for (int k = 0; k < base.length(); k++) {
+                char c = base.charAt(k);
+                if (Character.isLetter(c)) {
+                    hasLetter = true;
+                    if (Character.isLowerCase(c)) return false;
+                }
+            }
+            return hasLetter;
+        }
+
+        /** When self is an array VEC{T}/MAT{T}…, the component type of `sel` on the
+         *  element type T (so `self.charge` on a VEC{ATOM} -> self%charge), else null. */
+        String selfElemComponent(String sel) { return elemComponent(selfFooType, sel); }
+
+        /** Type of indexing an array/string `type` with index list `al`.
+         *  Result rank = number of section (a:b, :) or vector-subscript (array-valued
+         *  index) arguments: 0 -> element type; full rank -> same type; in between ->
+         *  reduced-rank array (MAT{T}(:,i) -> VEC{T}; VEC{ATOM}(vec_of_int) -> VEC{ATOM}).
+         *  A non-array (STR) keeps its type for a substring x(a:b), else element (null). */
+        String indexResultType(String type, String inner, FooParser.ArgListContext al) {
+            if (type == null) return null;
+            // Rank per index arg: a section shows a ':' in its rendered text (reliable
+            // whether the ':' is an arg-level range or an inner binOp); otherwise probe
+            // the arg's type for a vector subscript (array-valued index).
+            List<String> texts = splitTopComma(inner);
+            List<FooParser.ArgContext> args = al != null ? al.arg() : java.util.List.of();
+            int rank = 0;
+            for (int i = 0; i < texts.size(); i++) {
+                if (texts.get(i).contains(":")) { rank++; continue; }   // section
+                if (i < args.size()) {
+                    String t = indexArgFooType(args.get(i));            // vector subscript?
+                    if (t != null && parseArray(canon(t)) != null) rank++;
+                }
+            }
+            ArrayType at = parseArray(canon(type));
+            if (at == null) return rank > 0 ? type : null;   // STR(a:b) keeps STR; STR(i) -> null
+            if (rank == 0) return at.elem;
+            if (rank >= at.ndim) return type;
+            return headForRank(rank) + "{" + at.elem + "}";
+        }
+
+        /** Foo type of a single-expression index argument (for vector-subscript
+         *  detection), computed by re-translating its postfix with side effects
+         *  (recordUse) suppressed. Returns null for keyword/section/multi-postfix args. */
+        String indexArgFooType(FooParser.ArgContext a) {
+            if (a.name() != null || a.expr() == null || a.expr().size() != 1) return null;
+            FooParser.ExprContext e = a.expr(0);
+            if (e.postfix() == null || e.postfix().size() != 1) return null;   // not a lone postfix
+            boolean save = suppressUse; suppressUse = true;
+            try { return translatePostfix(e.postfix(0), false).fooType; }
+            finally { suppressUse = save; }
+        }
+
+        /** Component access on an array receiver yields an array of the component,
+         *  with the receiver's array head: VEC{ATOM}%charge -> VEC{REAL}, so a
+         *  following `.method` resolves to the array module. A non-array receiver or
+         *  an already-array component is returned unchanged. */
+        String arrayOfComponent(String receiverType, String componentType) {
+            ArrayType rat = receiverType != null ? parseArray(canon(receiverType)) : null;
+            if (rat != null && componentType != null && parseArray(canon(componentType)) == null)
+                return rat.head + "{" + componentType + "}";
+            return componentType;
+        }
+
+        String elemComponent(String type, String sel) {
+            if (type == null) return null;
+            ArrayType at = parseArray(canon(type));
+            if (at != null && at.elem != null && types.isComponent(at.elem, sel))
+                return types.componentType(at.elem, sel);
+            return null;
+        }
+
+        /** Tonto intrinsic functions (foo.pl @tonto_intrinsic_functions): a
+         *  `.method(args)` on them drops the `_` and passes the receiver as the
+         *  first arg — X.sin -> sin(X), X.scan(s) -> scan(X,s), X.trim -> trim(X).
+         *  The argumentless inquiry/pointer ones (size/dim, allocated, associated,
+         *  created, destroyed, …) are handled by intrinsicProp instead. */
+        static final Set<String> INTRINSIC_FNS = Set.of(
+            "abs", "acos", "asin", "atan", "cos", "sin", "tan",
+            "mod", "modulo", "scan", "trim", "verify", "nullify",
+            "erf", "erfc");   // Fortran 2008 error functions (REAL intrinsics)
+
+        /** Array/pointer inquiry methods that map to Fortran intrinsics, or null. */
+        String intrinsicProp(String name, String recv) {
+            switch (name) {
+                case "dim": return "size(" + recv + ")";
+                case "dim1": return "size(" + recv + ",1)";
+                case "dim2": return "size(" + recv + ",2)";
+                case "dim3": return "size(" + recv + ",3)";
+                case "dim4": return "size(" + recv + ",4)";
+                case "dim5": return "size(" + recv + ",5)";
+                case "dim6": return "size(" + recv + ",6)";
+                case "dim7": return "size(" + recv + ",7)";
+                // NB: .trim / .scan are NOT intrinsics here — a `.proc` always
+                // resolves to a `proc_` call (an explicit interface in STR, e.g.
+                // trim_ -> trim_blanks_from_end), even when the name coincides
+                // with a Fortran intrinsic. So they fall through to method calls.
+                case "allocated": return "allocated(" + recv + ")";
+                case "deallocated": return "NOT allocated(" + recv + ")";
+                case "created":                                 // pointer create/destroy
+                case "associated": return "associated(" + recv + ")";
+                case "destroyed":                               // inlined_by_foo: .destroyed
+                case "disassociated": return "NOT associated(" + recv + ")";
+                default: return null;
+            }
+        }
+
+        /** Foo result type of an intrinsic property (for chaining, e.g. `.dim.is_even`
+         *  -> size(self) is INT, so is_even_ resolves in INT_MODULE). Null if unknown. */
+        String intrinsicPropType(String name) {
+            if (name.matches("dim[1-7]?")) return "INT";
+            switch (name) {
+                case "allocated": case "deallocated":
+                case "created": case "destroyed":
+                case "associated": case "disassociated": return "BIN";
+                default: return null;
+            }
+        }
+
+        /** Fortran module a `.method` call on a receiver of foo type `fooType`
+         *  resolves to. A submodule-split type (MOLECULE) has no base <TYPE>_MODULE, so
+         *  resolve to the submodule that actually defines `method` (preferring the
+         *  current one so a self-call self-skips); ordinary types fall back to
+         *  <TYPE>_MODULE. Null if fooType is unknown. */
+        String callModule(String fooType, String method) {
+            if (fooType == null) return null;
+            Map<String, Set<String>> byMethod = subMethods.get(canon(fooType));
+            if (byMethod != null) {
+                Set<String> mods = method == null ? null : byMethod.get(method.toLowerCase(Locale.ROOT));
+                if (mods != null)
+                    return mods.contains(selfModuleName) ? selfModuleName : mods.iterator().next();
+            }
+            return fortranModName(fooType);
+        }
+
+        void recordCall(String fooType, String method) {
+            String mod = callModule(fooType, method);
+            if (mod != null) recordUse(mod, method + "_");
+        }
+
+        /** Call-graph capture (B1/B2) for a SAME-MODULE call that emits no `use` and so
+         *  never reaches recordUse — the `:proc`/`::proc` qualifier-omitted form and a
+         *  bare selfless-proc call `proc(...)`. Records the intra-module edge directly,
+         *  else dead-code analysis would miss it and prune a proc that a live sibling
+         *  in the same module calls (e.g. TIME's `::current_time5`, T_TENSOR's `t0`). */
+        void recordSelfCall(String method) {
+            if (callEdges != null && currentProcBase != null && selfModuleName != null)
+                callEdges.computeIfAbsent(node(selfModuleName, currentProcBase), k -> new LinkedHashSet<>())
+                         .add(node(selfModuleName, genericBase(method)));
+        }
+
+        /** True if EVERY overload of `method` in Fortran module `mod` is `selfless`
+         *  (module-aware; from buildSelflessByModule). A bare `.proc` self-call
+         *  resolving to `mod` then drops self. Falls back to the local (validated)
+         *  selflessProcs for the current module. */
+        boolean isSelflessCall(String mod, String method) {
+            if (selflessProcs.contains(method)) return true;   // local, AST-based
+            Set<String> s = mod == null ? null : selflessByMod.get(mod);
+            return s != null && s.contains(method);
+        }
+
+        /** Fortran module for a submodule qualifier on self: .SET->MOLECULE_SET_MODULE,
+         *  .MAIN->MOLECULE_MODULE, .: (null) -> the current module (same submodule). */
+        String submoduleModule(String qual) {
+            String base = fortranTypeName(selfFooType);
+            if (qual == null) return selfModuleName;
+            if (qual.equalsIgnoreCase("MAIN")) return base + "_MODULE";
+            return base + "_" + qual + "_MODULE";
+        }
+
+        /** Fortran module for a trailer call `recv.SUBMOD:method` / `recv.:method`
+         *  / `recv.MAIN:method`, where recv has foo type recvFooType. A named
+         *  submodule is used verbatim. For `.:` (same submodule) or `.MAIN:` on a
+         *  submodule-split type (MOLECULE), resolve via the registry to the submodule
+         *  that actually defines `method` — preferring the current one so recordUse
+         *  self-skips. Non-split types fall back to <TYPE>_MODULE. */
+        String trailerCallModule(String recvFooType, String submod, String method) {
+            if (submod != null && !submod.equalsIgnoreCase("MAIN"))
+                return fortranTypeName(recvFooType) + "_" + submod + "_MODULE";
+            Map<String, Set<String>> byMethod = subMethods.get(canon(recvFooType));
+            if (byMethod != null) {
+                Set<String> mods = method == null ? null : byMethod.get(method.toLowerCase(Locale.ROOT));
+                if (mods != null)
+                    return mods.contains(selfModuleName) ? selfModuleName : mods.iterator().next();
+                return selfModuleName;   // unknown -> assume the current submodule
+            }
+            return fortranTypeName(recvFooType) + "_MODULE";
+        }
+
+        /** Record a `use <mod>, only: <symbol>` dependency (skip self-use). */
+        void recordUse(String fortranMod, String symbol) {
+            if (suppressUse) return;                              // type-probe: no side effects
+            // Call-graph capture (B1): record the caller->callee edge BEFORE the
+            // self-module / TYPES / SYSTEM skips below, so intra-module calls and
+            // universal-sink calls are still visible to reachability analysis.
+            if (callEdges != null && currentProcBase != null)
+                callEdges.computeIfAbsent(node(selfModuleName, currentProcBase),
+                                          k -> new LinkedHashSet<>())
+                         .add(node(fortranMod, genericBase(symbol)));
+            if (fortranMod.equals(selfModuleName)) return;        // don't use own module
+            // TYPES and SYSTEM are pulled in wholesale (`use X_MODULE`), so they
+            // never get an `only:` clause (matches foo.pl).
+            if (fortranMod.equals("TYPES_MODULE") || fortranMod.equals("SYSTEM_MODULE")) return;
+            useOnly.computeIfAbsent(fortranMod, k -> new java.util.TreeSet<>()).add(symbol);
+        }
+
+        /** If `nm` is a cross-module global, set curType to its type, record the
+         *  `only:` use dependency, and return true. */
+        String resolveGlobal(String nm) {
+            String[] gi = globals.get(nm);
+            if (gi == null) return null;
+            recordUse(gi[1], nm);
+            return gi[0];
+        }
+
+        // ---- .int / .use ----------------------------------------------
+
+        void buildInterfaceFile() {
+            // foo.pl: the interface list defaults to `private`, EXCEPT for the TYPES
+            // module, which is `public` so that every derived type it declares is
+            // exported to all modules that `use` it. A bare `private` here would make
+            // all types private and nothing could reference type(SYSTEM_TYPE) etc.
+            intf.append(fooModuleName.equalsIgnoreCase("TYPES") ? "   public\n\n" : "   private\n\n");
+            // Combine the auto-generated per-base generics with explicit
+            // `interface NAME  member … end` aliases. An alias member is a base name,
+            // so expand it to that method's actual specific procedures (accounting for
+            // overload numbering: trace_product_with -> trace_product_with_0..3), else
+            // `module procedure <base>` would name a non-existent procedure.
+            // An explicit `interface NAME  m1 m2 … end` block groups its members under
+            // the generic NAME_ (a real umbrella generic like `to_str_`, or an alias
+            // like `uncompress_from_pyramid_` -> symmetric_unzip_triangle). Emit them
+            // all: a call to NAME_ from another module needs the interface to resolve.
+            // (Aliases that are never called — e.g. diagonal_plus_ — become harmless
+            // unused interfaces; release omits them, a minor .int-only deviation.)
+            Map<String, List<String>> all = new LinkedHashMap<>();
+            for (Map.Entry<String, List<String>> e : interfaceProcs.entrySet())
+                all.put(e.getKey(), new ArrayList<>(e.getValue()));
+            for (Map.Entry<String, List<String>> al : explicitAliases.entrySet()) {
+                List<String> specs = all.computeIfAbsent(al.getKey(), k -> new ArrayList<>());
+                for (String member : al.getValue()) {
+                    // B2: an alias member dropped by the purge is not in interfaceProcs,
+                    // so the List.of(member) fallback would name a non-existent procedure.
+                    if (deadNodes != null && deadNodes.contains(selfModuleName + ":" + member)) continue;
+                    for (String s : interfaceProcs.getOrDefault(member, List.of(member)))
+                        if (!specs.contains(s)) specs.add(s);
+                }
+            }
+            // foo.pl sorts the interface blocks by the emitted name (NAME_),
+            // strict ASCII order (LC_ALL=C: uppercase before lowercase).
+            List<Map.Entry<String, List<String>>> entries =
+                new ArrayList<>(all.entrySet());
+            entries.sort((a, b) -> (a.getKey() + "_").compareTo(b.getKey() + "_"));
+            for (Map.Entry<String, List<String>> e : entries) {
+                if (e.getValue().isEmpty()) continue;   // B2: every member dropped by the purge
+                String gacc = Boolean.TRUE.equals(genericPrivate.get(e.getKey())) ? "private" : "public";
+                intf.append("   ").append(gacc).append("    ").append(e.getKey()).append("_\n");
+                for (String spec : e.getValue())
+                    if (publicSpecs.contains(spec))
+                        intf.append("   public    ").append(spec).append('\n');
+                intf.append("   interface ").append(e.getKey()).append("_\n");
+                for (String spec : e.getValue())
+                    intf.append("      module procedure ").append(spec).append('\n');
+                intf.append("   end interface\n\n");
+            }
+        }
+
+        void buildUseFile() {
+            String selfMod = fortranTypeName(fooModuleName);
+            if (!selfMod.equals("TYPES")) use.append("   use TYPES_MODULE\n");
+            if (!selfMod.equals("SYSTEM") && !selfMod.equals("TYPES"))
+                use.append("   use SYSTEM_MODULE\n");
+            // one line per (module, symbol), sorted (matches foo.pl)
+            for (Map.Entry<String, Set<String>> e : useOnly.entrySet())
+                for (String sym : e.getValue())
+                    use.append("   use ").append(e.getKey()).append(", only: ").append(sym).append('\n');
+        }
+
+        // ---- attr signature comment helper (for get_from matching) -----
+        // set per-proc before resolving inheritance
+    }
+
+    // ----------------------------------------------------- hidden-token cursor
+
+    /** Emits hidden tokens (preprocessor lines + comments) and blank lines. */
+    static final class Cursor {
+        final CommonTokenStream toks;
+        int pos = 0;
+        int lastLine = -1;
+        Cursor(CommonTokenStream toks) { this.toks = toks; }
+
+        void flushHidden(StringBuilder out, int uptoTokenIndex, int defaultIndent) {
+            for (; pos < uptoTokenIndex && pos < toks.size(); pos++) {
+                Token t = toks.get(pos);
+                if (t.getChannel() != Token.HIDDEN_CHANNEL) continue;
+                int ty = t.getType();
+                if (ty != FooLexer.COMMENT && ty != FooLexer.PP_LINE) continue;
+                if (lastLine >= 0 && t.getLine() > lastLine + 1) out.append('\n');  // one blank max
+                int col = t.getCharPositionInLine();
+                for (int s = 0; s < col; s++) out.append(' ');
+                out.append(t.getText()).append('\n');
+                lastLine = t.getLine();
+            }
+        }
+    }
+
+    // ---------------------------------------------------------- get_from ref
+
+    static final class ParentRef {
+        String module, routine;
+        static ParentRef parse(String target, String selfModule) {
+            ParentRef r = new ParentRef();
+            String s = target.replaceAll("\\s+", "");
+            int colon = s.indexOf(':');
+            if (colon >= 0) { r.module = s.substring(0, colon); r.routine = s.substring(colon + 1); }
+            else if (s.matches("[A-Z].*")) { r.module = s; r.routine = null; }
+            else { r.module = selfModule; r.routine = s; }
+            return r;
+        }
+    }
+
+    // ----------------------------------------------------- attribute parsing
+
+    static final class Attrs {
+        boolean pure, PURE, elemental, ELEMENTAL, recursive, leaky, selfless, routinal, functional;
+        boolean privateAcc, publicAcc, template, inherited, inlinedByFoo;
+        String getFromTarget, signatureComment;
+        FooParser.AttrContext getFromAttr;
+
+        static Attrs parse(FooParser.ProcAttrsContext pa) {
+            Attrs a = new Attrs();
+            if (pa == null) return a;
+            for (FooParser.AttrContext at : pa.attrList().attr()) {
+                if (at.GET_FROM() != null) {
+                    a.inherited = true;
+                    a.getFromTarget = at.getFromArg(0).getText();
+                    a.getFromAttr = at;
+                    continue;
+                }
+                String raw = at.getText();
+                switch (raw.toLowerCase(Locale.ROOT)) {
+                    case "pure":      if (raw.equals("PURE")) a.PURE = true; else a.pure = true; break;
+                    case "elemental": if (raw.equals("ELEMENTAL")) a.ELEMENTAL = true; else a.elemental = true; break;
+                    case "recursive": a.recursive = true; break;
+                    case "leaky":     a.leaky = true; break;
+                    case "selfless":  a.selfless = true; break;
+                    case "routinal":  a.routinal = true; break;   // self is a subroutine arg (interface)
+                    case "functional": a.functional = true; break; // self is a function arg (interface)
+                    case "private":   a.privateAcc = true; break;
+                    case "public":    a.publicAcc = true; break;
+                    case "template":  a.template = true; break;
+                    case "inlined_by_foo": a.template = true; a.inlinedByFoo = true; break;  // inlined at call sites, not emitted
+                    default: break;
+                }
+            }
+            return a;
+        }
+
+        String prefix() {
+            StringBuilder p = new StringBuilder();
+            if (elemental) p.append("elemental");
+            else if (ELEMENTAL) p.append("ELEMENTAL");
+            else if (pure) p.append("pure");
+            else if (PURE) p.append("PURE");
+            if (recursive) { if (p.length() > 0) p.append(' '); p.append("recursive"); }
+            return p.length() == 0 ? null : p.toString();
+        }
+    }
+
+    // ------------------------------------------------------- tree utilities
+
+    @SuppressWarnings("unchecked")
+    static <T extends ParserRuleContext> List<T> descendants(ParseTree root, Class<T> cls) {
+        List<T> out = new ArrayList<>(); collect(root, cls, out); return out;
+    }
+    private static <T extends ParserRuleContext> void collect(ParseTree node, Class<T> cls, List<T> out) {
+        if (cls.isInstance(node)) out.add((T) node);
+        for (int i = 0; i < node.getChildCount(); i++) collect(node.getChild(i), cls, out);
+    }
+
+    /** Token index just after the module's CONTAINS keyword (or module start). */
+    static int containsTokenIndex(FooParser.ModuleDefContext mod) {
+        if (mod.CONTAINS() != null) return mod.CONTAINS().getSymbol().getTokenIndex() + 1;
+        return mod.getStart().getTokenIndex();
+    }
+
+    static String oneLine(String s) { return s.replaceAll("\\s+", " ").trim(); }
+
+    static String sp(int n) { StringBuilder b = new StringBuilder(); for (int i = 0; i < n; i++) b.append(' '); return b.toString(); }
+
+    /** Split on top-level commas (ignoring those inside (), {}, []). */
+    /** A Foo/Fortran string literal starts with a single or double quote. */
+    static boolean isStringLiteral(String s) {
+        return s != null && !s.isEmpty() && (s.charAt(0) == '"' || s.charAt(0) == '\'');
+    }
+
+    static List<String> splitTopComma(String s) {
+        List<String> out = new ArrayList<>();
+        int depth = 0, start = 0;
+        for (int i = 0; i < s.length(); i++) {
+            char ch = s.charAt(i);
+            if (ch == '(' || ch == '{' || ch == '[') depth++;
+            else if (ch == ')' || ch == '}' || ch == ']') depth--;
+            else if (ch == ',' && depth == 0) { out.add(s.substring(start, i)); start = i + 1; }
+        }
+        out.add(s.substring(start));
+        return out;
+    }
+
+    static String repeatColon(int n) {
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < n; i++) { if (i > 0) b.append(','); b.append(':'); }
+        return b.toString();
+    }
+
+    /** Outermost type arguments of a parameterised type: VEC{INTRINSIC} -> [INTRINSIC]. */
+    static List<String> typeArgsOf(String t) {
+        t = canon(t);
+        int b = t.indexOf('{');
+        if (b < 0) return new ArrayList<>();
+        int depth = 0, end = -1;
+        for (int j = b; j < t.length(); j++) {
+            char ch = t.charAt(j);
+            if (ch == '{') depth++;
+            else if (ch == '}') { if (--depth == 0) { end = j; break; } }
+        }
+        if (end < 0) return new ArrayList<>();
+        List<String> out = new ArrayList<>();
+        String inner = t.substring(b + 1, end);
+        int d = 0, start = 0;
+        for (int j = 0; j <= inner.length(); j++) {
+            if (j == inner.length() || (inner.charAt(j) == ',' && d == 0)) {
+                out.add(inner.substring(start, j)); start = j + 1;
+            } else if (inner.charAt(j) == '{') d++;
+            else if (inner.charAt(j) == '}') d--;
+        }
+        return out;
+    }
+
+    /** A parsed array type: head (VEC/MAT..MAT7), rank, element type, optional dims. */
+    static final class ArrayType { String head; int ndim; String elem; String dimSpec; }
+
+    private static final String[] ARRAY_HEADS = {"MAT7","MAT6","MAT5","MAT4","MAT3","MAT","VEC"};
+    private static final int[]    ARRAY_NDIM  = {7, 6, 5, 4, 3, 2, 1};
+
+    /** Array-type head for a given rank: 1->VEC, 2->MAT, 3->MAT3, … */
+    static String headForRank(int r) {
+        for (int i = 0; i < ARRAY_NDIM.length; i++) if (ARRAY_NDIM[i] == r) return ARRAY_HEADS[i];
+        return "VEC";
+    }
+
+    /** Parse `VEC{REAL}`, `MAT{REAL}(1:3,1:4)`, `VEC{EVEC{INT}}` … or null. */
+    static ArrayType parseArray(String c) {
+        for (int i = 0; i < ARRAY_HEADS.length; i++) {
+            String h = ARRAY_HEADS[i];
+            if (!c.startsWith(h) || c.length() <= h.length() || c.charAt(h.length()) != '{') continue;
+            int depth = 0, close = -1;
+            for (int j = h.length(); j < c.length(); j++) {
+                char ch = c.charAt(j);
+                if (ch == '{') depth++;
+                else if (ch == '}') { if (--depth == 0) { close = j; break; } }
+            }
+            if (close < 0) return null;
+            ArrayType at = new ArrayType();
+            at.head = h; at.ndim = ARRAY_NDIM[i];
+            at.elem = c.substring(h.length() + 1, close);
+            String rest = c.substring(close + 1);
+            if (rest.startsWith("(") && rest.endsWith(")")) at.dimSpec = rest.substring(1, rest.length() - 1);
+            return at;
+        }
+        return null;
+    }
+
+    private FooToFortran() {}
+}

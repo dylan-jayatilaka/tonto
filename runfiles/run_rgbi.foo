@@ -26,9 +26,9 @@ program run_RGBI
    implicit none
 
    command_line :: COMMAND_LINE
-   analysis,fchk :: STR
+   file,  tail  :: STR
    option,value :: STR
-   ci_labels,use_NAOs :: BIN
+   ci_labels    :: BIN
    grpstr :: VEC{STR}@
    groups :: VEC{EVEC{INT}}@
    i :: INT
@@ -43,9 +43,8 @@ program run_RGBI
    TEXTFILE::create_stderr
 
    ! Default option values
-   analysis  = "atom_bond_analysis"
    ci_labels = FALSE
-   use_NAOs  = FALSE
+ ! use_NAOs  = FALSE
 
    ! Get command line !!!!!!!!!
    command_line.set_defaults
@@ -56,12 +55,15 @@ program run_RGBI
    if (NOT command_line.has_option("help")) then
    if  (NOT command_line.has_arguments OR command_line.n_args>1) then
       ! No arguments
-      stdout.text("Supply at least a Gaussian <FChk-file>.")
+      stdout.text("Supply an <.FChk> file or <.molden> file.")
       stdout.text("Type 'run_rgbi -help' for additional help.")
       stop
    else
       ! First argument
-      fchk = command_line.arg(1)
+      file = command_line.arg(1)
+      tail = file.filename_tail
+      tail.to_lower_case
+      DIE_IF(NOT tail.is_one_of(["fchk  ","molden"]),"file must end in .fchk or .molden")
    end
    end ! -- NOT help
 
@@ -88,28 +90,30 @@ program run_RGBI
       case ("ci-labels")
          ci_labels = TRUE
 
-      case ("nao")
-         use_NAOs = value.to_bin
+    ! case ("nao")
+    !    use_NAOs = value.to_bin
            
       case ("help")
 
          stdout.text("SYNOPSIS")
          stdout.flush
-         stdout.text("    run_rgbi [ options ] <FChk-file>")
+         stdout.text("    run_rgbi [ options ] <file.FChk> | <file.molden>")
          stdout.flush
-         stdout.text("    Obtaining Roby-Gould bond indices from a gaussian <FChk-file>.")
+         stdout.text("    Obtaining Roby-Gould bond indices from a gaussian")
+         stdout.text("    <.FChk> file or from a <.molden> file.")
          stdout.flush
-         stdout.text("    NOTE: The FChk file must be produced with the '6d 10f' option.")
-         stdout.text("          Also, analysis with g functions or higher is not allowed.")
+         stdout.text("    With more free software such as LaTeX, chemfig, and Indigo")
+         stdout.text("    labelled structures and 'dial diagrams' may be produced with")
+         stdout.text("    additional scripts in the ./rgbi-script folder.")
+         stdout.flush
+         stdout.text("    If you use this work please cite the references below so")
+         stdout.text("    that people know what you have done.")
          stdout.flush
          stdout.flush
          stdout.text("EXPLANATION")
          stdout.flush
          stdout.text("    The Roby-Gould method uses projection operator techniques to produce")
          stdout.text("    chemically sensible bond indices from a wavefunction. It can do this")
-         stdout.text("    from any kind of wavefunction, but this program is limited to wave-")
-         stdout.text("    functions expanded in cartesian gaussian basis sets produced from the")
-         stdout.text("    Gaussian program. Therefore the '6d 10f' option must be used.")
          stdout.flush
          stdout.text("    The Roby-Gould method has several advantageas over other bond index")
          stdout.text("    methods, including, in no particular order:")
@@ -140,10 +144,7 @@ program run_RGBI
          stdout.text("REFERENCES")
          stdout.flush
          stdout.text("   . M.D. Gould et al (2008) Theor. Chem. Acc. 199 p119-270")
-         stdout.flush
          stdout.text("   . K. Alhameedi et al (2018) Int. J. Quantum Chem. e25603")
-         stdout.flush
-         stdout.text("   . M. Woinska et al (2016) Sci. Adv. 2 e1600192")
          stdout.flush
          stdout.flush
          stdout.text("OPTIONS")
@@ -167,13 +168,13 @@ program run_RGBI
          stdout.text("       Specify to print i/c bond indices above/below the bond line when")
          stdout.text("       using the latex-based make-rgbi-pic script")
          stdout.flush
-         stdout.text("   -nao [t|f]")
-         stdout.flush    
-         stdout.text("       Specify to use Reed et al's pre natural atomic orbitals to define")
-         stdout.text("       the atoms and atomic projectors via true (t) or false (f)")
-         stdout.flush
-         stdout.text("       Default: to use the occupied atomic natural orbitals with occupancy")
-         stdout.text("       greater than 0.05 electrons i.e. false or 'f'")
+       ! stdout.text("   -nao [t|f]")
+       ! stdout.flush    
+       ! stdout.text("       Specify to use Reed et al's pre natural atomic orbitals to define")
+       ! stdout.text("       the atoms and atomic projectors via true (t) or false (f)")
+       ! stdout.flush
+       ! stdout.text("       Default: to use the occupied atomic natural orbitals with occupancy")
+       ! stdout.text("       greater than 0.05 electrons i.e. false or 'f'")
          stdout.flush    
          stdout.text("   -help")
          stdout.flush    
@@ -194,9 +195,13 @@ program run_RGBI
 
    ! Create molecule
    m.MAIN:setup
+   m.name = file.filename_head
 
-   ! Process the FChk file
-   m.READ:read_g09_FChk_file(fchk)
+   ! Process input file
+   select case (tail)
+   case("fchk  "); m.READ:read_g09_FChk_file(file)
+   case("molden"); m.READ:read_molden_file(file)
+   end
 
    ! Initialize output file
    stdout.destroy
@@ -205,7 +210,7 @@ program run_RGBI
    stdout.open_for("write")
    tonto.set_stdout_unit(stdout.unit)
 
-   ! Report
+   ! Safe to report to 'stdout'
    stdout.flush
    stdout.text("=============================")
    stdout.text("Roby-Gould bond index program")
@@ -314,18 +319,19 @@ program run_RGBI
    stdout.flush
    stdout.flush
 
+
    ! Print out
    MOLECULE.MAIN:put_banner
    m.PUT:put
 
-   ! Set roby object
+   ! Make integrals
    m.INTS:make_overlap_mx
    m.SCF:make_core_mx
 
    ! Set up kind of Roby analysis
    m.roby.create(m)
    m.roby.set_roby_kind("atom_bond_analysis")
-   m.roby.set_use_NAOs(use_NAOs)
+ ! m.roby.set_use_NAOs(use_NAOs)
    m.roby.set_output_ci_latex_labels(ci_labels)
 
    if (groups.allocated) then

@@ -1,228 +1,145 @@
-# Welcome to Tonto!
+# Tonto
 
-[![Build Status](https://travis-ci.org/dylan-jayatilaka/tonto.svg?branch=master)](https://travis-ci.org/dylan-jayatilaka/tonto)
+[![CI](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml)
 
-# Erice 2025 workshop people!
+Tonto is a quantum chemistry and crystallography package, with a focus on
+X-ray and electron structure refinement (Hirshfeld atom refinement, structure
+factors, wavefunctions). The scientific code is written in **Foo** — an
+object-oriented preprocessor language translated to modern Fortran.
 
-If you are a workshop attendee, the lab folder and instructions are [here](https://drive.google.com/drive/folders/17OWncmSsFbKAlW8mZb9EKzJuW0GAjykG).
+> **This README covers one thing: getting a working, tested `tonto` binary.**
+> Everything else lives elsewhere — [running Tonto and science how-tos on the
+> **wiki**](https://github.com/dylan-jayatilaka/tonto/wiki), and developer/
+> internals references in [**`docs/`**](docs/).
 
-# Developers: How to push with a new token
+---
 
-To set up your local git repo to push to github, use the following
+## 1. Prerequisites
 
-```
-git remote set-url origin https://USERNAME:TOKEN@github.com/USERNAME/REPO.git
-```
-
-Replace USERNAME with your own github user name.
-
-You can get a classic TOKEN from :
-
-Settings photo-> Settings -> developer-setting -> personal-access-token -> tokens (classic) -> Generate new tokens (classic).
-
-These selections are quite convoluted: at the left, bottom, or top right of the menus.
-
-You can go directly to this location:
+On **Ubuntu/Debian Linux** (the assumed, best-supported platform):
 
 ```
-https://github.com/settings/tokens
+sudo apt install make default-jdk gfortran libblas-dev liblapack-dev python3 gnuplot git
 ```
 
+- `default-jdk` provides `java`/`javac` for the ANTLR4 `foo`→Fortran translator.
+  The ANTLR jar itself is downloaded automatically on the first `cmake` run
+  (internet needed for that one configure).
+- `gnuplot` is for graphs; `python3` runs the test harness.
+- Optional: `graphviz` (for the developer call-graphs), and for the parallel
+  build: `sudo apt install openmpi-bin libopenmpi-dev`.
 
-# Getting started and Compiling
+**macOS** → [Building on macOS](https://github.com/dylan-jayatilaka/tonto/wiki/Building-on-MacOS)
+(Homebrew `gfortran`; well-supported). &nbsp;
+**Windows** → untested natively; **WSL** (then follow the Linux steps) is the
+easy path. See [Building on Windows](https://github.com/dylan-jayatilaka/tonto/wiki/Building-on-Windows).
 
-You will need to be on the super user to install software on your machine.
-
-## 0. Operating systems
-
-### On Linux
-
-I assume you are using the latest Ubuntu (I use it).
-
-I also assume you are using the command line in a bash terminal - the default if you click the terminal icon.
-
-### On MacOS
-
-Tonto has many failures on the Apple M2 with Tahoe 26.3. It is not recommended.
-
-If you wish to proceed, the strategy is to use homebrew to install GNU tools, then follow the Linux instructions below.
-
-The instructions below may be helpful, but they are out of date.
-
-See [Building on MacOS](https://github.com/dylan-jayatilaka/tonto/wiki/Building-on-MacOS)
-
-### On Windows
-
-Tonto has not been tested on Windows recently.
-
-The strategy is as for the Mac - install GNU tools and compile.
-
-The instructions below are out of date since they predate WSL.
-
-See [Building on Windows](https://github.com/dylan-jayatilaka/tonto/wiki/Building-on-Windows)
-
-## 1. Install `git` and clone the repo
-
-You will need to be on the super user to install software on your machine.
-
-First install `git` 
+## 2. Get the code
 
 ```
-   sudo apt install git
+git clone --recursive https://github.com/dylan-jayatilaka/tonto.git
+cd tonto
+git checkout release        # the tested branch — recommended
 ```
 
-Next, open a terminal and clone the repository:
+(`--recursive` pulls the submodules. To keep several branches side by side,
+clone into a named folder: `git clone --recursive … tonto-release`.)
 
+## 3. Build
+
+Tonto builds **out of source**: make a build directory, configure it once with
+`cmake`, then `make`. Pick a **build type** — this is the one real choice, and
+`release` is the tested default. Copy-paste the recipe you want:
+
+**Release** — optimised, tested, what CI runs. Use this unless you have a reason not to.
 ```
-   git clone --recursive https://github.com/dylan-jayatilaka/tonto.git
-```
-
-To compile a particular branch e.g. the latest `release` branch (which is recommended) clone into a named folder, then `switch` to the branch you want:
-
-```
-   git clone --recursive https://github.com/dylan-jayatilaka/tonto.git tonto-release
-   cd tonto-release
-   git switch release
-```
-Unless you know what you are doing you should only use the default `master` branch or the `release` branches.
-
-## 2. Install other software
-
-Make sure you have all the other needed software installed, specifically: `make`, `perl` (for the `foo` language), `gfortran`, `blas`, `lapack`, `python3` (for testing), and `gnuplot` (for graphs and plots). In a new terminal type:
-
-```
-   sudo apt install make perl gfortran libblas-dev liblapack-dev python3 gnuplot
+mkdir build && cd build
+cmake .. -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=release
+make -j4
 ```
 
-To compile a parallel version of the program via openmpi and friends type:
-
+**Debug** — `-O0` with runtime checks and error messages; use it to diagnose a crash.
 ```
-   sudo apt install openmpi-bin openmpi-common openssh-client openssh-server libopenmpi-dev 
-```
-This should install the `mpifort` parallel fortran compiler. Installing all the components of a parallel compiler can be tricky, especially in a supercomputer environment. Usually it is required to load the the correct modules, via a `module load` command. In addition, you may need to run your program in a queue. For this reason, it is best to compile and test a single processor version first, before proceeding to a full parallel version.
-
-## 3. Set up a build folder and go into it
-
-Inside the tonto folder, make a build directory (the name is up to you) and enter it. This is where the program is compiled and built. I will call it `release` since it will hold the standard, released version of the programs. Type:
-
-```
-   mkdir release
-   cd release
+mkdir debug && cd debug
+cmake .. -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=debug
+make -j4
 ```
 
-I recommended to compile (or build) three other versions tonto: `debug`, `fast` and `mpi` parallel versions.
-
-You must make separate folders for each build version.
-
-
-## 4. Choose a compiler, and compile executables
-
-You may use different compilers but we use the latest `gfortran` and `gcc` compilers. 
-
-For the release version, in your build folder, type:
-
+**Fast** — aggressive optimisation; faster, but may perturb the last printed digits.
 ```
-   cmake .. -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=release
-   make -j
-```
-The screen will produce a lot of output. When it finished you are done.
-
-To make a `fast` version, in your `fast` build folder, type:
-
-```
-    cmake .. -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=fast
-    make -j
-
-```
-The `fast` version is, of course, faster. However this may come at the expense of bugs, and numerical imprecision. Please ensure you always run the tests (see below) to ensure the code is working properly.
-
-To make a `debug` version, in your `debug` build folder, type:
-
-```
-    cmake .. -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=debug
-    make -j
-
-```
-The `debug` version runs slower, but it has more error messages, and it gives a useful traceback if the program crashes, and it can be used in the debugger. This can help for understanding problems. The `debug` version is essential for developers.
-
-If you want a static executable, for redistribution, set the build type to `RELEASE-STATIC` as follows:
-
-```
-   cmake .. -DCMAKE_Fortran_COMPILER=gfortran DCMAKE_BUILD_TYPE=release-static
-   make -j
-```
-The static version is a lot larger in size.
-  
-For production i.e. large calculations it is recommended to make an MPI parallel version. However you absolutely must test the parallel version to check that the results are correct (see below) before using it. To make a MPI parallel version, in your MPI build folder, type:
-```
-   cmake .. -DCMAKE_Fortran_COMPILER=mpifort -DCMAKE_CXX_COMPILER=mpicxx -DCMAKE_C_COMPILER=mpicc -DCMAKE_BUILD_TYPE=fast -DMPI=1
-   make -j
-```
-Consider also using `-DNO_ERROR_MANAGEMENT` which will remove any error checking code and will make the program even faster.
-
-## 5. Where are the compiled programs?
-
-The executable program is located in the build folde e.g.
-
-```
-    release/tonto
+cmake .. -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=fast
 ```
 
-The standalone Hirshfeld atom refinement terminal (`hart`) program will be located at:
-
+**Static** — a self-contained binary for redistribution (larger).
 ```
-   release/hart
-```
-Copy the program `build/hart` anywhere you like  For help type `hart -help`.
-
-There are other test programs which are made and used.
-
-## 6. Where is the code?
-
-All of the programs are in the `runfiles/` folder.
-
-The source code used by the programs is in the `foofiles/` folder. It code is written in the `foo` language, which I invented. `Foo` is a bit like `Julia`, but was based on `Eiffel` and `Sather`.
-
-`Foo` code is arranged into modules, which are like classes. The name of each class is the same as the name of the head part of each file in `foofiles/`. Some modules are large, and are split into submodules. The `foo` compiler is a source-to-source converter: `foo` source code is currently translated into `fortran` 2008. The generated `fortran` code may have more, or less, error checking, or additions for parallel execution. The generated `fortran` source also resides in the build folder, along with the object files and the executable programs. 
-
-
-
-## 7. Run tests please!
-
-To run all tests, in the build directory type:
-
-```
-   ctest
+cmake .. -DCMAKE_BUILD_TYPE=release-static
 ```
 
-You should get mostly the `passed` messages, but there may be small numerical differences which lead to pseudo-failures. You should check for *true* failed tests. To do that, it is better to save the tests results to a file:
-
+**MPI (parallel)** — for production runs. **Validate the results yourself** before trusting them.
 ```
-   ctest >& tests.log &
-```
-
-Then you can review the results later at your leisure. To check failures go into the `tests/` folder and then from there into the folder with the same name as the job that failed. You should see there pairs of files called `<file>` and `<file>.bad`. You must compare the reference `<file>` and alleged failed output file `<file.bad>` using your favourite tool e.g.
-
-```
-   vimdiff stdout.bad stdout
+cmake .. -DCMAKE_Fortran_COMPILER=mpifort -DCMAKE_C_COMPILER=mpicc \
+         -DCMAKE_CXX_COMPILER=mpicxx -DCMAKE_BUILD_TYPE=fast -DMPI=1
+# add -DNO_ERROR_MANAGEMENT for extra speed
 ```
 
-Here is a nice thing for problem tests: you may use `ctest` in the `build/` folder and run only tests matching certain labels or regular expressions for the jobs that failed; or specify the number of processors to use when running tests :
+**On a cluster / supercomputer:** environments vary too much to script. Load
+your compiler and MPI modules first, then use the recipe above, overriding the
+compiler if needed:  `-DCMAKE_Fortran_COMPILER=<your ftn wrapper>`. The three
+knobs that matter are the **compiler**, the **build type**, and **`-DMPI=1`**.
+
+> **About `-j`.** Translation runs one JVM per `.foo` file, which is
+> memory-heavy. A bare `make -j` (unbounded) can thrash the machine — cap it:
+> `make -j4 -l8` (≤ 4 jobs, pause while load > 8). Lower `-j` first if a build stalls.
+
+When it finishes, your binaries are in the build dir: **`build/tonto`** (the main
+program) and **`build/hart`** (standalone Hirshfeld atom refinement — `hart -help`).
+The full source/executable layout is on the
+[wiki](https://github.com/dylan-jayatilaka/tonto/wiki).
+
+## 4. Verify — run the tests
+
+From the build directory, the quickest check:
 
 ```
-   ctest -L short    # this will run all tests with the label short.
-   ctest -R h2o      # this will run all tests with h2o in their name.
-   ctest -L long -j4 # this will run all long tests with 4 jobs at a time.
+ctest
 ```
 
-## 8. Problems, bugs, contributions
+Two correct builds can differ in the last printed digits (compiler, BLAS, grid
+ordering), so a bare `ctest` shows *pseudo-failures*. For a clear verdict, use
+the **agreement report** instead:
 
-Let me know at
 ```
-   dylan.jayatilaka@gmail.com
+make report        # runs every suite, writes a grouped table to tests.log
 ```
-I apologise, I am not good at responding. Best to contact some people that know me. If you google you might find such people. There aren't many, as I'm a misanthrope. 
 
-# How to run tonto
+It reports each test under three criteria — **exact** (every digit identical),
+**loose** (within 0.2 % *or* ±2 in the last digit — **this decides pass/fail**),
+and **last-digit** — plus the worst deviations:
 
-See [the wiki](https://github.com/dylan-jayatilaka/tonto/wiki/How-to-run-tonto) for details.
+```
+SUITE: short   (51 tests)
+test                                    exact  loose  lastdig   max rel%    max ulp
+h2o_rhf_STO-3G                          PASS   PASS   PASS             0          0
+h2o_rhf_6-31G(d)_normal_mode_analysis   FAIL   PASS   FAIL        0.0017          3
+...
+short subtotal:  loose 51/51   (exact 48, lastdig 49)
+```
+
+Tolerances are options on `scripts/compare_test_outputs.py` / `scripts/test.py`
+(`--rel-tol`, `--last-digit-tol`, `--abs-tol`); `--suites short rgbi` selects a
+subset. To inspect one failure, compare the reference and `.bad` output in
+`tests/<suite>/<job>/`:  `vimdiff stdout stdout.bad`.
+
+**The CI badge** at the top links to GitHub Actions; open the latest run to see
+this same agreement table on its summary page, and download the `tests.log`
+artifact. Green means the short suite passed the loose gate.
+
+## 5. Help, bugs, contributing
+
+Email **dylan.jayatilaka@gmail.com** (I am slow to reply — you may have better
+luck via people who know me).
+
+- **Running Tonto, tutorials, workshops** → the [wiki](https://github.com/dylan-jayatilaka/tonto/wiki).
+- **Developer references** (source layout, the ANTLR4 translator, call-graphs &
+  dead-code tools, pushing to GitHub) → [`docs/`](docs/) — see
+  [`docs/DEVELOPER.md`](docs/DEVELOPER.md) and [`docs/CALL_GRAPHS.md`](docs/CALL_GRAPHS.md).

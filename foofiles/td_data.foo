@@ -32,15 +32,15 @@ contains
 !  Allocation
 !  ==========
 
-   create ::: get_from(OBJECT), leaky, PURE
+   create :: get_from(OBJECT), leaky, PURE
    ! Allocate an object
    end
 
-   destroy ::: get_from(OBJECT), leaky, PURE
+   destroy :: get_from(OBJECT), leaky, PURE
    ! Deallocate "self"
    end
 
-   destroy_ptr_part ::: leaky, PURE
+   destroy_ptr_part :: leaky, PURE
    ! Destroy the pointer parts of self
       self :: INOUT
 
@@ -63,20 +63,31 @@ contains
 !  Set defaults, reset, update and realted methods
 !  ===============================================
 
-   update ::: leaky, PURE
+   update :: leaky, PURE
    ! Set default SCF data values
       self  :: INOUT
+
+      ! Sanity conditions
+      if (.dressing=="mazur") then
+      ENSURE(.method=="u-cis-ss","mazur dressing needs method='u-cis-ss'")
+      ENSURE(.use_M_0,"mazur dressing needs M=0 via 'use_M_0 = T'")
+      end
+
+      ! Find S window
       .find_singles
-    ! .find_doubles
+
+   ! .find_doubles
+
    end
 
-   set_defaults(n_bf,n_a,n_b) ::: leaky, PURE
+   set_defaults(n_bf,n_a,n_b) :: leaky, PURE
    ! Set default SCF data values
       self  :: INOUT
       n_bf  :: INT, IN
       n_a   :: INT, IN
       n_b   :: INT, IN
 
+      ! Leave existing options, if any
       .n_bf = n_bf
       .n_a  = n_a
       .n_b  = n_b
@@ -87,12 +98,12 @@ contains
 
    end
 
-   set_defaults(MOs,MO_energies,IVO_energies) ::: leaky, PURE
+   set_defaults(MOs,MO_energies,IVO_energies) :: leaky, PURE
    ! Set default SCF data values
       self  :: INOUT
       MOs   :: MAT{REAL}, IN
       MO_energies  :: VEC{REAL}, IN
-      IVO_energies :: VEC{REAL}@, IN
+      IVO_energies :: VEC{REAL}@, optional, IN
 
    ENSURE(.n_occ>0,"n_occ is not set, call set_defaults!")
 
@@ -107,12 +118,37 @@ contains
       ! VMO_canonisation was requested in scf_data block.
       .Eo = MO_energies(   1: no)
       .Ev = MO_energies(no+1:.n_bf)
+      .Ei = .Ev
 
-      if (IVO_energies.allocated) .Ei = IVO_energies
+      ! Copy if there
+      if (present(IVO_energies))  then
+      if (IVO_energies.allocated) then
+      .Ei = IVO_energies
+      end
+      end
 
    end
 
-   set_implementation(val) ::: PURE
+   set_archive_results(val) :: PURE
+   ! Set whether to archive vectors and eigenvalues to disk
+      self :: INOUT
+      val  :: BIN, IN
+      .archive_results = val
+   end
+
+   set_dressing(val) :: PURE
+   ! Set the dressing method to calculate doubles correction 
+   ! to the CIS method.
+      self :: INOUT
+      val  :: STR, IN
+
+   ENSURE(val.is_one_of(["mazur ","window"]),"unknown method")
+
+      .dressing = val.lower_cased
+
+   end
+
+   set_implementation(val) :: PURE
    ! Set the type of implementation for the method.
       self :: INOUT
       val  :: STR, IN
@@ -132,22 +168,25 @@ contains
 
       select case (.method)
 
-      case("r-cis-ss-s=0&1   ")
-      case("r-cis-ss-s=0     ")
-      case("r-cis-ss-s=0-d1  ") ! Testing
-      case("r-cis-ss-s=0-d2  ") ! Testing
-      case("r-cis-ss-s=0-v0  ") ! Testing
-      case("r-cis-ss-s=1      ")
-      case("r-cis-s=0        ")
-      case("r-cis-s=1        ")
+      ! Davidson
+      case("r-cis-ss-s=0   ")
+      case("r-cis-ss-s=0&1 ")
+      case("r-cis-ss-s=1    ")
+   ! case("r-cis-ss-s=0-d1") ! Testing
+   ! case("r-cis-ss-s=0-d2") ! Testing
+   ! case("r-cis-ss-s=0-v0") ! Testing
+      case("u-cis-ss       ")
 
-      case("r-tdhf-s=0&s=1   ")
-      case("r-tdhf-s=0       ")
-      case("r-tdhf-s=1       ")
-
-      case("u-cis            "); .tol_S = ZERO
-      case("u-cis-v1         ")
-      case("u-cis-ss         ")
+      ! In-core
+      case("r-cis-s=0      ")
+      case("r-cis-s=0&1    ")
+      case("r-cis-s=1      ")
+   ! case("r-cis-ss-s=0   ") ! See above
+      case("r-tdhf-s=0     ")
+      case("r-tdhf-s=0&1   ")
+      case("r-tdhf-s=1     ")
+      case("u-cis          "); .tol_S = ZERO
+      case("u-cis-v1       ")
 
       case default; UNKNOWN(.method)
 
@@ -155,16 +194,16 @@ contains
 
    end
 
-   set_n_evals(val) ::: PUREr
+   set_n_evals(val) :: PUREr
    ! Set number of excited-state eigenvalues to search for.
       self :: INOUT
       val  :: INT, IN
 
    ENSURE(val>0,"n_evals must be +ve")
 
-    if (.is_unrestricted) then
+   if (.is_unrestricted) then
    ENSURE(mod(val,4)==0,"n_evals must be multiple of 4")
-    end
+   end
 
       .n_evals = val
 
@@ -173,7 +212,7 @@ contains
 
    end
 
-   set_n_keep(val) ::: PURE
+   set_n_keep(val) :: PURE
    ! Set the maximum number of eigensolutions to keep.
       self :: INOUT
       val  :: INT, IN
@@ -186,7 +225,7 @@ contains
 
    end
 
-   set_n_max_show(val) ::: PURE
+   set_n_max_show(val) :: PURE
    ! Set number of states (i.e. selected singles, doubles, eigenvalues)
    ! to display in the output. A zero value means show all.
       self :: INOUT
@@ -199,7 +238,7 @@ contains
 
    end
 
-   set_omega(val) ::: PURE
+   set_omega(val) :: PURE
    ! Set energy .omega from which interacting double
    ! excitation determinants are to be selected.
       self :: INOUT
@@ -211,7 +250,22 @@ contains
 
    end
 
-   set_tol_D(val) ::: PURE
+   set_show_iterations(val) :: PURE
+   ! Set whether to show the Davidson iteration residuals in
+   ! a tabular format. Good for test valoidation.
+      self :: INOUT
+      val  :: BIN, IN
+      .show_iterations = val
+   end
+
+   set_show_evecs(val) :: PURE
+   ! Set whether to show the eigenvalue column output.
+      self :: INOUT
+      val  :: BIN, IN
+      .show_evecs = val
+   end
+
+   set_tol_D(val) :: PURE
    ! Set double-excitation determinant energy selection tolerance
       self :: INOUT
       val  :: REAL, IN
@@ -222,7 +276,7 @@ contains
 
    end
 
-   set_tol_Davidson(val) ::: PURE!
+   set_tol_Davidson(val) :: PURE!
    ! Set Davidson iteration convergence tolerance on eigenvectors
       self :: INOUT
       val  :: REAL, IN
@@ -233,7 +287,7 @@ contains
 
    end
 
-   set_tol_S(val) ::: PURE
+   set_tol_S(val) :: PURE
    ! Set the single-excitation tolerance window.
       self :: INOUT
       val  :: REAL, IN
@@ -244,30 +298,23 @@ contains
 
    end
 
-   set_use_IVO_energies(val) ::: PURE
+   set_use_IVO_energies(val) :: PURE
    ! Set whether to use improved virtual energies (IVOs) from
    ! a previous SCF canonicalisation to define determinants
    ! which comprise the S window.
       self :: INOUT
       val  :: BIN, IN
-
-   ENSURE(.Ei.allocated,"no IVO energies allocated")
-
       .use_IVO_energies = val
-
-      ! Below cannot be undone.
-      if (val) .Ev = .Ei
-
    end
 
-   set_use_M_0(val) ::: PURE
+   set_use_M_0(val) :: PURE
    ! Set whether to use M=0 basis only.
       self :: INOUT
       val  :: BIN, IN
       .use_M_0 = val
    end
 
-   set_use_MGS(val) ::: PURE
+   set_use_MGS(val) :: PURE
    ! Set whether to use Modified Gram-Schmidt QR orthonormalisation.
    ! If not set, Davidson uses the Householde QR algorithm.
       self :: INOUT
@@ -275,7 +322,7 @@ contains
       .use_MGS = val
    end
 
-!   set_use_S_window_MOs(val) ::: pure
+!   set_use_S_window_MOs(val) :: pure
 !   ! Set whether to use only MOs in the the single excitation
 !   ! list of determinants to construct interacting doubles
 !   ! excitations (on top of being within the tol_D energy window).
@@ -288,11 +335,11 @@ contains
 !  Input methods
 !  =============
 
-   read_keywords ::: get_from(OBJECT), recursive, leaky
+   read_keywords :: get_from(OBJECT), recursive, leaky
    ! Read data from "stdin" using keyword style input.
    end
 
-   process_keyword(keyword) ::: leaky
+   process_keyword(keyword) :: leaky
    ! Process a command "keyword". Data is inputted from "stdin", unless
    ! "word" is a sequence of blank separated strings. In this case,
    ! the sequence is processed as if it were a separate file.
@@ -307,6 +354,8 @@ contains
 
       select case (word)
 
+      case ("archive_results=   "); .read_archive_results
+      case ("dressing=          "); .read_dressing
       case ("find_doubles       "); .find_doubles
       case ("find_singles       "); .find_singles
       case ("implementation=    "); .read_implementation
@@ -324,16 +373,18 @@ contains
       case ("put_doubles        "); .put_doubles
       case ("put_evecs          "); .put_evecs
       case ("put_singles        "); .put_singles
+      case ("show_iterations=   "); .read_show_iterations
+      case ("show_evecs=        "); .read_show_evecs
       case ("tol_d=             "); .read_tol_D
       case ("tol_davidson=      "); .read_tol_Davidson
       case ("tol_s=             "); .read_tol_S
       case ("use_ivo_energies=  "); .read_use_IVO_energies
       case ("use_m_0=           "); .read_use_M_0
-    ! case ("use_s_window_mos=  "); .read_use_S_window_MOs
+   ! case ("use_s_window_mos=  "); .read_use_S_window_MOs
 
       ! Documentation
       case ("help?              "); TD_DATA:docu_help
-      case ("find_doubles?      "); TD_DATA:docu_find_doubles(die)
+   ! case ("find_doubles?      "); TD_DATA:docu_find_doubles(die)
       case ("find_singles?      "); TD_DATA:docu_find_singles(die)
       case ("max_keep=?         "); TD_DATA:docu_n_keep(die)
       case ("method=?           "); TD_DATA:docu_method(die)
@@ -347,7 +398,7 @@ contains
       case ("tol_d=?            "); TD_DATA:docu_tol_D(die)
       case ("tol_davidson=?     "); TD_DATA:docu_tol_Davidson(die)
       case ("tol_s=?            "); TD_DATA:docu_tol_S(die)
-    ! case ("use_s_window_mos=? "); TD_DATA:docu_use_S_window_MOs(die)
+   ! case ("use_s_window_mos=? "); TD_DATA:docu_use_S_window_MOs(die)
 
       case default;            UNKNOWN(word)
       end
@@ -355,7 +406,7 @@ contains
    end
 
 
-   docu_help ::: selfless, private
+   docu_help :: selfless, private
    ! Documentation.
 
       stdout.flush
@@ -364,7 +415,7 @@ contains
       stdout.text("Help for TD_DATA")
       stdout.text("================")
 
-      TD_DATA:docu_find_doubles
+   ! TD_DATA:docu_find_doubles
       TD_DATA:docu_find_singles
       TD_DATA:docu_n_keep
       TD_DATA:docu_method
@@ -380,15 +431,27 @@ contains
 
    end
 
+! A
+
+   read_archive_results :: get_from(OBJECT:read_and_set, VAL_TYPE?=>BIN, SET?=>.set_archive_results), private
+   ! Generic read and set
+   end
+
+! D
+
+   read_dressing :: get_from(OBJECT:read_and_set, VAL_TYPE?=>STR, SET?=>.set_dressing), private
+   ! Generic read and set
+   end
+
 ! I
 
-   read_implementation ::: get_from(OBJECT:read_and_set, VAL?=>STR, SET?=>.set_implementation), private
+   read_implementation :: get_from(OBJECT:read_and_set, VAL_TYPE?=>STR, SET?=>.set_implementation), private
    ! Generic read and set
    end
 
 ! M
 
-   docu_n_keep(die) ::: selfless, private
+   docu_n_keep(die) :: selfless, private
    ! Documentation.
       die :: BIN, optional, IN
       stdout.flush
@@ -403,11 +466,11 @@ contains
       if (present(die)) stop
    end
 
-   read_n_keep ::: get_from(OBJECT:read_and_set, VAL?=>INT, SET?=>.set_n_keep), private
+   read_n_keep :: get_from(OBJECT:read_and_set, VAL_TYPE?=>INT, SET?=>.set_n_keep), private
    ! Generic read and set
    end
 
-   docu_method(die) ::: selfless, private
+   docu_method(die) :: selfless, private
    ! Documentation.
       die :: BIN, optional, IN
       stdout.flush
@@ -419,13 +482,13 @@ contains
       if (present(die)) stop
    end
 
-   read_method ::: get_from(OBJECT:read_and_set, VAL?=>STR, SET?=>.set_method), private
+   read_method :: get_from(OBJECT:read_and_set, VAL_TYPE?=>STR, SET?=>.set_method), private
    ! Generic read and set
    end
 
 ! N
 
-   docu_n_evals(die) ::: selfless, private
+   docu_n_evals(die) :: selfless, private
    ! Documentation.
       die :: BIN, optional, IN
       stdout.flush
@@ -444,11 +507,11 @@ contains
       if (present(die)) stop
    end
 
-   read_n_evals ::: get_from(OBJECT:read_and_set, VAL?=>INT, SET?=>.set_n_evals), private
+   read_n_evals :: get_from(OBJECT:read_and_set, VAL_TYPE?=>INT, SET?=>.set_n_evals), private
    ! Generic read and set
    end
 
-   docu_n_max_show(die) ::: selfless, private
+   docu_n_max_show(die) :: selfless, private
    ! Documentation.
       die :: BIN, optional, IN
       stdout.flush
@@ -461,13 +524,23 @@ contains
       if (present(die)) stop
    end
 
-   read_n_max_show ::: get_from(OBJECT:read_and_set, VAL?=>INT, SET?=>.set_n_max_show), private
+   read_n_max_show :: get_from(OBJECT:read_and_set, VAL_TYPE?=>INT, SET?=>.set_n_max_show), private
+   ! Generic read and set
+   end
+
+! S
+
+   read_show_iterations :: get_from(OBJECT:read_and_set, VAL_TYPE?=>BIN, SET?=>.set_show_iterations), private
+   ! Generic read and set
+   end
+
+   read_show_evecs :: get_from(OBJECT:read_and_set, VAL_TYPE?=>BIN, SET?=>.set_show_evecs), private
    ! Generic read and set
    end
 
 ! O
 
-   docu_omega(die) ::: selfless, private
+   docu_omega(die) :: selfless, private
    ! Documentation.
       die :: BIN, optional, IN
       stdout.flush
@@ -488,13 +561,13 @@ contains
       if (present(die)) stop
    end
 
-   read_omega ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_omega), private
+   read_omega :: get_from(OBJECT:read_and_set, VAL_TYPE?=>REAL, SET?=>.set_omega), private
    ! Generic read and set a quantity with units
    end
 
 ! T
 
-   docu_tol_D(die) ::: selfless, private
+   docu_tol_D(die) :: selfless, private
    ! Documentation.
       die :: BIN, optional, IN
       stdout.flush
@@ -509,11 +582,11 @@ contains
       if (present(die)) stop
    end
 
-   read_tol_D ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_tol_D), private
+   read_tol_D :: get_from(OBJECT:read_and_set, VAL_TYPE?=>REAL, SET?=>.set_tol_D), private
    ! Generic read and set a quantity with units
    end
 
-   docu_tol_Davidson(die) ::: selfless, private
+   docu_tol_Davidson(die) :: selfless, private
    ! Documentation.
       die :: BIN, optional, IN
       stdout.flush
@@ -526,11 +599,11 @@ contains
       if (present(die)) stop
    end
 
-   read_tol_Davidson ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_tol_Davidson), private
+   read_tol_Davidson :: get_from(OBJECT:read_and_set, VAL_TYPE?=>REAL, SET?=>.set_tol_Davidson), private
    ! Generic read and set a quantity with units
    end
 
-   docu_tol_S(die) ::: selfless, private
+   docu_tol_S(die) :: selfless, private
    ! Documentation.
       die :: BIN, optional, IN
       stdout.flush
@@ -543,26 +616,26 @@ contains
       if (present(die)) stop
    end
 
-   read_tol_S ::: get_from(OBJECT:read_and_set, VAL?=>REAL, SET?=>.set_tol_S), private
+   read_tol_S :: get_from(OBJECT:read_and_set, VAL_TYPE?=>REAL, SET?=>.set_tol_S), private
    ! Generic read and set a quantity with units
    end
 
 ! U
 
-   read_use_IVO_energies ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_use_IVO_energies), private
+   read_use_IVO_energies :: get_from(OBJECT:read_and_set, VAL_TYPE?=>BIN, SET?=>.set_use_IVO_energies), private
    ! Generic read and set
    end
 
-   read_use_M_0 ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_use_M_0), private
+   read_use_M_0 :: get_from(OBJECT:read_and_set, VAL_TYPE?=>BIN, SET?=>.set_use_M_0), private
    ! Generic read and set
    end
 
-   read_use_MGS ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_use_M_0), private
+   read_use_MGS :: get_from(OBJECT:read_and_set, VAL_TYPE?=>BIN, SET?=>.set_use_M_0), private
    ! Generic read and set
    end
 
 
-!   docu_use_S_window_MOs(die) ::: selfless, private
+!   docu_use_S_window_MOs(die) :: selfless, private
 !   ! Documentation.
 !      die :: BIN, optional, IN
 !      stdout.flush
@@ -575,7 +648,7 @@ contains
 !      if (present(die)) stop
 !   end
 
-!   read_use_S_window_MOs ::: get_from(OBJECT:read_and_set, VAL?=>BIN, SET?=>.set_use_S_window_MOs), private
+!   read_use_S_window_MOs :: get_from(OBJECT:read_and_set, VAL_TYPE?=>BIN, SET?=>.set_use_S_window_MOs), private
 !   ! Generic read and set
 !   end
 
@@ -583,35 +656,35 @@ contains
 !  TD calc info
 !  ============
 
-   is_restricted result(res) ::: pure
+   is_restricted result (res) :: pure
    ! Return TRUE if the method is *only* a S=0 state
       self :: IN
       res  :: BIN
       res = .method.includes("r-")
    end
 
-   is_unrestricted result(res) ::: pure
+   is_unrestricted result (res) :: pure
    ! Return TRUE if the method is *only* a S=0 state
       self :: IN
       res  :: BIN
       res = .method.includes("u-")
    end
 
-   is_singlet_calc result(res) ::: PURE
+   is_singlet_calc result (res) :: PURE
    ! Return TRUE if the method is *only* a S=0 state
       self :: IN
       res  :: BIN
       res = .method.includes("-s=0") AND NOT .method.includes("-s=0&1")
    end
 
-   is_triplet_calc result(res) ::: PURE
+   is_triplet_calc result (res) :: PURE
    ! Return TRUE if the method is *only* a S=1 state
       self :: IN
       res  :: BIN
       res = .method.includes("-s=1")
    end
 
-   is_s0_and_s1_calc result(res) ::: PURE
+   is_s0_and_s1_calc result (res) :: PURE
    ! Return TRUE if the method *both* an S=0 and S=1 state.
    ! This test is used to append results.
       self :: IN
@@ -619,21 +692,21 @@ contains
       res = .method.includes("-s=0&1")
    end
 
-   do_sqrt_evals result(res) ::: PURE
+   do_sqrt_evals result (res) :: PURE
    ! Return TRUE if TD eigenvalues should be square-rooted.
       self :: IN
       res  :: BIN
       res = .method.includes("-tdhf")
    end
 
-   is_an_SS_method result(res) ::: PURE
+   is_an_SS_method result (res) :: PURE
    ! Return TRUE if the method is a state-slected method.
       self :: IN
       res  :: BIN
       res = .method.includes("-ss")
    end
 
-   is_CIS result(res) ::: PURE
+   is_CIS result (res) :: PURE
    ! Return TRUE if it is a CIS/Tamm-Dancoff calculation
    ! which does not require an off-diagonal "B" matrix.
       self :: IN
@@ -641,7 +714,7 @@ contains
       res = .method.includes("-cis")
    end
 
-   is_Tamm_Dancoff result(res) ::: PURE
+   is_Tamm_Dancoff result (res) :: PURE
    ! Return TRUE if it is a CIS/Tamm-Dancoff calculation
    ! which does not require an off-diagonal "B" matrix.
       self :: IN
@@ -649,7 +722,7 @@ contains
       res = .method.includes("-cis")
    end
 
-   has_states result(res) ::: pure
+   has_states result (res) :: pure
    ! Return TRUE if the states have been calculated.
    ! It is assumed that these are singlet states and
    ! if a triplet calculation is run afterwards, those
@@ -659,7 +732,7 @@ contains
       res = .eval.allocated AND .evec.allocated
    end
 
-   is_M0_singlet(i) result(res) ::: PURE
+   is_M0_singlet(i) result (res) :: PURE
    ! Return TRUE if vector "i" is an M=0 singlet.
       self :: IN
       i    :: INT, IN
@@ -682,7 +755,7 @@ contains
 !  State selection info
 !  ====================
 
-   no_of_singles result (res) ::: pure
+   no_of_singles result (res) :: pure
    ! The number of single excitations which satisfy the tol_S
    ! excitation window.
       self :: IN
@@ -711,48 +784,7 @@ contains
 
    end
 
-   no_of_doubles result (res) ::: PURE
-   ! The number of double excitations within energy .tol_D
-   ! of excitation energy .omega.
-      self :: IN
-      res  :: INT
-
-      n,d :: INT
-      i,a, ai :: INT
-      j,b, bj :: INT
-      Eai,Ebj,val :: REAL
-
-      ! Exit?
-      res = .no_of_singles
-      if (res==0) return
-      if (.single.deallocated) return
-      if (.omega.equals(ZERO)) return
-      if (.tol_D.equals(ZERO)) return
-
-      ! List of allowed occs and virs
-      d = .single.dim1
-
-      n = 0
-      do ai = 1,d
-         a  = .single(ai,1)
-         i  = .single(ai,2)
-         Eai = .deltaE(ai)
-         do bj = 1,ai
-            b  = .single(bj,1)
-            j  = .single(bj,2)
-            Ebj = .deltaE(bj)
-            val = Eai + Ebj
-            if (abs(val-.omega)<.tol_D AND val<.tol_S) then
-               n = n + 1
-            end
-         end
-      end
-
-      res = n
-
-   end
-
-   r_O_singles_str result (res) ::: leaky, PURE
+   r_O_singles_str result (res) :: leaky, PURE
    ! List of occupied MOs in the singles-excitation window.
    ! Restricted version.
       self :: IN
@@ -768,12 +800,12 @@ contains
       res.create(d)
       do i = 1,d
          omo = .single(i,2) - .n_occ
-         res(i) = omo.to_str
+         res(i) = trim(omo.to_str)
       end
 
    end
 
-   r_V_singles_str result (res) ::: leaky, PURE
+   r_V_singles_str result (res) :: leaky, PURE
    ! List of occupied MOs in the singles-excitation window.
    ! Restricted version.
       self :: IN
@@ -789,12 +821,12 @@ contains
       res.create(d)
       do i = 1,d
          vmo = .single(i,1)
-         res(i) = vmo.to_str
+         res(i) = trim(vmo.to_str)
       end
 
    end
 
-   u_O_singles_str result (res) ::: leaky, PURE
+   u_O_singles_str result (res) :: leaky, PURE
    ! List of occupied MOs in the singles-excitation window.
    ! Unrestricted version.
       self :: IN
@@ -812,12 +844,12 @@ contains
       res = " "
       do i = 1,d4,4
          omo = .single((i+3)/4,2) - .n_occ
-         res(i) = omo.to_str
+         res(i) = trim(omo.to_str)
       end
 
    end
 
-   u_V_singles_str result (res) ::: leaky, PURE
+   u_V_singles_str result (res) :: leaky, PURE
    ! List of occupied MOs in the singles-excitation window.
    ! Unrestricted version.
       self :: IN
@@ -834,7 +866,7 @@ contains
       res = " "
       do i = 1,d4,4
          vmo = .single((i+3)/4,1)
-         res(i) = vmo.to_str
+         res(i) = trim(vmo.to_str)
       end
 
    end
@@ -843,7 +875,7 @@ contains
 !  State selection methods
 !  =======================
 
-   docu_find_singles(die) ::: selfless, private
+   docu_find_singles(die) :: selfless, private
    ! Documentation.
       die :: BIN, optional, IN
       stdout.flush
@@ -854,7 +886,7 @@ contains
       if (present(die)) stop
    end
 
-   find_singles ::: leaky, PURE
+   find_singles :: leaky, PURE
    ! Sorts single excitations by smallest eigenvalue energy
    ! difference, and keep pairs in the single(:,1:2) array.
       self :: INOUT
@@ -862,6 +894,12 @@ contains
       i,a, n :: INT
       val :: REAL
       ind :: VEC{INT}@
+
+      ! Below cannot be undone.
+      if (.use_IVO_energies) then
+         ENSURE(.Ei.allocated,"no IVO energies allocated")
+         .Ev = .Ei
+      end
 
       ! Can proceed?
       n = .no_of_singles
@@ -924,19 +962,202 @@ contains
 
    end
 
-   docu_find_doubles(die) ::: selfless, private
+   docu_put_singles(die) :: selfless, private
    ! Documentation.
       die :: BIN, optional, IN
       stdout.flush
-      stdout.text("find_doubles")
+      stdout.text("put_singles")
       stdout.flush
-      stdout.text(". Find all double excitations within a certain tolerance")
-      stdout.text("  of a previously entered excitation energy, entered via")
-      stdout.text("  omega= and tol_D=")
+      stdout.text(". Display table of the sorted singles states")
       if (present(die)) stop
    end
 
-   find_doubles ::: leaky, PURE
+   put_singles
+   ! Print out the sorted singles states.
+      self :: IN
+
+      table :: VEC{TABLE_COLUMN}@
+      arrow :: VEC{STR}@
+      n, m  :: INT
+
+      n = .no_of_singles
+      m = .n_max_show
+
+      stdout.flush
+      stdout.text("=================")
+      stdout.text("CI singles window")
+      stdout.text("=================")
+      stdout.flush
+      stdout.text(". Single excitations S are selected in an energy window")
+      stdout.text("  so that:")
+      stdout.flush
+      stdout.text("     |E_S| < tol_S,")
+      stdout.flush
+      stdout.text("  where E_S is the singles excitation energy calculated")
+      stdout.text("  by Koopman's theorem i.e. orbital energy differences,")
+      stdout.flush
+      stdout.text(". Single excitation S is specified by:")
+      stdout.text("  - I -> A where I < 1 are occupied MOs; 0 is the HOMO")
+      stdout.text("  -        where A > 0 are virtual  MOs; 1 is the LUMO")
+      stdout.flush
+      stdout.text(". Improved virtual MO energies may be used, if requested,")
+      stdout.text("  and if VMO canonicalisation was used in the SCF.")
+      stdout.flush
+      stdout.text("Singles window")
+      stdout.show("  tol_S             =", .tol_S)
+      stdout.show("  tol_S / eV        =", .tol_S*EV_PER_HARTREE)
+      stdout.show("  No. of singles    =", n)
+      stdout.flush
+      stdout.text("Orbital range")
+      stdout.show("  Min. occupied MO  =", .min_OMO-.n_occ+1)
+      stdout.show("  Max. virtual  MO  =", .max_VMO)
+      stdout.flush
+      stdout.show("Use IVO energies?   =", .use_IVO_energies)
+      stdout.flush
+      stdout.show("No. of to display   =", m)
+      stdout.flush
+
+      DIE_IF(n==0,"no single excitations in the window")
+
+      if (m>0) n = min(n,m)
+
+      arrow.create(n)
+      arrow = "->"
+
+      table.create(5)
+
+      table(1).set_heading("I")
+      table(1).set_values(.single(1:n,2)-.n_occ)
+
+      table(2).set_column_spacing(0)
+      table(2).set_heading("->")
+      table(2).set_width(3)
+      table(2).set_values(arrow)
+
+      table(3).set_heading("A")
+      table(3).set_values(.single(1:n,1))
+
+      table(4).set_heading("Ev-Eo")
+      table(4).set_subhead(" /au")
+      table(4).set_real_precision(3)
+      table(4).set_width(8)
+      table(4).set_values(.deltaE(1:n))
+
+      table(5).set_heading("Ev-Eo")
+      table(5).set_subhead(" /eV")
+      table(5).set_real_precision(3)
+      table(5).set_width(8)
+      table(5).set_values(.deltaE(1:n)*EV_PER_HARTREE)
+
+      table.put(label_rows=TRUE)
+
+      table.destroy
+      arrow.destroy
+
+   end
+
+!  ================
+!  Doubles dressing
+!  ================
+
+   no_of_doubles result (res)
+   ! The number of double excitations within energy .tol_D
+   ! of excitation energy .omega.
+      self :: IN
+      res  :: INT
+
+   ENSURE(.single.allocated,"no single's array")
+
+      ! Exit?
+      res = .no_of_singles
+      if (res==0) return
+
+      select case(.dressing)
+      case ("mazur ");   res = .no_of_doubles_Mazur
+      case ("window");   res = .no_of_doubles_window
+      case default;      UNKNOWN(.dressing)
+      end
+
+   end
+
+   no_of_doubles_window result (res) :: PURE
+   ! The number of double excitations within energy .tol_D
+   ! of excitation energy .omega.
+      self :: IN
+      res  :: INT
+
+   ENSURE(.single.allocated,"no single's array")
+   ENSURE(.omega>ZERO,"window frequency omega is zero!")
+   ENSURE(.tol_D>ZERO,"window tolerance tol_D is zero!")
+
+      n,d :: INT
+      i,a, ai :: INT
+      j,b, bj :: INT
+      Eai,Ebj,val :: REAL
+
+      ! Exit?
+      res = .no_of_singles
+      if (res==0) return
+
+      ! List of allowed occs and virs
+      d = .single.dim1
+
+      n = 0
+      do ai = 1,d
+         a  = .single(ai,1)
+         i  = .single(ai,2)
+         Eai = .deltaE(ai)
+         do bj = 1,ai
+            b  = .single(bj,1)
+            j  = .single(bj,2)
+            Ebj = .deltaE(bj)
+            val = Eai + Ebj
+            if (abs(val-.omega)<.tol_D AND val<.tol_S) then
+               n = n + 1
+            end
+         end
+      end
+
+      res = n
+
+   end
+
+   no_of_doubles_Mazur result (res) :: PURE
+   ! The number double excitations in single double excitation 
+   ! determinant method. One per eigenvalue.
+      self :: IN
+      res  :: INT
+
+   ENSURE(.single.allocated,"no single's array")
+   ENSURE(.eval.allocated,"no eigenvalues eval")
+
+      ! Exit?
+      res = .no_of_singles
+      if (res==0) return
+
+      res = .eval.dim
+
+   end
+
+
+   find_doubles :: leaky
+   ! Find double excitations in S window, within .tol_D
+   ! of the chosen excitation energy .omega. Also find
+   ! all singles parents for each double.
+      self :: INOUT
+
+   ENSURE(.single.allocated,"no single's array")
+   ENSURE(.deltaE.allocated,"no deltaE array")
+
+      select case(.dressing)
+      case ("mazur ");   .find_doubles_Mazur
+      case ("window");   .find_doubles_window
+      case default;      UNKNOWN(.dressing)
+      end
+
+   end
+
+   find_doubles_window :: leaky, PURE
    ! Find double excitations in S window, within .tol_D
    ! of the chosen excitation energy .omega. Also find
    ! all singles parents for each double.
@@ -951,25 +1172,23 @@ contains
       ai, a,i :: INT
       bj, b,j :: INT
       Eai,Ebj,val :: REAL
-      n_S,f,l :: INT
-      cnt :: VEC{INT}@
 
-      ! Can we proceed?
-      n = .no_of_doubles
+      ! Proceed?
+      n = .no_of_doubles_window
       if (n==0) return
 
-      ! List of allowed occs and virs
+      ! Generate Ds in the tol_D window.
+      ! Sorted naturally in increasing BJ order
+      ! which corresponds to the class label.
+      .double.create(n,2) ! Double excitations
+      .delEab.create(n)   ! Koopman's energies
       d = .single.dim1
-
-      .delEab.create(n)
-      .double.create(n,2)
-
       n = 0
       do ai = 1,d
          a  = .single(ai,1)
          i  = .single(ai,2)
          Eai = .deltaE(ai)
-         do bj = 1,ai
+         do bj = ai,d                      ! NOTE
             b  = .single(bj,1)
             j  = .single(bj,2)
             Ebj = .deltaE(bj)
@@ -983,14 +1202,82 @@ contains
          end
       end
 
+      ! Make the S-parents
+      .make_S_list
+
+   if (n>0) then
+   ENSURE(all(.S_list<= n),"bad S_list")
+   end
+
+   end
+
+   find_doubles_Mazur :: leaky, PURE
+   ! Find the double excitation closest in energy to the
+   ! excited state of interest.
+      self :: INOUT
+
+   ENSURE(.single.allocated,"no single's array")
+   ENSURE(.deltaE.allocated,"no deltaE array")
+   ENSURE(.eval.allocated,"no eval array")
+
+      ai, a,i :: INT
+      bj, b,j :: INT
+      d, n    :: INT
+      Eai,Ebj,val :: REAL
+      eval, emin  :: REAL
+
+      n = .eval.dim
+      d = .single.dim1
+
+      ! For each eval find  ...
+      .double.create(n,2) ! Double excitation with
+      .delEab.create(n)   ! Closest Koopman's energy
+
+      ! Double D for each eigenvalue.
+      do n = 1,.eval.dim
+         eval = .eval(n)
+         emin = huge(ONE)         ! Initialise
+         do ai = 1,d
+            a  = .single(ai,1)
+            i  = .single(ai,2)
+            Eai = .deltaE(ai)
+            do bj = ai,d          ! NOTE: bj > ai
+               b  = .single(bj,1)
+               j  = .single(bj,2)
+               Ebj = .deltaE(bj)
+               val = Eai + Ebj
+               if (abs(val-eval)<abs(emin)) then
+                  emin = val-eval
+                  .delEab(n)   = emin ! Note sign
+                  .double(n,1) = ai 
+                  .double(n,2) = bj 
+               end
+            end
+         end
+      end
+
+      ! Make the S-parents
+      .make_S_list
+
+   end
+
+   make_S_list :: leaky, private, PURE
+   ! Make S_list parent array which gives the first and last 
+   ! indices where parent single "bj" has different "ai" values. 
+   ! These parents are used to generate Fock matrix elements 
+   ! and may be used to make a new singles-singles CIS block.
+   ! NOTE: this also works for Mazur style one-double correction
+   ! to each eigenvalue.
+      self :: INOUT
+
+   ENSURE(.double.allocated,"no double array")
+
+      n_S,f,l,i :: INT
+      cnt :: VEC{INT}@
+
       ! Count distinct singles-parent classes
       .double(:,1).make_repetition_count(cnt,n_S)
 
-      ! Make S_list parent array
-      ! First and last indices where parent single "bj" has 
-      ! different "ai" values. These parents are used to 
-      ! generate Fock matrix elements and may be used to make
-      ! a new singles-singles CIS block.
       .S_list.create(n_S,2)
       l = 0
       i = 0
@@ -1005,9 +1292,233 @@ contains
 
       cnt.destroy
 
-    if (n>0) then
-   ENSURE(all(.S_list<= n),"bad S_list")
-    end
+   end
+
+
+   docu_put_doubles(die) :: selfless, private
+   ! Documentation.
+      die :: BIN, optional, IN
+      stdout.flush
+      stdout.text("put_doubles")
+      stdout.flush
+      stdout.text(". Display table of the double-excitation detetrminants")
+      stdout.text("  within the omega-window used to correct the TD response")
+      stdout.text("  equations.")
+      if (present(die)) stop
+   end
+
+   put_doubles
+   ! Print out the interacting double excitations
+      self :: IN
+
+      select case(.dressing)
+   ! case ("mazur ");   .put_doubles_Mazur
+      case ("mazur ");   .put_doubles_window
+      case ("window");   .put_doubles_window
+      case default;      UNKNOWN(.dressing)
+      end
+
+   end
+
+   put_doubles_window
+   ! Print out the interacting double excitations
+      self :: IN
+
+   ENSURE(.single.allocated,"No single array")
+   ENSURE(.double.allocated,"No single array")
+   ENSURE(.S_list.allocated,"No S_list array")
+
+      table :: VEC{TABLE_COLUMN}@
+      arrow :: VEC{STR}@
+      S_par :: VEC{STR}@
+      n :: INT
+
+
+      stdout.flush
+      stdout.text("=================")
+      stdout.text("CI doubles window")
+      stdout.text("=================")
+      stdout.flush
+      stdout.text(". Double excitations D are selected in an energy")
+      stdout.text("  window such that:") 
+      stdout.flush
+      stdout.text("   |E_D - omega| < tol_D,")
+      stdout.flush
+      stdout.text("  where E_D is D's Koopmans excitation energy,")
+      stdout.text("  and omega is a user-specified target energy,")
+      stdout.text("  usually a particular excitation energy, and")
+      stdout.text("  tol_D is a user-specified tolerance. Also")
+      stdout.text("  D must still lie with the singles window i.e.")
+      stdout.text("  we must still have: |E_D| < tol_S")
+      stdout.flush
+      stdout.text(". Double D is made by two singles:")
+      stdout.text("  - I -> A label the 1st excitation")
+      stdout.text("  - J -> B label the 2nd excitation")
+      stdout.text("  where:")
+      stdout.text("  - I, J < 1 are occupied MOs; 0 is the HOMO")
+      stdout.text("  - A, B > 0 are virtual  MOs; 1 is the LUMO")
+      stdout.flush
+      stdout.text(". Different classes of Ds coming from a particular")
+      stdout.text("  single excitation parent P (J -> B) are starred.")
+      stdout.text("  Each P is used to generate Fock matrix elements,")
+      stdout.text("  and to make another CIS block for that class.")
+      stdout.flush
+      stdout.text("Dressing energy")
+      stdout.show("  omega            =", .omega)
+      stdout.show("  omega / eV       =", .omega*EV_PER_HARTREE)
+      stdout.flush
+
+      n = .no_of_doubles
+
+      stdout.text("Doubles window")
+      stdout.show("  tol_D            =", .tol_D)
+      stdout.show("  tol_D / eV       =", .tol_D*EV_PER_HARTREE)
+      stdout.show("  No. of doubles   =", n)
+      stdout.show("  No. of classes   =", .S_list.dim1)
+      stdout.flush
+      stdout.text("Singles window")
+      stdout.show("  tol_S            =", .tol_S)
+      stdout.show("  tol_S / eV       =", .tol_S*EV_PER_HARTREE)
+      stdout.show("  No. of singles   =", .single.dim1)
+
+
+      stdout.flush
+      stdout.flush
+
+      if (n==0) return
+
+      arrow.create(n)
+      arrow = "->"
+
+      S_par.create(n)
+      S_par = " "
+      S_par(.S_list(:,1)) = "*"
+
+      table.create(11)
+
+      table(1).set_heading("AI")
+      table(2).set_heading("BJ")
+      table(3).set_heading("P?")
+
+      table(4).set_heading("I")
+      table(5).set_column_spacing(0)
+      table(5).set_heading("->")
+      table(5).set_width(3)
+      table(6).set_heading("A")
+
+      table(7).set_heading("J")
+      table(8).set_column_spacing(0)
+      table(8).set_heading("->")
+      table(8).set_width(3)
+      table(9).set_heading("B")
+
+      table(10).set_heading("E_D")
+      table(10).set_subhead("/eV")
+      table(10).set_real_precision(2)
+
+      table(11).set_heading("E_D-w")
+      table(11).set_subhead("/eV")
+      table(11).set_real_precision(2)
+
+      table( 1).set_values(.double(:,2))                    ! AI
+      table( 2).set_values(.double(:,1))                    ! BJ
+      table( 3).set_values(S_par)
+      table( 4).set_values(.single(.double(:,2),2)-.n_occ)  ! I
+      table( 5).set_values(arrow)
+      table( 6).set_values(.single(.double(:,2),1))         ! A
+      table( 7).set_values(.single(.double(:,1),2)-.n_occ)  ! J
+      table( 8).set_values(arrow)
+      table( 9).set_values(.single(.double(:,1),1))         ! B
+      table(10).set_values((.delEab+.omega)*EV_PER_HARTREE) ! + sign correct
+      table(11).set_values( .delEab*EV_PER_HARTREE)
+
+      table.put(label_rows=TRUE)
+
+      table.destroy
+      S_par.destroy
+      arrow.destroy
+
+   end
+
+   put_doubles_Mazur
+   ! Print out the interacting double excitations
+      self :: IN
+
+   ENSURE(.single.allocated,"No single array")
+   ENSURE(.double.allocated,"No single array")
+
+      table :: VEC{TABLE_COLUMN}@
+      arrow :: VEC{STR}@
+      n :: INT
+
+      stdout.flush
+      stdout.text("=================")
+      stdout.text("CI doubles window")
+      stdout.text("=================")
+      stdout.flush
+      stdout.text(". The double excitations D whose energy is closest")
+      stdout.text("  to an existing CIS eigenvalue is selected.")
+      stdout.flush
+      stdout.text(". Double D is made by two singles:")
+      stdout.text("  - I -> A label the 1st excitation")
+      stdout.text("  - J -> B label the 2nd excitation")
+      stdout.text("  where:")
+      stdout.text("  - I, J < 1 are occupied MOs; 0 is the HOMO")
+      stdout.text("  - A, B > 0 are virtual  MOs; 1 is the LUMO")
+
+
+      n = .no_of_doubles
+
+      stdout.flush
+      stdout.show("  No. of evals     =", .n_evals)
+      stdout.show("  No. of doubles   =", n)
+      stdout.flush
+
+      if (n==0) return
+
+      arrow.create(n)
+      arrow = "->"
+
+      table.create(10)
+
+      table(1).set_heading("AI")
+      table(2).set_heading("BJ")
+
+      table(3).set_heading("I")
+      table(4).set_column_spacing(0)
+      table(4).set_heading("->")
+      table(4).set_width(3)
+      table(5).set_heading("A")
+
+      table(6).set_heading("J")
+      table(7).set_column_spacing(0)
+      table(7).set_heading("->")
+      table(7).set_width(3)
+      table(8).set_heading("B")
+
+      table(9).set_heading("E_D")
+      table(9).set_subhead("/eV")
+      table(9).set_real_precision(2)
+
+      table(10).set_heading("E_D-w")
+      table(10).set_subhead("/eV")
+      table(10).set_real_precision(2)
+
+      table( 1).set_values(.double(:,2))                    ! AI
+      table( 2).set_values(.double(:,1))                    ! BJ
+      table( 3).set_values(.single(.double(:,2),2)-.n_occ)  ! I
+      table( 4).set_values(arrow)
+      table( 5).set_values(.single(.double(:,2),1))         ! A
+      table( 6).set_values(.single(.double(:,1),2)-.n_occ)  ! J
+      table( 7).set_values(arrow)
+      table( 8).set_values(.single(.double(:,1),1))         ! B
+      table( 9).set_values((.delEab+.eval)*EV_PER_HARTREE)  ! + sign correct
+      table(10).set_values( .delEab*EV_PER_HARTREE)
+
+      table.put(label_rows=TRUE)
+
+      table.destroy
+      arrow.destroy
 
    end
 
@@ -1017,7 +1528,7 @@ contains
 
 ! Inquiry
 
-   converged result (res) ::: PURE
+   converged result (res) :: PURE
    ! Return TRUE if the Davidson procedure is done i.e. either
    ! converged or gone on for too long ... and, it must also
    ! have executed the requested minimum number of times ...
@@ -1028,14 +1539,14 @@ contains
         AND .iteration <= .max_iterations
    end
 
-   collapse result (res) ::: pure
+   collapse result (res) :: pure
    ! Collapse the Davidson subspace down to one set.
       self :: IN
       res :: BIN
       res = .n_trial==.n_keep
    end
 
-   fst_trial_vector result (res) ::: pure
+   fst_trial_vector result (res) :: pure
    ! Return the index of the first trial vector column
    ! in the current Davidson iteration.
       self :: IN
@@ -1049,7 +1560,7 @@ contains
 
    end
 
-   lst_trial_vector result (res) ::: pure
+   lst_trial_vector result (res) :: pure
    ! Return the index of the last trial vector column
    ! in the current Davidson iteration.
       self :: IN
@@ -1063,7 +1574,7 @@ contains
 
    end
 
-   best_trial_vector_set result (res) ::: pure
+   best_trial_vector_set result (res) :: pure
    ! Get the trial set with the best residuals.
    ! NOTE: can't be used yet.
       self :: IN
@@ -1071,7 +1582,7 @@ contains
       res = .max_res.index_of_minimum
    end
 
-   residual result (res) ::: PURE
+   residual result (res) :: PURE
    ! Return current maximum of the Ritz-vector residuals.
    ! NOTE: .max_res must be set externally beforehand!
       self :: IN
@@ -1083,7 +1594,7 @@ contains
 
    end
 
-   set_max_res(val) ::: leaky, PURE
+   set_max_res(val) :: leaky, PURE
    ! Set the maximum residual vector length for this iteration.
       self :: INOUT
       val  :: REAL, IN
@@ -1101,7 +1612,7 @@ contains
 !  Iteration control
 !  =================
 
-   initialize_Davidson(name) ::: leaky
+   initialize_Davidson(name) :: leaky
    ! Initialise the Davidson iterations
    ! Use archive "name" for any initial vectors.
       self :: INOUT
@@ -1152,7 +1663,7 @@ contains
 
          archive.set(name,"CIS_evec,u")
 
-         if (archive.exists) then
+         if (archive.exists AND .archive_results) then
 
             ! Read archive, make labels
             archive.read(.evec)
@@ -1160,7 +1671,9 @@ contains
             archive.set(name,"CIS_eval,u")
             archive.read(.eval)
             .make_u_Slab
-          ! .put_evecs
+         ! .put_evecs
+         ! .find_doubles
+         ! .put_doubles
 
          else
 
@@ -1218,7 +1731,7 @@ contains
 
    end
 
-   update_iteration ::: pure
+   update_iteration :: pure
    ! Update the SCF iteration
       self :: INOUT
 
@@ -1227,7 +1740,7 @@ contains
 
    end
 
-   reset_subspace ::: pure
+   reset_subspace :: pure
    ! Reset the Davidson subspace to one trial vector set.
       self :: INOUT
 
@@ -1246,7 +1759,7 @@ contains
 
    end
 
-   finalize_iteration ::: leaky, PURE
+   finalize_iteration :: leaky, PURE
    ! Clean up memory for Davidson procedure
       self :: INOUT
 
@@ -1266,15 +1779,11 @@ contains
 
    end
 
-   store_results(name) ::: leaky
+   store_results(name) :: leaky
    ! Store the results, make table Slab info.
    ! NOTE: merging of S=0 and S=1 
       self :: INOUT
       name :: STR, IN
-
-      ! Clean up !!!!!!!!
-      .finalize_iteration
-      !!!!!!!!!!!!!!!!!!!
 
       if (.is_restricted) then
          .:store_r_results(name)
@@ -1286,8 +1795,8 @@ contains
 
    end
 
-   store_r_results(name) ::: leaky, private
-   ! Store restricted results in core and on disk.
+   store_r_results(name) :: leaky, private
+   ! Save results in core and on disk.
    ! In core needed for later merging of S=0 and S=1 results.
       self :: INOUT
       name :: STR, IN
@@ -1298,18 +1807,26 @@ contains
       if (.is_singlet_calc) then
          .eval0 = .eval
          .evec0 = .evec
-         ! Archive
-         archive.set(name,"CIS_eval_S=0,r")
-         archive.write(.eval0)
-         archive.set(name,"CIS_evec_S=0,r")
-         archive.write(.evec0)
       end
       
       ! Store triplets
       if (.is_triplet_calc) then
          .eval1 = .eval
          .evec1 = .evec
-         ! Archive
+      end
+
+      if (NOT .archive_results) return
+
+      ! Archive singlets
+      if (.is_singlet_calc) then
+         archive.set(name,"CIS_eval_S=0,r")
+         archive.write(.eval0)
+         archive.set(name,"CIS_evec_S=0,r")
+         archive.write(.evec0)
+      end
+      
+      ! Archive triplets
+      if (.is_triplet_calc) then
          archive.set(name,"CIS_eval_S=1,r")
          archive.write(.eval1)
          archive.set(name,"CIS_evec_S=1,r")
@@ -1318,7 +1835,7 @@ contains
 
    end
 
-   make_r_Slab ::: leaky, private, PURE
+   make_r_Slab :: leaky, private, PURE
    ! Make restricted Slab labels for output table.
       self :: INOUT
 
@@ -1343,7 +1860,7 @@ contains
 
    end
 
-   store_u_results(name) ::: leaky, private
+   store_u_results(name) :: leaky, private
    ! Store unrestricted results on disk only.
    ! Clean up, store the results, with sorting if needed.
    ! UNRESTRICTED CASE.
@@ -1351,6 +1868,8 @@ contains
       name :: STR, IN
 
       archive :: ARCHIVE
+
+      if (NOT .archive_results) return
 
       ! Archive
       archive.set(name,"CIS_evec,u")
@@ -1360,7 +1879,7 @@ contains
 
    end
 
-   make_u_Slab ::: leaky, private
+   make_u_Slab :: leaky, private
    ! Make unrestricted Slab labels for output table.
       self :: INOUT
 
@@ -1388,7 +1907,7 @@ contains
                .Slab(i) = " "
             case (1)
                k1 = k1 + 1
-               .Slab(i) = "S"//trim(k1.to_str)
+               .Slab(i)   = "S"//trim(k1.to_str)
             case (2)
                k2 = k2 + 1
                .Slab(i)   = "D"//trim(k2.to_str)
@@ -1407,10 +1926,10 @@ contains
          do i = 1,n
             if (.is_M0_singlet(i)) then
                ns = ns + 1
-               .Slab(i) = "S"//ns.to_str
+               .Slab(i) = "S"//trim(ns.to_str)
             else
                nt = nt + 1
-               .Slab(i) = "T"//nt.to_str
+               .Slab(i) = "T"//trim(nt.to_str)
             end
          end
 
@@ -1418,7 +1937,7 @@ contains
 
    end
 
-   merge_S01_results ::: leaky, PURE
+   merge_S01_results :: leaky, PURE
    ! Merge S=0 and S=1 results ready for printing
    ! RESTART BECOMES IMPOSSIBLE IN THIS CASE.
       self :: INOUT
@@ -1474,7 +1993,7 @@ contains
 !  Efficient A x V product
 !  =======================
 
-   make_u_diag_AV(AV,V) ::: PURE
+   make_u_diag_AV(AV,V) :: PURE
    ! Do the *unrestricted* diag(A).V matrix product on the
    ! single-excitation trial vectors "V" and put the result
    ! into "AV". Will assume non-canonical VMOs if the VV
@@ -1544,7 +2063,7 @@ contains
 
    end
 
-   make_r_diag_AV(AV,V) ::: PURE
+   make_r_diag_AV(AV,V) :: PURE
    ! Do the diag(A).V matrix product on single-excitation
    ! trial vectors "V" and put the result into "AV".
    ! Can cope with non-canonical VMOs if the VV sector of
@@ -1554,7 +2073,7 @@ contains
       V  :: MAT{REAL}, IN
 
    ENSURE(AV.is_same_shape_as(V),"inconsistent shape, V and AV")
-   ENSURE(AV.dim2==(.n_evals-1),"wrong dim2, AV")
+   ENSURE(AV.dim2==.n_evals,"wrong dim2, AV")
    ENSURE(AV.dim1==.single.dim1,"wrong dim1, AV")
 
       ai, a,i :: INT
@@ -1595,7 +2114,7 @@ contains
    end
 
 
-!   change_u_V_to_AO(Vao,V) ::: PURE
+!   change_u_V_to_AO(Vao,V) :: PURE
 !   ! ***************************************
 !   ! NOTE: Only the _r_ code is used, below.
 !   ! ***************************************
@@ -1671,7 +2190,7 @@ contains
 !
 !   end
 
-   change_r_V_to_AO(Vao,V) ::: PURE
+   change_r_V_to_AO(Vao,V) :: PURE
    ! Back transform trial eigenvectors "V" into symmetric
    ! (n_bf x n_bf) AO sized density matrices "Vao", for
    ! each excited state eigenvalue. Needed to calculate
@@ -1728,7 +2247,7 @@ contains
    end
 
 
-   change_u_V_to_MO(V,Jao,Kao) ::: PURE
+   change_u_V_to_MO(V,Jao,Kao) :: PURE
    ! Transform and *ACCUMULATE* AO-basis "Jao" and "Kao"
    ! matrices from the 2e part of the CIS equations into
    ! the correct spin blocks of the unrestricted Davidson
@@ -1827,7 +2346,7 @@ contains
 
    end
 
-   change_r_V_to_MO(V,Vao) ::: PURE
+   change_r_V_to_MO(V,Vao) :: PURE
    ! Transform and *accumulate* AO-basis matrices "Vao" back
    ! into Davidson trial eigenvectors "V" in the state basis.
       self :: IN
@@ -1880,7 +2399,7 @@ contains
 
    end
 
-!   change_AV_to_MO(AV,V) ::: PURE
+!   change_AV_to_MO(AV,V) :: PURE
 !   ! Transform the (n_bf x n_bf) matrices "AV" and *accumulate*
 !   ! into trial eigenvectors "V" in the state basis.
 !      self :: IN
@@ -1943,11 +2462,11 @@ contains
       .put_options
       .put_MO_energies
       .put_singles
-    ! .put_doubles
+   ! .put_doubles
 
    end
 
-   docu_put_options(die) ::: selfless, private
+   docu_put_options(die) :: selfless, private
    ! Documentation.
       die :: BIN, optional, IN
       stdout.flush
@@ -1962,49 +2481,49 @@ contains
    ! Prints summary of what options being used.
       self :: IN
 
-      n,lo,hv :: INT
+      n :: INT
 
       stdout.flush
-      stdout.show("Method                       = ", .method)
-      stdout.show("Implementation               = ", .implementation)
+      stdout.show("Method              = ", .method)
+      stdout.show("Implementation      = ", .implementation)
+      stdout.show("Use IVO energies?   = ", .use_IVO_energies)
+      stdout.show("Use M=0 states?     = ", .use_M_0)
+
+      stdout.flush
+      stdout.text("No. of electrons")
+      stdout.show("  n_occ             = ", .n_occ)
+      stdout.show("  n_vir             = ", .n_vir)
+      stdout.show("  n_occ x n_vir     = ", .n_occ*.n_vir)
 
       n  = .no_of_singles
 
       stdout.flush
-      stdout.show("n_evals, # of evals wanted   = ", .n_evals)
-      stdout.show("n_keep,  # trial blocks kept = ", .n_keep)
-      stdout.show("Dimension of matrix          = ", n)
-      stdout.flush
-      stdout.show("Max. # of iterations         = ", .max_iterations)
-      stdout.show("Residual convergence tol     = ", .tol_Davidson)
+      stdout.text("Davidson options")
+      stdout.show("  n_evals wanted    = ", .n_evals)
+      stdout.show("  n_keep  blocks    = ", .n_keep)
+      stdout.show("  No. determinants  = ", n)
+      stdout.show("  Max. iterations   = ", .max_iterations)
+      stdout.show("  Convergence tol   = ", .tol_Davidson)
 
       stdout.flush
-    ! stdout.text("Dimensions")
-    ! stdout.flush
-    ! stdout.show("n_a                          = ", .n_a)
-    ! stdout.show("n_b                          = ", .n_b)
-      stdout.show("n_occ                        = ", .n_occ)
-      stdout.show("n_vir                        = ", .n_vir)
-      stdout.show("n_occ x n_vir                = ", .n_occ*.n_vir)
-
-    ! stdout.flush
-    ! stdout.text("Tolerances & convergence:")
-    ! stdout.flush
-    ! stdout.show("Minimum # of iterations      = ", .min_iterations)
-
+      stdout.text("Singles window")
+      stdout.show("  tol_S             =", .tol_S)
+      stdout.show("  tol_S / eV        =", .tol_S*EV_PER_HARTREE)
+      if (.implementation/="in-core" OR .is_an_SS_method) then
+      stdout.show("  No. of singles    =", n)
+      end
       stdout.flush
-      stdout.text("State selection:")
+      stdout.text("Orbital range")
+      stdout.show("  Min. occupied MO  =", .min_OMO-.n_occ+1)
+      stdout.show("  Max. virtual  MO  =", .max_VMO)
       stdout.flush
-      stdout.show("Single excitation window     = ", .tol_S)
-      lo = .min_OMO
-      hv = .max_VMO
-      stdout.show("# of states in S window      = ", n)
-      stdout.show("Dressing energy, omega       = ", .omega)
-      stdout.show("Dressing energy, omega (eV)  = ", .omega*EV_PER_HARTREE)
-      stdout.show("Doubles selection tol        = ", .tol_D)
-      stdout.show("Lowest  OMO in S window      = ", lo)
-      stdout.show("Highest VMO in S window      = ", hv)
-    ! stdout.show("Use S window MOs?            = ", .use_S_window_MOs)
+      stdout.text("Dressing energy")
+      stdout.show("  omega             =", .omega)
+      stdout.show("  omega / eV        =", .omega*EV_PER_HARTREE)
+      stdout.flush
+      stdout.text("Doubles window")
+      stdout.show("  tol_D             =", .tol_D)
+      stdout.show("  tol_D / eV        =", .tol_D*EV_PER_HARTREE)
 
       stdout.flush
 
@@ -2048,9 +2567,9 @@ contains
          stdout.flush
          stdout.text(". All energies are in ascending order")
          stdout.flush
-         stdout.show("No. of occupied MOs       = ", .n_occ)
-         stdout.show("Lowest  OMO in window     = ", lo)
-         stdout.show("Highest VMO in window     = ", hv)
+         stdout.show("  No. of OMOs       = ", .n_occ)
+         stdout.show("  Min. occupied MO  =", .min_OMO-.n_occ+1)
+         stdout.show("  Max. virtual  MO  =", .max_VMO)
 
 
          stdout.flush
@@ -2082,230 +2601,6 @@ contains
 
    end
 
-   docu_put_singles(die) ::: selfless, private
-   ! Documentation.
-      die :: BIN, optional, IN
-      stdout.flush
-      stdout.text("put_singles")
-      stdout.flush
-      stdout.text(". Display table of the sorted singles states")
-      if (present(die)) stop
-   end
-
-   put_singles
-   ! Print out the sorted singles states.
-      self :: IN
-
-      table :: VEC{TABLE_COLUMN}@
-      arrow :: VEC{STR}@
-      n, m  :: INT
-
-      n = .no_of_singles
-      m = .n_max_show
-
-      stdout.flush
-      stdout.text("=================")
-      stdout.text("CI singles window")
-      stdout.text("=================")
-      stdout.flush
-      stdout.text(". Single excitations S are selected in an energy window")
-      stdout.text("  so that:")
-      stdout.flush
-      stdout.text("     |E_S| < tol_S,")
-      stdout.flush
-      stdout.text("  where E_S is the singles excitation energy calculated")
-      stdout.text("  by Koopman's theorem i.e. orbital energy differences,")
-      stdout.flush
-      stdout.text(". Single excitation S is specified by:")
-      stdout.text("  - I -> A where I < 1 are occupied MOs; 0 is the HOMO")
-      stdout.text("  -        where A > 0 are virtual  MOs; 1 is the LUMO")
-      stdout.flush
-      stdout.text(". Improved virtual MO energies may be used, if requested,")
-      stdout.text("  and if VMO canonicalisation was used in the SCF.")
-      stdout.flush
-      stdout.text("Singles window")
-      stdout.show("  tol_S             =", .tol_S)
-      stdout.show("  tol_S / eV        =", .tol_S*EV_PER_HARTREE)
-      stdout.show("  No. of singles    =", n)
-      stdout.flush
-      stdout.text("Orbital range")
-      stdout.show("  Min. occupied MO  =", .min_OMO-.n_occ)
-      stdout.show("  Max. virtual  MO  =", .max_VMO)
-      stdout.flush
-      stdout.show("Use IVO energies?  =", .use_IVO_energies)
-      stdout.flush
-      stdout.show("No. of to display  =", m)
-      stdout.flush
-
-      DIE_IF(n==0,"no single excitations in the window")
-
-      if (m>0) n = min(n,m)
-
-      arrow.create(n)
-      arrow = "->"
-
-      table.create(5)
-
-      table(1).set_heading("I")
-      table(1).set_values(.single(1:n,2)-.n_occ)
-
-      table(2).set_column_spacing(0)
-      table(2).set_heading("->")
-      table(2).set_width(3)
-      table(2).set_values(arrow)
-
-      table(3).set_heading("A")
-      table(3).set_values(.single(1:n,1))
-
-      table(4).set_heading("Ev-Eo")
-      table(4).set_subhead(" /au")
-      table(4).set_real_precision(3)
-      table(4).set_width(8)
-      table(4).set_values(.deltaE(1:n))
-
-      table(5).set_heading("Ev-Eo")
-      table(5).set_subhead(" /eV")
-      table(5).set_real_precision(3)
-      table(5).set_width(8)
-      table(5).set_values(.deltaE(1:n)*EV_PER_HARTREE)
-
-      table.put(label_rows=TRUE)
-
-      table.destroy
-      arrow.destroy
-
-   end
-
-   docu_put_doubles(die) ::: selfless, private
-   ! Documentation.
-      die :: BIN, optional, IN
-      stdout.flush
-      stdout.text("put_doubles")
-      stdout.flush
-      stdout.text(". Display table of the double-excitation detetrminants")
-      stdout.text("  within the omega-window used to correct the TD response")
-      stdout.text("  equations.")
-      if (present(die)) stop
-   end
-
-   put_doubles
-   ! Print out the interacting double excitations
-      self :: IN
-
-   ENSURE(.single.allocated,"No single array")
-   ENSURE(.double.allocated,"No single array")
-   ENSURE(.S_list.allocated,"No S_list array")
-
-      table :: VEC{TABLE_COLUMN}@
-      arrow :: VEC{STR}@
-      S_par :: VEC{STR}@
-      n :: INT
-
-
-      stdout.flush
-      stdout.text("=================")
-      stdout.text("CI doubles window")
-      stdout.text("=================")
-      stdout.flush
-      stdout.text(". Double excitations D are selected in an energy")
-      stdout.text("  window such that:") 
-      stdout.flush
-      stdout.text("   |E_D - omega| < tol_D,")
-      stdout.flush
-      stdout.text("  where E_D is D's Koopmans excitation energy,")
-      stdout.text("  and omega is a user-specified target energy,")
-      stdout.text("  usually a particular excitation energy, and")
-      stdout.text("  tol_D is a user-specified tolerance. Also")
-      stdout.text("  D must still lie with the singles window i.e.")
-      stdout.text("  we must still have: |E_D| < tol_S")
-      stdout.flush
-      stdout.text(". Double D is made by two singles:")
-      stdout.text("  - I -> A label the 1st excitation")
-      stdout.text("  - J -> B label the 2nd excitation")
-      stdout.text("  where:")
-      stdout.text("  - I, J < 1 are occupied MOs; 0 is the HOMO")
-      stdout.text("  - A, B > 0 are virtual  MOs; 1 is the LUMO")
-      stdout.flush
-      stdout.text(". Different classes of Ds coming from a particular")
-      stdout.text("  single excitation parent (P: J -> B) are starred.")
-      stdout.text("  Eacjh P is used to generate Fock matrix elements,")
-      stdout.text("  and to make another CIS block for that class.")
-      stdout.flush
-      stdout.text("Dressing energy")
-      stdout.show("  omega            =", .omega)
-      stdout.show("  omega / eV       =", .omega*EV_PER_HARTREE)
-      stdout.flush
-      stdout.text("Doubles window")
-      stdout.show("  tol_D            =", .tol_D)
-      stdout.show("  tol_D / eV       =", .tol_D*EV_PER_HARTREE)
-      stdout.show("  No. of doubles   =", n)
-      stdout.show("  No. of classes   =", .S_list.dim1)
-      stdout.flush
-      stdout.text("Singles window")
-      stdout.show("  tol_S            =", .tol_S)
-      stdout.show("  tol_S / eV       =", .tol_S*EV_PER_HARTREE)
-      stdout.show("  No. of singles   =", .single.dim1)
-
-      n = .no_of_doubles
-
-      stdout.flush
-      stdout.flush
-
-      if (n==0) return
-
-      arrow.create(n)
-      arrow = "->"
-
-      S_par.create(n)
-      S_par = " "
-      S_par(.S_list(:,1)) = "*"
-
-      table.create(11)
-
-      table(1).set_heading("AI")
-      table(2).set_heading("BJ")
-      table(3).set_heading("P?")
-
-      table(4).set_heading("I")
-      table(5).set_column_spacing(0)
-      table(5).set_heading("->")
-      table(5).set_width(3)
-      table(6).set_heading("A")
-
-      table(7).set_heading("J")
-      table(8).set_column_spacing(0)
-      table(8).set_heading("->")
-      table(8).set_width(3)
-      table(9).set_heading("B")
-
-      table(10).set_heading("E_D")
-      table(10).set_subhead("/eV")
-      table(10).set_real_precision(2)
-
-      table(11).set_heading("E_D-w")
-      table(11).set_subhead("/eV")
-      table(11).set_real_precision(2)
-
-      table( 1).set_values(.double(:,2))                    ! AI
-      table( 2).set_values(.double(:,1))                    ! BJ
-      table( 3).set_values(S_par)
-      table( 4).set_values(.single(.double(:,2),2)-.n_occ)  ! I
-      table( 5).set_values(arrow)
-      table( 6).set_values(.single(.double(:,2),1))         ! A
-      table( 7).set_values(.single(.double(:,1),2)-.n_occ)  ! J
-      table( 8).set_values(arrow)
-      table( 9).set_values(.single(.double(:,1),1))         ! B
-      table(10).set_values((.delEab+.omega)*EV_PER_HARTREE) ! + sign correct
-      table(11).set_values( .delEab*EV_PER_HARTREE)
-
-      table.put(label_rows=TRUE)
-
-      table.destroy
-      S_par.destroy
-      arrow.destroy
-
-   end
-
 !  ===============
 !  Davidson output
 !  ===============
@@ -2320,27 +2615,15 @@ contains
       table :: VEC{TABLE_COLUMN}@
       n :: INT
 
-      n = .eval.dim
 
       stdout.flush
       stdout.text("============================")
       stdout.text("CIS/TD excited state results")
       stdout.text("============================")
-    ! stdout.flush
-    ! stdout.text(". Only the lowest states are shown")
-    ! stdout.flush
-    ! stdout.text(". In-core implementations do no state selection (SS)")
-    ! stdout.text("  UNLESS an SS-type method is specifically chosen AND")
-    ! stdout.text("  in addition, tol_S>0. (If tol_S is zero, all single")
-    ! stdout.text("  excitation states are used).")
-      stdout.flush
-      stdout.show("Method                       =", .method)
-      stdout.show("Implementation               =", .implementation)
-      stdout.show("Singles tolerance, tol_S     =", .tol_S)
-      if (.implementation/="in-core" OR .is_an_SS_method) then
-      stdout.show("No. of S states in window    =", n)
-      end
 
+      .put_options
+
+      n = .eval.dim
       if (n==0) return
 
       if (.Slab.allocated) then; table.create(3)
@@ -2376,7 +2659,7 @@ contains
 
    end
 
-   set_D_table_headings ::: leaky, PURE
+   set_D_table_headings :: leaky, PURE
    ! Set up the Davidson table
       self :: INOUT
 
@@ -2430,26 +2713,35 @@ contains
       stdout.flush
       stdout.text(". State energies are in eV")
       stdout.flush
+      stdout.text(". n_keep is the number of trial eigenvector sets to")
+      stdout.text("  keep in the block Davidson procedure.")
+      stdout.flush
+      stdout.text(". n_occ*n_vir is the maximum size of the Davidson matrix")
+      stdout.text("  but a fewer of determinants are used if state selected")
+      stdout.text("  method is used.")
+      stdout.flush
       stdout.text(". Convergence decided by the maximum of the absolute")
       stdout.text("  norm of the residual of each eigenvector.")
-    ! stdout.flush
-    ! stdout.text(". For unrestricted calcs the no. of eigenvalues is")
-    ! stdout.text("  four times more than asked, to allow for triplets.")
+   ! stdout.flush
+   ! stdout.text(". For unrestricted calcs the no. of eigenvalues is")
+   ! stdout.text("  four times more than asked, to allow for triplets.")
 
       stdout.flush
-      stdout.show("Method                       = ", .method)
-      stdout.show("Implementation               = ", .implementation)
+      stdout.text("No. of electrons")
+      stdout.show("  n_occ             = ", .n_occ)
+      stdout.show("  n_vir             = ", .n_vir)
+      stdout.show("  n_occ x n_vir     = ", .n_occ*.n_vir)
+
       stdout.flush
-      stdout.show("n_evals, # of evals wanted   = ", .n_evals)
-      stdout.show("n_keep,  # trial blocks kept = ", .n_keep)
-      stdout.show("Dimension of matrix          = ", d)
-      stdout.flush
-      stdout.show("Max. no. of iterations       = ",.max_iterations)
-      stdout.show("Convergence tolerance        = ",.tol_Davidson)
-      stdout.flush
+      stdout.text("Davidson options")
+      stdout.show("  n_evals wanted    = ", .n_evals)
+      stdout.show("  n_keep  blocks    = ", .n_keep)
+      stdout.show("  No. determinants  = ", .single.dim1)
+      stdout.show("  Max. iterations   = ", .max_iterations)
+      stdout.show("  Convergence tol.  = ", .tol_Davidson)
 
       ! Put the table
-      .table.put_headings
+      if (.show_iterations) .table.put_headings
 
    end
 
@@ -2463,10 +2755,13 @@ contains
 
       i :: INT
 
+      ! Actually show output?
+      if (.show_iterations) then
+
       ! Set table body (leaky)
       .table(1).set_values([.iteration],auto=FALSE)
       .table(2).set_values([.max_res(.n_trial)],auto=FALSE)
-    ! .table(3).set_values([.collapse])
+   ! .table(3).set_values([.collapse])
       do i = 1,.n_evals
       .table(i+2).set_values([.eval(i)*EV_PER_HARTREE])
       end
@@ -2477,14 +2772,16 @@ contains
       ! Clear columns for next time (UNleaky!)
       .table.clear_columns
 
+      end
+
       if (.converged) then
-        .table.put_footer
-        stdout.flush
-        if (.converged) then; stdout.text("* * * Converged * * *")
-        else;                 stdout.text("* * * NOT CONVERGED * * *")
-        end
-        .table.put_footer
-        stdout.flush
+         .table.put_footer
+         stdout.flush
+         if (.converged) then; stdout.text("* * * Converged * * *")
+         else;                 stdout.text("* * * NOT CONVERGED * * *")
+         end
+         .table.put_footer
+         stdout.flush
       end
 
    end
@@ -2496,13 +2793,15 @@ contains
    ENSURE(.single.allocated,"no single states")
    ENSURE(.evec.allocated,  "evec unallocated")
 
+      if (NOT .show_evecs) return
+
       if (NOT .is_unrestricted) then; .put_r_evecs
       else;                           .put_u_evecs
       end
 
    end
 
-   put_r_evecs ::: private
+   put_r_evecs :: private
    ! Print out the eigenvectors
       self :: IN
 
@@ -2564,7 +2863,7 @@ contains
 
       do i = 1,n
       val = .eval(i)*EV_PER_HARTREE
-      num = val.to_str("f10.2")
+      num = trim(val.to_str("f10.2"))
       table(4+i).set_heading(.Slab(i))
       table(4+i).set_subhead(trim(num))
       table(4+i).set_real_precision(4)
@@ -2582,7 +2881,7 @@ contains
 
    end
 
-   put_u_evecs ::: private
+   put_u_evecs :: private
    ! Print out the eigenvectors
       self :: IN
 
@@ -2694,7 +2993,7 @@ contains
 
       do i = 1,n
       val = .eval(i)*EV_PER_HARTREE
-      num = val.to_str("f10.2")
+      num = trim(val.to_str("f10.2"))
       table(4+i).set_heading(.Slab(i))
       table(4+i).set_subhead(trim(num))
       table(4+i).set_real_precision(4)

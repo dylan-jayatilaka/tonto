@@ -1,5 +1,5 @@
 # CMake
-cmake_minimum_required(VERSION 3.20...3.28)
+cmake_minimum_required(VERSION 3.20)
 cmake_policy(VERSION 3.20)
 
 # Allow arbitrary characters in test names
@@ -22,15 +22,53 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 # Install where?
 set(CMAKE_INSTALL_PREFIX /usr/local CACHE PATH "Install prefix")
 
-# Tonto speicifics
+# Tonto specifics
 set(BASIS_SETS ${CMAKE_CURRENT_SOURCE_DIR}/basis_sets 
     CACHE PATH "Basis sets directory")
 
 option(MPI "Use MPI" OFF)
 option(COMPILE_LAPACK "Use the reference implementation of lapack provided" OFF)
 
-# Perl
-find_package(Perl REQUIRED)
+# Java and ANTLR4
+find_package(Java REQUIRED COMPONENTS Runtime Development)
+# The ANTLR4 tool is a single "complete" jar. It is a release artefact (NOT part
+# of the antlr4 source repo), so we cannot get it from a git submodule. If it is
+# not already present, download it into external/ (git-ignored) and verify its
+# checksum. A system copy or a manually-placed jar is used in preference.
+set(ANTLR4_VERSION 4.13.2)
+set(ANTLR4_JAR_NAME antlr-${ANTLR4_VERSION}-complete.jar)
+set(ANTLR4_JAR_CACHE ${CMAKE_CURRENT_SOURCE_DIR}/external/${ANTLR4_JAR_NAME})
+set(ANTLR4_JAR_SHA256 eae2dfa119a64327444672aff63e9ec35a20180dc5b8090b7a6ab85125df4d76)
+set(ANTLR4_JAR_CANDIDATES
+    ${ANTLR4_JAR_CACHE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/antlr4/${ANTLR4_JAR_NAME}
+    /usr/local/lib/${ANTLR4_JAR_NAME}
+)
+unset(ANTLR4_JAR CACHE)
+foreach(ANTLR4_JAR_CANDIDATE ${ANTLR4_JAR_CANDIDATES})
+    if(EXISTS ${ANTLR4_JAR_CANDIDATE})
+        set(ANTLR4_JAR ${ANTLR4_JAR_CANDIDATE})
+        break()
+    endif()
+endforeach()
+if(NOT ANTLR4_JAR)
+    message(STATUS "ANTLR4 jar not found locally; downloading ${ANTLR4_JAR_NAME} into external/ ...")
+    file(DOWNLOAD
+        https://www.antlr.org/download/${ANTLR4_JAR_NAME}
+        ${ANTLR4_JAR_CACHE}
+        SHOW_PROGRESS
+        EXPECTED_HASH SHA256=${ANTLR4_JAR_SHA256}
+        STATUS ANTLR4_DL_STATUS)
+    list(GET ANTLR4_DL_STATUS 0 ANTLR4_DL_CODE)
+    if(NOT ANTLR4_DL_CODE EQUAL 0)
+        file(REMOVE ${ANTLR4_JAR_CACHE})
+        list(GET ANTLR4_DL_STATUS 1 ANTLR4_DL_MSG)
+        message(FATAL_ERROR "Failed to download ANTLR4 jar (${ANTLR4_DL_MSG}). "
+            "Place ${ANTLR4_JAR_NAME} in external/ manually and re-run cmake.")
+    endif()
+    set(ANTLR4_JAR ${ANTLR4_JAR_CACHE})
+endif()
+message(STATUS "Using ANTLR4 jar: ${ANTLR4_JAR}")
 
 # Git
 find_package(Git)
@@ -47,7 +85,16 @@ endif()
 # Testing?
 enable_testing()
 
+# BLAS
+#set(BLA_VENDOR NVPL)
+#set(BLA_VENDOR OpenBLAS)
+
 # LAPACK
+# The bundled reference LAPACK (external/lapack-release, netlib 3.8.0) declares an
+# ancient cmake_minimum_required (2.8.x) that CMake >= 4 rejects. Permit configuring
+# such old subprojects without editing the pinned submodule.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "min policy for old subprojects" FORCE)
+set(ENV{CMAKE_POLICY_VERSION_MINIMUM} 3.5)
 string(TOUPPER "${CMAKE_BUILD_TYPE}" TEMP)
 if(TEMP STREQUAL "RELEASE-STATIC")
   set(COMPILE_LAPACK "ON")
@@ -73,6 +120,7 @@ else()
   endif()
 endif()
 
+# MPI
 if(MPI)
     message(STATUS "Building with MPI enabled")
     if(MSMPI)
@@ -120,12 +168,12 @@ configure_file(
     ${MACROS}
 )
 
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/sbf)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/)
 
 # Foo source files
 set(FOO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/foofiles)
+set(FOOGRAMMAR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/foogrammar)
 set(FOO_TYPES_FILE ${FOO_DIR}/types.foo)
+set(FOO_ANTLR4_GRAMMAR ${FOOGRAMMAR_DIR}/Foo.g4)
 set(FORTRAN_TYPES_FILE types.F90)
 set(FOO_SRC
     ${FOO_DIR}/types.foo
@@ -190,9 +238,7 @@ set(FOO_SRC
     ${FOO_DIR}/map{str,int}.foo
     ${FOO_DIR}/map{vec{int},vec{int}}.foo
     ${FOO_DIR}/time.foo
-    ${FOO_DIR}/system_command.foo
     ${FOO_DIR}/command_line.foo
-    ${FOO_DIR}/parallel.foo
     ${FOO_DIR}/system.foo
     ${FOO_DIR}/atom.foo
     ${FOO_DIR}/basis.foo
@@ -201,8 +247,8 @@ set(FOO_SRC
     ${FOO_DIR}/buffer.foo
     ${FOO_DIR}/output_style.foo
     ${FOO_DIR}/textfile.foo
-    ${FOO_DIR}/datafile.foo
-    ${FOO_DIR}/json.foo
+#   ${FOO_DIR}/datafile.foo
+#   ${FOO_DIR}/json.foo
     ${FOO_DIR}/file.foo
     ${FOO_DIR}/archive.foo
     ${FOO_DIR}/cif.foo
@@ -211,6 +257,7 @@ set(FOO_SRC
     ${FOO_DIR}/colour_function.foo
     ${FOO_DIR}/coppensbasis.foo
     ${FOO_DIR}/coppensorbital.foo
+    ${FOO_DIR}/csf_to_sd.foo
     ${FOO_DIR}/dft_functional.foo
     ${FOO_DIR}/diffraction_data.inq.foo
     ${FOO_DIR}/diffraction_data.set.foo
@@ -233,8 +280,9 @@ set(FOO_SRC
     ${FOO_DIR}/capping_square.foo
     ${FOO_DIR}/isosurface.foo
     ${FOO_DIR}/plot_grid.foo
-    ${FOO_DIR}/lebedev.foo
     ${FOO_DIR}/quadrature.foo
+    ${FOO_DIR}/lebedev.foo
+    ${FOO_DIR}/womersley.foo
     ${FOO_DIR}/roby.foo
     ${FOO_DIR}/scf_data.foo
     ${FOO_DIR}/shell.foo
@@ -288,6 +336,7 @@ set(FOO_SRC
     ${FOO_DIR}/molecule.put.foo
     ${FOO_DIR}/molecule.base.foo
 #   ${FOO_DIR}/molecule.rel.foo ! for now
+    ${FOO_DIR}/molecule.rho.foo
     ${FOO_DIR}/molecule.grid.foo
     ${FOO_DIR}/molecule.xtal.foo
     ${FOO_DIR}/molecule.ce.foo
@@ -323,10 +372,11 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/command_line.F90
     ${CMAKE_CURRENT_BINARY_DIR}/coppensbasis.F90
     ${CMAKE_CURRENT_BINARY_DIR}/coppensorbital.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/csf_to_sd.F90
     ${CMAKE_CURRENT_BINARY_DIR}/cpx.F90
     ${CMAKE_CURRENT_BINARY_DIR}/crystal.F90
     ${CMAKE_CURRENT_BINARY_DIR}/crystal23.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/datafile.F90
+#   ${CMAKE_CURRENT_BINARY_DIR}/datafile.F90
     ${CMAKE_CURRENT_BINARY_DIR}/dft_functional.F90
     ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.inq.F90
     ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.set.F90
@@ -374,6 +424,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.put.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.base.F90
  #  ${CMAKE_CURRENT_BINARY_DIR}/molecule.rel.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/molecule.rho.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.grid.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.xtal.F90
     ${CMAKE_CURRENT_BINARY_DIR}/molecule.ce.F90
@@ -451,6 +502,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/vec_evec_real.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_evec_str.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_evec_evec_int.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/womersley.F90
     ${CMAKE_CURRENT_BINARY_DIR}/test_parallel.F90
 )
 
@@ -486,11 +538,67 @@ set(RUN_SRC
 
 
 # Processing foo into fortran source
-message(STATUS "Rules to process .foo -> .F90 using ${PERL_EXECUTABLE}")
-set(FOO_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/scripts/foo.pl")
-set(FOO_ARGS "")
+message(STATUS "Rules to process .foo -> .F90 using ANTLR4 two-pass translator")
 set(SRC ${FOO_SRC} ${RUN_SRC})
+set(ANTLR4_VALIDATION_DIR ${CMAKE_CURRENT_BINARY_DIR}/antlr4-validation)
+set(ANTLR4_CLASSES_DIR ${CMAKE_CURRENT_BINARY_DIR}/antlr4-classes)
+set(ANTLR4_VALIDATION_STAMP ${ANTLR4_VALIDATION_DIR}/FooParser.stamp)
+set(ANTLR4_TRANSLATOR_STAMP ${ANTLR4_CLASSES_DIR}/FooToFortran.stamp)
+set(FOO_TRANSLATOR_JAVA ${FOOGRAMMAR_DIR}/FooToFortran.java)
+
+# Optional dead-code purge (phase B). Set to a run-file stem (e.g. run_molecule) in a
+# SEPARATE build tree — `cmake .. -DPURGE_DEAD_CODE=run_molecule` — to emit only the
+# procedures reachable from that one executable's entry point, dropping the rest. The
+# normal build (empty PURGE_DEAD_CODE) is unaffected. Per-executable by design: code
+# dead for run_molecule may be live for another program, so never share the build dir.
+set(PURGE_DEAD_CODE "" CACHE STRING
+    "If set to a run-file stem (e.g. run_molecule), emit only code reachable from that executable")
+
+add_custom_command(
+    OUTPUT ${ANTLR4_VALIDATION_STAMP}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${ANTLR4_VALIDATION_DIR}
+    COMMAND ${Java_JAVA_EXECUTABLE} -jar ${ANTLR4_JAR} -Dlanguage=Java -visitor -listener -o ${ANTLR4_VALIDATION_DIR} Foo.g4
+    COMMAND ${CMAKE_COMMAND} -E touch ${ANTLR4_VALIDATION_STAMP}
+    DEPENDS ${FOO_ANTLR4_GRAMMAR}
+    WORKING_DIRECTORY ${FOOGRAMMAR_DIR}
+    COMMENT "Generating ANTLR4 parser sources from Foo.g4"
+    VERBATIM
+)
+
+add_custom_target(antlr4-grammar DEPENDS ${ANTLR4_VALIDATION_STAMP})
+
+add_custom_command(
+    OUTPUT ${ANTLR4_TRANSLATOR_STAMP}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${ANTLR4_CLASSES_DIR}
+    COMMAND ${Java_JAVAC_EXECUTABLE}
+        -cp ${ANTLR4_JAR}:${ANTLR4_VALIDATION_DIR}
+        -d ${ANTLR4_CLASSES_DIR}
+        ${ANTLR4_VALIDATION_DIR}/FooLexer.java
+        ${ANTLR4_VALIDATION_DIR}/FooParser.java
+        ${ANTLR4_VALIDATION_DIR}/FooListener.java
+        ${ANTLR4_VALIDATION_DIR}/FooBaseListener.java
+        ${ANTLR4_VALIDATION_DIR}/FooVisitor.java
+        ${ANTLR4_VALIDATION_DIR}/FooBaseVisitor.java
+        ${FOO_TRANSLATOR_JAVA}
+    COMMAND ${CMAKE_COMMAND} -E touch ${ANTLR4_TRANSLATOR_STAMP}
+    DEPENDS ${ANTLR4_VALIDATION_STAMP} ${FOO_TRANSLATOR_JAVA}
+    COMMENT "Compiling ANTLR4 Foo translator"
+    VERBATIM
+)
+
+add_custom_target(antlr4-translator DEPENDS ${ANTLR4_TRANSLATOR_STAMP})
+
+set(FOO_GENERATED_F90_OUTPUTS "")
+set(ALL_F90_OUTPUTS "")
 foreach(foopath ${SRC})
+    # Virtual (get_from template) modules - e.g. object.foo, vec{intrinsic}.foo,
+    # map{key,val}.foo - are inlined into their heirs and never compiled. Skip
+    # them so nothing is generated for them and they are never handed to the
+    # Fortran compiler. (They are also absent from FORTRAN_SRC.)
+    file(STRINGS "${foopath}" _foo_virtual REGEX "^[ \t]*virtual[ \t]+module")
+    if(_foo_virtual)
+        continue()
+    endif()
     get_filename_component(foofile ${foopath} NAME)
     string(REGEX REPLACE ".foo\$" ".F90" F90file ${foofile})
     # This is just so Make doesn't panic about unescaped { or ,
@@ -499,16 +607,83 @@ foreach(foopath ${SRC})
     string(REGEX REPLACE "___" "_" F90file ${F90file})
     string(REGEX REPLACE "__" "_" F90file ${F90file})
     string(REGEX REPLACE "_.F90" ".F90" F90file ${F90file})
-    add_custom_command(
-        OUTPUT ${F90file}
-        COMMAND ${PERL_EXECUTABLE}
-        ARGS ${FOO_SCRIPT} ${FOO_ARGS}
-        -fortran "${CMAKE_CURRENT_BINARY_DIR}/${F90file}"
-        -types ${FOO_TYPES_FILE}
-        \"${foopath}\"
-        DEPENDS ${foopath}
-    )
+    list(APPEND ALL_F90_OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/${F90file})
+    if(foopath MATCHES "^${FOO_DIR}/")
+        list(APPEND FOO_GENERATED_F90_OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/${F90file})
+    endif()
+    # Per-file generation (normal build). In purge mode a single batch command
+    # (below) supersedes these — cross-file reachability can't be computed one file
+    # at a time — so skip creating the per-file rules.
+    # NB: no VERBATIM here. Foo file names contain shell brace-expansion syntax
+    # (e.g. map{int,int}.foo, map{vec{key},vec{val}}.foo). VERBATIM would leave
+    # the path unquoted and /bin/sh (bash) would brace-expand it into multiple
+    # args. Emit explicit double quotes around the paths so the shell treats each
+    # as a single literal argument.
+    if(NOT PURGE_DEAD_CODE)
+        add_custom_command(
+            OUTPUT ${F90file}
+            COMMAND ${Java_JAVA_EXECUTABLE}
+            -cp "${ANTLR4_CLASSES_DIR}:${ANTLR4_JAR}"
+            FooToFortran
+            --types \"${FOO_TYPES_FILE}\"
+            --foo \"${foopath}\"
+            --out-dir \"${CMAKE_CURRENT_BINARY_DIR}\"
+            DEPENDS ${foopath} ${FOO_TYPES_FILE} ${ANTLR4_TRANSLATOR_STAMP}
+        )
+    endif()
 endforeach(foopath)
+
+# Purge mode: a single batch command emits EVERY .F90/.int/.use with procedures
+# unreachable from ${PURGE_DEAD_CODE} dropped. It depends on all sources (global
+# reachability), and produces the whole ALL_F90_OUTPUTS set at once.
+if(PURGE_DEAD_CODE)
+    message(STATUS "Dead-code purge ACTIVE: emitting only code reachable from ${PURGE_DEAD_CODE}")
+    add_custom_command(
+        OUTPUT ${ALL_F90_OUTPUTS}
+        COMMAND ${Java_JAVA_EXECUTABLE}
+        -cp "${ANTLR4_CLASSES_DIR}:${ANTLR4_JAR}"
+        FooToFortran
+        --types \"${FOO_TYPES_FILE}\"
+        --purge-dead-code \"${RUNFILE_DIR}/${PURGE_DEAD_CODE}.foo\"
+        --out-dir \"${CMAKE_CURRENT_BINARY_DIR}\"
+        DEPENDS ${SRC} ${FOO_TYPES_FILE} ${ANTLR4_TRANSLATOR_STAMP}
+    )
+endif()
+
+add_custom_target(antlr4-fortran
+    DEPENDS ${ANTLR4_TRANSLATOR_STAMP} ${FOO_GENERATED_F90_OUTPUTS}
+)
+
+add_dependencies(antlr4-fortran antlr4-grammar)
+add_dependencies(antlr4-fortran antlr4-translator)
+
+# On-demand documentation graphs: `make callgraphs` regenerates the Graphviz DOT
+# files (procedure call graph; module use graph with submodules collapsed to their
+# parent; expanded submodule use graph) plus a dead-code reachability report for
+# run_molecule, into build/callgraphs/. If Graphviz `dot` is present, the two small
+# use graphs are also rendered to SVG.
+find_program(DOT_EXE dot)
+add_custom_target(callgraphs
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/callgraphs
+    COMMAND ${Java_JAVA_EXECUTABLE}
+        -cp "${ANTLR4_CLASSES_DIR}:${ANTLR4_JAR}"
+        FooToFortran
+        --types \"${FOO_TYPES_FILE}\"
+        --dead-code-report \"${RUNFILE_DIR}/run_molecule.foo\"
+        --call-graph-report
+        --out-dir \"${CMAKE_CURRENT_BINARY_DIR}/callgraphs\"
+    DEPENDS ${ANTLR4_TRANSLATOR_STAMP}
+    COMMENT "Generating Foo call/use graphs (DOT) + dead-code report -> build/callgraphs/"
+)
+if(DOT_EXE)
+    add_custom_command(TARGET callgraphs POST_BUILD
+        COMMAND ${DOT_EXE} -Tsvg ${CMAKE_CURRENT_BINARY_DIR}/callgraphs/module_use.dot
+                -o ${CMAKE_CURRENT_BINARY_DIR}/callgraphs/module_use.svg
+        COMMAND ${DOT_EXE} -Tsvg ${CMAKE_CURRENT_BINARY_DIR}/callgraphs/submodule_use.dot
+                -o ${CMAKE_CURRENT_BINARY_DIR}/callgraphs/submodule_use.svg
+        COMMENT "Rendering module/submodule use graphs to SVG")
+endif()
+add_dependencies(callgraphs antlr4-translator)
 
 # Target libtonto
 add_library(tonto
@@ -516,15 +691,32 @@ add_library(tonto
    ${MACROS}
 )
 
-if(COMPILE_LAPACK)
-	target_link_libraries(tonto sbf_fortran dftd3 lapack blas ${MPI_Fortran_LIBRARIES})
-else()
-	target_link_libraries(tonto sbf_fortran dftd3 ${MPI_Fortran_LIBRARIES})
-endif()	
+# Generate ALL Foo->Fortran output (every .F90 and its co-generated .int/.use)
+# before compiling any object. The .use files carry the inter-module `use`
+# statements (e.g. system.use has `use TYPES_MODULE`) and are pulled in via
+# `#include "<mod>.use"`. CMake's Fortran dependency scanner can only follow
+# that include - and thus discover that system.F90 must compile after types.F90 -
+# if the .use file already exists on disk when the scan runs. Forcing the whole
+# antlr4-fortran generation step first guarantees every include is present, so the
+# module compile order is derived correctly instead of falling back to list order
+# (where system.F90 precedes types.F90 and type(SYSTEM_TYPE) is undefined).
+add_dependencies(tonto antlr4-fortran)
 
-# Build directory
-target_include_directories(tonto PUBLIC ${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR}/external)
-target_include_directories(tonto PUBLIC ${SBF_MODULE_DIRECTORY} ${DFTD3_MODULE_DIRECTORY})
+if(COMPILE_LAPACK)
+	target_link_libraries(tonto lapack blas ${MPI_Fortran_LIBRARIES})
+else()
+	target_link_libraries(tonto ${MPI_Fortran_LIBRARIES})
+endif()
+
+# tonto's generated Fortran (.F90/.int/.use) and .mod files all live in the build
+# root, which is the only include path the compile needs. A former
+# ${CMAKE_CURRENT_BINARY_DIR}/external entry was vestigial: no external dependency
+# puts includable files there (system LAPACK is linked as a library; a subdir
+# lapack-release build lands in build/external/lapack-release, and reference LAPACK
+# has no Fortran modules anyway). That entry only made gfortran warn about a
+# nonexistent include directory when the deps were system-provided (so build/external
+# was never created) -- removed rather than papered over with an empty directory.
+target_include_directories(tonto PUBLIC ${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 
 
 # Standard executables
@@ -585,6 +777,7 @@ target_link_libraries(run_shell2        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIE
 # Make non-standard-named executables
 set_target_properties(run_molecule PROPERTIES OUTPUT_NAME tonto)
 set_target_properties(run_har      PROPERTIES OUTPUT_NAME hart)
+set_target_properties(run_rgbi     PROPERTIES OUTPUT_NAME rgbi)
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
