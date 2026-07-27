@@ -9,13 +9,13 @@ X-ray wavefunction refinement.
 The code is written in **Foo** — an
 object-oriented preprocessor language translated to modern Fortran.
 
-**This README covers producing a `tonto` binary.**
+**This README covers producing a `tonto` binary on Ubuntu/Linux**
 
 Everything else lives elsewhere:
 
-  - [running Tonto and science how-tos on the **wiki**](https://github.com/dylan-jayatilaka/tonto/wiki)
+  - Compiling tonto on Mac and Linux, running Tonto, and science how-tos on the [**wiki**](https://github.com/dylan-jayatilaka/tonto/wiki)
   
-  - developer references in [**`docs/`**](docs/).
+  - Developer references in [**`docs/`**](docs/).
 
 ---
 
