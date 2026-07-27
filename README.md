@@ -30,7 +30,7 @@ sudo apt install make default-jdk gfortran libblas-dev liblapack-dev python3 gnu
   build: `sudo apt install openmpi-bin libopenmpi-dev`.
 
 **macOS** → [Building on macOS](https://github.com/dylan-jayatilaka/tonto/wiki/Building-on-MacOS)
-(Homebrew `gfortran`; well-supported). &nbsp;
+(via Homebrew; Linux/WSL is the reference platform). &nbsp;
 **Windows** → untested natively; **WSL** (then follow the Linux steps) is the
 easy path. See [Building on Windows](https://github.com/dylan-jayatilaka/tonto/wiki/Building-on-Windows).
 

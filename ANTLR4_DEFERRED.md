@@ -107,6 +107,19 @@ Status is **unverified** for the ANTLR4 translator output. Start by building MPI
 `ctest` under it; expect the parallel macros (`PARALLEL_DO_*`, `PARALLEL_SUM`, `broadcast_` — all
 `SYSTEM`/`tonto`-targeted, see `macros.in`) to be the surface area. Compare against a non-MPI run.
 
+## Future task: verify the macOS build (Apple Silicon / Tahoe)
+
+**Goal (Dylan):** confirm whether Tonto builds and passes tests on current macOS, on
+**Apple Silicon (M2) with macOS Tahoe (26)** — to be done in a **separate session on a real
+Mac** (the main dev box is Linux; macOS cannot be tested from it). A March-2026 README note
+claimed *"many failures on the Apple M2 with Tahoe 26.3 — not recommended"*, but Dylan says
+that is **very old** and likely stale, so it must be re-checked rather than trusted. Build via
+Homebrew (`brew install gcc cmake openjdk python3 gnuplot`; BLAS/LAPACK come from
+`Accelerate.framework`), then run `make report`. **Feed the result back into the docs:** update
+the README macOS line (currently softened to "via Homebrew; Linux/WSL is the reference platform")
+and the `Building on MacOS` wiki page to say what actually works — pass → "supported", or list the
+specific failures if any remain.
+
 ## DONE: continuous integration (GitHub Actions, loose gate)
 
 **Goal (user):** bring back automated CI so every push builds the ANTLR4 translator,
