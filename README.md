@@ -301,6 +301,18 @@ The graphs are useful documentation in their own right. (First run reconfigures 
 build dir once — if `make callgraphs` reports "no rule to make target", run `cmake ..`
 in the build dir first, then retry.)
 
+The raw `module_use.dot` is a hairball (139 nodes / 921 edges). To make it readable,
+`scripts/simplify_callgraph.py` post-processes it — aggregating array/shell/gaussian
+families into single coloured nodes and hiding the handful of universal utility modules:
+```
+   python3 scripts/simplify_callgraph.py build/callgraphs/module_use.dot --simplify -o simple.dot
+   python3 scripts/simplify_callgraph.py build/callgraphs/module_use.dot --module ATOM   # one module's deps
+```
+`--simplify` drops it to ~50 nodes / 114 edges; `--module NAME` emits a documentation
+graph of a single module's direct dependencies (`--reverse` for dependents, `--both` for
+both). See [docs/CALL_GRAPHS.md](docs/CALL_GRAPHS.md) for the full rationale (aggregate vs
+ambient, the `concentrate` caveat, layout notes).
+
 ### Dead-code-eliminated executables (`-DPURGE_DEAD_CODE`)
 
 A given executable only reaches a fraction of the code base; the rest is dead *for that
