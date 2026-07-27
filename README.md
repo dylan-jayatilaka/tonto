@@ -12,8 +12,10 @@ object-oriented preprocessor language translated to modern Fortran.
 **This README covers producing a `tonto` binary.**
 
 Everything else lives elsewhere:
-— [running Tonto and science how-tos on the**wiki**](https://github.com/dylan-jayatilaka/tonto/wiki), and 
--- developer references in [**`docs/`**](docs/).
+
+  - [running Tonto and science how-tos on the **wiki**](https://github.com/dylan-jayatilaka/tonto/wiki)
+  
+  - developer references in [**`docs/`**](docs/).
 
 ---
 
