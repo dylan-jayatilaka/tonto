@@ -62,18 +62,29 @@ calls (fixed: `recordSelfCall`); (2) case-sensitive node keys (`reset_IO_status`
 `reset_io_status`; fixed: `node()` lower-cases the method part — motivates the case-cleanup goal
 above). CPP-macro-hidden calls all target `SYSTEM` (always kept), so no macro-root class exists.
 
-## Future task: simplify the DOT call-graph output
+## DONE: simplify the DOT call-graph output
 
 **Goal (Dylan):** reduce the complexity of the graphs from `--call-graph-report` (phase B).
 `call_graph.dot` is a **procedure-level** graph — ~7600 nodes / ~24k edges — too dense to read
-as a single image (only `sfdp`/`fdp` lay it out at all). `module_use.dot` (921 edges) and
-`submodule_use.dot` are legible.
+as a single image. `module_use.dot` (921 edges) was legible-ish but still a hairball.
 
-**Ideas to pursue (in `writeDotFiles`, FooToFortran.java):** a **module-level call graph**
-(aggregate proc→proc edges to module→module — far more legible, like `module_use.dot` but for
-*calls* not *use*); optionally restrict the proc graph to the reachable set when a root is given
-(shading already exists); per-module or per-subsystem subgraph extraction; edge-bundling hints;
-drop the ubiquitous sinks (SYSTEM/TYPES) to de-clutter. Decide which graphs are worth keeping.
+**Delivered** as `scripts/simplify_callgraph.py` (a post-processor over `module_use.dot`, not a
+translator change — the DOT already carries every `use` edge):
+- **Aggregate** — fold module families into one coloured node: `NUMBERS` (INT/REAL/CPX),
+  `ARRAYS` (VEC/MAT of primitives), `SHELLS`, `GAUSSIANS`, `MAPS`, `ISOSURFACES`; and re-point
+  `VEC{T}`/`MAT{T}` over a derived type to that element's module (`VEC_ATOM`→`ATOM`), surfacing
+  real deps like `MOLECULE→ATOM`. Dropped dead `BREAKDOWN_DATA`, `MULTI_T_ADP`.
+- **Ambient** (`--simplify`) — hide the 7 universal utilities that take 62% of all edges
+  (`NUMBERS ARRAYS STR BIN TEXTFILE BUFFER TABLE_COLUMN`). 139/921 → **50 nodes / 114 edges**.
+- **`--module NAME`** — documentation ego-graph of one module's direct dependencies
+  (`--reverse` dependents, `--both`); no `concentrate`, so every direct edge shows.
+
+**Key findings, recorded in `docs/CALL_GRAPHS.md`:** the "aggregate vs ambient" distinction
+(merge-and-keep vs hide); `concentrate=true` is *lossy* (drops a direct edge parallel to a
+longer path — e.g. `ATOM→INTERPOLATOR`), so the doc mode avoids it; and Graphviz has **no** edge
+hops/bridges and is already hierarchical, so fewer edges beats a different engine. README §7b
+points to the tool + doc. (The procedure-level `call_graph.dot` remains dense — a module-level
+*call* graph in `writeDotFiles` is still a possible future refinement, but not needed now.)
 
 ## Future task: introduce Fortran-2008 `submodule` constructs
 
@@ -96,26 +107,27 @@ Status is **unverified** for the ANTLR4 translator output. Start by building MPI
 `ctest` under it; expect the parallel macros (`PARALLEL_DO_*`, `PARALLEL_SUM`, `broadcast_` — all
 `SYSTEM`/`tonto`-targeted, see `macros.in`) to be the surface area. Compare against a non-MPI run.
 
-## Infrastructure: reinstate continuous integration (CI)
+## DONE: continuous integration (GitHub Actions, loose gate)
 
 **Goal (user):** bring back automated CI so every push builds the ANTLR4 translator,
-compiles `tonto`, and runs the test suite. The old `README.md` carried a Travis-CI badge
-(`travis-ci.org`, now defunct — badge removed); the mechanism needs to be re-chosen based on
-further discussion and investigation.
+compiles `tonto`, and runs the test suite. (The old Travis badge was defunct.)
 
-**To investigate / decide:**
-- **Provider:** GitHub Actions (most natural for a GitHub-hosted repo; free for public repos)
-  vs Travis (`travis-ci.com`) vs other. GitHub Actions is the likely default.
-- **What the pipeline runs:** `cmake` + `make` (with a bounded `-j`/`-l`, see the build note
-  in the README — one JVM per `.foo` is memory-heavy on shared runners), then the suite via
-  `scripts/compare_test_outputs.py` (or `ctest`). Decide the tolerance policy for CI — the
-  loose criterion (rel ≤ 0.2% OR last-digit ≤ 2) is the natural pass/fail gate so that known
-  last-digit numerical noise doesn't red the build.
-- **Submodules:** the runner must `clone --recursive` (antlr4, sbf, lapack-release) and have a
-  JDK + gfortran + BLAS/LAPACK available.
-- **Matrix (optional):** debug vs release build; possibly gfortran versions.
-- **Caching:** the ANTLR4 jar download and built parser/classes are good cache candidates to
-  keep CI fast.
+**Delivered** as `.github/workflows/ci.yml` — green as of `99dc3a1c` (2026-07-27):
+- **Provider:** GitHub Actions (Travis's OSS offering is dead). Triggers on push/PR to
+  `antlr4`, `master`, `release`.
+- **Pipeline:** checkout `--recursive` → install gfortran-14 + JDK (for the translator's
+  `javac`; the ANTLR jar auto-downloads via CMake) + BLAS/LAPACK/python3 → `cmake` +
+  `cmake --build -j2` (bounded: one JVM per `.foo` is memory-heavy on a shared runner) →
+  short suite via `scripts/compare_test_outputs.py`.
+- **Gate:** the **loose** criterion (rel ≤ 0.2% OR last-digit ≤ 2). The agreement table is
+  echoed to the run's Job Summary and uploaded as `tests.log`; a self-diagnosing `Diagnostics`
+  step (`if: always`) reports toolchain/binary/one-raw-test on red runs. README carries the badge.
+- **Two bugs the first green run flushed out** (both fixed): `scripts/test.py` resolved a
+  *relative* `--test-directory`/`--basis-sets` after `chdir`ing into the temp run dir → doubled
+  path → 100%-fail (fixed by absolutising up front, `036ecaec`); and the Kanghyun `keyword_echo`
+  lines added un-reblessed stdout → 44/51 (dropped both echoes, `99dc3a1c`).
+- **Not done (deliberate):** debug/release matrix and gfortran-version matrix — single release
+  job for now; jar/parser caching not yet added (build is tolerable at ~20 min).
 
 ## Editor: improve vim highlighting of Foo and vim integration
 

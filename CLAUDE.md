@@ -50,13 +50,15 @@ transformation, type parameterization, and C-style macro expansion (`include/mac
 `foo.pl` runs in two passes — pass 1 analyses signatures/interfaces/symbols, pass 2 generates
 code.
 
-**Status** (2026-07-15): the ANTLR4 translator **works and drives the build**. Milestones 1 & 2
-are done — it parses every `foofiles/` file (submodules included) and emits equivalent,
-compilable Fortran. A release `tonto` built from its output passes **121/124** `ctest` under the
-loose criterion (the 3 known-bad are longstanding, not translator bugs — see
-`ANTLR4_DEFERRED.md`). Milestone 3 (fully-green tests, automated in CI) is what remains — a
-hodgepodge of minor issues, not core translator work. Phase B (per-executable dead-code
-elimination + call/use-graph export) is also done (§8, commit `860922ea`).
+**Status** (2026-07-27): **all three milestones done.** The ANTLR4 translator **works and drives
+the build** — it parses every `foofiles/` file (submodules included) and emits equivalent,
+compilable Fortran. A release `tonto` built from its output passes **124/124** `ctest` locally
+under the loose criterion, and **GitHub Actions CI is green** (short suite 51/51; badge in
+README; green as of `99dc3a1c`). Only the debug (`-O0`) build has 4 longstanding
+FP-boundary/structural failures (not translator bugs — see `ANTLR4_DEFERRED.md`). Phase B
+(per-executable dead-code elimination + call/use-graph export) is done (§8, commit `860922ea`);
+the DOT graphs now have a `--simplify`/`--module` readability tool (`scripts/simplify_callgraph.py`,
+`docs/CALL_GRAPHS.md`).
 
 ## 3. The Foo language (summary)
 
@@ -178,7 +180,7 @@ point). CMake exposes these as the `callgraphs` target and the `-DPURGE_DEAD_COD
 option (a **separate** build tree — purge is per-executable). Wholesale-`use` modules
 (`TYPES`/`SYSTEM`) are never pruned. Validated: a `-DPURGE_DEAD_CODE=run_molecule` release
 build compiles clean (~32% of procedures dropped, binary 33→25 MB) and passes the same
-121/124 ctest as the full build.
+loose ctest suite as the full build.
 
 ## 9. Milestones & open items
 
@@ -188,25 +190,25 @@ build compiles clean (~32% of procedures dropped, binary 33→25 MB) and passes 
    including the submodule files (`molecule.*`, `diffraction_data.*`).
 2. ✅ **DONE.** `foogrammar/FooToFortran.java` emits `.F90` / `.int` / `.use` that are
    **equivalent** (compilable, same behaviour) to the reference in `release/`.
-3. **IN PROGRESS — A fully-green test suite on a translator-built binary, automated in CI.** A `tonto`
-   compiled from the ANTLR4-generated Fortran runs `tests/` (`ctest`) and reproduces each
-   reference `stdout` under `scripts/test.py`'s **loose** comparison (rel ≤ 0.2% OR
-   last-digit ≤ 2, plus junk-line filtering). "Passing binaries" means **passing in CI under
-   that loose script** — not exact match. Current state: **121/124** on release. What remains
-   is a hodgepodge of minor issues, all enumerated in `ANTLR4_DEFERRED.md`: the 3 longstanding
-   known-bad tests, the debug-build (`-O0`) FP-boundary artifacts (suppress-or-tolerate), and
-   the harness junk-filter gaps. Then wire it to CI (GitHub Actions — Travis's OSS offering is
-   defunct; see the CI section in `ANTLR4_DEFERRED.md`) so every push runs the loose gate.
+3. ✅ **DONE — A translator-built binary passing the loose suite, automated in CI.** A `tonto`
+   compiled from the ANTLR4-generated Fortran runs the short suite under `scripts/test.py`'s
+   **loose** comparison (rel ≤ 0.2% OR last-digit ≤ 2, plus junk-line filtering) and passes
+   **51/51** in **GitHub Actions** (green as of `99dc3a1c`, 2026-07-27; `.github/workflows/ci.yml`,
+   README badge). The full release suite is **124/124** loose locally. Residual: the debug (`-O0`)
+   build has 4 longstanding FP-boundary/structural failures (#47/#64/#87/#91) that are not
+   translator bugs and are documented in `ANTLR4_DEFERRED.md`; CI runs the short release suite.
 
-**Open items** (all milestone-3 polish + future directions; details in `ANTLR4_DEFERRED.md`)
+**Open items** (future directions; details in `ANTLR4_DEFERRED.md`)
 
-- **Milestone 3 to fully green + CI** — clear the deferred hodgepodge (3 known-bad tests,
-  debug `-O0` FP-boundary artifacts, harness junk-filter gaps), then a GitHub Actions loose gate.
 - **Grammar still ACCEPTS the old submodule call forms** (`.SET:proc`, `.MAIN:proc`, `STR::proc`)
   even though they are now auto-resolved away in the sources; not tightened (harmless).
-- Future tasks (own conversations): simplify the DOT call-graph output; introduce Fortran-2008
-  `submodule` constructs; test the MPI parallel build; boilerplate doc comments; and (long-term)
-  a possible move off Fortran. See `ANTLR4_DEFERRED.md` for the first three.
+- **README/wiki reorganisation** (in progress, 2026-07-27) — split responsibilities: README =
+  build + verify/test only; `docs/` = code-tracking dev references; wiki = user guides. Default
+  build should be `release` (not `fast`); retire event-specific blocks to the wiki.
+- Future tasks (own conversations): a module-level *call* graph in `writeDotFiles` (the
+  `--simplify`/`--module` **use**-graph tooling is DONE — `scripts/simplify_callgraph.py`,
+  `docs/CALL_GRAPHS.md`); introduce Fortran-2008 `submodule` constructs; test the MPI parallel
+  build; boilerplate doc comments; and (long-term) a possible move off Fortran.
 
 > Submodules ARE implemented (dotted headers + colon call forms parse & auto-resolve; commit
 > `4cd995df`), and translator build/run commands are recorded in §8 — both former open items done.
