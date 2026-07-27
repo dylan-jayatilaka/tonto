@@ -370,7 +370,14 @@ def main():
                              'last printed decimal place (default 2). A number '
                              'passes loose if it is within rel-tol OR last-digit-tol.')
     args = parser.parse_args()
+    # Resolve all paths to absolute up front: run_test() chdir's into a temp
+    # directory before copying inputs / reading the basis sets, so a *relative*
+    # --test-directory or --basis-sets would be resolved against the temp dir
+    # and vanish (doubling the path). Must be absolutised while cwd is still the
+    # invocation dir.
     args.sbftool = os.path.abspath(args.sbftool)
+    args.test_directory = os.path.abspath(args.test_directory)
+    args.basis_sets = os.path.abspath(args.basis_sets)
     logging.basicConfig(level=args.log_level)
     io_files = parse_IO_file(join(args.test_directory,'IO'))
     if run_test(args, args.test_directory, io_files):
