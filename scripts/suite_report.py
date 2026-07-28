@@ -19,9 +19,9 @@ several compared output files is scored on its worst file.
 
 Usage
 -----
-    python3 scripts/compare_test_outputs.py --program build/tonto
-    python3 scripts/compare_test_outputs.py -p build-rel/tonto --suites short rgbi
-    python3 scripts/compare_test_outputs.py --rel-tol 1e-3 --last-digit-tol 1
+    python3 scripts/suite_report.py --program build/tonto
+    python3 scripts/suite_report.py -p build-rel/tonto --suites short rgbi
+    python3 scripts/suite_report.py --rel-tol 1e-3 --last-digit-tol 1
 
 Tolerances (mirror scripts/test.py):
     --rel-tol         loose RELATIVE tolerance   (fraction; default 2e-3 = 0.2%)

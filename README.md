@@ -130,7 +130,7 @@ h2o_rhf_6-31G(d)_normal_mode_analysis   FAIL   PASS   FAIL        0.0017        
 short subtotal:  loose 51/51   (exact 48, lastdig 49)
 ```
 
-Tolerances are options on `scripts/compare_test_outputs.py` / `scripts/test.py`
+Tolerances are options on `scripts/suite_report.py` / `scripts/test.py`
 (`--rel-tol`, `--last-digit-tol`, `--abs-tol`); `--suites short rgbi` selects a
 subset. To inspect one failure, compare the reference and `.bad` output in
 `tests/<suite>/<job>/`:  `vimdiff stdout stdout.bad`.

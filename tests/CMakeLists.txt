@@ -89,7 +89,7 @@ set_tests_properties("spherical_vs_cartesian" PROPERTIES LABELS "short")
 #
 # `ctest` gives a flat pass/fail list and hides each test's stdout (the concise
 # AGREEMENT line printed by test.py). This target instead runs
-# scripts/compare_test_outputs.py over every suite and writes a compact
+# scripts/suite_report.py over every suite and writes a compact
 # per-suite table (exact / loose / last-digit + worst rel% and ulp) to
 # tests.log in the build tree -- one line per test, not the whole run.
 #
@@ -99,7 +99,7 @@ set_tests_properties("spherical_vs_cartesian" PROPERTIES LABELS "short")
 # fully before the driver exits; the driver's exit code is non-zero if any test
 # failed the loose criterion (so `make report` mirrors ctest's pass/fail status).
 add_custom_target(report
-    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/compare_test_outputs.py
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/suite_report.py
             --program    ${TONTO_EXE}
             --tests-dir  ${CMAKE_CURRENT_SOURCE_DIR}
             --basis-sets ${BASIS_SETS}

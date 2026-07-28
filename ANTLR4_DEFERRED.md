@@ -463,7 +463,7 @@ compiles `tonto`, and runs the test suite. (The old Travis badge was defunct.)
 - **Pipeline:** checkout `--recursive` → install gfortran-14 + JDK (for the translator's
   `javac`; the ANTLR jar auto-downloads via CMake) + BLAS/LAPACK/python3 → `cmake` +
   `cmake --build -j2` (bounded: one JVM per `.foo` is memory-heavy on a shared runner) →
-  short suite via `scripts/compare_test_outputs.py`.
+  short suite via `scripts/suite_report.py`.
 - **Gate:** the **loose** criterion (rel ≤ 0.2% OR last-digit ≤ 2). The agreement table is
   echoed to the run's Job Summary and uploaded as `tests.log`; a self-diagnosing `Diagnostics`
   step (`if: always`) reports toolchain/binary/one-raw-test on red runs. README carries the badge.
@@ -543,7 +543,7 @@ Examples so far:
 | `h2o_rhf_cc-pVDZ_tdhf` | TDHF response, rel ~0.12% — just under the 0.2% gate (ulp already ~10) | time-dependent HF response; eigensolver / BLAS ordering across runners |
 | `nh3_rhf_DZP_HAR` | a near-zero value: ~10% *relative* but ~1 ulp — passes only via the last-digit bound | relative metric amplified near zero (cf. the `ylid` case) |
 
-**Stopgap in place (CI stability):** `scripts/compare_test_outputs.py` carries a documented
+**Stopgap in place (CI stability):** `scripts/suite_report.py` carries a documented
 `KNOWN_MARGINAL` table that widens the loose bound for just these tests (`tdhf`: rel ≤ 0.5%;
 `nh3_rhf_DZP_HAR`: last-digit ≤ 4) so the badge stops flickering, while the strict 0.2% / 2 gate
 stays for every other test — and the report prints a footnote naming which tests were relaxed.
