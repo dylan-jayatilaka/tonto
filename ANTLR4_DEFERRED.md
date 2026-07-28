@@ -98,6 +98,41 @@ recompilation of the parent's users). Investigate whether mapping Foo submodules
 submodules simplifies the emitted module graph and compile-time dependencies. Touches
 `emit()`/`buildUseFile()`/`buildInterfaceFile()` and the module-naming scheme.
 
+## Future task: split `types.foo` into several modules (parallel compilation)
+
+**Goal (Dylan):** `types.F90` is the slowest single compile in the build and it is a
+**serial bottleneck** — everything `use`s it, so nothing else can start until it finishes.
+Split `types.foo` into several independent modules so they compile in parallel under `-j`.
+
+**Why it is slow — measured (2026-07-28, M2 Pro / Tahoe, gfortran-14):**
+
+| Stage | Time |
+|---|---|
+| parse + `.mod` generation (`-fsyntax-only`) | 0.01 s |
+| `-O0` (codegen only) | 29 s |
+| `-O1` | 45 s |
+| full release flags (`-Ofast … -O2`) | > 4 min |
+
+The front end is *instantaneous*, so the ~90 derived-type definitions themselves cost nothing.
+The cost is **codegen**: those types have ~585 allocatable/pointer components, and gfortran
+auto-generates a deep-copy helper per type (`__copy_types_module_<TYPE>`) — 167 text symbols and
+**8.9 MB of `__TEXT`** from 5.7 k lines containing *zero* user-written procedures. Optimising
+that generated boilerplate is what costs the four minutes.
+
+**Interim fix already applied:** `types.F90` is compiled at `-O1`
+(`set_source_files_properties` in `CMakeLists.txt`), > 4 min → 45 s, no runtime cost worth
+measuring (the helpers are memcpy-shaped). The serial-bottleneck problem remains.
+
+**Note — F2008 `submodule` does NOT help here** (cf. the submodule task above): type
+definitions are part of a module's *interface* and cannot live in a submodule, and the
+`__copy_*` helpers are generated where the types are defined. Splitting into several **real
+modules** is what parallelises; submodules only avoid recompilation cascades.
+
+**Care needed:** the split must respect the derived-type dependency order (types with
+components of other derived types), and every `use TYPES_MODULE` site plus the translator's
+`.use`-file generation must follow. Check whether the translator can emit the split
+automatically from one `types.foo` rather than requiring the source be broken up by hand.
+
 ## Future task: test the MPI parallel build
 
 **Goal (Dylan):** verify the MPI build works and its tests pass. Build flags exist
@@ -119,6 +154,52 @@ Homebrew (`brew install gcc cmake openjdk python3 gnuplot`; BLAS/LAPACK come fro
 the README macOS line (currently softened to "via Homebrew; Linux/WSL is the reference platform")
 and the `Building on MacOS` wiki page to say what actually works — pass → "supported", or list the
 specific failures if any remain.
+
+**IN PROGRESS (2026-07-28, session on the real Mac: M2 Pro, macOS 26.5.2 Tahoe, Darwin 25,
+gfortran-14 / Homebrew GCC 14.3.0, CMake 4.3.3, Java 26).** Docs deliberately NOT updated yet —
+Dylan's instruction: **do not touch the README** until the cause is understood.
+
+- **The build is clean.** Full translate + compile + link, zero errors; only benign warnings
+  (clang deployment-version override ×149, a `-F` flag not valid for Fortran, 2 macro
+  redefinitions). So the 2026-03 "not recommended" note is stale *as regards building*.
+- **`make report`: 82/124 loose** (exact 73, lastdig 79) — short 33/51, rgbi 1/13, long 18/28,
+  cx 30/32. Baseline artefacts kept in `/tmp/tonto-mac-baseline/` (tests.log, build log,
+  all 44 `stdout.bad`).
+- **What passes:** geometry/CIF processing and Hirshfeld surfaces (cx 30/32), and plain SCF
+  energies (`h2o_rhf_cc-pVDZ`, `blyp`, `rks_B3LYPG`, `xalpha`, `aug-cc-pVDZ`) — all *exact*.
+- **What fails:** downstream *property* evaluation — 1e properties, structure factors / HAR,
+  cluster charges, Roby bond indices, polarisabilities/TDHF, Salvador properties.
+- **Ruled out (with evidence, not argument):**
+  - *Not* the ANO occupancy threshold (`atom.foo`, `count(.NAO_occupations>=1/14)`): scanning
+    `occupied_ano_cutoff=` over 0.02–0.30 changes BN not at all (the marginal occupation is
+    ~0.3, nowhere near 1/14).
+  - *Not* uninitialised heap: identical results under `MallocScribble=1 MallocPreScribble=1`.
+  - *Not mainly the LAPACK version.* Accelerate's Fortran LAPACK is frozen at **3.2.1 (2009)**
+    (confirmed via `ilaver`); switching to Homebrew OpenBLAS (**3.12.0**) flipped exactly
+    **one** short test (33/51 → 34/51) and **zero** rgbi (1/13 either way). Worth doing as
+    hygiene — now the macOS default, see `CMakeLists.txt` — but it is not the cause.
+- **Leading hypothesis — degenerate eigenspaces.** In rgbi/BN the Roby angle table has an
+  exactly degenerate pair (states 7 and 8, both `theta = 68.7340°` — the π_x/π_y pair).
+  Eigenvectors within a degenerate eigenspace are **not unique**: any orthogonal mixing is a
+  valid eigenbasis, and different LAPACKs return different mixtures. Anything downstream that
+  uses individual eigenvectors, rather than the projector onto the whole subspace, is then
+  **basis-dependent, i.e. ill-defined** — which explains differences far too large for
+  round-off. Strongly supported by the rgbi pattern: every failing molecule is linear/highly
+  symmetric (BN, C2, CN-, CO, F2, N2, NF, O2, Ni-carbonyl — all with degenerate π), while the
+  **only exact pass is `CHFCl`, the one molecule with no symmetry and no degeneracy**. Three
+  environments give three different answers for BN's B population: Linux 6.48, Accelerate 6.16,
+  OpenBLAS 6.34.
+  **Next step:** relink an Accelerate binary from the same objects (`.o` files are intact) and
+  A/B the `output_theta_info= YES` tables. If the *thetas* (eigenvalues, invariant) agree while
+  the populations differ, non-invariance under degenerate mixing is confirmed — and the fix is
+  in the Roby code, not the build.
+- **Still uncontrolled:** `-Ofast` implies `-ffast-math`; and the `release/` tree used here
+  carried a **stale cached `-O2`** (a fresh configure gives `-O3`), so opt level differed from
+  the Linux reference too. A strict-FP rebuild (`-O2 -fno-fast-math -ffp-contract=off`) is the
+  clean way to settle the FP-flags question.
+- **Also note:** a `1e_properties` diff shows *total* molecular moments agreeing to 7 digits
+  while *atomic partitioned* charges/dipoles differ by 15–17% — totals right, partitioning
+  wrong. Consistent with the same "non-invariant use of an arbitrary basis" theme.
 
 ## DONE: continuous integration (GitHub Actions, loose gate)
 
