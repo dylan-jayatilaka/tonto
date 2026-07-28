@@ -327,11 +327,54 @@ limit is ≈ −54.40). So it may well underlie a large share of the 42 macOS fa
 the atomic-partitioning discrepancies — and it is upstream of the ANO/Roby problem rather than
 caused by it.
 
-**Next step:** rebuild with strict FP (`-O2 -fno-fast-math -ffp-contract=off`) and rerun just
-this one test. If the energy returns to ≈ −74.79, the FP flags are the culprit and the fix is a
-build-flags change, not a source change. Bisecting `-ffast-math` sub-options
-(`-fno-finite-math-only`, `-fno-unsafe-math-optimizations`, denormal handling) then narrows it
-further. This should be done **before** any further work on the ANO/Roby path.
+#### Localised: two-electron integrals between *different shells*
+
+Bisection done 2026-07-28 against the Linux reference box (`achari2`, the very machine that
+produced the reference outputs — its kernel `6.8.0-88-generic` matches their `Platform:` line).
+
+**Ruled out, each with a direct test:**
+
+| Suspect | Result |
+|---|---|
+| FP flags | **No** — rebuilt `-O2 -fno-fast-math -ffp-contract=off`: identical (−77.6178, virial 1.9574) |
+| LAPACK | **No** — Accelerate 3.2.1 and OpenBLAS 3.12.0 agree exactly |
+| Platform `#ifdef`s | **No** — `GNU_gfortran_on_Darwin` is defined but never used anywhere |
+| Basis setup / normalisation | **No** — overlap matrix **bit-identical** to Linux, diagonal exactly 1.0 |
+| One-electron integrals | **No** — T and V_eN **bit-identical** to Linux (see below) |
+| ERI screening | **No** — setting all six `eri_*_cutoff` to 1e-20 changes nothing |
+| Initial guess / tolerances | **No** — see the table above |
+
+**Where it actually is.** `V_ee` is not computed directly; `molecule.scf.foo:1868` obtains it *by
+subtraction* (`energy − V_NN − V_eN − V_charge − T`), so a `V_ee` discrepancy *is* a total-energy
+discrepancy. With V_NN = 0 for an atom and T, V_eN identical, the error is entirely in the
+two-electron part of `.SCF_energy`.
+
+**Minimal reproducer — Be atom, STO-3G, milliseconds:**
+
+| Atom (STO-3G) | shells | Mac V_ee | Linux V_ee | T (both) |
+|---|---|---|---|---|
+| He | one s | 1.055713 | 1.055713 | 2.823526 |
+| **Be** | **two s (1s,2s)** | **4.538672** | **4.875821** | 14.844185 |
+| Ne | s + p | 54.602059 | 55.508976 | 125.562006 |
+| O | s + p | 28.349706 | 29.075205 | 73.444959 |
+
+A **single** shell is exact; **two distinct shells** diverge. So it is not an angular-momentum
+(p/d) problem — it is two-electron integrals spanning different shells. The Mac value is always
+*too small*, as if contributions are lost.
+
+*Why the densities still agree:* in a minimal basis these atoms have every orbital occupied
+(Be: 2 functions / 4 electrons), so the density is fixed by the basis regardless of the Fock
+matrix. That is why T and V_eN match while the energy does not — it does **not** imply the
+Fock matrix is correct.
+
+**Next step:** dump the individual two-electron integrals for Be/STO-3G on both platforms and
+diff them — there are only ~6 unique values. `put_fock_matrix` / `put_density_matrix` print
+empty under direct SCF, so this needs a temporary print inserted in the ERI path
+(`shell1quartet.foo`, `shell2.foo`, `gaussian4.foo`). Since the one-electron code shares the
+same Gaussian machinery and is provably correct, the fault is specific to the ERI routines.
+
+**Repro harness:** `scripts/oxygen_scf_probe.sh <tonto> <repo>` prints the energy decomposition
+at truncated iteration counts on either platform.
 
 ## DONE: continuous integration (GitHub Actions, loose gate)
 
