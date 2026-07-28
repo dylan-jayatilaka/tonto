@@ -93,7 +93,8 @@ elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU")
     # just shell1quartet.F90: one file is proven miscompiled, but nothing shows
     # it is the only one, and a silent wrong-answer bug is worth the small cost.
     # Must be appended AFTER the -O flags (see below) or -O2 re-enables it.
-    if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+    if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64"
+       AND NOT TONTO_SKIP_ARM64_WORKAROUNDS)
         set(WORKAROUND_FLAGS "-fno-schedule-insns")
         message(STATUS "arm64 macOS: adding -fno-schedule-insns "
                        "(works around a gfortran miscompilation of shell1quartet.F90)")

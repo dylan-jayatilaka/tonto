@@ -135,6 +135,8 @@ def main():
                          'the current directory)')
     ap.add_argument('--no-log', action='store_true',
                     help='print to stdout only; do not write a log file')
+    ap.add_argument('--no-invariant-checks', action='store_true',
+                    help='skip the self-validating invariant checks run after the suites')
     args = ap.parse_args()
 
     args.program = os.path.abspath(args.program)
@@ -219,12 +221,46 @@ def main():
         for t in widened:
             print('  * %-48s %s' % (t, ', '.join('%s=%g' % kv
                                     for kv in KNOWN_MARGINAL[t].items())))
+    # ------------------------------------------------------------------
+    # Invariant checks.
+    #
+    # These compare the program against ITSELF rather than against a stored
+    # reference, so they need no reference output and cannot be silently
+    # blessed by regenerating references on a broken build. They also need
+    # only one machine, which is what makes them useful for platform-specific
+    # miscompilations -- see ANTLR4_DEFERRED.md, "verify the macOS build".
+    # ------------------------------------------------------------------
+    invariants_ok = True
+    if not args.no_invariant_checks:
+        checks = [('spherical vs cartesian (s/p-only bases)',
+                   os.path.join(here, 'check_spherical_cartesian.sh'),
+                   [args.program, args.basis_sets])]
+        print('')
+        print('INVARIANT CHECKS (no reference output involved)')
+        print('_' * 95 + '\n')
+        for name, script, cmd_args in checks:
+            if not os.path.exists(script):
+                print('%-*s  %s' % (NAMEW, name[:NAMEW], 'SKIP (script not found)'))
+                continue
+            proc = subprocess.run(['sh', script] + cmd_args,
+                                  stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT,
+                                  universal_newlines=True)
+            ok = (proc.returncode == 0)
+            print('%-*s  %s' % (NAMEW, name[:NAMEW], yn(ok)))
+            if not ok:
+                invariants_ok = False
+                for line in proc.stdout.strip().splitlines():
+                    print('    %s' % line)
+        print('_' * 95)
+
     if logf:
         print('\n(report written to %s)' % os.path.abspath(args.log))
         sys.stdout = sys.__stdout__
         logf.close()
-    # Exit non-zero if any test failed the loose (pass-deciding) criterion.
-    sys.exit(0 if grand['loose'] == grand['n'] else 1)
+    # Exit non-zero if any test failed the loose (pass-deciding) criterion, or
+    # if an invariant check failed.
+    sys.exit(0 if (grand['loose'] == grand['n'] and invariants_ok) else 1)
 
 
 if __name__ == '__main__':

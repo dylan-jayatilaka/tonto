@@ -781,10 +781,21 @@ set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/types.F90
 # NOT yet established whether this is a GCC backend bug or latent undefined
 # behaviour in the emitted code that optimisation exposes -- see
 # ANTLR4_DEFERRED.md. If it is UB, this only masks it.
+# Set -DTONTO_SKIP_ARM64_WORKAROUNDS=ON to build WITHOUT this (and the matching
+# flag in cmake/SetFortranFlags.cmake), so a newer gfortran can be tested for the
+# miscompilation: configure with it ON, build, then run
+# scripts/check_spherical_cartesian.sh. If that passes, the compiler is clean and
+# the workarounds can be retired (or gated on the compiler version).
+option(TONTO_SKIP_ARM64_WORKAROUNDS
+       "Skip the arm64-macOS gfortran miscompilation workarounds (to test a newer compiler)" OFF)
+
 if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64"
-   AND "${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU")
+   AND "${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU"
+   AND NOT TONTO_SKIP_ARM64_WORKAROUNDS)
     set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/shell1quartet.F90
         PROPERTIES COMPILE_OPTIONS "-O2;-fno-schedule-insns")
+    message(STATUS "arm64 macOS: pinning shell1quartet.F90 to -O2 "
+                   "(gfortran miscompilation workaround)")
 endif()
 
 # Generate ALL Foo->Fortran output (every .F90 and its co-generated .int/.use)
