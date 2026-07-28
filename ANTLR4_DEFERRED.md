@@ -133,6 +133,107 @@ components of other derived types), and every `use TYPES_MODULE` site plus the t
 `.use`-file generation must follow. Check whether the translator can emit the split
 automatically from one `types.foo` rather than requiring the source be broken up by hand.
 
+## Deferred: atomic (guess) SCF fails for partly-filled degenerate shells
+
+**Found 2026-07-28** while diagnosing the macOS rgbi deviations. `make_ANOs` now **DIEs** when
+an atomic SCF does not converge (it previously carried on silently), and the guess-SCF option
+whitelist in `molecule.set.foo` was widened so iteration/damping/level-shift settings can
+actually be set from input. Two follow-ups remain.
+
+**Origin of the instability — NOT yet identified.** Several plausible explanations have been
+tested and *refuted*; record them so they are not re-proposed.
+
+| Hypothesis | Verdict |
+|---|---|
+| Boron's atomic SCF diverges; ANOs built from it anyway | **Observed** (100 iters, −6…−69 Ha, "DIIS stuck", final −65 Ha for an atom whose energy is ≈ −24.5) |
+| That causes BN's platform-dependent Roby numbers | **Demonstrated by intervention** — forcing convergence moved B 5.35/3.40 → 6.50/6.63, collapsed the cross-library spread 1.95 → 0.13, landing on the Linux reference 6.48 |
+| It explains the other rgbi failures | **Refuted** — only BN fails to converge; C2/CN-/CO/F2/N2/NF/O2 converge with bit-identical atomic energies across LAPACKs and still deviate |
+| "Partly-filled degenerate shell" predicts which atoms fail | **Refuted** — carbon 2p² is partly-filled and degenerate, and converges |
+| Low nuclear charge (B, Z=5) | **Not supported** — standalone UHF SCFs *converge* for B(5), C(6), N(7), Al(13), Si(14). But see the oxygen-atom finding below: standalone atomic energies on this Mac are themselves wrong, so these runs test convergence only, not correctness |
+| Bad initial guess | **Refuted** — `initial_density=` core / fock / promolecule / progroup all give identical results and all fail (verified the option reaches the SCF: "Kind of initial density ... promolecule") |
+| Loose guess tolerances (1e-3 vs 1e-5) | **Refuted** — standalone boron converges at every combination of `convergence`/DIIS tolerance |
+| Wrong atom setup in the guess | **Refuted** — guess reports B, charge 0, multiplicity 2, 5 e⁻ (3α/2β), all correct |
+
+**Key remaining clue:** boron converges perfectly well in a *standalone* UHF job, and fails only
+inside the **guess** SCF path (`make_ANOs_for_atom` → `atomic_SCF`). The untested difference is
+the **basis set** — the standalone tests used cc-pVDZ, while the guess inherits the basis from
+the molden file. Note the guess run reports a smallest overlap eigenvalue of 0.012 and runs a
+linear-dependence projection. **Next step: run a standalone boron atom in the molden's basis.**
+
+Also unexplained, and probably the deeper issue: the two "converged" boron solutions differ by
+**0.57 Ha** (−24.3378 vs −23.7663). Symmetry-equivalent solutions (occupying pₓ vs p_y vs p_z)
+are *isoenergetic*, and after the spherical averaging already performed in `make_ANOs_for_atom`
+they would give **identical** ANOs. A 0.57 Ha gap therefore means these are **genuinely
+different electronic states, not rotations of one another** — one of them is not the ground
+state. This is the argument against orientation drift (and against a maximum-overlap /
+MOM-style orbital-tracking fix) being the mechanism: such a fix arbitrates *which* degenerate
+orbital is occupied, but equivalent choices were never the problem.
+
+Compounding whatever the root cause is, the defaults withdraw all stabilisation exactly when
+DIIS starts:
+
+```
+level shift 0.30, quits at 3   |   damping 0.50, quits at 3   |   DIIS extrapolates from 3
+```
+
+Fine when the first three iterations settle; fatal when they do not — restoring damping and
+level shift well past iteration 3 does make boron converge.
+
+**Related defect:** a `DIE` leaves the process **exit status 0**. `scripts/test.py` uses
+`subprocess.check_call`, so a DIE is not detected as a run failure — only the output diff
+catches it. Worth fixing so hard errors are unambiguous to CI.
+
+### (a) Suggest sensible guess-SCF recovery options
+
+The options currently named in the DIE message were chosen only to *force* convergence in one
+experiment and are **deliberately extreme** (Dylan): `damp_factor= 0.85`, `damp_finish= 800`,
+`level_shift= 1.0`, `level_shift_finish= 800`, `max_iterations= 2000`. Work out values that are
+merely sensible — enough to carry a degenerate-shell atom past the DIIS handover without
+crawling — and put those in the message (and consider them as guess defaults). The message has
+since been reduced to naming the keywords, with no values, so nothing extreme is enshrined.
+
+### (b) Make the atomic SCF deterministic — tiny symmetry-breaking charge
+
+**Note first (Dylan):** the usual textbook remedy, spherically averaged *fractional*
+occupations, **does not apply** — UHF requires integer occupancy of spin orbitals. So the
+degeneracy has to be lifted rather than averaged over.
+
+**Dylan's idea:** place one tiny positive charge to stabilise the orbitals along a chosen
+direction, giving a unique lowest solution that the SCF finds deterministically. The subsequent
+spherical averaging already in `make_ANOs_for_atom` (`make_r_density_mx` + `symmetrize` with the
+`"oh"` pointgroup) then removes the axis dependence from the density.
+
+*Why this matters beyond convergence:* even when boron was forced to converge, the two LAPACKs
+landed in **different basins** (−24.3378 vs −23.7663 Ha, both flagged converged; tightening the
+tolerance to 1e-8 changed nothing). A DIE catches non-convergence but not basin-hopping — only
+lifting the degeneracy does.
+
+*Implementation sketch.* The machinery exists: `SCF_DATA` has `.cluster_charges` and
+`.cluster_charge_positions` with `set_using_cluster_charges()`. In `make_ANOs_for_atom`, after
+`.set_molecule_from_atom(a,mol)` and alongside the existing `mol.SCF_data.set_is_guess(TRUE)`
+(which currently switches cluster charges *off*), set a single charge `+q` on the z-axis at
+distance `R`. Open questions to settle:
+
+- **Choosing q and R.** The p-splitting must exceed the rounding noise that causes basin-hopping
+  yet leave the converged density negligibly perturbed. Splitting falls off steeply with R, so
+  a small q at moderate R may beat a tiny q nearby. Needs calibration against the observed
+  −24.34/−23.77 basin gap.
+- **Whether to remove the charge for a final few iterations** once the solution is selected, so
+  the converged state is the unperturbed one.
+- **Only for atoms that need it?** Half-filled/full shells converge fine; applying the charge
+  everywhere would shift every ANO-derived reference value.
+
+*Alternatives worth weighing:* seed the initial density with an axial bias instead of a real
+perturbation (selects the same solution, no physical charge in the Hamiltonian); or generate
+ANOs from a restricted-open/fractional calculation used *only* to build a spherical density,
+since the ANO generator needs a good spherical density rather than a variational UHF state.
+
+**Scope note:** this explains BN. A survey of the rgbi diatomics found only BN has a
+non-converged atomic SCF; C2, CN-, CO, F2, N2, NF and O2 all converge with atomic energies
+*bit-identical* across LAPACKs, yet still deviate from the Linux reference — N2 is even
+identical between the two Mac binaries. Those deviations are a separate, Mac↔Linux
+(arch / `-ffast-math`) matter.
+
 ## Future task: test the MPI parallel build
 
 **Goal (Dylan):** verify the MPI build works and its tests pass. Build flags exist
@@ -200,6 +301,37 @@ Dylan's instruction: **do not touch the README** until the cause is understood.
 - **Also note:** a `1e_properties` diff shows *total* molecular moments agreeing to 7 digits
   while *atomic partitioned* charges/dipoles differ by 15–17% — totals right, partitioning
   wrong. Consistent with the same "non-invariant use of an arbitrary basis" theme.
+
+### PRIORITY LEAD: the oxygen atom converges to a variationally impossible energy
+
+The single best probe found so far, because it is one atom, runs in seconds, and its
+correctness can be judged from physics alone rather than by diffing against a reference.
+
+Run `tests/short/oxygen_atom_uhf_cc-pVDZ/stdin` **verbatim**:
+
+| | Total energy |
+|---|---|
+| Linux reference (`tests/short/.../stdout`) | **−74.7923** |
+| this Mac, OpenBLAS 3.12.0 | **−77.6178** |
+| this Mac, Accelerate 3.2.1 | **−77.6178** |
+
+Both report "converged". The O atom UHF limit is ≈ −74.81, so **−77.62 lies ~2.8 Ha *below* the
+variational limit — impossible for a correct HF calculation.** This is not a tolerance or
+round-off effect and not a LAPACK effect (both libraries agree exactly); it is a Mac↔Linux
+difference in the SCF itself, so the prime suspects are code generation and `-Ofast`
+(`-ffast-math`, FMA contraction, denormal flush-to-zero).
+
+The same signature appears in every standalone atom tried on this Mac (B, C, N, Al, Si all come
+out 2–6 Ha too low), and in the *guess* SCF inside BN (its N atom gives −55.7673 where the HF
+limit is ≈ −54.40). So it may well underlie a large share of the 42 macOS failures — including
+the atomic-partitioning discrepancies — and it is upstream of the ANO/Roby problem rather than
+caused by it.
+
+**Next step:** rebuild with strict FP (`-O2 -fno-fast-math -ffp-contract=off`) and rerun just
+this one test. If the energy returns to ≈ −74.79, the FP flags are the culprit and the fix is a
+build-flags change, not a source change. Bisecting `-ffast-math` sub-options
+(`-fno-finite-math-only`, `-fno-unsafe-math-optimizations`, denormal handling) then narrows it
+further. This should be done **before** any further work on the ANO/Roby path.
 
 ## DONE: continuous integration (GitHub Actions, loose gate)
 
