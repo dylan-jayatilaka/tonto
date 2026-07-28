@@ -757,7 +757,8 @@ add_library(tonto
 # one: ~8.9 MB of __TEXT from 5.7 k lines of pure declarations. Handing all of that
 # to the optimiser is what makes types.F90 the slowest single compile in the build,
 # and it buys nothing -- the generated helpers are memcpy-shaped. Measured on
-# M2/Tahoe, gfortran-14: parse+.mod 0.01 s, -O0 29 s, full release flags > 4 min.
+# M2/Tahoe, gfortran-14: parse+.mod 0.01 s, -O0 29 s, -O1 45 s, full release
+# flags 839 s (~14 min) -- so -O1 is an ~18x saving on the slowest compile.
 # Compile it at -O1 instead. (See ANTLR4_DEFERRED.md for the follow-up: splitting
 # types.foo into several modules so they compile in parallel.)
 set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/types.F90

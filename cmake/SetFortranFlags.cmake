@@ -8,6 +8,40 @@
 
 SET(GNUNATIVE "-mtune=native")
 SET(GNUGENERIC "-mtune=generic")
+
+# Architecture tuning.
+#
+# -march=native, -mtune=native and Intel's -xHost all tune for the machine
+# running the COMPILER. Under cross-compilation -- e.g. an HPC login node
+# building for compute nodes -- that is the wrong machine: at best the target's
+# ISA extensions go unused, at worst the binary dies with SIGILL on the target.
+# So native tuning is switched off automatically when CMAKE_CROSSCOMPILING is
+# set, and must be stated explicitly for the target instead.
+#
+#   -DTONTO_ARCH_FLAG=auto                     (default) tune for the build host
+#   -DTONTO_ARCH_FLAG=none                     no architecture tuning at all
+#   -DTONTO_ARCH_FLAG="-march=znver3"          explicit flags for the target CPU
+#
+set(TONTO_ARCH_FLAG "auto" CACHE STRING
+    "Architecture tuning: 'auto' (tune for build host), 'none', or explicit flags for the target CPU")
+
+set(TONTO_ARCH_EXPLICIT "")
+set(TONTO_ARCH_NATIVE OFF)
+if(TONTO_ARCH_FLAG STREQUAL "auto")
+    if(CMAKE_CROSSCOMPILING)
+        message(STATUS
+            "Cross-compiling: native architecture tuning disabled (it would tune for the "
+            "build host, not the target). Pass -DTONTO_ARCH_FLAG=\"<flags>\" to tune for "
+            "the target CPU.")
+    else()
+        set(TONTO_ARCH_NATIVE ON)
+    endif()
+elseif(TONTO_ARCH_FLAG STREQUAL "none")
+    message(STATUS "Architecture tuning disabled (TONTO_ARCH_FLAG=none)")
+else()
+    set(TONTO_ARCH_EXPLICIT "${TONTO_ARCH_FLAG}")
+    message(STATUS "Architecture tuning (explicit): ${TONTO_ARCH_EXPLICIT}")
+endif()
 if("${CMAKE_Fortran_COMPILER_ID}" MATCHES "Intel")
     set(COMPILER "Intel_ifort")
     if(WIN32)
@@ -15,7 +49,12 @@ if("${CMAKE_Fortran_COMPILER_ID}" MATCHES "Intel")
         set(DEBUG_FLAGS "/Od /warn:all /traceback /check:bounds -DUSE_PRECONDITIONS -DDEBUG")
         set(RELEASE_FLAGS "/O2 /libs:static /Qunroll /warn:none -DUSE_ERROR_MANAGEMENT")
     else()
-        set(HOST_FLAG "-xHost")
+        # -xHost tunes for the build host; see TONTO_ARCH_FLAG above.
+        if(TONTO_ARCH_NATIVE)
+            set(HOST_FLAG "-xHost")
+        else()
+            set(HOST_FLAG "${TONTO_ARCH_EXPLICIT}")
+        endif()
         set(DEBUG_FLAGS "-g -warn all -traceback -check all -debug -DDEBUG")
         set(RELEASE_FLAGS "-O2 -warn none -traceback -DUSE_ERROR_MANAGEMENT")
     endif()
@@ -28,14 +67,20 @@ elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "PGI")
 elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU")
     set(COMPILER      "GNU_gfortran")
     set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -fno-sign-zero -ffree-line-length-none -fallow-invalid-boz")
-    # Architecture-tuning flag. gfortran on Apple Silicon (arm64 macOS) does not
-    # accept the x86-style -march=native reliably; use the CPU-specific -mcpu flag.
-    if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-        set(ARCH_FLAG "-mcpu=apple-m2")
+    # Architecture-tuning flag; see TONTO_ARCH_FLAG above. gfortran on Apple
+    # Silicon (arm64 macOS) does not accept the x86-style -march=native reliably,
+    # so use the CPU-specific -mcpu flag there.
+    if(TONTO_ARCH_NATIVE)
+        if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+            set(ARCH_FLAG "-mcpu=apple-m2")
+        else()
+            set(ARCH_FLAG "-march=native")
+        endif()
+        set(HOST_FLAG ${GNUNATIVE})
     else()
-        set(ARCH_FLAG "-march=native")
+        set(ARCH_FLAG "${TONTO_ARCH_EXPLICIT}")
+        set(HOST_FLAG "")
     endif()
-    set(HOST_FLAG ${GNUNATIVE})
     set(DEBUG_FLAGS   "-Wall -g -fbacktrace -fcheck=bounds -Wno-maybe-uninitialized -Wno-uninitialized -DUSE_PRECONDITIONS -DDEBUG=1")
     set(RELEASE_FLAGS "-Ofast ${ARCH_FLAG} -DUSE_ERROR_MANAGEMENT")
     set(FAST_FLAGS    "-Ofast -faggressive-loop-optimizations -fstrict-aliasing ${ARCH_FLAG} -DUSE_ERROR_MANAGEMENT")

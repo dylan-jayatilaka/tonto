@@ -111,7 +111,7 @@ Split `types.foo` into several independent modules so they compile in parallel u
 | parse + `.mod` generation (`-fsyntax-only`) | 0.01 s |
 | `-O0` (codegen only) | 29 s |
 | `-O1` | 45 s |
-| full release flags (`-Ofast … -O2`) | > 4 min |
+| full release flags (`-Ofast … -O2`) | 839 s (~14 min) |
 
 The front end is *instantaneous*, so the ~90 derived-type definitions themselves cost nothing.
 The cost is **codegen**: those types have ~585 allocatable/pointer components, and gfortran
@@ -120,7 +120,7 @@ auto-generates a deep-copy helper per type (`__copy_types_module_<TYPE>`) — 16
 that generated boilerplate is what costs the four minutes.
 
 **Interim fix already applied:** `types.F90` is compiled at `-O1`
-(`set_source_files_properties` in `CMakeLists.txt`), > 4 min → 45 s, no runtime cost worth
+(`set_source_files_properties` in `CMakeLists.txt`), 839 s → 45 s (~18x), no runtime cost worth
 measuring (the helpers are memcpy-shaped). The serial-bottleneck problem remains.
 
 **Note — F2008 `submodule` does NOT help here** (cf. the submodule task above): type
