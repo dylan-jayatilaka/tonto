@@ -89,6 +89,31 @@ enable_testing()
 #set(BLA_VENDOR NVPL)
 #set(BLA_VENDOR OpenBLAS)
 
+# On macOS, find_package(LAPACK) picks Apple's Accelerate framework, whose
+# Fortran entry points (dsyev_ etc.) are frozen at LAPACK 3.2.1 (2009) for ABI
+# compatibility -- Apple's newer LAPACK is only reachable via $NEWLAPACK-suffixed
+# symbols, which is not usable from Fortran. That 2009 dsyev differs materially
+# from a modern one (verified 2026-07-28 on M2/Tahoe: it alone flipped
+# short/h2o_rhf_6-31G(d)_normal_mode_analysis). So prefer Homebrew's OpenBLAS
+# (LAPACK 3.12.x) when it is installed; fall back to whatever find_package finds.
+# Override by configuring with an explicit -DBLA_VENDOR=... (e.g. Accelerate).
+if(APPLE AND NOT DEFINED BLA_VENDOR)
+    foreach(_brew_prefix /opt/homebrew/opt/openblas /usr/local/opt/openblas)
+        if(EXISTS ${_brew_prefix})
+            set(BLA_VENDOR OpenBLAS)
+            list(APPEND CMAKE_PREFIX_PATH ${_brew_prefix})
+            message(STATUS "macOS: preferring OpenBLAS at ${_brew_prefix} over Accelerate "
+                           "(Accelerate's Fortran LAPACK is frozen at 3.2.1)")
+            break()
+        endif()
+    endforeach()
+    if(NOT DEFINED BLA_VENDOR)
+        message(WARNING
+            "macOS: OpenBLAS not found, falling back to Accelerate's LAPACK 3.2.1 (2009). "
+            "Install a modern LAPACK with:  brew install openblas")
+    endif()
+endif()
+
 # LAPACK
 # The bundled reference LAPACK (external/lapack-release, netlib 3.8.0) declares an
 # ancient cmake_minimum_required (2.8.x) that CMake >= 4 rejects. Permit configuring
@@ -118,6 +143,41 @@ else()
     message(STATUS "Compiling lapack: ${LAPACK_LIBRARIES}")
     set(COMPILE_LAPACK "ON")
   endif()
+endif()
+
+# Report which LAPACK version is actually linked, and warn if it is ancient.
+# find_package(LAPACK) reports only "found", not "found, but from 2009" -- which
+# is how Accelerate's 3.2.1 was silently used on macOS for a long time. Query the
+# library itself via ILAVER (present since LAPACK 3.2) so the version is on the
+# record in every configure log, and comparable across platforms.
+if(NOT COMPILE_LAPACK AND NOT CMAKE_CROSSCOMPILING)
+    set(_ilaver_src ${CMAKE_BINARY_DIR}/CMakeFiles/lapack_version.f90)
+    file(WRITE ${_ilaver_src}
+         "program v\n"
+         "  integer :: a,b,c\n"
+         "  call ilaver(a,b,c)\n"
+         "  print *, a, b, c\n"
+         "end program\n")
+    try_run(_ilaver_run _ilaver_build
+            ${CMAKE_BINARY_DIR}/CMakeFiles/lapack_version ${_ilaver_src}
+            LINK_LIBRARIES ${LAPACK_LIBRARIES}
+            RUN_OUTPUT_VARIABLE _ilaver_out)
+    if(_ilaver_build AND _ilaver_run EQUAL 0)
+        string(REGEX MATCHALL "[0-9]+" _v "${_ilaver_out}")
+        list(GET _v 0 _v_major)
+        list(GET _v 1 _v_minor)
+        list(GET _v 2 _v_patch)
+        set(LAPACK_VERSION "${_v_major}.${_v_minor}.${_v_patch}")
+        message(STATUS "LAPACK version in use: ${LAPACK_VERSION}")
+        if(LAPACK_VERSION VERSION_LESS 3.9)
+            message(WARNING
+                "LAPACK ${LAPACK_VERSION} is very old (3.9 dates from 2019). Numerical "
+                "results -- particularly eigenvectors from dsyev -- may differ noticeably "
+                "from those produced with a current LAPACK. Consider installing OpenBLAS.")
+        endif()
+    else()
+        message(STATUS "LAPACK version in use: unknown (ILAVER probe did not run)")
+    endif()
 endif()
 
 # MPI
@@ -690,6 +750,18 @@ add_library(tonto
    ${FORTRAN_SRC}
    ${MACROS}
 )
+
+# types.F90 contains no executable code of its own -- only the ~90 derived-type
+# definitions. But those types have ~585 allocatable/pointer components, so
+# gfortran auto-generates a deep-copy helper (__copy_types_module_<TYPE>) for each
+# one: ~8.9 MB of __TEXT from 5.7 k lines of pure declarations. Handing all of that
+# to the optimiser is what makes types.F90 the slowest single compile in the build,
+# and it buys nothing -- the generated helpers are memcpy-shaped. Measured on
+# M2/Tahoe, gfortran-14: parse+.mod 0.01 s, -O0 29 s, full release flags > 4 min.
+# Compile it at -O1 instead. (See ANTLR4_DEFERRED.md for the follow-up: splitting
+# types.foo into several modules so they compile in parallel.)
+set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/types.F90
+    PROPERTIES COMPILE_OPTIONS "-O1")
 
 # Generate ALL Foo->Fortran output (every .F90 and its co-generated .int/.use)
 # before compiling any object. The .use files carry the inter-module `use`
