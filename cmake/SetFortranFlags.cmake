@@ -81,6 +81,23 @@ elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU")
         set(ARCH_FLAG "${TONTO_ARCH_EXPLICIT}")
         set(HOST_FLAG "")
     endif()
+    # WORKAROUND (2026-07-28): gfortran 14.3 on arm64 macOS miscompiles
+    # shell1quartet.F90 at -O2/-Ofast when the pre-register-allocation
+    # instruction scheduler is on. The two-electron integrals come out slightly
+    # too small and every downstream quantity silently inherits it -- the oxygen
+    # atom converged to -77.6178 Ha, ~2.8 Ha *below* the variational limit
+    # (virial -V/T = 1.957 instead of 2.000), and rgbi/BN's Roby populations were
+    # wrong. Bisected to -fschedule-insns: -O2 is wrong, -O2 -fno-schedule-insns,
+    # -O1 and -O0 are all correct, with -fno-fast-math already in force (so this
+    # is not FP semantics). Disabled for the whole arm64-macOS build rather than
+    # just shell1quartet.F90: one file is proven miscompiled, but nothing shows
+    # it is the only one, and a silent wrong-answer bug is worth the small cost.
+    # Must be appended AFTER the -O flags (see below) or -O2 re-enables it.
+    if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+        set(WORKAROUND_FLAGS "-fno-schedule-insns")
+        message(STATUS "arm64 macOS: adding -fno-schedule-insns "
+                       "(works around a gfortran miscompilation of shell1quartet.F90)")
+    endif()
     set(DEBUG_FLAGS   "-Wall -g -fbacktrace -fcheck=bounds -Wno-maybe-uninitialized -Wno-uninitialized -DUSE_PRECONDITIONS -DDEBUG=1")
     set(RELEASE_FLAGS "-Ofast ${ARCH_FLAG} -DUSE_ERROR_MANAGEMENT")
     set(FAST_FLAGS    "-Ofast -faggressive-loop-optimizations -fstrict-aliasing ${ARCH_FLAG} -DUSE_ERROR_MANAGEMENT")
@@ -144,4 +161,13 @@ set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -DINT_KIND=4 -DBIN_KIND=4 \
 
 if(WITH_MPI)
     set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -DMPI=1")
+endif()
+
+# Codegen workarounds must come AFTER every -O flag: gcc applies options left to
+# right, so a -fno-X placed before -O2 is simply re-enabled by it. CMake appends
+# CMAKE_Fortran_FLAGS_<CONFIG> after CMAKE_Fortran_FLAGS, so append there.
+if(WORKAROUND_FLAGS)
+    foreach(_cfg RELEASE DEBUG TESTING FAST RELWITHDEBINFO MINSIZEREL)
+        set(CMAKE_Fortran_FLAGS_${_cfg} "${CMAKE_Fortran_FLAGS_${_cfg}} ${WORKAROUND_FLAGS}")
+    endforeach()
 endif()

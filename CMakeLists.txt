@@ -764,6 +764,29 @@ add_library(tonto
 set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/types.F90
     PROPERTIES COMPILE_OPTIONS "-O1")
 
+# WORKAROUND (2026-07-28): gfortran 14.3 on arm64 macOS miscompiles
+# shell1quartet.F90 -- the two-electron integral code -- at -O3. The integrals
+# come out slightly too small and everything downstream silently inherits it:
+# the oxygen atom converged to -77.45 Ha, about 2.8 Ha *below* the variational
+# limit (virial -V/T = 1.959 instead of 2.000), boron's atomic SCF diverged, and
+# rgbi/BN's Roby populations were wrong. Pinning this one file to -O2 restores
+# exact agreement with the Linux reference (E, V_ee, V_eN, T and the virial all
+# match to the printed digits, and BN reproduces the reference numbers exactly).
+#
+# Two distinct triggers were found, which is why the level is pinned rather than
+# a single pass disabled: at -O2 with strict FP the culprit bisects to
+# -fschedule-insns (the pre-register-allocation scheduler); at -O3 there is a
+# further trigger that -fno-schedule-insns does NOT cover. Belt and braces here.
+#
+# NOT yet established whether this is a GCC backend bug or latent undefined
+# behaviour in the emitted code that optimisation exposes -- see
+# ANTLR4_DEFERRED.md. If it is UB, this only masks it.
+if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64"
+   AND "${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU")
+    set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/shell1quartet.F90
+        PROPERTIES COMPILE_OPTIONS "-O2;-fno-schedule-insns")
+endif()
+
 # Generate ALL Foo->Fortran output (every .F90 and its co-generated .int/.use)
 # before compiling any object. The .use files carry the inter-module `use`
 # statements (e.g. system.use has `use TYPES_MODULE`) and are pulled in via
