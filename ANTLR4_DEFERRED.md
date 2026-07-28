@@ -256,9 +256,33 @@ the README macOS line (currently softened to "via Homebrew; Linux/WSL is the ref
 and the `Building on MacOS` wiki page to say what actually works — pass → "supported", or list the
 specific failures if any remain.
 
-**IN PROGRESS (2026-07-28, session on the real Mac: M2 Pro, macOS 26.5.2 Tahoe, Darwin 25,
-gfortran-14 / Homebrew GCC 14.3.0, CMake 4.3.3, Java 26).** Docs deliberately NOT updated yet —
-Dylan's instruction: **do not touch the README** until the cause is understood.
+**RESOLVED (2026-07-28, session on the real Mac: M2 Pro, macOS 26.5.2 Tahoe, Darwin 25,
+gfortran-14 / Homebrew GCC 14.3.0, CMake 4.3.3, Java 26).**
+
+**Outcome: the macOS failures were a compiler miscompilation, not a Tonto bug.** gfortran 14.3
+on arm64 miscompiles `shell1quartet.F90` (the two-electron integral code) at `-O3`. Pinning
+that one file to `-O2 -fno-schedule-insns` (`CMakeLists.txt`, commit `a3ec1b07`) took the suite
+from **82/124 to 118/124**:
+
+| Suite | before | after |
+|---|---|---|
+| short | 33/51 | 49/51 |
+| rgbi | 1/13 | 12/13 |
+| long | 18/28 | 25/28 |
+| cx | 30/32 | 32/32 |
+| **total** | **82/124** | **118/124** |
+
+The build itself was always clean, so the March-2026 README note ("many failures on the Apple
+M2 — not recommended") is stale in both respects. **README and wiki still NOT updated** —
+Dylan's standing instruction; and the 6 residual failures should be understood first (they are
+mostly the longstanding small-difference cases already tracked below, plus one structural diff
+in `urea_lamaGOET_grown_CIF` with max rel 0 / LDD 0).
+
+The investigation history is kept below because the false trails are worth not re-walking.
+**Note especially:** the diverging boron atomic SCF that dominates the "atomic SCF" section
+above was a *symptom* of this miscompilation, not an independent defect — with the compiler
+workaround in place boron converges and rgbi/BN reproduces the reference exactly. The `DIE`
+added in `make_ANOs` is still worth keeping as a safety net, but its motivating example is gone.
 
 - **The build is clean.** Full translate + compile + link, zero errors; only benign warnings
   (clang deployment-version override ×149, a `-F` flag not valid for Fortran, 2 macro
@@ -302,7 +326,7 @@ Dylan's instruction: **do not touch the README** until the cause is understood.
   while *atomic partitioned* charges/dipoles differ by 15–17% — totals right, partitioning
   wrong. Consistent with the same "non-invariant use of an arbitrary basis" theme.
 
-### PRIORITY LEAD: the oxygen atom converges to a variationally impossible energy
+### RESOLVED: the oxygen atom converged to a variationally impossible energy
 
 The single best probe found so far, because it is one atom, runs in seconds, and its
 correctness can be judged from physics alone rather than by diffing against a reference.
@@ -375,6 +399,58 @@ same Gaussian machinery and is provably correct, the fault is specific to the ER
 
 **Repro harness:** `scripts/oxygen_scf_probe.sh <tonto> <repo>` prints the energy decomposition
 at truncated iteration counts on either platform.
+
+#### Final: compiler miscompilation of `shell1quartet.F90`
+
+Localised by swapping a single object file: with `shell1quartet.F90` compiled at `-O2` and
+everything else untouched, every probe matches Linux exactly (oxygen E/V_ee/V_eN/T/virial;
+Be V_ee 4.875821; BN's Roby populations identical to the reference). The path mattered because
+only the *engine* ERI route is affected — `use_spherical_basis= T` selects `make_r_JK_direct`
+and was an accidental working workaround.
+
+**Evidence it is a GCC bug rather than UB in our source** (not proof — see caveats):
+
+- The generated Fortran is **bit-identical** to Linux's (same md5, 11263 lines), so the
+  translator is not implicated.
+- Compiles clean under `-Wall -Wextra -Waliasing`: **no warnings at all**.
+- Runs clean under `-fcheck=all -finit-real=snan -finit-integer=-999999` with
+  `-ffpe-trap=invalid,zero,overflow` armed in the main program: no bounds violations, no
+  runtime errors, no traps.
+- The one concrete UB candidate — `Jab`/`Jcd` aliasing when `ab == cd`, both `INTENT(INOUT)` —
+  is **properly guarded**: every branch in which `same` can be true writes `Jab` only and never
+  references `Jcd` (`if (same) ... Jab = Jab + TWO*factor*ev`). Conforming.
+
+*Caveats:* the instrumentation covers this file only (bounds checking is per compilation unit),
+`-fcheck` cannot detect argument aliasing at all, and — importantly — the checks necessarily run
+on a *correctly* compiled build, since adding them changes codegen enough to make the answer
+right. So this shows the source is well-defined when compiled conservatively; it is not a proof
+that the failing binary contained no UB.
+
+**No minimal `-O3` workaround exists** (tried, failed): the trigger is not any of the 13 passes
+`-O3` adds over `-O2`, and disabling all 13 still gives the wrong answer; nor is it the
+vectoriser (`-fno-tree-vectorize`, `-fvect-cost-model=very-cheap`), inlining
+(`-fno-inline-functions`, `--param max-inline-insns-auto`), `-fno-ipa-cp-clone`, or
+`-fno-strict-aliasing`. There appear to be **two interacting triggers**:
+
+| config | result |
+|---|---|
+| strict FP, `-O2` | wrong; `-fno-schedule-insns` fixes it |
+| fast-math, `-O2` | correct, even with scheduling on |
+| fast-math, `-O3` | wrong; `-fno-schedule-insns` does NOT fix it |
+
+Hence the level is pinned rather than a pass disabled. Both switches are applied because that
+is the configuration the 118/124 run actually verified.
+
+**Left to do:**
+- Measure the runtime cost of `-O2` on this file (it is the ERI hot path). If negligible, stop.
+- Consider a GCC bug report. The ingredients are unusually strong: bit-identical source, two
+  platforms disagreeing, and a self-validating oracle (an SCF energy below the variational
+  limit, virial 1.957 vs 2.000). Would need reducing to a minimal test case first.
+- Re-test whether the *global* `-fno-schedule-insns` in `cmake/SetFortranFlags.cmake` is still
+  needed now that the file is pinned — currently kept only because it was in the verified run.
+- **Add a regression test**: for an s/p-only basis, `use_spherical_basis= T` and `F` must agree
+  (the two bases are mathematically identical below d functions). That single invariant would
+  have caught this immediately, on one machine, with no reference file.
 
 ## DONE: continuous integration (GitHub Actions, loose gate)
 
