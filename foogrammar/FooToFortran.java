@@ -304,6 +304,57 @@ public final class FooToFortran {
         return result;
     }
 
+    /** Per emitted Fortran module, the procedure names having AT LEAST ONE `elemental`
+     *  (or `ELEMENTAL`) overload. Both spellings become a Fortran `elemental` prefix
+     *  (Attrs.prefix), and either one lets the procedure be applied to an array actual
+     *  argument — which is exactly the hazard this table exists to detect.
+     *
+     *  Why it is needed: `elemental` is otherwise read only for the purity/assertion
+     *  decision (currentProcPure) and never consulted when resolving a call. That is the
+     *  root cause of the reverted TYPE:proc conversion — `STR::lower_cased(allowed)` with
+     *  `allowed :: VEC{STR}` is an elemental STR method applied per element, so rewriting
+     *  it to `allowed.lower_cased` re-resolves it against VEC_STR_MODULE and produced the
+     *  use-cycle INT->STR->VEC_BIN->VEC_INT->VEC_STR->INT. Used by
+     *  --type-qualified-call-report to classify such sites ELEMENTAL_HAZARD.
+     *
+     *  Keys are lower-cased like buildSubmethodTable / node(): Foo preserves identifier
+     *  case but Fortran is case-insensitive, so a case mismatch would silently miss. */
+    static Map<String, Set<String>> buildElementalByModule(Path foofilesDir) {
+        Map<String, Set<String>> result = new HashMap<>();
+        java.io.File[] files = foofilesDir.toFile().listFiles((d, n) -> n.endsWith(".foo"));
+        if (files == null) return result;
+        java.util.regex.Pattern modPat =
+            java.util.regex.Pattern.compile("^\\s*(?:virtual\\s+)?(?:array\\s+)?module\\s+(\\S+)");
+        // A proc header (3-space indent, after `contains`) carrying `elemental` among its
+        // `::` attributes. Same shape as the selfless scan above.
+        java.util.regex.Pattern elemPat =
+            java.util.regex.Pattern.compile("^ {3}([A-Za-z]\\w*)\\b[^\\n]*::[^\\n]*\\belemental\\b",
+                                            java.util.regex.Pattern.CASE_INSENSITIVE);
+        for (java.io.File f : files) {
+            List<String> lines;
+            try { lines = Files.readAllLines(f.toPath(), StandardCharsets.UTF_8); }
+            catch (Exception e) {
+                try { lines = Files.readAllLines(f.toPath(), StandardCharsets.ISO_8859_1); }
+                catch (Exception e2) { continue; }
+            }
+            String fooMod = null, mod = null; boolean past = false;
+            for (String line : lines) {
+                if (fooMod == null) {
+                    java.util.regex.Matcher m = modPat.matcher(line);
+                    if (m.find()) { fooMod = m.group(1); mod = fortranTypeName(fooMod) + "_MODULE"; }
+                    continue;
+                }
+                if (line.strip().equalsIgnoreCase("contains")) { past = true; continue; }
+                if (!past) continue;
+                java.util.regex.Matcher m = elemPat.matcher(line);
+                if (!m.find()) continue;
+                result.computeIfAbsent(mod, k -> new java.util.HashSet<>())
+                      .add(m.group(1).toLowerCase(Locale.ROOT));
+            }
+        }
+        return result;
+    }
+
     static final Set<String> INTRINSIC_SCALAR = Set.of("INT", "REAL", "CPX", "BIN", "STR");
     static boolean isIntrinsicScalar(String t) { return INTRINSIC_SCALAR.contains(canon(t)); }
 
@@ -336,6 +387,7 @@ public final class FooToFortran {
         Path typesPath = null, outDir = null, foofilesDir = null, fooDir = null, listFile = null;
         Path dceRoot = null, purgeRoot = null;
         boolean selfIntentReport = false, addSelfIntent = false, callGraphReport = false;
+        boolean tqcReport = false;
         List<Path> fooPaths = new ArrayList<>();
         for (int i = 0; i < argv.length; i++) {
             switch (argv[i]) {
@@ -356,6 +408,10 @@ public final class FooToFortran {
                 // See runCallGraphDce.
                 case "--dead-code-report":   dceRoot = Paths.get(argv[++i]); break;
                 case "--call-graph-report":  callGraphReport = true; break;
+                // Read-only analysis: classify every explicit TYPE:proc / TYPE::proc call
+                // site by whether rewriting it to `arg1.proc(...)` would resolve to the
+                // SAME module. See runTypeQualifiedCallReport.
+                case "--type-qualified-call-report": tqcReport = true; break;
                 // B2 purge mode: emit only procedures reachable from the root program,
                 // dropping the dead ones, into --out-dir. See runPurge.
                 case "--purge-dead-code":    purgeRoot = Paths.get(argv[++i]); break;
@@ -401,6 +457,12 @@ public final class FooToFortran {
                     : (typesPath != null ? typesPath : (dceRoot != null ? dceRoot : fooPaths.get(0)))
                           .toAbsolutePath().getParent();
             runCallGraphDce(fd, dceRoot, callGraphReport, outDir);
+            return;
+        }
+        if (tqcReport) {
+            Path fd = foofilesDir != null ? foofilesDir
+                    : (typesPath != null ? typesPath : fooPaths.get(0)).toAbsolutePath().getParent();
+            runTypeQualifiedCallReport(fd, outDir);
             return;
         }
         if (purgeRoot != null) {
@@ -1153,6 +1215,67 @@ public final class FooToFortran {
      *  the pruned .F90/.int/.use into outDir. The result is a self-consistent,
      *  compilable Fortran tree holding only code reachable from that one executable.
      *  Wholesale-use modules (TYPES/SYSTEM) are never pruned. */
+    /** Read-only analysis: classify every explicit `TYPE:proc` / `TYPE::proc` call site
+     *  by whether rewriting it to the bare receiver form `arg1.proc(...)` would resolve
+     *  to the SAME Fortran module it resolves to today. Writes `type_qualified_calls.tsv`
+     *  into --out-dir (or just the summary to stderr if --out-dir is omitted).
+     *
+     *  Emission is untouched: this walks the modules exactly as a normal translation
+     *  would (so classification piggybacks on the real call resolution, like the phase-B
+     *  call graph), and simply throws the generated Fortran away.
+     *
+     *  The point is to replace the guesswork that sank the previous, reverted attempt —
+     *  a blind textual rewrite of ~30 files — with a conservative, per-site verdict.
+     *  Only the SAFE class is a conversion candidate; see classifyTypeQualifiedCall. */
+    static void runTypeQualifiedCallReport(Path foofilesDir, Path outDir) throws Exception {
+        Path typesPath = foofilesDir.resolve("types.foo");
+        TypeTable types = new TypeTable();
+        if (Files.exists(typesPath)) buildTypeTable(types, typesPath);
+        Map<String, String[]> globals = buildGlobalTable(foofilesDir);
+        Map<String, Map<String, Set<String>>> subMethods = buildSubmethodTable(foofilesDir);
+        Set<String> selflessGlobal = buildSelflessMethods(foofilesDir);
+        Map<String, Set<String>> selflessByMod = buildSelflessByModule(foofilesDir);
+        Map<String, Set<String>> elementalByMod = buildElementalByModule(foofilesDir);
+
+        List<Path> fooPaths = new ArrayList<>();
+        java.io.File[] fs = foofilesDir.toFile().listFiles((d, n) -> n.endsWith(".foo"));
+        if (fs != null) { Arrays.sort(fs); for (java.io.File f : fs) fooPaths.add(f.toPath()); }
+
+        List<String> rows = new ArrayList<>();
+        for (Path p : fooPaths) {
+            try {
+                ModuleEmitter em = new ModuleEmitter(types, parseFile(p), p, foofilesDir,
+                        globals, subMethods, selflessGlobal, selflessByMod);
+                em.tqcRows = rows;
+                em.elementalByMod = elementalByMod;
+                em.emit();
+            } catch (Exception e) {
+                System.err.println("skip " + p.getFileName() + ": " + e);
+            }
+        }
+
+        Map<String, Integer> byClass = new TreeMap<>();
+        for (String r : rows) byClass.merge(r.split("\t")[2], 1, Integer::sum);
+
+        if (outDir != null) {
+            Files.createDirectories(outDir);
+            List<String> out = new ArrayList<>();
+            out.add(String.join("\t", "file", "line", "class", "qualifier", "sep", "method",
+                                "receiver_foo_type", "resolves_today", "would_resolve_to", "in_proc"));
+            out.addAll(rows);
+            Files.write(outDir.resolve("type_qualified_calls.tsv"), out, StandardCharsets.UTF_8);
+        }
+
+        int total = rows.size();
+        System.err.println("── type-qualified call report ── sites=" + total);
+        for (Map.Entry<String, Integer> e : byClass.entrySet())
+            System.err.printf("   %-20s %5d  (%4.1f%%)%n", e.getKey(), e.getValue(),
+                              total == 0 ? 0.0 : 100.0 * e.getValue() / total);
+        System.err.println("   SAFE is the only conversion candidate; UNKNOWN means the receiver"
+                         + " could not be typed and must NOT be converted.");
+        if (outDir != null) System.err.println("   wrote " + outDir.resolve("type_qualified_calls.tsv"));
+    }
+
     static void runPurge(Path foofilesDir, Path root, Path outDir) throws Exception {
         Path typesPath = foofilesDir.resolve("types.foo");
         TypeTable types = new TypeTable();
@@ -1357,6 +1480,13 @@ public final class FooToFortran {
         // Dead-code purge (B2). When non-null, emitProc drops any procedure whose
         // node "MOD:base" is in this set (unreachable from the purge root program).
         Set<String> deadNodes;
+        // TYPE:proc safety report. When non-null, every explicit type-qualified call
+        // site is classified into it as a TSV row. Read-only: classification must not
+        // change a single character of what is emitted.
+        List<String> tqcRows;
+        // fortran module -> proc names having an `elemental` overload there. Only
+        // consulted by the report (see buildElementalByModule).
+        Map<String, Set<String>> elementalByMod;
         boolean inComponent;   // true while emitting derived-type components
         List<String> selectKeywords;   // case labels of the enclosing select (for UNKNOWN)
         final Set<String> selflessProcs = new LinkedHashSet<>();   // selfless proc names in this module
@@ -2444,12 +2574,17 @@ public final class FooToFortran {
             if (da.STAR() != null) return "*";
             if (da.IDENTIFIER() != null && da.EQUAL() != null)
                 return da.IDENTIFIER().getText() + "=" + renderExpr(da.expr(0));
-            if (da.COLON() != null) {                       // expr? : expr?
-                int col = da.COLON().getSymbol().getTokenIndex();
+            // expr? : expr?   /   expr? :: expr?   — split the bounds by their position
+            // relative to the separator so an omitted LOWER bound (`:n`) stays on the
+            // correct side. A DCOLON here is an omitted upper bound (`1::2`).
+            org.antlr.v4.runtime.tree.TerminalNode sep =
+                da.COLON() != null ? da.COLON() : da.DCOLON();
+            if (sep != null) {
+                int col = sep.getSymbol().getTokenIndex();
                 String lo = "", hi = "";
                 for (FooParser.ExprContext e : da.expr())
                     if (e.getStop().getTokenIndex() < col) lo = renderExpr(e); else hi = renderExpr(e);
-                return lo + ":" + hi;
+                return lo + sep.getText() + hi;
             }
             return da.expr() != null && !da.expr().isEmpty() ? renderExpr(da.expr(0)) : da.getText();
         }
@@ -2828,19 +2963,25 @@ public final class FooToFortran {
                     String modFoo = chx.qualifier().getText();
                     String method = substSelector(nameText(chx.name()));
                     String[] gi = globals.get(method);
-                    if (colon && (!isModuleLikeQualifier(modFoo)
-                                  || currentArgs.contains(modFoo) || localVarTypes.containsKey(modFoo))) {
-                        // A single ':' whose qualifier is lowercase OR a known
-                        // arg/local (e.g. an uppercase loop index L) is not a module
-                        // call but an array-section range `lo:hi` that callHead's
-                        // qualified-call alternative greedily swallowed.
-                        out.append(modFoo).append(':').append(method);
+                    if ((colon && !isModuleLikeQualifier(modFoo)) || isKnownVariable(modFoo)) {
+                        // Not a module call but an array-section range that callHead's
+                        // qualified-call alternative greedily swallowed:
+                        //   `a(lo:hi)`   lowercase qualifier  -> a bound, single ':'
+                        //   `a(N:M)`     uppercase but a known variable in scope
+                        //   `a(lo::2)`   omitted upper bound; '::' is ONE token (DCOLON)
+                        // The scope test is `isKnownVariable`, which — unlike the old
+                        // args/locals-only test — also covers module variables and
+                        // cross-module globals used as bounds. A genuine `TYPE:proc`
+                        // qualifier is never a variable, so it is unaffected.
+                        out.append(modFoo).append(colon ? ":" : "::").append(method);
                     } else if (gi != null && gi[1].equals(fortranModName(modFoo))) {
                         // qualified access to a cross-module global variable (e.g.
                         // GAUSSIAN_DATA::spherical_harmonics_for) -> emit unqualified.
+                        classifyTypeQualifiedCall(p, modFoo, method, colon, true);
                         out.append(method); curType = gi[0];
                         recordUse(gi[1], method);
                     } else {
+                        classifyTypeQualifiedCall(p, modFoo, method, colon, false);
                         // MODULE:method (generic interface, method_) /
                         // MODULE::method (non-generic, the specific name) — never a
                         // TYPE_-prefixed name.
@@ -2914,7 +3055,16 @@ public final class FooToFortran {
                     // procedure passed by name as an argument) stays just the name.
                     String method = nameText(chx.name());
                     String ip = intrinsicProp(method, "self");
-                    if (ip != null) {
+                    if (isKnownVariable(method)) {
+                        // NOT a same-module call but an array section with an OMITTED
+                        // LOWER bound — `a(:n)`, `a(:n+1)`, `a(::n)` — which callHead's
+                        // qualified-call alternative swallowed with its `qualifier?`
+                        // absent. Without this guard `a(:n)` silently becomes the call
+                        // `a(n_)`: a wrong-but-plausible expression, not a parse error.
+                        // Same discriminator as the qualified case above: a bound names a
+                        // variable, a same-module call names a procedure.
+                        out.append(colon ? ":" : "::").append(method);
+                    } else if (ip != null) {
                         // inlined_by_foo on self, e.g. `.:destroyed` -> NOT associated(self)
                         out.append(ip);
                     } else {
@@ -3088,23 +3238,125 @@ public final class FooToFortran {
             if (a.name() != null && a.EQUAL() != null)          // keyword arg
                 return nameText(a.name()) + "=" + (a.expr(0) != null ? renderExpr(a.expr(0)) : "*");
             if ((a.expr() != null && !a.expr().isEmpty())
-                || (a.COLON() != null && !a.COLON().isEmpty())) {
-                // Array-section range (a, a:b, a:b:c, :b, ::c, :, …). Interleave the
-                // COLON and expr children in SOURCE ORDER so a leading-colon bound
-                // (:b) stays on the correct side of the colon — emitting it as `b:`
-                // inverts the range (a longstanding foo.pl bug we do not reproduce).
+                || (a.COLON() != null && !a.COLON().isEmpty())
+                || a.DCOLON() != null) {
+                // Array-section range (a, a:b, a:b:c, :b, ::c, 1::c, :, …). Interleave
+                // the COLON/DCOLON and expr children in SOURCE ORDER so a leading-colon
+                // bound (:b) stays on the correct side of the colon — emitting it as
+                // `b:` inverts the range (a longstanding foo.pl bug we do not reproduce).
+                // A DCOLON is an omitted upper bound before a stride (`a(1::2)`); it is
+                // one token by the time it gets here, and re-emitting it verbatim as
+                // `::` is already the correct Fortran.
                 StringBuilder sb = new StringBuilder();
                 for (int i = 0; i < a.getChildCount(); i++) {
                     org.antlr.v4.runtime.tree.ParseTree ch = a.getChild(i);
                     if (ch instanceof FooParser.ExprContext)
                         sb.append(renderExpr((FooParser.ExprContext) ch));
-                    else if (ch instanceof org.antlr.v4.runtime.tree.TerminalNode
-                             && ((org.antlr.v4.runtime.tree.TerminalNode) ch).getSymbol().getType() == FooParser.COLON)
-                        sb.append(':');
+                    else if (ch instanceof org.antlr.v4.runtime.tree.TerminalNode) {
+                        int tt = ((org.antlr.v4.runtime.tree.TerminalNode) ch).getSymbol().getType();
+                        if (tt == FooParser.COLON) sb.append(':');
+                        else if (tt == FooParser.DCOLON) sb.append("::");
+                    }
                 }
                 return sb.toString();
             }
             return a.getText();      // '*' form — passthrough
+        }
+
+        /** True if `a` is a single bare expression that is one postfix chain — the only
+         *  shape that can be promoted to a receiver (`TYPE:proc(x,r)` -> `x.proc(r)`)
+         *  without adding parentheses. Excludes keyword args (`fmt=...`), `*`, and
+         *  array-section ranges. Distinct from indexArgFooType, which returns null for
+         *  BOTH a wrong shape and an untypeable one; the report must tell those apart. */
+        boolean isLonePostfixArg(FooParser.ArgContext a) {
+            if (a.name() != null) return false;                       // keyword argument
+            if (a.expr() == null || a.expr().size() != 1) return false;
+            for (int i = 0; i < a.getChildCount(); i++) {
+                org.antlr.v4.runtime.tree.ParseTree ch = a.getChild(i);
+                if (!(ch instanceof org.antlr.v4.runtime.tree.TerminalNode)) continue;
+                int tt = ((org.antlr.v4.runtime.tree.TerminalNode) ch).getSymbol().getType();
+                if (tt == FooParser.COLON || tt == FooParser.DCOLON || tt == FooParser.STAR)
+                    return false;                                     // section range or `*`
+            }
+            FooParser.ExprContext e = a.expr(0);
+            return e.postfix() != null && e.postfix().size() == 1;    // no binary operator
+        }
+
+        /** Classify one explicit `TYPE:proc(...)` / `TYPE::proc(...)` site for
+         *  --type-qualified-call-report, by asking the SAME resolution machinery the
+         *  emitter uses two questions and comparing the answers:
+         *
+         *    1. where does it resolve today?      fortranModName(TYPE)
+         *    2. where would `arg1.proc(...)` go?  callModule(typeof(arg1), proc)
+         *
+         *  A site is convertible only if both answers exist and agree. Everything else
+         *  is named after WHY it differs, so the classes double as a work list. The
+         *  three failure modes that sank the previous (reverted) mechanical conversion
+         *  each get their own class: ELEMENTAL_HAZARD, COMPONENT_COLLISION, EXPR_RECEIVER.
+         *
+         *  UNKNOWN is not "probably fine" — it is "the translator cannot type the
+         *  receiver", which happens whenever a chain passes through a method call
+         *  (curType is cleared there, as there is no function-return-type registry).
+         *  It must be treated as non-convertible. */
+        void classifyTypeQualifiedCall(FooParser.PostfixContext p, String modFoo,
+                                       String method, boolean colon, boolean namespaceHit) {
+            if (tqcRows == null) return;
+            String qualMod = fortranModName(modFoo);
+            String cls, recvType = "", resolved = "";
+            if (namespaceHit) {
+                // A public module VARIABLE of that module, not a method: GAUSSIAN_DATA::nx.
+                // There is no receiver to promote, so this form can never be converted.
+                cls = "NAMESPACE";
+            } else {
+                FooParser.TrailerContext t0 = p.trailer().isEmpty() ? null : p.trailer(0);
+                FooParser.ArgListContext al = (t0 != null && t0.LPAREN() != null) ? t0.argList() : null;
+                if (t0 == null || t0.LPAREN() == null) {
+                    cls = "BY_NAME";            // `TYPE::proc` handed to another proc, not called
+                } else if (al == null || al.arg().isEmpty()) {
+                    cls = "NO_RECEIVER";        // `TYPE:proc()` — nothing to promote
+                } else if (!isLonePostfixArg(al.arg(0))) {
+                    cls = "EXPR_RECEIVER";      // receiver promotion would need parentheses
+                } else if ((recvType = String.valueOf(indexArgFooType(al.arg(0)))).equals("null")) {
+                    recvType = ""; cls = "UNKNOWN";
+                } else if (types.isComponent(recvType, method)) {
+                    cls = "COMPONENT_COLLISION";   // `x.proc` would emit `x%proc`, not a call
+                } else {
+                    ArrayType at = parseArray(canon(recvType));
+                    Set<String> elems = elementalByMod != null ? elementalByMod.get(qualMod) : null;
+                    boolean isElem = elems != null && elems.contains(method.toLowerCase(Locale.ROOT));
+                    if (at != null && at.elem != null && isElem
+                        && canon(at.elem).equalsIgnoreCase(canon(modFoo))) {
+                        // The method lives on the ELEMENT type but the receiver is the
+                        // array: `STR::lower_cased(allowed)` with `allowed :: VEC{STR}`.
+                        // Rewriting binds VEC_STR_MODULE instead of STR_MODULE.
+                        cls = "ELEMENTAL_HAZARD";
+                    } else {
+                        resolved = callModule(recvType, method);
+                        if (resolved == null) { resolved = ""; cls = "UNKNOWN"; }
+                        else if (resolved.equals(qualMod)) cls = "SAFE";
+                        else cls = "MODULE_MISMATCH";
+                    }
+                }
+            }
+            tqcRows.add(String.join("\t",
+                String.valueOf(fooPath.getFileName()),
+                String.valueOf(p.getStart().getLine()),
+                cls, modFoo, colon ? ":" : "::", method,
+                recvType, qualMod, resolved,
+                String.valueOf(currentProc)));
+        }
+
+        /** True if `n` names a VARIABLE in scope — a procedure argument, a local, a
+         *  module variable, or a public global of another module — rather than a
+         *  procedure. Used to un-swallow array-section ranges that `callHead`'s
+         *  qualified-call alternative (`DOT? qualifier? (DCOLON|COLON) name`) grabbed:
+         *  in `a(lo:hi)` / `a(:n)` / `a(lo::2)` the text either side of the colon is a
+         *  bound, not a module and a method. `isModuleLikeQualifier` alone cannot tell
+         *  them apart once the bound is spelled in upper case (`a(N:M)`), and it says
+         *  nothing at all about the qualifier-less form `:n`. */
+        boolean isKnownVariable(String n) {
+            return currentArgs.contains(n) || localVarTypes.containsKey(n)
+                || moduleVars.containsKey(n) || resolveGlobal(n) != null;
         }
 
         /** True if a qualifier before ':' names a module/type (uppercase base, per

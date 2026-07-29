@@ -323,9 +323,15 @@ dimSpec
 //   0:6  1:n  :n  n:  :   range bounds
 //   len=256       keyword parameter (string length etc.)
 //   *             assumed size
+// A declaration bound carries no stride (Fortran has none there), so unlike
+// `arg` this rule has no three-part form — but it needs the same DCOLON branch,
+// because `x(1::2)` in *expression* position and a mistyped declaration bound
+// share the lexical hazard: `::` is one token. Keeping the branch here makes the
+// two rules fail the same way instead of one silently misparsing.
 dimArg
     : IDENTIFIER EQUAL expr
     | expr? COLON expr?
+    | expr? DCOLON expr?
     | expr
     | STAR
     ;
@@ -466,13 +472,35 @@ caseLabel
     | CASE DEFAULT
     ;
 
-// Expressions are postfix chains: a head followed by selectors ('.x' / '%x')
-// and call/subscript parentheses. This covers chained and postfix calls such
-// as (self+m).factorial, a(i).method(j), foo().bar.
+// `expr` is deliberately FLAT — one operand list, no precedence cascade, all of
+// `binOp` at a single level. The parse tree therefore encodes NO precedence and
+// NO associativity. That is sound here only because Foo and Fortran share an
+// operator precedence table and the emitter re-emits operators verbatim in
+// source order.
+//
+//   INVARIANT: any transformation that re-parenthesises, reassociates, or
+//   promotes a sub-expression must NOT rely on the tree shape.
+//
+// Do not "fix" this by adding the F90 standard's level1Expr…level5Expr cascade:
+// it costs ~10 rule-context allocations per operand (even for a bare `x`), and
+// the grammars-v4 version of it is anyway wrong at `**` (left-associative). If a
+// precedence-shaped tree is ever needed — e.g. retargeting Foo to a language
+// with different precedence — use ONE ANTLR4 left-recursive rule with
+// precedence-ordered alternatives instead. See docs/GRAMMAR_COMPARISON.md §4.
 expr
     : postfix (binOp postfix)*
     ;
 
+// Expressions are postfix chains: a head followed by selectors ('.x' / '%x')
+// and call/subscript parentheses. This covers chained and postfix calls such
+// as (self+m).factorial, a(i).method(j), foo().bar.
+//
+// This is the same shape as `nameDataRef : name complexDataRefTail*` in the
+// ANTLR4 Fortran90 grammar: variable, array element, array section, derived-type
+// component and function reference are all merged into one permissive chain, and
+// the array-vs-call ambiguity (`A(I)`) is left to a semantic pass. The difference
+// is that we HAVE that pass — FooToFortran.translatePostfix threads a running
+// `curType` and decides per trailer — whereas grammars-v4 never wrote one.
 postfix
     : head trailer*
     ;
@@ -525,11 +553,24 @@ argList
 // lists — `(x, i=1,n)`, even nested `((j, i=1,n), j=1,m)` — are absorbed here:
 // the loop control `i=1` reads as a keyword argument, so no dedicated rule (and
 // its LPAREN ambiguity, which caused catastrophic parse-time blowup) is needed.
+//
+// The DCOLON branches exist because an *omitted upper bound before a stride*
+// puts two colons side by side, which the lexer munches into a single DCOLON:
+// `a(1::2)` and `a(::2)` would otherwise never reach this rule at all — the
+// `callHead` alternative `qualifier? DCOLON name` would swallow them as a
+// non-generic qualified call. (This mirrors `subscriptTripletTail`'s third
+// alternative `DOUBLECOLON expression` in the ANTLR4 Fortran90 grammar, which
+// carries it for exactly the same lexical reason. See docs/GRAMMAR_COMPARISON.md.)
+// Ambiguity note: for `STR::proc` the qualified-call reading still wins, because
+// `head` reaches `callHead` (whose alternative 1 matches `STR::proc` whole)
+// before this rule's optional group is ever entered; a numeric lower bound like
+// `1::2` cannot start a `callHead`, so it lands here as intended.
 arg
     : name EQUAL (expr | STAR)
     | STAR
-    | expr (COLON expr? (COLON expr?)?)?
+    | expr (COLON expr? (COLON expr?)? | DCOLON expr?)?
     | COLON expr? (COLON expr?)?
+    | DCOLON expr?
     ;
 
 literal

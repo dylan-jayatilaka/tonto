@@ -26,7 +26,7 @@ the call sites (a targeted, parse-tree-driven edit like `--add-self-intent`, NOT
 so commented-out and string-literal occurrences are left alone). Related: [[submodule-call-autoresolution-done]]
 already hit a case bug in the submodule registry (commit 627db872); this is the same family.
 
-## Deferred: eliminate explicit `TYPE:proc` calls (out of scope so far)
+## Closed (won't-do): eliminate explicit `TYPE:proc` calls — at its practical limit
 
 **What:** the submodule-call cleanup (`4cd995df`) auto-resolved `.SUBMOD:proc` etc., but
 explicit **type-qualified** calls `TYPE:proc` / `TYPE::proc` (e.g. `GAUSSIAN_DATA:...`,
@@ -40,6 +40,35 @@ a `use` cycle. See memory `typeproc-elemental-array-hazard`. A correct eliminati
 **type-aware** resolution that respects elemental/array-receiver semantics (and the
 GAUSSIAN_DATA namespace-access case), not a blind receiver swap. Low priority — the explicit
 form compiles and runs fine; this is a consistency/readability cleanup, not a correctness bug.
+
+**Analysis tool built — `--type-qualified-call-report` (read-only).** Rather than rewrite
+blindly again, `FooToFortran` now classifies every site by asking the *real* resolver two
+questions — "where does `TYPE:proc` resolve today?" vs. "where would `arg1.proc(...)` go?" —
+and only calls a site **SAFE** when both answers exist and agree. Writes
+`type_qualified_calls.tsv` (per-site verdict + why). New helpers `buildElementalByModule`,
+`runTypeQualifiedCallReport`, `classifyTypeQualifiedCall`, `isLonePostfixArg`. Emission is
+untouched; it just walks the modules and throws the Fortran away (~11 min single-JVM full walk).
+
+**Verdict: this task is at its practical limit — it cannot be cheaply or completely done.**
+Report over **2068** sites (2026-07-29):
+
+| class | count | % | convertible? |
+|---|---|---|---|
+| NAMESPACE (989 = `GAUSSIAN_DATA::…`) | 1002 | 48.5% | no — data access, no receiver to promote |
+| MODULE_MISMATCH | 506 | 24.5% | no — would bind a *different* module |
+| EXPR_RECEIVER | 232 | 11.2% | no — receiver needs added parens |
+| ELEMENTAL_HAZARD | 99 | 4.8% | no — the exact trap that sank the reverted attempt |
+| **SAFE** | **154** | **7.4%** | **yes — the only candidates** |
+| UNKNOWN / BY_NAME / COMPONENT_COLLISION / NO_RECEIVER | 75 | 3.6% | no — untypeable or non-call |
+
+Only **7.4%** is mechanically convertible; the other **~92%** each fail for a *structural*
+reason (namespace access with no receiver, genuine cross-module dispatch, expression receiver,
+or elemental/array-receiver semantics) that no blind rewrite can satisfy. Converting the 154
+SAFE sites would be a large, file-spanning diff for a cosmetic gain while **leaving the bulk of
+the explicit forms in place anyway** — so the readability payoff never actually lands. The
+explicit `TYPE:proc` form compiles, runs, and is unambiguous. **Recommendation: stop here.**
+Keep the report as the durable evidence and the work-list should anyone ever want the SAFE
+subset; treat full elimination as *not worth doing*, not merely *not yet done*.
 
 ## DONE: phase B — per-executable dead-code elimination
 
