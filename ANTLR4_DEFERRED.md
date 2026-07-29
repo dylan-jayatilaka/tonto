@@ -753,8 +753,50 @@ numbers written into a CIF** — possibly a published one. Options if that is ju
 promote it to something always-on (not `WARN`), which changes output and forces a re-bless; or
 leave it debug-only and rely on the upstream fix. Decision deferred, deliberately.
 
-**Where to start looking:** the ADP esds reach the CIF/table writers via `put_ADP2_errors_to`,
-which scales values taken from `.xray_data.covariance_mx`. Questions in order:
+**THE PATH IS NOW MAPPED — start here.** Traced 2026-07-29 (static reading, no probe yet):
+
+```
+least squares  ->  .xray_data.covariance_mx            (MAT{REAL}, the v-cov matrix)
+                        |
+crystal.foo:8231        |  per-atom diagonal block, transformed:
+                        |  covariance_mx(af:al,af:al).back_transform_to(C(af:al,af:al),T(1:n,1:n))
+                        v
+crystal.foo:8236   C.put_diagonal_to(esd)               <- esd = DIAGONAL of the transformed v-cov
+                        |
+crystal.foo:8038   atom.put_CIF_ADP2(...,esd)
+vec{atom}.foo:1002 put_ADP2_errors_to(dU,fac,esd)       <- pure copy: dU(a,k) = esd(k+3+…)
+                        |                                   then dU = fac*fac*dU
+                        v
+                   TABLE_COLUMN:set_values_and_errors(r,e)  <- where e_nan / e_neg were measured
+```
+
+**Note what `esd` actually is: the diagonal of a covariance matrix.** There is no `sqrt` in this
+path — `put_diagonal_to` takes the diagonal straight out of `C`. So:
+
+- a **negative** esd means the transformed covariance diagonal is negative, i.e. `C` is **not
+  positive semi-definite** — either `covariance_mx` itself is not, or `back_transform_to`
+  is losing it. This is Dylan's diagnosis, structurally confirmed.
+- a **NaN** esd means a NaN is already in `covariance_mx`, or is produced by the transform.
+
+`T` is built from `.unit_cell.inverse_mx` and the reciprocal matrices via
+`GAUSSIAN_DATA:symmetric_tensor_{2,3,4}_product_mx` (`crystal.foo:8208-8221`); it is 34x34,
+zeroed, with only the used sub-blocks filled, so an atom whose `no_of_pADPs` reaches into an
+unfilled region would transform through zero rows — that yields zeros, not NaN, but is worth
+checking while there.
+
+**The next probe (one run localises it):** print, per atom block, the counts of NaN and negative
+entries in `covariance_mx(af:al,af:al)` **before** the transform and in `C(af:al,af:al)`
+**after** it, in `make_CIF_esds` (`crystal.foo:8179`). That says immediately whether the defect
+is inherited from the least squares or manufactured by `back_transform_to`. Use `stdout` (NOT
+`std_err` — see the unit-collision item), and the NaN test `x/=x` worked under the current
+release flags.
+
+**Then:** if it is inherited, chase `covariance_mx` back into the least-squares/normal-equations
+inversion; a debug build with `-fcheck=all -ffpe-trap=invalid,zero,overflow` should trap where
+the NaN is *created* rather than where it is printed. Remember `-ffast-math` is on in release,
+so NaN behaviour there is not dependable.
+
+**Older notes on where to look (superseded by the map above):**
 
 1. Is the NaN/negative already present in the covariance matrix **diagonal**, or introduced by
    the transformation into the ADP basis? Print the diagonal before and after.
