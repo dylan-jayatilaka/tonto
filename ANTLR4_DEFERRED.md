@@ -565,6 +565,115 @@ non-pure one is an error), so it self-validates. Impure = {modifies an arg or se
 `impure_functions.tsv` (modifies-self + OUT/INOUT-arg functions) is the seed list; add
 I/O-call detection when tackling it.
 
+## Deferred: prune dead and stale macros in `include/macros.in`
+
+**Audited 2026-07-29.** Of **377** macros defined, **145 are never used in any `.foo` file**.
+Fewer macros is better for maintenance (Dylan), but they are not all the same kind of thing and
+should not be deleted with one sweep:
+
+**(a) Genuinely dead — delete.** `TONTO_SET_STDERR` / `TONTO_SET_STDERR0` is the clearest case:
+unused *and* it expands to `set_error_output_file_(tonto,X)` / `SYSTEM_set_error_output_file`,
+a routine that **does not exist anywhere in `foofiles/`**. It would fail to compile the moment
+anyone used it. Same family: `TONTO_CREATE`, `TONTO_DESTROY`, `PARALLEL_DO_START`,
+`PARALLEL_DO_STRIDE`, `LOCK_PARALLEL_DO`, `UNLOCK_PARALLEL_DO`, `PARALLEL_VECTOR_SUM` — each
+defined, each unused (their `…0` variants *are* used, inside `macros.in`).
+
+**(b) Stale defaults — the real hazard.** Macros that look like the tunable default for
+something but no longer drive anything, because the code sets its own value. Editing one has no
+effect, which is a trap. Worse, at least one has *drifted*:
+
+```
+macros.in:629   ROBY_ZERO_ANGLE_CUTOFF   TOL(2)
+roby.foo:176    .zero_angle_cutoff = TOL(2)*RADIAN_PER_DEGREE     <- not the same value
+```
+
+**These are safe to delete: the value has migrated into the type component's `DEFAULT(...)`
+in `types.foo`** (Dylan — confirmed: `types.foo` carries 1103 `DEFAULT(...)` declarations).
+The documentation is not lost by deleting the macro; it now lives on the component that owns
+it, which is the better place. Checked one by one:
+
+| macro | macro value | `DEFAULT` in `types.foo` | |
+|---|---|---|---|
+| `ROBY_OUTPUT_THETA_INFO` | `TRUE` | `TRUE` | matches |
+| `ROBY_ANALYZE_ALL_ATOM_PAIRS` | `FALSE` | `FALSE` | matches |
+| `QUADRATURE_ACCURACY` | `TOL(6)` | `TOL(6)` | matches |
+| `QUADRATURE_MAXIT` | `10` | `10` | matches |
+| `ISOSURFACE_ISO_VALUE` | `ONE` | `ONE` | matches |
+| `TEXTFILE_MARGIN_WIDTH` | `0` | `0` | matches |
+| `TEXTFILE_SPACING` | `2` | `2` | matches |
+| `TEXTFILE_INT_WIDTH` | `8` | `8` | matches |
+| `ISOSURFACE_TABLE_LENGTH/SPACING/EPS` | `30.0d0` / `0.02d0` / `TOL(9)` | `INTERPOLATOR_TABLE_*` | re-homed to the owning module |
+| `TEXTFILE_COMMENT_CHARS` / `_QUOTE_CHARS` | `"!#"` / `"'"""` | `BUFFER_COMMENT_CHARS` / `BUFFER_QUOTE_CHARS` | re-homed |
+| **`ROBY_ZERO_ANGLE_CUTOFF`** | `TOL(2)` | `TOL(2)*RADIAN_PER_DEGREE` | **DIVERGED** |
+| **`PLOT_GRID_PLOT_FORMAT`** | `"gnuplot.contour"` | `" "` | **DIVERGED** |
+| `DIIS_ERROR_TEMP_CUTOFF`, `FILE_BUFFER_LENGTH` | `TOL(2)`, `1024` | none found | check individually |
+
+The two **DIVERGED** entries are the argument for doing this sooner rather than later: they are
+not merely dead but *wrong*. Anyone "tidying up" by wiring the code to `ROBY_ZERO_ANGLE_CUTOFF`
+would silently drop the degrees→radians conversion.
+
+Remaining unchecked in this class: `ADAPTIVE_QUADRATURE_ACCURACY`, `QUADRATURE_EPS`, the other
+`ISOSURFACE_*`/`PLOT_GRID_*`/`TEXTFILE_*` entries, `MULTI_T_ADP_TOL_0`,
+`REAL_MAX_DECIMAL_PLACES`, `BASIS_LIBRARY_ENV_NAME`, `TONTO_REPOSITORY_BASIS_DIRECTORY` — same
+method: find the component, compare its `DEFAULT` with the macro, delete if superseded.
+
+**(c) Unused but arguably intentional API — leave alone.** Tonto is a library, and these are
+language surface a future `.foo` could legitimately use: the kind/size families (`INT_1_SIZE`,
+`REAL_16_SIZE`, …), the alternate scalar types (`INT_1/2/4/8`, `REAL_4/8/16`, `CPX_4/8/16`,
+`CHR`, `BSTR`), `MAT6`/`MAT7`, and the physical-constant set (`AVOGADROS_NUMBER`, `BOHR_SI`,
+`KCAL_PER_HARTREE`, …). Same reasoning as keeping the `set_width_automatically` fix.
+
+**Caveat on the audit:** it counted uses in `foofiles/*.foo` and inside `macros.in` only. A
+macro could in principle be referenced from another `include/` file or by the build, so confirm
+before deleting any individual one.
+
+## Deferred: `std_err` writes into the *input* file (hard-coded unit collision)
+
+**Found 2026-07-29** while instrumenting `table_column.foo` to chase the zero(error) problem.
+A few `std_err.show(...)` calls added for debugging did not appear in any error log — they were
+**appended to the `stdin` file**, which corrupted the input while it was still being read and
+killed the job with:
+
+```
+Error in TEXTFILE:read_line_bad_EOF ... unexpected end of file
+File name = stdin   Line number = 35
+```
+
+The input file grew from 55 to 101 lines during the run. Reproducible.
+
+**Mechanism — partly established, not fully pinned.** The three units are distinct
+(`TEXTFILE_STDIN_UNIT` 5, `TEXTFILE_STDOUT_UNIT` 6, `TEXTFILE_STDERR_UNIT` 7, `include/macros.in`).
+But `create_std_err` (`textfile.foo`) never *opens* anything — it allocates the object and
+claims the hard-coded unit:
+
+```fortran
+std_err.name   = "stderr"
+std_err.action = "write"
+std_err.unit   = tonto.std_err_unit      ! = 7, hard-coded
+```
+
+Fortran does not pre-connect unit 7, and Tonto hands out units dynamically when it opens files,
+so the likely story is that unit 7 already belonged to another open file (the input) and the
+write simply went there. That has not been proved — worth confirming with an `inquire` on the
+unit at the point of the write.
+
+**Why it matters more than it looks:** a diagnostic channel that silently destroys the input is
+a trap exactly when someone is debugging, and it fails in a way that looks like a *parse* error
+in the user's input rather than an I/O bug. It cost real time here.
+
+**Suggested fix:** have `create_std_err` claim its unit the same way every other file does
+(via the allocator, checking `unit_used`) instead of assuming a fixed number, or open the file
+properly. Note `stdout`/`stdin` share the same hard-coded pattern and may be latently exposed
+to the same collision.
+
+**Naming note:** the object was renamed `stderr` → `std_err` (matching the existing `std_time`,
+`std_name`, `std_output` family) because the Unix name implied Unix behaviour it does not have.
+The *file* it writes is still called `stderr`, so test directories and `IO` manifests are
+unaffected. The CPP macro `TEXTFILE_STDERR_UNIT` was deliberately left alone: it is one of a
+trio with `TEXTFILE_STDIN_UNIT`/`TEXTFILE_STDOUT_UNIT`, and renaming just one would look odd.
+Renaming `stdin`/`stdout` likewise is ~12,500 call sites across 81 foofiles but — importantly —
+**zero** test churn, since the file names are set separately. Deferred as cosmetic.
+
 ## Deferred: small numerical differences (longstanding) — drill down
 
 Several tests differ from their references only by small numerical amounts — 3rd–4th
@@ -573,6 +682,39 @@ significant figure, or a last-digit wobble on a near-zero value. They pass the l
 runner/CPU (BLAS / eigensolver ordering, FP reassociation) flips the verdict — this is the
 **CI flake** seen on GitHub Actions (same binary, pass on one runner, fail on the next).
 **Dylan wants to drill down** on each and fix the root cause, not merely tolerate them.
+
+### Lower priority: `ylid` (rgbi) — vdW contact indices differ on macOS
+
+**Status 2026-07-29:** fails on **macOS only** (3.85% max rel); **passes on Linux** against the
+current reference, with both platforms on gfortran-16 and LAPACK 3.12.0.
+
+**Where the difference lives:** splitting the diff at the *"Roby-Gould bond indices: VDW
+interactions only"* boundary gives **14 of 17** differing hunks inside the vdW section and only
+3 outside it (the largest of those being a Roby population, `C1 8.95` vs `8.96`). So the
+van der Waals contacts — non-bonded pairs at 2.3–3.3 Å, enabled by `analyze_vdw_atom_pairs= T`
+— carry most of the instability, as Dylan expected.
+
+**Considered and NOT adopted: turning the vdW pairs off and re-blessing.** Two reasons:
+
+1. **It would break Linux.** ylid currently *passes* there, so a re-bless would enshrine macOS
+   numbers and flip the platform that is presently correct.
+2. **It does not speed the test up** — the opposite. Measured interleaved, three rounds:
+   vdW **ON** 45.9 / 46.7 / 46.3 s, **OFF** 59.5 / 59.5 / 59.1 s, i.e. ~13 s *slower* with
+   fewer output lines (607 vs 660). Whatever `analyze_vdw_atom_pairs= F` does, it is not
+   "skip work" — it selects a different and more expensive set of pairs. That oddity is worth
+   understanding on its own; a flag that costs time when disabled is a bug smell.
+
+It would also drop coverage of the vdW code path, and the 3 non-vdW hunks would likely remain.
+
+**Also ruled out:** tightening the guess-SCF convergence. Settings from `convergence= 1e-3`
+(default) down to `1e-6` leave both the runtime (~46 s throughout) and the disagreement
+essentially unchanged (108 → 106 differing lines); `1e-8` makes the atomic SCF fail to converge
+outright, so `make_ANOs` DIEs and the job aborts — which is the DIE working as intended, but it
+also produced a *shorter* output that briefly looked like a speed-up and a perfect match. Beware
+that trap when timing truncated runs.
+
+**Open:** where the 46 s actually goes (convergence is not the lever), and why the vdW indices
+are the platform-sensitive part.
 
 ### Negative ESDs out of the least-squares variance-covariance matrix
 
