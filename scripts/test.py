@@ -19,6 +19,11 @@ log = logging.getLogger('test')
 prefixes_to_ignore = [
     'Wall-clock', 'CPU time', 
     'Version', 'Platform', 'Timer', 'Build-date',
+    # Build provenance stamped into the banner (CMakeLists.txt -> macros.in ->
+    # molecule.main.foo). Deliberately ignored: it legitimately differs between
+    # machines, and the whole point is that it be visible in stdout without
+    # breaking reference comparisons.
+    'Compiler', 'LAPACK',
     'Warning', 'https', 'www', 'Peter', 'Daniel', 'Dylan',
     'WARNINGS', 'Look above', 'time taken for',
     '_audit_creation_date', 

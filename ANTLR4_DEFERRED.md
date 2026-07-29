@@ -441,7 +441,41 @@ vectoriser (`-fno-tree-vectorize`, `-fvect-cost-model=very-cheap`), inlining
 Hence the level is pinned rather than a pass disabled. Both switches are applied because that
 is the configuration the 118/124 run actually verified.
 
+**Not fixed in GCC 16 (tested 2026-07-29).** A full build with `gfortran-16` (Homebrew GCC
+16.1.0) and `-DTONTO_SKIP_ARM64_WORKAROUNDS=ON` compiles cleanly (zero errors) and then
+reproduces the miscompilation **exactly** — the invariant check fails with values identical to
+GCC 14.3's, digit for digit:
+
+| case | correct | GCC 14.3 | GCC 16.1 |
+|---|---|---|---|
+| Be | −14.3518804762 | −14.6890291293 | −14.6890291293 |
+| O | −73.8041502333 | −74.5296496920 | −74.5296496920 |
+| Ne | −126.6045249968 | −127.5114422775 | −127.5114422775 |
+| N | −54.1053903978 | −55.0573624742 | −55.0573624742 |
+
+Consequences:
+
+- **Do not version-gate the workaround** — it is needed on both 14.3 and 16.1.
+- **Beware the default compiler.** Homebrew's main `gcc` formula is now 16.1.0, so plain
+  `gfortran` on this Mac *is* GCC 16; only CLAUDE.md's documented
+  `-DCMAKE_Fortran_COMPILER=gfortran-14` pins 14. Both hit the bug, and the workaround covers
+  any GNU compiler on arm64 Apple, but a developer's "default" build is not the documented one.
+- **The two versions producing bit-identical wrong answers is worth weighing.** It is what you
+  would expect from a persistent target-specific backend bug, but equally from source UB that
+  both versions exploit the same way, so it does not settle the question — it only shows the
+  behaviour is deterministic rather than a random codegen accident.
+
+**Compiler versions in play (they were never harmonised, which hid this):** Linux `release/`
+(the reference binary) used **plain `gfortran` = GCC 13.3.0**, Linux `build-rel/` and GitHub CI
+use **gfortran-14**, and this Mac used **14.3 and now 16.1**. The committed reference `stdout`
+files predate all of it and do not record what produced them — which is why the run banner now
+stamps compiler and LAPACK version (`CMakeLists.txt` → `macros.in` → `molecule.main.foo`,
+ignored by `scripts/test.py`).
+
 **Left to do:**
+- Decide the harmonisation: pick one reference compiler across Mac, Linux and CI. Worth doing
+  with data — check whether GCC 16 reproduces the *same suite numbers* before switching, since
+  otherwise the choice is between re-blessing references and staying put.
 - Measure the runtime cost of `-O2` on this file (it is the ERI hot path). If negligible, stop.
 - Consider a GCC bug report. The ingredients are unusually strong: bit-identical source, two
   platforms disagreeing, and a self-validating oracle (an SCF energy below the variational

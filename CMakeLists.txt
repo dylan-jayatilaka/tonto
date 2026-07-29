@@ -221,6 +221,24 @@ message(STATUS "Fortran Compiler flags: ${CMAKE_Fortran_FLAGS}")
 message(STATUS "CXX Compiler Flags: ${CMAKE_CXX_FLAGS}")
 message(STATUS "C Compiler Flags: ${CMAKE_C_FLAGS}")
 
+# Provenance stamped into the run banner (see molecule.main.foo). Recording the
+# compiler and the LAPACK version makes every stdout self-documenting, so a
+# cross-platform comparison does not have to guess what produced each side. This
+# was added after a numerical discrepancy between macOS and Linux turned out to
+# be a compiler miscompilation, while the two boxes were also unknowingly using
+# different gfortran versions AND different LAPACKs -- none of it visible in the
+# output. NOTE: scripts/test.py must ignore these lines (prefixes_to_ignore) or
+# every reference comparison breaks.
+set(TONTO_COMPILER "${CMAKE_Fortran_COMPILER_ID} ${CMAKE_Fortran_COMPILER_VERSION}")
+if(DEFINED LAPACK_VERSION)
+    set(TONTO_LAPACK "${LAPACK_VERSION}")
+elseif(COMPILE_LAPACK)
+    set(TONTO_LAPACK "bundled reference (netlib)")
+else()
+    set(TONTO_LAPACK "unknown")
+endif()
+message(STATUS "Provenance: compiler ${TONTO_COMPILER}, LAPACK ${TONTO_LAPACK}")
+
 # Macros
 set(MACROS ${PROJECT_BINARY_DIR}/macros)
 configure_file(
