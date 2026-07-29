@@ -573,6 +573,33 @@ significant figure, or a last-digit wobble on a near-zero value. They pass the l
 runner/CPU (BLAS / eigensolver ordering, FP reassociation) flips the verdict — this is the
 **CI flake** seen on GitHub Actions (same binary, pass on one runner, fail on the next).
 **Dylan wants to drill down** on each and fix the root cause, not merely tolerate them.
+
+### Negative ESDs out of the least-squares variance-covariance matrix
+
+**Found 2026-07-29** while tracking down `urea_lamaGOET_grown_CIF`. Instrumenting the ADP
+columns showed that, of the five atoms, **two carry tiny *negative* esds** in the U13/U23
+columns (`e_neg = 2`, `e_tiny = 2`, alongside two that are exactly zero):
+
+```
+DBG prec ....... 5      DBG e_neg ...... 2      DBG e_zero ..... 2
+```
+
+An esd is a square root and cannot be negative. **Dylan's reading: this comes from the least
+squares — the variance-covariance matrix is not right, either a genuine error in its
+construction or undefined behaviour.** Noise pushing a diagonal element slightly below zero
+would do it, but that should be understood rather than clamped.
+
+The *formatting* consequence has been fixed (`REAL:get_dp_de_le` now takes `abs(error)` before
+`log10`, which was previously invalid for a negative argument and gave platform-dependent
+decimal counts — 6 on Linux/x86, 2 on macOS/arm64). **That fix makes the output well-defined;
+it does not make the esds correct.** The underlying negative variance is still there and is the
+thing to chase.
+
+Where to start: the ADP esds reach the CIF writer via `put_ADP2_errors_to`, which scales values
+taken from `.xray_data.covariance_mx`. Worth checking whether the negatives are present in the
+covariance matrix diagonal itself or are introduced by the transformation into the ADP basis,
+and whether a debug build with `-fcheck=all`/`-ffpe-trap` catches anything in that path.
+
 Examples so far:
 
 | Test | Difference | Likely cause |
