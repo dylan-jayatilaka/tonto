@@ -162,15 +162,40 @@ components of other derived types), and every `use TYPES_MODULE` site plus the t
 `.use`-file generation must follow. Check whether the translator can emit the split
 automatically from one `types.foo` rather than requiring the source be broken up by hand.
 
-## Deferred: atomic (guess) SCF fails for partly-filled degenerate shells
+## RESOLVED (was: atomic (guess) SCF fails for partly-filled degenerate shells)
 
-**Found 2026-07-28** while diagnosing the macOS rgbi deviations. `make_ANOs` now **DIEs** when
-an atomic SCF does not converge (it previously carried on silently), and the guess-SCF option
-whitelist in `molecule.set.foo` was widened so iteration/damping/level-shift settings can
-actually be set from input. Two follow-ups remain.
+**There was no SCF instability.** The diverging boron atomic SCF found on 2026-07-28 was a
+*symptom* of the gfortran miscompilation of `shell1quartet.F90` (see "verify the macOS build"
+below): the two-electron integrals were wrong, so the atomic SCF was iterating on a corrupted
+Fock matrix. With the compiler workaround in place boron converges normally, the `DIE` does not
+fire, and rgbi/BN reproduces the Linux reference **exactly**. Nothing here needs fixing in the
+SCF or in the physics.
 
-**Origin of the instability — NOT yet identified.** Several plausible explanations have been
-tested and *refuted*; record them so they are not re-proposed.
+**Kept, because they stand on their own merits:**
+
+- **`make_ANOs` DIEs on a non-converged atomic SCF** (`molecule.scf.foo`). It previously
+  collected the per-atom `converged` flag, printed it only in verbose mode, and carried on —
+  so ANOs built from a garbage iterate silently corrupted every quantity derived from the
+  atomic projectors while molecular totals still looked plausible. Refusing to continue is
+  right regardless of what caused the non-convergence, and it is exactly the check that would
+  have surfaced this class of fault sooner.
+- **The widened guess-SCF whitelist** (`molecule.set.foo`). Only `output`, `initial_MOs`,
+  `initial_density`, `convergence`, the DIIS tolerance and `relativity_kind` were copied from
+  the parent, so `max_iterations`/damping/level-shift given in the input were silently
+  discarded and a failing guess SCF could not be rescued from the input file at all.
+
+**Retired follow-ups.** Two items were queued here — calibrating "sensible" guess-SCF recovery
+options, and adding a tiny symmetry-breaking charge to make the atomic SCF deterministic. Both
+were motivated purely by the phantom instability and are **no longer needed**. Worth keeping
+from that discussion, though: the textbook remedy of spherically-averaged *fractional*
+occupations does **not** apply here, because UHF requires integer occupancy of spin orbitals —
+so if a genuine degeneracy problem ever does appear, the degeneracy must be *lifted*, not
+averaged over.
+
+**The cautionary tale.** Every hypothesis below was tested against the real code and refuted,
+one after another. In hindsight they all failed for the same reason: they were searching for a
+*physics* cause of a *compiler* artefact. The tell was there early — the same input gave
+different answers on different platforms — and it deserved more weight than it got.
 
 | Hypothesis | Verdict |
 |---|---|
@@ -183,85 +208,35 @@ tested and *refuted*; record them so they are not re-proposed.
 | Loose guess tolerances (1e-3 vs 1e-5) | **Refuted** — standalone boron converges at every combination of `convergence`/DIIS tolerance |
 | Wrong atom setup in the guess | **Refuted** — guess reports B, charge 0, multiplicity 2, 5 e⁻ (3α/2β), all correct |
 
-**Key remaining clue:** boron converges perfectly well in a *standalone* UHF job, and fails only
-inside the **guess** SCF path (`make_ANOs_for_atom` → `atomic_SCF`). The untested difference is
-the **basis set** — the standalone tests used cc-pVDZ, while the guess inherits the basis from
-the molden file. Note the guess run reports a smallest overlap eigenvalue of 0.012 and runs a
-linear-dependence projection. **Next step: run a standalone boron atom in the molden's basis.**
+**Do not trust the numbers in that table as physics.** Everything above was measured on
+*miscompiled* binaries, so quantities like the "two converged boron solutions 0.57 Ha apart"
+(−24.3378 vs −23.7663) are artefacts of wrong two-electron integrals, not evidence of an SCF
+pathology or of basin-hopping. They are kept only as a record of what was tried.
 
-Also unexplained, and probably the deeper issue: the two "converged" boron solutions differ by
-**0.57 Ha** (−24.3378 vs −23.7663). Symmetry-equivalent solutions (occupying pₓ vs p_y vs p_z)
-are *isoenergetic*, and after the spherical averaging already performed in `make_ANOs_for_atom`
-they would give **identical** ANOs. A 0.57 Ha gap therefore means these are **genuinely
-different electronic states, not rotations of one another** — one of them is not the ground
-state. This is the argument against orientation drift (and against a maximum-overlap /
-MOM-style orbital-tracking fix) being the mechanism: such a fix arbitrates *which* degenerate
-orbital is occupied, but equivalent choices were never the problem.
-
-Compounding whatever the root cause is, the defaults withdraw all stabilisation exactly when
-DIIS starts:
+One observation from that work is still true and worth knowing, since it is a property of the
+defaults rather than of the bug: the guess SCF withdraws **all** stabilisation at exactly the
+iteration DIIS takes over —
 
 ```
 level shift 0.30, quits at 3   |   damping 0.50, quits at 3   |   DIIS extrapolates from 3
 ```
 
-Fine when the first three iterations settle; fatal when they do not — restoring damping and
-level shift well past iteration 3 does make boron converge.
+That is fine when the first three iterations settle, and unforgiving when they do not. It did
+not cause this failure, but it is a thin margin for any genuinely hard atom.
 
-**Related defect:** a `DIE` leaves the process **exit status 0**. `scripts/test.py` uses
-`subprocess.check_call`, so a DIE is not detected as a run failure — only the output diff
-catches it. Worth fixing so hard errors are unambiguous to CI.
+### Retired: (a) sensible guess-SCF recovery options, (b) symmetry-breaking charge
 
-### (a) Suggest sensible guess-SCF recovery options
+Both were queued to tame an instability that turned out not to exist. The `DIE` message no
+longer prescribes any values (it names the relevant keywords only), so nothing extreme is
+enshrined, and the tiny-charge idea has no problem left to solve. The `SCF_DATA` machinery it
+would have used (`.cluster_charges`, `.cluster_charge_positions`,
+`set_using_cluster_charges()`) is noted here only in case a genuine degeneracy problem ever
+does turn up.
 
-The options currently named in the DIE message were chosen only to *force* convergence in one
-experiment and are **deliberately extreme** (Dylan): `damp_factor= 0.85`, `damp_finish= 800`,
-`level_shift= 1.0`, `level_shift_finish= 800`, `max_iterations= 2000`. Work out values that are
-merely sensible — enough to carry a degenerate-shell atom past the DIIS handover without
-crawling — and put those in the message (and consider them as guess defaults). The message has
-since been reduced to naming the keywords, with no values, so nothing extreme is enshrined.
-
-### (b) Make the atomic SCF deterministic — tiny symmetry-breaking charge
-
-**Note first (Dylan):** the usual textbook remedy, spherically averaged *fractional*
-occupations, **does not apply** — UHF requires integer occupancy of spin orbitals. So the
-degeneracy has to be lifted rather than averaged over.
-
-**Dylan's idea:** place one tiny positive charge to stabilise the orbitals along a chosen
-direction, giving a unique lowest solution that the SCF finds deterministically. The subsequent
-spherical averaging already in `make_ANOs_for_atom` (`make_r_density_mx` + `symmetrize` with the
-`"oh"` pointgroup) then removes the axis dependence from the density.
-
-*Why this matters beyond convergence:* even when boron was forced to converge, the two LAPACKs
-landed in **different basins** (−24.3378 vs −23.7663 Ha, both flagged converged; tightening the
-tolerance to 1e-8 changed nothing). A DIE catches non-convergence but not basin-hopping — only
-lifting the degeneracy does.
-
-*Implementation sketch.* The machinery exists: `SCF_DATA` has `.cluster_charges` and
-`.cluster_charge_positions` with `set_using_cluster_charges()`. In `make_ANOs_for_atom`, after
-`.set_molecule_from_atom(a,mol)` and alongside the existing `mol.SCF_data.set_is_guess(TRUE)`
-(which currently switches cluster charges *off*), set a single charge `+q` on the z-axis at
-distance `R`. Open questions to settle:
-
-- **Choosing q and R.** The p-splitting must exceed the rounding noise that causes basin-hopping
-  yet leave the converged density negligibly perturbed. Splitting falls off steeply with R, so
-  a small q at moderate R may beat a tiny q nearby. Needs calibration against the observed
-  −24.34/−23.77 basin gap.
-- **Whether to remove the charge for a final few iterations** once the solution is selected, so
-  the converged state is the unperturbed one.
-- **Only for atoms that need it?** Half-filled/full shells converge fine; applying the charge
-  everywhere would shift every ANO-derived reference value.
-
-*Alternatives worth weighing:* seed the initial density with an axial bias instead of a real
-perturbation (selects the same solution, no physical charge in the Hamiltonian); or generate
-ANOs from a restricted-open/fractional calculation used *only* to build a spherical density,
-since the ANO generator needs a good spherical density rather than a variational UHF state.
-
-**Scope note:** this explains BN. A survey of the rgbi diatomics found only BN has a
-non-converged atomic SCF; C2, CN-, CO, F2, N2, NF and O2 all converge with atomic energies
-*bit-identical* across LAPACKs, yet still deviate from the Linux reference — N2 is even
-identical between the two Mac binaries. Those deviations are a separate, Mac↔Linux
-(arch / `-ffast-math`) matter.
+**Related defect, still open and unrelated to the above:** a `DIE` leaves the process **exit
+status 0**. `scripts/test.py` uses `subprocess.check_call`, so a hard error is not detected as
+a run failure -- only the output diff catches it. Worth fixing so failures are unambiguous to
+CI.
 
 ## Future task: test the MPI parallel build
 
