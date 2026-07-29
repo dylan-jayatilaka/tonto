@@ -716,7 +716,60 @@ that trap when timing truncated runs.
 **Open:** where the 46 s actually goes (convergence is not the lever), and why the vdW indices
 are the platform-sensitive part.
 
-### Negative ESDs out of the least-squares variance-covariance matrix
+### PRIORITY, NOT STARTED: NaN and negative ESDs from the least-squares variance-covariance matrix
+
+**This is the live thread — pick it up here.** Two impossible esd values are confirmed by
+instrumentation, in two different tests. An esd is a square root: it can be neither negative
+nor NaN. Per Dylan the source is the **least squares — the variance-covariance matrix is not
+right**, either a genuine error in its construction or UB.
+
+**Evidence (both from probes inserted in `TABLE_COLUMN:set_values_and_errors`, since removed):**
+
+| test | finding |
+|---|---|
+| `short/urea_lamaGOET_grown_CIF` | ADP U13/U23 columns: `e_neg = 2`, `e_zero = 2` of 5 rows — two **negative** esds |
+| `long/urea_rhf_STO-3G_HAR` | one ADP column: **`e_nan = 1`**, with `prec_out = 5` (i.e. the column precision was normal — the *data* is bad, not the formatting) |
+
+The `e_nan` probe result also killed the competing explanation that the column precision was
+simply small (`max_dp=1` would give `dp=2` innocently); `prec_out` was 5 in every column.
+
+**What has been fixed — formatting only, NOT the numbers.** `REAL:get_dp_de_le` now guards with
+`NOT (abs_error>ZERO)`, which catches zero *and* NaN in one test (every comparison against NaN
+is false), and takes `abs()` for the negative case. Previously these reached `log10()`, which is
+undefined for both, and under `-ffast-math` rendered as 6 decimal places on Linux/x86 and 2 on
+macOS/arm64 **from identical input** — the whole of the longstanding "zero(error) problem".
+`TABLE_COLUMN:set_values_and_errors` now emits a `WARN` when a column contains a NaN or negative
+esd, deliberately rather than silently printing `(0)`, because a NaN esd rendered as `(0)` is a
+wrong number presented as a confident one.
+
+**So the output is now well-defined and platform-independent; the esds are still wrong.**
+
+**Open question — the warning is debug-only.** `WARN`/`WARN_IF` are gated on
+`USE_PRECONDITIONS` (`macros.in:281`), which release builds do **not** define (only
+`USE_ERROR_MANAGEMENT`, which gates `DIE`). So the new NaN/negative-esd warning **compiles to
+nothing in a release build**: a production run silently prints `(0)` for a NaN esd. That is
+defensible for a programmer precondition, but this is a statement about the **validity of
+numbers written into a CIF** — possibly a published one. Options if that is judged wrong:
+promote it to something always-on (not `WARN`), which changes output and forces a re-bless; or
+leave it debug-only and rely on the upstream fix. Decision deferred, deliberately.
+
+**Where to start looking:** the ADP esds reach the CIF/table writers via `put_ADP2_errors_to`,
+which scales values taken from `.xray_data.covariance_mx`. Questions in order:
+
+1. Is the NaN/negative already present in the covariance matrix **diagonal**, or introduced by
+   the transformation into the ADP basis? Print the diagonal before and after.
+2. If it is in the diagonal — is it a `sqrt` of a negative, a `0/0`, or an uninitialised
+   element? A debug build with `-fcheck=all -ffpe-trap=invalid,zero,overflow` should trap at the
+   point of creation rather than at the point of printing.
+3. Note `-ffast-math` is in force in release builds, so NaN-producing operations are *not*
+   guaranteed to behave predictably; the debug build is the right place to chase this.
+
+**Caveat on the NaN test itself:** `e/=e` is the standard NaN check but `-ffast-math` permits
+the compiler to assume no NaNs and fold it away. It demonstrably *worked* with the current flags
+(the probe found the NaN), but do not rely on it silently — verify it still detects when flags
+change. The guard in `get_dp_de_le` uses `NOT (abs_error>ZERO)` partly for this reason.
+
+### Superseded detail: negative ESDs (kept for the record)
 
 **Found 2026-07-29** while tracking down `urea_lamaGOET_grown_CIF`. Instrumenting the ADP
 columns showed that, of the five atoms, **two carry tiny *negative* esds** in the U13/U23
