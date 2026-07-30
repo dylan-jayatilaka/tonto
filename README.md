@@ -1,12 +1,14 @@
 # Tonto
 
-[![CI (Linux)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml)
-<!-- Debug-build badge, disabled 2026-07-30: the workflow was not working, and its
-     automatic triggers are commented out in .github/workflows/ci-debug.yml.
-     Restore both together.
-[![CI (debug)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml)
+[![CI (Linux-release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml)
+<!-- Linux-debug badge, disabled 2026-07-30: the workflow's automatic triggers are
+     commented out in .github/workflows/ci-debug.yml. Its failure (a relative
+     --program path in scripts/test.py) is fixed but not yet proven green.
+     Restore both together -- see docs/CI.md.
+[![CI (Linux-debug)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml)
 -->
-[![CI (WSL)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml)
+[![CI (WSL-release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml)
+[![CI (WSL-debug)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml)
 
 Tonto is a quantum chemistry and crystallography package, with a focus on
 Hirshfeld atom refinement, structure factor calculation, and

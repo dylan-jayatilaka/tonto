@@ -22,7 +22,7 @@ Then, **inside** the Ubuntu shell:
 
 ```bash
 sudo apt update
-sudo apt install -y gfortran-14 libblas-dev liblapack-dev default-jdk \
+sudo apt install -y gcc gfortran-14 libblas-dev liblapack-dev default-jdk \
                     python3 perl make cmake git gnuplot
 
 # Clone into your Linux home -- NOT into /mnt/c. See "Where to put the code".
@@ -176,6 +176,21 @@ wsl --set-version Ubuntu-24.04 2
 | `-DTONTO_WSL=OFF` | Disables WSL handling entirely, including the `PATH` sanitising. |
 | `-DTONTO_WSL_KEEP_WINDOWS_PATH=ON` | Keeps `/mnt/*` on `PATH` while searching for tools. |
 | `-DTONTO_WSL=ON` | Forces the WSL path on a non-WSL host (used by the tests). |
+
+## `gcc` is not optional, and not implied by `gfortran`
+
+Tonto is declared `project(tonto LANGUAGES Fortran C)`, so CMake needs a **C**
+compiler as well as a Fortran one. A freshly installed WSL Ubuntu has neither, and
+`gfortran-14` pulls in `gcc-14-base` but *not* the `gcc` driver — so installing only
+`gfortran-14` gets you as far as:
+
+```
+CMake Error at CMakeLists.txt:16 (project):
+  No CMAKE_C_COMPILER could be found.
+```
+
+Ubuntu CI runners and most desktop installs ship `gcc` already, which is why this
+only bites on a bare WSL image. `scripts/wsl_doctor.sh` checks for it.
 
 ## Not covered
 

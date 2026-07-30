@@ -1,18 +1,25 @@
 # Continuous integration — what runs, and how to run it yourself
 
-Three workflows, in `.github/workflows/`. All of them are free: `tonto` is a public
-repository, so GitHub-hosted standard runners have unlimited minutes. What differs
-between them is **wall-clock time**, which is why they are not all wired to every push.
+Four workflows, in `.github/workflows/`, named `(platform)-(build type)`. All of them
+are free: `tonto` is a public repository, so GitHub-hosted standard runners have
+unlimited minutes. What differs between them is **wall-clock time**, which is why they
+are not all wired to every push.
 
 | Workflow | File | Badge | Runs | Time |
 |----------|------|-------|------|------|
-| **CI (Linux)** | `ci.yml` | yes | every push / PR to `antlr4`, `master`, `release` | ~15–20 min |
-| **CI (WSL)** | `ci-wsl.yml` | yes | `guards` job on every push; the full WSL build weekly, on demand, and when the WSL machinery changes | ~1 min / ~40–70 min |
-| **CI (debug)** | `ci-debug.yml` | **disabled** | manual only | ~15 min |
+| **CI (Linux-release)** | `ci.yml` | yes | every push / PR to `antlr4`, `master`, `release` | ~15–20 min |
+| **CI (WSL-release)** | `ci-wsl.yml` | yes | `guards` job on every push; the full WSL build weekly (Mon), on demand, and when the WSL machinery changes | ~1 min / ~40–70 min |
+| **CI (Linux-debug)** | `ci-debug.yml` | **disabled** | manual only | ~15 min |
+| **CI (WSL-debug)** | `ci-wsl-debug.yml` | yes, but **never yet run green** | weekly (Tue) and on demand | ~60–90 min |
 
-All three gate on the same **loose** criterion as `scripts/test.py` — relative
-error ≤ 0.2 % **or** last printed digit within ±2 — so their verdicts are directly
-comparable with each other and with a local `make report`.
+The two release workflows gate on the **loose** criterion from `scripts/test.py` —
+relative error ≤ 0.2 % **or** last printed digit within ±2 — so their verdicts are
+directly comparable with each other and with a local `make report`. The two debug
+workflows deliberately do **not** run the suite at all; see below.
+
+One wrinkle in the naming: the fast `guards` job lives inside **CI (WSL-release)**
+even though what it tests (`cmake/WSL.cmake`) is not release-specific. It is there so
+that WSL work gets a signal on every push without a fifth badge.
 
 ---
 
@@ -26,14 +33,15 @@ workflow up there, whatever branch you then ask it to run against. If the file o
 exists on a feature branch, the *Run workflow* button never appears and the CLI
 reports that the workflow has no `workflow_dispatch` trigger.
 
-So while `ci-wsl.yml` and the disabled `ci-debug.yml` live only on `antlr4`, neither
-can be started by hand. Merge to `master` first, or rely on the automatic triggers —
-pushing to `antlr4` runs `ci-wsl.yml` anyway.
+So while `ci-wsl.yml`, `ci-wsl-debug.yml` and the disabled `ci-debug.yml` live only on
+`antlr4`, none of them can be started by hand. Merge to `master` first, or rely on the
+automatic triggers — pushing to `antlr4` runs `ci-wsl.yml` anyway.
 
 ### From the command line
 
 ```bash
 gh workflow run ci-wsl.yml --ref antlr4 -f run_full_build=true
+gh workflow run ci-wsl-debug.yml --ref antlr4    # takes no inputs
 gh workflow run ci-debug.yml --ref antlr4        # takes no inputs
 ```
 
@@ -64,7 +72,7 @@ artifacts on both success and failure.
 
 ---
 
-## CI (Linux) — `ci.yml`
+## CI (Linux-release) — `ci.yml`
 
 The reference build. Ubuntu, `gfortran-14`, release, then the short suite through
 `scripts/suite_report.py`. It also runs the **invariant checks**, which compare the
@@ -73,7 +81,7 @@ bases must agree below d functions). Those cannot be silently blessed by regener
 references on a broken build — they exist because a gfortran miscompilation on arm64
 macOS went unnoticed for want of exactly such a check.
 
-## CI (WSL) — `ci-wsl.yml`
+## CI (WSL-release) — `ci-wsl.yml`
 
 Two jobs, because they cost very different amounts of wall-clock. See
 [`BUILD_WSL.md`](BUILD_WSL.md) for what is being guarded and why.
@@ -102,7 +110,43 @@ If a runner image ever loses nested virtualisation, WSL2 will fail to start; dro
 `wsl-version` to `'1'` in the workflow (WSLv1 has been available since `windows-2019`)
 and expect the WSL1 warning to appear in the configure log.
 
-## CI (debug) — `ci-debug.yml`, currently disabled
+### What the first real run found: `gcc`
+
+Run 30581657238 brought WSL2 up fine and then failed in the guard-assertion step:
+
+```
+::error::rejected, but not for the DrvFs reason
+CMake Error at CMakeLists.txt:16 (project):
+  No CMAKE_C_COMPILER could be found.
+```
+
+Tonto is `project(tonto LANGUAGES Fortran C)`, and a bare WSL Ubuntu image has no C
+compiler — `gfortran-14` pulls in `gcc-14-base` but not the `gcc` driver. Ubuntu CI
+runners ship one preinstalled, so only the WSL jobs could ever hit this. Fixed by
+adding `gcc` to `additional-packages`, to the apt line in `BUILD_WSL.md`, and as a
+check in `scripts/wsl_doctor.sh`.
+
+Worth noting *how* it was caught: the assertion checks the error **message**, not just
+the exit status. `cmake` did fail, and a status-only check would have called that a
+pass and moved on to a build that could never work. `project()` runs before
+`include(WSL)`, so a broken toolchain always reports before the WSL guards get a turn.
+
+## CI (WSL-debug) — `ci-wsl-debug.yml`
+
+The debug counterpart of CI (WSL-release), and the WSL counterpart of CI (Linux-debug):
+a `-DCMAKE_BUILD_TYPE=debug` build inside a real WSL2 Ubuntu, followed by the same two
+fast smoke jobs as `ci-debug.yml`. Weekly on Tuesdays (a day after WSL-release, so two
+hour-long Windows jobs never queue against each other) and on demand. **No push
+trigger** — nothing gates on it.
+
+Under WSL there is more to rot than on Linux: a debug build is far more I/O- and
+fork-heavy than a release one, which is what WSL is worst at.
+
+> **This workflow has never had a green run.** It was written alongside the WSL-release
+> job and shares its setup, but the debug path through WSL is unproven. Treat a first
+> red run as "needs triage", not "the debug build is broken".
+
+## CI (Linux-debug) — `ci-debug.yml`, currently disabled
 
 Builds `-DCMAKE_BUILD_TYPE=debug` and runs two fast jobs to prove the binary executes.
 It exists because the debug build is where `USE_PRECONDITIONS`, `-fcheck=bounds`,

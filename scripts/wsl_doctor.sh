@@ -121,6 +121,22 @@ else
     bad "no gfortran found" "sudo apt install gfortran-14"
 fi
 
+# Tonto is project(tonto LANGUAGES Fortran C), so a C compiler is required too.
+# gfortran-14 pulls in gcc-14-base but NOT the gcc driver, and a bare WSL image
+# has no C compiler at all -- so installing only gfortran gets you as far as
+# "No CMAKE_C_COMPILER could be found". Desktop Ubuntu and CI runners ship one
+# already, which is why this is a WSL-specific trap.
+CC_FOUND=""
+for c in gcc cc clang; do
+    if command -v "$c" >/dev/null 2>&1; then CC_FOUND="$c"; break; fi
+done
+if [ -n "$CC_FOUND" ]; then
+    ok "C compiler: $CC_FOUND ($($CC_FOUND -dumpversion 2>/dev/null))"
+else
+    bad "no C compiler -- cmake needs one for project(tonto LANGUAGES Fortran C), and gfortran does not provide it" \
+        "sudo apt install gcc"
+fi
+
 # The interop PATH is the classic WSL trap: a Windows JDK shadows the Linux one,
 # cannot read /home/... paths, and wants ';' rather than ':' between classpath
 # entries -- which is exactly how the Foo translator is invoked.
