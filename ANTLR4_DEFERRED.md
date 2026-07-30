@@ -753,7 +753,53 @@ numbers written into a CIF** — possibly a published one. Options if that is ju
 promote it to something always-on (not `WARN`), which changes output and forces a re-bless; or
 leave it debug-only and rely on the upstream fix. Decision deferred, deliberately.
 
-**THE PATH IS NOW MAPPED — start here.** Traced 2026-07-29 (static reading, no probe yet):
+**ROOT CAUSE FOUND (2026-07-29) — `sqrt` of a negative variance.** `atom.foo:2144`
+`set_pADP_errors_to(covariance_mx,H_U_iso)`:
+
+```fortran
+covariance_mx.put_diagonal_to(dX)
+dX = sqrt(dX)          ! <- unguarded: negative variance -> NaN
+```
+
+A variance cannot be negative, but if the least-squares variance-covariance matrix is **not
+positive definite** its diagonal can come out slightly negative, and `sqrt` then returns NaN.
+That NaN flows into `.pADP_errors`, into the ADP esds, into the CIF, and was printed as `(0)` —
+a meaningless number wearing the clothes of a confident one. The two symptoms are one mechanism:
+NaN where the `sqrt` is applied, plain negative esds where it is not.
+
+**Guarded (symptom only):** `dX = sqrt(max(dX,ZERO))` plus a `WARN_IF(any(dX<ZERO),...)`, so the
+esd becomes a visible zero rather than a silent NaN. **This does not fix anything scientific** —
+a negative variance still means the refinement's v-cov matrix is wrong.
+
+**AGREED DIRECTION (Dylan): the check belongs at the least-squares / covariance stage, as a
+`DIE`, not a warning here.** Two reasons it is the right call:
+
+- **Severity.** A non-positive-definite v-cov matrix means the refinement did not produce a
+  usable error model. Continuing yields esds that are not merely imprecise but meaningless, and
+  they end up in a CIF that may be published. Failing loudly is correct.
+- **Visibility.** `WARN`/`WARN_IF` are gated on `USE_PRECONDITIONS` (`macros.in:281`), which
+  **release builds do not define** — so any warning is a no-op in production. `DIE` is gated on
+  `USE_ERROR_MANAGEMENT`, which release *does* define. So a `DIE` actually fires where it
+  matters; a `WARN` never would.
+
+So the guard added in `atom.foo` should be regarded as a stop-gap at the wrong layer. The real
+check is upstream, where the covariance matrix is formed — test positive-definiteness (or at
+minimum a non-negative diagonal) there and `DIE` with a message naming the refinement.
+
+**Still open — the actual question: why is the matrix not positive definite?** Candidates: a
+singular or near-singular normal-equations matrix being inverted; an over-parameterised
+refinement (more parameters than the data supports); accumulated rounding in the inversion; or a
+genuine bug in the accumulation. A debug build with `-fcheck=all -ffpe-trap=invalid,zero,overflow`
+should trap at creation. Note `-ffast-math` is on in release, so NaN behaviour there is not
+dependable.
+
+**The earlier trace below was of the WRONG BRANCH — kept as a caution.** `crystal.foo:7842-7844`
+chooses between two `put_CIF` overloads, and these tests take the one *without* a covariance
+matrix, so `make_CIF_esds` is never called for them (verified: a probe there produced no output
+at all in either test). The esds come from the atom's stored `.pADP_errors` instead. The mapped
+path below is real code, but it is not the path these failures take.
+
+**THE (WRONG-BRANCH) PATH, kept for reference.** Traced 2026-07-29 (static reading, no probe yet):
 
 ```
 least squares  ->  .xray_data.covariance_mx            (MAT{REAL}, the v-cov matrix)
