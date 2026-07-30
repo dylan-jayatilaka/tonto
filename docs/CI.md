@@ -8,9 +8,9 @@ are not all wired to every push.
 | Workflow | File | Badge | Runs | Time |
 |----------|------|-------|------|------|
 | **CI (Linux-release)** | `ci.yml` | yes | every push / PR to `antlr4`, `master`, `release` | ~15–20 min |
-| **CI (WSL-release)** | `ci-wsl.yml` | yes | `guards` job on every push; the full WSL build weekly (Mon), on demand, and when the WSL machinery changes | ~1 min / ~40–70 min |
+| **CI (WSL-release)** | `ci-wsl.yml` | yes | `guards` job on every push; the full WSL build when the WSL machinery changes, on demand, and weekly (Mon) *once on `master`* | ~1 min / ~40–70 min |
 | **CI (Linux-debug)** | `ci-debug.yml` | yes | every push / PR to `antlr4`, `master`, `release`, and on demand | ~15 min |
-| **CI (WSL-debug)** | `ci-wsl-debug.yml` | yes, but **never yet run green** | weekly (Tue) and on demand | ~60–90 min |
+| **CI (WSL-debug)** | `ci-wsl-debug.yml` | yes, but **never yet run** | weekly (Tue) and on demand — both need it on `master` first | ~60–90 min |
 
 The two release workflows gate on the **loose** criterion from `scripts/test.py` —
 relative error ≤ 0.2 % **or** last printed digit within ±2 — so their verdicts are
@@ -33,9 +33,15 @@ workflow up there, whatever branch you then ask it to run against. If the file o
 exists on a feature branch, the *Run workflow* button never appears and the CLI
 reports that the workflow has no `workflow_dispatch` trigger.
 
-So while `ci-wsl.yml`, `ci-wsl-debug.yml` and `ci-debug.yml` live only on `antlr4`, none
-of them can be started by hand. Merge to `master` first, or rely on the automatic
-triggers — pushing to `antlr4` runs three of the four anyway.
+**The same rule governs `schedule:`,** and it is easier to miss: cron triggers fire
+**only from the default branch** too. A weekly job defined on a feature branch does not
+run weekly — it does not run at all.
+
+Both consequences are live right now. `ci-wsl.yml`, `ci-wsl-debug.yml` and `ci-debug.yml`
+exist only on `antlr4`, so none of them can be started by hand, and the Monday
+(WSL-release) and Tuesday (WSL-debug) crons are **inert** until those files reach
+`master`. Merge first, or rely on the push triggers — which do work on `antlr4`, and
+cover three of the four workflows.
 
 ### From the command line
 
@@ -94,9 +100,10 @@ Two jobs, because they cost very different amounts of wall-clock. See
 - **`wsl-build`** — a real WSL2 Ubuntu on a Windows runner, ~40–70 min. Re-checks the
   guards against a genuine drvfs mount and interop `PATH`, copies the checkout off
   `/mnt` into `~`, builds, and runs the short suite with the same gate as Linux CI.
-  Runs weekly (Mondays 04:17 UTC), on demand, and on any push touching
+  Runs on any push touching
   `cmake/WSL.cmake`, `CMakeLists.txt`, `CMakePresets.json`, `scripts/wsl_*.sh` or the
-  workflow itself.
+  workflow itself; on demand; and weekly (Mondays 04:17 UTC) once the file is on the
+  default branch — see the schedule caveat above.
 
 The split is about feedback latency and infrastructure flakiness, not money: an hour of
 pending checks on every PR, plus the failure modes of installing a distro on a Windows
@@ -180,8 +187,14 @@ the memory advisory computed `make -j3` from 4 CPUs / 7 GB.
 The debug counterpart of CI (WSL-release), and the WSL counterpart of CI (Linux-debug):
 a `-DCMAKE_BUILD_TYPE=debug` build inside a real WSL2 Ubuntu, followed by the same two
 fast smoke jobs as `ci-debug.yml`. Weekly on Tuesdays (a day after WSL-release, so two
-hour-long Windows jobs never queue against each other) and on demand. **No push
-trigger** — nothing gates on it.
+hour-long Windows jobs never queue against each other) and on demand — both of which
+require the file on `master` first. **No push trigger** — nothing gates on it.
+
+There is little point dispatching this before CI (WSL-release) is green. The two share
+nearly everything that can break — the LF checkout, `setup-wsl` and `gcc`, the copy into
+`~`, the summary staging, and the 184-file translation — and differ only in the `-O0`
+flags and in running two smoke tests instead of the suite. Until the shared path works,
+this job would just rediscover the same failures on a second 7 GB Windows runner.
 
 Under WSL there is more to rot than on Linux: a debug build is far more I/O- and
 fork-heavy than a release one, which is what WSL is worst at.
