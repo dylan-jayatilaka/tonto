@@ -744,6 +744,53 @@ wrong number presented as a confident one.
 
 **So the output is now well-defined and platform-independent; the esds are still wrong.**
 
+#### LOCALISED (2026-07-30): the bad esd sits on a symmetry-constrained-to-zero ADP component
+
+Found by consumer-side probing in `TABLE_COLUMN:set_values_and_errors` under the **gfortran-14
+debug build** (`-DUSE_PRECONDITIONS`, so `PURE` is off and `WARN` is live — see §8 of
+`CLAUDE.md`). Static tracing failed six times on this path; printing from the consumer
+succeeded on the first try. Prefer that direction here.
+
+The probe dumped the offending column in full (`long/urea_rhf_STO-3G_HAR`):
+
+```
+column heading = [U_xy]    subheading = []      n rows = 5   NaN count = 1
+e (esds)  :  1  0.0000   2  0.0000   3  NaN     4  0.0028   5  0.0027
+r (values):  1  0.0000   2  0.0000   3  0.0000  4  0.0000   5  0.0000
+```
+
+**Every data value in the column is exactly zero.** `U_xy` in that axis system is
+**symmetry-constrained to zero** for all five atoms of urea. So the *value* is fixed at zero,
+and it is only its *error* that is broken: two atoms get an exact `0`, two get a plausible
+`~0.003`, and one (row 3, carbon) gets NaN.
+
+This re-frames the bug. The esd of a symmetry-zero component should be identically zero, and
+it is being computed instead as the square root of a quantity that ought to be exactly zero
+but lands slightly **negative** — NaN for one atom, exact zero for the others, i.e. pure
+round-off noise about zero decided the outcome per atom.
+
+**Corroboration that the covariance matrix itself is fine.** Probes A, B and E on
+`.xray_data.covariance_mx` (before *and* after the transform) reported **zero** NaNs and zero
+negatives, and the `sqrt` guard added in `ATOM:set_pADP_errors_to` **never fired**. So the
+defect is *not* in the least-squares covariance as first assumed — it is introduced when the
+ADP errors are transformed into the axis system in which `U_xy` vanishes. Dylan called this:
+"The transformation, linear or non-linear, are implicated."
+
+Independent support from Tonto's own output: the *other* ADP table in the same run prints
+**non-zero** `U_xy` for the same five atoms (`0.0007, -0.0122, 0.0002, -0.039, -0.001`).
+`U_xy` is zero only *after* the transformation — exactly where a transformed variance can
+land on `-1e-19` instead of `0`. That table also carries an `NPD` (non-positive-definite)
+flag per atom, which reads `F` for all five: the ADP matrices themselves are positive
+definite, so it really is their transformed *errors* that go bad.
+
+**Next step:** instrument the ADP error transformation into that axis system (the producer of
+the table headed `#  ID  U_xx  U_yy  U_zz  U_xy  U_xz  U_yz` with the `/A^2` subheading, which
+in the run's `stdout` immediately follows the probe output). Print the pre-`sqrt` quantity for
+each component; expect a small negative for the symmetry-zero ones. The fix is then
+two-legged: clamp at the transformation (`sqrt(max(v,ZERO))`) *and* trap at creation with a
+`DIE` — note `WARN` is debug-only, so a release build would still print `(0)` silently
+(see the `USE_ERROR_MANAGEMENT` note above).
+
 **Open question — the warning is debug-only.** `WARN`/`WARN_IF` are gated on
 `USE_PRECONDITIONS` (`macros.in:281`), which release builds do **not** define (only
 `USE_ERROR_MANAGEMENT`, which gates `DIE`). So the new NaN/negative-esd warning **compiles to
