@@ -7,10 +7,13 @@ in the last columns — how closely each test's output matches its reference
 under three criteria:
 
     exact    byte-for-byte numeric agreement (every printed digit identical)
-    loose    within the relative tolerance (default 0.2%) OR the last-digit
-             tolerance -- this is the verdict that decides pass/fail
     lastdig  within +/- K units of the last printed decimal place (default 2),
              for numbers quoted to low precision
+    loose    within the relative tolerance (default 0.2%) OR the last-digit
+             tolerance -- this is the verdict that decides pass/fail
+
+They are reported in that order, so `loose`, being the combination of the
+other two, sits rightmost of the three verdict columns.
 
 The three criteria and their tolerances are exactly those of
 `scripts/test.py`; this script simply runs test.py per test, parses the
@@ -61,12 +64,18 @@ _ROW = re.compile(
 
 class _Tee:
     """Write to several streams at once — used to mirror the report to stdout and
-    a log file simultaneously."""
+    a log file simultaneously.
+
+    Every write is flushed immediately.  A suite takes minutes and each test
+    contributes one short line, so without this the report sits in an 8 KB
+    buffer and appears all at once when the run ends — which reads exactly like
+    a hang.  The cost is nothing: the report is a few dozen lines in total."""
     def __init__(self, *streams):
         self._streams = streams
     def write(self, s):
         for st in self._streams:
             st.write(s)
+            st.flush()
     def flush(self):
         for st in self._streams:
             st.flush()
@@ -154,8 +163,10 @@ def main():
     relpct = args.rel_tol * 100
     ldk = args.last_digit_tol
     NAMEW = 50
-    hdr = ('%-*s  %-6s %-6s %-7s  %9s  %9s'
-           % (NAMEW, 'test name', 'exact', 'loose', 'lastdig', 'max rel%', 'max LDD'))
+    # Column order: exact, lastdig, then loose LAST -- loose is the OR of the
+    # other two, so it reads naturally as the rightmost of the three verdicts.
+    hdr = ('%-*s  %-6s %-7s %-6s  %9s  %9s'
+           % (NAMEW, 'test name', 'exact', 'lastdig', 'loose', 'max rel%', 'max LDD'))
     grand = {'n': 0, 'exact': 0, 'loose': 0, 'ld': 0, 'err': 0}
     widened = []   # known-marginal tests run with a relaxed bound (reported below)
 
@@ -188,21 +199,25 @@ def main():
         print('_' * 95 + '\n')
         sub = {'n': 0, 'exact': 0, 'loose': 0, 'ld': 0, 'err': 0}
         for t in tests:
+            # Print the name *before* running the test, and only then its
+            # verdict columns, so a slow test shows as a visibly pending line
+            # instead of silence.  Some tests here run for minutes.
+            print('%-*s  ' % (NAMEW, t[:NAMEW]), end='', flush=True)
             r = score_test(test_py, os.path.join(sdir, t), args)
             sub['n'] += 1
             if t in KNOWN_MARGINAL:
                 widened.append(t)
             if r['status'] == 'ERROR':
                 sub['err'] += 1
-                print('%-*s  %-6s %-6s %-7s  %9s  %9s'
-                      % (NAMEW, t[:NAMEW], 'ERROR', 'ERROR', 'ERROR', '-', '-'))
+                print('%-6s %-7s %-6s  %9s  %9s'
+                      % ('ERROR', 'ERROR', 'ERROR', '-', '-'))
                 continue
             sub['exact'] += r['exact']
             sub['loose'] += r['loose']
             sub['ld'] += r['ld']
-            print('%-*s  %-6s %-6s %-7s  %9.3g  %9.3g'
-                  % (NAMEW, t[:NAMEW], yn(r['exact']), yn(r['loose']),
-                     yn(r['ld']), r['max_rel'], r['max_ulp']))
+            print('%-6s %-7s %-6s  %9.3g  %9.3g'
+                  % (yn(r['exact']), yn(r['ld']),
+                     yn(r['loose']), r['max_rel'], r['max_ulp']))
         print('_' * 95 + '\n')
         print('%s subtotal:  loose %d/%d   (exact %d, lastdig %d%s)'
               % (suite, sub['loose'], sub['n'], sub['exact'], sub['ld'],

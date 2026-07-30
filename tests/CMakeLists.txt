@@ -99,7 +99,10 @@ set_tests_properties("spherical_vs_cartesian" PROPERTIES LABELS "short")
 # fully before the driver exits; the driver's exit code is non-zero if any test
 # failed the loose criterion (so `make report` mirrors ctest's pass/fail status).
 add_custom_target(report
-    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/suite_report.py
+    # -u keeps the report streaming when make's output is redirected or piped
+    # (a tty is line-buffered, a pipe is 8 KB-buffered -- which is the whole
+    # report, so it would all appear only at the end and look like a hang).
+    COMMAND python3 -u ${PROJECT_SOURCE_DIR}/scripts/suite_report.py
             --program    ${TONTO_EXE}
             --tests-dir  ${CMAKE_CURRENT_SOURCE_DIR}
             --basis-sets ${BASIS_SETS}
