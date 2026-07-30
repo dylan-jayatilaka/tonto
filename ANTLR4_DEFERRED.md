@@ -1221,3 +1221,74 @@ current work.
 indentation/scoping. Low priority. (Separately, 2026-07-28: `run_mpi_test_complete.foo` had its
 variable declarations moved *inside* the `#ifdef MPI` so they don't trigger unused-variable
 warnings in a non-MPI debug build; this does not remove the parser diagnostic above.)
+
+## Deferred: adopt OpenBLAS consistently (single-threaded) on Linux and WSL
+
+**Decision (2026-07-30): not now.** Do the Mac/Linux numerical comparison first. The intended
+end state is **OpenBLAS, pinned to one thread, on every platform** — matching what macOS already
+does — but getting there means **redoing the reference outputs completely**, so it must not be
+started in the middle of other work.
+
+### What is actually happening today
+
+Measured, not inferred — `ldd release/tonto` links `libblas.so.3` / `liblapack.so.3`, which on
+Debian/Ubuntu are `update-alternatives` symlinks. On the development box exactly one alternative
+is registered (priority 10, from `libblas3` 3.12.1): the **netlib reference BLAS**. OpenBLAS is
+not installed. The WSL CI runner resolves the same way (`Found BLAS:
+/usr/lib/x86_64-linux-gnu/libblas.so`, LAPACK 3.12.0).
+
+| Platform | Selection | Verdict |
+|----------|-----------|---------|
+| macOS | `CMakeLists.txt:110` explicitly prefers Homebrew OpenBLAS over Accelerate, and warns on fallback — because Accelerate's Fortran LAPACK is frozen at 3.2.1 (2009) and on its own flipped `short/h2o_rhf_6-31G(d)_normal_mode_analysis` | Handled |
+| Linux | No `BLA_VENDOR`; bare `find_package(LAPACK)` takes whatever the distro alternative points at. README installs `libblas-dev liblapack-dev` = reference | **Suboptimal** |
+| WSL | Same as Linux; `docs/BUILD_WSL.md` installs the same reference packages | **Suboptimal** |
+
+So the platform that got careful attention is macOS, while the two reference platforms silently
+get the slowest BLAS. That is backwards.
+
+Note the two axes are independent: **LAPACK version** (3.12.x here — modern, so the `ILAVER`
+probe stays quiet) is a correctness/algorithms question; **BLAS implementation** (reference) is a
+speed one.
+
+### How much is actually on the table
+
+Less than it first appears, and the bigger lever is elsewhere. Tonto's LAPACK surface is narrow —
+`dsyev`, `zheev`, `zhpev`, `dgesv`, `dgetrf`/`dgetri`, **all in `mat{real}.foo` / `mat{cpx}.foo`**.
+There is **not one explicit `dgemm` call**. Matrix multiplication goes through the Fortran
+`matmul` intrinsic instead: **375 call sites across 35 files**. By default gfortran services
+`matmul` from libgfortran's own blocked routine, never touching BLAS.
+
+So swapping in OpenBLAS alone accelerates only the eigensolves and linear solves. The flag that
+would route `matmul` to `dgemm` is **`-fexternal-blas`** (with `-fblas-matmul-limit=<n>` as the
+size threshold); it is not set anywhere in `cmake/SetFortranFlags.cmake`. That is plausibly the
+larger win — and a larger numerical perturbation.
+
+Also unquantified: how much of a typical HAR/SCF run is linear algebra at all, versus Tonto's own
+two-electron integral code. Benchmark before believing any of this is worth it.
+
+### Why this forces a full re-bless
+
+Both changes alter summation order, so last digits move; the loose gate (rel ≤ 0.2 % OR
+last-digit ≤ 2) exists precisely for this, and the macOS case above shows a swap *can* flip a
+test outright.
+
+The sharper hazard is **threading**. Reference BLAS is single-threaded; OpenBLAS is not, and its
+results vary with thread *count*, because the blocking — and hence the reduction order — changes.
+Every stored reference in `tests/` was generated against single-threaded reference BLAS. Adopting
+OpenBLAS without pinning threads would produce run-to-run last-digit noise indistinguishable from
+regressions. Hence the decision above: **one thread**, via `OPENBLAS_NUM_THREADS=1`, set in the
+harness (`scripts/test.py` / `scripts/suite_report.py`) so it cannot be forgotten. Multithreaded
+OpenBLAS would also oversubscribe cores in MPI builds.
+
+### Suggested order when this is picked up
+
+1. Finish the Mac/Linux numerical comparison **first** — it is the baseline everything else is
+   measured against, and it must not be perturbed mid-flight.
+2. Benchmark `libopenblas-dev` alone (threads pinned to 1) on one representative HAR job. Record
+   before/after wall-clock **and** the agreement table.
+3. Separately benchmark `-fexternal-blas`, same job, same pinning.
+4. Only then decide whether the measured speedup justifies re-blessing every reference. If it
+   does, re-bless in one deliberate commit across all platforms at once, so Linux, macOS and WSL
+   share a single BLAS story.
+5. Update `README.md`, `docs/BUILD_WSL.md` and `scripts/wsl_doctor.sh` together — they currently
+   tell users to install the reference packages.

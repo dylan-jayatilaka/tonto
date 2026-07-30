@@ -244,16 +244,25 @@ jobs:
 
       - name: Configure
         shell: wsl-bash {0}
+        # $GITHUB_STEP_SUMMARY is a WINDOWS-side variable and is not visible
+        # inside WSL -- and wsl-bash runs `bash -euo pipefail`, so merely
+        # referencing it aborts the step with "unbound variable". (That is how run
+        # 30582988092 failed, *after* configure had completely succeeded.) Stage
+        # the summary in the workspace instead; the Windows-side step at the end
+        # of this job appends it.
         run: |
+          ws="$PWD"
           set -o pipefail
           cd ~/tonto
           cmake -B ~/tonto-build/release \
                 -DCMAKE_Fortran_COMPILER=gfortran-14 \
                 -DCMAKE_BUILD_TYPE=release 2>&1 | tee ~/configure.log
-          echo '## WSL configure log (WSL lines)' >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          grep '^-- WSL:' ~/configure.log >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo '## WSL configure (WSL lines)'
+            echo '```'
+            grep '^-- WSL:' ~/configure.log || true
+            echo '```'
+          } >> "$ws/wsl-summary.md"
 
       - name: Build
         shell: wsl-bash {0}
@@ -269,6 +278,7 @@ jobs:
         # numbers line up column-for-column with the Linux ones and any
         # divergence is visible as a difference rather than a reformat.
         run: |
+          ws="$PWD"
           set -o pipefail
           cd ~/tonto
           {
@@ -277,12 +287,12 @@ jobs:
             echo 'Columns: **Exact / Loose / Last-digit**.  Gate = **Loose** (rel ≤ 0.2% OR last-digit ≤ 2).'
             echo ''
             echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          } >> "$ws/wsl-summary.md"
           python3 scripts/suite_report.py \
             --program ~/tonto-build/release/tonto --tests-dir tests --basis-sets basis_sets \
-            --suites short --log ~/tests.log | tee -a "$GITHUB_STEP_SUMMARY"
+            --suites short --log ~/tests.log | tee -a "$ws/wsl-summary.md"
           status=${PIPESTATUS[0]}
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$ws/wsl-summary.md"
           exit $status
 
       - name: Collect artifacts out of the Linux filesystem
@@ -301,6 +311,18 @@ jobs:
                 | tar -cf - --null -T - 2>/dev/null ) | ( cd "$dest" && tar -xf - ) || true
           fi
           find "$dest" -type f | head -50
+
+      - name: Publish the WSL summary
+        if: always()
+        # Windows-side step (default pwsh), so $env:GITHUB_STEP_SUMMARY is in
+        # scope here even though it is not inside WSL.
+        run: |
+          if (Test-Path wsl-summary.md) {
+            Get-Content wsl-summary.md | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+          } else {
+            "No WSL summary was produced - the job failed before Configure." |
+              Add-Content -Path $env:GITHUB_STEP_SUMMARY
+          }
 
       - name: Upload agreement report + any .bad outputs
         if: always()

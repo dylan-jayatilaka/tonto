@@ -9,7 +9,7 @@ are not all wired to every push.
 |----------|------|-------|------|------|
 | **CI (Linux-release)** | `ci.yml` | yes | every push / PR to `antlr4`, `master`, `release` | ~15–20 min |
 | **CI (WSL-release)** | `ci-wsl.yml` | yes | `guards` job on every push; the full WSL build weekly (Mon), on demand, and when the WSL machinery changes | ~1 min / ~40–70 min |
-| **CI (Linux-debug)** | `ci-debug.yml` | **disabled** | manual only | ~15 min |
+| **CI (Linux-debug)** | `ci-debug.yml` | yes | every push / PR to `antlr4`, `master`, `release`, and on demand | ~15 min |
 | **CI (WSL-debug)** | `ci-wsl-debug.yml` | yes, but **never yet run green** | weekly (Tue) and on demand | ~60–90 min |
 
 The two release workflows gate on the **loose** criterion from `scripts/test.py` —
@@ -33,9 +33,9 @@ workflow up there, whatever branch you then ask it to run against. If the file o
 exists on a feature branch, the *Run workflow* button never appears and the CLI
 reports that the workflow has no `workflow_dispatch` trigger.
 
-So while `ci-wsl.yml`, `ci-wsl-debug.yml` and the disabled `ci-debug.yml` live only on
-`antlr4`, none of them can be started by hand. Merge to `master` first, or rely on the
-automatic triggers — pushing to `antlr4` runs `ci-wsl.yml` anyway.
+So while `ci-wsl.yml`, `ci-wsl-debug.yml` and `ci-debug.yml` live only on `antlr4`, none
+of them can be started by hand. Merge to `master` first, or rely on the automatic
+triggers — pushing to `antlr4` runs three of the four anyway.
 
 ### From the command line
 
@@ -151,6 +151,24 @@ Fixed by configuring git **before** the checkout step, in both WSL workflows:
 - uses: actions/checkout@v4
 ```
 
+### …and the third: `$GITHUB_STEP_SUMMARY` does not exist inside WSL
+
+Run 30582988092 configured **completely successfully** — CMake found LAPACK 3.12.0, every
+WSL guard passed, `Build files have been written` — and then the step failed anyway on:
+
+```
+GITHUB_STEP_SUMMARY: unbound variable
+```
+
+`$GITHUB_STEP_SUMMARY` is a **Windows-side** variable and is not exported into the WSL
+distro, and the `wsl-bash` wrapper runs `bash --noprofile --norc -euo pipefail`, so `-u`
+turns merely referencing it into a fatal error. Nothing to do with Tonto.
+
+Fixed by having the WSL steps stage their summary into `wsl-summary.md` in the workspace,
+and adding a Windows-side step (default `pwsh`, where the variable *is* in scope) that
+appends it. **Anything written from inside `wsl-bash` must follow this pattern** — the
+same applies to `$GITHUB_OUTPUT` and `$GITHUB_ENV`.
+
 That run also confirmed the rest of the machinery on real hardware: WSL 2 comes up on
 `windows-latest` (kernel `6.18.33.2-microsoft-standard-WSL2`, so nested virtualisation
 is available and the `wsl-version: '1'` fallback is not needed), the PATH sanitiser
@@ -172,16 +190,15 @@ fork-heavy than a release one, which is what WSL is worst at.
 > job and shares its setup, but the debug path through WSL is unproven. Treat a first
 > red run as "needs triage", not "the debug build is broken".
 
-## CI (Linux-debug) — `ci-debug.yml`, currently disabled
+## CI (Linux-debug) — `ci-debug.yml`
 
 Builds `-DCMAKE_BUILD_TYPE=debug` and runs two fast jobs to prove the binary executes.
 It exists because the debug build is where `USE_PRECONDITIONS`, `-fcheck=bounds`,
 `WARN`/`WARN_IF` and non-`PURE` probing live — it is the build used for all debugging,
 and it silently rotted once already.
 
-**It was not working, so its automatic triggers are commented out and its badge is
-commented out in `README.md`.** A permanently red badge is worse than no badge. Only
-`workflow_dispatch` remains, so it can still be run by hand while being fixed.
+It was switched off on 2026-07-30 because it was failing, and **re-enabled the same day**
+once the cause was found and fixed (below). Its badge is live again.
 
 ### The failure, and its fix
 
@@ -205,13 +222,16 @@ name with no separator is left alone, so it can still be found on `PATH`). Verif
 locally both ways: `--program release/tonto` now passes where it previously raised
 `FileNotFoundError`, and an absolute path — what `ctest` passes — still works.
 
-The workflow is still disabled: the fix is verified for the failing step, but the
-debug job has not yet been run end-to-end since.
+The workflow was re-enabled once that fix was in. The fix is verified for the step that
+failed; the first full green run is still pending, so if the badge is red, read the run
+before assuming the debug build itself is broken.
 
 Its scope was always deliberately narrow: it does **not** run the full short suite,
 because the debug (`-O0`) build has four longstanding FP-boundary/structural failures
 documented in [`../ANTLR4_DEFERRED.md`](../ANTLR4_DEFERRED.md). Widen the scope once
 those are triaged.
 
-**To re-enable:** uncomment the `push`/`pull_request` triggers in `ci-debug.yml` and the
-badge in `README.md` — both together, or the badge points at a workflow that never runs.
+**To disable again**, if it turns red and you want the noise gone: comment out the
+`push`/`pull_request` triggers in `ci-debug.yml` (leave `workflow_dispatch`) and wrap the badge
+in `README.md` in an HTML comment — both together, or the badge points at a workflow that never
+runs.

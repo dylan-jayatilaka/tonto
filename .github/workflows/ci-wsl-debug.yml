@@ -87,7 +87,11 @@ jobs:
 
       - name: Configure (debug)
         shell: wsl-bash {0}
+        # $GITHUB_STEP_SUMMARY is a WINDOWS-side variable, invisible inside WSL,
+        # and wsl-bash runs `bash -euo pipefail` so touching it aborts the step.
+        # Stage the summary in the workspace; a Windows-side step publishes it.
         run: |
+          ws="$PWD"
           set -o pipefail
           cd ~/tonto
           cmake -B ~/tonto-build/debug \
@@ -98,7 +102,7 @@ jobs:
             echo '```'
             grep '^-- WSL:' ~/configure.log || true
             echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          } >> "$ws/wsl-summary.md"
 
       - name: Build (debug)
         shell: wsl-bash {0}
@@ -133,7 +137,8 @@ jobs:
         if: failure()
         shell: wsl-bash {0}
         run: |
-          exec > >(tee -a "$GITHUB_STEP_SUMMARY") 2>&1
+          ws="$PWD"
+          exec > >(tee -a "$ws/wsl-summary.md") 2>&1
           echo '## WSL debug-build diagnostics'
           echo '```'
           cat /proc/sys/kernel/osrelease
@@ -158,6 +163,15 @@ jobs:
                 | tar -cf - --null -T - 2>/dev/null ) | ( cd "$dest" && tar -xf - ) || true
           fi
           find "$dest" -type f | head -50
+
+      - name: Publish the WSL summary
+        if: always()
+        # Windows-side step (default pwsh), where $env:GITHUB_STEP_SUMMARY is in
+        # scope -- unlike inside WSL.
+        run: |
+          if (Test-Path wsl-summary.md) {
+            Get-Content wsl-summary.md | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+          }
 
       - name: Upload diagnostics
         if: always()
