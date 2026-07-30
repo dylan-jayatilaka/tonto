@@ -19,6 +19,13 @@ project(tonto
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
+# WSL (Windows Subsystem for Linux). No-op on every other host. This MUST come
+# before any find_package/find_program: its main job is to take the Windows
+# directories off PATH so that no tool search can resolve to a .exe. See
+# cmake/WSL.cmake and docs/BUILD_WSL.md.
+include(WSL)
+tonto_wsl_preflight()
+
 # Install where?
 set(CMAKE_INSTALL_PREFIX /usr/local CACHE PATH "Install prefix")
 
@@ -31,6 +38,9 @@ option(COMPILE_LAPACK "Use the reference implementation of lapack provided" OFF)
 
 # Java and ANTLR4
 find_package(Java REQUIRED COMPONENTS Runtime Development)
+# Under WSL, reject a Windows JDK: it cannot read Linux paths and wants ';' as
+# its classpath separator, while the translator below is invoked with ':'.
+tonto_wsl_finalize()
 # The ANTLR4 tool is a single "complete" jar. It is a release artefact (NOT part
 # of the antlr4 source repo), so we cannot get it from a git submodule. If it is
 # not already present, download it into external/ (git-ignored) and verify its

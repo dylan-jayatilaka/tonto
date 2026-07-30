@@ -1,0 +1,301 @@
+name: CI (WSL)
+
+# Windows Subsystem for Linux coverage.
+#
+# WSL is how most Windows users reach Tonto, and it looks enough like Ubuntu that
+# the ordinary Linux build "works" -- right up to the point where it does not:
+# a Windows java.exe picked up off the interop PATH, a build tree on /mnt/c, CRLF
+# sources, or the OOM killer arriving because translation starts one JVM per .foo
+# file inside a memory-capped VM. cmake/WSL.cmake guards all four; this workflow
+# checks the guards are right AND that a real WSL build still passes the suite.
+#
+# Two jobs, because they cost wildly different amounts:
+#
+#   guards      ubuntu-latest, ~1 min, runs on EVERY push/PR. Every guard
+#               condition is path- or file-shaped, so scripts/wsl_selftest.sh can
+#               simulate all of them without a Windows machine. This is what the
+#               badge tracks day to day.
+#   wsl-build   windows-latest (billed at 2x) inside a real WSL2 Ubuntu, ~40-70
+#               min. Runs weekly, on demand, and on any push that touches the WSL
+#               machinery. This is the one that proves the real thing works.
+
+on:
+  push:
+    branches: [antlr4, master, release]
+  pull_request:
+    branches: [antlr4, master, release]
+  schedule:
+    # Mondays 04:17 UTC. Off the hour: scheduled jobs bunch up on round numbers
+    # and get delayed.
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      run_full_build:
+        description: 'Run the full WSL build + test job'
+        type: boolean
+        default: true
+
+jobs:
+  # --------------------------------------------------------------------------
+  guards:
+    name: WSL guards (simulated, Linux)
+    runs-on: ubuntu-latest
+    outputs:
+      wsl_touched: ${{ steps.changed.outputs.wsl_touched }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # needed to diff against the base commit below
+
+      - name: Install toolchain
+        # cmake + a JDK are all the self-test needs (it drives cmake/WSL.cmake
+        # through a throwaway harness and compiles no Fortran). gfortran and
+        # BLAS/LAPACK are for the full-project configure at the end of this job;
+        # the system LAPACK in particular keeps CMake off the external/
+        # lapack-release submodule, which this checkout does not fetch.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake make default-jdk gfortran libblas-dev liblapack-dev
+
+      - name: Self-test the WSL guards
+        run: |
+          set -o pipefail
+          {
+            echo '## WSL guard self-test'
+            echo ''
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          ./scripts/wsl_selftest.sh | tee -a "$GITHUB_STEP_SUMMARY"
+          status=${PIPESTATUS[0]}
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      - name: Exercise the preflight doctor
+        # TONTO_WSL_DOCTOR_FORCE runs the whole body on a non-WSL host, so the
+        # doctor's own logic is covered here rather than only on the (rare)
+        # Windows runs. Both polarities are checked: a Linux build directory must
+        # pass, a /mnt/c one must be rejected.
+        run: |
+          export TONTO_WSL_DOCTOR_FORCE=1
+          ./scripts/wsl_doctor.sh "$HOME/tonto-build"
+          if ./scripts/wsl_doctor.sh /mnt/c/Users/me/build; then
+            echo "::error::wsl_doctor.sh accepted a build directory on a Windows drive"
+            exit 1
+          fi
+          echo "doctor correctly rejects a /mnt/c build directory"
+          # And without the override it must be a no-op on this Linux runner.
+          unset TONTO_WSL_DOCTOR_FORCE
+          ./scripts/wsl_doctor.sh | grep -q 'not running under WSL'
+
+      - name: Non-WSL builds must be unaffected
+        # The whole module is meant to be invisible off WSL. Regressions here
+        # would break every Linux and macOS developer, so assert it explicitly --
+        # and this is also the only step that configures the REAL project, so it
+        # catches a WSL.cmake change that breaks CMakeLists.txt outright.
+        run: |
+          cmake -B /tmp/nonwsl -DCMAKE_BUILD_TYPE=release > /tmp/nonwsl.log 2>&1 || {
+            cat /tmp/nonwsl.log; exit 1; }
+          if grep -q '^-- WSL:' /tmp/nonwsl.log; then
+            echo "::error::cmake/WSL.cmake activated on a non-WSL host"
+            grep '^-- WSL:' /tmp/nonwsl.log
+            exit 1
+          fi
+          echo "clean: no WSL handling on an ordinary Linux host"
+
+      - name: Did this change touch the WSL machinery?
+        id: changed
+        # Decides whether the expensive Windows job runs for this push/PR.
+        run: |
+          case "${{ github.event_name }}" in
+            pull_request) base='${{ github.event.pull_request.base.sha }}' ;;
+            push)         base='${{ github.event.before }}' ;;
+            *)            base='' ;;
+          esac
+          touched=false
+          if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            if git diff --name-only "$base" HEAD | grep -qE \
+               '^(cmake/WSL\.cmake|CMakeLists\.txt|CMakePresets\.json|scripts/wsl_.*\.sh|\.github/workflows/ci-wsl\.yml)$'; then
+              touched=true
+            fi
+          fi
+          echo "wsl_touched=$touched" >> "$GITHUB_OUTPUT"
+          echo "WSL machinery touched: $touched"
+
+  # --------------------------------------------------------------------------
+  wsl-build:
+    name: Build + short suite inside real WSL
+    needs: guards
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.run_full_build) ||
+      needs.guards.outputs.wsl_touched == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - name: Check out (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up WSL
+        uses: Vampire/setup-wsl@v7
+        with:
+          distribution: Ubuntu-24.04
+          # WSL2 is what users actually run, and it is what the guards advise
+          # upgrading to. If a runner image ever loses nested virtualisation,
+          # drop to '1' here -- WSLv1 has been available since windows-2019 --
+          # and expect the WSL1 warning to appear in the configure log.
+          wsl-version: '2'
+          update: 'true'
+          additional-packages: >-
+            gfortran-14 libblas-dev liblapack-dev default-jdk
+            python3 perl make cmake git
+
+      - name: Environment
+        shell: wsl-bash {0}
+        run: |
+          echo "kernel : $(cat /proc/sys/kernel/osrelease)"
+          echo "distro : ${WSL_DISTRO_NAME:-?}"
+          gfortran-14 --version | head -1
+          java -version 2>&1 | head -1
+          cmake --version | head -1
+          echo "cwd    : $PWD"
+          df -h . | tail -1
+
+      - name: Guards fire on the real thing
+        shell: wsl-bash {0}
+        # The self-test in the `guards` job simulates these conditions. Here they
+        # are genuine: $PWD really is a Windows drive mounted via drvfs/9p, and
+        # PATH really does carry the Windows directories. Each assertion checks
+        # the exit status AND the message, so a guard that fires for the wrong
+        # reason still fails the job.
+        run: |
+          echo "--- the checkout is on a Windows drive, as GitHub leaves it:"
+          echo "    $PWD"
+
+          echo "--- 1. configuring a build tree here must be REJECTED"
+          if cmake -B ./badbuild -DCMAKE_Fortran_COMPILER=gfortran-14 > cfg.log 2>&1; then
+            echo "::error::cmake accepted a build tree on a Windows drive"
+            cat cfg.log; exit 1
+          fi
+          grep -q 'build tree is on a Windows drive' cfg.log || {
+            echo "::error::rejected, but not for the DrvFs reason"; cat cfg.log; exit 1; }
+          echo "    ok -- rejected with the DrvFs message"
+
+          echo "--- 2. -DTONTO_WSL_STRICT=OFF must downgrade it to a warning"
+          rm -rf ./badbuild
+          cmake -B ./badbuild -DTONTO_WSL_STRICT=OFF \
+                -DCMAKE_Fortran_COMPILER=gfortran-14 > loose.log 2>&1 || {
+            echo "::error::STRICT=OFF did not let configure through"; cat loose.log; exit 1; }
+          grep -q 'build tree is on a Windows drive' loose.log || {
+            echo "::error::STRICT=OFF also silenced the explanation"; exit 1; }
+          echo "    ok -- warned, then proceeded"
+
+          echo "--- 3. the interop PATH must be stripped, and a Linux JDK still found"
+          # Only assert the strip when interop actually gave us something to
+          # strip: a runner (or an /etc/wsl.conf) with appendWindowsPath=false is
+          # a legitimate configuration, not a failure.
+          winpath=$(tr ':' '\n' <<<"$PATH" | grep -c '^/mnt/[A-Za-z]/' || true)
+          echo "    Windows directories on PATH: $winpath"
+          if [ "$winpath" -gt 0 ]; then
+            grep -q 'dropped [1-9][0-9]* Windows PATH entries' loose.log || {
+              echo "::error::PATH carried $winpath Windows entries but none were dropped"
+              grep '^-- WSL:' loose.log; exit 1; }
+            echo "    ok -- they were dropped"
+          else
+            echo "    skipped -- interop appends no Windows directories here"
+          fi
+          java_exe=$(grep -E '^Java_JAVA_EXECUTABLE' ./badbuild/CMakeCache.txt | cut -d= -f2-)
+          echo "    Java_JAVA_EXECUTABLE = $java_exe"
+          case "$java_exe" in
+            /mnt/*|*.exe) echo "::error::CMake selected a Windows JDK"; exit 1 ;;
+          esac
+          echo "    ok -- Windows dirs dropped, Linux JDK selected"
+
+          echo "--- 4. the doctor agrees"
+          ./scripts/wsl_doctor.sh "$HOME/tonto-build" || true
+          if ./scripts/wsl_doctor.sh "$PWD"; then
+            echo "::error::wsl_doctor.sh accepted a build directory on a Windows drive"
+            exit 1
+          fi
+          echo "    ok"
+          rm -rf ./badbuild
+
+      - name: Copy the checkout into the Linux filesystem
+        shell: wsl-bash {0}
+        # This is the documented workflow (docs/BUILD_WSL.md), and CI has to walk
+        # it: building on the drvfs mount where actions/checkout leaves the repo
+        # is both rejected by the guard above and unusably slow.
+        run: |
+          rm -rf ~/tonto
+          time cp -a "$PWD" ~/tonto
+          echo "copied $(du -sh ~/tonto | cut -f1) to ~/tonto"
+
+      - name: Configure
+        shell: wsl-bash {0}
+        run: |
+          set -o pipefail
+          cd ~/tonto
+          cmake -B ~/tonto-build/release \
+                -DCMAKE_Fortran_COMPILER=gfortran-14 \
+                -DCMAKE_BUILD_TYPE=release 2>&1 | tee ~/configure.log
+          echo '## WSL configure log (WSL lines)' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep '^-- WSL:' ~/configure.log >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build
+        shell: wsl-bash {0}
+        # -j2 for the same reason as ci.yml: translation spawns one JVM per .foo
+        # file, and WSL2 hands its VM only part of the runner's RAM. The
+        # configure log's "build with make -jN" line is the advisory version of
+        # this; do not raise it without watching memory.
+        run: cmake --build ~/tonto-build/release -- -j2
+
+      - name: Test (short suite) + agreement report
+        shell: wsl-bash {0}
+        # Deliberately the same driver, gate and flags as ci.yml, so the WSL
+        # numbers line up column-for-column with the Linux ones and any
+        # divergence is visible as a difference rather than a reformat.
+        run: |
+          set -o pipefail
+          cd ~/tonto
+          {
+            echo '## Test agreement report — short suite (WSL)'
+            echo ''
+            echo 'Columns: **Exact / Loose / Last-digit**.  Gate = **Loose** (rel ≤ 0.2% OR last-digit ≤ 2).'
+            echo ''
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          python3 scripts/suite_report.py \
+            --program ~/tonto-build/release/tonto --tests-dir tests --basis-sets basis_sets \
+            --suites short --log ~/tests.log | tee -a "$GITHUB_STEP_SUMMARY"
+          status=${PIPESTATUS[0]}
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      - name: Collect artifacts out of the Linux filesystem
+        if: always()
+        shell: wsl-bash {0}
+        # The upload-artifact action runs on the Windows side and cannot see the
+        # WSL filesystem, so copy anything worth keeping back to the workspace.
+        run: |
+          dest="$PWD/wsl-artifacts"
+          rm -rf "$dest"; mkdir -p "$dest"
+          cp ~/tests.log ~/configure.log "$dest/" 2>/dev/null || true
+          # Preserve the tests/<suite>/<job>/ structure without cp --parents
+          # tripping over the absolute source path.
+          if [ -d ~/tonto/tests ]; then
+            ( cd ~/tonto && find tests -name '*.bad' -print0 \
+                | tar -cf - --null -T - 2>/dev/null ) | ( cd "$dest" && tar -xf - ) || true
+          fi
+          find "$dest" -type f | head -50
+
+      - name: Upload agreement report + any .bad outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-wsl-diagnostics
+          path: wsl-artifacts/
+          if-no-files-found: warn

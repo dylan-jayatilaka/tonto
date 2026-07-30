@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml)
 [![CI (debug)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml)
+[![CI (WSL)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml)
 
 Tonto is a quantum chemistry and crystallography package, with a focus on
 Hirshfeld atom refinement, structure factor calculation, and
@@ -37,8 +38,11 @@ sudo apt install make default-jdk gfortran libblas-dev liblapack-dev python3 gnu
 
 **macOS** → [Building on macOS](https://github.com/dylan-jayatilaka/tonto/wiki/Building-on-MacOS)
 (via Homebrew; Linux/WSL is the reference platform). &nbsp;
-**Windows** → untested natively; **WSL** (then follow the Linux steps) is the
-easy path. See [Building on Windows](https://github.com/dylan-jayatilaka/tonto/wiki/Building-on-Windows).
+**Windows** → untested natively; **WSL** is the easy path, and is covered by CI.
+Follow [**`docs/BUILD_WSL.md`**](docs/BUILD_WSL.md) rather than the Linux steps
+below: WSL adds four traps (a Windows JDK on the interop `PATH`, building on
+`/mnt/c`, CRLF line endings, and the OOM killer) that `cmake` now detects and
+explains. Run `scripts/wsl_doctor.sh` first.
 
 ## 2. Get the code
 

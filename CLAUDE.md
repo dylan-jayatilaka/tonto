@@ -105,6 +105,15 @@ make -j
 Other build types: `debug`, `release-static`, and MPI (`-DCMAKE_Fortran_COMPILER=mpifort …
 -DMPI=1`, optionally `-DNO_ERROR_MANAGEMENT`).
 
+**WSL is a supported build host.** `cmake/WSL.cmake` (included at the top of
+`CMakeLists.txt`, a no-op everywhere else) strips `/mnt/*` off `PATH` before any tool
+search — otherwise `find_package(Java)` resolves to a Windows `java.exe`, which cannot read
+Linux paths and needs `;` classpath separators while the translator is invoked with `:` —
+and hard-errors on a `/mnt/c` build tree or CRLF sources. `-DTONTO_WSL_STRICT=OFF` downgrades
+those to warnings. `scripts/wsl_doctor.sh` is the user-facing preflight;
+`scripts/wsl_selftest.sh` asserts every guard on an ordinary Linux box (no Windows needed) and
+runs on every push via `.github/workflows/ci-wsl.yml`. Details in `docs/BUILD_WSL.md`.
+
 ## 5. Validation
 
 The `antlr4` translator task is **complete**; validation is now **build + `ctest`**:
@@ -134,6 +143,7 @@ once the Parse tree is generated.
 ## 7. Reference docs in this repo
 
 - `docs/FOO_GRAMMAR_DOCUMENTATION.md` — full language description and Foo→Fortran conversion rules.
+- `docs/BUILD_WSL.md` — building under WSL: the four WSL-specific traps, the CMake guards, and how they are tested.
 - `README.md` — install/build/test/run instructions.
 - Project wiki — building on macOS/Windows, how to run tonto (linked from `README.md`).
 
