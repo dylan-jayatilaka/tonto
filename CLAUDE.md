@@ -141,6 +141,41 @@ once the Parse tree is generated.
 
 - Plan before coding; don't run `make` / `ctest` without asking.
 
+### Debugging and instrumenting Foo code — do it in a DEBUG build
+
+Learned the hard way (2026-07-30: five wasted release rebuilds). **Add probes in a `debug`
+build, not `release`.** `DEBUG_FLAGS` defines `USE_PRECONDITIONS`, which in `include/macros.in`:
+
+- **`#undef PURE`** — so a probe can go inside a `PURE` routine. In release, `PURE` is real and
+  any `stdout.show`/`flush` there fails to compile (often with a *misleading* "no specific
+  subroutine for the generic `flush_`" rather than a purity error).
+- **activates `WARN` / `WARN_IF`** — these are gated on `USE_PRECONDITIONS`, *not*
+  `USE_ERROR_MANAGEMENT`, so they compile to **nothing** in release. `DIE`/`DIE_IF` are gated on
+  `USE_ERROR_MANAGEMENT` and *are* live in release. So: a check that must fire in production has
+  to be a `DIE`, not a `WARN`.
+- adds `-fcheck=bounds`, useful given how easy overloading makes an arity/shape slip.
+
+Keep the debug test job **quick** (e.g. `tests/long/urea_rhf_STO-3G_HAR` is ~4 s) so the
+edit-build-run loop stays usable.
+
+**Two further traps, both from Foo's overloading — it makes the code pleasant to *use* and hard
+to *track*:**
+
+1. **Confirm the path executes before analysing it.** A name match is not the overload that
+   runs. `put_CIF`, `make_CIF_esds`, `set_pADP_errors_to`, `put_ADP2_errors_to` and
+   `LS_structure_fit` all exist in several versions, and reading the wrong one wastes a rebuild.
+   Print a bare marker first; only then instrument.
+2. **Generic imports are per-module and inferred from observed calls.** The translator emits each
+   module's `use … only:` list from the calls it finds, so `stdout.show("x",<expr>)` with an
+   argument type that module has not used before gives "no specific subroutine for the generic
+   `show_`" — it cannot resolve e.g. `count(...)` to the INT overload. **Assign to a declared
+   variable first**, then show that.
+
+*Also note:* the `shell1quartet.F90` `-O2` pin (arm64 macOS miscompilation workaround, §2) is
+currently applied in **every** build type, so in a debug build that one file is compiled `-O2`
+while everything else is `-O0`. Harmless for correctness but it hampers debugging that file;
+worth gating on the release configs if it gets in the way.
+
 **Translator build/run (confirmed).** Helper script: `scripts/build_translator.sh`.
 
 ```bash
