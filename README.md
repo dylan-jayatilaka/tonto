@@ -1,7 +1,11 @@
 # Tonto
 
-[![CI](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml)
+[![CI (Linux)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml)
+<!-- Debug-build badge, disabled 2026-07-30: the workflow was not working, and its
+     automatic triggers are commented out in .github/workflows/ci-debug.yml.
+     Restore both together.
 [![CI (debug)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml)
+-->
 [![CI (WSL)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml)
 
 Tonto is a quantum chemistry and crystallography package, with a focus on
