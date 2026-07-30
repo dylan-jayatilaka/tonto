@@ -934,6 +934,67 @@ A threshold-driven "loose pass" gate (candidate for CI, above) absorbs all of th
 What remains for milestone 3 is therefore **not** the release suite (green) but the **debug**
 suite (119/124 — next section) and wiring the release gate into CI.
 
+## DIAGNOSED (2026-07-30): gfortran-**16** DEBUG builds SEGFAULT on arm64 macOS
+
+**Use `gfortran-14` for debug builds on macOS.** `gfortran-16` release is fine on both platforms;
+only its *debug* build is broken, and only (as far as tested) on arm64.
+
+| build | any SCF job |
+|---|---|
+| macOS, gfortran-**16**, debug | **SIGSEGV** (exit 139, ~2 s) |
+| macOS, gfortran-**14**, debug | **runs to completion** — verified `h2o_rhf_STO-3G` and `urea_rhf_STO-3G_HAR` |
+| macOS, gfortran-16, release | fine (119/124) |
+| Linux, gfortran-16, release | fine (123/124) |
+
+**NOT a regression, and not caused by our changes** — I first wrote this up as a regression on the
+strength of the note below saying the debug build "ran every job to completion" on 2026-07-17.
+That note does **not record its platform** (it says only `gfortran-14, -O0 -g`), and since all work
+before 2026-07-28 was on the Linux box, it was almost certainly Linux. **Dylan spotted this.**
+So arm64-macOS debug was simply an **untested configuration**, and gfortran-14 debug works there
+today — which rules out today's commits entirely.
+
+*Consequence for the compiler migration:* the earlier verdict "the gfortran-16 switch is
+numerically free" was established for **release only**, on both platforms. It does **not** extend
+to debug on arm64. Standardising on 16 therefore needs this caveat, or the crash fixed.
+
+**Symptoms** (gfortran-16.1.0, `-DCMAKE_BUILD_TYPE=debug`, tree `debug/`):
+
+| test | result |
+|---|---|
+| `short/h2o_rhf_STO-3G` (plain SCF) | **SIGSEGV**, exit 139, ~2 s |
+| `long/urea_rhf_STO-3G_HAR` | **SIGSEGV**, exit 139 |
+| `short/nh3_rhf_DZP_HAR` | **SIGSEGV**, exit 139 |
+| `short/urea_read_and_process_CIF` (no SCF) | exit 0, fine |
+
+So it correlates with running an SCF, not with the ADP/esd code.
+
+**Ruled out:**
+- **Stack overflow** — raising `ulimit -s` from 8 MB to 64 MB does not help.
+- **The `shell1quartet.F90` `-O2` pin** — that per-source option applies in *every* build type, so
+  in debug that one file is `-O2` while the rest is `-O0`. Recompiling it at `-O0` and relinking
+  still segfaults. (The pin *should* still be gated to release configs for debuggability — see
+  CLAUDE.md §8 — but it is not the cause.)
+
+**Not yet diagnosed.** `lldb` cannot attach in this environment ("attached to process, but could
+not pause execution"), and `-fbacktrace` prints raw addresses only, so there is no symbolic
+backtrace yet. Options, cheapest first:
+
+1. **Compiler-specific — ANSWERED: yes.** gfortran-14 debug runs the same jobs to completion on
+   the same commit, so the fault is in gfortran-16's debug (`-O0`) codegen on arm64.
+2. To localise it: rebuild the gfortran-16 debug tree with `-fcheck=all` (currently only
+   `-fcheck=bounds`) — `-fcheck=pointer` may turn the segfault into a Fortran runtime error
+   naming a line. Note `lldb` cannot attach in this environment, and `-fbacktrace` yields raw
+   addresses only, so a symbolic backtrace needs either `atos` with the load slide or a
+   different debugger.
+3. Worth checking whether a Linux gfortran-16 debug build crashes too (build started; result
+   pending) — that tells us whether it is arm64-specific or general to gfortran-16.
+4. **Also wanted (Dylan): a DEBUG CI job.** Debug is the configuration whose job is to catch
+   crashes and precondition violations, yet nothing checks it — CI builds release only, and the
+   debug status here was two weeks stale, which is why this went unnoticed. Design notes: the 4
+   known debug failures (47, 64, 87, 91) must be recorded as *expected* or the job is red from
+   day one and gets ignored; and `-O0` is slow, so the `short` suite (or a few representative
+   jobs — one SCF, one HAR, one CIF-processing) is the sensible scope.
+
 ## Deferred: debug-build (`-O0`) test failures — floating-point boundary artifacts
 
 > **FIXED & COMMITTED — `process_CSD_cif` (#113) fragment-offset `int()` flip (2026-07-26).**
