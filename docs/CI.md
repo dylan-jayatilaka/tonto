@@ -131,6 +131,32 @@ the exit status. `cmake` did fail, and a status-only check would have called tha
 pass and moved on to a build that could never work. `project()` runs before
 `include(WSL)`, so a broken toolchain always reports before the WSL guards get a turn.
 
+### …and what the second one found: CRLF
+
+With `gcc` installed, run 30582532289 got through WSL setup, the guard assertions
+against a genuine drvfs mount and interop `PATH`, and the copy into `~` — then failed
+in `Configure`, with the CRLF guard firing on `foofiles/types.foo`.
+
+The guard was **correct**. `actions/checkout` runs *Windows* git on a Windows runner,
+and its default `core.autocrlf=true` rewrites every file to CRLF on checkout. Copying
+that into WSL reproduces trap 3 from [`BUILD_WSL.md`](BUILD_WSL.md) exactly, and
+`cmake/WSL.cmake` refused to configure — which is precisely its job.
+
+Fixed by configuring git **before** the checkout step, in both WSL workflows:
+
+```yaml
+- run: |
+    git config --global core.autocrlf false
+    git config --global core.eol lf
+- uses: actions/checkout@v4
+```
+
+That run also confirmed the rest of the machinery on real hardware: WSL 2 comes up on
+`windows-latest` (kernel `6.18.33.2-microsoft-standard-WSL2`, so nested virtualisation
+is available and the `wsl-version: '1'` fallback is not needed), the PATH sanitiser
+dropped **72** Windows directories, a Linux `/usr/bin/cc` and JDK were selected, and
+the memory advisory computed `make -j3` from 4 CPUs / 7 GB.
+
 ## CI (WSL-debug) — `ci-wsl-debug.yml`
 
 The debug counterpart of CI (WSL-release), and the WSL counterpart of CI (Linux-debug):
