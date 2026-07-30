@@ -144,6 +144,7 @@ once the Parse tree is generated.
 
 - `docs/FOO_GRAMMAR_DOCUMENTATION.md` — full language description and Foo→Fortran conversion rules.
 - `docs/BUILD_WSL.md` — building under WSL: the four WSL-specific traps, the CMake guards, and how they are tested.
+- `docs/CI.md` — the three CI workflows, how to trigger one manually, and how to read a run.
 - `README.md` — install/build/test/run instructions.
 - Project wiki — building on macOS/Windows, how to run tonto (linked from `README.md`).
 

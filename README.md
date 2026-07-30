@@ -144,9 +144,11 @@ Tolerances are options on `scripts/suite_report.py` / `scripts/test.py`
 subset. To inspect one failure, compare the reference and `.bad` output in
 `tests/<suite>/<job>/`:  `vimdiff stdout stdout.bad`.
 
-**The CI badge** at the top links to GitHub Actions; open the latest run to see
+**The CI badges** at the top link to GitHub Actions; open the latest run to see
 this same agreement table on its summary page, and download the `tests.log`
 artifact. Green means the short suite passed the loose gate.
+[**`docs/CI.md`**](docs/CI.md) covers what each workflow runs, how to start one by
+hand (`gh workflow run …` or the Actions tab), and how to read the result.
 
 ## 5. Help, bugs, contributing
 

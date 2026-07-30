@@ -195,5 +195,8 @@ Two layers, because they cost very different amounts — see `.github/workflows/
 - **A real WSL2 Ubuntu on a Windows runner** — configures, builds, and runs the short
   suite through `scripts/suite_report.py`, with the same loose gate as Linux CI so the
   numbers are directly comparable. It also re-checks the guards against a genuine drvfs
-  mount and a genuine interop `PATH`. This runs weekly, on demand
-  (`gh workflow run ci-wsl.yml`), and on any push that touches the WSL machinery.
+  mount and a genuine interop `PATH`. This runs weekly, on demand, and on any push that
+  touches the WSL machinery.
+
+See [`CI.md`](CI.md) for how to start either job by hand and how to read the result —
+including the reason a manual run needs the workflow file on the default branch.
