@@ -148,7 +148,17 @@ def main():
                     help='skip the self-validating invariant checks run after the suites')
     args = ap.parse_args()
 
+    # Resolve every path to an absolute one *before* anything runs. The
+    # invariant scripts chdir into a scratch work directory, so a relative
+    # --basis-sets would be resolved against that directory and silently fail
+    # ("could not read the energies"). This is not hypothetical: CI passes
+    # `--basis-sets basis_sets` relative, which broke every invariant check the
+    # moment they started running from this driver, while local runs and the
+    # CMake `report` target -- both of which pass absolute paths -- stayed green.
+    # test.py guards the same way for the same reason.
     args.program = os.path.abspath(args.program)
+    args.basis_sets = os.path.abspath(args.basis_sets)
+    args.tests_dir = os.path.abspath(args.tests_dir)
     if not os.path.exists(args.program):
         sys.exit('error: program not found: %s' % args.program)
     test_py = os.path.join(here, 'test.py')
