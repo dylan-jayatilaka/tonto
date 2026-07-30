@@ -383,6 +383,14 @@ def main():
     args.sbftool = os.path.abspath(args.sbftool)
     args.test_directory = os.path.abspath(args.test_directory)
     args.basis_sets = os.path.abspath(args.basis_sets)
+    # --program too, and for the same reason: subprocess resolves it from inside
+    # the temp directory, so `--program build/tonto` died with a FileNotFoundError
+    # naming a binary that was sitting right there in the invocation directory.
+    # (Left out when the others were absolutised; it broke the debug CI job, and
+    # the default './tonto' has the same flaw.) A bare name with no separator is
+    # left alone so it can still be found on PATH.
+    if os.sep in args.program or os.path.exists(args.program):
+        args.program = os.path.abspath(args.program)
     logging.basicConfig(level=args.log_level)
     io_files = parse_IO_file(join(args.test_directory,'IO'))
     if run_test(args, args.test_directory, io_files):

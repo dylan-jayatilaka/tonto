@@ -113,6 +113,31 @@ and it silently rotted once already.
 commented out in `README.md`.** A permanently red badge is worse than no badge. Only
 `workflow_dispatch` remains, so it can still be run by hand while being fixed.
 
+### The failure, and its fix
+
+Its one and only run (30571546632) built fine and then died in the smoke test with
+
+```
+FileNotFoundError: [Errno 2] No such file or directory: 'build-debug/tonto'
+```
+
+while the diagnostics step, three seconds later in the same directory, happily
+`ls`-ed a 100 MB `build-debug/tonto`. The binary was never missing: `run_test()` in
+`scripts/test.py` chdir's into a temp directory before launching the program, so a
+**relative** `--program` is resolved from there and vanishes. `main()` already
+absolutised `--sbftool`, `--test-directory` and `--basis-sets` for exactly this
+reason — `--program` had been left out of that list, and the default `./tonto` had
+the same flaw. `ci.yml` was unaffected only because it happens to pass
+`-p "$PWD/build/tonto"`.
+
+Fixed in `scripts/test.py` by absolutising `--program` alongside the others (a bare
+name with no separator is left alone, so it can still be found on `PATH`). Verified
+locally both ways: `--program release/tonto` now passes where it previously raised
+`FileNotFoundError`, and an absolute path — what `ctest` passes — still works.
+
+The workflow is still disabled: the fix is verified for the failing step, but the
+debug job has not yet been run end-to-end since.
+
 Its scope was always deliberately narrow: it does **not** run the full short suite,
 because the debug (`-O0`) build has four longstanding FP-boundary/structural failures
 documented in [`../ANTLR4_DEFERRED.md`](../ANTLR4_DEFERRED.md). Widen the scope once
