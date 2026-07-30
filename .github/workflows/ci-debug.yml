@@ -1,0 +1,74 @@
+name: CI (debug)
+
+# Debug-build CI, separate from ci.yml so it gets its own badge.
+#
+# SCOPE, deliberately narrow: this builds `-DCMAKE_BUILD_TYPE=debug` and runs a
+# couple of fast jobs to prove the binary actually executes. It does NOT run the
+# full short suite yet, because the debug (-O0) build has 4 longstanding
+# FP-boundary/structural failures documented in ANTLR4_DEFERRED.md; wiring those
+# in now would give a permanently red badge, which is worse than no badge.
+# Widen the scope once those four are triaged.
+#
+# Why a debug job exists at all: the debug build is where preconditions
+# (USE_PRECONDITIONS), -fcheck=bounds, WARN/WARN_IF and non-PURE probing live,
+# so it is the build used for all debugging -- and it silently rotted (gfortran
+# -16 debug segfaults on arm64 macOS, found 2026-07-30). A build+smoke gate stops
+# that class of rot recurring unnoticed.
+on:
+  push:
+    branches: [antlr4, master, release]
+  pull_request:
+    branches: [antlr4, master, release]
+
+jobs:
+  build-debug:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gfortran-14 libblas-dev liblapack-dev \
+            default-jdk python3 perl gnuplot make cmake
+
+      - name: Configure (debug)
+        run: >
+          cmake -B build-debug
+          -DCMAKE_Fortran_COMPILER=gfortran-14
+          -DCMAKE_BUILD_TYPE=debug
+
+      - name: Build (debug)
+        # -j2 as in ci.yml: translation spawns one JVM per .foo file and the
+        # runner has ~7 GB. Do not raise without watching RAM.
+        run: cmake --build build-debug -- -j2
+
+      - name: Smoke test (the binary must run, not just link)
+        # Two fast jobs. The point is to catch a debug binary that builds but
+        # dies immediately -- exactly the arm64 gfortran-16 segfault mode --
+        # rather than to police numerics, so the tolerances are loose on purpose.
+        run: |
+          set -o pipefail
+          for t in h2o_rhf_STO-3G h2o_rhf_cc-pVDZ; do
+            echo "== $t =="
+            python3 scripts/test.py \
+              --test-directory "tests/short/$t" \
+              --basis-sets basis_sets \
+              --program build-debug/tonto \
+              --log-level=ERROR
+          done
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          exec > >(tee -a "$GITHUB_STEP_SUMMARY") 2>&1
+          echo '## Debug-build diagnostics'
+          echo '```'
+          gfortran-14 --version | head -1 || echo "gfortran-14 MISSING"
+          ls -l build-debug/tonto || echo "no debug binary"
+          echo '```'

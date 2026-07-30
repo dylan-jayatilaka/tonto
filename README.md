@@ -1,6 +1,7 @@
 # Tonto
 
 [![CI](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml)
+[![CI (debug)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml)
 
 Tonto is a quantum chemistry and crystallography package, with a focus on
 Hirshfeld atom refinement, structure factor calculation, and
