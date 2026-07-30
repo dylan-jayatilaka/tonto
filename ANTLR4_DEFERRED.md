@@ -783,7 +783,68 @@ land on `-1e-19` instead of `0`. That table also carries an `NPD` (non-positive-
 flag per atom, which reads `F` for all five: the ADP matrices themselves are positive
 definite, so it really is their transformed *errors* that go bad.
 
-**Next step:** instrument the ADP error transformation into that axis system (the producer of
+#### ROOT CAUSE FOUND AND FIXED (2026-07-30) — `long/urea_rhf_STO-3G_HAR`
+
+Probing the pre-`sqrt` variances in `VEC{ATOM}:get_ADP2s_in_ADP2_principal_axes_in`, scaled by
+1e20 because `stdout.show`'s 4-dp default hid everything (the real variances are ~1e-6, so at
+the default format *every* value printed as `0.0000` — rescale before concluding anything):
+
+| atom | component | variance |
+|---|---|---|
+| 1 (O) | `U_xy` | **+4.0e-23** |
+| 3 (C) | `U_xy` | **-1.3e-23** |
+| 1, 3 | `U_xz`, `U_yz` | exactly 0 |
+| any | `U_xx`, `U_yy`, `U_zz` | ~1e-6 |
+
+The bad variance is **seventeen orders of magnitude** below the genuine ones on the same row.
+Oxygen's noise landed positive (`sqrt` → 6e-12, printed `0.000000(0)`); carbon's landed
+negative (`sqrt` → NaN, printed `0.00000(0)`). Same computation, same magnitude, opposite sign
+— the platform decides. That is the entire defect.
+
+**Why those components are special, stated correctly.** In this frame each atom's ADP tensor has
+been diagonalized, so the off-diagonal *values* are zero by construction. Their *variances* are
+**not** required to be zero — they measure how well determined the principal-axis *directions*
+are. In urea, O and C sit on the 2mm axis, so their axes are symmetry-fixed and the true
+variance is zero (hence the round-off); N1 lies on a mirror plane and keeps orientational
+freedom, so its off-diagonal variance is a real 3.8e-7 (~18% of its diagonal ones) and its
+`0.000000(8)` esd is **physically meaningful**. Any fix must keep N1's and kill O's and C's.
+
+**The fix** (in both `get_ADP2s_in_ADP2_principal_axes_in` and `get_ADP2s_in_new_axes_in`):
+
+```
+tol = 1.0d-9*maxval(abs(dU))
+DIE_IF(any(dU<-tol),"negative variance in the rotated ADP2 covariance matrix")
+where (dU<tol) dU = ZERO
+dU = sqrt(dU)
+```
+
+The clamp is **symmetric** — it zeroes round-off-level *positive* variances too, so the printed
+esd no longer depends on which side of zero the noise fell, i.e. it is platform-independent.
+That also removes the last of the "zeros not aligned" formatting difference: O and C now both
+print `0.00000(0)`, while N1 correctly keeps `0.000000(8)`. The relative tolerance does the
+discriminating. Both routines lost their `PURE` attribute, because `DIE` is live in release
+(`USE_ERROR_MANAGEMENT`) where `PURE` is real; they run once per printed table, so the cost is nil.
+
+**Second bug found in the same place (independently spotted by Dylan).** In
+`get_ADP2s_in_new_axes_in` — the routine already carrying `! WARNING: PROBLEM WITH THIS ROUTINE?
+Dylan 25/11/2024` — the loop wrote `rcm.put_diagonal_to(dU(n,1:6))` where `n` is set to `.dim`
+*before* the loop and never incremented. So every iteration overwrote the **last** row and rows
+`1..dim-1` were never assigned at all, then square-rooted as uninitialised heap. The tell is the
+inconsistency within one loop: `U` is indexed by `a`, `dU` by `n`. The sibling principal-axes
+routine gets away with `n` only because it does `n = 0` / `n = n+1`. Fixed to `dU(a,1:6)`.
+
+**Still open — a second, independent site.** `short/urea_lamaGOET_grown_CIF` still emits 4
+`negative esd` warnings, and they come from the **`put_cif`** path, not from the ADP2
+transformation fixed here (they appear immediately after `keyword found --> put_cif`). Same class
+of defect, different route; note the earlier finding that `make_CIF_esds` is never called for
+these tests, so the CIF esds come from the atom's stored `.pADP_errors`. Pick that up next.
+
+**Naming hazard noted (Dylan):** the local `rcm` in these routines is a *rotated covariance
+matrix* (it is the result of `rotated_U2_covariance_mx_for_atom`), but `rcm` conventionally reads
+as *reciprocal cell matrix*. 30 occurrences across the ADP2/3/4 analogues; worth renaming to
+`rcov`, but not folded into this correctness fix.
+
+**(Superseded) Next step:** instrument the ADP error transformation into that axis system (the producer of
 the table headed `#  ID  U_xx  U_yy  U_zz  U_xy  U_xz  U_yz` with the `/A^2` subheading, which
 in the run's `stdout` immediately follows the probe output). Print the pre-`sqrt` quantity for
 each component; expect a small negative for the symmetry-zero ones. The fix is then
