@@ -10,6 +10,8 @@ references:
   documentation graphs) → [`docs/CALL_GRAPHS.md`](CALL_GRAPHS.md).
 - **The Foo language and Foo→Fortran conversion rules** →
   [`docs/FOO_GRAMMAR_DOCUMENTATION.md`](FOO_GRAMMAR_DOCUMENTATION.md).
+- **What helps (and hinders) an AI assistant working in this codebase**, measured
+  → §3 below.
 
 ---
 
@@ -135,3 +137,114 @@ HTTPS). Prefer SSH above; the embedded-token URL below is the least secure optio
    it in **plaintext** in `.git/config` and exposes it via `git remote -v`, so treat
    that clone as sensitive and never paste the URL into logs or issues. If a token
    leaks, revoke it at the link above and issue a new one. (This is why SSH is preferred.)
+
+---
+
+## 3. Insights into coding with an AI assistant
+
+Much of the recent translator and numerics work was done with Claude (Anthropic's
+coding assistant) working directly in this repository. This section records what
+made that go well or badly, because the findings are concrete, measurable, and —
+usefully — **they are the same things that help a human reader.**
+
+### The question
+
+*Does a codebase written in a deliberately English-like style — long descriptive
+names, heavy explanatory comments — actually make an AI assistant more effective
+at working in it? If so, by how much, and can the assistant introspect on why?*
+
+Tonto is an unusually good place to ask, because it was written that way on
+purpose (originally to help its author, not any machine), and because the same
+codebase contains a few places that sharply violate the convention. Those act as
+a control.
+
+### What Tonto's style actually is, measured
+
+Across the 184 `.foo` files:
+
+| metric | value |
+|---|---|
+| comment lines | 83,439 — **28.7%** of non-blank lines |
+| comment : code | **0.40 : 1** |
+| unique procedure names | 4,258 |
+| mean words per procedure name | **3.37** |
+| mean characters per procedure name | **17.4** |
+| names of ≥ 3 words | **76%** |
+| single-word names | **6%** |
+
+For comparison, typical scientific Fortran sits nearer 0.10–0.15 comment:code.
+Names here are sentences rather than labels: `rotated_U2_covariance_mx_for_atom`,
+`get_ADP2s_in_ADP2_principal_axes_in`, `put_ADP2s_helper`.
+
+### The evidence that it helps — and the control that shows it
+
+During one debugging session (tracking a NaN in an ADP estimated standard
+uncertainty) both effects appeared in the same afternoon:
+
+- **Where names were prose, navigation was fast and correct.** The faulty routine
+  was located largely by *reading names*: `rotated_U2_covariance_mx_for_atom`
+  states what it returns without needing to be opened.
+
+- **Where the convention breaks, the same assistant failed repeatedly.** Tonto
+  overloads heavily — seven procedures share the name `put_ADP2_errors_to`,
+  distinguished only by argument list. Tracing which one actually ran failed
+  **six consecutive times**. The eventual fix was to stop reading and start
+  printing: instrument the *consumer* and let it name its caller. Same repository,
+  same assistant, same day — the variable was whether the name identified the thing.
+
+- **A single abbreviation cost real time.** The local `rcm` in the ADP routines
+  means *rotated covariance matrix*, but in crystallography `rcm` reads as
+  *reciprocal cell matrix*. One abbreviation embedded in a sea of prose is worse
+  than either convention applied consistently, because it invites a confident
+  wrong reading.
+
+**The practical rule:** the thing that most degrades an AI assistant's accuracy
+here is not complexity or size — it is **a name that does not uniquely identify
+what it names**. Overloading is wonderful when writing and expensive when
+debugging, for humans and machines alike.
+
+### A concrete improvement this suggests
+
+The translator already resolves every call site to a specific procedure — that is
+how it emits each module's `use … only:` list. That resolution is exactly the
+information a reader lacks at an overloaded call site. Emitting it — a per-module
+map of `file:line  .generic_call(args) → specific_procedure`, or the resolved
+name as a comment on the generated call — would turn a multi-step inference into
+a grep, for humans and assistants both. It costs little, because the data already
+exists inside the translator. (Not yet implemented; recorded here as a good idea.)
+
+A second, cheaper trick from the same session: because the generated Fortran gives
+each overload a *distinct* specific name, a `DIE` compiled with `-fbacktrace`
+identifies the routine and its callers in one run — which would have replaced a
+dozen rebuild-and-print cycles.
+
+### What the assistant could *not* do — worth knowing
+
+Asked whether it could introspect its own network and quantify which parts were
+exercised, Claude's answer was a flat no: no access to weights, activations or
+attention, and no ability to count anything about its own computation. It also
+flagged that its account of *why* it writes heavy comments is a **post-hoc
+narrative rather than a readout of mechanism** — it can say what considerations
+appear to bear on its output, but not verify those are the causes.
+
+That distinction is worth keeping in mind generally when working this way: an
+assistant's measurements *of your code* are checkable, and were checked here; its
+statements *about itself* are not, and should be discounted accordingly. In this
+session the pattern held more broadly — every claim that survived was one that had
+been reduced to a command someone could re-run.
+
+### If you are working on Tonto this way
+
+- Keep writing names as phrases. It is the single highest-value habit in the code.
+- Prefer a distinct name over a new overload when the two versions differ in
+  *meaning* (whole-array vs list-subset); reserve overloading for genuine
+  same-meaning variants. Where they differ only in arity, one routine with
+  `OPTIONAL` arguments is clearer — though note optional arguments imply a presence
+  test and can inhibit inlining, so keep them out of hot numeric kernels.
+- Comment the *why*, not the *what*. The comments that repeatedly paid off here
+  were the ones recording a decision or a hazard — `! WARNING: PROBLEM WITH THIS
+  ROUTINE?` on `get_ADP2s_in_new_axes_in` was correct, and the bug it hinted at
+  (a loop index that never advanced, leaving rows of an array unwritten) was found
+  and fixed years later because that note was there.
+- Debug in a `debug` build (`-O0`), where `PURE` is disabled and `WARN`/`WARN_IF`
+  are live — see §8 of [`CLAUDE.md`](../CLAUDE.md).
