@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import logging
+import re
 from tempfile import gettempdir
 import getpass
 from getpass import getuser
@@ -98,6 +99,19 @@ def num_decimals(s):
     return dec
 
 
+# A crystallographic value-with-uncertainty, e.g. "0.034873(16)" or
+# "-0.0012(19)": the bracketed digits are the estimated standard uncertainty
+# expressed in units of the value's last decimal place.
+_VALUE_ESD = re.compile(
+    r'^([-+]?(?:\d+\.?\d*|\.\d+)(?:[EeDd][-+]?\d+)?)\((\d+)\)$')
+
+
+def split_value_esd(tok):
+    """("0.034873(16)") -> ("0.034873", "16"), else None."""
+    m = _VALUE_ESD.match(tok)
+    return (m.group(1), m.group(2)) if m else None
+
+
 def token_agreement(a_str, b_str, rel_tol, abs_tol, last_digit_tol):
     """Agreement of one numeric token pair (b_str = reference value).
     Returns a dict of verdicts + metrics, or None if the pair is non-numeric.
@@ -107,6 +121,31 @@ def token_agreement(a_str, b_str, rel_tol, abs_tol, last_digit_tol):
       ld_ok  : |a-b| <= last_digit_tol * 10**-d(b)    (a couple of last places)
       loose  : rel_ok OR ld_ok  (OR within abs_tol, for near-zero values)
     """
+    # A value-with-uncertainty is a NUMBER, not an opaque string. Without this
+    # it fell through to the "non-numeric tokens must match exactly" branch, so
+    # 0.034873(16) vs 0.034872(16) -- a difference of one sixteenth of the
+    # value's own quoted error bar -- hard-failed every criterion and bypassed
+    # both tolerances, producing verdicts like "rel<=0.2%=FAIL(max 0.00317%)".
+    # Since value(esd) is most of the crystallographic output, that meant most
+    # of it was effectively compared byte-for-byte.
+    va, vb = split_value_esd(a_str), split_value_esd(b_str)
+    if va and vb:
+        ag = token_agreement(va[0], vb[0], rel_tol, abs_tol, last_digit_tol)
+        if ag is None:
+            return None
+        # Compare the esds as absolute quantities, since the two sides may be
+        # printed to different precision (the esd digits alone are in units of
+        # each value's own last place, so they are not directly comparable).
+        # An esd is the least precisely determined number on the line -- it is
+        # itself an estimate -- so allow it the same last-digit slack.
+        ua = 10.0 ** (-num_decimals(va[0]))
+        ub = 10.0 ** (-num_decimals(vb[0]))
+        esd_ok = abs(int(va[1]) * ua - int(vb[1]) * ub) <= last_digit_tol * max(ua, ub)
+        ag['exact'] = (a_str == b_str)      # keep "exact" byte-for-byte
+        ag['rel_ok'] = ag['rel_ok'] and esd_ok
+        ag['ld_ok'] = ag['ld_ok'] and esd_ok
+        ag['loose_ok'] = ag['rel_ok'] or ag['ld_ok']
+        return ag
     if not (is_float(a_str) and is_float(b_str)):
         return None
     a, b = float(a_str), float(b_str)
