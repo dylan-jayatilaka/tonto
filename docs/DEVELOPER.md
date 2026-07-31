@@ -203,20 +203,40 @@ here is not complexity or size — it is **a name that does not uniquely identif
 what it names**. Overloading is wonderful when writing and expensive when
 debugging, for humans and machines alike.
 
-### A concrete improvement this suggests
+### Tracing an overload: use the `.int` file first
 
-The translator already resolves every call site to a specific procedure — that is
-how it emits each module's `use … only:` list. That resolution is exactly the
-information a reader lacks at an overloaded call site. Emitting it — a per-module
-map of `file:line  .generic_call(args) → specific_procedure`, or the resolved
-name as a comment on the generated call — would turn a multi-step inference into
-a grep, for humans and assistants both. It costs little, because the data already
-exists inside the translator. (Not yet implemented; recorded here as a good idea.)
+**Most of what is needed already exists**, and was overlooked during the six failed
+traces above. Each module's generated `.int` file lists every generic together with
+its candidate specific procedures, which the translator has given *distinct* names:
 
-A second, cheaper trick from the same session: because the generated Fortran gives
-each overload a *distinct* specific name, a `DIE` compiled with `-fbacktrace`
-identifies the routine and its callers in one run — which would have replaced a
-dozen rebuild-and-print cycles.
+```fortran
+interface put_ADP2_errors_to_
+   module procedure put_ADP2_errors_to_0
+   module procedure put_ADP2_errors_to_1
+end interface
+```
+
+So the first move when chasing an overload is: **open `<module>.int` in the build
+tree and read the candidate list.** It is generated on every build and is always
+current.
+
+Two things it does not yet give:
+
+1. **Which candidate a given call site picks.** The `.int` says there are two
+   candidates; it cannot say that the call at `vec{atom}.foo:17301` resolves to
+   `_1`. The translator *does* know — that is how it emits each module's
+   `use … only:` list — so a per-module map of
+   `file:line  .generic_call(args) → specific_procedure` could be emitted at near
+   zero cost, either into the `.int` or beside it.
+2. **What `_0` and `_1` mean.** The numbering is opaque, so each definition must
+   still be opened to learn which argument list is which. Annotating each
+   `module procedure` line with its signature would make the `.int` a usable
+   overload index on its own — probably the highest value-for-effort change here.
+
+Both compose with a second trick: because the specific names are distinct in the
+generated Fortran, a `DIE` compiled with `-fbacktrace` names the exact routine and
+its callers in **one run**, and that name (`put_ADP2_errors_to_1`) maps straight
+onto the `.int` list — replacing a dozen rebuild-and-print cycles.
 
 ### What the assistant could *not* do — worth knowing
 

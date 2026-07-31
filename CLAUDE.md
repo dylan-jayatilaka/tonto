@@ -172,6 +172,25 @@ edit-build-run loop stays usable.
 **Two further traps, both from Foo's overloading — it makes the code pleasant to *use* and hard
 to *track*:**
 
+0. **Tracing an overload? Read the `.int` file first.** For each generic, the
+   generated `<module>.int` in the build tree lists the candidate specific
+   procedures under their *distinct* translator-assigned names:
+
+   ```fortran
+   interface put_ADP2_errors_to_
+      module procedure put_ADP2_errors_to_0
+      module procedure put_ADP2_errors_to_1
+   end interface
+   ```
+
+   This is the fastest way to learn how many overloads a name has and what they are
+   called in the generated Fortran. It does **not** say which one a given call site
+   resolves to, nor what `_0`/`_1` mean — for that, either open the definitions, or
+   put a `DIE` in the suspect routine and build with `-fbacktrace`, which names the
+   specific procedure *and* its callers in one run. Six consecutive mis-traces of
+   `put_ADP2_errors_to` (2026-07-30) were spent inferring by hand what these two
+   steps answer directly. See §3 of `docs/DEVELOPER.md`.
+
 1. **Confirm the path executes before analysing it.** A name match is not the overload that
    runs. `put_CIF`, `make_CIF_esds`, `set_pADP_errors_to`, `put_ADP2_errors_to` and
    `LS_structure_fit` all exist in several versions, and reading the wrong one wastes a rebuild.
