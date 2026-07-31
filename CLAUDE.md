@@ -267,6 +267,32 @@ loose ctest suite as the full build.
    build has 4 longstanding FP-boundary/structural failures (#47/#64/#87/#91) that are not
    translator bugs and are documented in `ANTLR4_DEFERRED.md`; CI runs the short release suite.
 
+**Milestones 4 and 5 — the remaining work on this project** (agreed 2026-07-31). These two are
+independent and can run in parallel; milestone 5 is the more important, and should be **planned
+before any code is written**, most likely in its own conversation (`/clear`).
+
+4. ⬜ **MPI parallel build + numeric comparison.** Build with
+   `-DCMAKE_Fortran_COMPILER=mpifort -DCMAKE_C_COMPILER=mpicc -DCMAKE_CXX_COMPILER=mpicxx
+   -DMPI=1` (optionally `-DNO_ERROR_MANAGEMENT`) and compare against the serial references with
+   the usual loose gate. **Expect numeric drift**: reduction order varies with rank count, and
+   some of it is genuine UB — per Dylan, "numerics might go off — no worries, we'll check". The
+   deliverable is a *characterisation* (which tests drift, by how much, and whether the drift is
+   rank-count dependent), not necessarily a green suite. Untested since before the ANTLR4 work.
+
+5. ⬜ **`hart` — verify, test, document, and make it work with `fragHAR`.** `hart` is the
+   standalone Hirshfeld-atom-refinement executable (`build/hart`, `hart -help`) and is currently
+   **unverified**: it has no test jobs at all, so nothing in `ctest`/`make report` exercises it.
+   Scope:
+   - confirm the program actually works, and fix what does not;
+   - **devise a testing method and add test jobs** for it — this is the substantive design
+     question, since `hart`'s interface is command-line/option driven rather than the `stdin`
+     job-file style the harness is built around;
+   - correct its **options, calls and documentation** so they match reality;
+   - make it work **seamlessly with `fragHAR`**, i.e. crystals with more than one molecule in
+     the asymmetric unit. (Note `tests/long/gly_ala_fragHAR_rhf_STO-3G` exercises `fragHAR`
+     through `tonto`, and Dylan's `gaussian-IAM` branch carries a commit "fragHAR fixed,
+     gly_ala test and others need to be modified/checked" — read that before starting.)
+
 **Open items** (future directions; details in `ANTLR4_DEFERRED.md`)
 
 - **Grammar still ACCEPTS the old submodule call forms** (`.SET:proc`, `.MAIN:proc`, `STR::proc`)
@@ -277,7 +303,8 @@ loose ctest suite as the full build.
 - Future tasks (own conversations): a module-level *call* graph in `writeDotFiles` (the
   `--simplify`/`--module` **use**-graph tooling is DONE — `scripts/simplify_callgraph.py`,
   `docs/CALL_GRAPHS.md`); introduce Fortran-2008 `submodule` constructs; test the MPI parallel
-  build; boilerplate doc comments; and (long-term) a possible move off Fortran.
+  build; boilerplate doc comments; and (long-term) a possible move off Fortran. (Testing the MPI build
+  is now milestone 4 above.)
 
 > Submodules ARE implemented (dotted headers + colon call forms parse & auto-resolve; commit
 > `4cd995df`), and translator build/run commands are recorded in §8 — both former open items done.
