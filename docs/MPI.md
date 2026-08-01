@@ -263,8 +263,8 @@ hoc:
 | `molecule.put.foo` `.wfn` writer (~20 statements) | correctly wrapped in one `IO_IS_ALLOWED` block |
 | `crystal.foo:8826` | correctly guarded |
 | `molecule.put.foo` `put_NBO_file_47` (13 statements) | **was unguarded** — fixed here |
-| `plot_grid.foo:2280` | **unguarded** `read(textfile.unit,*)` on every rank; also needs the result broadcast |
-| `archive.foo:2687, 2712, 2763` | **unguarded** stream writers (VAPOR, stream, VTK). Each rank opens with its own `newunit`, so no crash — all ranks write the *same filename* concurrently. Silent corruption. |
+| `plot_grid.foo:2280` | **fixed** — guarded *and* the result broadcast (this one needed both halves) |
+| `archive.foo:2687, 2712, 2763` | **fixed** — master-only. Each rank had its own `newunit`, so no crash: all ranks wrote the *same filename* concurrently. Silent corruption. |
 
 Because the silent regimes (preconnected unit 6; per-rank `newunit` on the same filename) do not
 announce themselves, an audit by inspection is not enough. The durable fix is a **translator
@@ -286,6 +286,42 @@ suspect the optimisation flags before the rank count.
 `max rel %` is the worst single token in a test's output, so "0 change" means the *worst* token
 did not move; sub-threshold movement elsewhere is not excluded. The `exact` counts corroborate
 the picture though: 45/46 exact matches are preserved at ×1 and only one is lost at ×2.
+
+### Defect register
+
+Every MPI defect found, and whether it announces itself. **"Silent" is the dangerous column** —
+those produce wrong numbers or corrupt files with no error at all.
+
+| # | Site | What goes wrong under MPI | Loud? | Status |
+|---|------|---------------------------|-------|--------|
+| 1 | `molecule.grid.foo` ×4 | Reduction written inside its own `parallel do` → dead code; each rank keeps 1/N of the answer | **Silent** | **Fixed** |
+| 2 | `parallel.foo` `parallel_symmetric_sum_23` | Triangle buffer sized from `dim1` not `dim2` → heap overflow on every call | **Silent** | **Fixed** |
+| 3 | `molecule.fock.foo` ×3 | CIS/TDHF: `F`/`K` never reduced, or a reduced quantity mixed with a per-rank one | **Silent** | **Fixed** |
+| 4 | `molecule.put.foo` `put_NBO_file_47` | 13 raw writes on a *redirected* unit → negative unit | Loud (crash) | **Fixed** |
+| 5 | `plot_grid.foo:2280` | `read(textfile.unit,*)` on every rank; result also needed broadcasting | Loud | **Fixed** |
+| 6 | `archive.foo` ×3 (VAPOR/stream/VTK) | Every rank opens the **same filename** with its own valid unit | **Silent** (corruption) | **Fixed** |
+| 7 | `molecule.har.foo:1346` | `parallel_write` — same file from every rank, on units never opened | Loud | Open |
+| 8 | `system.foo:260` | Seeds not cloned; two broadcasts inside a master-only guard | Silent now, **deadlock** if naively "fixed" | Open |
+| 9 | `system.foo:564` | `MPI_ABORT` commented out → one rank dying hangs the whole job | Hang | Open |
+| 10 | `parallel.foo:6452` | `fragment_SCF_para` RMA: out-of-bounds read on the terminating fetch, every run | **Silent** | Open |
+| 11 | `molecule.prop.foo:6118` | QTAIM: out-of-bounds at `nprocs==1`, sends to a non-existent rank, `MPI_FINALIZE` mid-run | Loud | Open |
+
+### Why they hid, and what actually closes each class
+
+Fixing the sites one by one is not the point — they were all *findable in principle* and none had
+been found, because nothing made them announce themselves. Each class needs a different defence:
+
+| Class | Why it was invisible | Defence |
+|-------|----------------------|---------|
+| Dead reductions (1–3) | `PARALLEL_*` is a silent no-op while the loop lock is held, so a reduction in the loop body reads as careful code and does nothing | **`parallel do … reduce(x)`** — the translator emits it in the one correct place, so it cannot be misplaced |
+| Raw I/O on a redirected unit (4, 5, 7) | Nothing hid it — it crashes. But only once somebody actually runs MPI, which had never happened | Guard, plus a **translator lint** on `write(`/`read(` over any `*.unit` |
+| Raw I/O on preconnected unit 6 | `TEXTFILE_STD_OUT_UNIT` is valid on *every* rank, so output is silently duplicated rather than failing | **Invalid `stdout.unit`/`std_err.unit` on non-master** in `create_stdout`/`create_std_err` — turns this class into the loud one |
+| Raw I/O with its own `newunit` (6) | Each rank holds a genuinely valid unit; only the *filename* collides | Lint, plus per-rank filenames where parallel writing is actually intended |
+| Collectives in rank-dependent branches (8) | Currently unreachable, so it looks fine — and becomes a deadlock the moment the ordering is corrected | **Abort on a suppressed collective** under `USE_PRECONDITIONS` |
+
+The three defences in bold are milestone 6. Between them they close every row in the register,
+including the ones not yet fixed — which is the argument for doing milestone 6 rather than
+continuing to fix sites individually.
 
 ### Conclusion
 
