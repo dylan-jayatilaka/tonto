@@ -1292,3 +1292,189 @@ OpenBLAS would also oversubscribe cores in MPI builds.
    share a single BLAS story.
 5. Update `README.md`, `docs/BUILD_WSL.md` and `scripts/wsl_doctor.sh` together — they currently
    tell users to install the reference packages.
+
+---
+
+## MPI: defects found during milestone 4 (2026-08-01)
+
+Found while building Tonto with MPI for the first time — **no MPI build had ever been
+configured**, in CI or in any local build tree, so none of this had been exercised. Items marked
+**FIXED** were repaired as part of milestone 4 because they produce wrong answers and would have
+made the numeric characterisation meaningless; the rest are recorded with evidence.
+
+### The root cause behind most of these: the `parallel do` lock is invisible
+
+`FooToFortran` lowers `parallel do` to `PARALLEL_DO_START/STRIDE` bounds plus a
+`LOCK_PARALLEL_DO(tag)` emitted as **the first statement inside the loop body**, with
+`UNLOCK_PARALLEL_DO(tag)` after `end do`. `do_in_parallel` is
+`.is_parallel AND .do_parallel_lock==" "` (`parallel.foo:287`), so **inside a `parallel do` body
+`DO_IN_PARALLEL` is always FALSE**, and every `PARALLEL_*` macro — each of which expands to
+`if (DO_IN_PARALLEL0) call …` — is a silent no-op there.
+
+The intent (Dylan) is sound and standard: keep MPI "on the outside", parallelise coarsely, and
+prevent interior collectives, which would otherwise deadlock on mismatched trip counts. The
+*mechanism* is the problem:
+
+- **Suppression is silent.** A reduction that never ran is indistinguishable from one that did.
+- **It answers a dynamic question when the need is lexical.** `DO_IN_PARALLEL` means "no outer
+  loop is active"; what a reduction site needs to know is "am I inside the body or after it".
+- **The unlock is name-matched, not depth-counted.** `unlock_parallel_do` clears the lock
+  whenever the name matches (`parallel.foo:321`), so a recursive routine's inner return releases
+  the outer loop's lock. The `ENSURE` that would catch recursion is commented out at
+  `parallel.foo:308`.
+
+Correctness therefore depends on the programmer holding the whole dynamic call sequence in their
+head. As Dylan put it: *"the programmer has to hold the call sequence in their head not to make
+bugs."* That is a design defect, not a discipline problem — the constraint is invisible at the
+point where it matters.
+
+> **DECIDED (Dylan, 2026-08-01): adopt all four of the following. This is URGENT and is the next
+> piece of work after milestone 4's characterisation completes.** It is sequenced after, not
+> during, because changing the `parallel do` lowering mid-characterisation would confound the
+> numbers it is meant to produce. Tracked as milestone 6 in `CLAUDE.md` §9.
+
+**1. Move the reduction into the loop construct (the main fix).**
+
+```foo
+parallel do q = 1,.n_shell_pairs reduce(grid)
+   ...
+end
+```
+
+lowering to the existing macros with the reduction emitted in the one place it is correct:
+
+```fortran
+do q = PARALLEL_DO_START(1,1),self%n_shell_pairs,PARALLEL_DO_STRIDE(1)
+LOCK_PARALLEL_DO("MODULE:proc")
+   ...
+end do
+UNLOCK_PARALLEL_DO("MODULE:proc")
+if (DO_IN_PARALLEL) then
+   PARALLEL_SUM(grid)
+end if
+```
+
+This is exactly OpenMP's `reduction(+:x)`, and it removes the failure mode entirely: the
+programmer no longer chooses *where* the reduction goes, so it cannot be written inside the body,
+inside a conditional, or forgotten. Every wrong-answer bug in the next section becomes impossible
+by construction.
+
+Implementation notes:
+- `FooToFortran.java` already owns this lowering (it emits the `PARALLEL_DO_START/STRIDE` bounds
+  and the `LOCK`/`UNLOCK` pair), so this is a grammar addition plus a few lines of emission.
+- `Foo.g4` needs `reduce(` *ident-list* `)` as an optional suffix on the `parallel do` loop head.
+- Support the variants actually used: `PARALLEL_SUM` (default), `PARALLEL_SYMMETRIC_SUM` and
+  `PARALLEL_SYMMETRIC_SUM_23`. Suggested spelling: `reduce(x)`, `reduce_symmetric(m)`,
+  `reduce_symmetric_23(m)` — or a single `reduce(x, kind=symmetric_23)`.
+- **Replicated contributions need care.** Two of the fixed routines have a serial loop feeding
+  the same array as the parallel one; the reduction would count it `n_ranks` times. The
+  `is_master_processor` guard used in the fix is the pattern — the migration must check each site
+  rather than mechanically adding `reduce(...)`.
+- Migration: convert the ~88 existing `parallel do` sites incrementally. The old form keeps
+  working, so this need not be atomic.
+
+**2. Make suppression loud in debug.** Under `USE_PRECONDITIONS`, have `PARALLEL_SUM` and friends
+abort when the lock is held. A reduction inside a locked region is *always* a bug, never a
+legitimate no-op. Two lines in `include/macros.in`, and it converts silent wrong answers into
+immediate aborts naming the routine. Do this one **first** — it is the cheapest, it is
+independent of the grammar work, and it turns the remaining unfixed sites into loud failures
+rather than quiet ones.
+
+**3. Depth-count the lock.** Replace the name-matched `do_parallel_lock` string with a depth
+counter, or have `lock_parallel_do` return the previous value for `unlock_parallel_do` to
+restore. Then a recursive routine's inner return can no longer release the outer loop's lock.
+Restore the recursion `ENSURE` at `parallel.foo:308` once this holds.
+
+**4. Lint it in the translator.** Phase B already has the parse tree and a cross-module call
+graph; flag any `PARALLEL_*` macro appearing lexically inside a `parallel do` body. This catches
+hand-written sites that have not yet been migrated to `reduce(...)`, and it would have found all
+four `molecule.grid.foo` bugs statically, without running anything.
+
+Items 1 and 2 together would have prevented every wrong-answer bug listed below.
+
+### Wrong answers under MPI — FIXED
+
+- **FIXED. Four dead or missing reductions in `foofiles/molecule.grid.foo`.** In
+  `make_electronic_pot_grid_r`, `make_mixed_ESP_grid_r` and `make_scm_ESP_grid_r` the
+  `PARALLEL_SUM(grid)` sat *inside* its own `parallel do` (and, in two cases, additionally inside
+  a rank-dependent `if`), so it never executed and every rank kept only its own `1/n_ranks` of
+  the terms. `make_multipole_ESP_grid_r` had no reduction at all. Hoisted past the `end`.
+  Two of them also have a **serial, replicated** multipole loop feeding the same `grid`, which a
+  plain `ALLREDUCE` would have counted `n_ranks` times; those are now guarded with
+  `tonto.is_master_processor`, which is a no-op in a serial build. Had the reductions inside the
+  rank-dependent conditionals ever run, they would have been collectives in a rank-dependent
+  branch — a guaranteed hang.
+- **FIXED. Heap buffer overflow in `PARALLEL_SYMMETRIC_SUM_23`** (`foofiles/parallel.foo:571`).
+  It sums "the lower half of the second two indices" but sized its triangle buffer from
+  `mat.dim1`. Callers pass `MAT3{REAL}(n_states,n_bf,n_bf)`, so it wrote `n_bf*(n_bf+1)/2`
+  doubles into a buffer of `n_states*(n_states+1)/2`, and `MPI_ALLREDUCE` then read past it.
+  The `ENSURE` also checked `dim1==dim2`, i.e. asserted `n_states==n_bf`, firing spuriously in
+  any `USE_PRECONDITIONS` build. Now `dim = mat.dim2` and `ENSURE(mat.dim2==mat.dim3)`.
+- **FIXED. Three missing CIS/TDHF reductions in `foofiles/molecule.fock.foo`.** `r_CIS_S1_AV`
+  had a `parallel do` and no reduction of any kind, leaving `F` a per-rank partial;
+  `r_CIS_S0_AV` reduced `F` but not `K`, then computed `F = TWO*F - K` mixing a reduced quantity
+  with an unreduced one; `u_CIS_AV` never reduced its `K` OUT argument. All three now use plain
+  `PARALLEL_SUM` — not the symmetric variant, since these arrays are filled in both triangles.
+  All are no-ops in a serial build.
+
+### Not yet fixed — recorded with evidence
+
+- **Latent deadlock in `SYSTEM:initialize`** (`foofiles/system.foo:259-261`).
+  `initialize_cloned_random_seed` is called *before* `parallel_initialize`, so `is_parallel` is
+  still false and every rank seeds itself from its own `system_clock` — the seeds are **not**
+  cloned, contrary to the routine's own comment. Worse, both `PARALLEL_BROADCAST` calls
+  (`:275-278`, `:284-305`) sit **inside** `if (.is_master_processor)` guards — a collective in a
+  rank-0-only branch. This is harmless today only because `DO_IN_PARALLEL` is false that early;
+  reordering the two lines (the obvious "fix") deadlocks in `SYSTEM:create`, with `n` undefined
+  on non-master ranks at `allocate(seed(n))`. Fix both together or neither.
+  Knock-on: R-free reflection selection (`crystal.foo:242`) is seeded from the clock and is
+  therefore not reproducible run-to-run, MPI or not.
+- **`MPI_ABORT` is commented out** (`foofiles/system.foo:564`), so a `DIE` on one rank leaves the
+  others hanging instead of failing the job.
+- **HAR writes the same file from every rank.** `foofiles/molecule.har.foo:1346` calls
+  `arch.parallel_write` — deliberately unguarded by `IO_IS_ALLOWED` — inside a *serial* loop with
+  a filename identical on all ranks. `file.foo:134` only opens the file when `IO_IS_ALLOWED`, and
+  `parallel_IO_allowed` is never set on the HAR path, so non-master ranks write to a unit that
+  was never opened. Affects every HAR test under MPI.
+- **`fragment_SCF_para` RMA work queue** (`foofiles/parallel.foo:6400`, driven from
+  `molecule.scf.foo:5871`): `g = .p_loop_list(.p_loop_index)` is evaluated before the caller's
+  exit test, so the terminating fetch indexes past the end of `p_loop_list` on every worker,
+  every run. The master also reads its own window buffer outside any access epoch (no
+  `MPI_WIN_FLUSH`/`MPI_WIN_SYNC` anywhere) while workers accumulate into it. Additionally the
+  algorithm *changes shape* at `n_processors > 2`, so `-n 2` and `-n 4` use different schedulers
+  and different rank→fragment maps.
+- **QTAIM basin decomposition** (`foofiles/molecule.prop.foo:6118`): the hand-rolled 1-D slab
+  decomposition indexes out of bounds at `nprocs == 1` and unconditionally `sendrecv`s to
+  `rank+1`, which does not exist; `nprocs > nx` gives zero-width slabs. It also calls
+  `tonto.finalize` (`MPI_FINALIZE`) at `:6743`, inside a science routine, invalidating any later
+  MPI call in the job.
+- **CONFIRMED CRASH: `DWGN_lamaGOET_NBO_file_47` aborts at every rank count above 1.**
+  Reproduced at `-n 2` and `-n 4`, at both `-Ofast` and `-O2 -fno-fast-math`:
+  *"Fortran runtime error: Unit number is negative and unit was not already opened with
+  OPEN(NEWUNIT=...)"*. Root cause is `foofiles/file.foo:134-146` — only the master executes the
+  `open(... newunit=.unit ...)` (it is wrapped in `if (IO_IS_ALLOWED)`), and the following
+  `PARALLEL_BROADCAST(.unit,tonto.master_processor)` then hands the master's negative `newunit`
+  value to every rank. Non-master ranks hold a unit they never opened, so any *unguarded* I/O on
+  it fails. The job dies during the `scfdata` block just after `read_g09_fchk_file`, having
+  already written its archives. This is the single blocker for recommending MPI on jobs that
+  write archives. Pinning the exact routine needs a debug MPI build. See `docs/MPI.md`.
+- **`parallel_sum` clobbers `val` even when the optional `sum` is supplied**
+  (`foofiles/parallel.foo:458`): an unconditional `val = tmp` after the `if (present(sum))`
+  branch, violating the "give me the sum, leave `val` alone" contract.
+- **Build-system inconsistencies.** `CMakeLists.txt` assigns `CMAKE_Fortran_FLAGS` from
+  `MPI_Fortran_FLAGS`, which modern `FindMPI` never sets — it evaluates to the empty string *and*
+  wipes any user-supplied flags (survivable only because `SetFortranFlags` rebuilds them). The
+  executables link `${MPI_LIBRARIES}` (the deprecated **C** libraries) while the `tonto` library
+  links `${MPI_Fortran_LIBRARIES}`. The MSMPI branch references `${msmpi-linux-home}`, which is
+  **defined nowhere**, and sets `CMAKE_C_FLAGS` from `${CMAKE_CXX_FLAGS}` (copy-paste).
+- **Dead MPI runfiles.** `run_mpi_matmul.foo` uses `myid` uninitialised and deadlocks at `-n 1`;
+  `run_mpi_pi_io.foo` is referenced nowhere in `CMakeLists.txt`. `run_mpi_test` and
+  `run_mpi_test_complete` are built and installed but **assert nothing** — `test_parallel` prints
+  `"MPI failed to …"` and still exits 0.
+- **`#ifdef MPI` strips `PURE`/`ELEMENTAL` from the entire codebase** (`include/macros.in:256`).
+  Necessary today — MPI calls are impure and some `PURE` routines contain `PARALLEL_SUM` (e.g.
+  `shell1quartet.foo:898`) — but it is a sledgehammer: it costs the optimiser common-subexpression
+  elimination, loop-invariant hoisting and `elemental` vectorisation across *all* code, and it is
+  a large part of why an MPI build differs numerically from serial even at one rank. Only
+  routines that transitively reach a `PARALLEL_*` macro need it. The translator's phase-B call
+  graph (`--call-graph-report`) can compute that set exactly.

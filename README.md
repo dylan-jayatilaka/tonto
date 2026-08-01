@@ -86,12 +86,32 @@ cmake .. -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=fast
 cmake .. -DCMAKE_BUILD_TYPE=release-static
 ```
 
-**MPI (parallel)** — for production runs. **Validate the results yourself** before trusting them.
+**MPI (parallel)** — for production runs. **Validate the results yourself** before
+trusting them: see `docs/MPI.md` for what is known to differ from a serial run.
 ```
 cmake .. -DCMAKE_Fortran_COMPILER=mpifort -DCMAKE_C_COMPILER=mpicc \
-         -DCMAKE_CXX_COMPILER=mpicxx -DCMAKE_BUILD_TYPE=fast -DMPI=1
-# add -DNO_ERROR_MANAGEMENT for extra speed
+         -DCMAKE_BUILD_TYPE=fast -DMPI=1
 ```
+
+Use `-DCMAKE_BUILD_TYPE=release` instead if you intend to **compare against the
+reference outputs**: the references were blessed at `release`, and `fast` adds
+`-faggressive-loop-optimizations -fstrict-aliasing` on top of `-Ofast`, so
+differences from it are not evidence about MPI.
+
+**The MPI must have been built with the same Fortran compiler you are using.**
+Tonto does `USE mpi`, and Fortran `.mod` files are compiler-version specific, so
+an MPI packaged against a different gcc fails with *"Cannot read module file …
+created by a different version of GNU Fortran"*. Configure now checks this and
+stops with a clear message rather than failing deep in the build. If they do not
+match, build MPI against your compiler, e.g.
+
+```
+./configure --prefix=$HOME/opt/openmpi-gf14 FC=gfortran-14 CC=clang CXX=clang++
+```
+
+and put its `bin` first on `PATH`. Note also that `-DMPI=1` is now a hard
+requirement: if MPI cannot be found, configure fails instead of quietly
+producing a serial binary.
 
 **On a cluster / supercomputer:** environments vary too much to script. Load
 your compiler and MPI modules first, then use the recipe above, overriding the

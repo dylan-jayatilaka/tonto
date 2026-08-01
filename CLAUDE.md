@@ -103,7 +103,15 @@ make -j
 ```
 
 Other build types: `debug`, `release-static`, and MPI (`-DCMAKE_Fortran_COMPILER=mpifort …
--DMPI=1`, optionally `-DNO_ERROR_MANAGEMENT`).
+-DMPI=1`). The MPI must be built with the **same** Fortran compiler — Tonto does `USE mpi` and
+`.mod` files are compiler-version specific; configure now checks and stops with a clear message.
+`-DMPI=1` is a hard requirement: if MPI is not found, configure fails rather than silently
+producing a serial binary. See `docs/MPI.md`.
+
+*(`-DNO_ERROR_MANAGEMENT` was documented here but is a **no-op** — the symbol appears nowhere in
+`CMakeLists.txt`, `cmake/*.cmake` or `include/macros.in`. Every optimised build type
+unconditionally defines the positive `USE_ERROR_MANAGEMENT`, so there is no documented way to
+turn error management off. Removed rather than implemented.)*
 
 **WSL is a supported build host.** `cmake/WSL.cmake` (included at the top of
 `CMakeLists.txt`, a no-op everywhere else) strips `/mnt/*` off `PATH` before any tool
@@ -271,10 +279,19 @@ loose ctest suite as the full build.
 independent and can run in parallel; milestone 5 is the more important, and should be **planned
 before any code is written**, most likely in its own conversation (`/clear`).
 
-4. ⬜ **MPI parallel build + numeric comparison.** Build with
-   `-DCMAKE_Fortran_COMPILER=mpifort -DCMAKE_C_COMPILER=mpicc -DCMAKE_CXX_COMPILER=mpicxx
-   -DMPI=1` (optionally `-DNO_ERROR_MANAGEMENT`) and compare against the serial references with
-   the usual loose gate. **Expect numeric drift**: reduction order varies with rank count, and
+4. ✅ **DONE (2026-08-01) — MPI parallel build + numeric characterisation.** First MPI build ever
+   configured for this project. Outcome: **MPI at 1 rank reproduces serial exactly**; only
+   `h2o_rhf_cc-pVDZ_tdhf` shows rank-count drift (non-monotonic, already `KNOWN_MARGINAL`); and
+   `-ffast-math` moves the numbers more than MPI does. **One blocker**: `DWGN_lamaGOET_NBO_file_47`
+   crashes at ≥2 ranks on a negative-unit I/O error (`file.foo:134-146` broadcasts the master's
+   `newunit` to ranks that never opened the file), so MPI is not yet safe for jobs that write
+   archives. Eight MPI wrong-answer bugs were found and fixed on the way (see milestone 6).
+   Full report: `docs/MPI.md`. Build with
+   `-DCMAKE_Fortran_COMPILER=mpifort -DCMAKE_C_COMPILER=mpicc -DMPI=1` and compare against the
+   serial references with the usual loose gate. (`-DCMAKE_CXX_COMPILER=mpicxx` was in this
+   recipe but is **ignored** — `project()` enables `Fortran C` only; `-DNO_ERROR_MANAGEMENT` was
+   a **no-op**. Both removed.) **The MPI must be built with the same Fortran compiler**, since
+   Tonto does `USE mpi`. Details, and the list of MPI defects found, in `docs/MPI.md`. **Expect numeric drift**: reduction order varies with rank count, and
    some of it is genuine UB — per Dylan, "numerics might go off — no worries, we'll check". The
    deliverable is a *characterisation* (which tests drift, by how much, and whether the drift is
    rank-count dependent), not necessarily a green suite. Untested since before the ANTLR4 work.
@@ -292,6 +309,26 @@ before any code is written**, most likely in its own conversation (`/clear`).
      the asymmetric unit. (Note `tests/long/gly_ala_fragHAR_rhf_STO-3G` exercises `fragHAR`
      through `tonto`, and Dylan's `gaussian-IAM` branch carries a commit "fragHAR fixed,
      gly_ala test and others need to be modified/checked" — read that before starting.)
+
+6. ⬜ **URGENT, next after milestone 4 — make MPI reductions safe by construction** (agreed
+   2026-08-01). Milestone 4 uncovered a class of silent wrong-answer bugs with a single root
+   cause: the translator emits `LOCK_PARALLEL_DO` as the first statement *inside* a `parallel do`,
+   and `DO_IN_PARALLEL` is false while that lock is held, so a `PARALLEL_SUM` written in the loop
+   body is **dead code that looks correct**. Four such sites in `molecule.grid.foo` each returned
+   `1/n_ranks` of the answer. The intent ("MPI on the outside", no interior collectives) is right
+   and standard; the enforcement is invisible, so — per Dylan — "the programmer has to hold the
+   call sequence in their head not to make bugs". Agreed fix, all four parts:
+   - **`parallel do … reduce(x)`**, lowered by `FooToFortran` to emit the reduction after
+     `UNLOCK_PARALLEL_DO` (i.e. OpenMP's `reduction(+:x)`). Removes the failure mode entirely.
+   - **Abort on a suppressed reduction** under `USE_PRECONDITIONS` — do this first, it is two
+     lines and independent of the grammar work.
+   - **Depth-count the lock** so a recursive inner return cannot release an outer lock; restore
+     the `ENSURE` at `parallel.foo:308`.
+   - **Translator lint** for any `PARALLEL_*` macro lexically inside a `parallel do` body.
+
+   Sequenced *after* milestone 4's characterisation, because changing the lowering mid-flight
+   would confound the numbers. Full design in `ANTLR4_DEFERRED.md`, "MPI: defects found during
+   milestone 4".
 
 **Open items** (future directions; details in `ANTLR4_DEFERRED.md`)
 
