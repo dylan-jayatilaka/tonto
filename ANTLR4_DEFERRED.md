@@ -1448,7 +1448,7 @@ Items 1 and 2 together would have prevented every wrong-answer bug listed below.
   `rank+1`, which does not exist; `nprocs > nx` gives zero-width slabs. It also calls
   `tonto.finalize` (`MPI_FINALIZE`) at `:6743`, inside a science routine, invalidating any later
   MPI call in the job.
-- **CONFIRMED CRASH: `DWGN_lamaGOET_NBO_file_47` aborts at every rank count above 1.**
+- **FIXED (2026-08-01). `DWGN_lamaGOET_NBO_file_47` aborted at every rank count above 1.**
   Reproduced at `-n 2` and `-n 4`, at both `-Ofast` and `-O2 -fno-fast-math`:
   *"Fortran runtime error: Unit number is negative and unit was not already opened with
   OPEN(NEWUNIT=...)"*. Root cause is `foofiles/file.foo:134-146` — only the master executes the
@@ -1456,8 +1456,23 @@ Items 1 and 2 together would have prevented every wrong-answer bug listed below.
   `PARALLEL_BROADCAST(.unit,tonto.master_processor)` then hands the master's negative `newunit`
   value to every rank. Non-master ranks hold a unit they never opened, so any *unguarded* I/O on
   it fails. The job dies during the `scfdata` block just after `read_g09_fchk_file`, having
-  already written its archives. This is the single blocker for recommending MPI on jobs that
-  write archives. Pinning the exact routine needs a debug MPI build. See `docs/MPI.md`.
+  already written its archives. A debug MPI build pinned it to `MOLECULE.PUT:put_NBO_file_47`,
+  which calls `stdout.redirect(...)` then makes **thirteen raw Fortran `write(stdout.unit,...)`
+  calls** that bypass the TEXTFILE API and its guarding. Fixed by guarding them; it is write-only
+  output so no broadcast is needed. Passes at -n 2 and -n 4 bit-exact, unchanged serially.
+
+  **The failure mode is the real lesson.** It crashed loudly only because a *redirected* TEXTFILE
+  holds a negative `newunit`. An unguarded raw write to a **non-redirected** stdout uses
+  `TEXTFILE_STD_OUT_UNIT` (6), a valid preconnected unit on every rank, and would **silently
+  interleave** output instead of crashing. So the sentinel idea is weaker than it first looks:
+  the negative `newunit` already acts as one, and it cannot help the unit-6 case at all (nor can
+  a static sentinel, since `fragment_SCF_para` deliberately enables `parallel_IO_allowed`).
+  Remaining unguarded raw-I/O sites: `plot_grid.foo:2280` (`read(textfile.unit,*)` on every rank,
+  and the result needs broadcasting too) and `archive.foo:2687/2712/2763` (VAPOR/stream/VTK
+  writers; each rank opens the *same filename* with its own `newunit`, so silent corruption
+  rather than a crash). The durable fix is a **translator lint** for `write(`/`read(` on any
+  `*.unit` outside `file.foo`/`textfile.foo`/`buffer.foo` -- static, cheap, and it would have
+  found every one of these without running anything. Added to milestone 6. See `docs/MPI.md`.
 - **`parallel_sum` clobbers `val` even when the optional `sum` is supplied**
   (`foofiles/parallel.foo:458`): an unconditional `val = tmp` after the `if (present(sum))`
   branch, violating the "give me the sum, leave `val` alone" contract.

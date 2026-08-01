@@ -283,9 +283,9 @@ before any code is written**, most likely in its own conversation (`/clear`).
    configured for this project. Outcome: **MPI at 1 rank reproduces serial exactly**; only
    `h2o_rhf_cc-pVDZ_tdhf` shows rank-count drift (non-monotonic, already `KNOWN_MARGINAL`); and
    `-ffast-math` moves the numbers more than MPI does. **One blocker**: `DWGN_lamaGOET_NBO_file_47`
-   crashes at ≥2 ranks on a negative-unit I/O error (`file.foo:134-146` broadcasts the master's
-   `newunit` to ranks that never opened the file), so MPI is not yet safe for jobs that write
-   archives. Eight MPI wrong-answer bugs were found and fixed on the way (see milestone 6).
+   crashed at ≥2 ranks on a negative-unit I/O error, **now fixed** (raw unguarded writes in
+   `put_NBO_file_47`), so the short suite is 50/51 under MPI, the same as serial. MPI is still
+   unaudited for `plot_grid`/`archive` raw I/O and for HAR's `parallel_write`. Eight MPI wrong-answer bugs were found and fixed on the way (see milestone 6).
    Full report: `docs/MPI.md`. Build with
    `-DCMAKE_Fortran_COMPILER=mpifort -DCMAKE_C_COMPILER=mpicc -DMPI=1` and compare against the
    serial references with the usual loose gate. (`-DCMAKE_CXX_COMPILER=mpicxx` was in this
@@ -324,7 +324,12 @@ before any code is written**, most likely in its own conversation (`/clear`).
      lines and independent of the grammar work.
    - **Depth-count the lock** so a recursive inner return cannot release an outer lock; restore
      the `ENSURE` at `parallel.foo:308`.
-   - **Translator lint** for any `PARALLEL_*` macro lexically inside a `parallel do` body.
+   - **Translator lint** for any `PARALLEL_*` macro lexically inside a `parallel do` body, and
+     for any raw `write(`/`read(` on a `*.unit` expression outside `file.foo`/`textfile.foo`/
+     `buffer.foo`. The second catches the raw-I/O class that crashed `DWGN_lamaGOET_NBO_file_47`
+     -- and, more importantly, the *silent* variant of it: an unguarded write to a
+     non-redirected stdout uses preconnected unit 6, valid on every rank, so it interleaves
+     output instead of failing. Inspection alone cannot find those; a lint can.
 
    Sequenced *after* milestone 4's characterisation, because changing the lowering mid-flight
    would confound the numbers. Full design in `ANTLR4_DEFERRED.md`, "MPI: defects found during

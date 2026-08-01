@@ -224,22 +224,53 @@ round-off-level change, not of an accumulating error. It is already in `suite_re
 `KNOWN_MARGINAL` list as runner-sensitive with a relaxed 0.5 % bound, and at `-O2` ×2 it exceeds
 even that. No other test in the suite is affected.
 
-#### Finding 3 — one hard crash at ≥2 ranks
+#### Finding 3 — one hard crash at ≥2 ranks (FIXED)
 
-`DWGN_lamaGOET_NBO_file_47` **aborts** at every rank count above 1, at both optimisation
-settings, reproducibly:
+`DWGN_lamaGOET_NBO_file_47` aborted at every rank count above 1, at both optimisation settings:
 
 ```
+At line 3126 of file molecule.put.F90
 Fortran runtime error: Unit number is negative and unit was not already
 opened with OPEN(NEWUNIT=...)
 ```
 
-Root cause is in `foofiles/file.foo:134-146`: only the master actually opens the file
-(`if (IO_IS_ALLOWED) open(… newunit=.unit …)`), and then `PARALLEL_BROADCAST(.unit, …)` hands the
-master's negative `newunit` value to every rank. Non-master ranks hold a unit number they never
-opened, so any *unguarded* I/O on it dies. This is the predicted file-I/O defect class; see
-`ANTLR4_DEFERRED.md`. It is a real bug, not drift, and needs a debug MPI build to pin to the exact
-routine.
+A debug MPI build put it in `MOLECULE.PUT:put_NBO_file_47`, which calls
+`stdout.redirect(...)` and then makes **thirteen raw Fortran `write(stdout.unit,…)` calls**,
+reaching around the TEXTFILE API and so getting none of its `IO_IS_ALLOWED` guarding. Only the
+master opens the redirected file (`TEXTFILE.open` is guarded), and `FILE.open` then broadcasts
+its unit — negative, from `newunit=` — to every rank, so non-master ranks wrote to a unit they
+had never opened.
+
+Fixed by guarding the writes. Nothing needs broadcasting: this is write-only output, so the
+simple guard is the whole fix. DWGN now passes at `-n 2` and `-n 4` **bit-exact** on all three
+compared outputs, and is unchanged serially.
+
+**The important lesson is about the failure mode, not this routine.** It crashed loudly only
+because a *redirected* TEXTFILE holds a negative `newunit`. An unguarded raw write to a
+**non-redirected** `stdout` would use `TEXTFILE_STD_OUT_UNIT` = 6, which is a valid preconnected
+unit on every rank — so it would **silently interleave** output rather than crash. The bugs found
+here are the lucky subset. See the audit below.
+
+#### Finding 5 — raw Fortran I/O reaches around the abstraction
+
+`FILE`/`TEXTFILE` are largely MPI-correct — notably `FILE` gets the hard part right, guarding
+reads and broadcasting the **data** rather than the handle (`file.foo:211/215`, `244/248`,
+`325/329`). But code reaches around them via `.unit`, and whether those sites are guarded is ad
+hoc:
+
+| site | status |
+|---|---|
+| `molecule.put.foo` `.wfn` writer (~20 statements) | correctly wrapped in one `IO_IS_ALLOWED` block |
+| `crystal.foo:8826` | correctly guarded |
+| `molecule.put.foo` `put_NBO_file_47` (13 statements) | **was unguarded** — fixed here |
+| `plot_grid.foo:2280` | **unguarded** `read(textfile.unit,*)` on every rank; also needs the result broadcast |
+| `archive.foo:2687, 2712, 2763` | **unguarded** stream writers (VAPOR, stream, VTK). Each rank opens with its own `newunit`, so no crash — all ranks write the *same filename* concurrently. Silent corruption. |
+
+Because the silent regimes (preconnected unit 6; per-rank `newunit` on the same filename) do not
+announce themselves, an audit by inspection is not enough. The durable fix is a **translator
+lint**: flag any `write(`/`read(` on a `*.unit` expression outside `file.foo`/`textfile.foo`/
+`buffer.foo`. That is static, cheap, and would have found every site above without running
+anything. Folded into milestone 6.
 
 #### Finding 4 — `-ffast-math` matters more than MPI does
 
@@ -260,8 +291,17 @@ the picture though: 45/46 exact matches are preserved at ×1 and only one is los
 
 Excluding the pre-existing platform failure, the MPI build is **as accurate as serial at 1 rank
 and materially so at 2 and 4**, with one genuinely rank-dependent test (TDHF, already known to be
-runner-sensitive) and one genuine I/O bug that must be fixed before MPI can be recommended for
-jobs that write archives. Reduction-order drift, the thing this milestone set out to measure, is
-present but far smaller than expected — smaller than the effect of the compiler's own
-`-ffast-math` reassociation.
+runner-sensitive). The one hard crash has been fixed, so the short suite now stands at **50/51
+under MPI — the same as serial**, the single remaining failure being the pre-existing macOS
+platform difference.
+
+Reduction-order drift, the thing this milestone set out to measure, is present but far smaller
+than expected — smaller than the effect of the compiler's own `-ffast-math` reassociation. The
+real finding was not drift at all: it was eight wrong-answer reduction bugs and a set of raw-I/O
+sites, in code that had never once been executed.
+
+**Recommendation.** MPI is usable for the SCF/property paths exercised by the short suite. It is
+**not** yet safe for anything driving `plot_grid`'s points file or `archive.foo`'s VAPOR/stream/
+VTK writers (Finding 5), nor for HAR, whose `parallel_write` path writes the same file from every
+rank (`ANTLR4_DEFERRED.md`). Those need the audit in milestone 6.
 
