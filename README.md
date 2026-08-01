@@ -123,9 +123,15 @@ knobs that matter are the **compiler**, the **build type**, and **`-DMPI=1`**.
 > `make -j4 -l8` (≤ 4 jobs, pause while load > 8). Lower `-j` first if a build stalls.
 
 When it finishes, your binaries are in the build dir: **`build/tonto`** (the main
-program) and **`build/hart`** (standalone Hirshfeld atom refinement — `hart -help`).
+program) and **`build/hart`** (standalone Hirshfeld atom refinement — `hart --help`;
+see [`docs/HART.md`](docs/HART.md) for the full option reference and how it is tested).
 The full source/executable layout is on the
 [wiki](https://github.com/dylan-jayatilaka/tonto/wiki).
+
+> **Options are GNU long options.** Every Tonto program takes `--name` only —
+> `tonto --input job.txt`, `hart --basis STO-3G`. The old single-dash spellings
+> (`-i`, `-o`, `-b`, `-help`, `-basis`, …) were removed; a program that is given
+> one now says which `--name` to use instead.
 
 ## 4. Verify — run the tests
 

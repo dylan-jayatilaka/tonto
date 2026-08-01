@@ -80,12 +80,14 @@ artifacts on both success and failure.
 
 ## CI (Linux-release) — `ci.yml`
 
-The reference build. Ubuntu, `gfortran-14`, release, then the short suite through
-`scripts/suite_report.py`. It also runs the **invariant checks**, which compare the
-program against itself rather than against a stored reference (spherical vs cartesian
-bases must agree below d functions). Those cannot be silently blessed by regenerating
-references on a broken build — they exist because a gfortran miscompilation on arm64
-macOS went unnoticed for want of exactly such a check.
+The reference build. Ubuntu, `gfortran-14`, release, then the **short** and **hart**
+suites through `scripts/suite_report.py`. It also runs the **invariant checks**, which
+compare the program against itself rather than against a stored reference (spherical vs
+cartesian bases must agree below d functions; `hart --help` must list exactly the options
+`run_har.foo` accepts). Those cannot be silently blessed by regenerating references on a
+broken build — they exist because a gfortran miscompilation on arm64 macOS went unnoticed
+for want of exactly such a check, and because `hart` shipped for years with a documented
+option its code rejected.
 
 ## CI (WSL-release) — `ci-wsl.yml`
 
@@ -241,7 +243,7 @@ before assuming the debug build itself is broken.
 
 Its scope was always deliberately narrow: it does **not** run the full short suite,
 because the debug (`-O0`) build has four longstanding FP-boundary/structural failures
-documented in [`../ANTLR4_DEFERRED.md`](../ANTLR4_DEFERRED.md). Widen the scope once
+documented in [`../DEFERRED.md`](../DEFERRED.md). Widen the scope once
 those are triaged.
 
 **To disable again**, if it turns red and you want the noise gone: comment out the

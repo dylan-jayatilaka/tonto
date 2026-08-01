@@ -1,7 +1,261 @@
-# ANTLR4 translator — deferred minor issues
+# Deferred issues
 
-Tracked for later attention once the full debug build compiles. None of these
-block compilation; they are correctness-of-match or robustness refinements.
+Tracked for later attention. None of these block compilation; they are
+correctness-of-match or robustness refinements.
+
+*(This file began as `ANTLR4_DEFERRED.md`, a list of translator loose ends. It
+now covers the whole project, so it was renamed.)*
+
+## Translator: `data` statements at `program` scope are silently dropped
+
+**This one causes silently wrong answers, and it cost a day.** The ANTLR4
+translator emits `data` statements for module-scope variables (`atom.foo` 21/21,
+`colour.foo` 44/44, `becke_grid.foo` 6/6 survive) but **drops them entirely from a
+`program` unit**. `runfiles/run_har.foo` had two; `build/run_har.F90` had none.
+
+The declaration is still emitted, so it compiles clean and the variable is simply
+uninitialised. In `hart` that meant `allowed_bases` and `grid_levels` were garbage,
+so **every** basis name — including the program's own default `def2-SVP` — failed
+`is_one_of` with "unknown basis". Nothing warned.
+
+Worked around by assigning the arrays in the executable part instead
+(`run_har.foo`, `run_sf.foo`, `run_sf_derivs.foo`). **The translator is the real
+bug.** Until it is fixed, either emit the `data`, or make the translator *reject*
+what it cannot translate — silently discarding a statement is the worst option.
+
+`runfiles/run_csq.foo` still has program-scope `data` and is not in the translated
+source list; it will hit this if revived.
+
+Related: `none` is a reserved word in `Foo.g4`, so it cannot be used as a variable
+name. The parse error it produces (`mismatched input 'none'`) points at the *end*
+of the file, not at the offending line, which makes it hard to find.
+
+## Keyword parsing must not leak into library routines (fixed; survey kept)
+
+`MOLECULE.READ:read_archive(name,genre)` is a library routine — it takes its
+operands as arguments and is called from `molecule.scf.foo` (×3),
+`molecule.main.foo` (×2) and `run_sf_derivs.foo`. It nonetheless reached for the
+global `stdin` to look for a trailing `normalise` qualifier:
+
+```foo
+   if (stdin.buffer.n_items==2) stdin.read(normalize)
+```
+
+Two bugs in one line:
+
+- **It segfaults in any program without a `stdin`.** `hart` has no job file, so
+  this dereferenced an unallocated `TEXTFILE` on the second HAR cycle — the
+  first time the refinement re-reads its density archive.
+- **In `tonto` it was dead, and could corrupt parsing.** `TEXTFILE:n_line_items`
+  *is* `buffer.n_items`, and the keyword handler `ENSURE`s `n_line_items==3`, so
+  a line of 3 items can never satisfy `==2`: no job file could ever switch
+  normalisation on, and every `if (do_norm) …unnormalize(…)` branch was
+  unreachable. Meanwhile a *programmatic* caller inherited whatever line the job
+  file was on, and on a 2-item line would silently consume one of its tokens.
+
+Fixed: the qualifier is now an optional argument, and `read_archive_and_normalise`
+is its keyword — so the feature is reachable for the first time.
+
+**Survey — this was the only instance.** Six places in the library peek at the
+line and then read a variable number of items:
+
+| Site | Procedure | Shape | Reached from |
+|---|---|---|---|
+| `molecule.har.foo:1797` | `make_spherically_averaged_HAs` | no args | 1 `case` line |
+| `molecule.misc.foo:2040` | `put_interpolator_list` | no args | 1 `case` line |
+| `molecule.misc.foo:5022` | `put_spherical_SA_ED_from_atom` | no args | 1 `case` line |
+| `diffraction_data.put.foo:783` | `put_worst_reflections` | no args | 1 `case` line |
+| `molecule.put.foo:674` | `put_archive` | no args | 1 `case` line |
+| `molecule.read.foo` | `read_archive(name,genre)` | **took args** | 6 programmatic sites |
+
+The five no-argument ones are genuine keyword handlers: they read *all* their
+operands from `stdin`, including the name of the thing to act on, and a driver
+never calls them. That pattern is fine. The breakage came only from merging the
+parse role and the do role into one procedure, which happened once.
+
+**The rule, for anyone adding a driver:** a procedure that takes arguments must
+not touch `stdin`. `scripts/check_library_stdin.py` enforces it (ctest name
+`library_stdin`, label `short`; also run by `make report` and CI).
+
+### `write_archive` swallows the next keyword (live bug, NOT fixed here)
+
+Found while testing `read_archive_and_normalise`. `MOLECULE.PUT:put_archive` has
+the same qualifier peek, with an off-by-one:
+
+```foo
+   if (stdin.buffer.n_items==2) stdin.read(normalize)     ! molecule.put.foo
+```
+
+`n_items` counts the **whole line including the keyword** — that is why
+`read_archive`'s handler asserts `n_line_items==3` for
+`read_archive <name> <genre>`. So a plain `write_archive MOs` is exactly 2 items,
+the peek always fires, runs off the end of the line and **consumes the next
+keyword** as its qualifier. The test should be `==3`.
+
+Demonstrated: a job file with `write_archive MOs` followed by
+`read_archive MOs restricted` dies with "unknown option: mos" — the
+`read_archive` keyword was eaten, leaving its operands to be read as keywords.
+
+**The one test that uses it is hollow — investigate this first.**
+`tests/long/nh3_x-ray-constrained-rhf-cluster-charge_cc-pVTZ_restart/stdin:196`
+reads:
+
+```
+   read_ascii_archive density_mx r
+   write_archive density_mx
+
+   ! Now to the SCF
+   scf
+```
+
+`write_archive density_mx` is two items, so the peek fires and swallows the very
+next token — **`scf`**. The reader resumes at `delete_scf_archives`. Evidence
+from the blessed reference, not inference:
+
+- `grep -c SCF stdout` → **0**. Not one mention, though the job sets
+  `output_results= YES`.
+- `Wall-clock time taken for job "nh3" is , 40 milliseconds.`
+
+An X-ray-constrained RHF cluster-charge SCF in cc-pVTZ does not run in 40 ms.
+**The test performs no SCF at all**, and its reference was blessed in that
+state, so it passes by faithfully reproducing the skip. Whatever coverage its
+name promises — X-ray constrained wavefunctions, cluster charges, restart — it
+does not provide.
+
+**Why it is not fixed here.** Correcting the off-by-one makes `scf` execute, so
+the job would then do the science it was written to do and its reference must be
+re-blessed against completely different output. That is a deliberate decision
+about a long-suite test, not a drive-by in an options branch.
+
+**Blast radius, surveyed:** one test and one line.
+`grep -rn '^[[:space:]]*write_archive' tests/ runfiles/` returns exactly the nh3
+line above and nothing else, and `n_items==2) stdin.read` now matches only
+`molecule.put.foo:674`. So the fix is a one-character edit (`2` → `3`) plus
+re-blessing one reference — but that reference will change completely, because
+the job will start doing an SCF it has never done.
+
+(The `normalise`/`normalize` spelling fix applied to that same line is
+behaviour-neutral until this off-by-one is fixed, since the token it compares is
+currently a stray keyword either way.)
+
+### Four more of the same shape, allow-listed rather than fixed
+
+Writing that check turned these up. They are **not broken today**, so they are
+recorded rather than changed, but they are the same merged-role pattern and the
+allow-list in the script names each one:
+
+- `molecule.read.foo:read_molden_file`, `read_tonto_FChk_file`,
+  `read_g09_FChk_file` — take an optional name and fall back to
+  `stdin.buffer.exhausted` when it is absent. Safe only because every driver
+  passes the name (`run_rgbi.foo:202-203` does). Call one without the argument
+  from a program that has no `stdin` and it dereferences an unallocated
+  `TEXTFILE`, exactly as `read_archive` did.
+- `molecule.put.foo:put_florian_wfn_file` — **unguarded**:
+  `if (NOT stdin.buffer.exhausted) stdin.read(name)` with no `present()` test at
+  all. This one would crash in any driver that reaches it. Nothing does today.
+
+The fix in each case is the one applied to `read_archive`: move the fallback
+into the keyword handler and let the library routine take a plain argument.
+
+`vec{basis}.foo:read_library_data` is allow-listed for the opposite reason — it
+is *correct*. It creates `stdin` itself when there is none and restores it
+afterwards. Copy that pattern if a library routine genuinely needs the parser.
+
+(`put_archive` looks like a counter-example to a plain grep — 10 further call
+sites — but those are a *different overload*, `put_archive(item,name,…)`, which
+takes arguments and never touches `stdin`. Read the `.int` file rather than
+grepping by name; see CLAUDE.md §8.)
+
+## Command line: two latent bugs that only a debug build sees
+
+Both were pre-existing in `COMMAND_LINE:process_options` and both are now fixed;
+recorded because they are a *class* of defect this codebase is prone to — a real
+precondition that `USE_PRECONDITIONS` gates away, so release ships the violation.
+
+- **`VEC{STR}:append` with a mismatched CHARACTER length.** `append` is
+  `self = [self,value]`, an array constructor, which requires `value` to have the
+  same length as the array element. `process_options` appended `trim(token(2:))`
+  and the literal `"none"` into a `VEC{STR}(len=256)`. Illegal Fortran; release
+  does not check it, but `-fcheck` aborts — so **every option, in every program,
+  killed a debug build**. Fixed by going through a full-width `STR` first.
+- **`put_command_optarg` overflowed the output buffer.** It asked for a column
+  `width=STR_SIZE` while `BSTR_SIZE == STR_SIZE`, so the 2-character margin put
+  the cursor past the end and tripped `ENSURE(.item_end+len(string)<=BSTR_SIZE)`.
+
+Worth a sweep for other `append(trim(...))` / `append("literal")` calls on
+`VEC{STR}`, and for other `width=STR_SIZE` uses, on the same reasoning.
+
+## hart — deferred items
+
+The `hart` work (milestone 5) left these alone deliberately. `docs/HART.md` is
+the authoritative document; these are the items with no owner yet.
+
+- **fragHAR support (milestone H1).** `hart` only ever calls `HAR_refinement`
+  (`runfiles/run_har.foo`), never `fragHAR_refinement`, and has no
+  atom-group/per-fragment-charge path, so crystals with more than one molecule
+  in the asymmetric unit cannot be refined with it.
+  `tests/long/gly_ala_fragHAR_rhf_STO-3G` exercises fragHAR through `tonto` and
+  is the acceptance test for this.
+- **Frozen options.** `--charge`, `--mult`, `--ldtol`, `--scf-guess`,
+  `--anharm`, `--wavelength` and `--4th-order-only` are commented out in both
+  the `select case` block and the help text of `run_har.foo`. They are kept in
+  step deliberately — the invariant check (`scripts/check_hart_options.sh`)
+  compares only the uncommented labels against the live `--help` output, so a
+  half-revived option is caught. Reviving one means uncommenting *both* halves.
+- **Hard-coded `stdout.*` scratch names.** A HAR job writes seven plot files
+  whose names ignore the job name entirely: `stdout.F_z_vs_stl`,
+  `stdout.Delta_F_vs_stl`, `stdout.F_z_vs_F_exp`, `stdout.Delta_F_pred_z_vs_F_pred`,
+  `stdout.Delta_F_pred_z_vs_stl` (`foofiles/diffraction_data.put.foo`), and
+  `stdout.QQ_plot_with_hkl`, `stdout.QQ_plot.gunplot`
+  (`foofiles/vec{reflection}.foo`). Two runs in one directory overwrite each
+  other's plots. They should derive from `<job>`. Also `.gunplot` is a typo for
+  `.gnuplot` — the file's own header says "Gnuplot input file".
+- **`.cif2` restart round-tripping is untested.** `hart` now accepts a `.cif2`
+  input (it previously rejected one while its own message said it was
+  required for restart), but nothing exercises the write-then-restart cycle.
+- **`--scf-guess` needs rewriting, not restoring.** The block that used to
+  implement it in `run_har.foo` was fatal — see the comment there. It ran
+  unconditionally (`guess` is always `"mos"`), and
+  `SCF_DATA:set_initial_density("restricted")` does not mean "guess a restricted
+  density", it rewrites `.initial_density` to `"r"`, i.e. *read* one from an SCF
+  archive. On a first run no archive exists, so the SCF read garbage. It also
+  threw away the promolecule guess set on the line above, and its two branches
+  were swapped against their own names. Reviving the option means writing it
+  correctly against `SCF_DATA`'s actual semantics.
+- **`put_archive` / `read_archive` are asymmetric about the normalise
+  qualifier.** After the fix below, `put_archive <name> normalise` takes it
+  inline on the keyword line, while reading needs the separate
+  `read_archive_and_normalise` keyword. Both work; they just do not look alike.
+  Unify if that grates — either give `put` its own
+  `put_archive_and_normalise`, or let `read_archive` take the inline qualifier
+  by relaxing its `ENSURE(n_line_items==3)` to accept a fourth item.
+
+## Runfiles that are not built, and were not migrated to `--options`
+
+The single-dash option removal covered every `runfiles/*.foo` that CMake
+actually translates. These eight have **no `add_executable` target and are not
+in the translated source list** in `CMakeLists.txt`, so they are never compiled
+and a mistake in them would not be caught by any build:
+
+`run_xtal.foo`, `run_cif_to_surface.foo`, `run_dnc.foo`,
+`run_metal_fingerprints.foo`, `run_command_line.foo`,
+`run_fix_pre_v4088_cif.foo`, `run_compare_data.foo`,
+`run_compare_3d_pair_data.foo`.
+
+Several still carry single-dash `case` labels (e.g. `run_xtal.foo` is a near
+copy of `run_molecule.foo` with `case("i","-input")`), which `COMMAND_LINE`
+can no longer deliver. Either revive them — translate, build, migrate — or
+delete them. `run_cif_to_surface.foo` was the CrystalExplorer entry point;
+CrystalExplorer no longer uses tonto.
+
+## Test registration: stale `DEPENDS run_test`
+
+`tests/CMakeLists.txt` used to set `DEPENDS run_test` on every registered test.
+`DEPENDS` names a *test*, and no test called `run_test` has ever existed — the
+name belongs to a Python function in `scripts/test.py`. It was a silent no-op
+and has been removed. Mentioned here in case the intent was a real dependency
+on the executable being built (which `add_test` does not express; that is what
+the `report` target's `add_dependencies` is for).
 
 ## Cleanup: normalise procedure-name CASE across definition and call sites
 

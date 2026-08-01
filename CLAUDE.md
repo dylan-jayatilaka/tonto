@@ -18,7 +18,10 @@ Fortran (95 / 2003+) and then compiled.
   ordinary **out-of-source CMake build trees** (untracked, regenerable); `debug/` is currently
   out of date. There is **no** reference-snapshot directory to preserve.
 - Executables: `build/tonto` (main program), `build/hart` (standalone Hirshfeld atom
-  refinement; `hart -help`).
+  refinement; `hart --help` — see `docs/HART.md`).
+- **All programs take GNU long options only** (`--input`, `--basis`, `--help`, …).
+  Single-dash spellings were removed; `COMMAND_LINE.process_options` rejects one
+  with a message naming the `--name` to use instead.
 - Run scripts: `runfiles/`. Test jobs: `tests/`.
 
 **Translator output.** For each `module.foo` the translator emits three files:
@@ -60,7 +63,7 @@ the build** — it parses every `foofiles/` file (submodules included) and emits
 compilable Fortran. A release `tonto` built from its output passes **124/124** `ctest` locally
 under the loose criterion, and **GitHub Actions CI is green** (short suite 51/51; badge in
 README; green as of `99dc3a1c`). Only the debug (`-O0`) build has 4 longstanding
-FP-boundary/structural failures (not translator bugs — see `ANTLR4_DEFERRED.md`). Phase B
+FP-boundary/structural failures (not translator bugs — see `DEFERRED.md`). Phase B
 (per-executable dead-code elimination + call/use-graph export) is done (§8, commit `860922ea`);
 the DOT graphs now have a `--simplify`/`--module` readability tool (`scripts/simplify_callgraph.py`,
 `docs/CALL_GRAPHS.md`).
@@ -131,7 +134,7 @@ The `antlr4` translator task is **complete**; validation is now **build + `ctest
   last-digit ≤ 2) as the pass/fail gate, not exact match.
 - Green on Linux and GitHub Actions CI (short suite 51/51); full release suite 124/124 locally.
   The debug (`-O0`) build has 4 longstanding FP-boundary/structural failures (see
-  `ANTLR4_DEFERRED.md`) — not translator bugs.
+  `DEFERRED.md`) — not translator bugs.
 - *(Historical, no longer applicable: the translator's `*.F90`/`*.int`/`*.use` output was once
   compared file-by-file — equivalent, not byte-exact — against a `foo.pl` reference snapshot.
   Both that snapshot and `foo.pl` are gone. The output is pre-C-preprocessor: macros /
@@ -153,6 +156,10 @@ once the Parse tree is generated.
 - `docs/FOO_GRAMMAR_DOCUMENTATION.md` — full language description and Foo→Fortran conversion rules.
 - `docs/BUILD_WSL.md` — building under WSL: the four WSL-specific traps, the CMake guards, and how they are tested.
 - `docs/CI.md` — the three CI workflows, how to trigger one manually, and how to read a run.
+- `docs/HART.md` — the `hart` program: what it hard-codes, its full `--option` reference, how
+  it is tested (`tests/hart/`, the `program:`/`args:` IO keys, the invariant check), and its
+  remaining milestones.
+- `DEFERRED.md` — project-wide deferred issues (was `ANTLR4_DEFERRED.md`).
 - `README.md` — install/build/test/run instructions.
 - Project wiki — building on macOS/Windows, how to run tonto (linked from `README.md`).
 
@@ -214,6 +221,21 @@ currently applied in **every** build type, so in a debug build that one file is 
 while everything else is `-O0`. Harmless for correctness but it hampers debugging that file;
 worth gating on the release configs if it gets in the way.
 
+**`hart` build/run (confirmed).** `run_har` is built by the ordinary `make` (it is *not*
+`EXCLUDE_FROM_ALL`), so `build/hart` appears alongside `build/tonto`. A quick end-to-end job,
+~5 s — the same urea structure the `tests/hart/` suite uses:
+
+```bash
+mkdir -p /tmp/hart && cd /tmp/hart
+cp <repo>/tests/hart/urea_hart_STO-3G/urea_init.cif .
+TONTO_BASIS_SET_DIRECTORY=<repo>/basis_sets \
+  <repo>/build/hart --job urea --basis STO-3G --grid-accuracy low urea_init.cif
+# -> urea.out (log) and urea.archive.cif (refined coords + ADPs with esds)
+ctest -L hart      # the suite + the options invariant check
+```
+
+Full option reference and testing notes: `docs/HART.md`.
+
 **Translator build/run (confirmed).** Helper script: `scripts/build_translator.sh`.
 
 ```bash
@@ -273,7 +295,7 @@ loose ctest suite as the full build.
    **51/51** in **GitHub Actions** (green as of `99dc3a1c`, 2026-07-27; `.github/workflows/ci.yml`,
    README badge). The full release suite is **124/124** loose locally. Residual: the debug (`-O0`)
    build has 4 longstanding FP-boundary/structural failures (#47/#64/#87/#91) that are not
-   translator bugs and are documented in `ANTLR4_DEFERRED.md`; CI runs the short release suite.
+   translator bugs and are documented in `DEFERRED.md`; CI runs the short release suite.
 
 **Milestones 4 and 5 — the remaining work on this project** (agreed 2026-07-31). These two are
 independent and can run in parallel; milestone 5 is the more important, and should be **planned
@@ -296,17 +318,25 @@ before any code is written**, most likely in its own conversation (`/clear`).
    deliverable is a *characterisation* (which tests drift, by how much, and whether the drift is
    rank-count dependent), not necessarily a green suite. Untested since before the ANTLR4 work.
 
-5. ⬜ **`hart` — verify, test, document, and make it work with `fragHAR`.** `hart` is the
-   standalone Hirshfeld-atom-refinement executable (`build/hart`, `hart -help`) and is currently
-   **unverified**: it has no test jobs at all, so nothing in `ctest`/`make report` exercises it.
-   Scope:
-   - confirm the program actually works, and fix what does not;
-   - **devise a testing method and add test jobs** for it — this is the substantive design
-     question, since `hart`'s interface is command-line/option driven rather than the `stdin`
-     job-file style the harness is built around;
-   - correct its **options, calls and documentation** so they match reality;
-   - make it work **seamlessly with `fragHAR`**, i.e. crystals with more than one molecule in
-     the asymmetric unit. (Note `tests/long/gly_ala_fragHAR_rhf_STO-3G` exercises `fragHAR`
+5. 🔶 **`hart` — verify, test, document, and make it work with `fragHAR`.** Everything except
+   the `fragHAR` part is **DONE**; see **`docs/HART.md`**, which is now the authoritative
+   document for the program.
+   - ✅ *confirm the program actually works, and fix what does not.* It did not: every real run
+     died at once (`std_err` was created but never opened, so the `close_and_delete` that
+     follows hit "not an existing file"), **and exited 0 while doing so** — `SYSTEM.die` ended
+     in a bare `stop`. Both fixed; `stop 1` now applies to every `DIE`/`DIE_IF` in Tonto.
+   - ✅ *devise a testing method and add test jobs.* `tests/hart/`, label `hart`, in CI. The
+     `IO` manifest gained optional `program:` / `args:` keys, so an argv-driven program can be
+     tested by the same harness as a `stdin` job file. Plus `scripts/check_hart_options.sh`, an
+     invariant check comparing `--help` against the option `case` labels — it cannot be blessed.
+   - ✅ *correct its options, calls and documentation so they match reality.* `--disk-sfs` was
+     documented but its case label was commented out; `--dtol` was parsed and validated but
+     never used; `.cif2` was rejected though the message said it was required for restart;
+     `extreme` was accepted but undocumented. All reconciled, and the whole option set moved to
+     GNU `--long` form (which is what took `tonto`'s `-i`/`-o`/`-b`/`-h`/`-v` with it).
+   - ⬜ *make it work **seamlessly with `fragHAR`***, i.e. crystals with more than one molecule
+     in the asymmetric unit — **milestone H1 in `docs/HART.md`**, the remaining work. `hart`
+     calls only `HAR_refinement`. (`tests/long/gly_ala_fragHAR_rhf_STO-3G` exercises `fragHAR`
      through `tonto`, and Dylan's `gaussian-IAM` branch carries a commit "fragHAR fixed,
      gly_ala test and others need to be modified/checked" — read that before starting.)
 
@@ -332,10 +362,10 @@ before any code is written**, most likely in its own conversation (`/clear`).
      output instead of failing. Inspection alone cannot find those; a lint can.
 
    Sequenced *after* milestone 4's characterisation, because changing the lowering mid-flight
-   would confound the numbers. Full design in `ANTLR4_DEFERRED.md`, "MPI: defects found during
+   would confound the numbers. Full design in `DEFERRED.md`, "MPI: defects found during
    milestone 4".
 
-**Open items** (future directions; details in `ANTLR4_DEFERRED.md`)
+**Open items** (future directions; details in `DEFERRED.md`)
 
 - **Grammar still ACCEPTS the old submodule call forms** (`.SET:proc`, `.MAIN:proc`, `STR::proc`)
   even though they are now auto-resolved away in the sources; not tightened (harmless).

@@ -38,14 +38,14 @@ import re
 import subprocess
 import sys
 
-SUITES = ['short', 'rgbi', 'long', 'cx']
+SUITES = ['short', 'hart', 'rgbi', 'long', 'cx']
 
 # Tests with known runner-sensitive numerics that pass the standard loose gate on
 # most CPUs but sit close enough to the boundary that a different runner (BLAS /
 # eigensolver ordering, FP reassociation) can flip the verdict. Give just these a
 # documented wider loose bound so CI does not flicker; the strict gate stays for
 # every other test. This is a WORKAROUND, not a fix -- the aim is to remove entries
-# by understanding each discrepancy. See ANTLR4_DEFERRED.md "small numerical
+# by understanding each discrepancy. See DEFERRED.md "small numerical
 # differences". Keys are the test-dir basename.
 KNOWN_MARGINAL = {
     'h2o_rhf_cc-pVDZ_tdhf': {'rel_tol': 5e-3},     # TDHF response, rel ~0.12% vs 0.2% gate
@@ -217,8 +217,12 @@ def main():
         sdir = os.path.join(args.tests_dir, suite)
         if not os.path.isdir(sdir):
             continue
+        # A directory is a test if it has a "stdin" (a tonto job file) or an
+        # "IO" manifest (which is how an argv-driven job e.g. hart declares
+        # its program, arguments and outputs -- it has no stdin at all).
         tests = sorted(d for d in os.listdir(sdir)
-                       if os.path.isfile(os.path.join(sdir, d, 'stdin')))
+                       if os.path.isfile(os.path.join(sdir, d, 'stdin'))
+                       or os.path.isfile(os.path.join(sdir, d, 'IO')))
         print('')
         print('SUITE: %s (%d tests)' % (suite, len(tests)))
         print('_' * 95 + '\n')
@@ -259,7 +263,7 @@ def main():
     print('_' * 95)
     if widened:
         print('\nNote: relaxed loose bound applied to known runner-sensitive tests '
-              '(workaround; see ANTLR4_DEFERRED.md "small numerical differences"):')
+              '(workaround; see DEFERRED.md "small numerical differences"):')
         for t in widened:
             print('  * %-48s %s' % (t, ', '.join('%s=%g' % kv
                                     for kv in KNOWN_MARGINAL[t].items())))
@@ -270,13 +274,28 @@ def main():
     # reference, so they need no reference output and cannot be silently
     # blessed by regenerating references on a broken build. They also need
     # only one machine, which is what makes them useful for platform-specific
-    # miscompilations -- see ANTLR4_DEFERRED.md, "verify the macOS build".
+    # miscompilations -- see DEFERRED.md, "verify the macOS build".
     # ------------------------------------------------------------------
     invariants_ok = True
     if not args.no_invariant_checks:
         checks = [('spherical vs cartesian (s/p-only bases)',
                    os.path.join(here, 'check_spherical_cartesian.sh'),
                    [args.program, args.basis_sets])]
+        # hart's --help text is its only interface documentation, so it must
+        # agree with the option case labels in run_har.foo. Only meaningful if
+        # hart was built -- it lives beside tonto in the same build tree.
+        hart = os.path.join(os.path.dirname(args.program), 'hart')
+        run_har = os.path.join(os.path.dirname(here), 'runfiles', 'run_har.foo')
+        if os.path.exists(hart):
+            checks.append(('hart options vs its --help text',
+                           os.path.join(here, 'check_hart_options.sh'),
+                           [hart, run_har, args.basis_sets]))
+        # Source-level, no binary needed: a procedure taking arguments is a
+        # library routine and must not touch stdin, or it breaks every
+        # argv-driven program. Runs from python3, not sh -- see below.
+        checks.append(('library routines must not touch stdin',
+                       os.path.join(here, 'check_library_stdin.py'),
+                       [os.path.join(os.path.dirname(here), 'foofiles')]))
         print('')
         print('INVARIANT CHECKS (no reference output involved)')
         print('_' * 95 + '\n')
@@ -284,7 +303,8 @@ def main():
             if not os.path.exists(script):
                 print('%-*s  %s' % (NAMEW, name[:NAMEW], 'SKIP (script not found)'))
                 continue
-            proc = subprocess.run(['sh', script] + cmd_args,
+            runner = 'python3' if script.endswith('.py') else 'sh'
+            proc = subprocess.run([runner, script] + cmd_args,
                                   stdout=subprocess.PIPE,
                                   stderr=subprocess.STDOUT,
                                   universal_newlines=True)

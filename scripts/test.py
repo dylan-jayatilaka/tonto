@@ -8,6 +8,7 @@ import os
 from os.path import abspath, join
 from itertools import zip_longest
 import sys
+import shlex
 import shutil
 import subprocess
 import difflib
@@ -305,17 +306,44 @@ def temp_test_dir(testname, subdir='tonto-tests'):
     return name
 
 def parse_IO_file(path):
+    """Parse a test directory's IO manifest.
+
+    Recognised keys:
+      input:   extra file to copy into the run directory (repeatable)
+      output:  file to compare against the reference     (repeatable)
+      delete:  recorded but unused
+      program: executable to run instead of the default, resolved as a
+               sibling of --program e.g. "hart" -> <build>/hart
+      args:    command line for that program, split shell-style
+
+    A job with no "program:" is a plain tonto job: it reads a file called
+    "stdin" and writes one called "stdout", so those are supplied as
+    defaults.  An argv-driven program (hart) names its own files, so the
+    defaults would be wrong and are not applied.
+    """
     io_files = {
-        'input': set(['stdin']),
-        'output': set(['stdout']),
+        'input': set(),
+        'output': set(),
         'delete': set(),
+        'program': None,
+        'args': None,
     }
 
     if os.path.exists(path):
         with open(path) as f:
             for line in f:
-                tokens = line.split(':')
-                io_files[tokens[0].strip()].add(tokens[1].strip())
+                if not line.strip():
+                    continue
+                key, _, value = line.partition(':')
+                key, value = key.strip(), value.strip()
+                if key in ('program', 'args'):
+                    io_files[key] = value
+                else:
+                    io_files[key].add(value)
+
+    if io_files['program'] is None:
+        io_files['input'].add('stdin')
+        io_files['output'].add('stdout')
     return io_files
 
 
@@ -337,6 +365,16 @@ def run_test(args, test_dir, io_files):
         'universal_newlines': True,
         'env': env,
     }
+    # A test may name a different executable -- resolved as a sibling of
+    # --program, which main() has already made absolute, so that e.g.
+    # "program: hart" picks up <build>/hart from whichever build tree is
+    # under test.
+    if io_files['program']:
+        executable = join(os.path.dirname(abspath(args.program)),
+                          io_files['program'])
+    else:
+        executable = args.program
+
     if args.mpi:
         # Rank count is a knob, not a constant: MPI reduction order depends on it,
         # so a numeric comparison has to sweep it (-n 1 is the control that
@@ -344,9 +382,12 @@ def run_test(args, test_dir, io_files):
         # The launcher is overridable too -- clusters use srun / mpiexec.hydra,
         # and a launcher from a *different* MPI than the one mpifort linked
         # against is the classic silent hang.
-        prog = [args.mpi_launcher, '-n', str(args.mpi_ranks), args.program]
+        prog = [args.mpi_launcher, '-n', str(args.mpi_ranks), executable]
     else:
-        prog = [args.program]
+        prog = [executable]
+
+    if io_files['args']:
+        prog += shlex.split(io_files['args'])
 
     timings = {}
     exec_dir = temp_test_dir(os.path.basename(test_dir.rstrip('/')))

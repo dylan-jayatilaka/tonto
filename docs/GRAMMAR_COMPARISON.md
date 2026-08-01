@@ -4,7 +4,7 @@ A comparison of `foogrammar/Foo.g4` against the community Fortran 90 grammar in
 [antlr/grammars-v4](https://github.com/antlr/grammars-v4/tree/master/fortran/fortran90),
 undertaken to find latent bugs in how Foo analyses Fortran expressions and variables —
 particularly **array subcomponents of derived types** — and to inform the deferred
-*eliminate explicit `TYPE:proc` calls* item (`ANTLR4_DEFERRED.md`).
+*eliminate explicit `TYPE:proc` calls* item (`DEFERRED.md`).
 
 **Summary: do not import anything from grammars-v4.** It is a port of a 1990s PCCTS
 grammar and is in poor repair. Its one genuine convergence with `Foo.g4` is a validation
@@ -195,7 +195,7 @@ and `proc` is `elemental`.
 `--type-qualified-call-report` makes that comparison explicit per site: it asks the same
 machinery both questions — where does this resolve today (`fortranModName(TYPE)`), and
 where would `x.proc` go (`callModule(typeof(x), proc)`) — and only calls a site `SAFE` when
-both answers exist and agree. See `ANTLR4_DEFERRED.md` for the classes and the current
+both answers exist and agree. See `DEFERRED.md` for the classes and the current
 counts.
 
 Eliminating `TYPE:proc` would also delete the H2/H4 ambiguity class outright: with no

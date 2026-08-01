@@ -831,7 +831,7 @@ add_library(tonto
 # and it buys nothing -- the generated helpers are memcpy-shaped. Measured on
 # M2/Tahoe, gfortran-14: parse+.mod 0.01 s, -O0 29 s, -O1 45 s, full release
 # flags 839 s (~14 min) -- so -O1 is an ~18x saving on the slowest compile.
-# Compile it at -O1 instead. (See ANTLR4_DEFERRED.md for the follow-up: splitting
+# Compile it at -O1 instead. (See DEFERRED.md for the follow-up: splitting
 # types.foo into several modules so they compile in parallel.)
 set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/types.F90
     PROPERTIES COMPILE_OPTIONS "-O1")
@@ -852,7 +852,7 @@ set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/types.F90
 #
 # NOT yet established whether this is a GCC backend bug or latent undefined
 # behaviour in the emitted code that optimisation exposes -- see
-# ANTLR4_DEFERRED.md. If it is UB, this only masks it.
+# DEFERRED.md. If it is UB, this only masks it.
 # Set -DTONTO_SKIP_ARM64_WORKAROUNDS=ON to build WITHOUT this (and the matching
 # flag in cmake/SetFortranFlags.cmake), so a newer gfortran can be tested for the
 # miscompilation: configure with it ON, build, then run

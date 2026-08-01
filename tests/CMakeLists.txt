@@ -5,6 +5,13 @@ set(TEST_SCRIPT "${PROJECT_SOURCE_DIR}/scripts/test.py"
 set(TONTO_EXE "${PROJECT_BINARY_DIR}/tonto"
     CACHE FILEPATH "Test executable")
 
+# The hart tests still pass TONTO_EXE as --program: test.py resolves a test's
+# "program:" key as a sibling of it, so both binaries must live side by side
+# (they do -- run_molecule and run_har both land in PROJECT_BINARY_DIR).
+# HART_EXE is only for the hand-registered invariant check below.
+set(HART_EXE "${PROJECT_BINARY_DIR}/hart"
+    CACHE FILEPATH "Hirshfeld atom refinement executable")
+
 set(BASIS_SETS "${PROJECT_SOURCE_DIR}/basis_sets"
     CACHE PATH "Basis sets directory")
 
@@ -42,7 +49,7 @@ function(add_all_tests)
     unset(current_list)
     foreach(D ${DIRS})
         get_filename_component(N "${D}" NAME)
-        add_test(NAME \"${N}\"
+        add_test(NAME "${N}"
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
             COMMAND python3  ${TEST_SCRIPT}
             --test-directory "${CMAKE_CURRENT_SOURCE_DIR}/${D}"
@@ -55,14 +62,13 @@ function(add_all_tests)
             # numeric diff. (Plain `ctest` is still pass/fail-only -- unavoidable.)
             --log-level=WARNING
             ${MPI_FLAG})
-        set_tests_properties(\"${N}\" PROPERTIES 
+        set_tests_properties("${N}" PROPERTIES
             LABELS ${LABELS})
-        set_tests_properties(\"${N}\" PROPERTIES 
-            DEPENDS run_test)
     endforeach()
 endfunction()
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/short)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/hart)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/rgbi)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/long)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/cx)
@@ -107,6 +113,34 @@ if(WITH_MPI)
     set_tests_properties("mpi_pi_rank_invariant" PROPERTIES LABELS "mpi")
 endif()
 
+# Invariant test -- no reference output involved.
+#
+# hart is command-line driven, so its `--help` text is its interface
+# documentation, and nothing keeps that text in step with the option `case`
+# labels in runfiles/run_har.foo. It had already drifted: --disk-sfs was fully
+# documented while its case label was commented out, so the documented option
+# killed the run. This compares the two sets directly, and also asserts that
+# hart's documented failure modes exit non-zero. Runs in a couple of seconds.
+add_test(NAME "hart_options"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND sh ${PROJECT_SOURCE_DIR}/scripts/check_hart_options.sh
+            ${HART_EXE} ${PROJECT_SOURCE_DIR}/runfiles/run_har.foo ${BASIS_SETS})
+set_tests_properties("hart_options" PROPERTIES LABELS "hart")
+
+# Invariant test -- no reference output involved.
+#
+# A Foo procedure that takes arguments is a library routine: it can be called
+# by the argv-driven programs (hart, rgbi), which have no job file. So it must
+# not touch stdin. A no-argument keyword handler may, since only the keyword
+# dispatcher reaches it. Merging the two roles is what segfaulted hart on its
+# second refinement cycle -- MOLECULE.READ:read_archive took arguments and
+# still peeked at stdin for a trailing qualifier. Instant; no build needed.
+add_test(NAME "library_stdin"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_library_stdin.py
+            ${PROJECT_SOURCE_DIR}/foofiles)
+set_tests_properties("library_stdin" PROPERTIES LABELS "short")
+
 # Grouped per-suite agreement report.
 #
 # `ctest` gives a flat pass/fail list and hides each test's stdout (the concise
@@ -132,4 +166,4 @@ add_custom_target(report
     WORKING_DIRECTORY ${PROJECT_BINARY_DIR}
     USES_TERMINAL
     COMMENT "Tonto per-suite agreement report -> tests.log")
-add_dependencies(report run_molecule)
+add_dependencies(report run_molecule run_har)

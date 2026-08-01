@@ -18,7 +18,7 @@
 # the engine path returned two-electron energies that were slightly too small.
 # Everything downstream inherited it -- the oxygen atom converged ~2.8 Ha *below*
 # the variational limit -- yet nothing in the suite compared the two paths.
-# See ANTLR4_DEFERRED.md, "verify the macOS build".
+# See DEFERRED.md, "verify the macOS build".
 #
 #   usage:  sh check_spherical_cartesian.sh <tonto-executable> <basis-set-dir>
 #
@@ -108,7 +108,7 @@ EOF
                "$name" "$eT" "$eF" "$vT" "$vF"
         echo "     The two settings solve an identical problem on an s/p-only basis,"
         echo "     so this points at the two-electron code (make_r_JK_engine vs"
-        echo "     make_r_JK_direct) or at its miscompilation. See ANTLR4_DEFERRED.md."
+        echo "     make_r_JK_direct) or at its miscompilation. See DEFERRED.md."
         status=1
     fi
 }

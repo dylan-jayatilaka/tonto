@@ -109,7 +109,7 @@ Worth knowing before interpreting any numeric difference:
   cannot hold. This is a large codegen change — it costs common-subexpression elimination,
   loop-invariant hoisting and `elemental` vectorisation everywhere — and it is why an MPI build
   differs from serial **even at one rank**. Only routines that transitively reach a `PARALLEL_*`
-  macro actually need it; narrowing that set is recorded in `ANTLR4_DEFERRED.md`.
+  macro actually need it; narrowing that set is recorded in `DEFERRED.md`.
 - The `PARALLEL` type layout differs (`types.foo:376` has `#ifdef MPI` members).
 - Work is distributed **cyclically**: rank *r* takes iterations *r, r+P, r+2P, …*
   (`parallel.foo:243`). Partial sums are therefore rank-partitioned, and reduction order depends
@@ -117,7 +117,7 @@ Worth knowing before interpreting any numeric difference:
 
 ## 5. Defects found on first contact
 
-Full detail, with evidence, in `ANTLR4_DEFERRED.md` under *"MPI: defects found during
+Full detail, with evidence, in `DEFERRED.md` under *"MPI: defects found during
 milestone 4"*. Summary:
 
 **Fixed** (these produced wrong answers, not drift, and would have made the characterisation
@@ -135,7 +135,7 @@ bit-identical results before and after.
 **Not yet fixed** — a latent collective-inside-a-master-guard deadlock in `SYSTEM:initialize`, a
 commented-out `MPI_ABORT` (so one rank dying hangs the job), HAR writing the same file from every
 rank, an out-of-bounds read in the `fragment_SCF_para` RMA work queue, and a QTAIM decomposition
-that breaks at `nprocs == 1`. See `ANTLR4_DEFERRED.md`.
+that breaks at `nprocs == 1`. See `DEFERRED.md`.
 
 ### The root cause, and the agreed fix
 
@@ -401,5 +401,5 @@ sites, in code that had never once been executed.
 **Recommendation.** MPI is usable for the SCF/property paths exercised by the short suite. It is
 **not** yet safe for anything driving `plot_grid`'s points file or `archive.foo`'s VAPOR/stream/
 VTK writers (Finding 5), nor for HAR, whose `parallel_write` path writes the same file from every
-rank (`ANTLR4_DEFERRED.md`). Those need the audit in milestone 6.
+rank (`DEFERRED.md`). Those need the audit in milestone 6.
 
