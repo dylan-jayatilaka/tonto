@@ -95,6 +95,12 @@ def score_test(test_py, test_dir, args):
            '--rel-tol', repr(rel_tol),
            '--last-digit-tol', repr(ld_tol),
            '--abs-tol', repr(args.abs_tol)]
+    # Without this, `make report` against an MPI build silently ran every job
+    # single-rank -- the report looked like an MPI result and was not one.
+    if args.mpi:
+        cmd += ['--mpi',
+                '--mpi-ranks', str(args.mpi_ranks),
+                '--mpi-launcher', args.mpi_launcher]
     p = subprocess.run(cmd, capture_output=True, text=True)
     rows = [m for m in (_ROW.search(l) for l in p.stdout.splitlines()
                         if l.startswith('AGREEMENT')) if m]
@@ -139,6 +145,17 @@ def main():
                     help='loose LAST-DIGIT tolerance (units of last place; default 2)')
     ap.add_argument('--abs-tol', type=float, default=1e-7,
                     help='absolute near-zero floor (default 1e-7)')
+    ap.add_argument('--mpi', '-m', action='store_true',
+                    help='run every job under the MPI launcher (see --mpi-ranks). '
+                         'Without this, a report against an MPI-built binary runs '
+                         'single-rank and is not an MPI result.')
+    ap.add_argument('--mpi-ranks', type=int, default=4,
+                    help='MPI ranks per job when --mpi is given (default 4). Sweep '
+                         'this: reduction order is rank-count dependent, and -n 1 '
+                         'is the control that isolates MPI-build effects from it.')
+    ap.add_argument('--mpi-launcher', default='mpirun',
+                    help='MPI launcher for --mpi (default mpirun). Must come from '
+                         'the same MPI installation the binary was linked against.')
     ap.add_argument('--log', default='tests.log',
                     help='also write the report to this file (default: tests.log in '
                          'the current directory)')

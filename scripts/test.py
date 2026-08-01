@@ -338,7 +338,13 @@ def run_test(args, test_dir, io_files):
         'env': env,
     }
     if args.mpi:
-        prog = ['mpirun', '-n', '4', args.program]
+        # Rank count is a knob, not a constant: MPI reduction order depends on it,
+        # so a numeric comparison has to sweep it (-n 1 is the control that
+        # isolates MPI-build effects from rank-partitioned reduction order).
+        # The launcher is overridable too -- clusters use srun / mpiexec.hydra,
+        # and a launcher from a *different* MPI than the one mpifort linked
+        # against is the classic silent hang.
+        prog = [args.mpi_launcher, '-n', str(args.mpi_ranks), args.program]
     else:
         prog = [args.program]
 
@@ -405,6 +411,13 @@ def main():
                         help='Location of sbftool')
     parser.add_argument('--mpi', '-m', default=False, action='store_true',
                         help='Test with mpirun')
+    parser.add_argument('--mpi-ranks', type=int, default=4,
+                        help='Number of MPI ranks when --mpi is given (default 4)')
+    parser.add_argument('--mpi-launcher', default='mpirun',
+                        help='MPI launcher to use with --mpi (default mpirun; '
+                             'use srun / mpiexec.hydra on clusters). Must come '
+                             'from the SAME MPI installation the binary was '
+                             'linked against.')
     parser.add_argument('--abs-tol', type=float, default=1e-7,
                         help='Absolute tolerance (near-zero floor) for numerical differences')
     parser.add_argument('--rel-tol', type=float, default=2e-3,
