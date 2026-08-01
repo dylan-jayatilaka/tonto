@@ -3007,9 +3007,15 @@ contains
             end
          end
          Vab.destroy
-         if (DO_IN_PARALLEL) then
-            PARALLEL_SUM(grid)
-         end
+      end
+
+      ! NOTE: this reduction must be OUTSIDE the parallel do. The translator
+      ! emits LOCK_PARALLEL_DO as the first statement inside the loop, and
+      ! DO_IN_PARALLEL is `.is_parallel AND .do_parallel_lock==" "`, so inside
+      ! the body the guard is always FALSE -- a PARALLEL_SUM written there is
+      ! dead code, and every rank kept only its own 1/n_ranks of the terms.
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(grid)
       end
 
    end
@@ -3048,6 +3054,13 @@ contains
                                          .atom(q).position,pt,grid)
       end
 
+      ! The atom loop above is rank-partitioned, so without this each rank kept
+      ! only its own 1/n_ranks of the atomic multipole contributions. There was
+      ! no reduction here at all.
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(grid)
+      end
+
    end
 
    make_mixed_ESP_grid_r(grid,pt,dens)
@@ -3083,12 +3096,21 @@ contains
 
       .make_atomic_multipoles(charges,dipoles,quadrupoles,octupoles,oc=TRUE)
 
+      ! NOTE: this loop is NOT rank-partitioned -- every rank would compute the
+      ! whole multipole contribution. Since the shell-pair loop below is
+      ! rank-partitioned and reduced with PARALLEL_SUM(grid), an unguarded
+      ! contribution here would be counted n_ranks times by that reduction.
+      ! Restricting it to the master rank makes it enter the sum exactly once.
+      ! In a serial build is_master_processor is TRUE and PARALLEL_SUM is empty,
+      ! so this is byte-identical to the unguarded form.
+      if (tonto.is_master_processor) then
       do q = 1, .n_atom
          do k = 1, n_pt
             T.create_fast(.atom(q).position, pt(k,:))
             V = T.electrostatic_potential(charges(q),dipoles(q,:),quadrupoles(q,:),octupoles(q,:))
             grid(k) = grid(k) - sum(V)
          end
+      end
       end
 
       parallel do q = 1,.n_shell_pairs
@@ -3113,12 +3135,16 @@ contains
 
             Vab.destroy
 
-            if (DO_IN_PARALLEL) then
-               PARALLEL_SUM(grid)
-            end
-
          end
 
+      end
+
+      ! NOTE: must be OUTSIDE the parallel do -- see make_electronic_pot_grid_r.
+      ! It was previously inside the loop AND inside the has_a_connection test,
+      ! so it was dead code; had it ever run it would have been a collective
+      ! inside a rank-dependent conditional, i.e. a guaranteed hang.
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(grid)
       end
 
    end
@@ -3156,6 +3182,9 @@ contains
 
       .make_atomic_multipoles(charges,dipoles,quadrupoles,octupoles,no_s=TRUE)
 
+      ! Master-only: replicated contribution, must enter the PARALLEL_SUM below
+      ! exactly once. Byte-identical in a serial build. See make_mixed_ESP_grid_r.
+      if (tonto.is_master_processor) then
       do q = 1, .n_atom
          charges(q) = charges(q)
          do k = 1, n_pt
@@ -3163,6 +3192,7 @@ contains
             V = T.electrostatic_potential(charges(q),dipoles(q,:),quadrupoles(q,:),octupoles(q,:))
             grid(k) = grid(k) - sum(V)
          end
+      end
       end
 
       parallel do q = 1,.n_shell_pairs
@@ -3184,11 +3214,13 @@ contains
             end
             end
             Vab.destroy
-            if (DO_IN_PARALLEL) then
-               PARALLEL_SUM(grid)
-            end
          end
 
+      end
+
+      ! NOTE: must be OUTSIDE the parallel do -- see make_electronic_pot_grid_r.
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(grid)
       end
 
    end
