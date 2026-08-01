@@ -85,6 +85,28 @@ add_test(NAME "spherical_vs_cartesian"
             ${TONTO_EXE} ${BASIS_SETS})
 set_tests_properties("spherical_vs_cartesian" PROPERTIES LABELS "short")
 
+# MPI invariant test -- no reference output involved.
+#
+# pi by Riemann integration: one `parallel do` plus one PARALLEL_SUM, i.e. the
+# whole macro surface every parallel routine depends on, against an answer that
+# is known in advance and must not change with the rank count.
+#
+# Added because NOTHING asserted that MPI worked at all -- no MPI build had ever
+# been configured, in CI or locally, and four reductions in molecule.grid.foo
+# were dead code that silently returned 1/n_ranks of the answer. Like
+# spherical_vs_cartesian this compares the program against a known truth rather
+# than a stored reference, so it cannot be blessed away.
+#
+# Only meaningful in an MPI build; in a serial build the rank sweep is
+# degenerate, so register it only when WITH_MPI.
+if(WITH_MPI)
+    add_test(NAME "mpi_pi_rank_invariant"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        COMMAND sh ${PROJECT_SOURCE_DIR}/scripts/check_mpi_pi.sh
+                ${PROJECT_BINARY_DIR}/run_mpi_pi ${MPIEXEC_EXECUTABLE} 1 2 4)
+    set_tests_properties("mpi_pi_rank_invariant" PROPERTIES LABELS "mpi")
+endif()
+
 # Grouped per-suite agreement report.
 #
 # `ctest` gives a flat pass/fail list and hides each test's stdout (the concise

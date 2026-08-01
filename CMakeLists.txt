@@ -205,18 +205,62 @@ if(MPI)
        include_directories("${msmpi-linux-home}/Include")
        set(MPI_LIBRARIES "${msmpi-linux-home}/Lib/x64/libmsmpi.a")
     else()
-       include(FindMPI)
-       # MPI
-       if(MPI_FOUND)
-           message(STATUS "MPI found.")
-           message(STATUS "MPI Fortran compiler: ${MPI_Fortran_COMPILER}")
-           message(STATUS "MPI include: ${MPI_Fortran_INCLUDE_PATH}")
-           message(STATUS "MPI libs:${MPI_Fortran_LIBRARIES}")
-           set(CMAKE_Fortran_FLAGS "${MPI_Fortran_FLAGS}")
-           set(WITH_MPI ON CACHE STRING "" FORCE)
-           include_directories(${MPI_Fortran_INCLUDE_PATH})
-       else()
-           message(STATUS "MPI_Fortran not found: ${MPI_Fortran_FOUND}")
+       # REQUIRED, and with an explicit Fortran component: the old
+       # `include(FindMPI)` + `if(MPI_FOUND)` reported a miss as a mere STATUS
+       # line, left WITH_MPI unset, and then happily built a SERIAL binary that
+       # looked like it had honoured -DMPI=1. -DMPI=1 must never silently
+       # produce a serial tonto.
+       find_package(MPI REQUIRED COMPONENTS Fortran)
+
+       message(STATUS "MPI found.")
+       message(STATUS "MPI Fortran compiler: ${MPI_Fortran_COMPILER}")
+       message(STATUS "MPI include: ${MPI_Fortran_INCLUDE_PATH}")
+       message(STATUS "MPI libs:${MPI_Fortran_LIBRARIES}")
+       # NOTE: modern FindMPI never sets MPI_Fortran_FLAGS (it sets
+       # MPI_Fortran_COMPILE_OPTIONS), so this assigns "" -- and it is an
+       # assignment, not an append, so it also wipes any user -DCMAKE_Fortran_FLAGS.
+       # Survivable only because SetFortranFlags rebuilds the flags afterwards.
+       # See DEFERRED.md.
+       set(CMAKE_Fortran_FLAGS "${MPI_Fortran_FLAGS}")
+       set(WITH_MPI ON CACHE STRING "" FORCE)
+       include_directories(${MPI_Fortran_INCLUDE_PATH})
+
+       # Tonto does `USE mpi` (foofiles/parallel.foo) and needs MPI_ADDRESS_KIND
+       # from that module (include/macros.in), so it needs MPI Fortran *module*
+       # files built by THIS gfortran. Fortran .mod files are compiler-version
+       # specific, so an MPI installed against a different gcc fails with
+       # "Cannot read module file ... created by a different version of GNU
+       # Fortran" -- hundreds of files into the build, long after configure said
+       # everything was fine. Catch it here instead.
+       include(CheckFortranSourceCompiles)
+       # Give the probe the same includes/libs the real build gets, so a failure
+       # means "modules unreadable", not "modules not found".
+       set(_tonto_saved_req_libs "${CMAKE_REQUIRED_LIBRARIES}")
+       set(_tonto_saved_req_incs "${CMAKE_REQUIRED_INCLUDES}")
+       set(CMAKE_REQUIRED_LIBRARIES MPI::MPI_Fortran)
+       set(CMAKE_REQUIRED_INCLUDES ${MPI_Fortran_INCLUDE_DIRS} ${MPI_Fortran_INCLUDE_PATH})
+       check_fortran_source_compiles("
+       program t
+          use mpi
+          implicit none
+          integer :: ierr
+          call MPI_Init(ierr)
+          call MPI_Finalize(ierr)
+       end program t
+       " TONTO_MPI_MODULE_USABLE SRC_EXT f90)
+       set(CMAKE_REQUIRED_LIBRARIES "${_tonto_saved_req_libs}")
+       set(CMAKE_REQUIRED_INCLUDES "${_tonto_saved_req_incs}")
+       if(NOT TONTO_MPI_MODULE_USABLE)
+           message(FATAL_ERROR
+             "The MPI installation provides Fortran modules this compiler cannot "
+             "read.\n"
+             "  Fortran compiler : ${CMAKE_Fortran_COMPILER_ID} "
+             "${CMAKE_Fortran_COMPILER_VERSION}\n"
+             "  MPI Fortran      : ${MPI_Fortran_COMPILER}\n"
+             "Tonto does `USE mpi`, and Fortran .mod files are compiler-version "
+             "specific. Rebuild MPI against this compiler (e.g. configure Open MPI "
+             "with FC=${CMAKE_Fortran_COMPILER}), or point CMAKE_Fortran_COMPILER "
+             "at the wrapper whose MPI modules match. See docs/MPI.md.")
        endif()
     endif()
 endif()
@@ -612,7 +656,7 @@ set(RUN_SRC
     ${RUNFILE_DIR}/run_mat{cpx}.foo
     ${RUNFILE_DIR}/run_mp2.foo
 #   ${RUNFILE_DIR}/run_mpi_matmul.foo
-#   ${RUNFILE_DIR}/run_mpi_pi.foo
+    ${RUNFILE_DIR}/run_mpi_pi.foo
     ${RUNFILE_DIR}/run_qr.foo
     ${RUNFILE_DIR}/run_shell2.foo
     ${RUNFILE_DIR}/run_real.foo
@@ -871,7 +915,11 @@ add_executable(run_mat_real      EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/ru
 add_executable(run_mat_cpx       EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mat_cpx.F90)
 add_executable(run_mp2           ${CMAKE_CURRENT_BINARY_DIR}/run_mp2.F90)
 #add_executable(run_mpi_matmul    EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_matmul.F90)
-#add_executable(run_mpi_pi        EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_pi.F90)
+# run_mpi_pi is the MPI smoke test: one `parallel do` + one PARALLEL_SUM, with a
+# known answer that must not depend on the rank count. Registered as the
+# `mpi_pi_rank_invariant` ctest (scripts/check_mpi_pi.sh). Not EXCLUDE_FROM_ALL,
+# so an MPI build always produces something that can be checked.
+add_executable(run_mpi_pi         ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_pi.F90)
 add_executable(run_qr            EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_qr.F90)
 add_executable(run_real          EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_real.F90)
 add_executable(run_rgbi          ${CMAKE_CURRENT_BINARY_DIR}/run_rgbi.F90)
@@ -897,7 +945,7 @@ target_link_libraries(run_mat_real      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIE
 target_link_libraries(run_mat_cpx       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_mp2           tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 #target_link_libraries(run_mpi_matmul    tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-#target_link_libraries(run_mpi_pi        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_mpi_pi         tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_qr            tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_real          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_rgbi          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
