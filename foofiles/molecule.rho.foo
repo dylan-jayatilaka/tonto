@@ -2694,6 +2694,18 @@ contains
    end
 
    make_periodic_stockholder_atom_weight(grid,a,pts) :: leaky, private
+   ! Use the molecule atom list for the observed-density path.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      a    :: INT, IN
+      pts  :: MAT{REAL}, IN
+
+      .make_periodic_stockholder_atom_weight_from( &
+         grid,a,pts,.atom)
+
+   end
+
+   make_periodic_stockholder_atom_weight_from(grid,a,pts,proatom) :: leaky, private
    ! Make a Hirshfeld stockholder weight for atom "a" using a periodic
    ! procrystal denominator. The ordinary molecular stockholder routine
    ! is not suitable for an extended solid: for a one-atom fragment it
@@ -2707,66 +2719,92 @@ contains
       grid :: VEC{REAL}, OUT
       a    :: INT, IN
       pts  :: MAT{REAL}, IN
+      proatom :: VEC{ATOM}, IN
 
-   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(proatom.dim>0,"no proatoms")
+   ENSURE(a>=1 AND a<=proatom.dim,"invalid proatom index")
    ENSURE(.crystal.allocated,"no crystal")
    ENSURE(.crystal.unit_cell_atom.allocated,"no unit-cell atoms")
    ENSURE(grid.dim==pts.dim1,"incompatible dim1, grid & pts")
 
-      rho_a,den,tmp,R2 :: VEC{REAL}@
+      rho_a,den,tmp,R2,reference_radius :: VEC{REAL}@
       reference,h_min,h_max :: VEC{INT}@
       lattice_index :: VEC{INT}(3)
       center,pos,shift,frac_center,frac_radius :: VEC{REAL}(3)
-      cutoff,radius :: REAL
+      cutoff,target_radius,max_radius :: REAL
       n_pts,n,u,b,i,h1,h2,h3 :: INT
 
       n_pts = pts.dim1
       cutoff = .becke_grid.basis_fn_cutoff
-      center = .atom(a).position
+      center = proatom(a).position
 
       ! Reuse the proatom interpolation table made by make_HA_info.  Calling
       ! interpolator_table_length here would rebuild the density from an
       ! orbital occupation vector that does not exist on the observed-only
       ! path.  Convert the table's stored coordinate back to a physical
       ! radius according to its domain mapping.
-      select case (.atom(a).basis_kind)
+      select case (proatom(a).basis_kind)
       case ("gaussian")
-         ENSURE(.atom(a).interpolator.allocated,"no proatom interpolator")
-         if (.atom(a).interpolator.domain_is_sqrt_x1x) then
-            radius = .atom(a).interpolator.domain_scale_factor*sqrt( &
-               .atom(a).interpolator.table_length / &
-               max(ONE-.atom(a).interpolator.table_length,epsilon(ONE)))
-         else if (.atom(a).interpolator.domain_is_sqrt) then
-            radius = sqrt(.atom(a).interpolator.table_length)
+         ENSURE(proatom(a).interpolator.allocated,"no proatom interpolator")
+         if (proatom(a).interpolator.domain_is_sqrt_x1x) then
+            target_radius = proatom(a).interpolator.domain_scale_factor*sqrt( &
+               proatom(a).interpolator.table_length / &
+               max(ONE-proatom(a).interpolator.table_length,epsilon(ONE)))
+         else if (proatom(a).interpolator.domain_is_sqrt) then
+            target_radius = sqrt(proatom(a).interpolator.table_length)
          else
-            radius = .atom(a).interpolator.table_length
+            target_radius = proatom(a).interpolator.table_length
          end
       case ("slater","coppens")
-         radius = .atom(a).interpolator_table_length(cutoff)
+         target_radius = proatom(a).interpolator_table_length(cutoff)
       case default
-         UNKNOWN(.atom(a).basis_kind)
+         UNKNOWN(proatom(a).basis_kind)
       end
 
       ! Find one neutral reference atom of the correct element for
       ! every crystallographic atom in the unit cell.
       reference.create(.crystal.n_unit_cell_atoms)
+      reference_radius.create(.crystal.n_unit_cell_atoms)
+      max_radius = target_radius
       do u = 1,.crystal.n_unit_cell_atoms
          reference(u) = 0
-         do b = 1,.n_atom
-            if (.atom(b).atomic_number == &
+         do b = 1,proatom.dim
+            if (proatom(b).atomic_number == &
                 .crystal.unit_cell_atom(u).atomic_number) then
                reference(u) = b
                exit
             end
          end
          ENSURE(reference(u)>0,"no periodic Hirshfeld reference atom")
+
+         b = reference(u)
+         select case (proatom(b).basis_kind)
+         case ("gaussian")
+            ENSURE(proatom(b).interpolator.allocated,"no proatom interpolator")
+            if (proatom(b).interpolator.domain_is_sqrt_x1x) then
+               reference_radius(u) = &
+                  proatom(b).interpolator.domain_scale_factor*sqrt( &
+                  proatom(b).interpolator.table_length / &
+                  max(ONE-proatom(b).interpolator.table_length,epsilon(ONE)))
+            else if (proatom(b).interpolator.domain_is_sqrt) then
+               reference_radius(u) = sqrt(proatom(b).interpolator.table_length)
+            else
+               reference_radius(u) = proatom(b).interpolator.table_length
+            end
+         case ("slater","coppens")
+            reference_radius(u) = &
+               proatom(b).interpolator_table_length(cutoff)
+         case default
+            UNKNOWN(proatom(b).basis_kind)
+         end
+         max_radius = max(max_radius,reference_radius(u))
       end
 
       ! The central proatom numerator defines the finite integration
       ! support. One extra cell in each direction is retained around
       ! that support.
       frac_center = matmul(center,.crystal.unit_cell.reciprocal_mx)
-      frac_radius = radius/.crystal.unit_cell.length
+      frac_radius = (target_radius+max_radius)/.crystal.unit_cell.length
       h_min.create(3)
       h_max.create(3)
       h_min = floor(frac_center-frac_radius) - 1
@@ -2776,7 +2814,7 @@ contains
       den.create(n_pts)
       tmp.create(n_pts)
       R2.create(n_pts)
-      .atom(a).make_ED_grid(rho_a,pts)
+      proatom(a).make_ED_grid(rho_a,pts)
       den = ZERO
 
       do h1 = h_min(1),h_max(1)
@@ -2795,21 +2833,22 @@ contains
 
             ! If both proatoms are truncated at "radius", this image
             ! cannot overlap the support of the central numerator.
-            if (norm2(pos-center)>TWO*radius) cycle
+            if (norm2(pos-center)> &
+               target_radius+reference_radius(u)) cycle
 
-            select case (.atom(b).basis_kind)
+            select case (proatom(b).basis_kind)
             case ("gaussian")
                do n = 1,n_pts
                   R2(n) = sum((pts(n,:)-pos)**2)
                end
-               .atom(b).interpolator.values_for(R2,tmp)
+               proatom(b).interpolator.values_for(R2,tmp)
                den = den + tmp
             case ("slater")
-               .atom(b).slaterbasis.add_ED_grid(den,pts,pos)
+               proatom(b).slaterbasis.add_ED_grid(den,pts,pos)
             case ("coppens")
-               .atom(b).coppensbasis.add_ED_grid(den,pts,pos)
+               proatom(b).coppensbasis.add_ED_grid(den,pts,pos)
             case default
-               UNKNOWN(.atom(b).basis_kind)
+               UNKNOWN(proatom(b).basis_kind)
             end
          end
 
@@ -2831,6 +2870,7 @@ contains
       rho_a.destroy
       h_max.destroy
       h_min.destroy
+      reference_radius.destroy
       reference.destroy
 
    end
@@ -5495,7 +5535,15 @@ contains
 
          ! Stockholder weight function "Wa" for atom "a"
          Wa.create(n_pt)
-         HS_atoms.make_Hirshfeld_weight_grid(Wa,pt,a)
+         select case (.crystal.xray_data.stockholder_model)
+         case ("cluster ")
+            HS_atoms.make_Hirshfeld_weight_grid(Wa,pt,a)
+         case ("periodic")
+            .make_periodic_stockholder_atom_weight_from( &
+               Wa,a,pt,HS_atoms)
+         case default
+            UNKNOWN(.crystal.xray_data.stockholder_model)
+         end
 
          ! Incorporate integration weight
          wt = Wa*wt
