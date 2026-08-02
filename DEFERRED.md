@@ -643,11 +643,45 @@ than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comment
 
   Serial suite unchanged (50/51, exact 45) -- the code is inside `#ifdef MPI` and additionally
   guarded, so a serial build never reaches it.
-- **HAR writes the same file from every rank.** `foofiles/molecule.har.foo:1346` calls
-  `arch.parallel_write` — deliberately unguarded by `IO_IS_ALLOWED` — inside a *serial* loop with
-  a filename identical on all ranks. `file.foo:134` only opens the file when `IO_IS_ALLOWED`, and
-  `parallel_IO_allowed` is never set on the HAR path, so non-master ranks write to a unit that
-  was never opened. Affects every HAR test under MPI.
+- **DECISION NEEDED DURING THE fragHAR WORK — `make_LS_mx` writes the same file from every rank.**
+  `foofiles/molecule.har.foo:1346` calls `arch.per_rank_write(sf_u)` (renamed from
+  `parallel_write`, 2026-08-02), which is deliberately unguarded by `IO_IS_ALLOWED`.
+
+  **Exact context**, traced 2026-08-02:
+
+  ```
+  MOLECULE.HAR:make_LS_mx(d_Fa)                          molecule.har.foo:725
+    do f = 1,.crystal.n_fragment_atoms                                  :799   <- SERIAL
+      do u = 1,n_unique                                                 :875   <- SERIAL
+        c = .crystal.unique_frag_atom(u)                                :915
+        arch.create(trim(.atom(c).tag)//"-SFs")                        :1344
+        arch.per_rank_write(sf_u)                                      :1346
+  ```
+
+  Both enclosing loops are serial, so every rank walks every `u`, `c` takes the **same value on
+  every rank at the same time**, and the filename is therefore identical across ranks. Two faults
+  stack: all ranks write one file concurrently (no locking, no offsets -- corruption, and no
+  filesystem prevents it), and `file.foo:134` only *opens* under `IO_IS_ALLOWED` while
+  `parallel_IO_allowed` is never set on this path, so non-master ranks write to the master's
+  broadcast unit which they never opened.
+
+  **Reachable ONLY via fragHAR** -- and therefore currently untested:
+  `fragHAR_refinement` (`:52`) is the sole caller of `set_use_disk_SFs(TRUE)`; `LS_fit` (`:562`)
+  then takes the `LS_fit_HAs_disk` branch, which calls `make_LS_mx` (`:643`). Every test job has
+  `use_disk_SFs` off -- `gly_ala_fragHAR`'s `stdin:40` has it **commented out**. The code's own
+  comment at `:631` reads *"NOTE: routine make_LS_mx is very long! Is it working? Rewrite?"*.
+
+  **Deliberately NOT fixed now**, because the right fix depends on intent and no test exercises
+  the branch, so a wrong choice would be invisible:
+  - if that `u` loop is *meant* to be serial -> change to the ordinary `write`, which is
+    `IO_IS_ALLOWED`-guarded, so only the master writes. One word, no serial behaviour change.
+  - if it is *meant* to be parallel -> make it `parallel do u`, at which point `per_rank_write`
+    becomes correct (each rank owns distinct `u`, hence distinct filenames) **and** you get the
+    speedup the `! WRITE SF_U TO DISK HERE TO SAVE TIME` comment is reaching for. Bigger: needs
+    the reduction question answered for whatever `make_LS_mx` accumulates.
+
+  `MOLECULE.RHO:get_Hirshfeld_atom_FFs_disk` (`molecule.rho.foo:5437`) makes the identical call
+  correctly, from inside a `parallel do` -- copy that pattern if going parallel.
 - **`fragment_SCF_para` RMA work queue** (`foofiles/parallel.foo:6400`, driven from
   `molecule.scf.foo:5871`): `g = .p_loop_list(.p_loop_index)` is evaluated before the caller's
   exit test, so the terminating fetch indexes past the end of `p_loop_list` on every worker,
