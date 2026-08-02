@@ -734,9 +734,25 @@ should not be deleted with one sweep:
 **(a) Genuinely dead — delete.** `TONTO_SET_STDERR` / `TONTO_SET_STDERR0` is the clearest case:
 unused *and* it expands to `set_error_output_file_(tonto,X)` / `SYSTEM_set_error_output_file`,
 a routine that **does not exist anywhere in `foofiles/`**. It would fail to compile the moment
-anyone used it. Same family: `TONTO_CREATE`, `TONTO_DESTROY`, `PARALLEL_DO_START`,
-`PARALLEL_DO_STRIDE`, `LOCK_PARALLEL_DO`, `UNLOCK_PARALLEL_DO`, `PARALLEL_VECTOR_SUM` — each
-defined, each unused (their `…0` variants *are* used, inside `macros.in`).
+anyone used it.
+
+> **CORRECTION 2026-08-02 — the rest of this list was WRONG and acting on it would have broken
+> the build.** The 2026-07-29 audit grepped only `foofiles/`, and so was blind to two other
+> sources of use. Re-measured:
+>
+> | macro | audit said | actually |
+> |---|---|---|
+> | `TONTO_CREATE` | unused | **50 runfiles**, 6 generated `.F90` |
+> | `TONTO_DESTROY` | unused | **48 runfiles**, 6 generated `.F90` |
+> | `PARALLEL_DO_START` / `_STRIDE` | unused | **emitted by the translator**, 10 generated `.F90` |
+> | `LOCK_PARALLEL_DO` / `UNLOCK_PARALLEL_DO` | unused | **emitted by the translator**, 10 generated `.F90` |
+> | `PARALLEL_VECTOR_SUM` | unused | genuinely unused — the only true positive |
+>
+> `TONTO_CREATE`/`TONTO_DESTROY` live in `runfiles/`, which the audit did not scan. The
+> `PARALLEL_DO_*` and `*_PARALLEL_DO` family can **never** appear in a `.foo` file by
+> construction: `FooToFortran` writes them into the generated Fortran when it lowers
+> `parallel do`. Any macro audit must cover **three** sources -- `foofiles/`, `runfiles/`, and
+> what the translator emits -- or it will report build-breaking false positives.
 
 **(b) Stale defaults — the real hazard.** Macros that look like the tunable default for
 something but no longer drive anything, because the code sets its own value. Editing one has no
@@ -884,7 +900,15 @@ interactions only"* boundary gives **14 of 17** differing hunks inside the vdW s
 van der Waals contacts — non-bonded pairs at 2.3–3.3 Å, enabled by `analyze_vdw_atom_pairs= T`
 — carry most of the instability, as Dylan expected.
 
-**Considered and NOT adopted: turning the vdW pairs off and re-blessing.** Two reasons:
+> **SUPERSEDED 2026-08-02.** This was written when vdW analysis was still ON. It is now **OFF**:
+> Dylan turned it off in `99b1b535` (2026-07-31, *"tests(ylid): turn vdW contact analysis off"*),
+> and `tests/rgbi/ylid/stdin:26` reads `analyze_vdw_atom_pairs= F`. The test's own comment records
+> the reasoning -- the vdW section was the whole of the macOS/Linux disagreement, and this test
+> exists to exercise Roby bond indices, which do not need it. The argument below was not
+> persuasive at the time and is kept only for the timing data (vdW ON ~46 s, OFF ~59 s), which
+> remains an unexplained oddity: turning work *off* made the job *slower*.
+
+**Considered and NOT adopted at the time: turning the vdW pairs off and re-blessing.** Two reasons:
 
 1. **It would break Linux.** ylid currently *passes* there, so a re-bless would enshrine macOS
    numbers and flip the platform that is presently correct.
