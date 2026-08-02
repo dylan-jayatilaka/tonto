@@ -4,6 +4,7 @@
 [![CI (Linux-debug)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml)
 [![CI (WSL-release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml)
 [![CI (WSL-debug)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml)
+[![CI (Linux-MPI)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-mpi.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-mpi.yml)
 
 Tonto is a quantum chemistry and crystallography package, with a focus on
 Hirshfeld atom refinement, structure factor calculation, and
@@ -172,6 +173,22 @@ this same agreement table on its summary page, and download the `tests.log`
 artifact. Green means the short suite passed the loose gate.
 [**`docs/CI.md`**](docs/CI.md) covers what each workflow runs, how to start one by
 hand (`gh workflow run …` or the Actions tab), and how to read the result.
+
+They are not all the same kind of badge:
+
+- **CI (Linux-release)** is the one that must be green. It is the gate.
+- **CI (Linux-debug)** carries four longstanding `-O0` floating-point/structural
+  failures that are not code defects (see `DEFERRED.md`), so its suite step is
+  informational.
+- **CI (Linux-MPI)** does not run on every push — Ubuntu's Open MPI is built
+  against gcc-13 while the project standardises on gfortran-14, and `USE mpi`
+  makes `.mod` files compiler-version specific, so the workflow builds Open MPI
+  from source and is therefore cached, scheduled weekly, and triggered only by
+  MPI-relevant paths. Its gate is the π rank-invariance check
+  (`scripts/check_mpi_pi.sh`), not the suite, whose step is `continue-on-error`
+  while the defect register in `docs/MPI.md` still has open rows. So a red MPI
+  badge means the build broke or π stopped being rank-count independent — both
+  real.
 
 ## 5. Help, bugs, contributing
 

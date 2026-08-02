@@ -4956,9 +4956,31 @@ contains
          end
 
          ! Write out updated SFs
+         !
+         ! Plain `write`, NOT `per_rank_write`. The `do u` loop above is SERIAL,
+         ! so every rank arrives here with the same "f" and therefore the same
+         ! file name, and per_rank_write is the ordinary write with the
+         ! master-only guard REMOVED -- every rank writing one file at once,
+         ! with no locking and no offsets. Unique atom labels do not save this:
+         ! they make different ATOMS use different files, which is what makes
+         ! the `parallel do u` version in MOLECULE.RHO:get_Hirshfeld_atom_FFs_-
+         ! disk correct, but here every rank is on the SAME label.
+         !
+         ! Worse than it looks, because this is a read-modify-write: the read
+         ! above is FILE:read, which is master-only and BROADCASTS the values,
+         ! so all ranks already hold master's copy -- and then all of them wrote
+         ! it back over each other. The read side is master-authoritative
+         ! already; the write side now agrees with it.
+         !
+         ! Master-only, not `parallel do`, deliberately: correctness first.
+         ! Distributing this loop is available (the per-atom work is
+         ! independent, and the commented-out `parallel_read` above shows it was
+         ! the intent) but it is a rewrite, and not obviously a win -- N ranks
+         ! each opening, writing and closing a small file at the same instant
+         ! contends on the filesystem, badly over NFS/Lustre. See DEFERRED.md.
          arch.create(trim(.fragment_atom(f).tag)//"-SFs")
          if (.xray_data.use_text_SFs) arch.set_format("ascii")
-         arch.per_rank_write(ff)
+         arch.write(ff)
          arch.destroy
 
       end
