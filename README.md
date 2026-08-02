@@ -44,9 +44,9 @@ sudo apt install make default-jdk gfortran libblas-dev liblapack-dev python3 gnu
   build: `sudo apt install openmpi-bin libopenmpi-dev`.
 
 **macOS** → [Building on macOS](https://github.com/dylan-jayatilaka/tonto/wiki/Building-on-MacOS)
-(via Homebrew; Linux/WSL is the reference platform). &nbsp;
+(via Homebrew). &nbsp;
 
-**Windows** → [**`docs/BUILD_WSL.md`**](docs/BUILD_WSL.md) is covered by CI.
+**Windows** → [**`docs/BUILD_WSL.md`**](docs/BUILD_WSL.md) (via Linux/WSL, covered by CI).
 Note: WSL adds four traps (a Windows JDK on the interop `PATH`, building on
 `/mnt/c`, CRLF line endings, and the OOM killer) that `cmake` now detects and
 explains. Run `scripts/wsl_doctor.sh` first.
