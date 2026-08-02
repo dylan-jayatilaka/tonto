@@ -1,0 +1,6052 @@
+!==================================================================
+!
+! MOLECULE.RHO: 
+! 
+! Molecule, basic electron density grids, and gradients of rho.
+! It also includes fuzzy atomic partitioning for the density.
+! And their FTs, the atomic form factor calcvulations.
+!
+! Copyright (C) Dylan Jayatilaka, Daniel Grimwood, 1996-2012
+! Copyright (C) Dylan Jayatilaka 2012-
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!==================================================================
+
+module MOLECULE.RHO
+
+   implicit none
+
+contains
+
+!  ============
+!  Orbital grid
+!  ============
+
+   make_orbital_grid_r(Ogrid,Orb,pts,square) :: PURE
+   ! Evaluate the orbital "Ogrid" for *one* AO-basis coefficient
+   ! orbital column "Orb", on a set of grid "pts". 
+   ! If present and TRUE, then "square" the result.
+      self   :: IN
+      Ogrid  :: VEC{REAL}, OUT
+      Orb    :: VEC{REAL}, IN
+      pts    :: MAT{REAL}, IN
+      square :: BIN, optional, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+
+      sq :: BIN
+      sh :: SHELL1
+      BFgrid :: MAT{REAL}@
+      n_pts,s,fs,ls,ns :: INT
+
+      sq = FALSE
+      if (present(square)) sq = square
+
+      n_pts = pts.dim1
+
+      Ogrid = ZERO
+
+      do s = 1,.n_shell
+
+         .set_shell1_from(s,sh,fs,ls,ns)
+
+         ! Basis Fn grid for shell s
+         BFgrid.create(n_pts,ns)
+         sh.make_grid(BFgrid,pts)
+
+         Ogrid = Ogrid + matmul(BFgrid,Orb(fs:ls))
+
+         BFgrid.destroy
+
+      end
+
+      if (sq) Ogrid = Ogrid*Ogrid
+
+   end
+
+!  ==================
+!  Nabla orbital grid
+!  ==================
+
+   make_nabla_orbital_grid(Ngrid,Ogrid,Orb,pts) :: template
+   ! Return the nabla orbital density "Ngrid", and orbital density
+   ! grid "Ogrid" for *one* orbital coefficient column "Orb", on a set
+   ! of points "pts".
+      self  :: IN
+      Ngrid :: MAT{TYPE?}, OUT
+      Ogrid :: VEC{TYPE?}, OUT
+      Orb   :: VEC{TYPE?}, IN
+      pts   :: MAT{REAL}, IN
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(Ngrid.dim2==3, "wrong dim2, Ngrid")
+   ENSURE(Ngrid.dim1==pts.dim1,"inconsistent Ngrid and pts")
+   ENSURE(Ogrid.dim ==pts.dim1,"inconsistent Ogrid and pts")
+
+      sh     :: SHELL1
+      Ngrids :: MAT3{REAL}@
+      Bgrids :: MAT{REAL}@
+      n_pts,fs,ls,ns,s :: INT
+
+      n_pts = pts.dim1
+
+      Ngrid = ZERO
+      Ogrid = ZERO
+
+      do s = 1,.n_shell
+
+         .set_shell1_from(s,sh,fs,ls,ns)
+
+         ! Nabla and Basis fn grid for shell s
+         ! Second index are shell basis fns
+         Ngrids.create(n_pts,ns,3)
+         Bgrids.create(n_pts,ns)
+         sh.make_nabla_grid(Ngrids,Bgrids,pts)
+
+         Ngrid(:,1) = Ngrid(:,1) + matmul(Ngrids(:,:,1),Orb(fs:ls))
+         Ngrid(:,2) = Ngrid(:,2) + matmul(Ngrids(:,:,2),Orb(fs:ls))
+         Ngrid(:,3) = Ngrid(:,3) + matmul(Ngrids(:,:,3),Orb(fs:ls))
+         Ogrid(:  ) = Ogrid(:  ) + matmul(Bgrids(:,:  ),Orb(fs:ls))
+
+         Ngrids.destroy
+         Bgrids.destroy
+
+      end
+
+   end
+
+   make_nabla_orbital_grid_r(Ngrid,Ogrid,Orb,pts) :: get_from(make_nabla_orbital_grid, TYPE?=>REAL), PURE
+   ! Return the nabla orbital density "Ngrid", and orbital density
+   ! grid "Ogrid" for *one* orbital coefficient column "Orb", on a set
+   ! of points "pts".
+   end
+
+!  ======================
+!  Laplacian orbital grid
+!  ======================
+
+   make_laplacian_orbital_grid_r(L,N,O,Orb,pts) :: PURE
+   ! Return the Laplacian orbital density grid "L", the Nabla orbital
+   ! grid "N", and the Orbital grid "O" for *one* AO-basis orbital
+   ! vector "Orb" on a set of grid points "pts"
+      self :: IN
+      L    :: MAT{REAL}, OUT 
+      N    :: MAT{REAL}, OUT 
+      O    :: VEC{REAL}, OUT
+      Orb  :: VEC{REAL}, IN
+      pts  :: MAT{REAL}, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(L.dim2==3,"wrong dim2, L")
+   ENSURE(N.dim2==3,"wrong dim2, N")
+   ENSURE(L.dim1==pts.dim1,"inconsistent dim1, L and pts")
+   ENSURE(N.dim1==pts.dim1,"inconsistent dim1, N and pts")
+   ENSURE(O.dim1==pts.dim1,"inconsistent dim1, O and pts")
+
+      sh :: SHELL1
+      Lgrid :: MAT3{REAL}@
+      Ngrid :: MAT3{REAL}@
+      Bgrid :: MAT{REAL}@
+      n_pts,fs,ls,ns,s :: INT
+
+      n_pts = pts.dim1
+
+      L = ZERO
+      N = ZERO
+      O = ZERO
+
+      do s = 1,.n_shell
+
+         .set_shell1_from(s,sh,fs,ls,ns)
+
+         ! Laplacian, Nabla, and regular Basis fn grids
+         Lgrid.create(n_pts,ns,3)
+         Ngrid.create(n_pts,ns,3)
+         Bgrid.create(n_pts,ns  )
+         sh.make_laplacian_grid(Lgrid,Ngrid,Bgrid,pts)
+
+         L(:,1) = L(:,1) + matmul(Lgrid(:,:,1),Orb(fs:ls))
+         L(:,2) = L(:,2) + matmul(Lgrid(:,:,2),Orb(fs:ls))
+         L(:,3) = L(:,3) + matmul(Lgrid(:,:,3),Orb(fs:ls))
+         N(:,1) = N(:,1) + matmul(Ngrid(:,:,1),Orb(fs:ls))
+         N(:,2) = N(:,2) + matmul(Ngrid(:,:,2),Orb(fs:ls))
+         N(:,3) = N(:,3) + matmul(Ngrid(:,:,3),Orb(fs:ls))
+         O(:)   = O(:)   + matmul(Bgrid(:,:  ),Orb(fs:ls))
+
+         Lgrid.destroy
+         Ngrid.destroy
+         Bgrid.destroy
+
+      end
+
+   end
+
+!  =========================
+!  Electron density routines
+!  =========================
+
+   make_ED_grid_at_pts(grid,pts) :: PURE
+   ! Work out the electron "grid" on "pt" using ".natural orbitals" and
+   ! the ".NO_occ_nos" vector. 
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+
+   ENSURE(.NOs.allocated, "no natural orbitals")
+   ENSURE(.NOs.has_real_genre, "no real NOs")
+
+      relativity :: STR
+      NOgenre    :: STR
+
+      relativity = "none"
+      if (.SCF_data.allocated) then
+         relativity = .SCF_data.relativity_kind
+         if (NOT .SCF_data.PCE_CORR) relativity = "none"
+      end
+      ENSURE(relativity=="none","relativistic densities unmaintained")
+
+      NOgenre = .NOs.genre
+      select case (NOgenre)
+      case ("r "); .make_ED_grid_r(grid,pts)
+      case ("u "); .make_ED_grid_u(grid,pts)
+      end
+
+   end
+
+   make_ED_grid_r(grid,pts) :: PURE
+   ! Make the "grid" for the supplied points "pts" from restricted 
+   ! real density matrix (not NOs as in v1, which is deprecated).
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+
+   ! .make_ED_grid_r_v1(grid,pts)
+      .make_ED_grid_r_v2(grid,pts)
+
+   end
+
+   make_ED_grid_r_v2(grid,pts) :: PURE
+   ! Make the electron density "grid" for the supplied points "pts"
+   ! from restricted real .density_mx. Elements smaller than TOL(9)
+   ! are ignored.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+
+   ENSURE(pts.dim2==3,  "wrong dim2, pts")
+   ENSURE(.density_mx.is_allocated_with_genre("r "), "no restricted density_mx")
+
+      .make_ED_grid_r_v2(grid,pts,.density_mx.r)
+
+   end
+
+   make_ED_grid_r(grid,pts,DM) :: PURE
+   ! Make the "grid" for the supplied points "pts" from restricted 
+   ! real density matrix "DM".
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+      DM   :: MAT{REAL}, IN
+
+      .make_ED_grid_r_v2(grid,pts,DM)
+
+   end
+
+   make_ED_grid_r_v2(grid,pts,DM,tol) :: PURE
+   ! Add to "grid" the electron density values at the the points "pt",
+   ! for density matrix "DM". Only terms bigger than "tol" are considered.
+   ! NOTE: This is Kanghyun's version. Now working.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+      DM   :: MAT{REAL}, IN
+      tol  :: REAL, optional, IN
+
+   ENSURE(grid.dim==pts.dim1, "inconsistent dim1, grid & pts")
+   ENSURE(pts.dim2==3,    "wrong dim2, pt")
+   ENSURE(DM.is_square,   "wrong shape, DM")
+   ENSURE(DM.dim1==.n_bf, "wrong size, DM")
+
+      psi  :: VEC{EVEC{REAL}}@
+      ind  :: VEC{EVEC{INT}}@
+      mask :: VEC{BIN}@
+      bf   :: MAT{REAL}@
+      same,pi,pj :: VEC{INT}@
+      n_pts, s,fs,ls,ns, i,j :: INT
+      sh   :: SHELL1
+      Dij  :: REAL
+      eps  :: REAL
+
+      ! Same as .becke_grid.basis_fn_cutoff
+      eps = SHELL_BASIS_FN_CUTOFF
+      if (present(tol)) eps = tol
+
+      ! Zero
+      grid = ZERO
+
+      ! Sparse storage of significant b.f. values on grid:
+      ! placed in "psi", corresponding indices in "ind".
+      psi.create(.n_bf)
+      ind.create(.n_bf)
+
+      ! Loop over shells "s"
+      n_pts = pts.dim1
+      mask.create(n_pts)
+      do s = 1,.n_shell 
+         .set_shell1_from(s,sh,fs,ls,ns)
+         bf.create(n_pts,ns)
+         sh.make_grid(bf,pts(:,1),pts(:,2),pts(:,3))
+         ! Basis fn. "i"
+         do i = fs,ls
+            mask = abs(bf(:,i-fs+1))>eps
+            ! Store large values for each b.f.
+            psi(i).element = pack(bf(:,i-fs+1)   ,mask)
+            ind(i).element = pack([(j,j=1,n_pts)],mask)
+         end
+         bf.destroy
+      end
+      mask.destroy
+
+      ! psi*psi product
+      grid = ZERO 
+      do i = 1,.n_bf 
+      do j = 1,i
+         ! DM is symmetric
+         Dij = DM(i,j)
+         if (j<i) Dij = Dij + Dij
+         ! DM value large enough?
+         if (abs(Dij)>eps) then
+            VEC{INT}:common_indices_in(ind(i)[:],ind(j)[:],pi,pj,same)
+            ! Common indices?
+            if (same.dim>0) then
+               grid(same) = grid(same) + Dij*psi(i)[pi]*psi(j)[pj]
+            end
+            pi.destroy
+            pj.destroy
+            same.destroy
+         end
+      end
+      end
+
+      ind.destroy
+      psi.destroy
+
+   end
+
+! Should be deprecated? Version without NOs is better?
+
+   make_ED_grid_r_v1(grid,pts) :: PURE
+   ! Make the "grid" for the supplied points "pts" from
+   ! restricted real natural orbitals
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+
+   ENSURE(pts.dim2==3,  "wrong dim2, pts")
+   ENSURE(.NOs.is_allocated_with_genre("r "), "no restricted NO's")
+   ENSURE(.NO_occ_nos.r.allocated, "no occupation numbers")
+
+      NO  :: VEC{REAL}@
+      occ :: REAL
+      n_occ,n :: INT
+
+      n_occ = .no_of_occupied_NOs
+      NO.create(pts.dim1)
+
+      grid = ZERO
+
+      parallel do n = 1,n_occ
+         .make_orbital_grid_r(NO,.NOs.r(:,n), pts)
+         occ = .NO_occ_nos.r(n)
+         grid = grid + occ*NO*NO
+      end
+
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(grid)
+      end
+
+      NO.destroy
+
+   end
+
+   make_ED_grid_r_v1(grid,pts,NO,occ) :: PURE
+   ! Make the electron density "grid" for the supplied points "pts"
+   ! from the natural orbitals "NO" and occupuation numbers "occ".
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+      NO   :: MAT{REAL}, IN
+      occ  :: VEC{REAL}, IN
+
+   ENSURE(pts.dim2==3,"wrong dimension for points array")
+   ENSURE(grid.dim==pts.dim1,"inconsistent number of points")
+
+      NOn :: VEC{REAL}@
+      n   :: INT
+
+      NOn.create(pts.dim1)
+
+      grid = ZERO
+      do n = 1,NO.dim2
+         if (occ(n)==ZERO) cycle
+         .make_orbital_grid_r(NOn,NO(:,n),pts)
+         grid = grid + occ(n)*NOn*NOn
+      end
+
+      NOn.destroy
+
+   end
+
+   make_ED_grid_u(grid,pts,sgn) :: PURE
+   ! Make the electron density  "grid" for the supplied points "pt"
+   ! from unrestricted real natural orbitals. If present "sgn" is used
+   ! to determine whether the total density or spin density is to be
+   ! calculated: sgn=1 means sum the alpha and beta densities to form
+   ! the total density, sgn=-1 means to subtract, forming the Sz spin
+   ! density.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+      sgn  :: INT, optional, IN
+
+   ENSURE(pts.dim2==3,  "wrong dimension for points array")
+   ENSURE(.NOs.is_allocated_with_genre("u "), "no unrestricted NO's")
+   ENSURE(.NO_occ_nos.a.allocated, "no alpha occupation numbers")
+   ENSURE(.NO_occ_nos.b.allocated, "no beta occupation numbers")
+
+      NO :: VEC{REAL}@
+      occ,fac :: REAL
+      na,nb,n :: INT
+
+      fac = ONE
+      if (present(sgn)) fac = REALIFY(sgn)
+
+      na = .no_of_occupied_NOs("alpha")
+      nb = .no_of_occupied_NOs("beta")
+
+      NO.create(pts.dim1)
+
+      grid = ZERO
+
+      do n = 1,na
+         .make_orbital_grid_r(NO,.NOs.a(:,n),pts)
+         occ = .NO_occ_nos.a(n)
+         grid = grid + occ*NO*NO
+      end
+
+      do n = 1,nb
+         .make_orbital_grid_r(NO,.NOs.b(:,n),pts)
+         occ = .NO_occ_nos.b(n)
+         grid = grid + fac*occ*NO*NO
+      end
+
+      ! Clean
+      NO.destroy
+
+   end
+
+   integrate_ED_numerically
+   ! Integrate the density numerically
+      self :: INOUT
+
+   ENSURE(.becke_grid.allocated,"no becke_grid")
+   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
+
+      pt   :: MAT{REAL}@
+      wt   :: VEC{REAL}@
+      rho  :: VEC{REAL}@
+      n_pt :: INT
+      n_e  :: REAL
+
+   ! Z    :: MAT{REAL}@
+   ! i,j  :: INT
+   ! V_ee :: REAL
+
+      stdout.head("Numerically integrate the electron density")
+
+      ! Make becke grid (leaky)
+      .becke_grid.put
+      .becke_grid.put_atom_info
+      .becke_grid.make_grid(pt,wt)
+
+      n_pt = pt.dim1
+
+      rho.create(n_pt)
+
+      .make_ED_grid_at_pts(rho,pt)
+
+      n_e = sum(rho*wt)
+
+      stdout.show("n_pt =",n_pt)
+      stdout.show("n_e  =",n_e)
+
+   ! stdout.text("wt:")
+   ! do i = 1,wt.dim
+   !     write(*,"(e20.12)") wt(i)
+   ! end
+
+   ! stdout.text("pt:")
+   ! stdout.put(pt)
+   ! do i = 1,pt.dim1
+   !     write(*,"(3e20.12)") (pt(i,j), j=1,3)
+   ! end
+
+      rho.destroy
+      wt.destroy
+      pt.destroy
+
+      ! Now do the int rho_2() r_12^{-1} dr2
+   ! Z.create(.n_bf,.n_bf)
+   ! pt.create(1,3)
+   ! i = 1
+   ! pt(1,:) = .atom(i).position
+   ! .make_nuclear_attraction_mx(Z,[-ONE],pt)
+   ! V_ee = .expectation(Z)
+   ! stdout.text("V_ee:")
+   ! write(*,"(e20.12)") V_ee
+   ! pt.destroy
+   ! Z.destroy
+
+   end
+
+!  ==================
+!  Derivative ED grid
+!  ==================
+
+   make_derivative_rho_grid(N0,pts,D) :: leaky, PURE
+   ! Make density grids "N0" on points "pt" using density matrices "D"
+   ! skipping as points as possible. This routine will probably have
+   ! to be batched over *spatially localised* points to reduce memory
+   ! requirements.
+      self :: IN
+      N0   :: MAT{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+      D   :: MAT3{REAL}, IN
+
+   ENSURE(N0.dim1==pts.dim1,"N0 and pt: incompatible sizes")
+   ENSURE(N0.dim2== D.dim3,"N0 and D: incompatible sizes")
+   ENSURE(3     ==pts.dim2,"pt: wrong dim2")
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.allocated,  "no atom list")
+   ENSURE(.becke_grid.allocated,"no becke_grid")
+   ENSURE(.overlapping_atoms_for_atom.allocated,"no overlapping_atoms_for_atom")
+
+      bf_lgval :: VEC{EVEC{INT}}@
+      bf_grid0 :: VEC{EMAT{REAL}}@
+      ra :: VEC{REAL}(3)
+      xa,ya,za,a2 :: VEC{REAL}@
+      ga0,gb0 :: VEC{REAL}@
+      overlapping_atom, lga,lgb, sp :: VEC{INT}@
+      DD :: MAT3{REAL}@
+      sha :: SHELL1
+      Dab, fac,val, ga,gb :: REAL
+      atom_o,cutoff,n_pts,n_keep, bs, p,n, q,n_dens :: INT
+      atom_a,fsa,lsa,sa,fa,la,na,a :: INT
+      atom_b,fsb,lsb,sb,fb,lb,nb,b :: INT
+
+      ! No of densities
+      n_dens = D.dim3
+
+      ! Basis function cutoff
+      cutoff = floor(log10(.becke_grid.basis_fn_cutoff))
+
+      ! Saved basis function grid and skip list
+      bf_lgval.create(.n_shell)
+      bf_grid0.create(.n_shell)
+
+      ! Atom "a" displaced points and skip switches
+      n_pts = pts.dim1
+      xa.create(n_pts)
+      ya.create(n_pts)
+      za.create(n_pts)
+      a2.create(n_pts)
+      sp.create(n_pts)
+
+      ! Create N0
+      N0 = ZERO
+
+      ! Loop atom_a
+      do atom_a = 1,.n_atom
+
+         fsa = .first_shell_for_atom(atom_a)
+         lsa =  .last_shell_for_atom(atom_a)
+
+         ! Make shell atom displaced points
+         .atom(atom_a).make_displaced_pts(xa,ya,za,a2,pts,n_pts)
+
+         ! Atom a position
+         ra = .atom(atom_a).position
+
+         ! Loop overlapping atom_b
+         overlapping_atom = .overlapping_atoms_for_atom(atom_a).element
+         do atom_o = 1,overlapping_atom.dim
+
+            atom_b = overlapping_atom(atom_o)
+            if (atom_b>atom_a) cycle
+
+            fsb = .first_shell_for_atom(atom_b)
+            lsb = min(.last_shell_for_atom(atom_b),lsa)
+
+            ! Loop shells on atom a
+            do sa = fsa,lsa
+
+               fa = .first_basis_fn_for_shell(sa)
+               la =  .last_basis_fn_for_shell(sa)
+               na = la - fa + 1
+
+               ! Set shell for index "sa"
+               bs  = .basis_shell_for_shell(sa)
+               sha = .basis_shell1pair(bs,1).a
+               sha.position = ra
+
+               ! Make shell "sa" basis function grid and lga values
+               bf_grid0(sa).element.create(n_pts,na)
+               lga.create(n_pts)
+               sha.make_grid(bf_grid0(sa).element,n_pts,xa,ya,za,a2,lga)
+
+               ! Save the values
+               bf_lgval(sa).element = lga
+
+               ! Loop shells on atom b
+               do sb = fsb,min(lsb,sa)
+
+                  fb = .first_basis_fn_for_shell(sb)
+                  lb = .last_basis_fn_for_shell(sb)
+                  nb = lb - fb + 1
+
+                  ! Get the "sb" basis function grid
+                  lgb = bf_lgval(sb).element
+
+                  ! How many points in common?
+                  n_keep = count((lga+lgb)>=cutoff)
+                  if (n_keep==0) cycle
+
+                  ! Make significant points
+                  sp(1:n_keep) = pack([(n,n=1,n_pts)],mask=(lga+lgb)>=cutoff)
+
+                  ! Factor
+                  fac = TWO
+                  if (sa==sb) fac = ONE
+
+                  ! Density block
+                  DD = D(fa:la,fb:lb,:)
+
+                  if (na*nb==1) then
+
+                     ga0 = bf_grid0(sa)[:,1]
+                     gb0 = bf_grid0(sa)[:,1]
+                     do q = 1,n_dens
+                        Dab = fac*DD(1,1,q)
+                        do p = 1,n_keep
+                           n = sp(p)
+                           ga = ga0(n)
+                           gb = gb0(n)
+                           val = ga*gb*Dab
+                           N0(n,q) = N0(n,q) + val
+                        end
+                     end
+
+                  else
+
+                     ! Add density contribution to rho
+                     do a = 1,na
+                        ga0 = bf_grid0(sa)[:,a]
+                        do b = 1,nb
+                           gb0 = bf_grid0(sb)[:,b]
+                           do q = 1,n_dens
+                              Dab = fac*DD(a,b,q)
+                              do p = 1,n_keep
+                                 n = sp(p)
+                                 ga = ga0(n)
+                                 gb = gb0(n)
+                                 val = ga*gb*Dab
+                                 N0(n,q) = N0(n,q) + val
+                              end
+                           end
+                        end
+                     end
+
+                     ! Clean up
+
+                  end ! if ss or not ss
+               end    ! -- loop sb
+            end       ! -- loop sa
+         end          ! -- atom_b
+      end             ! -- atom_a
+
+      ! Clean up
+      sp.destroy
+      a2.destroy
+      za.destroy
+      ya.destroy
+      xa.destroy
+      bf_grid0.destroy
+      bf_lgval.destroy
+
+   end
+
+!  ========================
+!  CRYSTAL232 density, fast
+!  ========================
+
+   make_CRYSTAL23_ED_grid_v1(grid,pts)
+   ! Make the "grid" for the supplied points "pts" using the CRYSTAL23
+   ! density marices which have been read in.
+   ! This version from Kanghyun Chu, tested in  Matlab for NH3
+   ! 7/12/23
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+
+   ENSURE(.crystal23.allocated , "Idiot! No crystal23 info read in!")
+   ENSURE(.crystal23.density_mx.allocated , "no crystal23 density_mx info")
+
+      psi  :: MAT{EVEC{REAL}}@
+      ind  :: MAT{EVEC{INT}}@
+      bf   :: MAT{REAL}@
+      l_ind :: MAT{INT}@
+      PSIPSI :: VEC{REAL}@
+      common, posA, posB :: VEC{INT}@
+      mask :: VEC{BIN}@
+      cm :: MAT{REAL}(3,3)
+      mt :: VEC{REAL}(3)
+      mv,lv,rv,dv :: VEC{INT}(3)
+      n_pts,n_g, s,fs,ls,ns :: INT
+      n,l,r, m,i,j, l1,l2  :: INT
+      tol :: REAL
+      sh :: SHELL1
+
+      ! Strange p basis function ordering
+      GAUSSIAN_DATA:set_CRYSTAL23_ordering(TRUE)
+
+      ! Array sizes
+      n_g   = .crystal23.n_g
+      n_pts = pts.dim1
+      tol   = exp(-20.00)
+
+      ! Unit cell matrix
+      cm = .crystal23.Primitive_unit_cell.direct_mx ! This is the unit cell written in the XML file
+
+      ! <<Kang's memo>>
+      ! The "psi" and "ind" objects should have 2+1 indices.
+      ! Former "2" dimensions have fixed sized: 
+      !            (# of basis) X (# of cells)
+      ! Last   "1" dimension has varying size:
+      !        (of # of grid points where Basis_Func(r) > tolerance) 
+      ! Sparse storage of significant b.f. values on grid 
+      ! in "psi" and corresponding indices in "ind".
+      psi.create(n_g,.n_bf)
+      ind.create(n_g,.n_bf)
+      mask.create(n_pts)
+      do m = 1,n_g
+
+         ! Left UC translational vector
+         mv = .crystal23.g_latt(:,m) ! m-th IVDL 
+         mt = matmul(cm,mv)          ! This is m-th CVDL
+
+         do s = 1,.n_shell ! s: for every shell
+            .set_shell1_from(s,sh,fs,ls,ns)
+            sh.position = sh.position + mt ! either +mt or -mt
+            bf.create(n_pts,ns)  ! bf:2D array: n_pt X ns
+            sh.make_grid_s(bf,pts(:,1),pts(:,2),pts(:,3))
+            do i = fs,ls
+               mask = abs(bf(:,i-fs+1))>tol
+               psi(m,i).element = pack(bf(:,i-fs+1)  ,mask)
+               ind(m,i).element = pack([(j,j=1,n_pts)],mask)
+            end
+            bf.destroy
+         end
+      end
+
+      mask.destroy
+
+   ! stdout.text("pt:")
+   ! stdout.put(pts)
+
+      ! Values on grid & psi*psi product
+      grid = ZERO 
+      PSIPSI.create(n_pts) 
+
+      ! m-cell loop
+      do m = 1,n_g
+
+         mv = .crystal23.g_latt(:,m)
+         mt = matmul(cm,mv)          ! This is m-th CVDL
+
+         ! List of allowed pairs
+         l_ind.create(n_g,2) 
+         n = 0
+         do l = 1,n_g
+            lv = .crystal23.g_latt(:,l)
+            dv = lv + mv
+            do r = 1,n_g
+               rv = .crystal23.g_latt(:,r)
+               if (dv.same_as(rv)) then 
+                  n = n + 1
+                  l_ind(n,1) = l 
+                  l_ind(n,2) = r 
+               end
+            end 
+         end
+         l_ind.shrink(n,2)
+
+         do i = 1,.n_bf ! psi(i, cell1)
+         do j = 1,.n_bf ! psi(j, cell2)
+        
+            if (abs(.crystal23.density_mx(i,j,m)) < tol)  cycle        
+         
+            PSIPSI = ZERO 
+            ! dim: (# Grid pointd)
+            ! psi(i,m) , i:1..n_ba; m:1..n_g
+            ! ind(i,m)
+        
+            do l = 1,l_ind.dim1
+
+               l1 = l_ind(l,1)
+               l2 = l_ind(l,2)
+               VEC{INT}:common_indices_in(ind(l1,i)[:],ind(l2,j)[:],posA,posB,common)
+
+               if (common.dim>0) then
+                  ! Product for both basis functions being large
+                  PSIPSI(common) = PSIPSI(common) &
+                                 + psi(l1,i)[posA]*psi(l2,j)[posB]
+               end
+
+               posA.destroy
+               posB.destroy
+               common.destroy
+
+            end
+        
+            ! Add up signinifcant parts
+            grid = grid + .crystal23.density_mx(i,j,m) * PSIPSI
+        
+         end
+         end
+
+      end
+
+   ! stdout.text("grid:")
+   ! stdout.put(grid,by_column=TRUE)
+
+      ! Clean
+      PSIPSI.destroy
+
+   end
+
+!   make_CRYSTAL23_ED_grid(grid,pt)
+!   ! Make the "grid" for the supplied points "pt" using the CRYSTAL23
+!   ! density marices which have been read in.
+!      self :: IN
+!      grid :: VEC{REAL}, OUT
+!      pt   :: MAT{REAL}, IN
+!
+!   ENSURE(.crystal23.allocated , "no crystal23 info")
+!   ENSURE(.crystal23.density_mx.allocated , "no crystal23 density_mx info")
+!
+!      cm :: MAT{REAL}(3,3)
+!      lt,rt    :: VEC{REAL}(3)
+!      lv,rv,dv :: VEC{INT}(3)
+!      l, r, d :: INT
+!
+!      GAUSSIAN_DATA:set_CRYSTAL23_ordering(TRUE)
+!
+!      ! Unit cell matrix
+!      cm = .crystal23.Primitive_unit_cell.direct_mx ! Kang update 2024.Jun.11
+!           ! Kang's note
+!           !   crystal23's unit cell is always primitive cell
+!           !   crystal  's unit cell is crystallogrphic conventional cell   
+!
+!      ! Values on grid
+!      grid = ZERO
+!
+!      ! Left b.f. unit cell "l"
+!      ! This is translated back to the first unit cell
+!      do l = .crystal23.n_g,1,-1
+!
+!         ! Left UC translational vector
+!         lv = .crystal23.g_latt(:,l) ! l-th IVDL
+!         lt = matmul(cm,lv)          ! This is l-th CVDL
+!
+!         ! Diagonal contribution from DM^{l l}
+!         .add_ED_grid(grid, pt, .crystal23.density_mx(:,:,1), lshft=lt , rshft=lt )
+!
+!         ! Right b.f. unit cell
+!         do r = .crystal23.n_g,1,-1 ! Check from here! off-diagonal
+!                                    ! density matrix contributions xxxxxxxxxx 
+!
+!            ! Done diagonal case, above?
+!            if (r==l) cycle 
+!
+!            ! Right UC translational vector
+!            rv = .crystal23.g_latt(:,r)
+!            rt = matmul(cm,rv)         ! This is g-th CVDL
+!
+!            ! Difference between left & right cell vectors
+!            ! "d" depends on how DM^{l r}_{a b} is defined when it
+!            ! mutiplies the basis functions.
+!            dv = rv - lv 
+!            d  = .crystal23.g_latt.index_for_column(dv)
+!
+!            ! Do we have DM^d ?
+!            if (d==0) cycle
+!
+!            ! Add contribution from shifted central unit cell
+!            ! DYLAN: I think the P's are not read in correct?
+!            .add_ED_grid(grid,pt,.crystal23.density_mx(:,:,d),lshft=lt,rshft=rt)
+!
+!         end
+!
+!      end
+!
+!   end 
+
+!  ==================
+!  Nabla density grid
+!  ==================
+
+   make_nabla_ED_grid(Ngrid,pts) :: PURE
+   ! Return nabla of the electron density in "Ngrid" on points "pts".
+      self  :: IN
+      Ngrid :: MAT{REAL}, OUT
+      pts   :: MAT{REAL}, IN
+
+      if (trim(.NOs.number_kind)=="real") then
+         .make_nabla_ED_grid_r(Ngrid,pts)
+   ! else
+   !    DIE("not implemented")
+      end
+
+   end
+
+   make_nabla_ED_grid_r(Ngrid,pts) :: PURE
+   ! Return nabla of electron density in "Ngrid" for points "pts".
+   ! Using ".NOs" and their occupation numbers.
+      self  :: IN
+      Ngrid :: MAT{REAL}, OUT
+      pts   :: MAT{REAL}, IN
+
+   ENSURE(pts.dim2==3,   "wrong dim2, pts")
+   ENSURE(Ngrid.dim2==3, "wrong dim2, Ngrid")
+   ENSURE(.NOs.allocated,"no NOss")
+   ENSURE(.NOs.is_allocated_with_genre("r "), "no restricted NO's")
+   ENSURE(.NO_occ_nos.allocated, "no NO occupation numbers")
+   ENSURE(.NO_occ_nos.is_allocated_with_genre("r "),"no restricted NO occupation numbers")
+
+      orb  :: VEC{REAL}@
+      Norb :: MAT{REAL}@
+      occ  :: REAL
+      n_pts,n_occ,n :: INT
+
+      n_pts = pts.dim1
+      n_occ = .no_of_occupied_NOs
+
+      orb.create(n_pts)
+      Norb.create(n_pts,3)
+
+      Ngrid = ZERO
+
+      do n = 1,n_occ
+
+         ! Nabla grid for n-th NO 
+         .make_nabla_orbital_grid_r(Norb,orb,.NOs.r(:,n), pts)
+
+         occ = .NO_occ_nos.r(n)
+
+         Ngrid(:,1) = Ngrid(:,1) + occ*orb(:)*Norb(:,1)
+         Ngrid(:,2) = Ngrid(:,2) + occ*orb(:)*Norb(:,2)
+         Ngrid(:,3) = Ngrid(:,3) + occ*orb(:)*Norb(:,3)
+
+      end
+
+      Ngrid = TWO * Ngrid
+
+      ! Clean
+      Norb.destroy
+      orb.destroy
+
+   end
+
+   make_nabla_ED_grid(Ngrid,Egrid,pts) :: PURE
+   ! Return nabla of electron density in "Ngrid" on points "pts".
+   ! And also the electron density in "Egrid".
+      self  :: IN
+      Ngrid :: MAT{REAL}, OUT
+      Egrid :: VEC{REAL}, OUT
+      pts   :: MAT{REAL}, IN
+
+      if (trim(.NOs.number_kind)=="real") then
+         .make_nabla_ED_grid_r(Ngrid,Egrid,pts)
+   ! else
+   !    DIE("not implemented")
+      end
+
+   end
+
+   make_nabla_ED_grid_r(Ngrid,Egrid,pts) :: PURE
+   ! Return nabla of electron density in "Ngrid" on points "pts".
+   ! And also the electron density in "Egrid".  Using the grid "pts"
+   ! and the ".NOs" and their occupation numbers.
+      self  :: IN
+      Ngrid :: MAT{REAL}, OUT
+      Egrid :: VEC{REAL}, OUT
+      pts   :: MAT{REAL}, IN
+
+   ENSURE(pts.dim2  ==3,  "wrong dim2, pts")
+   ENSURE(Ngrid.dim2==3,  "wrong dim2, Ngrid")
+   ENSURE(Ngrid.dim1==pts.dim1,"incosistent Ngrid and pts")
+   ENSURE(Egrid.dim ==pts.dim1,"incosistent Egrid and pts")
+   ENSURE(.NOs.allocated, "no natural orbitals")
+   ENSURE(.NOs.is_allocated_with_genre("r "), "no restricted NO's")
+   ENSURE(.NO_occ_nos.allocated, "no occupation numbers")
+   ENSURE(.NO_occ_nos.is_allocated_with_genre("r "),"no occupation numbers")
+
+      orb  :: VEC{REAL}@
+      Norb :: MAT{REAL}@
+      occ  :: REAL
+      n_pts,n_occ,n :: INT
+
+      n_pts = pts.dim1
+      n_occ = .no_of_occupied_NOs
+
+      orb.create(n_pts)
+      Norb.create(n_pts,3)
+
+      Ngrid = ZERO
+      Egrid = ZERO
+
+      do n = 1,n_occ
+
+         ! Nabla grid for n-th NO 
+         .make_nabla_orbital_grid_r(Norb,orb,.NOs.r(:,n), pts)
+
+         occ = .NO_occ_nos.r(n)
+
+         Ngrid(:,1) = Ngrid(:,1) + occ*orb(:)*Norb(:,1)
+         Ngrid(:,2) = Ngrid(:,2) + occ*orb(:)*Norb(:,2)
+         Ngrid(:,3) = Ngrid(:,3) + occ*orb(:)*Norb(:,3)
+         Egrid(:)   = Egrid(:)   + occ*orb(:)* orb(:  )
+
+      end
+
+      Ngrid = TWO * Ngrid
+
+      Norb.destroy
+      orb.destroy
+
+   end
+
+!   make_nabla_density_grid_fdm_r(nabla_grid,pts)
+!   ! Work out the nabla density on ".plot_grid" using ".natural orbitals" and the
+!   ! ".occupation" number vector.
+!   ! This method uses the finite difference method to calculate the gradient
+!   ! from the density.  It is much slower, but useful for checking.
+!     nabla_grid, pts :: MAT{REAL}
+!   ENSURE(pts.dim2==3,  "wrong dimension for points array")
+!   ENSURE(nabla_grid.dim2==3,  "wrong dimension for nabla_grid array")
+!   ENSURE(.NOs.is_allocated_with_genre("r "), "no restricted NO's")
+!   ENSURE(.NO_occ_nos.r.allocated, "no occupation #'s")
+!     orb :: VEC{REAL}*
+!     dens_1,dens_2,nabla_orb,comp :: VEC{REAL}*
+!     pt1 :: MAT{REAL}*
+!     alpha :: REAL
+!     n_occ,n,n_pts,i :: INT
+!     alpha = TOL(6)
+!     n_pts = size(pts,1)
+!     pt1.create(n_pts,3)
+!     nabla_grid = ZERO
+!     orb.create(n_pts)
+!     dens_1.create(n_pts)
+!     dens_2.create(n_pts)
+!     nabla_orb.create(n_pts)
+!     n_occ = .no_of_occupied_NOs
+!     do n = 1,n_occ
+!        do i = 1,3
+!          comp => pt1(:,i)
+!          pt1 = pts;    comp = comp + alpha
+!          .make_orbital_grid_r(dens_1,.NOs.r(:,n),pt1,square=TRUE)
+!          pt1 = pts;    comp = comp - alpha
+!          .make_orbital_grid_r(dens_2,.NOs.r(:,n),pt1,square=TRUE)
+!          nabla_orb = HALF/alpha * (dens_1 - dens_2)
+!          .make_orbital_grid_r(orb,.NOs.r(:,n), pts)
+!          nabla_grid(:,i) = nabla_grid(:,i) + .NO_occ_nos.r(n)*orb(:)*nabla_orb
+!        end
+!     end
+!     nabla_grid = TWO*nabla_grid
+!     nabla_orb.destroy
+!     dens_2.destroy
+!     dens_1.destroy
+!     orb.destroy
+!     pt1.destroy
+!   end
+
+! ==========================
+! Laplacian density routines
+! ==========================
+
+   make_laplacian_ED_grid_r(Lgrid,pts) :: PURE
+   ! Work out the electron density laplacian "Lgrid" on points "pts"
+   ! using ".natural orbitals" and  the ".NO_occ_nos" vector.
+      self  :: IN
+      Lgrid :: VEC{REAL}, OUT
+      pts   :: MAT{REAL}, IN
+
+   ENSURE(pts.dim2==3, "wrong dim2, pts")
+   ENSURE(.NOs.is_allocated_with_genre("r "), "no restricted real NO's")
+   ENSURE(.NO_occ_nos.r.allocated, "no rean NO occupation #'s")
+
+      O :: VEC{REAL}@
+      N :: MAT{REAL}@
+      L :: MAT{REAL}@
+      n_pts,n_occ,i :: INT
+      occ :: REAL
+
+      n_pts = pts.dim1
+      n_occ = .no_of_occupied_NOs
+
+      O.create(n_pts)
+      N.create(n_pts,3)
+      L.create(n_pts,3)
+
+      Lgrid = ZERO
+
+      parallel do i = 1,n_occ
+
+         .make_laplacian_orbital_grid_r(L,N,O,.NOs.r(:,i),pts)
+
+         occ = .NO_occ_nos.r(i)
+
+         Lgrid = Lgrid  &
+               + occ * ( O(:) * (L(:,1)+L(:,2)+L(:,3)) & 
+               + N(:,1)*N(:,1) + N(:,2)*N(:,2) + N(:,3)*N(:,3) )
+
+      end
+      PARALLEL_SUM(Lgrid)
+
+      Lgrid = TWO * Lgrid
+
+      ! Clean
+      L.destroy
+      N.destroy
+      O.destroy
+
+   end
+
+   make_laplacian_ED_grid_u(Lgrid,pts) :: PURE
+   ! Work out the electron density laplacian "Lgrid" on points "pts"
+   ! using ".natural orbitals" and  the ".NO_occ_nos" vector.
+      self  :: IN
+      Lgrid :: VEC{REAL}, OUT
+      pts   :: MAT{REAL}, IN
+
+   ENSURE(pts.dim2==3, "wrong dim2, pts")
+   ENSURE(.NOs.is_allocated_with_genre("u"), "no unrestricted real NO's")
+   ENSURE(.NO_occ_nos.is_allocated_with_genre("u"), "no unrestricted occupation numbers")
+
+      O :: VEC{REAL}@
+      N :: MAT{REAL}@
+      L :: MAT{REAL}@
+      na,nb,n_occ,n_pts,i :: INT
+      occ :: REAL
+
+      na    = .no_of_occupied_NOs("alpha")
+      nb    = .no_of_occupied_NOs("alpha")
+      n_occ = max(na,nb)
+
+      n_pts = pts.dim1
+      O.create(n_pts)
+      N.create(n_pts,3)
+      L.create(n_pts,3)
+
+      Lgrid = ZERO
+
+      parallel do i = 1,n_occ
+
+         ! Alpha
+         .make_laplacian_orbital_grid_r(L,N,O,.NOs.a(:,i),pts)
+         occ = .NO_occ_nos.a(i)
+         Lgrid = Lgrid  &
+               + occ * ( O(:) * (L(:,1)+L(:,2)+L(:,3)) & 
+               + N(:,1)*N(:,1) + N(:,2)*N(:,2) + N(:,3)*N(:,3) )
+
+         ! Beta
+         .make_laplacian_orbital_grid_r(L,N,O,.NOs.b(:,i),pts)
+         occ = .NO_occ_nos.b(i)
+         Lgrid = Lgrid  &
+               + occ * ( O(:) * (L(:,1)+L(:,2)+L(:,3)) & 
+               + N(:,1)*N(:,1) + N(:,2)*N(:,2) + N(:,3)*N(:,3) )
+
+      end
+      PARALLEL_SUM(Lgrid)
+
+      Lgrid = TWO * Lgrid
+
+      ! Clean
+      L.destroy
+      N.destroy
+      O.destroy
+
+   end
+
+!  ===================
+!  Becke density grids
+!  ===================
+
+! For DFT
+
+   set_up_becke_grid :: leaky, PURE
+   ! Set up the Becke grids and overlapping atoms
+      self :: INOUT
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.allocated,"no atom list")
+
+      if (.becke_grid.deallocated) .becke_grid.create
+
+      ! ALWAYS Set up integration grid
+      ! (in case of new positions) (leaky)
+      .becke_grid.set_atom_info(.atom) 
+      .becke_grid.set_grid_data
+
+      ! ALWAYS make the overlapping atom lists
+      .set_overlapping_atoms_for_atom
+
+   end
+
+   make_rho_becke_atom_grid(N0,pt,wt,bf_skip,bf_grid0,c,D) :: leaky, PURE
+   ! Make the density "N0" on the Becke grid ("pt","wt") for atom
+   ! "c" given AO density matrix "D". Also return the "bf_skip" arrays
+   ! and the "bf_grid0" array used for evaluating the rho (or other
+   ! density functionals) on the grid.
+      self :: INOUT
+      N0 :: VEC{REAL}@, OUT
+      pt :: MAT{REAL}@, OUT
+      wt :: VEC{REAL}@, OUT
+      bf_skip :: VEC{EVEC{BIN}}@, OUT
+      bf_grid0 :: VEC{EMAT{REAL}}@, OUT
+      c  :: INT, IN
+      D  :: MAT{REAL}, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.allocated,  "no atom list")
+   ENSURE(.density_mx.allocated,"no density matrix")
+   ENSURE(.becke_grid.allocated, "no becke_grid")
+   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
+   ENSURE(.overlapping_atoms_for_atom.allocated,"no overlapping_atoms")
+
+      xa,ya,za,a2 :: VEC{REAL}@
+      ga0,gb0 :: VEC{REAL}@
+      ra :: VEC{REAL}(3)
+      overlapping_atom, pi,pj,pn :: VEC{INT}@
+      skipa0,skipab, skipa,skipb :: VEC{BIN}@
+      gridc0 :: MAT{REAL}@
+      DD     :: MAT{REAL}@
+      sha :: SHELL1
+      cutoff, Dab, fac,val, ga,gb :: REAL
+      n_pt,n_keep, ca,cb, oa,fsa,lsa,fba, ob,fsb,lsb :: INT
+      sa,fa,la,na,ba, sb,fb,lb,nb, a,b,i,j,p,n :: INT
+
+      ! Overlapping atoms
+      overlapping_atom = .overlapping_atoms_for_atom(c).element
+
+      ! Get the Becke grid for atom "c"
+      .becke_grid.make_SS_grid(pt,wt,gridc0,c,overlapping_atom)
+      n_pt = pt.dim1
+
+      ! Create N0
+      N0.create(n_pt)
+      N0 = ZERO
+
+      ! Basis function cutoff
+      cutoff = .becke_grid.basis_fn_cutoff
+
+      ! Basis function grid and skip list
+      bf_skip.create(.n_shell)
+      bf_grid0.create(.n_shell)
+
+      ! Atom "a" displaced points (from "c") and skip switches
+      xa.create(n_pt)
+      ya.create(n_pt)
+      za.create(n_pt)
+      a2.create(n_pt)
+      skipa0.create(n_pt)
+      skipab.create(n_pt)
+
+      ! Loop c-overlapping atoms "oa"
+      do ca = 1,overlapping_atom.dim
+
+         oa  = overlapping_atom(ca)
+         fsa = .first_shell_for_atom(oa)
+         lsa =  .last_shell_for_atom(oa)
+         fba = .first_basis_fn_for_atom(oa)
+         ra  = .atom(oa).position
+
+         ! Make the displaced points for atom "oa"
+         .atom(oa).make_displaced_skip_pts(xa,ya,za,a2,skipa0,pt,n_pt,cutoff)
+
+         ! Loop shells on atom a
+         do sa = fsa,lsa
+
+            fa = .first_basis_fn_for_shell(sa)
+            la =  .last_basis_fn_for_shell(sa)
+            na = la - fa + 1
+
+            ! Set shell "sa"
+            ba  = .basis_shell_for_shell(sa)
+            sha = .basis_shell1pair(ba,1).a
+            sha.position = ra
+
+            ! Make shell "sa" skipa list
+            skipa.create(n_pt)
+            sha.make_skip_list(skipa,n_keep,a2,skipa0,n_pt,cutoff)
+
+            ! Next shell "sa" if no sig. points
+            if (n_keep==0) then
+               skipa.destroy
+               cycle
+            end
+
+            ! Assign the "sa" skipa list
+            bf_skip(sa).element.create(skipa.dim)
+            bf_skip(sa).element = skipa
+
+            ! Make/copy the "sa" basis function grid
+            ! This must be copied since skipa could be TRUE
+            bf_grid0(sa).element.create(n_keep,na)
+            if (oa==c) then
+               do a = 1,na
+                  i = 0
+                  do n = 1,n_pt
+                     if (skipa(n)) cycle
+                     i = i + 1
+                     bf_grid0(sa)[i,a] = gridc0(n,a+fa-fba)
+                  end
+               end
+            else
+               sha.make_skip_grid( &
+                  bf_grid0(sa).element, &
+                  n_keep,xa,ya,za,a2,skipa,n_pt)
+            end
+
+            ! Loop c-overlapping atoms b
+            do cb = 1,ca
+
+               ob  = overlapping_atom(cb)
+               fsb = .first_shell_for_atom(ob)
+               lsb =  .last_shell_for_atom(ob)
+
+               ! Loop shells on atom b
+               do sb = fsb,min(lsb,sa)
+
+                  if (bf_skip(sb).element.deallocated) cycle
+
+                  fb = .first_basis_fn_for_shell(sb)
+                  lb = .last_basis_fn_for_shell(sb)
+                  nb = lb - fb + 1
+
+                  ! Set the "sb" basis function grid
+                  skipb = bf_skip(sb).element
+
+                  ! How many points in common?
+                  skipab(1:n_pt) = skipa OR skipb
+                  n_keep = count(NOT skipab(1:n_pt))
+                  if (n_keep==0) cycle
+
+                  ! Factor
+                  fac = TWO
+                  if (sa==sb) fac = ONE
+
+                  ! Density block
+                  DD = D(fa:la,fb:lb)
+
+                  if (na*nb==1) then
+
+                     ga0 = bf_grid0(sa)[:,1]
+                     gb0 = bf_grid0(sb)[:,1]
+                     Dab = fac*DD(1,1)
+
+                     i = 0
+                     j = 0
+                     do n = 1,n_pt
+                        if (NOT skipa(n)) i = i + 1
+                        if (NOT skipb(n)) j = j + 1
+                        if (skipab(n)) cycle
+                        ga = ga0(i)
+                        gb = gb0(j)
+                        val = ga*gb*Dab
+                        N0(n) = N0(n) + val
+                     end
+
+                  else
+
+                     ! Create space for gathered index info
+                     pi.create(n_keep)
+                     pj.create(n_keep)
+                     pn.create(n_keep)
+
+                     ! Make mapper arrays
+                     p = 0
+                     i = 0
+                     j = 0
+                     do n = 1,n_pt
+                        if (NOT skipa(n)) i = i + 1
+                        if (NOT skipb(n)) j = j + 1
+                        if (skipab(n)) cycle
+                        p = p + 1
+                        pi(p) = i
+                        pj(p) = j
+                        pn(p) = n
+                     end
+
+                     ! Add density contribution to rho
+                     do a = 1,na
+                        ga0 = bf_grid0(sa)[:,a]
+                        do b = 1,nb
+                           gb0 = bf_grid0(sb)[:,b]
+                           Dab = fac*DD(a,b)
+                           do p = 1,n_keep
+                              i = pi(p)
+                              j = pj(p)
+                              n = pn(p)
+                              ga = ga0(i)
+                              gb = gb0(j)
+                              val = ga*gb*Dab
+                              N0(n) = N0(n) + val
+                           end
+                        end
+                     end
+
+                     ! Clean up
+                     pn.destroy
+                     pj.destroy
+                     pi.destroy
+
+                  end
+
+               end ! -- loops sa,sb
+            end
+         end       ! -- lops ca,cb
+      end
+
+      ! Clean up
+      skipab.destroy; skipa0.destroy
+      a2.destroy
+      za.destroy
+      ya.destroy
+      xa.destroy
+      gridc0.destroy
+
+   end
+
+   make_rho_becke_atom_grid(N0,Nx,Ny,Nz,pt,wt,bf_skip,bf_gr0,bf_grx,bf_gry,bf_grz,c,D) :: leaky, PURE
+   ! Make the density "N0" and its derivatives "Nx", "Ny", "Nz", on
+   ! the Becke grid ("pt","wt") for atom "c" given AO density matrix
+   ! "D". Also return the "bf_skip" array, and the basis function and
+   ! basis function derivative arrays "bf_gr0", "bf_grx", "bf_gry", 
+   ! "bf_grz" used for evaluating the density functionals on the grid.
+      self :: INOUT
+      N0,Nx,Ny,Nz :: VEC{REAL}@, OUT
+      pt :: MAT{REAL}@, OUT
+      wt :: VEC{REAL}@, OUT
+      bf_skip :: VEC{EVEC{BIN}}@, OUT
+      bf_gr0 :: VEC{EMAT{REAL}}@, OUT
+      bf_grx,bf_gry,bf_grz :: VEC{EMAT{REAL}}@, OUT
+      c  :: INT, IN
+      D  :: MAT{REAL}, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.allocated,  "no atom list")
+   ENSURE(.density_mx.allocated,"no density matrix")
+   ENSURE(.becke_grid.allocated, "no becke_grid")
+   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
+   ENSURE(.overlapping_atoms_for_atom.allocated,"no overlapping_atoms")
+
+      xa,ya,za,a2 :: VEC{REAL}@
+      ga0,gax,gay,gaz :: VEC{REAL}@
+      gb0,gbx,gby,gbz :: VEC{REAL}@
+      ra :: VEC{REAL}(3)
+      overlapping_atom, pi,pj,pn :: VEC{INT}@
+      skipa0,skipab, skipa,skipb :: VEC{BIN}@
+      DD :: MAT{REAL}@
+      gridc0,gridcx,gridcy,gridcz :: MAT{REAL}@
+      sha :: SHELL1
+      cutoff, Dab, fac, ga,gb :: REAL
+      n_pt,n_keep, ca,cb, oa,fsa,lsa,fba,offset, ob,fsb,lsb :: INT
+      sa,fa,la,na,ba, sb,fb,lb,nb, a,b,i,j,p,n :: INT
+
+      ! Overlapping atoms
+      overlapping_atom = .overlapping_atoms_for_atom(c).element
+
+      ! Get the Becke grid for atom "c"
+      .becke_grid.make_SS_grid(pt,wt,gridc0,gridcx,gridcy,gridcz,c,overlapping_atom)
+      n_pt = pt.dim1
+
+      ! Create N0
+      N0.create(n_pt); N0 = ZERO
+      Nx.create(n_pt); Nx = ZERO
+      Ny.create(n_pt); Ny = ZERO
+      Nz.create(n_pt); Nz = ZERO
+
+      ! Basis function cutoff
+      cutoff = .becke_grid.basis_fn_cutoff
+
+      ! Basis function grid and skip list
+      bf_skip.create(.n_shell)
+      bf_gr0.create(.n_shell)
+      bf_grx.create(.n_shell)
+      bf_gry.create(.n_shell)
+      bf_grz.create(.n_shell)
+
+      ! Atom "a" displaced points (from "c") and skip switches
+      xa.create(n_pt)
+      ya.create(n_pt)
+      za.create(n_pt)
+      a2.create(n_pt)
+      skipa0.create(n_pt)
+      skipab.create(n_pt)
+
+      ! Loop c-overlapping atoms "oa"
+      do ca = 1,overlapping_atom.dim
+
+         oa  = overlapping_atom(ca)
+         fsa = .first_shell_for_atom(oa)
+         lsa =  .last_shell_for_atom(oa)
+         fba = .first_basis_fn_for_atom(oa)
+         ra  = .atom(oa).position
+
+         ! Make the displaced points for atom "oa"
+         .atom(oa).make_displaced_skip_pts(xa,ya,za,a2,skipa0,pt,n_pt,cutoff)
+
+         ! Loop shells on atom a
+         do sa = fsa,lsa
+
+            fa = .first_basis_fn_for_shell(sa)
+            la =  .last_basis_fn_for_shell(sa)
+            na = la - fa + 1
+
+            ! Set shell "sa"
+            ba  = .basis_shell_for_shell(sa)
+            sha = .basis_shell1pair(ba,1).a
+            sha.position = ra
+
+            ! Make shell "sa" skipa list
+            skipa.create(n_pt)
+            sha.make_skip_list(skipa,n_keep,a2,skipa0,n_pt,cutoff)
+
+            ! Next shell "sa" if no sig. points
+            if (n_keep==0) then
+               skipa.destroy
+               cycle
+            end
+
+            ! Assign the "sa" skipa list
+            bf_skip(sa).element.create(skipa.dim)
+            bf_skip(sa).element = skipa
+
+            ! Make/copy the "sa" basis function grid
+            ! This must be copied since skipa could be TRUE
+            bf_gr0(sa).element.create(n_keep,na)
+            bf_grx(sa).element.create(n_keep,na)
+            bf_gry(sa).element.create(n_keep,na)
+            bf_grz(sa).element.create(n_keep,na)
+            if (oa==c) then
+               offset = fa-fba
+               do a = 1,na
+                  i = 0
+                  do n = 1,n_pt
+                     if (skipa(n)) cycle
+                     i = i + 1
+                     bf_gr0(sa)[i,a] = gridc0(n,a+offset)
+                     bf_grx(sa)[i,a] = gridcx(n,a+offset)
+                     bf_gry(sa)[i,a] = gridcy(n,a+offset)
+                     bf_grz(sa)[i,a] = gridcz(n,a+offset)
+                  end
+               end
+            else
+               sha.make_skip_nabla_grid( &
+                  bf_grx(sa).element,  &
+                  bf_gry(sa).element,  &
+                  bf_grz(sa).element,  &
+                  bf_gr0(sa).element,  &
+                  n_keep,xa,ya,za,a2,skipa,n_pt)
+            end
+
+            ! Loop c-overlapping atoms b
+            do cb = 1,ca
+
+               ob  = overlapping_atom(cb)
+               fsb = .first_shell_for_atom(ob)
+               lsb =  .last_shell_for_atom(ob)
+
+               ! Loop shells on atom b
+               do sb = fsb,min(lsb,sa)
+
+                  if (bf_skip(sb).element.deallocated) cycle
+
+                  fb = .first_basis_fn_for_shell(sb)
+                  lb = .last_basis_fn_for_shell(sb)
+                  nb = lb - fb + 1
+
+                  ! Set the "sb" basis function grid
+                  skipb = bf_skip(sb).element
+
+                  ! How many points in common?
+                  skipab(1:n_pt) = skipa OR skipb
+                  n_keep = count(NOT skipab(1:n_pt))
+                  if (n_keep==0) cycle
+
+                  ! Factor
+                  fac = TWO
+                  if (sa==sb) fac = ONE
+
+                  ! Density block
+                  DD = D(fa:la,fb:lb)
+
+                  if (na*nb==1) then
+
+                     ga0 = bf_gr0(sa)[:,1]
+                     gax = bf_grx(sa)[:,1]
+                     gay = bf_gry(sa)[:,1]
+                     gaz = bf_grz(sa)[:,1]
+
+                     gb0 = bf_gr0(sb)[:,1]
+                     gbx = bf_grx(sb)[:,1]
+                     gby = bf_gry(sb)[:,1]
+                     gbz = bf_grz(sb)[:,1]
+
+                     Dab = fac*DD(1,1)
+
+                     i = 0
+                     j = 0
+                     do n = 1,n_pt
+                        if (NOT skipa(n)) i = i + 1
+                        if (NOT skipb(n)) j = j + 1
+                        if (skipab(n)) cycle
+                        ga = ga0(i)
+                        gb = gb0(j)
+                        N0(n) = N0(n) + Dab* ga*gb
+                        Nx(n) = Nx(n) + Dab*(gax(i)*gb + ga*gbx(j))
+                        Ny(n) = Ny(n) + Dab*(gay(i)*gb + ga*gby(j))
+                        Nz(n) = Nz(n) + Dab*(gaz(i)*gb + ga*gbz(j))
+                     end
+
+                  else
+
+                     ! Create space for gathered index info
+                     pi.create(n_keep)
+                     pj.create(n_keep)
+                     pn.create(n_keep)
+
+                     ! Make mapper arrays
+                     p = 0
+                     i = 0
+                     j = 0
+                     do n = 1,n_pt
+                        if (NOT skipa(n)) i = i + 1
+                        if (NOT skipb(n)) j = j + 1
+                        if (skipab(n)) cycle
+                        p = p + 1
+                        pi(p) = i
+                        pj(p) = j
+                        pn(p) = n
+                     end
+
+                     ! Add density contribution to rho
+                     do a = 1,na
+                        ga0 = bf_gr0(sa)[:,a]
+                        gax = bf_grx(sa)[:,a]
+                        gay = bf_gry(sa)[:,a]
+                        gaz = bf_grz(sa)[:,a]
+                        do b = 1,nb
+                           gb0 = bf_gr0(sb)[:,b]
+                           gbx = bf_grx(sb)[:,b]
+                           gby = bf_gry(sb)[:,b]
+                           gbz = bf_grz(sb)[:,b]
+                           Dab = fac*DD(a,b)
+                           do p = 1,n_keep
+                              i = pi(p)
+                              j = pj(p)
+                              n = pn(p)
+                              ga = ga0(i)
+                              gb = gb0(j)
+                              N0(n) = N0(n) + Dab* ga*gb
+                              Nx(n) = Nx(n) + Dab*(gax(i)*gb + ga*gbx(j))
+                              Ny(n) = Ny(n) + Dab*(gay(i)*gb + ga*gby(j))
+                              Nz(n) = Nz(n) + Dab*(gaz(i)*gb + ga*gbz(j))
+                           end
+                        end
+                     end
+
+                     ! Clean up
+                     pn.destroy
+                     pj.destroy
+                     pi.destroy
+
+                  end
+
+               end ! -- loops sa,sb
+            end
+         end       ! -- lops ca,cb
+      end
+
+      ! Clean up
+      skipab.destroy
+      skipa0.destroy
+      a2.destroy
+      za.destroy
+      ya.destroy
+      xa.destroy
+      gridcz.destroy
+      gridcy.destroy
+      gridcx.destroy
+      gridc0.destroy
+
+   end
+
+   make_rho_becke_atom_grid(N0a,N0b,pt,wt,bf_skip,bf_grid0,c,Da,Db) :: leaky, PURE
+   ! Make the alpha and beta densities "N0a", "N0b" on the Becke grid
+   ! ("pt","wt") for atom "c" given AO density matrices "Da", "Db".
+   ! Also return the "bf_skip" arrays and the "bf_grid0" array used
+   ! for evaluating the density (or density functionals) on the grid.
+      self :: INOUT
+      N0a,N0b :: VEC{REAL}@, OUT
+      pt :: MAT{REAL}@, OUT
+      wt :: VEC{REAL}@, OUT
+      bf_skip :: VEC{EVEC{BIN}}@, OUT
+      bf_grid0 :: VEC{EMAT{REAL}}@, OUT
+      c  :: INT, IN
+      Da,Db  :: MAT{REAL}, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.allocated,  "no atom list")
+   ENSURE(.becke_grid.allocated, "no becke_grid")
+   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
+   ENSURE(.overlapping_atoms_for_atom.allocated,"no overlapping_atoms")
+
+      xa,ya,za,a2 :: VEC{REAL}@
+      ga0,gb0 :: VEC{REAL}@
+      ra :: VEC{REAL}(3)
+      overlapping_atom, pi,pj,pn :: VEC{INT}@
+      skipa0,skipab, skipa,skipb :: VEC{BIN}@
+      gridc0  :: MAT{REAL}@
+      DDa,DDb :: MAT{REAL}@
+      sha :: SHELL1
+      cutoff, Da_ab,Db_ab, fac, ga,gb,gab :: REAL
+      n_pt,n_keep, ca,cb, oa,fsa,lsa,fba, ob,fsb,lsb :: INT
+      sa,fa,la,na,ba, sb,fb,lb,nb, a,b,i,j,p,n :: INT
+
+      ! Overlapping atoms
+      overlapping_atom = .overlapping_atoms_for_atom(c).element
+
+      ! Get the Becke grid for atom "c"
+      .becke_grid.make_SS_grid(pt,wt,gridc0,c,overlapping_atom)
+      n_pt = pt.dim1
+
+      ! Create N0a, N0b
+      N0a.create(n_pt); N0a = ZERO
+      N0b.create(n_pt); N0b = ZERO
+
+      ! Basis function cutoff
+      cutoff = .becke_grid.basis_fn_cutoff
+
+      ! Basis function grid and skip list
+      bf_skip.create(.n_shell)
+      bf_grid0.create(.n_shell)
+
+      ! Atom "a" displaced points (from "c") and skip switches
+      xa.create(n_pt)
+      ya.create(n_pt)
+      za.create(n_pt)
+      a2.create(n_pt)
+      skipa0.create(n_pt)
+      skipab.create(n_pt)
+
+      ! Loop c-overlapping atoms "oa"
+      do ca = 1,overlapping_atom.dim
+
+         oa  = overlapping_atom(ca)
+         fsa = .first_shell_for_atom(oa)
+         lsa =  .last_shell_for_atom(oa)
+         fba = .first_basis_fn_for_atom(oa)
+         ra  = .atom(oa).position
+
+         ! Make the displaced points for atom "oa"
+         .atom(oa).make_displaced_skip_pts(xa,ya,za,a2,skipa0,pt,n_pt,cutoff)
+
+         ! Loop shells on atom a
+         do sa = fsa,lsa
+
+            fa = .first_basis_fn_for_shell(sa)
+            la =  .last_basis_fn_for_shell(sa)
+            na = la - fa + 1
+
+            ! Set shell "sa"
+            ba  = .basis_shell_for_shell(sa)
+            sha = .basis_shell1pair(ba,1).a
+            sha.position = ra
+
+            ! Make shell "sa" skipa list
+            skipa.create(n_pt)
+            sha.make_skip_list(skipa,n_keep,a2,skipa0,n_pt,cutoff)
+
+            ! Next shell "sa" if no sig. points
+            if (n_keep==0) then
+               skipa.destroy
+               cycle
+            end
+
+            ! Assign the "sa" skipa list
+            bf_skip(sa).element.create(skipa.dim)
+            bf_skip(sa).element = skipa
+
+            ! Make/copy the "sa" basis function grid
+            ! This must be copied since skipa could be TRUE
+            bf_grid0(sa).element.create(n_keep,na)
+            if (oa==c) then
+               do a = 1,na
+                  i = 0
+                  do n = 1,n_pt
+                     if (skipa(n)) cycle
+                     i = i + 1
+                     bf_grid0(sa)[i,a] = gridc0(n,a+fa-fba)
+                  end
+               end
+            else
+               sha.make_skip_grid(bf_grid0(sa).element,n_keep,xa,ya,za,a2,skipa,n_pt)
+            end
+
+            ! Loop c-overlapping atoms b
+            do cb = 1,ca
+
+               ob  = overlapping_atom(cb)
+               fsb = .first_shell_for_atom(ob)
+               lsb =  .last_shell_for_atom(ob)
+
+               ! Loop shells on atom b
+               do sb = fsb,min(lsb,sa)
+
+                  if (bf_skip(sb).element.deallocated) cycle
+
+                  fb = .first_basis_fn_for_shell(sb)
+                  lb = .last_basis_fn_for_shell(sb)
+                  nb = lb - fb + 1
+
+                  ! Set the "sb" basis function grid
+                  skipb = bf_skip(sb).element
+
+                  ! How many points in common?
+                  skipab(1:n_pt) = skipa OR skipb
+                  n_keep = count(NOT skipab(1:n_pt))
+                  if (n_keep==0) cycle
+
+                  ! Factor
+                  fac = TWO
+                  if (sa==sb) fac = ONE
+
+                  ! Density block
+                  DDa = Da(fa:la,fb:lb)
+                  DDb = Db(fa:la,fb:lb)
+
+                  if (na*nb==1) then
+
+                     ga0 = bf_grid0(sa)[:,1]
+                     gb0 = bf_grid0(sb)[:,1]
+
+                     Da_ab = fac*DDa(1,1)
+                     Db_ab = fac*DDb(1,1)
+
+                     i = 0
+                     j = 0
+                     do n = 1,n_pt
+                        if (NOT skipa(n)) i = i + 1
+                        if (NOT skipb(n)) j = j + 1
+                        if (skipab(n)) cycle
+                        ga = ga0(i)
+                        gb = gb0(j)
+                        gab = ga*gb
+                        N0a(n) = N0a(n) + Da_ab*gab
+                        N0b(n) = N0b(n) + Db_ab*gab
+                     end
+
+                  else
+
+                     ! Create space for gathered index info
+                     pi.create(n_keep)
+                     pj.create(n_keep)
+                     pn.create(n_keep)
+
+                     ! Make mapper arrays
+                     p = 0
+                     i = 0
+                     j = 0
+                     do n = 1,n_pt
+                        if (NOT skipa(n)) i = i + 1
+                        if (NOT skipb(n)) j = j + 1
+                        if (skipab(n)) cycle
+                        p = p + 1
+                        pi(p) = i
+                        pj(p) = j
+                        pn(p) = n
+                     end
+
+                     ! Add density contribution to rho
+                     do a = 1,na
+                        ga0 = bf_grid0(sa)[:,a]
+                        do b = 1,nb
+                           gb0 = bf_grid0(sb)[:,b]
+                           Da_ab = fac*DDa(a,b)
+                           Db_ab = fac*DDb(a,b)
+                           do p = 1,n_keep
+                              i = pi(p)
+                              j = pj(p)
+                              n = pn(p)
+                              ga = ga0(i)
+                              gb = gb0(j)
+                              gab = ga*gb
+                              N0a(n) = N0a(n) + Da_ab*gab
+                              N0b(n) = N0b(n) + Db_ab*gab
+                           end
+                        end
+                     end
+
+                     ! Clean up
+                     pn.destroy
+                     pj.destroy
+                     pi.destroy
+
+                  end
+
+               end ! -- loops sa,sb
+            end
+         end       ! -- lops ca,cb
+      end
+
+      ! Clean up
+      skipab.destroy; skipa0.destroy
+      a2.destroy
+      za.destroy
+      ya.destroy
+      xa.destroy
+      gridc0.destroy
+
+   end
+
+   make_rho_becke_atom_grid(N0a,N0b,Nxa,Nya,Nza,Nxb,Nyb,Nzb,pt,wt,bf_skip,bf_gr0,bf_grx,bf_gry,bf_grz,c,Da,Db) :: leaky, PURE
+   ! Make the densities "N0a", "N0b" and their alpha/beta derivatives
+   ! "Nxa", "Nya", "Nza", "Nxb", "Nyb", "Nzb", on the Becke grid
+   ! ("pt","wt") for atom "c" given AO density matrices "Da", "Db".
+   ! Also return the "bf_skip" array, and the basis function and basis
+   ! function derivative arrays "bf_gr0", "bf_grx", "bf_gry",
+   ! "bf_grz" for evaluating the density functionals on the grid.
+      self :: INOUT
+      N0a,N0b :: VEC{REAL}@, OUT
+      Nxa,Nya,Nza :: VEC{REAL}@, OUT
+      Nxb,Nyb,Nzb :: VEC{REAL}@, OUT
+      pt :: MAT{REAL}@, OUT
+      wt :: VEC{REAL}@, OUT
+      bf_skip :: VEC{EVEC{BIN}}@, OUT
+      bf_gr0,bf_grx,bf_gry,bf_grz :: VEC{EMAT{REAL}}@, OUT
+      c  :: INT, IN
+      Da,Db :: MAT{REAL}, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.allocated,  "no atom list")
+   ENSURE(.becke_grid.allocated, "no becke_grid")
+   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
+   ENSURE(.overlapping_atoms_for_atom.allocated,"no overlapping_atoms")
+
+      xa,ya,za,a2 :: VEC{REAL}@
+      ga0,gax,gay,gaz :: VEC{REAL}@
+      gb0,gbx,gby,gbz :: VEC{REAL}@
+      ra :: VEC{REAL}(3)
+      overlapping_atom, pi,pj,pn :: VEC{INT}@
+      skipa0,skipab, skipa,skipb :: VEC{BIN}@
+      DDa,DDb :: MAT{REAL}@
+      gridc0,gridcx,gridcy,gridcz :: MAT{REAL}@
+      sha :: SHELL1
+      cutoff, Da_ab,Db_ab, fac, ga,gb,gab,gx,gy,gz :: REAL
+      n_pt,n_keep, ca,cb, oa,fsa,lsa,fba,offset, ob,fsb,lsb :: INT
+      sa,fa,la,na,ba, sb,fb,lb,nb, a,b,i,j,p,n :: INT
+
+      ! Overlapping atoms
+      overlapping_atom = .overlapping_atoms_for_atom(c).element
+
+      ! Get the Becke grid for atom "c"
+      .becke_grid.make_SS_grid(pt,wt,gridc0,gridcx,gridcy,gridcz,c,overlapping_atom)
+      n_pt = pt.dim1
+
+      ! Create N0 arrays
+      N0a.create(n_pt); Nxa.create(n_pt); Nya.create(n_pt); Nza.create(n_pt)
+      N0b.create(n_pt); Nxb.create(n_pt); Nyb.create(n_pt); Nzb.create(n_pt)
+      N0a = ZERO; Nxa = ZERO; Nya = ZERO; Nza = ZERO
+      N0b = ZERO; Nxb = ZERO; Nyb = ZERO; Nzb = ZERO
+
+      ! Basis function cutoff
+      cutoff = .becke_grid.basis_fn_cutoff
+
+      ! Basis function grid and skip list
+      bf_skip.create(.n_shell)
+      bf_gr0.create(.n_shell)
+      bf_grx.create(.n_shell)
+      bf_gry.create(.n_shell)
+      bf_grz.create(.n_shell)
+
+      ! Atom "a" displaced points (from "c") and skip switches
+      xa.create(n_pt)
+      ya.create(n_pt)
+      za.create(n_pt)
+      a2.create(n_pt)
+      skipa0.create(n_pt)
+      skipab.create(n_pt)
+
+      ! Loop c-overlapping atoms "oa"
+      do ca = 1,overlapping_atom.dim
+
+         oa  = overlapping_atom(ca)
+         fsa = .first_shell_for_atom(oa)
+         lsa =  .last_shell_for_atom(oa)
+         fba = .first_basis_fn_for_atom(oa)
+         ra  = .atom(oa).position
+
+         ! Make the displaced points for atom "oa"
+         .atom(oa).make_displaced_skip_pts(xa,ya,za,a2,skipa0,pt,n_pt,cutoff)
+
+         ! Loop shells on atom a
+         do sa = fsa,lsa
+
+            fa = .first_basis_fn_for_shell(sa)
+            la =  .last_basis_fn_for_shell(sa)
+            na = la - fa + 1
+
+            ! Set shell "sa"
+            ba  = .basis_shell_for_shell(sa)
+            sha = .basis_shell1pair(ba,1).a
+            sha.position = ra
+
+            ! Make shell "sa" skipa list
+            skipa.create(n_pt)
+            sha.make_skip_list(skipa,n_keep,a2,skipa0,n_pt,cutoff)
+
+            ! Next shell "sa" if no sig. points
+            if (n_keep==0) then
+               skipa.destroy
+               cycle
+            end
+
+            ! Assign the "sa" skipa list
+            bf_skip(sa).element.create(skipa.dim)
+            bf_skip(sa).element = skipa
+
+            ! Make/copy the "sa" basis function grid
+            ! This must be copied since skipa could be TRUE
+            bf_gr0(sa).element.create(n_keep,na)
+            bf_grx(sa).element.create(n_keep,na)
+            bf_gry(sa).element.create(n_keep,na)
+            bf_grz(sa).element.create(n_keep,na)
+            if (oa==c) then
+               offset = fa-fba
+               do a = 1,na
+                  i = 0
+                  do n = 1,n_pt
+                     if (skipa(n)) cycle
+                     i = i + 1
+                     bf_gr0(sa)[i,a] = gridc0(n,a+offset)
+                     bf_grx(sa)[i,a] = gridcx(n,a+offset)
+                     bf_gry(sa)[i,a] = gridcy(n,a+offset)
+                     bf_grz(sa)[i,a] = gridcz(n,a+offset)
+                  end
+               end
+            else
+               sha.make_skip_nabla_grid( &
+                  bf_grx(sa).element,  &
+                  bf_gry(sa).element,  &
+                  bf_grz(sa).element,  &
+                  bf_gr0(sa).element,  &
+                  n_keep,xa,ya,za,a2,skipa,n_pt)
+            end
+
+            ! Loop c-overlapping atoms b
+            do cb = 1,ca
+
+               ob  = overlapping_atom(cb)
+               fsb = .first_shell_for_atom(ob)
+               lsb =  .last_shell_for_atom(ob)
+
+               ! Loop shells on atom b
+               do sb = fsb,min(lsb,sa)
+
+                  if (bf_skip(sb).element.deallocated) cycle
+
+                  fb = .first_basis_fn_for_shell(sb)
+                  lb = .last_basis_fn_for_shell(sb)
+                  nb = lb - fb + 1
+
+                  ! Set the "sb" basis function grid
+                  skipb = bf_skip(sb).element
+
+                  ! How many points in common?
+                  skipab(1:n_pt) = skipa OR skipb
+                  n_keep = count(NOT skipab(1:n_pt))
+                  if (n_keep==0) cycle
+
+                  ! Factor
+                  fac = TWO
+                  if (sa==sb) fac = ONE
+
+                  ! Density block
+                  DDa = Da(fa:la,fb:lb)
+                  DDb = Db(fa:la,fb:lb)
+
+                  if (na*nb==1) then
+
+                     ga0 = bf_gr0(sa)[:,1]
+                     gax = bf_grx(sa)[:,1]
+                     gay = bf_gry(sa)[:,1]
+                     gaz = bf_grz(sa)[:,1]
+
+                     gb0 = bf_gr0(sb)[:,1]
+                     gbx = bf_grx(sb)[:,1]
+                     gby = bf_gry(sb)[:,1]
+                     gbz = bf_grz(sb)[:,1]
+
+                     Da_ab = fac*DDa(1,1)
+                     Db_ab = fac*DDb(1,1)
+
+                     i = 0
+                     j = 0
+                     do n = 1,n_pt
+                        if (NOT skipa(n)) i = i + 1
+                        if (NOT skipb(n)) j = j + 1
+                        if (skipab(n)) cycle
+                        ga = ga0(i)
+                        gb = gb0(j)
+                        gab = ga*gb
+                        gx  = gax(i)*gb+ga*gbx(j)
+                        gy  = gay(i)*gb+ga*gby(j)
+                        gz  = gaz(i)*gb+ga*gbz(j)
+
+                        N0a(n) = N0a(n) + Da_ab*gab
+                        Nxa(n) = Nxa(n) + Da_ab*gx
+                        Nya(n) = Nya(n) + Da_ab*gy
+                        Nza(n) = Nza(n) + Da_ab*gz
+
+                        N0b(n) = N0b(n) + Db_ab*gab
+                        Nxb(n) = Nxb(n) + Db_ab*gx
+                        Nyb(n) = Nyb(n) + Db_ab*gy
+                        Nzb(n) = Nzb(n) + Db_ab*gz
+
+                     end
+
+                  else
+
+                     ! Create space for gathered index info
+                     pi.create(n_keep)
+                     pj.create(n_keep)
+                     pn.create(n_keep)
+
+                     ! Make mapper arrays
+                     p = 0
+                     i = 0
+                     j = 0
+                     do n = 1,n_pt
+                        if (NOT skipa(n)) i = i + 1
+                        if (NOT skipb(n)) j = j + 1
+                        if (skipab(n)) cycle
+                        p = p + 1
+                        pi(p) = i
+                        pj(p) = j
+                        pn(p) = n
+                     end
+
+                     ! Add density contribution to rho
+                     do a = 1,na
+                        ga0 = bf_gr0(sa)[:,a]
+                        gax = bf_grx(sa)[:,a]
+                        gay = bf_gry(sa)[:,a]
+                        gaz = bf_grz(sa)[:,a]
+                        do b = 1,nb
+                           gb0 = bf_gr0(sb)[:,b]
+                           gbx = bf_grx(sb)[:,b]
+                           gby = bf_gry(sb)[:,b]
+                           gbz = bf_grz(sb)[:,b]
+                           Da_ab = fac*DDa(a,b)
+                           Db_ab = fac*DDb(a,b)
+
+                           do p = 1,n_keep
+                              i = pi(p)
+                              j = pj(p)
+                              n = pn(p)
+
+                              ga  = ga0(i)
+                              gb  = gb0(j)
+                              gab = ga*gb
+                              gx  = gax(i)*gb+ga*gbx(j)
+                              gy  = gay(i)*gb+ga*gby(j)
+                              gz  = gaz(i)*gb+ga*gbz(j)
+
+                              N0a(n) = N0a(n) + Da_ab*gab
+                              Nxa(n) = Nxa(n) + Da_ab*gx
+                              Nya(n) = Nya(n) + Da_ab*gy
+                              Nza(n) = Nza(n) + Da_ab*gz
+
+                              N0b(n) = N0b(n) + Db_ab*gab
+                              Nxb(n) = Nxb(n) + Db_ab*gx
+                              Nyb(n) = Nyb(n) + Db_ab*gy
+                              Nzb(n) = Nzb(n) + Db_ab*gz
+
+                           end
+
+                        end
+                     end
+
+                     ! Clean up
+                     pn.destroy
+                     pj.destroy
+                     pi.destroy
+
+                  end
+
+               end ! -- loops sa,sb
+            end
+         end       ! -- lops ca,cb
+      end
+
+      ! Clean up
+      skipab.destroy
+      skipa0.destroy
+      a2.destroy
+      za.destroy
+      ya.destroy
+      xa.destroy
+      gridcz.destroy
+      gridcy.destroy
+      gridcx.destroy
+      gridc0.destroy
+
+   end
+
+!  ======================
+!  Set interpolator grids
+!  ======================
+
+! For faster Hirshfeld weight function evaluation
+
+   make_ANO_interpolators :: leaky
+   ! Get the gaussian ANO interpolators. Note that for gaussian ANO
+   ! interpolators the atom.basis_kind's must have been "gaussian" at
+   ! the time the interpolator was made.
+      self :: INOUT
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.atom(1).basis_kind=="gaussian","the basis_kind is not gaussian!")
+   ENSURE(.n_atom_kind>0,"no atom kinds set")
+
+      template :: INTERPOLATOR@
+      a,b :: INT
+      done :: VEC{BIN}@
+      first :: BIN
+
+      ! Already there?
+      if (.has_all_interpolators) return
+
+      done.create(.n_atom)
+      done = FALSE
+
+      do a = 1,.n_atom
+
+         ! Skip?
+         if (done(a)) cycle
+
+         ! Make the interpolator
+         if (.atom(a).interpolator.deallocated) then
+            if (.interpolator.allocated) then
+               .atom(a).make_interpolator(.interpolator)
+            else
+               .make_interpolator_sqrt_x1x(template)
+               .atom(a).make_interpolator(template)
+               template.destroy
+            end
+
+            if (first) then
+               stdout.flush
+               stdout.text("Making gaussian ANO interpolators ...")
+               first = FALSE
+            end
+
+         end
+
+         done(a) = TRUE
+
+         ! Copy interpolartor to other atoms
+         do b = a+1,.n_atom
+            ! Skip?
+            if (done(b)) cycle
+            if (NOT .atom(b).is_same_kind_as(.atom(a))) cycle
+            ! Copy 
+            .atom(b).interpolator = .atom(a).interpolator
+            done(b) = TRUE
+         end
+
+      end
+
+      done.destroy 
+
+   end
+
+   make_slater_interpolators :: leaky
+   ! Make the slaterbasis orbital density interpolators.
+   ! Make them using the defaults set in a give "interpolator".
+      self :: INOUT
+
+   ENSURE(.slaterbasis.allocated,"no slaterbasis")
+
+      template :: INTERPOLATOR@
+      i :: INT
+
+   ! stdout.flush
+   ! stdout.text("Making slater interpolators ...")
+
+      ! Make the interpolators
+      if (.interpolator.allocated) then
+
+         ! User defined interpolator
+         do i = 1,.slaterbasis.dim
+            .slaterbasis(i).make_interpolator(.interpolator)
+         end
+
+      else
+
+         ! Default interpolator
+         .make_interpolator_sqrt(template)
+         do i = 1,.slaterbasis.dim
+            .slaterbasis(i).make_interpolator(template)
+         end
+         template.destroy
+
+      end
+
+      ! Set .atom to use this interpolator
+      if (.atom.allocated) .atom.set_basis_kind("slater")
+
+   end
+
+   make_coppens_interpolators :: leaky
+   ! Make the coppensbasis orbital density interpolators.
+   ! Make them using the defaults set in a give "interpolator".
+   ! Otherwise use an atom density cutoff "tol".
+   ! NOTE: any existing interpolators are destroyed first
+      self :: INOUT
+
+   ENSURE(.coppensbasis.allocated,"no slaterbasis")
+
+      template :: INTERPOLATOR@
+      i :: INT
+
+      stdout.flush
+      stdout.text("Making coppens interpolators ...")
+
+      ! Make the interpolators
+      if (.interpolator.allocated) then
+
+         do i = 1,.coppensbasis.dim  ! Make the interpolators
+            .coppensbasis(i).make_interpolator(.interpolator)
+         end
+
+      else
+
+         .make_interpolator_sqrt(template)
+         do i = 1,.coppensbasis.dim  ! Make the interpolators
+            .coppensbasis(i).make_interpolator(template)
+         end
+         template.destroy
+
+      end
+
+      ! Set .atom to use this interpolator
+      if (.atom.allocated) .atom.set_basis_kind("coppens")
+
+   end
+
+   make_interpolator_sqrt(interpolator) :: leaky
+   ! Make a non-gaussian interpolator. These typically used for
+   ! stockholder weight functions.
+      self :: IN
+      interpolator :: INTERPOLATOR@
+
+      cluster :: CLUSTER
+
+      ! Create default interpolator
+      interpolator.create
+
+      ! Reset default table eps
+      interpolator.set_table_eps(cluster.atom_density_cutoff)
+
+      ! If a saved cluster exists, use a table eps from that
+      if (.saved.allocated) then
+      if (.saved.cluster.allocated) then
+      if (.saved.cluster.info_made) then
+         interpolator.set_table_eps(.saved.cluster.atom_density_cutoff)
+      end
+      end
+      end
+
+      ! Set a linear-sqrt interpolator
+      interpolator.set_interpolation_method("linear")
+      interpolator.set_range_mapping("none")
+      interpolator.set_domain_mapping("sqrt")
+      interpolator.set_table_length(900d0)
+      interpolator.set_table_spacing(0.1d0)
+
+   end
+
+   make_interpolator_sqrt_x1x(interpolator) :: leaky
+   ! Make a gaussian interpolator.
+      self :: IN
+      interpolator :: INTERPOLATOR@
+
+      cluster :: CLUSTER
+
+      ! Create default interpolator
+      interpolator.create
+
+      ! Reset default table eps
+      interpolator.set_table_eps(cluster.atom_density_cutoff)
+
+      ! If a saved cluster exists, use a table eps from that
+      if (.saved.allocated) then
+      if (.saved.cluster.allocated) then
+      if (.saved.cluster.info_made) then
+         interpolator.set_table_eps(.saved.cluster.atom_density_cutoff)
+      end
+      end
+      end
+
+      ! Set a linear-sqrt interpolator
+      interpolator.set_interpolation_method("cubic_spline")
+      interpolator.set_range_mapping("none")
+      interpolator.set_domain_mapping("sqrt(x/(1-x))*scale")
+      interpolator.set_table_length(ONE)
+      interpolator.set_spacing(0.0001d0)
+
+   end
+
+!  =========================
+!  ED at a point & on a line
+!  =========================
+
+   ED_at_point(pt) result (res) :: PURE
+   ! Return the electron density at a single point "pt"
+   ! NOTE: This is Kanghyun's version. Now working.
+      self :: IN
+      pt   :: VEC{REAL}(3), IN
+      res  :: REAL
+
+      grid :: VEC{REAL}(1)
+
+      .make_ED_grid_r(grid,reshape(pt,[1,3]))
+      res = grid(1)
+
+   end
+
+   ED_between_points(ra,rb,n_pts) result (res) :: PURE
+   ! Return ED on equally spaced grid points between "ra" and "rb"
+   ! as the first and last points, inclusive.
+      self  :: IN
+      ra    :: VEC{REAL}(3), IN
+      rb    :: VEC{REAL}(3), IN
+      n_pts :: INT, IN
+      res   :: VEC{REAL}(n_pts)
+
+   ENSURE(n_pts>3,"too few points")
+
+      pts :: MAT{REAL}@
+      del :: VEC{REAL}(3)
+      p   :: VEC{REAL}(3)
+      i   :: INT
+
+      pts.create(n_pts,3)
+
+      ! Step vector
+      del = rb - ra
+      del = del/(n_pts-1)
+
+      ! Line of points
+      p = ra
+      do i = 1,n_pts
+         pts(i,1) = p(1)
+         pts(i,2) = p(2)
+         pts(i,3) = p(3)
+         p = p + del
+      end
+
+      .make_ED_grid_r(res,pts)
+
+      ! Clean
+      pts.destroy
+
+   end
+
+   ED_between_points(ra,rb,n_pts,DM) result (res) :: PURE
+   ! Return ED on equally spaced grid points between "ra" and "rb"
+   ! as the first and last points, inclusive. "DM" is the density
+   ! matrix used to calculated the electron density.
+      self  :: IN
+      ra    :: VEC{REAL}(3), IN
+      rb    :: VEC{REAL}(3), IN
+      n_pts :: INT, IN
+      DM    :: MAT{REAL}, IN
+      res   :: VEC{REAL}(n_pts)
+
+   ENSURE(n_pts>3,"too few points")
+
+      pts :: MAT{REAL}@
+      del :: VEC{REAL}(3)
+      p   :: VEC{REAL}(3)
+      i   :: INT
+
+      pts.create(n_pts,3)
+
+      ! Step vector
+      del = rb - ra
+      del = del/(n_pts-1)
+
+      ! Line of points
+      p = ra
+      do i = 1,n_pts
+         pts(i,1) = p(1)
+         pts(i,2) = p(2)
+         pts(i,3) = p(3)
+         p = p + del
+      end
+
+      .make_ED_grid_r(res,pts,DM)
+
+      ! Clean
+      pts.destroy
+
+   end
+
+   make_ED_interpolator_between_atoms(a,b)
+   ! Make the .interpolator for the ED between two atoms "a" and "b"
+      self :: INOUT
+      a,b  :: INT, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.interpolator.allocated,"no interpolator info, specify n_data=")
+   ENSURE(.interpolator.n_data>0,"wrong no. of data, interpolator")
+
+      n_pts :: INT
+      pts   :: VEC{REAL}@
+      line  :: VEC{REAL}@
+      ra,rb :: VEC{REAL}(3)
+      del   :: VEC{REAL}(3)
+      stp,val :: REAL
+      i :: INT
+
+      ! How many points?
+      n_pts = .interpolator.n_data
+
+      ! Positions
+      ra = .atom(a).position
+      rb = .atom(b).position
+
+      ! Step vector
+      del = rb - ra
+      del = del/(n_pts-1)
+      stp = norm2(del)
+
+      ! Points as steps
+      pts.create(n_pts)
+      val = ZERO
+      do i = 1,n_pts
+         pts(i) = val
+         val = val + stp
+      end
+
+      ! Make ED line values
+      line = .ED_between_points(ra,rb,n_pts)
+
+      ! Set domain scale factor. May not be required.
+      .interpolator.set_data_points(pts)
+      .interpolator.set_data_values(line)
+
+      ! Clean
+      line.destroy
+      pts.destroy
+
+   end
+
+   promolecule_ED_at_point(pt) result (res) :: PURE
+   ! Return promolecule ED at a point "pt".
+      self :: IN
+      pt   :: VEC{REAL}(3), IN
+      res  :: REAL
+
+   ENSURE(.atom.allocated,"no atoms")
+
+      grid :: VEC{REAL}(1)
+      a :: INT
+
+      ! Sum up the atom grid values
+      res = ZERO
+      parallel do a = 1,.n_atom
+         .atom(a).make_ED_grid(grid,reshape(pt,[1,3]))
+         res = res + grid(1)
+      end
+
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(res)
+      end
+
+   end
+
+!  ======================
+!  Promolecule density mx
+!  ======================
+
+   add_ANO_densities(DM) :: leaky
+   ! Add the ANO densities to make the total density matrix
+      self :: IN
+      DM   :: OPMATRIX@, OUT
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.has_all_ANO_matrices,"no ANOs")
+
+      a,b,f,l :: INT
+
+      ! Create
+      DM.create(.n_bf,"r ")
+
+      ! Set to zero
+      DM.r = ZERO
+
+      ! Add 'em up
+      do a = 1,.n_atom
+
+         ! Transfer non-unique atoms
+         do b = 1,.n_atom
+
+            if (NOT .atom(b).is_same_kind_as(.atom(a))) cycle
+
+            f = .first_basis_fn_for_atom(b)
+            l =  .last_basis_fn_for_atom(b)
+            DM.r(f:l,f:l) = .atom(a).density_mx.r
+
+         end
+
+      end
+
+      ! Symmetrize
+      DM.r.symmetric_reflect
+
+   end
+
+!  ============================
+!  Stockholder atom weight grid
+!  ============================
+
+   apply_stockholder_atom_weight(grid,a,pts) :: PURE
+   ! Apply (i.e. multiply) "grid" by the stockholder weight function
+   ! for the atom with index "a" using supplied points "pts".
+   ! * If .use_interpolators is TRUE then interpolators are used.
+   ! * If .use_interpolators is FALSE then interpolators could still
+   !   be used if explicitly set for each atom (however the
+   !   overlapping_atoms array will not be used to eliminate work).
+   !   More likely the density will be explicitly evaluated.
+      self :: IN
+      grid :: VEC{REAL}, INOUT
+      a    :: INT, IN
+      pts  :: MAT{REAL}, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(grid.dim==pts.dim1,"incompatible dim1, grid & pts")
+
+      Wa :: VEC{REAL}@
+
+      ! Only needed for more than one atom
+      if (.n_atom>1) then
+
+         ! Get weights
+         Wa.create(pts.dim1)
+         .make_stockholder_atom_weight(Wa,a,pts)
+
+         ! Apply them
+         grid = grid*Wa
+
+         ! Clean
+         Wa.destroy
+
+      end
+
+   end
+
+   make_periodic_stockholder_atom_weight(grid,a,pts) :: leaky, private
+   ! Make a Hirshfeld stockholder weight for atom "a" using a periodic
+   ! procrystal denominator. The ordinary molecular stockholder routine
+   ! is not suitable for an extended solid: for a one-atom fragment it
+   ! returns one everywhere, so a periodic residual density would be
+   ! integrated over an unbounded atom grid.
+   !
+   ! Neutral spherical reference densities are repeated over the unit
+   ! cell and nearby lattice translations. Contributions smaller than
+   ! the Becke-grid density cutoff are consistently neglected.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      a    :: INT, IN
+      pts  :: MAT{REAL}, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.crystal.allocated,"no crystal")
+   ENSURE(.crystal.unit_cell_atom.allocated,"no unit-cell atoms")
+   ENSURE(grid.dim==pts.dim1,"incompatible dim1, grid & pts")
+
+      rho_a,den,tmp,R2 :: VEC{REAL}@
+      reference,h_min,h_max :: VEC{INT}@
+      lattice_index :: VEC{INT}(3)
+      center,pos,shift,frac_center,frac_radius :: VEC{REAL}(3)
+      cutoff,radius :: REAL
+      n_pts,n,u,b,i,h1,h2,h3 :: INT
+
+      n_pts = pts.dim1
+      cutoff = .becke_grid.basis_fn_cutoff
+      center = .atom(a).position
+
+      ! Reuse the proatom interpolation table made by make_HA_info.  Calling
+      ! interpolator_table_length here would rebuild the density from an
+      ! orbital occupation vector that does not exist on the observed-only
+      ! path.  Convert the table's stored coordinate back to a physical
+      ! radius according to its domain mapping.
+      select case (.atom(a).basis_kind)
+      case ("gaussian")
+         ENSURE(.atom(a).interpolator.allocated,"no proatom interpolator")
+         if (.atom(a).interpolator.domain_is_sqrt_x1x) then
+            radius = .atom(a).interpolator.domain_scale_factor*sqrt( &
+               .atom(a).interpolator.table_length / &
+               max(ONE-.atom(a).interpolator.table_length,epsilon(ONE)))
+         else if (.atom(a).interpolator.domain_is_sqrt) then
+            radius = sqrt(.atom(a).interpolator.table_length)
+         else
+            radius = .atom(a).interpolator.table_length
+         end
+      case ("slater","coppens")
+         radius = .atom(a).interpolator_table_length(cutoff)
+      case default
+         UNKNOWN(.atom(a).basis_kind)
+      end
+
+      ! Find one neutral reference atom of the correct element for
+      ! every crystallographic atom in the unit cell.
+      reference.create(.crystal.n_unit_cell_atoms)
+      do u = 1,.crystal.n_unit_cell_atoms
+         reference(u) = 0
+         do b = 1,.n_atom
+            if (.atom(b).atomic_number == &
+                .crystal.unit_cell_atom(u).atomic_number) then
+               reference(u) = b
+               exit
+            end
+         end
+         ENSURE(reference(u)>0,"no periodic Hirshfeld reference atom")
+      end
+
+      ! The central proatom numerator defines the finite integration
+      ! support. One extra cell in each direction is retained around
+      ! that support.
+      frac_center = matmul(center,.crystal.unit_cell.reciprocal_mx)
+      frac_radius = radius/.crystal.unit_cell.length
+      h_min.create(3)
+      h_max.create(3)
+      h_min = floor(frac_center-frac_radius) - 1
+      h_max = ceiling(frac_center+frac_radius) + 1
+
+      rho_a.create(n_pts)
+      den.create(n_pts)
+      tmp.create(n_pts)
+      R2.create(n_pts)
+      .atom(a).make_ED_grid(rho_a,pts)
+      den = ZERO
+
+      do h1 = h_min(1),h_max(1)
+      do h2 = h_min(2),h_max(2)
+      do h3 = h_min(3),h_max(3)
+
+         lattice_index(1) = h1
+         lattice_index(2) = h2
+         lattice_index(3) = h3
+         shift = matmul(.crystal.unit_cell.direct_mx, &
+            REALIFY(lattice_index))
+
+         do u = 1,.crystal.n_unit_cell_atoms
+            b = reference(u)
+            pos = .crystal.unit_cell_atom(u).position + shift
+
+            ! If both proatoms are truncated at "radius", this image
+            ! cannot overlap the support of the central numerator.
+            if (norm2(pos-center)>TWO*radius) cycle
+
+            select case (.atom(b).basis_kind)
+            case ("gaussian")
+               do n = 1,n_pts
+                  R2(n) = sum((pts(n,:)-pos)**2)
+               end
+               .atom(b).interpolator.values_for(R2,tmp)
+               den = den + tmp
+            case ("slater")
+               .atom(b).slaterbasis.add_ED_grid(den,pts,pos)
+            case ("coppens")
+               .atom(b).coppensbasis.add_ED_grid(den,pts,pos)
+            case default
+               UNKNOWN(.atom(b).basis_kind)
+            end
+         end
+
+      end
+      end
+      end
+
+      do i = 1,n_pts
+         if (rho_a(i)>cutoff AND den(i)>epsilon(ONE)) then
+            grid(i) = rho_a(i)/den(i)
+         else
+            grid(i) = ZERO
+         end
+      end
+
+      R2.destroy
+      tmp.destroy
+      den.destroy
+      rho_a.destroy
+      h_max.destroy
+      h_min.destroy
+      reference.destroy
+
+   end
+
+   make_stockholder_atom_weight(grid,a,pts) :: PURE
+   ! Make the "grid" of stockholder weight function values for the
+   ! atom with index "a" on supplied points "pts".
+   ! * If .use_interpolators is TRUE then interpolators are used.
+   ! * If .use_interpolators is FALSE then interpolators could still
+   !   be used if explicitly set for each atom (however the
+   !   overlapping_atoms array will not be used to eliminate work).
+   !   More likely the density will be explicitly evaluated.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      a    :: INT, IN
+      pts  :: MAT{REAL}, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(grid.dim==pts.dim1,"incompatible dim1, grid & pts")
+
+      if (.n_atom==1) then
+
+         ! Avoid this case if possible
+         grid = ONE
+
+      else
+
+         ! Get weights
+         if (.use_interpolators) then
+            ENSURE(.atom.has_interpolators_any_kind,"missing atomic interpolators")
+            ENSURE(.overlapping_atoms_for_atom.allocated,"no overlapping_atoms")
+            .make_stockholder_atom_weight_int(grid,a,pts,.overlapping_atoms_for_atom(a).element)
+         else
+            .make_stockholder_atom_weight_acc(grid,a,pts)
+         end
+
+      end
+
+   end
+
+   make_stockholder_atom_weight_acc(grid,a,pts) :: private, PURE
+   ! Make the Hirshfeld stockholder weight density "grid" for the atom
+   ! with index "a" using supplied points "pts".
+   ! NOTE: This DOES NOT USE an interpolated density for each atom
+   ! UNLESS use_interpolators is explicitly set. In this case you
+   ! should probably use the next routine which uses the
+   ! overlapping_atoms.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      a    :: INT, IN
+      pts  :: MAT{REAL}, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.atom.has_interpolators_any_kind,"missing atomic interpolators")
+   ENSURE(grid.dim==pts.dim1,"incompatible dim1, grid & pts")
+
+      rho_a   :: VEC{REAL}@
+      n_pts,i :: INT
+
+      ! Allocate temporary densities
+      n_pts = grid.dim
+      rho_a.create(n_pts)
+
+      ! Make density for atom "a" in "rho_a"
+      .atom(a).make_ED_grid(rho_a,pts)
+
+      ! Make total density in "grid"
+      grid = rho_a
+      do i = 1,.n_atom
+         if (i==a) cycle
+         .atom(i).add_ED_grid(grid,pts)
+      end
+
+      ! Make the stockholder weight
+      do i = 1,n_pts
+         if (grid(i)>epsilon(ONE)) then; grid(i) = rho_a(i)/grid(i)
+         else;                           grid(i) = ZERO
+         end
+      end
+      rho_a.destroy
+
+   end
+
+   make_stockholder_atom_weight_int(grid,a,pts,overlapping_atom) :: private, PURE
+   ! Make the Hirshfeld stockholder atom weight desity "grid" for the
+   ! atom with index "a" using supplied points "pts" and given a list
+   ! of "overlapping_atom". This makes use of a previously calculated
+   ! interpolated density for each atom.
+   ! NOTE: the CLUSTER.atom_density_cutoff must be the same as the
+   !       the BECKE_GRID.basis_fn_cutoff
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      a    :: INT, IN
+      pts  :: MAT{REAL}, IN
+      overlapping_atom :: VEC{INT}, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.atom.has_interpolators_any_kind,"missing atomic interpolators")
+   ENSURE(grid.dim==pts.dim1,"incompatible dim1, grid & pts")
+
+      rho_a :: VEC{REAL}@
+      n_pts,i,j :: INT
+
+      ! Allocate temporary densities
+      n_pts = grid.dim
+      rho_a.create(n_pts)
+
+      ! Make density for atom "a"
+      .atom(a).make_interpolated_density(rho_a,pts)
+
+      ! Make total density in "grid"
+      grid = rho_a
+      do j = 1,overlapping_atom.dim
+         i = overlapping_atom(j)
+         if (i==a) cycle
+         .atom(i).add_interpolated_density(grid,pts)
+      end
+
+      ! Make the stockholder weight
+      do i = 1,n_pts
+         if (grid(i)>epsilon(ONE)) then; grid(i) = rho_a(i)/grid(i)
+         else;                           grid(i) = ZERO
+         end
+      end
+      rho_a.destroy
+
+   end
+
+   make_stockholder_atom_weight(grid,a,pts,overlapping_atom) :: PURE
+   ! Make the Hirshfeld stockholder weight density "grid" for the atom
+   ! with index "a" using supplied points "pts". This version uses
+   ! interpolated atom densities to make the weight function only for
+   ! the "overlapping_atoms" which are considered the near neighbours.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      a    :: INT, IN
+      pts  :: MAT{REAL}, IN
+      overlapping_atom :: VEC{INT}, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.atom.has_interpolators_any_kind,"missing atomic interpolators")
+   ENSURE(grid.dim==pts.dim1,"incompatible dim1, grid & pts")
+
+      if (.n_atom>1) then
+         .make_stockholder_atom_weight_int(grid,a,pts,overlapping_atom)
+      else
+         grid = ONE
+      end
+
+   end
+
+!  ==============================
+!  Salvador-RC neighbours & radii
+!  ==============================
+
+   make_Salvador_radii :: PURE
+   ! Put the Salvador & Ramos-Cordoba radii for each atom.
+      self :: INOUT
+
+   ENSURE(.atom.allocated,"no atoms")
+
+      .make_Salvador_radii_orig(.Salvador_bonds_for &
+                                ,.Salvador_radii_for &
+                                ,.Salvador_chi       )
+   ! .make_Salvador_radii_orig(.Salvador_radii_for,50,400)
+
+   end
+
+   make_Salvador_radii_orig(bonds_for,radii_for,chi,n_div,n_sub) :: leaky, PURE
+   ! Make the Mayer-Salvador atom radii corresponding to the
+   ! bonded neighbours (which are also calculated) for the Topological
+   ! Fuzzy Voronoi Atoms.
+      self      :: IN
+      bonds_for :: VEC{EVEC{INT}}@, OUT
+      radii_for :: VEC{EVEC{REAL}}@, OUT
+      chi       :: MAT{REAL}@, OUT
+      n_div     :: INT, optional, IN
+      n_sub     :: INT, optional, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.density_mx.allocated,"no density_mx")
+   ENSURE(.density_mx.r.allocated,"no restricted density_mx")
+
+      n_atoms :: INT
+      n_bonds :: INT
+      a,b,n   :: INT
+      ra,rb   :: VEC{REAL}(3)
+      fac     :: REAL
+
+      ! Neighbours first
+      .atom.make_Salvador_neighbours(bonds_for)
+
+      ! Create radii table
+      n_atoms = .atom.dim
+      radii_for.create(n_atoms)
+      chi.create(n_atoms,n_atoms)
+      chi = ONE
+
+      ! Atom a
+      do a = 1,n_atoms
+         n_bonds = bonds_for(a).element.dim
+         radii_for(a).element.create(n_bonds)
+         ra = .atom(a).position
+         ! Neighbours b
+         do n = 1,n_bonds
+            b   = bonds_for(a)[n]
+            rb  = .atom(b).position 
+            fac = .Mayer_Salvador_radius_for(a,b,n_div,n_sub)
+            radii_for(a)[n] = fac*norm2(rb-ra)
+            chi(a,b)        = fac/(ONE-fac)
+         end
+      end
+
+   end
+
+   Mayer_Salvador_radius_for(a,b,n_div,n_sub) result (res) :: PURE
+   ! Return the Mayer-Salvador radius R(a.b) for atoms "a" and "b" in
+   ! the direction a->b, used to make Topological Fuzzy Voronoi atoms.
+   ! The code is accurate to 1/200-th of the bond length R(a-b).
+   ! The code also ensures that R(a.b) + R(b.a) = R(a-b).
+   ! Options:
+   ! . "n_div" [50] is the number of divisions used to detect minima.
+   ! . "n_sub" [40] is the no. of subdivisions to refine the result.
+   ! NOTE: Code was extracted from APOST-3D and contains the original
+   ! method from Mayer & Salvador used to define the Salvador &
+   ! Ramos-Cordoba radii. The method accounts for numerical errors and
+   ! instabilities in the internuclear density and atoms too far away.
+      self  :: IN
+      a, b  :: INT, IN
+      n_div :: INT, optional, IN
+      n_sub :: INT, optional, IN
+      res   :: REAL
+     
+   ENSURE(a/=b,"atoms should not be the same")
+
+      ra,rb,del :: VEC{REAL}(3)
+      rc,rd     :: VEC{REAL}(3)
+      rho       :: VEC{REAL}@
+      kmin,kmax :: VEC{INT}@
+      nmin,nmax :: INT
+      ndiv,nsub :: INT
+      step,subs :: REAL
+      k, km,kf  :: INT
+      midd,maxd :: INT
+      best,diff :: INT
+      is_min    :: BIN
+      swap      :: BIN
+      Za, Zb    :: INT
+
+      ! Scan resolution: must be even
+      ndiv = 50   ! No. of divisions 
+      if (present(n_div)) ndiv = n_div
+
+      ! Polishing resolution: also even
+      nsub = 40   ! No. of subdivisions
+      if (present(n_sub)) nsub = n_sub
+
+      ! Are atoms too far?
+      ra = .atom(a).position
+      rb = .atom(b).position
+      if (norm2(rb-ra)>TEN) then
+         res = HALF       ! Divide half-way
+         return
+      end
+
+      ! Ensure a has *smaller* atomic number.
+      ! Or if equal, index a is less than b.
+      ! This ensures R(a.b) + R(b.a) = R(a-b)
+      Za = .atom(a).atomic_number
+      Zb = .atom(b).atomic_number
+      swap = FALSE
+      if      (Za>Zb         ) then; swap = TRUE
+      else if (Za==Zb AND a>b) then; swap = TRUE
+      end
+
+      ! Swap positions
+      if (swap) then
+         rc = ra
+         ra = rb
+         rb = rc
+      end
+
+      ! ED, min & max locations
+      rho.create(ndiv+1) ! Note +1
+      kmin.create(ndiv)   ! idx of k-th min
+      kmax.create(ndiv)   ! idx of k-th max
+
+      ! Get ED from a->b at ndiv+1 points 
+      ! First and last point are on ra & rb
+      rho = .ED_between_points(ra,rb,ndiv+1)
+
+      ! Find indices of minima & maxima
+      nmin = 0
+      nmax = 0
+      do k = 2,ndiv
+         if (rho(k-1)>rho(k) AND rho(k)<rho(k+1)) then 
+            ! Minima found
+            nmin = nmin + 1
+            kmin(nmin) = k
+         end     
+         if (rho(k-1)<rho(k) AND rho(k)>rho(k+1)) then 
+            ! Maxima found
+            nmax = nmax + 1
+            kmax(nmax) = k
+         end     
+      end
+
+      ! Sanity check: any critical points?
+      ENSURE(nmin>0,"no minima found between the atoms!")
+   ! WARN_IF(nmax>0,"maxima found between the atoms!")
+
+      if (nmin==1 AND nmax==0) then
+
+         ! Easy case: 1 minima, 0 maxima
+         km = kmin(1)   ! Index of minimum
+         is_min = TRUE  ! Set 1 if maxima
+
+      else if (nmax>0 AND abs(nmin-nmax)==1) then
+
+         ! Troubles.
+         ! One more min than max, or vice versa
+         if (nmax.is_odd) then
+            ! Central max selected 
+            km = kmax((nmax+1)/2)
+            is_min = FALSE
+         else
+            ! Central min selected. If any.
+            ! But there must, if nmax is even!
+            km = kmin((nmin+1)/2)
+            is_min = TRUE
+         end 
+         
+      else
+
+         ! Real touble. Inconsistent no. of extrema.
+         ! Select best min/max i.e closest to midpoint
+         midd = ndiv/2 ! Middle division
+         maxd = ndiv   ! Max. diff to midd
+         best = midd   ! Start at middle 
+         is_min = TRUE
+        
+         ! First minima to middle division.
+         ! If there is one, it is found
+         do k = 1,nmin
+            diff = abs(kmin(k)-midd)
+            if (diff<maxd)  then
+               best = kmin(k) ! Store
+               maxd = diff    ! Look no further
+               is_min = TRUE  ! Label it
+            end 
+         end
+        
+         ! Any maxima closer than maxd?
+         ! Maxima trump minima.
+         do k = 1,nmax
+            diff = abs(kmax(k)-midd)
+            if (diff<maxd)  then
+               best = kmax(k)
+               maxd = diff
+               is_min = FALSE
+            end 
+         end
+
+         ! Finally
+         km = best
+        
+      end
+       
+      ! Extrema index km found.
+      ! Go back one step, look ahead two steps
+      step = ONE/ndiv        ! Orig. step size
+      del  = (rb-ra)*step    ! Step vector
+      rc   = ra + (km-2)*del ! km-1 is the extrema
+      rd   = ra + (km  )*del ! *Two* steps ahead
+      subs = TWO*step/nsub   ! Substep size, over 2 steps
+
+      ! ED from rc->rd at nsub+1 points 
+      ! First & last points on rc & rd
+      rho  = .ED_between_points(rc,rd,nsub+1)
+   
+      ! Find first extrema, finer level
+      if (is_min) then
+         do k = 2,nsub
+            kf = k
+            if (rho(k-1)>rho(k) AND rho(k)<rho(k+1)) exit
+         end
+      else
+         do k = 2,nsub
+            kf = k
+            if (rho(k-1)<rho(k) AND rho(k)>rho(k+1)) exit
+         end
+      end
+      
+      ! Steps from ra
+      res = (km-2)*step + (kf-1)*subs
+
+      ! Swap back?
+      if (swap) res = ONE - res
+
+   ENSURE(res>0.1 AND res<0.9,"Too close to nuclei!")
+
+   end
+
+   Mayer_Salvador_radius_for(a,b,n_div,n_sub,DM) result (res) :: PURE
+   ! Return the Mayer-Salvador radius R(a.b) for atoms "a" and "b" in
+   ! the direction a->b, used to make Topological Fuzzy Voronoi atoms.
+   ! "DM" is the density matrix used to calculated the electron
+   ! density. The code is accurate to 1/2000-th of the separation
+   ! R(a-b). The code ensures that R(a.b) + R(b.a) = R(a-b). 
+   ! Options:
+   ! . "n_div"  [50] is the number of divisions used to detect minima.
+   ! . "n_sub" [400] is the no. of subdivisions to refine the result.
+   ! NOTE: Code was extracted from APOST3D and contains the original
+   ! method from Mayer & Salvador used to define the Salvador &
+   ! Ramos-Cordoba radii. The method accounts for numerical errors and
+   ! instabilities in the internuclear density and atoms too far away.
+      self  :: IN
+      a, b  :: INT, IN
+      n_div :: INT, optional, IN
+      n_sub :: INT, optional, IN
+      DM    :: MAT{REAL}, IN
+      res   :: REAL
+     
+   ENSURE(a/=b,"atoms should not be the same")
+
+      ra,rb,del :: VEC{REAL}(3)
+      rc,rd     :: VEC{REAL}(3)
+      rho       :: VEC{REAL}@
+      kmin,kmax :: VEC{INT}@
+      nmin,nmax :: INT
+      ndiv,nsub :: INT
+      step,subs :: REAL
+      k, km,kf  :: INT
+      midd,maxd :: INT
+      best,diff :: INT
+      is_min    :: BIN
+      swap      :: BIN
+      Za, Zb    :: INT
+
+      ! Scan resolution: must be even
+      ndiv = 50   ! No. of divisions 
+      if (present(n_div)) ndiv = n_div
+
+      ! Polishing resolution: also even
+      nsub = 400  ! No. of subdivisions
+      if (present(n_sub)) nsub = n_sub
+
+      ! Are atoms too far?
+      ra = .atom(a).position
+      rb = .atom(b).position
+      if (norm2(rb-ra)>TEN) then
+         res = HALF       ! Divide half-way
+         return
+      end
+
+      ! Ensure a has *smaller* atomic number.
+      ! Or if equal, index a is less than b.
+      ! This ensures R(a.b) + R(b.a) = R(a-b)
+      Za = .atom(a).atomic_number
+      Zb = .atom(b).atomic_number
+      swap = FALSE
+      if      (Za>Zb         ) then; swap = TRUE
+      else if (Za==Zb AND a>b) then; swap = TRUE
+      end
+
+      ! Swap positions
+      if (swap) then
+         rc = ra
+         ra = rb
+         rb = rc
+      end
+
+      ! ED, min & max locations
+      rho.create(ndiv+1) ! Note +1
+      kmin.create(ndiv)   ! idx of k-th min
+      kmax.create(ndiv)   ! idx of k-th max
+
+      ! Get ED from a->b at ndiv+1 points 
+      ! First and last point are on ra & rb
+      rho = .ED_between_points(ra,rb,ndiv+1,DM)
+
+      ! Find indices of minima & maxima
+      nmin = 0
+      nmax = 0
+      do k = 2,ndiv
+         if (rho(k-1)>rho(k) AND rho(k)<rho(k+1)) then 
+            ! Minima found
+            nmin = nmin + 1
+            kmin(nmin) = k
+         end     
+         if (rho(k-1)<rho(k) AND rho(k)>rho(k+1)) then 
+            ! Maxima found
+            nmax = nmax + 1
+            kmax(nmax) = k
+         end     
+      end
+
+      ! Sanity check: any critical points?
+      ENSURE(nmin>0,"no minima found between the atoms!")
+      WARN_IF(nmax>0,"maxima found between the atoms!")
+
+      if (nmin==1 AND nmax==0) then
+
+         ! Easy case: 1 minima, 0 maxima
+         km = kmin(1)   ! Index of minimum
+         is_min = TRUE  ! Set 1 if maxima
+
+      else if (nmax>0 AND abs(nmin-nmax)==1) then
+
+         ! Troubles.
+         ! One more min than max, or vice versa
+         if (nmax.is_odd) then
+            ! Central max selected 
+            km = kmax((nmax+1)/2)
+            is_min = FALSE
+         else
+            ! Central min selected. If any.
+            ! But there must, if nmax is even!
+            km = kmin((nmin+1)/2)
+            is_min = TRUE
+         end 
+         
+      else
+
+         ! Real touble. Inconsistent no. of extrema.
+         ! Select best min/max i.e closest to midpoint
+         midd = ndiv/2 ! Middle division
+         maxd = ndiv   ! Max. diff to midd
+         best = midd   ! Start at middle 
+         is_min = TRUE
+        
+         ! First minima to middle division.
+         ! If there is one, it is found
+         do k = 1,nmin
+            diff = abs(kmin(k)-midd)
+            if (diff<maxd)  then
+               best = kmin(k) ! Store
+               maxd = diff    ! Look no further
+               is_min = TRUE  ! Label it
+            end 
+         end
+        
+         ! Any maxima closer than maxd?
+         ! Maxima trump minima.
+         do k = 1,nmax
+            diff = abs(kmax(k)-midd)
+            if (diff<maxd)  then
+               best = kmax(k)
+               maxd = diff
+               is_min = FALSE
+            end 
+         end
+
+         ! Finally
+         km = best
+        
+      end
+       
+      ! Extrema index km found.
+      ! Go back one step, look ahead two steps
+      step = ONE/ndiv        ! Orig. step size
+      del  = (rb-ra)*step    ! Step vector
+      rc   = ra + (km-2)*del ! km-1 is the extrema
+      rd   = ra + (km  )*del ! *Two* steps ahead
+      subs = TWO*step/nsub   ! Substep size, over 2 steps
+
+      ! ED from rc->rd at nsub+1 points 
+      ! First & last points on rc & rd
+      rho  = .ED_between_points(rc,rd,nsub+1,DM)
+   
+      ! Find first extrema, finer level
+      if (is_min) then
+         do k = 2,nsub
+            kf = k
+            if (rho(k-1)>rho(k) AND rho(k)<rho(k+1)) exit
+         end
+      else
+         do k = 2,nsub
+            kf = k
+            if (rho(k-1)<rho(k) AND rho(k)>rho(k+1)) exit
+         end
+      end
+      
+      ! Steps from ra
+      res = (km-2)*step + (kf-1)*subs
+
+      ! Swap back?
+      if (swap) res = ONE - res
+
+   ENSURE(res>0.1 AND res<0.9,"Too close to nuclei!")
+
+   end
+
+   make_Salvador_radii_lmin :: PURE
+   ! Put the Salvador & Ramos-Cordoba radii for each atom.
+      self :: INOUT
+
+   ENSURE(.atom.allocated,"no atoms")
+
+      .atom.make_Salvador_neighbours(.Salvador_bonds_for)
+      .make_Salvador_radii_lmin(.Salvador_radii_for)
+
+   end
+
+   make_Salvador_radii_lmin(radii_for) :: leaky, PURE
+   ! Make the Mayer-Salvador atom radii corresponding to the bonded
+   ! neighbours. If the point is outside the range a -ve radii is
+   ! returned then it is not between those atoms, or too close.
+   ! NOTE: This version uses canned line minimisation routines.
+      self      :: IN
+      radii_for :: VEC{EVEC{REAL}}@, OUT
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.density_mx.allocated,"no density_mx")
+   ENSURE(.density_mx.r.allocated,"no restricted density_mx")
+
+      bonds_for :: VEC{EVEC{INT}}@
+
+      n_bonds :: INT
+      a,b,c   :: INT
+      ra, rc  :: VEC{REAL}(3)
+      r1, r2  :: VEC{REAL}(3)
+      rac,dir :: VEC{REAL}(3)
+      E1,L,EDmin,r :: REAL
+
+      .atom.make_Salvador_neighbours(bonds_for)
+
+      ! Create radii table
+      radii_for.create(.atom.dim)
+
+      ! Atom a
+      do a = 1,.atom.dim
+         n_bonds = bonds_for(a).element.dim
+         radii_for(a).element.create(n_bonds)
+         ra = .atom(a).position
+         ! Bonded atom c
+         do b = 1,n_bonds
+            c   = bonds_for(a)[b]
+            rc  = .atom(c).position 
+            rac = rc - ra
+            r1  = ra 
+            r2  = ra + HALF*rac
+            dir = r2 - r1  ! search direction
+            E1  = .ED_at_point(r1)
+            VEC{REAL}:min_line(self,ED_at_point,r1,dir,EDmin,TOL(4),E1,L)
+            r = norm2(dir*L)
+            if (L<0.05 OR L>1.95) r = -BOHR_PER_ANGSTROM
+            radii_for(a)[b] = r
+         ! print *,"a=",a,"c=",c,"L=",L,"r=",r
+         end
+      end
+
+   end
+
+   make_Salvador_radii_pro(radii_for,bonds_for,DM,n_div,n_sub) :: leaky, PURE
+   ! Make the Mayer-Salvador atom radii corresponding to the
+   ! bonded neighbours (previously calculated!) for the Topological
+   ! Fuzzy Voronoi Atoms, for the electron density obtained from
+   ! density matrix "DM".
+      self      :: IN
+      radii_for :: VEC{EVEC{REAL}}@, OUT
+      bonds_for :: VEC{EVEC{INT}}@, IN
+      DM        :: MAT{REAL}, IN
+      n_div     :: INT, optional, IN
+      n_sub     :: INT, optional, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.density_mx.allocated,"no density_mx")
+   ENSURE(.density_mx.r.allocated,"no restricted density_mx")
+
+      n_atoms :: INT
+      n_bonds :: INT
+      a,b,n   :: INT
+      ra,rb   :: VEC{REAL}(3)
+      fac     :: REAL
+
+      ! Create radii table
+      n_atoms = .atom.dim
+      radii_for.create(n_atoms)
+
+      ! Atom a
+      do a = 1,n_atoms
+         n_bonds = bonds_for(a).element.dim
+         radii_for(a).element.create(n_bonds)
+         ra = .atom(a).position
+         ! Neighbours b
+         do n = 1,n_bonds
+            b   = bonds_for(a)[n]
+            rb  = .atom(b).position 
+            fac = .Mayer_Salvador_radius_for(a,b,n_div,n_sub,DM)
+            radii_for(a)[n] = fac*norm2(rb-ra)
+         end
+      end
+
+   end
+
+   put_Salvador_radii
+   ! Put the Salvador & Ramos-Cordoba radii for each atom.
+   ! The neighbours and radii should have veen made already.
+   ! Promolecule radii are made here, only for comparison.
+      self :: IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.Salvador_bonds_for.allocated,"no Salvador_bonds: make them!")
+   ENSURE(.Salvador_radii_for.allocated,"no Salvador_radii: make them!")
+
+      DM :: OPMATRIX@
+      radii_pro :: VEC{EVEC{REAL}}@
+
+      ! Make promolecule density
+      .add_ANO_densities(DM)
+      DM.convert_to("r",factor=HALF)
+
+      ! Make promolecule radii
+      .make_Salvador_radii_pro(radii_pro,.Salvador_bonds_for,DM.r)
+
+      ! Put table
+      .atom.put_Salvador_radii_table(.Salvador_bonds_for,.Salvador_radii_for,radii_pro)
+
+      ! Clean
+      radii_pro.destroy
+      DM.destroy
+
+   end
+
+!  ===================================
+!  Spherically averaged atomic density
+!  ===================================
+
+   SA_cell_fn_between_atoms(a,b,n_pts) result (res) :: PURE
+   ! Return ED on equally spaced grid points between "ra" and "rb"
+   ! as the first and last points, inclusive. "DM" is the density
+   ! matrix used to calculated the electron density.
+      self  :: IN
+      a, b  :: INT, IN
+      n_pts :: INT, IN
+      res   :: VEC{REAL}(n_pts)
+
+   ENSURE(n_pts>3,"too few points")
+
+      pts :: MAT{REAL}@
+      ra  :: VEC{REAL}(3)
+      rb  :: VEC{REAL}(3)
+      del :: VEC{REAL}(3)
+      p   :: VEC{REAL}(3)
+      i   :: INT
+
+      pts.create(n_pts,3)
+
+      ! Step vector
+      ra  = .atom(a).position
+      rb  = .atom(b).position
+      del = rb - ra
+      del = del/(n_pts-1)
+
+      ! Line of points
+      p = ra
+      do i = 1,n_pts
+         pts(i,1) = p(1)
+         pts(i,2) = p(2)
+         pts(i,3) = p(3)
+         p = p + del
+      end
+
+      ! Cell fn. "a"
+      .becke_grid.make_Salvador_cell_fn(res,pts,a)
+
+      ! Clean
+      pts.destroy
+
+   end
+
+   make_SA_cell_fn_interp_between_atoms(a,b)
+   ! Make the .interpolator for the ED between two atoms "a" and "b"
+      self :: INOUT
+      a,b  :: INT, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.interpolator.allocated,"no interpolator info, specify n_data=")
+   ENSURE(.interpolator.n_data>0,"wrong no. of data, interpolator")
+
+      n_pts :: INT
+      pts   :: VEC{REAL}@
+      line  :: VEC{REAL}@
+      ra,rb :: VEC{REAL}(3)
+      del   :: VEC{REAL}(3)
+      stp,val :: REAL
+      i :: INT
+
+      ! How many points?
+      n_pts = .interpolator.n_data
+
+      ! Positions
+      ra = .atom(a).position
+      rb = .atom(b).position
+
+      ! Step vector
+      del = rb - ra
+      del = del/(n_pts-1)
+      stp = norm2(del)
+
+      ! Points as steps
+      pts.create(n_pts)
+      val = ZERO
+      do i = 1,n_pts
+         pts(i) = val
+         val = val + stp
+      end
+
+      ! Make ED line values
+      line = .SA_cell_fn_between_atoms(a,b,n_pts)
+
+      ! Set domain scale factor. May not be required.
+      .interpolator.set_data_points(pts)
+      .interpolator.set_data_values(line)
+
+      ! Clean
+      line.destroy
+      pts.destroy
+
+   end
+
+
+   SA_ED_between_atoms(a,b,n_pts) result (res) :: PURE
+   ! Return ED on equally spaced grid points between "ra" and "rb"
+   ! as the first and last points, inclusive. "DM" is the density
+   ! matrix used to calculated the electron density.
+      self  :: IN
+      a, b  :: INT, IN
+      n_pts :: INT, IN
+      res   :: VEC{REAL}(n_pts)
+
+   ENSURE(n_pts>3,"too few points")
+
+      ED  :: VEC{REAL}@
+      pts :: MAT{REAL}@
+      ra  :: VEC{REAL}(3)
+      rb  :: VEC{REAL}(3)
+      del :: VEC{REAL}(3)
+      p   :: VEC{REAL}(3)
+      i   :: INT
+
+      pts.create(n_pts,3)
+
+      ! Step vector
+      ra  = .atom(a).position
+      rb  = .atom(b).position
+      del = rb - ra
+      del = del/(n_pts-1)
+
+      ! Line of points
+      p = ra
+      do i = 1,n_pts
+         pts(i,1) = p(1)
+         pts(i,2) = p(2)
+         pts(i,3) = p(3)
+         p = p + del
+      end
+
+      ! Cell fn. "a"
+      .becke_grid.make_Salvador_cell_fn(res,pts,a)
+
+      ! ED
+      ED.create(n_pts)
+      ED = .ED_between_points(ra,rb,n_pts)
+
+      ! Multiply
+      res = ED*res
+
+      ! Clean
+      ED.destroy
+      pts.destroy
+
+   end
+
+   make_SA_ED_interp_between_atoms(a,b)
+   ! Make the .interpolator for the ED between two atoms "a" and "b"
+      self :: INOUT
+      a,b  :: INT, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.interpolator.allocated,"no interpolator info, specify n_data=")
+   ENSURE(.interpolator.n_data>0,"wrong no. of data, interpolator")
+
+      n_pts :: INT
+      pts   :: VEC{REAL}@
+      line  :: VEC{REAL}@
+      ra,rb :: VEC{REAL}(3)
+      del   :: VEC{REAL}(3)
+      stp,val :: REAL
+      i :: INT
+
+      ! How many points?
+      n_pts = .interpolator.n_data
+
+      ! Positions
+      ra = .atom(a).position
+      rb = .atom(b).position
+
+      ! Step vector
+      del = rb - ra
+      del = del/(n_pts-1)
+      stp = norm2(del)
+
+      ! Points as steps
+      pts.create(n_pts)
+      val = ZERO
+      do i = 1,n_pts
+         pts(i) = val
+         val = val + stp
+      end
+
+      ! Make ED line values
+      line = .SA_ED_between_atoms(a,b,n_pts)
+
+      ! Set domain scale factor. May not be required.
+      .interpolator.set_data_points(pts)
+      .interpolator.set_data_values(line)
+
+      ! Clean
+      line.destroy
+      pts.destroy
+
+   end
+
+
+   make_sph_avgd_SA_ED_v0(avg,pts,c) :: PURE
+   ! Make "avg", the spherically averaged Salvador atom electron
+   ! densities for atom "c" evaluated at a set of radial "pts" away
+   ! from the nuclear position.
+      self :: IN
+      avg  :: VEC{REAL}, OUT
+      pts  :: VEC{REAL}, IN
+      c    :: INT, IN
+
+   ENSURE(avg.dim==pts.dim,"incompatible size, avg & pts")
+
+      rc        :: VEC{REAL}(3)
+      wts,Wc,N0 :: VEC{REAL}@
+      shell     :: MAT{REAL}@
+      theta,phi :: QUADRATURE@
+      nq,n_pts  :: INT
+      t,p,n, i  :: INT
+      th,ct,st  :: REAL
+      ph,cp,sp  :: REAL
+      r,rst     :: REAL
+
+      ! Quadrature pt. density
+      nq = 25
+      n_pts = 2*nq*nq
+
+      ! Polar angle quadrature
+      theta.create
+      theta.set_kind("gauss_legendre")
+      theta.set_n_pts(nq)
+      theta.set_quadrature_points
+      theta.set_limits([ZERO,PI]) ! <---
+
+      ! Azimuth - twice as many pts
+      phi.create
+      phi.set_kind("gauss_legendre")
+      phi.set_n_pts(2*nq)
+      phi.set_quadrature_points
+      phi.set_limits([ZERO,2*PI]) ! <---
+
+      ! Atom "c" position
+      rc = .atom(c).position
+
+      ! Radial pts
+      do i = 1,pts.dim
+
+         ! Radius
+         r = pts(i)
+
+         ! Shell radius "r"
+         shell.create(n_pts,3)
+         wts.create(n_pts) ! Quad. weights
+         Wc.create(n_pts)  ! Salvador atom
+         n = 0
+         do t = 1,theta.n_pts
+         do p = 1,  phi.n_pts
+            n   = n + 1
+            th  = theta.pts(t)
+            ph  =   phi.pts(p)
+            ct  = cos(th)
+            st  = sin(th)
+            cp  = cos(ph)
+            sp  = sin(ph)
+            ! Spherical shell around "rc"
+            rst = r * st ! <---
+            shell(n,1) = rst*cp + rc(1) 
+            shell(n,2) = rst*sp + rc(2)
+            shell(n,3) = r  *ct + rc(3)
+            ! The area x weights
+            wts(n) = st*theta.wts(t)*phi.wts(p) 
+         end
+         end
+
+         ! Salvador atom "Wc" on "shell"
+         .becke_grid.make_Salvador_cell_fn(Wc,shell,c)
+
+         ! Prune "shell"
+         wts = Wc*wts ! <---
+      ! .becke_grid.prune_grid(shell,wts)
+
+         ! ED for atom "c" on shell
+         N0.create(shell.dim1)
+         .make_ED_grid_r(N0,shell)
+
+         ! Population of shell x 4 PI
+         avg(i) = sum(N0*wts) ! Integrate
+
+         ! Clean
+         N0.destroy
+         Wc.destroy
+         wts.destroy
+         shell.destroy
+
+      end
+
+      ! Clean
+      phi.destroy
+      theta.destroy
+
+      ! Scale
+      avg = avg/(FOUR*PI)
+
+   end
+
+   make_sph_avgd_SA_ED_v1(avg,pts,c) :: PURE
+   ! Make "avg", the spherically averaged Salvador atom electron
+   ! densities for atom "c" evaluated at a set of radial "pts" away
+   ! from the nuclear position.
+   ! NOTE: ths "pts" should be from .becke_grid.radial_grid(p).pts
+      self :: IN
+      avg  :: VEC{REAL}, OUT
+      pts  :: VEC{REAL}, IN
+      c    :: INT, IN
+
+   ENSURE(avg.dim==pts.dim,"incompatible size, avg & pts")
+   ENSURE(.becke_grid.allocated,"no becke_grid")
+   ENSURE(.becke_grid.finalized,"becke_grid not finalized")
+
+      rc        :: VEC{REAL}(3)
+      wts,Wc,N0 :: VEC{REAL}@
+      shell     :: MAT{REAL}@
+      lebedev   :: LEBEDEV@
+      i         :: INT
+      r         :: REAL
+
+      ! Atom "c" pos
+      rc = .atom(c).position
+
+      ! Radial pts
+      do i = 1,pts.dim
+
+         ! Radius "r"
+         r = pts(i)
+
+         ! Shell radius "r"
+         lebedev = .becke_grid.angular_grid_for_atom(c,i)
+         shell = r*r*lebedev.pts ! Quad. pts
+         wts   =     lebedev.wts ! Quad. weights
+
+         ! Displace to "rc"
+         shell = shell + spread(rc,dim=2,ncopies=shell.dim2)
+
+         ! Salvador atom "Wc" on "shell"
+         Wc.create(shell.dim1)  ! Salvador atom
+         .becke_grid.make_Salvador_cell_fn(Wc,shell,c)
+
+         ! Prune "shell"
+         wts = Wc*wts ! <---
+      ! .becke_grid.prune_grid(shell,wts)
+
+         ! ED for atom "c" on "shell"
+         N0.create(shell.dim1)
+         .make_ED_grid_r(N0,shell)
+
+         ! Population of shell 
+         avg(i) = sum(N0*wts) ! Integrate
+
+         ! Clean
+         N0.destroy
+         Wc.destroy
+         wts.destroy
+         shell.destroy
+
+      end
+
+   end
+
+   make_sph_SA_interp_from_atom(a,b,r_max) :: PURE
+   ! Make the Salvador atom ED interpolator from atom "a". 
+   ! The furthest neighbour atom index "b" is also returned.
+   ! The no. of points "n_pts" must be given in an .interpolator.
+   ! The distance away to plot is "r_max", if specified.
+      self  :: INOUT
+      a     :: INT, IN
+      b     :: INT, OUT
+      r_max :: REAL, optional, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.atom.dim>1,"must have more than one atom.")
+   ENSURE(.Salvador_bonds_for.allocated,"no Salvador_bonds: make them!")
+   ENSURE(.interpolator.allocated,"no interpolator info, specify n_data=")
+   ENSURE(.interpolator.n_data>0,"wrong no. of data, interpolator")
+
+      line  :: VEC{REAL}@
+      pts   :: VEC{REAL}@
+      neigh :: VEC{INT}@
+      del,p :: REAL
+      rmax  :: REAL
+      dist  :: REAL
+      i,x   :: INT
+      n_pts :: INT
+
+      ! How many points?
+      n_pts = .interpolator.n_data
+
+      ! Find furthest neighbour
+      b = 0
+      rmax = ZERO
+      neigh = .Salvador_bonds_for(a).element
+      do i = 1,neigh.dim
+         x = neigh(i)
+         dist = .atom.distance_between(a,x)
+         if (dist>rmax) then
+            b = x
+            rmax = dist
+         end
+      end
+   ! rmax = .atom.distance_between(a,x)
+
+      ! Override r_max?
+      if (present(r_max)) then
+         rmax = r_max
+      end
+
+      ! Make grid points &
+      ! line of ED values
+      pts.create(n_pts)
+      line.create(n_pts)
+
+      ! Step size
+      del = rmax/(n_pts-1)
+
+      ! Line of points from "ra"
+      p = ZERO
+      do i = 1,n_pts
+         pts(i) = p
+         p = p + del
+      end
+
+      ! Make the density
+      .make_sph_avgd_SA_ED_v0(line,pts,a)
+
+      ! Set domain scale factor. May not be required.
+      .interpolator.set_data_points(pts)
+      .interpolator.set_data_values(line)
+
+      ! Clean
+      line.destroy
+      pts.destroy
+
+   end
+
+!  ====================
+!  Atom partition grids
+!  ====================
+
+! These routines include Becke grid weights
+
+   make_Hirshfeld_atom_ED_grid(N0,pts,c,DM) :: leaky, PURE
+   ! Return "N0", the Hirshfeld atom electron density (ED) grid for
+   ! atom "c" weighted by the Becke grid wts; and the pruned Becke
+   ! grid "pts" on which N0 is evaluated. "DM" is the density mx.
+   ! NOTE: sum(N0) is the electron population for atom "c". 
+   ! NOTE: Rewritten to use Kang's code.
+      self :: IN
+      N0   :: VEC{REAL}@, OUT
+      pts  :: MAT{REAL}@, OUT
+      c    :: INT, IN
+      DM   :: MAT{REAL}, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.allocated,  "no atom list")
+   ENSURE(.density_mx.allocated,"no density matrix")
+   ENSURE(.becke_grid.allocated, "no becke_grid")
+   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
+
+      wts    :: VEC{REAL}@
+      cutoff :: REAL
+
+      ! Get the Becke grid for atom "c"
+      .becke_grid.make_atom_grid(pts,wts,c)
+
+      ! Make stockholder weight function "Wc" for atom "c"
+      ! If using interpolatators, then overlapping_atoms
+      ! are not needed ... otherwise nothing is skipped
+      .apply_stockholder_atom_weight(wts,c,pts)
+
+      ! Prune the grid with new "wts"
+      .becke_grid.prune_grid(pts,wts)
+
+      ! Density grid for atom "c"
+      N0.create(pts.dim1)
+      cutoff = .becke_grid.basis_fn_cutoff
+      .make_ED_grid_r_v2(N0,pts,DM,cutoff)
+
+      ! N0 x weight for atom "c"
+      N0 = N0*wts
+
+      ! Clean
+      wts.destroy
+
+   end
+
+   make_Becke_atom_ED_grid(N0,pts,c,DM) :: leaky, PURE
+   ! Return "N0", the Becke atom electron density (ED) grid for
+   ! atom "c" weighted by the Becke grid wts; and the pruned Becke
+   ! grid "pts" on which N0 is evaluated. "DM" is the density mx.
+   ! NOTE: sum(N0) is the electron population for atom "c". 
+      self :: IN
+      N0   :: VEC{REAL}@, OUT
+      pts  :: MAT{REAL}@, OUT
+      c    :: INT, IN
+      DM   :: MAT{REAL}, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.allocated,  "no atom list")
+   ENSURE(.density_mx.allocated,"no density matrix")
+   ENSURE(.becke_grid.allocated, "no becke_grid")
+   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
+
+      wts    :: VEC{REAL}@
+      cutoff :: REAL
+
+      ! Get the Stratmann-Scuseria grid for atom "c"
+      ! Actually this is with a=ONE.
+      .becke_grid.make_Becke_atom_grid(pts,wts,c) 
+
+      ! Prune the grid with new "wts"
+      .becke_grid.prune_grid(pts,wts)
+
+      ! Density grid for atom "c"
+      N0.create(pts.dim1)
+      cutoff = .becke_grid.basis_fn_cutoff
+      .make_ED_grid_r_v2(N0,pts,DM,cutoff) ! Kang
+
+      ! N0*Wc, weights for atom "c"
+      N0 = N0*wts
+
+      ! Clean
+      wts.destroy
+
+   end
+
+   make_Stratmann_atom_ED_grid(N0,pts,c,DM) :: leaky, PURE
+   ! Return "N0", the Stratmann-Scuseria atom electron density (ED)
+   ! grid for atom "c" weighted by the Becke grid wts; and the pruned
+   ! Becke grid "pts" on which N0 is evaluated. "DM", the density mx.
+   ! NOTE: sum(N0) is the electron population for atom "c". 
+      self :: IN
+      N0   :: VEC{REAL}@, OUT
+      pts  :: MAT{REAL}@, OUT
+      c    :: INT, IN
+      DM   :: MAT{REAL}, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.allocated,  "no atom list")
+   ENSURE(.density_mx.allocated,"no density matrix")
+   ENSURE(.becke_grid.allocated, "no becke_grid")
+   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
+
+      wts    :: VEC{REAL}@
+      cutoff :: REAL
+
+      ! Get the Stratmann-Scuseria grid for atom "c"
+      ! Actually this is with a=ONE.
+      ! Becke grid "wts" are multiplied by normalized Voronoi cell fn "W"
+      .becke_grid.make_SS1_atom_grid(pts,wts,c) 
+
+      ! Prune the grid with new "wts"
+      .becke_grid.prune_grid(pts,wts)
+
+      ! Density grid for atom "c"
+      N0.create(pts.dim1)
+      cutoff = .becke_grid.basis_fn_cutoff
+      .make_ED_grid_r_v2(N0,pts,DM,cutoff) ! Kang
+
+      ! N0*Wc, weights for atom "c"
+      N0 = N0*wts
+
+      ! Clean
+      wts.destroy
+
+   end
+
+   make_Salvador_atom_ED_grid(N0,pts,c,DM) :: leaky, PURE
+   ! Return "N0", the Salvador atom electron density (ED) grid for
+   ! atom "c" weighted by the Becke grid wts; and the pruned Becke
+   ! grid "pts" on which N0 is evaluated. "DM" is the density mx.
+   ! NOTE: sum(N0) is the electron population for atom "c". 
+      self :: IN
+      N0   :: VEC{REAL}@, OUT
+      pts  :: MAT{REAL}@, OUT
+      c    :: INT, IN
+      DM   :: MAT{REAL}, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.allocated,  "no atom list")
+   ENSURE(.density_mx.allocated,"no density matrix")
+   ENSURE(.becke_grid.allocated, "no becke_grid")
+   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
+
+      wts    :: VEC{REAL}@
+      cutoff :: REAL
+
+      ! Get the Salvador & Ramos-Cordoba grid for atom "c"
+      ! Becke grid "wts" are multiplied by normalized Voronoi cell fn "W"
+      .becke_grid.make_Salvador_atom_grid_v0(pts,wts,c) 
+   ! .becke_grid.make_Salvador_atom_grid_v1(pts,wts,c) ! NOT WORKING
+
+      ! Prune the grid with new "wts"
+      .becke_grid.prune_grid(pts,wts)
+
+      ! Density grid for atom "c"
+      N0.create(pts.dim1)
+      cutoff = .becke_grid.basis_fn_cutoff
+      .make_ED_grid_r_v2(N0,pts,DM,cutoff) ! Kang
+
+      ! N0*Wc, weights for atom "c"
+      N0 = N0*wts
+
+      ! Clean
+      wts.destroy
+
+   end
+
+   make_sph_avgd_SA_ED_grid(N0,pts,c) :: PURE
+   ! Return "N0", the spherically averaged Salvador atom electron
+   ! density (ED) grid for atom "c" *weighted* by the Becke radial
+   ! grid wts; and return the radial grid points as well on which N0
+   ! is evaluated. 
+   ! NOTE: the radial grid points are from the origin.
+   ! NOTE: sum(N0) is the electron population for atom "c". 
+      self :: IN
+      N0   :: VEC{REAL}@, OUT
+      pts  :: VEC{REAL}@, OUT
+      c    :: INT, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.allocated,  "no atom list")
+   ENSURE(.becke_grid.allocated, "no becke_grid")
+   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
+
+      rgrid :: QUADRATURE@
+
+      ! Radial grid
+      rgrid = .becke_grid.radial_grid_for_atom(c)
+
+      ! Radial quadrature pts
+      pts = rgrid.pts
+
+      ! Averaged densities
+      N0.create(rgrid.n_pts)
+      .make_sph_avgd_SA_ED_v0(N0,pts,c)
+
+      ! N0 x radial weights
+      N0 = N0*rgrid.wts
+
+      ! Clean
+      rgrid.destroy
+
+   end
+
+!  =================
+!  Charges & moments
+!  =================
+
+   make_atomic_moments(spin,output) :: template
+   ! Make the restricted atomic moments for some partitioning.
+   ! NOTE: the charges & dipoles are set for every .atom 
+   !       and then propagated to .asymmetric_unit_atoms.
+   !       Needed for core-matrix-cluster-of-charges method
+   ! NOTE: Moments aren't printed, but total no. of electrons
+   !       is printed as a check unless supressed via "output".
+      self   :: INOUT
+      spin   :: BIN, optional, IN
+      output :: BIN, optional, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.allocated,  "no atom list")
+   ENSURE(.DFT_grid_info_made,"no becke_grid")
+   ENSURE(.density_mx.allocated,"no density matrix")
+
+      pts, DM  :: MAT{REAL}@
+      N0       :: VEC{REAL}@
+      r1,r2,r3 :: VEC{REAL}@
+      c1,c2,c3 :: REAL
+      q, n_e   :: REAL
+      dipole   :: VEC{REAL}(3)
+      quadru   :: MAT{REAL}(3,3)
+      spn, out :: BIN
+      c :: INT
+
+      spn = FALSE
+      if (present(spin)) spn = spin
+
+      out = FALSE
+      if (present(output)) out = output
+
+      ! Make the AO density matrix
+      DM.create(.n_bf,.n_bf)
+      if (spn) then; .make_r_Sz_density_mx(DM)
+      else;          .make_r_density_mx(DM)
+      end
+
+      ! Total no of electrons (check)
+      n_e = ZERO
+
+      ! Loop over atoms "c"
+      do c = 1,.n_atom
+
+         if (.atom(c).atomic_number<1) cycle
+
+         ! Get density N0 for atom "c"
+         .make_Hirshfeld?_atom_ED_grid(N0,pts,c,DM)
+
+         ! Integration points
+         r1 = pts(:,1)
+         r2 = pts(:,2)
+         r3 = pts(:,3)
+
+         ! Atom c position
+         c1 = .atom(c).position(1)
+         c2 = .atom(c).position(2)
+         c3 = .atom(c).position(3)
+
+         ! Make moments
+         q   = sum(N0)
+         n_e = n_e + q
+
+         dipole(1) = sum(N0*(r1-c1))
+         dipole(2) = sum(N0*(r2-c2))
+         dipole(3) = sum(N0*(r3-c3))
+
+         quadru(1,1) = sum(N0*(r1-c1)*(r1-c1))
+         quadru(2,2) = sum(N0*(r2-c2)*(r2-c2))
+         quadru(3,3) = sum(N0*(r3-c3)*(r3-c3))
+         quadru(1,2) = sum(N0*(r1-c1)*(r2-c2))
+         quadru(1,3) = sum(N0*(r1-c1)*(r3-c3))
+         quadru(2,3) = sum(N0*(r2-c2)*(r3-c3))
+         quadru(2,1) = quadru(1,2)
+         quadru(3,1) = quadru(1,3)
+         quadru(3,2) = quadru(2,3)
+
+
+         ! charges and moments
+         q      = -q + .atom(c).atomic_number
+         dipole = -dipole
+         quadru = -quadru
+
+         ! Assign the charges and moments
+         .atom(c).set_charge(q)
+         .atom(c).set_dipole(dipole)
+         .atom(c).set_quadrupole(quadru)
+
+         ! Clean up
+         pts.destroy
+         N0.destroy
+
+      end ! -- integration atom c
+
+      ! Clean up
+      DM.destroy
+
+      ! Check integration accuracy
+      if (out) then
+      stdout.flush
+      stdout.text("Making Hirshfeld? atom moments ...")
+      stdout.flush
+      stdout.show("Check: no. of electrons =",n_e)
+      end
+
+      ! Put charges to asymmetric unit
+      if (.crystal.allocated) then
+         .crystal.destroy_asymmetric_unit
+         .crystal.update_fragment_info(.atom)
+      end
+
+   end
+
+   make_r_HA_moments(spin,output) :: get_from(make_atomic_moments, Hirshfeld?=>Hirshfeld), leaky
+   ! Make the restricted atomic moments for some partitioning.
+   ! NOTE: the charges & dipoles are set for every .atom 
+   !       and then propagated to .asymmetric_unit_atoms.
+   !       Needed for core-matrix-cluster-of-charges method
+   ! NOTE: Moments aren't printed, but total no. of electrons
+   !       is printed as a check unless supressed via "output".
+   end
+
+   make_r_BA_moments(spin,output) :: get_from(make_atomic_moments, Hirshfeld?=>Becke), leaky
+   ! Make the restricted atomic moments for some partitioning.
+   ! NOTE: the charges & dipoles are set for every .atom 
+   !       and then propagated to .asymmetric_unit_atoms.
+   !       Needed for core-matrix-cluster-of-charges method
+   ! NOTE: Moments aren't printed, but total no. of electrons
+   !       is printed as a check unless supressed via "output".
+   end
+
+   make_r_SS_moments(spin,output) :: get_from(make_atomic_moments, Hirshfeld?=>Stratmann), leaky
+   ! Make the restricted atomic moments for some partitioning.
+   ! NOTE: the charges & dipoles are set for every .atom 
+   !       and then propagated to .asymmetric_unit_atoms.
+   !       Needed for core-matrix-cluster-of-charges method
+   ! NOTE: Moments aren't printed, but total no. of electrons
+   !       is printed as a check unless supressed via "output".
+   end
+
+   make_r_SA_moments(spin,output) :: get_from(make_atomic_moments, Hirshfeld?=>Salvador), leaky
+   ! Make the restricted atomic moments for some partitioning.
+   ! NOTE: the charges & dipoles are set for every .atom 
+   !       and then propagated to .asymmetric_unit_atoms.
+   !       Needed for core-matrix-cluster-of-charges method
+   ! NOTE: Moments aren't printed, but total no. of electrons
+   !       is printed as a check unless supressed via "output".
+   end
+
+
+   make_BA_info(output) :: leaky
+   ! Make the Becke atomic charges & moments.
+   ! Set up Becke grid before (if not there) ready for integration.
+      self   :: INOUT
+      output :: BIN, optional, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.basis_info_made,"no basis info")
+
+      ! Set up integration grid
+      .set_up_becke_grid
+
+      ! Make Becke moments
+      .make_r_BA_moments(output=output) ! NOT PURE
+
+   end
+
+   make_SS_info(output) :: leaky
+   ! Make the Stratmann-Scuseria atomic charges & moments.
+   ! Set up Becke grid before (if not there) ready for integration.
+      self   :: INOUT
+      output :: BIN, optional, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.basis_info_made,"no basis info")
+
+      ! Set up integration grid
+      .set_up_becke_grid
+
+      ! Make Becke moments
+      .make_r_SS_moments(output=output) ! NOT PURE
+
+   end
+
+   make_SA_info(output) :: leaky
+   ! Make the TFVA atomic charges & moments.
+   ! Set up Becke grid before (if not there) ready for integration.
+   ! The latter need Salvador neighbors & radii which are also made.
+      self   :: INOUT
+      output :: BIN, optional, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.basis_info_made,"no basis info")
+
+      ! Set up integration grid
+      .set_up_becke_grid 
+
+      ! Make Salvador radii
+      .make_Salvador_radii
+      .becke_grid.set_Salvador_bonds(.Salvador_bonds_for)
+      .becke_grid.set_Salvador_radii(.Salvador_radii_for)
+      .becke_grid.set_Salvador_chi(.Salvador_chi)
+
+      ! Make Salvador moments
+      .make_r_SA_moments(output=output) ! NOT PURE
+
+   end
+
+
+!  ============
+!  Form factors
+!  ============
+
+   make_unique_IAM_atom_FFs(ff) :: leaky, PURE
+   ! Get "ff", the IAM structure factors for the symmetry generated
+   ! K points with *no* thermal smearing, for every unique atom.
+      self :: INOUT
+      ff   :: MAT{CPX}@, OUT
+
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(.crystal.allocated, "no crystal")
+   ENSURE(.crystal.xray_data.allocated, "no x-ray data")
+   ENSURE(.crystal.asymmetric_unit_atom.allocated,"no asymmetric unit atoms")
+   ENSURE(.crystal.unique_atom_for_frag_atom.allocated,"no unique-frag_atom")
+   ENSURE(.crystal.asym_atom_for_frag_atom.allocated,"no asym-frag_atom")
+
+      k_pts :: MAT{REAL}@
+      n_atom,n_k, u,f :: INT
+      rf :: REAL
+   ! old :: BIN
+   ! rc :: VEC{REAL}(3)
+   ! k  :: INT
+   ! k1,k2,k3,kr :: REAL
+   ! sf :: CPX
+
+      ! Asymmetric unit atoms;
+      ! Symmetry generated K points and SF's
+      n_atom = .crystal.asymmetric_unit_atom.dim
+      n_k    = .crystal.n_unique_SF_k_pts
+
+      ! Allocate structure factor array (leaky)
+      ff.create(n_k,n_atom)
+
+      ! Make list of symmetry non-equivalent symops
+      ! and the necessary k points
+      k_pts.create(n_k,3)
+      .crystal.make_unique_X_SF_k_pts(k_pts)
+
+      ! Make the SF's
+      ff = ZERO
+
+      ! Loop over integration atoms "c"
+      do u = 1,.crystal.n_unique_frag_atoms
+
+         ! Atoms
+         f = .crystal.unique_frag_atom(u)
+
+         ! Structure factors
+         .atom(f).make_FT(ff(:,u),k_pts)
+
+         ! Repetition (site-symmetry) factor
+         rf = .crystal.frag_atom_sym_factor(f)
+         if (rf.is_zero) cycle
+         rf = ONE/rf
+
+         ! Scale
+         ff(:,u) = ff(:,u) * rf
+
+      ! ! Add on real part of dispersion - testing only
+      ! if (.crystal.xray_data.use_real_dispersion) then
+      !    sf = .atom(c).dispersion_correction * rf
+      !    rc = .atom(c).position
+      !    do k = 1,n_k
+      !       k1 = k_pts(k,1)
+      !       k2 = k_pts(k,2)
+      !       k3 = k_pts(k,3)
+      !       kr = k1*rc(1)+k2*rc(2)+k3*rc(3)
+      !       ff(k,u) = ff(k,u) + sf*COMPLEXIFY(cos(kr),sin(kr))
+      !    end
+      ! end
+
+      end
+
+      ! Clean up
+      k_pts.destroy
+
+   end
+
+!   get_Tanaka_atom_FFs(ff_n,spin_density) :: leaky, PURE
+!   ! Get "ff_n", the Tanaka *static* atomic form factors for the
+!   ! symmetry related K points for every unique atom.
+!   ! NOTE: "ff_n" is the FT rho_a(r), eqn (3) in Jayatilaka 2008,
+!   ! Acta Cryst A 64 p. 383-393. It is also f_a(q) in eqn (11) except
+!   ! without the thermal smearing factor.
+!      self :: INOUT
+!      ff_n :: MAT{CPX}@, OUT
+!      spin_density :: BIN, optional, IN
+!
+!   ENSURE(.basis_info_made,"no basis info")
+!   ENSURE(.atom.allocated,"no atom list")
+!   ENSURE(.density_mx.allocated, "no density matrix")
+!   ENSURE(.crystal.allocated, "no crystal")
+!   ENSURE(.crystal.xray_data.allocated, "no reflection data")
+!   ENSURE(.crystal.xray_data.allocated, "no x-ray reflection data")
+!   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
+!
+!      FT :: MAT3{CPX}@
+!      k_pts, DM, pf :: MAT{REAL}@
+!      sh :: SHELL2
+!      n_atom, n_k,k, q :: INT
+!      ua,ra,fa,la,na,atom_a :: INT
+!      ub,   fb,lb,nb,atom_b :: INT
+!      pa,pk  :: VEC{REAL}(3)
+!    ! pb     :: VEC{REAL}(3)
+!      sa     :: REAL
+!      cutoff :: REAL
+!      do_it,spin :: BIN
+!      II, phase  :: CPX
+!
+!      ! Asymmetric unit atoms
+!      n_atom = .crystal.asymmetric_unit_atom.dim
+!
+!      ! Symmetry generated K points and SF's
+!      n_k = .crystal.n_unique_SF_k_pts
+!
+!      ! Form factor array (no temp factor) (leaky)
+!      ff_n.create(n_k,n_atom)
+!      ff_n = IMAGIFY(ZERO)
+!      II   = IMAGIFY(ONE)
+!
+!      ! Make list of symmetry non-equivalent symops
+!      ! and the necessary k points
+!      k_pts.create(n_k,3)
+!      .crystal.make_unique_X_SF_k_pts(k_pts)
+!
+!      ! X-ray or PND?
+!      spin = FALSE
+!      if (present(spin_density)) spin = spin_density
+!
+!      ! Density matrix (leaky)
+!      if (NOT spin) then; .make_r_density_mx
+!      else;               .make_r_Sz_density_mx
+!      end
+!      ENSURE(.density_mx.r.allocated, "no restricted DM")
+!
+!      ! Store density matrix
+!      DM.create(.n_bf,.n_bf)
+!      DM = .density_mx.r
+!
+!      ! Too small threshhold
+!      cutoff = TOL(10)/.n_shell_pairs
+!
+!      ! Loop over all shell pairs
+!      do q = 1,.n_shell_pairs
+!
+!         ! Get shell pairs
+!         .set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
+!
+!         ! Skip?
+!         ua = .crystal.unique_frag_atom.index_of_value(atom_a)
+!         ub = .crystal.unique_frag_atom.index_of_value(atom_b)
+!         do_it = (ua>0 OR ub>0) AND NOT sh.skip_ft(cutoff)
+!
+!         ! =============================
+!         ! Do (non-zero) asym-atom pairs
+!         ! =============================
+!         if (do_it) then
+!
+!            ! Tanaka gaussian-partition factors
+!            pf.create(sh.a.n_cc,sh.b.n_cc)
+!
+!            ! Block of FT basis-function integrals
+!            FT.create(n_k,na,nb)
+!
+!            if (atom_a==atom_b) then ! SAME ATOMS A==B
+!
+!               ! Site symmetry factor can't be zero
+!               pa = .atom(atom_a).position
+!               ra = .crystal.frag_atom_sym_factor(atom_a)
+!               sa = ONE/ra
+!
+!               ! Only one atom -- no need to partition
+!               pf = ONE
+!              
+!               ! The static FT integrals 
+!               sh.make_FT_parted(FT,k_pts,pf)
+!
+!               if (fa==fb) then
+!                  ! Diagonal shell
+!                  do k = 1,n_k
+!                     pk = k_pts(k,:)
+!                     phase = exp(-II*dot_product(pk,pa))
+!                     ff_n(k,ua) = ff_n(k,ua) +     sum(FT(k,:,:)*DM(fa:la,fb:lb))*phase
+!                  end
+!               else
+!                  ! Off-diagonal shell -- count twice for same atom
+!                  do k = 1,n_k
+!                     pk = k_pts(k,:)
+!                     phase = exp(-II*dot_product(pk,pa))
+!                     ff_n(k,ua) = ff_n(k,ua) + TWO*sum(FT(k,:,:)*DM(fa:la,fb:lb))*phase
+!                  end
+!               end
+!
+!          ! else ! DIFFERENT ATOMS A /= B
+!
+!          !    ! Zero site symmetry factors if not asymmetric-unit atom
+!          !    pa = .atom(atom_a).position
+!          !    ra = .crystal.frag_atom_sym_factor(atom_a)
+!          !    if      (ua<1) then; sa = ZERO
+!          !    else;                sa = ONE/ra
+!          !    end
+!          !    pb = .atom(atom_b).position
+!          !    rb = .crystal.frag_atom_sym_factor(atom_b)
+!          !    if      (ub<1) then; sb = ZERO
+!          !    else;                sb = ONE/rb
+!          !    end
+!
+!          !    ! Make the ATOM A static FT integrals, lower-diagonal
+!          !    if (ua>1) then
+!          !       sh.make_tanaka_partition(pf,sa,sb,center="A")
+!          !       sh.make_FT_parted(FT,k_pts,pf)
+!          !       do k = 1,n_k
+!          !          phase = exp(-II*dot_product(pk,pa))
+!          !          ff_n(k,ua) = ff_n(k,ua) + sum(FT(k,:,:)*DM(fa:la,fb:lb))*phase
+!          !       end
+!          !    end
+!
+!          !    ! Make the ATOM B static FT integrals, lower-diagonal
+!          !    ! No need to actually transpose ...
+!          !    if (ub>1) then
+!          !       sh.make_tanaka_partition(pf,sa,sb,center="B")
+!          !       sh.make_FT_parted(FT,k_pts,pf)
+!          !       do k = 1,n_k
+!          !          phase = exp(-II*dot_product(pk,pb))
+!          !          ff_n(k,ub) = ff_n(k,ub) + sum(FT(k,:,:)*DM(fa:la,fb:lb))*phase
+!          !       end
+!          !    end
+!          !   
+!            end
+!
+!            ! Clean
+!            pf.destroy
+!            FT.destroy
+!
+!         end
+!
+!         ! Clean
+!         sh.destroy_ptr_part
+!
+!      end
+!
+!      ! Clean up
+!      k_pts.destroy
+!      DM.destroy
+!
+!   end
+
+
+   make_aspherical_atomic_FFs(ff) :: leaky
+   ! Get "ff", the *static* Hirshfeld atom form factors for the
+   ! symmetry related K points, for every unique fragment atom.
+   ! NOTE: "ff" is the FT rho_a(r), eqn (3) in Jayatilaka (2008)
+   !       Acta Cryst A 64 p. 383-393. It is also f_a(q) in eqn 
+   !       (11) except without the thermal smearing factor.
+      self :: INOUT
+      ff   :: MAT{CPX}@, OUT
+
+      ! Hirshfeld-atom structure factors
+      ! NOTE: in iteration 0, these were already calculated
+      !       as part of make_X_SFs ... double work!
+      select case (.crystal.xray_data.partition_model)
+      case("oc-crystal23  "); .make_C23_Hirshfeld_atom_FFs(ff) ! NOT PURE
+      case("oc-observed   "); .make_observed_Hirshfeld_atom_FFs(ff)
+      case("oc-g-hirshfeld"); .make_gHirshfeld_atom_FFs(ff)
+      case("oc-g-salvador "); .make_gSalvador_atom_FFs(ff)
+      case("oc-hirshfeld  "); .make_Hirshfeld_atom_FFs(ff)
+      case("oc-salvador   "); .make_Salvador_atom_FFs(ff)
+      case("oc-sph-tfva   "); .make_sph_TFVA_atom_FFs(ff)
+      end
+
+   end
+
+   make_observed_Hirshfeld_atom_FFs(ff) :: leaky
+   ! Experimental prototype: construct static atomic form factors from
+   ! an IAM prior plus a regularized, model-phased residual density.
+   !
+   ! The residual density is evaluated on each atom-centred Becke
+   ! quadrature, multiplied by a periodic Hirshfeld stockholder
+   ! weight, and Fourier transformed. Because the residual map is a
+   ! dynamic (thermally smeared) density, each atomic correction is
+   ! divided by a lower-bounded harmonic temperature factor before it
+   ! is added to the static IAM form factor.
+   !
+   ! The atomic form factors remain fixed during each inner rigid-atom
+   ! least-squares fit. They are regenerated only between outer
+   ! refinement cycles. This separation, together with shrinkage below
+   ! one, avoids the exact F_calc=F_exp circular limit, but does not
+   ! remove model-phase bias. Clean, merged unique reflections are a
+   ! prerequisite.
+      self :: INOUT
+      ff   :: MAT{CPX}@, OUT
+
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(.crystal.allocated,"no crystal")
+   ENSURE(.crystal.xray_data.allocated,"no x-ray reflection data")
+   ENSURE(.crystal.fragment_info_made,"no crystal fragment info")
+   ENSURE(.becke_grid.allocated,"no becke_grid")
+   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
+
+      adp2       :: MAT{REAL}(3,3)
+      correction,partition :: VEC{REAL}@
+      phase_seed  :: VEC{CPX}@
+      tf          :: VEC{REAL}@
+      wt          :: VEC{REAL}@
+      pt,k_pts    :: MAT{REAL}@
+      k1,k2,k3,kr,ss,s2,min_tf :: REAL
+      n_k,n_refl,n_pt,u,c,k,i :: INT
+      sf :: CPX
+
+      ! Preserve phases from the previous outer cycle before replacing
+      ! the current model by the IAM prior. This is essential for
+      ! symmetry-allowed reflections such as diamond 222 for which the
+      ! spherical IAM structure factor is exactly zero.
+      n_refl = .crystal.xray_data.reflections.dim
+      phase_seed.create(n_refl)
+      phase_seed = IMAGIFY(ZERO)
+      if (.crystal.xray_data.reflections.have_F_calc) then
+         do i = 1,n_refl
+            phase_seed(i) = .crystal.xray_data.reflections(i).F_calc
+         end
+      end
+
+      ! The neutral spherical-atom prior is cheap and supplies phases,
+      ! absolute electron count (including the unmeasured F000), and
+      ! unobserved Fourier coefficients.
+      .make_unique_IAM_atom_FFs(ff)
+
+      ! Establish IAM F_calc, optimum scale/extinction, and phases at
+      ! the current geometry before synthesizing residual density.
+      .crystal.make_F_predicted(ff)
+
+      n_k = .crystal.n_unique_SF_k_pts
+      min_tf = .crystal.xray_data.observed_density_min_TF
+
+      k_pts.create(n_k,3)
+      .crystal.make_unique_X_SF_k_pts(k_pts)
+
+      ! Partition the regularized residual density on atom-centred
+      ! quadratures and add its static correction to the IAM prior.
+      do u = 1,.crystal.n_unique_frag_atoms
+
+         c = .crystal.unique_frag_atom(u)
+
+         ss = .crystal.frag_atom_sym_factor(c)
+         if (ss.is_zero) cycle
+         s2 = .atom(c).site_occupancy/ss
+
+         .becke_grid.make_atom_grid(pt,wt,c)
+         partition.create(pt.dim1)
+         .make_periodic_stockholder_atom_weight(partition,c,pt)
+         wt = wt*partition
+         .becke_grid.prune_grid(pt,wt)
+         partition.destroy
+         n_pt = pt.dim1
+
+         correction.create(n_pt)
+         .crystal.make_regularized_observed_residual_density_grid( &
+            correction,pt,phase_seed)
+         correction = correction*wt
+
+         ! Harmonic dynamic-to-static deconvolution with a floor.
+         .atom(c).put_ADP2_vector_to(adp2)
+         tf.create(n_k)
+         tf.to_contraction_i2_of(k_pts,adp2)
+         tf = max(exp(-HALF*tf),min_tf)
+
+         do k = 1,n_k
+            k1 = k_pts(k,1)
+            k2 = k_pts(k,2)
+            k3 = k_pts(k,3)
+            sf = IMAGIFY(ZERO)
+            do i = 1,n_pt
+               kr = k1*pt(i,1) + k2*pt(i,2) + k3*pt(i,3)
+               sf = sf + correction(i)*exp(IMAGIFY(kr))
+            end
+            ff(k,u) = ff(k,u) + s2*sf/tf(k)
+         end
+
+         tf.destroy
+         correction.destroy
+         wt.destroy
+         pt.destroy
+
+      end
+
+      k_pts.destroy
+      phase_seed.destroy
+
+      ! Enforce site symmetry numerically after grid integration.
+      .crystal.symmetrize_FFs(ff)
+
+   end
+
+   make_Hirshfeld_atom_FFs(ff,spin_density) :: leaky, PURE
+   ! Get "ff", the static Hirshfeld atom form factors for the
+   ! symmetry related K points with *no* thermal smearing, for every
+   ! unique fragment atom.
+   ! NOTE: this version uses Kang's density code!
+   ! NOTE: "ff" is the FT rho_a(r), eqn (3) in Jayatilaka 2008,
+   ! Acta Cryst A 64 p. 383-393. It is also f_a(q) in eqn (11) except
+   ! without the thermal smearing factor.
+      self :: INOUT
+      ff   :: MAT{CPX}@, OUT
+      spin_density :: BIN, optional, IN
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(.density_mx.allocated, "no density matrix")
+   ENSURE(.crystal.allocated, "no crystal")
+   ENSURE(.crystal.xray_data.allocated, "no reflection data")
+   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
+
+      rc          :: VEC{REAL}(3)
+      rho         :: VEC{REAL}@
+      pt, k_pts   :: MAT{REAL}@
+      cutoff      :: REAL
+      ss,sc,s2    :: REAL
+      k1,k2,k3,kr :: REAL
+      n_atom, u,c :: INT
+      n_k,  k     :: INT
+      n_pt, i     :: INT
+      spin        :: BIN
+      sf          :: CPX
+
+      ! Asymmetric unit atoms
+      n_atom = .crystal.asymmetric_unit_atom.dim
+
+      ! Symmetry generated K points and SF's
+      n_k = .crystal.n_unique_SF_k_pts
+
+      ! Allocate structure factor array (leaky)
+      ff.create(n_k,n_atom)
+      ff = ZERO
+
+      ! Make list of symmetry non-equivalent symops
+      ! and the necessary k points
+      k_pts.create(n_k,3)
+      .crystal.make_unique_X_SF_k_pts(k_pts)
+
+      ! X-ray or PND?
+      spin = FALSE
+      if (present(spin_density)) spin = spin_density
+
+      ! Density matrix (leaky)
+      if (NOT spin) then; .make_r_density_mx
+      else;               .make_r_Sz_density_mx
+      end
+      ENSURE(.density_mx.r.allocated, "no restricted DM")
+
+      ! Basis function cutoff
+      cutoff = .becke_grid.basis_fn_cutoff
+
+      ! Loop over asymmetric/unique atoms "c"
+      parallel do u = 1,.crystal.n_unique_frag_atoms
+
+         c  = .crystal.unique_frag_atom(u)
+         rc = .atom(c).position
+
+         ! Site-symmetry factor for this atom
+         ss = .crystal.frag_atom_sym_factor(c)
+         sc = ss
+         if (sc.is_zero) cycle
+         s2 = ONE/sc
+
+         ! Get the Becke grid for atom "c" (leaky)
+         .make_Hirshfeld_atom_ED_grid(rho,pt,c,.density_mx.r)
+         n_pt = pt.dim1   ! <-- New n_pt !!!
+
+         ! The (unique) atomic form factors
+         ! Fourier transform, yay!
+         do k = 1,n_k
+            k1 = k_pts(k,1)
+            k2 = k_pts(k,2)
+            k3 = k_pts(k,3)
+            sf = IMAGIFY(ZERO)
+            do i = 1,n_pt
+               kr = k1*pt(i,1)+k2*pt(i,2)+k3*pt(i,3)
+               sf = sf + rho(i)*exp(IMAGIFY(kr))
+            end
+            ff(k,u) = sf * s2 * .atom(c).site_occupancy ! <-----
+         end
+
+         ! Clean up
+         rho.destroy
+         pt.destroy
+
+      end ! -- loop over atom "c"
+
+      ! Parallel
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(ff)
+      end
+
+      ! Clean up
+      k_pts.destroy
+
+   end
+
+   make_Salvador_atom_FFs(ff) :: leaky, PURE
+   ! Make "ff", the static Salvador (TFVA) atom form factors for the
+   ! symmetry related K points with *no* thermal smearing, for every
+   ! unique fragment atom.
+   ! NOTE: "ff" is the FT rho_a(r), eqn (3) in Jayatilaka 2008,
+   ! Acta Cryst A 64 p. 383-393. It is also f_a(q) in eqn (11) except
+   ! without the thermal smearing factor.
+      self :: INOUT
+      ff   :: MAT{CPX}@, OUT
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(.density_mx.allocated, "no density matrix")
+   ENSURE(.crystal.allocated, "no crystal")
+   ENSURE(.crystal.xray_data.allocated, "no reflection data")
+   ENSURE(.crystal.xray_data.allocated, "no x-ray reflection data")
+   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
+   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
+
+      rc          :: VEC{REAL}(3)
+      rho         :: VEC{REAL}@
+      pt, k_pts   :: MAT{REAL}@
+      cutoff      :: REAL
+      ss,sc,s2    :: REAL
+      k1,k2,k3,kr :: REAL
+      n_atom, u,c :: INT
+      n_k,  k     :: INT
+      n_pt, i     :: INT
+      sf          :: CPX
+
+      ! Asymmetric unit atoms
+      n_atom = .crystal.asymmetric_unit_atom.dim
+
+      ! Symmetry generated K points and SF's
+      n_k = .crystal.n_unique_SF_k_pts
+
+      ! Allocate structure factor array (leaky)
+      ff.create(n_k,n_atom)
+      ff = ZERO
+
+      ! Make list of symmetry non-equivalent symops
+      ! and the necessary k points
+      k_pts.create(n_k,3)
+      .crystal.make_unique_X_SF_k_pts(k_pts)
+
+      ! Density matrix (leaky)
+      .make_r_density_mx
+      ENSURE(.density_mx.r.allocated, "no restricted DM")
+
+      ! Basis function cutoff
+      cutoff = .becke_grid.basis_fn_cutoff
+
+      ! Loop over asymmetric/unique atoms "c"
+      parallel do u = 1,.crystal.n_unique_frag_atoms
+
+         c  = .crystal.unique_frag_atom(u)
+         rc = .atom(c).position
+
+         ! Site-symmetry factor for this atom
+         ss = .crystal.frag_atom_sym_factor(c)
+         sc = ss
+         if (sc.is_zero) cycle
+         s2 = ONE/sc
+
+         ! Get the Becke grid for atom "c" (leaky)
+         ! Grid points "pt" are around position "rc"
+         .make_Salvador_atom_ED_grid(rho,pt,c,.density_mx.r)
+         n_pt = pt.dim1   ! <-- New n_pt !!!
+
+         ! The (unique) atomic form factors
+         ! Fourier transform, yay!
+         do k = 1,n_k
+            k1 = k_pts(k,1)
+            k2 = k_pts(k,2)
+            k3 = k_pts(k,3)
+            sf = IMAGIFY(ZERO)
+            do i = 1,n_pt
+               kr = k1*pt(i,1)+k2*pt(i,2)+k3*pt(i,3)
+               sf = sf + rho(i)*exp(IMAGIFY(kr))
+            end
+            ff(k,u) = sf * s2 * .atom(c).site_occupancy ! <-----
+         end
+
+         ! Clean up
+         rho.destroy
+         pt.destroy
+
+      end ! -- loop over atom "c"
+
+      ! Parallel
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(ff)
+      end
+
+      ! Clean up
+      k_pts.destroy
+
+   end
+
+   make_sph_TFVA_atom_FFs(ff) :: leaky, PURE
+   ! Make "ff", the static Hirshfeld atom form factors for the
+   ! symmetry related K points with *no* thermal smearing, for every
+   ! unique fragment atom.
+   ! NOTE: "ff" is the FT rho_a(r), eqn (3) in Jayatilaka 2008,
+   ! Acta Cryst A 64 p. 383-393. It is also f_a(q) in eqn (11) except
+   ! without the thermal smearing factor.
+      self :: INOUT
+      ff   :: MAT{CPX}@, OUT
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(.density_mx.allocated, "no density matrix")
+   ENSURE(.crystal.allocated, "no crystal")
+   ENSURE(.crystal.xray_data.allocated, "no reflection data")
+   ENSURE(.crystal.xray_data.allocated, "no x-ray reflection data")
+   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
+   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
+
+      rc          :: VEC{REAL}(3)
+      rho, pt     :: VEC{REAL}@
+      k_pts       :: MAT{REAL}@
+      cutoff      :: REAL
+      ss,sc,s2    :: REAL
+      kk,kr,kc    :: REAL
+      n_atom, u,c :: INT
+      n_k,  k     :: INT
+      n_pt, i     :: INT
+      sf          :: REAL
+      sfc         :: CPX
+
+      ! Asymmetric unit atoms
+      n_atom = .crystal.asymmetric_unit_atom.dim
+
+      ! Symmetry generated K points and SF's
+      n_k = .crystal.n_unique_SF_k_pts
+
+      ! Allocate structure factor array (leaky)
+      ff.create(n_k,n_atom)
+      ff = ZERO
+
+      ! Make list of symmetry non-equivalent symops
+      ! and the necessary k points
+      k_pts.create(n_k,3)
+      .crystal.make_unique_X_SF_k_pts(k_pts)
+
+      ! Density matrix (leaky)
+      .make_r_density_mx
+      ENSURE(.density_mx.r.allocated, "no restricted DM")
+
+      ! Basis function cutoff
+      cutoff = .becke_grid.basis_fn_cutoff
+
+      ! Loop over asymmetric/unique atoms "c"
+      parallel do u = 1,.crystal.n_unique_frag_atoms
+
+         c  = .crystal.unique_frag_atom(u)
+         rc = .atom(c).position
+
+         ! Site-symmetry factor for this atom
+         ss = .crystal.frag_atom_sym_factor(c)
+         sc = ss
+         if (sc.is_zero) cycle
+         s2 = ONE/sc
+
+         ! Get the Becke grid for atom "c" (leaky)
+         ! Note: "pt" is around the origin, not "rc"
+         .make_sph_avgd_SA_ED_grid(rho,pt,c)
+         n_pt = pt.dim1   ! <-- New n_pt !!!
+
+         ! The (unique) atomic form factors
+         ! Fourier transform, yay!
+         do k = 1,n_k
+            kk = norm2(k_pts(k,:))
+            sf = ZERO
+            do i = 1,n_pt
+               kr = kk*pt(i)
+               sf = sf + rho(i)*sin(kr)/kr
+            end
+            kc  = dot_product(k_pts(k,:),rc)
+            sfc = exp(IMAGIFY(kc)) ! position phase
+            ff(k,u) = sfc * s2 * .atom(c).site_occupancy ! <-----
+         end
+
+         ! Clean up
+         rho.destroy
+         pt.destroy
+
+      end ! -- loop over atom "c"
+
+      ! Parallel
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(ff)
+      end
+
+      ! Clean up
+      k_pts.destroy
+
+   end
+   
+   delete_Hirshfeld_atom_FFs
+   ! Delete all the asymmetric unit form factor (FF) files
+   ! before they are (re)generated.
+      self :: IN
+
+      arch :: ARCHIVE
+      a :: INT
+
+      do a = 1,.crystal.n_asymmetric_unit_atoms
+         arch.set(trim(.crystal.asymmetric_unit_atom(a).label)//"-SFs")
+         arch.delete
+      end 
+
+   end
+
+
+   make_gHirshfeld_atom_FFs(ff) :: leaky, PURE
+   ! Get "ff", the static gaussian-partitioned Hirshfeld atom form
+   ! factors for the symmetry related K points "k_pts", for every
+   ! unique fragment atom.
+   ! NOTE: This version uses interpolators for efficiency.
+      self :: IN
+      ff   :: MAT{CPX}@, OUT
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.density_mx.allocated, "no density matrix")
+   ENSURE(.density_mx.r.allocated, "no restricted DM")
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(.atom.has_interpolators_any_kind,"missing atomic interpolators")
+   ENSURE(.overlapping_atoms_for_atom.allocated,"no overlapping_atoms")
+   ENSURE(.crystal.allocated, "no crystal")
+   ENSURE(.crystal.xray_data.allocated, "no reflection data")
+   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
+
+      sh    :: SHELL2
+      Wc    :: VEC{REAL}@
+      pts   :: MAT{REAL}@
+      k_pts :: MAT{REAL}@
+      DM    :: MAT{REAL}@
+      FT_ab :: MAT3{CPX}@
+      n_k,k, q        :: INT
+      n_atom,u,c      :: INT
+      fa,la,na,atom_a :: INT
+      fb,lb,nb,atom_b :: INT
+      cutoff, ss      :: REAL
+
+   ! TF    :: MAT3{REAL}@
+   ! Wcm   :: MAT{REAL}@
+   ! Ua,Ub :: MAT{REAL}(3,3)
+
+      ! Parameters
+      cutoff = TOL(10)/.n_shell_pairs
+      n_atom = .crystal.asymmetric_unit_atom.dim
+
+      ! Symmetry generated K points and SF's
+      n_k = .crystal.n_unique_SF_k_pts
+
+      ! Allocate structure factor array (leaky)
+      ff.create(n_k,n_atom)
+      ff = ZERO
+
+      ! Make list of symmetry non-equivalent symops
+      ! and the necessary k points
+      k_pts.create(n_k,3)
+      .crystal.make_unique_X_SF_k_pts(k_pts)
+
+      ! Shell pairs
+      do q = 1,.n_shell_pairs
+
+         .set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
+
+         ! Get thermal factors "TF"
+      ! TF.create(n_k,sh.a.n_cc,sh.b.n_cc)
+      ! TF = ONE
+      ! Ua = .atom(atom_a).ADP_tensor
+      ! Ub = .atom(atom_b).ADP_tensor
+      ! sh.make_temperature_factors(TF,"tc-tanaka",k_pts,Ua,Ub)
+
+         DM  = .density_mx.r(fa:la,fb:lb)
+         if (fa/=fb) DM = TWO*DM
+
+         pts = transpose(sh.pair_center)
+         Wc.create(pts.dim1)
+         FT_ab.create(n_k,na,nb)
+         
+         ! Loop on asymmetric/unique atoms "c"
+         do u = 1,.crystal.n_unique_frag_atoms
+
+            c  = .crystal.unique_frag_atom(u)
+
+            ! Site-symmetry & occupancy for this atom
+            ss = .crystal.frag_atom_sym_factor(c)
+            if (ss.is_zero) cycle
+            ss = .atom(c).site_occupancy/ss
+         
+            ! Get weights
+            .make_stockholder_atom_weight_int(Wc,c,pts,.overlapping_atoms_for_atom(c).element)
+            Wc = ss*Wc
+            
+            ! Do FT with partition factor
+            sh.make_FT_no_TF(FT_ab,k_pts,Wc)
+         ! Wcm = reshape(Wc,[sh.a.n_cc,sh.b.n_cc])
+         ! sh.make_ft(FT_ab,k_pts,TF,Wcm)
+            
+            ! Trace with density matrix
+            do k = 1,n_k
+               ff(k,u) = ff(k,u) + sum(FT_ab(k,:,:)*DM)
+            end
+         
+         end
+         
+         ! Clean
+         FT_ab.destroy
+         Wc.destroy
+         pts.destroy
+         DM.destroy
+      ! TF.destroy
+
+         ! Clean
+         sh.destroy_ptr_part
+
+      end
+
+   end
+
+   make_gSalvador_atom_FFs(ff) :: leaky, PURE
+   ! Get "ff", the static gaussian-partitioned Hirshfeld atom form
+   ! factors for the symmetry related K points "k_pts", for every
+   ! unique fragment atom.
+   ! NOTE: This version uses interpolators for efficiency.
+      self :: IN
+      ff   :: MAT{CPX}@, OUT
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.becke_grid.allocated, "no becke_grid")
+   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
+   ENSURE(.density_mx.allocated, "no density matrix")
+   ENSURE(.density_mx.r.allocated, "no restricted DM")
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(.atom.has_interpolators_any_kind,"missing atomic interpolators")
+   ENSURE(.overlapping_atoms_for_atom.allocated,"no overlapping_atoms")
+   ENSURE(.crystal.allocated, "no crystal")
+   ENSURE(.crystal.xray_data.allocated, "no reflection data")
+   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
+
+      sh    :: SHELL2
+      Wc    :: VEC{REAL}@
+      pts   :: MAT{REAL}@
+      k_pts :: MAT{REAL}@
+      DM    :: MAT{REAL}@
+      FT_ab :: MAT3{CPX}@
+      n_k,k, q        :: INT
+      n_atom,u,c      :: INT
+      fa,la,na,atom_a :: INT
+      fb,lb,nb,atom_b :: INT
+      cutoff, ss      :: REAL
+
+      ! Parameters
+      cutoff = TOL(10)/.n_shell_pairs
+      n_atom = .crystal.asymmetric_unit_atom.dim
+
+      ! Symmetry generated K points and SF's
+      n_k = .crystal.n_unique_SF_k_pts
+
+      ! Allocate structure factor array (leaky)
+      ff.create(n_k,n_atom)
+      ff = ZERO
+
+      ! Make list of symmetry non-equivalent symops
+      ! and the necessary k points
+      k_pts.create(n_k,3)
+      .crystal.make_unique_X_SF_k_pts(k_pts)
+
+      ! Shell pairs
+      do q = 1,.n_shell_pairs
+
+         .set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
+
+         DM  = .density_mx.r(fa:la,fb:lb)
+         if (fa/=fb) DM = TWO*DM
+
+         pts = transpose(sh.pair_center)
+         Wc.create(pts.dim1)
+         FT_ab.create(n_k,na,nb)
+         
+         ! Loop on asymmetric/unique atoms "c"
+         do u = 1,.crystal.n_unique_frag_atoms
+
+            c  = .crystal.unique_frag_atom(u)
+
+            ! Site-symmetry & occupancy for this atom
+            ss = .crystal.frag_atom_sym_factor(c)
+            if (ss.is_zero) cycle
+            ss = .atom(c).site_occupancy/ss
+         
+            ! Get weights
+            .becke_grid.make_Salvador_cell_fn(Wc,pts,c)
+            Wc = ss*Wc
+            
+            ! Do FT with partition factor
+            sh.make_FT_no_TF(FT_ab,k_pts,Wc)
+            
+            ! Trace with density matrix
+            do k = 1,n_k
+               ff(k,u) = ff(k,u) + sum(FT_ab(k,:,:)*DM)
+            end
+         
+         end
+         
+         ! Clean
+         FT_ab.destroy
+         Wc.destroy
+         pts.destroy
+         DM.destroy
+
+         ! Clean
+         sh.destroy_ptr_part
+
+      end
+
+   end
+
+
+   make_C23_Hirshfeld_atom_FFs(ff) :: leaky
+   ! MAke "ff", the static Hirshfeld atom form factors (from a
+   ! periodic CRYSTAL23 calculation) for the symmetry related K points
+   ! with *no* thermal smearing, for every unique atom.
+   ! NOTE: "ff" is the FT rho_a(r), eqn (3) in Jayatilaka 2008,
+   ! Acta Cryst A 64 p. 383-393. It is also f_a(q) in eqn (11) except
+   ! without the thermal smearing factor.
+      self :: INOUT
+      ff :: MAT{CPX}@, OUT
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(.crystal.allocated, "no crystal")
+   ENSURE(.crystal.xray_data.allocated, "no reflection data")
+   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
+
+      rho,wt,Wa :: VEC{REAL}@
+      pt, k_pts :: MAT{REAL}@
+      library_basis_labels :: VEC{STR}@
+      library  :: STR
+      cluster  :: CRYSTAL@
+      HS_atoms :: VEC{ATOM}@
+      sa,  k1,k2,k3,kr :: REAL
+      n_atom, n_k,n_pt :: INT
+      a,i,k :: INT
+      sf :: CPX
+      tmp_atom :: VEC{ATOM}@
+      found :: BIN
+      pos1,pos2 :: VEC{REAL}(3)
+
+      ! Asymmetric unit atoms,
+      ! Symmetry-generated K points and/or SF's
+      n_atom = .crystal.asymmetric_unit_atom.dim
+      n_k    = .crystal.n_unique_SF_k_pts
+
+      ! Form factor array (leaky)
+      ff.create(n_k,n_atom)
+      ff = ZERO
+
+      ! Make the Thakkar slaterbases
+      .slaterbasis.destroy
+      .slaterbasis_name = "Thakkar" ! ugly
+      .atom.set_basis_kind("slater")
+      library = .slaterbasis.library_file(.slaterbasis_name)
+      library_basis_labels = .atom.library_basis_labels(.slaterbasis_name)
+      .slaterbasis.read_library_data(library,library_basis_labels) !  NOT PURE
+      library_basis_labels.destroy
+      .slaterbasis.unnormalize
+
+      ! Ensure .atom's have their .slaterbases
+      .make_slater_interpolators
+      .resolve_slaterbases(.crystal.asymmetric_unit_atom)
+
+      ! Make a new crystal only for generating clusters.
+      ! Since we need to define the fragment_geometry to be
+      ! the asymmetric unit for this purpose, but for
+      ! structure refinement we need to stay with the C23
+      ! XML file geometry which is the [-half,+half]^3 cell.
+      ! NOTE: wasteful copy of xray_data is done here
+      ! In case of periodic defragment, .asymmetric_unit_atom(:) are compared with .atom(:)
+      !   If an asym_atom is not found in .atom, then it is manually updated by (CRY23 primitive_cell) lattice translastion.
+      !   Without defragment, all the asym_atoms are always found among .atom(:). 2025.Mar.19 Kang
+
+      cluster = .crystal
+
+!!! // phar_defragment compatibility //
+!
+!! Kang Note. 1-to-1 match between asymmetric_unit_atom(=tmp_atom) and (.molecule).atom (=atoms from Crystal23 xml file)
+!            Without pHAR_defragment, it does basically nothing.
+!            If .asymmetric_unit_atom(a) is not found in .atom, then it is replaced by one of atom(i)
+!            Take a lattice-translation-equivalent atom in atom(:). Use the CRY23 primitive unit cell, not crystallographic .crystal.unit_cell
+!            tmp_atom will be the source of HS_atoms 
+      tmp_atom.create(.crystal.n_asymmetric_unit_atoms)
+      tmp_atom = .crystal.asymmetric_unit_atom
+
+      do a = 1,tmp_atom.dim
+      
+         pos1 = tmp_atom(a).position ! pos1 from asymmetric_unit_atom
+         found = FALSE
+ 
+         do i = 1,.atom.dim  ! Kang comment. It is not efficient search. any found item is not excluded from the search
+
+            pos2 = .atom(i).position ! pos2 from Crystal23 xml_atom (=.atom); .atom is for the ED calculation
+            if (pos1.equals(pos2)) then
+!>DEBUG         stdout.show("cry.asym_atom, .atom" ,[a,i] ) ! Without phar_defragment, it is same to .crystal.asym_atom_for_frag_atom
+               found = TRUE 
+               exit
+            end     
+         end
+         if (found) cycle
+
+         ! asymmetric_unit_atom is not found in .atom(:). Then find translation-equivalent one from .atom(:)
+         do i = 1,.atom.dim
+            pos2 = .atom(i).position - pos1 ! Abusing variable "pos2". Now pos2 is the coordinate difference.
+            pos2 = matmul(.crystal23.Primitive_unit_cell.inverse_mx, pos2)  ! To fractional coord (in C23 primitive cell)
+            pos2 = mod( pos2 + HALF + ONE, ONE ) - HALF ! modulo operation. Map to [-0.5, 0.5)
+
+            if ( pos2.is_zero ) then 
+!               stdout.show("cry.asym_atom translated, .atom" ,[a,i] ) ! Without periodic defragmen
+               tmp_atom(a).set_position( .atom(i).position ) ! Overwrite tmp asym atom
+               ! Kang's note. You may double check by comparing ADPs. 
+               exit
+            end
+         end         
+      end 
+      .crystal.asymmetric_unit_source = "Crystal23-xml-selected-by-tonto"
+
+!! //phar_defragment compatibility// by Kang 2025.Mar.20
+
+      cluster.asymmetric_unit_geometry.destroy
+      cluster.asymmetric_unit_atom.destroy
+      cluster.update_fragment_info(tmp_atom) ; tmp_atom.destroy ! tmp_atom ~ .asymmetric_unit_atom
+
+      cluster.asymmetric_unit_atom.set_basis_kind("slater")
+     
+      ! Make the HS_atoms & resolve the interpolators
+      cluster.make_asym_unit_HS_cluster(HS_atoms,TOL(10)) ! <=== Kang note: HS_atoms are the source of becke_grid
+      HS_atoms.set_basis_kind("slater")
+      HS_atoms.resolve_bases(.slaterbasis,.slaterbasis_name)
+      HS_atoms.update_kinds    
+
+!>DEBUG: show super cluster for Hirshfeld weight function calculation
+!      stdout.text(" ----------------------------------------------------")
+!      stdout.text(" CLUSTER GEOMETRY for Hirshfeld partitioning function")
+!      stdout.text(" ----------------------------------------------------")
+!      HS_atoms.put_coordinates(no_header=TRUE)
+
+      ! Make list of symmetry non-equivalent symops
+      ! and the necessary k points
+      k_pts.create(n_k,3)
+      .crystal.make_unique_X_SF_k_pts(k_pts)
+
+      ! Set up integration grid for the HS atom cluster
+      .becke_grid.create
+      .becke_grid.set_atom_info(HS_atoms) ! NOT PURE. Kang note: HS_atoms = .becke_grid.atom
+      .becke_grid.set_one_atom_grid_data
+
+      ! Loop over asymmetric/unique atoms "c"
+      parallel do a = 1,.crystal.n_asymmetric_unit_atoms
+
+         ! Site-symmetry factor for this atom
+         sa = .crystal.asym_atom_sym_factor(a)
+         if (sa.is_zero) cycle
+         sa = ONE/sa
+
+         ! Get the Becke grid for one-atom grid
+         ! For 'a' from 1 to .n_asym_atoms:
+         ! HS_atoms(a) == .asymmetric_unit_atom(a)
+         .becke_grid.make_atom_grid(pt,wt,a)  
+         n_pt = pt.dim1
+
+         ! Stockholder weight function "Wa" for atom "a"
+         Wa.create(n_pt)
+         HS_atoms.make_Hirshfeld_weight_grid(Wa,pt,a)
+
+         ! Incorporate integration weight
+         wt = Wa*wt
+         Wa.destroy
+
+         ! Prune the grid with new "wt"
+         ! and new no of points, n_pt 
+         .becke_grid.prune_grid(pt,wt)
+         n_pt = pt.dim1 ! *New* points
+         !!!!!!!!!!!!!!
+    
+         ! Density for atom "a"
+         ! NOTE: only uses actual "pt" array for the C23 .atom
+         ! geometry & density matrix read from the XML file.
+         rho.create(n_pt)
+         .make_CRYSTAL23_ED_grid_v1(rho,pt)
+
+         ! Weight the atom "a" density
+         ! Now only the FT e^(ik.r) part missing
+         rho = rho*wt
+
+         ! Make the (symmetry-generated) atomic form factors "ff"
+         ! Fourier transform, yay!
+         do k = 1,n_k
+            k1 = k_pts(k,1)
+            k2 = k_pts(k,2)
+            k3 = k_pts(k,3)
+            sf = IMAGIFY(ZERO)
+            do i = 1,n_pt
+               kr = k1*pt(i,1)+k2*pt(i,2)+k3*pt(i,3)
+               sf = sf + rho(i)*exp(IMAGIFY(kr))
+            end
+            ff(k,a) = sf * sa ! <-----
+         end
+
+         rho.destroy
+         wt.destroy
+         pt.destroy
+
+      end ! -- loop over atom "a"
+
+      ! Parallel
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(ff)
+      end
+
+      ! Clean up
+      k_pts.destroy
+      HS_atoms.destroy
+
+   end
+
+
+   get_unique_fragHAR_SFs(spin_density) :: leaky
+   ! Write out the fragHAR static structure factors for each
+   ! .atom_group.mol molecule.
+      self :: INOUT
+      spin_density :: BIN, optional, IN
+
+   ENSURE(.atom_group.allocated,"no .atom_group")
+   ENSURE(.mol.allocated,"no .mol")
+   ENSURE(.mol.dim==.atom_group.dim,"wrong size, .mol")
+   ENSURE(.cif.allocated,"no cif specified")
+
+      g, n_group :: INT
+
+      ! Make ANO's & interpolators for parent
+      ! WARNING: dies if no ANOs or interpolators
+   ! .make_ANO_data
+
+      ! Make sutructure factors for each residue
+      do g = 1,.atom_group.dim
+
+         ! NOTE: change DFT -> becke
+         .mol(g).initialize_DFT_grids
+
+         ! Assign previously made ANOs
+         .mol(g).resolve_ANOs_from(self)
+
+         ! Write the SFs for each fragment to disk
+         n_group = .atom_group(g).atom_index.dim
+         .mol(g).get_Hirshfeld_atom_FFs_disk(n_group,spin_density)
+
+      end
+
+   end
+
+   get_Hirshfeld_atom_FFs_disk(n_last,spin_density) :: leaky
+   ! Write out the static Hirshfeld atom form factors for the symmetry
+   ! related K points with *no* thermal smearing, for every unique
+   ! atom. If "n_last" is present only do unique atoms up to this
+   ! atom, which is useful to eliminate capping atoms in a fragment.
+   ! If "spin_densityy" is present the spinb density SFs are made.
+   ! NOTE: The integrals "sf_u" written  are the FT rho_a(r), eqn (3)
+   ! in Jayatilaka 2008, Acta Cryst A 64 p. 383-393. It is also f_a(q)
+   ! in eqn (11) except without the thermal smearing factor.
+      self   :: INOUT
+      n_last :: INT, optional, IN
+      spin_density :: BIN, optional, IN
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(.density_mx.allocated, "no density matrix")
+   ENSURE(.crystal.allocated, "no crystal")
+   ENSURE(.crystal.xray_data.allocated, "no reflection data")
+   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
+
+      rc     :: VEC{REAL}(3)
+      wt,rho :: VEC{REAL}@
+      pt     :: MAT{REAL}@
+      k_pts  :: MAT{REAL}@
+      n_unique, n_atom :: INT
+      u,c,k,n_k,i,n_pt :: INT
+      cutoff,sc,s2 :: REAL
+      k1,k2,k3, kr :: REAL
+      sf_u   :: VEC{CPX}@
+      sf     :: CPX
+      spin   :: BIN
+      arch   :: ARCHIVE@
+
+      n_unique = .crystal.n_unique_frag_atoms
+      if (present(n_last)) n_unique = n_last
+
+      ! Asymmetric unit atoms
+      n_atom = .crystal.asymmetric_unit_atom.dim
+
+      ! Symmetry generated K points and SF's
+      n_k = .crystal.n_unique_SF_k_pts
+
+      ! Allocate structure factor array (leaky)
+      sf_u.create(n_k)
+
+      ! Make list of symmetry non-equivalent symops
+      ! and the necessary k points
+      k_pts.create(n_k,3)
+      .crystal.make_unique_X_SF_k_pts(k_pts)
+
+      ! X-ray or PND?
+      spin = FALSE
+      if (present(spin_density)) spin = spin_density
+
+      ! Density matrix (leaky)
+      if (NOT spin) then; .make_r_density_mx
+      else;               .make_r_Sz_density_mx
+      end
+      ENSURE(.density_mx.r.allocated, "no restricted DM")
+
+      ! Basis function cutoff
+      cutoff = .becke_grid.basis_fn_cutoff
+
+      ! Loop over integration atoms "c"
+      parallel do u = 1,n_unique
+
+         sf_u = ZERO
+
+         c  = .crystal.unique_frag_atom(u)
+         rc = .atom(c).position
+
+         ! Skip cap atoms
+         if (.atom(c).is_cap_atom) cycle
+
+         ! Repetition factor for this atom
+         ! Also include the site occupancy factor
+         ! (Dont forget this for the non-fragHAR routine)
+         sc = .crystal.frag_atom_sym_factor(c)
+         if (sc.is_zero) cycle
+         s2 = .crystal.fragment_atom(c).site_occupancy/sc
+      ! s2 = s2*s2
+
+         ! Get the Becke grid for atom "c" (leaky)
+         .becke_grid.make_atom_grid(pt,wt,c)
+
+         ! Apply stockholder weights "Wc" for atom "c" to "wt"
+         .apply_stockholder_atom_weight(wt,c,pt)
+
+         ! Prune the grid with new "wt"
+         .becke_grid.prune_grid(pt,wt)
+
+         ! Density for atom "c"
+         n_pt = pt.dim1   ! <-- New n_pt !!!
+         rho.create(n_pt)
+         .make_ED_grid_r_v2(rho,pt,.density_mx.r,cutoff)
+
+         ! Weight the atom "c" density
+         rho = rho*wt
+
+         ! Get aspherical form factor sf_u
+         do k = 1,n_k
+            k1 = k_pts(k,1)
+            k2 = k_pts(k,2)
+            k3 = k_pts(k,3)
+            sf = IMAGIFY(ZERO)
+            do i = 1,n_pt
+               kr = k1*pt(i,1)+k2*pt(i,2)+k3*pt(i,3)
+               sf = sf + rho(i)*exp(IMAGIFY(kr))
+            end
+            sf_u(k) = sf * s2
+         end
+
+         ! Write out sf_u
+         arch.create(trim(.atom(c).tag)//"-SFs")
+         if (.crystal.xray_data.use_text_SFs) arch.set_format("ascii")
+         arch.parallel_write(sf_u)
+         arch.destroy
+
+         ! Clean up atom "c" stuff
+         rho.destroy
+         wt.destroy
+         pt.destroy
+
+      end ! -- loop over atom "c"
+
+      ! Clean up
+      sf_u.destroy
+      k_pts.destroy
+
+   end
+
+   get_Hirshfeld_atom_FFs_for_atom(u,ff,spin_density) :: leaky
+   ! Get "ff", the static Hirshfeld atom form factors for the
+   ! symmetry related K points with *no* thermal smearing, for every
+   ! unique atom.
+   ! NOTE: "ff" is the FT rho_a(r), eqn (3) in Jayatilaka 2008,
+   ! Acta Cryst A 64 p. 383-393. It is also f_a(q) in eqn (11) except
+   ! without the thermal smearing factor.
+      self :: INOUT
+      u    :: INT, IN
+      ff   :: VEC{CPX}@, OUT
+      spin_density :: BIN, optional, IN
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(.density_mx.allocated, "no density matrix")
+   ENSURE(.crystal.allocated, "no crystal")
+   ENSURE(.crystal.xray_data.allocated, "no reflection data")
+   ENSURE(.crystal.xray_data.allocated, "no x-ray reflection data")
+   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
+
+      rc     :: VEC{REAL}(3)
+      wt,rho :: VEC{REAL}@
+      pt     :: MAT{REAL}@
+      k_pts  :: MAT{REAL}@
+      cutoff,sc,s2 :: REAL
+      k1,k2,k3, kr :: REAL
+      sf     :: CPX
+      k,n_k  :: INT
+      i,n_pt :: INT
+      c      :: INT
+      spin   :: BIN
+
+      ! Symmetry generated K points and SF's
+      n_k = .crystal.n_unique_SF_k_pts
+
+      ! Allocate structure factor array (leaky)
+      ff.create(n_k)
+      ff = ZERO
+
+      ! Make list of symmetry non-equivalent symops
+      ! and the necessary k points
+      k_pts.create(n_k,3)
+      .crystal.make_unique_X_SF_k_pts(k_pts)
+
+      ! X-ray or PND?
+      spin = FALSE
+      if (present(spin_density)) spin = spin_density
+
+      ! Density matrix (leaky)
+      if (NOT spin) then; .make_r_density_mx
+      else;               .make_r_Sz_density_mx
+      end
+      ENSURE(.density_mx.r.allocated, "no restricted DM")
+
+      ! Basis function cutoff
+      cutoff = .becke_grid.basis_fn_cutoff
+
+      ! Max no of becke grid points per atom
+      n_pt = .becke_grid.max_no_of_pts_per_atom
+
+      ! Loop over integration atoms "c"
+         c  = .crystal.unique_frag_atom(u)
+         rc = .atom(c).position
+
+         ! Repetition factor for this atom
+         sc = .crystal.frag_atom_sym_factor(c)
+      ! if (sc.is_zero) cycle
+         s2 = ONE/sc
+      ! s2 = s2*s2
+
+         ! Get the Becke grid for atom "c" (leaky)
+         .becke_grid.make_atom_grid(pt,wt,c)
+         n_pt = pt.dim1
+
+         ! Apply stockholder weights "Wc" for atom "c" to "wt"
+         .apply_stockholder_atom_weight(wt,c,pt)
+
+         ! Prune the grid with new "wt"
+         .becke_grid.prune_grid(pt,wt)
+
+         ! Density for atom "c"
+         n_pt = pt.dim1   ! <-- New n_pt !!!
+         rho.create(n_pt)
+         .make_ED_grid_r_v2(rho,pt,.density_mx.r,cutoff)
+
+         ! Weight the atom "c" density
+         rho = rho*wt
+
+         ! Make the (unique) structure factors
+         do k = 1,n_k
+            k1 = k_pts(k,1)
+            k2 = k_pts(k,2)
+            k3 = k_pts(k,3)
+            sf = IMAGIFY(ZERO)
+            do i = 1,n_pt
+               kr = k1*pt(i,1)+k2*pt(i,2)+k3*pt(i,3)
+               sf = sf + rho(i)*exp(IMAGIFY(kr))
+            end
+            ff(k) = sf * s2 * .atom(c).site_occupancy
+         end
+
+         ! Clean up atom "c" stuff
+         rho.destroy
+         wt.destroy
+         pt.destroy
+
+      ! Clean up
+      k_pts.destroy
+
+   end
+
+!  ======================
+!  Residual density grids
+!  ======================
+
+   make_residual_density_grid(grid,pts) :: PURE
+   ! Make the residual density grid from experimental and calculated
+   ! structure factors. Needs crystal & those to exist already!
+   ! NOTE: unusually, this always returns values in Anstrom^-3
+   ! NOTE: USE residual_density_cell FOR RECTILIEAR PTS GRID.
+      self :: INOUT
+      grid :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+
+   ENSURE(pts.dim1==grid.dim, "wrong dim1, pts")
+   ENSURE(pts.dim2==3,        "wrong dim2, pts")
+   ENSURE(.atom.allocated, "no atoms to fit")
+   ENSURE(.crystal.allocated, "no crystal")
+   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
+   ENSURE(.crystal.xray_data.allocated,"no crystal xray data")
+
+      fac,fac3 :: REAL
+
+      ! Make the residual map
+      .crystal.make_residual_density_grid(grid,pts)
+
+      ! Change to /A3
+      fac    = ANGSTROM_PER_BOHR
+      fac3   = BOHR_PER_ANGSTROM**3
+      grid   = fac3*grid
+
+   end
+
+!  ========================
+!  Min-max residual density
+!  ========================
+
+   get_minmax_residual_density(output)
+   ! Evaluate the min and max residual density from the
+   ! fitted structure factors, evaluated on a grid 0.1 A
+   ! per side. Also evaluate the residuals at the atom
+   ! centers and report the worst one. Store results in the
+   ! diffraction data object.
+      self :: INOUT
+      output :: BIN, IN
+
+   ENSURE(.crystal.allocated,"no crystal")
+   ENSURE(.crystal.xray_data.allocated,"no crystal data")
+
+      .get_minmax_residual_density_p( &
+         .crystal.xray_data.min_residual, &
+         .crystal.xray_data.max_residual, &
+         .crystal.xray_data.rms_residual, &
+!        .crystal.xray_data.min_atom_residual, &
+!        .crystal.xray_data.max_atom_residual, &
+!        .crystal.xray_data.rms_atom_residual, &
+!        .crystal.xray_data.min_atom_residual_tag, &
+!        .crystal.xray_data.max_atom_residual_tag, &
+         output)   
+
+   end
+
+   get_minmax_residual_density_p(minp,maxp,rmsp,output) :: private
+   ! Evaluate the min and max residual density from the
+   ! fitted structure factors, evaluated on a grid 0.1 A
+   ! per side. Also evaluate the residuals at the atom
+   ! centers and report the worst one.
+      self :: INOUT
+      minp, maxp, rmsp  :: REAL, OUT
+!     minpa,maxpa,rmspa :: REAL, OUT
+!     minat,maxat       :: STR, OUT
+      output :: BIN, IN
+
+   DIE_IF(NOT .atom.allocated, "no atoms to fit")
+   DIE_IF(NOT .crystal.allocated, "no crystal")
+   DIE_IF(NOT .crystal.fragment_info_made, "no crystal fragment info")
+   DIE_IF(NOT .crystal.xray_data.allocated,"no crystal data")
+   DIE_IF(NOT .crystal.xray_data.allocated,"no crystal xray data")
+
+      map,map_peeled :: VEC{REAL}@
+      pt :: MAT{REAL}@
+      n_pt :: INT
+      nx,ny,nz :: INT
+      n_peeled :: INT
+      map_mat3 :: MAT3{REAL}@
+      maxpos,minpos :: VEC{REAL}(3)
+      maxa,  mina   :: INT
+      maxats,minats :: VEC{INT}@
+      maxtag,mintag :: VEC{STR}@
+      fac,fac3,maxd,mind :: REAL
+
+      if (.plot_grid.deallocated) .plot_grid.create
+
+      ! Set up
+      .plot_grid.set_plot_kind("residual_density")
+      .plot_grid.set_box_scale_factor(ONE)
+      if (.plot_grid.desired_separation.is_zero) then
+         if (.plot_grid.n_x==1) &
+            .plot_grid.set_desired_separation(0.1*BOHR_PER_ANGSTROM)
+         if (.plot_grid.n_y==1) &
+            .plot_grid.set_desired_separation(0.1*BOHR_PER_ANGSTROM)
+         if (.plot_grid.n_z==1) &
+            .plot_grid.set_desired_separation(0.1*BOHR_PER_ANGSTROM)
+      end
+
+      ! Use unit cell as bbox 
+      .plot_grid.set_bbox_from_unit_cell(.crystal.unit_cell)
+
+      if (output) then
+
+      stdout.flush
+      stdout.text("=====================")
+      stdout.text("Residual density data")
+      stdout.text("=====================")
+
+      stdout.flush
+      stdout.text(". Grid has voxels less than 0.1 A per side")
+      stdout.text(". Length units are in Angstrom")
+
+      stdout.flush
+      .plot_grid.put_minimal
+
+      end
+
+      ! Make the residual density map
+      n_pt = .plot_grid.n_pt
+      pt.create(n_pt,3) ! Needed to see cartesian (xyz) coord
+      map.create(n_pt)  ! Done in fractionals using plot.nx's
+      .plot_grid.set_plot_kind("residual_density")
+      .plot_grid.make_points(pt)
+      .crystal.make_residual_density_cell(map,.plot_grid.n_x,.plot_grid.n_y,.plot_grid.n_z)
+
+      ! Change to /A3
+      fac    = ANGSTROM_PER_BOHR
+      fac3   = BOHR_PER_ANGSTROM**3
+      map    = fac3*map
+
+      maxa   = maxloc(map,dim=1)
+      mina   = minloc(map,dim=1)
+      maxp   = map(maxa)
+      minp   = map(mina)
+
+      ! RMS value calculation without double counting of boundaries / Kang
+      nx = .plot_grid.n_x 
+      ny = .plot_grid.n_y
+      nz = .plot_grid.n_z
+
+      map_mat3.create( nx, ny, nz )         ! Note: map_mat3(1,:,:) = map_mat3(nx,:,:)
+      map_mat3 = reshape( map ,[nx,ny,nz] ) !       map_mat3(:,1,:) = map_mat3(:,ny,:)
+                                             !       map_mat3(:,:,1) = map_mat3(:,:,nz)
+      n_peeled = (nx-1) * (ny-1) * (nz-1)
+
+      map_peeled.create(n_peeled)
+      map_peeled = reshape(map_mat3(1:nx-1, 1:ny-1, 1:nz-1), [n_peeled])
+      rmsp   = map_peeled.standard_deviation ! Kang 2024 Nov. 1
+
+      maxpos = pt(maxa,:)
+      minpos = pt(mina,:)
+      maxats = .crystal.unit_cell_atom.nearest_atoms_to(maxpos,TOL(1)) ! There could be many
+      minats = .crystal.unit_cell_atom.nearest_atoms_to(minpos,TOL(1))
+      maxtag = .crystal.unit_cell_atom(maxats).tag
+      mintag = .crystal.unit_cell_atom(minats).tag
+      maxd   = norm2(maxpos-.crystal.unit_cell_atom(maxats(1)).position)
+      mind   = norm2(minpos-.crystal.unit_cell_atom(minats(1)).position)
+
+      if (output) then
+      stdout.flush
+      stdout.text("Unit cell residual density:")
+      stdout.flush
+      stdout.show("Maximum                 = ",maxp)
+      if (.crystal.xray_data.do_minmax_atoms) then
+      stdout.show("- nearest atom          = ",maxtag)
+      stdout.show("- distance to it        = ",maxd*fac)
+      end
+      stdout.show("Minimum                 = ",minp)
+      if (.crystal.xray_data.do_minmax_atoms) then
+      stdout.show("- nearest atom          = ",mintag)
+      stdout.show("- distance to it        = ",mind*fac)
+      end
+      stdout.show("RMS                     = ",rmsp)
+      end
+
+      ! Write cube file
+      .dump_plot_grid(map,"residual_density",form="cell.cube")
+
+      ! Clean
+      pt.destroy
+      map.destroy
+      map_mat3.destroy
+      map_peeled.destroy
+!     .plot_grid.destroy
+
+!     ! Create atom coords
+!     pt.create(.n_atom,3)
+!     map.create(.n_atom)
+!     .atom.put_coordinates_to(pt,positions_as_rows=FALSE)
+!     .crystal.make_residual_density_map(map,pt)
+
+!     ! Change to /A3
+!     map    = fac3*map
+!     maxa   = maxloc(map,dim=1)
+!     mina   = minloc(map,dim=1)
+!     maxpa  = map(maxa)
+!     minpa  = map(mina)
+!     rmspa  = map.standard_deviation
+!     maxat  = .atom(maxa).tag
+!     minat  = .atom(mina).tag
+
+   ! if (output) then
+   ! stdout.flush
+   ! stdout.text("Residuals on atoms:")
+   ! stdout.flush
+   ! stdout.show("Maximum                 = ",maxpa)
+   ! stdout.show("- for atom              = ",maxat)
+   ! stdout.show("Minimum                 = ",minpa)
+   ! stdout.show("- for atom              = ",minat)
+   ! stdout.show("RMS                     = ",rmspa)
+   ! end
+
+      ! Clean
+!     pt.destroy
+!     map.destroy
+
+   end
+
+end
