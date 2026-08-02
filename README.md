@@ -45,9 +45,9 @@ sudo apt install make default-jdk gfortran libblas-dev liblapack-dev python3 gnu
 
 **macOS** → [Building on macOS](https://github.com/dylan-jayatilaka/tonto/wiki/Building-on-MacOS)
 (via Homebrew; Linux/WSL is the reference platform). &nbsp;
-**Windows** → untested natively; **WSL** is the easy path, and is covered by CI.
-Follow [**`docs/BUILD_WSL.md`**](docs/BUILD_WSL.md) rather than the Linux steps
-below: WSL adds four traps (a Windows JDK on the interop `PATH`, building on
+
+**Windows** → [**`docs/BUILD_WSL.md`**](docs/BUILD_WSL.md) is covered by CI.
+Note: WSL adds four traps (a Windows JDK on the interop `PATH`, building on
 `/mnt/c`, CRLF line endings, and the OOM killer) that `cmake` now detects and
 explains. Run `scripts/wsl_doctor.sh` first.
 
