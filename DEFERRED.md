@@ -1254,28 +1254,59 @@ through a **call** from inside a parallel do, which no source scan can find.
 depth-counting the parallel-do lock so a recursive inner return cannot release an outer lock
 (restoring the `ENSURE` at `parallel.foo:308`).
 
-## The MPI CI has never passed
+## DONE (2026-08-02): the MPI CI failure was the launcher, not the reductions
 
-Checked 2026-08-02 via the public GitHub API (`/actions/workflows/ci-mpi.yml/runs`): runs 1–4 all
-concluded **failure**, at four different commits, three of them predating that day's work. Every
-failure is the same step — **"MPI invariant — pi is rank-count independent (GATING)"**. Every
-step before it passes: toolchain verified as gfortran-14, Open MPI built, configure and build
-clean, binary asserted MPI-linked.
+**The reductions are correct.** This entry previously said "something in the reduction path is
+still wrong" — that was wrong, and it was written before the log had been read. Correcting it in
+full, because the mistaken version was pushed.
 
-So `run_mpi_pi` — one `parallel do`, one `PARALLEL_SUM`, an answer known in advance — gives a
-different π at 1, 2 and 4 ranks. That is precisely the failure the check was written to catch,
-and it means **something in the reduction path is still wrong**, independent of everything fixed
-on 2026-08-02.
+`ci-mpi.yml` had failed on every run since it was added, always on the gating step *"MPI
+invariant — pi is rank-count independent"*. The log says:
 
-This is the highest-value thread to pull next, because it is small, self-contained, has a known
-right answer, and needs no science to interpret.
+```
+ok   mpi_pi   -n 1: 3.141592653589362
+ok   mpi_pi   -n 2: 3.141592653589390
+FAIL mpi_pi   -n 4: launcher exited 1
+```
 
-**Note on tooling:** the run *status* and the *step list* are readable from the public API
-without credentials, so the failing step can be identified from here. The **logs are not**
-(`/actions/jobs/{id}/logs` returns 403 without auth), so the actual π values are not visible
-that way. Either read them in the browser, or `gh run view <id> --log-failed`.
+So π was right at 1 and 2 ranks, agreeing with each other to **13 significant digits** — i.e.
+`PARALLEL_SUM` works. At 4 ranks the program **never ran**: Open MPI 5 refuses to start more
+ranks than there are slots and exits non-zero, and a GitHub runner does not have 4.
 
-## Deferred: prune dead and stale macros in `include/macros.in`
+The workflow already knew this in one place and not the other: the toolchain-verification step
+uses `--oversubscribe` (`ci-mpi.yml:114`), and the suite step is pinned to `-n 2` with the
+comment *"the runner has 4 vCPUs and the launcher would oversubscribe"* — but the π check was
+invoked with `1 2 4` and `check_mpi_pi.sh` launched without the flag.
+
+**Fixed** in `scripts/check_mpi_pi.sh`: probe the launcher (`--version | grep -qi "open mpi"`)
+and add `--oversubscribe` when it is Open MPI. Probed rather than hard-coded because the flag is
+Open MPI's; MPICH oversubscribes unasked and would reject it. Oversubscribing is exactly right
+here — this is a correctness check on a tiny Riemann sum, not a benchmark.
+
+Verified locally on a 12-core machine, where `-n 16` is a genuine oversubscribe:
+
+```
+ok   mpi_pi   -n 1: 3.141592653589362      <- identical to CI
+ok   mpi_pi   -n 2: 3.141592653589390      <- identical to CI
+ok   mpi_pi   -n 4: 3.141592653590147
+ok   mpi_pi   -n 16: 3.141592653589789
+ok   mpi_pi   all rank counts (1 2 4 16) agree with pi and with each other
+```
+
+and the flag is demonstrably the cause: `mpirun -n 16` alone exits 1 without running anything,
+`mpirun -n 16 --oversubscribe` exits 0.
+
+**What this changes.** Parallel fragHAR is **not** blocked by a broken reduction, which is what
+the red CI appeared to say. The reduction path is sound at 1, 2, 4 and 16 ranks. The remaining
+`fragment_SCF_para` concerns stand on their own merits — the two-strategy split and the
+`next_p_loop_index` off-by-one — and are not evidence of anything deeper.
+
+**Lesson worth keeping:** the check reported `launcher exited 1`, which is not a numerical
+failure at all, and four consecutive runs were read as "the reductions are broken" without
+anyone opening the log. `scripts/check_mpi_pi.sh` distinguishes the cases in its own output; the
+diagnosis just has to read it.
+
+## Deferred: prune dead and stale macros in `include/macros.in`## Deferred: prune dead and stale macros in `include/macros.in`
 
 **Audited 2026-07-29.** Of **377** macros defined, **145 are never used in any `.foo` file**.
 Fewer macros is better for maintenance (Dylan), but they are not all the same kind of thing and

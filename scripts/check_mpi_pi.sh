@@ -46,6 +46,20 @@ if [ -z "$PI_EXE" ]; then
 fi
 if [ ! -x "$PI_EXE" ]; then echo "not executable: $PI_EXE" >&2; exit 2; fi
 
+# Oversubscription. This is a CORRECTNESS check on a tiny Riemann sum, not a
+# benchmark, so asking for more ranks than cores is exactly what we want -- but
+# Open MPI 5 REFUSES to do it by default and exits non-zero without running the
+# program at all. That is what made this check fail in CI at -n 4 on every run
+# from the day it was added: 1 and 2 ranks agreed with pi to 13 digits and 4
+# never started, which reads like a broken reduction and is not one.
+#
+# Probed rather than hard-coded, because the flag is Open MPI's; MPICH
+# oversubscribes without being asked and would reject it.
+OVERSUB=""
+if "$LAUNCHER" --version 2>&1 | grep -qi "open mpi"; then
+    OVERSUB="--oversubscribe"
+fi
+
 # Absolute, because we cd into a scratch directory below.
 case "$PI_EXE" in /*) ;; *) PI_EXE="$PWD/$PI_EXE" ;; esac
 
@@ -83,7 +97,7 @@ values=""
 for n in $RANKS; do
     RUNDIR="$WORK/n$n"
     mkdir -p "$RUNDIR" || exit 2
-    ( cd "$RUNDIR" && "$LAUNCHER" -n "$n" "$PI_EXE" > console.out 2>&1 )
+    ( cd "$RUNDIR" && "$LAUNCHER" -n "$n" $OVERSUB "$PI_EXE" > console.out 2>&1 )
     rc=$?
 
     if [ $rc -ne 0 ]; then
