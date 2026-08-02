@@ -854,22 +854,65 @@ here**: the routine does not execute in any tested configuration, so it is not w
 `gly_ala_fragHAR` takes ~60 s. (That claim was made and withdrawn the same day; the real cost
 has not been measured — see the test-speed item below, and measure before optimising.)
 
-**A latent inconsistency worth knowing, if this is ever revisited.** The stored file and the
-recomputed value are *not the same quantity*:
+**It did turn up a real bug, though — FIXED 2026-08-02.** Comparing the expressions showed
+`make_LS_mx` was **omitting the site occupancy** from the aspherical form factors. Per Dylan it
+should be included: it is 1 for a non-disordered small molecule, "definitely not" for a protein.
 
-| | expression |
-|---|---|
-| `get_Hirshfeld_atom_FFs_disk` (writes the file) | `sf_u(k) = sf * s2` |
-| `make_LS_mx` (writes the file) | `sf_u(k) = sf * s2` |
-| `get_Hirshfeld_atom_FFs_for_atom` (recomputes) | `ff(k) = sf * s2 * .atom(c).site_occupancy` |
+| route | expression | occupancy |
+|---|---|---|
+| in core — `make_Hirshfeld_atom_FFs`, `make_Salvador_atom_FFs`, `make_sph_TFVA_atom_FFs` | `ff = sf * s2 * .atom(c).site_occupancy` | yes |
+| disk, fragHAR — `get_Hirshfeld_atom_FFs_disk` | `s2 = .crystal.fragment_atom(c).site_occupancy/sc` | yes |
+| recompute — `get_Hirshfeld_atom_FFs_for_atom` | `ff = sf * s2 * .atom(c).site_occupancy` | yes |
+| **disk, non-fragHAR — `make_LS_mx`** | `s2 = ONE/sc` | **NO** |
 
-The recomputing path folds in `site_occupancy`; both writers do not. Identical for a fully
-occupied site, different otherwise — so anyone swapping a read in for the computation must
-multiply by the occupancy afterwards, or silently change results for partially-occupied sites.
-Which convention is *correct* is a separate question: the three readers that do use the archive
-(`crystal.foo:4946`, `:5590`, `:6216`) do not apply occupancy either. The k-points at least do
-agree — `CRYSTAL:make_unique_X_SF_k_pts` is a thin wrapper over the same
-`reflections.make_unique_SF_k_pts` that `make_LS_mx` calls directly.
+So the same structure refined with `use_disk_SFs` on and off gave different structure factors
+whenever an occupancy was not 1. `sf_u` feeds `sf_e` and the derivatives `sf_d` as well as the
+`<tag>-SFs` file, so it was the refinement that was wrong, not merely the stored factors.
+
+The correct routine's own comment names the culprit: *"Also include the site occupancy factor
+**(Dont forget this for the non-fragHAR routine)**"*. It was forgotten. Fixed by giving
+`make_LS_mx` the same `s2`, indexed the same way (`.crystal.fragment_atom(c)`) since the two
+write the same files and must agree.
+
+**Latent, and fixed before it was ever exercised** — three independent reasons:
+1. Every CIF in `tests/` that does a refinement has **occupancy exactly 1**, so the factor was
+   1 and changed nothing. The only partial occupancies in the suite are `0.5` in six
+   `tests/cx/` jobs (`mo7c.cif`, `acetoacetanilide.cif`), and **no `cx` job refines** — they
+   are Hirshfeld-surface jobs (`generation_method= for_hirshfeld_surface`, `CX_surface=`).
+2. `make_LS_mx` is reached by **no test at all**: it needs `use_disk_SFs` on a *non*-fragHAR
+   refinement, no job file enables that, and fragHAR routes to `LS_fit_fragHAR_disk` instead.
+3. The path **segfaults anyway** — see the next item.
+
+The k-points at least were never in doubt: `CRYSTAL:make_unique_X_SF_k_pts` is a thin wrapper
+over the same `reflections.make_unique_SF_k_pts` that `make_LS_mx` calls directly.
+
+### PRIORITY: `hart --disk-sfs t` segfaults — the non-fragHAR disk path is broken
+
+Found 2026-08-02 while trying to build a test that reaches `make_LS_mx`. Reproduced on
+macOS/arm64, release, gfortran-14:
+
+```
+hart --job urea --basis STO-3G --grid-accuracy low --residual-cube f --disk-sfs t urea_init.cif
+# -> exit 139 (SIGSEGV)
+```
+
+It dies immediately after the `Begin rigid-atom fit` table header, i.e. on the first
+`make_LS_mx` call, having already written the five `*-SFs.unknown,ascii` files. `urea.err` is
+empty; the backtrace is unsymbolised in a release build.
+
+**Confirmed pre-existing**, not a consequence of the occupancy fix above: reverting that one
+line, rebuilding and re-running gives the identical `139`.
+
+This is a **documented option that has never worked**, in a routine whose own comment
+(`molecule.har.foo:631`) reads *"NOTE: routine make_LS_mx is very long! Is it working?
+Rewrite?"* — the answer being no. It matters more than its test coverage suggests, because
+`--disk-sfs` is the memory-bounded path a large structure would need.
+
+Next steps: a debug build with `-fcheck=bounds` and `-fbacktrace` (per `CLAUDE.md` §8, instrument
+in debug, not release) on exactly the command above; the job is ~8 s so the loop is quick. Then
+add `tests/hart/urea_hart_STO-3G_disk_ffs` — the same structure with `--disk-sfs t` — which
+would give `make_LS_mx` its first test coverage, and would also cover the `per_rank_write` and
+occupancy fixes made to it today, both of which currently have none.
 
 ### Deferred: `fragHAR_refinement` forces disk form factors ON, unconditionally
 
