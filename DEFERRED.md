@@ -733,6 +733,47 @@ than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comment
   serial disk path is exercised and correct; what remains untested is the *parallel* one, which
   is where the `per_rank_write` defect lives.
 
+  **DIAGNOSED 2026-08-02. It was never a regression — the parallelisation was never finished.**
+  `git log -L` on the loop header says so in its own commit messages: `b2c53834` *"Working
+  monolithic LS fit routine for **future** parallelism"*, `15c2aee3` *"Needs to be tested before
+  **parallelisation can begin**"*, then `bfd30b95` *"Progress made to lower memory, parallelised
+  HAR routine"* — which introduced `do u = 1,n_unique` as a **plain** `do`. The
+  `per_rank_write` was copied into it from `MOLECULE.RHO:get_Hirshfeld_atom_FFs_disk`
+  (`molecule.rho.foo:5386`), which does the same thing inside a **`parallel do u`** and is
+  therefore correct — distinct `u` → distinct atom → distinct `<tag>-SFs` filename. The
+  `parallel` keyword never arrived at the copy.
+
+  **Three sites, one correct and two not:**
+
+  | site | loop | verdict |
+  |---|---|---|
+  | `molecule.rho.foo:5437` in `get_Hirshfeld_atom_FFs_disk` | **`parallel do u`** (`:5386`) | correct — each rank owns its filenames |
+  | `molecule.har.foo:1346` in `make_LS_mx` | plain `do u` (`:875`, extends to `:1408`) | **every rank writes every file, concurrently** |
+  | `crystal.foo:4961` in `shift_update_ff(dF)` | plain `do u` (`:4932`) | same, and it is a **read-modify-write** (`arch.read` at `:4946`) of the shared file |
+
+  There is a commented-out fourth copy at `molecule.har.foo:958-962`, inside the same
+  `make_LS_mx` loop, which is why the routine appears to compute `sf_u` twice.
+
+  **A second defect, and this one affects the CORRECT site too: there is no barrier between the
+  distributed writes and the collective reads.** `PARALLEL:unlock_parallel_do`
+  (`parallel.foo`) only clears a rank-local string — a `parallel do` has **no** implicit
+  barrier. So after `get_Hirshfeld_atom_FFs_disk` distributes the writes, nothing stops rank 0
+  reaching `crystal.foo:4946` / `:5590` / `:6216` — which read `<tag>-SFs` on *every* rank — for
+  an atom another rank has not written yet. On a fast shared filesystem this usually works. It
+  is a race, not a correctness argument, and it is the likely explanation for "it was working in
+  the past". *(The whole scheme also assumes a shared filesystem, which is worth stating
+  somewhere it can be found.)*
+
+  **Suggested fix, once agreed:**
+  - `shift_update_ff(dF)` → **`parallel do u`**. The per-atom work is independent, so this is
+    the same shape as the already-correct site, and it makes `per_rank_write` sound *and* faster.
+  - `make_LS_mx` → **master-only `write`** (the `IO_IS_ALLOWED`-guarded `ARCHIVE:write`), *not*
+    `parallel do`. The loop cannot simply be parallelised: `sf_e` accumulates across `u`
+    (`:1310`) and `make_F_predicted_from(sf_e)` is called **inside** the loop (`:1355`), so
+    parallelising needs a reduction and a restructure. Since the loop is serial every rank
+    computes the same `sf_u`, so the master's file is complete and correct.
+  - **An explicit barrier** after each distributed write phase, before the first collective read.
+
   **Two naming defects found while adding that coverage** — fold them into the
   `use_disk_SFs`→`use_disk_FFs` rename rather than spending a separate pass:
 
@@ -745,6 +786,72 @@ than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comment
   - **The files are named `C1-SFs.unknown`.** Wrong noun (they are atomic **form factors**) and
     an `.unknown` extension, which suggests the archive genre is never set on this path. A
     gly_ala run drops 20 of them, 3.2 MB.
+
+### PRIORITY: the precomputed form factors are written and then never read — they are recomputed
+
+Found 2026-08-02, and it is Dylan's point: *"It should read a precomputed file!"* That is the
+whole purpose of the disk form factors, and the comment at `molecule.har.foo:1342` says so —
+`! WRITE SF_U TO DISK HERE TO SAVE TIME`.
+
+**`MOLECULE.RHO:get_Hirshfeld_atom_FFs_for_atom` (`molecule.rho.foo:5453`) contains no archive
+access of any kind.** It rebuilds everything from scratch: `becke_grid.make_atom_grid` (`:5524`),
+`apply_stockholder_atom_weight` (`:5528`), `becke_grid.prune_grid` (`:5531`),
+`make_ED_grid_r_v2` (`:5536`) and the Fourier sum (`:5549`) — precisely the work
+`get_Hirshfeld_atom_FFs_disk` already did and wrote to `<tag>-SFs`.
+
+Its caller already knows. `MOLECULE.HAR:get_derivative_F_calc_for_atom` (`molecule.har.foo:713`)
+reads:
+
+```foo
+! Hirshfeld-atom structure factors
+! NOTE: in iteration 0, these were already calculated
+! as part of make_X_SFs ... double work!
+.get_Hirshfeld_atom_FFs_for_atom(a,ff)
+```
+
+The other three readers (`crystal.foo:4946`, `:5590`, `:6216`) *do* read the archive, so the
+files are not write-only overall — this one path just ignores them.
+
+**Why it matters beyond tidiness:** this is per unique atom per LS cycle, and it is the
+expensive part of a HAR. It is a strong candidate for why `gly_ala_fragHAR` takes ~60 s (see
+the test-speed item below). Fixing it is the same shape as the readers that already work:
+`arch.create(trim(tag)//"-SFs")`, honour `use_text_SFs`, `arch.read(ff)`.
+
+**Sequencing:** do this *after* the `per_rank_write` fixes, not before. Right now
+`make_LS_mx` writes those files from every rank at once, so making a second routine start
+reading them would be reading a file that is being concurrently corrupted.
+
+### Deferred: `fragHAR_refinement` forces disk form factors ON, unconditionally
+
+`molecule.har.foo:52` is `.crystal.xray_data.set_use_disk_SFs(TRUE)` with the comment
+*"Use disk SFs for now ..."*, and it is the **sole** caller. So the `use_disk_SFs=` keyword
+does nothing for a fragHAR job — `gly_ala_fragHAR`'s `stdin:40` has it commented out and the
+disk path runs anyway. Per Dylan this was a deliberate design feature, most likely to bound
+memory (the in-core path holds `MAT{CPX}(n_refl, n_pADPs)` for every atom at once).
+
+Worth revisiting once the parallel defects above are fixed:
+
+- Is the memory saving still needed at today's structure sizes and today's machines?
+- If it is, it should be a *choice* — honour the keyword, and default it on only when the
+  in-core requirement exceeds some threshold.
+- "for now" has lasted since `bfd30b95`.
+
+### Deferred: `gly_ala_fragHAR` is slow (~60 s) — speed it up for CI and `long`
+
+Two jobs run it, `tests/long/gly_ala_fragHAR_rhf_STO-3G` (tonto) and
+`tests/hart/gly_ala_hart_STO-3G` (hart, and therefore **in CI**). 60 s is the single largest
+item in the `hart` label, and Dylan wants it cheaper. Candidates, cheapest first:
+
+1. **Stop recomputing the form factors** — the item above. Costs nothing in accuracy and is a
+   real algorithmic saving, not a shortcut.
+2. **Start from stored MOs** (`initial_MOs`) rather than the promolecule guess, checking in the
+   converged archives. Cuts the fragment SCF, but the checked-in binaries then have to be kept
+   in step with the basis set and the code, which is a maintenance cost the other tests do not
+   carry.
+3. Drop the residual cube — **already done** for the hart test (`--residual-cube f`), and worth
+   doing in the tonto job too.
+
+Any of these rewrites the reference, so re-bless deliberately and read the result as science.
 
   **Deliberately NOT fixed now**, because the right fix depends on intent and no test exercises
   the branch, so a wrong choice would be invisible:
