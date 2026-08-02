@@ -570,6 +570,33 @@ than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comment
   reserved leading byte of the string, or broadcast a small `VEC{INT}` and the payload only when a
   line exists. A single collective per call cannot be mispaired, whatever the underlying cause.
 
+  **CONFIRMED 2026-08-02 — the lock hypothesis is right, and the fix is one line.** Changing the
+  broadcast gate from the lock to `is_parallel` alone:
+
+  ```c
+  -#define PARALLEL_BROADCAST0(X,Y)   if (DO_IN_PARALLEL0)   call broadcast_(tonto,X,Y)
+  +#define PARALLEL_BROADCAST0(X,Y)   if (tonto%is_parallel) call broadcast_(tonto,X,Y)
+  ```
+
+  makes **all three CIF tests pass** at `-n 2`, with `-n 1` unaffected. The new gate was verified
+  present in the generated `macros` *before* the run -- after the earlier barrier experiment
+  silently tested a stale binary -- and the tree was reverted afterwards.
+
+  **The principle, stated once:** *whether a collective executes must never depend on state that
+  can differ between ranks.* `do_parallel_lock` is rank-local -- set by executing a loop body,
+  which a rank given zero iterations never does -- so gating a collective on it is unsound.
+  `is_parallel` is identical everywhere.
+
+  **Reductions and broadcasts have opposite semantics under that lock**, yet share the gate: a
+  reduction combines rank-partitioned partials, so inside a `parallel do` (where the inner work is
+  serial per rank) skipping it is *correct*; a broadcast replicates master-only data, so skipping
+  it is *catastrophic*. That single conflation explains both the eight dead reductions and this
+  desync -- **milestone 7 collapses into milestone 6.**
+
+  Preferred over the barrier, which costs a full synchronisation on every broadcast and masks the
+  cause rather than removing it. Dylan's one-collective change to `read_line_external` is still
+  worth doing as belt-and-braces, since it makes the failure unrepresentable.
+
 ### Not yet fixed — recorded with evidence
 
 - **UNDIAGNOSED, HIGH PRIORITY: mismatched `MPI_Bcast` in the CIF-reading path, `-O2` only.**
