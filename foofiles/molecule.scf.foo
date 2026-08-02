@@ -3683,9 +3683,20 @@ contains
    ENSURE(.MOs.allocated,"no old MO's")
    ENSURE(.MOs.has_any_genre,"no old MO's")
 
-      ! Save lambda=0.0 MOs
+      ! Save the reference M0s.
+      !
+      ! Normally these are the lambda=0 MOs. But a RESTART job begins from a
+      ! stored density matrix at lambda>0 and never makes a lambda=0 pass, so
+      ! this used to leave .M0s unallocated -- and the overlap below then
+      ! dereferenced a null array descriptor and segfaulted. That was invisible
+      ! for as long as the reference existed, because write_archive was eating
+      ! the "scf" keyword before the SCF ever ran (see MOLECULE.PUT:put_archive).
+      !
+      ! For a restart we therefore seed .M0s with the MOs at the RESTART lambda.
+      ! The overlap is then measured against that starting point rather than
+      ! against lambda=0 -- see the note on M0s in types.foo.
       if (.SCF_data.is_constrained_SCF) then
-      if (.SCF_data.lambda.is_zero) then
+      if (.SCF_data.lambda.is_zero OR .M0s.deallocated) then
          .M0s = .MOs ! leaky
       end
       end
@@ -3717,10 +3728,15 @@ contains
 
       end
 
-      ! Calculate oveerlap with M0s
+      ! Calculate overlap with M0s
       if (.SCF_data.is_constrained_SCF) then
       if (.SCF_data.lambda>ZERO) then
       if (.SCF_data.is_restricted) then
+         ! Guard regardless: passing an unallocated .M0s to MO_M0_r_overlap
+         ! dereferences a null array descriptor and segfaults with no message.
+         ! The seeding above should make this unreachable, so if it ever fires
+         ! the seeding logic is wrong -- say so rather than crashing.
+         DIE_IF(.M0s.deallocated,"no reference M0s: a constrained-SCF overlap needs either a lambda=0 pass or a restart seed")
          .SCF_data.overlap_with_M0s = .MO_M0_r_overlap(.MOs.r,.M0s.r)
       end
       end

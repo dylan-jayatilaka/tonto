@@ -1671,6 +1671,94 @@ Items 1 and 2 together would have prevented every wrong-answer bug listed below.
   `PARALLEL_SUM` — not the symmetric variant, since these arrays are filled in both triangles.
   All are no-ops in a serial build.
 
+### Known-flaky: x-ray-constrained SCF convergence wanders violently (long-standing)
+
+Per Dylan this instability is **well known and has never been diagnosed**. Recorded here now that
+there is finally an executing test to observe it with:
+`tests/long/nh3_x-ray-constrained-rhf-cluster-charge_cc-pVTZ_restart` (which had never actually
+run its SCF -- see milestone 9). With `output= YES` the first lambda shows:
+
+```
+Iter  Lambda    GoF2    Energy     Delta   <MO|M0>
+   0  0.0120    6.49  -56.2167   ...       1.0000
+   1  0.0120   95.01  -55.9091   ...       0.9565
+   2  0.0120 1325.99  -52.7894   ...       0.5942
+   3  0.0120 3000.65  -26.4060   ...       0.0039   *Damping was off
+   4  0.0120  766.26  -51.0366   ...       0.3086   *DIIS starts saving now
+```
+
+The energy excursions to **-26.4 Ha** -- some 30 Ha above the true value -- and the overlap with
+the reference MOs collapses to 0.004, i.e. the wavefunction is essentially destroyed, before DIIS
+drags it back to a sane -56.2023. The final answer is fine; the path is not.
+
+**Why it matters beyond aesthetics.** The blessed reference now encodes that trajectory. A
+last-digit difference early on can send another machine down a different path, or fail to recover
+at all, so this test is a strong candidate for future cross-platform flakiness. If it goes red on
+Linux or in CI, suspect this before suspecting a real regression.
+
+**Leads worth trying**, in rough order of cheapness:
+- The excursion coincides exactly with `*Damping was off` at iteration 3. Damping is being
+  switched off while the wavefunction is still far from converged; the level-shift is off from
+  iteration 0. Check the damping/level-shift switch-off criteria for a constrained SCF -- they are
+  probably tuned for an ordinary SCF where GoF2 plays no part in the objective.
+- The objective is `E + lambda*GoF2`, and GoF2 reaches 3000 while E is ~-56. The gradient is then
+  dominated entirely by the fit term, which is exactly when a plain DIIS extrapolation misbehaves.
+- Compare against a run that starts at lambda=0 (not a restart): if the wandering is absent there,
+  the restart seed is starting the fit too far from its own optimum.
+
+### PENDING: apply at the next cascade rebuild — types.foo M0s comments
+
+Deliberately **not** applied yet: `types.foo` is included everywhere, so editing it forces a full
+recompile, and this is documentation only. Apply it the next time a cascade is needed anyway.
+People jump to the type component to find out what a field means, so this belongs there rather
+than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comments):
+
+```foo
+     M0s :: OPMATRIX@
+     ! The unfitted reference MOs, for overlap_with_M0s.
+     ! NOT necessarily the lambda=0 MOs: a RESTART starts at lambda>0 and seeds
+     ! these with the MOs at the restart lambda. Set in MOLECULE.SCF.
+```
+
+```foo
+     overlap_with_M0s :: REAL  DEFAULT(ONE)
+     ! Overlap of the current lambda>0 MOs with the reference M0s.
+     ! For a RESTART the reference is this job's starting point, not lambda=0,
+     ! so the value is not comparable across a restart boundary. See M0s.
+```
+
+### Two findings from the MPI_Bcast hunt (2026-08-02)
+
+- **`STR_SIZE` and `BSTR_SIZE` are both 256** (`include/macros.in:57-58`). `BSTR` is meant to be
+  the "big string" holding a whole text-file line, while `STR` holds a single token or program
+  variable -- but there is currently **no distinction at all**. Consequences: any input line
+  longer than 256 characters is silently truncated (CIF looped lines can be long), and the
+  distinction the code appears to draw between the two is fiction. Decide whether BSTR should be
+  genuinely larger, or whether the two names should be collapsed. Per Dylan, 256 may even be too
+  large for STR.
+
+- **Somebody hit the mismatched-`MPI_Bcast` bug before and their workaround is commented out.**
+  In the broadcast template itself (`foofiles/parallel.foo`, in `broadcast(buffer,root)`):
+
+  ```foo
+  ! Florian here: Added this Barrier to make sure that not BCAST interferes with a
+  ! different kind leading to str and Int in asynchronous running MPI process to
+  ! screw up communication
+  !call MPI_BARRIER(MPI_COMM_WORLD,.mpi_error)
+  ```
+
+  "BCAST interferes with a different kind leading to str and Int" is *exactly* the failure
+  diagnosed in `docs/MPI.md` Finding 6: a 256-character STR broadcast pairing with a 1-integer
+  INT broadcast, giving `MPI_ERR_TRUNCATE`. This is independent evidence that the desynchronisation
+  **predates all of the milestone 4 work**.
+
+  **Do not simply reinstate the barrier.** MPI matches collectives on a communicator in *program
+  order* -- `MPI_Bcast` carries no tag, so order is the only thing pairing them. `MPI_ERR_TRUNCATE`
+  therefore proves the ranks issue genuinely different *sequences* of collectives, and a barrier
+  cannot repair a different sequence: it is one more collective that must itself match, so it
+  generally converts the truncation into a deadlock. It would also force a full synchronisation on
+  every single broadcast. Treat the comment as a dated bug report, not as a fix.
+
 ### Not yet fixed — recorded with evidence
 
 - **UNDIAGNOSED, HIGH PRIORITY: mismatched `MPI_Bcast` in the CIF-reading path, `-O2` only.**
