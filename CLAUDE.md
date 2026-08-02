@@ -78,8 +78,11 @@ Full details in the companion docs (§7).
   nestable (`VEC{VEC{REAL}}`). Dimensions/params with `(...)`: `STR(len=256)`,
   `MAT{REAL}(3,4)`, `VEC{STR}(len=1,6)`.
 - **Pointer / allocatable suffixes:** `INT*` (pointer), `VEC{REAL}@` (allocatable).
-- **Procedures:** `name(args) result (res) ::: ATTRS`. Attributes after `:::` include `PURE`,
-  `ELEMENTAL`, `get_from(MODULE, ...)`.
+- **Procedures:** `name(args) result (res) :: ATTRS`. Attributes after `::` include `PURE`,
+  `ELEMENTAL`, `leaky`, `private`, `get_from(MODULE, ...)`. (This said `:::` until 2026-08-02.
+  There is no `:::` anywhere in `foofiles/` — the separator is the same `::` used for
+  declarations. The error was not harmless: `.ctags.d/foo.ctags` had been written from this
+  line, so its procedure regex required `:::` and therefore tagged **no procedure at all**.)
 - **Variable attributes** (comma-separated, after the type): `IN`, `OUT`, `INOUT`, `PRIVATE`,
   `READONLY`, `POINTER`, `TARGET`, `SAVE`, `ALLOCATABLE`, `OPTIONAL`.
 - **Modules:** `module NAME … contains … end`; generic `interface NAME … end` blocks.
