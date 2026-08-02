@@ -1341,9 +1341,36 @@ contains
          
          ! WRITE SF_U TO DISK HERE TO SAVE TIME
          ! Write out sf_u
+         !
+         ! Plain `write`, NOT `per_rank_write`. The enclosing `do u` loop is
+         ! SERIAL, so every rank reaches this with the same "u", hence the same
+         ! atom "c", hence the same file name -- and per_rank_write is the
+         ! ordinary write with the master-only guard REMOVED, so that was every
+         ! rank writing one file concurrently, with no locking and no offsets.
+         ! See FILE:per_rank_write for the precondition it violates.
+         !
+         ! Not a regression: this loop was never parallelised. The commit that
+         ! introduced it (bfd30b95) followed two that say so outright -- "for
+         ! FUTURE parallelism" (b2c53834) and "needs to be tested before
+         ! parallelisation can begin" (15c2aee3). The per_rank_write came in
+         ! with the loop body, copied from MOLECULE.RHO:get_Hirshfeld_atom_FFs_-
+         ! disk, which does the same thing inside a `parallel do u` and is
+         ! therefore correct -- there each rank owns distinct u, so distinct
+         ! file names. The `parallel` keyword never arrived at this copy.
+         !
+         ! Master-only is right here, not `parallel do`: sf_e accumulates ACROSS
+         ! u (see "sf_e(k) = sf_e(k) + sf1" below) and make_F_predicted_from is
+         ! called INSIDE this loop, so parallelising needs a reduction and a
+         ! restructure. Since the loop is serial every rank computes the same
+         ! sf_u, so the master's file is complete and correct.
+         !
+         ! ARCHIVE:write is the safe path: FILE:open_for guards the open and
+         ! then broadcasts .unit and .io_status, so the DIE_IF stays collective,
+         ! and FILE:write/close are guarded with .record kept in step on every
+         ! rank.
          arch.create(trim(.atom(c).tag)//"-SFs")
          if (.crystal.xray_data.use_text_SFs) arch.set_format("ascii")
-         arch.per_rank_write(sf_u)
+         arch.write(sf_u)
          arch.destroy
          
          sf_u.destroy

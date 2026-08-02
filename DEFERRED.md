@@ -764,15 +764,41 @@ than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comment
   the past". *(The whole scheme also assumes a shared filesystem, which is worth stating
   somewhere it can be found.)*
 
-  **Suggested fix, once agreed:**
-  - `shift_update_ff(dF)` → **`parallel do u`**. The per-atom work is independent, so this is
-    the same shape as the already-correct site, and it makes `per_rank_write` sound *and* faster.
-  - `make_LS_mx` → **master-only `write`** (the `IO_IS_ALLOWED`-guarded `ARCHIVE:write`), *not*
-    `parallel do`. The loop cannot simply be parallelised: `sf_e` accumulates across `u`
-    (`:1310`) and `make_F_predicted_from(sf_e)` is called **inside** the loop (`:1355`), so
-    parallelising needs a reduction and a restructure. Since the loop is serial every rank
-    computes the same `sf_u`, so the master's file is complete and correct.
-  - **An explicit barrier** after each distributed write phase, before the first collective read.
+  **What makes the correct site correct — and exactly where that argument stops.** Atom labels
+  are unique, so `<tag>-SFs` is a distinct file per atom. Under `parallel do u` each rank owns
+  distinct `u`, hence distinct atoms, hence distinct file names: the ranks write *simultaneously
+  but to different files*, which needs no locking and no MPI-IO. That is the whole safety
+  argument, and it is sound.
+
+  It does **not** extend to a serial loop. There the collision is not between different atoms,
+  it is every rank writing *the same* atom's file at the same instant — unique labels cannot
+  help, because all the ranks are on the same label.
+
+  **Separate, and real: disk crowding** (Dylan). Even in the correct case, N ranks each opening,
+  writing and closing their own small file at the same moment contends on the filesystem —
+  metadata operations especially, and on a network filesystem (NFS, Lustre) far more than on a
+  local disk. A gly_ala-sized job writes 20 such files; a protein writes hundreds per LS cycle.
+  So the parallel version can be *correct* and still be slower than the serial one. Worth
+  measuring before assuming `parallel do` is an optimisation — and a further argument for not
+  writing the files at all where they are only going to be recomputed (see the "written and then
+  never read" item below).
+
+  **Fix status:**
+  - ✅ **`make_LS_mx` → master-only `write`** (the `IO_IS_ALLOWED`-guarded `ARCHIVE:write`),
+    *not* `parallel do`. Done 2026-08-02. The loop cannot simply be parallelised: `sf_e`
+    accumulates across `u` (`:1310`) and `make_F_predicted_from(sf_e)` is called **inside** the
+    loop (`:1355`), so parallelising needs a reduction and a restructure. Since the loop is
+    serial every rank computes the same `sf_u`, so the master's file is complete and correct.
+    `ARCHIVE:write` is the safe path: `FILE:open_for` guards the `open` and then broadcasts
+    `.unit` and `.io_status` so the `DIE_IF` stays collective, and `FILE:write`/`close` are
+    guarded with `.record` kept in step on every rank. Serial behaviour is unchanged by
+    construction (`IO_IS_ALLOWED` is always true there) and `ctest -L hart` is 3/3.
+  - ⬜ `shift_update_ff(dF)` (`crystal.foo:4905`, serial `do u` at `:4932`). The per-atom work is
+    independent so `parallel do u` is available, but note it is a **read-modify-write** and see
+    the disk-crowding caveat above; master-only is the conservative choice and matches
+    `make_LS_mx` now.
+  - ⬜ **An explicit barrier** after each distributed write phase, before the first collective
+    read.
 
   **Two naming defects found while adding that coverage** — fold them into the
   `use_disk_SFs`→`use_disk_FFs` rename rather than spending a separate pass:
