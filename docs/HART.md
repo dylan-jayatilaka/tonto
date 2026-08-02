@@ -219,11 +219,16 @@ rather than merely producing plausible numbers.
 
 **H1 — fragHAR support. PLAN (2026-08-02).** The one that matters.
 
-### What broke, and when
+**H1 is a hookup, not a repair.** fragHAR works in `tonto` today: `tests/long/
+gly_ala_fragHAR_rhf_STO-3G` converges and reproduces the last known-good 2019 output to the
+printed precision (evidence in *"Archaeology"* below). So H1 is confined to `hart`'s own
+argv-to-`fragHAR_refinement` path -- no science to reconstruct, no `tonto` regression to chase.
 
-fragHAR is not merely unimplemented in `hart` -- it has been **broken in `tonto` since
-2020-01-23**, and the git history pins the change exactly. On that day the predicate deciding
-"are we refining fragments" was moved off the CIF:
+### What broke, when, and when it was fixed
+
+fragHAR was **broken in `tonto` from 2020-01-23 until 2026-06-01**, and the git history pins
+both ends. On the first date the predicate deciding "are we refining fragments" was moved off
+the CIF:
 
 ```foo
 -  res = .cif.is_mmCIF AND .cif.use_fragments      ! f0d7cfd3, 2020-01-23
@@ -232,13 +237,19 @@ fragHAR is not merely unimplemented in `hart` -- it has been **broken in `tonto`
 
 with companion commits `bcdcdfb0` ("removed use_fragments cif check") and `59d46d13`. The same
 day, `e8ecf99e` records *"Only four tests failing now; fragHAR one of them"*, and `tests/long/
-gly_ala_fragHAR_rhf_STO-3G/stdin` lost its `use_fragments= YES` line. It has been failing or
-disabled ever since (`fafce805`, `a0b9da8b`, Feb 2021: *"fraghar still broken"*).
+gly_ala_fragHAR_rhf_STO-3G/stdin` lost its `use_fragments= YES` line. It stayed broken for over
+six years (`fafce805`, `a0b9da8b`, Feb 2021: *"fraghar still broken"*).
 
 **`.cif.use_fragments` is now a dead flag**: `cif.foo` still has the setter (`:214`), the keyword
-(`:291`) and the type field (`types.foo:822`), but **nothing reads it**. The last working state is
-around `ecb593e9` (2019-10-28, *"Fixed gly-ala fraghar-rhf test"*) -- the method paper is
-Bergmann, Davidson & Jayatilaka, IUCrJ 2020 (`fc5039`).
+(`:291`) and the type field (`types.foo:822`), but **nothing reads it**. Worth deleting, but it is
+not what broke fragHAR and it is not what fixed it.
+
+It was **repaired by `d840e322`** (*"fragHAR fixed, gly_ala test and others need to be
+modified/checked"*), which arrived from Dylan's `gaussian-IAM` branch alongside the `hart` work
+and is live on `antlr4`. The reference `tests/long/gly_ala_fragHAR_rhf_STO-3G/stdout` was
+re-blessed at that point and records a genuine converged refinement.
+
+The method paper is Bergmann, Davidson & Jayatilaka, *IUCrJ* **7** (2020) (`fc5039`).
 
 ### How grouping actually works (verified, not assumed)
 
@@ -299,18 +310,57 @@ needs code; `C` works today.
 3. **Rename `use_disk_SFs` -> `use_disk_FFs`** (Dylan): they are atomic **form factors**, not
    structure factors. Cosmetic but it removes a standing confusion, and it touches the same code.
 
-### Open question to settle first
+### Archaeology — SETTLED (2026-08-02)
 
-Was the 2019 behaviour recoverable by re-enabling the CIF-driven path, or has `refine_fragments`
-superseded it correctly and something *else* broke? Cheapest probe: check out `ecb593e9`, run the
-gly_ala job, and diff its `stdout` against today's. That establishes whether there is a working
-reference to aim at -- and it is much cheaper than reconstructing the method from the paper. `hart` calls only
-`HAR_refinement`, never `fragHAR_refinement`, and has no atom-group or
-per-fragment-charge path, so a crystal with more than one molecule in the
-asymmetric unit cannot be refined. `tests/long/gly_ala_fragHAR_rhf_STO-3G`
-exercises fragHAR through `tonto` and is the acceptance test. Dylan's
-`gaussian-IAM` branch has a commit "fragHAR fixed, gly_ala test and others need
-to be modified/checked" — read it first.
+The question was whether a working fragHAR reference exists to aim at, or whether the science
+would have to be reconstructed from the paper. It exists, and it is the **current** reference.
+
+Method: extract `tests/long/gly_ala_fragHAR_rhf_STO-3G/stdout` at `ecb593e9` (2019-10-28,
+*"Fixed gly-ala fraghar-rhf test"* -- the last commit before the 2020 break) and compare with
+today's. No build was needed; `ecb593e9` predates the ANTLR4 translator and would have required
+the removed `foo.pl` plus a `cmake_minimum_required` local CMake 4.3.3 rejects.
+
+Both say `No. of atom groups .... 2` and both say `Structure refinement converged.`
+
+| quantity | 2019 (`ecb593e9`) | today | agrees |
+|---|---|---|---|
+| R(F) | 0.032430 | 0.0324 | yes |
+| R(F2) | 0.068683 | 0.0687 | yes |
+| Rw(F) | 0.033411 | 0.0334 | yes |
+| R_sigma(F) | 0.015952 | 0.0160 | yes |
+| R_sigma(F2) | 0.000332 | 0.0003 | yes |
+| Effective (mean) sigma^2 | 0.025276 | 0.0253 | yes |
+| # of reflections, N_r | 2514 | 2514 | yes |
+| # of fit parameters, N_p | 181 | 181 | yes |
+| chi^2 / GoF^2 (N_p) | 11.251429 | 11.2462 | 4 s.f. |
+| Goodness of fit / GoF (N_p) | 3.354315 | 3.3535 | 4 s.f. |
+
+Today prints 4 dp because the job now sets `real_precision= 4`; the only genuine drift is GoF,
+3.3543 -> 3.3535, about **2 parts in 10^4** across six years -- well inside the loose gate. The
+line count differs (949 -> 1257) from added per-cycle output, and the labels were renamed
+(`chi^2` -> `GoF^2`, `Goodness of fit` -> `GoF`), which is why a naive grep for the 2019 spelling
+finds nothing today and briefly suggested the refinement had stopped happening. It had not.
+
+**Conclusion: `tests/long/gly_ala_fragHAR_rhf_STO-3G/stdout` is a sound acceptance target.**
+Re-enabling `.cif.use_fragments` is not required and should not be attempted --
+`refine_fragments` superseded it correctly.
+
+Two observations recorded rather than acted on, both present in 2019 as well as today, so
+neither is a regression and neither blocks H1:
+
+- **`Rw(F2) ....... NaN`** in both. Same root as the NaN/negative-esd item in `DEFERRED.md`
+  (least-squares variance-covariance matrix).
+- **`# of unmatched Fridel pairs ....... 2514`** -- new since 2019, and it reports *every*
+  reflection as unmatched, having displaced 2019's `Scale factor ...... 0.976789` with
+  `Using single scale factor ...... T`. Either a benign diagnostic or a real miscount; also
+  misspelled (Friedel). Filed in `DEFERRED.md`, to investigate after H1.
+
+### Why `hart` still cannot do it
+
+`hart` calls only `HAR_refinement`, never `fragHAR_refinement`, and has no atom-group or
+per-fragment-charge path, so a crystal with more than one molecule in the asymmetric unit cannot
+be refined *through `hart`* -- even though `tonto` refines it correctly.
+`tests/long/gly_ala_fragHAR_rhf_STO-3G` is the acceptance test.
 
 **H2 — revive the frozen options.** `--charge`, `--mult`, `--ldtol`,
 `--scf-guess`, `--anharm`, `--wavelength` and `--4th-order-only` are commented

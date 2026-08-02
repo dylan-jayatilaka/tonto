@@ -1058,6 +1058,36 @@ that trap when timing truncated runs.
 **Open:** where the 46 s actually goes (convergence is not the lever), and why the vdW indices
 are the platform-sensitive part.
 
+### NOT STARTED: `# of unmatched Fridel pairs` reports *every* reflection (and is misspelled)
+
+Found during the H1 fragHAR archaeology (2026-08-02, `docs/HART.md` §6). In
+`tests/long/gly_ala_fragHAR_rhf_STO-3G/stdout` the refinement-results block reads:
+
+```
+# of reflections,    N_r .......... 2514
+# of unmatched Fridel pairs ....... 2514
+```
+
+i.e. **all 2514 reflections are counted as unmatched Friedel pairs** — a suspicious equality
+rather than an obviously wrong number, so it may be a correct-but-uninformative diagnostic (this
+is a centrosymmetric-in-projection dataset with no anomalous signal to pair up) or a real
+miscount. Nothing downstream is known to consume it, so it is a reporting question, not a
+correctness one, until shown otherwise.
+
+Three things to settle together:
+
+1. Whether the count is right, and what it should be for a dataset with no Friedel mates.
+2. **The line is misspelled** — `Fridel` should be `Friedel`. Reference-visible, so it needs a
+   re-bless of every stdout carrying it; batch it with other cosmetic output fixes rather than
+   spending a re-bless on one word.
+3. It is **new since 2019**, where it did not appear at all and the slot held
+   `Scale factor ...... 0.976789`. Today that reads `Using single scale factor ...... T`, so the
+   numeric scale factor stopped being printed at the same time. Worth restoring — it is a real
+   refined quantity and the boolean is strictly less informative.
+
+Not a regression in the science: the 2019 and 2026 refinements agree to 4 significant figures
+(table in `docs/HART.md` §6). Deferred until after H1.
+
 ### PRIORITY, NOT STARTED: NaN and negative ESDs from the least-squares variance-covariance matrix
 
 **This is the live thread — pick it up here.** Two impossible esd values are confirmed by
@@ -1071,6 +1101,7 @@ right**, either a genuine error in its construction or UB.
 |---|---|
 | `short/urea_lamaGOET_grown_CIF` | ADP U13/U23 columns: `e_neg = 2`, `e_zero = 2` of 5 rows — two **negative** esds |
 | `long/urea_rhf_STO-3G_HAR` | one ADP column: **`e_nan = 1`**, with `prec_out = 5` (i.e. the column precision was normal — the *data* is bad, not the formatting) |
+| `long/gly_ala_fragHAR_rhf_STO-3G` | headline statistic **`Rw(F2) ....... NaN`** — and it is NaN in the 2019 `ecb593e9` output too (`docs/HART.md` §6), so this predates every change under investigation. Note `Rw(F)` beside it is fine (0.0334), so whatever poisons the F² weighting does not touch the F one |
 
 The `e_nan` probe result also killed the competing explanation that the column precision was
 simply small (`max_dp=1` would give `dp=2` innocently); `prec_out` was 5 in every column.
@@ -1550,7 +1581,12 @@ the authoritative document; these are the items with no owner yet.
   atom-group/per-fragment-charge path, so crystals with more than one molecule
   in the asymmetric unit cannot be refined with it.
   `tests/long/gly_ala_fragHAR_rhf_STO-3G` exercises fragHAR through `tonto` and
-  is the acceptance test for this.
+  is the acceptance test for this. **It is a hookup, not a repair** — fragHAR
+  itself works in `tonto` today and reproduces the last known-good 2019 output
+  to 4 significant figures (archaeology and table in `docs/HART.md` §6). It was
+  broken 2020-01-23 (`f0d7cfd3`) and fixed by `d840e322`, which came in with the
+  `hart` work. Do **not** try to revive `.cif.use_fragments` — that flag is dead
+  and `.crystal.data.refine_fragments` superseded it correctly.
 - **Frozen options.** `--charge`, `--mult`, `--ldtol`, `--scf-guess`,
   `--anharm`, `--wavelength` and `--4th-order-only` are commented out in both
   the `select case` block and the help text of `run_har.foo`. They are kept in

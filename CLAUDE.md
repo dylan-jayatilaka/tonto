@@ -336,9 +336,11 @@ before any code is written**, most likely in its own conversation (`/clear`).
      GNU `--long` form (which is what took `tonto`'s `-i`/`-o`/`-b`/`-h`/`-v` with it).
    - ⬜ *make it work **seamlessly with `fragHAR`***, i.e. crystals with more than one molecule
      in the asymmetric unit — **milestone H1 in `docs/HART.md`**, the remaining work. `hart`
-     calls only `HAR_refinement`. (`tests/long/gly_ala_fragHAR_rhf_STO-3G` exercises `fragHAR`
-     through `tonto`, and Dylan's `gaussian-IAM` branch carries a commit "fragHAR fixed,
-     gly_ala test and others need to be modified/checked" — read that before starting.)
+     calls only `HAR_refinement`. **This is a hookup, not a repair**: fragHAR itself works in
+     `tonto` today (broken 2020-01-23 by `f0d7cfd3`, fixed 2026-06-01 by `d840e322`) and
+     `tests/long/gly_ala_fragHAR_rhf_STO-3G` reproduces the last known-good 2019 output to 4
+     significant figures — so that reference is a sound acceptance target. Archaeology and the
+     comparison table are in `docs/HART.md` §6.
 
 6. ⬜ **URGENT, next after milestone 4 — make MPI reductions safe by construction** (agreed
    2026-08-01). Milestone 4 uncovered a class of silent wrong-answer bugs with a single root
