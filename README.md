@@ -1,10 +1,15 @@
 # Tonto
 
 [![CI (Linux-release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml)
+
 [![CI (Linux-debug)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml)
-[![CI (WSL-release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml)
-[![CI (WSL-debug)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml)
+
 [![CI (Linux-MPI)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-mpi.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-mpi.yml)
+
+[![CI (WSL-release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml)
+
+[![CI (WSL-debug)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml/badge.svg)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml)
+
 
 Tonto is a quantum chemistry and crystallography package, with a focus on
 Hirshfeld atom refinement, structure factor calculation, and
