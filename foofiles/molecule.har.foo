@@ -637,6 +637,15 @@ contains
 
       d_Fa :: MAT{REAL}@
 
+      ! Once-only preamble, mirroring CRYSTAL:LS_structure_fit (crystal.foo:4272
+      ! onwards). All four used to run inside make_LS_mx, hence once per LS
+      ! iteration -- and the X_fit seeding once per ATOM per iteration, since it
+      ! sat inside that routine's `do u` loop.
+      .crystal.initialize_fit_data
+      .crystal.asymmetric_unit_atom.put_pADP_vector_to(.crystal.xray_data.X_fit)
+      if (.crystal.xray_data.refine_structure) .crystal.xray_data.X_ref = .crystal.xray_data.X_fit
+      .crystal.put_fit_header
+
       do
 
          ! This allocation is REAL, and make_LS_mx relies on it: its d_Fa
@@ -866,30 +875,13 @@ contains
       end
       end
 
-      ! Initialise the fit.
+      ! NOTE: the fit is initialised ONCE by LS_fit_HAs_disk before its loop,
+      ! via CRYSTAL:initialize_fit_data -- exactly where CRYSTAL:LS_structure_fit
+      ! does it. Calling it here meant once per LS iteration, re-creating
+      ! X_fit / X_fit0 and resetting chi2_fit0 to huge() every pass.
       !
-      ! This ONE call replaces a hand-inlined copy of CRYSTAL:initialize_fit_data
-      ! (crystal.foo:4514) that used to sit above -- the same
-      ! reset_pADPs_and_errors on the asymmetric-unit atoms, the same loop
-      ! resetting the fragment atoms, the same set_frag_from_asym_pADPs, the
-      ! same n_p / n_f / labels, and the same final
-      ! DIFFRACTION_DATA:initialize_fit_data. Line for line identical, except
-      ! where it had drifted -- which is where the bugs were.
-      !
-      ! The copy assigned refine_3rd/4th_order_for_atom to LOCAL allocatables
-      ! first (`refine_U3 = ...`), and those components are allocated only when
-      ! 3rd/4th-order refinement was requested. Assigning from an unallocated
-      ! allocatable is undefined; lldb caught it as EXC_BAD_ACCESS at that line.
-      ! The original passes them straight to reset_pADPs_and_errors as
-      ! ARGUMENTS, which is safe for an unallocated actual -- so calling it
-      ! removes the hazard rather than relocating it.
-      !
-      ! STILL WRONG, and not fixed here: this runs once per LS ITERATION,
-      ! because make_LS_mx is called inside LS_fit_HAs_disk's loop, whereas
-      ! CRYSTAL:LS_structure_fit calls it ONCE before its loop. See DEFERRED.md
-      ! -- moving it (with the X_fit seeding below) was tried and traded one
-      ! failure for another.
-      .crystal.initialize_fit_data
+      ! make_LS_mx now does one job: build the design matrix. That is the single
+      ! thing which genuinely differs between the disk path and the in-core one.
 
       ! Allocate structure factor array (leaky)
       ! For pne atom
@@ -1023,21 +1015,13 @@ contains
 
          end
 
-         ! Do a least squares
-  
-         ! Do the fit 
-  
-         ! Place asym atom position/ADPs in vector .xray_data.X_fit
-         ! - asymmetric_unit_atom keeps the pADPs
-         .crystal.asymmetric_unit_atom.put_pADP_vector_to(.crystal.xray_data.X_fit)
-         
-         ! If refining, store a copy of the pADPs in .xray_data.X_ref
-         if (.crystal.xray_data.refine_structure) .crystal.xray_data.X_ref = .crystal.xray_data.X_fit
-         
-         ! Banner, options/switches, initial parameters,
-         ! start banner, and iteration table header.
-         .crystal.put_fit_header
-         
+         ! NOTE: seeding X_fit from the atoms, copying X_ref and printing the
+         ! fit header used to happen HERE -- inside this `do u` loop, so once
+         ! per ATOM per LS iteration. X_fit is authoritative, so re-seeding it
+         ! from the atoms mid-fit throws away the refinement. They are now done
+         ! once in LS_fit_HAs_disk before the loop, where
+         ! CRYSTAL:LS_structure_fit has them.
+
          ! Constants
          ! Fragment atom
          f   = .crystal.unique_frag_atom(u)
@@ -1533,6 +1517,25 @@ contains
       ! Use the frag atom position shifts "dF".
       .crystal.shift_update_ff(dF)
       dF.destroy
+
+      ! Close the chain. X_fit is authoritative and the atoms follow it:
+      !
+      !   X_fit  --set_pADP_vector_to-->  asymmetric_unit_atom
+      !          --set_frag_from_asym_pADPs-->  crystal.fragment_atom
+      !          --THIS LINE-->  .atom
+      !
+      ! and make_LS_mx builds the next design matrix from .atom -- its Becke
+      ! grid and Fourier sum read .atom(c).position. Without this the moved
+      ! geometry never reached the next iteration, so the design matrix was
+      ! rebuilt from the ORIGINAL coordinates every pass.
+      !
+      ! The requirement was already written down two lines up -- ">>>
+      ! fragment_atom must be the same as molecule.atom" -- but nothing did it.
+      ! The in-core path gets away without it because CRYSTAL:LS_structure_fit
+      ! computes its form factors once, before the fit, and MOLECULE.HAR:LS_fit
+      ! does `.atom = .crystal.fragment_atom` after the whole thing. The disk
+      ! path rebuilds every iteration, so it needs the refresh every iteration.
+      .atom = .crystal.fragment_atom
 
    end
 

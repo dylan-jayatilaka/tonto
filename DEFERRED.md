@@ -886,144 +886,81 @@ write the same files and must agree.
 The k-points at least were never in doubt: `CRYSTAL:make_unique_X_SF_k_pts` is a thin wrapper
 over the same `reflections.make_unique_SF_k_pts` that `make_LS_mx` calls directly.
 
-### `hart --disk-sfs t` — two bugs, both FIXED 2026-08-02 (was: segfaults)
+### `hart --disk-sfs t` — WORKS as of 2026-08-02 (was: segfault, then infinite loop)
 
-Found 2026-08-02 while trying to build a test that reaches `make_LS_mx`. Reproduced on
-macOS/arm64, release, gfortran-14:
+The non-fragHAR disk path had **five** defects. All are fixed; `--disk-sfs t` now runs to
+completion and agrees with the in-core path:
 
-```
-hart --job urea --basis STO-3G --grid-accuracy low --residual-cube f --disk-sfs t urea_init.cif
-# -> exit 139 (SIGSEGV)
-```
-
-It dies immediately after the `Begin rigid-atom fit` table header, i.e. on the first
-`make_LS_mx` call, having already written the five `*-SFs.unknown,ascii` files. `urea.err` is
-empty; the backtrace is unsymbolised in a release build.
-
-**Confirmed pre-existing**, not a consequence of the occupancy fix above: reverting that one
-line, rebuilding and re-running gives the identical `139`.
-
-**FIXED (2026-08-02) — but a second, independent defect is behind it.**
-
-*The crash.* `make_LS_mx` declared its result `d_Fa :: MAT{REAL}@, **OUT**`. On an
-**allocatable** dummy, `intent(out)` makes Fortran **deallocate on entry** — so the caller's
-`d_Fa.create(...)` in `LS_fit_HAs_disk` was thrown away and became dead code, nothing in the
-routine's 744 lines ever allocated it again, and it arrived unallocated at
-`DIFFRACTION_DATA:d_F_abs_dX`, whose `res` dummy is `MAT{REAL}, OUT` — assumed-shape and **not**
-allocatable. Passing an unallocated allocatable to such a dummy is undefined; gfortran
-dereferences a null array descriptor. Fixed by declaring it **`INOUT`**, which is what the code
-meant all along: the caller allocates with exactly the right shape, and the sibling
-`DO_LS_refinement`, which takes *the same variable from the same caller*, is already
-`MAT{REAL}@, INOUT`. `OUT` was simply the slip.
-
-*What it uncovered, also FIXED (2026-08-02).* With the crash gone the job ran but **never
-converged**: it reprinted `Fit Iter 1` with identical numbers (`chi2 49.702984, R 0.038068,
-R_w 0.029149`, max shift `H1 pz`) indefinitely — 599 identical rows before a 900 s timeout.
-
-Cause: `LS_fit_HAs_disk` hand-rolls its iteration loop and **tested `.fit_finished` without ever
-calling the routine that sets it**. `DIFFRACTION_DATA.SET:update_fit_info`
-(`diffraction_data.set.foo:1530`) computes `.fit_converged` and `.too_many_fit_iterations`, sets
-`.fit_finished` from them, and is also the only thing that advances `.fit_iteration`
-(`fit_iteration = fit_iteration + 1` at its end). Without it the flag was permanently FALSE and
-the counter permanently 1 — the loop re-solved the same iteration forever.
-
-The two loops that work call it immediately before the same test:
-`CRYSTAL:LS_structure_fit` at `crystal.foo:4332` and `:4472`. That is where **both**
-`LS_fit_HAs_memory` and `LS_fit_fragHAR_disk` end up (the latter just delegates to `LS_fit`),
-which is exactly why the in-core path and fragHAR converge and only this hand-rolled loop did
-not. The call has been added.
-
-*(Correction to an earlier note here: `update_fit_info` does **not** advance `.fit_iteration` —
-`update_fit_parameters` does, at `diffraction_data.set.foo:1571`, and `do_LS_refinement` already
-calls it. What `update_fit_info` supplies is `.fit_finished`.)*
-
-**STILL NOT FIXED: the loop does not terminate.** With `update_fit_info` in place the numbers now
-move and converge (chi2 49.726269 → 49.703503 → … → 49.702984, max shift 0.302 → 0.141) where
-before all 599 rows were byte-identical — but it then repeats the converged row indefinitely and
-`Fit Iter` never leaves 1.
-
-Two further defects were found, both in the same routine, and neither is fixed:
-
-1. **`initialize_fit_data` runs once per LS ITERATION.** `make_LS_mx` is called inside the loop
-   and calls `.crystal.xray_data.initialize_fit_data` (`molecule.har.foo:903`), which re-creates
-   `X_fit`/`X_fit0` and resets `chi2_fit0 = huge()`. So the accumulated fit state is wiped every
-   pass, `max_shift_on_esd` never falls below `tol_for_shift_on_esd`, and `fit_converged` cannot
-   become true. `CRYSTAL:LS_structure_fit` calls it **once before** its loop (`crystal.foo:4272`).
-   **Moving just that one line was tried and CRASHED** — the preamble around it has to move too,
-   so it was reverted rather than left half-done.
-
-2. **`molecule.har.foo:806` assigns from a possibly-unallocated allocatable.** Pinpointed with
-   `lldb` on a debug build: `EXC_BAD_ACCESS (address=0x4040404040405000)` at
-   `refine_U3 = self%crystal%xray_data%refine_3rd_order_for_atom`. That component is only
-   allocated when 3rd-order refinement was asked for. `CRYSTAL:initialize_fit_data` never
-   assigns it to a local — it passes it straight to `reset_pADPs_and_errors` as an argument,
-   which is safe for an unallocated actual. The inlined copy introduced the hazard.
-
-**Refactor attempted 2026-08-02 — one half landed, the other half does not work.**
-
-*Landed:* `make_LS_mx`'s hand-inlined copy of `CRYSTAL:initialize_fit_data` is now a call to it.
-The two were line-for-line identical, so this is behaviour-preserving — verified, the fit
-produces the same numbers (49.726269, 49.703503, 49.703038, …) — and it **removes the `:806`
-hazard**, because the original passes `refine_3rd/4th_order_for_atom` as *arguments* rather than
-assigning them to local allocatables. ~20 lines of duplication gone.
-
-*Did not work:* relocating the once-per-fit steps out of the loop. `CRYSTAL:LS_structure_fit`
-does four things once, before its loop, that the disk path does every iteration —
-`initialize_fit_data`, `put_pADP_vector_to(X_fit)`, `X_ref = X_fit`, `put_fit_header` — and the
-`X_fit` seeding is worse than per-iteration: it sits inside `make_LS_mx`'s `do u` loop, so it
-runs once per **atom** per iteration. Moving all four out (mirroring `LS_structure_fit`) gave:
-
-| | before | after moving |
+| | in core | on disk |
 |---|---|---|
-| `Fit Iter` column | stuck at 1 | **increments 1…101** |
-| chi2 across iterations | moves and converges | **frozen at 49.726269** |
-| termination | never (infinite) | exits on `too_many_fit_iterations` |
-| exit | 124 timeout | **139 segfault, after the loop** |
+| R(F) | 0.037992 | 0.038220 |
+| R(F2) | 0.045405 | 0.045540 |
+| Rw(F) | 0.029097 | 0.029145 |
+| N_r / N_p | 817 / 27 | 817 / 27 |
+| GoF | 7.037680 | 7.049176 |
+| Scale factor | 0.981084 | 0.981037 |
 
-So it trades "the fit moves but never stops" for "the fit stops but never moves". The reason is
-that the per-iteration re-seeding of `X_fit` from the atoms — the very thing that looked like the
-bug — is what was making the numbers change at all. `make_LS_mx` is therefore **not** separable
-into "build the design matrix" by relocation: the parameter-update path is entangled with it, and
-sorting that out needs someone who knows which arrays are authoritative between iterations
-(`X_fit` vs `asymmetric_unit_atom` pADPs vs `fragment_atom` vs `.atom`). Reverted rather than
-left in a differently-broken state.
+~5 minutes wall clock against 7.7 s in core (`urea`, release, macOS arm64).
 
-*Also still divergent:* `CRYSTAL:LS_structure_fit` prunes inside the loop
-(`crystal.foo:4336`); the disk loop does not. Adding it made the job segfault after ~10
-iterations — pruning changes `reflections.dim` mid-fit and something downstream is still sized
-for the old count. Left out.
+**The five defects, all in `MOLECULE.HAR:make_LS_mx` / `LS_fit_HAs_disk` / `do_LS_refinement`:**
 
-**The real fix is still to stop duplicating (per Dylan).** `make_LS_mx`'s preamble is a hand-inlined
-copy of `CRYSTAL:initialize_fit_data` (`crystal.foo:4514`) — same `reset_pADPs_and_errors` on
-asymmetric and fragment atoms, same `set_frag_from_asym_pADPs`, same `n_p`/`n_f`/`labels`, same
-final call — and `LS_fit_HAs_disk` is a hand-rolled copy of `CRYSTAL:LS_structure_fit`'s loop.
-**Every defect found in this area on 2026-08-02 is a divergence between a copy and its
-original**: the missing `update_fit_info`, the per-iteration `initialize_fit_data`, the `:806`
-assignment, the `d_Fa` `OUT`/`INOUT` slip, and the missing site occupancy. Merging
-`make_LS_mx`'s preamble into a call to `CRYSTAL:initialize_fit_data`, and giving
-`LS_structure_fit` a way to rebuild the design matrix per iteration so the disk path can share
-its loop, would remove the whole class. That is the right next step here, and it is a refactor
-with no test covering it — so it needs `tests/hart/urea_hart_STO-3G_disk_ffs` written FIRST.
+1. **`d_Fa` declared `OUT` instead of `INOUT`** → `intent(out)` deallocates an allocatable on
+   entry, so the caller's `create` was dead code and an unallocated array reached
+   `d_F_abs_dX`'s non-allocatable dummy. SIGSEGV.
+2. **`update_fit_info` never called** → `.fit_finished` was tested but nothing ever set it.
+   Infinite loop.
+3. **`initialize_fit_data` called per LS iteration** (it sat in `make_LS_mx`, which is inside
+   the loop) → re-created `X_fit`/`X_fit0` and reset `chi2_fit0 = huge()` every pass.
+4. **`X_fit` re-seeded from the atoms once per ATOM per iteration** — `put_pADP_vector_to`
+   sat inside `make_LS_mx`'s `do u` loop. **X_fit is authoritative and the atoms follow it**
+   (Dylan), so re-seeding it mid-fit discards the refinement.
+5. **`.atom` never refreshed from `.crystal.fragment_atom` inside the loop** — the missing link.
+   The chain is `X_fit` → `asymmetric_unit_atom` (`set_pADP_vector_to`) → `fragment_atom`
+   (`set_frag_from_asym_pADPs`) → **`.atom`** → `make_LS_mx`, which builds the next design
+   matrix from `.atom(c).position`. Without the last step the design matrix was rebuilt from the
+   *original* coordinates every iteration. The requirement was written down two lines above the
+   gap — *">>>fragment_atom must be the same as molecule.atom"* — but nothing did it. The
+   in-core path gets away without it because it computes form factors once before the fit;
+   the disk path rebuilds every iteration, so it needs the refresh every iteration.
 
-*Timing, measured not guessed.* The first `make_LS_mx` takes ~11.5 minutes in a **release**
-build on urea — a job the in-core path completes end to end in 7.7 s. `sample(1)` on the live
-process puts the time in `make_ls_mx` → `cexp`/`sin`/`cos`, i.e. the structure-factor Fourier
-sum, not I/O. Subsequent loop passes are fast (~1.5 s), consistent with the stored SFs being
-reused as intended. **Why the in-core path is so much faster has NOT been established** — an
-earlier guess about interpolators was wrong (per Dylan they serve density evaluation before the
-transform, not the transform itself). A like-for-like profile of both paths is the way to settle
-it, and should come before any optimisation.
+Defects 3–5 only became visible in that order: fixing 2 exposed 3+4, and fixing 3+4 alone
+*froze* the fit (the bogus re-seeding was the only thing making the numbers move) until 5 closed
+the chain.
 
-This is a **documented option that has never worked**, in a routine whose own comment
-(`molecule.har.foo:631`) reads *"NOTE: routine make_LS_mx is very long! Is it working?
-Rewrite?"* — the answer being no. It matters more than its test coverage suggests, because
-`--disk-sfs` is the memory-bounded path a large structure would need.
+**Structural cause, and the part that was merged.** `make_LS_mx`'s preamble was a hand-inlined
+copy of `CRYSTAL:initialize_fit_data`, and `LS_fit_HAs_disk` a hand-rolled copy of
+`CRYSTAL:LS_structure_fit`'s loop. The preamble is now **one call** to the original, which also
+removed a sixth defect — the copy assigned `refine_3rd/4th_order_for_atom` to local allocatables
+(undefined when unallocated; `lldb` caught `EXC_BAD_ACCESS`), where the original passes them as
+arguments. `make_LS_mx` now does one job: build the design matrix, which is the only thing that
+genuinely differs between the two paths.
 
-Next steps: a debug build with `-fcheck=bounds` and `-fbacktrace` (per `CLAUDE.md` §8, instrument
-in debug, not release) on exactly the command above; the job is ~8 s so the loop is quick. Then
-add `tests/hart/urea_hart_STO-3G_disk_ffs` — the same structure with `--disk-sfs t` — which
-would give `make_LS_mx` its first test coverage, and would also cover the `per_rank_write` and
-occupancy fixes made to it today, both of which currently have none.
+**Still open here:**
+
+- **It stops on "chi2 has increased", not convergence**, and the fit oscillates
+  (chi2 49.726 → 49.696 → 49.693 → 49.694 → 49.701 → …, 264 fit rows). The answer is right to
+  ~0.6% on R(F) but the convergence behaviour is poor. Not investigated.
+- **`LS_structure_fit` prunes inside its loop (`crystal.foo:4336`); this loop does not.** Adding
+  it segfaults after ~10 iterations — pruning changes `reflections.dim` mid-fit and something
+  downstream is still sized for the old count.
+- **No test covers any of this.** `tests/hart/urea_hart_STO-3G_disk_ffs` is now *writable* (the
+  job terminates, in ~5 min) and should be added — it would be the first coverage `make_LS_mx`
+  has ever had. 5 min is too slow for CI as-is; a smaller structure or a capped iteration count
+  would be needed.
+
+### `HAR_refinement` does not remake the atom groups between cycles
+
+Raised by Dylan while fixing the above: once `molecule.atom` is remade, the atom groups and
+their fragments — capped residues, separated molecules — must be remade for the next refinement
+cycle, since the integrals and SCF depend on them.
+
+`fragHAR_refinement` does this: `.update_atom_groups` at `molecule.har.foo:106`, inside its LS
+cycle. **`HAR_refinement` does not call it at all.** Its outer cycle does redo
+`.promolecule_SCF` and `.scf` at the new geometry, so integrals and the wavefunction are
+current — but if a structure ever reaches `HAR_refinement` with `.atom_group` allocated, the
+group sub-molecules would keep the pre-shift coordinates. Harmless for the single-fragment case
+that path is normally used for, which is presumably why it has never bitten. Worth either
+adding the call or asserting that groups are absent on that path.
 
 ### Deferred: `fragHAR_refinement` forces disk form factors ON, unconditionally
 
