@@ -1419,6 +1419,18 @@ Items 1 and 2 together would have prevented every wrong-answer bug listed below.
 
 ### Not yet fixed — recorded with evidence
 
+- **UNDIAGNOSED, HIGH PRIORITY: mismatched `MPI_Bcast` in the CIF-reading path, `-O2` only.**
+  On Linux x86_64, four CIF tests (`c9o9h8_read_cif_IT_group_9`,
+  `maleate_read_CIF_H_double_bond_{new,old}_BLs`, `urea_lamaGOET_grown_CIF`) abort at >=2 ranks
+  with *"An error occurred in MPI_Bcast ... MPI_ERRORS_ARE_FATAL"* in the
+  `-O2 -fno-fast-math` build, while the **same test on the same machine passes at `-Ofast`**.
+  They do not fail on macOS arm64 at all. A collective mismatch that moves with the optimisation
+  level and the platform is undefined behaviour -- an uninitialised value or out-of-bounds read
+  feeding a broadcast length, or the branch deciding whether a rank reaches the collective.
+  Diagnose with a Linux debug MPI build (`-fcheck=bounds -finit-integer=-999999
+  -finit-real=snan`). NOTE the shipped `-Ofast` configuration is the one that HIDES this.
+
+
 - **Latent deadlock in `SYSTEM:initialize`** (`foofiles/system.foo:259-261`).
   `initialize_cloned_random_seed` is called *before* `parallel_initialize`, so `is_parallel` is
   still false and every rank seeds itself from its own `system_clock` — the seeds are **not**

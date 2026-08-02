@@ -287,6 +287,68 @@ suspect the optimisation flags before the rank count.
 did not move; sub-threshold movement elsewhere is not excluded. The `exact` counts corroborate
 the picture though: 45/46 exact matches are preserved at ×1 and only one is lost at ×2.
 
+### Cross-platform replication: achari2 (Linux x86_64)
+
+Repeated on `achari2` — Linux 6.8.0-88-generic, x86_64, gfortran **14.2.0**, Open MPI 5.0.9 built
+from source with `FC=gfortran-14` (Ubuntu's packaged Open MPI is built against gcc-13, so it hits
+the same `.mod` trap as Homebrew's — this is the *default* situation, not a macOS quirk).
+
+| configuration | loose | exact | notes |
+|---|---|---|---|
+| serial `-Ofast` | **51/51** | 49 | |
+| serial `-O2` | **51/51** | 46 | |
+| MPI `-Ofast` ×1 | **51/51** | 48 | matches serial |
+| MPI `-Ofast` ×2 | 50/51 | 48 | 1 crash (DWGN, since fixed) |
+| MPI `-Ofast` ×4 | 50/51 | 48 | 1 crash |
+| MPI `-O2` ×1 | **51/51** | 46 | matches serial |
+| MPI `-O2` ×2 | 46/51 | 40 | **5 crashes** |
+| MPI `-O2` ×4 | 46/51 | 41 | **5 crashes** |
+
+**Confirmed on Linux:**
+
+- **The macOS 50/51 was a platform artefact.** Linux is 51/51 serially, so
+  `urea_ccsd_pob-TZVP_Salvador_properties` fails only on macOS arm64 against these
+  Linux-blessed references. Nothing to do with MPI.
+- **MPI at 1 rank reproduces serial**, on both platforms and at both optimisation settings. This
+  is now a two-platform result, so the `PURE`/`ELEMENTAL` stripping genuinely costs nothing.
+- **The π invariant gives bit-identical values on both platforms** — `3.141592653589362` /
+  `…390` / `…147` at 1/2/4 ranks on arm64 macOS *and* x86_64 Linux. Reduction order is
+  reproducible across architectures.
+- **The DWGN crash reproduces on Linux**, so it was never macOS-specific.
+
+### Finding 6 — undefined behaviour exposed only at `-O2`, only on Linux
+
+Four *additional* tests crash on Linux, but **only** in the `-O2 -fno-fast-math` MPI build, and
+only at ≥2 ranks: `c9o9h8_read_cif_IT_group_9`, `maleate_read_CIF_H_double_bond_new_BLs`,
+`maleate_read_CIF_H_double_bond_old_BLs`, `urea_lamaGOET_grown_CIF`. All are CIF-reading jobs.
+
+The failure is not an I/O guard problem:
+
+```
+*** An error occurred in MPI_Bcast
+*** MPI_ERRORS_ARE_FATAL (processes in this communicator will now abort)
+```
+
+i.e. a **mismatched collective** — the ranks disagree about the broadcast, i.e. about its length
+or about whether they participate at all.
+
+Reproduced deterministically, same machine, same test, same rank count:
+
+| build | result |
+|---|---|
+| `build-mpi-fast` (`-Ofast`) | passes |
+| `build-mpi-o2` (`-O2 -fno-fast-math`) | `MPI_Bcast` error, rc=15 |
+
+A bug that appears and disappears with the optimisation level, and on one platform but not the
+other, is **undefined behaviour** — an uninitialised value or an out-of-bounds read feeding either
+a broadcast length or the branch that decides whether a rank reaches the collective. This is the
+"genuine UB" milestone 4 anticipated, and it is real.
+
+It has **not** been diagnosed. Doing so needs a debug MPI build on Linux (`-fcheck=bounds`
+plus `-finit-integer`/`-finit-real=snan` would likely name it immediately). Recorded rather than
+guessed at. Note the practical consequence: `-Ofast` **hides** this, so the shipped configuration
+is the one where it is invisible, not the one where it is absent.
+
 ### Defect register
 
 Every MPI defect found, and whether it announces itself. **"Silent" is the dangerous column** —
