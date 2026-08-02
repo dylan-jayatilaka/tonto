@@ -62,6 +62,29 @@ contains
 !  Axis change and origin shift
 !  ============================
 
+!   change_to_principal_axes ::: PURE
+!   ! Move the origin to the center of mass and change to the principal axis
+!   ! coordinate system
+!      self :: INOUT
+!
+!   ENSURE(.atom.allocated,"atom list required")
+!
+!      .atom.change_to_principal_axes
+!
+!   end
+
+!   change_to_principal_top_axes ::: PURE
+!   ! Move the origin to the center of mass and change to the principal axis
+!   ! coordinate system, where the symmetric top axis is the z axis and where the
+!   ! determinant of the axes transformation is 1.
+!      self :: INOUT
+!
+!   ENSURE(.atom.allocated,"atom list required")
+!
+!      .atom.change_to_principal_top_axes
+!
+!   end
+
    move_origin_to_center_of_mass
    ! Move the origin to the center of mass
       self :: INOUT
@@ -115,7 +138,7 @@ contains
 !  Overlapping atoms
 !  =================
 
-   make_max_S_for_shell_pairs(max_S) :: PURE
+   make_max_S_for_shell_pairs(max_S) ::: PURE
    ! Make "max_S", the maximum of the overlap integrals between basis
    ! functions in pairs of shells.
       self :: IN
@@ -142,11 +165,13 @@ contains
 
    end
 
+! Below does not work ... but it does with lower cutoff
+
 !  ========================
 !  Contraction Coefficients
 !  ========================
 
-   make_contraction_mx(cc_mat) :: PURE
+   make_contraction_mx(cc_mat) ::: PURE
    ! Returns the matrix of complete contraction coefficients for each basis set
    ! Size of cc_mat is [.n_prim,.n_bf].
       self :: IN
@@ -176,7 +201,7 @@ contains
 
    end
 
-   make_normalized_contraction_mx(cc_mat) :: PURE
+   make_normalized_contraction_mx(cc_mat) ::: PURE
    ! Returns the matrix of complete contraction coefficients for each
    ! basis set. Size of cc_mat is [.n_prim,.n_bf]. Primitive components
    ! are properly normalized.
@@ -211,10 +236,372 @@ contains
    end
 
 !  ========================
+!  AIM2000/Morphy interface
+!  ========================
+
+! Can we get rid of these beow, from this module? --dylan
+! The don't fit in PUT
+
+   put_morphy98_wfn_file ::: leaky
+   ! Write a morphy98 .wfn file
+      self :: IN
+
+   ENSURE(.NO_occ_nos.is_allocated_with_genre("r "), "No occupation numbers")
+   ENSURE(  .MO_energies.is_allocated_with_genre("r "), "No orbital energies")
+   ENSURE(.MOs.is_allocated_with_genre("r "), "No orbitals")
+
+      name :: STR
+      wfnfile :: TEXTFILE@
+      lvec :: VEC{INT}@
+      evec :: VEC{REAL}@
+      dmatrix, cc :: MAT{REAL}@
+      sh :: SHELL@
+      i, j, pcount, n_orbitals, a, l, atomn, shelln :: INT
+      n_vars_format :: STR, parameter = "(A8, 10X, I5, 15X, I5, 15X, I5, 17X)"
+      atom_format :: STR, parameter = "(A5, I3, '    (CENTRE', 1I3, ') ', 3F12.8, '          ', F5.1)"
+      c_assignment_format :: STR, parameter = "('CENTRE ASSIGNMENTS  ', 20I3)"
+      t_assignment_format :: STR, parameter = "('TYPE ASSIGNMENTS    ', 20I3)"
+      exponent_format :: STR, parameter = "('EXPONENTS ', 5D14.7)"
+      mol_title_format :: STR, parameter = "(1A4, I3, 1A30, F12.8, 1A15, F12.8)"
+      coefficient_format :: STR, parameter = "(5D16.8)"
+      e_v_format :: STR, parameter = "(' THE HF ENERGY = ', F20.12, ' THE VIRIAL(-V/T)=', F13.8)"
+
+      name = .name
+      if (NOT stdin.buffer.exhausted) stdin.read(name)
+
+      wfnfile.create(trim(name)//".wfn")
+      wfnfile.open_for("write")
+       
+      if (IO_IS_ALLOWED) then
+
+         if (mod(.n_e, 2)==0) then
+            n_orbitals = .n_e / 2
+         else
+            n_orbitals = (.n_e + 1) / 2
+         end
+       
+         write(unit = wfnfile.unit, fmt = '(a)') trim(name) //" computed by TONTO "//TONTO_VERSION//" v. "//GIT_VERSION
+         write(unit = wfnfile.unit, fmt = n_vars_format) "GAUSSIAN", n_orbitals, .n_prim, .n_atom
+         write(unit = wfnfile.unit, fmt = atom_format) (.atom(i).label, i, i, &
+            .atom(i).position, REALIFY(.atom(i).atomic_number), i=1,.n_atom)
+         write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i=1,.atom(j).basis.no_of_primitives), j=1,.n_atom)
+       
+         pcount = 1
+         lvec.create(.n_prim)
+         evec.create(.n_prim)
+
+         do a = 1, .n_shell
+
+           atomn  = .atom_for_shell(a)
+           shelln = .atom_shell_for_shell(a)
+           sh     = .atom(atomn).basis.shell(shelln)
+           l = GAUSSIAN_DATA:n_comp_up_to(sh.l) - sh.n_comp
+           do j = 1, sh.n_cc
+             if (sh.l==3) then
+               lvec(pcount  ) = l + 1
+               lvec(pcount+1) = l + 2
+               lvec(pcount+2) = l + 3
+               lvec(pcount+3) = l + 4
+               lvec(pcount+4) = l + 5
+               lvec(pcount+5) = l + 7
+               lvec(pcount+6) = l + 6
+               lvec(pcount+7) = l + 8
+               lvec(pcount+8) = l + 9
+               lvec(pcount+9) = l + 10
+               do i = 1, sh.n_comp
+                 evec(pcount) = sh.exponent(j)
+                 pcount = pcount + 1
+               end
+             else
+               do i = 1, sh.n_comp
+                 evec(pcount) = sh.exponent(j)
+                 lvec(pcount) = l + i
+                 pcount = pcount + 1
+               end
+             end
+           end
+         end
+       
+         write(unit=wfnfile.unit, fmt=t_assignment_format) lvec
+         write(unit=wfnfile.unit, fmt=exponent_format) evec
+       
+         lvec.destroy
+         evec.destroy
+       
+         dmatrix.create(.n_prim, .n_bf)
+         cc.create(.n_prim, .n_bf)
+       
+         .BASE:make_contraction_mx(cc)
+       
+         dmatrix.to_product_of(cc,.MOs.r)
+       
+         do i = 1, n_orbitals
+            write(unit=wfnfile.unit, fmt=mol_title_format) &
+               "MO  ", i, &
+               "OCC NO = ", .NO_occ_nos.r(i), &
+               " ORB. ENERGY = ", .MO_energies.r(i)
+            write(unit=wfnfile.unit, fmt=coefficient_format) dmatrix(:, i)
+         end
+       
+         write(unit=wfnfile.unit, fmt="(1A8)") "END DATA"
+         if (.SCF_data.allocated) then
+         write(unit=wfnfile.unit, fmt=e_v_format) .SCF_data.energy, TWO
+         else
+         write(unit=wfnfile.unit, fmt=e_v_format) ZERO, TWO
+         end
+       
+         ! Clean
+         cc.destroy
+         dmatrix.destroy
+
+      end
+
+      wfnfile.close
+      wfnfile.destroy
+
+   end
+
+   put_aim2000_wfn_file ::: leaky
+   ! Writes a proaim2000 .wfn file
+      self :: IN
+
+   ENSURE(.MO_energies.is_allocated_with_genre("r "), "No orbital energies")
+   ENSURE(.MOs.is_allocated_with_genre("r "), "No orbitals")
+
+      name :: STR
+      wfnfile :: TEXTFILE@
+      lvec :: VEC{INT}@
+      evec :: VEC{REAL}@
+      dmatrix, cc :: MAT{REAL}@
+      i, j, pcount, n_orbitals, a, l, atomn, shelln :: INT
+      sh :: SHELL@
+      occ :: REAL
+
+      n_vars_format :: STR, parameter = "(A8, 10X, I5,' MOL ORBITALS', I7,' PRIMITIVES', I9,' NUCLEI')"
+      atom_format :: STR, parameter = "(A5, I3, '    (CENTRE', 1I3, ') ', 3F12.8, '  CHARGE =', F5.1)"
+      c_assignment_format :: STR, parameter = "('CENTRE ASSIGNMENTS  ', 20I3)"
+      t_assignment_format :: STR, parameter = "('TYPE ASSIGNMENTS    ', 20I3)"
+      exponent_format :: STR, parameter = "('EXPONENTS ', 5D14.7)"
+      mol_title_format :: STR, parameter = "('MO  ', I3,'    MO 0.0        OCC NO =',F13.7,'  ORB. ENERGY =',F12.7)"
+      coefficient_format :: STR, parameter = "(5D16.8)"
+      e_v_format :: STR, parameter = "(' THE HF ENERGY = ', F20.12, ' THE VIRIAL(-V/T)=', F13.8)"
+
+      name = .name
+      if (NOT stdin.buffer.exhausted) stdin.read(name)
+
+      wfnfile.create(trim(name)//".wfn")
+      wfnfile.open_for("write")
+
+      if (IO_IS_ALLOWED) then
+       
+         if (mod(.n_e, 2)==0) then
+            n_orbitals = .n_e / 2
+         else
+            n_orbitals = (.n_e + 1) / 2
+         end
+       
+         write(unit = wfnfile.unit, fmt = '(a)') trim(name) //" computed by TONTO "//TONTO_VERSION//" v. "//GIT_VERSION
+         write(unit = wfnfile.unit, fmt = n_vars_format) "GAUSSIAN", n_orbitals, .n_prim, .n_atom
+         write(unit = wfnfile.unit, fmt = atom_format) (.atom(i).label, i, i, &
+            .atom(i).position, REALIFY(.atom(i).atomic_number), i=1,.n_atom)
+         write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i=1,.atom(j).basis.no_of_primitives), j=1,.n_atom)
+       
+         pcount = 1
+         lvec.create(.n_prim)
+         evec.create(.n_prim)
+
+         do a = 1, .n_shell
+           atomn  = .atom_for_shell(a)
+           shelln = .atom_shell_for_shell(a)
+           sh     = .atom(atomn).basis.shell(shelln)
+           l = GAUSSIAN_DATA:n_comp_up_to(sh.l) - sh.n_comp
+           do j = 1, sh.n_cc
+             if (sh.l==3) then
+               lvec(pcount  ) = l + 1
+               lvec(pcount+1) = l + 2
+               lvec(pcount+2) = l + 3
+               lvec(pcount+3) = l + 4
+               lvec(pcount+4) = l + 5
+               lvec(pcount+5) = l + 7
+               lvec(pcount+6) = l + 6
+               lvec(pcount+7) = l + 8
+               lvec(pcount+8) = l + 9
+               lvec(pcount+9) = l + 10
+               do i = 1, sh.n_comp
+                 evec(pcount) = sh.exponent(j)
+                 pcount = pcount + 1
+               end
+             else
+               do i = 1, sh.n_comp
+                 evec(pcount) = sh.exponent(j)
+                 lvec(pcount) = l + i
+                 pcount = pcount + 1
+               end
+             end
+           end
+         end
+       
+         write(unit = wfnfile.unit, fmt = t_assignment_format) lvec
+         write(unit = wfnfile.unit, fmt = exponent_format) evec
+       
+         lvec.destroy
+         evec.destroy
+       
+         dmatrix.create(.n_prim, .n_bf)
+         cc.create(.n_prim, .n_bf)
+       
+         .BASE:make_contraction_mx(cc)
+       
+         dmatrix.to_product_of(cc,.MOs.r)
+       
+         do i = 1, n_orbitals
+            occ = ZERO
+            if (i<=.n_a) occ = TWO
+            write(unit=wfnfile.unit, fmt=mol_title_format) &
+               i, occ, .MO_energies.r(i)
+            write(unit = wfnfile.unit, fmt = coefficient_format) dmatrix(:, i)
+         end
+       
+         write(unit = wfnfile.unit, fmt = "(1A8)") "END DATA"
+         if (.SCF_data.allocated) then
+         write(unit = wfnfile.unit, fmt = e_v_format) .SCF_data.energy, 2.0D00
+         else
+         write(unit = wfnfile.unit, fmt = e_v_format) ZERO, 2.0D00
+         end
+       
+         ! Clean
+         cc.destroy
+         dmatrix.destroy
+      end
+
+      wfnfile.close
+      wfnfile.destroy
+
+   end
+
+   put_florian_wfn_file(with_lambda)
+   ! Writes a full wavefunction .ffn file
+      self :: IN
+      with_lambda :: BIN, optional, IN
+
+   ENSURE(.MO_energies.is_allocated_with_genre("r "), "No orbital energies")
+   ENSURE(.MOs.is_allocated_with_genre("r "), "No orbitals")
+
+      name :: STR
+      wfnfile :: TEXTFILE@
+      lvec :: VEC{INT}@
+      evec :: VEC{REAL}@
+      dmatrix, cc :: MAT{REAL}@
+      sh :: SHELL@
+      i, j, pcount, a, l, atomn, shelln :: INT
+      occ :: REAL
+      avec_lambda :: BIN
+
+      n_vars_format :: STR, parameter = "(A8, 10X, I5,' MOL ORBITALS', I7,' PRIMITIVES', I9,' NUCLEI')"
+      atom_format :: STR, parameter = "(A5, I3, '    (CENTRE', 1I3, ') ', 3F12.8, '  CHARGE =', F5.1)"
+      c_assignment_format :: STR, parameter = "('CENTRE ASSIGNMENTS  ', 20I3)"
+      t_assignment_format :: STR, parameter = "('TYPE ASSIGNMENTS    ', 20I3)"
+      exponent_format :: STR, parameter = "('EXPONENTS ', 5D14.7)"
+      mol_title_format :: STR, parameter = "('MO ', I4,'    MO 0.0        OCC NO =',F13.7,'  ORB. ENERGY =',F12.7)"
+      coefficient_format :: STR, parameter = "(5D16.8)"
+      e_v_format :: STR, parameter = "(' THE HF ENERGY = ', F20.12, ' THE VIRIAL(-V/T)=', F13.8)"
+
+      avec_lambda = FALSE
+      if (present(with_lambda)) avec_lambda = with_lambda
+
+      name = .name
+      if (NOT stdin.buffer.exhausted) stdin.read(name)
+
+      if (avec_lambda) then
+        wfnfile.create(trim(name)//",lambda="//trim(.SCF_data.lambda.to_str("f9.6"))//".ffn")
+      else
+        wfnfile.create(trim(name)//".ffn")
+      end
+      
+      wfnfile.open_for("write")
+      if (IO_IS_ALLOWED) then
+         write(unit = wfnfile.unit, fmt = '(a)') trim(name) //" computed by TONTO "//TONTO_VERSION//" v. "//GIT_VERSION
+         write(unit = wfnfile.unit, fmt = n_vars_format) "GAUSSIAN", .n_bf, .n_prim, .n_atom
+         write(unit = wfnfile.unit, fmt = atom_format) (.atom(i).label, i, i, &
+            .atom(i).position, REALIFY(.atom(i).atomic_number), i=1,.n_atom)
+         write(unit = wfnfile.unit, fmt = c_assignment_format) ((j, i=1,.atom(j).basis.no_of_primitives), j=1,.n_atom)
+
+         pcount = 1
+         lvec.create(.n_prim)
+         evec.create(.n_prim)
+         do a = 1, .n_shell
+           atomn  = .atom_for_shell(a)
+           shelln = .atom_shell_for_shell(a)
+           sh     = .atom(atomn).basis.shell(shelln)
+           l = GAUSSIAN_DATA:n_comp_up_to(sh.l) - sh.n_comp
+           do j = 1, sh.n_cc
+             if (sh.l==3) then
+               lvec(pcount  ) = l + 1
+               lvec(pcount+1) = l + 2
+               lvec(pcount+2) = l + 3
+               lvec(pcount+3) = l + 4
+               lvec(pcount+4) = l + 5
+               lvec(pcount+5) = l + 7
+               lvec(pcount+6) = l + 6
+               lvec(pcount+7) = l + 8
+               lvec(pcount+8) = l + 9
+               lvec(pcount+9) = l + 10
+               do i = 1, sh.n_comp
+                 evec(pcount) = sh.exponent(j)
+                 pcount = pcount + 1
+               end
+             else
+               do i = 1, sh.n_comp
+                 evec(pcount) = sh.exponent(j)
+                 lvec(pcount) = l + i
+                 pcount = pcount + 1
+               end
+             end
+           end
+         end
+       
+         write(unit = wfnfile.unit, fmt = t_assignment_format) lvec
+         write(unit = wfnfile.unit, fmt = exponent_format) evec
+       
+         lvec.destroy
+         evec.destroy
+       
+         dmatrix.create(.n_prim, .n_bf)
+         cc.create(.n_prim, .n_bf)
+       
+         .BASE:make_contraction_mx(cc)
+       
+         dmatrix.to_product_of(cc,.MOs.r)
+       
+         do i = 1, .n_bf
+            occ = ZERO
+            if (i<=.n_a) occ = TWO
+            write(unit=wfnfile.unit, fmt=mol_title_format) &
+               i, occ, .MO_energies.r(i)
+            write(unit = wfnfile.unit, fmt = coefficient_format) dmatrix(:, i)
+         end
+       
+         write(unit = wfnfile.unit, fmt = "(1A8)") "END DATA"
+         if (.SCF_data.allocated) then
+            write(unit = wfnfile.unit, fmt = e_v_format) .SCF_data.energy, 2.0D00
+         else
+            write(unit = wfnfile.unit, fmt = e_v_format) ZERO, 2.0D00
+         end
+       
+         ! Clean
+         cc.destroy
+         dmatrix.destroy
+      end
+      wfnfile.close
+      wfnfile.destroy
+
+   end
+
+!  ========================
 !  Atom AO subspace setting
 !  ========================
 
-   AO_subspace_set(A,B,row_atom,col_atom) :: PURE
+   AO_subspace_set(A,B,row_atom,col_atom) ::: PURE
    ! Set "A" equal to the AO subspace blocks of "B" specified by the atom
    ! indices in "row_atom" and "col_atom". If either is missing, then copy
    ! the entire row or col, i.e.  A(small) = B(row_atom,col_atom)
@@ -315,7 +702,7 @@ contains
 !  Density matrix methods
 !  ======================
 
-   make_SCF_density_mx(damp,n_a,method) :: leaky
+   make_SCF_density_mx(damp,n_a,method) ::: leaky
    ! Make the density matrix from the molecular orbitals.
    ! . If "damp" is present use it to damp the updated density matrix.
    !   An .old_density_mx must exist for this to work.
@@ -431,7 +818,7 @@ contains
          end
 
          if (scf_method(1:4)=="xray" AND .SCF_data.stabilize_density) then
-            .stabilize(.density_mx.r)
+            .BASE:stabilize(.density_mx.r)
          end
 
       case ("rohf")
@@ -502,8 +889,8 @@ contains
       end
 
       ! Archive density matrix?
-   ! do_archive = FALSE
-   ! if (do_archive) .put_archive(.density_mx,"density_mx")
+    ! do_archive = FALSE
+    ! if (do_archive) .PUT:put_archive(.density_mx,"density_mx")
 
       ! Save the delta density matrix for incremental Fock build
       if (do_delta_density) then
@@ -516,7 +903,22 @@ contains
 
    end
 
-   make_finite_T_density_mx(D,MO,F,T,n_e) :: selfless
+!   make_S_g(S)
+!   ! Make the 2x.n_bf sizes AO overlap matrix
+!      self :: IN
+!      S :: MAT{REAL}, OUT
+!
+!   ENSURE(.overlap_mx.allocated, "NO overlap_mx!")
+!
+!      S = ZERO
+!
+!      ! Make S in the SAO asis 
+!      S.set_aa_block_to(.overlap_mx)
+!        S.set_bb_block_to(.overlap_mx)
+!
+!   end
+
+   make_finite_T_density_mx(D,MO,F,T,n_e) ::: selfless
    ! Make the finite temperature density matrix "D" from molecular
    ! orbitals "MO" according to the pFON method with temperature "T"
    ! and number of electrons "n_e" *for a given spin*, as in Rabuck
@@ -589,7 +991,7 @@ contains
 
    end
 
-   make_finite_T_DM_r(D,E_Fermi,MO,eig,T,n_e) :: selfless
+   make_finite_T_DM_r(D,E_Fermi,MO,eig,T,n_e) ::: selfless
    ! Make the restricted finite temperature density matrix "D" from
    ! molecular orbitals "MO" according to the FON method with
    ! temperature "T" in Kelvin and number of electrons "n_e" *for a
@@ -635,7 +1037,7 @@ contains
 
    end
 
-   make_finite_T_DM_u(Da,Db,E_Fermi,MOa,MOb,Ea,Eb,T,n_a,n_b) :: selfless
+   make_finite_T_DM_u(Da,Db,E_Fermi,MOa,MOb,Ea,Eb,T,n_a,n_b) ::: selfless
    ! Make the restricted finite temperature density matrix "D" from
    ! molecular orbitals "MO" according to the FON method with
    ! temperature "T" in Kelvin and number of electrons "n_e" *for a
@@ -693,7 +1095,7 @@ contains
 
    end
 
-   make_r_density_mx :: leaky, PURE
+   make_r_density_mx ::: leaky, PURE
    ! Make the AO (spin independent) density matrix any existing density
    ! matrix. The result is placed in the "r " part.
       self :: INOUT
@@ -703,11 +1105,11 @@ contains
    ENSURE(.density_mx.has_any_genre, "no density matrix")
 
       ! Leaky
-      .make_r_density_mx(.density_mx)
+      .BASE:make_r_density_mx(.density_mx)
 
    end
 
-   make_r_density_mx(D) :: leaky, PURE
+   make_r_density_mx(D) ::: leaky, PURE
    ! Make the AO (spin independent) density matrix from the existing
    ! density matrix. The result is placed in the "r " part of
    ! the density matrix.
@@ -734,22 +1136,22 @@ contains
       case ("gc")
          D.r = RE(D.gc.aa_block) + RE(D.gc.bb_block)
 
-   ! case default
-   !    DIE("unknown kind, "//trim(genre))
+    ! case default
+    !    DIE("unknown kind, "//trim(genre))
 
       end
 
    end
 
-   make_r_density_mx(P) :: PURE
+   make_r_density_mx(P) ::: PURE
    ! Make the AO (spin independent) density matrix "P" from the
    ! existing density matrix.
       self :: IN
       P :: MAT{REAL}, OUT
-      .make_ao_RE_density_mx(P)
+      .BASE:make_ao_RE_density_mx(P)
    end
 
-   make_ao_RE_density_mx(P) :: PURE
+   make_ao_RE_density_mx(P) ::: PURE
    ! Make the REAL AO (spin independent) density matrix "P" from the
    ! existing density matrix.
       self :: IN
@@ -779,14 +1181,14 @@ contains
          P = RE(.density_mx.gc.aa_block) &
            + RE(.density_mx.gc.bb_block)
 
-   ! case default
-   !    DIE("unknown kind, "//trim(genre))
+    ! case default
+    !    DIE("unknown kind, "//trim(genre))
 
       end
 
    end
 
-   make_ao_IM_density_mx(P) :: PURE
+   make_ao_IM_density_mx(P) ::: PURE
    ! Make the IMAGINARY AO (spin independent) density matrix "P" from
    ! the existing density matrix.
       self :: IN
@@ -815,14 +1217,14 @@ contains
          P = IM(.density_mx.gc.aa_block) &
            + IM(.density_mx.gc.bb_block)
 
-   ! case default
-   !    DIE("unknown kind, "//trim(genre))
+    ! case default
+    !    DIE("unknown kind, "//trim(genre))
 
       end
 
    end
 
-   make_r_Sz_density_mx :: leaky, PURE
+   make_r_Sz_density_mx ::: leaky, PURE
    ! Make the AO (spin independent) density matrix from the existing
    ! density matrix. The result is placed in the "r " part of
    ! the density matrix. NOTE: factor 1/2 not included.
@@ -832,11 +1234,11 @@ contains
    ENSURE(.density_mx.allocated, "no density matrix")
    ENSURE(.density_mx.has_any_genre, "no density matrix")
 
-      .make_r_Sz_density_mx(.density_mx)   ! leaky
+      .BASE:make_r_Sz_density_mx(.density_mx)   ! leaky
 
    end
 
-   make_r_Sz_density_mx(D) :: leaky, PURE
+   make_r_Sz_density_mx(D) ::: leaky, PURE
    ! Make the AO (spin independent) density matrix from the existing
    ! density matrix. The result is placed in the "r " part of
    ! the density matrix. NOTE: factor 1/2 not included!
@@ -862,14 +1264,14 @@ contains
          D.create("r ")
          D.r = D.a - D.b
 
-   ! case default
-   !    DIE("unknown kind, "//trim(genre))
+    ! case default
+    !    DIE("unknown kind, "//trim(genre))
 
       end
 
    end
 
-   make_r_Sz_density_mx(P) :: leaky, PURE
+   make_r_Sz_density_mx(P) ::: leaky, PURE
    ! Make the AO (spin independent) density matrix from the existing
    ! density matrix. The result is placed in the "r " part of
    ! the density matrix. NOTE: factor 1/2 not included!
@@ -902,14 +1304,14 @@ contains
          P = RE(.density_mx.gc.aa_block) &
            - RE(.density_mx.gc.bb_block)
 
-   ! case default
-   !    DIE("unknown kind, "//trim(genre))
+    ! case default
+    !    DIE("unknown kind, "//trim(genre))
 
       end
 
    end
 
-   make_c_S_densities(S) :: leaky, PURE
+   make_c_S_densities(S) ::: leaky, PURE
    ! Make  the complex spin density matrices
    ! NOTE: factor 1/2 IS included.
       self :: IN
@@ -949,8 +1351,8 @@ contains
          S(:,:,3) =   .density_mx.gc.aa_block &
                   -   .density_mx.gc.bb_block
 
-   ! case default
-   !    DIE("unknown kind, "//trim(genre))
+    ! case default
+    !    DIE("unknown kind, "//trim(genre))
 
       end
 
@@ -959,7 +1361,7 @@ contains
 
    end
 
-   make_RE_c_S_densities(S) :: leaky, PURE
+   make_RE_c_S_densities(S) ::: leaky, PURE
    ! Make the REAL part of the complex spin density matrices.
    ! NOTE: factor 1/2 IS included.
       self :: IN
@@ -999,8 +1401,8 @@ contains
          S(:,:,3) = RE(  .density_mx.gc.aa_block) &
                   - RE(  .density_mx.gc.bb_block)
 
-   ! case default
-   !    DIE("unknown kind, "//trim(genre))
+    ! case default
+    !    DIE("unknown kind, "//trim(genre))
 
       end
 
@@ -1009,7 +1411,7 @@ contains
 
    end
 
-   make_ao_IM_spin_densities(S) :: leaky, PURE
+   make_ao_IM_spin_densities(S) ::: leaky, PURE
    ! Make the IMAGINARY part of the AO spin density matrices.
    ! NOTE: factor 1/2 IS included.
       self :: IN
@@ -1045,8 +1447,8 @@ contains
          S(:,:,3) = IM(  .density_mx.gc.aa_block) &
                   - IM(  .density_mx.gc.bb_block)
 
-   ! case default
-   !    DIE("unknown kind, "//trim(genre))
+    ! case default
+    !    DIE("unknown kind, "//trim(genre))
 
       end
 
@@ -1144,7 +1546,7 @@ contains
 !  Set atoms density matrices
 !  ========================== 
 
-   make_aspherical_atoms :: leaky 
+   make_aspherical_atoms ::: leaky 
    ! Get the aspherical atom density matrix i.e. just copy the 
    ! atom-atom block from the molecular density matrix.  
       self :: INOUT
@@ -1160,33 +1562,32 @@ contains
       genre :: STR
       a :: INT
 
-      if (.has_all_ANO_matrices) .destroy_ANO_matrices
+      if (.INQ:has_all_ANO_matrices) .SET:destroy_ANO_matrices
 
       ! Determine (or guess) the genre of density matrix to be made
       if (.SCF_data.allocated) then; genre = .SCF_data.spinorbital_genre
-      else;                          genre = .MOs.genre
+      else;                         genre = .MOs.genre
       end
 
       ! Copy existing density matrix
       D = .density_mx
 
       ! Make the restricted density matrix
-      .make_r_density_mx(D)
+      .BASE:make_r_density_mx(D)
 
 
       ! Set athe atom densities
       do a = 1,.n_atom
-         .set_density_mx_for_atom(a,D.r)
+         .BASE:set_density_mx_for_atom(a,D.r)
       end
 
       D.destroy
 
    end
 
-   set_density_mx_for_atom(a,D) :: leaky, private
+   set_density_mx_for_atom(a,D) ::: leaky, private
    ! (ANO) and density matrix data and interpolator for atom "a" from
    ! a given (real) density matrix "D".
-      self :: INOUT
       a :: INT
       D :: MAT{REAL}, IN
 
@@ -1211,11 +1612,10 @@ contains
 
 !  Spherically average atoms in existing density
 
-   make_spherical_atoms :: leaky
+   make_spherical_atoms ::: leaky
    ! Get the spherical atom natural orbitals (ANO) data for all
    ! atoms in the molecule.
 
-   self :: INOUT
    ENSURE(.atom.allocated,"no atoms")
    ENSURE(.atom_info_made,"no atom info")
    ENSURE(.basis.allocated,"no basis set")
@@ -1227,9 +1627,9 @@ contains
       genre :: STR
       a :: INT
 
-      if (.has_all_atom_data) return
+      if (.INQ:has_all_atom_data) return
 
-      if (.has_all_ANO_matrices) .destroy_ANO_matrices
+      if (.INQ:has_all_ANO_matrices) .SET:destroy_ANO_matrices
 
       ! Determine (or guess) the genre of density matrix to be made
       if (.SCF_data.allocated) then; genre = .SCF_data.spinorbital_genre
@@ -1240,12 +1640,12 @@ contains
       D = .density_mx
 
       ! Make the restricted density matrix
-      .make_r_density_mx(D)
+      .BASE:make_r_density_mx(D)
 
 
       ! Spherically average the molecule AO density
       do a = 1,.n_atom
-         .spherically_average_atom(a,D.r)
+         .BASE:spherically_average_atom(a,D.r)
       end
       D.destroy
 
@@ -1253,7 +1653,7 @@ contains
 
    end
 
-   spherically_average_atom(a,D) :: leaky, private
+   spherically_average_atom(a,D) ::: leaky, private
    ! Make the spherically averaged restricted atomic natural orbitals
    ! (ANO) and density matrix data and interpolator for atom "a" from
    ! a given (real) density matrix "D".
@@ -1269,8 +1669,8 @@ contains
       mol :: MOLECULE@
 
       ! Create the molecule
-      mol.create
-      .set_molecule_from_atom(a,mol)
+      mol.SET:create
+      .SET:set_molecule_from_atom(a,mol)
 
       ! Get the density matrix
       mol.density_mx.create(mol.n_bf)
@@ -1281,14 +1681,14 @@ contains
 
       ! Spherically average the AO density
       mol.pointgroup.create("oh",.use_spherical_basis)
-      mol.symmetrize(mol.density_mx)
+      mol.BASE:symmetrize(mol.density_mx)
 
       ! Make the natural orbitals
-      mol.make_NOs
+      mol.BASE:make_NOs
 
       ! Clean up the SCF files
-      mol.delete_archive("NOs")
-      mol.delete_archive("NO_occ_nos")
+      mol.SET:delete_archive("NOs")
+      mol.SET:delete_archive("NO_occ_nos")
 
       ! Destroy the atoms's NO and interpolator info
       .atom(a).interpolator.destroy
@@ -1308,7 +1708,7 @@ contains
       mol.atom.destroy_ptr_part       ! do not destroy ptr part
 
       ! Safe to destroy
-      mol.destroy
+      mol.SET:destroy
 
    end
 
@@ -1316,7 +1716,7 @@ contains
 !  Expectation value
 !  =================
 
-   expectation(X) result (res) :: PURE
+   expectation(X) result (res) ::: PURE
    ! Evaluates the expectation value of the matrix of the operator X
    ! with the current density matrix
       self :: IN
@@ -1324,17 +1724,15 @@ contains
       res :: REAL
 
    ENSURE(X.is_square,"X operator matrix is not square")
-   ENSURE(.density_mx.allocated,"no density_mx")
-   ENSURE(.density_mx.has_any_genre,"no density_mx genre")
 
-      genre :: STR
+      orb_kind :: STR
       W :: MAT{REAL}@
 
       res = ZERO
 
-      genre = .density_mx.genre
+      orb_kind = .density_mx.genre
 
-      select case (genre)
+      select case (orb_kind)
 
       case ("r ")
          ENSURE(X.dim1==.n_bf,"(rhf) wrong size, X")
@@ -1352,14 +1750,14 @@ contains
          res = MAT{REAL}:trace_product_with(W,X)
          W.destroy
 
-   ! case default
-   !    DIE("unimplemented kind, "//trim(orb_kind))
+    ! case default
+    !    DIE("unimplemented kind, "//trim(orb_kind))
 
       end
 
    end
 
-   expectation(X,with_cross_terms) result (res) :: PURE
+   expectation(X,with_cross_terms) result (res) ::: PURE
    ! Evaluates the expectation value of the matrix of the opmatrix X
    ! with the current density matrix
       self :: IN
@@ -1381,7 +1779,7 @@ contains
       select case (orb_kind)
 
       case ("r ")
-         if (op_kind=="r ") then
+         if(op_kind=="r ") then
             ENSURE(X.r.dim1==.n_bf,"(rhf) wrong size, X")
             res = .density_mx.r.trace_product_with(X.r)
          else
@@ -1391,7 +1789,7 @@ contains
          end
 
       case ("u ")
-         if (op_kind=="r ") then
+         if(op_kind=="r ") then
             ENSURE(X.r.dim1==.density_mx.a.dim1,"(uhf) wrong size, X")
             res = .density_mx.a.trace_product_with(X.r)
             res = .density_mx.b.trace_product_with(X.r) + res
@@ -1405,8 +1803,8 @@ contains
             end
          end
 
-   ! case default
-   !    DIE("unimplemented kind, "//trim(orb_kind))
+    ! case default
+    !    DIE("unimplemented kind, "//trim(orb_kind))
 
       end
 
@@ -1416,7 +1814,18 @@ contains
 !  Cluster generation routines
 !  ===========================
 
-   create_cluster :: leaky
+   destroy_cluster ::: leaky, PURE
+   ! Destroy a molecule created by the "create_cluster" routine, 
+   ! and recover the original molecule from .saved
+      self :: allocatable, INOUT
+
+   ENSURE(.saved.allocated,"no crystal data")
+
+      .SET:unsave
+
+   end
+
+   create_cluster ::: leaky
    ! Create a new "self" by generating a cluster from information
    ! stored in .cluster.  The original molecule replaced by the
    ! *cluster-fragent* and stored in .saved. The new molecule is
@@ -1436,7 +1845,7 @@ contains
 
       ! Finalize basis on new .atom list
       .atom_info_made = FALSE
-      .update_atom_basis_group_info
+      .BASE:update_atom_basis_group_info
       .crystal.update_fragment_info(.atom)
 
       ! Message
@@ -1445,7 +1854,7 @@ contains
       stdout.flush
 
       ! Save this molecule & get a clean new molecule
-      .save
+      .SET:save
 
       ! The name for the new cluster
       .name = trim(.saved.name) // "_cluster"
@@ -1471,21 +1880,10 @@ contains
       ! Finalize atom info
       if (.atom.allocated) .atom.destroy_bases
       .atom_info_made = FALSE
-      .update_atom_basis_group_info
+      .BASE:update_atom_basis_group_info
 
       ! Redo crystal.atoms
       .crystal.update_fragment_info(.atom)
-
-   end
-
-   destroy_cluster :: leaky, PURE
-   ! Destroy a molecule created by the "create_cluster" routine, 
-   ! and recover the original molecule from .saved
-      self :: allocatable, INOUT
-
-   ENSURE(.saved.allocated,"no crystal data")
-
-      .unsave
 
    end
 
@@ -1493,20 +1891,20 @@ contains
 !  Atoms and atom groups
 !  =====================
 
-   update_atom_basis_group_info :: leaky
+   update_atom_basis_group_info ::: leaky
    ! Update the atom labels, no of electrons, spin multiplicities,
    ! axis system, crystal fragment info, and bases; remove isosurface.
       self :: INOUT
 
-      .update_atom_and_basis_info_no_grp
+      .SET:update_atom_and_basis_info_no_grp
 
-      .update_atom_groups
+      .BASE:update_atom_groups
 
       .atom_info_made = TRUE
 
    end
 
-   update_atom_groups :: leaky
+   update_atom_groups ::: leaky
    ! Update the .atom_group information
       self :: INOUT
 
@@ -1518,21 +1916,21 @@ contains
          if (.crystal.use_Ryde_capping) then
             ! Ulf Ryde's capped residues
             ! WARNING: .atom_groups list only (parent) uncapped atoms
-            .set_Ryde_capped_groups ! NOT PURE
+            .BASE:set_Ryde_capped_groups ! NOT PURE
          else if (.atom_group.has_atom_indices) then
             ! User set atom_indices for each atom_group 
-            .set_atom_group_mols   ! NOT PURE
+            .BASE:set_atom_group_mols   ! NOT PURE
          else 
             ! Make .atom_group's from connection table
-            .set_connected_atom_groups
-            .set_atom_group_mols
+            .SET:set_connected_atom_groups
+            .BASE:set_atom_group_mols
          end
 
       end
 
    end
 
-   set_atom_group_mols :: leaky
+   set_atom_group_mols ::: leaky
    ! Make the ".atom_group.mol" molecules
       self :: INOUT
 
@@ -1554,18 +1952,18 @@ contains
       
          ! Create mol & define it
          ! ... including mol.crystal part
-         .set_molecule_from_atom_group(g,.mol(g)) ! NOT PURE
+         .SET:set_molecule_from_atom_group(g,.mol(g)) ! NOT PURE
       
          ! Read the MOs & make the density
          ! This won't work until Tonto can read in its own dump
-      ! if (.atom_group(g).MO_file_name/=" ") then
-      !     .mol(g).read_archive("MOs","r ")
-      !     .mol(g).make_SCF_density_mx
-      ! end
+       ! if (.atom_group(g).MO_file_name/=" ") then
+       !     .mol(g).READ:read_archive("MOs","r ")
+       !     .mol(g).BASE:make_SCF_density_mx
+       ! end
       
          ! Rotate and translate mol
          if (.atom_group(g).transform_group) then
-            .mol(g).rotate_by(.atom_group(g).rotation_mx)
+            .mol(g).BASE:rotate_by(.atom_group(g).rotation_mx)
             .mol(g).atom.translate_by(.atom_group(g).shift)
          end
          .mol(g).atom.set_group_to(g)
@@ -1575,11 +1973,11 @@ contains
 
       ! Update atom_group info from self
       ! ANOs done above already.
-      .update_group_crystal_and_ANOs(skip_ANOs=TRUE)
+      .SET:update_group_crystal_and_ANOs(skip_ANOs=TRUE)
 
    end
 
-   join_atom_groups :: leaky
+   join_atom_groups ::: leaky
    ! Delete any existing .atom and .basis and set to the concatenation
    ! of the molecules in .atom_group
       self :: target, INOUT
@@ -1630,15 +2028,15 @@ contains
       .basis.remove_repetitions
 
       ! Finally: set atom info & basis info (leaky)
-      .set_charge(charge)
-      .set_spin_multiplicity(unpaired_electrons + 1)
+      .SET:set_charge(charge)
+      .SET:set_spin_multiplicity(unpaired_electrons + 1)
 
       ! Finalise atom info
-      .update_atom_and_basis_info_no_grp
+      .SET:update_atom_and_basis_info_no_grp
 
    end
 
-   rotate_group(g,axis,angle) :: leaky
+   rotate_group(g,axis,angle) ::: leaky
    ! Rotate a group "g" of atoms in the molecule using a matrix defined by its
    ! rotation "axis" and the "angle" of rotation around that axis, which are all
    ! inputted on the command line. The rotation is performed on the coordinates
@@ -1661,7 +2059,7 @@ contains
       i,a :: INT
 
       ! Clean up different-geometry data
-      .delete_SCF_archives
+      .SET:delete_SCF_archives
 
       R.to_3x3_rotation_mx(axis,angle)
 
@@ -1679,18 +2077,18 @@ contains
       ENSURE(.density_mx.r.allocated,"group rotation for restricted DM only")
 
       ! Create molecule
-      mol.create
-      .set_molecule_from_atom_group(g,mol)
+      mol.SET:create
+      .SET:set_molecule_from_atom_group(g,mol)
 
       ! Rotate density
       P.create(mol.n_bf,mol.n_bf)
-      .put_group_density_to(P,g,mol)
-      mol.rotate_density_mx_r(P,R)
-      .set_group_density_from(P,g,mol)
+      .SET:put_group_density_to(P,g,mol)
+      mol.BASE:rotate_density_mx_r(P,R)
+      .SET:set_group_density_from(P,g,mol)
       P.destroy
 
       mol.atom.destroy_ptr_part ! do not destroy these
-      mol.destroy
+      mol.SET:destroy
 
       ! Write out the density matrix
       archive.set(.name,"density_mx",genre="r ")
@@ -1702,7 +2100,7 @@ contains
 !  Ryde fragment capping
 !  =====================
 
-   set_Ryde_capped_groups :: leaky
+   set_Ryde_capped_groups ::: leaky
    ! Make Ulf Ryde's atom capped groups
    ! The strategy is to make them from the compound_sequence_id's
    ! which are found in an mmCIF, normally ....
@@ -1737,12 +2135,12 @@ contains
       .atom_group.update(.atom)
 
       ! Destroy the group .mol s
-      if (.mol.allocated) deallocate(.mol)
+      deallocate(.mol)
       allocate(.mol(.atom_group.dim))
 
       ! Make Ryde's molecular caps ... in .mol(g)
       do g = 1,.atom_group.dim
-         .set_Ryde_cap_for_group(g)
+         .BASE:set_Ryde_cap_for_group(g)
       end
 
       ! Clear connections
@@ -1750,7 +2148,7 @@ contains
 
    end
 
-!   make_NN_capped_groups :: leaky
+!   make_NN_capped_groups ::: leaky
 !   ! Make atom capped groups for periodic network molecule.
 !      self :: INOUT
 !
@@ -1786,30 +2184,30 @@ contains
 !            ATOM:set_atomic_number_and_mass(.mol(a).atom(nc_atoms+1:),"H ")
 !            
 !            ! Set charge
-!            .mol(a).set_charge(.atom_group(a).charge)
+!            .mol(a).SET:set_charge(.atom_group(a).charge)
 !
 !            ! Make atom info; groups should not contain subgroups!
 !            .mol(a).atom_info_made = FALSE
 !            .mol(a).atom.set_group_to(a)
-!            .mol(a).update_atom_and_basis_info_no_grp ! no recursion
+!            .mol(a).SET:update_atom_and_basis_info_no_grp ! no recursion
 !
 !            ! Reset multiplicity? NOTE: reset no. of alpha & beta electrons
 !            if (.atom_group(a).spin_multiplicity_set) then
-!               .mol(a).set_spin_multiplicity(.atom_group(a).spin_multiplicity)
+!               .mol(a).SET:set_spin_multiplicity(.atom_group(a).spin_multiplicity)
 !            end
 !
 !            ! Set guess-type SCF defaults: no output
 !            ! Will reset SCF_kind based on multiplicity
-!            .mol(a).set_SCF_guess_defaults_from(.SCF_data)
+!            .mol(a).SET:set_SCF_guess_defaults_from(.SCF_data)
 !
 !            ! Set .name
 !            name = "group-"//trim(a.to_str)//"-"
 !            name = trim(name)//trim(.mol(a).atom.chemical_formula(with_spaces=FALSE))
-!            .mol(a).set_name(name)
+!            .mol(a).SET:set_name(name)
 !            .atom_group(a).set_name(name)
 !
 !            ! Assign basis set -- don't destroy!
-!            .mol(a).set_basis_name(.basis_name) ! NOT PURE
+!            .mol(a).SET:set_basis_name(.basis_name) ! NOT PURE
 !
 !            ! Copy the crystal -- destroy it!
 !            ! Make separate asymm unit with only mol in it later ...
@@ -1817,13 +2215,13 @@ contains
 !            ! mol.crystal.update_fragment_info(mol.atom)
 !               
 !            ! Don't remake ANO data if there
-!            .mol(a).resolve_ANOs_from(self)
+!            .mol(a).SET:resolve_ANOs_from(self)
 !         end
 !      end
 !
 !   end
 
-   set_Ryde_cap_for_group(g) :: leaky
+   set_Ryde_cap_for_group(g) ::: leaky
    ! Make a capped fragment for molecule "mol, the atom_group(g).mol
    ! with compound_sequence_id "g", ready for fragHAR calculation.
    ! *This routine will add extra atoms*.
@@ -1843,8 +2241,25 @@ contains
       .mol(g).atom = .atom(.atom_group(g).atom_index)
 
       ! Add cap atoms !!!!!!!!!!!!!!!
-      .add_Ryde_cap_for_group(g,.mol(g))
+      .BASE:add_Ryde_cap_for_group(g,.mol(g))
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+      ! Set charge
+      .mol(g).SET:set_charge(.atom_group(g).charge)
+
+      ! Make atom info; groups should not contain subgroups!
+      .mol(g).atom_info_made = FALSE
+      .mol(g).atom.set_group_to(g)
+      .mol(g).SET:update_atom_and_basis_info_no_grp ! no recursion
+
+      ! Reset multiplicity? NOTE: reset no. of alpha & beta electrons
+      if (.atom_group(g).spin_multiplicity_set) then
+         .mol(g).SET:set_spin_multiplicity(.atom_group(g).spin_multiplicity)
+      end
+
+      ! Set guess-type SCF defaults: no output
+      ! Will reset SCF_kind based on multiplicity
+      .mol(g).SET:set_SCF_guess_defaults_from(.SCF_data)
 
       ! Set .name
       name = .atom(.atom_group(g).atom_index(1)).id_compound_str
@@ -1852,44 +2267,25 @@ contains
          name = "group-"//trim(g.to_str)//"-"
          name = trim(name)//trim(.mol(g).atom.chemical_formula(with_spaces=FALSE))
       end
-      .mol(g).set_name(name)
+      .mol(g).SET:set_name(name)
       .atom_group(g).set_name(name)
 
       ! Assign basis set -- don't destroy!
-      .mol(g).set_basis_name(.basis_name) ! NOT PURE
-
-      ! Set charge
-      .mol(g).set_charge(.atom_group(g).charge)
-
-      ! Make atom info; groups should not contain subgroups!
-      .mol(g).atom_info_made = FALSE
-      .mol(g).atom.set_group_to(g)
-      .mol(g).update_atom_and_basis_info_no_grp ! no recursion
-      ! Is the above doing REDUNDANT basis resolution?
-
-      ! Reset multiplicity? NOTE: reset no. of alpha & beta electrons
-      if (.atom_group(g).spin_multiplicity_set) then
-         .mol(g).set_spin_multiplicity(.atom_group(g).spin_multiplicity)
-      end
-
-      ! Set guess-type SCF defaults: no output
-      ! Will reset SCF_kind based on multiplicity
-      .mol(g).set_SCF_guess_defaults_from(.SCF_data)
+      .mol(g).SET:set_basis_name(.basis_name) ! NOT PURE
 
       ! Copy the crystal -- destroy it!
       ! Make separate asymm unit with only mol in it later ...
       if (.crystal.allocated) then
          .mol(g).crystal = .crystal
-         .mol(g).crystal.set_minimal_copy(.crystal)
          .mol(g).crystal.update_fragment_info(.mol(g).atom)
       end
       
       ! Don't remake ANO data if there
-      .mol(g).resolve_ANOs_from(self)
+      .mol(g).SET:resolve_ANOs_from(self)
 
    end
 
-   add_Ryde_cap_for_group(g,mol) :: private, leaky, PURE
+   add_Ryde_cap_for_group(g,mol) ::: private, leaky, PURE
    ! Add Ryde' caps fragment for molecule the atom_group(g).mol with
    ! compound_sequence_id "g".
       self :: INOUT
@@ -1916,13 +2312,13 @@ contains
          if (g2==g) cycle
       
          ! No. of bonds to atom_group "g2"
-         n_bonds = .n_bonds_between_atom_groups(g,g2)
+         n_bonds = .INQ:n_bonds_between_atom_groups(g,g2)
       
          ! Any bonds to group "g2"?
          if (n_bonds<=0) cycle
       
          ! Cap each connected group
-         bonded_atom = .bonded_atoms_between_groups(g,g2)
+         bonded_atom = .INQ:bonded_atoms_between_groups(g,g2)
       
          do b = 1,n_bonds
       
@@ -1931,7 +2327,7 @@ contains
             bp = bonded_atom(2,b)
       
             ! Use them to start the Ryde cap
-            .add_Ryde_cap_from_atoms(ap,bp,mol)
+            .BASE:add_Ryde_cap_from_atoms(ap,bp,mol)
 
          end
       
@@ -1942,7 +2338,7 @@ contains
  
    end
 
-   add_Ryde_cap_from_atoms(ap,bp,mol) :: private, leaky, PURE
+   add_Ryde_cap_from_atoms(ap,bp,mol) ::: private, leaky, PURE
    ! Cap residue molecule "mol" starting from atom "ap" in that
    ! residue, which is connected to atom "bp" in another group.
    ! WARNING: This will add extra atoms to atom_group(g1).mol.atom 
@@ -2030,7 +2426,7 @@ contains
 !  Molecule rotation
 !  =================
 
-   rotate_by(R) :: PURE
+   rotate_by(R) ::: PURE
    ! Rotate the whole molecule using matrix "R" which specifies how
    ! positions in space are to be transformed i.e. x' = Rx.
       self :: INOUT
@@ -2042,12 +2438,12 @@ contains
       if (R.is_zero) return
 
       .atom.rotate_by(R)
-      .rotate_MOs(R)
-      .rotate_density_mx(R)
+      .BASE:rotate_MOs(R)
+      .BASE:rotate_density_mx(R)
 
    end
 
-   rotate_MOs(R) :: PURE
+   rotate_MOs(R) ::: PURE
    ! Rotate the molecular orbital matrix using matrix "R" which
    ! specifies how positions in space are to be transformed
    ! i.e. x' = Rx.
@@ -2066,17 +2462,17 @@ contains
       select case (genre)
 
       case("r ")
-         .rotate_MOs_r(.MOs.r,R)
+         .BASE:rotate_MOs_r(.MOs.r,R)
 
       case("u ")
-         .rotate_MOs_r(.MOs.a,R)
-         .rotate_MOs_r(.MOs.b,R)
+         .BASE:rotate_MOs_r(.MOs.a,R)
+         .BASE:rotate_MOs_r(.MOs.b,R)
 
       end
 
    end
 
-   rotate_MOs_r(MO,R) :: PURE
+   rotate_MOs_r(MO,R) ::: PURE
    ! Rotate a restricted molecular orbitals "MO" using matrix "R",
    ! where "R" specifies how positions in space are to be transformed
    ! i.e. x' = Rx.
@@ -2110,7 +2506,7 @@ contains
 
    end
 
-   rotate_density_mx(R) :: PURE
+   rotate_density_mx(R) ::: PURE
    ! Rotate the resricted density matrix using matrix "R" which
    ! specifies how positions in space are to be transformed
    ! i.e. x' = Rx.
@@ -2130,18 +2526,18 @@ contains
       select case (genre)
 
       case("r ")
-         .rotate_density_mx_r(.density_mx.r,R)
+         .BASE:rotate_density_mx_r(.density_mx.r,R)
 
       case("u ")
-         .rotate_density_mx_r(.density_mx.a,R)
-         .rotate_density_mx_r(.density_mx.b,R)
+         .BASE:rotate_density_mx_r(.density_mx.a,R)
+         .BASE:rotate_density_mx_r(.density_mx.b,R)
 
 
       end
 
    end
 
-   rotate_density_mx_r(P,R) :: PURE
+   rotate_density_mx_r(P,R) ::: PURE
    ! Rotate the density matrix "P" using matrix "R", where "R" specifies
    ! how positions in space are to be transformed i.e. x' = Rx.
       self :: IN
@@ -2179,7 +2575,7 @@ contains
 
    end
 
-   rotate_fock(R) :: PURE
+   rotate_fock(R) ::: PURE
    ! Rotate the molecular orbital matrix using matrix "R" which
    ! specifies how positions in space are to be transformed
    ! i.e. x' = Rx.
@@ -2198,17 +2594,17 @@ contains
       select case (genre)
 
       case("r ")
-         .rotate_fock_mx_r(.fock_mx.r,R)
+         .BASE:rotate_fock_mx_r(.fock_mx.r,R)
 
       case("u ")
-         .rotate_fock_mx_r(.fock_mx.a,R)
-         .rotate_fock_mx_r(.fock_mx.b,R)
+         .BASE:rotate_fock_mx_r(.fock_mx.a,R)
+         .BASE:rotate_fock_mx_r(.fock_mx.b,R)
 
       end
 
    end
 
-   rotate_fock_mx_r(G,R) :: PURE
+   rotate_fock_mx_r(G,R) ::: PURE
    ! Rotate the fock matrix "G" using matrix "R", where "R" specifies
    ! how positions in space are to be transformed i.e. x' = Rx.
    ! NOTE: THIOS IS WRONG ... SEE DM rotation!
@@ -2252,7 +2648,6 @@ contains
 
    shift_dependence_from(F)
    ! Level shift the linear dependence in "F"
-      self :: IN
       F :: OPMATRIX, INOUT
 
    ENSURE(.SCF_data.allocated,"no SCF_data")
@@ -2263,10 +2658,10 @@ contains
       s_kind = .SCF_data.spinorbital_genre
       select case (s_kind)
          case("rhf","rks","xray_rhf","xray_rks","rdvpt")
-            .shift_dependence_from_r(F.r)
+            .BASE:shift_dependence_from_r(F.r)
          case("uhf","uks","rohf","pnd_uhf","pnd_uks","xray_uhf","xray_uks","xray_pnd_uhf","xray_pnd_uks")
-            .shift_dependence_from_r(F.a)
-            .shift_dependence_from_r(F.b)
+            .BASE:shift_dependence_from_r(F.a)
+            .BASE:shift_dependence_from_r(F.b)
          case default
             ! Unimplemented !!!
       end
@@ -2278,7 +2673,6 @@ contains
    ! eigenvectors "evec" with small eigenvalue "eval".
    ! WARNING: this routine assumes eval's are ordered
    ! smallest to largest.
-      self :: IN
       F :: MAT{REAL}
 
    ENSURE(.SCF_data.allocated,"no SCF_data")
@@ -2299,7 +2693,7 @@ contains
 
    end
 
-   decouple_and_shift_r(F,evec,n,shift) :: selfless
+   decouple_and_shift_r(F,evec,n,shift) ::: selfless
    ! In "F", decouple the first "n" eigenvectors "evec" and shift them
    ! to eigenvalue "shift". NOTE: ensure "evec" is orthonormal.
       F :: MAT{REAL}
@@ -2344,17 +2738,17 @@ contains
       s_kind = .SCF_data.spinorbital_genre
       select case (s_kind)
          case("rhf","rks","xray_rhf","xray_rks","rdvpt")
-            .remove_dependence_from_r(F.r)
+            .BASE:remove_dependence_from_r(F.r)
          case("uhf","uks","rohf","pnd_uhf","pnd_uks","xray_uhf","xray_uks","xray_pnd_uhf","xray_pnd_uks")
-            .remove_dependence_from_r(F.a)
-            .remove_dependence_from_r(F.b)
+            .BASE:remove_dependence_from_r(F.a)
+            .BASE:remove_dependence_from_r(F.b)
          case default
             ! Unimplemented !!!
       end
 
    end
 
-   remove_dependence_from_r(F) :: PURE
+   remove_dependence_from_r(F) ::: PURE
    ! In "F", remove the linearly-dependent overlap eigenvectors.
       self :: INOUT
       F :: MAT{REAL}, INOUT
@@ -2389,7 +2783,7 @@ contains
 !  Natural orbitals
 !  ================
 
-   make_NOs(genre) :: leaky
+   make_NOs(genre) ::: leaky
    ! Make the natural orbitals from the density matrix
       self :: INOUT
       genre :: STR, optional, IN
@@ -2405,15 +2799,15 @@ contains
       end
 
       select case (orb_kind)
-      case ("r "); .make_r_NOs
-      case ("u "); .make_u_NOs
-      case ("gc"); .make_gc_NOs
+      case ("r "); .BASE:make_r_NOs
+      case ("u "); .BASE:make_u_NOs
+      case ("gc"); .BASE:make_gc_NOs
       case default; UNKNOWN(orb_kind)
       end
 
    end
 
-   make_r_NOs :: leaky
+   make_r_NOs ::: leaky
    ! Make the restricted natural orbitals from the density matrix
       self :: INOUT
 
@@ -2428,11 +2822,11 @@ contains
       .NO_occ_nos.create(.n_bf,"r ")
 
       ! Make the restricted NO's
-      .make_r_NOs(.NOs.r,.NO_occ_nos.r,.density_mx.r)
+      .BASE:make_r_NOs(.NOs.r,.NO_occ_nos.r,.density_mx.r)
 
    end
 
-   make_u_NOs :: leaky
+   make_u_NOs ::: leaky
    ! Make the unrestricted natural orbitals from the density matrix
       self :: INOUT
 
@@ -2448,12 +2842,12 @@ contains
       .NO_occ_nos.create(.n_bf,"u ")
 
       ! Make the unrestricted NO's
-      .make_r_NOs(.NOs.a,.NO_occ_nos.a,.density_mx.a)
-      .make_r_NOs(.NOs.b,.NO_occ_nos.b,.density_mx.b)
+      .BASE:make_r_NOs(.NOs.a,.NO_occ_nos.a,.density_mx.a)
+      .BASE:make_r_NOs(.NOs.b,.NO_occ_nos.b,.density_mx.b)
 
    end
 
-   make_gc_NOs :: leaky
+   make_gc_NOs ::: leaky
    ! Make the general natural orbitals and occupations from the
    ! complex density matrix.
       self :: INOUT
@@ -2475,7 +2869,7 @@ contains
       V.create(2*.n_bf,2*.n_bf)
       R.create(.n_bf,.n_bf)
 
-      .make_r_overlap_sqrt(R)
+      .BASE:make_r_overlap_sqrt(R)
 
       V = ZERO
       V.set_aa_block_to(R)
@@ -2489,7 +2883,7 @@ contains
       X.solve_hermitian_eigenproblem(.NO_occ_nos.g,V)
 
       R.create(.n_bf,.n_bf)
-      .make_r_overlap_inverse_sqrt(R)
+      .BASE:make_r_overlap_inverse_sqrt(R)
 
       X = ZERO
       X.set_aa_block_to(R)
@@ -2506,7 +2900,7 @@ contains
    end
 
 
-   make_E_NOs(genre) :: leaky
+   make_E_NOs(genre) ::: leaky
    ! Make the energy natural orbitals from the energy density matrix
       self :: INOUT
       genre :: STR, optional, IN
@@ -2522,15 +2916,15 @@ contains
       end
 
       select case (orb_kind)
-      case ("r "); .make_r_ENOs
-      case ("u "); .make_u_ENOs
-      case ("gc"); .make_gc_ENOs
+      case ("r "); .BASE:make_r_ENOs
+      case ("u "); .BASE:make_u_ENOs
+      case ("gc"); .BASE:make_gc_ENOs
       case default;  UNKNOWN(orb_kind)
       end
 
    end
 
-   make_r_ENOs :: leaky
+   make_r_ENOs ::: leaky
    ! Make the restricted energy natural orbitals from the energy density matrix
       self :: INOUT
 
@@ -2545,11 +2939,11 @@ contains
       .E_NOs.create(.n_bf,"r ")
 
       ! Make the restricted NO's
-      .make_r_NOs(.E_NOs.r,.E_NO_energies.r,.E_density_mx.r)
+      .BASE:make_r_NOs(.E_NOs.r,.E_NO_energies.r,.E_density_mx.r)
 
    end
 
-   make_u_ENOs :: leaky
+   make_u_ENOs ::: leaky
    ! Make the unrestricted energy natural orbitals from the energy density matrix
       self :: INOUT
 
@@ -2565,12 +2959,12 @@ contains
       .E_NOs.create(.n_bf,"u ")
 
       ! Make the unrestricted NO's
-      .make_r_NOs(.E_NOs.a,.E_NO_energies.a,.E_density_mx.a,reverse_order=FALSE)
-      .make_r_NOs(.E_NOs.b, .E_NO_energies.b, .E_density_mx.b, reverse_order=FALSE)
+      .BASE:make_r_NOs(.E_NOs.a,.E_NO_energies.a,.E_density_mx.a,reverse_order=FALSE)
+      .BASE:make_r_NOs(.E_NOs.b, .E_NO_energies.b, .E_density_mx.b, reverse_order=FALSE)
 
    end
 
-   make_gc_ENOs :: leaky
+   make_gc_ENOs ::: leaky
    ! Make the general energy natural orbitals and eigenvalues from the
    ! general complex energy density matrix.
       self :: INOUT
@@ -2591,7 +2985,7 @@ contains
 
       V.create(2*.n_bf,2*.n_bf)
       R.create(.n_bf,.n_bf)
-      .make_r_overlap_sqrt(R)
+      .BASE:make_r_overlap_sqrt(R)
 
       V = ZERO
       V.set_aa_block_to(R)
@@ -2604,7 +2998,7 @@ contains
       X.solve_hermitian_eigenproblem(.E_NO_energies.g,V)
 
       R.create(.n_bf,.n_bf)
-      .make_r_overlap_inverse_sqrt(R)
+      .BASE:make_r_overlap_inverse_sqrt(R)
 
       X = ZERO
       X.set_aa_block_to(R)
@@ -2636,14 +3030,14 @@ contains
       if (present(reverse_order)) reverse = reverse_order
 
       V.create(.n_bf,.n_bf)
-      .make_r_overlap_sqrt(V)
+      .BASE:make_r_overlap_sqrt(V)
 
       X.create(.n_bf,.n_bf)
 
       P.change_basis_to(X,V)
       X.solve_symmetric_eigenproblem(occupation,V)
 
-      .make_r_overlap_inverse_sqrt(X)
+      .BASE:make_r_overlap_inverse_sqrt(X)
 
       NO.to_product_of(X,V)
 
@@ -2657,10 +3051,9 @@ contains
 
    end
 
-   make_density_mx_from(NO,occupations,genre) :: leaky
+   make_density_mx_from(NO,occupations,genre) ::: leaky
    ! Make the density_mx from the natural orbitals and the
    ! occupation numbers.
-      self :: INOUT
       NO :: OPMATRIX, IN
       occupations :: OPVECTOR, IN
       genre :: STR, IN, optional
@@ -2679,38 +3072,38 @@ contains
       select case (genus)
 
       case ("r ")
-         ENSURE(NO.r.allocated,"no restricted NOs")
-         ENSURE(occupations.r.allocated,"no restricted occupations")
-         .density_mx.destroy
-         .density_mx.create(.n_bf,"r ")
-         Pr.create(.n_bf,.n_bf)
-         Pr.to_product_with_diagonal(NO.r,occupations.r)
-         .density_mx.r.to_product_of(Pr,NO.r,transpose_b=TRUE)
-         Pr.destroy
+          ENSURE(NO.r.allocated,"no restricted NOs")
+          ENSURE(occupations.r.allocated,"no restricted occupations")
+          .density_mx.destroy
+          .density_mx.create(.n_bf,"r ")
+          Pr.create(.n_bf,.n_bf)
+          Pr.to_product_with_diagonal(NO.r,occupations.r)
+          .density_mx.r.to_product_of(Pr,NO.r,transpose_b=TRUE)
+          Pr.destroy
 
       case ("u ")
-         ENSURE(NO.a.allocated,"no alpha NOs")
-         ENSURE(NO.b.allocated, "no beta NOs")
-         ENSURE(occupations.a.allocated,"no alpha occupations")
-         ENSURE(occupations.b.allocated, "no beta occupations")
-         .density_mx.destroy
-         .density_mx.create(.n_bf,"u ")
-         Pr.create(.n_bf,.n_bf)
-         Pr.to_product_with_diagonal(NO.a,occupations.a)
-         .density_mx.a.to_product_of(Pr,NO.a,transpose_b=TRUE)
-         Pr.to_product_with_diagonal(NO.b,occupations.b)
-         .density_mx.b.to_product_of(Pr,NO.b,transpose_b=TRUE)
-         Pr.destroy
+          ENSURE(NO.a.allocated,"no alpha NOs")
+          ENSURE(NO.b.allocated, "no beta NOs")
+          ENSURE(occupations.a.allocated,"no alpha occupations")
+          ENSURE(occupations.b.allocated, "no beta occupations")
+          .density_mx.destroy
+          .density_mx.create(.n_bf,"u ")
+          Pr.create(.n_bf,.n_bf)
+          Pr.to_product_with_diagonal(NO.a,occupations.a)
+          .density_mx.a.to_product_of(Pr,NO.a,transpose_b=TRUE)
+          Pr.to_product_with_diagonal(NO.b,occupations.b)
+          .density_mx.b.to_product_of(Pr,NO.b,transpose_b=TRUE)
+          Pr.destroy
 
       case default
-         UNKNOWN(genus)
+          UNKNOWN(genus)
 
       end
 
    end
 
 
-   make_density_mx_from_NOs :: leaky
+   make_density_mx_from_NOs ::: leaky
    ! Make the .density_mx from the *NOs* and the
    ! *NO_occ_nos* vector. Only restricted so far.
       self :: INOUT
@@ -2751,7 +3144,7 @@ contains
 
    end
 
-   make_DM_from_NOs(DM,NOs,occs) :: selfless, private, PURE
+   make_DM_from_NOs(DM,NOs,occs) ::: selfless, private, PURE
    ! Make the density mx "DM" from the "NOs" and their
    ! occupation numbers "occs".
       DM   :: MAT{REAL}, OUT
@@ -2780,9 +3173,8 @@ contains
 !  Overlap matrix sqrt
 !  ===================
 
-   make_r_overlap_sqrt(S_sqrt) :: leaky
+   make_r_overlap_sqrt(S_sqrt) ::: leaky
    ! Get "S_sqrt", the sqrt overlap matrix
-      self :: IN
       S_sqrt :: MAT{REAL}, OUT
 
    ENSURE(.overlap_mx_evecs.allocated,"no overlap_mx_evecs")
@@ -2801,7 +3193,7 @@ contains
 
    end
 
-   make_r_overlap_inverse_sqrt(S_inv) :: leaky, PURE
+   make_r_overlap_inverse_sqrt(S_inv) ::: leaky, PURE
    ! Get "S_inv", the inverse sqrt overlap matrix
       self  :: INOUT
       S_inv :: MAT{REAL}, OUT
@@ -2826,7 +3218,7 @@ contains
 !  Natural orbital assignment
 !  ==========================
 
-   assign_NOs_to_MOs :: leaky
+   assign_NOs_to_MOs ::: leaky
    ! Copy the natural orbitals to be the MOs.
    ! If the MO's are not there, try and read them from disk.
    ! The occupation numbers are the MO ones.
@@ -2860,7 +3252,7 @@ contains
          .NOs = .MOs
          .NO_occ_nos.create(.n_bf,genre)
          .NO_occ_nos.set_to_zero
-         .set_SCF_occupations_for_NOs(genre)
+         .SET:set_SCF_occupations_for_NOs(genre)
       end
 
       if (.atom_group.allocated) then
@@ -2875,7 +3267,7 @@ contains
             .mol(g).NOs = .mol(g).MOs
             .mol(g).NO_occ_nos.create(.mol(g).n_bf,genre)
             .mol(g).NO_occ_nos.set_to_zero
-            .mol(g).set_SCF_occupations_for_NOs(genre)
+            .mol(g).SET:set_SCF_occupations_for_NOs(genre)
 
          end
 
@@ -2884,7 +3276,7 @@ contains
 
    end
 
-   assign_MOs_to_NOs :: leaky
+   assign_MOs_to_NOs ::: leaky
    ! Copy the MOs to be the same as the natural orbitals
    ! The occupation numbers are the MO ones.
       self :: target, INOUT
@@ -2898,7 +3290,7 @@ contains
          .MOs = .NOs
          .NO_occ_nos.create(.n_bf,genre)
          .NO_occ_nos.set_to_zero
-         .set_SCF_occupations_for_NOs(genre)
+         .SET:set_SCF_occupations_for_NOs(genre)
       end
 
       if (.atom_group.allocated) then
@@ -2912,7 +3304,7 @@ contains
             .mol(g).MOs = .mol(g).NOs
             .mol(g).NO_occ_nos.create(.n_bf,genre)
             .mol(g).NO_occ_nos.set_to_zero
-            .mol(g).set_SCF_occupations_for_NOs(genre)
+            .mol(g).SET:set_SCF_occupations_for_NOs(genre)
 
          end
 
@@ -2939,22 +3331,22 @@ contains
 
       select case (itemkind)
       case ("r ")
-         .symmetrize(mat.r)
+         .BASE:symmetrize(mat.r)
       case ("u ")
-         .symmetrize(mat.a)
-         .symmetrize(mat.b)
+         .BASE:symmetrize(mat.a)
+         .BASE:symmetrize(mat.b)
       case ("gc")
-         .symmetrize(mat.gc.aa_block_ptr)
-         .symmetrize(mat.gc.bb_block_ptr)
-         .symmetrize(mat.gc.ab_block_ptr)
-         .symmetrize(mat.gc.ba_block_ptr)
-   ! case default;   DIE("unknown kind, "//trim(orb_kind))
+         .BASE:symmetrize(mat.gc.aa_block_ptr)
+         .BASE:symmetrize(mat.gc.bb_block_ptr)
+         .BASE:symmetrize(mat.gc.ab_block_ptr)
+         .BASE:symmetrize(mat.gc.ba_block_ptr)
+    ! case default;   DIE("unknown kind, "//trim(orb_kind))
       end
 
    end
 
 
-   symmetrize(mat) :: template, PURE
+   symmetrize(mat) ::: template, PURE
    ! Symmetrize a matrix
       self :: IN
       mat :: MAT{TYPE?}
@@ -2972,7 +3364,7 @@ contains
       image :: MAT{INT}@
 
       image.create(.n_shell, .pointgroup.order)
-      .make_pg_image_of_shell(image)
+      .BASE:make_pg_image_of_shell(image)
 
       sym.create(.n_bf,.n_bf)
       sym = ZERO
@@ -3017,15 +3409,15 @@ contains
 
    end
 
-   symmetrize(mat) :: get_from(symmetrize, TYPE?=>REAL)
+   symmetrize(mat) ::: get_from(symmetrize, TYPE?=>REAL)
    ! Symmetrize a matrix
    end
 
-   symmetrize(mat) :: get_from(symmetrize, TYPE?=>CPX)
+   symmetrize(mat) ::: get_from(symmetrize, TYPE?=>CPX)
    ! Symmetrize a matrix
    end
 
-   make_pg_image_of_shell(res) :: PURE
+   make_pg_image_of_shell(res) ::: PURE
    ! Return an array "res(a,n)" which is the image of shell "a" under
    ! pointgroup operation "n"
    ! Size of "res" is [.n_shell,.pointgroup.order]
@@ -3058,7 +3450,7 @@ contains
    end
 
 
-   symmetrize_DM_like_mx(DM) :: template, PURE
+   symmetrize_DM_like_mx(DM) ::: template, PURE
    ! Symmetrize a density matrix-like object "DM" using the crystal
    ! seitz operators. 
       self :: IN
@@ -3088,14 +3480,14 @@ contains
 
       ! Make image shell map
       image.create(.n_shell,.crystal.spacegroup.n_seitz)
-      .make_sg_image_of_shell(image)
+      .BASE:make_sg_image_of_shell(image)
 
       ! Rotated and accumulated SM coeffcients
       sym.create(.n_bf,.n_bf)
       sym = DM
 
-   ! stdout.text("DM:")
-   ! stdout.put(DM)
+    ! stdout.text("DM:")
+    ! stdout.put(DM)
       
       ! Counter for image-shell blocks
       imshcnt.create(.n_shell, .n_shell)
@@ -3103,44 +3495,44 @@ contains
 
       ! Zero lower-triangle symmetry-dependent blocks
       ! Reset image shell block counts
-   ! do a = 1,.n_shell
-   ! do b = 1,a
-   !    
-   !    atom_a = .atom_for_shell(a)
-   !    atom_b = .atom_for_shell(b)
+    ! do a = 1,.n_shell
+    ! do b = 1,a
+    !    
+    !    atom_a = .atom_for_shell(a)
+    !    atom_b = .atom_for_shell(b)
 
-   !    !  Unique atom block?
-   !    ua = any(atom_a==.crystal.unique_frag_atom) 
-   !    ub = any(atom_b==.crystal.unique_frag_atom) 
+    !    !  Unique atom block?
+    !    ua = any(atom_a==.crystal.unique_frag_atom) 
+    !    ub = any(atom_b==.crystal.unique_frag_atom) 
 
-   !    fa = .first_basis_fn_for_shell(a)
-   !    la = .last_basis_fn_for_shell(a)
-   !    fb = .first_basis_fn_for_shell(b)
-   !    lb = .last_basis_fn_for_shell(b)
-   !    
-   !    if (NOT ua AND NOT ub) then
-   !       ! Zero block: At least one of (a,b) is 
-   !       ! related to a unique fragment atom.
-   !       sym(fa:la,fb:lb) = ZERO
-   !       sym(fb:lb,fa:la) = ZERO
-   !    else
-   !       ! Count block & copy
-   !       imshcnt(a,b) = 1
-   !       imshcnt(b,a) = 1
-   !       sym(fa:la,fb:lb) = DM(fa:la,fb:lb)
-   !       sym(fb:lb,fa:la) = DM(fb:lb,fa:la)
-   !    end
+    !    fa = .first_basis_fn_for_shell(a)
+    !    la = .last_basis_fn_for_shell(a)
+    !    fb = .first_basis_fn_for_shell(b)
+    !    lb = .last_basis_fn_for_shell(b)
+    !    
+    !    if (NOT ua AND NOT ub) then
+    !       ! Zero block: At least one of (a,b) is 
+    !       ! related to a unique fragment atom.
+    !       sym(fa:la,fb:lb) = ZERO
+    !       sym(fb:lb,fa:la) = ZERO
+    !    else
+    !       ! Count block & copy
+    !       imshcnt(a,b) = 1
+    !       imshcnt(b,a) = 1
+    !       sym(fa:la,fb:lb) = DM(fa:la,fb:lb)
+    !       sym(fb:lb,fa:la) = DM(fb:lb,fa:la)
+    !    end
 
-   ! end
-   ! end
+    ! end
+    ! end
 
       ! Generate Symmetry-dependent blocks
       do a = 1,.n_shell
 
-      ! ! Only do unique (asym-atom-corresponding) frag atoms
-      ! atom_a = .atom_for_shell(a)
-      ! ua = any(atom_a==.crystal.unique_frag_atom)
-      ! if (NOT ua) cycle
+       ! ! Only do unique (asym-atom-corresponding) frag atoms
+       ! atom_a = .atom_for_shell(a)
+       ! ua = any(atom_a==.crystal.unique_frag_atom)
+       ! if (NOT ua) cycle
 
          fa = .first_basis_fn_for_shell(a)
          la = .last_basis_fn_for_shell(a)
@@ -3199,127 +3591,127 @@ contains
 
       ! Reset image shell block counts
       ! for symmetry-dependent blocks
-   ! imshcnt = 0
-   ! do a = 1,.n_shell
+    ! imshcnt = 0
+    ! do a = 1,.n_shell
 
-   !    atom_a = .atom_for_shell(a)
-   !    ua = any(atom_a==.crystal.unique_frag_atom) 
-   !    fa = .first_basis_fn_for_shell(a)
-   !    la = .last_basis_fn_for_shell(a)
+    !    atom_a = .atom_for_shell(a)
+    !    ua = any(atom_a==.crystal.unique_frag_atom) 
+    !    fa = .first_basis_fn_for_shell(a)
+    !    la = .last_basis_fn_for_shell(a)
 
-   !    do b = 1,a
-   !    
-   !       atom_b = .atom_for_shell(b)
-   !       ub = any(atom_b==.crystal.unique_frag_atom) 
-   !       fb = .first_basis_fn_for_shell(b)
-   !       lb = .last_basis_fn_for_shell(b)
-   !      
-   !       !  Unique atom block?
-   !       if (NOT ua AND NOT ub) then
-   !       if (imshcnt(a,b)==0) then
-   !          ! Do block this time
-   !          imshcnt(a,b) = 1
-   !          imshcnt(b,a) = 1
-   !          sym(fa:la,fb:lb) = DM(fa:la,fb:lb)
-   !          sym(fb:lb,fa:la) = DM(fb:lb,fa:la)
-   !       end
-   !       end
+    !    do b = 1,a
+    !    
+    !       atom_b = .atom_for_shell(b)
+    !       ub = any(atom_b==.crystal.unique_frag_atom) 
+    !       fb = .first_basis_fn_for_shell(b)
+    !       lb = .last_basis_fn_for_shell(b)
+    !      
+    !       !  Unique atom block?
+    !       if (NOT ua AND NOT ub) then
+    !       if (imshcnt(a,b)==0) then
+    !          ! Do block this time
+    !          imshcnt(a,b) = 1
+    !          imshcnt(b,a) = 1
+    !          sym(fa:la,fb:lb) = DM(fa:la,fb:lb)
+    !          sym(fb:lb,fa:la) = DM(fb:lb,fa:la)
+    !       end
+    !       end
 
-   !    end
+    !    end
 
-   ! end
+    ! end
 
-   ! ! Symmetrise dependent blocks amonst only themselves
-   ! ! This is not ideal: we probably want to copy out from
-   ! ! the unique blocks. Maybe fiddle with the image array?
-   ! do a = 1,.n_shell
+    ! ! Symmetrise dependent blocks amonst only themselves
+    ! ! This is not ideal: we probably want to copy out from
+    ! ! the unique blocks. Maybe fiddle with the image array?
+    ! do a = 1,.n_shell
 
-   !    ! Only do unique (asym-atom-corresponding) frag atoms
-   !    atom_a = .atom_for_shell(a)
-   !    ua = any(atom_a==.crystal.unique_frag_atom)
-   !    if (ua) cycle
+    !    ! Only do unique (asym-atom-corresponding) frag atoms
+    !    atom_a = .atom_for_shell(a)
+    !    ua = any(atom_a==.crystal.unique_frag_atom)
+    !    if (ua) cycle
 
-   !    fa = .first_basis_fn_for_shell(a)
-   !    la = .last_basis_fn_for_shell(a)
-   !    ma = .angular_moment_for_shell(a)
+    !    fa = .first_basis_fn_for_shell(a)
+    !    la = .last_basis_fn_for_shell(a)
+    !    ma = .angular_moment_for_shell(a)
 
-   !    do b = 1,a
+    !    do b = 1,a
 
-   !       atom_b = .atom_for_shell(b)
-   !       ub = any(atom_b==.crystal.unique_frag_atom)
-   !       if (ub) cycle
+    !       atom_b = .atom_for_shell(b)
+    !       ub = any(atom_b==.crystal.unique_frag_atom)
+    !       if (ub) cycle
 
-   !       ! Do any atom for shell b
-   !       fb = .first_basis_fn_for_shell(b)
-   !       lb = .last_basis_fn_for_shell(b)
-   !       mb = .angular_moment_for_shell(b)
+    !       ! Do any atom for shell b
+    !       fb = .first_basis_fn_for_shell(b)
+    !       lb = .last_basis_fn_for_shell(b)
+    !       mb = .angular_moment_for_shell(b)
 
-   !       do g = 2,.crystal.spacegroup.n_seitz
+    !       do g = 2,.crystal.spacegroup.n_seitz
 
-   !          i = image(a,g)
-   !          j = image(b,g)
+    !          i = image(a,g)
+    !          j = image(b,g)
 
-   !          if (i==0 OR j==0) cycle
+    !          if (i==0 OR j==0) cycle
 
-   !          !  Unique image atom block?
-   !          atom_i = .atom_for_shell(i)
-   !          atom_j = .atom_for_shell(j)
+    !          !  Unique image atom block?
+    !          atom_i = .atom_for_shell(i)
+    !          atom_j = .atom_for_shell(j)
 
-   !          ui = any(atom_i==.crystal.unique_frag_atom) 
-   !          uj = any(atom_j==.crystal.unique_frag_atom) 
+    !          ui = any(atom_i==.crystal.unique_frag_atom) 
+    !          uj = any(atom_j==.crystal.unique_frag_atom) 
 
-   !          if (NOT ui AND NOT uj) then
+    !          if (NOT ui AND NOT uj) then
 
-   !             fi = .first_basis_fn_for_shell(i)
-   !             li =  .last_basis_fn_for_shell(i)
-   !             fj = .first_basis_fn_for_shell(j)
-   !             lj =  .last_basis_fn_for_shell(j)
-   !            
-   !             GAUSSIAN_DATA:make_gaussian_xyz_matrices(tr,symops(:,:,g))
-   !            
-   !             tra = tr(ma)[:,:]
-   !             trb = transpose(tr(mb)[:,:])
-   !             blk = matmul( matmul(tra,DM(fa:la,fb:lb)), trb)
-   !            
-   !             sym(fi:li,fj:lj) = sym(fi:li,fj:lj) + blk
-   !             sym(fj:lj,fi:li) = sym(fj:lj,fi:li) + transpose(blk)
-   !            
-   !             imshcnt(i,j) = imshcnt(i,j) + 1
-   !             imshcnt(j,i) = imshcnt(j,i) + 1
-   !            
-   !             tr.destroy
+    !             fi = .first_basis_fn_for_shell(i)
+    !             li =  .last_basis_fn_for_shell(i)
+    !             fj = .first_basis_fn_for_shell(j)
+    !             lj =  .last_basis_fn_for_shell(j)
+    !            
+    !             GAUSSIAN_DATA:make_gaussian_xyz_matrices(tr,symops(:,:,g))
+    !            
+    !             tra = tr(ma)[:,:]
+    !             trb = transpose(tr(mb)[:,:])
+    !             blk = matmul( matmul(tra,DM(fa:la,fb:lb)), trb)
+    !            
+    !             sym(fi:li,fj:lj) = sym(fi:li,fj:lj) + blk
+    !             sym(fj:lj,fi:li) = sym(fj:lj,fi:li) + transpose(blk)
+    !            
+    !             imshcnt(i,j) = imshcnt(i,j) + 1
+    !             imshcnt(j,i) = imshcnt(j,i) + 1
+    !            
+    !             tr.destroy
 
-   !          end
+    !          end
 
-   !       end
+    !       end
 
-   !    end
+    !    end
 
-   ! end
+    ! end
 
-   ! ! Divide unique blocks by symmetrisation factors
-   ! do a = 1,.n_shell
-   !    atom_a = .atom_for_shell(a)
-   !    ua = any(atom_a==.crystal.unique_frag_atom) 
-   !    fa = .first_basis_fn_for_shell(a)
-   !    la = .last_basis_fn_for_shell(a)
-   !    do b = 1,.n_shell
-   !       atom_b = .atom_for_shell(b)
-   !       ub = any(atom_b==.crystal.unique_frag_atom) 
-   !       fb = .first_basis_fn_for_shell(b)
-   !       lb = .last_basis_fn_for_shell(b)
-   !       if (NOT ua AND NOT ub) then
-   !       if (imshcnt(a,b)>0) then
-   !          sym(fa:la,fb:lb) = sym(fa:la,fb:lb)/imshcnt(a,b)
-   !       end
-   !       end
-   !    end
-   ! end
+    ! ! Divide unique blocks by symmetrisation factors
+    ! do a = 1,.n_shell
+    !    atom_a = .atom_for_shell(a)
+    !    ua = any(atom_a==.crystal.unique_frag_atom) 
+    !    fa = .first_basis_fn_for_shell(a)
+    !    la = .last_basis_fn_for_shell(a)
+    !    do b = 1,.n_shell
+    !       atom_b = .atom_for_shell(b)
+    !       ub = any(atom_b==.crystal.unique_frag_atom) 
+    !       fb = .first_basis_fn_for_shell(b)
+    !       lb = .last_basis_fn_for_shell(b)
+    !       if (NOT ua AND NOT ub) then
+    !       if (imshcnt(a,b)>0) then
+    !          sym(fa:la,fb:lb) = sym(fa:la,fb:lb)/imshcnt(a,b)
+    !       end
+    !       end
+    !    end
+    ! end
 
       DM = sym
 
-   ! stdout.text("DM 2:")
-   ! stdout.put(DM)
+    ! stdout.text("DM 2:")
+    ! stdout.put(DM)
 
       ! Clean
       sym.destroy
@@ -3329,18 +3721,18 @@ contains
 
    end
 
-   symmetrize_DM_like_mx(DM) :: get_from(symmetrize_DM_like_mx, TYPE?=>REAL), PURE
+   symmetrize_DM_like_mx(DM) ::: get_from(symmetrize_DM_like_mx, TYPE?=>REAL), PURE
    ! Symmetrize a density matrix-like object "DM" using the crystal
    ! seitz operators. 
    end
 
-   symmetrize_DM_like_mx(DM) :: get_from(symmetrize_DM_like_mx, TYPE?=>CPX), PURE
+   symmetrize_DM_like_mx(DM) ::: get_from(symmetrize_DM_like_mx, TYPE?=>CPX), PURE
    ! Symmetrize a density matrix-like object "DM" using the crystal
    ! seitz operators. 
    end
 
 
-   make_sg_image_of_shell(res) :: PURE
+   make_sg_image_of_shell(res) ::: PURE
    ! Return an array "res(s,g)" which is the image of shell "s" under
    ! *spacegroup* operation "g" ignoring whole cell translations.
    ! Size of "res" is [.n_shell,.crystal.spacegroup.n_seitz]
@@ -3383,7 +3775,7 @@ contains
    end
 
 
-   stabilize(mat) :: template, PURE
+   stabilize(mat) ::: template, PURE
    ! Stabilize a matrix
       self :: IN
       mat :: MAT{TYPE?}, INOUT
@@ -3402,7 +3794,7 @@ contains
       image :: MAT{INT}@
 
       image.create(.n_shell,.crystal.n_stabilizer_symops)
-      .make_image_of_stabilizer(image)
+      .BASE:make_image_of_stabilizer(image)
 
       sym.create(.n_bf,.n_bf)
       sym = ZERO
@@ -3449,15 +3841,15 @@ contains
 
    end
 
-   stabilize(mat) :: get_from(stabilize, TYPE?=>REAL), PURE
+   stabilize(mat) ::: get_from(stabilize, TYPE?=>REAL), PURE
    ! Stabilize a matrix
    end
 
-   stabilize(mat) :: get_from(stabilize, TYPE?=>CPX), PURE
+   stabilize(mat) ::: get_from(stabilize, TYPE?=>CPX), PURE
    ! Stabilize a matrix
    end
 
-   make_image_of_stabilizer(res) :: PURE
+   make_image_of_stabilizer(res) ::: PURE
    ! Return an array "res(a,n)" which is the image of shell "a" under
    ! a crystal stabilizer operation "n"
    ! Size of "res" is [.n_shell,.pointgroup.order]
