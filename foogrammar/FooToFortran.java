@@ -1358,6 +1358,38 @@ public final class FooToFortran {
      *  emitter (so the batch driver can read its module name + `use` edges for the
      *  cycle check). Uses the shared (pre-built) registries; behaviour is identical
      *  whether called once or as part of a --foo-dir batch. */
+    /** Write a Make-format depfile beside the .F90, naming every extra .foo this
+     *  translation read (its get_from donors). CMake consumes it via DEPFILE on the
+     *  add_custom_command, so editing a donor now rebuilds its heirs.
+     *
+     *  Why this is needed: each translation's DEPENDS lists only its own .foo,
+     *  types.foo and the translator. Donors are inlined at translation time and are
+     *  not in FOO_SRC, so they have no dependency edge -- editing one rebuilt
+     *  nothing and you silently tested a stale binary. That is how a working
+     *  MPI_BARRIER fix came to be disabled unnoticed in 2021, and it invalidated a
+     *  barrier experiment here on 2026-08-02 before being spotted.
+     *
+     *  NOTE the global tables (buildGlobalTable and friends) scan EVERY .foo in
+     *  foofiles/, so in principle every output depends on every input. That is not
+     *  encoded here: doing so would make every edit a full rebuild, which is what
+     *  editing types.foo already costs. Donors are the case that silently produces
+     *  WRONG results; the global-table dependency only risks a stale name-resolution
+     *  detail. See DEFERRED.md. */
+    static void writeDepFile(Path outDir, String name, Path fooPath, java.util.Set<Path> deps)
+            throws IOException {
+        Path target = outDir.resolve(outStem(name) + ".F90").toAbsolutePath().normalize();
+        StringBuilder d = new StringBuilder();
+        d.append(target).append(':');
+        d.append(' ').append(fooPath.toAbsolutePath().normalize());
+        for (Path dep : deps) {
+            if (dep.equals(fooPath.toAbsolutePath().normalize())) continue;
+            d.append(" \\\n    ").append(dep);
+        }
+        d.append('\n');
+        Files.writeString(outDir.resolve(outStem(name) + ".F90.d"), d.toString(),
+                          StandardCharsets.UTF_8);
+    }
+
     static ModuleEmitter translateOne(Path fooPath, Path outDir, TypeTable types, Path foofilesDir,
                              Map<String, String[]> globals,
                              Map<String, Map<String, Set<String>>> subMethods,
@@ -1391,6 +1423,7 @@ public final class FooToFortran {
         Files.writeString(outDir.resolve(outStem(name) + ".F90"), em.f90.toString(), StandardCharsets.UTF_8);
         Files.writeString(outDir.resolve(braceStem(name) + ".int"), em.intf.toString(), StandardCharsets.UTF_8);
         Files.writeString(outDir.resolve(braceStem(name) + ".use"), em.use.toString(), StandardCharsets.UTF_8);
+        writeDepFile(outDir, name, fooPath, em.readPaths);
         return em;
     }
 
@@ -1514,6 +1547,14 @@ public final class FooToFortran {
         final Set<String> selflessGlobal;   // selfless proc names across all foofiles
         // fortran module -> proc names selfless in ALL overloads there (module-aware)
         final Map<String, Set<String>> selflessByMod;
+
+        /** Every .foo file this translation actually READ beyond its own source:
+         *  the get_from donors resolved on demand by loadModule(). Written out as a
+         *  Make depfile so the build knows about them -- without this, editing a
+         *  donor rebuilds NOTHING, because a donor is not in FOO_SRC and so has no
+         *  dependency edge of its own. foofiles/parallel.foo (the entire MPI layer,
+         *  9865 lines) is the worst case: it generates no .F90 at all. */
+        final java.util.Set<Path> readPaths = new java.util.LinkedHashSet<>();
 
         ModuleEmitter(TypeTable types, Parsed main, Path fooPath, Path foofilesDir,
                       Map<String, String[]> globals, Map<String, Map<String, Set<String>>> subMethods,
@@ -2128,7 +2169,11 @@ public final class FooToFortran {
             // file head is the lower-cased type name, e.g. OBJECT -> object.foo
             String file = fooModule.toLowerCase(Locale.ROOT);
             Parsed p = parentCache.get(file);
-            if (p == null) { p = parseFile(foofilesDir.resolve(file + ".foo")); parentCache.put(file, p); }
+            if (p == null) {
+                Path dp = foofilesDir.resolve(file + ".foo");
+                readPaths.add(dp.toAbsolutePath().normalize());
+                p = parseFile(dp); parentCache.put(file, p);
+            }
             return p;
         }
 

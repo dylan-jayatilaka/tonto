@@ -761,6 +761,17 @@ foreach(foopath ${SRC})
             --foo \"${foopath}\"
             --out-dir \"${CMAKE_CURRENT_BINARY_DIR}\"
             DEPENDS ${foopath} ${FOO_TYPES_FILE} ${ANTLR4_TRANSLATOR_STAMP}
+            # DEPFILE picks up the get_from DONORS this file inlines, which the
+            # DEPENDS list above cannot know. A donor is not in FOO_SRC and emits
+            # no .F90 of its own, so without this it has NO dependency edge at all:
+            # editing it rebuilds nothing and you silently test a stale binary.
+            # foofiles/parallel.foo is the worst case -- the entire MPI layer, 9865
+            # lines, inlined into SYSTEM. That trap is how a working MPI_BARRIER fix
+            # came to be switched off unnoticed in 2021, and it invalidated an
+            # experiment here on 2026-08-02 before being caught. The translator
+            # writes <stem>.F90.d listing exactly what it read. Needs CMake >= 3.20
+            # for the Makefile generators (we require 3.20 at the top).
+            DEPFILE ${CMAKE_CURRENT_BINARY_DIR}/${F90file}.d
         )
     endif()
 endforeach(foopath)
