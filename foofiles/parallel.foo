@@ -298,6 +298,42 @@ contains
 
    end
 
+   reduction_is_allowed(name) result (res) :: pure
+   ! Return TRUE if a reduction may run here -- i.e. exactly .do_in_parallel --
+   ! and under USE_PRECONDITIONS ABORT if it may not *because a parallel-do lock
+   ! is held*. "name" is the macro's name, for the message.
+   !
+   ! Why this exists. Every reduction macro is gated on DO_IN_PARALLEL, which is
+   ! false while a `parallel do` holds the lock. So a PARALLEL_SUM written
+   ! inside a loop body is not a reduction that runs late or twice -- it is DEAD
+   ! CODE THAT LOOKS CORRECT. Four such sites in molecule.grid.foo each returned
+   ! 1/n_ranks of the answer, silently, for years.
+   !
+   ! The intent -- "MPI on the outside", no interior collectives -- is right.
+   ! Skipping the reduction is the CORRECT response, because inside the loop the
+   ! work is serial per rank and there is nothing to combine. What was missing is
+   ! that the programmer is never told. This says so, loudly, in any build with
+   ! preconditions on.
+   !
+   ! Debug-only by construction: ENSURE compiles to a comment without
+   ! USE_PRECONDITIONS, so an optimised build behaves exactly as before and pays
+   ! nothing. `pure` is safe for the same reason -- wherever ENSURE is live, PURE
+   ! has been #undef'd (macros.in).
+   !
+   ! Static counterpart: scripts/check_parallel_lint.py finds these lexically,
+   ! without running anything. This catches what the lint's heuristics miss --
+   ! a reduction reached through a CALL from inside a parallel do, which no
+   ! source-text scan can see.
+      self :: IN
+      name :: STR, IN
+      res :: BIN
+
+      res = .do_in_parallel
+
+   ENSURE(res OR NOT .is_parallel,trim(name)//" is inside a `parallel do`: the reduction is SKIPPED there, so it is dead code. Move it after the loop -- see DEFERRED.md, milestone 6.")
+
+   end
+
    lock_parallel_do(name) :: pure
    ! Sets the parallel do-loop lock to the "name" of the locking routine.
    ! Only the routine with the same "name" may unlock the loop. WARNING: This

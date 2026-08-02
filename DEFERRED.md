@@ -1203,6 +1203,78 @@ components of other derived types), and every `use TYPES_MODULE` site plus the t
 `.use`-file generation must follow. Check whether the translator can emit the split
 automatically from one `types.foo` rather than requiring the source be broken up by hand.
 
+## Milestone 6, partial: the suppressed-reduction abort and the parallel lint (2026-08-02)
+
+Two of milestone 6's four parts are done. Both are cheap, independent of the grammar work, and
+together they would have caught **every** MPI defect found on 2026-08-02, including one I
+introduced myself.
+
+**1. Abort on a suppressed reduction.** The reduction macros now call
+`SYSTEM:reduction_is_allowed(name)` (from `parallel.foo`) instead of testing `DO_IN_PARALLEL`
+inline. It returns the same value, and under `USE_PRECONDITIONS` `ENSURE`s that a FALSE result
+is not caused by a parallel-do lock:
+
+```foo
+res = .do_in_parallel
+ENSURE(res OR NOT .is_parallel, trim(name)//" is inside a `parallel do`: the reduction is
+                                 SKIPPED there, so it is dead code ...")
+```
+
+A function rather than an `if/then/else` in the macro deliberately: the macro keeps its
+single-statement `if (...) call ...` shape, so an existing `if (cond) PARALLEL_SUM(x)` call site
+cannot break. Debug-only by construction — `ENSURE` compiles to a comment without
+`USE_PRECONDITIONS`, so optimised builds behave exactly as before and pay nothing. `pure` is
+safe for the same reason: wherever `ENSURE` is live, `PURE` has been `#undef`'d.
+
+**NOT YET EXERCISED.** In a non-MPI build the reduction macros expand to nothing, so
+`reduction_is_allowed` is compiled but never called. It is inert in every serial run, which
+means the serial suites can neither break it nor validate it. **The first debug MPI build is
+what tests it** — and if it fires, that is a finding, not a bug in the check.
+
+**2. `scripts/check_parallel_lint.py`**, registered as `ctest` test `parallel_lint` (label
+`short`, so in CI) and as an invariant line in `make report`. Two checks:
+
+- **no collective inside a `parallel do` body** — reductions are silently skipped there;
+  broadcasts and barriers execute but a different number of times per rank and hang.
+- **no raw `write`/`read` on a `.unit`** outside `file.foo`/`textfile.foo`/`buffer.foo`.
+
+It is **guard-aware**: a site inside `if (IO_IS_ALLOWED)` or `if (... is_master_processor ...)`,
+block or one-liner, is not reported. Without that it flagged 48 already-correct sites, and a
+lint that cries wolf gets ignored. Self-tested against a synthetic file containing one violation
+of each kind plus two correctly-guarded writes: it reports exactly the two violations.
+
+Current state: **clean** — 184 files, 74 `parallel do` loops, no interior collectives, no
+unguarded raw `.unit` I/O.
+
+The two checks are complementary and neither subsumes the other. The lint is static and sees
+only what is lexically inside a loop; the abort is dynamic and catches a reduction reached
+through a **call** from inside a parallel do, which no source scan can find.
+
+**Still open in milestone 6:** `parallel do … reduce(x)` (grammar + translator), and
+depth-counting the parallel-do lock so a recursive inner return cannot release an outer lock
+(restoring the `ENSURE` at `parallel.foo:308`).
+
+## The MPI CI has never passed
+
+Checked 2026-08-02 via the public GitHub API (`/actions/workflows/ci-mpi.yml/runs`): runs 1–4 all
+concluded **failure**, at four different commits, three of them predating that day's work. Every
+failure is the same step — **"MPI invariant — pi is rank-count independent (GATING)"**. Every
+step before it passes: toolchain verified as gfortran-14, Open MPI built, configure and build
+clean, binary asserted MPI-linked.
+
+So `run_mpi_pi` — one `parallel do`, one `PARALLEL_SUM`, an answer known in advance — gives a
+different π at 1, 2 and 4 ranks. That is precisely the failure the check was written to catch,
+and it means **something in the reduction path is still wrong**, independent of everything fixed
+on 2026-08-02.
+
+This is the highest-value thread to pull next, because it is small, self-contained, has a known
+right answer, and needs no science to interpret.
+
+**Note on tooling:** the run *status* and the *step list* are readable from the public API
+without credentials, so the failing step can be identified from here. The **logs are not**
+(`/actions/jobs/{id}/logs` returns 403 without auth), so the actual π values are not visible
+that way. Either read them in the browser, or `gh run view <id> --log-failed`.
+
 ## Deferred: prune dead and stale macros in `include/macros.in`
 
 **Audited 2026-07-29.** Of **377** macros defined, **145 are never used in any `.foo` file**.

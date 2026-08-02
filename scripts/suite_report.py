@@ -296,6 +296,12 @@ def main():
         checks.append(('library routines must not touch stdin',
                        os.path.join(here, 'check_library_stdin.py'),
                        [os.path.join(os.path.dirname(here), 'foofiles')]))
+        # Also source-level: no collective inside a `parallel do` body, and no
+        # raw .unit I/O reaching around the IO_IS_ALLOWED guard. Both are
+        # invisible in a serial run, which is why a lint and not a test.
+        checks.append(('MPI: no interior collectives, no raw .unit I/O',
+                       os.path.join(here, 'check_parallel_lint.py'),
+                       [os.path.join(os.path.dirname(here), 'foofiles')]))
         print('')
         print('INVARIANT CHECKS (no reference output involved)')
         print('_' * 95 + '\n')

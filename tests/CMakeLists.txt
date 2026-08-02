@@ -141,6 +141,27 @@ add_test(NAME "library_stdin"
             ${PROJECT_SOURCE_DIR}/foofiles)
 set_tests_properties("library_stdin" PROPERTIES LABELS "short")
 
+# Invariant test -- no reference output involved.
+#
+# Two MPI hazards that inspection cannot find, both from milestone 4:
+#   . a collective inside a `parallel do` body. LOCK_PARALLEL_DO is the first
+#     statement in the loop and DO_IN_PARALLEL is false while it is held, so a
+#     PARALLEL_SUM there is dead code that looks correct -- four sites in
+#     molecule.grid.foo each returned 1/n_ranks of the answer. A broadcast or
+#     barrier there is worse: it executes, but a different number of times per
+#     rank, so the job hangs.
+#   . a raw write/read on a `.unit` outside file/textfile/buffer, reaching
+#     around the IO_IS_ALLOWED guard. The loud version crashed
+#     DWGN_lamaGOET_NBO_file_47; the silent version interleaves output from
+#     every rank via preconnected unit 6.
+# Source-level and instant; no build and no MPI needed, which is the point --
+# these are invisible in the serial runs everyone actually does.
+add_test(NAME "parallel_lint"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_parallel_lint.py
+            ${PROJECT_SOURCE_DIR}/foofiles)
+set_tests_properties("parallel_lint" PROPERTIES LABELS "short")
+
 # Grouped per-suite agreement report.
 #
 # `ctest` gives a flat pass/fail list and hides each test's stdout (the concise
