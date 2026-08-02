@@ -770,9 +770,6 @@ contains
 
       list      :: VEC{STR}@
       tags      :: VEC{STR}@
-      labels    :: VEC{STR}@
-      refine_U3 :: VEC{STR}@
-      refine_U4 :: VEC{STR}@
       sf_d :: MAT{CPX}@
       sf_u :: VEC{CPX}@
       sf_e :: VEC{CPX}@
@@ -818,26 +815,6 @@ contains
 
       ! Make sure HA stuff is there
       .make_atom_partition_info
-
-      ! Create refinement arrays & initialize (leaky)
-      ! - asymmetric atom and fragment atom pADPs are set.
-      ! Create space for asymmetric unit atom pADPs (leaky)
-      refine_U3 = .crystal.xray_data.refine_3rd_order_for_atom
-      refine_U4 = .crystal.xray_data.refine_4th_order_for_atom
-      .crystal.asymmetric_unit_atom.reset_pADPs_and_errors(refine_U3,refine_U4)
-
-      ! Create space for the fragment_atom pADPs (leaky)
-      do f = 1,.crystal.n_fragment_atoms
-         a = .crystal.asym_atom_for_frag_atom(f)
-         n_p_atom = .crystal.asymmetric_unit_atom(a).no_of_pADPs
-         .crystal.fragment_atom(f).reset_pADPs_and_errors(n_p_atom)
-      end
-
-      ! Set fragment_atom pADPs from asymmetric unit atom pADPs
-      .crystal.set_frag_from_asym_pADPs 
-
-      ! Get labels (leaky)
-      labels = .crystal.asymmetric_unit_atom.tag_pADP_labels
 
       ! Is there a nothing list?
       has_skip = .crystal.xray_data.refine_nothing_for_atom.allocated
@@ -889,21 +866,30 @@ contains
       end
       end
 
-      ! Sanity check
-      ! Create refinement arrays & initialize (leaky)
+      ! Initialise the fit.
       !
-      ! NOTE: this runs once per LS ITERATION, because make_LS_mx is called
-      ! inside the loop in LS_fit_HAs_disk, and initialize_fit_data re-creates
-      ! X_fit / X_fit0 and resets chi2_fit0 to huge(). That is very probably why
-      ! the fit re-takes its first step forever instead of converging. The loop
-      ! that works calls it ONCE before the loop (CRYSTAL:LS_structure_fit, via
-      ! crystal.foo:4272). Moving it was tried on 2026-08-02 and CRASHED -- see
-      ! DEFERRED.md; it needs the surrounding preamble moved with it, not just
-      ! this line. Left as-is deliberately rather than half-moved.
-      .crystal.xray_data.initialize_fit_data(n_p,n_f,labels)
-
-      ! Clean
-      labels.destroy
+      ! This ONE call replaces a hand-inlined copy of CRYSTAL:initialize_fit_data
+      ! (crystal.foo:4514) that used to sit above -- the same
+      ! reset_pADPs_and_errors on the asymmetric-unit atoms, the same loop
+      ! resetting the fragment atoms, the same set_frag_from_asym_pADPs, the
+      ! same n_p / n_f / labels, and the same final
+      ! DIFFRACTION_DATA:initialize_fit_data. Line for line identical, except
+      ! where it had drifted -- which is where the bugs were.
+      !
+      ! The copy assigned refine_3rd/4th_order_for_atom to LOCAL allocatables
+      ! first (`refine_U3 = ...`), and those components are allocated only when
+      ! 3rd/4th-order refinement was requested. Assigning from an unallocated
+      ! allocatable is undefined; lldb caught it as EXC_BAD_ACCESS at that line.
+      ! The original passes them straight to reset_pADPs_and_errors as
+      ! ARGUMENTS, which is safe for an unallocated actual -- so calling it
+      ! removes the hazard rather than relocating it.
+      !
+      ! STILL WRONG, and not fixed here: this runs once per LS ITERATION,
+      ! because make_LS_mx is called inside LS_fit_HAs_disk's loop, whereas
+      ! CRYSTAL:LS_structure_fit calls it ONCE before its loop. See DEFERRED.md
+      ! -- moving it (with the X_fit seeding below) was tried and traded one
+      ! failure for another.
+      .crystal.initialize_fit_data
 
       ! Allocate structure factor array (leaky)
       ! For pne atom

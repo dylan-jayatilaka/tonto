@@ -959,7 +959,41 @@ Two further defects were found, both in the same routine, and neither is fixed:
    assigns it to a local — it passes it straight to `reset_pADPs_and_errors` as an argument,
    which is safe for an unallocated actual. The inlined copy introduced the hazard.
 
-**The real fix is to stop duplicating (per Dylan).** `make_LS_mx`'s preamble is a hand-inlined
+**Refactor attempted 2026-08-02 — one half landed, the other half does not work.**
+
+*Landed:* `make_LS_mx`'s hand-inlined copy of `CRYSTAL:initialize_fit_data` is now a call to it.
+The two were line-for-line identical, so this is behaviour-preserving — verified, the fit
+produces the same numbers (49.726269, 49.703503, 49.703038, …) — and it **removes the `:806`
+hazard**, because the original passes `refine_3rd/4th_order_for_atom` as *arguments* rather than
+assigning them to local allocatables. ~20 lines of duplication gone.
+
+*Did not work:* relocating the once-per-fit steps out of the loop. `CRYSTAL:LS_structure_fit`
+does four things once, before its loop, that the disk path does every iteration —
+`initialize_fit_data`, `put_pADP_vector_to(X_fit)`, `X_ref = X_fit`, `put_fit_header` — and the
+`X_fit` seeding is worse than per-iteration: it sits inside `make_LS_mx`'s `do u` loop, so it
+runs once per **atom** per iteration. Moving all four out (mirroring `LS_structure_fit`) gave:
+
+| | before | after moving |
+|---|---|---|
+| `Fit Iter` column | stuck at 1 | **increments 1…101** |
+| chi2 across iterations | moves and converges | **frozen at 49.726269** |
+| termination | never (infinite) | exits on `too_many_fit_iterations` |
+| exit | 124 timeout | **139 segfault, after the loop** |
+
+So it trades "the fit moves but never stops" for "the fit stops but never moves". The reason is
+that the per-iteration re-seeding of `X_fit` from the atoms — the very thing that looked like the
+bug — is what was making the numbers change at all. `make_LS_mx` is therefore **not** separable
+into "build the design matrix" by relocation: the parameter-update path is entangled with it, and
+sorting that out needs someone who knows which arrays are authoritative between iterations
+(`X_fit` vs `asymmetric_unit_atom` pADPs vs `fragment_atom` vs `.atom`). Reverted rather than
+left in a differently-broken state.
+
+*Also still divergent:* `CRYSTAL:LS_structure_fit` prunes inside the loop
+(`crystal.foo:4336`); the disk loop does not. Adding it made the job segfault after ~10
+iterations — pruning changes `reflections.dim` mid-fit and something downstream is still sized
+for the old count. Left out.
+
+**The real fix is still to stop duplicating (per Dylan).** `make_LS_mx`'s preamble is a hand-inlined
 copy of `CRYSTAL:initialize_fit_data` (`crystal.foo:4514`) — same `reset_pADPs_and_errors` on
 asymmetric and fragment atoms, same `set_frag_from_asym_pADPs`, same `n_p`/`n_f`/`labels`, same
 final call — and `LS_fit_HAs_disk` is a hand-rolled copy of `CRYSTAL:LS_structure_fit`'s loop.
