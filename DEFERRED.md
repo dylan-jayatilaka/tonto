@@ -711,11 +711,30 @@ than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comment
   `MPI_WIN_FLUSH`/`MPI_WIN_SYNC` anywhere) while workers accumulate into it. Additionally the
   algorithm *changes shape* at `n_processors > 2`, so `-n 2` and `-n 4` use different schedulers
   and different rank→fragment maps.
-- **QTAIM basin decomposition** (`foofiles/molecule.prop.foo:6118`): the hand-rolled 1-D slab
-  decomposition indexes out of bounds at `nprocs == 1` and unconditionally `sendrecv`s to
-  `rank+1`, which does not exist; `nprocs > nx` gives zero-width slabs. It also calls
-  `tonto.finalize` (`MPI_FINALIZE`) at `:6743`, inside a science routine, invalidating any later
-  MPI call in the job.
+- **PARTLY FIXED (2026-08-02) — QTAIM basin decomposition** (`MOLECULE.PROP:cubes_to_basin_parallel`,
+  `foofiles/molecule.prop.foo`). Register entry **verified accurate**, unlike several others.
+
+  **Done — the two cheap parts.** (a) The mid-run `tonto.finalize` is **removed**: it called
+  `MPI_FINALIZE` from inside a property calculation, so MPI was shut down for the rest of the job
+  and every later MPI call was invalid. That did not fail locally, it poisoned everything
+  downstream. Finalisation belongs to the program. (b) Two `DIE_IF` guards added, because the
+  decomposition **cannot work below 2 ranks**: at `nprocs==1`, `mx = nx` and the master does
+  `ED(2:mx+2,...) = grid(1:mx+1,...)`, reading `grid` one element past its first extent (it is
+  `MAT3{REAL}` with first extent `nx`), then unconditionally `sendrecv`s to `processor_rank+1`
+  — rank 1, which does not exist. A second guard rejects `nprocs > nx`, where slabs have zero
+  width. Refusing beats corrupting.
+
+  Note this is only reachable in an **MPI build** — the call site picks `cubes_to_basin` under
+  `#else` of `#ifdef MPI` — but `mpirun -n 1` on an MPI build *does* reach it, which is precisely
+  the broken case and a very ordinary way to run.
+
+  **Still open — the decomposition itself.** It is a hand-rolled 1-D chain: master sends only
+  "hi", middle ranks both, the last only "lo". Two of the three allocation branches are
+  **identical** (`ED.create(px+2,...)` in both), so the `else if` earns nothing at setup. The
+  proper fix is `MPI_Cart_create` / `MPI_Cart_shift`, which returns `MPI_PROC_NULL` for
+  off-the-end neighbours — making each `sendrecv` a no-op at the ends and letting the `nprocs==1`
+  case fall out for free, rather than being guarded against. That would also let the guards above
+  be removed. Narrow (QTAIM only) but genuinely broken rather than merely fragile.
 - **FIXED (2026-08-01). `DWGN_lamaGOET_NBO_file_47` aborted at every rank count above 1.**
   Reproduced at `-n 2` and `-n 4`, at both `-Ofast` and `-O2 -fno-fast-math`:
   *"Fortran runtime error: Unit number is negative and unit was not already opened with

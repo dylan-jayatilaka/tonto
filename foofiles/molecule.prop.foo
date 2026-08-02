@@ -6122,6 +6122,22 @@ contains
 
       ! Establishes the partitions on each processor.
       nprocs = tonto.n_processors
+
+      ! This hand-rolled 1-D slab decomposition CANNOT work at one rank, and an
+      ! MPI build run under `mpirun -n 1` reaches exactly that (the serial build
+      ! calls cubes_to_basin instead, via the #ifdef MPI at the call site).
+      ! At nprocs==1: mx = nx, so the master branch does
+      !     ED(2:mx+2,...) = grid(1:mx+1,...)
+      ! which reads grid ONE ELEMENT PAST ITS FIRST EXTENT (grid is MAT3{REAL}
+      ! with first extent nx); and the halo exchange below unconditionally does
+      !     tonto.sendrecv(...,tonto.processor_rank+1)
+      ! i.e. sends to rank 1, which does not exist. Refuse rather than corrupt.
+      !
+      ! Proper fix is MPI_Cart_create/MPI_Cart_shift, which yields MPI_PROC_NULL
+      ! for off-the-end neighbours -- making the sendrecv a no-op and the
+      ! nprocs==1 case fall out for free. See DEFERRED.md.
+      DIE_IF(nprocs<2,"QTAIM basin decomposition needs at least 2 MPI ranks; run with -n 2 or more, or use a serial build")
+      DIE_IF(nprocs>nx,"QTAIM basin decomposition needs nprocs <= nx; slabs would have zero width")
       mx = nx - (nprocs-1)*int(nx/nprocs)
       px = int(nx/nprocs)
       if (tonto.processor_rank==tonto.master_rank)then
@@ -6738,7 +6754,11 @@ contains
       tonto.barrier
 
       ! Finalises the MPI program
-      tonto.finalize
+      ! NOTE: tonto.finalize (MPI_FINALIZE) was called here. That shut MPI down
+      ! from inside a science routine, so every later MPI call in the job was
+      ! invalid -- it did not fail locally, it poisoned everything downstream.
+      ! Finalisation belongs to the program, not to a property calculation.
+      ! (Removed 2026-08-02.)
 
    end
 
