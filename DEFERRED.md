@@ -165,6 +165,39 @@ sites — but those are a *different overload*, `put_archive(item,name,…)`, wh
 takes arguments and never touches `stdin`. Read the `.int` file rather than
 grepping by name; see CLAUDE.md §8.)
 
+## Command line: `command_arguments` silently truncates (and is never read)
+
+**Found 2026-08-02** while sizing the `hart --group-charge-spin` option (milestone H1).
+`COMMAND_LINE` has **two** independent 256-character limits, and Fortran truncates a fixed-length
+CHARACTER assignment **silently** in both cases:
+
+1. **Per token.** `item`, `option`, `option_value` and `arg` are all `VEC{STR}@`, i.e. `STR_SIZE`
+   = 256 per element. A single quoted argument longer than that -- e.g.
+   `--group-charge-spin "1 0 1 2 -1 1 ..."` for a protein -- is cut off with no error.
+2. **The whole command line.** `command_arguments :: STR` is **one** 256-character string that
+   `command_line.foo:134` appends *every* token to:
+   `command_arguments = trim(command_arguments)//" "//trim(token.to_quoted_str)//" "`.
+   That overflows after roughly a dozen tokens on **any** command line.
+
+**The saving grace, and the fix.** `command_arguments` is **never read** -- `grep` finds no
+consumer in `foofiles/` or `runfiles/`. It is written and discarded, so the truncation is
+currently harmless. The honest fix is to **delete the field**, not widen it. (`put_command_optarg`
+prints `command_optarg`, a `VEC{STR}` built per option, which is unaffected.)
+
+**Design consequence for `hart --group-charge-spin`** (H1): do not take one quoted blob. Two
+things keep every token short:
+- make the option **repeatable** -- `--group-charge-spin 12 -1 1 --group-charge-spin 47 1 1`;
+- make it an **exceptions list**, defaulting all other groups to `{0 1}`. The tonto keyword being
+  mirrored already works this way and says so in its name: `atom_groups= { keys={charge=}
+  altered_data= {...} }` -- *altered* data. For a protein nearly every residue is neutral singlet;
+  only Asp/Glu, Lys/Arg and metal ions deviate, so a 300-residue structure needs a dozen entries.
+
+For genuinely large cases, fall back to `--group-charge-spin-file <file>`, one `r C M` per line --
+which also makes the setup reproducible and version-controllable, unlike a shell command.
+
+**NOTE `COMMAND_LINE` does not currently support repeated options**: `has_option` /
+`value_for_option` return the *first* match. Repeatability needs a small addition there.
+
 ## Command line: two latent bugs that only a debug build sees
 
 Both were pre-existing in `COMMAND_LINE:process_options` and both are now fixed;
