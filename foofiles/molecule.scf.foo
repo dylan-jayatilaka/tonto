@@ -327,6 +327,18 @@ contains
       ! Get atomic form factors
       .get_Hirshfeld_atom_FFs_disk
 
+      ! Wait for every rank to finish writing before anyone reads. The loop
+      ! inside get_Hirshfeld_atom_FFs_disk is a `parallel do`, so the <tag>-SFs
+      ! files are scattered across ranks, while the readers (CRYSTAL:shift_-
+      ! update_ff and the two others in CRYSTAL) want all of them. Nothing else
+      ! orders that: PARALLEL:unlock_parallel_do only clears a rank-local
+      ! string, so a `parallel do` has NO implicit barrier.
+      !
+      ! Here rather than inside that routine because THIS call is collective --
+      ! every rank reaches it, the same number of times. Its per-fragment
+      ! callers in fragment_SCF are not; see the note there.
+      PARALLEL_BARRIER
+
       ! Make F_pred & chi2
       .crystal.make_F_predicted
 
@@ -5747,6 +5759,17 @@ contains
       else
          .fragment_SCF_para(restart,do_SFs,spin_density)
       end
+
+      ! Wait for every rank to finish before anyone reads. Both routines above
+      ! write each fragment's <tag>-SFs files from whichever rank owns that
+      ! fragment, and the readers want all of them.
+      !
+      ! This is the right level for it: fragment_SCF is called collectively --
+      ! every rank reaches it -- whereas the per-fragment
+      ! get_Hirshfeld_atom_FFs_disk calls inside those two routines are
+      ! rank-local, and a barrier there would deadlock. See the note in
+      ! MOLECULE.RHO:get_Hirshfeld_atom_FFs_disk.
+      PARALLEL_BARRIER
 
    end
 

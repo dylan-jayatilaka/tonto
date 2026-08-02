@@ -806,9 +806,25 @@ than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comment
     four blocks of the family and gated on **`is_parallel` alone** — never `DO_IN_PARALLEL` —
     for the same reason as `PARALLEL_BROADCAST`: whether a collective executes must not depend
     on rank-local state, or ranks disagree about how many collectives to enter and the job
-    hangs. Placed at the end of `MOLECULE.RHO:get_Hirshfeld_atom_FFs_disk`, whose `parallel do`
-    scatters the `<tag>-SFs` files across ranks while the readers want all of them. Compiles to
-    nothing in a serial build and is a no-op at one rank.
+    hangs. Compiles to nothing in a serial build and is a no-op at one rank.
+
+    **Placement corrected the same day, after an error.** It was first put at the end of
+    `MOLECULE.RHO:get_Hirshfeld_atom_FFs_disk`. That routine has **two kinds of caller**:
+
+    | caller | collective? |
+    |---|---|
+    | `MOLECULE.SCF:make_X_SFs_HAR_disk` | yes — every rank, same count |
+    | the `do g` loop in `MOLECULE.RHO:get_Hirshfeld_atom_FFs` | yes |
+    | the three per-fragment calls in `MOLECULE.SCF:fragment_SCF_norm` / `_para` | **NO — rank-local** |
+
+    On the rank-local paths rank *r* calls it only for the fragments it owns, and in
+    `fragment_SCF_para`'s >2-rank master/worker branch the master `cycle`s and never calls it at
+    all — so the barrier would have executed a different number of times per rank and
+    **deadlocked**. Exactly the milestone-6 hazard, and a reminder that the rule applies to the
+    **call site** as much as to the macro. Moved to the two collective sites:
+    `make_X_SFs_HAR_disk` (the non-fragHAR disk path) and the end of `MOLECULE.SCF:fragment_SCF`
+    (which every rank reaches, and which covers both fragment branches). Nothing caught this
+    because nothing runs parallel fragHAR — see `fragment_SCF_para` below.
 
   **Only one live `per_rank_write` call site now remains in the tree** — `molecule.rho.foo:5437`,
   inside the `parallel do u`, which is the correct use. Register row 1 is closed.
