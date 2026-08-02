@@ -217,7 +217,94 @@ rather than merely producing plausible numbers.
 
 ## 6. Milestones
 
-**H1 — fragHAR support.** The one that matters. `hart` calls only
+**H1 — fragHAR support. PLAN (2026-08-02).** The one that matters.
+
+### What broke, and when
+
+fragHAR is not merely unimplemented in `hart` -- it has been **broken in `tonto` since
+2020-01-23**, and the git history pins the change exactly. On that day the predicate deciding
+"are we refining fragments" was moved off the CIF:
+
+```foo
+-  res = .cif.is_mmCIF AND .cif.use_fragments      ! f0d7cfd3, 2020-01-23
++  res = .crystal.data.refine_fragments
+```
+
+with companion commits `bcdcdfb0` ("removed use_fragments cif check") and `59d46d13`. The same
+day, `e8ecf99e` records *"Only four tests failing now; fragHAR one of them"*, and `tests/long/
+gly_ala_fragHAR_rhf_STO-3G/stdin` lost its `use_fragments= YES` line. It has been failing or
+disabled ever since (`fafce805`, `a0b9da8b`, Feb 2021: *"fraghar still broken"*).
+
+**`.cif.use_fragments` is now a dead flag**: `cif.foo` still has the setter (`:214`), the keyword
+(`:291`) and the type field (`types.foo:822`), but **nothing reads it**. The last working state is
+around `ecb593e9` (2019-10-28, *"Fixed gly-ala fraghar-rhf test"*) -- the method paper is
+Bergmann, Davidson & Jayatilaka, IUCrJ 2020 (`fc5039`).
+
+### How grouping actually works (verified, not assumed)
+
+Two mechanisms, and they compose rather than competing:
+
+| mechanism | groups from | role |
+|---|---|---|
+| `MOLECULE.SET:set_connected_atom_groups` (`molecule.set.foo:1051`) | **connectivity** (`.atom.set_connected_groups`) | general; separate molecules in the asymmetric unit fall straight out. **No capping gate.** |
+| `MOLECULE.BASE:set_Ryde_capped_groups` (`molecule.base.foo:1705`) | `compound_sequence_id` (mmCIF residue labels) | *additionally* splits one covalent chain into residues, each with a half-residue cap. Correctly gated on `use_Ryde_capping`. |
+
+So capping is not an alternative path -- it is a refinement applied *within* a bonded chain,
+because connectivity alone would lump a whole protein into a single group.
+
+### What a fragment molecule inherits
+
+`MOLECULE.SET:set_molecule_from_atom_group` (`molecule.set.foo:937`):
+
+```foo
+mol.charge            = .atom_group(g).charge          ! taken from the group
+mol.spin_multiplicity = mol.default_spin_multiplicity  ! DERIVED -- group field IGNORED
+mol.set_SCF_guess_defaults_from(.SCF_data)             ! SCF kind cloned from the parent
+```
+
+So the SCF kind is **cloned**, not specified -- `hart` does not need a `fragment-rhf` option.
+`ATOM_GROUP` already carries `charge :: INT DEFAULT(0)` and
+`spin_multiplicity :: INT DEFAULT(1)`, matching the proposed CLI defaults exactly. **But the
+multiplicity field is not honoured**: it is overwritten by `default_spin_multiplicity`. The unused
+`spin_multiplicity_set :: BIN` flag is presumably what should gate that. Honouring `M` therefore
+needs code; `C` works today.
+
+### The CLI (agreed with Dylan)
+
+- **`--mmcif`** -> `m.cif.set_is_mmCIF(TRUE)` before `process_CIF`. The setter exists
+  (`cif.foo:196`); `hart` simply never calls it. It should turn Ryde capping on **internally**:
+  splitting a covalent chain without capping leaves dangling bonds, so there is no second
+  possibility and no `--use-Ryde-capping` option is warranted. (The "mmCIF but treat each chain as
+  one group" case is plain HAR, reachable without `--mmcif`.)
+- **`--group-charge-spin r C M`** -- **repeatable**, and an **exceptions list**: everything not
+  named defaults to `{0 1}`. This mirrors the tonto keyword it replaces, whose name already says
+  so: `atom_groups= { keys={charge=} altered_data= {...} }`. Keeps every token well under the
+  256-character `STR` limit (see the COMMAND_LINE entry in `DEFERRED.md`); a 300-residue protein
+  needs a dozen entries, not 300. `--group-charge-spin-file <file>` as the fallback for large
+  cases -- also reproducible and version-controllable, unlike a shell line.
+- **`COMMAND_LINE` does not yet support repeated options** (`has_option`/`value_for_option` return
+  the first match). Small addition needed.
+- Call `fragHAR_refinement` instead of `HAR_refinement` when there is more than one group.
+
+### Order of work
+
+1. **Serial first.** Get `gly_ala` reproducing through `hart` against the `tonto` reference. That
+   is the acceptance test and it needs no MPI.
+2. **Parallel is blocked on two open MPI register rows**, both of which fragHAR reaches:
+   `fragHAR_refinement` sets `use_disk_SFs(TRUE)` (`molecule.har.foo:52`), which routes through
+   `LS_fit_HAs_disk` -> **`make_LS_mx`** -- the same-file-from-every-rank `per_rank_write`
+   (register row 1) -- and its SCF goes through **`fragment_SCF_para`** (row 4), whose scheduler
+   *changes shape above 2 ranks*, so results are not comparable between `-n 2` and `-n 4` by
+   construction. Any parallel fragHAR test must therefore pin a rank count.
+3. **Rename `use_disk_SFs` -> `use_disk_FFs`** (Dylan): they are atomic **form factors**, not
+   structure factors. Cosmetic but it removes a standing confusion, and it touches the same code.
+
+### Open question to settle first
+
+Was the 2019 behaviour recoverable by re-enabling the CIF-driven path, or has `refine_fragments`
+superseded it correctly and something *else* broke? Cheapest probe: check out `ecb593e9`, run the
+gly_ala job, and diff its `stdout` against today's. That establishes whether there is a working
+reference to aim at -- and it is much cheaper than reconstructing the method from the paper. `hart` calls only
 `HAR_refinement`, never `fragHAR_refinement`, and has no atom-group or
 per-fragment-charge path, so a crystal with more than one molecule in the
 asymmetric unit cannot be refined. `tests/long/gly_ala_fragHAR_rhf_STO-3G`
