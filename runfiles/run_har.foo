@@ -46,7 +46,7 @@ program run_HAR
    grp_mult           :: VEC{INT}@
    wavelen            :: REAL
    i, charge, mult    :: INT
-   g, n_groups        :: INT
+   g, n_groups, maxit  :: INT
    do_4_only, extinct :: BIN
    h_ADPs,h_iso,h_pos :: BIN
    radius_is_0        :: BIN
@@ -121,6 +121,7 @@ program run_HAR
    h_pos      = TRUE
    job        = " "
    ldtol      = TOL(5)
+   maxit      = 0     ! 0 = leave the library default (100) alone
    mmcif      = FALSE
    mult       = 1
    rescube    = TRUE
@@ -238,6 +239,7 @@ program run_HAR
          case ("group-multiplicities") ! already dealt with above
 
          case ("grid-accuracy ");  gracc      = value
+         case ("max-iterations");  maxit      = value.to_int
          case ("mmcif         ");  mmcif      = value.to_bin
          case ("residual-cube ");  rescube    = value.to_bin
          case ("wavelength    ");  wavelen    = value.to_real
@@ -497,6 +499,14 @@ program run_HAR
             stdout.text("       Default: The head of <cif-file> e.g. 'urea' if <cif-file> is 'urea.cif'.")
             stdout.text("                The name of the output-file will then be <job>.out")
             stdout.flush
+            stdout.text("   --max-iterations <n>")
+            stdout.flush
+            stdout.text("       Stop after at most <n> iterations, whether or not the refinement has")
+            stdout.text("       converged. Caps both the rigid-atom fit and the outer HAR cycle. Useful")
+            stdout.text("       for a smoke test, or to bound a long job. Must be 3 or more.")
+            stdout.flush
+            stdout.text("       Default: 100")
+            stdout.flush
             stdout.text("   --mmcif [t|f]")
             stdout.flush
             stdout.text("       Read the <cif-file> as an mmCIF, i.e. with '_atom_site.' item names and")
@@ -747,6 +757,11 @@ program run_HAR
    DIE_IF(    radius<ZERO, "radius must be positive")
    DIE_IF(    radius>ten,  "radius must be less than 10 angstrom")
    DIE_IF(NOT gracc.is_one_of(grid_levels), "unknown grid accuracy: "//trim(gracc))
+   ! Validated here, not in the setter: DIFFRACTION_DATA's own check is an
+   ! ENSURE and compiles away in the optimised build every user has. The lower
+   ! bound is min_iterations, which defaults to 2.
+   DIE_IF(maxit<0,"--max-iterations must not be negative")
+   DIE_IF(maxit>0 AND maxit<3,"--max-iterations must be 3 or more (min_iterations is 2)")
    DIE_IF(NOT guess.is_one_of(["mos    ","density"]),"unknown initial guess: "//trim(guess))
    DIE_IF(NOT   scf.is_one_of(["rhf ","rks "]),"unknown scf: "//trim(scf))
 
@@ -804,6 +819,12 @@ program run_HAR
    m.crystal.xray_data.SET:set_refine_extinction(extinct)
    m.crystal.xray_data.SET:set_use_text_SFs(disk_sfs)
    m.crystal.xray_data.set_do_residual_cube(rescube)
+
+   ! Cap the refinement. Bounds BOTH loops -- the inner rigid-atom fit and the
+   ! outer HAR cycle -- since too_many_fit_iterations and too_many_ref_iterations
+   ! are both measured against max_iterations.
+   if (maxit>0) &
+   m.crystal.xray_data.set_max_iterations(maxit)
 
    ! Wavelength. Not every CIF carries _diffrn_radiation_wavelength, and
    ! DIFFRACTION_DATA defaults it to -1 i.e. "not set", which leaves theta

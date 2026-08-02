@@ -943,10 +943,33 @@ genuinely differs between the two paths.
 - **`LS_structure_fit` prunes inside its loop (`crystal.foo:4336`); this loop does not.** Adding
   it segfaults after ~10 iterations — pruning changes `reflections.dim` mid-fit and something
   downstream is still sized for the old count.
-- **No test covers any of this.** `tests/hart/urea_hart_STO-3G_disk_ffs` is now *writable* (the
-  job terminates, in ~5 min) and should be added — it would be the first coverage `make_LS_mx`
-  has ever had. 5 min is too slow for CI as-is; a smaller structure or a capped iteration count
-  would be needed.
+- ✅ **Test added: `tests/hart/urea_hart_STO-3G_disk_ffs`** (label `hart`, therefore in CI) —
+  the first coverage `make_LS_mx` has ever had. **22 s**, via the new `hart --max-iterations`.
+  Capping at 3 both cuts the job from ~5 min and gives a *better* answer (R(F) 0.037995 against
+  the in-core 0.037992, versus 0.038220 uncapped), because the uncapped fit oscillates away from
+  the optimum before stopping. The reference therefore records a deliberately unconverged fit,
+  with `WARNING: refinement stopped: too many iterations.` in it.
+- **`--grid-accuracy very_low` SEGFAULTS on this path** (rc=139 after 99 s), which is why the
+  test uses `low`. Not investigated — it is the obvious next thing to look at, since a coarse
+  grid crashing where a fine one does not suggests an array sized from the wrong grid dimension.
+
+### New: `hart --max-iterations <n>`, and `DIFFRACTION_DATA:set_max_iterations`
+
+Added 2026-08-02, prompted by needing a cheap disk-FF test (Dylan: *"just set max_it very low,
+no convergence, but at least some numbers are shown correctly, exercising the code"*).
+
+There was a `max_iterations=` job-file keyword but **no setter** — the reader writes the readonly
+field directly from inside the module — so an argv-driven program could not bound a run at all.
+`set_max_iterations` now exists; it caps **both** loops, since `too_many_fit_iterations` and
+`too_many_ref_iterations` are both measured against `max_iterations`.
+
+Validation is done in `run_har.foo` with `DIE_IF`, not in the setter: the keyword reader's
+`max_iterations > min_iterations` check is an `ENSURE` and so compiles away in every optimised
+build a user has. The floor is 3, because `min_iterations` defaults to 2.
+
+*(Dylan's other suggestion — skip the initial SCFs by reading stored MOs per fragment — was not
+needed here: urea is one molecule and its SCF is seconds out of the 22. It remains the relevant
+lever for `gly_ala_fragHAR`, where the fragment SCFs are the cost; see the test-speed item.)*
 
 ### `HAR_refinement` does not remake the atom groups between cycles
 
