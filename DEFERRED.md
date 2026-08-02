@@ -987,6 +987,41 @@ build a user has. The floor is 3, because `min_iterations` defaults to 2.
 needed here: urea is one molecule and its SCF is seconds out of the 22. It remains the relevant
 lever for `gly_ala_fragHAR`, where the fragment SCFs are the cost; see the test-speed item.)*
 
+### `fragment_SCF_para` — how it works, and what is rough about it
+
+Documented in the routine header 2026-08-02 (it previously had a three-line comment identical to
+the serial version's). Summary, so this is findable from here:
+
+Two strategies, chosen on rank count, and they are **different algorithms** — which is why
+results are not comparable between them and any parallel fragHAR test must pin a rank count.
+At exactly 2 ranks it is a plain `parallel do g` (static cyclic). Above 2 it is a dynamic
+master/worker pool: fragments sorted **largest-first** by basis-function count
+(longest-processing-time-first), then drawn off a shared counter in the master's memory using
+**one-sided MPI RMA** — `MPI_Win_lock_exclusive` + `MPI_Get_accumulate`, i.e. an atomic
+fetch-and-add. The master hosts the window and **does no science**, which is the scheme's cost
+and precisely why 2 ranks take the other branch.
+
+`setup_p_loop` also calls `lock_parallel_do("no")`, which is what makes any `parallel do` inside
+a fragment run serially on its owning rank — the "MPI on the outside" rule.
+
+Assignment order does **not** perturb the numbers: each fragment's form factors go to its own
+`<tag>-SFs` archive keyed by atom tag, not into a shared accumulator.
+
+**Rough edges, none fixed:**
+
+- `PARALLEL:next_p_loop_index` evaluates `.p_loop_list(.p_loop_index)` **before** the caller's
+  exit test — and its own comment insists it be called first — so the final draw indexes one
+  past the end. Read and discarded in an optimised build; a `-fcheck=bounds` MPI build should
+  abort there. **This is the most likely thing to bite first when parallel fragHAR is tried.**
+- `p_loop_list` is cached on `tonto` and only rebuilt when deallocated, so two different fragment
+  sets within one run would reuse a stale list.
+- `setup_p_loop(w,lb=1,ub=.atom_group.dim)` but the list is created with `.mol.dim`. Equal today
+  (one `mol` per group); a mismatch would index out of range.
+- **The long-term shape is sub-communicators** (`MPI_Comm_split`): give each fragment a *group*
+  of ranks, parallelise within a fragment as well as across them, and stop donating a whole rank
+  to scheduling. That would dissolve both branches. Agreed with Dylan as the eventual direction,
+  not now.
+
 ### `HAR_refinement` does not remake the atom groups between cycles
 
 Raised by Dylan while fixing the above: once `molecule.atom` is remade, the atom groups and

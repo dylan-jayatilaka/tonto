@@ -5879,8 +5879,75 @@ contains
    end
 
    fragment_SCF_para(restart,do_SFs,spin_density) :: leaky
-   ! Do an fragment SCF calculation on each of the .atom_group.mol
-   ! molecules and calculate the structure factors.
+   ! Do a fragment SCF calculation on each of the .atom_group.mol molecules and
+   ! calculate the structure factors. Parallel version; FRAGMENT_SCF_NORM is the
+   ! serial one and FRAGMENT_SCF picks between them on .n_processors.
+   !
+   ! HOW THE WORK IS SHARED. There are TWO strategies here, chosen on rank count,
+   ! and they are genuinely different algorithms -- which is why results are not
+   ! comparable between them, and why any parallel fragHAR test must pin a rank
+   ! count.
+   !
+   !   n_processors == 2   a plain `parallel do g` -- static cyclic. With only
+   !                       two ranks a dedicated scheduler would leave ONE
+   !                       worker, which is worse than cyclic.
+   !
+   !   n_processors >  2   a dynamic master/worker pool, below.
+   !
+   ! THE POOL. Fragments differ enormously in cost -- a two-atom cap against a
+   ! thirty-atom residue -- so static distribution leaves ranks idle behind the
+   ! one big fragment. Instead:
+   !
+   !   1. `.mol` is sorted by basis-function count, LARGEST FIRST, into
+   !      tonto.p_loop_list (`n_bf.quick_sort(...,decreasing_order=TRUE)`).
+   !      That is longest-processing-time-first: start the expensive fragments
+   !      early so the short ones fill the tail. Built once and cached -- the
+   !      `if (tonto.p_loop_list.deallocated)` guard -- since it is reused every
+   !      HAR cycle and the fragments do not change size.
+   !
+   !   2. Ranks then take the next fragment off a SHARED COUNTER held in the
+   !      master's memory, via one-sided MPI RMA: PARALLEL:setup_p_loop makes an
+   !      MPI window over .p_loop_index, and PARALLEL:next_p_loop_index does an
+   !      MPI_Win_lock_exclusive + MPI_Get_accumulate (atomic fetch-and-add) on
+   !      it. So a rank that finishes early immediately takes more work; nothing
+   !      is pre-assigned.
+   !
+   !   3. The MASTER DOES NO SCIENCE -- `if (tonto.is_master_processor) cycle`.
+   !      It hosts the window and hands out indices. That is the cost of this
+   !      scheme: at 3 ranks a third of the machine is scheduling. It is also
+   !      exactly why the 2-rank case takes the other branch.
+   !
+   ! setup_p_loop also does `.lock_parallel_do("no")`, which is what makes any
+   ! `parallel do` INSIDE a fragment run serially on its owning rank -- the
+   ! "MPI on the outside" rule. So .mol(g)'s SCF, integrals and grids are
+   ! ordinary serial code from that rank's point of view.
+   !
+   ! WHY THE ASSIGNMENT ORDER DOES NOT MOVE THE NUMBERS. Each fragment's form
+   ! factors are written to its own <tag>-SFs archive, keyed by atom tag, not
+   ! accumulated into a shared array. So which rank did which fragment cannot
+   ! change the result. The rank-count sensitivity is the two-strategy split
+   ! above, not scheduling non-determinism.
+   !
+   ! THE CALLS IN HERE ARE RANK-LOCAL, which matters for collectives: rank r
+   ! executes the loop body only for the fragments it draws, and the master
+   ! never executes it at all. A barrier, broadcast or reduction placed in the
+   ! body -- or in anything it calls, such as
+   ! MOLECULE.RHO:get_Hirshfeld_atom_FFs_disk -- would run a different number of
+   ! times on different ranks and deadlock. Collectives for this phase belong at
+   ! the end of FRAGMENT_SCF, which every rank reaches.
+   !
+   ! KNOWN ROUGH EDGES (see DEFERRED.md, "fragment_SCF_para"):
+   !   . PARALLEL:next_p_loop_index evaluates `.p_loop_list(.p_loop_index)`
+   !     BEFORE the caller's exit test -- and its own comment says it must be
+   !     called first -- so on the final draw it indexes one past the end. Read
+   !     and discarded in an optimised build; a -fcheck=bounds MPI build should
+   !     abort there.
+   !   . The window is created per call and the list cached globally on `tonto`,
+   !     so two different fragment sets in one run would reuse a stale list.
+   !   . The long-term shape is sub-communicators (MPI_Comm_split): give each
+   !     fragment a GROUP of ranks, parallelise within a fragment as well as
+   !     across them, and stop donating a whole rank to scheduling. That would
+   !     dissolve both branches.
       self    :: INOUT
       restart :: BIN, optional, IN
       do_SFs  :: BIN, optional, IN
@@ -5907,9 +5974,11 @@ contains
       ! Output details?
       .put_atom_group_mols
 
-      ! Loop over atom group "g"
+      ! Loop over atom group "g" -- dynamic pool above 2 ranks, cyclic at 2.
+      ! See the header for why the split exists and what it costs.
       if (tonto.n_processors > 2) then
          
+         ! Longest-processing-time-first order, built once and cached on tonto.
          if (tonto.p_loop_list.deallocated) then
 
             tonto.p_loop_list.destroy
@@ -5930,8 +5999,11 @@ contains
             ! NOTE: call this before exit conditions
             g = tonto.next_p_loop_index(w)
 
-            ! Exit if no more to do, or master
-            ! NOTE: Must be in this order!
+            ! Exit if no more to do, or master.
+            ! NOTE: Must be in this order! next_p_loop_index above performs the
+            ! atomic fetch-and-add, so every rank has to call it before anyone
+            ! tests the result -- skipping it on the master would stall the
+            ! counter. The master then cycles: it schedules, it does no science.
             if (tonto.exit_p_loop) exit
             if (tonto.is_master_processor) cycle
                   
@@ -5990,6 +6062,8 @@ contains
          
       else
          
+         ! Exactly 2 ranks: static cyclic. A dedicated master here would leave a
+         ! single worker, i.e. slower than serial plus the RMA overhead.
          parallel do g = 1,.mol.dim
 
             ! Skip SCF for atoms without electrons
