@@ -793,12 +793,25 @@ than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comment
     `.unit` and `.io_status` so the `DIE_IF` stays collective, and `FILE:write`/`close` are
     guarded with `.record` kept in step on every rank. Serial behaviour is unchanged by
     construction (`IO_IS_ALLOWED` is always true there) and `ctest -L hart` is 3/3.
-  - ⬜ `shift_update_ff(dF)` (`crystal.foo:4905`, serial `do u` at `:4932`). The per-atom work is
-    independent so `parallel do u` is available, but note it is a **read-modify-write** and see
-    the disk-crowding caveat above; master-only is the conservative choice and matches
-    `make_LS_mx` now.
-  - ⬜ **An explicit barrier** after each distributed write phase, before the first collective
-    read.
+  - ✅ **`shift_update_ff(dF)` → master-only `write`** (`crystal.foo:4905`, serial `do u` at
+    `:4932`). Done 2026-08-02. Worse than `make_LS_mx` because it is a **read-modify-write**:
+    the read is `FILE:read`, which is master-only and **broadcasts** the values, so every rank
+    already held master's copy and then all of them wrote it back over each other. The read side
+    was already master-authoritative; the write side now agrees. `parallel do u` was available
+    (the per-atom work is independent, and the commented-out `parallel_read` shows it was the
+    intent) but master-only is the conservative choice, matches `make_LS_mx`, and avoids the
+    disk-crowding question entirely.
+  - ✅ **An explicit barrier** after the distributed write phase, before the first collective
+    read. Done 2026-08-02. New `PARALLEL_BARRIER` macro in `include/macros.in`, defined in all
+    four blocks of the family and gated on **`is_parallel` alone** — never `DO_IN_PARALLEL` —
+    for the same reason as `PARALLEL_BROADCAST`: whether a collective executes must not depend
+    on rank-local state, or ranks disagree about how many collectives to enter and the job
+    hangs. Placed at the end of `MOLECULE.RHO:get_Hirshfeld_atom_FFs_disk`, whose `parallel do`
+    scatters the `<tag>-SFs` files across ranks while the readers want all of them. Compiles to
+    nothing in a serial build and is a no-op at one rank.
+
+  **Only one live `per_rank_write` call site now remains in the tree** — `molecule.rho.foo:5437`,
+  inside the `parallel do u`, which is the correct use. Register row 1 is closed.
 
   **Two naming defects found while adding that coverage** — fold them into the
   `use_disk_SFs`→`use_disk_FFs` rename rather than spending a separate pass:
