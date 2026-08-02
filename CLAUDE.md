@@ -365,6 +365,37 @@ before any code is written**, most likely in its own conversation (`/clear`).
    would confound the numbers. Full design in `DEFERRED.md`, "MPI: defects found during
    milestone 4".
 
+7. ⬜ **Diagnose and fix the `-O2`-only MPI undefined behaviour** (found 2026-08-02). Four
+   CIF-reading tests (`c9o9h8_read_cif_IT_group_9`, `maleate_read_CIF_H_double_bond_{new,old}_BLs`,
+   `urea_lamaGOET_grown_CIF`) abort at ≥2 ranks with a **mismatched `MPI_Bcast`** in the
+   `-O2 -fno-fast-math` build, while the *same test on the same machine passes at `-Ofast`*, and
+   none fail on macOS arm64. A collective mismatch that moves with optimisation level and platform
+   is undefined behaviour. **`-Ofast` hides it**, so the shipped configuration is the one where it
+   is invisible, not the one where it is absent — which is why this is a milestone, not a deferred
+   note. Diagnosis in progress with a Linux `-O2 + -fcheck=bounds` build and an `-O0 + -finit-*`
+   poisoning build. See `docs/MPI.md` Finding 6.
+
+8. ⬜ **Translator: `data` statements at program scope are silently dropped.** Found while making
+   `hart` work. The declaration still compiles and the variable is simply left uninitialised — a
+   silently-wrong-answer bug with no diagnostic, in the same family as the MPI dead reductions.
+   Currently worked around in three runfiles; **the translator is the real fix**, and until it is
+   fixed any `data` statement anywhere in a program unit is a trap. Deserves a translator-level
+   audit for other constructs that are parsed and then quietly discarded.
+
+9. ⬜ **`write_archive` swallows the following keyword, and one test has never run its SCF.**
+   `molecule.put.foo:674` tests `stdin.buffer.n_items==2`, but `n_items` counts the whole line
+   *including* the keyword — and `write_archive density_mx` is already 2 items, so the optional
+   third word (`normalise`) is always sought and the **next line's first word is eaten instead**.
+   The correct test is `==3` (per Dylan: the third item is genuinely optional, since objects such
+   as `density_mx` know their own genre). `MOLECULE.READ:read_archive` had the identical bug and
+   was fixed during milestone 5; this is its twin.
+   The consequence is the part that matters: `tests/long/nh3_x-ray-constrained-rhf-cluster-charge_cc-pVTZ_restart`
+   eats its own `scf` keyword, runs in 40 ms, and its checked-in reference contains **zero lines
+   mentioning "SCF"** in 635 lines — the test has never done the science its name claims. Blast
+   radius is exactly that one job file (it is the only one in `tests/` using `write_archive`).
+   Fixing the off-by-one will rewrite that reference wholesale, so **regenerate it and inspect it
+   as science, not as a diff**. Sequenced after the MPI work.
+
 **Open items** (future directions; details in `DEFERRED.md`)
 
 - **Grammar still ACCEPTS the old submodule call forms** (`.SET:proc`, `.MAIN:proc`, `STR::proc`)
