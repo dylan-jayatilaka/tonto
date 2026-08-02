@@ -119,7 +119,7 @@ stored reference, so it cannot be silently blessed, and all four dead reductions
 milestone 4 would have failed it.
 
 **What does not gate it:** the short suite at `-n 2`, which is informational until the defect
-register below is clear — three rows remain, so a gating suite would be permanently red. That is
+register below is clear — five rows remain, so a gating suite would be permanently red. That is
 the same reasoning `ci-debug.yml` applies to the four longstanding `-O0` failures. `-n 2` rather
 than `-n 4` because the runner has 4 vCPUs.
 

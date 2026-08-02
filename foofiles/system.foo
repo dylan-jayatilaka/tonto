@@ -130,6 +130,7 @@ module SYSTEM
 
 #ifndef _WIN32
 !  MPI initialise and finalise   
+   USE mpi, only: MPI_ABORT
    USE mpi, only: MPI_FINALIZE
 
 !  MPI gather functions   
@@ -402,7 +403,20 @@ contains
       .report_io_file_info
       .report_keyword_info
 #ifdef MPI
-      .parallel_finalize
+      ! MPI_ABORT, not MPI_FINALIZE. This is the ERROR path: one rank is dying and
+      ! the others are still running. MPI_FINALIZE is COLLECTIVE -- every rank must
+      ! call it -- so a single rank finalising here blocks while its peers carry on,
+      ! and the job HANGS instead of failing. A hang is the least informative failure
+      ! there is: no message, no exit code, no clue which rank died.
+      !
+      ! MPI_ABORT is unilateral by design: it terminates every rank in the
+      ! communicator. Guarded on .is_parallel so a serial build (where MPI was never
+      ! initialised) falls straight through to the stop below.
+      !
+      ! NOTE the previously commented-out line here passed .mpi_status (a
+      ! VEC{INT}(MPI_STATUS_SIZE)) as MPI_ABORT's integer "ierror" argument -- it
+      ! would not have compiled, and MPI_ABORT was never imported either. Both fixed.
+      if (.is_parallel) call MPI_ABORT(MPI_COMM_WORLD,.error_status,.mpi_error)
 #endif
 
 #ifdef DEBUG
@@ -523,7 +537,8 @@ contains
       .report_io_file_info
       .report_keyword_info(options)
 #ifdef MPI
-      .parallel_finalize
+      ! Error path: abort all ranks rather than finalise this one. See die().
+      if (.is_parallel) call MPI_ABORT(MPI_COMM_WORLD,.error_status,.mpi_error)
 #endif
 
 #ifdef DEBUG
@@ -566,8 +581,8 @@ contains
 
       if (.known_keywords.allocated) .report_keyword_info(.known_keywords)
 #ifdef MPI
-      .parallel_finalize
-   ! call MPI_ABORT(MPI_COMM_WORLD,.error_status,.mpi_status)
+      ! Error path: abort all ranks rather than finalise this one. See die().
+      if (.is_parallel) call MPI_ABORT(MPI_COMM_WORLD,.error_status,.mpi_error)
 #endif
 
 #ifdef DEBUG

@@ -599,7 +599,13 @@ than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comment
 
 ### Not yet fixed — recorded with evidence
 
-- **UNDIAGNOSED, HIGH PRIORITY: mismatched `MPI_Bcast` in the CIF-reading path, `-O2` only.**
+- **FIXED (2026-08-02) — mismatched `MPI_Bcast` in the CIF-reading path, `-O2` only.** Root
+  cause was the broadcast gate (see the confirmed fix above): `PARALLEL_BROADCAST` was gated on
+  `DO_IN_PARALLEL`, so a broadcast inside a held parallel-do lock was silently skipped, and ranks
+  that disagreed about the lock offset their collective streams. Now gated on `is_parallel`
+  alone. All three tested CIF jobs pass at `-n 2`. Original report follows.
+
+  ~~UNDIAGNOSED, HIGH PRIORITY:~~
   On Linux x86_64, four CIF tests (`c9o9h8_read_cif_IT_group_9`,
   `maleate_read_CIF_H_double_bond_{new,old}_BLs`, `urea_lamaGOET_grown_CIF`) abort at >=2 ranks
   with *"An error occurred in MPI_Bcast ... MPI_ERRORS_ARE_FATAL"* in the
@@ -621,8 +627,22 @@ than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comment
   on non-master ranks at `allocate(seed(n))`. Fix both together or neither.
   Knock-on: R-free reflection selection (`crystal.foo:242`) is seeded from the clock and is
   therefore not reproducible run-to-run, MPI or not.
-- **`MPI_ABORT` is commented out** (`foofiles/system.foo:564`), so a `DIE` on one rank leaves the
-  others hanging instead of failing the job.
+- **FIXED (2026-08-02) — a rank dying used to hang the job.** The entry used to read
+  *"`MPI_ABORT` is commented out"*, which understates it: the error paths were actively calling
+  **`MPI_FINALIZE`**, which is **collective**. One rank dying called it alone while its peers kept
+  running, so the job hung rather than failing. Now the three error paths (`die` and *both*
+  `unknown` overloads) call `MPI_ABORT`, which is unilateral by design and terminates every rank
+  in the communicator. Guarded on `.is_parallel`; the normal shutdown in `SYSTEM:finalize` still
+  uses `MPI_FINALIZE`, which is correct there.
+
+  Three things had to be true for the old commented line to work and none were, which is probably
+  why it was disabled: **`MPI_ABORT` was never imported** in `system.foo` or `parallel.foo`, so
+  uncommenting could not compile; the commented call passed **`.mpi_status`**
+  (a `VEC{INT}(MPI_STATUS_SIZE)`) where `MPI_ABORT` wants the integer `ierror`; and there were
+  **three** affected routines, with the comment present at only one.
+
+  Serial suite unchanged (50/51, exact 45) -- the code is inside `#ifdef MPI` and additionally
+  guarded, so a serial build never reaches it.
 - **HAR writes the same file from every rank.** `foofiles/molecule.har.foo:1346` calls
   `arch.parallel_write` — deliberately unguarded by `IO_IS_ALLOWED` — inside a *serial* loop with
   a filename identical on all ranks. `file.foo:134` only opens the file when `IO_IS_ALLOWED`, and
