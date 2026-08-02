@@ -639,6 +639,10 @@ contains
 
       do
 
+         ! This allocation is REAL, and make_LS_mx relies on it: its d_Fa
+         ! dummy is INOUT, so what is created here is what it fills. It was
+         ! declared OUT, which deallocates an allocatable on entry and made
+         ! this line dead code -- and the job segfaulted. See make_LS_mx.
          d_Fa.create(.crystal.xray_data.reflections.dim,.crystal.asymmetric_unit_atom.no_of_pADPs)
          .make_LS_mx(d_Fa)
          .do_LS_refinement(d_Fa)
@@ -725,7 +729,18 @@ contains
    make_LS_mx(d_Fa) :: leaky
    ! Calculate the LS matrix Low memory version.
       self :: target, INOUT
-      d_Fa :: MAT{REAL}@, OUT
+      ! INOUT, not OUT. The caller allocates this (LS_fit_HAs_disk does, with
+      ! exactly the shape used below) and its sibling DO_LS_refinement, which
+      ! takes the very same variable from the very same caller, is likewise
+      ! declared MAT{REAL}@, INOUT. `OUT` was the slip, and on an ALLOCATABLE
+      ! dummy it is not a documentation nicety: Fortran DEALLOCATES an
+      ! intent(out) allocatable on entry, so the caller's allocation was thrown
+      ! away, nothing here ever allocated it again, and it arrived unallocated
+      ! at DIFFRACTION_DATA:d_F_abs_dX -- whose "res" dummy is MAT{REAL}, OUT,
+      ! assumed-shape and NOT allocatable. Passing an unallocated allocatable
+      ! to such a dummy is undefined; gfortran dereferenced a null array
+      ! descriptor and every run that reached here died with SIGSEGV.
+      d_Fa :: MAT{REAL}@, INOUT
    
    ENSURE(.crystal.xray_data.allocated, "no data")
    ENSURE(.crystal.fragment_info_made, "no fragment info")

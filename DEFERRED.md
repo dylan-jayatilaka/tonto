@@ -903,6 +903,35 @@ empty; the backtrace is unsymbolised in a release build.
 **Confirmed pre-existing**, not a consequence of the occupancy fix above: reverting that one
 line, rebuilding and re-running gives the identical `139`.
 
+**FIXED (2026-08-02) — but a second, independent defect is behind it.**
+
+*The crash.* `make_LS_mx` declared its result `d_Fa :: MAT{REAL}@, **OUT**`. On an
+**allocatable** dummy, `intent(out)` makes Fortran **deallocate on entry** — so the caller's
+`d_Fa.create(...)` in `LS_fit_HAs_disk` was thrown away and became dead code, nothing in the
+routine's 744 lines ever allocated it again, and it arrived unallocated at
+`DIFFRACTION_DATA:d_F_abs_dX`, whose `res` dummy is `MAT{REAL}, OUT` — assumed-shape and **not**
+allocatable. Passing an unallocated allocatable to such a dummy is undefined; gfortran
+dereferences a null array descriptor. Fixed by declaring it **`INOUT`**, which is what the code
+meant all along: the caller allocates with exactly the right shape, and the sibling
+`DO_LS_refinement`, which takes *the same variable from the same caller*, is already
+`MAT{REAL}@, INOUT`. `OUT` was simply the slip.
+
+*What it uncovered.* With the crash gone the job runs but **never converges**: it reprints
+`Fit Iter 1` with identical numbers (`chi2 49.702984, R 0.038068, R_w 0.029149`, max shift
+`H1 pz`) indefinitely — 599 identical rows before a 900 s timeout. So the LS iteration does not
+advance: the parameters are not updated between passes, or
+`.crystal.xray_data.fit_finished` / `ref_iteration` never move. **`--disk-sfs` still does not
+work**; it has gone from crashing to looping.
+
+*Timing, measured not guessed.* The first `make_LS_mx` takes ~11.5 minutes in a **release**
+build on urea — a job the in-core path completes end to end in 7.7 s. `sample(1)` on the live
+process puts the time in `make_ls_mx` → `cexp`/`sin`/`cos`, i.e. the structure-factor Fourier
+sum, not I/O. Subsequent loop passes are fast (~1.5 s), consistent with the stored SFs being
+reused as intended. **Why the in-core path is so much faster has NOT been established** — an
+earlier guess about interpolators was wrong (per Dylan they serve density evaluation before the
+transform, not the transform itself). A like-for-like profile of both paths is the way to settle
+it, and should come before any optimisation.
+
 This is a **documented option that has never worked**, in a routine whose own comment
 (`molecule.har.foo:631`) reads *"NOTE: routine make_LS_mx is very long! Is it working?
 Rewrite?"* — the answer being no. It matters more than its test coverage suggests, because
