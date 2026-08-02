@@ -1671,6 +1671,50 @@ Items 1 and 2 together would have prevented every wrong-answer bug listed below.
   `PARALLEL_SUM` — not the symmetric variant, since these arrays are filled in both triangles.
   All are no-ops in a serial build.
 
+### BUILD-SYSTEM TRAP: `get_from` donors are invisible to the dependency graph
+
+Per Dylan: "always been an issue." Recorded now with a concrete demonstration and a fix.
+
+**The mechanism.** Each translation step declares (`CMakeLists.txt:764`):
+
+```cmake
+DEPENDS ${foopath} ${FOO_TYPES_FILE} ${ANTLR4_TRANSLATOR_STAMP}
+```
+
+i.e. its own `.foo`, `types.foo`, and the translator -- and **nothing else**. But the translator
+follows `get_from(...)` and inlines *donor* files. Those donors are not in the DEPENDS list, so
+**editing a donor rebuilds nothing**: you get a silently stale binary, no warning, and a test run
+that appears to exercise your change and does not.
+
+That also explains the asymmetry everyone notices: editing `types.foo` cascades to the entire
+build (it is an explicit dependency of every translation) while editing a donor does nothing at
+all.
+
+**Worked example, 2026-08-02.** `foofiles/parallel.foo` is 9857 lines containing the *entire* MPI
+layer, is a pure `get_from` donor into `SYSTEM`, generates **no `parallel.F90` whatsoever**, and
+appears nowhere in `CMakeLists.txt`. An experiment to re-enable Florian's `MPI_BARRIER` (see
+above) edited it, ran `cmake --build`, got `rc=0` in under a second, and tested a binary that
+still had the old code. Caught only because the build log was 11 lines and the generated
+`system.F90` still showed 25 commented barriers. Forcing it needs `touch foofiles/system.foo`.
+
+**This is very likely how the barrier came to be disabled unnoticed in 2021** (`42040312`): a
+two-line commit touching `parallel.foo` would have changed no compiled output for whoever made it.
+
+**The fix, in order of preference:**
+
+1. **Depfiles.** `FooToFortran` already knows every file it reads -- it has to, to resolve
+   `get_from`. Have it emit a `.d` alongside each `.F90` and pass CMake's `DEPFILE` option on the
+   `add_custom_command` (CMake >= 3.20 with Make/Ninja). Precise, automatic, and self-maintaining
+   as donors change.
+2. **Compute the donor set at configure time** -- scan the `.foo` files for `get_from(` and add
+   the referenced donors to that file's `DEPENDS`. No translator change, but the scan must track
+   the grammar.
+3. **Blunt fallback**: add every `foofiles/*.foo` to every `DEPENDS`. Always correct, but then any
+   edit rebuilds everything -- i.e. permanently what `types.foo` does today.
+
+Until this is fixed: **after editing any donor, `touch` a file that is a real dependency** (its
+consumer, or `types.foo`) or you will test a stale binary.
+
 ### Known-flaky: x-ray-constrained SCF convergence wanders violently (long-standing)
 
 Per Dylan this instability is **well known and has never been diagnosed**. Recorded here now that
@@ -1758,6 +1802,38 @@ than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comment
   cannot repair a different sequence: it is one more collective that must itself match, so it
   generally converts the truncation into a deadlock. It would also force a full synchronisation on
   every single broadcast. Treat the comment as a dated bug report, not as a fix.
+
+  **UPDATE 2026-08-02: the barrier was TESTED and it WORKS. The argument above is wrong.**
+  Re-enabling it (verified compiled in: 26 live `MPI_BARRIER` calls in the generated `system.F90`,
+  up from 1) makes all three failing CIF tests **pass**. That refutes the ordering argument: if the
+  collective *streams* differed in length a barrier would have **deadlocked**, since it adds one
+  element to each stream and cannot realign them. Passing means every rank reaches the same
+  collectives, and the fault is **timing-sensitive**, not a sequence mismatch.
+
+  Ruled out: non-blocking operations. `ibroadcast` is defined but **never called** anywhere, so
+  there is no in-flight message to collide with a later collective.
+
+  **Prime suspect, and it is the milestone-6 mechanism again.** `PARALLEL_BROADCAST` is not an
+  unconditional call (`include/macros.in:234`):
+
+  ```c
+  #define PARALLEL_BROADCAST0(X,Y)   if (DO_IN_PARALLEL0) call broadcast_(tonto,X,Y)
+  ```
+
+  Every broadcast is gated on `DO_IN_PARALLEL` = `.is_parallel AND .do_parallel_lock==" "`, so a
+  broadcast inside a held lock is **silently skipped** -- exactly as the dead reductions were. If
+  two ranks ever disagree about the lock state, one performs a collective the other skips, and from
+  that point the streams are offset by one -- precisely `MPI_ERR_TRUNCATE` on the next pair.
+  A plausible route to disagreement: the translator emits `LOCK_PARALLEL_DO` as the **first
+  statement inside** the loop body, so a rank given **zero iterations** by the cyclic distribution
+  never takes the lock while ranks with work do. **Not yet verified** -- this is the next thing to
+  test, and if it holds then milestone 6 fixes milestone 7 as well.
+
+  **Interim options.** The barrier is a working stopgap but costs a full synchronisation on every
+  broadcast. The better fix (Dylan) is to make the failure unrepresentable: have
+  `TEXTFILE:read_line_external` issue **one** collective instead of two -- carry the status in a
+  reserved leading byte of the string, or broadcast a small `VEC{INT}` and the payload only when a
+  line exists. A single collective per call cannot be mispaired, whatever the underlying cause.
 
 ### Not yet fixed — recorded with evidence
 

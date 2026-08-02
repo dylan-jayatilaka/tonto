@@ -344,7 +344,16 @@ other, is **undefined behaviour** — an uninitialised value or an out-of-bounds
 a broadcast length or the branch that decides whether a rank reaches the collective. This is the
 "genuine UB" milestone 4 anticipated, and it is real.
 
-It has **not** been diagnosed. Doing so needs a debug MPI build on Linux (`-fcheck=bounds`
+**UPDATE 2026-08-02 -- substantially diagnosed.** The failing call is the `.IO_status` broadcast in
+`TEXTFILE:read_line_external` (`MPI_BCAST(buffer,1,MPI_INTEGER,...)`) receiving a 256-character
+message, i.e. paired with the adjacent `string` broadcast. Reached via `VEC{ATOM}:read_smcif` ->
+`read_smcif_atoms_xtal` -> `CIF:find_looped_item` -> `TEXTFILE:look_for_item`. Re-enabling the 2021
+`MPI_BARRIER` makes all three tests pass, which rules out a sequence-length mismatch (that would
+deadlock) and points at the fact that every `PARALLEL_BROADCAST` is conditional on
+`DO_IN_PARALLEL` and can be silently skipped on one rank. See `DEFERRED.md`. What makes the ranks
+disagree is still open.
+
+The original note follows. It had **not** been diagnosed at the time of writing. Doing so needs a debug MPI build on Linux (`-fcheck=bounds`
 plus `-finit-integer`/`-finit-real=snan` would likely name it immediately). Recorded rather than
 guessed at. Note the practical consequence: `-Ofast` **hides** this, so the shipped configuration
 is the one where it is invisible, not the one where it is absent.
