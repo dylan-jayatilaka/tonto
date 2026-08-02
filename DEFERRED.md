@@ -826,39 +826,50 @@ than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comment
     an `.unknown` extension, which suggests the archive genre is never set on this path. A
     gly_ala run drops 20 of them, 3.2 MB.
 
-### PRIORITY: the precomputed form factors are written and then never read — they are recomputed
+### INVESTIGATED, DO NOT "FIX": `get_Hirshfeld_atom_FFs_for_atom` recomputes rather than reads
 
-Found 2026-08-02, and it is Dylan's point: *"It should read a precomputed file!"* That is the
-whole purpose of the disk form factors, and the comment at `molecule.har.foo:1342` says so —
-`! WRITE SF_U TO DISK HERE TO SAVE TIME`.
+The observation is right — `MOLECULE.RHO:get_Hirshfeld_atom_FFs_for_atom` (`molecule.rho.foo`)
+contains **no archive access of any kind**. It rebuilds everything: `becke_grid.make_atom_grid`,
+`apply_stockholder_atom_weight`, `becke_grid.prune_grid`, `make_ED_grid_r_v2` and the Fourier
+sum — apparently the work `get_Hirshfeld_atom_FFs_disk` already did and wrote to `<tag>-SFs`.
+Its caller even says so (`molecule.har.foo:713`): *"in iteration 0, these were already
+calculated as part of make_X_SFs ... double work!"*.
 
-**`MOLECULE.RHO:get_Hirshfeld_atom_FFs_for_atom` (`molecule.rho.foo:5453`) contains no archive
-access of any kind.** It rebuilds everything from scratch: `becke_grid.make_atom_grid` (`:5524`),
-`apply_stockholder_atom_weight` (`:5528`), `becke_grid.prune_grid` (`:5531`),
-`make_ED_grid_r_v2` (`:5536`) and the Fourier sum (`:5549`) — precisely the work
-`get_Hirshfeld_atom_FFs_disk` already did and wrote to `<tag>-SFs`.
+**But making it read the file would break its only caller.** Checked 2026-08-02:
 
-Its caller already knows. `MOLECULE.HAR:get_derivative_F_calc_for_atom` (`molecule.har.foo:713`)
-reads:
+- The sole caller of `get_Hirshfeld_atom_FFs_for_atom` is
+  `MOLECULE.HAR:get_derivative_F_calc_for_atom`, and the sole caller of *that* is
+  **`runfiles/run_sf_derivs.foo:748`** — not `tonto`, not `hart`, and nothing on the HAR path,
+  which uses `make_LS_mx` / `LS_fit_HAs_memory` instead.
+- `run_sf_derivs` is **`EXCLUDE_FROM_ALL`** (`CMakeLists.txt:918`): translated and compilable,
+  never built by default, exercised by no test.
+- **It never runs a disk-SF pass.** No `use_disk_SFs`, no `HAR_refinement`, no `LS_fit`, no
+  `get_Hirshfeld_atom_FFs_disk` anywhere in the file — it does an SCF and goes straight to
+  `get_derivative_F_calc_for_atom`. So no `<tag>-SFs` file exists when it runs, and a read
+  would `DIE` on a missing file.
 
-```foo
-! Hirshfeld-atom structure factors
-! NOTE: in iteration 0, these were already calculated
-! as part of make_X_SFs ... double work!
-.get_Hirshfeld_atom_FFs_for_atom(a,ff)
-```
+So the recomputation is **necessary there**, and the "double work!" comment describes a
+situation that no longer arises on that path. There is also **no performance win available
+here**: the routine does not execute in any tested configuration, so it is not why
+`gly_ala_fragHAR` takes ~60 s. (That claim was made and withdrawn the same day; the real cost
+has not been measured — see the test-speed item below, and measure before optimising.)
 
-The other three readers (`crystal.foo:4946`, `:5590`, `:6216`) *do* read the archive, so the
-files are not write-only overall — this one path just ignores them.
+**A latent inconsistency worth knowing, if this is ever revisited.** The stored file and the
+recomputed value are *not the same quantity*:
 
-**Why it matters beyond tidiness:** this is per unique atom per LS cycle, and it is the
-expensive part of a HAR. It is a strong candidate for why `gly_ala_fragHAR` takes ~60 s (see
-the test-speed item below). Fixing it is the same shape as the readers that already work:
-`arch.create(trim(tag)//"-SFs")`, honour `use_text_SFs`, `arch.read(ff)`.
+| | expression |
+|---|---|
+| `get_Hirshfeld_atom_FFs_disk` (writes the file) | `sf_u(k) = sf * s2` |
+| `make_LS_mx` (writes the file) | `sf_u(k) = sf * s2` |
+| `get_Hirshfeld_atom_FFs_for_atom` (recomputes) | `ff(k) = sf * s2 * .atom(c).site_occupancy` |
 
-**Sequencing:** do this *after* the `per_rank_write` fixes, not before. Right now
-`make_LS_mx` writes those files from every rank at once, so making a second routine start
-reading them would be reading a file that is being concurrently corrupted.
+The recomputing path folds in `site_occupancy`; both writers do not. Identical for a fully
+occupied site, different otherwise — so anyone swapping a read in for the computation must
+multiply by the occupancy afterwards, or silently change results for partially-occupied sites.
+Which convention is *correct* is a separate question: the three readers that do use the archive
+(`crystal.foo:4946`, `:5590`, `:6216`) do not apply occupancy either. The k-points at least do
+agree — `CRYSTAL:make_unique_X_SF_k_pts` is a thin wrapper over the same
+`reflections.make_unique_SF_k_pts` that `make_LS_mx` calls directly.
 
 ### Deferred: `fragHAR_refinement` forces disk form factors ON, unconditionally
 
@@ -879,16 +890,24 @@ Worth revisiting once the parallel defects above are fixed:
 
 Two jobs run it, `tests/long/gly_ala_fragHAR_rhf_STO-3G` (tonto) and
 `tests/hart/gly_ala_hart_STO-3G` (hart, and therefore **in CI**). 60 s is the single largest
-item in the `hart` label, and Dylan wants it cheaper. Candidates, cheapest first:
+item in the `hart` label, and Dylan wants it cheaper.
 
-1. **Stop recomputing the form factors** — the item above. Costs nothing in accuracy and is a
-   real algorithmic saving, not a shortcut.
-2. **Start from stored MOs** (`initial_MOs`) rather than the promolecule guess, checking in the
+**Measure first.** The obvious suspect — `get_Hirshfeld_atom_FFs_for_atom` recomputing what is
+already on disk — was checked and **does not execute on this path at all** (item above). Nothing
+has actually been profiled, so the next step is a profile, not a guess. A `gprof`/`perf` run on
+the hart job would settle it in one go; the plausible costs are the per-atom Becke grid work in
+`make_LS_mx`'s `do u` loop, the fragment SCFs, and the ~10 LS cycles.
+
+Candidates, once there is a measurement to justify one:
+
+1. **Start from stored MOs** (`initial_MOs`) rather than the promolecule guess, checking in the
    converged archives. Cuts the fragment SCF, but the checked-in binaries then have to be kept
    in step with the basis set and the code, which is a maintenance cost the other tests do not
    carry.
-3. Drop the residual cube — **already done** for the hart test (`--residual-cube f`), and worth
+2. Drop the residual cube — **already done** for the hart test (`--residual-cube f`), and worth
    doing in the tonto job too.
+3. A coarser `--grid-accuracy` for the test, if the refinement statistics survive it; the point
+   of the test is that fragHAR runs and reproduces, not that the grid is converged.
 
 Any of these rewrites the reference, so re-bless deliberately and read the result as science.
 
