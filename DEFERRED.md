@@ -6,29 +6,28 @@ correctness-of-match or robustness refinements.
 *(This file began as `ANTLR4_DEFERRED.md`, a list of translator loose ends. It
 now covers the whole project, so it was renamed.)*
 
-## Translator: `data` statements at `program` scope are silently dropped
+> **Organisation.** Entries are grouped by theme; anything finished has moved to the
+> archive at the end rather than being deleted, so the reasoning stays searchable.
 
-**This one causes silently wrong answers, and it cost a day.** The ANTLR4
-translator emits `data` statements for module-scope variables (`atom.foo` 21/21,
-`colour.foo` 44/44, `becke_grid.foo` 6/6 survive) but **drops them entirely from a
-`program` unit**. `runfiles/run_har.foo` had two; `build/run_har.F90` had none.
+| Theme | What lives there |
+|-------|------------------|
+| [Correctness](#correctness--open-bugs-that-give-wrong-answers) | Open bugs that give wrong answers, including ones with no diagnostic |
+| [MPI](#mpi) | The milestone-4 defect register, the `parallel do` lock, the `MPI_Bcast` desync, architecture options |
+| [Build system and toolchain](#build-system-and-toolchain) | `get_from` dependency trap, macro pruning, `types.foo` split, OpenBLAS |
+| [Test suite and numerics](#test-suite-and-numerics) | Small numerical differences, `-O0` failures, NaN/negative ESDs |
+| [Translator and the Foo language](#translator-and-the-foo-language) | Dropped `data` statements, name-case normalisation, F2008 submodules |
+| [hart](#hart) | Remaining hart items and un-migrated runfiles |
+| [Tooling and editor support](#tooling-and-editor-support) | vim highlighting and integration |
+| [Platform-specific](#platform-specific) | macOS/Apple Silicon, gfortran-16 |
+| [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-The declaration is still emitted, so it compiles clean and the variable is simply
-uninitialised. In `hart` that meant `allowed_bases` and `grid_levels` were garbage,
-so **every** basis name — including the program's own default `def2-SVP` — failed
-`is_one_of` with "unknown basis". Nothing warned.
+**Highest-priority open items**, if you are looking for where to start:
+`data` statements silently dropped (translator, no diagnostic); NaN and negative ESDs from the
+least-squares variance-covariance matrix; and the MPI items behind milestones 6 and 7.
 
-Worked around by assigning the arrays in the executable part instead
-(`run_har.foo`, `run_sf.foo`, `run_sf_derivs.foo`). **The translator is the real
-bug.** Until it is fixed, either emit the `data`, or make the translator *reject*
-what it cannot translate — silently discarding a statement is the worst option.
+---
 
-`runfiles/run_csq.foo` still has program-scope `data` and is not in the translated
-source list; it will hit this if revived.
-
-Related: `none` is a reserved word in `Foo.g4`, so it cannot be used as a variable
-name. The parse error it produces (`mismatched input 'none'`) points at the *end*
-of the file, not at the offending line, which makes it hard to find.
+# Correctness — open bugs that give wrong answers
 
 ## Keyword parsing must not leak into library routines (fixed; survey kept)
 
@@ -77,7 +76,7 @@ parse role and the do role into one procedure, which happened once.
 not touch `stdin`. `scripts/check_library_stdin.py` enforces it (ctest name
 `library_stdin`, label `short`; also run by `make report` and CI).
 
-### `write_archive` swallows the next keyword (live bug, NOT fixed here)
+### DONE (2026-08-02): `write_archive` swallowed the next keyword
 
 Found while testing `read_archive_and_normalise`. `MOLECULE.PUT:put_archive` has
 the same qualifier peek, with an off-by-one:
@@ -185,201 +184,484 @@ precondition that `USE_PRECONDITIONS` gates away, so release ships the violation
 Worth a sweep for other `append(trim(...))` / `append("literal")` calls on
 `VEC{STR}`, and for other `width=STR_SIZE` uses, on the same reasoning.
 
-## hart — deferred items
+## Deferred: `std_err` writes into the *input* file (hard-coded unit collision)
 
-The `hart` work (milestone 5) left these alone deliberately. `docs/HART.md` is
-the authoritative document; these are the items with no owner yet.
+**Found 2026-07-29** while instrumenting `table_column.foo` to chase the zero(error) problem.
+A few `std_err.show(...)` calls added for debugging did not appear in any error log — they were
+**appended to the `stdin` file**, which corrupted the input while it was still being read and
+killed the job with:
 
-- **fragHAR support (milestone H1).** `hart` only ever calls `HAR_refinement`
-  (`runfiles/run_har.foo`), never `fragHAR_refinement`, and has no
-  atom-group/per-fragment-charge path, so crystals with more than one molecule
-  in the asymmetric unit cannot be refined with it.
-  `tests/long/gly_ala_fragHAR_rhf_STO-3G` exercises fragHAR through `tonto` and
-  is the acceptance test for this.
-- **Frozen options.** `--charge`, `--mult`, `--ldtol`, `--scf-guess`,
-  `--anharm`, `--wavelength` and `--4th-order-only` are commented out in both
-  the `select case` block and the help text of `run_har.foo`. They are kept in
-  step deliberately — the invariant check (`scripts/check_hart_options.sh`)
-  compares only the uncommented labels against the live `--help` output, so a
-  half-revived option is caught. Reviving one means uncommenting *both* halves.
-- **Hard-coded `stdout.*` scratch names.** A HAR job writes seven plot files
-  whose names ignore the job name entirely: `stdout.F_z_vs_stl`,
-  `stdout.Delta_F_vs_stl`, `stdout.F_z_vs_F_exp`, `stdout.Delta_F_pred_z_vs_F_pred`,
-  `stdout.Delta_F_pred_z_vs_stl` (`foofiles/diffraction_data.put.foo`), and
-  `stdout.QQ_plot_with_hkl`, `stdout.QQ_plot.gunplot`
-  (`foofiles/vec{reflection}.foo`). Two runs in one directory overwrite each
-  other's plots. They should derive from `<job>`. Also `.gunplot` is a typo for
-  `.gnuplot` — the file's own header says "Gnuplot input file".
-- **`.cif2` restart round-tripping is untested.** `hart` now accepts a `.cif2`
-  input (it previously rejected one while its own message said it was
-  required for restart), but nothing exercises the write-then-restart cycle.
-- **`--scf-guess` needs rewriting, not restoring.** The block that used to
-  implement it in `run_har.foo` was fatal — see the comment there. It ran
-  unconditionally (`guess` is always `"mos"`), and
-  `SCF_DATA:set_initial_density("restricted")` does not mean "guess a restricted
-  density", it rewrites `.initial_density` to `"r"`, i.e. *read* one from an SCF
-  archive. On a first run no archive exists, so the SCF read garbage. It also
-  threw away the promolecule guess set on the line above, and its two branches
-  were swapped against their own names. Reviving the option means writing it
-  correctly against `SCF_DATA`'s actual semantics.
-- **`put_archive` / `read_archive` are asymmetric about the normalise
-  qualifier.** After the fix below, `put_archive <name> normalise` takes it
-  inline on the keyword line, while reading needs the separate
-  `read_archive_and_normalise` keyword. Both work; they just do not look alike.
-  Unify if that grates — either give `put` its own
-  `put_archive_and_normalise`, or let `read_archive` take the inline qualifier
-  by relaxing its `ENSURE(n_line_items==3)` to accept a fourth item.
+```
+Error in TEXTFILE:read_line_bad_EOF ... unexpected end of file
+File name = stdin   Line number = 35
+```
 
-## Runfiles that are not built, and were not migrated to `--options`
+The input file grew from 55 to 101 lines during the run. Reproducible.
 
-The single-dash option removal covered every `runfiles/*.foo` that CMake
-actually translates. These eight have **no `add_executable` target and are not
-in the translated source list** in `CMakeLists.txt`, so they are never compiled
-and a mistake in them would not be caught by any build:
+**Mechanism — partly established, not fully pinned.** The three units are distinct
+(`TEXTFILE_STDIN_UNIT` 5, `TEXTFILE_STDOUT_UNIT` 6, `TEXTFILE_STDERR_UNIT` 7, `include/macros.in`).
+But `create_std_err` (`textfile.foo`) never *opens* anything — it allocates the object and
+claims the hard-coded unit:
 
-`run_xtal.foo`, `run_cif_to_surface.foo`, `run_dnc.foo`,
-`run_metal_fingerprints.foo`, `run_command_line.foo`,
-`run_fix_pre_v4088_cif.foo`, `run_compare_data.foo`,
-`run_compare_3d_pair_data.foo`.
+```fortran
+std_err.name   = "stderr"
+std_err.action = "write"
+std_err.unit   = tonto.std_err_unit      ! = 7, hard-coded
+```
 
-Several still carry single-dash `case` labels (e.g. `run_xtal.foo` is a near
-copy of `run_molecule.foo` with `case("i","-input")`), which `COMMAND_LINE`
-can no longer deliver. Either revive them — translate, build, migrate — or
-delete them. `run_cif_to_surface.foo` was the CrystalExplorer entry point;
-CrystalExplorer no longer uses tonto.
+Fortran does not pre-connect unit 7, and Tonto hands out units dynamically when it opens files,
+so the likely story is that unit 7 already belonged to another open file (the input) and the
+write simply went there. That has not been proved — worth confirming with an `inquire` on the
+unit at the point of the write.
 
-## Test registration: stale `DEPENDS run_test`
+**Why it matters more than it looks:** a diagnostic channel that silently destroys the input is
+a trap exactly when someone is debugging, and it fails in a way that looks like a *parse* error
+in the user's input rather than an I/O bug. It cost real time here.
 
-`tests/CMakeLists.txt` used to set `DEPENDS run_test` on every registered test.
-`DEPENDS` names a *test*, and no test called `run_test` has ever existed — the
-name belongs to a Python function in `scripts/test.py`. It was a silent no-op
-and has been removed. Mentioned here in case the intent was a real dependency
-on the executable being built (which `add_test` does not express; that is what
-the `report` target's `add_dependencies` is for).
+**Suggested fix:** have `create_std_err` claim its unit the same way every other file does
+(via the allocator, checking `unit_used`) instead of assuming a fixed number, or open the file
+properly. Note `stdout`/`stdin` share the same hard-coded pattern and may be latently exposed
+to the same collision.
 
-## Cleanup: normalise procedure-name CASE across definition and call sites
+**Naming note:** the object was renamed `stderr` → `std_err` (matching the existing `std_time`,
+`std_name`, `std_output` family) because the Unix name implied Unix behaviour it does not have.
+The *file* it writes is still called `stderr`, so test directories and `IO` manifests are
+unaffected. The CPP macro `TEXTFILE_STDERR_UNIT` was deliberately left alone: it is one of a
+trio with `TEXTFILE_STDIN_UNIT`/`TEXTFILE_STDOUT_UNIT`, and renaming just one would look odd.
+Renaming `stdin`/`stdout` likewise is ~12,500 call sites across 81 foofiles but — importantly —
+**zero** test churn, since the file names are set separately. Deferred as cosmetic.
 
-**Goal (Dylan):** find every procedure whose **definition case differs from its call-site
-case** (or where call sites disagree among themselves) and make them consistent. Foo/Fortran
-are case-insensitive so these compile and run fine, but the inconsistency is annoying and
-trips case-sensitive tooling.
+---
 
-**Why it matters (concrete):** discovered during phase B (dead-code elimination). `textfile.foo`
-defines `reset_IO_status` (upper `IO`) but `vec{basis}.foo` calls it as `stdin.reset_io_status`
-(lower). The dead-code analysis keyed its call-graph nodes case-sensitively, so the call didn't
-match the definition and the procedure was wrongly pruned — a latent, silent trap. (Worked
-around in the translator by lower-casing the method part of every graph node via `node()`;
-this cleanup would remove the underlying inconsistency in the *sources*.)
+# MPI
 
-**How to tackle (parse-tree driven, reuse phase-B infra):** the translator already walks every
-`ProcDef` (definitions) and every `PostfixContext` (calls). Add a `--case-report` mode that
-records, per lower-cased procedure name, the **set of distinct spellings** seen across its
-definition header and all call sites; flag any name with >1 spelling, listing file:line of each
-variant. Then normalise — the definition's spelling is the natural canonical form — and rewrite
-the call sites (a targeted, parse-tree-driven edit like `--add-self-intent`, NOT a blind sed,
-so commented-out and string-literal occurrences are left alone). Related: [[submodule-call-autoresolution-done]]
-already hit a case bug in the submodule registry (commit 627db872); this is the same family.
+## MPI: defects found during milestone 4 (2026-08-01)
 
-## Closed (won't-do): eliminate explicit `TYPE:proc` calls — at its practical limit
+Found while building Tonto with MPI for the first time — **no MPI build had ever been
+configured**, in CI or in any local build tree, so none of this had been exercised. Items marked
+**FIXED** were repaired as part of milestone 4 because they produce wrong answers and would have
+made the numeric characterisation meaningless; the rest are recorded with evidence.
 
-**What:** the submodule-call cleanup (`4cd995df`) auto-resolved `.SUBMOD:proc` etc., but
-explicit **type-qualified** calls `TYPE:proc` / `TYPE::proc` (e.g. `GAUSSIAN_DATA:...`,
-`STR:...` for namespace access + method calls) were left **qualified on purpose**.
+### The root cause behind most of these: the `parallel do` lock is invisible
 
-**Why it's not just a mechanical `TYPE:proc(x)` → `x.proc` rewrite:** that transform is
-**unsafe** and was tried and reverted. An **elemental** method invoked on a `VEC{T}` array
-receiver resolves against the *receiver's* type (`VEC{T}`), not the element type `T`, so
-`x.proc` can bind a different (array-level) overload than `T:proc` intended — this introduced
-a `use` cycle. See memory `typeproc-elemental-array-hazard`. A correct elimination needs
-**type-aware** resolution that respects elemental/array-receiver semantics (and the
-GAUSSIAN_DATA namespace-access case), not a blind receiver swap. Low priority — the explicit
-form compiles and runs fine; this is a consistency/readability cleanup, not a correctness bug.
+`FooToFortran` lowers `parallel do` to `PARALLEL_DO_START/STRIDE` bounds plus a
+`LOCK_PARALLEL_DO(tag)` emitted as **the first statement inside the loop body**, with
+`UNLOCK_PARALLEL_DO(tag)` after `end do`. `do_in_parallel` is
+`.is_parallel AND .do_parallel_lock==" "` (`parallel.foo:287`), so **inside a `parallel do` body
+`DO_IN_PARALLEL` is always FALSE**, and every `PARALLEL_*` macro — each of which expands to
+`if (DO_IN_PARALLEL0) call …` — is a silent no-op there.
 
-**Analysis tool built — `--type-qualified-call-report` (read-only).** Rather than rewrite
-blindly again, `FooToFortran` now classifies every site by asking the *real* resolver two
-questions — "where does `TYPE:proc` resolve today?" vs. "where would `arg1.proc(...)` go?" —
-and only calls a site **SAFE** when both answers exist and agree. Writes
-`type_qualified_calls.tsv` (per-site verdict + why). New helpers `buildElementalByModule`,
-`runTypeQualifiedCallReport`, `classifyTypeQualifiedCall`, `isLonePostfixArg`. Emission is
-untouched; it just walks the modules and throws the Fortran away (~11 min single-JVM full walk).
+The intent (Dylan) is sound and standard: keep MPI "on the outside", parallelise coarsely, and
+prevent interior collectives, which would otherwise deadlock on mismatched trip counts. The
+*mechanism* is the problem:
 
-**Verdict: this task is at its practical limit — it cannot be cheaply or completely done.**
-Report over **2068** sites (2026-07-29):
+- **Suppression is silent.** A reduction that never ran is indistinguishable from one that did.
+- **It answers a dynamic question when the need is lexical.** `DO_IN_PARALLEL` means "no outer
+  loop is active"; what a reduction site needs to know is "am I inside the body or after it".
+- **The unlock is name-matched, not depth-counted.** `unlock_parallel_do` clears the lock
+  whenever the name matches (`parallel.foo:321`), so a recursive routine's inner return releases
+  the outer loop's lock. The `ENSURE` that would catch recursion is commented out at
+  `parallel.foo:308`.
 
-| class | count | % | convertible? |
-|---|---|---|---|
-| NAMESPACE (989 = `GAUSSIAN_DATA::…`) | 1002 | 48.5% | no — data access, no receiver to promote |
-| MODULE_MISMATCH | 506 | 24.5% | no — would bind a *different* module |
-| EXPR_RECEIVER | 232 | 11.2% | no — receiver needs added parens |
-| ELEMENTAL_HAZARD | 99 | 4.8% | no — the exact trap that sank the reverted attempt |
-| **SAFE** | **154** | **7.4%** | **yes — the only candidates** |
-| UNKNOWN / BY_NAME / COMPONENT_COLLISION / NO_RECEIVER | 75 | 3.6% | no — untypeable or non-call |
+Correctness therefore depends on the programmer holding the whole dynamic call sequence in their
+head. As Dylan put it: *"the programmer has to hold the call sequence in their head not to make
+bugs."* That is a design defect, not a discipline problem — the constraint is invisible at the
+point where it matters.
 
-Only **7.4%** is mechanically convertible; the other **~92%** each fail for a *structural*
-reason (namespace access with no receiver, genuine cross-module dispatch, expression receiver,
-or elemental/array-receiver semantics) that no blind rewrite can satisfy. Converting the 154
-SAFE sites would be a large, file-spanning diff for a cosmetic gain while **leaving the bulk of
-the explicit forms in place anyway** — so the readability payoff never actually lands. The
-explicit `TYPE:proc` form compiles, runs, and is unambiguous. **Recommendation: stop here.**
-Keep the report as the durable evidence and the work-list should anyone ever want the SAFE
-subset; treat full elimination as *not worth doing*, not merely *not yet done*.
+> **DECIDED (Dylan, 2026-08-01): adopt all four of the following. This is URGENT and is the next
+> piece of work after milestone 4's characterisation completes.** It is sequenced after, not
+> during, because changing the `parallel do` lowering mid-characterisation would confound the
+> numbers it is meant to produce. Tracked as milestone 6 in `CLAUDE.md` §9.
 
-## DONE: phase B — per-executable dead-code elimination
+**1. Move the reduction into the loop construct (the main fix).**
 
-**Goal (Dylan):** eliminate code dead for a specific executable (e.g. `run_molecule`/`tonto`),
-in a separate build dir, without affecting the other executables or the normal build.
+```foo
+parallel do q = 1,.n_shell_pairs reduce(grid)
+   ...
+end
+```
 
-**Delivered** in `FooToFortran.java` + `CMakeLists.txt`:
-- `--call-graph-report` → Graphviz `call_graph.dot` / `module_use.dot` (submodules collapsed to
-  parent) / `submodule_use.dot`; `--dead-code-report <root.foo>` → per-module live/dead TSV;
-  `--purge-dead-code <root.foo>` → two-pass emit dropping unreachable procs. CMake exposes the
-  `callgraphs` target and `-DPURGE_DEAD_CODE=<stem>` (separate build tree). See README §7b, CLAUDE.md §8.
-- Reachability = BFS from the root program's entry calls over a call graph captured by
-  piggybacking on the real call-resolution. `TYPES`/`SYSTEM` (wholesale-`use`) never pruned.
+lowering to the existing macros with the reduction emitted in the one place it is correct:
 
-**Validated:** `-DPURGE_DEAD_CODE=run_molecule` release build compiles 0-error, ~32% of the
-~7600 procedures dropped, binary 33→25 MB, and ctest is **121/124 — identical to the full build**
-(same 3 known-bad). Three reachability-analysis bugs were caught only by the compile+test gate,
-each a call form that bypassed the `use`-based capture: (1) same-module `::proc`/bare-selfless
-calls (fixed: `recordSelfCall`); (2) case-sensitive node keys (`reset_IO_status` vs
-`reset_io_status`; fixed: `node()` lower-cases the method part — motivates the case-cleanup goal
-above). CPP-macro-hidden calls all target `SYSTEM` (always kept), so no macro-root class exists.
+```fortran
+do q = PARALLEL_DO_START(1,1),self%n_shell_pairs,PARALLEL_DO_STRIDE(1)
+LOCK_PARALLEL_DO("MODULE:proc")
+   ...
+end do
+UNLOCK_PARALLEL_DO("MODULE:proc")
+if (DO_IN_PARALLEL) then
+   PARALLEL_SUM(grid)
+end if
+```
 
-## DONE: simplify the DOT call-graph output
+This is exactly OpenMP's `reduction(+:x)`, and it removes the failure mode entirely: the
+programmer no longer chooses *where* the reduction goes, so it cannot be written inside the body,
+inside a conditional, or forgotten. Every wrong-answer bug in the next section becomes impossible
+by construction.
 
-**Goal (Dylan):** reduce the complexity of the graphs from `--call-graph-report` (phase B).
-`call_graph.dot` is a **procedure-level** graph — ~7600 nodes / ~24k edges — too dense to read
-as a single image. `module_use.dot` (921 edges) was legible-ish but still a hairball.
+Implementation notes:
+- `FooToFortran.java` already owns this lowering (it emits the `PARALLEL_DO_START/STRIDE` bounds
+  and the `LOCK`/`UNLOCK` pair), so this is a grammar addition plus a few lines of emission.
+- `Foo.g4` needs `reduce(` *ident-list* `)` as an optional suffix on the `parallel do` loop head.
+- Support the variants actually used: `PARALLEL_SUM` (default), `PARALLEL_SYMMETRIC_SUM` and
+  `PARALLEL_SYMMETRIC_SUM_23`. Suggested spelling: `reduce(x)`, `reduce_symmetric(m)`,
+  `reduce_symmetric_23(m)` — or a single `reduce(x, kind=symmetric_23)`.
+- **Replicated contributions need care.** Two of the fixed routines have a serial loop feeding
+  the same array as the parallel one; the reduction would count it `n_ranks` times. The
+  `is_master_processor` guard used in the fix is the pattern — the migration must check each site
+  rather than mechanically adding `reduce(...)`.
+- Migration: convert the ~88 existing `parallel do` sites incrementally. The old form keeps
+  working, so this need not be atomic.
 
-**Delivered** as `scripts/simplify_callgraph.py` (a post-processor over `module_use.dot`, not a
-translator change — the DOT already carries every `use` edge):
-- **Aggregate** — fold module families into one coloured node: `NUMBERS` (INT/REAL/CPX),
-  `ARRAYS` (VEC/MAT of primitives), `SHELLS`, `GAUSSIANS`, `MAPS`, `ISOSURFACES`; and re-point
-  `VEC{T}`/`MAT{T}` over a derived type to that element's module (`VEC_ATOM`→`ATOM`), surfacing
-  real deps like `MOLECULE→ATOM`. Dropped dead `BREAKDOWN_DATA`, `MULTI_T_ADP`.
-- **Ambient** (`--simplify`) — hide the 7 universal utilities that take 62% of all edges
-  (`NUMBERS ARRAYS STR BIN TEXTFILE BUFFER TABLE_COLUMN`). 139/921 → **50 nodes / 114 edges**.
-- **`--module NAME`** — documentation ego-graph of one module's direct dependencies
-  (`--reverse` dependents, `--both`); no `concentrate`, so every direct edge shows.
+**2. Make suppression loud in debug.** Under `USE_PRECONDITIONS`, have `PARALLEL_SUM` and friends
+abort when the lock is held. A reduction inside a locked region is *always* a bug, never a
+legitimate no-op. Two lines in `include/macros.in`, and it converts silent wrong answers into
+immediate aborts naming the routine. Do this one **first** — it is the cheapest, it is
+independent of the grammar work, and it turns the remaining unfixed sites into loud failures
+rather than quiet ones.
 
-**Key findings, recorded in `docs/CALL_GRAPHS.md`:** the "aggregate vs ambient" distinction
-(merge-and-keep vs hide); `concentrate=true` is *lossy* (drops a direct edge parallel to a
-longer path — e.g. `ATOM→INTERPOLATOR`), so the doc mode avoids it; and Graphviz has **no** edge
-hops/bridges and is already hierarchical, so fewer edges beats a different engine. README §7b
-points to the tool + doc. (The procedure-level `call_graph.dot` remains dense — a module-level
-*call* graph in `writeDotFiles` is still a possible future refinement, but not needed now.)
+**3. Depth-count the lock.** Replace the name-matched `do_parallel_lock` string with a depth
+counter, or have `lock_parallel_do` return the previous value for `unlock_parallel_do` to
+restore. Then a recursive routine's inner return can no longer release the outer loop's lock.
+Restore the recursion `ENSURE` at `parallel.foo:308` once this holds.
 
-## Future task: introduce Fortran-2008 `submodule` constructs
+**4. Lint it in the translator.** Phase B already has the parse tree and a cross-module call
+graph; flag any `PARALLEL_*` macro appearing lexically inside a `parallel do` body. This catches
+hand-written sites that have not yet been migrated to `reduce(...)`, and it would have found all
+four `molecule.grid.foo` bugs statically, without running anything.
 
-**Goal (Dylan):** use real Fortran-2008 `submodule` where appropriate. **Concept clash to note
-first:** a Foo "submodule" (e.g. `molecule.base.foo` → `module MOLECULE.BASE`) currently
-translates to a **separate, standalone Fortran module** `MOLECULE_BASE_MODULE`, `use`d like any
-other — NOT an F2008 `submodule`. F2008 `submodule (PARENT) NAME` would instead let the 19
-`MOLECULE.*` pieces share one parent interface and break the `use`-graph coupling (a submodule
-sees its ancestor's specification without a `use`, and changing a submodule body doesn't force
-recompilation of the parent's users). Investigate whether mapping Foo submodules onto F2008
-submodules simplifies the emitted module graph and compile-time dependencies. Touches
-`emit()`/`buildUseFile()`/`buildInterfaceFile()` and the module-naming scheme.
+Items 1 and 2 together would have prevented every wrong-answer bug listed below.
+
+### Wrong answers under MPI — FIXED
+
+- **FIXED. Four dead or missing reductions in `foofiles/molecule.grid.foo`.** In
+  `make_electronic_pot_grid_r`, `make_mixed_ESP_grid_r` and `make_scm_ESP_grid_r` the
+  `PARALLEL_SUM(grid)` sat *inside* its own `parallel do` (and, in two cases, additionally inside
+  a rank-dependent `if`), so it never executed and every rank kept only its own `1/n_ranks` of
+  the terms. `make_multipole_ESP_grid_r` had no reduction at all. Hoisted past the `end`.
+  Two of them also have a **serial, replicated** multipole loop feeding the same `grid`, which a
+  plain `ALLREDUCE` would have counted `n_ranks` times; those are now guarded with
+  `tonto.is_master_processor`, which is a no-op in a serial build. Had the reductions inside the
+  rank-dependent conditionals ever run, they would have been collectives in a rank-dependent
+  branch — a guaranteed hang.
+- **FIXED. Heap buffer overflow in `PARALLEL_SYMMETRIC_SUM_23`** (`foofiles/parallel.foo:571`).
+  It sums "the lower half of the second two indices" but sized its triangle buffer from
+  `mat.dim1`. Callers pass `MAT3{REAL}(n_states,n_bf,n_bf)`, so it wrote `n_bf*(n_bf+1)/2`
+  doubles into a buffer of `n_states*(n_states+1)/2`, and `MPI_ALLREDUCE` then read past it.
+  The `ENSURE` also checked `dim1==dim2`, i.e. asserted `n_states==n_bf`, firing spuriously in
+  any `USE_PRECONDITIONS` build. Now `dim = mat.dim2` and `ENSURE(mat.dim2==mat.dim3)`.
+- **FIXED. Three missing CIS/TDHF reductions in `foofiles/molecule.fock.foo`.** `r_CIS_S1_AV`
+  had a `parallel do` and no reduction of any kind, leaving `F` a per-rank partial;
+  `r_CIS_S0_AV` reduced `F` but not `K`, then computed `F = TWO*F - K` mixing a reduced quantity
+  with an unreduced one; `u_CIS_AV` never reduced its `K` OUT argument. All three now use plain
+  `PARALLEL_SUM` — not the symmetric variant, since these arrays are filled in both triangles.
+  All are no-ops in a serial build.
+
+### Architecture options for the MPI layer (considered 2026-08-02, deferred)
+
+Discussed and deliberately **not** done now -- recorded so the reasoning is not lost. Sequenced
+after MPI is working, per Dylan: MPI fully working (+ CI) -> hart -> tidies.
+
+**(a) Split `parallel.foo` into its own repository, consumed as a submodule.** Dylan's original
+idea: a type-generic MPI layer is genuinely reusable, and no good equivalent was available when it
+was written. **Assessment: buys little, costs coupling.** `get_from` is *source-level inlining*,
+not linking -- `parallel.foo` produces no `.F90` and no module, its procedures are textually
+donated into `SYSTEM` at translation time, and the translator needs `types.foo`, `parallel.foo`
+and `system.foo` **together** to resolve the templates. So it can never be a separately *compiled*
+library while it remains a donor. A submodule would supply the source, but gains nothing over a
+subdirectory while losing the ability to change the three files atomically. And what an outside
+user could consume is the *generated Fortran* -- a build artifact they could not regenerate
+without the Foo toolchain, i.e. a fork of a snapshot.
+
+**(b) Promote `parallel.foo` from `get_from` donor to a real module.** This is the part of (a)
+worth having, and it can be done entirely in-tree. A real module compiles to its own `.F90`,
+appears in `FOO_SRC`, and therefore **acquires a dependency edge** -- fixing the stale-build trap
+above structurally rather than by convention. **Effort: a couple of days with real testing, not an
+afternoon.** Measured 2026-08-02:
+- **1241** `get_from(PARALLEL:...)` donation lines in `system.foo` to remove;
+- `SYSTEM`'s type in `types.foo` currently **duplicates** PARALLEL's components (`is_parallel`,
+  `processor_rank`, `n_processors`, ... under a comment reading "inherited from PARALLEL"); these
+  become one `parallel :: PARALLEL` component;
+- **126 external call sites across 12+ files** (`archive`, `buffer`, `command_line`, `crystal`,
+  `file`, `molecule.{ce,grid,misc,prop,put,scf}`, `plot_grid`, ...) where `.is_parallel` becomes
+  `.parallel.is_parallel` and so on;
+- every iteration touches `types.foo`, so every iteration is a full cascade;
+- and it cannot be validated serially -- the point is MPI behaviour, so each pass needs an MPI
+  build and the CIF tests.
+
+**(c) Spike `mpi_f08` assumed-rank to see how much of the layer is now redundant.**
+`parallel.foo` is 9865 lines of which **1175 are `get_from` instantiations** -- the cross-product
+of type x rank, written out, because a Fortran dummy has fixed type and rank. MPI-3.0 (2012) added
+`TYPE(*), DIMENSION(..)`, and the Open MPI we built confirms support
+(`F08 assumed rank syntax... yes`).
+
+**But this does NOT make the layer redundant, and the earlier claim in this file that it did was
+too strong.** Inside a `TYPE(*), DIMENSION(..)` procedure you can do almost nothing with the
+argument -- no indexing, no assignment, no type enquiry; you can only pass it to C. So `mpi_f08`
+still requires the **caller** to supply count and datatype:
+`call MPI_Bcast(x, size(x), MPI_DOUBLE_PRECISION, ...)`. Tonto's layer *derives* both from the
+argument type (`LEN?=>size(buffer)*len(buffer)`, `MPI_TYPE?=>MPI_CHARACTER`), so the caller writes
+`PARALLEL_BROADCAST(x,root)` and cannot get them wrong. Assumed rank solves the **plumbing**; the
+templates solve the **inference**, and the inference is the part that prevents wrong-count and
+wrong-datatype bugs. Worth a spike on `broadcast` alone to see how many of the 1175 collapse --
+but go in expecting to keep the inference layer.
+
+### BUILD-SYSTEM TRAP: `get_from` donors are invisible to the dependency graph
+
+Per Dylan: "always been an issue." Recorded now with a concrete demonstration and a fix.
+
+**The mechanism.** Each translation step declares (`CMakeLists.txt:764`):
+
+```cmake
+DEPENDS ${foopath} ${FOO_TYPES_FILE} ${ANTLR4_TRANSLATOR_STAMP}
+```
+
+i.e. its own `.foo`, `types.foo`, and the translator -- and **nothing else**. But the translator
+follows `get_from(...)` and inlines *donor* files. Those donors are not in the DEPENDS list, so
+**editing a donor rebuilds nothing**: you get a silently stale binary, no warning, and a test run
+that appears to exercise your change and does not.
+
+That also explains the asymmetry everyone notices: editing `types.foo` cascades to the entire
+build (it is an explicit dependency of every translation) while editing a donor does nothing at
+all.
+
+**Worked example, 2026-08-02.** `foofiles/parallel.foo` is 9857 lines containing the *entire* MPI
+layer, is a pure `get_from` donor into `SYSTEM`, generates **no `parallel.F90` whatsoever**, and
+appears nowhere in `CMakeLists.txt`. An experiment to re-enable Florian's `MPI_BARRIER` (see
+above) edited it, ran `cmake --build`, got `rc=0` in under a second, and tested a binary that
+still had the old code. Caught only because the build log was 11 lines and the generated
+`system.F90` still showed 25 commented barriers. Forcing it needs `touch foofiles/system.foo`.
+
+**This is very likely how the barrier came to be disabled unnoticed in 2021** (`42040312`): a
+two-line commit touching `parallel.foo` would have changed no compiled output for whoever made it.
+
+**The fix, in order of preference:**
+
+1. **Depfiles.** `FooToFortran` already knows every file it reads -- it has to, to resolve
+   `get_from`. Have it emit a `.d` alongside each `.F90` and pass CMake's `DEPFILE` option on the
+   `add_custom_command` (CMake >= 3.20 with Make/Ninja). Precise, automatic, and self-maintaining
+   as donors change.
+2. **Compute the donor set at configure time** -- scan the `.foo` files for `get_from(` and add
+   the referenced donors to that file's `DEPENDS`. No translator change, but the scan must track
+   the grammar.
+3. **Blunt fallback**: add every `foofiles/*.foo` to every `DEPENDS`. Always correct, but then any
+   edit rebuilds everything -- i.e. permanently what `types.foo` does today.
+
+Until this is fixed: **after editing any donor, `touch` a file that is a real dependency** (its
+consumer, or `types.foo`) or you will test a stale binary.
+
+### Known-flaky: x-ray-constrained SCF convergence wanders violently (long-standing)
+
+Per Dylan this instability is **well known and has never been diagnosed**. Recorded here now that
+there is finally an executing test to observe it with:
+`tests/long/nh3_x-ray-constrained-rhf-cluster-charge_cc-pVTZ_restart` (which had never actually
+run its SCF -- see milestone 9). With `output= YES` the first lambda shows:
+
+```
+Iter  Lambda    GoF2    Energy     Delta   <MO|M0>
+   0  0.0120    6.49  -56.2167   ...       1.0000
+   1  0.0120   95.01  -55.9091   ...       0.9565
+   2  0.0120 1325.99  -52.7894   ...       0.5942
+   3  0.0120 3000.65  -26.4060   ...       0.0039   *Damping was off
+   4  0.0120  766.26  -51.0366   ...       0.3086   *DIIS starts saving now
+```
+
+The energy excursions to **-26.4 Ha** -- some 30 Ha above the true value -- and the overlap with
+the reference MOs collapses to 0.004, i.e. the wavefunction is essentially destroyed, before DIIS
+drags it back to a sane -56.2023. The final answer is fine; the path is not.
+
+**Why it matters beyond aesthetics.** The blessed reference now encodes that trajectory. A
+last-digit difference early on can send another machine down a different path, or fail to recover
+at all, so this test is a strong candidate for future cross-platform flakiness. If it goes red on
+Linux or in CI, suspect this before suspecting a real regression.
+
+**Leads worth trying**, in rough order of cheapness:
+- The excursion coincides exactly with `*Damping was off` at iteration 3. Damping is being
+  switched off while the wavefunction is still far from converged; the level-shift is off from
+  iteration 0. Check the damping/level-shift switch-off criteria for a constrained SCF -- they are
+  probably tuned for an ordinary SCF where GoF2 plays no part in the objective.
+- The objective is `E + lambda*GoF2`, and GoF2 reaches 3000 while E is ~-56. The gradient is then
+  dominated entirely by the fit term, which is exactly when a plain DIIS extrapolation misbehaves.
+- Compare against a run that starts at lambda=0 (not a restart): if the wandering is absent there,
+  the restart seed is starting the fit too far from its own optimum.
+
+### PENDING: apply at the next cascade rebuild — types.foo M0s comments
+
+Deliberately **not** applied yet: `types.foo` is included everywhere, so editing it forces a full
+recompile, and this is documentation only. Apply it the next time a cascade is needed anyway.
+People jump to the type component to find out what a field means, so this belongs there rather
+than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comments):
+
+```foo
+     M0s :: OPMATRIX@
+     ! The unfitted reference MOs, for overlap_with_M0s.
+     ! NOT necessarily the lambda=0 MOs: a RESTART starts at lambda>0 and seeds
+     ! these with the MOs at the restart lambda. Set in MOLECULE.SCF.
+```
+
+```foo
+     overlap_with_M0s :: REAL  DEFAULT(ONE)
+     ! Overlap of the current lambda>0 MOs with the reference M0s.
+     ! For a RESTART the reference is this job's starting point, not lambda=0,
+     ! so the value is not comparable across a restart boundary. See M0s.
+```
+
+### Two findings from the MPI_Bcast hunt (2026-08-02)
+
+- **`STR_SIZE` and `BSTR_SIZE` are both 256** (`include/macros.in:57-58`). `BSTR` is meant to be
+  the "big string" holding a whole text-file line, while `STR` holds a single token or program
+  variable -- but there is currently **no distinction at all**. Consequences: any input line
+  longer than 256 characters is silently truncated (CIF looped lines can be long), and the
+  distinction the code appears to draw between the two is fiction. Decide whether BSTR should be
+  genuinely larger, or whether the two names should be collapsed. Per Dylan, 256 may even be too
+  large for STR.
+
+- **Somebody hit the mismatched-`MPI_Bcast` bug before and their workaround is commented out.**
+  In the broadcast template itself (`foofiles/parallel.foo`, in `broadcast(buffer,root)`):
+
+  ```foo
+  ! Florian here: Added this Barrier to make sure that not BCAST interferes with a
+  ! different kind leading to str and Int in asynchronous running MPI process to
+  ! screw up communication
+  !call MPI_BARRIER(MPI_COMM_WORLD,.mpi_error)
+  ```
+
+  "BCAST interferes with a different kind leading to str and Int" is *exactly* the failure
+  diagnosed in `docs/MPI.md` Finding 6: a 256-character STR broadcast pairing with a 1-integer
+  INT broadcast, giving `MPI_ERR_TRUNCATE`. This is independent evidence that the desynchronisation
+  **predates all of the milestone 4 work**.
+
+  **Do not simply reinstate the barrier.** MPI matches collectives on a communicator in *program
+  order* -- `MPI_Bcast` carries no tag, so order is the only thing pairing them. `MPI_ERR_TRUNCATE`
+  therefore proves the ranks issue genuinely different *sequences* of collectives, and a barrier
+  cannot repair a different sequence: it is one more collective that must itself match, so it
+  generally converts the truncation into a deadlock. It would also force a full synchronisation on
+  every single broadcast. Treat the comment as a dated bug report, not as a fix.
+
+  **UPDATE 2026-08-02: the barrier was TESTED and it WORKS. The argument above is wrong.**
+  Re-enabling it (verified compiled in: 26 live `MPI_BARRIER` calls in the generated `system.F90`,
+  up from 1) makes all three failing CIF tests **pass**. That refutes the ordering argument: if the
+  collective *streams* differed in length a barrier would have **deadlocked**, since it adds one
+  element to each stream and cannot realign them. Passing means every rank reaches the same
+  collectives, and the fault is **timing-sensitive**, not a sequence mismatch.
+
+  Ruled out: non-blocking operations. `ibroadcast` is defined but **never called** anywhere, so
+  there is no in-flight message to collide with a later collective.
+
+  **Prime suspect, and it is the milestone-6 mechanism again.** `PARALLEL_BROADCAST` is not an
+  unconditional call (`include/macros.in:234`):
+
+  ```c
+  #define PARALLEL_BROADCAST0(X,Y)   if (DO_IN_PARALLEL0) call broadcast_(tonto,X,Y)
+  ```
+
+  Every broadcast is gated on `DO_IN_PARALLEL` = `.is_parallel AND .do_parallel_lock==" "`, so a
+  broadcast inside a held lock is **silently skipped** -- exactly as the dead reductions were. If
+  two ranks ever disagree about the lock state, one performs a collective the other skips, and from
+  that point the streams are offset by one -- precisely `MPI_ERR_TRUNCATE` on the next pair.
+  A plausible route to disagreement: the translator emits `LOCK_PARALLEL_DO` as the **first
+  statement inside** the loop body, so a rank given **zero iterations** by the cyclic distribution
+  never takes the lock while ranks with work do. **Not yet verified** -- this is the next thing to
+  test, and if it holds then milestone 6 fixes milestone 7 as well.
+
+  **Interim options.** The barrier is a working stopgap but costs a full synchronisation on every
+  broadcast. The better fix (Dylan) is to make the failure unrepresentable: have
+  `TEXTFILE:read_line_external` issue **one** collective instead of two -- carry the status in a
+  reserved leading byte of the string, or broadcast a small `VEC{INT}` and the payload only when a
+  line exists. A single collective per call cannot be mispaired, whatever the underlying cause.
+
+### Not yet fixed — recorded with evidence
+
+- **UNDIAGNOSED, HIGH PRIORITY: mismatched `MPI_Bcast` in the CIF-reading path, `-O2` only.**
+  On Linux x86_64, four CIF tests (`c9o9h8_read_cif_IT_group_9`,
+  `maleate_read_CIF_H_double_bond_{new,old}_BLs`, `urea_lamaGOET_grown_CIF`) abort at >=2 ranks
+  with *"An error occurred in MPI_Bcast ... MPI_ERRORS_ARE_FATAL"* in the
+  `-O2 -fno-fast-math` build, while the **same test on the same machine passes at `-Ofast`**.
+  They do not fail on macOS arm64 at all. A collective mismatch that moves with the optimisation
+  level and the platform is undefined behaviour -- an uninitialised value or out-of-bounds read
+  feeding a broadcast length, or the branch deciding whether a rank reaches the collective.
+  Diagnose with a Linux debug MPI build (`-fcheck=bounds -finit-integer=-999999
+  -finit-real=snan`). NOTE the shipped `-Ofast` configuration is the one that HIDES this.
+
+
+- **Latent deadlock in `SYSTEM:initialize`** (`foofiles/system.foo:259-261`).
+  `initialize_cloned_random_seed` is called *before* `parallel_initialize`, so `is_parallel` is
+  still false and every rank seeds itself from its own `system_clock` — the seeds are **not**
+  cloned, contrary to the routine's own comment. Worse, both `PARALLEL_BROADCAST` calls
+  (`:275-278`, `:284-305`) sit **inside** `if (.is_master_processor)` guards — a collective in a
+  rank-0-only branch. This is harmless today only because `DO_IN_PARALLEL` is false that early;
+  reordering the two lines (the obvious "fix") deadlocks in `SYSTEM:create`, with `n` undefined
+  on non-master ranks at `allocate(seed(n))`. Fix both together or neither.
+  Knock-on: R-free reflection selection (`crystal.foo:242`) is seeded from the clock and is
+  therefore not reproducible run-to-run, MPI or not.
+- **`MPI_ABORT` is commented out** (`foofiles/system.foo:564`), so a `DIE` on one rank leaves the
+  others hanging instead of failing the job.
+- **HAR writes the same file from every rank.** `foofiles/molecule.har.foo:1346` calls
+  `arch.parallel_write` — deliberately unguarded by `IO_IS_ALLOWED` — inside a *serial* loop with
+  a filename identical on all ranks. `file.foo:134` only opens the file when `IO_IS_ALLOWED`, and
+  `parallel_IO_allowed` is never set on the HAR path, so non-master ranks write to a unit that
+  was never opened. Affects every HAR test under MPI.
+- **`fragment_SCF_para` RMA work queue** (`foofiles/parallel.foo:6400`, driven from
+  `molecule.scf.foo:5871`): `g = .p_loop_list(.p_loop_index)` is evaluated before the caller's
+  exit test, so the terminating fetch indexes past the end of `p_loop_list` on every worker,
+  every run. The master also reads its own window buffer outside any access epoch (no
+  `MPI_WIN_FLUSH`/`MPI_WIN_SYNC` anywhere) while workers accumulate into it. Additionally the
+  algorithm *changes shape* at `n_processors > 2`, so `-n 2` and `-n 4` use different schedulers
+  and different rank→fragment maps.
+- **QTAIM basin decomposition** (`foofiles/molecule.prop.foo:6118`): the hand-rolled 1-D slab
+  decomposition indexes out of bounds at `nprocs == 1` and unconditionally `sendrecv`s to
+  `rank+1`, which does not exist; `nprocs > nx` gives zero-width slabs. It also calls
+  `tonto.finalize` (`MPI_FINALIZE`) at `:6743`, inside a science routine, invalidating any later
+  MPI call in the job.
+- **FIXED (2026-08-01). `DWGN_lamaGOET_NBO_file_47` aborted at every rank count above 1.**
+  Reproduced at `-n 2` and `-n 4`, at both `-Ofast` and `-O2 -fno-fast-math`:
+  *"Fortran runtime error: Unit number is negative and unit was not already opened with
+  OPEN(NEWUNIT=...)"*. Root cause is `foofiles/file.foo:134-146` — only the master executes the
+  `open(... newunit=.unit ...)` (it is wrapped in `if (IO_IS_ALLOWED)`), and the following
+  `PARALLEL_BROADCAST(.unit,tonto.master_processor)` then hands the master's negative `newunit`
+  value to every rank. Non-master ranks hold a unit they never opened, so any *unguarded* I/O on
+  it fails. The job dies during the `scfdata` block just after `read_g09_fchk_file`, having
+  already written its archives. A debug MPI build pinned it to `MOLECULE.PUT:put_NBO_file_47`,
+  which calls `stdout.redirect(...)` then makes **thirteen raw Fortran `write(stdout.unit,...)`
+  calls** that bypass the TEXTFILE API and its guarding. Fixed by guarding them; it is write-only
+  output so no broadcast is needed. Passes at -n 2 and -n 4 bit-exact, unchanged serially.
+
+  **The failure mode is the real lesson.** It crashed loudly only because a *redirected* TEXTFILE
+  holds a negative `newunit`. An unguarded raw write to a **non-redirected** stdout uses
+  `TEXTFILE_STD_OUT_UNIT` (6), a valid preconnected unit on every rank, and would **silently
+  interleave** output instead of crashing. So the sentinel idea is weaker than it first looks:
+  the negative `newunit` already acts as one, and it cannot help the unit-6 case at all (nor can
+  a static sentinel, since `fragment_SCF_para` deliberately enables `parallel_IO_allowed`).
+  Remaining unguarded raw-I/O sites: `plot_grid.foo:2280` (`read(textfile.unit,*)` on every rank,
+  and the result needs broadcasting too) and `archive.foo:2687/2712/2763` (VAPOR/stream/VTK
+  writers; each rank opens the *same filename* with its own `newunit`, so silent corruption
+  rather than a crash). The durable fix is a **translator lint** for `write(`/`read(` on any
+  `*.unit` outside `file.foo`/`textfile.foo`/`buffer.foo` -- static, cheap, and it would have
+  found every one of these without running anything. Added to milestone 6. See `docs/MPI.md`.
+- **`parallel_sum` clobbers `val` even when the optional `sum` is supplied**
+  (`foofiles/parallel.foo:458`): an unconditional `val = tmp` after the `if (present(sum))`
+  branch, violating the "give me the sum, leave `val` alone" contract.
+- **Build-system inconsistencies.** `CMakeLists.txt` assigns `CMAKE_Fortran_FLAGS` from
+  `MPI_Fortran_FLAGS`, which modern `FindMPI` never sets — it evaluates to the empty string *and*
+  wipes any user-supplied flags (survivable only because `SetFortranFlags` rebuilds them). The
+  executables link `${MPI_LIBRARIES}` (the deprecated **C** libraries) while the `tonto` library
+  links `${MPI_Fortran_LIBRARIES}`. The MSMPI branch references `${msmpi-linux-home}`, which is
+  **defined nowhere**, and sets `CMAKE_C_FLAGS` from `${CMAKE_CXX_FLAGS}` (copy-paste).
+- **Dead MPI runfiles.** `run_mpi_matmul.foo` uses `myid` uninitialised and deadlocks at `-n 1`;
+  `run_mpi_pi_io.foo` is referenced nowhere in `CMakeLists.txt`. `run_mpi_test` and
+  `run_mpi_test_complete` are built and installed but **assert nothing** — `test_parallel` prints
+  `"MPI failed to …"` and still exits 0.
+- **`#ifdef MPI` strips `PURE`/`ELEMENTAL` from the entire codebase** (`include/macros.in:256`).
+  Necessary today — MPI calls are impure and some `PURE` routines contain `PARALLEL_SUM` (e.g.
+  `shell1quartet.foo:898`) — but it is a sledgehammer: it costs the optimiser common-subexpression
+  elimination, loop-invariant hoisting and `elemental` vectorisation across *all* code, and it is
+  a large part of why an MPI build differs numerically from serial even at one rank. Only
+  routines that transitively reach a `PARALLEL_*` macro need it. The translator's phase-B call
+  graph (`--call-graph-report`) can compute that set exactly.
+
+---
+
+# Build system and toolchain
 
 ## Future task: split `types.foo` into several modules (parallel compilation)
 
@@ -415,409 +697,6 @@ modules** is what parallelises; submodules only avoid recompilation cascades.
 components of other derived types), and every `use TYPES_MODULE` site plus the translator's
 `.use`-file generation must follow. Check whether the translator can emit the split
 automatically from one `types.foo` rather than requiring the source be broken up by hand.
-
-## RESOLVED (was: atomic (guess) SCF fails for partly-filled degenerate shells)
-
-**There was no SCF instability.** The diverging boron atomic SCF found on 2026-07-28 was a
-*symptom* of the gfortran miscompilation of `shell1quartet.F90` (see "verify the macOS build"
-below): the two-electron integrals were wrong, so the atomic SCF was iterating on a corrupted
-Fock matrix. With the compiler workaround in place boron converges normally, the `DIE` does not
-fire, and rgbi/BN reproduces the Linux reference **exactly**. Nothing here needs fixing in the
-SCF or in the physics.
-
-**Kept, because they stand on their own merits:**
-
-- **`make_ANOs` DIEs on a non-converged atomic SCF** (`molecule.scf.foo`). It previously
-  collected the per-atom `converged` flag, printed it only in verbose mode, and carried on —
-  so ANOs built from a garbage iterate silently corrupted every quantity derived from the
-  atomic projectors while molecular totals still looked plausible. Refusing to continue is
-  right regardless of what caused the non-convergence, and it is exactly the check that would
-  have surfaced this class of fault sooner.
-- **The widened guess-SCF whitelist** (`molecule.set.foo`). Only `output`, `initial_MOs`,
-  `initial_density`, `convergence`, the DIIS tolerance and `relativity_kind` were copied from
-  the parent, so `max_iterations`/damping/level-shift given in the input were silently
-  discarded and a failing guess SCF could not be rescued from the input file at all.
-
-**Retired follow-ups.** Two items were queued here — calibrating "sensible" guess-SCF recovery
-options, and adding a tiny symmetry-breaking charge to make the atomic SCF deterministic. Both
-were motivated purely by the phantom instability and are **no longer needed**. Worth keeping
-from that discussion, though: the textbook remedy of spherically-averaged *fractional*
-occupations does **not** apply here, because UHF requires integer occupancy of spin orbitals —
-so if a genuine degeneracy problem ever does appear, the degeneracy must be *lifted*, not
-averaged over.
-
-**The cautionary tale.** Every hypothesis below was tested against the real code and refuted,
-one after another. In hindsight they all failed for the same reason: they were searching for a
-*physics* cause of a *compiler* artefact. The tell was there early — the same input gave
-different answers on different platforms — and it deserved more weight than it got.
-
-| Hypothesis | Verdict |
-|---|---|
-| Boron's atomic SCF diverges; ANOs built from it anyway | **Observed** (100 iters, −6…−69 Ha, "DIIS stuck", final −65 Ha for an atom whose energy is ≈ −24.5) |
-| That causes BN's platform-dependent Roby numbers | **Demonstrated by intervention** — forcing convergence moved B 5.35/3.40 → 6.50/6.63, collapsed the cross-library spread 1.95 → 0.13, landing on the Linux reference 6.48 |
-| It explains the other rgbi failures | **Refuted** — only BN fails to converge; C2/CN-/CO/F2/N2/NF/O2 converge with bit-identical atomic energies across LAPACKs and still deviate |
-| "Partly-filled degenerate shell" predicts which atoms fail | **Refuted** — carbon 2p² is partly-filled and degenerate, and converges |
-| Low nuclear charge (B, Z=5) | **Not supported** — standalone UHF SCFs *converge* for B(5), C(6), N(7), Al(13), Si(14). But see the oxygen-atom finding below: standalone atomic energies on this Mac are themselves wrong, so these runs test convergence only, not correctness |
-| Bad initial guess | **Refuted** — `initial_density=` core / fock / promolecule / progroup all give identical results and all fail (verified the option reaches the SCF: "Kind of initial density ... promolecule") |
-| Loose guess tolerances (1e-3 vs 1e-5) | **Refuted** — standalone boron converges at every combination of `convergence`/DIIS tolerance |
-| Wrong atom setup in the guess | **Refuted** — guess reports B, charge 0, multiplicity 2, 5 e⁻ (3α/2β), all correct |
-
-**Do not trust the numbers in that table as physics.** Everything above was measured on
-*miscompiled* binaries, so quantities like the "two converged boron solutions 0.57 Ha apart"
-(−24.3378 vs −23.7663) are artefacts of wrong two-electron integrals, not evidence of an SCF
-pathology or of basin-hopping. They are kept only as a record of what was tried.
-
-One observation from that work is still true and worth knowing, since it is a property of the
-defaults rather than of the bug: the guess SCF withdraws **all** stabilisation at exactly the
-iteration DIIS takes over —
-
-```
-level shift 0.30, quits at 3   |   damping 0.50, quits at 3   |   DIIS extrapolates from 3
-```
-
-That is fine when the first three iterations settle, and unforgiving when they do not. It did
-not cause this failure, but it is a thin margin for any genuinely hard atom.
-
-### Retired: (a) sensible guess-SCF recovery options, (b) symmetry-breaking charge
-
-Both were queued to tame an instability that turned out not to exist. The `DIE` message no
-longer prescribes any values (it names the relevant keywords only), so nothing extreme is
-enshrined, and the tiny-charge idea has no problem left to solve. The `SCF_DATA` machinery it
-would have used (`.cluster_charges`, `.cluster_charge_positions`,
-`set_using_cluster_charges()`) is noted here only in case a genuine degeneracy problem ever
-does turn up.
-
-**Related defect, still open and unrelated to the above:** a `DIE` leaves the process **exit
-status 0**. `scripts/test.py` uses `subprocess.check_call`, so a hard error is not detected as
-a run failure -- only the output diff catches it. Worth fixing so failures are unambiguous to
-CI.
-
-## Future task: test the MPI parallel build
-
-**Goal (Dylan):** verify the MPI build works and its tests pass. Build flags exist
-(CLAUDE.md §4: `-DCMAKE_Fortran_COMPILER=mpifort … -DMPI=1`, optional `-DNO_ERROR_MANAGEMENT`);
-`scripts/test.py` has a `--mpi` path (`mpirun -n 4`), wired via `WITH_MPI` in `tests/CMakeLists.txt`.
-Status is **unverified** for the ANTLR4 translator output. Start by building MPI and running
-`ctest` under it; expect the parallel macros (`PARALLEL_DO_*`, `PARALLEL_SUM`, `broadcast_` — all
-`SYSTEM`/`tonto`-targeted, see `macros.in`) to be the surface area. Compare against a non-MPI run.
-
-## Future task: verify the macOS build (Apple Silicon / Tahoe)
-
-**Goal (Dylan):** confirm whether Tonto builds and passes tests on current macOS, on
-**Apple Silicon (M2) with macOS Tahoe (26)** — to be done in a **separate session on a real
-Mac** (the main dev box is Linux; macOS cannot be tested from it). A March-2026 README note
-claimed *"many failures on the Apple M2 with Tahoe 26.3 — not recommended"*, but Dylan says
-that is **very old** and likely stale, so it must be re-checked rather than trusted. Build via
-Homebrew (`brew install gcc cmake openjdk python3 gnuplot`; BLAS/LAPACK come from
-`Accelerate.framework`), then run `make report`. **Feed the result back into the docs:** update
-the README macOS line (currently softened to "via Homebrew; Linux/WSL is the reference platform")
-and the `Building on MacOS` wiki page to say what actually works — pass → "supported", or list the
-specific failures if any remain.
-
-**RESOLVED (2026-07-28, session on the real Mac: M2 Pro, macOS 26.5.2 Tahoe, Darwin 25,
-gfortran-14 / Homebrew GCC 14.3.0, CMake 4.3.3, Java 26).**
-
-**Outcome: the macOS failures were a compiler miscompilation, not a Tonto bug.** gfortran 14.3
-on arm64 miscompiles `shell1quartet.F90` (the two-electron integral code) at `-O3`. Pinning
-that one file to `-O2 -fno-schedule-insns` (`CMakeLists.txt`, commit `a3ec1b07`) took the suite
-from **82/124 to 118/124**:
-
-| Suite | before | after |
-|---|---|---|
-| short | 33/51 | 49/51 |
-| rgbi | 1/13 | 12/13 |
-| long | 18/28 | 25/28 |
-| cx | 30/32 | 32/32 |
-| **total** | **82/124** | **118/124** |
-
-The build itself was always clean, so the March-2026 README note ("many failures on the Apple
-M2 — not recommended") is stale in both respects. **README and wiki still NOT updated** —
-Dylan's standing instruction; and the 6 residual failures should be understood first (they are
-mostly the longstanding small-difference cases already tracked below, plus one structural diff
-in `urea_lamaGOET_grown_CIF` with max rel 0 / LDD 0).
-
-The investigation history is kept below because the false trails are worth not re-walking.
-**Note especially:** the diverging boron atomic SCF that dominates the "atomic SCF" section
-above was a *symptom* of this miscompilation, not an independent defect — with the compiler
-workaround in place boron converges and rgbi/BN reproduces the reference exactly. The `DIE`
-added in `make_ANOs` is still worth keeping as a safety net, but its motivating example is gone.
-
-- **The build is clean.** Full translate + compile + link, zero errors; only benign warnings
-  (clang deployment-version override ×149, a `-F` flag not valid for Fortran, 2 macro
-  redefinitions). So the 2026-03 "not recommended" note is stale *as regards building*.
-- **`make report`: 82/124 loose** (exact 73, lastdig 79) — short 33/51, rgbi 1/13, long 18/28,
-  cx 30/32. Baseline artefacts kept in `/tmp/tonto-mac-baseline/` (tests.log, build log,
-  all 44 `stdout.bad`).
-- **What passes:** geometry/CIF processing and Hirshfeld surfaces (cx 30/32), and plain SCF
-  energies (`h2o_rhf_cc-pVDZ`, `blyp`, `rks_B3LYPG`, `xalpha`, `aug-cc-pVDZ`) — all *exact*.
-- **What fails:** downstream *property* evaluation — 1e properties, structure factors / HAR,
-  cluster charges, Roby bond indices, polarisabilities/TDHF, Salvador properties.
-- **Ruled out (with evidence, not argument):**
-  - *Not* the ANO occupancy threshold (`atom.foo`, `count(.NAO_occupations>=1/14)`): scanning
-    `occupied_ano_cutoff=` over 0.02–0.30 changes BN not at all (the marginal occupation is
-    ~0.3, nowhere near 1/14).
-  - *Not* uninitialised heap: identical results under `MallocScribble=1 MallocPreScribble=1`.
-  - *Not mainly the LAPACK version.* Accelerate's Fortran LAPACK is frozen at **3.2.1 (2009)**
-    (confirmed via `ilaver`); switching to Homebrew OpenBLAS (**3.12.0**) flipped exactly
-    **one** short test (33/51 → 34/51) and **zero** rgbi (1/13 either way). Worth doing as
-    hygiene — now the macOS default, see `CMakeLists.txt` — but it is not the cause.
-- **Leading hypothesis — degenerate eigenspaces.** In rgbi/BN the Roby angle table has an
-  exactly degenerate pair (states 7 and 8, both `theta = 68.7340°` — the π_x/π_y pair).
-  Eigenvectors within a degenerate eigenspace are **not unique**: any orthogonal mixing is a
-  valid eigenbasis, and different LAPACKs return different mixtures. Anything downstream that
-  uses individual eigenvectors, rather than the projector onto the whole subspace, is then
-  **basis-dependent, i.e. ill-defined** — which explains differences far too large for
-  round-off. Strongly supported by the rgbi pattern: every failing molecule is linear/highly
-  symmetric (BN, C2, CN-, CO, F2, N2, NF, O2, Ni-carbonyl — all with degenerate π), while the
-  **only exact pass is `CHFCl`, the one molecule with no symmetry and no degeneracy**. Three
-  environments give three different answers for BN's B population: Linux 6.48, Accelerate 6.16,
-  OpenBLAS 6.34.
-  **Next step:** relink an Accelerate binary from the same objects (`.o` files are intact) and
-  A/B the `output_theta_info= YES` tables. If the *thetas* (eigenvalues, invariant) agree while
-  the populations differ, non-invariance under degenerate mixing is confirmed — and the fix is
-  in the Roby code, not the build.
-- **Still uncontrolled:** `-Ofast` implies `-ffast-math`; and the `release/` tree used here
-  carried a **stale cached `-O2`** (a fresh configure gives `-O3`), so opt level differed from
-  the Linux reference too. A strict-FP rebuild (`-O2 -fno-fast-math -ffp-contract=off`) is the
-  clean way to settle the FP-flags question.
-- **Also note:** a `1e_properties` diff shows *total* molecular moments agreeing to 7 digits
-  while *atomic partitioned* charges/dipoles differ by 15–17% — totals right, partitioning
-  wrong. Consistent with the same "non-invariant use of an arbitrary basis" theme.
-
-### RESOLVED: the oxygen atom converged to a variationally impossible energy
-
-The single best probe found so far, because it is one atom, runs in seconds, and its
-correctness can be judged from physics alone rather than by diffing against a reference.
-
-Run `tests/short/oxygen_atom_uhf_cc-pVDZ/stdin` **verbatim**:
-
-| | Total energy |
-|---|---|
-| Linux reference (`tests/short/.../stdout`) | **−74.7923** |
-| this Mac, OpenBLAS 3.12.0 | **−77.6178** |
-| this Mac, Accelerate 3.2.1 | **−77.6178** |
-
-Both report "converged". The O atom UHF limit is ≈ −74.81, so **−77.62 lies ~2.8 Ha *below* the
-variational limit — impossible for a correct HF calculation.** This is not a tolerance or
-round-off effect and not a LAPACK effect (both libraries agree exactly); it is a Mac↔Linux
-difference in the SCF itself, so the prime suspects are code generation and `-Ofast`
-(`-ffast-math`, FMA contraction, denormal flush-to-zero).
-
-The same signature appears in every standalone atom tried on this Mac (B, C, N, Al, Si all come
-out 2–6 Ha too low), and in the *guess* SCF inside BN (its N atom gives −55.7673 where the HF
-limit is ≈ −54.40). So it may well underlie a large share of the 42 macOS failures — including
-the atomic-partitioning discrepancies — and it is upstream of the ANO/Roby problem rather than
-caused by it.
-
-#### Localised: two-electron integrals between *different shells*
-
-Bisection done 2026-07-28 against the Linux reference box (`achari2`, the very machine that
-produced the reference outputs — its kernel `6.8.0-88-generic` matches their `Platform:` line).
-
-**Ruled out, each with a direct test:**
-
-| Suspect | Result |
-|---|---|
-| FP flags | **No** — rebuilt `-O2 -fno-fast-math -ffp-contract=off`: identical (−77.6178, virial 1.9574) |
-| LAPACK | **No** — Accelerate 3.2.1 and OpenBLAS 3.12.0 agree exactly |
-| Platform `#ifdef`s | **No** — `GNU_gfortran_on_Darwin` is defined but never used anywhere |
-| Basis setup / normalisation | **No** — overlap matrix **bit-identical** to Linux, diagonal exactly 1.0 |
-| One-electron integrals | **No** — T and V_eN **bit-identical** to Linux (see below) |
-| ERI screening | **No** — setting all six `eri_*_cutoff` to 1e-20 changes nothing |
-| Initial guess / tolerances | **No** — see the table above |
-
-**Where it actually is.** `V_ee` is not computed directly; `molecule.scf.foo:1868` obtains it *by
-subtraction* (`energy − V_NN − V_eN − V_charge − T`), so a `V_ee` discrepancy *is* a total-energy
-discrepancy. With V_NN = 0 for an atom and T, V_eN identical, the error is entirely in the
-two-electron part of `.SCF_energy`.
-
-**Minimal reproducer — Be atom, STO-3G, milliseconds:**
-
-| Atom (STO-3G) | shells | Mac V_ee | Linux V_ee | T (both) |
-|---|---|---|---|---|
-| He | one s | 1.055713 | 1.055713 | 2.823526 |
-| **Be** | **two s (1s,2s)** | **4.538672** | **4.875821** | 14.844185 |
-| Ne | s + p | 54.602059 | 55.508976 | 125.562006 |
-| O | s + p | 28.349706 | 29.075205 | 73.444959 |
-
-A **single** shell is exact; **two distinct shells** diverge. So it is not an angular-momentum
-(p/d) problem — it is two-electron integrals spanning different shells. The Mac value is always
-*too small*, as if contributions are lost.
-
-*Why the densities still agree:* in a minimal basis these atoms have every orbital occupied
-(Be: 2 functions / 4 electrons), so the density is fixed by the basis regardless of the Fock
-matrix. That is why T and V_eN match while the energy does not — it does **not** imply the
-Fock matrix is correct.
-
-**Next step:** dump the individual two-electron integrals for Be/STO-3G on both platforms and
-diff them — there are only ~6 unique values. `put_fock_matrix` / `put_density_matrix` print
-empty under direct SCF, so this needs a temporary print inserted in the ERI path
-(`shell1quartet.foo`, `shell2.foo`, `gaussian4.foo`). Since the one-electron code shares the
-same Gaussian machinery and is provably correct, the fault is specific to the ERI routines.
-
-**Repro harness:** `scripts/oxygen_scf_probe.sh <tonto> <repo>` prints the energy decomposition
-at truncated iteration counts on either platform.
-
-#### Final: compiler miscompilation of `shell1quartet.F90`
-
-Localised by swapping a single object file: with `shell1quartet.F90` compiled at `-O2` and
-everything else untouched, every probe matches Linux exactly (oxygen E/V_ee/V_eN/T/virial;
-Be V_ee 4.875821; BN's Roby populations identical to the reference). The path mattered because
-only the *engine* ERI route is affected — `use_spherical_basis= T` selects `make_r_JK_direct`
-and was an accidental working workaround.
-
-**Evidence it is a GCC bug rather than UB in our source** (not proof — see caveats):
-
-- The generated Fortran is **bit-identical** to Linux's (same md5, 11263 lines), so the
-  translator is not implicated.
-- Compiles clean under `-Wall -Wextra -Waliasing`: **no warnings at all**.
-- Runs clean under `-fcheck=all -finit-real=snan -finit-integer=-999999` with
-  `-ffpe-trap=invalid,zero,overflow` armed in the main program: no bounds violations, no
-  runtime errors, no traps.
-- The one concrete UB candidate — `Jab`/`Jcd` aliasing when `ab == cd`, both `INTENT(INOUT)` —
-  is **properly guarded**: every branch in which `same` can be true writes `Jab` only and never
-  references `Jcd` (`if (same) ... Jab = Jab + TWO*factor*ev`). Conforming.
-
-*Caveats:* the instrumentation covers this file only (bounds checking is per compilation unit),
-`-fcheck` cannot detect argument aliasing at all, and — importantly — the checks necessarily run
-on a *correctly* compiled build, since adding them changes codegen enough to make the answer
-right. So this shows the source is well-defined when compiled conservatively; it is not a proof
-that the failing binary contained no UB.
-
-**No minimal `-O3` workaround exists** (tried, failed): the trigger is not any of the 13 passes
-`-O3` adds over `-O2`, and disabling all 13 still gives the wrong answer; nor is it the
-vectoriser (`-fno-tree-vectorize`, `-fvect-cost-model=very-cheap`), inlining
-(`-fno-inline-functions`, `--param max-inline-insns-auto`), `-fno-ipa-cp-clone`, or
-`-fno-strict-aliasing`. There appear to be **two interacting triggers**:
-
-| config | result |
-|---|---|
-| strict FP, `-O2` | wrong; `-fno-schedule-insns` fixes it |
-| fast-math, `-O2` | correct, even with scheduling on |
-| fast-math, `-O3` | wrong; `-fno-schedule-insns` does NOT fix it |
-
-Hence the level is pinned rather than a pass disabled. Both switches are applied because that
-is the configuration the 118/124 run actually verified.
-
-**Not fixed in GCC 16 (tested 2026-07-29).** A full build with `gfortran-16` (Homebrew GCC
-16.1.0) and `-DTONTO_SKIP_ARM64_WORKAROUNDS=ON` compiles cleanly (zero errors) and then
-reproduces the miscompilation **exactly** — the invariant check fails with values identical to
-GCC 14.3's, digit for digit:
-
-| case | correct | GCC 14.3 | GCC 16.1 |
-|---|---|---|---|
-| Be | −14.3518804762 | −14.6890291293 | −14.6890291293 |
-| O | −73.8041502333 | −74.5296496920 | −74.5296496920 |
-| Ne | −126.6045249968 | −127.5114422775 | −127.5114422775 |
-| N | −54.1053903978 | −55.0573624742 | −55.0573624742 |
-
-Consequences:
-
-- **Do not version-gate the workaround** — it is needed on both 14.3 and 16.1.
-- **Beware the default compiler.** Homebrew's main `gcc` formula is now 16.1.0, so plain
-  `gfortran` on this Mac *is* GCC 16; only CLAUDE.md's documented
-  `-DCMAKE_Fortran_COMPILER=gfortran-14` pins 14. Both hit the bug, and the workaround covers
-  any GNU compiler on arm64 Apple, but a developer's "default" build is not the documented one.
-- **The two versions producing bit-identical wrong answers is worth weighing.** It is what you
-  would expect from a persistent target-specific backend bug, but equally from source UB that
-  both versions exploit the same way, so it does not settle the question — it only shows the
-  behaviour is deterministic rather than a random codegen accident.
-
-**Compiler versions in play (they were never harmonised, which hid this):** Linux `release/`
-(the reference binary) used **plain `gfortran` = GCC 13.3.0**, Linux `build-rel/` and GitHub CI
-use **gfortran-14**, and this Mac used **14.3 and now 16.1**. The committed reference `stdout`
-files predate all of it and do not record what produced them — which is why the run banner now
-stamps compiler and LAPACK version (`CMakeLists.txt` → `macros.in` → `molecule.main.foo`,
-ignored by `scripts/test.py`).
-
-**Left to do:**
-- Decide the harmonisation: pick one reference compiler across Mac, Linux and CI. Worth doing
-  with data — check whether GCC 16 reproduces the *same suite numbers* before switching, since
-  otherwise the choice is between re-blessing references and staying put.
-- Measure the runtime cost of `-O2` on this file (it is the ERI hot path). If negligible, stop.
-- Consider a GCC bug report. The ingredients are unusually strong: bit-identical source, two
-  platforms disagreeing, and a self-validating oracle (an SCF energy below the variational
-  limit, virial 1.957 vs 2.000). Would need reducing to a minimal test case first.
-- Re-test whether the *global* `-fno-schedule-insns` in `cmake/SetFortranFlags.cmake` is still
-  needed now that the file is pinned — currently kept only because it was in the verified run.
-- **Add a regression test**: for an s/p-only basis, `use_spherical_basis= T` and `F` must agree
-  (the two bases are mathematically identical below d functions). That single invariant would
-  have caught this immediately, on one machine, with no reference file.
-
-## DONE: continuous integration (GitHub Actions, loose gate)
-
-**Goal (user):** bring back automated CI so every push builds the ANTLR4 translator,
-compiles `tonto`, and runs the test suite. (The old Travis badge was defunct.)
-
-**Delivered** as `.github/workflows/ci.yml` — green as of `99dc3a1c` (2026-07-27):
-- **Provider:** GitHub Actions (Travis's OSS offering is dead). Triggers on push/PR to
-  `antlr4`, `master`, `release`.
-- **Pipeline:** checkout `--recursive` → install gfortran-14 + JDK (for the translator's
-  `javac`; the ANTLR jar auto-downloads via CMake) + BLAS/LAPACK/python3 → `cmake` +
-  `cmake --build -j2` (bounded: one JVM per `.foo` is memory-heavy on a shared runner) →
-  short suite via `scripts/suite_report.py`.
-- **Gate:** the **loose** criterion (rel ≤ 0.2% OR last-digit ≤ 2). The agreement table is
-  echoed to the run's Job Summary and uploaded as `tests.log`; a self-diagnosing `Diagnostics`
-  step (`if: always`) reports toolchain/binary/one-raw-test on red runs. README carries the badge.
-- **Two bugs the first green run flushed out** (both fixed): `scripts/test.py` resolved a
-  *relative* `--test-directory`/`--basis-sets` after `chdir`ing into the temp run dir → doubled
-  path → 100%-fail (fixed by absolutising up front, `036ecaec`); and the Kanghyun `keyword_echo`
-  lines added un-reblessed stdout → 44/51 (dropped both echoes, `99dc3a1c`).
-- **Not done (deliberate):** debug/release matrix and gfortran-version matrix — single release
-  job for now; jar/parser caching not yet added (build is tolerable at ~20 min).
-
-## Editor: improve vim highlighting of Foo and vim integration
-
-**Goal (user):** improve the vim editing experience for `.foo` sources — better syntax
-highlighting and tighter editor integration. The repo already ships some vim support
-(`.vim/filetype.vim` maps `*.foo` and `macros` to a `foo` filetype; `scripts/fix_tags.pl` and
-`scripts/cscope_setup` support ctags/cscope navigation — kept for exactly this reason).
-
-**To investigate / do:**
-- **Syntax file:** review/extend the `foo` syntax highlighting to cover the current language —
-  reverse declarations (`var :: TYPE`), parameterized types (`VEC{T}`, `MAT{T}`…), pointer/
-  allocatable suffixes (`*`, `@`), procedure headers with `:::` attributes (`PURE`,
-  `ELEMENTAL`, `get_from(...)`, `selfless`), `KEY?` template placeholders, the constants
-  (`TRUE`/`FALSE`/`ZERO`/`ONE`/`NULL`), and comments (`!`). Confirm whether a `syntax/foo.vim`
-  exists and is up to date, or author one.
-- **Indentation:** Foo uses 3-space indentation to mark scope (closed by `end`); an
-  `indent/foo.vim` that follows this would help.
-- **Navigation:** verify `scripts/cscope_setup` + `scripts/fix_tags.pl` still produce usable
-  tags/cscope indexes for `foofiles/` and `runfiles/`, and document the workflow.
-- **Integration niceties (optional):** a command/`makeprg` to translate the current `.foo`
-  with `FooToFortran` and jump to errors; folding on scope; matchit for `... end` blocks.
-
-## DONE: explicit `self` intent via self-modification analysis (plan B)
-
-**Goal (user):** make `self`'s intent explicit in the `.foo` sources where it is
-currently implicit. The first attempt used a blanket rule (subroutine → INOUT,
-function → IN); it did **not** compile — read-only subroutines given INOUT reject a
-const `self` from their (often inherited) callers, and some *functions actually
-modify self* (memoisers, lazy readers), so `self :: IN` was rejected. Dylan had
-assumed all functions are PURE, which several are not.
-
-**Resolved with "Option 2" below** — a **self-modification analysis** in the
-translator (`FooToFortran --add-self-intent`, parse-tree driven). Rule:
-- subroutine → **INOUT** iff it modifies self, else **IN**;
-- function → **IN** iff pure (does not modify self); a self-modifying function is
-  left implicit and **flagged impure** (see `self_intent_analysis/impure_functions.tsv`).
-
-"Modifies self" = direct write (`self%x = …`), a self-method call that transitively
-modifies self (fixpoint, seeded with create/destroy/nullify), a call to a method whose
-`self` is *declared* INOUT/OUT, or an input read into a self component
-(`stdin.read(.label)`, `.SCF_DIIS.read_keywords`, `.atom(a).set_flag`).
-
-**Applied + validated:** 135 `self :: IN|INOUT` decls (58 IN / 75 INOUT) across 47
-foofiles, plus 2 genuinely-wrong hand-written `INOUT`→`IN` corrections on read-only
-`MAT{REAL}` `_LAPACK` helpers. A clean **release** build compiles 0-error and the full
-`ctest` suite is **121/124** — the same three deferred failures below, no regressions.
-
-**Follow-on (deferred, Dylan's proposal):** mark the impure procs `IMPURE` in the
-`.foo` and declare the rest `PURE`. Purity is compiler-enforced (a `pure` proc calling a
-non-pure one is an error), so it self-validates. Impure = {modifies an arg or self} ∪
-{does I/O} — so put/dump/show/read are impure regardless of self. The
-`impure_functions.tsv` (modifies-self + OUT/INOUT-arg functions) is the seed list; add
-I/O-call detection when tackling it.
 
 ## Deferred: prune dead and stale macros in `include/macros.in`
 
@@ -881,52 +760,82 @@ language surface a future `.foo` could legitimately use: the kind/size families 
 macro could in principle be referenced from another `include/` file or by the build, so confirm
 before deleting any individual one.
 
-## Deferred: `std_err` writes into the *input* file (hard-coded unit collision)
+## Deferred: adopt OpenBLAS consistently (single-threaded) on Linux and WSL
 
-**Found 2026-07-29** while instrumenting `table_column.foo` to chase the zero(error) problem.
-A few `std_err.show(...)` calls added for debugging did not appear in any error log — they were
-**appended to the `stdin` file**, which corrupted the input while it was still being read and
-killed the job with:
+**Decision (2026-07-30): not now.** Do the Mac/Linux numerical comparison first. The intended
+end state is **OpenBLAS, pinned to one thread, on every platform** — matching what macOS already
+does — but getting there means **redoing the reference outputs completely**, so it must not be
+started in the middle of other work.
 
-```
-Error in TEXTFILE:read_line_bad_EOF ... unexpected end of file
-File name = stdin   Line number = 35
-```
+### What is actually happening today
 
-The input file grew from 55 to 101 lines during the run. Reproducible.
+Measured, not inferred — `ldd release/tonto` links `libblas.so.3` / `liblapack.so.3`, which on
+Debian/Ubuntu are `update-alternatives` symlinks. On the development box exactly one alternative
+is registered (priority 10, from `libblas3` 3.12.1): the **netlib reference BLAS**. OpenBLAS is
+not installed. The WSL CI runner resolves the same way (`Found BLAS:
+/usr/lib/x86_64-linux-gnu/libblas.so`, LAPACK 3.12.0).
 
-**Mechanism — partly established, not fully pinned.** The three units are distinct
-(`TEXTFILE_STDIN_UNIT` 5, `TEXTFILE_STDOUT_UNIT` 6, `TEXTFILE_STDERR_UNIT` 7, `include/macros.in`).
-But `create_std_err` (`textfile.foo`) never *opens* anything — it allocates the object and
-claims the hard-coded unit:
+| Platform | Selection | Verdict |
+|----------|-----------|---------|
+| macOS | `CMakeLists.txt:110` explicitly prefers Homebrew OpenBLAS over Accelerate, and warns on fallback — because Accelerate's Fortran LAPACK is frozen at 3.2.1 (2009) and on its own flipped `short/h2o_rhf_6-31G(d)_normal_mode_analysis` | Handled |
+| Linux | No `BLA_VENDOR`; bare `find_package(LAPACK)` takes whatever the distro alternative points at. README installs `libblas-dev liblapack-dev` = reference | **Suboptimal** |
+| WSL | Same as Linux; `docs/BUILD_WSL.md` installs the same reference packages | **Suboptimal** |
 
-```fortran
-std_err.name   = "stderr"
-std_err.action = "write"
-std_err.unit   = tonto.std_err_unit      ! = 7, hard-coded
-```
+So the platform that got careful attention is macOS, while the two reference platforms silently
+get the slowest BLAS. That is backwards.
 
-Fortran does not pre-connect unit 7, and Tonto hands out units dynamically when it opens files,
-so the likely story is that unit 7 already belonged to another open file (the input) and the
-write simply went there. That has not been proved — worth confirming with an `inquire` on the
-unit at the point of the write.
+Note the two axes are independent: **LAPACK version** (3.12.x here — modern, so the `ILAVER`
+probe stays quiet) is a correctness/algorithms question; **BLAS implementation** (reference) is a
+speed one.
 
-**Why it matters more than it looks:** a diagnostic channel that silently destroys the input is
-a trap exactly when someone is debugging, and it fails in a way that looks like a *parse* error
-in the user's input rather than an I/O bug. It cost real time here.
+### How much is actually on the table
 
-**Suggested fix:** have `create_std_err` claim its unit the same way every other file does
-(via the allocator, checking `unit_used`) instead of assuming a fixed number, or open the file
-properly. Note `stdout`/`stdin` share the same hard-coded pattern and may be latently exposed
-to the same collision.
+Less than it first appears, and the bigger lever is elsewhere. Tonto's LAPACK surface is narrow —
+`dsyev`, `zheev`, `zhpev`, `dgesv`, `dgetrf`/`dgetri`, **all in `mat{real}.foo` / `mat{cpx}.foo`**.
+There is **not one explicit `dgemm` call**. Matrix multiplication goes through the Fortran
+`matmul` intrinsic instead: **375 call sites across 35 files**. By default gfortran services
+`matmul` from libgfortran's own blocked routine, never touching BLAS.
 
-**Naming note:** the object was renamed `stderr` → `std_err` (matching the existing `std_time`,
-`std_name`, `std_output` family) because the Unix name implied Unix behaviour it does not have.
-The *file* it writes is still called `stderr`, so test directories and `IO` manifests are
-unaffected. The CPP macro `TEXTFILE_STDERR_UNIT` was deliberately left alone: it is one of a
-trio with `TEXTFILE_STDIN_UNIT`/`TEXTFILE_STDOUT_UNIT`, and renaming just one would look odd.
-Renaming `stdin`/`stdout` likewise is ~12,500 call sites across 81 foofiles but — importantly —
-**zero** test churn, since the file names are set separately. Deferred as cosmetic.
+So swapping in OpenBLAS alone accelerates only the eigensolves and linear solves. The flag that
+would route `matmul` to `dgemm` is **`-fexternal-blas`** (with `-fblas-matmul-limit=<n>` as the
+size threshold); it is not set anywhere in `cmake/SetFortranFlags.cmake`. That is plausibly the
+larger win — and a larger numerical perturbation.
+
+Also unquantified: how much of a typical HAR/SCF run is linear algebra at all, versus Tonto's own
+two-electron integral code. Benchmark before believing any of this is worth it.
+
+### Why this forces a full re-bless
+
+Both changes alter summation order, so last digits move; the loose gate (rel ≤ 0.2 % OR
+last-digit ≤ 2) exists precisely for this, and the macOS case above shows a swap *can* flip a
+test outright.
+
+The sharper hazard is **threading**. Reference BLAS is single-threaded; OpenBLAS is not, and its
+results vary with thread *count*, because the blocking — and hence the reduction order — changes.
+Every stored reference in `tests/` was generated against single-threaded reference BLAS. Adopting
+OpenBLAS without pinning threads would produce run-to-run last-digit noise indistinguishable from
+regressions. Hence the decision above: **one thread**, via `OPENBLAS_NUM_THREADS=1`, set in the
+harness (`scripts/test.py` / `scripts/suite_report.py`) so it cannot be forgotten. Multithreaded
+OpenBLAS would also oversubscribe cores in MPI builds.
+
+### Suggested order when this is picked up
+
+1. Finish the Mac/Linux numerical comparison **first** — it is the baseline everything else is
+   measured against, and it must not be perturbed mid-flight.
+2. Benchmark `libopenblas-dev` alone (threads pinned to 1) on one representative HAR job. Record
+   before/after wall-clock **and** the agreement table.
+3. Separately benchmark `-fexternal-blas`, same job, same pinning.
+4. Only then decide whether the measured speedup justifies re-blessing every reference. If it
+   does, re-bless in one deliberate commit across all platforms at once, so Linux, macOS and WSL
+   share a single BLAS story.
+5. Update `README.md`, `docs/BUILD_WSL.md` and `scripts/wsl_doctor.sh` together — they currently
+   tell users to install the reference packages.
+
+---
+
+---
+
+# Test suite and numerics
 
 ## Deferred: small numerical differences (longstanding) — drill down
 
@@ -1266,97 +1175,6 @@ NOTE (Salvador): verify this is NOT the moments-staleness knock-on from setting 
 `.atomic_moments_made = FALSE` reset after SCF convergence restores the reference values, it
 IS the knock-on and should be fixed rather than accepted. See memory `debug-ensure-vs-release`.
 
-## DONE (release): the 3 remaining test-suite failures (milestone 3)
-
-**Resolved on release — verified 2026-07-17: a `gfortran-14` release build is 124/124 (`ctest`
-exit 0), up from 121/124.** All three former failures now pass, fixed at the source / in the
-references by Dylan (commits `b3b50dd2` "Fixed no. of doubles test error", `d9dffb3f`,
-`dee5cac9` "Corrected Salvador test", `50988e87` "All short & long tests passing on laptop"):
-
-1. **`cyclazine_rhf_cc-pVDZ_tddft_state_selection`** — was a single-line `No. of doubles`
-   diff (`24355` ref vs `22797`). **Not** an `-O0` boundary artifact after all: it was a
-   real **evaluation-order bug in the source**. `foofiles/td_data.foo` computed
-   `n = .no_of_doubles` *after* printing the doubles-window block; commit `b3b50dd2` moved the
-   assignment *before* the block, so the printed count is now correct and stable. (Also fixed
-   two typos in adjacent `stdout.text` lines.)
-2. **`gly_ala_fragHAR_rhf_STO-3G`** — table column-width / alignment shift; reference updated
-   (`50988e87`). Passes (73 s).
-3. **`urea_ccsd_pob-TZVP_Salvador_properties`** — the longstanding Salvador grid/partition
-   numeric difference; the reference was updated to the release-produced values (`dee5cac9`),
-   so the release build now matches exactly. **NB:** this "resolves" it only for `-O3`; the
-   ~0.5% `-O0` difference is unchanged and now shows up as a **debug-only** failure — it has
-   moved into the debug section below, not disappeared. The `atomic_moments_made` knock-on
-   question (see the Salvador section above) is still unverified.
-
-Two other cases seen only under the *strict* (exact) sweep also loose-pass and are benign:
-`h2o_rhf_cc-pVDZ_tdhf` (one TDHF state differs in the last digits) and
-`cyclazine_rhf_cc-pVDZ_VMO_canonicalization` (~1e-4; original archives lost, regenerated).
-A threshold-driven "loose pass" gate (candidate for CI, above) absorbs all of these.
-
-What remains for milestone 3 is therefore **not** the release suite (green) but the **debug**
-suite (119/124 — next section) and wiring the release gate into CI.
-
-## DIAGNOSED (2026-07-30): gfortran-**16** DEBUG builds SEGFAULT on arm64 macOS
-
-**Use `gfortran-14` for debug builds on macOS.** `gfortran-16` release is fine on both platforms;
-only its *debug* build is broken, and only (as far as tested) on arm64.
-
-| build | any SCF job |
-|---|---|
-| macOS, gfortran-**16**, debug | **SIGSEGV** (exit 139, ~2 s) |
-| macOS, gfortran-**14**, debug | **runs to completion** — verified `h2o_rhf_STO-3G` and `urea_rhf_STO-3G_HAR` |
-| macOS, gfortran-16, release | fine (119/124) |
-| Linux, gfortran-16, release | fine (123/124) |
-
-**NOT a regression, and not caused by our changes** — I first wrote this up as a regression on the
-strength of the note below saying the debug build "ran every job to completion" on 2026-07-17.
-That note does **not record its platform** (it says only `gfortran-14, -O0 -g`), and since all work
-before 2026-07-28 was on the Linux box, it was almost certainly Linux. **Dylan spotted this.**
-So arm64-macOS debug was simply an **untested configuration**, and gfortran-14 debug works there
-today — which rules out today's commits entirely.
-
-*Consequence for the compiler migration:* the earlier verdict "the gfortran-16 switch is
-numerically free" was established for **release only**, on both platforms. It does **not** extend
-to debug on arm64. Standardising on 16 therefore needs this caveat, or the crash fixed.
-
-**Symptoms** (gfortran-16.1.0, `-DCMAKE_BUILD_TYPE=debug`, tree `debug/`):
-
-| test | result |
-|---|---|
-| `short/h2o_rhf_STO-3G` (plain SCF) | **SIGSEGV**, exit 139, ~2 s |
-| `long/urea_rhf_STO-3G_HAR` | **SIGSEGV**, exit 139 |
-| `short/nh3_rhf_DZP_HAR` | **SIGSEGV**, exit 139 |
-| `short/urea_read_and_process_CIF` (no SCF) | exit 0, fine |
-
-So it correlates with running an SCF, not with the ADP/esd code.
-
-**Ruled out:**
-- **Stack overflow** — raising `ulimit -s` from 8 MB to 64 MB does not help.
-- **The `shell1quartet.F90` `-O2` pin** — that per-source option applies in *every* build type, so
-  in debug that one file is `-O2` while the rest is `-O0`. Recompiling it at `-O0` and relinking
-  still segfaults. (The pin *should* still be gated to release configs for debuggability — see
-  CLAUDE.md §8 — but it is not the cause.)
-
-**Not yet diagnosed.** `lldb` cannot attach in this environment ("attached to process, but could
-not pause execution"), and `-fbacktrace` prints raw addresses only, so there is no symbolic
-backtrace yet. Options, cheapest first:
-
-1. **Compiler-specific — ANSWERED: yes.** gfortran-14 debug runs the same jobs to completion on
-   the same commit, so the fault is in gfortran-16's debug (`-O0`) codegen on arm64.
-2. To localise it: rebuild the gfortran-16 debug tree with `-fcheck=all` (currently only
-   `-fcheck=bounds`) — `-fcheck=pointer` may turn the segfault into a Fortran runtime error
-   naming a line. Note `lldb` cannot attach in this environment, and `-fbacktrace` yields raw
-   addresses only, so a symbolic backtrace needs either `atos` with the load slide or a
-   different debugger.
-3. Worth checking whether a Linux gfortran-16 debug build crashes too (build started; result
-   pending) — that tells us whether it is arm64-specific or general to gfortran-16.
-4. **Also wanted (Dylan): a DEBUG CI job.** Debug is the configuration whose job is to catch
-   crashes and precondition violations, yet nothing checks it — CI builds release only, and the
-   debug status here was two weeks stale, which is why this went unnoticed. Design notes: the 4
-   known debug failures (47, 64, 87, 91) must be recorded as *expected* or the job is red from
-   day one and gets ignored; and `-O0` is slow, so the `short` suite (or a few representative
-   jobs — one SCF, one HAR, one CIF-processing) is the sensible scope.
-
 ## Deferred: debug-build (`-O0`) test failures — floating-point boundary artifacts
 
 > **FIXED & COMMITTED — `process_CSD_cif` (#113) fragment-offset `int()` flip (2026-07-26).**
@@ -1449,6 +1267,69 @@ harness writes `stdout.bad` on a fail). The five listed above are all that remai
 2026-07-17; the raw diffs from the original 2026-07-15 run lived in that session's scratchpad
 (`debug_analysis/`) and are not preserved across sessions.
 
+---
+
+# Translator and the Foo language
+
+## Translator: `data` statements at `program` scope are silently dropped
+
+**This one causes silently wrong answers, and it cost a day.** The ANTLR4
+translator emits `data` statements for module-scope variables (`atom.foo` 21/21,
+`colour.foo` 44/44, `becke_grid.foo` 6/6 survive) but **drops them entirely from a
+`program` unit**. `runfiles/run_har.foo` had two; `build/run_har.F90` had none.
+
+The declaration is still emitted, so it compiles clean and the variable is simply
+uninitialised. In `hart` that meant `allowed_bases` and `grid_levels` were garbage,
+so **every** basis name — including the program's own default `def2-SVP` — failed
+`is_one_of` with "unknown basis". Nothing warned.
+
+Worked around by assigning the arrays in the executable part instead
+(`run_har.foo`, `run_sf.foo`, `run_sf_derivs.foo`). **The translator is the real
+bug.** Until it is fixed, either emit the `data`, or make the translator *reject*
+what it cannot translate — silently discarding a statement is the worst option.
+
+`runfiles/run_csq.foo` still has program-scope `data` and is not in the translated
+source list; it will hit this if revived.
+
+Related: `none` is a reserved word in `Foo.g4`, so it cannot be used as a variable
+name. The parse error it produces (`mismatched input 'none'`) points at the *end*
+of the file, not at the offending line, which makes it hard to find.
+
+## Cleanup: normalise procedure-name CASE across definition and call sites
+
+**Goal (Dylan):** find every procedure whose **definition case differs from its call-site
+case** (or where call sites disagree among themselves) and make them consistent. Foo/Fortran
+are case-insensitive so these compile and run fine, but the inconsistency is annoying and
+trips case-sensitive tooling.
+
+**Why it matters (concrete):** discovered during phase B (dead-code elimination). `textfile.foo`
+defines `reset_IO_status` (upper `IO`) but `vec{basis}.foo` calls it as `stdin.reset_io_status`
+(lower). The dead-code analysis keyed its call-graph nodes case-sensitively, so the call didn't
+match the definition and the procedure was wrongly pruned — a latent, silent trap. (Worked
+around in the translator by lower-casing the method part of every graph node via `node()`;
+this cleanup would remove the underlying inconsistency in the *sources*.)
+
+**How to tackle (parse-tree driven, reuse phase-B infra):** the translator already walks every
+`ProcDef` (definitions) and every `PostfixContext` (calls). Add a `--case-report` mode that
+records, per lower-cased procedure name, the **set of distinct spellings** seen across its
+definition header and all call sites; flag any name with >1 spelling, listing file:line of each
+variant. Then normalise — the definition's spelling is the natural canonical form — and rewrite
+the call sites (a targeted, parse-tree-driven edit like `--add-self-intent`, NOT a blind sed,
+so commented-out and string-literal occurrences are left alone). Related: [[submodule-call-autoresolution-done]]
+already hit a case bug in the submodule registry (commit 627db872); this is the same family.
+
+## Future task: introduce Fortran-2008 `submodule` constructs
+
+**Goal (Dylan):** use real Fortran-2008 `submodule` where appropriate. **Concept clash to note
+first:** a Foo "submodule" (e.g. `molecule.base.foo` → `module MOLECULE.BASE`) currently
+translates to a **separate, standalone Fortran module** `MOLECULE_BASE_MODULE`, `use`d like any
+other — NOT an F2008 `submodule`. F2008 `submodule (PARENT) NAME` would instead let the 19
+`MOLECULE.*` pieces share one parent interface and break the `use`-graph coupling (a submodule
+sees its ancestor's specification without a `use`, and changing a submodule body doesn't force
+recompilation of the parent's users). Investigate whether mapping Foo submodules onto F2008
+submodules simplifies the emitted module graph and compile-time dependencies. Touches
+`emit()`/`buildUseFile()`/`buildInterfaceFile()` and the module-naming scheme.
+
 ## Column-0 `#ifdef`/`#endif` inside a program body — benign parser diagnostic
 
 **Date:** 2026-07-28. A release build prints, at ~98%:
@@ -1476,450 +1357,681 @@ indentation/scoping. Low priority. (Separately, 2026-07-28: `run_mpi_test_comple
 variable declarations moved *inside* the `#ifdef MPI` so they don't trigger unused-variable
 warnings in a non-MPI debug build; this does not remove the parser diagnostic above.)
 
-## Deferred: adopt OpenBLAS consistently (single-threaded) on Linux and WSL
+---
 
-**Decision (2026-07-30): not now.** Do the Mac/Linux numerical comparison first. The intended
-end state is **OpenBLAS, pinned to one thread, on every platform** — matching what macOS already
-does — but getting there means **redoing the reference outputs completely**, so it must not be
-started in the middle of other work.
+# hart
 
-### What is actually happening today
+## hart — deferred items
 
-Measured, not inferred — `ldd release/tonto` links `libblas.so.3` / `liblapack.so.3`, which on
-Debian/Ubuntu are `update-alternatives` symlinks. On the development box exactly one alternative
-is registered (priority 10, from `libblas3` 3.12.1): the **netlib reference BLAS**. OpenBLAS is
-not installed. The WSL CI runner resolves the same way (`Found BLAS:
-/usr/lib/x86_64-linux-gnu/libblas.so`, LAPACK 3.12.0).
+The `hart` work (milestone 5) left these alone deliberately. `docs/HART.md` is
+the authoritative document; these are the items with no owner yet.
 
-| Platform | Selection | Verdict |
-|----------|-----------|---------|
-| macOS | `CMakeLists.txt:110` explicitly prefers Homebrew OpenBLAS over Accelerate, and warns on fallback — because Accelerate's Fortran LAPACK is frozen at 3.2.1 (2009) and on its own flipped `short/h2o_rhf_6-31G(d)_normal_mode_analysis` | Handled |
-| Linux | No `BLA_VENDOR`; bare `find_package(LAPACK)` takes whatever the distro alternative points at. README installs `libblas-dev liblapack-dev` = reference | **Suboptimal** |
-| WSL | Same as Linux; `docs/BUILD_WSL.md` installs the same reference packages | **Suboptimal** |
+- **fragHAR support (milestone H1).** `hart` only ever calls `HAR_refinement`
+  (`runfiles/run_har.foo`), never `fragHAR_refinement`, and has no
+  atom-group/per-fragment-charge path, so crystals with more than one molecule
+  in the asymmetric unit cannot be refined with it.
+  `tests/long/gly_ala_fragHAR_rhf_STO-3G` exercises fragHAR through `tonto` and
+  is the acceptance test for this.
+- **Frozen options.** `--charge`, `--mult`, `--ldtol`, `--scf-guess`,
+  `--anharm`, `--wavelength` and `--4th-order-only` are commented out in both
+  the `select case` block and the help text of `run_har.foo`. They are kept in
+  step deliberately — the invariant check (`scripts/check_hart_options.sh`)
+  compares only the uncommented labels against the live `--help` output, so a
+  half-revived option is caught. Reviving one means uncommenting *both* halves.
+- **Hard-coded `stdout.*` scratch names.** A HAR job writes seven plot files
+  whose names ignore the job name entirely: `stdout.F_z_vs_stl`,
+  `stdout.Delta_F_vs_stl`, `stdout.F_z_vs_F_exp`, `stdout.Delta_F_pred_z_vs_F_pred`,
+  `stdout.Delta_F_pred_z_vs_stl` (`foofiles/diffraction_data.put.foo`), and
+  `stdout.QQ_plot_with_hkl`, `stdout.QQ_plot.gunplot`
+  (`foofiles/vec{reflection}.foo`). Two runs in one directory overwrite each
+  other's plots. They should derive from `<job>`. Also `.gunplot` is a typo for
+  `.gnuplot` — the file's own header says "Gnuplot input file".
+- **`.cif2` restart round-tripping is untested.** `hart` now accepts a `.cif2`
+  input (it previously rejected one while its own message said it was
+  required for restart), but nothing exercises the write-then-restart cycle.
+- **`--scf-guess` needs rewriting, not restoring.** The block that used to
+  implement it in `run_har.foo` was fatal — see the comment there. It ran
+  unconditionally (`guess` is always `"mos"`), and
+  `SCF_DATA:set_initial_density("restricted")` does not mean "guess a restricted
+  density", it rewrites `.initial_density` to `"r"`, i.e. *read* one from an SCF
+  archive. On a first run no archive exists, so the SCF read garbage. It also
+  threw away the promolecule guess set on the line above, and its two branches
+  were swapped against their own names. Reviving the option means writing it
+  correctly against `SCF_DATA`'s actual semantics.
+- **`put_archive` / `read_archive` are asymmetric about the normalise
+  qualifier.** After the fix below, `put_archive <name> normalise` takes it
+  inline on the keyword line, while reading needs the separate
+  `read_archive_and_normalise` keyword. Both work; they just do not look alike.
+  Unify if that grates — either give `put` its own
+  `put_archive_and_normalise`, or let `read_archive` take the inline qualifier
+  by relaxing its `ENSURE(n_line_items==3)` to accept a fourth item.
 
-So the platform that got careful attention is macOS, while the two reference platforms silently
-get the slowest BLAS. That is backwards.
+## Runfiles that are not built, and were not migrated to `--options`
 
-Note the two axes are independent: **LAPACK version** (3.12.x here — modern, so the `ILAVER`
-probe stays quiet) is a correctness/algorithms question; **BLAS implementation** (reference) is a
-speed one.
+The single-dash option removal covered every `runfiles/*.foo` that CMake
+actually translates. These eight have **no `add_executable` target and are not
+in the translated source list** in `CMakeLists.txt`, so they are never compiled
+and a mistake in them would not be caught by any build:
 
-### How much is actually on the table
+`run_xtal.foo`, `run_cif_to_surface.foo`, `run_dnc.foo`,
+`run_metal_fingerprints.foo`, `run_command_line.foo`,
+`run_fix_pre_v4088_cif.foo`, `run_compare_data.foo`,
+`run_compare_3d_pair_data.foo`.
 
-Less than it first appears, and the bigger lever is elsewhere. Tonto's LAPACK surface is narrow —
-`dsyev`, `zheev`, `zhpev`, `dgesv`, `dgetrf`/`dgetri`, **all in `mat{real}.foo` / `mat{cpx}.foo`**.
-There is **not one explicit `dgemm` call**. Matrix multiplication goes through the Fortran
-`matmul` intrinsic instead: **375 call sites across 35 files**. By default gfortran services
-`matmul` from libgfortran's own blocked routine, never touching BLAS.
-
-So swapping in OpenBLAS alone accelerates only the eigensolves and linear solves. The flag that
-would route `matmul` to `dgemm` is **`-fexternal-blas`** (with `-fblas-matmul-limit=<n>` as the
-size threshold); it is not set anywhere in `cmake/SetFortranFlags.cmake`. That is plausibly the
-larger win — and a larger numerical perturbation.
-
-Also unquantified: how much of a typical HAR/SCF run is linear algebra at all, versus Tonto's own
-two-electron integral code. Benchmark before believing any of this is worth it.
-
-### Why this forces a full re-bless
-
-Both changes alter summation order, so last digits move; the loose gate (rel ≤ 0.2 % OR
-last-digit ≤ 2) exists precisely for this, and the macOS case above shows a swap *can* flip a
-test outright.
-
-The sharper hazard is **threading**. Reference BLAS is single-threaded; OpenBLAS is not, and its
-results vary with thread *count*, because the blocking — and hence the reduction order — changes.
-Every stored reference in `tests/` was generated against single-threaded reference BLAS. Adopting
-OpenBLAS without pinning threads would produce run-to-run last-digit noise indistinguishable from
-regressions. Hence the decision above: **one thread**, via `OPENBLAS_NUM_THREADS=1`, set in the
-harness (`scripts/test.py` / `scripts/suite_report.py`) so it cannot be forgotten. Multithreaded
-OpenBLAS would also oversubscribe cores in MPI builds.
-
-### Suggested order when this is picked up
-
-1. Finish the Mac/Linux numerical comparison **first** — it is the baseline everything else is
-   measured against, and it must not be perturbed mid-flight.
-2. Benchmark `libopenblas-dev` alone (threads pinned to 1) on one representative HAR job. Record
-   before/after wall-clock **and** the agreement table.
-3. Separately benchmark `-fexternal-blas`, same job, same pinning.
-4. Only then decide whether the measured speedup justifies re-blessing every reference. If it
-   does, re-bless in one deliberate commit across all platforms at once, so Linux, macOS and WSL
-   share a single BLAS story.
-5. Update `README.md`, `docs/BUILD_WSL.md` and `scripts/wsl_doctor.sh` together — they currently
-   tell users to install the reference packages.
+Several still carry single-dash `case` labels (e.g. `run_xtal.foo` is a near
+copy of `run_molecule.foo` with `case("i","-input")`), which `COMMAND_LINE`
+can no longer deliver. Either revive them — translate, build, migrate — or
+delete them. `run_cif_to_surface.foo` was the CrystalExplorer entry point;
+CrystalExplorer no longer uses tonto.
 
 ---
 
-## MPI: defects found during milestone 4 (2026-08-01)
+# Tooling and editor support
 
-Found while building Tonto with MPI for the first time — **no MPI build had ever been
-configured**, in CI or in any local build tree, so none of this had been exercised. Items marked
-**FIXED** were repaired as part of milestone 4 because they produce wrong answers and would have
-made the numeric characterisation meaningless; the rest are recorded with evidence.
+## Editor: improve vim highlighting of Foo and vim integration
 
-### The root cause behind most of these: the `parallel do` lock is invisible
+**Goal (user):** improve the vim editing experience for `.foo` sources — better syntax
+highlighting and tighter editor integration. The repo already ships some vim support
+(`.vim/filetype.vim` maps `*.foo` and `macros` to a `foo` filetype; `scripts/fix_tags.pl` and
+`scripts/cscope_setup` support ctags/cscope navigation — kept for exactly this reason).
 
-`FooToFortran` lowers `parallel do` to `PARALLEL_DO_START/STRIDE` bounds plus a
-`LOCK_PARALLEL_DO(tag)` emitted as **the first statement inside the loop body**, with
-`UNLOCK_PARALLEL_DO(tag)` after `end do`. `do_in_parallel` is
-`.is_parallel AND .do_parallel_lock==" "` (`parallel.foo:287`), so **inside a `parallel do` body
-`DO_IN_PARALLEL` is always FALSE**, and every `PARALLEL_*` macro — each of which expands to
-`if (DO_IN_PARALLEL0) call …` — is a silent no-op there.
+**To investigate / do:**
+- **Syntax file:** review/extend the `foo` syntax highlighting to cover the current language —
+  reverse declarations (`var :: TYPE`), parameterized types (`VEC{T}`, `MAT{T}`…), pointer/
+  allocatable suffixes (`*`, `@`), procedure headers with `:::` attributes (`PURE`,
+  `ELEMENTAL`, `get_from(...)`, `selfless`), `KEY?` template placeholders, the constants
+  (`TRUE`/`FALSE`/`ZERO`/`ONE`/`NULL`), and comments (`!`). Confirm whether a `syntax/foo.vim`
+  exists and is up to date, or author one.
+- **Indentation:** Foo uses 3-space indentation to mark scope (closed by `end`); an
+  `indent/foo.vim` that follows this would help.
+- **Navigation:** verify `scripts/cscope_setup` + `scripts/fix_tags.pl` still produce usable
+  tags/cscope indexes for `foofiles/` and `runfiles/`, and document the workflow.
+- **Integration niceties (optional):** a command/`makeprg` to translate the current `.foo`
+  with `FooToFortran` and jump to errors; folding on scope; matchit for `... end` blocks.
 
-The intent (Dylan) is sound and standard: keep MPI "on the outside", parallelise coarsely, and
-prevent interior collectives, which would otherwise deadlock on mismatched trip counts. The
-*mechanism* is the problem:
+---
 
-- **Suppression is silent.** A reduction that never ran is indistinguishable from one that did.
-- **It answers a dynamic question when the need is lexical.** `DO_IN_PARALLEL` means "no outer
-  loop is active"; what a reduction site needs to know is "am I inside the body or after it".
-- **The unlock is name-matched, not depth-counted.** `unlock_parallel_do` clears the lock
-  whenever the name matches (`parallel.foo:321`), so a recursive routine's inner return releases
-  the outer loop's lock. The `ENSURE` that would catch recursion is commented out at
-  `parallel.foo:308`.
+# Platform-specific
 
-Correctness therefore depends on the programmer holding the whole dynamic call sequence in their
-head. As Dylan put it: *"the programmer has to hold the call sequence in their head not to make
-bugs."* That is a design defect, not a discipline problem — the constraint is invisible at the
-point where it matters.
+## Future task: verify the macOS build (Apple Silicon / Tahoe)
 
-> **DECIDED (Dylan, 2026-08-01): adopt all four of the following. This is URGENT and is the next
-> piece of work after milestone 4's characterisation completes.** It is sequenced after, not
-> during, because changing the `parallel do` lowering mid-characterisation would confound the
-> numbers it is meant to produce. Tracked as milestone 6 in `CLAUDE.md` §9.
+**Goal (Dylan):** confirm whether Tonto builds and passes tests on current macOS, on
+**Apple Silicon (M2) with macOS Tahoe (26)** — to be done in a **separate session on a real
+Mac** (the main dev box is Linux; macOS cannot be tested from it). A March-2026 README note
+claimed *"many failures on the Apple M2 with Tahoe 26.3 — not recommended"*, but Dylan says
+that is **very old** and likely stale, so it must be re-checked rather than trusted. Build via
+Homebrew (`brew install gcc cmake openjdk python3 gnuplot`; BLAS/LAPACK come from
+`Accelerate.framework`), then run `make report`. **Feed the result back into the docs:** update
+the README macOS line (currently softened to "via Homebrew; Linux/WSL is the reference platform")
+and the `Building on MacOS` wiki page to say what actually works — pass → "supported", or list the
+specific failures if any remain.
 
-**1. Move the reduction into the loop construct (the main fix).**
+**RESOLVED (2026-07-28, session on the real Mac: M2 Pro, macOS 26.5.2 Tahoe, Darwin 25,
+gfortran-14 / Homebrew GCC 14.3.0, CMake 4.3.3, Java 26).**
 
-```foo
-parallel do q = 1,.n_shell_pairs reduce(grid)
-   ...
-end
+**Outcome: the macOS failures were a compiler miscompilation, not a Tonto bug.** gfortran 14.3
+on arm64 miscompiles `shell1quartet.F90` (the two-electron integral code) at `-O3`. Pinning
+that one file to `-O2 -fno-schedule-insns` (`CMakeLists.txt`, commit `a3ec1b07`) took the suite
+from **82/124 to 118/124**:
+
+| Suite | before | after |
+|---|---|---|
+| short | 33/51 | 49/51 |
+| rgbi | 1/13 | 12/13 |
+| long | 18/28 | 25/28 |
+| cx | 30/32 | 32/32 |
+| **total** | **82/124** | **118/124** |
+
+The build itself was always clean, so the March-2026 README note ("many failures on the Apple
+M2 — not recommended") is stale in both respects. **README and wiki still NOT updated** —
+Dylan's standing instruction; and the 6 residual failures should be understood first (they are
+mostly the longstanding small-difference cases already tracked below, plus one structural diff
+in `urea_lamaGOET_grown_CIF` with max rel 0 / LDD 0).
+
+The investigation history is kept below because the false trails are worth not re-walking.
+**Note especially:** the diverging boron atomic SCF that dominates the "atomic SCF" section
+above was a *symptom* of this miscompilation, not an independent defect — with the compiler
+workaround in place boron converges and rgbi/BN reproduces the reference exactly. The `DIE`
+added in `make_ANOs` is still worth keeping as a safety net, but its motivating example is gone.
+
+- **The build is clean.** Full translate + compile + link, zero errors; only benign warnings
+  (clang deployment-version override ×149, a `-F` flag not valid for Fortran, 2 macro
+  redefinitions). So the 2026-03 "not recommended" note is stale *as regards building*.
+- **`make report`: 82/124 loose** (exact 73, lastdig 79) — short 33/51, rgbi 1/13, long 18/28,
+  cx 30/32. Baseline artefacts kept in `/tmp/tonto-mac-baseline/` (tests.log, build log,
+  all 44 `stdout.bad`).
+- **What passes:** geometry/CIF processing and Hirshfeld surfaces (cx 30/32), and plain SCF
+  energies (`h2o_rhf_cc-pVDZ`, `blyp`, `rks_B3LYPG`, `xalpha`, `aug-cc-pVDZ`) — all *exact*.
+- **What fails:** downstream *property* evaluation — 1e properties, structure factors / HAR,
+  cluster charges, Roby bond indices, polarisabilities/TDHF, Salvador properties.
+- **Ruled out (with evidence, not argument):**
+  - *Not* the ANO occupancy threshold (`atom.foo`, `count(.NAO_occupations>=1/14)`): scanning
+    `occupied_ano_cutoff=` over 0.02–0.30 changes BN not at all (the marginal occupation is
+    ~0.3, nowhere near 1/14).
+  - *Not* uninitialised heap: identical results under `MallocScribble=1 MallocPreScribble=1`.
+  - *Not mainly the LAPACK version.* Accelerate's Fortran LAPACK is frozen at **3.2.1 (2009)**
+    (confirmed via `ilaver`); switching to Homebrew OpenBLAS (**3.12.0**) flipped exactly
+    **one** short test (33/51 → 34/51) and **zero** rgbi (1/13 either way). Worth doing as
+    hygiene — now the macOS default, see `CMakeLists.txt` — but it is not the cause.
+- **Leading hypothesis — degenerate eigenspaces.** In rgbi/BN the Roby angle table has an
+  exactly degenerate pair (states 7 and 8, both `theta = 68.7340°` — the π_x/π_y pair).
+  Eigenvectors within a degenerate eigenspace are **not unique**: any orthogonal mixing is a
+  valid eigenbasis, and different LAPACKs return different mixtures. Anything downstream that
+  uses individual eigenvectors, rather than the projector onto the whole subspace, is then
+  **basis-dependent, i.e. ill-defined** — which explains differences far too large for
+  round-off. Strongly supported by the rgbi pattern: every failing molecule is linear/highly
+  symmetric (BN, C2, CN-, CO, F2, N2, NF, O2, Ni-carbonyl — all with degenerate π), while the
+  **only exact pass is `CHFCl`, the one molecule with no symmetry and no degeneracy**. Three
+  environments give three different answers for BN's B population: Linux 6.48, Accelerate 6.16,
+  OpenBLAS 6.34.
+  **Next step:** relink an Accelerate binary from the same objects (`.o` files are intact) and
+  A/B the `output_theta_info= YES` tables. If the *thetas* (eigenvalues, invariant) agree while
+  the populations differ, non-invariance under degenerate mixing is confirmed — and the fix is
+  in the Roby code, not the build.
+- **Still uncontrolled:** `-Ofast` implies `-ffast-math`; and the `release/` tree used here
+  carried a **stale cached `-O2`** (a fresh configure gives `-O3`), so opt level differed from
+  the Linux reference too. A strict-FP rebuild (`-O2 -fno-fast-math -ffp-contract=off`) is the
+  clean way to settle the FP-flags question.
+- **Also note:** a `1e_properties` diff shows *total* molecular moments agreeing to 7 digits
+  while *atomic partitioned* charges/dipoles differ by 15–17% — totals right, partitioning
+  wrong. Consistent with the same "non-invariant use of an arbitrary basis" theme.
+
+### RESOLVED: the oxygen atom converged to a variationally impossible energy
+
+The single best probe found so far, because it is one atom, runs in seconds, and its
+correctness can be judged from physics alone rather than by diffing against a reference.
+
+Run `tests/short/oxygen_atom_uhf_cc-pVDZ/stdin` **verbatim**:
+
+| | Total energy |
+|---|---|
+| Linux reference (`tests/short/.../stdout`) | **−74.7923** |
+| this Mac, OpenBLAS 3.12.0 | **−77.6178** |
+| this Mac, Accelerate 3.2.1 | **−77.6178** |
+
+Both report "converged". The O atom UHF limit is ≈ −74.81, so **−77.62 lies ~2.8 Ha *below* the
+variational limit — impossible for a correct HF calculation.** This is not a tolerance or
+round-off effect and not a LAPACK effect (both libraries agree exactly); it is a Mac↔Linux
+difference in the SCF itself, so the prime suspects are code generation and `-Ofast`
+(`-ffast-math`, FMA contraction, denormal flush-to-zero).
+
+The same signature appears in every standalone atom tried on this Mac (B, C, N, Al, Si all come
+out 2–6 Ha too low), and in the *guess* SCF inside BN (its N atom gives −55.7673 where the HF
+limit is ≈ −54.40). So it may well underlie a large share of the 42 macOS failures — including
+the atomic-partitioning discrepancies — and it is upstream of the ANO/Roby problem rather than
+caused by it.
+
+#### Localised: two-electron integrals between *different shells*
+
+Bisection done 2026-07-28 against the Linux reference box (`achari2`, the very machine that
+produced the reference outputs — its kernel `6.8.0-88-generic` matches their `Platform:` line).
+
+**Ruled out, each with a direct test:**
+
+| Suspect | Result |
+|---|---|
+| FP flags | **No** — rebuilt `-O2 -fno-fast-math -ffp-contract=off`: identical (−77.6178, virial 1.9574) |
+| LAPACK | **No** — Accelerate 3.2.1 and OpenBLAS 3.12.0 agree exactly |
+| Platform `#ifdef`s | **No** — `GNU_gfortran_on_Darwin` is defined but never used anywhere |
+| Basis setup / normalisation | **No** — overlap matrix **bit-identical** to Linux, diagonal exactly 1.0 |
+| One-electron integrals | **No** — T and V_eN **bit-identical** to Linux (see below) |
+| ERI screening | **No** — setting all six `eri_*_cutoff` to 1e-20 changes nothing |
+| Initial guess / tolerances | **No** — see the table above |
+
+**Where it actually is.** `V_ee` is not computed directly; `molecule.scf.foo:1868` obtains it *by
+subtraction* (`energy − V_NN − V_eN − V_charge − T`), so a `V_ee` discrepancy *is* a total-energy
+discrepancy. With V_NN = 0 for an atom and T, V_eN identical, the error is entirely in the
+two-electron part of `.SCF_energy`.
+
+**Minimal reproducer — Be atom, STO-3G, milliseconds:**
+
+| Atom (STO-3G) | shells | Mac V_ee | Linux V_ee | T (both) |
+|---|---|---|---|---|
+| He | one s | 1.055713 | 1.055713 | 2.823526 |
+| **Be** | **two s (1s,2s)** | **4.538672** | **4.875821** | 14.844185 |
+| Ne | s + p | 54.602059 | 55.508976 | 125.562006 |
+| O | s + p | 28.349706 | 29.075205 | 73.444959 |
+
+A **single** shell is exact; **two distinct shells** diverge. So it is not an angular-momentum
+(p/d) problem — it is two-electron integrals spanning different shells. The Mac value is always
+*too small*, as if contributions are lost.
+
+*Why the densities still agree:* in a minimal basis these atoms have every orbital occupied
+(Be: 2 functions / 4 electrons), so the density is fixed by the basis regardless of the Fock
+matrix. That is why T and V_eN match while the energy does not — it does **not** imply the
+Fock matrix is correct.
+
+**Next step:** dump the individual two-electron integrals for Be/STO-3G on both platforms and
+diff them — there are only ~6 unique values. `put_fock_matrix` / `put_density_matrix` print
+empty under direct SCF, so this needs a temporary print inserted in the ERI path
+(`shell1quartet.foo`, `shell2.foo`, `gaussian4.foo`). Since the one-electron code shares the
+same Gaussian machinery and is provably correct, the fault is specific to the ERI routines.
+
+**Repro harness:** `scripts/oxygen_scf_probe.sh <tonto> <repo>` prints the energy decomposition
+at truncated iteration counts on either platform.
+
+#### Final: compiler miscompilation of `shell1quartet.F90`
+
+Localised by swapping a single object file: with `shell1quartet.F90` compiled at `-O2` and
+everything else untouched, every probe matches Linux exactly (oxygen E/V_ee/V_eN/T/virial;
+Be V_ee 4.875821; BN's Roby populations identical to the reference). The path mattered because
+only the *engine* ERI route is affected — `use_spherical_basis= T` selects `make_r_JK_direct`
+and was an accidental working workaround.
+
+**Evidence it is a GCC bug rather than UB in our source** (not proof — see caveats):
+
+- The generated Fortran is **bit-identical** to Linux's (same md5, 11263 lines), so the
+  translator is not implicated.
+- Compiles clean under `-Wall -Wextra -Waliasing`: **no warnings at all**.
+- Runs clean under `-fcheck=all -finit-real=snan -finit-integer=-999999` with
+  `-ffpe-trap=invalid,zero,overflow` armed in the main program: no bounds violations, no
+  runtime errors, no traps.
+- The one concrete UB candidate — `Jab`/`Jcd` aliasing when `ab == cd`, both `INTENT(INOUT)` —
+  is **properly guarded**: every branch in which `same` can be true writes `Jab` only and never
+  references `Jcd` (`if (same) ... Jab = Jab + TWO*factor*ev`). Conforming.
+
+*Caveats:* the instrumentation covers this file only (bounds checking is per compilation unit),
+`-fcheck` cannot detect argument aliasing at all, and — importantly — the checks necessarily run
+on a *correctly* compiled build, since adding them changes codegen enough to make the answer
+right. So this shows the source is well-defined when compiled conservatively; it is not a proof
+that the failing binary contained no UB.
+
+**No minimal `-O3` workaround exists** (tried, failed): the trigger is not any of the 13 passes
+`-O3` adds over `-O2`, and disabling all 13 still gives the wrong answer; nor is it the
+vectoriser (`-fno-tree-vectorize`, `-fvect-cost-model=very-cheap`), inlining
+(`-fno-inline-functions`, `--param max-inline-insns-auto`), `-fno-ipa-cp-clone`, or
+`-fno-strict-aliasing`. There appear to be **two interacting triggers**:
+
+| config | result |
+|---|---|
+| strict FP, `-O2` | wrong; `-fno-schedule-insns` fixes it |
+| fast-math, `-O2` | correct, even with scheduling on |
+| fast-math, `-O3` | wrong; `-fno-schedule-insns` does NOT fix it |
+
+Hence the level is pinned rather than a pass disabled. Both switches are applied because that
+is the configuration the 118/124 run actually verified.
+
+**Not fixed in GCC 16 (tested 2026-07-29).** A full build with `gfortran-16` (Homebrew GCC
+16.1.0) and `-DTONTO_SKIP_ARM64_WORKAROUNDS=ON` compiles cleanly (zero errors) and then
+reproduces the miscompilation **exactly** — the invariant check fails with values identical to
+GCC 14.3's, digit for digit:
+
+| case | correct | GCC 14.3 | GCC 16.1 |
+|---|---|---|---|
+| Be | −14.3518804762 | −14.6890291293 | −14.6890291293 |
+| O | −73.8041502333 | −74.5296496920 | −74.5296496920 |
+| Ne | −126.6045249968 | −127.5114422775 | −127.5114422775 |
+| N | −54.1053903978 | −55.0573624742 | −55.0573624742 |
+
+Consequences:
+
+- **Do not version-gate the workaround** — it is needed on both 14.3 and 16.1.
+- **Beware the default compiler.** Homebrew's main `gcc` formula is now 16.1.0, so plain
+  `gfortran` on this Mac *is* GCC 16; only CLAUDE.md's documented
+  `-DCMAKE_Fortran_COMPILER=gfortran-14` pins 14. Both hit the bug, and the workaround covers
+  any GNU compiler on arm64 Apple, but a developer's "default" build is not the documented one.
+- **The two versions producing bit-identical wrong answers is worth weighing.** It is what you
+  would expect from a persistent target-specific backend bug, but equally from source UB that
+  both versions exploit the same way, so it does not settle the question — it only shows the
+  behaviour is deterministic rather than a random codegen accident.
+
+**Compiler versions in play (they were never harmonised, which hid this):** Linux `release/`
+(the reference binary) used **plain `gfortran` = GCC 13.3.0**, Linux `build-rel/` and GitHub CI
+use **gfortran-14**, and this Mac used **14.3 and now 16.1**. The committed reference `stdout`
+files predate all of it and do not record what produced them — which is why the run banner now
+stamps compiler and LAPACK version (`CMakeLists.txt` → `macros.in` → `molecule.main.foo`,
+ignored by `scripts/test.py`).
+
+**Left to do:**
+- Decide the harmonisation: pick one reference compiler across Mac, Linux and CI. Worth doing
+  with data — check whether GCC 16 reproduces the *same suite numbers* before switching, since
+  otherwise the choice is between re-blessing references and staying put.
+- Measure the runtime cost of `-O2` on this file (it is the ERI hot path). If negligible, stop.
+- Consider a GCC bug report. The ingredients are unusually strong: bit-identical source, two
+  platforms disagreeing, and a self-validating oracle (an SCF energy below the variational
+  limit, virial 1.957 vs 2.000). Would need reducing to a minimal test case first.
+- Re-test whether the *global* `-fno-schedule-insns` in `cmake/SetFortranFlags.cmake` is still
+  needed now that the file is pinned — currently kept only because it was in the verified run.
+- **Add a regression test**: for an s/p-only basis, `use_spherical_basis= T` and `F` must agree
+  (the two bases are mathematically identical below d functions). That single invariant would
+  have caught this immediately, on one machine, with no reference file.
+
+## DIAGNOSED (2026-07-30): gfortran-**16** DEBUG builds SEGFAULT on arm64 macOS
+
+**Use `gfortran-14` for debug builds on macOS.** `gfortran-16` release is fine on both platforms;
+only its *debug* build is broken, and only (as far as tested) on arm64.
+
+| build | any SCF job |
+|---|---|
+| macOS, gfortran-**16**, debug | **SIGSEGV** (exit 139, ~2 s) |
+| macOS, gfortran-**14**, debug | **runs to completion** — verified `h2o_rhf_STO-3G` and `urea_rhf_STO-3G_HAR` |
+| macOS, gfortran-16, release | fine (119/124) |
+| Linux, gfortran-16, release | fine (123/124) |
+
+**NOT a regression, and not caused by our changes** — I first wrote this up as a regression on the
+strength of the note below saying the debug build "ran every job to completion" on 2026-07-17.
+That note does **not record its platform** (it says only `gfortran-14, -O0 -g`), and since all work
+before 2026-07-28 was on the Linux box, it was almost certainly Linux. **Dylan spotted this.**
+So arm64-macOS debug was simply an **untested configuration**, and gfortran-14 debug works there
+today — which rules out today's commits entirely.
+
+*Consequence for the compiler migration:* the earlier verdict "the gfortran-16 switch is
+numerically free" was established for **release only**, on both platforms. It does **not** extend
+to debug on arm64. Standardising on 16 therefore needs this caveat, or the crash fixed.
+
+**Symptoms** (gfortran-16.1.0, `-DCMAKE_BUILD_TYPE=debug`, tree `debug/`):
+
+| test | result |
+|---|---|
+| `short/h2o_rhf_STO-3G` (plain SCF) | **SIGSEGV**, exit 139, ~2 s |
+| `long/urea_rhf_STO-3G_HAR` | **SIGSEGV**, exit 139 |
+| `short/nh3_rhf_DZP_HAR` | **SIGSEGV**, exit 139 |
+| `short/urea_read_and_process_CIF` (no SCF) | exit 0, fine |
+
+So it correlates with running an SCF, not with the ADP/esd code.
+
+**Ruled out:**
+- **Stack overflow** — raising `ulimit -s` from 8 MB to 64 MB does not help.
+- **The `shell1quartet.F90` `-O2` pin** — that per-source option applies in *every* build type, so
+  in debug that one file is `-O2` while the rest is `-O0`. Recompiling it at `-O0` and relinking
+  still segfaults. (The pin *should* still be gated to release configs for debuggability — see
+  CLAUDE.md §8 — but it is not the cause.)
+
+**Not yet diagnosed.** `lldb` cannot attach in this environment ("attached to process, but could
+not pause execution"), and `-fbacktrace` prints raw addresses only, so there is no symbolic
+backtrace yet. Options, cheapest first:
+
+1. **Compiler-specific — ANSWERED: yes.** gfortran-14 debug runs the same jobs to completion on
+   the same commit, so the fault is in gfortran-16's debug (`-O0`) codegen on arm64.
+2. To localise it: rebuild the gfortran-16 debug tree with `-fcheck=all` (currently only
+   `-fcheck=bounds`) — `-fcheck=pointer` may turn the segfault into a Fortran runtime error
+   naming a line. Note `lldb` cannot attach in this environment, and `-fbacktrace` yields raw
+   addresses only, so a symbolic backtrace needs either `atos` with the load slide or a
+   different debugger.
+3. Worth checking whether a Linux gfortran-16 debug build crashes too (build started; result
+   pending) — that tells us whether it is arm64-specific or general to gfortran-16.
+4. **Also wanted (Dylan): a DEBUG CI job.** Debug is the configuration whose job is to catch
+   crashes and precondition violations, yet nothing checks it — CI builds release only, and the
+   debug status here was two weeks stale, which is why this went unnoticed. Design notes: the 4
+   known debug failures (47, 64, 87, 91) must be recorded as *expected* or the job is red from
+   day one and gets ignored; and `-O0` is slow, so the `short` suite (or a few representative
+   jobs — one SCF, one HAR, one CIF-processing) is the sensible scope.
+
+---
+
+# Done, resolved and closed (archive)
+
+## DONE (2026-08-02): test registration — stale `DEPENDS run_test`
+
+**Removed.** `grep -c "DEPENDS run_test" tests/CMakeLists.txt` is now 0; it went with the hart
+work's rewrite of `add_all_tests`.
+
+`tests/CMakeLists.txt` used to set `DEPENDS run_test` on every registered test.
+`DEPENDS` names a *test*, and no test called `run_test` has ever existed — the
+name belongs to a Python function in `scripts/test.py`. It was a silent no-op
+and has been removed. Mentioned here in case the intent was a real dependency
+on the executable being built (which `add_test` does not express; that is what
+the `report` target's `add_dependencies` is for).
+
+## Closed (won't-do): eliminate explicit `TYPE:proc` calls — at its practical limit
+
+**What:** the submodule-call cleanup (`4cd995df`) auto-resolved `.SUBMOD:proc` etc., but
+explicit **type-qualified** calls `TYPE:proc` / `TYPE::proc` (e.g. `GAUSSIAN_DATA:...`,
+`STR:...` for namespace access + method calls) were left **qualified on purpose**.
+
+**Why it's not just a mechanical `TYPE:proc(x)` → `x.proc` rewrite:** that transform is
+**unsafe** and was tried and reverted. An **elemental** method invoked on a `VEC{T}` array
+receiver resolves against the *receiver's* type (`VEC{T}`), not the element type `T`, so
+`x.proc` can bind a different (array-level) overload than `T:proc` intended — this introduced
+a `use` cycle. See memory `typeproc-elemental-array-hazard`. A correct elimination needs
+**type-aware** resolution that respects elemental/array-receiver semantics (and the
+GAUSSIAN_DATA namespace-access case), not a blind receiver swap. Low priority — the explicit
+form compiles and runs fine; this is a consistency/readability cleanup, not a correctness bug.
+
+**Analysis tool built — `--type-qualified-call-report` (read-only).** Rather than rewrite
+blindly again, `FooToFortran` now classifies every site by asking the *real* resolver two
+questions — "where does `TYPE:proc` resolve today?" vs. "where would `arg1.proc(...)` go?" —
+and only calls a site **SAFE** when both answers exist and agree. Writes
+`type_qualified_calls.tsv` (per-site verdict + why). New helpers `buildElementalByModule`,
+`runTypeQualifiedCallReport`, `classifyTypeQualifiedCall`, `isLonePostfixArg`. Emission is
+untouched; it just walks the modules and throws the Fortran away (~11 min single-JVM full walk).
+
+**Verdict: this task is at its practical limit — it cannot be cheaply or completely done.**
+Report over **2068** sites (2026-07-29):
+
+| class | count | % | convertible? |
+|---|---|---|---|
+| NAMESPACE (989 = `GAUSSIAN_DATA::…`) | 1002 | 48.5% | no — data access, no receiver to promote |
+| MODULE_MISMATCH | 506 | 24.5% | no — would bind a *different* module |
+| EXPR_RECEIVER | 232 | 11.2% | no — receiver needs added parens |
+| ELEMENTAL_HAZARD | 99 | 4.8% | no — the exact trap that sank the reverted attempt |
+| **SAFE** | **154** | **7.4%** | **yes — the only candidates** |
+| UNKNOWN / BY_NAME / COMPONENT_COLLISION / NO_RECEIVER | 75 | 3.6% | no — untypeable or non-call |
+
+Only **7.4%** is mechanically convertible; the other **~92%** each fail for a *structural*
+reason (namespace access with no receiver, genuine cross-module dispatch, expression receiver,
+or elemental/array-receiver semantics) that no blind rewrite can satisfy. Converting the 154
+SAFE sites would be a large, file-spanning diff for a cosmetic gain while **leaving the bulk of
+the explicit forms in place anyway** — so the readability payoff never actually lands. The
+explicit `TYPE:proc` form compiles, runs, and is unambiguous. **Recommendation: stop here.**
+Keep the report as the durable evidence and the work-list should anyone ever want the SAFE
+subset; treat full elimination as *not worth doing*, not merely *not yet done*.
+
+## DONE: phase B — per-executable dead-code elimination
+
+**Goal (Dylan):** eliminate code dead for a specific executable (e.g. `run_molecule`/`tonto`),
+in a separate build dir, without affecting the other executables or the normal build.
+
+**Delivered** in `FooToFortran.java` + `CMakeLists.txt`:
+- `--call-graph-report` → Graphviz `call_graph.dot` / `module_use.dot` (submodules collapsed to
+  parent) / `submodule_use.dot`; `--dead-code-report <root.foo>` → per-module live/dead TSV;
+  `--purge-dead-code <root.foo>` → two-pass emit dropping unreachable procs. CMake exposes the
+  `callgraphs` target and `-DPURGE_DEAD_CODE=<stem>` (separate build tree). See README §7b, CLAUDE.md §8.
+- Reachability = BFS from the root program's entry calls over a call graph captured by
+  piggybacking on the real call-resolution. `TYPES`/`SYSTEM` (wholesale-`use`) never pruned.
+
+**Validated:** `-DPURGE_DEAD_CODE=run_molecule` release build compiles 0-error, ~32% of the
+~7600 procedures dropped, binary 33→25 MB, and ctest is **121/124 — identical to the full build**
+(same 3 known-bad). Three reachability-analysis bugs were caught only by the compile+test gate,
+each a call form that bypassed the `use`-based capture: (1) same-module `::proc`/bare-selfless
+calls (fixed: `recordSelfCall`); (2) case-sensitive node keys (`reset_IO_status` vs
+`reset_io_status`; fixed: `node()` lower-cases the method part — motivates the case-cleanup goal
+above). CPP-macro-hidden calls all target `SYSTEM` (always kept), so no macro-root class exists.
+
+## DONE: simplify the DOT call-graph output
+
+**Goal (Dylan):** reduce the complexity of the graphs from `--call-graph-report` (phase B).
+`call_graph.dot` is a **procedure-level** graph — ~7600 nodes / ~24k edges — too dense to read
+as a single image. `module_use.dot` (921 edges) was legible-ish but still a hairball.
+
+**Delivered** as `scripts/simplify_callgraph.py` (a post-processor over `module_use.dot`, not a
+translator change — the DOT already carries every `use` edge):
+- **Aggregate** — fold module families into one coloured node: `NUMBERS` (INT/REAL/CPX),
+  `ARRAYS` (VEC/MAT of primitives), `SHELLS`, `GAUSSIANS`, `MAPS`, `ISOSURFACES`; and re-point
+  `VEC{T}`/`MAT{T}` over a derived type to that element's module (`VEC_ATOM`→`ATOM`), surfacing
+  real deps like `MOLECULE→ATOM`. Dropped dead `BREAKDOWN_DATA`, `MULTI_T_ADP`.
+- **Ambient** (`--simplify`) — hide the 7 universal utilities that take 62% of all edges
+  (`NUMBERS ARRAYS STR BIN TEXTFILE BUFFER TABLE_COLUMN`). 139/921 → **50 nodes / 114 edges**.
+- **`--module NAME`** — documentation ego-graph of one module's direct dependencies
+  (`--reverse` dependents, `--both`); no `concentrate`, so every direct edge shows.
+
+**Key findings, recorded in `docs/CALL_GRAPHS.md`:** the "aggregate vs ambient" distinction
+(merge-and-keep vs hide); `concentrate=true` is *lossy* (drops a direct edge parallel to a
+longer path — e.g. `ATOM→INTERPOLATOR`), so the doc mode avoids it; and Graphviz has **no** edge
+hops/bridges and is already hierarchical, so fewer edges beats a different engine. README §7b
+points to the tool + doc. (The procedure-level `call_graph.dot` remains dense — a module-level
+*call* graph in `writeDotFiles` is still a possible future refinement, but not needed now.)
+
+## RESOLVED (was: atomic (guess) SCF fails for partly-filled degenerate shells)
+
+**There was no SCF instability.** The diverging boron atomic SCF found on 2026-07-28 was a
+*symptom* of the gfortran miscompilation of `shell1quartet.F90` (see "verify the macOS build"
+below): the two-electron integrals were wrong, so the atomic SCF was iterating on a corrupted
+Fock matrix. With the compiler workaround in place boron converges normally, the `DIE` does not
+fire, and rgbi/BN reproduces the Linux reference **exactly**. Nothing here needs fixing in the
+SCF or in the physics.
+
+**Kept, because they stand on their own merits:**
+
+- **`make_ANOs` DIEs on a non-converged atomic SCF** (`molecule.scf.foo`). It previously
+  collected the per-atom `converged` flag, printed it only in verbose mode, and carried on —
+  so ANOs built from a garbage iterate silently corrupted every quantity derived from the
+  atomic projectors while molecular totals still looked plausible. Refusing to continue is
+  right regardless of what caused the non-convergence, and it is exactly the check that would
+  have surfaced this class of fault sooner.
+- **The widened guess-SCF whitelist** (`molecule.set.foo`). Only `output`, `initial_MOs`,
+  `initial_density`, `convergence`, the DIIS tolerance and `relativity_kind` were copied from
+  the parent, so `max_iterations`/damping/level-shift given in the input were silently
+  discarded and a failing guess SCF could not be rescued from the input file at all.
+
+**Retired follow-ups.** Two items were queued here — calibrating "sensible" guess-SCF recovery
+options, and adding a tiny symmetry-breaking charge to make the atomic SCF deterministic. Both
+were motivated purely by the phantom instability and are **no longer needed**. Worth keeping
+from that discussion, though: the textbook remedy of spherically-averaged *fractional*
+occupations does **not** apply here, because UHF requires integer occupancy of spin orbitals —
+so if a genuine degeneracy problem ever does appear, the degeneracy must be *lifted*, not
+averaged over.
+
+**The cautionary tale.** Every hypothesis below was tested against the real code and refuted,
+one after another. In hindsight they all failed for the same reason: they were searching for a
+*physics* cause of a *compiler* artefact. The tell was there early — the same input gave
+different answers on different platforms — and it deserved more weight than it got.
+
+| Hypothesis | Verdict |
+|---|---|
+| Boron's atomic SCF diverges; ANOs built from it anyway | **Observed** (100 iters, −6…−69 Ha, "DIIS stuck", final −65 Ha for an atom whose energy is ≈ −24.5) |
+| That causes BN's platform-dependent Roby numbers | **Demonstrated by intervention** — forcing convergence moved B 5.35/3.40 → 6.50/6.63, collapsed the cross-library spread 1.95 → 0.13, landing on the Linux reference 6.48 |
+| It explains the other rgbi failures | **Refuted** — only BN fails to converge; C2/CN-/CO/F2/N2/NF/O2 converge with bit-identical atomic energies across LAPACKs and still deviate |
+| "Partly-filled degenerate shell" predicts which atoms fail | **Refuted** — carbon 2p² is partly-filled and degenerate, and converges |
+| Low nuclear charge (B, Z=5) | **Not supported** — standalone UHF SCFs *converge* for B(5), C(6), N(7), Al(13), Si(14). But see the oxygen-atom finding below: standalone atomic energies on this Mac are themselves wrong, so these runs test convergence only, not correctness |
+| Bad initial guess | **Refuted** — `initial_density=` core / fock / promolecule / progroup all give identical results and all fail (verified the option reaches the SCF: "Kind of initial density ... promolecule") |
+| Loose guess tolerances (1e-3 vs 1e-5) | **Refuted** — standalone boron converges at every combination of `convergence`/DIIS tolerance |
+| Wrong atom setup in the guess | **Refuted** — guess reports B, charge 0, multiplicity 2, 5 e⁻ (3α/2β), all correct |
+
+**Do not trust the numbers in that table as physics.** Everything above was measured on
+*miscompiled* binaries, so quantities like the "two converged boron solutions 0.57 Ha apart"
+(−24.3378 vs −23.7663) are artefacts of wrong two-electron integrals, not evidence of an SCF
+pathology or of basin-hopping. They are kept only as a record of what was tried.
+
+One observation from that work is still true and worth knowing, since it is a property of the
+defaults rather than of the bug: the guess SCF withdraws **all** stabilisation at exactly the
+iteration DIIS takes over —
+
+```
+level shift 0.30, quits at 3   |   damping 0.50, quits at 3   |   DIIS extrapolates from 3
 ```
 
-lowering to the existing macros with the reduction emitted in the one place it is correct:
+That is fine when the first three iterations settle, and unforgiving when they do not. It did
+not cause this failure, but it is a thin margin for any genuinely hard atom.
 
-```fortran
-do q = PARALLEL_DO_START(1,1),self%n_shell_pairs,PARALLEL_DO_STRIDE(1)
-LOCK_PARALLEL_DO("MODULE:proc")
-   ...
-end do
-UNLOCK_PARALLEL_DO("MODULE:proc")
-if (DO_IN_PARALLEL) then
-   PARALLEL_SUM(grid)
-end if
-```
+### Retired: (a) sensible guess-SCF recovery options, (b) symmetry-breaking charge
 
-This is exactly OpenMP's `reduction(+:x)`, and it removes the failure mode entirely: the
-programmer no longer chooses *where* the reduction goes, so it cannot be written inside the body,
-inside a conditional, or forgotten. Every wrong-answer bug in the next section becomes impossible
-by construction.
+Both were queued to tame an instability that turned out not to exist. The `DIE` message no
+longer prescribes any values (it names the relevant keywords only), so nothing extreme is
+enshrined, and the tiny-charge idea has no problem left to solve. The `SCF_DATA` machinery it
+would have used (`.cluster_charges`, `.cluster_charge_positions`,
+`set_using_cluster_charges()`) is noted here only in case a genuine degeneracy problem ever
+does turn up.
 
-Implementation notes:
-- `FooToFortran.java` already owns this lowering (it emits the `PARALLEL_DO_START/STRIDE` bounds
-  and the `LOCK`/`UNLOCK` pair), so this is a grammar addition plus a few lines of emission.
-- `Foo.g4` needs `reduce(` *ident-list* `)` as an optional suffix on the `parallel do` loop head.
-- Support the variants actually used: `PARALLEL_SUM` (default), `PARALLEL_SYMMETRIC_SUM` and
-  `PARALLEL_SYMMETRIC_SUM_23`. Suggested spelling: `reduce(x)`, `reduce_symmetric(m)`,
-  `reduce_symmetric_23(m)` — or a single `reduce(x, kind=symmetric_23)`.
-- **Replicated contributions need care.** Two of the fixed routines have a serial loop feeding
-  the same array as the parallel one; the reduction would count it `n_ranks` times. The
-  `is_master_processor` guard used in the fix is the pattern — the migration must check each site
-  rather than mechanically adding `reduce(...)`.
-- Migration: convert the ~88 existing `parallel do` sites incrementally. The old form keeps
-  working, so this need not be atomic.
+**Related defect, still open and unrelated to the above:** a `DIE` leaves the process **exit
+status 0**. `scripts/test.py` uses `subprocess.check_call`, so a hard error is not detected as
+a run failure -- only the output diff catches it. Worth fixing so failures are unambiguous to
+CI.
 
-**2. Make suppression loud in debug.** Under `USE_PRECONDITIONS`, have `PARALLEL_SUM` and friends
-abort when the lock is held. A reduction inside a locked region is *always* a bug, never a
-legitimate no-op. Two lines in `include/macros.in`, and it converts silent wrong answers into
-immediate aborts naming the routine. Do this one **first** — it is the cheapest, it is
-independent of the grammar work, and it turns the remaining unfixed sites into loud failures
-rather than quiet ones.
+## DONE (2026-08-01/02): test the MPI parallel build
 
-**3. Depth-count the lock.** Replace the name-matched `do_parallel_lock` string with a depth
-counter, or have `lock_parallel_do` return the previous value for `unlock_parallel_do` to
-restore. Then a recursive routine's inner return can no longer release the outer loop's lock.
-Restore the recursion `ENSURE` at `parallel.foo:308` once this holds.
+**Milestone 4 complete.** First MPI build ever configured for this project; full characterisation
+in `docs/MPI.md`, defects in the MPI section above. Headline: MPI at 1 rank reproduces serial
+exactly on two platforms, rank-count drift is confined to one already-known-marginal test, and
+`-ffast-math` moves the numbers more than MPI does.
 
-**4. Lint it in the translator.** Phase B already has the parse tree and a cross-module call
-graph; flag any `PARALLEL_*` macro appearing lexically inside a `parallel do` body. This catches
-hand-written sites that have not yet been migrated to `reduce(...)`, and it would have found all
-four `molecule.grid.foo` bugs statically, without running anything.
+**Goal (Dylan):** verify the MPI build works and its tests pass. Build flags exist
+(CLAUDE.md §4: `-DCMAKE_Fortran_COMPILER=mpifort … -DMPI=1`, optional `-DNO_ERROR_MANAGEMENT`);
+`scripts/test.py` has a `--mpi` path (`mpirun -n 4`), wired via `WITH_MPI` in `tests/CMakeLists.txt`.
+Status is **unverified** for the ANTLR4 translator output. Start by building MPI and running
+`ctest` under it; expect the parallel macros (`PARALLEL_DO_*`, `PARALLEL_SUM`, `broadcast_` — all
+`SYSTEM`/`tonto`-targeted, see `macros.in`) to be the surface area. Compare against a non-MPI run.
 
-Items 1 and 2 together would have prevented every wrong-answer bug listed below.
+## DONE: continuous integration (GitHub Actions, loose gate)
 
-### Wrong answers under MPI — FIXED
+**Goal (user):** bring back automated CI so every push builds the ANTLR4 translator,
+compiles `tonto`, and runs the test suite. (The old Travis badge was defunct.)
 
-- **FIXED. Four dead or missing reductions in `foofiles/molecule.grid.foo`.** In
-  `make_electronic_pot_grid_r`, `make_mixed_ESP_grid_r` and `make_scm_ESP_grid_r` the
-  `PARALLEL_SUM(grid)` sat *inside* its own `parallel do` (and, in two cases, additionally inside
-  a rank-dependent `if`), so it never executed and every rank kept only its own `1/n_ranks` of
-  the terms. `make_multipole_ESP_grid_r` had no reduction at all. Hoisted past the `end`.
-  Two of them also have a **serial, replicated** multipole loop feeding the same `grid`, which a
-  plain `ALLREDUCE` would have counted `n_ranks` times; those are now guarded with
-  `tonto.is_master_processor`, which is a no-op in a serial build. Had the reductions inside the
-  rank-dependent conditionals ever run, they would have been collectives in a rank-dependent
-  branch — a guaranteed hang.
-- **FIXED. Heap buffer overflow in `PARALLEL_SYMMETRIC_SUM_23`** (`foofiles/parallel.foo:571`).
-  It sums "the lower half of the second two indices" but sized its triangle buffer from
-  `mat.dim1`. Callers pass `MAT3{REAL}(n_states,n_bf,n_bf)`, so it wrote `n_bf*(n_bf+1)/2`
-  doubles into a buffer of `n_states*(n_states+1)/2`, and `MPI_ALLREDUCE` then read past it.
-  The `ENSURE` also checked `dim1==dim2`, i.e. asserted `n_states==n_bf`, firing spuriously in
-  any `USE_PRECONDITIONS` build. Now `dim = mat.dim2` and `ENSURE(mat.dim2==mat.dim3)`.
-- **FIXED. Three missing CIS/TDHF reductions in `foofiles/molecule.fock.foo`.** `r_CIS_S1_AV`
-  had a `parallel do` and no reduction of any kind, leaving `F` a per-rank partial;
-  `r_CIS_S0_AV` reduced `F` but not `K`, then computed `F = TWO*F - K` mixing a reduced quantity
-  with an unreduced one; `u_CIS_AV` never reduced its `K` OUT argument. All three now use plain
-  `PARALLEL_SUM` — not the symmetric variant, since these arrays are filled in both triangles.
-  All are no-ops in a serial build.
+**Delivered** as `.github/workflows/ci.yml` — green as of `99dc3a1c` (2026-07-27):
+- **Provider:** GitHub Actions (Travis's OSS offering is dead). Triggers on push/PR to
+  `antlr4`, `master`, `release`.
+- **Pipeline:** checkout `--recursive` → install gfortran-14 + JDK (for the translator's
+  `javac`; the ANTLR jar auto-downloads via CMake) + BLAS/LAPACK/python3 → `cmake` +
+  `cmake --build -j2` (bounded: one JVM per `.foo` is memory-heavy on a shared runner) →
+  short suite via `scripts/suite_report.py`.
+- **Gate:** the **loose** criterion (rel ≤ 0.2% OR last-digit ≤ 2). The agreement table is
+  echoed to the run's Job Summary and uploaded as `tests.log`; a self-diagnosing `Diagnostics`
+  step (`if: always`) reports toolchain/binary/one-raw-test on red runs. README carries the badge.
+- **Two bugs the first green run flushed out** (both fixed): `scripts/test.py` resolved a
+  *relative* `--test-directory`/`--basis-sets` after `chdir`ing into the temp run dir → doubled
+  path → 100%-fail (fixed by absolutising up front, `036ecaec`); and the Kanghyun `keyword_echo`
+  lines added un-reblessed stdout → 44/51 (dropped both echoes, `99dc3a1c`).
+- **Not done (deliberate):** debug/release matrix and gfortran-version matrix — single release
+  job for now; jar/parser caching not yet added (build is tolerable at ~20 min).
 
-### BUILD-SYSTEM TRAP: `get_from` donors are invisible to the dependency graph
+## DONE: explicit `self` intent via self-modification analysis (plan B)
 
-Per Dylan: "always been an issue." Recorded now with a concrete demonstration and a fix.
+**Goal (user):** make `self`'s intent explicit in the `.foo` sources where it is
+currently implicit. The first attempt used a blanket rule (subroutine → INOUT,
+function → IN); it did **not** compile — read-only subroutines given INOUT reject a
+const `self` from their (often inherited) callers, and some *functions actually
+modify self* (memoisers, lazy readers), so `self :: IN` was rejected. Dylan had
+assumed all functions are PURE, which several are not.
 
-**The mechanism.** Each translation step declares (`CMakeLists.txt:764`):
+**Resolved with "Option 2" below** — a **self-modification analysis** in the
+translator (`FooToFortran --add-self-intent`, parse-tree driven). Rule:
+- subroutine → **INOUT** iff it modifies self, else **IN**;
+- function → **IN** iff pure (does not modify self); a self-modifying function is
+  left implicit and **flagged impure** (see `self_intent_analysis/impure_functions.tsv`).
 
-```cmake
-DEPENDS ${foopath} ${FOO_TYPES_FILE} ${ANTLR4_TRANSLATOR_STAMP}
-```
+"Modifies self" = direct write (`self%x = …`), a self-method call that transitively
+modifies self (fixpoint, seeded with create/destroy/nullify), a call to a method whose
+`self` is *declared* INOUT/OUT, or an input read into a self component
+(`stdin.read(.label)`, `.SCF_DIIS.read_keywords`, `.atom(a).set_flag`).
 
-i.e. its own `.foo`, `types.foo`, and the translator -- and **nothing else**. But the translator
-follows `get_from(...)` and inlines *donor* files. Those donors are not in the DEPENDS list, so
-**editing a donor rebuilds nothing**: you get a silently stale binary, no warning, and a test run
-that appears to exercise your change and does not.
+**Applied + validated:** 135 `self :: IN|INOUT` decls (58 IN / 75 INOUT) across 47
+foofiles, plus 2 genuinely-wrong hand-written `INOUT`→`IN` corrections on read-only
+`MAT{REAL}` `_LAPACK` helpers. A clean **release** build compiles 0-error and the full
+`ctest` suite is **121/124** — the same three deferred failures below, no regressions.
 
-That also explains the asymmetry everyone notices: editing `types.foo` cascades to the entire
-build (it is an explicit dependency of every translation) while editing a donor does nothing at
-all.
+**Follow-on (deferred, Dylan's proposal):** mark the impure procs `IMPURE` in the
+`.foo` and declare the rest `PURE`. Purity is compiler-enforced (a `pure` proc calling a
+non-pure one is an error), so it self-validates. Impure = {modifies an arg or self} ∪
+{does I/O} — so put/dump/show/read are impure regardless of self. The
+`impure_functions.tsv` (modifies-self + OUT/INOUT-arg functions) is the seed list; add
+I/O-call detection when tackling it.
 
-**Worked example, 2026-08-02.** `foofiles/parallel.foo` is 9857 lines containing the *entire* MPI
-layer, is a pure `get_from` donor into `SYSTEM`, generates **no `parallel.F90` whatsoever**, and
-appears nowhere in `CMakeLists.txt`. An experiment to re-enable Florian's `MPI_BARRIER` (see
-above) edited it, ran `cmake --build`, got `rc=0` in under a second, and tested a binary that
-still had the old code. Caught only because the build log was 11 lines and the generated
-`system.F90` still showed 25 commented barriers. Forcing it needs `touch foofiles/system.foo`.
+## DONE (release): the 3 remaining test-suite failures (milestone 3)
 
-**This is very likely how the barrier came to be disabled unnoticed in 2021** (`42040312`): a
-two-line commit touching `parallel.foo` would have changed no compiled output for whoever made it.
+**Resolved on release — verified 2026-07-17: a `gfortran-14` release build is 124/124 (`ctest`
+exit 0), up from 121/124.** All three former failures now pass, fixed at the source / in the
+references by Dylan (commits `b3b50dd2` "Fixed no. of doubles test error", `d9dffb3f`,
+`dee5cac9` "Corrected Salvador test", `50988e87` "All short & long tests passing on laptop"):
 
-**The fix, in order of preference:**
+1. **`cyclazine_rhf_cc-pVDZ_tddft_state_selection`** — was a single-line `No. of doubles`
+   diff (`24355` ref vs `22797`). **Not** an `-O0` boundary artifact after all: it was a
+   real **evaluation-order bug in the source**. `foofiles/td_data.foo` computed
+   `n = .no_of_doubles` *after* printing the doubles-window block; commit `b3b50dd2` moved the
+   assignment *before* the block, so the printed count is now correct and stable. (Also fixed
+   two typos in adjacent `stdout.text` lines.)
+2. **`gly_ala_fragHAR_rhf_STO-3G`** — table column-width / alignment shift; reference updated
+   (`50988e87`). Passes (73 s).
+3. **`urea_ccsd_pob-TZVP_Salvador_properties`** — the longstanding Salvador grid/partition
+   numeric difference; the reference was updated to the release-produced values (`dee5cac9`),
+   so the release build now matches exactly. **NB:** this "resolves" it only for `-O3`; the
+   ~0.5% `-O0` difference is unchanged and now shows up as a **debug-only** failure — it has
+   moved into the debug section below, not disappeared. The `atomic_moments_made` knock-on
+   question (see the Salvador section above) is still unverified.
 
-1. **Depfiles.** `FooToFortran` already knows every file it reads -- it has to, to resolve
-   `get_from`. Have it emit a `.d` alongside each `.F90` and pass CMake's `DEPFILE` option on the
-   `add_custom_command` (CMake >= 3.20 with Make/Ninja). Precise, automatic, and self-maintaining
-   as donors change.
-2. **Compute the donor set at configure time** -- scan the `.foo` files for `get_from(` and add
-   the referenced donors to that file's `DEPENDS`. No translator change, but the scan must track
-   the grammar.
-3. **Blunt fallback**: add every `foofiles/*.foo` to every `DEPENDS`. Always correct, but then any
-   edit rebuilds everything -- i.e. permanently what `types.foo` does today.
+Two other cases seen only under the *strict* (exact) sweep also loose-pass and are benign:
+`h2o_rhf_cc-pVDZ_tdhf` (one TDHF state differs in the last digits) and
+`cyclazine_rhf_cc-pVDZ_VMO_canonicalization` (~1e-4; original archives lost, regenerated).
+A threshold-driven "loose pass" gate (candidate for CI, above) absorbs all of these.
 
-Until this is fixed: **after editing any donor, `touch` a file that is a real dependency** (its
-consumer, or `types.foo`) or you will test a stale binary.
-
-### Known-flaky: x-ray-constrained SCF convergence wanders violently (long-standing)
-
-Per Dylan this instability is **well known and has never been diagnosed**. Recorded here now that
-there is finally an executing test to observe it with:
-`tests/long/nh3_x-ray-constrained-rhf-cluster-charge_cc-pVTZ_restart` (which had never actually
-run its SCF -- see milestone 9). With `output= YES` the first lambda shows:
-
-```
-Iter  Lambda    GoF2    Energy     Delta   <MO|M0>
-   0  0.0120    6.49  -56.2167   ...       1.0000
-   1  0.0120   95.01  -55.9091   ...       0.9565
-   2  0.0120 1325.99  -52.7894   ...       0.5942
-   3  0.0120 3000.65  -26.4060   ...       0.0039   *Damping was off
-   4  0.0120  766.26  -51.0366   ...       0.3086   *DIIS starts saving now
-```
-
-The energy excursions to **-26.4 Ha** -- some 30 Ha above the true value -- and the overlap with
-the reference MOs collapses to 0.004, i.e. the wavefunction is essentially destroyed, before DIIS
-drags it back to a sane -56.2023. The final answer is fine; the path is not.
-
-**Why it matters beyond aesthetics.** The blessed reference now encodes that trajectory. A
-last-digit difference early on can send another machine down a different path, or fail to recover
-at all, so this test is a strong candidate for future cross-platform flakiness. If it goes red on
-Linux or in CI, suspect this before suspecting a real regression.
-
-**Leads worth trying**, in rough order of cheapness:
-- The excursion coincides exactly with `*Damping was off` at iteration 3. Damping is being
-  switched off while the wavefunction is still far from converged; the level-shift is off from
-  iteration 0. Check the damping/level-shift switch-off criteria for a constrained SCF -- they are
-  probably tuned for an ordinary SCF where GoF2 plays no part in the objective.
-- The objective is `E + lambda*GoF2`, and GoF2 reaches 3000 while E is ~-56. The gradient is then
-  dominated entirely by the fit term, which is exactly when a plain DIIS extrapolation misbehaves.
-- Compare against a run that starts at lambda=0 (not a restart): if the wandering is absent there,
-  the restart seed is starting the fit too far from its own optimum.
-
-### PENDING: apply at the next cascade rebuild — types.foo M0s comments
-
-Deliberately **not** applied yet: `types.foo` is included everywhere, so editing it forces a full
-recompile, and this is documentation only. Apply it the next time a cascade is needed anyway.
-People jump to the type component to find out what a field means, so this belongs there rather
-than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comments):
-
-```foo
-     M0s :: OPMATRIX@
-     ! The unfitted reference MOs, for overlap_with_M0s.
-     ! NOT necessarily the lambda=0 MOs: a RESTART starts at lambda>0 and seeds
-     ! these with the MOs at the restart lambda. Set in MOLECULE.SCF.
-```
-
-```foo
-     overlap_with_M0s :: REAL  DEFAULT(ONE)
-     ! Overlap of the current lambda>0 MOs with the reference M0s.
-     ! For a RESTART the reference is this job's starting point, not lambda=0,
-     ! so the value is not comparable across a restart boundary. See M0s.
-```
-
-### Two findings from the MPI_Bcast hunt (2026-08-02)
-
-- **`STR_SIZE` and `BSTR_SIZE` are both 256** (`include/macros.in:57-58`). `BSTR` is meant to be
-  the "big string" holding a whole text-file line, while `STR` holds a single token or program
-  variable -- but there is currently **no distinction at all**. Consequences: any input line
-  longer than 256 characters is silently truncated (CIF looped lines can be long), and the
-  distinction the code appears to draw between the two is fiction. Decide whether BSTR should be
-  genuinely larger, or whether the two names should be collapsed. Per Dylan, 256 may even be too
-  large for STR.
-
-- **Somebody hit the mismatched-`MPI_Bcast` bug before and their workaround is commented out.**
-  In the broadcast template itself (`foofiles/parallel.foo`, in `broadcast(buffer,root)`):
-
-  ```foo
-  ! Florian here: Added this Barrier to make sure that not BCAST interferes with a
-  ! different kind leading to str and Int in asynchronous running MPI process to
-  ! screw up communication
-  !call MPI_BARRIER(MPI_COMM_WORLD,.mpi_error)
-  ```
-
-  "BCAST interferes with a different kind leading to str and Int" is *exactly* the failure
-  diagnosed in `docs/MPI.md` Finding 6: a 256-character STR broadcast pairing with a 1-integer
-  INT broadcast, giving `MPI_ERR_TRUNCATE`. This is independent evidence that the desynchronisation
-  **predates all of the milestone 4 work**.
-
-  **Do not simply reinstate the barrier.** MPI matches collectives on a communicator in *program
-  order* -- `MPI_Bcast` carries no tag, so order is the only thing pairing them. `MPI_ERR_TRUNCATE`
-  therefore proves the ranks issue genuinely different *sequences* of collectives, and a barrier
-  cannot repair a different sequence: it is one more collective that must itself match, so it
-  generally converts the truncation into a deadlock. It would also force a full synchronisation on
-  every single broadcast. Treat the comment as a dated bug report, not as a fix.
-
-  **UPDATE 2026-08-02: the barrier was TESTED and it WORKS. The argument above is wrong.**
-  Re-enabling it (verified compiled in: 26 live `MPI_BARRIER` calls in the generated `system.F90`,
-  up from 1) makes all three failing CIF tests **pass**. That refutes the ordering argument: if the
-  collective *streams* differed in length a barrier would have **deadlocked**, since it adds one
-  element to each stream and cannot realign them. Passing means every rank reaches the same
-  collectives, and the fault is **timing-sensitive**, not a sequence mismatch.
-
-  Ruled out: non-blocking operations. `ibroadcast` is defined but **never called** anywhere, so
-  there is no in-flight message to collide with a later collective.
-
-  **Prime suspect, and it is the milestone-6 mechanism again.** `PARALLEL_BROADCAST` is not an
-  unconditional call (`include/macros.in:234`):
-
-  ```c
-  #define PARALLEL_BROADCAST0(X,Y)   if (DO_IN_PARALLEL0) call broadcast_(tonto,X,Y)
-  ```
-
-  Every broadcast is gated on `DO_IN_PARALLEL` = `.is_parallel AND .do_parallel_lock==" "`, so a
-  broadcast inside a held lock is **silently skipped** -- exactly as the dead reductions were. If
-  two ranks ever disagree about the lock state, one performs a collective the other skips, and from
-  that point the streams are offset by one -- precisely `MPI_ERR_TRUNCATE` on the next pair.
-  A plausible route to disagreement: the translator emits `LOCK_PARALLEL_DO` as the **first
-  statement inside** the loop body, so a rank given **zero iterations** by the cyclic distribution
-  never takes the lock while ranks with work do. **Not yet verified** -- this is the next thing to
-  test, and if it holds then milestone 6 fixes milestone 7 as well.
-
-  **Interim options.** The barrier is a working stopgap but costs a full synchronisation on every
-  broadcast. The better fix (Dylan) is to make the failure unrepresentable: have
-  `TEXTFILE:read_line_external` issue **one** collective instead of two -- carry the status in a
-  reserved leading byte of the string, or broadcast a small `VEC{INT}` and the payload only when a
-  line exists. A single collective per call cannot be mispaired, whatever the underlying cause.
-
-### Not yet fixed — recorded with evidence
-
-- **UNDIAGNOSED, HIGH PRIORITY: mismatched `MPI_Bcast` in the CIF-reading path, `-O2` only.**
-  On Linux x86_64, four CIF tests (`c9o9h8_read_cif_IT_group_9`,
-  `maleate_read_CIF_H_double_bond_{new,old}_BLs`, `urea_lamaGOET_grown_CIF`) abort at >=2 ranks
-  with *"An error occurred in MPI_Bcast ... MPI_ERRORS_ARE_FATAL"* in the
-  `-O2 -fno-fast-math` build, while the **same test on the same machine passes at `-Ofast`**.
-  They do not fail on macOS arm64 at all. A collective mismatch that moves with the optimisation
-  level and the platform is undefined behaviour -- an uninitialised value or out-of-bounds read
-  feeding a broadcast length, or the branch deciding whether a rank reaches the collective.
-  Diagnose with a Linux debug MPI build (`-fcheck=bounds -finit-integer=-999999
-  -finit-real=snan`). NOTE the shipped `-Ofast` configuration is the one that HIDES this.
-
-
-- **Latent deadlock in `SYSTEM:initialize`** (`foofiles/system.foo:259-261`).
-  `initialize_cloned_random_seed` is called *before* `parallel_initialize`, so `is_parallel` is
-  still false and every rank seeds itself from its own `system_clock` — the seeds are **not**
-  cloned, contrary to the routine's own comment. Worse, both `PARALLEL_BROADCAST` calls
-  (`:275-278`, `:284-305`) sit **inside** `if (.is_master_processor)` guards — a collective in a
-  rank-0-only branch. This is harmless today only because `DO_IN_PARALLEL` is false that early;
-  reordering the two lines (the obvious "fix") deadlocks in `SYSTEM:create`, with `n` undefined
-  on non-master ranks at `allocate(seed(n))`. Fix both together or neither.
-  Knock-on: R-free reflection selection (`crystal.foo:242`) is seeded from the clock and is
-  therefore not reproducible run-to-run, MPI or not.
-- **`MPI_ABORT` is commented out** (`foofiles/system.foo:564`), so a `DIE` on one rank leaves the
-  others hanging instead of failing the job.
-- **HAR writes the same file from every rank.** `foofiles/molecule.har.foo:1346` calls
-  `arch.parallel_write` — deliberately unguarded by `IO_IS_ALLOWED` — inside a *serial* loop with
-  a filename identical on all ranks. `file.foo:134` only opens the file when `IO_IS_ALLOWED`, and
-  `parallel_IO_allowed` is never set on the HAR path, so non-master ranks write to a unit that
-  was never opened. Affects every HAR test under MPI.
-- **`fragment_SCF_para` RMA work queue** (`foofiles/parallel.foo:6400`, driven from
-  `molecule.scf.foo:5871`): `g = .p_loop_list(.p_loop_index)` is evaluated before the caller's
-  exit test, so the terminating fetch indexes past the end of `p_loop_list` on every worker,
-  every run. The master also reads its own window buffer outside any access epoch (no
-  `MPI_WIN_FLUSH`/`MPI_WIN_SYNC` anywhere) while workers accumulate into it. Additionally the
-  algorithm *changes shape* at `n_processors > 2`, so `-n 2` and `-n 4` use different schedulers
-  and different rank→fragment maps.
-- **QTAIM basin decomposition** (`foofiles/molecule.prop.foo:6118`): the hand-rolled 1-D slab
-  decomposition indexes out of bounds at `nprocs == 1` and unconditionally `sendrecv`s to
-  `rank+1`, which does not exist; `nprocs > nx` gives zero-width slabs. It also calls
-  `tonto.finalize` (`MPI_FINALIZE`) at `:6743`, inside a science routine, invalidating any later
-  MPI call in the job.
-- **FIXED (2026-08-01). `DWGN_lamaGOET_NBO_file_47` aborted at every rank count above 1.**
-  Reproduced at `-n 2` and `-n 4`, at both `-Ofast` and `-O2 -fno-fast-math`:
-  *"Fortran runtime error: Unit number is negative and unit was not already opened with
-  OPEN(NEWUNIT=...)"*. Root cause is `foofiles/file.foo:134-146` — only the master executes the
-  `open(... newunit=.unit ...)` (it is wrapped in `if (IO_IS_ALLOWED)`), and the following
-  `PARALLEL_BROADCAST(.unit,tonto.master_processor)` then hands the master's negative `newunit`
-  value to every rank. Non-master ranks hold a unit they never opened, so any *unguarded* I/O on
-  it fails. The job dies during the `scfdata` block just after `read_g09_fchk_file`, having
-  already written its archives. A debug MPI build pinned it to `MOLECULE.PUT:put_NBO_file_47`,
-  which calls `stdout.redirect(...)` then makes **thirteen raw Fortran `write(stdout.unit,...)`
-  calls** that bypass the TEXTFILE API and its guarding. Fixed by guarding them; it is write-only
-  output so no broadcast is needed. Passes at -n 2 and -n 4 bit-exact, unchanged serially.
-
-  **The failure mode is the real lesson.** It crashed loudly only because a *redirected* TEXTFILE
-  holds a negative `newunit`. An unguarded raw write to a **non-redirected** stdout uses
-  `TEXTFILE_STD_OUT_UNIT` (6), a valid preconnected unit on every rank, and would **silently
-  interleave** output instead of crashing. So the sentinel idea is weaker than it first looks:
-  the negative `newunit` already acts as one, and it cannot help the unit-6 case at all (nor can
-  a static sentinel, since `fragment_SCF_para` deliberately enables `parallel_IO_allowed`).
-  Remaining unguarded raw-I/O sites: `plot_grid.foo:2280` (`read(textfile.unit,*)` on every rank,
-  and the result needs broadcasting too) and `archive.foo:2687/2712/2763` (VAPOR/stream/VTK
-  writers; each rank opens the *same filename* with its own `newunit`, so silent corruption
-  rather than a crash). The durable fix is a **translator lint** for `write(`/`read(` on any
-  `*.unit` outside `file.foo`/`textfile.foo`/`buffer.foo` -- static, cheap, and it would have
-  found every one of these without running anything. Added to milestone 6. See `docs/MPI.md`.
-- **`parallel_sum` clobbers `val` even when the optional `sum` is supplied**
-  (`foofiles/parallel.foo:458`): an unconditional `val = tmp` after the `if (present(sum))`
-  branch, violating the "give me the sum, leave `val` alone" contract.
-- **Build-system inconsistencies.** `CMakeLists.txt` assigns `CMAKE_Fortran_FLAGS` from
-  `MPI_Fortran_FLAGS`, which modern `FindMPI` never sets — it evaluates to the empty string *and*
-  wipes any user-supplied flags (survivable only because `SetFortranFlags` rebuilds them). The
-  executables link `${MPI_LIBRARIES}` (the deprecated **C** libraries) while the `tonto` library
-  links `${MPI_Fortran_LIBRARIES}`. The MSMPI branch references `${msmpi-linux-home}`, which is
-  **defined nowhere**, and sets `CMAKE_C_FLAGS` from `${CMAKE_CXX_FLAGS}` (copy-paste).
-- **Dead MPI runfiles.** `run_mpi_matmul.foo` uses `myid` uninitialised and deadlocks at `-n 1`;
-  `run_mpi_pi_io.foo` is referenced nowhere in `CMakeLists.txt`. `run_mpi_test` and
-  `run_mpi_test_complete` are built and installed but **assert nothing** — `test_parallel` prints
-  `"MPI failed to …"` and still exits 0.
-- **`#ifdef MPI` strips `PURE`/`ELEMENTAL` from the entire codebase** (`include/macros.in:256`).
-  Necessary today — MPI calls are impure and some `PURE` routines contain `PARALLEL_SUM` (e.g.
-  `shell1quartet.foo:898`) — but it is a sledgehammer: it costs the optimiser common-subexpression
-  elimination, loop-invariant hoisting and `elemental` vectorisation across *all* code, and it is
-  a large part of why an MPI build differs numerically from serial even at one rank. Only
-  routines that transitively reach a `PARALLEL_*` macro need it. The translator's phase-B call
-  graph (`--call-graph-report`) can compute that set exactly.
+What remains for milestone 3 is therefore **not** the release suite (green) but the **debug**
+suite (119/124 — next section) and wiring the release gate into CI.
