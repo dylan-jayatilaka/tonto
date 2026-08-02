@@ -350,10 +350,15 @@ before any code is written**, most likely in its own conversation (`/clear`).
      `tests/long/gly_ala_fragHAR_rhf_STO-3G` **to every digit that reference prints** (R(F)
      0.0324, GoF 3.3535, N_r 2514, N_p 181). Gated by `tests/hart/gly_ala_hart_STO-3G` (60 s).
      It was a hookup, not a repair: fragHAR itself was broken 2020-01-23 by `f0d7cfd3` and
-     fixed 2026-06-01 by `d840e322`. **Still open: parallel**, blocked on two MPI register rows
-     (`make_LS_mx`'s same-file-from-every-rank write, and `fragment_SCF_para`, whose scheduler
-     changes shape above 2 ranks) — plus `--group-charges-file` for proteins and the
-     `use_disk_SFs`→`use_disk_FFs` rename. All in `docs/HART.md` §6.
+     fixed 2026-06-01 by `d840e322`. **Still open: parallel.** It was blocked on two MPI
+     register rows; **row 1 is now closed** (`make_LS_mx`'s same-file-from-every-rank write,
+     fixed 2026-08-02 along with the two other `per_rank_write` sites and the missing barrier),
+     leaving **`fragment_SCF_para`**, whose scheduler changes shape above 2 ranks — so any
+     parallel fragHAR test must pin a rank count. Also open: `--group-charges-file` for
+     proteins, and the `use_disk_SFs`→`use_disk_FFs` rename. All in `docs/HART.md` §6.
+     *(Unrelated to fragHAR but fixed the same day: the non-fragHAR **disk** form-factor path,
+     `hart --disk-sfs`, which had never worked — six defects — now does, and is gated by
+     `tests/hart/urea_hart_STO-3G_disk_ffs`, the first test ever to execute `make_LS_mx`.)*
 
 6. ⬜ **URGENT, next after milestone 4 — make MPI reductions safe by construction** (agreed
    2026-08-01). Milestone 4 uncovered a class of silent wrong-answer bugs with a single root
