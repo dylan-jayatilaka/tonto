@@ -1254,6 +1254,21 @@ through a **call** from inside a parallel do, which no source scan can find.
 depth-counting the parallel-do lock so a recursive inner return cannot release an outer lock
 (restoring the `ENSURE` at `parallel.foo:308`).
 
+## DONE (2026-08-03): the MPI CI is GREEN — first time ever
+
+Run #8 (`29f8dcea`) concluded **success**, after the `--oversubscribe` fix below. Every step
+passed, including the two that matter:
+
+| step | result |
+|---|---|
+| Assert the binary really is MPI-linked | success |
+| **MPI invariant — pi is rank-count independent (GATING)** | **success** |
+| Short suite under MPI at 2 ranks (informational) | **success** |
+
+Runs 1–7 had all failed. Note the informational short suite passed too, which is more than the
+gate required — so `tonto` at 2 ranks agrees with the serial references across the short suite in
+CI, not just locally.
+
 ## DONE (2026-08-02): the MPI CI failure was the launcher, not the reductions
 
 **The reductions are correct.** This entry previously said "something in the reduction path is
@@ -1344,10 +1359,20 @@ rank-local state. This is the milestone-6 rule one level down: not a collective 
 rank-local state, but a **branch** taken on it, inside a routine whose branches contain
 collectives.
 
-**NOT yet confirmed as the cause.** It is a real bug of the right kind, found by inspection
-after the bisect, but the truncation has not been traced to it. Verify before believing it: the
-fix is one line — give `close_and_delete` the broadcast `close` already has — and a rebuild plus
-the 2-rank `hart` run settles it either way.
+**TESTED, AND IT IS NOT THE CAUSE.** The broadcast was added (`file.foo`, `close_and_delete`
+now matches `close`), the MPI tree rebuilt, and `hart` at 2 ranks fails **identically** —
+`MPI_ERR_TRUNCATE` in `MPI_Bcast` reported by rank 1, at the same point, `urea.out` still
+stopping after 29 lines at the option echo. **Do not re-try this fix.**
+
+The fix was kept anyway: it is correct on its own terms, it removes a genuine rank-local branch,
+and it is verified serially (release rebuild, short suite 50/51 unchanged, all four invariant
+checks pass, `ctest -L hart` 4/4).
+
+So the desync is elsewhere in the same window — between the option echo and the basis-validation
+`DIE_IF`s. **Next step is instrumentation, not inspection**: the debug MPI tree
+(`build-mpi-debug`, `~/opt/openmpi-gf14`) has `USE_PRECONDITIONS` and `-fbacktrace`, and the job
+is seconds long, so a marker printed per rank before each collective in that window will find it
+in one run. Inspection has now failed twice here.
 
 **Also found:** `hart`'s early-exit paths return **non-zero under MPI** — `hart --version` at 2
 ranks exits 1, because `stop` runs on one rank without `MPI_FINALIZE` on the others. Harmless
