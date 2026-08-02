@@ -720,11 +720,31 @@ than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comment
   `parallel_IO_allowed` is never set on this path, so non-master ranks write to the master's
   broadcast unit which they never opened.
 
-  **Reachable ONLY via fragHAR** -- and therefore currently untested:
-  `fragHAR_refinement` (`:52`) is the sole caller of `set_use_disk_SFs(TRUE)`; `LS_fit` (`:562`)
-  then takes the `LS_fit_HAs_disk` branch, which calls `make_LS_mx` (`:643`). Every test job has
-  `use_disk_SFs` off -- `gly_ala_fragHAR`'s `stdin:40` has it **commented out**. The code's own
-  comment at `:631` reads *"NOTE: routine make_LS_mx is very long! Is it working? Rewrite?"*.
+  **Reachable ONLY via fragHAR:** `fragHAR_refinement` (`:52`) is the sole caller of
+  `set_use_disk_SFs(TRUE)`; `LS_fit` (`:562`) then takes the `LS_fit_HAs_disk` branch, which
+  calls `make_LS_mx` (`:643`). No job file turns it on -- `gly_ala_fragHAR`'s `stdin:40` has
+  `use_disk_SFs=` **commented out** -- but `:52` forces it TRUE regardless, so *every* fragHAR
+  run takes the disk path whatever the keyword says. The code's own comment at `:631` reads
+  *"NOTE: routine make_LS_mx is very long! Is it working? Rewrite?"*.
+
+  **Serial coverage now exists (2026-08-02), and only via gly_ala.** Two jobs reach it, both
+  fragHAR: `tests/long/gly_ala_fragHAR_rhf_STO-3G` (tonto) and the new
+  `tests/hart/gly_ala_hart_STO-3G` (hart, label `hart`, therefore **in CI**). Both pass, so the
+  serial disk path is exercised and correct; what remains untested is the *parallel* one, which
+  is where the `per_rank_write` defect lives.
+
+  **Two naming defects found while adding that coverage** — fold them into the
+  `use_disk_SFs`→`use_disk_FFs` rename rather than spending a separate pass:
+
+  - **`hart --disk-sfs` does not do what its name says.** It is wired to
+    `set_use_text_SFs` (`run_har.foo:805`), and that setter assigns **both**
+    `.use_text_SFs` and `.use_disk_SFs` (`diffraction_data.set.foo:611-618`). So the option
+    really means "disk form factors, written as **ascii**", and there is no way to ask `hart`
+    for the binary form at all. Either rename the option to `--text-ffs` or give it a value
+    (`binary`/`text`/`off`).
+  - **The files are named `C1-SFs.unknown`.** Wrong noun (they are atomic **form factors**) and
+    an `.unknown` extension, which suggests the archive genre is never set on this path. A
+    gly_ala run drops 20 of them, 3.2 MB.
 
   **Deliberately NOT fixed now**, because the right fix depends on intent and no test exercises
   the branch, so a wrong choice would be invisible:
@@ -1080,10 +1100,9 @@ Three things to settle together:
 2. **The line is misspelled** — `Fridel` should be `Friedel`. Reference-visible, so it needs a
    re-bless of every stdout carrying it; batch it with other cosmetic output fixes rather than
    spending a re-bless on one word.
-3. It is **new since 2019**, where it did not appear at all and the slot held
-   `Scale factor ...... 0.976789`. Today that reads `Using single scale factor ...... T`, so the
-   numeric scale factor stopped being printed at the same time. Worth restoring — it is a real
-   refined quantity and the boolean is strictly less informative.
+3. It is **new since 2019**, arriving together with a `Using single scale factor ...... T` line.
+   The numeric `Scale factor ...... 0.9768` is still printed directly underneath, so nothing was
+   lost — the block simply gained two lines.
 
 Not a regression in the science: the 2019 and 2026 refinements agree to 4 significant figures
 (table in `docs/HART.md` §6). Deferred until after H1.

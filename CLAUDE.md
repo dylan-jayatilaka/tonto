@@ -334,13 +334,18 @@ before any code is written**, most likely in its own conversation (`/clear`).
      never used; `.cif2` was rejected though the message said it was required for restart;
      `extreme` was accepted but undocumented. All reconciled, and the whole option set moved to
      GNU `--long` form (which is what took `tonto`'s `-i`/`-o`/`-b`/`-h`/`-v` with it).
-   - ⬜ *make it work **seamlessly with `fragHAR`***, i.e. crystals with more than one molecule
-     in the asymmetric unit — **milestone H1 in `docs/HART.md`**, the remaining work. `hart`
-     calls only `HAR_refinement`. **This is a hookup, not a repair**: fragHAR itself works in
-     `tonto` today (broken 2020-01-23 by `f0d7cfd3`, fixed 2026-06-01 by `d840e322`) and
-     `tests/long/gly_ala_fragHAR_rhf_STO-3G` reproduces the last known-good 2019 output to 4
-     significant figures — so that reference is a sound acceptance target. Archaeology and the
-     comparison table are in `docs/HART.md` §6.
+   - 🔶 *make it work **seamlessly with `fragHAR`***, i.e. crystals with more than one molecule
+     in the asymmetric unit — **milestone H1 in `docs/HART.md`**. **Serial is DONE
+     (2026-08-02)**: `hart` counts the atom groups and calls `fragHAR_refinement` when there is
+     more than one, with new `--mmcif`, `--group-charges '{ 1 -1 }'`,
+     `--group-multiplicities`, `--wavelength` and `--residual-cube` options, and it reproduces
+     `tests/long/gly_ala_fragHAR_rhf_STO-3G` **to every digit that reference prints** (R(F)
+     0.0324, GoF 3.3535, N_r 2514, N_p 181). Gated by `tests/hart/gly_ala_hart_STO-3G` (60 s).
+     It was a hookup, not a repair: fragHAR itself was broken 2020-01-23 by `f0d7cfd3` and
+     fixed 2026-06-01 by `d840e322`. **Still open: parallel**, blocked on two MPI register rows
+     (`make_LS_mx`'s same-file-from-every-rank write, and `fragment_SCF_para`, whose scheduler
+     changes shape above 2 ranks) — plus `--group-charges-file` for proteins and the
+     `use_disk_SFs`→`use_disk_FFs` rename. All in `docs/HART.md` §6.
 
 6. ⬜ **URGENT, next after milestone 4 — make MPI reductions safe by construction** (agreed
    2026-08-01). Milestone 4 uncovered a class of silent wrong-answer bugs with a single root

@@ -37,9 +37,10 @@ was validated (§4a). But `tests/long/urea_rhf_STO-3G_HAR` is *not* one of those
 jobs: it optimises the scale factor and uses tighter tolerances, so `hart` will
 not reproduce that particular reference, and `tests/hart/` carries its own.
 
-The consequence worth knowing: `hart` cannot refine a structure with more than
-one molecule in the asymmetric unit, because that needs `fragHAR_refinement`
-and `hart` never calls it. See §6, milestone H1.
+More than one molecule (or capped residue) in the asymmetric unit **is**
+supported, as of milestone H1: `hart` counts the atom groups and calls
+`fragHAR_refinement` instead of `HAR_refinement` when there is more than one.
+Serial only for now — see §6.
 
 ## 2. Options
 
@@ -74,15 +75,20 @@ reads.
 | `--extinction` | `t`/`f` | `f` | Correct extinction via the Larson formula. |
 | `--fos` | ratio | 3 | Reject reflections with F/sigma below this. |
 | `--fzcut` | z-score | off | Prune reflections whose `(F_pred-F_expt)/sigma` exceeds this. Needs a CIF from a previous HAR. |
+| `--group-charges` | braced list | all 0 | Charge on each atom group, in group order, e.g. `--group-charges '{ 1 -1 }'`. One entry per group; `hart` stops if the count differs. Quote it: the whole list is one option value. |
+| `--group-multiplicities` | braced list | all 1 | Spin multiplicity 2S+1 of each atom group, same form and same one-per-group rule. |
 | `--grid-accuracy` | level | `low` | `very_low`, `low`, `medium`, `high`, `very_high` or `extreme`. |
 | `--h-adps` | `t`/`f` | `t` | Refine the H-atom ADPs. |
 | `--h-iso` | `t`/`f` | `f` | Set isotropic H ADPs and refine isotropically. |
 | `--h-pos` | `t`/`f` | `t` | Refine H-atom positions. |
 | `--help` | — | — | Print the full documentation and exit 0. |
 | `--job` | name | head of the CIF name | Names the output file `<job>.out` and the other intermediates. |
+| `--mmcif` | `t`/`f` | `f` | Read the CIF as an mmCIF (`_atom_site.` names, residue labels). Residues are then Ryde-capped and refined by fragHAR. |
+| `--residual-cube` | `t`/`f` | `t` | Write a residual-density cube over the unit cell. By far the largest file a refinement produces (9 MB for a dipeptide). |
 | `--scf` | `rhf`/`rks` | `rhf` | The SCF wavefunction. |
 | `--shelx-f`, `--shelx-f2` | file | — | Reflections in SHELX fixed format `(I4,I4,I4,8F,8F)`. |
 | `--std-f`, `--std-f2` | file | — | Reflections in free, whitespace-separated format. |
+| `--wavelength` | Å | from the CIF | X-ray wavelength. Needed only when the CIF has no `_diffrn_radiation_wavelength`; it defines each reflection's Bragg angle. |
 | `--version` | — | — | Print the version and exit 0. |
 
 **Restrictions**, all enforced with a message: zero overall charge; an even
@@ -217,12 +223,90 @@ rather than merely producing plausible numbers.
 
 ## 6. Milestones
 
-**H1 — fragHAR support. PLAN (2026-08-02).** The one that matters.
+**H1 — fragHAR support. SERIAL DONE (2026-08-02); parallel still open.**
 
-**H1 is a hookup, not a repair.** fragHAR works in `tonto` today: `tests/long/
+**H1 was a hookup, not a repair.** fragHAR works in `tonto` today: `tests/long/
 gly_ala_fragHAR_rhf_STO-3G` converges and reproduces the last known-good 2019 output to the
-printed precision (evidence in *"Archaeology"* below). So H1 is confined to `hart`'s own
+printed precision (evidence in *"Archaeology"* below). So H1 was confined to `hart`'s own
 argv-to-`fragHAR_refinement` path -- no science to reconstruct, no `tonto` regression to chase.
+
+### What was built, and the acceptance evidence
+
+`hart` now refines gly-L-ala as two capped, oppositely-charged residues and reproduces the
+`tonto` reference **to every digit the reference prints**:
+
+| | `tonto` reference (4 dp) | `hart` |
+|---|---|---|
+| R(F) | 0.0324 | 0.032423 |
+| R(F2) | 0.0687 | 0.068659 |
+| Rw(F) | 0.0334 | 0.033403 |
+| R_sigma(F) | 0.0160 | 0.015952 |
+| # of reflections, N_r | 2514 | 2514 |
+| # of fit parameters, N_p | 181 | 181 |
+| GoF (N_p) | 3.3535 | 3.353475 |
+| Effective (mean) sigma^2 | 0.0253 | 0.025275 |
+| Scale factor | 0.9768 | 0.976826 |
+
+Registered as `tests/hart/gly_ala_hart_STO-3G` (label `hart`, 60 s), whose `IO` manifest
+records why each non-default option is there. The whole invocation is:
+
+```
+hart --job glyala --basis STO-3G --grid-accuracy low --mmcif t --fos 0 \
+     --residual-cube f --wavelength 0.59960 --group-charges '{ 1 -1 }' \
+     --std-f2 gly_ala_100K_F2.hkl gly_ala_100K.cif
+```
+
+The pieces:
+
+- **`--mmcif`** sets `CIF:set_is_mmCIF(TRUE)` *before* `process_CIF` (it selects the
+  `_atom_site.` item names and brings in the compound sequence ids) and turns on
+  `use_Ryde_capping`. No separate `--use-Ryde-capping` option: splitting a covalent chain
+  without capping leaves dangling bonds, so there is no second choice to offer.
+- **`--group-charges` / `--group-multiplicities`** take a **braced** list, one entry per group,
+  read by the new `COMMAND_LINE:int_vec_for_option`. That builds a one-line internal `TEXTFILE`
+  and hands it to `TEXTFILE:read_all`, i.e. the same reader the `atom_group_charges= { 1 -1 }`
+  job-file keyword uses -- same syntax, same integer parsing. The brace check is a `DIE_IF` in
+  `int_vec_for_option` rather than being left to `read_all`, whose own brace checks are
+  `ENSURE`s and so compile away in every optimised build. The list length is then checked
+  against the real number of atom groups, because a silently-short list would refine a
+  zwitterion as neutral fragments and converge to a plausible wrong answer.
+- **The whole list is one command-line token** and must be quoted. `process_options` binds
+  exactly one token as an option value, so a bare `--group-charges { 1 -1 }` takes `{` as the
+  value and sends `-1` to the single-dash rejection, which then advises `--1`.
+- **Charges are written to `MOLECULE.atom_group_charges` as well as onto the groups.** That is
+  the copy that survives: `set_connected_atom_groups` re-applies it every time the groups are
+  rebuilt, and `fragHAR_refinement` rebuilds them on every LS cycle (`molecule.har.foo:106`).
+- **`fragHAR` is chosen by the data, not by an option** -- more than one atom group means more
+  than one molecule or capped residue, which is exactly what `HAR_refinement` cannot do. The
+  SCF kind becomes `fragment-rhf`/`fragment-rks`, damping (0.99) and level shifting (100) are
+  switched on to match the `tonto` job, and the whole-of-asymmetric-unit `scf` call is skipped
+  -- with several fragments there is no single molecule to converge, and `fragHAR_refinement`
+  does the fragment SCF itself. (The `tonto` job has its `scf` keyword commented out for the
+  same reason.)
+- **`--cluster-radius` with fragments is a `DIE`**, not a silent no-op: self-consistent cluster
+  charges are a whole-molecule idea the fragment SCF does not use.
+
+Two library changes came with it, both of which were gaps rather than bugs in `hart`:
+
+- **`MOLECULE.SET:set_molecule_from_atom_group` now honours a group's spin multiplicity.** It
+  set `mol.spin_multiplicity = mol.default_spin_multiplicity` unconditionally, so a multiplicity
+  given for a group made from the **connection table** -- the ordinary several-molecules case --
+  was read, stored in `spin_multiplicity_set`, and then overwritten. The Ryde-capped path
+  (`molecule.base.foo:1871`) already got this right; the two now agree.
+- **`DIFFRACTION_DATA.SET:set_do_residual_cube`.** There was a `do_residual_cube=` keyword but
+  no setter, so an argv-driven program could not turn the cube off -- and it is the largest
+  file a refinement writes (9 MB for a dipeptide, 8.9 of the 16 MB this job produced).
+
+Two input-side notes:
+
+- **`--fos 0`.** `hart` defaults the F/sigma cutoff to 3 but `DIFFRACTION_DATA` defaults it to
+  off, and the `tonto` job leaves it off. With pruning on, `N_r` would not be 2514. Zero
+  disables it (the test in `diffraction_data.set.foo` is `> ZERO`), so no source change was
+  needed -- but it is a real trap for anyone comparing `hart` against a `tonto` job.
+- **`hart` does not read `tonto`'s keyword hkl format**, only SHELX and free-form. The test's
+  `gly_ala_100K_F2.hkl` is the tonto-format file reduced to `h k l F2 sigma` columns; the exact
+  `awk` line is recorded in the test's `IO` manifest. Column 4 of the original is junk, which is
+  the part worth not getting wrong.
 
 ### What broke, when, and when it was fixed
 
@@ -299,16 +383,22 @@ needs code; `C` works today.
 
 ### Order of work
 
-1. **Serial first.** Get `gly_ala` reproducing through `hart` against the `tonto` reference. That
-   is the acceptance test and it needs no MPI.
-2. **Parallel is blocked on two open MPI register rows**, both of which fragHAR reaches:
+1. ✅ **Serial.** `gly_ala` reproduces through `hart` against the `tonto` reference; see the
+   table above. Done 2026-08-02.
+2. ⬜ **Parallel is blocked on two open MPI register rows**, both of which fragHAR reaches:
    `fragHAR_refinement` sets `use_disk_SFs(TRUE)` (`molecule.har.foo:52`), which routes through
    `LS_fit_HAs_disk` -> **`make_LS_mx`** -- the same-file-from-every-rank `per_rank_write`
    (register row 1) -- and its SCF goes through **`fragment_SCF_para`** (row 4), whose scheduler
    *changes shape above 2 ranks*, so results are not comparable between `-n 2` and `-n 4` by
    construction. Any parallel fragHAR test must therefore pin a rank count.
-3. **Rename `use_disk_SFs` -> `use_disk_FFs`** (Dylan): they are atomic **form factors**, not
+3. ⬜ **Rename `use_disk_SFs` -> `use_disk_FFs`** (Dylan): they are atomic **form factors**, not
    structure factors. Cosmetic but it removes a standing confusion, and it touches the same code.
+   The files the serial run leaves behind make the case by themselves: 20 of them, named
+   `C1-SFs.unknown`, `H10-SFs.unknown`, ... -- wrong noun *and* an `.unknown` extension, which
+   suggests the archive genre is not being set either. Worth fixing in the same pass.
+4. ⬜ **`--group-charges-file`, for proteins.** The braced list is right for a handful of groups
+   and wrong for 300 residues. A file is also reproducible and version-controllable, which a
+   shell line is not. Agreed with Dylan as the follow-up, not part of serial H1.
 
 ### Archaeology — SETTLED (2026-08-02)
 

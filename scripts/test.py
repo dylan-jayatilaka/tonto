@@ -331,11 +331,23 @@ def parse_IO_file(path):
 
     if os.path.exists(path):
         with open(path) as f:
-            for line in f:
-                if not line.strip():
+            for lineno, line in enumerate(f, 1):
+                # Blank lines and tonto-style "!" comments. A manifest whose
+                # options are not the program's defaults needs room to say why,
+                # and an undocumented option in a test is one nobody dares
+                # change later.
+                if not line.strip() or line.lstrip().startswith('!'):
                     continue
-                key, _, value = line.partition(':')
+                key, sep, value = line.partition(':')
                 key, value = key.strip(), value.strip()
+                if not sep or key not in io_files:
+                    # Not silently ignored: a mistyped key would drop a
+                    # comparison or an input file and the test would still
+                    # "pass", which is the failure mode this whole manifest
+                    # exists to prevent.
+                    raise ValueError(
+                        '%s line %d: unknown key %r (expected one of %s)'
+                        % (path, lineno, key, ', '.join(sorted(io_files))))
                 if key in ('program', 'args'):
                     io_files[key] = value
                 else:
