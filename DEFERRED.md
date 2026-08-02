@@ -1951,7 +1951,7 @@ highlighting and tighter editor integration. The repo already ships some vim sup
 **To investigate / do:**
 - **Syntax file:** review/extend the `foo` syntax highlighting to cover the current language —
   reverse declarations (`var :: TYPE`), parameterized types (`VEC{T}`, `MAT{T}`…), pointer/
-  allocatable suffixes (`*`, `@`), procedure headers with `:::` attributes (`PURE`,
+  allocatable suffixes (`*`, `@`), procedure headers with `::` attributes (`PURE`,
   `ELEMENTAL`, `get_from(...)`, `selfless`), `KEY?` template placeholders, the constants
   (`TRUE`/`FALSE`/`ZERO`/`ONE`/`NULL`), and comments (`!`). Confirm whether a `syntax/foo.vim`
   exists and is up to date, or author one.

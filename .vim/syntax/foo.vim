@@ -172,7 +172,6 @@ syn keyword fortranStatementOb	assign pause to
   syn match fortranOperator	"\(\(>\|<\)=\=\|==\|/=\|=\)"
   syn match fortranOperator	"=>"
   syn match fortranOperator	"::"
-  syn match fortranOperator	":::"
 
   syn region fortranString	start=+"+ end=+"+	contains=fortranLeftMargin,fortranContinueMark,fortranSerialNumber
   syn keyword fortranIO		pad position action delim readwrite

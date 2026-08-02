@@ -79,10 +79,15 @@ Full details in the companion docs (§7).
   `MAT{REAL}(3,4)`, `VEC{STR}(len=1,6)`.
 - **Pointer / allocatable suffixes:** `INT*` (pointer), `VEC{REAL}@` (allocatable).
 - **Procedures:** `name(args) result (res) :: ATTRS`. Attributes after `::` include `PURE`,
-  `ELEMENTAL`, `leaky`, `private`, `get_from(MODULE, ...)`. (This said `:::` until 2026-08-02.
-  There is no `:::` anywhere in `foofiles/` — the separator is the same `::` used for
-  declarations. The error was not harmless: `.ctags.d/foo.ctags` had been written from this
-  line, so its procedure regex required `:::` and therefore tagged **no procedure at all**.)
+  `ELEMENTAL`, `leaky`, `private`, `get_from(MODULE, ...)`. It was `:::` until **`3ca1e53d`**
+  (2026-07-09, *"foo: replace ::: procedure-attribute separator with :: everywhere"*), which
+  moved to `::` for consistency with Fortran's attribute separator — 184 files, the grammar and
+  the translator included. This line was a straggler from that migration, corrected 2026-08-02
+  along with three others: **both** ctags procedure regexes and a dead `:::` operator rule in
+  the vim syntax files. The ctags effect was measured, not assumed — the old rule still matched
+  headers carrying **no** attributes, via its `( *$)` branch, but missed every header with
+  `:: leaky`, `:: PURE`, `:: private`, `get_from(...)` and so on: **1285 procedure tags across
+  `foofiles/` instead of 12757, i.e. 90% missing.**
 - **Variable attributes** (comma-separated, after the type): `IN`, `OUT`, `INOUT`, `PRIVATE`,
   `READONLY`, `POINTER`, `TARGET`, `SAVE`, `ALLOCATABLE`, `OPTIONAL`.
 - **Modules:** `module NAME … contains … end`; generic `interface NAME … end` blocks.
