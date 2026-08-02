@@ -100,6 +100,35 @@ separates the two failure modes the reference suite cannot: wrong at *every* ran
 reduction or the integration is broken; right at `-n 1` but wrong at `-n 2`/`-n 4` means partial
 sums are not being combined.
 
+## 3a. CI
+
+`.github/workflows/ci-mpi.yml` — **CI (Linux-MPI)**, the first CI coverage the MPI build has ever
+had.
+
+**Trigger it by hand** from Actions → *CI (Linux-MPI)* → *Run workflow*. It also runs weekly
+(Mondays 05:17 UTC) and on pushes that touch MPI-relevant paths (`parallel.foo`, `system.foo`,
+`macros.in`, `run_mpi_*.foo`, the test scripts, or the workflow itself). Deliberately **not** on
+every push: Ubuntu's packaged Open MPI is built against gcc-13 while the project uses gfortran-14,
+and Tonto does `USE mpi`, so the workflow has to build Open MPI from source. That is cached on
+`(Open MPI version, gfortran version)` — the pair that `.mod` compatibility actually depends on —
+so a cold cache costs ~8-10 min and a warm one seconds. Same pattern `ci-wsl.yml` uses for its
+expensive job.
+
+**What gates it:** the π rank-invariance check (`check_mpi_pi.sh` at 1/2/4 ranks). It needs no
+stored reference, so it cannot be silently blessed, and all four dead reductions found in
+milestone 4 would have failed it.
+
+**What does not gate it:** the short suite at `-n 2`, which is informational until the defect
+register below is clear — three rows remain, so a gating suite would be permanently red. That is
+the same reasoning `ci-debug.yml` applies to the four longstanding `-O0` failures. `-n 2` rather
+than `-n 4` because the runner has 4 vCPUs.
+
+**Every check asserts on an artefact, not on process state** — that `mpifort` really wraps
+gfortran-14, that a `use mpi` program compiles *and runs* under the matching launcher, that
+`ldd build-mpi/tonto` shows `libmpi`. That convention is deliberate: a day of milestone-4
+debugging was lost to checks that could not see what they were checking — a stale binary reported
+as fresh, and a `pgrep` matching its own shell.
+
 ## 4. What an MPI build changes, besides adding ranks
 
 Worth knowing before interpreting any numeric difference:
