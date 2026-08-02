@@ -1306,7 +1306,54 @@ failure at all, and four consecutive runs were read as "the reductions are broke
 anyone opening the log. `scripts/check_mpi_pi.sh` distinguishes the cases in its own output; the
 diagnosis just has to read it.
 
-## Deferred: prune dead and stale macros in `include/macros.in`## Deferred: prune dead and stale macros in `include/macros.in`
+## PRIORITY: `hart` has never run under MPI — MPI_ERR_TRUNCATE at 2 ranks
+
+Found 2026-08-03 while attempting milestone 5's last step (parallel fragHAR at 2 ranks). **Not a
+regression** — no argv-driven program has ever been run under MPI.
+
+Evidence, on a local gfortran-14 Open MPI build (`~/opt/openmpi-gf14`, `-Ofast`, `-DMPI=1`,
+`hart` confirmed linked against `libmpi`):
+
+| what | result |
+|---|---|
+| `run_mpi_pi` at 1, 2, 4, 8 ranks | OK — all agree with π and with each other |
+| `tonto` (stdin-driven) at 2 ranks | OK — exit 0, no truncation |
+| `hart --version` / `--help` / no args at 2 ranks | OK — no truncation |
+| `hart … <cif>` at 2 ranks | **`MPI_ERR_TRUNCATE` in `MPI_Bcast`**, reported by rank 1 |
+| `hart --basis NOSUCH <cif>` at 2 ranks | same — so it fails **before** any CIF is read |
+
+So the reductions are sound and `tonto` is fine; the **argv-driven path** breaks, as soon as a
+`<cif-file>` argument is supplied. `MPI_ERR_TRUNCATE` on a broadcast means the ranks are at
+*different* broadcasts — the collective streams have gone out of step.
+
+**The bisect brackets it.** `--help`, `--version` and no-args all `stop` before
+`run_har.foo:203`; supplying an argument is what first reaches the `std_err`
+close / destroy / re-create / `set_name` / `open_for` sequence there.
+
+**A concrete defect of the right shape in that path.** `FILE:close_and_delete` sets
+`.io_status` **inside** an `IO_IS_ALLOWED` guard and then tests it on every rank with no
+broadcast in between — while its sibling `FILE:close` does broadcast it:
+
+| routine | guarded operation | broadcast afterwards? |
+|---|---|---|
+| `FILE:close` | `inquire` | **yes** — `PARALLEL_BROADCAST(.io_status,…)` |
+| `FILE:close_and_delete` | `close(status="delete")` | **no**, then `DIE_IF(.io_status/=0,…)` |
+
+On a non-master rank `.io_status` keeps whatever it held, so that `DIE_IF` is decided on
+rank-local state. This is the milestone-6 rule one level down: not a collective gated on
+rank-local state, but a **branch** taken on it, inside a routine whose branches contain
+collectives.
+
+**NOT yet confirmed as the cause.** It is a real bug of the right kind, found by inspection
+after the bisect, but the truncation has not been traced to it. Verify before believing it: the
+fix is one line — give `close_and_delete` the broadcast `close` already has — and a rebuild plus
+the 2-rank `hart` run settles it either way.
+
+**Also found:** `hart`'s early-exit paths return **non-zero under MPI** — `hart --version` at 2
+ranks exits 1, because `stop` runs on one rank without `MPI_FINALIZE` on the others. Harmless
+serially, wrong for any harness, and a separate small fix.
+
+## Deferred: prune dead and stale macros in `include/macros.in`
 
 **Audited 2026-07-29.** Of **377** macros defined, **145 are never used in any `.foo` file**.
 Fewer macros is better for maintenance (Dylan), but they are not all the same kind of thing and
