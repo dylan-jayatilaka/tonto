@@ -258,8 +258,12 @@ contains
       self :: INOUT
 
       .set_defaults
-      .initialize_cloned_random_seed
+      ! MUST come before the seed: initialize_cloned_random_seed asks
+      ! .is_master_processor, and until parallel_initialize runs, master_rank and
+      ! processor_rank are both still DEFAULT(0) -- so EVERY rank believes it is
+      ! master and seeds itself from its own clock. See below.
       .parallel_initialize
+      .initialize_cloned_random_seed
 
    end
 
@@ -272,11 +276,14 @@ contains
       dt :: VEC{INT}(8)
       n,i,t :: INT
 
-      ! Get the size "n"
-      if (.is_master_processor) then
-         call random_seed(size=n)
-         PARALLEL_BROADCAST(n,tonto.master_processor)
-      end
+      ! Get the size "n".
+      ! ALL ranks, not just master: random_seed(size=) reports a property of the
+      ! compiled RNG, so it is identical everywhere and never needed broadcasting.
+      ! It used to be fetched under `if (.is_master_processor)` with the broadcast
+      ! INSIDE that guard -- a collective no worker would ever reach, and `n` left
+      ! undefined on workers at the allocate below. Calling it everywhere removes
+      ! the collective rather than fixing it.
+      call random_seed(size=n)
 
       ! Allocate seed array
       allocate(seed(n))
@@ -300,13 +307,15 @@ contains
          i = 0
          seed = t + 37 * [ (i, i=0,n-1) ]
 
-         ! Broadcast seed
-         PARALLEL_BROADCAST(seed,tonto.master_processor)
-
       end
 
+      ! Broadcast the seed OUTSIDE the master guard, so every rank reaches this
+      ! collective. It used to sit inside the `if (.is_master_processor)` block
+      ! above, i.e. a broadcast only the root ever called.
+      PARALLEL_BROADCAST(seed,tonto.master_processor)
+
       ! Get the random numbers from same seed
-      ! NOTE: cloned for each processor!
+      ! NOTE: cloned for each processor -- which is now actually true.
       call random_seed(put=seed)
 
       ! Clean

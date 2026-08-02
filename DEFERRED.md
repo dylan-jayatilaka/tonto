@@ -617,7 +617,29 @@ than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comment
   -finit-real=snan`). NOTE the shipped `-Ofast` configuration is the one that HIDES this.
 
 
-- **Latent deadlock in `SYSTEM:initialize`** (`foofiles/system.foo:259-261`).
+- **FIXED (2026-08-02) — `SYSTEM:initialize` seeds and guarded collectives.** Three faults that
+  were load-bearing on each other, which is why the note below said "fix both together or neither":
+  (i) the seed routine ran *before* `parallel_initialize`, so `master_rank` and `processor_rank`
+  were both still `DEFAULT(0)` and **every rank believed it was master**; (ii) consequently every
+  rank seeded from its own `system_clock`, so seeds were never cloned despite the routine's name,
+  its comment, and an explicit `! NOTE: cloned for each processor!`; (iii) both `PARALLEL_BROADCAST`
+  calls sat *inside* `if (.is_master_processor)`, i.e. collectives only the root would reach.
+  Fault (i) masked (iii): with `is_parallel` false the broadcasts were no-ops.
+
+  Fixed together. The fix is *smaller* than the bug, because one collective should never have
+  existed: `random_seed(size=n)` reports a property of the compiled RNG and is identical on every
+  rank, so it is now simply called everywhere and its broadcast **deleted** rather than moved. Only
+  the `seed` broadcast was hoisted out of the guard. Net: one fewer collective than before.
+
+  Serial suite unchanged (50/51, exact 45). **Not yet demonstrated under MPI** -- in a serial build
+  `is_master_processor` is TRUE and the broadcast compiles away, so the changed lines are never
+  exercised. Testable via R-free selection (`crystal.foo:246`), which is seeded from this: under
+  `-n 2` every rank should now make the *same* selection. Still clock-seeded, so still not
+  reproducible run-to-run; that part remains open below.
+
+  Original note follows.
+
+- ~~**Latent deadlock in `SYSTEM:initialize`**~~ (`foofiles/system.foo:259-261`).
   `initialize_cloned_random_seed` is called *before* `parallel_initialize`, so `is_parallel` is
   still false and every rank seeds itself from its own `system_clock` — the seeds are **not**
   cloned, contrary to the routine's own comment. Worse, both `PARALLEL_BROADCAST` calls
