@@ -375,7 +375,7 @@ before any code is written**, most likely in its own conversation (`/clear`).
 6. 🔶 **HALF DONE — make MPI reductions safe by construction** (agreed 2026-08-01; parts 2 and
    4 done 2026-08-02/03). Milestone 4 uncovered a class of silent wrong-answer bugs with a single root
    cause: the translator emits `LOCK_PARALLEL_DO` as the first statement *inside* a `parallel do`,
-   and `DO_IN_PARALLEL` is false while that lock is held, so a `PARALLEL_SUM` written in the loop
+   and `WORK_IS_SHARED` is false while that lock is held, so a `PARALLEL_SUM` written in the loop
    body is **dead code that looks correct**. Four such sites in `molecule.grid.foo` each returned
    `1/n_ranks` of the answer. The intent ("MPI on the outside", no interior collectives) is right
    and standard; the enforcement is invisible, so — per Dylan — "the programmer has to hold the

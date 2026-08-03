@@ -116,8 +116,8 @@ zero, which is the usual case — so it only bit once a caller set a margin.
 
 ### Pitfall 2 — a reduction *lexically inside* a `parallel do`
 
-`LOCK_PARALLEL_DO` is the first statement in the loop body, and `DO_IN_PARALLEL` is false while
-the lock is held. Every reduction macro is gated on `DO_IN_PARALLEL`, so:
+`LOCK_PARALLEL_DO` is the first statement in the loop body, and `WORK_IS_SHARED` is false while
+the lock is held. Every reduction macro is gated on `WORK_IS_SHARED`, so:
 
 ```foo
 parallel do i = 1,n
@@ -172,7 +172,9 @@ it was found misused in serial loops.
 
 ### Pitfall 5 — the parallel-do lock does two jobs
 
-`do_in_parallel` is asked two different questions:
+`WORK_IS_SHARED` (renamed from `DO_IN_PARALLEL` on 2026-08-03: the old name read as "are we
+running in parallel?", which is how it got misused, when it means "is work split between ranks
+here?") is asked two different questions:
 
 | question | asked by | when | must answer |
 |---|---|---|---|

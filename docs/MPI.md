@@ -154,7 +154,7 @@ meaningless):
 
 | Where | What |
 |---|---|
-| `molecule.grid.foo` ×4 | ESP/property-grid reductions written *inside* their own `parallel do`, where `DO_IN_PARALLEL` is always false — dead code, so each rank kept only its `1/n_ranks` share. One had no reduction at all. |
+| `molecule.grid.foo` ×4 | ESP/property-grid reductions written *inside* their own `parallel do`, where `WORK_IS_SHARED` is always false — dead code, so each rank kept only its `1/n_ranks` share. One had no reduction at all. |
 | `parallel.foo` | `PARALLEL_SYMMETRIC_SUM_23` sized its triangle buffer from `dim1` instead of `dim2`: a heap overflow on every call, plus an `ENSURE` testing the wrong dimensions. |
 | `molecule.fock.foo` ×3 | CIS/TDHF: `r_CIS_S1_AV` reduced nothing at all; `r_CIS_S0_AV` and `u_CIS_AV` never reduced `K`. |
 
@@ -169,7 +169,7 @@ that breaks at `nprocs == 1`. See `DEFERRED.md`.
 ### The root cause, and the agreed fix
 
 Most of the above is one mistake repeated. `FooToFortran` emits `LOCK_PARALLEL_DO` as the *first
-statement inside* a `parallel do`, and `do_in_parallel` is false while that lock is held — so any
+statement inside* a `parallel do`, and `work_is_shared` is false while that lock is held — so any
 `PARALLEL_*` macro written in the loop body is a **silent no-op**. The intent ("MPI on the
 outside", no interior collectives) is standard and correct; the enforcement is invisible, so
 correctness depends on the programmer tracking the dynamic call sequence by hand.
@@ -379,7 +379,7 @@ message, i.e. paired with the adjacent `string` broadcast. Reached via `VEC{ATOM
 `read_smcif_atoms_xtal` -> `CIF:find_looped_item` -> `TEXTFILE:look_for_item`. Re-enabling the 2021
 `MPI_BARRIER` makes all three tests pass, which rules out a sequence-length mismatch (that would
 deadlock) and points at the fact that every `PARALLEL_BROADCAST` is conditional on
-`DO_IN_PARALLEL` and can be silently skipped on one rank. See `DEFERRED.md`. What makes the ranks
+`WORK_IS_SHARED` and can be silently skipped on one rank. See `DEFERRED.md`. What makes the ranks
 disagree is still open.
 
 The original note follows. It had **not** been diagnosed at the time of writing. Doing so needs a debug MPI build on Linux (`-fcheck=bounds`

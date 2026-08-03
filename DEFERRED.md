@@ -279,17 +279,17 @@ made the numeric characterisation meaningless; the rest are recorded with eviden
 
 `FooToFortran` lowers `parallel do` to `PARALLEL_DO_START/STRIDE` bounds plus a
 `LOCK_PARALLEL_DO(tag)` emitted as **the first statement inside the loop body**, with
-`UNLOCK_PARALLEL_DO(tag)` after `end do`. `do_in_parallel` is
-`.is_parallel AND .do_parallel_lock==" "` (`parallel.foo:287`), so **inside a `parallel do` body
-`DO_IN_PARALLEL` is always FALSE**, and every `PARALLEL_*` macro — each of which expands to
-`if (DO_IN_PARALLEL0) call …` — is a silent no-op there.
+`UNLOCK_PARALLEL_DO(tag)` after `end do`. `work_is_shared` is
+`.is_parallel AND .parallel_do_lock==" "` (`parallel.foo:287`), so **inside a `parallel do` body
+`WORK_IS_SHARED` is always FALSE**, and every `PARALLEL_*` macro — each of which expands to
+`if (WORK_IS_SHARED0) call …` — is a silent no-op there.
 
 The intent (Dylan) is sound and standard: keep MPI "on the outside", parallelise coarsely, and
 prevent interior collectives, which would otherwise deadlock on mismatched trip counts. The
 *mechanism* is the problem:
 
 - **Suppression is silent.** A reduction that never ran is indistinguishable from one that did.
-- **It answers a dynamic question when the need is lexical.** `DO_IN_PARALLEL` means "no outer
+- **It answers a dynamic question when the need is lexical.** `WORK_IS_SHARED` means "no outer
   loop is active"; what a reduction site needs to know is "am I inside the body or after it".
 - **The unlock is name-matched, not depth-counted.** `unlock_parallel_do` clears the lock
   whenever the name matches (`parallel.foo:321`), so a recursive routine's inner return releases
@@ -322,7 +322,7 @@ LOCK_PARALLEL_DO("MODULE:proc")
    ...
 end do
 UNLOCK_PARALLEL_DO("MODULE:proc")
-if (DO_IN_PARALLEL) then
+if (WORK_IS_SHARED) then
    PARALLEL_SUM(grid)
 end if
 ```
@@ -353,7 +353,7 @@ immediate aborts naming the routine. Do this one **first** — it is the cheapes
 independent of the grammar work, and it turns the remaining unfixed sites into loud failures
 rather than quiet ones.
 
-**3. Depth-count the lock.** Replace the name-matched `do_parallel_lock` string with a depth
+**3. Depth-count the lock.** Replace the name-matched `parallel_do_lock` string with a depth
 counter, or have `lock_parallel_do` return the previous value for `unlock_parallel_do` to
 restore. Then a recursive routine's inner return can no longer release the outer loop's lock.
 Restore the recursion `ENSURE` at `parallel.foo:308` once this holds.
@@ -585,10 +585,10 @@ than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comment
   unconditional call (`include/macros.in:234`):
 
   ```c
-  #define PARALLEL_BROADCAST0(X,Y)   if (DO_IN_PARALLEL0) call broadcast_(tonto,X,Y)
+  #define PARALLEL_BROADCAST0(X,Y)   if (WORK_IS_SHARED0) call broadcast_(tonto,X,Y)
   ```
 
-  Every broadcast is gated on `DO_IN_PARALLEL` = `.is_parallel AND .do_parallel_lock==" "`, so a
+  Every broadcast is gated on `WORK_IS_SHARED` = `.is_parallel AND .parallel_do_lock==" "`, so a
   broadcast inside a held lock is **silently skipped** -- exactly as the dead reductions were. If
   two ranks ever disagree about the lock state, one performs a collective the other skips, and from
   that point the streams are offset by one -- precisely `MPI_ERR_TRUNCATE` on the next pair.
@@ -607,7 +607,7 @@ than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comment
   broadcast gate from the lock to `is_parallel` alone:
 
   ```c
-  -#define PARALLEL_BROADCAST0(X,Y)   if (DO_IN_PARALLEL0)   call broadcast_(tonto,X,Y)
+  -#define PARALLEL_BROADCAST0(X,Y)   if (WORK_IS_SHARED0)   call broadcast_(tonto,X,Y)
   +#define PARALLEL_BROADCAST0(X,Y)   if (tonto%is_parallel) call broadcast_(tonto,X,Y)
   ```
 
@@ -616,7 +616,7 @@ than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comment
   silently tested a stale binary -- and the tree was reverted afterwards.
 
   **The principle, stated once:** *whether a collective executes must never depend on state that
-  can differ between ranks.* `do_parallel_lock` is rank-local -- set by executing a loop body,
+  can differ between ranks.* `parallel_do_lock` is rank-local -- set by executing a loop body,
   which a rank given zero iterations never does -- so gating a collective on it is unsound.
   `is_parallel` is identical everywhere.
 
@@ -634,7 +634,7 @@ than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comment
 
 - **FIXED (2026-08-02) — mismatched `MPI_Bcast` in the CIF-reading path, `-O2` only.** Root
   cause was the broadcast gate (see the confirmed fix above): `PARALLEL_BROADCAST` was gated on
-  `DO_IN_PARALLEL`, so a broadcast inside a held parallel-do lock was silently skipped, and ranks
+  `WORK_IS_SHARED`, so a broadcast inside a held parallel-do lock was silently skipped, and ranks
   that disagreed about the lock offset their collective streams. Now gated on `is_parallel`
   alone. All three tested CIF jobs pass at `-n 2`. Original report follows.
 
@@ -677,7 +677,7 @@ than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comment
   still false and every rank seeds itself from its own `system_clock` — the seeds are **not**
   cloned, contrary to the routine's own comment. Worse, both `PARALLEL_BROADCAST` calls
   (`:275-278`, `:284-305`) sit **inside** `if (.is_master_processor)` guards — a collective in a
-  rank-0-only branch. This is harmless today only because `DO_IN_PARALLEL` is false that early;
+  rank-0-only branch. This is harmless today only because `WORK_IS_SHARED` is false that early;
   reordering the two lines (the obvious "fix") deadlocks in `SYSTEM:create`, with `n` undefined
   on non-master ranks at `allocate(seed(n))`. Fix both together or neither.
   Knock-on: R-free reflection selection (`crystal.foo:242`) is seeded from the clock and is
@@ -717,7 +717,7 @@ than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comment
   every rank at the same time**, and the filename is therefore identical across ranks. Two faults
   stack: all ranks write one file concurrently (no locking, no offsets -- corruption, and no
   filesystem prevents it), and `file.foo:134` only *opens* under `IO_IS_ALLOWED` while
-  `parallel_IO_allowed` is never set on this path, so non-master ranks write to the master's
+  `per_rank_IO_allowed` is never set on this path, so non-master ranks write to the master's
   broadcast unit which they never opened.
 
   **Reachable ONLY via fragHAR:** `fragHAR_refinement` (`:52`) is the sole caller of
@@ -803,7 +803,7 @@ than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comment
     disk-crowding question entirely.
   - ✅ **An explicit barrier** after the distributed write phase, before the first collective
     read. Done 2026-08-02. New `PARALLEL_BARRIER` macro in `include/macros.in`, defined in all
-    four blocks of the family and gated on **`is_parallel` alone** — never `DO_IN_PARALLEL` —
+    four blocks of the family and gated on **`is_parallel` alone** — never `WORK_IS_SHARED` —
     for the same reason as `PARALLEL_BROADCAST`: whether a collective executes must not depend
     on rank-local state, or ranks disagree about how many collectives to enter and the job
     hangs. Compiles to nothing in a serial build and is a no-op at one rank.
@@ -1136,7 +1136,7 @@ Any of these rewrites the reference, so re-bless deliberately and read the resul
   `TEXTFILE_STD_OUT_UNIT` (6), a valid preconnected unit on every rank, and would **silently
   interleave** output instead of crashing. So the sentinel idea is weaker than it first looks:
   the negative `newunit` already acts as one, and it cannot help the unit-6 case at all (nor can
-  a static sentinel, since `fragment_SCF_para` deliberately enables `parallel_IO_allowed`).
+  a static sentinel, since `fragment_SCF_para` deliberately enables `per_rank_IO_allowed`).
   Remaining unguarded raw-I/O sites: `plot_grid.foo:2280` (`read(textfile.unit,*)` on every rank,
   and the result needs broadcasting too) and `archive.foo:2687/2712/2763` (VAPOR/stream/VTK
   writers; each rank opens the *same filename* with its own `newunit`, so silent corruption
@@ -1210,12 +1210,12 @@ together they would have caught **every** MPI defect found on 2026-08-02, includ
 introduced myself.
 
 **1. Abort on a suppressed reduction.** The reduction macros now call
-`SYSTEM:reduction_is_allowed(name)` (from `parallel.foo`) instead of testing `DO_IN_PARALLEL`
+`SYSTEM:reduction_is_allowed(name)` (from `parallel.foo`) instead of testing `WORK_IS_SHARED`
 inline. It returns the same value, and under `USE_PRECONDITIONS` `ENSURE`s that a FALSE result
 is not caused by a parallel-do lock:
 
 ```foo
-res = .do_in_parallel
+res = .work_is_shared
 ENSURE(res OR NOT .is_parallel, trim(name)//" is inside a `parallel do`: the reduction is
                                  SKIPPED there, so it is dead code ...")
 ```
@@ -1451,15 +1451,15 @@ So each rank runs a whole SCF on *its own* fragment, and that work performs coll
 written**, outside the `IO_IS_ALLOWED` guard. Different fragments produce different amounts of
 output, hence different numbers of collectives, hence `MPI_ERR_TRUNCATE`.
 
-**PROPOSED FIX (Dylan, 2026-08-03): make `parallel_IO_allowed` also switch off the broadcasts.**
+**PROPOSED FIX (Dylan, 2026-08-03): make `per_rank_IO_allowed` also switch off the broadcasts.**
 
 The switch already exists and is already used in the right places — `fragment_SCF_para` wraps its
-disk-FF writes in `set_parallel_IO_allowed(TRUE/FALSE)`. And `SYSTEM:IO_is_allowed`
+disk-FF writes in `set_per_rank_IO_allowed(TRUE/FALSE)`. And `SYSTEM:IO_is_allowed`
 (`system.foo:6734`, which overrides the simpler `PARALLEL` version and is the one the
 `IO_IS_ALLOWED` macro calls) honours it:
 
 ```foo
-if (.parallel_IO_allowed) then
+if (.per_rank_IO_allowed) then
    res = TRUE                                        ! every rank may do I/O
 else
    res = .is_master_processor OR (NOT .is_parallel)
@@ -1474,7 +1474,7 @@ The fix is to give the flag its full meaning: when it is set, the ranks are *del
 different I/O, so the bookkeeping broadcasts must be skipped.
 
 ```
-#define PARALLEL_BROADCAST_IO(X,Y)   if (tonto%is_parallel .AND. .NOT. tonto%parallel_IO_allowed) \
+#define PARALLEL_BROADCAST_IO(X,Y)   if (tonto%is_parallel .AND. .NOT. tonto%per_rank_IO_allowed) \
                                         call broadcast_(tonto,X,Y)
 ```
 
@@ -1530,7 +1530,7 @@ which calls nothing back, and:
 - the parallel decision moves to the right place. Distributing work over fragments is a property
   of the **container**. Today it is made inside a `MOLECULE` method that is simultaneously "do an
   SCF on me" and "do SCFs on my children" — which is why `fragment_SCF_para` carries
-  `parallel_IO_allowed` toggling, per-fragment archives and a work scheduler: container concerns
+  `per_rank_IO_allowed` toggling, per-fragment archives and a work scheduler: container concerns
   in a molecule's clothes.
 
 Large refactor, and the right one. Worth noting as the destination even if the interim fixes
@@ -1585,10 +1585,10 @@ Agreed with Dylan while diagnosing the fragHAR desync. Three separate defects in
 
 ```foo
 lock_parallel_do(name)
-   if (.do_parallel_lock==name) return                    ! already ours
-   if (.do_parallel_lock==" ") .do_parallel_lock = name   ! take only if free
+   if (.parallel_do_lock==name) return                    ! already ours
+   if (.parallel_do_lock==" ") .parallel_do_lock = name   ! take only if free
 unlock_parallel_do(name)
-   if (.do_parallel_lock==name) .do_parallel_lock = " "   ! release only if it matches
+   if (.parallel_do_lock==name) .parallel_do_lock = " "   ! release only if it matches
 ```
 
 **1. Nesting is fine; RECURSION is not.** An inner `parallel do` cannot steal the lock and its
@@ -1596,7 +1596,7 @@ unlock cannot release the outer one, so ordinary nesting — which today proved 
 17 loops in `shell1quartet.foo` alone — is safe. But if a routine's own `parallel do` is
 re-entered recursively, the inner `lock("A")` is a no-op and the inner `unlock("A")` **matches
 and clears the lock while the outer loop is still running**. The code knows: there is a disabled
-`ENSURE(name/=.do_parallel_lock,"recursive parallel routines not allowed")` at `parallel.foo:310`
+`ENSURE(name/=.parallel_do_lock,"recursive parallel routines not allowed")` at `parallel.foo:310`
 and the comment says *"It is currently an error if the routine is recursive."*
 
 **2. It assumes routine names are unique** — its own comment warns so, and overloads are the
@@ -1611,7 +1611,7 @@ given zero iterations never locks, so the ranks disagree about being in a parall
 is harmless on its own: the lock is only consulted by code *inside* the body, which such a rank
 never executes, and the trailing `UNLOCK` no-ops on a clear lock.
 
-The real point is that **`do_in_parallel` is doing two different jobs**:
+The real point is that **`work_is_shared` is doing two different jobs**:
 
 | question | asked by | when | must answer |
 |---|---|---|---|
@@ -1649,7 +1649,7 @@ fixes is not live.** Two facts, both checked:
 1. **`LOCK_PARALLEL_DO` is the first statement *inside* the loop body, so it executes once per
    iteration.** A depth counter would increment N times and decrement once, leaving the depth
    stuck at N-1. The present name-based scheme survives only because it is *idempotent*
-   (`if (.do_parallel_lock==name) return`). So **depth counting requires lock-before-loop**,
+   (`if (.parallel_do_lock==name) return`). So **depth counting requires lock-before-loop**,
    which requires the hoisted bounds below — it is the same piece of work, not a separate one.
 2. ~~No recursive routine contains a `parallel do`.~~ **WRONG — corrected 2026-08-03 (Dylan).**
    That check looked only for the `recursive` *attribute*, i.e. **direct** recursion. The SCF
@@ -1694,7 +1694,7 @@ translator change. The per-rank-I/O work is still the smaller, more certain win.
 - **Depth counter for correctness, name for diagnostics — keep both.**
   `lock`: `depth = depth+1`, and record the name *only* on the 0→1 transition.
   `unlock`: `depth = depth-1`, and clear the name on 1→0.
-  `DO_IN_PARALLEL` = `is_parallel AND depth==0`.
+  `WORK_IS_SHARED` = `is_parallel AND depth==0`.
   Recursion becomes correct; the name-uniqueness assumption **disappears**, because unlock no
   longer matches on name; and the disabled `ENSURE` can be *deleted* rather than restored, since
   recursion becomes legal.
@@ -1782,7 +1782,7 @@ been invisible:
    lint cannot see and the runtime abort can. The two checks are not redundant.
 2. `CIF:find_looped_item ... CIF file has not been opened` on rank 1 — rank-local file state.
 
-The abort message now also names the **locking routine**, via `trim(.do_parallel_lock)`, since
+The abort message now also names the **locking routine**, via `trim(.parallel_do_lock)`, since
 `LOCK_PARALLEL_DO` records which routine holds the lock — that is exactly "which `parallel do`
 am I inside", which is what you need to fix it.
 
