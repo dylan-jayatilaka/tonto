@@ -5994,6 +5994,11 @@ contains
       
          tonto.setup_p_loop(w,lb=1,ub=.atom_group.dim)
 
+         ! PER-RANK I/O for the whole loop -- see the 2-rank branch below for
+         ! why. Set outside the loop and on EVERY rank, including the master,
+         ! which schedules and cycles without ever entering the body.
+         tonto.set_per_rank_IO_allowed(TRUE)
+
          do
 
             ! NOTE: call this before exit conditions
@@ -6031,39 +6036,51 @@ contains
             end
 
             ! SCF !!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            tonto.set_per_rank_IO_allowed(TRUE)
+            ! NOTE: no set_per_rank_IO_allowed here -- see the 2-rank branch.
             name = trim(.mol(g).name)
             stdout.redirect(name)
             stdout.move_to_end
             .mol(g).usual_SCF ! <<<
             stdout.revert
-            tonto.set_per_rank_IO_allowed(FALSE)
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
             if (SFs) then
 
                ! NOTE: change DFT -> becke
                .mol(g).initialize_DFT_grids
-              
+
                ! Assign previously made ANOs
                .mol(g).resolve_ANOs_from(self)
-              
+
                ! Write SFs for each fragment to disk - in parallel
                n_group = .atom_group(g).atom_index.dim
-               tonto.set_per_rank_IO_allowed(TRUE)
                .mol(g).get_Hirshfeld_atom_FFs_disk(spin_density=spin_density)
-               tonto.set_per_rank_IO_allowed(FALSE)
 
             end
-      
+
          end
-         
+
          tonto.unlock_parallel_do("no")
-         
+
+         ! Back to shared I/O: the ranks resynchronise here.
+         tonto.set_per_rank_IO_allowed(FALSE)
+
       else
          
          ! Exactly 2 ranks: static cyclic. A dedicated master here would leave a
          ! single worker, i.e. slower than serial plus the RMA overhead.
+         !
+         ! PER-RANK I/O for the whole loop. Each rank runs a different fragment,
+         ! so it opens, writes and closes its OWN files -- and the I/O layer's
+         ! bookkeeping broadcasts (unit, io_status, record, the text buffer) must
+         ! be skipped, or the ranks synchronise on state that is deliberately
+         ! different and fall out of step. That was the MPI_ERR_TRUNCATE at
+         ! "Making F_pred".
+         !
+         ! Set OUTSIDE the loop, on purpose: the mode has to be identical on
+         ! every rank, including one that draws zero iterations.
+         tonto.set_per_rank_IO_allowed(TRUE)
+
          parallel do g = 1,.mol.dim
 
             ! Skip SCF for atoms without electrons
@@ -6090,32 +6107,36 @@ contains
             end
 
             ! SCF !!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            tonto.set_per_rank_IO_allowed(TRUE)
+            ! NOTE: no set_per_rank_IO_allowed here. The mode is set once,
+            ! outside the loop. Toggling it back to FALSE mid-body -- which is
+            ! what this used to do -- re-enables the bookkeeping broadcasts
+            ! while the two ranks are on *different* fragments, and they then
+            ! block on each other's records. That was the MPI_ERR_TRUNCATE.
             name = trim(.mol(g).name)
             stdout.redirect(name)
             stdout.move_to_end
             .mol(g).usual_SCF ! <<<
             stdout.revert
-            tonto.set_per_rank_IO_allowed(FALSE)
             !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
             if (SFs) then
 
                ! NOTE: change DFT -> becke
                .mol(g).initialize_DFT_grids
-              
+
                ! Assign previously made ANOs
                .mol(g).resolve_ANOs_from(self)
-              
+
                ! Write SFs for each fragment to disk - in parallel
                n_group = .atom_group(g).atom_index.dim
-               tonto.set_per_rank_IO_allowed(TRUE)
                .mol(g).get_Hirshfeld_atom_FFs_disk(spin_density=spin_density)
-               tonto.set_per_rank_IO_allowed(FALSE)
 
             end
-         
+
          end
+
+         ! Back to shared I/O: the ranks resynchronise here.
+         tonto.set_per_rank_IO_allowed(FALSE)
       
       end 
 
