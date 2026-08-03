@@ -358,7 +358,11 @@ before any code is written**, most likely in its own conversation (`/clear`).
      `tests/long/gly_ala_fragHAR_rhf_STO-3G` **to every digit that reference prints** (R(F)
      0.0324, GoF 3.3535, N_r 2514, N_p 181). Gated by `tests/hart/gly_ala_hart_STO-3G` (60 s).
      It was a hookup, not a repair: fragHAR itself was broken 2020-01-23 by `f0d7cfd3` and
-     fixed 2026-06-01 by `d840e322`. **Still open: parallel.** It was blocked on two MPI
+     fixed 2026-06-01 by `d840e322`. **Parallel: plain HAR now works** — `hart` at 2 ranks
+     reproduces a serial run digit for digit (2026-08-03), after fixing a `TEXTFILE:flush`
+     collective imbalance. **fragHAR at 2 ranks still fails**, 884 lines in at *"Making F_pred"*,
+     with a second distinct `MPI_ERR_TRUNCATE` in the fragment path. **Still open: parallel
+     fragHAR.** It was blocked on two MPI
      register rows; **row 1 is now closed** (`make_LS_mx`'s same-file-from-every-rank write,
      fixed 2026-08-02 along with the two other `per_rank_write` sites and the missing barrier),
      leaving **`fragment_SCF_para`**, whose scheduler changes shape above 2 ranks — so any

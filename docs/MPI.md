@@ -400,11 +400,44 @@ those produce wrong numbers or corrupt files with no error at all.
 | 4 | `molecule.put.foo` `put_NBO_file_47` | 13 raw writes on a *redirected* unit → negative unit | Loud (crash) | **Fixed** |
 | 5 | `plot_grid.foo:2280` | `read(textfile.unit,*)` on every rank; result also needed broadcasting | Loud | **Fixed** |
 | 6 | `archive.foo` ×3 (VAPOR/stream/VTK) | Every rank opens the **same filename** with its own valid unit | **Silent** (corruption) | **Fixed** |
-| 7 | `molecule.har.foo:1346` | `parallel_write` — same file from every rank, on units never opened | Loud | Open |
+| 7 | `molecule.har.foo:1346` | `per_rank_write` in a **serial** loop — same file from every rank | Loud | **Fixed** |
+| 7b | `crystal.foo:4961` `shift_update_ff` | same, and a read-modify-write of the shared file | Loud | **Fixed** |
+| 7c | `get_Hirshfeld_atom_FFs_disk` | no barrier between the scattered writes and the collective reads | Race | **Fixed** |
 | 8 | `system.foo:260` | Seeds not cloned; two broadcasts inside a master-only guard | Silent now, **deadlock** if naively "fixed" | Open |
-| 9 | `system.foo:564` | `MPI_ABORT` commented out → one rank dying hangs the whole job | Hang | Open |
+| 9 | `system.foo:564` | `MPI_ABORT` commented out → one rank dying hangs the whole job | Hang | **Fixed** |
+| 12 | `textfile.foo` `flush` | `.clear_and_put_margin` called **twice on master**, once elsewhere; it broadcasts, so the ranks desynchronise | Loud (`MPI_ERR_TRUNCATE`) | **Fixed** |
+| 13 | `system.foo` `die` ×3 | error message written only under `IO_is_allowed`, so a dying **non-master** rank said nothing at all | **Silent failure** | **Fixed** |
+| 14 | `run_har.foo` `--fos 0` | `set_F_sigma_cutoff(0)` violates its own `ENSURE`; worked in release only because the check compiles away | Loud in debug only | **Fixed** |
+| 15 | fragment path | a **second** `MPI_ERR_TRUNCATE`, at *"Making F_pred"*, only under fragHAR | Loud | Open |
 | 10 | `parallel.foo:6452` | `fragment_SCF_para` RMA: out-of-bounds read on the terminating fetch, every run | **Silent** | Open |
 | 11 | `molecule.prop.foo:6118` | QTAIM: out-of-bounds at `nprocs==1`, sends to a non-existent rank, `MPI_FINALIZE` mid-run | Loud | Open |
+
+### Status 2026-08-03: `hart` works under MPI
+
+`hart` now runs to completion at 2 ranks and reproduces a serial run **digit for digit** —
+release-serial against debug-MPI, so the agreement spans two different builds:
+
+| | serial | MPI, 2 ranks |
+|---|---|---|
+| R(F) | 0.037995 | 0.037995 |
+| N_r / N_p | 817 / 27 | 817 / 27 |
+| GoF | 7.038231 | 7.038231 |
+
+**fragHAR at 2 ranks still fails** (row 15), but 884 lines in — past the CIF, the atom groups and
+the ANO data — rather than at the banner.
+
+**The method that found row 12**, worth reusing for row 15 and any collective desync:
+
+1. Trace every `MPI_BCAST`'s element count from the `PARALLEL:broadcast` *template*, so all 25
+   type instantiations are covered by one edit.
+2. Run under `mpirun --tag-output -n 2`, split by rank, and **diff the two length sequences**.
+   `MPI_ERR_TRUNCATE` *is* a length mismatch, so the first differing index is the divergence.
+3. Add `PHASE` markers printing the running broadcast count to find which interval contains it.
+4. Then trace the arguments of whatever routine that interval implicates.
+
+Two dead ends, recorded so they are not repeated: gfortran's `backtrace()` cannot symbolise on
+macOS, and `FILE:close_and_delete`'s missing broadcast (a real bug, fixed on its own merits) was
+**not** the cause.
 
 ### Why they hid, and what actually closes each class
 
