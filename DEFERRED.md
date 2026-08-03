@@ -1433,7 +1433,33 @@ After the `TEXTFILE:flush` fix below, plus removing an over-strict runtime check
 
 **fragHAR at 2 ranks still fails**, but far later — 884 lines in, past the CIF, the atom groups
 and the ANO data, at *"Making F_pred ..."* — with a **second, distinct** `MPI_ERR_TRUNCATE` in
-the fragment path. That is the known register-row territory (the per-fragment,
+the fragment path.
+
+**CONFIRMED 2026-08-03 — it is output inside `fragment_SCF_para`'s `parallel do g`.** Traced with
+phase markers and a per-broadcast counter. The ranks are in *perfect lockstep* right up to the
+loop, and diverge the instant they take different fragments:
+
+| | rank 0 | rank 1 |
+|---|---|---|
+| entering `fragment_SCF` | 127,197 | 127,197 |
+| before `parallel do g` | 141,907 | 141,907 |
+| **fragment taken** | **g=1** | **g=2** |
+| died | 146,858 | 146,815 |
+
+So each rank runs a whole SCF on *its own* fragment, and that work performs collectives — chiefly
+`BUFFER:put_str`, which broadcasts `.string` (256 bytes) and `.item_end` on **every token
+written**, outside the `IO_IS_ALLOWED` guard. Different fragments produce different amounts of
+output, hence different numbers of collectives, hence `MPI_ERR_TRUNCATE`.
+
+**This is structural, not a bug at a line.** Coarse-grained parallelism over fragments cannot
+work while writing output is a collective operation. Compile-time purity (see the `PURE` design
+above) cannot help either: a fragment SCF legitimately writes archives and output. The two
+options remain (1) make output non-collective inside a parallel region, or (2) suppress or
+serialise it there.
+
+**Note the scale while deciding:** 141,907 broadcasts occur *before the fragment loop even
+starts* — a HAR job spends ~142k collectives producing text. Option (1) would remove nearly all
+of them, so it is a performance fix as much as a correctness one. That is the known register-row territory (the per-fragment,
 **rank-local** calls in `fragment_SCF_norm`/`_para`), and it is a separate hunt. The method that
 found the first one is recorded below and applies unchanged.
 
