@@ -1387,11 +1387,31 @@ in `COMMAND_LINE:put_command_optarg` — i.e. *echoing the command line*. Master
 broadcasts there and rank 1 performs **3**. At the divergent index master sends a `STR` (256)
 while rank 1 is at a scalar (1), which is the truncation.
 
-`TEXTFILE:put(VEC{STR})` (`textfile.foo:4082`) loops over elements calling `.flush`, and each
-flush broadcasts `.IO_status` — so the loop is running a different number of times on the two
-ranks. `.command_optarg` itself is built from already-broadcast tokens
-(`command_line.foo:189-205`) and should be identical, so the suspect is rank-local state inside
-the `put`/`flush` path rather than the data. **That is where to resume.**
+**The `256 1` pair is `BUFFER:put_str`** (`buffer.foo:505-528`). It broadcasts `.string`
+(a `BSTR`, 256 bytes) and then `.item_end` (an `INT`, 1) — exactly the repeating pair in the
+trace. So the whole output path is built on these, and the two ranks call `put_str` a
+**different number of times** while writing the command-line echo:
+
+```
+rank 0:  256 1 | 256 1 1 1 | 256 1 256 1 256 1 1 1 | ...   (37)
+rank 1:  256 1   1                                          (3, then aborts)
+```
+
+They agree on the first `put_str`, then master starts a second one while rank 1 has moved on to
+a scalar. **Who calls `put_str` a different number of times is the one remaining question.**
+Note the broadcasts themselves are correctly *outside* the `IO_IS_ALLOWED` guard; what is inside
+it is the buffer update and the `ENSURE` — so the collective is fine and the *control flow*
+reaching it is not.
+
+### Separately, and arguably worse: output costs two collectives per token
+
+`BUFFER:put_str` broadcasts a **256-byte string plus an integer on every call** — i.e. every
+token written to any output buffer is two MPI collectives. That is why printing a banner
+accounts for 126 broadcasts before `hart` has done any science at all. It is correct, but it
+makes all output a synchronisation point and will not scale. The obvious question for whoever
+picks this up: does the buffer need broadcasting at all on a *write* path, where non-master
+ranks discard the result? (On a *read* path it clearly does.) Splitting the read and write cases
+would remove nearly all of them.
 
 The instrumentation was reverted; the tree is clean. Re-applying it is ~10 minutes and the
 recipe is above.
