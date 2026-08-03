@@ -372,26 +372,37 @@ before any code is written**, most likely in its own conversation (`/clear`).
      `hart --disk-sfs`, which had never worked — six defects — now does, and is gated by
      `tests/hart/urea_hart_STO-3G_disk_ffs`, the first test ever to execute `make_LS_mx`.)*
 
-6. ⬜ **URGENT, next after milestone 4 — make MPI reductions safe by construction** (agreed
-   2026-08-01). Milestone 4 uncovered a class of silent wrong-answer bugs with a single root
+6. 🔶 **HALF DONE — make MPI reductions safe by construction** (agreed 2026-08-01; parts 2 and
+   4 done 2026-08-02/03). Milestone 4 uncovered a class of silent wrong-answer bugs with a single root
    cause: the translator emits `LOCK_PARALLEL_DO` as the first statement *inside* a `parallel do`,
    and `DO_IN_PARALLEL` is false while that lock is held, so a `PARALLEL_SUM` written in the loop
    body is **dead code that looks correct**. Four such sites in `molecule.grid.foo` each returned
    `1/n_ranks` of the answer. The intent ("MPI on the outside", no interior collectives) is right
    and standard; the enforcement is invisible, so — per Dylan — "the programmer has to hold the
    call sequence in their head not to make bugs". Agreed fix, all four parts:
-   - **`parallel do … reduce(x)`**, lowered by `FooToFortran` to emit the reduction after
+   - ⬜ **`parallel do … reduce(x)`**, lowered by `FooToFortran` to emit the reduction after
      `UNLOCK_PARALLEL_DO` (i.e. OpenMP's `reduction(+:x)`). Removes the failure mode entirely.
-   - **Abort on a suppressed reduction** under `USE_PRECONDITIONS` — do this first, it is two
-     lines and independent of the grammar work.
-   - **Depth-count the lock** so a recursive inner return cannot release an outer lock; restore
-     the `ENSURE` at `parallel.foo:308`.
-   - **Translator lint** for any `PARALLEL_*` macro lexically inside a `parallel do` body, and
+     **The remaining big one** — grammar + translator + re-verification.
+   - ✅ **Abort on a suppressed reduction** under `USE_PRECONDITIONS`. Done: the reduction macros
+     now call `SYSTEM:reduction_is_allowed`, which returns `DO_IN_PARALLEL` and `ENSURE`s that a
+     FALSE result is not caused by a parallel-do lock. Debug-only by construction; **not yet
+     exercised**, since the macros expand to nothing without MPI — the first debug MPI run tests
+     it. (Cost a red debug badge first: it must be declared `PURE`, not `pure` — see §3.)
+   - ⬜ **Depth-count the lock** so a recursive inner return cannot release an outer lock; restore
+     the `ENSURE` at `parallel.foo:308`. Small and self-contained; the natural next step.
+   - ✅ **Lint** for any `PARALLEL_*` macro lexically inside a `parallel do` body, and
      for any raw `write(`/`read(` on a `*.unit` expression outside `file.foo`/`textfile.foo`/
      `buffer.foo`. The second catches the raw-I/O class that crashed `DWGN_lamaGOET_NBO_file_47`
      -- and, more importantly, the *silent* variant of it: an unguarded write to a
      non-redirected stdout uses preconnected unit 6, valid on every rank, so it interleaves
      output instead of failing. Inspection alone cannot find those; a lint can.
+     Done as `scripts/check_parallel_lint.py` — a **source scan**, not a translator pass,
+     following `check_library_stdin.py`: registered as ctest `parallel_lint` (label `short`, so
+     in CI) and as an invariant line in `make report`. Guard-aware (a site inside
+     `if (IO_IS_ALLOWED)` is not reported — without that it flagged 48 correct sites). Clean over
+     184 files and 74 `parallel do` loops. It complements the abort rather than replacing it: the
+     lint sees only what is *lexically* inside a loop, the abort catches a reduction reached
+     through a **call** from inside one.
 
    Sequenced *after* milestone 4's characterisation, because changing the lowering mid-flight
    would confound the numbers. Full design in `DEFERRED.md`, "MPI: defects found during
