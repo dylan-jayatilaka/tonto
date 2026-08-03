@@ -1422,7 +1422,43 @@ invariant checks pass, `ctest -L hart` 4/4.
 getting through options, CIF, Becke grid and into the first SCF. That is a *different* bug and a
 far better place to be. Diagnosis is hampered by the next item.
 
-### `DIE` messages are LOST under MPI
+### FIXED (2026-08-03): `DIE` messages were LOST under MPI — and fixing it found two more bugs
+
+`SYSTEM:die` wrote its message only inside `if (.IO_is_allowed)`, i.e. **on the master alone**.
+So when a *non-master* rank died — the usual case for an MPI-only defect — nothing was printed
+anywhere: not stdout, not stderr, not `<job>.err`. The job aborted in silence.
+
+Fixed at all three `MPI_ABORT` sites (`die` and both `unknown` overloads): before aborting, each
+rank writes its own message straight to Fortran's preconnected **stderr (unit 0)**, tagged with
+the rank.
+
+Two deliberate choices there:
+- **Unit 0, not `.std_err_unit`** — unit 0 exists on every rank, whereas the `std_err` file is
+  opened only on the master and its unit number is merely broadcast.
+- **No `flush` of the TEXTFILE** — `TEXTFILE:flush` contains `PARALLEL_BROADCAST`s, so flushing
+  from the single dying rank while its peers run on would be a collective entered by one rank,
+  i.e. a hang. **The error path must not use collectives.**
+
+**It paid for itself immediately.** The first run after the fix named two real defects that had
+been invisible:
+
+1. `SYSTEM:reduction_is_allowed ... a PARALLEL_* reduction is inside a parallel do` — the
+   milestone-6 abort firing on a **genuine dead reduction** in the SCF path. Note the static
+   lint reports *nothing* lexically inside a `parallel do`, and a one-level call scan finds
+   nothing either, so this is reached through a **deeper call chain** — precisely the case the
+   lint cannot see and the runtime abort can. The two checks are not redundant.
+2. `CIF:find_looped_item ... CIF file has not been opened` on rank 1 — rank-local file state.
+
+The abort message now also names the **locking routine**, via `trim(.do_parallel_lock)`, since
+`LOCK_PARALLEL_DO` records which routine holds the lock — that is exactly "which `parallel do`
+am I inside", which is what you need to fix it.
+
+*(Correction: an earlier note here claimed `ENSURE` messages must be plain literals because
+`message` is fixed-length. That was wrong — it generates `STR(len=*)`, and concatenation is
+fine. The debug-build break was **entirely** the lowercase `pure` vs the `PURE` macro; two
+changes were made at once and both were credited. The claim has been removed from CLAUDE.md.)*
+
+### superseded note: `DIE` messages are LOST under MPI
 
 When a `DIE` fires under MPI the message never appears — not on stdout, not on stderr, not in
 `<job>.err`. `SYSTEM:die` writes to the `std_err` TEXTFILE, which is *buffered*, and then calls

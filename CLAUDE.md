@@ -96,10 +96,6 @@ Full details in the companion docs (§7).
   vanishes) and **fails only in a debug or MPI build**, with gfortran's misleading *"There is no
   specific subroutine for the generic `ensure_`"* rather than a purity error. Cost the debug CI
   a red badge on 2026-08-02; see the note at `PARALLEL:reduction_is_allowed`.
-- **`ENSURE`/`DIE` messages must be plain literals.** `SYSTEM:ensure` declares
-  `message :: STR`, i.e. `character(STR_SIZE)` and *not* `character(len=*)`, so a built-up
-  `trim(x)//"..."` matches no specific. (`DIE_IF` is fine with concatenation — it is used that
-  way throughout `run_har.foo`.)
 - **Variable attributes** (comma-separated, after the type): `IN`, `OUT`, `INOUT`, `PRIVATE`,
   `READONLY`, `POINTER`, `TARGET`, `SAVE`, `ALLOCATABLE`, `OPTIONAL`.
 - **Modules:** `module NAME … contains … end`; generic `interface NAME … end` blocks.
