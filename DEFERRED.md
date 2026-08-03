@@ -1359,7 +1359,44 @@ rank-local state. This is the milestone-6 rule one level down: not a collective 
 rank-local state, but a **branch** taken on it, inside a routine whose branches contain
 collectives.
 
-**TESTED, AND IT IS NOT THE CAUSE.** The broadcast was added (`file.foo`, `close_and_delete`
+**LOCALISED 2026-08-03 to a single call.** Method — *bracketing by phase*, which is bisection
+with printed landmarks rather than a debugger, and is worth reusing for any collective desync:
+
+1. A temporary trace in `PARALLEL:broadcast` (the template, so all 25 type instantiations get
+   it) printing the element count of every `MPI_BCAST` to stderr.
+2. Run under `mpirun --tag-output -n 2`, split the stream by rank, and diff. `MPI_ERR_TRUNCATE`
+   **is** a length mismatch, so the first index where the two length sequences differ is the
+   divergence.
+3. Then temporary `PHASE` markers at known points in `run_har.foo`, each printing the running
+   broadcast count, to find which interval contains that index.
+
+Result. The two ranks are **identical for the first 126 broadcasts** and diverge inside one call:
+
+| marker | rank 0 | rank 1 |
+|---|---|---|
+| after stdin created | 5 | 5 |
+| after `process_options` | 30 | 30 |
+| after the `std_err` dance | 36 | 36 |
+| before the option loop | 36 | 36 |
+| before the banner | 106 | 106 |
+| **immediately before the `put`** | **126** | **126** |
+| died | 163 (+37) | 129 (+3) |
+
+So the desync is **inside `stdout.put(.command_optarg,by_column=TRUE,left=TRUE,width=STR_SIZE-8)`**
+in `COMMAND_LINE:put_command_optarg` — i.e. *echoing the command line*. Master performs **37**
+broadcasts there and rank 1 performs **3**. At the divergent index master sends a `STR` (256)
+while rank 1 is at a scalar (1), which is the truncation.
+
+`TEXTFILE:put(VEC{STR})` (`textfile.foo:4082`) loops over elements calling `.flush`, and each
+flush broadcasts `.IO_status` — so the loop is running a different number of times on the two
+ranks. `.command_optarg` itself is built from already-broadcast tokens
+(`command_line.foo:189-205`) and should be identical, so the suspect is rank-local state inside
+the `put`/`flush` path rather than the data. **That is where to resume.**
+
+The instrumentation was reverted; the tree is clean. Re-applying it is ~10 minutes and the
+recipe is above.
+
+**Earlier attempt, TESTED AND NOT THE CAUSE.** The broadcast was added (`file.foo`, `close_and_delete`
 now matches `close`), the MPI tree rebuilt, and `hart` at 2 ranks fails **identically** —
 `MPI_ERR_TRUNCATE` in `MPI_Bcast` reported by rank 1, at the same point, `urea.out` still
 stopping after 29 lines at the option echo. **Do not re-try this fix.**
