@@ -1418,7 +1418,72 @@ rank. Verified — `hart` at 2 ranks goes from dying at 30 lines of output to **
 truncation is gone. Serially unaffected: release rebuilt, short suite 50/51 unchanged, all four
 invariant checks pass, `ctest -L hart` 4/4.
 
-**Still open — `hart` at 2 ranks now dies mid-SCF** (exit 1, an `MPI_ABORT` from a `DIE`) after
+## `hart` NOW WORKS UNDER MPI (2026-08-03) — and reproduces serial exactly
+
+After the `TEXTFILE:flush` fix below, plus removing an over-strict runtime check (next item),
+`hart` runs to completion at 2 ranks and agrees with a serial run **digit for digit** — and from
+*different builds*, release-serial against debug-MPI, which makes the agreement stronger:
+
+| | serial (release) | MPI, 2 ranks (debug) |
+|---|---|---|
+| R(F) | 0.037995 | 0.037995 |
+| N_r / N_p | 817 / 27 | 817 / 27 |
+| GoF^2 | 49.536697 | 49.536697 |
+| GoF | 7.038231 | 7.038231 |
+
+**fragHAR at 2 ranks still fails**, but far later — 884 lines in, past the CIF, the atom groups
+and the ANO data, at *"Making F_pred ..."* — with a **second, distinct** `MPI_ERR_TRUNCATE` in
+the fragment path. That is the known register-row territory (the per-fragment,
+**rank-local** calls in `fragment_SCF_norm`/`_para`), and it is a separate hunt. The method that
+found the first one is recorded below and applies unchanged.
+
+## WITHDRAWN (2026-08-03): the runtime "abort on a suppressed reduction"
+
+Milestone 6 part 2 was implemented, and then **removed the next day, because its premise is
+wrong**. It assumed a reduction reached while a parallel-do lock is held is always a bug. It is
+not — it is *also* the intended nesting pattern:
+
+```foo
+SHELL1QUARTET:make_esfs_ss_0000(v11)      ! called from inside
+   parallel do k = 1,.ab_n_gaussian_pairs !   MOLECULE.FOCK:make_u_JK_engine's
+   ...                                    !   own `parallel do`
+   PARALLEL_SUM(v11)                      ! correctly placed after ITS loop
+```
+
+With the outer lock held, the inner `parallel do` runs **serially over its full range on every
+rank**, so each rank already holds the complete `v11` and skipping the reduction is **correct**.
+That is "MPI on the outside" working as designed. `shell1quartet.foo` alone has 17 such loops,
+all reached from outer loops in the Fock build, so the check aborted every debug MPI run almost
+immediately — it killed `hart`.
+
+Nor can it be downgraded to a `WARN`: these sites are per shell-quartet, so the warning would
+fire millions of times.
+
+**What survives is the lint**, and it is the right tool: the actual bug is a reduction *lexically
+inside* a `parallel do` body (the four `molecule.grid.foo` sites), which
+`scripts/check_parallel_lint.py` detects statically and precisely. The dynamic check could not
+distinguish the bug from the design, and the static one does not need to.
+
+*(An earlier note claimed the two checks were complementary — the lint for lexical cases, the
+abort for reductions reached through a call. The call case turns out to be the legitimate one,
+so there is nothing for the abort to add.)*
+
+**Milestone 6 is therefore: part 4 (lint) done, part 2 withdrawn with reasons, parts 1
+(`reduce(x)`) and 3 (depth-counted lock) still open.**
+
+## A related trap found the same way: `--fos 0`
+
+`hart --fos 0` (used by `tests/hart/gly_ala_hart_STO-3G` to disable F/sigma pruning) called
+`DIFFRACTION_DATA:set_F_sigma_cutoff(0)`. That routine `ENSURE`s `val>ZERO` and says so in its
+own comment — *"make sure zero is not entered ... just leave it off!"* — while the field defaults
+to `-TWO` and every consumer tests `> ZERO`. So passing 0 worked **only in release**, where the
+`ENSURE` compiles away, and aborted in any debug build. Fixed in `run_har.foo`: `--fos 0` now
+means *do not call the setter*, which is what the library asks for.
+
+Worth noting as a pattern: this is the second defect today that was invisible in release and
+obvious in debug. A debug MPI build is cheap insurance.
+
+**Superseded — `hart` at 2 ranks dies mid-SCF** (exit 1, an `MPI_ABORT` from a `DIE`) after
 getting through options, CIF, Becke grid and into the first SCF. That is a *different* bug and a
 far better place to be. Diagnosis is hampered by the next item.
 

@@ -379,11 +379,14 @@ before any code is written**, most likely in its own conversation (`/clear`).
    - ⬜ **`parallel do … reduce(x)`**, lowered by `FooToFortran` to emit the reduction after
      `UNLOCK_PARALLEL_DO` (i.e. OpenMP's `reduction(+:x)`). Removes the failure mode entirely.
      **The remaining big one** — grammar + translator + re-verification.
-   - ✅ **Abort on a suppressed reduction** under `USE_PRECONDITIONS`. Done: the reduction macros
-     now call `SYSTEM:reduction_is_allowed`, which returns `DO_IN_PARALLEL` and `ENSURE`s that a
-     FALSE result is not caused by a parallel-do lock. Debug-only by construction; **not yet
-     exercised**, since the macros expand to nothing without MPI — the first debug MPI run tests
-     it. (Cost a red debug badge first: it must be declared `PURE`, not `pure` — see §3.)
+   - ❌ **Abort on a suppressed reduction** under `USE_PRECONDITIONS` — implemented, then
+     **WITHDRAWN 2026-08-03: the premise is wrong.** A reduction reached while a parallel-do lock
+     is held is *also* the intended nesting pattern (an inner `parallel do` + reduction in a
+     routine called from an outer one runs serially over its full range per rank, so skipping the
+     reduction is correct). `shell1quartet.foo` alone has 17 such loops and the check aborted
+     every debug MPI run. It cannot be a `WARN` either — those sites fire per shell-quartet. The
+     **lint** is the right enforcement: the real bug is *lexical* containment, which it detects
+     precisely. Full reasoning in `DEFERRED.md`.
    - ⬜ **Depth-count the lock** so a recursive inner return cannot release an outer lock; restore
      the `ENSURE` at `parallel.foo:308`. Small and self-contained; the natural next step.
    - ✅ **Lint** for any `PARALLEL_*` macro lexically inside a `parallel do` body, and
