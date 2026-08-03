@@ -223,7 +223,7 @@ rather than merely producing plausible numbers.
 
 ## 6. Milestones
 
-**H1 — fragHAR support. SERIAL DONE (2026-08-02); parallel still open.**
+**H1 — fragHAR support. SERIAL DONE (2026-08-02); PARALLEL DONE (2026-08-03).**
 
 **H1 was a hookup, not a repair.** fragHAR works in `tonto` today: `tests/long/
 gly_ala_fragHAR_rhf_STO-3G` converges and reproduces the last known-good 2019 output to the
@@ -445,12 +445,55 @@ neither is a regression and neither blocks H1:
   `Using single scale factor ...... T`. Either a benign diagnostic or a real miscount; also
   misspelled (Friedel). Filed in `DEFERRED.md`, to investigate after H1.
 
-### Why `hart` still cannot do it
+### fragHAR under MPI — DONE (2026-08-03)
 
-`hart` calls only `HAR_refinement`, never `fragHAR_refinement`, and has no atom-group or
-per-fragment-charge path, so a crystal with more than one molecule in the asymmetric unit cannot
-be refined *through `hart`* -- even though `tonto` refines it correctly.
-`tests/long/gly_ala_fragHAR_rhf_STO-3G` is the acceptance test.
+`mpirun -n 2 hart ... --group-charges '{ 1 -1 }'` now completes with exit 0 and reproduces the
+serial reference: **R(F) 0.032423, GoF 3.353475**, and the second block **0.089265 / 12.034623**
+-- digit for digit, every reported statistic, 1586 lines against 1586. The only textual
+differences are the banner (version, build date, timers), one `WARN` line that is live in the
+debug build and compiles away in the release build that blessed the reference, and one
+`Making gaussian ANO data ...` progress line that is skipped because
+`make_ANOs_and_interpolators` returns early when `.has_all_ANO_matrices`.
+
+Getting there took three defects, in increasing order of subtlety.
+
+**1. `SYSTEM:set_per_rank_IO_allowed` assigned the wrong member.** It set `.keyword_echo`, not
+`.per_rank_IO_allowed`. Longstanding -- `set_parallel_IO_allowed` had the identical body before
+the rename -- so the escape hatch in `SYSTEM:IO_is_allowed` had **never once been reachable**,
+every "let each rank do its own I/O" call site in `molecule.scf.foo` was a silent no-op, and
+non-master ranks simply dropped their writes. Symptom: rank 1 ran the ALA fragment, wrote its
+28 KB log, and produced no `2-ALA.density_mx,r` at all. Nothing warned.
+
+**2. The per-rank mode was scoped to the wrong region.** It was switched on and then off again
+*inside* the fragment loop body, so the I/O bookkeeping broadcasts resumed while the two ranks
+were on different fragments. It has to be set once, outside the loop, on every rank -- including
+the >2-rank master, which schedules and `cycle`s without ever entering the body.
+
+**3. Object state diverges permanently after a per-rank loop, and output branches on it.**
+This is the one worth remembering. Each rank builds grids and densities only for the fragment
+*it* ran, so `.mol(g).becke_grid` is allocated on one rank and not on another. `MOLECULE:put`
+branches on exactly that (`if (.becke_grid.allocated) .put_becke_grid`), so the ranks issue
+different numbers of TEXTFILE bookkeeping broadcasts. Measured: after `put: cluster done`,
+master issued 42 broadcasts and rank 1 issued **zero**. The ranks then fell out of step and a
+later collective paired with the wrong one -- surfacing, misleadingly, as rank 1 dying in
+`TEXTFILE:close` with *"not an existing file!"*, because its `.exists` broadcast received
+another rank's payload.
+
+The fix is to stop `MOLECULE.PUT:put_atom_group_mols` being collective at all: it is pure
+output, so it switches per-rank I/O on (which makes the TEXTFILE bookkeeping non-collective)
+and lets the master write alone, restoring the caller's mode afterwards.
+
+**The general rule this establishes:** *after* a per-rank region, the ranks' object graphs are
+deliberately different. Any later shared-mode code that branches on allocation status, array
+extent, or convergence flags of that per-rank data will desync. Either resynchronise the state,
+or keep the code non-collective. Recorded in `docs/DEVELOPER.md` §1a and `docs/MPI.md`.
+
+**How it was found.** By tracing, not by reading -- three consecutive readings of the code
+pointed at the wrong routine. A `write` at the single `MPI_BCAST` choke point in
+`parallel.foo`, logging `(datatype, count)` to a per-rank `fort.7<rank>` file (Fortran
+auto-connects the unit, so the two streams cannot interleave), plus positional `TAG` markers.
+Diffing the two streams gives the exact call where they part; segmenting the counts between
+tags names the routine. That recipe is in `docs/DEVELOPER.md` §1a.
 
 **H2 — revive the frozen options.** `--charge`, `--mult`, `--ldtol`,
 `--scf-guess`, `--anharm`, `--wavelength` and `--4th-order-only` are commented

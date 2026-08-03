@@ -157,9 +157,24 @@ meaningless):
 | `molecule.grid.foo` ×4 | ESP/property-grid reductions written *inside* their own `parallel do`, where `WORK_IS_SHARED` is always false — dead code, so each rank kept only its `1/n_ranks` share. One had no reduction at all. |
 | `parallel.foo` | `PARALLEL_SYMMETRIC_SUM_23` sized its triangle buffer from `dim1` instead of `dim2`: a heap overflow on every call, plus an `ENSURE` testing the wrong dimensions. |
 | `molecule.fock.foo` ×3 | CIS/TDHF: `r_CIS_S1_AV` reduced nothing at all; `r_CIS_S0_AV` and `u_CIS_AV` never reduced `K`. |
+| `system.foo` | `set_per_rank_IO_allowed` assigned `.keyword_echo`, not `.per_rank_IO_allowed` (2026-08-03). The flag could therefore **never be set**, so the escape hatch in `SYSTEM:IO_is_allowed` was unreachable dead code, every "let each rank do its own I/O" call site in `molecule.scf.foo` was a silent no-op — non-master ranks dropped their writes — and those call sites were instead toggling an unrelated flag. Longstanding: `set_parallel_IO_allowed` had the identical body before the rename. |
+| `molecule.scf.foo` | `fragment_SCF_para` switched per-rank I/O mode on and then off again *inside* the fragment loop body, so the bookkeeping broadcasts resumed while the ranks were on different fragments. It must be set once, outside the loop, on every rank — including the >2-rank master, which schedules and `cycle`s without entering the body. |
+| `molecule.put.foo` | `put_atom_group_mols` was collective, and branched on state that is *deliberately* per-rank after a fragment loop (`if (.becke_grid.allocated) …` — master issued 42 broadcasts there, rank 1 zero). Now non-collective: per-rank mode on, master writes alone, caller's mode restored. |
 
 All the fixes are no-ops in a serial build, and this was verified: the short suite gives
 bit-identical results before and after.
+
+**Result of the last three:** `hart` now runs **fragHAR under MPI**. `mpirun -n 2 hart …
+--group-charges '{ 1 -1 }'` on gly-L-ala exits 0 and reproduces the serial reference digit for
+digit — R(F) 0.032423, GoF 3.353475 — with the ranks in exact lockstep for 2,421,451
+broadcasts. See `docs/HART.md`, milestone H1.
+
+**The general rule these establish:** after a per-rank region the ranks' object graphs are
+deliberately different, and any later shared-mode code that branches on allocation status,
+extent or convergence flags of that data will desync. Either resynchronise the state or keep
+the later code non-collective. Because TEXTFILE bookkeeping is collective, *printing slightly
+more on one rank is itself a collective mismatch* — and it surfaces later, somewhere innocent.
+Pitfall 8 in `docs/DEVELOPER.md` §1a, with the trace-based recipe that found it.
 
 **Not yet fixed** — a latent collective-inside-a-master-guard deadlock in `SYSTEM:initialize`, a
 commented-out `MPI_ABORT` (so one rank dying hangs the job), HAR writing the same file from every

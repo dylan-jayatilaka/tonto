@@ -433,21 +433,45 @@ contains
 
       name :: STR
       g :: INT
+      saved :: BIN
 
-      ! Output fragment info
-      do g = 1,.atom_group.dim
-      
-         ! Minimal stdout for fragment
-         name = trim(.atom_group(g).name)
-         stdout.redirect(name)
-      ! .mol(g).put_basics_and_atoms
-         .mol(g).put ! INOUT
-         stdout.revert
-        
-         ! Even more minimal xyz for plotting
-         .mol(g).atom.put_xyz_file(name)
-      
+      ! This is pure output, and it must NOT be collective.
+      !
+      ! After a per-rank fragment loop (MOLECULE.SCF:fragment_SCF_para) each
+      ! rank has built grids and densities only for the fragment IT ran, so
+      ! .mol(g).becke_grid and friends are allocated on one rank and not on
+      ! another. MOLECULE:put branches on exactly that, so the ranks issue
+      ! different numbers of TEXTFILE bookkeeping broadcasts, fall out of step,
+      ! and a later collective pairs with the wrong one -- observed as rank 1
+      ! dying in TEXTFILE:close with "not an existing file!" because its
+      ! .exists broadcast received another rank's payload.
+      !
+      ! Per-rank I/O mode makes the TEXTFILE bookkeeping non-collective, so the
+      ! master can then do the writing alone. Restore the caller's mode rather
+      ! than forcing it FALSE: this may be called from inside a per-rank region.
+      saved = tonto.per_rank_IO_allowed
+      tonto.set_per_rank_IO_allowed(TRUE)
+
+      if (tonto.is_master_processor) then
+
+         ! Output fragment info
+         do g = 1,.atom_group.dim
+
+            ! Minimal stdout for fragment
+            name = trim(.atom_group(g).name)
+            stdout.redirect(name)
+         ! .mol(g).put_basics_and_atoms
+            .mol(g).put ! INOUT
+            stdout.revert
+
+            ! Even more minimal xyz for plotting
+            .mol(g).atom.put_xyz_file(name)
+
+         end
+
       end
+
+      tonto.set_per_rank_IO_allowed(saved)
 
    end
 

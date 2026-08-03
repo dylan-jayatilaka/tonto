@@ -720,6 +720,15 @@ than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comment
   `per_rank_IO_allowed` is never set on this path, so non-master ranks write to the master's
   broadcast unit which they never opened.
 
+  **Update (2026-08-03) — it was never set on *any* path.** `SYSTEM:set_per_rank_IO_allowed`
+  assigned `.keyword_echo` instead of `.per_rank_IO_allowed`, so the flag could not be set at
+  all, the escape hatch in `SYSTEM:IO_is_allowed` was unreachable dead code, and all ~10 call
+  sites in `molecule.scf.foo` were silent no-ops that toggled an unrelated flag. Longstanding —
+  `set_parallel_IO_allowed` had the identical body before the rename. Fixed, and the mechanism
+  now works: see `docs/HART.md` (milestone H1) and `docs/MPI.md` §5. This also means every
+  earlier statement in this file of the form "per-rank I/O is enabled here" described an
+  intention, not a behaviour.
+
   **Reachable ONLY via fragHAR:** `fragHAR_refinement` (`:52`) is the sole caller of
   `set_use_disk_SFs(TRUE)`; `LS_fit` (`:562`) then takes the `LS_fit_HAs_disk` branch, which
   calls `make_LS_mx` (`:643`). No job file turns it on -- `gly_ala_fragHAR`'s `stdin:40` has
@@ -1486,6 +1495,22 @@ Apply it **only** to I/O bookkeeping — `.unit`, `.io_status`, `.record`, `exis
 region there is nothing collective left to mismatch, so a rank that takes zero iterations simply
 does nothing and no peer waits on it. The flag itself must be set and cleared *outside* the
 parallel loop so every rank agrees on the mode.
+
+**Refinement (Dylan): one flag conflates two permissions.** `per_rank_IO_allowed` currently means
+both "write my own files" *and* "write to the shared log" — so enabling it for a fragment loop
+also lets every rank interleave `stdout`. They should be separate:
+
+| flag | meaning | broadcasts | who writes |
+|---|---|---|---|
+| *(default)* | shared file, master only | yes | master |
+| `per_rank_self_IO_allowed` | each rank writes its **own** files | **no** | every rank |
+| `per_rank_shared_IO_allowed` | every rank may write the **shared** log | yes | every rank (interleaved, deliberate) |
+
+**The deeper form is per-FILE, not global**: a `FILE`/`TEXTFILE` is intrinsically either shared
+(master writes, state broadcast) or per-rank (each rank owns a copy, nothing broadcast). Marking
+the file removes the need for any global mode and for setting/clearing it around regions — the
+archive is per-rank, `stdout` is shared, and each behaves correctly wherever it is used. Two
+global flags are a cheaper approximation and a reasonable first step.
 
 **No translator change**, unlike every other option considered. It also deletes most of the
 ~147,000 broadcasts a fragHAR run performs, so it is a scaling fix as much as a correctness one.

@@ -334,9 +334,8 @@ before any code is written**, most likely in its own conversation (`/clear`).
    deliverable is a *characterisation* (which tests drift, by how much, and whether the drift is
    rank-count dependent), not necessarily a green suite. Untested since before the ANTLR4 work.
 
-5. 🔶 **`hart` — verify, test, document, and make it work with `fragHAR`.** Everything except
-   the `fragHAR` part is **DONE**; see **`docs/HART.md`**, which is now the authoritative
-   document for the program.
+5. ✅ **DONE (2026-08-03) — `hart`: verify, test, document, and make it work with `fragHAR`.**
+   See **`docs/HART.md`**, which is now the authoritative document for the program.
    - ✅ *confirm the program actually works, and fix what does not.* It did not: every real run
      died at once (`std_err` was created but never opened, so the `close_and_delete` that
      follows hit "not an existing file"), **and exited 0 while doing so** — `SYSTEM.die` ended
@@ -350,7 +349,7 @@ before any code is written**, most likely in its own conversation (`/clear`).
      never used; `.cif2` was rejected though the message said it was required for restart;
      `extreme` was accepted but undocumented. All reconciled, and the whole option set moved to
      GNU `--long` form (which is what took `tonto`'s `-i`/`-o`/`-b`/`-h`/`-v` with it).
-   - 🔶 *make it work **seamlessly with `fragHAR`***, i.e. crystals with more than one molecule
+   - ✅ *make it work **seamlessly with `fragHAR`***, i.e. crystals with more than one molecule
      in the asymmetric unit — **milestone H1 in `docs/HART.md`**. **Serial is DONE
      (2026-08-02)**: `hart` counts the atom groups and calls `fragHAR_refinement` when there is
      more than one, with new `--mmcif`, `--group-charges '{ 1 -1 }'`,
@@ -358,16 +357,23 @@ before any code is written**, most likely in its own conversation (`/clear`).
      `tests/long/gly_ala_fragHAR_rhf_STO-3G` **to every digit that reference prints** (R(F)
      0.0324, GoF 3.3535, N_r 2514, N_p 181). Gated by `tests/hart/gly_ala_hart_STO-3G` (60 s).
      It was a hookup, not a repair: fragHAR itself was broken 2020-01-23 by `f0d7cfd3` and
-     fixed 2026-06-01 by `d840e322`. **Parallel: plain HAR now works** — `hart` at 2 ranks
-     reproduces a serial run digit for digit (2026-08-03), after fixing a `TEXTFILE:flush`
-     collective imbalance. **fragHAR at 2 ranks still fails**, 884 lines in at *"Making F_pred"*,
-     with a second distinct `MPI_ERR_TRUNCATE` in the fragment path. **Still open: parallel
-     fragHAR.** It was blocked on two MPI
-     register rows; **row 1 is now closed** (`make_LS_mx`'s same-file-from-every-rank write,
-     fixed 2026-08-02 along with the two other `per_rank_write` sites and the missing barrier),
-     leaving **`fragment_SCF_para`**, whose scheduler changes shape above 2 ranks — so any
-     parallel fragHAR test must pin a rank count. Also open: `--group-charges-file` for
-     proteins, and the `use_disk_SFs`→`use_disk_FFs` rename. All in `docs/HART.md` §6.
+     fixed 2026-06-01 by `d840e322`. **Parallel is DONE too (2026-08-03)**: `mpirun -n 2 hart`
+     runs fragHAR to exit 0 and reproduces the serial reference digit for digit (R(F) 0.032423,
+     GoF 3.353475; 1586 lines vs 1586, differing only in banner/timing), with the ranks in exact
+     lockstep for 2,421,451 broadcasts. Three defects had to go first, the last two of which are
+     the generalisable ones: (i) `SYSTEM:set_per_rank_IO_allowed` assigned `.keyword_echo`, so
+     the flag could **never be set** and the whole per-rank-I/O mechanism was dead code that
+     looked live — longstanding, not from the rename; (ii) the mode was scoped *inside* the
+     fragment loop body instead of around it, so bookkeeping broadcasts resumed while ranks were
+     on different fragments; (iii) **after a per-rank region the ranks' object state diverges by
+     design**, and `put_atom_group_mols` branched on it (`if (.becke_grid.allocated) …` — master
+     42 broadcasts, rank 1 zero), which desynced them; it is now non-collective. Because
+     TEXTFILE bookkeeping is collective, *printing more on one rank is itself a collective
+     mismatch*. Recorded as pitfall 8 in `docs/DEVELOPER.md` §1a, with the per-rank-file trace
+     recipe that found it after three wrong readings of the code. Still open, both minor:
+     `--group-charges-file` for proteins, and the `use_disk_SFs`→`use_disk_FFs` rename. Note
+     `fragment_SCF_para`'s scheduler changes shape above 2 ranks, so any parallel fragHAR test
+     must pin a rank count. All in `docs/HART.md` §6.
      *(Unrelated to fragHAR but fixed the same day: the non-fragHAR **disk** form-factor path,
      `hart --disk-sfs`, which had never worked — six defects — now does, and is gated by
      `tests/hart/urea_hart_STO-3G_disk_ffs`, the first test ever to execute `make_LS_mx`.)*

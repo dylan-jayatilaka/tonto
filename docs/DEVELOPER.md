@@ -215,25 +215,69 @@ So a routine containing `ENSURE`, `DIE`, `WARN` — anything that writes `tonto`
 fails only in debug or MPI, with gfortran's thoroughly misleading *"There is no specific
 subroutine for the generic `ensure_`"* rather than a purity error.
 
+### Pitfall 8 — after a per-rank region, the ranks' object state diverges
+
+Per-rank mode (`tonto.set_per_rank_IO_allowed(TRUE)`) exists so that ranks working on different
+data can each open, write and close their OWN files. The consequence is easy to miss: when the
+region ends, **the ranks' object graphs are deliberately different and stay that way**. In
+`MOLECULE.SCF:fragment_SCF_para` each rank builds grids and densities only for the fragment it
+ran, so afterwards `.mol(g).becke_grid` is allocated on one rank and not on another.
+
+Any *later* shared-mode code that branches on that state will then desync — and the branch is
+usually innocent-looking output:
+
+```foo
+if (.becke_grid.allocated) .put_becke_grid   ! master: 42 broadcasts. Rank 1: zero.
+```
+
+Because TEXTFILE bookkeeping is collective, "print a bit more on one rank" *is* a collective
+mismatch. It does not fail where it happens: the ranks stay superficially in step until some
+later collective pairs with the wrong partner. In the observed case rank 1 died in
+`TEXTFILE:close` with *"not an existing file!"* — its `.exists` broadcast had received another
+rank's payload. The message named a file, a routine and a rank, and all three were innocent.
+
+Two ways out, and you must pick one deliberately:
+
+- **Resynchronise** the state across ranks when the region ends, or
+- **keep the later code non-collective** — which for pure output means switching per-rank mode
+  on and letting the master write alone. That is what `MOLECULE.PUT:put_atom_group_mols` does;
+  note it saves and restores the caller's mode rather than forcing `FALSE`, since it may itself
+  be called from inside a per-rank region.
+
+Corollary: **verify a mode switch is actually on before trusting anything downstream of it.**
+`SYSTEM:set_per_rank_IO_allowed` assigned `.keyword_echo` instead of `.per_rank_IO_allowed` for
+as long as it had existed, so the whole mechanism was dead code that looked live, and every call
+site was silently toggling an unrelated flag. A one-line probe printing the flag at the point of
+use would have found it immediately; three careful readings of the call sites did not.
+
 ### How to debug a collective desync
 
 Inspection does not work; measurement does. This found the `TEXTFILE:flush` bug in an afternoon
 after two failed attempts at reasoning it out:
 
-1. **Trace every broadcast's length** from the `PARALLEL:broadcast` *template*, so all 25 type
-   instantiations are covered by a single edit:
+1. **Trace every broadcast** from the `PARALLEL:broadcast` *template* — a single edit covers
+   all 25 type instantiations, because they are all `get_from` of one body. Log the **datatype
+   as well as the count**; the type alone often identifies the caller (`t=MPI_CHARACTER n=256`
+   is a TEXTFILE string buffer, `n=1` integers are `.record`/`.IO_status` bookkeeping).
+2. **Write each rank's trace to its own file**, by letting Fortran auto-connect the unit:
    ```foo
-   #ifdef USE_PRECONDITIONS
-         write(0,'(a,i0)') "TRACE_BCAST len=", LEN?
-         flush(0)
-   #endif
+         write(70+.processor_rank,'(a,i0,a,i0)') "t=",MPI_TYPE?," n=",LEN?
+         flush(70+.processor_rank)
    ```
-2. **Run under `mpirun --tag-output -n 2`**, split the stream by rank, and **diff the two length
-   sequences**. `MPI_ERR_TRUNCATE` *is* a length mismatch, so the first differing index is the
-   divergence.
-3. **Add `PHASE` markers** that print the running broadcast count, to find which interval of the
-   program contains that index. Bisect by adding more.
-4. **Then trace arguments** of whatever routine the interval implicates.
+   giving `fort.70`, `fort.71`, … **Do not** merge the ranks onto stderr and split afterwards.
+   Two ranks writing the same stream interleave *mid-line* despite flushing — an observed trace
+   contained the line `BCTRACt=7 n=1` — and the corruption lands exactly where you are looking.
+3. **Diff the two streams.** `MPI_ERR_TRUNCATE` *is* a length mismatch, so the first differing
+   index is the divergence. `cmp` reports the line number directly.
+4. **Add positional `TAG` markers** into the same per-rank stream, via a macro so a marker is
+   one short line at the call site:
+   ```
+   #    define TAG(S)  write(70+tonto%processor_rank,'(a)') "TAG "//S ; flush(70+tonto%processor_rank)
+   ```
+   Then **count broadcasts between consecutive tags and compare the counts per rank**. The first
+   segment whose counts differ names the routine — this is what turned "somewhere in a 2.4
+   million call stream" into "`.put_becke_grid`, 42 versus 0" in one run. Bisect by adding tags.
+5. **Then trace arguments** of whatever routine the interval implicates.
 
 Two dead ends, so nobody repeats them: gfortran's `backtrace()` **cannot symbolise on macOS**
 (*"executable file is not an executable"*), and a debug build alone does **not** localise a
