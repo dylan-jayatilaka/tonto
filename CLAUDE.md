@@ -88,6 +88,18 @@ Full details in the companion docs (§7).
   headers carrying **no** attributes, via its `( *$)` branch, but missed every header with
   `:: leaky`, `:: PURE`, `:: private`, `get_from(...)` and so on: **1285 procedure tags across
   `foofiles/` instead of 12757, i.e. 90% missing.**
+- **`PURE` vs `pure` — the case matters.** Upper-case `PURE`/`ELEMENTAL` are **macros**
+  (`include/macros.in`), `#undef`'d to nothing under `USE_PRECONDITIONS` and under `MPI`.
+  Lower-case `pure` is passed through as the **literal Fortran keyword** and stays pure in every
+  build. So a routine containing `ENSURE`, `DIE`, `WARN` or any other call that writes `tonto`
+  must be declared `PURE`, never `pure` — otherwise it compiles in release (where `ENSURE`
+  vanishes) and **fails only in a debug or MPI build**, with gfortran's misleading *"There is no
+  specific subroutine for the generic `ensure_`"* rather than a purity error. Cost the debug CI
+  a red badge on 2026-08-02; see the note at `PARALLEL:reduction_is_allowed`.
+- **`ENSURE`/`DIE` messages must be plain literals.** `SYSTEM:ensure` declares
+  `message :: STR`, i.e. `character(STR_SIZE)` and *not* `character(len=*)`, so a built-up
+  `trim(x)//"..."` matches no specific. (`DIE_IF` is fine with concatenation — it is used that
+  way throughout `run_har.foo`.)
 - **Variable attributes** (comma-separated, after the type): `IN`, `OUT`, `INOUT`, `PRIVATE`,
   `READONLY`, `POINTER`, `TARGET`, `SAVE`, `ALLOCATABLE`, `OPTIONAL`.
 - **Modules:** `module NAME … contains … end`; generic `interface NAME … end` blocks.
