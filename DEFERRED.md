@@ -1578,11 +1578,33 @@ fixes is not live.** Two facts, both checked:
    stuck at N-1. The present name-based scheme survives only because it is *idempotent*
    (`if (.do_parallel_lock==name) return`). So **depth counting requires lock-before-loop**,
    which requires the hoisted bounds below — it is the same piece of work, not a separate one.
-2. **No recursive routine contains a `parallel do`** (checked across all 184 files), so the
-   recursion defect is **latent, not live**.
+2. ~~No recursive routine contains a `parallel do`.~~ **WRONG — corrected 2026-08-03 (Dylan).**
+   That check looked only for the `recursive` *attribute*, i.e. **direct** recursion. The SCF
+   re-enters itself **indirectly**, through the initial guess. Confirmed from the translator's own
+   `--call-graph-report`: `MOLECULE_SCF_MODULE:fragment_scf_para` sits inside a **12-node call
+   cycle**:
 
-Non-trivial cost, no current payoff. **Do the per-rank-I/O work first** — that is what actually
-blocks parallel fragHAR.
+   ```
+   fragment_scf_para -> usual_scf -> initialize_scf -> get_initial_guess
+     -> get_initial_density_mx -> make_atom_group_guess_mos -> atom_group_scf
+     -> do_atom_group_scf -> scf -> fragment_scf -> fragment_scf_para
+   ```
+
+   It is the **only** `parallel do` routine in any cycle (26 such routines, 8 cycles in the whole
+   graph) — and it is precisely the routine at the centre of the fragHAR failure. With the
+   name-based lock the outer `fragment_scf_para` takes the lock, the inner one's `lock` is a
+   same-name no-op, and the inner one's **`UNLOCK` clears the lock while the outer loop is still
+   running**. The outer body then believes it is not in a parallel region: inner loops begin
+   distributing and reductions begin firing.
+
+   *Caveat:* this is static reachability. Whether the cycle is taken depends on the initial-guess
+   setting (`make_atom_group_guess_mos` is not on the promolecule path). It should be confirmed
+   dynamically — a counter in `lock_parallel_do` would settle it — but it is live enough to
+   matter, and it is in the failing path.
+
+**So the priority is raised, but the cost is unchanged**: depth counting still cannot be done
+while `LOCK_PARALLEL_DO` sits inside the loop body (fact 1), so it remains coupled to the
+translator change. The per-rank-I/O work is still the smaller, more certain win.
 
 **Proposed fix, all three at once:**
 
