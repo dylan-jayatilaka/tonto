@@ -1502,6 +1502,40 @@ of them, so it is a performance fix as much as a correctness one. That is the kn
 **rank-local** calls in `fragment_SCF_norm`/`_para`), and it is a separate hunt. The method that
 found the first one is recorded below and applies unchanged.
 
+## Root cause behind several of these: `MOLECULE` contains `MOLECULE`s (Dylan, 2026-08-03)
+
+The fragment machinery is a **module/problem mapping** problem, and most of the parallel defects
+above are downstream of it.
+
+Today a `MOLECULE` holds a `CRYSTAL` *and* holds `.mol(g)` — a set of `MOLECULE`s. So
+`MOLECULE.SCF:fragment_scf` must call back into `MOLECULE.SCF:scf`, and that is **why** the
+12-node cycle exists:
+
+```
+fragment_scf_para -> usual_scf -> initialize_scf -> get_initial_guess -> ...
+   -> do_atom_group_scf -> scf -> fragment_scf -> fragment_scf_para
+```
+
+It is not an accident of the initial-guess path; it is forced by a type containing instances of
+itself.
+
+**Put the fragments where the physics puts them** — a `CRYSTAL` containing several `MOLECULE`s,
+with `fragment_SCF` as a `CRYSTAL` method. Then `CRYSTAL:fragment_SCF` calls `MOLECULE:scf`,
+which calls nothing back, and:
+
+- **the cycle disappears**, and with it the recursion defect in the parallel-do lock;
+- the `subfrag_SCF` clone becomes unnecessary;
+- depth counting loses its only *live* justification (the cycle was the sole `parallel do`
+  routine inside any cycle — 26 such routines, 8 cycles);
+- the parallel decision moves to the right place. Distributing work over fragments is a property
+  of the **container**. Today it is made inside a `MOLECULE` method that is simultaneously "do an
+  SCF on me" and "do SCFs on my children" — which is why `fragment_SCF_para` carries
+  `parallel_IO_allowed` toggling, per-fragment archives and a work scheduler: container concerns
+  in a molecule's clothes.
+
+Large refactor, and the right one. Worth noting as the destination even if the interim fixes
+above are taken first, so they are understood as interim.
+
 ## Design (2026-08-03): let MPI keep `PURE`, so the compiler forbids I/O in parallel regions
 
 Dylan's proposal, and it is a good one: if output inside a parallel region desynchronises the

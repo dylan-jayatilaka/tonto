@@ -457,6 +457,13 @@ before any code is written**, most likely in its own conversation (`/clear`).
 - **README/wiki reorganisation** (in progress, 2026-07-27) — split responsibilities: README =
   build + verify/test only; `docs/` = code-tracking dev references; wiki = user guides. Default
   build should be `release` (not `fast`); retire event-specific blocks to the wiki.
+- **Relocate the fragment machinery: a `CRYSTAL` should contain several `MOLECULE`s** (Dylan,
+  2026-08-03). Today a `MOLECULE` holds a `CRYSTAL` *and* holds `.mol(g)`, a set of `MOLECULE`s,
+  which forces `MOLECULE.SCF:fragment_scf` to call back into `MOLECULE.SCF:scf` — the 12-node
+  call cycle that makes the parallel-do lock unsafe in the one routine where it matters. Moving
+  `fragment_SCF` onto `CRYSTAL` dissolves the cycle, the recursion defect, and the need for a
+  cloned `subfrag_SCF`, and puts the decision to distribute work over fragments in the container
+  where it belongs. Full argument in `DEFERRED.md`.
 - Future tasks (own conversations): a module-level *call* graph in `writeDotFiles` (the
   `--simplify`/`--module` **use**-graph tooling is DONE — `scripts/simplify_callgraph.py`,
   `docs/CALL_GRAPHS.md`); introduce Fortran-2008 `submodule` constructs; test the MPI parallel
