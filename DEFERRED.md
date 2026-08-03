@@ -1387,6 +1387,53 @@ in `COMMAND_LINE:put_command_optarg` — i.e. *echoing the command line*. Master
 broadcasts there and rank 1 performs **3**. At the divergent index master sends a `STR` (256)
 while rank 1 is at a scalar (1), which is the truncation.
 
+## ROOT CAUSE FOUND AND FIXED (2026-08-03): `TEXTFILE:flush` put the margin twice on master
+
+```foo
+      if (IO_IS_ALLOWED) then
+         write(unit=.unit,...) trim(.buffer.string)
+         ...
+         .clear_and_put_margin        ! <-- MASTER ONLY
+         .record = .record + 1
+      end
+
+      PARALLEL_BROADCAST(.IO_status,...)
+      PARALLEL_BROADCAST(.record,...)
+
+      .clear_and_put_margin           ! <-- every rank
+```
+
+`clear_and_put_margin` ends in `.buffer.put(...)` → `BUFFER:put_str`, which **broadcasts**
+`.string` (256 bytes) and `.item_end`. So the master entered **one extra pair of collectives per
+flush**, the ranks fell out of step, and the next collective failed with `MPI_ERR_TRUNCATE`.
+
+**Why it hid for years:** `clear_and_put_margin` *returns early* when `.style.margin_width==0`,
+doing no collective at all — and that is the normal case. It only bites once something sets a
+margin. `COMMAND_LINE:put_command_optarg` calls `set_margin_width(2)`, which is why `hart` died
+exactly there, why the first 126 broadcasts matched perfectly (banner, margin 0), and why
+`tonto` was never affected.
+
+**Fix:** delete the call inside the guard; the one after the broadcasts already covers every
+rank. Verified — `hart` at 2 ranks goes from dying at 30 lines of output to **758**, and the
+truncation is gone. Serially unaffected: release rebuilt, short suite 50/51 unchanged, all four
+invariant checks pass, `ctest -L hart` 4/4.
+
+**Still open — `hart` at 2 ranks now dies mid-SCF** (exit 1, an `MPI_ABORT` from a `DIE`) after
+getting through options, CIF, Becke grid and into the first SCF. That is a *different* bug and a
+far better place to be. Diagnosis is hampered by the next item.
+
+### `DIE` messages are LOST under MPI
+
+When a `DIE` fires under MPI the message never appears — not on stdout, not on stderr, not in
+`<job>.err`. `SYSTEM:die` writes to the `std_err` TEXTFILE, which is *buffered*, and then calls
+`MPI_ABORT`, which kills the job before anything is flushed. So a parallel job that dies tells
+you **nothing at all** about why.
+
+That is its own defect and worth fixing before more MPI debugging: flush `std_err` (and stdout)
+immediately before `MPI_ABORT` in `SYSTEM:die`. It would have saved most of the effort above.
+
+### How it was found
+
 **The `256 1` pair is `BUFFER:put_str`** (`buffer.foo:505-528`). It broadcasts `.string`
 (a `BSTR`, 256 bytes) and then `.item_end` (an `INT`, 1) — exactly the repeating pair in the
 trace. So the whole output path is built on these, and the two ranks call `put_str` a
