@@ -391,8 +391,14 @@ before any code is written**, most likely in its own conversation (`/clear`).
      every debug MPI run. It cannot be a `WARN` either — those sites fire per shell-quartet. The
      **lint** is the right enforcement: the real bug is *lexical* containment, which it detects
      precisely. Full reasoning in `DEFERRED.md`.
-   - ⬜ **Depth-count the lock** so a recursive inner return cannot release an outer lock; restore
-     the `ENSURE` at `parallel.foo:308`. Small and self-contained; the natural next step.
+   - ⬜ **Fix the parallel-do lock — three defects, one mechanism** (design agreed 2026-08-03,
+     full write-up in `DEFERRED.md`): (a) recursion clears an outer lock — depth-count it;
+     (b) it assumes routine names are unique, which overloads break in principle (currently
+     holds, since the translator suffixes them); (c) **`LOCK_PARALLEL_DO` is emitted inside the
+     loop body**, so a rank given zero iterations never locks while its peers do — emit it
+     *before* the loop instead. (c) needs the translator and is the most valuable. Keep the
+     holder's **name** alongside the depth: it is what names the offending routine in every
+     diagnostic.
    - ✅ **Lint** for any `PARALLEL_*` macro lexically inside a `parallel do` body, and
      for any raw `write(`/`read(` on a `*.unit` expression outside `file.foo`/`textfile.foo`/
      `buffer.foo`. The second catches the raw-I/O class that crashed `DWGN_lamaGOET_NBO_file_47`

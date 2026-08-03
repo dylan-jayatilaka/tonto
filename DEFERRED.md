@@ -1437,6 +1437,96 @@ the fragment path. That is the known register-row territory (the per-fragment,
 **rank-local** calls in `fragment_SCF_norm`/`_para`), and it is a separate hunt. The method that
 found the first one is recorded below and applies unchanged.
 
+## Design (2026-08-03): let MPI keep `PURE`, so the compiler forbids I/O in parallel regions
+
+Dylan's proposal, and it is a good one: if output inside a parallel region desynchronises the
+ranks, then routines reachable from one should be `pure` — and the *compiler* should enforce it,
+rather than the programmer remembering.
+
+Today `include/macros.in` `#undef`s `PURE` under **`MPI`**, so an MPI build has no purity checking
+at all. The cost of stopping that, measured:
+
+| | count |
+|---|---|
+| routines declared `PURE`/`ELEMENTAL` | **4122** |
+| routines containing parallel constructs | 93 |
+| **both — would have to drop `PURE`** | **64** |
+
+So 64 routines lose a `PURE` they were never entitled to (they contain `parallel do` or a
+reduction, which mutate `tonto`), and **4058 keep compiler-enforced purity under MPI**. The first
+entry in that list is `buffer.foo:put_str` — declared `PURE` *and* broadcasting, which is exactly
+the routine desynchronising fragHAR. It is not pure and the compiler would say so.
+
+**Debuggability is not lost**, because there are *two independent* `#undef PURE` in `macros.in` —
+one in the `MPI` block, one in the `USE_PRECONDITIONS` block. Removing only the MPI one gives:
+
+| build | `PURE` | effect |
+|---|---|---|
+| MPI release | **on** | compiler forbids I/O in 4058 routines |
+| MPI debug | off (via `USE_PRECONDITIONS`) | probes still allowed |
+
+**Limit, stated plainly: this cannot fix fragHAR.** `fragment_SCF_para`'s `parallel do g` runs a
+whole SCF per fragment — archives, output, allocation — so those routines can never be pure.
+Compile-time purity covers **fine-grained** parallelism (the `shell1quartet` integral layer) and
+cannot cover **coarse-grained** parallelism over fragments. For that there are two honest
+options, and one must be chosen:
+
+1. make output **non-collective** inside a parallel region — i.e. stop broadcasting the buffer
+   when the ranks are doing different work; or
+2. **suppress or serialise** output there.
+
+Option 1 is the deeper fix and would also delete most of the ~147k broadcasts a fragHAR run
+currently performs (see "output costs two collectives per token").
+
+## Design (2026-08-03): fix the parallel-do lock — depth AND name, and lock outside the loop
+
+Agreed with Dylan while diagnosing the fragHAR desync. Three separate defects in one mechanism.
+
+**Today's lock is a single string, "first wins":**
+
+```foo
+lock_parallel_do(name)
+   if (.do_parallel_lock==name) return                    ! already ours
+   if (.do_parallel_lock==" ") .do_parallel_lock = name   ! take only if free
+unlock_parallel_do(name)
+   if (.do_parallel_lock==name) .do_parallel_lock = " "   ! release only if it matches
+```
+
+**1. Nesting is fine; RECURSION is not.** An inner `parallel do` cannot steal the lock and its
+unlock cannot release the outer one, so ordinary nesting — which today proved is *pervasive*,
+17 loops in `shell1quartet.foo` alone — is safe. But if a routine's own `parallel do` is
+re-entered recursively, the inner `lock("A")` is a no-op and the inner `unlock("A")` **matches
+and clears the lock while the outer loop is still running**. The code knows: there is a disabled
+`ENSURE(name/=.do_parallel_lock,"recursive parallel routines not allowed")` at `parallel.foo:310`
+and the comment says *"It is currently an error if the routine is recursive."*
+
+**2. It assumes routine names are unique** — its own comment warns so, and overloads are the
+obvious way that breaks (Dylan). *Currently it holds*: checked across the whole generated tree,
+every `LOCK_PARALLEL_DO` name is distinct, because the translator suffixes overloads
+(`CRYSTAL:make_unique_sf_0`, `_1`). But correctness resting on a naming convention fails silently
+the day the convention shifts.
+
+**3. `LOCK_PARALLEL_DO` is emitted INSIDE the loop body**, as its first statement. A rank given
+**zero iterations** never executes it, so it never locks while its peers do — the ranks disagree
+about whether they are in a parallel region. That is the "state that differs between ranks" trap
+that milestone 6 exists to remove, sitting in the mechanism milestone 6 relies on.
+
+**Proposed fix, all three at once:**
+
+- **Depth counter for correctness, name for diagnostics — keep both.**
+  `lock`: `depth = depth+1`, and record the name *only* on the 0→1 transition.
+  `unlock`: `depth = depth-1`, and clear the name on 1→0.
+  `DO_IN_PARALLEL` = `is_parallel AND depth==0`.
+  Recursion becomes correct; the name-uniqueness assumption **disappears**, because unlock no
+  longer matches on name; and the disabled `ENSURE` can be *deleted* rather than restored, since
+  recursion becomes legal.
+- **Keeping the name is not cosmetic.** It is the outer routine's identity in every diagnostic —
+  it is the only reason `MOLECULE.FOCK:make_u_JK_engine` was identified on 2026-08-03, from a
+  message that would otherwise have said "a reduction, somewhere".
+- **Emit `LOCK` before the loop and `UNLOCK` after** (translator change), so the lock state is
+  identical on every rank regardless of iteration count. This is the most valuable of the three
+  and the only one that needs `FooToFortran`.
+
 ## WITHDRAWN (2026-08-03): the runtime "abort on a suppressed reduction"
 
 Milestone 6 part 2 was implemented, and then **removed the next day, because its premise is
