@@ -1451,6 +1451,45 @@ So each rank runs a whole SCF on *its own* fragment, and that work performs coll
 written**, outside the `IO_IS_ALLOWED` guard. Different fragments produce different amounts of
 output, hence different numbers of collectives, hence `MPI_ERR_TRUNCATE`.
 
+**PROPOSED FIX (Dylan, 2026-08-03): make `parallel_IO_allowed` also switch off the broadcasts.**
+
+The switch already exists and is already used in the right places — `fragment_SCF_para` wraps its
+disk-FF writes in `set_parallel_IO_allowed(TRUE/FALSE)`. And `SYSTEM:IO_is_allowed`
+(`system.foo:6734`, which overrides the simpler `PARALLEL` version and is the one the
+`IO_IS_ALLOWED` macro calls) honours it:
+
+```foo
+if (.parallel_IO_allowed) then
+   res = TRUE                                        ! every rank may do I/O
+else
+   res = .is_master_processor OR (NOT .is_parallel)
+end
+```
+
+But it only removes the master-only **guard**. The **broadcasts** stay unconditional — the same
+half-measure as `FILE:per_rank_write`, which also removes the guard and not the synchronisation.
+That is why per-rank file I/O has never actually worked.
+
+The fix is to give the flag its full meaning: when it is set, the ranks are *deliberately* doing
+different I/O, so the bookkeeping broadcasts must be skipped.
+
+```
+#define PARALLEL_BROADCAST_IO(X,Y)   if (tonto%is_parallel .AND. .NOT. tonto%parallel_IO_allowed) \
+                                        call broadcast_(tonto,X,Y)
+```
+
+Apply it **only** to I/O bookkeeping — `.unit`, `.io_status`, `.record`, `exists`/`is_open`, and
+`BUFFER:put_str`'s buffer and cursor — and leave genuine data broadcasts (`FILE:read`'s payload,
+`plot_grid`'s `pt`, the random seed) alone.
+
+**Why it is safe**, which is the part worth checking: with the broadcasts disabled inside the
+region there is nothing collective left to mismatch, so a rank that takes zero iterations simply
+does nothing and no peer waits on it. The flag itself must be set and cleared *outside* the
+parallel loop so every rank agrees on the mode.
+
+**No translator change**, unlike every other option considered. It also deletes most of the
+~147,000 broadcasts a fragHAR run performs, so it is a scaling fix as much as a correctness one.
+
 **This is structural, not a bug at a line.** Coarse-grained parallelism over fragments cannot
 work while writing output is a collective operation. Compile-time purity (see the `PURE` design
 above) cannot help either: a fragment SCF legitimately writes archives and output. The two
@@ -1601,6 +1640,16 @@ fixes is not live.** Two facts, both checked:
    setting (`make_atom_group_guess_mos` is not on the promolecule path). It should be confirmed
    dynamically — a counter in `lock_parallel_do` would settle it — but it is live enough to
    matter, and it is in the failing path.
+
+**Dylan's `get_from` answer to the duplication objection.** A clone (`subfrag_SCF`) breaks the
+name collision and so fixes the cycle with no translator work — and my objection that clones
+drift (as `make_LS_mx` did) does **not** apply if the clone is generated:
+`subfrag_SCF :: get_from(MOLECULE.SCF:fragment_SCF)` produces it from a single definition, so it
+cannot diverge, and the translator tags its lock with the new name automatically. The inner call
+site must then be pointed at the clone. It is a point fix rather than a mechanism fix — another
+cycle would need another clone — but it is honest and cheap. **Measure first**: confirm the cycle
+is actually taken at runtime (a counter in `lock_parallel_do`) before cloning anything, since
+`make_atom_group_guess_mos` is not on the promolecule path.
 
 **So the priority is raised, but the cost is unchanged**: depth counting still cannot be done
 while `LOCK_PARALLEL_DO` sits inside the loop body (fact 1), so it remains coupled to the
