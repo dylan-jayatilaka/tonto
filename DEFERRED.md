@@ -1570,6 +1570,20 @@ current lowering leaves implicit. It needs the translator to emit and declare te
 parallel region by testing the lock). On its own it buys nothing, and done naively it costs the
 parallelism.
 
+**FINDING 2026-08-03 — depth counting is NOT a small self-contained change, and the defect it
+fixes is not live.** Two facts, both checked:
+
+1. **`LOCK_PARALLEL_DO` is the first statement *inside* the loop body, so it executes once per
+   iteration.** A depth counter would increment N times and decrement once, leaving the depth
+   stuck at N-1. The present name-based scheme survives only because it is *idempotent*
+   (`if (.do_parallel_lock==name) return`). So **depth counting requires lock-before-loop**,
+   which requires the hoisted bounds below — it is the same piece of work, not a separate one.
+2. **No recursive routine contains a `parallel do`** (checked across all 184 files), so the
+   recursion defect is **latent, not live**.
+
+Non-trivial cost, no current payoff. **Do the per-rank-I/O work first** — that is what actually
+blocks parallel fragHAR.
+
 **Proposed fix, all three at once:**
 
 - **Depth counter for correctness, name for diagnostics — keep both.**

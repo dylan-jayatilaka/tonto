@@ -12,6 +12,8 @@ references:
   [`docs/FOO_GRAMMAR_DOCUMENTATION.md`](FOO_GRAMMAR_DOCUMENTATION.md).
 - **What helps (and hinders) an AI assistant working in this codebase**, measured
   → §3 below.
+- **Writing parallel (MPI) code without stepping on a mine** → §1a below. Read it
+  before touching `parallel do`, any `PARALLEL_*` macro, or file I/O.
 
 ---
 
@@ -75,6 +77,177 @@ build (no `-DPURGE_DEAD_CODE`) is unaffected.
 Under the hood these use `FooToFortran` flags `--call-graph-report`,
 `--dead-code-report <root.foo>`, and `--purge-dead-code <root.foo>` (see
 [`CLAUDE.md §8`](../CLAUDE.md)).
+
+## 1a. Writing parallel (MPI) code in Foo — the pitfalls
+
+Every trap below cost real time in August 2026, and every one is **invisible in a serial run**,
+which is the only kind most people do. Read this before touching anything with `parallel do`,
+`PARALLEL_*`, or file I/O.
+
+### The one rule everything follows from
+
+**MPI collectives are matched by *program order*, not by name.** If rank 0 executes broadcast A
+then B, and rank 1 executes only B, MPI pairs rank 0's *A* with rank 1's *B*. When they are
+different sizes you get `MPI_ERR_TRUNCATE`; when they are the same size you get **silently wrong
+data**; when one rank has none left you get a **hang**.
+
+So the governing question for any code that runs under MPI is not "is this correct?" but:
+
+> **Does every rank reach this point the same number of times?**
+
+### Pitfall 1 — a collective inside an `if (IO_IS_ALLOWED)` block
+
+The guard means *master only*. A collective inside it is entered by one rank and no other.
+
+```foo
+if (IO_IS_ALLOWED) then
+   ...
+   .clear_and_put_margin        ! <-- this broadcasts. MASTER ONLY. Bug.
+end
+PARALLEL_BROADCAST(.io_status,tonto.master_processor)
+.clear_and_put_margin           ! <-- the correct one: every rank
+```
+
+That was a real bug in `TEXTFILE:flush` (fixed 2026-08-03) and it stopped `hart` working under
+MPI for years. It hid because `clear_and_put_margin` *returns early* when the margin width is
+zero, which is the usual case — so it only bit once a caller set a margin.
+
+**`scripts/check_parallel_lint.py` does not catch this**; extending it to would be worthwhile.
+
+### Pitfall 2 — a reduction *lexically inside* a `parallel do`
+
+`LOCK_PARALLEL_DO` is the first statement in the loop body, and `DO_IN_PARALLEL` is false while
+the lock is held. Every reduction macro is gated on `DO_IN_PARALLEL`, so:
+
+```foo
+parallel do i = 1,n
+   ...
+   PARALLEL_SUM(x)      ! DEAD CODE THAT LOOKS CORRECT
+end
+```
+
+The reduction never runs; each rank keeps 1/N of the answer, silently. Four such sites in
+`molecule.grid.foo` did exactly that. Put the reduction **after** the loop.
+`scripts/check_parallel_lint.py` catches this one, and it is in CI.
+
+### Pitfall 3 — but a *suppressed* reduction is usually CORRECT
+
+The mirror image, and the reason there is no runtime check for pitfall 2. This is fine:
+
+```foo
+SHELL1QUARTET:make_esfs_ss_0000     ! called from inside an outer `parallel do`
+   parallel do k = 1,n              ! runs SERIALLY, full range, on every rank
+   ...
+   PARALLEL_SUM(v11)                ! skipped -- and skipping is RIGHT
+```
+
+With an outer lock held the inner loop is serial, so each rank already holds the whole answer and
+there is nothing to combine. This is "MPI on the outside", and it is pervasive —
+`shell1quartet.foo` alone has 17 such loops. A runtime "abort on suppressed reduction" was
+implemented and **withdrawn** because it fires on all of them. Only *lexical* containment is a
+bug, which is why the enforcement is a static lint.
+
+### Pitfall 4 — file I/O is collective, all of it, not just writing
+
+`FILE`/`TEXTFILE` keep every rank's state consistent by broadcasting. **`open_for` broadcasts
+`.unit` and `.io_status`; `close` broadcasts `.io_status`; `exists` and `is_open` broadcast their
+result; `BUFFER:put_str` broadcasts the 256-byte buffer and the cursor on every token written.**
+
+Consequences:
+
+- **Writing output costs two collectives per token.** A `hart` run performs ~142,000 broadcasts
+  before its first fragment SCF, purely producing text.
+- **Any I/O inside a `parallel do` desynchronises the ranks**, because they are doing different
+  work and therefore different amounts of I/O. This is what blocks parallel fragHAR: at 2 ranks
+  the two ranks are in exact lockstep (141,907 broadcasts each) until they take *different
+  fragments*, and diverge immediately after.
+- **Switching binary/ascii does not help.** Measured inside the fragment loop: 96% of the
+  collectives are *scalars* — `unit`, `io_status`, `record` — i.e. open/close/inquire
+  bookkeeping, which binary archives perform too. Only ~4% is text.
+
+`FILE:per_rank_write` exists as an attempt at this: it is the ordinary write with the guard
+removed. It does not solve the problem, because the surrounding `open`/`close` still broadcast —
+which is why its precondition ("every rank writes its OWN file") was never satisfiable, and why
+it was found misused in serial loops.
+
+### Pitfall 5 — the parallel-do lock does two jobs
+
+`do_in_parallel` is asked two different questions:
+
+| question | asked by | when | must answer |
+|---|---|---|---|
+| "should **this** loop distribute?" | `PARALLEL_DO_START` / `_STRIDE` | *before* entry | yes |
+| "am I **inside** a parallel region?" | inner loops, reductions, I/O | *during* the body | yes |
+
+Those are opposite states of one flag. **Moving `LOCK_PARALLEL_DO` before the loop — the obvious
+"fix" — silently disables distribution**, because the bounds macros then see a held lock and each
+rank runs the full range. The loop stays correct and stops being parallel: no error, just lost
+speed.
+
+Also note `LOCK_PARALLEL_DO` is emitted *inside* the body, so it executes **once per iteration**.
+It is safe only because it is idempotent by name. Any scheme that counts (a nesting depth, say)
+is therefore incompatible with the current lowering.
+
+### Pitfall 6 — the error path must not use collectives
+
+A rank that is dying is, by definition, out of step with its peers. `TEXTFILE:flush` contains
+broadcasts, so flushing the error file from the dying rank while the others run on is a collective
+entered by one rank — a hang, replacing a diagnosable failure with an undiagnosable one.
+
+`SYSTEM:die` writes its message straight to Fortran's preconnected **stderr (unit 0)**, tagged
+with the rank, and then calls `MPI_ABORT`. Unit 0 because it exists on every rank, whereas the
+`std_err` file is opened only on the master.
+
+Until 2026-08-03 the message was written only under `IO_is_allowed`, so a dying **non-master**
+rank said nothing at all — no stdout, no stderr, no `<job>.err`. Fixing that immediately exposed
+two defects that had been invisible.
+
+### Pitfall 7 — `PURE` versus `pure`
+
+Upper-case `PURE`/`ELEMENTAL` are **macros** (`include/macros.in`), `#undef`'d to nothing under
+`USE_PRECONDITIONS` and under `MPI`. Lower-case `pure` is passed straight through as the Fortran
+keyword and stays pure in every build.
+
+So a routine containing `ENSURE`, `DIE`, `WARN` — anything that writes `tonto` — must be declared
+**`PURE`**, never `pure`. Get it wrong and it compiles in release (where `ENSURE` vanishes) and
+fails only in debug or MPI, with gfortran's thoroughly misleading *"There is no specific
+subroutine for the generic `ensure_`"* rather than a purity error.
+
+### How to debug a collective desync
+
+Inspection does not work; measurement does. This found the `TEXTFILE:flush` bug in an afternoon
+after two failed attempts at reasoning it out:
+
+1. **Trace every broadcast's length** from the `PARALLEL:broadcast` *template*, so all 25 type
+   instantiations are covered by a single edit:
+   ```foo
+   #ifdef USE_PRECONDITIONS
+         write(0,'(a,i0)') "TRACE_BCAST len=", LEN?
+         flush(0)
+   #endif
+   ```
+2. **Run under `mpirun --tag-output -n 2`**, split the stream by rank, and **diff the two length
+   sequences**. `MPI_ERR_TRUNCATE` *is* a length mismatch, so the first differing index is the
+   divergence.
+3. **Add `PHASE` markers** that print the running broadcast count, to find which interval of the
+   program contains that index. Bisect by adding more.
+4. **Then trace arguments** of whatever routine the interval implicates.
+
+Two dead ends, so nobody repeats them: gfortran's `backtrace()` **cannot symbolise on macOS**
+(*"executable file is not an executable"*), and a debug build alone does **not** localise a
+collective mismatch, because MPI aborts internally without a Fortran backtrace.
+
+### Always test in a debug MPI build
+
+Two separate defects in one week were invisible in release and obvious in debug, because
+`ENSURE` compiles away in release. The most recent: `hart --fos 0` called
+`set_F_sigma_cutoff(0)`, whose own `ENSURE` forbids it and whose own comment says *"make sure
+zero is not entered ... just leave it off!"*.
+
+```
+cmake -B build-mpi-debug -DCMAKE_Fortran_COMPILER=$HOME/opt/openmpi-gf14/bin/mpifort \
+      -DCMAKE_C_COMPILER=$HOME/opt/openmpi-gf14/bin/mpicc -DMPI=1 -DCMAKE_BUILD_TYPE=debug
+```
 
 ## 2. Pushing to GitHub
 
