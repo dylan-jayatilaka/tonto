@@ -394,9 +394,11 @@ before any code is written**, most likely in its own conversation (`/clear`).
    - ⬜ **Fix the parallel-do lock — three defects, one mechanism** (design agreed 2026-08-03,
      full write-up in `DEFERRED.md`): (a) recursion clears an outer lock — depth-count it;
      (b) it assumes routine names are unique, which overloads break in principle (currently
-     holds, since the translator suffixes them); (c) **`LOCK_PARALLEL_DO` is emitted inside the
-     loop body**, so a rank given zero iterations never locks while its peers do — emit it
-     *before* the loop instead. (c) needs the translator and is the most valuable. Keep the
+     holds, since the translator suffixes them); (c) `LOCK_PARALLEL_DO` is emitted inside the
+     loop body. **Correction: this is only worth fixing if lock-gated behaviour is wanted**, and
+     the naive fix (move the emission) *silently disables distribution*, because
+     `PARALLEL_DO_START`/`_STRIDE` consult the same flag before entry. Doing it safely means
+     hoisting the bounds into temporaries, then locking — a translator change. Keep the
      holder's **name** alongside the depth: it is what names the offending routine in every
      diagnostic.
    - ✅ **Lint** for any `PARALLEL_*` macro lexically inside a `parallel do` body, and

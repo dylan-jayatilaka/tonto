@@ -1532,10 +1532,43 @@ every `LOCK_PARALLEL_DO` name is distinct, because the translator suffixes overl
 (`CRYSTAL:make_unique_sf_0`, `_1`). But correctness resting on a naming convention fails silently
 the day the convention shifts.
 
-**3. `LOCK_PARALLEL_DO` is emitted INSIDE the loop body**, as its first statement. A rank given
-**zero iterations** never executes it, so it never locks while its peers do — the ranks disagree
-about whether they are in a parallel region. That is the "state that differs between ranks" trap
-that milestone 6 exists to remove, sitting in the mechanism milestone 6 relies on.
+**3. `LOCK_PARALLEL_DO` is emitted INSIDE the loop body** — and the reason that matters is *not*
+the one first recorded here. **Correction (2026-08-03):** the original claim was that a rank
+given zero iterations never locks, so the ranks disagree about being in a parallel region. That
+is harmless on its own: the lock is only consulted by code *inside* the body, which such a rank
+never executes, and the trailing `UNLOCK` no-ops on a clear lock.
+
+The real point is that **`do_in_parallel` is doing two different jobs**:
+
+| question | asked by | when | must answer |
+|---|---|---|---|
+| "should **this** loop distribute?" | `PARALLEL_DO_START` / `_STRIDE` | *before* entry | yes |
+| "am I **inside** a parallel region?" | inner loops, reductions, I/O | *during* the body | yes |
+
+They are the *opposite* states of one flag. Locking before the loop answers the second correctly
+and the first **wrongly** — and silently: `parallel_do_start` returns `f` and `parallel_do_stride`
+returns `s`, so every rank runs the full range. The loop is still correct, merely **not
+distributed**. A pure performance regression with no error, which is the worst kind. *Verified by
+reading both routines; this is why the naive "move the emission" fix must not be applied.*
+
+The two questions are separable **in time** — they are asked at different moments — and collide
+only because Fortran evaluates `do` bounds after the point where one would want to lock. Hoisting
+resolves it:
+
+```fortran
+lo = PARALLEL_DO_START(1,1)   ! asked while depth == 0 -> distributes
+hi = n
+st = PARALLEL_DO_STRIDE(1)
+LOCK_PARALLEL_DO("...")       ! now depth == 1
+do i = lo, hi, st             ! answers correctly throughout the body
+```
+
+so hoisting is not a workaround for a Fortran limitation; it makes explicit a sequencing the
+current lowering leaves implicit. It needs the translator to emit and declare temporaries.
+
+**Only do this if lock-gated behaviour is wanted** (e.g. making output non-collective inside a
+parallel region by testing the lock). On its own it buys nothing, and done naively it costs the
+parallelism.
 
 **Proposed fix, all three at once:**
 
