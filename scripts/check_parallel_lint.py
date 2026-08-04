@@ -192,6 +192,10 @@ def main():
               '(%d)' % len(bad_collective))
         print('      A reduction there is silently skipped; a broadcast or '
               'barrier there desynchronises the ranks.')
+        print('      For a reduction, use the loop clause instead -- '
+              '`parallel do i = 1,n reduce(x)` -- which the translator lowers '
+              'to a PARALLEL_SUM after UNLOCK_PARALLEL_DO, the only place it '
+              'can be written correctly.')
         for name, lineno, hdr, what, code in bad_collective:
             print('  %s:%d  %s  (loop opened at line %d)'
                   % (name, lineno, what, hdr))

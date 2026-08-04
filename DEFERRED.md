@@ -22,8 +22,9 @@ now covers the whole project, so it was renamed.)*
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
 **Highest-priority open items**, if you are looking for where to start:
-`data` statements silently dropped (translator, no diagnostic); NaN and negative ESDs from the
-least-squares variance-covariance matrix; and the MPI items behind milestones 6 and 7.
+NaN and negative ESDs from the least-squares variance-covariance matrix, and the MPI items
+behind milestones 6 and 7. (`data` statements silently dropped: **fixed 2026-08-04** — see
+below; the audit found no library file was ever affected.)
 
 ---
 
@@ -2503,7 +2504,7 @@ harness writes `stdout.bad` on a fail). The five listed above are all that remai
 
 # Translator and the Foo language
 
-## Translator: `data` statements at `program` scope are silently dropped
+## Translator: `data` statements at `program` scope are silently dropped — FIXED 2026-08-04
 
 **This one causes silently wrong answers, and it cost a day.** The ANTLR4
 translator emits `data` statements for module-scope variables (`atom.foo` 21/21,
@@ -2522,6 +2523,39 @@ what it cannot translate — silently discarding a statement is the worst option
 
 `runfiles/run_csq.foo` still has program-scope `data` and is not in the translated
 source list; it will hit this if revived.
+
+### Resolution (2026-08-04)
+
+**Both** halves of the recommendation above were implemented — the `data` is emitted,
+*and* the translator now rejects what it cannot translate.
+
+Root cause was a single line in `FooToFortran.emitBodyList`:
+
+```java
+if (b.localDecl() == null && b.stmt() == null) continue;   // blank / unhandled
+```
+
+`procBody` has seven alternatives; a `dataStmt` has both `localDecl` and `stmt` null,
+so it fell through this crack. The comment even said "unhandled".
+
+Now: `dataStmt` is emitted; `implicitStmt` and `useStmt` inside a body are skipped
+**deliberately**, each with a comment giving the reason (the translator emits its own
+`implicit none`, and the module's `<stem>.use` include already provides the `use TYPES`
+in `VEC{REAL}:min_BFGS` — emitting either in place would not compile); and **every other
+alternative throws**. A construct that parses but produces no output is now a build
+failure, which is the property this entry asked for.
+
+**The audit found the blast radius was smaller than feared.** Comparing every source
+`data` statement against the generated Fortran across all 184 files found no dropped
+statement anywhere in `foofiles/`. Five files looked like mismatches and all five are
+variables *named* `data` (`data :: VEC{REAL}, IN`, `data = data(keep)`), not statements.
+So no built binary was ever wrong: the library has no procedure-scope `data`, and the
+only affected program, `run_csq.foo`, is not built. `run_csq` now translates with all
+three of its `data` statements intact.
+
+The `run_har.foo` / `run_sf.foo` / `run_sf_derivs.foo` workarounds are **left in place**:
+they work, `hart` is now tested around them, and reverting tested code to restore a
+`data` statement buys nothing.
 
 Related: `none` is a reserved word in `Foo.g4`, so it cannot be used as a variable
 name. The parse error it produces (`mismatched input 'none'`) points at the *end*

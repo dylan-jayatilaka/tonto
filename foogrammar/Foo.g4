@@ -428,13 +428,27 @@ elseClause
 // `do`, optionally named (`outer: do`) and/or prefixed with a modifier word
 // such as `parallel` (`parallel do q = 1,n`).
 doStmt
-    : (name COLON)? name? DO (loopHeader | WHILE LPAREN expr RPAREN)? NEWLINE
+    : (name COLON)? name? DO (loopHeader | WHILE LPAREN expr RPAREN)? reduceClause? NEWLINE
       procBody*
       endKw name? NEWLINE?
     ;
 
 loopHeader
     : IDENTIFIER EQUAL expr COMMA expr (COMMA expr)?
+    ;
+
+// `parallel do i = 1,n reduce(x)` -- a reduction over the distributed loop.
+// The translator lowers it to a PARALLEL_SUM emitted AFTER UNLOCK_PARALLEL_DO,
+// which is the only place it can be written correctly: WORK_IS_SHARED is false
+// while the loop holds the lock, so a reduction written inside the body is a
+// silent no-op. See CLAUDE.md milestone 6 and docs/DEVELOPER.md pitfall 2.
+//
+// Deliberately NOT a keyword: `reduce` is already an ordinary identifier in the
+// sources (BECKE_GRID:set_reduce_H_angular_grid takes a dummy called `reduce`),
+// and a new lexer token would break every such use. It is matched here as a
+// plain `name` and checked for the text "reduce" in FooToFortran.emitDo.
+reduceClause
+    : name LPAREN expr (COMMA expr)* RPAREN
     ;
 
 selectStmt

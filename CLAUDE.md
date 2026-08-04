@@ -386,9 +386,18 @@ before any code is written**, most likely in its own conversation (`/clear`).
    `1/n_ranks` of the answer. The intent ("MPI on the outside", no interior collectives) is right
    and standard; the enforcement is invisible, so — per Dylan — "the programmer has to hold the
    call sequence in their head not to make bugs". Agreed fix, all four parts:
-   - ⬜ **`parallel do … reduce(x)`**, lowered by `FooToFortran` to emit the reduction after
-     `UNLOCK_PARALLEL_DO` (i.e. OpenMP's `reduction(+:x)`). Removes the failure mode entirely.
-     **The remaining big one** — grammar + translator + re-verification.
+   - ✅ **DONE (2026-08-04) — `parallel do … reduce(x)`**, lowered by `FooToFortran` to emit
+     `PARALLEL_SUM` after `UNLOCK_PARALLEL_DO`. Removes the failure mode entirely: the
+     reduction can no longer be written in the one place it is silently dead. Correct under
+     nesting too — an inner loop never acquires the lock, so its `UNLOCK` does not release it,
+     `WORK_IS_SHARED` stays false and the reduction is skipped, which is right because that
+     rank was given the full range. `reduce` is **not** a reserved word (it is already an
+     identifier in `becke_grid.foo`); it is matched as a plain name and checked in `emitDo`.
+     Sum only — `PARALLEL_VECTOR_SUM`/`PARALLEL_SYMMETRIC_SUM` stay hand-written.
+     **17 of the 23 existing sites converted** (the other 6 are `PARALLEL_SYMMETRIC_SUM`);
+     14 of the 17 produced **byte-identical** generated Fortran and the other 3 differ only by
+     dropping a redundant `if (WORK_IS_SHARED)` wrapper, so the lowering provably reproduces
+     what was hand-written. Serial suite unchanged: 50/51 loose, exact 45, lastdig 48.
    - ❌ **Abort on a suppressed reduction** under `USE_PRECONDITIONS` — implemented, then
      **WITHDRAWN 2026-08-03: the premise is wrong.** A reduction reached while a parallel-do lock
      is held is *also* the intended nesting pattern (an inner `parallel do` + reduction in a
@@ -435,12 +444,24 @@ before any code is written**, most likely in its own conversation (`/clear`).
    note. Diagnosis in progress with a Linux `-O2 + -fcheck=bounds` build and an `-O0 + -finit-*`
    poisoning build. See `docs/MPI.md` Finding 6.
 
-8. ⬜ **Translator: `data` statements at program scope are silently dropped.** Found while making
-   `hart` work. The declaration still compiles and the variable is simply left uninitialised — a
-   silently-wrong-answer bug with no diagnostic, in the same family as the MPI dead reductions.
-   Currently worked around in three runfiles; **the translator is the real fix**, and until it is
-   fixed any `data` statement anywhere in a program unit is a trap. Deserves a translator-level
-   audit for other constructs that are parsed and then quietly discarded.
+8. ✅ **DONE (2026-08-04) — Translator: `data` statements at program scope were silently
+   dropped.** Root cause was one line in `emitBodyList`: `if (b.localDecl() == null &&
+   b.stmt() == null) continue;  // blank / unhandled`. A `dataStmt` has both null, so it fell
+   through the crack — the variable was still declared, so the Fortran compiled and simply ran
+   uninitialised. Module scope was never affected (`emitModule` handles `data` separately),
+   which is why the library's 171 `data` statements were always fine.
+   **The audit it asked for was done, and the answer is reassuring**: comparing every source
+   `data` against the generated output found *no* dropped statement anywhere in `foofiles/`
+   (the 5 apparent mismatches are variables *named* `data`, e.g. `data :: VEC{REAL}, IN`), so
+   no built binary was ever wrong. The only casualty was `runfiles/run_csq.foo` (3 statements),
+   which is not in the build. The `hart` workarounds in `run_har.foo`/`run_sf.foo`/
+   `run_sf_derivs.foo` are left alone — they work and are now tested.
+   **The class is now closed, not just the instance**: the `continue` is gone. `dataStmt` is
+   emitted; `implicitStmt` and `useStmt` in a body are skipped *deliberately*, each with a
+   comment saying why (the translator emits its own `implicit none`; the module's `.use`
+   include already covers `use TYPES` in `VEC{REAL}:min_BFGS`); and **anything else throws**,
+   so a construct that parses but emits nothing is now a build failure rather than a silent
+   wrong answer. Verified: 184/184 files translate, output byte-identical to before.
 
 9. ⬜ **`write_archive` swallows the following keyword, and one test has never run its SCF.**
    `molecule.put.foo:674` tests `stdin.buffer.n_items==2`, but `n_items` counts the whole line
