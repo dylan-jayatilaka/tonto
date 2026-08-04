@@ -2381,7 +2381,44 @@ public final class FooToFortran {
                     c.lastLine = b.getStop().getLine();
                     continue;
                 }
-                if (b.localDecl() == null && b.stmt() == null) continue;   // blank / unhandled
+                if (b.dataStmt() != null) {                // `data x(1:3)/1,2,3/`
+                    // Was silently DROPPED here until 2026-08-04 (CLAUDE.md milestone 8):
+                    // this test used to read `if (b.localDecl() == null && b.stmt() == null)
+                    // continue;`, and a dataStmt has both null, so it fell through the crack.
+                    // The variable was still declared, so the Fortran compiled and simply ran
+                    // with it uninitialised -- a silently-wrong-answer bug with no diagnostic.
+                    // Module-scope data was never affected (emitModule handles it separately),
+                    // which is why the library's 171 data statements were always fine and only
+                    // program/procedure bodies lost theirs.
+                    c.flushHidden(f90, b.getStart().getTokenIndex(), indent);
+                    emitDataStmt(b.dataStmt(), indent);
+                    c.pos = Math.max(c.pos, b.getStop().getTokenIndex() + 1);
+                    c.lastLine = b.getStop().getLine();
+                    continue;
+                }
+                if (b.NEWLINE() != null) continue;         // blank line: nothing to emit
+                if (b.implicitStmt() != null) continue;
+                    // `implicit none` inside a program/procedure body. Deliberately not
+                    // emitted: emitProgram already writes one after the USE block, and a
+                    // second would not compile. This is a DECISION, not the old crack --
+                    // run_csq.foo:22 has one.
+                if (b.useStmt() != null) continue;
+                    // `use TYPES` inside a procedure body (VEC{REAL}:min_BFGS is the only
+                    // one). Deliberately not emitted: the module already pulls TYPES in via
+                    // its `<stem>.use` include, so the symbol is in scope, and Fortran wants
+                    // a procedure's USE before its declarations -- emitting it here, amid
+                    // them, would not compile. If a body ever needs a use the module lacks,
+                    // emit it at the procedure header instead.
+                if (b.localDecl() == null && b.stmt() == null)
+                    // Every remaining procBody alternative is one we do NOT emit. Refuse
+                    // loudly rather than skipping: a construct that parses and then vanishes
+                    // is the worst failure mode this translator has, because the Fortran
+                    // still compiles. If you need `use`/`implicit` inside a body, implement
+                    // it here -- do not restore the silent `continue`.
+                    throw new IllegalArgumentException(fooModuleName + ":" + currentProc
+                        + " (line " + b.getStart().getLine() + "): unhandled construct in a"
+                        + " procedure/program body -- '" + b.getText().trim()
+                        + "'. It parsed but nothing would be emitted for it.");
                 if (i == firstActive) {                       // hoisted preconditions belong to the
                     for (FooParser.StmtContext pc : preconds) emitPrecond(pc);   // signature: emit them
                     preconds.clear();                          // right after the last declaration,
@@ -2744,6 +2781,52 @@ public final class FooToFortran {
             // UNLOCK, which goes AFTER the end do (outside the loop), matching foo.pl
             spliceTrailingComment(c, x.getStop().getTokenIndex(), beforeEnd);
             if (parallel) f90.append(sp(indent)).append("UNLOCK_PARALLEL_DO(").append(tag).append(")\n");
+            emitReduceClause(x, indent, parallel);
+        }
+
+        /**
+         * Lower `parallel do ... reduce(a,b)` to one PARALLEL_SUM per variable,
+         * emitted AFTER UNLOCK_PARALLEL_DO -- i.e. outside the loop.
+         *
+         * That placement is the whole point, and it is correct under both
+         * nestings because of how the lock works (PARALLEL:lock_parallel_do):
+         *
+         *   - Outermost parallel loop: the lock was blank, so this loop took it;
+         *     UNLOCK clears it again, WORK_IS_SHARED becomes true, and the
+         *     reduction fires. Each rank contributed its slice, so it must.
+         *
+         *   - Inner parallel loop, with an outer one holding the lock under a
+         *     different tag: LOCK did not acquire (the tag differs and the lock
+         *     is not blank) and UNLOCK does not clear it, so WORK_IS_SHARED is
+         *     still false and the reduction is SKIPPED. Also correct: with the
+         *     lock held, PARALLEL_DO_START/_STRIDE gave this rank the FULL
+         *     range, so its sum is already complete and reducing would multiply
+         *     it by the rank count.
+         *
+         * The failure this exists to prevent -- a reduction written inside the
+         * body, where WORK_IS_SHARED is false and the macro therefore expands to
+         * a no-op that looks correct -- becomes unexpressible.
+         *
+         * KNOWN GAP (not fixed here, see CLAUDE.md milestone 6 bullet 3): if a
+         * routine containing a parallel do recurses into itself, the inner
+         * UNLOCK clears the OUTER loop's lock, because the tags match. A reduce
+         * on the inner loop would then fire when it should not. No current site
+         * combines recursion with a reduction.
+         */
+        void emitReduceClause(FooParser.DoStmtContext x, int indent, boolean parallel) {
+            FooParser.ReduceClauseContext rc = x.reduceClause();
+            if (rc == null) return;
+            String kw = nameText(rc.name());
+            if (!kw.equals("reduce"))
+                throw new IllegalArgumentException(fooModuleName + ":" + currentProc
+                    + ": unknown do-loop clause '" + kw + "' (only 'reduce' is defined)");
+            if (!parallel)
+                throw new IllegalArgumentException(fooModuleName + ":" + currentProc
+                    + ": 'reduce' is only meaningful on a `parallel do` -- a serial loop"
+                    + " needs no reduction, and emitting one would multiply the result"
+                    + " by the rank count");
+            for (FooParser.ExprContext e : rc.expr())
+                f90.append(sp(indent)).append("PARALLEL_SUM(").append(renderExpr(e)).append(")\n");
         }
 
         String renderForallHeader(FooParser.ForallHeaderContext h) {

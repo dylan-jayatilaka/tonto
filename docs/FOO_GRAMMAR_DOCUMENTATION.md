@@ -782,8 +782,42 @@ becomes (pre-CPP):
 ```
 
 The `LOCK_PARALLEL_DO` is emitted just inside the loop and the matching
-`UNLOCK_PARALLEL_DO` **after** the `end do`. Reductions (`PARALLEL_SUM`, etc.)
-and the lower-level MPI calls live in the `SYSTEM`/`PARALLEL` modules.
+`UNLOCK_PARALLEL_DO` **after** the `end do`. The lower-level MPI calls live in
+the `SYSTEM`/`PARALLEL` modules.
+
+### The `reduce(...)` clause
+
+**Write reductions with the loop clause, not by hand:**
+
+```foo
+parallel do k = 1,.ab_n_gaussian_pairs reduce(v11)
+   v11 = v11 + ...
+end
+```
+
+which lowers to exactly the `PARALLEL_SUM(v11)` shown above — emitted *after*
+`UNLOCK_PARALLEL_DO`. Several variables may be reduced at once: `reduce(a,b)`.
+Only summation is provided; `PARALLEL_VECTOR_SUM` and `PARALLEL_SYMMETRIC_SUM`
+are still written by hand.
+
+The clause exists because the hand-written form has one correct position and
+several plausible wrong ones. `PARALLEL_SUM(X)` expands to
+`if (WORK_IS_SHARED) call parallel_sum_(tonto,X)`, and `WORK_IS_SHARED` is
+**false while the loop holds the parallel-do lock** — so a `PARALLEL_SUM`
+written *inside* the loop body is a no-op that looks correct, and each rank
+keeps only its `1/n_ranks` share of the answer. Four such sites in
+`molecule.grid.foo` did exactly that. The clause makes the mistake
+unexpressible; `scripts/check_parallel_lint.py` catches the hand-written form.
+
+It is also correct when loops nest. An inner `parallel do` never acquires the
+lock (an outer loop holds it under a different tag), so its `UNLOCK` does not
+release it, `WORK_IS_SHARED` stays false, and the reduction is **skipped** —
+which is right, because with the lock held that rank was given the *full* loop
+range and its sum is already complete.
+
+`reduce` is **not** a reserved word: it is still usable as an ordinary
+identifier (`BECKE_GRID:set_reduce_H_angular_grid` takes a dummy called
+`reduce`). It is recognised only in this position.
 
 ---
 
