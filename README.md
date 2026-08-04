@@ -1,14 +1,14 @@
 # Tonto
 
-[![CI (Linux-release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml/badge.svg?branch=antlr4)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml?query=branch%3Aantlr4)
+[![CI (Linux-release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml/badge.svg?branch=release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml?query=branch%3Arelease)
 
-[![CI (Linux-debug)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml/badge.svg?branch=antlr4)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml?query=branch%3Aantlr4)
+[![CI (Linux-debug)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml/badge.svg?branch=release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml?query=branch%3Arelease)
 
-[![CI (Linux-MPI)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-mpi.yml/badge.svg?branch=antlr4)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-mpi.yml?query=branch%3Aantlr4)
+[![CI (Linux-MPI)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-mpi.yml/badge.svg?branch=release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-mpi.yml?query=branch%3Arelease)
 
-[![CI (WSL-release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml/badge.svg?branch=antlr4)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml?query=branch%3Aantlr4)
+[![CI (WSL-release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml/badge.svg?branch=release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml?query=branch%3Arelease)
 
-[![CI (WSL-debug)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml/badge.svg?branch=antlr4)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml?query=branch%3Aantlr4)
+[![CI (WSL-debug)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml/badge.svg?branch=release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml?query=branch%3Arelease)
 
 
 Tonto is a quantum chemistry and crystallography package, with a focus on
@@ -173,9 +173,10 @@ Tolerances are options on `scripts/suite_report.py` / `scripts/test.py`
 subset. To inspect one failure, compare the reference and `.bad` output in
 `tests/<suite>/<job>/`:  `vimdiff stdout stdout.bad`.
 
-**The CI badges** at the top link to GitHub Actions; open the latest run to see
-this same agreement table on its summary page, and download the `tests.log`
-artifact. Green means the short suite passed the loose gate.
+**The CI badges** at the top track the **`release`** branch — the one §2 tells you
+to clone. They link to GitHub Actions; open the latest run to see this same
+agreement table on its summary page, and download the `tests.log` artifact.
+Green means the short suite passed the loose gate.
 [**`docs/CI.md`**](docs/CI.md) covers what each workflow runs, how to start one by
 hand (`gh workflow run …` or the Actions tab), and how to read the result.
 

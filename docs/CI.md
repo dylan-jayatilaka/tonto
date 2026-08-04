@@ -37,18 +37,18 @@ reports that the workflow has no `workflow_dispatch` trigger.
 **only from the default branch** too. A weekly job defined on a feature branch does not
 run weekly — it does not run at all.
 
-Both consequences are live right now. `ci-wsl.yml`, `ci-wsl-debug.yml` and `ci-debug.yml`
-exist only on `antlr4`, so none of them can be started by hand, and the Monday
-(WSL-release) and Tuesday (WSL-debug) crons are **inert** until those files reach
-`master`. Merge first, or rely on the push triggers — which do work on `antlr4`, and
-cover three of the four workflows.
+Both consequences were live until **2026-08-04**, when `antlr4` was merged into `master`
+and `release`. All four workflow files now exist on the default branch, so every one of
+them can be started by hand, and the Monday (WSL-release) and Tuesday (WSL-debug) crons
+fire for real. Before that merge they existed only on `antlr4`, and the crons were inert
+— if you ever add a workflow on a feature branch again, expect the same silence.
 
 ### From the command line
 
 ```bash
-gh workflow run ci-wsl.yml --ref antlr4 -f run_full_build=true
-gh workflow run ci-wsl-debug.yml --ref antlr4    # takes no inputs
-gh workflow run ci-debug.yml --ref antlr4        # takes no inputs
+gh workflow run ci-wsl.yml --ref release -f run_full_build=true
+gh workflow run ci-wsl-debug.yml --ref release   # takes no inputs
+gh workflow run ci-debug.yml --ref release       # takes no inputs
 ```
 
 `run_full_build` is the one input `ci-wsl.yml` defines: leave it true to include the
@@ -112,8 +112,8 @@ pending checks on every PR, plus the failure modes of installing a distro on a W
 runner, is noise that isn't about your code.
 
 > **Scheduled runs expire.** GitHub disables `schedule:` triggers in public repositories
-> after **60 days without repository activity**. If `antlr4` goes quiet over a break, the
-> weekly WSL run stops until someone re-enables it in the Actions tab.
+> after **60 days without repository activity**. If the repository goes quiet over a
+> break, the weekly WSL run stops until someone re-enables it in the Actions tab.
 
 If a runner image ever loses nested virtualisation, WSL2 will fail to start; drop
 `wsl-version` to `'1'` in the workflow (WSLv1 has been available since `windows-2019`)
