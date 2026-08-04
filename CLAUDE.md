@@ -438,7 +438,16 @@ before any code is written**, most likely in its own conversation (`/clear`).
    Re-verified 2026-08-04 on achari2 (Linux) against current `antlr4`: **all four tests still
    abort at `-n 2`** in the `-O2 -fno-fast-math` build with `MPI_ERR_TRUNCATE`, exit 15, with the
    gate fix confirmed present in that build; `-n 1` passes exactly. One real cause was found and
-   fixed (below); at least one more remains. Four CIF-reading tests (`c9o9h8_read_cif_IT_group_9`,
+   fixed (`e3ef5906`, a collective gated on rank-local state — that stays fixed); the remainder is
+   **localised to a codegen bug in `textfile.F90` at `-O2`**, with controls: pinning that one file
+   to `-O1` makes all four tests pass (3/3) and removing the pin fails again (2/2); a single
+   `write` probe inside `TEXTFILE:look_for_item` masks it (5/5); `-fcheck=all` masks it *and
+   reports nothing*, so it is not a source-level out-of-bounds. The desync is one surplus integer
+   broadcast on rank 0 after 8,481 matching ones. A `.record`-divergence hypothesis was tested and
+   **rejected** (it matches on both ranks). Workaround ready but uncommitted (pin the file, as
+   `types.F90` and `shell1quartet.F90` already are). Open: which `-O2` pass (bisect left running
+   on achari2, `/tmp/m7bisect.log`), whether `-Ofast` is safe or merely lucky, and a minimal
+   reproducer before blaming gcc. Full detail in `docs/MPI.md` Finding 6. Four CIF-reading tests (`c9o9h8_read_cif_IT_group_9`,
    `maleate_read_CIF_H_double_bond_{new,old}_BLs`, `urea_lamaGOET_grown_CIF`) aborted at ≥2 ranks
    with a mismatched `MPI_Bcast` in `-O2 -fno-fast-math` while passing at `-Ofast`.
    **It was never undefined behaviour** — that was inferred from the symptom and is wrong.

@@ -422,6 +422,71 @@ least one other cause remains. Note also that the commit verified only *three* o
 The analysis below is retained because it is correct as far as it goes: the mechanism it
 describes is real and was fixed. What follows it is the continuing hunt.
 
+### Localised to a codegen bug in `textfile.F90` at `-O2` (2026-08-04)
+
+Everything below is from `achari2` (Linux x86_64, gfortran 14.2.0, Open MPI 5.0.9 built with the
+same compiler), `build-mpi-o2` = `-O2 -fno-fast-math`, test `c9o9h8_read_cif_IT_group_9` at
+`-n 2` unless stated. **Each claim has a control**; the earlier round of this investigation went
+wrong by inferring instead of measuring, so this time nothing is asserted without its opposite
+being tested.
+
+| experiment | result |
+|---|---|
+| no pin (control) | **FAIL** exit 15, 2/2 runs |
+| `textfile.F90` pinned to `-O1` | **PASS** 3/3 runs, and all four CIF tests pass |
+| one `write` probe inside `TEXTFILE:look_for_item` | **PASS** 5/5 runs |
+| that probe removed again | **FAIL** — the mask is that one probe |
+| a probe in `move_to_record_external` instead | FAIL — masking is specific to `look_for_item` |
+| `textfile.F90` at `-O2 -fcheck=all -fbacktrace` | **PASS**, and **no check fires** |
+| `textfile.F90` at `-O2 -fno-schedule-insns` | FAIL — *not* the arm64 `shell1quartet` pass |
+| `-n 1`, any build | PASS, **exact** agreement |
+
+**What the desync looks like.** Tracing every `MPI_BCAST` to a per-rank file (`fort.70`,
+`fort.71` — never a shared stream, they interleave mid-line) shows the ranks agreeing for
+**8,481** broadcasts of alternating `(MPI_CHARACTER 256, MPI_INTEGER 1)` pairs, then rank 0
+issuing **one surplus integer broadcast** that rank 1 never issues. Everything after is offset by
+one, and the next pair mismatches a 1-integer receive against a 256-character send:
+`MPI_ERR_TRUNCATE`.
+
+**A hypothesis that was tested and rejected.** `move_to_record_external` steps
+`move_to_back_record` once per record, one broadcast each, so a `.record` differing by one
+between ranks would produce exactly one surplus broadcast. Probing `.record` on both ranks at
+every call: **it matches everywhere**. Rank 0 does make three `move_to_record` calls rank 1 never
+makes, but they occur *after* the first divergence, so they are a consequence. Recorded because
+the hypothesis is a good one and someone will have it again.
+
+**Assessment.** `-fcheck=all` masks it and reports nothing, so this is not a source-level
+out-of-bounds. A single unrelated `write` in one routine masks it. It behaves like a **gcc
+miscompilation of `textfile.F90` at `-O2`**, not like a Foo-level bug -- which is why the
+`-fcheck=bounds` / `-finit-*` plan the milestone originally proposed would have found nothing.
+
+**Workaround available now**, and it is the one this project already uses twice (`types.F90` is
+pinned to `-O1`; `shell1quartet.F90` to `-O2 -fno-schedule-insns` on arm64 macOS):
+
+```cmake
+set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/textfile.F90
+    PROPERTIES COMPILE_OPTIONS "-O1")
+```
+
+`textfile.F90` is line-oriented I/O, not a hot path, so pinning it costs essentially nothing.
+**Not yet committed** -- see the open questions.
+
+**Open, for the next session:**
+
+1. **Which `-O2` pass?** A bisect over `-fno-schedule-insns{,2}`, `-fno-strict-aliasing`,
+   `-fno-tree-vrp`, `-fno-gcse`, `-fno-tree-pre`, `-fno-code-hoisting`, `-fno-store-merging` was
+   left running on achari2: script `~/m7bisect.sh`, driver `~/m7pin.sh`, log `/tmp/m7bisect.log`.
+   `-fno-schedule-insns` is already ruled out. **NOTE:** that script leaves an experimental
+   `set_source_files_properties` block in `CMakeLists.txt` on achari2 -- run
+   `git checkout CMakeLists.txt` there before pulling.
+2. **Is `-Ofast` genuinely safe or merely lucky?** The shipped build has never failed here, but
+   if this is a miscompilation that is luck, not immunity. Worth rebuilding `build-mpi-fast` on
+   achari2 and re-running the four tests before deciding the pin is only needed at `-O2`.
+3. **Is it really the compiler?** Before filing anything upstream, reduce it: the surplus
+   broadcast comes from somewhere in `look_for_item`/`move_to_record_external`; a minimal
+   reproducer would settle compiler-versus-source. Also worth trying gfortran 13 and 15 on the
+   same file.
+
 ### The original diagnosis (correct, but not the whole story)
 
 **It was never undefined behaviour.** That framing came from the symptom -- a failure that moves
