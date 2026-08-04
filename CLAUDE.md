@@ -434,8 +434,11 @@ before any code is written**, most likely in its own conversation (`/clear`).
    would confound the numbers. Full design in `DEFERRED.md`, "MPI: defects found during
    milestone 4".
 
-7. ✅ **DONE — the `-O2`-only MPI failure was diagnosed and fixed (`e3ef5906`, 2026-08-02);
-   record corrected 2026-08-04.** Four CIF-reading tests (`c9o9h8_read_cif_IT_group_9`,
+7. 🔶 **OPEN — partly diagnosed. NOT fixed, contrary to what `e3ef5906` and `macros.in` claim.**
+   Re-verified 2026-08-04 on achari2 (Linux) against current `antlr4`: **all four tests still
+   abort at `-n 2`** in the `-O2 -fno-fast-math` build with `MPI_ERR_TRUNCATE`, exit 15, with the
+   gate fix confirmed present in that build; `-n 1` passes exactly. One real cause was found and
+   fixed (below); at least one more remains. Four CIF-reading tests (`c9o9h8_read_cif_IT_group_9`,
    `maleate_read_CIF_H_double_bond_{new,old}_BLs`, `urea_lamaGOET_grown_CIF`) aborted at ≥2 ranks
    with a mismatched `MPI_Bcast` in `-O2 -fno-fast-math` while passing at `-Ofast`.
    **It was never undefined behaviour** — that was inferred from the symptom and is wrong.

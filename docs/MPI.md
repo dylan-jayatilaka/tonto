@@ -402,7 +402,27 @@ plus `-finit-integer`/`-finit-real=snan` would likely name it immediately). Reco
 guessed at. Note the practical consequence: `-Ofast` **hides** this, so the shipped configuration
 is the one where it is invisible, not the one where it is absent.
 
-### RESOLVED (fix 2026-08-02, `e3ef5906`; record corrected 2026-08-04)
+### PARTLY diagnosed — the gate fix was necessary but NOT sufficient (2026-08-04)
+
+**Retracted:** an earlier version of this section, written on 2026-08-04, declared this resolved
+on the strength of `e3ef5906`'s commit message and the comment in `macros.in`. **It is not.**
+Re-run on `achari2` (Linux x86_64) against current `antlr4` (`ed706c97`), in the same
+`-O2 -fno-fast-math` MPI build, **all four tests still abort at `-n 2`** with the identical
+`MPI_ERR_TRUNCATE` in `MPI_Bcast`, exit 15. `-n 1` passes with an *exact* match. The gate fix is
+confirmed present in that build:
+
+```
+#    define PARALLEL_BROADCAST0(X,Y)      if (tonto%is_parallel) call broadcast_(tonto,X,Y)
+```
+
+So `e3ef5906`'s claim to "fix the four CIF tests" was over-stated -- it removed one real cause
+(a collective gated on rank-local state, which was genuinely a bug and stays fixed), but at
+least one other cause remains. Note also that the commit verified only *three* of the four.
+
+The analysis below is retained because it is correct as far as it goes: the mechanism it
+describes is real and was fixed. What follows it is the continuing hunt.
+
+### The original diagnosis (correct, but not the whole story)
 
 **It was never undefined behaviour.** That framing came from the symptom -- a failure that moves
 with optimisation level and platform -- and it was wrong. The cause is deterministic and was
