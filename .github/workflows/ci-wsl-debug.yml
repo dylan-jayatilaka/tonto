@@ -1,0 +1,182 @@
+name: CI (WSL-debug)
+
+# Debug build inside a real WSL2 Ubuntu -- the WSL counterpart of ci-debug.yml
+# (CI (Linux-debug)), and the debug counterpart of ci-wsl.yml (CI (WSL-release)).
+#
+# SCOPE, deliberately narrow -- the same reasoning as ci-debug.yml: this builds
+# -DCMAKE_BUILD_TYPE=debug and runs two fast jobs to prove the binary executes.
+# It does NOT run the short suite, because the debug (-O0) build has 4
+# longstanding FP-boundary/structural failures documented in DEFERRED.md,
+# and wiring those in would give a permanently red badge -- worse than no badge.
+#
+# Why it exists: the debug build is where USE_PRECONDITIONS, -fcheck=bounds,
+# WARN/WARN_IF and non-PURE probing live, so it is the build used for all
+# debugging. It has silently rotted once already (gfortran-16 debug segfaults on
+# arm64 macOS, found 2026-07-30). Under WSL there is more to rot: a debug build
+# is far more I/O- and fork-heavy than a release one, which is exactly what WSL
+# is worst at.
+#
+# Triggers: weekly and on demand only, never on push. It is a ~60-90 minute
+# Windows-runner job, and -O0 makes the two smoke jobs slower to RUN even though
+# they are faster to compile. Nothing gates on it.
+#
+# STATUS: this workflow has not yet had a green run. It was written alongside the
+# WSL-release job and shares its setup, but the debug path through WSL is
+# unproven. Treat the first red run as "needs triage", not "the debug build is
+# broken".
+on:
+  schedule:
+    # Tuesdays 04:17 UTC -- a day after CI (WSL-release), so two hour-long
+    # Windows jobs never queue against each other. Off the hour on purpose:
+    # scheduled jobs bunch up on round numbers and get delayed.
+    - cron: '17 4 * * 2'
+  workflow_dispatch:
+
+jobs:
+  build-debug-wsl:
+    name: Debug build + smoke test inside real WSL
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - name: Check out with LF line endings
+        # MUST come before actions/checkout -- see the same step in ci-wsl.yml.
+        # Windows git defaults to core.autocrlf=true, which would hand WSL a CRLF
+        # source tree that cmake/WSL.cmake rightly refuses to configure.
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
+      - name: Check out (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up WSL
+        uses: Vampire/setup-wsl@v7
+        with:
+          distribution: Ubuntu-24.04
+          wsl-version: '2'
+          update: 'true'
+          # gcc is NOT optional and NOT implied by gfortran-14: the project is
+          # declared `project(tonto LANGUAGES Fortran C)`, and a bare WSL Ubuntu
+          # image has no C compiler (gfortran-14 pulls in gcc-14-base, not the
+          # gcc driver). Ubuntu CI runners ship one preinstalled, which is why
+          # only the WSL jobs ever hit this.
+          additional-packages: >-
+            gcc gfortran-14 libblas-dev liblapack-dev default-jdk
+            python3 perl make cmake git
+
+      - name: Environment
+        shell: wsl-bash {0}
+        run: |
+          echo "kernel : $(cat /proc/sys/kernel/osrelease)"
+          gcc --version | head -1
+          gfortran-14 --version | head -1
+          java -version 2>&1 | head -1
+          free -g | head -2
+
+      - name: Copy the checkout into the Linux filesystem
+        shell: wsl-bash {0}
+        # actions/checkout leaves the repo on the Windows drive, where building
+        # is 10-50x slower and cmake/WSL.cmake rejects it outright. See
+        # docs/BUILD_WSL.md.
+        run: |
+          rm -rf ~/tonto
+          cp -a "$PWD" ~/tonto
+          echo "copied $(du -sh ~/tonto | cut -f1) to ~/tonto"
+
+      - name: Configure (debug)
+        shell: wsl-bash {0}
+        # $GITHUB_STEP_SUMMARY is a WINDOWS-side variable, invisible inside WSL,
+        # and wsl-bash runs `bash -euo pipefail` so touching it aborts the step.
+        # Stage the summary in the workspace; a Windows-side step publishes it.
+        run: |
+          ws="$PWD"
+          set -o pipefail
+          cd ~/tonto
+          cmake -B ~/tonto-build/debug \
+                -DCMAKE_Fortran_COMPILER=gfortran-14 \
+                -DCMAKE_BUILD_TYPE=debug 2>&1 | tee ~/configure.log
+          {
+            echo '## WSL debug configure (WSL lines)'
+            echo '```'
+            grep '^-- WSL:' ~/configure.log || true
+            echo '```'
+          } >> "$ws/wsl-summary.md"
+
+      - name: Build (debug)
+        shell: wsl-bash {0}
+        # -j2 as in the other jobs: translation spawns one JVM per .foo file and
+        # WSL2 hands its VM only part of the runner's RAM. The configure log's
+        # "build with make -jN" line is the advisory version of this.
+        run: cmake --build ~/tonto-build/debug -- -j2
+
+      - name: Smoke test (the binary must run, not just link)
+        shell: wsl-bash {0}
+        # Two fast jobs. The point is to catch a debug binary that builds but
+        # dies immediately -- the arm64 gfortran-16 segfault mode -- rather than
+        # to police numerics, so tolerances are loose on purpose.
+        #
+        # The program path is absolute deliberately: scripts/test.py chdir's into
+        # a temp directory before launching it, so a relative --program resolves
+        # from there and vanishes. That is what broke CI (Linux-debug); test.py
+        # now absolutises it itself, and passing an absolute path costs nothing.
+        run: |
+          set -o pipefail
+          cd ~/tonto
+          for t in h2o_rhf_STO-3G h2o_rhf_cc-pVDZ; do
+            echo "== $t =="
+            python3 scripts/test.py \
+              --test-directory "tests/short/$t" \
+              --basis-sets "$PWD/basis_sets" \
+              --program "$HOME/tonto-build/debug/tonto" \
+              --log-level=ERROR
+          done
+
+      - name: Diagnostics on failure
+        if: failure()
+        shell: wsl-bash {0}
+        run: |
+          ws="$PWD"
+          exec > >(tee -a "$ws/wsl-summary.md") 2>&1
+          echo '## WSL debug-build diagnostics'
+          echo '```'
+          cat /proc/sys/kernel/osrelease
+          gcc --version | head -1 || echo "gcc MISSING"
+          gfortran-14 --version | head -1 || echo "gfortran-14 MISSING"
+          free -g | head -2
+          ls -l ~/tonto-build/debug/tonto || echo "no debug binary -- the BUILD failed"
+          grep '^-- WSL:' ~/configure.log || echo "(no WSL lines: configure never got that far)"
+          echo '```'
+
+      - name: Collect artifacts out of the Linux filesystem
+        if: always()
+        shell: wsl-bash {0}
+        # upload-artifact runs on the Windows side and cannot see the WSL
+        # filesystem, so copy anything worth keeping back to the workspace.
+        run: |
+          dest="$PWD/wsl-debug-artifacts"
+          rm -rf "$dest"; mkdir -p "$dest"
+          cp ~/configure.log "$dest/" 2>/dev/null || true
+          if [ -d ~/tonto/tests ]; then
+            ( cd ~/tonto && find tests -name '*.bad' -print0 \
+                | tar -cf - --null -T - 2>/dev/null ) | ( cd "$dest" && tar -xf - ) || true
+          fi
+          find "$dest" -type f | head -50
+
+      - name: Publish the WSL summary
+        if: always()
+        # Windows-side step (default pwsh), where $env:GITHUB_STEP_SUMMARY is in
+        # scope -- unlike inside WSL.
+        run: |
+          if (Test-Path wsl-summary.md) {
+            Get-Content wsl-summary.md | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-wsl-debug-diagnostics
+          path: wsl-debug-artifacts/
+          if-no-files-found: warn

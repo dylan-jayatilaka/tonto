@@ -637,8 +637,21 @@ contains
 
       d_Fa :: MAT{REAL}@
 
+      ! Once-only preamble, mirroring CRYSTAL:LS_structure_fit (crystal.foo:4272
+      ! onwards). All four used to run inside make_LS_mx, hence once per LS
+      ! iteration -- and the X_fit seeding once per ATOM per iteration, since it
+      ! sat inside that routine's `do u` loop.
+      .crystal.initialize_fit_data
+      .crystal.asymmetric_unit_atom.put_pADP_vector_to(.crystal.xray_data.X_fit)
+      if (.crystal.xray_data.refine_structure) .crystal.xray_data.X_ref = .crystal.xray_data.X_fit
+      .crystal.put_fit_header
+
       do
 
+         ! This allocation is REAL, and make_LS_mx relies on it: its d_Fa
+         ! dummy is INOUT, so what is created here is what it fills. It was
+         ! declared OUT, which deallocates an allocatable on entry and made
+         ! this line dead code -- and the job segfaulted. See make_LS_mx.
          d_Fa.create(.crystal.xray_data.reflections.dim,.crystal.asymmetric_unit_atom.no_of_pADPs)
          .make_LS_mx(d_Fa)
          .do_LS_refinement(d_Fa)
@@ -647,6 +660,22 @@ contains
          .crystal.xray_data.put_fit_table_body
 
          ! Finished?
+         !
+         ! update_fit_info is what DECIDES that, and it was missing: it sets
+         ! .fit_converged / .too_many_fit_iterations, and from them
+         ! .fit_finished, and it is also the only thing that advances
+         ! .fit_iteration (diffraction_data.set.foo, "fit_iteration =
+         ! fit_iteration + 1" at the end). Without it the loop tested a flag
+         ! nothing ever set: the fit re-solved iteration 1 forever, reprinting
+         ! identical rows -- 599 of them before a timeout, chi2 49.702984 every
+         ! time -- and never converged.
+         !
+         ! This loop is hand-rolled. The two that work call update_fit_info
+         ! immediately before the same test: CRYSTAL:LS_structure_fit
+         ! (crystal.foo:4332 and :4472), which is where LS_fit_HAs_MEMORY and
+         ! LS_fit_fragHAR_disk both end up. That is why the in-core path and
+         ! fragHAR converge and only this one did not.
+         .crystal.xray_data.update_fit_info
          if (.crystal.xray_data.fit_finished) exit
 
       end
@@ -725,7 +754,18 @@ contains
    make_LS_mx(d_Fa) :: leaky
    ! Calculate the LS matrix Low memory version.
       self :: target, INOUT
-      d_Fa :: MAT{REAL}@, OUT
+      ! INOUT, not OUT. The caller allocates this (LS_fit_HAs_disk does, with
+      ! exactly the shape used below) and its sibling DO_LS_refinement, which
+      ! takes the very same variable from the very same caller, is likewise
+      ! declared MAT{REAL}@, INOUT. `OUT` was the slip, and on an ALLOCATABLE
+      ! dummy it is not a documentation nicety: Fortran DEALLOCATES an
+      ! intent(out) allocatable on entry, so the caller's allocation was thrown
+      ! away, nothing here ever allocated it again, and it arrived unallocated
+      ! at DIFFRACTION_DATA:d_F_abs_dX -- whose "res" dummy is MAT{REAL}, OUT,
+      ! assumed-shape and NOT allocatable. Passing an unallocated allocatable
+      ! to such a dummy is undefined; gfortran dereferenced a null array
+      ! descriptor and every run that reached here died with SIGSEGV.
+      d_Fa :: MAT{REAL}@, INOUT
    
    ENSURE(.crystal.xray_data.allocated, "no data")
    ENSURE(.crystal.fragment_info_made, "no fragment info")
@@ -739,9 +779,6 @@ contains
 
       list      :: VEC{STR}@
       tags      :: VEC{STR}@
-      labels    :: VEC{STR}@
-      refine_U3 :: VEC{STR}@
-      refine_U4 :: VEC{STR}@
       sf_d :: MAT{CPX}@
       sf_u :: VEC{CPX}@
       sf_e :: VEC{CPX}@
@@ -787,26 +824,6 @@ contains
 
       ! Make sure HA stuff is there
       .make_atom_partition_info
-
-      ! Create refinement arrays & initialize (leaky)
-      ! - asymmetric atom and fragment atom pADPs are set.
-      ! Create space for asymmetric unit atom pADPs (leaky)
-      refine_U3 = .crystal.xray_data.refine_3rd_order_for_atom
-      refine_U4 = .crystal.xray_data.refine_4th_order_for_atom
-      .crystal.asymmetric_unit_atom.reset_pADPs_and_errors(refine_U3,refine_U4)
-
-      ! Create space for the fragment_atom pADPs (leaky)
-      do f = 1,.crystal.n_fragment_atoms
-         a = .crystal.asym_atom_for_frag_atom(f)
-         n_p_atom = .crystal.asymmetric_unit_atom(a).no_of_pADPs
-         .crystal.fragment_atom(f).reset_pADPs_and_errors(n_p_atom)
-      end
-
-      ! Set fragment_atom pADPs from asymmetric unit atom pADPs
-      .crystal.set_frag_from_asym_pADPs 
-
-      ! Get labels (leaky)
-      labels = .crystal.asymmetric_unit_atom.tag_pADP_labels
 
       ! Is there a nothing list?
       has_skip = .crystal.xray_data.refine_nothing_for_atom.allocated
@@ -858,12 +875,13 @@ contains
       end
       end
 
-      ! Sanity check
-      ! Create refinement arrays & initialize (leaky)
-      .crystal.xray_data.initialize_fit_data(n_p,n_f,labels)
-
-      ! Clean
-      labels.destroy
+      ! NOTE: the fit is initialised ONCE by LS_fit_HAs_disk before its loop,
+      ! via CRYSTAL:initialize_fit_data -- exactly where CRYSTAL:LS_structure_fit
+      ! does it. Calling it here meant once per LS iteration, re-creating
+      ! X_fit / X_fit0 and resetting chi2_fit0 to huge() every pass.
+      !
+      ! make_LS_mx now does one job: build the design matrix. That is the single
+      ! thing which genuinely differs between the disk path and the in-core one.
 
       ! Allocate structure factor array (leaky)
       ! For pne atom
@@ -915,12 +933,38 @@ contains
          c  = .crystal.unique_frag_atom(u)
          rc = .atom(c).position
   
-         ! Repetition factor for this atom
+         ! Repetition factor for this atom, INCLUDING the site occupancy.
+         !
+         ! The occupancy was missing here, and this is the routine
+         ! MOLECULE.RHO:get_Hirshfeld_atom_FFs_disk warns about in its own
+         ! comment -- "Also include the site occupancy factor (Dont forget this
+         ! for the non-fragHAR routine)". It was forgotten. Every other route to
+         ! an aspherical form factor applies it:
+         !
+         !   in core   MOLECULE.RHO:make_Hirshfeld_atom_FFs, :make_Salvador_-
+         !             atom_FFs, :make_sph_TFVA_atom_FFs   -- sf*s2*occupancy
+         !   on disk   MOLECULE.RHO:get_Hirshfeld_atom_FFs_disk (fragHAR)
+         !                                                  -- s2 = occupancy/sc
+         !   recompute MOLECULE.RHO:get_Hirshfeld_atom_FFs_for_atom
+         !                                                  -- sf*s2*occupancy
+         !
+         ! so the same structure refined with use_disk_SFs on and off gave
+         ! different structure factors whenever an occupancy was not 1. Silent:
+         ! for a fully occupied small molecule the factor is exactly 1 and
+         ! nothing changes, which is every job in tests/. It is disordered
+         ! structures and proteins -- per Dylan, "definitely not [one] for
+         ! proteins" -- where it is wrong.
+         !
+         ! sf_u feeds sf_e and the derivatives sf_d as well as the <tag>-SFs
+         ! file, so this corrects the refinement, not just the stored factors.
+         !
+         ! Indexed as .crystal.fragment_atom(c), matching get_Hirshfeld_atom_-
+         ! FFs_disk, because the two write the SAME files and must agree.
          sc = .crystal.frag_atom_sym_factor(c)
 
          if (NOT sc.is_zero) then
 
-            s2 = ONE/sc
+            s2 = .crystal.fragment_atom(c).site_occupancy/sc
   
             ! Get the Becke grid for atom "c" (leaky)
             .becke_grid.make_atom_grid(pt,wt,c)
@@ -958,7 +1002,7 @@ contains
          !  ! Write out sf_u
          !  arch.create(trim(.atom(c).tag)//"-SFs")
          !  if (.crystal.xray_data.use_text_SFs) arch.set_format("ascii")
-         !  arch.parallel_write(sf_u)
+         !  arch.per_rank_write(sf_u)
          !  arch.destroy
   
             ! Clean up atom "c" stuff
@@ -971,21 +1015,13 @@ contains
 
          end
 
-         ! Do a least squares
-  
-         ! Do the fit 
-  
-         ! Place asym atom position/ADPs in vector .xray_data.X_fit
-         ! - asymmetric_unit_atom keeps the pADPs
-         .crystal.asymmetric_unit_atom.put_pADP_vector_to(.crystal.xray_data.X_fit)
-         
-         ! If refining, store a copy of the pADPs in .xray_data.X_ref
-         if (.crystal.xray_data.refine_structure) .crystal.xray_data.X_ref = .crystal.xray_data.X_fit
-         
-         ! Banner, options/switches, initial parameters,
-         ! start banner, and iteration table header.
-         .crystal.put_fit_header
-         
+         ! NOTE: seeding X_fit from the atoms, copying X_ref and printing the
+         ! fit header used to happen HERE -- inside this `do u` loop, so once
+         ! per ATOM per LS iteration. X_fit is authoritative, so re-seeding it
+         ! from the atoms mid-fit throws away the refinement. They are now done
+         ! once in LS_fit_HAs_disk before the loop, where
+         ! CRYSTAL:LS_structure_fit has them.
+
          ! Constants
          ! Fragment atom
          f   = .crystal.unique_frag_atom(u)
@@ -1341,9 +1377,36 @@ contains
          
          ! WRITE SF_U TO DISK HERE TO SAVE TIME
          ! Write out sf_u
+         !
+         ! Plain `write`, NOT `per_rank_write`. The enclosing `do u` loop is
+         ! SERIAL, so every rank reaches this with the same "u", hence the same
+         ! atom "c", hence the same file name -- and per_rank_write is the
+         ! ordinary write with the master-only guard REMOVED, so that was every
+         ! rank writing one file concurrently, with no locking and no offsets.
+         ! See FILE:per_rank_write for the precondition it violates.
+         !
+         ! Not a regression: this loop was never parallelised. The commit that
+         ! introduced it (bfd30b95) followed two that say so outright -- "for
+         ! FUTURE parallelism" (b2c53834) and "needs to be tested before
+         ! parallelisation can begin" (15c2aee3). The per_rank_write came in
+         ! with the loop body, copied from MOLECULE.RHO:get_Hirshfeld_atom_FFs_-
+         ! disk, which does the same thing inside a `parallel do u` and is
+         ! therefore correct -- there each rank owns distinct u, so distinct
+         ! file names. The `parallel` keyword never arrived at this copy.
+         !
+         ! Master-only is right here, not `parallel do`: sf_e accumulates ACROSS
+         ! u (see "sf_e(k) = sf_e(k) + sf1" below) and make_F_predicted_from is
+         ! called INSIDE this loop, so parallelising needs a reduction and a
+         ! restructure. Since the loop is serial every rank computes the same
+         ! sf_u, so the master's file is complete and correct.
+         !
+         ! ARCHIVE:write is the safe path: FILE:open_for guards the open and
+         ! then broadcasts .unit and .io_status, so the DIE_IF stays collective,
+         ! and FILE:write/close are guarded with .record kept in step on every
+         ! rank.
          arch.create(trim(.atom(c).tag)//"-SFs")
          if (.crystal.xray_data.use_text_SFs) arch.set_format("ascii")
-         arch.parallel_write(sf_u)
+         arch.write(sf_u)
          arch.destroy
          
          sf_u.destroy
@@ -1455,6 +1518,25 @@ contains
       .crystal.shift_update_ff(dF)
       dF.destroy
 
+      ! Close the chain. X_fit is authoritative and the atoms follow it:
+      !
+      !   X_fit  --set_pADP_vector_to-->  asymmetric_unit_atom
+      !          --set_frag_from_asym_pADPs-->  crystal.fragment_atom
+      !          --THIS LINE-->  .atom
+      !
+      ! and make_LS_mx builds the next design matrix from .atom -- its Becke
+      ! grid and Fourier sum read .atom(c).position. Without this the moved
+      ! geometry never reached the next iteration, so the design matrix was
+      ! rebuilt from the ORIGINAL coordinates every pass.
+      !
+      ! The requirement was already written down two lines up -- ">>>
+      ! fragment_atom must be the same as molecule.atom" -- but nothing did it.
+      ! The in-core path gets away without it because CRYSTAL:LS_structure_fit
+      ! computes its form factors once, before the fit, and MOLECULE.HAR:LS_fit
+      ! does `.atom = .crystal.fragment_atom` after the whole thing. The disk
+      ! path rebuilds every iteration, so it needs the refresh every iteration.
+      .atom = .crystal.fragment_atom
+
    end
 
 !  ==============
@@ -1488,7 +1570,7 @@ contains
       .crystal.xray_data.set_is_IAM_refinement(TRUE)
 
       ! Isotropic H's?
-   ! if (.crystal.xray_data.refine_H_U_iso) .atom.set_isotropic_H_ADP
+      if (.crystal.xray_data.refine_H_U_iso) .atom.set_isotropic_H_ADP
 
       ! Do we need atomic density matrices
       if (NOT .crystal.xray_data.use_IAM_ITC_FFs) then

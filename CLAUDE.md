@@ -11,12 +11,17 @@ in **Foo**, a custom object-oriented preprocessor language that is translated to
 Fortran (95 / 2003+) and then compiled.
 
 - Foo sources live in `foofiles/` (`*.foo`). Maintainer: Dylan Jayatilaka.
-- Legacy translator: `foo.pl` (Perl) — the reference behaviour to reproduce. The
-  script itself has been removed from the repo now that the ANTLR4 translator
-  drives the build; its frozen output survives in `release/`, which remains the
-  reference snapshot to match.
+- Legacy translator: `foo.pl` (Perl) — the reference behaviour the ANTLR4 translator was built
+  to reproduce. **Both `foo.pl` and its frozen reference output have since been removed**; the
+  ANTLR4 translator now drives the build and the task is **complete** (validated by build +
+  `ctest` on Linux and CI — see §2). The working-tree `release/` and `debug/` directories are
+  ordinary **out-of-source CMake build trees** (untracked, regenerable); `debug/` is currently
+  out of date. There is **no** reference-snapshot directory to preserve.
 - Executables: `build/tonto` (main program), `build/hart` (standalone Hirshfeld atom
-  refinement; `hart -help`).
+  refinement; `hart --help` — see `docs/HART.md`).
+- **All programs take GNU long options only** (`--input`, `--basis`, `--help`, …).
+  Single-dash spellings were removed; `COMMAND_LINE.process_options` rejects one
+  with a message naming the `--name` to use instead.
 - Run scripts: `runfiles/`. Test jobs: `tests/`.
 
 **Translator output.** For each `module.foo` the translator emits three files:
@@ -25,8 +30,8 @@ Fortran (95 / 2003+) and then compiled.
 - `module.use` — procedures pulled in from dependent modules.
 
 The `.int` and `.use` files are `#include`d into the `.F90` by the C preprocessor **at
-compile time**. So the translator output — and the `release/` reference — is **pre-CPP**:
-macros (`include/macros.in`) and `#include`s are left intact for the Fortran build to expand.
+compile time**. So the translator output is **pre-CPP**: macros (`include/macros.in`) and
+`#include`s are left intact for the Fortran build to expand.
 
 ## 2. Current task — the `antlr4` branch
 
@@ -40,9 +45,12 @@ Directory roles:
 
 | Path | Role |
 |------|------|
-| `release/` | Reference Fortran produced by `foo.pl` — the target to reproduce. |
-| `antlr4-release/` | Output of the new ANTLR4 translator — compared against `release/`. |
+| `build/`, `release/`, `debug/` | Local out-of-source CMake build trees (untracked, regenerable). `debug/` is currently out of date. |
 | `external/antlr4` | ANTLR4 itself (git submodule). |
+
+*(Historical: during development the translator's output was written to `antlr4-release/` and
+compared file-by-file against a frozen `foo.pl` reference snapshot. Both the snapshot and `foo.pl`
+are gone — the `release/` name is now just a build tree; validation is build + `ctest`.)*
 
 **Translation rules `foo.pl` applies** (the behaviour to match): reverse declarations
 (`var :: TYPE` → `TYPE :: var`), module renaming (`str.foo` → `STR_MODULE`), procedure-header
@@ -55,7 +63,7 @@ the build** — it parses every `foofiles/` file (submodules included) and emits
 compilable Fortran. A release `tonto` built from its output passes **124/124** `ctest` locally
 under the loose criterion, and **GitHub Actions CI is green** (short suite 51/51; badge in
 README; green as of `99dc3a1c`). Only the debug (`-O0`) build has 4 longstanding
-FP-boundary/structural failures (not translator bugs — see `ANTLR4_DEFERRED.md`). Phase B
+FP-boundary/structural failures (not translator bugs — see `DEFERRED.md`). Phase B
 (per-executable dead-code elimination + call/use-graph export) is done (§8, commit `860922ea`);
 the DOT graphs now have a `--simplify`/`--module` readability tool (`scripts/simplify_callgraph.py`,
 `docs/CALL_GRAPHS.md`).
@@ -70,8 +78,24 @@ Full details in the companion docs (§7).
   nestable (`VEC{VEC{REAL}}`). Dimensions/params with `(...)`: `STR(len=256)`,
   `MAT{REAL}(3,4)`, `VEC{STR}(len=1,6)`.
 - **Pointer / allocatable suffixes:** `INT*` (pointer), `VEC{REAL}@` (allocatable).
-- **Procedures:** `name(args) result (res) ::: ATTRS`. Attributes after `:::` include `PURE`,
-  `ELEMENTAL`, `get_from(MODULE, ...)`.
+- **Procedures:** `name(args) result (res) :: ATTRS`. Attributes after `::` include `PURE`,
+  `ELEMENTAL`, `leaky`, `private`, `get_from(MODULE, ...)`. It was `:::` until **`3ca1e53d`**
+  (2026-07-09, *"foo: replace ::: procedure-attribute separator with :: everywhere"*), which
+  moved to `::` for consistency with Fortran's attribute separator — 184 files, the grammar and
+  the translator included. This line was a straggler from that migration, corrected 2026-08-02
+  along with three others: **both** ctags procedure regexes and a dead `:::` operator rule in
+  the vim syntax files. The ctags effect was measured, not assumed — the old rule still matched
+  headers carrying **no** attributes, via its `( *$)` branch, but missed every header with
+  `:: leaky`, `:: PURE`, `:: private`, `get_from(...)` and so on: **1285 procedure tags across
+  `foofiles/` instead of 12757, i.e. 90% missing.**
+- **`PURE` vs `pure` — the case matters.** Upper-case `PURE`/`ELEMENTAL` are **macros**
+  (`include/macros.in`), `#undef`'d to nothing under `USE_PRECONDITIONS` and under `MPI`.
+  Lower-case `pure` is passed through as the **literal Fortran keyword** and stays pure in every
+  build. So a routine containing `ENSURE`, `DIE`, `WARN` or any other call that writes `tonto`
+  must be declared `PURE`, never `pure` — otherwise it compiles in release (where `ENSURE`
+  vanishes) and **fails only in a debug or MPI build**, with gfortran's misleading *"There is no
+  specific subroutine for the generic `ensure_`"* rather than a purity error. Cost the debug CI
+  a red badge on 2026-08-02; see the note at `PARALLEL:reduction_is_allowed`.
 - **Variable attributes** (comma-separated, after the type): `IN`, `OUT`, `INOUT`, `PRIVATE`,
   `READONLY`, `POINTER`, `TARGET`, `SAVE`, `ALLOCATABLE`, `OPTIONAL`.
 - **Modules:** `module NAME … contains … end`; generic `interface NAME … end` blocks.
@@ -98,29 +122,45 @@ make -j
 ```
 
 Other build types: `debug`, `release-static`, and MPI (`-DCMAKE_Fortran_COMPILER=mpifort …
--DMPI=1`, optionally `-DNO_ERROR_MANAGEMENT`).
+-DMPI=1`). The MPI must be built with the **same** Fortran compiler — Tonto does `USE mpi` and
+`.mod` files are compiler-version specific; configure now checks and stops with a clear message.
+`-DMPI=1` is a hard requirement: if MPI is not found, configure fails rather than silently
+producing a serial binary. See `docs/MPI.md`.
 
-## 5. Validation (for the `antlr4` task)
+*(`-DNO_ERROR_MANAGEMENT` was documented here but is a **no-op** — the symbol appears nowhere in
+`CMakeLists.txt`, `cmake/*.cmake` or `include/macros.in`. Every optimised build type
+unconditionally defines the positive `USE_ERROR_MANAGEMENT`, so there is no documented way to
+turn error management off. Removed rather than implemented.)*
 
-- Generate the `*.F90`, `*.int` and `*.use` files with the new translator
-  (`foogrammar/FooToFortran.java`) into `antlr4-release/`, and compare them against the
-  reference files in `release/` produced by `foo.pl`.
-- The bar is **equivalent, compilable Fortran — not a byte-exact match.**
-- The target is **every** generated file, not only the examples named in the docs
-  (`str`, `bin`, `int`, `real`, `atom`, `basis`, `molecule.*`); those were produced by an
-  earlier Claude attempt whose context was lost.
-- The reference files are **pre-C-preprocessor** (see §1); macro / `#include` expansion
-  happens during the Fortran compile, which is **not** part of this task.
-- **Running `ctest` is now in scope** (it is milestone 3 — see §9) but, like `make`, ask
-  before launching a long build/test run (§8). Use the loose criterion in `scripts/test.py`
-  (rel ≤ 0.2% OR last-digit ≤ 2) as the pass/fail gate, not exact match.
+**WSL is a supported build host.** `cmake/WSL.cmake` (included at the top of
+`CMakeLists.txt`, a no-op everywhere else) strips `/mnt/*` off `PATH` before any tool
+search — otherwise `find_package(Java)` resolves to a Windows `java.exe`, which cannot read
+Linux paths and needs `;` classpath separators while the translator is invoked with `:` —
+and hard-errors on a `/mnt/c` build tree or CRLF sources. `-DTONTO_WSL_STRICT=OFF` downgrades
+those to warnings. `scripts/wsl_doctor.sh` is the user-facing preflight;
+`scripts/wsl_selftest.sh` asserts every guard on an ordinary Linux box (no Windows needed) and
+runs on every push via `.github/workflows/ci-wsl.yml`. Details in `docs/BUILD_WSL.md`.
+
+## 5. Validation
+
+The `antlr4` translator task is **complete**; validation is now **build + `ctest`**:
+
+- Build a `release` tree and run `ctest` — but, like `make`, **ask before launching a long
+  build/test run** (§8). Use the loose criterion in `scripts/test.py` (rel ≤ 0.2% OR
+  last-digit ≤ 2) as the pass/fail gate, not exact match.
+- Green on Linux and GitHub Actions CI (short suite 51/51); full release suite 124/124 locally.
+  The debug (`-O0`) build has 4 longstanding FP-boundary/structural failures (see
+  `DEFERRED.md`) — not translator bugs.
+- *(Historical, no longer applicable: the translator's `*.F90`/`*.int`/`*.use` output was once
+  compared file-by-file — equivalent, not byte-exact — against a `foo.pl` reference snapshot.
+  Both that snapshot and `foo.pl` are gone. The output is pre-C-preprocessor: macros /
+  `#include`s are expanded by the Fortran compile, see §1.)*
 
 ## 6. Conventions & gotchas
 
 - Edit `.foo` sources in `foofiles/`, never the generated Fortran.
-- During a normal build, generated Fortran lands in `build/`; do not hand-edit it. (`release/`
-  and `antlr4-release/` are the reference vs. new-translator snapshots used for this task —
-  see §2.)
+- During a normal build, generated Fortran lands in the build tree (e.g. `build/`, `release/`);
+  do not hand-edit it — edit the `.foo` sources instead.
 - `external/*` are git submodules (sbf, lapack-release, antlr4); clone with `--recursive`.
 - Note that the files can be translated independently *provided* the `types.foo` file
 which defines all the derived types is processed first. The legacy translator uses
@@ -130,12 +170,87 @@ once the Parse tree is generated.
 ## 7. Reference docs in this repo
 
 - `docs/FOO_GRAMMAR_DOCUMENTATION.md` — full language description and Foo→Fortran conversion rules.
+- `docs/BUILD_WSL.md` — building under WSL: the four WSL-specific traps, the CMake guards, and how they are tested.
+- `docs/CI.md` — the three CI workflows, how to trigger one manually, and how to read a run.
+- `docs/HART.md` — the `hart` program: what it hard-codes, its full `--option` reference, how
+  it is tested (`tests/hart/`, the `program:`/`args:` IO keys, the invariant check), and its
+  remaining milestones.
+- `DEFERRED.md` — project-wide deferred issues (was `ANTLR4_DEFERRED.md`).
 - `README.md` — install/build/test/run instructions.
 - Project wiki — building on macOS/Windows, how to run tonto (linked from `README.md`).
 
 ## 8. Working agreement
 
 - Plan before coding; don't run `make` / `ctest` without asking.
+
+### Debugging and instrumenting Foo code — do it in a DEBUG build
+
+Learned the hard way (2026-07-30: five wasted release rebuilds). **Add probes in a `debug`
+build, not `release`.** `DEBUG_FLAGS` defines `USE_PRECONDITIONS`, which in `include/macros.in`:
+
+- **`#undef PURE`** — so a probe can go inside a `PURE` routine. In release, `PURE` is real and
+  any `stdout.show`/`flush` there fails to compile (often with a *misleading* "no specific
+  subroutine for the generic `flush_`" rather than a purity error).
+- **activates `WARN` / `WARN_IF`** — these are gated on `USE_PRECONDITIONS`, *not*
+  `USE_ERROR_MANAGEMENT`, so they compile to **nothing** in release. `DIE`/`DIE_IF` are gated on
+  `USE_ERROR_MANAGEMENT` and *are* live in release. So: a check that must fire in production has
+  to be a `DIE`, not a `WARN`.
+- adds `-fcheck=bounds`, useful given how easy overloading makes an arity/shape slip.
+
+Keep the debug test job **quick** (e.g. `tests/long/urea_rhf_STO-3G_HAR` is ~4 s) so the
+edit-build-run loop stays usable.
+
+**Two further traps, both from Foo's overloading — it makes the code pleasant to *use* and hard
+to *track*:**
+
+0. **Tracing an overload? Read the `.int` file first.** For each generic, the
+   generated `<module>.int` in the build tree lists the candidate specific
+   procedures under their *distinct* translator-assigned names:
+
+   ```fortran
+   interface put_ADP2_errors_to_
+      module procedure put_ADP2_errors_to_0
+      module procedure put_ADP2_errors_to_1
+   end interface
+   ```
+
+   This is the fastest way to learn how many overloads a name has and what they are
+   called in the generated Fortran. It does **not** say which one a given call site
+   resolves to, nor what `_0`/`_1` mean — for that, either open the definitions, or
+   put a `DIE` in the suspect routine and build with `-fbacktrace`, which names the
+   specific procedure *and* its callers in one run. Six consecutive mis-traces of
+   `put_ADP2_errors_to` (2026-07-30) were spent inferring by hand what these two
+   steps answer directly. See §3 of `docs/DEVELOPER.md`.
+
+1. **Confirm the path executes before analysing it.** A name match is not the overload that
+   runs. `put_CIF`, `make_CIF_esds`, `set_pADP_errors_to`, `put_ADP2_errors_to` and
+   `LS_structure_fit` all exist in several versions, and reading the wrong one wastes a rebuild.
+   Print a bare marker first; only then instrument.
+2. **Generic imports are per-module and inferred from observed calls.** The translator emits each
+   module's `use … only:` list from the calls it finds, so `stdout.show("x",<expr>)` with an
+   argument type that module has not used before gives "no specific subroutine for the generic
+   `show_`" — it cannot resolve e.g. `count(...)` to the INT overload. **Assign to a declared
+   variable first**, then show that.
+
+*Also note:* the `shell1quartet.F90` `-O2` pin (arm64 macOS miscompilation workaround, §2) is
+currently applied in **every** build type, so in a debug build that one file is compiled `-O2`
+while everything else is `-O0`. Harmless for correctness but it hampers debugging that file;
+worth gating on the release configs if it gets in the way.
+
+**`hart` build/run (confirmed).** `run_har` is built by the ordinary `make` (it is *not*
+`EXCLUDE_FROM_ALL`), so `build/hart` appears alongside `build/tonto`. A quick end-to-end job,
+~5 s — the same urea structure the `tests/hart/` suite uses:
+
+```bash
+mkdir -p /tmp/hart && cd /tmp/hart
+cp <repo>/tests/hart/urea_hart_STO-3G/urea_init.cif .
+TONTO_BASIS_SET_DIRECTORY=<repo>/basis_sets \
+  <repo>/build/hart --job urea --basis STO-3G --grid-accuracy low urea_init.cif
+# -> urea.out (log) and urea.archive.cif (refined coords + ADPs with esds)
+ctest -L hart      # the suite + the options invariant check
+```
+
+Full option reference and testing notes: `docs/HART.md`.
 
 **Translator build/run (confirmed).** Helper script: `scripts/build_translator.sh`.
 
@@ -155,8 +270,8 @@ java -cp "$JAR:build/translator/classes" FooToFortran \
 ```
 
 `FooToFortran` writes `<stem>.F90`, `<stem>.int`, `<stem>.use` (stem maps `vec{real}.foo`
-→ `vec_real`). Compare against `release/` (whitespace-insensitive; the bar is equivalent,
-not byte-exact). `types.foo` must be passed so the derived-type table is built first (§6).
+→ `vec_real`) into `antlr4-release/`. `types.foo` must be passed so the derived-type table is
+built first (§6). (This single-module path is a dev/debug aid; the normal build is via CMake, §4.)
 
 **Analysis modes (phase B — call graph / dead-code elimination).** `FooToFortran` also has
 read-only analysis and a purge mode, all built on a cross-module call graph it derives by
@@ -189,26 +304,177 @@ loose ctest suite as the full build.
 1. ✅ **DONE.** `foogrammar/Foo.g4` parses **every** file in `foofiles/` without error —
    including the submodule files (`molecule.*`, `diffraction_data.*`).
 2. ✅ **DONE.** `foogrammar/FooToFortran.java` emits `.F90` / `.int` / `.use` that are
-   **equivalent** (compilable, same behaviour) to the reference in `release/`.
+   **equivalent** (compilable, same behaviour) to the legacy `foo.pl` output (since removed).
 3. ✅ **DONE — A translator-built binary passing the loose suite, automated in CI.** A `tonto`
    compiled from the ANTLR4-generated Fortran runs the short suite under `scripts/test.py`'s
    **loose** comparison (rel ≤ 0.2% OR last-digit ≤ 2, plus junk-line filtering) and passes
    **51/51** in **GitHub Actions** (green as of `99dc3a1c`, 2026-07-27; `.github/workflows/ci.yml`,
    README badge). The full release suite is **124/124** loose locally. Residual: the debug (`-O0`)
    build has 4 longstanding FP-boundary/structural failures (#47/#64/#87/#91) that are not
-   translator bugs and are documented in `ANTLR4_DEFERRED.md`; CI runs the short release suite.
+   translator bugs and are documented in `DEFERRED.md`; CI runs the short release suite.
 
-**Open items** (future directions; details in `ANTLR4_DEFERRED.md`)
+**Milestones 4 and 5 — the remaining work on this project** (agreed 2026-07-31). These two are
+independent and can run in parallel; milestone 5 is the more important, and should be **planned
+before any code is written**, most likely in its own conversation (`/clear`).
+
+4. ✅ **DONE (2026-08-01) — MPI parallel build + numeric characterisation.** First MPI build ever
+   configured for this project. Outcome: **MPI at 1 rank reproduces serial exactly**; only
+   `h2o_rhf_cc-pVDZ_tdhf` shows rank-count drift (non-monotonic, already `KNOWN_MARGINAL`); and
+   `-ffast-math` moves the numbers more than MPI does. **One blocker**: `DWGN_lamaGOET_NBO_file_47`
+   crashed at ≥2 ranks on a negative-unit I/O error, **now fixed** (raw unguarded writes in
+   `put_NBO_file_47`), so the short suite is 50/51 under MPI, the same as serial. MPI is still
+   unaudited for `plot_grid`/`archive` raw I/O and for HAR's `parallel_write`. Eight MPI wrong-answer bugs were found and fixed on the way (see milestone 6).
+   Full report: `docs/MPI.md`. Build with
+   `-DCMAKE_Fortran_COMPILER=mpifort -DCMAKE_C_COMPILER=mpicc -DMPI=1` and compare against the
+   serial references with the usual loose gate. (`-DCMAKE_CXX_COMPILER=mpicxx` was in this
+   recipe but is **ignored** — `project()` enables `Fortran C` only; `-DNO_ERROR_MANAGEMENT` was
+   a **no-op**. Both removed.) **The MPI must be built with the same Fortran compiler**, since
+   Tonto does `USE mpi`. Details, and the list of MPI defects found, in `docs/MPI.md`. **Expect numeric drift**: reduction order varies with rank count, and
+   some of it is genuine UB — per Dylan, "numerics might go off — no worries, we'll check". The
+   deliverable is a *characterisation* (which tests drift, by how much, and whether the drift is
+   rank-count dependent), not necessarily a green suite. Untested since before the ANTLR4 work.
+
+5. ✅ **DONE (2026-08-03) — `hart`: verify, test, document, and make it work with `fragHAR`.**
+   See **`docs/HART.md`**, which is now the authoritative document for the program.
+   - ✅ *confirm the program actually works, and fix what does not.* It did not: every real run
+     died at once (`std_err` was created but never opened, so the `close_and_delete` that
+     follows hit "not an existing file"), **and exited 0 while doing so** — `SYSTEM.die` ended
+     in a bare `stop`. Both fixed; `stop 1` now applies to every `DIE`/`DIE_IF` in Tonto.
+   - ✅ *devise a testing method and add test jobs.* `tests/hart/`, label `hart`, in CI. The
+     `IO` manifest gained optional `program:` / `args:` keys, so an argv-driven program can be
+     tested by the same harness as a `stdin` job file. Plus `scripts/check_hart_options.sh`, an
+     invariant check comparing `--help` against the option `case` labels — it cannot be blessed.
+   - ✅ *correct its options, calls and documentation so they match reality.* `--disk-sfs` was
+     documented but its case label was commented out; `--dtol` was parsed and validated but
+     never used; `.cif2` was rejected though the message said it was required for restart;
+     `extreme` was accepted but undocumented. All reconciled, and the whole option set moved to
+     GNU `--long` form (which is what took `tonto`'s `-i`/`-o`/`-b`/`-h`/`-v` with it).
+   - ✅ *make it work **seamlessly with `fragHAR`***, i.e. crystals with more than one molecule
+     in the asymmetric unit — **milestone H1 in `docs/HART.md`**. **Serial is DONE
+     (2026-08-02)**: `hart` counts the atom groups and calls `fragHAR_refinement` when there is
+     more than one, with new `--mmcif`, `--group-charges '{ 1 -1 }'`,
+     `--group-multiplicities`, `--wavelength` and `--residual-cube` options, and it reproduces
+     `tests/long/gly_ala_fragHAR_rhf_STO-3G` **to every digit that reference prints** (R(F)
+     0.0324, GoF 3.3535, N_r 2514, N_p 181). Gated by `tests/hart/gly_ala_hart_STO-3G` (60 s).
+     It was a hookup, not a repair: fragHAR itself was broken 2020-01-23 by `f0d7cfd3` and
+     fixed 2026-06-01 by `d840e322`. **Parallel is DONE too (2026-08-03)**: `mpirun -n 2 hart`
+     runs fragHAR to exit 0 and reproduces the serial reference digit for digit (R(F) 0.032423,
+     GoF 3.353475; 1586 lines vs 1586, differing only in banner/timing), with the ranks in exact
+     lockstep for 2,421,451 broadcasts. Three defects had to go first, the last two of which are
+     the generalisable ones: (i) `SYSTEM:set_per_rank_IO_allowed` assigned `.keyword_echo`, so
+     the flag could **never be set** and the whole per-rank-I/O mechanism was dead code that
+     looked live — longstanding, not from the rename; (ii) the mode was scoped *inside* the
+     fragment loop body instead of around it, so bookkeeping broadcasts resumed while ranks were
+     on different fragments; (iii) **after a per-rank region the ranks' object state diverges by
+     design**, and `put_atom_group_mols` branched on it (`if (.becke_grid.allocated) …` — master
+     42 broadcasts, rank 1 zero), which desynced them; it is now non-collective. Because
+     TEXTFILE bookkeeping is collective, *printing more on one rank is itself a collective
+     mismatch*. Recorded as pitfall 8 in `docs/DEVELOPER.md` §1a, with the per-rank-file trace
+     recipe that found it after three wrong readings of the code. Still open, both minor:
+     `--group-charges-file` for proteins, and the `use_disk_SFs`→`use_disk_FFs` rename. Note
+     `fragment_SCF_para`'s scheduler changes shape above 2 ranks, so any parallel fragHAR test
+     must pin a rank count. All in `docs/HART.md` §6.
+     *(Unrelated to fragHAR but fixed the same day: the non-fragHAR **disk** form-factor path,
+     `hart --disk-sfs`, which had never worked — six defects — now does, and is gated by
+     `tests/hart/urea_hart_STO-3G_disk_ffs`, the first test ever to execute `make_LS_mx`.)*
+
+6. 🔶 **HALF DONE — make MPI reductions safe by construction** (agreed 2026-08-01; parts 2 and
+   4 done 2026-08-02/03). Milestone 4 uncovered a class of silent wrong-answer bugs with a single root
+   cause: the translator emits `LOCK_PARALLEL_DO` as the first statement *inside* a `parallel do`,
+   and `WORK_IS_SHARED` is false while that lock is held, so a `PARALLEL_SUM` written in the loop
+   body is **dead code that looks correct**. Four such sites in `molecule.grid.foo` each returned
+   `1/n_ranks` of the answer. The intent ("MPI on the outside", no interior collectives) is right
+   and standard; the enforcement is invisible, so — per Dylan — "the programmer has to hold the
+   call sequence in their head not to make bugs". Agreed fix, all four parts:
+   - ⬜ **`parallel do … reduce(x)`**, lowered by `FooToFortran` to emit the reduction after
+     `UNLOCK_PARALLEL_DO` (i.e. OpenMP's `reduction(+:x)`). Removes the failure mode entirely.
+     **The remaining big one** — grammar + translator + re-verification.
+   - ❌ **Abort on a suppressed reduction** under `USE_PRECONDITIONS` — implemented, then
+     **WITHDRAWN 2026-08-03: the premise is wrong.** A reduction reached while a parallel-do lock
+     is held is *also* the intended nesting pattern (an inner `parallel do` + reduction in a
+     routine called from an outer one runs serially over its full range per rank, so skipping the
+     reduction is correct). `shell1quartet.foo` alone has 17 such loops and the check aborted
+     every debug MPI run. It cannot be a `WARN` either — those sites fire per shell-quartet. The
+     **lint** is the right enforcement: the real bug is *lexical* containment, which it detects
+     precisely. Full reasoning in `DEFERRED.md`.
+   - ⬜ **Fix the parallel-do lock — three defects, one mechanism** (design agreed 2026-08-03,
+     full write-up in `DEFERRED.md`): (a) recursion clears an outer lock — depth-count it;
+     (b) it assumes routine names are unique, which overloads break in principle (currently
+     holds, since the translator suffixes them); (c) `LOCK_PARALLEL_DO` is emitted inside the
+     loop body. **Correction: this is only worth fixing if lock-gated behaviour is wanted**, and
+     the naive fix (move the emission) *silently disables distribution*, because
+     `PARALLEL_DO_START`/`_STRIDE` consult the same flag before entry. Doing it safely means
+     hoisting the bounds into temporaries, then locking — a translator change. Keep the
+     holder's **name** alongside the depth: it is what names the offending routine in every
+     diagnostic.
+   - ✅ **Lint** for any `PARALLEL_*` macro lexically inside a `parallel do` body, and
+     for any raw `write(`/`read(` on a `*.unit` expression outside `file.foo`/`textfile.foo`/
+     `buffer.foo`. The second catches the raw-I/O class that crashed `DWGN_lamaGOET_NBO_file_47`
+     -- and, more importantly, the *silent* variant of it: an unguarded write to a
+     non-redirected stdout uses preconnected unit 6, valid on every rank, so it interleaves
+     output instead of failing. Inspection alone cannot find those; a lint can.
+     Done as `scripts/check_parallel_lint.py` — a **source scan**, not a translator pass,
+     following `check_library_stdin.py`: registered as ctest `parallel_lint` (label `short`, so
+     in CI) and as an invariant line in `make report`. Guard-aware (a site inside
+     `if (IO_IS_ALLOWED)` is not reported — without that it flagged 48 correct sites). Clean over
+     184 files and 74 `parallel do` loops. It complements the abort rather than replacing it: the
+     lint sees only what is *lexically* inside a loop, the abort catches a reduction reached
+     through a **call** from inside one.
+
+   Sequenced *after* milestone 4's characterisation, because changing the lowering mid-flight
+   would confound the numbers. Full design in `DEFERRED.md`, "MPI: defects found during
+   milestone 4".
+
+7. ⬜ **Diagnose and fix the `-O2`-only MPI undefined behaviour** (found 2026-08-02). Four
+   CIF-reading tests (`c9o9h8_read_cif_IT_group_9`, `maleate_read_CIF_H_double_bond_{new,old}_BLs`,
+   `urea_lamaGOET_grown_CIF`) abort at ≥2 ranks with a **mismatched `MPI_Bcast`** in the
+   `-O2 -fno-fast-math` build, while the *same test on the same machine passes at `-Ofast`*, and
+   none fail on macOS arm64. A collective mismatch that moves with optimisation level and platform
+   is undefined behaviour. **`-Ofast` hides it**, so the shipped configuration is the one where it
+   is invisible, not the one where it is absent — which is why this is a milestone, not a deferred
+   note. Diagnosis in progress with a Linux `-O2 + -fcheck=bounds` build and an `-O0 + -finit-*`
+   poisoning build. See `docs/MPI.md` Finding 6.
+
+8. ⬜ **Translator: `data` statements at program scope are silently dropped.** Found while making
+   `hart` work. The declaration still compiles and the variable is simply left uninitialised — a
+   silently-wrong-answer bug with no diagnostic, in the same family as the MPI dead reductions.
+   Currently worked around in three runfiles; **the translator is the real fix**, and until it is
+   fixed any `data` statement anywhere in a program unit is a trap. Deserves a translator-level
+   audit for other constructs that are parsed and then quietly discarded.
+
+9. ⬜ **`write_archive` swallows the following keyword, and one test has never run its SCF.**
+   `molecule.put.foo:674` tests `stdin.buffer.n_items==2`, but `n_items` counts the whole line
+   *including* the keyword — and `write_archive density_mx` is already 2 items, so the optional
+   third word (`normalise`) is always sought and the **next line's first word is eaten instead**.
+   The correct test is `==3` (per Dylan: the third item is genuinely optional, since objects such
+   as `density_mx` know their own genre). `MOLECULE.READ:read_archive` had the identical bug and
+   was fixed during milestone 5; this is its twin.
+   The consequence is the part that matters: `tests/long/nh3_x-ray-constrained-rhf-cluster-charge_cc-pVTZ_restart`
+   eats its own `scf` keyword, runs in 40 ms, and its checked-in reference contains **zero lines
+   mentioning "SCF"** in 635 lines — the test has never done the science its name claims. Blast
+   radius is exactly that one job file (it is the only one in `tests/` using `write_archive`).
+   Fixing the off-by-one will rewrite that reference wholesale, so **regenerate it and inspect it
+   as science, not as a diff**. Sequenced after the MPI work.
+
+**Open items** (future directions; details in `DEFERRED.md`)
 
 - **Grammar still ACCEPTS the old submodule call forms** (`.SET:proc`, `.MAIN:proc`, `STR::proc`)
   even though they are now auto-resolved away in the sources; not tightened (harmless).
 - **README/wiki reorganisation** (in progress, 2026-07-27) — split responsibilities: README =
   build + verify/test only; `docs/` = code-tracking dev references; wiki = user guides. Default
   build should be `release` (not `fast`); retire event-specific blocks to the wiki.
+- **Relocate the fragment machinery: a `CRYSTAL` should contain several `MOLECULE`s** (Dylan,
+  2026-08-03). Today a `MOLECULE` holds a `CRYSTAL` *and* holds `.mol(g)`, a set of `MOLECULE`s,
+  which forces `MOLECULE.SCF:fragment_scf` to call back into `MOLECULE.SCF:scf` — the 12-node
+  call cycle that makes the parallel-do lock unsafe in the one routine where it matters. Moving
+  `fragment_SCF` onto `CRYSTAL` dissolves the cycle, the recursion defect, and the need for a
+  cloned `subfrag_SCF`, and puts the decision to distribute work over fragments in the container
+  where it belongs. Full argument in `DEFERRED.md`.
 - Future tasks (own conversations): a module-level *call* graph in `writeDotFiles` (the
   `--simplify`/`--module` **use**-graph tooling is DONE — `scripts/simplify_callgraph.py`,
   `docs/CALL_GRAPHS.md`); introduce Fortran-2008 `submodule` constructs; test the MPI parallel
-  build; boilerplate doc comments; and (long-term) a possible move off Fortran.
+  build; boilerplate doc comments; and (long-term) a possible move off Fortran. (Testing the MPI build
+  is now milestone 4 above.)
 
 > Submodules ARE implemented (dotted headers + colon call forms parse & auto-resolve; commit
 > `4cd995df`), and translator build/run commands are recorded in §8 — both former open items done.

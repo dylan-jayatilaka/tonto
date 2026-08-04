@@ -2,14 +2,20 @@
 !
 ! COMMAND_LINE: Object for processing the command line.
 !
-! The command line is separated into separate items comprising unix-style
-! options, their arguments, and items (which is the whole command line).
+! The command line is separated into separate items comprising GNU-style long
+! options, their values, and non-optional arguments.
 !
-! By default it is *assumed* that every -option is followed by an option
-! value, like: -option <value> ...
+! An option is spelled --option. A single-dash spelling is rejected, with a
+! message naming the long form to use instead.
+!
+! By default it is *assumed* that every --option is followed by an option
+! value, like: --option <value> ...
 !   *unless* immediately followed by another option,
-!   like: -option1 -option2 -option3, or
-!   like: -option1 -option2 -option3 <value3> arg1 arg2
+!   like: --option1 --option2 --option3, or
+!   like: --option1 --option2 --option3 <value3> arg1 arg2
+!
+! A value beginning with "-" is still read as a value, so a negative number
+! e.g. --fzcut -1.0 is not mistaken for an option.
 !
 ! Copyright (C) Dylan Jayatilaka, 2014
 ! Copyright (C) Dylan Jayatilaka, 2021
@@ -79,11 +85,12 @@ contains
    end
 
    process_options :: public
-   ! Process unix-style options on the command line
+   ! Process GNU-style long options on the command line.
+   ! Options are spelled "--name"; a single-dash spelling is an error.
       self :: INOUT
 
-      token,opt :: STR
-      i,length :: INT
+      token,opt,no_val :: STR
+      i,j,length,n_option_values :: INT
       expecting_option_value :: BIN
 
       ! Defaults
@@ -103,6 +110,7 @@ contains
       .n_items = 0
       .command_arguments = " "
       expecting_option_value = FALSE
+      n_option_values = 0
 
       do
 
@@ -125,21 +133,39 @@ contains
          ! Append command_arguments
          .command_arguments = trim(.command_arguments) // " " // trim(token.to_quoted_str) // " "
 
-         ! Is it an option?
-         if (token(1:1)=="-") then
+         ! Is it an option? Only the GNU long form "--name" is one.
+         if (token(1:2)=="--" AND len_trim(token)>2) then
 
-            ! Add it to list
-            opt = token
-            .option.append(trim(token(2:)))
-            .option_value.append("none")
+            ! Add it to list.
+            !
+            ! Both values go through a full-width STR first. Appending a
+            ! trimmed string or a literal makes an array constructor whose
+            ! elements have different CHARACTER lengths, which is illegal:
+            ! release does not check, but a debug build rejects it at run
+            ! time, so every option in every program aborted under -fcheck.
+            opt  = token(3:)
+            no_val = "none"
+            .option.append(opt)
+            .option_value.append(no_val)
             .n_options = .n_options + 1
             expecting_option_value = TRUE
 
-         ! Is it an option value?
+         ! Is it an option value? This test must precede the single-dash
+         ! rejection below, so a negative number e.g. "--fzcut -1.0" is
+         ! read as the value it is, not mistaken for an option.
          else if (expecting_option_value) then
 
             .option_value(.n_options) = token
+            n_option_values = n_option_values + 1
             expecting_option_value = FALSE
+
+         ! A single-dash option, or a bare "--". No longer accepted.
+         else if (token(1:1)=="-") then
+
+            j = verify(trim(token),"-")
+            DIE_IF(j==0,"'"//trim(token)//"' is not an option")
+            DIE("options must be given in GNU long form, use '--"// &
+                trim(token(j:))//"' instead of '"//trim(token)//"'")
 
          else
 
@@ -154,7 +180,10 @@ contains
 
       .command_arguments = trim(.command_arguments)
 
-      ENSURE(.n_items==(.n_args+2*.n_options),"inconsistent command line processing")
+      ! Every item is an argument, an option, or an option value. Note that
+      ! not every option has a value -- a valueless flag e.g. "--help" is
+      ! counted once, not twice.
+      ENSURE(.n_items==(.n_args+.n_options+n_option_values),"inconsistent command line processing")
 
 
       ! Make command_optarg
@@ -163,7 +192,11 @@ contains
 
       ! Options
       do i = 1,.n_options
-         .command_optarg(i) = "-" // trim(.option(i)) // " " // trim(.option_value(i).to_quoted_str)
+         if (.option_value(i)=="none") then
+            .command_optarg(i) = "--" // trim(.option(i))
+         else
+            .command_optarg(i) = "--" // trim(.option(i)) // " " // trim(.option_value(i).to_quoted_str)
+         end
       end
 
       ! Arguments
@@ -235,6 +268,45 @@ contains
 
    end
 
+   int_vec_for_option(opt,v) :: leaky
+   ! Read the value of option "opt" as a braced list of integers into the
+   ! allocatable vector "v", e.g. --opt '{ 1 -1 3 }'.
+   !
+   ! The braced form is deliberate: it is the same list syntax tonto uses for
+   ! the equivalent job-file keywords (`atom_group_charges= { 1 -1 }`), and the
+   ! braces make a truncated or shell-mangled list an error rather than a
+   ! shorter list that is quietly accepted.
+   !
+   ! The WHOLE list is one command-line token, so it must be quoted for the
+   ! shell -- process_options binds exactly one token as an option's value.
+   ! A bare `--opt { 1 -1 }` takes "{" as the value and then sends "-1" to the
+   ! single-dash rejection, which unhelpfully advises "--1".
+      self :: IN
+      opt :: STR, IN
+      v :: VEC{INT}@, OUT
+
+      val :: STR
+      f :: TEXTFILE@
+
+      val = .value_for_option(opt)
+
+   ! Checked here rather than left to TEXTFILE:read_all, whose own brace checks
+   ! are ENSUREs and so compile away in an optimised build -- which is every
+   ! build a user has.
+   DIE_IF(val.n_items<3,"--"//trim(opt)//": expected a braced list of integers, e.g. "// &
+                        "'{ 1 -1 }', not '"//trim(val)//"'")
+   DIE_IF(val.item(1)/="{" OR val.item(val.n_items)/="}", &
+          "--"//trim(opt)//": list must be in braces, e.g. '{ 1 -1 }', not '"//trim(val)//"'")
+
+      ! Read it with the same reader the job-file keywords use, via a
+      ! one-line internal file. No external file and no stdin redirection:
+      ! an argv-driven program may have no stdin at all.
+      f.create([val])
+      f.read_all(v)
+      f.destroy
+
+   end
+
 ! ===
 ! Put
 ! ===
@@ -290,7 +362,13 @@ contains
       stdout.set_margin_width(2)
       stdout.set_using_array_labels(FALSE)
       stdout.clear_and_put_margin
-      stdout.put(.command_optarg,by_column=TRUE,left=TRUE,width=STR_SIZE)
+      ! Width must leave room for the margin: the buffer is BSTR_SIZE and
+      ! STR_SIZE is the same, so asking for a full STR_SIZE column overflowed
+      ! it by exactly the margin width. Release does not check the buffer
+      ! cursor, a debug build does -- so this aborted every program that
+      ! echoed its command line. Still far wider than a page, so the entries
+      ! stay one per line.
+      stdout.put(.command_optarg,by_column=TRUE,left=TRUE,width=STR_SIZE-8)
       stdout.unsave_style
       end
 

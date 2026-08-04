@@ -9,6 +9,8 @@
 # define GIT_VERSION       "@TONTO_GIT_REVISION@"
 # define TONTO_PLATFORM    "@CMAKE_SYSTEM@"
 # define TONTO_BUILD_DATE  "@TONTO_BUILD_DATE@"
+# define TONTO_COMPILER    "@TONTO_COMPILER@"
+# define TONTO_LAPACK      "@TONTO_LAPACK@"
 
 !======================================================================
 ! Kind parameters for scalar intrinsic types. 
@@ -196,12 +198,14 @@
 #    define LOCK_PARALLEL_DO0(X)       ! Normally this is a parallel do loop ...
 #    define UNLOCK_PARALLEL_DO0(X)     ! End parallel do loop ...
 #    define IO_IS_ALLOWED0             TRUE
-#    define DO_IN_PARALLEL0            FALSE
+#    define WORK_IS_SHARED0            FALSE
 #    define PARALLEL_SUM0(X)
 #    define PARALLEL_VECTOR_SUM0(X,Y)
 #    define PARALLEL_SYMMETRIC_SUM0(X)
 #    define PARALLEL_SYMMETRIC_SUM_230(X)
 #    define PARALLEL_BROADCAST0(X,Y)
+#    define PARALLEL_BROADCAST_IO0(X,Y)
+#    define PARALLEL_BARRIER0
 
 # elif defined NO_GENERIC_NAMES
 
@@ -210,12 +214,14 @@
 #    define LOCK_PARALLEL_DO0(X)          call SYSTEM_lock_parallel_do(tonto,X)
 #    define UNLOCK_PARALLEL_DO0(X)        call SYSTEM_unlock_parallel_do(tonto,X)
 #    define IO_IS_ALLOWED0                SYSTEM_IO_is_allowed(tonto)
-#    define DO_IN_PARALLEL0               SYSTEM_do_in_parallel(tonto)
-#    define PARALLEL_SUM0(X)              if (DO_IN_PARALLEL0) call SYSTEM_parallel_sum(tonto,X)
-#    define PARALLEL_VECTOR_SUM0(X,Y)     if (DO_IN_PARALLEL0) call SYSTEM_parallel_vector_sum(tonto,X,Y)
-#    define PARALLEL_SYMMETRIC_SUM0(X)    if (DO_IN_PARALLEL0) call SYSTEM_parallel_symmetric_sum(tonto,X)
-#    define PARALLEL_SYMMETRIC_SUM_230(X) if (DO_IN_PARALLEL0) call SYSTEM_parallel_symmetric_sum_23(tonto,X)
-#    define PARALLEL_BROADCAST0(X,Y)      if (DO_IN_PARALLEL0) call SYSTEM_broadcast(tonto,X,Y)
+#    define WORK_IS_SHARED0               SYSTEM_work_is_shared(tonto)
+#    define PARALLEL_SUM0(X)              if (WORK_IS_SHARED0) call SYSTEM_parallel_sum(tonto,X)
+#    define PARALLEL_VECTOR_SUM0(X,Y)     if (WORK_IS_SHARED0) call SYSTEM_parallel_vector_sum(tonto,X,Y)
+#    define PARALLEL_SYMMETRIC_SUM0(X)    if (WORK_IS_SHARED0) call SYSTEM_parallel_symmetric_sum(tonto,X)
+#    define PARALLEL_SYMMETRIC_SUM_230(X) if (WORK_IS_SHARED0) call SYSTEM_parallel_symmetric_sum_23(tonto,X)
+#    define PARALLEL_BROADCAST0(X,Y)      if (tonto%is_parallel) call SYSTEM_broadcast(tonto,X,Y)
+#    define PARALLEL_BROADCAST_IO0(X,Y)   if (tonto%is_parallel .and. .not. tonto%per_rank_IO_allowed) call SYSTEM_broadcast(tonto,X,Y)
+#    define PARALLEL_BARRIER0             if (tonto%is_parallel) call SYSTEM_barrier(tonto)
 
 # else
 
@@ -224,12 +230,41 @@
 #    define LOCK_PARALLEL_DO0(X)          call lock_parallel_do_(tonto,X)
 #    define UNLOCK_PARALLEL_DO0(X)        call unlock_parallel_do_(tonto,X)
 #    define IO_IS_ALLOWED0                IO_is_allowed_(tonto)
-#    define DO_IN_PARALLEL0               do_in_parallel_(tonto)
-#    define PARALLEL_SUM0(X)              if (DO_IN_PARALLEL0) call parallel_sum_(tonto,X)
-#    define PARALLEL_VECTOR_SUM0(X,Y)     if (DO_IN_PARALLEL0) call parallel_vector_sum_(tonto,X,Y)
-#    define PARALLEL_SYMMETRIC_SUM0(X)    if (DO_IN_PARALLEL0) call parallel_symmetric_sum_(tonto,X)
-#    define PARALLEL_SYMMETRIC_SUM_230(X) if (DO_IN_PARALLEL0) call parallel_symmetric_sum_23_(tonto,X)
-#    define PARALLEL_BROADCAST0(X,Y)      if (DO_IN_PARALLEL0) call broadcast_(tonto,X,Y)
+#    define WORK_IS_SHARED0               work_is_shared_(tonto)
+! NOTE: the REDUCTIONS below are gated on WORK_IS_SHARED (= is_parallel AND no
+! parallel-do lock held) but the BROADCAST above is gated on is_parallel ALONE.
+! That asymmetry is deliberate. A reduction combines rank-partitioned partial
+! results, so inside a `parallel do` -- where the inner work is serial on each
+! rank -- there is nothing to combine and skipping it is CORRECT. A broadcast
+! replicates master-only data, so skipping it leaves non-master ranks holding
+! garbage AND, because .parallel_do_lock is rank-local state (it is set by
+! executing a loop body, which a rank given zero iterations never does),
+! different ranks could skip different broadcasts -- offsetting the collective
+! streams and giving MPI_ERR_TRUNCATE. The rule: whether a COLLECTIVE executes
+! must never depend on state that can differ between ranks. Confirmed 2026-08-02:
+! this one-line change fixes four CIF tests that aborted at >=2 ranks. See
+! docs/MPI.md and DEFERRED.md.
+#    define PARALLEL_SUM0(X)              if (WORK_IS_SHARED0) call parallel_sum_(tonto,X)
+#    define PARALLEL_VECTOR_SUM0(X,Y)     if (WORK_IS_SHARED0) call parallel_vector_sum_(tonto,X,Y)
+#    define PARALLEL_SYMMETRIC_SUM0(X)    if (WORK_IS_SHARED0) call parallel_symmetric_sum_(tonto,X)
+#    define PARALLEL_SYMMETRIC_SUM_230(X) if (WORK_IS_SHARED0) call parallel_symmetric_sum_23_(tonto,X)
+#    define PARALLEL_BROADCAST0(X,Y)      if (tonto%is_parallel) call broadcast_(tonto,X,Y)
+! The I/O layer's OWN broadcasts. They exist to keep every rank's file state --
+! unit, io_status, record, the text buffer -- identical, so the ranks take the
+! same wrapping/flushing decisions and therefore enter the same collectives.
+! Inside a per-rank I/O region that goal is neither achievable nor wanted: each
+! rank is deliberately working on its OWN file, so taking master's unit or
+! status would be wrong, and synchronising on it desynchronises everything else.
+! So these are skipped exactly when per_rank_IO_allowed says "this rank does its
+! own I/O" -- the same switch that already lifts the master-only guard in
+! SYSTEM:IO_is_allowed. Set and clear it OUTSIDE a parallel loop, so every rank
+! agrees on the mode. See docs/DEVELOPER.md pitfall 4.
+#    define PARALLEL_BROADCAST_IO0(X,Y)   if (tonto%is_parallel .and. .not. tonto%per_rank_IO_allowed) call broadcast_(tonto,X,Y)
+! A barrier is a COLLECTIVE, so like the broadcast above it is gated on
+! is_parallel ALONE and never on WORK_IS_SHARED: whether a collective executes
+! must not depend on rank-local state such as the parallel-do lock, or ranks
+! disagree about how many collectives to enter and the job hangs.
+#    define PARALLEL_BARRIER0             if (tonto%is_parallel) call barrier_(tonto)
 
 # endif
 
@@ -245,12 +280,14 @@
 #    define LOCK_PARALLEL_DO(X)          LOCK_PARALLEL_DO0(X)
 #    define UNLOCK_PARALLEL_DO(X)        UNLOCK_PARALLEL_DO0(X)
 #    define IO_IS_ALLOWED                IO_IS_ALLOWED0
-#    define DO_IN_PARALLEL               DO_IN_PARALLEL0
+#    define WORK_IS_SHARED               WORK_IS_SHARED0
 #    define PARALLEL_SUM(X)              PARALLEL_SUM0(X)
 #    define PARALLEL_VECTOR_SUM(X,Y)     PARALLEL_VECTOR_SUM0(X,Y)
 #    define PARALLEL_SYMMETRIC_SUM(X)    PARALLEL_SYMMETRIC_SUM0(X)
 #    define PARALLEL_SYMMETRIC_SUM_23(X) PARALLEL_SYMMETRIC_SUM_230(X)
 #    define PARALLEL_BROADCAST(X,Y)      PARALLEL_BROADCAST0(X,Y)
+#    define PARALLEL_BROADCAST_IO(X,Y)   PARALLEL_BROADCAST_IO0(X,Y)
+#    define PARALLEL_BARRIER             PARALLEL_BARRIER0
 #    undef  PURE
 #    define PURE
 #    undef  ELEMENTAL
@@ -263,12 +300,14 @@
 #    define LOCK_PARALLEL_DO(X)          ! Normally this is a parallel do loop ...
 #    define UNLOCK_PARALLEL_DO(X)        ! End parallel do loop ...
 #    define IO_IS_ALLOWED                TRUE
-#    define DO_IN_PARALLEL               FALSE
+#    define WORK_IS_SHARED               FALSE
 #    define PARALLEL_SUM(X)
 #    define PARALLEL_VECTOR_SUM(X,Y)
 #    define PARALLEL_SYMMETRIC_SUM(X)
 #    define PARALLEL_SYMMETRIC_SUM_23(X)
 #    define PARALLEL_BROADCAST(X,Y)
+#    define PARALLEL_BROADCAST_IO(X,Y)
+#    define PARALLEL_BARRIER
 
 # endif
 
@@ -638,9 +677,9 @@
 # define SHELL1QUARTET_ERI_PAIR_CUTOFF             TOL(6)
 
 # define TEXTFILE_IOSTAT_EOF                       -1
-# define TEXTFILE_STDIN_UNIT                       5
-# define TEXTFILE_STDOUT_UNIT                      6
-# define TEXTFILE_STDERR_UNIT                      7
+# define TEXTFILE_STD_IN_UNIT                       5
+# define TEXTFILE_STD_OUT_UNIT                      6
+# define TEXTFILE_STD_ERR_UNIT                      7
 # define TEXTFILE_COMMENT_CHARS                    "!#"
 # define TEXTFILE_QUOTE_CHARS                      "'"""
 # define TEXTFILE_LIST_DELIMITER                   "{}"

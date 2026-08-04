@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import logging
+import re
 from tempfile import gettempdir
 import getpass
 from getpass import getuser
@@ -7,6 +8,7 @@ import os
 from os.path import abspath, join
 from itertools import zip_longest
 import sys
+import shlex
 import shutil
 import subprocess
 import difflib
@@ -19,6 +21,11 @@ log = logging.getLogger('test')
 prefixes_to_ignore = [
     'Wall-clock', 'CPU time', 
     'Version', 'Platform', 'Timer', 'Build-date',
+    # Build provenance stamped into the banner (CMakeLists.txt -> macros.in ->
+    # molecule.main.foo). Deliberately ignored: it legitimately differs between
+    # machines, and the whole point is that it be visible in stdout without
+    # breaking reference comparisons.
+    'Compiler', 'LAPACK',
     'Warning', 'https', 'www', 'Peter', 'Daniel', 'Dylan',
     'WARNINGS', 'Look above', 'time taken for',
     '_audit_creation_date', 
@@ -93,6 +100,19 @@ def num_decimals(s):
     return dec
 
 
+# A crystallographic value-with-uncertainty, e.g. "0.034873(16)" or
+# "-0.0012(19)": the bracketed digits are the estimated standard uncertainty
+# expressed in units of the value's last decimal place.
+_VALUE_ESD = re.compile(
+    r'^([-+]?(?:\d+\.?\d*|\.\d+)(?:[EeDd][-+]?\d+)?)\((\d+)\)$')
+
+
+def split_value_esd(tok):
+    """("0.034873(16)") -> ("0.034873", "16"), else None."""
+    m = _VALUE_ESD.match(tok)
+    return (m.group(1), m.group(2)) if m else None
+
+
 def token_agreement(a_str, b_str, rel_tol, abs_tol, last_digit_tol):
     """Agreement of one numeric token pair (b_str = reference value).
     Returns a dict of verdicts + metrics, or None if the pair is non-numeric.
@@ -102,6 +122,31 @@ def token_agreement(a_str, b_str, rel_tol, abs_tol, last_digit_tol):
       ld_ok  : |a-b| <= last_digit_tol * 10**-d(b)    (a couple of last places)
       loose  : rel_ok OR ld_ok  (OR within abs_tol, for near-zero values)
     """
+    # A value-with-uncertainty is a NUMBER, not an opaque string. Without this
+    # it fell through to the "non-numeric tokens must match exactly" branch, so
+    # 0.034873(16) vs 0.034872(16) -- a difference of one sixteenth of the
+    # value's own quoted error bar -- hard-failed every criterion and bypassed
+    # both tolerances, producing verdicts like "rel<=0.2%=FAIL(max 0.00317%)".
+    # Since value(esd) is most of the crystallographic output, that meant most
+    # of it was effectively compared byte-for-byte.
+    va, vb = split_value_esd(a_str), split_value_esd(b_str)
+    if va and vb:
+        ag = token_agreement(va[0], vb[0], rel_tol, abs_tol, last_digit_tol)
+        if ag is None:
+            return None
+        # Compare the esds as absolute quantities, since the two sides may be
+        # printed to different precision (the esd digits alone are in units of
+        # each value's own last place, so they are not directly comparable).
+        # An esd is the least precisely determined number on the line -- it is
+        # itself an estimate -- so allow it the same last-digit slack.
+        ua = 10.0 ** (-num_decimals(va[0]))
+        ub = 10.0 ** (-num_decimals(vb[0]))
+        esd_ok = abs(int(va[1]) * ua - int(vb[1]) * ub) <= last_digit_tol * max(ua, ub)
+        ag['exact'] = (a_str == b_str)      # keep "exact" byte-for-byte
+        ag['rel_ok'] = ag['rel_ok'] and esd_ok
+        ag['ld_ok'] = ag['ld_ok'] and esd_ok
+        ag['loose_ok'] = ag['rel_ok'] or ag['ld_ok']
+        return ag
     if not (is_float(a_str) and is_float(b_str)):
         return None
     a, b = float(a_str), float(b_str)
@@ -261,17 +306,56 @@ def temp_test_dir(testname, subdir='tonto-tests'):
     return name
 
 def parse_IO_file(path):
+    """Parse a test directory's IO manifest.
+
+    Recognised keys:
+      input:   extra file to copy into the run directory (repeatable)
+      output:  file to compare against the reference     (repeatable)
+      delete:  recorded but unused
+      program: executable to run instead of the default, resolved as a
+               sibling of --program e.g. "hart" -> <build>/hart
+      args:    command line for that program, split shell-style
+
+    A job with no "program:" is a plain tonto job: it reads a file called
+    "stdin" and writes one called "stdout", so those are supplied as
+    defaults.  An argv-driven program (hart) names its own files, so the
+    defaults would be wrong and are not applied.
+    """
     io_files = {
-        'input': set(['stdin']),
-        'output': set(['stdout']),
+        'input': set(),
+        'output': set(),
         'delete': set(),
+        'program': None,
+        'args': None,
     }
 
     if os.path.exists(path):
         with open(path) as f:
-            for line in f:
-                tokens = line.split(':')
-                io_files[tokens[0].strip()].add(tokens[1].strip())
+            for lineno, line in enumerate(f, 1):
+                # Blank lines and tonto-style "!" comments. A manifest whose
+                # options are not the program's defaults needs room to say why,
+                # and an undocumented option in a test is one nobody dares
+                # change later.
+                if not line.strip() or line.lstrip().startswith('!'):
+                    continue
+                key, sep, value = line.partition(':')
+                key, value = key.strip(), value.strip()
+                if not sep or key not in io_files:
+                    # Not silently ignored: a mistyped key would drop a
+                    # comparison or an input file and the test would still
+                    # "pass", which is the failure mode this whole manifest
+                    # exists to prevent.
+                    raise ValueError(
+                        '%s line %d: unknown key %r (expected one of %s)'
+                        % (path, lineno, key, ', '.join(sorted(io_files))))
+                if key in ('program', 'args'):
+                    io_files[key] = value
+                else:
+                    io_files[key].add(value)
+
+    if io_files['program'] is None:
+        io_files['input'].add('stdin')
+        io_files['output'].add('stdout')
     return io_files
 
 
@@ -293,10 +377,29 @@ def run_test(args, test_dir, io_files):
         'universal_newlines': True,
         'env': env,
     }
-    if args.mpi:
-        prog = ['mpirun', '-n', '4', args.program]
+    # A test may name a different executable -- resolved as a sibling of
+    # --program, which main() has already made absolute, so that e.g.
+    # "program: hart" picks up <build>/hart from whichever build tree is
+    # under test.
+    if io_files['program']:
+        executable = join(os.path.dirname(abspath(args.program)),
+                          io_files['program'])
     else:
-        prog = [args.program]
+        executable = args.program
+
+    if args.mpi:
+        # Rank count is a knob, not a constant: MPI reduction order depends on it,
+        # so a numeric comparison has to sweep it (-n 1 is the control that
+        # isolates MPI-build effects from rank-partitioned reduction order).
+        # The launcher is overridable too -- clusters use srun / mpiexec.hydra,
+        # and a launcher from a *different* MPI than the one mpifort linked
+        # against is the classic silent hang.
+        prog = [args.mpi_launcher, '-n', str(args.mpi_ranks), executable]
+    else:
+        prog = [executable]
+
+    if io_files['args']:
+        prog += shlex.split(io_files['args'])
 
     timings = {}
     exec_dir = temp_test_dir(os.path.basename(test_dir.rstrip('/')))
@@ -361,6 +464,13 @@ def main():
                         help='Location of sbftool')
     parser.add_argument('--mpi', '-m', default=False, action='store_true',
                         help='Test with mpirun')
+    parser.add_argument('--mpi-ranks', type=int, default=4,
+                        help='Number of MPI ranks when --mpi is given (default 4)')
+    parser.add_argument('--mpi-launcher', default='mpirun',
+                        help='MPI launcher to use with --mpi (default mpirun; '
+                             'use srun / mpiexec.hydra on clusters). Must come '
+                             'from the SAME MPI installation the binary was '
+                             'linked against.')
     parser.add_argument('--abs-tol', type=float, default=1e-7,
                         help='Absolute tolerance (near-zero floor) for numerical differences')
     parser.add_argument('--rel-tol', type=float, default=2e-3,
@@ -378,6 +488,14 @@ def main():
     args.sbftool = os.path.abspath(args.sbftool)
     args.test_directory = os.path.abspath(args.test_directory)
     args.basis_sets = os.path.abspath(args.basis_sets)
+    # --program too, and for the same reason: subprocess resolves it from inside
+    # the temp directory, so `--program build/tonto` died with a FileNotFoundError
+    # naming a binary that was sitting right there in the invocation directory.
+    # (Left out when the others were absolutised; it broke the debug CI job, and
+    # the default './tonto' has the same flaw.) A bare name with no separator is
+    # left alone so it can still be found on PATH.
+    if os.sep in args.program or os.path.exists(args.program):
+        args.program = os.path.abspath(args.program)
     logging.basicConfig(level=args.log_level)
     io_files = parse_IO_file(join(args.test_directory,'IO'))
     if run_test(args, args.test_directory, io_files):

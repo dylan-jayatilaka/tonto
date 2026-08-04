@@ -19,6 +19,13 @@ project(tonto
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
+# WSL (Windows Subsystem for Linux). No-op on every other host. This MUST come
+# before any find_package/find_program: its main job is to take the Windows
+# directories off PATH so that no tool search can resolve to a .exe. See
+# cmake/WSL.cmake and docs/BUILD_WSL.md.
+include(WSL)
+tonto_wsl_preflight()
+
 # Install where?
 set(CMAKE_INSTALL_PREFIX /usr/local CACHE PATH "Install prefix")
 
@@ -31,6 +38,9 @@ option(COMPILE_LAPACK "Use the reference implementation of lapack provided" OFF)
 
 # Java and ANTLR4
 find_package(Java REQUIRED COMPONENTS Runtime Development)
+# Under WSL, reject a Windows JDK: it cannot read Linux paths and wants ';' as
+# its classpath separator, while the translator below is invoked with ':'.
+tonto_wsl_finalize()
 # The ANTLR4 tool is a single "complete" jar. It is a release artefact (NOT part
 # of the antlr4 source repo), so we cannot get it from a git submodule. If it is
 # not already present, download it into external/ (git-ignored) and verify its
@@ -89,6 +99,31 @@ enable_testing()
 #set(BLA_VENDOR NVPL)
 #set(BLA_VENDOR OpenBLAS)
 
+# On macOS, find_package(LAPACK) picks Apple's Accelerate framework, whose
+# Fortran entry points (dsyev_ etc.) are frozen at LAPACK 3.2.1 (2009) for ABI
+# compatibility -- Apple's newer LAPACK is only reachable via $NEWLAPACK-suffixed
+# symbols, which is not usable from Fortran. That 2009 dsyev differs materially
+# from a modern one (verified 2026-07-28 on M2/Tahoe: it alone flipped
+# short/h2o_rhf_6-31G(d)_normal_mode_analysis). So prefer Homebrew's OpenBLAS
+# (LAPACK 3.12.x) when it is installed; fall back to whatever find_package finds.
+# Override by configuring with an explicit -DBLA_VENDOR=... (e.g. Accelerate).
+if(APPLE AND NOT DEFINED BLA_VENDOR)
+    foreach(_brew_prefix /opt/homebrew/opt/openblas /usr/local/opt/openblas)
+        if(EXISTS ${_brew_prefix})
+            set(BLA_VENDOR OpenBLAS)
+            list(APPEND CMAKE_PREFIX_PATH ${_brew_prefix})
+            message(STATUS "macOS: preferring OpenBLAS at ${_brew_prefix} over Accelerate "
+                           "(Accelerate's Fortran LAPACK is frozen at 3.2.1)")
+            break()
+        endif()
+    endforeach()
+    if(NOT DEFINED BLA_VENDOR)
+        message(WARNING
+            "macOS: OpenBLAS not found, falling back to Accelerate's LAPACK 3.2.1 (2009). "
+            "Install a modern LAPACK with:  brew install openblas")
+    endif()
+endif()
+
 # LAPACK
 # The bundled reference LAPACK (external/lapack-release, netlib 3.8.0) declares an
 # ancient cmake_minimum_required (2.8.x) that CMake >= 4 rejects. Permit configuring
@@ -120,6 +155,41 @@ else()
   endif()
 endif()
 
+# Report which LAPACK version is actually linked, and warn if it is ancient.
+# find_package(LAPACK) reports only "found", not "found, but from 2009" -- which
+# is how Accelerate's 3.2.1 was silently used on macOS for a long time. Query the
+# library itself via ILAVER (present since LAPACK 3.2) so the version is on the
+# record in every configure log, and comparable across platforms.
+if(NOT COMPILE_LAPACK AND NOT CMAKE_CROSSCOMPILING)
+    set(_ilaver_src ${CMAKE_BINARY_DIR}/CMakeFiles/lapack_version.f90)
+    file(WRITE ${_ilaver_src}
+         "program v\n"
+         "  integer :: a,b,c\n"
+         "  call ilaver(a,b,c)\n"
+         "  print *, a, b, c\n"
+         "end program\n")
+    try_run(_ilaver_run _ilaver_build
+            ${CMAKE_BINARY_DIR}/CMakeFiles/lapack_version ${_ilaver_src}
+            LINK_LIBRARIES ${LAPACK_LIBRARIES}
+            RUN_OUTPUT_VARIABLE _ilaver_out)
+    if(_ilaver_build AND _ilaver_run EQUAL 0)
+        string(REGEX MATCHALL "[0-9]+" _v "${_ilaver_out}")
+        list(GET _v 0 _v_major)
+        list(GET _v 1 _v_minor)
+        list(GET _v 2 _v_patch)
+        set(LAPACK_VERSION "${_v_major}.${_v_minor}.${_v_patch}")
+        message(STATUS "LAPACK version in use: ${LAPACK_VERSION}")
+        if(LAPACK_VERSION VERSION_LESS 3.9)
+            message(WARNING
+                "LAPACK ${LAPACK_VERSION} is very old (3.9 dates from 2019). Numerical "
+                "results -- particularly eigenvectors from dsyev -- may differ noticeably "
+                "from those produced with a current LAPACK. Consider installing OpenBLAS.")
+        endif()
+    else()
+        message(STATUS "LAPACK version in use: unknown (ILAVER probe did not run)")
+    endif()
+endif()
+
 # MPI
 if(MPI)
     message(STATUS "Building with MPI enabled")
@@ -135,18 +205,62 @@ if(MPI)
        include_directories("${msmpi-linux-home}/Include")
        set(MPI_LIBRARIES "${msmpi-linux-home}/Lib/x64/libmsmpi.a")
     else()
-       include(FindMPI)
-       # MPI
-       if(MPI_FOUND)
-           message(STATUS "MPI found.")
-           message(STATUS "MPI Fortran compiler: ${MPI_Fortran_COMPILER}")
-           message(STATUS "MPI include: ${MPI_Fortran_INCLUDE_PATH}")
-           message(STATUS "MPI libs:${MPI_Fortran_LIBRARIES}")
-           set(CMAKE_Fortran_FLAGS "${MPI_Fortran_FLAGS}")
-           set(WITH_MPI ON CACHE STRING "" FORCE)
-           include_directories(${MPI_Fortran_INCLUDE_PATH})
-       else()
-           message(STATUS "MPI_Fortran not found: ${MPI_Fortran_FOUND}")
+       # REQUIRED, and with an explicit Fortran component: the old
+       # `include(FindMPI)` + `if(MPI_FOUND)` reported a miss as a mere STATUS
+       # line, left WITH_MPI unset, and then happily built a SERIAL binary that
+       # looked like it had honoured -DMPI=1. -DMPI=1 must never silently
+       # produce a serial tonto.
+       find_package(MPI REQUIRED COMPONENTS Fortran)
+
+       message(STATUS "MPI found.")
+       message(STATUS "MPI Fortran compiler: ${MPI_Fortran_COMPILER}")
+       message(STATUS "MPI include: ${MPI_Fortran_INCLUDE_PATH}")
+       message(STATUS "MPI libs:${MPI_Fortran_LIBRARIES}")
+       # NOTE: modern FindMPI never sets MPI_Fortran_FLAGS (it sets
+       # MPI_Fortran_COMPILE_OPTIONS), so this assigns "" -- and it is an
+       # assignment, not an append, so it also wipes any user -DCMAKE_Fortran_FLAGS.
+       # Survivable only because SetFortranFlags rebuilds the flags afterwards.
+       # See DEFERRED.md.
+       set(CMAKE_Fortran_FLAGS "${MPI_Fortran_FLAGS}")
+       set(WITH_MPI ON CACHE STRING "" FORCE)
+       include_directories(${MPI_Fortran_INCLUDE_PATH})
+
+       # Tonto does `USE mpi` (foofiles/parallel.foo) and needs MPI_ADDRESS_KIND
+       # from that module (include/macros.in), so it needs MPI Fortran *module*
+       # files built by THIS gfortran. Fortran .mod files are compiler-version
+       # specific, so an MPI installed against a different gcc fails with
+       # "Cannot read module file ... created by a different version of GNU
+       # Fortran" -- hundreds of files into the build, long after configure said
+       # everything was fine. Catch it here instead.
+       include(CheckFortranSourceCompiles)
+       # Give the probe the same includes/libs the real build gets, so a failure
+       # means "modules unreadable", not "modules not found".
+       set(_tonto_saved_req_libs "${CMAKE_REQUIRED_LIBRARIES}")
+       set(_tonto_saved_req_incs "${CMAKE_REQUIRED_INCLUDES}")
+       set(CMAKE_REQUIRED_LIBRARIES MPI::MPI_Fortran)
+       set(CMAKE_REQUIRED_INCLUDES ${MPI_Fortran_INCLUDE_DIRS} ${MPI_Fortran_INCLUDE_PATH})
+       check_fortran_source_compiles("
+       program t
+          use mpi
+          implicit none
+          integer :: ierr
+          call MPI_Init(ierr)
+          call MPI_Finalize(ierr)
+       end program t
+       " TONTO_MPI_MODULE_USABLE SRC_EXT f90)
+       set(CMAKE_REQUIRED_LIBRARIES "${_tonto_saved_req_libs}")
+       set(CMAKE_REQUIRED_INCLUDES "${_tonto_saved_req_incs}")
+       if(NOT TONTO_MPI_MODULE_USABLE)
+           message(FATAL_ERROR
+             "The MPI installation provides Fortran modules this compiler cannot "
+             "read.\n"
+             "  Fortran compiler : ${CMAKE_Fortran_COMPILER_ID} "
+             "${CMAKE_Fortran_COMPILER_VERSION}\n"
+             "  MPI Fortran      : ${MPI_Fortran_COMPILER}\n"
+             "Tonto does `USE mpi`, and Fortran .mod files are compiler-version "
+             "specific. Rebuild MPI against this compiler (e.g. configure Open MPI "
+             "with FC=${CMAKE_Fortran_COMPILER}), or point CMAKE_Fortran_COMPILER "
+             "at the wrapper whose MPI modules match. See docs/MPI.md.")
        endif()
     endif()
 endif()
@@ -160,6 +274,24 @@ include(SetFortranFlags)
 message(STATUS "Fortran Compiler flags: ${CMAKE_Fortran_FLAGS}")
 message(STATUS "CXX Compiler Flags: ${CMAKE_CXX_FLAGS}")
 message(STATUS "C Compiler Flags: ${CMAKE_C_FLAGS}")
+
+# Provenance stamped into the run banner (see molecule.main.foo). Recording the
+# compiler and the LAPACK version makes every stdout self-documenting, so a
+# cross-platform comparison does not have to guess what produced each side. This
+# was added after a numerical discrepancy between macOS and Linux turned out to
+# be a compiler miscompilation, while the two boxes were also unknowingly using
+# different gfortran versions AND different LAPACKs -- none of it visible in the
+# output. NOTE: scripts/test.py must ignore these lines (prefixes_to_ignore) or
+# every reference comparison breaks.
+set(TONTO_COMPILER "${CMAKE_Fortran_COMPILER_ID} ${CMAKE_Fortran_COMPILER_VERSION}")
+if(DEFINED LAPACK_VERSION)
+    set(TONTO_LAPACK "${LAPACK_VERSION}")
+elseif(COMPILE_LAPACK)
+    set(TONTO_LAPACK "bundled reference (netlib)")
+else()
+    set(TONTO_LAPACK "unknown")
+endif()
+message(STATUS "Provenance: compiler ${TONTO_COMPILER}, LAPACK ${TONTO_LAPACK}")
 
 # Macros
 set(MACROS ${PROJECT_BINARY_DIR}/macros)
@@ -524,7 +656,7 @@ set(RUN_SRC
     ${RUNFILE_DIR}/run_mat{cpx}.foo
     ${RUNFILE_DIR}/run_mp2.foo
 #   ${RUNFILE_DIR}/run_mpi_matmul.foo
-#   ${RUNFILE_DIR}/run_mpi_pi.foo
+    ${RUNFILE_DIR}/run_mpi_pi.foo
     ${RUNFILE_DIR}/run_qr.foo
     ${RUNFILE_DIR}/run_shell2.foo
     ${RUNFILE_DIR}/run_real.foo
@@ -629,6 +761,17 @@ foreach(foopath ${SRC})
             --foo \"${foopath}\"
             --out-dir \"${CMAKE_CURRENT_BINARY_DIR}\"
             DEPENDS ${foopath} ${FOO_TYPES_FILE} ${ANTLR4_TRANSLATOR_STAMP}
+            # DEPFILE picks up the get_from DONORS this file inlines, which the
+            # DEPENDS list above cannot know. A donor is not in FOO_SRC and emits
+            # no .F90 of its own, so without this it has NO dependency edge at all:
+            # editing it rebuilds nothing and you silently test a stale binary.
+            # foofiles/parallel.foo is the worst case -- the entire MPI layer, 9865
+            # lines, inlined into SYSTEM. That trap is how a working MPI_BARRIER fix
+            # came to be switched off unnoticed in 2021, and it invalidated an
+            # experiment here on 2026-08-02 before being caught. The translator
+            # writes <stem>.F90.d listing exactly what it read. Needs CMake >= 3.20
+            # for the Makefile generators (we require 3.20 at the top).
+            DEPFILE ${CMAKE_CURRENT_BINARY_DIR}/${F90file}.d
         )
     endif()
 endforeach(foopath)
@@ -660,7 +803,7 @@ add_dependencies(antlr4-fortran antlr4-translator)
 # On-demand documentation graphs: `make callgraphs` regenerates the Graphviz DOT
 # files (procedure call graph; module use graph with submodules collapsed to their
 # parent; expanded submodule use graph) plus a dead-code reachability report for
-# run_molecule, into build/callgraphs/. If Graphviz `dot` is present, the two small
+# run_molecule, into <build-dir>/callgraphs/ (the current build tree). If Graphviz `dot` is present, the two small
 # use graphs are also rendered to SVG.
 find_program(DOT_EXE dot)
 add_custom_target(callgraphs
@@ -673,7 +816,7 @@ add_custom_target(callgraphs
         --call-graph-report
         --out-dir \"${CMAKE_CURRENT_BINARY_DIR}/callgraphs\"
     DEPENDS ${ANTLR4_TRANSLATOR_STAMP}
-    COMMENT "Generating Foo call/use graphs (DOT) + dead-code report -> build/callgraphs/"
+    COMMENT "Generating Foo call/use graphs (DOT) + dead-code report -> ${CMAKE_CURRENT_BINARY_DIR}/callgraphs/"
 )
 if(DOT_EXE)
     add_custom_command(TARGET callgraphs POST_BUILD
@@ -690,6 +833,53 @@ add_library(tonto
    ${FORTRAN_SRC}
    ${MACROS}
 )
+
+# types.F90 contains no executable code of its own -- only the ~90 derived-type
+# definitions. But those types have ~585 allocatable/pointer components, so
+# gfortran auto-generates a deep-copy helper (__copy_types_module_<TYPE>) for each
+# one: ~8.9 MB of __TEXT from 5.7 k lines of pure declarations. Handing all of that
+# to the optimiser is what makes types.F90 the slowest single compile in the build,
+# and it buys nothing -- the generated helpers are memcpy-shaped. Measured on
+# M2/Tahoe, gfortran-14: parse+.mod 0.01 s, -O0 29 s, -O1 45 s, full release
+# flags 839 s (~14 min) -- so -O1 is an ~18x saving on the slowest compile.
+# Compile it at -O1 instead. (See DEFERRED.md for the follow-up: splitting
+# types.foo into several modules so they compile in parallel.)
+set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/types.F90
+    PROPERTIES COMPILE_OPTIONS "-O1")
+
+# WORKAROUND (2026-07-28): gfortran 14.3 on arm64 macOS miscompiles
+# shell1quartet.F90 -- the two-electron integral code -- at -O3. The integrals
+# come out slightly too small and everything downstream silently inherits it:
+# the oxygen atom converged to -77.45 Ha, about 2.8 Ha *below* the variational
+# limit (virial -V/T = 1.959 instead of 2.000), boron's atomic SCF diverged, and
+# rgbi/BN's Roby populations were wrong. Pinning this one file to -O2 restores
+# exact agreement with the Linux reference (E, V_ee, V_eN, T and the virial all
+# match to the printed digits, and BN reproduces the reference numbers exactly).
+#
+# Two distinct triggers were found, which is why the level is pinned rather than
+# a single pass disabled: at -O2 with strict FP the culprit bisects to
+# -fschedule-insns (the pre-register-allocation scheduler); at -O3 there is a
+# further trigger that -fno-schedule-insns does NOT cover. Belt and braces here.
+#
+# NOT yet established whether this is a GCC backend bug or latent undefined
+# behaviour in the emitted code that optimisation exposes -- see
+# DEFERRED.md. If it is UB, this only masks it.
+# Set -DTONTO_SKIP_ARM64_WORKAROUNDS=ON to build WITHOUT this (and the matching
+# flag in cmake/SetFortranFlags.cmake), so a newer gfortran can be tested for the
+# miscompilation: configure with it ON, build, then run
+# scripts/check_spherical_cartesian.sh. If that passes, the compiler is clean and
+# the workarounds can be retired (or gated on the compiler version).
+option(TONTO_SKIP_ARM64_WORKAROUNDS
+       "Skip the arm64-macOS gfortran miscompilation workarounds (to test a newer compiler)" OFF)
+
+if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64"
+   AND "${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU"
+   AND NOT TONTO_SKIP_ARM64_WORKAROUNDS)
+    set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/shell1quartet.F90
+        PROPERTIES COMPILE_OPTIONS "-O2;-fno-schedule-insns")
+    message(STATUS "arm64 macOS: pinning shell1quartet.F90 to -O2 "
+                   "(gfortran miscompilation workaround)")
+endif()
 
 # Generate ALL Foo->Fortran output (every .F90 and its co-generated .int/.use)
 # before compiling any object. The .use files carry the inter-module `use`
@@ -736,7 +926,11 @@ add_executable(run_mat_real      EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/ru
 add_executable(run_mat_cpx       EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mat_cpx.F90)
 add_executable(run_mp2           ${CMAKE_CURRENT_BINARY_DIR}/run_mp2.F90)
 #add_executable(run_mpi_matmul    EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_matmul.F90)
-#add_executable(run_mpi_pi        EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_pi.F90)
+# run_mpi_pi is the MPI smoke test: one `parallel do` + one PARALLEL_SUM, with a
+# known answer that must not depend on the rank count. Registered as the
+# `mpi_pi_rank_invariant` ctest (scripts/check_mpi_pi.sh). Not EXCLUDE_FROM_ALL,
+# so an MPI build always produces something that can be checked.
+add_executable(run_mpi_pi         ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_pi.F90)
 add_executable(run_qr            EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_qr.F90)
 add_executable(run_real          EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_real.F90)
 add_executable(run_rgbi          ${CMAKE_CURRENT_BINARY_DIR}/run_rgbi.F90)
@@ -762,7 +956,7 @@ target_link_libraries(run_mat_real      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIE
 target_link_libraries(run_mat_cpx       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_mp2           tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 #target_link_libraries(run_mpi_matmul    tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-#target_link_libraries(run_mpi_pi        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_mpi_pi         tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_qr            tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_real          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_rgbi          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})

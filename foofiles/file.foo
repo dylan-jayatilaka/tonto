@@ -142,8 +142,8 @@ contains
       end
 
       ! Check for failure
-      PARALLEL_BROADCAST(.unit,tonto.master_processor)
-      PARALLEL_BROADCAST(.io_status,tonto.master_processor)
+      PARALLEL_BROADCAST_IO(.unit,tonto.master_processor)
+      PARALLEL_BROADCAST_IO(.io_status,tonto.master_processor)
       DIE_IF(.io_status/=0,"error opening "//trim(.file_status)//" file "//.name)
 
    end
@@ -163,7 +163,7 @@ contains
       end
 
       ! Failure?
-      PARALLEL_BROADCAST(.io_status,tonto.master_processor)
+      PARALLEL_BROADCAST_IO(.io_status,tonto.master_processor)
       DIE_IF(.io_status/=0,"error opening new file "//trim(.name))
 
       ! Close the file
@@ -182,6 +182,17 @@ contains
       if (IO_IS_ALLOWED) then
          close(unit=.unit,status="delete",iostat=.io_status)
       end
+
+      ! Broadcast before testing, exactly as FILE:close does after its own
+      ! guarded inquire. Without this .io_status is set only on the master and
+      ! every other rank tests whatever it happened to hold -- so the DIE_IF
+      ! below is decided on RANK-LOCAL state. That is the milestone-6 rule one
+      ! level down: not a collective gated on rank-local state, but a BRANCH
+      ! taken on it, in a routine whose branches contain collectives. Ranks that
+      ! branch differently then arrive at different collectives, which is
+      ! MPI_ERR_TRUNCATE on the next broadcast.
+      PARALLEL_BROADCAST_IO(.io_status,tonto.master_processor)
+
       DIE_IF(.io_status/=0,"error closing and deleting"//trim(.file_status)//" file "//.name)
 
    end
@@ -212,7 +223,7 @@ contains
          read(unit=.unit,iostat=.io_status) value
          ENSURE(.io_status==0,"read error, #"// trim(.io_status.to_str))
       end
-      PARALLEL_BROADCAST(value,tonto.master_processor)
+      PARALLEL_BROADCAST_IO(value,tonto.master_processor)
       
       .record = .record + 1
 
@@ -245,7 +256,7 @@ contains
          read(unit=.unit,iostat=.io_status) values
          ENSURE(.io_status==0,"read error, #"// trim(.io_status.to_str))
       end
-      PARALLEL_BROADCAST(values,tonto.master_processor)
+      PARALLEL_BROADCAST_IO(values,tonto.master_processor)
 
       .record = .record + 1
 
@@ -326,7 +337,7 @@ contains
             read(unit=.unit,iostat=.io_status) v(i).element
             ENSURE(.io_status==0,"read error, #"// trim(.io_status.to_str))
          end
-         PARALLEL_BROADCAST(v(i).element,tonto.master_processor)
+         PARALLEL_BROADCAST_IO(v(i).element,tonto.master_processor)
 
          .record = .record + 1
 
@@ -531,8 +542,24 @@ contains
 
 !  Arrays
 
-   parallel_write(values) :: template
-   ! Parallel write the "value" array to the file.
+   per_rank_write(values) :: template
+   ! Write "values" WITHOUT the IO_IS_ALLOWED guard that FILE:write applies.
+   !
+   ! PRECONDITION: every rank must be writing to its OWN file. This routine does
+   ! NOT do parallel I/O -- it is the ordinary write with the master-only guard
+   ! REMOVED, so if two ranks reach it with the same filename they write the same
+   ! file concurrently, with no locking and no offset negotiation, and corrupt it.
+   ! No filesystem prevents that; one file written by many ranks needs MPI-IO,
+   ! which Tonto does not use anywhere.
+   !
+   ! Correct use: inside a `parallel do` whose index selects the filename, so each
+   ! rank owns a distinct file -- see MOLECULE.RHO:get_Hirshfeld_atom_FFs_disk.
+   ! Incorrect use: inside a SERIAL loop, where every rank computes the same index
+   ! and therefore the same name -- see MOLECULE.HAR:make_LS_mx, which still does
+   ! this and is reachable only via fragHAR (see DEFERRED.md).
+   !
+   ! Renamed from `parallel_write` 2026-08-02: the old name implied a capability it
+   ! does not have, which is how the make_LS_mx misuse got written.
       self :: INOUT
       values :: VALUES_TYPE?, IN
 
@@ -543,27 +570,27 @@ contains
 
    end
 
-   parallel_write(values) :: get_from(FILE, VALUES_TYPE?=>VEC{INT})
+   per_rank_write(values) :: get_from(FILE, VALUES_TYPE?=>VEC{INT})
    ! Parallel write the "value" array to the file.
    end
 
-   parallel_write(values) :: get_from(FILE, VALUES_TYPE?=>VEC{REAL})
+   per_rank_write(values) :: get_from(FILE, VALUES_TYPE?=>VEC{REAL})
    ! Parallel write the "value" array to the file.
    end
 
-   parallel_write(values) :: get_from(FILE, VALUES_TYPE?=>VEC{CPX})
+   per_rank_write(values) :: get_from(FILE, VALUES_TYPE?=>VEC{CPX})
    ! Parallel write the "value" array to the file.
    end
 
-   parallel_write(values) :: get_from(FILE, VALUES_TYPE?=>MAT{INT})
+   per_rank_write(values) :: get_from(FILE, VALUES_TYPE?=>MAT{INT})
    ! Parallel write the "value" array to the file.
    end
 
-   parallel_write(values) :: get_from(FILE, VALUES_TYPE?=>MAT{REAL})
+   per_rank_write(values) :: get_from(FILE, VALUES_TYPE?=>MAT{REAL})
    ! Parallel write the "value" array to the file.
    end
 
-   parallel_write(values) :: get_from(FILE, VALUES_TYPE?=>MAT{CPX})
+   per_rank_write(values) :: get_from(FILE, VALUES_TYPE?=>MAT{CPX})
    ! Parallel write the "value" array to the file.
    end
 
@@ -614,7 +641,7 @@ contains
       do
 
          if (IO_IS_ALLOWED) read(unit=.unit,iostat=.io_status)
-         PARALLEL_BROADCAST(.io_status,tonto.master_processor)
+         PARALLEL_BROADCAST_IO(.io_status,tonto.master_processor)
 
          if (.io_status/=0) exit
 
@@ -675,7 +702,7 @@ contains
       else
          if (IO_IS_ALLOWED) inquire(file=.name,exist=res)
       end
-      PARALLEL_BROADCAST(res,tonto.master_processor)
+      PARALLEL_BROADCAST_IO(res,tonto.master_processor)
 
    end
 
@@ -688,7 +715,7 @@ contains
       ! inquire(unit=.unit,opened=res)
          inquire(file=.name,opened=res)
       end
-      PARALLEL_BROADCAST(res,tonto.master_processor)
+      PARALLEL_BROADCAST_IO(res,tonto.master_processor)
 
    end
 
@@ -698,7 +725,7 @@ contains
       res :: BIN
 
       if (IO_IS_ALLOWED)  inquire(unit=.unit,opened=res)
-      PARALLEL_BROADCAST(res,tonto.master_processor)
+      PARALLEL_BROADCAST_IO(res,tonto.master_processor)
 
    end
 
@@ -719,7 +746,7 @@ contains
       reading :: STR(len=5)
 
       if (IO_IS_ALLOWED) inquire(unit=.unit,read=reading)
-      PARALLEL_BROADCAST(reading,tonto.master_processor)
+      PARALLEL_BROADCAST_IO(reading,tonto.master_processor)
 
       if (reading=="YES") then; res = TRUE
       else;                     res = FALSE

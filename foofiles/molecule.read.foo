@@ -2064,7 +2064,7 @@ contains
 !
 !      call datafile%sbf%get("charge_multiplicity", charge_multiplicity, err)
 !      if (err /= success) then
-!          stderr.show("Error reading charge_multiplicity from file, not setting:", sbf_strerr(err))
+!          std_err.show("Error reading charge_multiplicity from file, not setting:", sbf_strerr(err))
 !      else
 !          .set_charge(charge_multiplicity(1))
 !          .set_spin_multiplicity(charge_multiplicity(2))
@@ -2155,19 +2155,44 @@ contains
 
    end
 
-   read_archive(name,genre) :: leaky
+   read_archive_and_normalise :: leaky
+   ! Read the archive called "name" with "genre", e.g. "r ", and unnormalize
+   ! the orbitals after reading. For use with TONTO generated archives.
+   !
+   ! This is a separate keyword because the parsing belongs here, in the
+   ! keyword layer, not in the library routine it calls. It also replaces a
+   ! trailing "normalise" qualifier on the read_archive line, which could
+   ! never fire -- read_archive ENSUREs three items on the line and the
+   ! qualifier was only looked for on a line of two.
+      self :: INOUT
+
+   ENSURE(stdin.n_line_items==3, "must specify an archive and a kind")
+   ENSURE(.n_bf>0, "need to already know the number of basis functions")
+
+      name,genre :: STR
+
+      stdin.read(name)
+      stdin.read(genre)
+
+      stdout.text("reading archive : " // trim(name))
+      .read_archive(name,genre,normalise=TRUE)
+
+   end
+
+   read_archive(name,genre,normalise) :: leaky
    ! Read the archive called "name" with "genre", e.g. "r ".
    ! For use with TONTO generated archives. Handle specific
    ! lambda's in the name (if the name is of the form ....,lambda=...)
+   ! Set "normalise" to unnormalize the orbitals after reading.
       self :: INOUT
       name  :: STR, IN
       genre :: STR, IN
+      normalise :: BIN, optional, IN
 
    ENSURE(.n_bf>0, "need to already know the number of basis functions")
 
       i  :: INT
       nm :: STR
-      normalize :: STR
       fbf,lbf,ang :: VEC{INT}@
       do_norm :: BIN
       arch :: ARCHIVE
@@ -2181,10 +2206,20 @@ contains
       i  = nm.index_of_character_in(",")
       if (i>0) nm = name(1:i-1)
 
-      ! Second word on line is normalize?
-      normalize = " "
-      if (stdin.buffer.n_items==2) stdin.read(normalize)
-      do_norm = normalize(1:9)=="normalise" OR normalize(1:9)=="normalize"
+      ! Normalize? This is an ARGUMENT, not something read from stdin.
+      !
+      ! It used to be "if (stdin.buffer.n_items==2) stdin.read(normalize)",
+      ! which was wrong twice over. This is a library routine -- it takes its
+      ! operands as arguments and is called from MOLECULE.SCF, MOLECULE.MAIN
+      ! and run_sf_derivs -- so reaching for the global stdin made it depend
+      ! on whatever line the job file happened to be on, and made it segfault
+      ! outright in a program that has no stdin at all (hart). It was also
+      ! dead: the keyword handler above ENSUREs n_line_items==3, which can
+      ! never equal 2, so no job file could ever switch it on. Use the
+      ! read_archive_and_normalise keyword for that. See DEFERRED.md.
+      do_norm = FALSE
+      if (present(normalise)) do_norm = normalise
+
       ! Tell them
       if (do_norm) then
          stdout.flush

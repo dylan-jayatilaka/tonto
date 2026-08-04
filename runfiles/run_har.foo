@@ -26,24 +26,9 @@ program run_HAR
 
    default_basis :: STR  DEFAULT("def2-SVP")
    allowed_bases :: VEC{STR}(len=10,7)
-   data allowed_bases/ &
-      "STO-3G    ", &
-      "def2-SVP  ", &
-      "def2-TZVP ", &
-      "def2-TZVPP", &
-      "cc-pVDZ   ", &
-      "cc-pVTZ   ", &
-      "cc-pVQZ   "  /
 
    default_grid :: STR  DEFAULT("low")
    grid_levels  :: VEC{STR}(len=9,6)
-   data grid_levels/ &
-      "very_low ", &
-      "low      ", &
-      "medium   ", &
-      "high     ", &
-      "very_high", &
-      "extreme  "  /
 
    m :: MOLECULE@
    command_line :: COMMAND_LINE
@@ -52,29 +37,74 @@ program run_HAR
    mess,etime,ctime :: STR
    basis,basdir,basnam,gracc :: STR
    cif,guess,job,out,err,scf :: STR
+   tail :: STR
    std_f2,std_f,shx_f2,shx_f :: STR
    dtol,fos,fzcut     :: REAL
    ldtol,radius,ten   :: REAL
    anharm,disperse    :: VEC{STR}@
+   grp_charge         :: VEC{INT}@
+   grp_mult           :: VEC{INT}@
+   wavelen            :: REAL
    i, charge, mult    :: INT
+   g, n_groups, maxit  :: INT
    do_4_only, extinct :: BIN
    h_ADPs,h_iso,h_pos :: BIN
    radius_is_0        :: BIN
    tmetal,defragment  :: BIN
    disk_sfs           :: BIN
+   mmcif, do_fragHAR  :: BIN
+   rescube            :: BIN
    file :: TEXTFILE@
 
    ! Macro to create Tonto system object
    ! Initialise MPI parallel stuff too.
    TONTO_CREATE
 
-   ! Set stdout & stderr to screen
+   ! Set stdout & std_err to screen. std_err must be *opened* as well as
+   ! created: it is closed and deleted below once the <job> name is known,
+   ! and TEXTFILE:close_and_delete dies on a file that does not exist.
    TEXTFILE::create_stdout
-   TEXTFILE::create_stderr 
+   TEXTFILE::create_std_err
+   std_err.open_for("write")
+
+   ! Defence in depth, not the fix. hart never reads a job file, but it once
+   ! segfaulted on the second HAR cycle because MOLECULE.READ:read_archive
+   ! reached for the global stdin to look for a trailing "normalise", and
+   ! hart had created none -- dereferencing an unallocated TEXTFILE. That
+   ! routine no longer touches stdin (the qualifier is an argument now, and
+   ! read_archive_and_normalise is its keyword), so this is here only in case
+   ! another library path reaches the same way. Create but do NOT open it:
+   ! there is no stdin file, and an empty buffer answers such questions
+   ! correctly. See DEFERRED.md for the survey of who else could.
+   TEXTFILE::create_stdin
+
+   ! Allowed values for --basis and --grid-accuracy.
+   !
+   ! These are assigned here, NOT with a `data` statement in the declarations:
+   ! the ANTLR4 translator silently DROPS a `data` statement at `program` scope
+   ! (it keeps them at module scope). The arrays were left uninitialised, so
+   ! every basis name -- including the default -- failed `is_one_of` below with
+   ! "unknown basis". See DEFERRED.md.
+   allowed_bases = [ &
+      "STO-3G    ", &
+      "def2-SVP  ", &
+      "def2-TZVP ", &
+      "def2-TZVPP", &
+      "cc-pVDZ   ", &
+      "cc-pVTZ   ", &
+      "cc-pVQZ   "  ]
+
+   grid_levels = [ &
+      "very_low ", &
+      "low      ", &
+      "medium   ", &
+      "high     ", &
+      "very_high", &
+      "extreme  "  ]
 
    ! Default option values
    basis      = default_basis
-   basdir     = "./basis_sets"
+   basdir     = " "   ! see the TONTO_BASIS_SET_DIRECTORY fallback below
    charge     = 0
    cif        = "urea.cif"
    disk_sfs   = FALSE
@@ -91,7 +121,10 @@ program run_HAR
    h_pos      = TRUE
    job        = " "
    ldtol      = TOL(5)
+   maxit      = 0     ! 0 = leave the library default (100) alone
+   mmcif      = FALSE
    mult       = 1
+   rescube    = TRUE
    out        = " "
  ! radius     = EIGHT*BOHR_PER_ANGSTROM 
    radius     = ZERO
@@ -101,42 +134,46 @@ program run_HAR
    shx_f      = " "
    std_f      = " "
    scf        = "rhf"
-   ten        = TEN*BOHR_PER_ANGSTROM 
- ! wavelength = -ONE
+   ten        = TEN*BOHR_PER_ANGSTROM
+   wavelen    = -ONE   ! i.e. not set; see --wavelength
 
    ! Get command line !!!!!!!!!
    command_line.set_defaults
    command_line.process_options
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!
    
-   if (NOT command_line.has_option("help")) then
+   ! --help and --version report and stop; neither needs a <cif-file>, so the
+   ! argument checks below must not run for them.
+   if (NOT (command_line.has_option("help") OR command_line.has_option("version"))) then
 
       if  (NOT command_line.has_arguments) then
 
             ! No arguments
             stdout.text("Supply a <cif-file> and, if needed, a <hkl> file")
-            stdout.text("via the -shelx-f <hkl> or -shelxf2 <hkl> options.")
-            stdout.text("Type 'hart -help' for additional help.")
-            stop
+            stdout.text("via the --shelx-f <hkl> or --shelx-f2 <hkl> options.")
+            stdout.text("Type 'hart --help' for additional help.")
+            stop 1
 
       else if (command_line.n_args>1) then
 
             ! Too many arguments
             stdout.text("Supply a <cif-file> and, if needed, a <hkl> file")
-            stdout.text("via the -shelx-f <hkl> or -shelxf2 <hkl> options.")
-            stdout.text("Type 'hart -help' for additional help.")
-            stop
+            stdout.text("via the --shelx-f <hkl> or --shelx-f2 <hkl> options.")
+            stdout.text("Type 'hart --help' for additional help.")
+            stop 1
 
       else
 
          ! First argument
          cif = command_line.arg(1)
 
-         ! No .cif extension
-         if (cif.filename_tail/="cif") then
+         ! No .cif or .cif2 extension. Both are accepted: a .cif2 file is
+         ! what a previous hart run writes, and what a restart needs.
+         tail = cif.filename_tail
+         if (NOT tail.is_one_of(["cif ","cif2"])) then
             stdout.text("Supply a cif file with a '.cif' or '.cif2' extension!")
-            stdout.text("Type 'hart -help' for additional help.")
-            stop
+            stdout.text("Type 'hart --help' for additional help.")
+            stop 1
          end
          
       end
@@ -145,20 +182,32 @@ program run_HAR
       if (command_line.has_option("job")) then
          job = command_line.value_for_option("job")
       end
+
+      ! Braced integer lists, one entry per atom group. Read here rather than
+      ! in the option loop below because they are vectors, not scalars, and
+      ! COMMAND_LINE owns the brace/integer checking. Their length is checked
+      ! against the real number of atom groups once the structure is read.
+      if (command_line.has_option("group-charges")) then
+         command_line.int_vec_for_option("group-charges",grp_charge)
+      end
+      if (command_line.has_option("group-multiplicities")) then
+         command_line.int_vec_for_option("group-multiplicities",grp_mult)
+         DIE_IF(any(grp_mult<1),"--group-multiplicities: must all be 1 or more")
+      end
      
       ! Preprocess main arguments
       if (job==" ") job = trim(cif.filename_head)
       if (out==" ") out = trim(job)//".out"
       if (err==" ") err = trim(job)//".err"
      
-      ! Set stderr properly
-      stderr.close_and_delete
-      stderr.destroy
-      TEXTFILE::create_stderr 
-      stderr.set_name(err)
-      stderr.open_for("write")
+      ! Set std_err properly
+      std_err.close_and_delete
+      std_err.destroy
+      TEXTFILE::create_std_err 
+      std_err.set_name(err)
+      std_err.open_for("write")
 
-   end ! -- NOT help
+   end ! -- NOT help/version
 
    ! Analyze command line options
    do i = 1,command_line.n_options
@@ -178,12 +227,22 @@ program run_HAR
          case ("cluster-radius");  radius     = value.to_real*BOHR_PER_ANGSTROM
          case ("complete-mol  ");  defragment = value.to_bin !test defrag Lorraine
          case ("dispersion    ");  disperse   = value.split
-       ! case ("disk-sfs      ");  disk_sfs   = value.to_bin
+         case ("disk-sfs      ");  disk_sfs   = value.to_bin
          case ("dtol          ");  dtol       = value.to_real
          case ("extinction    ");  extinct    = value.to_bin
          case ("fos           ");  fos        = value.to_real
          case ("fzcut         ");  fzcut      = value.to_real
+
+         ! Braced integer lists; read above via COMMAND_LINE:int_vec_for_option,
+         ! which is where the brace and integer checking lives.
+         case ("group-charges       ") ! already dealt with above
+         case ("group-multiplicities") ! already dealt with above
+
          case ("grid-accuracy ");  gracc      = value
+         case ("max-iterations");  maxit      = value.to_int
+         case ("mmcif         ");  mmcif      = value.to_bin
+         case ("residual-cube ");  rescube    = value.to_bin
+         case ("wavelength    ");  wavelen    = value.to_real
          case ("h-adps        ");  h_ADPs     = value.to_bin
          case ("h-iso         ");  h_iso      = value.to_bin
          case ("h-pos         ");  h_pos      = value.to_bin !test_new refine_H_pos Lorraine
@@ -197,7 +256,12 @@ program run_HAR
          case ("scf           ");  scf        = value
        ! case ("scf-guess     ");  guess      = value
        ! case ("wavelength    ");  wavelength = value.to_real
-              
+
+         case ("version")
+
+            stdout.text("This is hart, from Tonto version"//TONTO_VERSION//" "//GIT_VERSION)
+            stop
+
          case ("help")
 
             stdout.text("SYNOPSIS")
@@ -252,6 +316,10 @@ program run_HAR
             stdout.flush
             stdout.text("    . Disordered structures may not be refined")
             stdout.flush
+            stdout.text("    . Only elements up to Z=36 (Kr) are supported")
+            stdout.flush
+            stdout.text("    . Transition metals (Z=21 to 30, Sc to Zn) are not supported")
+            stdout.flush
             stdout.flush
             stdout.text("REFERENCES")
             stdout.flush
@@ -267,16 +335,16 @@ program run_HAR
             stdout.flush
             stdout.text("OPTIONS")
           ! stdout.flush    
-          ! stdout.text("   -anharm '<atom-label-list>'")
+          ! stdout.text("   --anharm '<atom-label-list>'")
           ! stdout.flush    
           ! stdout.text("       Refine the listed atoms anharmonically using a 4th or Gram-Charlier expansion.")
           ! stdout.text("       The <atom-label-list> must correspond to the *unique* labels in the <cif-file>")
           ! stdout.text("       and must be separated by spaces e.g. 'S1 Cl'")
             stdout.flush
-            stdout.text("   -basis <basis>")
+            stdout.text("   --basis <basis>")
             stdout.flush    
             stdout.text("       The gaussian atomic <basis> set to use. A file with the bases, also called")
-            stdout.text("       <basis>, must reside in the <basis-dir> folder (see -basis-dir option)")
+            stdout.text("       <basis>, must reside in the <basis-dir> folder (see --basis-dir option)")
             stdout.flush
             stdout.text("       Default: def2-SVP")
             stdout.flush    
@@ -292,28 +360,29 @@ program run_HAR
             stdout.text("       Additional bases may be added into the <basis-dir> folder from the EMSL")
             stdout.text("       basis-set library, if required. See examples in the <basis-dir> folder.")
             stdout.flush    
-            stdout.text("   -basis-dir <basis-dir>")
+            stdout.text("   --basis-dir <basis-dir>")
             stdout.flush    
-            stdout.text("       The location of the <basis-set> library files. See -basis option above.")
-            stdout.flush    
-            stdout.text("       Default: './basis_sets'")
+            stdout.text("       The location of the <basis-set> library files. See --basis option above.")
+            stdout.flush
+            stdout.text("       Default: the TONTO_BASIS_SET_DIRECTORY environment variable if it is")
+            stdout.text("                set, otherwise './basis_sets'")
           ! stdout.flush    
-          ! stdout.text("   -charge <q>")
+          ! stdout.text("   --charge <q>")
           ! stdout.flush    
           ! stdout.text("       Set the (integer) charge of the molecule in au. Default: 0.")
             stdout.flush    
-            stdout.text("   -shelx-f  <hkl>")
-            stdout.text("   -shelx-f2 <hkl>")
-            stdout.text("   -std-f    <hkl>")
-            stdout.text("   -std-f2   <hkl>")
+            stdout.text("   --shelx-f  <hkl>")
+            stdout.text("   --shelx-f2 <hkl>")
+            stdout.text("   --std-f    <hkl>")
+            stdout.text("   --std-f2   <hkl>")
             stdout.flush    
-            stdout.text("       Supply one of the different <hkl> reflection files. The -shelx file is in")
+            stdout.text("       Supply one of the different <hkl> reflection files. The --shelx file is in")
             stdout.text("       fortran fixed format '(I4,I4,I4,8F,8F)' for h, k, l, F or F2, and sigma.")
-            stdout.text("       The -std file format is free and whitespace separated. Extra items may")
+            stdout.text("       The --std file format is free and whitespace separated. Extra items may")
             stdout.text("       at the end of each line, as well as blank lines and an (0 0 0) reflection.")
             stdout.text("       Comments of any kind are disallowed.")
             stdout.flush    
-            stdout.text("   -cluster-radius <radius>")
+            stdout.text("   --cluster-radius <radius>")
             stdout.flush    
             stdout.text("       The electric potential from whole molecules within <radius> Angstrom of")
             stdout.text("       the fragment is modeled by Hirshfeld charges and dipoles placed at each")
@@ -322,106 +391,149 @@ program run_HAR
             stdout.text("       Default:  0")
             stdout.text("       Maximum: 10")
             stdout.flush    
-            stdout.text("   -dispersion '<dispersion-coefficient-list>'")
+            stdout.text("   --dispersion '<dispersion-coefficient-list>'")
             stdout.flush    
             stdout.text("       Enter dispersion coefficients to be used in the refinement as a quoted")
             stdout.text("       space-separated list of the element-symbol, f' and f'', repeated. Values")
             stdout.text("       for elements which are not specified are assumed to be zero.")
             stdout.flush    
-            stdout.text("       Example: -dispersion 'S 0.04370 0.04026  Cl 0.05457 0.05224'")
+            stdout.text("       Example: --dispersion 'S 0.04370 0.04026  Cl 0.05457 0.05224'")
             stdout.flush    
             stdout.text("       Default: No dispersion used")
             stdout.flush    
-            stdout.text("   -disk-sfs [t|f]")
+            stdout.text("   --disk-sfs [t|f]")
             stdout.flush    
             stdout.text("       Whether to write aspherical atomic structure factors to disk.")
             stdout.text("       With this information, write your own HAR refinement program!")
             stdout.flush    
             stdout.text("       Default: f")
             stdout.flush    
-            stdout.text("   -dtol <dtol>")
+            stdout.text("   --dtol <dtol>")
             stdout.flush    
             stdout.text("       Convergence tolerance <dtol> for the DIIS extrapolation procedure.")
             stdout.flush    
             stdout.text("       Default: 0.01")
             stdout.text("       Minimum: 0.00001")
             stdout.flush    
-            stdout.text("   -extinction [t|f]")
+            stdout.text("   --extinction [t|f]")
             stdout.flush    
             stdout.text("       Whether to correct extinction via the Larson formula.")
             stdout.flush    
             stdout.text("       Default: f")
           ! stdout.flush    
-          ! stdout.text("   -refine-4th-order-only [t|f]'")
+          ! stdout.text("   --refine-4th-order-only [t|f]'")
           ! stdout.flush    
           ! stdout.text("       Refine only the 4th order Gram-Charlier coefficients, leave any")
           ! stdout.text("       3rd order coefficients unchanged. If not specified in the CIF")
           ! stdout.text("       initial coeffiicents are assumed to be zero.")
             stdout.flush    
-            stdout.text("   -fos <ratio>")
+            stdout.text("   --fos <ratio>")
             stdout.flush    
             stdout.text("       The ratio of F/sigma below which the reflection is rejected.")
             stdout.flush    
             stdout.text("       Default: 3")
             stdout.text("       Minimum: 0")
             stdout.flush    
-            stdout.text("   -fzcut <F_z>")
+            stdout.text("   --fzcut <F_z>")
             stdout.flush    
             stdout.text("       If <cif-file> is from a previous HAR and has F_pred values, then remove")
             stdout.text("       reflections which have a z-score greater than F_z=(F_pred-F_expt)/sigma.")
             stdout.text("       Use this option with care only after an initial refinement to remove")
             stdout.text("       outliers. By default no reflections are pruned.")
             stdout.flush    
-            stdout.text("   -grid-accuracy [very_low|low|medium|high|very_high]")
-            stdout.flush    
+            stdout.text("   --grid-accuracy [very_low|low|medium|high|very_high|extreme]")
+            stdout.flush
             stdout.text("       Accuracy needed for DFT integrations.")
             stdout.flush    
             stdout.text("       Default: low")
-            stdout.flush    
-            stdout.text("   -h-adps [t|f]")
+            stdout.flush
+            stdout.text("   --group-charges '{ <q1> <q2> ... }'")
+            stdout.flush
+            stdout.text("       The charge on each atom group, in group order. One entry per group;")
+            stdout.text("       hart stops if the count does not match. Quote the whole list: it is a")
+            stdout.text("       single option value, and the braces and any minus signs must survive")
+            stdout.text("       the shell.")
+            stdout.flush
+            stdout.text("       Example, for a zwitterion split into two residues:")
+            stdout.text("                --group-charges '{ 1 -1 }'")
+            stdout.flush
+            stdout.text("       Default: every group neutral")
+            stdout.flush
+            stdout.text("   --group-multiplicities '{ <m1> <m2> ... }'")
+            stdout.flush
+            stdout.text("       The spin multiplicity <m>=2S+1 of each atom group, in group order.")
+            stdout.text("       Same form and same one-per-group rule as --group-charges.")
+            stdout.flush
+            stdout.text("       Default: every group a closed-shell singlet")
+            stdout.flush
+            stdout.text("   --h-adps [t|f]")
             stdout.flush    
             stdout.text("       Set whether to refine the H-atom ADPs. If set to 'f' only H atom positions")
             stdout.text("       are refined.")
             stdout.flush    
             stdout.text("       Default: t")
             stdout.flush    
-            stdout.text("   -h-iso [t|f] ")
+            stdout.text("   --h-iso [t|f] ")
             stdout.flush    
             stdout.text("       Set isotropic H-atom ADPs and then refine isotropically.")
             stdout.flush    
             stdout.text("       Default: f")
             stdout.flush    
-            stdout.text("       - If '-h-adps f' is set you get isotropic H ADPs without refinement")
+            stdout.text("       - If '--h-adps f' is set you get isotropic H ADPs without refinement")
             stdout.text("       - Using this option will produce poorer X-H bond lengths")
             stdout.flush    
-            stdout.text("   -h-pos [t|f]")
+            stdout.text("   --h-pos [t|f]")
             stdout.flush    
             stdout.text("       Set whether to refine H atom positions.")
             stdout.flush    
             stdout.text("       Default: t")
             stdout.flush    
-            stdout.text("   -help")
+            stdout.text("   --help")
             stdout.flush    
             stdout.text("       Print this documentation")
             stdout.flush    
-            stdout.text("   -job <job>")
+            stdout.text("   --job <job>")
             stdout.flush    
             stdout.text("       The name of the job; used to name the output file and other intermediates.")
             stdout.flush    
             stdout.text("       Default: The head of <cif-file> e.g. 'urea' if <cif-file> is 'urea.cif'.")
             stdout.text("                The name of the output-file will then be <job>.out")
+            stdout.flush
+            stdout.text("   --max-iterations <n>")
+            stdout.flush
+            stdout.text("       Stop after at most <n> iterations, whether or not the refinement has")
+            stdout.text("       converged. Caps both the rigid-atom fit and the outer HAR cycle. Useful")
+            stdout.text("       for a smoke test, or to bound a long job. Must be 3 or more.")
+            stdout.flush
+            stdout.text("       Default: 100")
+            stdout.flush
+            stdout.text("   --mmcif [t|f]")
+            stdout.flush
+            stdout.text("       Read the <cif-file> as an mmCIF, i.e. with '_atom_site.' item names and")
+            stdout.text("       residue (compound sequence) labels. Residues are then split into capped")
+            stdout.text("       fragments by Ulf Ryde's method and refined by fragHAR.")
+            stdout.flush
+            stdout.text("       Default: f")
           ! stdout.flush    
-          ! stdout.text("   -ldtol <ldtol>")
+          ! stdout.text("   --ldtol <ldtol>")
           ! stdout.flush    
           ! stdout.text("       Eliminate linear dependent basis functions i.e. eigenfunctions of the overlap")
           ! stdout.text("       matrix, with eigenvalue less that <tol>.  Default: 0.00001.")
           ! stdout.flush    
-          ! stdout.text("   -mult <m>")
+          ! stdout.text("   --mult <m>")
           ! stdout.flush    
           ! stdout.text("       The multiplicity of the <wavefunction> i.e. <m>=2S+1 where S is the total spin.")
           ! stdout.text("       Default: 1.")
-            stdout.flush    
-            stdout.text("   -scf <wavefunction>")
+            stdout.flush
+            stdout.text("   --residual-cube [t|f]")
+            stdout.flush
+            stdout.text("       Write a residual-density cube over the unit cell after refinement.")
+            stdout.text("       This is by far the largest file a refinement produces -- megabytes even")
+            stdout.text("       for a dipeptide -- so turn it off for large structures or batch runs.")
+            stdout.flush
+            stdout.text("       Default: t")
+            stdout.flush
+            stdout.text("   --scf <wavefunction>")
             stdout.flush    
             stdout.text("       The scf <wavefunction> to be used. Allowed options:")
             stdout.flush    
@@ -433,30 +545,37 @@ program run_HAR
           ! stdout.text("       uks     unrestricted Kohn-Sham/BLYP")
           ! stdout.text("       gchf    general-complex (relativistic) Hartree-Fock")
           ! stdout.flush    
-          ! stdout.text("   -scf-guess [mos|density]")
+          ! stdout.text("   --scf-guess [mos|density]")
           ! stdout.flush    
           ! stdout.text("       Initial guess for SCF <wavefunction> method.")
           ! stdout.flush    
-          ! stdout.text("   -wavelength <wavelength>")
-          ! stdout.flush    
-          ! stdout.text("       The <wavelength> of the X-radiation.  Default: '0.7139 angstrom'.")
-          ! stdout.text("       Used for e.g. dispersion correction, and defining sin(theta)/lambda.")
-          ! stdout.flush    
-            stdout.flush    
-            stdout.text("   -complete-mol [t|f] ")
+            stdout.flush
+            stdout.text("   --wavelength <wavelength>")
+            stdout.flush
+            stdout.text("       The <wavelength> of the X-radiation, in Angstrom. Needed only when the")
+            stdout.text("       <cif-file> has no _diffrn_radiation_wavelength item; it defines the")
+            stdout.text("       Bragg angle of each reflection.")
+            stdout.flush
+            stdout.text("       Default: taken from the <cif-file>")
+            stdout.flush
+            stdout.text("   --complete-mol [t|f] ")
             stdout.flush    
             stdout.text("       Set 't' to complete molecules for SC cluster point charges.")
             stdout.text("       Should be false in case of network compounds.")
             stdout.flush    
             stdout.text("       Default: TRUE")
+            stdout.flush
+            stdout.text("   --version")
+            stdout.flush
+            stdout.text("       Print the version of hart and stop")
 
             stop
 
          case default
-            stdout.text("Type 'hart -help' for help.")
+            stdout.text("Type 'hart --help' for help.")
             stdout.flush
             UNKNOWN(option)
-            stop
+            stop 1
 
       end
 
@@ -482,7 +601,7 @@ program run_HAR
    stdout.flush
    stdout.text("For detailed help, run the command:")
    stdout.flush
-   stdout.text("   hart -help")
+   stdout.text("   hart --help")
    stdout.flush
    stdout.text("If you publish any of the results from this program please")
    stdout.text("cite the following original scientific publications:")
@@ -619,7 +738,17 @@ program run_HAR
 
    ! Post-processing
  ! DIE_IF(shx_f2==" " AND shx_f==" " AND std_f2==" " AND std_f==" ", "no .hkl file supplied")
-   DIE_IF(NOT basdir.filename_head=="basis_sets", "-basis-dir must end in 'basis_sets'")
+   ! Where are the basis sets? If --basis-dir was not given, fall back to the
+   ! environment, exactly as run_molecule.foo does, so that hart can be run
+   ! from anywhere without a machine-specific path on the command line.
+   if (basdir==" ") then
+      call get_environment_variable(BASIS_LIBRARY_ENV_NAME, basdir, status=i)
+      if (i/=0) basdir = " "
+   end
+   if (basdir==" ") basdir = "./basis_sets"
+   ! No check on the directory itself: whether INQUIRE reports a directory as
+   ! existing is compiler dependent. The basis file inside it is checked below,
+   ! and that message names the full path anyway.
    DIE_IF(NOT basis.is_one_of(allowed_bases), "unknown basis: "//trim(basis))
    DIE_IF(     dtol <TOL(5), "dtol is too small: "//trim(dtol.to_str))
    DIE_IF(     dtol >TOL(1), "dtol is too large: "//trim(dtol.to_str))
@@ -628,6 +757,11 @@ program run_HAR
    DIE_IF(    radius<ZERO, "radius must be positive")
    DIE_IF(    radius>ten,  "radius must be less than 10 angstrom")
    DIE_IF(NOT gracc.is_one_of(grid_levels), "unknown grid accuracy: "//trim(gracc))
+   ! Validated here, not in the setter: DIFFRACTION_DATA's own check is an
+   ! ENSURE and compiles away in the optimised build every user has. The lower
+   ! bound is min_iterations, which defaults to 2.
+   DIE_IF(maxit<0,"--max-iterations must not be negative")
+   DIE_IF(maxit>0 AND maxit<3,"--max-iterations must be 3 or more (min_iterations is 2)")
    DIE_IF(NOT guess.is_one_of(["mos    ","density"]),"unknown initial guess: "//trim(guess))
    DIE_IF(NOT   scf.is_one_of(["rhf ","rks "]),"unknown scf: "//trim(scf))
 
@@ -650,8 +784,14 @@ program run_HAR
    ! Read CIF
    m.cif.create
    m.cif.set_file_name(cif)
+
+   ! An mmCIF? This must be set BEFORE process_CIF, since it selects which
+   ! item names are looked for (_atom_site.* rather than _atom_site_*) and
+   ! brings in the compound_sequence_id's that Ryde capping groups on.
+   if (mmcif) m.cif.set_is_mmCIF(TRUE)
+
    m.CE:process_CIF
-   m.cif.update  
+   m.cif.update
 
    ! Complete whole molecules?
    if (defragment) then
@@ -678,6 +818,30 @@ program run_HAR
    m.crystal.xray_data.SET:set_partition_model("oc-hirshfeld")
    m.crystal.xray_data.SET:set_refine_extinction(extinct)
    m.crystal.xray_data.SET:set_use_text_SFs(disk_sfs)
+   m.crystal.xray_data.set_do_residual_cube(rescube)
+
+   ! Cap the refinement. Bounds BOTH loops -- the inner rigid-atom fit and the
+   ! outer HAR cycle -- since too_many_fit_iterations and too_many_ref_iterations
+   ! are both measured against max_iterations.
+   if (maxit>0) &
+   m.crystal.xray_data.set_max_iterations(maxit)
+
+   ! Wavelength. Not every CIF carries _diffrn_radiation_wavelength, and
+   ! DIFFRACTION_DATA defaults it to -1 i.e. "not set", which leaves theta
+   ! undefined for every reflection. Only override when asked. The option is
+   ! in Angstrom and converted here, exactly as the CIF reader does with
+   ! _diffrn_radiation_wavelength; the stored quantity is in Bohr.
+   if (wavelen>ZERO) &
+   m.crystal.xray_data.set_wavelength(wavelen*BOHR_PER_ANGSTROM)
+
+   ! Ulf Ryde's capped residues. Only meaningful for an mmCIF, which is where
+   ! the compound_sequence_id's come from, so it follows --mmcif rather than
+   ! being an option of its own: splitting a covalent chain into residues
+   ! WITHOUT capping would leave dangling bonds, so there is no second choice
+   ! to offer. A multi-molecule (non-polymer) asymmetric unit needs no capping
+   ! and is grouped by plain connectivity instead -- see below.
+   if (mmcif) &
+   m.crystal.xray_data.set_use_Ryde_capping(TRUE)
 
    ! Dispersion
    if (disperse.allocated) then
@@ -726,16 +890,85 @@ program run_HAR
    end
 
    ! Finalize data, and do data pruning
-   m.crystal.xray_data.SET:set_F_sigma_cutoff(fos)
+   ! --fos 0 means "no cutoff", and the way to express that is NOT to set it:
+   ! DIFFRACTION_DATA:set_F_sigma_cutoff ENSUREs val>ZERO and says so in its own
+   ! comment ("make sure zero is not entered ... just leave it off!"), while the
+   ! field DEFAULTS to -TWO and every consumer tests `> ZERO`. Calling it with 0
+   ! therefore worked only in release, where the ENSURE compiles away, and
+   ! aborted in any debug build -- which is exactly how it was found.
+   if (fos>ZERO) &
+   m.crystal.xray_data.set_F_sigma_cutoff(fos)
    if (fzcut>ZERO) &
    m.crystal.xray_data.SET:set_F_z_cutoff(fzcut)
    m.crystal.xray_data.SET:update(m.crystal.unit_cell,m.crystal.spacegroup)
+   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+   ! Atom groups !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+   !
+   ! Remake them now that use_Ryde_capping is known. This mirrors what a tonto
+   ! job does: the groups are first made during process_CIF, when capping is
+   ! still off, and remade when the crystal block is read -- MOLECULE.MAIN's
+   ! read_crystal ends in exactly this call. Without it, an --mmcif run keeps
+   ! the connectivity groups it built earlier and Ryde capping never happens.
+   m.update_atom_basis_group_info
+
+   n_groups = 0
+   if (m.atom_group.allocated) n_groups = m.atom_group.dim
+
+   ! fragHAR, or plain HAR? Decided by the data, not by an option: more than
+   ! one group means more than one molecule (or capped residue) in the
+   ! asymmetric unit, which is precisely the case HAR_refinement cannot do.
+   do_fragHAR = n_groups>1
+
+   ! Charges and multiplicities are per group, so the lists must be the length
+   ! the structure actually has. Getting this wrong silently -- refining a
+   ! zwitterion as two neutral fragments, say -- gives a converged, plausible,
+   ! wrong answer, so it is a DIE and the message names both numbers.
+   if (grp_charge.allocated) then
+      DIE_IF(grp_charge.dim/=n_groups, &
+             "--group-charges has "//trim(grp_charge.dim.to_str)// &
+             " entries but there are "//trim(n_groups.to_str)//" atom groups")
+   end
+   if (grp_mult.allocated) then
+      DIE_IF(grp_mult.dim/=n_groups, &
+             "--group-multiplicities has "//trim(grp_mult.dim.to_str)// &
+             " entries but there are "//trim(n_groups.to_str)//" atom groups")
+   end
+
+   ! Self-consistent cluster charges are a whole-molecule SCF idea and the
+   ! fragment SCF does not use them. Silently ignoring --cluster-radius would
+   ! hand back a refinement that is not the one that was asked for.
+   DIE_IF(do_fragHAR AND radius>ZERO, &
+          "--cluster-radius is not (yet) available with fragment refinement")
    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 
    !!!!!!!!!
    m.PUT:put
    !!!!!!!!!
+
+   ! Apply the per-group charges and multiplicities, then remake the group
+   ! sub-molecules so they pick them up. Same two steps, in the same order, as
+   ! MOLECULE.MAIN:read_atom_groups -- read onto the groups, then update.
+   if (grp_charge.allocated OR grp_mult.allocated) then
+
+      ! .atom_group_charges is the copy that SURVIVES. set_connected_atom_groups
+      ! re-applies it every time the groups are rebuilt from the connection
+      ! table, and fragHAR_refinement rebuilds them on every LS cycle. A charge
+      ! written only onto the group itself would be dropped there.
+      if (grp_charge.allocated) then
+         m.atom_group_charges.create(n_groups)
+         m.atom_group_charges = grp_charge
+      end
+
+      do g = 1,n_groups
+         if (grp_charge.allocated) m.atom_group(g).set_charge(grp_charge(g))
+         if (grp_mult.allocated)   m.atom_group(g).set_spin_multiplicity(grp_mult(g))
+      end
+
+      m.update_atom_basis_group_info
+
+   end
 
    ! Set Becke grid
    m.becke_grid.create
@@ -745,36 +978,86 @@ program run_HAR
 
    ! Initial SCF - only if using cluster charges
    m.SCF_data.create
-   m.SCF_data.set_SCF_kind(scf)
+   if (do_fragHAR) then
+      ! Each fragment gets its own SCF, driven by MOLECULE.SCF:fragment_SCF.
+      ! The kinds are literally "fragment-rhf" / "fragment-rks" -- see the
+      ! dispatch in molecule.scf.foo and the SCF_kind case list in scf_data.foo.
+      m.SCF_data.set_SCF_kind("fragment-"//trim(scf))
+   else
+      m.SCF_data.set_SCF_kind(scf)
+   end
    spinorbitals = m.SCF_data.spinorbital_genre
    m.SCF_data.set_initial_density("promolecule")
-   select case (guess)
-   case ("density"); m.SCF_data.set_initial_MOs(spinorbitals)
-   case ("mos    "); m.SCF_data.set_initial_density(spinorbitals)
-   end
+
+   ! NO second guess call here. The block that used to sit here was
+   !
+   !    select case (guess)
+   !    case ("density"); m.SCF_data.set_initial_MOs(spinorbitals)
+   !    case ("mos    "); m.SCF_data.set_initial_density(spinorbitals)
+   !    end
+   !
+   ! and it was fatal. "guess" is always "mos" (--scf-guess is one of the
+   ! frozen options), so it always ran the second branch, and
+   ! SCF_DATA:set_initial_density("restricted") does not mean "guess a
+   ! restricted density" -- it rewrites .initial_density to "r", i.e. *read*
+   ! a restricted density from an SCF archive. No archive exists on a first
+   ! run, so the SCF read garbage and segfaulted. It also silently discarded
+   ! the promolecule guess set on the line above. (The two branches are
+   ! swapped against their own names as well: "density" called set_initial_MOs.)
+   !
+   ! The equivalent tonto job -- tests/long/urea_rhf_STO-3G_HAR/stdin -- sets
+   ! `initial_density= promolecule` and nothing else, which is what hart now
+   ! does. Reviving --scf-guess means rewriting this correctly, not restoring
+   ! the above. See DEFERRED.md.
    m.SCF_data.set_convergence(TOL(3))
-   m.SCF_data.SCF_DIIS.set_convergence_tolerance(TOL(2))
+   m.SCF_data.SCF_DIIS.set_convergence_tolerance(dtol)
    m.SCF_data.set_linear_dependence_tol(ldtol)
-   m.SCF_data.update 
 
-   !!!!!!!!!
-   m.SCF:scf
-   !!!!!!!!!
+   ! Damping and level shifting for the fragment SCF. Fragments are charged
+   ! and often open-shell-looking near the promolecule guess, so the plain
+   ! DIIS settings above oscillate. These are the values the equivalent tonto
+   ! job uses (tests/long/gly_ala_fragHAR_rhf_STO-3G/stdin) -- hardcoded here
+   ! in the same spirit as the SCF/DIIS tolerances hart already fixes.
+   if (do_fragHAR) then
+      m.SCF_data.set_using_damping(TRUE)
+      m.SCF_data.set_damp_factor(0.99d0)
+      m.SCF_data.set_using_level_shift(TRUE)
+      m.SCF_data.set_level_shift(100.0d0)
+   end
 
-   ! Cluster/ED SCF settings
-   radius_is_0 = abs(radius) < TOL(2)
-   if (NOT radius_is_0) then
-      m.SCF_data.set_using_SC_cluster_charges(TRUE)
-      m.SCF_data.set_cluster_radius(radius)
-      m.SCF_data.set_defragment(defragment)
-      m.SCF_data.update
-      m.SCF:scf ! Cluster charge SCF here
+   m.SCF_data.update
+
+   ! A whole-of-asymmetric-unit SCF, but ONLY for a single fragment. With more
+   ! than one fragment there is no single molecule to converge -- the fragments
+   ! are separate wavefunctions and fragHAR_refinement does their SCF itself
+   ! (via fragment_SCF, first call before the LS cycle). The tonto job has its
+   ! `scf` keyword commented out for the same reason.
+   if (NOT do_fragHAR) then
+
+      !!!!!!!!!
+      m.SCF:scf
+      !!!!!!!!!
+
+      ! Cluster/ED SCF settings
+      radius_is_0 = abs(radius) < TOL(2)
+      if (NOT radius_is_0) then
+         m.SCF_data.set_using_SC_cluster_charges(TRUE)
+         m.SCF_data.set_cluster_radius(radius)
+         m.SCF_data.set_defragment(defragment)
+         m.SCF_data.update
+         m.SCF:scf ! Cluster charge SCF here
+      end
+
    end
 
 
-   ! HAR !!!!!!!!!!!!!!
-   m.HAR:HAR_refinement
-   !!!!!!!!!!!!!!!!!!!!
+   ! HAR !!!!!!!!!!!!!!!!!!!!!!
+   if (do_fragHAR) then
+      m.fragHAR_refinement
+   else
+      m.HAR:HAR_refinement
+   end
+   !!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
    ! Job timing
    stdout.flush
@@ -788,9 +1071,9 @@ program run_HAR
    MOLECULE.MAIN:cleanup
 
    ! Clean-up files
-   TEXTFILE:destroy(stderr)
+   TEXTFILE:destroy(std_err)
    TEXTFILE:destroy(stdout)
- ! TEXTFILE:destroy(stdin)
+   TEXTFILE:destroy(stdin)
 
    ! Clean-up tonto system
    TONTO_DESTROY

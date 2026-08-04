@@ -130,6 +130,7 @@ module SYSTEM
 
 #ifndef _WIN32
 !  MPI initialise and finalise   
+   USE mpi, only: MPI_ABORT
    USE mpi, only: MPI_FINALIZE
 
 !  MPI gather functions   
@@ -245,8 +246,8 @@ contains
 
       .error_status    = 0
       .warnings_issued = FALSE
-      .stderr_unit     = TEXTFILE_STDERR_UNIT
-      .stdout_unit     = TEXTFILE_STDOUT_UNIT
+      .std_err_unit     = TEXTFILE_STD_ERR_UNIT
+      .stdout_unit     = TEXTFILE_STD_OUT_UNIT
       .keyword_echo    = FALSE
 
    end
@@ -257,8 +258,12 @@ contains
       self :: INOUT
 
       .set_defaults
-      .initialize_cloned_random_seed
+      ! MUST come before the seed: initialize_cloned_random_seed asks
+      ! .is_master_processor, and until parallel_initialize runs, master_rank and
+      ! processor_rank are both still DEFAULT(0) -- so EVERY rank believes it is
+      ! master and seeds itself from its own clock. See below.
       .parallel_initialize
+      .initialize_cloned_random_seed
 
    end
 
@@ -271,11 +276,14 @@ contains
       dt :: VEC{INT}(8)
       n,i,t :: INT
 
-      ! Get the size "n"
-      if (.is_master_processor) then
-         call random_seed(size=n)
-         PARALLEL_BROADCAST(n,tonto.master_processor)
-      end
+      ! Get the size "n".
+      ! ALL ranks, not just master: random_seed(size=) reports a property of the
+      ! compiled RNG, so it is identical everywhere and never needed broadcasting.
+      ! It used to be fetched under `if (.is_master_processor)` with the broadcast
+      ! INSIDE that guard -- a collective no worker would ever reach, and `n` left
+      ! undefined on workers at the allocate below. Calling it everywhere removes
+      ! the collective rather than fixing it.
+      call random_seed(size=n)
 
       ! Allocate seed array
       allocate(seed(n))
@@ -299,13 +307,15 @@ contains
          i = 0
          seed = t + 37 * [ (i, i=0,n-1) ]
 
-         ! Broadcast seed
-         PARALLEL_BROADCAST(seed,tonto.master_processor)
-
       end
 
+      ! Broadcast the seed OUTSIDE the master guard, so every rank reaches this
+      ! collective. It used to sit inside the `if (.is_master_processor)` block
+      ! above, i.e. a broadcast only the root ever called.
+      PARALLEL_BROADCAST(seed,tonto.master_processor)
+
       ! Get the random numbers from same seed
-      ! NOTE: cloned for each processor!
+      ! NOTE: cloned for each processor -- which is now actually true.
       call random_seed(put=seed)
 
       ! Clean
@@ -323,18 +333,18 @@ contains
 !  Error operations
 !  ================
 
-   set_stderr_unit(n) :: pure
+   set_std_err_unit(n) :: pure
    ! Set the error unit number "n"
       self :: INOUT
       n :: INT, IN
-      .stderr_unit = n
+      .std_err_unit = n
    end
 
-   set_stderr_file(file) :: pure
+   set_std_err_file(file) :: pure
    ! Set the error output file to "file"
       self :: INOUT
       file :: TEXTFILE, IN
-      .stderr_unit = file.unit
+      .std_err_unit = file.unit
    end
 
    set_stdout_unit(n) :: pure
@@ -365,11 +375,15 @@ contains
       .low_verbosity = val
    end
 
-   set_parallel_IO_allowed(val) :: pure
-   ! Set whether to echo user-input keywords
+   set_per_rank_IO_allowed(val) :: pure
+   ! Set whether every rank may do its own I/O, instead of the master alone.
+   ! Used where the ranks deliberately work on different data and so must
+   ! open, write and close their OWN files -- see MOLECULE.SCF:fragment_SCF_para.
+   ! NOTE: until 2026-08-03 this assigned .keyword_echo, so the flag could not
+   ! be set at all and the escape hatch in SYSTEM:IO_is_allowed was dead code.
       self :: INOUT
       val :: BIN, IN
-      .keyword_echo = val
+      .per_rank_IO_allowed = val
    end
 
 !  ==============
@@ -386,12 +400,12 @@ contains
       .error_status = 1
 
       if (.IO_is_allowed) then
-         write(.stderr_unit,*)
-         write(.stderr_unit,"(a)") &
+         write(.std_err_unit,*)
+         write(.std_err_unit,"(a)") &
           "Error in "// trim(message) ! message should include the routine name via foo
          inquire(unit=.stdout_unit,opened=stdout_open)
          if (stdout_open) then
-         if (.stderr_unit/=.stdout_unit) then
+         if (.std_err_unit/=.stdout_unit) then
          write(.stdout_unit,*)
          write(.stdout_unit,"(a)") &
           "Error in "// trim(message) ! message should include the routine name via foo
@@ -402,14 +416,55 @@ contains
       .report_io_file_info
       .report_keyword_info
 #ifdef MPI
-      .parallel_finalize
+      ! MPI_ABORT, not MPI_FINALIZE. This is the ERROR path: one rank is dying and
+      ! the others are still running. MPI_FINALIZE is COLLECTIVE -- every rank must
+      ! call it -- so a single rank finalising here blocks while its peers carry on,
+      ! and the job HANGS instead of failing. A hang is the least informative failure
+      ! there is: no message, no exit code, no clue which rank died.
+      !
+      ! MPI_ABORT is unilateral by design: it terminates every rank in the
+      ! communicator. Guarded on .is_parallel so a serial build (where MPI was never
+      ! initialised) falls straight through to the stop below.
+      !
+      ! NOTE the previously commented-out line here passed .mpi_status (a
+      ! VEC{INT}(MPI_STATUS_SIZE)) as MPI_ABORT's integer "ierror" argument -- it
+      ! would not have compiled, and MPI_ABORT was never imported either. Both fixed.
+      if (.is_parallel) then
+
+         ! Say WHY, on THIS rank, before the job is killed.
+         !
+         ! Everything above is gated on .IO_is_allowed, i.e. master only -- so
+         ! when a NON-master rank dies, which is the usual case for an MPI-only
+         ! bug, the message was never written at all and the job died in total
+         ! silence: nothing on stdout, nothing on stderr, nothing in <job>.err.
+         ! That makes a parallel failure nearly undiagnosable, and it cost most
+         ! of a day on the hart MPI_ERR_TRUNCATE hunt.
+         !
+         ! Written straight to Fortran's preconnected stderr (unit 0), not via
+         ! TEXTFILE and not to .std_err_unit:
+         !   . unit 0 exists on EVERY rank, whereas the std_err file is opened
+         !     only on the master and its unit number is merely broadcast;
+         !   . TEXTFILE:flush contains PARALLEL_BROADCASTs, so flushing here --
+         !     from the one rank that is dying, while its peers run on -- would
+         !     be a collective entered by a single rank, i.e. a hang. The error
+         !     path must not use collectives.
+         ! The rank is included because "which rank died" is the first question.
+         write(0,'(a,i0,a)') "Error on rank ",.processor_rank,": "//trim(message)
+         flush(0)
+
+         call MPI_ABORT(MPI_COMM_WORLD,.error_status,.mpi_error)
+
+      end
 #endif
 
 #ifdef DEBUG
       deallocate(tonto_bug)
 #endif
 
-      stop
+      ! Non-zero: .error_status was set to 1 above, and a caller -- a shell,
+      ! a CI job, scripts/test.py -- can only see that through the exit code.
+      ! A bare "stop" exits 0, i.e. reports success while dying.
+      stop 1
 
    end
 
@@ -435,10 +490,10 @@ contains
       .error_status = -1
 
       if (.IO_is_allowed) then
-         write(.stderr_unit,"(' ')")
-         write(.stderr_unit,"(a)") &
+         write(.std_err_unit,"(' ')")
+         write(.std_err_unit,"(a)") &
          "Warning from "// trim(message) ! message should include the routine name
-         if (.stderr_unit/=.stdout_unit) then
+         if (.std_err_unit/=.stdout_unit) then
          write(.stdout_unit,"(' ')")
          write(.stdout_unit,"(a)") &
          "Warning from "// trim(message) ! message should include the routine name
@@ -448,11 +503,11 @@ contains
       if (present(iostat)) then
 
          if (.IO_is_allowed) then
-            write(.stderr_unit,"(' ')")
-            write(.stderr_unit,"(a,i4)") "Fortran error ",iostat
+            write(.std_err_unit,"(' ')")
+            write(.std_err_unit,"(a,i4)") "Fortran error ",iostat
             inquire(unit=.stdout_unit,opened=stdout_open)
             if (stdout_open) then
-            if (.stderr_unit/=.stdout_unit) then
+            if (.std_err_unit/=.stdout_unit) then
             write(.stdout_unit,"(' ')")
             write(.stdout_unit,"(a,i4)") "Fortran error ",iostat
             end
@@ -504,12 +559,12 @@ contains
       .error_status = 1
 
       if (.IO_is_allowed) then
-         write(.stderr_unit,*)
-         write(.stderr_unit,"(a)") &
+         write(.std_err_unit,*)
+         write(.std_err_unit,"(a)") &
          "Error in "// trim(name) // " ... unknown option: " // trim(word)
          inquire(unit=.stdout_unit,opened=stdout_open)
          if (stdout_open) then
-         if (.stderr_unit/=.stdout_unit) then
+         if (.std_err_unit/=.stdout_unit) then
          write(.stdout_unit,*)
          write(.stdout_unit,"(a)") &
          "Error in "// trim(name) // " ... unknown option: " // trim(word)
@@ -520,14 +575,43 @@ contains
       .report_io_file_info
       .report_keyword_info(options)
 #ifdef MPI
-      .parallel_finalize
+      ! Error path: abort all ranks rather than finalise this one. See die().
+      if (.is_parallel) then
+
+         ! Say WHY, on THIS rank, before the job is killed.
+         !
+         ! Everything above is gated on .IO_is_allowed, i.e. master only -- so
+         ! when a NON-master rank dies, which is the usual case for an MPI-only
+         ! bug, the message was never written at all and the job died in total
+         ! silence: nothing on stdout, nothing on stderr, nothing in <job>.err.
+         ! That makes a parallel failure nearly undiagnosable, and it cost most
+         ! of a day on the hart MPI_ERR_TRUNCATE hunt.
+         !
+         ! Written straight to Fortran's preconnected stderr (unit 0), not via
+         ! TEXTFILE and not to .std_err_unit:
+         !   . unit 0 exists on EVERY rank, whereas the std_err file is opened
+         !     only on the master and its unit number is merely broadcast;
+         !   . TEXTFILE:flush contains PARALLEL_BROADCASTs, so flushing here --
+         !     from the one rank that is dying, while its peers run on -- would
+         !     be a collective entered by a single rank, i.e. a hang. The error
+         !     path must not use collectives.
+         ! The rank is included because "which rank died" is the first question.
+         write(0,'(a,i0,a)') "Error on rank ",.processor_rank,": "//trim(name)//" ... unknown option: "//trim(word)
+         flush(0)
+
+         call MPI_ABORT(MPI_COMM_WORLD,.error_status,.mpi_error)
+
+      end
 #endif
 
 #ifdef DEBUG
       deallocate(tonto_bug)
 #endif
 
-      stop
+      ! Non-zero: .error_status was set to 1 above, and a caller -- a shell,
+      ! a CI job, scripts/test.py -- can only see that through the exit code.
+      ! A bare "stop" exits 0, i.e. reports success while dying.
+      stop 1
 
    end
 
@@ -543,12 +627,12 @@ contains
       .error_status = 1
 
       if (.IO_is_allowed) then
-         write(.stderr_unit,*)
-         write(.stderr_unit,"(a)") &
+         write(.std_err_unit,*)
+         write(.std_err_unit,"(a)") &
          "Error in "// trim(name) // " ... unknown option: " // trim(word)
          inquire(unit=.stdout_unit,opened=stdout_open)
          if (stdout_open) then
-         if (.stderr_unit/=.stdout_unit) then
+         if (.std_err_unit/=.stdout_unit) then
          write(.stdout_unit,*)
          write(.stdout_unit,"(a)") &
          "Error in "// trim(name) // " ... unknown option: " // trim(word)
@@ -560,15 +644,43 @@ contains
 
       if (.known_keywords.allocated) .report_keyword_info(.known_keywords)
 #ifdef MPI
-      .parallel_finalize
-   ! call MPI_ABORT(MPI_COMM_WORLD,.error_status,.mpi_status)
+      ! Error path: abort all ranks rather than finalise this one. See die().
+      if (.is_parallel) then
+
+         ! Say WHY, on THIS rank, before the job is killed.
+         !
+         ! Everything above is gated on .IO_is_allowed, i.e. master only -- so
+         ! when a NON-master rank dies, which is the usual case for an MPI-only
+         ! bug, the message was never written at all and the job died in total
+         ! silence: nothing on stdout, nothing on stderr, nothing in <job>.err.
+         ! That makes a parallel failure nearly undiagnosable, and it cost most
+         ! of a day on the hart MPI_ERR_TRUNCATE hunt.
+         !
+         ! Written straight to Fortran's preconnected stderr (unit 0), not via
+         ! TEXTFILE and not to .std_err_unit:
+         !   . unit 0 exists on EVERY rank, whereas the std_err file is opened
+         !     only on the master and its unit number is merely broadcast;
+         !   . TEXTFILE:flush contains PARALLEL_BROADCASTs, so flushing here --
+         !     from the one rank that is dying, while its peers run on -- would
+         !     be a collective entered by a single rank, i.e. a hang. The error
+         !     path must not use collectives.
+         ! The rank is included because "which rank died" is the first question.
+         write(0,'(a,i0,a)') "Error on rank ",.processor_rank,": "//trim(name)//" ... unknown option: "//trim(word)
+         flush(0)
+
+         call MPI_ABORT(MPI_COMM_WORLD,.error_status,.mpi_error)
+
+      end
 #endif
 
 #ifdef DEBUG
       deallocate(tonto_bug)
 #endif
 
-      stop
+      ! Non-zero: .error_status was set to 1 above, and a caller -- a shell,
+      ! a CI job, scripts/test.py -- can only see that through the exit code.
+      ! A bare "stop" exits 0, i.e. reports success while dying.
+      stop 1
 
    end
 
@@ -588,13 +700,13 @@ contains
       if (item_end>0) cursor = repeat("-",item_end-1)//"^"
 
       if (.IO_is_allowed) then
-         write(.stderr_unit,*)
-         write(.stderr_unit,"('File name   = ',a)")  trim(.io_file.name)
-         write(.stderr_unit,"('Line number = ',i4)")      .io_file.record
-         write(.stderr_unit,"('File buffer = ',a)")  trim(.io_file.buffer.string)
+         write(.std_err_unit,*)
+         write(.std_err_unit,"('File name   = ',a)")  trim(.io_file.name)
+         write(.std_err_unit,"('Line number = ',i4)")      .io_file.record
+         write(.std_err_unit,"('File buffer = ',a)")  trim(.io_file.buffer.string)
          inquire(unit=.stdout_unit,opened=stdout_open)
          if (stdout_open) then
-         if (.stderr_unit/=.stdout_unit) then
+         if (.std_err_unit/=.stdout_unit) then
          write(.stdout_unit,*)
          write(.stdout_unit,"('File name   = ',a)")  trim(.io_file.name)
          write(.stdout_unit,"('Line number = ',i4)")      .io_file.record
@@ -603,9 +715,9 @@ contains
          end
 
          if (item_end>0) then
-         write(.stderr_unit,"('Cursor -------',a)")  trim(cursor)
+         write(.std_err_unit,"('Cursor -------',a)")  trim(cursor)
          if (stdout_open) then
-         if (.stderr_unit/=.stdout_unit) then
+         if (.std_err_unit/=.stdout_unit) then
          write(.stdout_unit,"('Cursor -------',a)")  trim(cursor)
          end
          end
@@ -631,16 +743,16 @@ contains
 
          if (.IO_is_allowed) then
 
-            write(.stderr_unit,*)
-            write(.stderr_unit,"('Allowed keyword options:')")
-            write(.stderr_unit,*)
+            write(.std_err_unit,*)
+            write(.std_err_unit,"('Allowed keyword options:')")
+            write(.std_err_unit,*)
             do n = 1,size(options)
-            write(.stderr_unit,"('   ',a)") trim(options(n))
+            write(.std_err_unit,"('   ',a)") trim(options(n))
             end
 
             inquire(unit=.stdout_unit,opened=stdout_open)
             if (stdout_open) then
-            if (.stderr_unit/=.stdout_unit) then
+            if (.std_err_unit/=.stdout_unit) then
             write(.stdout_unit,*)
             write(.stdout_unit,"('Allowed keyword options:')")
             write(.stdout_unit,*)
@@ -666,7 +778,7 @@ contains
       f_unit :: INT
 
       if (present(unit)) then; f_unit = unit
-      else;                    f_unit = tonto.stderr_unit
+      else;                    f_unit = tonto.std_err_unit
       end
 
       if (.IO_is_allowed) then
@@ -697,7 +809,7 @@ contains
    ! Generic set
    end
 
-   set_do_parallel_lock(val) :: get_from(PARALLEL), pure
+   set_parallel_do_lock(val) :: get_from(PARALLEL), pure
    ! Generic set
    end
 
@@ -761,7 +873,7 @@ contains
    ! length can be optionally supplied, if it is not 1.
    end
 
-   do_in_parallel result (res) :: get_from(PARALLEL), pure
+   work_is_shared result (res) :: get_from(PARALLEL), pure
    ! Return TRUE if we are allowed to start to implement a given do-loop in
    ! parallel. NOTE: Once you have parallelised a loop, remember to prevent
    ! further parallelisation, using the ".lock_parallel_do" method. This is
@@ -6628,7 +6740,7 @@ contains
    ! Here, only the master processor does I/O in a parallel job.
       self :: IN
       res :: BIN
-      if (.parallel_IO_allowed) then
+      if (.per_rank_IO_allowed) then
          res = TRUE
       else
          res = .is_master_processor OR (NOT .is_parallel)

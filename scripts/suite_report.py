@@ -7,10 +7,13 @@ in the last columns — how closely each test's output matches its reference
 under three criteria:
 
     exact    byte-for-byte numeric agreement (every printed digit identical)
-    loose    within the relative tolerance (default 0.2%) OR the last-digit
-             tolerance -- this is the verdict that decides pass/fail
     lastdig  within +/- K units of the last printed decimal place (default 2),
              for numbers quoted to low precision
+    loose    within the relative tolerance (default 0.2%) OR the last-digit
+             tolerance -- this is the verdict that decides pass/fail
+
+They are reported in that order, so `loose`, being the combination of the
+other two, sits rightmost of the three verdict columns.
 
 The three criteria and their tolerances are exactly those of
 `scripts/test.py`; this script simply runs test.py per test, parses the
@@ -19,9 +22,9 @@ several compared output files is scored on its worst file.
 
 Usage
 -----
-    python3 scripts/compare_test_outputs.py --program build/tonto
-    python3 scripts/compare_test_outputs.py -p build-rel/tonto --suites short rgbi
-    python3 scripts/compare_test_outputs.py --rel-tol 1e-3 --last-digit-tol 1
+    python3 scripts/suite_report.py --program build/tonto
+    python3 scripts/suite_report.py -p build-rel/tonto --suites short rgbi
+    python3 scripts/suite_report.py --rel-tol 1e-3 --last-digit-tol 1
 
 Tolerances (mirror scripts/test.py):
     --rel-tol         loose RELATIVE tolerance   (fraction; default 2e-3 = 0.2%)
@@ -35,14 +38,14 @@ import re
 import subprocess
 import sys
 
-SUITES = ['short', 'rgbi', 'long', 'cx']
+SUITES = ['short', 'hart', 'rgbi', 'long', 'cx']
 
 # Tests with known runner-sensitive numerics that pass the standard loose gate on
 # most CPUs but sit close enough to the boundary that a different runner (BLAS /
 # eigensolver ordering, FP reassociation) can flip the verdict. Give just these a
 # documented wider loose bound so CI does not flicker; the strict gate stays for
 # every other test. This is a WORKAROUND, not a fix -- the aim is to remove entries
-# by understanding each discrepancy. See ANTLR4_DEFERRED.md "small numerical
+# by understanding each discrepancy. See DEFERRED.md "small numerical
 # differences". Keys are the test-dir basename.
 KNOWN_MARGINAL = {
     'h2o_rhf_cc-pVDZ_tdhf': {'rel_tol': 5e-3},     # TDHF response, rel ~0.12% vs 0.2% gate
@@ -61,12 +64,18 @@ _ROW = re.compile(
 
 class _Tee:
     """Write to several streams at once — used to mirror the report to stdout and
-    a log file simultaneously."""
+    a log file simultaneously.
+
+    Every write is flushed immediately.  A suite takes minutes and each test
+    contributes one short line, so without this the report sits in an 8 KB
+    buffer and appears all at once when the run ends — which reads exactly like
+    a hang.  The cost is nothing: the report is a few dozen lines in total."""
     def __init__(self, *streams):
         self._streams = streams
     def write(self, s):
         for st in self._streams:
             st.write(s)
+            st.flush()
     def flush(self):
         for st in self._streams:
             st.flush()
@@ -86,6 +95,12 @@ def score_test(test_py, test_dir, args):
            '--rel-tol', repr(rel_tol),
            '--last-digit-tol', repr(ld_tol),
            '--abs-tol', repr(args.abs_tol)]
+    # Without this, `make report` against an MPI build silently ran every job
+    # single-rank -- the report looked like an MPI result and was not one.
+    if args.mpi:
+        cmd += ['--mpi',
+                '--mpi-ranks', str(args.mpi_ranks),
+                '--mpi-launcher', args.mpi_launcher]
     p = subprocess.run(cmd, capture_output=True, text=True)
     rows = [m for m in (_ROW.search(l) for l in p.stdout.splitlines()
                         if l.startswith('AGREEMENT')) if m]
@@ -130,14 +145,37 @@ def main():
                     help='loose LAST-DIGIT tolerance (units of last place; default 2)')
     ap.add_argument('--abs-tol', type=float, default=1e-7,
                     help='absolute near-zero floor (default 1e-7)')
+    ap.add_argument('--mpi', '-m', action='store_true',
+                    help='run every job under the MPI launcher (see --mpi-ranks). '
+                         'Without this, a report against an MPI-built binary runs '
+                         'single-rank and is not an MPI result.')
+    ap.add_argument('--mpi-ranks', type=int, default=4,
+                    help='MPI ranks per job when --mpi is given (default 4). Sweep '
+                         'this: reduction order is rank-count dependent, and -n 1 '
+                         'is the control that isolates MPI-build effects from it.')
+    ap.add_argument('--mpi-launcher', default='mpirun',
+                    help='MPI launcher for --mpi (default mpirun). Must come from '
+                         'the same MPI installation the binary was linked against.')
     ap.add_argument('--log', default='tests.log',
                     help='also write the report to this file (default: tests.log in '
                          'the current directory)')
     ap.add_argument('--no-log', action='store_true',
                     help='print to stdout only; do not write a log file')
+    ap.add_argument('--no-invariant-checks', action='store_true',
+                    help='skip the self-validating invariant checks run after the suites')
     args = ap.parse_args()
 
+    # Resolve every path to an absolute one *before* anything runs. The
+    # invariant scripts chdir into a scratch work directory, so a relative
+    # --basis-sets would be resolved against that directory and silently fail
+    # ("could not read the energies"). This is not hypothetical: CI passes
+    # `--basis-sets basis_sets` relative, which broke every invariant check the
+    # moment they started running from this driver, while local runs and the
+    # CMake `report` target -- both of which pass absolute paths -- stayed green.
+    # test.py guards the same way for the same reason.
     args.program = os.path.abspath(args.program)
+    args.basis_sets = os.path.abspath(args.basis_sets)
+    args.tests_dir = os.path.abspath(args.tests_dir)
     if not os.path.exists(args.program):
         sys.exit('error: program not found: %s' % args.program)
     test_py = os.path.join(here, 'test.py')
@@ -152,8 +190,10 @@ def main():
     relpct = args.rel_tol * 100
     ldk = args.last_digit_tol
     NAMEW = 50
-    hdr = ('%-*s  %-6s %-6s %-7s  %9s  %9s'
-           % (NAMEW, 'test name', 'exact', 'loose', 'lastdig', 'max rel%', 'max LDD'))
+    # Column order: exact, lastdig, then loose LAST -- loose is the OR of the
+    # other two, so it reads naturally as the rightmost of the three verdicts.
+    hdr = ('%-*s  %-6s %-7s %-6s  %9s  %9s'
+           % (NAMEW, 'test name', 'exact', 'lastdig', 'loose', 'max rel%', 'max LDD'))
     grand = {'n': 0, 'exact': 0, 'loose': 0, 'ld': 0, 'err': 0}
     widened = []   # known-marginal tests run with a relaxed bound (reported below)
 
@@ -177,8 +217,12 @@ def main():
         sdir = os.path.join(args.tests_dir, suite)
         if not os.path.isdir(sdir):
             continue
+        # A directory is a test if it has a "stdin" (a tonto job file) or an
+        # "IO" manifest (which is how an argv-driven job e.g. hart declares
+        # its program, arguments and outputs -- it has no stdin at all).
         tests = sorted(d for d in os.listdir(sdir)
-                       if os.path.isfile(os.path.join(sdir, d, 'stdin')))
+                       if os.path.isfile(os.path.join(sdir, d, 'stdin'))
+                       or os.path.isfile(os.path.join(sdir, d, 'IO')))
         print('')
         print('SUITE: %s (%d tests)' % (suite, len(tests)))
         print('_' * 95 + '\n')
@@ -186,21 +230,25 @@ def main():
         print('_' * 95 + '\n')
         sub = {'n': 0, 'exact': 0, 'loose': 0, 'ld': 0, 'err': 0}
         for t in tests:
+            # Print the name *before* running the test, and only then its
+            # verdict columns, so a slow test shows as a visibly pending line
+            # instead of silence.  Some tests here run for minutes.
+            print('%-*s  ' % (NAMEW, t[:NAMEW]), end='', flush=True)
             r = score_test(test_py, os.path.join(sdir, t), args)
             sub['n'] += 1
             if t in KNOWN_MARGINAL:
                 widened.append(t)
             if r['status'] == 'ERROR':
                 sub['err'] += 1
-                print('%-*s  %-6s %-6s %-7s  %9s  %9s'
-                      % (NAMEW, t[:NAMEW], 'ERROR', 'ERROR', 'ERROR', '-', '-'))
+                print('%-6s %-7s %-6s  %9s  %9s'
+                      % ('ERROR', 'ERROR', 'ERROR', '-', '-'))
                 continue
             sub['exact'] += r['exact']
             sub['loose'] += r['loose']
             sub['ld'] += r['ld']
-            print('%-*s  %-6s %-6s %-7s  %9.3g  %9.3g'
-                  % (NAMEW, t[:NAMEW], yn(r['exact']), yn(r['loose']),
-                     yn(r['ld']), r['max_rel'], r['max_ulp']))
+            print('%-6s %-7s %-6s  %9.3g  %9.3g'
+                  % (yn(r['exact']), yn(r['ld']),
+                     yn(r['loose']), r['max_rel'], r['max_ulp']))
         print('_' * 95 + '\n')
         print('%s subtotal:  loose %d/%d   (exact %d, lastdig %d%s)'
               % (suite, sub['loose'], sub['n'], sub['exact'], sub['ld'],
@@ -215,16 +263,72 @@ def main():
     print('_' * 95)
     if widened:
         print('\nNote: relaxed loose bound applied to known runner-sensitive tests '
-              '(workaround; see ANTLR4_DEFERRED.md "small numerical differences"):')
+              '(workaround; see DEFERRED.md "small numerical differences"):')
         for t in widened:
             print('  * %-48s %s' % (t, ', '.join('%s=%g' % kv
                                     for kv in KNOWN_MARGINAL[t].items())))
+    # ------------------------------------------------------------------
+    # Invariant checks.
+    #
+    # These compare the program against ITSELF rather than against a stored
+    # reference, so they need no reference output and cannot be silently
+    # blessed by regenerating references on a broken build. They also need
+    # only one machine, which is what makes them useful for platform-specific
+    # miscompilations -- see DEFERRED.md, "verify the macOS build".
+    # ------------------------------------------------------------------
+    invariants_ok = True
+    if not args.no_invariant_checks:
+        checks = [('spherical vs cartesian (s/p-only bases)',
+                   os.path.join(here, 'check_spherical_cartesian.sh'),
+                   [args.program, args.basis_sets])]
+        # hart's --help text is its only interface documentation, so it must
+        # agree with the option case labels in run_har.foo. Only meaningful if
+        # hart was built -- it lives beside tonto in the same build tree.
+        hart = os.path.join(os.path.dirname(args.program), 'hart')
+        run_har = os.path.join(os.path.dirname(here), 'runfiles', 'run_har.foo')
+        if os.path.exists(hart):
+            checks.append(('hart options vs its --help text',
+                           os.path.join(here, 'check_hart_options.sh'),
+                           [hart, run_har, args.basis_sets]))
+        # Source-level, no binary needed: a procedure taking arguments is a
+        # library routine and must not touch stdin, or it breaks every
+        # argv-driven program. Runs from python3, not sh -- see below.
+        checks.append(('library routines must not touch stdin',
+                       os.path.join(here, 'check_library_stdin.py'),
+                       [os.path.join(os.path.dirname(here), 'foofiles')]))
+        # Also source-level: no collective inside a `parallel do` body, and no
+        # raw .unit I/O reaching around the IO_IS_ALLOWED guard. Both are
+        # invisible in a serial run, which is why a lint and not a test.
+        checks.append(('MPI: no interior collectives, no raw .unit I/O',
+                       os.path.join(here, 'check_parallel_lint.py'),
+                       [os.path.join(os.path.dirname(here), 'foofiles')]))
+        print('')
+        print('INVARIANT CHECKS (no reference output involved)')
+        print('_' * 95 + '\n')
+        for name, script, cmd_args in checks:
+            if not os.path.exists(script):
+                print('%-*s  %s' % (NAMEW, name[:NAMEW], 'SKIP (script not found)'))
+                continue
+            runner = 'python3' if script.endswith('.py') else 'sh'
+            proc = subprocess.run([runner, script] + cmd_args,
+                                  stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT,
+                                  universal_newlines=True)
+            ok = (proc.returncode == 0)
+            print('%-*s  %s' % (NAMEW, name[:NAMEW], yn(ok)))
+            if not ok:
+                invariants_ok = False
+                for line in proc.stdout.strip().splitlines():
+                    print('    %s' % line)
+        print('_' * 95)
+
     if logf:
         print('\n(report written to %s)' % os.path.abspath(args.log))
         sys.stdout = sys.__stdout__
         logf.close()
-    # Exit non-zero if any test failed the loose (pass-deciding) criterion.
-    sys.exit(0 if grand['loose'] == grand['n'] else 1)
+    # Exit non-zero if any test failed the loose (pass-deciding) criterion, or
+    # if an invariant check failed.
+    sys.exit(0 if (grand['loose'] == grand['n'] and invariants_ok) else 1)
 
 
 if __name__ == '__main__':

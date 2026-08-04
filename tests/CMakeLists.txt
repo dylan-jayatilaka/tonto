@@ -5,6 +5,13 @@ set(TEST_SCRIPT "${PROJECT_SOURCE_DIR}/scripts/test.py"
 set(TONTO_EXE "${PROJECT_BINARY_DIR}/tonto"
     CACHE FILEPATH "Test executable")
 
+# The hart tests still pass TONTO_EXE as --program: test.py resolves a test's
+# "program:" key as a sibling of it, so both binaries must live side by side
+# (they do -- run_molecule and run_har both land in PROJECT_BINARY_DIR).
+# HART_EXE is only for the hand-registered invariant check below.
+set(HART_EXE "${PROJECT_BINARY_DIR}/hart"
+    CACHE FILEPATH "Hirshfeld atom refinement executable")
+
 set(BASIS_SETS "${PROJECT_SOURCE_DIR}/basis_sets"
     CACHE PATH "Basis sets directory")
 
@@ -42,7 +49,7 @@ function(add_all_tests)
     unset(current_list)
     foreach(D ${DIRS})
         get_filename_component(N "${D}" NAME)
-        add_test(NAME \"${N}\"
+        add_test(NAME "${N}"
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
             COMMAND python3  ${TEST_SCRIPT}
             --test-directory "${CMAKE_CURRENT_SOURCE_DIR}/${D}"
@@ -55,23 +62,111 @@ function(add_all_tests)
             # numeric diff. (Plain `ctest` is still pass/fail-only -- unavoidable.)
             --log-level=WARNING
             ${MPI_FLAG})
-        set_tests_properties(\"${N}\" PROPERTIES 
+        set_tests_properties("${N}" PROPERTIES
             LABELS ${LABELS})
-        set_tests_properties(\"${N}\" PROPERTIES 
-            DEPENDS run_test)
     endforeach()
 endfunction()
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/short)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/hart)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/rgbi)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/long)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/cx)
+
+# Invariant test -- no reference output involved.
+#
+# Below d functions the spherical and cartesian basis sets are mathematically
+# identical, but use_spherical_basis selects different two-electron code
+# (make_r_JK_direct vs make_r_JK_engine), so the two settings must give the same
+# energy on an s/p-only basis. Unlike the reference-diff tests this one cannot be
+# silently blessed by regenerating a reference on a broken build.
+#
+# Added after a gfortran 14.3 miscompilation of shell1quartet.F90 on arm64 macOS
+# made the engine path return two-electron energies that were slightly too small
+# -- the oxygen atom converged ~2.8 Ha *below* the variational limit -- and no
+# test in the suite compared the two paths. Runs in a couple of seconds.
+add_test(NAME "spherical_vs_cartesian"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND sh ${PROJECT_SOURCE_DIR}/scripts/check_spherical_cartesian.sh
+            ${TONTO_EXE} ${BASIS_SETS})
+set_tests_properties("spherical_vs_cartesian" PROPERTIES LABELS "short")
+
+# MPI invariant test -- no reference output involved.
+#
+# pi by Riemann integration: one `parallel do` plus one PARALLEL_SUM, i.e. the
+# whole macro surface every parallel routine depends on, against an answer that
+# is known in advance and must not change with the rank count.
+#
+# Added because NOTHING asserted that MPI worked at all -- no MPI build had ever
+# been configured, in CI or locally, and four reductions in molecule.grid.foo
+# were dead code that silently returned 1/n_ranks of the answer. Like
+# spherical_vs_cartesian this compares the program against a known truth rather
+# than a stored reference, so it cannot be blessed away.
+#
+# Only meaningful in an MPI build; in a serial build the rank sweep is
+# degenerate, so register it only when WITH_MPI.
+if(WITH_MPI)
+    add_test(NAME "mpi_pi_rank_invariant"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        COMMAND sh ${PROJECT_SOURCE_DIR}/scripts/check_mpi_pi.sh
+                ${PROJECT_BINARY_DIR}/run_mpi_pi ${MPIEXEC_EXECUTABLE} 1 2 4)
+    set_tests_properties("mpi_pi_rank_invariant" PROPERTIES LABELS "mpi")
+endif()
+
+# Invariant test -- no reference output involved.
+#
+# hart is command-line driven, so its `--help` text is its interface
+# documentation, and nothing keeps that text in step with the option `case`
+# labels in runfiles/run_har.foo. It had already drifted: --disk-sfs was fully
+# documented while its case label was commented out, so the documented option
+# killed the run. This compares the two sets directly, and also asserts that
+# hart's documented failure modes exit non-zero. Runs in a couple of seconds.
+add_test(NAME "hart_options"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND sh ${PROJECT_SOURCE_DIR}/scripts/check_hart_options.sh
+            ${HART_EXE} ${PROJECT_SOURCE_DIR}/runfiles/run_har.foo ${BASIS_SETS})
+set_tests_properties("hart_options" PROPERTIES LABELS "hart")
+
+# Invariant test -- no reference output involved.
+#
+# A Foo procedure that takes arguments is a library routine: it can be called
+# by the argv-driven programs (hart, rgbi), which have no job file. So it must
+# not touch stdin. A no-argument keyword handler may, since only the keyword
+# dispatcher reaches it. Merging the two roles is what segfaulted hart on its
+# second refinement cycle -- MOLECULE.READ:read_archive took arguments and
+# still peeked at stdin for a trailing qualifier. Instant; no build needed.
+add_test(NAME "library_stdin"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_library_stdin.py
+            ${PROJECT_SOURCE_DIR}/foofiles)
+set_tests_properties("library_stdin" PROPERTIES LABELS "short")
+
+# Invariant test -- no reference output involved.
+#
+# Two MPI hazards that inspection cannot find, both from milestone 4:
+#   . a collective inside a `parallel do` body. LOCK_PARALLEL_DO is the first
+#     statement in the loop and DO_IN_PARALLEL is false while it is held, so a
+#     PARALLEL_SUM there is dead code that looks correct -- four sites in
+#     molecule.grid.foo each returned 1/n_ranks of the answer. A broadcast or
+#     barrier there is worse: it executes, but a different number of times per
+#     rank, so the job hangs.
+#   . a raw write/read on a `.unit` outside file/textfile/buffer, reaching
+#     around the IO_IS_ALLOWED guard. The loud version crashed
+#     DWGN_lamaGOET_NBO_file_47; the silent version interleaves output from
+#     every rank via preconnected unit 6.
+# Source-level and instant; no build and no MPI needed, which is the point --
+# these are invisible in the serial runs everyone actually does.
+add_test(NAME "parallel_lint"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_parallel_lint.py
+            ${PROJECT_SOURCE_DIR}/foofiles)
+set_tests_properties("parallel_lint" PROPERTIES LABELS "short")
 
 # Grouped per-suite agreement report.
 #
 # `ctest` gives a flat pass/fail list and hides each test's stdout (the concise
 # AGREEMENT line printed by test.py). This target instead runs
-# scripts/compare_test_outputs.py over every suite and writes a compact
+# scripts/suite_report.py over every suite and writes a compact
 # per-suite table (exact / loose / last-digit + worst rel% and ulp) to
 # tests.log in the build tree -- one line per test, not the whole run.
 #
@@ -81,7 +176,10 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/cx)
 # fully before the driver exits; the driver's exit code is non-zero if any test
 # failed the loose criterion (so `make report` mirrors ctest's pass/fail status).
 add_custom_target(report
-    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/compare_test_outputs.py
+    # -u keeps the report streaming when make's output is redirected or piped
+    # (a tty is line-buffered, a pipe is 8 KB-buffered -- which is the whole
+    # report, so it would all appear only at the end and look like a hang).
+    COMMAND python3 -u ${PROJECT_SOURCE_DIR}/scripts/suite_report.py
             --program    ${TONTO_EXE}
             --tests-dir  ${CMAKE_CURRENT_SOURCE_DIR}
             --basis-sets ${BASIS_SETS}
@@ -89,4 +187,4 @@ add_custom_target(report
     WORKING_DIRECTORY ${PROJECT_BINARY_DIR}
     USES_TERMINAL
     COMMENT "Tonto per-suite agreement report -> tests.log")
-add_dependencies(report run_molecule)
+add_dependencies(report run_molecule run_har)
