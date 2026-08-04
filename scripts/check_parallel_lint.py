@@ -211,11 +211,74 @@ def main():
             print('  %s:%d' % (name, lineno))
             print('      %s' % code)
 
+    status |= check_collective_gates()
+
     if status == 0:
         print('parallel lint OK: %d files, %d `parallel do` loops, '
-              'no interior collectives, no UNGUARDED raw .unit I/O outside %s'
+              'no interior collectives, no UNGUARDED raw .unit I/O outside %s, '
+              'collective gates correct'
               % (n_files, n_loops, '/'.join(sorted(IO_LAYER))))
     return status
+
+
+# Whether a COLLECTIVE executes must never depend on state that can differ
+# between ranks. `is_parallel` is identical everywhere; the parallel-do lock is
+# NOT -- it is set by executing a loop body, which a rank given zero iterations
+# never does. Gating a broadcast or barrier on the lock therefore lets different
+# ranks skip different collectives, offsetting the streams until some later pair
+# mismatches (observed: a 1-integer receive against a 256-character send,
+# MPI_ERR_TRUNCATE, in four CIF tests -- CLAUDE.md milestone 7).
+#
+# Reductions are the deliberate exception: they combine rank-partitioned partial
+# results, so with the lock held there is nothing to combine and skipping is
+# correct. macros.in carries a comment explaining the asymmetry; this check stops
+# the two gates being "tidied" back into agreement, which is exactly how the bug
+# would return -- and it would return silently, because the shipped -Ofast build
+# does not expose it.
+GATE_RULES = {
+    # macro name          : (must contain, must NOT contain)
+    'PARALLEL_BROADCAST0':    ('is_parallel', 'work_is_shared'),
+    'PARALLEL_BROADCAST_IO0': ('is_parallel', 'work_is_shared'),
+    'PARALLEL_BARRIER0':      ('is_parallel', 'work_is_shared'),
+    'PARALLEL_SUM0':             ('work_is_shared', None),
+    'PARALLEL_VECTOR_SUM0':      ('work_is_shared', None),
+    'PARALLEL_SYMMETRIC_SUM0':   ('work_is_shared', None),
+    'PARALLEL_SYMMETRIC_SUM_230':('work_is_shared', None),
+}
+
+
+def check_collective_gates(path=None):
+    """Assert the MPI definitions of the collective macros use the right gate."""
+    if path is None:
+        path = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), 'include', 'macros.in')
+    bad, seen = [], set()
+    for line in open(path, encoding='utf-8', errors='replace'):
+        m = re.match(r'#\s*define\s+(PARALLEL_[A-Z_0-9]+)\s*(\([^)]*\))?\s+(.*\S)\s*$', line)
+        if not m:
+            continue
+        name, body = m.group(1), m.group(3).lower()
+        if name not in GATE_RULES or 'call ' not in body:
+            continue          # the serial block defines these as empty: skip
+        seen.add(name)
+        need, forbid = GATE_RULES[name]
+        if need not in body:
+            bad.append((name, 'must be gated on %s' % need, m.group(3)))
+        elif forbid and forbid in body:
+            bad.append((name, 'must NOT be gated on %s (rank-local state)' % forbid,
+                        m.group(3)))
+    missing = sorted(set(GATE_RULES) - seen)
+    if bad or missing:
+        print('FAIL: collective macro gated on the wrong state (%d)' % (len(bad) + len(missing)))
+        print('      A collective must not be gated on rank-local state such as the')
+        print('      parallel-do lock; a reduction must be. See macros.in.')
+        for name, why, body in bad:
+            print('  %s: %s' % (name, why))
+            print('      %s' % body)
+        for name in missing:
+            print('  %s: no MPI definition found (renamed? then update this check)' % name)
+        return 1
+    return 0
 
 
 if __name__ == '__main__':

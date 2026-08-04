@@ -434,15 +434,25 @@ before any code is written**, most likely in its own conversation (`/clear`).
    would confound the numbers. Full design in `DEFERRED.md`, "MPI: defects found during
    milestone 4".
 
-7. ⬜ **Diagnose and fix the `-O2`-only MPI undefined behaviour** (found 2026-08-02). Four
-   CIF-reading tests (`c9o9h8_read_cif_IT_group_9`, `maleate_read_CIF_H_double_bond_{new,old}_BLs`,
-   `urea_lamaGOET_grown_CIF`) abort at ≥2 ranks with a **mismatched `MPI_Bcast`** in the
-   `-O2 -fno-fast-math` build, while the *same test on the same machine passes at `-Ofast`*, and
-   none fail on macOS arm64. A collective mismatch that moves with optimisation level and platform
-   is undefined behaviour. **`-Ofast` hides it**, so the shipped configuration is the one where it
-   is invisible, not the one where it is absent — which is why this is a milestone, not a deferred
-   note. Diagnosis in progress with a Linux `-O2 + -fcheck=bounds` build and an `-O0 + -finit-*`
-   poisoning build. See `docs/MPI.md` Finding 6.
+7. ✅ **DONE — the `-O2`-only MPI failure was diagnosed and fixed (`e3ef5906`, 2026-08-02);
+   record corrected 2026-08-04.** Four CIF-reading tests (`c9o9h8_read_cif_IT_group_9`,
+   `maleate_read_CIF_H_double_bond_{new,old}_BLs`, `urea_lamaGOET_grown_CIF`) aborted at ≥2 ranks
+   with a mismatched `MPI_Bcast` in `-O2 -fno-fast-math` while passing at `-Ofast`.
+   **It was never undefined behaviour** — that was inferred from the symptom and is wrong.
+   `PARALLEL_BROADCAST` was gated on `WORK_IS_SHARED`, which includes the parallel-do lock, and
+   **the lock is rank-local**: it is set by executing a loop body, which a rank given zero
+   iterations never does. Two ranks could therefore disagree about entering a broadcast; MPI pairs
+   collectives by issue order, so one skipped broadcast offsets the streams and the next pair
+   mismatches (1-integer receive vs 256-character send). Optimisation level only changed whether
+   the ranks happened to diverge. Nothing was uninitialised — the `-fcheck=bounds`/`-finit-*` plan
+   would have found nothing. Fix: gate broadcasts and barriers on `is_parallel` alone, keep
+   reductions on `WORK_IS_SHARED`. Rule: **whether a collective executes must never depend on
+   state that can differ between ranks.** Because the shipped `-Ofast` build hides this class, no
+   test can catch a regression, so `scripts/check_parallel_lint.py` now audits the gates in
+   `macros.in` directly (verified to fail against the pre-fix definition) and runs in CI.
+   **Verification gap, still open:** `e3ef5906` verified *three* of the four tests on achari2
+   (Linux) at `-O2`, `-n 2`. The fourth, and a re-run of all four against current `antlr4`, are
+   outstanding — see `docs/MPI.md` Finding 6.
 
 8. ✅ **DONE (2026-08-04) — Translator: `data` statements at program scope were silently
    dropped.** Root cause was one line in `emitBodyList`: `if (b.localDecl() == null &&

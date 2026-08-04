@@ -402,6 +402,47 @@ plus `-finit-integer`/`-finit-real=snan` would likely name it immediately). Reco
 guessed at. Note the practical consequence: `-Ofast` **hides** this, so the shipped configuration
 is the one where it is invisible, not the one where it is absent.
 
+### RESOLVED (fix 2026-08-02, `e3ef5906`; record corrected 2026-08-04)
+
+**It was never undefined behaviour.** That framing came from the symptom -- a failure that moves
+with optimisation level and platform -- and it was wrong. The cause is deterministic and was
+sitting in one macro:
+
+```
+#    define PARALLEL_BROADCAST0(X,Y)   if (DO_IN_PARALLEL) call broadcast_(tonto,X,Y)
+```
+
+`DO_IN_PARALLEL` (now `WORK_IS_SHARED`) is `is_parallel AND parallel_do_lock == " "`, and **the
+lock is rank-local state**: it is set by executing a loop body, which a rank handed zero
+iterations by the cyclic distribution never does. So two ranks could disagree about whether to
+enter a broadcast. MPI pairs collectives by issue order, so one skipped broadcast offsets the
+streams and the *next* pair mismatches -- a 1-integer receive against a 256-character send, i.e.
+the `MPI_ERR_TRUNCATE` seen in `TEXTFILE:read_line_external`.
+
+Optimisation level and platform only changed *whether the ranks happened to diverge*, not whether
+the bug was there. Nothing was uninitialised and nothing was out of bounds, which is why the
+`-fcheck=bounds` / `-finit-*` plan suggested above would have found nothing.
+
+The fix is the one-line gate change: a **broadcast** or **barrier** is gated on `is_parallel`
+alone, while a **reduction** stays gated on `WORK_IS_SHARED`. The asymmetry is deliberate --
+skipping a reduction under a held lock is correct (there are no rank-partitioned partials to
+combine), skipping a broadcast never is. The general rule:
+
+> Whether a **collective** executes must never depend on state that can differ between ranks.
+
+**Guarded, because the shipped build cannot expose a regression.** `release` is `-Ofast`, which
+hid this, so no CI job can catch it coming back. `scripts/check_parallel_lint.py` therefore audits
+the gates in `macros.in` directly: broadcasts and barriers must be gated on `is_parallel` and must
+not mention `work_is_shared`; reductions must be gated on `work_is_shared`. Verified to fail
+against the exact pre-fix definition. It runs as the `parallel_lint` ctest, label `short`, so it
+is in CI.
+
+**Verification status.** `e3ef5906` records: *"Verified on achari2 (Linux x86_64): all three
+tested pass at -n 2, -n 1 unaffected"* -- three of the four tests, in the `-O2 -fno-fast-math`
+build where they failed. Outstanding: the fourth test, and a re-run of all four on Linux at `-O2`
+against current `antlr4`, which has changed substantially since (the I/O broadcasts moved to
+`PARALLEL_BROADCAST_IO`, `TEXTFILE:flush` was fixed, per-rank I/O now actually works).
+
 ### Defect register
 
 Every MPI defect found, and whether it announces itself. **"Silent" is the dangerous column** —
