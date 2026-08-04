@@ -473,12 +473,23 @@ set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/textfile.F90
 
 **Open, for the next session:**
 
-1. **Which `-O2` pass?** A bisect over `-fno-schedule-insns{,2}`, `-fno-strict-aliasing`,
-   `-fno-tree-vrp`, `-fno-gcse`, `-fno-tree-pre`, `-fno-code-hoisting`, `-fno-store-merging` was
-   left running on achari2: script `~/m7bisect.sh`, driver `~/m7pin.sh`, log `/tmp/m7bisect.log`.
-   `-fno-schedule-insns` is already ruled out. **NOTE:** that script leaves an experimental
-   `set_source_files_properties` block in `CMakeLists.txt` on achari2 -- run
-   `git checkout CMakeLists.txt` there before pulling.
+1. **Which `-O2` pass? All eight obvious candidates are RULED OUT.** Each was tried as
+   `-O2 <flag>` on `textfile.F90` alone, 2 runs each, and **every one still failed** (exit 15):
+   `-fno-schedule-insns`, `-fno-schedule-insns2`, `-fno-strict-aliasing`, `-fno-tree-vrp`,
+   `-fno-gcse`, `-fno-tree-pre`, `-fno-code-hoisting`, `-fno-store-merging`. So it is not one of
+   the classic single-pass culprits, and notably **not** the `-fschedule-insns` that the arm64
+   `shell1quartet` workaround targets.
+
+   **Bisect the other way next.** Subtracting from `-O2` means testing ~30 flags one at a time
+   with no guarantee a single one is responsible. Start from `-O1` (known good) and *add* the
+   `-O2`-only flags, binary-searching the set — `gcc -Q -O2 --help=optimizers` versus
+   `-Q -O1 --help=optimizers` gives the exact difference for gfortran 14.2. That converges in
+   ~5 builds instead of 30, and it also answers whether *any* single flag is responsible: if
+   `-O1` plus the whole set still passes, the trigger is an interaction, which would point away
+   from a simple miscompilation and back towards latent UB.
+
+   Harness on achari2: driver `~/m7pin.sh "<flags>"` (edits the pin, rebuilds, runs the test
+   twice), loop `~/m7bisect.sh`, log `/tmp/m7bisect.log`.
 2. **Is `-Ofast` genuinely safe or merely lucky?** The shipped build has never failed here, but
    if this is a miscompilation that is luck, not immunity. Worth rebuilding `build-mpi-fast` on
    achari2 and re-running the four tests before deciding the pin is only needed at `-O2`.
