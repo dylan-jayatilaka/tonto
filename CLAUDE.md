@@ -202,15 +202,28 @@ once the Parse tree is generated.
 
 ## 7. Reference docs in this repo
 
-- `docs/FOO_GRAMMAR_DOCUMENTATION.md` — full language description and Foo→Fortran conversion rules.
-- `docs/BUILD_WSL.md` — building under WSL: the four WSL-specific traps, the CMake guards, and how they are tested.
-- `docs/CI.md` — the three CI workflows, how to trigger one manually, and how to read a run.
+**Everything is in this repository.** The GitHub wiki was retired on 2026-08-05 and its nine
+pages migrated into `docs/` — it was superfluous, hard to maintain, and worst of all *not
+versioned with the code it described*, so it could rot silently. Do not add documentation there.
+
+- `README.md` — the leader page: what Tonto is, a quickstart, the documentation index, and what
+  each CI badge means. Deliberately short; detail belongs in `docs/`.
+- `docs/BUILD.md` — **the** build document: prerequisites, all build types, MPI, clusters, and
+  macOS and Windows/WSL. The README quickstart is the only build instructions outside it.
+- `docs/RUNNING.md` — running Tonto: input/output conventions (`stdin`/`stdout`/`IO`), practical set-up.
+- `docs/LAYOUT.md` — source and executable layout, and the module structure picture.
 - `docs/HART.md` — the `hart` program: what it hard-codes, its full `--option` reference, how
   it is tested (`tests/hart/`, the `program:`/`args:` IO keys, the invariant check), and its
   remaining milestones.
+- `docs/DEVELOPER.md` — developer reference; §1a is **writing parallel (MPI) code in Foo**, eight
+  pitfalls and the trace recipes that found them.
+- `docs/FOO_GRAMMAR_DOCUMENTATION.md` — full language description and Foo→Fortran conversion rules.
+- `docs/MPI.md` — the parallel build, its numeric characterisation, and the defect register.
+- `docs/BUILD_WSL.md` — the four WSL-specific traps, the CMake guards, and how they are tested.
+- `docs/CI.md` — the CI workflows, how to trigger one manually, and how to read a run.
+- `docs/CALL_GRAPHS.md` — call/use graphs and dead-code elimination.
+- `docs/EDITING_VIM.md` — vim set-up: tags, folding, completion.
 - `DEFERRED.md` — project-wide deferred issues (was `ANTLR4_DEFERRED.md`).
-- `README.md` — install/build/test/run instructions.
-- Project wiki — building on macOS/Windows, how to run tonto (linked from `README.md`).
 
 ## 8. Working agreement
 
