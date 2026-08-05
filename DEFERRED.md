@@ -2065,6 +2065,23 @@ size 174978609
 
 i.e. the real asset is **167 MB**.
 
+**FIRST STEP, and it decides everything below: is that LFS object still retrievable?** This was
+*not* checked — `git-lfs` is not installed on the machine this was investigated from. One
+command answers it:
+
+```bash
+sudo apt install git-lfs          # or: brew install git-lfs
+cd <a scratch clone of tonto>
+git lfs ls-files -l origin/release-pHAR-broken     # does GitHub still know the oid?
+git lfs fetch origin release-pHAR-broken           # does it actually come down?
+```
+
+- **If it downloads**, the fix is small: restore a `.gitattributes` that tracks
+  `tests/long/**/*.XML`, port the one test directory onto `release`, and decide whether a
+  167 MB clone cost is acceptable (option 4 below says it probably is not).
+- **If it 404s or the quota is exhausted**, the object is gone and options 1–3 are the only
+  real ones — regenerate, fetch on demand, or shrink the case.
+
 **How the deposit went wrong** is legible in the branch's own history:
 
 ```
