@@ -402,6 +402,194 @@ plus `-finit-integer`/`-finit-real=snan` would likely name it immediately). Reco
 guessed at. Note the practical consequence: `-Ofast` **hides** this, so the shipped configuration
 is the one where it is invisible, not the one where it is absent.
 
+### PARTLY diagnosed — the gate fix was necessary but NOT sufficient (2026-08-04)
+
+**Retracted:** an earlier version of this section, written on 2026-08-04, declared this resolved
+on the strength of `e3ef5906`'s commit message and the comment in `macros.in`. **It is not.**
+Re-run on `achari2` (Linux x86_64) against current `antlr4` (`ed706c97`), in the same
+`-O2 -fno-fast-math` MPI build, **all four tests still abort at `-n 2`** with the identical
+`MPI_ERR_TRUNCATE` in `MPI_Bcast`, exit 15. `-n 1` passes with an *exact* match. The gate fix is
+confirmed present in that build:
+
+```
+#    define PARALLEL_BROADCAST0(X,Y)      if (tonto%is_parallel) call broadcast_(tonto,X,Y)
+```
+
+So `e3ef5906`'s claim to "fix the four CIF tests" was over-stated -- it removed one real cause
+(a collective gated on rank-local state, which was genuinely a bug and stays fixed), but at
+least one other cause remains. Note also that the commit verified only *three* of the four.
+
+The analysis below is retained because it is correct as far as it goes: the mechanism it
+describes is real and was fixed. What follows it is the continuing hunt.
+
+### Localised to a codegen bug in `textfile.F90` at `-O2` (2026-08-04)
+
+Everything below is from `achari2` (Linux x86_64, gfortran 14.2.0, Open MPI 5.0.9 built with the
+same compiler), `build-mpi-o2` = `-O2 -fno-fast-math`, test `c9o9h8_read_cif_IT_group_9` at
+`-n 2` unless stated. **Each claim has a control**; the earlier round of this investigation went
+wrong by inferring instead of measuring, so this time nothing is asserted without its opposite
+being tested.
+
+| experiment | result |
+|---|---|
+| no pin (control) | **FAIL** exit 15, 2/2 runs |
+| `textfile.F90` pinned to `-O1` | **PASS** 3/3 runs, and all four CIF tests pass |
+| one `write` probe inside `TEXTFILE:look_for_item` | **PASS** 5/5 runs |
+| that probe removed again | **FAIL** — the mask is that one probe |
+| a probe in `move_to_record_external` instead | FAIL — masking is specific to `look_for_item` |
+| `textfile.F90` at `-O2 -fcheck=all -fbacktrace` | **PASS**, and **no check fires** |
+| `textfile.F90` at `-O2 -fno-schedule-insns` | FAIL — *not* the arm64 `shell1quartet` pass |
+| `-n 1`, any build | PASS, **exact** agreement |
+
+**What the desync looks like.** Tracing every `MPI_BCAST` to a per-rank file (`fort.70`,
+`fort.71` — never a shared stream, they interleave mid-line) shows the ranks agreeing for
+**8,481** broadcasts of alternating `(MPI_CHARACTER 256, MPI_INTEGER 1)` pairs, then rank 0
+issuing **one surplus integer broadcast** that rank 1 never issues. Everything after is offset by
+one, and the next pair mismatches a 1-integer receive against a 256-character send:
+`MPI_ERR_TRUNCATE`.
+
+**A hypothesis that was tested and rejected.** `move_to_record_external` steps
+`move_to_back_record` once per record, one broadcast each, so a `.record` differing by one
+between ranks would produce exactly one surplus broadcast. Probing `.record` on both ranks at
+every call: **it matches everywhere**. Rank 0 does make three `move_to_record` calls rank 1 never
+makes, but they occur *after* the first divergence, so they are a consequence. Recorded because
+the hypothesis is a good one and someone will have it again.
+
+**Assessment.** `-fcheck=all` masks it and reports nothing, so this is not a source-level
+out-of-bounds. A single unrelated `write` in one routine masks it. It behaves like a **gcc
+miscompilation of `textfile.F90` at `-O2`**, not like a Foo-level bug -- which is why the
+`-fcheck=bounds` / `-finit-*` plan the milestone originally proposed would have found nothing.
+
+**Workaround available now**, and it is the one this project already uses twice (`types.F90` is
+pinned to `-O1`; `shell1quartet.F90` to `-O2 -fno-schedule-insns` on arm64 macOS):
+
+```cmake
+set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/textfile.F90
+    PROPERTIES COMPILE_OPTIONS "-O1")
+```
+
+`textfile.F90` is line-oriented I/O, not a hot path, so pinning it costs essentially nothing.
+**Not yet committed** -- see the open questions.
+
+**Open, for the next session:**
+
+### CULPRIT FOUND: `-foptimize-sibling-calls` (2026-08-05)
+
+Bisected with a 7-second per-file harness (recompile `textfile.F90` only, relink, run twice —
+`~/m7fast.sh` on achari2; the CMake route took 20 minutes per iteration and made this
+impractical). Of the **45** flags `-O2` enables over `-O1`, **`-foptimize-sibling-calls` is the
+only one whose removal fixes it**:
+
+| build | result |
+|---|---|
+| `-O2` | **FAIL** |
+| `-O2 -fno-optimize-sibling-calls` | **PASS** (2/2, and all four CIF tests pass) |
+| `-O1` | PASS |
+| `-O1` + **all 45** `-O2`-only flags | **PASS** |
+| `-O3`, `-Ofast`, `-Ofast -march=native` | **PASS** |
+| only differing `--param` (`max-fields-for-field-sensitive` 0→100), forced back at `-O2` | FAIL |
+| `-O2 -finit-integer/-real=snan/-logical` poisoning | FAIL (nothing reported) |
+
+**This explains why the bug hid from inspection.** A sibling (tail) call is one where the caller's
+stack frame is torn down *before* jumping to the callee, so the callee reuses it. Put any
+statement after a call and it is no longer the last thing the routine does, so it is no longer a
+tail call — which is exactly what a `write` probe or `-fcheck=all` does. The bug did not "move
+when observed" in some mysterious way; **observing it removed the optimisation that caused it.**
+
+**It is an interaction, not one bad pass.** `-O1` plus all 45 flags — sibling calls included —
+passes, and `-O3`/`-Ofast`, supersets of `-O2`, also pass: their extra passes reshape the code
+away from the trigger. So the **shipped release build (`-Ofast`) is not affected**, and no
+released binary has been wrong. That is luck rather than immunity, which is why the workaround is
+applied unconditionally.
+
+**Workaround (committed).** `CMakeLists.txt` pins the one file:
+
+```cmake
+set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/textfile.F90
+    PROPERTIES COMPILE_OPTIONS "-fno-optimize-sibling-calls")
+```
+
+Cost is nil — line-oriented I/O, never a hot path — and it restores the `-O2 -fno-fast-math`
+control build, which §6 needs in order to separate floating-point reassociation from genuine MPI
+defects.
+
+**Still NOT established, and it matters:** *which* tail call, and whether the fault is a gcc bug
+or latent UB in the Foo sources that only tail calls expose. The `tailc` dump shows 154 tail calls
+in `textfile.F90`; the 14 that pass an address all pass `&C.NNNN` compiler constants in static
+storage, not stack locals, so there is no smoking gun of the classic
+"pointer into a dead frame" form. `read_line_external` is where the mismatch *surfaces* — it does
+contain tail calls, but only on its `die()` paths, which abort anyway, so **it has not been shown
+to be the cause**. Reducing this to a self-contained test case is the next step, and the
+prerequisite for reporting it upstream.
+
+### Ruled out along the way
+
+1. **All eight obvious candidates.** Each was tried as
+   `-O2 <flag>` on `textfile.F90` alone, 2 runs each, and **every one still failed** (exit 15):
+   `-fno-schedule-insns`, `-fno-schedule-insns2`, `-fno-strict-aliasing`, `-fno-tree-vrp`,
+   `-fno-gcse`, `-fno-tree-pre`, `-fno-code-hoisting`, `-fno-store-merging`. So it is not one of
+   the classic single-pass culprits, and notably **not** the `-fschedule-insns` that the arm64
+   `shell1quartet` workaround targets.
+
+   **Bisect the other way next.** Subtracting from `-O2` means testing ~30 flags one at a time
+   with no guarantee a single one is responsible. Start from `-O1` (known good) and *add* the
+   `-O2`-only flags, binary-searching the set — `gcc -Q -O2 --help=optimizers` versus
+   `-Q -O1 --help=optimizers` gives the exact difference for gfortran 14.2. That converges in
+   ~5 builds instead of 30, and it also answers whether *any* single flag is responsible: if
+   `-O1` plus the whole set still passes, the trigger is an interaction, which would point away
+   from a simple miscompilation and back towards latent UB.
+
+   Harness on achari2: driver `~/m7pin.sh "<flags>"` (edits the pin, rebuilds, runs the test
+   twice), loop `~/m7bisect.sh`, log `/tmp/m7bisect.log`.
+2. **Is `-Ofast` genuinely safe or merely lucky?** The shipped build has never failed here, but
+   if this is a miscompilation that is luck, not immunity. Worth rebuilding `build-mpi-fast` on
+   achari2 and re-running the four tests before deciding the pin is only needed at `-O2`.
+3. **Is it really the compiler?** Before filing anything upstream, reduce it: the surplus
+   broadcast comes from somewhere in `look_for_item`/`move_to_record_external`; a minimal
+   reproducer would settle compiler-versus-source. Also worth trying gfortran 13 and 15 on the
+   same file.
+
+### The original diagnosis (correct, but not the whole story)
+
+**It was never undefined behaviour.** That framing came from the symptom -- a failure that moves
+with optimisation level and platform -- and it was wrong. The cause is deterministic and was
+sitting in one macro:
+
+```
+#    define PARALLEL_BROADCAST0(X,Y)   if (DO_IN_PARALLEL) call broadcast_(tonto,X,Y)
+```
+
+`DO_IN_PARALLEL` (now `WORK_IS_SHARED`) is `is_parallel AND parallel_do_lock == " "`, and **the
+lock is rank-local state**: it is set by executing a loop body, which a rank handed zero
+iterations by the cyclic distribution never does. So two ranks could disagree about whether to
+enter a broadcast. MPI pairs collectives by issue order, so one skipped broadcast offsets the
+streams and the *next* pair mismatches -- a 1-integer receive against a 256-character send, i.e.
+the `MPI_ERR_TRUNCATE` seen in `TEXTFILE:read_line_external`.
+
+Optimisation level and platform only changed *whether the ranks happened to diverge*, not whether
+the bug was there. Nothing was uninitialised and nothing was out of bounds, which is why the
+`-fcheck=bounds` / `-finit-*` plan suggested above would have found nothing.
+
+The fix is the one-line gate change: a **broadcast** or **barrier** is gated on `is_parallel`
+alone, while a **reduction** stays gated on `WORK_IS_SHARED`. The asymmetry is deliberate --
+skipping a reduction under a held lock is correct (there are no rank-partitioned partials to
+combine), skipping a broadcast never is. The general rule:
+
+> Whether a **collective** executes must never depend on state that can differ between ranks.
+
+**Guarded, because the shipped build cannot expose a regression.** `release` is `-Ofast`, which
+hid this, so no CI job can catch it coming back. `scripts/check_parallel_lint.py` therefore audits
+the gates in `macros.in` directly: broadcasts and barriers must be gated on `is_parallel` and must
+not mention `work_is_shared`; reductions must be gated on `work_is_shared`. Verified to fail
+against the exact pre-fix definition. It runs as the `parallel_lint` ctest, label `short`, so it
+is in CI.
+
+**Verification status.** `e3ef5906` records: *"Verified on achari2 (Linux x86_64): all three
+tested pass at -n 2, -n 1 unaffected"* -- three of the four tests, in the `-O2 -fno-fast-math`
+build where they failed. Outstanding: the fourth test, and a re-run of all four on Linux at `-O2`
+against current `antlr4`, which has changed substantially since (the I/O broadcasts moved to
+`PARALLEL_BROADCAST_IO`, `TEXTFILE:flush` was fixed, per-rank I/O now actually works).
+
 ### Defect register
 
 Every MPI defect found, and whether it announces itself. **"Silent" is the dangerous column** —

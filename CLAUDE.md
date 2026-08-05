@@ -434,15 +434,47 @@ before any code is written**, most likely in its own conversation (`/clear`).
    would confound the numbers. Full design in `DEFERRED.md`, "MPI: defects found during
    milestone 4".
 
-7. ⬜ **Diagnose and fix the `-O2`-only MPI undefined behaviour** (found 2026-08-02). Four
-   CIF-reading tests (`c9o9h8_read_cif_IT_group_9`, `maleate_read_CIF_H_double_bond_{new,old}_BLs`,
-   `urea_lamaGOET_grown_CIF`) abort at ≥2 ranks with a **mismatched `MPI_Bcast`** in the
-   `-O2 -fno-fast-math` build, while the *same test on the same machine passes at `-Ofast`*, and
-   none fail on macOS arm64. A collective mismatch that moves with optimisation level and platform
-   is undefined behaviour. **`-Ofast` hides it**, so the shipped configuration is the one where it
-   is invisible, not the one where it is absent — which is why this is a milestone, not a deferred
-   note. Diagnosis in progress with a Linux `-O2 + -fcheck=bounds` build and an `-O0 + -finit-*`
-   poisoning build. See `docs/MPI.md` Finding 6.
+7. 🔶 **WORKED AROUND (2026-08-05), root cause not fully established.** Bisected to a single
+   gcc flag: **`-foptimize-sibling-calls`** — of the 45 flags `-O2` enables over `-O1`, the only
+   one whose removal fixes all four tests. A tail call tears down the caller's frame before
+   jumping, and *any* statement after a call stops it being a tail call — which is precisely why
+   a `write` probe and `-fcheck=all` both made the bug vanish: observing it removed the
+   optimisation causing it. It is an interaction, not one bad pass: `-O1` plus all 45 flags
+   passes, and `-O3`/`-Ofast` pass too, so the **shipped release build was never affected**.
+   `CMakeLists.txt` now pins `textfile.F90` to `-fno-optimize-sibling-calls` (nil cost, restores
+   the `-O2` control build). **Open:** which tail call, and whether this is a gcc bug or latent
+   UB that tail calls merely expose — needs a reduced test case before reporting upstream.
+   Earlier status, kept because the reasoning matters:
+   Re-verified 2026-08-04 on achari2 (Linux) against current `antlr4`: **all four tests still
+   abort at `-n 2`** in the `-O2 -fno-fast-math` build with `MPI_ERR_TRUNCATE`, exit 15, with the
+   gate fix confirmed present in that build; `-n 1` passes exactly. One real cause was found and
+   fixed (`e3ef5906`, a collective gated on rank-local state — that stays fixed); the remainder is
+   **localised to a codegen bug in `textfile.F90` at `-O2`**, with controls: pinning that one file
+   to `-O1` makes all four tests pass (3/3) and removing the pin fails again (2/2); a single
+   `write` probe inside `TEXTFILE:look_for_item` masks it (5/5); `-fcheck=all` masks it *and
+   reports nothing*, so it is not a source-level out-of-bounds. The desync is one surplus integer
+   broadcast on rank 0 after 8,481 matching ones. A `.record`-divergence hypothesis was tested and
+   **rejected** (it matches on both ranks). Workaround ready but uncommitted (pin the file, as
+   `types.F90` and `shell1quartet.F90` already are). Open: which `-O2` pass (bisect left running
+   on achari2, `/tmp/m7bisect.log`), whether `-Ofast` is safe or merely lucky, and a minimal
+   reproducer before blaming gcc. Full detail in `docs/MPI.md` Finding 6. Four CIF-reading tests (`c9o9h8_read_cif_IT_group_9`,
+   `maleate_read_CIF_H_double_bond_{new,old}_BLs`, `urea_lamaGOET_grown_CIF`) aborted at ≥2 ranks
+   with a mismatched `MPI_Bcast` in `-O2 -fno-fast-math` while passing at `-Ofast`.
+   **It was never undefined behaviour** — that was inferred from the symptom and is wrong.
+   `PARALLEL_BROADCAST` was gated on `WORK_IS_SHARED`, which includes the parallel-do lock, and
+   **the lock is rank-local**: it is set by executing a loop body, which a rank given zero
+   iterations never does. Two ranks could therefore disagree about entering a broadcast; MPI pairs
+   collectives by issue order, so one skipped broadcast offsets the streams and the next pair
+   mismatches (1-integer receive vs 256-character send). Optimisation level only changed whether
+   the ranks happened to diverge. Nothing was uninitialised — the `-fcheck=bounds`/`-finit-*` plan
+   would have found nothing. Fix: gate broadcasts and barriers on `is_parallel` alone, keep
+   reductions on `WORK_IS_SHARED`. Rule: **whether a collective executes must never depend on
+   state that can differ between ranks.** Because the shipped `-Ofast` build hides this class, no
+   test can catch a regression, so `scripts/check_parallel_lint.py` now audits the gates in
+   `macros.in` directly (verified to fail against the pre-fix definition) and runs in CI.
+   **Verification gap, still open:** `e3ef5906` verified *three* of the four tests on achari2
+   (Linux) at `-O2`, `-n 2`. The fourth, and a re-run of all four against current `antlr4`, are
+   outstanding — see `docs/MPI.md` Finding 6.
 
 8. ✅ **DONE (2026-08-04) — Translator: `data` statements at program scope were silently
    dropped.** Root cause was one line in `emitBodyList`: `if (b.localDecl() == null &&
@@ -491,6 +523,19 @@ before any code is written**, most likely in its own conversation (`/clear`).
   `fragment_SCF` onto `CRYSTAL` dissolves the cycle, the recursion defect, and the need for a
   cloned `subfrag_SCF`, and puts the decision to distribute work over fragments in the container
   where it belongs. Full argument in `DEFERRED.md`.
+- **LONG TERM — re-engineer in a language with first-class parallelism** (Dylan, 2026-08-05;
+  **not now**, and a bigger task than hoisting `CRYSTAL`). The case for it has been built by
+  evidence, not preference. Tonto's parallelism is MPI bolted on through C macros, and the
+  failure modes found in the last week were all *invisible*: eight reductions that silently
+  returned `1/n_ranks` of the answer; a per-rank I/O flag whose setter assigned the wrong member,
+  so the mechanism was dead code that looked live; collectives gated on rank-local state, so
+  different ranks entered different collectives; `data` statements parsed and silently discarded;
+  and now a `-O2`-only codegen interaction in the I/O layer that desynchronises the ranks and
+  **disappears the moment you instrument it**. Each was found only by tracing, none by reading.
+  A language where reductions, collectives and data placement are checked constructs rather than
+  macro expansions removes these classes by construction instead of by lint. Sequence: finish
+  what is in flight, then hoist `CRYSTAL` (October), then consider this.
+
 - Future tasks (own conversations): a module-level *call* graph in `writeDotFiles` (the
   `--simplify`/`--module` **use**-graph tooling is DONE — `scripts/simplify_callgraph.py`,
   `docs/CALL_GRAPHS.md`); introduce Fortran-2008 `submodule` constructs; test the MPI parallel

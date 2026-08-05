@@ -847,6 +847,33 @@ add_library(tonto
 set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/types.F90
     PROPERTIES COMPILE_OPTIONS "-O1")
 
+# textfile.F90 -- disable tail-call ("sibling call") optimisation.
+#
+# At -O2 exactly, gfortran 14.2 on x86_64 Linux miscompiles this file badly
+# enough to desynchronise MPI: four CIF-reading tests abort at >=2 ranks with
+# MPI_ERR_TRUNCATE in MPI_Bcast (CLAUDE.md milestone 7, docs/MPI.md Finding 6).
+# The ranks agree for 8481 broadcasts and then rank 0 issues one surplus
+# integer broadcast, offsetting the streams until a 1-integer receive meets a
+# 256-character send.
+#
+# Bisected to a single flag with a 7-second per-file harness: of the 45 flags
+# that -O2 enables over -O1, -foptimize-sibling-calls is the ONLY one whose
+# removal fixes it. That also explains why the bug hid from every attempt to
+# look at it -- a `write` probe or -fcheck=all placed after a call stops that
+# call being a tail call, so instrumenting the code made it pass (5/5).
+#
+# It is an interaction, not a lone bad pass: -O1 plus ALL 45 flags (sibling
+# calls included) passes, and so do -O3 and -Ofast, which are supersets of -O2.
+# So the SHIPPED release build (-Ofast) is not affected -- but the
+# -O2 -fno-fast-math control build is, and that is the build docs/MPI.md uses to
+# separate floating-point reassociation from genuine MPI defects, so it has to
+# work. Whether the underlying fault is a gcc bug or latent UB in the Foo
+# sources that only tail calls expose is NOT yet established; see Finding 6.
+#
+# The cost is nil: this is line-oriented I/O, never a hot path.
+set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/textfile.F90
+    PROPERTIES COMPILE_OPTIONS "-fno-optimize-sibling-calls")
+
 # WORKAROUND (2026-07-28): gfortran 14.3 on arm64 macOS miscompiles
 # shell1quartet.F90 -- the two-electron integral code -- at -O3. The integrals
 # come out slightly too small and everything downstream silently inherits it:
