@@ -42,7 +42,11 @@ The module dependency picture omits utility modules such as `TEXTFILE` and
 `SHELLS`; and note that use of a type such as `ATOM` often implies use of the
 corresponding array type `VEC{ATOM}`.
 
-![module structure](https://github.com/user-attachments/assets/6a70c013-7dbd-4e75-9c6b-2d14973d08d1)
+![module structure](images/module_structure.svg)
+
+*(`docs/images/module_structure.svg` — committed here rather than linked to a
+GitHub attachment URL, so it is versioned with the code and survives if that
+URL ever stops resolving.)*
 
 For generated, always-current versions of this information see
 [`CALL_GRAPHS.md`](CALL_GRAPHS.md) — `make callgraphs` writes `call_graph.dot`,
