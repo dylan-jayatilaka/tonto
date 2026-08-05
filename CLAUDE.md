@@ -434,7 +434,17 @@ before any code is written**, most likely in its own conversation (`/clear`).
    would confound the numbers. Full design in `DEFERRED.md`, "MPI: defects found during
    milestone 4".
 
-7. 🔶 **OPEN — partly diagnosed. NOT fixed, contrary to what `e3ef5906` and `macros.in` claim.**
+7. 🔶 **WORKED AROUND (2026-08-05), root cause not fully established.** Bisected to a single
+   gcc flag: **`-foptimize-sibling-calls`** — of the 45 flags `-O2` enables over `-O1`, the only
+   one whose removal fixes all four tests. A tail call tears down the caller's frame before
+   jumping, and *any* statement after a call stops it being a tail call — which is precisely why
+   a `write` probe and `-fcheck=all` both made the bug vanish: observing it removed the
+   optimisation causing it. It is an interaction, not one bad pass: `-O1` plus all 45 flags
+   passes, and `-O3`/`-Ofast` pass too, so the **shipped release build was never affected**.
+   `CMakeLists.txt` now pins `textfile.F90` to `-fno-optimize-sibling-calls` (nil cost, restores
+   the `-O2` control build). **Open:** which tail call, and whether this is a gcc bug or latent
+   UB that tail calls merely expose — needs a reduced test case before reporting upstream.
+   Earlier status, kept because the reasoning matters:
    Re-verified 2026-08-04 on achari2 (Linux) against current `antlr4`: **all four tests still
    abort at `-n 2`** in the `-O2 -fno-fast-math` build with `MPI_ERR_TRUNCATE`, exit 15, with the
    gate fix confirmed present in that build; `-n 1` passes exactly. One real cause was found and
@@ -513,6 +523,19 @@ before any code is written**, most likely in its own conversation (`/clear`).
   `fragment_SCF` onto `CRYSTAL` dissolves the cycle, the recursion defect, and the need for a
   cloned `subfrag_SCF`, and puts the decision to distribute work over fragments in the container
   where it belongs. Full argument in `DEFERRED.md`.
+- **LONG TERM — re-engineer in a language with first-class parallelism** (Dylan, 2026-08-05;
+  **not now**, and a bigger task than hoisting `CRYSTAL`). The case for it has been built by
+  evidence, not preference. Tonto's parallelism is MPI bolted on through C macros, and the
+  failure modes found in the last week were all *invisible*: eight reductions that silently
+  returned `1/n_ranks` of the answer; a per-rank I/O flag whose setter assigned the wrong member,
+  so the mechanism was dead code that looked live; collectives gated on rank-local state, so
+  different ranks entered different collectives; `data` statements parsed and silently discarded;
+  and now a `-O2`-only codegen interaction in the I/O layer that desynchronises the ranks and
+  **disappears the moment you instrument it**. Each was found only by tracing, none by reading.
+  A language where reductions, collectives and data placement are checked constructs rather than
+  macro expansions removes these classes by construction instead of by lint. Sequence: finish
+  what is in flight, then hoist `CRYSTAL` (October), then consider this.
+
 - Future tasks (own conversations): a module-level *call* graph in `writeDotFiles` (the
   `--simplify`/`--module` **use**-graph tooling is DONE — `scripts/simplify_callgraph.py`,
   `docs/CALL_GRAPHS.md`); introduce Fortran-2008 `submodule` constructs; test the MPI parallel

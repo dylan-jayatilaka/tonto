@@ -473,7 +473,58 @@ set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/textfile.F90
 
 **Open, for the next session:**
 
-1. **Which `-O2` pass? All eight obvious candidates are RULED OUT.** Each was tried as
+### CULPRIT FOUND: `-foptimize-sibling-calls` (2026-08-05)
+
+Bisected with a 7-second per-file harness (recompile `textfile.F90` only, relink, run twice —
+`~/m7fast.sh` on achari2; the CMake route took 20 minutes per iteration and made this
+impractical). Of the **45** flags `-O2` enables over `-O1`, **`-foptimize-sibling-calls` is the
+only one whose removal fixes it**:
+
+| build | result |
+|---|---|
+| `-O2` | **FAIL** |
+| `-O2 -fno-optimize-sibling-calls` | **PASS** (2/2, and all four CIF tests pass) |
+| `-O1` | PASS |
+| `-O1` + **all 45** `-O2`-only flags | **PASS** |
+| `-O3`, `-Ofast`, `-Ofast -march=native` | **PASS** |
+| only differing `--param` (`max-fields-for-field-sensitive` 0→100), forced back at `-O2` | FAIL |
+| `-O2 -finit-integer/-real=snan/-logical` poisoning | FAIL (nothing reported) |
+
+**This explains why the bug hid from inspection.** A sibling (tail) call is one where the caller's
+stack frame is torn down *before* jumping to the callee, so the callee reuses it. Put any
+statement after a call and it is no longer the last thing the routine does, so it is no longer a
+tail call — which is exactly what a `write` probe or `-fcheck=all` does. The bug did not "move
+when observed" in some mysterious way; **observing it removed the optimisation that caused it.**
+
+**It is an interaction, not one bad pass.** `-O1` plus all 45 flags — sibling calls included —
+passes, and `-O3`/`-Ofast`, supersets of `-O2`, also pass: their extra passes reshape the code
+away from the trigger. So the **shipped release build (`-Ofast`) is not affected**, and no
+released binary has been wrong. That is luck rather than immunity, which is why the workaround is
+applied unconditionally.
+
+**Workaround (committed).** `CMakeLists.txt` pins the one file:
+
+```cmake
+set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/textfile.F90
+    PROPERTIES COMPILE_OPTIONS "-fno-optimize-sibling-calls")
+```
+
+Cost is nil — line-oriented I/O, never a hot path — and it restores the `-O2 -fno-fast-math`
+control build, which §6 needs in order to separate floating-point reassociation from genuine MPI
+defects.
+
+**Still NOT established, and it matters:** *which* tail call, and whether the fault is a gcc bug
+or latent UB in the Foo sources that only tail calls expose. The `tailc` dump shows 154 tail calls
+in `textfile.F90`; the 14 that pass an address all pass `&C.NNNN` compiler constants in static
+storage, not stack locals, so there is no smoking gun of the classic
+"pointer into a dead frame" form. `read_line_external` is where the mismatch *surfaces* — it does
+contain tail calls, but only on its `die()` paths, which abort anyway, so **it has not been shown
+to be the cause**. Reducing this to a self-contained test case is the next step, and the
+prerequisite for reporting it upstream.
+
+### Ruled out along the way
+
+1. **All eight obvious candidates.** Each was tried as
    `-O2 <flag>` on `textfile.F90` alone, 2 runs each, and **every one still failed** (exit 15):
    `-fno-schedule-insns`, `-fno-schedule-insns2`, `-fno-strict-aliasing`, `-fno-tree-vrp`,
    `-fno-gcse`, `-fno-tree-pre`, `-fno-code-hoisting`, `-fno-store-merging`. So it is not one of
