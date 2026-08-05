@@ -378,8 +378,11 @@ before any code is written**, most likely in its own conversation (`/clear`).
      `hart --disk-sfs`, which had never worked — six defects — now does, and is gated by
      `tests/hart/urea_hart_STO-3G_disk_ffs`, the first test ever to execute `make_LS_mx`.)*
 
-6. 🔶 **HALF DONE — make MPI reductions safe by construction** (agreed 2026-08-01; parts 2 and
-   4 done 2026-08-02/03). Milestone 4 uncovered a class of silent wrong-answer bugs with a single root
+6. 🔶 **MOSTLY DONE — make MPI reductions safe by construction** (agreed 2026-08-01). Part 1
+   (the `reduce` clause) done 2026-08-04, part 4 (the lint) 2026-08-03, part 2 implemented and
+   then **withdrawn** because its premise was wrong. **Only part 3 remains** — the parallel-do
+   lock's three defects — and it carries a live caveat: the naive fix silently disables work
+   distribution, so it is only worth doing if lock-gated behaviour is actually wanted. Milestone 4 uncovered a class of silent wrong-answer bugs with a single root
    cause: the translator emits `LOCK_PARALLEL_DO` as the first statement *inside* a `parallel do`,
    and `WORK_IS_SHARED` is false while that lock is held, so a `PARALLEL_SUM` written in the loop
    body is **dead code that looks correct**. Four such sites in `molecule.grid.foo` each returned
@@ -495,19 +498,28 @@ before any code is written**, most likely in its own conversation (`/clear`).
    so a construct that parses but emits nothing is now a build failure rather than a silent
    wrong answer. Verified: 184/184 files translate, output byte-identical to before.
 
-9. ⬜ **`write_archive` swallows the following keyword, and one test has never run its SCF.**
-   `molecule.put.foo:674` tests `stdin.buffer.n_items==2`, but `n_items` counts the whole line
-   *including* the keyword — and `write_archive density_mx` is already 2 items, so the optional
-   third word (`normalise`) is always sought and the **next line's first word is eaten instead**.
-   The correct test is `==3` (per Dylan: the third item is genuinely optional, since objects such
-   as `density_mx` know their own genre). `MOLECULE.READ:read_archive` had the identical bug and
-   was fixed during milestone 5; this is its twin.
-   The consequence is the part that matters: `tests/long/nh3_x-ray-constrained-rhf-cluster-charge_cc-pVTZ_restart`
-   eats its own `scf` keyword, runs in 40 ms, and its checked-in reference contains **zero lines
-   mentioning "SCF"** in 635 lines — the test has never done the science its name claims. Blast
-   radius is exactly that one job file (it is the only one in `tests/` using `write_archive`).
-   Fixing the off-by-one will rewrite that reference wholesale, so **regenerate it and inspect it
-   as science, not as a diff**. Sequenced after the MPI work.
+9. ✅ **DONE (`ffce26bd`) — `write_archive` swallowed the following keyword, and one test had
+   never run its SCF.** `MOLECULE.PUT:put_archive` tested `stdin.buffer.n_items==2`, but
+   `n_items` counts the whole line *including* the keyword — and `write_archive density_mx` is
+   already 2 items, so the optional third word (`normalise`) was always sought and **the next
+   line's first word was eaten instead**. Now `==3` (the third item is genuinely optional:
+   objects such as `density_mx` know their own genre). `MOLECULE.READ:read_archive` had the
+   identical bug, fixed during milestone 5; this was its twin. The same commit also fixed a
+   copy-paste slip whereby the British spelling `normalise` was silently ignored here while
+   `read_archive` accepted it.
+   **The consequence was the part that mattered**, and it is repaired:
+   `tests/long/nh3_x-ray-constrained-rhf-cluster-charge_cc-pVTZ_restart` ate its own `scf`
+   keyword, ran in 40 ms, and its checked-in reference contained **zero** lines mentioning "SCF"
+   in 635 lines — the test had never done the science its name claims. The reference was
+   regenerated in the same commit: **947 lines, 12 s, SCF present**, and it passes *exactly*
+   (0% deviation, 0 ulp) as of 2026-08-05. Blast radius was exactly that one job file, the only
+   one in `tests/` using `write_archive`.
+   **One open question for a scientist, not a bug:** the job asks for two lambda values
+   (`initial_lambda= 0.012`, `lambda_step= 0.004`, `lambda_max= 0.016`) and the IO manifest
+   deletes archives for both `lambda=0.012` and `lambda=0.016`, so both evidently ran — but the
+   reference prints a single `SCF results` block and a single `Total energy` (−56.2023, R(F)
+   0.0099, GoF 0.777). With `output= NO, output_results= YES` that may be correct; whether the
+   results of *each* lambda should be reported has not been confirmed.
 
 **Open items** (future directions; details in `DEFERRED.md`)
 
