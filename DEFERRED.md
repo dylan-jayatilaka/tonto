@@ -22,8 +22,9 @@ now covers the whole project, so it was renamed.)*
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
 **Highest-priority open items**, if you are looking for where to start:
-NaN and negative ESDs from the least-squares variance-covariance matrix, and the MPI items
-behind milestones 6 and 7. (`data` statements silently dropped: **fixed 2026-08-04** — see
+NaN and negative ESDs from the least-squares variance-covariance matrix, the MPI items
+behind milestones 6 and 7, and **pHAR ships untested** — its only test is stranded on a branch
+behind a 167 MB Git LFS asset (see *"Reinstate the ammonia-borane pHAR test"*). (`data` statements silently dropped: **fixed 2026-08-04** — see
 below; the audit found no library file was ever affected.)
 
 ---
@@ -2031,6 +2032,72 @@ OpenBLAS would also oversubscribe cores in MPI builds.
 ---
 
 # Test suite and numerics
+
+## Reinstate the ammonia-borane pHAR test — blocked by a 167 MB asset (Dylan, 2026-08-05)
+
+**pHAR code ships in the library but nothing tests it.** `MOLECULE.CE:phar_defragment` is live
+(`molecule.main.foo` dispatches `phar_defragment`, added by Kang 2025-03-13), and
+`crystal.foo`, `molecule.har.foo` and `molecule.rho.foo` all carry pHAR-specific branches. There
+is **no pHAR test in `tests/`**.
+
+One exists, on a branch: `tests/long/ammonium_borane_pHAR_C23/`, on
+**`origin/release-pHAR-broken`** (tip `18712bd6`, 2025-04-29, kanghyun-chu).
+
+**What is there, and what is missing:**
+
+| file | size | |
+|---|---|---|
+| `stdin` | 946 B | the job |
+| `stdout` | 269 KB | the blessed reference |
+| `B6H6_grown.cif` | 7 KB | input |
+| `tonto_data_on_F_20rfl.hkl` | 16 KB | input |
+| `Crystal23_InputFiles.zip` | 12 KB | the Crystal23 inputs that *generate* the XML |
+| **`GenerateXML.XML`** | **134 B** | **a Git LFS pointer, not the file** |
+
+The `IO` manifest lists `GenerateXML.XML` as a required input, so **the test cannot run**. The
+pointer says:
+
+```
+version https://git-lfs.github.com/spec/v1
+oid sha256:1c5c24f0903c1b8667e3f8aa41ba1b2a550a49370b22db422a37d7a1f093a8ee
+size 174978609
+```
+
+i.e. the real asset is **167 MB**.
+
+**How the deposit went wrong** is legible in the branch's own history:
+
+```
+0f70beae  Activated git lfs and added .gitattributes files but NOT YET large XML
+69d6e806  Added large XML file
+...
+18712bd6  The Crystal23 input files for generating the GenerateXML.XML are included
+```
+
+LFS was enabled and `.gitattributes` added, then the XML committed — but **`.gitattributes` does
+not exist at the branch tip**. So the tracking configuration was lost while the pointer file
+stayed behind, and a plain `git clone` gets a 134-byte text file where a 167 MB XML should be.
+Whether the LFS object is still retrievable from GitHub was **not** checked (git-lfs is not
+installed on this machine) — check that first, since it decides which option below is viable.
+
+**Options, in rough order of preference:**
+
+1. **Regenerate rather than store.** `Crystal23_InputFiles.zip` (12 KB) is committed precisely so
+   the XML can be rebuilt — that is what `18712bd6` was for. Needs Crystal23, which is
+   proprietary, so this makes the test reproducible only for those who have it.
+2. **Fetch on demand**, the way the ANTLR jar already is at configure time: host the XML
+   somewhere durable and have the test skip cleanly when it is absent.
+3. **Shrink the case.** 167 MB for a test asset is the real problem; a smaller cell, fewer
+   reflections, or a trimmed XML would make this an ordinary test.
+4. **Proper LFS** — restore `.gitattributes` and re-push the object. Note GitHub's free LFS quota
+   is 1 GB storage *and* 1 GB/month bandwidth; a 167 MB asset cloned a handful of times exhausts
+   it, which is a poor fit for a public repository.
+
+**Note the branch is 631 commits behind `release` and 8 ahead**, so this is a port of one test
+directory, not a merge. Those 8 commits also contain unrelated work (form-factor symmetrisation
+tables with RMS and MAX residuals) that may or may not already be in `release` — check before
+cherry-picking.
+
 
 ## Deferred: small numerical differences (longstanding) — drill down
 
