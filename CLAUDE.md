@@ -58,15 +58,48 @@ transformation, type parameterization, and C-style macro expansion (`include/mac
 `foo.pl` runs in two passes — pass 1 analyses signatures/interfaces/symbols, pass 2 generates
 code.
 
-**Status** (2026-07-27): **all three milestones done.** The ANTLR4 translator **works and drives
-the build** — it parses every `foofiles/` file (submodules included) and emits equivalent,
-compilable Fortran. A release `tonto` built from its output passes **124/124** `ctest` locally
-under the loose criterion, and **GitHub Actions CI is green** (short suite 51/51; badge in
-README; green as of `99dc3a1c`). Only the debug (`-O0`) build has 4 longstanding
-FP-boundary/structural failures (not translator bugs — see `DEFERRED.md`). Phase B
-(per-executable dead-code elimination + call/use-graph export) is done (§8, commit `860922ea`);
-the DOT graphs now have a `--simplify`/`--module` readability tool (`scripts/simplify_callgraph.py`,
-`docs/CALL_GRAPHS.md`).
+**Status** (2026-08-05). Read this before the milestone list; the detail below is easy to get
+lost in.
+
+**The original task is complete.** The ANTLR4 translator replaced `foo.pl` and drives the build:
+it parses every `foofiles/` file, submodules included, and emits equivalent, compilable Fortran.
+A release `tonto` built from its output passes the full local suite under the loose criterion and
+GitHub Actions CI is green. `foo.pl` and its reference snapshot are gone.
+
+**What followed was not translation but repair.** Having a translator that could be trusted made
+it possible to go after things that had been wrong for years, and the pattern was consistent:
+**almost every defect found was silent.** It produced a wrong number, or no number, with no
+diagnostic — and none was found by reading the code. All of them fell to measurement: tracing
+broadcasts to per-rank files, counting them between markers, bisecting compiler flags.
+
+The substantive gains, in rough order of value:
+
+- **`hart` works.** The standalone Hirshfeld-atom-refinement program died on every real run and
+  exited 0 while doing it. It now runs, has a test suite in CI, an option set reconciled with its
+  documentation, and handles crystals with several molecules in the asymmetric unit (fragHAR) —
+  in serial *and* under MPI, reproducing the serial reference digit for digit. See `docs/HART.md`.
+- **MPI was characterised and largely repaired.** The first MPI build ever configured for this
+  project. Eight reductions were silently returning `1/n_ranks` of the answer. A per-rank I/O
+  flag's setter assigned the wrong member, so the whole mechanism was dead code that looked live.
+  Collectives were gated on rank-local state, so different ranks entered different collectives.
+  See `docs/MPI.md`, which carries a defect register with a **"Loud?"** column — the *silent* rows
+  are the dangerous ones.
+- **Whole classes closed, not just instances.** `data` statements were parsed and silently
+  discarded; now they are emitted, and any construct that parses but emits nothing is a **build
+  failure**. Reductions get a `parallel do … reduce(x)` clause, so the one place a reduction can
+  be written incorrectly no longer exists. Two lints run in CI, including one that cannot be
+  blessed away and one that guards a fix against being "tidied" back into the bug.
+- **A test that never tested.** An X-ray-constrained-wavefunction job silently ate its own `scf`
+  keyword and finished in 40 ms; its blessed reference contained no SCF at all. It now runs.
+
+**What is open**, and why it is worth knowing before starting: the parallel-do lock (milestone 6
+part 3), a gcc `-O2` tail-call interaction that is worked around but not root-caused (milestone 7),
+hoisting `CRYSTAL` out of `MOLECULE` (October), and — long term — the case for re-engineering in a
+language with first-class parallelism, argued from the evidence above rather than from taste.
+
+**The working lesson, if you read nothing else:** in this codebase, *inspection does not work and
+measurement does*. `docs/DEVELOPER.md` §1a records the recipes — trace to per-rank files, never a
+shared stream; count events between markers; and confirm a code path executes before analysing it.
 
 ## 3. The Foo language (summary)
 
