@@ -1,0 +1,106 @@
+name: CI (RGBI toolchain, macOS — exploratory)
+
+# Tests the macOS half of docs/INSTALLING_RGBI.md, which is otherwise written
+# from recollection and labelled UNTESTED.
+#
+# There is no container option here. A container shares the host kernel -- it is
+# chroot's descendant, not a virtual machine -- so "macOS in Docker" is a
+# category error: Docker Desktop on a Mac is a Linux VM, and Apple's licence
+# permits virtualising macOS only on Apple hardware. Real macOS runners are the
+# only honest way, and they are free for this repository because it is public.
+#
+# DELIBERATELY A SEPARATE WORKFLOW, and deliberately not on `push`.
+#
+# Dylan's position is that macOS is "sadly disavowed for now". So this must not
+# be able to turn the Linux RGBI badge red, and must not gate any change. It
+# runs weekly and on demand, and if it fails that is INFORMATION -- the honest
+# state of Mac support -- rather than a regression to be blessed away. Do not
+# add continue-on-error: a check that cannot fail tells you nothing.
+#
+# WHAT IT IS REALLY FOR
+#
+# Two specific things went wrong on the Mac on 2026-08-05, and both are here:
+#
+#   . `tlmgr` needed an ABSOLUTE PATH to install pdfcrop -- a bare `tlmgr
+#     install` did not work, and the full path under /Library/TeX/texbin had to
+#     be typed by hand. The step below uses the absolute path on purpose, and
+#     says why.
+#   . Homebrew pulled in far more than expected, ghostscript among it. Whether
+#     ghostscript arrives as a dependency or has to be asked for decides one
+#     line of the install document.
+#
+# It uses BasicTeX rather than the full MacTeX cask: ~100 MB against ~5 GB, and
+# it is the harder case -- with BasicTeX the packages must be fetched by tlmgr,
+# which is exactly where the trouble was.
+
+on:
+  schedule:
+    # Fridays 06:11 UTC, after the Linux one.
+    - cron: '11 6 * * 5'
+  workflow_dispatch:
+
+jobs:
+  macos-install-list:
+    name: does the documented macOS list actually work?
+    runs-on: macos-14          # Apple silicon, which is where Indigo wheels bite
+    timeout-minutes: 45
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: What arrives with Homebrew (and what has to be asked for)
+        run: |
+          set -x
+          brew install open-babel pipx || true
+          # Report rather than assume: whether ghostscript comes along for the
+          # ride decides a line of docs/INSTALLING_RGBI.md.
+          if command -v gs; then echo "GHOSTSCRIPT: arrived as a dependency"; else
+            brew install ghostscript; echo "GHOSTSCRIPT: had to be installed explicitly"; fi
+          gs --version || true
+
+      - name: BasicTeX, then tlmgr BY ABSOLUTE PATH
+        run: |
+          set -x
+          brew install --cask basictex
+          # The trap. A bare `tlmgr` is not on PATH in the same shell that
+          # installed BasicTeX, and using the absolute path is what worked by
+          # hand on 2026-08-05.
+          TLMGR=/Library/TeX/texbin/tlmgr
+          ls -l "$TLMGR"
+          sudo "$TLMGR" update --self
+          sudo "$TLMGR" install chemfig pdfcrop geometry longtable xcolor pgf simplekv
+          echo "/Library/TeX/texbin" >> "$GITHUB_PATH"
+
+      - name: mol2chemfig (brings Indigo -- the Apple-silicon wheel question)
+        run: |
+          set -x
+          pipx install mol2chemfigPy3
+          pipx ensurepath
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: The doctor's verdict — this is the actual result
+        run: |
+          scripts/rgbi_doctor.sh || true          # report in full, do not stop here
+          scripts/rgbi_doctor.sh                  # now let it decide the job
+
+      - name: The doctor still catches things (platform-independent)
+        run: bash scripts/rgbi_selftest.sh
+
+      - name: Draw both pictures from a real N2 run's fragments
+        run: |
+          set -x
+          cd docker/example-N2
+          TONTO_RGBI_SCRIPT_DIRECTORY="$GITHUB_WORKSPACE/rgbi-scripts" \
+            "$GITHUB_WORKSPACE/rgbi-scripts/make-rgbi-pic" --do-H
+          for f in "rgbi-mol-structure+H.pdf" "rgbi-dial-table+H.pdf"; do
+              test -s "$f" || { echo "MISSING: $f"; exit 1; }
+              echo "ok  $f ($(stat -f%z "$f") bytes)"
+          done
+
+      - name: Keep the pictures, so a human can look at them
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rgbi-macos-pictures
+          path: docker/example-N2/*.pdf
+          if-no-files-found: ignore

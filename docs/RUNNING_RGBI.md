@@ -14,39 +14,93 @@ papers the program itself cites: Gould *et al.* (2008) *Theor. Chem. Acc.* **199
 weak link cannot push. On `sauce` it is at
 `~/rgbi-reference/Jayatilaka_2025_Grabowsky_chapter.pdf`.)*
 
-For installing the pieces, see **`docs/INSTALLING_RGBI.md`**. This document is
-the developer reference.
+For installing the picture tools see **`docs/INSTALLING_RGBI.md`**; for checking
+an installation, run `scripts/rgbi_doctor.sh`. This document is the developer
+reference.
 
 ---
 
-## 1. The pipeline, and the fact that it has two independent halves
+## 1. The pipeline
 
-Measured on 2026-08-09, not inferred — a real N2 job was run and each stage
-watched (CLAUDE.md §2). **The two pictures have very different dependencies**,
-and this had not been written down anywhere:
-
-| Picture | Produced by | Needs |
-|---|---|---|
-| **Dial diagrams** (`rgbi-dial-table{+,-}H.pdf`) | `make-rgbi-dials` | `pdflatex`, `pdfcrop`, and the LaTeX packages `chemfig`, `tikz`, `xcolor`, `longtable` |
-| **Molecular structure** (`rgbi-mol-structure{+,-}H.pdf`) | `make-rgbi-pic` | all of the above **plus** `obabel`, python **Indigo**, and **`mol2chemfig`** |
-
-Only the structure picture needs the awkward software. The dial diagrams come
-out of a stock TeX Live and nothing else — which is worth knowing before anyone
-concludes that "RGBI does not work on this machine".
-
-The flow:
+Measured on 2026-08-09, not inferred — a real job was run and each stage
+watched (CLAUDE.md §2).
 
 ```
-   rgbi / tonto  ──▶  rgbi-*.tex fragments  ──┬──▶  make-rgbi-dials  ──▶  rgbi-dial-table{+,-}H.pdf
-   (ROBY:bond_analysis)                       │
-                                              └──▶  make-rgbi-pic
-                                                      obabel  (.molden/.fchk ──▶ .mol, 2D coords)
-                                                      mol2chemfig (.mol ──▶ chemfig .tex)   [uses Indigo]
-                                                      pdflatex + pdfcrop
-                                                                     ──▶  rgbi-mol-structure{+,-}H.pdf
+                    ┌─────────────────────────────┐
+                    │  rgbi <file>                │   or a tonto job file
+                    │  (or tonto + roby_analysis) │   with robydata= { … }
+                    └──────────────┬──────────────┘
+                                   │
+                                   ▼
+                    ┌─────────────────────────────┐
+                    │  rgbi-*.tex  fragments       │
+                    │  geometry.xyz                │
+                    └──────┬───────────────┬──────┘
+                           │               │
+          ┌────────────────┘               └────────────────┐
+          ▼                                                 ▼
+┌───────────────────────┐                    ┌──────────────────────────┐
+│  make-rgbi-dials      │                    │  make-rgbi-pic           │
+│                       │                    │                          │
+│  LaTeX only:          │                    │  obabel --gen2d          │
+│    chemfig, tikz      │                    │      ↓  .mol             │
+│    pdfcrop + gs       │                    │  mol2chemfig  [Indigo]   │
+│                       │                    │      ↓  chemfig .tex     │
+│                       │                    │  pdflatex ×2 + pdfcrop   │
+└───────────┬───────────┘                    └────────────┬─────────────┘
+            ▼                                             ▼
+  rgbi-dial-table±H.pdf                        rgbi-mol-structure±H.pdf
 ```
 
-## 2. What Tonto writes, and when
+**The two halves are independent, and that matters.** Only the structure
+picture needs the awkward software. The dial diagrams come out of a stock TeX
+Live and nothing else — so "RGBI does not work on this machine" is too coarse a
+statement to act on, and a workshop participant who cannot install Open Babel
+can still draw half the pictures:
+
+```bash
+scripts/rgbi_doctor.sh --dials-only
+make-rgbi-dials --do-H
+```
+
+## 2. The `rgbi` command
+
+```
+rgbi [ options ] <file.FChk> | <file.molden>
+```
+
+| Option | Meaning |
+|---|---|
+| `--groups '{ { 1 4 6 } { 2 3 5 } }'` | Compute indices between two *groups* of atoms rather than between individual atoms. Default: every pair close enough to be bonded by the Cambridge Structural Database criteria. |
+| `--ci-labels` | Print the covalent/ionic index pair above and below each bond, instead of the index and its % covalency. Affects what `make-rgbi-pic` draws. |
+| `--help` | Full documentation, including the method summary and references. |
+
+Output goes to `stdout` in the working directory, plus the `.tex` fragments of
+§3. There is **no** `--basis` option and none is needed: the wavefunction comes
+from the input file. `TONTO_BASIS_SET_DIRECTORY` is still read, as everywhere.
+
+**Two known blemishes in `--help`** (cosmetic, not yet fixed): it calls the
+program `run_rgbi`, which is the CMake target name and not what gets installed;
+and it refers to a `./rgbi-script` folder, which is `rgbi-scripts`. `hart` has
+an invariant check comparing `--help` against its option labels
+(`scripts/check_hart_options.sh`); `rgbi` has only three options and no such
+check.
+
+### Both routes work, and agree
+
+`rgbi` and an ordinary `tonto` job produce the same fragments — verified on N2,
+byte-identical. Use whichever suits:
+
+```bash
+rgbi N2.molden                     # argv-driven
+tonto --input stdin                # job file with robydata= { … } + roby_analysis
+```
+
+One difference to know: `rgbi` leaves `output_theta_info` at its default (**on**),
+whereas most `tests/rgbi/*/stdin` set it **off** — so the argv route gives you
+the dial fragments and those test jobs do not.
+
+## 3. What Tonto writes, and when
 
 All from `ROBY:bond_analysis` in `foofiles/roby.foo`, via `stdout.redirect`:
 
@@ -61,64 +115,58 @@ All from `ROBY:bond_analysis` in `foofiles/roby.foo`, via `stdout.redirect`:
 | `rgbi-data-<A>-<B>` | separate `put` |
 | `geometry.xyz` | always (`.atom.put_xyz_file`) |
 
-Two notes on that table.
+**The per-bond dial files are named after the bond number alone** — `1+H.tex`,
+`2+H.tex`, … with no `rgbi-` prefix, and the dial table pulls them in with
+`\input{1+H}`. They look like junk in a directory listing and are not.
 
-- **The per-bond dial files are named after the bond number alone** — `1+H.tex`,
-  `2+H.tex`, … with no `rgbi-` prefix, and `rgbi-dial-table+H.tex` pulls them in
-  with `\input{1+H}`. Easy to mistake for junk, easy to collide with anything
-  else in the directory called `1+H.tex`. Left as is for now: renaming them
-  changes what every `\input` line says.
-- **Most `tests/rgbi/*/stdin` set `output_theta_info= NO`**, so the suite as it
-  stands does *not* produce the dial files. A job used to gate the pictures has
-  to turn it on.
+## 4. Drawing the pictures
 
-## 3. Baseline measurement, 2026-08-09
+```bash
+make-rgbi-pic   --do-H       # structure + dials, hydrogens kept
+make-rgbi-dials --do-H       # dials only (needs no Open Babel/Indigo/mol2chemfig)
+```
 
-The starting point this restoration was written against. `tests/rgbi/N2`, with
-`output_theta_info= YES`, against `release/tonto`:
+**Neither needs a wavefunction file.** Open Babel derives the 2D depiction from
+coordinates alone — it perceives the bonding itself and gets nothing extra from
+a `.molden` or `.FChk` — and Tonto already writes `geometry.xyz` on every run,
+so that is the default input. Verified on ylid (24 atoms): the `.mol` built from
+`geometry.xyz` is identical to the one built from `ylid.molden`, 14 heavy atoms
+and 15 bonds either way. `--molden` and `--fchk` remain for existing habits.
 
-- **Tonto's half is healthy.** All eight `.tex` fragments were written, exit 0.
-- **`make-rgbi-dials` is healthy.** `rgbi-dial-table+H.pdf` was produced and is
-  **identical to the committed reference** `tests/rgbi/N2/rgbi-dial-table-H.pdf`
-  — τ(N1-N2) = 2.88, covalent 2.88, ionic 0.00.
-- **`make-rgbi-pic` fails, and exits 0 while doing it.** In full:
+### `make-rgbi-pic`
 
-  ```
-  rm: cannot remove 'rgbi-structure.tex': No such file or directory
-  1 molecule converted                                   <- obabel fine
-  mol2chemfig: .../mol2chemfigpy3/bin/python: bad interpreter
-  !!! Error: Input file `rgbi-mol-structure.pdf' not found!
-  mv: cannot stat 'rgbi-mol-structure-crop.pdf'
-  EXIT=0
-  ```
+| Option | Meaning |
+|---|---|
+| `--xyz <file>` | Lay out from an `.xyz` file. **Default: `geometry.xyz`.** |
+| `--molden <file>`, `--fchk <file>` | Lay out from a wavefunction file instead. |
+| `--do-H`, `--no-H` | Keep or delete hydrogens. Default: delete. Picks `+H` or `-H` fragments and output names. |
+| `--do-ci`, `--no-ci` | Print c/i indices instead of % covalency. Pair with `rgbi --ci-labels`. |
+| `--do-xyz` | Let `mol2chemfig` recompute the 2D coordinates. |
+| `--do-tonto` | Run `tonto` first, to make the fragments. |
+| `--skip-doctor` | Skip the dependency preflight. |
+| `--quiet`, `--help` | |
 
-  `mol2chemfig` is installed but unrunnable — its pipx virtual-environment
-  interpreter has been removed from under it, which `command -v mol2chemfig`
-  cannot see. It leaves a **zero-byte** `rgbi-structure.tex`, `pdflatex` then
-  fails, and because every LaTeX run in the script is redirected to
-  `/dev/null` the only symptom is a picture that silently does not appear —
-  or, worse, the *previous* run's picture left standing.
+### `make-rgbi-dials`
 
-This is why `scripts/rgbi_doctor.sh` exists, and why it tests that
-`mol2chemfig` **executes** rather than that it is present.
+`--do-H`/`--no-H`, `--do-tonto`, `--skip-doctor`, `--quiet`, `--help` — same
+meanings. It asks the doctor with `--dials-only`, so a missing Open Babel or
+mol2chemfig will not stop it.
 
-## 4. The reference pictures in `tests/rgbi/`
+### Where the templates come from
 
-32 PDFs are committed across 11 of the 13 test directories: three for each
-diatomic (`rgbi-mol-structure.pdf`, `rgbi-mol-structure-H.pdf`,
-`rgbi-dial-table-H.pdf`) and five for `ylid`, which also has the `+H` forms.
-They were made by hand and are the visual targets.
+`scripts/rgbi_doctor.sh --print-template-dir` is the **single** implementation
+of the search, and both scripts ask it rather than keeping a copy that can
+drift. In order: `$TONTO_RGBI_SCRIPT_DIRECTORY`, a git checkout's
+`rgbi-scripts/`, an installed `<prefix>/share/tonto/rgbi-scripts`, and finally
+`~/bin` — which is where they *used* to come from, unconditionally, so that
+`rgbi-scripts/` in the repository was authoritative on no machine but the
+author's.
 
-Use a **diatomic** (N2, BN, CO) for the fast edit-run loop — seconds, and it
-still exercises both halves. Use **ylid** as the gate: it is the only case with
-H atoms, so it is the only one that exercises the `+H`/`-H` split, the atom
-labelling and a multi-bond dial table.
+## 5. Two traps in the LaTeX, both of which have cost time
 
-## 5. The two `chemfig`s are both needed — one fails loudly, one silently
+### The two `chemfig`s are both needed — one fails loudly, one silently
 
-`rgbi-mol-structure.tex` loads `chemfig` twice, apparently. It has to, and the
-reason is worth knowing because the redundant-looking one was deleted once and
-had to be restored.
+`rgbi-mol-structure.tex` loads `chemfig` twice, apparently. It has to.
 
 - `mol2chemfig.sty` does `\input{cf-pastebin.tex}` — a **vendored chemfig
   v1.2d from December 2015**, with the comment *"load this directly, don't mess
@@ -126,25 +174,58 @@ had to be restored.
   `Command \setbondstyle undefined`.
 - `\usepackage{chemfig}` loads the **modern system chemfig**. Remove it and
   `pdflatex` **exits 0 with no error** — and draws the aromatic ring circle
-  oversized and overlapping its own bonds, with the whole skeleton compressed.
-  A wrong picture with no diagnostic.
+  oversized and overlapping its own bonds, with the skeleton compressed. A
+  wrong picture with no diagnostic.
 
 Measured on ylid, 2026-08-09, against `tests/rgbi/ylid/rgbi-mol-structure+H.pdf`.
+It was deleted once as redundant and had to be restored; there is now a note in
+the template itself, where the deletion would be made.
 
-**And `pdflatex` must run twice.** The bond labels are placed by TikZ node
-references resolved through the `.aux` file, so after a single pass they float
-off to the side of the molecule in a cluster. That looks exactly like a
-placement bug and is not one — it is a missing second pass. Both scripts
-already run `pdflatex` twice for this reason.
+### `pdflatex` must run twice
 
-## 6. Known defects, not yet fixed
+The bond labels are placed by TikZ node references resolved through the `.aux`
+file, so after a single pass they float off to the side of the molecule in a
+cluster. That looks exactly like a label-placement bug and is not one. Both
+scripts run it twice.
 
-- `foofiles/crystal.foo` "free" plots (see `docs/PLOT_PLAN.md`) — unrelated to
-  RGBI but in the same neighbourhood.
+## 6. Testing
+
+`ctest -L rgbi` — 13 jobs, comparing `stdout` against blessed references. They
+exercise the **numbers**, not the pictures.
+
+For the pictures, 32 reference PDFs are committed across 11 of the 13
+directories: three for each diatomic and five for `ylid`. Nothing compares them
+automatically; they are visual targets.
+
+- **Fast loop:** a diatomic (N2, BN, CO). Seconds, and still exercises both
+  halves.
+- **The gate:** `ylid`. The only case with hydrogens, so the only one that
+  exercises the `+H`/`-H` split, the atom labelling and a multi-bond dial table.
+  Its job takes about 2 minutes; drawing takes about 15 seconds.
+
+Note that a picture run needs `output_theta_info= YES`, which most of those
+`stdin` files turn off.
+
+`ctest -R rgbi_doctor_selftest` (label `short`, so it is in CI) checks the
+doctor still catches things. The doctor itself is deliberately not a ctest: CI
+has none of the arcane software and would be permanently red. The install list
+is covered separately by `docker/rgbi.Dockerfile` and
+`.github/workflows/ci-rgbi.yml`.
+
+## 7. Known defects, not fixed
+
+- **The dial grid's column count is hard-coded to four** in three places per
+  routine (`ROBY:put_dial_table_do_H`, `foofiles/roby.foo:7090`). Four dials
+  need ~520 pt and `article`'s default `\textwidth` is ~345 pt, so the fourth
+  column fell off the page and `pdfcrop` cut it — visible in the committed
+  reference PDFs too. Worked around in `rgbi-dial-header.tex` by giving the page
+  a large canvas; the proper fix is in `DEFERRED.md`.
 - `CMakeLists.txt:883` pins a file to `-O2` because **"rgbi/BN's Roby
   populations were wrong"** at other optimisation levels. Read that comment
   before touching optimisation flags for this program.
 - `~/bin/make-rgbi-molden` on Dylan's machine is a third, older script,
   hard-coded to a file called `test.molden` and printing `iest.molden not
-  found` when it is absent. It is superseded by `make-rgbi-pic --molden` and is
+  found` when it is absent. Superseded by `make-rgbi-pic --molden`, and
   deliberately **not** brought into the repository.
+- Tonto does not draw these pictures itself. Doing so — the `SYSTEM_COMMAND`
+  route the HAR plots already use — is stage 4 item 4 of `docs/PLOT_PLAN.md`.

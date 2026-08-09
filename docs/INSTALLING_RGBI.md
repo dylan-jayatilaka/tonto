@@ -108,11 +108,22 @@ Linux and has none of these boundary problems. WSL coverage lives in
 
 ---
 
-## macOS — UNTESTED. Read this as a set of leads, not instructions
+## macOS — UNTESTED BY HAND, now probed weekly by CI
 
-Nobody has run this end to end. Dylan's assessment is that Mac is "a lost cause
-for now"; it is deferred, not supported. `rgbi_doctor.sh` runs on macOS and is
-the arbiter — if it disagrees with anything below, believe the doctor.
+Nobody has run this end to end by hand. Dylan's assessment is that Mac is "a
+lost cause for now"; it is deferred, not supported. `rgbi_doctor.sh` runs on
+macOS and is the arbiter — if it disagrees with anything below, believe the
+doctor.
+
+**`.github/workflows/ci-rgbi-macos.yml` now tries this list on a real macOS
+runner**, weekly and on demand. It is deliberately a separate workflow that
+cannot turn the Linux badge red, and deliberately has no `continue-on-error`:
+if it fails, that failure *is* the state of Mac support, and its log is the
+best correction to this section. Check it before trusting anything below.
+
+There is no container shortcut here. A container shares the host kernel, so
+"macOS in Docker" is a category error — Docker Desktop on a Mac is a Linux VM,
+and Apple's licence allows virtualising macOS only on Apple hardware.
 
 ```bash
 brew install open-babel ghostscript pipx

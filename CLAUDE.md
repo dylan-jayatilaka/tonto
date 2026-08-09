@@ -215,6 +215,11 @@ versioned with the code it described*, so it could rot silently. Do not add docu
 - `docs/RUNNING_HART.md` — the `hart` program: what it hard-codes, its full `--option` reference, how
   it is tested (`tests/hart/`, the `program:`/`args:` IO keys, the invariant check), and its
   remaining milestones.
+- `docs/RUNNING_RGBI.md` — the `rgbi` program, the two-halved picture pipeline, the LaTeX traps
+  (two `chemfig`s, one of which fails silently), and how it is tested.
+- `docs/INSTALLING_RGBI.md` — participant-facing install guide. Linux is tested by
+  `docker/rgbi.Dockerfile` in CI; macOS is untested by hand and probed weekly by
+  `ci-rgbi-macos.yml`.
 - `docs/TONTO_DEVELOPER.md` — developer reference; §1a is **writing parallel (MPI) code in Foo**, eight
   pitfalls and the trace recipes that found them.
 - `docs/FOO_GRAMMAR_DOCUMENTATION.md` — full language description and Foo→Fortran conversion rules.

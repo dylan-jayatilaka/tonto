@@ -67,6 +67,8 @@ Everything lives in this repository, versioned with the code it describes.
 | [**`docs/BUILDING_TONTO.md`**](docs/BUILDING_TONTO.md) | building on Linux, macOS and Windows/WSL; every build type; MPI; clusters |
 | [**`docs/RUNNING_TONTO.md`**](docs/RUNNING_TONTO.md) | running Tonto, input/output conventions, practical set-up |
 | [**`docs/RUNNING_HART.md`**](docs/RUNNING_HART.md) | the `hart` program — options, testing, fragHAR |
+| [**`docs/RUNNING_RGBI.md`**](docs/RUNNING_RGBI.md) | the `rgbi` program — options, the picture pipeline, testing |
+| [**`docs/INSTALLING_RGBI.md`**](docs/INSTALLING_RGBI.md) | installing the RGBI picture tools (for workshop participants) |
 | [**`docs/TONTO_LIBRARY_STRUCTURE.md`**](docs/TONTO_LIBRARY_STRUCTURE.md) | what lives where, and the module structure |
 | [**`docs/TONTO_DEVELOPER.md`**](docs/TONTO_DEVELOPER.md) | developer reference, including **writing parallel (MPI) code in Foo** |
 | [**`docs/FOO_GRAMMAR_DOCUMENTATION.md`**](docs/FOO_GRAMMAR_DOCUMENTATION.md) | the Foo language and its translation to Fortran |
