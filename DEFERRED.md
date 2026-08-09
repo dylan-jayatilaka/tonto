@@ -2850,6 +2850,55 @@ CLAUDE.md long-term item on re-engineering in a language with first-class
 parallelism: both are cases of replacing "invisible failure held together by
 glue" with "checked constructs".
 
+### The open questions, which must be researched before any of it is decided
+
+Dylan, 2026-08-09: *"It's a complex decision that needs discussion and research
+and planning."* Agreed — the layer to replace is genuinely not obvious, and the
+instinct to blame the oldest tool is not evidence. Recorded as questions rather
+than as a plan:
+
+1. **Is there a good programmatic alternative to `chemfig` at all?** Dylan likes
+   it and is not aware of one. The candidates to actually evaluate are RDKit's
+   drawing code, Indigo's own renderer (already installed here, and never used
+   for drawing), OpenSMILES-based web renderers, and plain hand-emitted SVG.
+   The bar is high: chemfig's ring/bond conventions and its typography are the
+   part a chemist notices.
+2. **Is Indigo maintained?** Open question, and material: it is a C++ toolkit
+   with a Python binding, and it arrives here only as a *dependency of*
+   `mol2chemfigPy3`. Check release cadence and the state of Apple-silicon
+   wheels before building anything further on it.
+3. **Which end goes first?** Two defensible answers, and they point opposite
+   ways. Replace the *front* (Open Babel + Indigo + mol2chemfig) and keep
+   chemfig — Tonto emits chemfig markup itself, needing only a 2D layout
+   algorithm. Or replace the *back* (chemfig + LaTeX) and keep the chemistry
+   toolkits — Tonto emits SVG and no TeX is needed at all. The front is the
+   fragile half in practice; the back is the half with no alternative in sight.
+4. **How good is `obabel --gen2d` really?** This is the measurement that decides
+   question 3: it sets the bar any replacement layout has to clear. Render every
+   `tests/rgbi/` case and look.
+
+### Smaller, and self-contained: the dial grid's column count is hard-coded
+
+`ROBY:put_dial_table_do_H` / `_no_H` (`foofiles/roby.foo:7090`, `7143`) hard-code
+**four columns** in three places each — `ceiling(0.25d0*n_bonds)`, `min(l+4,...)`
+and `\begin{longtable}{cccc}`. Four dials need about 520pt; `article`'s default
+`\textwidth` is about 345pt, so the fourth column fell off the page and `pdfcrop`
+cut it. That is now worked around in `rgbi-dial-header.tex` by giving the page a
+large canvas (the crop means paper size does not survive into the result), which
+fixes the clipping with no rebuild.
+
+The proper fix makes the *table* fit the *page* instead: emit the dials as a
+flowed sequence of boxes separated by breakable glue, and let LaTeX fit as many
+per line as the width allows and break pages itself. That deletes the column
+count entirely rather than choosing a better one — no width probing, no
+arithmetic in Foo, and it adapts to any dial scale or paper size. Costs a
+`roby.foo` rebuild and re-blessing the committed reference PDFs, which is why it
+is here and not done.
+
+Dylan's reason for wanting the grid at all, worth preserving: *"to have a quick
+scan to see if there were any unusual bonds — so separate files would be no good
+for this kind of visual survey."* Any redesign has to keep the one-page survey.
+
 ---
 
 # Tooling and editor support

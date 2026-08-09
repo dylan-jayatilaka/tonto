@@ -175,7 +175,7 @@ else
 fi
 
 if command -v kpsewhich >/dev/null 2>&1; then
-    for sty in chemfig tikz xcolor longtable graphicx ifthen; do
+    for sty in chemfig tikz xcolor longtable graphicx ifthen geometry; do
         if kpsewhich "$sty.sty" >/dev/null 2>&1; then
             ok "$sty.sty"
         else
