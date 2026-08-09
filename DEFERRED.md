@@ -23,6 +23,9 @@ now covers the whole project, so it was renamed.)*
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
 **Highest-priority open items**, if you are looking for where to start:
+**macOS in CI** (feasible and free — the repo is public — and it is the only thing that can
+guard the two arm64 `-O2`/`-O3` compiler pins, which today are guarded by nothing and whose
+failure mode is wrong numbers, not crashes; see *Platform-specific*),
 NaN and negative ESDs from the least-squares variance-covariance matrix, the MPI items
 behind milestones 6 and 7, and **pHAR ships untested** — its only test is stranded on a branch
 behind a 167 MB Git LFS asset (see *"Reinstate the ammonia-borane pHAR test"*). (`data` statements silently dropped: **fixed 2026-08-04** — see
@@ -2927,6 +2930,50 @@ highlighting and tighter editor integration. The repo already ships some vim sup
 ---
 
 # Platform-specific
+
+## HIGH PRIORITY: put macOS in CI, with a badge (Dylan, 2026-08-09)
+
+**It is feasible, and it is free.** `dylan-jayatilaka/tonto` is a **public**
+repository, and GitHub gives public repositories unlimited standard-runner
+minutes — macOS included, where a private repo would be billed at 10×. So the
+only cost is wall-clock. This was established while adding
+`.github/workflows/ci-rgbi-macos.yml`, which already runs the RGBI picture
+toolchain on `macos-14`; the same machinery extends to Tonto itself.
+
+**Why it is high priority rather than nice-to-have.** `macos-14` runners are
+**arm64**, which is exactly the platform where `shell1quartet.F90` is
+miscompiled. That miscompilation cost 36 tests (82/124 → 118/124 once the file
+was pinned, `a3ec1b07`), and produced *wrong numbers rather than crashes* — the
+diverging boron atomic SCF and rgbi/BN's populations were symptoms of it, not
+independent defects. **That pin is currently guarded by nothing.** Delete it, or
+have a compiler upgrade change what the flag means, and the suite goes quietly
+wrong on every Mac while Linux CI stays green. A macOS job is the only thing
+that can see it. Note `CMakeLists.txt:883` carries a second such pin for the
+same reason (rgbi/BN's Roby populations), likewise unguarded.
+
+**What it needs:** `brew install gcc cmake openjdk` (the translator needs a JDK;
+BLAS/LAPACK already default to Homebrew OpenBLAS on macOS rather than
+Accelerate, whose LAPACK is frozen at 3.2.1 from 2009). Expect 40-70 minutes for
+a build, which is why the suite should be `ctest -L short`, not all 124.
+
+**Do not expect green on the first run, and do not bless it away.** At the last
+real-Mac measurement (2026-07-28, M2 Pro, macOS 26.5.2) the full suite was
+118/124 with **6 residual failures**, and the leading explanation — non-unique
+eigenvectors within degenerate eigenspaces, so anything using individual
+eigenvectors rather than the subspace projector is ill-defined — is still a
+hypothesis with an unexecuted next step (relink against Accelerate from the
+intact `.o` files and A/B the `theta` tables). So:
+
+1. Start it as a **scheduled, non-gating** workflow, exactly like
+   `ci-rgbi-macos.yml`: separate file, no `push` trigger, no
+   `continue-on-error`. A red Mac badge is information.
+2. Use it to gather repeated evidence on the 6 failures, which one Mac session
+   could not.
+3. **Only then** add the badge to `README.md` and promote it to a gate.
+
+The stale README line ("many failures on the Apple M2 — not recommended") should
+be corrected at the same time; it is wrong about the build, which was always
+clean.
 
 ## Future task: verify the macOS build (Apple Silicon / Tahoe)
 
