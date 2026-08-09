@@ -267,9 +267,12 @@ executable (`runfiles/run_rgbi.foo`, `add_executable(run_rgbi ...)`,
 `OUTPUT_NAME rgbi`). This work was also lost with the achari2/Mac material and
 has not been started here.
 
-**The reference for it is `docs/Jayatilaka_2025_Grabowsky_chapter.pdf`** — Dylan
-put it there for this stage (2026-08-09). It is untracked in git as of writing;
-decide whether to commit it before relying on it being present.
+**The reference for it is the Grabowsky chapter, Jayatilaka (2025)** — Dylan
+provided it for this stage (2026-08-09). **Decided: not checked in.** 1.1 MB of
+binary is more than a weak uplink will push in one request (it failed with
+HTTP 408 three times from a plane, and was the sole reason), and it is a
+published chapter rather than something the build needs. On `sauce` it lives at
+`~/rgbi-reference/Jayatilaka_2025_Grabowsky_chapter.pdf`.
 
 ### Dylan's brief for RGBI, in his words (2026-08-09)
 
