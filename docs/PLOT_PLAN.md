@@ -12,7 +12,7 @@ every turn, so the plan survives a lost context or a lost machine.
 | 2 — the five plots + QQ, auto-drawn | ✅ done, built, shown on nh3 |
 | 2b — label placement, leaders, job-name files | ⚠️ **written and translating cleanly; full build was still running when this conversation ended** |
 | 3 — WORKSHOP docs | not started, own conversation |
-| 4 — RGBI | not started, own conversation |
+| 4 — RGBI | ✅ **items 1-3 done 2026-08-09** (scripts, build, doctor). Item 4 — Tonto drawing them itself — deferred, design recorded below. |
 
 **If you are picking this up cold, the first thing to do is finish the build and
 run nh3**, because stage 2b has not yet been through a compiler or a test:
@@ -301,6 +301,50 @@ So, four things, in his order:
    `tonto.execute` / `tonto.call_gnuplot` are the precedent to follow. Note the
    pattern established there: *failure to draw must never be fatal*, and the
    inputs must be left behind so the user can run it by hand.
+
+### What was done, 2026-08-09 — items 1, 2 and 3
+
+Full detail in **`docs/RUNNING_RGBI.md`** (developer reference) and
+**`docs/INSTALLING_RGBI.md`** (participant-facing). Headlines:
+
+- ✅ **1. Scripts cleaned up and hardened.** They used to **fail and exit 0** —
+  every LaTeX run went to `/dev/null`, so a broken stage gave an absent picture,
+  or left the *previous* run's picture standing. Now: `set -euo pipefail`, every
+  stage's output checked before the next consumes it, LaTeX errors reported,
+  `--help` on both, and usage headers that list every option (the old ones
+  omitted the two that were mandatory). Four error paths that exited 0 now exit 1.
+- ✅ **2. The build is clean on Linux and WSL.** The scripts and doctor install
+  to `<prefix>/bin`, the templates to `<prefix>/share/tonto/rgbi-scripts`, so an
+  installed Tonto works with no repository present — verified by installing to a
+  throwaway prefix and running with `$HOME` faked. They no longer copy from
+  `~/bin`. macOS: see item 3.
+- ✅ **3. A doctor**, `scripts/rgbi_doctor.sh`, with `scripts/rgbi_selftest.sh`
+  as ctest `rgbi_doctor_selftest` (label `short`, in CI, 21 cases). It *executes*
+  tools rather than looking for them, which is the whole point. Plus
+  `docker/rgbi.Dockerfile` + `ci-rgbi.yml`, which prove the install list from a
+  bare `ubuntu:24.04`, and `ci-rgbi-macos.yml`, which probes the Mac list weekly.
+- ⬜ **4. Tonto drawing them automatically** — deferred to its own conversation.
+  Agreed contract: automatic when the dependencies are present, mirroring
+  `SYSTEM:call_gnuplot` (master rank only, never fatal, inputs always left
+  behind). Design in `DEFERRED.md`.
+
+**Five findings worth carrying forward**, all measured rather than inferred:
+
+1. **The pipeline has two independent halves.** Dial diagrams need only LaTeX;
+   the structure picture needs Open Babel + Indigo + mol2chemfig. So a
+   participant defeated by the arcane half still gets half the pictures
+   (`--dials-only`).
+2. **Neither script needs a wavefunction file.** Open Babel lays out from
+   coordinates, and Tonto already writes `geometry.xyz`. Verified on ylid: the
+   `.mol` from `geometry.xyz` is identical to the one from `ylid.molden`.
+3. **Indigo does not need separate installation** (`mol2chemfigPy3` requires it),
+   and **`ghostscript` does** (`pdfcrop` shells out to `gs`) — undocumented for
+   years. Linux is now two commands.
+4. **The doubled `chemfig` include is real and required.** The vendored 2015 copy
+   fails loudly if removed; the modern one fails *silently*, drawing a wrong
+   picture at exit 0. That is why deleting it once seemed safe.
+5. **The clipped 4th dial column was a `\textwidth` issue** — four dials need
+   ~520 pt, `article` gives ~345 pt — fixed in the header with no rebuild.
 
 **The "arcane software"** is the reason this is not a small job.
 `make-rgbi-pic`'s own header lists: `tonto`, `openbabel`, `python`, python
