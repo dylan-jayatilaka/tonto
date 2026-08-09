@@ -17,6 +17,7 @@ now covers the whole project, so it was renamed.)*
 | [Test suite and numerics](#test-suite-and-numerics) | Small numerical differences, `-O0` failures, NaN/negative ESDs |
 | [Translator and the Foo language](#translator-and-the-foo-language) | Dropped `data` statements, name-case normalisation, F2008 submodules |
 | [hart](#hart) | Remaining hart items and un-migrated runfiles |
+| [RGBI and the picture toolchain](#rgbi-and-the-picture-toolchain) | Folding the five-ecosystem picture pipeline into one integrated codebase |
 | [Tooling and editor support](#tooling-and-editor-support) | vim highlighting and integration |
 | [Platform-specific](#platform-specific) | macOS/Apple Silicon, gfortran-16 |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
@@ -2778,6 +2779,76 @@ copy of `run_molecule.foo` with `case("i","-input")`), which `COMMAND_LINE`
 can no longer deliver. Either revive them — translate, build, migrate — or
 delete them. `run_cif_to_surface.foo` was the CrystalExplorer entry point;
 CrystalExplorer no longer uses tonto.
+
+---
+
+# RGBI and the picture toolchain
+
+## LONG TERM: fold the picture toolchain into one integrated codebase (Dylan, 2026-08-09)
+
+**The ask, in his words:** *"review and rewrite different tools based on these
+ecosystems, into one integrated codebase"*, prompted by finding the RGBI
+requirements *"extremely convoluted"*. They are, and the convolution is real
+rather than a failure of setup — worth stating plainly, because the instinct is
+to blame oneself for it.
+
+**What is actually in the chain**, and what each piece contributes:
+
+| Piece | Ecosystem | What it does that nothing else does |
+|---|---|---|
+| `obabel --gen2d` | C++ | Generates a **2D depiction layout** from 3D coordinates |
+| `mol2chemfig` | Python (port of an abandoned Perl tool) | Turns a `.mol` into `chemfig` markup |
+| **Indigo** | C++ library, Python binding | Molecule parsing / aromaticity perception, for the above |
+| `chemfig` + TikZ | TeX | Draws it |
+| `pdflatex`, `pdfcrop`, `gs` | TeX + PostScript | Renders and crops |
+| two `bash` scripts | shell | Glue, with no error handling until 2026-08-09 |
+
+Five ecosystems, two of them effectively unmaintained, held together by shell.
+The failure modes measured on 2026-08-09 are the predictable consequence: a
+`pipx` venv silently orphaned by an OS Python upgrade; `command -v` reporting a
+program that cannot execute; every LaTeX run redirected to `/dev/null`; and the
+whole pipeline exiting **0** having drawn nothing.
+
+**The observation that makes consolidation tractable.** Tonto already knows the
+molecule, the bonding, the atom labels and every index it wants to print. The
+*only* thing it does not have is a **2D depiction layout**. So this is not
+"rewrite five tools" — it is "acquire one algorithm, then emit the picture
+directly", which is exactly the move stage 2 of `docs/PLOT_PLAN.md` already made
+for the HAR plots: Tonto computed the label placement itself instead of hoping
+gnuplot had an algorithm for it (it does not).
+
+**And half of it is already done, which is the proof of concept.** The dial
+diagrams are TikZ emitted straight from Tonto's own numbers — no Open Babel, no
+Indigo, no mol2chemfig — and they reproduce the committed reference PDFs exactly.
+That half of the toolchain has *already* been integrated, and it is the half
+that never breaks.
+
+**Options, in increasing order of ambition:**
+
+- **A — emit `chemfig`/TikZ directly from Tonto.** Drops Open Babel, Indigo and
+  mol2chemfig; keeps LaTeX, which is doing real typographic work and is the one
+  dependency a chemist already has. Needs a 2D layout in Foo. *Recommended
+  starting point.*
+- **B — emit SVG directly.** Drops LaTeX too, so the picture appears with no
+  external program at all. Loses chemfig's typography and its ring/bond
+  conventions, which are not trivial to reproduce.
+- **C — keep the pipeline, replace the bash glue with one program.** Cheapest,
+  and removes the silent-failure class, but leaves five ecosystems to install.
+  This is roughly what R1-R3 of the 2026-08-09 restoration achieve already.
+
+**Measure before choosing** (CLAUDE.md §2). The open question is how good
+`obabel --gen2d` actually is on the molecules that matter, because that sets the
+bar option A has to clear. Take the `tests/rgbi/` set, render each layout, and
+look. A ring-template plus force-directed refinement is a well-understood
+algorithm and is likely enough for drug-like molecules; if it is not, option A
+is much more expensive than it looks.
+
+**Sequence:** after the workshop. The doctor (`scripts/rgbi_doctor.sh`) and the
+container (`docker/rgbi.Dockerfile`) make the status quo survivable in the
+meantime — which is the point of doing them first. Related in spirit to the
+CLAUDE.md long-term item on re-engineering in a language with first-class
+parallelism: both are cases of replacing "invisible failure held together by
+glue" with "checked constructs".
 
 ---
 
