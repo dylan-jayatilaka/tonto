@@ -79,13 +79,6 @@ Output goes to `stdout` in the working directory, plus the `.tex` fragments of
 §3. There is **no** `--basis` option and none is needed: the wavefunction comes
 from the input file. `TONTO_BASIS_SET_DIRECTORY` is still read, as everywhere.
 
-**Two known blemishes in `--help`** (cosmetic, not yet fixed): it calls the
-program `run_rgbi`, which is the CMake target name and not what gets installed;
-and it refers to a `./rgbi-script` folder, which is `rgbi-scripts`. `hart` has
-an invariant check comparing `--help` against its option labels
-(`scripts/check_hart_options.sh`); `rgbi` has only three options and no such
-check.
-
 ### Both routes work, and agree
 
 `rgbi` and an ordinary `tonto` job produce the same fragments — verified on N2,
@@ -120,6 +113,20 @@ All from `ROBY:bond_analysis` in `foofiles/roby.foo`, via `stdout.redirect`:
 `\input{1+H}`. They look like junk in a directory listing and are not.
 
 ## 4. Drawing the pictures
+
+**Tonto draws them for you** at the end of a Roby analysis, if the tools are
+installed — that is, if `make-rgbi-pic` is on your `PATH`. You get the
+heavy-atom picture, and the `+H` one as well when the molecule has hydrogens.
+Nothing to ask for and nothing to remember.
+
+If the script is *not* installed, Tonto does nothing and says nothing: a machine
+without the picture tools behaves exactly as it did before. If it *is* installed
+and fails, that is reported once and the job carries on — the `.tex` fragments
+and `geometry.xyz` are on disk either way, so you lose the convenience and
+nothing else. The same contract as the post-HAR gnuplot plots
+(`SYSTEM:call_gnuplot`).
+
+To draw them yourself, or to redraw with different options:
 
 ```bash
 make-rgbi-pic   --do-H       # structure + dials, hydrogens kept
@@ -212,7 +219,24 @@ has none of the arcane software and would be permanently red. The install list
 is covered separately by `docker/rgbi.Dockerfile` and
 `.github/workflows/ci-rgbi.yml`.
 
-## 7. Known defects, not fixed
+## 7. Known defects and rough edges, not fixed
+
+Kept together here rather than scattered through the sections above, so the
+reference part stays readable.
+
+**In the program**
+
+- **`rgbi --help` calls the program `run_rgbi`**, which is the CMake target
+  name, not what gets installed; and it points at a `./rgbi-script` folder,
+  which is spelled `rgbi-scripts`. Both cosmetic. `hart` has an invariant check
+  comparing `--help` against its option `case` labels
+  (`scripts/check_hart_options.sh`); `rgbi` has three options and no such check.
+- `CMakeLists.txt:883` pins a file to `-O2` because **"rgbi/BN's Roby
+  populations were wrong"** at other optimisation levels. Read that comment
+  before touching optimisation flags for this program. It is guarded by no test
+  — see the macOS-in-CI item in `DEFERRED.md`.
+
+**In the pictures**
 
 - **The dial grid's column count is hard-coded to four** in three places per
   routine (`ROBY:put_dial_table_do_H`, `foofiles/roby.foo:7090`). Four dials
@@ -220,12 +244,4 @@ is covered separately by `docker/rgbi.Dockerfile` and
   column fell off the page and `pdfcrop` cut it — visible in the committed
   reference PDFs too. Worked around in `rgbi-dial-header.tex` by giving the page
   a large canvas; the proper fix is in `DEFERRED.md`.
-- `CMakeLists.txt:883` pins a file to `-O2` because **"rgbi/BN's Roby
-  populations were wrong"** at other optimisation levels. Read that comment
-  before touching optimisation flags for this program.
-- `~/bin/make-rgbi-molden` on Dylan's machine is a third, older script,
-  hard-coded to a file called `test.molden` and printing `iest.molden not
-  found` when it is absent. Superseded by `make-rgbi-pic --molden`, and
-  deliberately **not** brought into the repository.
-- Tonto does not draw these pictures itself. Doing so — the `SYSTEM_COMMAND`
-  route the HAR plots already use — is stage 4 item 4 of `docs/PLOT_PLAN.md`.
+- Nothing compares the reference PDFs automatically; they are eyeball targets.
