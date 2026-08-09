@@ -177,6 +177,28 @@ add_test(NAME "parallel_lint"
             ${PROJECT_SOURCE_DIR}/foofiles)
 set_tests_properties("parallel_lint" PROPERTIES LABELS "short")
 
+# Invariant test -- no reference output involved.
+#
+# scripts/rgbi_doctor.sh reports what is missing from the RGBI picture
+# toolchain. On a developer machine with everything installed it will always
+# say "you are fine", so it proves nothing about itself; this drives it against
+# synthetic environments and asserts that each check FIRES.
+#
+# Note the DOCTOR is deliberately not a ctest: CI has none of the arcane
+# software (Open Babel, Indigo, mol2chemfig) and would be permanently red. The
+# SELF-TEST is, because it needs nothing but bash and coreutils -- it builds a
+# minimal PATH so that "absent" really means absent, rather than stubbing
+# anything inside the doctor.
+#
+# The case that matters is "installed but cannot run": on 2026-08-09 this
+# machine had a mol2chemfig that `command -v` found happily and whose pipx
+# virtualenv pointed at a python the OS had removed. The pipeline's only
+# symptom was a picture that silently did not appear. Runs in a second or two.
+add_test(NAME "rgbi_doctor_selftest"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND bash ${PROJECT_SOURCE_DIR}/scripts/rgbi_selftest.sh)
+set_tests_properties("rgbi_doctor_selftest" PROPERTIES LABELS "short")
+
 # Grouped per-suite agreement report.
 #
 # `ctest` gives a flat pass/fail list and hides each test's stdout (the concise
