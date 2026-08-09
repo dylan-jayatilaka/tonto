@@ -929,15 +929,17 @@ contains
    end
 
 
-   put_labelled_qq_plot(tag)
+   put_labelled_qq_plot(prefix)
    ! Output a qq plot to stdout.
    ! It is a plot of the experimental quantile vs expected quantile.
+   !
+   ! "prefix" heads the files written; CRYSTAL passes the job name.
       self :: IN
-      tag :: STR, optional, IN
+      prefix :: STR, optional, IN
 
    ENSURE(.reflections.allocated, "no reflection data")
 
-      .reflections.put_labelled_F_qq_plot(tag)
+      .reflections.put_labelled_F_qq_plot(prefix)
 
    end
 
@@ -1344,38 +1346,46 @@ contains
 
    end
 
-   put_F_calc_plots(tag)
+   put_F_calc_plots(prefix)
    ! Output some different plots about the calculated structure factors.
    !
-   ! Each plot gets three files: the data, a gnuplot script describing how to
-   ! draw it, and the drawn PNG itself. Every data file has the same layout --
-   ! x, y, then h, k, l -- so that the worst outliers can be labelled with the
-   ! reflection responsible, which is the reason for looking at these at all.
+   ! Each plot gets four files: the data, the label positions, a gnuplot script
+   ! describing how to draw it, and the drawn PNG itself. Every data file has
+   ! the same layout -- x, y, then h, k, l -- so that the worst outliers can be
+   ! labelled with the reflection responsible, which is the reason for looking
+   ! at these at all.
+   !
+   ! "prefix" heads every file written here. CRYSTAL passes the job name, so two
+   ! jobs run in one directory no longer overwrite each other's plots.
       self :: IN
-      tag :: STR, optional, IN
+      prefix :: STR, optional, IN
 
       ext :: VEC{REAL}@
       ext_refs :: VEC{REFLECTION}@
-      dev :: VEC{REAL}@
+      dev,xv :: VEC{REAL}@
+      hkl :: MAT{INT}@
       n,n_refl :: INT
-      y,w,thr :: REAL
-      name,prefix,data,script,image :: STR
+      y,w :: REAL
+      head,data :: STR
 
-      name = " "
-      if (present(tag)) name = tag
-
-      ! A tagged plot ("free") must not overwrite the untagged one: CRYSTAL asks
-      ! for both, in the same directory.
-      prefix = "stdout"
-      if (name/=" ") prefix = "stdout."//trim(name)
+      head = "stdout"
+      if (present(prefix)) head = prefix
 
       n_refl = .reflections.dim
 
+      ! x and y for the plot, and the Miller indices that go with them. The
+      ! label placer needs all three as arrays, not just written to a file.
       dev.create(n_refl)
+      xv.create(n_refl)
+      hkl.create(n_refl,3)
 
-      data   = trim(prefix)//".F_z_vs_stl"
-      script = trim(data)//".gnuplot"
-      image  = trim(data)//".png"
+      do n = 1,n_refl
+         hkl(n,1) = .reflections(n).h1
+         hkl(n,2) = .reflections(n).h2
+         hkl(n,3) = .reflections(n).h3
+      end
+
+      data = trim(head)//".F_z_vs_stl"
 
       stdout.redirect(data)
 
@@ -1388,26 +1398,23 @@ contains
       stdout.flush
 
       do n = 1,n_refl
+         xv(n)  = .reflections(n).stl
          dev(n) = .reflections(n).F_z
-         stdout.put(.reflections(n).stl)
+         stdout.put(xv(n))
          stdout.put(dev(n))
-         stdout.put(.reflections(n).h1,width=5)
-         stdout.put(.reflections(n).h2,width=5)
-         stdout.put(.reflections(n).h3,width=5)
+         stdout.put(hkl(n,1),width=5)
+         stdout.put(hkl(n,2),width=5)
+         stdout.put(hkl(n,3),width=5)
          stdout.flush
       end
 
       stdout.revert
 
-      thr = .reflections.outlier_threshold(dev)
-      .reflections.put_gnuplot_script(script,data, &
+      .reflections.put_xy_plot_files(data,xv,dev,hkl, &
          "sin({/Symbol q})/{/Symbol l}", &
-         "F_z = ( F^{o} - F^{c} ) / {/Symbol s}",thr)
-      tonto.call_gnuplot(script,image)
+         "F_z = ( F^{o} - F^{c} ) / {/Symbol s}",x_non_negative=TRUE)
 
-      data   = trim(prefix)//".Delta_F_vs_stl"
-      script = trim(data)//".gnuplot"
-      image  = trim(data)//".png"
+      data = trim(head)//".Delta_F_vs_stl"
 
       stdout.redirect(data)
 
@@ -1420,26 +1427,23 @@ contains
       stdout.flush
 
       do n = 1,n_refl
+         xv(n)  = .reflections(n).stl
          dev(n) = .reflections(n).delta_F
-         stdout.put(.reflections(n).stl)
+         stdout.put(xv(n))
          stdout.put(dev(n))
-         stdout.put(.reflections(n).h1,width=5)
-         stdout.put(.reflections(n).h2,width=5)
-         stdout.put(.reflections(n).h3,width=5)
+         stdout.put(hkl(n,1),width=5)
+         stdout.put(hkl(n,2),width=5)
+         stdout.put(hkl(n,3),width=5)
          stdout.flush
       end
 
       stdout.revert
 
-      thr = .reflections.outlier_threshold(dev)
-      .reflections.put_gnuplot_script(script,data, &
+      .reflections.put_xy_plot_files(data,xv,dev,hkl, &
          "sin({/Symbol q})/{/Symbol l}", &
-         "{/Symbol D}F = F^{o} - F^{c}",thr)
-      tonto.call_gnuplot(script,image)
+         "{/Symbol D}F = F^{o} - F^{c}",x_non_negative=TRUE)
 
-      data   = trim(prefix)//".F_z_vs_F_exp"
-      script = trim(data)//".gnuplot"
-      image  = trim(data)//".png"
+      data = trim(head)//".F_z_vs_F_exp"
 
       stdout.redirect(data)
 
@@ -1452,24 +1456,25 @@ contains
       stdout.flush
 
       do n = 1,n_refl
+         xv(n)  = .reflections(n).F_corr
          dev(n) = .reflections(n).F_z
-         stdout.put(.reflections(n).F_corr)
+         stdout.put(xv(n))
          stdout.put(dev(n))
-         stdout.put(.reflections(n).h1,width=5)
-         stdout.put(.reflections(n).h2,width=5)
-         stdout.put(.reflections(n).h3,width=5)
+         stdout.put(hkl(n,1),width=5)
+         stdout.put(hkl(n,2),width=5)
+         stdout.put(hkl(n,3),width=5)
          stdout.flush
       end
 
       stdout.revert
 
-      thr = .reflections.outlier_threshold(dev)
-      .reflections.put_gnuplot_script(script,data,"F^{o}", &
-         "F_z = ( F^{o} - F^{c} ) / {/Symbol s}",thr)
-      tonto.call_gnuplot(script,image)
+      .reflections.put_xy_plot_files(data,xv,dev,hkl,"F^{o}", &
+         "F_z = ( F^{o} - F^{c} ) / {/Symbol s}",x_non_negative=TRUE)
 
       if (NOT .refine_extinction) then
          dev.destroy
+         xv.destroy
+         hkl.destroy
          return
       end
 
@@ -1491,9 +1496,7 @@ contains
       y = y / n_refl
       w = w / n_refl
 
-      data   = trim(prefix)//".Delta_F_pred_z_vs_F_pred"
-      script = trim(data)//".gnuplot"
-      image  = trim(data)//".png"
+      data = trim(head)//".Delta_F_pred_z_vs_F_pred"
 
       stdout.redirect(data)
 
@@ -1508,25 +1511,22 @@ contains
       stdout.show("# Average value of abs(extinction correction)                       = ",w)
       stdout.text("# 3rd, 4th, 5th columns: h, k, l")
       do n = 1,n_refl
+         xv(n)  = ext_refs(n).F_pred
          dev(n) = ext_refs(n).F_z
-         stdout.put(ext_refs(n).F_pred)
+         stdout.put(xv(n))
          stdout.put(dev(n))
-         stdout.put(.reflections(n).h1,width=5)
-         stdout.put(.reflections(n).h2,width=5)
-         stdout.put(.reflections(n).h3,width=5)
+         stdout.put(hkl(n,1),width=5)
+         stdout.put(hkl(n,2),width=5)
+         stdout.put(hkl(n,3),width=5)
          stdout.flush
       end
 
       stdout.revert
 
-      thr = .reflections.outlier_threshold(dev)
-      .reflections.put_gnuplot_script(script,data,"F^{c} (no extinction)", &
-         "[ F^{c}(no ext) - F^{c}(ext) ] / {/Symbol s}",thr)
-      tonto.call_gnuplot(script,image)
+      .reflections.put_xy_plot_files(data,xv,dev,hkl,"F^{c} (no extinction)", &
+         "[ F^{c}(no ext) - F^{c}(ext) ] / {/Symbol s}",x_non_negative=TRUE)
 
-      data   = trim(prefix)//".Delta_F_pred_z_vs_stl"
-      script = trim(data)//".gnuplot"
-      image  = trim(data)//".png"
+      data = trim(head)//".Delta_F_pred_z_vs_stl"
 
       stdout.redirect(data)
 
@@ -1538,25 +1538,26 @@ contains
       stdout.text("# Note: F_exp & F_pred may have dispersion removed")
       stdout.text("# 3rd, 4th, 5th columns: h, k, l")
       do n = 1,n_refl
+         xv(n)  = .reflections(n).stl
          dev(n) = ext_refs(n).F_z
-         stdout.put(.reflections(n).stl)
+         stdout.put(xv(n))
          stdout.put(dev(n))
-         stdout.put(.reflections(n).h1,width=5)
-         stdout.put(.reflections(n).h2,width=5)
-         stdout.put(.reflections(n).h3,width=5)
+         stdout.put(hkl(n,1),width=5)
+         stdout.put(hkl(n,2),width=5)
+         stdout.put(hkl(n,3),width=5)
          stdout.flush
       end
 
       stdout.revert
 
-      thr = .reflections.outlier_threshold(dev)
-      .reflections.put_gnuplot_script(script,data, &
+      .reflections.put_xy_plot_files(data,xv,dev,hkl, &
          "sin({/Symbol q})/{/Symbol l}", &
-         "[ F^{c}(no ext) - F^{c}(ext) ] / {/Symbol s}",thr)
-      tonto.call_gnuplot(script,image)
+         "[ F^{c}(no ext) - F^{c}(ext) ] / {/Symbol s}",x_non_negative=TRUE)
 
       ext_refs.destroy
       dev.destroy
+      xv.destroy
+      hkl.destroy
 
    end
 

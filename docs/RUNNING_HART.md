@@ -208,9 +208,12 @@ rather than merely producing plausible numbers.
 
 ## 5. Known defects
 
-- The `stdout.*` plot files ignore `--job`, so two runs in one directory
-  overwrite each other's plots. (The `stdout.QQ_plot.gunplot` typo that used to
-  sit alongside this was fixed on 2026-08-09 with the gnuplot plot work.)
+- *(Fixed 2026-08-09, both halves.)* The plot files used to be called `stdout.*`
+  regardless of the job, so two runs in one directory overwrote each other's
+  plots; they are now headed by the job name — `MOLECULE.name`, which `hart`
+  sets from `--job` and a `tonto` job file sets with `name=`. An unnamed job
+  still falls back to `stdout`. The `stdout.QQ_plot.gunplot` typo went at the
+  same time.
 - `<job>.err` is left behind on a clean run rather than deleted, and a run that
   stops early (`--help`, a usage error) leaves a stray file called `stderr`.
   `tonto` does the same, which is why so many `IO` manifests list `delete: stderr`.
@@ -501,10 +504,13 @@ out in both the `select case` block and the help text. Reviving one means
 uncommenting both halves; the invariant check compares only uncommented labels,
 so a half-revived option is caught.
 
-**H3 — derive the `stdout.*` scratch names from `<job>`.** In
-`foofiles/diffraction_data.put.foo` and `foofiles/vec{reflection}.foo`; it
-affects `tonto` HAR jobs too. (The `.gunplot` half of this item is **done** —
-renamed to `.gnuplot` on 2026-08-09.)
+**H3 — ✅ DONE (2026-08-09).** The plot names now come from the job.
+`MOLECULE.SCF` passes its `.name` to `CRYSTAL:put_correction_data`, which heads
+every plot file with it; an unnamed job (`MOLECULE.name` still `"unknown"`)
+falls back to `stdout`, so nothing that worked before changed name. Nothing in
+`tests/` compares a plot file — the 16 references are all `delete:` lines, and
+`scripts/test.py:314` records `delete:` as *"recorded but unused"* — so this
+could not break a test, and did not.
 
 **H4 — test the `.cif2` restart round trip.**
 

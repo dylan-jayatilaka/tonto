@@ -3245,12 +3245,255 @@ contains
 
    end
 
-   put_gnuplot_script(script,data,xlabel,ylabel,threshold,with_fit)
-   ! Write the gnuplot input file "script", which plots the data file "data".
+   nice_axis_range(lo,hi,a0,a1,non_negative)
+   ! Return in "a0" and "a1" an axis range covering [lo,hi]: padded by 6% and
+   ! then rounded outward to a whole tic on the 1-2-2.5-5 ladder, which is the
+   ! ladder gnuplot's own autoscaling walks. So the axis reads -3 .. 3 rather
+   ! than -2.83 .. 2.83.
+   !
+   ! Tonto has to fix the range itself instead of leaving gnuplot to autoscale,
+   ! because .put_hkl_label_file computes label positions as fractions of the
+   ! plot area -- and that mapping is only known once the range is known.
+   !
+   ! If "non_negative", the lower bound is clamped at zero. Padding below the
+   ! smallest F^o would otherwise start that axis at -10, and a negative
+   ! structure factor amplitude is meaningless.
+      self :: IN
+      lo,hi :: REAL, IN
+      a0,a1 :: REAL, OUT
+      non_negative :: BIN, IN, optional
+
+      span,pad,step,e,m :: REAL
+      nn :: BIN
+
+      nn = FALSE
+      if (present(non_negative)) nn = non_negative
+
+      span = hi - lo
+
+      ! Degenerate: every point at the same value. Invent a span so the
+      ! arithmetic below stays finite and the single point is visible.
+      if (span<=ZERO) span = max(abs(hi),ONE)
+
+      pad = 0.06d0*span
+      a0  = lo - pad
+      a1  = hi + pad
+
+      span = (a1-a0)/EIGHT                     ! aim for about eight tics
+      e    = TEN**floor(log10(span))
+      m    = span/e
+
+      if (m<=ONE) then
+         step = e
+      else if (m<=TWO) then
+         step = TWO*e
+      else if (m<=2.5d0) then
+         step = 2.5d0*e
+      else if (m<=FIVE) then
+         step = FIVE*e
+      else
+         step = TEN*e
+      end
+
+      a0 = floor(a0/step)*step
+      a1 = ceiling(a1/step)*step
+
+      if (nn AND a0<ZERO) a0 = ZERO
+
+   end
+
+   put_hkl_label_file(file,x,y,hkl,threshold,x0,x1,y0,y1,n_placed)
+   ! Write "file", which says where each outlier's (h k l) label goes and where
+   ! its leader line runs. Columns are
+   !
+   !    1,2  the data point            (x,y)
+   !    3,4  the centre of the label   (x,y)
+   !    5,6  the end of the leader     (x,y)  -- on the label's box edge
+   !    7    the label text, quoted
+   !
+   ! A point is labelled when abs(y) >= "threshold". "n_placed" returns how many
+   ! were, so the caller can leave the label passes out of the plot command
+   ! altogether when there are none -- gnuplot aborts a whole plot if any one of
+   ! its data files turns out to hold no points.
+   !
+   ! WHY THIS EXISTS. gnuplot has no label auto-placement: "with labels" takes
+   ! one fixed offset for every label in the pass, so two outliers close
+   ! together print on top of each other and neither can be read. (Checked, not
+   ! assumed -- "offset variable" is not a thing, and "set jitter" moves points,
+   ! not text.) Tonto is better placed to do it anyway, since it has the data.
+   !
+   ! THE ALGORITHM. Worst point first, so the worst outlier gets the best spot.
+   ! For each, try twelve directions at three short radii and score every
+   ! candidate: a heavy penalty for falling outside the frame or landing on a
+   ! label already placed, a light one for covering a data point, and a mild
+   ! preference for a short leader and for sideways over vertical. Take the
+   ! cheapest, remember its box, move on. Greedy and deterministic; with six
+   ! labels there is nothing to be gained by iterating.
+   !
+   ! The label box is sized from the character count and the font size, so it is
+   ! an estimate -- gnuplot alone knows the true text extent. Good enough at six
+   ! labels, and the leader line makes an imperfect guess obvious rather than
+   ! wrong.
+      self :: IN
+      file :: STR, IN
+      x,y :: VEC{REAL}, IN
+      hkl :: MAT{INT}, IN
+      threshold :: REAL, IN
+      x0,x1,y0,y1 :: REAL, IN
+      n_placed :: INT, OUT
+
+      gx,gy :: VEC{REAL}@
+      bx,by,bw,bh :: VEC{REAL}@
+      idx :: VEC{INT}@
+      a :: VEC{REAL}@
+      ux,uy :: VEC{REAL}(12)
+      rad :: VEC{REAL}(3)
+      txt :: STR
+      n,i,j,m,ia,ir :: INT
+      cw,ch,hw,hh,px,py,cx,cy,ex,ey :: REAL
+      r,cost,best_cost,best_x,best_y,ddx,ddy,t :: REAL
+
+      n = x.dim
+
+      ! Unit directions: sideways first, then the diagonals, then vertical.
+      ! Listed rather than derived from an angle so no trigonometry is needed.
+      ux = [ ONE,-ONE, 0.866d0,-0.866d0, 0.866d0,-0.866d0, &
+             HALF,-HALF, HALF,-HALF, ZERO, ZERO ]
+      uy = [ ZERO, ZERO, HALF, HALF,-HALF,-HALF, &
+             0.866d0, 0.866d0,-0.866d0,-0.866d0, ONE,-ONE ]
+
+      rad = [ 0.045d0, 0.075d0, 0.110d0 ]
+
+      ! Label box, as a fraction of the plot side, for the ",8" font below.
+      cw = 0.0057d0                            ! width of one character
+      ch = 0.016d0                             ! height of one line
+
+      ! Worst first
+      a.create(n)
+      a = abs(y)
+      idx.create(n)
+      a.quick_sort(idx,decreasing_order=TRUE)
+
+      n_placed = count(a>=threshold)
+
+      gx.create(n); gy.create(n)
+      gx = (x-x0)/(x1-x0)
+      gy = (y-y0)/(y1-y0)
+
+      bx.create(n_placed); by.create(n_placed)
+      bw.create(n_placed); bh.create(n_placed)
+
+      stdout.redirect(file)
+
+      stdout.text("# Where the (h k l) labels go, placed by Tonto.")
+      stdout.text("# 1st,2nd columns: the data point")
+      stdout.text("# 3rd,4th columns: the centre of the label")
+      stdout.text("# 5th,6th columns: the end of its leader line")
+      stdout.text("# 7th column:      the label")
+      stdout.text("#")
+      stdout.text("# Move a label by editing columns 3 and 4; the leader follows.")
+
+      do i = 1,n_placed
+
+         j = idx(i)
+
+         txt = "("//trim(hkl(j,1).to_str)//" "// &
+                    trim(hkl(j,2).to_str)//" "// &
+                    trim(hkl(j,3).to_str)//")"
+
+         hw = HALF*len_trim(txt)*cw
+         hh = HALF*ch
+
+         px = gx(j)
+         py = gy(j)
+
+         best_cost = TEN**30
+         best_x    = px
+         best_y    = py
+
+         do ir = 1,3
+         do ia = 1,12
+
+            r  = rad(ir)
+            cx = px + r*ux(ia)
+            cy = py + r*uy(ia)
+
+            cost = ZERO
+
+            ! Stay inside the frame
+            if (cx-hw<0.01d0 OR cx+hw>0.99d0 OR &
+                cy-hh<0.01d0 OR cy+hh>0.99d0) cost = cost + HUNDRED
+
+            ! Never cover a label already placed
+            do m = 1,i-1
+               ddx = (bw(m)+hw+0.008d0) - abs(cx-bx(m))
+               ddy = (bh(m)+hh+0.004d0) - abs(cy-by(m))
+               if (ddx>ZERO AND ddy>ZERO) cost = cost + 50.0d0 + TEN*ddx*ddy
+            end
+
+            ! Prefer not to sit on the data
+            do m = 1,n
+               if (abs(cx-gx(m))<hw+0.004d0 AND &
+                   abs(cy-gy(m))<hh+0.004d0) cost = cost + ONE
+            end
+
+            ! Prefer a short leader, and sideways over vertical
+            cost = cost + THREE*r + 0.6d0*abs(uy(ia))
+
+            if (cost<best_cost) then
+               best_cost = cost
+               best_x    = cx
+               best_y    = cy
+            end
+
+         end
+         end
+
+         cx = best_x
+         cy = best_y
+
+         bx(i) = cx; by(i) = cy
+         bw(i) = hw; bh(i) = hh
+
+         ! The leader stops on the box edge nearest the point, not at its
+         ! centre, so the line does not strike through the text.
+         ddx = px - cx
+         ddy = py - cy
+         t   = ONE
+         if (ddx/=ZERO) t = min(t,hw/abs(ddx))
+         if (ddy/=ZERO) t = min(t,hh/abs(ddy))
+         ex = cx + ddx*t
+         ey = cy + ddy*t
+
+         ! Back to data coordinates, which is what gnuplot plots in
+         stdout.put(x0+px*(x1-x0))
+         stdout.put(y0+py*(y1-y0))
+         stdout.put(x0+cx*(x1-x0))
+         stdout.put(y0+cy*(y1-y0))
+         stdout.put(x0+ex*(x1-x0))
+         stdout.put(y0+ey*(y1-y0))
+         stdout.put(" '"//trim(txt)//"'")
+         stdout.flush
+
+      end
+
+      stdout.revert
+
+      a.destroy
+      idx.destroy
+      gx.destroy; gy.destroy
+      bx.destroy; by.destroy
+      bw.destroy; bh.destroy
+
+   end
+
+   put_gnuplot_script(script,data,labels,xlabel,ylabel,x0,x1,y0,y1,n_labels,with_fit)
+   ! Write the gnuplot input file "script", which plots the data file "data"
+   ! over the axis range [x0,x1] by [y0,y1], and draws the "n_labels" outlier
+   ! labels described by the file "labels".
    !
    ! The plot is square (1:1), as in Abrahams & Keve style figures -- see e.g.
-   ! Fig. S8 of Davidson et al. (2022) Acta Cryst B 78 397. Points whose |y| is
-   ! at or above "threshold" are labelled with their (h k l).
+   ! Fig. S8 of Davidson et al. (2022) Acta Cryst B 78 397.
    !
    ! If "with_fit", a least-squares line is fitted and its equation is printed
    ! centred along the bottom of the plot.
@@ -3260,12 +3503,13 @@ contains
    !
    !    gnuplot -persist 'script'
    !
-   ! and .run_gnuplot below forces a PNG terminal on the command line instead.
+   ! and SYSTEM:call_gnuplot forces a PNG terminal on the command line instead.
    ! One script, both uses -- rather than a script that can only ever do one.
       self :: IN
-      script,data :: STR, IN
+      script,data,labels :: STR, IN
       xlabel,ylabel :: STR, IN
-      threshold :: REAL, IN
+      x0,x1,y0,y1 :: REAL, IN
+      n_labels :: INT, IN
       with_fit :: BIN, IN, optional
 
       cmd :: STR
@@ -3304,13 +3548,37 @@ contains
       stdout.text("set grid xtics")
       stdout.text("set grid ytics")
 
+      ! Axis ranges.
+      !
+      ! Fixed here rather than left to gnuplot's autoscaling because the label
+      ! positions in the "labels" file were computed against them: they are only
+      ! meaningful if the mapping from data to plot area is the one Tonto
+      ! assumed. .nice_axis_range picks bounds on the same 1-2-2.5-5 tic ladder
+      ! gnuplot would have, so this costs nothing in appearance.
+      stdout.flush
+      stdout.text("# Axis ranges. The (h k l) labels were placed against these,")
+      stdout.text("# so widen them and the labels drift; rerun Tonto to replace.")
+      stdout.text("set xrange ["//trim(x0.to_str("e14.6"))//":"// &
+                                  trim(x1.to_str("e14.6"))//"]")
+      stdout.text("set yrange ["//trim(y0.to_str("e14.6"))//":"// &
+                                  trim(y1.to_str("e14.6"))//"]")
+
       ! Line of best fit
       if (fit) then
          stdout.flush
          stdout.text("# Line of best fit")
          stdout.text("set fit quiet")
          stdout.text("l(x) = a*x + b")
-         stdout.text("a = 1; b = 0")
+         ! NOTE: b starts at 0.1, not 0. gnuplot cannot use a parameter whose
+         ! start value is exactly zero -- its step is taken relative to that
+         ! value, so the normal matrix is singular in b. It then reports
+         ! "Singular matrix in Invert_RtR", pins b at 1e-30 and fits the slope
+         ! alone. The line is silently forced through the origin and the label
+         ! prints a fitted-looking "+ 0.000". Measured on nh3: the true
+         ! intercept is 0.035. The error message never reaches the user either,
+         ! since SYSTEM:call_gnuplot sends stderr to /dev/null.
+         stdout.text("a = 1")
+         stdout.text("b = 0.1")
          stdout.text("fit l(x) '"//trim(data)//"' using 1:2 via a,b")
          stdout.flush
          stdout.text("# Its equation, centred along the bottom of the plot")
@@ -3318,12 +3586,6 @@ contains
          cmd = trim(cmd)//" at graph 0.5, graph 0.045 center front"
          stdout.text(trim(cmd))
       end
-
-      ! The outlier-labelling threshold
-      stdout.flush
-      stdout.text("# Any point at or beyond this |y| is labelled with its (h k l).")
-      stdout.text("# Tonto set it to the |y| of the worst few points; change it freely.")
-      stdout.text("thr = "//trim(threshold.to_str("e14.6")))
 
       ! Plot.
       !
@@ -3337,16 +3599,35 @@ contains
       ! generated Fortran (CLAUDE.md S1), but it only splices a backslash that is
       ! the last character on a *source* line -- here each one is inside a string
       ! literal, followed by the closing quote and bracket.
+      !
+      ! Which component carries the trailing comma depends on which comes last,
+      ! since a plot command may not end on ", \".
       stdout.flush
       stdout.text("# Plot")
       stdout.text("plot '"//trim(data)//"' using 1:2 \")
+
+      if (fit OR n_labels>0) then
       stdout.text("        with points pt 7 ps 0.3 lc rgb 'dark-violet', \")
-      if (fit) then
-      stdout.text("     l(x) with lines lw 2 lc rgb 'skyblue', \")
+      else
+      stdout.text("        with points pt 7 ps 0.3 lc rgb 'dark-violet'")
       end
-      stdout.text("     '"//trim(data)//"' \")
-      stdout.text("        using 1:2:(abs($2)>=thr ? sprintf('(%d %d %d)',$3,$4,$5) : '') \")
-      stdout.text("        with labels offset char 1,0.8 font ',7' tc rgb 'red'")
+
+      if (fit) then
+         if (n_labels>0) then
+         stdout.text("     l(x) with lines lw 2 lc rgb 'skyblue', \")
+         else
+         stdout.text("     l(x) with lines lw 2 lc rgb 'skyblue'")
+         end
+      end
+
+      ! The leader lines, then the labels they lead to. Two passes over the
+      ! same file: gnuplot draws one style per pass.
+      if (n_labels>0) then
+      stdout.text("     '"//trim(labels)//"' using 1:2:($5-$1):($6-$2) \")
+      stdout.text("        with vectors nohead lw 1 lc rgb 'gray50', \")
+      stdout.text("     '"//trim(labels)//"' using 3:4:7 \")
+      stdout.text("        with labels center font ',8' tc rgb 'red'")
+      end
 
       ! PDF
       stdout.flush
@@ -3360,33 +3641,81 @@ contains
 
    end
 
+   put_xy_plot_files(data,x,y,hkl,xlabel,ylabel,stem,with_fit,x_non_negative)
+   ! Given a data file "data" that has already been written -- x, y, h, k, l in
+   ! five columns -- make everything else the plot needs, and then draw it:
+   !
+   !    <stem>.labels    where each outlier's (h k l) goes, and its leader
+   !    <stem>.gnuplot   the script
+   !    <stem>.png       the picture, by actually running gnuplot
+   !
+   ! "stem" defaults to "data", which is what every plot here wants except the
+   ! QQ plot, whose data file has been called <prefix>.QQ_plot_with_hkl since
+   ! long before there was a script to go with it.
+   !
+   ! One call per plot, so adding a plot is a data file plus a line. Set
+   ! "x_non_negative" for a quantity that cannot go below zero, such as F^o or
+   ! sin(theta)/lambda, so the axis is not padded into negative territory.
+      self :: IN
+      data :: STR, IN
+      x,y :: VEC{REAL}, IN
+      hkl :: MAT{INT}, IN
+      xlabel,ylabel :: STR, IN
+      stem :: STR, IN, optional
+      with_fit :: BIN, IN, optional
+      x_non_negative :: BIN, IN, optional
+
+      base,labels,script,image :: STR
+      x0,x1,y0,y1,thr :: REAL
+      n_lab :: INT
+
+      base = data
+      if (present(stem)) base = stem
+
+      labels = trim(base)//".labels"
+      script = trim(base)//".gnuplot"
+      image  = trim(base)//".png"
+
+      .nice_axis_range(minval(x),maxval(x),x0,x1,non_negative=x_non_negative)
+      .nice_axis_range(minval(y),maxval(y),y0,y1)
+
+      ! The worst few points get labelled with the reflection responsible
+      thr = .outlier_threshold(y)
+
+      .put_hkl_label_file(labels,x,y,hkl,thr,x0,x1,y0,y1,n_lab)
+
+      .put_gnuplot_script(script,data,labels,xlabel,ylabel, &
+         x0,x1,y0,y1,n_lab,with_fit=with_fit)
+
+      tonto.call_gnuplot(script,image)
+
+   end
+
 !  ========
 !  QQ plots
 !  ========
 
-   put_labelled_F_qq_plot(tag)
+   put_labelled_F_qq_plot(prefix)
    ! Output a qq plot to the text file.
    ! It is a plot of the experimental quantile vs expected quantile.
+   !
+   ! "prefix" heads every file written here. CRYSTAL passes the job name, so two
+   ! jobs run in one directory no longer overwrite each other's plots.
       self :: IN
-      tag :: STR, optional, IN
+      prefix :: STR, optional, IN
 
       grid :: MAT{REAL}@
       hkl :: MAT{INT}@
-      name,prefix,data,script,image :: STR
-      thr :: REAL
+      head,stem,data :: STR
       n :: INT
 
-      name = " "
-      if (present(tag)) name = tag
+      head = "stdout"
+      if (present(prefix)) head = prefix
 
-      ! Names. A tagged plot ("free") must not overwrite the untagged one --
-      ! CRYSTAL asks for both in the same directory.
-      prefix = "stdout"
-      if (name/=" ") prefix = "stdout."//trim(name)
-
-      data   = trim(prefix)//".QQ_plot_with_hkl"
-      script = trim(prefix)//".QQ_plot.gnuplot"
-      image  = trim(prefix)//".QQ_plot.png"
+      ! The data file keeps its historical name; everything else hangs off the
+      ! stem, as it does for the F_calc plots in DIFFRACTION_DATA.PUT.
+      stem = trim(head)//".QQ_plot"
+      data = trim(head)//".QQ_plot_with_hkl"
 
       hkl.create(.dim,3)
       do n = 1,.dim
@@ -3423,17 +3752,13 @@ contains
 
       stdout.revert
 
-      ! The six worst outliers get labelled with their (h k l)
-      thr = .outlier_threshold(grid(:,2))
+      ! The label file, the gnuplot input file, then the picture itself
+      .put_xy_plot_files(data,grid(:,1),grid(:,2),hkl,"F_z (Gaussian)", &
+         "F_z (exp) = ( F^{o} - F^{c} ) / {/Symbol s}", &
+         stem=stem,with_fit=TRUE)
 
       grid.destroy
       hkl.destroy
-
-      ! The gnuplot input file, then the picture itself
-      .put_gnuplot_script(script,data,"F_z (Gaussian)", &
-         "F_z (exp) = ( F^{o} - F^{c} ) / {/Symbol s}",thr,with_fit=TRUE)
-
-      tonto.call_gnuplot(script,image)
 
    end
 
