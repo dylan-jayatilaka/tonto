@@ -74,7 +74,7 @@ Everything lives in this repository, versioned with the code it describes.
 | [**`docs/BUILDING_ON_WINDOWS.md`**](docs/BUILDING_ON_WINDOWS.md) | the four WSL traps and how they are guarded |
 | [**`docs/TONTO_CONTINUOUS_INTEGRATION.md`**](docs/TONTO_CONTINUOUS_INTEGRATION.md) | what each workflow runs, and how to read a result |
 | [**`docs/MAKING_CALL_GRAPHS.md`**](docs/MAKING_CALL_GRAPHS.md) | call/use graphs and dead-code elimination |
-| [**`docs/EDITING_VIM.md`**](docs/EDITING_VIM.md) | vim set-up — tags, folding, completion |
+| [**`docs/EDITING_TONTO_WITH_VIM.md`**](docs/EDITING_TONTO_WITH_VIM.md) | vim set-up — tags, folding, completion |
 | [**`DEFERRED.md`**](DEFERRED.md) | known issues and deferred work, with the reasoning |
 
 ## The CI badges

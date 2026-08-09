@@ -500,7 +500,7 @@ caseLabel
 // the grammars-v4 version of it is anyway wrong at `**` (left-associative). If a
 // precedence-shaped tree is ever needed — e.g. retargeting Foo to a language
 // with different precedence — use ONE ANTLR4 left-recursive rule with
-// precedence-ordered alternatives instead. See docs/GRAMMAR_COMPARISON.md §4.
+// precedence-ordered alternatives instead. See docs/FOO_LANGUAGE_VS_FORTRAN.md §4.
 expr
     : postfix (binOp postfix)*
     ;
@@ -574,7 +574,7 @@ argList
 // `callHead` alternative `qualifier? DCOLON name` would swallow them as a
 // non-generic qualified call. (This mirrors `subscriptTripletTail`'s third
 // alternative `DOUBLECOLON expression` in the ANTLR4 Fortran90 grammar, which
-// carries it for exactly the same lexical reason. See docs/GRAMMAR_COMPARISON.md.)
+// carries it for exactly the same lexical reason. See docs/FOO_LANGUAGE_VS_FORTRAN.md.)
 // Ambiguity note: for `STR::proc` the qualified-call reading still wins, because
 // `head` reaches `callHead` (whose alternative 1 matches `STR::proc` whole)
 // before this rule's optional group is ever entered; a numeric lower bound like

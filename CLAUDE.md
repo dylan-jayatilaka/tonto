@@ -222,7 +222,7 @@ versioned with the code it described*, so it could rot silently. Do not add docu
 - `docs/BUILDING_ON_WINDOWS.md` — the four WSL-specific traps, the CMake guards, and how they are tested.
 - `docs/TONTO_CONTINUOUS_INTEGRATION.md` — the CI workflows, how to trigger one manually, and how to read a run.
 - `docs/MAKING_CALL_GRAPHS.md` — call/use graphs and dead-code elimination.
-- `docs/EDITING_VIM.md` — vim set-up: tags, folding, completion.
+- `docs/EDITING_TONTO_WITH_VIM.md` — vim set-up: tags, folding, completion.
 - `DEFERRED.md` — project-wide deferred issues (was `ANTLR4_DEFERRED.md`).
 
 ## 8. Working agreement
