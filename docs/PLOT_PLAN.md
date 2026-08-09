@@ -215,6 +215,31 @@ Safe by measurement, not by hope: 16 test-manifest lines mention these files and
 **every one is a `delete:`**, never a `compare:` — and `scripts/test.py:314`
 records `delete:` as *"recorded but unused"*. 126 of 129 test jobs set `name=`.
 
+### Two open items from the end of the session
+
+**1. The end-of-HAR message is stale, and fixing it means reblessing 24 tests.**
+It names `stdout.fit_analysis` (a file nothing writes and never has), calls
+several small files "this large file", names not one file that is actually
+produced, and ends "Use Excel or gnuplot to view these data" — which predates
+Tonto drawing the pictures itself. A corrected version, naming the real files in
+dot points, was written and then **reverted**: the text appears in **24**
+checked-in references (`grep -rl "This large file includes" tests/`), most of
+them `long` jobs. Worth doing as its own change, together with the rebless —
+not as a side effect of something else. The reverted text is in the git history
+of `foofiles/crystal.foo` around 2026-08-09 if you want it back.
+
+**2. A cosmetic ADP-table difference, which is NOT a failure.** A raw `diff` of
+`tests/short/nh3_rhf_DZP_HAR/stdout` against a fresh run shows the `U_xx … U_yz`
+error table with different column widths — the reference wider
+(`0.00000(5)   0.00000(8)`), the new build narrower. Every number is identical.
+
+**It does not fail the suite**: with the message block reverted the test passes
+1/1, so the comparison in `scripts/test.py` is insensitive to this whitespace
+and the message was the sole cause of the failure. Recorded only so that whoever
+next runs a bare `diff` on this test does not mistake it for a regression, as
+was briefly done here. Untraced, and not worth tracing unless it starts
+mattering.
+
 ### Open follow-up
 
 Add a `DIE_IF` to `TEXTFILE:text` / `BUFFER:put_str` so an over-long line reports
