@@ -665,6 +665,7 @@ set(RUN_SRC
     ${RUNFILE_DIR}/run_textfile.foo
     ${RUNFILE_DIR}/run_mpi_test.foo
     ${RUNFILE_DIR}/run_mpi_test_complete.foo
+    ${RUNFILE_DIR}/run_system_commands.foo
     ${RUNFILE_DIR}/run_vec{str}.foo
 )
 
@@ -964,6 +965,11 @@ add_executable(run_rgbi          ${CMAKE_CURRENT_BINARY_DIR}/run_rgbi.F90)
 add_executable(run_vec_str       EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_vec_str.F90)
 add_executable(run_least_squares EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_least_squares.F90)
 add_executable(run_textfile      EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_textfile.F90)
+# run_system_commands exercises the SYSTEM_COMMAND virtual module (shell
+# execution, used to render plots with gnuplot at the end of a job). Not
+# EXCLUDE_FROM_ALL: it is registered as the `system_commands` ctest, and shelling
+# out is exactly the kind of thing that silently does nothing if it breaks.
+add_executable(run_system_commands ${CMAKE_CURRENT_BINARY_DIR}/run_system_commands.F90)
 add_executable(run_mpi_test      ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_test.F90)
 add_executable(run_mpi_test_complete ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_test_complete.F90)
 
@@ -990,6 +996,7 @@ target_link_libraries(run_rgbi          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIE
 target_link_libraries(run_vec_str       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_least_squares tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_textfile      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_system_commands tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_mpi_test      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_mpi_test_complete tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_shell2        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})

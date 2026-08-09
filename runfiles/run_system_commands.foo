@@ -1,0 +1,226 @@
+! Exerciser for the SYSTEM_COMMAND virtual module, which is inherited into
+! SYSTEM -- so every method below is called on the global "tonto" object.
+!
+! It is self-checking: every test either passes or increments a counter, and the
+! program DIEs (exit 1) if any failed. That makes it usable as a ctest, which is
+! the point -- shell execution is exactly the kind of thing that silently does
+! nothing, and this codebase has been bitten by that repeatedly.
+!
+! Run it by hand with:
+!    make run_system_commands && ./run_system_commands
+!
+! Copyright (C) Dylan Jayatilaka 2014
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+
+program run_SYSTEM_COMMANDS
+
+   implicit none
+
+   f :: TEXTFILE*
+   tmp,word :: STR
+   n_failed :: INT
+   ok,failed,there :: BIN
+   exit_status,status :: INT
+
+   ! Create Tonto system object
+   ! Initialise MPI parallel stuff too.
+   TONTO_CREATE
+
+   ! Initialise standard I/O files.
+   std_time.start_timing
+
+   std_err.create_std_err
+   std_err.open_for("writing")
+   stdout.create_stdout
+
+   n_failed = 0
+   tmp      = "run_system_commands.tmp"
+
+   stdout.flush
+   stdout.text("==================================")
+   stdout.text("SYSTEM_COMMAND exerciser")
+   stdout.text("==================================")
+   stdout.flush
+
+   ! ---------------------------------------------------------------------
+   ! 1. Defaults. A freshly created tonto must have an empty command slot.
+   ! ---------------------------------------------------------------------
+
+   stdout.text("Test 1: defaults are set")
+
+   ok = tonto.command==" " AND tonto.command_wait
+   if (NOT ok) n_failed = n_failed + 1
+   stdout.show("... passed?                   =",ok)
+
+   ! ---------------------------------------------------------------------
+   ! 2. A command that succeeds. Nothing may be reported as having failed.
+   ! ---------------------------------------------------------------------
+
+   stdout.text("Test 2: a command that succeeds")
+
+   tonto.set_command("true")
+   tonto.execute_command
+
+   exit_status = tonto.command_exit_status
+   status      = tonto.command_status
+   failed      = tonto.command_failed
+
+   stdout.show("... exit status               =",exit_status)
+   stdout.show("... command status            =",status)
+   ok = exit_status==0 AND status==0 AND (NOT failed)
+   if (NOT ok) n_failed = n_failed + 1
+   stdout.show("... passed?                   =",ok)
+
+   ! ---------------------------------------------------------------------
+   ! 3. The shell really runs: write a file, and read back what was written.
+   !    This is the test that matters. A do-nothing implementation passes
+   !    tests 1 and 2 by accident; it cannot pass this one.
+   ! ---------------------------------------------------------------------
+
+   stdout.text("Test 3: the command really executes")
+
+   tonto.execute("echo tonto_was_here > "//trim(tmp))
+
+   there = stdout.exists(tmp)
+   stdout.show("... file was created?         =",there)
+
+   word = " "
+   if (there) then
+      TEXTFILE:create(f,tmp)
+      f.open_for("reading")
+      f.read(word)
+      f.close
+      TEXTFILE:destroy(f)
+   end
+
+   stdout.show("... file contains             =",word)
+   ok = there AND word=="tonto_was_here"
+   if (NOT ok) n_failed = n_failed + 1
+   stdout.show("... passed?                   =",ok)
+
+   ! ---------------------------------------------------------------------
+   ! 4. A command that fails must be reported as failing. `sh` returns the
+   !    exit code of `exit 3` verbatim, so this is deterministic.
+   ! ---------------------------------------------------------------------
+
+   stdout.text("Test 4: a command that fails is detected")
+
+   tonto.execute("exit 3")
+
+   exit_status = tonto.command_exit_status
+   failed      = tonto.command_failed
+
+   stdout.show("... exit status               =",exit_status)
+   stdout.show("... reported as failed?       =",failed)
+   ok = exit_status==3 AND failed
+   if (NOT ok) n_failed = n_failed + 1
+   stdout.show("... passed?                   =",ok)
+
+   ! ---------------------------------------------------------------------
+   ! 5. A command that does not exist. The shell reports 127; what matters
+   !    is only that .command_failed says so rather than staying silent.
+   ! ---------------------------------------------------------------------
+
+   stdout.text("Test 5: a non-existent command is detected")
+
+   tonto.execute("no_such_program_exists_here_1234")
+
+   exit_status = tonto.command_exit_status
+   status      = tonto.command_status
+   failed      = tonto.command_failed
+
+   stdout.show("... exit status               =",exit_status)
+   stdout.show("... command status            =",status)
+   stdout.show("... reported as failed?       =",failed)
+   ok = failed
+   if (NOT ok) n_failed = n_failed + 1
+   stdout.show("... passed?                   =",ok)
+
+   ! ---------------------------------------------------------------------
+   ! 6. set_command clears the previous result, so a stale failure cannot
+   !    be reported against a command which has not been run.
+   ! ---------------------------------------------------------------------
+
+   stdout.text("Test 6: set_command clears the previous result")
+
+   tonto.set_command("true")
+
+   exit_status = tonto.command_exit_status
+   failed      = tonto.command_failed
+
+   ok = exit_status==0 AND (NOT failed)
+   if (NOT ok) n_failed = n_failed + 1
+   stdout.show("... passed?                   =",ok)
+
+   ! ---------------------------------------------------------------------
+   ! 7. Asynchronous execution. Nothing is reported back, so the only
+   !    contract is that it runs and claims no failure.
+   ! ---------------------------------------------------------------------
+
+   stdout.text("Test 7: asynchronous execution")
+
+   tonto.set_command("true")
+   tonto.set_command_asynchronous
+   tonto.execute_command
+
+   failed = tonto.command_failed
+   ok = NOT failed
+   if (NOT ok) n_failed = n_failed + 1
+   stdout.show("... passed?                   =",ok)
+
+   tonto.set_command_synchronous
+
+   ! ---------------------------------------------------------------------
+   ! 8. put_command_info prints something sane. Also cleans up test 3.
+   ! ---------------------------------------------------------------------
+
+   stdout.text("Test 8: put_command_info")
+
+   tonto.execute("rm -f "//trim(tmp))
+   tonto.put_command_info
+
+   there = stdout.exists(tmp)
+   ok = NOT there
+   if (NOT ok) n_failed = n_failed + 1
+   stdout.show("... temporary file removed?   =",ok)
+
+   ! ---------------------------------------------------------------------
+   ! Verdict
+   ! ---------------------------------------------------------------------
+
+   stdout.flush
+   stdout.show("Number of failed tests        =",n_failed)
+   stdout.flush
+
+   if (n_failed==0) then
+      stdout.text("ALL SYSTEM_COMMAND TESTS PASSED")
+   else
+      stdout.text("SOME SYSTEM_COMMAND TESTS FAILED")
+   end
+
+   stdout.flush
+
+   DIE_IF(n_failed>0,"SYSTEM_COMMAND exerciser failed")
+
+   ! Clean-up files
+   TEXTFILE:destroy(std_err)
+   TEXTFILE:destroy(stdout)
+
+   ! Clean-up tonto system
+   TONTO_DESTROY
+
+end

@@ -28,7 +28,13 @@ sudo apt install make default-jdk gfortran-14 libblas-dev liblapack-dev python3 
 - `default-jdk` provides `java`/`javac` for the ANTLR4 `foo`→Fortran translator.
   The ANTLR jar itself is downloaded automatically on the first `cmake` run
   (internet needed for that one configure).
-- `gnuplot` is for graphs; `python3` runs the test harness.
+- **`gnuplot` (version 6.0 or later) is required at *run* time, not build time.**
+  Tonto runs it for you: at the end of a refinement it writes the diagnostic
+  plots — the Abrahams–Keeve QQ plot and the F_calc scatter plots — as a data
+  file *and* a gnuplot script, then invokes `gnuplot` to render each one to a
+  `.png` you can just look at. Without it the job still completes and both the
+  data and the scripts are still written; you get a warning naming the command
+  to run by hand, and no pictures. `python3` runs the test harness.
 - Optional: `graphviz` (for the developer call-graphs), and for the parallel
   build: `sudo apt install openmpi-bin libopenmpi-dev`.
 

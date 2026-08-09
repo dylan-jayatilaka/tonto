@@ -1346,73 +1346,132 @@ contains
 
    put_F_calc_plots(tag)
    ! Output some different plots about the calculated structure factors.
+   !
+   ! Each plot gets three files: the data, a gnuplot script describing how to
+   ! draw it, and the drawn PNG itself. Every data file has the same layout --
+   ! x, y, then h, k, l -- so that the worst outliers can be labelled with the
+   ! reflection responsible, which is the reason for looking at these at all.
       self :: IN
       tag :: STR, optional, IN
 
       ext :: VEC{REAL}@
       ext_refs :: VEC{REFLECTION}@
+      dev :: VEC{REAL}@
       n,n_refl :: INT
-      y,w :: REAL
-      name :: STR
+      y,w,thr :: REAL
+      name,prefix,data,script,image :: STR
 
       name = " "
       if (present(tag)) name = tag
 
+      ! A tagged plot ("free") must not overwrite the untagged one: CRYSTAL asks
+      ! for both, in the same directory.
+      prefix = "stdout"
+      if (name/=" ") prefix = "stdout."//trim(name)
+
       n_refl = .reflections.dim
 
-      stdout.redirect("stdout.F_z_vs_stl")
+      dev.create(n_refl)
+
+      data   = trim(prefix)//".F_z_vs_stl"
+      script = trim(data)//".gnuplot"
+      image  = trim(data)//".png"
+
+      stdout.redirect(data)
 
       stdout.text("# Scatter plot of F_z = (Fexp-Fpred)/F_sigma vs sin(theta)/lambda :")
       stdout.text("# 1st column: sin(theta)/lambda")
       stdout.text("# 2nd column: (F_exp-F_pred)/F_sigma")
       stdout.text("# Note: F_exp & F_pred may have dispersion removed")
       stdout.text("# Note: Fpred may include extinction correction")
+      stdout.text("# 3rd, 4th, 5th columns: h, k, l")
       stdout.flush
 
       do n = 1,n_refl
+         dev(n) = .reflections(n).F_z
          stdout.put(.reflections(n).stl)
-         stdout.put(.reflections(n).F_z)
+         stdout.put(dev(n))
+         stdout.put(.reflections(n).h1,width=5)
+         stdout.put(.reflections(n).h2,width=5)
+         stdout.put(.reflections(n).h3,width=5)
          stdout.flush
       end
 
       stdout.revert
 
-      stdout.redirect("stdout.Delta_F_vs_stl")
+      thr = .reflections.outlier_threshold(dev)
+      .reflections.put_gnuplot_script(script,data, &
+         "sin({/Symbol q})/{/Symbol l}", &
+         "F_z = ( F^{o} - F^{c} ) / {/Symbol s}",thr)
+      tonto.call_gnuplot(script,image)
+
+      data   = trim(prefix)//".Delta_F_vs_stl"
+      script = trim(data)//".gnuplot"
+      image  = trim(data)//".png"
+
+      stdout.redirect(data)
 
       stdout.text("# Scatter plot of Delta F = (F_exp-F_pred) vs sin(theta)/lambda :")
       stdout.text("# 1st column: sin(theta)/lambda")
       stdout.text("# 2nd column: Delta F = (F_exp-F_pred)")
       stdout.text("# Note: F_exp & F_pred may have dispersion removed")
       stdout.text("# Note: F_pred may include extinction correction")
-      stdout.flush
+      stdout.text("# 3rd, 4th, 5th columns: h, k, l")
       stdout.flush
 
       do n = 1,n_refl
+         dev(n) = .reflections(n).delta_F
          stdout.put(.reflections(n).stl)
-         stdout.put(.reflections(n).delta_F)
+         stdout.put(dev(n))
+         stdout.put(.reflections(n).h1,width=5)
+         stdout.put(.reflections(n).h2,width=5)
+         stdout.put(.reflections(n).h3,width=5)
          stdout.flush
       end
 
       stdout.revert
 
-      stdout.redirect("stdout.F_z_vs_F_exp")
+      thr = .reflections.outlier_threshold(dev)
+      .reflections.put_gnuplot_script(script,data, &
+         "sin({/Symbol q})/{/Symbol l}", &
+         "{/Symbol D}F = F^{o} - F^{c}",thr)
+      tonto.call_gnuplot(script,image)
+
+      data   = trim(prefix)//".F_z_vs_F_exp"
+      script = trim(data)//".gnuplot"
+      image  = trim(data)//".png"
+
+      stdout.redirect(data)
 
       stdout.text("# Scatter plot of F_z = (Fexp-Fpred)/F_sigma vs F_exp :")
       stdout.text("# 1st column: Fexp")
       stdout.text("# 2nd column: (Fexp-Fpred)/F_sigma")
       stdout.text("# Note: F_exp & F_pred may have dispersion removed")
       stdout.text("# Note: F_pred may include extinction correction")
+      stdout.text("# 3rd, 4th, 5th columns: h, k, l")
       stdout.flush
 
       do n = 1,n_refl
+         dev(n) = .reflections(n).F_z
          stdout.put(.reflections(n).F_corr)
-         stdout.put(.reflections(n).F_z)
+         stdout.put(dev(n))
+         stdout.put(.reflections(n).h1,width=5)
+         stdout.put(.reflections(n).h2,width=5)
+         stdout.put(.reflections(n).h3,width=5)
          stdout.flush
       end
 
       stdout.revert
 
-      if (NOT .refine_extinction) return
+      thr = .reflections.outlier_threshold(dev)
+      .reflections.put_gnuplot_script(script,data,"F^{o}", &
+         "F_z = ( F^{o} - F^{c} ) / {/Symbol s}",thr)
+      tonto.call_gnuplot(script,image)
+
+      if (NOT .refine_extinction) then
+         dev.destroy
+         return
+      end
 
       ! Only do this if extinction was used
       ext_refs.create(n_refl)
@@ -1432,7 +1491,11 @@ contains
       y = y / n_refl
       w = w / n_refl
 
-      stdout.redirect("stdout.Delta_F_pred_z_vs_F_pred")
+      data   = trim(prefix)//".Delta_F_pred_z_vs_F_pred"
+      script = trim(data)//".gnuplot"
+      image  = trim(data)//".png"
+
+      stdout.redirect(data)
 
       stdout.text("# The effects of intensity on extinction:")
       stdout.text("# ")
@@ -1443,15 +1506,29 @@ contains
       stdout.text("# ")
       stdout.show("# Average value of abs[Fpred(without ext)-Fcalc(with ext)]/F_sigma  = ",y)
       stdout.show("# Average value of abs(extinction correction)                       = ",w)
+      stdout.text("# 3rd, 4th, 5th columns: h, k, l")
       do n = 1,n_refl
+         dev(n) = ext_refs(n).F_z
          stdout.put(ext_refs(n).F_pred)
-         stdout.put(ext_refs(n).F_z)
+         stdout.put(dev(n))
+         stdout.put(.reflections(n).h1,width=5)
+         stdout.put(.reflections(n).h2,width=5)
+         stdout.put(.reflections(n).h3,width=5)
          stdout.flush
       end
 
       stdout.revert
 
-      stdout.redirect("stdout.Delta_F_pred_z_vs_stl")
+      thr = .reflections.outlier_threshold(dev)
+      .reflections.put_gnuplot_script(script,data,"F^{c} (no extinction)", &
+         "[ F^{c}(no ext) - F^{c}(ext) ] / {/Symbol s}",thr)
+      tonto.call_gnuplot(script,image)
+
+      data   = trim(prefix)//".Delta_F_pred_z_vs_stl"
+      script = trim(data)//".gnuplot"
+      image  = trim(data)//".png"
+
+      stdout.redirect(data)
 
       stdout.text("# The effects of scattering angle on extinction:")
       stdout.text("# ")
@@ -1459,15 +1536,27 @@ contains
       stdout.text("# 1st column: sin(theta)/lambda")
       stdout.text("# 2nd column: [F_pred(without ext)-F_pred(with ext)]/F_sigma")
       stdout.text("# Note: F_exp & F_pred may have dispersion removed")
+      stdout.text("# 3rd, 4th, 5th columns: h, k, l")
       do n = 1,n_refl
+         dev(n) = ext_refs(n).F_z
          stdout.put(.reflections(n).stl)
-         stdout.put(ext_refs(n).F_z)
+         stdout.put(dev(n))
+         stdout.put(.reflections(n).h1,width=5)
+         stdout.put(.reflections(n).h2,width=5)
+         stdout.put(.reflections(n).h3,width=5)
          stdout.flush
       end
 
       stdout.revert
 
+      thr = .reflections.outlier_threshold(dev)
+      .reflections.put_gnuplot_script(script,data, &
+         "sin({/Symbol q})/{/Symbol l}", &
+         "[ F^{c}(no ext) - F^{c}(ext) ] / {/Symbol s}",thr)
+      tonto.call_gnuplot(script,image)
+
       ext_refs.destroy
+      dev.destroy
 
    end
 

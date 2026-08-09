@@ -3176,6 +3176,164 @@ contains
 
    end
 
+!  =============
+!  Gnuplot files
+!  =============
+!  Shared by the QQ plot below and by the F_calc plots in DIFFRACTION_DATA.PUT,
+!  which calls them on its own .reflections. Neither uses self -- they are here
+!  because this is the module both callers can already reach, and because a
+!  cross-module call needs an ordinary method rather than a selfless one.
+!
+!  Every data file these describe has the same layout: column 1 = x,
+!  column 2 = y, columns 3-5 = h, k, l. Carrying the Miller indices alongside
+!  the point is what lets gnuplot label an outlier with the reflection that
+!  caused it -- which is the whole point of looking at these plots.
+
+   outlier_threshold(y,n_worst) result (res)
+   ! Return the "n_worst"-th largest absolute value in "y", i.e. the cutoff at
+   ! or above which exactly "n_worst" points lie. "n_worst" defaults to six.
+   !
+   ! Used as the threshold above which a point is labelled with its (h k l).
+   ! Deliberately data-adaptive rather than a fixed number of sigma: only some
+   ! of these plots have a y axis in units of sigma (F_z does, Delta_F does
+   ! not), so no single constant is meaningful across all of them. This always
+   ! labels the worst few, whatever the units.
+   !
+   ! NOTE: the default lives here, in the one routine that uses it, rather than
+   ! as a macro in include/macros.in -- a constant there is #included by every
+   ! module and so costs a whole-tree recompile whenever it is touched.
+      self :: IN
+      y :: VEC{REAL}, IN
+      n_worst :: INT, IN, optional
+      res :: REAL
+
+      a :: VEC{REAL}@
+      n,k,n_lab :: INT
+
+      n_lab = 6
+      if (present(n_worst)) n_lab = n_worst
+
+      n = y.dim
+
+      if (n==0) then
+         res = ZERO
+         return
+      end
+
+      a.create(n)
+      a = abs(y)
+      a.sort                  ! ascending
+
+      k = min(n_lab,n)
+      res = a(n-k+1)
+
+      a.destroy
+
+   end
+
+   put_gnuplot_script(script,data,xlabel,ylabel,threshold,with_fit)
+   ! Write the gnuplot input file "script", which plots the data file "data".
+   !
+   ! The plot is square (1:1), as in Abrahams & Keve style figures -- see e.g.
+   ! Fig. S8 of Davidson et al. (2022) Acta Cryst B 78 397. Points whose |y| is
+   ! at or above "threshold" are labelled with their (h k l).
+   !
+   ! If "with_fit", a least-squares line is fitted and its equation is printed
+   ! centred along the bottom of the plot.
+   !
+   ! NOTE: the script sets no terminal and no output, on purpose. Run by hand it
+   ! draws to your screen:
+   !
+   !    gnuplot -persist 'script'
+   !
+   ! and .run_gnuplot below forces a PNG terminal on the command line instead.
+   ! One script, both uses -- rather than a script that can only ever do one.
+      self :: IN
+      script,data :: STR, IN
+      xlabel,ylabel :: STR, IN
+      threshold :: REAL, IN
+      with_fit :: BIN, IN, optional
+
+      cmd :: STR(len=1024)
+      fit :: BIN
+
+      fit = FALSE
+      if (present(with_fit)) fit = with_fit
+
+      stdout.redirect(script)
+
+      stdout.text("# ==================")
+      stdout.text("# Gnuplot input file")
+      stdout.text("# ==================")
+      stdout.text("#")
+      stdout.text("# To see this plot type:")
+      stdout.text("#")
+      stdout.text("#    gnuplot -persist '"//trim(script)//"'")
+      stdout.text("#")
+      stdout.text("# Alter the lines below to get the plot you want.")
+
+      ! Check
+      stdout.flush
+      stdout.text("# Check version")
+      stdout.text("if (GPVAL_VERSION<6.0) print 'Use gnuplot 6.0 or greater'; exit")
+
+      ! Axis labels
+      stdout.flush
+      stdout.text("set xlabel '"//trim(xlabel)//"'")
+      stdout.text("set ylabel '"//trim(ylabel)//"'")
+
+      ! Plot options. "set size square" is the 1:1 aspect ratio.
+      stdout.flush
+      stdout.text("# Plot options")
+      stdout.text("set size square")
+      stdout.text("unset key")
+      stdout.text("set grid xtics")
+      stdout.text("set grid ytics")
+
+      ! Line of best fit
+      if (fit) then
+         stdout.flush
+         stdout.text("# Line of best fit")
+         stdout.text("set fit quiet")
+         stdout.text("l(x) = a*x + b")
+         stdout.text("a = 1; b = 0")
+         stdout.text("fit l(x) '"//trim(data)//"' using 1:2 via a,b")
+         stdout.flush
+         stdout.text("# Its equation, centred along the bottom of the plot")
+         cmd = "set label 1 sprintf('y = %.3f x + %.3f', a, b)"
+         cmd = trim(cmd)//" at graph 0.5, graph 0.045 center front"
+         stdout.text(cmd)
+      end
+
+      ! The outlier-labelling threshold
+      stdout.flush
+      stdout.text("# Any point at or beyond this |y| is labelled with its (h k l).")
+      stdout.text("# Tonto set it to the |y| of the worst few points; change it freely.")
+      stdout.text("thr = "//trim(threshold.to_str("e14.6")))
+
+      ! Plot. Built as ONE line: a trailing backslash would be eaten by the C
+      ! preprocessor, which still runs over the generated Fortran (see CLAUDE.md
+      ! S1 -- the translator output is pre-CPP).
+      stdout.flush
+      stdout.text("# Plot")
+      cmd = "plot '"//trim(data)//"' using 1:2 with points pt 7 ps 0.3 lc rgb 'dark-violet'"
+      if (fit) cmd = trim(cmd)//", l(x) with lines lw 2 lc rgb 'skyblue'"
+      cmd = trim(cmd)//", '"//trim(data)//"' using 1:2:(abs($2)>=thr ? sprintf('(%d %d %d)',$3,$4,$5) : '')"
+      cmd = trim(cmd)//" with labels offset char 1,0.8 font ',7' tc rgb 'red'"
+      stdout.text(cmd)
+
+      ! PDF
+      stdout.flush
+      stdout.text("# PDF output")
+      stdout.text("# Uncomment, or do it from the Qt window")
+      stdout.text("# set terminal pdfcairo size 5,5")
+      stdout.text("# set output '"//trim(script)//".pdf'")
+      stdout.text("# replot")
+
+      stdout.revert
+
+   end
+
 !  ========
 !  QQ plots
 !  ========
@@ -3188,11 +3346,21 @@ contains
 
       grid :: MAT{REAL}@
       hkl :: MAT{INT}@
-      name :: STR
+      name,prefix,data,script,image :: STR
+      thr :: REAL
       n :: INT
 
       name = " "
       if (present(tag)) name = tag
+
+      ! Names. A tagged plot ("free") must not overwrite the untagged one --
+      ! CRYSTAL asks for both in the same directory.
+      prefix = "stdout"
+      if (name/=" ") prefix = "stdout."//trim(name)
+
+      data   = trim(prefix)//".QQ_plot_with_hkl"
+      script = trim(prefix)//".QQ_plot.gnuplot"
+      image  = trim(prefix)//".QQ_plot.png"
 
       hkl.create(.dim,3)
       do n = 1,.dim
@@ -3203,7 +3371,7 @@ contains
 
       .make_F_qq_plot_grid(grid,hkl)
 
-      stdout.redirect("stdout.QQ_plot_with_hkl")
+      stdout.redirect(data)
 
       stdout.text("# Labelled QQ plot:")
       stdout.text("# ")
@@ -3229,64 +3397,17 @@ contains
 
       stdout.revert
 
+      ! The six worst outliers get labelled with their (h k l)
+      thr = .outlier_threshold(grid(:,2))
+
       grid.destroy
       hkl.destroy
 
-      ! Header for user ...
-      stdout.redirect("stdout.QQ_plot.gunplot")
-      stdout.text("# ==================")
-      stdout.text("# Gnuplot input file")
-      stdout.text("# ==================")
-      stdout.text("#")
-      stdout.text("# To see this plot type:")
-      stdout.text("#")
-      stdout.text("#    gnuplot -persist 'stdout.QQ_plot.gunplot'")
-      stdout.text("#")
-      stdout.text("# Alter the lines below to get the plot you want.")
+      ! The gnuplot input file, then the picture itself
+      .put_gnuplot_script(script,data,"F_z (Gaussian)", &
+         "F_z (exp) = ( F^{o} - F^{c} ) / {/Symbol s}",thr,with_fit=TRUE)
 
-      ! Check
-      stdout.flush
-      stdout.text("# Check version")
-      stdout.text("if (GPVAL_VERSION<6.0) print 'Use gnuplot 6.0 or greater'; exit")
-
-      ! Linear fit
-      stdout.flush
-      stdout.text("# Fit line")
-      stdout.text("l(x) = a*x + b")
-      stdout.text("fit l(x) 'stdout.QQ_plot_with_hkl' using 1:2 via a,b")
-
-      ! Label
-      stdout.flush
-      stdout.text("# Line of fit label; reposition as needed")
-      stdout.text("set label 1 sprintf('y = %.2f x + %.2f', a, b) at 0,0")
-
-      ! X & Y axis labels
-      stdout.flush
-      stdout.text("set ylabel 'F_z (exp) = ( F^{o} - F^{c} ) / {/Symbol s}")
-      stdout.text("set xlabel 'F_z (Gaussian)'")
-
-      ! Plot options
-      stdout.flush
-      stdout.text("# Plot options")
-      stdout.text("set size square")
-      stdout.text("unset key")
-      stdout.text("set grid xtics")
-      stdout.text("set grid ytics")
-
-      ! Plot
-      stdout.flush
-      stdout.text("# Plot")
-      stdout.text("plot 'stdout.QQ_plot_with_hkl' using 1:2 with dots, l(x)")
-
-      ! PDF
-      stdout.flush
-      stdout.text("# PDF output")
-      stdout.text("# Uncomment or do from Qt window")
-      stdout.text("# set terminal pdf")
-      stdout.text("# set output 'stdout.QQ_plot.pdf'")
-      stdout.text("# replot")
-
-      stdout.revert
+      tonto.call_gnuplot(script,image)
 
    end
 

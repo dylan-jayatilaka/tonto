@@ -33,6 +33,11 @@ cmake .. -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=release
 make -j4
 ```
 
+> **`gnuplot` 6.0+ is needed at run time**, not just to build: Tonto invokes it
+> to draw the diagnostic plots at the end of a refinement. Without it the job
+> still finishes and the plot data and scripts are still written — you just have
+> to run `gnuplot` yourself to see the pictures.
+
 That gives you **`build/tonto`** and **`build/hart`**. Then check it works:
 
 ```

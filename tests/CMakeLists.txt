@@ -129,6 +129,21 @@ set_tests_properties("hart_options" PROPERTIES LABELS "hart")
 
 # Invariant test -- no reference output involved.
 #
+# The SYSTEM_COMMAND exerciser. It shells out for real: it writes a file with
+# `echo`, reads the contents back, and asserts that a failing command is
+# reported as failing. Registered because shell execution is the classic silent
+# failure -- a broken implementation returns "0, no error" and simply does
+# nothing, which is precisely how the eight MPI reductions and the per-rank-IO
+# flag hid for years (docs/MPI.md). The binary self-checks and exits non-zero,
+# so no reference file can be blessed to make it pass. Runs in well under a
+# second.
+add_test(NAME "system_commands"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND ${PROJECT_BINARY_DIR}/run_system_commands)
+set_tests_properties("system_commands" PROPERTIES LABELS "short")
+
+# Invariant test -- no reference output involved.
+#
 # A Foo procedure that takes arguments is a library routine: it can be called
 # by the argv-driven programs (hart, rgbi), which have no job file. So it must
 # not touch stdin. A no-argument keyword handler may, since only the keyword

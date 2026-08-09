@@ -1,6 +1,26 @@
 !---------------------------------------------------------------------------
 !
-! SYSTEM_COMMAND: Object executing shel commands.
+! SYSTEM_COMMAND: Execute shell commands from within Tonto.
+!
+! This is a *virtual* module: it has no type and no compiled code of its own.
+! Its procedures are textually inherited into SYSTEM via get_from(), in exactly
+! the same way as PARALLEL -- see the "inherited from SYSTEM_COMMAND" section of
+! system.foo. So the methods below are called on the one global system object:
+!
+!    tonto.set_command("gnuplot urea.gnuplot")
+!    tonto.execute_command
+!    if (tonto.command_failed) tonto.put_command_info
+!
+! The point of it is to let Tonto drive an external program -- gnuplot, above
+! all -- so that a plot written at the end of a job can be *rendered* by the
+! same job instead of leaving the user with a data file and instructions.
+!
+! WARNING (parallel builds): .execute_command runs the command on whichever
+! rank reaches it. It is NOT collective and does no synchronisation. If every
+! rank reaches it you get n_processors copies of the process, all writing the
+! same output file. Guard it -- `if (tonto.is_master_processor) ...` -- or call
+! it only from code that is already master-only. This mirrors the rule in
+! docs/DEVELOPER.md S1a: what executes must not silently differ between ranks.
 !
 ! Copyright (C) Dylan Jayatilaka, 2014
 !
@@ -23,56 +43,70 @@
 !
 !---------------------------------------------------------------------------
 
-module SYSTEM_COMMAND
+virtual module SYSTEM_COMMAND
 
    implicit none
 
 contains
 
-!  ==========
-!  Allocation
-!  ==========
-
-   create :: get_from(OBJECT), leaky, PURE
-   ! Create an object. This version does not nullify point parts.
-   end
-
-   destroy :: get_from(OBJECT), leaky, PURE
-   ! Destroy an object. This version does not destroy pointer parts.
-   end
-
 ! ===========
 ! Set methods
 ! ===========
 
-   set_defaults :: pure
-   ! Set up the default settings
+   set_command_defaults :: PURE
+   ! Set up the default command settings. Called from SYSTEM:set_defaults, so
+   ! the command slot is well defined from the moment "tonto" exists.
       self :: INOUT
 
-      .command     = " "
-      .wait        = TRUE
-      .exit_status = 0
-      .status      = 0
-      .message     = " "
+      .command             = " "
+      .command_wait        = TRUE
+      .command_exit_status = 0
+      .command_status      = 0
+      .command_message     = " "
 
    end
 
    set_command(val) :: PURE
-   ! Set up the default settings
+   ! Set the shell command "val" to be executed. Also clears the results of any
+   ! previous command, so that .command_failed can never report a stale verdict
+   ! for a command that has not been run yet.
       self :: INOUT
       val :: STR, IN
 
    ENSURE(val/=" ","empty command!")
 
-      .command = val
+      .command             = val
+      .command_exit_status = 0
+      .command_status      = 0
+      .command_message     = " "
 
    end
 
-   set_asynchorous :: pure
-   ! Set the command to execute asynchronouly i.e. wait=FALSE
+   set_command_wait(val) :: pure
+   ! Set whether to wait for the command to complete. TRUE (the default) is
+   ! synchronous; FALSE runs the command in the background.
+      self :: INOUT
+      val :: BIN, IN
+
+      .command_wait = val
+
+   end
+
+   set_command_asynchronous :: pure
+   ! Run the command in the background i.e. do not wait for it to finish.
+   ! NOTE: an asynchronous command reports no exit status, so .command_failed
+   ! is meaningless for it -- there is nothing yet to have failed.
       self :: INOUT
 
-      .wait = FALSE
+      .command_wait = FALSE
+
+   end
+
+   set_command_synchronous :: pure
+   ! Wait for the command to finish before continuing. This is the default.
+      self :: INOUT
+
+      .command_wait = TRUE
 
    end
 
@@ -81,12 +115,105 @@ contains
 ! ===================
 
    execute_command
-   ! Do it ...
-      self :: IN
+   ! Execute ".command" in a shell, and record how it went in
+   ! .command_exit_status, .command_status and .command_message.
+   !
+   ! NOTE: self must be INOUT. The three result components are intent(out) and
+   ! intent(inout) arguments of the execute_command_line intrinsic, so this
+   ! routine writes to self -- it was declared IN, which cannot compile.
+      self :: INOUT
 
    ENSURE(.command/=" ","empty command!")
 
-      call execute_command_line(.command,.wait,.exit_status,.status,.message)
+      call execute_command_line(.command,.command_wait,.command_exit_status, &
+                                .command_status,.command_message)
+
+   end
+
+   execute(val)
+   ! Convenience: set the command "val" and execute it in one call.
+      self :: INOUT
+      val :: STR, IN
+
+   ENSURE(val/=" ","empty command!")
+
+      .set_command(val)
+      .execute_command
+
+   end
+
+! =================
+! Inquiry routines
+! =================
+
+   command_failed result (res)
+   ! Return TRUE if the last synchronous command could not be run, or ran and
+   ! returned a non-zero exit status. Always FALSE for an asynchronous command,
+   ! which reports nothing back.
+      self :: IN
+      res :: BIN
+
+      if (NOT .command_wait) then
+         res = FALSE
+      else
+         res = .command_status/=0 OR .command_exit_status/=0
+      end
+
+   end
+
+! =======
+! Gnuplot
+! =======
+
+   call_gnuplot(script,image)
+   ! Render the gnuplot input file "script" into the PNG file "image", by
+   ! actually running gnuplot. This is what makes a plot appear at the end of a
+   ! job without the user having to do anything.
+   !
+   ! The terminal is forced here on the command line rather than written into
+   ! the script, and the image is taken from gnuplot's standard output rather
+   ! than by a "set output" line. That way the very same script still draws to
+   ! your screen when you run it by hand:
+   !
+   !    gnuplot -persist 'script'
+   !
+   ! One script, both uses -- instead of a script that can only ever do one.
+   ! Note the command is built with single quotes only: a double quote would
+   ! have to be escaped through Foo, Fortran and the shell in turn.
+   !
+   ! Failure is reported and stepped over, never fatal. gnuplot is not a build
+   ! dependency of Tonto and is absent on plenty of machines, CI included; a
+   ! missing plotting program must not kill a refinement that has already done
+   ! all of its science. The data file and the script are written either way, so
+   ! nothing is lost but the convenience.
+   !
+   ! MPI: guarded on the master rank, because .execute_command is NOT
+   ! collective. Without the guard every rank spawns its own gnuplot onto the
+   ! same output file.
+      self :: INOUT
+      script,image :: STR, IN
+
+      cmd :: STR(len=1024)
+
+      if (NOT .is_master_processor) return
+
+      cmd = "gnuplot -e 'set terminal pngcairo size 900,900'"
+      cmd = trim(cmd)//" '"//trim(script)//"'"
+      cmd = trim(cmd)//" > '"//trim(image)//"' 2>/dev/null"
+
+      .execute(cmd)
+
+      if (.command_failed) then
+         if (.IO_is_allowed) then
+            write(.stdout_unit,*)
+            write(.stdout_unit,"(a)") "WARNING: could not run gnuplot, so no "//trim(image)//" was made."
+            write(.stdout_unit,"(a)") "Is gnuplot installed and on your PATH? The plot data and the"
+            write(.stdout_unit,"(a)") "gnuplot script were written anyway, so you can do it yourself:"
+            write(.stdout_unit,*)
+            write(.stdout_unit,"(a)") "   gnuplot -persist '"//trim(script)//"'"
+            write(.stdout_unit,*)
+         end
+      end
 
    end
 
@@ -94,21 +221,31 @@ contains
 ! Put
 ! ===
 
-   put
-   ! Put out the command line info
+   put_command_info
+   ! Put out the command and the result of executing it.
+   !
+   ! NOTE: written with raw writes to .stdout_unit rather than through stdout,
+   ! exactly as SYSTEM:die is, and for the same reason: SYSTEM must depend on
+   ! TYPES alone. TEXTFILE uses SYSTEM, so a single stdout.text here puts
+   ! `use TEXTFILE_MODULE` into system.use and the build becomes circular.
+   ! (Confirmed, not assumed -- the first version of this routine did exactly
+   ! that, and system.use grew four TEXTFILE imports.) The cost is that this
+   ! output is unbuffered, so it can appear out of order with respect to
+   ! surrounding stdout; acceptable for what is a diagnostic.
       self :: IN
 
-      stdout.flush
-      stdout.text("======================")
-      stdout.text("Execute system command")
-      stdout.text("======================")
+      if (NOT .IO_is_allowed) return
 
-      stdout.flush
-      stdout.show("Command (program) name       =",.command)
-      stdout.show("Asynchronous?                =",.wait)
-      stdout.show("Exit status (sys. dependent) =",.exit_status)
-      stdout.show("Exit command status          =",.status)
-      stdout.show("Exit command message         =",.message)
+      write(.stdout_unit,*)
+      write(.stdout_unit,"(a)") "======================"
+      write(.stdout_unit,"(a)") "Execute system command"
+      write(.stdout_unit,"(a)") "======================"
+      write(.stdout_unit,*)
+      write(.stdout_unit,"(a)")    "Command                      = "//trim(.command)
+      write(.stdout_unit,"(a,l1)") "Wait for it to finish?       = ",.command_wait
+      write(.stdout_unit,"(a,i0)") "Exit status (sys. dependent) = ",.command_exit_status
+      write(.stdout_unit,"(a,i0)") "Command status               = ",.command_status
+      write(.stdout_unit,"(a)")    "Command message              = "//trim(.command_message)
 
    end
 
