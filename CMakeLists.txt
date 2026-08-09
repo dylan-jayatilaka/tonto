@@ -1018,6 +1018,27 @@ install(TARGETS run_mpi_test_complete DESTINATION bin)
 # Packages
 install(DIRECTORY ${BASIS_SETS} DESTINATION share/tonto)
 
+# The RGBI picture pipeline: two driver scripts and the doctor go on PATH; the
+# LaTeX templates they consume go beside the basis sets.
+#
+# This is what makes an INSTALLED tonto usable with no repository present --
+# until now the scripts copied their templates from ~/bin, so rgbi-scripts/ was
+# the source of truth on no machine but the author's, and the two copies had
+# already drifted. scripts/rgbi_doctor.sh --print-template-dir performs the
+# search (override, checkout, this share directory, ~/bin), and the drivers ask
+# it rather than keeping a second copy of the logic.
+#
+# PROGRAMS, not FILES: the exec bit matters, and make-rgbi-pic invokes
+# make-rgbi-dials as a sibling.
+install(PROGRAMS
+    ${CMAKE_CURRENT_SOURCE_DIR}/rgbi-scripts/make-rgbi-pic
+    ${CMAKE_CURRENT_SOURCE_DIR}/rgbi-scripts/make-rgbi-dials
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/rgbi_doctor.sh
+    DESTINATION bin)
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/rgbi-scripts/
+    DESTINATION share/tonto/rgbi-scripts
+    FILES_MATCHING PATTERN "*.tex" PATTERN "*.sty")
+
 set(CPACK_SET_DESTDIR ON)
 set(CPACK_PACKAGE_NAME ${PROJECT_NAME})
 set(CPACK_PACKAGE_VERSION ${TONTO_VERSION})
