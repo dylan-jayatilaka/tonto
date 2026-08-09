@@ -213,5 +213,5 @@ Two layers, because they cost very different amounts — see `.github/workflows/
   mount and a genuine interop `PATH`. This runs weekly, on demand, and on any push that
   touches the WSL machinery.
 
-See [`CI.md`](CI.md) for how to start either job by hand and how to read the result —
+See [`TONTO_CONTINUOUS_INTEGRATION.md`](TONTO_CONTINUOUS_INTEGRATION.md) for how to start either job by hand and how to read the result —
 including the reason a manual run needs the workflow file on the default branch.

@@ -211,7 +211,7 @@ versioned with the code it described*, so it could rot silently. Do not add docu
 - `docs/BUILDING_TONTO.md` — **the** build document: prerequisites, all build types, MPI, clusters, and
   macOS and Windows/WSL. The README quickstart is the only build instructions outside it.
 - `docs/RUNNING_TONTO.md` — running Tonto: input/output conventions (`stdin`/`stdout`/`IO`), practical set-up.
-- `docs/LAYOUT.md` — source and executable layout, and the module structure picture.
+- `docs/TONTO_LIBRARY_STRUCTURE.md` — source and executable layout, and the module structure picture.
 - `docs/RUNNING_HART.md` — the `hart` program: what it hard-codes, its full `--option` reference, how
   it is tested (`tests/hart/`, the `program:`/`args:` IO keys, the invariant check), and its
   remaining milestones.
@@ -220,7 +220,7 @@ versioned with the code it described*, so it could rot silently. Do not add docu
 - `docs/FOO_GRAMMAR_DOCUMENTATION.md` — full language description and Foo→Fortran conversion rules.
 - `docs/TONTO_AND_MPI.md` — the parallel build, its numeric characterisation, and the defect register.
 - `docs/BUILDING_ON_WINDOWS.md` — the four WSL-specific traps, the CMake guards, and how they are tested.
-- `docs/CI.md` — the CI workflows, how to trigger one manually, and how to read a run.
+- `docs/TONTO_CONTINUOUS_INTEGRATION.md` — the CI workflows, how to trigger one manually, and how to read a run.
 - `docs/MAKING_CALL_GRAPHS.md` — call/use graphs and dead-code elimination.
 - `docs/EDITING_VIM.md` — vim set-up: tags, folding, completion.
 - `DEFERRED.md` — project-wide deferred issues (was `ANTLR4_DEFERRED.md`).

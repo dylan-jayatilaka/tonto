@@ -6,7 +6,7 @@ README only carries a three-command quickstart and points here.
 
 Related: [`BUILDING_ON_WINDOWS.md`](BUILDING_ON_WINDOWS.md) for the WSL-specific traps and how they
 are guarded, [`TONTO_AND_MPI.md`](TONTO_AND_MPI.md) for what a parallel build does and does not
-reproduce, [`CI.md`](CI.md) for what the automated builds do.
+reproduce, [`TONTO_CONTINUOUS_INTEGRATION.md`](TONTO_CONTINUOUS_INTEGRATION.md) for what the automated builds do.
 
 ---
 
@@ -120,7 +120,7 @@ knobs that matter are the **compiler**, the **build type**, and **`-DMPI=1`**.
 When it finishes, your binaries are in the build dir: **`build/tonto`** (the main
 program) and **`build/hart`** (standalone Hirshfeld atom refinement — `hart --help`;
 see [`docs/RUNNING_HART.md`](RUNNING_HART.md) for the full option reference and how it is tested).
-The full source/executable layout is in [`LAYOUT.md`](LAYOUT.md).
+The full source/executable layout is in [`TONTO_LIBRARY_STRUCTURE.md`](TONTO_LIBRARY_STRUCTURE.md).
 
 > **Options are GNU long options.** Every Tonto program takes `--name` only —
 > `tonto --input job.txt`, `hart --basis STO-3G`. The old single-dash spellings
