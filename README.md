@@ -1,10 +1,21 @@
 # Tonto
 
-[![CI (Linux-release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml/badge.svg?branch=release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml?query=branch%3Arelease)
-[![CI (Linux-debug)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml/badge.svg?branch=release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml?query=branch%3Arelease)
-[![CI (Linux-MPI)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-mpi.yml/badge.svg?branch=release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-mpi.yml?query=branch%3Arelease)
-[![CI (WSL-release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml/badge.svg?branch=release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml?query=branch%3Arelease)
-[![CI (WSL-debug)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml/badge.svg?branch=release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml?query=branch%3Arelease)
+|  | release | debug | MPI |
+|---|---|---|---|
+| **Linux** | [![Linux-release](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml/badge.svg?branch=release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml?query=branch%3Arelease) | [![Linux-debug](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml/badge.svg?branch=release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml?query=branch%3Arelease) | [![Linux-MPI](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-mpi.yml/badge.svg?branch=release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-mpi.yml?query=branch%3Arelease) |
+| **Windows/WSL** | [![WSL-release](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml/badge.svg?branch=release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml?query=branch%3Arelease) | [![WSL-debug](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml/badge.svg?branch=release)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml?query=branch%3Arelease) | — |
+| **macOS** | *none yet* | *none yet* | — |
+
+The empty **macOS** row is deliberate, and is the point of the table: macOS
+runners are free for this public repository, and a macOS job is the only thing
+that can guard the two arm64 compiler pins whose failure mode is wrong numbers
+rather than crashes. See the high-priority item in [`DEFERRED.md`](DEFERRED.md).
+
+Two workflows are not build types and sit outside the table:
+[![RGBI toolchain](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-rgbi.yml/badge.svg?branch=antlr4)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-rgbi.yml)
+proves the RGBI picture-tool install list from a bare `ubuntu:24.04`, and
+`ci-rgbi-macos.yml` probes the same list on a real Mac weekly (deliberately
+unbadged: macOS is not supported yet, so it must not read as if it were).
 
 Tonto is a quantum chemistry and crystallography package, with a focus on X-ray
 and electron structure refinement — especially **Hirshfeld atom refinement**,

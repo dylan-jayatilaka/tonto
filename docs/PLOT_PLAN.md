@@ -323,10 +323,18 @@ Full detail in **`docs/RUNNING_RGBI.md`** (developer reference) and
   tools rather than looking for them, which is the whole point. Plus
   `docker/rgbi.Dockerfile` + `ci-rgbi.yml`, which prove the install list from a
   bare `ubuntu:24.04`, and `ci-rgbi-macos.yml`, which probes the Mac list weekly.
-- ⬜ **4. Tonto drawing them automatically** — deferred to its own conversation.
-  Agreed contract: automatic when the dependencies are present, mirroring
-  `SYSTEM:call_gnuplot` (master rank only, never fatal, inputs always left
-  behind). Design in `DEFERRED.md`.
+- ✅ **4. Tonto draws them automatically**, at the end of `ROBY:bond_analysis`,
+  when `make-rgbi-pic` is on the `PATH`. Heavy-atom picture always, `+H` as well
+  when the molecule has hydrogens. It was nearly deferred on a wrong premise —
+  "it touches `SYSTEM`, so it costs a near-full rebuild" — but stage 1 had
+  *already* put `tonto.execute` on `SYSTEM`, so only `roby.foo` changed.
+  **The important half of the contract is the silence**: with the script not
+  installed, Tonto does nothing and says nothing, so a machine without the
+  picture tools behaves exactly as before. Anything else would print a warning
+  into the `stdout` that 13 `tests/rgbi` references are compared against, and
+  they would all have to be reissued to say "you have no LaTeX". Failure of an
+  *installed* script is reported once, never fatal, master rank only, and the
+  report is a raw write because TEXTFILE bookkeeping is collective.
 
 **Five findings worth carrying forward**, all measured rather than inferred:
 

@@ -856,6 +856,12 @@ contains
       .put_populations
       .put_bond_indices
 
+      ! Draw the pictures, if the tools are installed. It must be HERE and not
+      ! at the end of .bond_analysis: that routine only computes the indices,
+      ! while the rgbi-bondtable*.tex and rgbi-atom-labels*.tex fragments the
+      ! picture is made from are written by .put_bond_indices, just above.
+      .draw_pictures
+
    end
 
    bond_analysis :: leaky, private
@@ -963,6 +969,89 @@ contains
       end
 
       .atom.put_xyz_file
+
+   end
+
+   draw_pictures :: private
+   ! Draw the RGBI pictures -- the labelled molecular structure and the page of
+   ! dial diagrams -- by running the make-rgbi-pic script on the .tex fragments
+   ! just written. This is what makes the pictures appear at the end of a job
+   ! without the user having to do anything.
+   !
+   ! SILENT NO-OP IF THE SCRIPT IS NOT INSTALLED, deliberately. The brief was
+   ! "if the components are there, the plots are built automatically", and the
+   ! converse matters just as much: a machine without them must behave exactly
+   ! as it did before, saying nothing. Otherwise every tests/rgbi job would
+   ! start printing a warning into the output it is compared against, and 13
+   ! blessed references would have to be reissued to say "you have no LaTeX".
+   !
+   ! Failure of an INSTALLED script is different, and is reported -- but never
+   ! fatal. The .tex fragments and geometry.xyz are on disk either way, so
+   ! nothing is lost but the convenience, and the user can run the script by
+   ! hand. Same contract as SYSTEM:call_gnuplot for the HAR plots.
+   !
+   ! MPI: guarded on the master rank, because .execute_command is NOT
+   ! collective -- without the guard every rank spawns its own copy of the
+   ! pipeline onto the same output files. The reporting below is therefore a
+   ! raw write to .stdout_unit rather than stdout.text: TEXTFILE bookkeeping
+   ! IS collective, so printing on master alone through stdout would desync the
+   ! ranks (pitfall 8, docs/TONTO_DEVELOPER.md §1a).
+      self :: IN
+
+      has_H :: BIN
+      a :: INT
+
+      if (NOT tonto.is_master_processor) return
+
+      ! Is the script installed? If not, do nothing and say nothing.
+      tonto.execute("command -v make-rgbi-pic >/dev/null 2>&1")
+      if (tonto.command_failed) return
+
+      ! Are there any hydrogens to keep? If not, the +H and -H fragments are
+      ! identical and one drawing is enough.
+      has_H = FALSE
+      do a = 1,.atom.dim
+         if (NOT .atom(a).is_not_a_H_atom) has_H = TRUE
+      end
+
+      .run_picture_script("--no-H")
+      if (has_H) .run_picture_script("--do-H")
+
+   end
+
+   run_picture_script(hopt) :: private
+   ! Run make-rgbi-pic with the hydrogen option "hopt", and report a failure
+   ! without making it fatal. See .draw_pictures for the reasoning.
+      self :: IN
+      hopt :: STR, IN
+
+      cmd :: STR
+
+      ! Built in a STR and passed with trim: BUFFER:put_str copies the DECLARED
+      ! length, so an over-long literal corrupts memory in a release build.
+      cmd = "make-rgbi-pic --quiet "//trim(hopt)
+      if (.output_ci_latex_labels) cmd = trim(cmd)//" --do-ci"
+
+      tonto.execute(trim(cmd))
+
+      if (tonto.command_failed) then
+         if (tonto.IO_is_allowed) then
+            ! To std_err, NOT stdout. A picture is a convenience; stdout is the
+            ! scientific result and is what every blessed reference is compared
+            ! against. Writing here would mean that ANY user with a broken or
+            ! stale make-rgbi-pic on their PATH silently fails 12 of the 13
+            ! tests/rgbi jobs -- which is exactly what happened when this was
+            ! first written, because ~/bin held a copy older than the repo's.
+            ! The message still reaches the terminal and the job's stderr file.
+            write(tonto.std_err_unit,*)
+            write(tonto.std_err_unit,"(a)") "WARNING: could not draw the RGBI pictures with:"
+            write(tonto.std_err_unit,"(a)") "   "//trim(cmd)
+            write(tonto.std_err_unit,"(a)") "The rgbi-*.tex files and geometry.xyz were written anyway,"
+            write(tonto.std_err_unit,"(a)") "so you can do it yourself. To find out what is missing, run:"
+            write(tonto.std_err_unit,"(a)") "   rgbi_doctor.sh"
+            write(tonto.std_err_unit,*)
+         end
+      end
 
    end
 
