@@ -1,0 +1,86 @@
+name: CI (RGBI picture toolchain)
+
+# Proves that docs/INSTALLING_RGBI.md is COMPLETE, by building a machine that
+# has nothing and installing exactly what that document tells a workshop
+# participant to install.
+#
+# The RGBI pictures need five ecosystems to line up (Open Babel, Indigo,
+# mol2chemfig, TeX Live/chemfig, ghostscript). An install list checked against
+# a developer's machine proves nothing: that machine has years of accumulated
+# packages. So this starts from bare ubuntu:24.04 in a container. If the list is
+# wrong, this workflow is the only thing that can tell us.
+#
+# COST, and why it is bounded
+#
+#   ~4-6 minutes cold, nearly all of it the TeX Live download (several hundred
+#   MB even with --no-install-recommends). To keep that off every push:
+#
+#     . the push/PR trigger has a `paths:` filter -- the install list can only
+#       become wrong when the toolchain files, the doctor, or the Dockerfile
+#       change, so those are what fire it;
+#     . layers are cached through the GitHub Actions cache, so a run that does
+#       not touch the apt line reuses it and finishes in well under a minute;
+#     . it runs weekly regardless, because the list can also rot from the
+#       OUTSIDE -- an upstream package renamed or dropped is exactly the kind
+#       of breakage nobody notices until a workshop morning.
+#
+# What this does NOT cover: WSL (a container is ordinary Linux -- see
+# scripts/wsl_selftest.sh and .github/workflows/ci-wsl.yml), macOS (deferred),
+# and building Tonto itself (the other workflows).
+
+on:
+  push:
+    branches: [antlr4, master, release]
+    paths:
+      - 'docker/**'
+      - 'rgbi-scripts/**'
+      - 'scripts/rgbi_doctor.sh'
+      - 'scripts/rgbi_selftest.sh'
+      - 'docs/INSTALLING_RGBI.md'
+      - '.github/workflows/ci-rgbi.yml'
+  pull_request:
+    branches: [antlr4, master, release]
+    paths:
+      - 'docker/**'
+      - 'rgbi-scripts/**'
+      - 'scripts/rgbi_doctor.sh'
+      - 'scripts/rgbi_selftest.sh'
+      - 'docs/INSTALLING_RGBI.md'
+      - '.github/workflows/ci-rgbi.yml'
+  schedule:
+    # Fridays 05:23 UTC. Off the hour: scheduled jobs bunch up on round numbers.
+    - cron: '23 5 * * 5'
+  workflow_dispatch:
+
+jobs:
+  install-list:
+    name: install list is complete (bare ubuntu:24.04)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up buildx (needed for the layer cache)
+        uses: docker/setup-buildx-action@v3
+
+      # The Dockerfile does the asserting, not this workflow: it runs the
+      # doctor (must be all PASS), then the doctor's self-test, then draws both
+      # pictures from a real N2 run's fragments and checks the PDFs have pages.
+      # A failure here means the documented install list is wrong.
+      - name: Build the image (this IS the test)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/rgbi.Dockerfile
+          push: false
+          load: true
+          tags: tonto-rgbi:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Re-run the doctor in the finished image and keep its output in the log,
+      # so a green run still shows WHAT was verified rather than only that it
+      # passed.
+      - name: Show the doctor's verdict
+        run: docker run --rm tonto-rgbi:ci scripts/rgbi_doctor.sh
