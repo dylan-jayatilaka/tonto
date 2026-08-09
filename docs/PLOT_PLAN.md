@@ -23,7 +23,7 @@ Dylan's brief, in his words, in order:
 
 > In the final stage we need to make the WORKSHOP docs.
 
-## Stage 1 — reactivate SYSTEM_COMMAND  (IN PROGRESS)
+## Stage 1 — reactivate SYSTEM_COMMAND  ✅ DONE (2026-08-09)
 
 `SYSTEM_COMMAND` was a dead module: a real `module` with its own type, referenced
 by nothing that is built, and it could not have compiled as written
@@ -57,36 +57,65 @@ on whichever rank reaches it. Callers must guard with `.is_master_processor` or
 every rank spawns its own copy of gnuplot onto the same output file. Documented
 in the module header and the SYSTEM section.
 
-## Stage 2 — the post-HAR plots
+## Stage 2 — the post-HAR plots  ✅ DONE (2026-08-09)
 
-Six plot files are written at the end of a HAR, by these `stdout.redirect` sites:
+**Five** plots are written at the end of a HAR by `DIFFRACTION_DATA.PUT:
+put_F_calc_plots` (not four — `RECOVERY.md` had it wrong), plus the QQ plot from
+`VEC{REFLECTION}:put_labelled_F_qq_plot`. The last two need `refine_extinction`,
+so a job without it writes four:
 
 ```
-foofiles/diffraction_data.put.foo:1363   stdout.F_z_vs_stl
-foofiles/diffraction_data.put.foo:1380   stdout.Delta_F_vs_stl
-foofiles/diffraction_data.put.foo:1435   stdout.Delta_F_pred_z_vs_F_pred
-foofiles/diffraction_data.put.foo:1454   stdout.Delta_F_pred_z_vs_stl
-foofiles/vec{reflection}.foo:3206        stdout.QQ_plot_with_hkl
-foofiles/vec{reflection}.foo:3236        stdout.QQ_plot.gunplot
+stdout.F_z_vs_stl                stdout.Delta_F_pred_z_vs_F_pred   (extinction only)
+stdout.Delta_F_vs_stl            stdout.Delta_F_pred_z_vs_stl      (extinction only)
+stdout.F_z_vs_F_exp
+stdout.QQ_plot                   (+ stdout.QQ_plot_with_hkl, the tabular form)
 ```
 
-`DEFERRED.md` records two known defects here: the names are hard-coded and ignore
-the job name, so two runs in one directory overwrite each other's plots; and
-`.gunplot` is a typo for `.gnuplot`.
+Each now writes three files: the data, a `.gnuplot` script, and — because
+`tonto.call_gnuplot(script,image)` runs gnuplot on the spot — the `.png` itself.
 
-To do:
+All six brief points are done:
 
-1. Only the QQ plot gets a gnuplot script today. Write one for the other four.
-2. **1:1 aspect ratio** on all of them (`set size square`) — the reference is
-   Fig. S8, p. 10 §S9 of the Davidson 2022 Acta Cryst B supplement: square
-   panels, dotted grid, data curve plus a straight reference line.
-3. **Line of best fit on the QQ plot**, with its **equation centred at the
-   bottom** of the plot.
-4. **Label the six worst outliers** (above a threshold) with the reflection's
-   `(h k l)` — on the QQ plot *and* on the other plots.
-5. **Generate the plots automatically** by invoking gnuplot through
-   SYSTEM_COMMAND at the end of the job (master rank only).
-6. Test on **nh3**; show Dylan the resulting plots.
+1. ✅ A gnuplot script for every plot, not just the QQ one, from the one shared
+   emitter `VEC{REFLECTION}:put_gnuplot_script`.
+2. ✅ **1:1 aspect ratio** (`set size square`), dotted grid — Fig. S8, p. 10 §S9
+   of the Davidson 2022 Acta Cryst B supplement.
+3. ✅ **Line of best fit on the QQ plot**, gnuplot's own `fit`, with the equation
+   `sprintf`'d and placed `at graph 0.5, graph 0.045 center` — i.e. centred at
+   the bottom, and correct because gnuplot substitutes the fitted `a`, `b` at
+   plot time rather than Tonto hard-coding a number into the label.
+4. ✅ **Six worst outliers labelled `(h k l)`** on every plot. `h`,`k`,`l` are
+   written as columns 3-5 of each data file and selected in gnuplot with
+   `abs($2)>=thr ? sprintf(...) : ''`. The threshold comes from
+   `VEC{REFLECTION}:outlier_threshold`, which sorts `abs(y)` and returns the
+   **midpoint** between the 6th- and 7th-largest — taking the 6th-largest itself
+   gave five labels, because printing `thr` at `e14.6` rounded it a hair above
+   the very point that defined it.
+5. ✅ **Generated automatically**, master rank only.
+6. ✅ Tested on **nh3** (`tests/short/nh3_rhf_DZP_HAR`) and shown.
+
+The `.gunplot` → `.gnuplot` typo was fixed on the way, in the source and in the
+three test `IO` manifests that listed it.
+
+### Two things worth remembering from the doing
+
+- **`stdout.text` silently corrupts memory past 256 characters in a release
+  build.** `BUFFER:put_str` copies `len(string)` — the *declared* length — into
+  `BUFFER.string`, which is `STR(len=BSTR_SIZE)` = 256. (`BSTR` is not "bigger";
+  `STR_SIZE` and `BSTR_SIZE` are both 256.) The guard is an `ENSURE`, so it
+  compiles away in release and you get a SEGV in `__memmove_avx_unaligned_erms`
+  instead of a message. Declaring `cmd :: STR` and passing `trim(cmd)` fixes it.
+  A `DIE_IF` there would close the whole class — see the open item below.
+- **SYSTEM may depend on TYPES alone.** TEXTFILE uses SYSTEM, so a single
+  `stdout.text` inside a SYSTEM_COMMAND routine makes the build circular. That is
+  why `put_command_info` and `call_gnuplot` write raw to `.stdout_unit`, exactly
+  as `SYSTEM:die` does.
+
+### Open follow-up
+
+Add a `DIE_IF` to `TEXTFILE:text` / `BUFFER:put_str` so an over-long line reports
+itself instead of dumping core. Live in release, unlike the `ENSURE` that is
+there now.
 
 ## Stage 3 — the WORKSHOP docs
 

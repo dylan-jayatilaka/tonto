@@ -209,8 +209,8 @@ rather than merely producing plausible numbers.
 ## 5. Known defects
 
 - The `stdout.*` plot files ignore `--job`, so two runs in one directory
-  overwrite each other's plots. One of them, `stdout.QQ_plot.gunplot`, is a
-  typo for `.gnuplot` — its own header says "Gnuplot input file".
+  overwrite each other's plots. (The `stdout.QQ_plot.gunplot` typo that used to
+  sit alongside this was fixed on 2026-08-09 with the gnuplot plot work.)
 - `<job>.err` is left behind on a clean run rather than deleted, and a run that
   stops early (`--help`, a usage error) leaves a stray file called `stderr`.
   `tonto` does the same, which is why so many `IO` manifests list `delete: stderr`.
@@ -501,9 +501,10 @@ out in both the `select case` block and the help text. Reviving one means
 uncommenting both halves; the invariant check compares only uncommented labels,
 so a half-revived option is caught.
 
-**H3 — derive the `stdout.*` scratch names from `<job>`,** and fix the
-`.gunplot` typo. In `foofiles/diffraction_data.put.foo` and
-`foofiles/vec{reflection}.foo`; it affects `tonto` HAR jobs too.
+**H3 — derive the `stdout.*` scratch names from `<job>`.** In
+`foofiles/diffraction_data.put.foo` and `foofiles/vec{reflection}.foo`; it
+affects `tonto` HAR jobs too. (The `.gunplot` half of this item is **done** —
+renamed to `.gnuplot` on 2026-08-09.)
 
 **H4 — test the `.cif2` restart round trip.**
 

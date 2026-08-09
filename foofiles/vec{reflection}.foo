@@ -3225,7 +3225,21 @@ contains
       a.sort                  ! ascending
 
       k = min(n_lab,n)
-      res = a(n-k+1)
+
+      ! Midway between the k-th and (k+1)-th largest, NOT the k-th itself.
+      !
+      ! The threshold is written into the gnuplot script as a decimal, and the
+      ! script tests abs(y)>=thr. If thr were exactly the k-th largest value,
+      ! rounding it to a printable number can push it a hair ABOVE that value --
+      ! and the very point which defines the threshold then fails its own test.
+      ! Measured, not theorised: with thr = the 6th largest, nh3 labelled five
+      ! points on the QQ plot instead of six. Halfway between neighbours cannot
+      ! round the wrong side of either.
+      if (n>k) then
+         res = HALF*(a(n-k+1)+a(n-k))
+      else
+         res = a(1)                        ! everything is labelled anyway
+      end
 
       a.destroy
 
@@ -3254,7 +3268,7 @@ contains
       threshold :: REAL, IN
       with_fit :: BIN, IN, optional
 
-      cmd :: STR(len=1024)
+      cmd :: STR
       fit :: BIN
 
       fit = FALSE
@@ -3302,7 +3316,7 @@ contains
          stdout.text("# Its equation, centred along the bottom of the plot")
          cmd = "set label 1 sprintf('y = %.3f x + %.3f', a, b)"
          cmd = trim(cmd)//" at graph 0.5, graph 0.045 center front"
-         stdout.text(cmd)
+         stdout.text(trim(cmd))
       end
 
       ! The outlier-labelling threshold
@@ -3311,16 +3325,28 @@ contains
       stdout.text("# Tonto set it to the |y| of the worst few points; change it freely.")
       stdout.text("thr = "//trim(threshold.to_str("e14.6")))
 
-      ! Plot. Built as ONE line: a trailing backslash would be eaten by the C
-      ! preprocessor, which still runs over the generated Fortran (see CLAUDE.md
-      ! S1 -- the translator output is pre-CPP).
+      ! Plot.
+      !
+      ! Emitted as several gnuplot continuation lines rather than one long one,
+      ! because NO line handed to stdout.text may exceed BSTR_SIZE (256): the
+      ! TEXTFILE buffer it is copied into is STR(len=BSTR_SIZE), and overrunning
+      ! it segfaults inside memmove with no diagnostic. The single-line version
+      ! of this command was 265 characters and did exactly that.
+      !
+      ! The trailing backslashes are safe. The C preprocessor still runs over the
+      ! generated Fortran (CLAUDE.md S1), but it only splices a backslash that is
+      ! the last character on a *source* line -- here each one is inside a string
+      ! literal, followed by the closing quote and bracket.
       stdout.flush
       stdout.text("# Plot")
-      cmd = "plot '"//trim(data)//"' using 1:2 with points pt 7 ps 0.3 lc rgb 'dark-violet'"
-      if (fit) cmd = trim(cmd)//", l(x) with lines lw 2 lc rgb 'skyblue'"
-      cmd = trim(cmd)//", '"//trim(data)//"' using 1:2:(abs($2)>=thr ? sprintf('(%d %d %d)',$3,$4,$5) : '')"
-      cmd = trim(cmd)//" with labels offset char 1,0.8 font ',7' tc rgb 'red'"
-      stdout.text(cmd)
+      stdout.text("plot '"//trim(data)//"' using 1:2 \")
+      stdout.text("        with points pt 7 ps 0.3 lc rgb 'dark-violet', \")
+      if (fit) then
+      stdout.text("     l(x) with lines lw 2 lc rgb 'skyblue', \")
+      end
+      stdout.text("     '"//trim(data)//"' \")
+      stdout.text("        using 1:2:(abs($2)>=thr ? sprintf('(%d %d %d)',$3,$4,$5) : '') \")
+      stdout.text("        with labels offset char 1,0.8 font ',7' tc rgb 'red'")
 
       ! PDF
       stdout.flush
