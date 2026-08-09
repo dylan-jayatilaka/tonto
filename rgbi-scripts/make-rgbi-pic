@@ -1,153 +1,207 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
-# Usage
+# make-rgbi-pic -- draw the labelled molecular structure from an RGBI job,
+#                  and then the dial diagrams.
 #
-# In the Tonto job folder, type:
+# Run it in the Tonto job folder, after rgbi (or a tonto job with
+# roby_analysis) has written its rgbi-*.tex fragments:
 #
-#    make-rgbi-pic [--no-tonto] [--do-xyz] 
+#     make-rgbi-pic                     # uses the geometry.xyz Tonto wrote
+#     make-rgbi-pic --do-H              # keep the hydrogens
+#     make-rgbi-pic --molden foo.molden # lay out from a wavefunction file
 #
-# Output pictures:
+# OUTPUT
 #
-#   rgbi-mol-structure.pdf
-#   rgbi-dial-diagrams.pdf
+#     rgbi-mol-structure-H.pdf   (or ...+H.pdf with --do-H)
+#     rgbi-dial-table-H.pdf      (or ...+H.pdf), via make-rgbi-dials
 #
-# Program requirements:
+# OPTIONS
 #
-# - This script
-# - tonto
-# - openbabel
-# - python
+#     --molden <file>   lay the molecule out from a .molden file
+#     --fchk <file>     lay the molecule out from a Gaussian .FChk file
+#     --xyz <file>      lay it out from an .xyz file  [default: geometry.xyz]
+#     --do-H, --no-H    keep or delete hydrogens             [default: delete]
+#     --do-ci, --no-ci  print c/i indices instead of % covalency  [default: %]
+#     --do-xyz          let mol2chemfig recompute the 2D coordinates
+#     --do-tonto        run `tonto` first, to make the .tex fragments
+#     --skip-doctor     do not run the dependency preflight
+#     --quiet           hide the LaTeX chatter (errors are still reported)
+#     --help            this text
 #
-# And, to draw latex molecules, install:
+# WHY THERE IS NO REQUIRED INPUT FILE
 #
-# - python Indigo 
-#   (https://github.com/epam/Indigo)
-#   It might require installing cairo fonts
-#   try: sudo apt-get install python-indigo
-#   or : pip install epam.indigo
-#   (lifescience.opensource.epam.com/indigo/installation.html)
+# Open Babel derives the 2D depiction from coordinates alone -- it perceives
+# the bonding itself, and gets nothing extra from a wavefunction file. Tonto
+# already writes geometry.xyz on every run, so that is the default. Verified on
+# ylid (24 atoms): the .mol built from geometry.xyz is byte-identical to the
+# one built from ylid.molden. --molden and --fchk remain for existing habits.
 #
-# - mol2chemfig 
-#   (pip install mol2chemfigPy3)
+# REQUIREMENTS
 #
-# And from the texlive suite, install:
-# - pdflatex
-# - pdfcrop
+# Run `rgbi_doctor.sh` -- it checks them and says how to install what is
+# missing. In short: Open Babel, mol2chemfig (which brings Indigo), and a TeX
+# Live with chemfig, plus ghostscript for pdfcrop. See docs/INSTALLING_RGBI.md.
 #
-# Input file requirements
-# - The stdin file for a Tonto RGBI job <---
-# - The Test.FChk  for a Tonto RGBI job <---
-# - The rgbi-mol-structure.tex file
-# - The rgbi-bondtable+H.tex made by Tonto RGBI job
-# - The rgbi-bondtable-H.tex made by Tonto RGBI job
-# - mol2chemfig.sty file
-# - cf-pastebin.tex ... the old chemfig.tex
+# Dial diagrams alone need none of the first three: make-rgbi-dials.
 
-# Defaults
+set -euo pipefail
+
+# ------------------------------------------------------------------ defaults
 mold=""
 fchk=""
+xyz=""
 do_tonto=0
 do_xyz=0
 do_H=0
 do_ci=0
+quiet=0
+skip_doctor=0
 
-# Process options
-while [[ "$#" > 0 ]]; do case $1 in
-  --molden) 
-    shift
-    mold="$1"
-    ;;
-  --fchk) 
-    shift
-    fchk="$1"
-    ;;
-  --no-tonto) do_tonto=0;;
-  --do-tonto) do_tonto=1;;
-  --do-xyz)   do_xyz=1;;
-  --do-H)     do_H=1;;
-  --no-H)     do_H=0;;
-  --do-ci)    do_ci=1;;
-  --no-ci)    do_ci=0;;
-  *) echo "Unknown parameter passed: $1"; exit 1;;
+here_of() { local s="$1"; case "$s" in */*) printf '%s' "${s%/*}" ;; *) printf '.' ;; esac; }
+HERE="$(cd "$(here_of "${BASH_SOURCE[0]}")" && pwd)"
+SELF="$(basename "${BASH_SOURCE[0]}")"
+
+usage() { sed -n '2,50p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+note()  { [ "$quiet" = 1 ] || printf '%s: %s\n' "$SELF" "$1"; }
+die()   { printf '%s: %s\n' "$SELF" "$1" >&2; exit 1; }
+
+# ----------------------------------------------------------------- options
+while [ $# -gt 0 ]; do case "$1" in
+  --molden)      shift; [ $# -gt 0 ] || die "--molden needs a file"; mold="$1" ;;
+  --fchk)        shift; [ $# -gt 0 ] || die "--fchk needs a file";   fchk="$1" ;;
+  --xyz)         shift; [ $# -gt 0 ] || die "--xyz needs a file";    xyz="$1"  ;;
+  --no-tonto)    do_tonto=0 ;;
+  --do-tonto)    do_tonto=1 ;;
+  --do-xyz)      do_xyz=1 ;;
+  --do-H)        do_H=1 ;;
+  --no-H)        do_H=0 ;;
+  --do-ci)       do_ci=1 ;;
+  --no-ci)       do_ci=0 ;;
+  --quiet|-q)    quiet=1 ;;
+  --skip-doctor) skip_doctor=1 ;;
+  --help|-h)     usage; exit 0 ;;
+  *) die "unknown option $1 (try --help)" ;;
 esac; shift; done
 
-# tonto: get rgbi-bondtable+H/-H.tex
-if [[ do_tonto -gt 0 ]]; then
-   tonto
+# ------------------------------------------------------- find the companions
+# The doctor is the single implementation of "where are the templates", so
+# there is no second copy of that search here to drift out of step.
+DOCTOR=""
+for c in "$HERE/rgbi_doctor.sh" "$HERE/../scripts/rgbi_doctor.sh"; do
+    [ -x "$c" ] && { DOCTOR="$c"; break; }
+done
+[ -n "$DOCTOR" ] || DOCTOR="$(command -v rgbi_doctor.sh 2>/dev/null || true)"
+
+if [ -n "$DOCTOR" ] && [ "$skip_doctor" = 0 ]; then
+    "$DOCTOR" --quiet || die "dependencies are missing -- see the report above, or run ${DOCTOR##*/} in full"
 fi
 
-# Babel: convert fchk to structure.mol
-rm rgbi-structure.tex
-if [[ -n "$fchk" ]]; then
-  if [[ do_H -gt 0 ]]; then
-     obabel --gen2d    -ifchk $fchk -omol > rgbi-structure.mol # keep H atoms
-     cp rgbi-bondtable+H.tex   rgbi-bondtable.tex
-     cp rgbi-atom-labels+H.tex rgbi-atom-labels.tex
-  else
-     obabel --gen2d -d -ifchk $fchk -omol > rgbi-structure.mol # delete H atoms
-     cp rgbi-bondtable-H.tex   rgbi-bondtable.tex
-     cp rgbi-atom-labels-H.tex rgbi-atom-labels.tex
-  fi
-elif [[ -n "$mold" ]]; then
-  if [[ do_H -gt 0 ]]; then
-     obabel --gen2d    -imolden $mold -omol > rgbi-structure.mol # keep H atoms
-     cp rgbi-bondtable+H.tex   rgbi-bondtable.tex
-     cp rgbi-atom-labels+H.tex rgbi-atom-labels.tex
-  else
-     obabel --gen2d -d -imolden $mold -omol > rgbi-structure.mol # delete H atoms
-     cp rgbi-bondtable-H.tex   rgbi-bondtable.tex
-     cp rgbi-atom-labels-H.tex rgbi-atom-labels.tex
-  fi
+if [ -n "$DOCTOR" ]; then
+    TEMPLATES="$("$DOCTOR" --print-template-dir)" \
+        || die "cannot locate the LaTeX templates; set TONTO_RGBI_SCRIPT_DIRECTORY"
 else
-   echo "Error: No input provided. Use --fchk or --molden option."
-   exit 1
+    TEMPLATES="${TONTO_RGBI_SCRIPT_DIRECTORY:-$HERE}"
+    [ -r "$TEMPLATES/rgbi-mol-structure.tex" ] \
+        || die "no rgbi_doctor.sh and no templates in $TEMPLATES; set TONTO_RGBI_SCRIPT_DIRECTORY"
 fi
 
-# Use CI labels?
-if [[ do_ci -gt 0 ]]; then
-   echo "\renewcommand{\percentc}{}" >> rgbi-structure.tex
+# ------------------------------------------------------------------ helpers
+
+# Run pdflatex TWICE, and say so if it fails.
+#
+# Twice is not superstition: the bond labels are placed by TikZ node references
+# resolved through the .aux file, so a single pass leaves them floating in a
+# cluster beside the molecule. And the output is NOT sent to /dev/null the way
+# it used to be -- that is how a missing package or a broken fragment turned
+# into "the picture just doesn't appear".
+run_latex() {
+    local tex="$1" stem="${1%.tex}" pass
+    rm -f "$stem.aux"
+    for pass in 1 2; do
+        if ! pdflatex -interaction=nonstopmode -halt-on-error "$tex" > "$stem.log" 2>&1; then
+            printf '%s: pdflatex failed on %s (pass %s). The error was:\n' "$SELF" "$tex" "$pass" >&2
+            grep -A3 -m3 '^!' "$stem.log" | sed 's/^/    /' >&2 || true
+            printf '    full log: %s\n' "$stem.log" >&2
+            exit 1
+        fi
+    done
+    [ -s "$stem.pdf" ] || die "pdflatex reported success but produced no $stem.pdf"
+}
+
+# Crop, and only replace the original once the crop has actually worked.
+crop_to() {
+    local pdf="$1" dest="$2" stem="${1%.pdf}"
+    pdfcrop "$pdf" "$stem-crop.pdf" > "$stem-crop.log" 2>&1 \
+        || { printf '%s: pdfcrop failed on %s:\n' "$SELF" "$pdf" >&2
+             sed 's/^/    /' "$stem-crop.log" >&2
+             die "is ghostscript installed? pdfcrop needs it"; }
+    [ -s "$stem-crop.pdf" ] || die "pdfcrop produced no output for $pdf"
+    mv -f "$stem-crop.pdf" "$dest"
+    note "wrote $dest"
+}
+
+# ------------------------------------------------------------------- tonto
+if [ "$do_tonto" -gt 0 ]; then
+    note "running tonto to produce the rgbi-*.tex fragments"
+    tonto
 fi
 
-# mol2chemfig: convert .mol to .tex
-if [[ do_xyz -gt 0 ]]; then
-   mol2chemfig \
-     -n -wo \
-     --markers a \
-     --hydrogens keep \
-     --recalculate-coordinates \
-     rgbi-structure.mol >> rgbi-structure.tex
+# --------------------------------------------------------------- the layout
+# Pick the input, and check it exists before handing it to Open Babel: an
+# absent file used to produce an empty .mol that everything downstream
+# cheerfully consumed.
+if   [ -n "$fchk" ]; then IN="$fchk"; INFMT="fchk"
+elif [ -n "$mold" ]; then IN="$mold"; INFMT="molden"
+elif [ -n "$xyz"  ]; then IN="$xyz";  INFMT="xyz"
+else                      IN="geometry.xyz"; INFMT="xyz"
+fi
+[ -r "$IN" ] || die "cannot read $IN -- run rgbi/tonto first, or name a file with --molden/--fchk/--xyz"
+
+if [ "$do_H" -gt 0 ]; then
+    HSUF="+H"; HFLAG=""            # keep hydrogens
 else
-   mol2chemfig \
-     -n -wo \
-     --markers a \
-     --hydrogens keep \
-     rgbi-structure.mol >> rgbi-structure.tex
-fi
- 
-# Get RGBI tex template
-cp ~/bin/cf-pastebin.tex .
-cp ~/bin/mol2chemfig.sty .
-cp ~/bin/rgbi-mol-structure.tex .
-
-# Make the pdf image
-pdflatex rgbi-mol-structure.tex >& /dev/null
-pdflatex rgbi-mol-structure.tex >& /dev/null
-
-# Crop
-pdfcrop  rgbi-mol-structure.pdf
-
-# Move to right file name
-if [[ do_H -gt 0 ]]; then
-   mv rgbi-mol-structure-crop.pdf rgbi-mol-structure+H.pdf
-else
-   mv rgbi-mol-structure-crop.pdf rgbi-mol-structure-H.pdf
+    HSUF="-H"; HFLAG="-d"          # delete them
 fi
 
-# Dial diagram template
-if [[ do_H -gt 0 ]]; then
-   ~/bin/make-rgbi-dials --do-H
+for f in "rgbi-bondtable$HSUF.tex" "rgbi-atom-labels$HSUF.tex"; do
+    [ -r "$f" ] || die "missing $f -- it is written by the RGBI job (needs output_theta_info, and a job that ran)"
+done
+cp -f "rgbi-bondtable$HSUF.tex"   rgbi-bondtable.tex
+cp -f "rgbi-atom-labels$HSUF.tex" rgbi-atom-labels.tex
+
+note "laying out $IN with Open Babel ($INFMT, hydrogens $([ "$do_H" -gt 0 ] && echo kept || echo deleted))"
+obabel --gen2d $HFLAG -i"$INFMT" "$IN" -omol > rgbi-structure.mol 2> rgbi-obabel.log \
+    || { sed 's/^/    /' rgbi-obabel.log >&2; die "obabel failed on $IN"; }
+[ -s rgbi-structure.mol ] || { sed 's/^/    /' rgbi-obabel.log >&2; die "obabel produced an empty rgbi-structure.mol"; }
+
+# --------------------------------------------------------- chemfig markup
+rm -f rgbi-structure.tex
+if [ "$do_ci" -gt 0 ]; then
+    printf '\\renewcommand{\\percentc}{}\n' >> rgbi-structure.tex
+fi
+
+M2C_ARGS=(-n -wo --markers a --hydrogens keep)
+[ "$do_xyz" -gt 0 ] && M2C_ARGS+=(--recalculate-coordinates)
+
+mol2chemfig "${M2C_ARGS[@]}" rgbi-structure.mol >> rgbi-structure.tex 2> rgbi-mol2chemfig.log \
+    || { sed 's/^/    /' rgbi-mol2chemfig.log >&2; die "mol2chemfig failed (run rgbi_doctor.sh)"; }
+[ -s rgbi-structure.tex ] \
+    || { sed 's/^/    /' rgbi-mol2chemfig.log >&2
+         die "mol2chemfig produced nothing. If it is installed but its virtualenv is broken, run: pipx reinstall-all"; }
+
+# ------------------------------------------------------------------ draw it
+for f in cf-pastebin.tex mol2chemfig.sty rgbi-mol-structure.tex; do
+    cp -f "$TEMPLATES/$f" .
+done
+
+run_latex rgbi-mol-structure.tex
+crop_to rgbi-mol-structure.pdf "rgbi-mol-structure$HSUF.pdf"
+
+# -------------------------------------------------------------- dial diagrams
+DIALS="$HERE/make-rgbi-dials"
+[ -x "$DIALS" ] || DIALS="$(command -v make-rgbi-dials 2>/dev/null || true)"
+if [ -n "$DIALS" ] && [ -x "$DIALS" ]; then
+    "$DIALS" $([ "$do_H" -gt 0 ] && echo --do-H || echo --no-H) $([ "$quiet" = 1 ] && echo --quiet)
 else
-   ~/bin/make-rgbi-dials --no-H
-fi 
-
-
+    note "make-rgbi-dials not found beside me; skipping the dial diagrams"
+fi

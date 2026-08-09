@@ -1,66 +1,132 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
-# Usage
+# make-rgbi-dials -- draw the page of Roby-Gould dial diagrams.
 #
-# In the Tonto job folder, type:
+# Run it in the Tonto job folder, after rgbi (or a tonto job with
+# roby_analysis) has written its rgbi-dial-*.tex fragments:
 #
-#    make-rgbi-dials [--do-tonto] 
+#     make-rgbi-dials            # heavy atoms only
+#     make-rgbi-dials --do-H     # include bonds to hydrogen
 #
-# Output
+# OUTPUT
 #
-#   rgbi-dial-diagrms.pdf
+#     rgbi-dial-table-H.pdf      (or ...+H.pdf with --do-H)
 #
-# Requirements
+# OPTIONS
 #
-# - This script
-# - The rgbi-dial-diagrms.tex file
-# - tonto
-# - The stdin file for a Tonto RGBI job <---
-# - The rgbi-dial-figures.tex made by the Tonto RGBI job
-# - tonto
+#     --do-H, --no-H    include or omit bonds to hydrogen    [default: omit]
+#     --do-tonto        run `tonto` first, to make the .tex fragments
+#     --skip-doctor     do not run the dependency preflight
+#     --quiet           hide the LaTeX chatter (errors are still reported)
+#     --help            this text
+#
+# REQUIREMENTS
+#
+# Only LaTeX: a TeX Live with chemfig/tikz, and ghostscript for pdfcrop. It
+# needs NEITHER Open Babel, NOR Indigo, NOR mol2chemfig -- those are for the
+# structure picture only (make-rgbi-pic). So if the awkward half of the
+# toolchain defeats you, you can still draw these.
+#
+#     rgbi_doctor.sh --dials-only
+#
+# THE FRAGMENTS IT CONSUMES
+#
+# Tonto writes them only when the job asks for theta information:
+#
+#     robydata= { output_theta_info= YES }        # this is the default
+#
+# It writes rgbi-dial-table{+,-}H.tex, which \input one file per bond named
+# after the bond NUMBER alone -- 1+H.tex, 2+H.tex and so on, with no prefix.
+# They look like junk in a directory listing and are not.
 
-# Defaults
+set -euo pipefail
+
 do_tonto=0
 do_H=0
+quiet=0
+skip_doctor=0
 
-# Process options
-while [[ "$#" > 0 ]]; do case $1 in
-  --do-tonto) do_tonto=1;;
-  --do-H)     do_H=1;;
-  --no-H)     do_H=0;;
-  *) echo "Unknown parameter passed: $1"; exit 1;;
+here_of() { local s="$1"; case "$s" in */*) printf '%s' "${s%/*}" ;; *) printf '.' ;; esac; }
+HERE="$(cd "$(here_of "${BASH_SOURCE[0]}")" && pwd)"
+SELF="$(basename "${BASH_SOURCE[0]}")"
+
+usage() { sed -n '2,42p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+note()  { [ "$quiet" = 1 ] || printf '%s: %s\n' "$SELF" "$1"; }
+die()   { printf '%s: %s\n' "$SELF" "$1" >&2; exit 1; }
+
+while [ $# -gt 0 ]; do case "$1" in
+  --do-tonto)    do_tonto=1 ;;
+  --no-tonto)    do_tonto=0 ;;
+  --do-H)        do_H=1 ;;
+  --no-H)        do_H=0 ;;
+  --quiet|-q)    quiet=1 ;;
+  --skip-doctor) skip_doctor=1 ;;
+  --help|-h)     usage; exit 0 ;;
+  *) die "unknown option $1 (try --help)" ;;
 esac; shift; done
 
-# tonto: get bondtable.tex
-if [[ do_tonto -gt 0 ]]; then
-   tonto
+DOCTOR=""
+for c in "$HERE/rgbi_doctor.sh" "$HERE/../scripts/rgbi_doctor.sh"; do
+    [ -x "$c" ] && { DOCTOR="$c"; break; }
+done
+[ -n "$DOCTOR" ] || DOCTOR="$(command -v rgbi_doctor.sh 2>/dev/null || true)"
+
+if [ -n "$DOCTOR" ] && [ "$skip_doctor" = 0 ]; then
+    # --dials-only: this script genuinely does not need the arcane half, so it
+    # must not refuse to run because that half is missing.
+    "$DOCTOR" --quiet --dials-only \
+        || die "LaTeX dependencies are missing -- see above, or run ${DOCTOR##*/} --dials-only in full"
 fi
 
-# Get RGBI tex template
-cp ~/bin/cf-pastebin.tex .
-cp ~/bin/rgbi-dial-header.tex .
-cp ~/bin/rgbi-dial-diagrams.tex .
-cp ~/bin/mol2chemfig.sty .
-
-if [[ do_H -gt 0 ]]; then
-
-   # Make the pdf of dial table
-   pdflatex rgbi-dial-table+H.tex >& /dev/null
-   pdflatex rgbi-dial-table+H.tex >& /dev/null
-
-   # Crop
-   pdfcrop  rgbi-dial-table+H.pdf
-   mv rgbi-dial-table+H-crop.pdf rgbi-dial-table+H.pdf
-
+if [ -n "$DOCTOR" ]; then
+    TEMPLATES="$("$DOCTOR" --print-template-dir)" \
+        || die "cannot locate the LaTeX templates; set TONTO_RGBI_SCRIPT_DIRECTORY"
 else
-
-   # Make the pdf of dial table
-   pdflatex rgbi-dial-table-H.tex >& /dev/null
-   pdflatex rgbi-dial-table-H.tex >& /dev/null
-
-   # Crop
-   pdfcrop  rgbi-dial-table-H.pdf
-   mv rgbi-dial-table-H-crop.pdf rgbi-dial-table-H.pdf
-
+    TEMPLATES="${TONTO_RGBI_SCRIPT_DIRECTORY:-$HERE}"
+    [ -r "$TEMPLATES/rgbi-dial-header.tex" ] \
+        || die "no rgbi_doctor.sh and no templates in $TEMPLATES; set TONTO_RGBI_SCRIPT_DIRECTORY"
 fi
 
+# Two passes, and the log is kept rather than discarded -- see make-rgbi-pic.
+run_latex() {
+    local tex="$1" stem="${1%.tex}" pass
+    rm -f "$stem.aux"
+    for pass in 1 2; do
+        if ! pdflatex -interaction=nonstopmode -halt-on-error "$tex" > "$stem.log" 2>&1; then
+            printf '%s: pdflatex failed on %s (pass %s). The error was:\n' "$SELF" "$tex" "$pass" >&2
+            grep -A3 -m3 '^!' "$stem.log" | sed 's/^/    /' >&2 || true
+            printf '    full log: %s\n' "$stem.log" >&2
+            exit 1
+        fi
+    done
+    [ -s "$stem.pdf" ] || die "pdflatex reported success but produced no $stem.pdf"
+}
+
+crop_in_place() {
+    local pdf="$1" stem="${1%.pdf}"
+    pdfcrop "$pdf" "$stem-crop.pdf" > "$stem-crop.log" 2>&1 \
+        || { printf '%s: pdfcrop failed on %s:\n' "$SELF" "$pdf" >&2
+             sed 's/^/    /' "$stem-crop.log" >&2
+             die "is ghostscript installed? pdfcrop needs it"; }
+    [ -s "$stem-crop.pdf" ] || die "pdfcrop produced no output for $pdf"
+    mv -f "$stem-crop.pdf" "$pdf"
+    note "wrote $pdf"
+}
+
+if [ "$do_tonto" -gt 0 ]; then
+    note "running tonto to produce the rgbi-*.tex fragments"
+    tonto
+fi
+
+if [ "$do_H" -gt 0 ]; then HSUF="+H"; else HSUF="-H"; fi
+TABLE="rgbi-dial-table$HSUF.tex"
+
+[ -r "$TABLE" ] || die "missing $TABLE -- the RGBI job writes it only with robydata= { output_theta_info= YES }"
+
+for f in cf-pastebin.tex mol2chemfig.sty rgbi-dial-header.tex rgbi-dial-diagrams.tex; do
+    cp -f "$TEMPLATES/$f" .
+done
+
+note "drawing the dial diagrams from $TABLE"
+run_latex "$TABLE"
+crop_in_place "rgbi-dial-table$HSUF.pdf"
