@@ -73,7 +73,7 @@ Everything lives in this repository, versioned with the code it describes.
 | [**`docs/TONTO_AND_MPI.md`**](docs/TONTO_AND_MPI.md) | the parallel build, its numeric characterisation, and the defect register |
 | [**`docs/BUILDING_ON_WINDOWS.md`**](docs/BUILDING_ON_WINDOWS.md) | the four WSL traps and how they are guarded |
 | [**`docs/CI.md`**](docs/CI.md) | what each workflow runs, and how to read a result |
-| [**`docs/CALL_GRAPHS.md`**](docs/CALL_GRAPHS.md) | call/use graphs and dead-code elimination |
+| [**`docs/MAKING_CALL_GRAPHS.md`**](docs/MAKING_CALL_GRAPHS.md) | call/use graphs and dead-code elimination |
 | [**`docs/EDITING_VIM.md`**](docs/EDITING_VIM.md) | vim set-up — tags, folding, completion |
 | [**`DEFERRED.md`**](DEFERRED.md) | known issues and deferred work, with the reasoning |
 

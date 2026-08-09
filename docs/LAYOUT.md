@@ -49,6 +49,6 @@ GitHub attachment URL, so it is versioned with the code and survives if that
 URL ever stops resolving.)*
 
 For generated, always-current versions of this information see
-[`CALL_GRAPHS.md`](CALL_GRAPHS.md) — `make callgraphs` writes `call_graph.dot`,
+[`MAKING_CALL_GRAPHS.md`](MAKING_CALL_GRAPHS.md) — `make callgraphs` writes `call_graph.dot`,
 `module_use.dot` and `submodule_use.dot`, and `scripts/simplify_callgraph.py`
 makes them readable.

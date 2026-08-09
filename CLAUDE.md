@@ -221,7 +221,7 @@ versioned with the code it described*, so it could rot silently. Do not add docu
 - `docs/TONTO_AND_MPI.md` — the parallel build, its numeric characterisation, and the defect register.
 - `docs/BUILDING_ON_WINDOWS.md` — the four WSL-specific traps, the CMake guards, and how they are tested.
 - `docs/CI.md` — the CI workflows, how to trigger one manually, and how to read a run.
-- `docs/CALL_GRAPHS.md` — call/use graphs and dead-code elimination.
+- `docs/MAKING_CALL_GRAPHS.md` — call/use graphs and dead-code elimination.
 - `docs/EDITING_VIM.md` — vim set-up: tags, folding, completion.
 - `DEFERRED.md` — project-wide deferred issues (was `ANTLR4_DEFERRED.md`).
 
@@ -596,7 +596,7 @@ before any code is written**, most likely in its own conversation (`/clear`).
 
 - Future tasks (own conversations): a module-level *call* graph in `writeDotFiles` (the
   `--simplify`/`--module` **use**-graph tooling is DONE — `scripts/simplify_callgraph.py`,
-  `docs/CALL_GRAPHS.md`); introduce Fortran-2008 `submodule` constructs; test the MPI parallel
+  `docs/MAKING_CALL_GRAPHS.md`); introduce Fortran-2008 `submodule` constructs; test the MPI parallel
   build; boilerplate doc comments; and (long-term) a possible move off Fortran. (Testing the MPI build
   is now milestone 4 above.)
 

@@ -3210,7 +3210,7 @@ translator change — the DOT already carries every `use` edge):
 - **`--module NAME`** — documentation ego-graph of one module's direct dependencies
   (`--reverse` dependents, `--both`); no `concentrate`, so every direct edge shows.
 
-**Key findings, recorded in `docs/CALL_GRAPHS.md`:** the "aggregate vs ambient" distinction
+**Key findings, recorded in `docs/MAKING_CALL_GRAPHS.md`:** the "aggregate vs ambient" distinction
 (merge-and-keep vs hide); `concentrate=true` is *lossy* (drops a direct edge parallel to a
 longer path — e.g. `ATOM→INTERPOLATOR`), so the doc mode avoids it; and Graphviz has **no** edge
 hops/bridges and is already hierarchical, so fewer edges beats a different engine. README §7b
