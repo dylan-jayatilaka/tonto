@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Invariant test: two MPI hazards that are invisible on inspection.
 
-Both come out of milestone 4 (see docs/MPI.md and DEFERRED.md). Each is a
+Both come out of milestone 4 (see docs/TONTO_AND_MPI.md and DEFERRED.md). Each is a
 silent wrong answer or a hang, and neither is visible in a serial run -- which
 is every run anyone does day to day.
 

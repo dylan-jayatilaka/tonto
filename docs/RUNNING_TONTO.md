@@ -13,7 +13,7 @@ The `tests/` folder is the example collection — one directory per job.
 - The file called **`IO`** lists the auxiliary files needed as input, and the
   temporary files produced during the run that should be deleted afterwards.
   For an argv-driven program such as `hart` it also carries `program:` and
-  `args:` keys — see [`HART.md`](HART.md).
+  `args:` keys — see [`RUNNING_HART.md`](RUNNING_HART.md).
 
 ## Running it
 
@@ -45,6 +45,6 @@ You can copy the executable wherever you like.
 | Path | Program |
 |------|---------|
 | `build/tonto` | the main program |
-| `build/hart` | standalone Hirshfeld atom refinement (`hart --help`; see [`HART.md`](HART.md)) |
+| `build/hart` | standalone Hirshfeld atom refinement (`hart --help`; see [`RUNNING_HART.md`](RUNNING_HART.md)) |
 
 Smaller test and utility programs are built alongside them.

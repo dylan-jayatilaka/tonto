@@ -20,7 +20,7 @@ variables, subroutines and functions are declared.
 ## Quickstart
 
 On Ubuntu/Debian. Other platforms, and every build option, are in
-[**`docs/BUILD.md`**](docs/BUILD.md).
+[**`docs/BUILDING_TONTO.md`**](docs/BUILDING_TONTO.md).
 
 ```
 sudo apt install make default-jdk gfortran-14 libblas-dev liblapack-dev python3 gnuplot git
@@ -64,14 +64,14 @@ Everything lives in this repository, versioned with the code it describes.
 
 | | |
 |---|---|
-| [**`docs/BUILD.md`**](docs/BUILD.md) | building on Linux, macOS and Windows/WSL; every build type; MPI; clusters |
-| [**`docs/RUNNING.md`**](docs/RUNNING.md) | running Tonto, input/output conventions, practical set-up |
-| [**`docs/HART.md`**](docs/HART.md) | the `hart` program — options, testing, fragHAR |
+| [**`docs/BUILDING_TONTO.md`**](docs/BUILDING_TONTO.md) | building on Linux, macOS and Windows/WSL; every build type; MPI; clusters |
+| [**`docs/RUNNING_TONTO.md`**](docs/RUNNING_TONTO.md) | running Tonto, input/output conventions, practical set-up |
+| [**`docs/RUNNING_HART.md`**](docs/RUNNING_HART.md) | the `hart` program — options, testing, fragHAR |
 | [**`docs/LAYOUT.md`**](docs/LAYOUT.md) | what lives where, and the module structure |
-| [**`docs/DEVELOPER.md`**](docs/DEVELOPER.md) | developer reference, including **writing parallel (MPI) code in Foo** |
+| [**`docs/TONTO_DEVELOPER.md`**](docs/TONTO_DEVELOPER.md) | developer reference, including **writing parallel (MPI) code in Foo** |
 | [**`docs/FOO_GRAMMAR_DOCUMENTATION.md`**](docs/FOO_GRAMMAR_DOCUMENTATION.md) | the Foo language and its translation to Fortran |
-| [**`docs/MPI.md`**](docs/MPI.md) | the parallel build, its numeric characterisation, and the defect register |
-| [**`docs/BUILD_WSL.md`**](docs/BUILD_WSL.md) | the four WSL traps and how they are guarded |
+| [**`docs/TONTO_AND_MPI.md`**](docs/TONTO_AND_MPI.md) | the parallel build, its numeric characterisation, and the defect register |
+| [**`docs/BUILDING_ON_WINDOWS.md`**](docs/BUILDING_ON_WINDOWS.md) | the four WSL traps and how they are guarded |
 | [**`docs/CI.md`**](docs/CI.md) | what each workflow runs, and how to read a result |
 | [**`docs/CALL_GRAPHS.md`**](docs/CALL_GRAPHS.md) | call/use graphs and dead-code elimination |
 | [**`docs/EDITING_VIM.md`**](docs/EDITING_VIM.md) | vim set-up — tags, folding, completion |

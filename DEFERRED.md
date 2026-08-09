@@ -562,7 +562,7 @@ than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comment
   ```
 
   "BCAST interferes with a different kind leading to str and Int" is *exactly* the failure
-  diagnosed in `docs/MPI.md` Finding 6: a 256-character STR broadcast pairing with a 1-integer
+  diagnosed in `docs/TONTO_AND_MPI.md` Finding 6: a 256-character STR broadcast pairing with a 1-integer
   INT broadcast, giving `MPI_ERR_TRUNCATE`. This is independent evidence that the desynchronisation
   **predates all of the milestone 4 work**.
 
@@ -727,7 +727,7 @@ than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comment
   all, the escape hatch in `SYSTEM:IO_is_allowed` was unreachable dead code, and all ~10 call
   sites in `molecule.scf.foo` were silent no-ops that toggled an unrelated flag. Longstanding —
   `set_parallel_IO_allowed` had the identical body before the rename. Fixed, and the mechanism
-  now works: see `docs/HART.md` (milestone H1) and `docs/MPI.md` §5. This also means every
+  now works: see `docs/RUNNING_HART.md` (milestone H1) and `docs/TONTO_AND_MPI.md` §5. This also means every
   earlier statement in this file of the form "per-rank I/O is enabled here" described an
   intention, not a behaviour.
 
@@ -1153,7 +1153,7 @@ Any of these rewrites the reference, so re-bless deliberately and read the resul
   writers; each rank opens the *same filename* with its own `newunit`, so silent corruption
   rather than a crash). The durable fix is a **translator lint** for `write(`/`read(` on any
   `*.unit` outside `file.foo`/`textfile.foo`/`buffer.foo` -- static, cheap, and it would have
-  found every one of these without running anything. Added to milestone 6. See `docs/MPI.md`.
+  found every one of these without running anything. Added to milestone 6. See `docs/TONTO_AND_MPI.md`.
 - **`parallel_sum` clobbers `val` even when the optional `sum` is supplied**
   (`foofiles/parallel.foo:458`): an unconditional `val = tmp` after the `if (present(sum))`
   branch, violating the "give me the sum, leave `val` alone" contract.
@@ -1975,7 +1975,7 @@ not installed. The WSL CI runner resolves the same way (`Found BLAS:
 |----------|-----------|---------|
 | macOS | `CMakeLists.txt:110` explicitly prefers Homebrew OpenBLAS over Accelerate, and warns on fallback — because Accelerate's Fortran LAPACK is frozen at 3.2.1 (2009) and on its own flipped `short/h2o_rhf_6-31G(d)_normal_mode_analysis` | Handled |
 | Linux | No `BLA_VENDOR`; bare `find_package(LAPACK)` takes whatever the distro alternative points at. README installs `libblas-dev liblapack-dev` = reference | **Suboptimal** |
-| WSL | Same as Linux; `docs/BUILD_WSL.md` installs the same reference packages | **Suboptimal** |
+| WSL | Same as Linux; `docs/BUILDING_ON_WINDOWS.md` installs the same reference packages | **Suboptimal** |
 
 So the platform that got careful attention is macOS, while the two reference platforms silently
 get the slowest BLAS. That is backwards.
@@ -2024,7 +2024,7 @@ OpenBLAS would also oversubscribe cores in MPI builds.
 4. Only then decide whether the measured speedup justifies re-blessing every reference. If it
    does, re-bless in one deliberate commit across all platforms at once, so Linux, macOS and WSL
    share a single BLAS story.
-5. Update `README.md`, `docs/BUILD_WSL.md` and `scripts/wsl_doctor.sh` together — they currently
+5. Update `README.md`, `docs/BUILDING_ON_WINDOWS.md` and `scripts/wsl_doctor.sh` together — they currently
    tell users to install the reference packages.
 
 ---
@@ -2168,7 +2168,7 @@ are the platform-sensitive part.
 
 ### NOT STARTED: `# of unmatched Fridel pairs` reports *every* reflection (and is misspelled)
 
-Found during the H1 fragHAR archaeology (2026-08-02, `docs/HART.md` §6). In
+Found during the H1 fragHAR archaeology (2026-08-02, `docs/RUNNING_HART.md` §6). In
 `tests/long/gly_ala_fragHAR_rhf_STO-3G/stdout` the refinement-results block reads:
 
 ```
@@ -2193,7 +2193,7 @@ Three things to settle together:
    lost — the block simply gained two lines.
 
 Not a regression in the science: the 2019 and 2026 refinements agree to 4 significant figures
-(table in `docs/HART.md` §6). Deferred until after H1.
+(table in `docs/RUNNING_HART.md` §6). Deferred until after H1.
 
 ### PRIORITY, NOT STARTED: NaN and negative ESDs from the least-squares variance-covariance matrix
 
@@ -2208,7 +2208,7 @@ right**, either a genuine error in its construction or UB.
 |---|---|
 | `short/urea_lamaGOET_grown_CIF` | ADP U13/U23 columns: `e_neg = 2`, `e_zero = 2` of 5 rows — two **negative** esds |
 | `long/urea_rhf_STO-3G_HAR` | one ADP column: **`e_nan = 1`**, with `prec_out = 5` (i.e. the column precision was normal — the *data* is bad, not the formatting) |
-| `long/gly_ala_fragHAR_rhf_STO-3G` | headline statistic **`Rw(F2) ....... NaN`** — and it is NaN in the 2019 `ecb593e9` output too (`docs/HART.md` §6), so this predates every change under investigation. Note `Rw(F)` beside it is fine (0.0334), so whatever poisons the F² weighting does not touch the F one |
+| `long/gly_ala_fragHAR_rhf_STO-3G` | headline statistic **`Rw(F2) ....... NaN`** — and it is NaN in the 2019 `ecb593e9` output too (`docs/RUNNING_HART.md` §6), so this predates every change under investigation. Note `Rw(F)` beside it is fine (0.0334), so whatever poisons the F² weighting does not touch the F one |
 
 The `e_nan` probe result also killed the competing explanation that the column precision was
 simply small (`max_dp=1` would give `dp=2` innocently); `prec_out` was 5 in every column.
@@ -2713,7 +2713,7 @@ warnings in a non-MPI debug build; this does not remove the parser diagnostic ab
 
 ## hart — deferred items
 
-The `hart` work (milestone 5) left these alone deliberately. `docs/HART.md` is
+The `hart` work (milestone 5) left these alone deliberately. `docs/RUNNING_HART.md` is
 the authoritative document; these are the items with no owner yet.
 
 - **fragHAR support (milestone H1).** `hart` only ever calls `HAR_refinement`
@@ -2723,7 +2723,7 @@ the authoritative document; these are the items with no owner yet.
   `tests/long/gly_ala_fragHAR_rhf_STO-3G` exercises fragHAR through `tonto` and
   is the acceptance test for this. **It is a hookup, not a repair** — fragHAR
   itself works in `tonto` today and reproduces the last known-good 2019 output
-  to 4 significant figures (archaeology and table in `docs/HART.md` §6). It was
+  to 4 significant figures (archaeology and table in `docs/RUNNING_HART.md` §6). It was
   broken 2020-01-23 (`f0d7cfd3`) and fixed by `d840e322`, which came in with the
   `hart` work. Do **not** try to revive `.cif.use_fragments` — that flag is dead
   and `.crystal.data.refine_fragments` superseded it correctly.
@@ -3296,7 +3296,7 @@ CI.
 ## DONE (2026-08-01/02): test the MPI parallel build
 
 **Milestone 4 complete.** First MPI build ever configured for this project; full characterisation
-in `docs/MPI.md`, defects in the MPI section above. Headline: MPI at 1 rank reproduces serial
+in `docs/TONTO_AND_MPI.md`, defects in the MPI section above. Headline: MPI at 1 rank reproduces serial
 exactly on two platforms, rank-count drift is confined to one already-known-marginal test, and
 `-ffast-math` moves the numbers more than MPI does.
 

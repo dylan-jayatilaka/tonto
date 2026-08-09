@@ -18,7 +18,7 @@ Fortran (95 / 2003+) and then compiled.
   ordinary **out-of-source CMake build trees** (untracked, regenerable); `debug/` is currently
   out of date. There is **no** reference-snapshot directory to preserve.
 - Executables: `build/tonto` (main program), `build/hart` (standalone Hirshfeld atom
-  refinement; `hart --help` — see `docs/HART.md`).
+  refinement; `hart --help` — see `docs/RUNNING_HART.md`).
 - **All programs take GNU long options only** (`--input`, `--basis`, `--help`, …).
   Single-dash spellings were removed; `COMMAND_LINE.process_options` rejects one
   with a message naming the `--name` to use instead.
@@ -77,12 +77,12 @@ The substantive gains, in rough order of value:
 - **`hart` works.** The standalone Hirshfeld-atom-refinement program died on every real run and
   exited 0 while doing it. It now runs, has a test suite in CI, an option set reconciled with its
   documentation, and handles crystals with several molecules in the asymmetric unit (fragHAR) —
-  in serial *and* under MPI, reproducing the serial reference digit for digit. See `docs/HART.md`.
+  in serial *and* under MPI, reproducing the serial reference digit for digit. See `docs/RUNNING_HART.md`.
 - **MPI was characterised and largely repaired.** The first MPI build ever configured for this
   project. Eight reductions were silently returning `1/n_ranks` of the answer. A per-rank I/O
   flag's setter assigned the wrong member, so the whole mechanism was dead code that looked live.
   Collectives were gated on rank-local state, so different ranks entered different collectives.
-  See `docs/MPI.md`, which carries a defect register with a **"Loud?"** column — the *silent* rows
+  See `docs/TONTO_AND_MPI.md`, which carries a defect register with a **"Loud?"** column — the *silent* rows
   are the dangerous ones.
 - **Whole classes closed, not just instances.** `data` statements were parsed and silently
   discarded; now they are emitted, and any construct that parses but emits nothing is a **build
@@ -98,7 +98,7 @@ hoisting `CRYSTAL` out of `MOLECULE` (October), and — long term — the case f
 language with first-class parallelism, argued from the evidence above rather than from taste.
 
 **The working lesson, if you read nothing else:** in this codebase, *inspection does not work and
-measurement does*. `docs/DEVELOPER.md` §1a records the recipes — trace to per-rank files, never a
+measurement does*. `docs/TONTO_DEVELOPER.md` §1a records the recipes — trace to per-rank files, never a
 shared stream; count events between markers; and confirm a code path executes before analysing it.
 
 ## 3. The Foo language (summary)
@@ -158,7 +158,7 @@ Other build types: `debug`, `release-static`, and MPI (`-DCMAKE_Fortran_COMPILER
 -DMPI=1`). The MPI must be built with the **same** Fortran compiler — Tonto does `USE mpi` and
 `.mod` files are compiler-version specific; configure now checks and stops with a clear message.
 `-DMPI=1` is a hard requirement: if MPI is not found, configure fails rather than silently
-producing a serial binary. See `docs/MPI.md`.
+producing a serial binary. See `docs/TONTO_AND_MPI.md`.
 
 *(`-DNO_ERROR_MANAGEMENT` was documented here but is a **no-op** — the symbol appears nowhere in
 `CMakeLists.txt`, `cmake/*.cmake` or `include/macros.in`. Every optimised build type
@@ -172,7 +172,7 @@ Linux paths and needs `;` classpath separators while the translator is invoked w
 and hard-errors on a `/mnt/c` build tree or CRLF sources. `-DTONTO_WSL_STRICT=OFF` downgrades
 those to warnings. `scripts/wsl_doctor.sh` is the user-facing preflight;
 `scripts/wsl_selftest.sh` asserts every guard on an ordinary Linux box (no Windows needed) and
-runs on every push via `.github/workflows/ci-wsl.yml`. Details in `docs/BUILD_WSL.md`.
+runs on every push via `.github/workflows/ci-wsl.yml`. Details in `docs/BUILDING_ON_WINDOWS.md`.
 
 ## 5. Validation
 
@@ -208,18 +208,18 @@ versioned with the code it described*, so it could rot silently. Do not add docu
 
 - `README.md` — the leader page: what Tonto is, a quickstart, the documentation index, and what
   each CI badge means. Deliberately short; detail belongs in `docs/`.
-- `docs/BUILD.md` — **the** build document: prerequisites, all build types, MPI, clusters, and
+- `docs/BUILDING_TONTO.md` — **the** build document: prerequisites, all build types, MPI, clusters, and
   macOS and Windows/WSL. The README quickstart is the only build instructions outside it.
-- `docs/RUNNING.md` — running Tonto: input/output conventions (`stdin`/`stdout`/`IO`), practical set-up.
+- `docs/RUNNING_TONTO.md` — running Tonto: input/output conventions (`stdin`/`stdout`/`IO`), practical set-up.
 - `docs/LAYOUT.md` — source and executable layout, and the module structure picture.
-- `docs/HART.md` — the `hart` program: what it hard-codes, its full `--option` reference, how
+- `docs/RUNNING_HART.md` — the `hart` program: what it hard-codes, its full `--option` reference, how
   it is tested (`tests/hart/`, the `program:`/`args:` IO keys, the invariant check), and its
   remaining milestones.
-- `docs/DEVELOPER.md` — developer reference; §1a is **writing parallel (MPI) code in Foo**, eight
+- `docs/TONTO_DEVELOPER.md` — developer reference; §1a is **writing parallel (MPI) code in Foo**, eight
   pitfalls and the trace recipes that found them.
 - `docs/FOO_GRAMMAR_DOCUMENTATION.md` — full language description and Foo→Fortran conversion rules.
-- `docs/MPI.md` — the parallel build, its numeric characterisation, and the defect register.
-- `docs/BUILD_WSL.md` — the four WSL-specific traps, the CMake guards, and how they are tested.
+- `docs/TONTO_AND_MPI.md` — the parallel build, its numeric characterisation, and the defect register.
+- `docs/BUILDING_ON_WINDOWS.md` — the four WSL-specific traps, the CMake guards, and how they are tested.
 - `docs/CI.md` — the CI workflows, how to trigger one manually, and how to read a run.
 - `docs/CALL_GRAPHS.md` — call/use graphs and dead-code elimination.
 - `docs/EDITING_VIM.md` — vim set-up: tags, folding, completion.
@@ -266,7 +266,7 @@ to *track*:**
    put a `DIE` in the suspect routine and build with `-fbacktrace`, which names the
    specific procedure *and* its callers in one run. Six consecutive mis-traces of
    `put_ADP2_errors_to` (2026-07-30) were spent inferring by hand what these two
-   steps answer directly. See §3 of `docs/DEVELOPER.md`.
+   steps answer directly. See §3 of `docs/TONTO_DEVELOPER.md`.
 
 1. **Confirm the path executes before analysing it.** A name match is not the overload that
    runs. `put_CIF`, `make_CIF_esds`, `set_pADP_errors_to`, `put_ADP2_errors_to` and
@@ -296,7 +296,7 @@ TONTO_BASIS_SET_DIRECTORY=<repo>/basis_sets \
 ctest -L hart      # the suite + the options invariant check
 ```
 
-Full option reference and testing notes: `docs/HART.md`.
+Full option reference and testing notes: `docs/RUNNING_HART.md`.
 
 **Translator build/run (confirmed).** Helper script: `scripts/build_translator.sh`.
 
@@ -370,18 +370,18 @@ before any code is written**, most likely in its own conversation (`/clear`).
    crashed at ≥2 ranks on a negative-unit I/O error, **now fixed** (raw unguarded writes in
    `put_NBO_file_47`), so the short suite is 50/51 under MPI, the same as serial. MPI is still
    unaudited for `plot_grid`/`archive` raw I/O and for HAR's `parallel_write`. Eight MPI wrong-answer bugs were found and fixed on the way (see milestone 6).
-   Full report: `docs/MPI.md`. Build with
+   Full report: `docs/TONTO_AND_MPI.md`. Build with
    `-DCMAKE_Fortran_COMPILER=mpifort -DCMAKE_C_COMPILER=mpicc -DMPI=1` and compare against the
    serial references with the usual loose gate. (`-DCMAKE_CXX_COMPILER=mpicxx` was in this
    recipe but is **ignored** — `project()` enables `Fortran C` only; `-DNO_ERROR_MANAGEMENT` was
    a **no-op**. Both removed.) **The MPI must be built with the same Fortran compiler**, since
-   Tonto does `USE mpi`. Details, and the list of MPI defects found, in `docs/MPI.md`. **Expect numeric drift**: reduction order varies with rank count, and
+   Tonto does `USE mpi`. Details, and the list of MPI defects found, in `docs/TONTO_AND_MPI.md`. **Expect numeric drift**: reduction order varies with rank count, and
    some of it is genuine UB — per Dylan, "numerics might go off — no worries, we'll check". The
    deliverable is a *characterisation* (which tests drift, by how much, and whether the drift is
    rank-count dependent), not necessarily a green suite. Untested since before the ANTLR4 work.
 
 5. ✅ **DONE (2026-08-03) — `hart`: verify, test, document, and make it work with `fragHAR`.**
-   See **`docs/HART.md`**, which is now the authoritative document for the program.
+   See **`docs/RUNNING_HART.md`**, which is now the authoritative document for the program.
    - ✅ *confirm the program actually works, and fix what does not.* It did not: every real run
      died at once (`std_err` was created but never opened, so the `close_and_delete` that
      follows hit "not an existing file"), **and exited 0 while doing so** — `SYSTEM.die` ended
@@ -396,7 +396,7 @@ before any code is written**, most likely in its own conversation (`/clear`).
      `extreme` was accepted but undocumented. All reconciled, and the whole option set moved to
      GNU `--long` form (which is what took `tonto`'s `-i`/`-o`/`-b`/`-h`/`-v` with it).
    - ✅ *make it work **seamlessly with `fragHAR`***, i.e. crystals with more than one molecule
-     in the asymmetric unit — **milestone H1 in `docs/HART.md`**. **Serial is DONE
+     in the asymmetric unit — **milestone H1 in `docs/RUNNING_HART.md`**. **Serial is DONE
      (2026-08-02)**: `hart` counts the atom groups and calls `fragHAR_refinement` when there is
      more than one, with new `--mmcif`, `--group-charges '{ 1 -1 }'`,
      `--group-multiplicities`, `--wavelength` and `--residual-cube` options, and it reproduces
@@ -415,11 +415,11 @@ before any code is written**, most likely in its own conversation (`/clear`).
      design**, and `put_atom_group_mols` branched on it (`if (.becke_grid.allocated) …` — master
      42 broadcasts, rank 1 zero), which desynced them; it is now non-collective. Because
      TEXTFILE bookkeeping is collective, *printing more on one rank is itself a collective
-     mismatch*. Recorded as pitfall 8 in `docs/DEVELOPER.md` §1a, with the per-rank-file trace
+     mismatch*. Recorded as pitfall 8 in `docs/TONTO_DEVELOPER.md` §1a, with the per-rank-file trace
      recipe that found it after three wrong readings of the code. Still open, both minor:
      `--group-charges-file` for proteins, and the `use_disk_SFs`→`use_disk_FFs` rename. Note
      `fragment_SCF_para`'s scheduler changes shape above 2 ranks, so any parallel fragHAR test
-     must pin a rank count. All in `docs/HART.md` §6.
+     must pin a rank count. All in `docs/RUNNING_HART.md` §6.
      *(Unrelated to fragHAR but fixed the same day: the non-fragHAR **disk** form-factor path,
      `hart --disk-sfs`, which had never worked — six defects — now does, and is gated by
      `tests/hart/urea_hart_STO-3G_disk_ffs`, the first test ever to execute `make_LS_mx`.)*
@@ -506,7 +506,7 @@ before any code is written**, most likely in its own conversation (`/clear`).
    **rejected** (it matches on both ranks). Workaround ready but uncommitted (pin the file, as
    `types.F90` and `shell1quartet.F90` already are). Open: which `-O2` pass (bisect left running
    on achari2, `/tmp/m7bisect.log`), whether `-Ofast` is safe or merely lucky, and a minimal
-   reproducer before blaming gcc. Full detail in `docs/MPI.md` Finding 6. Four CIF-reading tests (`c9o9h8_read_cif_IT_group_9`,
+   reproducer before blaming gcc. Full detail in `docs/TONTO_AND_MPI.md` Finding 6. Four CIF-reading tests (`c9o9h8_read_cif_IT_group_9`,
    `maleate_read_CIF_H_double_bond_{new,old}_BLs`, `urea_lamaGOET_grown_CIF`) aborted at ≥2 ranks
    with a mismatched `MPI_Bcast` in `-O2 -fno-fast-math` while passing at `-Ofast`.
    **It was never undefined behaviour** — that was inferred from the symptom and is wrong.
@@ -523,7 +523,7 @@ before any code is written**, most likely in its own conversation (`/clear`).
    `macros.in` directly (verified to fail against the pre-fix definition) and runs in CI.
    **Verification gap, still open:** `e3ef5906` verified *three* of the four tests on achari2
    (Linux) at `-O2`, `-n 2`. The fourth, and a re-run of all four against current `antlr4`, are
-   outstanding — see `docs/MPI.md` Finding 6.
+   outstanding — see `docs/TONTO_AND_MPI.md` Finding 6.
 
 8. ✅ **DONE (2026-08-04) — Translator: `data` statements at program scope were silently
    dropped.** Root cause was one line in `emitBodyList`: `if (b.localDecl() == null &&

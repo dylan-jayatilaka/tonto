@@ -4,8 +4,8 @@ Everything needed to produce a working `tonto` (and `hart`) binary, on all three
 supported platforms. This page is the single source of truth for building — the
 README only carries a three-command quickstart and points here.
 
-Related: [`BUILD_WSL.md`](BUILD_WSL.md) for the WSL-specific traps and how they
-are guarded, [`MPI.md`](MPI.md) for what a parallel build does and does not
+Related: [`BUILDING_ON_WINDOWS.md`](BUILDING_ON_WINDOWS.md) for the WSL-specific traps and how they
+are guarded, [`TONTO_AND_MPI.md`](TONTO_AND_MPI.md) for what a parallel build does and does not
 reproduce, [`CI.md`](CI.md) for what the automated builds do.
 
 ---
@@ -82,7 +82,7 @@ cmake .. -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=release-static
 ```
 
 **MPI (parallel)** — for production runs. **Validate the results yourself** before
-trusting them: see [`MPI.md`](MPI.md) for what is known to differ from a serial run.
+trusting them: see [`TONTO_AND_MPI.md`](TONTO_AND_MPI.md) for what is known to differ from a serial run.
 ```
 cmake .. -DCMAKE_Fortran_COMPILER=mpifort -DCMAKE_C_COMPILER=mpicc \
          -DCMAKE_BUILD_TYPE=fast -DMPI=1
@@ -119,7 +119,7 @@ knobs that matter are the **compiler**, the **build type**, and **`-DMPI=1`**.
 
 When it finishes, your binaries are in the build dir: **`build/tonto`** (the main
 program) and **`build/hart`** (standalone Hirshfeld atom refinement — `hart --help`;
-see [`docs/HART.md`](HART.md) for the full option reference and how it is tested).
+see [`docs/RUNNING_HART.md`](RUNNING_HART.md) for the full option reference and how it is tested).
 The full source/executable layout is in [`LAYOUT.md`](LAYOUT.md).
 
 > **Options are GNU long options.** Every Tonto program takes `--name` only —
@@ -188,4 +188,4 @@ WSL adds four traps — a Windows `java.exe` on the interop `PATH`, a build tree
 `/mnt/c`, CRLF line endings, and the OOM killer arriving because translation
 starts one JVM per `.foo` file. `cmake/WSL.cmake` detects all four and explains
 them; run `scripts/wsl_doctor.sh` first. Full detail in
-[`BUILD_WSL.md`](BUILD_WSL.md).
+[`BUILDING_ON_WINDOWS.md`](BUILDING_ON_WINDOWS.md).

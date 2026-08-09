@@ -486,14 +486,14 @@ and lets the master write alone, restoring the caller's mode afterwards.
 **The general rule this establishes:** *after* a per-rank region, the ranks' object graphs are
 deliberately different. Any later shared-mode code that branches on allocation status, array
 extent, or convergence flags of that per-rank data will desync. Either resynchronise the state,
-or keep the code non-collective. Recorded in `docs/DEVELOPER.md` §1a and `docs/MPI.md`.
+or keep the code non-collective. Recorded in `docs/TONTO_DEVELOPER.md` §1a and `docs/TONTO_AND_MPI.md`.
 
 **How it was found.** By tracing, not by reading -- three consecutive readings of the code
 pointed at the wrong routine. A `write` at the single `MPI_BCAST` choke point in
 `parallel.foo`, logging `(datatype, count)` to a per-rank `fort.7<rank>` file (Fortran
 auto-connects the unit, so the two streams cannot interleave), plus positional `TAG` markers.
 Diffing the two streams gives the exact call where they part; segmenting the counts between
-tags names the routine. That recipe is in `docs/DEVELOPER.md` §1a.
+tags names the routine. That recipe is in `docs/TONTO_DEVELOPER.md` §1a.
 
 **H2 — revive the frozen options.** `--charge`, `--mult`, `--ldtol`,
 `--scf-guess`, `--anharm`, `--wavelength` and `--4th-order-only` are commented

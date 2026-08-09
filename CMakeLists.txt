@@ -22,7 +22,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 # WSL (Windows Subsystem for Linux). No-op on every other host. This MUST come
 # before any find_package/find_program: its main job is to take the Windows
 # directories off PATH so that no tool search can resolve to a .exe. See
-# cmake/WSL.cmake and docs/BUILD_WSL.md.
+# cmake/WSL.cmake and docs/BUILDING_ON_WINDOWS.md.
 include(WSL)
 tonto_wsl_preflight()
 
@@ -260,7 +260,7 @@ if(MPI)
              "Tonto does `USE mpi`, and Fortran .mod files are compiler-version "
              "specific. Rebuild MPI against this compiler (e.g. configure Open MPI "
              "with FC=${CMAKE_Fortran_COMPILER}), or point CMAKE_Fortran_COMPILER "
-             "at the wrapper whose MPI modules match. See docs/MPI.md.")
+             "at the wrapper whose MPI modules match. See docs/TONTO_AND_MPI.md.")
        endif()
     endif()
 endif()
@@ -852,7 +852,7 @@ set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/types.F90
 #
 # At -O2 exactly, gfortran 14.2 on x86_64 Linux miscompiles this file badly
 # enough to desynchronise MPI: four CIF-reading tests abort at >=2 ranks with
-# MPI_ERR_TRUNCATE in MPI_Bcast (CLAUDE.md milestone 7, docs/MPI.md Finding 6).
+# MPI_ERR_TRUNCATE in MPI_Bcast (CLAUDE.md milestone 7, docs/TONTO_AND_MPI.md Finding 6).
 # The ranks agree for 8481 broadcasts and then rank 0 issues one surplus
 # integer broadcast, offsetting the streams until a 1-integer receive meets a
 # 256-character send.
@@ -866,7 +866,7 @@ set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/types.F90
 # It is an interaction, not a lone bad pass: -O1 plus ALL 45 flags (sibling
 # calls included) passes, and so do -O3 and -Ofast, which are supersets of -O2.
 # So the SHIPPED release build (-Ofast) is not affected -- but the
-# -O2 -fno-fast-math control build is, and that is the build docs/MPI.md uses to
+# -O2 -fno-fast-math control build is, and that is the build docs/TONTO_AND_MPI.md uses to
 # separate floating-point reassociation from genuine MPI defects, so it has to
 # work. Whether the underlying fault is a gcc bug or latent UB in the Foo
 # sources that only tail calls expose is NOT yet established; see Finding 6.

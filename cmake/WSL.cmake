@@ -83,12 +83,12 @@ function(_tonto_wsl_report)
     set(TONTO_WSL_PROBLEMS "" CACHE INTERNAL "" FORCE)
     if(TONTO_WSL_STRICT)
         message(FATAL_ERROR
-            "WSL environment problems (see docs/BUILD_WSL.md):\n${_report}\n"
+            "WSL environment problems (see docs/BUILDING_ON_WINDOWS.md):\n${_report}\n"
             "Configure with -DTONTO_WSL_STRICT=OFF to downgrade these to warnings.")
     else()
         message(WARNING
             "WSL environment problems, ignored because TONTO_WSL_STRICT=OFF "
-            "(see docs/BUILD_WSL.md):\n${_report}")
+            "(see docs/BUILDING_ON_WINDOWS.md):\n${_report}")
     endif()
 endfunction()
 

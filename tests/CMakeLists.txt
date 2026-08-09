@@ -134,7 +134,7 @@ set_tests_properties("hart_options" PROPERTIES LABELS "hart")
 # reported as failing. Registered because shell execution is the classic silent
 # failure -- a broken implementation returns "0, no error" and simply does
 # nothing, which is precisely how the eight MPI reductions and the per-rank-IO
-# flag hid for years (docs/MPI.md). The binary self-checks and exits non-zero,
+# flag hid for years (docs/TONTO_AND_MPI.md). The binary self-checks and exits non-zero,
 # so no reference file can be blessed to make it pass. Runs in well under a
 # second.
 add_test(NAME "system_commands"

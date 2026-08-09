@@ -167,14 +167,14 @@ bit-identical results before and after.
 **Result of the last three:** `hart` now runs **fragHAR under MPI**. `mpirun -n 2 hart …
 --group-charges '{ 1 -1 }'` on gly-L-ala exits 0 and reproduces the serial reference digit for
 digit — R(F) 0.032423, GoF 3.353475 — with the ranks in exact lockstep for 2,421,451
-broadcasts. See `docs/HART.md`, milestone H1.
+broadcasts. See `docs/RUNNING_HART.md`, milestone H1.
 
 **The general rule these establish:** after a per-rank region the ranks' object graphs are
 deliberately different, and any later shared-mode code that branches on allocation status,
 extent or convergence flags of that data will desync. Either resynchronise the state or keep
 the later code non-collective. Because TEXTFILE bookkeeping is collective, *printing slightly
 more on one rank is itself a collective mismatch* — and it surfaces later, somewhere innocent.
-Pitfall 8 in `docs/DEVELOPER.md` §1a, with the trace-based recipe that found it.
+Pitfall 8 in `docs/TONTO_DEVELOPER.md` §1a, with the trace-based recipe that found it.
 
 **Not yet fixed** — a latent collective-inside-a-master-guard deadlock in `SYSTEM:initialize`, a
 commented-out `MPI_ABORT` (so one rank dying hangs the job), HAR writing the same file from every

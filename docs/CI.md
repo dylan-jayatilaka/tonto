@@ -92,7 +92,7 @@ option its code rejected.
 ## CI (WSL-release) — `ci-wsl.yml`
 
 Two jobs, because they cost very different amounts of wall-clock. See
-[`BUILD_WSL.md`](BUILD_WSL.md) for what is being guarded and why.
+[`BUILDING_ON_WINDOWS.md`](BUILDING_ON_WINDOWS.md) for what is being guarded and why.
 
 - **`guards`** — ubuntu-latest, ~1 min, **every push**. Every WSL failure condition is
   path- or file-shaped, so `scripts/wsl_selftest.sh` can simulate all of them without a
@@ -132,7 +132,7 @@ CMake Error at CMakeLists.txt:16 (project):
 Tonto is `project(tonto LANGUAGES Fortran C)`, and a bare WSL Ubuntu image has no C
 compiler — `gfortran-14` pulls in `gcc-14-base` but not the `gcc` driver. Ubuntu CI
 runners ship one preinstalled, so only the WSL jobs could ever hit this. Fixed by
-adding `gcc` to `additional-packages`, to the apt line in `BUILD_WSL.md`, and as a
+adding `gcc` to `additional-packages`, to the apt line in `BUILDING_ON_WINDOWS.md`, and as a
 check in `scripts/wsl_doctor.sh`.
 
 Worth noting *how* it was caught: the assertion checks the error **message**, not just
@@ -148,7 +148,7 @@ in `Configure`, with the CRLF guard firing on `foofiles/types.foo`.
 
 The guard was **correct**. `actions/checkout` runs *Windows* git on a Windows runner,
 and its default `core.autocrlf=true` rewrites every file to CRLF on checkout. Copying
-that into WSL reproduces trap 3 from [`BUILD_WSL.md`](BUILD_WSL.md) exactly, and
+that into WSL reproduces trap 3 from [`BUILDING_ON_WINDOWS.md`](BUILDING_ON_WINDOWS.md) exactly, and
 `cmake/WSL.cmake` refused to configure — which is precisely its job.
 
 Fixed by configuring git **before** the checkout step, in both WSL workflows:
