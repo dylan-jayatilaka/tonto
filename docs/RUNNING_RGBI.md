@@ -114,7 +114,30 @@ still exercises both halves. Use **ylid** as the gate: it is the only case with
 H atoms, so it is the only one that exercises the `+H`/`-H` split, the atom
 labelling and a multi-bond dial table.
 
-## 5. Known defects, not yet fixed
+## 5. The two `chemfig`s are both needed — one fails loudly, one silently
+
+`rgbi-mol-structure.tex` loads `chemfig` twice, apparently. It has to, and the
+reason is worth knowing because the redundant-looking one was deleted once and
+had to be restored.
+
+- `mol2chemfig.sty` does `\input{cf-pastebin.tex}` — a **vendored chemfig
+  v1.2d from December 2015**, with the comment *"load this directly, don't mess
+  with chemfig.sty"*. Remove it and the run dies at once:
+  `Command \setbondstyle undefined`.
+- `\usepackage{chemfig}` loads the **modern system chemfig**. Remove it and
+  `pdflatex` **exits 0 with no error** — and draws the aromatic ring circle
+  oversized and overlapping its own bonds, with the whole skeleton compressed.
+  A wrong picture with no diagnostic.
+
+Measured on ylid, 2026-08-09, against `tests/rgbi/ylid/rgbi-mol-structure+H.pdf`.
+
+**And `pdflatex` must run twice.** The bond labels are placed by TikZ node
+references resolved through the `.aux` file, so after a single pass they float
+off to the side of the molecule in a cluster. That looks exactly like a
+placement bug and is not one — it is a missing second pass. Both scripts
+already run `pdflatex` twice for this reason.
+
+## 6. Known defects, not yet fixed
 
 - `foofiles/crystal.foo` "free" plots (see `docs/PLOT_PLAN.md`) — unrelated to
   RGBI but in the same neighbourhood.
