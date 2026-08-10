@@ -4004,3 +4004,24 @@ on Linux, or make the esd printer's digit count independent of a zero esd,
 which is the real fix: a zero esd should not be formatted by the same
 digit-counting rule as a measured one. Until then the two tests fail only on
 machines whose formatting differs from the Mac that blessed them.
+
+**Correction, 2026-08-10, same day.** Reblessing
+`tests/hart/urea_hart_STO-3G_disk_ffs` on this machine **made Linux CI red**,
+and the reblessed reference has been reverted.
+
+The variable is not the operating system, as the Darwin banner on the old
+reference suggested. It is the **compiler version**: this machine has
+GNU 14.3.0 and both the CI runner and the machine that blessed the reference
+have 14.2.0. So the odd one out is here, and blessing from here breaks
+everybody else. With the original reference, CI reports the test as
+`exact=FAIL, loose=PASS` and is green; with mine, it fails the loose gate on a
+structural mismatch of zero numeric difference.
+
+The `gly_ala_fragHAR_rhf_STO-3G` rebless is kept: that difference was an extra
+keyword-echo line, not a formatting one, and the test is in the `long` suite,
+which CI does not run.
+
+**So the item stands, with a sharper statement of it:** the esd printer's digit
+count for a zero esd varies between gfortran point releases, and any reference
+containing a zero esd is therefore only valid for the compiler that blessed it.
+The fix is in the printer, not in the references.
