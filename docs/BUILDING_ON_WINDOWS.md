@@ -17,7 +17,7 @@ with the ANTLR4 translator. Use WSL.
 
 ---
 
-## Quick start
+## Quick start: install WSL, build, test
 
 From a Windows PowerShell prompt, once:
 
@@ -57,7 +57,7 @@ cmake -B ~/tonto-build/release -S ~/tonto \
 
 ---
 
-## The four traps
+## The four traps WSL adds
 
 ### 1. A Windows JDK gets picked up instead of the Linux one
 
@@ -86,7 +86,7 @@ If you would rather WSL never put Windows directories on your `PATH`, add this t
 appendWindowsPath = false
 ```
 
-### 2. Building on the Windows drive
+### 2. A build tree on the Windows drive (/mnt/c)
 
 Files under `/mnt/c` (or any `/mnt/<letter>`) live on the Windows filesystem, reached
 through a translation layer. It is **10–50× slower** than the Linux filesystem, the
@@ -126,7 +126,7 @@ git rm --cached -r .
 git reset --hard
 ```
 
-### 4. Running out of memory
+### 4. Running out of memory during translation
 
 Translation starts **one JVM per `.foo` file**, each wanting roughly 0.5–1 GB. WSL2 gives
 its VM half the host's RAM by default. So `make -j$(nproc)` — fine on bare Linux with the
@@ -151,7 +151,7 @@ memory=12GB
 
 ---
 
-## `scripts/wsl_doctor.sh`
+## `scripts/wsl_doctor.sh` — the preflight check
 
 Run this before `cmake`. It reports the same four problems plus the ones CMake cannot
 see — missing apt packages, unpopulated submodules, WSL 1 — in plain language, changes
@@ -165,7 +165,7 @@ scripts/wsl_doctor.sh ~/tonto-build   # or check a specific one
 Exit status is 0 when you are ready to build, 1 when something blocking is wrong. Off
 WSL it says so and exits immediately.
 
-## WSL 1 vs WSL 2
+## WSL 1 vs WSL 2 — use WSL 2
 
 Both work; WSL 2 is much faster at exactly the things this build does most (file I/O
 and process creation — remember the JVM per file). If `wsl_doctor.sh` or the configure
@@ -175,7 +175,7 @@ log tells you that you are on WSL 1:
 wsl --set-version Ubuntu-24.04 2
 ```
 
-## Escape hatches
+## Escape hatches, if a guard is wrong
 
 | Option | Effect |
 |--------|--------|
@@ -199,14 +199,14 @@ CMake Error at CMakeLists.txt:16 (project):
 Ubuntu CI runners and most desktop installs ship `gcc` already, which is why this
 only bites on a bare WSL image. `scripts/wsl_doctor.sh` checks for it.
 
-## Not covered
+## What this page does not cover
 
 - **MPI.** MS-MPI interop from WSL is not tested and not guarded. A Linux MPI inside
   WSL (`sudo apt install libopenmpi-dev`) is the path that is likely to work.
 - **Native Windows builds** (MSVC, or MinGW cross-compilation via
   `cmake/mingw_w64.cmake`) are a separate thing entirely and unaffected by any of this.
 
-## How this is tested
+## How the WSL guards are tested
 
 Two layers, because they cost very different amounts — see `.github/workflows/ci-wsl.yml`:
 

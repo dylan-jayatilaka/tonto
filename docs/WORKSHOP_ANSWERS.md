@@ -1,24 +1,22 @@
 # Workshop answers
 
-Answers to the questions in [WORKSHOP.md](WORKSHOP.md). Cheating is allowed —
-but have a guess first, because the names are chosen to be guessable and the
-guessing is where the learning is.
+Answers to the questions in [WORKSHOP.md](WORKSHOP.md). Have a guess first:
+the file names are chosen to be guessable.
 
 ---
 
-## Exercise 1 — what are all these files?
+## Exercise 1 — what each output file is for
 
 A two-second `hart` run on 88 reflections leaves about thirty files behind.
-Almost all of them are *deliverables*, not debris: a refinement produces a
-structure, a set of calculated structure factors, a wavefunction, a residual
-density and a set of diagnostic plots, and each of those has a conventional
-format that some other program expects to read.
+Almost all are results rather than debris: a refinement produces a structure, a
+set of calculated structure factors, a wavefunction, a residual density and
+diagnostic plots, each in a format some other program expects.
 
 Everything is named `<job>.something`, where `<job>` is what you passed to
 `--job`. That is the whole naming scheme, and it is why two jobs can share a
 directory without overwriting each other.
 
-### The two you will actually read
+### The two files you read
 
 | File | What it is |
 |---|---|
@@ -34,12 +32,11 @@ directory without overwriting each other.
 | `nh3.cartesian.cif2` | The geometry in Cartesian coordinates, CIF2. |
 | `nh3.fractional.cif1` | The geometry in fractional coordinates, CIF1. |
 
-**Why so many?** Because "the structure" means different things to different
-readers. A database wants the asymmetric unit in fractional coordinates; a
-quantum chemistry program wants a complete molecule in Cartesians; a
+**Why so many?** "The structure" means different things to different readers. A
+database wants the asymmetric unit in fractional coordinates; a quantum
+chemistry program wants a complete molecule in Cartesians; a
 displacement-parameter analysis wants the ADPs in a molecular frame. Converting
-between them by hand is exactly the kind of step where a factor of 2π or a
-transposed matrix gets in.
+between them by hand invites a factor of 2π or a transposed matrix.
 
 ### The calculated structure factors
 
@@ -64,12 +61,11 @@ These are Tonto **archive** files: `<job>.<what>,<genre>`, and the `,r` means
 *restricted* — one spatial orbital per electron pair. An unrestricted
 calculation writes `,a` and `,b` instead.
 
-They are the point of the whole exercise, and they are what makes HAR more than
-a way of moving hydrogens: a refinement that ends in a wavefunction can be asked
-questions afterwards, which is what exercises 2 and 3 do. A tonto job can read
-them back with `read_archive` and carry on from there. (Exercises 2 and 3 end
-with `delete_scf_archives`, which is why you will not find them afterwards —
-they are large, and everything downstream in those jobs has already happened.)
+These are what makes HAR more than a way of moving hydrogens: a refinement that
+ends in a wavefunction can be asked questions afterwards, which is what
+exercises 2 and 3 do. A `tonto` job reads them back with `read_archive`.
+Exercises 2 and 3 end with `delete_scf_archives`, so you will not find them
+there — they are large, and the analysis has already run.
 
 ### The residual density
 
@@ -100,10 +96,9 @@ data file historically called `QQ_plot_with_hkl`), `F_z_vs_stl`,
 |---|---|
 | `fit.log` | **Not Tonto's.** It is *gnuplot's* own log, written when the QQ-plot script fits its straight line. Harmless, and easy to mistake for a refinement log. |
 
-### The question behind the question
+### Why there are no scratch files
 
-Notice what is *not* here: no scratch files, no temporary integrals, nothing
-you are meant to delete. Every file is either a result in a format someone
-else's program reads, or a plot you can redraw. That is the design — a
+Nothing here is a scratch file or a temporary integral. Every file is either a
+result in a format another program reads, or a plot you can redraw: a
 refinement is finished when its results are in the formats the rest of
 crystallography uses.
