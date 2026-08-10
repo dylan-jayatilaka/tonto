@@ -26,13 +26,13 @@ Ordinary **Independent Atom Model** (IAM) refinement in chemical
 crystallography, as done by SHELXL or Olex2, minimises
 
 $$M = \sum_{r=1}^{N_{\mathrm{refl}}} w_r
-\left( \xi\,|F_r^{\mathrm{calc}}| - |F_r^{\mathrm{obs}}| \right)^2$$
+\left( s |F_r^{\mathrm{calc}}| - |F_r^{\mathrm{obs}}| \right)^2$$
 
 where $r$ labels the $N_{\mathrm{refl}}$ measured reflections,
 $|F_r^{\mathrm{obs}}|$ and $|F_r^{\mathrm{calc}}|$ are the observed and
 calculated structure factor magnitudes, $w_r$ is the weight given to
 reflection $r$ — usually $1/(\sigma_r^{\mathrm{obs}})^2$, the reciprocal of
-its estimated standard uncertainty squared — and $\xi$ is an overall scale
+its estimated standard uncertainty squared — and $s$ is an overall scale
 factor, refined along with everything else, because the experimental
 magnitudes are not measured on an absolute scale.
 
