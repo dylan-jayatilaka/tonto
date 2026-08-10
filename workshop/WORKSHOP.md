@@ -1047,9 +1047,11 @@ book-keeping quirk of the name, not of the calculation. The wavefunction is
 the λ = 0.001 one.)*
 
 The file holds one value per line, in 201 rows of 201 separated by blank
-lines. `deformation.gnuplot` in this directory turns either into a contour
-map — solid red where density was gained, dashed blue where it was lost, grey
-for the zero contour, at 0.05 e Å⁻³ intervals.
+lines. `deformation.gnuplot` in this directory turns either into a coloured
+map with contours on top. The contour levels are **logarithmic** — ±0.002,
+0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2 e Å⁻³ — because a density spans
+decades: evenly spaced contours either crowd into a black blot at the nuclei
+or vanish altogether in the bonds.
 **In a terminal**, type:
 
 ```bash
@@ -1080,17 +1082,19 @@ and the difference is a twentieth of the deformation density itself:
 paste -d' ' urea_deformation.deformation_density_grid,gnuplot \
             urea_deformation,lambda=0.002000.deformation_density_grid,gnuplot \
   | awk 'NF==0{print ""; next} {printf "%15.6E\n", $2-$1}' > difference.dat
-gnuplot -e "f='difference.dat'; out='difference.png'; d=0.005; c=0.05" deformation.gnuplot
+gnuplot -e "f='difference.dat'; out='difference.png'; c=0.05; \
+             lv='0.0005 0.001 0.002 0.005 0.01 0.02 0.05'" deformation.gnuplot
 ```
 
-`d` is the contour interval: ten times finer here, because the differences
-are ten times smaller.
+`c` is the colour range and `lv` the contour ladder, both a decade smaller
+here, because the differences are.
 
 ![Constrained minus unconstrained](images/deformation-difference.png)
 
-Note the contour interval: 0.005 e Å⁻³, a tenth of the maps above. The
-constraint puts density **back at the carbon and oxygen nuclei**, and the
-zero contour shows where it came from — the region beyond the C–N bonds. That is the same story the bond indices told
+Note the scale: the outermost contour is 0.0005 e Å⁻³, a hundredth of the
+maps above. The constraint puts density **back at the carbon and oxygen
+nuclei** and takes it **out of the region above and below the C–N bonds** —
+the same story the bond indices told in exercise 3, in real space. That is the same story the bond indices told
 in exercise 3 — the ionic index of the polar bonds fell — now in real space.
 
 ### Things to try next
