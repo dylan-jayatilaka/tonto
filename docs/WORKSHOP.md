@@ -135,19 +135,29 @@ cmake .. -DCMAKE_BUILD_TYPE=release
 make -j3
 ```
 
-That gives you two programs, `build/tonto` and `build/hart`. Tell Tonto where
-its basis sets live, once, and you are ready:
+That gives you two programs, `build/tonto` and `build/hart`.
+
+**Work in the exercise directories where they sit, inside the repository.**
+Everything each exercise needs is then a short relative path away — the
+executables you have just built, and the basis set library:
+
+```bash
+cd <path-to>/tonto/docs/workshop/1-nh3-hart
+ln -s ../../../build/hart hart          # exercises 2 and 3: ln -s ../../../build/tonto tonto
+```
+
+The three exercise directories all sit three levels below the top of the
+repository, so `../../../basis_sets` is the basis set library from any of them.
+Exercise 1 passes that on the command line. Exercises 2 and 3 have no such
+option, so set the environment variable for them:
 
 ```bash
 export TONTO_BASIS_SET_DIRECTORY=<path-to>/tonto/basis_sets
 ```
 
-Then copy an exercise directory somewhere of your own and work there:
-
-```bash
-cp -r <path-to>/tonto/docs/workshop/1-nh3-hart ~/workshop-1
-cd ~/workshop-1
-```
+If you would rather work somewhere of your own, copy a directory
+(`cp -r <path-to>/tonto/docs/workshop/1-nh3-hart ~/workshop-1`) and adjust the
+two paths to suit.
 
 ---
 
@@ -164,30 +174,27 @@ Two data files are provided:
 | `nh3.cif` | the starting independent-atom structure — *P* 2₁3, *a* = 5.1305 Å |
 | `nh3.hkl` | 88 reflections, free format: `h k l F sigma` |
 
-Run it:
+Run it — one line, made to be copied:
 
 ```bash
-hart --job nh3 \
-     --basis def2-SVP \
-     --std-f nh3.hkl \
-     --dtol 0.01 \
-     --grid-accuracy low \
-     nh3.cif
+./hart --job nh3 --basis def2-SVP --basis-dir ../../../basis_sets --std-f nh3.hkl nh3.cif
 ```
 
-About two seconds. What the options mean:
+About two seconds. `./hart` because the exercise directory is not on your
+`PATH`; it is the symlink you made in *Before you begin*. What the options mean:
 
 | Option | |
 |---|---|
 | `--job nh3` | names every output file |
 | `--basis def2-SVP` | the Gaussian basis set. Also the default — spelled out so all three exercises visibly agree |
+| `--basis-dir ../../../basis_sets` | where the basis set files live. Only needed because we are running in place without `TONTO_BASIS_SET_DIRECTORY` set |
 | `--std-f nh3.hkl` | free-format `h k l F sigma`. Use `--std-f2` for *F*², or `--shelx-f`/`--shelx-f2` for the fixed-format SHELX layout |
-| `--dtol 0.01` | DIIS convergence tolerance |
-| `--grid-accuracy low` | the numerical integration grid. Enough here; raise it for published work |
 
-`hart --help` lists the rest. Note that `hart` has **no option for the SCF
-energy convergence** — exercises 2 and 3 set `convergence= 0.001` explicitly,
-and exercise 1 simply cannot, so it runs at hart's internal default.
+`hart --help` lists the rest — including `--dtol` and `--grid-accuracy`, whose
+defaults (0.01 and `low`) are what this exercise wants anyway, so they are not
+written out. Note that `hart` has **no option for the SCF energy convergence** —
+exercises 2 and 3 set `convergence= 0.001` explicitly, and exercise 1 simply
+cannot, so it runs at hart's internal default.
 
 ### What you should get
 
@@ -279,15 +286,16 @@ Urea's asymmetric unit contains a quarter of a molecule. HAR needs a complete
 one, so `urea_init.cif` has been completed for you; it also carries all 817
 reflections, so it is the only data file you need.
 
-Copy the directory, then run:
+Run it:
 
 ```bash
-cd ~/workshop-2
-tonto
+cd ../2-urea-har && ./tonto
 ```
 
-`tonto` reads `stdin` from the working directory and writes `stdout` there. It
-takes about half a minute.
+`tonto` reads `stdin` from the working directory and writes `stdout` there — so
+unlike `hart` it takes no arguments at all, and there is nowhere to say where
+the basis sets are. That is what `TONTO_BASIS_SET_DIRECTORY` is for. It takes
+about half a minute.
 
 ### The input file
 
