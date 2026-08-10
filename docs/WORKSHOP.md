@@ -158,8 +158,17 @@ exercise 3 asks you to look at.
 
 ## Before you begin
 
-Build Tonto by following [BUILDING_TONTO.md](BUILDING_TONTO.md). The quick
-version, on Linux or macOS:
+First build Tonto. Jump straight to your platform — each page is
+self-contained:
+
+| | |
+|---|---|
+| **Linux** | [BUILDING_ON_LINUX.md](BUILDING_ON_LINUX.md) |
+| **macOS** | [BUILDING_ON_MACOS.md](BUILDING_ON_MACOS.md) |
+| **Windows** | [BUILDING_ON_WINDOWS.md](BUILDING_ON_WINDOWS.md) (via WSL) |
+
+The short version, on Linux or macOS, once the prerequisites on those pages are
+installed:
 
 ```bash
 git clone --recursive https://github.com/dylan-jayatilaka/tonto.git

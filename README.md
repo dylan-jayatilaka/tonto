@@ -19,8 +19,12 @@ variables, subroutines and functions are declared.
 
 ## Quickstart
 
-On Ubuntu/Debian. Other platforms, and every build option, are in
-[**`docs/BUILDING_TONTO.md`**](docs/BUILDING_TONTO.md).
+On Ubuntu/Debian. Jump straight to your platform —
+[**Linux**](docs/BUILDING_ON_LINUX.md),
+[**macOS**](docs/BUILDING_ON_MACOS.md),
+[**Windows/WSL**](docs/BUILDING_ON_WINDOWS.md) — or see
+[**`docs/BUILDING_TONTO.md`**](docs/BUILDING_TONTO.md) for build types, MPI and
+clusters.
 
 ```
 sudo apt install make default-jdk gfortran-14 libblas-dev liblapack-dev python3 gnuplot git
@@ -64,7 +68,9 @@ Everything lives in this repository, versioned with the code it describes.
 
 | | |
 |---|---|
-| [**`docs/BUILDING_TONTO.md`**](docs/BUILDING_TONTO.md) | building on Linux, macOS and Windows/WSL; every build type; MPI; clusters |
+| [**`docs/BUILDING_ON_LINUX.md`**](docs/BUILDING_ON_LINUX.md) | building on Linux — start here if you are on Ubuntu/Debian |
+| [**`docs/BUILDING_ON_MACOS.md`**](docs/BUILDING_ON_MACOS.md) | building on macOS, via Homebrew |
+| [**`docs/BUILDING_TONTO.md`**](docs/BUILDING_TONTO.md) | build types, MPI and clusters — common to every platform |
 | [**`docs/RUNNING_TONTO.md`**](docs/RUNNING_TONTO.md) | running Tonto, input/output conventions, practical set-up |
 | [**`docs/RUNNING_HART.md`**](docs/RUNNING_HART.md) | the `hart` program — options, testing, fragHAR |
 | [**`docs/RUNNING_RGBI.md`**](docs/RUNNING_RGBI.md) | the `rgbi` program — options, the picture pipeline, testing |
@@ -73,7 +79,7 @@ Everything lives in this repository, versioned with the code it describes.
 | [**`docs/TONTO_DEVELOPER.md`**](docs/TONTO_DEVELOPER.md) | developer reference, including **writing parallel (MPI) code in Foo** |
 | [**`docs/FOO_GRAMMAR_DOCUMENTATION.md`**](docs/FOO_GRAMMAR_DOCUMENTATION.md) | the Foo language and its translation to Fortran |
 | [**`docs/TONTO_AND_MPI.md`**](docs/TONTO_AND_MPI.md) | the parallel build, its numeric characterisation, and the defect register |
-| [**`docs/BUILDING_ON_WINDOWS.md`**](docs/BUILDING_ON_WINDOWS.md) | the four WSL traps and how they are guarded |
+| [**`docs/BUILDING_ON_WINDOWS.md`**](docs/BUILDING_ON_WINDOWS.md) | building on Windows via WSL — and the four WSL traps and how they are guarded |
 | [**`docs/TONTO_CONTINUOUS_INTEGRATION.md`**](docs/TONTO_CONTINUOUS_INTEGRATION.md) | what each workflow runs, and how to read a result |
 | [**`docs/MAKING_CALL_GRAPHS.md`**](docs/MAKING_CALL_GRAPHS.md) | call/use graphs and dead-code elimination |
 | [**`docs/EDITING_TONTO_WITH_VIM.md`**](docs/EDITING_TONTO_WITH_VIM.md) | vim set-up — tags, folding, completion |

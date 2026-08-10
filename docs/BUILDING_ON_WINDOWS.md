@@ -8,6 +8,13 @@ with the fix in the message (`cmake/WSL.cmake`).
 
 If you just want the commands, skip to [Quick start](#quick-start).
 
+Other platforms: [Linux](BUILDING_ON_LINUX.md), [macOS](BUILDING_ON_MACOS.md).
+Build types other than `release`, parallel (MPI) builds and clusters are common
+to all three and live in [`BUILDING_TONTO.md`](BUILDING_TONTO.md).
+
+Native Windows builds — MinGW, MSYS2, cross-compilation — are **not tested**
+with the ANTLR4 translator. Use WSL.
+
 ---
 
 ## Quick start
