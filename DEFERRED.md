@@ -4025,3 +4025,50 @@ which CI does not run.
 count for a zero esd varies between gfortran point releases, and any reference
 containing a zero esd is therefore only valid for the compiler that blessed it.
 The fix is in the printer, not in the references.
+
+---
+
+## Exercise 4 should use Tonto's own contour plotting, not a hand-rolled script
+
+**Status: open, 2026-08-11.** Dylan's observation, and he is right.
+
+`workshop/WORKSHOP.md` exercise 4 writes the grid with `plot_format= gnuplot`
+and draws it with `examples/4-urea-deformation/deformation.gnuplot`, which
+computes its own logarithmic contour ladder. Tonto already has that facility:
+
+```
+   plot_format= gnuplot.contour
+   contour_scale= log            ! the default
+   contour_min_value= -3.0       ! log10 of the smallest contour
+   contour_increment=  0.5       ! half a decade
+   contour_max_value=  0.0       ! log10 of the largest
+```
+
+which makes Tonto write three files per plot — `*.contour_data`,
+`*.bond_data` and a `*.commands` gnuplot script — and the script draws the map
+with a **logarithmic colour bar labelled in powers of ten**, positive and
+negative, and the bonds overlaid. Verified working: it reports
+
+```
+Minimum +ve log10 contour =  -3.0
+Maximum +ve log10 contour =   0.0
+Contour increment         =   0.5
+No. of contours           =   7
+Total no. of contours     =  15
+```
+
+**Why it was not adopted before the lab.** Two things need sorting first, and
+neither is deep:
+
+1. The generated script targets `xterm` and then `postscript eps`. Rendering
+   to PNG means overriding both terminal lines, and under `pngcairo` the
+   result comes out black — the script's colours assume the EPS terminal's
+   white ground, and `background rgb 'white'` alone does not fix it.
+2. The difference map (constrained minus unconstrained) is made by subtracting
+   two plain grids. The contour format writes a different file, so keeping
+   that picture means either a second pair of plots in plain format or
+   subtracting in the contour data.
+
+**The right end state** is exercise 4 using `gnuplot.contour` and the workshop
+telling the reader to run `gnuplot -persist <job>,<kind>,gnuplot.commands`,
+with no hand-written script at all.
