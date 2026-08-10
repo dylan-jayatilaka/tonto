@@ -148,3 +148,62 @@ Both go in the document as images, not as instructions to go and look at a file.
 3. **`_reflns_d_resolution_low` and `_high` are swapped** in the archive CIF
    relative to the input CIF (0.3475 vs 4.6860). Cosmetic, but it is in a file
    users are told to deposit.
+
+## Exercise 3: what lambda urea's data will actually take (step 6, measured)
+
+The requested ladder — 0.01, 0.02, 0.03 then 0.1, 0.2, 0.3 — **does not run on
+this dataset.** This was established by experiment, not inference, and the
+evidence is worth keeping because the reason is physical rather than a bug.
+
+**λ = 0.01 from a cold start destroys the wavefunction.** GoF² goes 19.8 → 1254
+→ 23335 within three iterations, the energy from −168.1 to −44, and the ⟨MO|M0⟩
+overlap to 0.000000. Two candidate causes were tested and eliminated:
+
+- *Wrong reflections?* No. `urea.hkl` and `urea_init.cif` were compared
+  reflection by reflection — the same 817 Birkedal reflections, the CIF copy
+  merely rounded to 3 dp.
+- *Missing setup?* Partly. Adding a Becke grid and a `refine_hirshfeld_atoms`
+  to settle the scale factor improved the starting point (GoF² 25.6 → 19.8,
+  first-step gradient 2.70 → 1.64) but did not stop the divergence.
+
+**The cause is that urea's data is extremely precise.** The effective mean σ²
+is 2.1 × 10⁻⁴, against 4.4 × 10⁻² for the ammonia data in exercise 1 — a factor
+of 200. The XCW gradient carries λ × dχ²/dP, so the same λ is a two-hundred-fold
+stronger pull here. λ is not a dimensionless knob that transfers between
+datasets.
+
+**What does work**, walking up in steps of 0.001:
+
+| λ | GoF² | energy / hartree | ⟨MO\|M0⟩ | iterations |
+|---|---|---|---|---|
+| 0.001 | 15.79 | −168.129750 | 0.999567 | 14 |
+| 0.002 | 14.00 | −168.127152 | 0.998901 | 17 |
+| 0.003 | 12.91 | −168.124470 | 0.998222 | 20 |
+| 0.004 | 12.15 | −168.121839 | 0.997572 | 24 |
+| 0.005 | 11.58 | −168.119291 | 0.996964 | 28 |
+| 0.010 | **diverged** | — | 0.000000 | killed at 13 |
+
+Monotonic in all three columns, which is exactly what XCW should do: χ² falls,
+the energy rises above its variational minimum, and the orbitals rotate away
+from the unconstrained ones. **This is the table the document should carry**,
+and it is a better teaching object than the requested one because the reader
+can see the trade-off being bought.
+
+Note λ = 0.010 was seeded from a *converged* λ = 0.005 and still blew up, so
+this is not merely a cold-start problem. A finer approach (0.006, 0.007 …) might
+reach it; untested, because of the time budget below.
+
+### Time budget
+
+Dylan's limit is 2–3 minutes per job. The tight-convergence ladder above
+**exceeded 10 minutes** and was killed after 5 converged λ points plus 13
+iterations of the sixth. The cost is per XCW iteration — each needs 817
+structure factors from a Hirshfeld partitioning — and the iteration count climbs
+with λ (14 → 28 across the ladder).
+
+Two savings applied on Dylan's instruction, both of which also simplify the
+decks: the explicit `becke_grid= { accuracy= high }` is gone (the default is
+good enough, and `high` was expensive), and the `show_refinement_output=` /
+`show_refinement_results=` lines are gone from all three decks. Whether the
+requested loose convergence (0.001 / 0.01) brings the ladder inside the budget
+without reintroducing the divergence is being measured now.
