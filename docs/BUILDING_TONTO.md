@@ -1,12 +1,13 @@
 # Building Tonto
 
 Everything needed to produce a working `tonto` (and `hart`) binary, on all three
-supported platforms. This page is the single source of truth for building — the
-README only carries a three-command quickstart and points here.
+supported platforms. 
 
-Related: [`BUILDING_ON_WINDOWS.md`](BUILDING_ON_WINDOWS.md) for the WSL-specific traps and how they
-are guarded, [`TONTO_AND_MPI.md`](TONTO_AND_MPI.md) for what a parallel build does and does not
-reproduce, [`TONTO_CONTINUOUS_INTEGRATION.md`](TONTO_CONTINUOUS_INTEGRATION.md) for what the automated builds do.
+[`BUILDING_ON_WINDOWS.md`](BUILDING_ON_WINDOWS.md) for the WSL-specific traps and how they
+are guarded,
+
+[`TONTO_AND_MPI.md`](TONTO_AND_MPI.md) for what a parallel build does and does not
+reproduce,
 
 ---
 
