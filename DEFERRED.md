@@ -3557,3 +3557,37 @@ A threshold-driven "loose pass" gate (candidate for CI, above) absorbs all of th
 
 What remains for milestone 3 is therefore **not** the release suite (green) but the **debug**
 suite (119/124 — next section) and wiring the release gate into CI.
+
+---
+
+## RGBI: known defects and rough edges
+
+Moved out of `docs/RUNNING_RGBI.md` on 2026-08-10, when the user-facing pages
+were cleared of developer material. None is fixed.
+
+**In the program**
+
+- **`rgbi --help` calls the program `run_rgbi`**, which is the CMake target name
+  rather than what gets installed, and points at a `./rgbi-script` folder, which
+  is spelled `rgbi-scripts`. Both cosmetic. `hart` has an invariant check
+  comparing `--help` against its option `case` labels
+  (`scripts/check_hart_options.sh`); `rgbi` has three options and no such check.
+- `CMakeLists.txt:883` pins a file to `-O2` because **"rgbi/BN's Roby
+  populations were wrong"** at other optimisation levels. Read that comment
+  before touching optimisation flags for this program. No test guards it — see
+  the macOS-in-CI item below.
+
+**In the pictures**
+
+- **The dial grid's column count is hard-coded to four**, in three places per
+  routine (`ROBY:put_dial_table_do_H`, `foofiles/roby.foo:7090`). Four dials
+  need ~520 pt and `article`'s default `\textwidth` is ~345 pt, so the fourth
+  column fell off the page and `pdfcrop` cut it — visible in the committed
+  reference PDFs. Worked around in `rgbi-dial-header.tex` by giving the page a
+  large canvas.
+- Nothing compares the reference PDFs automatically; they are eyeball targets.
+
+**Reference material not in the repository**
+
+The Grabowsky chapter PDF is deliberately not checked in — 1.1 MB of binary. On
+`sauce` it is at `~/rgbi-reference/Jayatilaka_2025_Grabowsky_chapter.pdf`.

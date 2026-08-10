@@ -1,8 +1,6 @@
 # Source and executable layout
 
-Migrated from the project wiki (2026-08-05).
-
-## Executables
+## The executables
 
 Built into whichever build directory you configured (`build/` by convention):
 
@@ -13,7 +11,7 @@ Built into whichever build directory you configured (`build/` by convention):
 
 Other small test/run programs are built alongside.
 
-## Source layout
+## Where the source lives
 
 | Folder | Contents |
 |--------|----------|
@@ -35,18 +33,14 @@ For each `module.foo` the translator emits three files: `module.F90` (the Fortra
 dependent modules). The latter two are `#include`d into the `.F90` by the C
 preprocessor at compile time, so the translator's output is *pre-CPP*.
 
-## Module structure
+## The module dependency picture
 
-The module dependency picture omits utility modules such as `TEXTFILE` and
-`TABLES`; aggregates `ARRAYS`, `NUMBERS`, `MAPS`, gaussian basis functions and
-`SHELLS`; and note that use of a type such as `ATOM` often implies use of the
-corresponding array type `VEC{ATOM}`.
+The picture omits utility modules such as `TEXTFILE` and `TABLES`, and
+aggregates `ARRAYS`, `NUMBERS`, `MAPS`, gaussian basis functions and `SHELLS`.
+Use of a type such as `ATOM` usually implies use of the array type `VEC{ATOM}`
+as well.
 
 ![module structure](images/module_structure.svg)
-
-*(`docs/images/module_structure.svg` — committed here rather than linked to a
-GitHub attachment URL, so it is versioned with the code and survives if that
-URL ever stops resolving.)*
 
 For generated, always-current versions of this information see
 [`MAKING_CALL_GRAPHS.md`](MAKING_CALL_GRAPHS.md) — `make callgraphs` writes `call_graph.dot`,
