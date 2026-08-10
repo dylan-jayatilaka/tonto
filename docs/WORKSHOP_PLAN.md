@@ -9,7 +9,7 @@ plan survives a lost context or a lost machine.
 
 Found. It is **not** in this repository and not on the `lamaGOET` branch — it is
 
-    github.com/dylan-jayatilaka/lamaGOET   branch macos-qt-fixes   docs/WORKSHOP.md
+    github.com/dylan-jayatilaka/lamaGOET   branch macos-qt-fixes   workshop/WORKSHOP.md
 
 358 lines, adapted from Lorraine Malaspina's 2024 lab notes. A local copy is in
 this session's scratchpad. What we take from it:
@@ -96,11 +96,11 @@ Each step ends in a commit and a push.
 | 0 | Locate the reference WORKSHOP | ✅ done |
 | 1 | Time urea vs SO₂; pick exercise 2's molecule | ✅ done — urea |
 | 2 | Write this plan, push it | ✅ done |
-| 3 | Draft the **three stdin decks** and show Dylan *before* running them | ✅ drafted, in `docs/workshop/` — awaiting review |
+| 3 | Draft the **three stdin decks** and show Dylan *before* running them | ✅ drafted, in `examples/` — awaiting review |
 | 4 | Run exercise 1 (`hart`, NH₃) — capture the numbers | ⬜ |
 | 5 | Run exercise 2 (HAR + RGBI) — capture numbers, the four HAR plots, dial diagrams | ⬜ |
 | 6 | Run exercise 3 (XCW, six lambdas) — build the λ table | ⬜ |
-| 7 | Write `docs/WORKSHOP.md` around the captured output | ⬜ |
+| 7 | Write `workshop/WORKSHOP.md` around the captured output | ⬜ |
 | 8 | Commit the images under `docs/images/workshop/` | ⬜ |
 | 9 | Link it from `README.md` and the docs index in `CLAUDE.md` §7 | ⬜ |
 
@@ -231,7 +231,7 @@ The parameter set is settled when these are fixed and measured together:
 3. whether `refine_hirshfeld_atoms` stays in the deck (it is what settles the
    scale factor, but it is also the single most expensive step).
 
-Until then, treat every number in this file and in `WORKSHOP.md` as indicative
+Until then, treat every number in this file and in `workshop/WORKSHOP.md` as indicative
 of shape, not of value.
 
 ---
@@ -247,7 +247,7 @@ at all (11.14 → 10.85 → 10.87).
 In this run the swing coincides with the converger changing gear — damping and
 level-shifting come off at iteration 3, which is where DIIS starts
 extrapolating. That is a correlation in a single trace and **not** a
-demonstrated cause; it is written into `WORKSHOP.md` as an observation, with the
+demonstrated cause; it is written into `workshop/WORKSHOP.md` as an observation, with the
 cause explicitly left open. Worth a proper experiment some time: hold damping on
 throughout, or start DIIS at iteration 0, and see whether the wobble follows the
 converger or the constraint.

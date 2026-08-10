@@ -4,7 +4,7 @@ A guided introduction to Hirshfeld atom refinement (HAR) and X-ray constrained
 wavefunction (XCW) fitting, driving **Tonto directly** — no GUI. Three worked
 exercises, each with a results table for you to fill in from your own run.
 
-Everything you need is in this repository, under `docs/workshop/`. The input
+Everything you need is in this repository, under `examples/`. The input
 files are printed in full below, so you can read them here and check what you
 are running.
 
@@ -162,9 +162,9 @@ self-contained:
 
 | | |
 |---|---|
-| **Linux** | [BUILDING_ON_LINUX.md](BUILDING_ON_LINUX.md) |
-| **macOS** | [BUILDING_ON_MACOS.md](BUILDING_ON_MACOS.md) |
-| **Windows** | [BUILDING_ON_WINDOWS.md](BUILDING_ON_WINDOWS.md) (via WSL) |
+| **Linux** | [BUILDING_ON_LINUX.md](../docs/BUILDING_ON_LINUX.md) |
+| **macOS** | [BUILDING_ON_MACOS.md](../docs/BUILDING_ON_MACOS.md) |
+| **Windows** | [BUILDING_ON_WINDOWS.md](../docs/BUILDING_ON_WINDOWS.md) (via WSL) |
 
 The short version, on Linux or macOS, once the prerequisites on those pages are
 installed:
@@ -183,12 +183,12 @@ Everything each exercise needs is then a short relative path away — the
 executables you have just built, and the basis set library:
 
 ```bash
-cd <path-to>/tonto/docs/workshop/1-nh3-hart
-ln -s ../../../build/hart hart          # exercises 2 and 3: ln -s ../../../build/tonto tonto
+cd <path-to>/tonto/examples/1-nh3-hart
+ln -s ../../build/hart hart          # exercises 2 and 3: ln -s ../../build/tonto tonto
 ```
 
 The three exercise directories all sit three levels below the top of the
-repository, so `../../../basis_sets` is the basis set library from any of them,
+repository, so `../../basis_sets` is the basis set library from any of them,
 and each exercise passes it on the command line. Nothing else to set up: no
 environment, no copying, no editing of paths.
 
@@ -204,7 +204,7 @@ export TONTO_BASIS_SET_DIRECTORY=<path-to>/tonto/basis_sets
 `tonto --basis-library`. Not a typo below; `--help` on either will confirm it.
 
 If you would rather work somewhere of your own, copy a directory
-(`cp -r <path-to>/tonto/docs/workshop/1-nh3-hart ~/workshop-1`) and adjust the
+(`cp -r <path-to>/tonto/examples/1-nh3-hart ~/workshop-1`) and adjust the
 two paths to suit.
 
 ---
@@ -225,7 +225,7 @@ Two data files are provided:
 Run it — one line, made to be copied:
 
 ```bash
-./hart --job nh3 --basis def2-SVP --basis-dir ../../../basis_sets --std-f nh3.hkl nh3.cif
+./hart --job nh3 --basis def2-SVP --basis-dir ../../basis_sets --std-f nh3.hkl nh3.cif
 ```
 
 About two seconds. `./hart` because the exercise directory is not on your
@@ -235,7 +235,7 @@ About two seconds. `./hart` because the exercise directory is not on your
 |---|---|
 | `--job nh3` | names every output file |
 | `--basis def2-SVP` | the Gaussian basis set. Also the default — spelled out so all three exercises visibly agree |
-| `--basis-dir ../../../basis_sets` | where the basis set files live. Only needed because we are running in place without `TONTO_BASIS_SET_DIRECTORY` set |
+| `--basis-dir ../../basis_sets` | where the basis set files live. Only needed because we are running in place without `TONTO_BASIS_SET_DIRECTORY` set |
 | `--std-f nh3.hkl` | free-format `h k l F sigma`. Use `--std-f2` for *F*², or `--shelx-f`/`--shelx-f2` for the fixed-format SHELX layout |
 
 `hart --help` lists the rest — including `--dtol` and `--grid-accuracy`, whose
@@ -324,24 +324,24 @@ the hydrogen distance is.
 At the end of a refinement Tonto draws four diagnostic plots itself, using
 gnuplot. They are the fastest way to see whether anything is wrong with the fit.
 
-![Normal QQ plot](images/workshop/nh3.QQ_plot.png)
+![Normal QQ plot](images/nh3.QQ_plot.png)
 
 **Normal QQ plot.** If the errors are normally distributed the points lie on a
 straight line through the origin with slope 1. The fitted line and its equation
 are drawn for you; the six worst outliers are labelled with their (*h k l*).
 
-![F_z vs sin(theta)/lambda](images/workshop/nh3.F_z_vs_stl.png)
+![F_z vs sin(theta)/lambda](images/nh3.F_z_vs_stl.png)
 
 **F_z against sin θ/λ.** Systematic structure here means a resolution-dependent
 error — an extinction, thermal-motion or scattering-factor problem. You want a
 featureless band.
 
-![F_z vs F_exp](images/workshop/nh3.F_z_vs_F_exp.png)
+![F_z vs F_exp](images/nh3.F_z_vs_F_exp.png)
 
 **F_z against F_exp.** A trend here points at the weighting scheme, or at
 extinction on the strong reflections.
 
-![Delta F vs sin(theta)/lambda](images/workshop/nh3.Delta_F_vs_stl.png)
+![Delta F vs sin(theta)/lambda](images/nh3.Delta_F_vs_stl.png)
 
 **ΔF against sin θ/λ.** The unnormalised residual — shows you which reflections
 dominate in absolute terms rather than in units of σ.
@@ -406,7 +406,7 @@ reflections, so it is the only data file you need.
 Run it:
 
 ```bash
-cd ../2-urea-har && ./tonto --basis-library ../../../basis_sets
+cd ../2-urea-har && ./tonto --basis-library ../../basis_sets
 ```
 
 `tonto` takes no input file argument: it reads `stdin` from the working
@@ -414,7 +414,7 @@ directory and writes `stdout` there. About 40 seconds.
 
 ### The input file
 
-This is `docs/workshop/2-urea-har/stdin`, in full:
+This is `examples/2-urea-har/stdin`, in full:
 
 ```
 {
@@ -517,13 +517,13 @@ Do not read it as a failed refinement; read it as the reason exercise 3 exists.
 
 ### The four diagnostic plots
 
-![Normal QQ plot](images/workshop/urea.QQ_plot.png)
+![Normal QQ plot](images/urea.QQ_plot.png)
 
-![F_z vs sin(theta)/lambda](images/workshop/urea.F_z_vs_stl.png)
+![F_z vs sin(theta)/lambda](images/urea.F_z_vs_stl.png)
 
-![F_z vs F_exp](images/workshop/urea.F_z_vs_F_exp.png)
+![F_z vs F_exp](images/urea.F_z_vs_F_exp.png)
 
-![Delta F vs sin(theta)/lambda](images/workshop/urea.Delta_F_vs_stl.png)
+![Delta F vs sin(theta)/lambda](images/urea.Delta_F_vs_stl.png)
 
 Compare the QQ plot with ammonia's. With 817 reflections instead of 88 the
 shape is much better defined — and it is visibly *not* a straight line of slope
@@ -546,9 +546,9 @@ make-rgbi-pic   --do-H     # additionally needs Open Babel and mol2chemfig
 
 The two halves are independent: if the second defeats you, you still get the
 dial diagrams. `scripts/rgbi_doctor.sh` tells you what is missing, and
-[INSTALLING_RGBI.md](INSTALLING_RGBI.md) how to fix it.
+[INSTALLING_RGBI.md](../docs/INSTALLING_RGBI.md) how to fix it.
 
-![Urea with Roby-Gould bond indices](images/workshop/urea.rgbi-structure.png)
+![Urea with Roby-Gould bond indices](images/urea.rgbi-structure.png)
 
 Each bond carries its **bond index** in black and its **percentage covalency**
 in blue. The C=O comes out at 1.78 and 74% covalent; the two C–N bonds at 1.46
@@ -563,7 +563,7 @@ measured rather than asserted.
 The dial diagrams show where each index comes from — covalent index along the
 horizontal, ionic index along the vertical, the total being the radius:
 
-![Dial diagrams for urea](images/workshop/urea.rgbi-dials-detail.png)
+![Dial diagrams for urea](images/urea.rgbi-dials-detail.png)
 
 Read them as a picture of bond character. The C=O dial (top left, 1.63 covalent
 against 0.70 ionic) leans well off the horizontal — a strongly polarised double
@@ -574,7 +574,7 @@ weak, almost purely electrostatic interaction rather than a bond.
 
 The full page of 21 dials, including every non-bonded pair, is in
 `rgbi-dial-table+H.pdf`, and reproduced
-[here](images/workshop/urea.rgbi-dials-all.png).
+[here](images/urea.rgbi-dials-all.png).
 
 ### Things to try next
 
@@ -614,7 +614,7 @@ by the data and by nothing else.
 Run it:
 
 ```bash
-cd ../3-urea-xcw && ./tonto --basis-library ../../../basis_sets
+cd ../3-urea-xcw && ./tonto --basis-library ../../basis_sets
 ```
 
 About two and a half minutes.
@@ -628,7 +628,7 @@ calculation needs.
 
 ### The input file
 
-This is `docs/workshop/3-urea-xcw/stdin`, in full:
+This is `examples/3-urea-xcw/stdin`, in full:
 
 ```
 {
@@ -643,8 +643,8 @@ This is `docs/workshop/3-urea-xcw/stdin`, in full:
    !
    ! Run it in this directory, in place:
    !
-   !    ln -s ../../../build/tonto tonto        # once, if the link is not here
-   !    ./tonto --basis-library ../../../basis_sets
+   !    ln -s ../../build/tonto tonto        # once, if the link is not here
+   !    ./tonto --basis-library ../../basis_sets
    !
    ! tonto takes no input file argument: it reads the file called "stdin" in
    ! the working directory -- this one -- and writes "stdout" beside it. (hart

@@ -31,7 +31,7 @@ Pick your platform. Each page is self-contained.
 
 ## Learn it
 
-The [**workshop**](docs/WORKSHOP.md) is three worked exercises: a Hirshfeld
+The [**workshop**](workshop/WORKSHOP.md) is three worked exercises: a Hirshfeld
 atom refinement on ammonia, a refinement on urea followed by a bond-index
 analysis, and an X-ray constrained wavefunction fit.
 

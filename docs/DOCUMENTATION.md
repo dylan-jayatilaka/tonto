@@ -26,8 +26,9 @@ parallel (MPI) builds for that platform.
 
 | | |
 |---|---|
-| [**Workshop**](WORKSHOP.md) | three worked exercises: HAR, bond indices, XCW fitting |
-| [**Workshop answers**](WORKSHOP_ANSWERS.md) | answers to the questions in the workshop |
+| [**Workshop**](../workshop/WORKSHOP.md) | three worked exercises: HAR, bond indices, XCW fitting |
+| [**Workshop answers**](../workshop/WORKSHOP_ANSWERS.md) | answers to the questions in the workshop |
+| [**`examples/`**](../examples) | the input files those exercises run |
 
 ## Developing
 
