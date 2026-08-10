@@ -162,13 +162,23 @@ Ready-built programs are on the
 download contains everything this workshop needs — the programs, the basis
 sets, the exercises and this document.
 
+**Which terminal to type in.** Every command below is typed into a terminal
+window, and this document always says which one:
+
+| Your machine | The terminal to use | How to open it |
+|---|---|---|
+| **Windows** | **Ubuntu** (that is WSL — a Linux terminal running on Windows) | Start menu → *Ubuntu* |
+| **Windows, once, to install WSL** | **PowerShell as Administrator** | right-click the Start button → *Terminal (Admin)* |
+| **macOS** | **Terminal** | Applications → Utilities → *Terminal* |
+| **Linux** | **Terminal** | your usual one |
+
 ### Windows
 
 Windows runs the Linux build inside WSL, which is a real Ubuntu that Windows
 installs for you. Five steps, and you can paste every command.
 
-1. Open **PowerShell as Administrator** (right-click the Start button →
-   *Terminal (Admin)*) and run:
+1. **In PowerShell as Administrator** (right-click the Start button →
+   *Terminal (Admin)*), type:
 
    ```powershell
    wsl --install
@@ -183,8 +193,8 @@ installs for you. Five steps, and you can paste every command.
    download the file ending in **`-linux-x86_64.tar.gz`**. It goes to your
    Windows `Downloads` folder, which is fine.
 
-3. Open **Ubuntu** from the Start menu, and paste these lines. Replace
-   `<you>` with your Windows user name:
+3. Open **Ubuntu** from the Start menu. **In the Ubuntu terminal**, type
+   these three lines, replacing `<you>` with your Windows user name:
 
    ```bash
    cd ~
@@ -192,13 +202,14 @@ installs for you. Five steps, and you can paste every command.
    cd tonto-*-linux-x86_64
    ```
 
-4. Install gnuplot, which draws the plots at the end of a refinement:
+4. **In the Ubuntu terminal**, install gnuplot, which draws the plots at the
+   end of a refinement:
 
    ```bash
    sudo apt update && sudo apt install -y gnuplot
    ```
 
-5. Check it works:
+5. **In the Ubuntu terminal**, check it works:
 
    ```bash
    build/tonto --version
@@ -208,6 +219,8 @@ installs for you. Five steps, and you can paste every command.
    directory.
 
 ### Linux
+
+**In a terminal**, type:
 
 ```bash
 cd ~
@@ -245,8 +258,8 @@ Jump straight to your platform — each page is self-contained:
 | **macOS** | [BUILDING_ON_MACOS.md](../docs/BUILDING_ON_MACOS.md) |
 | **Windows** | [BUILDING_ON_WINDOWS.md](../docs/BUILDING_ON_WINDOWS.md) (via WSL) |
 
-The short version, on Linux or macOS, once the prerequisites on those pages are
-installed:
+The short version, once the prerequisites on those pages are installed —
+**in a terminal**, type:
 
 ```bash
 git clone --recursive https://github.com/dylan-jayatilaka/tonto.git
@@ -255,36 +268,18 @@ cmake .. -DCMAKE_BUILD_TYPE=release
 make -j3
 ```
 
-That gives you two programs, `build/tonto` and `build/hart`.
+That gives you `build/tonto` and `build/hart` — the same two programs, in the
+same place, as the download.
 
-**Work in the exercise directories where they sit, inside the repository.**
-Everything each exercise needs is then a short relative path away — the
-executables you have just built, and the basis set library:
+## Where to work
 
-```bash
-cd <path-to>/tonto/examples/1-nh3-hart
-ln -s ../../build/hart hart          # exercises 2 and 3: ln -s ../../build/tonto tonto
-```
+**Work in the exercise directories where they sit**, whether you downloaded or
+compiled. Each exercise then reaches the program and the basis sets by a short
+relative path, and there is nothing to set up: no environment variable, no
+copying, no editing of paths.
 
-The three exercise directories all sit three levels below the top of the
-repository, so `../../basis_sets` is the basis set library from any of them,
-and each exercise passes it on the command line. Nothing else to set up: no
-environment, no copying, no editing of paths.
-
-If you would rather not type it every time, both programs fall back to the
-`TONTO_BASIS_SET_DIRECTORY` environment variable, and then the option can be
-dropped:
-
-```bash
-export TONTO_BASIS_SET_DIRECTORY=<path-to>/tonto/basis_sets
-```
-
-**The two programs spell the same option differently** — `hart --basis-dir`,
-`tonto --basis-library`. Not a typo below; `--help` on either will confirm it.
-
-If you would rather work somewhere of your own, copy a directory
-(`cp -r <path-to>/tonto/examples/1-nh3-hart ~/workshop-1`) and adjust the
-two paths to suit.
+The two programs spell one option differently — `hart --basis-dir`,
+`tonto --basis-library`. That is not a typo below.
 
 ---
 
@@ -301,20 +296,22 @@ Two data files are provided:
 | `nh3.cif` | the starting independent-atom structure — *P* 2₁3, *a* = 5.1305 Å |
 | `nh3.hkl` | 88 reflections, free format: `h k l F sigma` |
 
-Run it — one line, made to be copied:
+**In a terminal**, type these two lines — the first moves into the exercise
+directory, the second runs the refinement:
 
 ```bash
-./hart --job nh3 --basis def2-SVP --basis-dir ../../basis_sets --std-f nh3.hkl nh3.cif
+cd examples/1-nh3-hart
+../../build/hart --job nh3 --basis def2-SVP --basis-dir ../../basis_sets --std-f nh3.hkl nh3.cif
 ```
 
-About two seconds. `./hart` because the exercise directory is not on your
-`PATH`; it is the symlink you made in *Before you begin*. What the options mean:
+About two seconds. `../../build/hart` is the program you downloaded or built,
+two directories up. What the options mean:
 
 | Option | |
 |---|---|
 | `--job nh3` | names every output file |
 | `--basis def2-SVP` | the Gaussian basis set. Also the default — spelled out so all three exercises visibly agree |
-| `--basis-dir ../../basis_sets` | where the basis set files live. Only needed because we are running in place without `TONTO_BASIS_SET_DIRECTORY` set |
+| `--basis-dir ../../basis_sets` | where the basis-set files live, two directories up |
 | `--std-f nh3.hkl` | free-format `h k l F sigma`. Use `--std-f2` for *F*², or `--shelx-f`/`--shelx-f2` for the fixed-format SHELX layout |
 
 `hart --help` lists the rest — including `--dtol` and `--grid-accuracy`, whose
@@ -482,10 +479,11 @@ Urea's asymmetric unit contains a quarter of a molecule. HAR needs a complete
 one, so `urea_init.cif` has been completed for you; it also carries all 817
 reflections, so it is the only data file you need.
 
-Run it:
+**In a terminal**, type:
 
 ```bash
-cd ../2-urea-har && ./tonto --basis-library ../../basis_sets
+cd ../2-urea-har
+../../build/tonto --basis-library ../../basis_sets
 ```
 
 `tonto` takes no input file argument: it reads `stdin` from the working
@@ -497,6 +495,22 @@ This is `examples/2-urea-har/stdin`, in full:
 
 ```
 {
+
+   ! Exercise 2 -- Hirshfeld atom refinement of urea, followed by a
+   ! Roby-Gould bond index (RGBI) analysis of the refined wavefunction.
+   !
+   ! Everything the refinement needs -- cell, symmetry, starting atom
+   ! positions and ADPs, and all 817 reflections -- is in urea_init.cif.
+   !
+   ! Run it in this directory, in place:
+   !
+   !    ../../build/tonto --basis-library ../../basis_sets
+   !
+   ! tonto takes no input file argument: it reads the file called "stdin" in
+   ! the working directory -- this one -- and writes "stdout" beside it. The
+   ! run takes about 40 seconds. (hart spells the same option --basis-dir;
+   ! tonto spells it --basis-library. Or set TONTO_BASIS_SET_DIRECTORY once
+   ! and drop it.)
 
    name= urea
 
@@ -523,9 +537,6 @@ This is `examples/2-urea-har/stdin`, in full:
          optimise_scale_factor= YES
 
          do_residual_cube= NO
-
-         show_refinement_output=  FALSE
-         show_refinement_results= TRUE
 
       }
    }
@@ -690,10 +701,11 @@ defined.
 There are no cluster charges here: this is the isolated molecule, constrained
 by the data and by nothing else.
 
-Run it:
+**In a terminal**, type:
 
 ```bash
-cd ../3-urea-xcw && ./tonto --basis-library ../../basis_sets
+cd ../3-urea-xcw
+../../build/tonto --basis-library ../../basis_sets
 ```
 
 About two and a half minutes.
@@ -722,8 +734,7 @@ This is `examples/3-urea-xcw/stdin`, in full:
    !
    ! Run it in this directory, in place:
    !
-   !    ln -s ../../build/tonto tonto        # once, if the link is not here
-   !    ./tonto --basis-library ../../basis_sets
+   !    ../../build/tonto --basis-library ../../basis_sets
    !
    ! tonto takes no input file argument: it reads the file called "stdin" in
    ! the working directory -- this one -- and writes "stdout" beside it. (hart
