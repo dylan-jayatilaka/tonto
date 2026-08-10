@@ -111,7 +111,6 @@ Everything lives in this repository, versioned with the code it describes.
 | [**`docs/TONTO_CONTINUOUS_INTEGRATION.md`**](docs/TONTO_CONTINUOUS_INTEGRATION.md) | what each workflow runs, and how to read a result |
 | [**`docs/MAKING_CALL_GRAPHS.md`**](docs/MAKING_CALL_GRAPHS.md) | call/use graphs and dead-code elimination |
 | [**`docs/EDITING_TONTO_WITH_VIM.md`**](docs/EDITING_TONTO_WITH_VIM.md) | vim set-up — tags, folding, completion |
-| [**`DEFERRED.md`**](DEFERRED.md) | known issues and deferred work, with the reasoning |
 
 ## The CI badges, and what each one actually tests
 
