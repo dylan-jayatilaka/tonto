@@ -215,12 +215,27 @@ the hydrogen distance is.
 At the end of a refinement Tonto draws four diagnostic plots itself, using
 gnuplot. They are the fastest way to see whether anything is wrong with the fit.
 
-| | |
-|---|---|
-| ![Normal QQ plot](images/workshop/nh3.QQ_plot.png) | ![F_z vs sin(theta)/lambda](images/workshop/nh3.F_z_vs_stl.png) |
-| **Normal QQ plot.** If the errors are normally distributed the points lie on a straight line through the origin with slope 1. The fitted line and its equation are drawn for you; the six worst outliers are labelled with their (*h k l*). | **F_z against sin θ/λ.** Systematic structure here means a resolution-dependent error — an extinction, thermal-motion or scattering-factor problem. You want a featureless band. |
-| ![F_z vs F_exp](images/workshop/nh3.F_z_vs_F_exp.png) | ![Delta F vs sin(theta)/lambda](images/workshop/nh3.Delta_F_vs_stl.png) |
-| **F_z against F_exp.** A trend here points at the weighting scheme, or at extinction on the strong reflections. | **ΔF against sin θ/λ.** The unnormalised residual — shows you which reflections dominate in absolute terms rather than in units of σ. |
+![Normal QQ plot](images/workshop/nh3.QQ_plot.png)
+
+**Normal QQ plot.** If the errors are normally distributed the points lie on a
+straight line through the origin with slope 1. The fitted line and its equation
+are drawn for you; the six worst outliers are labelled with their (*h k l*).
+
+![F_z vs sin(theta)/lambda](images/workshop/nh3.F_z_vs_stl.png)
+
+**F_z against sin θ/λ.** Systematic structure here means a resolution-dependent
+error — an extinction, thermal-motion or scattering-factor problem. You want a
+featureless band.
+
+![F_z vs F_exp](images/workshop/nh3.F_z_vs_F_exp.png)
+
+**F_z against F_exp.** A trend here points at the weighting scheme, or at
+extinction on the strong reflections.
+
+![Delta F vs sin(theta)/lambda](images/workshop/nh3.Delta_F_vs_stl.png)
+
+**ΔF against sin θ/λ.** The unnormalised residual — shows you which reflections
+dominate in absolute terms rather than in units of σ.
 
 For ammonia the QQ plot is close to a straight line of slope 0.932, with (1 1 1)
 sitting well below it — one reflection fitting worse than a normal distribution
@@ -362,10 +377,13 @@ Do not read it as a failed refinement; read it as the reason exercise 3 exists.
 
 ### The fit plots
 
-| | |
-|---|---|
-| ![Normal QQ plot](images/workshop/urea.QQ_plot.png) | ![F_z vs sin(theta)/lambda](images/workshop/urea.F_z_vs_stl.png) |
-| ![F_z vs F_exp](images/workshop/urea.F_z_vs_F_exp.png) | ![Delta F vs sin(theta)/lambda](images/workshop/urea.Delta_F_vs_stl.png) |
+![Normal QQ plot](images/workshop/urea.QQ_plot.png)
+
+![F_z vs sin(theta)/lambda](images/workshop/urea.F_z_vs_stl.png)
+
+![F_z vs F_exp](images/workshop/urea.F_z_vs_F_exp.png)
+
+![Delta F vs sin(theta)/lambda](images/workshop/urea.Delta_F_vs_stl.png)
 
 Compare the QQ plot with ammonia's. With 817 reflections instead of 88 the
 shape is much better defined — and it is visibly *not* a straight line of slope
