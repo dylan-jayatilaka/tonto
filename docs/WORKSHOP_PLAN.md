@@ -63,8 +63,23 @@ anyway.** Three reasons, and the third is the one that decides it:
    first workshop — its R(F) *rises* from 0.0295 to 0.0406. Urea's falls to
    0.0185 (SHELX IAM is 0.0253). An exercise whose numbers get worse teaches
    the wrong lesson.
-3. **SO₂ has no hydrogen.** Locating hydrogen is the whole point of HAR. Urea
-   gives two N–H distances to set against neutron values; SO₂ gives none.
+3. **Urea carries exercise 3, and exercise 3 is the point.** Locating hydrogen
+   is *one* reason to do HAR, and the visible one — urea gives two N–H
+   distances to set against neutron values, SO₂ gives none. But it is not the
+   main reason, and the document must not say it is (Dylan, 2026-08-10):
+
+   > HAR gives a **wavefunction for the system at that geometry**, which can be
+   > further fitted (via XCW) and from which properties can be obtained —
+   > properties consistent with a density that has been fitted to X-ray
+   > diffraction data.
+
+   That is what makes the three exercises one story rather than three: HAR
+   produces the wavefunction, XCW constrains it against the data, and what
+   comes out is a density you can compute properties from and still call
+   experimental. The RGBI analysis in exercise 2 is the first such property.
+   So the **"Why bother" section leads with the wavefunction**, and hydrogen
+   appears as the check you can see with your own eyes — the reverse of the
+   lamaGOET document's emphasis.
 
 Urea is also a single self-contained CIF with its 817 reflections embedded —
 one file for the participant to copy — whereas SO₂ needs a CIF plus a separate
@@ -81,7 +96,7 @@ Each step ends in a commit and a push.
 | 0 | Locate the reference WORKSHOP | ✅ done |
 | 1 | Time urea vs SO₂; pick exercise 2's molecule | ✅ done — urea |
 | 2 | Write this plan, push it | ✅ done |
-| 3 | Draft the **three stdin decks** and show Dylan *before* running them | ⬜ |
+| 3 | Draft the **three stdin decks** and show Dylan *before* running them | ✅ drafted, in `docs/workshop/` — awaiting review |
 | 4 | Run exercise 1 (`hart`, NH₃) — capture the numbers | ⬜ |
 | 5 | Run exercise 2 (HAR + RGBI) — capture numbers, the four HAR plots, dial diagrams | ⬜ |
 | 6 | Run exercise 3 (XCW, six lambdas) — build the λ table | ⬜ |
@@ -115,3 +130,21 @@ Two families, both already working as of `d00e26b6`:
    the labelled-structure half additionally needs Open Babel and mol2chemfig.
 
 Both go in the document as images, not as instructions to go and look at a file.
+
+## Open questions raised by drafting the decks (step 3)
+
+1. **`hart` cannot set the SCF energy convergence.** Exercises 2 and 3 set
+   `convergence= 0.001` in `scfdata`; `hart` exposes `--dtol` (DIIS) but has no
+   equivalent for the energy. So exercise 1 cannot be made to agree with the
+   other two on the 0.001 figure. Either `hart` gains the option, or the
+   document says plainly that it runs at hart's internal default.
+2. **Urea's wavelength was never in `urea_init.cif`.** The archive CIF from the
+   timing run came out with `_diffrn_radiation_wavelength -0.529177` — that is
+   −1 bohr, i.e. the unset default, printed in Angstrom. Harmless here
+   (extinction off, no dispersion), but it means the reported θ_max is
+   meaningless. The decks now set `wavelength= 0.3173 angstrom` explicitly.
+   Worth a look at why an unset wavelength prints as a negative number instead
+   of failing.
+3. **`_reflns_d_resolution_low` and `_high` are swapped** in the archive CIF
+   relative to the input CIF (0.3475 vs 4.6860). Cosmetic, but it is in a file
+   users are told to deposit.
