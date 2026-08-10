@@ -155,102 +155,80 @@ exercise 3 asks you to look at.
 
 ---
 
-## Getting Tonto: download it, no compiler needed
+## Getting Tonto
 
 Ready-built programs are on the
 [**releases page**](https://github.com/dylan-jayatilaka/tonto/releases). One
-download contains everything this workshop needs — the programs, the basis
-sets, the exercises and this document.
-
-**Which terminal to type in.** Every command below is typed into a terminal
-window, and this document always says which one:
-
-| Your machine | The terminal to use | How to open it |
-|---|---|---|
-| **Windows** | **Ubuntu** (that is WSL — a Linux terminal running on Windows) | Start menu → *Ubuntu* |
-| **Windows, once, to install WSL** | **PowerShell as Administrator** | right-click the Start button → *Terminal (Admin)* |
-| **macOS** | **Terminal** | Applications → Utilities → *Terminal* |
-| **Linux** | **Terminal** | your usual one |
+download holds the programs, the basis sets, the exercises and this document.
+No compiler is needed.
 
 ### Windows
 
-Windows runs the Linux build inside WSL, which is a real Ubuntu that Windows
-installs for you. Five steps, and you can paste every command.
+Download **`tonto-<version>-windows-x86_64.zip`** from the releases page and
+unzip it — right-click the file, *Extract All*.
 
-1. **In PowerShell as Administrator** (right-click the Start button →
-   *Terminal (Admin)*), type:
+Open the extracted folder, then open a terminal there: click in the address bar
+of the Explorer window, type `cmd`, and press Enter. Then type:
 
-   ```powershell
-   wsl --install
-   ```
+```
+build\tonto.exe --version
+```
 
-   Reboot if it asks. When you next open **Ubuntu** from the Start menu it will
-   ask you to choose a username and a password. Remember the password: `sudo`
-   asks for it.
+A version number means you are ready. Every command in the exercises below is
+the same, with `\` for `/` and `.exe` on the end:
 
-2. In your browser, go to the
-   [releases page](https://github.com/dylan-jayatilaka/tonto/releases) and
-   download the file ending in **`-linux-x86_64.tar.gz`**. It goes to your
-   Windows `Downloads` folder, which is fine.
+```
+build\hart.exe --job nh3 --basis def2-SVP --basis-dir ..\..\basis_sets --std-f nh3.hkl nh3.cif
+```
 
-3. Open **Ubuntu** from the Start menu. **In the Ubuntu terminal**, type
-   these three lines, replacing `<you>` with your Windows user name:
+Install [gnuplot for Windows](http://www.gnuplot.info/) if you want the
+diagnostic plots drawn for you; without it the plot data and scripts are still
+written.
 
-   ```bash
-   cd ~
-   tar xzf /mnt/c/Users/<you>/Downloads/tonto-*-linux-x86_64.tar.gz
-   cd tonto-*-linux-x86_64
-   ```
+*The Windows programs are new and less tested than the Linux ones. If one
+misbehaves, use WSL instead — see below.*
 
-4. **In the Ubuntu terminal**, install gnuplot, which draws the plots at the
-   end of a refinement:
+### Linux, and Windows via WSL
 
-   ```bash
-   sudo apt update && sudo apt install -y gnuplot
-   ```
+Download **`tonto-<version>-linux-x86_64.tar.gz`** from the releases page.
 
-5. **In the Ubuntu terminal**, check it works:
+On Windows, first install WSL: open PowerShell as Administrator (right-click
+the Start button, *Terminal (Admin)*), type `wsl --install`, reboot if asked,
+then open **Ubuntu** from the Start menu and choose a username and password.
 
-   ```bash
-   build/tonto --version
-   ```
-
-   A version number means you are done. Everything below works from this
-   directory.
-
-### Linux
-
-**In a terminal**, type:
+In a terminal — **Ubuntu** on Windows, your usual one on Linux — type:
 
 ```bash
 cd ~
-tar xzf ~/Downloads/tonto-*-linux-x86_64.tar.gz
+tar xzf ~/Downloads/tonto-*-linux-x86_64.tar.gz     # Windows: /mnt/c/Users/<you>/Downloads/...
 cd tonto-*-linux-x86_64
-sudo apt install -y gnuplot        # for the plots
+sudo apt install -y gnuplot
 build/tonto --version
 ```
 
+A version number means you are ready.
+
 ### macOS
 
-There is no ready-built macOS package yet — build it instead, with
-[BUILDING_ON_MACOS.md](../docs/BUILDING_ON_MACOS.md). It takes about ten
+No ready-built package yet. Build it with
+[BUILDING_ON_MACOS.md](../docs/BUILDING_ON_MACOS.md), which takes about ten
 minutes.
 
-### What you get
+### What is in the download
 
 ```
-build/          tonto and hart, ready to run
+build/          tonto and hart
 basis_sets/     the basis-set library
-examples/       the three exercises below
+examples/       the three exercises
 workshop/       this document
 ```
 
-The programs sit in `build/` in the download and in `build/` after a compile,
-so every command in this document works either way.
+A compiled checkout has the same layout, so the commands below work either
+way.
 
 ## Or build it yourself
 
-Jump straight to your platform — each page is self-contained:
+Each platform page is self-contained:
 
 | | |
 |---|---|
@@ -268,18 +246,15 @@ cmake .. -DCMAKE_BUILD_TYPE=release
 make -j3
 ```
 
-That gives you `build/tonto` and `build/hart` — the same two programs, in the
-same place, as the download.
+This gives `build/tonto` and `build/hart`, as the download does.
 
 ## Where to work
 
-**Work in the exercise directories where they sit**, whether you downloaded or
-compiled. Each exercise then reaches the program and the basis sets by a short
-relative path, and there is nothing to set up: no environment variable, no
-copying, no editing of paths.
+Work in the exercise directories where they sit. Each exercise reaches the
+program and the basis sets by a relative path, so there is nothing to set up.
 
-The two programs spell one option differently — `hart --basis-dir`,
-`tonto --basis-library`. That is not a typo below.
+The two programs spell one option differently: `hart --basis-dir`,
+`tonto --basis-library`.
 
 ---
 
