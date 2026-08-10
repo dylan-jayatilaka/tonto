@@ -3931,3 +3931,36 @@ could not break a test, and did not.
 **H4 — test the `.cif2` restart round trip.**
 
 Tracked alongside the rest of the project's deferred work in `DEFERRED.md`.
+
+---
+
+## The Windows executables have never been run on Windows
+
+**Status: open, 2026-08-10. Deliberately carried into the IUCr Calgary lab.**
+
+`tonto.exe` and `hart.exe` are cross-compiled from Linux with MinGW-w64
+(`cmake/mingw-w64-toolchain.cmake`, the `windows-exe` job of
+`.github/workflows/release.yml`) and shipped in
+`tonto-<version>-windows-x86_64.zip`. Native Windows has never been a tested
+platform for Tonto, and no one has run these binaries on a Windows machine.
+
+**What is known.** They link as `PE32+ executable (console) x86-64`, they are
+statically linked so no DLLs travel with them, and under wine on a Linux runner
+`tonto.exe --version` prints the version and `hart.exe` reproduces workshop
+exercise 1 exactly: R(F) = 0.010071, the reference value. That is the whole of
+the evidence.
+
+**Why that is not enough.** Wine is not Windows. The parts most likely to
+differ are the ones wine emulates rather than implements: path handling for the
+`--basis-dir` argument, console I/O buffering in `TEXTFILE`, the `system()` call
+Tonto makes to run gnuplot, and file deletion at the end of a job.
+
+**How it will be resolved.** Live, in the lab, by whoever brings a Windows
+laptop. If a binary misbehaves, the fallback is in the same section of
+`workshop/WORKSHOP.md`: WSL plus the Linux tarball, which is tested in CI on
+every push to `release` and `master`.
+
+**If it works**, the WSL instructions can be demoted to a footnote for Windows
+users. **If it does not**, the fix is to reproduce the failure under wine
+first — the cross-build is cheap to iterate on — and only then to blame
+Windows.
