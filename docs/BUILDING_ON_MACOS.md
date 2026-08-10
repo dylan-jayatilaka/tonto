@@ -10,7 +10,7 @@ to all platforms and live in [`BUILDING_TONTO.md`](BUILDING_TONTO.md).
 
 ---
 
-## 1. Prerequisites
+## 1. Install the prerequisites, with Homebrew
 
 First Apple's command-line tools (`git`, `make`, a C compiler):
 
@@ -42,7 +42,7 @@ brew install gcc cmake openjdk python3 gnuplot
   compiler-matching warning in [`BUILDING_TONTO.md`](BUILDING_TONTO.md). A
   Homebrew Open MPI built against a different gcc will not work.
 
-## 2. Get the code
+## 2. Get the source code
 
 ```bash
 git clone --recursive https://github.com/dylan-jayatilaka/tonto.git
@@ -52,7 +52,7 @@ git checkout release        # the tested branch — recommended
 
 `--recursive` pulls the submodules.
 
-## 3. Build
+## 3. Configure and build
 
 Tonto builds **out of source**: make a build directory, configure it once, then
 `make`.
@@ -73,7 +73,7 @@ what Homebrew installed — `ls $(brew --prefix gcc)/bin/gfortran*` will show it
 You now have **`build/tonto`** and **`build/hart`** (`hart --help`; see
 [`RUNNING_HART.md`](RUNNING_HART.md)).
 
-## 4. Test
+## 4. Run the tests
 
 ```bash
 ctest -L short        # about a minute
@@ -84,7 +84,7 @@ macOS shows tiny last-digit differences in a few tests. The comparison is
 deliberately loose — relative difference ≤ 0.2%, or last printed digit within
 2 — and counts those as passes.
 
-## macOS-specific note
+## One macOS-specific oddity: the arm64 compiler pin
 
 **arm64.** `shell1quartet.F90` is pinned to `-O2 -fno-schedule-insns` on arm64
 macOS, working around a gfortran miscompilation of the two-electron integral
@@ -93,7 +93,7 @@ so the odd flag in the build log is not a mystery.
 
 ---
 
-## Where next
+## Where to go next
 
 | | |
 |---|---|

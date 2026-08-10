@@ -17,9 +17,9 @@ variables, subroutines and functions are declared.
 
 ---
 
-## Quickstart
+## Compile quickstart, on Ubuntu/Debian Linux
 
-On Ubuntu/Debian. Jump straight to your platform —
+For another platform, jump straight to its page —
 [**Linux**](docs/BUILDING_ON_LINUX.md),
 [**macOS**](docs/BUILDING_ON_MACOS.md),
 [**Windows/WSL**](docs/BUILDING_ON_WINDOWS.md) — or see
@@ -62,7 +62,35 @@ decides pass/fail.** A bare `ctest` shows pseudo-failures for this reason.
 > **Options are GNU long options** — `tonto --input job.txt`,
 > `hart --basis STO-3G`. The single-dash spellings were removed.
 
-## Documentation
+## Parallel (MPI) builds, on every platform that has an MPI
+
+Parallel is a **build option, not a platform**: the same two flags apply
+wherever an MPI library is installed.
+
+```
+cmake .. -DCMAKE_Fortran_COMPILER=mpifort -DCMAKE_C_COMPILER=mpicc \
+         -DCMAKE_BUILD_TYPE=release -DMPI=1
+```
+
+**The MPI must have been built with the same Fortran compiler as Tonto.** Tonto
+does `USE mpi`, and Fortran `.mod` files are compiler-version specific.
+Configure checks this and stops if they differ. `-DMPI=1` is a hard
+requirement: if MPI is not found, configure fails rather than silently
+producing a serial binary.
+
+How far each platform has been taken:
+
+| Platform | Parallel build |
+|---|---|
+| **Linux** | Tested, and in CI — the Linux-MPI badge above |
+| **Windows/WSL** | Untested. WSL is Ubuntu, so `apt install openmpi-bin libopenmpi-dev` and the recipe above should apply unchanged |
+| **macOS** | Untested. `brew install open-mpi`, subject to the compiler-matching rule above |
+
+**Validate parallel results before trusting them.**
+[`docs/TONTO_AND_MPI.md`](docs/TONTO_AND_MPI.md) records what a parallel run
+does and does not reproduce, and the defects found so far.
+
+## Documentation overview
 
 Everything lives in this repository, versioned with the code it describes.
 
@@ -85,7 +113,7 @@ Everything lives in this repository, versioned with the code it describes.
 | [**`docs/EDITING_TONTO_WITH_VIM.md`**](docs/EDITING_TONTO_WITH_VIM.md) | vim set-up — tags, folding, completion |
 | [**`DEFERRED.md`**](DEFERRED.md) | known issues and deferred work, with the reasoning |
 
-## The CI badges
+## The CI badges, and what each one actually tests
 
 They track the **`release`** branch — the one the quickstart clones. They are not
 all the same kind of badge:
@@ -121,7 +149,7 @@ proves the RGBI picture-tool install list from a bare `ubuntu:24.04`, and
 `ci-rgbi-macos.yml` probes the same list on a real Mac weekly (deliberately
 unbadged: macOS is not supported yet, so it must not read as if it were).
 
-## Help, bugs, contributing
+## Getting help, reporting bugs, and contributing
 
 Email **dylan.jayatilaka@gmail.com** (I am slow to reply — you may have better
 luck via people who know me).

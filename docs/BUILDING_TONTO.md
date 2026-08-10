@@ -14,7 +14,7 @@ What follows applies to all three, and none of it is needed for an ordinary
 
 ---
 
-## Build types
+## Build types: release, debug, fast and static
 
 Tonto builds **out of source**, and the build type is the one real choice.
 Configure a separate directory for each type you want to keep.
@@ -34,11 +34,15 @@ make -j4
 
 Substitute any type above for `debug`, in its own directory.
 
-## Parallel (MPI) builds
+## Parallel (MPI) builds, on any platform with an MPI library
 
-For production runs. **Validate the results yourself** before trusting them —
-[`TONTO_AND_MPI.md`](TONTO_AND_MPI.md) says what is known to differ from a
-serial run.
+Parallel is a build option rather than a platform: the flags below apply
+wherever an MPI is installed. It is tested, and in CI, on **Linux**; on WSL and
+macOS it is expected to work but is **untested**.
+
+**Validate parallel results before trusting them** —
+[`TONTO_AND_MPI.md`](TONTO_AND_MPI.md) records what a parallel run does and does
+not reproduce.
 
 ```bash
 cmake .. -DCMAKE_Fortran_COMPILER=mpifort -DCMAKE_C_COMPILER=mpicc \
@@ -69,7 +73,7 @@ your compiler and MPI modules first, then use the recipe above, overriding the
 compiler if needed with `-DCMAKE_Fortran_COMPILER=<your ftn wrapper>`. The three
 knobs that matter are the **compiler**, the **build type** and **`-DMPI=1`**.
 
-## What you get
+## What the build produces, and where it lands
 
 **`build/tonto`** (the main program) and **`build/hart`** (standalone Hirshfeld
 atom refinement — `hart --help`; see [`RUNNING_HART.md`](RUNNING_HART.md) for

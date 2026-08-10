@@ -9,7 +9,7 @@ to all platforms and live in [`BUILDING_TONTO.md`](BUILDING_TONTO.md).
 
 ---
 
-## 1. Prerequisites
+## 1. Install the prerequisites
 
 ```bash
 sudo apt install make cmake default-jdk gfortran-14 libblas-dev liblapack-dev \
@@ -36,7 +36,7 @@ sudo apt install make cmake default-jdk gfortran-14 libblas-dev liblapack-dev \
 - Optional: `graphviz` for the developer call-graphs;
   `openmpi-bin libopenmpi-dev` for a parallel build.
 
-## 2. Get the code
+## 2. Get the source code
 
 ```bash
 git clone --recursive https://github.com/dylan-jayatilaka/tonto.git
@@ -47,7 +47,7 @@ git checkout release        # the tested branch — recommended
 `--recursive` pulls the submodules. To keep several branches side by side,
 clone into a named folder: `git clone --recursive … tonto-release`.
 
-## 3. Build
+## 3. Configure and build
 
 Tonto builds **out of source**: make a build directory, configure it once, then
 `make`.
@@ -67,7 +67,7 @@ You now have **`build/tonto`** (the main program) and **`build/hart`**
 (standalone Hirshfeld atom refinement — `hart --help`; see
 [`RUNNING_HART.md`](RUNNING_HART.md)).
 
-## 4. Test
+## 4. Run the tests
 
 ```bash
 ctest -L short        # about a minute
@@ -80,7 +80,7 @@ and one machine.
 
 ---
 
-## Where next
+## Where to go next
 
 | | |
 |---|---|
