@@ -20,7 +20,7 @@ bond indices in exercise 2 are the first example of a property computed from it.
 
 ---
 
-## Why bother
+## Why refine with a wavefunction at all
 
 Ordinary **Independent Atom Model** (IAM) refinement in chemical
 crystallography, as done by SHELXL or Olex2, minimises
@@ -48,9 +48,9 @@ $f_j$ come from: they describe how an **isolated atom type** scatters, and
 they are read from a table — Tables 4.2.6.8 and 6.1.1.4 of *International
 Tables* Vol. C.
 
-Read that again, because everything follows from it: every atom is modelled as
-an isolated, non-interacting sphere sitting at the centre of its electron
-cloud, regardless of what it is bonded to or what its oxidation state is.
+Everything follows from that: every atom is modelled as an isolated,
+non-interacting sphere at the centre of its electron cloud, whatever it is
+bonded to and whatever its oxidation state.
 
 **Hirshfeld atom refinement** (Jayatilaka et al., 2008) computes the form
 factors instead of looking them up — for each atom, not each atom *type* —
@@ -58,7 +58,7 @@ from a quantum chemical calculation on the actual molecule. The atomic
 densities that result are aspherical and distorted by their surroundings, as
 real ones are.
 
-### The main reason is the wavefunction
+### The main reason is the wavefunction, not the hydrogens
 
 The famous benefit of HAR is that the position of hydrogen atoms come out right,
 in agreement with independent neutron diffraction experiments. A hydrogen's
@@ -78,15 +78,14 @@ In fact, the main reason to do HAR is this:
 > and properties can be computed from it: properties consistent with an
 > electron density that has been fitted to X-ray diffraction data.
 
-That is the point. An ordinary refinement gives you coordinates and thermal
-parameters, and nothing else; the model has no electrons in it that you could
-ask a question of. HAR gives you a density, and XCW makes that density answer
+An ordinary refinement gives coordinates and thermal parameters and nothing
+else; its model has no electrons in it to ask a question of. HAR gives you a density, and XCW makes that density answer
 to the experiment. Bond indices, electrostatic potentials, energies, ELF — all
 become *experimentally constrained* quantities rather than purely theoretical
 ones. Exercise 2 computes the first of these. One can predict the results of
 other experiments.
 
-## How HAR works
+## How Hirshfeld atom refinement works
 
 Starting from an ordinary refined structure — HAR is a *post-IAM* procedure:
 
@@ -111,7 +110,7 @@ Starting from an ordinary refined structure — HAR is a *post-IAM* procedure:
 The geometry has now changed, so the density is out of date — go back to step 1.
 Repeat until nothing moves.
 
-## And XCW
+## And how X-ray constrained wavefunction fitting works
 
 HAR fits *positions* to the data, with the wavefunction along for the ride. XCW
 (Grimwood et al., 2001) fits the **wavefunction itself**. It minimises
@@ -137,7 +136,7 @@ value of GoF² you are aiming at, and deciding what it should be is the
 How far to push $\lambda$ is a judgement call, and that is exactly what
 exercise 3 asks you to look at.
 
-## Two things to know before you start
+## Two requirements on your data and your molecule
 
 1. **Reflection files must be merged and pruned of systematic absences.**
 
@@ -156,7 +155,7 @@ exercise 3 asks you to look at.
 
 ---
 
-## Before you begin
+## Building Tonto, and where to work
 
 First build Tonto. Jump straight to your platform — each page is
 self-contained:
@@ -210,7 +209,7 @@ two paths to suit.
 
 ---
 
-## Exercise 1 — ammonia, with `hart`
+## Exercise 1 — a HAR on ammonia, with `hart`
 
 `hart` is the standalone Hirshfeld-atom-refinement program. It takes no input
 file: **the command line is the input.** That makes it the quickest way to see
@@ -320,7 +319,7 @@ The SHELX IAM column is quoted from Malaspina's lab notes and uses a slightly
 different reflection selection, so the R factors are not exactly comparable —
 the hydrogen distance is.
 
-### The fit plots
+### The four diagnostic plots
 
 At the end of a refinement Tonto draws four diagnostic plots itself, using
 gnuplot. They are the fastest way to see whether anything is wrong with the fit.
@@ -351,7 +350,7 @@ For ammonia the QQ plot is close to a straight line of slope 0.932, with (1 1 1)
 sitting well below it — one reflection fitting worse than a normal distribution
 would allow. With only 88 reflections that is not alarming.
 
-### Questions — what is in the folder?
+### Questions: what are all these output files?
 
 A two-second run on 88 reflections has left about thirty files behind. Look at
 their names before you look at anything else:
@@ -383,7 +382,7 @@ ls
 
 Answers: [WORKSHOP_ANSWERS.md](WORKSHOP_ANSWERS.md).
 
-### Things to try
+### Things to try next
 
 - Raise `--grid-accuracy` to `high` and see whether anything moves. If it does,
   the `low` grid was not adequate.
@@ -394,7 +393,7 @@ Answers: [WORKSHOP_ANSWERS.md](WORKSHOP_ANSWERS.md).
 
 ---
 
-## Exercise 2 — urea, and a property of the wavefunction
+## Exercise 2 — a HAR on urea, then bond indices from the wavefunction
 
 Now the same thing with a job file rather than a command line, on a molecule
 with two distinct N–H bonds — and then the part that exercise 1 could not do:
@@ -516,7 +515,7 @@ a GoF² this far above 1 says the model still does not explain the data to
 within its stated precision — there is real structure left in the residuals.
 Do not read it as a failed refinement; read it as the reason exercise 3 exists.
 
-### The fit plots
+### The four diagnostic plots
 
 ![Normal QQ plot](images/workshop/urea.QQ_plot.png)
 
@@ -577,7 +576,7 @@ The full page of 21 dials, including every non-bonded pair, is in
 `rgbi-dial-table+H.pdf`, and reproduced
 [here](images/workshop/urea.rgbi-dials-all.png).
 
-### Things to try
+### Things to try next
 
 - Set `output_theta_info= NO` and re-run. The numbers are unchanged and the
   dial diagrams disappear — that flag controls the pictures, nothing else.
@@ -590,7 +589,7 @@ The full page of 21 dials, including every non-bonded pair, is in
 
 ---
 
-## Exercise 3 — the same urea, now constrained by the data
+## Exercise 3 — constraining that wavefunction to the data (XCW)
 
 Exercise 2 refined a geometry *and* left a wavefunction behind. This exercise
 takes that wavefunction and fits it to the same 817 reflections.
@@ -601,8 +600,7 @@ Davidson et al. (2022):
 
 > XWR ≡ XWR(HA) = HAR + HA-XCW
 
-The point of that definition is *consistency*, and it is easy to miss. HAR
-smears the atomic density with a Hirshfeld-atom, one-centre model; an XCW
+The content of that definition is *consistency*. HAR smears the atomic density with a Hirshfeld-atom, one-centre model; an XCW
 fitting is free to use a different smearing model, and the earlier XWR
 protocols did exactly that — HAR positions and ADPs, but a two-centre
 (Tanaka) model in the XCW step. The recommendation is to use the **same**
@@ -792,7 +790,7 @@ This is `docs/workshop/3-urea-xcw/stdin`, in full:
 }
 ```
 
-### Choosing λ, and why you have to
+### Choosing λ: why a decade scan is needed
 
 λ has no natural size. It multiplies the derivative of GoF², so how hard a
 given λ pulls depends entirely on how precise your σ values are, and **no value
@@ -813,7 +811,7 @@ a `lambda_step=` sweep — `lambda_step` adds, it does not multiply.
 | 0.001 | 9.43 | −223.822669 | 0.999873 | ? |
 | 0.01 | *diverges* — see below | | | |
 
-Read the columns together, because the trade is the whole point. Going from
+Read the columns together: the trade is what matters. Going from
 λ = 0 to λ = 0.001 buys a drop in GoF² of 1.7 — a real improvement in the fit
 to the experiment — and pays 0.7 mhartree of energy for it. The orbitals
 themselves barely move: ⟨MO|M0⟩, the overlap with the unconstrained orbitals,
@@ -823,7 +821,7 @@ That ratio is not a coincidence. λ is a Lagrange multiplier, so at the
 constrained solution λ = −d*E*/d(GoF²), an exchange rate: the energy you pay
 per unit of GoF² you buy.
 
-### Reading the SCF trace
+### Reading the SCF trace: it gets worse before it settles
 
 The iteration table for each λ is worth looking at, because it does **not**
 descend smoothly. At λ = 0.001:
@@ -852,7 +850,7 @@ The practical consequence: a couple of iterations going the wrong way is
 expected and is not a reason to stop the job. A sustained *trend* the wrong
 way, as at λ = 0.01 below, is another matter entirely.
 
-### What happens if λ is too big
+### What too large a λ does
 
 The deck has a third block, for λ = 0.01, commented out. Uncomment it and this
 is what you get:
@@ -870,11 +868,10 @@ recover: after fifteen iterations GoF² is still 302 and the SCF has not
 converged. It costs about three minutes to watch, which is why it is left
 commented out rather than removed.
 
-This is the useful failure. **Too large a λ does not merely overshoot the
-right answer, it leaves the variational region entirely**, and there is no
-warning in advance — only the decade scan.
+**Too large a λ does not overshoot the right answer, it leaves the variational
+region entirely**, and there is no warning in advance — only the decade scan.
 
-### The experiment's effect on the bonding
+### The effect of the experiment on the bonding
 
 The deck ends with the same Roby–Gould analysis exercise 2 ran, but now on the
 *constrained* wavefunction. The two are directly comparable, and the difference
@@ -900,7 +897,7 @@ The dial diagrams are written to this folder as `rgbi-dial-table+H.pdf` and
 `rgbi-mol-structure+H.pdf`, exactly as in exercise 2. They are not reproduced
 here — put them beside exercise 2's and look for yourself.
 
-### Things to try
+### Things to try next
 
 - Refine *within* the decade: 0.002, 0.003. GoF² keeps falling and the energy
   keeps rising. Where would you stop, and on what grounds?
