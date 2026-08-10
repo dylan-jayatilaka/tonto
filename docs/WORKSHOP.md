@@ -29,7 +29,7 @@ $$M = \sum w\,(|F_o| - |F_c|)^2$$
 where $F_o$ and $F_c$ are the observed and calculated structure factors. The
 calculated ones come from a sum over atomic form factors $f_j$:
 
-$$F(\vec{h}) = \sum_{j=1}^{N} f_j \, e^{2\pi i \vec{h} \cdot \vec{r}_j}$$
+$$F(\boldsymbol{h}) = \sum_{j=1}^{N} f_j \, e^{2\pi i \boldsymbol{h} \cdot \boldsymbol{r}_j}$$
 
 Those $f_j$ describe how an **isolated atom type** scatters, and they are read
 from a table — Tables 4.2.6.8 and 6.1.1.4 of *International Tables* Vol. C.
@@ -76,9 +76,9 @@ Starting from an ordinary refined structure — HAR is a *post-IAM* procedure:
    scheme, each atom taking a share proportional to what a free atom would
    contribute there:
 
-   $$\rho_A(\vec{r}) = w_A(\vec{r}) \cdot \rho_{\text{molecule}}(\vec{r})
+   $$\rho_A(\boldsymbol{r}) = w_A(\boldsymbol{r}) \cdot \rho_{\text{molecule}}(\boldsymbol{r})
    \qquad
-   w_A(\vec{r}) = \frac{\rho_A^0(\vec{r} - \vec{r}_A)}{\sum_B \rho_B^0(\vec{r} - \vec{r}_B)}$$
+   w_A(\boldsymbol{r}) = \frac{\rho_A^0(\boldsymbol{r} - \boldsymbol{r}_A)}{\sum_B \rho_B^0(\boldsymbol{r} - \boldsymbol{r}_B)}$$
 
    Each atomic density is then smeared by thermal motion and Fourier
    transformed into a scattering factor.
@@ -116,6 +116,14 @@ exercise 3 asks you to look at.
    calculation on whatever fragment you give it. If the asymmetric unit holds
    a third of a molecule, you must complete it first, or the calculation is
    meaningless. Both molecules here are completed for you.
+
+   Tonto will do the completing itself, by applying the crystal symmetry to
+   grow each fragment into whole molecules: the keyword `defragment` after
+   `process_CIF` in a job file, and in `hart` the `--defragment` option, which
+   is **on by default**. **Turn it off for a network solid** — diamond,
+   silica, a coordination polymer — with `--defragment f`. There is no whole
+   molecule to complete in such a structure, so the growth has no stopping
+   point and the run will not terminate.
 
 3. **Tonto eliminates linear dependencies in the least-squares matrix
    automatically**, so it has no restraints or constraints. That can cause
@@ -271,6 +279,38 @@ dominate in absolute terms rather than in units of σ.
 For ammonia the QQ plot is close to a straight line of slope 0.932, with (1 1 1)
 sitting well below it — one reflection fitting worse than a normal distribution
 would allow. With only 88 reflections that is not alarming.
+
+### Questions — what is in the folder?
+
+A two-second run on 88 reflections has left about thirty files behind. Look at
+their names before you look at anything else:
+
+```bash
+ls
+```
+
+1. Every one is called `nh3.something`. Where did `nh3` come from, and what
+   would happen if you ran a second job in this directory?
+2. There are **four** files describing the refined structure — `.archive.cif`,
+   `.HBB.cif2`, `.cartesian.cif2`, `.fractional.cif1` — and **three** giving
+   the calculated structure factors: `.archive.fcf`, `.fcf6`, `.archive.fco`.
+   Why would anyone want the same result written out more than once?
+3. Which file would you deposit with a journal? Which would you hand to a
+   quantum chemistry program?
+4. Three files have a `,r` in their names: `nh3.MOs,r`, `nh3.MO_energies,r`,
+   `nh3.density_mx,r`. What is the `r`, and what would an open-shell molecule
+   write instead? Between them these three are the *reason for doing HAR at
+   all* — why?
+5. `nh3.residual_density,cell.cube` is a `.cube` file. What would you open it
+   with, and what are you looking for when you do?
+6. Each plot comes as four files — the data, a `.labels`, a `.gnuplot` and a
+   `.png`. Which one would you edit to change the axis range, and would you
+   need to rebuild Tonto to do it?
+7. One file is not Tonto's at all and was written by another program entirely.
+   Which, and by what? (`fit.log`.)
+8. `nh3.err` is empty. Is that good or bad?
+
+Answers: [WORKSHOP_ANSWERS.md](WORKSHOP_ANSWERS.md).
 
 ### Things to try
 
@@ -479,4 +519,304 @@ The full page of 21 dials, including every non-bonded pair, is in
 
 ---
 
-*Exercise 3 is running now.*
+## Exercise 3 — the same urea, now constrained by the data
+
+Exercise 2 refined a geometry *and* left a wavefunction behind. This exercise
+takes that wavefunction and fits it to the same 817 reflections. HAR followed
+by XCW on the HAR geometry is what is called an **X-ray wavefunction
+refinement**, XWR.
+
+There are no cluster charges here: this is the isolated molecule, constrained
+by the data and by nothing else.
+
+Run it:
+
+```bash
+cd ../3-urea-xcw && ./tonto --basis-library ../../../basis_sets
+```
+
+About two and a half minutes.
+
+Two files come from exercise 2 and are already here: `urea.HBB.cif2`, the
+refined geometry, and `urea.hkl`, the same 817 reflections unrounded. Take the
+`.HBB.cif2` and **not** `urea.archive.cif` — the archive CIF holds the
+asymmetric unit, five atoms, half a urea, because that is what you deposit;
+the `.cif2` holds the whole eight-atom molecule, which is what a quantum
+calculation needs.
+
+### The input file
+
+This is `docs/workshop/3-urea-xcw/stdin`, in full:
+
+```
+{
+
+   ! Exercise 3 -- X-ray constrained wavefunction (XCW) fitting on the
+   ! geometry that exercise 2 refined. HAR then XCW on the HAR geometry
+   ! is what is called an X-ray wavefunction refinement (XWR).
+   !
+   ! Run it in this directory, in place:
+   !
+   !    ln -s ../../../build/tonto tonto        # once, if the link is not here
+   !    ./tonto --basis-library ../../../basis_sets
+   !
+   ! tonto takes no input file argument: it reads the file called "stdin" in
+   ! the working directory -- this one -- and writes "stdout" beside it. (hart
+   ! spells the same option --basis-dir; tonto spells it --basis-library. Or
+   ! set TONTO_BASIS_SET_DIRECTORY once and drop it.)
+   !
+   ! The geometry is urea.HBB.cif2, already here -- it is what exercise 2
+   ! wrote. Take that file and NOT urea.archive.cif: the archive CIF holds
+   ! the asymmetric unit, 5 atoms, half a urea, because that is what you
+   ! deposit. The .cif2 holds the whole 8-atom molecule with the refined
+   ! coordinates, which is what a quantum calculation needs. Reflections come
+   ! from urea.hkl -- the same 817 Birkedal reflections, unrounded.
+   !
+   ! No cluster charges: this is the isolated molecule constrained by
+   ! the data, and nothing else.
+   !
+   ! THE POINT OF THE THREE SCF BLOCKS AT THE END. Lambda has no natural
+   ! size: it multiplies the derivative of chi^2, so how hard a given
+   ! lambda pulls depends entirely on how precise your sigmas are. There
+   ! is no value that transfers from one dataset to the next. So you do
+   ! not guess -- you scan by decades, 0.0001, 0.001, 0.01, and read off
+   ! which decade your data lives in. Then, if you want, refine within it.
+
+   ! NOT "urea": the refinement below writes <name>.HBB.cif2, which with
+   ! name= urea is the file this job READS. Running the lab twice would then
+   ! start from the previous run's output instead of exercise 2's, and the
+   ! numbers would drift a little each time with nothing to show why.
+   name= urea_xcw
+
+   basis_name= def2-SVP
+
+   charge= 0
+   multiplicity= 1
+
+   CIF= { file_name= urea.HBB.cif2  data_block_name= urea }
+   process_CIF
+
+   crystal= {
+
+      xray_data= {
+
+         wavelength= 0.3173 angstrom
+
+         partition_model= oc-hirshfeld
+
+         optimise_extinction= NO
+         optimise_scale_factor= YES
+
+         do_residual_cube= NO
+
+         REDIRECT urea.hkl
+
+      }
+   }
+
+   ! The unconstrained wavefunction: lambda = 0. Every overlap <MO|M0>
+   ! in the tables below is measured against the orbitals from this SCF.
+   scfdata= {
+      kind=            rhf
+      initial_density= promolecule
+      convergence= 0.001
+      diis= { convergence_tolerance= 0.01 }
+   }
+   scf
+
+   ! The geometry is already refined, so this converges at once. It is
+   ! here to settle the scale factor between F_calc and F_exp: start the
+   ! XCW without it and chi^2 is wrong from the very first step.
+   refine_hirshfeld_atoms
+
+
+   ! ---- decade 1: lambda = 0.0001 --------------------------------------
+
+   scfdata= {
+      kind= xray_rhf
+      initial_density= restricted
+      convergence= 0.001
+      diis= { convergence_tolerance= 0.01 }
+      max_iterations= 60
+      initial_lambda= 0.0001
+      lambda_step=    0.0001
+      lambda_max=     0.0001
+   }
+   scf
+
+
+   ! ---- decade 2: lambda = 0.001, starting from the orbitals above -----
+
+   scfdata= {
+      kind= xray_rhf
+      initial_density= restricted
+      convergence= 0.001
+      diis= { convergence_tolerance= 0.01 }
+      max_iterations= 60
+      initial_lambda= 0.001
+      lambda_step=    0.001
+      lambda_max=     0.001
+   }
+   scf
+
+
+   ! ---- decade 3: lambda = 0.01 ----------------------------------------
+   ! Deliberately NOT run. On urea this does not overshoot, it destroys the
+   ! wavefunction. Measured, with the block below uncommented:
+   !
+   !    iter 0:  GoF2     11.3   E -223.82   <MO|M0> 0.9999
+   !    iter 2:  GoF2   9398.9   E -196.02   <MO|M0> 0.000000
+   !    iter 3:  GoF2  19397.8   E  -99.21   <MO|M0> 0.000000
+   !
+   ! and it does not recover: after 15 iterations GoF2 is still 302 and the
+   ! SCF has not converged. It adds about 3 minutes to a 2.5 minute job to
+   ! watch that happen. The two decades above already show which one urea's
+   ! data lives in. Uncomment it if you want to see it for yourself.
+   !
+   ! scfdata= {
+   !    kind= xray_rhf
+   !    initial_density= restricted
+   !    convergence= 0.001
+   !    diis= { convergence_tolerance= 0.01 }
+   !    max_iterations= 15
+   !    initial_lambda= 0.01
+   !    lambda_step=    0.01
+   !    lambda_max=     0.01
+   ! }
+   ! scf
+
+
+   ! Roby-Gould bond indices again -- but now from the CONSTRAINED
+   ! wavefunction, the one that has been fitted to the diffraction data.
+   ! Exercise 2 ran the same analysis on the unconstrained wavefunction,
+   ! so the two sets of numbers are directly comparable, and the
+   ! difference between them is the effect of the experiment on the
+   ! bonding. That comparison is the whole point of doing HAR and XCW in
+   ! sequence.
+   robydata= {
+      kind= atom_bond_analysis
+      output_theta_info= YES
+   }
+   roby_analysis
+
+   delete_scf_archives
+
+}
+```
+
+### Choosing λ, and why you have to
+
+λ has no natural size. It multiplies the derivative of χ², so how hard a given
+λ pulls depends entirely on how precise your σ values are, and **no value
+transfers from one dataset to the next**. Urea's data is about two hundred
+times more precise than the ammonia data of exercise 1, and its χ² surface is
+correspondingly steeper.
+
+So you do not guess: you scan by decades and read off which decade your data
+lives in. That is why the deck has one `scfdata` block per decade rather than
+a `lambda_step=` sweep — `lambda_step` adds, it does not multiply.
+
+### What you should get
+
+| λ | GoF² | *E* / hartree | ⟨MO\|M0⟩ | yours |
+|:---|:---:|:---:|:---:|:---:|
+| 0 (unconstrained) | 11.14 | −223.823350 | 1.000000 | ? |
+| 0.0001 | 10.87 | −223.823338 | 0.999998 | ? |
+| 0.001 | 9.43 | −223.822669 | 0.999873 | ? |
+| 0.01 | *diverges* — see below | | | |
+
+Read the columns together, because the trade is the whole point. Going from
+λ = 0 to λ = 0.001 buys a drop in GoF² of 1.7 — a real improvement in the fit
+to the experiment — and pays 0.7 mhartree of energy for it. The orbitals
+themselves barely move: ⟨MO|M0⟩, the overlap with the unconstrained orbitals,
+is still 0.99987.
+
+That ratio is not a coincidence. λ is a Lagrange multiplier, so at the
+constrained solution λ = −d*E*/dχ², an exchange rate: the energy you pay per
+unit of χ² you buy.
+
+### Reading the SCF trace
+
+The iteration table for each λ is worth looking at, because it does **not**
+descend smoothly. At λ = 0.001:
+
+```
+ Iter    Lambda      GoF2       Energy        Delta     - DIIS -      <MO|M0>
+    0  0.001000     11.18  -223.823349  -223.812172     0.113942     0.999998
+    1  0.001000      9.32  -223.821685    -0.000196     0.118774     0.999768
+    2  0.001000     11.01  -223.822700     0.000677     0.163113     0.999919
+    3  0.001000     10.13  -223.820083     0.001736     0.241988     0.999543
+    4  0.001000      9.42  -223.822644    -0.003266     0.013574     0.999871
+    5  0.001000      9.43  -223.822669    -0.000013     0.001706     0.999873
+```
+
+GoF² falls to 9.32, climbs back to 11.01, falls again, and settles at 9.43.
+
+**This is worth recording as an observation rather than explaining away.** An
+XCW fit commonly gets *worse* over its first few iterations before settling
+down, and **the cause is not established**. In this run the swing coincides
+with the converger changing gear — damping and level-shifting come off at
+iteration 3 and DIIS takes over there — but that is a correlation seen in one
+trace, not a demonstrated cause. At λ = 0.0001 the pull is small enough that
+nothing wobbles at all (11.14 → 10.85 → 10.87).
+
+The practical consequence: a couple of iterations going the wrong way is
+expected and is not a reason to stop the job. A sustained *trend* the wrong
+way, as at λ = 0.01 below, is another matter entirely.
+
+### What happens if λ is too big
+
+The deck has a third block, for λ = 0.01, commented out. Uncomment it and this
+is what you get:
+
+```
+    0  0.010000     11.33  -223.823280   ...   0.999873
+    1  0.010000    177.29  -223.586517   ...   0.968370
+    2  0.010000   9398.93  -196.022704   ...   0.000000
+    3  0.010000  19397.80   -99.210871   ...   0.000000
+```
+
+The wavefunction is destroyed — the overlap with the starting orbitals is zero
+by the third iteration and the energy has risen by 120 hartree. It does not
+recover: after fifteen iterations GoF² is still 302 and the SCF has not
+converged. It costs about three minutes to watch, which is why it is left
+commented out rather than removed.
+
+This is the useful failure. **Too large a λ does not merely overshoot the
+right answer, it leaves the variational region entirely**, and there is no
+warning in advance — only the decade scan.
+
+### The experiment's effect on the bonding
+
+The deck ends with the same Roby–Gould analysis exercise 2 ran, but now on the
+*constrained* wavefunction. The two are directly comparable, and the difference
+between them is the effect of the experiment on the bonding:
+
+| bond | | covalent | ionic | bond index | % covalent |
+|:---|:---|:---:|:---:|:---:|:---:|
+| C=O | unconstrained | 1.63 | 0.70 | 1.78 | 84.4 |
+| | λ = 0.001 | 1.63 | 0.68 | 1.77 | 85.1 |
+| C–N | unconstrained | 1.31 | 0.64 | 1.46 | 80.7 |
+| | λ = 0.001 | 1.31 | 0.62 | 1.45 | 81.9 |
+| N–H | unconstrained | 0.90 | 0.30 | 0.95 | 90.0 |
+| | λ = 0.001 | 0.90 | 0.30 | 0.95 | 90.0 |
+
+The changes are small and they are systematic: on the two polar bonds the
+ionic index drops by about 3% and the covalency rises by about one point,
+while the N–H bonds do not move at all. Carbon gains 0.03 electrons. That is
+what fitting to urea's diffraction data does to this wavefunction at the λ its
+data supports — a modest, directional correction to the polar bonds, and the
+number to quote is the *difference*, not either column alone.
+
+The dial diagrams are written to this folder as `rgbi-dial-table+H.pdf` and
+`rgbi-mol-structure+H.pdf`, exactly as in exercise 2. They are not reproduced
+here — put them beside exercise 2's and look for yourself.
+
+### Things to try
+
+- Refine *within* the decade: 0.002, 0.003. GoF² keeps falling and the energy
+  keeps rising. Where would you stop, and on what grounds?
+- Add `use_SC_cluster_charges= TRUE` and `cluster_radius= 8 angstrom`. Does
+  the crystal environment move the bond indices more than the data constraint
+  does?
+- Compare the residual density cube before and after the constraint.

@@ -68,7 +68,8 @@ reads.
 | `--basis` | basis-set name | `def2-SVP` | One of `STO-3G`, `def2-SVP`, `def2-TZVP`, `def2-TZVPP`, `cc-pVDZ`, `cc-pVTZ`, `cc-pVQZ`. A file of that name must exist in the basis directory. |
 | `--basis-dir` | directory | `$TONTO_BASIS_SET_DIRECTORY`, else `./basis_sets` | Where the basis-set library lives. |
 | `--cluster-radius` | Å | 0 | Model the potential of whole molecules within this radius by Hirshfeld charges and dipoles. Maximum 10. |
-| `--complete-mol` | `t`/`f` | `t` | Complete molecules for the cluster point charges. Set `f` for network compounds. |
+| `--defragment` | `t`/`f` | `t` | Apply the crystal symmetry to grow each fragment in the CIF into whole molecules, before anything is refined. A CIF holds the asymmetric unit — a quarter of a molecule for urea — and HAR runs a quantum calculation on whatever fragment it is handed, so refining an incomplete molecule converges to a meaningless answer. **Set `f` for a network solid** (diamond, silica, a coordination polymer): there is no whole molecule to complete, the growth has no stopping point, and the run will not terminate. Since the default is `t`, a network solid *must* turn it off. |
+| `--complete-mol` | `t`/`f` | `t` | An accepted spelling of `--defragment`, kept because existing scripts write it. Identical in effect. |
 | `--dispersion` | quoted list | none | Dispersion coefficients, e.g. `--dispersion 'S 0.04370 0.04026 Cl 0.05457 0.05224'`. |
 | `--disk-sfs` | `t`/`f` | `f` | Write the aspherical atomic structure factors to disk. |
 | `--dtol` | real | 0.01 | DIIS convergence tolerance. Must lie between 1e-5 and 0.1. |

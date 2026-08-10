@@ -233,3 +233,27 @@ The parameter set is settled when these are fixed and measured together:
 
 Until then, treat every number in this file and in `WORKSHOP.md` as indicative
 of shape, not of value.
+
+---
+
+## Observations worth keeping (2026-08-10)
+
+**An XCW fit commonly gets worse before it settles, and the cause is unknown.**
+Dylan's observation, confirmed here on urea. The λ = 0.001 trace goes
+GoF² 11.18 → 9.32 → 11.01 → 10.13 → 9.42 → 9.43: down, back up past its
+starting point, down again, settle. At λ = 0.0001 the same deck shows no wobble
+at all (11.14 → 10.85 → 10.87).
+
+In this run the swing coincides with the converger changing gear — damping and
+level-shifting come off at iteration 3, which is where DIIS starts
+extrapolating. That is a correlation in a single trace and **not** a
+demonstrated cause; it is written into `WORKSHOP.md` as an observation, with the
+cause explicitly left open. Worth a proper experiment some time: hold damping on
+throughout, or start DIIS at iteration 0, and see whether the wobble follows the
+converger or the constraint.
+
+**The deck must not be named after the file it reads.** `refine_hirshfeld_atoms`
+writes `<name>.HBB.cif2`, so `name= urea` in exercise 3 overwrote `urea.HBB.cif2`
+— its own input, exercise 2's output. Running the lab twice would silently start
+from the previous run's geometry. Fixed by `name= urea_xcw`; the input is now
+provably untouched by a run (checked with `git status` after one).
