@@ -1,8 +1,8 @@
 # Tonto workshop
 
 A guided introduction to Hirshfeld atom refinement (HAR) and X-ray constrained
-wavefunction (XCW) fitting, driving **Tonto directly** — no GUI. Three worked
-exercises, each with a results table for you to fill in from your own run.
+wavefunction (XCW) fitting, driving **Tonto directly** — no GUI. Four worked
+exercises, most with a results table to fill in from your own run.
 
 Everything you need is in this repository, under `examples/`. The input
 files are printed in full below, so you can read them here and check what you
@@ -12,7 +12,8 @@ are running.
 |---|---|---|---|
 | 1 | HAR on ammonia | `hart` | ~2 s |
 | 2 | HAR on urea, then a Roby–Gould bond index analysis | `tonto` | ~30 s |
-| 3 | XCW fitting on exercise 2's refined geometry | `tonto` | *(see below)* |
+| 3 | XCW fitting on exercise 2's refined geometry | `tonto` | ~2.5 min |
+| 4 | The deformation density, before and after that fit | `tonto` + gnuplot | ~45 s |
 
 Together they are one procedure, not three: exercise 2 produces a wavefunction,
 exercise 3 constrains that wavefunction against the diffraction data, and the
@@ -979,6 +980,110 @@ here — put them beside exercise 2's and look for yourself.
 - Compare the residual density cube before and after the constraint.
 
 ---
+
+---
+
+## Exercise 4 — the deformation density, before and after the constraint
+
+Exercises 2 and 3 asked the wavefunction a *number*: the bond indices. This
+one asks it for a *picture*. The **deformation density**
+
+$$\rho_{\mathrm{def}}(\boldsymbol{r}) = \rho_{\mathrm{molecule}}(\boldsymbol{r})
+- \sum_A \rho_A^{0}(\boldsymbol{r} - \boldsymbol{r}_A)$$
+
+is the molecular density minus a sum of spherical free-atom densities — what
+the electrons did when the atoms formed bonds. It is positive in the bonds and
+in the lone pairs, and negative where density was drawn away.
+
+**In a terminal**, type:
+
+```bash
+cd ../4-urea-deformation
+../../build/tonto --basis-library ../../basis_sets
+```
+
+About 45 seconds. The job computes the density twice in the plane of the amide
+group — once from the ordinary wavefunction, once from the wavefunction fitted
+to the 817 reflections — on the same grid.
+
+### The plane
+
+```
+   plot_grid= {
+      kind= deformation_density
+      centre_atom= 4          ! C
+      x_axis_atoms= 4 1       ! C -> O
+      y_axis_atoms= 4 2       ! C -> N1
+      x_width= 6 angstrom
+      y_width= 6 angstrom
+      n_points= 101
+      plot_format= gnuplot
+   }
+
+   plot
+```
+
+`centre_atom` and the two axis pairs define the plane by three atoms, so no
+coordinates need to be typed. The grid is 6 × 6 Å at 101 × 101 points.
+
+### Drawing it
+
+**Tonto computes the grid but does not draw it.** Each `plot` writes one file
+of numbers:
+
+| File | From |
+|---|---|
+| `urea_deformation.deformation_density_grid,gnuplot` | the ordinary wavefunction |
+| `urea_deformation,lambda=0.002000.deformation_density_grid,gnuplot` | the constrained one |
+
+*(The λ in the second name is one step past the λ that was used — a
+book-keeping quirk of the name, not of the calculation. The wavefunction is
+the λ = 0.001 one.)*
+
+The file holds one value per line, in 101 rows of 101 separated by blank
+lines. `deformation.gnuplot` in this directory turns either into a picture.
+**In a terminal**, type:
+
+```bash
+gnuplot -e "f='urea_deformation.deformation_density_grid,gnuplot'; out='before.png'" deformation.gnuplot
+gnuplot -e "f='urea_deformation,lambda=0.002000.deformation_density_grid,gnuplot'; out='after.png'" deformation.gnuplot
+```
+
+![Deformation density, unconstrained](images/deformation-unconstrained.png)
+
+Carbon is at the origin, oxygen at +1.26 Å along x, the two nitrogens at
+±1.16 Å. Read it as a map of the bonding: a peak in each C–N and C=O bond, two
+lone-pair lobes on the far side of the oxygen, a peak in each N–H bond, and a
+deep hole at every nucleus, where a spherical atom holds more density than the
+molecule does.
+
+### What the experiment changed
+
+The two maps look nearly identical, which is the honest result — subtract them
+and the difference is a twentieth of the deformation density itself:
+
+```bash
+paste -d' ' urea_deformation.deformation_density_grid,gnuplot \
+            urea_deformation,lambda=0.002000.deformation_density_grid,gnuplot \
+  | awk 'NF==0{print ""; next} {printf "%15.6E\n", $2-$1}' > difference.dat
+gnuplot -e "f='difference.dat'; out='difference.png'; c=0.05" deformation.gnuplot
+```
+
+![Constrained minus unconstrained](images/deformation-difference.png)
+
+Note the colour scale: ±0.05 e Å⁻³, against ±0.5 for the maps above. The
+constraint puts density **back at the carbon and oxygen nuclei** and takes it
+**out of the C–N bonding region**. That is the same story the bond indices told
+in exercise 3 — the ionic index of the polar bonds fell — now in real space.
+
+### Things to try next
+
+- Raise λ to 0.01 in the second `scfdata` block and redraw. The difference map
+  stops being a small correction and starts being noise: this is what
+  over-fitting looks like.
+- Change the plane. `y_axis_atoms= 4 5` puts an N–H bond in it instead.
+- Plot `kind= electron_density` instead, and see why the deformation density is
+  the more useful picture: the total density is dominated by the cores.
 
 ## References
 
