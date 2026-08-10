@@ -237,4 +237,198 @@ would allow. With only 88 reflections that is not alarming.
 
 ---
 
-*Exercises 2 and 3 follow — being run and written now.*
+## Exercise 2 — urea, and a property of the wavefunction
+
+Now the same thing with a job file rather than a command line, on a molecule
+with two distinct N–H bonds — and then the part that exercise 1 could not do:
+we ask the refined wavefunction a chemical question.
+
+Urea's asymmetric unit contains a quarter of a molecule. HAR needs a complete
+one, so `urea_init.cif` has been completed for you; it also carries all 817
+reflections, so it is the only data file you need.
+
+Copy the directory, then run:
+
+```bash
+cd ~/workshop-2
+tonto
+```
+
+`tonto` reads `stdin` from the working directory and writes `stdout` there. It
+takes about half a minute.
+
+### The input file
+
+This is `docs/workshop/2-urea-har/stdin`, in full:
+
+```
+{
+
+   name= urea
+
+   basis_name= def2-SVP
+
+   charge= 0
+   multiplicity= 1
+
+   CIF= { file_name= urea_init.cif }
+   process_CIF
+
+   crystal= {
+
+      xray_data= {
+
+         ! 0.3173 Angstrom. Tonto's default length unit is the bohr, so
+         ! say "angstrom" or you will silently refine against the wrong
+         ! wavelength.
+         wavelength= 0.3173 angstrom
+
+         partition_model= oc-hirshfeld
+
+         optimise_extinction= NO
+         optimise_scale_factor= YES
+
+         do_residual_cube= NO
+
+         show_refinement_output=  FALSE
+         show_refinement_results= TRUE
+
+      }
+   }
+
+   ! A first SCF on the starting geometry, to get the Hirshfeld charges
+   ! the refinement starts from.
+   scfdata= {
+      kind=            rhf
+      initial_density= promolecule
+      convergence= 0.001
+      diis= { convergence_tolerance= 0.01 }
+   }
+   scf
+
+   ! The refinement itself. This loops: SCF -> partition -> least squares
+   ! -> new geometry -> SCF ... until nothing moves.
+   HAR_refinement
+
+   ! Roby-Gould bond index analysis of the final, refined wavefunction.
+   ! output_theta_info= YES is what writes rgbi-dial-table+H.tex, and without
+   ! it make-rgbi-dials has nothing to draw. Say YES if you want the pictures.
+   robydata= {
+      kind= atom_bond_analysis
+      output_theta_info= YES
+   }
+   roby_analysis
+
+   delete_scf_archives
+
+}
+```
+
+Points worth pausing on:
+
+- **`wavelength= 0.3173 angstrom`.** Tonto's default length unit is the *bohr*.
+  Leave off `angstrom` and you have quietly specified 0.3173 bohr = 0.168 Å.
+  (You will meet the same figure written `0.59960` in some of Tonto's test
+  jobs — that is the same wavelength in bohr.)
+- **`process_CIF`** does the work of reading the CIF. `CIF= { … }` only says
+  which file.
+- **`HAR_refinement`** is the whole loop of the three steps above — SCF,
+  partition, least squares — repeated to convergence. One keyword.
+- **`convergence= 0.001`** is on the SCF energy, **`convergence_tolerance= 0.01`**
+  is on the DIIS gradient. Both are deliberately loose, to keep the exercise
+  short.
+
+### What you should get
+
+| Urea | SHELX IAM | HAR (mine) | HAR (yours) |
+|:---|:---:|:---:|:---:|
+| R(F) | 0.0253 | 0.0185 | ? |
+| Rw(F) | — | 0.0138 | ? |
+| GoF² | — | 11.157 | ? |
+| reflections | 817 | 817 | ? |
+| parameters | 21 | 27 | ? |
+| C=O / Å | — | 1.2558(4) | ? |
+| C–N / Å | — | 1.3413(3) | ? |
+| **N1–H1 / Å** | **0.964(17)** | **1.028(5)** | ? |
+| **N1–H3 / Å** | **0.900(12)** | **0.986(6)** | ? |
+
+Both N–H distances lengthen, by 0.06 and 0.09 Å, and their esds shrink by a
+factor of three. Neutron values for urea are about 1.00 and 1.01 Å.
+
+Note the goodness of fit: **11.2**, not ≈1. Urea's σ values are very small, and
+a GoF² this far above 1 says the model still does not explain the data to
+within its stated precision — there is real structure left in the residuals.
+Do not read it as a failed refinement; read it as the reason exercise 3 exists.
+
+### The fit plots
+
+| | |
+|---|---|
+| ![Normal QQ plot](images/workshop/urea.QQ_plot.png) | ![F_z vs sin(theta)/lambda](images/workshop/urea.F_z_vs_stl.png) |
+| ![F_z vs F_exp](images/workshop/urea.F_z_vs_F_exp.png) | ![Delta F vs sin(theta)/lambda](images/workshop/urea.Delta_F_vs_stl.png) |
+
+Compare the QQ plot with ammonia's. With 817 reflections instead of 88 the
+shape is much better defined — and it is visibly *not* a straight line of slope
+1. That is the same message the goodness of fit gave.
+
+### The bond indices
+
+The Roby–Gould analysis at the end of the job is the first property computed
+from the refined wavefunction — a wavefunction which, because HAR produced it,
+is consistent with the diffraction data.
+
+Tonto writes the numbers to `stdout` and, at the same time, LaTeX fragments for
+two pictures. Draw them with the scripts in `rgbi-scripts/`:
+
+```bash
+export PATH=<path-to>/tonto/rgbi-scripts:$PATH
+make-rgbi-dials --do-H     # needs LaTeX with chemfig, plus ghostscript
+make-rgbi-pic   --do-H     # additionally needs Open Babel and mol2chemfig
+```
+
+The two halves are independent: if the second defeats you, you still get the
+dial diagrams. `scripts/rgbi_doctor.sh` tells you what is missing, and
+[INSTALLING_RGBI.md](INSTALLING_RGBI.md) how to fix it.
+
+![Urea with Roby-Gould bond indices](images/workshop/urea.rgbi-structure.png)
+
+Each bond carries its **bond index** in black and its **percentage covalency**
+in blue. The C=O comes out at 1.78 and 74% covalent; the two C–N bonds at 1.46
+and 71%; the N–H bonds at 0.95 and about 80%.
+
+Those numbers say something chemical. A textbook urea has a C=O double bond and
+two C–N single bonds; what the refined wavefunction says is that the C–N bonds
+are **half again as strong as a single bond** (1.46, not 1.0) and the C=O is
+noticeably *less* than a double bond (1.78, not 2.0). That is amide resonance,
+measured rather than asserted.
+
+The dial diagrams show where each index comes from — covalent index along the
+horizontal, ionic index along the vertical, the total being the radius:
+
+![Dial diagrams for urea](images/workshop/urea.rgbi-dials-detail.png)
+
+Read them as a picture of bond character. The C=O dial (top left, 1.63 covalent
+against 0.70 ionic) leans well off the horizontal — a strongly polarised double
+bond. The N–H dial (bottom right, 0.90 against 0.30) leans less. The O···H
+contact (top right) is nearly *all* ionic, 0.22 against 0.04: that is the
+hydrogen bond that holds the urea crystal together, and it appears here as a
+weak, almost purely electrostatic interaction rather than a bond.
+
+The full page of 21 dials, including every non-bonded pair, is in
+`rgbi-dial-table+H.pdf`, and reproduced
+[here](images/workshop/urea.rgbi-dials-all.png).
+
+### Things to try
+
+- Set `output_theta_info= NO` and re-run. The numbers are unchanged and the
+  dial diagrams disappear — that flag controls the pictures, nothing else.
+- Add `use_SC_cluster_charges= TRUE` and `cluster_radius= 8 angstrom` to the
+  `scfdata` block, surrounding the molecule with self-consistent Hirshfeld
+  charges. Urea is held together by strong, directional hydrogen bonds, so the
+  crystal environment matters a great deal here. Watch the C=O index.
+- Change `basis_name=` to `def2-TZVP`. Slower. Do the bond indices move as much
+  as the crystal environment moved them?
+
+---
+
+*Exercise 3 is running now.*
