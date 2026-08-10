@@ -1,0 +1,120 @@
+# Build downloadable executables, so a workshop participant needs no toolchain.
+#
+#   linux-static   a single static binary set for Linux and for WSL. Supported.
+#   windows-exe    a native Windows .exe, cross-compiled with MinGW-w64.
+#                  EXPERIMENTAL -- native Windows has never been a tested
+#                  platform. This job may fail; it does not gate the release.
+#
+# Trigger by hand from the Actions tab, or by pushing a tag such as v26.08.
+name: Release binaries
+
+on:
+  workflow_dispatch:
+  push:
+    tags: [ 'v*' ]
+
+jobs:
+
+  linux-static:
+    name: Linux (static)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install the toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make cmake default-jdk gfortran-14 python3
+
+      - name: Build
+        run: |
+          cmake -B out -S . \
+                -DCMAKE_Fortran_COMPILER=gfortran-14 \
+                -DCMAKE_BUILD_TYPE=release-static \
+                -DCOMPILE_LAPACK=ON
+          cmake --build out -- -j3
+
+      - name: Check the binaries run and are self-contained
+        run: |
+          out/tonto --version
+          out/hart --help > /dev/null
+          file out/tonto out/hart
+          ldd out/tonto || true          # "not a dynamic executable" is the goal
+
+      - name: Run a workshop exercise against the built binary
+        run: |
+          cd examples/1-nh3-hart
+          TONTO_BASIS_SET_DIRECTORY=$GITHUB_WORKSPACE/basis_sets \
+            $GITHUB_WORKSPACE/out/hart --job nh3 --basis def2-SVP \
+            --std-f nh3.hkl nh3.cif
+          grep '^R(F)' nh3.out
+
+      - name: Package
+        run: |
+          V=$(git describe --tags --always)
+          D=tonto-$V-linux-x86_64
+          mkdir -p $D/bin
+          cp out/tonto out/hart $D/bin/
+          [ -f out/rgbi ] && cp out/rgbi $D/bin/ || true
+          cp -r basis_sets examples workshop $D/
+          cp README.md LICENSE $D/
+          tar czf $D.tar.gz $D
+          echo "ARTEFACT=$D.tar.gz" >> $GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tonto-linux-x86_64
+          path: ${{ env.ARTEFACT }}
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload ${{ github.ref_name }} $ARTEFACT --clobber
+
+  windows-exe:
+    name: Windows .exe (experimental, may fail)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install the cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make cmake default-jdk gfortran-mingw-w64 \
+                                  gcc-mingw-w64-x86-64 wine64
+
+      - name: Cross-compile
+        run: |
+          cmake -B out-win -S . \
+                -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-toolchain.cmake \
+                -DCMAKE_BUILD_TYPE=release \
+                -DCOMPILE_LAPACK=ON \
+                -DTONTO_WSL=OFF
+          cmake --build out-win -- -j3
+
+      - name: Check the .exe runs under wine
+        run: |
+          file out-win/tonto.exe out-win/hart.exe
+          wine64 out-win/tonto.exe --version || echo "wine could not run it"
+
+      - name: Package
+        run: |
+          V=$(git describe --tags --always)
+          D=tonto-$V-windows-x86_64
+          mkdir -p $D/bin
+          cp out-win/*.exe $D/bin/
+          cp -r basis_sets examples workshop $D/
+          cp README.md LICENSE $D/
+          zip -qr $D.zip $D
+          echo "ARTEFACT=$D.zip" >> $GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tonto-windows-x86_64
+          path: ${{ env.ARTEFACT }}
