@@ -3964,3 +3964,43 @@ every push to `release` and `master`.
 users. **If it does not**, the fix is to reproduce the failure under wine
 first — the cross-build is cheap to iterate on — and only then to blame
 Windows.
+
+---
+
+## Two local `ctest` failures that CI does not see: zero-esd formatting
+
+**Status: understood, not fixed, 2026-08-10.**
+
+A full local `ctest` on `release/` gives 131/133. The two failures are
+`tests/hart/urea_hart_STO-3G_disk_ffs` and
+`tests/long/gly_ala_fragHAR_rhf_STO-3G`, and both report the same thing:
+
+```
+exact=FAIL  rel<=0.2%=FAIL(max 0%)  lastdig<=2=FAIL(max 0 ulp)  =>  LOOSE=FAIL
+    1 structural/alignment mismatch(es)
+```
+
+**Zero numeric difference, zero ulp.** The mismatch is in the torsion-angle
+table, where a zero angle carries a zero esd:
+
+```
+reference (blessed on Darwin-25.5.0):    O---C--N1--H1     0.000000(0)
+this machine (Linux):                    O---C--N1--H1   0.00000000(1)
+```
+
+The value is 0 either way. What differs is how many digits the esd printer
+emits when the esd is at the denormal edge — 0 on the machine that blessed the
+reference, 1 in the last place here — and that changes the token alignment, so
+`test.py`'s structural check fires while every numeric check passes.
+
+**It is not a regression.** `gly_ala_fragHAR_rhf_STO-3G` runs `tonto`, a binary
+in that build tree older than the day's only source change (`--defragment` in
+`runfiles/run_har.foo`, which builds `hart`). And **Linux CI does not see it**:
+the same `urea_hart_STO-3G_disk_ffs` reports `FAIL PASS PASS` there — exact
+fails, loose passes — in a green 54/54 run.
+
+**What is worth doing, when there is time.** Either rebless the two references
+on Linux, or make the esd printer's digit count independent of a zero esd,
+which is the real fix: a zero esd should not be formatted by the same
+digit-counting rule as a measured one. Until then the two tests fail only on
+machines whose formatting differs from the Mac that blessed them.
