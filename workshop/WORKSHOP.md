@@ -157,15 +157,22 @@ exercise 3 asks you to look at.
 
 ## Getting Tonto
 
-Ready-built programs are on the
-[**releases page**](https://github.com/dylan-jayatilaka/tonto/releases). One
-download holds the programs, the basis sets, the exercises and this document.
-No compiler is needed.
+One download holds the programs, the basis sets, the exercises and this
+document. No compiler is needed.
+
+| Your machine | Download |
+|---|---|
+| **Windows** | [**tonto-windows-x86_64.zip**](https://github.com/dylan-jayatilaka/tonto/releases/latest/download/tonto-windows-x86_64.zip) |
+| **Linux**, and **Windows via WSL** | [**tonto-linux-x86_64.tar.gz**](https://github.com/dylan-jayatilaka/tonto/releases/latest/download/tonto-linux-x86_64.tar.gz) |
+| **macOS** | none yet — [build it](../docs/BUILDING_ON_MACOS.md) |
+
+Those links always give the newest release. Every release is listed on the
+[releases page](https://github.com/dylan-jayatilaka/tonto/releases).
 
 ### Windows
 
-Download **`tonto-<version>-windows-x86_64.zip`** from the releases page and
-unzip it — right-click the file, *Extract All*.
+Download **`tonto-windows-x86_64.zip`** and unzip it — right-click the file,
+*Extract All*.
 
 Open the extracted folder, then open a terminal there: click in the address bar
 of the Explorer window, type `cmd`, and press Enter. Then type:
@@ -190,7 +197,7 @@ misbehaves, use WSL instead — see below.*
 
 ### Linux, and Windows via WSL
 
-Download **`tonto-<version>-linux-x86_64.tar.gz`** from the releases page.
+Download **`tonto-linux-x86_64.tar.gz`**.
 
 On Windows, first install WSL: open PowerShell as Administrator (right-click
 the Start button, *Terminal (Admin)*), type `wsl --install`, reboot if asked,
@@ -200,7 +207,7 @@ In a terminal — **Ubuntu** on Windows, your usual one on Linux — type:
 
 ```bash
 cd ~
-tar xzf ~/Downloads/tonto-*-linux-x86_64.tar.gz     # Windows: /mnt/c/Users/<you>/Downloads/...
+tar xzf ~/Downloads/tonto-linux-x86_64.tar.gz      # Windows: /mnt/c/Users/<you>/Downloads/...
 cd tonto-*-linux-x86_64
 sudo apt install -y gnuplot
 build/tonto --version
