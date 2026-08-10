@@ -172,7 +172,14 @@ of 200. The XCW gradient carries λ × dχ²/dP, so the same λ is a two-hundred
 stronger pull here. λ is not a dimensionless knob that transfers between
 datasets.
 
-**What does work**, walking up in steps of 0.001:
+**What does work**, walking up in steps of 0.001. **Caveat on these numbers:
+they were produced with convergence 10⁻⁵ / 10⁻⁵, not the 0.001 / 0.01 Dylan
+specified.** The tight setting was a *diagnostic* — the only working urea XCW in
+the repo (`tests/long/urea_x-ray-constrained-uhf_STO-3G_plus_ELF_plot`) uses
+10⁻⁵, so tightening it isolated whether the divergence came from the tolerance
+or from λ. It came from λ: the loose setting converges just as well up to 0.003
+and diverges at 0.01 just the same. The table is being regenerated at 0.001 /
+0.01 for the document; the shape will not change but the last digits will.
 
 | λ | GoF² | energy / hartree | ⟨MO\|M0⟩ | iterations |
 |---|---|---|---|---|
@@ -207,3 +214,22 @@ good enough, and `high` was expensive), and the `show_refinement_output=` /
 `show_refinement_results=` lines are gone from all three decks. Whether the
 requested loose convergence (0.001 / 0.01) brings the ladder inside the budget
 without reintroducing the divergence is being measured now.
+
+### Every table here is provisional
+
+Agreed with Dylan, 2026-08-10: **all results tables must be regenerated once the
+final parameter set settles**, and not patched piecemeal before then. That
+includes exercise 1's and exercise 2's, not only the λ table — the decks have
+changed since those runs (the `show_refinement_*` lines and the `becke_grid`
+block are gone), so their numbers are from inputs that no longer exist as
+written.
+
+The parameter set is settled when these are fixed and measured together:
+
+1. the λ values urea's data will actually take, at 0.001 / 0.01 convergence;
+2. whether the job fits the 2–3 minute budget, and what is dropped if not;
+3. whether `refine_hirshfeld_atoms` stays in the deck (it is what settles the
+   scale factor, but it is also the single most expensive step).
+
+Until then, treat every number in this file and in `WORKSHOP.md` as indicative
+of shape, not of value.
