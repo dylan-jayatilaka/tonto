@@ -137,7 +137,7 @@ value of GoF² you are aiming at, and deciding what it should be is the
 How far to push $\lambda$ is a judgement call, and that is exactly what
 exercise 3 asks you to look at.
 
-## Three things to know before you start
+## Two things to know before you start
 
 1. **Reflection files must be merged and pruned of systematic absences.**
 
@@ -153,10 +153,6 @@ exercise 3 asks you to look at.
    silica, a coordination polymer — with `--defragment f`. There is no whole
    molecule to complete in such a structure, so the growth has no stopping
    point and the run will not terminate.
-
-3. **Tonto eliminates linear dependencies in the least-squares matrix
-   automatically**, so it has no restraints or constraints. That can cause
-   trouble for spherical ions.
 
 ---
 
