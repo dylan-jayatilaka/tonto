@@ -42,20 +42,15 @@ $f_j$ come from: they describe how an **isolated atom type** scatters, and
 they are read from a table — Tables 4.2.6.8 and 6.1.1.4 of *International
 Tables* Vol. C.
 
-(The symbols throughout are those of Davidson, Grabowsky & Jayatilaka,
-*X-ray constrained wavefunctions based on Hirshfeld atoms. I. Method and
-review*, *Acta Cryst.* (2022), **B78**, 312–332 — equations (2) and (3)
-there, which reappear in exercise 1. Read that review next; this document is
-a way of getting your hands on what it describes.)
-
 Read that again, because everything follows from it: every atom is modelled as
 an isolated, non-interacting sphere sitting at the centre of its electron
 cloud, regardless of what it is bonded to or what its oxidation state is.
 
-**Hirshfeld atom refinement** computes the form factors instead of looking them
-up — for each atom, not each atom *type* — from a quantum chemical calculation
-on the actual molecule. The atomic densities that result are aspherical and
-distorted by their surroundings, as real ones are.
+**Hirshfeld atom refinement** (Jayatilaka et al., 2008) computes the form
+factors instead of looking them up — for each atom, not each atom *type* —
+from a quantum chemical calculation on the actual molecule. The atomic
+densities that result are aspherical and distorted by their surroundings, as
+real ones are.
 
 ### The main reason is the wavefunction
 
@@ -63,8 +58,9 @@ The famous benefit of HAR is that hydrogen atoms come out right. A hydrogen's
 electron density peaks *inside* the bond, not at the nucleus, so a spherical
 model places it too close to its neighbour — the well-known shortening of X–H
 distances in X-ray structures. HAR removes that bias and puts hydrogen where
-neutron diffraction puts it. You will see this happen in exercises 1 and 2, and
-it is the easiest thing to check.
+neutron diffraction puts it, in a fairly automatic and standard way
+(Woińska et al., 2016). You will see this happen in exercises 1 and 2, and it
+is the easiest thing to check.
 
 But it is not the main reason to do HAR. The main reason is this:
 
@@ -87,8 +83,8 @@ Starting from an ordinary refined structure — HAR is a *post-IAM* procedure:
 1. **A single-point calculation** gives the molecular electron density.
 
 2. **That density is partitioned** into atoms by Hirshfeld's stockholder
-   scheme, each atom taking a share proportional to what a free atom would
-   contribute there:
+   scheme (Hirshfeld, 1977), each atom taking a share proportional to what a
+   free atom would contribute there:
 
    $$\rho_A(\boldsymbol{r}) = w_A(\boldsymbol{r}) \cdot \rho_{\text{molecule}}(\boldsymbol{r})
    \qquad
@@ -106,7 +102,7 @@ Repeat until nothing moves.
 ## And XCW
 
 HAR fits *positions* to the data, with the wavefunction along for the ride. XCW
-fits the **wavefunction itself**. It minimises
+(Grimwood et al., 2001) fits the **wavefunction itself**. It minimises
 
 $$E[\Psi] + \lambda \left( \mathrm{GoF}^2[\Psi] - \Delta \right)$$
 
@@ -495,8 +491,8 @@ shape is much better defined — and it is visibly *not* a straight line of slop
 
 ### The bond indices
 
-The Roby–Gould analysis at the end of the job is the first property computed
-from the refined wavefunction — a wavefunction which, because HAR produced it,
+The Roby–Gould analysis (Gould et al., 2008) at the end of the job is the
+first property computed from the refined wavefunction — a wavefunction which, because HAR produced it,
 is consistent with the diffraction data.
 
 Tonto writes the numbers to `stdout` and, at the same time, LaTeX fragments for
@@ -558,8 +554,9 @@ The full page of 21 dials, including every non-bonded pair, is in
 Exercise 2 refined a geometry *and* left a wavefunction behind. This exercise
 takes that wavefunction and fits it to the same 817 reflections.
 
-Doing the two in sequence is **X-ray wavefunction refinement**, XWR — and it
-has a precise definition, §2.8 of Davidson, Grabowsky & Jayatilaka (2022):
+Doing the two in sequence is **X-ray wavefunction refinement**, XWR
+(Woińska et al., 2017) — and it has a precise definition, §2.8 of
+Davidson et al. (2022):
 
 > XWR ≡ XWR(HA) = HAR + HA-XCW
 
@@ -870,3 +867,23 @@ here — put them beside exercise 2's and look for yourself.
   the crystal environment move the bond indices more than the data constraint
   does?
 - Compare the residual density cube before and after the constraint.
+
+---
+
+## References
+
+Davidson et al. (2022). *Acta Cryst.* **B78**, 312–332.
+
+Gould et al. (2008). *Theor. Chem. Acc.* **119**, 275–290.
+
+Grimwood et al. (2001). *Acta Cryst.* **A57**, 87–100.
+
+Hirshfeld (1977). *Theor. Chim. Acta* **44**, 129–138.
+
+*International Tables for Crystallography*, Vol. C, Tables 4.2.6.8 and 6.1.1.4.
+
+Jayatilaka et al. (2008). *Acta Cryst.* **A64**, 383–393.
+
+Woińska et al. (2016). *Sci. Adv.* **2**, e1600192.
+
+Woińska et al. (2017). *ChemPhysChem* **18**, 3334–3351.
