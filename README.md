@@ -19,9 +19,20 @@ language translated to modern Fortran. *Foo* is `Fortran` reversed, for object
 oriented Fortran: identical to Fortran at the expression level, different in how
 variables, subroutines and functions are declared.
 
-## Build it
+## Get it
 
-Pick your platform. Each page is self-contained.
+Ready-built programs for Linux and Windows, needing no compiler, are on the
+[**releases page**](https://github.com/dylan-jayatilaka/tonto/releases).
+
+To build from source, clone the repository — **`--recursive` matters**, the
+submodules are not optional:
+
+```
+git clone --recursive https://github.com/dylan-jayatilaka/tonto.git
+cd tonto
+```
+
+then follow the page for your platform. Each is self-contained.
 
 | | |
 |---|---|
