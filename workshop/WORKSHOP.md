@@ -155,10 +155,89 @@ exercise 3 asks you to look at.
 
 ---
 
-## Building Tonto, and where to work
+## Getting Tonto: download it, no compiler needed
 
-First build Tonto. Jump straight to your platform — each page is
-self-contained:
+Ready-built programs are on the
+[**releases page**](https://github.com/dylan-jayatilaka/tonto/releases). One
+download contains everything this workshop needs — the programs, the basis
+sets, the exercises and this document.
+
+### Windows
+
+Windows runs the Linux build inside WSL, which is a real Ubuntu that Windows
+installs for you. Five steps, and you can paste every command.
+
+1. Open **PowerShell as Administrator** (right-click the Start button →
+   *Terminal (Admin)*) and run:
+
+   ```powershell
+   wsl --install
+   ```
+
+   Reboot if it asks. When you next open **Ubuntu** from the Start menu it will
+   ask you to choose a username and a password. Remember the password: `sudo`
+   asks for it.
+
+2. In your browser, go to the
+   [releases page](https://github.com/dylan-jayatilaka/tonto/releases) and
+   download the file ending in **`-linux-x86_64.tar.gz`**. It goes to your
+   Windows `Downloads` folder, which is fine.
+
+3. Open **Ubuntu** from the Start menu, and paste these lines. Replace
+   `<you>` with your Windows user name:
+
+   ```bash
+   cd ~
+   tar xzf /mnt/c/Users/<you>/Downloads/tonto-*-linux-x86_64.tar.gz
+   cd tonto-*-linux-x86_64
+   ```
+
+4. Install gnuplot, which draws the plots at the end of a refinement:
+
+   ```bash
+   sudo apt update && sudo apt install -y gnuplot
+   ```
+
+5. Check it works:
+
+   ```bash
+   build/tonto --version
+   ```
+
+   A version number means you are done. Everything below works from this
+   directory.
+
+### Linux
+
+```bash
+cd ~
+tar xzf ~/Downloads/tonto-*-linux-x86_64.tar.gz
+cd tonto-*-linux-x86_64
+sudo apt install -y gnuplot        # for the plots
+build/tonto --version
+```
+
+### macOS
+
+There is no ready-built macOS package yet — build it instead, with
+[BUILDING_ON_MACOS.md](../docs/BUILDING_ON_MACOS.md). It takes about ten
+minutes.
+
+### What you get
+
+```
+build/          tonto and hart, ready to run
+basis_sets/     the basis-set library
+examples/       the three exercises below
+workshop/       this document
+```
+
+The programs sit in `build/` in the download and in `build/` after a compile,
+so every command in this document works either way.
+
+## Or build it yourself
+
+Jump straight to your platform — each page is self-contained:
 
 | | |
 |---|---|
