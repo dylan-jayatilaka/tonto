@@ -36,20 +36,17 @@ its estimated standard uncertainty squared — and $\xi$ is an overall scale
 factor, refined along with everything else, because the experimental
 magnitudes are not measured on an absolute scale.
 
-The calculated magnitudes come from a sum over atomic form factors $f_j$:
+The calculated magnitudes are the usual sum over atomic form factors $f_j$,
+one per atom, phased by the atomic positions. What matters here is where those
+$f_j$ come from: they describe how an **isolated atom type** scatters, and
+they are read from a table — Tables 4.2.6.8 and 6.1.1.4 of *International
+Tables* Vol. C.
 
-$$F_r^{\mathrm{calc}} = \sum_{j=1}^{N_{\mathrm{atom}}} f_j \,
-e^{2\pi i\, \boldsymbol{h}_r \cdot \boldsymbol{r}_j}$$
-
-where $\boldsymbol{h}_r$ is the Miller triple of reflection $r$ and
-$\boldsymbol{r}_j$ the position of atom $j$.
-
-Those $f_j$ describe how an **isolated atom type** scatters, and they are read
-from a table — Tables 4.2.6.8 and 6.1.1.4 of *International Tables* Vol. C.
-
-(The symbols here are those of Davidson, Grabowsky & Jayatilaka, *Acta Cryst.*
-(2022), **B78**, 312–332, equations 2 and 3, so that this document and the
-review agree.)
+(The symbols throughout are those of Davidson, Grabowsky & Jayatilaka,
+*X-ray constrained wavefunctions based on Hirshfeld atoms. I. Method and
+review*, *Acta Cryst.* (2022), **B78**, 312–332 — equations (2) and (3)
+there, which reappear in exercise 1. Read that review next; this document is
+a way of getting your hands on what it describes.)
 
 Read that again, because everything follows from it: every atom is modelled as
 an isolated, non-interacting sphere sitting at the centre of its electron
@@ -559,9 +556,21 @@ The full page of 21 dials, including every non-bonded pair, is in
 ## Exercise 3 — the same urea, now constrained by the data
 
 Exercise 2 refined a geometry *and* left a wavefunction behind. This exercise
-takes that wavefunction and fits it to the same 817 reflections. HAR followed
-by XCW on the HAR geometry is what is called an **X-ray wavefunction
-refinement**, XWR.
+takes that wavefunction and fits it to the same 817 reflections.
+
+Doing the two in sequence is **X-ray wavefunction refinement**, XWR — and it
+has a precise definition, §2.8 of Davidson, Grabowsky & Jayatilaka (2022):
+
+> XWR ≡ XWR(HA) = HAR + HA-XCW
+
+The point of that definition is *consistency*, and it is easy to miss. HAR
+smears the atomic density with a Hirshfeld-atom, one-centre model; an XCW
+fitting is free to use a different smearing model, and the earlier XWR
+protocols did exactly that — HAR positions and ADPs, but a two-centre
+(Tanaka) model in the XCW step. The recommendation is to use the **same**
+position-averaging model in both halves. Exercises 2 and 3 both set
+`partition_model= oc-hirshfeld`, so what you are running here is XWR(HA) as
+defined.
 
 There are no cluster charges here: this is the isolated molecule, constrained
 by the data and by nothing else.
@@ -589,8 +598,12 @@ This is `docs/workshop/3-urea-xcw/stdin`, in full:
 {
 
    ! Exercise 3 -- X-ray constrained wavefunction (XCW) fitting on the
-   ! geometry that exercise 2 refined. HAR then XCW on the HAR geometry
-   ! is what is called an X-ray wavefunction refinement (XWR).
+   ! geometry that exercise 2 refined. Both halves use the same one-centre
+   ! Hirshfeld smearing model (partition_model= oc-hirshfeld), which is what
+   ! makes the pair an X-ray wavefunction refinement as defined in section
+   ! 2.8 of Davidson, Grabowsky & Jayatilaka, Acta Cryst. (2022) B78 312:
+   !
+   !    XWR = XWR(HA) = HAR + HA-XCW
    !
    ! Run it in this directory, in place:
    !
