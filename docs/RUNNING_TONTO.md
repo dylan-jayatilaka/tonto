@@ -1,50 +1,52 @@
 # Running Tonto
 
-Migrated from the project wiki (2026-08-05) so that it is versioned with the
-code it describes.
+## Running a job
 
-## Example input
+1. Make an input file called `stdin`, or copy one from `tests/`.
+2. Run `tonto` in that directory. It writes its output to `stdout`.
 
-The `tests/` folder is the example collection — one directory per job.
+`tonto` takes no file arguments. Its options, all GNU long options:
 
-- Input files are always called **`stdin`**.
-- Reference output files are always called **`stdout`**.
-- Some jobs need auxiliary input data files, which sit alongside.
-- The file called **`IO`** lists the auxiliary files needed as input, and the
-  temporary files produced during the run that should be deleted afterwards.
-  For an argv-driven program such as `hart` it also carries `program:` and
-  `args:` keys — see [`RUNNING_HART.md`](RUNNING_HART.md).
+| Option | Effect |
+|---|---|
+| `--input <file>` | Read the job from `<file>` instead of `stdin` |
+| `--output <file>` | Write the output to `<file>` instead of `stdout` |
+| `--basis-library <dir>` | Where the basis-set files are, if not `$TONTO_BASIS_SET_DIRECTORY` |
+| `--version` | Print the version and stop |
+| `--help` | Print the usage and stop |
 
-## Running it
+The single-dash spellings (`-i`, `-o`, `-b`, `-help`) were removed; a program
+given one says which `--name` to use instead. `hart` has its own, larger option
+set — see [`RUNNING_HART.md`](RUNNING_HART.md).
 
-1. Make an input file called `stdin`, or copy one you like from `tests/`.
-2. Run the `tonto` executable from your build directory.
+## Example inputs
 
-That is the whole thing.
+`tests/` is the example collection, one directory per job:
 
-> **Options are GNU long options.** Every Tonto program takes `--name` only —
-> `tonto --input job.txt`, `hart --basis STO-3G`. The old single-dash spellings
-> (`-i`, `-o`, `-b`, `-help`, `-basis`, …) were removed; a program given one now
-> says which `--name` to use instead.
+- The input file is always `stdin`.
+- The reference output is always `stdout`.
+- Auxiliary data files sit alongside.
+- `IO` lists the auxiliary files the job reads, and the temporary files to
+  delete afterwards. For an argv-driven program such as `hart` it also carries
+  `program:` and `args:` keys.
 
-## Practical set-up
+## Where to keep the executable and the basis sets
 
-You can copy the executable wherever you like.
+The executable can go anywhere. Two things help:
 
-- You will generally also need the **`basis_sets`** folder in the same place, or
-  else tell Tonto where it is — either in the `stdin` input file, or via the
+- Tonto needs the **`basis_sets`** folder — in the same place, or named in the
+  input file, or given by `--basis-library`, or by the
   `TONTO_BASIS_SET_DIRECTORY` environment variable.
-- A **symbolic link** named `tonto` pointing at the build directory's binary
-  means every job picks up the latest build after a recompile.
-- For long jobs, give the program a descriptive name —
-  `tonto.this-is-for-oxalic-acid` — so concurrent runs can be told apart in
-  `ps` and in job listings.
+- A **symbolic link** named `tonto` pointing into the build directory means
+  every job picks up the latest build after a recompile.
+- For long jobs, copy the executable to a descriptive name —
+  `tonto.oxalic-acid` — so concurrent runs can be told apart in `ps`.
 
-## What the programs are
+## The programs
 
 | Path | Program |
 |------|---------|
 | `build/tonto` | the main program |
-| `build/hart` | standalone Hirshfeld atom refinement (`hart --help`; see [`RUNNING_HART.md`](RUNNING_HART.md)) |
+| `build/hart` | standalone Hirshfeld atom refinement — [`RUNNING_HART.md`](RUNNING_HART.md) |
 
 Smaller test and utility programs are built alongside them.
