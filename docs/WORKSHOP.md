@@ -25,8 +25,14 @@ bond indices in exercise 2 are the first example of a property computed from it.
 Ordinary **Independent Atom Model** (IAM) refinement in chemical
 crystallography, as done by SHELXL or Olex2, minimises
 
-$$M = \sum_{r=1}^{N_{\mathrm{refl}}} w_r
-\left( s |F_r^{\mathrm{calc}}| - |F_r^{\mathrm{obs}}| \right)^2$$
+<div align="center">
+
+```math
+M = \sum_{r=1}^{N_{\mathrm{refl}}} w_r
+\left( s |F_r^{\mathrm{calc}}| - |F_r^{\mathrm{obs}}| \right)^2
+```
+
+</div>
 
 where $r$ labels the $N_{\mathrm{refl}}$ measured reflections,
 $|F_r^{\mathrm{obs}}|$ and $|F_r^{\mathrm{calc}}|$ are the observed and
@@ -90,9 +96,11 @@ Starting from an ordinary refined structure — HAR is a *post-IAM* procedure:
    scheme (Hirshfeld, 1977), each atom taking a share proportional to what a
    free atom would contribute there:
 
-   $$\rho_A(\boldsymbol{r}) = w_A(\boldsymbol{r}) \cdot \rho_{\text{molecule}}(\boldsymbol{r})
+   ```math
+   \rho_A(\boldsymbol{r}) = w_A(\boldsymbol{r}) \cdot \rho_{\text{molecule}}(\boldsymbol{r})
    \qquad
-   w_A(\boldsymbol{r}) = \frac{\rho_A^0(\boldsymbol{r} - \boldsymbol{r}_A)}{\sum_B \rho_B^0(\boldsymbol{r} - \boldsymbol{r}_B)}$$
+   w_A(\boldsymbol{r}) = \frac{\rho_A^0(\boldsymbol{r} - \boldsymbol{r}_A)}{\sum_B \rho_B^0(\boldsymbol{r} - \boldsymbol{r}_B)}
+   ```
 
    Each atomic density is then smeared by thermal motion and Fourier
    transformed into a scattering factor.
@@ -108,7 +116,13 @@ Repeat until nothing moves.
 HAR fits *positions* to the data, with the wavefunction along for the ride. XCW
 (Grimwood et al., 2001) fits the **wavefunction itself**. It minimises
 
-$$E[\Psi] + \lambda \left( \mathrm{GoF}^2[\Psi] - \Delta \right)$$
+<div align="center">
+
+```math
+E[\Psi] + \lambda \left( \mathrm{GoF}^2[\Psi] - \Delta \right)
+```
+
+</div>
 
 — the quantum mechanical energy, plus the disagreement with the diffraction
 data weighted by a multiplier $\lambda$. At $\lambda = 0$ you have an ordinary
@@ -234,19 +248,31 @@ structure, with esds, is in `nh3.archive.cif`.
 **A word on the names.** The **goodness of fit**, GoF, is the root-mean-square
 misfit measured in units of the experimental error:
 
-$$\mathrm{GoF}^2 = \left(N_{\mathrm{refl}} - N_{\mathrm{param}}\right)^{-1}
+<div align="center">
+
+```math
+\mathrm{GoF}^2 = \left(N_{\mathrm{refl}} - N_{\mathrm{param}}\right)^{-1}
 \sum_{r=1}^{N_{\mathrm{refl}}}
-\left(\frac{\xi\,|F_r^{\mathrm{calc}}| - |F_r^{\mathrm{obs}}|}
-{\sigma_r^{\mathrm{obs}}}\right)^2$$
+\left(\frac{s\,|F_r^{\mathrm{calc}}| - |F_r^{\mathrm{obs}}|}
+{\sigma_r^{\mathrm{obs}}}\right)^2
+```
+
+</div>
 
 with the symbols of the previous section, and $\sigma_r^{\mathrm{obs}}$ the
 estimated standard uncertainty of $|F_r^{\mathrm{obs}}|$. The number of
 parameters is
 
-$$N_{\mathrm{param}} = N_{\mathrm{pADP}} + N_{\mathrm{misc}}$$
+<div align="center">
+
+```math
+N_{\mathrm{param}} = N_{\mathrm{pADP}} + N_{\mathrm{misc}}
+```
+
+</div>
 
 where $N_{\mathrm{pADP}}$ counts the symmetry-unique atomic positions and
-displacement parameters, and $N_{\mathrm{misc}}$ is at least one — for $\xi$ —
+displacement parameters, and $N_{\mathrm{misc}}$ is at least one — for $s$ —
 plus any further parameters refined for phenomenological corrections such as
 extinction. Tonto prints both, as `N_r` and `N_p`.
 
@@ -258,7 +284,13 @@ are overestimated.
 earlier papers called this quantity χ². The two differ by exactly the factor
 that GoF² divides out:
 
-$$\chi^2 = \left(N_{\mathrm{refl}} - N_{\mathrm{param}}\right)\,\mathrm{GoF}^2$$
+<div align="center">
+
+```math
+\chi^2 = \left(N_{\mathrm{refl}} - N_{\mathrm{param}}\right)\,\mathrm{GoF}^2
+```
+
+</div>
 
 so for the ammonia run below, with $N_{\mathrm{refl}} - N_{\mathrm{param}} =
 84 - 13$, a GoF² of 1.07 is a χ² of about 76. Everything Tonto now prints, and
