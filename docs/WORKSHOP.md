@@ -25,15 +25,31 @@ bond indices in exercise 2 are the first example of a property computed from it.
 Ordinary **Independent Atom Model** (IAM) refinement in chemical
 crystallography, as done by SHELXL or Olex2, minimises
 
-$$M = \sum w\,(|F_o| - |F_c|)^2$$
+$$M = \sum_{r=1}^{N_{\mathrm{refl}}} w_r
+\left( \xi\,|F_r^{\mathrm{calc}}| - |F_r^{\mathrm{obs}}| \right)^2$$
 
-where $F_o$ and $F_c$ are the observed and calculated structure factors. The
-calculated ones come from a sum over atomic form factors $f_j$:
+where $r$ labels the $N_{\mathrm{refl}}$ measured reflections,
+$|F_r^{\mathrm{obs}}|$ and $|F_r^{\mathrm{calc}}|$ are the observed and
+calculated structure factor magnitudes, $w_r$ is the weight given to
+reflection $r$ — usually $1/(\sigma_r^{\mathrm{obs}})^2$, the reciprocal of
+its estimated standard uncertainty squared — and $\xi$ is an overall scale
+factor, refined along with everything else, because the experimental
+magnitudes are not measured on an absolute scale.
 
-$$F(\boldsymbol{h}) = \sum_{j=1}^{N} f_j \, e^{2\pi i \boldsymbol{h} \cdot \boldsymbol{r}_j}$$
+The calculated magnitudes come from a sum over atomic form factors $f_j$:
+
+$$F_r^{\mathrm{calc}} = \sum_{j=1}^{N_{\mathrm{atom}}} f_j \,
+e^{2\pi i\, \boldsymbol{h}_r \cdot \boldsymbol{r}_j}$$
+
+where $\boldsymbol{h}_r$ is the Miller triple of reflection $r$ and
+$\boldsymbol{r}_j$ the position of atom $j$.
 
 Those $f_j$ describe how an **isolated atom type** scatters, and they are read
 from a table — Tables 4.2.6.8 and 6.1.1.4 of *International Tables* Vol. C.
+
+(The symbols here are those of Davidson, Grabowsky & Jayatilaka, *Acta Cryst.*
+(2022), **B78**, 312–332, equations 2 and 3, so that this document and the
+review agree.)
 
 Read that again, because everything follows from it: every atom is modelled as
 an isolated, non-interacting sphere sitting at the centre of its electron
@@ -95,16 +111,17 @@ Repeat until nothing moves.
 HAR fits *positions* to the data, with the wavefunction along for the ride. XCW
 fits the **wavefunction itself**. It minimises
 
-$$E[\Psi] + \lambda \left( \chi^2[\Psi] - \Delta \right)$$
+$$E[\Psi] + \lambda \left( \mathrm{GoF}^2[\Psi] - \Delta \right)$$
 
 — the quantum mechanical energy, plus the disagreement with the diffraction
 data weighted by a multiplier $\lambda$. At $\lambda = 0$ you have an ordinary
 Hartree–Fock wavefunction that has never seen the experiment. As $\lambda$
-rises, the wavefunction is pulled towards the data: $\chi^2$ falls, the energy
-rises above its variational minimum, and the orbitals change.
+rises, the wavefunction is pulled towards the data: GoF² falls, the energy
+rises above its variational minimum, and the orbitals change. $\Delta$ is the
+value of GoF² you are aiming at, and deciding what it should be is the
+*halting problem* of the XCW method.
 
-($\chi^2$ here is the goodness of fit squared — the same quantity the refinement
-tables call GoF². It is defined in exercise 1.)
+(GoF², the goodness of fit squared, is defined in exercise 1.)
 
 How far to push $\lambda$ is a judgement call, and that is exactly what
 exercise 3 asks you to look at.
@@ -217,19 +234,38 @@ cannot, so it runs at hart's internal default.
 Results are in `nh3.out`; look for `Structure refinement results`. The refined
 structure, with esds, is in `nh3.archive.cif`.
 
-**A word on the names, because two of them are the same thing.** The
-**goodness of fit**, GoF, is the root-mean-square misfit measured in units of
-the experimental error:
+**A word on the names.** The **goodness of fit**, GoF, is the root-mean-square
+misfit measured in units of the experimental error:
 
-$$\mathrm{GoF}^2 = \chi^2 = \frac{1}{N_r - N_p}\sum_k
-\left(\frac{|F_{\mathrm{calc},k}| - |F_{\mathrm{exp},k}|}{\sigma_k}\right)^2$$
+$$\mathrm{GoF}^2 = \left(N_{\mathrm{refl}} - N_{\mathrm{param}}\right)^{-1}
+\sum_{r=1}^{N_{\mathrm{refl}}}
+\left(\frac{\xi\,|F_r^{\mathrm{calc}}| - |F_r^{\mathrm{obs}}|}
+{\sigma_r^{\mathrm{obs}}}\right)^2$$
 
-So **GoF² and χ² are one quantity under two names** — older Tonto output and
-much of the literature call it χ², while the tables below and Tonto's current
-output call it GoF². It appears again in exercise 3, where it is the thing the
-constraint is buying. A value near **1** means the model reproduces the data to
-within its stated errors; much above 1 means it does not; much below 1 usually
-means the σ values are overestimated.
+with the symbols of the previous section, and $\sigma_r^{\mathrm{obs}}$ the
+estimated standard uncertainty of $|F_r^{\mathrm{obs}}|$. The number of
+parameters is
+
+$$N_{\mathrm{param}} = N_{\mathrm{pADP}} + N_{\mathrm{misc}}$$
+
+where $N_{\mathrm{pADP}}$ counts the symmetry-unique atomic positions and
+displacement parameters, and $N_{\mathrm{misc}}$ is at least one — for $\xi$ —
+plus any further parameters refined for phenomenological corrections such as
+extinction. Tonto prints both, as `N_r` and `N_p`.
+
+A value near **1** means the model reproduces the data to within its stated
+errors; much above 1 means it does not; much below 1 usually means the σ values
+are overestimated.
+
+**GoF² is not χ², although Tonto used to say it was.** Earlier Tonto output and
+earlier papers called this quantity χ². The two differ by exactly the factor
+that GoF² divides out:
+
+$$\chi^2 = \left(N_{\mathrm{refl}} - N_{\mathrm{param}}\right)\,\mathrm{GoF}^2$$
+
+so for the ammonia run below, with $N_{\mathrm{refl}} - N_{\mathrm{param}} =
+84 - 13$, a GoF² of 1.07 is a χ² of about 76. Everything Tonto now prints, and
+every table in this document, is GoF².
 
 | NH₃ | SHELX IAM | HAR (mine) | HAR (yours) |
 |:---|:---:|:---:|:---:|
@@ -577,7 +613,7 @@ This is `docs/workshop/3-urea-xcw/stdin`, in full:
    ! the data, and nothing else.
    !
    ! THE POINT OF THE THREE SCF BLOCKS AT THE END. Lambda has no natural
-   ! size: it multiplies the derivative of chi^2, so how hard a given
+   ! size: it multiplies the derivative of GoF^2, so how hard a given
    ! lambda pulls depends entirely on how precise your sigmas are. There
    ! is no value that transfers from one dataset to the next. So you do
    ! not guess -- you scan by decades, 0.0001, 0.001, 0.01, and read off
@@ -627,7 +663,7 @@ This is `docs/workshop/3-urea-xcw/stdin`, in full:
 
    ! The geometry is already refined, so this converges at once. It is
    ! here to settle the scale factor between F_calc and F_exp: start the
-   ! XCW without it and chi^2 is wrong from the very first step.
+   ! XCW without it and GoF^2 is wrong from the very first step.
    refine_hirshfeld_atoms
 
 
@@ -707,10 +743,10 @@ This is `docs/workshop/3-urea-xcw/stdin`, in full:
 
 ### Choosing λ, and why you have to
 
-λ has no natural size. It multiplies the derivative of χ², so how hard a given
-λ pulls depends entirely on how precise your σ values are, and **no value
+λ has no natural size. It multiplies the derivative of GoF², so how hard a
+given λ pulls depends entirely on how precise your σ values are, and **no value
 transfers from one dataset to the next**. Urea's data is about two hundred
-times more precise than the ammonia data of exercise 1, and its χ² surface is
+times more precise than the ammonia data of exercise 1, and its GoF² surface is
 correspondingly steeper.
 
 So you do not guess: you scan by decades and read off which decade your data
@@ -733,8 +769,8 @@ themselves barely move: ⟨MO|M0⟩, the overlap with the unconstrained orbitals
 is still 0.99987.
 
 That ratio is not a coincidence. λ is a Lagrange multiplier, so at the
-constrained solution λ = −d*E*/dχ², an exchange rate: the energy you pay per
-unit of χ² you buy.
+constrained solution λ = −d*E*/d(GoF²), an exchange rate: the energy you pay
+per unit of GoF² you buy.
 
 ### Reading the SCF trace
 
