@@ -1,11 +1,8 @@
 # Building Tonto on Linux
 
 Ubuntu/Debian, the assumed and best-supported platform. Everything here is one
-pass from a clean machine to a tested binary. Other platforms:
-[macOS](BUILDING_ON_MACOS.md), [Windows/WSL](BUILDING_ON_WINDOWS.md).
-
-Build types other than `release`, parallel (MPI) builds and clusters are common
-to all platforms and live in [`BUILDING_TONTO.md`](BUILDING_TONTO.md).
+pass from a clean machine to a tested binary. Other platforms: [macOS](BUILDING_ON_MACOS.md),
+[Windows/WSL](BUILDING_ON_WINDOWS.md).
 
 ---
 
@@ -78,13 +75,70 @@ The comparison is deliberately loose — relative difference ≤ 0.2%, or last
 printed digit within 2 — because the references were blessed on one compiler
 and one machine.
 
+
+## Other build types
+
+The build type is the one real choice. Configure a separate directory for each
+type you keep.
+
+| Type | For |
+|---|---|
+| `release` | Optimised and tested; what CI runs and what the reference outputs were blessed with. Use this unless you have a reason not to. |
+| `debug` | `-O0`, runtime checks, error messages. For diagnosing a crash. |
+| `fast` | Aggressive optimisation. Faster, may perturb the last printed digits. |
+| `release-static` | A self-contained binary for redistribution. Larger. |
+
+```bash
+mkdir debug && cd debug
+cmake .. -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=debug
+make -j4
+```
+
+## Parallel (MPI) builds
+
+```bash
+cmake .. -DCMAKE_Fortran_COMPILER=mpifort -DCMAKE_C_COMPILER=mpicc \
+         -DCMAKE_BUILD_TYPE=release -DMPI=1
+```
+
+**The MPI must have been built with the same Fortran compiler as Tonto.** Tonto
+does `USE mpi`, and Fortran `.mod` files are compiler-version specific.
+Configure checks this and stops if they differ. `-DMPI=1` is a hard
+requirement: if MPI is not found, configure fails rather than silently
+producing a serial binary.
+
+**Validate parallel results before trusting them.**
+[`TONTO_AND_MPI.md`](TONTO_AND_MPI.md) records what a parallel run does and does
+not reproduce.
+
+Install it with `sudo apt install openmpi-bin libopenmpi-dev`. Ubuntu's package
+is built against a different gcc than `gfortran-14`, so if configure rejects it,
+build one to match:
+
+```bash
+./configure --prefix=$HOME/opt/openmpi-gf14 FC=gfortran-14 CC=gcc-14
+```
+
+and put its `bin` first on `PATH`. This is the platform where the parallel build
+is tested and in CI.
+
+## On a cluster
+
+Environments vary too much to script. Load your compiler and MPI modules first,
+then use the recipe above, overriding the compiler if needed with
+`-DCMAKE_Fortran_COMPILER=<your ftn wrapper>`. The three knobs that matter are
+the compiler, the build type and `-DMPI=1`.
+
 ---
 
 ## Where to go next
 
 | | |
 |---|---|
-| Other build types (debug, fast, static), MPI, clusters | [`BUILDING_TONTO.md`](BUILDING_TONTO.md) |
-| What a parallel build does and does not reproduce | [`TONTO_AND_MPI.md`](TONTO_AND_MPI.md) |
 | Running Tonto | [`RUNNING_TONTO.md`](RUNNING_TONTO.md) |
+| The `hart` program | [`RUNNING_HART.md`](RUNNING_HART.md) |
+| What a parallel build does and does not reproduce | [`TONTO_AND_MPI.md`](TONTO_AND_MPI.md) |
 | Source and executable layout | [`TONTO_LIBRARY_STRUCTURE.md`](TONTO_LIBRARY_STRUCTURE.md) |
+
+> **Options are GNU long options.** Every Tonto program takes `--name` only —
+> `tonto --input job.txt`, `hart --basis STO-3G`.

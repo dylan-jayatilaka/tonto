@@ -151,7 +151,7 @@ elif [ -x "$HERE/../release/rgbi" ]; then
     ok "rgbi: $HERE/../release/rgbi (not on PATH)"
 else
     warn "no rgbi on PATH -- you need it to PRODUCE the .tex fragments, but not to draw ones you already have" \
-         "build it: see docs/BUILDING_TONTO.md, then add <prefix>/bin to PATH"
+         "build it: see docs/DOCUMENTATION.md, then add <prefix>/bin to PATH"
 fi
 
 # ------------------------------------------------------------------- LaTeX

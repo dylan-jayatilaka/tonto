@@ -5,9 +5,6 @@ of `apt`. Everything here is one pass from a clean machine to a tested binary.
 Other platforms: [Linux](BUILDING_ON_LINUX.md),
 [Windows/WSL](BUILDING_ON_WINDOWS.md).
 
-Build types other than `release`, parallel (MPI) builds and clusters are common
-to all platforms and live in [`BUILDING_TONTO.md`](BUILDING_TONTO.md).
-
 ---
 
 ## 1. Install the prerequisites, with Homebrew
@@ -38,9 +35,8 @@ brew install gcc cmake openjdk python3 gnuplot
   diagnostic plots a refinement writes. Without it the job still completes and
   the data files and gnuplot scripts are still written; you get a warning and
   no pictures.
-- Optional parallel build: `brew install open-mpi` — but see the
-  compiler-matching warning in [`BUILDING_TONTO.md`](BUILDING_TONTO.md). A
-  Homebrew Open MPI built against a different gcc will not work.
+- Optional parallel build: `brew install open-mpi` — see the compiler-matching
+  rule below.
 
 ## 2. Get the source code
 
@@ -91,13 +87,55 @@ macOS, working around a gfortran miscompilation of the two-electron integral
 code. `CMakeLists.txt` explains it at the pin. Nothing to do; it is mentioned
 so the odd flag in the build log is not a mystery.
 
+
+## Other build types
+
+The build type is the one real choice. Configure a separate directory for each
+type you keep.
+
+| Type | For |
+|---|---|
+| `release` | Optimised and tested; what CI runs and what the reference outputs were blessed with. Use this unless you have a reason not to. |
+| `debug` | `-O0`, runtime checks, error messages. For diagnosing a crash. |
+| `fast` | Aggressive optimisation. Faster, may perturb the last printed digits. |
+| `release-static` | A self-contained binary for redistribution. Larger. |
+
+```bash
+mkdir debug && cd debug
+cmake .. -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=debug
+make -j4
+```
+
+## Parallel (MPI) builds
+
+```bash
+cmake .. -DCMAKE_Fortran_COMPILER=mpifort -DCMAKE_C_COMPILER=mpicc \
+         -DCMAKE_BUILD_TYPE=release -DMPI=1
+```
+
+**The MPI must have been built with the same Fortran compiler as Tonto.** Tonto
+does `USE mpi`, and Fortran `.mod` files are compiler-version specific.
+Configure checks this and stops if they differ. `-DMPI=1` is a hard
+requirement: if MPI is not found, configure fails rather than silently
+producing a serial binary.
+
+**Validate parallel results before trusting them.**
+[`TONTO_AND_MPI.md`](TONTO_AND_MPI.md) records what a parallel run does and does
+not reproduce.
+
+**Untested on macOS.** A Homebrew Open MPI built against a different gcc will
+not work, so expect to check `mpifort --version` against `gfortran-14`.
+
 ---
 
 ## Where to go next
 
 | | |
 |---|---|
-| Other build types (debug, fast, static), MPI, clusters | [`BUILDING_TONTO.md`](BUILDING_TONTO.md) |
-| What a parallel build does and does not reproduce | [`TONTO_AND_MPI.md`](TONTO_AND_MPI.md) |
 | Running Tonto | [`RUNNING_TONTO.md`](RUNNING_TONTO.md) |
+| The `hart` program | [`RUNNING_HART.md`](RUNNING_HART.md) |
+| What a parallel build does and does not reproduce | [`TONTO_AND_MPI.md`](TONTO_AND_MPI.md) |
 | Source and executable layout | [`TONTO_LIBRARY_STRUCTURE.md`](TONTO_LIBRARY_STRUCTURE.md) |
+
+> **Options are GNU long options.** Every Tonto program takes `--name` only —
+> `tonto --input job.txt`, `hart --basis STO-3G`.

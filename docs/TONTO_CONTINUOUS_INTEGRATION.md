@@ -250,3 +250,36 @@ those are triaged.
 `push`/`pull_request` triggers in `ci-debug.yml` (leave `workflow_dispatch`) and wrap the badge
 in `README.md` in an HTML comment — both together, or the badge points at a workflow that never
 runs.
+
+## What each badge on the README covers
+
+The badges track the **`release`** branch.
+
+- **Linux-release** — the gate. This one must be green.
+- **Linux-debug** — carries four longstanding `-O0` floating-point and
+  structural failures that are not code defects (see `DEFERRED.md`), so its
+  suite step is informational.
+- **Linux-MPI** — not on every push. Ubuntu's Open MPI is built against gcc-13
+  while this project standardises on gfortran-14, and `USE mpi` makes `.mod`
+  files compiler-version specific, so the workflow builds Open MPI from source;
+  it is cached, scheduled weekly, and triggered only by MPI-relevant paths. Its
+  gate is the π rank-invariance check (`scripts/check_mpi_pi.sh`), not the
+  suite. A red MPI badge means the build broke, or π stopped being rank-count
+  independent — both real.
+- **WSL-release** — builds and tests inside a real WSL2 Ubuntu on a Windows
+  runner, because WSL looks enough like Linux that the ordinary build "works"
+  right up until it does not. Every push, plus weekly.
+- **WSL-debug** — the WSL counterpart of Linux-debug, deliberately narrow: it
+  builds `debug` and runs two fast jobs to prove the binary executes. Weekly, a
+  day after WSL-release, so two hour-long Windows jobs never queue against each
+  other.
+
+The empty **macOS** row is deliberate: macOS runners are free for this public
+repository, and a macOS job is the only thing that can guard the two arm64
+compiler pins whose failure mode is wrong numbers rather than crashes. See the
+high-priority item in `DEFERRED.md`.
+
+Two workflows are not build types and sit outside the table: `ci-rgbi.yml`
+proves the RGBI picture-tool install list from a bare `ubuntu:24.04`, and
+`ci-rgbi-macos.yml` probes the same list on a real Mac weekly, deliberately
+unbadged so it does not read as macOS support.

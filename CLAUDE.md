@@ -208,11 +208,14 @@ versioned with the code it described*, so it could rot silently. Do not add docu
 
 - `README.md` — the leader page: what Tonto is, a quickstart, the documentation index, and what
   each CI badge means. Deliberately short; detail belongs in `docs/`.
-- Building — one self-contained page per platform, so a reader jumps straight to theirs:
-  `docs/BUILDING_ON_LINUX.md`, `docs/BUILDING_ON_MACOS.md`, `docs/BUILDING_ON_WINDOWS.md`.
-  `docs/BUILDING_TONTO.md` is the chooser plus what is common to all three — build types
-  beyond `release`, MPI and clusters. Split out 2026-08-10; it had become labyrinthine.
-  The README quickstart is the only build instructions outside these.
+- Building — one **self-contained** page per platform, each covering prerequisites, build,
+  tests, other build types and MPI for that platform: `docs/BUILDING_ON_LINUX.md`,
+  `docs/BUILDING_ON_MACOS.md`, `docs/BUILDING_ON_WINDOWS.md`. There is deliberately no
+  shared build page — `BUILDING_TONTO.md` was split out and then deleted (2026-08-10),
+  because a chooser page plus per-platform pages still made a reader hop.
+- `docs/DOCUMENTATION.md` — the documentation index, linked from the README. The README
+  itself is deliberately short: badges, what Tonto is, three build links, the workshop,
+  this index, contact. Anything explanatory belongs here or in `docs/`.
 - `docs/RUNNING_TONTO.md` — running Tonto: input/output conventions (`stdin`/`stdout`/`IO`), practical set-up.
 - `docs/TONTO_LIBRARY_STRUCTURE.md` — source and executable layout, and the module structure picture.
 - `docs/RUNNING_HART.md` — the `hart` program: what it hard-codes, its full `--option` reference, how

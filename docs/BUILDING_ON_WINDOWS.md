@@ -9,8 +9,6 @@ with the fix in the message (`cmake/WSL.cmake`).
 If you just want the commands, skip to [Quick start](#quick-start).
 
 Other platforms: [Linux](BUILDING_ON_LINUX.md), [macOS](BUILDING_ON_MACOS.md).
-Build types other than `release`, parallel (MPI) builds and clusters are common
-to all three and live in [`BUILDING_TONTO.md`](BUILDING_TONTO.md).
 
 Native Windows builds — MinGW, MSYS2, cross-compilation — are **not tested**
 with the ANTLR4 translator. Use WSL.
@@ -198,6 +196,39 @@ CMake Error at CMakeLists.txt:16 (project):
 
 Ubuntu CI runners and most desktop installs ship `gcc` already, which is why this
 only bites on a bare WSL image. `scripts/wsl_doctor.sh` checks for it.
+
+## Other build types
+
+The presets cover `release`; for another type, configure a separate directory:
+
+| Type | For |
+|---|---|
+| `release` | Optimised and tested. Use this unless you have a reason not to. |
+| `debug` | `-O0`, runtime checks, error messages. For diagnosing a crash. |
+| `fast` | Aggressive optimisation. Faster, may perturb the last printed digits. |
+| `release-static` | A self-contained binary for redistribution. Larger. |
+
+```bash
+cmake -B ~/tonto-build/debug -S ~/tonto \
+      -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=debug
+cmake --build ~/tonto-build/debug -- -j4
+```
+
+## Parallel (MPI) builds
+
+**Untested under WSL.** WSL is Ubuntu, so `sudo apt install openmpi-bin
+libopenmpi-dev` and the ordinary recipe should apply:
+
+```bash
+cmake -B ~/tonto-build/mpi -S ~/tonto -DCMAKE_Fortran_COMPILER=mpifort \
+      -DCMAKE_C_COMPILER=mpicc -DCMAKE_BUILD_TYPE=release -DMPI=1
+```
+
+The MPI must have been built with the same Fortran compiler as Tonto — Tonto
+does `USE mpi`, and `.mod` files are compiler-version specific. Configure checks
+this. MS-MPI interop from Windows is not tested and not guarded.
+[`TONTO_AND_MPI.md`](TONTO_AND_MPI.md) records what a parallel run does and does
+not reproduce.
 
 ## What this page does not cover
 
