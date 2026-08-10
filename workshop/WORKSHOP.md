@@ -988,8 +988,14 @@ here — put them beside exercise 2's and look for yourself.
 Exercises 2 and 3 asked the wavefunction a *number*: the bond indices. This
 one asks it for a *picture*. The **deformation density**
 
-$$\rho_{\mathrm{def}}(\boldsymbol{r}) = \rho_{\mathrm{molecule}}(\boldsymbol{r})
-- \sum_A \rho_A^{0}(\boldsymbol{r} - \boldsymbol{r}_A)$$
+<div align="center">
+
+```math
+\rho_{\mathrm{def}}(\boldsymbol{r}) = \rho_{\mathrm{molecule}}(\boldsymbol{r})
+   - \sum_A \rho_A^{0}(\boldsymbol{r} - \boldsymbol{r}_A)
+```
+
+</div>
 
 is the molecular density minus a sum of spherical free-atom densities — what
 the electrons did when the atoms formed bonds. It is positive in the bonds and
@@ -1040,8 +1046,10 @@ of numbers:
 book-keeping quirk of the name, not of the calculation. The wavefunction is
 the λ = 0.001 one.)*
 
-The file holds one value per line, in 101 rows of 101 separated by blank
-lines. `deformation.gnuplot` in this directory turns either into a picture.
+The file holds one value per line, in 201 rows of 201 separated by blank
+lines. `deformation.gnuplot` in this directory turns either into a contour
+map — solid red where density was gained, dashed blue where it was lost, grey
+for the zero contour, at 0.05 e Å⁻³ intervals.
 **In a terminal**, type:
 
 ```bash
@@ -1072,14 +1080,17 @@ and the difference is a twentieth of the deformation density itself:
 paste -d' ' urea_deformation.deformation_density_grid,gnuplot \
             urea_deformation,lambda=0.002000.deformation_density_grid,gnuplot \
   | awk 'NF==0{print ""; next} {printf "%15.6E\n", $2-$1}' > difference.dat
-gnuplot -e "f='difference.dat'; out='difference.png'; c=0.05" deformation.gnuplot
+gnuplot -e "f='difference.dat'; out='difference.png'; d=0.005; c=0.05" deformation.gnuplot
 ```
+
+`d` is the contour interval: ten times finer here, because the differences
+are ten times smaller.
 
 ![Constrained minus unconstrained](images/deformation-difference.png)
 
-Note the colour scale: ±0.05 e Å⁻³, against ±0.5 for the maps above. The
-constraint puts density **back at the carbon and oxygen nuclei** and takes it
-**out of the C–N bonding region**. That is the same story the bond indices told
+Note the contour interval: 0.005 e Å⁻³, a tenth of the maps above. The
+constraint puts density **back at the carbon and oxygen nuclei**, and the
+zero contour shows where it came from — the region beyond the C–N bonds. That is the same story the bond indices told
 in exercise 3 — the ionic index of the polar bonds fell — now in real space.
 
 ### Things to try next
