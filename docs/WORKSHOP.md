@@ -54,15 +54,18 @@ real ones are.
 
 ### The main reason is the wavefunction
 
-The famous benefit of HAR is that hydrogen atoms come out right. A hydrogen's
+The famous benefit of HAR is that the position of hydrogen atoms come out right,
+in agreement with independent neutron diffraction experiments. A hydrogen's
 electron density peaks *inside* the bond, not at the nucleus, so a spherical
 model places it too close to its neighbour — the well-known shortening of X–H
 distances in X-ray structures. HAR removes that bias and puts hydrogen where
 neutron diffraction puts it, in a fairly automatic and standard way
 (Woińska et al., 2016). You will see this happen in exercises 1 and 2, and it
-is the easiest thing to check.
+is the easiest thing to check. In good quality data these small differences
+in bond length can be seen, which bodes well for the use of the structure
+factors for other purposes.
 
-But it is not the main reason to do HAR. The main reason is this:
+In fact, the main reason to do HAR is this:
 
 > HAR gives you a **wavefunction for the system at that geometry**. That
 > wavefunction can be fitted further — that is what XCW does, in exercise 3 —
@@ -74,7 +77,8 @@ parameters, and nothing else; the model has no electrons in it that you could
 ask a question of. HAR gives you a density, and XCW makes that density answer
 to the experiment. Bond indices, electrostatic potentials, energies, ELF — all
 become *experimentally constrained* quantities rather than purely theoretical
-ones. Exercise 2 computes the first of these.
+ones. Exercise 2 computes the first of these. One can predict the results of
+other experiments.
 
 ## How HAR works
 
