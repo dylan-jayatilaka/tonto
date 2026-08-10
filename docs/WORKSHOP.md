@@ -22,7 +22,8 @@ bond indices in exercise 2 are the first example of a property computed from it.
 
 ## Why bother
 
-Ordinary refinement, as in SHELXL, minimises
+Ordinary **Independent Atom Model** (IAM) refinement in chemical
+crystallography, as done by SHELXL or Olex2, minimises
 
 $$M = \sum w\,(|F_o| - |F_c|)^2$$
 
