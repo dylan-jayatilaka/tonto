@@ -1049,7 +1049,13 @@ gnuplot -e "f='urea_deformation.deformation_density_grid,gnuplot'; out='before.p
 gnuplot -e "f='urea_deformation,lambda=0.002000.deformation_density_grid,gnuplot'; out='after.png'" deformation.gnuplot
 ```
 
-![Deformation density, unconstrained](images/deformation-unconstrained.png)
+**The ordinary wavefunction:**
+
+![Deformation density from the unconstrained wavefunction](images/deformation-unconstrained.png)
+
+**The same plane, from the wavefunction fitted to the data:**
+
+![Deformation density from the constrained wavefunction](images/deformation-constrained.png)
 
 Carbon is at the origin, oxygen at +1.26 Å along x, the two nitrogens at
 ±1.16 Å. Read it as a map of the bonding: a peak in each C–N and C=O bond, two
