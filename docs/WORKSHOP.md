@@ -147,13 +147,20 @@ ln -s ../../../build/hart hart          # exercises 2 and 3: ln -s ../../../buil
 ```
 
 The three exercise directories all sit three levels below the top of the
-repository, so `../../../basis_sets` is the basis set library from any of them.
-Exercise 1 passes that on the command line. Exercises 2 and 3 have no such
-option, so set the environment variable for them:
+repository, so `../../../basis_sets` is the basis set library from any of them,
+and each exercise passes it on the command line. Nothing else to set up: no
+environment, no copying, no editing of paths.
+
+If you would rather not type it every time, both programs fall back to the
+`TONTO_BASIS_SET_DIRECTORY` environment variable, and then the option can be
+dropped:
 
 ```bash
 export TONTO_BASIS_SET_DIRECTORY=<path-to>/tonto/basis_sets
 ```
+
+**The two programs spell the same option differently** — `hart --basis-dir`,
+`tonto --basis-library`. Not a typo below; `--help` on either will confirm it.
 
 If you would rather work somewhere of your own, copy a directory
 (`cp -r <path-to>/tonto/docs/workshop/1-nh3-hart ~/workshop-1`) and adjust the
@@ -289,13 +296,11 @@ reflections, so it is the only data file you need.
 Run it:
 
 ```bash
-cd ../2-urea-har && ./tonto
+cd ../2-urea-har && ./tonto --basis-library ../../../basis_sets
 ```
 
-`tonto` reads `stdin` from the working directory and writes `stdout` there — so
-unlike `hart` it takes no arguments at all, and there is nowhere to say where
-the basis sets are. That is what `TONTO_BASIS_SET_DIRECTORY` is for. It takes
-about half a minute.
+`tonto` takes no input file argument: it reads `stdin` from the working
+directory and writes `stdout` there. About 40 seconds.
 
 ### The input file
 
