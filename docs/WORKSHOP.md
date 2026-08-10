@@ -102,6 +102,9 @@ Hartree–Fock wavefunction that has never seen the experiment. As $\lambda$
 rises, the wavefunction is pulled towards the data: $\chi^2$ falls, the energy
 rises above its variational minimum, and the orbitals change.
 
+($\chi^2$ here is the goodness of fit squared — the same quantity the refinement
+tables call GoF². It is defined in exercise 1.)
+
 How far to push $\lambda$ is a judgement call, and that is exactly what
 exercise 3 asks you to look at.
 
@@ -191,11 +194,25 @@ and exercise 1 simply cannot, so it runs at hart's internal default.
 Results are in `nh3.out`; look for `Structure refinement results`. The refined
 structure, with esds, is in `nh3.archive.cif`.
 
+**A word on the names, because two of them are the same thing.** The
+**goodness of fit**, GoF, is the root-mean-square misfit measured in units of
+the experimental error:
+
+$$\mathrm{GoF}^2 = \chi^2 = \frac{1}{N_r - N_p}\sum_k
+\left(\frac{|F_{\mathrm{calc},k}| - |F_{\mathrm{exp},k}|}{\sigma_k}\right)^2$$
+
+So **GoF² and χ² are one quantity under two names** — older Tonto output and
+much of the literature call it χ², while the tables below and Tonto's current
+output call it GoF². It appears again in exercise 3, where it is the thing the
+constraint is buying. A value near **1** means the model reproduces the data to
+within its stated errors; much above 1 means it does not; much below 1 usually
+means the σ values are overestimated.
+
 | NH₃ | SHELX IAM | HAR (mine) | HAR (yours) |
 |:---|:---:|:---:|:---:|
 | R(F) | 0.0071 | 0.0101 | ? |
 | Rw(F) | — | 0.0096 | ? |
-| GoF²  | — | 1.0737 | ? |
+| GoF² (goodness of fit, squared) | — | 1.0737 | ? |
 | ρ<sub>max</sub> / e Å⁻³ | 0.014 | 0.0373 | ? |
 | ρ<sub>min</sub> / e Å⁻³ | −0.013 | −0.0571 | ? |
 | reflections | 98 | 84 | ? |
