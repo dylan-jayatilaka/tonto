@@ -7,9 +7,9 @@ are not all wired to every push.
 
 | Workflow | File | Badge | Runs | Time |
 |----------|------|-------|------|------|
-| **CI (Linux-release)** | `ci.yml` | yes | every push / PR to `antlr4`, `master`, `release` | ~15–20 min |
+| **CI (Linux-release)** | `ci.yml` | yes | every push / PR to `master`, `develop` | ~15–20 min |
 | **CI (WSL-release)** | `ci-wsl.yml` | yes | `guards` job on every push; the full WSL build when the WSL machinery changes, on demand, and weekly (Mon) *once on `master`* | ~1 min / ~40–70 min |
-| **CI (Linux-debug)** | `ci-debug.yml` | yes | every push / PR to `antlr4`, `master`, `release`, and on demand | ~15 min |
+| **CI (Linux-debug)** | `ci-debug.yml` | yes | every push / PR to `master`, `develop`, and on demand | ~15 min |
 | **CI (WSL-debug)** | `ci-wsl-debug.yml` | yes, but **never yet run** | weekly (Tue) and on demand — both need it on `master` first | ~60–90 min |
 
 The two release workflows gate on the **loose** criterion from `scripts/test.py` —

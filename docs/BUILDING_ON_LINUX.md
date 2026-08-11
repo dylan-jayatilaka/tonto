@@ -38,7 +38,7 @@ sudo apt install make cmake default-jdk gfortran-14 libblas-dev liblapack-dev \
 ```bash
 git clone --recursive https://github.com/dylan-jayatilaka/tonto.git
 cd tonto
-git checkout release        # the tested branch — recommended
+# master is the stable branch, and is what you get by default
 ```
 
 `--recursive` pulls the submodules. To keep several branches side by side,

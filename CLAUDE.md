@@ -33,10 +33,27 @@ The `.int` and `.use` files are `#include`d into the `.F90` by the C preprocesso
 compile time**. So the translator output is **pre-CPP**: macros (`include/macros.in`) and
 `#include`s are left intact for the Fortran build to expand.
 
-## 2. Current task — the `antlr4` branch
+## 1a. Branching model (adopted 2026-08-11)
+
+Conventional, and now actually followed:
+
+| Branch | Role |
+|---|---|
+| **`master`** | The stable branch. What the CI badges track, what tags are cut from, what a user clones. Documentation fixes may land here directly; code should arrive by merge. |
+| **`develop`** | The integration branch. Work lands here first and is merged to `master` when green. |
+| feature branches | Short-lived, merged and deleted. |
+| **tags** `v*` | Releases. A tag builds `tonto-linux-x86_64.tar.gz` and `tonto-windows-x86_64.zip` and publishes them (`.github/workflows/release.yml`). |
+
+The old `antlr4` branch was deleted on 2026-08-11, its work being fully merged; `release`
+was renamed `develop`, because a long-lived branch called "release" that is *less* stable
+than master inverts what the name means everywhere else. **Dylan edits `master` directly
+(README and docs), so fetch and merge `origin/master` before pushing.**
+
+## 2. How the translator came to be — background, not current work
 
 Replace `foo.pl` with an ANTLR4-based Foo→Fortran translator that reproduces the legacy
-output. Two deliverables:
+output. **This task is complete** (see *Status* below); the section is kept because the
+milestone history explains why the code looks as it does. Two deliverables:
 
 1. A correct ANTLR4 grammar — `foogrammar/Foo.g4`.
 2. A translator — `foogrammar/FooToFortran.java` — whose Fortran matches `foo.pl`'s.
@@ -176,7 +193,7 @@ runs on every push via `.github/workflows/ci-wsl.yml`. Details in `docs/BUILDING
 
 ## 5. Validation
 
-The `antlr4` translator task is **complete**; validation is now **build + `ctest`**:
+The translator task is **complete**; validation is now **build + `ctest`**:
 
 - Build a `release` tree and run `ctest` — but, like `make`, **ask before launching a long
   build/test run** (§8). Use the loose criterion in `scripts/test.py` (rel ≤ 0.2% OR
@@ -518,7 +535,7 @@ before any code is written**, most likely in its own conversation (`/clear`).
    the `-O2` control build). **Open:** which tail call, and whether this is a gcc bug or latent
    UB that tail calls merely expose — needs a reduced test case before reporting upstream.
    Earlier status, kept because the reasoning matters:
-   Re-verified 2026-08-04 on achari2 (Linux) against current `antlr4`: **all four tests still
+   Re-verified 2026-08-04 on achari2 (Linux) against current `master`: **all four tests still
    abort at `-n 2`** in the `-O2 -fno-fast-math` build with `MPI_ERR_TRUNCATE`, exit 15, with the
    gate fix confirmed present in that build; `-n 1` passes exactly. One real cause was found and
    fixed (`e3ef5906`, a collective gated on rank-local state — that stays fixed); the remainder is
@@ -546,7 +563,7 @@ before any code is written**, most likely in its own conversation (`/clear`).
    test can catch a regression, so `scripts/check_parallel_lint.py` now audits the gates in
    `macros.in` directly (verified to fail against the pre-fix definition) and runs in CI.
    **Verification gap, still open:** `e3ef5906` verified *three* of the four tests on achari2
-   (Linux) at `-O2`, `-n 2`. The fourth, and a re-run of all four against current `antlr4`, are
+   (Linux) at `-O2`, `-n 2`. The fourth, and a re-run of all four against current `master`, are
    outstanding — see `docs/TONTO_AND_MPI.md` Finding 6.
 
 8. ✅ **DONE (2026-08-04) — Translator: `data` statements at program scope were silently
