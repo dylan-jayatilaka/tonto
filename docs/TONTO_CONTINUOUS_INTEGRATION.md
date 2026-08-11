@@ -227,7 +227,7 @@ while the diagnostics step, three seconds later in the same directory, happily
 `ls`-ed a 100 MB `build-debug/tonto`. The binary was never missing: `run_test()` in
 `scripts/test.py` chdir's into a temp directory before launching the program, so a
 **relative** `--program` is resolved from there and vanishes. `main()` already
-absolutised `--sbftool`, `--test-directory` and `--basis-sets` for exactly this
+absolutised `--test-directory` and `--basis-sets` for exactly this
 reason — `--program` had been left out of that list, and the default `./tonto` had
 the same flaw. `ci.yml` was unaffected only because it happens to pass
 `-p "$PWD/build/tonto"`.

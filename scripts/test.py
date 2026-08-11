@@ -229,42 +229,17 @@ def format_agreement(name, res, rel_tol, last_digit_tol):
     return row, notes
 
 
-def diff_sbf(file1, file2, args): 
-    """Find the differences between 2 cxs files using sbftool
-    """
-    verbosity = 1
-    retcode = subprocess.check_call([args.sbftool, '-vc', file1, file2])
-    log.debug('sbftool returned: %s', retcode)
-    return (retcode == 0)
-
-
-def is_sbf(filename):
-    """Check if a file is a SBF by reading the header"""
-    with open(filename, 'rb') as f:
-        if f.read(3) == b'SBF':
-            return True
-    return False
-
 def diff_files(file1, file2, args, print_diffs=True):
     """Compare two output files under all three agreement criteria (exact,
     loose-relative, loose-last-digit), print a columnar agreement report, and
-    return the LOOSE verdict (which drives the pass/exit status). SBF files are
-    delegated to sbftool as a single binary verdict."""
+    return the LOOSE verdict (which drives the pass/exit status)."""
     name = os.path.basename(args.test_directory.rstrip('/')) or os.path.basename(file2)
-    if is_sbf(file1) and is_sbf(file2):
-        log.debug('Diffing with sbftool')
-        ok = diff_sbf(file1, file2, args)
-        res = {'exact': ok, 'rel_pass': ok, 'ld_pass': ok, 'loose_pass': ok,
-               'n_num': 0, 'n_struct': 0 if ok else 1,
-               'max_rel': 0.0, 'max_ulp': 0.0, 'worst_rel': None, 'worst_ulp': None,
-               'diff_text': ''}
-    else:
-        lines1 = get_lines(file1)
-        lines2 = get_lines(file2)
-        res = agreement_report(lines1, lines2, args.rel_tol, args.abs_tol,
-                               args.last_digit_tol)
-        if print_diffs and res['diff_text']:
-            log.info('Diff:\n%s', res['diff_text'])
+    lines1 = get_lines(file1)
+    lines2 = get_lines(file2)
+    res = agreement_report(lines1, lines2, args.rel_tol, args.abs_tol,
+                           args.last_digit_tol)
+    if print_diffs and res['diff_text']:
+        log.info('Diff:\n%s', res['diff_text'])
 
     row, notes = format_agreement(name, res, args.rel_tol, args.last_digit_tol)
     sys.stdout.write(row + '\n')
@@ -363,7 +338,7 @@ def compare_outputs(f1, f2, args):
     if args.compare_program:
         return (subprocess.check_call([args.compare_program, f1, f2]) == 0)
     else:
-        log.debug('Using builtin diffing or sbftool')
+        log.debug('Using builtin diffing')
         d = diff_files(f1, f2, args)
         log.debug('diff_files returned: %s', d)
         return d
@@ -460,8 +435,6 @@ def main():
                         help='Log level for running tests')
     parser.add_argument('--basis-sets', '-b', default='.',
                         help='Basis sets directory')
-    parser.add_argument('--sbftool', default='../../external/sbf/src/sbftool',
-                        help='Location of sbftool')
     parser.add_argument('--mpi', '-m', default=False, action='store_true',
                         help='Test with mpirun')
     parser.add_argument('--mpi-ranks', type=int, default=4,
@@ -485,7 +458,6 @@ def main():
     # --test-directory or --basis-sets would be resolved against the temp dir
     # and vanish (doubling the path). Must be absolutised while cwd is still the
     # invocation dir.
-    args.sbftool = os.path.abspath(args.sbftool)
     args.test_directory = os.path.abspath(args.test_directory)
     args.basis_sets = os.path.abspath(args.basis_sets)
     # --program too, and for the same reason: subprocess resolves it from inside

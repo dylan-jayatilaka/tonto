@@ -170,15 +170,16 @@ libxc. The two are unrelated: `cmake/FindLibxc.cmake` makes no reference to SBF,
 and the bump was incidental. `master` is at a **newer** SBF commit than the
 branch, so that part of the branch is obsolete either way.
 
-More to the point, **SBF is already all but gone from Tonto**:
+More to the point, **SBF was already all but gone from Tonto** when this was
+investigated:
 
-- It is still a submodule, from `https://github.com/peterspackman/sbf`.
-- **Nothing in `CMakeLists.txt` or `cmake/*.cmake` references it**, so it is
+- It was a submodule, from `https://github.com/peterspackman/sbf`.
+- **Nothing in `CMakeLists.txt` or `cmake/*.cmake` referenced it**, so it was
   neither compiled nor linked.
-- Of 137 mentions across `foofiles/`, 97 are on commented-out lines. Only three
-  are live: two in `datafile.foo`, which is **commented out of the CMake source
-  list** (`CMakeLists.txt:382`), and one vestigial `sbf_file_name :: STR` member
-  in `types.foo`.
+- Of 137 mentions across `foofiles/`, 97 were on commented-out lines. Only three
+  were live: two in `datafile.foo`, which was **commented out of the CMake source
+  list**, and one vestigial `sbf_file_name :: STR` member of `ATOM_GROUP` in
+  `types.foo` whose only readers were themselves commented out.
 
 Two further things were checked before removing it, because neither is obvious
 from the build files:
@@ -191,12 +192,31 @@ from the build files:
   directory holds only `stdin` and `stdout` — **no `IO` manifest**, so it is not a
   registered test and does not run.
 
-**The submodule was removed on 2026-08-11.** `external/lapack-release` is now the
-only submodule; ANTLR4 is a release jar rather than a submodule, contrary to what
-`CLAUDE.md` used to say. The dead source references were left in place — the
-commented-out `datafile.foo`, the 97 commented-out mentions, and the vestigial
-`sbf_file_name :: STR` member in `types.foo` — since removing them is a source
-cleanup rather than a submodule question.
+**All of it was removed on 2026-08-11**, in two commits — the submodule first,
+then the dead source it left behind. `external/lapack-release` is now the only
+submodule; ANTLR4 is a release jar rather than a submodule, contrary to what
+`CLAUDE.md` used to say.
+
+The source cleanup deleted `foofiles/datafile.foo` and its commented-out line in
+the CMake source list, the `sbf_file_name` member and the commented `type
+DATAFILE` and `use sbf` in `types.foo`, three commented routines in
+`atom_group.foo`, the commented `read_sbf`/serialize/`serialize_isosurface_sbf`
+blocks in `molecule.read.foo`, `molecule.put.foo` and `molecule.ce.foo`, and the
+`test_dump_file` scratch routine in `molecule.main.foo`. `scripts/test.py` lost
+`diff_sbf`, `is_sbf` and the `--sbftool` option, whose default path pointed into
+the deleted submodule.
+
+Comments that merely *mentioned* SBF inside live routines were reworded rather
+than deleted, since removing the whole line would have taken working
+documentation with it — `breakdown_data.foo:176`, and a stale `read_wfn_file`
+doc line in `molecule.read.foo` that advertised reading "a tonto .sbf file" when
+the body had only ever handled `.fchk` and `.molden`.
+
+**One reference is deliberately left**: `tests/samuel/sucacb_energies_breakdown/`
+names two `.sbf` files in its `stdin`. It is test *data* for a job that has no
+`IO` manifest and is registered with no `CMakeLists`, so it does not run; it is
+left alone rather than edited, along with the rest of that unregistered
+directory.
 
 ## Why archived work cannot be merged into `master`, only ported
 

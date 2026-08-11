@@ -221,9 +221,11 @@ The translator task is **complete**; validation is now **build + `ctest`**:
   **not** a submodule — it is a release jar, `external/antlr-4.13.2-complete.jar`. The `sbf`
   submodule (Peter Spackman's) was **removed 2026-08-11**: nothing in `CMakeLists.txt` or
   `cmake/*.cmake` ever referenced it, so it was neither compiled nor linked; its only live
-  consumer, `datafile.foo`, is commented out of the CMake source list; and no test manifest
-  mentions a `.sbf` file. The dormant `diff_sbf`/`--sbftool` path in `scripts/test.py` shells
-  out to an external binary and was never fed by the submodule.
+  consumer, `datafile.foo`, was commented out of the CMake source list; and no test manifest
+  names a `.sbf` file. The dead source went with it in a second commit — `datafile.foo`, the
+  commented serialize/deserialize blocks, and `scripts/test.py`'s `diff_sbf`/`is_sbf`/
+  `--sbftool` (whose default path pointed into the submodule). `foofiles/` now contains no
+  `sbf` reference at all. See `docs/REPOSITORY_BRANCHES.md`.
 - Note that the files can be translated independently *provided* the `types.foo` file
 which defines all the derived types is processed first. The legacy translator uses
 two passes through the module file but it is not clear whether ANTLR4 needs two passes

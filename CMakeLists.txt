@@ -379,7 +379,6 @@ set(FOO_SRC
     ${FOO_DIR}/buffer.foo
     ${FOO_DIR}/output_style.foo
     ${FOO_DIR}/textfile.foo
-#   ${FOO_DIR}/datafile.foo
 #   ${FOO_DIR}/json.foo
     ${FOO_DIR}/file.foo
     ${FOO_DIR}/archive.foo
