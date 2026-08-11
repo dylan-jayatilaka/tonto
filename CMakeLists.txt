@@ -686,6 +686,33 @@ set(FOO_TRANSLATOR_JAVA ${FOOGRAMMAR_DIR}/FooToFortran.java)
 set(PURGE_DEAD_CODE "" CACHE STRING
     "If set to a run-file stem (e.g. run_molecule), emit only code reachable from that executable")
 
+# Cap the translator JVM's heap. WITHOUT THIS A PARALLEL BUILD IS AN OOM MACHINE.
+#
+# A JVM given no -Xmx sets its maximum heap to 1/4 of physical RAM -- 3.7 GB on a
+# 16 GB box -- and the collector treats that as a budget to spend: it lets garbage
+# accumulate rather than pay to collect it, so resident memory drifts up toward the
+# ceiling no matter how little live data there is. One translation of the 4 KB
+# mat{str}.foo was measured at 2.1 GB RSS for exactly this reason. `make -j8` then
+# runs eight of them and the kernel starts killing processes (Error 137), which is
+# how this was found on 2026-08-11.
+#
+# Neither of make's throttles can prevent that: -j caps process COUNT, and -l is a
+# load-average trigger -- a runqueue metric that knows nothing about memory and lags
+# besides. The heap cap is the only lever that works.
+#
+# 512m is about double what is needed. Measured on the largest file in the tree,
+# vec{atom}.foo (21k lines), translation succeeds at -Xmx256m with 389 MB peak RSS,
+# and the wall time is flat across 256m/512m/1g (~29 s), so capping costs nothing.
+# Peak RSS runs above the cap because metaspace, code cache and thread stacks sit
+# outside the heap. If a future file genuinely needs more, the failure is now a
+# clean Java OutOfMemoryError naming the file, not a random SIGKILL.
+set(FOO_TRANSLATOR_XMX "512m" CACHE STRING
+    "Max heap for each per-file Foo translator JVM (many run in parallel under -j)")
+# The whole-library modes (purge, call graphs) hold every file's parse data in ONE
+# JVM, so they need more -- but only one of them ever runs at a time.
+set(FOO_ANALYSIS_XMX "2g" CACHE STRING
+    "Max heap for whole-library translator runs (--purge-dead-code, --call-graph-report)")
+
 add_custom_command(
     OUTPUT ${ANTLR4_VALIDATION_STAMP}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${ANTLR4_VALIDATION_DIR}
@@ -755,6 +782,7 @@ foreach(foopath ${SRC})
         add_custom_command(
             OUTPUT ${F90file}
             COMMAND ${Java_JAVA_EXECUTABLE}
+            -Xmx${FOO_TRANSLATOR_XMX}
             -cp "${ANTLR4_CLASSES_DIR}:${ANTLR4_JAR}"
             FooToFortran
             --types \"${FOO_TYPES_FILE}\"
@@ -784,6 +812,7 @@ if(PURGE_DEAD_CODE)
     add_custom_command(
         OUTPUT ${ALL_F90_OUTPUTS}
         COMMAND ${Java_JAVA_EXECUTABLE}
+        -Xmx${FOO_ANALYSIS_XMX}
         -cp "${ANTLR4_CLASSES_DIR}:${ANTLR4_JAR}"
         FooToFortran
         --types \"${FOO_TYPES_FILE}\"
@@ -809,6 +838,7 @@ find_program(DOT_EXE dot)
 add_custom_target(callgraphs
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/callgraphs
     COMMAND ${Java_JAVA_EXECUTABLE}
+        -Xmx${FOO_ANALYSIS_XMX}
         -cp "${ANTLR4_CLASSES_DIR}:${ANTLR4_JAR}"
         FooToFortran
         --types \"${FOO_TYPES_FILE}\"
