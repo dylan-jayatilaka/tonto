@@ -747,6 +747,53 @@ add_custom_command(
 
 add_custom_target(antlr4-translator DEPENDS ${ANTLR4_TRANSLATOR_STAMP})
 
+# Pack the translator into an executable jar, so the 150 parallel invocations read
+# as `java -Xmx512m -jar foo-translator.jar ...` rather than carrying a 105-character
+# -cp in front of every one. That classpath is identical on all of them and is pure
+# noise in `ps`, `htop`, build logs and any profiler that shows a command line.
+#
+# The ANTLR runtime stays OUT of the jar and is named by the manifest's Class-Path
+# instead, which the JVM resolves RELATIVE TO THE JAR'S OWN DIRECTORY -- hence
+# file(RELATIVE_PATH). That keeps the jar small and works whether ANTLR4_JAR was
+# found in external/ or downloaded into the build tree. Manifest Class-Path entries
+# are space-separated and cannot contain spaces, so a path with a space in it would
+# break; the configure step below fails loudly rather than emit a broken manifest.
+#
+# Measured: the per-file command drops from 313 to ~246 characters. The remaining
+# bulk is the three absolute paths (--types, --foo, --out-dir), which repeat the
+# repository root four times -- shortening those is a separate change, and a riskier
+# one, because relative paths here would interact with DEPFILE resolution.
+set(FOO_TRANSLATOR_JAR ${CMAKE_CURRENT_BINARY_DIR}/foo-translator.jar)
+file(RELATIVE_PATH ANTLR4_JAR_RELATIVE ${CMAKE_CURRENT_BINARY_DIR} ${ANTLR4_JAR})
+if(ANTLR4_JAR_RELATIVE MATCHES " ")
+    message(FATAL_ERROR
+        "The path from the build directory to the ANTLR4 jar contains a space:\n"
+        "  ${ANTLR4_JAR_RELATIVE}\n"
+        "A jar manifest Class-Path is space-separated and cannot express that. "
+        "Build from a directory whose path has no spaces.")
+endif()
+set(FOO_TRANSLATOR_MANIFEST ${CMAKE_CURRENT_BINARY_DIR}/foo-translator.mf)
+# Written at configure time; Class-Path must end with a newline or the jar tool
+# silently drops the last entry.
+file(WRITE ${FOO_TRANSLATOR_MANIFEST}
+     "Main-Class: FooToFortran\nClass-Path: ${ANTLR4_JAR_RELATIVE}\n")
+add_custom_command(
+    OUTPUT ${FOO_TRANSLATOR_JAR}
+    COMMAND ${Java_JAR_EXECUTABLE} cfm ${FOO_TRANSLATOR_JAR}
+            ${FOO_TRANSLATOR_MANIFEST} -C ${ANTLR4_CLASSES_DIR} .
+    DEPENDS ${ANTLR4_TRANSLATOR_STAMP} ${FOO_TRANSLATOR_MANIFEST}
+    COMMENT "Packing Foo translator into ${FOO_TRANSLATOR_JAR}"
+    VERBATIM
+)
+add_custom_target(antlr4-translator-jar DEPENDS ${FOO_TRANSLATOR_JAR})
+
+# The per-file translator runs with WORKING_DIRECTORY set to the source root, so
+# these three are what actually appear on its command line. An out-of-tree build
+# directory just yields a longer ../.. prefix, which is still correct.
+file(RELATIVE_PATH FOO_TRANSLATOR_JAR_REL ${CMAKE_SOURCE_DIR} ${FOO_TRANSLATOR_JAR})
+file(RELATIVE_PATH FOO_TYPES_REL          ${CMAKE_SOURCE_DIR} ${FOO_TYPES_FILE})
+file(RELATIVE_PATH FOO_OUT_DIR_REL        ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+
 set(FOO_GENERATED_F90_OUTPUTS "")
 set(ALL_F90_OUTPUTS "")
 foreach(foopath ${SRC})
@@ -779,16 +826,28 @@ foreach(foopath ${SRC})
     # args. Emit explicit double quotes around the paths so the shell treats each
     # as a single literal argument.
     if(NOT PURGE_DEAD_CODE)
+        # Paths are passed RELATIVE to WORKING_DIRECTORY (the source root). This is
+        # cosmetic but worth it: 150 of these run in parallel and the absolute form
+        # repeated the repository root four times per line, so `ps`/`htop`/build logs
+        # were unreadable. 313 characters becomes ~150.
+        #
+        # Safe for the DEPFILE below, which is the thing to worry about here: the
+        # translator absolutises every path before writing it (writeDepFile, and
+        # readPaths.add(dp.toAbsolutePath().normalize())), so depfile contents are
+        # identical whether the arguments arrived relative or absolute. Verified
+        # against the emitted .F90.d files, which carry absolute deps either way.
+        # WORKING_DIRECTORY makes the resolution deterministic rather than inherited.
+        file(RELATIVE_PATH foopath_rel ${CMAKE_SOURCE_DIR} ${foopath})
         add_custom_command(
             OUTPUT ${F90file}
             COMMAND ${Java_JAVA_EXECUTABLE}
             -Xmx${FOO_TRANSLATOR_XMX}
-            -cp "${ANTLR4_CLASSES_DIR}:${ANTLR4_JAR}"
-            FooToFortran
-            --types \"${FOO_TYPES_FILE}\"
-            --foo \"${foopath}\"
-            --out-dir \"${CMAKE_CURRENT_BINARY_DIR}\"
-            DEPENDS ${foopath} ${FOO_TYPES_FILE} ${ANTLR4_TRANSLATOR_STAMP}
+            -jar \"${FOO_TRANSLATOR_JAR_REL}\"
+            --types \"${FOO_TYPES_REL}\"
+            --foo \"${foopath_rel}\"
+            --out-dir \"${FOO_OUT_DIR_REL}\"
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            DEPENDS ${foopath} ${FOO_TYPES_FILE} ${ANTLR4_TRANSLATOR_STAMP} ${FOO_TRANSLATOR_JAR}
             # DEPFILE picks up the get_from DONORS this file inlines, which the
             # DEPENDS list above cannot know. A donor is not in FOO_SRC and emits
             # no .F90 of its own, so without this it has NO dependency edge at all:
