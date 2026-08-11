@@ -321,7 +321,7 @@ Full detail in **`docs/RUNNING_RGBI.md`** (developer reference) and
 - ✅ **3. A doctor**, `scripts/rgbi_doctor.sh`, with `scripts/rgbi_selftest.sh`
   as ctest `rgbi_doctor_selftest` (label `short`, in CI, 21 cases). It *executes*
   tools rather than looking for them, which is the whole point. Plus
-  `docker/rgbi.Dockerfile` + `ci-rgbi.yml`, which prove the install list from a
+  `scripts/docker/rgbi.Dockerfile` + `ci-rgbi.yml`, which prove the install list from a
   bare `ubuntu:24.04`, and `ci-rgbi-macos.yml`, which probes the Mac list weekly.
 - ✅ **4. Tonto draws them automatically**, at the end of `ROBY:bond_analysis`,
   when `make-rgbi-pic` is on the `PATH`. Heavy-atom picture always, `+H` as well

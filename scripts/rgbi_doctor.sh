@@ -133,7 +133,7 @@ say ""
 
 say "platform"
 case "$PLATFORM" in
-    linux) ok "Linux -- supported and tested (docker/rgbi.Dockerfile builds this from scratch in CI)" ;;
+    linux) ok "Linux -- supported and tested (scripts/docker/rgbi.Dockerfile builds this from scratch in CI)" ;;
     wsl)   ok "WSL (${WSL_DISTRO_NAME:-unknown distro}) -- supported"
            printf '        %salso run: scripts/wsl_doctor.sh -- the Windows/Linux boundary traps are checked there%s\n' "$DIM" "$OFF"
            printf '        %sand keep the job directory OFF /mnt/c: pdflatex runs four times per picture%s\n' "$DIM" "$OFF" ;;

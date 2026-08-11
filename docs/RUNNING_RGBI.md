@@ -187,6 +187,6 @@ turn off.
 
 `ctest -R rgbi_doctor_selftest` checks the doctor still catches things. The
 doctor itself is not a ctest: CI has none of the arcane software. The install
-list is covered by `docker/rgbi.Dockerfile` and `.github/workflows/ci-rgbi.yml`.
+list is covered by `scripts/docker/rgbi.Dockerfile` and `.github/workflows/ci-rgbi.yml`.
 
 Known defects and rough edges are in [`../DEFERRED.md`](../DEFERRED.md).

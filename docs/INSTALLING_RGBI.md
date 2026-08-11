@@ -49,7 +49,7 @@ Which package supplies what, for diagnosing a partial TeX install:
 | `obabel` | `openbabel` |
 
 This list is tested from a bare `ubuntu:24.04` on every push, by
-`docker/rgbi.Dockerfile`.
+`scripts/docker/rgbi.Dockerfile`.
 
 ### If it worked before and has stopped
 

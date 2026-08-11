@@ -2847,7 +2847,7 @@ algorithm and is likely enough for drug-like molecules; if it is not, option A
 is much more expensive than it looks.
 
 **Sequence:** after the workshop. The doctor (`scripts/rgbi_doctor.sh`) and the
-container (`docker/rgbi.Dockerfile`) make the status quo survivable in the
+container (`scripts/docker/rgbi.Dockerfile`) make the status quo survivable in the
 meantime — which is the point of doing them first. Related in spirit to the
 CLAUDE.md long-term item on re-engineering in a language with first-class
 parallelism: both are cases of replacing "invisible failure held together by
@@ -4072,3 +4072,20 @@ neither is deep:
 **The right end state** is exercise 4 using `gnuplot.contour` and the workshop
 telling the reader to run `gnuplot -persist <job>,<kind>,gnuplot.commands`,
 with no hand-written script at all.
+
+---
+
+## `rgbi_doctor.sh` is installed as a command but named as a script
+
+**Status: open, 2026-08-11.** Cosmetic, and a rename with call sites.
+
+`CMakeLists.txt` installs three programs into `bin`: `make-rgbi-pic`,
+`make-rgbi-dials` and `scripts/rgbi_doctor.sh`. The first two are named as
+commands should be, with no extension; the third carries `.sh` into `bin` and
+lives in the directory that is otherwise *not* installed.
+
+If it is a user-facing command it should be `rgbi-doctor` in `rgbi-scripts/`.
+That means updating both drivers (which call it for
+`--print-template-dir` and the preflight), `ctest`'s `rgbi_doctor_selftest`,
+`scripts/rgbi_selftest.sh`, the CI workflows, and four documents — so it is
+worth doing deliberately, not as a side effect.

@@ -200,6 +200,19 @@ which defines all the derived types is processed first. The legacy translator us
 two passes through the module file but it is not clear whether ANTLR4 needs two passes
 once the Parse tree is generated.
 
+## 6a. The two script directories
+
+`rgbi-scripts/` is **installed** — `make-rgbi-pic` and `make-rgbi-dials` into `bin`, the
+`.tex`/`.sty` templates into `share/tonto/rgbi-scripts`. `scripts/` is **not**: test
+harness, invariant checks, lints, doctors, and `scripts/docker/` (moved there 2026-08-11;
+it proves `docs/INSTALLING_RGBI.md`'s package list from a bare `ubuntu:24.04`). That is the
+boundary — installed versus not, rather than subject matter.
+
+The drivers in `rgbi-scripts/` deliberately have **no `.sh` extension**: they are commands
+on `PATH`, named as commands are. `scripts/*.sh` keep theirs because they are invoked by
+path. The one inconsistency is `rgbi_doctor.sh`, which is installed into `bin` with its
+extension; see `DEFERRED.md`. Each directory has a `README.md` saying this.
+
 ## 7. Reference docs in this repo
 
 **Everything is in this repository.** The GitHub wiki was retired on 2026-08-05 and its nine
@@ -224,7 +237,7 @@ versioned with the code it described*, so it could rot silently. Do not add docu
 - `docs/RUNNING_RGBI.md` — the `rgbi` program, the two-halved picture pipeline, the LaTeX traps
   (two `chemfig`s, one of which fails silently), and how it is tested.
 - `docs/INSTALLING_RGBI.md` — participant-facing install guide. Linux is tested by
-  `docker/rgbi.Dockerfile` in CI; macOS is untested by hand and probed weekly by
+  `scripts/docker/rgbi.Dockerfile` in CI; macOS is untested by hand and probed weekly by
   `ci-rgbi-macos.yml`.
 - `docs/TONTO_DEVELOPER.md` — developer reference; §1a is **writing parallel (MPI) code in Foo**, eight
   pitfalls and the trace recipes that found them.
