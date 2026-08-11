@@ -52,6 +52,25 @@ before and after that fit.
 [**Documentation**](docs/DOCUMENTATION.md) — running the programs, the Foo
 language, the parallel build, and the developer references.
 
+## What happened to the branches that are missing
+
+In August 2026 the branch list was reduced from twenty to four. **No commit was
+deleted.** Each removed branch is preserved as an annotated `archive/*` tag and
+restores in one command:
+
+```bash
+git fetch --tags && git branch Bader archive/Bader
+```
+
+**`Nice-branch` was not touched.** It is the work of Patrick Cassam-Chenaï's
+group in Nice on electronic and vibrational quantum chemistry method development
+— a research programme entirely separate from the quantum crystallography work on
+the other branches — and it remains a live branch, unaltered.
+
+[**Repository branches**](docs/REPOSITORY_BRANCHES.md) lists what every branch
+held and who wrote it, how to recover any of it, and why the archived work has to
+be ported rather than merged.
+
 ## Getting help, reporting bugs, and contributing
 
 Email **dylan.jayatilaka@gmail.com** (I am slow to reply — you may have better

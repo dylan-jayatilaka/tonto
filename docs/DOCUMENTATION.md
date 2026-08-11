@@ -42,4 +42,5 @@ parallel (MPI) builds for that platform.
 | [**Tonto and MPI**](TONTO_AND_MPI.md) | the parallel build, its numerics, and the defect register |
 | [**Continuous integration**](TONTO_CONTINUOUS_INTEGRATION.md) | what each workflow runs, and what each badge means |
 | [**Call graphs**](MAKING_CALL_GRAPHS.md) | call/use graphs and dead-code elimination |
+| [**Repository branches**](REPOSITORY_BRANCHES.md) | what is live, what was archived, how to recover it, and why archived work must be ported |
 | [**Editing with vim**](EDITING_TONTO_WITH_VIM.md) | tags, folding, completion |
