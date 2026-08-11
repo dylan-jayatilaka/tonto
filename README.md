@@ -54,9 +54,9 @@ language, the parallel build, and the developer references.
 
 ## What happened to the branches that are missing
 
-In August 2026 the branch list was reduced from twenty to four. **No commit was
-deleted.** Each removed branch is preserved as an annotated `archive/*` tag and
-restores in one command:
+In August 2026 the branch list was reduced from twenty-one branches to five.
+**No commit was deleted.** Each removed branch is preserved as an annotated
+`archive/*` tag and restores in one command:
 
 ```bash
 git fetch --tags && git branch Bader archive/Bader

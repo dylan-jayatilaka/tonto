@@ -1,9 +1,10 @@
 # Repository branches: what is live, what was archived, and how to recover it
 
-On 2026-08-11 the branch list was reduced from twenty to four. No commit was
-deleted. Every branch that was removed is preserved as an annotated `archive/*`
-tag on `origin`, and any of them can be restored to a working branch with one
-command.
+On 2026-08-11 the branch list was reduced from twenty-one branches to five;
+sixteen were removed. No commit was deleted. Fifteen of the sixteen are preserved
+as annotated `archive/*` tags on `origin`, and any of them can be restored to a
+working branch with one command. The sixteenth needed no tag, because its tip was
+already an ancestor of `master`.
 
 This page records what each branch held, who wrote it, why it was archived, and
 why the archived work cannot be merged into `master` — only ported.
