@@ -1,46 +1,48 @@
 # Tonto workshop
 
-A guided introduction to Hirshfeld atom refinement (HAR) and X-ray constrained
-wavefunction (XCW) fitting, driving **Tonto directly** — no GUI. Four worked
-exercises, most with a results table to fill in from your own run.
+This is a guided introduction to Hirshfeld atom refinement (HAR), 
+X-ray wavefunction refinement (XWR) fittin, using **Tonto directly** — without
+any graphical user interface. There are four worked exercises, most with a
+results table to fill in from your own runs.
 
-Everything you need is in this repository, under `examples/`. The input
-files are printed in full below, so you can read them here and check what you
-are running.
+Everything you need is in this repository, under `examples/`. 
+
+The input files are printed in full below, so you can read them here
+and check what you are running.
 
 | | Exercise | Program | Runs in |
 |---|---|---|---|
 | 1 | HAR on ammonia | `hart` | ~2 s |
 | 2 | HAR on urea, then a Roby–Gould bond index analysis | `tonto` | ~30 s |
-| 3 | XCW fitting on exercise 2's refined geometry | `tonto` | ~2.5 min |
+| 3 | XWR on the refined geometry from 2. | `tonto` | ~2.5 min |
 | 4 | The deformation density, before and after that fit | `tonto` + gnuplot | ~45 s |
-
-Together they are one procedure, not three: exercise 2 produces a wavefunction,
-exercise 3 constrains that wavefunction against the diffraction data, and the
-bond indices in exercise 2 are the first example of a property computed from it.
 
 ---
 
-## Why refine with a wavefunction at all
+## Why refine a wavefunction?
 
-Ordinary **Independent Atom Model** (IAM) refinement in chemical
-crystallography, as done by SHELXL or Olex2, minimises
+In crystallography an **Independent Atom Model** (IAM) refinement, as done by 
+SHELXL or Olex2, means minimising a measure of the difference between the calculated
+and observed data,
+
 
 <div align="center">
 
 ```math
 M = \sum_{r=1}^{N_{\mathrm{refl}}} w_r
-\left( s |F_r^{\mathrm{calc}}| - |F_r^{\mathrm{obs}}| \right)^2
+\left( s |F_r^{\mathrm{calc}}| - |F_r^{\mathrm{obs}}| \right)^2,
 ```
 
 </div>
 
-where $r$ labels the $N_{\mathrm{refl}}$ measured reflections,
-$|F_r^{\mathrm{obs}}|$ and $|F_r^{\mathrm{calc}}|$ are the observed and
-calculated structure factor magnitudes, $w_r$ is the weight given to
-reflection $r$ — usually related to $1/(\sigma_r^{\mathrm{obs}})^2$, the reciprocal of
-its estimated standard uncertainty squared — and $s$ is an overall scale
-factor, refined along with everything else, because the experimental
+with respect to the atomic positions and atomic displacement parameters (ADPs).
+The optimum value of these variables is "the crystal structure".
+Here $|F_r^{\mathrm{obs}}|$ and $|F_r^{\mathrm{calc}}|$ are, respectively,
+the observed and calculated structure factor magnitudes; $w_r$ is a weight
+related to $1/(\sigma_r^{\mathrm{obs}})^2$, the reciprocal of the 
+estimated standard uncertainty in $|F_r^{\mathrm{obs}}|$; and $s$ is
+an overall scale factor, which is also refined along with the positions
+and ADPs, because the experimental
 magnitudes are not measured on an absolute scale.
 
 The calculated magnitudes are the usual sum over atomic form factors $f_j$,
