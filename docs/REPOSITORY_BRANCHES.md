@@ -163,7 +163,7 @@ alternatives were dropped. It is reached by the **new keyword
 on the branch — deliberately, so that no existing test reference changes and
 nothing has to be reblessed.
 
-### The SBF question, raised 2026-08-11 and not yet settled
+### The SBF question — raised and settled on 2026-08-11: the submodule is gone
 
 `archive/libxc` bumps the `external/sbf` submodule in the same commit that adds
 libxc. The two are unrelated: `cmake/FindLibxc.cmake` makes no reference to SBF,
@@ -180,9 +180,23 @@ More to the point, **SBF is already all but gone from Tonto**:
   list** (`CMakeLists.txt:382`), and one vestigial `sbf_file_name :: STR` member
   in `types.foo`.
 
-So removing the submodule outright looks safe, and would finish a job that is
-evidently most of the way done. That has not been done here — it is a separate
-decision from the branch cleanup.
+Two further things were checked before removing it, because neither is obvious
+from the build files:
+
+- `scripts/test.py` carries `diff_sbf`, `is_sbf` and a `--sbftool` option, but
+  **no test `IO` manifest anywhere mentions a `.sbf` file**, so that path never
+  triggers. It also shells out to an external `sbftool` binary, which the
+  submodule never built.
+- `tests/samuel/sucacb_energies_breakdown/stdin` names two `.sbf` files, but that
+  directory holds only `stdin` and `stdout` — **no `IO` manifest**, so it is not a
+  registered test and does not run.
+
+**The submodule was removed on 2026-08-11.** `external/lapack-release` is now the
+only submodule; ANTLR4 is a release jar rather than a submodule, contrary to what
+`CLAUDE.md` used to say. The dead source references were left in place — the
+commented-out `datafile.foo`, the 97 commented-out mentions, and the vestigial
+`sbf_file_name :: STR` member in `types.foo` — since removing them is a source
+cleanup rather than a submodule question.
 
 ## Why archived work cannot be merged into `master`, only ported
 

@@ -63,7 +63,7 @@ Directory roles:
 | Path | Role |
 |------|------|
 | `build/`, `release/`, `debug/` | Local out-of-source CMake build trees (untracked, regenerable). `debug/` is currently out of date. |
-| `external/antlr4` | ANTLR4 itself (git submodule). |
+| `external/antlr-4.13.2-complete.jar` | ANTLR4 itself — a release jar, **not** a submodule. |
 
 *(Historical: during development the translator's output was written to `antlr4-release/` and
 compared file-by-file against a frozen `foo.pl` reference snapshot. Both the snapshot and `foo.pl`
@@ -217,7 +217,13 @@ The translator task is **complete**; validation is now **build + `ctest`**:
 - Edit `.foo` sources in `foofiles/`, never the generated Fortran.
 - During a normal build, generated Fortran lands in the build tree (e.g. `build/`, `release/`);
   do not hand-edit it — edit the `.foo` sources instead.
-- `external/*` are git submodules (sbf, lapack-release, antlr4); clone with `--recursive`.
+- `external/lapack-release` is the **only** git submodule; clone with `--recursive`. ANTLR4 is
+  **not** a submodule — it is a release jar, `external/antlr-4.13.2-complete.jar`. The `sbf`
+  submodule (Peter Spackman's) was **removed 2026-08-11**: nothing in `CMakeLists.txt` or
+  `cmake/*.cmake` ever referenced it, so it was neither compiled nor linked; its only live
+  consumer, `datafile.foo`, is commented out of the CMake source list; and no test manifest
+  mentions a `.sbf` file. The dormant `diff_sbf`/`--sbftool` path in `scripts/test.py` shells
+  out to an external binary and was never fed by the submodule.
 - Note that the files can be translated independently *provided* the `types.foo` file
 which defines all the derived types is processed first. The legacy translator uses
 two passes through the module file but it is not clear whether ANTLR4 needs two passes
