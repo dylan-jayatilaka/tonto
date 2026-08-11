@@ -445,6 +445,41 @@ subroutines). A `selfless` procedure has no `self`.
 > from a template — and keeps them live everywhere else. This is exactly why the
 > case is significant.
 
+### The former `:::` separator, and reading pre-July-2026 Foo
+
+The attribute separator above used to be `:::`, not `::`. Commit `3ca1e53d`
+(2026-07-09) replaced it across 184 files, the grammar and the translator
+included, for consistency with Fortran's own attribute separator:
+
+```foo
+n_items result (res) ::: pure         ! before 3ca1e53d
+n_items result (res) :: pure          ! now
+```
+
+`master` contains no `:::` at all. Any Foo written before that date does — the
+sources at the migration point carried 11,605 such lines — so every archived
+branch, every old patch and every paper listing of Tonto source is in the older
+form. When reading such code, `:::` is simply what `::` is now; nothing else
+about the header changed.
+
+**The tag `foo-old-syntax` marks the last commit in the old dialect**
+(`ae306e1d`, the parent of the migration). It is tagged because it is the only
+point in the history where old-syntax Foo can still be *built and tested* with
+the current toolchain: `foo.pl` was already gone, `CMakeLists.txt` already
+invoked `FooToFortran`, and CI already ran `ctest -L short` there.
+
+That makes it the natural bridge when porting old code forward — the branch and
+the tree speak the same dialect, so only the semantic drift has to be resolved,
+and the `:::` → `::` migration can be replayed mechanically afterwards:
+
+```bash
+git checkout -b port-x foo-old-syntax
+git merge archive/x           # same dialect; only semantic drift conflicts
+```
+
+See [**Repository branches**](REPOSITORY_BRANCHES.md) for what else has drifted,
+and why a direct merge into `master` is not worth attempting.
+
 ### Procedure arguments that are themselves procedures
 
 If an argument is a procedure, its calling interface is declared with an

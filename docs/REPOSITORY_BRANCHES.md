@@ -133,6 +133,57 @@ branch. Nothing is lost when this happens, but the branch list refills. If the
 work is finished, delete the local copy; if it is not, say so and it can stay a
 branch, as `Lolo_CP2K` has.
 
+## Porting notes: what was assessed, and what was found
+
+The four smallest branches were examined in detail on 2026-08-11. Most of what
+looked like low-hanging fruit turned out to be already fixed, obsolete, or worse
+than what `master` now has. Recorded so the assessment is not repeated.
+
+| Branch | Finding |
+|---|---|
+| `archive/lamaGOET` | **`put_unit_cell_geometry_cartesian` was ported** — see below. Its second routine, `write_xyz_file_xtal14`, was **not**: it is a degraded fork of `put_xyz_file`, which has since moved to `molecule.put.foo` and improved. The branch version writes `.crystal.asymmetric_unit_geometry` — **fractional** coordinates, verified at `crystal.foo:3771` where they are converted with `matmul(.unit_cell.direct_mx,…)` — with no unit conversion, while its own comment claims cartesian axes. It also omits the xyz comment line, making the file malformed, and uses `TEXTFILE*` and `stdin.buffer_exhausted`, both gone from `master` (the latter commented out at `textfile.foo:2001`). If XTAL14 output is wanted, add an option to `put_xyz_file`. |
+| `archive/kanghyun` | Nothing to port. The `oisn't` → `isn't` typo was **already fixed on `master`** independently. Commenting out `stdout.flush` in `object.foo` was a workaround for stray blank lines in the keyword echo; the real cause — `TEXTFILE:flush` emitting the margin twice — was root-caused and fixed on 2026-08-03 (see `DEFERRED.md`), so the workaround is obsolete and treats the symptom. Only the two-line CIF/job-name echo is live, and it was judged not worth the output change. |
+| `archive/lorraine` | **Skip.** It modifies `cubes_to_basin` and its driver rather than adding anything, and `master` has independently evolved both `cubes_to_basin` and `cubes_to_basin_parallel` since. A merge into live code, not a graft. |
+| `archive/libxc` | **Needs discussion before any port** — it adds a capability rather than a printout, so it is the most valuable of the small branches, but see the SBF question below. |
+
+### What was ported, and how
+
+`CRYSTAL:put_unit_cell_geometry_cartesian` — the unit cell geometry printed in
+cartesian coordinates and Ångström, rather than the fractional coordinates of
+its sibling `put_unit_cell_geometry`. The port needed exactly two mechanical
+changes, and every other symbol it uses still exists:
+
+- `.associated` → `.allocated` (five `ENSURE`s)
+- `.unit_cell.direct_matrix` → `.unit_cell.direct_mx` — a rename; the old name
+  is gone from `master`
+
+Four unused locals (`fac1`, `fac2`, `fac3`, `cartesian`) and some commented-out
+alternatives were dropped. It is reached by the **new keyword
+`put_unit_cell_geometry_cart`** rather than being called from `put_crystal` as
+on the branch — deliberately, so that no existing test reference changes and
+nothing has to be reblessed.
+
+### The SBF question, raised 2026-08-11 and not yet settled
+
+`archive/libxc` bumps the `external/sbf` submodule in the same commit that adds
+libxc. The two are unrelated: `cmake/FindLibxc.cmake` makes no reference to SBF,
+and the bump was incidental. `master` is at a **newer** SBF commit than the
+branch, so that part of the branch is obsolete either way.
+
+More to the point, **SBF is already all but gone from Tonto**:
+
+- It is still a submodule, from `https://github.com/peterspackman/sbf`.
+- **Nothing in `CMakeLists.txt` or `cmake/*.cmake` references it**, so it is
+  neither compiled nor linked.
+- Of 137 mentions across `foofiles/`, 97 are on commented-out lines. Only three
+  are live: two in `datafile.foo`, which is **commented out of the CMake source
+  list** (`CMakeLists.txt:382`), and one vestigial `sbf_file_name :: STR` member
+  in `types.foo`.
+
+So removing the submodule outright looks safe, and would finish a job that is
+evidently most of the way done. That has not been done here — it is a separate
+decision from the branch cleanup.
+
 ## Why archived work cannot be merged into `master`, only ported
 
 The short statement is that a merge is technically possible and practically
@@ -156,6 +207,19 @@ branch is written entirely in the older form.
 
 Taken alone this would be a nuisance rather than a barrier: the substitution is
 mechanical, and could be applied to a branch before merging it.
+
+**There is a tag for this.** `foo-old-syntax` (`ae306e1d`, the migration's
+parent) is the last commit in the old dialect, and the only point in the history
+where old-syntax Foo can still be built and tested with the current toolchain —
+`foo.pl` was already gone, `CMakeLists.txt` already invoked `FooToFortran`, and
+CI already ran `ctest -L short`. Porting is easier from there than from `master`,
+because the dialect matches and only the semantic drift below has to be resolved:
+
+```bash
+git checkout -b port-lamaGOET foo-old-syntax
+git merge archive/lamaGOET      # same dialect; build and test here
+# then replay the ::: -> :: migration on the result
+```
 
 ### The larger half: the library API migrated underneath the branches
 

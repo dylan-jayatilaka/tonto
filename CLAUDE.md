@@ -138,6 +138,12 @@ Full details in the companion docs (§7).
   headers carrying **no** attributes, via its `( *$)` branch, but missed every header with
   `:: leaky`, `:: PURE`, `:: private`, `get_from(...)` and so on: **1285 procedure tags across
   `foofiles/` instead of 12757, i.e. 90% missing.**
+  **The tag `foo-old-syntax` (`ae306e1d`, the migration's parent) marks the last commit in the
+  old dialect** — and the only point where old-syntax Foo still builds and tests with the current
+  toolchain (`foo.pl` already gone, CMake already invoking `FooToFortran`, CI already running
+  `ctest -L short`). It is the bridge for porting archived work: merge an `archive/*` branch
+  there, where only the semantic drift conflicts, then replay the `:::`→`::` change. See
+  `docs/REPOSITORY_BRANCHES.md` and §7 of `docs/FOO_GRAMMAR_DOCUMENTATION.md`.
 - **`PURE` vs `pure` — the case matters.** Upper-case `PURE`/`ELEMENTAL` are **macros**
   (`include/macros.in`), `#undef`'d to nothing under `USE_PRECONDITIONS` and under `MPI`.
   Lower-case `pure` is passed through as the **literal Fortran keyword** and stays pure in every
