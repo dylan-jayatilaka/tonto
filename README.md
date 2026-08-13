@@ -6,8 +6,7 @@
 | **Windows/WSL** | [![WSL-release](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml/badge.svg?branch=master)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml?query=branch%3Amaster) | [![WSL-debug](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml/badge.svg?branch=master)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml?query=branch%3Amaster) | — |
 | **macOS** | *none yet* | *none yet* | — |
 
-Each badge builds Tonto on that platform and runs a test suite, on the
-`release` branch. What each one covers is in
+Each badge test Tonto on the `release` branch. For more details
 [**Continuous integration**](docs/TONTO_CONTINUOUS_INTEGRATION.md).
 
 Tonto is a quantum chemistry and crystallography package, with a focus on X-ray
