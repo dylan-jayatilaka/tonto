@@ -178,6 +178,35 @@ add_test(NAME "single_atom_scf"
             ${TONTO_EXE} ${BASIS_SETS})
 set_tests_properties("single_atom_scf" PROPERTIES LABELS "short")
 
+# Invariant tests -- properties, not blessed numbers, so they cannot be blessed
+# away. Each was written by working BACKWARDS from a defect found on
+# 2026-08-12/13, asking what the cheapest property would be that catches it:
+#
+#   1 the grid responds to accuracy=   -> the becke_grid block was INERT, every
+#                                        DFT run silently used the defaults
+#   2 LDA invariant to rho_cutoff,     -> rho_cutoff defaulted to 1e-6, a
+#     GGA is not                          systematic 1e-5 bias in every GGA and
+#                                        none in LDA. The long-standing
+#                                        discrepancy against g09, now also
+#                                        corroborated by ORCA
+#   3 closed shell: rks == uks         -> TWO defects: "V0b(i) = V0a(i)" in the
+#                                        unrestricted VWN potentials, and 14
+#                                        single-precision literals in the
+#                                        unrestricted LYP/B3LYP routines
+#   4 a bogus functional name is fatal -> unrecognised names contributed NOTHING
+#                                        at exit 0; "blyp" was 8.7 Hartree wrong
+#   5 a late use_spherical_basis= is   -> silently ignored after atoms=, giving
+#     fatal                               cartesian functions and 1.6e-3 Hartree
+#
+# 20 jobs, STO-3G, about 2 seconds for the lot. The reference suite could not
+# have found any of these: several because both sides of a comparison were
+# consistently wrong, and the grid one because no test varies a grid.
+add_test(NAME "dft_invariants"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_dft_invariants.py
+            ${TONTO_EXE} ${BASIS_SETS})
+set_tests_properties("dft_invariants" PROPERTIES LABELS "short")
+
 # Invariant test -- no reference output involved.
 #
 # Two MPI hazards that inspection cannot find, both from milestone 4:

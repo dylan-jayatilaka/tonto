@@ -352,6 +352,28 @@ functional are involved.
 -74.7945773564 / -74.7945773885 / -74.7945774567 / -74.7945774565 for FineGrid /
 UltraFine / 199974 / 250974, stable to 2e-10.
 
+**And g09 itself is corroborated by a THIRD code.** ORCA 6.1.1 was run on the
+same cation, same functional, in spherical harmonics (ORCA does not readily do
+cartesian, so all three were compared in spherical):
+
+| code | UHFS H2O+, spherical | vs ORCA |
+|---|---|---|
+| ORCA 6.1.1 | -74.791990412377 | -- |
+| g09 (5D) | -74.7919904357 | **-2.33e-08** |
+| **Tonto** | **-74.792006265688** | **-1.59e-05** |
+
+Two independent codes agree with each other to 2.3e-08, and Tonto disagrees with
+both by 1.6e-05 -- matching the 1.54e-05 measured in cartesian, so it is not a
+basis-convention artefact. **There is no reference-code bug: Tonto is the
+outlier.**
+
+Two traps worth recording for anyone repeating this. ORCA defaults to the RI-J
+approximation (it announces "auxiliary basis: def2/J"), which introduces error
+around 1e-4 and swamps the signal entirely -- use `NoRI`. And ORCA's SHARK
+module reports "Number of basis functions ... 30" for what g09 counts as 24
+spherical / 25 cartesian; the energies agree, so that is internal bookkeeping
+and not a different basis.
+
 **Tonto's side converges to the wrong value.** Sweeping `accuracy=`:
 
 | accuracy | UKS slater | vs g09 |
