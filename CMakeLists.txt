@@ -482,7 +482,6 @@ set(FOO_SRC
     ${FOO_DIR}/molecule.har.foo
     ${FOO_DIR}/molecule.misc.foo
     ${FOO_DIR}/molecule.main.foo
-    ${FOO_DIR}/test_parallel.foo
 )
 
 # Fortran source files used by run_molecule/run_har
@@ -634,8 +633,19 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/vec_evec_str.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_evec_evec_int.F90
     ${CMAKE_CURRENT_BINARY_DIR}/womersley.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/test_parallel.F90
 )
+
+# TEST_PARALLEL is an 11,358-line MPI send/receive testing suite whose only
+# consumer is run_mpi_test_complete. It carries no #ifdef MPI of its own and
+# no PARALLEL_* macros: every routine it calls goes through SYSTEM, whose MPI
+# bodies vanish in a serial build, so serially it compiled 11,358 lines and a
+# 4.6 MB object to exercise empty stubs. The static archive meant the linker
+# discarded it, so the shipped binaries never carried it -- the cost was pure
+# compile time, on every build. Built only for MPI now.
+if(WITH_MPI)
+    list(APPEND FOO_SRC     ${FOO_DIR}/test_parallel.foo)
+    list(APPEND FORTRAN_SRC ${CMAKE_CURRENT_BINARY_DIR}/test_parallel.F90)
+endif()
 
 # Set up run files
 set(RUNFILE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/runfiles)
@@ -1040,13 +1050,22 @@ add_executable(run_himz          EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/ru
 add_executable(run_shell2        EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_shell2.F90)
 add_executable(run_mat_real      EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mat_real.F90)
 add_executable(run_mat_cpx       EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mat_cpx.F90)
-add_executable(run_mp2           ${CMAKE_CURRENT_BINARY_DIR}/run_mp2.F90)
+# run_mp2 is referenced by no test, script, workflow or document -- its only
+# trace in the repo is a note that archive/Teaching carried an MP2 lab. Still
+# buildable on demand.
+add_executable(run_mp2           EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mp2.F90)
 #add_executable(run_mpi_matmul    EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_matmul.F90)
 # run_mpi_pi is the MPI smoke test: one `parallel do` + one PARALLEL_SUM, with a
 # known answer that must not depend on the rank count. Registered as the
 # `mpi_pi_rank_invariant` ctest (scripts/check_mpi_pi.sh). Not EXCLUDE_FROM_ALL,
 # so an MPI build always produces something that can be checked.
-add_executable(run_mpi_pi         ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_pi.F90)
+# ... and only in an MPI build: the comment above says "an MPI build always
+# produces something that can be checked", but nothing restricted it, so a
+# serial tree built it too. The mpi_pi_rank_invariant ctest is already
+# if(WITH_MPI)-guarded, so this cannot orphan it.
+if(WITH_MPI)
+    add_executable(run_mpi_pi     ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_pi.F90)
+endif()
 add_executable(run_qr            EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_qr.F90)
 add_executable(run_real          EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_real.F90)
 add_executable(run_rgbi          ${CMAKE_CURRENT_BINARY_DIR}/run_rgbi.F90)
@@ -1058,8 +1077,13 @@ add_executable(run_textfile      EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/ru
 # EXCLUDE_FROM_ALL: it is registered as the `system_commands` ctest, and shelling
 # out is exactly the kind of thing that silently does nothing if it breaks.
 add_executable(run_system_commands ${CMAKE_CURRENT_BINARY_DIR}/run_system_commands.F90)
-add_executable(run_mpi_test      ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_test.F90)
-add_executable(run_mpi_test_complete ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_test_complete.F90)
+# Both are MPI test programs that nothing in the repo references -- no test, no
+# script, no workflow, no document -- yet both were built by every serial build
+# AND installed into bin alongside tonto/hart/rgbi. On demand, MPI only.
+if(WITH_MPI)
+    add_executable(run_mpi_test          EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_test.F90)
+    add_executable(run_mpi_test_complete EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_test_complete.F90)
+endif()
 
 # Link exectables
 target_link_libraries(run_molecule      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
@@ -1077,7 +1101,9 @@ target_link_libraries(run_mat_real      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIE
 target_link_libraries(run_mat_cpx       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_mp2           tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 #target_link_libraries(run_mpi_matmul    tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_mpi_pi         tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+if(WITH_MPI)
+    target_link_libraries(run_mpi_pi     tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+endif()
 target_link_libraries(run_qr            tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_real          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_rgbi          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
@@ -1085,8 +1111,10 @@ target_link_libraries(run_vec_str       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIE
 target_link_libraries(run_least_squares tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_textfile      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_system_commands tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_mpi_test      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_mpi_test_complete tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+if(WITH_MPI)
+    target_link_libraries(run_mpi_test          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+    target_link_libraries(run_mpi_test_complete tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+endif()
 target_link_libraries(run_shell2        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 
 
@@ -1100,8 +1128,6 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tests)
 install(TARGETS run_molecule DESTINATION bin)
 install(TARGETS run_har      DESTINATION bin)
 install(TARGETS run_rgbi     DESTINATION bin)
-install(TARGETS run_mpi_test DESTINATION bin)
-install(TARGETS run_mpi_test_complete DESTINATION bin)
 
 # Packages
 install(DIRECTORY ${BASIS_SETS} DESTINATION share/tonto)
