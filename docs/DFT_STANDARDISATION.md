@@ -331,6 +331,86 @@ Reporting the XC energy properly would have made every row of the defect-2 table
 obvious at a glance. That is the argument for fixing it: it is not cosmetic, it is
 the missing instrument.
 
+## 6a. OPEN: unrestricted DFT is ~1.5e-5 off g09, cause unknown
+
+**Found 2026-08-13, UNRESOLVED. Recorded so the eliminations are not repeated.**
+
+Closed-shell DFT agrees with g09 to 3.5e-8 (section 3). Open-shell does not. On
+H2O+ (doublet, cc-pVDZ, Cartesian d, tight SCF, accuracy= best):
+
+| calculation | Tonto | g09 | difference |
+|---|---|---|---|
+| **UHF** | -75.632703875799 | -75.6327038760 | **2.0e-10** |
+| UKS slater | -74.794592831830 | -74.7945774565 | **-1.54e-05** |
+| UKS slater+vwn5 | -75.397717113397 | -75.3977985806 | **+8.15e-05** |
+
+UHF agreeing to 2e-10 rules out the basis, the integrals, the geometry and the
+SCF machinery for open shells. The discrepancy appears only once a grid and a
+functional are involved.
+
+**The g09 side is converged** -- checked, not assumed. UHFS on the cation gives
+-74.7945773564 / -74.7945773885 / -74.7945774567 / -74.7945774565 for FineGrid /
+UltraFine / 199974 / 250974, stable to 2e-10.
+
+**Tonto's side converges to the wrong value.** Sweeping `accuracy=`:
+
+| accuracy | UKS slater | vs g09 |
+|---|---|---|
+| low | -74.794654915208 | -7.75e-05 |
+| medium | -74.794611075620 | -3.36e-05 |
+| high | -74.794589182934 | -1.17e-05 |
+| very_high | -74.794591566399 | -1.41e-05 |
+| extreme | -74.794595481064 | -1.80e-05 |
+| best | -74.794592831830 | -1.54e-05 |
+
+`low` to `high` improves six-fold, then it **plateaus near -1.5e-5 and
+oscillates** rather than continuing to zero. That is refinement removing
+quadrature error and exposing a fixed offset underneath -- not a grid that is
+merely too coarse.
+
+### What has been excluded, all by measurement
+
+- **`rho_cutoff`** -- swept 1e-10 to 1e-30; the error is flat to 1e-11.
+- **The grid** -- the sweep above.
+- **`new_u_LDA_x_energy_density`** -- verified by hand. With `f_ba = rho_a/rho`
+  and `f_ab = rho_b/rho` it reduces to `eps = -C(rho_a^(4/3)+rho_b^(4/3))/rho`,
+  the correct spin scaling.
+- **`new_u_LDA_x_potential`** -- verified. `const = 2(3/4pi)^(1/3)` gives
+  `v_sigma = -(4/3) C rho_sigma^(1/3)`, correct.
+- **The outer assembly** `add_LDA_XC_mx(Ka,Kb,E,Ea,Eb)` -- `Ea -= HALF*Tr(Va Pa)`
+  and `Eb -= HALF*Tr(Vb Pb)`, exactly what MOLECULE.SCF's
+  `HALF*Tr(Pa Wa) + HALF*Tr(Pb Wb) + Ea + Eb` requires.
+- **The inner accumulator** -- `Ea += wal*Da_ab`, `Eb += wal*Db_ab`, summing to
+  the integral of rho*eps; `VVa` takes `V0a`, `VVb` takes `V0b`.
+- **The zeta = 0 limit** -- closed-shell UKS reproduces RKS to 5e-12 for slater,
+  so the unrestricted path is exact when the spins are equal. Whatever this is,
+  it appears only at zeta != 0.
+
+Three hypotheses were advanced and all three were killed by measurement: the
+spin-resolved `rho_cutoff` double guard, an error in the LDA formulae, and
+ordinary grid error. Recording that is the point of this section.
+
+### Next step
+
+Hand-verification has run out -- everything readable has been read. The next
+move is a DEBUG-build probe comparing Tonto's `V0a`, `V0b` and `E0` against
+independently computed values at a handful of grid points for a known
+zeta != 0 density. Instrumentation, not inspection, which is what
+`docs/TONTO_DEVELOPER.md` section 1a recommends for exactly this situation.
+
+### The VWN part is BLOCKED on this
+
+UKS slater+vwn5 is off by +8.15e-05, so VWN contributes ~9.7e-05 in the opposite
+direction to the exchange error. That cannot be attributed while the exchange
+underneath it is unexplained.
+
+There is also a suspected chain-rule grouping error in `new_u_VWN5_c_potential`,
+recorded in the commit that fixed the `V0b = V0a` slip: the code applies
+`-(x/6)` and `(1-zeta)` to BOTH terms, whereas
+`v_a = eps - (x/6) d_eps/dx + (1-zeta) d_eps/dzeta` gives each factor to one
+term only. At zeta = 0 it is harmless because `VWN_G'(0) = 0`, which is why no
+closed-shell test can see it. Settle the exchange first.
+
 ## 7. Assessed and deliberately left alone: how E_xc is evaluated
 
 `molecule.fock.foo` accumulates the XC energy as a density-matrix contraction,
