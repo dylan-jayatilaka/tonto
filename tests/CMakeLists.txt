@@ -156,6 +156,28 @@ add_test(NAME "library_stdin"
             ${PROJECT_SOURCE_DIR}/foofiles)
 set_tests_properties("library_stdin" PROPERTIES LABELS "short")
 
+# Smoke matrix -- no reference output involved, so it cannot be blessed away.
+#
+# A single atom with initial_density= promolecule (the DEFAULT) SEGFAULTED in a
+# release build until 2026-08-13: H, He and Li alike, closed shell and open
+# shell alike. A promolecule guess superposes atomic ANO densities, and
+# make_ANOs_and_interpolators deliberately returns early for one atom, so there
+# were none to superpose. MOLECULE.RHO:add_ANO_densities guards that with an
+# ENSURE, which reports cleanly in debug and is COMPILED OUT in release.
+#
+# It survived because NO TEST IN THE SUITE RAN A SINGLE ATOM. That is a coverage
+# gap, not a tolerance gap: no reblessing or tighter tolerance could have found
+# it, because the job never got as far as producing a number. Hence a matrix
+# over {H,He,Li} x {promolecule,core} x {uhf,uks} asserting only that each runs
+# -- plus that the initial GUESS does not move the CONVERGED energy, since a
+# guess is a starting point and two guesses disagreeing means one of them is
+# not converged. STO-3G and a coarse grid: about a second for the lot.
+add_test(NAME "single_atom_scf"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_single_atom_scf.py
+            ${TONTO_EXE} ${BASIS_SETS})
+set_tests_properties("single_atom_scf" PROPERTIES LABELS "short")
+
 # Invariant test -- no reference output involved.
 #
 # Two MPI hazards that inspection cannot find, both from milestone 4:
