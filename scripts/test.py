@@ -252,6 +252,55 @@ def diff_files(file1, file2, args, print_diffs=True):
     return res['loose_pass']
 
 
+def bless_summary(canonical, produced, args, elapsed):
+    """Decide whether "produced" may replace the reference "canonical", and
+    describe what would change.
+
+    Returns (ok, reason, report).  "ok" False means REFUSE -- the caller must
+    not overwrite the reference unless --bless-anyway was given.
+
+    Blessing is how a silent wrong answer becomes permanent, so this is
+    deliberately suspicious.  The cautionary case is real and from this
+    project: an x-ray-constrained-wavefunction test silently ate its own
+    "scf" keyword, finished in 40 ms instead of 12 s, and its checked-in
+    reference held ZERO lines mentioning SCF across 635 -- against 947 in a
+    correct run.  Something blessed that.  A collapse in output size is the
+    machine-detectable shape of it, so it is a refusal and not a warning.
+
+    Runtime is reported but NOT gated, because no expected runtime is stored
+    per test.  Recording one, so that "40 ms against a 12 s reference" could
+    be refused outright, is the natural next step for this guard.
+    """
+    ref_lines = get_lines(canonical) if os.path.exists(canonical) else []
+    new_lines = get_lines(produced)
+    res = agreement_report(new_lines, ref_lines, args.rel_tol, args.abs_tol,
+                           args.last_digit_tol)
+
+    n_ref, n_new = len(ref_lines), len(new_lines)
+    ratio = (float(n_new) / n_ref) if n_ref else 1.0
+
+    report = (
+        '    lines      %d -> %d  (%.0f%% of reference)\n'
+        '    numeric    %d tokens compared, max rel %.3g%%, max last-digit %.3g ulp\n'
+        '    structural %d mismatch(es) (non-numeric or token-count)\n'
+        '    runtime    %.2f s\n'
+        % (n_ref, n_new, ratio * 100.0,
+           res['n_num'], res['max_rel'] * 100.0, res['max_ulp'],
+           res['n_struct'], elapsed))
+    if res['worst_rel']:
+        report += ('    worst rel  %s -> %s\n'
+                   % (res['worst_rel'][1], res['worst_rel'][0]))
+
+    if n_ref and ratio < args.bless_min_line_ratio:
+        return (False,
+                'output collapsed to %.0f%% of the reference (floor %.0f%%) -- '
+                'this is the shape of a job that silently stopped doing its work'
+                % (ratio * 100.0, args.bless_min_line_ratio * 100.0),
+                report)
+
+    return (True, '', report)
+
+
 class working_directory:
     """ Context manager for temporarily changing the current working directory. """
     old_directory = None
@@ -403,15 +452,56 @@ def run_test(args, test_dir, io_files):
         timings['diffs'] = time.time() - sum(t for t in timings.values())
         success = completed and all(files_equivalent)
 
+        # --bless: adopt the produced output as the new reference. Never
+        # reachable from ctest -- CMake does not pass the flag -- so this only
+        # happens when a developer asks for it explicitly.
+        blessed, refused = set(), []
+        if args.bless:
+            for path, equivalent in zip(io_files['output'], files_equivalent):
+                if equivalent:
+                    continue
+                canonical = abspath(join(test_dir, path))
+                produced = abspath(join('.', path))
+                ok, why, report = bless_summary(canonical, produced, args,
+                                                timings.get('tonto', 0.0))
+                if ok or args.bless_anyway:
+                    if not ok:
+                        sys.stdout.write('BLESS OVERRIDE %s: %s\n' % (path, why))
+                    shutil.copy(produced, canonical)
+                    blessed.add(path)
+                    # A stale .bad from an earlier failing run would otherwise
+                    # sit next to a now-correct reference and read as a failure.
+                    stale = abspath(join(test_dir, path + '.bad'))
+                    if os.path.exists(stale):
+                        os.remove(stale)
+                    sys.stdout.write('BLESSED %s\n%s' % (canonical, report))
+                    sys.stdout.write(
+                        '    NOTE       the banner (version, platform, build date) and the\n'
+                        '               timing lines are rewritten too. They are junk-filtered\n'
+                        '               out of every comparison, so they are NOT part of the\n'
+                        '               numeric summary above -- but they will show up in\n'
+                        '               "git diff". Review the summary, not the raw diff.\n')
+                else:
+                    refused.append(path)
+                    sys.stdout.write('BLESS REFUSED %s: %s\n%s'
+                                     % (canonical, why, report))
+            sys.stdout.flush()
+
         for path, equivalent in zip(io_files['output'], files_equivalent):
             log.debug('%s: %s', path, 'GOOD' if equivalent else 'BAD')
-            if equivalent:
+            if equivalent or path in blessed:
                 """ shutil.copy(abspath(join('.', path)),
                         abspath(join(test_dir, path + '.good')))
                 """
             else:
                 shutil.copy(abspath(join('.', path)),
                         abspath(join(test_dir, path + '.bad')))
+
+        if args.bless:
+            # A blessed file is now, by construction, in agreement. Report
+            # success only if every mismatch was actually adopted -- a refusal
+            # must still fail, or a scripted bless loop would sail past it.
+            success = completed and not refused
         timings['cp_output'] = time.time() - sum(t for t in timings.values())
         log.debug('Time spent:')
         for k, v in timings.items():
@@ -448,6 +538,22 @@ def main():
                         help='Absolute tolerance (near-zero floor) for numerical differences')
     parser.add_argument('--rel-tol', type=float, default=2e-3,
                         help='Loose RELATIVE tolerance (fraction; default 2e-3 = 0.2%%)')
+    parser.add_argument('--bless', default=False, action='store_true',
+                        help='Adopt the produced output as the new reference '
+                             'instead of failing on a mismatch. Developer use '
+                             'only -- ctest never passes this. Refuses when the '
+                             'output looks degenerate; see --bless-anyway.')
+    parser.add_argument('--bless-anyway', default=False, action='store_true',
+                        help='With --bless, overwrite the reference even when '
+                             'the safety check refuses. Every override is '
+                             'printed. Use only when the collapse is understood '
+                             'and intended.')
+    parser.add_argument('--bless-min-line-ratio', type=float, default=0.75,
+                        help='With --bless, refuse to adopt an output shorter '
+                             'than this fraction of the reference (default '
+                             '0.75). Catches a job that silently stopped doing '
+                             'its work -- the failure mode that produced a '
+                             'blessed SCF reference containing no SCF.')
     parser.add_argument('--last-digit-tol', type=float, default=2.0,
                         help='Loose LAST-DIGIT tolerance: allowed units of the '
                              'last printed decimal place (default 2). A number '
