@@ -35,6 +35,28 @@ below; the audit found no library file was ever affected.)
 
 # Correctness — open bugs that give wrong answers
 
+## DFT: three silent defects — see `docs/DFT_STANDARDISATION.md`
+
+Found 2026-08-12 by measurement on `tests/short/h2o_blyp_cc-pVDZ`. The full
+record, with the evidence, the fix, and the plan, is
+**`docs/DFT_STANDARDISATION.md`** (milestone 10 in `CLAUDE.md`). Summarised here
+only so this register stays complete:
+
+| Defect | Effect | Status |
+|---|---|---|
+| `MOLECULE.SET:initialize_DFT_grids` destroyed and recreated the `BECKE_GRID` | **every** user grid setting discarded; all DFT ran at default `accuracy= "low"` while `put_basics` echoed the requested settings back | **FIXED** 2026-08-12 |
+| `rho_cutoff` defaults to 10⁻⁶ | **the long-standing systematic error against g09.** Cross-validation isolated it: HF agrees to 1.2e-10 and Slater to 4.6e-7, but B88 differs by 9.9e-6 — because `x = \|∇ρ\|/ρ^(4/3)` *grows* in the tail the cutoff truncates. Lowering it to 10⁻¹⁰ collapses the full-BLYP gap **300-fold**, from 1.03e-5 to 3.5e-8, and is **free** — timed, no trend at any accuracy. Each derivative order costs another ρ^(-1/3), so meta-GGAs would be far worse | OPEN — change the default; batch the `types.foo` comment onto the next cascade |
+| `use_spherical_basis=` after the `atoms=` block | silently ignored — 25 basis functions instead of 24, 1.6e-3 Hartree, exit 0, no diagnostic | OPEN |
+| Eight `case default; UNKNOWN(...)` lines commented out | an unrecognised functional name silently contributes nothing — `blyp` gives −67.7092 instead of −76.4002, exit 0 | OPEN |
+| `gill96` blessed in three places, implemented nowhere | accepted name that computes nothing, indistinguishable from a typo | OPEN |
+| `MOLECULE.SCF:put_SCF_energy` has no callers and mislabels its output | the XC energy is never reported, so none of the above is visible | OPEN |
+
+**Two consequences that will surface elsewhere.** Every checked-in DFT reference
+was produced with the default grid rather than the one its own input requests, so
+they must be reblessed against converged numbers once the grid fix lands. And the
+existing suite cannot detect any of these, because no test varies the grid and
+every test spells its functional correctly.
+
 ## Keyword parsing must not leak into library routines (fixed; survey kept)
 
 `MOLECULE.READ:read_archive(name,genre)` is a library routine — it takes its
@@ -1217,6 +1239,22 @@ modules** is what parallelises; submodules only avoid recompilation cascades.
 components of other derived types), and every `use TYPES_MODULE` site plus the translator's
 `.use`-file generation must follow. Check whether the translator can emit the split
 automatically from one `types.foo` rather than requiring the source be broken up by hand.
+
+## libxc as the DFT functional engine — see `docs/DFT_STANDARDISATION.md`
+
+Superseded by milestone 10. The decision, the verified API facts, the compiler
+constraint, and the seven-point list of what a real implementation must cover are
+all in **`docs/DFT_STANDARDISATION.md` §8**, alongside the interface analysis
+(§7) that determines how much work it is.
+
+The one thing worth repeating here, because it is the most likely thing for a
+reimplementation to get wrong: **Tonto's `E` is the functional divided by the
+density** — energy per particle, exactly what libxc's `_exc` entry points return.
+Read `new_r_LDA_x_energy_density`, which computes `-(3/4)(3/pi)^(1/3) rho^(1/3)`.
+Assuming `E` is an energy density is wrong by a factor of rho.
+
+`archive/libxc` (Peter Spackman, 2017) is a prototype and **must not be merged**;
+it is assessed in `docs/REPOSITORY_BRANCHES.md`.
 
 ## Milestone 6, partial: the suppressed-reduction abort and the parallel lint (2026-08-02)
 

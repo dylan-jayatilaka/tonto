@@ -274,6 +274,8 @@ versioned with the code it described*, so it could rot silently. Do not add docu
   pitfalls and the trace recipes that found them.
 - `docs/FOO_GRAMMAR_DOCUMENTATION.md` — full language description and Foo→Fortran conversion rules.
 - `docs/TONTO_AND_MPI.md` — the parallel build, its numeric characterisation, and the defect register.
+- `docs/DFT_STANDARDISATION.md` — milestone 10: the DFT machinery, its three silent defects, the
+  functional-interface analysis, and the libxc plan.
 - `docs/BUILDING_ON_WINDOWS.md` — the four WSL-specific traps, the CMake guards, and how they are tested.
 - `docs/TONTO_CONTINUOUS_INTEGRATION.md` — the CI workflows, how to trigger one manually, and how to read a run.
 - `docs/MAKING_CALL_GRAPHS.md` — call/use graphs and dead-code elimination.
@@ -621,6 +623,49 @@ before any code is written**, most likely in its own conversation (`/clear`).
    reference prints a single `SCF results` block and a single `Total energy` (−56.2023, R(F)
    0.0099, GoF 0.777). With `output= NO, output_results= YES` that may be correct; whether the
    results of *each* lambda should be reported has not been confirmed.
+
+10. 🔶 **IN PROGRESS (opened 2026-08-12) — DFT standardisation and improvement.** Authoritative
+   document: **`docs/DFT_STANDARDISATION.md`**. Three defects were found in one afternoon, all
+   by *measurement* on `tests/short/h2o_blyp_cc-pVDZ`, and all three are silent.
+   - ✅ **DONE — every user-specified Becke grid setting was discarded.** This is the cause of
+     the long-standing difficulty reproducing DFT energies to a required precision.
+     `MOLECULE.SET:initialize_DFT_grids` was commented *"Initialise DFT grids, if not already
+     done so"* and had **no such guard**: it destroyed and recreated the `BECKE_GRID` the input
+     block had just configured, reverting every DFT run to type defaults (`accuracy= "low"`,
+     `mura_knowles`, `treutler_ahlrichs`) while `put_basics` went on echoing the settings the
+     user asked for. Proved three ways — sweeping `accuracy=` from `very_low` to `best`,
+     setting absurd cutoffs, and deleting the whole block — each giving **bit-identical**
+     −76.400240454361 with no change in wall time, although the reported grid grew 35-fold.
+     Fixed to the guarded-create pattern already used by `MOLECULE.RHO:set_up_becke_grid`.
+     **Every DFT test reference must now be reblessed against a converged number**, and a
+     regression test must assert that two `accuracy=` values give *different* energies.
+   - ⬜ **An unrecognised functional name silently removes the functional.** `blyp` — the
+     standard name for the functional that test computes — is accepted and gives −67.7092
+     instead of −76.4002, exit 0, no diagnostic. `blyp` with `pbe` is a Coulomb-only run
+     reported as DFT. Eight `case default; UNKNOWN(...)` lines are commented out. `gill96` is
+     blessed as valid in three places and **implemented nowhere**.
+   - ⬜ **The XC energy is never reported.** `V_ee` lumps it with Coulomb;
+     `MOLECULE.SCF:put_SCF_energy` has zero call sites and mislabels
+     `E_xc − ½Tr(P·V_xc)` as the XC energy. This is the missing instrument, not a cosmetic issue.
+   - ⬜ **Then wrap libxc as the functional engine**, gated by a `slater`/`vwn5` agreement test.
+     Tonto's `E` is already energy-per-particle, which is exactly libxc's `_exc`, so it is a
+     dispatch change and not a units change. `archive/libxc` is a prototype and must not be
+     merged. Two interface differences matter: Tonto passes gradient *components* and returns an
+     already-contracted vector potential rather than libxc's `σ`/`vsigma` (a thin adapter, but
+     the factor of two in `Vn = 2·vsigma·∇ρ` is where a wrapper goes silently wrong), and the
+     functional is evaluated **twice per grid batch** because energy and potential are separate
+     passes — worth collapsing into one `exc_vxc`-style call as part of the wrap.
+   - ⬜ **Static analysis** so none of these classes can return: commented-out `case default`;
+     accepted-name against implemented-name cross-check; `.X.destroy` immediately followed by
+     `.X.create`.
+   - ⬜ **Reduce the dispatcher argument counts** (§8 of the doc). `new_u_potential` already takes
+     **17** arguments and a meta-GGA would take 21–25, since the count grows as rung × spin.
+     Dropping the redundant `name` (the object already stores `.name`) and grouping each
+     gradient triple into the `MAT{REAL}(n_pt,3)` the callers *already hold and splat* takes it
+     to 8. The real answer is to bundle the grid batch into `XC_DENSITY`/`XC_POTENTIAL` types,
+     giving constant arity — and, more valuably, making the spin channel a dimension rather than
+     a routine name, which collapses the **20 `new_r_*` plus 20 `new_u_*`** duplicated
+     procedures. Take this with the libxc wrap, not as a separate migration.
 
 **Open items** (future directions; details in `DEFERRED.md`)
 

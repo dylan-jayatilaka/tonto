@@ -40,6 +40,7 @@ parallel (MPI) builds for that platform.
 | [**The Foo language**](FOO_GRAMMAR_DOCUMENTATION.md) | the language and its translation to Fortran |
 | [**Foo compared with Fortran**](FOO_LANGUAGE_VS_FORTRAN.md) | for readers who know Fortran |
 | [**Tonto and MPI**](TONTO_AND_MPI.md) | the parallel build, its numerics, and the defect register |
+| [**DFT standardisation**](DFT_STANDARDISATION.md) | the DFT machinery, its silent defects, and the libxc plan |
 | [**Continuous integration**](TONTO_CONTINUOUS_INTEGRATION.md) | what each workflow runs, and what each badge means |
 | [**Call graphs**](MAKING_CALL_GRAPHS.md) | call/use graphs and dead-code elimination |
 | [**Repository branches**](REPOSITORY_BRANCHES.md) | what is live, what was archived, how to recover it, and why archived work must be ported |

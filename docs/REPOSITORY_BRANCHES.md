@@ -135,16 +135,17 @@ branch, as `Lolo_CP2K` has.
 
 ## Porting notes: what was assessed, and what was found
 
-The four smallest branches were examined in detail on 2026-08-11. Most of what
-looked like low-hanging fruit turned out to be already fixed, obsolete, or worse
-than what `master` now has. Recorded so the assessment is not repeated.
+The four smallest branches were examined in detail on 2026-08-11, and `libxc` on
+2026-08-12. Most of what looked like low-hanging fruit turned out to be already
+fixed, obsolete, or worse than what `master` now has. Recorded so the assessment
+is not repeated.
 
 | Branch | Finding |
 |---|---|
 | `archive/lamaGOET` | **`put_unit_cell_geometry_cartesian` was ported** — see below. Its second routine, `write_xyz_file_xtal14`, was **not**: it is a degraded fork of `put_xyz_file`, which has since moved to `molecule.put.foo` and improved. The branch version writes `.crystal.asymmetric_unit_geometry` — **fractional** coordinates, verified at `crystal.foo:3771` where they are converted with `matmul(.unit_cell.direct_mx,…)` — with no unit conversion, while its own comment claims cartesian axes. It also omits the xyz comment line, making the file malformed, and uses `TEXTFILE*` and `stdin.buffer_exhausted`, both gone from `master` (the latter commented out at `textfile.foo:2001`). If XTAL14 output is wanted, add an option to `put_xyz_file`. |
 | `archive/kanghyun` | Nothing to port. The `oisn't` → `isn't` typo was **already fixed on `master`** independently. Commenting out `stdout.flush` in `object.foo` was a workaround for stray blank lines in the keyword echo; the real cause — `TEXTFILE:flush` emitting the margin twice — was root-caused and fixed on 2026-08-03 (see `DEFERRED.md`), so the workaround is obsolete and treats the symptom. Only the two-line CIF/job-name echo is live, and it was judged not worth the output change. |
 | `archive/lorraine` | **Skip.** It modifies `cubes_to_basin` and its driver rather than adding anything, and `master` has independently evolved both `cubes_to_basin` and `cubes_to_basin_parallel` since. A merge into live code, not a graft. |
-| `archive/libxc` | **Needs discussion before any port** — it adds a capability rather than a printout, so it is the most valuable of the small branches, but see the SBF question below. |
+| `archive/libxc` | **Do not port as it stands; it is a prototype.** It is the most valuable of the small branches — a capability rather than a printout — and its two hardest judgement calls are correct. But it wires one of the four functional dispatch routines, and that one dereferences absent arguments on exactly the functionals it added. Assessed 2026-08-12; full findings below. |
 
 ### What was ported, and how
 
@@ -162,6 +163,96 @@ alternatives were dropped. It is reached by the **new keyword
 `put_unit_cell_geometry_cart`** rather than being called from `put_crystal` as
 on the branch — deliberately, so that no existing test reference changes and
 nothing has to be reblessed.
+
+### `archive/libxc` in detail — what is worth keeping, and what blocks a port
+
+Peter Spackman, four commits, August 2017, about 150 lines: `cmake/FindLibxc.cmake`,
+a `-DLIBXC=ON` option, a `USING_LIBXC` macro set in `cmake/SetFortranFlags.cmake`,
+an `XCFUNC` wrapper type in `types.foo`, and an `#ifdef` fork inside
+`DFT_FUNCTIONAL:new_r_energy_density`. The SBF submodule bump in the first commit
+was incidental and is now moot.
+
+**Two judgement calls the branch got right**, and they are the ones a
+reimplementation is most likely to get wrong:
+
+- **The energy convention.** Tonto's `E` is the functional *divided by the
+  density* — `new_r_LDA_x_energy_density` computes `-(3/4)(3/pi)^(1/3) rho^(1/3)`,
+  which is the energy per particle, not an energy density. libxc's
+  `xc_f03_lda_exc` / `xc_f03_gga_exc` return exactly that quantity, so the
+  branch's `E = E + EXC` is dimensionally consistent. A reimplementation that
+  assumes `E` is an energy density is wrong by a factor of rho.
+- **The VWN variant mapping.** `b3lypx` is mapped to `XC_HYB_GGA_XC_B3LYP5`
+  (VWN5) and `b3lypgx` to `XC_HYB_GGA_XC_B3LYP` (VWN_RPA, i.e. VWN3). That
+  matches Tonto's own `b3lypc`→VWN5 and `b3lypgc`→VWN3 split.
+
+**Six reasons it cannot be merged as written**, in order of severity:
+
+1. **Only the energy is wired; the potential is not.** The SCF is driven through
+   `new_r_potential` (`molecule.fock.foo:5066`), which the branch does not touch,
+   and neither unrestricted routine is touched either. A `-DLIBXC=ON` build would
+   converge on Tonto's own functionals and then report an energy from libxc's —
+   silently inconsistent and non-variational whenever the two differ. Wiring the
+   potential is not a small addition: libxc returns `vrho` and `vsigma`, which
+   still have to be assembled into the `V0` / `Vx,Vy,Vz` form Tonto expects.
+2. **An absent-optional dereference on every LDA run.** `sigma = Nx*Nx + Ny*Ny +
+   Nz*Nz` is evaluated unconditionally, above the `select case`, but `Nx,Ny,Nz`
+   are `optional` and the routine's own `ENSURE` permits them absent when
+   `is_LDA_functional(name)` — true for `slater`, `xalpha`, `vwn5` and `vwn3`,
+   which are four of the cases the branch routes to libxc.
+3. **`sigma` is never created or destroyed.** It is declared `VEC{REAL}@` with no
+   `.create`; Fortran 2003 assignment auto-allocates, so it works by accident,
+   but there is no `.destroy` and Tonto's memory accounting never sees it.
+4. **The `b3lypc` no-op is correct only in pairs.** `exch` and `corr` are
+   independent input keywords (`molecule.fock.foo:5027-5028`). Routing `b3lypx`
+   to the whole B3LYP XC functional and making `b3lypc` do nothing is right only
+   for that exact pair: `exch=b3lypx, corr=lyp` double-counts correlation, and
+   `exch=b3lypx` alone acquires correlation that was not asked for.
+5. **It no longer parses.** `XCFUNC` is raw Fortran inside a Foo `type` block
+   (`type(xc_f03_func_t) xc_func`, with no `::`). `Foo.g4` makes a `typeDef` body
+   `(varDecl | NEWLINE)*`, and `varDecl` requires `name :: TYPE`. The line-based
+   `foo.pl` accepted this in 2017; the ANTLR4 grammar does not. The type's
+   `xc_info` member is also declared and never used.
+6. **Lowercase `use`.** `types.foo` documents the convention — a capital `USE`
+   stops the preprocessor treating the module as a build dependency — and the
+   branch writes lowercase `use xc_f03_lib_m` in both files.
+
+**How the branch's code stands against a current libxc** — measured on 2026-08-12
+against the packaged `libxc-dev` 5.2.3, by compiling the branch's exact call
+pattern rather than by reading release notes:
+
+- **The `xc_f03` interface is stable, and the branch's calls are the right shape.**
+  `xc_f03_func_init`, `xc_f03_func_end`, `xc_f03_lda_exc` and `xc_f03_gga_exc` all
+  exist in 5.2.3 with the same names and argument order, and all seven functional
+  constants the branch uses (`XC_LDA_X`, `XC_LDA_C_VWN`, `XC_LDA_C_VWN_3`,
+  `XC_GGA_X_B88`, `XC_GGA_C_LYP`, `XC_HYB_GGA_XC_B3LYP`, `XC_HYB_GGA_XC_B3LYP5`)
+  are present and absent from `xc_funcs_removed.h`. Upstream describes the
+  `libxcf03` API as unchanged for about eight years.
+- **One genuine break: `np` became `size_t` in libxc 5.0.0.** Tonto's `INT` is
+  `integer(4)` (`include/macros.in:86`, `INT_KIND=4`), so passing `N0.dim`
+  produces *"Type mismatch in argument 'np': passed INTEGER(4) to INTEGER(8)"* at
+  every call site. Converting to `integer(c_size_t)` is the only change the
+  branch's calls need — with that one edit the whole pattern compiles clean.
+  This is a loud, compile-time failure, so it is a nuisance rather than a risk.
+- **On libxc 7.0.0 and later a second `use` is required.** The functional
+  constants were split out into `xc_f03_funcs_m`, so `use xc_f03_lib_m` alone no
+  longer defines them.
+- **`FindLibxc.cmake` will misreport on libxc 6 and later.** It runs three
+  `find_library` calls and appends each result to `LIBXC_LIBRARIES` **without
+  checking any of them succeeded**. libxc 5.0.0 turned `libxcf90` into a duplicate
+  of `libxcf03` and 6.0.0 removed that duplicate, so from 6.0.0 the `xcf90` search
+  fails, `LIBXC_F90_LIBRARY-NOTFOUND` is appended to the link line, and
+  `find_package_handle_standard_args` still sees a non-empty `LIBXC_LIBRARIES` and
+  reports the package found. Configure succeeds; the link then fails.
+
+**A toolchain blocker independent of all of the above.** Ubuntu's `libxc-dev`
+5.2.3 ships `xc_f03_lib_m.mod` built by **gfortran-15**, and Tonto builds with
+**gfortran-14**, which refuses it outright: *"Cannot read module file … created by
+a different version of GNU Fortran"*. This is the same constraint already
+documented for MPI in `docs/TONTO_AND_MPI.md` — a Fortran `.mod` is compiler-version
+specific. Using the distro package therefore means moving Tonto to gfortran-15;
+staying on gfortran-14 means building libxc from source with it. Whichever is
+chosen has to be decided before any code is written, and enforced in CMake with
+the same kind of check the MPI compiler match already gets.
 
 ### The SBF question — raised and settled on 2026-08-11: the submodule is gone
 
