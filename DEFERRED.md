@@ -46,7 +46,7 @@ only so this register stays complete:
 |---|---|---|
 | `MOLECULE.SET:initialize_DFT_grids` destroyed and recreated the `BECKE_GRID` | **every** user grid setting discarded; all DFT ran at default `accuracy= "low"` while `put_basics` echoed the requested settings back | **FIXED** 2026-08-12 |
 | `rho_cutoff` defaults to 10⁻⁶ | **the long-standing systematic error against g09.** Cross-validation isolated it: HF agrees to 1.2e-10 and Slater to 4.6e-7, but B88 differs by 9.9e-6 — because `x = \|∇ρ\|/ρ^(4/3)` *grows* in the tail the cutoff truncates. Lowering it to 10⁻¹⁰ collapses the full-BLYP gap **300-fold**, from 1.03e-5 to 3.5e-8, and is **free** — timed, no trend at any accuracy. Each derivative order costs another ρ^(-1/3), so meta-GGAs would be far worse | OPEN — change the default; batch the `types.foo` comment onto the next cascade |
-| **OPEN-SHELL DFT is ~1.5e-5 off g09, cause unknown** | UHF agrees to 2.0e-10 but UKS slater on H2O+ is -1.54e-5 and slater+vwn5 +8.15e-5, against a g09 value converged to 2e-10 **and independently corroborated by ORCA 6.1.1, which agrees with g09 to 2.3e-8** -- so Tonto is the outlier, not the reference. Tonto's own grid sweep **plateaus** at -1.5e-5 rather than converging to zero. Excluded by measurement: rho_cutoff (to 1e-30), the grid, both LDA formulae, both assembly routines, and the zeta=0 limit (closed-shell UKS reproduces RKS to 5e-12). Next: a debug-build probe of V0a/V0b/E0 at individual grid points. See `docs/DFT_STANDARDISATION.md` section 6a | OPEN |
+| **RESOLVED 2026-08-14: three causes** (was: "open-shell DFT off by 1.5e-5, cause unknown") | (1) `pruning_scheme= jayatilaka2`, a confound introduced during the investigation -- removed for ROBUSTNESS, not average accuracy: it was actually better closed-shell (3.5e-8) but -1.5e-5 on an open-shell case where every alternative was within 1.6e-6. (2) the VWN5 potential grouped the chain rule wrongly. (3) the VWN3 potential evaluated `VWN_G`/`VWN_dG` at **ZERO instead of zeta**, so it had NO SPIN DEPENDENCE AT ALL. After all three: slater +1.44e-6, +vwn5 +1.455e-6, +vwn3 +1.511e-6 against g09 -- correlation now adds nothing of its own. Tonto's default grid sits ~1.5e-6 from g09; use 5e-6 for any external-reference test. See `docs/DFT_STANDARDISATION.md` section 6a | **FIXED** |
 | `use_spherical_basis=` after the `atoms=` block | silently ignored — 25 basis functions instead of 24, 1.6e-3 Hartree, exit 0, no diagnostic | OPEN |
 | Eight `case default; UNKNOWN(...)` lines commented out | an unrecognised functional name silently contributes nothing — `blyp` gives −67.7092 instead of −76.4002, exit 0 | OPEN |
 | `gill96` blessed in three places, implemented nowhere | accepted name that computes nothing, indistinguishable from a typo | OPEN |
@@ -2969,6 +2969,105 @@ highlighting and tighter editor integration. The repo already ships some vim sup
 ---
 
 # Platform-specific
+
+## OPEN: long paths to the basis sets fail -- STR is 256 characters
+
+**Reported for the Windows `tonto.exe` and `hart.exe` (untested binaries from
+the release workflow), suspected to be a forward/backslash problem. IT IS NOT.
+Reproduced on LINUX on 2026-08-14 with a long path, so no Windows box is needed
+to work on it.**
+
+    path length = 544
+    short path : exit=0   -74.963358
+    long path  : exit=1   Error in VEC{BASIS}:read_library_data ...
+                          no library basis set
+
+### Cause
+
+`STR_SIZE` is 256 (`include/macros.in:57`), so a Foo `STR` is
+`character(256)`. The basis directory is read as
+
+```foo
+call get_environment_variable(BASIS_LIBRARY_ENV_NAME, basdir, status=i)
+if (i/=0) basdir = " "
+```
+
+and the Fortran standard sets `status = -1` when the value is **too long for
+the variable supplied**. So a path over 256 characters is truncated, reports
+-1, is then blanked by that line, and the code falls back to `./basis_sets` --
+which usually does not exist, giving "no library basis set" with no mention of
+a path problem.
+
+Three call sites, i.e. every program that takes a basis directory:
+`runfiles/run_har.foo:763`, `runfiles/run_molecule.foo:132`,
+`runfiles/run_xtal.foo:122`.
+
+Windows is where it surfaced because paths there are routinely deeper
+(`C:\Users\...\AppData\...`), not because of anything Windows-specific. There
+is no path-separator handling anywhere in `foofiles/`, and none is needed:
+Windows accepts forward slashes in its file APIs.
+
+### History: BSTR was 8192, and shrinking it was reasonable
+
+`git blame` settles this. Peter Spackman introduced `BSTR` in Dec 2015
+(`542350e7`) with `STR_SIZE 512` and **`BSTR_SIZE 8192`** -- a genuine "big
+string". Both were cut to 256 on 2024-11-25 (`f2c47977`, "Tidied TEXTFILE,
+slurp stdin? ...").
+
+**That was defensible.** `BSTR_SIZE` is the JOB-FILE LINE BUFFER:
+`buffer.foo:258` declares `item :: STR(len=BSTR_SIZE)` and `buffer.foo:23`
+warns "The buffer string is of length BSTR_SIZE". Shrinking an 8192-character
+per-line buffer while moving to slurping stdin is exactly the right call, and
+256 is ample for a job-file line.
+
+So do **not** move paths onto `BSTR`: that is the buffer's size, reduced
+deliberately. The error was that ONE constant was serving two requirements that
+differ by an order of magnitude.
+
+### The real scope: COMMAND_LINE is worse than the environment variable
+
+    command           :: STR   ! character(256)
+    command_arguments :: STR   ! EVERY argument, concatenated into one string
+    command_optarg    :: VEC{STR}@
+
+`command_arguments` accumulates all arguments joined together
+(`command_line.foo:134`), so it overflows well before any single path does; and
+`command_optarg` being `VEC{STR}` caps each individual option value -- including
+`--basis <path>` -- at 256. So the command-line route truncates independently of
+`TONTO_BASIS_SET_DIRECTORY`, which is why the report named both programs.
+
+### Two things to fix, and they are separate
+
+**1. Give paths and the command line their own size.** A `PATH_SIZE` (4096
+matches Linux `PATH_MAX`; Windows extended paths reach 32767), used by
+`COMMAND_LINE`'s `command`, `command_arguments` and `command_optarg`, and by the
+three `get_environment_variable` sites. `BUFFER` keeps `BSTR_SIZE` at 256,
+untouched. Raising `STR_SIZE` globally is the blunt alternative and would cost
+memory across the many `STR` members in `types.foo` for a problem in a handful
+of places.
+
+**2. Truncation must FAIL LOUDLY.** Independently of any size,
+
+    if (i/=0) basdir = " "
+
+treats "the value was truncated" (-1) exactly like "the variable is not set"
+(1), silently falling back to `./basis_sets`. Whatever size is chosen, a path
+that does not fit must DIE naming the variable and the length. This is the same
+silent-fallback shape as the DFT defects above, and it is why the failure
+surfaced as "no library basis set" with no mention of a path at all.
+
+### Testing
+
+The reproduction is a shell script away and needs no Windows: build a directory
+tree deeper than 256 characters, point `TONTO_BASIS_SET_DIRECTORY` at it, and
+assert the job still runs. That belongs in the suite alongside
+`check_single_atom_scf.py` -- it is the same kind of coverage gap, in that no
+existing test uses a long path.
+
+Worth noting in `docs/BUILDING_ON_WINDOWS.md` too, since that page collects the
+Windows traps and this is the one users will hit first.
+
+
 
 ## HIGH PRIORITY: put macOS in CI, with a badge (Dylan, 2026-08-09)
 

@@ -331,107 +331,111 @@ Reporting the XC energy properly would have made every row of the defect-2 table
 obvious at a glance. That is the argument for fixing it: it is not cosmetic, it is
 the missing instrument.
 
-## 6a. OPEN: unrestricted DFT is ~1.5e-5 off g09, cause unknown
+## 6a. RESOLVED: the open-shell discrepancy was three separate things
 
-**Found 2026-08-13, UNRESOLVED. Recorded so the eliminations are not repeated.**
+**Opened 2026-08-13 as "unrestricted DFT is ~1.5e-5 off g09, cause unknown".
+Closed 2026-08-14.** Two of the three causes were real defects; the third was a
+confounded variable introduced during the investigation itself. All three are
+invisible in closed-shell work, which is why years of restricted calculations
+never showed them.
 
-Closed-shell DFT agrees with g09 to 3.5e-8 (section 3). Open-shell does not. On
-H2O+ (doublet, cc-pVDZ, Cartesian d, tight SCF, accuracy= best):
+### The result
 
-| calculation | Tonto | g09 | difference |
-|---|---|---|---|
-| **UHF** | -75.632703875799 | -75.6327038760 | **2.0e-10** |
-| UKS slater | -74.794592831830 | -74.7945774565 | **-1.54e-05** |
-| UKS slater+vwn5 | -75.397717113397 | -75.3977985806 | **+8.15e-05** |
+H2O+ (doublet), cc-pVDZ, `accuracy= best`, default `treutler_ahlrichs` grid:
 
-UHF agreeing to 2e-10 rules out the basis, the integrals, the geometry and the
-SCF machinery for open shells. The discrepancy appears only once a grid and a
-functional are involved.
-
-**The g09 side is converged** -- checked, not assumed. UHFS on the cation gives
--74.7945773564 / -74.7945773885 / -74.7945774567 / -74.7945774565 for FineGrid /
-UltraFine / 199974 / 250974, stable to 2e-10.
-
-**And g09 itself is corroborated by a THIRD code.** ORCA 6.1.1 was run on the
-same cation, same functional, in spherical harmonics (ORCA does not readily do
-cartesian, so all three were compared in spherical):
-
-| code | UHFS H2O+, spherical | vs ORCA |
+| calculation | vs g09 | reference |
 |---|---|---|
-| ORCA 6.1.1 | -74.791990412377 | -- |
-| g09 (5D) | -74.7919904357 | **-2.33e-08** |
-| **Tonto** | **-74.792006265688** | **-1.59e-05** |
+| UHF | 2.0e-10 | -75.6327038760 |
+| slater | +1.444e-06 | -74.7945774565 |
+| slater + **vwn5** | +1.455e-06 | -75.3977985806 |
+| slater + **vwn3** | +1.511e-06 | -75.5735204288 (g09 `SVWN`) |
 
-Two independent codes agree with each other to 2.3e-08, and Tonto disagrees with
-both by 1.6e-05 -- matching the 1.54e-05 measured in cartesian, so it is not a
-basis-convention artefact. **There is no reference-code bug: Tonto is the
-outlier.**
+All three DFT numbers land on the same ~1.5e-06 floor, and adding either
+correlation functional now contributes **nothing of its own** beyond the
+exchange-only control. That floor is Tonto's default grid against g09's, not a
+functional error.
 
-Two traps worth recording for anyone repeating this. ORCA defaults to the RI-J
-approximation (it announces "auxiliary basis: def2/J"), which introduces error
-around 1e-4 and swamps the signal entirely -- use `NoRI`. And ORCA's SHARK
-module reports "Number of basis functions ... 30" for what g09 counts as 24
-spherical / 25 cartesian; the energies agree, so that is internal bookkeeping
-and not a different basis.
+Before: slater+vwn5 was **+8.70e-05** on that same grid, and the VWN3 potential
+had **no spin dependence at all**.
 
-**Tonto's side converges to the wrong value.** Sweeping `accuracy=`:
+### Cause 1 -- `pruning_scheme= jayatilaka2` (a confound, now removed)
 
-| accuracy | UKS slater | vs g09 |
-|---|---|---|
-| low | -74.794654915208 | -7.75e-05 |
-| medium | -74.794611075620 | -3.36e-05 |
-| high | -74.794589182934 | -1.17e-05 |
-| very_high | -74.794591566399 | -1.41e-05 |
-| extreme | -74.794595481064 | -1.80e-05 |
-| best | -74.794592831830 | -1.54e-05 |
+Every cc-pVDZ run in the investigation was derived from the
+`tests/short/h2o_blyp_cc-pVDZ` job, which set `pruning_scheme= jayatilaka2`,
+while every other basis used a clean template with the default. The basis was
+never the variable; the pruning was. On the cation:
 
-`low` to `high` improves six-fold, then it **plateaus near -1.5e-5 and
-oscillates** rather than continuing to zero. That is refinement removing
-quadrature error and exposing a fixed offset underneath -- not a grid that is
-merely too coarse.
+| pruning_scheme | vs g09 |
+|---|---|
+| `treutler_ahlrichs` (default) | +1.44e-06 |
+| `jayatilaka0` | +4.69e-07 |
+| `jayatilaka1` | +1.63e-06 |
+| **`jayatilaka2`** | **-1.54e-05** |
 
-### What has been excluded, all by measurement
+**Stated honestly: `jayatilaka2` was BETTER for the closed-shell neutral case**
+-- 3.5e-08 for BLYP against 1.6e-06 on the default grid. It was not uniformly
+worse, and the earlier claim that it was "too rough" everywhere is withdrawn.
+Its closed-shell accuracy looks like error cancellation rather than quality,
+since the same scheme is ten to thirty times worse than every alternative on a
+harder density.
 
-- **`rho_cutoff`** -- swept 1e-10 to 1e-30; the error is flat to 1e-11.
-- **The grid** -- the sweep above.
-- **`new_u_LDA_x_energy_density`** -- verified by hand. With `f_ba = rho_a/rho`
-  and `f_ab = rho_b/rho` it reduces to `eps = -C(rho_a^(4/3)+rho_b^(4/3))/rho`,
-  the correct spin scaling.
-- **`new_u_LDA_x_potential`** -- verified. `const = 2(3/4pi)^(1/3)` gives
-  `v_sigma = -(4/3) C rho_sigma^(1/3)`, correct.
-- **The outer assembly** `add_LDA_XC_mx(Ka,Kb,E,Ea,Eb)` -- `Ea -= HALF*Tr(Va Pa)`
-  and `Eb -= HALF*Tr(Vb Pb)`, exactly what MOLECULE.SCF's
-  `HALF*Tr(Pa Wa) + HALF*Tr(Pb Wb) + Ea + Eb` requires.
-- **The inner accumulator** -- `Ea += wal*Da_ab`, `Eb += wal*Db_ab`, summing to
-  the integral of rho*eps; `VVa` takes `V0a`, `VVb` takes `V0b`.
-- **The zeta = 0 limit** -- closed-shell UKS reproduces RKS to 5e-12 for slater,
-  so the unrestricted path is exact when the spins are equal. Whatever this is,
-  it appears only at zeta != 0.
+**It was removed anyway, and the reason is robustness rather than average
+accuracy.** A method that is excellent on easy cases and unreliable on harder
+ones cannot be offered as an option: the user cannot tell which case they are
+in. `apply_pruning_scheme_J2` dropped to Lebedev L3/L5/L5/L7 over the inner half
+of the radial range, which is very coarse. Removed 2026-08-14, along with a
+`"truetler_ahlrichs"` typo in the validation list that made a DEBUG build reject
+the correctly-spelled name and accept the misspelled one.
 
-Three hypotheses were advanced and all three were killed by measurement: the
-spin-resolved `rho_cutoff` double guard, an error in the LDA formulae, and
-ordinary grid error. Recording that is the point of this section.
+Because `apply_pruning_scheme` had no `case default`, and `ENSURE` is compiled
+out in release, an old job file still naming `jayatilaka2` would have silently
+run with **no pruning at all**. `set_pruning_scheme` therefore gained a live
+`UNKNOWN` default and lost `PURE` (the same trade as section 5).
 
-### Next step
+### Cause 2 -- the VWN5 chain rule was grouped wrongly
 
-Hand-verification has run out -- everything readable has been read. The next
-move is a DEBUG-build probe comparing Tonto's `V0a`, `V0b` and `E0` against
-independently computed values at a handful of grid points for a known
-zeta != 0 density. Instrumentation, not inspection, which is what
-`docs/TONTO_DEVELOPER.md` section 1a recommends for exactly this situation.
+With `x = (3/(4 pi rho))^(1/6)` and `zeta = (rho_a-rho_b)/rho`, so that
+`dx/drho = -x/(6 rho)` and `dzeta/drho_a = (1-zeta)/rho`:
 
-### The VWN part is BLOCKED on this
+    v_a = eps - (x/6) deps/dx + (1-zeta) deps/dzeta
+    v_b = eps - (x/6) deps/dx - (1+zeta) deps/dzeta
 
-UKS slater+vwn5 is off by +8.15e-05, so VWN contributes ~9.7e-05 in the opposite
-direction to the exchange error. That cannot be attributed while the exchange
-underneath it is unexplained.
+The `-(x/6)` belongs only to the x-derivative and the `(1-+zeta)` only to the
+zeta-derivative. The code applied **both factors to both terms**. Harmless at
+zeta = 0, where `deps/dzeta` vanishes because `VWN_G'(0) = 0` -- which is
+exactly why no closed-shell test could see it.
 
-There is also a suspected chain-rule grouping error in `new_u_VWN5_c_potential`,
-recorded in the commit that fixed the `V0b = V0a` slip: the code applies
-`-(x/6)` and `(1-zeta)` to BOTH terms, whereas
-`v_a = eps - (x/6) d_eps/dx + (1-zeta) d_eps/dzeta` gives each factor to one
-term only. At zeta = 0 it is harmless because `VWN_G'(0) = 0`, which is why no
-closed-shell test can see it. Settle the exchange first.
+### Cause 3 -- VWN3 was evaluated at ZERO instead of zeta
+
+    g   = VWN_G(ZERO) * (FOUR/NINE)/(2**(THIRD) - 1)
+    d_g = VWN_dG(ZERO) * (FOUR/NINE)/(2**(THIRD) - 1)
+
+`VWN_G(0) = 1.125*(1+1-2) = 0` and `VWN_dG(0) = 0`, so `g` and `d_g` were
+**identically zero**: `e` collapsed to `eps_p` and `V0a` equalled `V0b` for any
+spin polarisation. **The unrestricted VWN3 potential had no spin dependence
+whatsoever.** Its ENERGY routine was correct throughout, which is why the error
+never appeared in an energy expression check. A sign error on the zeta term sat
+underneath it, so fixing either alone would have looked like no improvement.
+
+`VWN_dG` and `VWN_dH` were both verified against their definitions and are
+correct; the defects were confined to the two potential routines.
+
+### What this floor means, and the tolerance to use
+
+Tonto's default grid sits a consistent **~1.5e-06** from g09 across functionals
+and charge states, at the finest `accuracy=` available. That is a
+characterisation of the grid, not a defect, but it is a floor.
+
+**Any external-reference test should therefore use a tolerance of 5e-06.** Note
+the four candidate reference values recorded earlier in this document were
+measured on `jayatilaka2` (BLYP 3.5e-08, B88 2.0e-07, slater 4.6e-07) and do NOT
+hold on the default grid, where the DFT ones are ~1.6e-06. They must be
+re-measured before use.
+
+Driving that floor lower is worth doing but is **not** a near-term task; it
+belongs with the long-term re-engineering argued in `CLAUDE.md`. The property
+and reference tests built here are precisely the harness such a transition would
+need: they state what must be true independently of how it is implemented.
 
 ## 7. Assessed and deliberately left alone: how E_xc is evaluated
 
