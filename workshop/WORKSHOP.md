@@ -74,6 +74,20 @@ is the easiest thing to check. In good quality data these small differences
 in bond length can be seen, which bodes well for the use of the structure
 factors for other purposes.
 
+**It is not only the positions.** The agreement with neutron diffraction
+extends to the atomic displacement parameters, which HAR returns in
+*quantitative* agreement with independent neutron values — and this matters
+more than it first sounds, because an ADP is not a nuisance parameter. It is a
+measurement of how the atom actually moves. Those displacements carry
+vibrational information, and hence information about the **phonons** of the
+crystal, as well as about any static **disorder**. Getting them right means the
+diffraction experiment tells you about the dynamics of the solid and not merely
+its average geometry. A spherical-atom model absorbs its own deficiencies into
+the ADPs — the aspherical density it cannot describe gets soaked up as spurious
+thermal motion — so IAM displacement parameters are systematically
+contaminated. HAR removes that contamination, which is why its ADPs can be
+compared with neutron ones at all.
+
 In fact, the main reason to do HAR is this:
 
 > HAR gives you a **wavefunction for the system at that geometry**. That
