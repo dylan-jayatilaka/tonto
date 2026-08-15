@@ -2970,6 +2970,27 @@ highlighting and tighter editor integration. The repo already ships some vim sup
 
 # Platform-specific
 
+## The macOS RGBI badge is red, and the fix is on a machine we cannot reach
+
+`ci-rgbi-macos.yml` is a weekly, deliberately exploratory probe of the macOS
+install list in `docs/INSTALLING_RGBI.md`. It fails at the step **"BasicTeX,
+then tlmgr BY ABSOLUTE PATH"**, after `brew install --cask basictex` succeeds.
+
+**It is not investigated, on purpose.** The toolchain was working when it was
+last set up by hand (2026-08-05, which is what the step's comment about the
+absolute `tlmgr` path records), but that work lives on a Mac that is no longer
+accessible. Nobody can currently reproduce, and a speculative fix to an
+untested platform is worse than a known-red badge.
+
+Logs from the failing scheduled runs are no longer retrievable, so the cause is
+unknown rather than merely unfixed. Candidates, none confirmed:
+`/Library/TeX/texbin/tlmgr` having moved, `tlmgr update --self` failing against
+a CTAN mirror, or one of the seven requested packages being unavailable.
+
+Anyone with a Mac should trigger a manual run and read a FRESH log before
+changing anything.
+
+
 ## OPEN: long paths to the basis sets fail -- STR is 256 characters
 
 **Reported for the Windows `tonto.exe` and `hart.exe` (untested binaries from
