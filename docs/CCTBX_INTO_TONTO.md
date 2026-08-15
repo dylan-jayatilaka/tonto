@@ -1201,18 +1201,41 @@ A zero esd is also actively dangerous downstream: any shift-over-esd test, signi
 or esd-weighted comparison divides by it. An allocated array of zeros silently claims infinite
 precision and passes every existing guard.
 
-**Tonto already has the right encoding, and already enforces it.** `pADP_errors` is
-`VEC{REAL}@` (`types.foo:2614`) — allocatable — and consumers guard with
+**Tonto already has the right encoding.** `pADP_errors` is `VEC{REAL}@`
+(`types.foo:2614`) — allocatable — and consumers guard with
 `ENSURE(.pADP_errors.allocated,"no pADP_errors")` (`atom.foo:1825, 1853, 1880, 2071, 2092`, …).
 So:
 
 > **When converting ADPs to an axis system without a covariance, `destroy` the errors rather
 > than transforming or zeroing them.**
 
-Unallocated is the established "not available" signal; the existing `ENSURE`s then catch any
-consumer that needs them, loudly and at the point of use. Note that `zero_pADP_errors`
+Unallocated is the established "not available" signal. Note that `zero_pADP_errors`
 (`vec{atom}.foo:750`) does *not* achieve this — an allocated array of zeros passes every
 `.allocated` guard.
+
+> **CORRECTION (2026-08-16, measured).** This section previously said Tonto *"already enforces
+> it"*, and that the existing `ENSURE`s would *"catch any consumer that needs them, loudly and
+> at the point of use"*. **That is wrong, and it was tried.** `ENSURE` is gated on
+> `USE_PRECONDITIONS`, which is **off in every optimised build** (`include/macros.in`), so those
+> guards compile to nothing in release. Destroying `pADP_errors` therefore turns a wrong-number
+> bug into a **SIGSEGV**: `tests/short/urea_lamaGOET_grown_CIF` died in
+> `VEC{ATOM}:put_CIF_ADP2_cryst`, which requires the array unconditionally. A check that must
+> fire in production has to be a `DIE`, not an `ENSURE` — see `CLAUDE.md` §8.
+>
+> The encoding is still right and the recommendation stands. What it additionally requires is
+> that the **consumers be made absence-aware first**: five CIF writers, 44 `_esu` column
+> headers, five value/error table pairs. And because `pADP_errors` holds positions, `U_iso` and
+> ADPs in one vector, destroying it removes the coordinate esds too — which argues for splitting
+> it, or giving it a validity flag, as part of §6's parameter-descriptor migration rather than
+> as a standalone change.
+>
+> Also corrected: this section's claim that the element-wise conversion *"affects every
+> anisotropic ADP ESD Tonto writes to a CIF"*. It does not. There are two CIF ADP writers, and
+> the one that matters most — `crystal.foo:8207`, via `CRYSTAL:make_CIF_esds` — **already builds
+> the induced 6×6 map with `GAUSSIAN_DATA:symmetric_tensor_2_product_mx` and applies it as a
+> proper quadratic form to the covariance.** Only the no-covariance writer at `crystal.foo:8135`
+> is affected. Full record, including a retracted numerical claim about the size of the error,
+> in `DEFERRED.md`.
 
 **If a number is genuinely required**, the honest one is the conservative upper bound. Since
 `|cov(U_kl,U_mn)| ≤ σ_kl σ_mn`,

@@ -35,6 +35,104 @@ below; the audit found no library file was ever affected.)
 
 # Correctness — open bugs that give wrong answers
 
+## ADP standard uncertainties are transformed element-wise on axis change (2026-08-16)
+
+`ATOM:change_ADP2_axis_system_to` (`atom.foo:3733`) converts the ADP *errors*
+between Cartesian and crystal axes by running the tensor congruence over the
+standard deviations themselves:
+
+```foo
+.put_ADP2_errors_to(ADP)
+ADP.change_basis_using(cell.direct_U_mx)   ! M sigma M^T -- on sigmas
+.set_ADP2_errors_to(ADP)
+```
+
+That is invalid whatever the basis convention. The conversion is a congruence,
+`U' = M U M^T`, so each `U'_ij` is a linear combination of **all six** `U_kl`
+and its variance needs the full 6x6 covariance. Running it over sigmas forms
+*signed* combinations of standard deviations, so terms cancel and an entry can
+come out negative. The routine already carried `! ERROR: To fix later` twice.
+The docstring admits it: *"the errors are transformed too, linearly … (this is
+wrong, but in the absence of any covariance we do it)"*.
+
+**Scope — smaller than it first appears, and this took three tries to pin
+down.** There are TWO CIF ADP writers:
+
+| path | esds from | correct? |
+|---|---|---|
+| `crystal.foo:8207` `put_CIF_ADP2(…,esd)` | `CRYSTAL:make_CIF_esds` | **yes** |
+| `crystal.foo:8135` `put_CIF_ADP2(…)` | the atom's own `.pADP_errors` | no |
+
+`make_CIF_esds` already does the right thing — it builds the induced 6x6 map
+with `GAUSSIAN_DATA:symmetric_tensor_2_product_mx` and applies it as a
+quadratic form to the covariance. So the claim that this "affects every
+anisotropic ADP esd Tonto writes to a CIF" is **wrong**; it affects the
+no-covariance writer, which is the `put_cif` path exercised by
+`tests/short/urea_lamaGOET_grown_CIF`.
+
+**A numerical claim that was made and is RETRACTED.** An independent
+calculation appeared to show the CIF esds 38x too large on one component and
+14x too small on another. That comparison was invalid: it assumed
+`U' = M U M^T` with its own packing of the 6-vector, whereas Tonto's convention
+per `symmetric_tensor_2_product_mx` is `D' = R^T D R` with the off-diagonal
+doubling handled inside the packed form. Reproducing the ADP *values* validated
+the 3x3 tensor map but said nothing about the packing, which is where the
+factors of two live. **The size of the error is therefore NOT known.** Anyone
+picking this up should measure it properly, against Tonto's own convention.
+
+### The decision, and why it was parked
+
+Dylan, 2026-08-16: **the ADP errors must be removed, not transformed and not
+zeroed** — *"Leaving them allocated holding possible rubbish is not good, for
+accidental later use."* Absent means "not available", which is true; zero means
+"known exactly", which is false and would be divided by in every shift-on-esd
+test.
+
+An implementation was written and **reverted**, for a reason worth recording:
+
+> **`ENSURE` does not enforce anything in a release build.** The recommendation
+> in `docs/CCTBX_INTO_TONTO.md` §10 says destroying the errors is safe because
+> *"the existing ENSUREs then catch any consumer that needs them, loudly and at
+> the point of use"*. `ENSURE` is gated on `USE_PRECONDITIONS`, which is off in
+> every optimised build, so those guards compile to nothing. Destroying
+> `pADP_errors` turned a wrong-number bug into a **SIGSEGV** in
+> `urea_lamaGOET_grown_CIF` — `put_CIF_ADP2_cryst` requires the array
+> unconditionally. A consumer that must fail in production needs a `DIE`.
+
+The debug build named it in one run (`ATOM:put_ADP2_errors_to_1 ... no
+pADP_errors`, via `put_CIF_ADP2_cryst`), which is the recipe in
+`docs/TONTO_DEVELOPER.md` §1a working exactly as advertised.
+
+Making "absent" actually representable then means guarding **five** CIF
+writers — 44 `_esu` column headers and 5 value/error table pairs — because
+`pADP_errors` is one vector holding positions, U_iso and ADPs together, so
+destroying it removes the coordinate esds too. That is a change to CIF output
+shape in five places, each needing its own re-bless, and it is a different and
+much larger job than fixing the transform.
+
+### What to do
+
+1. Fix `change_ADP2_axis_system_to` to propagate exactly, `V' = T V T^T`, when
+   a covariance is available. `ATOM` already carries one — `covariance_mx`
+   (`types.foo:2602`), stored by `set_pADP_errors_to` and already used as
+   `.covariance_mx(4:9,4:9)` at `atom.foo:1578` — so no plumbing is needed.
+   Build `T` by pushing each packed unit tensor through the same routine used
+   on the tensor itself, so the convention cannot drift.
+2. Destroy the errors when there is no covariance, per the decision above.
+3. Guard the five writers so the `_esu` columns are omitted rather than filled.
+   Re-bless the affected references; `urea_lamaGOET_grown_CIF` at minimum.
+4. Better: consider splitting `pADP_errors`, or giving it a validity flag, so
+   only the ADP block goes absent and the coordinate writers are untouched.
+   This belongs with the parameter-descriptor migration in
+   `docs/CCTBX_INTO_TONTO.md` §6 rather than as a separate change.
+
+Related, and not fixed either: `molecule.har.foo:1300` implements `U_iso` by
+writing three identical derivative columns (`sf_d(k,4) = sf_d(k,5) =
+sf_d(k,6) = -sf2`), making the normal matrix singular by construction and
+letting the pseudo-inverse absorb it. Verified present. It did **not** affect
+the quartz results in `docs/NN_HAR_REPORT.md`, which refined anisotropically
+and never entered that branch, but it would bite any isotropic refinement.
+
 ## DFT: three silent defects — see `docs/DFT_STANDARDISATION.md`
 
 Found 2026-08-12 by measurement on `tests/short/h2o_blyp_cc-pVDZ`. The full
