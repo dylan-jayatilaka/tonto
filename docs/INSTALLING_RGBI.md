@@ -31,7 +31,7 @@ Two points that are easy to get wrong:
 ```bash
 sudo apt install -y openbabel ghostscript pipx \
      texlive-latex-base texlive-latex-recommended \
-     texlive-pictures texlive-extra-utils
+     texlive-pictures texlive-extra-utils texlive-latex-extra
 pipx install mol2chemfigPy3          # brings Indigo with it
 
 scripts/rgbi_doctor.sh
@@ -45,6 +45,7 @@ Which package supplies what, for diagnosing a partial TeX install:
 | `xcolor.sty` | `texlive-latex-recommended` |
 | `longtable.sty` | `texlive-latex-base` |
 | `pdfcrop` | `texlive-extra-utils` |
+| `ifmtarg.sty` | `texlive-latex-extra` |
 | `gs` | `ghostscript` |
 | `obabel` | `openbabel` |
 

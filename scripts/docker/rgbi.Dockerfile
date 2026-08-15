@@ -45,6 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         texlive-latex-recommended \
         texlive-pictures \
         texlive-extra-utils \
+        texlive-latex-extra \
         poppler-utils \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
