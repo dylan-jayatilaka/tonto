@@ -437,6 +437,71 @@ belongs with the long-term re-engineering argued in `CLAUDE.md`. The property
 and reference tests built here are precisely the harness such a transition would
 need: they state what must be true independently of how it is implemented.
 
+## 6b. OPEN: the grid needs far too many points for the accuracy it gives
+
+**Not for investigation now. Recorded because the evidence is unusually clean
+and it points at an implementation problem, not a tuning question.**
+
+At `accuracy= best` -- Tonto's finest setting, 65 radial points and Lebedev L71
+-- every DFT case sits about **1.5e-06** from g09:
+
+| system | functional | \|Tonto - g09\| |
+|---|---|---|
+| H2O | HF | 6.5e-10 |
+| H2O | slater | 1.512e-06 |
+| H2O | becke88 | 1.584e-06 |
+| H2O | becke88+lyp | 1.629e-06 |
+| H2O | slater+vwn5 | 1.596e-06 |
+| H2O+ | UHF | 2.0e-10 |
+| H2O+ | slater | 1.444e-06 |
+| H2O+ | slater+vwn5 | 1.455e-06 |
+| H2O+ | slater+vwn3 | 1.511e-06 |
+
+**Two things stand out.**
+
+The two HF rows agree to 1e-10 and use NO grid. Every case that touches a grid
+is three to four orders worse. So the residual is the quadrature, not the basis,
+the integrals or the SCF.
+
+And the seven DFT numbers span 1.44e-06 to 1.63e-06 -- a 13% spread across
+different functionals, different charge states, and both spin treatments. A
+functional error would vary with the functional; a grid offset would not. This
+is a grid offset.
+
+### Why this looks like a defect rather than a limit
+
+g09 reaches its converged answer on a FAR smaller grid. Its FineGrid, (75,302),
+gives -76.4002380205 for BLYP against its own converged -76.4002385321 -- within
+**5e-10**. Tonto at 65 radial and L71 is **1.5e-06** from that same number.
+
+Even allowing that g09's grids are pruned and raw point counts are not directly
+comparable, that is roughly three orders of magnitude of accuracy for a grid of
+broadly similar size. Something in the quadrature is not doing the work those
+points should be doing.
+
+Candidates, none investigated:
+
+- the **Becke partition weights** and the atomic-size adjustment
+- the **radial mapping** and its scaling (`kind= mura_knowles` by default, with
+  `treutler_ahlrichs` and `becke` also available)
+- the **pruning** interaction -- note `jayatilaka2` was removed in section 6a for
+  being unreliable, and the remaining schemes have not been characterised
+- whether the atomic grids are being **normalised** correctly, which a uniform
+  offset of this kind would be consistent with
+
+### Why it matters beyond neatness
+
+It sets the floor for everything else. The `dft_reference` test (`long`) has to
+use a 5e-06 tolerance purely because of this, and at `accuracy= high` the
+deviations already exceed that -- so a cheap grid cannot be used for absolute
+comparisons at all. Fixing the quadrature would let that tolerance drop by
+orders of magnitude, and would make every DFT result cheaper as well as more
+accurate.
+
+**A rewrite of the grid construction should be considered**, not merely a tuning
+pass. This is worth doing before, or as part of, any of the larger re-engineering
+in `CLAUDE.md`.
+
 ## 7. Assessed and deliberately left alone: how E_xc is evaluated
 
 `molecule.fock.foo` accumulates the XC energy as a density-matrix contraction,

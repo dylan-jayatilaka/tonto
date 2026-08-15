@@ -207,6 +207,24 @@ add_test(NAME "dft_invariants"
             ${TONTO_EXE} ${BASIS_SETS})
 set_tests_properties("dft_invariants" PROPERTIES LABELS "short")
 
+# ABSOLUTE accuracy against g09 -- typed-in constants, NOT blessed Tonto output.
+# Every other test compares Tonto against Tonto and so can only answer "did
+# anything change?". Until 2026-08-13 every DFT reference in this suite encoded
+# a ~1e-5 error from rho_cutoff, and the suite was green for years because both
+# sides carried it. An external number cannot do that.
+#
+# Includes OPEN-SHELL cases, which the rks==uks property in dft_invariants is
+# structurally blind to: all three VWN defects broke only at zeta != 0.
+#
+# LABEL long, not short: it needs accuracy= best (~10 s per DFT case, ~31 s
+# total). At `high` the deviations already exceed the 5e-6 tolerance -- see the
+# measurements in the script header -- so running it cheap would defeat it.
+add_test(NAME "dft_reference"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_dft_reference.py
+            ${TONTO_EXE} ${BASIS_SETS})
+set_tests_properties("dft_reference" PROPERTIES LABELS "long")
+
 # Invariant test -- no reference output involved.
 #
 # Two MPI hazards that inspection cannot find, both from milestone 4:
