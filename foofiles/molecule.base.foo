@@ -1519,6 +1519,10 @@ contains
             ! Ulf Ryde's capped residues
             ! WARNING: .atom_groups list only (parent) uncapped atoms
             .set_Ryde_capped_groups ! NOT PURE
+         else if (.crystal.use_NN) then
+            ! Nearest-neighbour capped fragments, one per asymmetric
+            ! unit atom, for a periodic network solid
+            .set_NN_capped_groups ! NOT PURE
          else if (.atom_group.has_atom_indices) then
             ! User set atom_indices for each atom_group 
             .set_atom_group_mols   ! NOT PURE
@@ -1750,78 +1754,152 @@ contains
 
    end
 
-!   make_NN_capped_groups :: leaky
-!   ! Make atom capped groups for periodic network molecule.
-!      self :: INOUT
-!
-!   ENSURE(.atom.allocated,"no atom info")
-!   ENSURE(.atoms_bonded_to_atom.allocated,"no connection table")
-!   ENSURE(.crystal.allocated, "no crystal info")
-!
-!      name,label :: STR
-!      n_comp,nc_atoms,a :: INT
-!
-!      n_comp = .crystal.n_asymmetric_unit_atoms 
-!
-!      if (.atom_group.deallocated) then
-!      
-!         ! Make groups from asym atoms
-!         .atom_group.create(n_comp)
-!         allocate(.mol(n_comp))
-!         
-!         do a = 1,n_comp
-!
-!            ! Make cap atoms
-!            .cluster.make_asym_occupation_list(a)
-!            .cluster.do_NN_defragment(.cluster.occupation_list,1,nc_atoms)
-!            .cluster.create_atom_list(.mol(a).atom) 
-!            .atom_group(a).set_atom_index( [ a ] )
-!            .atom_group(a).set_n_atoms(.cluster.n_atoms)
-!            .mol(a).atom(2:).set_is_cap_atom(TRUE)
-!
-!            ! Correct label & atomic number for last added atom
-!            ! WARNING: AN has to be set after setting unique label
-!            label = "H-cap"
-!            ATOM:set_label(.mol(a).atom(nc_atoms+1:),label,skip_mass=TRUE)
-!            ATOM:set_atomic_number_and_mass(.mol(a).atom(nc_atoms+1:),"H ")
-!            
-!            ! Set charge
-!            .mol(a).set_charge(.atom_group(a).charge)
-!
-!            ! Make atom info; groups should not contain subgroups!
-!            .mol(a).atom_info_made = FALSE
-!            .mol(a).atom.set_group_to(a)
-!            .mol(a).update_atom_and_basis_info_no_grp ! no recursion
-!
-!            ! Reset multiplicity? NOTE: reset no. of alpha & beta electrons
-!            if (.atom_group(a).spin_multiplicity_set) then
-!               .mol(a).set_spin_multiplicity(.atom_group(a).spin_multiplicity)
-!            end
-!
-!            ! Set guess-type SCF defaults: no output
-!            ! Will reset SCF_kind based on multiplicity
-!            .mol(a).set_SCF_guess_defaults_from(.SCF_data)
-!
-!            ! Set .name
-!            name = "group-"//trim(a.to_str)//"-"
-!            name = trim(name)//trim(.mol(a).atom.chemical_formula(with_spaces=FALSE))
-!            .mol(a).set_name(name)
-!            .atom_group(a).set_name(name)
-!
-!            ! Assign basis set -- don't destroy!
-!            .mol(a).set_basis_name(.basis_name) ! NOT PURE
-!
-!            ! Copy the crystal -- destroy it!
-!            ! Make separate asymm unit with only mol in it later ...
-!            ! mol.crystal = .crystal
-!            ! mol.crystal.update_fragment_info(mol.atom)
-!               
-!            ! Don't remake ANO data if there
-!            .mol(a).resolve_ANOs_from(self)
-!         end
-!      end
-!
-!   end
+!  ===================================
+!  Nearest-neighbour fragment capping
+!  ===================================
+
+   set_NN_capped_groups :: leaky
+   ! Make nearest-neighbour capped atom groups for a periodic network
+   ! solid, where no molecule can be isolated at all. One fragment is
+   ! made around each asymmetric unit atom by following bonds out
+   ! ".crystal.NN_level" shells; the shell beyond that is replaced by
+   ! capping hydrogen atoms. Only the central atom of each fragment is
+   ! a fragment atom -- it is the one whose form factor is wanted.
+   ! For quartz at level 1 this gives orthosilicic acid around the
+   ! silicon, and silyloxysilane around the oxygen.
+      self :: INOUT
+
+   ENSURE(.atom.allocated,"no atom info")
+   ENSURE(.crystal.allocated,"no crystal info")
+
+      name,label :: STR
+      length :: REAL
+      n_comp,nc_atoms,n_cap,a,c,i :: INT
+      connections_for :: VEC{EVEC{INT}}@
+      cluster :: CLUSTER@
+
+      if (NOT .crystal.use_NN) return
+
+      n_comp = .crystal.n_asymmetric_unit_atoms
+
+      ! Make one group per asymmetric unit atom
+      .atom_group.destroy
+      .atom_group.create(n_comp)
+
+      if (.mol.allocated) deallocate(.mol)
+      allocate(.mol(n_comp))
+
+      ! A cluster to grow the fragments in. This is deliberately LOCAL,
+      ! not the ".cluster" member: growing a fragment mutates the
+      ! cluster, so using the member would leave it holding the last
+      ! fragment's atoms against the crystal's own fragment list, and
+      ! MOLECULE:put walks both -- a SEGFAULT in CLUSTER:put, where
+      ! .crystal.fragment_atom gets indexed by cluster atom.
+      cluster.create
+      cluster.set_defaults(.crystal)
+
+      do a = 1,n_comp
+
+         ! Grow "NN_level" shells of bonded neighbours out from
+         ! asymmetric unit atom "a". Uncapped, one shell fewer is
+         ! asked for: do_NN_defragment always adds the shell beyond
+         ! "level", and that is the shell which would be capped.
+         cluster.make_asym_occupation_list(a)
+         if (.crystal.use_NN_capping) then
+            cluster.do_NN_defragment(cluster.occupation_list,.crystal.NN_level,nc_atoms)
+         else
+            cluster.do_NN_defragment(cluster.occupation_list,.crystal.NN_level-1,nc_atoms)
+         end
+         cluster.extract_geometry(cluster.occupation_list,cluster.geometry)
+         cluster.create_atom_list(.mol(a).atom)
+
+         .atom_group(a).set_atom_index( [ a ] )
+         .atom_group(a).set_n_atoms(cluster.n_atoms)
+
+         ! Every atom but the central one is there to provide the
+         ! chemical environment, not to have a form factor taken
+         .mol(a).atom(2:).set_is_cap_atom(TRUE)
+
+         ! Those atoms are not refined, so they carry no thermal
+         ! motion of their own. Their ADP errors are left alone, being
+         ! read only for fragment atoms.
+         .mol(a).atom(2:).set_ADP_tensor(ZERO)
+
+         ! Give the central atom a digit, so that its label stays
+         ! distinct from the capping labels made below
+         if (.mol(a).atom(1).label.index_of_digit==0) then
+            label = trim(.mol(a).atom(1).label)//"1"
+            ATOM:set_label(.mol(a).atom(1),label,skip_mass=TRUE)
+         end
+
+         if (.crystal.use_NN_capping) then
+
+            ! Connections say which atom each cap hangs off, and hence
+            ! the direction to place it in
+            .mol(a).atom.make_connection_table(connections_for)
+
+            n_cap = .mol(a).atom.dim - nc_atoms
+
+            do i = 1,n_cap
+
+               ! WARNING: AN has to be set after setting unique label
+               label = "H-cap"//trim(i.to_str)
+               ATOM:set_label(.mol(a).atom(nc_atoms+i),label,skip_mass=TRUE)
+               ATOM:set_atomic_number_and_mass(.mol(a).atom(nc_atoms+i),"H ")
+
+               ! Put the cap along the internuclear vector of the bond
+               ! it replaces, at the sum of the two covalent radii
+               c = connections_for(nc_atoms+i).element(1)
+               length = .mol(a).atom(c).covalent_radius_ccdc &
+                      + .mol(a).atom(nc_atoms+i).covalent_radius_ccdc
+               .mol(a).atom.set_bond_length(c,nc_atoms+i,length)
+
+            end
+
+            connections_for.destroy
+
+         end
+
+         ! Set .name
+         name = "group-"//trim(a.to_str)//"-"
+         name = trim(name)//trim(.mol(a).atom.chemical_formula(with_spaces=FALSE))
+         .mol(a).set_name(name)
+         .atom_group(a).set_name(name)
+
+         ! Assign basis set -- don't destroy!
+         .mol(a).set_basis_name(.basis_name) ! NOT PURE
+
+         ! Set charge
+         .mol(a).set_charge(.atom_group(a).charge)
+
+         ! Make atom info; groups should not contain subgroups!
+         .mol(a).atom_info_made = FALSE
+         .mol(a).atom.set_group_to(a)
+         .mol(a).update_atom_and_basis_info_no_grp ! no recursion
+
+         ! Reset multiplicity? NOTE: reset no. of alpha & beta electrons
+         if (.atom_group(a).spin_multiplicity_set) then
+            .mol(a).set_spin_multiplicity(.atom_group(a).spin_multiplicity)
+         end
+
+         ! Set guess-type SCF defaults: no output
+         ! Will reset SCF_kind based on multiplicity
+         .mol(a).set_SCF_guess_defaults_from(.SCF_data)
+
+         ! Copy the crystal -- destroy it!
+         ! Make separate asymm unit with only mol in it later ...
+         .mol(a).crystal = .crystal
+         .mol(a).crystal.set_minimal_copy(.crystal)
+         .mol(a).crystal.update_fragment_info(.mol(a).atom)
+
+         ! Don't remake ANO data if there
+         .mol(a).resolve_ANOs_from(self)
+
+      end
+
+      cluster.destroy
+
+   end
 
    set_Ryde_cap_for_group(g) :: leaky
    ! Make a capped fragment for molecule "mol, the atom_group(g).mol
