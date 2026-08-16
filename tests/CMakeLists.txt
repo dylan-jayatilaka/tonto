@@ -63,7 +63,21 @@ function(add_all_tests)
             --log-level=WARNING
             ${MPI_FLAG})
         set_tests_properties("${N}" PROPERTIES
-            LABELS ${LABELS})
+            LABELS ${LABELS}
+            # A test whose declared inputs are not present cannot run, which is
+            # a different thing from failing. test.py exits 77 (the automake
+            # convention) in that case and prints how to obtain them, and ctest
+            # reports "Skipped" instead of reddening the suite.
+            #
+            # Set for EVERY test rather than the one that needs it: a test that
+            # never exits 77 is unaffected, and special-casing one directory in
+            # a glob-driven registration is how a test quietly stops being
+            # registered later.
+            #
+            # Needed by tests/long/ammonium_borane_pHAR_C23, whose 167 MB
+            # CRYSTAL23 wavefunction is deliberately not committed -- see
+            # scripts/fetch_phar_asset.sh.
+            SKIP_RETURN_CODE 77)
     endforeach()
 endfunction()
 
