@@ -18,6 +18,11 @@ import re
 
 log = logging.getLogger('test')
 
+# Exit code meaning "this test could not run", as distinct from "this test
+# failed". CMake pairs it with SKIP_RETURN_CODE. 77 is the GNU automake
+# convention for a skipped test, which is why it and not something arbitrary.
+SKIP_EXIT_CODE = 77
+
 prefixes_to_ignore = [
     'Wall-clock', 'CPU time', 
     'Version', 'Platform', 'Timer', 'Build-date',
@@ -351,6 +356,10 @@ def parse_IO_file(path):
         'delete': set(),
         'program': None,
         'args': None,
+        # Printed when the test is skipped for a missing input. Put the remedy
+        # here -- it is the one message that reaches somebody who was not
+        # already reading this file.
+        'skip-hint': None,
     }
 
     if os.path.exists(path):
@@ -372,7 +381,7 @@ def parse_IO_file(path):
                     raise ValueError(
                         '%s line %d: unknown key %r (expected one of %s)'
                         % (path, lineno, key, ', '.join(sorted(io_files))))
-                if key in ('program', 'args'):
+                if key in ('program', 'args', 'skip-hint'):
                     io_files[key] = value
                 else:
                     io_files[key].add(value)
@@ -576,6 +585,33 @@ def main():
         args.program = os.path.abspath(args.program)
     logging.basicConfig(level=args.log_level)
     io_files = parse_IO_file(join(args.test_directory,'IO'))
+
+    # A declared input that is not there is NOT a failure -- it means the test
+    # cannot run, which is a different thing from the code being wrong. Exit
+    # SKIP_EXIT_CODE, which CMake matches with SKIP_RETURN_CODE, so ctest
+    # reports "Skipped" rather than a red suite.
+    #
+    # This exists for tests/long/ammonium_borane_pHAR_C23, whose 167 MB
+    # CRYSTAL23 XML is deliberately not committed -- see
+    # scripts/fetch_phar_asset.sh. Before this, a missing input produced a
+    # FileNotFoundError traceback out of shutil.copy or get_lines(): a real
+    # failure to notice, but an ugly and uninformative way to report it.
+    #
+    # The message matters as much as the exit code. It is the only place that
+    # reaches somebody who was not already reading the test directory, so it
+    # names the file AND how to get it, and any test using this should put the
+    # remedy in its "skip-hint:" line.
+    missing = [p for p in io_files['input']
+               if not os.path.exists(join(args.test_directory, p))]
+    if missing:
+        print('SKIPPED: %s -- required input not present: %s'
+              % (os.path.basename(args.test_directory.rstrip('/')),
+                 ', '.join(missing)))
+        hint = io_files.get('skip-hint')
+        if hint:
+            print(hint)
+        sys.exit(SKIP_EXIT_CODE)
+
     if run_test(args, args.test_directory, io_files):
         sys.exit(0)
     else:

@@ -63,7 +63,21 @@ function(add_all_tests)
             --log-level=WARNING
             ${MPI_FLAG})
         set_tests_properties("${N}" PROPERTIES
-            LABELS ${LABELS})
+            LABELS ${LABELS}
+            # A test whose declared inputs are not present cannot run, which is
+            # a different thing from failing. test.py exits 77 (the automake
+            # convention) in that case and prints how to obtain them, and ctest
+            # reports "Skipped" instead of reddening the suite.
+            #
+            # Set for EVERY test rather than the one that needs it: a test that
+            # never exits 77 is unaffected, and special-casing one directory in
+            # a glob-driven registration is how a test quietly stops being
+            # registered later.
+            #
+            # Needed by tests/long/ammonium_borane_pHAR_C23, whose 167 MB
+            # CRYSTAL23 wavefunction is deliberately not committed -- see
+            # scripts/fetch_phar_asset.sh.
+            SKIP_RETURN_CODE 77)
     endforeach()
 endfunction()
 
@@ -206,6 +220,24 @@ add_test(NAME "dft_invariants"
     COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_dft_invariants.py
             ${TONTO_EXE} ${BASIS_SETS})
 set_tests_properties("dft_invariants" PROPERTIES LABELS "short")
+
+# ABSOLUTE accuracy against g09 -- typed-in constants, NOT blessed Tonto output.
+# Every other test compares Tonto against Tonto and so can only answer "did
+# anything change?". Until 2026-08-13 every DFT reference in this suite encoded
+# a ~1e-5 error from rho_cutoff, and the suite was green for years because both
+# sides carried it. An external number cannot do that.
+#
+# Includes OPEN-SHELL cases, which the rks==uks property in dft_invariants is
+# structurally blind to: all three VWN defects broke only at zeta != 0.
+#
+# LABEL long, not short: it needs accuracy= best (~10 s per DFT case, ~31 s
+# total). At `high` the deviations already exceed the 5e-6 tolerance -- see the
+# measurements in the script header -- so running it cheap would defeat it.
+add_test(NAME "dft_reference"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_dft_reference.py
+            ${TONTO_EXE} ${BASIS_SETS})
+set_tests_properties("dft_reference" PROPERTIES LABELS "long")
 
 # Invariant test -- no reference output involved.
 #

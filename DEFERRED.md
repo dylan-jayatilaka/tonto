@@ -35,6 +35,104 @@ below; the audit found no library file was ever affected.)
 
 # Correctness — open bugs that give wrong answers
 
+## ADP standard uncertainties are transformed element-wise on axis change (2026-08-16)
+
+`ATOM:change_ADP2_axis_system_to` (`atom.foo:3733`) converts the ADP *errors*
+between Cartesian and crystal axes by running the tensor congruence over the
+standard deviations themselves:
+
+```foo
+.put_ADP2_errors_to(ADP)
+ADP.change_basis_using(cell.direct_U_mx)   ! M sigma M^T -- on sigmas
+.set_ADP2_errors_to(ADP)
+```
+
+That is invalid whatever the basis convention. The conversion is a congruence,
+`U' = M U M^T`, so each `U'_ij` is a linear combination of **all six** `U_kl`
+and its variance needs the full 6x6 covariance. Running it over sigmas forms
+*signed* combinations of standard deviations, so terms cancel and an entry can
+come out negative. The routine already carried `! ERROR: To fix later` twice.
+The docstring admits it: *"the errors are transformed too, linearly … (this is
+wrong, but in the absence of any covariance we do it)"*.
+
+**Scope — smaller than it first appears, and this took three tries to pin
+down.** There are TWO CIF ADP writers:
+
+| path | esds from | correct? |
+|---|---|---|
+| `crystal.foo:8207` `put_CIF_ADP2(…,esd)` | `CRYSTAL:make_CIF_esds` | **yes** |
+| `crystal.foo:8135` `put_CIF_ADP2(…)` | the atom's own `.pADP_errors` | no |
+
+`make_CIF_esds` already does the right thing — it builds the induced 6x6 map
+with `GAUSSIAN_DATA:symmetric_tensor_2_product_mx` and applies it as a
+quadratic form to the covariance. So the claim that this "affects every
+anisotropic ADP esd Tonto writes to a CIF" is **wrong**; it affects the
+no-covariance writer, which is the `put_cif` path exercised by
+`tests/short/urea_lamaGOET_grown_CIF`.
+
+**A numerical claim that was made and is RETRACTED.** An independent
+calculation appeared to show the CIF esds 38x too large on one component and
+14x too small on another. That comparison was invalid: it assumed
+`U' = M U M^T` with its own packing of the 6-vector, whereas Tonto's convention
+per `symmetric_tensor_2_product_mx` is `D' = R^T D R` with the off-diagonal
+doubling handled inside the packed form. Reproducing the ADP *values* validated
+the 3x3 tensor map but said nothing about the packing, which is where the
+factors of two live. **The size of the error is therefore NOT known.** Anyone
+picking this up should measure it properly, against Tonto's own convention.
+
+### The decision, and why it was parked
+
+Dylan, 2026-08-16: **the ADP errors must be removed, not transformed and not
+zeroed** — *"Leaving them allocated holding possible rubbish is not good, for
+accidental later use."* Absent means "not available", which is true; zero means
+"known exactly", which is false and would be divided by in every shift-on-esd
+test.
+
+An implementation was written and **reverted**, for a reason worth recording:
+
+> **`ENSURE` does not enforce anything in a release build.** The recommendation
+> in `docs/CCTBX_INTO_TONTO.md` §10 says destroying the errors is safe because
+> *"the existing ENSUREs then catch any consumer that needs them, loudly and at
+> the point of use"*. `ENSURE` is gated on `USE_PRECONDITIONS`, which is off in
+> every optimised build, so those guards compile to nothing. Destroying
+> `pADP_errors` turned a wrong-number bug into a **SIGSEGV** in
+> `urea_lamaGOET_grown_CIF` — `put_CIF_ADP2_cryst` requires the array
+> unconditionally. A consumer that must fail in production needs a `DIE`.
+
+The debug build named it in one run (`ATOM:put_ADP2_errors_to_1 ... no
+pADP_errors`, via `put_CIF_ADP2_cryst`), which is the recipe in
+`docs/TONTO_DEVELOPER.md` §1a working exactly as advertised.
+
+Making "absent" actually representable then means guarding **five** CIF
+writers — 44 `_esu` column headers and 5 value/error table pairs — because
+`pADP_errors` is one vector holding positions, U_iso and ADPs together, so
+destroying it removes the coordinate esds too. That is a change to CIF output
+shape in five places, each needing its own re-bless, and it is a different and
+much larger job than fixing the transform.
+
+### What to do
+
+1. Fix `change_ADP2_axis_system_to` to propagate exactly, `V' = T V T^T`, when
+   a covariance is available. `ATOM` already carries one — `covariance_mx`
+   (`types.foo:2602`), stored by `set_pADP_errors_to` and already used as
+   `.covariance_mx(4:9,4:9)` at `atom.foo:1578` — so no plumbing is needed.
+   Build `T` by pushing each packed unit tensor through the same routine used
+   on the tensor itself, so the convention cannot drift.
+2. Destroy the errors when there is no covariance, per the decision above.
+3. Guard the five writers so the `_esu` columns are omitted rather than filled.
+   Re-bless the affected references; `urea_lamaGOET_grown_CIF` at minimum.
+4. Better: consider splitting `pADP_errors`, or giving it a validity flag, so
+   only the ADP block goes absent and the coordinate writers are untouched.
+   This belongs with the parameter-descriptor migration in
+   `docs/CCTBX_INTO_TONTO.md` §6 rather than as a separate change.
+
+Related, and not fixed either: `molecule.har.foo:1300` implements `U_iso` by
+writing three identical derivative columns (`sf_d(k,4) = sf_d(k,5) =
+sf_d(k,6) = -sf2`), making the normal matrix singular by construction and
+letting the pseudo-inverse absorb it. Verified present. It did **not** affect
+the quartz results in `docs/NN_HAR_REPORT.md`, which refined anisotropically
+and never entered that branch, but it would bite any isotropic refinement.
+
 ## DFT: three silent defects — see `docs/DFT_STANDARDISATION.md`
 
 Found 2026-08-12 by measurement on `tests/short/h2o_blyp_cc-pVDZ`. The full
@@ -47,6 +145,7 @@ only so this register stays complete:
 | `MOLECULE.SET:initialize_DFT_grids` destroyed and recreated the `BECKE_GRID` | **every** user grid setting discarded; all DFT ran at default `accuracy= "low"` while `put_basics` echoed the requested settings back | **FIXED** 2026-08-12 |
 | `rho_cutoff` defaults to 10⁻⁶ | **the long-standing systematic error against g09.** Cross-validation isolated it: HF agrees to 1.2e-10 and Slater to 4.6e-7, but B88 differs by 9.9e-6 — because `x = \|∇ρ\|/ρ^(4/3)` *grows* in the tail the cutoff truncates. Lowering it to 10⁻¹⁰ collapses the full-BLYP gap **300-fold**, from 1.03e-5 to 3.5e-8, and is **free** — timed, no trend at any accuracy. Each derivative order costs another ρ^(-1/3), so meta-GGAs would be far worse | OPEN — change the default; batch the `types.foo` comment onto the next cascade |
 | **RESOLVED 2026-08-14: three causes** (was: "open-shell DFT off by 1.5e-5, cause unknown") | (1) `pruning_scheme= jayatilaka2`, a confound introduced during the investigation -- removed for ROBUSTNESS, not average accuracy: it was actually better closed-shell (3.5e-8) but -1.5e-5 on an open-shell case where every alternative was within 1.6e-6. (2) the VWN5 potential grouped the chain rule wrongly. (3) the VWN3 potential evaluated `VWN_G`/`VWN_dG` at **ZERO instead of zeta**, so it had NO SPIN DEPENDENCE AT ALL. After all three: slater +1.44e-6, +vwn5 +1.455e-6, +vwn3 +1.511e-6 against g09 -- correlation now adds nothing of its own. Tonto's default grid sits ~1.5e-6 from g09; use 5e-6 for any external-reference test. See `docs/DFT_STANDARDISATION.md` section 6a | **FIXED** |
+| **The grid needs far too many points for its accuracy** | At `accuracy= best` (65 radial, L71) every DFT case is ~1.5e-6 from g09, while the two HF cases -- which use no grid -- agree to 1e-10. The seven DFT numbers span only 1.44-1.63e-6 across different functionals, charges and spin treatments, so it is a GRID OFFSET, not functional error. g09 reaches 5e-10 of its converged answer on FineGrid (75,302), a broadly comparable grid. Something in the quadrature (partition weights, radial mapping, normalisation) is likely wrong; a rewrite of the grid construction should be considered. Sets the floor for `dft_reference`'s 5e-6 tolerance. See `docs/DFT_STANDARDISATION.md` section 6b | OPEN — not for now |
 | `use_spherical_basis=` after the `atoms=` block | silently ignored — 25 basis functions instead of 24, 1.6e-3 Hartree, exit 0, no diagnostic | OPEN |
 | Eight `case default; UNKNOWN(...)` lines commented out | an unrecognised functional name silently contributes nothing — `blyp` gives −67.7092 instead of −76.4002, exit 0 | OPEN |
 | `gill96` blessed in three places, implemented nowhere | accepted name that computes nothing, indistinguishable from a typo | OPEN |
@@ -2158,6 +2257,104 @@ directory, not a merge. Those 8 commits also contain unrelated work (form-factor
 tables with RMS and MAX residuals) that may or may not already be in `release` — check before
 cherry-picking.
 
+---
+
+### ANSWERED AND UNBLOCKED (2026-08-16): the asset is alive, and the test PASSES
+
+**The first step above was finally run, and the answer is yes.** The LFS object is still on
+GitHub, retrievable, and byte-exact.
+
+It did not need `git-lfs` to find out. The LFS protocol is plain HTTP, so the batch API
+answers it directly — useful whenever `git-lfs` is missing:
+
+```bash
+curl -s -X POST \
+  -H "Accept: application/vnd.git-lfs+json" -H "Content-Type: application/vnd.git-lfs+json" \
+  -d '{"operation":"download","transfers":["basic"],"objects":[
+       {"oid":"1c5c24f0903c1b8667e3f8aa41ba1b2a550a49370b22db422a37d7a1f093a8ee",
+        "size":174978609}]}' \
+  https://github.com/dylan-jayatilaka/tonto.git/info/lfs/objects/batch
+```
+
+It returns a signed `download.href` (1 h expiry) rather than an error, i.e. the object is
+present and the quota is not exhausted. Downloading it gives 174 978 609 bytes whose sha256
+matches the oid exactly, opening with
+`<CREATOR name="CRYSTAL" version="1.0.0"/> <TITLE> Ammonium_closo-hexaborane(6)_pHAR </TITLE>`.
+
+#### How to pull the file and run the test
+
+`git-lfs` is installed as of 2026-08-16. Work in a **separate worktree**, so the main tree and
+its tests cannot be disturbed:
+
+```bash
+# 1. an isolated checkout of the archived branch (shares the object store, no second clone)
+git worktree add -b wip/phar ~/github/tonto-phar archive/release-pHAR-broken
+
+# 2. pull the 167 MB asset. Note .gitattributes is ABSENT at the tip, but the pointer is in
+#    the index, so git-lfs still resolves it -- `git lfs ls-files -l` lists the oid
+cd ~/github/tonto-phar
+git lfs pull --include "tests/long/ammonium_borane_pHAR_C23/GenerateXML.XML"
+git lfs status        # expect: LFS: 1c5c24f -> File: 1c5c24f
+
+# 3. run it against the CURRENT binary, not a build of the 2025-04 branch. That branch
+#    predates the ANTLR4 translator and foo.pl is gone, so it will not build; the point is
+#    to reinstate the TEST on develop, and the test is data plus a job file
+mkdir -p /tmp/phar && cd /tmp/phar
+cp ~/github/tonto-phar/tests/long/ammonium_borane_pHAR_C23/{stdin,B6H6_grown.cif,tonto_data_on_F_20rfl.hkl,GenerateXML.XML} .
+sed -i '/thermal_smearing_model=/d' stdin      # see below -- obsolete keyword
+TONTO_BASIS_SET_DIRECTORY=<repo>/basis_sets <repo>/build/tonto
+```
+
+**One edit to the job file is required.** As committed it dies with
+
+```
+Error in DIFFRACTION_DATA.READ:process_keyword ... unknown option: thermal_smearing_model=
+```
+
+`thermal_smearing_model=` was removed by `acb7af0b`, *"Removed 'temperature_factor_model' and a
+few others, **in favour of deriving the info from partition_model**"* — the whole machinery is
+commented out, keyword, reader, setter, `CRYSTAL` accessor and its `molecule.scf.foo` consumers.
+The job already sets `partition_model= oc-crystal23`, which now carries that information
+(confirmed by Dylan, 2026-08-16), so **deleting the line is the correct port**, not a workaround.
+
+#### Result: exact reproduction, 3 m 41 s
+
+With that one line removed, the job runs to completion on current `develop` and reproduces the
+2025-04 reference **digit for digit**:
+
+| | this run | reference |
+|---|---|---|
+| `Structure fit converged.` | yes | yes |
+| R(F) | 0.005188 | 0.005188 |
+| N_r | 20 | 20 |
+| N_p | 11 | 11 |
+| GoF² | 0.631422 | 0.631422 |
+| GoF | 0.794621 | 0.794621 |
+| scale factor | 0.979852 | 0.979852 |
+
+So **pHAR still works**, and the code that ships untested is now known to be correct on this
+case. That was the whole point of the entry.
+
+#### What remains, and it is small
+
+The reference is 2928 lines against this run's 971. The difference is **not numerical**: the
+`thermal_smearing_model=` keyword echo (removed), a *"crystal data already defined!"* warning,
+and a **"Form factor asymmetry"** diagnostic section the current build no longer prints. So
+reinstating the test needs its `stdout` re-blessed — legitimate, given a year of intervening
+development, but a blessing decision.
+
+Remaining work to land it, with **option 2 (fetch on demand) chosen by Dylan**:
+
+1. Port `tests/long/ammonium_borane_pHAR_C23/` to `develop`, keeping the 134-byte **pointer**
+   rather than the asset — a 167 MB file in a public repo is what option 4 rightly rejects.
+2. Restore a `.gitattributes` tracking `tests/long/**/*.XML`, which is the file whose loss
+   caused all of this.
+3. **The test must SKIP, not fail, when the asset is absent** — otherwise every clone without
+   the object goes red. `scripts/test.py` has no skip mechanism today; ctest's
+   `SKIP_RETURN_CODE` is the natural hook. This is the only real piece of work left.
+4. Re-bless `stdout` from a current run.
+5. Note the runtime: 3 m 41 s, so `long`, and comfortably the slowest test in the suite.
+
 
 ## Deferred: small numerical differences (longstanding) — drill down
 
@@ -2969,6 +3166,27 @@ highlighting and tighter editor integration. The repo already ships some vim sup
 ---
 
 # Platform-specific
+
+## The macOS RGBI badge is red, and the fix is on a machine we cannot reach
+
+`ci-rgbi-macos.yml` is a weekly, deliberately exploratory probe of the macOS
+install list in `docs/INSTALLING_RGBI.md`. It fails at the step **"BasicTeX,
+then tlmgr BY ABSOLUTE PATH"**, after `brew install --cask basictex` succeeds.
+
+**It is not investigated, on purpose.** The toolchain was working when it was
+last set up by hand (2026-08-05, which is what the step's comment about the
+absolute `tlmgr` path records), but that work lives on a Mac that is no longer
+accessible. Nobody can currently reproduce, and a speculative fix to an
+untested platform is worse than a known-red badge.
+
+Logs from the failing scheduled runs are no longer retrievable, so the cause is
+unknown rather than merely unfixed. Candidates, none confirmed:
+`/Library/TeX/texbin/tlmgr` having moved, `tlmgr update --self` failing against
+a CTAN mirror, or one of the seven requested packages being unavailable.
+
+Anyone with a Mac should trigger a manual run and read a FRESH log before
+changing anything.
+
 
 ## OPEN: long paths to the basis sets fail -- STR is 256 characters
 

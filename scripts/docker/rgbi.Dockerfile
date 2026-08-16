@@ -45,6 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         texlive-latex-recommended \
         texlive-pictures \
         texlive-extra-utils \
+        texlive-latex-extra \
         poppler-utils \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -58,7 +59,7 @@ RUN pipx install mol2chemfigPy3
 WORKDIR /tonto
 COPY scripts/rgbi_doctor.sh   scripts/rgbi_selftest.sh   scripts/
 COPY rgbi-scripts/            rgbi-scripts/
-COPY docker/example-N2/       example-N2/
+COPY scripts/docker/example-N2/  example-N2/
 
 # 1. The doctor must come out CLEAN on a machine built from the list above.
 #    Any FAIL here means the list is incomplete -- exactly what this exists for.
