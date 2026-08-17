@@ -394,9 +394,10 @@ contains
    end
 
    I_scale_and_extn_correction(scale_factor,extinction_factor) result (res) ::: PURE
-   ! Return the extinction correction  factors "res" to the calculated
-   ! individual structure factors. NOTE: this routine also does scaling
-   ! corrections without extinction.
+   ! Return the SHELXL-style extinction and scale correction factors "res"
+   ! to the calculated intensities.  The corresponding amplitude correction
+   ! is [1+x*|Fc|^2*angle_part]^(-1/4), so its intensity correction is the
+   ! square of that factor.
       self :: IN
       scale_factor      :: REAL, IN
       extinction_factor :: REAL, IN
@@ -405,10 +406,29 @@ contains
    ENSURE(.reflections.allocated,"no reflection data")
    ENSURE(.reflections.have_F_calc, "no calculated structure factors")
 
+      F_calc :: CPX
+      F_abs2,val :: REAL
+      angle_part :: VEC{REAL}@
+      n_refl,n :: INT
+
+      n_refl = .reflections.dim
+
       if (extinction_factor.is_zero(TOL(9))) then
+
          res = scale_factor
+
       else
-       ! DIE("sorry, not yet ...")
+
+         angle_part.create(n_refl)
+         angle_part = .INQ:extinction_angle_part
+         do n = 1,n_refl
+            F_calc = .reflections(n).F_calc
+            F_abs2 = REALIFY(F_calc*conjg(F_calc))
+            val    = ONE + extinction_factor*F_abs2*angle_part(n)
+            res(n) = scale_factor/sqrt(val)
+         end
+         angle_part.destroy
+
       end
 
    end
@@ -463,9 +483,8 @@ contains
    end
 
    I_scale_and_extn_correction(scale_factors,extinction_factor) result (res) ::: PURE
-   ! Return the extinction correction factors "res" to the calculated
-   ! individual structure factors. WARNING: this routine in fact does no
-   ! extinction correction, only multiple scale factors.
+   ! Return the SHELXL-style extinction and scale correction factors "res"
+   ! to the calculated intensities.
       self :: IN
       scale_factors     :: VEC{REAL}, IN
       extinction_factor :: REAL, IN
@@ -475,6 +494,9 @@ contains
    ENSURE(.reflections.have_F_calc, "no calculated structure factors")
    ENSURE(scale_factors.dim==maxval(.reflections.group),"wrong # of groups")
 
+      F_calc :: CPX
+      F_abs2,val :: REAL
+      angle_part :: VEC{REAL}@
       g,n,n_refl,n_group :: INT
 
       n_refl = .reflections.dim
@@ -492,25 +514,43 @@ contains
 
       else
 
-       ! DIE("sorry, not yet ,...")
+         angle_part.create(n_refl)
+         angle_part = .INQ:extinction_angle_part
+         do g = 1,n_group
+         do n = 1,n_refl
+            if (.reflections(n).group==g) then
+               F_calc = .reflections(n).F_calc
+               F_abs2 = REALIFY(F_calc*conjg(F_calc))
+               val    = ONE + extinction_factor*F_abs2*angle_part(n)
+               res(n) = scale_factors(g)/sqrt(val)
+            end
+         end
+         end
+         angle_part.destroy
 
       end
 
    end
 
    extinction_angle_part result (res) ::: private, pure
-   ! Return the angular part of the extinction correction.
+   ! Return the reflection-dependent part of the empirical SHELXL
+   ! extinction correction:
+   !
+   !   Fc* = k Fc [1 + 0.001*x*|Fc|^2*lambda^3/sin(2 theta)]^(-1/4)
+   !
+   ! Wavelength is stored internally in bohr and is converted to Angstrom
+   ! here, as required by the SHELXL convention.
       self :: IN
       res :: VEC{REAL}(size(.reflections))
 
       n :: INT
-      twotheta,c,s :: REAL
+      twotheta,s,wavelength_A :: REAL
 
+      wavelength_A = .wavelength*ANGSTROM_PER_BOHR
       do n = 1,.reflections.dim
          twotheta=TWO*.reflections(n).theta
-         c = cos(twotheta)
          s = sin(twotheta)
-         res(n) = (ONE+c*c)/(ONE+c*s)
+         res(n) = TOL(3)*wavelength_A*wavelength_A*wavelength_A/s
       end
 
    end
@@ -675,7 +715,7 @@ contains
        ! tmp = tmp + I_pred*(I_pred-ref.I_corr) / (ref.I_sigma*ref.I_sigma)
          tmp = tmp + I_pred*(I_pred-ref.I_exp) / (ref.I_sigma*ref.I_sigma)
       end
-      res = FOUR*tmp/max(n_refl-.n_param,1)
+      res = TWO*tmp/(p(1)*max(n_refl-.n_param,1))
 
       ext.destroy
 
@@ -712,7 +752,7 @@ contains
          extn = ext(n)
          tmp  = tmp + (p1 * abs(ref.F_calc)*extn - ref.F_corr) * &
              extn*extn*extn*extn*extn* &
-             REALIFY(ref.F_calc*ref.F_calc*ref.F_calc) * &
+             abs(ref.F_calc)*abs(ref.F_calc)*abs(ref.F_calc) * &
              angle_bit(n) / (ref.F_sigma * ref.F_sigma)
       end
       res = -p1*tmp/(TWO * max(n_refl-.n_param,1))
@@ -728,9 +768,39 @@ contains
       p    :: VEC{REAL}, IN
       res  :: REAL
 
-   ! DIE("Sorry...")
+   ENSURE(.INQ:have_I_exp, "no experimental structure factors")
+   ENSURE(.reflections.have_I_calc, "no calculated structure factors")
+   ENSURE(.reflections.have_nonzero_I_sigma, "no structure factor errors")
+   ENSURE(size(p)==2, "wrong size, p")
 
-      res = ZERO * p(1)
+      tmp,extn,p1,I_calc :: REAL
+      angle_bit,ext :: VEC{REAL}@
+      ref :: REFLECTION
+      n,n_refl :: INT
+
+      n_refl = .reflections.dim
+
+      angle_bit.create(n_refl)
+      ext.create(n_refl)
+
+      angle_bit = .INQ:extinction_angle_part
+
+      p1 = p(1)
+      ext = .INQ:I_scale_and_extn_correction(ONE,p(2))
+
+      tmp = ZERO
+      do n = 1,n_refl
+         ref    = .reflections(n)
+         extn   = ext(n)
+         I_calc = ref.I_calc
+         tmp = tmp + (p1*I_calc*extn - ref.I_exp) * &
+            extn*extn*extn*I_calc*I_calc*angle_bit(n) / &
+            (ref.I_sigma*ref.I_sigma)
+      end
+      res = -p1*tmp/max(n_refl-.n_param,1)
+
+      ext.destroy
+      angle_bit.destroy
 
    end
 
