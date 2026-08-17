@@ -4382,6 +4382,63 @@ count for a zero esd varies between gfortran point releases, and any reference
 containing a zero esd is therefore only valid for the compiler that blessed it.
 The fix is in the printer, not in the references.
 
+### UPDATE 2026-08-18: half of this is fixed; the other half is open and named
+
+**Fixed and pushed (`26d9166a`): the esd digit count.** `REAL:get_dp_de_le`
+clamps the error's decimal place at `max_dp` and then emitted an error digit at
+`dp = max_dp+1` anyway, so an esd of about 1e-8 out of a covariance matrix
+printed `180.00000000(1)` under gfortran 14.2.0 and `180.0000000(0)` under
+14.3.0 — the value being an exact zero on one compiler and denormal-scale noise
+on the other, taking different branches. The fix needs no threshold: after the
+1-digit reduction, `dp > max_dp` means the esd needed more decimals than the
+caller allows, so it prints as zero. **It should converge 14.2.0 onto the
+14.3.0 output**, which is what the references blessed in `d7d2caaa` contain.
+
+**UNVERIFIED AT THE TIME OF WRITING.** Locally this is a no-op — 14.3.0 already
+produced the zeros — so the proof must come from CI, which runs 14.2.0. The
+check is simply: are `nh3_rhf_DZP_HAR` (label `short`) and `urea_hart_STO-3G`
+(label `hart`) green on GitHub for `26d9166a` or later? **If they are red, the
+diagnosis is wrong and those two references, plus
+`nh3_rhf-consistent-cluster-charge_DZP_HAR`, must be reverted to their
+pre-`d7d2caaa` contents** — they were blessed from this 14.3.0 box deliberately
+(Dylan, 2026-08-18) to get the corrected asymmetry table in, accepting the risk.
+Also left deliberately unblessed: `urea_hart_STO-3G_disk_ffs`, which after the
+fix agrees loosely on its first file and differs by 0.43 ulp on the second
+(fewer printed decimals). Bless it only once CI is known good.
+
+**Open, and NOT the same bug: column widths drift by one character.** In the
+*cartesian* ADP table only, every entry is byte-identical between compilers but
+the gap between two columns moves by one space:
+
+```
+-  1   S  0.01561(7)  0.01747(8)  0.02029(8)   0.00000(4)  0.00000(3)   0.00000(8)
++  1   S  0.01561(7)  0.01747(8)  0.02029(8)   0.00000(4)   0.00000(3)   0.00000(8)
+```
+
+Seen in `so2_rhf_DZP_anharmonic_cluster_charge_XWR` (widens) and both
+`nh3_*_HAR` tests (narrows). What has been **ruled out** by comparing the
+references character by character, so nobody repeats it:
+
+- Not the values — no printed entry differs.
+- Not all ADP tables — the wide `U_xx…Axis` table with esds is identical across
+  compilers. Only the cartesian one moves.
+- Not a missing guard in the width path: `REAL:get_sl_cb` derives the width from
+  the same `get_dp_de_le` call that produces the text, so the two cannot
+  disagree about an entry. Per-entry arithmetic gives 11 characters on both.
+
+That leaves the column-level maximum — `max_cb`, the padding that aligns closing
+braces — as the only place a difference can enter with no entry changing. Start
+there.
+
+**The measurement that was in flight when this was written:** a full
+`gfortran-13` build in a scratch tree (13, 15 and 16 are all installed here;
+there is no 14.2.0 on this machine, which is why the esd half could not be
+verified locally). If 13 or 15 reproduces the width drift against 14.3.0, that
+is a local reproducer and the bisect can proceed without CI. **If all of them
+agree, the drift is not the compiler at all** — it would then be something about
+the machine that blessed the reference, and the hunt moves elsewhere. Either
+outcome is worth knowing; run it and record which.
+
 ---
 
 ## Exercise 4 should use Tonto's own contour plotting, not a hand-rolled script
