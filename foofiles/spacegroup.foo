@@ -3592,7 +3592,7 @@ contains
 
    end
 
-   symmetrize_unique_SFs(sf,stabilizer,refl,diff) :: leaky 
+   symmetrize_unique_SFs(sf,stabilizer,refl,diff,diffmax,diffmax_hkl) :: leaky
    ! Symmetrize the list of unique non-T&I symmetry-generated
    ! reflections over the lost of stablizer symops.
    ! NOTE: these are the original lst of reflections, not
@@ -3629,7 +3629,9 @@ contains
       stabilizer :: VEC{INT}, IN
       refl :: VEC{REFLECTION}, IN
       diff :: REAL, optional, OUT
-   
+      diffmax :: REAL, optional, OUT
+      diffmax_hkl :: VEC{INT}(3), optional, OUT
+
    ENSURE(.analyzed,        "spacegroup not analyzed")
    ENSURE(sf.dim==.n_unique_SF_symops*refl.dim,"unique_sf_ints: wrong size")
     
@@ -3649,9 +3651,12 @@ Db = FALSE ! Set Db=TRUE to see all the chains of indices comprising the stabili
    
       ! Anything to do?
 
-      if (present(diff)) then   ! Kang added 2024.06.03
-         diff = ZERO ! Initialize "diff" OUT if diff is provided
-      end
+      ! Initialize whichever residuals were asked for. Each is tested
+      ! separately: they are independently optional, and the branch version
+      ! of this code assigned all three under "present(diff)" alone.
+      if (present(diff))        diff = ZERO
+      if (present(diffmax))     diffmax = ZERO
+      if (present(diffmax_hkl)) diffmax_hkl = 0
 
       if (n_stab<=1) return
    
@@ -3757,10 +3762,28 @@ Db = FALSE ! Set Db=TRUE to see all the chains of indices comprising the stabili
       ! At the end---after the calculation of "diff"---"sf" will be overwritten by "tmp_ff"
  
 
-! If "diff" is provided, do the following section. else skip.
-      if ( present(diff) ) then   ! Kang added 2024.05.29
+! If any residual is wanted, do the following section. else skip.
+      if ( present(diff) OR present(diffmax) OR present(diffmax_hkl) ) then ! Kang added 2024.05.29
          absdiff = abs(tmp_ff(1:n_refl) - sf(1:n_refl)) ! First block only = FF of original unique atom in the asym. unit
-         diff = sqrt(sum(absdiff**2))
+         ! The residual SUM OF SQUARES, which is what the caller stores in
+         ! .asymmetric_FF_symmetrization_rss and what that component's
+         ! description says it holds. This used to return sqrt(sum(...)),
+         ! while CRYSTAL:put_asymmetric_FF_symmetrization_rss printed
+         ! sqrt(rss/n_refl) -- so the reported "RMS asymmetry" was rooted
+         ! twice, S^(1/4)/sqrt(n) rather than sqrt(S/n), overstating it by
+         ! seven orders of magnitude for urea. The Max column added below
+         ! is what exposed it: a maximum cannot be smaller than the RMS of
+         ! the same set, and it was, by a factor of a million.
+         if (present(diff)) diff = sum(absdiff**2)
+         ! The largest single asymmetry, and the reflection that produced it.
+         ! Kang 2025.04.25: an RMS says how asymmetric the form factors are on
+         ! average, but not which reflection is worst, which is what tells you
+         ! whether the cause is one bad k-point or a systematic effect.
+         if (present(diffmax) OR present(diffmax_hkl)) then
+            n = absdiff.index_of_largest_value
+            if (present(diffmax))     diffmax = absdiff(n)
+            if (present(diffmax_hkl)) diffmax_hkl = [ refl(n).h1, refl(n).h2, refl(n).h3 ]
+         end
       end
 
       ! Update sf
