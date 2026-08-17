@@ -48,7 +48,7 @@ an annotation describing the branch in more detail than this table.
 | Tag | Author(s) | Dates | What it holds |
 |---|---|---|---|
 | `archive/Bader` | Dylan Jayatilaka (19), Max Davidson (9) | 2018-12 – 2019-02 | Bader basin analysis and isosurface triangulation: `cubify_Bader`, `get_Bader_basins_para`/`_sing`, `interpolate_Bader_edge_info`, `interpolate_Bader_faces`, `prepare_Bader_grid`, `put_Bader_basin_info`, plus marching-cube changes and a `PARALLEL` gather. `master` carries only `get_Bader_regions`, so this is genuinely unmerged. |
-| `archive/release-td-old` | Dylan Jayatilaka (13), Kanghyun Chu (4) | 2025-08 – 2025-09 | Time-dependent and CIS work. `td_data.foo` reworked, M=0 singlet detector, `S_list` array, MS=0 option in CIS, MGS/Householder orthonormalisation in Davidson, and a major `symmetric_reflect` bug fix. |
+| `archive/release-td-old` | Dylan Jayatilaka (13), Kanghyun Chu (4) | 2025-08 – 2025-09 | Time-dependent and CIS work. `td_data.foo` reworked, M=0 singlet detector, `S_list` array, MS=0 option in CIS, MGS/Householder orthonormalisation in Davidson, and a major `symmetric_reflect` bug fix. **All seven TD/CIS commits are already on `develop`, which has since gone further; the `symmetric_reflect` fix included. Nothing to port back** — assessed 2026-08-17, see the porting note below. What is still stranded is the earlier half: two breakdown commits and `e22e2569`, an additive extension to Kang's form-factor symmetrization. |
 | `archive/bond-energy` | Dylan Jayatilaka (11) | 2020-09 – 2020-10 | Roby bond-energy analysis. `roby.foo` +1478 lines: `Eshared` partitioning for E^DE, exact energy-density method, deformation energies, group populations. |
 | `archive/release-pHAR-broken` | Kanghyun Chu (8) | 2025-04 | **TEST RESCUED 2026-08-16.** Held the only ammonia-borane pHAR test in existence. It is now on `develop` as `tests/long/ammonium_borane_pHAR_C23`, and it PASSES — reproducing the 2025-04 reference digit for digit. The 167 MB CRYSTAL23 wavefunction stays on this tag and is fetched on demand; the test skips without it. See the porting note below. Still unported from these 8 commits: the form-factor symmetrisation residual tables. |
 | `archive/nn-har` | Max Davidson (3), Dylan Jayatilaka (1) | 2023-02 | **NEAREST-NEIGHBOUR** Hirshfeld atom refinement -- cluster selection by connectivity for PERIODIC NETWORK SOLIDS, with hydrogen capping, automated level switching and H-bond length normalisation. (An earlier version of this table said "neural-network", which is wrong and led to the branch being dismissed once; see the porting note below.) |
@@ -154,6 +154,7 @@ is not repeated.
 | `archive/lamaGOET` | **`put_unit_cell_geometry_cartesian` was ported** — see below. Its second routine, `write_xyz_file_xtal14`, was **not**: it is a degraded fork of `put_xyz_file`, which has since moved to `molecule.put.foo` and improved. The branch version writes `.crystal.asymmetric_unit_geometry` — **fractional** coordinates, verified at `crystal.foo:3771` where they are converted with `matmul(.unit_cell.direct_mx,…)` — with no unit conversion, while its own comment claims cartesian axes. It also omits the xyz comment line, making the file malformed, and uses `TEXTFILE*` and `stdin.buffer_exhausted`, both gone from `master` (the latter commented out at `textfile.foo:2001`). If XTAL14 output is wanted, add an option to `put_xyz_file`. |
 | `archive/kanghyun` | Nothing to port. The `oisn't` → `isn't` typo was **already fixed on `master`** independently. Commenting out `stdout.flush` in `object.foo` was a workaround for stray blank lines in the keyword echo; the real cause — `TEXTFILE:flush` emitting the margin twice — was root-caused and fixed on 2026-08-03 (see `DEFERRED.md`), so the workaround is obsolete and treats the symptom. Only the two-line CIF/job-name echo is live, and it was judged not worth the output change. |
 | `archive/lorraine` | **Skip.** It modifies `cubes_to_basin` and its driver rather than adding anything, and `master` has independently evolved both `cubes_to_basin` and `cubes_to_basin_parallel` since. A merge into live code, not a graft. |
+| `archive/release-td-old` | **The TD/CIS half is already merged; `develop` is ahead of it.** Assessed 2026-08-17. `git cherry develop archive/release-td-old` marks all seven TD/CIS commits as upstream, including `ac8b2af4` *"Major bug fix in `symmetric_reflect`!"*, which is on `develop` as `e28bd649` — the same patch, the same minute, differing only in blob hashes and line offsets. `develop` then continued past the branch: the Mazur one-double correction, the 2D `Vs` array in CIS, `read_molden_NOs` reinstated, and the TDHF and cyclazine test fixes, through `b3b50dd2` (2026-07-16), all after the branch's last TD commit (2025-09-04). So the branch holds the **older** copy of this code and nothing in it should be ported back. What remains stranded is the other half — the two breakdown commits and `e22e2569`, discussed below. Details of the `symmetric_reflect` bug and its surviving twin are in the next section. |
 | `archive/nn-har` | **PORTED 2026-08-16 — `16a91ce1` on `develop`. This row previously said the branch was BLOCKED ON A TEST CASE and that porting needed "a network-solid structure with diffraction data to refine against — a scientific input, not something that can be synthesised". That input existed all along, in `~/Dropbox/Quartz/`:** the Bern quartz measurement (Balmohammadi, via Grabowsky; Ag Kα, 100 K), and Max Davidson's thesis chapter 5 as the expected answers. NN is **nearest neighbour** — connectivity-based cluster selection with H-capping, which is how HAR is done on an extended solid where no molecule can be isolated. The port took the branch's NN logic but **not** its group construction, which predates the 2026 fragHAR repair `d840e322` by three years — all four of its commits sit inside the window when fragHAR was broken (`f0d7cfd3`, 2020-01-23 → 2026-06-01), and Max was patching fragHAR himself as he went. Its `fd956388` fragHAR/DFT fix was dropped as superseded, as this row predicted. **Six tests, in two tiers**: four short ones build fragments only (37 ms each, no SCF, no reflections) and assert the formulae Davidson Fig. 5.2 names — orthosilicic acid around the Si, silyloxysilane around the O; two long ones do the refinement (7 s and 21 s). **The thesis reproduces**: L1+H gives R(F) 0.0120 / GoF² 9.84 against 0.0127 / 10.61, with r(Si–O) and both U_iso agreeing to the digits printed — and Davidson's uncomfortable finding reproduces too, IAM GoF² 7.235 beating HAR's 9.84. Three live `cluster.foo` defects were fixed on the way, including an out-of-bounds write in `make_asym_occupation_list` and a `PURTE` attribute that had never been `PURE`. The "I AM LAZY" comment this row flagged is handled. Full record: `docs/NN_HAR_REPORT.md`. |
 | `archive/release-pHAR-broken` | **TEST RESCUED AND PASSING 2026-08-16.** This branch was recorded as the one archive with an open dependency: a 167 MB CRYSTAL23 wavefunction stored as a **134-byte Git LFS pointer**, because `.gitattributes` was lost before the branch tip. `DEFERRED.md` called checking whether that object was still retrievable *"FIRST STEP, and it decides everything below"*, and it had never been run because `git-lfs` was not installed. **It is retrievable.** Finding out needed no `git-lfs` at all — the LFS protocol is plain HTTP, so a `curl` against GitHub's batch API returns a signed download URL rather than an error; the object downloads to 174,978,609 bytes whose sha256 matches the oid exactly. **The test then passed on current `develop`**, reproducing the 2025-04 reference digit for digit: R(F) 0.005188, N_r 20, N_p 11, GoF² 0.631422, scale 0.979852, *"Structure fit converged."* So pHAR — which ships in the library with `MOLECULE.CE:phar_defragment` live and nothing testing it — is now known to work. **One line had to be ported, not worked around**: the job died on `unknown option: thermal_smearing_model=`, a keyword removed by `acb7af0b` *"in favour of deriving the info from partition_model"*; the job already sets `partition_model= oc-crystal23`, which carries it. **The asset is deliberately NOT committed.** Restoring a `.gitattributes` and porting the pointer — which the old note suggested — would make every clone pull 167 MB, since LFS smudges the checked-out ref automatically. `develop` and `master` carry **zero** LFS objects (`git lfs ls-files develop`), and must stay that way; the asset lives only on this tag and `scripts/fetch_phar_asset.sh` pulls it on request, verifying sha256 and deleting on mismatch. The test **skips** without it, printing how to get it. `stdout` was re-blessed: the numbers were unchanged, but the old reference echoed the removed keyword and carried a "Form factor asymmetry" section this build no longer prints. Runtime 3 m 14 s. **Not** rescued: the form-factor symmetrisation residual tables in the same 8 commits. |
 | `archive/libxc` | **Do not port as it stands; it is a prototype.** It is the most valuable of the small branches — a capability rather than a printout — and its two hardest judgement calls are correct. But it wires one of the four functional dispatch routines, and that one dereferences absent arguments on exactly the functionals it added. Assessed 2026-08-12; full findings below. |
@@ -174,6 +175,83 @@ alternatives were dropped. It is reached by the **new keyword
 `put_unit_cell_geometry_cart`** rather than being called from `put_crystal` as
 on the branch — deliberately, so that no existing test reference changes and
 nothing has to be reblessed.
+
+### `archive/release-td-old` in detail — the `symmetric_reflect` bug, and its surviving twin
+
+The branch was recommended as the next rescue on the strength of `ac8b2af4`,
+*"Major bug fix in `symmetric_reflect`!"*, on the reasoning that a bug fix
+stranded on an archive tag means the live code still has the bug. **That
+reasoning was sound and the premise was wrong**: the commit is on `develop` as
+`e28bd649`, and `git blame` puts it on the live lines. The lesson is that a
+branch commit must be checked against the tree by patch, not by whether the
+branch was ever merged — `git cherry` answers it in one command.
+
+The bug itself is worth recording, because it recurs. The lower-triangle branch
+of `MAT{INTRINSIC}:symmetric_reflect` read:
+
+```foo
+do j = 1,.dim1
+do i = 1,i-1              ! bound names the loop variable it controls
+   self(j,i) = self(i,j)  ! same direction as the upper branch
+```
+
+Two defects in three lines: the inner trip count is computed from an undefined
+`i`, and the assignment sets the *upper* triangle, which is what the other
+branch already does. The fix corrected both.
+
+**One copy survived, and was fixed on 2026-08-17**: `MAT3{REAL}:symmetric_reflect_23`
+carried the same three lines, unamended, at `mat3{real}.foo:236`. It could not
+fire — its only callers, `molecule.fock.foo:739` and `:903`, call it bare, so
+`upper` defaults to `TRUE`, and no call site anywhere in `foofiles/` or
+`runfiles/` passes `set_lower`. The same is true of the `MAT{INTRINSIC}` version,
+so that 2025 fix was itself pre-emptive. Both were landmines rather than wrong
+answers: the first caller to ask for the lower triangle would have got an
+undefined loop bound. No test reference changes, since no test reaches the path.
+
+The defect class is greppable, which is how the survivor was found:
+
+```bash
+grep -rnP 'do\s+([A-Za-z_]\w*)\s*=\s*[^,\n]+,\s*\1\s*[-+]' foofiles/
+```
+
+That pattern — a `do` whose bound names its own loop variable — now returns
+nothing across `foofiles/`.
+
+### Kang's form-factor symmetrization: mostly merged, one extension is not
+
+`e22e2569` *"Added Kang residual symmetrization updated"* (2025-04-25) is one of
+the commits still stranded on `release-td-old`, but it is an **update** to work
+that is already live. On `develop`:
+
+| | state |
+|---|---|
+| `SPACEGROUP:symmetrize_unique_SFs(sf,stabilizer,refl,diff)` | present, called from `CRYSTAL:symmetrize_FFs` |
+| `asymmetric_FF_symmetrization_rss` and its "Form factor asymmetry" table | present — `crystal.foo:7716`, headed *"By Kang. 10.Mar.2025"*, printed by five HAR test references |
+| `.crystal.asymmetric_unit_geometry.destroy` in `molecule.read.foo` | present, at line 1275 |
+
+What the 2025-04-25 commit adds on top is the **maximum** residual beside the
+root-sum-square: `asymmetric_FF_symmetrization_rmax` and
+`..._rmax_hkl`, reported with the reflection that produced it, which needs three
+`OUT` arguments on `symmetrize_unique_SFs` instead of one. That is the
+"form-factor symmetrisation residual tables" listed as unported from the pHAR
+branch. It is additive and self-contained.
+
+Two riders in the same commit should **not** be taken with it. One moves
+`put_CIFs`/`put_tonto_fcf_XCW`/`put_olex_fcf_XCW`/`put_xd_fco_XCW` out of the
+`if (.crystal.xray_data.do_residual_cube)` guard in the XCW lambda loop, so every
+XCW run would write those files; `develop` keeps them inside the guard, and with
+`output=FALSE` rather than the branch's `TRUE`. The other is a comment noting
+that `.reflections(n).stl` is printed in Bohr⁻¹.
+
+**Open question, not a claim.** The rescued pHAR job does not print the
+"Form factor asymmetry" table, although the 2025-04 reference it reproduces
+digit for digit did — noted in `tests/long/ammonium_borane_pHAR_C23/IO`. The
+table is gated on `.asymmetric_FF_symmetrization_rss.allocated`, which is set
+only by `CRYSTAL:symmetrize_FFs`, whose only caller is `molecule.har.foo:612`.
+So the pHAR path appears not to symmetrize its form factors while the HAR path
+does. The numbers being unchanged says the difference is not affecting this
+structure's result, but whether pHAR *should* symmetrize has not been asked of
+anyone who would know.
 
 ### `archive/libxc` in detail — what is worth keeping, and what blocks a port
 
