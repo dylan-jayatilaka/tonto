@@ -47,7 +47,7 @@ an annotation describing the branch in more detail than this table.
 
 | Tag | Author(s) | Dates | What it holds |
 |---|---|---|---|
-| `archive/Bader` | Dylan Jayatilaka (19), Max Davidson (9) | 2018-12 – 2019-02 | Bader basin analysis and isosurface triangulation: `cubify_Bader`, `get_Bader_basins_para`/`_sing`, `interpolate_Bader_edge_info`, `interpolate_Bader_faces`, `prepare_Bader_grid`, `put_Bader_basin_info`, plus marching-cube changes and a `PARALLEL` gather. `master` carries only `get_Bader_regions`, so this is genuinely unmerged. |
+| `archive/Bader` | Dylan Jayatilaka (19), Max Davidson (9) | 2018-12 – 2019-02 | Bader basin analysis and isosurface triangulation: `cubify_Bader`, `get_Bader_basins_para`/`_sing`, `interpolate_Bader_edge_info`, `interpolate_Bader_faces`, `prepare_Bader_grid`, `put_Bader_basin_info`, plus marching-cube changes and a `PARALLEL` gather. **The serial half is now on `develop`** (2026-08-18, `cc530a34`) under the new keyword `get_bader_basins`; `get_Bader_regions` was left as it was. **The parallel half — Max Davidson's linked-list rework of `cubes_to_basin_parallel` and its three `types.foo` types — is still only here**, and so is the `PARALLEL` gather, which is superseded. See the porting note below and `docs/BADER_REPORT.md`. |
 | `archive/release-td-old` | Dylan Jayatilaka (13), Kanghyun Chu (4) | 2025-08 – 2025-09 | Time-dependent and CIS work. `td_data.foo` reworked, M=0 singlet detector, `S_list` array, MS=0 option in CIS, MGS/Householder orthonormalisation in Davidson, and a major `symmetric_reflect` bug fix. **All seven TD/CIS commits are already on `develop`, which has since gone further; the `symmetric_reflect` fix included. Nothing to port back** — assessed 2026-08-17, see the porting note below. What is still stranded is the earlier half: two breakdown commits and `e22e2569`, an additive extension to Kang's form-factor symmetrization. |
 | `archive/bond-energy` | Dylan Jayatilaka (11) | 2020-09 – 2020-10 | Roby bond-energy analysis. `roby.foo` +1478 lines: `Eshared` partitioning for E^DE, exact energy-density method, deformation energies, group populations. |
 | `archive/release-pHAR-broken` | Kanghyun Chu (8) | 2025-04 | **TEST RESCUED 2026-08-16.** Held the only ammonia-borane pHAR test in existence. It is now on `develop` as `tests/long/ammonium_borane_pHAR_C23`, and it PASSES — reproducing the 2025-04 reference digit for digit. The 167 MB CRYSTAL23 wavefunction stays on this tag and is fetched on demand; the test skips without it. See the porting note below. Still unported from these 8 commits: the form-factor symmetrisation residual tables. |
@@ -97,14 +97,14 @@ which is the only arrangement that keeps a public clone cheap.
 ## State of the recovery effort, and what is left (2026-08-18)
 
 Nine of the fifteen tags are closed. Of the six that held substantial unmerged work,
-three are now resolved:
+**four are now resolved and two remain**:
 
 | tag | outcome |
 |---|---|
 | `archive/nn-har` | **ported** 2026-08-16 (`16a91ce1`) — six tests, thesis reproduced |
 | `archive/release-pHAR-broken` | **test rescued** 2026-08-16 (`8ea8c988`); its symmetrization extension ported 2026-08-18 |
 | `archive/release-td-old` | **nothing to port** — the TD/CIS half is already on `develop`, which is ahead |
-| `archive/Bader` | **serial half ported** 2026-08-18 — compiles and runs; two measured defects; parallel half deferred. See `docs/BADER_REPORT.md` |
+| `archive/Bader` | **serial half ported** 2026-08-18 (`cc530a34`) — compiles, runs, two measured defects. **The parallel half was not done** — see below. `docs/BADER_REPORT.md` |
 
 Two remain, in the order worth taking them:
 
@@ -112,6 +112,40 @@ Two remain, in the order worth taking them:
 |---|---|---|
 | `archive/bond-energy` | 11 commits, +1756/−217 | Roby bond energies, `roby.foo` +1478 lines. Self-contained. |
 | `archive/Teaching` | 8 commits, +152/−87 | MP2 teaching lab and two student PDFs. Small, no library risk. |
+
+### `archive/Bader` is only half closed — the tag must stay
+
+The serial path is on `develop`. **The parallel path is not, and the tag is still the
+only copy of it.** Do not treat `archive/Bader` as spent.
+
+What is still only on the tag: Max Davidson's rework of
+`MOLECULE.PROP:cubes_to_basin_parallel` (9 commits, 2018-08 – 2019-02), which replaces
+the boundary-plane rescan with a linked list of the paths that terminate on a partition
+boundary, plus the three types it needs — `BADER`, `LINKED_LIST_MAT_INT` and
+`HEAD_MAT_INT` in `types.foo`. The idea is sound and his own commit message records it
+as competitive on timings.
+
+It was not ported because the code is mid-debug in two specific ways, neither of which
+is a translation problem:
+
+- the convergence loop is disabled — `do while (changes EQV TRUE)` was replaced by
+  `do ii = 1,3! while (changes EQV TRUE)`, and since labels propagate one partition per
+  pass, three passes is correct only up to four ranks and silently wrong above it;
+- every merge branch does `allocate(tmp); tmp => head.head`, discarding the node it just
+  allocated on each pass, and uses raw `allocate`/`nullify` rather than Tonto's
+  `create`/`destroy`, so the memory accounting never sees the list.
+
+`develop`'s pre-existing `cubes_to_basin_parallel` was left exactly as it was, so
+nothing regressed. The design discussion, the recovery commands, and the two things
+*not* to take from the tag (his `PARALLEL:gather`, superseded by a better one already on
+`develop`; and the `MAT3{VEC_{INT}}` spelling, now `MAT3{EVEC{INT}}`) are in `DEFERRED.md`
+under *"Parallelise the Bader basin search"*.
+
+**Sequencing note.** Parallelising is not the next step even if someone wants the speed.
+The serial version does not yet give a usable answer — its basin count runs from 1 to
+13942 depending on the grid — and there is no Bader test of any kind to compare a
+parallel result against. Get a correct serial answer and a reference first, or a parallel
+version will merely reproduce a wrong number faster.
 
 `archive/energies-breakdown2` is left alone: its own final commit records it failing in the
 polarisation term.
