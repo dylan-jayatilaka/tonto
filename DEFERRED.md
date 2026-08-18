@@ -57,6 +57,57 @@ Known offenders, all recent:
 A useful check while sweeping: a comment longer than the code it describes is a candidate,
 and a comment that names a compiler version, a date or a test name almost certainly is.
 
+## The energy breakdown is inert on `develop` — present, switched off, driver missing (2026-08-18)
+
+Found while closing the branch-recovery effort. `breakdown_data.foo` is **in the tree and
+does nothing**, and it is disconnected in three independent places, so no single switch
+turns it back on:
+
+| piece | state on `develop` |
+|---|---|
+| `foofiles/breakdown_data.foo` | present, 1589 lines, 165 procedures |
+| `type BREAKDOWN_DATA` in `types.foo` | present, line 7771 |
+| `CMakeLists.txt` source lists | **commented out in both places** (`:378` and `:495`) — never compiled |
+| keyword `put_energies_breakdown=` | **commented out**, `molecule.main.foo:407` |
+| `MOLECULE.PROP:put_energies_breakdown` | **does not exist anywhere in `foofiles/`** |
+| `breakdown_data` member on `MOLECULE` | absent |
+
+So the commented-out keyword calls a procedure that is not there, and the module it
+would need is not built. This is the same shape as `datafile.foo` before the SBF
+removal: a file that looks like a live capability and is not one. It is not a
+wrong-answer bug — nothing can reach it — but it is 1589 lines of source that no build
+has compiled, so nothing has checked it still translates.
+
+**Most of the code is already here.** The newest version of `breakdown_data.foo` on any
+ref is on `archive/release-td-old` at 1593 lines — **four lines** more than `develop`'s.
+So the bulk landed; only the wiring did not:
+
+| what is missing | where it is |
+|---|---|
+| `MOLECULE.PROP:put_energies_breakdown`, the driver | `archive/release-td-old`, `molecule.prop.foo:6561` |
+| the live keyword line (`.PROP:put_energies_breakdown`) | same tag, `molecule.main.foo:389` |
+| the two `CMakeLists.txt` uncommentings | same tag, commit `7c71e672` |
+| `MAT{REAL}` / `MAT{CPX}` / `OPMATRIX` helpers it uses | same tag, commit `74f33e26` |
+
+**It is known not to work, and that is the real obstacle.** Two people have tried:
+
+- `archive/energies-breakdown2` — Sam Thompson, `4b9bb359` *"Got tonto compiling"*
+  (2024-03-07), then Dylan `7190faa0` *"Got a few numbers from breadown, failing in
+  polarisation bit"* (2024-03-11).
+- `archive/release-td-old` — Dylan again, `37a3875d` *"Fixed up more of Spackman's
+  breakdown code"* (2025-04-25), `7c71e672` and `74f33e26` (2025-08-27).
+
+So porting the wiring is a small, bounded job — an hour, and it would compile. Making the
+numbers right is the actual work, it is a **scientific** question about the polarisation
+term rather than a translation one, and the last two attempts stopped there. **Do not
+port the wiring without deciding to finish the physics**, or the result is a reachable
+keyword that produces a wrong energy decomposition — strictly worse than the present
+state, where it cannot be reached at all.
+
+The cheap alternative, if nobody intends to finish it: delete `breakdown_data.foo` and the
+dead keyword line from `develop` and leave the work on its two tags, as was done for
+`datafile.foo`. That is a decision for Dylan, not a default.
+
 ## Searched for in-core CCSD: it is not in this repository (2026-08-18)
 
 Dylan recalled *"some work on in-core CCSD"* and asked for it to be found and extracted.

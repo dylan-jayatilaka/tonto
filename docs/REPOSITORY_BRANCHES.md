@@ -94,7 +94,36 @@ carry no LFS objects and must not start: committing the pointer with a
 skips without it. So the dependency is not removed — it is made **opt-in**,
 which is the only arrangement that keeps a public clone cheap.
 
-## State of the recovery effort, and what is left (2026-08-18)
+## The recovery effort is CLOSED (2026-08-18)
+
+**All fifteen `archive/*` tags now have a recorded outcome.** Nothing is waiting to be
+assessed, and no tag holds work that someone still intends to port. The tags stay where
+they are — several remain the only copy of what they hold, so none should be deleted.
+
+| outcome | tags |
+|---|---|
+| ported | `nn-har`, `Teaching`, `Bader` (serial half) |
+| test or extension rescued | `release-pHAR-broken`, `release-td-old` (Kang symmetrization) |
+| nothing to port — already upstream | `release-td-old` (TD/CIS half), `lorraine`, `kanghyun`, `cubes_to_basin`, `wip-sauce`, `energies-breakdown`, `dylan-jayatilaka-patch-1` |
+| assessed and declined | `bond-energy`, `libxc` (prototype; folded into the DFT milestone), `lamaGOET` (one routine ported, one declined) |
+| left to an open feature, not a rescue | `energies-breakdown2` and the breakdown commits on `release-td-old` — see below |
+
+**One thread outlives the effort, and it is not a porting problem.** The energy breakdown
+is already 99% on `develop` — `breakdown_data.foo` there is 1589 lines against the newest
+version's 1593 — but it is **inert**: commented out of `CMakeLists.txt` in two places, its
+keyword commented out, and its driver `MOLECULE.PROP:put_energies_breakdown` absent from
+the tree entirely. The missing wiring is a small, bounded job. Making the numbers right is
+not: two attempts have stopped at the same place, Dylan's own commit reading *"Got a few
+numbers from breadown, failing in polarisation bit"*. It is therefore recorded in
+`DEFERRED.md` as an open feature with a scientific obstacle, not as an unported branch.
+
+`git cherry` is misleading here and should not be used to judge what is closed. The ports
+were done by hand — rewritten against seven years of API drift, not cherry-picked — so
+`git cherry develop archive/Bader` still marks all 26 commits as unmerged even though the
+serial half is on `develop`. The recorded decision is the measure; the patch identity is
+not.
+
+## History of the effort, tag by tag (2026-08-18)
 
 Nine of the fifteen tags are closed. Of the six that held substantial unmerged work,
 **four are now resolved and two remain**:
