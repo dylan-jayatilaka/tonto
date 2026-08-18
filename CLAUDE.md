@@ -271,7 +271,9 @@ versioned with the code it described*, so it could rot silently. Do not add docu
   `scripts/docker/rgbi.Dockerfile` in CI; macOS is untested by hand and probed weekly by
   `ci-rgbi-macos.yml`.
 - `docs/TONTO_DEVELOPER.md` — developer reference; §1a is **writing parallel (MPI) code in Foo**, eight
-  pitfalls and the trace recipes that found them.
+  pitfalls and the trace recipes that found them; §1b is **build and test traps** — the stale
+  translation when a `.foo` is edited mid-build, why the loose gate passes visibly wrong output,
+  and how `scripts/test.py` actually compares.
 - `docs/FOO_GRAMMAR_DOCUMENTATION.md` — full language description and Foo→Fortran conversion rules.
 - `docs/TONTO_AND_MPI.md` — the parallel build, its numeric characterisation, and the defect register.
 - `docs/DFT_STANDARDISATION.md` — milestone 10: the DFT machinery, its three silent defects, the
@@ -281,6 +283,36 @@ versioned with the code it described*, so it could rot silently. Do not add docu
 - `docs/MAKING_CALL_GRAPHS.md` — call/use graphs and dead-code elimination.
 - `docs/EDITING_TONTO_WITH_VIM.md` — vim set-up: tags, folding, completion.
 - `DEFERRED.md` — project-wide deferred issues (was `ANTLR4_DEFERRED.md`).
+
+## 7a. Where prose belongs: source code versus documents
+
+**Agreed with Dylan, 2026-08-18.** A slab of explanatory text is cheap for a model to read
+and expensive for a person. The two audiences get different documents.
+
+**In the source (`foofiles/*.foo`, scripts, CMake) — brief.** A comment says what the code
+does and, where it is not obvious, why. It does **not** narrate how a bug was found, what
+was tried first, which compiler disagreed, or what the symptom looked like. Once a defect
+is fixed, the investigation is history and belongs in a markdown file, not beside the
+code. Three specifics:
+
+- **Procedure header documentation** may be longer, and is the right place for an
+  explanation a caller genuinely needs. Use that latitude sparingly.
+- **Type component descriptions** (`types.foo`) stay **very brief** — a line, ideally.
+- A **pitfall** that would cause the next person to reintroduce the bug may be noted, in
+  one or two lines, pointing at the document that carries the detail.
+
+**In the documents — two kinds, and do not mix them.**
+
+- *User- and developer-facing* (`README.md`, `docs/RUNNING_*`, `docs/BUILDING_*`, the
+  language and structure references): brief, clear, no trace of the debugging process.
+  Pitfalls are stated as facts to know, not as stories about how they were discovered.
+- *Mechanics and history* (`DEFERRED.md`, `docs/TONTO_DEVELOPER.md`, the per-milestone
+  reports such as `docs/NN_HAR_REPORT.md`, `docs/TONTO_AND_MPI.md`): this is where
+  durable context lives — what was measured, what was ruled out, which recipe found it,
+  what was decided and why. Write these for the next session as much as for a person.
+
+The test: if a comment explains the *bug*, it belongs in a document. If it explains the
+*code*, it belongs in the code — in as few lines as will do.
 
 ## 8. Working agreement
 

@@ -7741,9 +7741,43 @@ contains
    ENSURE(.asym_atom_stabilizer.allocated, "No stabilizer symmetry operators found")
 
       table :: VEC{TABLE_COLUMN}@
-      n_refl :: INT
+      rms, rmx :: VEC{REAL}@
+      hkl :: MAT{INT}@
+      n_refl, a, n_atom :: INT
 
       n_refl = .xray_data.reflections.dim
+      n_atom = .asymmetric_FF_symmetrization_rss.dim
+
+      ! Floor the numerical noise before reporting.
+      !
+      ! For a well-behaved molecular HAR the asymmetry is at the level of
+      ! floating-point rounding -- around 1e-15 -- and at that level neither the
+      ! value NOR the reflection at which the maximum occurs is reproducible:
+      ! the same urea job gives 0.818E-15 at (0,5,2) under gfortran 14.3.0 and
+      ! 0.843E-15 at (-1,-1,-3) under 14.2.0, because the argmax of noise is
+      ! arbitrary. Reporting that verbatim puts unreproducible numbers into every
+      ! blessed reference, which is what reddened CI on 2026-08-18.
+      !
+      ! Anything below the tolerance is numerically zero, so print it as an exact
+      ! zero and drop its meaningless hkl. Real asymmetry survives untouched: the
+      ! pHAR case runs 1e-9 to 5e-8, three orders above this, and the whole point
+      ! of the table is to show that a periodic density is measurably less
+      ! symmetric than a molecular one.
+      rms.create(n_atom)
+      rmx.create(n_atom)
+      hkl.create(n_atom,3)
+
+      rms = sqrt(.asymmetric_FF_symmetrization_rss/n_refl)
+      rmx = .asymmetric_FF_symmetrization_rmax
+      hkl = .asymmetric_FF_symmetrization_rmax_hkl
+
+      do a = 1,n_atom
+         if (rmx(a)<FF_ASYMMETRY_TOL) then
+            rms(a)   = ZERO
+            rmx(a)   = ZERO
+            hkl(a,:) = 0
+         end
+      end
 
       stdout.flush
       stdout.text("=====================")
@@ -7767,31 +7801,35 @@ contains
       table(1).set_heading("ID");
       table(1).set_values(.asymmetric_unit_atom(:).tag)
 
+      ! One significant digit, deliberately. This is a diagnostic: what matters
+      ! is the ORDER OF MAGNITUDE of the symmetry breaking, and 0.1E-04 against
+      ! 0.8E-04 separates two atoms perfectly well. More digits would only
+      ! report bits that differ between compilers (Dylan, 2026-08-18).
       table(2).set_heading("RMS");
       table(2).set_subhead("asymmetry")
-      table(2).set_width(11)
-      table(2).set_real_precision(3)
+      table(2).set_width(9)
+      table(2).set_real_precision(1)
       table(2).set_real_fortran_fmt("e") ! First e format in column !!!
-      table(2).set_values(sqrt(.asymmetric_FF_symmetrization_rss/n_refl))
+      table(2).set_values(rms)
 
       table(3).set_heading("Max")
       table(3).set_subhead("asymmetry")
-      table(3).set_width(11)
-      table(3).set_real_precision(3)
+      table(3).set_width(9)
+      table(3).set_real_precision(1)
       table(3).set_real_fortran_fmt("e")
-      table(3).set_values(.asymmetric_FF_symmetrization_rmax)
+      table(3).set_values(rmx)
 
       table(4).set_heading("-")
       table(4).set_subhead("h")
-      table(4).set_values(.asymmetric_FF_symmetrization_rmax_hkl(:,1))
+      table(4).set_values(hkl(:,1))
 
       table(5).set_heading("-")
       table(5).set_subhead("k")
-      table(5).set_values(.asymmetric_FF_symmetrization_rmax_hkl(:,2))
+      table(5).set_values(hkl(:,2))
 
       table(6).set_heading("-")
       table(6).set_subhead("l")
-      table(6).set_values(.asymmetric_FF_symmetrization_rmax_hkl(:,3))
+      table(6).set_values(hkl(:,3))
 
       table(7).set_heading("Site symm.")
       table(7).set_subhead("factor")
@@ -7803,6 +7841,9 @@ contains
       table.put
 
       table.destroy
+      hkl.destroy
+      rmx.destroy
+      rms.destroy
    end
 
    put_unit_cell_geometry

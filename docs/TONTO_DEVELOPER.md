@@ -295,6 +295,75 @@ cmake -B build-mpi-debug -DCMAKE_Fortran_COMPILER=$HOME/opt/openmpi-gf14/bin/mpi
       -DCMAKE_C_COMPILER=$HOME/opt/openmpi-gf14/bin/mpicc -DMPI=1 -DCMAKE_BUILD_TYPE=debug
 ```
 
+## 1b. Build and test traps that cost real time
+
+Four things that are not obvious, each of which produced a wrong conclusion rather
+than an error message.
+
+### Never edit a `.foo` while a build is running — the translation goes stale silently
+
+`FooToFortran` translates all 184 files in a single run, so a file parsed early can have
+its `.F90` **written minutes after** you edited the `.foo`. Make then compares timestamps,
+sees a generated file newer than its source, and considers it up to date. The result is a
+build tree whose Fortran disagrees with the sources it came from, with no diagnostic
+anywhere and an exit code of zero.
+
+Observed 2026-08-18: `crystal.foo` edited at 15:13:38, its `build/crystal.F90` written at
+15:14:39 by a translator run that had parsed the file before the edit. Two subsequent
+builds reported success and changed nothing. The tell is that the generated Fortran does
+not contain your change:
+
+```bash
+grep -n "<something you just wrote>" build/<module>.F90   # empty = stale
+touch foofiles/<module>.foo && make                       # forces re-translation
+```
+
+### Check the DIFF, not the pass/fail gate
+
+The loose gate is deliberately forgiving (rel <= 0.2% OR last-digit <= 2, and some tests
+carry relaxed tolerances), so it will pass output that is plainly wrong. On 2026-08-18 a
+change to the esd printer collapsed real uncertainties --
+
+```
+    1   N  7.0  1.0811(3)  ...  0.03615(19)      before
+    1   N  7.0  1.081(0)   ...  0.036(0)         after
+```
+
+-- and `ctest` reported **Passed**, because 0.03615 -> 0.036 is 0.4% on a test whose
+last-digit tolerance had been relaxed. CI caught it on the next push. When you change
+anything that *formats* output, diff the produced file against the reference and read it;
+the gate answers a different question.
+
+### How the harness actually compares, so you can read a failure
+
+From `scripts/test.py`, and worth knowing before theorising about a red test:
+
+- Tokenising is `.split()`, so **whitespace and column-width differences are invisible**
+  to every criterion. They matter for `vimdiff`, not for the verdict.
+- `value(esd)` is **not** compared as a string. `split_value_esd` separates the two, the
+  value gets the usual tolerances and the esd gets last-digit slack. So `180.00000000(1)`
+  versus `180.0000000(0)` **passes** loose.
+- A **token-count** difference fails every criterion, loose included. This is the one way
+  column drift can still redden a test: these tables are dense enough that one extra
+  character merges `O1` with the number beside it and the line loses a token.
+
+### A redundant second statistic is the cheapest invariant you can print
+
+The "Form factor asymmetry" table reported an RMS that had been wrong by seven orders of
+magnitude for as long as it existed -- `S^(1/4)/sqrt(n)` instead of `sqrt(S/n)`, because
+the routine returned a root and the caller rooted it again. Nobody had spotted it in a
+year of reading, since a small number looked plausible either way.
+
+Printing the **maximum** beside the RMS found it immediately: a maximum cannot be smaller
+than the RMS of the same set, and it was, by a factor of a million. Where a quantity is
+hard to eyeball, print a second quantity that must stand in a known relation to it. The
+relation does the checking.
+
+(The same table then taught the converse: those values are ~1e-15 noise for a molecular
+HAR, and the reflection at which the maximum falls is the argmax of noise, so both differ
+between compilers. Anything printed into a blessed reference must be reproducible --
+see `FF_ASYMMETRY_TOL` in `include/macros.in`.)
+
 ## 2. Pushing to GitHub
 
 You authenticate either with SSH keys (recommended — no secret in the URL) or a

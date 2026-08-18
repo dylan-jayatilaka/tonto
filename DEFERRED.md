@@ -33,6 +33,30 @@ below; the audit found no library file was ever affected.)
 
 ---
 
+# Housekeeping
+
+## Trim the oversized source comments once the debugging settles (Dylan, 2026-08-18)
+
+**Status: open, deliberately deferred.** Several routines now carry long explanatory
+comments written during debugging — how a defect was found, which compiler disagreed,
+what the symptom looked like. `CLAUDE.md` §7a is the rule going forward: source comments
+stay brief and explain the *code*, while the investigation belongs in a markdown file.
+The existing slabs are **worth keeping for now**, because we are in the thick of the work
+they describe and the context is still live.
+
+When this settles, sweep them: keep the sentence that stops the bug being reintroduced,
+move the rest into `DEFERRED.md` or the relevant `docs/` report, and leave a pointer.
+Known offenders, all recent:
+
+- `crystal.foo`, `CRYSTAL:put_asymmetric_FF_symmetrization_rss` — the noise-floor comment
+  (the compiler-to-compiler numbers belong in a document).
+- `spacegroup.foo`, `SPACEGROUP:symmetrize_unique_SFs` — the double-root explanation.
+- `real.foo`, `REAL:get_dp_de_le` — three stacked notes on negative, NaN and tiny esds.
+- `molecule.har.foo` and `crystal.foo` around the fragHAR and disk-FF repairs.
+
+A useful check while sweeping: a comment longer than the code it describes is a candidate,
+and a comment that names a compiler version, a date or a test name almost certainly is.
+
 # Correctness — open bugs that give wrong answers
 
 ## ADP standard uncertainties are transformed element-wise on axis change (2026-08-16)
@@ -4381,6 +4405,73 @@ which CI does not run.
 count for a zero esd varies between gfortran point releases, and any reference
 containing a zero esd is therefore only valid for the compiler that blessed it.
 The fix is in the printer, not in the references.
+
+### UPDATE 2026-08-18 (LATER, AND IT SUPERSEDES THE SECTION BELOW): the fix was WRONG, and the whole class is now a DECISION TO LIVE WITH IT
+
+Read this before the section that follows, which is left in place only because
+its reasoning is instructive about how the mistake was made.
+
+**The esd fix was wrong and is reverted (`e522e1ce` reverts `26d9166a`).** The
+premise -- "a `dp` exceeding `max_dp` means the esd is too small to print" --
+is false: `dp = min(abs(floor(log10(err))),max_dp) + 1`, so `dp = max_dp+1` is
+the NORMAL outcome for any esd at or below the clamp. The change therefore
+destroyed real esds on every compiler:
+
+    reference   1   N  7.0  1.0811(3)   ...  0.03615(19)
+    with fix    1   N  7.0  1.081(0)    ...  0.036(0)
+
+**How it survived local testing, which is the part worth remembering:** it was
+verified against the ctest pass/fail gate rather than against the diff. The
+gate is loose by design (0.03615 -> 0.036 is 0.4%, and that test carries a
+relaxed last-digit tolerance), so `nh3_rhf_DZP_HAR` reported "Passed" while its
+output was visibly wrong. CI found it in one run. **Check the diff, not the
+gate**, when changing anything that formats output.
+
+**What the harness actually does, measured in `scripts/test.py`, because three
+separate discussions have guessed at it:**
+
+- Tokenising is `.split()`, so **pure whitespace/column-width drift is
+  invisible to every criterion**. It costs nothing in ctest or `make report`;
+  it is a `vimdiff` irritant only.
+- `value(esd)` is **not** compared as a string. `token_agreement` calls
+  `split_value_esd` and applies the normal tolerances to the value and
+  last-digit slack to the esd. So `180.00000000(1)` vs `180.0000000(0)` PASSES
+  loose -- confirmed on CI, where `urea_hart_STO-3G_disk_ffs` came back
+  loose PASS at 0.00569% / 0.43 ulp.
+- A **token-count** difference fails every criterion including loose. This is
+  how width drift can still bite: these tables are dense enough that one extra
+  character merges `O1` with the value beside it, dropping a token. That, not
+  the digits, is the "structural mismatch of zero numeric difference" that
+  reddened CI on 2026-08-10.
+
+**DECISION (Dylan, 2026-08-18): stop fixing this class; live with it.** The
+formatting work is worth human legibility and the rare token-merge hard-fail,
+not correctness -- the harness already absorbs esd drift. Do not spend more
+time on the printer.
+
+**If it is ever revisited, the honest fix is upstream and is NOT a print
+threshold** (Dylan): a parameter fixed by site symmetry should get an exactly
+zero esd BY CONSTRUCTION -- constrained out of the normal matrix rather than
+refined and then filtered by eigenvalue. Then the zero is exact on every
+machine with no tolerance to justify. This is the same root as the open NaN and
+negative-esd item elsewhere in this file: parameters that should never have
+been in the variance-covariance matrix at all.
+
+**Separately, and this one IS fixed:** the "Form factor asymmetry" table was
+printing floating-point noise. For a molecular HAR the asymmetry is ~1e-15 and
+the reflection at which the maximum occurs is the argmax of that noise, so the
+same urea job gave 0.818E-15 at (0,5,2) here and 0.843E-15 at (-1,-1,-3) on CI
+-- 100-167% relative disagreement, which is what actually reddened CI on
+2026-08-18 (NOT the formatting). Now floored at `FF_ASYMMETRY_TOL = TOL(12)`
+in `include/macros.in`: below that the value prints as an exact zero and its
+meaningless hkl is dropped, and the columns print **one significant digit**,
+since the table is a diagnostic and only the order of magnitude matters. Real
+asymmetry is untouched -- pHAR runs 1e-9 to 5e-8.
+
+Note the irony worth keeping: the old double-square-root bug HID this. A fourth
+root compressed 1e-15 noise up to ~1e-8 and printed it to one digit, which was
+stable across machines by accident. Fixing the mathematics exposed the noise
+the wrong formula had been concealing.
 
 ### UPDATE 2026-08-18: half of this is fixed; the other half is open and named
 
