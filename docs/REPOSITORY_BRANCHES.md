@@ -94,6 +94,37 @@ carry no LFS objects and must not start: committing the pointer with a
 skips without it. So the dependency is not removed — it is made **opt-in**,
 which is the only arrangement that keeps a public clone cheap.
 
+## State of the recovery effort, and what is left (2026-08-18)
+
+Nine of the fifteen tags are closed. Of the six that held substantial unmerged work,
+three are now resolved:
+
+| tag | outcome |
+|---|---|
+| `archive/nn-har` | **ported** 2026-08-16 (`16a91ce1`) — six tests, thesis reproduced |
+| `archive/release-pHAR-broken` | **test rescued** 2026-08-16 (`8ea8c988`); its symmetrization extension ported 2026-08-18 |
+| `archive/release-td-old` | **nothing to port** — the TD/CIS half is already on `develop`, which is ahead |
+
+Three remain, in the order worth taking them:
+
+| tag | size | note |
+|---|---|---|
+| `archive/Bader` | 28 commits, +1907/−791 | Basin analysis and isosurface triangulation. `master` has only `get_Bader_regions`, so genuinely unmerged. The largest capability left. |
+| `archive/bond-energy` | 11 commits, +1756/−217 | Roby bond energies, `roby.foo` +1478 lines. Self-contained. |
+| `archive/Teaching` | 8 commits, +152/−87 | MP2 teaching lab and two student PDFs. Small, no library risk. |
+
+`archive/energies-breakdown2` is left alone: its own final commit records it failing in the
+polarisation term.
+
+**Two things to do before reading any of these**, both learned the hard way here:
+
+1. **`git cherry develop archive/<tag>`** first. `release-td-old` was recommended as the
+   next rescue on the strength of a commit titled *"Major bug fix in `symmetric_reflect`!"*
+   which was already on `develop` under a different hash. One command settles it.
+2. **Check what the branch's code depends on before porting it.** Every one of these
+   predates the `:::` → `::` migration (tag `foo-old-syntax` is the bridge) and the API has
+   moved underneath them; see the two sections at the end of this document.
+
 ## Recovering an archived branch
 
 One command, from any clone that has fetched tags:
