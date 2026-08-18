@@ -420,6 +420,58 @@ Renaming `stdin`/`stdout` likewise is ~12,500 call sites across 81 foofiles but 
 
 # MPI
 
+## Parallelise the Bader basin search (Dylan, 2026-08-18)
+
+`MOLECULE.PROP:assign_Bader_basins`, ported from `archive/Bader` on 2026-08-18, is
+serial. It is also the expensive part of the calculation: a steepest-ascent walk from
+every interior grid point, each step scanning 26 neighbours, and it prints its own
+`cpu_time` for exactly that reason. On any grid worth using it dominates.
+
+The work is embarrassingly parallel in principle — each starting point's path is
+independent — but the basins are not: a path stops as soon as it lands on a point
+another path already claimed, so the assignment is order-dependent, and two ranks
+walking neighbouring slabs will disagree about which basin a shared path belongs to.
+That merge is the whole difficulty, and it is why the existing
+`cubes_to_basin_parallel` is structured as a decompose-then-reconcile loop over
+slab boundaries rather than a plain `parallel do`.
+
+**There is prior art on the archive tag, and it was deliberately not ported.** Max
+Davidson reworked `cubes_to_basin_parallel` on `archive/Bader` (9 commits,
+2018-08 – 2019-02) to replace the boundary-plane rescan with a linked list of paths
+that terminate on a partition boundary — `LINKED_LIST_MAT_INT` / `HEAD_MAT_INT` /
+`BADER` in `types.foo`, plus a `PARALLEL:gather` template. His commit messages record
+it as an improvement ("Times for parallel cube to basin now comparable to base
+implementation"), and the idea is sound: reconcile only the paths that can cross a
+boundary instead of sweeping the boundary plane.
+
+It was left on the tag because the code is mid-debug, in two specific ways:
+
+- **The convergence loop is disabled.** `do while (changes EQV TRUE)` was replaced by
+  `do ii = 1,3! while (changes EQV TRUE)`. Basin labels propagate one partition per
+  pass, so three passes is correct only up to four ranks and silently wrong above it.
+- **Every merge branch leaks.** Each does `allocate(tmp); tmp => head.head`, discarding
+  the node it just allocated on every pass of the outer loop. It also uses raw
+  `allocate`/`nullify` rather than Tonto's `create`/`destroy`, so the memory accounting
+  never sees the list.
+
+Recovering it:
+
+```bash
+git show archive/Bader:foofiles/molecule.prop.foo   # cubes_to_basin_parallel
+git show archive/Bader:foofiles/types.foo           # the three list types
+git show archive/Bader:foofiles/parallel.foo        # gather -- superseded, see below
+```
+
+Two things not to take from the tag. `PARALLEL:gather` is already on `develop` in a
+better form (`parallel.foo:4827` onwards — `root` required rather than optional, and a
+`recvtmp` staging buffer); the branch version passes the *optional* `root` straight to
+`MPI_GATHER` whether or not it is present. And the branch's `MAT3{VEC_{INT}}` spelling
+is now `MAT3{EVEC{INT}}`.
+
+**Before writing any of it, get a reference.** There is no Bader test of any kind —
+serial or parallel — so there is nothing to compare a parallel result against. The
+serial path needs a blessed reference first; see `docs/BADER_REPORT.md`.
+
 ## MPI: defects found during milestone 4 (2026-08-01)
 
 Found while building Tonto with MPI for the first time — **no MPI build had ever been

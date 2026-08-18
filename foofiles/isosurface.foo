@@ -785,6 +785,26 @@ contains
 
    end
 
+   prepare_Bader_grid
+   ! Prepare the rhomboid grid for triangulating Bader basin
+   ! boundaries. Unlike .prepare_grid this does *not* call
+   ! .plot_grid.set_for_marching_cubes: the grid on which the basins
+   ! were assigned is the grid to be triangulated, and adding two
+   ! points per axis would invalidate the basin index array.
+      self :: INOUT
+
+      ! Set the plot kind
+      .plot_grid.set_plot_kind(.property)
+
+      .del_x = .plot_grid.del_x
+      .del_y = .plot_grid.del_y
+      .del_z = .plot_grid.del_z
+
+      .set_default_cube(.cube)
+      .cap_square.set_defaults
+
+   end
+
    capping_number(x,y,z) result (res) :: PURE
    ! Identify which faces of a given cube denoted by x,y and z are on the boundary of the plot grid
       self :: IN
@@ -1181,6 +1201,124 @@ contains
       x_cap_info.destroy
       y_cap_info.destroy
       z_cap_info.destroy
+
+      ! Compactify
+      .point.shrink_columns(.n_pt)
+      .point_gradient.shrink_columns(.n_pt)
+      .point_mean_curvature.shrink(.n_pt)
+      .point_gaussian_curvature.shrink(.n_pt)
+      .face.shrink_columns(.n_face)
+      .cap.shrink_columns(.n_cap)
+
+      ! Rotate
+      .rotate_gradients
+
+   end
+
+   cubify_Bader(basin,n_basin) :: leaky
+   ! Triangulate the boundary of every Bader basin using the standard
+   ! marching cube algorithm *without* recursion, assuming the whole
+   ! grid is available in memory with each grid point assigned a
+   ! "basin" index in the range 1 ... "n_basin". The vertex function
+   ! value is ZERO inside the basin of interest and ONE outside it, and
+   ! the isovalue is one half, so the surface falls on the voxel
+   ! boundary. NOTE: capping is not done, so a basin cut by the edge of
+   ! the plot grid gives an open surface.
+      self :: INOUT
+      basin :: MAT3{INT}, IN
+      n_basin :: INT, IN
+
+   ENSURE(basin.dim1==.plot_grid.n_x,"wrong dim1, basin")
+   ENSURE(basin.dim2==.plot_grid.n_y,"wrong dim2, basin")
+   ENSURE(basin.dim3==.plot_grid.n_z,"wrong dim3, basin")
+
+      x,y,z,r :: INT
+      cube :: MARCHINGCUBE
+      info :: MAT3{EVEC{INT}}@
+      func_slab :: MAT3{INT}@
+      point_slab :: MAT4{REAL}@
+
+      ! Set isosurface info defaults
+      .set_isosurface_info_arrays
+
+      ! One surface per basin, all appended to the same point/face lists
+      do r = 1,n_basin
+
+         ! .cube contains the size/axes of the grid; the basin flag is
+         ! ZERO inside and ONE outside, so the surface is at one half
+         cube = .cube
+         cube.set_iso_value(HALF)
+
+         ! Make the 4-slab of data
+         point_slab.create(3,.plot_grid.n_x,.plot_grid.n_y,4) ! slab of points
+         func_slab.create(.plot_grid.n_x,.plot_grid.n_y,4)    ! basin indices
+
+         info.create(.plot_grid.n_x,.plot_grid.n_y,2,[0,11])  ! Saved vertex index info
+         info.zero
+
+         ! Find all the marching cubes. Loop bottom to top,
+         ! two layers at a time.
+         do z = 2,.plot_grid.n_z-2
+
+            ! Get a new z-slab of basin indices
+            .update_4_slab(point_slab,func_slab,z,basin)
+
+            ! Save previous edge info; zero current
+            info(:,:,1:1).set_to(info(:,:,2:2))
+            info(:,:,2:2).zero
+
+            ! Loop over the slab;
+            ! x = left,  right
+            ! y = front, back
+            do y = 2,.plot_grid.n_y-2
+            do x = 2,.plot_grid.n_x-2
+
+               ! Set cube points and basin membership flags
+               cube.set_vertex_info( point_slab(:,x:x+1,y:y+1,2:3), &
+                                     func_slab(x:x+1,y:y+1,2:3), r )
+
+               ! Which vertices are inside the basin?
+               cube.set_case_info
+
+               ! If not on the surface, do the next cube
+               if (NOT cube.is_on_surface) cycle
+
+               ! Set up cube edge triangulation
+               cube.set_triangulation_info
+
+               ! Use previous edge info, if available.
+               ! left  = previous cube in the x-direction
+               ! front = previous cube in the y-direction
+               ! below = previous cube in the z-direction
+               if (x>2) cube.set_left_info(left  =info(x-1,y  ,2).element)
+               if (y>2) cube.set_front_info(front=info(x  ,y-1,2).element)
+               if (z>2) cube.set_below_info(below=info(x  ,y  ,1).element)
+
+               ! Now do the interpolation. Positions only: a basin
+               ! index has no gradient
+               cube.interpolate_Bader_faces
+
+               ! Store surface info
+               .append_new_face_info(cube)
+
+               ! Keep interpolated vertex indices
+               info(x,y,2).element = cube.edge_vertex_index(0:11)
+
+               ! Reset cube, reset # of points
+               cube.reset
+               cube.set_n_pt(.n_pt)
+
+            end
+            end
+
+         end
+
+         ! Clean
+         info.destroy
+         point_slab.destroy
+         func_slab.destroy
+
+      end
 
       ! Compactify
       .point.shrink_columns(.n_pt)
@@ -2871,6 +3009,70 @@ contains
 
       pt.destroy
       values.destroy
+
+   end
+
+
+   update_4_slab(p,f,slice,basin) :: private
+   ! Make or update a "slice" of an array "f", a 4-slab of Bader basin
+   ! indices taken from "basin", at the slab points "p". The slab
+   ! involves .plot_grid points whose z values are in the range
+   ! slice-1:slice+2. The "p" points and the values f(:,:,2:3)
+   ! correspond to the bottom and top of the slice.
+      self :: INOUT
+      p :: MAT4{REAL}, INOUT
+      f :: MAT3{INT}, INOUT
+      slice :: INT, IN
+      basin :: MAT3{INT}, IN
+
+   ENSURE(slice>=2 AND slice<=.plot_grid.n_z-2,"slice out f range")
+   ENSURE(p.dim1==3,"p must have dim1=3")
+   ENSURE(p.dim2==.plot_grid.n_x,"wrong size, p")
+   ENSURE(p.dim3==.plot_grid.n_y,"wrong size, p")
+   ENSURE(p.dim4==4,"p must have 4 slabs")
+   ENSURE(f.dim1==.plot_grid.n_x,"wrong size, f")
+   ENSURE(f.dim2==.plot_grid.n_y,"wrong size, f")
+   ENSURE(f.dim3==4,"f must have 4 slabs")
+   ENSURE(basin.dim1==.plot_grid.n_x,"wrong dim1, basin")
+   ENSURE(basin.dim2==.plot_grid.n_y,"wrong dim2, basin")
+   ENSURE(basin.dim3==.plot_grid.n_z,"wrong dim3, basin")
+
+      fz,lz,n_pt,n_x,n_y,i,x,y,z :: INT
+      pt :: MAT{REAL}@
+
+      ! Get slab ranges
+      if (slice == 2) then
+         ! These are the first 4 slices
+         fz = 1; lz = 4
+      else
+         ! In between: only calculate one slice
+         p(:,:,:,1:3) = p(:,:,:,2:4)
+         f(:,:,1:3) = f(:,:,2:4)
+         fz = 4; lz = 4
+      end
+
+      ! Now calculate the slab between the right limits
+      n_x  = .plot_grid.n_x
+      n_y  = .plot_grid.n_y
+      n_pt = n_x*n_y*(lz-fz+1)
+      pt.create(n_pt,3)
+
+      ! Set the slab of points & transfer the basin indices
+      .plot_grid.make_points(pt,1,n_x,1,n_y,slice-2+fz,slice-2+lz)
+      f(:,:,fz:lz) = basin(:,:,slice-2+fz:slice-2+lz)
+
+      ! Copy the points; reshape & transpose
+      i = 0
+      do z = fz,lz
+      do y = 1,n_y
+      do x = 1,n_x
+         i = i + 1
+         p(:,x,y,z) = pt(i,:)
+      end
+      end
+      end
+
+      pt.destroy
 
    end
 

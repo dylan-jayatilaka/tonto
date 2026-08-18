@@ -276,6 +276,9 @@ versioned with the code it described*, so it could rot silently. Do not add docu
   and how `scripts/test.py` actually compares.
 - `docs/FOO_GRAMMAR_DOCUMENTATION.md` — full language description and Foo→Fortran conversion rules.
 - `docs/TONTO_AND_MPI.md` — the parallel build, its numeric characterisation, and the defect register.
+- `docs/BADER_REPORT.md` — the `archive/Bader` port (2026-08-18): the ten procedures that landed, what
+  was deliberately left on the tag, and the two defects found by running it — a basin count that swings
+  from 1 to 13942 with the grid, and voxel volumes summed per point but sized per interval.
 - `docs/DFT_STANDARDISATION.md` — milestone 10: the DFT machinery, its three silent defects, the
   functional-interface analysis, and the libxc plan.
 - `docs/BUILDING_ON_WINDOWS.md` — the four WSL-specific traps, the CMake guards, and how they are tested.
