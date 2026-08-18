@@ -43,6 +43,7 @@ parallel (MPI) builds for that platform.
 | [**DFT standardisation**](DFT_STANDARDISATION.md) | the DFT machinery, its silent defects, and the libxc plan |
 | [**Nearest-neighbour HAR**](NN_HAR_REPORT.md) | HAR on a covalent network solid, the quartz reproduction, and where the sus go wrong |
 | [**Bader basin analysis**](BADER_REPORT.md) | the `archive/Bader` port: what landed, and the two defects found by running it |
+| [**MP2 teaching lab**](TEACHING_MP2.md) | the two non-default MP2 programs, and how they were validated |
 | [**cctbx into Tonto**](CCTBX_INTO_TONTO.md) | the refinement capabilities Tonto lacks, and the staged plan to write them in Foo |
 | [**Continuous integration**](TONTO_CONTINUOUS_INTEGRATION.md) | what each workflow runs, and what each badge means |
 | [**Call graphs**](MAKING_CALL_GRAPHS.md) | call/use graphs and dead-code elimination |

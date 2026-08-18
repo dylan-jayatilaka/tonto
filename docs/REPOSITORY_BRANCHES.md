@@ -106,12 +106,22 @@ Nine of the fifteen tags are closed. Of the six that held substantial unmerged w
 | `archive/release-td-old` | **nothing to port** — the TD/CIS half is already on `develop`, which is ahead |
 | `archive/Bader` | **serial half ported** 2026-08-18 (`cc530a34`) — compiles, runs, two measured defects. **The parallel half was not done** — see below. `docs/BADER_REPORT.md` |
 
-Two remain, in the order worth taking them:
+Both of the last two were decided on 2026-08-18, and **the recovery effort is now
+closed**:
 
-| tag | size | note |
-|---|---|---|
-| `archive/bond-energy` | 11 commits, +1756/−217 | Roby bond energies, `roby.foo` +1478 lines. Self-contained. |
-| `archive/Teaching` | 8 commits, +152/−87 | MP2 teaching lab and two student PDFs. Small, no library risk. |
+| tag | outcome |
+|---|---|
+| `archive/Teaching` | **ported** 2026-08-18 — the MP2 lab, validated against the library `mp2` keyword. See `docs/TEACHING_MP2.md` |
+| `archive/bond-energy` | **will not be ported** — decided, not postponed. Stays on its tag; see `DEFERRED.md` |
+
+`archive/bond-energy` was declined rather than deferred for want of time. For the
+record, its starting position was the better of the two — there is already a
+regression net (`tests/rgbi/karrikinolide_blyp_6-31G(d)_Roby_bond_index` and its
+`_g09_` variant exercise the live Roby path), and the two helper modules it adds,
+`vec{emat{intrinsic}}.foo` and `vec{emat{int}}.foo`, have since landed on `develop`
+independently. The difficulty is drift: `roby.foo` is 7490 lines on `develop` against
+8463 on the tag and has been modified since 2020, so it is a graft into evolved code
+and needs a `types.foo` change. `DEFERRED.md` carries the full inventory.
 
 ### `archive/Bader` is only half closed — the tag must stay
 
@@ -158,6 +168,32 @@ polarisation term.
 2. **Check what the branch's code depends on before porting it.** Every one of these
    predates the `:::` → `::` migration (tag `foo-old-syntax` is the bridge) and the API has
    moved underneath them; see the two sections at the end of this document.
+
+## The pre-GitHub history: a Subversion repository on SourceForge
+
+This git repository is not the whole history. Tonto lived in **Subversion on
+SourceForge** first, as project **`tonto-chem`**:
+
+- project page — <https://sourceforge.net/projects/tonto-chem/>
+- repository — `svn://svn.code.sf.net/p/tonto-chem/code/`, also readable over HTTPS at
+  `https://svn.code.sf.net/p/tonto-chem/code/`
+
+It is still live and public, at **revision 4411**, spanning **1999-06-28 to
+2014-06-21**, with 14 branches (`TONTO_1_0` through `TONTO_2_3`, `development`, `phys`,
+`reversedtypes`, `tonto-3.2`, `tonto-for-CE3.0`) and 4 tags. Surviving `$Id:` keywords
+in `runfiles/*.foo` are its fingerprints — e.g.
+`! $Id: run_molecule.foo 3361 2009-09-24 15:40:02Z dylan_ $`.
+
+**It holds 22 committers whose names appear nowhere in git**, among them `chris` and
+`skw` on the original Roby work (1999–2001), `awhitton` on PND and `diffraction_data`
+(2003–2004), `grimwreaper` on platforms and ScaLAPACK, `vongrabow` on ELI-D,
+`magdalos` on HAR least squares (2013), and `reaper`, the largest single contributor
+at 1800 commits between 1999 and 2005. If you need to know who wrote something, or
+what a routine looked like before 2014, this is where to look.
+
+**You do not need an `svn` client.** The full log — authors, dates, messages and
+changed paths — comes back from one DeltaV `REPORT` over HTTPS, and individual files
+fetch with `curl`; the recipe is in `DEFERRED.md` under the in-core CCSD search.
 
 ## Recovering an archived branch
 

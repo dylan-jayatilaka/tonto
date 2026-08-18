@@ -57,6 +57,122 @@ Known offenders, all recent:
 A useful check while sweeping: a comment longer than the code it describes is a candidate,
 and a comment that names a compiler version, a date or a test name almost certainly is.
 
+## Searched for in-core CCSD: it is not in this repository (2026-08-18)
+
+Dylan recalled *"some work on in-core CCSD"* and asked for it to be found and extracted.
+**There is no coupled-cluster solver anywhere in the repository.** Recorded so the
+search is not repeated.
+
+What was searched, all on 2026-08-18:
+
+| where | how | result |
+|---|---|---|
+| `develop` library and runfiles | `grep -i ccsd`, and for `cc`/`ccd`/`cisd`/`lccd`/`cepa`/`mp3`/`mp4` procedure headers, and for `amplitude`/`t1`/`t2`/`doubles`/`coupled cluster` | nothing |
+| every branch and tag (15 archive tags, 5 branches, all remotes) | `git grep -l -i ccsd` over `foofiles/*` and `runfiles/*` | nothing |
+| commit messages, all refs | `git log --all -i --grep=ccsd --grep='coupled cluster'` | three hits, all about *structure factors* — see below |
+| 131 dangling commits | `git fsck --no-reflogs`, then `git grep -i` over all of them for `ccsd`/`coupled.cluster` and for CC procedure headers | nothing |
+| added filenames, all history | `git log --all --diff-filter=A --name-only` filtered for `cc`/`cluster`/`corr` | only `docs/CCTBX_INTO_TONTO.md`, which is cctbx, unrelated |
+
+Every `ccsd` string in the tree is one of three innocent things: a **Gaussian**
+CCSD density matrix read from an fchk file (`tests/{short,long}/urea_ccsd_pob-TZVP_*`,
+whose job files say *"This fchk file has the CCSD density matrix in it"*), a
+literature citation inside `basis_sets/TZP-DKH`, or documentation referring to those
+tests. The three commits — `ed585a29` *"added ability to calculate CCSD structure
+factors"*, `765463f2`, `306ec7f4` — add the ability to compute structure factors
+**from** an externally-computed CC density, not to compute one. The only CC plumbing
+in the library is `MOLECULE.READ:read_gX_CC_dm`, one line of fchk reading.
+
+**What almost certainly is the memory.** The phrase "in core" appears in Tonto against
+**MP2**, not CCSD, and four times: `MOLECULE.MISC:make_r_mp2`, `make_chem_mp2`,
+`make_u_mp2` and `make_gc_mp2` are each documented *"make ... MP2 in core"*, and
+`make_r_mp2` prints *"This is a toy implementation with integrals stored in memory"*.
+Restricted, chemists'-notation, unrestricted and general-complex variants. All four are
+already on `develop`, none is on any archive tag, and nothing needs extracting.
+`make_r_mp2` was validated on 2026-08-18 as part of the `archive/Teaching` port — it
+agrees with a hand-written MP2 to twelve decimals; see `docs/TEACHING_MP2.md`.
+
+### The old Subversion repository was searched too, and it is not there either
+
+Dylan then recalled the pre-GitHub history: a Subversion repository on SourceForge,
+project name forgotten. **It is `tonto-chem`** — <https://sourceforge.net/projects/tonto-chem/>,
+SVN at `svn://svn.code.sf.net/p/tonto-chem/code/`, browsable over HTTPS at
+`https://svn.code.sf.net/p/tonto-chem/code/`. It is still live, at **revision 4411**,
+spanning **1999-06-28 to 2014-06-21** — five years of history that predates the GitHub
+repository and is in no way contained in it.
+
+No `svn` client is installed here and none is needed: the whole log comes back from a
+single DeltaV `REPORT` over HTTPS, and files can be fetched with plain `curl`.
+
+```bash
+# the entire 4411-revision log, authors and changed paths included, in one request
+cat > logreq.xml <<'XML'
+<?xml version="1.0" encoding="utf-8"?>
+<S:log-report xmlns:S="svn:">
+<S:start-revision>4411</S:start-revision><S:end-revision>1</S:end-revision>
+<S:discover-changed-paths/><S:all-revprops/><S:path></S:path>
+</S:log-report>
+XML
+curl -s -X REPORT -H "Content-Type: text/xml" -H "Depth: 0" --data-binary @logreq.xml   "https://svn.code.sf.net/p/tonto-chem/code/!svn/bc/4411/" -o svnlog.xml
+```
+
+What was checked, and the result in every case is **nothing**:
+
+| check | scope | result |
+|---|---|---|
+| commit messages | all 4411 revisions | 6 hits, none a CCSD implementation: reading CC/MP2/MP3 densities from fchk files, the `cc-pVTZ` basis, CCSD **CIF/MIF** files, and `destroy ex,cc in copy` |
+| changed paths | every add/modify/replace/delete in all 4411 revisions, 14 branches and 4 tags | no path ever named for CCSD; the only `cc`-ish matches are `cluster.foo` (the crystal cluster) and `cc-pVDZ` test directories |
+| file contents, newest line | all **166** `.foo` files of `branches/tonto-3.2` | zero `ccsd`, zero `coupled cluster`, zero amplitude names |
+| file contents, other line | all **165** `.foo` files of `trunk/tonto` | the same |
+| the manual | `documentation/tonto.docbook` and `tonto.xml`, ~445 kB each | zero `ccsd` |
+| authors | all 22 | listed below; none committed a correlation method beyond MP2 |
+
+The 22 SVN committers, for the record, since they are not recoverable from the git
+repository: `reaper` (1800, 1999–2005), `dylan_` (1475, 2005–2014), `dylan` (612,
+1999–2005), `tonto` (144), `chris` (52, Roby work), `cassam` (51), `durhammike` (48),
+`bucinsky` (40), `grimwreaper` (22, platforms and BLACS/ScaLAPACK), `magdalos` (19,
+2013, HAR least squares and ADP errors), `awhitton` (14, 2003–2004, PND and
+`diffraction_data`), `jjripsnorter` (12), `josh146` (9), `bdittric` (9),
+`shadowadler` (3, fingerprints), `birger` (3, anomalous dispersion), `smeeton1` (2),
+`vongrabow` (2, ELI-D), `mimisue` (1, vapour keyword), `root` (1), `josh` (1),
+`skw` (1, Roby).
+
+**Conclusion: Dylan's own guess was right — it was never committed.** The work exists in
+neither repository, so there is nothing to extract. If a copy survives it is outside
+version control: an unpushed clone on `sauce` or `achari2` (`git log --all --oneline`
+there settles it in one command), a student's own machine or thesis, or an email
+attachment. Absent that, the in-core MP2 family is the nearest thing that exists and it
+is already on `develop`.
+
+## `archive/bond-energy` will not be ported (Dylan, 2026-08-18)
+
+**Decided, not merely postponed.** The Roby bond-energy work on `archive/bond-energy`
+(Dylan Jayatilaka, 11 commits, 2020-09 – 2020-10) stays on its tag. Nothing on
+`develop` depends on it and nothing was removed to make this decision.
+
+What it holds, so the size of the thing is on record: `roby.foo` +1478 lines --
+`Eshared` partitioning for E^DE, an exact energy-density method, deformation
+energies and group populations -- plus `types.foo` +127, `atom.foo` +123,
+`vec{atom}.foo` +122, and smaller changes to `molecule.prop.foo`,
+`molecule.scf.foo`, `opmatrix.foo`, `vec{int}.foo` and `CMakeLists.txt`.
+Eleven files, +1756/−217, all unmerged (`git cherry develop archive/bond-energy`
+marks all 11 commits `+`).
+
+Two things a future reader should know before reopening it, both established
+2026-08-18:
+
+- **The starting position is better than it looks.** Unlike the Bader port there is
+  already a regression net: `tests/rgbi/karrikinolide_blyp_6-31G(d)_Roby_bond_index`
+  and its `_g09_` variant exercise the live Roby path. And the two helper modules the
+  tag adds, `vec{emat{intrinsic}}.foo` and `vec{emat{int}}.foo`, have since landed on
+  `develop` independently, so that part of the work is already done.
+- **The difficulty is drift, not translation.** `roby.foo` is 7490 lines on `develop`
+  against 8463 on the tag, and it has been modified on `develop` since 2020. This is
+  a graft into evolved code, not a clean apply, and it needs a `types.foo` change --
+  which the Bader port did not.
+
+Recover it with `git branch bond-energy archive/bond-energy`. See
+`docs/REPOSITORY_BRANCHES.md`.
+
 # Correctness — open bugs that give wrong answers
 
 ## ADP standard uncertainties are transformed element-wise on axis change (2026-08-16)

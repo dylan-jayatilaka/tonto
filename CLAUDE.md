@@ -279,6 +279,9 @@ versioned with the code it described*, so it could rot silently. Do not add docu
 - `docs/BADER_REPORT.md` — the `archive/Bader` port (2026-08-18): the ten procedures that landed, what
   was deliberately left on the tag, and the two defects found by running it — a basin count that swings
   from 1 to 13942 with the grid, and voxel volumes summed per point but sized per interval.
+- `docs/TEACHING_MP2.md` — the MP2 teaching lab ported from `archive/Teaching`: `run_mp2` and
+  `run_mp2_exercise`, both `EXCLUDE_FROM_ALL`, and the validation showing `run_mp2` reproduces the
+  library `mp2` keyword to twelve decimals once the frozen-core active space matches.
 - `docs/DFT_STANDARDISATION.md` — milestone 10: the DFT machinery, its three silent defects, the
   functional-interface analysis, and the libxc plan.
 - `docs/BUILDING_ON_WINDOWS.md` — the four WSL-specific traps, the CMake guards, and how they are tested.
