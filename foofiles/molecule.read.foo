@@ -1323,7 +1323,7 @@ contains
       pos :: VEC{REAL}(3)
       n_atoms,n_bf,n_g,n_tri :: INT
       a,g  :: INT 
-      found :: BIN
+      found,cp2k_xml :: BIN
 
       if ( .crystal.fragment_atom.allocated ) .crystal.fragment_atom.destroy
 
@@ -1334,6 +1334,15 @@ contains
       replace(:,2) = [ '" "', '" "', '" "' ]
       XMLfile.set_replacement_list(replace)
       XMLfile.open_for("read")
+      XMLfile.move_to_line(1)
+
+      ! CP2K bridge XML uses the same density-matrix container as Crystal23,
+      ! but CP2K and Crystal/Tonto use opposite direct-lattice labels for
+      ! off-centre density blocks. CP2K may also report equivalent atoms in
+      ! the [0,1) cell, whereas its periodic AO matrices use centred images.
+      ! Detect the bridge format explicitly so native Crystal23 XML retains
+      ! its established conventions.
+      XMLfile.look_for("CP2K_TONTO_PERIODIC_DENSITY",found=cp2k_xml)
       XMLfile.move_to_line(1)
 
       ! Read in unit cell
@@ -1378,7 +1387,15 @@ contains
          xml_atom(a).set_label(tmp)
          XMLfile.read_line
          XMLfile.read(pos)
-         xml_atom(a).set_position(pos) ! pos is in fractional coordinate
+         if (cp2k_xml) then
+            ! Put CP2K atoms in the centred [-1/2,1/2) images used by the
+            ! periodic AO density matrices. This is only a lattice
+            ! translation and therefore preserves the crystallographic atom.
+            pos = matmul(.crystal23.Primitive_unit_cell.inverse_mx,pos)
+            pos = mod(pos+HALF+ONE,ONE)-HALF
+            pos = matmul(.crystal23.Primitive_unit_cell.direct_mx,pos)
+         end
+         xml_atom(a).set_position(pos) ! pos is in Cartesian coordinate
          XMLfile.read_line
          XMLfile.read_line
       end
@@ -1407,6 +1424,10 @@ contains
       do g = 1,n_g
          XMLfile.move_to_line_item(2)
          XMLfile.read(igv)
+         ! CP2K's P(R) is Crystal/Tonto's P(-R). Reversing only the lattice
+         ! label (equivalently transposing each paired block) restores the
+         ! physical periodic density and its electron count.
+         if (cp2k_xml) igv = -igv
          .crystal23.g_latt(:,g) = igv
          XMLfile.read_line
       end
