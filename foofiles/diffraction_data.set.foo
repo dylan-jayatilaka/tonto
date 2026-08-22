@@ -63,9 +63,10 @@ contains
 
       if (.reflection_data_exists) then
 
-         .scale_factor      =  ONE
-         .exp_scale_factor  = -ONE
-         .extinction_factor =  ZERO
+         .scale_factor          =  ONE
+         .exp_scale_factor      = -ONE
+         .extinction_factor     =  ZERO
+         .extinction_factor_esd = -ONE
 
          .reflection0.destroy
          .reflections.destroy
@@ -338,6 +339,7 @@ contains
       self :: INOUT
       val :: BIN, IN
       .refine_extinction = val
+      if (NOT val) .extinction_factor_esd = -ONE
    end
 
    set_refine_fragments(val) :: pure
@@ -1068,15 +1070,18 @@ contains
 ! Set scale & extinction factors
 ! ==============================
 
-   get_F_optimum_parameters :: PUREp
+   get_F_optimum_parameters
    ! Get the scale factors, extinction parameters, etc, which minimise
-   ! the chi2.  (To get the corrections cooresponding to these
-   ! parameters see routine .extinction_correction)
+   ! the GoF^2. (To get the corrections corresponding to these
+   ! parameters see routine .F_scale_and_extn_correction)
+   ! NOTE: not PURE -- the extinction preconditions below must fire in a
+   ! release build, and DIE is live there while PURE is a real "pure".
       self :: INOUT
 
       if (.refine_extinction) then
 
-         ENSURE(NOT .use_multiple_scale_factors,"must use refine_extinction= no")
+         DIE_IF(.use_multiple_scale_factors,"extinction needs a single scale factor")
+         DIE_IF(.wavelength<=ZERO,"extinction needs a wavelength; set wavelength=")
          .optimize_F_extinction_factor
 
       else if (.refine_scale) then
@@ -1089,16 +1094,17 @@ contains
 
    end
 
-   get_I_optimum_parameters :: PURE
+   get_I_optimum_parameters
    ! Get the scale factors, extinction parameters, etc, which minimise
-   ! the chi2.  (To get the corrections cooresponding to these
-   ! parameters see routine .extinction_correction)
+   ! the GoF^2. (To get the corrections corresponding to these
+   ! parameters see routine .I_scale_and_extn_correction)
+   ! NOTE: not PURE -- see the note on .get_F_optimum_parameters.
       self :: INOUT
 
       if (.refine_extinction) then
 
-      ! DIE_IF(.use_multiple_scale_factors,"must use refine_extinction= no")
-      ! DIE("Not yet implemented")
+         DIE_IF(.use_multiple_scale_factors,"extinction needs a single scale factor")
+         DIE_IF(.wavelength<=ZERO,"extinction needs a wavelength; set wavelength=")
          .optimize_I_extinction_factor
 
       else if (.refine_scale) then
@@ -1307,8 +1313,9 @@ contains
                         ,.::d_chi2F &
                         ,p,chi2_min,tol=TOL(7),gtol=TOL(7),step=TOL(4))
 
-      .scale_factor      = p(1)
-      .extinction_factor = p(2)
+      .scale_factor          = p(1)
+      .extinction_factor     = p(2)
+      .extinction_factor_esd = .F_extinction_factor_esd(p)
 
    end
 
@@ -1336,8 +1343,9 @@ contains
                         ,.::d_chi2I &
                         ,p,chi2_min,tol=TOL(7),gtol=TOL(7),step=TOL(6))
 
-      .scale_factor      = p(1)
-      .extinction_factor = p(2)
+      .scale_factor          = p(1)
+      .extinction_factor     = p(2)
+      .extinction_factor_esd = .I_extinction_factor_esd(p)
 
    end
 
@@ -1367,6 +1375,7 @@ contains
       ! Set the uique # of parameters. Used for getting the correct
       ! GoF^2 statistic. Note: zero eigenvalues in the least squares
       ! will modify this value.
+      .n_param_structure = n_p
       .n_param = n_p
       .n_param_manually_set = FALSE ! Ignore manually set n_p
 
@@ -1492,44 +1501,43 @@ contains
    end
 
    update_n_param :: PURE
-   ! Update the number of parameters to include scale
-   ! and extinction factors.
+   ! Update the number of parameters to include the scale and extinction
+   ! factors. Always recomputed from .n_param_structure, never incremented
+   ! in place: this routine is called once per structure-factor rebuild and
+   ! an in-place increment would inflate N_p within a fit iteration.
       self :: INOUT
 
-      if (NOT .n_param_manually_set) then
+      n_p :: INT
 
-         ! The number of params is assumed set in a refinement
-         ! So only initialize n_param if this isn't going on
-         ! or if not manually set by readinf a CIF
-         if (NOT (.refine_structure OR .fit_structure)) then
-            .n_param = 0
-         end
+      ! Frozen: set from a CIF, or fixed by a finished refinement
+      if (.n_param_manually_set) return
 
-         ! Add on extra parameters for scale/extinction
-         if (.refine_extinction) then
+      ! Structural (pADP) parameters, or none if not refining
+      n_p = 0
+      if (.refine_structure OR .fit_structure) n_p = .n_param_structure
 
-            ENSURE(NOT .use_multiple_scale_factors,"must use refine_extinction= no")
-            .n_param = .n_param + 2
+      ! Scale and extinction
+      if (.refine_extinction) then
 
-         else if (.refine_scale) then
+         ENSURE(NOT .use_multiple_scale_factors,"extinction needs a single scale factor")
+         n_p = n_p + 2
 
-            if (.use_multiple_scale_factors) then
-               .n_param = .n_param + maxval(.reflections.group)
-            else
-               .n_param = .n_param + 1
-            end
+      else if (.refine_scale) then
 
-         end
-
-         if (.XCW) then
-        
-            ! Add lambda as an extra parameter
-            ! Not correct - but better than nothing?
-            .n_param = .n_param + 1
-        
+         if (.use_multiple_scale_factors) then; n_p = n_p + maxval(.reflections.group)
+         else;                                  n_p = n_p + 1
          end
 
       end
+
+      ! NOTE: nothing is added for the XCW Lagrange multiplier lambda. It is
+      ! not a least-squares parameter, and the effective number of
+      ! wavefunction parameters N_param(lambda) is zero at lambda=0 --
+      ! Davidson et al. (2022), Acta Cryst. B78, 312-332, section 2. Holding
+      ! N_p at the refinement count is what makes a lambda=0 XCW reproduce
+      ! the GoF of the HAR it starts from.
+
+      .n_param = n_p
 
    end
 
@@ -2474,7 +2482,8 @@ contains
       .max_shift = maxval(abs(.dX))
 
       ! Set the number of parameters
-      .n_param = n_p - .n_0 - .near_0
+      .n_param_structure = n_p - .n_0 - .near_0
+      .n_param = .n_param_structure
 
       ! Update chi2
       .update_n_param_and_chi2
