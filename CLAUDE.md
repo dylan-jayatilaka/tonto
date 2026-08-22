@@ -282,6 +282,13 @@ versioned with the code it described*, so it could rot silently. Do not add docu
 - `docs/TEACHING_MP2.md` — the MP2 teaching lab ported from `archive/Teaching`: `run_mp2` and
   `run_mp2_exercise`, both `EXCLUDE_FROM_ALL`, and the validation showing `run_mp2` reproduces the
   library `mp2` keyword to twelve decimals once the frozen-core active space matches.
+- `docs/EXTINCTION_REPORT.md` — the secondary-extinction correction: dormant since 2016-10-02, its
+  eight silent defects, Lorraine Malaspina's prior work on `origin/Lolo_CP2K`, and the reactivation
+  plan. Includes the two decisions that must be taken first — Larson's angular factor or SHELXL
+  eq (62), and what `N_p` should be in the XCW stage of an XWR.
+- `docs/GOF_NOT_CHI2.md` — the quantity called `chi2` throughout the code is a GoF²; the rename, and
+  reporting GoF rather than its square in the refinement tables. Kept separate from the extinction
+  work on purpose.
 - `docs/DFT_STANDARDISATION.md` — milestone 10: the DFT machinery, its three silent defects, the
   functional-interface analysis, and the libxc plan.
 - `docs/BUILDING_ON_WINDOWS.md` — the four WSL-specific traps, the CMake guards, and how they are tested.
