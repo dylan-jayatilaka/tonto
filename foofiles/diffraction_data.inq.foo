@@ -401,9 +401,10 @@ contains
    end
 
    I_scale_and_extn_correction(scale_factor,extinction_factor) result (res) :: PURE
-   ! Return the extinction correction  factors "res" to the calculated
-   ! individual structure factors. NOTE: this routine also does scaling
-   ! corrections without extinction.
+   ! Return the extinction and scale correction factors "res" for the
+   ! calculated intensities. The amplitude correction is
+   ! [1+x|F_calc|^2 A]^(-1/4), so the intensity correction is its square.
+   ! NOTE: this routine also does scaling corrections without extinction.
       self :: IN
       scale_factor      :: REAL, IN
       extinction_factor :: REAL, IN
@@ -412,10 +413,29 @@ contains
    ENSURE(.reflections.allocated,"no reflection data")
    ENSURE(.reflections.have_F_calc, "no calculated structure factors")
 
+      F_calc :: CPX
+      F_abs2,val :: REAL
+      angle_part :: VEC{REAL}@
+      n_refl,n :: INT
+
+      n_refl = .reflections.dim
+
       if (extinction_factor.is_zero(TOL(9))) then
+
          res = scale_factor
+
       else
-      ! DIE("sorry, not yet ...")
+
+         angle_part.create(n_refl)
+         angle_part = .extinction_angle_part
+         do n = 1,n_refl
+            F_calc = .reflections(n).F_calc
+            F_abs2 = REALIFY(F_calc*conjg(F_calc))
+            val    = ONE + extinction_factor*F_abs2*angle_part(n)
+            res(n) = scale_factor/sqrt(val)
+         end
+         angle_part.destroy
+
       end
 
    end
@@ -470,9 +490,8 @@ contains
    end
 
    I_scale_and_extn_correction(scale_factors,extinction_factor) result (res) :: PURE
-   ! Return the extinction correction factors "res" to the calculated
-   ! individual structure factors. WARNING: this routine in fact does no
-   ! extinction correction, only multiple scale factors.
+   ! Return the extinction and scale correction factors "res" for the
+   ! calculated intensities, with multiple scale factors.
       self :: IN
       scale_factors     :: VEC{REAL}, IN
       extinction_factor :: REAL, IN
@@ -482,6 +501,9 @@ contains
    ENSURE(.reflections.have_F_calc, "no calculated structure factors")
    ENSURE(scale_factors.dim==maxval(.reflections.group),"wrong # of groups")
 
+      F_calc :: CPX
+      F_abs2,val :: REAL
+      angle_part :: VEC{REAL}@
       g,n,n_refl,n_group :: INT
 
       n_refl = .reflections.dim
@@ -499,25 +521,46 @@ contains
 
       else
 
-      ! DIE("sorry, not yet ,...")
+         angle_part.create(n_refl)
+         angle_part = .extinction_angle_part
+         do g = 1,n_group
+         do n = 1,n_refl
+            if (.reflections(n).group==g) then
+               F_calc = .reflections(n).F_calc
+               F_abs2 = REALIFY(F_calc*conjg(F_calc))
+               val    = ONE + extinction_factor*F_abs2*angle_part(n)
+               res(n) = scale_factors(g)/sqrt(val)
+            end
+         end
+         end
+         angle_part.destroy
 
       end
 
    end
 
-   extinction_angle_part result (res) :: private, pure
-   ! Return the angular part of the extinction correction.
+   extinction_angle_part result (res) :: private, PURE
+   ! Return the reflection-dependent part of the SHELXL empirical
+   ! extinction correction, eq (62) of Bourhis et al. (2015):
+   !
+   !    F_calc' = k F_calc [1 + 0.001 x |F_calc|^2 lambda^3 / sin(2 theta)]^(-1/4)
+   !
+   ! The wavelength is held in bohr and converted to Angstrom here, which
+   ! is the unit the 0.001 of the SHELXL convention is defined against.
       self :: IN
       res :: VEC{REAL}(size(.reflections))
 
+   ENSURE(.wavelength>ZERO,"extinction needs a wavelength")
+
       n :: INT
-      twotheta,c,s :: REAL
+      lambda3,s :: REAL
+
+      lambda3 = .wavelength*ANGSTROM_PER_BOHR
+      lambda3 = lambda3*lambda3*lambda3
 
       do n = 1,.reflections.dim
-         twotheta=TWO*.reflections(n).theta
-         c = cos(twotheta)
-         s = sin(twotheta)
-         res(n) = (ONE+c*c)/(ONE+c*s)
+         s = sin(TWO*.reflections(n).theta)
+         res(n) = TOL(3)*lambda3/max(s,TOL(6))
       end
 
    end
@@ -622,6 +665,132 @@ contains
 
    end
 
+   F_extinction_factor_esd(p) result (res) :: public, PURE
+   ! Return the error in the extinction factor from the joint
+   ! scale/extinction weighted least-squares fit to the amplitudes.
+   ! The covariance is the inverted Gauss-Newton normal matrix, scaled by
+   ! the same GoF^2 as the rest of the refinement. Negative if unavailable.
+   ! NOTE: conditional on the current structure factors. Extinction sits
+   ! outside the pADP normal matrix, so its correlation with the
+   ! structural parameters is not included.
+      self :: IN
+      p    :: VEC{REAL}, IN
+      res  :: REAL
+
+   ENSURE(.have_F_exp, "no experimental structure factors")
+   ENSURE(.have_nonzero_F_sigma, "no structure factor errors")
+   ENSURE(.reflections.have_F_calc, "no calculated structure factors")
+   ENSURE(size(p)==2, "wrong size, p")
+
+      angle_part,ext :: VEC{REAL}@
+      ref :: REFLECTION
+      F_abs,extn,sig2,d_scale,d_ext :: REAL
+      normal11,normal12,normal22,det :: REAL
+      n,n_refl :: INT
+
+      res = -ONE
+
+      n_refl = .reflections.dim
+      if (n_refl<=.n_param) return
+
+      angle_part.create(n_refl)
+      ext.create(n_refl)
+      angle_part = .extinction_angle_part
+      ext = .F_scale_and_extn_correction(ONE,p(2))
+
+      normal11 = ZERO
+      normal12 = ZERO
+      normal22 = ZERO
+
+      do n = 1,n_refl
+
+         ref   = .reflections(n)
+         F_abs = abs(ref.F_calc)
+         extn  = ext(n)
+         sig2  = ONE/(ref.F_sigma*ref.F_sigma)
+
+         ! d F_pred / d scale, and d F_pred / d extinction
+         d_scale = F_abs*extn
+         d_ext   = -QUARTER*p(1)*F_abs*F_abs*F_abs*angle_part(n) * &
+                    extn*extn*extn*extn*extn
+
+         normal11 = normal11 + d_scale*d_scale*sig2
+         normal12 = normal12 + d_scale*d_ext  *sig2
+         normal22 = normal22 + d_ext  *d_ext  *sig2
+
+      end
+
+      ! The (2,2) element of the inverted 2x2 normal matrix
+      det = normal11*normal22 - normal12*normal12
+      if (normal11>ZERO AND det>ZERO) then
+         res = sqrt(max(ZERO,.chi2F(p)*normal11/det))
+      end
+
+      ext.destroy
+      angle_part.destroy
+
+   end
+
+   I_extinction_factor_esd(p) result (res) :: public, PURE
+   ! Return the error in the extinction factor from the joint
+   ! scale/extinction weighted least-squares fit to the intensities.
+   ! See the amplitude version above for the caveat.
+      self :: IN
+      p    :: VEC{REAL}, IN
+      res  :: REAL
+
+   ENSURE(.have_I_exp, "no experimental intensities")
+   ENSURE(.reflections.have_I_calc, "no calculated intensities")
+   ENSURE(.reflections.have_nonzero_I_sigma, "no intensity errors")
+   ENSURE(size(p)==2, "wrong size, p")
+
+      angle_part,ext :: VEC{REAL}@
+      ref :: REFLECTION
+      I_calc,extn,sig2,d_scale,d_ext :: REAL
+      normal11,normal12,normal22,det :: REAL
+      n,n_refl :: INT
+
+      res = -ONE
+
+      n_refl = .reflections.dim
+      if (n_refl<=.n_param) return
+
+      angle_part.create(n_refl)
+      ext.create(n_refl)
+      angle_part = .extinction_angle_part
+      ext = .I_scale_and_extn_correction(ONE,p(2))
+
+      normal11 = ZERO
+      normal12 = ZERO
+      normal22 = ZERO
+
+      do n = 1,n_refl
+
+         ref    = .reflections(n)
+         I_calc = ref.I_calc
+         extn   = ext(n)
+         sig2   = ONE/(ref.I_sigma*ref.I_sigma)
+
+         d_scale = I_calc*extn
+         d_ext   = -HALF*p(1)*I_calc*I_calc*angle_part(n) * &
+                    extn*extn*extn
+
+         normal11 = normal11 + d_scale*d_scale*sig2
+         normal12 = normal12 + d_scale*d_ext  *sig2
+         normal22 = normal22 + d_ext  *d_ext  *sig2
+
+      end
+
+      det = normal11*normal22 - normal12*normal12
+      if (normal11>ZERO AND det>ZERO) then
+         res = sqrt(max(ZERO,.chi2I(p)*normal11/det))
+      end
+
+      ext.destroy
+      angle_part.destroy
+
+   end
+
    d_chi2F_d_scale(p) result (res) :: public, PURE
    ! Derivative of the GoF^2 for F with respect to the scale factor
       self :: IN
@@ -682,7 +851,7 @@ contains
       ! tmp = tmp + I_pred*(I_pred-ref.I_corr) / (ref.I_sigma*ref.I_sigma)
          tmp = tmp + I_pred*(I_pred-ref.I_exp) / (ref.I_sigma*ref.I_sigma)
       end
-      res = FOUR*tmp/max(n_refl-.n_param,1)
+      res = TWO*tmp/(p(1)*max(n_refl-.n_param,1))
 
       ext.destroy
 
@@ -719,7 +888,7 @@ contains
          extn = ext(n)
          tmp  = tmp + (p1 * abs(ref.F_calc)*extn - ref.F_corr) * &
              extn*extn*extn*extn*extn* &
-             REALIFY(ref.F_calc*ref.F_calc*ref.F_calc) * &
+             abs(ref.F_calc)*abs(ref.F_calc)*abs(ref.F_calc) * &
              angle_bit(n) / (ref.F_sigma * ref.F_sigma)
       end
       res = -p1*tmp/(TWO * max(n_refl-.n_param,1))
@@ -735,9 +904,39 @@ contains
       p    :: VEC{REAL}, IN
       res  :: REAL
 
-   ! DIE("Sorry...")
+   ENSURE(.have_I_exp, "no experimental intensities")
+   ENSURE(.reflections.have_I_calc, "no calculated intensities")
+   ENSURE(.reflections.have_nonzero_I_sigma, "no intensity errors")
+   ENSURE(size(p)==2, "wrong size, p")
 
-      res = ZERO * p(1)
+      tmp,extn,p1,I_calc :: REAL
+      angle_bit,ext :: VEC{REAL}@
+      ref :: REFLECTION
+      n,n_refl :: INT
+
+      n_refl = .reflections.dim
+
+      angle_bit.create(n_refl)
+      ext.create(n_refl)
+
+      angle_bit = .extinction_angle_part
+
+      p1  = p(1)
+      ext = .I_scale_and_extn_correction(ONE,p(2))
+
+      tmp = ZERO
+      do n = 1,n_refl
+         ref    = .reflections(n)
+         extn   = ext(n)
+         I_calc = ref.I_calc
+         tmp = tmp + (p1*I_calc*extn - ref.I_exp) * &
+            extn*extn*extn*I_calc*I_calc*angle_bit(n) / &
+            (ref.I_sigma*ref.I_sigma)
+      end
+      res = -p1*tmp/max(n_refl-.n_param,1)
+
+      ext.destroy
+      angle_bit.destroy
 
    end
 
