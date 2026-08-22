@@ -12,6 +12,11 @@ touches files that have nothing to do with diffraction.
 The three parts below are independent of each other and can be done in any order. Only
 part B changes numbers.
 
+**Sequencing.** Dylan asked for this work to follow two other things: the extinction
+reactivation of `docs/EXTINCTION_REPORT.md`, and the question of choosing the XCW
+Lagrange multiplier by the Akaike information criterion, recorded as step 6 of that
+document's plan.
+
 ## The quantity
 
 `VEC{REFLECTION}:F_chi2` (`vec{reflection}.foo:880`) returns `sum(F_z^2)/(N_r-1)`, and

@@ -275,14 +275,22 @@ Two findings from the port itself, both worth keeping:
   wavelength check therefore sits at the impure entry points, with an `ENSURE` left in
   `extinction_angle_part` for debug builds.
 
+**Done since.** A negative extinction factor is unphysical, and it makes
+`1 + x|F|²A` negative, which has no real fourth root, so the correction becomes
+not-a-number. Dylan's decision: test for it where the minimiser returns, not inside the
+correction, because the minimiser knows nothing about the meaning of its parameters. An
+`ENSURE` in both `optimize_F_` and `optimize_I_extinction_factor` reports it in a debug
+build and costs nothing in a release build.
+
+Also done, both at Dylan's request: reading a CIF, `_refine_ls_extinction_method` now
+switches the correction **on** as well as off, and `_refine_ls_extinction_coef` is read
+back, so a job restarted from a CIF continues from the extinction factor already found
+rather than refitting it from zero.
+
 **Still to do.**
 
-1. A NaN guard in the four `*_scale_and_extn_correction` routines. The BFGS is
-   unconstrained, so a negative `x` can drive `1 + x|F|²A` to zero or below;
-   `sqrt(sqrt(negative))` is NaN. Clamp `val` to a small positive number, which yields a
-   large GoF² and lets the minimiser back away by itself.
-2. `min_BFGS`'s commented-out `DIE_IF` on non-convergence (`vec{real}.foo:2166`).
-3. Build, and run the tests of step 4 below.
+1. `min_BFGS`'s commented-out `DIE_IF` on non-convergence (`vec{real}.foo:2166`).
+2. Build, and run the tests of step 4 below.
 
 **Expected reference changes, beyond any job that switches extinction on.**
 
@@ -309,5 +317,12 @@ Two findings from the port itself, both worth keeping:
    inert again, as it did for ten years.
 5. **Rebless** the affected references. Extinction changes numbers wherever it is
    switched on; the `n_param` fixes of §4 change GoF² wherever an XWR runs.
-6. `docs/GOF_NOT_CHI2.md` is independent. If it lands in the same window, its table
+6. **Then the Akaike information criterion for choosing `lambda`** (Dylan, 2026-08-22).
+   He has wanted to select the XCW Lagrange multiplier by an information criterion
+   rather than by a target GoF, and how to do it is an open question. It is placed here
+   deliberately: after extinction is built, tested and covered by a test job, and before
+   the naming work below. It is related to the parameter count of §4a — an information
+   criterion needs a count of parameters, and the whole difficulty is that the effective
+   number contributed by the wavefunction is not known at intermediate `lambda`.
+7. `docs/GOF_NOT_CHI2.md` is independent. If it lands in the same window, its table
    change can share step 5's reblessing pass; nothing requires it to.
