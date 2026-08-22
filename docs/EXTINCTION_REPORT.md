@@ -287,6 +287,23 @@ switches the correction **on** as well as off, and `_refine_ls_extinction_coef` 
 back, so a job restarted from a CIF continues from the extinction factor already found
 rather than refitting it from zero.
 
+**Also done: the XCW constraint gradient.** The three routines that build the constraint
+contribution to the Fock matrix multiplied the derivative of `|F_calc|` by the
+scale-and-extinction factor alone. Holding the scale factor and the extinction parameter
+fixed is *not* an approximation — both minimise the same quantity being differentiated,
+so their chain-rule terms are exactly zero. What was dropped is different: the
+per-reflection factor also depends on `|F_calc|`, and so on the density matrix. That term
+does not vanish, and the least squares has always included it as the `dX` term of
+`d_F_pred_dX`. It matters because the gradient is added to the Fock matrix, so a wrong
+gradient converges to a different wavefunction rather than merely taking longer. With
+extinction off the missing factor is exactly one. New inquiry routine
+`d_F_pred_d_F_abs` supplies it and answers the no-extinction case itself, so no caller
+needs a test and nothing is added inside the shell-pair loop.
+
+`MOLECULE.SCF:make_pnd_constraint` needs the same treatment but was left alone: neutron
+fitting is commented out of `make_constraint_data`, so the routine is unreachable. It
+also reads `n_par` without ever assigning it.
+
 **Still to do.**
 
 1. `min_BFGS`'s commented-out `DIE_IF` on non-convergence (`vec{real}.foo:2166`).
