@@ -183,7 +183,7 @@ Two other things that will show up in output:
 
 ---
 
-## 4. One change we did not keep, one to confirm, one recorded
+## 4. One change we did not keep, and three to look at
 
 ### 4.1 The forced `accuracy= extreme` grid — REMOVED
 
@@ -300,6 +300,49 @@ commits couple through one number. And `F_calc_cutoff` is documented as
 "negative means unused"; a negative value makes the guard always true and
 restores the division by zero. A guard on `abs(F_calc) > ZERO` as well would
 close that.
+### 4.4 Systematic absences are now pruned even at `merg_code= 0` — OPEN
+
+This one is not a defect either, but it is the change with the widest reach in
+the whole port, and it is the only thing still failing in the test suite. It is
+left that way on purpose, so it is visible rather than blessed away.
+
+`apply_merg` calls `prune_systematic_absences` **before** it looks at
+`merg_code`, so true space-group absences are removed even when the user asked
+for no merging at all. Your comment explains why, and we agree with the
+principle: SHELXL rejects true absences independently of any merging or
+observation threshold, and a reflection that is zero by symmetry carries no
+information.
+
+**What it does to real jobs.** Two short tests generate a reflection list to an
+`stl_limit` in space group **P b c a**, whose three glide planes require k even
+in 0kl, l even in h0l, and h even in hk0:
+
+```
+Space-group systematic absences pruned
+No. of observations before pruning ..... 1604
+No. of systematic absences .............  247
+No. of observations kept ............... 1357
+```
+
+247 of 1604, about 15%, which is the right order for Pbca. We checked the
+count against the reflection conditions rather than assuming it.
+
+**The part we would like you to look at.** Both those jobs set
+`use_equivalents= YES`, which now maps to `merg_code= 0`, and the run duly
+prints *"MERG code (observations retained unmerged) = 0"* — and then removes
+247 reflections anyway. Someone who writes `use_equivalents= YES` is asking for
+their list to be left alone, and it is not.
+
+We think the pruning is right and the *reporting* is what misleads. Two cheap
+options, and it is your call which:
+
+- say so in the `merg_code=` documentation — that absences are always removed,
+  whatever the code, because they are not observations;
+- or separate the two ideas properly, so absence rejection has its own switch
+  and `merg_code` governs only merging.
+
+Until it is decided, the two tests stay red. Everything else in the short suite
+passes: 60 of 62.
 ---
 
 ## 5. The `oc-observed` method, as we read it
@@ -626,6 +669,12 @@ Being honest about the state of it:
   merged and pruned for every refinement, not only periodic ones. Any test
   whose reflection count moves is evidence that the change is working, not a
   failure — but each one has to be looked at rather than blessed.
+- **The short suite is at 60/62.** Eight references were regenerated: six that
+  differed only by the new MERG banner lines, and the two IAM jobs where
+  equivalents are now genuinely averaged instead of discarded — which moved
+  `nh3_IAM_ITC` from GoF 1.360 to 1.387 and `nh3_IAM_gaussian` from 1.268 to
+  1.288, on the same 88 → 86 reflections. That is your fix, visible. The two
+  still red are the Pbca pair of section 4.4, deliberately not blessed.
 - **The existing CRYSTAL23 test will change too**, because pruning now happens
   on the model rather than on the IAM. Its reference output will need
   regenerating. It will *not* slow down, because the forced `extreme` grid was
