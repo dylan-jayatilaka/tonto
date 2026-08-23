@@ -365,6 +365,11 @@ contains
 
       results :: BIN
       output  :: BIN
+      external_density :: BIN
+
+      ! A CRYSTAL23 refinement takes its density from the imported periodic
+      ! wavefunction, not from a molecular SCF.
+      external_density = .crystal.xray_data.partition_model=="oc-crystal23"
 
       ! This is a HAR
       .crystal.xray_data.set_refine_structure(TRUE)
@@ -378,7 +383,9 @@ contains
       .make_atom_partition_info
 
       ! Initial SCF
-      if (.density_mx.deallocated) then
+      ! An externally supplied density defines no molecular MOs, so a missing
+      ! molecular density matrix must not fall back to a molecular SCF.
+      if (.density_mx.deallocated AND NOT external_density) then
          if (output) then
             stdout.flush
             stdout.text("Initial density matrix for refinement ...")
@@ -389,22 +396,23 @@ contains
          .scf ! ???
       end
 
-      ! Initial F_calc's for pruning
-      if (NOT .crystal.xray_data.reflections.have_F_pred) then
-         if (output) then
-            stdout.flush
-            stdout.text("Making F_pred ...")
-         end
-         .make_X_SFs
+      ! Start this cycle from every raw observation, repeat MERG, then make
+      ! the aspherical F_calc values used for model-dependent rejection.
+      .crystal.xray_data.restart_from_unmerged_reflections( &
+         .crystal.unit_cell,.crystal.spacegroup)
+      if (output) then
+         stdout.flush
+         stdout.text("Making F_pred ...")
       end
+      .make_X_SFs
 
-      ! Prune?
+      ! Prune with the current density, never with an IAM pre-filter.
       if (.crystal.xray_data.is_F_calc_prunable) then
          if (output) then
             stdout.flush
             stdout.text("Pruning reflections with F_pred/F_calc for refinement ...")
          end
-         .crystal.xray_data.prune_reflections
+         .crystal.xray_data.prune_calculated_reflections
       end
 
       ! Initialize & turn off SCF printing ...
@@ -427,15 +435,34 @@ contains
       do
 
          ! SCF: skip first one
-         if (.crystal.xray_data.ref_iteration>0) then
+         if (.crystal.xray_data.ref_iteration>0 AND NOT external_density) then
             if (.crystal.xray_data.restart_HAR_with_promolecule) &
             .promolecule_SCF
             .scf ! ???
          end
 
+         ! Every cycle has a new geometry and wavefunction partition. Rebuild
+         ! from the untouched unmerged observations, so a reflection that was
+         ! an aspherical zero last cycle can re-enter this one.
+         if (.crystal.xray_data.ref_iteration>0) then
+            .crystal.xray_data.restart_from_unmerged_reflections( &
+               .crystal.unit_cell,.crystal.spacegroup)
+            if (output) then
+               stdout.flush
+               stdout.text("Making F_pred for current HAR density ...")
+            end
+            .make_X_SFs
+            if (.crystal.xray_data.is_F_calc_prunable) then
+               if (output) stdout.text( &
+                  "Pruning with current aspherical F_pred/F_calc ...")
+               .crystal.xray_data.prune_calculated_reflections
+            end
+         end
+
          !=======================
          .LS_fit_Hirshfeld_atoms
          !=======================
+         .crystal.xray_data.finish_reflection_partition
 
          ! Update geometry & errors
          .crystal.xray_data.update_refinement_parameters
@@ -468,7 +495,7 @@ contains
       end
 
       ! SCF @ final geometry
-      .scf
+      if (NOT external_density) .scf
       .SCF_data.set_output(TRUE) ! put back
 
       ! Put analysis info ...
@@ -496,6 +523,11 @@ contains
 
       results :: BIN
       output  :: BIN
+      external_density :: BIN
+
+      ! A CRYSTAL23 fit uses the imported periodic density; there are no
+      ! molecular MOs for Tonto to start an SCF from.
+      external_density = .crystal.xray_data.partition_model=="oc-crystal23"
       
       ! This is a rigid-atom fit
       .crystal.xray_data.set_fit_structure(TRUE)
@@ -508,7 +540,7 @@ contains
       .make_atom_partition_info
 
       ! Initial SCF
-      if (.density_mx.deallocated) then
+      if (.density_mx.deallocated AND NOT external_density) then
          if (output) then
             stdout.flush
             stdout.text("Initial density matrix for refinement ...")
@@ -519,27 +551,29 @@ contains
          .scf ! ???
       end
 
-      ! Initial F_calc's for pruning
-      if (NOT .crystal.xray_data.reflections.have_F_pred) then
-         if (output) then
-            stdout.flush
-            stdout.text("Making F_pred ...")
-         end
-         .make_X_SFs
+      ! A one-cycle HA fit is also a partition cycle: restore all unmerged
+      ! observations, repeat MERG, and evaluate the current aspherical model.
+      .crystal.xray_data.restart_from_unmerged_reflections( &
+         .crystal.unit_cell,.crystal.spacegroup)
+      if (output) then
+         stdout.flush
+         stdout.text("Making F_pred ...")
       end
+      .make_X_SFs
 
-      ! Prune?
+      ! Prune only once current aspherical F_calc values exist.
       if (.crystal.xray_data.is_F_calc_prunable) then
          if (output) then
             stdout.flush
             stdout.text("Pruning reflections with F_pred/F_calc for refinement ...")
          end
-         .crystal.xray_data.prune_reflections
+         .crystal.xray_data.prune_calculated_reflections
       end
 
       ! Do the LSQ fit
       ! Header output appears inside here
       .LS_fit_Hirshfeld_atoms
+      .crystal.xray_data.finish_reflection_partition
 
    end
 

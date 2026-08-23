@@ -2832,6 +2832,176 @@ contains
 
    end
 
+   make_periodic_stockholder_atom_weight_from(grid,a,pts,proatom) :: leaky, private
+   ! Make a Hirshfeld stockholder weight for atom "a" using a periodic
+   ! procrystal denominator. The ordinary molecular stockholder routine
+   ! is not suitable for an extended solid: for a one-atom fragment it
+   ! returns one everywhere, so a periodic residual density would be
+   ! integrated over an unbounded atom grid.
+   !
+   ! Neutral spherical reference densities are repeated over the unit
+   ! cell and nearby lattice translations. Contributions smaller than
+   ! the Becke-grid density cutoff are consistently neglected.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      a    :: INT, IN
+      pts  :: MAT{REAL}, IN
+      proatom :: VEC{ATOM}, IN
+
+   ENSURE(proatom.dim>0,"no proatoms")
+   ENSURE(a>=1 AND a<=proatom.dim,"invalid proatom index")
+   ENSURE(.crystal.allocated,"no crystal")
+   ENSURE(.crystal.unit_cell_atom.allocated,"no unit-cell atoms")
+   ENSURE(grid.dim==pts.dim1,"incompatible dim1, grid & pts")
+
+      rho_a,den,tmp,R2,reference_radius :: VEC{REAL}@
+      reference,h_min,h_max :: VEC{INT}@
+      lattice_index :: VEC{INT}(3)
+      center,pos,shift,frac_center,frac_radius :: VEC{REAL}(3)
+      cutoff,target_radius,max_radius :: REAL
+      n_pts,n,u,b,i,h1,h2,h3 :: INT
+
+      n_pts = pts.dim1
+      cutoff = .becke_grid.basis_fn_cutoff
+      center = proatom(a).position
+
+      ! Reuse the proatom interpolation table made by make_HA_info. Calling
+      ! interpolator_table_length here would rebuild the density from an
+      ! orbital occupation vector that does not exist when the density is
+      ! imported. Convert the table's stored coordinate back to a physical
+      ! radius according to its domain mapping.
+      select case (proatom(a).basis_kind)
+      case ("gaussian")
+         ENSURE(proatom(a).interpolator.allocated,"no proatom interpolator")
+         if (proatom(a).interpolator.domain_is_sqrt_x1x) then
+            target_radius = proatom(a).interpolator.domain_scale_factor*sqrt( &
+               proatom(a).interpolator.table_length / &
+               max(ONE-proatom(a).interpolator.table_length,epsilon(ONE)))
+         else if (proatom(a).interpolator.domain_is_sqrt) then
+            target_radius = sqrt(proatom(a).interpolator.table_length)
+         else
+            target_radius = proatom(a).interpolator.table_length
+         end
+      case ("slater","coppens")
+         target_radius = proatom(a).interpolator_table_length(cutoff)
+      case default
+         UNKNOWN(proatom(a).basis_kind)
+      end
+
+      ! Find one neutral reference atom of the correct element for
+      ! every crystallographic atom in the unit cell.
+      reference.create(.crystal.n_unit_cell_atoms)
+      reference_radius.create(.crystal.n_unit_cell_atoms)
+      max_radius = target_radius
+      do u = 1,.crystal.n_unit_cell_atoms
+         reference(u) = 0
+         do b = 1,proatom.dim
+            if (proatom(b).atomic_number == &
+                .crystal.unit_cell_atom(u).atomic_number) then
+               reference(u) = b
+               exit
+            end
+         end
+         ENSURE(reference(u)>0,"no periodic Hirshfeld reference atom")
+
+         b = reference(u)
+         select case (proatom(b).basis_kind)
+         case ("gaussian")
+            ENSURE(proatom(b).interpolator.allocated,"no proatom interpolator")
+            if (proatom(b).interpolator.domain_is_sqrt_x1x) then
+               reference_radius(u) = &
+                  proatom(b).interpolator.domain_scale_factor*sqrt( &
+                  proatom(b).interpolator.table_length / &
+                  max(ONE-proatom(b).interpolator.table_length,epsilon(ONE)))
+            else if (proatom(b).interpolator.domain_is_sqrt) then
+               reference_radius(u) = sqrt(proatom(b).interpolator.table_length)
+            else
+               reference_radius(u) = proatom(b).interpolator.table_length
+            end
+         case ("slater","coppens")
+            reference_radius(u) = &
+               proatom(b).interpolator_table_length(cutoff)
+         case default
+            UNKNOWN(proatom(b).basis_kind)
+         end
+         max_radius = max(max_radius,reference_radius(u))
+      end
+
+      ! The central proatom numerator defines the finite integration
+      ! support. One extra cell in each direction is retained around
+      ! that support.
+      frac_center = matmul(center,.crystal.unit_cell.reciprocal_mx)
+      frac_radius = (target_radius+max_radius)/.crystal.unit_cell.length
+      h_min.create(3)
+      h_max.create(3)
+      h_min = floor(frac_center-frac_radius) - 1
+      h_max = ceiling(frac_center+frac_radius) + 1
+
+      rho_a.create(n_pts)
+      den.create(n_pts)
+      tmp.create(n_pts)
+      R2.create(n_pts)
+      proatom(a).make_ED_grid(rho_a,pts)
+      den = ZERO
+
+      do h1 = h_min(1),h_max(1)
+      do h2 = h_min(2),h_max(2)
+      do h3 = h_min(3),h_max(3)
+
+         lattice_index(1) = h1
+         lattice_index(2) = h2
+         lattice_index(3) = h3
+         shift = matmul(.crystal.unit_cell.direct_mx, &
+            REALIFY(lattice_index))
+
+         do u = 1,.crystal.n_unit_cell_atoms
+            b = reference(u)
+            pos = .crystal.unit_cell_atom(u).position + shift
+
+            ! If both proatoms are truncated at their radii, this image
+            ! cannot overlap the support of the central numerator.
+            if (norm2(pos-center)> &
+               target_radius+reference_radius(u)) cycle
+
+            select case (proatom(b).basis_kind)
+            case ("gaussian")
+               do n = 1,n_pts
+                  R2(n) = sum((pts(n,:)-pos)**2)
+               end
+               proatom(b).interpolator.values_for(R2,tmp)
+               den = den + tmp
+            case ("slater")
+               proatom(b).slaterbasis.add_ED_grid(den,pts,pos)
+            case ("coppens")
+               proatom(b).coppensbasis.add_ED_grid(den,pts,pos)
+            case default
+               UNKNOWN(proatom(b).basis_kind)
+            end
+         end
+
+      end
+      end
+      end
+
+      do i = 1,n_pts
+         if (rho_a(i)>cutoff AND den(i)>epsilon(ONE)) then
+            grid(i) = rho_a(i)/den(i)
+         else
+            grid(i) = ZERO
+         end
+      end
+
+      R2.destroy
+      tmp.destroy
+      den.destroy
+      rho_a.destroy
+      h_max.destroy
+      h_min.destroy
+      reference_radius.destroy
+      reference.destroy
+
+   end
+
 !  ==============================
 !  Salvador-RC neighbours & radii
 !  ==============================
@@ -5088,17 +5258,35 @@ contains
 
       rho,wt,Wa :: VEC{REAL}@
       pt, k_pts :: MAT{REAL}@
+      basis_overlap :: MAT{REAL}@
       library_basis_labels :: VEC{STR}@
       library  :: STR(len=PATH_SIZE)
       cluster  :: CRYSTAL@
       HS_atoms :: VEC{ATOM}@
-      sa,  k1,k2,k3,kr :: REAL
+      basis_overlap_error :: REAL
+      sa,  k1,k2,k3,kr,sfr,sfi :: REAL
       n_atom, n_k,n_pt :: INT
       a,i,k :: INT
       sf :: CPX
       tmp_atom :: VEC{ATOM}@
       found :: BIN
       pos1,pos2 :: VEC{REAL}(3)
+
+      ! CRYSTAL23 exports the density and overlap matrices but not the basis
+      ! exponents or contractions, so check the externally chosen Tonto basis
+      ! against the central-cell XML overlap before using the density. The
+      ! CP2K bridge XML has no overlap block; there the basis-function count
+      ! checked during the XML import is the only guard.
+      if (.crystal23.central_overlap_mx.allocated) then
+         basis_overlap.create(.n_bf,.n_bf)
+         .make_r_overlap_mx(basis_overlap)
+         basis_overlap_error = maxval(abs(basis_overlap-.crystal23.central_overlap_mx))
+         if (basis_overlap_error>TOL(4)) then
+            stdout.show("Maximum CRYSTAL23/Tonto basis overlap difference =",basis_overlap_error)
+         end
+         basis_overlap.destroy
+         DIE_IF(basis_overlap_error>TOL(4),"Tonto basis differs from CRYSTAL23 XML overlap; use the exact CRYSTAL basis_directory and basis_name")
+      end
 
       ! Asymmetric unit atoms,
       ! Symmetry-generated K points and/or SF's
@@ -5203,7 +5391,14 @@ contains
       .crystal.make_unique_X_SF_k_pts(k_pts)
 
       ! Set up integration grid for the HS atom cluster
-      .becke_grid.create
+      if (.becke_grid.deallocated) .becke_grid.create
+      ! An imported periodic density needs a denser minimum than the molecular
+      ! low-accuracy grid, especially for core-sensitive data. The two settings
+      ! already dense enough are kept; anything lower is promoted, since the
+      ! grid may have been allocated before this point.
+      if (NOT .becke_grid.accuracy.is_one_of(["extreme","best   "])) then
+         .becke_grid.set_accuracy("extreme")
+      end
       .becke_grid.set_atom_info(HS_atoms) ! NOT PURE. Kang note: HS_atoms = .becke_grid.atom
       .becke_grid.set_one_atom_grid_data
 
@@ -5223,7 +5418,14 @@ contains
 
          ! Stockholder weight function "Wa" for atom "a"
          Wa.create(n_pt)
-         HS_atoms.make_Hirshfeld_weight_grid(Wa,pt,a)
+         select case (.crystal.xray_data.stockholder_model)
+         case ("cluster ")
+            HS_atoms.make_Hirshfeld_weight_grid(Wa,pt,a)
+         case ("periodic")
+            .make_periodic_stockholder_atom_weight_from(Wa,a,pt,HS_atoms)
+         case default
+            UNKNOWN(.crystal.xray_data.stockholder_model)
+         end
 
          ! Incorporate integration weight
          wt = Wa*wt
@@ -5251,11 +5453,17 @@ contains
             k1 = k_pts(k,1)
             k2 = k_pts(k,2)
             k3 = k_pts(k,3)
-            sf = IMAGIFY(ZERO)
+            ! exp(i.kr) = cos(kr) + i.sin(kr). Accumulating the two real
+            ! parts avoids a general complex exponential and a complex
+            ! multiply at every grid-point/reflection pair.
+            sfr = ZERO
+            sfi = ZERO
             do i = 1,n_pt
                kr = k1*pt(i,1)+k2*pt(i,2)+k3*pt(i,3)
-               sf = sf + rho(i)*exp(IMAGIFY(kr))
+               sfr = sfr + rho(i)*cos(kr)
+               sfi = sfi + rho(i)*sin(kr)
             end
+            sf = sfr + IMAGIFY(sfi)
             ff(k,a) = sf * sa ! <-----
          end
 

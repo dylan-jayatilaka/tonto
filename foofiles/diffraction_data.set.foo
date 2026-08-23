@@ -69,8 +69,10 @@ contains
          .extinction_factor_esd = -ONE
 
          .reflection0.destroy
+         .unmerged_reflections.destroy
          .reflections.destroy
          .hkl_range.destroy
+         .merg_applied = FALSE
 
          .scale_factors.destroy
 
@@ -314,6 +316,25 @@ contains
       ! doing an atom-based i.e. OC model
    ! if (.partition_model(1:3)=="oc-") &
     !    .set_temperature_factor_model("atom-based")
+
+   end
+
+   set_stockholder_model(val) :: PURE
+   ! Set the Hirshfeld stockholder denominator used when the partition
+   ! model is oc-crystal23. The source of the density and the way the
+   ! partition is built are independent choices.
+      self :: INOUT
+      val  :: STR, IN
+
+      options :: VEC{STR}@
+
+      options = [ "cluster ", &
+                  "periodic"  ]
+
+   ENSURE(val.is_one_of(options),"unknown stockholder_model, "//trim(val))
+
+      .stockholder_model = val
+      .stockholder_model.to_lower_case
 
    end
 
@@ -602,8 +623,28 @@ contains
 
 !   Use switches
 
-   set_use_equivalents(val) :: get_from(OBJECT:set, VAL_TYPE?=>BIN, ARG?=>.use_equivalents), pure
-   ! Generic set
+   set_merg_code(val) :: PURE
+   ! Set the SHELXL-compatible reflection merging code.
+      self :: INOUT
+      val :: INT, IN
+
+   ENSURE(val>=0 AND val<=4,"merg_code must be an integer from 0 to 4")
+
+      .merg_code = val
+      .use_equivalents = val<=1
+
+   end
+
+   set_use_equivalents(val) :: pure
+   ! Deprecated compatibility alias for pre-MERG Tonto input.
+      self :: INOUT
+      val :: BIN, IN
+
+      .use_equivalents = val
+      if (val) then; .merg_code = 0
+      else;          .merg_code = 2
+      end
+
    end
 
    set_use_disk_SFs(val) :: get_from(OBJECT:set, VAL_TYPE?=>BIN, ARG?=>.use_disk_SFs), pure
@@ -662,6 +703,346 @@ contains
 !  Update methods
 !  ==============
 
+   prune_systematic_absences(spacegroup) :: leaky
+   ! Reject true space-group systematic absences before MERG. A reflection
+   ! h is absent when an operation in its reciprocal-space little group has
+   ! a non-integral h.t phase. This test uses the actual Seitz operators, so
+   ! it covers centring translations, screw axes and glide planes for every
+   ! space group without special-case reflection conditions.
+      self :: INOUT
+      spacegroup :: SPACEGROUP, IN
+
+      rejected :: VEC{BIN}@
+      kept :: VEC{REFLECTION}@
+      h,g :: VEC{INT}(3)
+      phase :: REAL
+      i,j,s,n_reflections,n_rejected,n_kept :: INT
+
+      if (.reflections.deallocated) return
+      if (.reflections.dim==0) return
+
+      n_reflections = .reflections.dim
+      rejected.create(n_reflections)
+      rejected = FALSE
+
+      do i = 1,n_reflections
+         h = .reflections(i).Miller_indices
+         do s = 1,spacegroup.n_seitz
+            g = nint(matmul(transpose(spacegroup.seitz(1:3,1:3,s)),h))
+            if (all(g==h)) then
+               phase = h(1)*spacegroup.seitz(1,4,s) + &
+                       h(2)*spacegroup.seitz(2,4,s) + &
+                       h(3)*spacegroup.seitz(3,4,s)
+               if (abs(phase-REALIFY(nint(phase)))>TOL(6)) then
+                  rejected(i) = TRUE
+                  exit
+               end
+            end
+         end
+      end
+
+      n_rejected = count(rejected)
+      if (n_rejected==0) then
+         rejected.destroy
+         return
+      end
+
+      n_kept = n_reflections-n_rejected
+      DIE_IF(n_kept==0,"all observations are systematic absences")
+      kept.create(n_kept)
+      j = 0
+      do i = 1,n_reflections
+         if (rejected(i)) cycle
+         j = j + 1
+         kept(j) = .reflections(i)
+      end
+      .reflections = kept
+
+      stdout.flush
+      stdout.text("Space-group systematic absences pruned")
+      stdout.show("No. of observations before pruning = ",n_reflections)
+      stdout.show("No. of systematic absences         = ",n_rejected)
+      stdout.show("No. of observations kept           = ",n_kept)
+
+      rejected.destroy
+
+   end
+
+   apply_merg(spacegroup) :: leaky
+   ! Apply SHELXL-style MERG treatment to the observations. Miller indices
+   ! are standardized by maximizing l, then k, then h over the applicable
+   ! reciprocal-space symmetry orbit. Merging never crosses data groups.
+      self :: INOUT
+      spacegroup :: SPACEGROUP, IN
+
+   ENSURE(.merg_code>=0 AND .merg_code<=4,"invalid merg_code")
+
+      canonical_h,canonical_k,canonical_l,group,order :: VEC{INT}@
+      merged :: VEC{REFLECTION}@
+      indices,trial,best :: VEC{INT}(3)
+      i,j,s,c,n_reflections,n_unique,n_equiv,first,current :: INT
+      mean_obs,sum_obs,sum_sigma2,sum_scatter :: REAL
+      sigma_propagated,sigma_scatter,sigma_merged :: REAL
+      merge_intensities :: BIN
+
+      if (.reflections.deallocated) return
+      if (.reflections.dim==0) return
+      if (.merg_applied) return
+
+      ! SHELXL rejects true space-group absences independently of any
+      ! observation threshold or density model. Keep IAM/model zeros that
+      ! are symmetry allowed (for example diamond 222) distinct from these.
+      .prune_systematic_absences(spacegroup)
+
+      if (.merg_code==4) then
+         if (.add_dispersion_to_F_calc OR .remove_dispersion_from_F_exp) &
+            WARN("MERG 4 disables anomalous-dispersion corrections")
+         .add_dispersion_to_F_calc = FALSE
+         .remove_dispersion_from_F_exp = FALSE
+      end
+
+      n_reflections = .reflections.dim
+
+      if (.merg_code==0) then
+         stdout.show("MERG code (observations retained unmerged) = ",.merg_code)
+         .merg_applied = TRUE
+         return
+      end
+
+      canonical_h.create(n_reflections)
+      canonical_k.create(n_reflections)
+      canonical_l.create(n_reflections)
+      group.create(n_reflections)
+      order.create(n_reflections)
+      order.to_sequence(1,n_reflections)
+
+      ! Find the standard representative of each reciprocal-space orbit.
+      do i = 1,n_reflections
+         indices = .reflections(i).Miller_indices
+         best = indices
+         do s = 1,spacegroup.n_seitz
+            trial = nint(matmul(transpose(spacegroup.seitz(1:3,1:3,s)),indices))
+            if (trial(3)>best(3) OR &
+               (trial(3)==best(3) AND trial(2)>best(2)) OR &
+               (trial(3)==best(3) AND trial(2)==best(2) AND trial(1)>best(1))) &
+               best = trial
+            if (.merg_code>=3) then
+               trial = -trial
+               if (trial(3)>best(3) OR &
+                  (trial(3)==best(3) AND trial(2)>best(2)) OR &
+                  (trial(3)==best(3) AND trial(2)==best(2) AND trial(1)>best(1))) &
+                  best = trial
+            end
+         end
+         canonical_h(i) = best(1)
+         canonical_k(i) = best(2)
+         canonical_l(i) = best(3)
+         group(i) = .reflections(i).group
+      end
+
+      ! MERG 1 changes only the indexing; every observation remains present.
+      if (.merg_code==1) then
+         do i = 1,n_reflections
+            indices = [canonical_h(i),canonical_k(i),canonical_l(i)]
+            .reflections(i).set_miller_indices(indices)
+         end
+         stdout.show("MERG code (indices standardized; observations unmerged) = ",.merg_code)
+         canonical_h.destroy
+         canonical_k.destroy
+         canonical_l.destroy
+         group.destroy
+         order.destroy
+         .merg_applied = TRUE
+         return
+      end
+
+      ! Sort an index vector by (group,l,k,h). This makes grouping O(N log N)
+      ! rather than O(N**2), which matters for raw area-detector data.
+      ::sort_merg_order(order,1,n_reflections,canonical_h,canonical_k,canonical_l,group)
+
+      n_unique = 1
+      do i = 2,n_reflections
+         current = order(i)
+         first = order(i-1)
+         if (group(current)/=group(first) OR &
+             canonical_l(current)/=canonical_l(first) OR &
+             canonical_k(current)/=canonical_k(first) OR &
+             canonical_h(current)/=canonical_h(first)) &
+            n_unique = n_unique + 1
+      end
+
+      merged.create(n_unique)
+      merge_intensities = .have_I_exp
+
+      c = 0
+      i = 1
+      do while (i<=n_reflections)
+         c = c + 1
+         first = order(i)
+         j = i
+         n_equiv = 0
+         sum_obs = ZERO
+         sum_sigma2 = ZERO
+         do
+            if (j>n_reflections) exit
+            current = order(j)
+            if (group(current)/=group(first) OR &
+                canonical_l(current)/=canonical_l(first) OR &
+                canonical_k(current)/=canonical_k(first) OR &
+                canonical_h(current)/=canonical_h(first)) exit
+            n_equiv = n_equiv + 1
+            if (merge_intensities) then
+               sum_obs = sum_obs + .reflections(current).I_exp
+               sum_sigma2 = sum_sigma2 + .reflections(current).I_sigma**2
+            else
+               sum_obs = sum_obs + .reflections(current).F_exp
+               sum_sigma2 = sum_sigma2 + .reflections(current).F_sigma**2
+            end
+            j = j + 1
+         end
+
+         mean_obs = sum_obs/REALIFY(n_equiv)
+         sigma_propagated = sqrt(sum_sigma2)/REALIFY(n_equiv)
+         sigma_scatter = ZERO
+         if (n_equiv>1) then
+            sum_scatter = ZERO
+            do s = i,j-1
+               current = order(s)
+               if (merge_intensities) then
+                  sum_scatter = sum_scatter + (.reflections(current).I_exp-mean_obs)**2
+               else
+                  sum_scatter = sum_scatter + (.reflections(current).F_exp-mean_obs)**2
+               end
+            end
+            sigma_scatter = sqrt(sum_scatter/REALIFY(n_equiv*(n_equiv-1)))
+         end
+         sigma_merged = max(sigma_propagated,sigma_scatter)
+
+         merged(c) = .reflections(first)
+         indices = [canonical_h(first),canonical_k(first),canonical_l(first)]
+         merged(c).set_miller_indices(indices)
+         if (merge_intensities) then
+            merged(c).set_I_exp(mean_obs)
+            merged(c).set_I_sigma(sigma_merged)
+         else
+            merged(c).set_F_exp(mean_obs)
+            merged(c).set_F_sigma(sigma_merged)
+         end
+         i = j
+      end
+
+      .reflections = merged
+
+      stdout.flush
+      stdout.show("MERG code = ",.merg_code)
+      stdout.show("No. of observations before merging = ",n_reflections)
+      stdout.show("No. of reflections after merging   = ",n_unique)
+
+      canonical_h.destroy
+      canonical_k.destroy
+      canonical_l.destroy
+      group.destroy
+      order.destroy
+      .merg_applied = TRUE
+
+   end
+
+   restart_from_unmerged_reflections(unit_cell,spacegroup) :: leaky
+   ! Rebuild the working reflection set for a new density partition. MERG and
+   ! all rejection rules are deliberately repeated from the complete unmerged
+   ! input, so a reflection rejected as a model zero in one HAR cycle can
+   ! re-enter when the next aspherical density makes it nonzero.
+      self :: INOUT
+      unit_cell :: UNIT_CELL, IN
+      spacegroup :: SPACEGROUP, IN
+
+   ENSURE(.unmerged_reflections.allocated,"no unmerged reflection data")
+
+      ! The first cycle may consume the working set prepared directly from
+      ! the just-read observations. Later cycles clear this flag after their
+      ! partition, and so rebuild from the untouched master copy below.
+      if (.merg_applied) return
+
+      .reflections = .unmerged_reflections
+      .merg_applied = FALSE
+      .apply_merg(spacegroup)
+
+      ! Keep the complete merged set for reporting, then apply the data-only
+      ! cutoffs. The model-dependent cutoffs are applied only once the caller
+      ! has recalculated F_calc/F_pred for this density partition.
+      .reflection0 = .reflections
+      .reflection0.set_d_and_theta(unit_cell,.wavelength)
+      .reflections.set_d_and_theta(unit_cell,.wavelength)
+      .reflection0.set_equivalence_factors(spacegroup)
+      .reflections.set_equivalence_factors(spacegroup)
+      .prune_observation_reflections
+      .sort_reflections
+
+   end
+
+   finish_reflection_partition :: PURE
+   ! Mark the current merged/pruned working set as consumed by one density
+   ! partition. The next cycle must rebuild it from .unmerged_reflections.
+      self :: INOUT
+
+      .merg_applied = FALSE
+
+   end
+
+   merg_key_less(a,b,h,k,l,group) result (res) :: selfless, private, PURE
+   ! Lexicographic order for MERG classes.
+      a,b :: INT, IN
+      h,k,l,group :: VEC{INT}, IN
+      res :: BIN
+
+      if (group(a)/=group(b)) then; res = group(a)<group(b)
+      else if (l(a)/=l(b)) then;    res = l(a)<l(b)
+      else if (k(a)/=k(b)) then;    res = k(a)<k(b)
+      else;                         res = h(a)<h(b)
+      end
+
+   end
+
+   sort_merg_order(order,left,right,h,k,l,group) :: selfless, recursive, private, PURE
+   ! In-place quicksort of reflection indices using the MERG class key.
+      order :: VEC{INT}, INOUT
+      left,right :: INT, IN
+      h,k,l,group :: VEC{INT}, IN
+
+      i,j,pivot,temp :: INT
+
+      if (left>=right) return
+
+      i = left
+      j = right
+      pivot = order((left+right)/2)
+
+      do
+         do while (::merg_key_less(order(i),pivot,h,k,l,group))
+            i = i + 1
+         end
+         do while (::merg_key_less(pivot,order(j),h,k,l,group))
+            j = j - 1
+         end
+         if (i<=j) then
+            temp = order(i)
+            order(i) = order(j)
+            order(j) = temp
+            i = i + 1
+            j = j - 1
+         end
+         if (i>j) exit
+      end
+
+      if (left<j) then
+         ::sort_merg_order(order,left,j,h,k,l,group)
+      end
+      if (i<right) then
+         ::sort_merg_order(order,i,right,h,k,l,group)
+      end
+
+   end
+
    update(unit_cell,spacegroup) :: leaky
    ! Update the crystal information after setting values. If the
    ! "unit_cell" is provided, then that is used to define the
@@ -680,13 +1061,17 @@ contains
 
       else
 
-         ! The untainted reflections, taken ONCE. Previously this was
-         ! refreshed on every update, so a second xray_data= block overwrote
-         ! it with the already-pruned set and the original data was lost.
-         ! Pruning still works on .reflections in place, so successive
-         ! prunings compound; fixing that needs the downstream state rebuilt
-         ! and is deferred. See DEFERRED.md.
-         if (.reflection0.deallocated) .reflection0 = .reflections
+         ! The untouched observations, taken ONCE. This is the master copy
+         ! every density partition restarts from; a new read destroys it.
+         if (.unmerged_reflections.deallocated) &
+            .unmerged_reflections = .reflections
+
+         ! Remove true space-group absences and merge the raw observations
+         ! before any observation cutoff or least-squares set-up.
+         .apply_merg(spacegroup)
+
+         ! The complete merged set, kept for reporting.
+         .reflection0 = .reflections
         
          ! Set d, stl, theta 
          .reflection0.set_d_and_theta(unit_cell,.wavelength)
@@ -712,6 +1097,11 @@ contains
                .reflections.scale_F_exp(.exp_scale_factor)
                .reflection0.scale_F_sigma(.exp_scale_factor)
                .reflections.scale_F_sigma(.exp_scale_factor)
+
+               if (.unmerged_reflections.allocated) then
+                  .unmerged_reflections.scale_F_exp(.exp_scale_factor)
+                  .unmerged_reflections.scale_F_sigma(.exp_scale_factor)
+               end
 
                ! Turn off next time
                .exp_scale_factor = -ONE
@@ -771,6 +1161,8 @@ contains
             DIE_IF(NOT found,"no F or F_squared reflections in your fcf file: "//trim(.fcf_file_name))
             .reflections.read_smCIF_F2_reflections(cif) ! leaky
          end
+         .merg_applied = FALSE
+         .unmerged_reflections.destroy
 
          cif.destroy
 
@@ -813,12 +1205,21 @@ contains
 ! ===================
 
    prune_reflections
-   ! Zero-out negative reflections, adding appropriate error to sigma
-   ! If random errors are to be added, process and add error to sigma.
-   ! Then prune all the reflections, as requested by cutoffs.
+   ! Apply every configured observation- and model-dependent cutoff.
       self :: INOUT
 
-      n_refl,n_prun :: INT
+      .prune_observation_reflections
+      .prune_calculated_reflections
+
+   end
+
+   prune_observation_reflections
+   ! Apply only the rules that depend on the observations or the resolution.
+   ! Safe immediately after restoring the raw observations, before the
+   ! current density has supplied new F_calc/F_pred values.
+   ! Zero-out negative reflections, adding appropriate error to sigma.
+   ! If random errors are to be added, process and add error to sigma.
+      self :: INOUT
 
       ! Prune small I's and define F's
       if (.have_I_exp) then
@@ -858,7 +1259,24 @@ contains
          WARN("F_sigma_cutoff specified but no F_exp/F_sigma data") 
       end 
       end 
-      
+
+      if (.stl_high_cutoff>ZERO) then
+         .prune_high_angle_reflections
+      end
+
+      if ( .stl_low_cutoff>ZERO) then
+         .prune_low_angle_reflections
+      end
+
+   end
+
+   prune_calculated_reflections
+   ! Apply only the rejection rules that depend on F_calc/F_pred from the
+   ! current density partition. Call this after make_X_SFs in every cycle.
+      self :: INOUT
+
+      n_refl,n_prun :: INT
+
       ! NOTE if doing below, do it repeatedly
       ! because the scale factor will change
       if (.F_z_cutoff     >ZERO) then
@@ -892,15 +1310,6 @@ contains
       else
          WARN("F_pred_cutoff specified but no F_pred data")
       end
-      end
-
-
-      if (.stl_high_cutoff>ZERO) then
-         .prune_high_angle_reflections
-      end
-
-      if ( .stl_low_cutoff>ZERO) then
-         .prune_low_angle_reflections
       end
 
    end

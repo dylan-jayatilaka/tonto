@@ -1271,6 +1271,12 @@ contains
       ! (Assuming basis set was set before this)
       .update_atom_basis_group_info   ! It uses .atom.group updated  
                                           ! Kang. Caution: (molecule).atom.group may not be correct when a molecule crosses the unit cell boundary
+
+      ! The XML carries a density matrix but no basis exponents or contraction
+      ! coefficients, so a mismatched Tonto basis reconstructs a density that
+      ! cannot be valid. The basis function count is the cheapest way to see it.
+      DIE_IF(.n_bf/=.crystal23.n_bf,"CRYSTAL23 XML basis count differs from Tonto; use the exact CRYSTAL basis_directory and basis_name")
+
       .crystal.asymmetric_unit_atom.destroy
       .crystal.asymmetric_unit_geometry.destroy 
 
@@ -1314,11 +1320,13 @@ contains
       tmp  :: STR
       replace :: MAT{STR}@
       W   :: MAT{REAL}@
+      S0  :: VEC{REAL}@
       av,bv,cv   :: VEC{REAL}(3)
       igv :: VEC{INT}(3)
       pos :: VEC{REAL}(3)
-      n_atoms,n_bf,n_g :: INT
+      n_atoms,n_bf,n_g,n_tri :: INT
       a,g  :: INT 
+      found,cp2k_xml :: BIN
 
       if ( .crystal.fragment_atom.allocated ) .crystal.fragment_atom.destroy
 
@@ -1329,6 +1337,15 @@ contains
       replace(:,2) = [ '" "', '" "', '" "' ]
       XMLfile.set_replacement_list(replace)
       XMLfile.open_for("read")
+      XMLfile.move_to_line(1)
+
+      ! The CP2K bridge writes into the same density-matrix container as
+      ! CRYSTAL23, but CP2K and CRYSTAL/Tonto label off-centre density blocks
+      ! with opposite direct-lattice vectors, and CP2K may report equivalent
+      ! atoms in the [0,1) cell while its periodic AO matrices use centred
+      ! images. Detect the bridge format explicitly, so native CRYSTAL23 XML
+      ! keeps its established conventions.
+      XMLfile.look_for("CP2K_TONTO_PERIODIC_DENSITY",found=cp2k_xml)
       XMLfile.move_to_line(1)
 
       ! Read in unit cell
@@ -1373,7 +1390,15 @@ contains
          xml_atom(a).set_label(tmp)
          XMLfile.read_line
          XMLfile.read(pos)
-         xml_atom(a).set_position(pos) ! pos is in fractional coordinate
+         if (cp2k_xml) then
+            ! Move CP2K atoms into the centred [-1/2,1/2) images that the
+            ! periodic AO density matrices use. This is a lattice translation
+            ! only, so the crystallographic atom is unchanged.
+            pos = matmul(.crystal23.Primitive_unit_cell.inverse_mx,pos)
+            pos = mod(pos+HALF+ONE,ONE)-HALF
+            pos = matmul(.crystal23.Primitive_unit_cell.direct_mx,pos)
+         end
+         xml_atom(a).set_position(pos) ! pos is in Cartesian coordinates
          XMLfile.read_line
          XMLfile.read_line
       end
@@ -1402,9 +1427,30 @@ contains
       do g = 1,n_g
          XMLfile.move_to_line_item(2)
          XMLfile.read(igv)
+         ! CP2K's P(R) is CRYSTAL/Tonto's P(-R). Reversing the lattice label
+         ! alone -- equivalently, transposing each paired block -- restores
+         ! the physical periodic density and its electron count.
+         if (cp2k_xml) igv = -igv
          .crystal23.g_latt(:,g) = igv
          XMLfile.read_line
       end
+
+      ! Keep the central-cell overlap matrix. The XML has no basis exponents
+      ! or contraction coefficients, so this is what lets the externally
+      ! chosen Tonto basis be checked before the density is used. The CP2K
+      ! bridge XML has no such block, hence the optional read.
+      n_tri = n_bf*(n_bf+1)/2
+      if (.crystal23.central_overlap_mx.allocated) .crystal23.central_overlap_mx.destroy
+      S0.create(n_tri)
+      XMLfile.look_for("DIRECT_OVERLAP_MATRIX__IVDL.1",found=found)
+      if (found) then
+         XMLfile.read_line
+         XMLfile.move_to_line_item(1)
+         XMLfile.read(S0)
+         .crystal23.central_overlap_mx.create(n_bf,n_bf)
+         .crystal23.central_overlap_mx.symmetric_unzip_triangle(S0)
+      end
+      S0.destroy
 
       ! Read overlap matrices
    ! n_tri = n_bf*(n_bf+1)/2

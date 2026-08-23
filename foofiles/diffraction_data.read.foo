@@ -78,6 +78,8 @@ contains
       case ("max_allowed_param_shift=      "); .read_max_allowed_param_shift
       case ("max_iterations=               "); .read_max_iterations
       case ("max_prune_iterations=         "); .read_max_prune_iterations
+      case ("merg=                         "); .read_merg_code
+      case ("merg_code=                    "); .read_merg_code
       case ("min_correlation=              "); .read_min_correlation
       case ("min_iterations=               "); .read_min_iterations
    ! case ("nka_t_sequence_no=            "); .read_NKA_T_seq_no
@@ -140,6 +142,7 @@ contains
       case ("stl_limit=                    "); .read_stl_limit
       case ("stl_low_cutoff=               "); .read_stl_low_cutoff
       case ("stop_after_dispersion=        "); .read_stop_after_dispersion
+      case ("stockholder_model=            "); .read_stockholder_model
       case ("synthesize_sigma_i=           "); .read_synthesize_sigma_I
    ! case ("thermal_smearing_model=       "); .read_temperature_factor_model
       case ("temperature=                  "); .read_temperature
@@ -183,6 +186,8 @@ contains
       case ("max_allowed_param_shift=?     "); .docu_max_allowed_param_shift(die)
       case ("max_iterations=?              "); .docu_max_iterations(die)
       case ("max_prune_iterations=?        "); .docu_max_prune_iterations(die)
+      case ("merg=?                        "); .docu_merg_code(die)
+      case ("merg_code=?                   "); .docu_merg_code(die)
       case ("min_correlation=?             "); .docu_min_correlation(die)
       case ("min_iterations=?              "); .docu_min_iterations(die)
    ! case ("nka_t_sequence_no=?           "); .docu_NKA_T_seq_no(die)
@@ -238,6 +243,7 @@ contains
       case ("stl_low_cutoff=?              "); .docu_stl_low_cutoff(die)
       case ("stl_limit=?                   "); .docu_stl_limit(die)
    ! case ("stop_after_dispersion=?       "); .docu_stop_after_dispersion(die)
+      case ("stockholder_model=?           "); .docu_stockholder_model(die)
    ! case ("synthesize_sigma_i=?          "); .docu_synthesize_sigma_I(die)
    ! case ("thermal_smearing_model=?      "); .docu_temperature_factor_model(die)
    ! case ("temperature=?                 "); .docu_temperature(die)
@@ -279,6 +285,7 @@ contains
       .docu_do_residual_cube
       .docu_exp_scale_factor
       .docu_F_calc_cutoff
+      .docu_merg_code
       .docu_F_pred_cutoff
       .docu_F_sigma_cutoff
       .docu_F_sigma_noise
@@ -339,6 +346,7 @@ contains
       .docu_stl_low_cutoff
       .docu_stl_limit
    ! .docu_stop_after_dispersion
+      .docu_stockholder_model
    ! .docu_synthesize_sigma_I
    ! .docu_temperature_factor_model
    ! .docu_temperature
@@ -543,17 +551,19 @@ contains
       die :: BIN, optional, IN
       stdout.flush
       stdout.flush
-      stdout.text("F_calc_cutoff= REAL [TOL(3)] ")
+      stdout.text("F_calc_cutoff= REAL [TOL(8)] ")
       stdout.flush
-      stdout.text(". Set autoff for |F_calc| values, used to prune out small")
-      stdout.text("  calculated structure factors.")
+      stdout.text(". Set the cutoff for numerically zero |F_calc| values.")
       stdout.flush
       stdout.text(". Must be a positive value")
       stdout.text(". Initial negative value denotes feature is unused")
       stdout.flush
-      stdout.text(". Useful for removing systematic absences from the data;")
-      stdout.text("  essential for least-squares structure refinement to avoid")
-      stdout.text("  potential divide-by-zero errors.")
+      stdout.text(". This test is applied only after the structure factors for")
+      stdout.text("  the selected partition model have been calculated. So an")
+      stdout.text("  IAM-zero reflection that is nonzero for an aspherical model")
+      stdout.text("  is retained, while exact translational absences are removed.")
+      stdout.text(". The numerical-zero test prevents divide-by-zero errors in")
+      stdout.text("  least-squares refinement.")
       if (present(die)) stop
    end
 
@@ -1194,6 +1204,36 @@ contains
       if (present(die)) stop
    end
 
+   docu_stockholder_model(die) :: selfless, private
+   ! Documentation.
+      die :: BIN, optional, IN
+      stdout.flush
+      stdout.text("stockholder_model= STR [cluster]")
+      stdout.flush
+      stdout.text(". Select the Hirshfeld stockholder denominator used with")
+      stdout.text("  partition_model= oc-crystal23, including CP2K densities")
+      stdout.text("  imported through the Crystal23-compatible path.")
+      stdout.flush
+      stdout.text(". Allowed values are:")
+      stdout.text("     - cluster,  the finite HS atom cluster (the default)")
+      stdout.text("     - periodic, a unit-cell/lattice-periodic procrystal")
+      stdout.flush
+      stdout.text(". This changes only the stockholder weights. The electron")
+      stdout.text("  density remains the imported Crystal23 or CP2K density.")
+      if (present(die)) stop
+   end
+
+   read_stockholder_model :: private
+   ! Read the Hirshfeld stockholder denominator model.
+      self :: INOUT
+
+      val :: STR
+
+      stdin.read(val)
+      .set_stockholder_model(val)
+
+   end
+
    read_partition_model :: private
    ! Read the partition model to used to correct for oversampled fragments
    ! of the unit cell when calculating the structure factors
@@ -1623,6 +1663,8 @@ contains
 
       if (.reflections.allocated) .reflections.destroy
       .reflections.read_list_keywords
+      .merg_applied = FALSE
+      .unmerged_reflections.destroy
 
    end
 
@@ -2116,23 +2158,51 @@ contains
 
    end
 
+   docu_merg_code(die) :: selfless, private
+   ! Documentation.
+      die :: BIN, optional, IN
+      stdout.flush
+      stdout.flush
+      stdout.text("merg_code= INT [2]")
+      stdout.flush
+      stdout.text(". SHELXL-compatible treatment of equivalent observations:")
+      stdout.text("  0: keep observations and Miller indices unchanged;")
+      stdout.text("  1: standardize Miller indices, but do not merge;")
+      stdout.text("  2: merge space-group equivalents, keeping Friedel pairs")
+      stdout.text("     separate when the space group is non-centrosymmetric;")
+      stdout.text("  3: as 2, also merging Friedel opposites;")
+      stdout.text("  4: as 3, with anomalous scattering disabled.")
+      stdout.flush
+      stdout.text(". Equivalent intensities or amplitudes are averaged. Their")
+      stdout.text("  merged sigma is the larger of the propagated input sigma")
+      stdout.text("  and the standard error estimated from equivalent scatter.")
+      stdout.flush
+      stdout.text(". MERG only combines observations belonging to the same data")
+      stdout.text("  group. TWIN/HKLF 5/6 data are not implemented in Tonto.")
+      if (present(die)) stop
+   end
+
+   read_merg_code :: leaky, private
+   ! Read the SHELXL-compatible reflection merging code.
+      self :: INOUT
+
+      val :: INT
+
+      stdin.read(val)
+      .set_merg_code(val)
+
+   end
+
    docu_use_equivalents(die) :: selfless, private
    ! Documentation.
       die :: BIN, optional, IN
       stdout.flush
       stdout.flush
-      stdout.text("use_disk_SFs= BIN [FALSE]")
+      stdout.text("use_equivalents= BIN [FALSE] (deprecated)")
       stdout.flush
-      stdout.text(". Set if you want to *keep* equivalent reflections.")
-      stdout.text("  If you do *not* set this TRUE, equivalent reflections")
-      stdout.text("  will be deleted.")
-      stdout.flush
-      stdout.text(". IMPORTANT: Tonto requires a  symmetry independent set")
-      stdout.text("  of reflections.")
-      stdout.flush
-      stdout.text(". Friedel pairs may or may not be present; if you are")
-      stdout.text("  using dispersion corrections, you had better have")
-      stdout.text("  Friedel pairs in you set of reflections!")
+      stdout.text(". Compatibility alias retained for old input files.")
+      stdout.text("  TRUE maps to merg_code= 0; FALSE maps to merg_code= 2.")
+      stdout.text(". New inputs should use merg_code= explicitly.")
       if (present(die)) stop
    end
 
@@ -2485,6 +2555,8 @@ contains
 
       ! Read reflections
       .reflections.read_CIF(cif)
+      .merg_applied = FALSE
+      .unmerged_reflections.destroy
 
       ! First prune I's and define F's
       if (.have_I_exp) then
@@ -2557,6 +2629,8 @@ contains
 
       ! Read reflections
       .reflections.read_CIF(cif)
+      .merg_applied = FALSE
+      .unmerged_reflections.destroy
 
       ! First prune I's and define F's
       if (.have_I_exp) then
