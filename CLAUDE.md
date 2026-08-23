@@ -152,6 +152,21 @@ Full details in the companion docs (§7).
   vanishes) and **fails only in a debug or MPI build**, with gfortran's misleading *"There is no
   specific subroutine for the generic `ensure_`"* rather than a purity error. Cost the debug CI
   a red badge on 2026-08-02; see the note at `PARALLEL:reduction_is_allowed`.
+- **Never reach a `WARN`/`ENSURE` through a line continuation.** The sibling trap, and it
+  fails the *other* way round — in **release**, not debug. Under an optimised build
+  `WARN(X)` expands to a **comment** (`! Warning message: X`), so
+
+  ```
+  if (cond) &
+     WARN("...")
+  ```
+
+  leaves a bare `if (cond)` with no statement: *"Syntax error in IF-clause"*. It compiles
+  happily in debug, where the macro is real. Use **`WARN_IF(cond,"...")`**, which exists for
+  exactly this, or the block form `if (cond) then / WARN(...) / end` — an empty block body is
+  legal, a continued `if` with nothing after it is not. Every `WARN` in `foofiles/` uses one of
+  those two. Found 2026-08-23 by the first release build of the `Lolo_CP2K` port; the
+  same rule applies to `WARN_IF`, `ENSURE` and any other macro that vanishes in some build.
 - **Variable attributes** (comma-separated, after the type): `IN`, `OUT`, `INOUT`, `PRIVATE`,
   `READONLY`, `POINTER`, `TARGET`, `SAVE`, `ALLOCATABLE`, `OPTIONAL`.
 - **Modules:** `module NAME … contains … end`; generic `interface NAME … end` blocks.
