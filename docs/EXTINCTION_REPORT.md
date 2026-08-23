@@ -343,3 +343,267 @@ also reads `n_par` without ever assigning it.
    number contributed by the wavefunction is not known at intermediate `lambda`.
 7. `docs/GOF_NOT_CHI2.md` is independent. If it lands in the same window, its table
    change can share step 5's reblessing pass; nothing requires it to.
+
+---
+
+# Appendix A — choosing lambda by an information criterion
+
+**Opened 2026-08-23**, at Dylan's request, as step 6 of the plan above. Nothing here is
+implemented. It is written down so the next session starts from the reasoning rather than
+from the question.
+
+## A1. Why cross-validation was spotty
+
+Cross-validation has been tried and the free-set statistic jumped around. Two causes, one
+of them quantitative and decisive.
+
+**Too few free reflections.** If the model is right, the free-set statistic is a sum of
+`m` squared standardised residuals, so it follows a chi-squared distribution on about `m`
+degrees of freedom. Its mean is `m` and its variance is `2m`, so its **relative standard
+error is `sqrt(2/m)`**. For urea, five percent of 817 reflections is 41, giving 22%. To
+tell apart two values of lambda whose free residual differs by two percent, you would need
+about five thousand free reflections. A single five-percent split of a small-molecule
+dataset cannot locate a minimum. This is not a defect in the implementation; the statistic
+simply is not precise enough.
+
+**The split is not stratified.** `CRYSTAL:set_r_free_reflections` (`crystal.foo:220`) draws
+one uniform random number per reflection and puts it in the free set if the number falls
+below the percentage. Two consequences follow.
+
+- The free-set size is not fixed. It is binomial, so it varies from run to run by about
+  `sqrt(m)` — seven reflections in the urea case.
+- The split is not balanced across resolution or intensity. A handful of strong low-angle
+  reflections dominate the weighted residual. Whether two or five of them land in the free
+  set changes the free statistic substantially, and that is decided by chance.
+
+Sorting the reflections by resolution, and within a shell by intensity, then taking every
+`k`-th, removes most of the second problem at no cost.
+
+**A nuance worth keeping.** The split is drawn once when the crystal is set up, so a scan
+over lambda within a single job uses the same free reflections throughout. The *curve* of
+free residual against lambda should therefore be reasonably smooth even when the estimate
+is imprecise; what moves from split to split is where its minimum sits. If the curve itself
+was jagged within one job, the cause lies elsewhere — most likely the SCF convergence
+tolerance at each lambda, or the free set being redrawn.
+
+**One hypothesis checked and rejected.** `crystal.foo:202` copies the whole diffraction-data
+object to make the free one, parameter count included, which would divide the free
+statistic by `(m - N_p)` instead of `m`. It does not: `VEC{REFLECTION}:put_F_free_stats`
+uses `F_chi2`, which divides by `(m - 1)`. The normalisation is right to within a fraction
+of a percent.
+
+## A2. Dylan's question: does cross-validation need several reserved sets
+
+Yes, and this is the standard fix. **k-fold cross-validation** partitions the reflections
+into `k` groups, holds each out in turn, and adds up the residuals of the held-out
+predictions. Every reflection is predicted exactly once, by a model that did not see it,
+so the statistic rests on all `N` reflections rather than on `N/20`. The relative standard
+error falls from `sqrt(2/m)` to about `sqrt(2/N)` — for urea, from 22% to 5%.
+
+The cost is `k` complete scans over lambda instead of one. The runs are independent.
+
+What Tonto would need for this is small: a way to say which fold is being held out, and a
+seed, so that the partition is reproducible and can be stepped through. Today the split is
+a single unseeded random draw with no way to request a different one.
+
+**This is Brunger's own position, not a departure from it.** He calls the procedure
+*complete cross-validation* and defines it in equations (13) and (14) of Brunger (1997),
+*Methods in Enzymology* **277**, 366: partition the data into `t` disjoint test sets of
+equal size, refit with each omitted in turn, and add the held-out residuals. His reason is
+exactly the one above — "Because of the small size of the test set, the individual test
+residuals show large statistical fluctuations. Therefore, complete cross-validation must
+be applied to obtain statistically significant results." He goes further and repeats the
+whole procedure with twenty different partitionings to get a mean and a standard deviation.
+
+## A2a. Why it works for macromolecules, checked against the source
+
+The received explanation — that cross-validation works in macromolecular crystallography
+because there are so many reflections — is correct, and Brunger quantifies it. In the same
+chapter: "the standard deviation of the free R value is approximately given by
+`R_free/sqrt(n)`, where `n` is the number of reflections in the test set." That is a
+relative precision of `1/sqrt(n)`, the same inverse-square-root behaviour as the
+`sqrt(2/m)` of A1, which applies to a chi-squared rather than to an R value.
+
+Put against real dataset sizes, with a five percent test set:
+
+| Case | Reflections | Test set | Relative s.e. |
+|---|---|---|---|
+| urea, `tests/hart/urea_hart_STO-3G` | 817 | 40 | 22% (chi2), 16% (R_free) |
+| small-molecule charge density | 6000 | 300 | 8% (chi2), 6% (R_free) |
+| protein at 2.0 A | 25000 | 1250 | 4.0% (chi2), 2.8% (R_free) |
+| protein at 1.5 A | 60000 | 3000 | 2.6% (chi2), 1.8% (R_free) |
+
+So the received explanation is right, but it is worth being precise about the size of the
+effect: the advantage is a factor of five or six in precision, not a difference in kind.
+Brunger's recommendation of a ten percent test set was reached from model calculations,
+and he notes that the standard deviation also worsens with resolution, a 2.5% test set at
+1.8 A behaving like a 10% set at 3 A because the two hold about the same number of
+reflections.
+
+**A second reason, which is about the signal rather than the noise.** Macromolecular
+refinement has few observations per parameter, so overfitting is a large effect and easy
+to see. Ordinary small-molecule refinement has 800 reflections against 27 parameters, so
+there is very little overfitting to detect: a small signal measured with a noisy ruler.
+The XCW sits between the two. Its wavefunction has many parameters, so the effect being
+looked for is much larger than in an ordinary small-molecule refinement, which is a point
+in favour of cross-validation here even though the datasets are small.
+
+## A3. The Akaike criterion
+
+AIC is `2k - 2 ln L`, with `k` the number of parameters and `L` the maximised likelihood.
+The sigmas are measured rather than estimated, so the errors are Gaussian with known
+variances and
+
+    -2 ln L  =  sum_i (F_obs,i - F_pred,i)^2 / sigma_i^2  +  constant
+
+which is the true chi-squared, equal to `(N_refl - N_p)` times the GoF-squared. Hence
+
+    AIC  =  sum_i F_z,i^2  +  2 k_eff  +  constant
+
+The first term falls as lambda rises. The second rises. The minimum is the chosen lambda.
+Note that this is one of the few places where the genuine chi-squared, not the GoF-squared,
+is the quantity wanted — see `docs/GOF_NOT_CHI2.md`.
+
+Everything turns on `k_eff`, and it cannot be a count of wavefunction parameters. There are
+more of those than there are reflections, and at lambda = 0 the data influences none of
+them. The replacement is the **effective number of parameters**, defined by how closely the
+fit tracks the data:
+
+    k_eff  =  sum over reflections of   d F_pred,i / d F_obs,i
+
+Nudge one observed structure factor. If the prediction for that reflection follows the
+whole way, that reflection has consumed one parameter. If it does not move, none. Add up.
+The quantity is a real number, not an integer, and it is zero at lambda = 0, which is what
+Davidson *et al.* (2022) section 2 says it must be.
+
+## A4. The analytic route, and why it is a CPHF calculation
+
+Write `C` for the wavefunction parameters — orbital rotation parameters — and let the XCW
+make stationary
+
+    J(C; F_obs)  =  E_QM(C)  +  lambda * GoF2(C; F_obs)
+
+(the sign convention is the code's; only derivatives with respect to `C` matter below, so
+the target value that lambda enforces drops out).
+
+The converged wavefunction `C*(F_obs)` satisfies the stationarity condition
+
+    g(C, F_obs)  =  dJ/dC  =  0
+
+Differentiate that identity with respect to one observed structure factor `F_obs,i`. The
+condition holds for every `F_obs`, so its total derivative is zero:
+
+    (d2J/dC dC) (dC*/dF_obs,i)  +  d2J/dC dF_obs,i  =  0
+
+Write `H` for the first factor and `b_i` for the second:
+
+    H    =  d2E_QM/dC dC  +  lambda * d2 GoF2/dC dC
+    b_i  =  lambda * d2 GoF2/dC dF_obs,i
+
+so that
+
+    dC*/dF_obs,i  =  -H^-1 b_i
+
+`H` is the electronic Hessian — the same orbital-rotation Hessian that appears in a
+stability analysis — plus lambda times the Hessian of the fit term. Solving a linear system
+in `H` for a perturbation of the Hamiltonian is exactly a coupled-perturbed Hartree-Fock
+calculation. There is one right-hand side per reflection, which is why the direct form is
+out of reach: a few thousand CPHF solutions per lambda.
+
+**It collapses to something much better.** Write `v_i = d F_pred,i / dC`. Then
+
+    GoF2          =  (1/(N-N_p)) sum_j (F_pred,j - F_obs,j)^2 / sigma_j^2
+    d GoF2/dC     =  (2/(N-N_p)) sum_j (F_pred,j - F_obs,j) v_j / sigma_j^2
+    b_i           =  -lambda (2/(N-N_p)) v_i / sigma_i^2
+
+and the sensitivity of one prediction to its own observation is
+
+    d F_pred,i / d F_obs,i  =  v_i^T (dC*/dF_obs,i)
+                            =  lambda (2/(N-N_p)) v_i^T H^-1 v_i / sigma_i^2
+
+Summing over reflections turns the sum of quadratic forms into a trace:
+
+    k_eff  =  trace[ H^-1 * lambda * B ],    B = (2/(N-N_p)) sum_i v_i v_i^T / sigma_i^2
+
+`B` is the Gauss-Newton part of the Hessian of the fit term — the usual normal matrix,
+formed by dropping the term containing residuals times second derivatives. So with `A` the
+electronic Hessian,
+
+    k_eff  =  trace[ (A + lambda B)^-1 lambda B ]
+
+This is the ridge-regression formula for effective degrees of freedom, with the quantum
+mechanical energy playing the part of the penalty. It behaves correctly at both ends. At
+lambda = 0 it is zero. As lambda grows without bound it tends to the rank of `B`, which is
+the smaller of the number of reflections and the number of wavefunction parameters. Both
+limits are what Davidson *et al.* state.
+
+**What it would cost.** Only the trace is needed, not the matrix. The trace of a matrix you
+can apply but not form is estimated by applying it to random vectors of plus and minus ones
+and averaging — `trace(M) = expectation of z^T M z`. Each sample needs one solve with
+`(A + lambda B)`, so twenty or so samples replace thousands. Two of the three ingredients
+already exist in some form: `v_i` is essentially what the constraint routines build, and
+`B` acting on a vector is a contraction Tonto can already do. The missing piece is the
+electronic Hessian `A` acting on a vector, which is new work.
+
+## A5. The Monte Carlo route, which needs no Hessian
+
+The same quantity can be measured rather than derived. The definition used above has an
+equivalent statistical form,
+
+    k_eff  =  sum_i covariance(F_pred,i, F_obs,i) / sigma_i^2
+
+The two agree for any fitting rule that is deterministic and differentiable, by Stein's
+lemma. The covariance form suggests an estimator that treats the whole XCW as a black box.
+
+Draw a vector `z` of independent standard normal numbers. Perturb the data by
+
+    F_obs  ->  F_obs + epsilon * sigma * z
+
+element by element, rerun the XCW at the same lambda, and form
+
+    k_hat  =  (1/epsilon) * sum_i  z_i * [ F_pred,i(perturbed) - F_pred,i ] / sigma_i
+
+To first order the change in prediction is `sum_j (dF_pred,i/dF_obs,j) epsilon sigma_j z_j`,
+and since the expectation of `z_i z_j` is one when `i = j` and zero otherwise, the
+expectation of `k_hat` is the sum of the diagonal sensitivities, which is `k_eff`. Average
+over independent draws of `z`; the error falls as one over the square root of the number of
+draws, so twenty to fifty draws give a usable figure.
+
+**Three practical points.**
+
+The step size trades bias against noise. Bias grows with `epsilon`, because the response
+stops being linear. Noise grows as `1/epsilon`, because the measured change shrinks while
+the numerical noise in `F_pred` does not. A perturbation of about one sigma is the usual
+starting point, and the result should be checked for stability by halving and doubling it.
+
+Numerical noise must be controlled, or it will swamp the signal. Start every perturbed run
+from the unperturbed converged wavefunction and use the same convergence tolerance, so that
+the two runs follow nearly the same path and their common error cancels in the difference.
+Without this the SCF tolerance sets the smallest measurable `k_eff`.
+
+Tonto already has the perturbation. `F_sigma_noise=` is a live keyword, documented as noise
+added to `F_exp` and `F_sigma` in units of `F_sigma`. Whether it does precisely what is
+wanted needs checking — in particular whether it perturbs `F_sigma` as well, which this
+estimator does not want — but the mechanism exists, and the rest of the estimator is
+arithmetic on quantities already printed.
+
+## A6. Cautions, and a recommendation
+
+AIC assumes the number of parameters is small compared with the number of observations. If
+`k_eff` becomes an appreciable fraction of the reflection count, the corrected form
+`AICc = AIC + 2k(k+1)/(N-k-1)` should be used instead.
+
+AIC weighs fit against complexity using the sigmas as though they were correct.
+Crystallographic sigmas are usually underestimated, which is exactly why the goodness of
+fit does not come out at one. If they are wrong by a common factor, the balance point moves
+and AIC will not say so. Cross-validation does not have this weakness, because it never
+converts a residual into a likelihood.
+
+**Suggested order.** Fix the free-set selection first — stratify it and make it seeded and
+selectable — and try k-fold cross-validation, which needs no parameter count and no new
+theory. It is a small change to `CRYSTAL:set_r_free_reflections` plus reviving the free-set
+calls in `MOLECULE.SCF:make_constraint_data`, which are commented out at
+`molecule.scf.foo:2141`. Then treat AIC as the more principled goal, entering by the Monte
+Carlo estimator of A5 rather than the Hessian of A4, because it needs no new derivative
+code. The analytic route is worth building only if the Monte Carlo estimate turns out to be
+too noisy or too slow.
