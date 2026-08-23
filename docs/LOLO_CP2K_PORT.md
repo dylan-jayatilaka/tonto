@@ -70,6 +70,13 @@ That has three consequences:
 - Bringing `oc-observed` over is a separate piece of work that nobody has
   scheduled. If it matters to you, please say so — it changes the priority.
 
+One more thing worth saying here, because it shapes section 5: **your branch
+carries no test jobs.** Measured against your fork point, the only file you add
+under `tests/` is the Fourier-kernel benchmark of section 3.4. So the CRYSTAL23
+and CP2K files we ask for at the end really do have to come from you
+separately — they are not sitting on the branch waiting to be ported, and we
+looked.
+
 ---
 
 ## 3. What we changed in your code, and why
@@ -108,7 +115,24 @@ This is a real trap and it has cost us a red build before. In short: **a routine
 containing `ENSURE`, `DIE` or `WARN` must be `PURE`, never `pure`.** Your
 `set_stockholder_model` already had this right.
 
-### 3.4 One routine we left out
+### 3.4 Your Fourier-kernel benchmark
+
+`tests/benchmark_c23_fourier_kernel.f90`, which came with `0673ad05`, is not in
+this port, and that is a decision rather than an oversight.
+
+It is a good program and we are not throwing it away — it stays on your branch
+and this note says where to find it. But it is a standalone Fortran
+reimplementation of both kernels, so what it checks is that
+exp(i·kr) equals cos(kr) + i·sin(kr), which was never in doubt. It does not
+touch `molecule.rho.foo`, so it could not catch the one thing that might
+genuinely have gone wrong in porting `0673ad05`: somebody mistyping your change
+into Tonto itself. Its other half is a timing comparison, which is
+machine-dependent and would be a flaky test.
+
+If you would like it kept in the tree as a development tool — built on request,
+not run by `ctest` — say so and we will add it that way.
+
+### 3.5 One routine we left out
 
 `make_periodic_stockholder_atom_weight` — the short wrapper that passes
 `.atom` to `make_periodic_stockholder_atom_weight_from` — exists only to serve
@@ -117,7 +141,7 @@ the observed-density path, which is not here. The real routine,
 CRYSTAL23 code calls. When the observed-density work arrives, the wrapper is
 four lines.
 
-### 3.5 Your keywords: all of them survive, unchanged
+### 3.6 Your keywords: all of them survive, unchanged
 
 Every keyword you added is spelled exactly as you wrote it, and behaves as you
 wrote it.
