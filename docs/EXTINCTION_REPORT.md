@@ -587,17 +587,66 @@ wanted needs checking — in particular whether it perturbs `F_sigma` as well, w
 estimator does not want — but the mechanism exists, and the rest of the estimator is
 arithmetic on quantities already printed.
 
-## A6. Cautions, and a recommendation
+## A6. Underestimated sigmas: which methods care
+
+Dylan's question, 2026-08-23: the Monte Carlo estimator uses sigmas, so does it inherit
+AIC's weakness? It does not. The two roles sigma plays have to be separated.
+
+**The estimate of `k_eff` is immune.** The perturbation is `epsilon sigma z` and the
+estimator divides by `epsilon sigma`, so
+
+    k_hat  =  sum_i sum_j  z_i z_j (sigma_j/sigma_i) J_ij,   J_ij = dF_pred,i/dF_obs,j
+
+The expectation of `z_i z_j` is one when `i = j` and zero otherwise, so only the diagonal
+survives and the sigma ratio there is exactly one. The result is `sum_i J_ii` whatever the
+sigmas were. Scaling them all by ten changes nothing. The variance of the estimator
+changes; its mean does not.
+
+**AIC as a whole is not immune, and the size of the effect is alarming.** The criterion
+balances `sum_i F_z,i^2` against `2 k_eff`. The first term uses sigma and the second does
+not. If the true errors are `c` times the stated ones, the first is inflated by `c^2` while
+the penalty is untouched, so minimising it is the same as minimising the correct residual
+with the penalty divided by `c^2`. Urea's GoF is 7. Were that misfit entirely
+underestimated sigmas, the complexity penalty would be about fifty times too weak, AIC
+would effectively ignore it, and it would choose the largest lambda offered without
+signalling anything.
+
+**The standard repair.** Treat the error scale as unknown and estimate it with the model:
+
+    AIC  =  N ln( sum_i F_z,i^2 / N )  +  2 (k_eff + 1)
+
+Scaling every sigma by `c` shifts the first term by `-2 N ln c`, the same at every lambda,
+so differences in AIC are unaffected. This form is immune to a *common* error in the
+sigmas. It is not immune to sigmas that are wrong in a way varying with resolution or
+intensity, which is the more realistic failure.
+
+**Cross-validation is invariant without needing a repair.** Multiplying every sigma by a
+constant multiplies the held-out residual by a constant, so the curve moves bodily up or
+down and the lambda at which it turns does not move. Better still, cross-validation need
+not use sigmas at all: Brunger's free R value, equation (15) of the 1997 chapter, is a sum
+of `|F_obs - k F_calc|` over a sum of `|F_obs|`, with no weights in it.
+
+**Two refinements to "look for where it starts to rise".** A single test set is enough to
+see the *shape*, because the same reflections are used at every lambda, so the curve is
+smooth even when its level is imprecise; what moves between splits is *where* the turn
+lies. And near any turning point the curve is flat by construction, so the minimum is
+located to within roughly the noise divided by the curvature. Averaging over folds attacks
+the numerator, which is the argument for complete cross-validation all over again.
+
+**The weakness cross-validation does have here.** The held-out reflections are not
+independent of the working set. The model links them — atomicity in an ordinary
+refinement, and in the XCW a single wavefunction tying every reflection to every other — so
+a reflection set aside is partly predictable from those kept, and the held-out residual is
+optimistic. Brunger acknowledged this for proteins, where non-crystallographic symmetry
+makes it acute. For *choosing* lambda it matters less than it appears, since a bias varying
+slowly with lambda largely cancels in the comparison, but the resulting free residual is
+not an honest estimate of prediction error and should not be quoted as one.
+
+## A7. Cautions, and a recommendation
 
 AIC assumes the number of parameters is small compared with the number of observations. If
 `k_eff` becomes an appreciable fraction of the reflection count, the corrected form
 `AICc = AIC + 2k(k+1)/(N-k-1)` should be used instead.
-
-AIC weighs fit against complexity using the sigmas as though they were correct.
-Crystallographic sigmas are usually underestimated, which is exactly why the goodness of
-fit does not come out at one. If they are wrong by a common factor, the balance point moves
-and AIC will not say so. Cross-validation does not have this weakness, because it never
-converts a residual into a likelihood.
 
 **Suggested order.** Fix the free-set selection first — stratify it and make it seeded and
 selectable — and try k-fold cross-validation, which needs no parameter count and no new
