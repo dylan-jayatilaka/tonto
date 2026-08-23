@@ -4,11 +4,18 @@
 are already on `develop` — see `docs/EXTINCTION_REPORT.md`. This plan covers everything
 else on it.
 
-Work on branch `lolo-cp2k-port`, cut from `develop` at the extinction merge.
+Work on branch **`Lolo2`**, cut from `develop` at the extinction merge.
 
 **`Lolo_CP2K` is live and must not be touched.** It is Lorraine Malaspina's active
 development, still receiving commits. Everything below is a hand-port *from* it onto
-`develop`; nothing is pushed to it, rebased, merged into it, or deleted.
+`develop`; nothing is pushed to it, rebased, merged into it, or deleted. It stays live for
+as long as she wishes.
+
+**Decided by Dylan, 2026-08-23: we port, she does not.** Lorraine has no knowledge of how
+far Tonto has moved in the last two months — 622 commits past her fork point, including
+the two dialect migrations of §3 — so asking her to port would mean asking her to learn a
+codebase that changed under her. The work is ours. This also settles the question the
+first version of this plan left open about duplicated effort: there is none.
 
 ## 1. The branch inventory, for the record
 
@@ -20,7 +27,8 @@ development, still receiving commits. Everything below is a hand-port *from* it 
 | `Lolo_CP2K` | 2026-08-21, Lorraine A. Malaspina | live, the subject of this plan |
 | `wip/sauce` | 2026-08-23, Dylan | a one-commit snapshot of the extinction `Infinity` fix, **already on `develop`** in `4ad76d98`. Nothing to port. |
 | `gh-pages` | 2014-06-28 | the Jekyll site |
-| `extinction-reactivation` | 2026-08-23 | merged into `develop` at `89dbacef`; a short-lived feature branch, so it can be deleted |
+| `extinction-reactivation` | — | **deleted 2026-08-23**, locally and on the remote, once merged into `develop` at `89dbacef`. A short-lived feature branch that had served its purpose. |
+| `Lolo2` | 2026-08-23 | this port |
 
 So apart from `Nice-branch` there is one live branch carrying unported work: `Lolo_CP2K`.
 
@@ -128,11 +136,23 @@ existing HAR test exercises. Expect reference changes wherever symmetry equivale
 present in the data, and treat any test whose reflection count moves as evidence rather
 than as a failure.
 
-## 7. Questions to settle before starting
+## 7. Settled, and the one thing still open
 
-1. **Is `develop` the right destination for all of it?** Groups A and B are one
-   contributor's active research line. Landing it commits the project to maintaining CP2K
-   and CRYSTAL23 import paths that no test covers.
-2. **Does Lorraine intend to port these herself?** The extinction port was done without
-   asking. Ten more commits is a different matter, and duplicated effort helps nobody.
-3. **Who owns the test assets**, and may small versions of them be committed?
+**Settled 2026-08-23.** We port rather than Lorraine; the destination is `develop`, by way
+of `Lolo2`; and `Lolo_CP2K` stays live and untouched.
+
+**Still open, and it is the only thing that can block verification: the test data.** Groups
+A, B and C touch code paths that nothing in `tests/` exercises. Two small files are needed
+and neither can be synthesised:
+
+- a small **CRYSTAL23 XML**, ideally one where the old code chose the wrong basis, so the
+  `9ccdacf1` check is shown to fire rather than merely being present;
+- a small **CP2K bridge XML**, to cover the lattice convention of `67c8e2dd`.
+
+Lorraine has both. Not porting does not stop her supplying them, and this is the one place
+where asking her is unavoidable — the alternative is landing three groups of changes on
+`develop` with no cover at all, which the register in `docs/TONTO_AND_MPI.md` and the DFT
+milestone both argue against.
+
+Group D needs no new asset. It changes reflection handling, which every existing HAR test
+already exercises.
