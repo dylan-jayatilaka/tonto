@@ -63,7 +63,10 @@ function(add_all_tests)
             --log-level=WARNING
             ${MPI_FLAG})
         set_tests_properties("${N}" PROPERTIES
-            LABELS ${LABELS}
+            # Quoted: LABELS is a ;-separated list and must reach
+            # set_tests_properties as ONE argument, or a second label is read
+            # as the next property name. tests/crystal23 uses two labels.
+            LABELS "${LABELS}"
             # A test whose declared inputs are not present cannot run, which is
             # a different thing from failing. test.py exits 77 (the automake
             # convention) in that case and prints how to obtain them, and ctest
@@ -74,7 +77,7 @@ function(add_all_tests)
             # a glob-driven registration is how a test quietly stops being
             # registered later.
             #
-            # Needed by tests/long/ammonium_borane_pHAR_C23, whose 167 MB
+            # Needed by tests/crystal23/ammonium_borane_pHAR_C23, whose 167 MB
             # CRYSTAL23 wavefunction is deliberately not committed -- see
             # scripts/fetch_phar_asset.sh.
             SKIP_RETURN_CODE 77)
@@ -85,6 +88,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/short)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/hart)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/rgbi)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/long)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/crystal23)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/cx)
 
 # Invariant test -- no reference output involved.

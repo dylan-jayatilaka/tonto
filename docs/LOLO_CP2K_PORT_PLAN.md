@@ -1,5 +1,12 @@
 # Porting the rest of `Lolo_CP2K`
 
+> **EXECUTED 2026-08-23 on branch `Lolo2`, commit `70a7a085`.** This page is
+> kept as the record of what was *planned*. What actually happened — including
+> the one thing this plan got wrong, that `912b32b2` carries the whole
+> `oc-observed` model and not merely dialect churn — is in
+> **`docs/LOLO_CP2K_PORT.md`**, which is written for Lorraine and is the page
+> to read first.
+
 **Written 2026-08-23, no code ported yet.** The two extinction commits from this branch
 are already on `develop` — see `docs/EXTINCTION_REPORT.md`. This plan covers everything
 else on it.
@@ -118,7 +125,7 @@ tractable by rebuilding the state that currently breaks.
 ## 6. Testing — the real obstacle
 
 **There is no CRYSTAL23 or CP2K test that runs.** The only C23 job in the tree is
-`tests/long/ammonium_borane_pHAR_C23`, whose 167 MB wavefunction is deliberately not
+`tests/crystal23/ammonium_borane_pHAR_C23`, whose 167 MB wavefunction is deliberately not
 committed: it lives on the `archive/release-pHAR-broken` tag and `scripts/fetch_phar_asset.sh`
 pulls it on request, with the test skipping when it is absent. So groups A, B and C would
 land with no automated cover at all.

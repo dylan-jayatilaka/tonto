@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Fetch the 167 MB CRYSTAL23 XML that tests/long/ammonium_borane_pHAR_C23 needs.
+# Fetch the 167 MB CRYSTAL23 XML that tests/crystal23/ammonium_borane_pHAR_C23 needs.
 #
 # WHY THIS EXISTS, and why the file is not simply committed:
 #
@@ -27,10 +27,12 @@ OID=1c5c24f0903c1b8667e3f8aa41ba1b2a550a49370b22db422a37d7a1f093a8ee
 SIZE=174978609
 NAME=GenerateXML.XML
 TAG=archive/release-pHAR-broken
+# NOTE the path INSIDE THE TAG is still tests/long/... -- the tag is frozen and
+# does not follow the working tree, where the job now lives in tests/crystal23.
 PATH_IN_TAG=tests/long/ammonium_borane_pHAR_C23/$NAME
 
 REPO=$(git rev-parse --show-toplevel)
-DEST=${1:-$REPO/tests/long/ammonium_borane_pHAR_C23}
+DEST=${1:-$REPO/tests/crystal23/ammonium_borane_pHAR_C23}
 
 if [ ! -d "$DEST" ]; then
    echo "fetch_phar_asset: no such directory: $DEST" >&2

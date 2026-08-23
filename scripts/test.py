@@ -591,7 +591,7 @@ def main():
     # SKIP_EXIT_CODE, which CMake matches with SKIP_RETURN_CODE, so ctest
     # reports "Skipped" rather than a red suite.
     #
-    # This exists for tests/long/ammonium_borane_pHAR_C23, whose 167 MB
+    # This exists for tests/crystal23/ammonium_borane_pHAR_C23, whose 167 MB
     # CRYSTAL23 XML is deliberately not committed -- see
     # scripts/fetch_phar_asset.sh. Before this, a missing input produced a
     # FileNotFoundError traceback out of shutil.copy or get_lines(): a real

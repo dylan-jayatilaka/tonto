@@ -44,6 +44,7 @@ parallel (MPI) builds for that platform.
 | [**Nearest-neighbour HAR**](NN_HAR_REPORT.md) | HAR on a covalent network solid, the quartz reproduction, and where the sus go wrong |
 | [**Bader basin analysis**](BADER_REPORT.md) | the `archive/Bader` port: what landed, and the two defects found by running it |
 | [**MP2 teaching lab**](TEACHING_MP2.md) | the two non-default MP2 programs, and how they were validated |
+| [**The `Lolo_CP2K` port**](LOLO_CP2K_PORT.md) | CRYSTAL23 and CP2K imported densities, what changed in the port, and how to make a test for it |
 | [**cctbx into Tonto**](CCTBX_INTO_TONTO.md) | the refinement capabilities Tonto lacks, and the staged plan to write them in Foo |
 | [**Extinction correction**](EXTINCTION_REPORT.md) | why it has been dormant since 2016, its defect register, and the plan to bring it back |
 | [**GoF², not chi2**](GOF_NOT_CHI2.md) | the misnamed goodness of fit, and reporting GoF in place of its square |

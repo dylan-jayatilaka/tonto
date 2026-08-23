@@ -50,7 +50,7 @@ an annotation describing the branch in more detail than this table.
 | `archive/Bader` | Dylan Jayatilaka (19), Max Davidson (9) | 2018-12 – 2019-02 | Bader basin analysis and isosurface triangulation: `cubify_Bader`, `get_Bader_basins_para`/`_sing`, `interpolate_Bader_edge_info`, `interpolate_Bader_faces`, `prepare_Bader_grid`, `put_Bader_basin_info`, plus marching-cube changes and a `PARALLEL` gather. **The serial half is now on `develop`** (2026-08-18, `cc530a34`) under the new keyword `get_bader_basins`; `get_Bader_regions` was left as it was. **The parallel half — Max Davidson's linked-list rework of `cubes_to_basin_parallel` and its three `types.foo` types — is still only here**, and so is the `PARALLEL` gather, which is superseded. See the porting note below and `docs/BADER_REPORT.md`. |
 | `archive/release-td-old` | Dylan Jayatilaka (13), Kanghyun Chu (4) | 2025-08 – 2025-09 | Time-dependent and CIS work. `td_data.foo` reworked, M=0 singlet detector, `S_list` array, MS=0 option in CIS, MGS/Householder orthonormalisation in Davidson, and a major `symmetric_reflect` bug fix. **All seven TD/CIS commits are already on `develop`, which has since gone further; the `symmetric_reflect` fix included. Nothing to port back** — assessed 2026-08-17, see the porting note below. What is still stranded is the earlier half: two breakdown commits and `e22e2569`, an additive extension to Kang's form-factor symmetrization. |
 | `archive/bond-energy` | Dylan Jayatilaka (11) | 2020-09 – 2020-10 | Roby bond-energy analysis. `roby.foo` +1478 lines: `Eshared` partitioning for E^DE, exact energy-density method, deformation energies, group populations. |
-| `archive/release-pHAR-broken` | Kanghyun Chu (8) | 2025-04 | **TEST RESCUED 2026-08-16.** Held the only ammonia-borane pHAR test in existence. It is now on `develop` as `tests/long/ammonium_borane_pHAR_C23`, and it PASSES — reproducing the 2025-04 reference digit for digit. The 167 MB CRYSTAL23 wavefunction stays on this tag and is fetched on demand; the test skips without it. See the porting note below. Still unported from these 8 commits: the form-factor symmetrisation residual tables. |
+| `archive/release-pHAR-broken` | Kanghyun Chu (8) | 2025-04 | **TEST RESCUED 2026-08-16.** Held the only ammonia-borane pHAR test in existence. It is now on `develop` as `tests/crystal23/ammonium_borane_pHAR_C23`, and it PASSES — reproducing the 2025-04 reference digit for digit. The 167 MB CRYSTAL23 wavefunction stays on this tag and is fetched on demand; the test skips without it. See the porting note below. Still unported from these 8 commits: the form-factor symmetrisation residual tables. |
 | `archive/nn-har` | Max Davidson (3), Dylan Jayatilaka (1) | 2023-02 | **NEAREST-NEIGHBOUR** Hirshfeld atom refinement -- cluster selection by connectivity for PERIODIC NETWORK SOLIDS, with hydrogen capping, automated level switching and H-bond length normalisation. (An earlier version of this table said "neural-network", which is wrong and led to the branch being dismissed once; see the porting note below.) |
 | `archive/libxc` | Peter Spackman (4) | 2017-08 | Optional libxc dependency: `cmake/FindLibxc.cmake`, `dft_functional.foo` wiring, B3LYP via libxc. |
 | `archive/Teaching` | Max Davidson (5), Dylan Jayatilaka (3) | 2019-06 – 2019-10 | MP2 teaching lab: `run_mp2.foo`, `run_exercise.foo`, a lab-specific `CMakeLists.txt`, and two student PDFs. |
@@ -84,7 +84,7 @@ It was recorded here as blocked, because `GenerateXML.XML` is a 134-byte Git LFS
 pointer rather than the 167 MB object — `.gitattributes` was lost before the
 branch tip. **That block is lifted.** The object is still on GitHub and
 verifiable, the test is on `develop` as
-`tests/long/ammonium_borane_pHAR_C23`, and it passes, reproducing the 2025-04
+`tests/crystal23/ammonium_borane_pHAR_C23`, and it passes, reproducing the 2025-04
 reference digit for digit. Full account in the porting notes above.
 
 **The tag remains the home of the asset, deliberately.** `develop` and `master`
@@ -376,7 +376,7 @@ that `.reflections(n).stl` is printed in Bohr⁻¹.
 
 **Open question, not a claim.** The rescued pHAR job does not print the
 "Form factor asymmetry" table, although the 2025-04 reference it reproduces
-digit for digit did — noted in `tests/long/ammonium_borane_pHAR_C23/IO`. The
+digit for digit did — noted in `tests/crystal23/ammonium_borane_pHAR_C23/IO`. The
 table is gated on `.asymmetric_FF_symmetrization_rss.allocated`, which is set
 only by `CRYSTAL:symmetrize_FFs`, whose only caller is `molecule.har.foo:612`.
 So the pHAR path appears not to symmetrize its form factors while the HAR path
