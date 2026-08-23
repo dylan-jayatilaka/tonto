@@ -32,7 +32,7 @@ records a defect we found in shared code and deliberately did **not** fix,
 because fixing it moves test results and that is your call, not ours.
 
 **The one thing we could not do is test it.** Nothing in Tonto's test suite
-runs any of this code. Section 5 explains what is needed and how to make it.
+runs any of this code. Section 6 explains what is needed and how to make it.
 
 ---
 
@@ -79,7 +79,11 @@ and input keyword across three points — your branch tip, your fork point
 **added** from what Tonto has since **renamed or removed**, which a plain
 two-way diff cannot do. That list is now empty.
 
-One more thing worth saying here, because it shapes section 5: **your branch
+Our reading of how the method works, and four things about it worth knowing, are
+in section 5. Please correct us there — it is your method, and we reconstructed
+it from the code.
+
+One more thing worth saying here, because it shapes section 6: **your branch
 carries no test jobs.** Measured against your fork point, the only file you add
 under `tests/` is the Fourier-kernel benchmark of section 3.4. So the CRYSTAL23
 and CP2K files we ask for at the end really do have to come from you
@@ -298,9 +302,94 @@ restores the division by zero. A guard on `abs(F_calc) > ZERO` as well would
 close that.
 ---
 
-## 5. Testing — the part that needs you
+## 5. The `oc-observed` method, as we read it
 
-### 5.1 Where things stand
+We had to understand this to port it, and understanding is where mistakes hide.
+So here is our reading, for you to correct. **Nothing below is a defect
+report** — three of the four are properties of the method rather than of your
+code, and the fourth is a question nobody has measured.
+
+### 5.1 What we think it does
+
+Aspherical atomic form factors, obtained from the data instead of from a
+wavefunction:
+
+1. A neutral IAM prior supplies the phases, the electron count, and the Fourier
+   coefficients of the reflections nobody measured.
+2. The residual ΔF = F_exp·(model phase) − F_calc is the part of the data the
+   spherical model fails to explain.
+3. It is damped twice — by `observed_density_shrinkage`, and by
+   F²/(F²+σ²) so a noisy weak reflection counts for less.
+4. Fourier-transformed to the Becke grid, then Hirshfeld-partitioned onto atoms.
+5. Divided by the atom's temperature factor exp(−½h·U·h), floored at
+   `observed_density_min_TF`, to turn a *dynamic* residual into a *static*
+   form factor.
+6. Added to the IAM prior.
+
+We checked that the loop really closes: `MOLECULE.HAR:LS_fit_HAs_memory` rebuilds
+the form factors every refinement cycle, and the temperature factor comes from
+`.atom(c).put_ADP2_vector_to(adp2)` — the ADPs as currently refined. So the
+deconvolution does follow the refinement, as your comment says.
+
+The phase handling is neat and we nearly missed it: `phase_seed` is taken from
+`.reflections(i).F_calc` *before* the IAM prior overwrites it, so it holds the
+**previous cycle's aspherical** phases. The phased routine prefers those and
+falls back to the IAM phase only where the previous model had none.
+
+### 5.2 The ADPs lag by one cycle
+
+The least squares refines ADPs against form factors that were deconvolved using
+the *previous* cycle's ADPs. At a true fixed point that lag vanishes. But
+convergence is tested on parameter shifts (`tol_for_shift_on_esd`), not on the
+form factors — so the refinement can stop while the deconvolution is still one
+step behind.
+
+Whether that matters depends on how far the form factors still move at the point
+the refinement stops, and nobody has measured it. It would be easy to: print the
+largest change in `ff` between the last two cycles.
+
+### 5.3 The shrinkage factor is doing two jobs, and only one is written down
+
+Your `ENSURE` justifies shrinkage < 1 by circularity, and that is right: at 1
+the whole residual returns, F_calc equals F_exp by construction, and the
+refinement is an identity rather than a fit.
+
+But it is also the **damping that makes this fixed-point iteration a
+contraction**. Undamped, there is no reason the loop should converge at all.
+That is a second and independent argument for shrinkage < 1, and we could not
+find it stated anywhere. If it is deliberate, it deserves a line in the
+`docu_` text, because it tells a user what happens as they push shrinkage
+towards one: not merely "more circular", but "less likely to converge".
+
+### 5.4 `observed_density_min_TF` biases, it does not only limit
+
+Dividing by exp(−½h·U·h) amplifies noise at high angle, which is why the floor
+exists — at the default 0.1 the amplification is capped at tenfold.
+
+The thing to be aware of is that below the floor the deconvolution is no longer
+merely *noisy*, it is *wrong*: the recovered static form factor is out by a
+factor T/`min_TF`, and there is a kink at the reflection where the exponent
+passes about 2.3. It is a sensible engineering choice, but it is a systematic
+distortion of the high-angle data rather than noise suppression, and the size of
+it depends on the ADPs — so it varies from structure to structure and from atom
+to atom.
+
+### 5.5 One approximation inherent to the method
+
+The residual density near atom *a* contains thermal smearing contributed by its
+*neighbours*, whose ADPs are different. Hirshfeld partitioning hands atom *a* a
+share of that, which is then divided by atom *a*'s temperature factor.
+
+This is standard for experimental-form-factor work and we are not suggesting an
+alternative. We mention it only so that it is written down somewhere, because it
+sets a floor on what the method can be expected to deliver for a structure with
+strongly contrasting ADPs — a heavy atom beside a hydrogen, say.
+
+---
+
+## 6. Testing — the part that needs you
+
+### 6.1 Where things stand
 
 **No test in Tonto exercises any of this code.** Not the CRYSTAL23 import, not
 the CP2K import, not the periodic stockholder model. There is exactly one job
@@ -320,7 +409,7 @@ So the single most useful thing you can give us is a small CRYSTAL23 file where
 the old code picked the wrong basis, and a small CP2K file. Section 5.4 says how
 to make them.
 
-### 5.2 Where the tests live now
+### 6.2 Where the tests live now
 
 They live in **`tests/crystal23/`**. We made that directory as part of this
 work — previously the one job sat in `tests/long/` among the ordinary molecular
@@ -350,7 +439,7 @@ Put your new jobs in `tests/crystal23/`. Anything named `*.XML` or `*.xml` in a
 subdirectory there is ignored by git automatically, so you cannot accidentally
 commit a huge wavefunction.
 
-### 5.3 How the existing job works
+### 6.3 How the existing job works
 
 The Tonto job itself, `stdin`, is ordinary except for three lines:
 
@@ -394,7 +483,7 @@ If a declared `input:` file is missing, the test does not fail: it **skips**,
 prints the `skip-hint:` and exits 77, and ctest reports "Skipped" rather than
 reddening the suite. That is how a test can depend on a file too big to commit.
 
-### 5.4 How the big XML is made
+### 6.4 How the big XML is made
 
 The recipe is committed, in `Crystal23_InputFiles.zip` (12 KB). It contains
 three files, and they are worth understanding because **your tests will be made
@@ -478,7 +567,7 @@ your `67c8e2dd`: it moves the atoms into the centred cell that the periodic
 matrices assume, and it reverses the sign of each lattice label, because CP2K's
 P(R) is CRYSTAL's P(−R).
 
-### 5.5 Why the big file is not committed, and what to do instead
+### 6.5 Why the big file is not committed, and what to do instead
 
 `GenerateXML.XML` is 174,978,609 bytes. It is deliberately not in the
 repository, and it should stay that way. Committing it — or committing a Git
@@ -506,7 +595,7 @@ Do not commit the wavefunction. If you tell us where a wavefunction is, we will
 add a fetch step for it. And please keep committing the input decks — they are
 12 KB and they are the only reason the 167 MB file could ever be regenerated.
 
-### 5.6 What we would like, concretely
+### 6.6 What we would like, concretely
 
 1. **A small CRYSTAL23 XML, ideally one where the basis really is wrong** —
    a case where the old code silently used the wrong basis. That is the test
@@ -526,7 +615,7 @@ the suite.
 
 ---
 
-## 6. What still has to happen at our end
+## 7. What still has to happen at our end
 
 Being honest about the state of it:
 
@@ -543,11 +632,11 @@ Being honest about the state of it:
   removed (section 4.1); had it stayed, the three-minute runtime would have
   grown considerably.
 
-None of that needs anything from you. The test files in section 5.6 do.
+None of that needs anything from you. The test files in section 6.6 do.
 
 ---
 
-## 7. Where to look
+## 8. Where to look
 
 | For | Read |
 |---|---|
