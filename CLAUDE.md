@@ -282,6 +282,13 @@ versioned with the code it described*, so it could rot silently. Do not add docu
 - `docs/TEACHING_MP2.md` — the MP2 teaching lab ported from `archive/Teaching`: `run_mp2` and
   `run_mp2_exercise`, both `EXCLUDE_FROM_ALL`, and the validation showing `run_mp2` reproduces the
   library `mp2` keyword to twelve decimals once the frozen-core active space matches.
+- `docs/EXTINCTION_REPORT.md` — the secondary-extinction correction: dormant since 2016-10-02, its
+  eight silent defects, Lorraine Malaspina's prior work on `origin/Lolo_CP2K`, and the reactivation
+  plan. Includes the two decisions that must be taken first — Larson's angular factor or SHELXL
+  eq (62), and what `N_p` should be in the XCW stage of an XWR.
+- `docs/GOF_NOT_CHI2.md` — the quantity called `chi2` throughout the code is a GoF²; the rename, and
+  reporting GoF rather than its square in the refinement tables. Kept separate from the extinction
+  work on purpose.
 - `docs/DFT_STANDARDISATION.md` — milestone 10: the DFT machinery, its three silent defects, the
   functional-interface analysis, and the libxc plan.
 - `docs/BUILDING_ON_WINDOWS.md` — the four WSL-specific traps, the CMake guards, and how they are tested.
@@ -704,6 +711,37 @@ before any code is written**, most likely in its own conversation (`/clear`).
      giving constant arity — and, more valuably, making the spin channel a dimension rather than
      a routine name, which collapses the **20 `new_r_*` plus 20 `new_u_*`** duplicated
      procedures. Take this with the libxc wrap, not as a separate migration.
+
+11. 🔶 **IN PROGRESS (opened 2026-08-22) — reactivate the extinction correction.**
+   Authoritative document: **`docs/EXTINCTION_REPORT.md`**. Dormant since 2016-10-02 and
+   reached by no test, so the eight defects found in it were all silent. Decisions taken:
+   adopt the SHELXL form, eq (62) of Bourhis *et al.* (2015); hold `N_p` at the refinement
+   count and add nothing for the XCW Lagrange multiplier, so a `lambda = 0` XCW reproduces
+   the GoF of the HAR it starts from. Ported from `origin/Lolo_CP2K` (Lorraine Malaspina)
+   and extended. **Works**: quartz L1+H gives an extinction factor 14 times its own esd,
+   with GoF² 9.84 → 8.39 and R(F) 0.0120 → 0.0105; urea gives nothing, confirming the
+   consensus that so small a crystal has no extinction. Short suite 62/62. Open: rebless the
+   three `hart` references for the new `_refine_ls_extinction_coef` CIF item, and add a
+   quartz test job.
+
+12. ⬜ **NOT STARTED — choose the XCW Lagrange multiplier by cross-validation.**
+   Design and reasoning: **Appendix A of `docs/EXTINCTION_REPORT.md`**, which records the
+   whole discussion with Dylan of 2026-08-22/23 in question-and-answer form. The short
+   version: cross-validation has been tried and the free-set statistic was too noisy to use,
+   for reasons now understood. The statistic on `m` free reflections has relative standard
+   error `sqrt(2/m)` — 22% for a five percent split of urea's 817 reflections — and
+   `CRYSTAL:set_r_free_reflections` draws an unstratified uniform sample, so the test set is
+   neither of fixed size nor balanced across resolution and intensity. Three pieces of work:
+   stratify and seed the selection; make the fold selectable so that **complete
+   cross-validation** in Brunger's sense can be run, which is what he says is *required* when
+   the test set is small; and revive the free-set calls in
+   `MOLECULE.SCF:make_constraint_data`, commented out at `molecule.scf.foo:2141`.
+   Cross-validation is preferred over an information criterion because it is invariant to a
+   common error in the sigmas, and the free R value uses no sigmas at all — which matters
+   when the GoF is 3 or 7 and nobody believes the true value is 1. The Akaike criterion is
+   kept as a cross-check, with the effective parameter count
+   `trace[(A + lambda B)^-1 lambda B]` and its Monte Carlo estimator both derived in the
+   appendix. Sequence: after milestone 11 is tested, before `docs/GOF_NOT_CHI2.md`.
 
 **Open items** (future directions; details in `DEFERRED.md`)
 

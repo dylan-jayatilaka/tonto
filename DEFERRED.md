@@ -324,6 +324,79 @@ letting the pseudo-inverse absorb it. Verified present. It did **not** affect
 the quartz results in `docs/NN_HAR_REPORT.md`, which refined anisotropically
 and never entered that branch, but it would bite any isotropic refinement.
 
+## Pruning compounds across repeated `update` calls (Dylan, 2026-08-23)
+
+**Half fixed 2026-08-23. The other half is not a one-liner — a naive attempt
+corrupts the heap.**
+
+Found while making `tests/long/quartz_NN_HAR_L1_rhf_def2-SVP` refine twice, once
+without the extinction correction and once with it, which puts a second
+`xray_data=` block in the middle of a job.
+
+`DIFFRACTION_DATA.SET:update` (`diffraction_data.set.foo:664`) does, in order:
+
+```
+.reflection0 = .reflections     ! "keep original reflections"
+.reflection0.set_d_and_theta(...)
+.reflections.set_d_and_theta(...)
+...
+.prune_reflections              ! operates on .reflections, in place
+.sort_reflections
+```
+
+`.reflection0` is the pristine copy that ought to exist, and `types.foo:3502`
+declares it as the original input structure factors before pruning. It is not
+the cross-validation machinery — that is `CRYSTAL.xray_r_free_data`, a separate
+`DIFFRACTION_DATA` holding the held-out reflections. It is maintained properly,
+receiving `set_d_and_theta`, the equivalence factors and any `exp_scale_factor`
+scaling alongside `.reflections`. But **the only place it is ever read is the
+`show_rejects` diagnostic** (`diffraction_data.set.foo:727`), which prints the
+list before and after pruning. Nothing refits from it and nothing prunes from it.
+
+**Why it matters, in Dylan's words.** Re-running the pruning is legitimate: the
+geometry has changed, so which reflections deserve to be rejected can change
+with it. That is exactly why it must run against the *original* data. Pruning
+the survivors of an earlier pruning can only ever remove more, so a reflection
+rejected on the starting geometry can never come back once the model has
+improved, even if it now fits perfectly well. The first pruning is done on the
+worst model the job will ever have, and its verdict is currently permanent.
+
+**Fixed: the copy is no longer clobbered.** It was refreshed from `.reflections`
+on *every* call, so the second `update` overwrote it with the already-pruned set
+and the original data was gone for the rest of the job. It is now taken once:
+
+```
+if (.reflection0.deallocated) .reflection0 = .reflections
+```
+
+No behaviour changes except that `show_rejects` now shows the true original.
+
+**Open: pruning still works on `.reflections` in place**, so successive prunings
+compound. The obvious fix — restore the working set from the pristine copy
+before pruning again —
+
+```
+.reflections.destroy
+.reflections = .reflection0
+```
+
+**was tried and aborts the quartz job** with `malloc(): invalid size (unsorted)`
+during the second refinement. Both components are `VEC{REFLECTION}@`, i.e.
+allocatable, and `REFLECTION` has no pointer components, so the assignment
+itself is a legitimate deep copy. The corruption therefore comes from downstream
+state that is tied to the reflection array and does not survive its wholesale
+replacement — the calculated and predicted structure factors, the group
+assignments, and whatever the fragment and refinement machinery sizes against
+`.reflections.dim`. Replacing the array mid-job invalidates all of it.
+
+So the remaining work is not the assignment; it is establishing what must be
+rebuilt after a re-prune and rebuilding it. That is why this stays deferred.
+
+**Scope.** Only jobs that call `update` more than once are affected, which in
+`tests/` is the quartz job alone, and it prunes nothing — 1009 reflections in
+both refinements. Nothing currently checked in gives a wrong answer. The defect
+is latent, and becomes live the moment a job with cutoffs re-enters the block.
+
 ## DFT: three silent defects — see `docs/DFT_STANDARDISATION.md`
 
 Found 2026-08-12 by measurement on `tests/short/h2o_blyp_cc-pVDZ`. The full
