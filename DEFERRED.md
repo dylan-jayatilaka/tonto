@@ -324,6 +324,65 @@ letting the pseudo-inverse absorb it. Verified present. It did **not** affect
 the quartz results in `docs/NN_HAR_REPORT.md`, which refined anisotropically
 and never entered that branch, but it would bite any isotropic refinement.
 
+## Pruning is applied to already-pruned data, and the pristine copy is overwritten (Dylan, 2026-08-23)
+
+Not a milestone, just an annoying bug. Found while making
+`tests/long/quartz_NN_HAR_L1_rhf_def2-SVP` refine twice, once without the
+extinction correction and once with it, which puts a second `xray_data=` block
+in the middle of a job.
+
+`DIFFRACTION_DATA.SET:update` (`diffraction_data.set.foo:664`) does, in order:
+
+```
+.reflection0 = .reflections     ! "keep original reflections"
+.reflection0.set_d_and_theta(...)
+.reflections.set_d_and_theta(...)
+...
+.prune_reflections              ! operates on .reflections, in place
+.sort_reflections
+```
+
+`.reflection0` is exactly the pristine copy that ought to exist. Its declaration
+in `types.foo:3502` says so: *"The original input structure factors before
+pruning."* It is not the cross-validation machinery — that is
+`CRYSTAL.xray_r_free_data`, a separate `DIFFRACTION_DATA` holding the held-out
+reflections.
+
+It is maintained properly: it gets `set_d_and_theta`, the equivalence factors,
+and any `exp_scale_factor` scaling alongside `.reflections`. But **the only place
+it is ever read is the `show_rejects` diagnostic** (`diffraction_data.set.foo:727`),
+which prints the reflection list before and after pruning. Nothing refits from
+it and nothing re-prunes from it.
+
+The trouble is that it is refreshed from `.reflections` **every** time `update`
+runs, and `prune_reflections` works on `.reflections` in place. So the second
+time through:
+
+- `.reflection0` is overwritten with the already-pruned set, and the untainted
+  data is gone for the rest of the job;
+- pruning is applied to data that has already been pruned, so successive
+  prunings compound.
+
+**Dylan's point, and it is the reason this matters beyond tidiness.** Re-running
+the pruning is legitimate — the geometry has changed, so which reflections
+deserve to be rejected can change with it. But that is exactly why it must run
+against the *original* data. Pruning the survivors of an earlier pruning can only
+ever remove more; a reflection rejected on the starting geometry can never come
+back once the model has improved, even if it now fits perfectly well. The initial
+pruning was done on the worst model the job will ever have, and its verdict is
+currently permanent.
+
+**Fix.** Take the copy once — `if (.reflection0.deallocated) .reflection0 = .reflections`
+— and have `prune_reflections` build `.reflections` from `.reflection0` each time
+rather than editing it in place. `.reflection0` already carries `set_d_and_theta`
+and the equivalence factors, so it is ready to be pruned from; what it needs is
+`set_d_and_theta` re-run on it whenever the geometry moves, which is cheap.
+
+**Scope.** Only jobs that re-enter `xray_data=` or otherwise call `update` more
+than once are affected today, which in `tests/` is the quartz job alone, and it
+prunes nothing. So nothing currently checked in gives a wrong answer. The defect
+is latent, and it becomes live the moment a job with cutoffs re-enters the block.
+
 ## DFT: three silent defects — see `docs/DFT_STANDARDISATION.md`
 
 Found 2026-08-12 by measurement on `tests/short/h2o_blyp_cc-pVDZ`. The full
