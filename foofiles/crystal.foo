@@ -3181,7 +3181,8 @@ contains
    ! Returns TRUE if numerical integration of the electron density is
       self :: IN
       res :: BIN
-      res = .partition_model=="oc-hirshfeld"
+      res = .partition_model=="oc-hirshfeld" &
+         OR .partition_model=="oc-observed"
    end
 
    uses_Tanaka_atoms result (res) :: pure
@@ -4208,6 +4209,95 @@ contains
       if (.xray_data.add_dispersion_to_F_calc) then
          .add_D_dispersion_correction_for_atom(a,dFc)
       end
+
+   end
+
+   make_regularized_observed_residual_density_grid(grid,pts,phase_seed) :: PURE
+   ! Make a regularized, model-phased experimental residual density, for
+   ! partition_model= oc-observed.
+   !
+   ! The residual coefficients are damped twice: by the user shrinkage factor,
+   ! and by F^2/(F^2+sigma^2) so that a noisy weak reflection contributes less.
+   ! Model phases are mandatory -- phases are not measured.
+   !
+   ! Shrinkage must be less than one. At one the whole residual is added back,
+   ! F_calc equals F_exp by construction, and the refinement is an identity
+   ! rather than a fit.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+      phase_seed :: VEC{CPX}, IN
+
+   ENSURE(grid.dim==pts.dim1,"wrong dim, grid")
+   ENSURE(pts.dim2==3,"wrong dim2, pts")
+   ENSURE(.xray_data.allocated,"no diffraction data")
+   ENSURE(.xray_data.reflections.allocated,"no structure factors")
+   ENSURE(.xray_data.have_F_calc,"no calculated structure factors")
+   ENSURE(.xray_data.have_F_pred,"no predicted structure factors")
+   ENSURE(.xray_data.have_F_exp,"no experimental structure factors")
+   ENSURE(phase_seed.dim==.xray_data.reflections.dim,"phase_seed: wrong dim")
+
+      n_pts,n_refl,n_exp,r,p,first,last :: INT
+      gx,gy,gz,mult :: VEC{INT}@
+      dF :: VEC{CPX}@
+      frac :: MAT{REAL}@
+      xi,yi,zi,den :: REAL
+      Fcorr,Fsig,fac,reliability :: REAL
+      ci,val :: CPX
+
+      n_pts  = pts.dim1
+      n_exp  = .xray_data.reflections.dim
+      n_refl = n_exp*.spacegroup.n_seitz
+      ci     = -2*PI*IMAGIFY(ONE)
+
+      mult.create(n_exp)
+      if (.spacegroup.centrosymmetric) then
+         mult = 2
+      else
+         .xray_data.reflections.get_all_Friedel_pairs(mult)
+      end
+
+      dF.create(n_refl)
+      gx.create(n_refl)
+      gy.create(n_refl)
+      gz.create(n_refl)
+      .xray_data.make_symop_generated_dF_a_phased( &
+         dF,gx,gy,gz,.spacegroup,mult,phase_seed, &
+         .xray_data.observed_density_zero_phase_sign)
+      mult.destroy
+
+      ! Damp each residual coefficient by the shrinkage factor and by its own
+      ! reliability, F^2/(F^2+sigma^2).
+      do r = 1,n_exp
+         Fcorr = .xray_data.reflections(r).F_corr
+         Fsig  = max(abs(.xray_data.reflections(r).F_sigma),TOL(12))
+         reliability = Fcorr*Fcorr/(Fcorr*Fcorr + Fsig*Fsig)
+         fac = .xray_data.observed_density_shrinkage*reliability
+         first = (r-1)*.spacegroup.n_seitz + 1
+         last  = r*.spacegroup.n_seitz
+         dF(first:last) = fac*dF(first:last)
+      end
+
+      dF = dF/.unit_cell.volume
+      frac = matmul(pts,.unit_cell.reciprocal_mx)
+
+      do p = 1,n_pts
+         xi = frac(p,1)
+         yi = frac(p,2)
+         zi = frac(p,3)
+         den = ZERO
+         do r = 1,n_refl
+            val = ci*(gx(r)*xi + gy(r)*yi + gz(r)*zi)
+            den = den + REALIFY(exp(val)*dF(r))
+         end
+         grid(p) = den
+      end
+
+      frac.destroy
+      gz.destroy
+      gy.destroy
+      gx.destroy
+      dF.destroy
 
    end
 

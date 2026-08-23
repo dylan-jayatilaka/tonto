@@ -4704,6 +4704,7 @@ contains
       !       as part of make_X_SFs ... double work!
       select case (.crystal.xray_data.partition_model)
       case("oc-crystal23  "); .make_C23_Hirshfeld_atom_FFs(ff) ! NOT PURE
+      case("oc-observed   "); .make_observed_Hirshfeld_atom_FFs(ff) ! NOT PURE
       case("oc-g-hirshfeld"); .make_gHirshfeld_atom_FFs(ff)
       case("oc-g-salvador "); .make_gSalvador_atom_FFs(ff)
       case("oc-hirshfeld  "); .make_Hirshfeld_atom_FFs(ff)
@@ -5239,6 +5240,121 @@ contains
 
    end
 
+
+   make_periodic_stockholder_atom_weight(grid,a,pts) :: leaky, private
+   ! Periodic stockholder weight using the molecule's own atom list, which is
+   ! what the imported-density path wants.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      a    :: INT, IN
+      pts  :: MAT{REAL}, IN
+
+      .make_periodic_stockholder_atom_weight_from(grid,a,pts,.atom)
+
+   end
+
+   make_observed_Hirshfeld_atom_FFs(ff) :: leaky
+   ! Make "ff", static atomic form factors built from a neutral IAM prior plus
+   ! a regularized, model-phased experimental residual density, for
+   ! partition_model= oc-observed.
+   !
+   ! The IAM prior supplies the phases, the electron count, and the Fourier
+   ! coefficients of the reflections that were not measured. The residual is
+   ! damped, Hirshfeld-partitioned onto each atom, and deconvolved of harmonic
+   ! thermal motion to give a STATIC form factor. Rebuilt between outer
+   ! refinement cycles, since the phases move with the model.
+      self :: INOUT
+      ff   :: MAT{CPX}@, OUT
+
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(.crystal.allocated,"no crystal")
+   ENSURE(.crystal.xray_data.allocated,"no x-ray reflection data")
+   ENSURE(.crystal.fragment_info_made,"no crystal fragment info")
+   ENSURE(.becke_grid.allocated,"no becke_grid")
+   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
+
+      adp2 :: MAT{REAL}(3,3)
+      correction,partition,wt,tf :: VEC{REAL}@
+      phase_seed :: VEC{CPX}@
+      pt,k_pts :: MAT{REAL}@
+      k1,k2,k3,kr,ss,s2,min_tf :: REAL
+      n_k,n_refl,n_pt,u,c,k,i :: INT
+      sf :: CPX
+
+      ! Phases from the PREVIOUS model, where there are any.
+      n_refl = .crystal.xray_data.reflections.dim
+      phase_seed.create(n_refl)
+      phase_seed = IMAGIFY(ZERO)
+      if (.crystal.xray_data.reflections.have_F_calc) then
+         do i = 1,n_refl
+            phase_seed(i) = .crystal.xray_data.reflections(i).F_calc
+         end
+      end
+
+      ! The neutral spherical prior supplies phases, electron count and the
+      ! unobserved Fourier coefficients.
+      .make_unique_IAM_atom_FFs(ff)
+      .crystal.make_F_predicted(ff)
+
+      n_k = .crystal.n_unique_SF_k_pts
+      min_tf = .crystal.xray_data.observed_density_min_TF
+      k_pts.create(n_k,3)
+      .crystal.make_unique_X_SF_k_pts(k_pts)
+
+      do u = 1,.crystal.n_unique_frag_atoms
+
+         c = .crystal.unique_frag_atom(u)
+         ss = .crystal.frag_atom_sym_factor(c)
+         if (ss.is_zero) cycle
+         s2 = .atom(c).site_occupancy/ss
+
+         ! Grid for atom "c", weighted by its periodic stockholder share
+         .becke_grid.make_atom_grid(pt,wt,c)
+         partition.create(pt.dim1)
+         .make_periodic_stockholder_atom_weight(partition,c,pt)
+         wt = wt*partition
+         .becke_grid.prune_grid(pt,wt)
+         partition.destroy
+         n_pt = pt.dim1
+
+         ! The damped, phased experimental residual on that grid
+         correction.create(n_pt)
+         .crystal.make_regularized_observed_residual_density_grid( &
+            correction,pt,phase_seed)
+         correction = correction*wt
+
+         ! Harmonic temperature factor, floored so that the deconvolution
+         ! below does not divide by nearly zero at high angle.
+         .atom(c).put_ADP2_vector_to(adp2)
+         tf.create(n_k)
+         tf.to_contraction_i2_of(k_pts,adp2)
+         tf = max(exp(-HALF*tf),min_tf)
+
+         ! Fourier transform, deconvolve, and add to the IAM prior
+         do k = 1,n_k
+            k1 = k_pts(k,1)
+            k2 = k_pts(k,2)
+            k3 = k_pts(k,3)
+            sf = IMAGIFY(ZERO)
+            do i = 1,n_pt
+               kr = k1*pt(i,1)+k2*pt(i,2)+k3*pt(i,3)
+               sf = sf + correction(i)*exp(IMAGIFY(kr))
+            end
+            ff(k,u) = ff(k,u)+s2*sf/tf(k)
+         end
+
+         tf.destroy
+         correction.destroy
+         wt.destroy
+         pt.destroy
+
+      end
+
+      k_pts.destroy
+      phase_seed.destroy
+      .crystal.symmetrize_FFs(ff)
+
+   end
 
    make_C23_Hirshfeld_atom_FFs(ff) :: leaky
    ! MAke "ff", the static Hirshfeld atom form factors (from a

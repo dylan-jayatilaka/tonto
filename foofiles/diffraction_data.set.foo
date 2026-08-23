@@ -281,6 +281,8 @@ contains
 
       options = [ "oc-crystal23  ", &
                   "crystal23     ", &
+                  "oc-observed   ", &
+                  "observed      ", &
                   "oc-g-hirshfeld", &
                   "g-hirshfeld   ", &
                   "oc-hirshfeld  ", &
@@ -303,6 +305,7 @@ contains
       ! Rename to standard form
       select case( .partition_model)
       case ("crystal23  "); .partition_model = "oc-crystal23"
+      case ("observed   "); .partition_model = "oc-observed"
       case ("g-hirshfeld"); .partition_model = "oc-g-hirshfeld"
       case ("hirshfeld  "); .partition_model = "oc-hirshfeld"
       case ("g-salvador "); .partition_model = "oc-g-salvador"
@@ -316,6 +319,39 @@ contains
       ! doing an atom-based i.e. OC model
    ! if (.partition_model(1:3)=="oc-") &
     !    .set_temperature_factor_model("atom-based")
+
+   end
+
+   set_observed_density_shrinkage(val) :: PURE
+   ! Set the fraction of robust residual density added to the IAM prior.
+      self :: INOUT
+      val  :: REAL, IN
+
+   ENSURE(val>=ZERO AND val<ONE,"observed_density_shrinkage must be in [0,1)")
+
+      .observed_density_shrinkage = val
+
+   end
+
+   set_observed_density_min_TF(val) :: PURE
+   ! Set the floor used when removing harmonic thermal motion.
+      self :: INOUT
+      val  :: REAL, IN
+
+   ENSURE(val>ZERO AND val<=ONE,"observed_density_min_TF must be in (0,1]")
+
+      .observed_density_min_TF = val
+
+   end
+
+   set_observed_density_zero_phase_sign(val) :: PURE
+   ! Set an explicit sign hypothesis for a zero model phase.
+      self :: INOUT
+      val  :: INT, IN
+
+   ENSURE(val==-1 OR val==0 OR val==1,"observed_density_zero_phase_sign must be -1, 0, or 1")
+
+      .observed_density_zero_phase_sign = val
 
    end
 
@@ -2443,6 +2479,137 @@ contains
       ! Clean
       ext.destroy
       phase.destroy
+
+   end
+
+   make_symop_generated_dF_a_phased(dF,g1,g2,g3,spacegroup,mult,phase_seed,zero_phase_sign) :: PURE
+   ! As make_symop_generated_dF_a_v2, but phased from a SUPPLIED model rather
+   ! than from .F_calc alone, for partition_model= oc-observed.
+   !
+   ! A SEPARATE routine, not optional arguments on the v2 one, deliberately:
+   ! the two differ in what they do when the model structure factor vanishes,
+   ! and a separate name means the residual-density callers of v2 cannot reach
+   ! this behaviour by accident. The two share their symop-generation loop; if
+   ! you change one, change the other. See docs/LOLO_CP2K_PORT.md section 4.3.
+      self       :: IN
+      dF         :: VEC{CPX}, OUT
+      g1,g2,g3   :: VEC{INT}, OUT
+      spacegroup :: SPACEGROUP, IN
+      mult       :: VEC{INT}, IN
+      phase_seed :: VEC{CPX}, IN
+      zero_phase_sign :: INT, IN
+
+   ENSURE(.reflections.allocated,"no reflections")
+   ENSURE(dF.dim  ==spacegroup.n_seitz*.reflections.dim,"dF: wrong dim")
+   ENSURE(g1.dim  ==spacegroup.n_seitz*.reflections.dim,"g1: wrong dim")
+   ENSURE(g2.dim  ==spacegroup.n_seitz*.reflections.dim,"g2: wrong dim")
+   ENSURE(g3.dim  ==spacegroup.n_seitz*.reflections.dim,"g3: wrong dim")
+   ENSURE(mult.dim==.reflections.dim,"mult: wrong dim")
+   ENSURE(phase_seed.dim==.reflections.dim,"phase_seed: wrong dim")
+   ENSURE(zero_phase_sign==-1 OR zero_phase_sign==0 OR zero_phase_sign==1,"zero_phase_sign must be -1, 0, or 1")
+
+      R :: MAT{REAL}(3,3)
+      ext :: VEC{REAL}@
+      t   :: VEC{REAL}(3)
+      g,h :: VEC{INT}(3)
+      n_refl,n,p0,p,s,ss,Friedel :: INT
+      F_calc,F_disp,F_exp,phase,difference,ci :: CPX
+      have_phase :: BIN
+
+      n_refl = .reflections.dim
+
+      ci = -2*PI*IMAGIFY(ONE)
+
+      ! Per-reflection scale factors & extinction corrections
+      ext.create(n_refl)
+      ext = .F_scale_and_extn_correction
+
+      p = 0
+      do n = 1,n_refl
+
+         ! F_calc (absolute scale) *including* dispersion
+         F_calc = .reflections(n).F_calc
+
+         ! Dispersion contribution only
+         F_disp = .reflections(n).F_disp
+
+         ! Unique Miller indices
+         h = .reflections(n).Miller_indices
+
+         ! Prefer the supplied model phase. If neither model has a phase, omit
+         ! the coefficient rather than divide by a vanishing modulus.
+         phase = F_calc
+         if (abs(phase_seed(n))>.F_calc_cutoff) phase = phase_seed(n)
+         have_phase = abs(phase)>.F_calc_cutoff
+
+         ! For a centrosymmetric zero-model reflection, an explicit user
+         ! hypothesis may select one of the two symmetry-restricted signs.
+         if (NOT have_phase AND zero_phase_sign/=0) then
+         if (spacegroup.centrosymmetric) then
+            do s = 1,spacegroup.n_seitz
+               R = transpose(spacegroup.seitz(1:3,1:3,s))
+               t = spacegroup.seitz(1:3,4,s)
+               g = nint(matmul(R,h))
+               if (all(-h==g)) then
+                  phase = REALIFY(zero_phase_sign)* &
+                     exp(PI*IMAGIFY(dot_product(h,t)))
+                  have_phase = TRUE
+                  exit
+               end
+            end
+         end
+         end
+
+         if (have_phase) then
+            phase = phase/abs(phase)
+            F_exp = .reflections(n).F_exp*phase/ext(n) - F_disp
+            F_calc = F_calc - F_disp
+            difference = F_exp - F_calc
+         else
+            difference = IMAGIFY(ZERO)
+         end
+
+         ! Friedel multiplicity
+         Friedel = mult(n)
+
+         p0 = p
+         ss = 0
+
+         do s = 1,spacegroup.n_seitz
+
+            ! Symop in fractionals
+            R = transpose(spacegroup.seitz(1:3,1:3,s))
+            t = spacegroup.seitz(1:3,4,s)
+
+            p = p + 1
+
+            ! Symmetry generated Miller indices
+            g = nint(matmul(R,h))
+
+            ! Site symmetry / Bijvoet counting, as in the v2 routine
+            if (all(h==g)) ss = ss + 1
+            if (all(-h==g)) ss = ss + 1
+
+            g1(p) = g(1)
+            g2(p) = g(2)
+            g3(p) = g(3)
+
+            dF(p) = difference*Friedel
+            dF(p) = dF(p)*exp(ci*dot_product(h,t)) ! translation part
+
+         end
+
+         ! Divide by the (reciprocal) site symmetry factor
+         if (ss>1) dF(p0+1:p) = dF(p0+1:p)/REALIFY(ss)
+
+      end
+
+      ext.destroy
+
+      ! Divide by the number of data sets
+      if (.n_data_sets>1) then
+         dF = dF/REALIFY(.n_data_sets)
+      end
 
    end
 
