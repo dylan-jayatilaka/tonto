@@ -24,7 +24,10 @@ language itself. Asking you to port would have meant asking you to learn a
 codebase that had changed underneath you.
 
 Almost all of your code went across unchanged in meaning. Where we had to change
-something, section 3 says what and why.
+something, section 3 says what and why. There is exactly one place where we
+overruled a decision of yours rather than asking first — the forced
+`accuracy= extreme` grid — and section 4.1 gives the reasoning in full, along
+with the one line of input that gets the same grid deliberately.
 
 **The one thing we could not do is test it.** Nothing in Tonto's test suite
 runs any of this code. Section 5 explains what is needed and how to make it.
@@ -170,23 +173,77 @@ Two other things that will show up in output:
 
 ---
 
-## 4. Two things we would like you to look at
+## 4. One change of yours we did not keep, and one to look at
 
-Neither is a defect. Both are decisions of yours that we ported faithfully and
-would rather you confirmed than have us quietly change.
+### 4.1 The forced `accuracy= extreme` grid — REMOVED
 
-**The Becke grid is forced to `extreme`.** In `9ccdacf1` the integration grid
-for an imported periodic density is promoted to `accuracy= extreme` unless the
-user asked for `extreme` or `best`. We understand why: a periodic density needs
-a denser grid than the molecular default, especially for core-sensitive data.
-But it does mean that a user who writes `accuracy= high` gets `extreme` without
-being told. Tonto has just spent a month removing a bug of exactly that
-shape — a `becke_grid` block whose settings were silently discarded, which was
-the reason DFT energies were hard to reproduce (`docs/DFT_STANDARDISATION.md`).
-We would suggest either saying so in the output, or making it a floor the user
-can lower deliberately. Your call; tell us which and we will do it.
+This is the only place where we overruled you rather than asking, so it gets
+the full reasoning.
 
-**`reflection0` versus `unmerged_reflections`.** You introduced
+`9ccdacf1` promoted the integration grid for an imported periodic density to
+`accuracy= extreme`, unless the user had already asked for `extreme` or `best`:
+
+```
+if (NOT .becke_grid.accuracy.is_one_of(["extreme","best   "])) then
+   .becke_grid.set_accuracy("extreme")
+end
+```
+
+**Dylan asked for this to be taken out, and we agree.** It is commented out in
+`MOLECULE.RHO:make_C23_Hirshfeld_atom_FFs`, with a note pointing here.
+
+Why: it silently overrides the user. Somebody who writes
+`becke_grid= { accuracy= high }` gets `extreme`, is not told, and cannot find
+out from the output why the job is slow or why the number moved. Tonto has just
+spent a month removing a defect of exactly that shape — `initialize_DFT_grids`
+destroyed and recreated the `BECKE_GRID`, so **every** DFT run silently used the
+type defaults while the echo went on reporting what the user had asked for. That
+one cost years of difficulty reproducing DFT energies, and it is written up in
+`docs/DFT_STANDARDISATION.md`. Putting a second override of the same kind into
+the periodic path, three weeks after removing the first, is not a trade we are
+willing to make — however good the reason for wanting the denser grid.
+
+**Your underlying point stands, and nothing is lost.** An imported periodic
+density really does want a denser grid than the molecular default, especially
+for core-sensitive data. The fix is to ask for it in the job file, where it is
+visible, echoed, and can be changed:
+
+```
+   becke_grid= { accuracy= extreme }
+```
+
+Put that at the top level of the job, alongside `basis_name=`, before the
+`crystal= { }` block. `set_defaults` first is a good habit if you want to be
+sure of what you are starting from:
+
+```
+   becke_grid= {
+      set_defaults
+      accuracy= extreme
+      put_basics          ! echoes the grid actually in use
+   }
+```
+
+The accuracies, cheapest first, are `very_low`, `sg-1`, `low`, `medium`,
+`high`, `very_high`, `extreme`, `best`. `extreme` is what your code was
+forcing, so writing it explicitly reproduces your behaviour exactly.
+
+**What we kept from the same hunk.** You also changed `.becke_grid.create` to
+`if (.becke_grid.deallocated) .becke_grid.create`. That part is right and it
+stays — without it, an unconditional `create` wipes a `becke_grid=` block the
+user has just written, which is the `initialize_DFT_grids` bug all over again.
+So your change is what makes the input block above work at all.
+
+**One consequence for testing.** Because the grid is no longer forced, the
+existing job `tests/crystal23/ammonium_borane_pHAR_C23` runs on the default
+grid. If a periodic refinement needs a denser one to be trustworthy, that
+should be *demonstrated* — the same job at two accuracies, giving two
+different answers — rather than compiled in. That would be a good test, and it
+is cheap.
+
+### 4.2 `reflection0` versus `unmerged_reflections`
+
+This one we did keep, and would just like you to confirm. You introduced
 `unmerged_reflections` as the untouched master copy, and redefined
 `reflection0` as "the complete merged set, kept for reporting". Just before
 your work landed we had made a separate fix so that `reflection0` was taken
@@ -437,10 +494,11 @@ Being honest about the state of it:
   merged and pruned for every refinement, not only periodic ones. Any test
   whose reflection count moves is evidence that the change is working, not a
   failure — but each one has to be looked at rather than blessed.
-- **The existing CRYSTAL23 test will change too**, in two ways: the grid is
-  promoted to `extreme` (section 4), and pruning now happens on the model
-  rather than the IAM. Its reference output will need regenerating and its
-  three-minute runtime will grow.
+- **The existing CRYSTAL23 test will change too**, because pruning now happens
+  on the model rather than on the IAM. Its reference output will need
+  regenerating. It will *not* slow down, because the forced `extreme` grid was
+  removed (section 4.1); had it stayed, the three-minute runtime would have
+  grown considerably.
 
 None of that needs anything from you. The test files in section 5.6 do.
 
