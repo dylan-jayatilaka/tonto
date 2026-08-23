@@ -304,6 +304,26 @@ needs a test and nothing is added inside the shell-pair loop.
 fitting is commented out of `make_constraint_data`, so the routine is unreachable. It
 also reads `n_par` without ever assigning it.
 
+**Setting the switch part way through a job.** `tests/long/quartz_NN_HAR_L1_rhf_def2-SVP`
+refines twice, once without the correction and once with it, so a second `xray_data=`
+block sits between the two `fraghar_refinement` calls. This does **not** rebuild anything.
+`MOLECULE.MAIN:read_crystal` and `CRYSTAL:read_xray_data` both create only if the object is
+absent and then read keywords into the existing one, so the reflections, the fragments and
+the refined structure all carry over — demonstrated by the first refinement reproducing
+its previously blessed numbers to every digit.
+
+There is one side effect worth knowing. `CRYSTAL:read_xray_data` ends by calling
+`DIFFRACTION_DATA.SET:update` (`crystal.foo:594`), which re-runs `set_d_and_theta`, the
+equivalence factors, and the pruning and sorting over the reflections already held. That
+is idempotent for a job that only flips a switch, and it is *necessary* when a keyword
+changed something structural such as `stl_limit` or `hkl_range`, so it is left alone. But
+a re-entered block is not free, and a job that re-enters one after pruning should know
+that pruning runs again.
+
+*(A top-level `optimise_extinction=` keyword on `MOLECULE` was added to avoid the nesting
+and then reverted: it duplicated a keyword that already sat in the right place, and put a
+diffraction-data setting into a namespace where it does not belong.)*
+
 **Still to do.**
 
 1. `min_BFGS`'s commented-out `DIE_IF` on non-convergence (`vec{real}.foo:2166`).
