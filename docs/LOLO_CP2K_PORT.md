@@ -250,7 +250,7 @@ used. For this job that is `pob-TZVP-rev2`: 22 atoms in the primitive cell
 which is what the XML declares. Your `9ccdacf1` check compares those two numbers
 and stops if they differ.
 
-The `IO` file is the test manifest. It has five possible keys:
+The `IO` file is the test manifest. It recognises six keys:
 
 | Key | Meaning |
 |---|---|
