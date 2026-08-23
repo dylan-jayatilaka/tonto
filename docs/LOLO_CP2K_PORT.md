@@ -27,7 +27,9 @@ Almost all of your code went across unchanged in meaning. Where we had to change
 something, section 3 says what and why. There is exactly one place where we
 overruled a decision of yours rather than asking first — the forced
 `accuracy= extreme` grid — and section 4.1 gives the reasoning in full, along
-with the one line of input that gets the same grid deliberately.
+with the one line of input that gets the same grid deliberately. Section 4.3
+records a defect we found in shared code and deliberately did **not** fix,
+because fixing it moves test results and that is your call, not ours.
 
 **The one thing we could not do is test it.** Nothing in Tonto's test suite
 runs any of this code. Section 5 explains what is needed and how to make it.
@@ -48,7 +50,7 @@ Ten of your commits were in scope. Here is what happened to each.
 | `b8f63c49` | Do not start a molecular SCF for an imported density | ported in part |
 | `4661a8a3` | Selectable periodic stockholder model | ported in part |
 | `0673ad05` | Faster Fourier kernel for the periodic form factors | ported |
-| `a62eb998` | One-atom fragment needs a Hirshfeld denominator | **not ported** |
+| `a62eb998` | One-atom fragment needs a Hirshfeld denominator | ported |
 | `e2a401ef` | SHELXL merging; prune on the model, not on the IAM | ported |
 
 Two of your commits were left out on purpose, and they are the two big ones that
@@ -63,15 +65,19 @@ also carries the **entire `oc-observed` partition model** — the regularised
 experimental-density work. That model does not exist anywhere else, so it is not
 on `develop` and it is not in this port.
 
-That has three consequences:
+**It has since been ported too, at Dylan's instruction: everything on your
+branch is now across.** `oc-observed` builds atomic form factors from the data
+rather than from a wavefunction — a neutral IAM prior plus a regularized,
+model-phased experimental residual, Hirshfeld-partitioned onto each atom and
+deconvolved of harmonic thermal motion, with the residual damped both by
+`observed_density_shrinkage` and by F²/(F²+σ²). With it came `a62eb998`, which
+until then had nothing to apply to.
 
-- `a62eb998` only ever applies to `oc-observed`, so there was nothing here for
-  it to change. It is not ported. It is not lost — it is still on your branch,
-  and it will apply the moment the observed-density model itself is brought over.
-- `b8f63c49` and `4661a8a3` each had a part that referred to `oc-observed`.
-  Those parts were left out; the CRYSTAL23 parts went across in full.
-- Bringing `oc-observed` over is a separate piece of work that nobody has
-  scheduled. If it matters to you, please say so — it changes the priority.
+How we know nothing else was missed: we compared every procedure, type member
+and input keyword across three points — your branch tip, your fork point
+`8ee220bc`, and here. The three-way comparison is what separates what you
+**added** from what Tonto has since **renamed or removed**, which a plain
+two-way diff cannot do. That list is now empty.
 
 One more thing worth saying here, because it shapes section 5: **your branch
 carries no test jobs.** Measured against your fork point, the only file you add
@@ -173,7 +179,7 @@ Two other things that will show up in output:
 
 ---
 
-## 4. One change of yours we did not keep, and one to look at
+## 4. One change we did not keep, one to confirm, one recorded
 
 ### 4.1 The forced `accuracy= extreme` grid — REMOVED
 
@@ -253,6 +259,43 @@ which is the right place for it, so we removed our guard and followed you.
 We think that is correct, but you are the one who knows what `reflection0` is
 for now.
 
+### 4.3 An unguarded phase in the residual map — recorded, not fixed
+
+Found while porting `oc-observed`, and left for you.
+
+`DIFFRACTION_DATA.SET:make_symop_generated_dF_a_v2` computes the phase of each
+residual coefficient as `F_calc/abs(F_calc)`, with no guard. So:
+
+- a reflection whose `F_calc` is **exactly zero** gives 0/0, that is a NaN;
+- one whose `F_calc` is merely **tiny** gives a phase that is numerical noise,
+  which is then attached to a full-sized `F_exp`.
+
+Both poison the residual density map without saying anything. Your phased
+routine guards exactly this, with `abs(...) > .F_calc_cutoff`, and contributes
+zero instead — which we think is right.
+
+**We did not apply that guard to the shared routine, on purpose.** Its only two
+callers are `make_residual_density_grid` and `make_residual_density_cell_n`,
+and **nine test references print residual output**. Guarding it would move
+those numbers, and deciding whether the new numbers are the correct ones is a
+scientific judgement about your own data, not a porting decision. So:
+
+**As it stands, the defect is still there, and fixing it will change the test
+suite.** That is the honest position. Nothing is hidden: there is a note beside
+the code saying so, and this section.
+
+One measurement, so the size of it is known rather than guessed: no NaN from
+this routine appears in any current reference. The three `NaN` strings in the
+suite are all `Rw(F2)`, an unrelated quantity computed when there is no
+intensity data. So exact zeros do not arise in what we test today, and the
+realistic exposure is the tiny-`F_calc` case.
+
+One trap if you do fix it. The guard tests against `F_calc_cutoff`, whose
+default your own `e2a401ef` changed from `TOL(3)` to `TOL(8)` — so the two
+commits couple through one number. And `F_calc_cutoff` is documented as
+"negative means unused"; a negative value makes the guard always true and
+restores the division by zero. A guard on `abs(F_calc) > ZERO` as well would
+close that.
 ---
 
 ## 5. Testing — the part that needs you
