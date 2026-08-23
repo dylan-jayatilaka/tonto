@@ -16,7 +16,7 @@ why the archived work cannot be merged into `master` — only ported.
 | **`master`** | The stable branch. What the CI badges track and what a user clones. |
 | **`develop`** | The integration branch. Work lands here and is merged to `master` when green. |
 | **`Nice-branch`** | Not our work. See below. |
-| **`Lolo_CP2K`** | Active work by Lorraine A. — CP2K periodic density, selectable periodic stockholder model, SHELX extinction. Last commit 2026-08-03. Left as a branch deliberately. |
+| **`Lolo_CP2K`** | Active work by Lorraine A. — CP2K periodic density, selectable periodic stockholder model, CRYSTAL23 imported-density fixes, SHELX extinction, and reflection merging. Left as a branch deliberately: it is live development, which is why it was never part of the archive-tag recovery effort. **The two extinction commits were ported to `develop` on 2026-08-22** (`58f4a23d`, `3e29ca20` — see `docs/EXTINCTION_REPORT.md`); the rest is not ported. Still ahead of `develop` as of 2026-08-23, including `e2a401ef`, which reports that symmetry equivalents were never merged at all — Tonto silently kept the first and discarded the rest. |
 | **`gh-pages`** | The Jekyll site, `CNAME` → `dylan-jayatilaka.github.io`. Untouched. |
 
 ## Work that is not ours: `Nice-branch`
