@@ -6,8 +6,11 @@ This document says what happened to your `Lolo_CP2K` work, exactly which of
 your keywords and routines we had to change and why, what we did not bring
 over, and — the part that needs you — how to add tests for it.
 
-The plan we worked from is `docs/LOLO_CP2K_PORT_PLAN.md`. This document is the
-record of what actually happened, which is not quite the same thing.
+There was a plan before the work started. It has been deleted: it was
+superseded by what actually happened, and in one important respect it was
+wrong — it treated `912b32b2` as pure syntax churn, when that commit also
+carries the whole `oc-observed` model. A plan nobody should follow again is
+better removed than left lying about. This document replaces it.
 
 ---
 
@@ -31,8 +34,12 @@ with the one line of input that gets the same grid deliberately. Section 4.3
 records a defect we found in shared code and deliberately did **not** fix,
 because fixing it moves test results and that is your call, not ours.
 
-**The one thing we could not do is test it.** Nothing in Tonto's test suite
-runs any of this code. Section 6 explains what is needed and how to make it.
+**Everything on your branch is now across**, `oc-observed` included, and it
+builds and runs. What we could not do is test the *periodic* half of it:
+nothing in Tonto's test suite reads a CRYSTAL23 or CP2K wavefunction, or
+exercises `oc-observed`. Your reflection-merging work is a different story —
+it changed ten tests immediately, and section 6.1 has the numbers. Section 6
+explains what is still needed and how to make it.
 
 ---
 
@@ -53,20 +60,21 @@ Ten of your commits were in scope. Here is what happened to each.
 | `a62eb998` | One-atom fragment needs a Hirshfeld denominator | ported |
 | `e2a401ef` | SHELXL merging; prune on the model, not on the IAM | ported |
 
-Two of your commits were left out on purpose, and they are the two big ones that
-convert the whole tree between old and new Foo syntax: `6f7fa8cf` and
-`912b32b2`. They are not science, they are dialect, and they are the reason none
-of this could be cherry-picked.
+Two of your commits were not replayed as commits, and they are the two big ones
+that convert the whole tree between old and new Foo syntax: `6f7fa8cf` and
+`912b32b2`. The syntax half of them is not science, and it is the reason none of
+this could be cherry-picked. But `912b32b2` is not *only* syntax, which is the
+trap described next.
 
-### The thing the plan got wrong, and you should know about
+### `912b32b2` was not only syntax, and that nearly cost you a whole model
 
-`912b32b2` is described in the plan as dialect churn. It is not only that. It
-also carries the **entire `oc-observed` partition model** — the regularised
-experimental-density work. That model does not exist anywhere else, so it is not
-on `develop` and it is not in this port.
+Our plan wrote that commit off as dialect churn. It is that — but it also
+carries the **entire `oc-observed` partition model**, the regularised
+experimental-density work, which exists nowhere else in your history. Had we
+followed the plan, that model would have been silently dropped, and the two
+later commits that refine it would have looked like they applied to nothing.
 
-**It has since been ported too, at Dylan's instruction: everything on your
-branch is now across.** `oc-observed` builds atomic form factors from the data
+**It is ported.** `oc-observed` builds atomic form factors from the data
 rather than from a wavefunction — a neutral IAM prior plus a regularized,
 model-phased experimental residual, Hirshfeld-partitioned onto each atom and
 deconvolved of harmonic thermal motion, with the residual damped both by
@@ -145,14 +153,18 @@ machine-dependent and would be a flaky test.
 If you would like it kept in the tree as a development tool — built on request,
 not run by `ctest` — say so and we will add it that way.
 
-### 3.5 One routine we left out
+### 3.5 Two routines renamed to match their twins
 
-`make_periodic_stockholder_atom_weight` — the short wrapper that passes
-`.atom` to `make_periodic_stockholder_atom_weight_from` — exists only to serve
-the observed-density path, which is not here. The real routine,
-`make_periodic_stockholder_atom_weight_from`, is ported in full and is what the
-CRYSTAL23 code calls. When the observed-density work arrives, the wrapper is
-four lines.
+`get_observed_Hirshfeld_atom_FFs` is now **`make_observed_Hirshfeld_atom_FFs`**,
+and lives in `molecule.rho.foo` beside `make_C23_Hirshfeld_atom_FFs` rather than
+in `molecule.scf.foo`. That is not our invention: Tonto had already renamed and
+moved the CRYSTAL23 twin the same way, and leaving one of a matched pair behind
+would be worse than moving both.
+
+Two more renames you will meet if you read the ported code:
+`get_unique_IAM_atom_SFs` is now `make_unique_IAM_atom_FFs`, and
+`BECKE_GRID:make_grid(pt,wt,a)` is now `make_atom_grid(pts,wts,a)`. Both are
+Tonto's renames, not ours.
 
 ### 3.6 Your keywords: all of them survive, unchanged
 
@@ -165,6 +177,12 @@ wrote it.
 | `stockholder_model=` | inside `xray_data= { }` | `cluster`, `periodic` | `cluster` |
 | `cp2k_periodic_file_name=` | top level | a file name | — |
 | `process_cif_and_cp2k_data` | top level | — | — |
+| `observed_density_shrinkage=` | inside `xray_data= { }` | ≥ 0 and < 1 | 0.5 |
+| `observed_density_min_TF=` | inside `xray_data= { }` | > 0 and ≤ 1 | 0.1 |
+| `observed_zero_phase_sign=` | inside `xray_data= { }` | −1, 0 or +1 | 0 |
+
+`partition_model=` accepts `observed` and `oc-crystal23`/`crystal23` as you
+wrote them, and `observed` still normalises to `oc-observed`.
 
 `use_equivalents=` still works and still parses, but it is now a compatibility
 alias: `TRUE` means `merg_code= 0`, `FALSE` means `merg_code= 2`. Old input
@@ -434,10 +452,21 @@ strongly contrasting ADPs — a heavy atom beside a hydrogen, say.
 
 ### 6.1 Where things stand
 
-**No test in Tonto exercises any of this code.** Not the CRYSTAL23 import, not
-the CP2K import, not the periodic stockholder model. There is exactly one job
-in the tree that reads a CRYSTAL23 wavefunction, and it does not run unless
-somebody deliberately fetches a 167 MB file first.
+**Your merging work is tested. The periodic half is not.**
+
+`e2a401ef` reached the suite at once. Ten short tests changed the moment it
+landed, and two of them show your headline claim working: `nh3_IAM_ITC` and
+`nh3_IAM_gaussian` both go from 88 to 86 reflections — exactly as before — but
+the pair is now *averaged* rather than one of them discarded, moving GoF from
+1.360 to 1.387 and from 1.268 to 1.288. Eight references were regenerated. Two
+are deliberately left failing; that is section 4.4.
+
+Nothing, however, exercises the CRYSTAL23 import, the CP2K import, the periodic
+stockholder model, or `oc-observed`. There is exactly one job in the tree that
+reads a CRYSTAL23 wavefunction, and it does not run unless somebody
+deliberately fetches a 167 MB file first. **`oc-observed` has never been
+executed at all** — roughly 300 lines of new numerical code that compiles and
+that nothing has ever run.
 
 That matters more here than it would in most codebases. Nearly every defect
 found in Tonto this year was **silent** — it produced a wrong number, or no
@@ -449,7 +478,7 @@ into an error message. **But nothing yet proves the check fires**, and a check
 nobody has seen fire is not much better than no check.
 
 So the single most useful thing you can give us is a small CRYSTAL23 file where
-the old code picked the wrong basis, and a small CP2K file. Section 5.4 says how
+the old code picked the wrong basis, and a small CP2K file. Section 6.4 says how
 to make them.
 
 ### 6.2 Where the tests live now
@@ -662,9 +691,17 @@ the suite.
 
 Being honest about the state of it:
 
-- **The ported code has not been compiled.** Every changed file was put through
-  the Foo-to-Fortran translator and parses, and both source lints pass, but no
-  binary has been built from it yet and no test has been run.
+- **It builds.** A release `tonto` and `hart` compile clean from the ported
+  sources, with no new warnings, and both source lints pass. Two release-only
+  compile errors had to be fixed first, and one of them was in your code: a
+  `WARN` reached by a line continuation, `if (cond) & WARN(...)`. `WARN`
+  expands to a *comment* in a release build, so that form leaves a bare
+  `if (cond)` and will not compile — in release only, never in debug. It is now
+  `WARN_IF`, which takes the condition as an argument and exists for this.
+  Worth knowing for your own branch, where the same line is still present.
+- **The long suite has not run**, nor MPI, nor a debug build. The long suite is
+  where every HAR, fragHAR, extinction and quartz test lives, so it is the
+  obvious next thing and it may well move more references.
 - **`e2a401ef` will change existing results.** It changes how reflections are
   merged and pruned for every refinement, not only periodic ones. Any test
   whose reflection count moves is evidence that the change is working, not a
@@ -689,7 +726,6 @@ None of that needs anything from you. The test files in section 6.6 do.
 
 | For | Read |
 |---|---|
-| The plan this work followed | `docs/LOLO_CP2K_PORT_PLAN.md` |
 | Which branch is what, and why | `docs/REPOSITORY_BRANCHES.md` |
 | Building Tonto on Linux | `docs/BUILDING_ON_LINUX.md` |
 | The Foo language | `docs/FOO_GRAMMAR_DOCUMENTATION.md` |
