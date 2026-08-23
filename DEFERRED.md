@@ -324,12 +324,14 @@ letting the pseudo-inverse absorb it. Verified present. It did **not** affect
 the quartz results in `docs/NN_HAR_REPORT.md`, which refined anisotropically
 and never entered that branch, but it would bite any isotropic refinement.
 
-## Pruning is applied to already-pruned data, and the pristine copy is overwritten (Dylan, 2026-08-23)
+## Pruning compounds across repeated `update` calls (Dylan, 2026-08-23)
 
-Not a milestone, just an annoying bug. Found while making
-`tests/long/quartz_NN_HAR_L1_rhf_def2-SVP` refine twice, once without the
-extinction correction and once with it, which puts a second `xray_data=` block
-in the middle of a job.
+**Half fixed 2026-08-23. The other half is not a one-liner — a naive attempt
+corrupts the heap.**
+
+Found while making `tests/long/quartz_NN_HAR_L1_rhf_def2-SVP` refine twice, once
+without the extinction correction and once with it, which puts a second
+`xray_data=` block in the middle of a job.
 
 `DIFFRACTION_DATA.SET:update` (`diffraction_data.set.foo:664`) does, in order:
 
@@ -342,46 +344,58 @@ in the middle of a job.
 .sort_reflections
 ```
 
-`.reflection0` is exactly the pristine copy that ought to exist. Its declaration
-in `types.foo:3502` says so: *"The original input structure factors before
-pruning."* It is not the cross-validation machinery — that is
-`CRYSTAL.xray_r_free_data`, a separate `DIFFRACTION_DATA` holding the held-out
-reflections.
+`.reflection0` is the pristine copy that ought to exist, and `types.foo:3502`
+declares it as the original input structure factors before pruning. It is not
+the cross-validation machinery — that is `CRYSTAL.xray_r_free_data`, a separate
+`DIFFRACTION_DATA` holding the held-out reflections. It is maintained properly,
+receiving `set_d_and_theta`, the equivalence factors and any `exp_scale_factor`
+scaling alongside `.reflections`. But **the only place it is ever read is the
+`show_rejects` diagnostic** (`diffraction_data.set.foo:727`), which prints the
+list before and after pruning. Nothing refits from it and nothing prunes from it.
 
-It is maintained properly: it gets `set_d_and_theta`, the equivalence factors,
-and any `exp_scale_factor` scaling alongside `.reflections`. But **the only place
-it is ever read is the `show_rejects` diagnostic** (`diffraction_data.set.foo:727`),
-which prints the reflection list before and after pruning. Nothing refits from
-it and nothing re-prunes from it.
+**Why it matters, in Dylan's words.** Re-running the pruning is legitimate: the
+geometry has changed, so which reflections deserve to be rejected can change
+with it. That is exactly why it must run against the *original* data. Pruning
+the survivors of an earlier pruning can only ever remove more, so a reflection
+rejected on the starting geometry can never come back once the model has
+improved, even if it now fits perfectly well. The first pruning is done on the
+worst model the job will ever have, and its verdict is currently permanent.
 
-The trouble is that it is refreshed from `.reflections` **every** time `update`
-runs, and `prune_reflections` works on `.reflections` in place. So the second
-time through:
+**Fixed: the copy is no longer clobbered.** It was refreshed from `.reflections`
+on *every* call, so the second `update` overwrote it with the already-pruned set
+and the original data was gone for the rest of the job. It is now taken once:
 
-- `.reflection0` is overwritten with the already-pruned set, and the untainted
-  data is gone for the rest of the job;
-- pruning is applied to data that has already been pruned, so successive
-  prunings compound.
+```
+if (.reflection0.deallocated) .reflection0 = .reflections
+```
 
-**Dylan's point, and it is the reason this matters beyond tidiness.** Re-running
-the pruning is legitimate — the geometry has changed, so which reflections
-deserve to be rejected can change with it. But that is exactly why it must run
-against the *original* data. Pruning the survivors of an earlier pruning can only
-ever remove more; a reflection rejected on the starting geometry can never come
-back once the model has improved, even if it now fits perfectly well. The initial
-pruning was done on the worst model the job will ever have, and its verdict is
-currently permanent.
+No behaviour changes except that `show_rejects` now shows the true original.
 
-**Fix.** Take the copy once — `if (.reflection0.deallocated) .reflection0 = .reflections`
-— and have `prune_reflections` build `.reflections` from `.reflection0` each time
-rather than editing it in place. `.reflection0` already carries `set_d_and_theta`
-and the equivalence factors, so it is ready to be pruned from; what it needs is
-`set_d_and_theta` re-run on it whenever the geometry moves, which is cheap.
+**Open: pruning still works on `.reflections` in place**, so successive prunings
+compound. The obvious fix — restore the working set from the pristine copy
+before pruning again —
 
-**Scope.** Only jobs that re-enter `xray_data=` or otherwise call `update` more
-than once are affected today, which in `tests/` is the quartz job alone, and it
-prunes nothing. So nothing currently checked in gives a wrong answer. The defect
-is latent, and it becomes live the moment a job with cutoffs re-enters the block.
+```
+.reflections.destroy
+.reflections = .reflection0
+```
+
+**was tried and aborts the quartz job** with `malloc(): invalid size (unsorted)`
+during the second refinement. Both components are `VEC{REFLECTION}@`, i.e.
+allocatable, and `REFLECTION` has no pointer components, so the assignment
+itself is a legitimate deep copy. The corruption therefore comes from downstream
+state that is tied to the reflection array and does not survive its wholesale
+replacement — the calculated and predicted structure factors, the group
+assignments, and whatever the fragment and refinement machinery sizes against
+`.reflections.dim`. Replacing the array mid-job invalidates all of it.
+
+So the remaining work is not the assignment; it is establishing what must be
+rebuilt after a re-prune and rebuilding it. That is why this stays deferred.
+
+**Scope.** Only jobs that call `update` more than once are affected, which in
+`tests/` is the quartz job alone, and it prunes nothing — 1009 reflections in
+both refinements. Nothing currently checked in gives a wrong answer. The defect
+is latent, and becomes live the moment a job with cutoffs re-enters the block.
 
 ## DFT: three silent defects — see `docs/DFT_STANDARDISATION.md`
 
