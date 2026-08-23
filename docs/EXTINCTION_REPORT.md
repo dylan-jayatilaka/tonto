@@ -642,7 +642,53 @@ makes it acute. For *choosing* lambda it matters less than it appears, since a b
 slowly with lambda largely cancels in the comparison, but the resulting free residual is
 not an honest estimate of prediction error and should not be quoted as one.
 
-## A7. Cautions, and a recommendation
+## A7. Why AIC still discriminates once the sigmas are rescaled
+
+Dylan's objection, 2026-08-23, and it goes to the heart of the method: *"you mentioned
+scaling the sigmas by a certain factor: but how does this make sense, since in normal least
+squares the chi2 would then become equal to one. Why does it make sense in AIC?"*
+
+He is right that it becomes one. The maximum-likelihood estimate of the scale is
+`c^2 = RSS/N`, so after rescaling the chi-squared is `N` for **every** model, by
+construction. The comparison therefore cannot be a comparison of chi-squared values.
+
+It is not. Work the likelihood through. With errors distributed as `N(0, c^2 sigma^2)` and
+`c` estimated from the data,
+
+    -2 ln L  =  N ln(2 pi c^2)  +  2 sum_i ln sigma_i  +  RSS / c^2
+
+Minimising over `c^2` gives `c^2 = RSS/N`, and substituting it back collapses everything to
+
+    -2 ln L_max  =  N ln(RSS)  +  constant
+
+where the constant does not depend on the model. Hence
+
+    AIC  =  N ln(RSS)  +  2 (k_eff + 1)  +  constant
+
+**The fit term is the logarithm of the residual, not the residual.** What is compared is
+not how well each model fits in absolute terms — that has been made unmeasurable, on
+purpose — but *how small an error level each model needs in order to explain the data*. A
+better model requires a smaller assumed noise. The extra `+1` in the penalty is that
+estimated noise level, counted as the parameter it is.
+
+Two checks that this is sane.
+
+**It reduces to the ordinary form when the sigmas are right.** Reduce the residual by a
+fraction `f`. The gain in the new form is `N ln(1/(1-f))`, which is about `N f`. In the
+known-sigma form the gain is `f * RSS`. If the sigmas are correct then `RSS` is about `N`
+and the two agree. They differ by the factor `RSS/N`, which is the GoF-squared — precisely
+the `c^2` of A6, and about fifty for urea.
+
+**It gives up something real, and should.** With the scale estimated you can no longer say
+a model fits *well*, only that it fits *better* than another. That looks like a loss but it
+is honest: if the noise level is unknown, absolute goodness of fit is not a measurable
+thing. It also matches the situation actually at hand, where the GoF comes out at 3 or 7
+and nobody believes the true value is 1.
+
+This is the cleanest way to see why cross-validation appeals. It obtains the same
+invariance without having to write down a likelihood at all.
+
+## A8. Cautions, and a recommendation
 
 AIC assumes the number of parameters is small compared with the number of observations. If
 `k_eff` becomes an appreciable fraction of the reflection count, the corrected form
@@ -656,3 +702,68 @@ calls in `MOLECULE.SCF:make_constraint_data`, which are commented out at
 Carlo estimator of A5 rather than the Hessian of A4, because it needs no new derivative
 code. The analytic route is worth building only if the Monte Carlo estimate turns out to be
 too noisy or too slow.
+
+## A9. The exchange that produced this appendix
+
+Dylan's questions, kept close to verbatim because they drove the analysis, each with the
+short form of the answer and a pointer to where it is worked out.
+
+**"I don't fully understand how it determines the number of parameters. Would it require
+differentiating the effective Fock matrix again, to produce a hessian?"**
+
+Yes for the analytic route, and it is exactly a coupled-perturbed Hartree-Fock problem —
+differentiate the stationarity condition, and the Hessian of the constrained functional
+appears as the matrix to invert. But the sum over reflections collapses to
+`trace[(A + lambda B)^-1 lambda B]`, and only the trace is needed, which a handful of
+random probe vectors will estimate. There is also a Monte Carlo route that needs no
+Hessian at all. Sections A4 and A5.
+
+**"We did try cross validation, and the chi2_free values were very spotty - perhaps because
+we did not have enough reflections or because we did not select evenly across resolution or
+intensity? Wouldn't cross validation still require multiple sets of reserved reflections to
+be sure?"**
+
+Both suggested causes are real, and the third point is decisive. The free statistic on `m`
+reflections has relative standard error `sqrt(2/m)`, which is 22% for a five percent split
+of urea's 817 reflections. The selection is an unstratified uniform draw, so the test set
+is neither of fixed size nor balanced. And yes, several reserved sets are needed — that is
+Brunger's own position, which he calls complete cross-validation and says is *required*
+when the test set is small. Sections A1 and A2.
+
+**"I was told that, in macromolecular crystallography, cross validation works because there
+were so many reflections."**
+
+Correct, and Brunger quantifies it: the standard deviation of the free R value is about
+`R_free/sqrt(n)`. Five percent of a protein dataset is one to three thousand reflections
+against urea's forty, so the precision improves by a factor of five or six. A difference of
+degree, not of kind. Section A2a.
+
+**"I could never understand Brungers argument. Or others."**
+
+Worth knowing that the 1992 paper does not derive the test-set size; the precision estimate
+`R_free/sqrt(n)` is stated empirically in the 1997 chapter, and the ten percent
+recommendation came from model calculations. The argument is heuristic, and the one part
+that is not — that a single small test set fluctuates too much to be significant — is the
+part that recommends complete cross-validation.
+
+**"I see that the monte carlo method involves sigmas. Does it also suffer from the same
+issue, that AIC does, regarding underestimated sigmas? In that case cross validation may be
+the best? Since one only looks for the point where the chi2_free starts to diverge or
+increase, on average ... right?"**
+
+The Monte Carlo estimate of `k_eff` does not suffer: the perturbation and the normalisation
+use the same sigma, so it cancels exactly. AIC as a whole does suffer, by a factor of the
+GoF-squared. And yes to the last point: a common sigma error moves the cross-validation
+curve bodily and leaves the turning point where it was, so looking for where the held-out
+residual starts to rise is the robust procedure. Two refinements — a single split shows the
+right shape but not the right location, and a flat minimum is located only to within the
+noise divided by the curvature. Section A6.
+
+**"You mentioned scaling the sigmas by a certain factor: but how does this make sense, since
+in normal least squares the chi2 would then become equal to one. Why does it make sense in
+AIC?"**
+
+Because the criterion is then `N ln(RSS)`, not `RSS`. The rescaled chi-squared is indeed one
+for every model; what differs between models is the error level each one needs to explain
+the data. Section A7.
+
