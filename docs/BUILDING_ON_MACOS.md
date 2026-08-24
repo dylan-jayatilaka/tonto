@@ -80,6 +80,10 @@ macOS shows tiny last-digit differences in a few tests. The comparison is
 deliberately loose — relative difference ≤ 0.2%, or last printed digit within
 2 — and counts those as passes.
 
+> **Use `gfortran-14` for debug builds.** A `gfortran-16` debug build
+> segfaults on any SCF job, on macOS *and* Linux; release is fine on both. See
+> [`GFORTRAN16_DEBUG_CRASH.md`](GFORTRAN16_DEBUG_CRASH.md).
+
 ## One macOS-specific oddity: the arm64 compiler pin
 
 **arm64.** `shell1quartet.F90` is pinned to `-O2 -fno-schedule-insns` on arm64

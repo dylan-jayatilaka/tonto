@@ -3903,6 +3903,9 @@ ignored by `scripts/test.py`).
 
 ## PARTLY DIAGNOSED (2026-08-24): gfortran-**16** DEBUG builds SEGFAULT — BOTH platforms
 
+> **Handover page: [`docs/GFORTRAN16_DEBUG_CRASH.md`](docs/GFORTRAN16_DEBUG_CRASH.md)**
+> — self-contained: how to reproduce, what is ruled out, the traps, and what to do next.
+
 **Use `gfortran-14` for debug builds, on any platform.** `gfortran-16` release is fine on both
 platforms; its *debug* build segfaults on **both** arm64 macOS and x86_64 Linux — the "only on
 arm64" in the original note was an untested assumption, disproved 2026-08-24 (see progress note
