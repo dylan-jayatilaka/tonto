@@ -4120,12 +4120,34 @@ and `:clear_keys`:
 That is undefined behaviour on every compiler; the uninstrumented run merely
 survives it. The template is inherited by 43 files.
 
-**The experiment, and it is the next thing to do:** fix that (create `tmp` before
-use, or restructure so the scalar `read_keys` is reached without a dummy object),
-rebuild gfortran-16 debug, and rerun. If the pointgroup segfault goes with it,
-the whole thing was one latent bug in Tonto and no compiler is at fault. If it
-stays, run `-fcheck=all` again and take whatever it names next -- each fix peels
-one layer.
+**The experiment was run (2026-08-24), and the `tmp` bug is fixed but was NOT the
+cause.** Four sites in the *allocatable* copy of the template now do
+`tmp.create` / use / `tmp.destroy`, which is the pattern two sibling procedures
+in the same file already used. (The *pointer* copy below the `! Old` marker
+deliberately `nullify`s and is left alone -- the checker's complaint named an
+allocatable.) Result: the `-fcheck=all` violation is gone, and the run gets
+further -- but it still ends in **SIGSEGV, same site, same faulting address
+`0xd9`**. `-fcheck=all` does not catch the fault itself.
+
+**A further clue, and it strengthens the corruption hypothesis: the crash site is
+not the same on the two platforms.**
+
+| platform | crash |
+|---|---|
+| Linux x86_64 | `POINTGROUP:make_character_table`, `pointgroup.foo:1018` |
+| macOS arm64 | `MOLECULE.BASE:make_pg_image_of_shell`, `KERN_INVALID_ADDRESS at 0xd9` |
+
+Both are in the pointgroup machinery reached from `make_anos_for_atom`, but they
+are *different procedures*. A single deterministic logic error would fault in the
+same place on both. Two different faults in the same neighbourhood, neither
+reproducible when the construct is isolated, is what heap corruption looks like:
+whatever is damaged, the layout decides which innocent read dies first.
+
+**So the search should move upstream of the crash, not around it.** Options, in
+order of cost: run under a sanitizer (`-fsanitize=address` with gfortran-16, which
+would name the *write* that corrupts rather than the read that dies); or bisect by
+disabling the promolecule guess (`initial_density=` something else) to confirm the
+corruption is laid down before `make_anos_for_atom` rather than inside it.
 
 **Also done and NOT the fix:** the IRREP components `character` and `dimension`
 were renamed to `chi` and `dim` (they are Fortran keywords and were poor names).
