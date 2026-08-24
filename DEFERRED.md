@@ -4085,14 +4085,54 @@ herring about gdb, not about the compiler.
 keywords, and `chi`/`dim` would be better, `chi` being the standard symbol for a
 group character. Worth doing as hygiene, on its own, but it is not this bug.)
 
-**So the next suspect is what remains**: `create` on an allocatable component of
-an element of an allocatable derived-type array — `.irrep(i).character.create(.order)`
-where `.irrep` is itself allocatable. That is a nest gfortran-16 may handle
-differently, and it is the one construct left between a correct read side and a
-faulting write. A reduced test case of exactly that shape — an allocatable array
-of a derived type whose component is an allocatable vector, allocated
-element-by-element in a loop then written — is the thing to write next, and it is
-small enough to send upstream if it reproduces.
+**h. The construct itself does NOT reproduce it (2026-08-24).** Two standalone
+reduced cases were written and run under both compilers: (1) an allocatable array
+of a derived type with an allocatable vector component, allocated
+element-by-element in a loop then written through; (2) the same, with the array
+itself a component of an outer derived type, so the access is
+`self%irrep(i)%chi(n)` exactly as in Tonto. **Both compile and run to exit 0
+under gfortran-14 and gfortran-16.** So the shape at the crash site is not, by
+itself, the trigger.
+
+**That is the most useful negative result so far, because of what it implies: the
+crash site is probably not the bug site.** A fault that will not reproduce when
+the construct is isolated, but is reliable inside the full program on two
+platforms, looks like **earlier memory corruption landing somewhere fatal** --
+and gfortran-14 and -16 simply lay memory out differently, so the same corruption
+is benign under one and fatal under the other. That would explain every
+observation at once: compiler-dependent, platform-independent, reproducible in
+situ, not reproducible in isolation, and a read side that checks out while the
+write target does not.
+
+**The leading candidate for that earlier corruption is already in hand.** The
+`-fcheck=all` run stops long before the SCF, during keyword reading, at
+*"Allocatable actual argument 'tmp' is not allocated"* -- `VEC{OBJECT}:read_keys`
+and `:clear_keys`:
+
+```foo
+   read_keys :: leaky
+      self :: allocatable, INOUT
+      tmp :: OBJECT@          ! declared, never created
+      ...
+      tmp.read_keys           ! called on an unallocated allocatable
+```
+
+That is undefined behaviour on every compiler; the uninstrumented run merely
+survives it. The template is inherited by 43 files.
+
+**The experiment, and it is the next thing to do:** fix that (create `tmp` before
+use, or restructure so the scalar `read_keys` is reached without a dummy object),
+rebuild gfortran-16 debug, and rerun. If the pointgroup segfault goes with it,
+the whole thing was one latent bug in Tonto and no compiler is at fault. If it
+stays, run `-fcheck=all` again and take whatever it names next -- each fix peels
+one layer.
+
+**Also done and NOT the fix:** the IRREP components `character` and `dimension`
+were renamed to `chi` and `dim` (they are Fortran keywords and were poor names).
+It builds clean and the crash is unchanged, so it is hygiene, not a fix. Note
+`dim` is **reserved in Foo** as the array-size accessor -- renaming DIIS's
+`dimension` method to `dim` turned `d = .dim` into `d = size(self)` on a
+non-array and broke the build, so DIIS keeps its name.
 
 **Still open, and the next step.** `-fcheck=all` does turn a crash into a named
 error, but **not this one** -- it stops earlier, at
