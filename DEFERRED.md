@@ -4073,12 +4073,26 @@ That is legal Fortran and has worked for years, but it is exactly the sort of
 thing a new front-end regresses on, and the failing component is the one that is
 both keyword-named *and* allocatable. gdb's parser already chokes on it.
 
-**The experiment**, and it is cheap: rename `character` (say to `chi`, which is
-what it is) and `dimension` (to `dim`), rebuild gfortran-16 debug, rerun
-`h2o_rhf_STO-3G`. If the crash goes, it is a gfortran-16 front-end bug with a
-clean workaround and a reduced test case worth reporting upstream. If it stays,
-the hypothesis is dead and the next suspect is `create` on an allocatable
-component of an element of an allocatable derived-type array.
+**REFUTED, same day.** The experiment was run: `character` renamed to `chi`
+throughout (4 references and the declaration — the blast radius is only
+`types.foo`, `irrep.foo` and `pointgroup.foo`), gfortran-16 debug rebuilt,
+`h2o_rhf_STO-3G` rerun. **Still exit 139.** The keyword-named component is not
+the cause, and the rename has been reverted rather than left in the tree, since
+it fixes nothing and would muddy the record. gdb's parser error was a red
+herring about gdb, not about the compiler.
+
+(The names are still poor Fortran — `character` and `dimension` are both
+keywords, and `chi`/`dim` would be better, `chi` being the standard symbol for a
+group character. Worth doing as hygiene, on its own, but it is not this bug.)
+
+**So the next suspect is what remains**: `create` on an allocatable component of
+an element of an allocatable derived-type array — `.irrep(i).character.create(.order)`
+where `.irrep` is itself allocatable. That is a nest gfortran-16 may handle
+differently, and it is the one construct left between a correct read side and a
+faulting write. A reduced test case of exactly that shape — an allocatable array
+of a derived type whose component is an allocatable vector, allocated
+element-by-element in a loop then written — is the thing to write next, and it is
+small enough to send upstream if it reproduces.
 
 **Still open, and the next step.** `-fcheck=all` does turn a crash into a named
 error, but **not this one** -- it stops earlier, at
