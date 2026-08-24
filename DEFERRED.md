@@ -4143,11 +4143,31 @@ same place on both. Two different faults in the same neighbourhood, neither
 reproducible when the construct is isolated, is what heap corruption looks like:
 whatever is damaged, the layout decides which innocent read dies first.
 
-**So the search should move upstream of the crash, not around it.** Options, in
-order of cost: run under a sanitizer (`-fsanitize=address` with gfortran-16, which
-would name the *write* that corrupts rather than the read that dies); or bisect by
-disabling the promolecule guess (`initial_density=` something else) to confirm the
-corruption is laid down before `make_anos_for_atom` rather than inside it.
+**The sanitizer was tried on macOS and is INCONCLUSIVE — read this before
+repeating it.** A full `-fsanitize=address -fno-omit-frame-pointer` gfortran-16
+debug build was made and run. ASan is genuinely active (`libasan.8.dylib` linked,
+48 undefined `__asan` symbols), but:
+
+- it produced **no ASan report at all**, and
+- the process died with **SIGBUS (138)** rather than the usual SIGSEGV (139).
+
+A sanitizer that changes the signal but issues no diagnostic has not cleared the
+program; it has failed to instrument usefully. gfortran + ASan on arm64 macOS is
+the suspect, not the absence of a heap bug. **Do not read this as "ASan found
+nothing".**
+
+Stack exhaustion was re-tested at the same time and is genuinely ruled out: the
+plain gfortran-16 debug build still exits 139 with the stack at the hard ceiling
+(`ulimit -s 65520`), as well as at the 8 MB default. That confirms the original
+note.
+
+**Next, and it should be done on Linux.** achari2 has gfortran-16 and a
+conventional toolchain where ASan is reliable; the same build there is the
+obvious repeat, and Linux already proved better for this bug once (it gives
+symbolic backtraces with line numbers for free, which macOS does not). Failing
+that, `valgrind` on Linux would name the offending write directly. The bisect
+option — changing `initial_density=` away from `promolecule` to establish whether
+the damage predates `make_anos_for_atom` — is cheap and still untried.
 
 **Also done and NOT the fix:** the IRREP components `character` and `dimension`
 were renamed to `chi` and `dim` (they are Fortran keywords and were poor names).
