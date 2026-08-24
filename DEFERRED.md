@@ -3901,7 +3901,7 @@ ignored by `scripts/test.py`).
   (the two bases are mathematically identical below d functions). That single invariant would
   have caught this immediately, on one machine, with no reference file.
 
-## DIAGNOSED (2026-07-30): gfortran-**16** DEBUG builds SEGFAULT on arm64 macOS
+## PARTLY DIAGNOSED (2026-08-24): gfortran-**16** DEBUG builds SEGFAULT on arm64 macOS
 
 **Use `gfortran-14` for debug builds on macOS.** `gfortran-16` release is fine on both platforms;
 only its *debug* build is broken, and only (as far as tested) on arm64.
@@ -3955,6 +3955,57 @@ backtrace yet. Options, cheapest first:
    different debugger.
 3. Worth checking whether a Linux gfortran-16 debug build crashes too (build started; result
    pending) — that tells us whether it is arm64-specific or general to gfortran-16.
+**Progress 2026-08-24, on a real arm64 Mac.** Four things established, two of
+which contradict what was written above.
+
+**a. It was masked by a separate bug that stopped the build entirely.** Before any
+segfault could happen, gfortran-16 debug failed to *compile*: `PLOT_GRID:volume`
+and `pixel_volume` (added by `cc530a34`, the serial Bader port) were declared
+lower-case `pure` while calling `PURE` routines. Not compiler-specific -- CI
+(Linux-debug) had been red on it since 2026-08-23, five runs, and gfortran-14
+rejects the same file here. Fixed in `97d8b0e9`; the rule is now written up in
+`docs/FOO_GRAMMAR_DOCUMENTATION.md` ("PURE is contagious upward").
+
+**b. A symbolic backtrace IS obtainable**, contradicting "there is no symbolic
+backtrace yet" above. `lldb` still cannot attach and `-fbacktrace` still prints
+raw addresses, but **macOS writes its own symbolicated crash report** to
+`~/Library/Logs/DiagnosticReports/tonto-*.ips`. Parse the JSON payload:
+
+```
+EXC_BAD_ACCESS, KERN_INVALID_ADDRESS at 0x00000000000000d9
+  make_pg_image_of_shell  <- crash
+  symmetrize_1 / symmetrize_0
+  make_anos_for_atom / make_anos / make_anos_and_interpolators
+  make_promolecule_density_mx / make_promol_guess_mos
+  get_initial_density_mx / get_initial_guess / initialize_scf
+  usual_scf / scf
+```
+
+`0xd9` is a field access off a null base. This is why only jobs with an SCF
+crash: the fault is in building the **promolecule initial guess**.
+
+**c. It is NOT the architecture-tuning flag.** This was the leading hypothesis --
+debug applies `-mtune=native` (via `HOST_FLAG`) while release deliberately avoids
+`native` in favour of `-mcpu=apple-m2`, an asymmetry nobody had pointed at.
+Rebuilt with `-DTONTO_ARCH_FLAG=none`, which removes it: **still exit 139**.
+Refuted. (The asymmetry is still worth removing -- a debug build should carry no
+CPU tuning at all -- but it is not this bug.)
+
+**d. Control, clean.** Same commit, same flags, same machine:
+gfortran-14 debug runs `h2o_rhf_STO-3G` to **exit 0**; gfortran-16 debug gives
+**exit 139**.
+
+**Still open, and the next step.** `-fcheck=all` does turn a crash into a named
+error, but **not this one** -- it stops earlier, at
+`vec_atom.F90:2018`, with *"Allocatable actual argument 'tmp' is not allocated"*,
+during keyword reading and long before the SCF. That is a real defect in its own
+right (`VEC{OBJECT}:read_keys` and `:clear_keys` declare `tmp :: OBJECT@`, never
+create it, and then call a method on it; the template is inherited by 43 files),
+but it is benign in practice -- the uninstrumented run gets past it and dies
+later somewhere else. So it is **not established** that it causes the segfault.
+To get there: fix or suppress the `tmp` violation, then re-run under
+`-fcheck=all` and see what it names next.
+
 4. **Also wanted (Dylan): a DEBUG CI job.** Debug is the configuration whose job is to catch
    crashes and precondition violations, yet nothing checks it — CI builds release only, and the
    debug status here was two weeks stale, which is why this went unnoticed. Design notes: the 4
