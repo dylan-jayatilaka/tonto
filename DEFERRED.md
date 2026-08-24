@@ -3483,25 +3483,36 @@ highlighting and tighter editor integration. The repo already ships some vim sup
 
 # Platform-specific
 
-## The macOS RGBI badge is red, and the fix is on a machine we cannot reach
+## FIXED 2026-08-24: the macOS RGBI badge was red over one bad package name
 
-`ci-rgbi-macos.yml` is a weekly, deliberately exploratory probe of the macOS
-install list in `docs/INSTALLING_RGBI.md`. It fails at the step **"BasicTeX,
-then tlmgr BY ABSOLUTE PATH"**, after `brew install --cask basictex` succeeds.
+`ci-rgbi-macos.yml` failed at **"BasicTeX, then tlmgr BY ABSOLUTE PATH"** from
+2026-08-05. This entry used to say the cause was unknown, because the Mac that
+last had the toolchain working was behind a firewall and the logs had expired.
+Both premises turned out to be false: the Mac came back, and the log of run
+**32456863540** (2026-08-21) was still retrievable. It says:
 
-**It is not investigated, on purpose.** The toolchain was working when it was
-last set up by hand (2026-08-05, which is what the step's comment about the
-absolute `tlmgr` path records), but that work lives on a Mac that is no longer
-accessible. Nobody can currently reproduce, and a speculative fix to an
-untested platform is worse than a known-red badge.
+```
+tlmgr install: package longtable not present in repository.
+```
 
-Logs from the failing scheduled runs are no longer retrievable, so the cause is
-unknown rather than merely unfixed. Candidates, none confirmed:
-`/Library/TeX/texbin/tlmgr` having moved, `tlmgr update --self` failing against
-a CTAN mirror, or one of the seven requested packages being unavailable.
+That is the whole fault. **There is no TeX Live package called `longtable`** --
+`longtable.sty` ships inside `tools`, which BasicTeX already carries. Every
+other package in the list was fine: `geometry`, `pgf` and `xcolor` were already
+present, and `chemfig`, `pdfcrop` and `simplekv` installed cleanly (4/4). tlmgr
+still returned 1 for the one name it could not resolve, and that killed the step.
 
-Anyone with a Mac should trigger a manual run and read a FRESH log before
-changing anything.
+None of the three candidate causes guessed here previously was right. The
+absolute-path `tlmgr` trap, which this entry speculated about, was real but had
+already been fixed on 2026-08-05 and was not the failure.
+
+Fixed by dropping `longtable` from the install list, plus a `kpsewhich
+longtable.sty` in the same step so the claim "already satisfied" is asserted
+rather than trusted.
+
+**The lesson is the cheap one.** The diagnosis took a single `gh run view
+--log-failed` and no Mac at all -- the entry's own instruction ("anyone with a
+Mac should read a FRESH log") was half right: the fresh log was the answer, the
+Mac was not needed. Logs are retained 90 days; this one was read on day 3.
 
 
 ## OPEN: long paths to the basis sets fail -- STR is 256 characters

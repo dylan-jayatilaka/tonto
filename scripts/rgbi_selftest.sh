@@ -33,7 +33,10 @@ FAIL=0
 
 # The doctor's own dependencies. Without these on PATH it cannot run at all,
 # and every case would fail for the wrong reason.
-BASE_TOOLS="uname grep sed awk tr head cat"
+# readlink is here because the doctor resolves mol2chemfig through its
+# symlink to find the venv interpreter -- a pipx app is a /bin/sh shim, so
+# its shebang names the shell, not python.
+BASE_TOOLS="uname grep sed awk tr head cat readlink"
 
 # make_path <tool> ... -- a PATH with the base tools plus the named ones
 make_path() {

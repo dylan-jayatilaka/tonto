@@ -137,8 +137,7 @@ case "$PLATFORM" in
     wsl)   ok "WSL (${WSL_DISTRO_NAME:-unknown distro}) -- supported"
            printf '        %salso run: scripts/wsl_doctor.sh -- the Windows/Linux boundary traps are checked there%s\n' "$DIM" "$OFF"
            printf '        %sand keep the job directory OFF /mnt/c: pdflatex runs four times per picture%s\n' "$DIM" "$OFF" ;;
-    macos) warn "macOS -- UNTESTED. docs/INSTALLING_RGBI.md is written from recollection; this doctor is the arbiter" \
-                "if you get it working, please correct that document" ;;
+    macos) ok "macOS -- run through by hand on Apple silicon (2026-08-24) and probed weekly by ci-rgbi-macos.yml" ;;
     *)     warn "unrecognised platform $(uname -s) -- the checks still apply, the fix hints assume apt" ;;
 esac
 
@@ -217,7 +216,29 @@ if command -v mol2chemfig >/dev/null 2>&1; then
         ok "mol2chemfig runs: $(grep -o 'version.*' <<<"$M2C_OUT" | head -1)"
         # Indigo lives inside mol2chemfig's own venv -- importing it from the
         # system python proves nothing, so ask the venv's interpreter.
-        M2C_PY="$(sed -n '1s/^#!//p' "$(command -v mol2chemfig)" 2>/dev/null | awk '{print $1}')"
+        # Find the venv's python by RESOLVING THE APP, not by reading its
+        # shebang. pipx installs the app as a symlink into its own venv, and
+        # the file itself can be a /bin/sh polyglot shim whose first line is
+        # "#!/bin/sh" -- so shebang-parsing yields /bin/sh, `/bin/sh -c
+        # 'import indigo'` fails, and the doctor reports Indigo missing on a
+        # machine where it imports perfectly. Measured on macOS 26.5 with
+        # pipx 1.8 (2026-08-24). The real interpreter is on the shim's SECOND
+        # line and its path contains spaces on macOS ("Application Support"),
+        # which is a second reason not to parse it.
+        M2C_APP="$(command -v mol2chemfig)"
+        if command -v readlink >/dev/null 2>&1; then
+            while [ -L "$M2C_APP" ]; do      # no readlink -f on macOS
+                _t="$(readlink "$M2C_APP")"
+                case "$_t" in
+                    /*) M2C_APP="$_t" ;;
+                     *) M2C_APP="${M2C_APP%/*}/$_t" ;;
+                esac
+            done
+        fi
+        M2C_PY="${M2C_APP%/*}/python"
+        # Fall back to the shebang for a plain script that is not in a venv.
+        [ -x "$M2C_PY" ] || \
+            M2C_PY="$(sed -n '1s/^#!//p' "$(command -v mol2chemfig)" 2>/dev/null | awk '{print $1}')"
         if [ -x "${M2C_PY:-}" ]; then
             if "$M2C_PY" -c 'import indigo' >/dev/null 2>&1; then
                 ok "Indigo importable (it is a dependency of mol2chemfigPy3, not a separate install)"
