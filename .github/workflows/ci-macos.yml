@@ -1,0 +1,100 @@
+name: CI (macOS-release)
+
+# The first CI that BUILDS Tonto on a Mac. ci-rgbi-macos.yml only ever probed
+# the picture-tool install list; nothing has ever compiled the Fortran here.
+#
+# Why it is worth a runner: macos-14 is arm64, and arm64 is the one platform
+# where this project carries compiler workarounds whose failure mode is WRONG
+# NUMBERS rather than a crash -- shell1quartet.F90 is pinned to
+# -O2 -fno-schedule-insns, and CMakeLists.txt carries a second pin for rgbi/BN's
+# Roby populations. Both are guarded by nothing at all. A Linux runner cannot
+# see them.
+#
+# Both compilers, on purpose. The project standardises on gfortran-14, but
+# DEFERRED.md records the gfortran-16 release switch as numerically free on both
+# platforms (macOS 119/124, Linux 123/124). Only the DEBUG build is broken on
+# arm64 with 16, so only release is matrixed here. Testing both is what lets the
+# standard move without guessing.
+#
+# Scheduled and manual only, no push trigger, and deliberately NOT badged yet:
+# DEFERRED.md's rollout says gather evidence first, badge when there is
+# something to say. There is no continue-on-error -- a check that cannot fail
+# tells you nothing.
+#
+# EXPECT THIS RED AT FIRST, AND DO NOT BLESS IT AWAY. Measured by hand on Apple
+# silicon (macOS 26.5, 2026-08-24) with gfortran-14: the short suite is 54/55
+# under the loose gate, failing only urea_ccsd_pob-TZVP_Salvador_properties at
+# 2.99% relative against a 0.2% gate. That one discrepancy is the thing this
+# workflow exists to characterise.
+
+on:
+  schedule:
+    - cron: '43 4 * * 2'      # Tuesdays 04:43 UTC
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: macOS release, gfortran-${{ matrix.gcc }}
+    runs-on: macos-14          # Apple silicon
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false         # 14 and 16 are independent questions
+      matrix:
+        gcc: [14, 16]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install the toolchain
+        run: |
+          set -x
+          # gcc provides gfortran; openjdk provides javac for the ANTLR4
+          # translator. No BLAS/LAPACK: macOS has Accelerate, and CMake prefers
+          # Homebrew OpenBLAS when it is present.
+          brew install gcc cmake openjdk
+          echo "$(brew --prefix openjdk)/bin" >> "$GITHUB_PATH"
+
+      - name: Which compiler is this, actually
+        run: |
+          set -x
+          which gfortran-${{ matrix.gcc }}
+          gfortran-${{ matrix.gcc }} --version
+          uname -m                       # must say arm64, or the pins are untested
+
+      - name: Configure
+        run: |
+          cmake -B build \
+                -DCMAKE_Fortran_COMPILER=gfortran-${{ matrix.gcc }} \
+                -DCMAKE_BUILD_TYPE=release
+
+      - name: Build
+        run: cmake --build build -- -j3
+
+      - name: Confirm the arm64 pins were actually applied
+        run: |
+          # The pins are the reason this job exists. If they silently stop being
+          # applied, the numbers go wrong quietly, so assert them rather than
+          # trusting the configure log scrolled past.
+          grep -q 'fno-schedule-insns' build/CMakeFiles/tonto.dir/flags.make \
+            || grep -rq 'fno-schedule-insns' build/CMakeFiles/tonto.dir/ \
+            || { echo "arm64 pin for shell1quartet.F90 NOT found in the build flags"; exit 1; }
+
+      - name: Test — the loose agreement gate, short suite
+        run: |
+          set -o pipefail
+          python3 scripts/suite_report.py \
+            --program build/tonto --tests-dir tests --basis-sets basis_sets \
+            --suites short --log tests-macos-${{ matrix.gcc }}.log \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the log and any .bad files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-diagnostics-gfortran${{ matrix.gcc }}
+          path: |
+            tests-macos-${{ matrix.gcc }}.log
+            tests/**/*.bad
+          if-no-files-found: ignore
