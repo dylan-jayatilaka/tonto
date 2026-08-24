@@ -61,6 +61,7 @@ contains
    ! Erase all reflection data
       self :: INOUT
 
+      .cif_theta_full = -ONE
       if (.INQ:reflection_data_exists) then
 
          .scale_factor      =  ONE
@@ -73,6 +74,15 @@ contains
          .reflections.destroy
          .hkl_range.destroy
          .merg_applied = FALSE
+         .cif_statistics_ready = FALSE
+         .cif_number_total = 0
+         .cif_number_gt = 0
+         .cif_R_factor_all = -ONE
+         .cif_R_factor_gt = -ONE
+         .cif_wR_factor_all = -ONE
+         .cif_wR_factor_gt = -ONE
+         .cif_goodness_of_fit_all = -ONE
+         .cif_goodness_of_fit_gt = -ONE
 
          .scale_factors.destroy
 
@@ -111,6 +121,15 @@ contains
 !  ===========
 !  Set methods
 !  ===========
+
+   set_CIF_theta_full(theta_full) ::: PURE
+   ! Retain the input-CIF completeness limit across reflection input setup.
+      self :: INOUT
+      theta_full :: REAL, IN
+
+      .cif_theta_full = theta_full
+
+   end
 
    set_defaults ::: leaky, PURE
    ! Set up a default diffraction_data object
@@ -911,18 +930,21 @@ contains
       if (.merg_applied) return
 
       .reflections = .unmerged_reflections
+      .reflections.set_d_and_theta(unit_cell,.wavelength)
       .merg_applied = FALSE
+      .SET:prune_systematic_absences(spacegroup)
+      .SET:prune_observation_reflections
       .SET:apply_merg(spacegroup)
 
-      ! Keep the complete merged set for reporting, then apply data-only
-      ! cutoffs. The new model-dependent cutoffs are applied only after the
-      ! caller has recalculated F_calc/F_pred for this density partition.
+      ! Keep the merged set made from accepted raw observations.  No weak-data
+      ! rejection is repeated after merging: the same merged set is the
+      ! refinement/CIF *_all set.  The CIF *_gt subset is classified from the
+      ! merged uncertainties without removing reflections from the fit.
       .reflection0 = .reflections
       .reflection0.set_d_and_theta(unit_cell,.wavelength)
       .reflections.set_d_and_theta(unit_cell,.wavelength)
       .reflection0.set_equivalence_factors(spacegroup)
       .reflections.set_equivalence_factors(spacegroup)
-      .SET:prune_observation_reflections
       .SET:sort_reflections
 
    end
@@ -1012,11 +1034,18 @@ contains
          if (.unmerged_reflections.deallocated) &
             .unmerged_reflections = .reflections
 
-         ! Remove true space-group absences and merge raw observations before
-         ! observation cutoffs or least-squares setup.
-         .SET:apply_merg(spacegroup)
+         ! SHELXL-style preprocessing order: remove true translational
+         ! absences, reject weak raw observations, then merge the surviving
+         ! equivalents.  Repeated update calls on an already prepared working
+         ! set must not apply those steps again.
+         if (NOT .merg_applied) then
+            .reflections.set_d_and_theta(unit_cell,.wavelength)
+            .SET:prune_systematic_absences(spacegroup)
+            .SET:prune_observation_reflections
+            .SET:apply_merg(spacegroup)
+         end
 
-         ! Keep original reflections
+         ! Keep the complete merged refinement set.
          .reflection0 = .reflections
         
          ! Set d, stl, theta 
@@ -1027,10 +1056,9 @@ contains
          .reflection0.set_equivalence_factors(spacegroup)
          .reflections.set_equivalence_factors(spacegroup)
         
-         ! Prune & sort !!!
-         .SET:prune_reflections
+         ! Model-dependent zero pruning is performed only after the current
+         ! partition has supplied F_calc/F_pred.
          .SET:sort_reflections
-         !!!!!!!!!!!!!!!!!!
 
          if (.INQ:have_F_exp) then
 
@@ -2164,6 +2192,108 @@ contains
 !  =================
 !  Structure factors
 !  =================
+
+   set_CIF_subset_statistics(refl,all_data) ::: private, PURE
+   ! Store agreement statistics for either the fitted (gt) subset or the
+   ! complete merged reflection set used only for CIF reporting.
+      self :: INOUT
+      refl :: VEC{REFLECTION}, IN
+      all_data :: BIN, IN
+
+      n :: INT
+      R,wR,gof :: REAL
+
+      n = refl.dim
+      if (n==0 OR NOT refl.have_F_pred OR NOT refl.have_nonzero_F_exp) return
+
+      R = refl.F_r_factor
+      wR = refl.F_weighted_r_factor
+      gof = sqrt(REALIFY(max(n-1,1))*refl.F_chi2/REALIFY(max(n-.n_param,1)))
+
+      if (all_data) then
+         .cif_number_total = n
+         .cif_R_factor_all = R
+         .cif_wR_factor_all = wR
+         .cif_goodness_of_fit_all = gof
+      else
+         .cif_number_gt = n
+         .cif_R_factor_gt = R
+         .cif_wR_factor_gt = wR
+         .cif_goodness_of_fit_gt = gof
+      end
+
+   end
+
+   prepare_CIF_statistics ::: leaky
+   ! Store agreement statistics for the complete merged refinement set and
+   ! independently for the subset satisfying the CIF intensity threshold.
+   ! Weak raw observations were rejected before MERG, but a merged reflection
+   ! can still fail the threshold because its merged uncertainty includes the
+   ! observed scatter. Classification here never removes it from the fit.
+      self :: INOUT
+
+      gt :: VEC{REFLECTION}@
+      use_F,use_I,keep :: BIN
+      i,j,n_gt :: INT
+
+      .cif_statistics_ready = FALSE
+      .cif_number_total = 0
+      .cif_number_gt = 0
+      .cif_R_factor_all = -ONE
+      .cif_R_factor_gt = -ONE
+      .cif_wR_factor_all = -ONE
+      .cif_wR_factor_gt = -ONE
+      .cif_goodness_of_fit_all = -ONE
+      .cif_goodness_of_fit_gt = -ONE
+
+      if (.reflections.deallocated) return
+      if (.reflections.dim==0) return
+      if (NOT .reflections.have_F_pred) return
+
+      .SET:set_CIF_subset_statistics(.reflections,TRUE)
+
+      use_F = .F_sigma_cutoff>ZERO AND .INQ:have_F_exp AND .reflections.have_nonzero_F_sigma
+      use_I = .I_sigma_cutoff>ZERO AND .INQ:have_I_exp AND .reflections.have_nonzero_I_sigma
+
+      n_gt = 0
+      do i = 1,.reflections.dim
+         keep = TRUE
+         if (use_F) then
+            if (.reflections(i).has_weak_F_exp(.F_sigma_cutoff)) keep = FALSE
+         end
+         if (use_I) then
+            if (.reflections(i).has_weak_I_exp(.I_sigma_cutoff)) keep = FALSE
+         end
+         if (NOT use_F AND NOT use_I) then
+            if (.reflections(i).F_exp<=ZERO) keep = FALSE
+         end
+         if (keep) n_gt = n_gt + 1
+      end
+
+      if (n_gt>0) then
+         gt.create(n_gt)
+         j = 0
+         do i = 1,.reflections.dim
+            keep = TRUE
+            if (use_F) then
+               if (.reflections(i).has_weak_F_exp(.F_sigma_cutoff)) keep = FALSE
+            end
+            if (use_I) then
+               if (.reflections(i).has_weak_I_exp(.I_sigma_cutoff)) keep = FALSE
+            end
+            if (NOT use_F AND NOT use_I) then
+               if (.reflections(i).F_exp<=ZERO) keep = FALSE
+            end
+            if (NOT keep) cycle
+            j = j + 1
+            gt(j) = .reflections(i)
+         end
+         .SET:set_CIF_subset_statistics(gt,FALSE)
+         gt.destroy
+      end
+      .cif_statistics_ready = TRUE
+
+   end
 
    make_F_predicted(update_n_param)
    ! Make the predicted magnitude of the structure factors, including

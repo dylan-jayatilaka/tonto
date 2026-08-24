@@ -29,6 +29,396 @@ module DIFFRACTION_DATA.PUT
 
 contains
 
+   CIF_canonical_hkl(h,spacegroup,with_friedel) result (res) ::: selfless, private, PURE
+   ! Canonical reciprocal-space representative, using the same l,k,h
+   ! ordering as the MERG implementation.
+      h :: VEC{INT}(3), IN
+      spacegroup :: SPACEGROUP, IN
+      with_friedel :: BIN, IN
+      res :: VEC{INT}(3)
+
+      trial :: VEC{INT}(3)
+      s :: INT
+
+      res = h
+      do s = 1,spacegroup.n_seitz
+         trial = nint(matmul(transpose(spacegroup.seitz(1:3,1:3,s)),h))
+         if (trial(3)>res(3) OR &
+            (trial(3)==res(3) AND trial(2)>res(2)) OR &
+            (trial(3)==res(3) AND trial(2)==res(2) AND trial(1)>res(1))) res = trial
+         if (with_friedel) then
+            trial = -trial
+            if (trial(3)>res(3) OR &
+               (trial(3)==res(3) AND trial(2)>res(2)) OR &
+               (trial(3)==res(3) AND trial(2)==res(2) AND trial(1)>res(1))) res = trial
+         end
+      end
+
+   end
+
+   CIF_systematic_absence(h,spacegroup) result (res) ::: selfless, private, PURE
+   ! True translational space-group absence.  Model-zero reflections are not
+   ! systematic absences and are deliberately retained.
+      h :: VEC{INT}(3), IN
+      spacegroup :: SPACEGROUP, IN
+      res :: BIN
+
+      g :: VEC{INT}(3)
+      phase :: REAL
+      s :: INT
+
+      res = FALSE
+      do s = 1,spacegroup.n_seitz
+         g = nint(matmul(transpose(spacegroup.seitz(1:3,1:3,s)),h))
+         if (all(g==h)) then
+            phase = h(1)*spacegroup.seitz(1,4,s) + &
+                    h(2)*spacegroup.seitz(2,4,s) + &
+                    h(3)*spacegroup.seitz(3,4,s)
+            if (abs(phase-REALIFY(nint(phase)))>TOL(6)) then
+               res = TRUE
+               return
+            end
+         end
+      end
+
+   end
+
+   CIF_count_measured_classes(refl,unit_cell,spacegroup,q_limit,with_friedel) result (res) ::: selfless, private, leaky
+   ! Count unique measured reciprocal-space classes after rejecting only true
+   ! systematic absences.
+      refl :: VEC{REFLECTION}, IN
+      unit_cell :: UNIT_CELL, IN
+      spacegroup :: SPACEGROUP, IN
+      q_limit :: REAL, IN
+      with_friedel :: BIN, IN
+      res :: INT
+
+      uh,uk,ul :: VEC{INT}@
+      h,c :: VEC{INT}(3)
+      q :: VEC{REAL}(3)
+      i,j :: INT
+      found :: BIN
+
+      res = 0
+      if (refl.dim==0 OR q_limit<=ZERO) return
+      uh.create(refl.dim)
+      uk.create(refl.dim)
+      ul.create(refl.dim)
+
+      do i = 1,refl.dim
+         h = refl(i).Miller_indices
+         if (::CIF_systematic_absence(h,spacegroup)) cycle
+         q = matmul(unit_cell.reciprocal_mx,h)
+         if (q.norm>q_limit+TOL(8)) cycle
+         c = ::CIF_canonical_hkl(h,spacegroup,with_friedel)
+         found = FALSE
+         do j = 1,res
+            if (uh(j)==c(1) AND uk(j)==c(2) AND ul(j)==c(3)) then
+               found = TRUE
+               exit
+            end
+         end
+         if (found) cycle
+         res = res + 1
+         uh(res) = c(1)
+         uk(res) = c(2)
+         ul(res) = c(3)
+      end
+
+      uh.destroy
+      uk.destroy
+      ul.destroy
+
+   end
+
+   CIF_count_theoretical_classes(unit_cell,spacegroup,q_limit,with_friedel) result (res) ::: selfless, private, leaky
+   ! Enumerate all symmetry-allowed reciprocal-lattice points in the measured
+   ! resolution sphere and count unique point- or Laue-group classes.
+      unit_cell :: UNIT_CELL, IN
+      spacegroup :: SPACEGROUP, IN
+      q_limit :: REAL, IN
+      with_friedel :: BIN, IN
+      res :: INT
+
+      uh,uk,ul :: VEC{INT}@
+      bounds,h,c :: VEC{INT}(3)
+      q :: VEC{REAL}(3)
+      capacity_real :: REAL
+      capacity,h1,h2,h3,j :: INT
+      found :: BIN
+
+      res = -1
+      if (q_limit<=ZERO) return
+
+      bounds(1) = ceiling(unit_cell.direct_mx(:,1).norm*q_limit)+1
+      bounds(2) = ceiling(unit_cell.direct_mx(:,2).norm*q_limit)+1
+      bounds(3) = ceiling(unit_cell.direct_mx(:,3).norm*q_limit)+1
+      capacity_real = REALIFY(2*bounds(1)+1)*REALIFY(2*bounds(2)+1)*REALIFY(2*bounds(3)+1)
+      if (capacity_real>2000000.0) return
+      capacity = int(capacity_real)
+
+      uh.create(capacity)
+      uk.create(capacity)
+      ul.create(capacity)
+      res = 0
+
+      do h3 = -bounds(3),bounds(3)
+      do h2 = -bounds(2),bounds(2)
+      do h1 = -bounds(1),bounds(1)
+         if (h1==0 AND h2==0 AND h3==0) cycle
+         h = [h1,h2,h3]
+         q = matmul(unit_cell.reciprocal_mx,h)
+         if (q.norm>q_limit+TOL(8)) cycle
+         if (::CIF_systematic_absence(h,spacegroup)) cycle
+         c = ::CIF_canonical_hkl(h,spacegroup,with_friedel)
+         found = FALSE
+         do j = 1,res
+            if (uh(j)==c(1) AND uk(j)==c(2) AND ul(j)==c(3)) then
+               found = TRUE
+               exit
+            end
+         end
+         if (found) cycle
+         res = res + 1
+         uh(res) = c(1)
+         uk(res) = c(2)
+         ul(res) = c(3)
+      end
+      end
+      end
+
+      uh.destroy
+      uk.destroy
+      ul.destroy
+
+   end
+
+   put_CIF_measurement_data(cif,unit_cell,spacegroup) ::: leaky
+   ! Output dictionary-defined measured-data statistics.  These are derived
+   ! from the immutable unmerged observations, not from the fitted subset.
+      self :: INOUT
+      cif :: CIF, INOUT
+      unit_cell :: UNIT_CELL, IN
+      spacegroup :: SPACEGROUP, IN
+
+      raw :: VEC{REFLECTION}@
+      class_h,class_k,class_l,class_group,class_of :: VEC{INT}@
+      class_sum,obs :: VEC{REAL}@
+      class_count :: VEC{INT}@
+      absent :: VEC{BIN}@
+      h,c :: VEC{INT}(3)
+      q :: VEC{REAL}(3)
+      theta_min,theta_max,theta_full,qmax,qfull :: REAL
+      sum_sigma,sum_I,sum_delta,sum_mean,Rint,mean_I,Iobs,sigmaI,Fobs,sigmaF :: REAL
+      laue_max,point_max,laue_full,point_full,coverage :: REAL
+      friedel_max,friedel_full :: REAL
+      n_obs,n_class,i,j,nm_l,nm_p,nt_l,nt_p,nmf_l,nmf_p,ntf_l,ntf_p,n_total,n_gt :: INT
+      found,found_class,intensity_input,same_class :: BIN
+      theta_word :: STR
+
+      if (.unmerged_reflections.allocated) then; raw = .unmerged_reflections
+      else if (.reflection0.allocated) then;    raw = .reflection0
+      else;                                     return
+      end
+      if (raw.dim==0) return
+
+      absent.create(raw.dim)
+      class_h.create(raw.dim)
+      class_k.create(raw.dim)
+      class_l.create(raw.dim)
+      class_group.create(raw.dim)
+      class_of.create(raw.dim)
+      class_sum.create(raw.dim)
+      class_count.create(raw.dim)
+      obs.create(raw.dim)
+      absent = FALSE
+      class_of = 0
+      class_sum = ZERO
+      class_count = 0
+      intensity_input = raw(1).I_exp_set
+      n_obs = 0
+      n_class = 0
+      sum_sigma = ZERO
+      sum_I = ZERO
+      theta_min = HUGE(ONE)
+      theta_max = ZERO
+      qmax = ZERO
+
+      do i = 1,raw.dim
+         h = raw(i).Miller_indices
+         absent(i) = ::CIF_systematic_absence(h,spacegroup)
+         q = matmul(unit_cell.reciprocal_mx,h)
+         qmax = max(qmax,q.norm)
+         theta_min = min(theta_min,asin(min(ONE,HALF*q.norm*.wavelength)))
+         theta_max = max(theta_max,asin(min(ONE,HALF*q.norm*.wavelength)))
+
+         if (intensity_input) then
+            if (raw(i).I_sigma_raw_set) then
+               Iobs = raw(i).I_exp_raw
+               sigmaI = raw(i).I_sigma_raw
+            else
+               Iobs = raw(i).I_exp
+               sigmaI = raw(i).I_sigma
+            end
+         else
+            if (raw(i).F_sigma_raw_set) then
+               Fobs = raw(i).F_exp_raw
+               sigmaF = raw(i).F_sigma_raw
+            else
+               Fobs = raw(i).F_exp
+               sigmaF = raw(i).F_sigma
+            end
+            Iobs = Fobs**2
+            sigmaI = TWO*abs(Fobs)*abs(sigmaF)
+         end
+         obs(i) = Iobs
+         sum_sigma = sum_sigma + abs(sigmaI)
+         sum_I = sum_I + abs(Iobs)
+
+         if (absent(i)) cycle
+         n_obs = n_obs + 1
+         c = ::CIF_canonical_hkl(h,spacegroup,.merg_code>=3)
+         found_class = FALSE
+         do j = 1,n_class
+            same_class = class_h(j)==c(1) AND class_k(j)==c(2) AND &
+                         class_l(j)==c(3) AND class_group(j)==raw(i).group
+            if (same_class) then
+               found_class = TRUE
+               exit
+            end
+         end
+         if (NOT found_class) then
+            n_class = n_class + 1
+            j = n_class
+            class_h(j) = c(1)
+            class_k(j) = c(2)
+            class_l(j) = c(3)
+            class_group(j) = raw(i).group
+         end
+         class_of(i) = j
+         class_sum(j) = class_sum(j) + Iobs
+         class_count(j) = class_count(j) + 1
+      end
+
+      sum_delta = ZERO
+      sum_mean = ZERO
+      do i = 1,raw.dim
+         if (absent(i)) cycle
+         j = class_of(i)
+         mean_I = class_sum(j)/REALIFY(class_count(j))
+         sum_delta = sum_delta + abs(obs(i)-mean_I)
+         sum_mean = sum_mean + abs(mean_I)
+      end
+      if (sum_mean>ZERO) then; Rint = sum_delta/sum_mean
+      else;                Rint = -ONE
+      end
+
+      nm_l = ::CIF_count_measured_classes(raw,unit_cell,spacegroup,qmax,TRUE)
+      nm_p = ::CIF_count_measured_classes(raw,unit_cell,spacegroup,qmax,FALSE)
+      nt_l = ::CIF_count_theoretical_classes(unit_cell,spacegroup,qmax,TRUE)
+      nt_p = ::CIF_count_theoretical_classes(unit_cell,spacegroup,qmax,FALSE)
+      laue_max = -ONE
+      point_max = -ONE
+      if (nt_l>0) laue_max = REALIFY(nm_l)/REALIFY(nt_l)
+      if (nt_p>0) point_max = REALIFY(nm_p)/REALIFY(nt_p)
+
+      theta_full = .cif_theta_full
+      if (theta_full<=ZERO) then
+      theta_word = "."
+      cif.read_item("_diffrn_reflns_theta_full",theta_word,found)
+      if (found AND theta_word/="." AND theta_word/="?") theta_full = theta_word.to_real
+      end
+      if (theta_full<=ZERO AND laue_max>=0.95 AND point_max>=0.95) &
+         theta_full = theta_max*DEGREE_PER_RADIAN
+
+      laue_full = -ONE
+      point_full = -ONE
+      friedel_full = -ONE
+      if (theta_full>ZERO) then
+         qfull = TWO*sin(theta_full*RADIAN_PER_DEGREE)/.wavelength
+         nmf_l = ::CIF_count_measured_classes(raw,unit_cell,spacegroup,qfull,TRUE)
+         nmf_p = ::CIF_count_measured_classes(raw,unit_cell,spacegroup,qfull,FALSE)
+         ntf_l = ::CIF_count_theoretical_classes(unit_cell,spacegroup,qfull,TRUE)
+         ntf_p = ::CIF_count_theoretical_classes(unit_cell,spacegroup,qfull,FALSE)
+         if (ntf_l>0) laue_full = REALIFY(nmf_l)/REALIFY(ntf_l)
+         if (ntf_p>0) point_full = REALIFY(nmf_p)/REALIFY(ntf_p)
+         if (NOT spacegroup.centrosymmetric AND ntf_p>ntf_l) &
+            friedel_full = REALIFY(max(nmf_p-nmf_l,0))/REALIFY(ntf_p-ntf_l)
+      end
+
+      coverage = ZERO
+      if (nm_l>0) coverage = REALIFY(max(nm_p-nm_l,0))/REALIFY(nm_l)
+      friedel_max = -ONE
+      if (NOT spacegroup.centrosymmetric AND nt_p>nt_l) &
+         friedel_max = REALIFY(max(nm_p-nm_l,0))/REALIFY(nt_p-nt_l)
+
+      stdout.flush
+      stdout.text("# ===========================")
+      stdout.text("# Measured diffraction data")
+      stdout.text("# ===========================")
+      if (Rint>=ZERO) then; stdout.show("_diffrn_reflns_av_R_equivalents    ",Rint,dots=FALSE)
+      else;                stdout.show("_diffrn_reflns_av_R_equivalents    ",".",dots=FALSE)
+      end
+      if (sum_I>ZERO) then; stdout.show("_diffrn_reflns_av_unetI/netI       ",sum_sigma/sum_I,dots=FALSE)
+      else;                stdout.show("_diffrn_reflns_av_unetI/netI       ",".",dots=FALSE)
+      end
+      stdout.show("_diffrn_reflns_number              ",n_obs,dots=FALSE)
+      stdout.show("_diffrn_reflns_limit_h_min         ",minval(raw(:).h1),dots=FALSE)
+      stdout.show("_diffrn_reflns_limit_h_max         ",maxval(raw(:).h1),dots=FALSE)
+      stdout.show("_diffrn_reflns_limit_k_min         ",minval(raw(:).h2),dots=FALSE)
+      stdout.show("_diffrn_reflns_limit_k_max         ",maxval(raw(:).h2),dots=FALSE)
+      stdout.show("_diffrn_reflns_limit_l_min         ",minval(raw(:).h3),dots=FALSE)
+      stdout.show("_diffrn_reflns_limit_l_max         ",maxval(raw(:).h3),dots=FALSE)
+      stdout.show("_diffrn_reflns_theta_min           ",theta_min*DEGREE_PER_RADIAN,dots=FALSE)
+      stdout.show("_diffrn_reflns_theta_max           ",theta_max*DEGREE_PER_RADIAN,dots=FALSE)
+      if (theta_full>ZERO) then; stdout.show("_diffrn_reflns_theta_full          ",theta_full,dots=FALSE)
+      else;                      stdout.show("_diffrn_reflns_theta_full          ",".",dots=FALSE)
+      end
+      if (laue_full>=ZERO) then; stdout.show("_diffrn_reflns_Laue_measured_fraction_full       ",laue_full,dots=FALSE)
+      else;                     stdout.show("_diffrn_reflns_Laue_measured_fraction_full       ",".",dots=FALSE)
+      end
+      if (laue_max>=ZERO) then; stdout.show("_diffrn_reflns_Laue_measured_fraction_max        ",laue_max,dots=FALSE)
+      else;                    stdout.show("_diffrn_reflns_Laue_measured_fraction_max        ",".",dots=FALSE)
+      end
+      if (point_full>=ZERO) then; stdout.show("_diffrn_reflns_point_group_measured_fraction_full ",point_full,dots=FALSE)
+      else;                      stdout.show("_diffrn_reflns_point_group_measured_fraction_full ",".",dots=FALSE)
+      end
+      if (point_max>=ZERO) then; stdout.show("_diffrn_reflns_point_group_measured_fraction_max  ",point_max,dots=FALSE)
+      else;                     stdout.show("_diffrn_reflns_point_group_measured_fraction_max  ",".",dots=FALSE)
+      end
+      stdout.show("_reflns_Friedel_coverage           ",coverage,dots=FALSE)
+      if (friedel_full>=ZERO) then; stdout.show("_reflns_Friedel_fraction_full      ",friedel_full,dots=FALSE)
+      else;                        stdout.show("_reflns_Friedel_fraction_full      ",".",dots=FALSE)
+      end
+      if (friedel_max>=ZERO) then; stdout.show("_reflns_Friedel_fraction_max       ",friedel_max,dots=FALSE)
+      else;                       stdout.show("_reflns_Friedel_fraction_max       ",".",dots=FALSE)
+      end
+
+      if (.cif_statistics_ready) then
+         n_total = .cif_number_total
+         n_gt = .cif_number_gt
+      else
+         if (.reflection0.allocated) then; n_total = .reflection0.dim
+         else;                            n_total = .reflections.dim
+         end
+         n_gt = .reflections.dim
+      end
+      stdout.show("_reflns_number_total              ",n_total,dots=FALSE)
+      stdout.show("_reflns_number_gt                 ",n_gt,dots=FALSE)
+      raw.destroy
+      absent.destroy
+      class_h.destroy
+      class_k.destroy
+      class_l.destroy
+      class_group.destroy
+      class_of.destroy
+      class_sum.destroy
+      class_count.destroy
+      obs.destroy
+
+   end
+
+
 ! =======
 ! Put CIF
 ! =======
@@ -76,35 +466,67 @@ contains
       stdout.text("_refine_ls_structure_factor_coef    F")
       stdout.text("_refine_ls_matrix_type              full")
 
-      R   = .reflections.F_r_factor
-      val = R.to_str("f10.4")
+      if (.cif_statistics_ready) then; R = .cif_R_factor_gt
+      else;                           R = .reflections.F_r_factor
+      end
+      val = R.to_str("f12.6")
       stdout.text("_refine_ls_R_factor_gt              "//trim(val))
-      stdout.text("_refine_ls_R_factor_ref             "//trim(val))
-      stdout.text("_refine_ls_R_factor_all             "//trim(val))
 
-      R   = .reflections.F_weighted_r_factor
-      val = R.to_str("f10.4")
-      stdout.text("_refine_ls_wR_factor_gt             "//trim(R.to_str("f10.4")))
-      stdout.text("_refine_ls_wR_factor_ref            "//trim(R.to_str("f10.4")))
-      stdout.text("_refine_ls_wR_factor_all            "//trim(R.to_str("f10.4")))
+      if (.cif_statistics_ready) then; R = .cif_R_factor_all
+      else;                           R = .reflections.F_r_factor
+      end
+      val = R.to_str("f12.6")
+      stdout.text("_refine_ls_R_factor_all             "//trim(val))
+      stdout.text("_refine_ls_R_factor_ref             "//trim(val))
+
+      if (.cif_statistics_ready) then; R = .cif_wR_factor_gt
+      else;                           R = .reflections.F_weighted_r_factor
+      end
+      val = R.to_str("f12.6")
+      stdout.text("_refine_ls_wR_factor_gt             "//trim(val))
+
+      if (.cif_statistics_ready) then; R = .cif_wR_factor_all
+      else;                           R = .reflections.F_weighted_r_factor
+      end
+      val = R.to_str("f12.6")
+      stdout.text("_refine_ls_wR_factor_all            "//trim(val))
+      stdout.text("_refine_ls_wR_factor_ref            "//trim(val))
 
       R   = .reflections.F2_r_factor
-      val = R.to_str("f10.4")
-      stdout.text("_refine_ls_R_Fsqd_factor            "//trim(R.to_str("f10.4")))
+      val = R.to_str("f12.6")
+      stdout.text("_refine_ls_R_Fsqd_factor            "//trim(val))
 
       R   = (.chi2)
-      val = R.to_str("f10.4")
+      val = R.to_str("f12.6")
       stdout.text("_refine_ls_chi2                     "//trim(val))
 
-      R   = sqrt(.chi2)
-      val = R.to_str("f10.4")
+      if (.cif_statistics_ready) then; R = .cif_goodness_of_fit_gt
+      else;                           R = sqrt(.chi2)
+      end
+      val = R.to_str("f12.6")
       stdout.text("_refine_ls_goodness_of_fit_gt       "//trim(val))
-      stdout.text("_refine_ls_goodness_of_fit_ref      "//trim(val))
+
+      if (.cif_statistics_ready) then; R = .cif_goodness_of_fit_all
+      else;                           R = sqrt(.chi2)
+      end
+      val = R.to_str("f12.6")
       stdout.text("_refine_ls_goodness_of_fit_all      "//trim(val))
+      stdout.text("_refine_ls_goodness_of_fit_ref      "//trim(val))
+    ! The *_ref values use the complete set included in the final refinement.
+    ! They therefore equal *_all when no additional non-refined reflections
+    ! are present, while *_gt remains the significant-intensity subset.
+    !
     ! stdout.text("_refine_ls_restrained_S_all             "//trim(val))
-      n   = .reflections.dim
+      if (.cif_statistics_ready) then; n = .cif_number_total
+      else;                           n = .reflections.dim
+      end
       val = n.to_str
       stdout.text("_refine_ls_number_reflns            "//trim(val))
+      if (.cif_statistics_ready) then; n = .cif_number_gt
+      else;                           n = .reflections.dim
+      end
+      val = n.to_str
+      stdout.text("_refine_ls_number_reflns_gt         "//trim(val))
       stdout.text("_refine_ls_number_parameters        "//trim(.n_param.to_str))
       stdout.text("_refine_ls_number_restraints        0")
       val = .near_0.to_str
@@ -121,7 +543,7 @@ contains
       end
 
       stdout.text("_refine_ls_weighting_scheme         sigma")
-      stdout.text("_refine_ls_weighting_details        'w=1/\s(F)'")
+      stdout.text("_refine_ls_weighting_details        'w=1/[u(F)]^2^'")
 
       val = adjustl(.tol_for_shift_on_esd.to_str("f10.4"))
       stdout.text("_refine_ls_shift/su_conv_tol        "//trim(val))
@@ -133,6 +555,9 @@ contains
 
       if (.refine_extinction) then
       stdout.text("_refine_ls_extinction_method        Zachariasen/Larson")
+      stdout.text("_refine_ls_extinction_expression    'Fc^*^=kFc"// &
+         achar(91)//"1+0.001xFc^2^\l^3^/sin(2\q)"// &
+         achar(93)//"^-1/4^'")
       if (.extinction_factor_esd>ZERO) then
          stdout.text("_refine_ls_extinction_coef          ",flush=FALSE)
          stdout.put(.extinction_factor,.extinction_factor_esd &
@@ -145,6 +570,7 @@ contains
       else
       stdout.text("_refine_ls_extinction_method        none")
       stdout.text("_refine_ls_extinction_coef          .")
+      stdout.text("_refine_ls_extinction_expression    .")
       end
 
       if (.do_residual_cube) then
