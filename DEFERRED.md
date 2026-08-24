@@ -4038,6 +4038,48 @@ with file and line for nothing, while macOS needs the crash report in
 `~/Library/Logs/DiagnosticReports/` and gives no line numbers. The Mac was the
 harder machine to work on and was not the necessary one.
 
+**g. Narrowed to the assignment TARGET, with a concrete hypothesis (2026-08-24, gdb on achari2).**
+Runtime values at the fault:
+
+| | |
+|---|---|
+| crash line | `pointgroup.foo:1018` — `.irrep(i).character(n) = .irrep(i).mx(:,:,n).trace` |
+| `i`, `n` | **1, 1** — the very first irrep and first operation |
+| pointgroup | `oh`, `order` 48, `n_irrep` 10 |
+| `ubound(.irrep(1).mx)` | `(1,1,48)` — correct for a 1-D irrep |
+| `ubound(.irrep(4).mx)` | `(3,3,48)` — correct for a 3-D irrep |
+
+So `mx` is allocated correctly and the READ side is sound. (An earlier reading of
+gdb's output suggested every irrep was 1x1x48; that was a misreading of gdb's
+`<repeats>` display, and it is wrong.) By elimination the fault is the WRITE
+target, `.irrep(i).character`, which is allocated on the line immediately above
+by `.create(.order)`.
+
+**It could not be inspected directly**: `print self%irrep(1)%character` gives
+*"A syntax error in expression, near `character'"* — gdb's Fortran parser treats
+`character` as a keyword. Which points at the hypothesis.
+
+**Hypothesis to test next: the component names.** `types.foo:3196` declares
+
+```foo
+   type IRREP
+     label     :: STR(len=4)
+     dimension :: INT          ! <- Fortran keyword
+     character :: VEC{REAL}@   ! <- Fortran keyword, and the allocatable that fails
+```
+
+Both `character` and `dimension` are Fortran keywords used as component names.
+That is legal Fortran and has worked for years, but it is exactly the sort of
+thing a new front-end regresses on, and the failing component is the one that is
+both keyword-named *and* allocatable. gdb's parser already chokes on it.
+
+**The experiment**, and it is cheap: rename `character` (say to `chi`, which is
+what it is) and `dimension` (to `dim`), rebuild gfortran-16 debug, rerun
+`h2o_rhf_STO-3G`. If the crash goes, it is a gfortran-16 front-end bug with a
+clean workaround and a reduced test case worth reporting upstream. If it stays,
+the hypothesis is dead and the next suspect is `create` on an allocatable
+component of an element of an allocatable derived-type array.
+
 **Still open, and the next step.** `-fcheck=all` does turn a crash into a named
 error, but **not this one** -- it stops earlier, at
 `vec_atom.F90:2018`, with *"Allocatable actual argument 'tmp' is not allocated"*,
