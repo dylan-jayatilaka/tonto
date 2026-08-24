@@ -3901,10 +3901,12 @@ ignored by `scripts/test.py`).
   (the two bases are mathematically identical below d functions). That single invariant would
   have caught this immediately, on one machine, with no reference file.
 
-## PARTLY DIAGNOSED (2026-08-24): gfortran-**16** DEBUG builds SEGFAULT on arm64 macOS
+## PARTLY DIAGNOSED (2026-08-24): gfortran-**16** DEBUG builds SEGFAULT — BOTH platforms
 
-**Use `gfortran-14` for debug builds on macOS.** `gfortran-16` release is fine on both platforms;
-only its *debug* build is broken, and only (as far as tested) on arm64.
+**Use `gfortran-14` for debug builds, on any platform.** `gfortran-16` release is fine on both
+platforms; its *debug* build segfaults on **both** arm64 macOS and x86_64 Linux — the "only on
+arm64" in the original note was an untested assumption, disproved 2026-08-24 (see progress note
+below).
 
 | build | any SCF job |
 |---|---|
@@ -3994,6 +3996,47 @@ CPU tuning at all -- but it is not this bug.)
 **d. Control, clean.** Same commit, same flags, same machine:
 gfortran-14 debug runs `h2o_rhf_STO-3G` to **exit 0**; gfortran-16 debug gives
 **exit 139**.
+
+**e. It is NOT arm64-specific, and it is NOT a macOS problem.** This is the
+question item 3 below left pending, now answered: a gfortran-16 **debug** build
+on achari2 (Ubuntu 24.04, x86_64) segfaults on the same job, exit 139. The entry
+above said "only (as far as tested) on arm64"; that was untested, not true.
+
+**f. Linux gives the backtrace macOS cannot**, with line numbers, for free:
+
+```
+#3  make_character_table   at pointgroup.F90:1066
+#4  update                 at pointgroup.F90:324
+#5  create_1               at pointgroup.F90:71
+#6  make_anos_for_atom     at molecule.scf.F90:5779
+#7  make_anos / make_anos_and_interpolators / make_promolecule_density_mx
+```
+
+`pointgroup.foo:1018`, inside `POINTGROUP:make_character_table`:
+
+```foo
+   do i = 1, .n_irrep
+      .irrep(i).character.create(.order)
+      do n = 1, .order
+         .irrep(i).character(n) = .irrep(i).mx(:,:,n).trace   ! <- here
+```
+
+So it reads `.irrep(i).mx` for an irrep whose `mx` is **not allocated**. The
+macOS crash is the same class one level out -- `make_pg_image_of_shell` reading
+`.pointgroup.mx(:,:,n)`, `KERN_INVALID_ADDRESS at 0xd9`, a field access off a
+null base -- and both are reached from `make_anos_for_atom`, building the
+promolecule guess for a single-atom molecule.
+
+**So the working conclusion is that this is a latent Tonto bug, not a gfortran-16
+codegen bug**: unallocated pointgroup data that gfortran-14 tolerates and
+gfortran-16 dereferences. That is a much better prognosis than a compiler bug --
+it can be fixed here. It is not yet proven; what is proven is the crash site, on
+two platforms, and that the arch flag is not involved.
+
+**Do the diagnosis on Linux, not on macOS.** `-fbacktrace` there symbolicates
+with file and line for nothing, while macOS needs the crash report in
+`~/Library/Logs/DiagnosticReports/` and gives no line numbers. The Mac was the
+harder machine to work on and was not the necessary one.
 
 **Still open, and the next step.** `-fcheck=all` does turn a crash into a named
 error, but **not this one** -- it stops earlier, at
