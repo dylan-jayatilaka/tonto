@@ -174,7 +174,13 @@ else
 fi
 
 if command -v kpsewhich >/dev/null 2>&1; then
-    for sty in chemfig tikz xcolor longtable graphicx ifthen geometry; do
+    # ifmtarg and twoopt are here because rgbi-scripts/mol2chemfig.sty does
+    # \RequirePackage{xcolor, twoopt, ifmtarg, tikz}, and BOTH templates load
+    # mol2chemfig. They were missing from this list, so a machine without them
+    # got a green doctor and then `! LaTeX Error: File 'ifmtarg.sty' not
+    # found.` at draw time -- which is exactly what the macOS runner did on
+    # 2026-08-24. A preflight that misses a hard requirement is worse than none.
+    for sty in chemfig tikz xcolor longtable graphicx ifthen geometry ifmtarg twoopt; do
         if kpsewhich "$sty.sty" >/dev/null 2>&1; then
             ok "$sty.sty"
         else
