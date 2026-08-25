@@ -4,10 +4,15 @@
 |---|---|---|---|
 | **Linux** | [![Linux-release](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml?query=branch%3Amaster) | [![Linux-debug](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml/badge.svg?branch=master)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml?query=branch%3Amaster) | [![Linux-MPI](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-mpi.yml/badge.svg?branch=master)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-mpi.yml?query=branch%3Amaster) |
 | **Windows/WSL** | [![WSL-release](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml/badge.svg?branch=master)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml?query=branch%3Amaster) | [![WSL-debug](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml/badge.svg?branch=master)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml?query=branch%3Amaster) | — |
-| **macOS** | *none yet* | *none yet* | — |
+| **macOS** | [scheduled, not yet badged](.github/workflows/ci-macos.yml) | *none yet* | [scheduled, not yet badged](.github/workflows/ci-macos-mpi.yml) |
 
 Each badge test Tonto on the `release` branch. For more details
 [**Continuous integration**](docs/TONTO_CONTINUOUS_INTEGRATION.md).
+
+The macOS jobs are new and deliberately unbadged: they run weekly to gather
+evidence first, and get a badge when they have something steady to report. macOS
+debug is still empty because `gfortran-16` debug builds segfault on arm64 — see
+`DEFERRED.md`.
 
 Tonto is a quantum chemistry and crystallography package, with a focus on X-ray
 and electron structure refinement — especially **Hirshfeld atom refinement**,

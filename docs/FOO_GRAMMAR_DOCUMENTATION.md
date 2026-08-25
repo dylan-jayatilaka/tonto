@@ -445,6 +445,32 @@ subroutines). A `selfless` procedure has no `self`.
 > from a template — and keeps them live everywhere else. This is exactly why the
 > case is significant.
 
+> **`PURE` is contagious upward: whatever calls a `PURE` procedure must itself be
+> `PURE`, never `pure`.** Fortran requires that a `pure` procedure call only
+> `pure` procedures. Upper-case `PURE` is a macro that expands to `pure` in a
+> release build but to **nothing** in a debug build (`include/macros.in`, under
+> `USE_PRECONDITIONS`). So in a debug build a `PURE` callee is *impure*, and a
+> lower-case `pure` caller — whose keyword is real and never switched off — is
+> then calling an impure procedure. That is a compile error:
+>
+> ```
+> Error: Reference to impure function 'determinant' at (1) within a PURE procedure
+> ```
+>
+> **The trap is that it is invisible in a release build**, where `PURE` expands to
+> `pure` and everything agrees. It appears only in debug, which is the
+> configuration nobody builds by habit. This is what happened to
+> `PLOT_GRID:volume` in August 2026: declared `pure`, calling
+> `MAT{INTRINSIC}:determinant`, which is `PURE` because it contains `ENSURE`. It
+> broke every debug build, on every compiler, and sat red in CI for a day.
+>
+> **The rule, and which way to fix it.** Prefer making the *callee* lower-case
+> `pure`, so purity propagates as far as it honestly can. You can only do that if
+> the callee has no `ENSURE`/`DIE`/`WARN` — those force the macro. If the callee
+> must stay `PURE`, then the caller has to become `PURE` as well, and it is worth
+> a comment saying why, because the declaration then looks needlessly weak in a
+> release build.
+
 ### The former `:::` separator, and reading pre-July-2026 Foo
 
 The attribute separator above used to be `:::`, not `::`. Commit `3ca1e53d`

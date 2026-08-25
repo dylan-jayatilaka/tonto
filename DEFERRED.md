@@ -3483,25 +3483,36 @@ highlighting and tighter editor integration. The repo already ships some vim sup
 
 # Platform-specific
 
-## The macOS RGBI badge is red, and the fix is on a machine we cannot reach
+## FIXED 2026-08-24: the macOS RGBI badge was red over one bad package name
 
-`ci-rgbi-macos.yml` is a weekly, deliberately exploratory probe of the macOS
-install list in `docs/INSTALLING_RGBI.md`. It fails at the step **"BasicTeX,
-then tlmgr BY ABSOLUTE PATH"**, after `brew install --cask basictex` succeeds.
+`ci-rgbi-macos.yml` failed at **"BasicTeX, then tlmgr BY ABSOLUTE PATH"** from
+2026-08-05. This entry used to say the cause was unknown, because the Mac that
+last had the toolchain working was behind a firewall and the logs had expired.
+Both premises turned out to be false: the Mac came back, and the log of run
+**32456863540** (2026-08-21) was still retrievable. It says:
 
-**It is not investigated, on purpose.** The toolchain was working when it was
-last set up by hand (2026-08-05, which is what the step's comment about the
-absolute `tlmgr` path records), but that work lives on a Mac that is no longer
-accessible. Nobody can currently reproduce, and a speculative fix to an
-untested platform is worse than a known-red badge.
+```
+tlmgr install: package longtable not present in repository.
+```
 
-Logs from the failing scheduled runs are no longer retrievable, so the cause is
-unknown rather than merely unfixed. Candidates, none confirmed:
-`/Library/TeX/texbin/tlmgr` having moved, `tlmgr update --self` failing against
-a CTAN mirror, or one of the seven requested packages being unavailable.
+That is the whole fault. **There is no TeX Live package called `longtable`** --
+`longtable.sty` ships inside `tools`, which BasicTeX already carries. Every
+other package in the list was fine: `geometry`, `pgf` and `xcolor` were already
+present, and `chemfig`, `pdfcrop` and `simplekv` installed cleanly (4/4). tlmgr
+still returned 1 for the one name it could not resolve, and that killed the step.
 
-Anyone with a Mac should trigger a manual run and read a FRESH log before
-changing anything.
+None of the three candidate causes guessed here previously was right. The
+absolute-path `tlmgr` trap, which this entry speculated about, was real but had
+already been fixed on 2026-08-05 and was not the failure.
+
+Fixed by dropping `longtable` from the install list, plus a `kpsewhich
+longtable.sty` in the same step so the claim "already satisfied" is asserted
+rather than trusted.
+
+**The lesson is the cheap one.** The diagnosis took a single `gh run view
+--log-failed` and no Mac at all -- the entry's own instruction ("anyone with a
+Mac should read a FRESH log") was half right: the fresh log was the answer, the
+Mac was not needed. Logs are retained 90 days; this one was read on day 3.
 
 
 ## OPEN: long paths to the basis sets fail -- STR is 256 characters
@@ -3890,10 +3901,15 @@ ignored by `scripts/test.py`).
   (the two bases are mathematically identical below d functions). That single invariant would
   have caught this immediately, on one machine, with no reference file.
 
-## DIAGNOSED (2026-07-30): gfortran-**16** DEBUG builds SEGFAULT on arm64 macOS
+## PARTLY DIAGNOSED (2026-08-24): gfortran-**16** DEBUG builds SEGFAULT — BOTH platforms
 
-**Use `gfortran-14` for debug builds on macOS.** `gfortran-16` release is fine on both platforms;
-only its *debug* build is broken, and only (as far as tested) on arm64.
+> **Handover page: [`docs/GFORTRAN16_DEBUG_CRASH.md`](docs/GFORTRAN16_DEBUG_CRASH.md)**
+> — self-contained: how to reproduce, what is ruled out, the traps, and what to do next.
+
+**Use `gfortran-14` for debug builds, on any platform.** `gfortran-16` release is fine on both
+platforms; its *debug* build segfaults on **both** arm64 macOS and x86_64 Linux — the "only on
+arm64" in the original note was an untested assumption, disproved 2026-08-24 (see progress note
+below).
 
 | build | any SCF job |
 |---|---|
@@ -3944,6 +3960,236 @@ backtrace yet. Options, cheapest first:
    different debugger.
 3. Worth checking whether a Linux gfortran-16 debug build crashes too (build started; result
    pending) — that tells us whether it is arm64-specific or general to gfortran-16.
+**Progress 2026-08-24, on a real arm64 Mac.** Four things established, two of
+which contradict what was written above.
+
+**a. It was masked by a separate bug that stopped the build entirely.** Before any
+segfault could happen, gfortran-16 debug failed to *compile*: `PLOT_GRID:volume`
+and `pixel_volume` (added by `cc530a34`, the serial Bader port) were declared
+lower-case `pure` while calling `PURE` routines. Not compiler-specific -- CI
+(Linux-debug) had been red on it since 2026-08-23, five runs, and gfortran-14
+rejects the same file here. Fixed in `97d8b0e9`; the rule is now written up in
+`docs/FOO_GRAMMAR_DOCUMENTATION.md` ("PURE is contagious upward").
+
+**b. A symbolic backtrace IS obtainable**, contradicting "there is no symbolic
+backtrace yet" above. `lldb` still cannot attach and `-fbacktrace` still prints
+raw addresses, but **macOS writes its own symbolicated crash report** to
+`~/Library/Logs/DiagnosticReports/tonto-*.ips`. Parse the JSON payload:
+
+```
+EXC_BAD_ACCESS, KERN_INVALID_ADDRESS at 0x00000000000000d9
+  make_pg_image_of_shell  <- crash
+  symmetrize_1 / symmetrize_0
+  make_anos_for_atom / make_anos / make_anos_and_interpolators
+  make_promolecule_density_mx / make_promol_guess_mos
+  get_initial_density_mx / get_initial_guess / initialize_scf
+  usual_scf / scf
+```
+
+`0xd9` is a field access off a null base. This is why only jobs with an SCF
+crash: the fault is in building the **promolecule initial guess**.
+
+**c. It is NOT the architecture-tuning flag.** This was the leading hypothesis --
+debug applies `-mtune=native` (via `HOST_FLAG`) while release deliberately avoids
+`native` in favour of `-mcpu=apple-m2`, an asymmetry nobody had pointed at.
+Rebuilt with `-DTONTO_ARCH_FLAG=none`, which removes it: **still exit 139**.
+Refuted. (The asymmetry is still worth removing -- a debug build should carry no
+CPU tuning at all -- but it is not this bug.)
+
+**d. Control, clean.** Same commit, same flags, same machine:
+gfortran-14 debug runs `h2o_rhf_STO-3G` to **exit 0**; gfortran-16 debug gives
+**exit 139**.
+
+**e. It is NOT arm64-specific, and it is NOT a macOS problem.** This is the
+question item 3 below left pending, now answered: a gfortran-16 **debug** build
+on achari2 (Ubuntu 24.04, x86_64) segfaults on the same job, exit 139. The entry
+above said "only (as far as tested) on arm64"; that was untested, not true.
+
+**f. Linux gives the backtrace macOS cannot**, with line numbers, for free:
+
+```
+#3  make_character_table   at pointgroup.F90:1066
+#4  update                 at pointgroup.F90:324
+#5  create_1               at pointgroup.F90:71
+#6  make_anos_for_atom     at molecule.scf.F90:5779
+#7  make_anos / make_anos_and_interpolators / make_promolecule_density_mx
+```
+
+`pointgroup.foo:1018`, inside `POINTGROUP:make_character_table`:
+
+```foo
+   do i = 1, .n_irrep
+      .irrep(i).character.create(.order)
+      do n = 1, .order
+         .irrep(i).character(n) = .irrep(i).mx(:,:,n).trace   ! <- here
+```
+
+So it reads `.irrep(i).mx` for an irrep whose `mx` is **not allocated**. The
+macOS crash is the same class one level out -- `make_pg_image_of_shell` reading
+`.pointgroup.mx(:,:,n)`, `KERN_INVALID_ADDRESS at 0xd9`, a field access off a
+null base -- and both are reached from `make_anos_for_atom`, building the
+promolecule guess for a single-atom molecule.
+
+**So the working conclusion is that this is a latent Tonto bug, not a gfortran-16
+codegen bug**: unallocated pointgroup data that gfortran-14 tolerates and
+gfortran-16 dereferences. That is a much better prognosis than a compiler bug --
+it can be fixed here. It is not yet proven; what is proven is the crash site, on
+two platforms, and that the arch flag is not involved.
+
+**Do the diagnosis on Linux, not on macOS.** `-fbacktrace` there symbolicates
+with file and line for nothing, while macOS needs the crash report in
+`~/Library/Logs/DiagnosticReports/` and gives no line numbers. The Mac was the
+harder machine to work on and was not the necessary one.
+
+**g. Narrowed to the assignment TARGET, with a concrete hypothesis (2026-08-24, gdb on achari2).**
+Runtime values at the fault:
+
+| | |
+|---|---|
+| crash line | `pointgroup.foo:1018` — `.irrep(i).character(n) = .irrep(i).mx(:,:,n).trace` |
+| `i`, `n` | **1, 1** — the very first irrep and first operation |
+| pointgroup | `oh`, `order` 48, `n_irrep` 10 |
+| `ubound(.irrep(1).mx)` | `(1,1,48)` — correct for a 1-D irrep |
+| `ubound(.irrep(4).mx)` | `(3,3,48)` — correct for a 3-D irrep |
+
+So `mx` is allocated correctly and the READ side is sound. (An earlier reading of
+gdb's output suggested every irrep was 1x1x48; that was a misreading of gdb's
+`<repeats>` display, and it is wrong.) By elimination the fault is the WRITE
+target, `.irrep(i).character`, which is allocated on the line immediately above
+by `.create(.order)`.
+
+**It could not be inspected directly**: `print self%irrep(1)%character` gives
+*"A syntax error in expression, near `character'"* — gdb's Fortran parser treats
+`character` as a keyword. Which points at the hypothesis.
+
+**Hypothesis to test next: the component names.** `types.foo:3196` declares
+
+```foo
+   type IRREP
+     label     :: STR(len=4)
+     dimension :: INT          ! <- Fortran keyword
+     character :: VEC{REAL}@   ! <- Fortran keyword, and the allocatable that fails
+```
+
+Both `character` and `dimension` are Fortran keywords used as component names.
+That is legal Fortran and has worked for years, but it is exactly the sort of
+thing a new front-end regresses on, and the failing component is the one that is
+both keyword-named *and* allocatable. gdb's parser already chokes on it.
+
+**REFUTED, same day.** The experiment was run: `character` renamed to `chi`
+throughout (4 references and the declaration — the blast radius is only
+`types.foo`, `irrep.foo` and `pointgroup.foo`), gfortran-16 debug rebuilt,
+`h2o_rhf_STO-3G` rerun. **Still exit 139.** The keyword-named component is not
+the cause, and the rename has been reverted rather than left in the tree, since
+it fixes nothing and would muddy the record. gdb's parser error was a red
+herring about gdb, not about the compiler.
+
+(The names are still poor Fortran — `character` and `dimension` are both
+keywords, and `chi`/`dim` would be better, `chi` being the standard symbol for a
+group character. Worth doing as hygiene, on its own, but it is not this bug.)
+
+**h. The construct itself does NOT reproduce it (2026-08-24).** Two standalone
+reduced cases were written and run under both compilers: (1) an allocatable array
+of a derived type with an allocatable vector component, allocated
+element-by-element in a loop then written through; (2) the same, with the array
+itself a component of an outer derived type, so the access is
+`self%irrep(i)%chi(n)` exactly as in Tonto. **Both compile and run to exit 0
+under gfortran-14 and gfortran-16.** So the shape at the crash site is not, by
+itself, the trigger.
+
+**That is the most useful negative result so far, because of what it implies: the
+crash site is probably not the bug site.** A fault that will not reproduce when
+the construct is isolated, but is reliable inside the full program on two
+platforms, looks like **earlier memory corruption landing somewhere fatal** --
+and gfortran-14 and -16 simply lay memory out differently, so the same corruption
+is benign under one and fatal under the other. That would explain every
+observation at once: compiler-dependent, platform-independent, reproducible in
+situ, not reproducible in isolation, and a read side that checks out while the
+write target does not.
+
+**The leading candidate for that earlier corruption is already in hand.** The
+`-fcheck=all` run stops long before the SCF, during keyword reading, at
+*"Allocatable actual argument 'tmp' is not allocated"* -- `VEC{OBJECT}:read_keys`
+and `:clear_keys`:
+
+```foo
+   read_keys :: leaky
+      self :: allocatable, INOUT
+      tmp :: OBJECT@          ! declared, never created
+      ...
+      tmp.read_keys           ! called on an unallocated allocatable
+```
+
+That is undefined behaviour on every compiler; the uninstrumented run merely
+survives it. The template is inherited by 43 files.
+
+**The experiment was run (2026-08-24), and the `tmp` bug is fixed but was NOT the
+cause.** Four sites in the *allocatable* copy of the template now do
+`tmp.create` / use / `tmp.destroy`, which is the pattern two sibling procedures
+in the same file already used. (The *pointer* copy below the `! Old` marker
+deliberately `nullify`s and is left alone -- the checker's complaint named an
+allocatable.) Result: the `-fcheck=all` violation is gone, and the run gets
+further -- but it still ends in **SIGSEGV, same site, same faulting address
+`0xd9`**. `-fcheck=all` does not catch the fault itself.
+
+**A further clue, and it strengthens the corruption hypothesis: the crash site is
+not the same on the two platforms.**
+
+| platform | crash |
+|---|---|
+| Linux x86_64 | `POINTGROUP:make_character_table`, `pointgroup.foo:1018` |
+| macOS arm64 | `MOLECULE.BASE:make_pg_image_of_shell`, `KERN_INVALID_ADDRESS at 0xd9` |
+
+Both are in the pointgroup machinery reached from `make_anos_for_atom`, but they
+are *different procedures*. A single deterministic logic error would fault in the
+same place on both. Two different faults in the same neighbourhood, neither
+reproducible when the construct is isolated, is what heap corruption looks like:
+whatever is damaged, the layout decides which innocent read dies first.
+
+**The sanitizer was tried on macOS and is INCONCLUSIVE — read this before
+repeating it.** A full `-fsanitize=address -fno-omit-frame-pointer` gfortran-16
+debug build was made and run. ASan is genuinely active (`libasan.8.dylib` linked,
+48 undefined `__asan` symbols), but:
+
+- it produced **no ASan report at all**, and
+- the process died with **SIGBUS (138)** rather than the usual SIGSEGV (139).
+
+A sanitizer that changes the signal but issues no diagnostic has not cleared the
+program; it has failed to instrument usefully. gfortran + ASan on arm64 macOS is
+the suspect, not the absence of a heap bug. **Do not read this as "ASan found
+nothing".**
+
+Stack exhaustion was re-tested at the same time and is genuinely ruled out: the
+plain gfortran-16 debug build still exits 139 with the stack at the hard ceiling
+(`ulimit -s 65520`), as well as at the 8 MB default. That confirms the original
+note.
+
+**Next, and it should be done on Linux.** achari2 has gfortran-16 and a
+conventional toolchain where ASan is reliable; the same build there is the
+obvious repeat, and Linux already proved better for this bug once (it gives
+symbolic backtraces with line numbers for free, which macOS does not). Failing
+that, `valgrind` on Linux would name the offending write directly. The bisect
+option — changing `initial_density=` away from `promolecule` to establish whether
+the damage predates `make_anos_for_atom` — is cheap and still untried.
+
+**Also done and NOT the fix:** the IRREP components `character` and `dimension`
+were renamed to `chi` and `dim` (they are Fortran keywords and were poor names).
+It builds clean and the crash is unchanged, so it is hygiene, not a fix. Note
+`dim` is **reserved in Foo** as the array-size accessor -- renaming DIIS's
+`dimension` method to `dim` turned `d = .dim` into `d = size(self)` on a
+non-array and broke the build, so DIIS keeps its name.
+
+**Still open, and the next step.** `-fcheck=all` does turn a crash into a named
+error, but **not this one** -- it stops earlier, at
+`vec_atom.F90:2018`, with *"Allocatable actual argument 'tmp' is not allocated"*,
+during keyword reading and long before the SCF. That is a real defect in its own
+right (`VEC{OBJECT}:read_keys` and `:clear_keys` declare `tmp :: OBJECT@`, never
+create it, and then call a method on it; the template is inherited by 43 files),
+but it is benign in practice -- the uninstrumented run gets past it and dies
+later somewhere else. So it is **not established** that it causes the segfault.
+To get there: fix or suppress the `tmp` violation, then re-run under
+`-fcheck=all` and see what it names next.
+
 4. **Also wanted (Dylan): a DEBUG CI job.** Debug is the configuration whose job is to catch
    crashes and precondition violations, yet nothing checks it — CI builds release only, and the
    debug status here was two weeks stale, which is why this went unnoticed. Design notes: the 4

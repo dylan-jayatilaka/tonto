@@ -11,6 +11,8 @@ are not all wired to every push.
 | **CI (WSL-release)** | `ci-wsl.yml` | yes | `guards` job on every push; the full WSL build when the WSL machinery changes, on demand, and weekly (Mon) *once on `master`* | ~1 min / ~40–70 min |
 | **CI (Linux-debug)** | `ci-debug.yml` | yes | every push / PR to `master`, `develop`, and on demand | ~15 min |
 | **CI (WSL-debug)** | `ci-wsl-debug.yml` | yes, but **never yet run** | weekly (Tue) and on demand — both need it on `master` first | ~60–90 min |
+| **CI (macOS-release)** | `ci-macos.yml` | not yet | weekly (Tue) and on demand | ~40–70 min × 2 |
+| **CI (macOS-MPI)** | `ci-macos-mpi.yml` | not yet | weekly (Wed) and on demand | ~40–70 min |
 
 The two release workflows gate on the **loose** criterion from `scripts/test.py` —
 relative error ≤ 0.2 % **or** last printed digit within ±2 — so their verdicts are
@@ -274,10 +276,34 @@ The badges track the **`release`** branch.
   day after WSL-release, so two hour-long Windows jobs never queue against each
   other.
 
-The empty **macOS** row is deliberate: macOS runners are free for this public
-repository, and a macOS job is the only thing that can guard the two arm64
-compiler pins whose failure mode is wrong numbers rather than crashes. See the
-high-priority item in `DEFERRED.md`.
+**macOS**, added 2026-08-24. macOS runners are free for this public repository,
+and a macOS job is the only thing that can guard the two arm64 compiler pins
+whose failure mode is wrong numbers rather than crashes — `shell1quartet.F90`'s
+`-O2 -fno-schedule-insns`, and the second pin for rgbi/BN's Roby populations.
+Neither was guarded by anything before. `ci-macos.yml` asserts the pin is still
+in the build flags rather than trusting it.
+
+Both jobs are **unbadged on purpose**, following the rollout in `DEFERRED.md`:
+run them, gather evidence, badge when they have something steady to say. Measured
+by hand on Apple silicon before the workflows were written (2026-08-24,
+gfortran-14, release): the short suite is **54/55** under the loose gate, failing
+only `urea_ccsd_pob-TZVP_Salvador_properties` at 2.99% against a 0.2% gate. That
+one discrepancy is what these jobs exist to characterise, and it is not to be
+blessed away.
+
+`ci-macos.yml` runs a **matrix over gfortran-14 and gfortran-16**, because the
+compiler standard is a live question: `DEFERRED.md` records the gfortran-16
+*release* switch as numerically free on both platforms, while its *debug* build
+segfaults on arm64. Only release is matrixed for that reason, and the macOS debug
+column stays empty.
+
+**Why macOS MPI is cheap and Linux MPI is not.** Tonto does `USE mpi`, so the MPI
+must be built by the same compiler as Tonto. Measured 2026-08-24: Homebrew's
+`mpifort` wraps **GCC 16.1.0**, and Homebrew's `gcc` gives `gfortran-16` from the
+same build — a matched pair for free. On Ubuntu 24.04 `mpifort` is **GCC 13.3**
+against a project standard of 14, which is exactly why `ci-mpi.yml` builds Open
+MPI from source and caches it. `ci-macos-mpi.yml` therefore needs no source build,
+and pins itself to gfortran-16 and asserts the match rather than hoping.
 
 Two workflows are not build types and sit outside the table: `ci-rgbi.yml`
 proves the RGBI picture-tool install list from a bare `ubuntu:24.04`, and
