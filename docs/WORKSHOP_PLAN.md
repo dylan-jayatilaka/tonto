@@ -257,3 +257,39 @@ writes `<name>.HBB.cif2`, so `name= urea` in exercise 3 overwrote `urea.HBB.cif2
 — its own input, exercise 2's output. Running the lab twice would silently start
 from the previous run's geometry. Fixed by `name= urea_xcw`; the input is now
 provably untouched by a run (checked with `git status` after one).
+
+---
+
+## Still owed: SO₂ as an ADDITIONAL exercise (agreed 2026-08-24)
+
+Not a replacement for urea. The measured rejection above still stands and is the
+*reason* this is a separate exercise: under the plain workshop settings SO₂'s
+R(F) **rises** 0.0295 → 0.0406 while urea's falls to 0.0185.
+
+**So give SO₂ the settings it actually needs, and make that the lesson** — some
+structures are not served by the default recipe:
+
+- Keep `refine_4th_order_for_atoms= { S }` (anharmonic ADPs on sulfur) and the
+  cluster charges. Source data: `tests/long/so2_rhf_DZP_anharmonic_consistent_cluster_charge_HAR/{stdin,xd_F.hkl}`.
+  Note SO₂ needs a CIF **and** a separate `xd_F.hkl`, unlike urea's single CIF.
+- Basis `def2-SVP`, as the other exercises.
+- Append a `robydata=` / `roby_analysis` block for the bond indices.
+
+**The chemical punchline urea has not got:** sulfur is **not** hypervalent. The
+Roby-Gould bond order comes out ≈1.7, not 2, with a large ionic component —
+reproducing Grabowsky *et al.*, *Angew. Chem. Int. Ed.* **2012**, *51*, 6776
+(`docs/Grabowsky_2012_Angewandte_12_p6776-6779.pdf` on the stranded branch; cite
+by DOI otherwise). `tests/rgbi/` has no SO₂ case, so one could be added.
+
+**Shape:** `examples/5-so2-har/` following the established deck pattern (a `!`
+comment block giving the `cd` + run line, then the job), and a `## Exercise 5` in
+`workshop/WORKSHOP.md` matching the house layout exactly — prose → `**In a
+terminal**, type:` → runtime → `### The input file` → `### What you should get`
+(table with a `?` column) → `### The four diagnostic plots` → `### The bond
+indices` → `### Things to try next` → `---`. Update the overview table at the top.
+Images `workshop/images/so2.{QQ_plot,F_z_vs_stl,F_z_vs_F_exp,Delta_F_vs_stl}.png`
+plus `so2.rgbi-{structure,dials-all}.png`.
+
+**Every number must be re-measured**, not transcribed. Earlier SO₂ figures came
+from an 8 August build of a branch that predates the extinction merge, and the
+plots are job-named PNGs now, not `stdout.*.pdf`.
