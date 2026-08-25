@@ -1,107 +1,134 @@
-# The gfortran-16 debug crash — handover
+# The gfortran-16 debug crash — found
 
-**Status 2026-08-24: not fixed.** Characterised well enough to hand over cold.
-This page is self-contained; `DEFERRED.md` (§ "PARTLY DIAGNOSED (2026-08-24)")
-carries the same findings woven into the longer record.
+**Status 2026-08-25: root cause established, worked around, not yet reported
+upstream.** `DEFERRED.md` carries the same finding woven into the longer record.
 
 ## The one-paragraph version
 
-A **gfortran-16 debug** build of Tonto segfaults on any job that runs an SCF,
-on **both** arm64 macOS and x86_64 Linux. gfortran-14 debug is fine, and
-gfortran-16 **release** is fine on both platforms. The fault is a bad read in the
-pointgroup machinery while building the promolecule initial guess — but the crash
-site **differs between platforms**, and the construct will not reproduce in
-isolation, which together point at *memory corruption laid down earlier* rather
-than a logic error where it dies. **Chasing the crash site is chasing the
-victim; the job is to find the write.**
+A **gfortran-16 debug** build of Tonto segfaults on any job that runs an SCF, on
+both arm64 macOS and x86_64 Linux, while gfortran-14 debug and gfortran-16
+release are both fine. **The cause is a code-generation bug in gfortran 16's
+`-fcheck=bounds` itself, not a defect in Tonto and not memory corruption.** For a
+bounds-checked subscript reached through an allocatable component chain, gfortran
+16 copies the array descriptor into one stack temporary and emits the check
+reading *another* temporary that is only written later in the same statement. The
+check therefore consults uninitialised stack memory: it either faults on a
+nonsense address or reports a bounds violation that is not real. Tonto's build
+now omits `-fcheck=bounds` on gfortran 16 and up.
 
-## Reproduce it in two minutes
+## The mechanism
 
-```bash
-mkdir b && cd b
-cmake .. -DCMAKE_Fortran_COMPILER=gfortran-16 -DCMAKE_BUILD_TYPE=debug
-make -j6                                  # ~20 min
-mkdir -p /tmp/t && cd /tmp/t
-cp <repo>/tests/short/h2o_rhf_STO-3G/{stdin,IO} .
-TONTO_BASIS_SET_DIRECTORY=<repo>/basis_sets <repo>/b/tonto ; echo "exit=$?"
-# expect 139
+The statement that dies on Linux is `POINTGROUP:make_character_table`:
+
+```fortran
+self%irrep(i)%chi(n) = trace_(self%irrep(i)%mx(:,:,n))
 ```
 
-Control: the same with `gfortran-14` gives exit 0.
+At `-O0 -fcheck=bounds`, gfortran 16 emits (x86_64, offsets from `%rbp`):
 
-## What is established, and how
+```
++609 … +721   copy the SELF%IRREP descriptor  ->  -0x100 … -0xc8
++734          mov -0xc0(%rbp),%rsi      <-- reads the NEXT temporary, never written
++741          mov -0xb8(%rbp),%rcx
++773          mov (%rcx),%rcx           <-- SIGSEGV: address 0x22a0000038a
+...
++1176         mov %rcx,-0xc0(%rbp)      <-- the only write, 400 bytes further on
+```
+
+The address at `+773` is `base + (offset + i)*184 + 168`, i.e. the third
+dimension's lower bound of `irrep(i)%mx` — an ordinary bounds check. It faults
+because `base` and `offset` were read from a temporary the compiler had not filled
+in yet. The garbage picked up on the failing run was 1,1,2,3,3,1,1,2,3,3: the Oh
+irrep dimensions, left on the stack by an earlier call.
+
+Compare the *preceding* statement in the same procedure, `create_(…%chi,…)`,
+which is compiled correctly: it writes its descriptor copy to `-0x80` and reads
+`-0x80`.
+
+## Evidence
 
 | Fact | How it was established |
 |---|---|
-| Only with an SCF | a CIF-processing job with no SCF is fine |
-| gfortran-16 only | gfortran-14 debug, same commit, same flags, same machine: exit 0 |
-| **Both platforms** | achari2 (Ubuntu 24.04 x86_64) segfaults identically. The old note said "only on arm64"; that was untested |
-| Crash, Linux | `POINTGROUP:make_character_table`, `pointgroup.foo:1018`, at `i=1, n=1`, Oh pointgroup, order 48 |
-| Crash, macOS | `MOLECULE.BASE:make_pg_image_of_shell`, `KERN_INVALID_ADDRESS at 0xd9` |
-| Read side is sound | gdb: `ubound(.irrep(1).mx)` = (1,1,48), `ubound(.irrep(4).mx)` = (3,3,48) — both correct |
-| Reached from | `scf → initialize_scf → get_initial_guess → make_promolecule_density_mx → make_anos → make_anos_for_atom` |
+| The flag is the trigger | `-fcheck=bounds` is debug-only (`cmake/SetFortranFlags.cmake`). No check, no faulty temporary — which is why gfortran-16 **release** was always fine |
+| Read before write | the only write to those two slots is at `+1176`; every use before it reads them uninitialised. Full disassembly of the procedure, not a sample |
+| Reproducer | `scripts/gfortran_bounds_bug.f90`, 97 lines, no Tonto: gfortran-14 fine both ways, gfortran-16 fine at `-O0`, **SIGSEGV at `-O0 -fcheck=bounds`** on x86_64 |
+| The two crash sites are two statements, not two victims | the macOS site, `MOLECULE.BASE:make_pg_image_of_shell`, contains `.pointgroup.mx(:,:,n)` — the identical construct: a bounds-checked variable subscript on an allocatable array component reached through an allocatable component |
+| Confirmed in Tonto | recompiling **`pointgroup.F90` alone** without `-fcheck=bounds` and relinking removes the segfault. The run reaches "Making gaussian ANO data …" and then hits the next site of the same shape, `atom.F90:7058` (`self%NOs%r(:,n)`) |
+| … and the next failure is the same bug wearing a different hat | there the garbage descriptor does not fault; it makes the check *report* `Index '1' of dimension 2 … outside of expected range (0:0)`. Bounds of `(0:0)` read out of an uninitialised descriptor |
 
-**The two crash sites are different procedures.** A deterministic logic error
-would fault in the same place on both platforms. Two different innocent reads
-dying in the same neighbourhood is what heap corruption looks like — the memory
-layout decides which one dies first.
+## What this retires
 
-## Ruled out — do not spend time here again
+Three entries in the old "ruled out" table were misread, and the conclusion drawn
+from them — heap corruption — was wrong. Recorded so the reasoning is not
+repeated:
 
-| Hypothesis | How it died |
-|---|---|
-| `-mtune=native` in debug (absent from release, which uses `-mcpu=apple-m2`) | rebuilt with `-DTONTO_ARCH_FLAG=none`: still 139 |
-| The `shell1quartet.F90` `-O2` pin | recompiled at `-O0` and relinked: still crashes (earlier note) |
-| Stack exhaustion | still 139 with `ulimit -s 65520`, the hard ceiling, as well as the 8 MB default |
-| Keyword-named components (`character`, `dimension` in `IRREP`) | renamed to `chi`/`dim`, rebuilt, rerun: still 139. Renamed anyway as hygiene (`fce350ca`) |
-| The crash-site construct itself | two standalone reduced cases — an allocatable array of a derived type with an allocatable vector component, allocated in a loop then written, first bare and then nested inside an outer type so the access is `self%irrep(i)%chi(n)` exactly as in Tonto — **both run to exit 0 under gfortran-14 AND gfortran-16** |
-| `VEC{OBJECT}` passing an unallocated allocatable | genuine UB, found by `-fcheck=all`, and **fixed** (`d8b94cbf`). The crash is unchanged |
+- **"The two crash sites are different procedures, so it must be corruption."**
+  They are two *statements* of the same shape, each independently miscompiled.
+  Nothing was corrupt.
+- **"The construct will not reproduce in isolation."** The reduced cases were
+  built without the descriptor-temporary trigger. The construct reproduces
+  perfectly once the bounds check is present *and* the target is x86_64.
+- **"AddressSanitizer on macOS emits no report."** It never would. This is a
+  stack-slot ordering error inside compiler-generated code, not a heap access
+  ASan instruments.
 
-## Traps that cost time — read before repeating
+Two entries stand: `-mtune=native` and the `shell1quartet.F90` `-O2` pin are
+genuinely irrelevant. The `VEC{OBJECT}` unallocated-allocatable fix (`d8b94cbf`)
+was a real conformance defect and worth landing, but was never related to this.
 
-- **`-fcheck=all` does not catch this fault.** It catches an *earlier* violation
-  during keyword reading, long before the SCF. That one is now fixed; the crash
-  remains.
-- **AddressSanitizer on arm64 macOS is useless here.** ASan is genuinely linked
-  (`libasan.8.dylib`, 48 `__asan` symbols) but emits **no report** and turns the
-  SIGSEGV into a SIGBUS. That is a failure to instrument, **not** a clean bill of
-  health. Try it on Linux instead.
-- **gdb cannot print the component formerly called `character`** — its Fortran
-  parser takes the name for the keyword. (Now renamed to `chi`, so this is moot.)
-- **macOS gives no line numbers.** `lldb` will not attach and `-fbacktrace`
-  prints raw addresses. The only symbolication is macOS's own crash report,
-  `~/Library/Logs/DiagnosticReports/tonto-*.ips` — a JSON payload after the first
-  line. **Linux gives file and line for free.**
-- **`dim` is reserved in Foo** as the array-size accessor. Renaming DIIS's
-  `dimension` method to `dim` turned `d = .dim` into `d = size(self)` on a
-  non-array and broke the build. IRREP's `dim` is safe only because it is a
-  component on a scalar.
+## What Tonto does about it
 
-## Do this next, in this order
+`cmake/SetFortranFlags.cmake` omits `-fcheck=bounds` from `DEBUG_FLAGS` when the
+GNU Fortran version is 16 or newer, and says so at configure time. Everything
+else about a debug build is unchanged: `-O0`, `-g`, `-fbacktrace`,
+`USE_PRECONDITIONS`, the `ENSURE`/`WARN` machinery. Only the compiler's own array
+bounds checking is lost, and only on 16.
 
-1. **Sanitizer on Linux**, on achari2. Conventional toolchain, ASan reliable,
-   symbolic backtraces free. This is the one thing most likely to name the write.
-   `valgrind` there is the fallback and would name it directly.
-2. **Bisect the guess.** Change `initial_density=` away from `promolecule` and
-   see whether the crash survives. Cheap, untried, and it establishes whether the
-   damage predates `make_anos_for_atom` or is laid down inside it.
-3. Only then go back to reading code.
+```bash
+cmake .. -DCMAKE_Fortran_COMPILER=gfortran-16 -DCMAKE_BUILD_TYPE=debug
+# -- gfortran 16.1.0: omitting -fcheck=bounds from DEBUG (compiler bug -- ...)
+```
 
-## Working material
+Re-enable with `-DTONTO_FORCE_FCHECK_BOUNDS=ON` to retest once GCC fixes it. Use
+**gfortran-14 for debug work that needs bounds checking**; it is correct and
+keeps the flag.
 
-On this Mac (build trees are regenerable; `/tmp` is not durable):
+## Testing a compiler
+
+```bash
+scripts/check_gfortran_bounds_bug.py gfortran-16     # exit 1 if affected
+```
+
+It compiles the reproducer with and without the flag and runs both: correct
+without and failing with is the bug, since a check may add a diagnostic but must
+never change the answer.
+
+**A pass is evidence, not proof.** What the bad code does depends on what happens
+to be on the stack, and the reduced case only provokes the faulty temporary on
+x86_64 — gfortran 16 on arm64 compiles *the reproducer* correctly while still
+crashing Tonto at `make_pg_image_of_shell`. Trust a failure; do not use a pass to
+clear a compiler whose debug builds are failing. Check the generated code by hand
+instead, for the signature above.
+
+## Still open
+
+- **Not reported to GCC.** A draft bug report is in `docs/GFORTRAN16_GCC_BUG.md`.
+  Worth checking Bugzilla for an existing report first.
+- **gfortran 15 is untested** — neither machine has it. The gate is therefore on
+  `>= 16`, which is what was measured. If 15 turns out to be affected, lower it.
+- **A full gfortran-16 debug build with the flag omitted has not been run
+  end-to-end.** The single-file experiment above is strong but partial: it shows
+  the mechanism and that removing the flag removes the failure at that site.
+  A whole-tree rebuild plus `ctest` is the confirmation still owed.
+- **Which arm64 construct makes the temporary.** The reduced case does not
+  provoke it there, so the macOS crash site has not been examined at machine
+  level. It is not needed for the fix, but it would make the upstream report
+  cover both targets.
+
+## Versions
 
 | | |
 |---|---|
-| `build-gf16-debug/` | gfortran-16 debug — reproduces, exit 139 |
-| `build-gf14-debug/` | gfortran-14 debug — the control, exit 0 |
-| `build-macos/` | gfortran-14 release — for regression checks, `ctest -L short` |
-| `build-gf16-notune/`, `build-gf16-check/`, `build-gf16-asan/` | the refuted experiments |
-
-On achari2: `/tmp/tonto-gf16/{rel16,dbg16}` (gfortran-16 release and debug).
-Note `/tmp` there is not durable either — rebuild from the branch.
-
-Branch: **`macos-and-so2`**, pushed. Two fixes on it are independent of this
-crash and worth landing regardless: the `plot_grid` purity fix (`97d8b0e9`,
-which had `ci-debug.yml` red since 2026-08-23) and the `VEC{OBJECT}` allocatable
-fix (`d8b94cbf`).
+| Affected | GCC 16.1.0 (Homebrew, arm64 macOS) and 16.0.1 20260315 trunk r16-8100 (Ubuntu 24.04, x86_64) |
+| Not affected | GCC 14.2.0 (Ubuntu), 14.3.0 (Homebrew) |
+| Untested | GCC 15 |

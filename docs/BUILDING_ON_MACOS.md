@@ -80,8 +80,11 @@ macOS shows tiny last-digit differences in a few tests. The comparison is
 deliberately loose — relative difference ≤ 0.2%, or last printed digit within
 2 — and counts those as passes.
 
-> **Use `gfortran-14` for debug builds.** A `gfortran-16` debug build
-> segfaults on any SCF job, on macOS *and* Linux; release is fine on both. See
+> **Debug builds on gfortran 16 have no array bounds checking.** gfortran 16
+> miscompiles `-fcheck=bounds` itself — the check reads an uninitialised stack
+> temporary — so the build omits the flag on 16 and up and says so at configure
+> time. Everything else about a debug build is unchanged. Use **gfortran-14** for
+> debug work that needs bounds checking; it is correct and keeps the flag. See
 > [`GFORTRAN16_DEBUG_CRASH.md`](GFORTRAN16_DEBUG_CRASH.md).
 
 ## One macOS-specific oddity: the arm64 compiler pin

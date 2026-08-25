@@ -3901,10 +3901,51 @@ ignored by `scripts/test.py`).
   (the two bases are mathematically identical below d functions). That single invariant would
   have caught this immediately, on one machine, with no reference file.
 
-## PARTLY DIAGNOSED (2026-08-24): gfortran-**16** DEBUG builds SEGFAULT — BOTH platforms
+## DIAGNOSED (2026-08-25): gfortran-**16** DEBUG builds SEGFAULT — BOTH platforms
 
-> **Handover page: [`docs/GFORTRAN16_DEBUG_CRASH.md`](docs/GFORTRAN16_DEBUG_CRASH.md)**
-> — self-contained: how to reproduce, what is ruled out, the traps, and what to do next.
+> **Authoritative page: [`docs/GFORTRAN16_DEBUG_CRASH.md`](docs/GFORTRAN16_DEBUG_CRASH.md)**
+> — cause, machine-level evidence, reproducer, workaround, and what is still owed.
+> Draft upstream report: [`docs/GFORTRAN16_GCC_BUG.md`](docs/GFORTRAN16_GCC_BUG.md).
+
+**RESOLVED 2026-08-25 — it is a gfortran 16 compiler bug in `-fcheck=bounds`, not a
+Tonto defect and not memory corruption.** For a bounds-checked subscript reached
+through an allocatable component chain, gfortran 16 copies the array descriptor into
+one stack temporary and emits the check reading *another* temporary that is only
+written later in the same statement. The check reads uninitialised stack memory, and
+either faults on a nonsense address or reports a bounds violation that is not real.
+`-fcheck=bounds` is debug-only, which is exactly why gfortran-16 **release** was
+always fine.
+
+Found by disassembling `POINTGROUP:make_character_table` and observing that the only
+*write* to the two slots the faulting check reads is 400 bytes further on. Reduced to
+`scripts/gfortran_bounds_bug.f90` (97 lines, no Tonto): gfortran-14 fine both ways,
+gfortran-16 fine at `-O0`, SIGSEGV at `-O0 -fcheck=bounds` on x86_64. Confirmed in
+Tonto by recompiling `pointgroup.F90` alone without the flag — the segfault goes, the
+run reaches "Making gaussian ANO data …", and the next site of the same shape
+(`atom.F90:7058`, `self%NOs%r(:,n)`) then reports a *false* violation, bounds `(0:0)`
+read out of the garbage descriptor.
+
+**Fix:** `cmake/SetFortranFlags.cmake` omits `-fcheck=bounds` from `DEBUG_FLAGS` on GNU
+Fortran 16 and up, announcing it at configure time; `-DTONTO_FORCE_FCHECK_BOUNDS=ON`
+puts it back for retesting. `scripts/check_gfortran_bounds_bug.py <compiler>` tests a
+compiler. gfortran 15 is untested — neither machine has it — so the gate is on `>= 16`,
+which is what was measured.
+
+**This retires the heap-corruption hypothesis below, and the reasoning that produced
+it.** The two crash sites are two *statements* of the same shape, each independently
+miscompiled — not two innocent victims of one corrupting write. The reduced cases
+"failed to reproduce" because they were built without the descriptor-temporary
+trigger. ASan on macOS was never going to report a stack-slot ordering error inside
+compiler-generated code. The `VEC{OBJECT}` fix (`d8b94cbf`) was a real conformance
+defect worth landing, but was never related to this.
+
+**Still owed:** a whole-tree gfortran-16 debug rebuild with the flag omitted, plus
+`ctest`, as end-to-end confirmation; and filing the upstream report.
+
+---
+
+*Historical record from 2026-08-24 and earlier follows. Its conclusion is wrong; it is
+kept because the measurements are sound and the reasoning is instructive.*
 
 **Use `gfortran-14` for debug builds, on any platform.** `gfortran-16` release is fine on both
 platforms; its *debug* build segfaults on **both** arm64 macOS and x86_64 Linux — the "only on

@@ -99,7 +99,23 @@ elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU")
         message(STATUS "arm64 macOS: adding -fno-schedule-insns "
                        "(works around a gfortran miscompilation of shell1quartet.F90)")
     endif()
-    set(DEBUG_FLAGS   "-Wall -g -fbacktrace -fcheck=bounds -Wno-maybe-uninitialized -Wno-uninitialized -DUSE_PRECONDITIONS -DDEBUG=1")
+    # gfortran 16 miscompiles -fcheck=bounds itself: for a bounds-checked
+    # subscript reached through an allocatable component chain, the check reads
+    # the array descriptor from a stack temporary that is only written later in
+    # the same statement. The garbage it picks up either segfaults or produces a
+    # false "outside of expected range" report. Release builds are unaffected --
+    # they carry no -fcheck. Drop the flag on 16 and up; gfortran 14 is correct
+    # and keeps it. Re-enable with -DTONTO_FORCE_FCHECK_BOUNDS=ON.
+    # Cause, reproducer and evidence: docs/GFORTRAN16_DEBUG_CRASH.md.
+    set(BOUNDS_CHECK_FLAG "-fcheck=bounds")
+    if(CMAKE_Fortran_COMPILER_VERSION VERSION_GREATER_EQUAL 16
+       AND NOT TONTO_FORCE_FCHECK_BOUNDS)
+        set(BOUNDS_CHECK_FLAG "")
+        message(STATUS "gfortran ${CMAKE_Fortran_COMPILER_VERSION}: omitting "
+                       "-fcheck=bounds from DEBUG (compiler bug -- see "
+                       "docs/GFORTRAN16_DEBUG_CRASH.md)")
+    endif()
+    set(DEBUG_FLAGS   "-Wall -g -fbacktrace ${BOUNDS_CHECK_FLAG} -Wno-maybe-uninitialized -Wno-uninitialized -DUSE_PRECONDITIONS -DDEBUG=1")
     set(RELEASE_FLAGS "-Ofast ${ARCH_FLAG} -DUSE_ERROR_MANAGEMENT")
     set(FAST_FLAGS    "-Ofast -faggressive-loop-optimizations -fstrict-aliasing ${ARCH_FLAG} -DUSE_ERROR_MANAGEMENT")
   # set(FAST_FLAGS    "-Ofast -faggressive-loop-optimizations ${ARCH_FLAG}")
