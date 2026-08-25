@@ -3939,8 +3939,20 @@ trigger. ASan on macOS was never going to report a stack-slot ordering error ins
 compiler-generated code. The `VEC{OBJECT}` fix (`d8b94cbf`) was a real conformance
 defect worth landing, but was never related to this.
 
-**Still owed:** a whole-tree gfortran-16 debug rebuild with the flag omitted, plus
-`ctest`, as end-to-end confirmation; and filing the upstream report.
+**Confirmed end-to-end the same day.** A whole-tree gfortran-16 debug build on arm64
+macOS compiles clean, runs `h2o_rhf_STO-3G` to **exit 0** (139 before) with
+`Total energy -74.9658`, and takes `ctest -L short` **62/62**.
+
+**Still owed:** filing the upstream report — it needs a Bugzilla login and there is
+no account. The draft and the duplicate search are in `docs/GFORTRAN16_GCC_BUG.md`.
+
+**A side observation from that run, not chased.** The two `short` tests that fail in
+the gfortran-14 **release** build on this Mac — `urea_ccsd_pob-TZVP_Salvador_properties`
+(2.99%) and `h2o_rhf_cc-pVDZ_tdhf` (0.231%) — both **pass** in the gfortran-16 debug
+build. `ci-macos.yml` attributes the first to macOS; this says it is not intrinsic to
+the platform or the test. Two variables differ between those builds, compiler *and*
+optimisation, so it does not isolate a cause. The cheap experiment is a gfortran-14
+**debug** build: if they pass there too, the culprit is `-Ofast`, not the compiler.
 
 ---
 

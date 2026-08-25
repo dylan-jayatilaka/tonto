@@ -116,10 +116,10 @@ instead, for the signature above.
   Worth checking Bugzilla for an existing report first.
 - **gfortran 15 is untested** — neither machine has it. The gate is therefore on
   `>= 16`, which is what was measured. If 15 turns out to be affected, lower it.
-- **A full gfortran-16 debug build with the flag omitted has not been run
-  end-to-end.** The single-file experiment above is strong but partial: it shows
-  the mechanism and that removing the flag removes the failure at that site.
-  A whole-tree rebuild plus `ctest` is the confirmation still owed.
+- ~~A full gfortran-16 debug build has not been run end-to-end.~~ **Done
+  2026-08-25, and it passes.** A whole-tree gfortran-16 debug build on arm64
+  macOS compiles clean, runs `h2o_rhf_STO-3G` to **exit 0** (it gave 139 before)
+  with `Total energy -74.9658`, and takes `ctest -L short` **62/62**.
 - **Which arm64 construct makes the temporary.** The reduced case does not
   provoke it there, so the macOS crash site has not been examined at machine
   level. It is not needed for the fix, but it would make the upstream report
