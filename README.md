@@ -9,11 +9,7 @@
 Each badge test Tonto on the `release` branch. For more details
 [**Continuous integration**](docs/TONTO_CONTINUOUS_INTEGRATION.md).
 
-The macOS jobs are new and deliberately unbadged: they run weekly to gather
-evidence first, and get a badge when they have something steady to report. macOS
-debug is still empty: `gfortran-16` debug builds used to segfault, which turned
-out to be a compiler bug in `-fcheck=bounds` — now worked around, see
-[`docs/GFORTRAN16_DEBUG_CRASH.md`](docs/GFORTRAN16_DEBUG_CRASH.md).
+The macOS jobs are new and not yet badged.
 
 Tonto is a quantum chemistry and crystallography package, with a focus on X-ray
 and electron structure refinement — especially **Hirshfeld atom refinement**,

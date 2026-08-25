@@ -11,8 +11,9 @@ are not all wired to every push.
 | **CI (WSL-release)** | `ci-wsl.yml` | yes | `guards` job on every push; the full WSL build when the WSL machinery changes, on demand, and weekly (Mon) *once on `master`* | ~1 min / ~40–70 min |
 | **CI (Linux-debug)** | `ci-debug.yml` | yes | every push / PR to `master`, `develop`, and on demand | ~15 min |
 | **CI (WSL-debug)** | `ci-wsl-debug.yml` | yes, but **never yet run** | weekly (Tue) and on demand — both need it on `master` first | ~60–90 min |
-| **CI (macOS-release)** | `ci-macos.yml` | not yet | weekly (Tue) and on demand | ~40–70 min × 2 |
-| **CI (macOS-MPI)** | `ci-macos-mpi.yml` | not yet | weekly (Wed) and on demand | ~40–70 min |
+| **CI (macOS-release)** | `ci-macos.yml` | not yet | weekly (Tue) and on demand — **never yet run**, the file is not on `master` | ~40–70 min × 2 |
+| **CI (macOS-MPI)** | `ci-macos-mpi.yml` | not yet | weekly (Wed) and on demand — **never yet run**, the file is not on `master` | ~40–70 min |
+| **macOS debug** | — | — | **does not exist**; `ci-macos.yml` matrixes release only | — |
 
 The two release workflows gate on the **loose** criterion from `scripts/test.py` —
 relative error ≤ 0.2 % **or** last printed digit within ±2 — so their verdicts are
@@ -296,6 +297,32 @@ compiler standard is a live question: `DEFERRED.md` records the gfortran-16
 *release* switch as numerically free on both platforms, while its *debug* build
 segfaults on arm64. Only release is matrixed for that reason, and the macOS debug
 column stays empty.
+
+### Two gaps, and what it would take to close them (2026-08-25)
+
+**Neither macOS workflow has ever run.** They exist only on `develop`, and both are
+`schedule:` + `workflow_dispatch:` with no `push:` trigger — GitHub fires a scheduled
+workflow only from the **default branch**. So they cannot run until they are on
+`master`. Same rule already noted above for `ci-wsl-debug.yml`.
+
+**A macOS debug job could be added.** The reason given for leaving it out — the
+gfortran-16 debug segfault — never applied to gfortran-**14**, which builds and runs
+debug on arm64 today, and the gfortran-16 crash is now worked around
+(`GFORTRAN16_DEBUG_CRASH.md`). Pin such a job to gfortran-14: on 16 the build omits
+`-fcheck=bounds`, so it would check less than `ci-debug.yml`. Shape it like
+`ci-debug.yml` — build, then two fast jobs to prove the binary runs — not a full
+numeric suite. Badge only after one green run: `ci-macos.yml` has never run and is
+expected red at first.
+
+**A WSL MPI job is possible but poor value.** No technical blocker, but the cost is
+`wsl-build`'s Windows runner (billed 2×, 40–70 min) *plus* an Open MPI build from
+source — Ubuntu's is built against gcc-13 and `USE mpi` makes `.mod` files
+compiler-version specific, which is exactly why `ci-mpi.yml` builds its own. That
+buys mostly a re-run of Linux MPI, since WSL is Ubuntu userland and the MPI code path
+is identical; what is WSL-*specific* is the four traps `cmake/WSL.cmake` guards, none
+of them MPI-related. The cheap alternative is a **configure-only** check inside the
+existing `wsl-build` job: assert `-DMPI=1` finds a matching `mpifort`, and fails with
+the intended message when it does not.
 
 **Why macOS MPI is cheap and Linux MPI is not.** Tonto does `USE mpi`, so the MPI
 must be built by the same compiler as Tonto. Measured 2026-08-24: Homebrew's
