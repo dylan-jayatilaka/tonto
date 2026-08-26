@@ -585,7 +585,22 @@ before any code is written**, most likely in its own conversation (`/clear`).
    would confound the numbers. Full design in `DEFERRED.md`, "MPI: defects found during
    milestone 4".
 
-7. 🔶 **WORKED AROUND (2026-08-05), root cause not fully established.** Bisected to a single
+7. 🔶 **RE-OPENED (2026-08-26) — `-Ofast` is not clean, and the suite that said so is not
+   evidence.** The four CIF tests were recorded as failing at `-O2 -fno-fast-math` and passing at
+   `-Ofast`. CI builds `-Ofast` and the same family errors there, intermittently. So `-Ofast`
+   **hides** this class most of the time rather than not having it; the `-foptimize-sibling-calls`
+   bisection below still stands, but the inference that the shipped build is unaffected does not.
+   Measured the same day: five `ci-mpi.yml` runs on identical code gave ERROR 1, 1, 1, 1 and
+   **11** — so no conclusion may be drawn from a single MPI suite run, including several already
+   in this file. One failure is *not* flaky: `urea_read_and_process_CIF` dies on rank 1 in every
+   run, in `TEXTFILE:move_to_next_record`, and its diagnostic ("error opening new file") names an
+   operation that routine never performs. Full evidence, the two candidate mechanisms and the
+   discriminator: `docs/TONTO_AND_MPI.md` Finding 7. Why it stayed invisible: the report was
+   truncated to its last 30 lines and `suite_report.py` captured each failure's output only to
+   discard it, so eleven errors carried **no recorded cause**. Both fixed (`--failure-dir`, no
+   `tail`). Earlier status follows, and remains accurate for the `-O2` work.
+
+   🔶 **WORKED AROUND (2026-08-05), root cause not fully established.** Bisected to a single
    gcc flag: **`-foptimize-sibling-calls`** — of the 45 flags `-O2` enables over `-O1`, the only
    one whose removal fixes all four tests. A tail call tears down the caller's frame before
    jumping, and *any* statement after a call stops it being a tail call — which is precisely why

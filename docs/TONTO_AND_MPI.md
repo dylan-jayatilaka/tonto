@@ -596,6 +596,98 @@ build where they failed. Outstanding: the fourth test, and a re-run of all four 
 against current `antlr4`, which has changed substantially since (the I/O broadcasts moved to
 `PARALLEL_BROADCAST_IO`, `TEXTFILE:flush` was fixed, per-rank I/O now actually works).
 
+### Finding 7 — the suite is nondeterministic, and the one thing that is not (2026-08-26)
+
+Found while moving CI to gfortran-16. It is recorded first because it invalidates a habit,
+not just a number: **a single MPI suite run is not evidence.**
+
+Five runs of `ci-mpi.yml`, all at commit `ed25349b`, same compiler, same cached Open MPI:
+
+| run | ERROR | loose | exact |
+|---|---|---|---|
+| 32968421834 | **11** | 42/55 | 36 |
+| 32976459938 | 1 | 52/55 | 47 |
+| 32976469015 | 1 | 52/55 | 50 |
+| 32976478217 | 1 | 52/55 | 50 |
+| 32976487120 | 1 | 52/55 | 50 |
+
+Read it carefully, because the obvious reading is wrong. This is **not** per-test flakiness:
+
+- `urea_read_and_process_CIF` errors in **5 of 5** (6 of 6 including the run after) — it is a
+  **deterministic** failure with a stable reproducer.
+- The other ten errors happened **together, in one run, and never again**. Ten tests failing at
+  once and then not at all is one event, not ten flaky tests.
+- Even among the four ERROR-1 runs, `exact` varies 47–50, so the *numbers* drift run to run
+  independently of the errors.
+
+Ruled out for the burst: the Open MPI cache (all five restored the same one) and runner
+contention (the burst run ran **alone**; the four concurrent ones were clean).
+
+**What this costs.** A `50/55` under gfortran-14 was compared against a `52/55` under
+gfortran-16 and reported as an improvement. It was not evidence — the spread on identical
+code is wider than the effect. gfortran-16 does sit at ERROR 1 in four of five runs against
+gfortran-14's 3, but gfortran-14 has **n=1** and no such claim can be made yet.
+
+**Correction to Finding 6's practical consequence.** That section says `-Ofast` hides the
+CIF-test failures and `-O2` exposes them. CI is `-Ofast` and the same family errors there, so
+the right statement is that `-Ofast` **hides it most of the time, not always**. The `-O2` /
+`-foptimize-sibling-calls` bisection stands; the inference that `-Ofast` is clean does not.
+
+#### Why this went unseen, which matters more than the finding
+
+Three layers each discarded the evidence, each assuming another kept it:
+
+1. `ci-mpi.yml` piped the report through `| tail -30`, so **45 of 55 rows never reached the
+   log**. The full table went only to `$GITHUB_STEP_SUMMARY`, which is not reachable through
+   the API. Three green runs had already gone by.
+2. An ERROR row prints `ERROR ERROR ERROR - -` and nothing else.
+3. `suite_report.py` ran each job with `capture_output=True` and the ERROR branch **dropped
+   both streams**, building its verdict from the return code alone. A crashed job also writes
+   no `.bad`, so the artefact upload had nothing to collect.
+
+The result was eleven failures with **no recorded cause anywhere**, which forced attribution by
+test *name* — guessing. Fixed: `suite_report.py --failure-dir` writes one untruncated log per
+ERRORing test (command, exit status, both streams) and CI uploads it; the `tail` is gone.
+**Rule: truncate for display, never for capture.**
+
+#### The deterministic one, with its cause
+
+First run with `--failure-dir` produced this immediately:
+
+```
+Error on rank 1: TEXTFILE:move_to_next_record ... error opening new file urea.cif
+MPI_ABORT was invoked on rank 1 in communicator MPI_COMM_WORLD
+```
+
+**The message is wrong and will mislead the next reader as it misled this one.**
+`TEXTFILE:move_to_next_record` (`foofiles/textfile.foo:1316`) opens nothing — it forward-spaces
+one record:
+
+```fortran
+.IO_status = 0
+if (IO_IS_ALLOWED) then
+   read(unit=.unit,fmt="()",iostat=.IO_status)   ! only the IO rank reads
+end
+PARALLEL_BROADCAST_IO(.IO_status,tonto.master_processor)
+DIE_IF(.IO_status/=0,"error opening new file "//trim(.name))
+```
+
+A non-zero `iostat` here is **end-of-file or a read error**, not a failed open. And rank 1 never
+reads: its `.IO_status` arrives by broadcast.
+
+Two candidate mechanisms, **not yet distinguished**:
+
+- **(a) A genuine read failure on the IO rank**, faithfully broadcast. Then master hit EOF too and
+  both ranks die — plausible, since `PARALLEL_BROADCAST_IO` is gated on `is_parallel .and. .not.
+  per_rank_IO_allowed`, which is uniform across ranks.
+- **(b) A desync**, delivering a stale value to rank 1 — the Finding 6 class.
+
+**The discriminator is whether rank 0 reports the same error.** Only rank 1's message survived,
+because `MPI_ABORT` killed the job — that is consistent with either. Settle it with the per-rank
+trace recipe in `TONTO_DEVELOPER.md` §1a, not by reading the code: three wrong readings of this
+same area are already on record. Two cheap first steps: correct the diagnostic text so it names
+what actually failed, and print the rank and `iostat` value with it.
+
 ### Defect register
 
 Every MPI defect found, and whether it announces itself. **"Silent" is the dangerous column** —
@@ -613,6 +705,9 @@ those produce wrong numbers or corrupt files with no error at all.
 | 7b | `crystal.foo:4961` `shift_update_ff` | same, and a read-modify-write of the shared file | Loud | **Fixed** |
 | 7c | `get_Hirshfeld_atom_FFs_disk` | no barrier between the scattered writes and the collective reads | Race | **Fixed** |
 | 8 | `system.foo:260` | Seeds not cloned; two broadcasts inside a master-only guard | Silent now, **deadlock** if naively "fixed" | Open |
+| 10 | `textfile.foo:1316` `move_to_next_record` | `urea_read_and_process_CIF` dies on rank 1 at 2 ranks, deterministically. Mechanism not yet distinguished (real EOF vs desync) — see Finding 7 | Loud (abort) | **Open** |
+| 10b | same | Diagnostic says "error opening new file" for a routine that only *reads a record*, and prints neither the rank nor `iostat` | Misleading | **Open** |
+| 11 | `ci-mpi.yml`, `suite_report.py` | ERROR cause captured then discarded; suite table truncated to the last 30 lines → failures with no recorded reason | **Silent** | **Fixed** |
 | 9 | `system.foo:564` | `MPI_ABORT` commented out → one rank dying hangs the whole job | Hang | **Fixed** |
 | 12 | `textfile.foo` `flush` | `.clear_and_put_margin` called **twice on master**, once elsewhere; it broadcasts, so the ranks desynchronise | Loud (`MPI_ERR_TRUNCATE`) | **Fixed** |
 | 13 | `system.foo` `die` ×3 | error message written only under `IO_is_allowed`, so a dying **non-master** rank said nothing at all | **Silent failure** | **Fixed** |
