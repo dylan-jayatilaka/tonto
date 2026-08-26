@@ -2723,12 +2723,33 @@ Caveats, so the next person does not over-read this:
   agree there `exact=PASS, max 0%`. They fail on arm64 macOS and nowhere else, which puts
   them beside `ylid` above rather than with the XCW reblessing.
 
-  Same code, same day: Linux `GoF^2(N_p)` 9.8369, macOS 9.8425 (0.057%), worst line
-  **0.135%** against a 0.2% gate. The chain that turns that into a failure is worth
-  knowing, because the reported number looks alarming and is not: the small numeric drift
-  changes how many digits an ESD needs, that changes a column width in the ADP table, the
-  shifted columns make the comparator pair up different fields, and it reports
-  `0.7196 vs 0.0000 (100%)`. The underlying ADP values are identical.
+  **It is not a crash and not a debug-build artefact**: exit 0, full 50 kB of output, job
+  completes, gfortran-14 **release**. Measured 2026-08-26.
+
+  **What actually fails is row ORDER in a sorted reflection list, not the numbers.**
+  Matched by Miller index instead of by line position, the two runs list the **same 54
+  reflections** and the largest per-reflection difference is **0.158%** — inside the 0.2%
+  gate. But 4 rows of 160 come out in a different order, because two sort keys sit
+  **0.103% apart** and sub-0.2% platform drift is enough to flip them:
+
+  | | reflection | key |
+  |---|---|---|
+  | Linux, row 21 | `(-8, 8, 10)` | −6.6098 |
+  | macOS, row 21 | `(-5, 9, 11)` | −6.6166 |
+
+  `scripts/test.py` compares line by line, so one transposed row pairs unrelated fields and
+  reports `0.7196 vs 0.0000` — the **100%** in the ctest log. Nothing is 100% wrong.
+
+  *(Two earlier explanations of this in the git history are wrong and should not be
+  believed: that these were stale references, and that a changed ESD digit count shifted a
+  column width. Both were inferred from a truncated diff. The reflections were compared by
+  index only after the second one failed to hold up.)*
+
+  **Two separate things to fix, and only the first is urgent.** The output order should be
+  deterministic — a tie-break on `(h,k,l)` after the existing key — or the comparator should
+  match reflection rows by index rather than position; until then this test can flip on any
+  machine, which is the `ylid` failure mode again. Separately, a 0.158% drift against a
+  0.2% gate is thin cover and belongs on the drill-down list above.
 
   **Do not bless these on a Mac.** It would bake macOS numbers into a Linux-gated project
   and leave Linux passing on under a third of the tolerance. Generating references on
