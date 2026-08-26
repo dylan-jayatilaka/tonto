@@ -1,0 +1,93 @@
+name: CI (full suite, on demand)
+
+# THE FULL 124-JOB SUITE, ON DEMAND. Nothing else runs `long`: ci.yml runs
+# `short hart` only, so the long jobs -- where the heavy CIF and archive reading
+# lives -- are covered by no workflow at all. That gap was found on 2026-08-26,
+# when a change to foofiles/textfile.foo (on the path of EVERY file read in
+# Tonto) needed the serial suite and there was no way to run it without a local
+# machine. See DEFERRED.md, "UNVERIFIED: the textfile.foo MPI fix has not seen
+# the serial suite".
+#
+# DISPATCH-ONLY, DELIBERATELY. No push or schedule trigger: it is slow and it is
+# not a gate. Trigger it from Actions -> CI (full suite, on demand) -> Run
+# workflow, picking whichever branch you want tested; or
+#
+#     gh workflow run ci-full-suite.yml --ref develop
+#
+# THE RULE THAT CATCHES EVERYONE: a workflow is dispatchable only if a copy of
+# the file containing `workflow_dispatch` exists on the DEFAULT branch (master).
+# GitHub looks it up there whatever ref you then ask it to run. That is why this
+# file is landed on master directly -- it is CI configuration, not Tonto code,
+# and running it against `develop` does NOT merge develop.
+on:
+  workflow_dispatch:
+    inputs:
+      suites:
+        description: 'Suites to run (space separated: short long hart)'
+        required: false
+        default: 'short long hart'
+
+jobs:
+  full-suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350        # the long suite is slow; do not let it be killed silently
+
+    steps:
+      - name: Check out (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gfortran-14 libblas-dev liblapack-dev \
+            default-jdk python3 perl make cmake
+
+      - name: Configure and build (release)
+        run: |
+          set -euo pipefail
+          cmake -B build -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=release
+          # -j2, matching ci.yml: translation spawns one JVM per .foo file and is
+          # memory-heavy on a shared 7 GB runner.
+          cmake --build build -- -j2
+
+      - name: Assert the binary exists before spending an hour on tests
+        run: |
+          set -euo pipefail
+          test -x build/tonto
+          ./build/tonto --version | head -1
+
+      - name: Full suite (GATING)
+        run: |
+          set -o pipefail
+          {
+            echo '## Full suite — ${{ github.event.inputs.suites }}'
+            echo ''
+            echo 'Gate = **Loose** (rel <= 0.2% OR last-digit <= 2).'
+            echo 'Baseline to match, from CLAUDE.md section 5: **124/124** loose.'
+            echo ''
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # --failure-dir: a crashed job writes no .bad, so without it an ERROR
+          # row records its cause nowhere. Learned the hard way, 2026-08-26.
+          python3 -u scripts/suite_report.py \
+            --program "$PWD/build/tonto" --tests-dir tests --basis-sets "$PWD/basis_sets" \
+            --suites ${{ github.event.inputs.suites }} \
+            --log tests.log --failure-dir test-failures \
+            2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          status=${PIPESTATUS[0]}
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      - name: Upload the report, failure causes and any .bad outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-suite-diagnostics
+          path: |
+            tests.log
+            test-failures/**
+            tests/**/*.bad
+          if-no-files-found: warn

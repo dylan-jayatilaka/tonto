@@ -3423,6 +3423,24 @@ clean.
 
 ## UNVERIFIED: the `textfile.foo` MPI fix has not seen the serial suite (2026-08-26)
 
+**How to run it without a machine (added 2026-08-26, as Dylan left).**
+`.github/workflows/ci-full-suite.yml` is a **dispatch-only** workflow that builds release
+and runs the full suite with `--failure-dir`. It exists because nothing else runs `long`:
+`ci.yml` runs `short hart` only. Trigger it from the Actions tab (pick any branch) or
+
+```bash
+gh workflow run ci-full-suite.yml --ref develop
+```
+
+It is deliberately **not** a gate: no push or schedule trigger, no badge. It was added as a
+separate file rather than as an option on `ci.yml` because `ci.yml` is the gate and its
+current revision was still running unproven at the time; a new file cannot break an existing
+one. **For the peer picking this up:** if it proves useful, the obvious follow-ups are to give
+it a badge only after one green run, and to consider folding it into `ci.yml` behind an input
+once both are settled. If it turns out to be wrong, deleting the file costs nothing.
+
+
+
 **Do this before the `textfile.foo` change goes anywhere near `master`.** Full detail, the
 exact commands and the baseline: `docs/TONTO_AND_MPI.md` Finding 7, "VERIFICATION STILL OWED".
 
