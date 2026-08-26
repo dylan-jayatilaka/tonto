@@ -33,7 +33,15 @@ now covers the whole project, so it was renamed.)*
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
 **Highest-priority open items**, if you are looking for where to start:
-**macOS in CI** (feasible and free — the repo is public — and it is the only thing that can
+**File the gfortran-16 GCC bug report** — the draft is finished and the duplicate search done
+([`docs/GFORTRAN16_GCC_BUG.md`](docs/GFORTRAN16_GCC_BUG.md)); all it needs is a Bugzilla login,
+which only Dylan can provide. It is listed first because of what it *blocks*: the `-fcheck=bounds`
+segfault is the reason `gfortran-14` is still the project standard. Release-16 is already
+numerically free on both platforms (123/124 Linux, 119/124 macOS) and Linux-MPI moved to 16 on
+2026-08-26 without incident, so **debug bounds checking is the only technical constraint left**.
+Fix that upstream and the compiler migration is unblocked. Decided 2026-08-26: this *will* be
+filed, not merely considered.
+Then: **macOS in CI** (feasible and free — the repo is public — and it is the only thing that can
 guard the two arm64 `-O2`/`-O3` compiler pins, which today are guarded by nothing and whose
 failure mode is wrong numbers, not crashes; see *Platform-specific*),
 NaN and negative ESDs from the least-squares variance-covariance matrix, the MPI items
@@ -3785,7 +3793,7 @@ ignored by `scripts/test.py`).
   with data — check whether GCC 16 reproduces the *same suite numbers* before switching, since
   otherwise the choice is between re-blessing references and staying put.
 - Measure the runtime cost of `-O2` on this file (it is the ERI hot path). If negligible, stop.
-- Consider a GCC bug report. The ingredients are unusually strong: bit-identical source, two
+- **File the GCC bug report** (decided 2026-08-26; it was "consider" before). The ingredients are unusually strong: bit-identical source, two
   platforms disagreeing, and a self-validating oracle (an SCF energy below the variational
   limit, virial 1.957 vs 2.000). Would need reducing to a minimal test case first.
 - Re-test whether the *global* `-fno-schedule-insns` in `cmake/SetFortranFlags.cmake` is still
