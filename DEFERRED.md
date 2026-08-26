@@ -2717,11 +2717,22 @@ Caveats, so the next person does not over-read this:
 
 ### Two more for the same register
 
-- **`quartz_NN_HAR_L0`/`L1` drift between platforms.** Same code, same day: Linux gives
-  `GoF^2(N_p)` 9.8369, macOS 9.8425 (0.057%), with the worst line at **0.135%** against a
-  0.2% gate. Inside the gate, but under a third of the tolerance in hand — which is how a
-  test goes flaky later for no visible reason. This is why these references are generated
-  on Linux/gfortran-14 and not on a Mac.
+- **`quartz_NN_HAR_L0`/`L1` fail on macOS only — and their references are correct.**
+  This was first written up here as two more stale references. It is not: reblessing on
+  Linux/gfortran-14 (2026-08-26) left both files **byte-unchanged**, because they already
+  agree there `exact=PASS, max 0%`. They fail on arm64 macOS and nowhere else, which puts
+  them beside `ylid` above rather than with the XCW reblessing.
+
+  Same code, same day: Linux `GoF^2(N_p)` 9.8369, macOS 9.8425 (0.057%), worst line
+  **0.135%** against a 0.2% gate. The chain that turns that into a failure is worth
+  knowing, because the reported number looks alarming and is not: the small numeric drift
+  changes how many digits an ESD needs, that changes a column width in the ADP table, the
+  shifted columns make the comparator pair up different fields, and it reports
+  `0.7196 vs 0.0000 (100%)`. The underlying ADP values are identical.
+
+  **Do not bless these on a Mac.** It would bake macOS numbers into a Linux-gated project
+  and leave Linux passing on under a third of the tolerance. Generating references on
+  Linux/gfortran-14 is what exposed that they needed no reblessing at all.
 - **`urea_ccsd_pob-TZVP_Salvador_properties` (2.99%) and `h2o_rhf_cc-pVDZ_tdhf` (0.231%)
   both PASS in a gfortran-16 debug build** while failing in gfortran-14 release on the same
   Mac. Two variables differ between those builds — compiler *and* optimisation — so this
