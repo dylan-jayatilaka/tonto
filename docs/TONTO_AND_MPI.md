@@ -108,11 +108,17 @@ had.
 **Trigger it by hand** from Actions → *CI (Linux-MPI)* → *Run workflow*. It also runs weekly
 (Mondays 05:17 UTC) and on pushes that touch MPI-relevant paths (`parallel.foo`, `system.foo`,
 `macros.in`, `run_mpi_*.foo`, the test scripts, or the workflow itself). Deliberately **not** on
-every push: Ubuntu's packaged Open MPI is built against gcc-13 while the project uses gfortran-14,
-and Tonto does `USE mpi`, so the workflow has to build Open MPI from source. That is cached on
-`(Open MPI version, gfortran version)` — the pair that `.mod` compatibility actually depends on —
-so a cold cache costs ~8-10 min and a warm one seconds. Same pattern `ci-wsl.yml` uses for its
-expensive job.
+every push: Tonto does `USE mpi`, so the MPI must be built by the same compiler as Tonto, and
+Ubuntu's packaged Open MPI is built against the distro default (gcc-13 on 24.04) — so the
+workflow has to build Open MPI from source. That is cached on `(Open MPI version, gfortran
+version)` — the pair that `.mod` compatibility actually depends on — so a cold cache costs
+~8-10 min and a warm one seconds. Same pattern `ci-wsl.yml` uses for its expensive job.
+
+**The workflow compiler is `gfortran-16` as of 2026-08-26** (`FC_VERSION` in `ci-mpi.yml`, the
+single place it is set; Ubuntu 24.04 stops at gcc-14, so it comes from
+`ppa:ubuntu-toolchain-r/test`). The measurements recorded further down this page were taken
+under **gfortran-14** and are left as measured — re-running them under 16 is the point of the
+first scheduled run after the switch.
 
 **What gates it:** the π rank-invariance check (`check_mpi_pi.sh` at 1/2/4 ranks). It needs no
 stored reference, so it cannot be silently blessed, and all four dead reductions found in

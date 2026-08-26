@@ -264,13 +264,30 @@ renamed `develop` on 2026-08-11 and the badges never pointed at it.)
 - **Linux-debug** — carries four longstanding `-O0` floating-point and
   structural failures that are not code defects (see `DEFERRED.md`), so its
   suite step is informational.
-- **Linux-MPI** — not on every push. Ubuntu's Open MPI is built against gcc-13
-  while this project standardises on gfortran-14, and `USE mpi` makes `.mod`
-  files compiler-version specific, so the workflow builds Open MPI from source;
-  it is cached, scheduled weekly, and triggered only by MPI-relevant paths. Its
-  gate is the π rank-invariance check (`scripts/check_mpi_pi.sh`), not the
-  suite. A red MPI badge means the build broke, or π stopped being rank-count
-  independent — both real.
+- **Linux-MPI** — not on every push. `USE mpi` makes `.mod` files
+  compiler-version specific, so the MPI must be built by the same compiler as
+  Tonto; Ubuntu's packaged Open MPI is built against the distro default (gcc-13
+  on 24.04) and so cannot be used at all. The workflow therefore builds Open MPI
+  from source; it is cached, scheduled weekly, and triggered only by
+  MPI-relevant paths. Its gate is the π rank-invariance check
+  (`scripts/check_mpi_pi.sh`), not the suite. A red MPI badge means the build
+  broke, or π stopped being rank-count independent — both real.
+
+  **On gfortran-16 since 2026-08-26** (gfortran-14 before). The compiler was
+  never an inherited constraint — gcc-13 was only ever the reason the *packaged*
+  MPI is unusable, and since the workflow builds its own, the compiler is a
+  parameter: `FC_VERSION` in `ci-mpi.yml` is the single place it is set, and the
+  cache key carries it, so a switch invalidates the cache on its own (one cold
+  ~8–10 min rebuild, then seconds again). Ubuntu 24.04's repositories stop at
+  gcc-14, so 16 comes from `ppa:ubuntu-toolchain-r/test`, and the install step
+  asserts it landed rather than falling back to 14 — a 14 MPI labelled 16 is
+  exactly the silent class this project keeps finding by measurement. `DEFERRED.md`
+  records gfortran-16 **release** as numerically free on both platforms; that
+  verdict does not extend to debug, where 16 segfaults in `-fcheck=bounds`
+  ([`GFORTRAN16_DEBUG_CRASH.md`](GFORTRAN16_DEBUG_CRASH.md)). This job builds
+  release only. Note the "numerically free" measurement was taken on *serial*
+  release: under `-DMPI=1`, `include/macros.in` `#undef`s `PURE`, so an MPI build
+  is a different macro configuration. The π gate is what proves the switch.
 - **WSL-release** — builds and tests inside a real WSL2 Ubuntu on a Windows
   runner, because WSL looks enough like Linux that the ordinary build "works"
   right up until it does not. Every push, plus weekly.
@@ -329,10 +346,17 @@ the intended message when it does not.
 **Why macOS MPI is cheap and Linux MPI is not.** Tonto does `USE mpi`, so the MPI
 must be built by the same compiler as Tonto. Measured 2026-08-24: Homebrew's
 `mpifort` wraps **GCC 16.1.0**, and Homebrew's `gcc` gives `gfortran-16` from the
-same build — a matched pair for free. On Ubuntu 24.04 `mpifort` is **GCC 13.3**
-against a project standard of 14, which is exactly why `ci-mpi.yml` builds Open
-MPI from source and caches it. `ci-macos-mpi.yml` therefore needs no source build,
-and pins itself to gfortran-16 and asserts the match rather than hoping.
+same build — a matched pair for free. On Ubuntu 24.04 `mpifort` is **GCC 13.3**,
+which matches no compiler this project uses, which is exactly why `ci-mpi.yml`
+builds Open MPI from source and caches it. `ci-macos-mpi.yml` therefore needs no
+source build, and pins itself to gfortran-16 and asserts the match rather than
+hoping. Since 2026-08-26 both MPI workflows are on **GCC 16** — but not the *same*
+GCC 16, and that matters when reading a Linux/macOS difference. macOS gets **16.1.0**
+from Homebrew; Linux gets the newest noble build in `ppa:ubuntu-toolchain-r/test`,
+which is the snapshot **16.0.1 20260315 (trunk r16-8100)**, plus a source build of
+Open MPI. The Linux one is the compiler already characterised on achari2
+([`GFORTRAN16_GCC_BUG.md`](GFORTRAN16_GCC_BUG.md)), so the switch runs on measured
+ground rather than an unknown compiler.
 
 Two workflows are not build types and sit outside the table: `ci-rgbi.yml`
 proves the RGBI picture-tool install list from a bare `ubuntu:24.04`, and

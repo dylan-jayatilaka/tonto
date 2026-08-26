@@ -5,13 +5,32 @@ name: CI (Linux-MPI)
 # build tree -- and eight reductions were silently returning wrong answers because
 # nothing executed them. See docs/TONTO_AND_MPI.md.
 #
-# WHY THIS IS NOT ON EVERY PUSH. Ubuntu's Open MPI is built against gcc-13 while
-# the project standardises on gfortran-14, and Tonto does `USE mpi` -- Fortran .mod
-# files are compiler-version specific, so the packaged MPI simply cannot be used
-# (configure now stops with a clear message rather than failing deep in the build).
-# So this workflow builds Open MPI from source, which is why it is cached and why
-# it runs on a schedule / on demand / on MPI-relevant changes rather than every
-# push. Same pattern as ci-wsl.yml's expensive wsl-build job.
+# WHY THIS IS NOT ON EVERY PUSH. Tonto does `USE mpi`, and Fortran .mod files are
+# compiler-version specific, so the MPI must be built by the SAME compiler as Tonto.
+# Ubuntu's packaged Open MPI is built against the distro default (gcc-13 on 24.04)
+# and therefore cannot be used at all (configure stops with a clear message rather
+# than failing deep in the build). So this workflow builds Open MPI from source,
+# which is why it is cached and why it runs on a schedule / on demand / on
+# MPI-relevant changes rather than every push. Same pattern as ci-wsl.yml's
+# expensive wsl-build job.
+#
+# WHICH COMPILER. gfortran-16 since 2026-08-26; gfortran-14 before that. The
+# compiler is a parameter, not an inherited constraint -- FC_VERSION below is the
+# single place it is set, and the cache key carries it, so a switch invalidates the
+# cache correctly on its own. DEFERRED.md records gfortran-16 RELEASE as
+# numerically free on both platforms; that verdict does NOT extend to debug, where
+# 16 segfaults in -fcheck=bounds (docs/GFORTRAN16_DEBUG_CRASH.md). This job builds
+# release only, so it sits in the verified column. The pi gate below is what proves
+# the switch.
+#
+# WHICH 16, EXACTLY. Ubuntu 24.04 stops at gcc-14, so 16 comes from
+# ppa:ubuntu-toolchain-r/test, whose newest noble build is the snapshot
+# 16-20260315-1ubuntu1~24~ppa1 -- i.e. "16.0.1 20260315 (experimental) [trunk
+# r16-8100]". That is the SAME compiler already characterised on achari2 (see
+# docs/GFORTRAN16_GCC_BUG.md), so this switch runs on a measured compiler, not an
+# unknown one. It is NOT the macOS compiler: ci-macos-mpi.yml gets GCC 16.1.0 from
+# Homebrew. Both are 16; they are not the same 16, so do not read a Linux/macOS
+# numeric difference as a platform difference without checking the point version.
 on:
   workflow_dispatch:          # the button: Actions -> CI (Linux-MPI) -> Run workflow
   schedule:
@@ -55,8 +74,8 @@ on:
 
 env:
   OMPI_VERSION: 5.0.9
-  OMPI_PREFIX: /home/runner/opt/openmpi-gf14
-  FC_VERSION: 14
+  OMPI_PREFIX: /home/runner/opt/openmpi-gf16
+  FC_VERSION: 16
 
 jobs:
   mpi:
@@ -69,24 +88,36 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install toolchain
+      # Ubuntu 24.04's own repositories top out at gcc-14, so gfortran-16 comes
+      # from the toolchain PPA. Assert it landed: if the PPA ever stops carrying 16
+      # for the runner's release, this step must fail HERE with a message. Falling
+      # through would leave gfortran-14 in place and build a 14 MPI labelled 16 --
+      # the silent-wrong-answer class this project keeps finding the hard way.
+      - name: Install toolchain (gfortran-${{ env.FC_VERSION }})
         run: |
+          set -euo pipefail
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            gfortran-14 gcc-14 libblas-dev liblapack-dev \
-            default-jdk python3 perl make cmake
+            gfortran-${FC_VERSION} gcc-${FC_VERSION} g++-${FC_VERSION} \
+            libblas-dev liblapack-dev default-jdk python3 perl make cmake
+          command -v gfortran-${FC_VERSION} > /dev/null || {
+            echo "::error::gfortran-${FC_VERSION} did not install -- ppa:ubuntu-toolchain-r/test may not carry it for $(lsb_release -cs). Do NOT fall back to 14 silently; fix the source or change FC_VERSION deliberately."
+            exit 1
+          }
+          gfortran-${FC_VERSION} --version | head -1
 
       # Keyed on (Open MPI version, gfortran version) because THAT PAIR is exactly
       # what the .mod compatibility depends on. A cold cache costs ~8-10 min; a warm
       # one, seconds.
-      - name: Cache Open MPI (built with gfortran-14)
+      - name: Cache Open MPI (built with gfortran-${{ env.FC_VERSION }})
         id: ompi-cache
         uses: actions/cache@v4
         with:
           path: ${{ env.OMPI_PREFIX }}
           key: ompi-${{ env.OMPI_VERSION }}-gfortran${{ env.FC_VERSION }}-${{ runner.os }}
 
-      - name: Build Open MPI with gfortran-14
+      - name: Build Open MPI with gfortran-${{ env.FC_VERSION }}
         if: steps.ompi-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
@@ -94,7 +125,8 @@ jobs:
           tar xf openmpi-${OMPI_VERSION}.tar.bz2
           cd openmpi-${OMPI_VERSION}
           ./configure --prefix="$OMPI_PREFIX" \
-                      FC=gfortran-14 F77=gfortran-14 CC=gcc-14 CXX=g++-14 \
+                      FC=gfortran-${FC_VERSION} F77=gfortran-${FC_VERSION} \
+                      CC=gcc-${FC_VERSION} CXX=g++-${FC_VERSION} \
                       --disable-mpi-cxx > configure.log 2>&1 || { tail -30 configure.log; exit 1; }
           make -j"$(nproc)" > make.log 2>&1 || { tail -30 make.log; exit 1; }
           make install > install.log 2>&1
@@ -107,8 +139,18 @@ jobs:
         run: |
           set -euo pipefail
           "$OMPI_PREFIX/bin/mpifort" --version | head -1
-          "$OMPI_PREFIX/bin/mpifort" --version | head -1 | grep -q "14\." \
-            || { echo "::error::mpifort does not wrap gfortran-14"; exit 1; }
+          # Compare the version we got against the version we asked for, rather
+          # than grepping a literal -- the two can only drift apart in one place.
+          # -dumpfullversion, NOT the tail of --version: the PPA compiler is a trunk
+          # snapshot whose --version line ends in "[trunk r16-8100-g3aca3bae8ee]",
+          # so parsing the last field yields a git hash. A release build ends in the
+          # version and would have hidden this.
+          mpi_fc_ver=$("$OMPI_PREFIX/bin/mpifort" -dumpfullversion)
+          case "$mpi_fc_ver" in
+            ${FC_VERSION}.*) echo "mpifort wraps GNU Fortran $mpi_fc_ver" ;;
+            *) echo "::error::mpifort wraps $mpi_fc_ver, not gfortran-${FC_VERSION} -- a stale cache under a reused key, or the PPA moved"
+               exit 1 ;;
+          esac
           printf 'program t\n  use mpi\n  implicit none\n  integer :: e\n  call MPI_Init(e)\n  call MPI_Finalize(e)\nend program t\n' > t.f90
           "$OMPI_PREFIX/bin/mpifort" t.f90 -o t
           "$OMPI_PREFIX/bin/mpirun" -n 2 --oversubscribe ./t
