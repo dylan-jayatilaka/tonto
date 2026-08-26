@@ -606,7 +606,9 @@ before any code is written**, most likely in its own conversation (`/clear`).
    jumping, and *any* statement after a call stops it being a tail call — which is precisely why
    a `write` probe and `-fcheck=all` both made the bug vanish: observing it removed the
    optimisation causing it. It is an interaction, not one bad pass: `-O1` plus all 45 flags
-   passes, and `-O3`/`-Ofast` pass too, so the **shipped release build was never affected**.
+   passes, and `-O3`/`-Ofast` pass too. *(That was read at the time as "the shipped release build
+   was never affected". Superseded — see the 2026-08-26 note above: `-Ofast` errors on the same
+   family intermittently, so it hides this class rather than lacking it.)*
    `CMakeLists.txt` now pins `textfile.F90` to `-fno-optimize-sibling-calls` (nil cost, restores
    the `-O2` control build). **Open:** which tail call, and whether this is a gcc bug or latent
    UB that tail calls merely expose — needs a reduced test case before reporting upstream.
