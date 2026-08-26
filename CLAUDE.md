@@ -585,7 +585,18 @@ before any code is written**, most likely in its own conversation (`/clear`).
    would confound the numbers. Full design in `DEFERRED.md`, "MPI: defects found during
    milestone 4".
 
-7. 🔶 **RE-OPENED (2026-08-26) — `-Ofast` is not clean, and the suite that said so is not
+7. 🔶 **ROOT CAUSE FOUND (2026-08-26), fix not yet written.** `TEXTFILE:move_to_record_external`
+   (`foofiles/textfile.foo:1263`) decides how many times to loop — and each iteration issues a
+   `PARALLEL_BROADCAST_IO` — from **`.record`, which is rank-local**. Nothing resynchronises it:
+   `.record` is broadcast in exactly one place in the file, `:3550`, in the *write* path, never
+   on read. So one disagreement shifts the streams by one collective, permanently, and every
+   later broadcast binds the wrong variable — rank 1 receives a record counter into
+   `.IO_status`, sees `114 /= 0`, and dies. Reproduced 5/5 on macOS/arm64 GCC 16.1.0 at
+   `-Ofast` **and** on Linux CI, `-n 1` exact — so neither platform- nor optimisation-specific.
+   Fix direction, evidence, rank 1's stack and three method lessons: `docs/TONTO_AND_MPI.md`
+   Finding 7. **Do not "fix" it with a barrier** — that masks the shift.
+
+   🔶 **RE-OPENED (2026-08-26) — `-Ofast` is not clean, and the suite that said so is not
    evidence.** The four CIF tests were recorded as failing at `-O2 -fno-fast-math` and passing at
    `-Ofast`. CI builds `-Ofast` and the same family errors there, intermittently. So `-Ofast`
    **hides** this class most of the time rather than not having it; the `-foptimize-sibling-calls`

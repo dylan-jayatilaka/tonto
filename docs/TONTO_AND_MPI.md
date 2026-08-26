@@ -650,6 +650,78 @@ test *name* — guessing. Fixed: `suite_report.py --failure-dir` writes one untr
 ERRORing test (command, exit status, both streams) and CI uploads it; the `tail` is gone.
 **Rule: truncate for display, never for capture.**
 
+#### ROOT CAUSE (2026-08-26): a collective count driven by rank-local state
+
+`urea_read_and_process_CIF` at 2 ranks. Reproduced **5/5** locally on macOS/arm64 with
+Homebrew GCC 16.1.0 at `-Ofast`, and on Linux/x86_64 with the 16.0.1 snapshot in CI — so it
+is neither platform- nor optimisation-specific. `-n 1` passes **exactly** (0%, 0 ulp).
+
+**`TEXTFILE:move_to_record_external`** (`foofiles/textfile.foo:1263`):
+
+```fortran
+if (rec < (.record+1)) then
+   do ; .move_to_back_record ; if (rec==(.record+1)) exit ; end
+else if (rec > (.record+1)) then
+   do ; .move_to_next_record ; if (rec==(.record+1)) exit ; end
+end
+```
+
+Each iteration of either loop issues one `PARALLEL_BROADCAST_IO`. **The iteration count is
+computed from `.record`, which is rank-local**, so two ranks that disagree about `.record`
+issue different numbers of collectives. That is the milestone-7 rule violated verbatim:
+*whether a collective executes must never depend on state that can differ between ranks.*
+
+And nothing puts them back in step. **`.record` is broadcast in exactly one place in the
+file — `textfile.foo:3550`, in the `flush` (write) path.** The read path maintains it purely
+locally, `+1` in `move_to_next_record` and `-1` in `move_to_back_record`. So the loop count
+depends on `.record`, and `.record` is only kept correct by executing equal loop counts: one
+divergence is permanent and self-amplifying.
+
+**The observed damage.** Once the streams shift by one, every later collective binds to the
+wrong variable. Rank 1 receives a *record counter* into `.IO_status` — the trace shows the
+values 113, 114, 115 cycling — sees `114 /= 0`, and dies at the `DIE_IF` in
+`move_to_next_record`. Master is unaffected and is already writing `urea.cxc`, which comes
+out truncated at 12–16 lines of 101 when `MPI_ABORT` lands.
+
+**Rank 1's stack**, obtained with `lldb` on the *release* binary, no rebuild:
+
+```
+SYSTEM:die <- SYSTEM:die_if <- TEXTFILE:move_to_next_record <- TEXTFILE:move_to_record
+           <- TEXTFILE:move_to_line <- CIF:move_to_end_of_data
+           <- MOLECULE.CE:process_cif_for_cx <- MOLECULE.MAIN:read_keywords
+```
+
+The debug build's `ENSURE(.file.is_open)` fires at `CIF:move_to_end_of_data` — frame 5 of that
+same stack. **Debug and release are one failure, not two.**
+
+##### Three method lessons, all of which cost time here
+
+1. **A broadcast trace of `(length, datatype, value)` cannot detect misalignment.** Rank 1's
+   *n*-th receive *is* master's *n*-th send, so both traces record the same value whatever
+   variable each rank binds it to. The two streams came out byte-identical and were briefly
+   read as "perfect lockstep" — the opposite of the truth. To see a shift, a trace must carry
+   a **call-site identity**, not the payload. 66% of broadcasts here are `1 x MPI_INTEGER`, so
+   shape alone is useless too.
+2. **`lldb` on the optimised binary answered in two minutes what two 30-minute instrumented
+   rebuilds did not.** Break on `die`, not `die_if` — `DIE_IF` expands to
+   `call die_if_(tonto,cond,msg)`, so a breakpoint there fires on every evaluation including
+   the benign ones, and the first stack you get is a startup check.
+3. **The diagnostic text is wrong and cost a wrong turn.** `move_to_next_record` opens
+   nothing; `iostat/=0` there is EOF or a read error. "error opening new file" appears at
+   **seven** sites in `textfile.foo` and one in `file.foo`. It should name the operation and
+   print the rank and the `iostat` value.
+
+##### Fix direction (not yet implemented)
+
+Make the collective count independent of rank-local state: decide the number of iterations on
+the IO rank, broadcast **that**, and have every rank loop the same number of times — or
+position the file on master alone and broadcast the resulting `.record`. Do **not** add a
+barrier: it masks the shift instead of removing it. The commented-out `MPI_BARRIER` in
+`parallel.foo`, with a note by Florian describing exactly this symptom ("BCAST interferes with
+a different kind leading to str and Int ... to screw up communication"), was an earlier
+encounter with this bug; it has been removed in favour of a one-line pitfall pointing here,
+because commented-out code that hides a live defect is an invitation to re-enable it.
+
 #### The deterministic one, with its cause
 
 First run with `--failure-dir` produced this immediately:
@@ -705,7 +777,8 @@ those produce wrong numbers or corrupt files with no error at all.
 | 7b | `crystal.foo:4961` `shift_update_ff` | same, and a read-modify-write of the shared file | Loud | **Fixed** |
 | 7c | `get_Hirshfeld_atom_FFs_disk` | no barrier between the scattered writes and the collective reads | Race | **Fixed** |
 | 8 | `system.foo:260` | Seeds not cloned; two broadcasts inside a master-only guard | Silent now, **deadlock** if naively "fixed" | Open |
-| 10 | `textfile.foo:1316` `move_to_next_record` | `urea_read_and_process_CIF` dies on rank 1 at 2 ranks, deterministically. Mechanism not yet distinguished (real EOF vs desync) — see Finding 7 | Loud (abort) | **Open** |
+| 10 | `textfile.foo:1263` `move_to_record_external` | Loop count -- and so the number of collectives -- computed from rank-local `.record`; `.record` is resynchronised only in the *write* path (`:3550`), never on read. Ranks shift by one and every later collective binds the wrong variable | Loud (abort), but only at >=2 ranks | **Open** (root cause found 2026-08-26) |
+| 10a | `textfile.foo:1316` `move_to_next_record` | `urea_read_and_process_CIF` dies on rank 1 at 2 ranks, deterministically. Mechanism not yet distinguished (real EOF vs desync) — see Finding 7 | Loud (abort) | **Open** |
 | 10b | same | Diagnostic says "error opening new file" for a routine that only *reads a record*, and prints neither the rank nor `iostat` | Misleading | **Open** |
 | 11 | `ci-mpi.yml`, `suite_report.py` | ERROR cause captured then discarded; suite table truncated to the last 30 lines → failures with no recorded reason | **Silent** | **Fixed** |
 | 9 | `system.foo:564` | `MPI_ABORT` commented out → one rank dying hangs the whole job | Hang | **Fixed** |
