@@ -1,0 +1,119 @@
+name: CI (macOS-debug)
+
+# The macOS counterpart of ci-debug.yml, and deliberately the same narrow shape:
+# build `debug`, then run two fast jobs to prove the binary executes. It does not
+# police numerics -- ci-macos.yml does that -- because the failure this catches is
+# a debug binary that links and then dies immediately.
+#
+# Why it did not exist before: the reason recorded in ci-macos.yml was the arm64
+# gfortran-16 debug segfault. That never applied to gfortran-14, which has always
+# built and run debug on arm64, and the gfortran-16 crash is now understood and
+# worked around -- it was a compiler bug in -fcheck=bounds, not a Tonto defect.
+# See docs/GFORTRAN16_DEBUG_CRASH.md.
+#
+# Both compilers, for different reasons:
+#   14  the real check. It keeps -fcheck=bounds, so it is the one that can catch
+#       an out-of-bounds access.
+#   16  guards the workaround. If GCC fixes the bug, or if our version gate stops
+#       matching, this job is what notices.
+#
+# The bounds-flag assertion below is the point of running 16 at all. It is an
+# invariant check in the same spirit as ci-macos.yml's arm64 pin assertion: the
+# gate's effect is invisible at runtime, so assert it rather than trust it.
+#
+# Scheduled and manual only, and NOT badged until it has run green once --
+# ci-macos.yml has never run at all, and a badge on a workflow that has never
+# executed is a red badge on day one. Both macOS workflows also need to be on
+# `master` before any schedule fires: GitHub runs schedule: from the default
+# branch only.
+
+on:
+  schedule:
+    - cron: '37 4 * * 4'      # Thursdays 04:37 UTC, clear of the other macOS jobs
+  workflow_dispatch:
+
+jobs:
+  build-and-smoke-test:
+    name: macOS debug, gfortran-${{ matrix.gcc }}
+    runs-on: macos-14          # Apple silicon
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false         # 14 and 16 are independent questions
+      matrix:
+        gcc: [14, 16]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install the toolchain
+        run: |
+          set -x
+          brew install gcc cmake openjdk
+          echo "$(brew --prefix openjdk)/bin" >> "$GITHUB_PATH"
+
+      - name: Which compiler is this, actually
+        run: |
+          set -x
+          which gfortran-${{ matrix.gcc }}
+          gfortran-${{ matrix.gcc }} --version
+          uname -m                       # must say arm64
+
+      - name: Configure (debug)
+        run: |
+          cmake -B build-debug \
+                -DCMAKE_Fortran_COMPILER=gfortran-${{ matrix.gcc }} \
+                -DCMAKE_BUILD_TYPE=debug
+
+      - name: Assert the -fcheck=bounds gate did the right thing
+        # gfortran 16 miscompiles -fcheck=bounds, so the build drops it on 16 and
+        # up and keeps it on 14. Both halves matter: losing it on 14 would remove
+        # real checking, and keeping it on 16 would resurrect the segfault.
+        run: |
+          FLAGS=build-debug/CMakeFiles/tonto.dir/flags.make
+          if [ "${{ matrix.gcc }}" = "16" ]; then
+            grep -q 'fcheck=bounds' "$FLAGS" \
+              && { echo "::error::gfortran-16 debug still has -fcheck=bounds; see docs/GFORTRAN16_DEBUG_CRASH.md"; exit 1; }
+            echo "ok: -fcheck=bounds correctly omitted on gfortran-16"
+          else
+            grep -q 'fcheck=bounds' "$FLAGS" \
+              || { echo "::error::gfortran-14 debug lost -fcheck=bounds; the version gate is too broad"; exit 1; }
+            echo "ok: -fcheck=bounds correctly kept on gfortran-14"
+          fi
+
+      - name: Build (debug)
+        run: cmake --build build-debug -- -j3
+
+      - name: Smoke test (the binary must run, not just link)
+        # Two fast jobs. An SCF is the point: the gfortran-16 crash killed every
+        # job that ran one, and exited before printing anything useful.
+        run: |
+          set -o pipefail
+          for t in h2o_rhf_STO-3G h2o_rhf_cc-pVDZ; do
+            echo "== $t =="
+            python3 scripts/test.py \
+              --test-directory "tests/short/$t" \
+              --basis-sets basis_sets \
+              --program build-debug/tonto \
+              --log-level=ERROR
+          done
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          exec > >(tee -a "$GITHUB_STEP_SUMMARY") 2>&1
+          echo '## macOS debug diagnostics — gfortran-${{ matrix.gcc }}'
+          echo '```'
+          gfortran-${{ matrix.gcc }} --version | head -1 || echo "compiler MISSING"
+          ls -l build-debug/tonto || echo "no debug binary"
+          grep -o '\-fcheck=bounds' build-debug/CMakeFiles/tonto.dir/flags.make || echo "(no -fcheck=bounds in flags)"
+          echo '```'
+
+      - name: Keep any .bad files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-debug-diagnostics-gfortran${{ matrix.gcc }}
+          path: tests/**/*.bad
+          if-no-files-found: ignore

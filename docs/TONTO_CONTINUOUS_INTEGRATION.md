@@ -13,7 +13,7 @@ are not all wired to every push.
 | **CI (WSL-debug)** | `ci-wsl-debug.yml` | yes, but **never yet run** | weekly (Tue) and on demand — both need it on `master` first | ~60–90 min |
 | **CI (macOS-release)** | `ci-macos.yml` | not yet | weekly (Tue) and on demand — **never yet run**, the file is not on `master` | ~40–70 min × 2 |
 | **CI (macOS-MPI)** | `ci-macos-mpi.yml` | not yet | weekly (Wed) and on demand — **never yet run**, the file is not on `master` | ~40–70 min |
-| **macOS debug** | — | — | **does not exist**; `ci-macos.yml` matrixes release only | — |
+| **CI (macOS-debug)** | `ci-macos-debug.yml` | not yet | weekly (Thu) and on demand — **never yet run**, the file is not on `master` | ~40–60 min × 2 |
 
 The two release workflows gate on the **loose** criterion from `scripts/test.py` —
 relative error ≤ 0.2 % **or** last printed digit within ±2 — so their verdicts are

@@ -4,7 +4,7 @@
 |---|---|---|---|
 | **Linux** | [![Linux-release](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml?query=branch%3Amaster) | [![Linux-debug](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml/badge.svg?branch=master)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml?query=branch%3Amaster) | [![Linux-MPI](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-mpi.yml/badge.svg?branch=master)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-mpi.yml?query=branch%3Amaster) |
 | **Windows/WSL** | [![WSL-release](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml/badge.svg?branch=master)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml?query=branch%3Amaster) | [![WSL-debug](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml/badge.svg?branch=master)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml?query=branch%3Amaster) | — |
-| **macOS** | [not running yet](.github/workflows/ci-macos.yml) | *none yet* | [not running yet](.github/workflows/ci-macos-mpi.yml) |
+| **macOS** | [not running yet](.github/workflows/ci-macos.yml) | [not running yet](.github/workflows/ci-macos-debug.yml) | [not running yet](.github/workflows/ci-macos-mpi.yml) |
 
 Each badge tests Tonto on the `master` branch. For more details
 [**Continuous integration**](docs/TONTO_CONTINUOUS_INTEGRATION.md).
