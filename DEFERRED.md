@@ -6,8 +6,18 @@ correctness-of-match or robustness refinements.
 *(This file began as `ANTLR4_DEFERRED.md`, a list of translator loose ends. It
 now covers the whole project, so it was renamed.)*
 
-> **Organisation.** Entries are grouped by theme; anything finished has moved to the
-> archive at the end rather than being deleted, so the reasoning stays searchable.
+> **Organisation.** Two halves. Everything above the archive is **live**; everything in
+> [Archive](#done-resolved-and-closed-archive) is **finished** — done, resolved, withdrawn or
+> won't-do — and is kept rather than deleted, so the reasoning stays searchable. Live entries
+> are grouped by theme within that first half.
+>
+> The split had drifted and was re-sorted on 2026-08-26: eight finished sections were still
+> filed under live themes (the two MPI-CI `DONE`s, the `TEXTFILE:flush` root cause, the
+> withdrawn suppressed-reduction abort, the dropped-`data`-statements fix, the macOS RGBI
+> badge, the `bond-energy` won't-do, and the keyword-parsing survey), and one live list
+> (*RGBI: known defects*) was stranded inside the archive. **43 live, 17 archived.**
+> If you add an entry, put it under a theme; when it closes, move it down — a `DONE` heading
+> in a live section is how the drift starts.
 
 | Theme | What lives there |
 |-------|------------------|
@@ -193,36 +203,6 @@ version control: an unpushed clone on `sauce` or `achari2` (`git log --all --one
 there settles it in one command), a student's own machine or thesis, or an email
 attachment. Absent that, the in-core MP2 family is the nearest thing that exists and it
 is already on `develop`.
-
-## `archive/bond-energy` will not be ported (Dylan, 2026-08-18)
-
-**Decided, not merely postponed.** The Roby bond-energy work on `archive/bond-energy`
-(Dylan Jayatilaka, 11 commits, 2020-09 – 2020-10) stays on its tag. Nothing on
-`develop` depends on it and nothing was removed to make this decision.
-
-What it holds, so the size of the thing is on record: `roby.foo` +1478 lines --
-`Eshared` partitioning for E^DE, an exact energy-density method, deformation
-energies and group populations -- plus `types.foo` +127, `atom.foo` +123,
-`vec{atom}.foo` +122, and smaller changes to `molecule.prop.foo`,
-`molecule.scf.foo`, `opmatrix.foo`, `vec{int}.foo` and `CMakeLists.txt`.
-Eleven files, +1756/−217, all unmerged (`git cherry develop archive/bond-energy`
-marks all 11 commits `+`).
-
-Two things a future reader should know before reopening it, both established
-2026-08-18:
-
-- **The starting position is better than it looks.** Unlike the Bader port there is
-  already a regression net: `tests/rgbi/karrikinolide_blyp_6-31G(d)_Roby_bond_index`
-  and its `_g09_` variant exercise the live Roby path. And the two helper modules the
-  tag adds, `vec{emat{intrinsic}}.foo` and `vec{emat{int}}.foo`, have since landed on
-  `develop` independently, so that part of the work is already done.
-- **The difficulty is drift, not translation.** `roby.foo` is 7490 lines on `develop`
-  against 8463 on the tag, and it has been modified on `develop` since 2020. This is
-  a graft into evolved code, not a clean apply, and it needs a `types.foo` change --
-  which the Bader port did not.
-
-Recover it with `git branch bond-energy archive/bond-energy`. See
-`docs/REPOSITORY_BRANCHES.md`.
 
 # Correctness — open bugs that give wrong answers
 
@@ -420,142 +400,6 @@ was produced with the default grid rather than the one its own input requests, s
 they must be reblessed against converged numbers once the grid fix lands. And the
 existing suite cannot detect any of these, because no test varies the grid and
 every test spells its functional correctly.
-
-## Keyword parsing must not leak into library routines (fixed; survey kept)
-
-`MOLECULE.READ:read_archive(name,genre)` is a library routine — it takes its
-operands as arguments and is called from `molecule.scf.foo` (×3),
-`molecule.main.foo` (×2) and `run_sf_derivs.foo`. It nonetheless reached for the
-global `stdin` to look for a trailing `normalise` qualifier:
-
-```foo
-   if (stdin.buffer.n_items==2) stdin.read(normalize)
-```
-
-Two bugs in one line:
-
-- **It segfaults in any program without a `stdin`.** `hart` has no job file, so
-  this dereferenced an unallocated `TEXTFILE` on the second HAR cycle — the
-  first time the refinement re-reads its density archive.
-- **In `tonto` it was dead, and could corrupt parsing.** `TEXTFILE:n_line_items`
-  *is* `buffer.n_items`, and the keyword handler `ENSURE`s `n_line_items==3`, so
-  a line of 3 items can never satisfy `==2`: no job file could ever switch
-  normalisation on, and every `if (do_norm) …unnormalize(…)` branch was
-  unreachable. Meanwhile a *programmatic* caller inherited whatever line the job
-  file was on, and on a 2-item line would silently consume one of its tokens.
-
-Fixed: the qualifier is now an optional argument, and `read_archive_and_normalise`
-is its keyword — so the feature is reachable for the first time.
-
-**Survey — this was the only instance.** Six places in the library peek at the
-line and then read a variable number of items:
-
-| Site | Procedure | Shape | Reached from |
-|---|---|---|---|
-| `molecule.har.foo:1797` | `make_spherically_averaged_HAs` | no args | 1 `case` line |
-| `molecule.misc.foo:2040` | `put_interpolator_list` | no args | 1 `case` line |
-| `molecule.misc.foo:5022` | `put_spherical_SA_ED_from_atom` | no args | 1 `case` line |
-| `diffraction_data.put.foo:783` | `put_worst_reflections` | no args | 1 `case` line |
-| `molecule.put.foo:674` | `put_archive` | no args | 1 `case` line |
-| `molecule.read.foo` | `read_archive(name,genre)` | **took args** | 6 programmatic sites |
-
-The five no-argument ones are genuine keyword handlers: they read *all* their
-operands from `stdin`, including the name of the thing to act on, and a driver
-never calls them. That pattern is fine. The breakage came only from merging the
-parse role and the do role into one procedure, which happened once.
-
-**The rule, for anyone adding a driver:** a procedure that takes arguments must
-not touch `stdin`. `scripts/check_library_stdin.py` enforces it (ctest name
-`library_stdin`, label `short`; also run by `make report` and CI).
-
-### DONE (2026-08-02): `write_archive` swallowed the next keyword
-
-Found while testing `read_archive_and_normalise`. `MOLECULE.PUT:put_archive` has
-the same qualifier peek, with an off-by-one:
-
-```foo
-   if (stdin.buffer.n_items==2) stdin.read(normalize)     ! molecule.put.foo
-```
-
-`n_items` counts the **whole line including the keyword** — that is why
-`read_archive`'s handler asserts `n_line_items==3` for
-`read_archive <name> <genre>`. So a plain `write_archive MOs` is exactly 2 items,
-the peek always fires, runs off the end of the line and **consumes the next
-keyword** as its qualifier. The test should be `==3`.
-
-Demonstrated: a job file with `write_archive MOs` followed by
-`read_archive MOs restricted` dies with "unknown option: mos" — the
-`read_archive` keyword was eaten, leaving its operands to be read as keywords.
-
-**The one test that uses it is hollow — investigate this first.**
-`tests/long/nh3_x-ray-constrained-rhf-cluster-charge_cc-pVTZ_restart/stdin:196`
-reads:
-
-```
-   read_ascii_archive density_mx r
-   write_archive density_mx
-
-   ! Now to the SCF
-   scf
-```
-
-`write_archive density_mx` is two items, so the peek fires and swallows the very
-next token — **`scf`**. The reader resumes at `delete_scf_archives`. Evidence
-from the blessed reference, not inference:
-
-- `grep -c SCF stdout` → **0**. Not one mention, though the job sets
-  `output_results= YES`.
-- `Wall-clock time taken for job "nh3" is , 40 milliseconds.`
-
-An X-ray-constrained RHF cluster-charge SCF in cc-pVTZ does not run in 40 ms.
-**The test performs no SCF at all**, and its reference was blessed in that
-state, so it passes by faithfully reproducing the skip. Whatever coverage its
-name promises — X-ray constrained wavefunctions, cluster charges, restart — it
-does not provide.
-
-**Why it is not fixed here.** Correcting the off-by-one makes `scf` execute, so
-the job would then do the science it was written to do and its reference must be
-re-blessed against completely different output. That is a deliberate decision
-about a long-suite test, not a drive-by in an options branch.
-
-**Blast radius, surveyed:** one test and one line.
-`grep -rn '^[[:space:]]*write_archive' tests/ runfiles/` returns exactly the nh3
-line above and nothing else, and `n_items==2) stdin.read` now matches only
-`molecule.put.foo:674`. So the fix is a one-character edit (`2` → `3`) plus
-re-blessing one reference — but that reference will change completely, because
-the job will start doing an SCF it has never done.
-
-(The `normalise`/`normalize` spelling fix applied to that same line is
-behaviour-neutral until this off-by-one is fixed, since the token it compares is
-currently a stray keyword either way.)
-
-### Four more of the same shape, allow-listed rather than fixed
-
-Writing that check turned these up. They are **not broken today**, so they are
-recorded rather than changed, but they are the same merged-role pattern and the
-allow-list in the script names each one:
-
-- `molecule.read.foo:read_molden_file`, `read_tonto_FChk_file`,
-  `read_g09_FChk_file` — take an optional name and fall back to
-  `stdin.buffer.exhausted` when it is absent. Safe only because every driver
-  passes the name (`run_rgbi.foo:202-203` does). Call one without the argument
-  from a program that has no `stdin` and it dereferences an unallocated
-  `TEXTFILE`, exactly as `read_archive` did.
-- `molecule.put.foo:put_florian_wfn_file` — **unguarded**:
-  `if (NOT stdin.buffer.exhausted) stdin.read(name)` with no `present()` test at
-  all. This one would crash in any driver that reaches it. Nothing does today.
-
-The fix in each case is the one applied to `read_archive`: move the fallback
-into the keyword handler and let the library routine take a plain argument.
-
-`vec{basis}.foo:read_library_data` is allow-listed for the opposite reason — it
-is *correct*. It creates `stdin` itself when there is none and restores it
-afterwards. Copy that pattern if a library routine genuinely needs the parser.
-
-(`put_archive` looks like a counter-example to a plain grep — 10 further call
-sites — but those are a *different overload*, `put_archive(item,name,…)`, which
-takes arguments and never touches `stdin`. Read the `.int` file rather than
-grepping by name; see CLAUDE.md §8.)
 
 ## Command line: `command_arguments` silently truncates (and is never read)
 
@@ -1723,73 +1567,6 @@ through a **call** from inside a parallel do, which no source scan can find.
 depth-counting the parallel-do lock so a recursive inner return cannot release an outer lock
 (restoring the `ENSURE` at `parallel.foo:308`).
 
-## DONE (2026-08-03): the MPI CI is GREEN — first time ever
-
-Run #8 (`29f8dcea`) concluded **success**, after the `--oversubscribe` fix below. Every step
-passed, including the two that matter:
-
-| step | result |
-|---|---|
-| Assert the binary really is MPI-linked | success |
-| **MPI invariant — pi is rank-count independent (GATING)** | **success** |
-| Short suite under MPI at 2 ranks (informational) | **success** |
-
-Runs 1–7 had all failed. Note the informational short suite passed too, which is more than the
-gate required — so `tonto` at 2 ranks agrees with the serial references across the short suite in
-CI, not just locally.
-
-## DONE (2026-08-02): the MPI CI failure was the launcher, not the reductions
-
-**The reductions are correct.** This entry previously said "something in the reduction path is
-still wrong" — that was wrong, and it was written before the log had been read. Correcting it in
-full, because the mistaken version was pushed.
-
-`ci-mpi.yml` had failed on every run since it was added, always on the gating step *"MPI
-invariant — pi is rank-count independent"*. The log says:
-
-```
-ok   mpi_pi   -n 1: 3.141592653589362
-ok   mpi_pi   -n 2: 3.141592653589390
-FAIL mpi_pi   -n 4: launcher exited 1
-```
-
-So π was right at 1 and 2 ranks, agreeing with each other to **13 significant digits** — i.e.
-`PARALLEL_SUM` works. At 4 ranks the program **never ran**: Open MPI 5 refuses to start more
-ranks than there are slots and exits non-zero, and a GitHub runner does not have 4.
-
-The workflow already knew this in one place and not the other: the toolchain-verification step
-uses `--oversubscribe` (`ci-mpi.yml:114`), and the suite step is pinned to `-n 2` with the
-comment *"the runner has 4 vCPUs and the launcher would oversubscribe"* — but the π check was
-invoked with `1 2 4` and `check_mpi_pi.sh` launched without the flag.
-
-**Fixed** in `scripts/check_mpi_pi.sh`: probe the launcher (`--version | grep -qi "open mpi"`)
-and add `--oversubscribe` when it is Open MPI. Probed rather than hard-coded because the flag is
-Open MPI's; MPICH oversubscribes unasked and would reject it. Oversubscribing is exactly right
-here — this is a correctness check on a tiny Riemann sum, not a benchmark.
-
-Verified locally on a 12-core machine, where `-n 16` is a genuine oversubscribe:
-
-```
-ok   mpi_pi   -n 1: 3.141592653589362      <- identical to CI
-ok   mpi_pi   -n 2: 3.141592653589390      <- identical to CI
-ok   mpi_pi   -n 4: 3.141592653590147
-ok   mpi_pi   -n 16: 3.141592653589789
-ok   mpi_pi   all rank counts (1 2 4 16) agree with pi and with each other
-```
-
-and the flag is demonstrably the cause: `mpirun -n 16` alone exits 1 without running anything,
-`mpirun -n 16 --oversubscribe` exits 0.
-
-**What this changes.** Parallel fragHAR is **not** blocked by a broken reduction, which is what
-the red CI appeared to say. The reduction path is sound at 1, 2, 4 and 16 ranks. The remaining
-`fragment_SCF_para` concerns stand on their own merits — the two-strategy split and the
-`next_p_loop_index` off-by-one — and are not evidence of anything deeper.
-
-**Lesson worth keeping:** the check reported `launcher exited 1`, which is not a numerical
-failure at all, and four consecutive runs were read as "the reductions are broken" without
-anyone opening the log. `scripts/check_mpi_pi.sh` distinguishes the cases in its own output; the
-diagnosis just has to read it.
-
 ## PRIORITY: `hart` has never run under MPI — MPI_ERR_TRUNCATE at 2 ranks
 
 Found 2026-08-03 while attempting milestone 5's last step (parallel fragHAR at 2 ranks). **Not a
@@ -1855,37 +1632,6 @@ So the desync is **inside `stdout.put(.command_optarg,by_column=TRUE,left=TRUE,w
 in `COMMAND_LINE:put_command_optarg` — i.e. *echoing the command line*. Master performs **37**
 broadcasts there and rank 1 performs **3**. At the divergent index master sends a `STR` (256)
 while rank 1 is at a scalar (1), which is the truncation.
-
-## ROOT CAUSE FOUND AND FIXED (2026-08-03): `TEXTFILE:flush` put the margin twice on master
-
-```foo
-      if (IO_IS_ALLOWED) then
-         write(unit=.unit,...) trim(.buffer.string)
-         ...
-         .clear_and_put_margin        ! <-- MASTER ONLY
-         .record = .record + 1
-      end
-
-      PARALLEL_BROADCAST(.IO_status,...)
-      PARALLEL_BROADCAST(.record,...)
-
-      .clear_and_put_margin           ! <-- every rank
-```
-
-`clear_and_put_margin` ends in `.buffer.put(...)` → `BUFFER:put_str`, which **broadcasts**
-`.string` (256 bytes) and `.item_end`. So the master entered **one extra pair of collectives per
-flush**, the ranks fell out of step, and the next collective failed with `MPI_ERR_TRUNCATE`.
-
-**Why it hid for years:** `clear_and_put_margin` *returns early* when `.style.margin_width==0`,
-doing no collective at all — and that is the normal case. It only bites once something sets a
-margin. `COMMAND_LINE:put_command_optarg` calls `set_margin_width(2)`, which is why `hart` died
-exactly there, why the first 126 broadcasts matched perfectly (banner, margin 0), and why
-`tonto` was never affected.
-
-**Fix:** delete the call inside the guard; the one after the broadcasts already covers every
-rank. Verified — `hart` at 2 ranks goes from dying at 30 lines of output to **758**, and the
-truncation is gone. Serially unaffected: release rebuilt, short suite 50/51 unchanged, all four
-invariant checks pass, `ctest -L hart` 4/4.
 
 ## `hart` NOW WORKS UNDER MPI (2026-08-03) — and reproduces serial exactly
 
@@ -2189,40 +1935,6 @@ translator change. The per-rank-I/O work is still the smaller, more certain win.
 - **Emit `LOCK` before the loop and `UNLOCK` after** (translator change), so the lock state is
   identical on every rank regardless of iteration count. This is the most valuable of the three
   and the only one that needs `FooToFortran`.
-
-## WITHDRAWN (2026-08-03): the runtime "abort on a suppressed reduction"
-
-Milestone 6 part 2 was implemented, and then **removed the next day, because its premise is
-wrong**. It assumed a reduction reached while a parallel-do lock is held is always a bug. It is
-not — it is *also* the intended nesting pattern:
-
-```foo
-SHELL1QUARTET:make_esfs_ss_0000(v11)      ! called from inside
-   parallel do k = 1,.ab_n_gaussian_pairs !   MOLECULE.FOCK:make_u_JK_engine's
-   ...                                    !   own `parallel do`
-   PARALLEL_SUM(v11)                      ! correctly placed after ITS loop
-```
-
-With the outer lock held, the inner `parallel do` runs **serially over its full range on every
-rank**, so each rank already holds the complete `v11` and skipping the reduction is **correct**.
-That is "MPI on the outside" working as designed. `shell1quartet.foo` alone has 17 such loops,
-all reached from outer loops in the Fock build, so the check aborted every debug MPI run almost
-immediately — it killed `hart`.
-
-Nor can it be downgraded to a `WARN`: these sites are per shell-quartet, so the warning would
-fire millions of times.
-
-**What survives is the lint**, and it is the right tool: the actual bug is a reduction *lexically
-inside* a `parallel do` body (the four `molecule.grid.foo` sites), which
-`scripts/check_parallel_lint.py` detects statically and precisely. The dynamic check could not
-distinguish the bug from the design, and the static one does not need to.
-
-*(An earlier note claimed the two checks were complementary — the lint for lexical cases, the
-abort for reductions reached through a call. The call case turns out to be the legitimate one,
-so there is nothing for the abort to add.)*
-
-**Milestone 6 is therefore: part 4 (lint) done, part 2 withdrawn with reasons, parts 1
-(`reduce(x)`) and 3 (depth-counted lock) still open.**
 
 ## A related trap found the same way: `--fos 0`
 
@@ -3250,63 +2962,6 @@ harness writes `stdout.bad` on a fail). The five listed above are all that remai
 
 # Translator and the Foo language
 
-## Translator: `data` statements at `program` scope are silently dropped — FIXED 2026-08-04
-
-**This one causes silently wrong answers, and it cost a day.** The ANTLR4
-translator emits `data` statements for module-scope variables (`atom.foo` 21/21,
-`colour.foo` 44/44, `becke_grid.foo` 6/6 survive) but **drops them entirely from a
-`program` unit**. `runfiles/run_har.foo` had two; `build/run_har.F90` had none.
-
-The declaration is still emitted, so it compiles clean and the variable is simply
-uninitialised. In `hart` that meant `allowed_bases` and `grid_levels` were garbage,
-so **every** basis name — including the program's own default `def2-SVP` — failed
-`is_one_of` with "unknown basis". Nothing warned.
-
-Worked around by assigning the arrays in the executable part instead
-(`run_har.foo`, `run_sf.foo`, `run_sf_derivs.foo`). **The translator is the real
-bug.** Until it is fixed, either emit the `data`, or make the translator *reject*
-what it cannot translate — silently discarding a statement is the worst option.
-
-`runfiles/run_csq.foo` still has program-scope `data` and is not in the translated
-source list; it will hit this if revived.
-
-### Resolution (2026-08-04)
-
-**Both** halves of the recommendation above were implemented — the `data` is emitted,
-*and* the translator now rejects what it cannot translate.
-
-Root cause was a single line in `FooToFortran.emitBodyList`:
-
-```java
-if (b.localDecl() == null && b.stmt() == null) continue;   // blank / unhandled
-```
-
-`procBody` has seven alternatives; a `dataStmt` has both `localDecl` and `stmt` null,
-so it fell through this crack. The comment even said "unhandled".
-
-Now: `dataStmt` is emitted; `implicitStmt` and `useStmt` inside a body are skipped
-**deliberately**, each with a comment giving the reason (the translator emits its own
-`implicit none`, and the module's `<stem>.use` include already provides the `use TYPES`
-in `VEC{REAL}:min_BFGS` — emitting either in place would not compile); and **every other
-alternative throws**. A construct that parses but produces no output is now a build
-failure, which is the property this entry asked for.
-
-**The audit found the blast radius was smaller than feared.** Comparing every source
-`data` statement against the generated Fortran across all 184 files found no dropped
-statement anywhere in `foofiles/`. Five files looked like mismatches and all five are
-variables *named* `data` (`data :: VEC{REAL}, IN`, `data = data(keep)`), not statements.
-So no built binary was ever wrong: the library has no procedure-scope `data`, and the
-only affected program, `run_csq.foo`, is not built. `run_csq` now translates with all
-three of its `data` statements intact.
-
-The `run_har.foo` / `run_sf.foo` / `run_sf_derivs.foo` workarounds are **left in place**:
-they work, `hart` is now tested around them, and reverting tested code to restore a
-`data` statement buys nothing.
-
-Related: `none` is a reserved word in `Foo.g4`, so it cannot be used as a variable
-name. The parse error it produces (`mismatched input 'none'`) points at the *end*
-of the file, not at the offending line, which makes it hard to find.
-
 ## Cleanup: normalise procedure-name CASE across definition and call sites
 
 **Goal (Dylan):** find every procedure whose **definition case differs from its call-site
@@ -3562,6 +3217,40 @@ for this kind of visual survey."* Any redesign has to keep the one-page survey.
 
 ---
 
+## RGBI: known defects and rough edges
+
+Moved out of `docs/RUNNING_RGBI.md` on 2026-08-10, when the user-facing pages
+were cleared of developer material. None is fixed.
+
+**In the program**
+
+- **`rgbi --help` calls the program `run_rgbi`**, which is the CMake target name
+  rather than what gets installed, and points at a `./rgbi-script` folder, which
+  is spelled `rgbi-scripts`. Both cosmetic. `hart` has an invariant check
+  comparing `--help` against its option `case` labels
+  (`scripts/check_hart_options.sh`); `rgbi` has three options and no such check.
+- `CMakeLists.txt:883` pins a file to `-O2` because **"rgbi/BN's Roby
+  populations were wrong"** at other optimisation levels. Read that comment
+  before touching optimisation flags for this program. No test guards it — see
+  the macOS-in-CI item below.
+
+**In the pictures**
+
+- **The dial grid's column count is hard-coded to four**, in three places per
+  routine (`ROBY:put_dial_table_do_H`, `foofiles/roby.foo:7090`). Four dials
+  need ~520 pt and `article`'s default `\textwidth` is ~345 pt, so the fourth
+  column fell off the page and `pdfcrop` cut it — visible in the committed
+  reference PDFs. Worked around in `rgbi-dial-header.tex` by giving the page a
+  large canvas.
+- Nothing compares the reference PDFs automatically; they are eyeball targets.
+
+**Reference material not in the repository**
+
+The Grabowsky chapter PDF is deliberately not checked in — 1.1 MB of binary. On
+`sauce` it is at `~/rgbi-reference/Jayatilaka_2025_Grabowsky_chapter.pdf`.
+
+---
+
 # Tooling and editor support
 
 ## Editor: improve vim highlighting of Foo and vim integration
@@ -3588,38 +3277,6 @@ highlighting and tighter editor integration. The repo already ships some vim sup
 ---
 
 # Platform-specific
-
-## FIXED 2026-08-24: the macOS RGBI badge was red over one bad package name
-
-`ci-rgbi-macos.yml` failed at **"BasicTeX, then tlmgr BY ABSOLUTE PATH"** from
-2026-08-05. This entry used to say the cause was unknown, because the Mac that
-last had the toolchain working was behind a firewall and the logs had expired.
-Both premises turned out to be false: the Mac came back, and the log of run
-**32456863540** (2026-08-21) was still retrievable. It says:
-
-```
-tlmgr install: package longtable not present in repository.
-```
-
-That is the whole fault. **There is no TeX Live package called `longtable`** --
-`longtable.sty` ships inside `tools`, which BasicTeX already carries. Every
-other package in the list was fine: `geometry`, `pgf` and `xcolor` were already
-present, and `chemfig`, `pdfcrop` and `simplekv` installed cleanly (4/4). tlmgr
-still returned 1 for the one name it could not resolve, and that killed the step.
-
-None of the three candidate causes guessed here previously was right. The
-absolute-path `tlmgr` trap, which this entry speculated about, was real but had
-already been fixed on 2026-08-05 and was not the failure.
-
-Fixed by dropping `longtable` from the install list, plus a `kpsewhich
-longtable.sty` in the same step so the claim "already satisfied" is asserted
-rather than trusted.
-
-**The lesson is the cheap one.** The diagnosis took a single `gh run view
---log-failed` and no Mac at all -- the entry's own instruction ("anyone with a
-Mac should read a FRESH log") was half right: the fresh log was the answer, the
-Mac was not needed. Logs are retained 90 days; this one was read on day 3.
-
 
 ## OPEN: long paths to the basis sets fail -- STR is 256 characters
 
@@ -4637,39 +4294,392 @@ suite (119/124 — next section) and wiring the release gate into CI.
 
 ---
 
-## RGBI: known defects and rough edges
+## `archive/bond-energy` will not be ported (Dylan, 2026-08-18)
 
-Moved out of `docs/RUNNING_RGBI.md` on 2026-08-10, when the user-facing pages
-were cleared of developer material. None is fixed.
+**Decided, not merely postponed.** The Roby bond-energy work on `archive/bond-energy`
+(Dylan Jayatilaka, 11 commits, 2020-09 – 2020-10) stays on its tag. Nothing on
+`develop` depends on it and nothing was removed to make this decision.
 
-**In the program**
+What it holds, so the size of the thing is on record: `roby.foo` +1478 lines --
+`Eshared` partitioning for E^DE, an exact energy-density method, deformation
+energies and group populations -- plus `types.foo` +127, `atom.foo` +123,
+`vec{atom}.foo` +122, and smaller changes to `molecule.prop.foo`,
+`molecule.scf.foo`, `opmatrix.foo`, `vec{int}.foo` and `CMakeLists.txt`.
+Eleven files, +1756/−217, all unmerged (`git cherry develop archive/bond-energy`
+marks all 11 commits `+`).
 
-- **`rgbi --help` calls the program `run_rgbi`**, which is the CMake target name
-  rather than what gets installed, and points at a `./rgbi-script` folder, which
-  is spelled `rgbi-scripts`. Both cosmetic. `hart` has an invariant check
-  comparing `--help` against its option `case` labels
-  (`scripts/check_hart_options.sh`); `rgbi` has three options and no such check.
-- `CMakeLists.txt:883` pins a file to `-O2` because **"rgbi/BN's Roby
-  populations were wrong"** at other optimisation levels. Read that comment
-  before touching optimisation flags for this program. No test guards it — see
-  the macOS-in-CI item below.
+Two things a future reader should know before reopening it, both established
+2026-08-18:
 
-**In the pictures**
+- **The starting position is better than it looks.** Unlike the Bader port there is
+  already a regression net: `tests/rgbi/karrikinolide_blyp_6-31G(d)_Roby_bond_index`
+  and its `_g09_` variant exercise the live Roby path. And the two helper modules the
+  tag adds, `vec{emat{intrinsic}}.foo` and `vec{emat{int}}.foo`, have since landed on
+  `develop` independently, so that part of the work is already done.
+- **The difficulty is drift, not translation.** `roby.foo` is 7490 lines on `develop`
+  against 8463 on the tag, and it has been modified on `develop` since 2020. This is
+  a graft into evolved code, not a clean apply, and it needs a `types.foo` change --
+  which the Bader port did not.
 
-- **The dial grid's column count is hard-coded to four**, in three places per
-  routine (`ROBY:put_dial_table_do_H`, `foofiles/roby.foo:7090`). Four dials
-  need ~520 pt and `article`'s default `\textwidth` is ~345 pt, so the fourth
-  column fell off the page and `pdfcrop` cut it — visible in the committed
-  reference PDFs. Worked around in `rgbi-dial-header.tex` by giving the page a
-  large canvas.
-- Nothing compares the reference PDFs automatically; they are eyeball targets.
+Recover it with `git branch bond-energy archive/bond-energy`. See
+`docs/REPOSITORY_BRANCHES.md`.
 
-**Reference material not in the repository**
+## Keyword parsing must not leak into library routines (fixed; survey kept)
 
-The Grabowsky chapter PDF is deliberately not checked in — 1.1 MB of binary. On
-`sauce` it is at `~/rgbi-reference/Jayatilaka_2025_Grabowsky_chapter.pdf`.
+`MOLECULE.READ:read_archive(name,genre)` is a library routine — it takes its
+operands as arguments and is called from `molecule.scf.foo` (×3),
+`molecule.main.foo` (×2) and `run_sf_derivs.foo`. It nonetheless reached for the
+global `stdin` to look for a trailing `normalise` qualifier:
 
----
+```foo
+   if (stdin.buffer.n_items==2) stdin.read(normalize)
+```
+
+Two bugs in one line:
+
+- **It segfaults in any program without a `stdin`.** `hart` has no job file, so
+  this dereferenced an unallocated `TEXTFILE` on the second HAR cycle — the
+  first time the refinement re-reads its density archive.
+- **In `tonto` it was dead, and could corrupt parsing.** `TEXTFILE:n_line_items`
+  *is* `buffer.n_items`, and the keyword handler `ENSURE`s `n_line_items==3`, so
+  a line of 3 items can never satisfy `==2`: no job file could ever switch
+  normalisation on, and every `if (do_norm) …unnormalize(…)` branch was
+  unreachable. Meanwhile a *programmatic* caller inherited whatever line the job
+  file was on, and on a 2-item line would silently consume one of its tokens.
+
+Fixed: the qualifier is now an optional argument, and `read_archive_and_normalise`
+is its keyword — so the feature is reachable for the first time.
+
+**Survey — this was the only instance.** Six places in the library peek at the
+line and then read a variable number of items:
+
+| Site | Procedure | Shape | Reached from |
+|---|---|---|---|
+| `molecule.har.foo:1797` | `make_spherically_averaged_HAs` | no args | 1 `case` line |
+| `molecule.misc.foo:2040` | `put_interpolator_list` | no args | 1 `case` line |
+| `molecule.misc.foo:5022` | `put_spherical_SA_ED_from_atom` | no args | 1 `case` line |
+| `diffraction_data.put.foo:783` | `put_worst_reflections` | no args | 1 `case` line |
+| `molecule.put.foo:674` | `put_archive` | no args | 1 `case` line |
+| `molecule.read.foo` | `read_archive(name,genre)` | **took args** | 6 programmatic sites |
+
+The five no-argument ones are genuine keyword handlers: they read *all* their
+operands from `stdin`, including the name of the thing to act on, and a driver
+never calls them. That pattern is fine. The breakage came only from merging the
+parse role and the do role into one procedure, which happened once.
+
+**The rule, for anyone adding a driver:** a procedure that takes arguments must
+not touch `stdin`. `scripts/check_library_stdin.py` enforces it (ctest name
+`library_stdin`, label `short`; also run by `make report` and CI).
+
+### DONE (2026-08-02): `write_archive` swallowed the next keyword
+
+Found while testing `read_archive_and_normalise`. `MOLECULE.PUT:put_archive` has
+the same qualifier peek, with an off-by-one:
+
+```foo
+   if (stdin.buffer.n_items==2) stdin.read(normalize)     ! molecule.put.foo
+```
+
+`n_items` counts the **whole line including the keyword** — that is why
+`read_archive`'s handler asserts `n_line_items==3` for
+`read_archive <name> <genre>`. So a plain `write_archive MOs` is exactly 2 items,
+the peek always fires, runs off the end of the line and **consumes the next
+keyword** as its qualifier. The test should be `==3`.
+
+Demonstrated: a job file with `write_archive MOs` followed by
+`read_archive MOs restricted` dies with "unknown option: mos" — the
+`read_archive` keyword was eaten, leaving its operands to be read as keywords.
+
+**The one test that uses it is hollow — investigate this first.**
+`tests/long/nh3_x-ray-constrained-rhf-cluster-charge_cc-pVTZ_restart/stdin:196`
+reads:
+
+```
+   read_ascii_archive density_mx r
+   write_archive density_mx
+
+   ! Now to the SCF
+   scf
+```
+
+`write_archive density_mx` is two items, so the peek fires and swallows the very
+next token — **`scf`**. The reader resumes at `delete_scf_archives`. Evidence
+from the blessed reference, not inference:
+
+- `grep -c SCF stdout` → **0**. Not one mention, though the job sets
+  `output_results= YES`.
+- `Wall-clock time taken for job "nh3" is , 40 milliseconds.`
+
+An X-ray-constrained RHF cluster-charge SCF in cc-pVTZ does not run in 40 ms.
+**The test performs no SCF at all**, and its reference was blessed in that
+state, so it passes by faithfully reproducing the skip. Whatever coverage its
+name promises — X-ray constrained wavefunctions, cluster charges, restart — it
+does not provide.
+
+**Why it is not fixed here.** Correcting the off-by-one makes `scf` execute, so
+the job would then do the science it was written to do and its reference must be
+re-blessed against completely different output. That is a deliberate decision
+about a long-suite test, not a drive-by in an options branch.
+
+**Blast radius, surveyed:** one test and one line.
+`grep -rn '^[[:space:]]*write_archive' tests/ runfiles/` returns exactly the nh3
+line above and nothing else, and `n_items==2) stdin.read` now matches only
+`molecule.put.foo:674`. So the fix is a one-character edit (`2` → `3`) plus
+re-blessing one reference — but that reference will change completely, because
+the job will start doing an SCF it has never done.
+
+(The `normalise`/`normalize` spelling fix applied to that same line is
+behaviour-neutral until this off-by-one is fixed, since the token it compares is
+currently a stray keyword either way.)
+
+### Four more of the same shape, allow-listed rather than fixed
+
+Writing that check turned these up. They are **not broken today**, so they are
+recorded rather than changed, but they are the same merged-role pattern and the
+allow-list in the script names each one:
+
+- `molecule.read.foo:read_molden_file`, `read_tonto_FChk_file`,
+  `read_g09_FChk_file` — take an optional name and fall back to
+  `stdin.buffer.exhausted` when it is absent. Safe only because every driver
+  passes the name (`run_rgbi.foo:202-203` does). Call one without the argument
+  from a program that has no `stdin` and it dereferences an unallocated
+  `TEXTFILE`, exactly as `read_archive` did.
+- `molecule.put.foo:put_florian_wfn_file` — **unguarded**:
+  `if (NOT stdin.buffer.exhausted) stdin.read(name)` with no `present()` test at
+  all. This one would crash in any driver that reaches it. Nothing does today.
+
+The fix in each case is the one applied to `read_archive`: move the fallback
+into the keyword handler and let the library routine take a plain argument.
+
+`vec{basis}.foo:read_library_data` is allow-listed for the opposite reason — it
+is *correct*. It creates `stdin` itself when there is none and restores it
+afterwards. Copy that pattern if a library routine genuinely needs the parser.
+
+(`put_archive` looks like a counter-example to a plain grep — 10 further call
+sites — but those are a *different overload*, `put_archive(item,name,…)`, which
+takes arguments and never touches `stdin`. Read the `.int` file rather than
+grepping by name; see CLAUDE.md §8.)
+
+## DONE (2026-08-03): the MPI CI is GREEN — first time ever
+
+Run #8 (`29f8dcea`) concluded **success**, after the `--oversubscribe` fix below. Every step
+passed, including the two that matter:
+
+| step | result |
+|---|---|
+| Assert the binary really is MPI-linked | success |
+| **MPI invariant — pi is rank-count independent (GATING)** | **success** |
+| Short suite under MPI at 2 ranks (informational) | **success** |
+
+Runs 1–7 had all failed. Note the informational short suite passed too, which is more than the
+gate required — so `tonto` at 2 ranks agrees with the serial references across the short suite in
+CI, not just locally.
+
+## DONE (2026-08-02): the MPI CI failure was the launcher, not the reductions
+
+**The reductions are correct.** This entry previously said "something in the reduction path is
+still wrong" — that was wrong, and it was written before the log had been read. Correcting it in
+full, because the mistaken version was pushed.
+
+`ci-mpi.yml` had failed on every run since it was added, always on the gating step *"MPI
+invariant — pi is rank-count independent"*. The log says:
+
+```
+ok   mpi_pi   -n 1: 3.141592653589362
+ok   mpi_pi   -n 2: 3.141592653589390
+FAIL mpi_pi   -n 4: launcher exited 1
+```
+
+So π was right at 1 and 2 ranks, agreeing with each other to **13 significant digits** — i.e.
+`PARALLEL_SUM` works. At 4 ranks the program **never ran**: Open MPI 5 refuses to start more
+ranks than there are slots and exits non-zero, and a GitHub runner does not have 4.
+
+The workflow already knew this in one place and not the other: the toolchain-verification step
+uses `--oversubscribe` (`ci-mpi.yml:114`), and the suite step is pinned to `-n 2` with the
+comment *"the runner has 4 vCPUs and the launcher would oversubscribe"* — but the π check was
+invoked with `1 2 4` and `check_mpi_pi.sh` launched without the flag.
+
+**Fixed** in `scripts/check_mpi_pi.sh`: probe the launcher (`--version | grep -qi "open mpi"`)
+and add `--oversubscribe` when it is Open MPI. Probed rather than hard-coded because the flag is
+Open MPI's; MPICH oversubscribes unasked and would reject it. Oversubscribing is exactly right
+here — this is a correctness check on a tiny Riemann sum, not a benchmark.
+
+Verified locally on a 12-core machine, where `-n 16` is a genuine oversubscribe:
+
+```
+ok   mpi_pi   -n 1: 3.141592653589362      <- identical to CI
+ok   mpi_pi   -n 2: 3.141592653589390      <- identical to CI
+ok   mpi_pi   -n 4: 3.141592653590147
+ok   mpi_pi   -n 16: 3.141592653589789
+ok   mpi_pi   all rank counts (1 2 4 16) agree with pi and with each other
+```
+
+and the flag is demonstrably the cause: `mpirun -n 16` alone exits 1 without running anything,
+`mpirun -n 16 --oversubscribe` exits 0.
+
+**What this changes.** Parallel fragHAR is **not** blocked by a broken reduction, which is what
+the red CI appeared to say. The reduction path is sound at 1, 2, 4 and 16 ranks. The remaining
+`fragment_SCF_para` concerns stand on their own merits — the two-strategy split and the
+`next_p_loop_index` off-by-one — and are not evidence of anything deeper.
+
+**Lesson worth keeping:** the check reported `launcher exited 1`, which is not a numerical
+failure at all, and four consecutive runs were read as "the reductions are broken" without
+anyone opening the log. `scripts/check_mpi_pi.sh` distinguishes the cases in its own output; the
+diagnosis just has to read it.
+
+## ROOT CAUSE FOUND AND FIXED (2026-08-03): `TEXTFILE:flush` put the margin twice on master
+
+```foo
+      if (IO_IS_ALLOWED) then
+         write(unit=.unit,...) trim(.buffer.string)
+         ...
+         .clear_and_put_margin        ! <-- MASTER ONLY
+         .record = .record + 1
+      end
+
+      PARALLEL_BROADCAST(.IO_status,...)
+      PARALLEL_BROADCAST(.record,...)
+
+      .clear_and_put_margin           ! <-- every rank
+```
+
+`clear_and_put_margin` ends in `.buffer.put(...)` → `BUFFER:put_str`, which **broadcasts**
+`.string` (256 bytes) and `.item_end`. So the master entered **one extra pair of collectives per
+flush**, the ranks fell out of step, and the next collective failed with `MPI_ERR_TRUNCATE`.
+
+**Why it hid for years:** `clear_and_put_margin` *returns early* when `.style.margin_width==0`,
+doing no collective at all — and that is the normal case. It only bites once something sets a
+margin. `COMMAND_LINE:put_command_optarg` calls `set_margin_width(2)`, which is why `hart` died
+exactly there, why the first 126 broadcasts matched perfectly (banner, margin 0), and why
+`tonto` was never affected.
+
+**Fix:** delete the call inside the guard; the one after the broadcasts already covers every
+rank. Verified — `hart` at 2 ranks goes from dying at 30 lines of output to **758**, and the
+truncation is gone. Serially unaffected: release rebuilt, short suite 50/51 unchanged, all four
+invariant checks pass, `ctest -L hart` 4/4.
+
+## WITHDRAWN (2026-08-03): the runtime "abort on a suppressed reduction"
+
+Milestone 6 part 2 was implemented, and then **removed the next day, because its premise is
+wrong**. It assumed a reduction reached while a parallel-do lock is held is always a bug. It is
+not — it is *also* the intended nesting pattern:
+
+```foo
+SHELL1QUARTET:make_esfs_ss_0000(v11)      ! called from inside
+   parallel do k = 1,.ab_n_gaussian_pairs !   MOLECULE.FOCK:make_u_JK_engine's
+   ...                                    !   own `parallel do`
+   PARALLEL_SUM(v11)                      ! correctly placed after ITS loop
+```
+
+With the outer lock held, the inner `parallel do` runs **serially over its full range on every
+rank**, so each rank already holds the complete `v11` and skipping the reduction is **correct**.
+That is "MPI on the outside" working as designed. `shell1quartet.foo` alone has 17 such loops,
+all reached from outer loops in the Fock build, so the check aborted every debug MPI run almost
+immediately — it killed `hart`.
+
+Nor can it be downgraded to a `WARN`: these sites are per shell-quartet, so the warning would
+fire millions of times.
+
+**What survives is the lint**, and it is the right tool: the actual bug is a reduction *lexically
+inside* a `parallel do` body (the four `molecule.grid.foo` sites), which
+`scripts/check_parallel_lint.py` detects statically and precisely. The dynamic check could not
+distinguish the bug from the design, and the static one does not need to.
+
+*(An earlier note claimed the two checks were complementary — the lint for lexical cases, the
+abort for reductions reached through a call. The call case turns out to be the legitimate one,
+so there is nothing for the abort to add.)*
+
+**Milestone 6 is therefore: part 4 (lint) done, part 2 withdrawn with reasons, parts 1
+(`reduce(x)`) and 3 (depth-counted lock) still open.**
+
+## Translator: `data` statements at `program` scope are silently dropped — FIXED 2026-08-04
+
+**This one causes silently wrong answers, and it cost a day.** The ANTLR4
+translator emits `data` statements for module-scope variables (`atom.foo` 21/21,
+`colour.foo` 44/44, `becke_grid.foo` 6/6 survive) but **drops them entirely from a
+`program` unit**. `runfiles/run_har.foo` had two; `build/run_har.F90` had none.
+
+The declaration is still emitted, so it compiles clean and the variable is simply
+uninitialised. In `hart` that meant `allowed_bases` and `grid_levels` were garbage,
+so **every** basis name — including the program's own default `def2-SVP` — failed
+`is_one_of` with "unknown basis". Nothing warned.
+
+Worked around by assigning the arrays in the executable part instead
+(`run_har.foo`, `run_sf.foo`, `run_sf_derivs.foo`). **The translator is the real
+bug.** Until it is fixed, either emit the `data`, or make the translator *reject*
+what it cannot translate — silently discarding a statement is the worst option.
+
+`runfiles/run_csq.foo` still has program-scope `data` and is not in the translated
+source list; it will hit this if revived.
+
+### Resolution (2026-08-04)
+
+**Both** halves of the recommendation above were implemented — the `data` is emitted,
+*and* the translator now rejects what it cannot translate.
+
+Root cause was a single line in `FooToFortran.emitBodyList`:
+
+```java
+if (b.localDecl() == null && b.stmt() == null) continue;   // blank / unhandled
+```
+
+`procBody` has seven alternatives; a `dataStmt` has both `localDecl` and `stmt` null,
+so it fell through this crack. The comment even said "unhandled".
+
+Now: `dataStmt` is emitted; `implicitStmt` and `useStmt` inside a body are skipped
+**deliberately**, each with a comment giving the reason (the translator emits its own
+`implicit none`, and the module's `<stem>.use` include already provides the `use TYPES`
+in `VEC{REAL}:min_BFGS` — emitting either in place would not compile); and **every other
+alternative throws**. A construct that parses but produces no output is now a build
+failure, which is the property this entry asked for.
+
+**The audit found the blast radius was smaller than feared.** Comparing every source
+`data` statement against the generated Fortran across all 184 files found no dropped
+statement anywhere in `foofiles/`. Five files looked like mismatches and all five are
+variables *named* `data` (`data :: VEC{REAL}, IN`, `data = data(keep)`), not statements.
+So no built binary was ever wrong: the library has no procedure-scope `data`, and the
+only affected program, `run_csq.foo`, is not built. `run_csq` now translates with all
+three of its `data` statements intact.
+
+The `run_har.foo` / `run_sf.foo` / `run_sf_derivs.foo` workarounds are **left in place**:
+they work, `hart` is now tested around them, and reverting tested code to restore a
+`data` statement buys nothing.
+
+Related: `none` is a reserved word in `Foo.g4`, so it cannot be used as a variable
+name. The parse error it produces (`mismatched input 'none'`) points at the *end*
+of the file, not at the offending line, which makes it hard to find.
+
+## FIXED 2026-08-24: the macOS RGBI badge was red over one bad package name
+
+`ci-rgbi-macos.yml` failed at **"BasicTeX, then tlmgr BY ABSOLUTE PATH"** from
+2026-08-05. This entry used to say the cause was unknown, because the Mac that
+last had the toolchain working was behind a firewall and the logs had expired.
+Both premises turned out to be false: the Mac came back, and the log of run
+**32456863540** (2026-08-21) was still retrievable. It says:
+
+```
+tlmgr install: package longtable not present in repository.
+```
+
+That is the whole fault. **There is no TeX Live package called `longtable`** --
+`longtable.sty` ships inside `tools`, which BasicTeX already carries. Every
+other package in the list was fine: `geometry`, `pgf` and `xcolor` were already
+present, and `chemfig`, `pdfcrop` and `simplekv` installed cleanly (4/4). tlmgr
+still returned 1 for the one name it could not resolve, and that killed the step.
+
+None of the three candidate causes guessed here previously was right. The
+absolute-path `tlmgr` trap, which this entry speculated about, was real but had
+already been fixed on 2026-08-05 and was not the failure.
+
+Fixed by dropping `longtable` from the install list, plus a `kpsewhich
+longtable.sty` in the same step so the claim "already satisfied" is asserted
+rather than trusted.
+
+**The lesson is the cheap one.** The diagnosis took a single `gh run view
+--log-failed` and no Mac at all -- the entry's own instruction ("anyone with a
+Mac should read a FRESH log") was half right: the fresh log was the answer, the
+Mac was not needed. Logs are retained 90 days; this one was read on day 3.
+
 
 # `hart`: development history
 
