@@ -2681,6 +2681,54 @@ runner/CPU (BLAS / eigensolver ordering, FP reassociation) flips the verdict —
 **CI flake** seen on GitHub Actions (same binary, pass on one runner, fail on the next).
 **Dylan wants to drill down** on each and fix the root cause, not merely tolerate them.
 
+### The XCW `Penalty in F` drift, found while reblessing (2026-08-26)
+
+**Filed here at Dylan's direction**, alongside the other small numerical differences:
+they look alike and may well have *unrelated* causes, but one register is the place to
+see them together.
+
+Reblessing the six `long` XCW/HAR references after the extinction/GoF merge, almost
+every changed number was accounted for. `N_p` went 2 → 1 — the milestone 11 decision to
+stop counting the XCW Lagrange multiplier — and that one change propagates through the
+whole per-shell `GOF` column, each shell scaling by `sqrt((n_refl-1)/(n_refl-2))`. Every
+other column (`R(F)`, `Rw(F)`, `R(F2)`, `Rw(F2)`, `F_exp/F_pred`, `# of refl`) is
+**byte-identical**. Hundreds of differing lines, one parameter.
+
+**One number is not accounted for.** In `nh3_x-ray-constrained-rhf_cc-pVTZ`:
+
+| | old | new | ratio |
+|---|---|---|---|
+| `Penalty in F` = `GoF^2(N_p)` | 7.557 | 7.491 | 1.00881 |
+
+With `N_r` = 88, a pure `N_p` 2 → 1 change would give `87/86` = **1.01163** if
+`GoF^2 = chi^2/(N_r - N_p)`. Observed is 1.00881, leaving **~0.28% unexplained**.
+
+Caveats, so the next person does not over-read this:
+
+- **That formula is assumed, not verified.** `Penalty in F` may not be
+  `chi^2/(N_r - N_p)` at all; if it is not, there is nothing to explain here and the
+  first job is to read what the code actually computes.
+- **It is not platform drift.** macOS/gfortran-14 and Linux/gfortran-16 both print
+  7.491 to every digit — checked directly, not inferred.
+- **The per-shell residuals are probably print precision, not signal.** Each shell ratio
+  falls 0.06–0.21% short of the pure-`N_p` prediction, but the references carry only 4
+  significant figures, which alone accounts for ~0.09%. The `Penalty` residual is on
+  values printed to the same precision and is three times larger, so that one is real.
+
+### Two more for the same register
+
+- **`quartz_NN_HAR_L0`/`L1` drift between platforms.** Same code, same day: Linux gives
+  `GoF^2(N_p)` 9.8369, macOS 9.8425 (0.057%), with the worst line at **0.135%** against a
+  0.2% gate. Inside the gate, but under a third of the tolerance in hand — which is how a
+  test goes flaky later for no visible reason. This is why these references are generated
+  on Linux/gfortran-14 and not on a Mac.
+- **`urea_ccsd_pob-TZVP_Salvador_properties` (2.99%) and `h2o_rhf_cc-pVDZ_tdhf` (0.231%)
+  both PASS in a gfortran-16 debug build** while failing in gfortran-14 release on the same
+  Mac. Two variables differ between those builds — compiler *and* optimisation — so this
+  isolates nothing by itself. The cheap next experiment is a gfortran-14 **debug** build: if
+  they pass there too, the culprit is `-Ofast`, not the compiler. Note `ci-macos.yml`'s
+  header attributes the first to macOS; that attribution is at least incomplete.
+
 ### Lower priority: `ylid` (rgbi) — vdW contact indices differ on macOS
 
 **Status 2026-07-29:** fails on **macOS only** (3.85% max rel); **passes on Linux** against the
