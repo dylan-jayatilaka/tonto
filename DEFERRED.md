@@ -3423,6 +3423,13 @@ clean.
 
 ## UNVERIFIED: the `textfile.foo` MPI fix has not seen the serial suite (2026-08-26)
 
+**Update, same evening: the `long` suite passed with no new failures.** 28/31 loose against
+the fixed binary; the three non-passes are the two known macOS-only `quartz_NN_HAR` jobs
+(references correct) and the pHAR test blocked by its missing 167 MB asset. Run on
+macOS/arm64 with the MPI build at `-n 1`, **not** Linux serial gfortran-14, so it is strong
+evidence rather than the owed run — the compiler, platform and macro configuration all differ
+from the 124/124 baseline. Detail in `docs/TONTO_AND_MPI.md` Finding 7.
+
 **How to run it without a machine (added 2026-08-26, as Dylan left).**
 `.github/workflows/ci-full-suite.yml` is a **dispatch-only** workflow that builds release
 and runs the full suite with `--failure-dir`. It exists because nothing else runs `long`:

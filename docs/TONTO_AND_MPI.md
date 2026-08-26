@@ -758,6 +758,33 @@ sits on the path of every file read, and it was disguising the real failure.
 collective apart, before `CIF:move_to_end_of_data` is reached. From rank 1's stack that means
 `CIF:find_end_of_data_block` / `MOLECULE.CE:process_cif_for_cx`.
 
+##### PARTIAL VERIFICATION DONE (2026-08-26, late) — the `long` suite, macOS, 1 rank
+
+Run after the section below was written, so read this first. The **`long` suite** was run
+against the fixed binary: **28/31 loose**, and **all three non-passes are known and
+pre-existing**, none of them caused by the `textfile.foo` change:
+
+| test | why it fails, and since when |
+|---|---|
+| `quartz_NN_HAR_L0_rhf_def2-SVP` | macOS-only, reference is *correct* — `DEFERRED.md`, "fail on macOS only" |
+| `quartz_NN_HAR_L1_rhf_def2-SVP` | same |
+| `ammonium_borane_pHAR_C23` | ERROR — the test blocked by the missing 167 MB LFS asset, its own deferred entry |
+
+So the `long` jobs — the ones no workflow runs, and the heaviest users of the CIF and archive
+reading this change touches — show **no regression**.
+
+**What this does NOT discharge, and the distinction matters.** It was run with
+`build-mpi-local` (macOS/arm64, Homebrew GCC 16.1.0, `-DMPI=1`, `-Ofast`) at **`-n 1`**, not
+with a serial gfortran-14 build on Linux. At one rank `IO_IS_ALLOWED` is always true so the
+new guard is a no-op and the changed control flow is exercised exactly as it would be in
+serial — which is the point — but the compiler, the platform and the macro configuration all
+differ from the baseline in `CLAUDE.md` §5. Treat this as strong evidence of no regression in
+the `long` jobs, not as the owed suite run.
+
+**Still owed:** `short long hart` on Linux, gfortran-14, serial release, against the 124/124
+baseline. That is now runnable without a machine — `gh workflow run ci-full-suite.yml --ref
+develop`, see `.github/workflows/ci-full-suite.yml`.
+
 ##### VERIFICATION STILL OWED — run the SERIAL suite before this goes near `master`
 
 **Not yet run as of 2026-08-26.** `foofiles/textfile.foo` is on the path of **every file read
