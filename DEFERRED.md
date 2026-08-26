@@ -2745,11 +2745,37 @@ Caveats, so the next person does not over-read this:
   column width. Both were inferred from a truncated diff. The reflections were compared by
   index only after the second one failed to hold up.)*
 
-  **Two separate things to fix, and only the first is urgent.** The output order should be
-  deterministic — a tie-break on `(h,k,l)` after the existing key — or the comparator should
-  match reflection rows by index rather than position; until then this test can flip on any
-  machine, which is the `ylid` failure mode again. Separately, a 0.158% drift against a
-  0.2% gate is thin cover and belongs on the drill-down list above.
+  **Where the order comes from:** `DIFFRACTION_DATA.PUT:put_N_worst_reflections`, which does
+  `F_z.quick_sort(ind,decreasing_order=TRUE)` and prints `.reflections(ind(1:n))`.
+
+  **A tie-break on `(h,k,l)` will NOT fix this — do not try it.** That was proposed here and
+  is wrong: the keys are not tied, their true order reverses. Measured for the pair that
+  swaps:
+
+  | | `(-8, 8, 10)` | `(-5, 9, 11)` | gap |
+  |---|---|---|---|
+  | Linux | −6.6098 | −6.6106 | 0.0008 |
+  | macOS | −6.6168 | −6.6166 | 0.0002 |
+
+  Drift of ~0.001 on values of ~6.6 exceeds a gap of 0.0008, so the comparison genuinely
+  reverses. A secondary key only helps for *equal* primaries. More generally: **any total
+  order on a noisy continuous key can flip**, so no sort refinement fixes this class.
+
+  **Decision 2026-08-26 (Dylan): leave it, record it.** The two fixes that would work, with
+  what each costs, so the choice does not have to be re-derived:
+
+  - *Normalise in `scripts/test.py`* — sort the rows of the block on both sides before
+    comparing. Output and references unchanged; but it is a shared-harness change touching
+    every test, and it masks genuine row-ordering regressions in this table.
+  - *Canonical order in the Foo source* — keep `F_z` for **selecting** the worst `n`, print
+    them ordered by `(h,k,l)`. Platform-stable; but a crystallographer loses worst-first
+    reading order, and three references need reblessing on Linux.
+
+  **Consequence of leaving it, and it is the reason this is written down:** this is **not a
+  macOS problem**. Any machine whose BLAS or FP ordering moves `F_z` by ~0.01% can transpose
+  those rows — a different Linux CI runner included. It is a latent flake wearing a
+  platform-specific mask, like `ylid` above. If `quartz_NN_HAR_L0`/`L1` ever go red on
+  Linux, read this entry before believing the number.
 
   **Do not bless these on a Mac.** It would bake macOS numbers into a Linux-gated project
   and leave Linux passing on under a third of the tolerance. Generating references on
