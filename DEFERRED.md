@@ -3421,6 +3421,90 @@ The stale README line ("many failures on the Apple M2 — not recommended") shou
 be corrected at the same time; it is wrong about the build, which was always
 clean.
 
+## Transpose and thin the CI badge table (Dylan, 2026-08-26)
+
+Do this as its own piece of work, in its own session. It is a README/docs change only --
+no workflow edits -- so it needs no build and no CI run.
+
+**Transpose.** The README table is platforms as rows, build types as columns. Swap them:
+build types as **rows**, platforms as **columns**. Transposing does not reduce the cell
+count -- 3 platforms x 4 build types is 12 either way -- but it fixes the growth
+direction. Platforms are stable at three (Linux, Windows/WSL, macOS) and have not changed
+in years; **build types are what keeps growing** -- release, debug, MPI, and now MPI-debug
+(see the entry above), with `release-static` and `fast` also existing. A markdown table
+grows badly sideways: a fourth column makes the README scroll horizontally on GitHub and
+is unreadable on a phone. A fourth row costs nothing.
+
+**Thin, which is the part that actually matters.** A badge means *"a live signal worth
+watching"*. Four of the nine current cells are not that: the three macOS cells say
+"not running yet" (the workflows are not on `master`, so `schedule:` never fires),
+WSL-MPI is a dash, and **WSL-debug carries a badge and has never had a green run**. Twelve
+badges would be mostly grey, and a wall of grey teaches a reader to ignore all of them --
+including Linux-release, which is the gate and the one that must never be ignored.
+
+So split the two questions the one table is currently being asked:
+
+- **`README.md`** -- "is Tonto healthy?" A small table of badges that are genuinely live
+  signals. Linux-release above all.
+- **`docs/TONTO_CONTINUOUS_INTEGRATION.md`** -- "what is covered where?" The full
+  platform x build-type matrix including the not-yet-running cells, where completeness is
+  the point and a grey cell is informative rather than noise.
+
+**Do not** simply delete the unbadged rows: "macOS release is not tested in CI" is a fact a
+reader deserves, it just does not deserve README real estate. And keep the existing rule
+that a badge and its workflow triggers are changed together -- a badge pointing at a
+workflow that never runs is how WSL-debug got into its current state.
+
+## Add a PARALLEL DEBUG build to CI, on every platform (Dylan, 2026-08-26)
+
+There is a debug job and an MPI job on Linux, and neither is a **debug MPI** job. Nothing
+in CI, on any platform, builds `-DMPI=1 -DCMAKE_BUILD_TYPE=debug`. That is the gap this
+entry closes.
+
+**Why, with the evidence that prompted it.** Chasing the deterministic
+`urea_read_and_process_CIF` desync (Finding 7 in `docs/TONTO_AND_MPI.md`), the release MPI
+build reported:
+
+```
+Error on rank 1: TEXTFILE:move_to_next_record ... error opening new file urea.cif
+```
+
+— a misleading message (that routine opens nothing) about damage **41 broadcasts downstream**
+of the divergence. The *debug* MPI build, first run, reported:
+
+```
+Error on rank 1: CIF:move_to_end_of_data ... CIF file has not been opened
+```
+
+which names the divergent state at the site. The difference is `ENSURE`, which is gated on
+`USE_PRECONDITIONS` and compiled out of every optimised build. Six CI cycles on release
+produced less than one local debug run. **Preconditions are the instrument that makes an MPI
+desync legible, and no CI job compiles them together with MPI.**
+
+**Scope.** `ci-mpi.yml` (Linux) first — it already builds Open MPI from source and caches it,
+so a second job reusing that cache is cheap. Then macOS, where `mpifort` and `gfortran` come
+matched from Homebrew and no source build is needed. WSL last, and only if the WSL-release and
+WSL-debug jobs are green first.
+
+**Shape it like `ci-debug.yml`, not like a suite run.** Build, then a couple of fast jobs at
+`-n 2` to prove the binary executes and the ranks stay in step. A full numeric suite under
+debug MPI would be slow and would inherit the `-O0` failures already in `DEFERRED.md`.
+
+**Three cautions.**
+
+- **`ENSURE` can itself contain a collective.** `TEXTFILE:is_open` performs a
+  `PARALLEL_BROADCAST_IO`, so `ENSURE(.file.is_open,...)` broadcasts. A precondition evaluated
+  on some ranks and not others *is* a desync — so a debug MPI build can fail in ways release
+  never would. Expect to triage that before the job is green, and do not read a debug-only
+  failure as proof of a release bug.
+- **On gfortran-16 the debug build omits `-fcheck=bounds`** (the compiler bug in
+  `docs/GFORTRAN16_DEBUG_CRASH.md`), so it checks less than a gfortran-14 debug build. Pin the
+  job to gfortran-14 if bounds checking is the point; use 16 if matching the MPI toolchain is.
+- **Do not badge it until it has been green once.** `ci-wsl-debug.yml` has a badge and has
+  never had a green run.
+
+Related: the badge table cannot absorb another column — see the note in that entry.
+
 ## Future task: verify the macOS build (Apple Silicon / Tahoe)
 
 **Goal (Dylan):** confirm whether Tonto builds and passes tests on current macOS, on
