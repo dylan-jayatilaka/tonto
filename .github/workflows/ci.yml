@@ -76,14 +76,31 @@ jobs:
           fi
           echo
           echo "== one canonical short test (h2o_rhf_STO-3G), raw =="
+          # TRUNCATE FOR DISPLAY, NEVER FOR CAPTURE. The full output goes to a
+          # file that is uploaded unconditionally; only what a human reads on the
+          # summary is tailed. The previous form piped straight to `tail -25`, so
+          # the other lines existed nowhere -- and `|| true` discarded the exit
+          # status on top of that.
+          mkdir -p diagnostics
           python3 scripts/test.py -t tests/short/h2o_rhf_STO-3G -p "$PWD/build/tonto" \
-            --basis-sets "$PWD/basis_sets" --log-level=INFO 2>&1 | tail -25 || true
+            --basis-sets "$PWD/basis_sets" --log-level=INFO \
+            > diagnostics/raw-test.log 2>&1 || echo "(raw test exited $?)"
+          echo "(full output in the ci-diagnostics artifact: diagnostics/raw-test.log)"
+          tail -25 diagnostics/raw-test.log
           echo
-          echo "== reference-vs-.bad diff (first 80 lines) =="
-          bad=$(find tests/short -name '*.bad' 2>/dev/null | head -1)
-          if [ -n "$bad" ]; then
-            echo "diff ${bad%.bad}  vs  $bad :"
-            diff "${bad%.bad}" "$bad" | head -80 || true
+          echo "== reference-vs-.bad diffs =="
+          # Name every .bad, not just the first. All of them are uploaded, so the
+          # summary showing one is display truncation -- but a reader who is not
+          # told there were nine will not go looking for the other eight.
+          bads=$(find tests/short -name '*.bad' 2>/dev/null | sort)
+          n=$(printf '%s\n' "$bads" | grep -c . || true)
+          if [ "$n" -gt 0 ]; then
+            echo "$n .bad file(s):"
+            printf '%s\n' "$bads" | sed 's/^/  /'
+            first=$(printf '%s\n' "$bads" | head -1)
+            echo
+            echo "diff ${first%.bad}  vs  $first  (first 80 lines; all are in the artifact):"
+            diff "${first%.bad}" "$first" | head -80 || true
           else
             echo "(no .bad produced -> h2o_rhf_STO-3G PASSED; failures are test-specific, not universal)"
           fi
@@ -116,9 +133,12 @@ jobs:
             echo ''
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          # --failure-dir: a crashed job produces no .bad, so without this an ERROR
+          # row records no cause anywhere. See scripts/suite_report.py.
           python3 scripts/suite_report.py \
             --program build/tonto --tests-dir tests --basis-sets basis_sets \
-            --suites short hart --log tests.log | tee -a "$GITHUB_STEP_SUMMARY"
+            --suites short hart --log tests.log \
+            --failure-dir test-failures | tee -a "$GITHUB_STEP_SUMMARY"
           status=${PIPESTATUS[0]}
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           exit $status
@@ -131,4 +151,6 @@ jobs:
           path: |
             tests.log
             tests/**/*.bad
+            test-failures/**
+            diagnostics/**
           if-no-files-found: warn

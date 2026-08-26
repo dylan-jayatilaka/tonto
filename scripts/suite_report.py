@@ -35,6 +35,7 @@ Tolerances (mirror scripts/test.py):
 import argparse
 import os
 import re
+import shlex
 import subprocess
 import sys
 
@@ -81,6 +82,30 @@ class _Tee:
             st.flush()
 
 
+def _save_failure(test_dir, cmd, p, args):
+    """Write everything known about a job that failed to run.
+
+    One file per failing test under --failure-dir: the exact command, the exit
+    status, and both streams. Nothing is truncated here -- a reader can tail it,
+    but a file that was never written cannot be un-truncated.
+    """
+    d = getattr(args, 'failure_dir', None)
+    if not d:
+        return
+    try:
+        os.makedirs(d, exist_ok=True)
+        name = os.path.basename(test_dir.rstrip('/')) or 'unnamed'
+        with open(os.path.join(d, name + '.log'), 'w') as f:
+            f.write('test:    %s\n' % test_dir)
+            f.write('command: %s\n' % ' '.join(shlex.quote(c) for c in cmd))
+            f.write('exit:    %d\n\n' % p.returncode)
+            f.write('----- stdout -----\n%s\n' % (p.stdout or '(empty)'))
+            f.write('----- stderr -----\n%s\n' % (p.stderr or '(empty)'))
+    except OSError as e:
+        # Never let diagnostics break the run that produced them.
+        print('  (could not write failure log for %s: %s)' % (test_dir, e))
+
+
 def score_test(test_py, test_dir, args):
     """Run test.py on one test dir; return an aggregated verdict dict."""
     # per-test tolerance overrides for known runner-sensitive tests
@@ -107,6 +132,14 @@ def score_test(test_py, test_dir, args):
     if not rows:
         # No comparison happened -- the job crashed or produced no output.
         status = 'ERROR' if p.returncode != 0 else 'PASS'
+        # KEEP THE REASON. This output is already captured above and used to be
+        # thrown away here, so an ERROR row said only "ERROR ERROR ERROR - -" and
+        # the cause existed nowhere -- not in the log, not in the artefacts (a
+        # crashed job writes no .bad). On 2026-08-26 that cost a full CI cycle:
+        # eleven MPI tests errored and nothing recorded why, so the failure had
+        # to be attributed by test NAME, which is guessing.
+        if status == 'ERROR':
+            _save_failure(test_dir, cmd, p, args)
         return {'status': status, 'exact': p.returncode == 0,
                 'rel': p.returncode == 0, 'ld': p.returncode == 0,
                 'loose': p.returncode == 0, 'max_rel': 0.0, 'max_ulp': 0.0,
@@ -161,6 +194,10 @@ def main():
                          'the current directory)')
     ap.add_argument('--no-log', action='store_true',
                     help='print to stdout only; do not write a log file')
+    ap.add_argument('--failure-dir', default=None,
+                    help='write one log per ERRORing test here (command, exit '
+                         'status, stdout, stderr). A crashed job produces no .bad '
+                         'file, so without this its cause is recorded nowhere.')
     ap.add_argument('--no-invariant-checks', action='store_true',
                     help='skip the self-validating invariant checks run after the suites')
     args = ap.parse_args()
@@ -176,6 +213,11 @@ def main():
     args.program = os.path.abspath(args.program)
     args.basis_sets = os.path.abspath(args.basis_sets)
     args.tests_dir = os.path.abspath(args.tests_dir)
+    # Absolutised for the same reason as the others: the invariant checks chdir
+    # into a scratch directory, so a relative --failure-dir would scatter logs
+    # into it and the artefact upload would find nothing.
+    if args.failure_dir:
+        args.failure_dir = os.path.abspath(args.failure_dir)
     if not os.path.exists(args.program):
         sys.exit('error: program not found: %s' % args.program)
     test_py = os.path.join(here, 'test.py')
