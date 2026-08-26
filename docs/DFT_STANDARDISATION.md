@@ -812,7 +812,7 @@ Two things make this cleaner than it looks:
 Both facts come from `archive/libxc` (Peter Spackman, 2017), which is a prototype
 and **must not be merged** — it wires one of the four dispatch routines and that
 one dereferences absent optional arguments on exactly the LDA functionals it
-added. The full assessment is in `docs/REPOSITORY_BRANCHES.md`.
+added. The full assessment is in `docs/TONTO_REPOSITORY_BRANCHES.md`.
 
 ### What a real implementation must cover
 

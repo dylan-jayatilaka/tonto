@@ -17,7 +17,7 @@
 > Two rechecks are required rather than optional:
 >
 > 1. **Redo the §4 gap analysis against the union of live and recovered code.** It was made
->    against `develop` alone. Archived work — see [Repository branches](REPOSITORY_BRANCHES.md)
+>    against `develop` alone. Archived work — see [Repository branches](TONTO_REPOSITORY_BRANCHES.md)
 >    and the `archive/*` tags — may already contain some of what §4 lists as absent, in which
 >    case the scope shrinks and the port becomes partly a recovery job. Anything found there
 >    is cheaper to revive than to re-port.

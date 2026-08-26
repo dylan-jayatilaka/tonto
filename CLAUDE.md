@@ -115,7 +115,7 @@ hoisting `CRYSTAL` out of `MOLECULE` (October), and — long term — the case f
 language with first-class parallelism, argued from the evidence above rather than from taste.
 
 **The working lesson, if you read nothing else:** in this codebase, *inspection does not work and
-measurement does*. `docs/TONTO_DEVELOPER.md` §1a records the recipes — trace to per-rank files, never a
+measurement does*. `docs/TONTO_DEVELOPER_INFO.md` §1a records the recipes — trace to per-rank files, never a
 shared stream; count events between markers; and confirm a code path executes before analysing it.
 
 ## 3. The Foo language (summary)
@@ -143,7 +143,7 @@ Full details in the companion docs (§7).
   toolchain (`foo.pl` already gone, CMake already invoking `FooToFortran`, CI already running
   `ctest -L short`). It is the bridge for porting archived work: merge an `archive/*` branch
   there, where only the semantic drift conflicts, then replay the `:::`→`::` change. See
-  `docs/REPOSITORY_BRANCHES.md` and §7 of `docs/FOO_GRAMMAR_DOCUMENTATION.md`.
+  `docs/TONTO_REPOSITORY_BRANCHES.md` and §7 of `docs/FOO_GRAMMAR_DOCUMENTATION.md`.
 - **`PURE` vs `pure` — the case matters.** Upper-case `PURE`/`ELEMENTAL` are **macros**
   (`include/macros.in`), `#undef`'d to nothing under `USE_PRECONDITIONS` and under `MPI`.
   Lower-case `pure` is passed through as the **literal Fortran keyword** and stays pure in every
@@ -225,7 +225,7 @@ The translator task is **complete**; validation is now **build + `ctest`**:
   names a `.sbf` file. The dead source went with it in a second commit — `datafile.foo`, the
   commented serialize/deserialize blocks, and `scripts/test.py`'s `diff_sbf`/`is_sbf`/
   `--sbftool` (whose default path pointed into the submodule). `foofiles/` now contains no
-  `sbf` reference at all. See `docs/REPOSITORY_BRANCHES.md`.
+  `sbf` reference at all. See `docs/TONTO_REPOSITORY_BRANCHES.md`.
 - Note that the files can be translated independently *provided* the `types.foo` file
 which defines all the derived types is processed first. The legacy translator uses
 two passes through the module file but it is not clear whether ANTLR4 needs two passes
@@ -270,7 +270,7 @@ versioned with the code it described*, so it could rot silently. Do not add docu
 - `docs/INSTALLING_RGBI.md` — participant-facing install guide. Linux is tested by
   `scripts/docker/rgbi.Dockerfile` in CI; macOS is untested by hand and probed weekly by
   `ci-rgbi-macos.yml`.
-- `docs/TONTO_DEVELOPER.md` — developer reference; §1a is **writing parallel (MPI) code in Foo**, eight
+- `docs/TONTO_DEVELOPER_INFO.md` — developer reference; §1a is **writing parallel (MPI) code in Foo**, eight
   pitfalls and the trace recipes that found them; §1b is **build and test traps** — the stale
   translation when a `.foo` is edited mid-build, why the loose gate passes visibly wrong output,
   and how `scripts/test.py` actually compares.
@@ -293,8 +293,8 @@ versioned with the code it described*, so it could rot silently. Do not add docu
   functional-interface analysis, and the libxc plan.
 - `docs/BUILDING_ON_WINDOWS.md` — the four WSL-specific traps, the CMake guards, and how they are tested.
 - `docs/TONTO_CONTINUOUS_INTEGRATION.md` — the CI workflows, how to trigger one manually, and how to read a run.
-- `docs/MAKING_CALL_GRAPHS.md` — call/use graphs and dead-code elimination.
-- `docs/EDITING_TONTO_WITH_VIM.md` — vim set-up: tags, folding, completion.
+- `docs/TONTO_CALL_GRAPHS.md` — call/use graphs and dead-code elimination.
+- `docs/TONTO_EDITING_WITH_VIM.md` — vim set-up: tags, folding, completion.
 - `DEFERRED.md` — project-wide deferred issues (was `ANTLR4_DEFERRED.md`).
 
 ## 7a. Where prose belongs: source code versus documents
@@ -319,7 +319,7 @@ code. Three specifics:
 - *User- and developer-facing* (`README.md`, `docs/RUNNING_*`, `docs/BUILDING_*`, the
   language and structure references): brief, clear, no trace of the debugging process.
   Pitfalls are stated as facts to know, not as stories about how they were discovered.
-- *Mechanics and history* (`DEFERRED.md`, `docs/TONTO_DEVELOPER.md`, the per-milestone
+- *Mechanics and history* (`DEFERRED.md`, `docs/TONTO_DEVELOPER_INFO.md`, the per-milestone
   reports such as `docs/NN_HAR_REPORT.md`, `docs/TONTO_AND_MPI.md`): this is where
   durable context lives — what was measured, what was ruled out, which recipe found it,
   what was decided and why. Write these for the next session as much as for a person.
@@ -368,7 +368,7 @@ to *track*:**
    put a `DIE` in the suspect routine and build with `-fbacktrace`, which names the
    specific procedure *and* its callers in one run. Six consecutive mis-traces of
    `put_ADP2_errors_to` (2026-07-30) were spent inferring by hand what these two
-   steps answer directly. See §3 of `docs/TONTO_DEVELOPER.md`.
+   steps answer directly. See §3 of `docs/TONTO_DEVELOPER_INFO.md`.
 
 1. **Confirm the path executes before analysing it.** A name match is not the overload that
    runs. `put_CIF`, `make_CIF_esds`, `set_pADP_errors_to`, `put_ADP2_errors_to` and
@@ -517,7 +517,7 @@ before any code is written**, most likely in its own conversation (`/clear`).
      design**, and `put_atom_group_mols` branched on it (`if (.becke_grid.allocated) …` — master
      42 broadcasts, rank 1 zero), which desynced them; it is now non-collective. Because
      TEXTFILE bookkeeping is collective, *printing more on one rank is itself a collective
-     mismatch*. Recorded as pitfall 8 in `docs/TONTO_DEVELOPER.md` §1a, with the per-rank-file trace
+     mismatch*. Recorded as pitfall 8 in `docs/TONTO_DEVELOPER_INFO.md` §1a, with the per-rank-file trace
      recipe that found it after three wrong readings of the code. Still open, both minor:
      `--group-charges-file` for proteins, and the `use_disk_SFs`→`use_disk_FFs` rename. Note
      `fragment_SCF_para`'s scheduler changes shape above 2 ranks, so any parallel fragHAR test
@@ -800,7 +800,7 @@ before any code is written**, most likely in its own conversation (`/clear`).
 
 - Future tasks (own conversations): a module-level *call* graph in `writeDotFiles` (the
   `--simplify`/`--module` **use**-graph tooling is DONE — `scripts/simplify_callgraph.py`,
-  `docs/MAKING_CALL_GRAPHS.md`); introduce Fortran-2008 `submodule` constructs; test the MPI parallel
+  `docs/TONTO_CALL_GRAPHS.md`); introduce Fortran-2008 `submodule` constructs; test the MPI parallel
   build; boilerplate doc comments; and (long-term) a possible move off Fortran. (Testing the MPI build
   is now milestone 4 above.)
 

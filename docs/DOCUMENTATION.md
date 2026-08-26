@@ -36,7 +36,7 @@ parallel (MPI) builds for that platform.
 | | |
 |---|---|
 | [**Source and executable layout**](TONTO_LIBRARY_STRUCTURE.md) | what lives where, and the module structure |
-| [**Developer reference**](TONTO_DEVELOPER.md) | including writing parallel (MPI) code in Foo |
+| [**Developer reference**](TONTO_DEVELOPER_INFO.md) | including writing parallel (MPI) code in Foo |
 | [**The Foo language**](FOO_GRAMMAR_DOCUMENTATION.md) | the language and its translation to Fortran |
 | [**Foo compared with Fortran**](FOO_LANGUAGE_VS_FORTRAN.md) | for readers who know Fortran |
 | [**Tonto and MPI**](TONTO_AND_MPI.md) | the parallel build, its numerics, and the defect register |
@@ -49,6 +49,6 @@ parallel (MPI) builds for that platform.
 | [**GoF², not chi2**](GOF_NOT_CHI2.md) | the misnamed goodness of fit, and reporting GoF in place of its square |
 | [**gfortran-16 debug builds**](GFORTRAN16_DEBUG_CRASH.md) | a compiler bug, and the build workaround |
 | [**Continuous integration**](TONTO_CONTINUOUS_INTEGRATION.md) | what each workflow runs, and what each badge means |
-| [**Call graphs**](MAKING_CALL_GRAPHS.md) | call/use graphs and dead-code elimination |
-| [**Repository branches**](REPOSITORY_BRANCHES.md) | what is live, what was archived, how to recover it, and why archived work must be ported |
-| [**Editing with vim**](EDITING_TONTO_WITH_VIM.md) | tags, folding, completion |
+| [**Call graphs**](TONTO_CALL_GRAPHS.md) | call/use graphs and dead-code elimination |
+| [**Repository branches**](TONTO_REPOSITORY_BRANCHES.md) | what is live, what was archived, how to recover it, and why archived work must be ported |
+| [**Editing with vim**](TONTO_EDITING_WITH_VIM.md) | tags, folding, completion |

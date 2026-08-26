@@ -180,7 +180,7 @@ deliberately different, and any later shared-mode code that branches on allocati
 extent or convergence flags of that data will desync. Either resynchronise the state or keep
 the later code non-collective. Because TEXTFILE bookkeeping is collective, *printing slightly
 more on one rank is itself a collective mismatch* — and it surfaces later, somewhere innocent.
-Pitfall 8 in `docs/TONTO_DEVELOPER.md` §1a, with the trace-based recipe that found it.
+Pitfall 8 in `docs/TONTO_DEVELOPER_INFO.md` §1a, with the trace-based recipe that found it.
 
 **Not yet fixed** — a latent collective-inside-a-master-guard deadlock in `SYSTEM:initialize`, a
 commented-out `MPI_ABORT` (so one rank dying hangs the job), HAR writing the same file from every
@@ -758,6 +758,43 @@ sits on the path of every file read, and it was disguising the real failure.
 collective apart, before `CIF:move_to_end_of_data` is reached. From rank 1's stack that means
 `CIF:find_end_of_data_block` / `MOLECULE.CE:process_cif_for_cx`.
 
+##### VERIFICATION STILL OWED — run the SERIAL suite before this goes near `master`
+
+**Not yet run as of 2026-08-26.** `foofiles/textfile.foo` is on the path of **every file read
+in Tonto**, so `move_to_record_external` and the two record movers are exercised by essentially
+every job, serial included. The blast radius of that change is the whole suite, not the one MPI
+test it was aimed at. What has been run is only: the reproducer at `-n 2` (still fails,
+`MPI_ERR_TRUNCATE`), and `-n 1` plus a serial run of `urea_read_and_process_CIF` alone (both
+pass exactly, 0%, 0 ulp). That is three jobs out of 124.
+
+The change is *structural* rather than numerical — it moves work under an `IO_IS_ALLOWED`
+guard, which is a no-op in a serial build, and moves a `DIE_IF` out of a loop into its caller.
+So the expectation is no change at all in serial. **That expectation is exactly what has to be
+tested, not asserted** — a loop whose terminating `DIE_IF` moved is precisely the kind of edit
+that can turn a clean failure into a silent one, and the new `exit` on `.IO_status/=0` is a
+control-flow path that did not exist before.
+
+```bash
+# a release build from the current sources, then the full suite
+cmake -B build -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=release
+cmake --build build -- -j3            # -j3, not -j$(nproc): one JVM per .foo file
+python3 scripts/suite_report.py --program build/tonto --tests-dir tests \
+        --basis-sets basis_sets --suites short long hart \
+        --failure-dir test-failures --log tests.log
+```
+
+**The baseline to compare against** — from `CLAUDE.md` §5, measured before any of this work:
+full release suite **124/124** loose locally; short suite **51/51** in CI. Anything below that
+is a regression from this change and must be treated as one. Use `--failure-dir`: an ERRORing
+job writes no `.bad`, so without it the cause is recorded nowhere (that is register row 11).
+
+A second, cheaper gate that is *not* a substitute: `ctest -L short` on the same build. It is
+what CI runs and it will catch a gross breakage in minutes, but it does not exercise the `long`
+jobs where the heavier CIF and archive reading lives — which is the code this change touches.
+
+Until the serial suite is green at the baseline, treat the `textfile.foo` change as **unproven
+outside three jobs**, whatever the MPI story does.
+
 ##### How to find it: the probe must carry CALL-SITE identity
 
 The lesson from the failed attempt above, stated as a method: **do not trace payloads, trace
@@ -803,7 +840,7 @@ place to finish it**, for reasons that are practical rather than aesthetic:
 
 Practical notes for whoever does it:
 
-- Give each rank its **own** output file, always. `TONTO_DEVELOPER.md` §1a, and it is the one
+- Give each rank its **own** output file, always. `TONTO_DEVELOPER_INFO.md` §1a, and it is the one
   rule that has never yet failed to matter here.
 - Run at exactly `-n 2`. The failure needs a peer rank and nothing more; higher counts add
   noise and, for fragHAR, change the scheduler shape.
@@ -860,7 +897,7 @@ Two candidate mechanisms, **not yet distinguished**:
 
 **The discriminator is whether rank 0 reports the same error.** Only rank 1's message survived,
 because `MPI_ABORT` killed the job — that is consistent with either. Settle it with the per-rank
-trace recipe in `TONTO_DEVELOPER.md` §1a, not by reading the code: three wrong readings of this
+trace recipe in `TONTO_DEVELOPER_INFO.md` §1a, not by reading the code: three wrong readings of this
 same area are already on record. Two cheap first steps: correct the diagnostic text so it names
 what actually failed, and print the rank and `iostat` value with it.
 

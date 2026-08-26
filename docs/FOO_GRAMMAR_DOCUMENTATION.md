@@ -503,7 +503,7 @@ git checkout -b port-x foo-old-syntax
 git merge archive/x           # same dialect; only semantic drift conflicts
 ```
 
-See [**Repository branches**](REPOSITORY_BRANCHES.md) for what else has drifted,
+See [**Repository branches**](TONTO_REPOSITORY_BRANCHES.md) for what else has drifted,
 and why a direct merge into `master` is not worth attempting.
 
 ### Procedure arguments that are themselves procedures

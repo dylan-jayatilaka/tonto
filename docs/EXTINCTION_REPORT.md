@@ -113,7 +113,7 @@ commits long, but `develop` is 622 commits ahead of that point, so the branch pr
 both `3ca1e53d` (`:::` → `::`) and `4cd995df` (submodule call auto-resolution). Every
 hunk uses the old dialect. The changes are small enough to transcribe by hand; the
 alternative route through the `foo-old-syntax` tag described in
-`docs/REPOSITORY_BRANCHES.md` is not worth the ceremony for three files.
+`docs/TONTO_REPOSITORY_BRANCHES.md` is not worth the ceremony for three files.
 
 Two commits on that branch, `b8f63c49` and `6f7fa8cf`, are unrelated to extinction and
 are not part of this port. The `foofiles/tree{str}.foo` hunk in `3e29ca20` adds the new

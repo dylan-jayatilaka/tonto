@@ -43,6 +43,6 @@ as well.
 ![module structure](images/module_structure.svg)
 
 For generated, always-current versions of this information see
-[`MAKING_CALL_GRAPHS.md`](MAKING_CALL_GRAPHS.md) — `make callgraphs` writes `call_graph.dot`,
+[`TONTO_CALL_GRAPHS.md`](TONTO_CALL_GRAPHS.md) — `make callgraphs` writes `call_graph.dot`,
 `module_use.dot` and `submodule_use.dot`, and `scripts/simplify_callgraph.py`
 makes them readable.

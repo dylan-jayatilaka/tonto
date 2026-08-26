@@ -7,7 +7,7 @@ references:
 - **The ANTLR4 `foo`→Fortran translator task, layout, and how to build/run the
   translator itself** → [`CLAUDE.md`](../CLAUDE.md) and `scripts/build_translator.sh`.
 - **Making the DOT call-graphs readable** (aggregate/ambient, per-module
-  documentation graphs) → [`docs/MAKING_CALL_GRAPHS.md`](MAKING_CALL_GRAPHS.md).
+  documentation graphs) → [`docs/TONTO_CALL_GRAPHS.md`](TONTO_CALL_GRAPHS.md).
 - **The Foo language and Foo→Fortran conversion rules** →
   [`docs/FOO_GRAMMAR_DOCUMENTATION.md`](FOO_GRAMMAR_DOCUMENTATION.md).
 - **What helps (and hinders) an AI assistant working in this codebase**, measured
@@ -52,7 +52,7 @@ to make target", run `cmake ..` in the build dir first, then retry.)
 
 The raw `module_use.dot` is a hairball (139 nodes / 921 edges). **To make it
 readable — and to produce a per-module documentation graph — use
-`scripts/simplify_callgraph.py`; see [`docs/MAKING_CALL_GRAPHS.md`](MAKING_CALL_GRAPHS.md).**
+`scripts/simplify_callgraph.py`; see [`docs/TONTO_CALL_GRAPHS.md`](TONTO_CALL_GRAPHS.md).**
 
 ### Dead-code-eliminated executables (`-DPURGE_DEAD_CODE`)
 

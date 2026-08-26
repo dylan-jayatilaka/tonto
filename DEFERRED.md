@@ -272,7 +272,7 @@ An implementation was written and **reverted**, for a reason worth recording:
 
 The debug build named it in one run (`ATOM:put_ADP2_errors_to_1 ... no
 pADP_errors`, via `put_CIF_ADP2_cryst`), which is the recipe in
-`docs/TONTO_DEVELOPER.md` §1a working exactly as advertised.
+`docs/TONTO_DEVELOPER_INFO.md` §1a working exactly as advertised.
 
 Making "absent" actually representable then means guarding **five** CIF
 writers — 44 `_esu` column headers and 5 value/error table pairs — because
@@ -1514,7 +1514,7 @@ Read `new_r_LDA_x_energy_density`, which computes `-(3/4)(3/pi)^(1/3) rho^(1/3)`
 Assuming `E` is an energy density is wrong by a factor of rho.
 
 `archive/libxc` (Peter Spackman, 2017) is a prototype and **must not be merged**;
-it is assessed in `docs/REPOSITORY_BRANCHES.md`.
+it is assessed in `docs/TONTO_REPOSITORY_BRANCHES.md`.
 
 ## Milestone 6, partial: the suppressed-reduction abort and the parallel lint (2026-08-02)
 
@@ -3421,6 +3421,27 @@ The stale README line ("many failures on the Apple M2 — not recommended") shou
 be corrected at the same time; it is wrong about the build, which was always
 clean.
 
+## UNVERIFIED: the `textfile.foo` MPI fix has not seen the serial suite (2026-08-26)
+
+**Do this before the `textfile.foo` change goes anywhere near `master`.** Full detail, the
+exact commands and the baseline: `docs/TONTO_AND_MPI.md` Finding 7, "VERIFICATION STILL OWED".
+
+`move_to_record_external` and the two record movers were changed to position the file on the
+I/O rank and broadcast the result. `foofiles/textfile.foo` is on the path of **every file read
+in Tonto**, so the change is exercised by essentially every job, serial included -- but only
+**three** have been run: the MPI reproducer at `-n 2` (still fails, `MPI_ERR_TRUNCATE` -- the
+fix removed an amplifier, not the origin), and `-n 1` plus serial on
+`urea_read_and_process_CIF` alone, which pass exactly.
+
+Baseline to match, from `CLAUDE.md` §5: **124/124** loose on the full release suite locally,
+**51/51** short in CI. Pass `--failure-dir` so an ERRORing job records its cause.
+
+Why it is not merely paperwork: the edit moved a `DIE_IF` out of a loop into its caller and
+added an `exit` on `.IO_status/=0` -- a control-flow path that did not exist before. A loop
+whose terminating check moved is exactly the kind of change that turns a loud failure into a
+quiet one. The expectation is that serial behaviour is unchanged, because the new guard is a
+no-op in a serial build; **that expectation is the thing to test, not to assert.**
+
 ## Transpose and thin the CI badge table (Dylan, 2026-08-26)
 
 Do this as its own piece of work, in its own session. It is a README/docs change only --
@@ -4195,7 +4216,7 @@ translator change — the DOT already carries every `use` edge):
 - **`--module NAME`** — documentation ego-graph of one module's direct dependencies
   (`--reverse` dependents, `--both`); no `concentrate`, so every direct edge shows.
 
-**Key findings, recorded in `docs/MAKING_CALL_GRAPHS.md`:** the "aggregate vs ambient" distinction
+**Key findings, recorded in `docs/TONTO_CALL_GRAPHS.md`:** the "aggregate vs ambient" distinction
 (merge-and-keep vs hide); `concentrate=true` is *lossy* (drops a direct edge parallel to a
 longer path — e.g. `ATOM→INTERPOLATOR`), so the doc mode avoids it; and Graphviz has **no** edge
 hops/bridges and is already hierarchical, so fewer edges beats a different engine. README §7b
@@ -4406,7 +4427,7 @@ Two things a future reader should know before reopening it, both established
   which the Bader port did not.
 
 Recover it with `git branch bond-energy archive/bond-energy`. See
-`docs/REPOSITORY_BRANCHES.md`.
+`docs/TONTO_REPOSITORY_BRANCHES.md`.
 
 ## Keyword parsing must not leak into library routines (fixed; survey kept)
 
@@ -5076,14 +5097,14 @@ and lets the master write alone, restoring the caller's mode afterwards.
 **The general rule this establishes:** *after* a per-rank region, the ranks' object graphs are
 deliberately different. Any later shared-mode code that branches on allocation status, array
 extent, or convergence flags of that per-rank data will desync. Either resynchronise the state,
-or keep the code non-collective. Recorded in `docs/TONTO_DEVELOPER.md` §1a and `docs/TONTO_AND_MPI.md`.
+or keep the code non-collective. Recorded in `docs/TONTO_DEVELOPER_INFO.md` §1a and `docs/TONTO_AND_MPI.md`.
 
 **How it was found.** By tracing, not by reading -- three consecutive readings of the code
 pointed at the wrong routine. A `write` at the single `MPI_BCAST` choke point in
 `parallel.foo`, logging `(datatype, count)` to a per-rank `fort.7<rank>` file (Fortran
 auto-connects the unit, so the two streams cannot interleave), plus positional `TAG` markers.
 Diffing the two streams gives the exact call where they part; segmenting the counts between
-tags names the routine. That recipe is in `docs/TONTO_DEVELOPER.md` §1a.
+tags names the routine. That recipe is in `docs/TONTO_DEVELOPER_INFO.md` §1a.
 
 **H2 — revive the frozen options.** `--charge`, `--mult`, `--ldtol`,
 `--scf-guess`, `--anharm`, `--wavelength` and `--4th-order-only` are commented

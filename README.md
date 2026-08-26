@@ -68,7 +68,7 @@ group in Nice on electronic and vibrational quantum chemistry method development
 — a research programme entirely separate from the quantum crystallography work on
 the other branches — and it remains a live branch, unaltered.
 
-[**Repository branches**](docs/REPOSITORY_BRANCHES.md) lists what every branch
+[**Repository branches**](docs/TONTO_REPOSITORY_BRANCHES.md) lists what every branch
 held and who wrote it, how to recover any of it, and why the archived work has to
 be ported rather than merged.
 
