@@ -256,7 +256,9 @@ runs.
 
 ## What each badge on the README covers
 
-The badges track the **`release`** branch.
+The badges track the **`master`** branch — every badge URL carries `?branch=master`.
+(They were described here as tracking `release` until 2026-08-26; that branch was
+renamed `develop` on 2026-08-11 and the badges never pointed at it.)
 
 - **Linux-release** — the gate. This one must be green.
 - **Linux-debug** — carries four longstanding `-O0` floating-point and
