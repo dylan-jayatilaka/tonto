@@ -711,6 +711,110 @@ same stack. **Debug and release are one failure, not two.**
    **seven** sites in `textfile.foo` and one in `file.foo`. It should name the operation and
    print the rank and the `iostat` value.
 
+##### PARTIAL FIX APPLIED (2026-08-26) — an amplifier removed, the origin still open
+
+`move_to_record_external` now positions the file on the I/O rank alone and broadcasts the
+result, which is the standard pattern:
+
+```fortran
+if (IO_IS_ALLOWED) then
+   ... backwards / forwards loop, both movers now NON-collective ...
+end
+PARALLEL_BROADCAST_IO(.IO_status,tonto.master_processor)   ! exactly one, every rank
+PARALLEL_BROADCAST_IO(.record,   tonto.master_processor)   ! exactly one, every rank
+DIE_IF(.IO_status/=0,"error moving to a record in "//trim(.name))
+```
+
+`move_to_next_record` and `move_to_back_record` lost their collectives entirely; each has
+exactly one caller, so no `_io` twin was needed. Both carry a comment saying they must stay
+non-collective. The loops gained an `exit` on `.IO_status/=0`, because the `DIE_IF` that used
+to terminate a failing loop now lives in the caller. Collective traffic also drops from one
+pair per record stepped to one pair per positioning call.
+
+Positioning on master additionally dissolves a problem that broadcasting inside the loops
+would **not** have fixed: `rec` is not independent of `.record` (`cif.foo:712` sets
+`.end_of_data = .file.record`), so had every rank kept looping they would have disagreed
+about the *target* as well as the position. Non-master ranks now never evaluate the exit
+condition at all.
+
+**It did not cure the test, and the causality was the other way round from what is written
+above.** After the fix, `urea_read_and_process_CIF` at `-n 2` fails 3/3 with
+
+```
+*** An error occurred in MPI_Bcast
+*** MPI_ERR_TRUNCATE: message truncated
+```
+
+`-n 1` and serial still pass exactly. So `move_to_record_external` was an **amplifier**, not
+the origin: the ranks were *already* one collective apart on entry, which is what made
+`.record` diverge. The divergent `.record` was a symptom that had been read as the cause. With
+the amplifier gone the underlying shift surfaces honestly as `MPI_ERR_TRUNCATE` — milestone
+7's original signature — instead of as a bogus "error opening new file".
+
+The fix stays: a collective count driven by rank-local state is a defect on its own terms, it
+sits on the path of every file read, and it was disguising the real failure.
+
+**The origin is upstream of `move_to_record_external`** — in whatever first put the ranks one
+collective apart, before `CIF:move_to_end_of_data` is reached. From rank 1's stack that means
+`CIF:find_end_of_data_block` / `MOLECULE.CE:process_cif_for_cx`.
+
+##### How to find it: the probe must carry CALL-SITE identity
+
+The lesson from the failed attempt above, stated as a method: **do not trace payloads, trace
+call sites.** Rank 1's *n*-th receive *is* master's *n*-th send, so a trace of
+`(length, datatype, value)` is identical on both ranks no matter which variable each binds —
+it cannot see a one-step shift, and it was briefly misread as proof of lockstep.
+
+Two ways to get call-site identity:
+
+1. **`LD_PRELOAD` a PMPI shim — no Tonto rebuild at all, Linux only.** MPI defines the
+   profiling interface, so a small shared library can define `MPI_Bcast` (and the Fortran
+   `mpi_bcast_`), record the caller's return address via `backtrace()`, call `PMPI_Bcast`,
+   and write one line per call to a **per-rank** file. Resolve the addresses afterwards with
+   `addr2line`. Diff the two rank files: the first differing call site is the origin. This is
+   the cheapest option by far and needs no rebuild, no probe in `parallel.foo`, and no
+   recompilation between iterations.
+2. **Emit `__FILE__`/`__LINE__` from the macro.** `PARALLEL_BROADCAST_IO` in
+   `include/macros.in` expands *at each call site*, unlike the template in `parallel.foo`
+   which is one source location for all 25 overloads. That is where call-site identity can be
+   captured in-tree — but it costs a full rebuild per iteration.
+
+Prefer (1). See "Debugging this on Linux" below.
+
+##### Debugging this on Linux — recommended, and better than macOS
+
+The bug reproduces on both platforms (Linux/x86_64 with the gfortran-16.0.1 snapshot in CI,
+macOS/arm64 with Homebrew 16.1.0 locally), so either will do — but **Linux is the better
+place to finish it**, for reasons that are practical rather than aesthetic:
+
+- **`LD_PRELOAD` works properly.** The PMPI shim above is the whole ballgame: call-site
+  identity with no rebuild, so each experiment costs seconds instead of half an hour. macOS
+  has `DYLD_INSERT_LIBRARIES`, but System Integrity Protection strips it from protected
+  binaries and the two-level namespace makes symbol interposition unreliable. On Linux it
+  simply works.
+- **`backtrace()`/`backtrace_symbols()` are in glibc**, so the shim can capture a stack
+  without extra dependencies. macOS has `backtrace()` too, but resolving Fortran symbols in
+  an `-Ofast` binary is poorer.
+- **`gdb` handles gfortran better than `lldb`.** Module symbols, array descriptors and
+  derived types are all more legible; `gdb`'s `--args` plus `mpirun -n 2 xterm -e gdb ...`
+  or `gdb -p` attach per rank is a well-trodden path.
+- **`achari2` already has the toolchain** — gfortran-16 and a working MPI — and it is the
+  machine where the earlier `-O2` bisection was done, so the results stay comparable.
+
+Practical notes for whoever does it:
+
+- Give each rank its **own** output file, always. `TONTO_DEVELOPER.md` §1a, and it is the one
+  rule that has never yet failed to matter here.
+- Run at exactly `-n 2`. The failure needs a peer rank and nothing more; higher counts add
+  noise and, for fragHAR, change the scheduler shape.
+- `-n 1` and serial are the controls and both pass **exactly** (0%, 0 ulp) — if they ever
+  stop passing, the change under test is wrong, independently of the desync.
+- `mpirun --output tag` prefixes every line with `[job,rank]`, which is how it was
+  established that rank 0 never dies. Cheap and worth doing first.
+- Break on `die`, **not** `die_if`: `DIE_IF` expands to `call die_if_(tonto,cond,msg)`, so a
+  breakpoint on it fires for every evaluation and the first stack you get is a benign startup
+  check.
+
 ##### Fix direction (not yet implemented)
 
 Make the collective count independent of rank-local state: decide the number of iterations on

@@ -436,7 +436,7 @@ contains
 
       ! Failure?
       PARALLEL_BROADCAST_IO(.IO_status,tonto.master_processor)
-      DIE_IF(.IO_status/=0,"error opening new file "//trim(.name))
+      DIE_IF(.IO_status/=0,"error inquiring about file "//trim(.name))
 
       ! Close the file
       if (IO_IS_ALLOWED) then
@@ -461,7 +461,7 @@ contains
 
       ! Failure?
       PARALLEL_BROADCAST_IO(.IO_status,tonto.master_processor)
-      DIE_IF(.IO_status/=0,"error opening new file "//trim(.name))
+      DIE_IF(.IO_status/=0,"error closing and deleting file "//trim(.name))
 
    end
 
@@ -1125,7 +1125,7 @@ contains
 
       ! Failure?
       PARALLEL_BROADCAST_IO(.IO_status,tonto.master_processor)
-      DIE_IF(.IO_status/=0,"error opening new file "//trim(.name))
+      DIE_IF(.IO_status/=0,"error rewinding file "//trim(.name))
 
       ! All good: set line no.
       .record = 0
@@ -1272,23 +1272,44 @@ contains
       ! Update
       .update_system_info
 
-      if (rec<(.record+1)) then
+      ! Position the file on the I/O processor ALONE, then broadcast the result.
+      ! The number of iterations depends on .record, and on "rec" -- which CIF
+      ! derives from .record (cif.foo: .end_of_data = .file.record). Both are
+      ! rank-local. When every rank ran this loop they ran it a different number
+      ! of times, and because each iteration issued a collective the ranks shifted
+      ! permanently out of step: a later broadcast then delivered a record counter
+      ! into .IO_status and the job died claiming it could not open a file.
+      ! See docs/TONTO_AND_MPI.md Finding 7.
+      if (IO_IS_ALLOWED) then
 
-         ! Go backwards
-         do
-            .move_to_back_record
-            if (rec==(.record+1)) exit
-         end
+         if (rec<(.record+1)) then
 
-      else if (rec>(.record+1)) then
+            ! Go backwards
+            do
+               .move_to_back_record
+               if (.IO_status/=0) exit
+               if (rec==(.record+1)) exit
+            end
 
-         ! Go forwards
-         do
-            .move_to_next_record
-            if (rec==(.record+1)) exit
+         else if (rec>(.record+1)) then
+
+            ! Go forwards
+            do
+               .move_to_next_record
+               if (.IO_status/=0) exit
+               if (rec==(.record+1)) exit
+            end
+
          end
 
       end
+
+      ! Failure? Exactly one of each, on every rank, whatever the file position
+      ! was -- that is the point: the collective count must not depend on state
+      ! that can differ between ranks.
+      PARALLEL_BROADCAST_IO(.IO_status,tonto.master_processor)
+      PARALLEL_BROADCAST_IO(.record,tonto.master_processor)
+      DIE_IF(.IO_status/=0,"error moving to a record in "//trim(.name))
 
       ! Read it
       .read_line
@@ -1297,18 +1318,17 @@ contains
 
    move_to_back_record :: private
    ! Backspace a record. Skip system info update.
+   ! NOT COLLECTIVE, and it must stay that way: the only caller,
+   ! move_to_record_external, runs this inside an IO_IS_ALLOWED guard a
+   ! rank-dependent number of times, and broadcasts .IO_status and .record once
+   ! afterwards. Putting a collective back in here reinstates the desync of
+   ! docs/TONTO_AND_MPI.md Finding 7. The caller must check .IO_status.
       self :: INOUT
 
       .IO_status = 0
-      if (IO_IS_ALLOWED) then
-         backspace(unit=.unit,iostat=.IO_status)
-      end
+      backspace(unit=.unit,iostat=.IO_status)
 
-      ! Failure?
-      PARALLEL_BROADCAST_IO(.IO_status,tonto.master_processor)
-      DIE_IF(.IO_status/=0,"error opening new file "//trim(.name))
-
-      ! Next record
+      ! Previous record
       .record = .record - 1
 
    end
@@ -1317,15 +1337,10 @@ contains
    ! Forward space a record. Skip system info update.
       self :: INOUT
 
-      ! Read a line
+      ! Read a line. NOT COLLECTIVE -- see move_to_back_record for why, and do
+      ! not add a broadcast here. The caller must check .IO_status.
       .IO_status = 0
-      if (IO_IS_ALLOWED) then
-         read(unit=.unit,fmt="()",iostat=.IO_status)
-      end
-
-      ! Failure?
-      PARALLEL_BROADCAST_IO(.IO_status,tonto.master_processor)
-      DIE_IF(.IO_status/=0,"error opening new file "//trim(.name))
+      read(unit=.unit,fmt="()",iostat=.IO_status)
 
       ! Next record
       .record = .record + 1
