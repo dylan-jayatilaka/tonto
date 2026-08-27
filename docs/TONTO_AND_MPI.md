@@ -825,19 +825,29 @@ tested, not asserted** — a loop whose terminating `DIE_IF` moved is precisely 
 that can turn a clean failure into a silent one, and the new `exit` on `.IO_status/=0` is a
 control-flow path that did not exist before.
 
-**NOT dispatched — an attempt was made on 2026-08-27 and failed.** Recorded because the
-failure is a trap worth knowing: `workflow_dispatch` decides whether a workflow *exists* from
-the default branch, but validates its **inputs against the ref you dispatch**. The `fc_version`
-input had been landed on `master` and not on `origin/develop`, so every attempt returned
-`HTTP 422: Unexpected inputs provided: ["fc_version"]`. Pushing the branch is the prerequisite,
-not just landing the file on master.
+**DISPATCHED 2026-08-27 on `80dcbfe4`, result not yet read** —
+<https://github.com/dylan-jayatilaka/tonto/actions/runs/33067218748>, `short long hart` at
+`fc_version: 14`. **Read the result against the notes below before drawing any conclusion; two
+earlier attempts today were worthless for reasons that had nothing to do with `textfile.foo`.**
 
-When it is run, two things to hold in mind. It discharges this owed verification only if it
-comes back at the 124/124 baseline; anything less must be attributed before it is accepted.
-And the existing Linux release-16 figure is **123/124** (see `DEFERRED.md`,
-*Platform-specific*), so if it is dispatched at `fc_version: 16` a single missing test is the
-*expected* result and not by itself evidence of a regression — identify which one before
-concluding anything.
+*Attempt 1 would not dispatch at all.* `workflow_dispatch` decides whether a workflow *exists*
+from the default branch, but validates its **inputs against the ref you dispatch**. `fc_version`
+had been landed on `master` and not on `origin/develop`, so every attempt returned
+`HTTP 422: Unexpected inputs provided: ["fc_version"]`. Pushing the branch is the prerequisite.
+
+*Attempt 2 ran and measured the workflow, not the code.* It returned **70/89**, and every one of
+its 18 captured failures carried `WARNING: could not run gnuplot` — `ci-full-suite.yml` had never
+installed gnuplot. A plotting job without gnuplot still completes and still gets the numbers
+right; it prints a multi-line warning instead of drawing, which is a **structural** mismatch. It
+also ran with `ppa:ubuntu-toolchain-r/test` enabled, which substituted gfortran 14.3.0 for the
+archive's 14.2.0 and independently reddened `ci.yml`. Both are fixed in `80dcbfe4`.
+
+**Reading attempt 3.** The baseline in `CLAUDE.md` §5 is **124/124** loose, but these runs report
+**89** agreement lines for `short long hart` (55 short + 31 long + 3 hart). That discrepancy is
+*unexplained and must be resolved before 89-of-89 is called a pass* — the 124 may count something
+else, or may predate a change in suite composition. Do not treat the two numbers as comparable
+until someone has checked. Anything below whatever the correct baseline is must be attributed,
+not accepted, and `--failure-dir` output is uploaded as an artifact for exactly that.
 
 ```bash
 # a release build from the current sources, then the full suite

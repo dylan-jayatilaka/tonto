@@ -3191,6 +3191,42 @@ highlighting and tighter editor integration. The repo already ships some vim sup
 
 # Platform-specific
 
+## The 124/124 suite baseline does not match what CI counts (2026-08-27)
+
+**Status: open, and it blocks reading any full-suite result.** `CLAUDE.md` §5 and several
+entries here quote a baseline of **124/124** loose for the full release suite. The
+`ci-full-suite.yml` runs of 2026-08-27 report **89** agreement lines for `short long hart`:
+55 short + 31 long + 3 hart. Nobody has reconciled the two numbers.
+
+Until that is done, a full-suite result **cannot be called a pass or a regression**, because
+there is no agreed denominator. Candidates: the 124 counts something other than agreement lines;
+it predates a change in suite composition; or it includes suites the workflow is not asked for.
+Cheap to settle — count the job directories under `tests/` per suite and compare against a local
+`scripts/suite_report.py --suites short long hart`.
+
+Noticed while reading the `textfile.foo` verification run, which is itself waiting on this.
+
+## CI workflows must install every RUN-time dependency, not just build ones (2026-08-27)
+
+**Status: fixed for gnuplot; the class is worth remembering.** `ci-full-suite.yml` ran for the
+first time on 2026-08-27 and returned 70/89. All 18 captured failures carried
+`WARNING: could not run gnuplot` — the workflow installed no gnuplot.
+
+The failure mode is what makes this worth an entry. gnuplot is **not** a build dependency and its
+absence is not an error: Tonto finishes the job, gets every number right, writes the plot data
+*and* the gnuplot script, and prints a multi-line warning instead of rendering. Those extra lines
+are a **structural** mismatch against the stored reference. So a missing *optional, run-time*
+package produces a page of failures at 0% numeric deviation and 0 ulp — indistinguishable at a
+glance from a real defect.
+
+`ci-mpi.yml` had the same hole while running the full short suite, so its suite table carried
+these failures too; see `docs/TONTO_AND_MPI.md`. Both are fixed. `ci-wsl-debug.yml` and
+`release.yml` do not need it — two plain SCF jobs and no tests respectively.
+
+**The general rule:** when adding a workflow that runs the suite, copy the package list from
+`ci.yml`, which is the reference build, rather than writing a shorter one from what the *build*
+needs.
+
 ## gfortran-16 DEBUG fails 34 of 71 short tests — the migration was reverted (2026-08-27)
 
 **Status: open, and the compiler is now isolated by measurement (see below).** The compiler
