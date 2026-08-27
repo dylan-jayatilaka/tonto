@@ -15,7 +15,14 @@ now covers the whole project, so it was renamed.)*
 > filed under live themes (the two MPI-CI `DONE`s, the `TEXTFILE:flush` root cause, the
 > withdrawn suppressed-reduction abort, the dropped-`data`-statements fix, the macOS RGBI
 > badge, the `bond-energy` won't-do, and the keyword-parsing survey), and one live list
-> (*RGBI: known defects*) was stranded inside the archive. **43 live, 17 archived.**
+> (*RGBI: known defects*) was stranded inside the archive. **45 live, 17 archived.**
+>
+> Re-sorted again on 2026-08-27, when `docs/PLOT_PLAN.md` and `docs/WORKSHOP_PLAN.md`
+> were retired: their finished stages are history and went with them, and their four
+> live items were filed here under *Correctness*, *Test suite and numerics* and the
+> new *Workshop and examples* theme, which also took in the exercise-4 entry that had
+> been stranded below the archive.
+>
 > If you add an entry, put it under a theme; when it closes, move it down — a `DONE` heading
 > in a live section is how the drift starts.
 
@@ -29,6 +36,7 @@ now covers the whole project, so it was renamed.)*
 | [hart](#hart) | Remaining hart items and un-migrated runfiles |
 | [RGBI and the picture toolchain](#rgbi-and-the-picture-toolchain) | Folding the five-ecosystem picture pipeline into one integrated codebase |
 | [Tooling and editor support](#tooling-and-editor-support) | vim highlighting and integration |
+| [Workshop and examples](#workshop-and-examples) | The SO₂ exercise still owed, and exercise 4's contour plotting |
 | [Platform-specific](#platform-specific) | macOS/Apple Silicon, gfortran-16 |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
@@ -509,6 +517,50 @@ Renaming `stdin`/`stdout` likewise is ~12,500 call sites across 81 foofiles but 
 **zero** test churn, since the file names are set separately. Deferred as cosmetic.
 
 ---
+
+## The reserved ("free") reflection plots re-plot the FITTING data (2026-08-09)
+
+`foofiles/crystal.foo:9726-9727`. The branch is guarded on
+`.xray_r_free_data.allocated` but plots `.xray_data`:
+
+```
+      if (.xray_r_free_data.allocated) then
+         .xray_data.PUT:put_labelled_qq_plot(trim(head)//".free")
+         .xray_data.PUT:put_F_calc_plots(trim(head)//".free")
+```
+
+Both receivers should be `.xray_r_free_data`. As written the `.free` plots are
+the *fitting* plots under a different name, so anyone reading them to judge a
+reserved set is reading the wrong reflections — silently, and with a file name
+that asserts otherwise. Found during the post-HAR plot work (2026-08-09) and
+deliberately left alone there: it was outside that brief, and correcting it
+changes numbers in blessed references. **It matters more now**, because
+milestone 12 turns the free set into the instrument that chooses the XCW
+Lagrange multiplier — see Appendix A of `docs/EXTINCTION_REPORT.md`.
+
+*(Line numbers re-verified 2026-08-27; the earlier note said 9471-9472, which
+had drifted, and the tag argument is now `trim(head)//".free"`.)*
+
+## An over-long line aborts with no diagnostic in release (2026-08-09)
+
+`BUFFER:put_str` (`foofiles/buffer.foo:514`) guards the 256-character `STR`
+limit with
+
+```
+   ENSURE(.item_end+len(string)<=BSTR_SIZE,"cursor beyond buffer end")
+```
+
+and `ENSURE` is gated on `USE_PRECONDITIONS`, so it compiles to nothing in
+exactly the build users run. An over-long line therefore dumps core instead of
+reporting itself. It should be a `DIE_IF`, which is gated on
+`USE_ERROR_MANAGEMENT` and is live in release; the routine is declared `PURE`
+(the macro, not the Fortran keyword), so a `DIE_IF` is permitted there.
+
+Sharper since Tonto began drawing its own plots: the emitted gnuplot command
+interpolates a job-name-derived file name into several lines, so a long `name=`
+shortens the distance to 256 characters. Related, and the same root limit:
+*"long paths to the basis sets fail -- STR is 256 characters"* under
+*Platform-specific*.
 
 # MPI
 
@@ -2968,6 +3020,29 @@ harness writes `stdout.bad` on a fail). The five listed above are all that remai
 
 ---
 
+## The end-of-HAR message is stale, and correcting it means reblessing 24 references (2026-08-09)
+
+The message printed at the end of a HAR names `stdout.fit_analysis` — a file
+nothing writes and nothing ever has — calls several small files "this large
+file", names not one file that is actually produced, and closes with "Use Excel
+or gnuplot to view these data", which predates Tonto drawing the pictures
+itself.
+
+A corrected version, naming the real files as dot points, was written and then
+**reverted**, because the old text appears in **24** checked-in references
+(`grep -rl "This large file includes" tests/`), most of them `long` jobs. Worth
+doing as its own change together with the rebless, never as a side effect of
+something else. The reverted wording is in the history of `foofiles/crystal.foo`
+around 2026-08-09.
+
+**A cosmetic difference that is NOT a failure**, recorded so the next person
+does not mistake it for one: a raw `diff` of `tests/short/nh3_rhf_DZP_HAR/stdout`
+against a fresh run shows the `U_xx … U_yz` error table with different column
+widths — the reference wider (`0.00000(5)   0.00000(8)`), the new build
+narrower. Every number is identical, and the test passes 1/1, so `scripts/test.py`
+is insensitive to this whitespace. Untraced, and not worth tracing unless it
+starts mattering.
+
 # Translator and the Foo language
 
 ## Cleanup: normalise procedure-name CASE across definition and call sites
@@ -3137,9 +3212,9 @@ whole pipeline exiting **0** having drawn nothing.
 molecule, the bonding, the atom labels and every index it wants to print. The
 *only* thing it does not have is a **2D depiction layout**. So this is not
 "rewrite five tools" — it is "acquire one algorithm, then emit the picture
-directly", which is exactly the move stage 2 of `docs/PLOT_PLAN.md` already made
-for the HAR plots: Tonto computed the label placement itself instead of hoping
-gnuplot had an algorithm for it (it does not).
+directly", which is exactly the move already made for the post-HAR plots in
+2026-08-09: Tonto computed the label placement itself instead of hoping gnuplot
+had an algorithm for it (it does not).
 
 **And half of it is already done, which is the proof of concept.** The dial
 diagrams are TikZ emitted straight from Tonto's own numbers — no Open Babel, no
@@ -4150,6 +4225,103 @@ To get there: fix or suppress the `tmp` violation, then re-run under
    known debug failures (47, 64, 87, 91) must be recorded as *expected* or the job is red from
    day one and gets ignored; and `-O0` is slow, so the `short` suite (or a few representative
    jobs — one SCF, one HAR, one CIF-processing) is the sensible scope.
+
+---
+
+# Workshop and examples
+
+## Still owed: SO₂ as an ADDITIONAL exercise 5 (Dylan, 2026-08-24)
+
+**Not a replacement for urea.** Exercise 2's molecule was chosen by measurement
+in 2026-08-10, and that rejection is the *reason* this is a separate exercise.
+Timed on `sauce`, same settings for both (RHF/def2-SVP, HAR, no cluster charges,
+0.001/0.01):
+
+| | reflections | ASU | wall clock | R(F) after HAR |
+|---|---|---|---|---|
+| SO₂ (`tests/long/so2_rhf_DZP_anharmonic_*`) | 1097 | S + 2×O | **8.0 s** | 0.0406 |
+| urea (`tests/hart/urea_hart_STO-3G`) | 817 | C,O,N,2×H | **23.8 s** | **0.0185** |
+
+SO₂ is quicker, and urea won anyway: stripped of the anharmonic 4th-order ADPs
+on S and the cluster charges — neither wanted in a first exercise — SO₂'s R(F)
+*rises* from 0.0295 to 0.0406 while urea's falls to 0.0185 (SHELX IAM 0.0253).
+An exercise whose numbers get worse teaches the wrong lesson. Urea is also a
+single self-contained CIF, whereas SO₂ needs a CIF **and** a separate
+`xd_F.hkl`.
+
+**So give SO₂ the settings it actually needs, and make that the lesson** — some
+structures are not served by the default recipe:
+
+- Keep `refine_4th_order_for_atoms= { S }` (anharmonic ADPs on sulfur) and the
+  cluster charges. Source data:
+  `tests/long/so2_rhf_DZP_anharmonic_consistent_cluster_charge_HAR/{stdin,xd_F.hkl}`.
+- Basis `def2-SVP`, as the other exercises.
+- Append a `robydata=` / `roby_analysis` block for the bond indices.
+
+**The chemical punchline urea has not got:** sulfur is **not** hypervalent. The
+Roby-Gould bond order comes out ≈1.7, not 2, with a large ionic component,
+reproducing Grabowsky *et al.*, *Angew. Chem. Int. Ed.* **2012**, *51*, 6776
+(cite by DOI; the PDF is on a stranded branch). `tests/rgbi/` has no SO₂ case,
+so one could be added.
+
+**Shape:** `workshop/examples/5-so2-har/` following the established deck pattern
+(a `!` comment block giving the `cd` + run line, then the job), and a
+`## Exercise 5` in `workshop/WORKSHOP.md` matching the house layout exactly —
+prose → `**In a terminal**, type:` → runtime → `### The input file` →
+`### What you should get` (table with a `?` column) → `### The four diagnostic
+plots` → `### The bond indices` → `### Things to try next` → `---`. Update the
+overview table at the top. Images
+`workshop/images/so2.{QQ_plot,F_z_vs_stl,F_z_vs_F_exp,Delta_F_vs_stl}.png` plus
+`so2.rgbi-{structure,dials-all}.png`.
+
+**Every number must be re-measured**, not transcribed. The figures above came
+from an 8 August build of a branch that predates the extinction merge, and the
+plots are job-named PNGs now, not `stdout.*.pdf`.
+
+## Exercise 4 should use Tonto's own contour plotting, not a hand-rolled script
+
+**Status: open, 2026-08-11.** Dylan's observation, and he is right.
+
+`workshop/WORKSHOP.md` exercise 4 writes the grid with `plot_format= gnuplot`
+and draws it with `workshop/examples/4-urea-deformation/deformation.gnuplot`, which
+computes its own logarithmic contour ladder. Tonto already has that facility:
+
+```
+   plot_format= gnuplot.contour
+   contour_scale= log            ! the default
+   contour_min_value= -3.0       ! log10 of the smallest contour
+   contour_increment=  0.5       ! half a decade
+   contour_max_value=  0.0       ! log10 of the largest
+```
+
+which makes Tonto write three files per plot — `*.contour_data`,
+`*.bond_data` and a `*.commands` gnuplot script — and the script draws the map
+with a **logarithmic colour bar labelled in powers of ten**, positive and
+negative, and the bonds overlaid. Verified working: it reports
+
+```
+Minimum +ve log10 contour =  -3.0
+Maximum +ve log10 contour =   0.0
+Contour increment         =   0.5
+No. of contours           =   7
+Total no. of contours     =  15
+```
+
+**Why it was not adopted before the lab.** Two things need sorting first, and
+neither is deep:
+
+1. The generated script targets `xterm` and then `postscript eps`. Rendering
+   to PNG means overriding both terminal lines, and under `pngcairo` the
+   result comes out black — the script's colours assume the EPS terminal's
+   white ground, and `background rgb 'white'` alone does not fix it.
+2. The difference map (constrained minus unconstrained) is made by subtracting
+   two plain grids. The contour format writes a different file, so keeping
+   that picture means either a second pair of plots in plain format or
+   subtracting in the contour data.
+
+**The right end state** is exercise 4 using `gnuplot.contour` and the workshop
+telling the reader to run `gnuplot -persist <job>,<kind>,gnuplot.commands`,
+with no hand-written script at all.
 
 ---
 
@@ -5374,53 +5546,6 @@ is a local reproducer and the bisect can proceed without CI. **If all of them
 agree, the drift is not the compiler at all** — it would then be something about
 the machine that blessed the reference, and the hunt moves elsewhere. Either
 outcome is worth knowing; run it and record which.
-
----
-
-## Exercise 4 should use Tonto's own contour plotting, not a hand-rolled script
-
-**Status: open, 2026-08-11.** Dylan's observation, and he is right.
-
-`workshop/WORKSHOP.md` exercise 4 writes the grid with `plot_format= gnuplot`
-and draws it with `examples/4-urea-deformation/deformation.gnuplot`, which
-computes its own logarithmic contour ladder. Tonto already has that facility:
-
-```
-   plot_format= gnuplot.contour
-   contour_scale= log            ! the default
-   contour_min_value= -3.0       ! log10 of the smallest contour
-   contour_increment=  0.5       ! half a decade
-   contour_max_value=  0.0       ! log10 of the largest
-```
-
-which makes Tonto write three files per plot — `*.contour_data`,
-`*.bond_data` and a `*.commands` gnuplot script — and the script draws the map
-with a **logarithmic colour bar labelled in powers of ten**, positive and
-negative, and the bonds overlaid. Verified working: it reports
-
-```
-Minimum +ve log10 contour =  -3.0
-Maximum +ve log10 contour =   0.0
-Contour increment         =   0.5
-No. of contours           =   7
-Total no. of contours     =  15
-```
-
-**Why it was not adopted before the lab.** Two things need sorting first, and
-neither is deep:
-
-1. The generated script targets `xterm` and then `postscript eps`. Rendering
-   to PNG means overriding both terminal lines, and under `pngcairo` the
-   result comes out black — the script's colours assume the EPS terminal's
-   white ground, and `background rgb 'white'` alone does not fix it.
-2. The difference map (constrained minus unconstrained) is made by subtracting
-   two plain grids. The contour format writes a different file, so keeping
-   that picture means either a second pair of plots in plain format or
-   subtracting in the contour data.
-
-**The right end state** is exercise 4 using `gnuplot.contour` and the workshop
-telling the reader to run `gnuplot -persist <job>,<kind>,gnuplot.commands`,
-with no hand-written script at all.
 
 ---
 
