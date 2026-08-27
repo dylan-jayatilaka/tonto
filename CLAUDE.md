@@ -345,6 +345,24 @@ The test: if a comment explains the *bug*, it belongs in a document. If it expla
 ## 8. Working agreement
 
 - Plan before coding; don't run `make` / `ctest` without asking.
+- **A parallel build is safe, and `-j` is the right thing to use.** It was not always:
+  before 2026-08-11 each per-file translator JVM ran uncapped, and a JVM with no `-Xmx`
+  takes a quarter of physical RAM as its heap budget and drifts up toward it regardless of
+  live data — one translation of the 4 KB `mat{str}.foo` was measured at **2.1 GB RSS**.
+  `make -j8` then ran eight of those and the kernel started killing processes (Error 137),
+  taking Dylan's desktop session with it. **The fix is already in the tree**:
+  `FOO_TRANSLATOR_XMX` caps every per-file JVM at `512m` (about double what the largest
+  file needs; wall time is flat from 256m to 1g, so it costs nothing), and
+  `FOO_ANALYSIS_XMX` gives the whole-library modes `2g` because only one ever runs.
+  Two consequences worth holding on to:
+  - **Do not "fix" a memory problem by dropping to `-j1`.** The cap is the lever; `-j` is
+    not the bug, and translating serially just makes a full rebuild several times slower
+    for no benefit. Scale `-j` to free memory at roughly 512 MB per job.
+  - **Never remove or raise the cap** without measuring. `make`'s own throttles cannot
+    substitute: `-j` limits process *count* and `-l` triggers on load average, a runqueue
+    metric that knows nothing about memory and lags besides. Since the cap, an
+    over-large file fails as a clean Java `OutOfMemoryError` naming the file rather than
+    a random `SIGKILL`. The reasoning is in `CMakeLists.txt` above `FOO_TRANSLATOR_XMX`.
 
 ### Debugging and instrumenting Foo code — do it in a DEBUG build
 
