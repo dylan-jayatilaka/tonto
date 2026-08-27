@@ -192,6 +192,19 @@ cmake .. -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=release
 make -j
 ```
 
+**No toolchain PPA in the build or in CI** (rule agreed with Dylan, 2026-08-27). Ubuntu 24.04
+carries `gfortran-14` natively, so `ppa:ubuntu-toolchain-r/test` is used **only** where a compiler
+newer than the distribution's is genuinely required — today that is `ci-mpi.yml` alone, which
+builds 16 — and it goes as soon as that compiler reaches the archive. The reason is not taste:
+**a build whose output is compared against stored references must not silently change where its
+packages come from.** The PPA does not merely *carry* gfortran-14, it carries its own build of it
+(`14.3.0-12ubuntu1~24~ppa1`), and adding it to `ci.yml` during the gfortran-16 migration turned
+the reference build red — `urea_hart_STO-3G_disk_ffs` failing *structurally*, 0% deviation and
+0 ulp, grand total 57/58, reproduced twice. The install assertion missed it because it checks the
+**major** version, which is 14 either way: a guard at the wrong granularity. `ci.yml` now records
+the exact package builds of `gfortran`, `libblas-dev` and `liblapack-dev` on every run, because
+that difference was one package revision wide and invisible without it.
+
 **The project standard compiler is `gfortran-14`.** A migration to 16 was made and
 **reverted the same day, 2026-08-27**, and the reason is worth knowing before anyone tries
 again: a gfortran-16 **debug** build fails **34 of 71** short tests where a gfortran-14 debug
