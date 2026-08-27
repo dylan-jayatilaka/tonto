@@ -3193,7 +3193,8 @@ highlighting and tighter editor integration. The repo already ships some vim sup
 
 ## gfortran-16 DEBUG fails 34 of 71 short tests — the migration was reverted (2026-08-27)
 
-**Status: open. The compiler migration is blocked on this, not on the bounds-check bug.**
+**Status: open, and the compiler is now isolated by measurement (see below).** The compiler
+migration is blocked on this, not on the bounds-check bug.
 
 The project standard moved 14 -> 16 on 2026-08-27 and was **reverted hours later**, when the
 local gate was run before pushing. The whole migration is preserved on the branch
@@ -3234,18 +3235,39 @@ gfortran-16 defect or something subtler in how the object is copied — note
 `.atom(b).interpolator = .atom(a).interpolator` a few lines below, an intrinsic assignment of a
 derived type with allocatable components.
 
-**Not yet established, in priority order:**
+**MEASURED 2026-08-27, and it isolates the compiler.** The experiment below was run: a
+gfortran-14 debug build **from the same commit** (`1d5ed7a5`), same machine, same suite.
 
-1. **The one variable still not isolated** — the passing debug-14 binary was built from
-   11-day-old source. The decisive experiment is a **gfortran-14 debug build on today's
-   source**, run against the same suite. Until that is done, "the compiler" is strongly
-   indicated but not proven.
-2. **How many of the 7 numeric failures are pre-existing `-O0` artefacts.** This file records
-   *four* longstanding debug failures; 34 is not four, but the two counts have never been
-   measured side by side on the same source. The experiment above settles this too.
-3. **Whether gfortran-15 shares it.** Installed on sauce and never tested. The
-   `-fcheck=bounds` gate in `cmake/SetFortranFlags.cmake` is `>= 16` for the same reason.
-4. **Whether the ANO line and the 7 numeric failures have one cause or two.**
+| debug build, identical source | agreement lines pass / fail | `Making gaussian ANO interpolators` |
+|---|---|---|
+| **gfortran-14** | **70 / 1** | **0 occurrences** |
+| **gfortran-16** | 37 / 34 | 34 occurrences |
+
+Zero against thirty-four. The source-age variable that qualified the earlier three-build table is
+gone, and gfortran-16 is implicated. The one agreement failure under 14 is
+`urea_ccsd_pob-TZVP_Salvador_properties` (4.48%), which fails under 16 as well and is a known
+longstanding case, not part of this.
+
+**A by-product worth recording: the "four longstanding `-O0` failures" figure this file has
+carried for months is wrong on current source.** A gfortran-14 debug build shows **3** ctest
+failures, and two of them are *invariant checks* — `single_atom_scf` and `dft_invariants` — which
+compare the program against itself and so cannot be blessed away. Only one is a reference
+comparison. Whoever revisits the `-O0` entry should start from these three, not from the old four.
+
+**Still not established:**
+
+1. **The `-fcheck=bounds` confound.** The two builds differ by a flag as well as a compiler: 14
+   keeps the bounds check, 16 drops it because 16 miscompiles it, and CMake offers no way to
+   build 14 without it. The flag should not affect whether an `allocatable` component reads as
+   unallocated — but 16's bounds-check codegen is already known to be broken, so this is not
+   nothing. Close it the cheap way, the technique this file records from the `pointgroup` work:
+   recompile the single file with altered flags and relink, rather than rebuilding a tree.
+2. **Whether gfortran-15 shares it.** Installed on sauce, never tested. The gate in
+   `cmake/SetFortranFlags.cmake` is `>= 16` because that is what was measured, not what was
+   established.
+3. **Whether the ANO line and the 7 numeric failures have one cause or two.**
+4. **A second GCC bug report is now probably owed** — subject to (1). It would need the same
+   treatment as the bounds-check one: a reduced reproducer, not a description of Tonto.
 
 **A caution for whoever picks this up.** Do not read the 27 structural failures as cosmetic.
 The extra line means a code path *ran* under 16 that did not run under 14 — interpolators were
