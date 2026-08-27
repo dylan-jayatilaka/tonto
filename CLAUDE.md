@@ -197,9 +197,9 @@ carries `gfortran-14` natively, so `ppa:ubuntu-toolchain-r/test` is used **only*
 newer than the distribution's is genuinely required — today that is `ci-mpi.yml` alone, which
 builds 16 — and it goes as soon as that compiler reaches the archive. The reason is not taste:
 **a build whose output is compared against stored references must not silently change where its
-packages come from.** The PPA does not merely *carry* gfortran-14, it carries its own build of it
-(`14.3.0-12ubuntu1~24~ppa1`), and adding it to `ci.yml` during the gfortran-16 migration turned
-the reference build red — `urea_hart_STO-3G_disk_ffs` failing *structurally*, 0% deviation and
+packages come from.** The PPA does not merely *carry* gfortran-14, it carries a **newer minor release**: the Ubuntu
+archive has `14.2.0-4ubuntu2~24.04.1` and the PPA supplied `14.3.0-12ubuntu1~24~ppa1`. Adding it
+to `ci.yml` during the gfortran-16 migration turned the reference build red — `urea_hart_STO-3G_disk_ffs` failing *structurally*, 0% deviation and
 0 ulp, grand total 57/58, reproduced twice. The install assertion missed it because it checks the
 **major** version, which is 14 either way: a guard at the wrong granularity. `ci.yml` now records
 the exact package builds of `gfortran`, `libblas-dev` and `liblapack-dev` on every run, because
