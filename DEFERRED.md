@@ -540,7 +540,33 @@ File name = stdin   Line number = 35
 
 The input file grew from 55 to 101 lines during the run. Reproducible.
 
-**Mechanism — partly established, not fully pinned.** The three units are distinct
+**THE RECORDED MECHANISM IS REFUTED (2026-08-27).** The story below — "unit 7 already belonged
+to another open file" — cannot be what happened, and the next person should not spend time on it:
+
+- **No ordinary file can ever hold unit 5, 6 or 7.** `TEXTFILE:open` and its two siblings open
+  with `newunit=.unit` (`textfile.foo:331,378,405`), and Fortran 2008 guarantees `newunit`
+  returns a **negative** number distinct from every unit in use. A collision with a small
+  positive hard-coded unit is impossible by construction.
+- **`.std_err_unit` is never reassigned.** `SYSTEM:set_std_err_unit` and
+  `SYSTEM:set_std_err_file` exist (`system.foo:339,347`) — the latter would repoint it at another
+  file's unit, which *would* produce exactly the reported symptom — but **neither is called
+  anywhere in `foofiles/`**. The only assignment is `system.foo:249`, to the macro.
+- The three macros are distinct and correct: 5, 6, 7 (`include/macros.in:704-706`), and all three
+  create routines exist — `create_stdin:70`, `create_stdout:96`, `create_std_err:124`.
+
+**So the symptom is real and reproducible but its cause is unknown.** The write went *somewhere*;
+`create_std_err` never opens unit 7, and an unconnected unit written by gfortran normally
+auto-connects to `fort.7`, not to the input. Start from an `inquire(unit=7,...)` immediately
+before the failing write, and from **`TEXTFILE:is_open`/`is_open_io`** (`textfile.foo:823,844`),
+which special-case `TEXTFILE_STD_IN_UNIT` and `TEXTFILE_STD_OUT_UNIT` but **not**
+`TEXTFILE_STD_ERR_UNIT` — so `std_err` alone falls through to `inquire(file=.name,...)` on a name
+that was never opened.
+
+**Design intent (Dylan, 2026-08-27):** `std_err` should be created **only in the `run_*.foo`
+programs**, not wherever a diagnostic happens to want it. Worth checking against where
+`create_std_err` is actually reached before choosing a fix.
+
+**Superseded mechanism, kept only so it is not re-derived:** The three units are distinct
 (`TEXTFILE_STDIN_UNIT` 5, `TEXTFILE_STDOUT_UNIT` 6, `TEXTFILE_STDERR_UNIT` 7, `include/macros.in`).
 But `create_std_err` (`textfile.foo`) never *opens* anything — it allocates the object and
 claims the hard-coded unit:
