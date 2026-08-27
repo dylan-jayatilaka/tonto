@@ -135,6 +135,15 @@ as measured. Two notes on re-measuring them, agreed 2026-08-27:
   sides first. Re-running §6's four-build sweep is deferred until GCC 16 is released, since the
   numbers would otherwise want taking twice.
 
+**CAUTION on this workflow's suite table (found 2026-08-27).** Until that date `ci-mpi.yml`
+installed **no gnuplot**, while running the full short suite through `suite_report.py`. Tonto
+completes a plotting job without gnuplot but prints a multi-line WARNING per plot instead of
+rendering it, which is a **structural** difference from the stored reference — so every plotting
+job in that table failed at 0% numeric deviation, for reasons having nothing to do with MPI.
+gnuplot is installed now. Any MPI suite count recorded on this page before 2026-08-27 should be
+read with that in mind; the π check, which is the actual gate, is unaffected because it needs no
+reference.
+
 **What gates it:** the π rank-invariance check (`check_mpi_pi.sh` at 1/2/4 ranks). It needs no
 stored reference, so it cannot be silently blessed, and all four dead reductions found in
 milestone 4 would have failed it.
