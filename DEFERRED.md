@@ -41,6 +41,49 @@ now covers the whole project, so it was renamed.)*
 | [Platform-specific](#platform-specific) | macOS/Apple Silicon, gfortran-16 |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## WHERE 2026-08-27 LEFT OFF — read this first if you are picking up cold
+
+**One measurement is in flight and its result is the first thing to look at.** The full suite,
+`short long hart` at gfortran-14, on commit `80dcbfe4`:
+<https://github.com/dylan-jayatilaka/tonto/actions/runs/33067218748>. It is the verification owed
+since 2026-08-26 for the `textfile.foo` MPI fix, which is on the path of every file read in Tonto
+and has so far been tested by 3 jobs out of 124.
+
+**Before you read it, read `docs/TONTO_AND_MPI.md` §"VERIFICATION STILL OWED".** Two earlier
+attempts the same day were worthless for reasons unconnected to `textfile.foo`, and the third
+cannot be called a pass yet because the baseline itself is in question — see the entry below on
+124/124 versus 89. Do not accept or reject that run without settling the denominator first.
+
+**Nothing is uncommitted.** `origin/develop` is at `ac64ad68`. `origin/master` has only CI
+configuration. The gfortran-16 migration is preserved whole on `origin/develop-gfortran-16`.
+
+**What the day established, in one line each:**
+
+- **gfortran-16 debug is broken and the migration was reverted.** 34 failures against
+  gfortran-14's 1, same commit, same machine. See *Platform-specific*.
+- **The toolchain PPA must not be in a reference build.** It substituted gfortran 14.3.0 for the
+  archive's 14.2.0 and reddened `ci.yml` twice. Removed everywhere except `ci-mpi.yml`, which
+  needs 16. Rule in `CLAUDE.md` §4.
+- **A missing optional run-time dependency looks exactly like a defect.** No gnuplot meant 18
+  structural failures at 0% deviation. Fixed in `ci-full-suite.yml` and `ci-mpi.yml`.
+- **The Bugzilla account request was sent** and its reply is awaited; the duplicate search is
+  still owed and cannot be scripted.
+
+**The three next actions, in order:**
+
+1. **Read the suite run** above, against a denominator you have checked.
+2. **Close the `-fcheck=bounds` confound** in the gfortran-16 finding — recompile the one file
+   with altered flags and relink, per the recipe this file records from the `pointgroup` work.
+   Until that is done, do not file a second GCC bug: the two builds differ by a flag as well as a
+   compiler.
+3. **Reconcile 124 versus 89.** It is cheap and it is blocking (1).
+
+**The methodological lesson of the day, which cost the most time:** a *structural* failure —
+0% numeric deviation, 0 ulp, output differing only in line count — pointed at the **environment**
+three times (a 2023 reference, a missing package, a substituted compiler package) and at a real
+compiler defect once. Read that signature as "the output has extra or missing lines", and check
+what changed around the program before suspecting the program.
+
 **Highest-priority open items**, if you are looking for where to start:
 **File the gfortran-16 GCC bug report** — the draft is finished
 ([`docs/GFORTRAN16_GCC_BUG.md`](docs/GFORTRAN16_GCC_BUG.md)). Blocked on a Bugzilla account,
