@@ -815,9 +815,19 @@ tested, not asserted** — a loop whose terminating `DIE_IF` moved is precisely 
 that can turn a clean failure into a silent one, and the new `exit` on `.IO_status/=0` is a
 control-flow path that did not exist before.
 
+**Dispatched 2026-08-27, awaiting its result.** `gh workflow run ci-full-suite.yml --ref
+develop -f suites="short long hart" -f fc_version=16` — i.e. **gfortran-16**, the standard as
+of that day, not the 14 the recipe below was written for. Two things follow. First, it
+discharges this owed verification only if it comes back at the 124/124 baseline; anything less
+must be attributed before it is accepted, and the compiler is now a second candidate alongside
+the `textfile.foo` change, so a `-f fc_version=14` run is the discriminator. Second, the
+existing Linux release-16 figure is **123/124** (see `DEFERRED.md`, *Platform-specific*), so a
+single missing test is the *expected* result and not by itself evidence of a regression —
+identify which one before concluding anything.
+
 ```bash
 # a release build from the current sources, then the full suite
-cmake -B build -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=release
+cmake -B build -DCMAKE_Fortran_COMPILER=gfortran-16 -DCMAKE_BUILD_TYPE=release
 cmake --build build -- -j3            # -j3, not -j$(nproc): one JVM per .foo file
 python3 scripts/suite_report.py --program build/tonto --tests-dir tests \
         --basis-sets basis_sets --suites short long hart \

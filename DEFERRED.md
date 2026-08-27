@@ -3379,40 +3379,6 @@ whose terminating check moved is exactly the kind of change that turns a loud fa
 quiet one. The expectation is that serial behaviour is unchanged, because the new guard is a
 no-op in a serial build; **that expectation is the thing to test, not to assert.**
 
-## Transpose and thin the CI badge table (Dylan, 2026-08-26)
-
-Do this as its own piece of work, in its own session. It is a README/docs change only --
-no workflow edits -- so it needs no build and no CI run.
-
-**Transpose.** The README table is platforms as rows, build types as columns. Swap them:
-build types as **rows**, platforms as **columns**. Transposing does not reduce the cell
-count -- 3 platforms x 4 build types is 12 either way -- but it fixes the growth
-direction. Platforms are stable at three (Linux, Windows/WSL, macOS) and have not changed
-in years; **build types are what keeps growing** -- release, debug, MPI, and now MPI-debug
-(see the entry above), with `release-static` and `fast` also existing. A markdown table
-grows badly sideways: a fourth column makes the README scroll horizontally on GitHub and
-is unreadable on a phone. A fourth row costs nothing.
-
-**Thin, which is the part that actually matters.** A badge means *"a live signal worth
-watching"*. Four of the nine current cells are not that: the three macOS cells say
-"not running yet" (the workflows are not on `master`, so `schedule:` never fires),
-WSL-MPI is a dash, and **WSL-debug carries a badge and has never had a green run**. Twelve
-badges would be mostly grey, and a wall of grey teaches a reader to ignore all of them --
-including Linux-release, which is the gate and the one that must never be ignored.
-
-So split the two questions the one table is currently being asked:
-
-- **`README.md`** -- "is Tonto healthy?" A small table of badges that are genuinely live
-  signals. Linux-release above all.
-- **`docs/TONTO_CONTINUOUS_INTEGRATION.md`** -- "what is covered where?" The full
-  platform x build-type matrix including the not-yet-running cells, where completeness is
-  the point and a grey cell is informative rather than noise.
-
-**Do not** simply delete the unbadged rows: "macOS release is not tested in CI" is a fact a
-reader deserves, it just does not deserve README real estate. And keep the existing rule
-that a badge and its workflow triggers are changed together -- a badge pointing at a
-workflow that never runs is how WSL-debug got into its current state.
-
 ## Add a PARALLEL DEBUG build to CI, on every platform (Dylan, 2026-08-26)
 
 There is a debug job and an MPI job on Linux, and neither is a **debug MPI** job. Nothing
@@ -4155,6 +4121,34 @@ with no hand-written script at all.
 ---
 
 # Done, resolved and closed (archive)
+
+## DONE (2026-08-27): transpose and thin the CI badge table
+
+Done as asked, and **one premise of the original entry was wrong**. It said four of
+the nine cells were dead, counting WSL-debug as a badge that "has never had a green
+run". That was true when written on 2026-08-26 but is not now: WSL-debug has run
+weekly on `master` and its last three runs are green. It stays badged. The dead cells
+were the three macOS placeholders and the WSL-MPI dash — and the macOS ones are dead
+for one reason only, that a `schedule:` trigger fires from the default branch, so
+those files never run until they reach `master`.
+
+What landed:
+
+- **`README.md`** — transposed, so build types are rows and platforms columns, which
+  is the axis that grows. Thinned to the five live badges: the macOS placeholder row
+  is gone, replaced by one sentence saying macOS *is* built and tested but carries no
+  badge yet, pointing at the CI document. The WSL-MPI dash stays, being one blank cell
+  in an otherwise live row.
+- **`docs/TONTO_CONTINUOUS_INTEGRATION.md`** — gains a *Coverage* section carrying the
+  full platform x build-type matrix, macOS and the missing parallel-debug row included,
+  where a blank is informative. Its workflow table also had the same stale
+  "never yet run" claim about WSL-debug; corrected.
+
+Not done, deliberately: the macOS cells were **not** given badges in anticipation of
+the merge to `master`. A badge pointing at a workflow that has never run is exactly
+how WSL-debug got into the state this entry misreported. Badge them once they have
+run green.
+
 
 ## DONE (2026-08-27): the ammonia-borane pHAR test is reinstated, and pHAR is tested
 

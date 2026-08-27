@@ -10,7 +10,7 @@ are not all wired to every push.
 | **CI (Linux-release)** | `ci.yml` | yes | every push / PR to `master`, `develop` | ~15–20 min |
 | **CI (WSL-release)** | `ci-wsl.yml` | yes | `guards` job on every push; the full WSL build when the WSL machinery changes, on demand, and weekly (Mon) *once on `master`* | ~1 min / ~40–70 min |
 | **CI (Linux-debug)** | `ci-debug.yml` | yes | every push / PR to `master`, `develop`, and on demand | ~15 min |
-| **CI (WSL-debug)** | `ci-wsl-debug.yml` | yes, but **never yet run** | weekly (Tue) and on demand — both need it on `master` first | ~60–90 min |
+| **CI (WSL-debug)** | `ci-wsl-debug.yml` | yes | weekly (Tue) and on demand — green on `master` since 2026-08-18 | ~60–90 min |
 | **CI (macOS-release)** | `ci-macos.yml` | not yet | weekly (Tue) and on demand — **never yet run**, the file is not on `master` | ~40–70 min × 2 |
 | **CI (macOS-MPI)** | `ci-macos-mpi.yml` | not yet | weekly (Wed) and on demand — **never yet run**, the file is not on `master` | ~40–70 min |
 | **CI (macOS-debug)** | `ci-macos-debug.yml` | not yet | weekly (Thu) and on demand — **never yet run**, the file is not on `master` | ~40–60 min × 2 |
@@ -253,6 +253,29 @@ those are triaged.
 `push`/`pull_request` triggers in `ci-debug.yml` (leave `workflow_dispatch`) and wrap the badge
 in `README.md` in an HTML comment — both together, or the badge points at a workflow that never
 runs.
+
+## Coverage: every platform against every build type
+
+The README carries only the badges that are **live signals**. This is the full picture,
+including the cells that are not covered — a blank here is information, which is why it
+lives in this document rather than on the front page.
+
+| | Linux | Windows/WSL | macOS |
+|---|---|---|---|
+| **release** | `ci.yml`, badge, every push | `ci-wsl.yml`, badge, weekly + on demand | `ci-macos.yml`, **not on `master`, so never runs** |
+| **debug** | `ci-debug.yml`, badge, every push | `ci-wsl-debug.yml`, badge, weekly | `ci-macos-debug.yml`, **not on `master`** |
+| **parallel (MPI)** | `ci-mpi.yml`, badge, weekly + MPI paths | — none | `ci-macos-mpi.yml`, **not on `master`** |
+| **parallel debug** | — none | — none | — none |
+
+Two gaps worth naming rather than leaving as blanks. **The three macOS workflow files
+exist and are written**, but a `schedule:` trigger only fires from the default branch, so
+until they reach `master` they never run — that is the single reason macOS has no badge.
+**No platform has a parallel *debug* build**, which is where an MPI precondition failure
+would actually be caught; see `DEFERRED.md`.
+
+The build types are the rows because that is the axis that grows: platforms have been
+Linux, Windows/WSL and macOS for years, while build types have gone release → debug → MPI
+→ MPI-debug, with `release-static` and `fast` also existing.
 
 ## What each badge on the README covers
 

@@ -1,7 +1,12 @@
 # The gfortran-16 debug crash — found
 
-**Status 2026-08-25: root cause established, worked around, not yet reported
-upstream.** `DEFERRED.md` carries the same finding woven into the longer record.
+**Status 2026-08-27: root cause established, worked around, account requested upstream.**
+`DEFERRED.md` carries the same finding woven into the longer record.
+
+**The project migrated to gfortran-16 anyway, on 2026-08-27**, accepting a debug build with no
+array bounds checking rather than waiting on a fix of unknown date — Tonto is almost entirely
+dynamically allocated Fortran, so overruns are expected to be rare. See `CLAUDE.md` §4. This
+document therefore describes a *live* condition of every debug build, not a historical one.
 
 ## The one-paragraph version
 
@@ -112,8 +117,11 @@ instead, for the signature above.
 
 ## Still open
 
-- **Not reported to GCC.** A draft bug report is in `docs/GFORTRAN16_GCC_BUG.md`.
-  Worth checking Bugzilla for an existing report first.
+- **Not reported to GCC**, and the blocker is an account, not the report. The draft is
+  finished in `docs/GFORTRAN16_GCC_BUG.md`; Bugzilla sign-up is restricted and goes through
+  <gcc-bugzilla-account-request@gcc.gnu.org>, where a request was sent **2026-08-27**. The
+  duplicate search over *resolved* bugs and `16 Regression` is still outstanding and, like the
+  filing, has to be done by hand — sourceware blocks scripted access.
 - **gfortran 15 is untested** — neither machine has it. The gate is therefore on
   `>= 16`, which is what was measured. If 15 turns out to be affected, lower it.
 - ~~A full gfortran-16 debug build has not been run end-to-end.~~ **Done
