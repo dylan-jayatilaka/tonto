@@ -15,13 +15,14 @@ now covers the whole project, so it was renamed.)*
 > filed under live themes (the two MPI-CI `DONE`s, the `TEXTFILE:flush` root cause, the
 > withdrawn suppressed-reduction abort, the dropped-`data`-statements fix, the macOS RGBI
 > badge, the `bond-energy` won't-do, and the keyword-parsing survey), and one live list
-> (*RGBI: known defects*) was stranded inside the archive. **45 live, 17 archived.**
+> (*RGBI: known defects*) was stranded inside the archive. **44 live, 18 archived.**
 >
 > Re-sorted again on 2026-08-27, when `docs/PLOT_PLAN.md` and `docs/WORKSHOP_PLAN.md`
 > were retired: their finished stages are history and went with them, and their four
 > live items were filed here under *Correctness*, *Test suite and numerics* and the
 > new *Workshop and examples* theme, which also took in the exercise-4 entry that had
-> been stranded below the archive.
+> been stranded below the archive. The ammonia-borane pHAR entry was closed and archived the
+> same week, on 2026-08-27.
 >
 > If you add an entry, put it under a theme; when it closes, move it down — a `DONE` heading
 > in a live section is how the drift starts.
@@ -52,10 +53,11 @@ filed, not merely considered.
 Then: **macOS in CI** (feasible and free — the repo is public — and it is the only thing that can
 guard the two arm64 `-O2`/`-O3` compiler pins, which today are guarded by nothing and whose
 failure mode is wrong numbers, not crashes; see *Platform-specific*),
-NaN and negative ESDs from the least-squares variance-covariance matrix, the MPI items
-behind milestones 6 and 7, and **pHAR ships untested** — its only test is stranded on a branch
-behind a 167 MB Git LFS asset (see *"Reinstate the ammonia-borane pHAR test"*). (`data` statements silently dropped: **fixed 2026-08-04** — see
-below; the audit found no library file was ever affected.)
+NaN and negative ESDs from the least-squares variance-covariance matrix, and the MPI items
+behind milestones 6 and 7. (`data` statements silently dropped: **fixed 2026-08-04** — see
+below; the audit found no library file was ever affected. **pHAR ships untested** was listed
+here until 2026-08-27 and is no longer true: the test is on `develop`, skips cleanly without
+its 167 MB asset and passes with it — see the archive.)
 
 ---
 
@@ -2263,187 +2265,6 @@ OpenBLAS would also oversubscribe cores in MPI builds.
 
 # Test suite and numerics
 
-## Reinstate the ammonia-borane pHAR test — blocked by a 167 MB asset (Dylan, 2026-08-05)
-
-**pHAR code ships in the library but nothing tests it.** `MOLECULE.CE:phar_defragment` is live
-(`molecule.main.foo` dispatches `phar_defragment`, added by Kang 2025-03-13), and
-`crystal.foo`, `molecule.har.foo` and `molecule.rho.foo` all carry pHAR-specific branches. There
-is **no pHAR test in `tests/`**.
-
-One exists, on a branch: `tests/long/ammonium_borane_pHAR_C23/`, on
-**`origin/release-pHAR-broken`** (tip `18712bd6`, 2025-04-29, kanghyun-chu).
-
-**What is there, and what is missing:**
-
-| file | size | |
-|---|---|---|
-| `stdin` | 946 B | the job |
-| `stdout` | 269 KB | the blessed reference |
-| `B6H6_grown.cif` | 7 KB | input |
-| `tonto_data_on_F_20rfl.hkl` | 16 KB | input |
-| `Crystal23_InputFiles.zip` | 12 KB | the Crystal23 inputs that *generate* the XML |
-| **`GenerateXML.XML`** | **134 B** | **a Git LFS pointer, not the file** |
-
-The `IO` manifest lists `GenerateXML.XML` as a required input, so **the test cannot run**. The
-pointer says:
-
-```
-version https://git-lfs.github.com/spec/v1
-oid sha256:1c5c24f0903c1b8667e3f8aa41ba1b2a550a49370b22db422a37d7a1f093a8ee
-size 174978609
-```
-
-i.e. the real asset is **167 MB**.
-
-**FIRST STEP, and it decides everything below: is that LFS object still retrievable?** This was
-*not* checked — `git-lfs` is not installed on the machine this was investigated from. One
-command answers it:
-
-```bash
-sudo apt install git-lfs          # or: brew install git-lfs
-cd <a scratch clone of tonto>
-git lfs ls-files -l origin/release-pHAR-broken     # does GitHub still know the oid?
-git lfs fetch origin release-pHAR-broken           # does it actually come down?
-```
-
-- **If it downloads**, the fix is small: restore a `.gitattributes` that tracks
-  `tests/long/**/*.XML`, port the one test directory onto `release`, and decide whether a
-  167 MB clone cost is acceptable (option 4 below says it probably is not).
-- **If it 404s or the quota is exhausted**, the object is gone and options 1–3 are the only
-  real ones — regenerate, fetch on demand, or shrink the case.
-
-**How the deposit went wrong** is legible in the branch's own history:
-
-```
-0f70beae  Activated git lfs and added .gitattributes files but NOT YET large XML
-69d6e806  Added large XML file
-...
-18712bd6  The Crystal23 input files for generating the GenerateXML.XML are included
-```
-
-LFS was enabled and `.gitattributes` added, then the XML committed — but **`.gitattributes` does
-not exist at the branch tip**. So the tracking configuration was lost while the pointer file
-stayed behind, and a plain `git clone` gets a 134-byte text file where a 167 MB XML should be.
-Whether the LFS object is still retrievable from GitHub was **not** checked (git-lfs is not
-installed on this machine) — check that first, since it decides which option below is viable.
-
-**Options, in rough order of preference:**
-
-1. **Regenerate rather than store.** `Crystal23_InputFiles.zip` (12 KB) is committed precisely so
-   the XML can be rebuilt — that is what `18712bd6` was for. Needs Crystal23, which is
-   proprietary, so this makes the test reproducible only for those who have it.
-2. **Fetch on demand**, the way the ANTLR jar already is at configure time: host the XML
-   somewhere durable and have the test skip cleanly when it is absent.
-3. **Shrink the case.** 167 MB for a test asset is the real problem; a smaller cell, fewer
-   reflections, or a trimmed XML would make this an ordinary test.
-4. **Proper LFS** — restore `.gitattributes` and re-push the object. Note GitHub's free LFS quota
-   is 1 GB storage *and* 1 GB/month bandwidth; a 167 MB asset cloned a handful of times exhausts
-   it, which is a poor fit for a public repository.
-
-**Note the branch is 631 commits behind `release` and 8 ahead**, so this is a port of one test
-directory, not a merge. Those 8 commits also contain unrelated work (form-factor symmetrisation
-tables with RMS and MAX residuals) that may or may not already be in `release` — check before
-cherry-picking.
-
----
-
-### ANSWERED AND UNBLOCKED (2026-08-16): the asset is alive, and the test PASSES
-
-**The first step above was finally run, and the answer is yes.** The LFS object is still on
-GitHub, retrievable, and byte-exact.
-
-It did not need `git-lfs` to find out. The LFS protocol is plain HTTP, so the batch API
-answers it directly — useful whenever `git-lfs` is missing:
-
-```bash
-curl -s -X POST \
-  -H "Accept: application/vnd.git-lfs+json" -H "Content-Type: application/vnd.git-lfs+json" \
-  -d '{"operation":"download","transfers":["basic"],"objects":[
-       {"oid":"1c5c24f0903c1b8667e3f8aa41ba1b2a550a49370b22db422a37d7a1f093a8ee",
-        "size":174978609}]}' \
-  https://github.com/dylan-jayatilaka/tonto.git/info/lfs/objects/batch
-```
-
-It returns a signed `download.href` (1 h expiry) rather than an error, i.e. the object is
-present and the quota is not exhausted. Downloading it gives 174 978 609 bytes whose sha256
-matches the oid exactly, opening with
-`<CREATOR name="CRYSTAL" version="1.0.0"/> <TITLE> Ammonium_closo-hexaborane(6)_pHAR </TITLE>`.
-
-#### How to pull the file and run the test
-
-`git-lfs` is installed as of 2026-08-16. Work in a **separate worktree**, so the main tree and
-its tests cannot be disturbed:
-
-```bash
-# 1. an isolated checkout of the archived branch (shares the object store, no second clone)
-git worktree add -b wip/phar ~/github/tonto-phar archive/release-pHAR-broken
-
-# 2. pull the 167 MB asset. Note .gitattributes is ABSENT at the tip, but the pointer is in
-#    the index, so git-lfs still resolves it -- `git lfs ls-files -l` lists the oid
-cd ~/github/tonto-phar
-git lfs pull --include "tests/long/ammonium_borane_pHAR_C23/GenerateXML.XML"
-git lfs status        # expect: LFS: 1c5c24f -> File: 1c5c24f
-
-# 3. run it against the CURRENT binary, not a build of the 2025-04 branch. That branch
-#    predates the ANTLR4 translator and foo.pl is gone, so it will not build; the point is
-#    to reinstate the TEST on develop, and the test is data plus a job file
-mkdir -p /tmp/phar && cd /tmp/phar
-cp ~/github/tonto-phar/tests/long/ammonium_borane_pHAR_C23/{stdin,B6H6_grown.cif,tonto_data_on_F_20rfl.hkl,GenerateXML.XML} .
-sed -i '/thermal_smearing_model=/d' stdin      # see below -- obsolete keyword
-TONTO_BASIS_SET_DIRECTORY=<repo>/basis_sets <repo>/build/tonto
-```
-
-**One edit to the job file is required.** As committed it dies with
-
-```
-Error in DIFFRACTION_DATA.READ:process_keyword ... unknown option: thermal_smearing_model=
-```
-
-`thermal_smearing_model=` was removed by `acb7af0b`, *"Removed 'temperature_factor_model' and a
-few others, **in favour of deriving the info from partition_model**"* — the whole machinery is
-commented out, keyword, reader, setter, `CRYSTAL` accessor and its `molecule.scf.foo` consumers.
-The job already sets `partition_model= oc-crystal23`, which now carries that information
-(confirmed by Dylan, 2026-08-16), so **deleting the line is the correct port**, not a workaround.
-
-#### Result: exact reproduction, 3 m 41 s
-
-With that one line removed, the job runs to completion on current `develop` and reproduces the
-2025-04 reference **digit for digit**:
-
-| | this run | reference |
-|---|---|---|
-| `Structure fit converged.` | yes | yes |
-| R(F) | 0.005188 | 0.005188 |
-| N_r | 20 | 20 |
-| N_p | 11 | 11 |
-| GoF² | 0.631422 | 0.631422 |
-| GoF | 0.794621 | 0.794621 |
-| scale factor | 0.979852 | 0.979852 |
-
-So **pHAR still works**, and the code that ships untested is now known to be correct on this
-case. That was the whole point of the entry.
-
-#### What remains, and it is small
-
-The reference is 2928 lines against this run's 971. The difference is **not numerical**: the
-`thermal_smearing_model=` keyword echo (removed), a *"crystal data already defined!"* warning,
-and a **"Form factor asymmetry"** diagnostic section the current build no longer prints. So
-reinstating the test needs its `stdout` re-blessed — legitimate, given a year of intervening
-development, but a blessing decision.
-
-Remaining work to land it, with **option 2 (fetch on demand) chosen by Dylan**:
-
-1. Port `tests/long/ammonium_borane_pHAR_C23/` to `develop`, keeping the 134-byte **pointer**
-   rather than the asset — a 167 MB file in a public repo is what option 4 rightly rejects.
-2. Restore a `.gitattributes` tracking `tests/long/**/*.XML`, which is the file whose loss
-   caused all of this.
-3. **The test must SKIP, not fail, when the asset is absent** — otherwise every clone without
-   the object goes red. `scripts/test.py` has no skip mechanism today; ctest's
-   `SKIP_RETURN_CODE` is the natural hook. This is the only real piece of work left.
-4. Re-bless `stdout` from a current run.
-5. Note the runtime: 3 m 41 s, so `long`, and comfortably the slowest test in the suite.
-
-
 ## Deferred: small numerical differences (longstanding) — drill down
 
 Several tests differ from their references only by small numerical amounts — 3rd–4th
@@ -4326,6 +4147,220 @@ with no hand-written script at all.
 ---
 
 # Done, resolved and closed (archive)
+
+## DONE (2026-08-27): the ammonia-borane pHAR test is reinstated, and pHAR is tested
+
+**Closed 2026-08-27.** All five steps in the list below are done, and the test was verified
+both ways on that date against a `hart`/`tonto` built from `233e2d06`:
+
+- **Asset absent** — `ctest -R ammonium_borane` reports `***Skipped` in 0.08 s, and the run
+  summarises as *100% tests passed, 0 tests failed*. `scripts/test.py` exits 77 and
+  `tests/CMakeLists.txt` sets `SKIP_RETURN_CODE 77` on **every** test, so a clone without the
+  object does not go red. That was step 3, described below as *"the only real piece of work
+  left"*.
+- **Asset present** — `Passed` in **166 s**, reproducing the blessed R(F) 0.005188,
+  GoF 0.794621, N_r 20, N_p 11. So pHAR is no longer untested library code.
+
+**Step 2 below was deliberately REVERSED, and the list is left unedited so the reasoning
+stays visible.** It says to restore a `.gitattributes` tracking `tests/long/**/*.XML`. The
+design settled on the opposite: `develop` and `master` carry **no LFS objects at all**
+(`git lfs ls-files develop` must print nothing), the asset lives only on the tag
+`archive/release-pHAR-broken`, and `scripts/fetch_phar_asset.sh` pulls it on demand into
+`tests/long/ammonium_borane_pHAR_C23/`, where `.gitignore:106` keeps it out of the index.
+Committing the pointer plus a tracking `.gitattributes` would make **every** clone of a
+public repository pull 167 MB against GitHub's 1 GB free allowance. The full reasoning is in
+the test's own `IO` manifest.
+
+**One trap worth knowing**, because it cost this discovery a while: the asset had in fact
+been fetched on `sauce`, into `tests/crystal23/ammonium_borane_pHAR_C23/` rather than
+`tests/long/...`. Verified genuine by sha256 against the LFS oid, it was simply in the wrong
+directory, so the test skipped for weeks with the file it needed sitting two directories
+away — and skipping is quiet by design. `fetch_phar_asset.sh` takes an optional destination
+argument, which is how a copy ends up somewhere the test does not look. If the test skips,
+check for a stray copy before re-downloading 167 MB.
+
+The original entry follows, unchanged.
+
+### Original entry (Dylan, 2026-08-05): blocked by a 167 MB asset
+
+**pHAR code ships in the library but nothing tests it.** `MOLECULE.CE:phar_defragment` is live
+(`molecule.main.foo` dispatches `phar_defragment`, added by Kang 2025-03-13), and
+`crystal.foo`, `molecule.har.foo` and `molecule.rho.foo` all carry pHAR-specific branches. There
+is **no pHAR test in `tests/`**.
+
+One exists, on a branch: `tests/long/ammonium_borane_pHAR_C23/`, on
+**`origin/release-pHAR-broken`** (tip `18712bd6`, 2025-04-29, kanghyun-chu).
+
+**What is there, and what is missing:**
+
+| file | size | |
+|---|---|---|
+| `stdin` | 946 B | the job |
+| `stdout` | 269 KB | the blessed reference |
+| `B6H6_grown.cif` | 7 KB | input |
+| `tonto_data_on_F_20rfl.hkl` | 16 KB | input |
+| `Crystal23_InputFiles.zip` | 12 KB | the Crystal23 inputs that *generate* the XML |
+| **`GenerateXML.XML`** | **134 B** | **a Git LFS pointer, not the file** |
+
+The `IO` manifest lists `GenerateXML.XML` as a required input, so **the test cannot run**. The
+pointer says:
+
+```
+version https://git-lfs.github.com/spec/v1
+oid sha256:1c5c24f0903c1b8667e3f8aa41ba1b2a550a49370b22db422a37d7a1f093a8ee
+size 174978609
+```
+
+i.e. the real asset is **167 MB**.
+
+**FIRST STEP, and it decides everything below: is that LFS object still retrievable?** This was
+*not* checked — `git-lfs` is not installed on the machine this was investigated from. One
+command answers it:
+
+```bash
+sudo apt install git-lfs          # or: brew install git-lfs
+cd <a scratch clone of tonto>
+git lfs ls-files -l origin/release-pHAR-broken     # does GitHub still know the oid?
+git lfs fetch origin release-pHAR-broken           # does it actually come down?
+```
+
+- **If it downloads**, the fix is small: restore a `.gitattributes` that tracks
+  `tests/long/**/*.XML`, port the one test directory onto `release`, and decide whether a
+  167 MB clone cost is acceptable (option 4 below says it probably is not).
+- **If it 404s or the quota is exhausted**, the object is gone and options 1–3 are the only
+  real ones — regenerate, fetch on demand, or shrink the case.
+
+**How the deposit went wrong** is legible in the branch's own history:
+
+```
+0f70beae  Activated git lfs and added .gitattributes files but NOT YET large XML
+69d6e806  Added large XML file
+...
+18712bd6  The Crystal23 input files for generating the GenerateXML.XML are included
+```
+
+LFS was enabled and `.gitattributes` added, then the XML committed — but **`.gitattributes` does
+not exist at the branch tip**. So the tracking configuration was lost while the pointer file
+stayed behind, and a plain `git clone` gets a 134-byte text file where a 167 MB XML should be.
+Whether the LFS object is still retrievable from GitHub was **not** checked (git-lfs is not
+installed on this machine) — check that first, since it decides which option below is viable.
+
+**Options, in rough order of preference:**
+
+1. **Regenerate rather than store.** `Crystal23_InputFiles.zip` (12 KB) is committed precisely so
+   the XML can be rebuilt — that is what `18712bd6` was for. Needs Crystal23, which is
+   proprietary, so this makes the test reproducible only for those who have it.
+2. **Fetch on demand**, the way the ANTLR jar already is at configure time: host the XML
+   somewhere durable and have the test skip cleanly when it is absent.
+3. **Shrink the case.** 167 MB for a test asset is the real problem; a smaller cell, fewer
+   reflections, or a trimmed XML would make this an ordinary test.
+4. **Proper LFS** — restore `.gitattributes` and re-push the object. Note GitHub's free LFS quota
+   is 1 GB storage *and* 1 GB/month bandwidth; a 167 MB asset cloned a handful of times exhausts
+   it, which is a poor fit for a public repository.
+
+**Note the branch is 631 commits behind `release` and 8 ahead**, so this is a port of one test
+directory, not a merge. Those 8 commits also contain unrelated work (form-factor symmetrisation
+tables with RMS and MAX residuals) that may or may not already be in `release` — check before
+cherry-picking.
+
+---
+
+### ANSWERED AND UNBLOCKED (2026-08-16): the asset is alive, and the test PASSES
+
+**The first step above was finally run, and the answer is yes.** The LFS object is still on
+GitHub, retrievable, and byte-exact.
+
+It did not need `git-lfs` to find out. The LFS protocol is plain HTTP, so the batch API
+answers it directly — useful whenever `git-lfs` is missing:
+
+```bash
+curl -s -X POST \
+  -H "Accept: application/vnd.git-lfs+json" -H "Content-Type: application/vnd.git-lfs+json" \
+  -d '{"operation":"download","transfers":["basic"],"objects":[
+       {"oid":"1c5c24f0903c1b8667e3f8aa41ba1b2a550a49370b22db422a37d7a1f093a8ee",
+        "size":174978609}]}' \
+  https://github.com/dylan-jayatilaka/tonto.git/info/lfs/objects/batch
+```
+
+It returns a signed `download.href` (1 h expiry) rather than an error, i.e. the object is
+present and the quota is not exhausted. Downloading it gives 174 978 609 bytes whose sha256
+matches the oid exactly, opening with
+`<CREATOR name="CRYSTAL" version="1.0.0"/> <TITLE> Ammonium_closo-hexaborane(6)_pHAR </TITLE>`.
+
+#### How to pull the file and run the test
+
+`git-lfs` is installed as of 2026-08-16. Work in a **separate worktree**, so the main tree and
+its tests cannot be disturbed:
+
+```bash
+# 1. an isolated checkout of the archived branch (shares the object store, no second clone)
+git worktree add -b wip/phar ~/github/tonto-phar archive/release-pHAR-broken
+
+# 2. pull the 167 MB asset. Note .gitattributes is ABSENT at the tip, but the pointer is in
+#    the index, so git-lfs still resolves it -- `git lfs ls-files -l` lists the oid
+cd ~/github/tonto-phar
+git lfs pull --include "tests/long/ammonium_borane_pHAR_C23/GenerateXML.XML"
+git lfs status        # expect: LFS: 1c5c24f -> File: 1c5c24f
+
+# 3. run it against the CURRENT binary, not a build of the 2025-04 branch. That branch
+#    predates the ANTLR4 translator and foo.pl is gone, so it will not build; the point is
+#    to reinstate the TEST on develop, and the test is data plus a job file
+mkdir -p /tmp/phar && cd /tmp/phar
+cp ~/github/tonto-phar/tests/long/ammonium_borane_pHAR_C23/{stdin,B6H6_grown.cif,tonto_data_on_F_20rfl.hkl,GenerateXML.XML} .
+sed -i '/thermal_smearing_model=/d' stdin      # see below -- obsolete keyword
+TONTO_BASIS_SET_DIRECTORY=<repo>/basis_sets <repo>/build/tonto
+```
+
+**One edit to the job file is required.** As committed it dies with
+
+```
+Error in DIFFRACTION_DATA.READ:process_keyword ... unknown option: thermal_smearing_model=
+```
+
+`thermal_smearing_model=` was removed by `acb7af0b`, *"Removed 'temperature_factor_model' and a
+few others, **in favour of deriving the info from partition_model**"* — the whole machinery is
+commented out, keyword, reader, setter, `CRYSTAL` accessor and its `molecule.scf.foo` consumers.
+The job already sets `partition_model= oc-crystal23`, which now carries that information
+(confirmed by Dylan, 2026-08-16), so **deleting the line is the correct port**, not a workaround.
+
+#### Result: exact reproduction, 3 m 41 s
+
+With that one line removed, the job runs to completion on current `develop` and reproduces the
+2025-04 reference **digit for digit**:
+
+| | this run | reference |
+|---|---|---|
+| `Structure fit converged.` | yes | yes |
+| R(F) | 0.005188 | 0.005188 |
+| N_r | 20 | 20 |
+| N_p | 11 | 11 |
+| GoF² | 0.631422 | 0.631422 |
+| GoF | 0.794621 | 0.794621 |
+| scale factor | 0.979852 | 0.979852 |
+
+So **pHAR still works**, and the code that ships untested is now known to be correct on this
+case. That was the whole point of the entry.
+
+#### What remains, and it is small
+
+The reference is 2928 lines against this run's 971. The difference is **not numerical**: the
+`thermal_smearing_model=` keyword echo (removed), a *"crystal data already defined!"* warning,
+and a **"Form factor asymmetry"** diagnostic section the current build no longer prints. So
+reinstating the test needs its `stdout` re-blessed — legitimate, given a year of intervening
+development, but a blessing decision.
+
+Remaining work to land it, with **option 2 (fetch on demand) chosen by Dylan**:
+
+1. Port `tests/long/ammonium_borane_pHAR_C23/` to `develop`, keeping the 134-byte **pointer**
+   rather than the asset — a 167 MB file in a public repo is what option 4 rightly rejects.
+2. Restore a `.gitattributes` tracking `tests/long/**/*.XML`, which is the file whose loss
+   caused all of this.
+3. **The test must SKIP, not fail, when the asset is absent** — otherwise every clone without
+   the object goes red. `scripts/test.py` has no skip mechanism today; ctest's
+   `SKIP_RETURN_CODE` is the natural hook. This is the only real piece of work left.
+4. Re-bless `stdout` from a current run.
+5. Note the runtime: 3 m 41 s, so `long`, and comfortably the slowest test in the suite.
+
 
 ## DONE (2026-08-02): test registration — stale `DEPENDS run_test`
 
