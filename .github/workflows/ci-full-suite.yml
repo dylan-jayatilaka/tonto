@@ -26,6 +26,18 @@ on:
         description: 'Suites to run (space separated: short long hart)'
         required: false
         default: 'short long hart'
+      fc_version:
+        description: 'gfortran major version (16 = project standard; 14 to compare against the pre-migration measurements)'
+        required: false
+        default: '16'
+
+env:
+  # The project standard compiler; migrated 14 -> 16 on 2026-08-27. Overridable
+  # per run, because the numeric characterisation in docs/TONTO_AND_MPI.md was
+  # taken under 14: dispatching this workflow once at 14 and once at 16 gives a
+  # like-for-like comparison on identical code and identical hardware, which is
+  # the only honest way to attribute drift to the compiler.
+  FC_VERSION: ${{ github.event.inputs.fc_version || '16' }}
 
 jobs:
   full-suite:
@@ -38,17 +50,26 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install toolchain
+      - name: Install toolchain (gfortran-${{ env.FC_VERSION }})
+        # From the toolchain PPA: Ubuntu 24.04 tops out at gcc-14. Assert it
+        # landed rather than silently building a 14 labelled 16.
         run: |
+          set -euo pipefail
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            gfortran-14 libblas-dev liblapack-dev \
+            gfortran-${FC_VERSION} libblas-dev liblapack-dev \
             default-jdk python3 perl make cmake
+          command -v gfortran-${FC_VERSION} > /dev/null || {
+            echo "::error::gfortran-${FC_VERSION} did not install -- ppa:ubuntu-toolchain-r/test may not carry it for $(lsb_release -cs). Do NOT fall back to 14 silently."
+            exit 1
+          }
+          gfortran-${FC_VERSION} --version | head -1
 
       - name: Configure and build (release)
         run: |
           set -euo pipefail
-          cmake -B build -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=release
+          cmake -B build -DCMAKE_Fortran_COMPILER=gfortran-${FC_VERSION} -DCMAKE_BUILD_TYPE=release
           # -j2, matching ci.yml: translation spawns one JVM per .foo file and is
           # memory-heavy on a shared 7 GB runner.
           cmake --build build -- -j2
