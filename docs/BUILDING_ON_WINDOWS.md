@@ -27,8 +27,7 @@ Then, **inside** the Ubuntu shell:
 
 ```bash
 sudo apt update
-sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
-sudo apt install -y gcc gfortran-16 libblas-dev liblapack-dev default-jdk \
+sudo apt install -y gcc gfortran-14 libblas-dev liblapack-dev default-jdk \
                     python3 perl make cmake git gnuplot
 
 # Clone into your Linux home -- NOT into /mnt/c. See "Where to put the code".
@@ -51,7 +50,7 @@ ctest --preset wsl-short
 
 ```bash
 cmake -B ~/tonto-build/release -S ~/tonto \
-      -DCMAKE_Fortran_COMPILER=gfortran-16 -DCMAKE_BUILD_TYPE=release
+      -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=release
 ```
 
 ---
@@ -187,8 +186,8 @@ wsl --set-version Ubuntu-24.04 2
 
 Tonto is declared `project(tonto LANGUAGES Fortran C)`, so CMake needs a **C**
 compiler as well as a Fortran one. A freshly installed WSL Ubuntu has neither, and
-`gfortran-16` pulls in `gcc-16-base` but *not* the `gcc` driver — so installing only
-`gfortran-16` gets you as far as:
+`gfortran-14` pulls in `gcc-14-base` but *not* the `gcc` driver — so installing only
+`gfortran-14` gets you as far as:
 
 ```
 CMake Error at CMakeLists.txt:16 (project):
@@ -211,7 +210,7 @@ The presets cover `release`; for another type, configure a separate directory:
 
 ```bash
 cmake -B ~/tonto-build/debug -S ~/tonto \
-      -DCMAKE_Fortran_COMPILER=gfortran-16 -DCMAKE_BUILD_TYPE=debug
+      -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=debug
 cmake --build ~/tonto-build/debug -- -j4
 ```
 

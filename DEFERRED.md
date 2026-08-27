@@ -51,13 +51,14 @@ a 429, and the Anubis anti-bot layer blocks the rest), so the filing *and* the d
 over resolved bugs and `16 Regression` — still outstanding — have to be done by hand in a
 logged-in browser.
 
-**This no longer blocks the compiler migration.** Decided by Dylan, 2026-08-27: **migrate to
-gfortran-16 now and live with the missing bounds check**, rather than wait on an upstream fix of
-unknown date. The reasoning is that Tonto is almost entirely dynamically allocated Fortran, so
-array-bounds overruns are expected to be rare, and one project-wide compiler is worth more than a
-check that only ever ran in `debug`. `gfortran-14` stays correct and keeps the flag if a specific
-hunt needs it, and `-DTONTO_FORCE_FCHECK_BOUNDS=ON` re-enables it the day GCC fixes the bug. The
-migration was carried out the same day: see *Platform-specific*.
+**The migration to 16 was attempted and REVERTED on 2026-08-27**, so this bug report is no
+longer the thing blocking it. The decision that morning was to migrate and live with the missing
+bounds check; the local gate that afternoon found a **second and worse defect** — a gfortran-16
+debug build fails 34 of 71 short tests where a gfortran-14 debug build of the same code passes
+exactly. `develop` is back on 14, the migration is preserved on the branch
+`develop-gfortran-16`, and the blocker is now that second defect: see *Platform-specific*,
+"gfortran-16 DEBUG fails 34 of 71 short tests". Filing this report is still worth doing on its
+own merits.
 Then: **macOS in CI** (feasible and free — the repo is public — and it is the only thing that can
 guard the two arm64 `-O2`/`-O3` compiler pins, which today are guarded by nothing and whose
 failure mode is wrong numbers, not crashes; see *Platform-specific*),
@@ -3189,6 +3190,72 @@ highlighting and tighter editor integration. The repo already ships some vim sup
 ---
 
 # Platform-specific
+
+## gfortran-16 DEBUG fails 34 of 71 short tests — the migration was reverted (2026-08-27)
+
+**Status: open. The compiler migration is blocked on this, not on the bounds-check bug.**
+
+The project standard moved 14 -> 16 on 2026-08-27 and was **reverted hours later**, when the
+local gate was run before pushing. The whole migration is preserved on the branch
+**`develop-gfortran-16`** — retrying means merging that branch and flipping `FC_VERSION`, not
+redoing the work. `ci-mpi.yml` is deliberately left on 16: it builds *release*, which is not
+implicated, and has been green since 2026-08-26.
+
+**The measurement.** `ctest -L short`, x86_64 Linux (sauce), `-DCMAKE_BUILD_TYPE=debug`:
+**37 pass, 34 fail** out of 71 agreement lines.
+
+- **27 failures are structural only** — `max 0%`, `0 ulp`. Every one carries the same extra
+  line, `Making gaussian ANO interpolators ...` (`foofiles/molecule.rho.foo:2280`), emitted
+  when `.atom(a).interpolator.deallocated` is true.
+- **7 fail numerically, and largely**: `h2o_rhf_cc-pVDZ_1e_properties`,
+  `h2o_rhf_cc-pVDZ_E_field_and_1e_properties` and `h2o+_uhf_cc-pVDZ_1e_properties` at **200%**;
+  `urea_ccsd_pob-TZVP_Salvador_properties` **197%**; `h2o_rhf_cc-pVDZ_tdhf` **62.5%**;
+  `nh3_rhf_DZP_HAR` **58.2%**; `nh3_rhf_DZP_HAF_and_structure_factors` **58%**.
+
+**Why this is a compiler difference and not stale references.** Three builds, one test
+(`h2o_rhf_STO-3G`):
+
+| build | compiler | source | result |
+|---|---|---|---|
+| release | 14 | 2026-08-27 | **PASS**, exact |
+| debug | 14 | 2026-08-16 | **PASS**, exact |
+| debug | 16 | 2026-08-27 | **FAIL** — the extra ANO line, 0% numeric |
+
+`foofiles/molecule.rho.foo` has **not changed since 2026-08-16**, so the code holding that
+condition is identical in both debug binaries. The reference for that test dates from
+2023-05-29 and lacks the line, and both gfortran-14 builds agree with it.
+
+**What makes it substantive.** `interpolator` is `INTERPOLATOR@` in `types.foo`, and the
+translator emits it as a genuine Fortran `allocatable` component
+(`type(INTERPOLATOR_TYPE), allocatable :: interpolator`). The standard guarantees an
+allocatable component starts **unallocated**, so its status is not undefined behaviour that a
+compiler may resolve either way. Two conforming compilers disagreeing about it is either a
+gfortran-16 defect or something subtler in how the object is copied — note
+`.atom(b).interpolator = .atom(a).interpolator` a few lines below, an intrinsic assignment of a
+derived type with allocatable components.
+
+**Not yet established, in priority order:**
+
+1. **The one variable still not isolated** — the passing debug-14 binary was built from
+   11-day-old source. The decisive experiment is a **gfortran-14 debug build on today's
+   source**, run against the same suite. Until that is done, "the compiler" is strongly
+   indicated but not proven.
+2. **How many of the 7 numeric failures are pre-existing `-O0` artefacts.** This file records
+   *four* longstanding debug failures; 34 is not four, but the two counts have never been
+   measured side by side on the same source. The experiment above settles this too.
+3. **Whether gfortran-15 shares it.** Installed on sauce and never tested. The
+   `-fcheck=bounds` gate in `cmake/SetFortranFlags.cmake` is `>= 16` for the same reason.
+4. **Whether the ANO line and the 7 numeric failures have one cause or two.**
+
+**A caution for whoever picks this up.** Do not read the 27 structural failures as cosmetic.
+The extra line means a code path *ran* under 16 that did not run under 14 — interpolators were
+constructed rather than found already present. That the numbers came out identical anyway is
+luck or redundancy, not evidence that the divergence is harmless.
+
+**Related but separate:** the `-fcheck=bounds` miscompilation, `docs/GFORTRAN16_DEBUG_CRASH.md`,
+and the upstream report blocked on a Bugzilla account, `docs/GFORTRAN16_GCC_BUG.md`. A second
+GCC report may be owed here once (1) is done.
+
 
 ## OPEN: long paths to the basis sets fail -- STR is 256 characters
 

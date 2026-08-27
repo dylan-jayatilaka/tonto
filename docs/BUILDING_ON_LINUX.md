@@ -9,26 +9,22 @@ pass from a clean machine to a tested binary. Other platforms: [macOS](BUILDING_
 ## 1. Install the prerequisites
 
 ```bash
-sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
-sudo apt install make cmake default-jdk gfortran-16 libblas-dev liblapack-dev \
+sudo apt install make cmake default-jdk gfortran-14 libblas-dev liblapack-dev \
                  python3 gnuplot git
 ```
 
-- **`gfortran-16`, not the distro default `gfortran`.** Ubuntu 24.04's plain
-  `gfortran` is version 13 and its own repositories stop at 14, so 16 comes from
-  the toolchain PPA above. The project standardises on **16** (since
-  2026-08-27): that is what CI builds with and — because Tonto does `USE mpi` and
-  Fortran `.mod` files are compiler-version specific — what any MPI you use must
-  also have been built with. Earlier versions will generally compile, but do not
-  report a numeric difference against the references without first checking on 16.
-- **One caveat, and it only affects `debug` builds.** gfortran 16 miscompiles
-  `-fcheck=bounds` itself, so the build omits that flag on 16 and says so at
-  configure time. A debug build therefore has no array-bounds checking. Tonto is
-  almost entirely dynamically allocated Fortran, so overruns are expected to be
-  rare, and this was judged an acceptable price for a single project-wide
-  compiler. If you are chasing something where bounds checking would help, build
-  that one tree with `gfortran-14`, which is correct and keeps the flag. The bug,
-  the reproducer and the upstream status are in
+- **`gfortran-14`, not the distro default `gfortran`.** Ubuntu 24.04's plain
+  `gfortran` is version 13. The project standardises on **14**: that is what CI
+  builds with, what the reference outputs in `tests/` were blessed with, and —
+  because Tonto does `USE mpi` and Fortran `.mod` files are compiler-version
+  specific — what any MPI you use must also have been built with. Version 13
+  will generally compile, but do not report a numeric difference against the
+  references without first checking on 14.
+- **Do not use gfortran-16 yet.** A migration to it was made and reverted on
+  2026-08-27: its *debug* build fails 34 of 71 short tests where 14 passes
+  exactly, and separately it miscompiles `-fcheck=bounds`. Release builds are
+  fine, so 16 is usable if you only ever build `release` — but it is not the
+  standard, and the references were not blessed on it. See
   [`GFORTRAN16_DEBUG_CRASH.md`](GFORTRAN16_DEBUG_CRASH.md).
 - `default-jdk` provides `java`/`javac` for the ANTLR4 `foo`→Fortran translator.
   The ANTLR jar itself is downloaded automatically on the first `cmake` run
@@ -61,7 +57,7 @@ Tonto builds **out of source**: make a build directory, configure it once, then
 
 ```bash
 mkdir build && cd build
-cmake .. -DCMAKE_Fortran_COMPILER=gfortran-16 -DCMAKE_BUILD_TYPE=release
+cmake .. -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=release
 make -j4
 ```
 
@@ -100,7 +96,7 @@ type you keep.
 
 ```bash
 mkdir debug && cd debug
-cmake .. -DCMAKE_Fortran_COMPILER=gfortran-16 -DCMAKE_BUILD_TYPE=debug
+cmake .. -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=debug
 make -j4
 ```
 
@@ -122,11 +118,11 @@ producing a serial binary.
 not reproduce.
 
 Install it with `sudo apt install openmpi-bin libopenmpi-dev`. Ubuntu's package
-is built against a different gcc than `gfortran-16`, so if configure rejects it,
+is built against a different gcc than `gfortran-14`, so if configure rejects it,
 build one to match:
 
 ```bash
-./configure --prefix=$HOME/opt/openmpi-gf16 FC=gfortran-16 CC=gcc-16
+./configure --prefix=$HOME/opt/openmpi-gf14 FC=gfortran-14 CC=gcc-14
 ```
 
 and put its `bin` first on `PATH`. This is the platform where the parallel build

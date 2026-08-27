@@ -21,9 +21,9 @@ Then the rest:
 brew install gcc cmake openjdk python3 gnuplot
 ```
 
-- `gcc` provides **`gfortran`**. This project standardises on **`gfortran-16`**
-  (since 2026-08-27). If Homebrew's `gcc` formula gives you an older version,
-  `brew install gcc@16` and point CMake at it explicitly, as below.
+- `gcc` provides **`gfortran`**. This project standardises on **`gfortran-14`**.
+  If Homebrew's `gcc` formula gives you a different version, `brew install gcc@14`
+  and point CMake at it explicitly, as below.
 - `openjdk` provides **`java`/`javac`** for the ANTLR4 `foo`→Fortran
   translator. If the build cannot find `javac`, add Homebrew's openjdk to your
   `PATH` as `brew` instructs — on Apple Silicon:
@@ -56,11 +56,11 @@ Tonto builds **out of source**: make a build directory, configure it once, then
 
 ```bash
 mkdir build && cd build
-cmake .. -DCMAKE_Fortran_COMPILER=gfortran-16 -DCMAKE_BUILD_TYPE=release
+cmake .. -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=release
 make -j4
 ```
 
-If `gfortran-16` is not on your `PATH` under that exact name, point CMake at
+If `gfortran-14` is not on your `PATH` under that exact name, point CMake at
 what Homebrew installed — `ls $(brew --prefix gcc)/bin/gfortran*` will show it.
 
 > **About `-j`.** Translation runs one JVM per `.foo` file, which is
@@ -81,13 +81,11 @@ macOS shows tiny last-digit differences in a few tests. The comparison is
 deliberately loose — relative difference ≤ 0.2%, or last printed digit within
 2 — and counts those as passes.
 
-> **A `debug` build on `gfortran-16` has no array bounds checking.** The
-> compiler miscompiles that flag, so the build leaves it out and says so at
-> configure time. This was accepted as the price of a single project-wide
-> compiler: Tonto is almost entirely dynamically allocated Fortran, so overruns
-> are expected to be rare. Everything else about a debug build is unchanged. If
-> you specifically need bounds checking, build that one tree with `gfortran-14`,
-> which is correct and keeps the flag. See
+> **Do not use `gfortran-16` for debug builds.** It has two separate defects
+> there: it miscompiles `-fcheck=bounds` (so the build drops the flag and you get
+> no array bounds checking), and its debug build fails 34 of 71 short tests where
+> gfortran-14 passes exactly. A migration to 16 was made and reverted on
+> 2026-08-27 for that reason. Release builds on 16 are fine. See
 > [`GFORTRAN16_DEBUG_CRASH.md`](GFORTRAN16_DEBUG_CRASH.md).
 
 ## One macOS-specific oddity: the arm64 compiler pin
@@ -112,7 +110,7 @@ type you keep.
 
 ```bash
 mkdir debug && cd debug
-cmake .. -DCMAKE_Fortran_COMPILER=gfortran-16 -DCMAKE_BUILD_TYPE=debug
+cmake .. -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=debug
 make -j4
 ```
 
@@ -134,7 +132,7 @@ producing a serial binary.
 not reproduce.
 
 **Untested on macOS.** A Homebrew Open MPI built against a different gcc will
-not work, so expect to check `mpifort --version` against `gfortran-16`.
+not work, so expect to check `mpifort --version` against `gfortran-14`.
 
 ---
 

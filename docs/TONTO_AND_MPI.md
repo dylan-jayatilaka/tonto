@@ -116,9 +116,10 @@ version)` — the pair that `.mod` compatibility actually depends on — so a co
 
 **The workflow compiler is `gfortran-16` as of 2026-08-26** (`FC_VERSION` in `ci-mpi.yml`, the
 single place it is set; Ubuntu 24.04 stops at gcc-14, so it comes from
-`ppa:ubuntu-toolchain-r/test`). **The whole project followed on 2026-08-27** — every workflow,
-the release tarballs and the build documentation — accepting the loss of `-fcheck=bounds` in
-debug builds; see `CLAUDE.md` §4.
+`ppa:ubuntu-toolchain-r/test`). **The rest of the project did NOT follow.** A project-wide migration to 16 was made on
+2026-08-27 and reverted the same day, when a gfortran-16 debug build was found to fail 34 of 71
+short tests; `ci-mpi.yml` is left on 16 because it builds *release*, which is unaffected, and
+has been green since the switch. See `CLAUDE.md` §4 and the branch `develop-gfortran-16`.
 
 The measurements recorded further down this page were taken under **gfortran-14** and are left
 as measured. Two notes on re-measuring them, agreed 2026-08-27:
@@ -815,19 +816,23 @@ tested, not asserted** — a loop whose terminating `DIE_IF` moved is precisely 
 that can turn a clean failure into a silent one, and the new `exit` on `.IO_status/=0` is a
 control-flow path that did not exist before.
 
-**Dispatched 2026-08-27, awaiting its result.** `gh workflow run ci-full-suite.yml --ref
-develop -f suites="short long hart" -f fc_version=16` — i.e. **gfortran-16**, the standard as
-of that day, not the 14 the recipe below was written for. Two things follow. First, it
-discharges this owed verification only if it comes back at the 124/124 baseline; anything less
-must be attributed before it is accepted, and the compiler is now a second candidate alongside
-the `textfile.foo` change, so a `-f fc_version=14` run is the discriminator. Second, the
-existing Linux release-16 figure is **123/124** (see `DEFERRED.md`, *Platform-specific*), so a
-single missing test is the *expected* result and not by itself evidence of a regression —
-identify which one before concluding anything.
+**NOT dispatched — an attempt was made on 2026-08-27 and failed.** Recorded because the
+failure is a trap worth knowing: `workflow_dispatch` decides whether a workflow *exists* from
+the default branch, but validates its **inputs against the ref you dispatch**. The `fc_version`
+input had been landed on `master` and not on `origin/develop`, so every attempt returned
+`HTTP 422: Unexpected inputs provided: ["fc_version"]`. Pushing the branch is the prerequisite,
+not just landing the file on master.
+
+When it is run, two things to hold in mind. It discharges this owed verification only if it
+comes back at the 124/124 baseline; anything less must be attributed before it is accepted.
+And the existing Linux release-16 figure is **123/124** (see `DEFERRED.md`,
+*Platform-specific*), so if it is dispatched at `fc_version: 16` a single missing test is the
+*expected* result and not by itself evidence of a regression — identify which one before
+concluding anything.
 
 ```bash
 # a release build from the current sources, then the full suite
-cmake -B build -DCMAKE_Fortran_COMPILER=gfortran-16 -DCMAKE_BUILD_TYPE=release
+cmake -B build -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=release
 cmake --build build -- -j3            # -j3, not -j$(nproc): one JVM per .foo file
 python3 scripts/suite_report.py --program build/tonto --tests-dir tests \
         --basis-sets basis_sets --suites short long hart \

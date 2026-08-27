@@ -3,10 +3,12 @@
 **Status 2026-08-27: root cause established, worked around, account requested upstream.**
 `DEFERRED.md` carries the same finding woven into the longer record.
 
-**The project migrated to gfortran-16 anyway, on 2026-08-27**, accepting a debug build with no
-array bounds checking rather than waiting on a fix of unknown date — Tonto is almost entirely
-dynamically allocated Fortran, so overruns are expected to be rare. See `CLAUDE.md` §4. This
-document therefore describes a *live* condition of every debug build, not a historical one.
+**A migration to gfortran-16 was made and REVERTED on 2026-08-27.** It was made accepting a
+debug build with no array bounds checking; it was reverted hours later when the local gate found
+a *second*, worse defect — a gfortran-16 debug build fails **34 of 71** short tests where a
+gfortran-14 debug build of the same code passes exactly. So the bounds-check bug described here
+is **not the only reason** to avoid 16 for debug builds; see `DEFERRED.md` for the second. The
+migration is preserved on the branch `develop-gfortran-16`. Release builds on 16 remain fine.
 
 ## The one-paragraph version
 
