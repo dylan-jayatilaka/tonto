@@ -15,6 +15,11 @@ on:
 
 env:
   BUILD_TYPE: release
+  # The project standard compiler. Migrated 14 -> 16 on 2026-08-27; the one
+  # known cost is that a DEBUG build loses -fcheck=bounds (a gfortran 16
+  # code-generation bug, see docs/GFORTRAN16_DEBUG_CRASH.md), which does not
+  # affect this release workflow at all.
+  FC_VERSION: 16
 
 jobs:
   build-and-test:
@@ -26,21 +31,32 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install toolchain
-        # gfortran-14 (Foo->Fortran target compiler), a full JDK (CMake needs
-        # javac to build the translator; the ANTLR jar itself is auto-downloaded
-        # by CMake with a SHA-256 check), BLAS/LAPACK from apt (so the LAPACK
-        # submodule isn't rebuilt from source), plus python3/perl/gnuplot/make.
+      - name: Install toolchain (gfortran-${{ env.FC_VERSION }})
+        # gfortran (Foo->Fortran target compiler) comes from the toolchain PPA:
+        # Ubuntu 24.04's own repositories top out at gcc-14. Assert it landed --
+        # falling through would build with 14 under a 16 label, which is the
+        # silent-wrong-answer class this project keeps finding the hard way.
+        # Also a full JDK (CMake needs javac to build the translator; the ANTLR
+        # jar itself is auto-downloaded by CMake with a SHA-256 check),
+        # BLAS/LAPACK from apt (so the LAPACK submodule isn't rebuilt from
+        # source), plus python3/perl/gnuplot/make.
         run: |
+          set -euo pipefail
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            gfortran-14 libblas-dev liblapack-dev \
+            gfortran-${FC_VERSION} libblas-dev liblapack-dev \
             default-jdk python3 perl gnuplot make cmake
+          command -v gfortran-${FC_VERSION} > /dev/null || {
+            echo "::error::gfortran-${FC_VERSION} did not install -- ppa:ubuntu-toolchain-r/test may not carry it for $(lsb_release -cs). Do NOT fall back to 14 silently; fix the source or change FC_VERSION deliberately."
+            exit 1
+          }
+          gfortran-${FC_VERSION} --version | head -1
 
       - name: Configure
         run: >
           cmake -B build
-          -DCMAKE_Fortran_COMPILER=gfortran-14
+          -DCMAKE_Fortran_COMPILER=gfortran-${{ env.FC_VERSION }}
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
 
       - name: Build
@@ -57,7 +73,7 @@ jobs:
           echo '## Diagnostics'
           echo '```'
           echo "== toolchain =="
-          gfortran-14 --version | head -1 || echo "gfortran-14 MISSING"
+          gfortran-${FC_VERSION} --version | head -1 || echo "gfortran-${FC_VERSION} MISSING"
           java -version 2>&1 | head -1 || echo "java MISSING"
           python3 --version || true
           echo

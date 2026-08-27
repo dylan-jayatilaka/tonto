@@ -10,10 +10,12 @@ name: CI (Linux-debug)
 # Widen the scope once those four are triaged.
 #
 # Why a debug job exists at all: the debug build is where preconditions
-# (USE_PRECONDITIONS), -fcheck=bounds, WARN/WARN_IF and non-PURE probing live,
-# so it is the build used for all debugging -- and it silently rotted (gfortran
-# -16 debug segfaults on arm64 macOS, found 2026-07-30). A build+smoke gate stops
-# that class of rot recurring unnoticed.
+# (USE_PRECONDITIONS), WARN/WARN_IF and non-PURE probing live, so it is the build
+# used for all debugging -- and it silently rotted (gfortran-16 debug segfaults
+# on arm64 macOS, found 2026-07-30). A build+smoke gate stops that class of rot
+# recurring unnoticed. NOTE: on gfortran 16 this build carries no -fcheck=bounds,
+# because the compiler miscompiles the check itself; the assertion step below
+# pins that down either way. Bounds checking returns when GCC fixes it.
 # RE-ENABLED (2026-07-30), after the failure that caused it to be switched off was
 # found and fixed: scripts/test.py was handed a *relative* --program, which
 # run_test() then resolved from inside the temp directory it chdir's into. See
@@ -25,6 +27,13 @@ on:
     branches: [master, develop]
   workflow_dispatch:
 
+env:
+  # The project standard compiler. Migrated 14 -> 16 on 2026-08-27, accepting
+  # that a DEBUG build on 16 loses -fcheck=bounds until GCC fixes the
+  # code-generation bug: see docs/GFORTRAN16_DEBUG_CRASH.md. Set this back to 14
+  # to restore bounds checking here.
+  FC_VERSION: 16
+
 jobs:
   build-debug:
     runs-on: ubuntu-latest
@@ -35,18 +44,44 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install toolchain
+      - name: Install toolchain (gfortran-${{ env.FC_VERSION }})
+        # From the toolchain PPA: Ubuntu 24.04 tops out at gcc-14. Assert it
+        # landed rather than silently building a 14 labelled 16.
         run: |
+          set -euo pipefail
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            gfortran-14 libblas-dev liblapack-dev \
+            gfortran-${FC_VERSION} libblas-dev liblapack-dev \
             default-jdk python3 perl gnuplot make cmake
+          command -v gfortran-${FC_VERSION} > /dev/null || {
+            echo "::error::gfortran-${FC_VERSION} did not install -- ppa:ubuntu-toolchain-r/test may not carry it for $(lsb_release -cs). Do NOT fall back to 14 silently; fix the source or change FC_VERSION deliberately."
+            exit 1
+          }
+          gfortran-${FC_VERSION} --version | head -1
 
       - name: Configure (debug)
         run: >
           cmake -B build-debug
-          -DCMAKE_Fortran_COMPILER=gfortran-14
+          -DCMAKE_Fortran_COMPILER=gfortran-${{ env.FC_VERSION }}
           -DCMAKE_BUILD_TYPE=debug
+
+      - name: Assert the -fcheck=bounds gate did the right thing
+        # gfortran 16 miscompiles -fcheck=bounds, so the build drops it on 16 and
+        # up and keeps it on 14. Both halves matter: losing it on 14 would remove
+        # real checking, and keeping it on 16 would resurrect the segfault. The
+        # same assertion runs on macOS; this is the Linux half.
+        run: |
+          FLAGS=build-debug/CMakeFiles/tonto.dir/flags.make
+          if [ "${FC_VERSION}" -ge 16 ]; then
+            grep -q 'fcheck=bounds' "$FLAGS" \
+              && { echo "::error::gfortran-${FC_VERSION} debug still has -fcheck=bounds; see docs/GFORTRAN16_DEBUG_CRASH.md"; exit 1; }
+            echo "ok: -fcheck=bounds correctly omitted on gfortran-${FC_VERSION}"
+          else
+            grep -q 'fcheck=bounds' "$FLAGS" \
+              || { echo "::error::gfortran-${FC_VERSION} debug lost -fcheck=bounds; the version gate is too broad"; exit 1; }
+            echo "ok: -fcheck=bounds correctly kept on gfortran-${FC_VERSION}"
+          fi
 
       - name: Build (debug)
         # -j2 as in ci.yml: translation spawns one JVM per .foo file and the
@@ -74,6 +109,6 @@ jobs:
           exec > >(tee -a "$GITHUB_STEP_SUMMARY") 2>&1
           echo '## Debug-build diagnostics'
           echo '```'
-          gfortran-14 --version | head -1 || echo "gfortran-14 MISSING"
+          gfortran-${FC_VERSION} --version | head -1 || echo "gfortran-${FC_VERSION} MISSING"
           ls -l build-debug/tonto || echo "no debug binary"
           echo '```'

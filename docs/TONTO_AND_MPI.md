@@ -116,9 +116,23 @@ version)` — the pair that `.mod` compatibility actually depends on — so a co
 
 **The workflow compiler is `gfortran-16` as of 2026-08-26** (`FC_VERSION` in `ci-mpi.yml`, the
 single place it is set; Ubuntu 24.04 stops at gcc-14, so it comes from
-`ppa:ubuntu-toolchain-r/test`). The measurements recorded further down this page were taken
-under **gfortran-14** and are left as measured — re-running them under 16 is the point of the
-first scheduled run after the switch.
+`ppa:ubuntu-toolchain-r/test`). **The whole project followed on 2026-08-27** — every workflow,
+the release tarballs and the build documentation — accepting the loss of `-fcheck=bounds` in
+debug builds; see `CLAUDE.md` §4.
+
+The measurements recorded further down this page were taken under **gfortran-14** and are left
+as measured. Two notes on re-measuring them, agreed 2026-08-27:
+
+- **The serial comparison is cheap and worth having.** `ci-full-suite.yml` takes an
+  `fc_version` dispatch input, so dispatching it at `14` and at `16` gives a like-for-like pair
+  on identical code, references and hardware — the only honest way to attribute drift to the
+  compiler. It has diagnostic value now, not just after GCC 16 releases: milestone 7 is being
+  chased *on* 16 while its baseline numbers come from 14, which leaves compiler and code varying
+  together.
+- **A single MPI run must not be used for this.** Finding 7 measured five `ci-mpi.yml` runs on
+  identical code at ERROR 1, 1, 1, 1 and **11**. Any 16-vs-14 MPI claim needs repetition on both
+  sides first. Re-running §6's four-build sweep is deferred until GCC 16 is released, since the
+  numbers would otherwise want taking twice.
 
 **What gates it:** the π rank-invariance check (`check_mpi_pi.sh` at 1/2/4 ranks). It needs no
 stored reference, so it cannot be silently blessed, and all four dead reductions found in

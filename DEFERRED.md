@@ -42,14 +42,22 @@ now covers the whole project, so it was renamed.)*
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
 **Highest-priority open items**, if you are looking for where to start:
-**File the gfortran-16 GCC bug report** — the draft is finished and the duplicate search done
-([`docs/GFORTRAN16_GCC_BUG.md`](docs/GFORTRAN16_GCC_BUG.md)); all it needs is a Bugzilla login,
-which only Dylan can provide. It is listed first because of what it *blocks*: the `-fcheck=bounds`
-segfault is the reason `gfortran-14` is still the project standard. Release-16 is already
-numerically free on both platforms (123/124 Linux, 119/124 macOS) and Linux-MPI moved to 16 on
-2026-08-26 without incident, so **debug bounds checking is the only technical constraint left**.
-Fix that upstream and the compiler migration is unblocked. Decided 2026-08-26: this *will* be
-filed, not merely considered.
+**File the gfortran-16 GCC bug report** — the draft is finished
+([`docs/GFORTRAN16_GCC_BUG.md`](docs/GFORTRAN16_GCC_BUG.md)). Blocked on a Bugzilla account,
+which is **not self-service**: sign-up answers *"user account creation has been restricted"* and
+directs you to email <gcc-bugzilla-account-request@gcc.gnu.org>. **A request was sent
+2026-08-27** and the reply is awaited. Sourceware also refuses scripted access (plain `curl` gets
+a 429, and the Anubis anti-bot layer blocks the rest), so the filing *and* the duplicate search
+over resolved bugs and `16 Regression` — still outstanding — have to be done by hand in a
+logged-in browser.
+
+**This no longer blocks the compiler migration.** Decided by Dylan, 2026-08-27: **migrate to
+gfortran-16 now and live with the missing bounds check**, rather than wait on an upstream fix of
+unknown date. The reasoning is that Tonto is almost entirely dynamically allocated Fortran, so
+array-bounds overruns are expected to be rare, and one project-wide compiler is worth more than a
+check that only ever ran in `debug`. `gfortran-14` stays correct and keeps the flag if a specific
+hunt needs it, and `-DTONTO_FORCE_FCHECK_BOUNDS=ON` re-enables it the day GCC fixes the bug. The
+migration was carried out the same day: see *Platform-specific*.
 Then: **macOS in CI** (feasible and free — the repo is public — and it is the only thing that can
 guard the two arm64 `-O2`/`-O3` compiler pins, which today are guarded by nothing and whose
 failure mode is wrong numbers, not crashes; see *Platform-specific*),

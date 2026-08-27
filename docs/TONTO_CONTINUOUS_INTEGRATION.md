@@ -83,7 +83,7 @@ artifacts on both success and failure.
 
 ## CI (Linux-release) — `ci.yml`
 
-The reference build. Ubuntu, `gfortran-14`, release, then the **short** and **hart**
+The reference build. Ubuntu, `gfortran-16`, release, then the **short** and **hart**
 suites through `scripts/suite_report.py`. It also runs the **invariant checks**, which
 compare the program against itself rather than against a stored reference (spherical vs
 cartesian bases must agree below d functions; `hart --help` must list exactly the options
@@ -133,7 +133,7 @@ CMake Error at CMakeLists.txt:16 (project):
 ```
 
 Tonto is `project(tonto LANGUAGES Fortran C)`, and a bare WSL Ubuntu image has no C
-compiler — `gfortran-14` pulls in `gcc-14-base` but not the `gcc` driver. Ubuntu CI
+compiler — `gfortran-16` pulls in `gcc-16-base` but not the `gcc` driver. Ubuntu CI
 runners ship one preinstalled, so only the WSL jobs could ever hit this. Fixed by
 adding `gcc` to `additional-packages`, to the apt line in `BUILDING_ON_WINDOWS.md`, and as a
 check in `scripts/wsl_doctor.sh`.

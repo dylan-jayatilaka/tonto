@@ -32,6 +32,12 @@ on:
     - cron: '17 4 * * 2'
   workflow_dispatch:
 
+env:
+  # The project standard compiler; migrated 14 -> 16 on 2026-08-27.
+  # NOTE: a DEBUG build on 16 carries no -fcheck=bounds (compiler bug, see
+  # docs/GFORTRAN16_DEBUG_CRASH.md).
+  FC_VERSION: 16
+
 jobs:
   build-debug-wsl:
     name: Debug build + smoke test inside real WSL
@@ -57,21 +63,37 @@ jobs:
           distribution: Ubuntu-24.04
           wsl-version: '2'
           update: 'true'
-          # gcc is NOT optional and NOT implied by gfortran-14: the project is
+          # gcc is NOT optional and NOT implied by gfortran-${{ env.FC_VERSION }}: the project is
           # declared `project(tonto LANGUAGES Fortran C)`, and a bare WSL Ubuntu
-          # image has no C compiler (gfortran-14 pulls in gcc-14-base, not the
+          # image has no C compiler (gfortran-${{ env.FC_VERSION }} pulls in gcc-14-base, not the
           # gcc driver). Ubuntu CI runners ship one preinstalled, which is why
           # only the WSL jobs ever hit this.
           additional-packages: >-
-            gcc gfortran-14 libblas-dev liblapack-dev default-jdk
+            gcc software-properties-common libblas-dev liblapack-dev default-jdk
             python3 perl make cmake git
+
+      - name: Install gfortran-${{ env.FC_VERSION }} inside the distro
+        # Ubuntu 24.04 tops out at gcc-14, so the project compiler comes from the
+        # toolchain PPA. setup-wsl's additional-packages cannot add a PPA, hence
+        # a step of its own. Assert it landed rather than falling back silently.
+        shell: wsl-bash {0}
+        run: |
+          set -euo pipefail
+          add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          apt-get update
+          apt-get install -y --no-install-recommends gfortran-${{ env.FC_VERSION }}
+          command -v gfortran-${{ env.FC_VERSION }} > /dev/null || {
+            echo "::error::gfortran-${{ env.FC_VERSION }} did not install inside WSL"
+            exit 1
+          }
+          gfortran-${{ env.FC_VERSION }} --version | head -1
 
       - name: Environment
         shell: wsl-bash {0}
         run: |
           echo "kernel : $(cat /proc/sys/kernel/osrelease)"
           gcc --version | head -1
-          gfortran-14 --version | head -1
+          gfortran-${{ env.FC_VERSION }} --version | head -1
           java -version 2>&1 | head -1
           free -g | head -2
 
@@ -95,7 +117,7 @@ jobs:
           set -o pipefail
           cd ~/tonto
           cmake -B ~/tonto-build/debug \
-                -DCMAKE_Fortran_COMPILER=gfortran-14 \
+                -DCMAKE_Fortran_COMPILER=gfortran-${{ env.FC_VERSION }} \
                 -DCMAKE_BUILD_TYPE=debug 2>&1 | tee ~/configure.log
           {
             echo '## WSL debug configure (WSL lines)'
@@ -143,7 +165,7 @@ jobs:
           echo '```'
           cat /proc/sys/kernel/osrelease
           gcc --version | head -1 || echo "gcc MISSING"
-          gfortran-14 --version | head -1 || echo "gfortran-14 MISSING"
+          gfortran-${{ env.FC_VERSION }} --version | head -1 || echo "gfortran-${{ env.FC_VERSION }} MISSING"
           free -g | head -2
           ls -l ~/tonto-build/debug/tonto || echo "no debug binary -- the BUILD failed"
           grep '^-- WSL:' ~/configure.log || echo "(no WSL lines: configure never got that far)"

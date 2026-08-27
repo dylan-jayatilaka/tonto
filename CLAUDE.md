@@ -183,14 +183,23 @@ Full details in the companion docs (§7).
 
 ## 4. Building
 
-CMake, out-of-source. Toolchain (`make`, `perl`, `gfortran-14`, `blas`, `lapack`, `python3`,
+CMake, out-of-source. Toolchain (`make`, `perl`, `gfortran-16`, `blas`, `lapack`, `python3`,
 `gnuplot`) is already installed.
 
 ```bash
 mkdir build && cd build
-cmake .. -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=release
+cmake .. -DCMAKE_Fortran_COMPILER=gfortran-16 -DCMAKE_BUILD_TYPE=release
 make -j
 ```
+
+**The project standard compiler is `gfortran-16`, since 2026-08-27** (`gfortran-14` before).
+The migration was made *knowing* gfortran 16 miscompiles `-fcheck=bounds`: a `debug` build on
+16 therefore carries no array bounds checking, and `cmake/SetFortranFlags.cmake` drops the flag
+and says so at configure time. Dylan's decision, and the reasoning is that Tonto is almost
+entirely dynamically allocated Fortran, so bounds overruns are expected to be rare — a single
+project-wide compiler is worth more than the check. `-DTONTO_FORCE_FCHECK_BOUNDS=ON` restores
+it, and `gfortran-14` remains correct if a specific hunt needs the flag. The upstream report is
+`docs/GFORTRAN16_GCC_BUG.md`; the bug itself, `docs/GFORTRAN16_DEBUG_CRASH.md`.
 
 Other build types: `debug`, `release-static`, and MPI (`-DCMAKE_Fortran_COMPILER=mpifort …
 -DMPI=1`). The MPI must be built with the **same** Fortran compiler — Tonto does `USE mpi` and

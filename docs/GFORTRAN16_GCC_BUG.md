@@ -5,6 +5,16 @@ below is ready to paste into the "File a new bug" form for gcc/fortran once
 someone signs in at <https://gcc.gnu.org/bugzilla/>. Background and Tonto's
 workaround: `docs/GFORTRAN16_DEBUG_CRASH.md`.
 
+**Getting the account is the blocker, and it is not self-service** (found
+2026-08-27). Bugzilla answers a sign-up attempt with *"user account creation has
+been restricted"* and directs you to email
+<gcc-bugzilla-account-request@gcc.gnu.org>. **A request was sent on 2026-08-27**
+and the reply is awaited; the text is kept at
+`~/gcc_bugzilla_account_request.txt` on sauce. Note also that sourceware refuses
+scripted access — plain `curl` gets a 429 and the anti-bot layer (Anubis) blocks
+the rest — so both the filing and the duplicate search have to be done by hand in
+a logged-in browser.
+
 **The duplicate search was done (2026-08-25) and found nothing.** Bugzilla
 quicksearch `product:gcc component:fortran fcheck bounds` returns 22 open bugs;
 the near ones are all *missing-diagnostic* reports — `-fcheck=bounds` failing to
