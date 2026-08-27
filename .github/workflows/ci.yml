@@ -34,27 +34,44 @@ jobs:
           submodules: recursive
 
       - name: Install toolchain (gfortran-${{ env.FC_VERSION }})
-        # gfortran (Foo->Fortran target compiler) comes from the toolchain PPA,
-        # which carries 14 as well as newer versions, so FC_VERSION alone selects
-        # the compiler. Assert it landed -- falling through would build with one
-        # version under another's label, which is the silent-wrong-answer class
-        # this project keeps finding the hard way.
+        # NO PPA, DELIBERATELY -- this is the reference build and it must use the
+        # SAME packages the references in tests/ were blessed against. Ubuntu
+        # 24.04 carries gfortran-14 natively, so nothing else is needed at 14.
+        #
+        # Adding ppa:ubuntu-toolchain-r/test here on 2026-08-27 turned this
+        # workflow red: urea_hart_STO-3G_disk_ffs began failing structurally
+        # (0% deviation, 0 ulp), grand total 57/58. The PPA does not merely
+        # *carry* 14, it carries its OWN BUILD of it -- the run reported
+        # 14.3.0-12ubuntu1~24~ppa1 -- and enabling it also exposes a second
+        # archive to every other package, BLAS and LAPACK included. The install
+        # assertion below did not catch it because it checks the MAJOR version,
+        # which is 14 either way.
+        #
+        # If FC_VERSION is ever raised past what Ubuntu ships, the PPA has to
+        # come back -- and the references must be re-blessed against it as a
+        # deliberate act, not acquired as a side effect.
+        #
         # Also a full JDK (CMake needs javac to build the translator; the ANTLR
         # jar itself is auto-downloaded by CMake with a SHA-256 check),
         # BLAS/LAPACK from apt (so the LAPACK submodule isn't rebuilt from
         # source), plus python3/perl/gnuplot/make.
         run: |
           set -euo pipefail
-          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             gfortran-${FC_VERSION} libblas-dev liblapack-dev \
             default-jdk python3 perl gnuplot make cmake
           command -v gfortran-${FC_VERSION} > /dev/null || {
-            echo "::error::gfortran-${FC_VERSION} did not install -- ppa:ubuntu-toolchain-r/test may not carry it for $(lsb_release -cs). Do NOT fall back to another version silently; fix the source or change FC_VERSION deliberately."
+            echo "::error::gfortran-${FC_VERSION} did not install from the Ubuntu archive. Do NOT add a PPA to work around this without re-blessing the references; see the comment above."
             exit 1
           }
+          # Record the EXACT package builds, not just the version numbers. The
+          # 2026-08-27 failure was one package revision apart and invisible
+          # without this.
+          echo "== toolchain provenance =="
           gfortran-${FC_VERSION} --version | head -1
+          dpkg-query -W -f='${Package} ${Version}\n' \
+            gfortran-${FC_VERSION} libblas-dev liblapack-dev 2>/dev/null || true
 
       - name: Configure
         run: >
