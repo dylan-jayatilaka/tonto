@@ -386,6 +386,12 @@ about five thousand free reflections. A single five-percent split of a small-mol
 dataset cannot locate a minimum. This is not a defect in the implementation; the statistic
 simply is not precise enough.
 
+**No job has ever created a free set.** Nothing in `tests/` sets `r_free_percentage=`, so the
+entire reserved-data path is unreachable by the suite — which is how the `.free` plots came to
+be plotting the *fitting* data for a year (fixed 2026-08-27, `crystal.foo:9726`, still never
+executed). The first job here that sets `r_free_percentage=` will be the first to run any of it;
+expect to find more than one thing wrong.
+
 **The split is not stratified.** `CRYSTAL:set_r_free_reflections` (`crystal.foo:220`) draws
 one uniform random number per reflection and puts it in the free set if the number falls
 below the percentage. Two consequences follow.

@@ -4312,27 +4312,6 @@ with no hand-written script at all.
 
 # Done, resolved and closed (archive)
 
-## DONE (2026-08-27): the reserved ("free") reflection plots plotted the FITTING data
-
-`foofiles/crystal.foo:9726-9727`. The branch is guarded on `.xray_r_free_data.allocated` but
-both receivers were `.xray_data`, so the `.free` plots were the fitting plots under a name
-asserting otherwise. Both now read `.xray_r_free_data`. A two-line change.
-
-**No reference moved, and that is measured, not assumed.** The branch is reached only when
-`.r_free_percentage > 0` (`crystal.foo:201`), and **no test in `tests/` sets
-`r_free_percentage=`** — so the whole reserved-data path is unreachable by the suite. That is
-why this could be fixed safely in minutes, and it is also the reason it survived since
-2026-08-09: nothing exercises it. Spot-checked `h2o_rhf_STO-3G`, `urea_read_and_process_CIF` and
-`nh3_rhf_DZP_HAR` after the change, all exact.
-
-**What is still owed: a test.** The fix is correct by inspection and compiles, but it has never
-been *run*, because no job creates a free set. Milestone 12 turns the free set into the
-instrument that chooses the XCW Lagrange multiplier (Appendix A of
-`docs/EXTINCTION_REPORT.md`), so a job setting `r_free_percentage=` should be added there — at
-which point this fix gets its first real exercise. Until then, treat the reserved-data plots as
-untested code that is now at least *reading the right array*.
-
-
 ## DONE (2026-08-27): transpose and thin the CI badge table
 
 Done as asked, and **one premise of the original entry was wrong**. It said four of
