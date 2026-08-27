@@ -59,8 +59,11 @@ configuration. The gfortran-16 migration is preserved whole on `origin/develop-g
 
 **What the day established, in one line each:**
 
-- **gfortran-16 debug is broken and the migration was reverted.** 34 failures against
-  gfortran-14's 1, same commit, same machine. See *Platform-specific*.
+- **The migration to gfortran-16 was reverted, then the reason was overturned.** The 34 debug
+  failures are caused by the missing `-fcheck=bounds`, not by gfortran-16: gfortran-14 reproduces
+  them when the flag is removed from one file. What it exposed is a **latent Tonto defect** — an
+  `allocatable` component's status depending on whether bounds checking is on. See
+  *Platform-specific*, "OVERTURNED". **That defect, not the compiler, is the live bug.**
 - **The toolchain PPA must not be in a reference build.** It substituted gfortran 14.3.0 for the
   archive's 14.2.0 and reddened `ci.yml` twice. Removed everywhere except `ci-mpi.yml`, which
   needs 16. Rule in `CLAUDE.md` §4.
@@ -72,10 +75,10 @@ configuration. The gfortran-16 migration is preserved whole on `origin/develop-g
 **The three next actions, in order:**
 
 1. **Read the suite run** above, against a denominator you have checked.
-2. **Close the `-fcheck=bounds` confound** in the gfortran-16 finding — recompile the one file
-   with altered flags and relink, per the recipe this file records from the `pointgroup` work.
-   Until that is done, do not file a second GCC bug: the two builds differ by a flag as well as a
-   compiler.
+2. **Chase the latent defect the confound uncovered** — `.atom(a).interpolator.deallocated`
+   answering differently with and without `-fcheck=bounds`, at `foofiles/molecule.rho.foo:2269`.
+   This is ours, not gcc's, and it is invisible in any build carrying the flag. No second GCC
+   report is owed.
 3. **Reconcile 124 versus 89.** It is cheap and it is blocking (1).
 
 **The methodological lesson of the day, which cost the most time:** a *structural* failure —
@@ -3269,6 +3272,48 @@ these failures too; see `docs/TONTO_AND_MPI.md`. Both are fixed. `ci-wsl-debug.y
 **The general rule:** when adding a workflow that runs the suite, copy the package list from
 `ci.yml`, which is the reference build, rather than writing a shorter one from what the *build*
 needs.
+
+## OVERTURNED (2026-08-27, same day): the 34 debug failures are `-fcheck=bounds`, NOT gfortran-16
+
+**Read this before the entry below, which it corrects.** The confound the entry listed as open
+question 1 was closed the same afternoon, and it reversed the conclusion.
+
+**The experiment.** In the **gfortran-14** debug tree, recompile the single file that holds the
+deciding condition, `molecule.rho.F90`, without `-fcheck=bounds`, and relink. One file, one flag,
+one compiler:
+
+| gfortran-14 tree, `molecule.rho.F90` | `h2o_rhf_STO-3G` |
+|---|---|
+| with `-fcheck=bounds` | **PASS**, exact |
+| **without** `-fcheck=bounds` | **FAIL** — the `Making gaussian ANO interpolators ...` line |
+| with it again (control) | **PASS**, exact |
+
+**So the flag causes the behaviour, and gfortran-16 does not.** The 34 failures are a consequence
+of *our own workaround* — dropping `-fcheck=bounds` on 16 because 16 miscompiles it — and
+gfortran-14 reproduces them exactly when the flag is removed. **No second GCC bug report is
+owed.** The `-fcheck=bounds` miscompilation (`docs/GFORTRAN16_DEBUG_CRASH.md`) remains real and
+remains the one gfortran-16 defect we have.
+
+**What this leaves, and it is not nothing.** Tonto has a **latent defect of its own**: whether
+`.atom(a).interpolator.deallocated` is true depends on whether bounds checking is switched on.
+`interpolator` is a genuine Fortran `allocatable` component whose initial status the standard
+guarantees, so a conforming program should not be able to tell. Something is reading state it
+should not — and it is invisible in every build that carries the flag, which is every debug build
+before gfortran-16 arrived. Note `.atom(b).interpolator = .atom(a).interpolator` a few lines
+below at `foofiles/molecule.rho.foo:2288`, an intrinsic assignment of a derived type with
+allocatable components. **This is now the interesting bug, and it is ours.**
+
+**Consequence for the migration.** The case against gfortran-16 is materially weaker than it was
+this morning: what remains against it is the `-fcheck=bounds` miscompilation alone, whose cost is
+losing bounds checking in debug — the bargain that was originally accepted and then withdrawn on
+evidence that has now evaporated. `develop-gfortran-16` holds the whole migration. **Do not
+simply re-apply it**: first fix the latent defect above, because a debug build on 16 has no
+bounds checking and would therefore hit it.
+
+**Method note.** The entry below was written with the confound explicitly listed as unresolved,
+and the conclusion was still stated too strongly in the commit message and in `CLAUDE.md`. The
+evidence was 0 occurrences against 34 and it was still the wrong attribution. Closing the
+confound cost about ten minutes: one file, one flag, one relink.
 
 ## gfortran-16 DEBUG fails 34 of 71 short tests — the migration was reverted (2026-08-27)
 

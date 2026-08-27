@@ -205,17 +205,17 @@ to `ci.yml` during the gfortran-16 migration turned the reference build red — 
 the exact package builds of `gfortran`, `libblas-dev` and `liblapack-dev` on every run, because
 that difference was one package revision wide and invisible without it.
 
-**The project standard compiler is `gfortran-14`.** A migration to 16 was made and
-**reverted the same day, 2026-08-27**, and the reason is worth knowing before anyone tries
-again: a gfortran-16 **debug** build fails **34 of 71** short tests where a gfortran-14 debug
-build of the same code passes exactly. 27 of those are structural (0% deviation) — an extra
-`Making gaussian ANO interpolators ...`, i.e. the two compilers disagree about the allocation
-status of an `allocatable` component — and 7 differ numerically by as much as 200%. That is on
-top of the separate `-fcheck=bounds` miscompilation, which is why a debug build on 16 also has
-no array bounds checking. Release builds are not implicated (Linux release-16 measured 123/124).
-The whole migration is preserved on the branch **`develop-gfortran-16`**, so retrying it means
-merging that branch and flipping `FC_VERSION`, not redoing the work. Evidence and the next
-experiment: `DEFERRED.md`; the compiler bugs: `docs/GFORTRAN16_DEBUG_CRASH.md` and
+**The project standard compiler is `gfortran-14`.** A migration to 16 was made and reverted on
+2026-08-27. **The reason given for reverting was then overturned the same day** — read
+`DEFERRED.md`, "OVERTURNED ... the 34 debug failures are `-fcheck=bounds`, NOT gfortran-16",
+before acting on any of this. In short: a gfortran-16 *debug* build fails 34 of 71 short tests,
+but so does a **gfortran-14** debug build once `-fcheck=bounds` is removed from one file — so the
+failures follow from the workaround for the bounds-check miscompilation, not from gfortran-16.
+What that exposed instead is a **latent defect in Tonto**: whether an `allocatable` component
+reads as unallocated depends on whether bounds checking is on, which a conforming program should
+not be able to detect. Fix that before re-applying the migration, which is preserved whole on the
+branch `develop-gfortran-16`. The one real gfortran-16 defect remains the `-fcheck=bounds`
+miscompilation: `docs/GFORTRAN16_DEBUG_CRASH.md`, and the unfiled report,
 `docs/GFORTRAN16_GCC_BUG.md`.
 
 Other build types: `debug`, `release-static`, and MPI (`-DCMAKE_Fortran_COMPILER=mpifort …
