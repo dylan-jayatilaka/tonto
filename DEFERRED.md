@@ -43,18 +43,32 @@ now covers the whole project, so it was renamed.)*
 
 ## WHERE 2026-08-27 LEFT OFF — read this first if you are picking up cold
 
-**One measurement is in flight and its result is the first thing to look at.** The full suite,
+> **UPDATE 2026-09-03.** Actions 1 and 3 below are **done** — the suite run was read and the
+> denominator settled; both are archived at the foot of this file. The list now starts at
+> action 2, the latent `-fcheck=bounds` defect. Also: the GCC Bugzilla account was **granted**
+> on 2026-09-03, so filing the bug report is no longer blocked on it.
+
+**The measurement that was in flight has landed and it PASSES.** The full suite,
 `short long hart` at gfortran-14, on commit `80dcbfe4`:
-<https://github.com/dylan-jayatilaka/tonto/actions/runs/33067218748>. It is the verification owed
-since 2026-08-26 for the `textfile.foo` MPI fix, which is on the path of every file read in Tonto
-and has so far been tested by 3 jobs out of 124.
+<https://github.com/dylan-jayatilaka/tonto/actions/runs/33067218748> — **88/89 loose, 77 exact**,
+all four invariant checks green. That discharges the verification owed since 2026-08-26 for the
+`textfile.foo` MPI fix, which is on the path of every file read in Tonto and had until then been
+tested by 3 jobs out of 89.
 
-**Before you read it, read `docs/TONTO_AND_MPI.md` §"VERIFICATION STILL OWED".** Two earlier
-attempts the same day were worthless for reasons unconnected to `textfile.foo`, and the third
-cannot be called a pass yet because the baseline itself is in question — see the entry below on
-124/124 versus 89. Do not accept or reject that run without settling the denominator first.
+**Two things had to be untangled before that could be read**, and both are now closed:
 
-**Nothing is uncommitted.** `origin/develop` is at `ac64ad68`. `origin/master` has only CI
+- The 89th test was reported as an **ERROR** when it had merely been **skipped**.
+  `ammonium_borane_pHAR_C23` needs a 167 MB asset that CI does not have, so `test.py` exits 77;
+  but `suite_report.py` runs `test.py` directly and never saw the `SKIP_RETURN_CODE` property
+  `ctest` uses, so it scored the skip as a failure and reddened the gate. Fixed.
+- **124/124 versus 89 was not a discrepancy.** The 124 counted `short long cx rgbi` as they
+  stood on 2026-07-15 (51 + 28 + 32 + 13); the 89 counts the three suites the workflow is asked
+  for. Neither score said what it counted, which is the actual defect; `CLAUDE.md` §5 now states
+  the composition beside every number.
+
+**Nothing is uncommitted.** `origin/develop` is at `659d335c` — three commits past `ac64ad68`,
+which this handover named before they landed; the substantive one is `134152e3`, where the
+reserved ("free") reflection plots were plotting the *fitting* data. `origin/master` has only CI
 configuration. The gfortran-16 migration is preserved whole on `origin/develop-gfortran-16`.
 
 **What the day established, in one line each:**
@@ -72,14 +86,15 @@ configuration. The gfortran-16 migration is preserved whole on `origin/develop-g
 - **The Bugzilla account request was sent** and its reply is awaited; the duplicate search is
   still owed and cannot be scripted.
 
-**The three next actions, in order:**
+**The next actions, in order** *(1 and 3 were done on 2026-09-03; what remains is renumbered)*:
 
-1. **Read the suite run** above, against a denominator you have checked.
-2. **Chase the latent defect the confound uncovered** — `.atom(a).interpolator.deallocated`
+1. **Chase the latent defect the confound uncovered** — `.atom(a).interpolator.deallocated`
    answering differently with and without `-fcheck=bounds`, at `foofiles/molecule.rho.foo:2269`.
    This is ours, not gcc's, and it is invisible in any build carrying the flag. No second GCC
    report is owed.
-3. **Reconcile 124 versus 89.** It is cheap and it is blocking (1).
+2. **File the gfortran-16 GCC bug report.** The draft is finished and the account was granted on
+   2026-09-03. The duplicate search over resolved bugs and `16 Regression` is still owed and
+   still cannot be scripted — Sourceware refuses automated access.
 
 **The methodological lesson of the day, which cost the most time:** a *structural* failure —
 0% numeric deviation, 0 ulp, output differing only in line count — pointed at the **environment**
@@ -91,8 +106,9 @@ what changed around the program before suspecting the program.
 **File the gfortran-16 GCC bug report** — the draft is finished
 ([`docs/GFORTRAN16_GCC_BUG.md`](docs/GFORTRAN16_GCC_BUG.md)). Blocked on a Bugzilla account,
 which is **not self-service**: sign-up answers *"user account creation has been restricted"* and
-directs you to email <gcc-bugzilla-account-request@gcc.gnu.org>. **A request was sent
-2026-08-27** and the reply is awaited. Sourceware also refuses scripted access (plain `curl` gets
+directs you to email <gcc-bugzilla-account-request@gcc.gnu.org>. A request was sent 2026-08-27
+and **the account was granted on 2026-09-03** (login: the maintainer's email; the password is not
+mailed, so it is set through "Forgot Password"). Sourceware also refuses scripted access (plain `curl` gets
 a 429, and the Anubis anti-bot layer blocks the rest), so the filing *and* the duplicate search
 over resolved bugs and `16 Regression` — still outstanding — have to be done by hand in a
 logged-in browser.
@@ -3240,21 +3256,6 @@ highlighting and tighter editor integration. The repo already ships some vim sup
 
 # Platform-specific
 
-## The 124/124 suite baseline does not match what CI counts (2026-08-27)
-
-**Status: open, and it blocks reading any full-suite result.** `CLAUDE.md` §5 and several
-entries here quote a baseline of **124/124** loose for the full release suite. The
-`ci-full-suite.yml` runs of 2026-08-27 report **89** agreement lines for `short long hart`:
-55 short + 31 long + 3 hart. Nobody has reconciled the two numbers.
-
-Until that is done, a full-suite result **cannot be called a pass or a regression**, because
-there is no agreed denominator. Candidates: the 124 counts something other than agreement lines;
-it predates a change in suite composition; or it includes suites the workflow is not asked for.
-Cheap to settle — count the job directories under `tests/` per suite and compare against a local
-`scripts/suite_report.py --suites short long hart`.
-
-Noticed while reading the `textfile.foo` verification run, which is itself waiting on this.
-
 ## CI workflows must install every RUN-time dependency, not just build ones (2026-08-27)
 
 **Status: fixed for gnuplot; the class is worth remembering.** `ci-full-suite.yml` ran for the
@@ -3549,14 +3550,22 @@ The stale README line ("many failures on the Apple M2 — not recommended") shou
 be corrected at the same time; it is wrong about the build, which was always
 clean.
 
-## UNVERIFIED: the `textfile.foo` MPI fix has not seen the serial suite (2026-08-26)
+## VERIFIED 2026-09-03: the `textfile.foo` MPI fix, serial suite 88/89 (opened 2026-08-26)
+
+> **Closed.** The owed run is
+> [33067218748](https://github.com/dylan-jayatilaka/tonto/actions/runs/33067218748) —
+> `short long hart`, Linux, gfortran-14, serial release, on `80dcbfe4`: **88/89 loose, 77
+> exact**, four invariant checks green, the 89th a deliberate skip. Move this entry to the
+> archive next time the file is re-sorted. What follows is the entry as written while it was
+> open, and its reasoning about *why* a whole-suite gate was needed still applies to the next
+> structural change in `textfile.foo`.
 
 **Update, same evening: the `long` suite passed with no new failures.** 28/31 loose against
 the fixed binary; the three non-passes are the two known macOS-only `quartz_NN_HAR` jobs
 (references correct) and the pHAR test blocked by its missing 167 MB asset. Run on
 macOS/arm64 with the MPI build at `-n 1`, **not** Linux serial gfortran-14, so it is strong
 evidence rather than the owed run — the compiler, platform and macro configuration all differ
-from the 124/124 baseline. Detail in `docs/TONTO_AND_MPI.md` Finding 7.
+from the Linux baseline. Detail in `docs/TONTO_AND_MPI.md` Finding 7.
 
 **How to run it without a machine (added 2026-08-26, as Dylan left).**
 `.github/workflows/ci-full-suite.yml` is a **dispatch-only** workflow that builds release
@@ -3586,8 +3595,11 @@ in Tonto**, so the change is exercised by essentially every job, serial included
 fix removed an amplifier, not the origin), and `-n 1` plus serial on
 `urea_read_and_process_CIF` alone, which pass exactly.
 
-Baseline to match, from `CLAUDE.md` §5: **124/124** loose on the full release suite locally,
-**51/51** short in CI. Pass `--failure-dir` so an ERRORing job records its cause.
+Baseline to match: **89** tests for `short long hart` (55 + 31 + 3), of which
+`ammonium_borane_pHAR_C23` skips without its 167 MB asset — so **88/89** is the score to beat,
+and 77 of those were exact. Pass `--failure-dir` so an ERRORing job records its cause.
+*(The "124/124" this entry used to quote counted `short long cx rgbi` on 2026-07-15; see the
+archive.)*
 
 Why it is not merely paperwork: the edit moved a `DIE_IF` out of a loop into its caller and
 added an `exit` on `.IO_status/=0` -- a control-flow path that did not exist before. A loop
@@ -4337,6 +4349,50 @@ with no hand-written script at all.
 ---
 
 # Done, resolved and closed (archive)
+
+## RESOLVED (2026-09-03): the 124/124 baseline versus CI's 89 — different suites, both right
+
+**The two numbers were never comparable, and neither was wrong.**
+
+| | suites counted | tests |
+|---|---|---|
+| the "124/124" baseline, 2026-07-15 | `short` 51 + `long` 28 + `cx` 32 + `rgbi` 13 | **124** |
+| `ci-full-suite.yml`, 2026-08-27 | `short` 55 + `long` 31 + `hart` 3 | **89** |
+
+The 124 counted every ctest-registered suite of the day; the 89 counts the three the workflow
+is asked for. `hart` did not exist in July and `cx`/`rgbi` are not in the workflow's list. The
+same four suites today hold 131.
+
+**What actually went wrong is that neither score said what it counted**, so for a day in August
+a full-suite result could not be called a pass or a regression — which blocked reading the
+`textfile.foo` verification run. The fix is a habit, not a number: `CLAUDE.md` §5 now states the
+composition beside every score, and `docs/TONTO_AND_MPI.md` records the reconciliation where
+the confusion happened.
+
+**And the run it was blocking passes.** 88/89 loose, 77 exact, all four invariant checks green;
+the 89th is a deliberate skip, see the entry below.
+
+## RESOLVED (2026-09-03): a skipped test was reported as an ERROR and failed the gate
+
+`scripts/test.py` exits **77** — the automake convention — when a declared input is absent, and
+`tests/CMakeLists.txt` pairs that with `SKIP_RETURN_CODE`, so `ctest` reports it as skipped.
+`scripts/suite_report.py` runs `test.py` **directly**, so it never saw that property and scored
+exit 77 as `ERROR`: a red gating step, a `GRAND TOTAL` one short of its denominator, and a
+failure log written for a test that had not run.
+
+It cost a full-suite run its verdict on 2026-08-27, where `ammonium_borane_pHAR_C23` skips for
+want of its 167 MB asset.
+
+**Fixed.** `suite_report.py` knows `SKIP_EXIT_CODE` now: a skipped test is scored `SKIP`, kept
+**out of the denominator** (it did not run, so scoring it either way misreports the build),
+counted as `SKIPPED n` in the subtotal, and its reason printed under the totals so the smaller
+denominator is never silent. It writes no failure log. Verified both ways on a scratch suite —
+a skip passes the gate and an ERROR still fails it.
+
+**The general shape, worth keeping:** a second test runner that bypasses `ctest` also bypasses
+every `set_tests_properties` the project relies on. `SKIP_RETURN_CODE` was the one that bit;
+`TIMEOUT`, `WILL_FAIL` and `LABELS` are equally invisible to it.
+
 
 ## DONE (2026-08-27): transpose and thin the CI badge table
 

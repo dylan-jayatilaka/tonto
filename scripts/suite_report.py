@@ -53,6 +53,11 @@ KNOWN_MARGINAL = {
     'nh3_rhf_DZP_HAR':      {'last_digit_tol': 4},  # near-zero value, passes only on ulp<=2
 }
 
+# "Could not run", as distinct from "ran and disagreed" -- scripts/test.py exits
+# with this when a declared input is absent (the pHAR asset, say). CMake pairs it
+# with SKIP_RETURN_CODE; this driver runs test.py directly, so it must know it too.
+SKIP_EXIT_CODE = 77
+
 # Parse a test.py "AGREEMENT ..." line, e.g.
 #   AGREEMENT h2o_rhf_STO-3G   exact=PASS  rel<=0.2%=PASS(max  0%)  \
 #             lastdig<=2=PASS(max  0 ulp)  =>  LOOSE=PASS
@@ -130,7 +135,14 @@ def score_test(test_py, test_dir, args):
     rows = [m for m in (_ROW.search(l) for l in p.stdout.splitlines()
                         if l.startswith('AGREEMENT')) if m]
     if not rows:
-        # No comparison happened -- the job crashed or produced no output.
+        # No comparison happened. Either the test declined to run (SKIP_EXIT_CODE,
+        # e.g. a missing large asset), which is not a defect and must not be scored
+        # as one, or the job crashed / produced no output, which is.
+        if p.returncode == SKIP_EXIT_CODE:
+            reason = next((l for l in p.stdout.splitlines()
+                           if l.startswith('SKIPPED:')), 'no reason given')
+            return {'status': 'SKIP', 'reason': reason.partition('--')[2].strip()
+                                                or reason, 'rc': p.returncode}
         status = 'ERROR' if p.returncode != 0 else 'PASS'
         # KEEP THE REASON. This output is already captured above and used to be
         # thrown away here, so an ERROR row said only "ERROR ERROR ERROR - -" and
@@ -236,8 +248,9 @@ def main():
     # other two, so it reads naturally as the rightmost of the three verdicts.
     hdr = ('%-*s  %-6s %-7s %-6s  %9s  %9s'
            % (NAMEW, 'test name', 'exact', 'lastdig', 'loose', 'max rel%', 'max LDD'))
-    grand = {'n': 0, 'exact': 0, 'loose': 0, 'ld': 0, 'err': 0}
+    grand = {'n': 0, 'exact': 0, 'loose': 0, 'ld': 0, 'err': 0, 'skip': 0}
     widened = []   # known-marginal tests run with a relaxed bound (reported below)
+    skipped = []   # (test, reason) for tests that declined to run (reported below)
 
     print('')
     print('=================================')
@@ -270,13 +283,23 @@ def main():
         print('_' * 95 + '\n')
         print(hdr)
         print('_' * 95 + '\n')
-        sub = {'n': 0, 'exact': 0, 'loose': 0, 'ld': 0, 'err': 0}
+        sub = {'n': 0, 'exact': 0, 'loose': 0, 'ld': 0, 'err': 0, 'skip': 0}
         for t in tests:
             # Print the name *before* running the test, and only then its
             # verdict columns, so a slow test shows as a visibly pending line
             # instead of silence.  Some tests here run for minutes.
             print('%-*s  ' % (NAMEW, t[:NAMEW]), end='', flush=True)
             r = score_test(test_py, os.path.join(sdir, t), args)
+            # A skipped test is NOT in the denominator: it was never run, so
+            # scoring it either way would misreport the build. It is counted
+            # and its reason printed below, so the drop in the total is never
+            # silent.
+            if r['status'] == 'SKIP':
+                sub['skip'] += 1
+                skipped.append((t, r['reason']))
+                print('%-6s %-7s %-6s  %9s  %9s'
+                      % ('SKIP', 'SKIP', 'SKIP', '-', '-'))
+                continue
             sub['n'] += 1
             if t in KNOWN_MARGINAL:
                 widened.append(t)
@@ -292,17 +315,24 @@ def main():
                   % (yn(r['exact']), yn(r['ld']),
                      yn(r['loose']), r['max_rel'], r['max_ulp']))
         print('_' * 95 + '\n')
-        print('%s subtotal:  loose %d/%d   (exact %d, lastdig %d%s)'
+        print('%s subtotal:  loose %d/%d   (exact %d, lastdig %d%s%s)'
               % (suite, sub['loose'], sub['n'], sub['exact'], sub['ld'],
-                 ', ERROR %d' % sub['err'] if sub['err'] else ''))
+                 ', ERROR %d' % sub['err'] if sub['err'] else '',
+                 ', SKIPPED %d' % sub['skip'] if sub['skip'] else ''))
         for k in grand:
             grand[k] += sub[k]
 
     print('_' * 95 + '\n')
-    print('GRAND TOTAL:  loose %d/%d   (exact %d, lastdig %d%s)'
+    print('GRAND TOTAL:  loose %d/%d   (exact %d, lastdig %d%s%s)'
           % (grand['loose'], grand['n'], grand['exact'], grand['ld'],
-             ', ERROR %d' % grand['err'] if grand['err'] else ''))
+             ', ERROR %d' % grand['err'] if grand['err'] else '',
+             ', SKIPPED %d' % grand['skip'] if grand['skip'] else ''))
     print('_' * 95)
+    if skipped:
+        print('\nSkipped -- these tests declined to run and are NOT in the totals '
+              'above:')
+        for t, why in skipped:
+            print('  * %-48s %s' % (t, why))
     if widened:
         print('\nNote: relaxed loose bound applied to known runner-sensitive tests '
               '(workaround; see DEFERRED.md "small numerical differences"):')

@@ -805,18 +805,26 @@ serial — which is the point — but the compiler, the platform and the macro c
 differ from the baseline in `CLAUDE.md` §5. Treat this as strong evidence of no regression in
 the `long` jobs, not as the owed suite run.
 
-**Still owed:** `short long hart` on Linux, gfortran-14, serial release, against the 124/124
-baseline. That is now runnable without a machine — `gh workflow run ci-full-suite.yml --ref
-develop`, see `.github/workflows/ci-full-suite.yml`.
+**RUN AND CLEAR (2026-09-03).** `short long hart` on Linux, gfortran-14, serial release:
+[run 33067218748](https://github.com/dylan-jayatilaka/tonto/actions/runs/33067218748) on
+`80dcbfe4`, **88/89 loose, 77 exact**, all four invariant checks passing. The 89th test,
+`ammonium_borane_pHAR_C23`, did not run at all — its 167 MB asset is absent in CI, so it exited
+77, the skip code — and was *reported* as an ERROR, which failed the gating step. That was a
+defect in `scripts/suite_report.py`, not in Tonto: it ran `test.py` directly and, unlike `ctest`,
+knew nothing of `SKIP_RETURN_CODE`. Fixed the same day; a skipped test is now scored `SKIP`, kept
+out of the denominator, and its reason printed under the totals. **So the `textfile.foo` change
+is verified**: 88 of the 88 tests that ran agree at the loose bound.
 
-##### VERIFICATION STILL OWED — run the SERIAL suite before this goes near `master`
+##### VERIFICATION — DISCHARGED 2026-09-03 (the serial suite ran: 88/89, see above)
 
-**Not yet run as of 2026-08-26.** `foofiles/textfile.foo` is on the path of **every file read
+**The section below was written on 2026-08-26, when it had not been run.** It is kept because
+the reasoning about *why* a structural change to `textfile.foo` needs a whole-suite gate is
+still the right reasoning for the next such change. **Status as of 2026-09-03.** `foofiles/textfile.foo` is on the path of **every file read
 in Tonto**, so `move_to_record_external` and the two record movers are exercised by essentially
 every job, serial included. The blast radius of that change is the whole suite, not the one MPI
 test it was aimed at. What has been run is only: the reproducer at `-n 2` (still fails,
 `MPI_ERR_TRUNCATE`), and `-n 1` plus a serial run of `urea_read_and_process_CIF` alone (both
-pass exactly, 0%, 0 ulp). That is three jobs out of 124.
+pass exactly, 0%, 0 ulp). That is three jobs out of 89.
 
 The change is *structural* rather than numerical — it moves work under an `IO_IS_ALLOWED`
 guard, which is a no-op in a serial build, and moves a `DIE_IF` out of a loop into its caller.
@@ -842,12 +850,14 @@ right; it prints a multi-line warning instead of drawing, which is a **structura
 also ran with `ppa:ubuntu-toolchain-r/test` enabled, which substituted gfortran 14.3.0 for the
 archive's 14.2.0 and independently reddened `ci.yml`. Both are fixed in `80dcbfe4`.
 
-**Reading attempt 3.** The baseline in `CLAUDE.md` §5 is **124/124** loose, but these runs report
-**89** agreement lines for `short long hart` (55 short + 31 long + 3 hart). That discrepancy is
-*unexplained and must be resolved before 89-of-89 is called a pass* — the 124 may count something
-else, or may predate a change in suite composition. Do not treat the two numbers as comparable
-until someone has checked. Anything below whatever the correct baseline is must be attributed,
-not accepted, and `--failure-dir` output is uploaded as an artifact for exactly that.
+**Reading attempt 3, and the denominator RESOLVED (2026-09-03).** These runs report **89**
+agreement lines for `short long hart` (55 + 31 + 3), against a quoted baseline of **124/124**.
+The two were never comparable: **124 = 51 short + 28 long + 32 cx + 13 rgbi**, the four
+ctest-registered suites as they stood on 2026-07-15. Neither number was wrong; neither said
+which suites it counted. The same four suites today hold 131. `CLAUDE.md` §5 now states the
+composition beside every score, which is the only thing that stops this recurring. Anything
+below the stated baseline must be attributed, not accepted, and `--failure-dir` output is
+uploaded as an artifact for exactly that.
 
 ```bash
 # a release build from the current sources, then the full suite
@@ -858,16 +868,19 @@ python3 scripts/suite_report.py --program build/tonto --tests-dir tests \
         --failure-dir test-failures --log tests.log
 ```
 
-**The baseline to compare against** — from `CLAUDE.md` §5, measured before any of this work:
-full release suite **124/124** loose locally; short suite **51/51** in CI. Anything below that
-is a regression from this change and must be treated as one. Use `--failure-dir`: an ERRORing
+**The baseline to compare against** — `short long hart` is **89** tests, of which
+`ammonium_borane_pHAR_C23` skips unless you have fetched its asset. The 2026-08-27 run scored
+**88/89 loose, 77 exact** (see above). Anything below that is a regression from this change and
+must be treated as one. Use `--failure-dir`: an ERRORing
 job writes no `.bad`, so without it the cause is recorded nowhere (that is register row 11).
 
 A second, cheaper gate that is *not* a substitute: `ctest -L short` on the same build. It is
 what CI runs and it will catch a gross breakage in minutes, but it does not exercise the `long`
 jobs where the heavier CIF and archive reading lives — which is the code this change touches.
 
-Until the serial suite is green at the baseline, treat the `textfile.foo` change as **unproven
+*(Discharged: the suite ran on 2026-08-27 and was read on 2026-09-03. What follows was the
+standing instruction until then.)* Until the serial suite is green at the baseline, treat the
+`textfile.foo` change as **unproven
 outside three jobs**, whatever the MPI story does.
 
 ##### How to find it: the probe must carry CALL-SITE identity

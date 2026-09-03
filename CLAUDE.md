@@ -245,7 +245,14 @@ The translator task is **complete**; validation is now **build + `ctest`**:
 - Build a `release` tree and run `ctest` — but, like `make`, **ask before launching a long
   build/test run** (§8). Use the loose criterion in `scripts/test.py` (rel ≤ 0.2% OR
   last-digit ≤ 2) as the pass/fail gate, not exact match.
-- Green on Linux and GitHub Actions CI (short suite 51/51); full release suite 124/124 locally.
+- Green on Linux and GitHub Actions CI. **Quote a score with the suites it counted**, or it
+  cannot be compared with the next one: `short long hart` is **89** tests (55 + 31 + 3) and is
+  what `ci-full-suite.yml` runs; all four ctest-registered suites (`short long cx rgbi`) are
+  **131**. The last full-suite run, 2026-08-27 at gfortran-14, was **88/89 loose, 77 exact**,
+  the 89th being a deliberate skip. *(An older baseline of "124/124" appears in earlier notes:
+  it was `short long cx rgbi` on 2026-07-15, when those suites held 51 + 28 + 32 + 13. It was
+  never the same denominator as CI's 89, and the two were compared for a day in August before
+  anyone noticed.)*
   The debug (`-O0`) build has 4 longstanding FP-boundary/structural failures (see
   `DEFERRED.md`) — not translator bugs.
 - *(Historical, no longer applicable: the translator's `*.F90`/`*.int`/`*.use` output was once
@@ -516,7 +523,9 @@ loose ctest suite as the full build.
    compiled from the ANTLR4-generated Fortran runs the short suite under `scripts/test.py`'s
    **loose** comparison (rel ≤ 0.2% OR last-digit ≤ 2, plus junk-line filtering) and passes
    **51/51** in **GitHub Actions** (green as of `99dc3a1c`, 2026-07-27; `.github/workflows/ci.yml`,
-   README badge). The full release suite is **124/124** loose locally. Residual: the debug (`-O0`)
+   README badge; the short suite has since grown to 55). The full release suite was **124/124**
+   loose locally on that date — `short long cx rgbi`, see §5 for why that number is not
+   comparable with today's. Residual: the debug (`-O0`)
    build has 4 longstanding FP-boundary/structural failures (#47/#64/#87/#91) that are not
    translator bugs and are documented in `DEFERRED.md`; CI runs the short release suite.
 
