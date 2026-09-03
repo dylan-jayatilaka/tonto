@@ -499,9 +499,14 @@ def run_test(args, test_dir, io_files):
         for path, equivalent in zip(io_files['output'], files_equivalent):
             log.debug('%s: %s', path, 'GOOD' if equivalent else 'BAD')
             if equivalent or path in blessed:
-                """ shutil.copy(abspath(join('.', path)),
-                        abspath(join(test_dir, path + '.good')))
-                """
+                # Drop a .bad left by an earlier failing run; it would read
+                # as a current failure. Keep this PER-TEST -- every build tree
+                # shares these source directories, so a sweep of tests/ before
+                # a run destroys another tree's evidence.
+                stale = abspath(join(test_dir, path + '.bad'))
+                if os.path.exists(stale):
+                    os.remove(stale)
+                    log.debug('%s: removed stale .bad', path)
             else:
                 shutil.copy(abspath(join('.', path)),
                         abspath(join(test_dir, path + '.bad')))
