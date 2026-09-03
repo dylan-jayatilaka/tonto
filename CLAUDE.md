@@ -215,8 +215,9 @@ What that exposed instead is a **latent defect in Tonto**: whether an `allocatab
 reads as unallocated depends on whether bounds checking is on, which a conforming program should
 not be able to detect. Fix that before re-applying the migration, which is preserved whole on the
 branch `develop-gfortran-16`. The one real gfortran-16 defect remains the `-fcheck=bounds`
-miscompilation: `docs/GFORTRAN16_DEBUG_CRASH.md`, and the unfiled report,
-`docs/GFORTRAN16_GCC_BUG.md`.
+miscompilation: `docs/GFORTRAN16_DEBUG_CRASH.md`, and the report, **filed 2026-09-03 as
+GCC PR 127197**, `docs/GFORTRAN16_GCC_BUG.md`. It is a clean 16 regression: gfortran 12, 13,
+14 and 15 all compile the reduced case correctly and 16.0.1 segfaults.
 
 Other build types: `debug`, `release-static`, and MPI (`-DCMAKE_Fortran_COMPILER=mpifort …
 -DMPI=1`). The MPI must be built with the **same** Fortran compiler — Tonto does `USE mpi` and

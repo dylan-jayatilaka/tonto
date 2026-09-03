@@ -45,8 +45,9 @@ now covers the whole project, so it was renamed.)*
 
 > **UPDATE 2026-09-03.** Actions 1 and 3 below are **done** — the suite run was read and the
 > denominator settled; both are archived at the foot of this file. The list now starts at
-> action 2, the latent `-fcheck=bounds` defect. Also: the GCC Bugzilla account was **granted**
-> on 2026-09-03, so filing the bug report is no longer blocked on it.
+> action 2, the latent `-fcheck=bounds` defect. The GCC bug report is **filed** — PR 127197,
+> 2026-09-03 — so that item is closed too; what is left of it is a duplicate search and
+> waiting for a maintainer.
 
 **The measurement that was in flight has landed and it PASSES.** The full suite,
 `short long hart` at gfortran-14, on commit `80dcbfe4`:
@@ -83,8 +84,8 @@ configuration. The gfortran-16 migration is preserved whole on `origin/develop-g
   needs 16. Rule in `CLAUDE.md` §4.
 - **A missing optional run-time dependency looks exactly like a defect.** No gnuplot meant 18
   structural failures at 0% deviation. Fixed in `ci-full-suite.yml` and `ci-mpi.yml`.
-- **The Bugzilla account request was sent** and its reply is awaited; the duplicate search is
-  still owed and cannot be scripted.
+- **The Bugzilla account request was sent.** *(Granted 2026-09-03, and the report filed the
+  same day as PR 127197.)* The duplicate search is still owed and cannot be scripted.
 
 **The next actions, in order** *(1 and 3 were done on 2026-09-03; what remains is renumbered)*:
 
@@ -92,9 +93,10 @@ configuration. The gfortran-16 migration is preserved whole on `origin/develop-g
    answering differently with and without `-fcheck=bounds`, at `foofiles/molecule.rho.foo:2269`.
    This is ours, not gcc's, and it is invisible in any build carrying the flag. No second GCC
    report is owed.
-2. **File the gfortran-16 GCC bug report.** The draft is finished and the account was granted on
-   2026-09-03. The duplicate search over resolved bugs and `16 Regression` is still owed and
-   still cannot be scripted — Sourceware refuses automated access.
+2. ✅ **DONE 2026-09-03 — the gfortran-16 GCC bug report is filed: PR 127197**
+   (<https://gcc.gnu.org/bugzilla/show_bug.cgi?id=127197>), with a five-version bisection that
+   makes it a clean 16 regression. The duplicate search over resolved bugs and `16 Regression`
+   is still owed and still cannot be scripted — Sourceware refuses automated access.
 
 **The methodological lesson of the day, which cost the most time:** a *structural* failure —
 0% numeric deviation, 0 ulp, output differing only in line count — pointed at the **environment**
@@ -103,15 +105,15 @@ compiler defect once. Read that signature as "the output has extra or missing li
 what changed around the program before suspecting the program.
 
 **Highest-priority open items**, if you are looking for where to start:
-**File the gfortran-16 GCC bug report** — the draft is finished
-([`docs/GFORTRAN16_GCC_BUG.md`](docs/GFORTRAN16_GCC_BUG.md)). Blocked on a Bugzilla account,
-which is **not self-service**: sign-up answers *"user account creation has been restricted"* and
-directs you to email <gcc-bugzilla-account-request@gcc.gnu.org>. A request was sent 2026-08-27
-and **the account was granted on 2026-09-03** (login: the maintainer's email; the password is not
-mailed, so it is set through "Forgot Password"). Sourceware also refuses scripted access (plain `curl` gets
-a 429, and the Anubis anti-bot layer blocks the rest), so the filing *and* the duplicate search
-over resolved bugs and `16 Regression` — still outstanding — have to be done by hand in a
-logged-in browser.
+**The gfortran-16 GCC bug report is FILED — PR 127197, 2026-09-03**
+([`docs/GFORTRAN16_GCC_BUG.md`](docs/GFORTRAN16_GCC_BUG.md),
+<https://gcc.gnu.org/bugzilla/show_bug.cgi?id=127197>). Getting there took five weeks for
+reasons worth remembering: Bugzilla sign-up is **not self-service** — it answers *"user account
+creation has been restricted"* and directs you to email
+<gcc-bugzilla-account-request@gcc.gnu.org> — and sourceware refuses scripted access entirely
+(plain `curl` gets a 429, and the Anubis anti-bot layer blocks the rest, WebFetch included).
+**So anything involving that tracker needs a person at a browser**, including the duplicate
+search over resolved bugs and `16 Regression`, which is still outstanding.
 
 **The migration to 16 was attempted and REVERTED on 2026-08-27**, so this bug report is no
 longer the thing blocking it. The decision that morning was to migrate and live with the missing
@@ -3403,7 +3405,7 @@ constructed rather than found already present. That the numbers came out identic
 luck or redundancy, not evidence that the divergence is harmless.
 
 **Related but separate:** the `-fcheck=bounds` miscompilation, `docs/GFORTRAN16_DEBUG_CRASH.md`,
-and the upstream report blocked on a Bugzilla account, `docs/GFORTRAN16_GCC_BUG.md`. A second
+reported upstream as **GCC PR 127197** on 2026-09-03, `docs/GFORTRAN16_GCC_BUG.md`. A second
 GCC report may be owed here once (1) is done.
 
 
@@ -3942,8 +3944,8 @@ defect worth landing, but was never related to this.
 macOS compiles clean, runs `h2o_rhf_STO-3G` to **exit 0** (139 before) with
 `Total energy -74.9658`, and takes `ctest -L short` **62/62**.
 
-**Still owed:** filing the upstream report — it needs a Bugzilla login and there is
-no account. The draft and the duplicate search are in `docs/GFORTRAN16_GCC_BUG.md`.
+**Filed 2026-09-03 as GCC PR 127197**, with a five-version bisection (12, 13, 14 and 15
+correct; 16.0.1 segfaults). Record and duplicate search: `docs/GFORTRAN16_GCC_BUG.md`.
 
 **A side observation from that run, not chased.** The two `short` tests that fail in
 the gfortran-14 **release** build on this Mac — `urea_ccsd_pob-TZVP_Salvador_properties`

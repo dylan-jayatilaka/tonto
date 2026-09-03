@@ -1,6 +1,7 @@
 # The gfortran-16 debug crash — found
 
-**Status 2026-08-27: root cause established, worked around, account requested upstream.**
+**Status 2026-09-03: root cause established, worked around, and FILED upstream as GCC PR 127197**
+(<https://gcc.gnu.org/bugzilla/show_bug.cgi?id=127197>).
 `DEFERRED.md` carries the same finding woven into the longer record.
 
 **A migration to gfortran-16 was made and REVERTED on 2026-08-27.** It was made accepting a
@@ -119,11 +120,10 @@ instead, for the signature above.
 
 ## Still open
 
-- **Not reported to GCC**, and the blocker is an account, not the report. The draft is
-  finished in `docs/GFORTRAN16_GCC_BUG.md`; Bugzilla sign-up is restricted and goes through
-  <gcc-bugzilla-account-request@gcc.gnu.org>, where a request was sent **2026-08-27**. The
-  duplicate search over *resolved* bugs and `16 Regression` is still outstanding and, like the
-  filing, has to be done by hand — sourceware blocks scripted access.
+- **Reported to GCC as PR 127197** on 2026-09-03, with a five-version bisection (12, 13, 14
+  and 15 all correct; 16.0.1 segfaults) — see `docs/GFORTRAN16_GCC_BUG.md`. Awaiting a
+  maintainer. The duplicate search over *resolved* bugs and `16 Regression` remains
+  outstanding and has to be done by hand: sourceware blocks scripted access.
 - **gfortran 15 is untested** — neither machine has it. The gate is therefore on
   `>= 16`, which is what was measured. If 15 turns out to be affected, lower it.
 - ~~A full gfortran-16 debug build has not been run end-to-end.~~ **Done
