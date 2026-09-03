@@ -5907,6 +5907,321 @@ contains
 
    end
 
+   get_Bader_basins :: leaky
+   ! Assign every point of the isosurface plot grid to a Bader basin of
+   ! the electron density, report the volume and electron count of each
+   ! basin, and triangulate the basin boundaries into .isosurface.
+   ! NOTE: this is the ported archive/Bader serial path and is *not*
+   ! validated against a reference; see docs/BADER_REPORT.md.
+      self :: INOUT
+
+   ENSURE(.isosurface.allocated,"no isosurface")
+
+      n,nx,ny,nz :: INT
+      grid :: VEC{REAL}@
+      g3 :: MAT3{REAL}@
+      pt :: MAT{REAL}@
+
+      nx = .isosurface.plot_grid.n_x
+      ny = .isosurface.plot_grid.n_y
+      nz = .isosurface.plot_grid.n_z
+      n  = .isosurface.plot_grid.n_pt
+
+      ! Make space for the grid values and grid points
+      g3.create(nx+2,ny+2,nz+2)
+      grid.create(n)
+      pt.create(n,3)
+
+      ! Make the grid points
+      .isosurface.plot_grid.make_points(pt)
+
+      ! Make the electron density grid values
+      .make_ED_grid_r(grid,pt)
+
+      ! Make the g3 array, which has a zero boundary so the gradient
+      ! search never steps off the grid
+      g3 = ZERO
+      g3(2:nx+1,2:ny+1,2:nz+1) = reshape(grid,[nx,ny,nz])
+
+      ! Clean up
+      pt.destroy
+      grid.destroy
+
+      ! Do it
+      .assign_Bader_basins(g3,.isosurface.plot_grid.pixel_volume)
+
+      g3.destroy
+
+   end
+
+   assign_Bader_basins(ED,dv) :: leaky
+   ! Assign each interior point of the electron density grid "ED" to a
+   ! Bader basin by following the steepest ascent to a maximum, using
+   ! the on-grid method of Henkelman et al. (2006). "ED" carries a
+   ! one-point zero boundary on every face; "dv" is the voxel volume.
+   ! Results are reported and triangulated by .put_Bader_basin_info.
+   ! NOTE: on the archive/Bader branch this routine was called
+   ! cubes_to_basin, replacing the differently-shaped routine of that
+   ! name which is still present below.
+      self :: INOUT
+      ED :: MAT3{REAL}, IN
+      dv :: REAL, IN
+
+      n_path,n_basin :: INT
+      i,m,b :: INT
+      x,y,z :: INT
+      nx,ny,nz :: INT
+      dx,dy,dz :: INT
+      qx,qy,qz :: INT
+      mx,my,mz :: INT
+      px,py,pz :: INT
+      path :: MAT{INT}@
+      basin :: MAT3{INT}@
+      ED_p,ED_q :: REAL
+      EG_max,Grad,d :: REAL
+      t1,t2,t3 :: REAL
+
+      ! Remove the boundary
+      nx = ED.dim1 - 2
+      ny = ED.dim2 - 2
+      nz = ED.dim3 - 2
+
+      ! Basin index of every grid point, boundary included
+      basin.create(nx+2,ny+2,nz+2)
+
+      basin = 0
+      n_basin = 0
+      EG_max = huge(ONE)
+
+      call cpu_time(t1)
+
+      ! Non-boundary grid points
+      do z = 2,nz+1
+      do y = 2,ny+1
+      do x = 2,nx+1
+
+         ! Already assigned a basin?
+         if (basin(x,y,z)/=0) cycle
+
+         ! No: start a new path
+         path.create(3,0)
+         n_path = 0
+
+         ! Starting path point
+         px = x
+         py = y
+         pz = z
+
+         ! Follow the maximum gradient
+         do
+
+            ! Gradient too small?
+            if (EG_max==ZERO) exit
+
+            ! Landed on a previously found basin?
+            if (basin(px,py,pz)>0) exit
+
+            ! Density at the new path point
+            ED_p = ED(px,py,pz)
+
+            ! Append the new path point to the list
+            n_path = n_path + 1
+            path.append_column([px,py,pz])
+
+            ! Loop over the neighbours q of p to find the one giving
+            ! the largest gradient
+            m = 0
+            mx = px ! Max gradient position
+            my = py
+            mz = pz
+            EG_max = ZERO
+
+            do qz = pz-1,pz+1
+            do qy = py-1,py+1
+            do qx = px-1,px+1
+
+               m = m + 1
+
+               if (m==14) then
+
+                  ! The central point has d==0
+                  if (ZERO>=EG_max) then
+                     mx = qx
+                     my = qy
+                     mz = qz
+                     EG_max = ZERO
+                  end
+
+               else
+
+                  ! Density at the neighbour q
+                  ED_q = ED(qx,qy,qz)
+
+                  ! Point separation
+                  dx = qx - px
+                  dy = qy - py
+                  dz = qz - pz
+                  d  = dx*dx + dy*dy + dz*dz
+                  d  = sqrt(d)
+
+                  ! Gradient towards q
+                  Grad = (ED_q-ED_p)/d
+
+                  ! A bigger gradient?
+                  if (Grad<=EG_max) cycle
+
+                  ! Yes
+                  mx = qx
+                  my = qy
+                  mz = qz
+                  EG_max = Grad
+
+               end
+
+            end
+            end
+            end
+
+            ! New path point
+            px = mx
+            py = my
+            pz = mz
+
+         end
+
+         ! Path ended. Basin index at the last path point?
+         b = basin(px,py,pz)
+
+         ! A new basin?
+         if (b==0) then
+            n_basin = n_basin + 1
+            b = n_basin
+         end
+
+         ! Assign the whole path to basin "b"
+         do i = 1,n_path
+            px = path(1,i)
+            py = path(2,i)
+            pz = path(3,i)
+            basin(px,py,pz) = b
+         end
+
+         path.destroy
+         EG_max = huge(ONE)
+
+      end
+      end
+      end
+
+      call cpu_time(t2)
+      stdout.show("Elapsed time for gradient search",t2-t1)
+
+      ! Output
+      .put_Bader_basin_info(ED,basin,n_basin,dv)
+
+      ! Timing
+      call cpu_time(t3)
+      stdout.show("Elapsed time for summation and output",t3-t2)
+
+      ! Clean
+      basin.destroy
+
+   end
+
+   put_Bader_basin_info(ED,basin,n_basin,dv) :: leaky
+   ! Report the volume and electron count of each Bader basin, then
+   ! triangulate the basin boundaries into .isosurface. "ED" and
+   ! "basin" both carry a one-point boundary which is ignored.
+      self :: INOUT
+      ED :: MAT3{REAL}, IN
+      basin :: MAT3{INT}, IN
+      n_basin :: INT, IN
+      dv :: REAL, IN
+
+   ENSURE(.isosurface.allocated,"no isosurface")
+
+      x,y,z,i,n_unassigned :: INT
+      nx,ny,nz :: INT
+      EDS,VOL :: VEC{REAL}@
+      table :: VEC{TABLE_COLUMN}@
+
+      ! Limits. Ignore the boundary
+      nx = ED.dim1 - 2
+      ny = ED.dim2 - 2
+      nz = ED.dim3 - 2
+
+      EDS.create(n_basin)
+      VOL.create(n_basin)
+
+      ! Add up the volumes and electron counts. NOTE: this sums one "dv"
+      ! per grid *point*, while "dv" is the plot box volume divided by
+      ! the number of grid *intervals*, so sum(VOL) exceeds the box
+      ! volume by product(n_i/(n_i-1)). Both are printed below so the
+      ! discrepancy is visible; see docs/BADER_REPORT.md.
+      ! A grid point the gradient search never reached has basin index
+      ! zero, and must be counted rather than indexed: EDS and VOL start
+      ! at one, so a zero index would write outside them.
+      EDS = ZERO
+      VOL = ZERO
+      n_unassigned = 0
+
+      do z = 2,nz+1
+      do y = 2,ny+1
+      do x = 2,nx+1
+         i = basin(x,y,z)
+         if (i==0) then
+            n_unassigned = n_unassigned + 1
+            cycle
+         end
+         EDS(i) = EDS(i) + ED(x,y,z)*dv ! electrons in this voxel
+         VOL(i) = VOL(i) + dv           ! size of the voxel
+      end
+      end
+      end
+
+      stdout.flush
+      stdout.text("====================")
+      stdout.text("Bader basin analysis")
+      stdout.text("====================")
+
+      stdout.flush
+      stdout.text("This method uses the on-grid method of Henkelman et al. (2006)")
+
+      stdout.flush
+      stdout.show("No. of basins found =",n_basin)
+      stdout.show("Voxel volume        =",dv)
+      stdout.show("Volume of grid      =",sum(VOL))
+      stdout.show("Volume of plot box  =",.isosurface.plot_grid.volume)
+      stdout.show("No. of electrons    =",sum(EDS))
+      stdout.show("Unassigned points   =",n_unassigned)
+
+      stdout.flush
+      stdout.text("Data for each Bader basin:")
+
+      ! Make the table
+      table.create(2)
+      table(1).set_heading("Volume")
+      table(1).set_subhead("/au")
+      table(1).set_values(VOL)
+      table(2).set_heading("No. of")
+      table(2).set_subhead("electrons")
+      table(2).set_values(EDS)
+
+      ! Body
+      table.put
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+      VOL.destroy
+      EDS.destroy
+
+      ! Triangulate the basin boundaries
+      .isosurface.prepare_Bader_grid
+      .isosurface.cubify_Bader(basin(2:nx+1,2:ny+1,2:nz+1),n_basin)
+
+   end
+
    cubes_to_basin(grid,nx,ny,nz,gridlength,gridvector,CP,EDS,VOL) :: leaky, selfless
    ! A tonto implementation of the cubes to basin code, originally
    ! implemented by Florian from Tobias (spelling).

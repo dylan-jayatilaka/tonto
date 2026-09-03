@@ -1,12 +1,15 @@
 # Tonto
 
-|  | release build | debug build | parallel (MPI) build |
-|---|---|---|---|
-| **Linux** | [![Linux-release](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml?query=branch%3Amaster) | [![Linux-debug](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml/badge.svg?branch=master)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml?query=branch%3Amaster) | [![Linux-MPI](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-mpi.yml/badge.svg?branch=master)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-mpi.yml?query=branch%3Amaster) |
-| **Windows/WSL** | [![WSL-release](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml/badge.svg?branch=master)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml?query=branch%3Amaster) | [![WSL-debug](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml/badge.svg?branch=master)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml?query=branch%3Amaster) | — |
-| **macOS** | *none yet* | *none yet* | — |
+|  | Linux | Windows/WSL |
+|---|---|---|
+| **release** | [![Linux-release](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci.yml?query=branch%3Amaster) | [![WSL-release](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml/badge.svg?branch=master)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl.yml?query=branch%3Amaster) |
+| **debug** | [![Linux-debug](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml/badge.svg?branch=master)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-debug.yml?query=branch%3Amaster) | [![WSL-debug](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml/badge.svg?branch=master)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-wsl-debug.yml?query=branch%3Amaster) |
+| **parallel (MPI)** | [![Linux-MPI](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-mpi.yml/badge.svg?branch=master)](https://github.com/dylan-jayatilaka/tonto/actions/workflows/ci-mpi.yml?query=branch%3Amaster) | — |
 
-Each badge test Tonto on the `release` branch. For more details
+Each badge tests Tonto on the `master` branch. **macOS is built and tested too**,
+but its workflows are not on `master` yet, so they do not run and carry no badge.
+The full picture — every platform against every build type, including what is not
+yet covered — is in
 [**Continuous integration**](docs/TONTO_CONTINUOUS_INTEGRATION.md).
 
 Tonto is a quantum chemistry and crystallography package, with a focus on X-ray
@@ -66,7 +69,7 @@ group in Nice on electronic and vibrational quantum chemistry method development
 — a research programme entirely separate from the quantum crystallography work on
 the other branches — and it remains a live branch, unaltered.
 
-[**Repository branches**](docs/REPOSITORY_BRANCHES.md) lists what every branch
+[**Repository branches**](docs/TONTO_REPOSITORY_BRANCHES.md) lists what every branch
 held and who wrote it, how to recover any of it, and why the archived work has to
 be ported rather than merged.
 

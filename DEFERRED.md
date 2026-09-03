@@ -6,8 +6,26 @@ correctness-of-match or robustness refinements.
 *(This file began as `ANTLR4_DEFERRED.md`, a list of translator loose ends. It
 now covers the whole project, so it was renamed.)*
 
-> **Organisation.** Entries are grouped by theme; anything finished has moved to the
-> archive at the end rather than being deleted, so the reasoning stays searchable.
+> **Organisation.** Two halves. Everything above the archive is **live**; everything in
+> [Archive](#done-resolved-and-closed-archive) is **finished** — done, resolved, withdrawn or
+> won't-do — and is kept rather than deleted, so the reasoning stays searchable. Live entries
+> are grouped by theme within that first half.
+>
+> The split had drifted and was re-sorted on 2026-08-26: eight finished sections were still
+> filed under live themes (the two MPI-CI `DONE`s, the `TEXTFILE:flush` root cause, the
+> withdrawn suppressed-reduction abort, the dropped-`data`-statements fix, the macOS RGBI
+> badge, the `bond-energy` won't-do, and the keyword-parsing survey), and one live list
+> (*RGBI: known defects*) was stranded inside the archive. **44 live, 18 archived.**
+>
+> Re-sorted again on 2026-08-27, when `docs/PLOT_PLAN.md` and `docs/WORKSHOP_PLAN.md`
+> were retired: their finished stages are history and went with them, and their four
+> live items were filed here under *Correctness*, *Test suite and numerics* and the
+> new *Workshop and examples* theme, which also took in the exercise-4 entry that had
+> been stranded below the archive. The ammonia-borane pHAR entry was closed and archived the
+> same week, on 2026-08-27.
+>
+> If you add an entry, put it under a theme; when it closes, move it down — a `DONE` heading
+> in a live section is how the drift starts.
 
 | Theme | What lives there |
 |-------|------------------|
@@ -19,19 +37,253 @@ now covers the whole project, so it was renamed.)*
 | [hart](#hart) | Remaining hart items and un-migrated runfiles |
 | [RGBI and the picture toolchain](#rgbi-and-the-picture-toolchain) | Folding the five-ecosystem picture pipeline into one integrated codebase |
 | [Tooling and editor support](#tooling-and-editor-support) | vim highlighting and integration |
+| [Workshop and examples](#workshop-and-examples) | The SO₂ exercise still owed, and exercise 4's contour plotting |
 | [Platform-specific](#platform-specific) | macOS/Apple Silicon, gfortran-16 |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-**Highest-priority open items**, if you are looking for where to start:
-**macOS in CI** (feasible and free — the repo is public — and it is the only thing that can
-guard the two arm64 `-O2`/`-O3` compiler pins, which today are guarded by nothing and whose
-failure mode is wrong numbers, not crashes; see *Platform-specific*),
-NaN and negative ESDs from the least-squares variance-covariance matrix, the MPI items
-behind milestones 6 and 7, and **pHAR ships untested** — its only test is stranded on a branch
-behind a 167 MB Git LFS asset (see *"Reinstate the ammonia-borane pHAR test"*). (`data` statements silently dropped: **fixed 2026-08-04** — see
-below; the audit found no library file was ever affected.)
+## WHERE 2026-09-03 LEFT OFF — read this first if you are picking up cold
+
+**Nothing is in flight.** No build, no CI run, no measurement is waiting on a result. Everything
+below is either finished or not started.
+
+**Branch state.** `develop` carries the day's work; `origin/master` was merged into it, so
+`develop` is a superset. The gfortran-16 migration is preserved whole on
+`origin/develop-gfortran-16`.
+
+### The one thing to know before touching the compiler
+
+**Moving to gfortran-16 is blocked on GCC, and only on GCC.** Tonto's side is finished. Read
+`CLAUDE.md` §4, "THE MOVE TO gfortran-16 IS BLOCKED ON GCC" — it carries the whole state in a
+table. In one line: the bug report is filed as **GCC PR 127197** and we wait; our own defect,
+which made 16 look far worse than it is, is fixed.
+
+**The correction that matters, because this file asserted the opposite.** The 34 debug failures
+were *not* caused by an `allocatable` component's status depending on bounds checking. They were
+caused by `MOLECULE.RHO:make_ANO_interpolators` reading the logical `first` before ever assigning
+it, so a progress banner printed according to stack garbage. Deleting eight lines took a
+bounds-check-free debug build from **36 failures of 62 to 3** — the same 3 an ordinary debug
+build has. One file, everything else identical, executable relinked each time.
+
+### What was closed on 2026-09-03
+
+- **The full-suite verification owed for `textfile.foo`** — read at last: **88/89 loose, 77
+  exact**, all four invariant checks green.
+- **A skipped test was scored `ERROR`** by `suite_report.py`, which failed the gate and shortened
+  the denominator. It runs `test.py` directly and so never saw `ctest`'s `SKIP_RETURN_CODE`.
+- **"124 versus 89" was never a discrepancy** — different suites, both right, neither saying what
+  it counted.
+- **GCC PR 127197 filed**, with a five-version bisection (12, 13, 14, 15 correct; 16.0.1
+  segfaults) that makes it a clean regression report.
+- **The uninitialised-logical defect fixed** (above).
+- **A stale `.bad` now clears** when its test starts passing again, per-test — never a sweep of
+  `tests/`, because every build tree shares those directories.
+- **The `tonto` target-name collision fixed.** `tonto` was the *library*; the program came from
+  `make run_molecule`. So `make tonto` built the library, skipped the link, and left a stale
+  binary looking fresh — which silently voided a measurement run before it was noticed. The
+  library is now `tonto_lib` (still `libtonto.a`) and `make tonto` builds the program.
+
+### Next actions, in order
+
+1. **macOS in CI, then WSL-MPI** (Dylan, 2026-09-03) — to complete the badge table across
+   platforms. The three macOS workflows already exist and are good; they have **never run**
+   because scheduled workflows only fire from the default branch and they sit on `develop`.
+   Merging to `master` registers them. Dispatch each once — `ci-macos.yml` warns to expect red
+   at 54/55 and says not to bless it away. Then write `ci-wsl-mpi.yml`, the only genuinely
+   missing cell.
+2. **Three pre-existing debug failures nothing is tracking**: `single_atom_scf`,
+   `dft_invariants` and `urea_ccsd_pob-TZVP_Salvador_properties` fail in a plain **gfortran-14**
+   debug build with bounds checking **on**. `ci-debug.yml` cannot see them — it runs two smoke
+   jobs, not the suite. That gap is worth closing at the same time.
+3. **The column-width difference**, unexplained. Identical numbers, one extra space per column,
+   in both a dipole table and a HAR esd table, in a debug build without bounds checking. Two
+   guesses are already dead: it is not the bracketed uncertainty (the dipole test prints none),
+   and `width`/`width_set` both carry proper `DEFAULT` initialisers.
+4. **Turn `-Wno-uninitialized -Wno-maybe-uninitialized` back on** in `DEBUG_FLAGS`. It is the
+   warning class that names the bug just fixed, switched off in the one build where it fires.
+   Expect noise, and note gfortran did **not** flag that particular site at `-O2`, so it is an
+   instrument rather than a cure. A source scan was tried and abandoned: without argument
+   intents it cannot tell a read from an `OUT` write, and every candidate was a false positive.
+5. **The Bugzilla duplicate search** over resolved bugs and `16 Regression`. Sourceware refuses
+   every automated tool — `curl` gets a 429 and the Anubis layer blocks the rest, `WebFetch`
+   included — so **this needs a person at a browser**, as did the filing.
+6. Longer-standing, unchanged: NaN and negative ESDs from the least-squares variance-covariance
+   matrix, and the MPI items behind milestones 6 and 7.
+
+### Two method lessons worth keeping
+
+- **A *structural* failure — 0% numeric deviation, 0 ulp, output differing only in line count —
+  points at the environment before it points at the program.** On 2026-08-27 that signature meant
+  a 2023 reference, a missing package and a substituted compiler package. On 2026-09-03 the same
+  signature meant a single line of stdout appearing where it never had. Read it as "the output
+  has extra or missing lines" and check what changed *around* the program first. A related trap:
+  a shifted line makes `test.py` compare misaligned numbers, and it will report a confident
+  "200% deviation" between two values that are in fact identical.
+- **Verify the thing you built is the thing you tested.** A wrong `make` target relinked nothing
+  and two "different" cases ran the same binary. Check a timestamp or a `strings` marker before
+  trusting any before/after comparison.
 
 ---
+
+# Housekeeping
+
+## Trim the oversized source comments once the debugging settles (Dylan, 2026-08-18)
+
+**Status: open, deliberately deferred.** Several routines now carry long explanatory
+comments written during debugging — how a defect was found, which compiler disagreed,
+what the symptom looked like. `CLAUDE.md` §7a is the rule going forward: source comments
+stay brief and explain the *code*, while the investigation belongs in a markdown file.
+The existing slabs are **worth keeping for now**, because we are in the thick of the work
+they describe and the context is still live.
+
+When this settles, sweep them: keep the sentence that stops the bug being reintroduced,
+move the rest into `DEFERRED.md` or the relevant `docs/` report, and leave a pointer.
+Known offenders, all recent:
+
+- `crystal.foo`, `CRYSTAL:put_asymmetric_FF_symmetrization_rss` — the noise-floor comment
+  (the compiler-to-compiler numbers belong in a document).
+- `spacegroup.foo`, `SPACEGROUP:symmetrize_unique_SFs` — the double-root explanation.
+- `real.foo`, `REAL:get_dp_de_le` — three stacked notes on negative, NaN and tiny esds.
+- `molecule.har.foo` and `crystal.foo` around the fragHAR and disk-FF repairs.
+
+A useful check while sweeping: a comment longer than the code it describes is a candidate,
+and a comment that names a compiler version, a date or a test name almost certainly is.
+
+## The energy breakdown is inert on `develop` — present, switched off, driver missing (2026-08-18)
+
+Found while closing the branch-recovery effort. `breakdown_data.foo` is **in the tree and
+does nothing**, and it is disconnected in three independent places, so no single switch
+turns it back on:
+
+| piece | state on `develop` |
+|---|---|
+| `foofiles/breakdown_data.foo` | present, 1589 lines, 165 procedures |
+| `type BREAKDOWN_DATA` in `types.foo` | present, line 7771 |
+| `CMakeLists.txt` source lists | **commented out in both places** (`:378` and `:495`) — never compiled |
+| keyword `put_energies_breakdown=` | **commented out**, `molecule.main.foo:407` |
+| `MOLECULE.PROP:put_energies_breakdown` | **does not exist anywhere in `foofiles/`** |
+| `breakdown_data` member on `MOLECULE` | absent |
+
+So the commented-out keyword calls a procedure that is not there, and the module it
+would need is not built. This is the same shape as `datafile.foo` before the SBF
+removal: a file that looks like a live capability and is not one. It is not a
+wrong-answer bug — nothing can reach it — but it is 1589 lines of source that no build
+has compiled, so nothing has checked it still translates.
+
+**Most of the code is already here.** The newest version of `breakdown_data.foo` on any
+ref is on `archive/release-td-old` at 1593 lines — **four lines** more than `develop`'s.
+So the bulk landed; only the wiring did not:
+
+| what is missing | where it is |
+|---|---|
+| `MOLECULE.PROP:put_energies_breakdown`, the driver | `archive/release-td-old`, `molecule.prop.foo:6561` |
+| the live keyword line (`.PROP:put_energies_breakdown`) | same tag, `molecule.main.foo:389` |
+| the two `CMakeLists.txt` uncommentings | same tag, commit `7c71e672` |
+| `MAT{REAL}` / `MAT{CPX}` / `OPMATRIX` helpers it uses | same tag, commit `74f33e26` |
+
+**It is known not to work, and that is the real obstacle.** Two people have tried:
+
+- `archive/energies-breakdown2` — Sam Thompson, `4b9bb359` *"Got tonto compiling"*
+  (2024-03-07), then Dylan `7190faa0` *"Got a few numbers from breadown, failing in
+  polarisation bit"* (2024-03-11).
+- `archive/release-td-old` — Dylan again, `37a3875d` *"Fixed up more of Spackman's
+  breakdown code"* (2025-04-25), `7c71e672` and `74f33e26` (2025-08-27).
+
+So porting the wiring is a small, bounded job — an hour, and it would compile. Making the
+numbers right is the actual work, it is a **scientific** question about the polarisation
+term rather than a translation one, and the last two attempts stopped there. **Do not
+port the wiring without deciding to finish the physics**, or the result is a reachable
+keyword that produces a wrong energy decomposition — strictly worse than the present
+state, where it cannot be reached at all.
+
+The cheap alternative, if nobody intends to finish it: delete `breakdown_data.foo` and the
+dead keyword line from `develop` and leave the work on its two tags, as was done for
+`datafile.foo`. That is a decision for Dylan, not a default.
+
+## Searched for in-core CCSD: it is not in this repository (2026-08-18)
+
+Dylan recalled *"some work on in-core CCSD"* and asked for it to be found and extracted.
+**There is no coupled-cluster solver anywhere in the repository.** Recorded so the
+search is not repeated.
+
+What was searched, all on 2026-08-18:
+
+| where | how | result |
+|---|---|---|
+| `develop` library and runfiles | `grep -i ccsd`, and for `cc`/`ccd`/`cisd`/`lccd`/`cepa`/`mp3`/`mp4` procedure headers, and for `amplitude`/`t1`/`t2`/`doubles`/`coupled cluster` | nothing |
+| every branch and tag (15 archive tags, 5 branches, all remotes) | `git grep -l -i ccsd` over `foofiles/*` and `runfiles/*` | nothing |
+| commit messages, all refs | `git log --all -i --grep=ccsd --grep='coupled cluster'` | three hits, all about *structure factors* — see below |
+| 131 dangling commits | `git fsck --no-reflogs`, then `git grep -i` over all of them for `ccsd`/`coupled.cluster` and for CC procedure headers | nothing |
+| added filenames, all history | `git log --all --diff-filter=A --name-only` filtered for `cc`/`cluster`/`corr` | only `docs/CCTBX_INTO_TONTO.md`, which is cctbx, unrelated |
+
+Every `ccsd` string in the tree is one of three innocent things: a **Gaussian**
+CCSD density matrix read from an fchk file (`tests/{short,long}/urea_ccsd_pob-TZVP_*`,
+whose job files say *"This fchk file has the CCSD density matrix in it"*), a
+literature citation inside `basis_sets/TZP-DKH`, or documentation referring to those
+tests. The three commits — `ed585a29` *"added ability to calculate CCSD structure
+factors"*, `765463f2`, `306ec7f4` — add the ability to compute structure factors
+**from** an externally-computed CC density, not to compute one. The only CC plumbing
+in the library is `MOLECULE.READ:read_gX_CC_dm`, one line of fchk reading.
+
+**What almost certainly is the memory.** The phrase "in core" appears in Tonto against
+**MP2**, not CCSD, and four times: `MOLECULE.MISC:make_r_mp2`, `make_chem_mp2`,
+`make_u_mp2` and `make_gc_mp2` are each documented *"make ... MP2 in core"*, and
+`make_r_mp2` prints *"This is a toy implementation with integrals stored in memory"*.
+Restricted, chemists'-notation, unrestricted and general-complex variants. All four are
+already on `develop`, none is on any archive tag, and nothing needs extracting.
+`make_r_mp2` was validated on 2026-08-18 as part of the `archive/Teaching` port — it
+agrees with a hand-written MP2 to twelve decimals; see `docs/TEACHING_MP2.md`.
+
+### The old Subversion repository was searched too, and it is not there either
+
+Dylan then recalled the pre-GitHub history: a Subversion repository on SourceForge,
+project name forgotten. **It is `tonto-chem`** — <https://sourceforge.net/projects/tonto-chem/>,
+SVN at `svn://svn.code.sf.net/p/tonto-chem/code/`, browsable over HTTPS at
+`https://svn.code.sf.net/p/tonto-chem/code/`. It is still live, at **revision 4411**,
+spanning **1999-06-28 to 2014-06-21** — five years of history that predates the GitHub
+repository and is in no way contained in it.
+
+No `svn` client is installed here and none is needed: the whole log comes back from a
+single DeltaV `REPORT` over HTTPS, and files can be fetched with plain `curl`.
+
+```bash
+# the entire 4411-revision log, authors and changed paths included, in one request
+cat > logreq.xml <<'XML'
+<?xml version="1.0" encoding="utf-8"?>
+<S:log-report xmlns:S="svn:">
+<S:start-revision>4411</S:start-revision><S:end-revision>1</S:end-revision>
+<S:discover-changed-paths/><S:all-revprops/><S:path></S:path>
+</S:log-report>
+XML
+curl -s -X REPORT -H "Content-Type: text/xml" -H "Depth: 0" --data-binary @logreq.xml   "https://svn.code.sf.net/p/tonto-chem/code/!svn/bc/4411/" -o svnlog.xml
+```
+
+What was checked, and the result in every case is **nothing**:
+
+| check | scope | result |
+|---|---|---|
+| commit messages | all 4411 revisions | 6 hits, none a CCSD implementation: reading CC/MP2/MP3 densities from fchk files, the `cc-pVTZ` basis, CCSD **CIF/MIF** files, and `destroy ex,cc in copy` |
+| changed paths | every add/modify/replace/delete in all 4411 revisions, 14 branches and 4 tags | no path ever named for CCSD; the only `cc`-ish matches are `cluster.foo` (the crystal cluster) and `cc-pVDZ` test directories |
+| file contents, newest line | all **166** `.foo` files of `branches/tonto-3.2` | zero `ccsd`, zero `coupled cluster`, zero amplitude names |
+| file contents, other line | all **165** `.foo` files of `trunk/tonto` | the same |
+| the manual | `documentation/tonto.docbook` and `tonto.xml`, ~445 kB each | zero `ccsd` |
+| authors | all 22 | listed below; none committed a correlation method beyond MP2 |
+
+The 22 SVN committers, for the record, since they are not recoverable from the git
+repository: `reaper` (1800, 1999–2005), `dylan_` (1475, 2005–2014), `dylan` (612,
+1999–2005), `tonto` (144), `chris` (52, Roby work), `cassam` (51), `durhammike` (48),
+`bucinsky` (40), `grimwreaper` (22, platforms and BLACS/ScaLAPACK), `magdalos` (19,
+2013, HAR least squares and ADP errors), `awhitton` (14, 2003–2004, PND and
+`diffraction_data`), `jjripsnorter` (12), `josh146` (9), `bdittric` (9),
+`shadowadler` (3, fingerprints), `birger` (3, anomalous dispersion), `smeeton1` (2),
+`vongrabow` (2, ELI-D), `mimisue` (1, vapour keyword), `root` (1), `josh` (1),
+`skw` (1, Roby).
+
+**Conclusion: Dylan's own guess was right — it was never committed.** The work exists in
+neither repository, so there is nothing to extract. If a copy survives it is outside
+version control: an unpushed clone on `sauce` or `achari2` (`git log --all --oneline`
+there settles it in one command), a student's own machine or thesis, or an email
+attachment. Absent that, the in-core MP2 family is the nearest thing that exists and it
+is already on `develop`.
 
 # Correctness — open bugs that give wrong answers
 
@@ -101,7 +353,7 @@ An implementation was written and **reverted**, for a reason worth recording:
 
 The debug build named it in one run (`ATOM:put_ADP2_errors_to_1 ... no
 pADP_errors`, via `put_CIF_ADP2_cryst`), which is the recipe in
-`docs/TONTO_DEVELOPER.md` §1a working exactly as advertised.
+`docs/TONTO_DEVELOPER_INFO.md` §1a working exactly as advertised.
 
 Making "absent" actually representable then means guarding **five** CIF
 writers — 44 `_esu` column headers and 5 value/error table pairs — because
@@ -133,6 +385,79 @@ letting the pseudo-inverse absorb it. Verified present. It did **not** affect
 the quartz results in `docs/NN_HAR_REPORT.md`, which refined anisotropically
 and never entered that branch, but it would bite any isotropic refinement.
 
+## Pruning compounds across repeated `update` calls (Dylan, 2026-08-23)
+
+**Half fixed 2026-08-23. The other half is not a one-liner — a naive attempt
+corrupts the heap.**
+
+Found while making `tests/long/quartz_NN_HAR_L1_rhf_def2-SVP` refine twice, once
+without the extinction correction and once with it, which puts a second
+`xray_data=` block in the middle of a job.
+
+`DIFFRACTION_DATA.SET:update` (`diffraction_data.set.foo:664`) does, in order:
+
+```
+.reflection0 = .reflections     ! "keep original reflections"
+.reflection0.set_d_and_theta(...)
+.reflections.set_d_and_theta(...)
+...
+.prune_reflections              ! operates on .reflections, in place
+.sort_reflections
+```
+
+`.reflection0` is the pristine copy that ought to exist, and `types.foo:3502`
+declares it as the original input structure factors before pruning. It is not
+the cross-validation machinery — that is `CRYSTAL.xray_r_free_data`, a separate
+`DIFFRACTION_DATA` holding the held-out reflections. It is maintained properly,
+receiving `set_d_and_theta`, the equivalence factors and any `exp_scale_factor`
+scaling alongside `.reflections`. But **the only place it is ever read is the
+`show_rejects` diagnostic** (`diffraction_data.set.foo:727`), which prints the
+list before and after pruning. Nothing refits from it and nothing prunes from it.
+
+**Why it matters, in Dylan's words.** Re-running the pruning is legitimate: the
+geometry has changed, so which reflections deserve to be rejected can change
+with it. That is exactly why it must run against the *original* data. Pruning
+the survivors of an earlier pruning can only ever remove more, so a reflection
+rejected on the starting geometry can never come back once the model has
+improved, even if it now fits perfectly well. The first pruning is done on the
+worst model the job will ever have, and its verdict is currently permanent.
+
+**Fixed: the copy is no longer clobbered.** It was refreshed from `.reflections`
+on *every* call, so the second `update` overwrote it with the already-pruned set
+and the original data was gone for the rest of the job. It is now taken once:
+
+```
+if (.reflection0.deallocated) .reflection0 = .reflections
+```
+
+No behaviour changes except that `show_rejects` now shows the true original.
+
+**Open: pruning still works on `.reflections` in place**, so successive prunings
+compound. The obvious fix — restore the working set from the pristine copy
+before pruning again —
+
+```
+.reflections.destroy
+.reflections = .reflection0
+```
+
+**was tried and aborts the quartz job** with `malloc(): invalid size (unsorted)`
+during the second refinement. Both components are `VEC{REFLECTION}@`, i.e.
+allocatable, and `REFLECTION` has no pointer components, so the assignment
+itself is a legitimate deep copy. The corruption therefore comes from downstream
+state that is tied to the reflection array and does not survive its wholesale
+replacement — the calculated and predicted structure factors, the group
+assignments, and whatever the fragment and refinement machinery sizes against
+`.reflections.dim`. Replacing the array mid-job invalidates all of it.
+
+So the remaining work is not the assignment; it is establishing what must be
+rebuilt after a re-prune and rebuilding it. That is why this stays deferred.
+
+**Scope.** Only jobs that call `update` more than once are affected, which in
+`tests/` is the quartz job alone, and it prunes nothing — 1009 reflections in
+both refinements. Nothing currently checked in gives a wrong answer. The defect
+is latent, and becomes live the moment a job with cutoffs re-enters the block.
+
 ## DFT: three silent defects — see `docs/DFT_STANDARDISATION.md`
 
 Found 2026-08-12 by measurement on `tests/short/h2o_blyp_cc-pVDZ`. The full
@@ -156,142 +481,6 @@ was produced with the default grid rather than the one its own input requests, s
 they must be reblessed against converged numbers once the grid fix lands. And the
 existing suite cannot detect any of these, because no test varies the grid and
 every test spells its functional correctly.
-
-## Keyword parsing must not leak into library routines (fixed; survey kept)
-
-`MOLECULE.READ:read_archive(name,genre)` is a library routine — it takes its
-operands as arguments and is called from `molecule.scf.foo` (×3),
-`molecule.main.foo` (×2) and `run_sf_derivs.foo`. It nonetheless reached for the
-global `stdin` to look for a trailing `normalise` qualifier:
-
-```foo
-   if (stdin.buffer.n_items==2) stdin.read(normalize)
-```
-
-Two bugs in one line:
-
-- **It segfaults in any program without a `stdin`.** `hart` has no job file, so
-  this dereferenced an unallocated `TEXTFILE` on the second HAR cycle — the
-  first time the refinement re-reads its density archive.
-- **In `tonto` it was dead, and could corrupt parsing.** `TEXTFILE:n_line_items`
-  *is* `buffer.n_items`, and the keyword handler `ENSURE`s `n_line_items==3`, so
-  a line of 3 items can never satisfy `==2`: no job file could ever switch
-  normalisation on, and every `if (do_norm) …unnormalize(…)` branch was
-  unreachable. Meanwhile a *programmatic* caller inherited whatever line the job
-  file was on, and on a 2-item line would silently consume one of its tokens.
-
-Fixed: the qualifier is now an optional argument, and `read_archive_and_normalise`
-is its keyword — so the feature is reachable for the first time.
-
-**Survey — this was the only instance.** Six places in the library peek at the
-line and then read a variable number of items:
-
-| Site | Procedure | Shape | Reached from |
-|---|---|---|---|
-| `molecule.har.foo:1797` | `make_spherically_averaged_HAs` | no args | 1 `case` line |
-| `molecule.misc.foo:2040` | `put_interpolator_list` | no args | 1 `case` line |
-| `molecule.misc.foo:5022` | `put_spherical_SA_ED_from_atom` | no args | 1 `case` line |
-| `diffraction_data.put.foo:783` | `put_worst_reflections` | no args | 1 `case` line |
-| `molecule.put.foo:674` | `put_archive` | no args | 1 `case` line |
-| `molecule.read.foo` | `read_archive(name,genre)` | **took args** | 6 programmatic sites |
-
-The five no-argument ones are genuine keyword handlers: they read *all* their
-operands from `stdin`, including the name of the thing to act on, and a driver
-never calls them. That pattern is fine. The breakage came only from merging the
-parse role and the do role into one procedure, which happened once.
-
-**The rule, for anyone adding a driver:** a procedure that takes arguments must
-not touch `stdin`. `scripts/check_library_stdin.py` enforces it (ctest name
-`library_stdin`, label `short`; also run by `make report` and CI).
-
-### DONE (2026-08-02): `write_archive` swallowed the next keyword
-
-Found while testing `read_archive_and_normalise`. `MOLECULE.PUT:put_archive` has
-the same qualifier peek, with an off-by-one:
-
-```foo
-   if (stdin.buffer.n_items==2) stdin.read(normalize)     ! molecule.put.foo
-```
-
-`n_items` counts the **whole line including the keyword** — that is why
-`read_archive`'s handler asserts `n_line_items==3` for
-`read_archive <name> <genre>`. So a plain `write_archive MOs` is exactly 2 items,
-the peek always fires, runs off the end of the line and **consumes the next
-keyword** as its qualifier. The test should be `==3`.
-
-Demonstrated: a job file with `write_archive MOs` followed by
-`read_archive MOs restricted` dies with "unknown option: mos" — the
-`read_archive` keyword was eaten, leaving its operands to be read as keywords.
-
-**The one test that uses it is hollow — investigate this first.**
-`tests/long/nh3_x-ray-constrained-rhf-cluster-charge_cc-pVTZ_restart/stdin:196`
-reads:
-
-```
-   read_ascii_archive density_mx r
-   write_archive density_mx
-
-   ! Now to the SCF
-   scf
-```
-
-`write_archive density_mx` is two items, so the peek fires and swallows the very
-next token — **`scf`**. The reader resumes at `delete_scf_archives`. Evidence
-from the blessed reference, not inference:
-
-- `grep -c SCF stdout` → **0**. Not one mention, though the job sets
-  `output_results= YES`.
-- `Wall-clock time taken for job "nh3" is , 40 milliseconds.`
-
-An X-ray-constrained RHF cluster-charge SCF in cc-pVTZ does not run in 40 ms.
-**The test performs no SCF at all**, and its reference was blessed in that
-state, so it passes by faithfully reproducing the skip. Whatever coverage its
-name promises — X-ray constrained wavefunctions, cluster charges, restart — it
-does not provide.
-
-**Why it is not fixed here.** Correcting the off-by-one makes `scf` execute, so
-the job would then do the science it was written to do and its reference must be
-re-blessed against completely different output. That is a deliberate decision
-about a long-suite test, not a drive-by in an options branch.
-
-**Blast radius, surveyed:** one test and one line.
-`grep -rn '^[[:space:]]*write_archive' tests/ runfiles/` returns exactly the nh3
-line above and nothing else, and `n_items==2) stdin.read` now matches only
-`molecule.put.foo:674`. So the fix is a one-character edit (`2` → `3`) plus
-re-blessing one reference — but that reference will change completely, because
-the job will start doing an SCF it has never done.
-
-(The `normalise`/`normalize` spelling fix applied to that same line is
-behaviour-neutral until this off-by-one is fixed, since the token it compares is
-currently a stray keyword either way.)
-
-### Four more of the same shape, allow-listed rather than fixed
-
-Writing that check turned these up. They are **not broken today**, so they are
-recorded rather than changed, but they are the same merged-role pattern and the
-allow-list in the script names each one:
-
-- `molecule.read.foo:read_molden_file`, `read_tonto_FChk_file`,
-  `read_g09_FChk_file` — take an optional name and fall back to
-  `stdin.buffer.exhausted` when it is absent. Safe only because every driver
-  passes the name (`run_rgbi.foo:202-203` does). Call one without the argument
-  from a program that has no `stdin` and it dereferences an unallocated
-  `TEXTFILE`, exactly as `read_archive` did.
-- `molecule.put.foo:put_florian_wfn_file` — **unguarded**:
-  `if (NOT stdin.buffer.exhausted) stdin.read(name)` with no `present()` test at
-  all. This one would crash in any driver that reaches it. Nothing does today.
-
-The fix in each case is the one applied to `read_archive`: move the fallback
-into the keyword handler and let the library routine take a plain argument.
-
-`vec{basis}.foo:read_library_data` is allow-listed for the opposite reason — it
-is *correct*. It creates `stdin` itself when there is none and restores it
-afterwards. Copy that pattern if a library routine genuinely needs the parser.
-
-(`put_archive` looks like a counter-example to a plain grep — 10 further call
-sites — but those are a *different overload*, `put_archive(item,name,…)`, which
-takes arguments and never touches `stdin`. Read the `.int` file rather than
-grepping by name; see CLAUDE.md §8.)
 
 ## Command line: `command_arguments` silently truncates (and is never read)
 
@@ -359,7 +548,33 @@ File name = stdin   Line number = 35
 
 The input file grew from 55 to 101 lines during the run. Reproducible.
 
-**Mechanism — partly established, not fully pinned.** The three units are distinct
+**THE RECORDED MECHANISM IS REFUTED (2026-08-27).** The story below — "unit 7 already belonged
+to another open file" — cannot be what happened, and the next person should not spend time on it:
+
+- **No ordinary file can ever hold unit 5, 6 or 7.** `TEXTFILE:open` and its two siblings open
+  with `newunit=.unit` (`textfile.foo:331,378,405`), and Fortran 2008 guarantees `newunit`
+  returns a **negative** number distinct from every unit in use. A collision with a small
+  positive hard-coded unit is impossible by construction.
+- **`.std_err_unit` is never reassigned.** `SYSTEM:set_std_err_unit` and
+  `SYSTEM:set_std_err_file` exist (`system.foo:339,347`) — the latter would repoint it at another
+  file's unit, which *would* produce exactly the reported symptom — but **neither is called
+  anywhere in `foofiles/`**. The only assignment is `system.foo:249`, to the macro.
+- The three macros are distinct and correct: 5, 6, 7 (`include/macros.in:704-706`), and all three
+  create routines exist — `create_stdin:70`, `create_stdout:96`, `create_std_err:124`.
+
+**So the symptom is real and reproducible but its cause is unknown.** The write went *somewhere*;
+`create_std_err` never opens unit 7, and an unconnected unit written by gfortran normally
+auto-connects to `fort.7`, not to the input. Start from an `inquire(unit=7,...)` immediately
+before the failing write, and from **`TEXTFILE:is_open`/`is_open_io`** (`textfile.foo:823,844`),
+which special-case `TEXTFILE_STD_IN_UNIT` and `TEXTFILE_STD_OUT_UNIT` but **not**
+`TEXTFILE_STD_ERR_UNIT` — so `std_err` alone falls through to `inquire(file=.name,...)` on a name
+that was never opened.
+
+**Design intent (Dylan, 2026-08-27):** `std_err` should be created **only in the `run_*.foo`
+programs**, not wherever a diagnostic happens to want it. Worth checking against where
+`create_std_err` is actually reached before choosing a fix.
+
+**Superseded mechanism, kept only so it is not re-derived:** The three units are distinct
 (`TEXTFILE_STDIN_UNIT` 5, `TEXTFILE_STDOUT_UNIT` 6, `TEXTFILE_STDERR_UNIT` 7, `include/macros.in`).
 But `create_std_err` (`textfile.foo`) never *opens* anything — it allocates the object and
 claims the hard-coded unit:
@@ -394,7 +609,80 @@ Renaming `stdin`/`stdout` likewise is ~12,500 call sites across 81 foofiles but 
 
 ---
 
+## An over-long line aborts with no diagnostic in release (2026-08-09)
+
+`BUFFER:put_str` (`foofiles/buffer.foo:514`) guards the 256-character `STR`
+limit with
+
+```
+   ENSURE(.item_end+len(string)<=BSTR_SIZE,"cursor beyond buffer end")
+```
+
+and `ENSURE` is gated on `USE_PRECONDITIONS`, so it compiles to nothing in
+exactly the build users run. An over-long line therefore dumps core instead of
+reporting itself. It should be a `DIE_IF`, which is gated on
+`USE_ERROR_MANAGEMENT` and is live in release; the routine is declared `PURE`
+(the macro, not the Fortran keyword), so a `DIE_IF` is permitted there.
+
+Sharper since Tonto began drawing its own plots: the emitted gnuplot command
+interpolates a job-name-derived file name into several lines, so a long `name=`
+shortens the distance to 256 characters. Related, and the same root limit:
+*"long paths to the basis sets fail -- STR is 256 characters"* under
+*Platform-specific*.
+
 # MPI
+
+## Parallelise the Bader basin search (Dylan, 2026-08-18)
+
+`MOLECULE.PROP:assign_Bader_basins`, ported from `archive/Bader` on 2026-08-18, is
+serial. It is also the expensive part of the calculation: a steepest-ascent walk from
+every interior grid point, each step scanning 26 neighbours, and it prints its own
+`cpu_time` for exactly that reason. On any grid worth using it dominates.
+
+The work is embarrassingly parallel in principle — each starting point's path is
+independent — but the basins are not: a path stops as soon as it lands on a point
+another path already claimed, so the assignment is order-dependent, and two ranks
+walking neighbouring slabs will disagree about which basin a shared path belongs to.
+That merge is the whole difficulty, and it is why the existing
+`cubes_to_basin_parallel` is structured as a decompose-then-reconcile loop over
+slab boundaries rather than a plain `parallel do`.
+
+**There is prior art on the archive tag, and it was deliberately not ported.** Max
+Davidson reworked `cubes_to_basin_parallel` on `archive/Bader` (9 commits,
+2018-08 – 2019-02) to replace the boundary-plane rescan with a linked list of paths
+that terminate on a partition boundary — `LINKED_LIST_MAT_INT` / `HEAD_MAT_INT` /
+`BADER` in `types.foo`, plus a `PARALLEL:gather` template. His commit messages record
+it as an improvement ("Times for parallel cube to basin now comparable to base
+implementation"), and the idea is sound: reconcile only the paths that can cross a
+boundary instead of sweeping the boundary plane.
+
+It was left on the tag because the code is mid-debug, in two specific ways:
+
+- **The convergence loop is disabled.** `do while (changes EQV TRUE)` was replaced by
+  `do ii = 1,3! while (changes EQV TRUE)`. Basin labels propagate one partition per
+  pass, so three passes is correct only up to four ranks and silently wrong above it.
+- **Every merge branch leaks.** Each does `allocate(tmp); tmp => head.head`, discarding
+  the node it just allocated on every pass of the outer loop. It also uses raw
+  `allocate`/`nullify` rather than Tonto's `create`/`destroy`, so the memory accounting
+  never sees the list.
+
+Recovering it:
+
+```bash
+git show archive/Bader:foofiles/molecule.prop.foo   # cubes_to_basin_parallel
+git show archive/Bader:foofiles/types.foo           # the three list types
+git show archive/Bader:foofiles/parallel.foo        # gather -- superseded, see below
+```
+
+Two things not to take from the tag. `PARALLEL:gather` is already on `develop` in a
+better form (`parallel.foo:4827` onwards — `root` required rather than optional, and a
+`recvtmp` staging buffer); the branch version passes the *optional* `root` straight to
+`MPI_GATHER` whether or not it is present. And the branch's `MAT3{VEC_{INT}}` spelling
+is now `MAT3{EVEC{INT}}`.
+
+**Before writing any of it, get a reference.** There is no Bader test of any kind —
+serial or parallel — so there is nothing to compare a parallel result against. The
+serial path needs a blessed reference first; see `docs/BADER_REPORT.md`.
 
 ## MPI: defects found during milestone 4 (2026-08-01)
 
@@ -1354,7 +1642,7 @@ Read `new_r_LDA_x_energy_density`, which computes `-(3/4)(3/pi)^(1/3) rho^(1/3)`
 Assuming `E` is an energy density is wrong by a factor of rho.
 
 `archive/libxc` (Peter Spackman, 2017) is a prototype and **must not be merged**;
-it is assessed in `docs/REPOSITORY_BRANCHES.md`.
+it is assessed in `docs/TONTO_REPOSITORY_BRANCHES.md`.
 
 ## Milestone 6, partial: the suppressed-reduction abort and the parallel lint (2026-08-02)
 
@@ -1406,73 +1694,6 @@ through a **call** from inside a parallel do, which no source scan can find.
 **Still open in milestone 6:** `parallel do … reduce(x)` (grammar + translator), and
 depth-counting the parallel-do lock so a recursive inner return cannot release an outer lock
 (restoring the `ENSURE` at `parallel.foo:308`).
-
-## DONE (2026-08-03): the MPI CI is GREEN — first time ever
-
-Run #8 (`29f8dcea`) concluded **success**, after the `--oversubscribe` fix below. Every step
-passed, including the two that matter:
-
-| step | result |
-|---|---|
-| Assert the binary really is MPI-linked | success |
-| **MPI invariant — pi is rank-count independent (GATING)** | **success** |
-| Short suite under MPI at 2 ranks (informational) | **success** |
-
-Runs 1–7 had all failed. Note the informational short suite passed too, which is more than the
-gate required — so `tonto` at 2 ranks agrees with the serial references across the short suite in
-CI, not just locally.
-
-## DONE (2026-08-02): the MPI CI failure was the launcher, not the reductions
-
-**The reductions are correct.** This entry previously said "something in the reduction path is
-still wrong" — that was wrong, and it was written before the log had been read. Correcting it in
-full, because the mistaken version was pushed.
-
-`ci-mpi.yml` had failed on every run since it was added, always on the gating step *"MPI
-invariant — pi is rank-count independent"*. The log says:
-
-```
-ok   mpi_pi   -n 1: 3.141592653589362
-ok   mpi_pi   -n 2: 3.141592653589390
-FAIL mpi_pi   -n 4: launcher exited 1
-```
-
-So π was right at 1 and 2 ranks, agreeing with each other to **13 significant digits** — i.e.
-`PARALLEL_SUM` works. At 4 ranks the program **never ran**: Open MPI 5 refuses to start more
-ranks than there are slots and exits non-zero, and a GitHub runner does not have 4.
-
-The workflow already knew this in one place and not the other: the toolchain-verification step
-uses `--oversubscribe` (`ci-mpi.yml:114`), and the suite step is pinned to `-n 2` with the
-comment *"the runner has 4 vCPUs and the launcher would oversubscribe"* — but the π check was
-invoked with `1 2 4` and `check_mpi_pi.sh` launched without the flag.
-
-**Fixed** in `scripts/check_mpi_pi.sh`: probe the launcher (`--version | grep -qi "open mpi"`)
-and add `--oversubscribe` when it is Open MPI. Probed rather than hard-coded because the flag is
-Open MPI's; MPICH oversubscribes unasked and would reject it. Oversubscribing is exactly right
-here — this is a correctness check on a tiny Riemann sum, not a benchmark.
-
-Verified locally on a 12-core machine, where `-n 16` is a genuine oversubscribe:
-
-```
-ok   mpi_pi   -n 1: 3.141592653589362      <- identical to CI
-ok   mpi_pi   -n 2: 3.141592653589390      <- identical to CI
-ok   mpi_pi   -n 4: 3.141592653590147
-ok   mpi_pi   -n 16: 3.141592653589789
-ok   mpi_pi   all rank counts (1 2 4 16) agree with pi and with each other
-```
-
-and the flag is demonstrably the cause: `mpirun -n 16` alone exits 1 without running anything,
-`mpirun -n 16 --oversubscribe` exits 0.
-
-**What this changes.** Parallel fragHAR is **not** blocked by a broken reduction, which is what
-the red CI appeared to say. The reduction path is sound at 1, 2, 4 and 16 ranks. The remaining
-`fragment_SCF_para` concerns stand on their own merits — the two-strategy split and the
-`next_p_loop_index` off-by-one — and are not evidence of anything deeper.
-
-**Lesson worth keeping:** the check reported `launcher exited 1`, which is not a numerical
-failure at all, and four consecutive runs were read as "the reductions are broken" without
-anyone opening the log. `scripts/check_mpi_pi.sh` distinguishes the cases in its own output; the
-diagnosis just has to read it.
 
 ## PRIORITY: `hart` has never run under MPI — MPI_ERR_TRUNCATE at 2 ranks
 
@@ -1539,37 +1760,6 @@ So the desync is **inside `stdout.put(.command_optarg,by_column=TRUE,left=TRUE,w
 in `COMMAND_LINE:put_command_optarg` — i.e. *echoing the command line*. Master performs **37**
 broadcasts there and rank 1 performs **3**. At the divergent index master sends a `STR` (256)
 while rank 1 is at a scalar (1), which is the truncation.
-
-## ROOT CAUSE FOUND AND FIXED (2026-08-03): `TEXTFILE:flush` put the margin twice on master
-
-```foo
-      if (IO_IS_ALLOWED) then
-         write(unit=.unit,...) trim(.buffer.string)
-         ...
-         .clear_and_put_margin        ! <-- MASTER ONLY
-         .record = .record + 1
-      end
-
-      PARALLEL_BROADCAST(.IO_status,...)
-      PARALLEL_BROADCAST(.record,...)
-
-      .clear_and_put_margin           ! <-- every rank
-```
-
-`clear_and_put_margin` ends in `.buffer.put(...)` → `BUFFER:put_str`, which **broadcasts**
-`.string` (256 bytes) and `.item_end`. So the master entered **one extra pair of collectives per
-flush**, the ranks fell out of step, and the next collective failed with `MPI_ERR_TRUNCATE`.
-
-**Why it hid for years:** `clear_and_put_margin` *returns early* when `.style.margin_width==0`,
-doing no collective at all — and that is the normal case. It only bites once something sets a
-margin. `COMMAND_LINE:put_command_optarg` calls `set_margin_width(2)`, which is why `hart` died
-exactly there, why the first 126 broadcasts matched perfectly (banner, margin 0), and why
-`tonto` was never affected.
-
-**Fix:** delete the call inside the guard; the one after the broadcasts already covers every
-rank. Verified — `hart` at 2 ranks goes from dying at 30 lines of output to **758**, and the
-truncation is gone. Serially unaffected: release rebuilt, short suite 50/51 unchanged, all four
-invariant checks pass, `ctest -L hart` 4/4.
 
 ## `hart` NOW WORKS UNDER MPI (2026-08-03) — and reproduces serial exactly
 
@@ -1874,40 +2064,6 @@ translator change. The per-rank-I/O work is still the smaller, more certain win.
   identical on every rank regardless of iteration count. This is the most valuable of the three
   and the only one that needs `FooToFortran`.
 
-## WITHDRAWN (2026-08-03): the runtime "abort on a suppressed reduction"
-
-Milestone 6 part 2 was implemented, and then **removed the next day, because its premise is
-wrong**. It assumed a reduction reached while a parallel-do lock is held is always a bug. It is
-not — it is *also* the intended nesting pattern:
-
-```foo
-SHELL1QUARTET:make_esfs_ss_0000(v11)      ! called from inside
-   parallel do k = 1,.ab_n_gaussian_pairs !   MOLECULE.FOCK:make_u_JK_engine's
-   ...                                    !   own `parallel do`
-   PARALLEL_SUM(v11)                      ! correctly placed after ITS loop
-```
-
-With the outer lock held, the inner `parallel do` runs **serially over its full range on every
-rank**, so each rank already holds the complete `v11` and skipping the reduction is **correct**.
-That is "MPI on the outside" working as designed. `shell1quartet.foo` alone has 17 such loops,
-all reached from outer loops in the Fock build, so the check aborted every debug MPI run almost
-immediately — it killed `hart`.
-
-Nor can it be downgraded to a `WARN`: these sites are per shell-quartet, so the warning would
-fire millions of times.
-
-**What survives is the lint**, and it is the right tool: the actual bug is a reduction *lexically
-inside* a `parallel do` body (the four `molecule.grid.foo` sites), which
-`scripts/check_parallel_lint.py` detects statically and precisely. The dynamic check could not
-distinguish the bug from the design, and the static one does not need to.
-
-*(An earlier note claimed the two checks were complementary — the lint for lexical cases, the
-abort for reductions reached through a call. The call case turns out to be the legitimate one,
-so there is nothing for the abort to add.)*
-
-**Milestone 6 is therefore: part 4 (lint) done, part 2 withdrawn with reasons, parts 1
-(`reduce(x)`) and 3 (depth-counted lock) still open.**
-
 ## A related trap found the same way: `--fos 0`
 
 `hart --fos 0` (used by `tests/hart/gly_ala_hart_STO-3G` to disable F/sigma pruning) called
@@ -2175,187 +2331,6 @@ OpenBLAS would also oversubscribe cores in MPI builds.
 
 # Test suite and numerics
 
-## Reinstate the ammonia-borane pHAR test — blocked by a 167 MB asset (Dylan, 2026-08-05)
-
-**pHAR code ships in the library but nothing tests it.** `MOLECULE.CE:phar_defragment` is live
-(`molecule.main.foo` dispatches `phar_defragment`, added by Kang 2025-03-13), and
-`crystal.foo`, `molecule.har.foo` and `molecule.rho.foo` all carry pHAR-specific branches. There
-is **no pHAR test in `tests/`**.
-
-One exists, on a branch: `tests/long/ammonium_borane_pHAR_C23/`, on
-**`origin/release-pHAR-broken`** (tip `18712bd6`, 2025-04-29, kanghyun-chu).
-
-**What is there, and what is missing:**
-
-| file | size | |
-|---|---|---|
-| `stdin` | 946 B | the job |
-| `stdout` | 269 KB | the blessed reference |
-| `B6H6_grown.cif` | 7 KB | input |
-| `tonto_data_on_F_20rfl.hkl` | 16 KB | input |
-| `Crystal23_InputFiles.zip` | 12 KB | the Crystal23 inputs that *generate* the XML |
-| **`GenerateXML.XML`** | **134 B** | **a Git LFS pointer, not the file** |
-
-The `IO` manifest lists `GenerateXML.XML` as a required input, so **the test cannot run**. The
-pointer says:
-
-```
-version https://git-lfs.github.com/spec/v1
-oid sha256:1c5c24f0903c1b8667e3f8aa41ba1b2a550a49370b22db422a37d7a1f093a8ee
-size 174978609
-```
-
-i.e. the real asset is **167 MB**.
-
-**FIRST STEP, and it decides everything below: is that LFS object still retrievable?** This was
-*not* checked — `git-lfs` is not installed on the machine this was investigated from. One
-command answers it:
-
-```bash
-sudo apt install git-lfs          # or: brew install git-lfs
-cd <a scratch clone of tonto>
-git lfs ls-files -l origin/release-pHAR-broken     # does GitHub still know the oid?
-git lfs fetch origin release-pHAR-broken           # does it actually come down?
-```
-
-- **If it downloads**, the fix is small: restore a `.gitattributes` that tracks
-  `tests/long/**/*.XML`, port the one test directory onto `release`, and decide whether a
-  167 MB clone cost is acceptable (option 4 below says it probably is not).
-- **If it 404s or the quota is exhausted**, the object is gone and options 1–3 are the only
-  real ones — regenerate, fetch on demand, or shrink the case.
-
-**How the deposit went wrong** is legible in the branch's own history:
-
-```
-0f70beae  Activated git lfs and added .gitattributes files but NOT YET large XML
-69d6e806  Added large XML file
-...
-18712bd6  The Crystal23 input files for generating the GenerateXML.XML are included
-```
-
-LFS was enabled and `.gitattributes` added, then the XML committed — but **`.gitattributes` does
-not exist at the branch tip**. So the tracking configuration was lost while the pointer file
-stayed behind, and a plain `git clone` gets a 134-byte text file where a 167 MB XML should be.
-Whether the LFS object is still retrievable from GitHub was **not** checked (git-lfs is not
-installed on this machine) — check that first, since it decides which option below is viable.
-
-**Options, in rough order of preference:**
-
-1. **Regenerate rather than store.** `Crystal23_InputFiles.zip` (12 KB) is committed precisely so
-   the XML can be rebuilt — that is what `18712bd6` was for. Needs Crystal23, which is
-   proprietary, so this makes the test reproducible only for those who have it.
-2. **Fetch on demand**, the way the ANTLR jar already is at configure time: host the XML
-   somewhere durable and have the test skip cleanly when it is absent.
-3. **Shrink the case.** 167 MB for a test asset is the real problem; a smaller cell, fewer
-   reflections, or a trimmed XML would make this an ordinary test.
-4. **Proper LFS** — restore `.gitattributes` and re-push the object. Note GitHub's free LFS quota
-   is 1 GB storage *and* 1 GB/month bandwidth; a 167 MB asset cloned a handful of times exhausts
-   it, which is a poor fit for a public repository.
-
-**Note the branch is 631 commits behind `release` and 8 ahead**, so this is a port of one test
-directory, not a merge. Those 8 commits also contain unrelated work (form-factor symmetrisation
-tables with RMS and MAX residuals) that may or may not already be in `release` — check before
-cherry-picking.
-
----
-
-### ANSWERED AND UNBLOCKED (2026-08-16): the asset is alive, and the test PASSES
-
-**The first step above was finally run, and the answer is yes.** The LFS object is still on
-GitHub, retrievable, and byte-exact.
-
-It did not need `git-lfs` to find out. The LFS protocol is plain HTTP, so the batch API
-answers it directly — useful whenever `git-lfs` is missing:
-
-```bash
-curl -s -X POST \
-  -H "Accept: application/vnd.git-lfs+json" -H "Content-Type: application/vnd.git-lfs+json" \
-  -d '{"operation":"download","transfers":["basic"],"objects":[
-       {"oid":"1c5c24f0903c1b8667e3f8aa41ba1b2a550a49370b22db422a37d7a1f093a8ee",
-        "size":174978609}]}' \
-  https://github.com/dylan-jayatilaka/tonto.git/info/lfs/objects/batch
-```
-
-It returns a signed `download.href` (1 h expiry) rather than an error, i.e. the object is
-present and the quota is not exhausted. Downloading it gives 174 978 609 bytes whose sha256
-matches the oid exactly, opening with
-`<CREATOR name="CRYSTAL" version="1.0.0"/> <TITLE> Ammonium_closo-hexaborane(6)_pHAR </TITLE>`.
-
-#### How to pull the file and run the test
-
-`git-lfs` is installed as of 2026-08-16. Work in a **separate worktree**, so the main tree and
-its tests cannot be disturbed:
-
-```bash
-# 1. an isolated checkout of the archived branch (shares the object store, no second clone)
-git worktree add -b wip/phar ~/github/tonto-phar archive/release-pHAR-broken
-
-# 2. pull the 167 MB asset. Note .gitattributes is ABSENT at the tip, but the pointer is in
-#    the index, so git-lfs still resolves it -- `git lfs ls-files -l` lists the oid
-cd ~/github/tonto-phar
-git lfs pull --include "tests/long/ammonium_borane_pHAR_C23/GenerateXML.XML"
-git lfs status        # expect: LFS: 1c5c24f -> File: 1c5c24f
-
-# 3. run it against the CURRENT binary, not a build of the 2025-04 branch. That branch
-#    predates the ANTLR4 translator and foo.pl is gone, so it will not build; the point is
-#    to reinstate the TEST on develop, and the test is data plus a job file
-mkdir -p /tmp/phar && cd /tmp/phar
-cp ~/github/tonto-phar/tests/long/ammonium_borane_pHAR_C23/{stdin,B6H6_grown.cif,tonto_data_on_F_20rfl.hkl,GenerateXML.XML} .
-sed -i '/thermal_smearing_model=/d' stdin      # see below -- obsolete keyword
-TONTO_BASIS_SET_DIRECTORY=<repo>/basis_sets <repo>/build/tonto
-```
-
-**One edit to the job file is required.** As committed it dies with
-
-```
-Error in DIFFRACTION_DATA.READ:process_keyword ... unknown option: thermal_smearing_model=
-```
-
-`thermal_smearing_model=` was removed by `acb7af0b`, *"Removed 'temperature_factor_model' and a
-few others, **in favour of deriving the info from partition_model**"* — the whole machinery is
-commented out, keyword, reader, setter, `CRYSTAL` accessor and its `molecule.scf.foo` consumers.
-The job already sets `partition_model= oc-crystal23`, which now carries that information
-(confirmed by Dylan, 2026-08-16), so **deleting the line is the correct port**, not a workaround.
-
-#### Result: exact reproduction, 3 m 41 s
-
-With that one line removed, the job runs to completion on current `develop` and reproduces the
-2025-04 reference **digit for digit**:
-
-| | this run | reference |
-|---|---|---|
-| `Structure fit converged.` | yes | yes |
-| R(F) | 0.005188 | 0.005188 |
-| N_r | 20 | 20 |
-| N_p | 11 | 11 |
-| GoF² | 0.631422 | 0.631422 |
-| GoF | 0.794621 | 0.794621 |
-| scale factor | 0.979852 | 0.979852 |
-
-So **pHAR still works**, and the code that ships untested is now known to be correct on this
-case. That was the whole point of the entry.
-
-#### What remains, and it is small
-
-The reference is 2928 lines against this run's 971. The difference is **not numerical**: the
-`thermal_smearing_model=` keyword echo (removed), a *"crystal data already defined!"* warning,
-and a **"Form factor asymmetry"** diagnostic section the current build no longer prints. So
-reinstating the test needs its `stdout` re-blessed — legitimate, given a year of intervening
-development, but a blessing decision.
-
-Remaining work to land it, with **option 2 (fetch on demand) chosen by Dylan**:
-
-1. Port `tests/long/ammonium_borane_pHAR_C23/` to `develop`, keeping the 134-byte **pointer**
-   rather than the asset — a 167 MB file in a public repo is what option 4 rightly rejects.
-2. Restore a `.gitattributes` tracking `tests/long/**/*.XML`, which is the file whose loss
-   caused all of this.
-3. **The test must SKIP, not fail, when the asset is absent** — otherwise every clone without
-   the object goes red. `scripts/test.py` has no skip mechanism today; ctest's
-   `SKIP_RETURN_CODE` is the natural hook. This is the only real piece of work left.
-4. Re-bless `stdout` from a current run.
-5. Note the runtime: 3 m 41 s, so `long`, and comfortably the slowest test in the suite.
-
-
 ## Deferred: small numerical differences (longstanding) — drill down
 
 Several tests differ from their references only by small numerical amounts — 3rd–4th
@@ -2364,6 +2339,112 @@ significant figure, or a last-digit wobble on a near-zero value. They pass the l
 runner/CPU (BLAS / eigensolver ordering, FP reassociation) flips the verdict — this is the
 **CI flake** seen on GitHub Actions (same binary, pass on one runner, fail on the next).
 **Dylan wants to drill down** on each and fix the root cause, not merely tolerate them.
+
+### The XCW `Penalty in F` drift, found while reblessing (2026-08-26)
+
+**Filed here at Dylan's direction**, alongside the other small numerical differences:
+they look alike and may well have *unrelated* causes, but one register is the place to
+see them together.
+
+Reblessing the six `long` XCW/HAR references after the extinction/GoF merge, almost
+every changed number was accounted for. `N_p` went 2 → 1 — the milestone 11 decision to
+stop counting the XCW Lagrange multiplier — and that one change propagates through the
+whole per-shell `GOF` column, each shell scaling by `sqrt((n_refl-1)/(n_refl-2))`. Every
+other column (`R(F)`, `Rw(F)`, `R(F2)`, `Rw(F2)`, `F_exp/F_pred`, `# of refl`) is
+**byte-identical**. Hundreds of differing lines, one parameter.
+
+**One number is not accounted for.** In `nh3_x-ray-constrained-rhf_cc-pVTZ`:
+
+| | old | new | ratio |
+|---|---|---|---|
+| `Penalty in F` = `GoF^2(N_p)` | 7.557 | 7.491 | 1.00881 |
+
+With `N_r` = 88, a pure `N_p` 2 → 1 change would give `87/86` = **1.01163** if
+`GoF^2 = chi^2/(N_r - N_p)`. Observed is 1.00881, leaving **~0.28% unexplained**.
+
+Caveats, so the next person does not over-read this:
+
+- **That formula is assumed, not verified.** `Penalty in F` may not be
+  `chi^2/(N_r - N_p)` at all; if it is not, there is nothing to explain here and the
+  first job is to read what the code actually computes.
+- **It is not platform drift.** macOS/gfortran-14 and Linux/gfortran-16 both print
+  7.491 to every digit — checked directly, not inferred.
+- **The per-shell residuals are probably print precision, not signal.** Each shell ratio
+  falls 0.06–0.21% short of the pure-`N_p` prediction, but the references carry only 4
+  significant figures, which alone accounts for ~0.09%. The `Penalty` residual is on
+  values printed to the same precision and is three times larger, so that one is real.
+
+### Two more for the same register
+
+- **`quartz_NN_HAR_L0`/`L1` fail on macOS only — and their references are correct.**
+  This was first written up here as two more stale references. It is not: reblessing on
+  Linux/gfortran-14 (2026-08-26) left both files **byte-unchanged**, because they already
+  agree there `exact=PASS, max 0%`. They fail on arm64 macOS and nowhere else, which puts
+  them beside `ylid` above rather than with the XCW reblessing.
+
+  **It is not a crash and not a debug-build artefact**: exit 0, full 50 kB of output, job
+  completes, gfortran-14 **release**. Measured 2026-08-26.
+
+  **What actually fails is row ORDER in a sorted reflection list, not the numbers.**
+  Matched by Miller index instead of by line position, the two runs list the **same 54
+  reflections** and the largest per-reflection difference is **0.158%** — inside the 0.2%
+  gate. But 4 rows of 160 come out in a different order, because two sort keys sit
+  **0.103% apart** and sub-0.2% platform drift is enough to flip them:
+
+  | | reflection | key |
+  |---|---|---|
+  | Linux, row 21 | `(-8, 8, 10)` | −6.6098 |
+  | macOS, row 21 | `(-5, 9, 11)` | −6.6166 |
+
+  `scripts/test.py` compares line by line, so one transposed row pairs unrelated fields and
+  reports `0.7196 vs 0.0000` — the **100%** in the ctest log. Nothing is 100% wrong.
+
+  *(Two earlier explanations of this in the git history are wrong and should not be
+  believed: that these were stale references, and that a changed ESD digit count shifted a
+  column width. Both were inferred from a truncated diff. The reflections were compared by
+  index only after the second one failed to hold up.)*
+
+  **Where the order comes from:** `DIFFRACTION_DATA.PUT:put_N_worst_reflections`, which does
+  `F_z.quick_sort(ind,decreasing_order=TRUE)` and prints `.reflections(ind(1:n))`.
+
+  **A tie-break on `(h,k,l)` will NOT fix this — do not try it.** That was proposed here and
+  is wrong: the keys are not tied, their true order reverses. Measured for the pair that
+  swaps:
+
+  | | `(-8, 8, 10)` | `(-5, 9, 11)` | gap |
+  |---|---|---|---|
+  | Linux | −6.6098 | −6.6106 | 0.0008 |
+  | macOS | −6.6168 | −6.6166 | 0.0002 |
+
+  Drift of ~0.001 on values of ~6.6 exceeds a gap of 0.0008, so the comparison genuinely
+  reverses. A secondary key only helps for *equal* primaries. More generally: **any total
+  order on a noisy continuous key can flip**, so no sort refinement fixes this class.
+
+  **Decision 2026-08-26 (Dylan): leave it, record it.** The two fixes that would work, with
+  what each costs, so the choice does not have to be re-derived:
+
+  - *Normalise in `scripts/test.py`* — sort the rows of the block on both sides before
+    comparing. Output and references unchanged; but it is a shared-harness change touching
+    every test, and it masks genuine row-ordering regressions in this table.
+  - *Canonical order in the Foo source* — keep `F_z` for **selecting** the worst `n`, print
+    them ordered by `(h,k,l)`. Platform-stable; but a crystallographer loses worst-first
+    reading order, and three references need reblessing on Linux.
+
+  **Consequence of leaving it, and it is the reason this is written down:** this is **not a
+  macOS problem**. Any machine whose BLAS or FP ordering moves `F_z` by ~0.01% can transpose
+  those rows — a different Linux CI runner included. It is a latent flake wearing a
+  platform-specific mask, like `ylid` above. If `quartz_NN_HAR_L0`/`L1` ever go red on
+  Linux, read this entry before believing the number.
+
+  **Do not bless these on a Mac.** It would bake macOS numbers into a Linux-gated project
+  and leave Linux passing on under a third of the tolerance. Generating references on
+  Linux/gfortran-14 is what exposed that they needed no reblessing at all.
+- **`urea_ccsd_pob-TZVP_Salvador_properties` (2.99%) and `h2o_rhf_cc-pVDZ_tdhf` (0.231%)
+  both PASS in a gfortran-16 debug build** while failing in gfortran-14 release on the same
+  Mac. Two variables differ between those builds — compiler *and* optimisation — so this
+  isolates nothing by itself. The cheap next experiment is a gfortran-14 **debug** build: if
+  they pass there too, the culprit is `-Ofast`, not the compiler. Note `ci-macos.yml`'s
+  header attributes the first to macOS; that attribution is at least incomplete.
 
 ### Lower priority: `ylid` (rgbi) — vdW contact indices differ on macOS
 
@@ -2826,64 +2907,30 @@ harness writes `stdout.bad` on a fail). The five listed above are all that remai
 
 ---
 
+## The end-of-HAR message is stale, and correcting it means reblessing 24 references (2026-08-09)
+
+The message printed at the end of a HAR names `stdout.fit_analysis` — a file
+nothing writes and nothing ever has — calls several small files "this large
+file", names not one file that is actually produced, and closes with "Use Excel
+or gnuplot to view these data", which predates Tonto drawing the pictures
+itself.
+
+A corrected version, naming the real files as dot points, was written and then
+**reverted**, because the old text appears in **24** checked-in references
+(`grep -rl "This large file includes" tests/`), most of them `long` jobs. Worth
+doing as its own change together with the rebless, never as a side effect of
+something else. The reverted wording is in the history of `foofiles/crystal.foo`
+around 2026-08-09.
+
+**A cosmetic difference that is NOT a failure**, recorded so the next person
+does not mistake it for one: a raw `diff` of `tests/short/nh3_rhf_DZP_HAR/stdout`
+against a fresh run shows the `U_xx … U_yz` error table with different column
+widths — the reference wider (`0.00000(5)   0.00000(8)`), the new build
+narrower. Every number is identical, and the test passes 1/1, so `scripts/test.py`
+is insensitive to this whitespace. Untraced, and not worth tracing unless it
+starts mattering.
+
 # Translator and the Foo language
-
-## Translator: `data` statements at `program` scope are silently dropped — FIXED 2026-08-04
-
-**This one causes silently wrong answers, and it cost a day.** The ANTLR4
-translator emits `data` statements for module-scope variables (`atom.foo` 21/21,
-`colour.foo` 44/44, `becke_grid.foo` 6/6 survive) but **drops them entirely from a
-`program` unit**. `runfiles/run_har.foo` had two; `build/run_har.F90` had none.
-
-The declaration is still emitted, so it compiles clean and the variable is simply
-uninitialised. In `hart` that meant `allowed_bases` and `grid_levels` were garbage,
-so **every** basis name — including the program's own default `def2-SVP` — failed
-`is_one_of` with "unknown basis". Nothing warned.
-
-Worked around by assigning the arrays in the executable part instead
-(`run_har.foo`, `run_sf.foo`, `run_sf_derivs.foo`). **The translator is the real
-bug.** Until it is fixed, either emit the `data`, or make the translator *reject*
-what it cannot translate — silently discarding a statement is the worst option.
-
-`runfiles/run_csq.foo` still has program-scope `data` and is not in the translated
-source list; it will hit this if revived.
-
-### Resolution (2026-08-04)
-
-**Both** halves of the recommendation above were implemented — the `data` is emitted,
-*and* the translator now rejects what it cannot translate.
-
-Root cause was a single line in `FooToFortran.emitBodyList`:
-
-```java
-if (b.localDecl() == null && b.stmt() == null) continue;   // blank / unhandled
-```
-
-`procBody` has seven alternatives; a `dataStmt` has both `localDecl` and `stmt` null,
-so it fell through this crack. The comment even said "unhandled".
-
-Now: `dataStmt` is emitted; `implicitStmt` and `useStmt` inside a body are skipped
-**deliberately**, each with a comment giving the reason (the translator emits its own
-`implicit none`, and the module's `<stem>.use` include already provides the `use TYPES`
-in `VEC{REAL}:min_BFGS` — emitting either in place would not compile); and **every other
-alternative throws**. A construct that parses but produces no output is now a build
-failure, which is the property this entry asked for.
-
-**The audit found the blast radius was smaller than feared.** Comparing every source
-`data` statement against the generated Fortran across all 184 files found no dropped
-statement anywhere in `foofiles/`. Five files looked like mismatches and all five are
-variables *named* `data` (`data :: VEC{REAL}, IN`, `data = data(keep)`), not statements.
-So no built binary was ever wrong: the library has no procedure-scope `data`, and the
-only affected program, `run_csq.foo`, is not built. `run_csq` now translates with all
-three of its `data` statements intact.
-
-The `run_har.foo` / `run_sf.foo` / `run_sf_derivs.foo` workarounds are **left in place**:
-they work, `hart` is now tested around them, and reverting tested code to restore a
-`data` statement buys nothing.
-
-Related: `none` is a reserved word in `Foo.g4`, so it cannot be used as a variable
-name. The parse error it produces (`mismatched input 'none'`) points at the *end*
-of the file, not at the offending line, which makes it hard to find.
 
 ## Cleanup: normalise procedure-name CASE across definition and call sites
 
@@ -3052,9 +3099,9 @@ whole pipeline exiting **0** having drawn nothing.
 molecule, the bonding, the atom labels and every index it wants to print. The
 *only* thing it does not have is a **2D depiction layout**. So this is not
 "rewrite five tools" — it is "acquire one algorithm, then emit the picture
-directly", which is exactly the move stage 2 of `docs/PLOT_PLAN.md` already made
-for the HAR plots: Tonto computed the label placement itself instead of hoping
-gnuplot had an algorithm for it (it does not).
+directly", which is exactly the move already made for the post-HAR plots in
+2026-08-09: Tonto computed the label placement itself instead of hoping gnuplot
+had an algorithm for it (it does not).
 
 **And half of it is already done, which is the proof of concept.** The dial
 diagrams are TikZ emitted straight from Tonto's own numbers — no Open Babel, no
@@ -3140,6 +3187,40 @@ for this kind of visual survey."* Any redesign has to keep the one-page survey.
 
 ---
 
+## RGBI: known defects and rough edges
+
+Moved out of `docs/RUNNING_RGBI.md` on 2026-08-10, when the user-facing pages
+were cleared of developer material. None is fixed.
+
+**In the program**
+
+- **`rgbi --help` calls the program `run_rgbi`**, which is the CMake target name
+  rather than what gets installed, and points at a `./rgbi-script` folder, which
+  is spelled `rgbi-scripts`. Both cosmetic. `hart` has an invariant check
+  comparing `--help` against its option `case` labels
+  (`scripts/check_hart_options.sh`); `rgbi` has three options and no such check.
+- `CMakeLists.txt:883` pins a file to `-O2` because **"rgbi/BN's Roby
+  populations were wrong"** at other optimisation levels. Read that comment
+  before touching optimisation flags for this program. No test guards it — see
+  the macOS-in-CI item below.
+
+**In the pictures**
+
+- **The dial grid's column count is hard-coded to four**, in three places per
+  routine (`ROBY:put_dial_table_do_H`, `foofiles/roby.foo:7090`). Four dials
+  need ~520 pt and `article`'s default `\textwidth` is ~345 pt, so the fourth
+  column fell off the page and `pdfcrop` cut it — visible in the committed
+  reference PDFs. Worked around in `rgbi-dial-header.tex` by giving the page a
+  large canvas.
+- Nothing compares the reference PDFs automatically; they are eyeball targets.
+
+**Reference material not in the repository**
+
+The Grabowsky chapter PDF is deliberately not checked in — 1.1 MB of binary. On
+`sauce` it is at `~/rgbi-reference/Jayatilaka_2025_Grabowsky_chapter.pdf`.
+
+---
+
 # Tooling and editor support
 
 ## Editor: improve vim highlighting of Foo and vim integration
@@ -3167,25 +3248,174 @@ highlighting and tighter editor integration. The repo already ships some vim sup
 
 # Platform-specific
 
-## The macOS RGBI badge is red, and the fix is on a machine we cannot reach
+## CI workflows must install every RUN-time dependency, not just build ones (2026-08-27)
 
-`ci-rgbi-macos.yml` is a weekly, deliberately exploratory probe of the macOS
-install list in `docs/INSTALLING_RGBI.md`. It fails at the step **"BasicTeX,
-then tlmgr BY ABSOLUTE PATH"**, after `brew install --cask basictex` succeeds.
+**Status: fixed for gnuplot; the class is worth remembering.** `ci-full-suite.yml` ran for the
+first time on 2026-08-27 and returned 70/89. All 18 captured failures carried
+`WARNING: could not run gnuplot` — the workflow installed no gnuplot.
 
-**It is not investigated, on purpose.** The toolchain was working when it was
-last set up by hand (2026-08-05, which is what the step's comment about the
-absolute `tlmgr` path records), but that work lives on a Mac that is no longer
-accessible. Nobody can currently reproduce, and a speculative fix to an
-untested platform is worse than a known-red badge.
+The failure mode is what makes this worth an entry. gnuplot is **not** a build dependency and its
+absence is not an error: Tonto finishes the job, gets every number right, writes the plot data
+*and* the gnuplot script, and prints a multi-line warning instead of rendering. Those extra lines
+are a **structural** mismatch against the stored reference. So a missing *optional, run-time*
+package produces a page of failures at 0% numeric deviation and 0 ulp — indistinguishable at a
+glance from a real defect.
 
-Logs from the failing scheduled runs are no longer retrievable, so the cause is
-unknown rather than merely unfixed. Candidates, none confirmed:
-`/Library/TeX/texbin/tlmgr` having moved, `tlmgr update --self` failing against
-a CTAN mirror, or one of the seven requested packages being unavailable.
+`ci-mpi.yml` had the same hole while running the full short suite, so its suite table carried
+these failures too; see `docs/TONTO_AND_MPI.md`. Both are fixed. `ci-wsl-debug.yml` and
+`release.yml` do not need it — two plain SCF jobs and no tests respectively.
 
-Anyone with a Mac should trigger a manual run and read a FRESH log before
-changing anything.
+**The general rule:** when adding a workflow that runs the suite, copy the package list from
+`ci.yml`, which is the reference build, rather than writing a shorter one from what the *build*
+needs.
+
+## OVERTURNED (2026-08-27, same day): the 34 debug failures are `-fcheck=bounds`, NOT gfortran-16
+
+**Read this before the entry below, which it corrects.** The confound the entry listed as open
+question 1 was closed the same afternoon, and it reversed the conclusion.
+
+**The experiment.** In the **gfortran-14** debug tree, recompile the single file that holds the
+deciding condition, `molecule.rho.F90`, without `-fcheck=bounds`, and relink. One file, one flag,
+one compiler:
+
+| gfortran-14 tree, `molecule.rho.F90` | `h2o_rhf_STO-3G` |
+|---|---|
+| with `-fcheck=bounds` | **PASS**, exact |
+| **without** `-fcheck=bounds` | **FAIL** — the `Making gaussian ANO interpolators ...` line |
+| with it again (control) | **PASS**, exact |
+
+**So the flag causes the behaviour, and gfortran-16 does not.** The 34 failures are a consequence
+of *our own workaround* — dropping `-fcheck=bounds` on 16 because 16 miscompiles it — and
+gfortran-14 reproduces them exactly when the flag is removed. **No second GCC bug report is
+owed.** The `-fcheck=bounds` miscompilation (`docs/GFORTRAN16_DEBUG_CRASH.md`) remains real and
+remains the one gfortran-16 defect we have.
+
+**What this leaves, and it is not nothing.** Tonto has a **latent defect of its own**, invisible
+in every build carrying the flag — which is every debug build before gfortran-16 arrived.
+
+> **CORRECTED 2026-09-03, and the correction matters.** This entry named the wrong variable. It
+> said the defect was that `.atom(a).interpolator.deallocated` reads differently with and without
+> bounds checking — an `allocatable` component whose initial status the standard guarantees, which
+> would have been a strange thing for a compiler to expose, and was chased as such.
+>
+> **The actual defect was two lines below**, and is ordinary undefined behaviour of our own:
+> `make_ANO_interpolators` declared `first :: BIN`, read it at `if (first)`, and assigned it only
+> *inside* the branch that read guards. Nothing ever set it TRUE, so a progress banner printed
+> according to whatever was in that stack slot. With `-fcheck=bounds` the garbage read false and
+> the line never appeared — no blessed reference contains it. Without the flag it appeared, shifted
+> every later line by one, and wrecked the reference comparison across the suite.
+>
+> Measured, one file, everything else identical: **banner present + no bounds check → 36 of 62
+> failed; banner deleted + no bounds check → 3; banner deleted + bounds check on → 3**, the same
+> three in each and unrelated to any of this. Fixed by deleting the banner, which had never once
+> printed in the program's history.
+>
+> The lesson is about attribution: the deciding *condition* was correctly located, and the wrong
+> *variable inside it* was blamed. Both were in the same `if`. Reading the enclosing statement
+> rather than the whole procedure cost a week.
+
+**Consequence for the migration.** The case against gfortran-16 is materially weaker than it was
+this morning: what remains against it is the `-fcheck=bounds` miscompilation alone, whose cost is
+losing bounds checking in debug — the bargain that was originally accepted and then withdrawn on
+evidence that has now evaporated. `develop-gfortran-16` holds the whole migration. **Do not
+simply re-apply it**: first fix the latent defect above, because a debug build on 16 has no
+bounds checking and would therefore hit it.
+
+**Method note.** The entry below was written with the confound explicitly listed as unresolved,
+and the conclusion was still stated too strongly in the commit message and in `CLAUDE.md`. The
+evidence was 0 occurrences against 34 and it was still the wrong attribution. Closing the
+confound cost about ten minutes: one file, one flag, one relink.
+
+## gfortran-16 DEBUG fails 34 of 71 short tests — the migration was reverted (2026-08-27)
+
+> **RESOLVED 2026-09-03 — and the cause was ours, not the compiler's.** The 34 failures were an
+> uninitialised logical in `MOLECULE.RHO:make_ANO_interpolators` printing a banner according to
+> stack garbage; see the CORRECTION in the entry above. Fixed. **The migration is now blocked on
+> GCC PR 127197 alone**, whose only cost is losing bounds checking in a 16 debug build. Read
+> `CLAUDE.md` §4 for the current state. The rest of this entry is kept because the measurements
+> in it are sound and were what made the diagnosis possible — only the attribution was wrong.
+
+The project standard moved 14 -> 16 on 2026-08-27 and was **reverted hours later**, when the
+local gate was run before pushing. The whole migration is preserved on the branch
+**`develop-gfortran-16`** — retrying means merging that branch and flipping `FC_VERSION`, not
+redoing the work. `ci-mpi.yml` is deliberately left on 16: it builds *release*, which is not
+implicated, and has been green since 2026-08-26.
+
+**The measurement.** `ctest -L short`, x86_64 Linux (sauce), `-DCMAKE_BUILD_TYPE=debug`:
+**37 pass, 34 fail** out of 71 agreement lines.
+
+- **27 failures are structural only** — `max 0%`, `0 ulp`. Every one carries the same extra
+  line, `Making gaussian ANO interpolators ...` (`foofiles/molecule.rho.foo:2280`), emitted
+  when `.atom(a).interpolator.deallocated` is true.
+- **7 fail numerically, and largely**: `h2o_rhf_cc-pVDZ_1e_properties`,
+  `h2o_rhf_cc-pVDZ_E_field_and_1e_properties` and `h2o+_uhf_cc-pVDZ_1e_properties` at **200%**;
+  `urea_ccsd_pob-TZVP_Salvador_properties` **197%**; `h2o_rhf_cc-pVDZ_tdhf` **62.5%**;
+  `nh3_rhf_DZP_HAR` **58.2%**; `nh3_rhf_DZP_HAF_and_structure_factors` **58%**.
+
+**Why this is a compiler difference and not stale references.** Three builds, one test
+(`h2o_rhf_STO-3G`):
+
+| build | compiler | source | result |
+|---|---|---|---|
+| release | 14 | 2026-08-27 | **PASS**, exact |
+| debug | 14 | 2026-08-16 | **PASS**, exact |
+| debug | 16 | 2026-08-27 | **FAIL** — the extra ANO line, 0% numeric |
+
+`foofiles/molecule.rho.foo` has **not changed since 2026-08-16**, so the code holding that
+condition is identical in both debug binaries. The reference for that test dates from
+2023-05-29 and lacks the line, and both gfortran-14 builds agree with it.
+
+**What makes it substantive.** `interpolator` is `INTERPOLATOR@` in `types.foo`, and the
+translator emits it as a genuine Fortran `allocatable` component
+(`type(INTERPOLATOR_TYPE), allocatable :: interpolator`). The standard guarantees an
+allocatable component starts **unallocated**, so its status is not undefined behaviour that a
+compiler may resolve either way. Two conforming compilers disagreeing about it is either a
+gfortran-16 defect or something subtler in how the object is copied — note
+`.atom(b).interpolator = .atom(a).interpolator` a few lines below, an intrinsic assignment of a
+derived type with allocatable components.
+
+**MEASURED 2026-08-27, and it isolates the compiler.** The experiment below was run: a
+gfortran-14 debug build **from the same commit** (`1d5ed7a5`), same machine, same suite.
+
+| debug build, identical source | agreement lines pass / fail | `Making gaussian ANO interpolators` |
+|---|---|---|
+| **gfortran-14** | **70 / 1** | **0 occurrences** |
+| **gfortran-16** | 37 / 34 | 34 occurrences |
+
+Zero against thirty-four. The source-age variable that qualified the earlier three-build table is
+gone, and gfortran-16 is implicated. The one agreement failure under 14 is
+`urea_ccsd_pob-TZVP_Salvador_properties` (4.48%), which fails under 16 as well and is a known
+longstanding case, not part of this.
+
+**A by-product worth recording: the "four longstanding `-O0` failures" figure this file has
+carried for months is wrong on current source.** A gfortran-14 debug build shows **3** ctest
+failures, and two of them are *invariant checks* — `single_atom_scf` and `dft_invariants` — which
+compare the program against itself and so cannot be blessed away. Only one is a reference
+comparison. Whoever revisits the `-O0` entry should start from these three, not from the old four.
+
+**Still not established:**
+
+1. **The `-fcheck=bounds` confound.** The two builds differ by a flag as well as a compiler: 14
+   keeps the bounds check, 16 drops it because 16 miscompiles it, and CMake offers no way to
+   build 14 without it. The flag should not affect whether an `allocatable` component reads as
+   unallocated — but 16's bounds-check codegen is already known to be broken, so this is not
+   nothing. Close it the cheap way, the technique this file records from the `pointgroup` work:
+   recompile the single file with altered flags and relink, rather than rebuilding a tree.
+2. **Whether gfortran-15 shares it.** Installed on sauce, never tested. The gate in
+   `cmake/SetFortranFlags.cmake` is `>= 16` because that is what was measured, not what was
+   established.
+3. **Whether the ANO line and the 7 numeric failures have one cause or two.**
+4. **A second GCC bug report is now probably owed** — subject to (1). It would need the same
+   treatment as the bounds-check one: a reduced reproducer, not a description of Tonto.
+
+**A caution for whoever picks this up.** Do not read the 27 structural failures as cosmetic.
+The extra line means a code path *ran* under 16 that did not run under 14 — interpolators were
+constructed rather than found already present. That the numbers came out identical anyway is
+luck or redundancy, not evidence that the divergence is harmless.
+
+**Related but separate:** the `-fcheck=bounds` miscompilation, `docs/GFORTRAN16_DEBUG_CRASH.md`,
+reported upstream as **GCC PR 127197** on 2026-09-03, `docs/GFORTRAN16_GCC_BUG.md`. A second
+GCC report may be owed here once (1) is done.
 
 
 ## OPEN: long paths to the basis sets fail -- STR is 256 characters
@@ -3330,6 +3560,113 @@ intact `.o` files and A/B the `theta` tables). So:
 The stale README line ("many failures on the Apple M2 — not recommended") should
 be corrected at the same time; it is wrong about the build, which was always
 clean.
+
+## VERIFIED 2026-09-03: the `textfile.foo` MPI fix, serial suite 88/89 (opened 2026-08-26)
+
+> **Closed.** The owed run is
+> [33067218748](https://github.com/dylan-jayatilaka/tonto/actions/runs/33067218748) —
+> `short long hart`, Linux, gfortran-14, serial release, on `80dcbfe4`: **88/89 loose, 77
+> exact**, four invariant checks green, the 89th a deliberate skip. Move this entry to the
+> archive next time the file is re-sorted. What follows is the entry as written while it was
+> open, and its reasoning about *why* a whole-suite gate was needed still applies to the next
+> structural change in `textfile.foo`.
+
+**Update, same evening: the `long` suite passed with no new failures.** 28/31 loose against
+the fixed binary; the three non-passes are the two known macOS-only `quartz_NN_HAR` jobs
+(references correct) and the pHAR test blocked by its missing 167 MB asset. Run on
+macOS/arm64 with the MPI build at `-n 1`, **not** Linux serial gfortran-14, so it is strong
+evidence rather than the owed run — the compiler, platform and macro configuration all differ
+from the Linux baseline. Detail in `docs/TONTO_AND_MPI.md` Finding 7.
+
+**How to run it without a machine (added 2026-08-26, as Dylan left).**
+`.github/workflows/ci-full-suite.yml` is a **dispatch-only** workflow that builds release
+and runs the full suite with `--failure-dir`. It exists because nothing else runs `long`:
+`ci.yml` runs `short hart` only. Trigger it from the Actions tab (pick any branch) or
+
+```bash
+gh workflow run ci-full-suite.yml --ref develop
+```
+
+It is deliberately **not** a gate: no push or schedule trigger, no badge. It was added as a
+separate file rather than as an option on `ci.yml` because `ci.yml` is the gate and its
+current revision was still running unproven at the time; a new file cannot break an existing
+one. **For the peer picking this up:** if it proves useful, the obvious follow-ups are to give
+it a badge only after one green run, and to consider folding it into `ci.yml` behind an input
+once both are settled. If it turns out to be wrong, deleting the file costs nothing.
+
+
+
+**Do this before the `textfile.foo` change goes anywhere near `master`.** Full detail, the
+exact commands and the baseline: `docs/TONTO_AND_MPI.md` Finding 7, "VERIFICATION STILL OWED".
+
+`move_to_record_external` and the two record movers were changed to position the file on the
+I/O rank and broadcast the result. `foofiles/textfile.foo` is on the path of **every file read
+in Tonto**, so the change is exercised by essentially every job, serial included -- but only
+**three** have been run: the MPI reproducer at `-n 2` (still fails, `MPI_ERR_TRUNCATE` -- the
+fix removed an amplifier, not the origin), and `-n 1` plus serial on
+`urea_read_and_process_CIF` alone, which pass exactly.
+
+Baseline to match: **89** tests for `short long hart` (55 + 31 + 3), of which
+`ammonium_borane_pHAR_C23` skips without its 167 MB asset — so **88/89** is the score to beat,
+and 77 of those were exact. Pass `--failure-dir` so an ERRORing job records its cause.
+*(The "124/124" this entry used to quote counted `short long cx rgbi` on 2026-07-15; see the
+archive.)*
+
+Why it is not merely paperwork: the edit moved a `DIE_IF` out of a loop into its caller and
+added an `exit` on `.IO_status/=0` -- a control-flow path that did not exist before. A loop
+whose terminating check moved is exactly the kind of change that turns a loud failure into a
+quiet one. The expectation is that serial behaviour is unchanged, because the new guard is a
+no-op in a serial build; **that expectation is the thing to test, not to assert.**
+
+## Add a PARALLEL DEBUG build to CI, on every platform (Dylan, 2026-08-26)
+
+There is a debug job and an MPI job on Linux, and neither is a **debug MPI** job. Nothing
+in CI, on any platform, builds `-DMPI=1 -DCMAKE_BUILD_TYPE=debug`. That is the gap this
+entry closes.
+
+**Why, with the evidence that prompted it.** Chasing the deterministic
+`urea_read_and_process_CIF` desync (Finding 7 in `docs/TONTO_AND_MPI.md`), the release MPI
+build reported:
+
+```
+Error on rank 1: TEXTFILE:move_to_next_record ... error opening new file urea.cif
+```
+
+— a misleading message (that routine opens nothing) about damage **41 broadcasts downstream**
+of the divergence. The *debug* MPI build, first run, reported:
+
+```
+Error on rank 1: CIF:move_to_end_of_data ... CIF file has not been opened
+```
+
+which names the divergent state at the site. The difference is `ENSURE`, which is gated on
+`USE_PRECONDITIONS` and compiled out of every optimised build. Six CI cycles on release
+produced less than one local debug run. **Preconditions are the instrument that makes an MPI
+desync legible, and no CI job compiles them together with MPI.**
+
+**Scope.** `ci-mpi.yml` (Linux) first — it already builds Open MPI from source and caches it,
+so a second job reusing that cache is cheap. Then macOS, where `mpifort` and `gfortran` come
+matched from Homebrew and no source build is needed. WSL last, and only if the WSL-release and
+WSL-debug jobs are green first.
+
+**Shape it like `ci-debug.yml`, not like a suite run.** Build, then a couple of fast jobs at
+`-n 2` to prove the binary executes and the ranks stay in step. A full numeric suite under
+debug MPI would be slow and would inherit the `-O0` failures already in `DEFERRED.md`.
+
+**Three cautions.**
+
+- **`ENSURE` can itself contain a collective.** `TEXTFILE:is_open` performs a
+  `PARALLEL_BROADCAST_IO`, so `ENSURE(.file.is_open,...)` broadcasts. A precondition evaluated
+  on some ranks and not others *is* a desync — so a debug MPI build can fail in ways release
+  never would. Expect to triage that before the job is green, and do not read a debug-only
+  failure as proof of a release bug.
+- **On gfortran-16 the debug build omits `-fcheck=bounds`** (the compiler bug in
+  `docs/GFORTRAN16_DEBUG_CRASH.md`), so it checks less than a gfortran-14 debug build. Pin the
+  job to gfortran-14 if bounds checking is the point; use 16 if matching the MPI toolchain is.
+- **Do not badge it until it has been green once.** `ci-wsl-debug.yml` has a badge and has
+  never had a green run.
+
+Related: the badge table cannot absorb another column — see the note in that entry.
 
 ## Future task: verify the macOS build (Apple Silicon / Tahoe)
 
@@ -3565,7 +3902,7 @@ ignored by `scripts/test.py`).
   with data — check whether GCC 16 reproduces the *same suite numbers* before switching, since
   otherwise the choice is between re-blessing references and staying put.
 - Measure the runtime cost of `-O2` on this file (it is the ERI hot path). If negligible, stop.
-- Consider a GCC bug report. The ingredients are unusually strong: bit-identical source, two
+- **File the GCC bug report** (decided 2026-08-26; it was "consider" before). The ingredients are unusually strong: bit-identical source, two
   platforms disagreeing, and a self-validating oracle (an SCF energy below the variational
   limit, virial 1.957 vs 2.000). Would need reducing to a minimal test case first.
 - Re-test whether the *global* `-fno-schedule-insns` in `cmake/SetFortranFlags.cmake` is still
@@ -3574,10 +3911,68 @@ ignored by `scripts/test.py`).
   (the two bases are mathematically identical below d functions). That single invariant would
   have caught this immediately, on one machine, with no reference file.
 
-## DIAGNOSED (2026-07-30): gfortran-**16** DEBUG builds SEGFAULT on arm64 macOS
+## DIAGNOSED (2026-08-25): gfortran-**16** DEBUG builds SEGFAULT — BOTH platforms
 
-**Use `gfortran-14` for debug builds on macOS.** `gfortran-16` release is fine on both platforms;
-only its *debug* build is broken, and only (as far as tested) on arm64.
+> **Authoritative page: [`docs/GFORTRAN16_DEBUG_CRASH.md`](docs/GFORTRAN16_DEBUG_CRASH.md)**
+> — cause, machine-level evidence, reproducer, workaround, and what is still owed.
+> Draft upstream report: [`docs/GFORTRAN16_GCC_BUG.md`](docs/GFORTRAN16_GCC_BUG.md).
+
+**RESOLVED 2026-08-25 — it is a gfortran 16 compiler bug in `-fcheck=bounds`, not a
+Tonto defect and not memory corruption.** For a bounds-checked subscript reached
+through an allocatable component chain, gfortran 16 copies the array descriptor into
+one stack temporary and emits the check reading *another* temporary that is only
+written later in the same statement. The check reads uninitialised stack memory, and
+either faults on a nonsense address or reports a bounds violation that is not real.
+`-fcheck=bounds` is debug-only, which is exactly why gfortran-16 **release** was
+always fine.
+
+Found by disassembling `POINTGROUP:make_character_table` and observing that the only
+*write* to the two slots the faulting check reads is 400 bytes further on. Reduced to
+`scripts/gfortran_bounds_bug.f90` (97 lines, no Tonto): gfortran-14 fine both ways,
+gfortran-16 fine at `-O0`, SIGSEGV at `-O0 -fcheck=bounds` on x86_64. Confirmed in
+Tonto by recompiling `pointgroup.F90` alone without the flag — the segfault goes, the
+run reaches "Making gaussian ANO data …", and the next site of the same shape
+(`atom.F90:7058`, `self%NOs%r(:,n)`) then reports a *false* violation, bounds `(0:0)`
+read out of the garbage descriptor.
+
+**Fix:** `cmake/SetFortranFlags.cmake` omits `-fcheck=bounds` from `DEBUG_FLAGS` on GNU
+Fortran 16 and up, announcing it at configure time; `-DTONTO_FORCE_FCHECK_BOUNDS=ON`
+puts it back for retesting. `scripts/check_gfortran_bounds_bug.py <compiler>` tests a
+compiler. gfortran 15 is untested — neither machine has it — so the gate is on `>= 16`,
+which is what was measured.
+
+**This retires the heap-corruption hypothesis below, and the reasoning that produced
+it.** The two crash sites are two *statements* of the same shape, each independently
+miscompiled — not two innocent victims of one corrupting write. The reduced cases
+"failed to reproduce" because they were built without the descriptor-temporary
+trigger. ASan on macOS was never going to report a stack-slot ordering error inside
+compiler-generated code. The `VEC{OBJECT}` fix (`d8b94cbf`) was a real conformance
+defect worth landing, but was never related to this.
+
+**Confirmed end-to-end the same day.** A whole-tree gfortran-16 debug build on arm64
+macOS compiles clean, runs `h2o_rhf_STO-3G` to **exit 0** (139 before) with
+`Total energy -74.9658`, and takes `ctest -L short` **62/62**.
+
+**Filed 2026-09-03 as GCC PR 127197**, with a five-version bisection (12, 13, 14 and 15
+correct; 16.0.1 segfaults). Record and duplicate search: `docs/GFORTRAN16_GCC_BUG.md`.
+
+**A side observation from that run, not chased.** The two `short` tests that fail in
+the gfortran-14 **release** build on this Mac — `urea_ccsd_pob-TZVP_Salvador_properties`
+(2.99%) and `h2o_rhf_cc-pVDZ_tdhf` (0.231%) — both **pass** in the gfortran-16 debug
+build. `ci-macos.yml` attributes the first to macOS; this says it is not intrinsic to
+the platform or the test. Two variables differ between those builds, compiler *and*
+optimisation, so it does not isolate a cause. The cheap experiment is a gfortran-14
+**debug** build: if they pass there too, the culprit is `-Ofast`, not the compiler.
+
+---
+
+*Historical record from 2026-08-24 and earlier follows. Its conclusion is wrong; it is
+kept because the measurements are sound and the reasoning is instructive.*
+
+**Use `gfortran-14` for debug builds, on any platform.** `gfortran-16` release is fine on both
+platforms; its *debug* build segfaults on **both** arm64 macOS and x86_64 Linux — the "only on
+arm64" in the original note was an untested assumption, disproved 2026-08-24 (see progress note
+below).
 
 | build | any SCF job |
 |---|---|
@@ -3628,6 +4023,236 @@ backtrace yet. Options, cheapest first:
    different debugger.
 3. Worth checking whether a Linux gfortran-16 debug build crashes too (build started; result
    pending) — that tells us whether it is arm64-specific or general to gfortran-16.
+**Progress 2026-08-24, on a real arm64 Mac.** Four things established, two of
+which contradict what was written above.
+
+**a. It was masked by a separate bug that stopped the build entirely.** Before any
+segfault could happen, gfortran-16 debug failed to *compile*: `PLOT_GRID:volume`
+and `pixel_volume` (added by `cc530a34`, the serial Bader port) were declared
+lower-case `pure` while calling `PURE` routines. Not compiler-specific -- CI
+(Linux-debug) had been red on it since 2026-08-23, five runs, and gfortran-14
+rejects the same file here. Fixed in `97d8b0e9`; the rule is now written up in
+`docs/FOO_GRAMMAR_DOCUMENTATION.md` ("PURE is contagious upward").
+
+**b. A symbolic backtrace IS obtainable**, contradicting "there is no symbolic
+backtrace yet" above. `lldb` still cannot attach and `-fbacktrace` still prints
+raw addresses, but **macOS writes its own symbolicated crash report** to
+`~/Library/Logs/DiagnosticReports/tonto-*.ips`. Parse the JSON payload:
+
+```
+EXC_BAD_ACCESS, KERN_INVALID_ADDRESS at 0x00000000000000d9
+  make_pg_image_of_shell  <- crash
+  symmetrize_1 / symmetrize_0
+  make_anos_for_atom / make_anos / make_anos_and_interpolators
+  make_promolecule_density_mx / make_promol_guess_mos
+  get_initial_density_mx / get_initial_guess / initialize_scf
+  usual_scf / scf
+```
+
+`0xd9` is a field access off a null base. This is why only jobs with an SCF
+crash: the fault is in building the **promolecule initial guess**.
+
+**c. It is NOT the architecture-tuning flag.** This was the leading hypothesis --
+debug applies `-mtune=native` (via `HOST_FLAG`) while release deliberately avoids
+`native` in favour of `-mcpu=apple-m2`, an asymmetry nobody had pointed at.
+Rebuilt with `-DTONTO_ARCH_FLAG=none`, which removes it: **still exit 139**.
+Refuted. (The asymmetry is still worth removing -- a debug build should carry no
+CPU tuning at all -- but it is not this bug.)
+
+**d. Control, clean.** Same commit, same flags, same machine:
+gfortran-14 debug runs `h2o_rhf_STO-3G` to **exit 0**; gfortran-16 debug gives
+**exit 139**.
+
+**e. It is NOT arm64-specific, and it is NOT a macOS problem.** This is the
+question item 3 below left pending, now answered: a gfortran-16 **debug** build
+on achari2 (Ubuntu 24.04, x86_64) segfaults on the same job, exit 139. The entry
+above said "only (as far as tested) on arm64"; that was untested, not true.
+
+**f. Linux gives the backtrace macOS cannot**, with line numbers, for free:
+
+```
+#3  make_character_table   at pointgroup.F90:1066
+#4  update                 at pointgroup.F90:324
+#5  create_1               at pointgroup.F90:71
+#6  make_anos_for_atom     at molecule.scf.F90:5779
+#7  make_anos / make_anos_and_interpolators / make_promolecule_density_mx
+```
+
+`pointgroup.foo:1018`, inside `POINTGROUP:make_character_table`:
+
+```foo
+   do i = 1, .n_irrep
+      .irrep(i).character.create(.order)
+      do n = 1, .order
+         .irrep(i).character(n) = .irrep(i).mx(:,:,n).trace   ! <- here
+```
+
+So it reads `.irrep(i).mx` for an irrep whose `mx` is **not allocated**. The
+macOS crash is the same class one level out -- `make_pg_image_of_shell` reading
+`.pointgroup.mx(:,:,n)`, `KERN_INVALID_ADDRESS at 0xd9`, a field access off a
+null base -- and both are reached from `make_anos_for_atom`, building the
+promolecule guess for a single-atom molecule.
+
+**So the working conclusion is that this is a latent Tonto bug, not a gfortran-16
+codegen bug**: unallocated pointgroup data that gfortran-14 tolerates and
+gfortran-16 dereferences. That is a much better prognosis than a compiler bug --
+it can be fixed here. It is not yet proven; what is proven is the crash site, on
+two platforms, and that the arch flag is not involved.
+
+**Do the diagnosis on Linux, not on macOS.** `-fbacktrace` there symbolicates
+with file and line for nothing, while macOS needs the crash report in
+`~/Library/Logs/DiagnosticReports/` and gives no line numbers. The Mac was the
+harder machine to work on and was not the necessary one.
+
+**g. Narrowed to the assignment TARGET, with a concrete hypothesis (2026-08-24, gdb on achari2).**
+Runtime values at the fault:
+
+| | |
+|---|---|
+| crash line | `pointgroup.foo:1018` — `.irrep(i).character(n) = .irrep(i).mx(:,:,n).trace` |
+| `i`, `n` | **1, 1** — the very first irrep and first operation |
+| pointgroup | `oh`, `order` 48, `n_irrep` 10 |
+| `ubound(.irrep(1).mx)` | `(1,1,48)` — correct for a 1-D irrep |
+| `ubound(.irrep(4).mx)` | `(3,3,48)` — correct for a 3-D irrep |
+
+So `mx` is allocated correctly and the READ side is sound. (An earlier reading of
+gdb's output suggested every irrep was 1x1x48; that was a misreading of gdb's
+`<repeats>` display, and it is wrong.) By elimination the fault is the WRITE
+target, `.irrep(i).character`, which is allocated on the line immediately above
+by `.create(.order)`.
+
+**It could not be inspected directly**: `print self%irrep(1)%character` gives
+*"A syntax error in expression, near `character'"* — gdb's Fortran parser treats
+`character` as a keyword. Which points at the hypothesis.
+
+**Hypothesis to test next: the component names.** `types.foo:3196` declares
+
+```foo
+   type IRREP
+     label     :: STR(len=4)
+     dimension :: INT          ! <- Fortran keyword
+     character :: VEC{REAL}@   ! <- Fortran keyword, and the allocatable that fails
+```
+
+Both `character` and `dimension` are Fortran keywords used as component names.
+That is legal Fortran and has worked for years, but it is exactly the sort of
+thing a new front-end regresses on, and the failing component is the one that is
+both keyword-named *and* allocatable. gdb's parser already chokes on it.
+
+**REFUTED, same day.** The experiment was run: `character` renamed to `chi`
+throughout (4 references and the declaration — the blast radius is only
+`types.foo`, `irrep.foo` and `pointgroup.foo`), gfortran-16 debug rebuilt,
+`h2o_rhf_STO-3G` rerun. **Still exit 139.** The keyword-named component is not
+the cause, and the rename has been reverted rather than left in the tree, since
+it fixes nothing and would muddy the record. gdb's parser error was a red
+herring about gdb, not about the compiler.
+
+(The names are still poor Fortran — `character` and `dimension` are both
+keywords, and `chi`/`dim` would be better, `chi` being the standard symbol for a
+group character. Worth doing as hygiene, on its own, but it is not this bug.)
+
+**h. The construct itself does NOT reproduce it (2026-08-24).** Two standalone
+reduced cases were written and run under both compilers: (1) an allocatable array
+of a derived type with an allocatable vector component, allocated
+element-by-element in a loop then written through; (2) the same, with the array
+itself a component of an outer derived type, so the access is
+`self%irrep(i)%chi(n)` exactly as in Tonto. **Both compile and run to exit 0
+under gfortran-14 and gfortran-16.** So the shape at the crash site is not, by
+itself, the trigger.
+
+**That is the most useful negative result so far, because of what it implies: the
+crash site is probably not the bug site.** A fault that will not reproduce when
+the construct is isolated, but is reliable inside the full program on two
+platforms, looks like **earlier memory corruption landing somewhere fatal** --
+and gfortran-14 and -16 simply lay memory out differently, so the same corruption
+is benign under one and fatal under the other. That would explain every
+observation at once: compiler-dependent, platform-independent, reproducible in
+situ, not reproducible in isolation, and a read side that checks out while the
+write target does not.
+
+**The leading candidate for that earlier corruption is already in hand.** The
+`-fcheck=all` run stops long before the SCF, during keyword reading, at
+*"Allocatable actual argument 'tmp' is not allocated"* -- `VEC{OBJECT}:read_keys`
+and `:clear_keys`:
+
+```foo
+   read_keys :: leaky
+      self :: allocatable, INOUT
+      tmp :: OBJECT@          ! declared, never created
+      ...
+      tmp.read_keys           ! called on an unallocated allocatable
+```
+
+That is undefined behaviour on every compiler; the uninstrumented run merely
+survives it. The template is inherited by 43 files.
+
+**The experiment was run (2026-08-24), and the `tmp` bug is fixed but was NOT the
+cause.** Four sites in the *allocatable* copy of the template now do
+`tmp.create` / use / `tmp.destroy`, which is the pattern two sibling procedures
+in the same file already used. (The *pointer* copy below the `! Old` marker
+deliberately `nullify`s and is left alone -- the checker's complaint named an
+allocatable.) Result: the `-fcheck=all` violation is gone, and the run gets
+further -- but it still ends in **SIGSEGV, same site, same faulting address
+`0xd9`**. `-fcheck=all` does not catch the fault itself.
+
+**A further clue, and it strengthens the corruption hypothesis: the crash site is
+not the same on the two platforms.**
+
+| platform | crash |
+|---|---|
+| Linux x86_64 | `POINTGROUP:make_character_table`, `pointgroup.foo:1018` |
+| macOS arm64 | `MOLECULE.BASE:make_pg_image_of_shell`, `KERN_INVALID_ADDRESS at 0xd9` |
+
+Both are in the pointgroup machinery reached from `make_anos_for_atom`, but they
+are *different procedures*. A single deterministic logic error would fault in the
+same place on both. Two different faults in the same neighbourhood, neither
+reproducible when the construct is isolated, is what heap corruption looks like:
+whatever is damaged, the layout decides which innocent read dies first.
+
+**The sanitizer was tried on macOS and is INCONCLUSIVE — read this before
+repeating it.** A full `-fsanitize=address -fno-omit-frame-pointer` gfortran-16
+debug build was made and run. ASan is genuinely active (`libasan.8.dylib` linked,
+48 undefined `__asan` symbols), but:
+
+- it produced **no ASan report at all**, and
+- the process died with **SIGBUS (138)** rather than the usual SIGSEGV (139).
+
+A sanitizer that changes the signal but issues no diagnostic has not cleared the
+program; it has failed to instrument usefully. gfortran + ASan on arm64 macOS is
+the suspect, not the absence of a heap bug. **Do not read this as "ASan found
+nothing".**
+
+Stack exhaustion was re-tested at the same time and is genuinely ruled out: the
+plain gfortran-16 debug build still exits 139 with the stack at the hard ceiling
+(`ulimit -s 65520`), as well as at the 8 MB default. That confirms the original
+note.
+
+**Next, and it should be done on Linux.** achari2 has gfortran-16 and a
+conventional toolchain where ASan is reliable; the same build there is the
+obvious repeat, and Linux already proved better for this bug once (it gives
+symbolic backtraces with line numbers for free, which macOS does not). Failing
+that, `valgrind` on Linux would name the offending write directly. The bisect
+option — changing `initial_density=` away from `promolecule` to establish whether
+the damage predates `make_anos_for_atom` — is cheap and still untried.
+
+**Also done and NOT the fix:** the IRREP components `character` and `dimension`
+were renamed to `chi` and `dim` (they are Fortran keywords and were poor names).
+It builds clean and the crash is unchanged, so it is hygiene, not a fix. Note
+`dim` is **reserved in Foo** as the array-size accessor -- renaming DIIS's
+`dimension` method to `dim` turned `d = .dim` into `d = size(self)` on a
+non-array and broke the build, so DIIS keeps its name.
+
+**Still open, and the next step.** `-fcheck=all` does turn a crash into a named
+error, but **not this one** -- it stops earlier, at
+`vec_atom.F90:2018`, with *"Allocatable actual argument 'tmp' is not allocated"*,
+during keyword reading and long before the SCF. That is a real defect in its own
+right (`VEC{OBJECT}:read_keys` and `:clear_keys` declare `tmp :: OBJECT@`, never
+create it, and then call a method on it; the template is inherited by 43 files),
+but it is benign in practice -- the uninstrumented run gets past it and dies
+later somewhere else. So it is **not established** that it causes the segfault.
+To get there: fix or suppress the `tmp` violation, then re-run under
+`-fcheck=all` and see what it names next.
+
 4. **Also wanted (Dylan): a DEBUG CI job.** Debug is the configuration whose job is to catch
    crashes and precondition violations, yet nothing checks it — CI builds release only, and the
    debug status here was two weeks stale, which is why this went unnoticed. Design notes: the 4
@@ -3637,7 +4262,390 @@ backtrace yet. Options, cheapest first:
 
 ---
 
+# Workshop and examples
+
+## Still owed: SO₂ as an ADDITIONAL exercise 5 (Dylan, 2026-08-24)
+
+**Not a replacement for urea.** Exercise 2's molecule was chosen by measurement
+in 2026-08-10, and that rejection is the *reason* this is a separate exercise.
+Timed on `sauce`, same settings for both (RHF/def2-SVP, HAR, no cluster charges,
+0.001/0.01):
+
+| | reflections | ASU | wall clock | R(F) after HAR |
+|---|---|---|---|---|
+| SO₂ (`tests/long/so2_rhf_DZP_anharmonic_*`) | 1097 | S + 2×O | **8.0 s** | 0.0406 |
+| urea (`tests/hart/urea_hart_STO-3G`) | 817 | C,O,N,2×H | **23.8 s** | **0.0185** |
+
+SO₂ is quicker, and urea won anyway: stripped of the anharmonic 4th-order ADPs
+on S and the cluster charges — neither wanted in a first exercise — SO₂'s R(F)
+*rises* from 0.0295 to 0.0406 while urea's falls to 0.0185 (SHELX IAM 0.0253).
+An exercise whose numbers get worse teaches the wrong lesson. Urea is also a
+single self-contained CIF, whereas SO₂ needs a CIF **and** a separate
+`xd_F.hkl`.
+
+**So give SO₂ the settings it actually needs, and make that the lesson** — some
+structures are not served by the default recipe:
+
+- Keep `refine_4th_order_for_atoms= { S }` (anharmonic ADPs on sulfur) and the
+  cluster charges. Source data:
+  `tests/long/so2_rhf_DZP_anharmonic_consistent_cluster_charge_HAR/{stdin,xd_F.hkl}`.
+- Basis `def2-SVP`, as the other exercises.
+- Append a `robydata=` / `roby_analysis` block for the bond indices.
+
+**The chemical punchline urea has not got:** sulfur is **not** hypervalent. The
+Roby-Gould bond order comes out ≈1.7, not 2, with a large ionic component,
+reproducing Grabowsky *et al.*, *Angew. Chem. Int. Ed.* **2012**, *51*, 6776
+(cite by DOI; the PDF is on a stranded branch). `tests/rgbi/` has no SO₂ case,
+so one could be added.
+
+**Shape:** `workshop/examples/5-so2-har/` following the established deck pattern
+(a `!` comment block giving the `cd` + run line, then the job), and a
+`## Exercise 5` in `workshop/WORKSHOP.md` matching the house layout exactly —
+prose → `**In a terminal**, type:` → runtime → `### The input file` →
+`### What you should get` (table with a `?` column) → `### The four diagnostic
+plots` → `### The bond indices` → `### Things to try next` → `---`. Update the
+overview table at the top. Images
+`workshop/images/so2.{QQ_plot,F_z_vs_stl,F_z_vs_F_exp,Delta_F_vs_stl}.png` plus
+`so2.rgbi-{structure,dials-all}.png`.
+
+**Every number must be re-measured**, not transcribed. The figures above came
+from an 8 August build of a branch that predates the extinction merge, and the
+plots are job-named PNGs now, not `stdout.*.pdf`.
+
+## Exercise 4 should use Tonto's own contour plotting, not a hand-rolled script
+
+**Status: open, 2026-08-11.** Dylan's observation, and he is right.
+
+`workshop/WORKSHOP.md` exercise 4 writes the grid with `plot_format= gnuplot`
+and draws it with `workshop/examples/4-urea-deformation/deformation.gnuplot`, which
+computes its own logarithmic contour ladder. Tonto already has that facility:
+
+```
+   plot_format= gnuplot.contour
+   contour_scale= log            ! the default
+   contour_min_value= -3.0       ! log10 of the smallest contour
+   contour_increment=  0.5       ! half a decade
+   contour_max_value=  0.0       ! log10 of the largest
+```
+
+which makes Tonto write three files per plot — `*.contour_data`,
+`*.bond_data` and a `*.commands` gnuplot script — and the script draws the map
+with a **logarithmic colour bar labelled in powers of ten**, positive and
+negative, and the bonds overlaid. Verified working: it reports
+
+```
+Minimum +ve log10 contour =  -3.0
+Maximum +ve log10 contour =   0.0
+Contour increment         =   0.5
+No. of contours           =   7
+Total no. of contours     =  15
+```
+
+**Why it was not adopted before the lab.** Two things need sorting first, and
+neither is deep:
+
+1. The generated script targets `xterm` and then `postscript eps`. Rendering
+   to PNG means overriding both terminal lines, and under `pngcairo` the
+   result comes out black — the script's colours assume the EPS terminal's
+   white ground, and `background rgb 'white'` alone does not fix it.
+2. The difference map (constrained minus unconstrained) is made by subtracting
+   two plain grids. The contour format writes a different file, so keeping
+   that picture means either a second pair of plots in plain format or
+   subtracting in the contour data.
+
+**The right end state** is exercise 4 using `gnuplot.contour` and the workshop
+telling the reader to run `gnuplot -persist <job>,<kind>,gnuplot.commands`,
+with no hand-written script at all.
+
+---
+
 # Done, resolved and closed (archive)
+
+## RESOLVED (2026-09-03): the 124/124 baseline versus CI's 89 — different suites, both right
+
+**The two numbers were never comparable, and neither was wrong.**
+
+| | suites counted | tests |
+|---|---|---|
+| the "124/124" baseline, 2026-07-15 | `short` 51 + `long` 28 + `cx` 32 + `rgbi` 13 | **124** |
+| `ci-full-suite.yml`, 2026-08-27 | `short` 55 + `long` 31 + `hart` 3 | **89** |
+
+The 124 counted every ctest-registered suite of the day; the 89 counts the three the workflow
+is asked for. `hart` did not exist in July and `cx`/`rgbi` are not in the workflow's list. The
+same four suites today hold 131.
+
+**What actually went wrong is that neither score said what it counted**, so for a day in August
+a full-suite result could not be called a pass or a regression — which blocked reading the
+`textfile.foo` verification run. The fix is a habit, not a number: `CLAUDE.md` §5 now states the
+composition beside every score, and `docs/TONTO_AND_MPI.md` records the reconciliation where
+the confusion happened.
+
+**And the run it was blocking passes.** 88/89 loose, 77 exact, all four invariant checks green;
+the 89th is a deliberate skip, see the entry below.
+
+## RESOLVED (2026-09-03): a skipped test was reported as an ERROR and failed the gate
+
+`scripts/test.py` exits **77** — the automake convention — when a declared input is absent, and
+`tests/CMakeLists.txt` pairs that with `SKIP_RETURN_CODE`, so `ctest` reports it as skipped.
+`scripts/suite_report.py` runs `test.py` **directly**, so it never saw that property and scored
+exit 77 as `ERROR`: a red gating step, a `GRAND TOTAL` one short of its denominator, and a
+failure log written for a test that had not run.
+
+It cost a full-suite run its verdict on 2026-08-27, where `ammonium_borane_pHAR_C23` skips for
+want of its 167 MB asset.
+
+**Fixed.** `suite_report.py` knows `SKIP_EXIT_CODE` now: a skipped test is scored `SKIP`, kept
+**out of the denominator** (it did not run, so scoring it either way misreports the build),
+counted as `SKIPPED n` in the subtotal, and its reason printed under the totals so the smaller
+denominator is never silent. It writes no failure log. Verified both ways on a scratch suite —
+a skip passes the gate and an ERROR still fails it.
+
+**The general shape, worth keeping:** a second test runner that bypasses `ctest` also bypasses
+every `set_tests_properties` the project relies on. `SKIP_RETURN_CODE` was the one that bit;
+`TIMEOUT`, `WILL_FAIL` and `LABELS` are equally invisible to it.
+
+
+## DONE (2026-08-27): transpose and thin the CI badge table
+
+Done as asked, and **one premise of the original entry was wrong**. It said four of
+the nine cells were dead, counting WSL-debug as a badge that "has never had a green
+run". That was true when written on 2026-08-26 but is not now: WSL-debug has run
+weekly on `master` and its last three runs are green. It stays badged. The dead cells
+were the three macOS placeholders and the WSL-MPI dash — and the macOS ones are dead
+for one reason only, that a `schedule:` trigger fires from the default branch, so
+those files never run until they reach `master`.
+
+What landed:
+
+- **`README.md`** — transposed, so build types are rows and platforms columns, which
+  is the axis that grows. Thinned to the five live badges: the macOS placeholder row
+  is gone, replaced by one sentence saying macOS *is* built and tested but carries no
+  badge yet, pointing at the CI document. The WSL-MPI dash stays, being one blank cell
+  in an otherwise live row.
+- **`docs/TONTO_CONTINUOUS_INTEGRATION.md`** — gains a *Coverage* section carrying the
+  full platform x build-type matrix, macOS and the missing parallel-debug row included,
+  where a blank is informative. Its workflow table also had the same stale
+  "never yet run" claim about WSL-debug; corrected.
+
+Not done, deliberately: the macOS cells were **not** given badges in anticipation of
+the merge to `master`. A badge pointing at a workflow that has never run is exactly
+how WSL-debug got into the state this entry misreported. Badge them once they have
+run green.
+
+
+## DONE (2026-08-27): the ammonia-borane pHAR test is reinstated, and pHAR is tested
+
+**Closed 2026-08-27.** All five steps in the list below are done, and the test was verified
+both ways on that date against a `hart`/`tonto` built from `233e2d06`:
+
+- **Asset absent** — `ctest -R ammonium_borane` reports `***Skipped` in 0.08 s, and the run
+  summarises as *100% tests passed, 0 tests failed*. `scripts/test.py` exits 77 and
+  `tests/CMakeLists.txt` sets `SKIP_RETURN_CODE 77` on **every** test, so a clone without the
+  object does not go red. That was step 3, described below as *"the only real piece of work
+  left"*.
+- **Asset present** — `Passed` in **166 s**, reproducing the blessed R(F) 0.005188,
+  GoF 0.794621, N_r 20, N_p 11. So pHAR is no longer untested library code.
+
+**Step 2 below was deliberately REVERSED, and the list is left unedited so the reasoning
+stays visible.** It says to restore a `.gitattributes` tracking `tests/long/**/*.XML`. The
+design settled on the opposite: `develop` and `master` carry **no LFS objects at all**
+(`git lfs ls-files develop` must print nothing), the asset lives only on the tag
+`archive/release-pHAR-broken`, and `scripts/fetch_phar_asset.sh` pulls it on demand into
+`tests/long/ammonium_borane_pHAR_C23/`, where `.gitignore:106` keeps it out of the index.
+Committing the pointer plus a tracking `.gitattributes` would make **every** clone of a
+public repository pull 167 MB against GitHub's 1 GB free allowance. The full reasoning is in
+the test's own `IO` manifest.
+
+**One trap worth knowing**, because it cost this discovery a while: the asset had in fact
+been fetched on `sauce`, into `tests/crystal23/ammonium_borane_pHAR_C23/` rather than
+`tests/long/...`. Verified genuine by sha256 against the LFS oid, it was simply in the wrong
+directory, so the test skipped for weeks with the file it needed sitting two directories
+away — and skipping is quiet by design. `fetch_phar_asset.sh` takes an optional destination
+argument, which is how a copy ends up somewhere the test does not look. If the test skips,
+check for a stray copy before re-downloading 167 MB.
+
+The original entry follows, unchanged.
+
+### Original entry (Dylan, 2026-08-05): blocked by a 167 MB asset
+
+**pHAR code ships in the library but nothing tests it.** `MOLECULE.CE:phar_defragment` is live
+(`molecule.main.foo` dispatches `phar_defragment`, added by Kang 2025-03-13), and
+`crystal.foo`, `molecule.har.foo` and `molecule.rho.foo` all carry pHAR-specific branches. There
+is **no pHAR test in `tests/`**.
+
+One exists, on a branch: `tests/long/ammonium_borane_pHAR_C23/`, on
+**`origin/release-pHAR-broken`** (tip `18712bd6`, 2025-04-29, kanghyun-chu).
+
+**What is there, and what is missing:**
+
+| file | size | |
+|---|---|---|
+| `stdin` | 946 B | the job |
+| `stdout` | 269 KB | the blessed reference |
+| `B6H6_grown.cif` | 7 KB | input |
+| `tonto_data_on_F_20rfl.hkl` | 16 KB | input |
+| `Crystal23_InputFiles.zip` | 12 KB | the Crystal23 inputs that *generate* the XML |
+| **`GenerateXML.XML`** | **134 B** | **a Git LFS pointer, not the file** |
+
+The `IO` manifest lists `GenerateXML.XML` as a required input, so **the test cannot run**. The
+pointer says:
+
+```
+version https://git-lfs.github.com/spec/v1
+oid sha256:1c5c24f0903c1b8667e3f8aa41ba1b2a550a49370b22db422a37d7a1f093a8ee
+size 174978609
+```
+
+i.e. the real asset is **167 MB**.
+
+**FIRST STEP, and it decides everything below: is that LFS object still retrievable?** This was
+*not* checked — `git-lfs` is not installed on the machine this was investigated from. One
+command answers it:
+
+```bash
+sudo apt install git-lfs          # or: brew install git-lfs
+cd <a scratch clone of tonto>
+git lfs ls-files -l origin/release-pHAR-broken     # does GitHub still know the oid?
+git lfs fetch origin release-pHAR-broken           # does it actually come down?
+```
+
+- **If it downloads**, the fix is small: restore a `.gitattributes` that tracks
+  `tests/long/**/*.XML`, port the one test directory onto `release`, and decide whether a
+  167 MB clone cost is acceptable (option 4 below says it probably is not).
+- **If it 404s or the quota is exhausted**, the object is gone and options 1–3 are the only
+  real ones — regenerate, fetch on demand, or shrink the case.
+
+**How the deposit went wrong** is legible in the branch's own history:
+
+```
+0f70beae  Activated git lfs and added .gitattributes files but NOT YET large XML
+69d6e806  Added large XML file
+...
+18712bd6  The Crystal23 input files for generating the GenerateXML.XML are included
+```
+
+LFS was enabled and `.gitattributes` added, then the XML committed — but **`.gitattributes` does
+not exist at the branch tip**. So the tracking configuration was lost while the pointer file
+stayed behind, and a plain `git clone` gets a 134-byte text file where a 167 MB XML should be.
+Whether the LFS object is still retrievable from GitHub was **not** checked (git-lfs is not
+installed on this machine) — check that first, since it decides which option below is viable.
+
+**Options, in rough order of preference:**
+
+1. **Regenerate rather than store.** `Crystal23_InputFiles.zip` (12 KB) is committed precisely so
+   the XML can be rebuilt — that is what `18712bd6` was for. Needs Crystal23, which is
+   proprietary, so this makes the test reproducible only for those who have it.
+2. **Fetch on demand**, the way the ANTLR jar already is at configure time: host the XML
+   somewhere durable and have the test skip cleanly when it is absent.
+3. **Shrink the case.** 167 MB for a test asset is the real problem; a smaller cell, fewer
+   reflections, or a trimmed XML would make this an ordinary test.
+4. **Proper LFS** — restore `.gitattributes` and re-push the object. Note GitHub's free LFS quota
+   is 1 GB storage *and* 1 GB/month bandwidth; a 167 MB asset cloned a handful of times exhausts
+   it, which is a poor fit for a public repository.
+
+**Note the branch is 631 commits behind `release` and 8 ahead**, so this is a port of one test
+directory, not a merge. Those 8 commits also contain unrelated work (form-factor symmetrisation
+tables with RMS and MAX residuals) that may or may not already be in `release` — check before
+cherry-picking.
+
+---
+
+### ANSWERED AND UNBLOCKED (2026-08-16): the asset is alive, and the test PASSES
+
+**The first step above was finally run, and the answer is yes.** The LFS object is still on
+GitHub, retrievable, and byte-exact.
+
+It did not need `git-lfs` to find out. The LFS protocol is plain HTTP, so the batch API
+answers it directly — useful whenever `git-lfs` is missing:
+
+```bash
+curl -s -X POST \
+  -H "Accept: application/vnd.git-lfs+json" -H "Content-Type: application/vnd.git-lfs+json" \
+  -d '{"operation":"download","transfers":["basic"],"objects":[
+       {"oid":"1c5c24f0903c1b8667e3f8aa41ba1b2a550a49370b22db422a37d7a1f093a8ee",
+        "size":174978609}]}' \
+  https://github.com/dylan-jayatilaka/tonto.git/info/lfs/objects/batch
+```
+
+It returns a signed `download.href` (1 h expiry) rather than an error, i.e. the object is
+present and the quota is not exhausted. Downloading it gives 174 978 609 bytes whose sha256
+matches the oid exactly, opening with
+`<CREATOR name="CRYSTAL" version="1.0.0"/> <TITLE> Ammonium_closo-hexaborane(6)_pHAR </TITLE>`.
+
+#### How to pull the file and run the test
+
+`git-lfs` is installed as of 2026-08-16. Work in a **separate worktree**, so the main tree and
+its tests cannot be disturbed:
+
+```bash
+# 1. an isolated checkout of the archived branch (shares the object store, no second clone)
+git worktree add -b wip/phar ~/github/tonto-phar archive/release-pHAR-broken
+
+# 2. pull the 167 MB asset. Note .gitattributes is ABSENT at the tip, but the pointer is in
+#    the index, so git-lfs still resolves it -- `git lfs ls-files -l` lists the oid
+cd ~/github/tonto-phar
+git lfs pull --include "tests/long/ammonium_borane_pHAR_C23/GenerateXML.XML"
+git lfs status        # expect: LFS: 1c5c24f -> File: 1c5c24f
+
+# 3. run it against the CURRENT binary, not a build of the 2025-04 branch. That branch
+#    predates the ANTLR4 translator and foo.pl is gone, so it will not build; the point is
+#    to reinstate the TEST on develop, and the test is data plus a job file
+mkdir -p /tmp/phar && cd /tmp/phar
+cp ~/github/tonto-phar/tests/long/ammonium_borane_pHAR_C23/{stdin,B6H6_grown.cif,tonto_data_on_F_20rfl.hkl,GenerateXML.XML} .
+sed -i '/thermal_smearing_model=/d' stdin      # see below -- obsolete keyword
+TONTO_BASIS_SET_DIRECTORY=<repo>/basis_sets <repo>/build/tonto
+```
+
+**One edit to the job file is required.** As committed it dies with
+
+```
+Error in DIFFRACTION_DATA.READ:process_keyword ... unknown option: thermal_smearing_model=
+```
+
+`thermal_smearing_model=` was removed by `acb7af0b`, *"Removed 'temperature_factor_model' and a
+few others, **in favour of deriving the info from partition_model**"* — the whole machinery is
+commented out, keyword, reader, setter, `CRYSTAL` accessor and its `molecule.scf.foo` consumers.
+The job already sets `partition_model= oc-crystal23`, which now carries that information
+(confirmed by Dylan, 2026-08-16), so **deleting the line is the correct port**, not a workaround.
+
+#### Result: exact reproduction, 3 m 41 s
+
+With that one line removed, the job runs to completion on current `develop` and reproduces the
+2025-04 reference **digit for digit**:
+
+| | this run | reference |
+|---|---|---|
+| `Structure fit converged.` | yes | yes |
+| R(F) | 0.005188 | 0.005188 |
+| N_r | 20 | 20 |
+| N_p | 11 | 11 |
+| GoF² | 0.631422 | 0.631422 |
+| GoF | 0.794621 | 0.794621 |
+| scale factor | 0.979852 | 0.979852 |
+
+So **pHAR still works**, and the code that ships untested is now known to be correct on this
+case. That was the whole point of the entry.
+
+#### What remains, and it is small
+
+The reference is 2928 lines against this run's 971. The difference is **not numerical**: the
+`thermal_smearing_model=` keyword echo (removed), a *"crystal data already defined!"* warning,
+and a **"Form factor asymmetry"** diagnostic section the current build no longer prints. So
+reinstating the test needs its `stdout` re-blessed — legitimate, given a year of intervening
+development, but a blessing decision.
+
+Remaining work to land it, with **option 2 (fetch on demand) chosen by Dylan**:
+
+1. Port `tests/long/ammonium_borane_pHAR_C23/` to `develop`, keeping the 134-byte **pointer**
+   rather than the asset — a 167 MB file in a public repo is what option 4 rightly rejects.
+2. Restore a `.gitattributes` tracking `tests/long/**/*.XML`, which is the file whose loss
+   caused all of this.
+3. **The test must SKIP, not fail, when the asset is absent** — otherwise every clone without
+   the object goes red. `scripts/test.py` has no skip mechanism today; ctest's
+   `SKIP_RETURN_CODE` is the natural hook. This is the only real piece of work left.
+4. Re-bless `stdout` from a current run.
+5. Note the runtime: 3 m 41 s, so `long`, and comfortably the slowest test in the suite.
+
 
 ## DONE (2026-08-02): test registration — stale `DEPENDS run_test`
 
@@ -3733,7 +4741,7 @@ translator change — the DOT already carries every `use` edge):
 - **`--module NAME`** — documentation ego-graph of one module's direct dependencies
   (`--reverse` dependents, `--both`); no `concentrate`, so every direct edge shows.
 
-**Key findings, recorded in `docs/MAKING_CALL_GRAPHS.md`:** the "aggregate vs ambient" distinction
+**Key findings, recorded in `docs/TONTO_CALL_GRAPHS.md`:** the "aggregate vs ambient" distinction
 (merge-and-keep vs hide); `concentrate=true` is *lossy* (drops a direct edge parallel to a
 longer path — e.g. `ATOM→INTERPOLATOR`), so the doc mode avoids it; and Graphviz has **no** edge
 hops/bridges and is already hierarchical, so fewer edges beats a different engine. README §7b
@@ -3916,39 +4924,392 @@ suite (119/124 — next section) and wiring the release gate into CI.
 
 ---
 
-## RGBI: known defects and rough edges
+## `archive/bond-energy` will not be ported (Dylan, 2026-08-18)
 
-Moved out of `docs/RUNNING_RGBI.md` on 2026-08-10, when the user-facing pages
-were cleared of developer material. None is fixed.
+**Decided, not merely postponed.** The Roby bond-energy work on `archive/bond-energy`
+(Dylan Jayatilaka, 11 commits, 2020-09 – 2020-10) stays on its tag. Nothing on
+`develop` depends on it and nothing was removed to make this decision.
 
-**In the program**
+What it holds, so the size of the thing is on record: `roby.foo` +1478 lines --
+`Eshared` partitioning for E^DE, an exact energy-density method, deformation
+energies and group populations -- plus `types.foo` +127, `atom.foo` +123,
+`vec{atom}.foo` +122, and smaller changes to `molecule.prop.foo`,
+`molecule.scf.foo`, `opmatrix.foo`, `vec{int}.foo` and `CMakeLists.txt`.
+Eleven files, +1756/−217, all unmerged (`git cherry develop archive/bond-energy`
+marks all 11 commits `+`).
 
-- **`rgbi --help` calls the program `run_rgbi`**, which is the CMake target name
-  rather than what gets installed, and points at a `./rgbi-script` folder, which
-  is spelled `rgbi-scripts`. Both cosmetic. `hart` has an invariant check
-  comparing `--help` against its option `case` labels
-  (`scripts/check_hart_options.sh`); `rgbi` has three options and no such check.
-- `CMakeLists.txt:883` pins a file to `-O2` because **"rgbi/BN's Roby
-  populations were wrong"** at other optimisation levels. Read that comment
-  before touching optimisation flags for this program. No test guards it — see
-  the macOS-in-CI item below.
+Two things a future reader should know before reopening it, both established
+2026-08-18:
 
-**In the pictures**
+- **The starting position is better than it looks.** Unlike the Bader port there is
+  already a regression net: `tests/rgbi/karrikinolide_blyp_6-31G(d)_Roby_bond_index`
+  and its `_g09_` variant exercise the live Roby path. And the two helper modules the
+  tag adds, `vec{emat{intrinsic}}.foo` and `vec{emat{int}}.foo`, have since landed on
+  `develop` independently, so that part of the work is already done.
+- **The difficulty is drift, not translation.** `roby.foo` is 7490 lines on `develop`
+  against 8463 on the tag, and it has been modified on `develop` since 2020. This is
+  a graft into evolved code, not a clean apply, and it needs a `types.foo` change --
+  which the Bader port did not.
 
-- **The dial grid's column count is hard-coded to four**, in three places per
-  routine (`ROBY:put_dial_table_do_H`, `foofiles/roby.foo:7090`). Four dials
-  need ~520 pt and `article`'s default `\textwidth` is ~345 pt, so the fourth
-  column fell off the page and `pdfcrop` cut it — visible in the committed
-  reference PDFs. Worked around in `rgbi-dial-header.tex` by giving the page a
-  large canvas.
-- Nothing compares the reference PDFs automatically; they are eyeball targets.
+Recover it with `git branch bond-energy archive/bond-energy`. See
+`docs/TONTO_REPOSITORY_BRANCHES.md`.
 
-**Reference material not in the repository**
+## Keyword parsing must not leak into library routines (fixed; survey kept)
 
-The Grabowsky chapter PDF is deliberately not checked in — 1.1 MB of binary. On
-`sauce` it is at `~/rgbi-reference/Jayatilaka_2025_Grabowsky_chapter.pdf`.
+`MOLECULE.READ:read_archive(name,genre)` is a library routine — it takes its
+operands as arguments and is called from `molecule.scf.foo` (×3),
+`molecule.main.foo` (×2) and `run_sf_derivs.foo`. It nonetheless reached for the
+global `stdin` to look for a trailing `normalise` qualifier:
 
----
+```foo
+   if (stdin.buffer.n_items==2) stdin.read(normalize)
+```
+
+Two bugs in one line:
+
+- **It segfaults in any program without a `stdin`.** `hart` has no job file, so
+  this dereferenced an unallocated `TEXTFILE` on the second HAR cycle — the
+  first time the refinement re-reads its density archive.
+- **In `tonto` it was dead, and could corrupt parsing.** `TEXTFILE:n_line_items`
+  *is* `buffer.n_items`, and the keyword handler `ENSURE`s `n_line_items==3`, so
+  a line of 3 items can never satisfy `==2`: no job file could ever switch
+  normalisation on, and every `if (do_norm) …unnormalize(…)` branch was
+  unreachable. Meanwhile a *programmatic* caller inherited whatever line the job
+  file was on, and on a 2-item line would silently consume one of its tokens.
+
+Fixed: the qualifier is now an optional argument, and `read_archive_and_normalise`
+is its keyword — so the feature is reachable for the first time.
+
+**Survey — this was the only instance.** Six places in the library peek at the
+line and then read a variable number of items:
+
+| Site | Procedure | Shape | Reached from |
+|---|---|---|---|
+| `molecule.har.foo:1797` | `make_spherically_averaged_HAs` | no args | 1 `case` line |
+| `molecule.misc.foo:2040` | `put_interpolator_list` | no args | 1 `case` line |
+| `molecule.misc.foo:5022` | `put_spherical_SA_ED_from_atom` | no args | 1 `case` line |
+| `diffraction_data.put.foo:783` | `put_worst_reflections` | no args | 1 `case` line |
+| `molecule.put.foo:674` | `put_archive` | no args | 1 `case` line |
+| `molecule.read.foo` | `read_archive(name,genre)` | **took args** | 6 programmatic sites |
+
+The five no-argument ones are genuine keyword handlers: they read *all* their
+operands from `stdin`, including the name of the thing to act on, and a driver
+never calls them. That pattern is fine. The breakage came only from merging the
+parse role and the do role into one procedure, which happened once.
+
+**The rule, for anyone adding a driver:** a procedure that takes arguments must
+not touch `stdin`. `scripts/check_library_stdin.py` enforces it (ctest name
+`library_stdin`, label `short`; also run by `make report` and CI).
+
+### DONE (2026-08-02): `write_archive` swallowed the next keyword
+
+Found while testing `read_archive_and_normalise`. `MOLECULE.PUT:put_archive` has
+the same qualifier peek, with an off-by-one:
+
+```foo
+   if (stdin.buffer.n_items==2) stdin.read(normalize)     ! molecule.put.foo
+```
+
+`n_items` counts the **whole line including the keyword** — that is why
+`read_archive`'s handler asserts `n_line_items==3` for
+`read_archive <name> <genre>`. So a plain `write_archive MOs` is exactly 2 items,
+the peek always fires, runs off the end of the line and **consumes the next
+keyword** as its qualifier. The test should be `==3`.
+
+Demonstrated: a job file with `write_archive MOs` followed by
+`read_archive MOs restricted` dies with "unknown option: mos" — the
+`read_archive` keyword was eaten, leaving its operands to be read as keywords.
+
+**The one test that uses it is hollow — investigate this first.**
+`tests/long/nh3_x-ray-constrained-rhf-cluster-charge_cc-pVTZ_restart/stdin:196`
+reads:
+
+```
+   read_ascii_archive density_mx r
+   write_archive density_mx
+
+   ! Now to the SCF
+   scf
+```
+
+`write_archive density_mx` is two items, so the peek fires and swallows the very
+next token — **`scf`**. The reader resumes at `delete_scf_archives`. Evidence
+from the blessed reference, not inference:
+
+- `grep -c SCF stdout` → **0**. Not one mention, though the job sets
+  `output_results= YES`.
+- `Wall-clock time taken for job "nh3" is , 40 milliseconds.`
+
+An X-ray-constrained RHF cluster-charge SCF in cc-pVTZ does not run in 40 ms.
+**The test performs no SCF at all**, and its reference was blessed in that
+state, so it passes by faithfully reproducing the skip. Whatever coverage its
+name promises — X-ray constrained wavefunctions, cluster charges, restart — it
+does not provide.
+
+**Why it is not fixed here.** Correcting the off-by-one makes `scf` execute, so
+the job would then do the science it was written to do and its reference must be
+re-blessed against completely different output. That is a deliberate decision
+about a long-suite test, not a drive-by in an options branch.
+
+**Blast radius, surveyed:** one test and one line.
+`grep -rn '^[[:space:]]*write_archive' tests/ runfiles/` returns exactly the nh3
+line above and nothing else, and `n_items==2) stdin.read` now matches only
+`molecule.put.foo:674`. So the fix is a one-character edit (`2` → `3`) plus
+re-blessing one reference — but that reference will change completely, because
+the job will start doing an SCF it has never done.
+
+(The `normalise`/`normalize` spelling fix applied to that same line is
+behaviour-neutral until this off-by-one is fixed, since the token it compares is
+currently a stray keyword either way.)
+
+### Four more of the same shape, allow-listed rather than fixed
+
+Writing that check turned these up. They are **not broken today**, so they are
+recorded rather than changed, but they are the same merged-role pattern and the
+allow-list in the script names each one:
+
+- `molecule.read.foo:read_molden_file`, `read_tonto_FChk_file`,
+  `read_g09_FChk_file` — take an optional name and fall back to
+  `stdin.buffer.exhausted` when it is absent. Safe only because every driver
+  passes the name (`run_rgbi.foo:202-203` does). Call one without the argument
+  from a program that has no `stdin` and it dereferences an unallocated
+  `TEXTFILE`, exactly as `read_archive` did.
+- `molecule.put.foo:put_florian_wfn_file` — **unguarded**:
+  `if (NOT stdin.buffer.exhausted) stdin.read(name)` with no `present()` test at
+  all. This one would crash in any driver that reaches it. Nothing does today.
+
+The fix in each case is the one applied to `read_archive`: move the fallback
+into the keyword handler and let the library routine take a plain argument.
+
+`vec{basis}.foo:read_library_data` is allow-listed for the opposite reason — it
+is *correct*. It creates `stdin` itself when there is none and restores it
+afterwards. Copy that pattern if a library routine genuinely needs the parser.
+
+(`put_archive` looks like a counter-example to a plain grep — 10 further call
+sites — but those are a *different overload*, `put_archive(item,name,…)`, which
+takes arguments and never touches `stdin`. Read the `.int` file rather than
+grepping by name; see CLAUDE.md §8.)
+
+## DONE (2026-08-03): the MPI CI is GREEN — first time ever
+
+Run #8 (`29f8dcea`) concluded **success**, after the `--oversubscribe` fix below. Every step
+passed, including the two that matter:
+
+| step | result |
+|---|---|
+| Assert the binary really is MPI-linked | success |
+| **MPI invariant — pi is rank-count independent (GATING)** | **success** |
+| Short suite under MPI at 2 ranks (informational) | **success** |
+
+Runs 1–7 had all failed. Note the informational short suite passed too, which is more than the
+gate required — so `tonto` at 2 ranks agrees with the serial references across the short suite in
+CI, not just locally.
+
+## DONE (2026-08-02): the MPI CI failure was the launcher, not the reductions
+
+**The reductions are correct.** This entry previously said "something in the reduction path is
+still wrong" — that was wrong, and it was written before the log had been read. Correcting it in
+full, because the mistaken version was pushed.
+
+`ci-mpi.yml` had failed on every run since it was added, always on the gating step *"MPI
+invariant — pi is rank-count independent"*. The log says:
+
+```
+ok   mpi_pi   -n 1: 3.141592653589362
+ok   mpi_pi   -n 2: 3.141592653589390
+FAIL mpi_pi   -n 4: launcher exited 1
+```
+
+So π was right at 1 and 2 ranks, agreeing with each other to **13 significant digits** — i.e.
+`PARALLEL_SUM` works. At 4 ranks the program **never ran**: Open MPI 5 refuses to start more
+ranks than there are slots and exits non-zero, and a GitHub runner does not have 4.
+
+The workflow already knew this in one place and not the other: the toolchain-verification step
+uses `--oversubscribe` (`ci-mpi.yml:114`), and the suite step is pinned to `-n 2` with the
+comment *"the runner has 4 vCPUs and the launcher would oversubscribe"* — but the π check was
+invoked with `1 2 4` and `check_mpi_pi.sh` launched without the flag.
+
+**Fixed** in `scripts/check_mpi_pi.sh`: probe the launcher (`--version | grep -qi "open mpi"`)
+and add `--oversubscribe` when it is Open MPI. Probed rather than hard-coded because the flag is
+Open MPI's; MPICH oversubscribes unasked and would reject it. Oversubscribing is exactly right
+here — this is a correctness check on a tiny Riemann sum, not a benchmark.
+
+Verified locally on a 12-core machine, where `-n 16` is a genuine oversubscribe:
+
+```
+ok   mpi_pi   -n 1: 3.141592653589362      <- identical to CI
+ok   mpi_pi   -n 2: 3.141592653589390      <- identical to CI
+ok   mpi_pi   -n 4: 3.141592653590147
+ok   mpi_pi   -n 16: 3.141592653589789
+ok   mpi_pi   all rank counts (1 2 4 16) agree with pi and with each other
+```
+
+and the flag is demonstrably the cause: `mpirun -n 16` alone exits 1 without running anything,
+`mpirun -n 16 --oversubscribe` exits 0.
+
+**What this changes.** Parallel fragHAR is **not** blocked by a broken reduction, which is what
+the red CI appeared to say. The reduction path is sound at 1, 2, 4 and 16 ranks. The remaining
+`fragment_SCF_para` concerns stand on their own merits — the two-strategy split and the
+`next_p_loop_index` off-by-one — and are not evidence of anything deeper.
+
+**Lesson worth keeping:** the check reported `launcher exited 1`, which is not a numerical
+failure at all, and four consecutive runs were read as "the reductions are broken" without
+anyone opening the log. `scripts/check_mpi_pi.sh` distinguishes the cases in its own output; the
+diagnosis just has to read it.
+
+## ROOT CAUSE FOUND AND FIXED (2026-08-03): `TEXTFILE:flush` put the margin twice on master
+
+```foo
+      if (IO_IS_ALLOWED) then
+         write(unit=.unit,...) trim(.buffer.string)
+         ...
+         .clear_and_put_margin        ! <-- MASTER ONLY
+         .record = .record + 1
+      end
+
+      PARALLEL_BROADCAST(.IO_status,...)
+      PARALLEL_BROADCAST(.record,...)
+
+      .clear_and_put_margin           ! <-- every rank
+```
+
+`clear_and_put_margin` ends in `.buffer.put(...)` → `BUFFER:put_str`, which **broadcasts**
+`.string` (256 bytes) and `.item_end`. So the master entered **one extra pair of collectives per
+flush**, the ranks fell out of step, and the next collective failed with `MPI_ERR_TRUNCATE`.
+
+**Why it hid for years:** `clear_and_put_margin` *returns early* when `.style.margin_width==0`,
+doing no collective at all — and that is the normal case. It only bites once something sets a
+margin. `COMMAND_LINE:put_command_optarg` calls `set_margin_width(2)`, which is why `hart` died
+exactly there, why the first 126 broadcasts matched perfectly (banner, margin 0), and why
+`tonto` was never affected.
+
+**Fix:** delete the call inside the guard; the one after the broadcasts already covers every
+rank. Verified — `hart` at 2 ranks goes from dying at 30 lines of output to **758**, and the
+truncation is gone. Serially unaffected: release rebuilt, short suite 50/51 unchanged, all four
+invariant checks pass, `ctest -L hart` 4/4.
+
+## WITHDRAWN (2026-08-03): the runtime "abort on a suppressed reduction"
+
+Milestone 6 part 2 was implemented, and then **removed the next day, because its premise is
+wrong**. It assumed a reduction reached while a parallel-do lock is held is always a bug. It is
+not — it is *also* the intended nesting pattern:
+
+```foo
+SHELL1QUARTET:make_esfs_ss_0000(v11)      ! called from inside
+   parallel do k = 1,.ab_n_gaussian_pairs !   MOLECULE.FOCK:make_u_JK_engine's
+   ...                                    !   own `parallel do`
+   PARALLEL_SUM(v11)                      ! correctly placed after ITS loop
+```
+
+With the outer lock held, the inner `parallel do` runs **serially over its full range on every
+rank**, so each rank already holds the complete `v11` and skipping the reduction is **correct**.
+That is "MPI on the outside" working as designed. `shell1quartet.foo` alone has 17 such loops,
+all reached from outer loops in the Fock build, so the check aborted every debug MPI run almost
+immediately — it killed `hart`.
+
+Nor can it be downgraded to a `WARN`: these sites are per shell-quartet, so the warning would
+fire millions of times.
+
+**What survives is the lint**, and it is the right tool: the actual bug is a reduction *lexically
+inside* a `parallel do` body (the four `molecule.grid.foo` sites), which
+`scripts/check_parallel_lint.py` detects statically and precisely. The dynamic check could not
+distinguish the bug from the design, and the static one does not need to.
+
+*(An earlier note claimed the two checks were complementary — the lint for lexical cases, the
+abort for reductions reached through a call. The call case turns out to be the legitimate one,
+so there is nothing for the abort to add.)*
+
+**Milestone 6 is therefore: part 4 (lint) done, part 2 withdrawn with reasons, parts 1
+(`reduce(x)`) and 3 (depth-counted lock) still open.**
+
+## Translator: `data` statements at `program` scope are silently dropped — FIXED 2026-08-04
+
+**This one causes silently wrong answers, and it cost a day.** The ANTLR4
+translator emits `data` statements for module-scope variables (`atom.foo` 21/21,
+`colour.foo` 44/44, `becke_grid.foo` 6/6 survive) but **drops them entirely from a
+`program` unit**. `runfiles/run_har.foo` had two; `build/run_har.F90` had none.
+
+The declaration is still emitted, so it compiles clean and the variable is simply
+uninitialised. In `hart` that meant `allowed_bases` and `grid_levels` were garbage,
+so **every** basis name — including the program's own default `def2-SVP` — failed
+`is_one_of` with "unknown basis". Nothing warned.
+
+Worked around by assigning the arrays in the executable part instead
+(`run_har.foo`, `run_sf.foo`, `run_sf_derivs.foo`). **The translator is the real
+bug.** Until it is fixed, either emit the `data`, or make the translator *reject*
+what it cannot translate — silently discarding a statement is the worst option.
+
+`runfiles/run_csq.foo` still has program-scope `data` and is not in the translated
+source list; it will hit this if revived.
+
+### Resolution (2026-08-04)
+
+**Both** halves of the recommendation above were implemented — the `data` is emitted,
+*and* the translator now rejects what it cannot translate.
+
+Root cause was a single line in `FooToFortran.emitBodyList`:
+
+```java
+if (b.localDecl() == null && b.stmt() == null) continue;   // blank / unhandled
+```
+
+`procBody` has seven alternatives; a `dataStmt` has both `localDecl` and `stmt` null,
+so it fell through this crack. The comment even said "unhandled".
+
+Now: `dataStmt` is emitted; `implicitStmt` and `useStmt` inside a body are skipped
+**deliberately**, each with a comment giving the reason (the translator emits its own
+`implicit none`, and the module's `<stem>.use` include already provides the `use TYPES`
+in `VEC{REAL}:min_BFGS` — emitting either in place would not compile); and **every other
+alternative throws**. A construct that parses but produces no output is now a build
+failure, which is the property this entry asked for.
+
+**The audit found the blast radius was smaller than feared.** Comparing every source
+`data` statement against the generated Fortran across all 184 files found no dropped
+statement anywhere in `foofiles/`. Five files looked like mismatches and all five are
+variables *named* `data` (`data :: VEC{REAL}, IN`, `data = data(keep)`), not statements.
+So no built binary was ever wrong: the library has no procedure-scope `data`, and the
+only affected program, `run_csq.foo`, is not built. `run_csq` now translates with all
+three of its `data` statements intact.
+
+The `run_har.foo` / `run_sf.foo` / `run_sf_derivs.foo` workarounds are **left in place**:
+they work, `hart` is now tested around them, and reverting tested code to restore a
+`data` statement buys nothing.
+
+Related: `none` is a reserved word in `Foo.g4`, so it cannot be used as a variable
+name. The parse error it produces (`mismatched input 'none'`) points at the *end*
+of the file, not at the offending line, which makes it hard to find.
+
+## FIXED 2026-08-24: the macOS RGBI badge was red over one bad package name
+
+`ci-rgbi-macos.yml` failed at **"BasicTeX, then tlmgr BY ABSOLUTE PATH"** from
+2026-08-05. This entry used to say the cause was unknown, because the Mac that
+last had the toolchain working was behind a firewall and the logs had expired.
+Both premises turned out to be false: the Mac came back, and the log of run
+**32456863540** (2026-08-21) was still retrievable. It says:
+
+```
+tlmgr install: package longtable not present in repository.
+```
+
+That is the whole fault. **There is no TeX Live package called `longtable`** --
+`longtable.sty` ships inside `tools`, which BasicTeX already carries. Every
+other package in the list was fine: `geometry`, `pgf` and `xcolor` were already
+present, and `chemfig`, `pdfcrop` and `simplekv` installed cleanly (4/4). tlmgr
+still returned 1 for the one name it could not resolve, and that killed the step.
+
+None of the three candidate causes guessed here previously was right. The
+absolute-path `tlmgr` trap, which this entry speculated about, was real but had
+already been fixed on 2026-08-05 and was not the failure.
+
+Fixed by dropping `longtable` from the install list, plus a `kpsewhich
+longtable.sty` in the same step so the claim "already satisfied" is asserted
+rather than trusted.
+
+**The lesson is the cheap one.** The diagnosis took a single `gh run view
+--log-failed` and no Mac at all -- the entry's own instruction ("anyone with a
+Mac should read a FRESH log") was half right: the fresh log was the answer, the
+Mac was not needed. Logs are retained 90 days; this one was read on day 3.
+
 
 # `hart`: development history
 
@@ -4261,14 +5622,14 @@ and lets the master write alone, restoring the caller's mode afterwards.
 **The general rule this establishes:** *after* a per-rank region, the ranks' object graphs are
 deliberately different. Any later shared-mode code that branches on allocation status, array
 extent, or convergence flags of that per-rank data will desync. Either resynchronise the state,
-or keep the code non-collective. Recorded in `docs/TONTO_DEVELOPER.md` §1a and `docs/TONTO_AND_MPI.md`.
+or keep the code non-collective. Recorded in `docs/TONTO_DEVELOPER_INFO.md` §1a and `docs/TONTO_AND_MPI.md`.
 
 **How it was found.** By tracing, not by reading -- three consecutive readings of the code
 pointed at the wrong routine. A `write` at the single `MPI_BCAST` choke point in
 `parallel.foo`, logging `(datatype, count)` to a per-rank `fort.7<rank>` file (Fortran
 auto-connects the unit, so the two streams cannot interleave), plus positional `TAG` markers.
 Diffing the two streams gives the exact call where they part; segmenting the counts between
-tags names the routine. That recipe is in `docs/TONTO_DEVELOPER.md` §1a.
+tags names the routine. That recipe is in `docs/TONTO_DEVELOPER_INFO.md` §1a.
 
 **H2 — revive the frozen options.** `--charge`, `--mult`, `--ldtol`,
 `--scf-guess`, `--anharm`, `--wavelength` and `--4th-order-only` are commented
@@ -4382,52 +5743,129 @@ count for a zero esd varies between gfortran point releases, and any reference
 containing a zero esd is therefore only valid for the compiler that blessed it.
 The fix is in the printer, not in the references.
 
----
+### UPDATE 2026-08-18 (LATER, AND IT SUPERSEDES THE SECTION BELOW): the fix was WRONG, and the whole class is now a DECISION TO LIVE WITH IT
 
-## Exercise 4 should use Tonto's own contour plotting, not a hand-rolled script
+Read this before the section that follows, which is left in place only because
+its reasoning is instructive about how the mistake was made.
 
-**Status: open, 2026-08-11.** Dylan's observation, and he is right.
+**The esd fix was wrong and is reverted (`e522e1ce` reverts `26d9166a`).** The
+premise -- "a `dp` exceeding `max_dp` means the esd is too small to print" --
+is false: `dp = min(abs(floor(log10(err))),max_dp) + 1`, so `dp = max_dp+1` is
+the NORMAL outcome for any esd at or below the clamp. The change therefore
+destroyed real esds on every compiler:
 
-`workshop/WORKSHOP.md` exercise 4 writes the grid with `plot_format= gnuplot`
-and draws it with `examples/4-urea-deformation/deformation.gnuplot`, which
-computes its own logarithmic contour ladder. Tonto already has that facility:
+    reference   1   N  7.0  1.0811(3)   ...  0.03615(19)
+    with fix    1   N  7.0  1.081(0)    ...  0.036(0)
+
+**How it survived local testing, which is the part worth remembering:** it was
+verified against the ctest pass/fail gate rather than against the diff. The
+gate is loose by design (0.03615 -> 0.036 is 0.4%, and that test carries a
+relaxed last-digit tolerance), so `nh3_rhf_DZP_HAR` reported "Passed" while its
+output was visibly wrong. CI found it in one run. **Check the diff, not the
+gate**, when changing anything that formats output.
+
+**What the harness actually does, measured in `scripts/test.py`, because three
+separate discussions have guessed at it:**
+
+- Tokenising is `.split()`, so **pure whitespace/column-width drift is
+  invisible to every criterion**. It costs nothing in ctest or `make report`;
+  it is a `vimdiff` irritant only.
+- `value(esd)` is **not** compared as a string. `token_agreement` calls
+  `split_value_esd` and applies the normal tolerances to the value and
+  last-digit slack to the esd. So `180.00000000(1)` vs `180.0000000(0)` PASSES
+  loose -- confirmed on CI, where `urea_hart_STO-3G_disk_ffs` came back
+  loose PASS at 0.00569% / 0.43 ulp.
+- A **token-count** difference fails every criterion including loose. This is
+  how width drift can still bite: these tables are dense enough that one extra
+  character merges `O1` with the value beside it, dropping a token. That, not
+  the digits, is the "structural mismatch of zero numeric difference" that
+  reddened CI on 2026-08-10.
+
+**DECISION (Dylan, 2026-08-18): stop fixing this class; live with it.** The
+formatting work is worth human legibility and the rare token-merge hard-fail,
+not correctness -- the harness already absorbs esd drift. Do not spend more
+time on the printer.
+
+**If it is ever revisited, the honest fix is upstream and is NOT a print
+threshold** (Dylan): a parameter fixed by site symmetry should get an exactly
+zero esd BY CONSTRUCTION -- constrained out of the normal matrix rather than
+refined and then filtered by eigenvalue. Then the zero is exact on every
+machine with no tolerance to justify. This is the same root as the open NaN and
+negative-esd item elsewhere in this file: parameters that should never have
+been in the variance-covariance matrix at all.
+
+**Separately, and this one IS fixed:** the "Form factor asymmetry" table was
+printing floating-point noise. For a molecular HAR the asymmetry is ~1e-15 and
+the reflection at which the maximum occurs is the argmax of that noise, so the
+same urea job gave 0.818E-15 at (0,5,2) here and 0.843E-15 at (-1,-1,-3) on CI
+-- 100-167% relative disagreement, which is what actually reddened CI on
+2026-08-18 (NOT the formatting). Now floored at `FF_ASYMMETRY_TOL = TOL(12)`
+in `include/macros.in`: below that the value prints as an exact zero and its
+meaningless hkl is dropped, and the columns print **one significant digit**,
+since the table is a diagnostic and only the order of magnitude matters. Real
+asymmetry is untouched -- pHAR runs 1e-9 to 5e-8.
+
+Note the irony worth keeping: the old double-square-root bug HID this. A fourth
+root compressed 1e-15 noise up to ~1e-8 and printed it to one digit, which was
+stable across machines by accident. Fixing the mathematics exposed the noise
+the wrong formula had been concealing.
+
+### UPDATE 2026-08-18: half of this is fixed; the other half is open and named
+
+**Fixed and pushed (`26d9166a`): the esd digit count.** `REAL:get_dp_de_le`
+clamps the error's decimal place at `max_dp` and then emitted an error digit at
+`dp = max_dp+1` anyway, so an esd of about 1e-8 out of a covariance matrix
+printed `180.00000000(1)` under gfortran 14.2.0 and `180.0000000(0)` under
+14.3.0 — the value being an exact zero on one compiler and denormal-scale noise
+on the other, taking different branches. The fix needs no threshold: after the
+1-digit reduction, `dp > max_dp` means the esd needed more decimals than the
+caller allows, so it prints as zero. **It should converge 14.2.0 onto the
+14.3.0 output**, which is what the references blessed in `d7d2caaa` contain.
+
+**UNVERIFIED AT THE TIME OF WRITING.** Locally this is a no-op — 14.3.0 already
+produced the zeros — so the proof must come from CI, which runs 14.2.0. The
+check is simply: are `nh3_rhf_DZP_HAR` (label `short`) and `urea_hart_STO-3G`
+(label `hart`) green on GitHub for `26d9166a` or later? **If they are red, the
+diagnosis is wrong and those two references, plus
+`nh3_rhf-consistent-cluster-charge_DZP_HAR`, must be reverted to their
+pre-`d7d2caaa` contents** — they were blessed from this 14.3.0 box deliberately
+(Dylan, 2026-08-18) to get the corrected asymmetry table in, accepting the risk.
+Also left deliberately unblessed: `urea_hart_STO-3G_disk_ffs`, which after the
+fix agrees loosely on its first file and differs by 0.43 ulp on the second
+(fewer printed decimals). Bless it only once CI is known good.
+
+**Open, and NOT the same bug: column widths drift by one character.** In the
+*cartesian* ADP table only, every entry is byte-identical between compilers but
+the gap between two columns moves by one space:
 
 ```
-   plot_format= gnuplot.contour
-   contour_scale= log            ! the default
-   contour_min_value= -3.0       ! log10 of the smallest contour
-   contour_increment=  0.5       ! half a decade
-   contour_max_value=  0.0       ! log10 of the largest
+-  1   S  0.01561(7)  0.01747(8)  0.02029(8)   0.00000(4)  0.00000(3)   0.00000(8)
++  1   S  0.01561(7)  0.01747(8)  0.02029(8)   0.00000(4)   0.00000(3)   0.00000(8)
 ```
 
-which makes Tonto write three files per plot — `*.contour_data`,
-`*.bond_data` and a `*.commands` gnuplot script — and the script draws the map
-with a **logarithmic colour bar labelled in powers of ten**, positive and
-negative, and the bonds overlaid. Verified working: it reports
+Seen in `so2_rhf_DZP_anharmonic_cluster_charge_XWR` (widens) and both
+`nh3_*_HAR` tests (narrows). What has been **ruled out** by comparing the
+references character by character, so nobody repeats it:
 
-```
-Minimum +ve log10 contour =  -3.0
-Maximum +ve log10 contour =   0.0
-Contour increment         =   0.5
-No. of contours           =   7
-Total no. of contours     =  15
-```
+- Not the values — no printed entry differs.
+- Not all ADP tables — the wide `U_xx…Axis` table with esds is identical across
+  compilers. Only the cartesian one moves.
+- Not a missing guard in the width path: `REAL:get_sl_cb` derives the width from
+  the same `get_dp_de_le` call that produces the text, so the two cannot
+  disagree about an entry. Per-entry arithmetic gives 11 characters on both.
 
-**Why it was not adopted before the lab.** Two things need sorting first, and
-neither is deep:
+That leaves the column-level maximum — `max_cb`, the padding that aligns closing
+braces — as the only place a difference can enter with no entry changing. Start
+there.
 
-1. The generated script targets `xterm` and then `postscript eps`. Rendering
-   to PNG means overriding both terminal lines, and under `pngcairo` the
-   result comes out black — the script's colours assume the EPS terminal's
-   white ground, and `background rgb 'white'` alone does not fix it.
-2. The difference map (constrained minus unconstrained) is made by subtracting
-   two plain grids. The contour format writes a different file, so keeping
-   that picture means either a second pair of plots in plain format or
-   subtracting in the contour data.
-
-**The right end state** is exercise 4 using `gnuplot.contour` and the workshop
-telling the reader to run `gnuplot -persist <job>,<kind>,gnuplot.commands`,
-with no hand-written script at all.
+**The measurement that was in flight when this was written:** a full
+`gfortran-13` build in a scratch tree (13, 15 and 16 are all installed here;
+there is no 14.2.0 on this machine, which is why the esd half could not be
+verified locally). If 13 or 15 reproduces the width drift against 14.3.0, that
+is a local reproducer and the bisect can proceed without CI. **If all of them
+agree, the drift is not the compiler at all** — it would then be something about
+the machine that blessed the reference, and the hunt moves elsewhere. Either
+outcome is worth knowing; run it and record which.
 
 ---
 

@@ -1,11 +1,11 @@
 # Tonto workshop
 
 This is a guided introduction to Hirshfeld atom refinement (HAR), 
-X-ray wavefunction refinement (XWR) fittin, using **Tonto directly** — without
+X-ray wavefunction refinement (XWR) fitting, using **Tonto directly** — without
 any graphical user interface. There are four worked exercises, most with a
 results table to fill in from your own runs.
 
-Everything you need is in this repository, under `examples/`. 
+Everything you need is in this repository, under `workshop/examples/`. 
 
 The input files are printed in full below, so you can read them here
 and check what you are running.
@@ -241,10 +241,10 @@ minutes.
 ### What is in the download
 
 ```
-build/          tonto and hart
-basis_sets/     the basis-set library
-examples/       the three exercises
-workshop/       this document
+build/               tonto and hart
+basis_sets/          the basis-set library
+workshop/            this document, and
+workshop/examples/   the four exercises
 ```
 
 A compiled checkout has the same layout, so the commands below work either
@@ -299,18 +299,18 @@ Two data files are provided:
 directory, the second runs the refinement:
 
 ```bash
-cd examples/1-nh3-hart
-../../build/hart --job nh3 --basis def2-SVP --basis-dir ../../basis_sets --std-f nh3.hkl nh3.cif
+cd workshop/examples/1-nh3-hart
+../../../build/hart --job nh3 --basis def2-SVP --basis-dir ../../../basis_sets --std-f nh3.hkl nh3.cif
 ```
 
-About two seconds. `../../build/hart` is the program you downloaded or built,
-two directories up. What the options mean:
+About two seconds. `../../../build/hart` is the program you downloaded or built,
+three directories up. What the options mean:
 
 | Option | |
 |---|---|
 | `--job nh3` | names every output file |
-| `--basis def2-SVP` | the Gaussian basis set. Also the default — spelled out so all three exercises visibly agree |
-| `--basis-dir ../../basis_sets` | where the basis-set files live, two directories up |
+| `--basis def2-SVP` | the Gaussian basis set. Also the default — spelled out so all four exercises visibly agree |
+| `--basis-dir ../../../basis_sets` | where the basis-set files live, three directories up |
 | `--std-f nh3.hkl` | free-format `h k l F sigma`. Use `--std-f2` for *F*², or `--shelx-f`/`--shelx-f2` for the fixed-format SHELX layout |
 
 `hart --help` lists the rest — including `--dtol` and `--grid-accuracy`, whose
@@ -482,7 +482,7 @@ reflections, so it is the only data file you need.
 
 ```bash
 cd ../2-urea-har
-../../build/tonto --basis-library ../../basis_sets
+../../../build/tonto --basis-library ../../../basis_sets
 ```
 
 `tonto` takes no input file argument: it reads `stdin` from the working
@@ -490,7 +490,7 @@ directory and writes `stdout` there. About 40 seconds.
 
 ### The input file
 
-This is `examples/2-urea-har/stdin`, in full:
+This is `workshop/examples/2-urea-har/stdin`, in full:
 
 ```
 {
@@ -503,7 +503,7 @@ This is `examples/2-urea-har/stdin`, in full:
    !
    ! Run it in this directory, in place:
    !
-   !    ../../build/tonto --basis-library ../../basis_sets
+   !    ../../../build/tonto --basis-library ../../../basis_sets
    !
    ! tonto takes no input file argument: it reads the file called "stdin" in
    ! the working directory -- this one -- and writes "stdout" beside it. The
@@ -704,7 +704,7 @@ by the data and by nothing else.
 
 ```bash
 cd ../3-urea-xcw
-../../build/tonto --basis-library ../../basis_sets
+../../../build/tonto --basis-library ../../../basis_sets
 ```
 
 About two and a half minutes.
@@ -718,7 +718,7 @@ calculation needs.
 
 ### The input file
 
-This is `examples/3-urea-xcw/stdin`, in full:
+This is `workshop/examples/3-urea-xcw/stdin`, in full:
 
 ```
 {
@@ -733,7 +733,7 @@ This is `examples/3-urea-xcw/stdin`, in full:
    !
    ! Run it in this directory, in place:
    !
-   !    ../../build/tonto --basis-library ../../basis_sets
+   !    ../../../build/tonto --basis-library ../../../basis_sets
    !
    ! tonto takes no input file argument: it reads the file called "stdin" in
    ! the working directory -- this one -- and writes "stdout" beside it. (hart
@@ -1021,7 +1021,7 @@ in the lone pairs, and negative where density was drawn away.
 
 ```bash
 cd ../4-urea-deformation
-../../build/tonto --basis-library ../../basis_sets
+../../../build/tonto --basis-library ../../../basis_sets
 ```
 
 About 45 seconds. The job computes the density twice in the plane of the amide

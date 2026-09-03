@@ -18,6 +18,25 @@
 !==================================================================
 
 program run_MP2
+   ! A minimal restricted MP2 program, written to be read rather than to be
+   ! fast: it forms the full (n_bf)^4 MO integral array in memory, so it is
+   ! usable only on small molecules. Built by `make run_mp2`, not by default.
+   ! `run_mp2_exercise.foo` is the same program with the correlation loop
+   ! left blank; keep the two in step.
+   !
+   ! VALIDATED, 2026-08-18. Against Tonto's own `mp2` keyword, on water at
+   ! the RHF/STO-3G geometry of tests/short/h2o_rhf_cc-pVDZ_electron_density_plot,
+   ! SCF converged to 1e-7, `real_precision= 12`. Both numbers come from the
+   ! same run, so the orbitals are identical:
+   !
+   !   library `mp2`             E2 = -0.038839812482   E = -75.004633512884
+   !   this program, frozen core E2 = -0.038839812482   E = -75.004633512884
+   !   this program, all electron E2 = -0.038936921469  E = -75.004730621870
+   !
+   ! Exact to every printed digit. The frozen-core column is the one that
+   ! matches, because the library restricts the active space to mimic
+   ! Gaussian; the all-electron column correlates the O 1s as well and so
+   ! recovers slightly more. Details in docs/TEACHING_MP2.md.
 
    implicit none
 
@@ -25,7 +44,11 @@ program run_MP2
    v :: MAT4{REAL}@
    eval :: VEC{REAL}@
    n,no,i,j,a,b :: INT
-   e2 :: REAL
+   e_hf,e2,e2_fc,top,bot :: REAL
+   basis_library_dir :: STR(len=PATH_SIZE)
+   stat :: INT
+
+   ! ---------- Initialisation ----------
 
    ! Macro to create Tonto system object
    ! Initialise MPI parallel stuff too.
@@ -44,37 +67,78 @@ program run_MP2
    TEXTFILE::create_stdout
    stdout.open_for("write")
 
-   ! Run the molecule
-   m.MAIN:run
+   ! Where are the basis sets? Unlike `tonto` this program takes no
+   ! command-line options, so the environment variable is the only way in.
+   ! Without this the basis lookup fails as the `atoms=` block closes, with
+   ! a syntax error that names the closing brace rather than the basis.
+   basis_library_dir = " "
+   call get_environment_variable(BASIS_LIBRARY_ENV_NAME,basis_library_dir,status=stat)
+   if (stat/=0) basis_library_dir = " "
 
-   ! Start here
-   stdout.text("Testing 1, 2, 3 ...")
+   ! Run the molecule. It reads and processes the keywords in "stdin",
+   ! so the job must do an "scf" before there are orbitals to correlate.
+   m.MAIN:run(basis_library_dir)
 
-   ! Get the integrals
-   n  = m.n_bf
-   no = m.n_e/2
+   ! The reference energy
+   e_hf = m.SCF_data.energy
+
+   ! Important numbers
+   n  = m.n_bf    ! No. of basis functions
+   no = m.n_e/2   ! No. of occupied spatial orbitals
+
+   ! The two-electron integrals over MOs, in chemists' notation:
+   ! v(i,a,j,b) is (ia|jb)
    v.create(n,n,n,n)
    m.FOCK:make_MO_ERI_chem_integrals(v)
+
+   ! The orbital energies
    eval.create(n)
    eval = m.MO_energies.r
 
-   stdout.text("Here are the eigenvalues:")
-   stdout.put(eval)
+   ! ---------- The MP2 correlation energy ----------
 
-   e2 = ZERO
-   do i = 2,no
-   do j = 2,no
+   ! E2 = sum(ijab) (ia|jb) [ 2(ia|jb) - (ib|ja) ] / (e_i + e_j - e_a - e_b)
+   !
+   ! i,j run over occupied and a,b over virtual spatial orbitals. There is
+   ! no factor of one half: the spin summation for a closed shell is already
+   ! folded into the 2(ia|jb) - (ib|ja) numerator. Szabo & Ostlund eq. 6.74.
+   !
+   ! Two sums are accumulated. "e2" correlates every occupied orbital;
+   ! "e2_fc" skips the first, i.e. freezes the core. The library's own `mp2`
+   ! keyword freezes core to mimic Gaussian (MOLECULE.MISC:set_MO_limits
+   ! picks the active space), so "e2_fc" is the one to compare against it,
+   ! and it agrees exactly -- see the validation note in the header.
+   e2    = ZERO
+   e2_fc = ZERO
+
+   do i = 1,no
+   do j = 1,no
    do a = no+1,n
    do b = no+1,n
-      e2 = e2 + (TWO*v(i,a,j,b)**2 - (v(i,a,j,b)-v(i,b,j,a))**2)/ &
-          (eval(i)+eval(j)-eval(a)-eval(b))
-   end
-   end
-   end
-   end
-   e2 = HALF*e2
 
-   stdout.show("MP2 energy =",e2)
+      top = v(i,a,j,b)*(TWO*v(i,a,j,b) - v(i,b,j,a))
+      bot = eval(i) + eval(j) - eval(a) - eval(b)
+
+      e2 = e2 + top/bot
+
+      if (i>1 AND j>1) e2_fc = e2_fc + top/bot
+
+   end
+   end
+   end
+   end
+
+   stdout.flush
+   stdout.show("HF energy                    =",e_hf)
+   stdout.show("MP2 correlation, all electron=",e2)
+   stdout.show("MP2 correlation, frozen core =",e2_fc)
+   stdout.show("Total energy, all electron   =",e_hf+e2)
+   stdout.show("Total energy, frozen core    =",e_hf+e2_fc)
+
+   ! ---------- Tidy up ----------
+
+   eval.destroy
+   v.destroy
 
    ! Clean-up molecule
    MOLECULE.MAIN:cleanup

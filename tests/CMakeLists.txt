@@ -280,7 +280,9 @@ set_tests_properties("parallel_lint" PROPERTIES LABELS "short")
 add_test(NAME "rgbi_doctor_selftest"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND bash ${PROJECT_SOURCE_DIR}/scripts/rgbi_selftest.sh)
-set_tests_properties("rgbi_doctor_selftest" PROPERTIES LABELS "short")
+set_tests_properties("rgbi_doctor_selftest" PROPERTIES
+    LABELS "short"
+    SKIP_RETURN_CODE 77)
 
 # Grouped per-suite agreement report.
 #

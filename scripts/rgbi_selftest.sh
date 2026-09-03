@@ -33,7 +33,28 @@ FAIL=0
 
 # The doctor's own dependencies. Without these on PATH it cannot run at all,
 # and every case would fail for the wrong reason.
-BASE_TOOLS="uname grep sed awk tr head cat"
+# readlink is here because the doctor resolves mol2chemfig through its
+# symlink to find the venv interpreter -- a pipx app is a /bin/sh shim, so
+# its shebang names the shell, not python.
+BASE_TOOLS="uname grep sed awk tr head cat readlink"
+
+# Several cases build a DELIBERATELY COMPLETE sandbox and assert the doctor is
+# happy with it. That needs the tools to exist on the host to symlink in the
+# first place -- and on macOS /Library/TeX/texbin is not on a non-login shell's
+# PATH, so `ctest` runs without pdflatex even where TeX is installed. Failing
+# then would report a defect in the doctor when the only fact established is
+# that this shell cannot see TeX. Skip instead, loudly, with ctest's skip code.
+MISSING_HOST_TOOLS=""
+for _t in pdflatex pdfcrop kpsewhich; do
+    command -v "$_t" >/dev/null 2>&1 || MISSING_HOST_TOOLS="$MISSING_HOST_TOOLS $_t"
+done
+if [ -n "$MISSING_HOST_TOOLS" ]; then
+    echo "SKIP: this host has no$MISSING_HOST_TOOLS, so the good-path sandboxes"
+    echo "      cannot be built. That is a fact about this shell's PATH, not"
+    echo "      about rgbi_doctor.sh. On macOS try:"
+    echo "         eval \"\$(/usr/libexec/path_helper)\""
+    exit 77
+fi
 
 # make_path <tool> ... -- a PATH with the base tools plus the named ones
 make_path() {

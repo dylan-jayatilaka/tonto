@@ -21,8 +21,9 @@ Then the rest:
 brew install gcc cmake openjdk python3 gnuplot
 ```
 
-- `gcc` provides **`gfortran`**. Homebrew's `gcc` formula currently gives
-  `gfortran-14`, which is the version this project standardises on.
+- `gcc` provides **`gfortran`**. This project standardises on **`gfortran-14`**.
+  If Homebrew's `gcc` formula gives you a different version, `brew install gcc@14`
+  and point CMake at it explicitly, as below.
 - `openjdk` provides **`java`/`javac`** for the ANTLR4 `foo`→Fortran
   translator. If the build cannot find `javac`, add Homebrew's openjdk to your
   `PATH` as `brew` instructs — on Apple Silicon:
@@ -79,6 +80,13 @@ ctest                 # the full suite
 macOS shows tiny last-digit differences in a few tests. The comparison is
 deliberately loose — relative difference ≤ 0.2%, or last printed digit within
 2 — and counts those as passes.
+
+> **Do not use `gfortran-16` for debug builds.** It has two separate defects
+> there: it miscompiles `-fcheck=bounds` (so the build drops the flag and you get
+> no array bounds checking), and its debug build fails 34 of 71 short tests where
+> gfortran-14 passes exactly. A migration to 16 was made and reverted on
+> 2026-08-27 for that reason. Release builds on 16 are fine. See
+> [`GFORTRAN16_DEBUG_CRASH.md`](GFORTRAN16_DEBUG_CRASH.md).
 
 ## One macOS-specific oddity: the arm64 compiler pin
 

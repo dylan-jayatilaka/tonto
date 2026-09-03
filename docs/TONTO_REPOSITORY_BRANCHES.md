@@ -16,7 +16,7 @@ why the archived work cannot be merged into `master` — only ported.
 | **`master`** | The stable branch. What the CI badges track and what a user clones. |
 | **`develop`** | The integration branch. Work lands here and is merged to `master` when green. |
 | **`Nice-branch`** | Not our work. See below. |
-| **`Lolo_CP2K`** | Active work by Lorraine A. — CP2K periodic density, selectable periodic stockholder model, SHELX extinction. Last commit 2026-08-03. Left as a branch deliberately. |
+| **`Lolo_CP2K`** | Active work by Lorraine A. — CP2K periodic density, selectable periodic stockholder model, CRYSTAL23 imported-density fixes, SHELX extinction, and reflection merging. Left as a branch deliberately: it is live development, which is why it was never part of the archive-tag recovery effort. **The two extinction commits were ported to `develop` on 2026-08-22** (`58f4a23d`, `3e29ca20` — see `docs/EXTINCTION_REPORT.md`); the rest is not ported. Still ahead of `develop` as of 2026-08-23, including `e2a401ef`, which reports that symmetry equivalents were never merged at all — Tonto silently kept the first and discarded the rest. |
 | **`gh-pages`** | The Jekyll site, `CNAME` → `dylan-jayatilaka.github.io`. Untouched. |
 
 ## Work that is not ours: `Nice-branch`
@@ -47,8 +47,8 @@ an annotation describing the branch in more detail than this table.
 
 | Tag | Author(s) | Dates | What it holds |
 |---|---|---|---|
-| `archive/Bader` | Dylan Jayatilaka (19), Max Davidson (9) | 2018-12 – 2019-02 | Bader basin analysis and isosurface triangulation: `cubify_Bader`, `get_Bader_basins_para`/`_sing`, `interpolate_Bader_edge_info`, `interpolate_Bader_faces`, `prepare_Bader_grid`, `put_Bader_basin_info`, plus marching-cube changes and a `PARALLEL` gather. `master` carries only `get_Bader_regions`, so this is genuinely unmerged. |
-| `archive/release-td-old` | Dylan Jayatilaka (13), Kanghyun Chu (4) | 2025-08 – 2025-09 | Time-dependent and CIS work. `td_data.foo` reworked, M=0 singlet detector, `S_list` array, MS=0 option in CIS, MGS/Householder orthonormalisation in Davidson, and a major `symmetric_reflect` bug fix. |
+| `archive/Bader` | Dylan Jayatilaka (19), Max Davidson (9) | 2018-12 – 2019-02 | Bader basin analysis and isosurface triangulation: `cubify_Bader`, `get_Bader_basins_para`/`_sing`, `interpolate_Bader_edge_info`, `interpolate_Bader_faces`, `prepare_Bader_grid`, `put_Bader_basin_info`, plus marching-cube changes and a `PARALLEL` gather. **The serial half is now on `develop`** (2026-08-18, `cc530a34`) under the new keyword `get_bader_basins`; `get_Bader_regions` was left as it was. **The parallel half — Max Davidson's linked-list rework of `cubes_to_basin_parallel` and its three `types.foo` types — is still only here**, and so is the `PARALLEL` gather, which is superseded. See the porting note below and `docs/BADER_REPORT.md`. |
+| `archive/release-td-old` | Dylan Jayatilaka (13), Kanghyun Chu (4) | 2025-08 – 2025-09 | Time-dependent and CIS work. `td_data.foo` reworked, M=0 singlet detector, `S_list` array, MS=0 option in CIS, MGS/Householder orthonormalisation in Davidson, and a major `symmetric_reflect` bug fix. **All seven TD/CIS commits are already on `develop`, which has since gone further; the `symmetric_reflect` fix included. Nothing to port back** — assessed 2026-08-17, see the porting note below. What is still stranded is the earlier half: two breakdown commits and `e22e2569`, an additive extension to Kang's form-factor symmetrization. |
 | `archive/bond-energy` | Dylan Jayatilaka (11) | 2020-09 – 2020-10 | Roby bond-energy analysis. `roby.foo` +1478 lines: `Eshared` partitioning for E^DE, exact energy-density method, deformation energies, group populations. |
 | `archive/release-pHAR-broken` | Kanghyun Chu (8) | 2025-04 | **TEST RESCUED 2026-08-16.** Held the only ammonia-borane pHAR test in existence. It is now on `develop` as `tests/long/ammonium_borane_pHAR_C23`, and it PASSES — reproducing the 2025-04 reference digit for digit. The 167 MB CRYSTAL23 wavefunction stays on this tag and is fetched on demand; the test skips without it. See the porting note below. Still unported from these 8 commits: the form-factor symmetrisation residual tables. |
 | `archive/nn-har` | Max Davidson (3), Dylan Jayatilaka (1) | 2023-02 | **NEAREST-NEIGHBOUR** Hirshfeld atom refinement -- cluster selection by connectivity for PERIODIC NETWORK SOLIDS, with hydrogen capping, automated level switching and H-bond length normalisation. (An earlier version of this table said "neural-network", which is wrong and led to the branch being dismissed once; see the porting note below.) |
@@ -93,6 +93,136 @@ carry no LFS objects and must not start: committing the pointer with a
 `scripts/fetch_phar_asset.sh` pulls it from this tag on request, and the test
 skips without it. So the dependency is not removed — it is made **opt-in**,
 which is the only arrangement that keeps a public clone cheap.
+
+## The recovery effort is CLOSED (2026-08-18)
+
+**All fifteen `archive/*` tags now have a recorded outcome.** Nothing is waiting to be
+assessed, and no tag holds work that someone still intends to port. The tags stay where
+they are — several remain the only copy of what they hold, so none should be deleted.
+
+| outcome | tags |
+|---|---|
+| ported | `nn-har`, `Teaching`, `Bader` (serial half) |
+| test or extension rescued | `release-pHAR-broken`, `release-td-old` (Kang symmetrization) |
+| nothing to port — already upstream | `release-td-old` (TD/CIS half), `lorraine`, `kanghyun`, `cubes_to_basin`, `wip-sauce`, `energies-breakdown`, `dylan-jayatilaka-patch-1` |
+| assessed and declined | `bond-energy`, `libxc` (prototype; folded into the DFT milestone), `lamaGOET` (one routine ported, one declined) |
+| left to an open feature, not a rescue | `energies-breakdown2` and the breakdown commits on `release-td-old` — see below |
+
+**One thread outlives the effort, and it is not a porting problem.** The energy breakdown
+is already 99% on `develop` — `breakdown_data.foo` there is 1589 lines against the newest
+version's 1593 — but it is **inert**: commented out of `CMakeLists.txt` in two places, its
+keyword commented out, and its driver `MOLECULE.PROP:put_energies_breakdown` absent from
+the tree entirely. The missing wiring is a small, bounded job. Making the numbers right is
+not: two attempts have stopped at the same place, Dylan's own commit reading *"Got a few
+numbers from breadown, failing in polarisation bit"*. It is therefore recorded in
+`DEFERRED.md` as an open feature with a scientific obstacle, not as an unported branch.
+
+`git cherry` is misleading here and should not be used to judge what is closed. The ports
+were done by hand — rewritten against seven years of API drift, not cherry-picked — so
+`git cherry develop archive/Bader` still marks all 26 commits as unmerged even though the
+serial half is on `develop`. The recorded decision is the measure; the patch identity is
+not.
+
+## History of the effort, tag by tag (2026-08-18)
+
+Nine of the fifteen tags are closed. Of the six that held substantial unmerged work,
+**four are now resolved and two remain**:
+
+| tag | outcome |
+|---|---|
+| `archive/nn-har` | **ported** 2026-08-16 (`16a91ce1`) — six tests, thesis reproduced |
+| `archive/release-pHAR-broken` | **test rescued** 2026-08-16 (`8ea8c988`); its symmetrization extension ported 2026-08-18 |
+| `archive/release-td-old` | **nothing to port** — the TD/CIS half is already on `develop`, which is ahead |
+| `archive/Bader` | **serial half ported** 2026-08-18 (`cc530a34`) — compiles, runs, two measured defects. **The parallel half was not done** — see below. `docs/BADER_REPORT.md` |
+
+Both of the last two were decided on 2026-08-18, and **the recovery effort is now
+closed**:
+
+| tag | outcome |
+|---|---|
+| `archive/Teaching` | **ported** 2026-08-18 — the MP2 lab, validated against the library `mp2` keyword. See `docs/TEACHING_MP2.md` |
+| `archive/bond-energy` | **will not be ported** — decided, not postponed. Stays on its tag; see `DEFERRED.md` |
+
+`archive/bond-energy` was declined rather than deferred for want of time. For the
+record, its starting position was the better of the two — there is already a
+regression net (`tests/rgbi/karrikinolide_blyp_6-31G(d)_Roby_bond_index` and its
+`_g09_` variant exercise the live Roby path), and the two helper modules it adds,
+`vec{emat{intrinsic}}.foo` and `vec{emat{int}}.foo`, have since landed on `develop`
+independently. The difficulty is drift: `roby.foo` is 7490 lines on `develop` against
+8463 on the tag and has been modified since 2020, so it is a graft into evolved code
+and needs a `types.foo` change. `DEFERRED.md` carries the full inventory.
+
+### `archive/Bader` is only half closed — the tag must stay
+
+The serial path is on `develop`. **The parallel path is not, and the tag is still the
+only copy of it.** Do not treat `archive/Bader` as spent.
+
+What is still only on the tag: Max Davidson's rework of
+`MOLECULE.PROP:cubes_to_basin_parallel` (9 commits, 2018-08 – 2019-02), which replaces
+the boundary-plane rescan with a linked list of the paths that terminate on a partition
+boundary, plus the three types it needs — `BADER`, `LINKED_LIST_MAT_INT` and
+`HEAD_MAT_INT` in `types.foo`. The idea is sound and his own commit message records it
+as competitive on timings.
+
+It was not ported because the code is mid-debug in two specific ways, neither of which
+is a translation problem:
+
+- the convergence loop is disabled — `do while (changes EQV TRUE)` was replaced by
+  `do ii = 1,3! while (changes EQV TRUE)`, and since labels propagate one partition per
+  pass, three passes is correct only up to four ranks and silently wrong above it;
+- every merge branch does `allocate(tmp); tmp => head.head`, discarding the node it just
+  allocated on each pass, and uses raw `allocate`/`nullify` rather than Tonto's
+  `create`/`destroy`, so the memory accounting never sees the list.
+
+`develop`'s pre-existing `cubes_to_basin_parallel` was left exactly as it was, so
+nothing regressed. The design discussion, the recovery commands, and the two things
+*not* to take from the tag (his `PARALLEL:gather`, superseded by a better one already on
+`develop`; and the `MAT3{VEC_{INT}}` spelling, now `MAT3{EVEC{INT}}`) are in `DEFERRED.md`
+under *"Parallelise the Bader basin search"*.
+
+**Sequencing note.** Parallelising is not the next step even if someone wants the speed.
+The serial version does not yet give a usable answer — its basin count runs from 1 to
+13942 depending on the grid — and there is no Bader test of any kind to compare a
+parallel result against. Get a correct serial answer and a reference first, or a parallel
+version will merely reproduce a wrong number faster.
+
+`archive/energies-breakdown2` is left alone: its own final commit records it failing in the
+polarisation term.
+
+**Two things to do before reading any of these**, both learned the hard way here:
+
+1. **`git cherry develop archive/<tag>`** first. `release-td-old` was recommended as the
+   next rescue on the strength of a commit titled *"Major bug fix in `symmetric_reflect`!"*
+   which was already on `develop` under a different hash. One command settles it.
+2. **Check what the branch's code depends on before porting it.** Every one of these
+   predates the `:::` → `::` migration (tag `foo-old-syntax` is the bridge) and the API has
+   moved underneath them; see the two sections at the end of this document.
+
+## The pre-GitHub history: a Subversion repository on SourceForge
+
+This git repository is not the whole history. Tonto lived in **Subversion on
+SourceForge** first, as project **`tonto-chem`**:
+
+- project page — <https://sourceforge.net/projects/tonto-chem/>
+- repository — `svn://svn.code.sf.net/p/tonto-chem/code/`, also readable over HTTPS at
+  `https://svn.code.sf.net/p/tonto-chem/code/`
+
+It is still live and public, at **revision 4411**, spanning **1999-06-28 to
+2014-06-21**, with 14 branches (`TONTO_1_0` through `TONTO_2_3`, `development`, `phys`,
+`reversedtypes`, `tonto-3.2`, `tonto-for-CE3.0`) and 4 tags. Surviving `$Id:` keywords
+in `runfiles/*.foo` are its fingerprints — e.g.
+`! $Id: run_molecule.foo 3361 2009-09-24 15:40:02Z dylan_ $`.
+
+**It holds 22 committers whose names appear nowhere in git**, among them `chris` and
+`skw` on the original Roby work (1999–2001), `awhitton` on PND and `diffraction_data`
+(2003–2004), `grimwreaper` on platforms and ScaLAPACK, `vongrabow` on ELI-D,
+`magdalos` on HAR least squares (2013), and `reaper`, the largest single contributor
+at 1800 commits between 1999 and 2005. If you need to know who wrote something, or
+what a routine looked like before 2014, this is where to look.
+
+**You do not need an `svn` client.** The full log — authors, dates, messages and
+changed paths — comes back from one DeltaV `REPORT` over HTTPS, and individual files
+fetch with `curl`; the recipe is in `DEFERRED.md` under the in-core CCSD search.
 
 ## Recovering an archived branch
 
@@ -154,8 +284,10 @@ is not repeated.
 | `archive/lamaGOET` | **`put_unit_cell_geometry_cartesian` was ported** — see below. Its second routine, `write_xyz_file_xtal14`, was **not**: it is a degraded fork of `put_xyz_file`, which has since moved to `molecule.put.foo` and improved. The branch version writes `.crystal.asymmetric_unit_geometry` — **fractional** coordinates, verified at `crystal.foo:3771` where they are converted with `matmul(.unit_cell.direct_mx,…)` — with no unit conversion, while its own comment claims cartesian axes. It also omits the xyz comment line, making the file malformed, and uses `TEXTFILE*` and `stdin.buffer_exhausted`, both gone from `master` (the latter commented out at `textfile.foo:2001`). If XTAL14 output is wanted, add an option to `put_xyz_file`. |
 | `archive/kanghyun` | Nothing to port. The `oisn't` → `isn't` typo was **already fixed on `master`** independently. Commenting out `stdout.flush` in `object.foo` was a workaround for stray blank lines in the keyword echo; the real cause — `TEXTFILE:flush` emitting the margin twice — was root-caused and fixed on 2026-08-03 (see `DEFERRED.md`), so the workaround is obsolete and treats the symptom. Only the two-line CIF/job-name echo is live, and it was judged not worth the output change. |
 | `archive/lorraine` | **Skip.** It modifies `cubes_to_basin` and its driver rather than adding anything, and `master` has independently evolved both `cubes_to_basin` and `cubes_to_basin_parallel` since. A merge into live code, not a graft. |
+| `archive/release-td-old` | **The TD/CIS half is already merged; `develop` is ahead of it.** Assessed 2026-08-17. `git cherry develop archive/release-td-old` marks all seven TD/CIS commits as upstream, including `ac8b2af4` *"Major bug fix in `symmetric_reflect`!"*, which is on `develop` as `e28bd649` — the same patch, the same minute, differing only in blob hashes and line offsets. `develop` then continued past the branch: the Mazur one-double correction, the 2D `Vs` array in CIS, `read_molden_NOs` reinstated, and the TDHF and cyclazine test fixes, through `b3b50dd2` (2026-07-16), all after the branch's last TD commit (2025-09-04). So the branch holds the **older** copy of this code and nothing in it should be ported back. What remains stranded is the other half — the two breakdown commits and `e22e2569`, discussed below. Details of the `symmetric_reflect` bug and its surviving twin are in the next section. |
 | `archive/nn-har` | **PORTED 2026-08-16 — `16a91ce1` on `develop`. This row previously said the branch was BLOCKED ON A TEST CASE and that porting needed "a network-solid structure with diffraction data to refine against — a scientific input, not something that can be synthesised". That input existed all along, in `~/Dropbox/Quartz/`:** the Bern quartz measurement (Balmohammadi, via Grabowsky; Ag Kα, 100 K), and Max Davidson's thesis chapter 5 as the expected answers. NN is **nearest neighbour** — connectivity-based cluster selection with H-capping, which is how HAR is done on an extended solid where no molecule can be isolated. The port took the branch's NN logic but **not** its group construction, which predates the 2026 fragHAR repair `d840e322` by three years — all four of its commits sit inside the window when fragHAR was broken (`f0d7cfd3`, 2020-01-23 → 2026-06-01), and Max was patching fragHAR himself as he went. Its `fd956388` fragHAR/DFT fix was dropped as superseded, as this row predicted. **Six tests, in two tiers**: four short ones build fragments only (37 ms each, no SCF, no reflections) and assert the formulae Davidson Fig. 5.2 names — orthosilicic acid around the Si, silyloxysilane around the O; two long ones do the refinement (7 s and 21 s). **The thesis reproduces**: L1+H gives R(F) 0.0120 / GoF² 9.84 against 0.0127 / 10.61, with r(Si–O) and both U_iso agreeing to the digits printed — and Davidson's uncomfortable finding reproduces too, IAM GoF² 7.235 beating HAR's 9.84. Three live `cluster.foo` defects were fixed on the way, including an out-of-bounds write in `make_asym_occupation_list` and a `PURTE` attribute that had never been `PURE`. The "I AM LAZY" comment this row flagged is handled. Full record: `docs/NN_HAR_REPORT.md`. |
 | `archive/release-pHAR-broken` | **TEST RESCUED AND PASSING 2026-08-16.** This branch was recorded as the one archive with an open dependency: a 167 MB CRYSTAL23 wavefunction stored as a **134-byte Git LFS pointer**, because `.gitattributes` was lost before the branch tip. `DEFERRED.md` called checking whether that object was still retrievable *"FIRST STEP, and it decides everything below"*, and it had never been run because `git-lfs` was not installed. **It is retrievable.** Finding out needed no `git-lfs` at all — the LFS protocol is plain HTTP, so a `curl` against GitHub's batch API returns a signed download URL rather than an error; the object downloads to 174,978,609 bytes whose sha256 matches the oid exactly. **The test then passed on current `develop`**, reproducing the 2025-04 reference digit for digit: R(F) 0.005188, N_r 20, N_p 11, GoF² 0.631422, scale 0.979852, *"Structure fit converged."* So pHAR — which ships in the library with `MOLECULE.CE:phar_defragment` live and nothing testing it — is now known to work. **One line had to be ported, not worked around**: the job died on `unknown option: thermal_smearing_model=`, a keyword removed by `acb7af0b` *"in favour of deriving the info from partition_model"*; the job already sets `partition_model= oc-crystal23`, which carries it. **The asset is deliberately NOT committed.** Restoring a `.gitattributes` and porting the pointer — which the old note suggested — would make every clone pull 167 MB, since LFS smudges the checked-out ref automatically. `develop` and `master` carry **zero** LFS objects (`git lfs ls-files develop`), and must stay that way; the asset lives only on this tag and `scripts/fetch_phar_asset.sh` pulls it on request, verifying sha256 and deleting on mismatch. The test **skips** without it, printing how to get it. `stdout` was re-blessed: the numbers were unchanged, but the old reference echoed the removed keyword and carried a "Form factor asymmetry" section this build no longer prints. Runtime 3 m 14 s. **Not** rescued: the form-factor symmetrisation residual tables in the same 8 commits. |
+| `archive/Bader` | **SERIAL HALF PORTED 2026-08-18.** The largest capability left on any tag, and the port needed no `types.foo` change at all: the branch's three new types and its `basin_at_vertex` members serve only the parallel half or are never read. Ten new procedures across `molecule.prop.foo`, `isosurface.foo`, `marchingcube.foo` and `plot_grid.foo`, reached by a **new keyword `get_bader_basins`** so that `get_Bader_regions` and the older `cubes_to_basin` are untouched and the two algorithms can be compared. **It compiles clean, runs to exit 0, and does not yet give a usable answer** — and both reasons were found by running it, not by reading it. The basin count is wildly grid-dependent: 1 basin for water on a 21 × 19 × 15 box, **13942** on a wider 41-point box, where flat outer density makes every point its own maximum. And `sum(VOL)` counts one voxel per grid *point* while `pixel_volume` divides by grid *intervals*, overstating volumes and electron counts by ∏ n_i/(n_i−1) — 18.75% on that grid; correcting for it gives 10.29 electrons against a true 10, which is what confirms the density integration itself is roughly right. Four things were deliberately not taken: the parallel linked-list rework (mid-debug — its convergence loop is a hard-coded three iterations and every merge branch leaks; see `DEFERRED.md`), the `PARALLEL:gather` template (`develop`'s is better — `root` required rather than an optional passed straight to `MPI_GATHER`), the narrowing of `MARCHINGCUBE.edge_vertex_index` from `(0:12)` to `(0:11)` **and** the disabling of the 358-line `divide_cubes_small_map` that it forced, and three dead procedures the branch defined and never called. Full account: `docs/BADER_REPORT.md`. |
 | `archive/libxc` | **Do not port as it stands; it is a prototype.** It is the most valuable of the small branches — a capability rather than a printout — and its two hardest judgement calls are correct. But it wires one of the four functional dispatch routines, and that one dereferences absent arguments on exactly the functionals it added. Assessed 2026-08-12; full findings below. |
 
 ### What was ported, and how
@@ -174,6 +306,83 @@ alternatives were dropped. It is reached by the **new keyword
 `put_unit_cell_geometry_cart`** rather than being called from `put_crystal` as
 on the branch — deliberately, so that no existing test reference changes and
 nothing has to be reblessed.
+
+### `archive/release-td-old` in detail — the `symmetric_reflect` bug, and its surviving twin
+
+The branch was recommended as the next rescue on the strength of `ac8b2af4`,
+*"Major bug fix in `symmetric_reflect`!"*, on the reasoning that a bug fix
+stranded on an archive tag means the live code still has the bug. **That
+reasoning was sound and the premise was wrong**: the commit is on `develop` as
+`e28bd649`, and `git blame` puts it on the live lines. The lesson is that a
+branch commit must be checked against the tree by patch, not by whether the
+branch was ever merged — `git cherry` answers it in one command.
+
+The bug itself is worth recording, because it recurs. The lower-triangle branch
+of `MAT{INTRINSIC}:symmetric_reflect` read:
+
+```foo
+do j = 1,.dim1
+do i = 1,i-1              ! bound names the loop variable it controls
+   self(j,i) = self(i,j)  ! same direction as the upper branch
+```
+
+Two defects in three lines: the inner trip count is computed from an undefined
+`i`, and the assignment sets the *upper* triangle, which is what the other
+branch already does. The fix corrected both.
+
+**One copy survived, and was fixed on 2026-08-17**: `MAT3{REAL}:symmetric_reflect_23`
+carried the same three lines, unamended, at `mat3{real}.foo:236`. It could not
+fire — its only callers, `molecule.fock.foo:739` and `:903`, call it bare, so
+`upper` defaults to `TRUE`, and no call site anywhere in `foofiles/` or
+`runfiles/` passes `set_lower`. The same is true of the `MAT{INTRINSIC}` version,
+so that 2025 fix was itself pre-emptive. Both were landmines rather than wrong
+answers: the first caller to ask for the lower triangle would have got an
+undefined loop bound. No test reference changes, since no test reaches the path.
+
+The defect class is greppable, which is how the survivor was found:
+
+```bash
+grep -rnP 'do\s+([A-Za-z_]\w*)\s*=\s*[^,\n]+,\s*\1\s*[-+]' foofiles/
+```
+
+That pattern — a `do` whose bound names its own loop variable — now returns
+nothing across `foofiles/`.
+
+### Kang's form-factor symmetrization: mostly merged, one extension is not
+
+`e22e2569` *"Added Kang residual symmetrization updated"* (2025-04-25) is one of
+the commits still stranded on `release-td-old`, but it is an **update** to work
+that is already live. On `develop`:
+
+| | state |
+|---|---|
+| `SPACEGROUP:symmetrize_unique_SFs(sf,stabilizer,refl,diff)` | present, called from `CRYSTAL:symmetrize_FFs` |
+| `asymmetric_FF_symmetrization_rss` and its "Form factor asymmetry" table | present — `crystal.foo:7716`, headed *"By Kang. 10.Mar.2025"*, printed by five HAR test references |
+| `.crystal.asymmetric_unit_geometry.destroy` in `molecule.read.foo` | present, at line 1275 |
+
+What the 2025-04-25 commit adds on top is the **maximum** residual beside the
+root-sum-square: `asymmetric_FF_symmetrization_rmax` and
+`..._rmax_hkl`, reported with the reflection that produced it, which needs three
+`OUT` arguments on `symmetrize_unique_SFs` instead of one. That is the
+"form-factor symmetrisation residual tables" listed as unported from the pHAR
+branch. It is additive and self-contained.
+
+Two riders in the same commit should **not** be taken with it. One moves
+`put_CIFs`/`put_tonto_fcf_XCW`/`put_olex_fcf_XCW`/`put_xd_fco_XCW` out of the
+`if (.crystal.xray_data.do_residual_cube)` guard in the XCW lambda loop, so every
+XCW run would write those files; `develop` keeps them inside the guard, and with
+`output=FALSE` rather than the branch's `TRUE`. The other is a comment noting
+that `.reflections(n).stl` is printed in Bohr⁻¹.
+
+**Open question, not a claim.** The rescued pHAR job does not print the
+"Form factor asymmetry" table, although the 2025-04 reference it reproduces
+digit for digit did — noted in `tests/long/ammonium_borane_pHAR_C23/IO`. The
+table is gated on `.asymmetric_FF_symmetrization_rss.allocated`, which is set
+only by `CRYSTAL:symmetrize_FFs`, whose only caller is `molecule.har.foo:612`.
+So the pHAR path appears not to symmetrize its form factors while the HAR path
+does. The numbers being unchanged says the difference is not affecting this
+structure's result, but whether pHAR *should* symmetrize has not been asked of
+anyone who would know.
 
 ### `archive/libxc` in detail — what is worth keeping, and what blocks a port
 

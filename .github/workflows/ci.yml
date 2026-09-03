@@ -15,6 +15,13 @@ on:
 
 env:
   BUILD_TYPE: release
+  # The project standard compiler. A migration to 16 was made and REVERTED on
+  # 2026-08-27: a gfortran-16 DEBUG build fails 34 of 71 short tests where a
+  # gfortran-14 debug build of the same code passes exactly, on top of the
+  # known -fcheck=bounds miscompilation. The 16 work is preserved on the branch
+  # develop-gfortran-16; see DEFERRED.md. Flipping this back to 16 is the only
+  # edit needed here, which is why the PPA machinery is kept.
+  FC_VERSION: 14
 
 jobs:
   build-and-test:
@@ -26,21 +33,51 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install toolchain
-        # gfortran-14 (Foo->Fortran target compiler), a full JDK (CMake needs
-        # javac to build the translator; the ANTLR jar itself is auto-downloaded
-        # by CMake with a SHA-256 check), BLAS/LAPACK from apt (so the LAPACK
-        # submodule isn't rebuilt from source), plus python3/perl/gnuplot/make.
+      - name: Install toolchain (gfortran-${{ env.FC_VERSION }})
+        # NO PPA, DELIBERATELY -- this is the reference build and it must use the
+        # SAME packages the references in tests/ were blessed against. Ubuntu
+        # 24.04 carries gfortran-14 natively, so nothing else is needed at 14.
+        #
+        # Adding ppa:ubuntu-toolchain-r/test here on 2026-08-27 turned this
+        # workflow red: urea_hart_STO-3G_disk_ffs began failing structurally
+        # (0% deviation, 0 ulp), grand total 57/58. The PPA does not merely
+        # *carry* 14, it carries a NEWER MINOR RELEASE of it: the archive has
+        # 14.2.0-4ubuntu2~24.04.1 and the PPA gave 14.3.0-12ubuntu1~24~ppa1.
+        # Enabling it also exposes a second
+        # archive to every other package, BLAS and LAPACK included. The install
+        # assertion below did not catch it because it checks the MAJOR version,
+        # which is 14 either way.
+        #
+        # If FC_VERSION is ever raised past what Ubuntu ships, the PPA has to
+        # come back -- and the references must be re-blessed against it as a
+        # deliberate act, not acquired as a side effect.
+        #
+        # Also a full JDK (CMake needs javac to build the translator; the ANTLR
+        # jar itself is auto-downloaded by CMake with a SHA-256 check),
+        # BLAS/LAPACK from apt (so the LAPACK submodule isn't rebuilt from
+        # source), plus python3/perl/gnuplot/make.
         run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            gfortran-14 libblas-dev liblapack-dev \
+            gfortran-${FC_VERSION} libblas-dev liblapack-dev \
             default-jdk python3 perl gnuplot make cmake
+          command -v gfortran-${FC_VERSION} > /dev/null || {
+            echo "::error::gfortran-${FC_VERSION} did not install from the Ubuntu archive. Do NOT add a PPA to work around this without re-blessing the references; see the comment above."
+            exit 1
+          }
+          # Record the EXACT package builds, not just the version numbers. The
+          # 2026-08-27 failure was one package revision apart and invisible
+          # without this.
+          echo "== toolchain provenance =="
+          gfortran-${FC_VERSION} --version | head -1
+          dpkg-query -W -f='${Package} ${Version}\n' \
+            gfortran-${FC_VERSION} libblas-dev liblapack-dev 2>/dev/null || true
 
       - name: Configure
         run: >
           cmake -B build
-          -DCMAKE_Fortran_COMPILER=gfortran-14
+          -DCMAKE_Fortran_COMPILER=gfortran-${{ env.FC_VERSION }}
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
 
       - name: Build
@@ -57,7 +94,7 @@ jobs:
           echo '## Diagnostics'
           echo '```'
           echo "== toolchain =="
-          gfortran-14 --version | head -1 || echo "gfortran-14 MISSING"
+          gfortran-${FC_VERSION} --version | head -1 || echo "gfortran-${FC_VERSION} MISSING"
           java -version 2>&1 | head -1 || echo "java MISSING"
           python3 --version || true
           echo
@@ -76,14 +113,31 @@ jobs:
           fi
           echo
           echo "== one canonical short test (h2o_rhf_STO-3G), raw =="
+          # TRUNCATE FOR DISPLAY, NEVER FOR CAPTURE. The full output goes to a
+          # file that is uploaded unconditionally; only what a human reads on the
+          # summary is tailed. The previous form piped straight to `tail -25`, so
+          # the other lines existed nowhere -- and `|| true` discarded the exit
+          # status on top of that.
+          mkdir -p diagnostics
           python3 scripts/test.py -t tests/short/h2o_rhf_STO-3G -p "$PWD/build/tonto" \
-            --basis-sets "$PWD/basis_sets" --log-level=INFO 2>&1 | tail -25 || true
+            --basis-sets "$PWD/basis_sets" --log-level=INFO \
+            > diagnostics/raw-test.log 2>&1 || echo "(raw test exited $?)"
+          echo "(full output in the ci-diagnostics artifact: diagnostics/raw-test.log)"
+          tail -25 diagnostics/raw-test.log
           echo
-          echo "== reference-vs-.bad diff (first 80 lines) =="
-          bad=$(find tests/short -name '*.bad' 2>/dev/null | head -1)
-          if [ -n "$bad" ]; then
-            echo "diff ${bad%.bad}  vs  $bad :"
-            diff "${bad%.bad}" "$bad" | head -80 || true
+          echo "== reference-vs-.bad diffs =="
+          # Name every .bad, not just the first. All of them are uploaded, so the
+          # summary showing one is display truncation -- but a reader who is not
+          # told there were nine will not go looking for the other eight.
+          bads=$(find tests/short -name '*.bad' 2>/dev/null | sort)
+          n=$(printf '%s\n' "$bads" | grep -c . || true)
+          if [ "$n" -gt 0 ]; then
+            echo "$n .bad file(s):"
+            printf '%s\n' "$bads" | sed 's/^/  /'
+            first=$(printf '%s\n' "$bads" | head -1)
+            echo
+            echo "diff ${first%.bad}  vs  $first  (first 80 lines; all are in the artifact):"
+            diff "${first%.bad}" "$first" | head -80 || true
           else
             echo "(no .bad produced -> h2o_rhf_STO-3G PASSED; failures are test-specific, not universal)"
           fi
@@ -116,9 +170,12 @@ jobs:
             echo ''
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          # --failure-dir: a crashed job produces no .bad, so without this an ERROR
+          # row records no cause anywhere. See scripts/suite_report.py.
           python3 scripts/suite_report.py \
             --program build/tonto --tests-dir tests --basis-sets basis_sets \
-            --suites short hart --log tests.log | tee -a "$GITHUB_STEP_SUMMARY"
+            --suites short hart --log tests.log \
+            --failure-dir test-failures | tee -a "$GITHUB_STEP_SUMMARY"
           status=${PIPESTATUS[0]}
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           exit $status
@@ -131,4 +188,6 @@ jobs:
           path: |
             tests.log
             tests/**/*.bad
+            test-failures/**
+            diagnostics/**
           if-no-files-found: warn

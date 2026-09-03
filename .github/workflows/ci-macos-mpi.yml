@@ -1,0 +1,116 @@
+name: CI (macOS-MPI)
+
+# The first parallel build ever attempted on macOS in CI. TONTO_AND_MPI.md's
+# characterisation, and ci-mpi.yml, are both Linux-only.
+#
+# THE COMPILER IS THE WHOLE STORY HERE. Tonto does `USE mpi`, and Fortran .mod
+# files are compiler-version specific, so the MPI must have been built by the
+# same compiler as Tonto. On Linux that is painful: Ubuntu's Open MPI is built
+# against gcc-13 while the project standardises on gfortran-14, so ci-mpi.yml
+# has to build Open MPI from source and cache it (~8-10 min cold).
+#
+# On macOS it is free, and by luck rather than design: measured on Apple silicon
+# 2026-08-24, Homebrew's `mpifort` wraps GCC 16.1.0, and Homebrew's `gcc`
+# formula provides gfortran-16 from the same build. So asking for gfortran-16
+# gives a matched pair with no source build at all. That is why this job is
+# gfortran-16 only -- pairing gfortran-14 with a GCC-16 MPI is exactly the
+# mismatch CMakeLists.txt's `use mpi` probe exists to reject, and it would
+# rightly refuse to configure.
+#
+# DEFERRED.md records the gfortran-16 RELEASE switch as numerically free on both
+# platforms, which is what makes this legitimate rather than a shortcut. Its
+# debug build segfaults on arm64, so debug is not attempted here.
+#
+# The gate is the pi rank-invariance check, exactly as on Linux: it needs no
+# stored reference, so it cannot be quietly blessed. The suite is informational
+# for the same reason as ci-mpi.yml -- TONTO_AND_MPI.md still has open
+# defect-register rows, so gating on it would be permanently red for reasons
+# that have nothing to do with macOS.
+#
+# Scheduled and manual only, unbadged until it has said something.
+
+on:
+  schedule:
+    - cron: '51 4 * * 3'      # Wednesdays 04:51 UTC
+  workflow_dispatch:
+
+jobs:
+  mpi:
+    name: macOS MPI, gfortran-16 + Homebrew Open MPI
+    runs-on: macos-14          # Apple silicon
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install the toolchain
+        run: |
+          set -x
+          brew install gcc cmake openjdk open-mpi
+          echo "$(brew --prefix openjdk)/bin" >> "$GITHUB_PATH"
+
+      - name: The compilers must match — assert it, do not hope
+        run: |
+          set -x
+          gfortran-16 --version
+          mpifort --version
+          # Both must report GCC 16.x. If Homebrew ever splits them, this job
+          # should fail here with an obvious message rather than 200 lines
+          # later inside a .mod read error.
+          mpifort --version | head -1 | grep -q 'GCC 16' \
+            || { echo "mpifort is not GCC 16 -- see the header of this file"; exit 1; }
+          gfortran-16 --version | head -1 | grep -q '16\.' \
+            || { echo "gfortran-16 is not 16.x"; exit 1; }
+
+      - name: MPI itself works
+        run: |
+          set -x
+          cat > t.f90 <<'EOF'
+          program t
+             use mpi
+             implicit none
+             integer :: ierr, n
+             call MPI_Init(ierr)
+             call MPI_Comm_size(MPI_COMM_WORLD, n, ierr)
+             print *, 'ranks =', n
+             call MPI_Finalize(ierr)
+          end program t
+          EOF
+          mpifort -o t t.f90
+          mpirun -n 2 ./t
+
+      - name: Configure and build
+        run: |
+          cmake -B build-mpi \
+                -DCMAKE_Fortran_COMPILER=mpifort \
+                -DCMAKE_C_COMPILER=mpicc \
+                -DMPI=1 \
+                -DCMAKE_BUILD_TYPE=release
+          cmake --build build-mpi -- -j3
+
+      - name: GATE — pi is independent of rank count
+        run: |
+          set -euo pipefail
+          sh scripts/check_mpi_pi.sh build-mpi/run_mpi_pi mpirun 1 2 4 | tee mpi_pi.log
+
+      - name: Informational — the short suite under MPI at 2 ranks
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python3 scripts/suite_report.py \
+            --program build-mpi/tonto --tests-dir tests --basis-sets basis_sets \
+            --suites short --mpi --mpi-ranks 2 --mpi-launcher mpirun \
+            --log tests-macos-mpi.log | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-mpi-diagnostics
+          path: |
+            mpi_pi.log
+            tests-macos-mpi.log
+            tests/**/*.bad
+          if-no-files-found: ignore

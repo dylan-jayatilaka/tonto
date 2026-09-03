@@ -52,6 +52,20 @@ Which package supplies what, for diagnosing a partial TeX install:
 This list is tested from a bare `ubuntu:24.04` on every push, by
 `scripts/docker/rgbi.Dockerfile`.
 
+### If you reach for `pip` instead of `pipx`
+
+The install line above uses `pipx` deliberately. On Ubuntu 24.04 the two obvious
+alternatives both fail, and neither error names the real cause:
+
+- **`pip install mol2chemfigPy3` is refused outright.** The system Python is
+  marked externally managed (PEP 668) and answers
+  `error: externally-managed-environment`. Verified on Ubuntu 24.04.3.
+- **`python3 -m venv` fails unless `python3-venv` is installed** — with a
+  `ModuleNotFoundError: No module named 'ensurepip'` that points at ensurepip
+  rather than at the missing package. `sudo apt install python3-venv` fixes it.
+
+`pipx` sidesteps both: it makes the virtual environment itself.
+
 ### If it worked before and has stopped
 
 Your OS most likely upgraded Python and took the virtual environment with it.
@@ -83,26 +97,76 @@ specific to the pictures:
 - **Keep the job directory off `/mnt/c`.** `pdflatex` there is slow enough to
   look hung, and the pipeline runs LaTeX four times.
 
-## macOS — untested
+## macOS
 
-No one has run this end to end on a Mac. `.github/workflows/ci-rgbi-macos.yml`
-tries the list below on a macOS runner weekly; its log is the current state of
-Mac support. `rgbi_doctor.sh` runs on macOS — believe it over this page.
+Run through by hand on Apple silicon (macOS 26.5, BasicTeX 2026) on 2026-08-24,
+and probed weekly by `.github/workflows/ci-rgbi-macos.yml`. `rgbi_doctor.sh` runs
+on macOS — believe it over this page.
 
 ```bash
+xcode-select --install                 # git, and perl: pdfcrop is a Perl script
 brew install open-babel ghostscript pipx
-brew install --cask mactex-no-gui      # or basictex, but see the tlmgr note
-pipx install mol2chemfigPy3
+brew install --cask basictex           # ~100 MB; mactex-no-gui is the ~6 GB alternative
+pipx install mol2chemfigPy3            # brings Indigo with it
+
+eval "$(/usr/libexec/path_helper)"     # see trap 1
+sudo /Library/TeX/texbin/tlmgr install pdfcrop     # see trap 2
+
+scripts/rgbi_doctor.sh
 ```
 
-Three known problems:
+### The two PATH traps, in the order they bite
 
-1. **`tlmgr` may need an absolute path to install `pdfcrop`** — the full path
-   under `/usr/local/texlive/<year>/bin/<arch>/`, not a bare `tlmgr install
-   pdfcrop`. `pdfcrop` also needs `gs`.
-2. **Homebrew pulls in a lot**, including ghostscript. Expect a long download.
-3. **Indigo wheels have had trouble on Apple silicon.** If
-   `pipx install mol2chemfigPy3` fails to build, an x86_64 Python under Rosetta
-   is the usual workaround.
+They are a pair, and fixing the first is what exposes the second.
+
+1. **BasicTeX installs into `/Library/TeX/texbin`, which is not on your `PATH`
+   until a new shell starts.** Run `tlmgr` in the terminal you installed from and
+   you get `command not found` seconds after installing TeX. Either open a new
+   terminal or run `eval "$(/usr/libexec/path_helper)"`.
+
+2. **`sudo` does not inherit your `PATH`.** macOS resets it to a built-in
+   `secure_path` that excludes `/Library/TeX/texbin`, so `sudo tlmgr install …`
+   fails with `sudo: tlmgr: command not found` at the exact moment `tlmgr` is
+   working perfectly for you. Give it the absolute path:
+
+   ```bash
+   sudo /Library/TeX/texbin/tlmgr install pdfcrop
+   ```
+
+### Which TeX packages to install: ask, do not guess
+
+On BasicTeX 2026 only **`pdfcrop`** was actually missing — `pgf`/`tikz` (with the
+`calc` library), `xcolor`, `chemfig`, `simplekv`, `geometry`, `longtable`,
+`graphics` and `ifthen` all shipped with it. That will drift, so ask rather than
+hard-code a list:
+
+```bash
+for s in chemfig tikz xcolor longtable graphicx ifthen geometry; do
+    kpsewhich $s.sty >/dev/null || echo "MISSING: $s.sty"
+done
+```
+
+Then install what came back — but the package name is not always the style-file
+name:
+
+| Style file | TeX Live package |
+|---|---|
+| `tikz.sty` | `pgf` |
+| `graphicx.sty` | `graphics` |
+| `longtable.sty` | `tools` |
+| `twoopt.sty` | `oberdiek` |
+| everything else | same name as the style file |
+
+**There is no package called `longtable`.** Asking for one makes `tlmgr` return
+1 and take the whole install down with it, even when every other package
+succeeded — which is exactly what kept the macOS CI badge red for three weeks.
+
+### Two more, unchanged
+
+- **Homebrew pulls in a lot**, including ghostscript. Expect a long download.
+- **Indigo wheels have had trouble on Apple silicon.** If
+  `pipx install mol2chemfigPy3` fails to build, an x86_64 Python under Rosetta is
+  the usual workaround. It did not arise on the 2026-08-24 run: the
+  `macosx_11_0_arm64` wheel installed without compiling.
 
 Corrections to this section are welcome.

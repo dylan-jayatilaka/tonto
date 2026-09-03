@@ -20,6 +20,12 @@ sudo apt install make cmake default-jdk gfortran-14 libblas-dev liblapack-dev \
   specific — what any MPI you use must also have been built with. Version 13
   will generally compile, but do not report a numeric difference against the
   references without first checking on 14.
+- **Do not use gfortran-16 yet.** A migration to it was made and reverted on
+  2026-08-27: its *debug* build fails 34 of 71 short tests where 14 passes
+  exactly, and separately it miscompiles `-fcheck=bounds`. Release builds are
+  fine, so 16 is usable if you only ever build `release` — but it is not the
+  standard, and the references were not blessed on it. See
+  [`GFORTRAN16_DEBUG_CRASH.md`](GFORTRAN16_DEBUG_CRASH.md).
 - `default-jdk` provides `java`/`javac` for the ANTLR4 `foo`→Fortran translator.
   The ANTLR jar itself is downloaded automatically on the first `cmake` run
   (internet needed for that one configure).

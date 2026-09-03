@@ -13,6 +13,15 @@ on:
   push:
     tags: [ 'v*' ]            # a tag builds and publishes a release
 
+env:
+  # The project standard compiler. A migration to 16 was made and REVERTED on
+  # 2026-08-27: a gfortran-16 DEBUG build fails 34 of 71 short tests where a
+  # gfortran-14 debug build of the same code passes exactly, on top of the
+  # known -fcheck=bounds miscompilation. The 16 work is preserved on the branch
+  # develop-gfortran-16; see DEFERRED.md. Flipping this back to 16 is the only
+  # edit needed here, which is why the PPA machinery is kept.
+  FC_VERSION: 14
+
 jobs:
 
   linux-static:
@@ -23,15 +32,27 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install the toolchain
+      - name: Install the toolchain (gfortran-${{ env.FC_VERSION }})
+        # NO PPA, DELIBERATELY. Ubuntu 24.04 carries gfortran-14 natively, and a
+        # build compared against stored references must not silently change
+        # where its packages come from: adding ppa:ubuntu-toolchain-r/test on
+        # 2026-08-27 substituted a newer minor release (archive 14.2.0, PPA
+        # 14.3.0) and turned ci.yml red. Bring the PPA back only for a compiler Ubuntu
+        # does not ship, and re-bless the references as a deliberate act.
         run: |
+          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y make cmake default-jdk gfortran-14 python3
+          sudo apt-get install -y make cmake default-jdk gfortran-${FC_VERSION} python3
+          command -v gfortran-${FC_VERSION} > /dev/null || {
+            echo "::error::gfortran-${FC_VERSION} is not in the Ubuntu archive; refusing to ship a tarball built by another compiler."
+            exit 1
+          }
+          gfortran-${FC_VERSION} --version | head -1
 
       - name: Build
         run: |
           cmake -B out -S . \
-                -DCMAKE_Fortran_COMPILER=gfortran-14 \
+                -DCMAKE_Fortran_COMPILER=gfortran-${FC_VERSION} \
                 -DCMAKE_BUILD_TYPE=release-static \
                 -DCOMPILE_LAPACK=ON
           cmake --build out -- -j3
@@ -45,7 +66,7 @@ jobs:
 
       - name: Run a workshop exercise against the built binary
         run: |
-          cd examples/1-nh3-hart
+          cd workshop/examples/1-nh3-hart
           TONTO_BASIS_SET_DIRECTORY=$GITHUB_WORKSPACE/basis_sets \
             $GITHUB_WORKSPACE/out/hart --job nh3 --basis def2-SVP \
             --std-f nh3.hkl nh3.cif
@@ -65,7 +86,7 @@ jobs:
           mkdir -p $D/build
           cp out/tonto out/hart $D/build/
           [ -f out/rgbi ] && cp out/rgbi $D/build/ || true
-          cp -r basis_sets examples workshop $D/
+          cp -r basis_sets workshop $D/
           cp README.md LICENSE $D/
           tar czf tonto-linux-x86_64.tar.gz $D
           echo "ARTEFACT=tonto-linux-x86_64.tar.gz" >> $GITHUB_ENV
@@ -118,9 +139,9 @@ jobs:
           "$WINE" out-win/tonto.exe --version || { echo "tonto.exe did not run"; exit 0; }
           # Does it get the right answer? Exercise 1 of the workshop, whose
           # reference R(F) is 0.010071.
-          cd examples/1-nh3-hart
-          "$WINE" ../../out-win/hart.exe --job nh3 --basis def2-SVP \
-                  --basis-dir ../../basis_sets --std-f nh3.hkl nh3.cif \
+          cd workshop/examples/1-nh3-hart
+          "$WINE" ../../../out-win/hart.exe --job nh3 --basis def2-SVP \
+                  --basis-dir ../../../basis_sets --std-f nh3.hkl nh3.cif \
             || { echo "hart.exe did not complete under wine"; exit 0; }
           grep '^R(F)' nh3.out || echo "no R(F) in the output"
 
@@ -130,7 +151,7 @@ jobs:
           D=tonto-$V-windows-x86_64
           mkdir -p $D/build
           cp out-win/*.exe $D/build/
-          cp -r basis_sets examples workshop $D/
+          cp -r basis_sets workshop $D/
           cp README.md LICENSE $D/
           zip -qr tonto-windows-x86_64.zip $D
           echo "ARTEFACT=tonto-windows-x86_64.zip" >> $GITHUB_ENV

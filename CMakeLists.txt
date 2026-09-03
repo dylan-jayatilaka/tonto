@@ -664,6 +664,7 @@ set(RUN_SRC
     ${RUNFILE_DIR}/run_mat{real}.foo
     ${RUNFILE_DIR}/run_mat{cpx}.foo
     ${RUNFILE_DIR}/run_mp2.foo
+    ${RUNFILE_DIR}/run_mp2_exercise.foo
 #   ${RUNFILE_DIR}/run_mpi_matmul.foo
     ${RUNFILE_DIR}/run_mpi_pi.foo
     ${RUNFILE_DIR}/run_qr.foo
@@ -1050,10 +1051,13 @@ add_executable(run_himz          EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/ru
 add_executable(run_shell2        EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_shell2.F90)
 add_executable(run_mat_real      EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mat_real.F90)
 add_executable(run_mat_cpx       EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mat_cpx.F90)
-# run_mp2 is referenced by no test, script, workflow or document -- its only
-# trace in the repo is a note that archive/Teaching carried an MP2 lab. Still
-# buildable on demand.
+# The MP2 teaching lab, ported from archive/Teaching (2026-08-18). run_mp2 is the
+# working program, validated against the library `mp2` keyword; run_mp2_exercise
+# is the same code with the correlation loop blank. Both are EXCLUDE_FROM_ALL and
+# deliberately so: they are teaching material, not part of the shipped product,
+# and no test references either. See docs/TEACHING_MP2.md.
 add_executable(run_mp2           EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mp2.F90)
+add_executable(run_mp2_exercise  EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mp2_exercise.F90)
 #add_executable(run_mpi_matmul    EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_matmul.F90)
 # run_mpi_pi is the MPI smoke test: one `parallel do` + one PARALLEL_SUM, with a
 # known answer that must not depend on the rank count. Registered as the
@@ -1100,6 +1104,7 @@ target_link_libraries(run_himz          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIE
 target_link_libraries(run_mat_real      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_mat_cpx       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_mp2           tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_mp2_exercise  tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 #target_link_libraries(run_mpi_matmul    tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 if(WITH_MPI)
     target_link_libraries(run_mpi_pi     tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})

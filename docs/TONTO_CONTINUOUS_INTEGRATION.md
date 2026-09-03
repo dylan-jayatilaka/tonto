@@ -10,7 +10,10 @@ are not all wired to every push.
 | **CI (Linux-release)** | `ci.yml` | yes | every push / PR to `master`, `develop` | ~15–20 min |
 | **CI (WSL-release)** | `ci-wsl.yml` | yes | `guards` job on every push; the full WSL build when the WSL machinery changes, on demand, and weekly (Mon) *once on `master`* | ~1 min / ~40–70 min |
 | **CI (Linux-debug)** | `ci-debug.yml` | yes | every push / PR to `master`, `develop`, and on demand | ~15 min |
-| **CI (WSL-debug)** | `ci-wsl-debug.yml` | yes, but **never yet run** | weekly (Tue) and on demand — both need it on `master` first | ~60–90 min |
+| **CI (WSL-debug)** | `ci-wsl-debug.yml` | yes | weekly (Tue) and on demand — green on `master` since 2026-08-18 | ~60–90 min |
+| **CI (macOS-release)** | `ci-macos.yml` | not yet | weekly (Tue) and on demand — **never yet run**, the file is not on `master` | ~40–70 min × 2 |
+| **CI (macOS-MPI)** | `ci-macos-mpi.yml` | not yet | weekly (Wed) and on demand — **never yet run**, the file is not on `master` | ~40–70 min |
+| **CI (macOS-debug)** | `ci-macos-debug.yml` | not yet | weekly (Thu) and on demand — **never yet run**, the file is not on `master` | ~40–60 min × 2 |
 
 The two release workflows gate on the **loose** criterion from `scripts/test.py` —
 relative error ≤ 0.2 % **or** last printed digit within ±2 — so their verdicts are
@@ -251,21 +254,63 @@ those are triaged.
 in `README.md` in an HTML comment — both together, or the badge points at a workflow that never
 runs.
 
+## Coverage: every platform against every build type
+
+The README carries only the badges that are **live signals**. This is the full picture,
+including the cells that are not covered — a blank here is information, which is why it
+lives in this document rather than on the front page.
+
+| | Linux | Windows/WSL | macOS |
+|---|---|---|---|
+| **release** | `ci.yml`, badge, every push | `ci-wsl.yml`, badge, weekly + on demand | `ci-macos.yml`, **not on `master`, so never runs** |
+| **debug** | `ci-debug.yml`, badge, every push | `ci-wsl-debug.yml`, badge, weekly | `ci-macos-debug.yml`, **not on `master`** |
+| **parallel (MPI)** | `ci-mpi.yml`, badge, weekly + MPI paths | — none | `ci-macos-mpi.yml`, **not on `master`** |
+| **parallel debug** | — none | — none | — none |
+
+Two gaps worth naming rather than leaving as blanks. **The three macOS workflow files
+exist and are written**, but a `schedule:` trigger only fires from the default branch, so
+until they reach `master` they never run — that is the single reason macOS has no badge.
+**No platform has a parallel *debug* build**, which is where an MPI precondition failure
+would actually be caught; see `DEFERRED.md`.
+
+The build types are the rows because that is the axis that grows: platforms have been
+Linux, Windows/WSL and macOS for years, while build types have gone release → debug → MPI
+→ MPI-debug, with `release-static` and `fast` also existing.
+
 ## What each badge on the README covers
 
-The badges track the **`release`** branch.
+The badges track the **`master`** branch — every badge URL carries `?branch=master`.
+(They were described here as tracking `release` until 2026-08-26; that branch was
+renamed `develop` on 2026-08-11 and the badges never pointed at it.)
 
 - **Linux-release** — the gate. This one must be green.
 - **Linux-debug** — carries four longstanding `-O0` floating-point and
   structural failures that are not code defects (see `DEFERRED.md`), so its
   suite step is informational.
-- **Linux-MPI** — not on every push. Ubuntu's Open MPI is built against gcc-13
-  while this project standardises on gfortran-14, and `USE mpi` makes `.mod`
-  files compiler-version specific, so the workflow builds Open MPI from source;
-  it is cached, scheduled weekly, and triggered only by MPI-relevant paths. Its
-  gate is the π rank-invariance check (`scripts/check_mpi_pi.sh`), not the
-  suite. A red MPI badge means the build broke, or π stopped being rank-count
-  independent — both real.
+- **Linux-MPI** — not on every push. `USE mpi` makes `.mod` files
+  compiler-version specific, so the MPI must be built by the same compiler as
+  Tonto; Ubuntu's packaged Open MPI is built against the distro default (gcc-13
+  on 24.04) and so cannot be used at all. The workflow therefore builds Open MPI
+  from source; it is cached, scheduled weekly, and triggered only by
+  MPI-relevant paths. Its gate is the π rank-invariance check
+  (`scripts/check_mpi_pi.sh`), not the suite. A red MPI badge means the build
+  broke, or π stopped being rank-count independent — both real.
+
+  **On gfortran-16 since 2026-08-26** (gfortran-14 before). The compiler was
+  never an inherited constraint — gcc-13 was only ever the reason the *packaged*
+  MPI is unusable, and since the workflow builds its own, the compiler is a
+  parameter: `FC_VERSION` in `ci-mpi.yml` is the single place it is set, and the
+  cache key carries it, so a switch invalidates the cache on its own (one cold
+  ~8–10 min rebuild, then seconds again). Ubuntu 24.04's repositories stop at
+  gcc-14, so 16 comes from `ppa:ubuntu-toolchain-r/test`, and the install step
+  asserts it landed rather than falling back to 14 — a 14 MPI labelled 16 is
+  exactly the silent class this project keeps finding by measurement. `DEFERRED.md`
+  records gfortran-16 **release** as numerically free on both platforms; that
+  verdict does not extend to debug, where 16 segfaults in `-fcheck=bounds`
+  ([`GFORTRAN16_DEBUG_CRASH.md`](GFORTRAN16_DEBUG_CRASH.md)). This job builds
+  release only. Note the "numerically free" measurement was taken on *serial*
+  release: under `-DMPI=1`, `include/macros.in` `#undef`s `PURE`, so an MPI build
+  is a different macro configuration. The π gate is what proves the switch.
 - **WSL-release** — builds and tests inside a real WSL2 Ubuntu on a Windows
   runner, because WSL looks enough like Linux that the ordinary build "works"
   right up until it does not. Every push, plus weekly.
@@ -274,10 +319,67 @@ The badges track the **`release`** branch.
   day after WSL-release, so two hour-long Windows jobs never queue against each
   other.
 
-The empty **macOS** row is deliberate: macOS runners are free for this public
-repository, and a macOS job is the only thing that can guard the two arm64
-compiler pins whose failure mode is wrong numbers rather than crashes. See the
-high-priority item in `DEFERRED.md`.
+**macOS**, added 2026-08-24. macOS runners are free for this public repository,
+and a macOS job is the only thing that can guard the two arm64 compiler pins
+whose failure mode is wrong numbers rather than crashes — `shell1quartet.F90`'s
+`-O2 -fno-schedule-insns`, and the second pin for rgbi/BN's Roby populations.
+Neither was guarded by anything before. `ci-macos.yml` asserts the pin is still
+in the build flags rather than trusting it.
+
+Both jobs are **unbadged on purpose**, following the rollout in `DEFERRED.md`:
+run them, gather evidence, badge when they have something steady to say. Measured
+by hand on Apple silicon before the workflows were written (2026-08-24,
+gfortran-14, release): the short suite is **54/55** under the loose gate, failing
+only `urea_ccsd_pob-TZVP_Salvador_properties` at 2.99% against a 0.2% gate. That
+one discrepancy is what these jobs exist to characterise, and it is not to be
+blessed away.
+
+`ci-macos.yml` runs a **matrix over gfortran-14 and gfortran-16**, because the
+compiler standard is a live question: `DEFERRED.md` records the gfortran-16
+*release* switch as numerically free on both platforms, while its *debug* build
+segfaults on arm64. Only release is matrixed for that reason, and the macOS debug
+column stays empty.
+
+### Two gaps, and what it would take to close them (2026-08-25)
+
+**Neither macOS workflow has ever run.** They exist only on `develop`, and both are
+`schedule:` + `workflow_dispatch:` with no `push:` trigger — GitHub fires a scheduled
+workflow only from the **default branch**. So they cannot run until they are on
+`master`. Same rule already noted above for `ci-wsl-debug.yml`.
+
+**A macOS debug job could be added.** The reason given for leaving it out — the
+gfortran-16 debug segfault — never applied to gfortran-**14**, which builds and runs
+debug on arm64 today, and the gfortran-16 crash is now worked around
+(`GFORTRAN16_DEBUG_CRASH.md`). Pin such a job to gfortran-14: on 16 the build omits
+`-fcheck=bounds`, so it would check less than `ci-debug.yml`. Shape it like
+`ci-debug.yml` — build, then two fast jobs to prove the binary runs — not a full
+numeric suite. Badge only after one green run: `ci-macos.yml` has never run and is
+expected red at first.
+
+**A WSL MPI job is possible but poor value.** No technical blocker, but the cost is
+`wsl-build`'s Windows runner (billed 2×, 40–70 min) *plus* an Open MPI build from
+source — Ubuntu's is built against gcc-13 and `USE mpi` makes `.mod` files
+compiler-version specific, which is exactly why `ci-mpi.yml` builds its own. That
+buys mostly a re-run of Linux MPI, since WSL is Ubuntu userland and the MPI code path
+is identical; what is WSL-*specific* is the four traps `cmake/WSL.cmake` guards, none
+of them MPI-related. The cheap alternative is a **configure-only** check inside the
+existing `wsl-build` job: assert `-DMPI=1` finds a matching `mpifort`, and fails with
+the intended message when it does not.
+
+**Why macOS MPI is cheap and Linux MPI is not.** Tonto does `USE mpi`, so the MPI
+must be built by the same compiler as Tonto. Measured 2026-08-24: Homebrew's
+`mpifort` wraps **GCC 16.1.0**, and Homebrew's `gcc` gives `gfortran-16` from the
+same build — a matched pair for free. On Ubuntu 24.04 `mpifort` is **GCC 13.3**,
+which matches no compiler this project uses, which is exactly why `ci-mpi.yml`
+builds Open MPI from source and caches it. `ci-macos-mpi.yml` therefore needs no
+source build, and pins itself to gfortran-16 and asserts the match rather than
+hoping. Since 2026-08-26 both MPI workflows are on **GCC 16** — but not the *same*
+GCC 16, and that matters when reading a Linux/macOS difference. macOS gets **16.1.0**
+from Homebrew; Linux gets the newest noble build in `ppa:ubuntu-toolchain-r/test`,
+which is the snapshot **16.0.1 20260315 (trunk r16-8100)**, plus a source build of
+Open MPI. The Linux one is the compiler already characterised on achari2
+([`GFORTRAN16_GCC_BUG.md`](GFORTRAN16_GCC_BUG.md)), so the switch runs on measured
+ground rather than an unknown compiler.
 
 Two workflows are not build types and sit outside the table: `ci-rgbi.yml`
 proves the RGBI picture-tool install list from a bare `ubuntu:24.04`, and

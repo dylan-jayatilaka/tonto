@@ -108,11 +108,41 @@ had.
 **Trigger it by hand** from Actions → *CI (Linux-MPI)* → *Run workflow*. It also runs weekly
 (Mondays 05:17 UTC) and on pushes that touch MPI-relevant paths (`parallel.foo`, `system.foo`,
 `macros.in`, `run_mpi_*.foo`, the test scripts, or the workflow itself). Deliberately **not** on
-every push: Ubuntu's packaged Open MPI is built against gcc-13 while the project uses gfortran-14,
-and Tonto does `USE mpi`, so the workflow has to build Open MPI from source. That is cached on
-`(Open MPI version, gfortran version)` — the pair that `.mod` compatibility actually depends on —
-so a cold cache costs ~8-10 min and a warm one seconds. Same pattern `ci-wsl.yml` uses for its
-expensive job.
+every push: Tonto does `USE mpi`, so the MPI must be built by the same compiler as Tonto, and
+Ubuntu's packaged Open MPI is built against the distro default (gcc-13 on 24.04) — so the
+workflow has to build Open MPI from source. That is cached on `(Open MPI version, gfortran
+version)` — the pair that `.mod` compatibility actually depends on — so a cold cache costs
+~8-10 min and a warm one seconds. Same pattern `ci-wsl.yml` uses for its expensive job.
+
+**The workflow compiler is `gfortran-16` as of 2026-08-26** (`FC_VERSION` in `ci-mpi.yml`, the
+single place it is set; Ubuntu 24.04 stops at gcc-14, so it comes from
+`ppa:ubuntu-toolchain-r/test`). **The rest of the project did NOT follow.** A project-wide migration to 16 was made on
+2026-08-27 and reverted the same day, when a gfortran-16 debug build was found to fail 34 of 71
+short tests; `ci-mpi.yml` is left on 16 because it builds *release*, which is unaffected, and
+has been green since the switch. See `CLAUDE.md` §4 and the branch `develop-gfortran-16`.
+
+The measurements recorded further down this page were taken under **gfortran-14** and are left
+as measured. Two notes on re-measuring them, agreed 2026-08-27:
+
+- **The serial comparison is cheap and worth having.** `ci-full-suite.yml` takes an
+  `fc_version` dispatch input, so dispatching it at `14` and at `16` gives a like-for-like pair
+  on identical code, references and hardware — the only honest way to attribute drift to the
+  compiler. It has diagnostic value now, not just after GCC 16 releases: milestone 7 is being
+  chased *on* 16 while its baseline numbers come from 14, which leaves compiler and code varying
+  together.
+- **A single MPI run must not be used for this.** Finding 7 measured five `ci-mpi.yml` runs on
+  identical code at ERROR 1, 1, 1, 1 and **11**. Any 16-vs-14 MPI claim needs repetition on both
+  sides first. Re-running §6's four-build sweep is deferred until GCC 16 is released, since the
+  numbers would otherwise want taking twice.
+
+**CAUTION on this workflow's suite table (found 2026-08-27).** Until that date `ci-mpi.yml`
+installed **no gnuplot**, while running the full short suite through `suite_report.py`. Tonto
+completes a plotting job without gnuplot but prints a multi-line WARNING per plot instead of
+rendering it, which is a **structural** difference from the stored reference — so every plotting
+job in that table failed at 0% numeric deviation, for reasons having nothing to do with MPI.
+gnuplot is installed now. Any MPI suite count recorded on this page before 2026-08-27 should be
+read with that in mind; the π check, which is the actual gate, is unaffected because it needs no
+reference.
 
 **What gates it:** the π rank-invariance check (`check_mpi_pi.sh` at 1/2/4 ranks). It needs no
 stored reference, so it cannot be silently blessed, and all four dead reductions found in
@@ -174,7 +204,7 @@ deliberately different, and any later shared-mode code that branches on allocati
 extent or convergence flags of that data will desync. Either resynchronise the state or keep
 the later code non-collective. Because TEXTFILE bookkeeping is collective, *printing slightly
 more on one rank is itself a collective mismatch* — and it surfaces later, somewhere innocent.
-Pitfall 8 in `docs/TONTO_DEVELOPER.md` §1a, with the trace-based recipe that found it.
+Pitfall 8 in `docs/TONTO_DEVELOPER_INFO.md` §1a, with the trace-based recipe that found it.
 
 **Not yet fixed** — a latent collective-inside-a-master-guard deadlock in `SYSTEM:initialize`, a
 commented-out `MPI_ABORT` (so one rank dying hangs the job), HAR writing the same file from every
@@ -590,6 +620,375 @@ build where they failed. Outstanding: the fourth test, and a re-run of all four 
 against current `antlr4`, which has changed substantially since (the I/O broadcasts moved to
 `PARALLEL_BROADCAST_IO`, `TEXTFILE:flush` was fixed, per-rank I/O now actually works).
 
+### Finding 7 — the suite is nondeterministic, and the one thing that is not (2026-08-26)
+
+Found while moving CI to gfortran-16. It is recorded first because it invalidates a habit,
+not just a number: **a single MPI suite run is not evidence.**
+
+Five runs of `ci-mpi.yml`, all at commit `ed25349b`, same compiler, same cached Open MPI:
+
+| run | ERROR | loose | exact |
+|---|---|---|---|
+| 32968421834 | **11** | 42/55 | 36 |
+| 32976459938 | 1 | 52/55 | 47 |
+| 32976469015 | 1 | 52/55 | 50 |
+| 32976478217 | 1 | 52/55 | 50 |
+| 32976487120 | 1 | 52/55 | 50 |
+
+Read it carefully, because the obvious reading is wrong. This is **not** per-test flakiness:
+
+- `urea_read_and_process_CIF` errors in **5 of 5** (6 of 6 including the run after) — it is a
+  **deterministic** failure with a stable reproducer.
+- The other ten errors happened **together, in one run, and never again**. Ten tests failing at
+  once and then not at all is one event, not ten flaky tests.
+- Even among the four ERROR-1 runs, `exact` varies 47–50, so the *numbers* drift run to run
+  independently of the errors.
+
+Ruled out for the burst: the Open MPI cache (all five restored the same one) and runner
+contention (the burst run ran **alone**; the four concurrent ones were clean).
+
+**What this costs.** A `50/55` under gfortran-14 was compared against a `52/55` under
+gfortran-16 and reported as an improvement. It was not evidence — the spread on identical
+code is wider than the effect. gfortran-16 does sit at ERROR 1 in four of five runs against
+gfortran-14's 3, but gfortran-14 has **n=1** and no such claim can be made yet.
+
+**Correction to Finding 6's practical consequence.** That section says `-Ofast` hides the
+CIF-test failures and `-O2` exposes them. CI is `-Ofast` and the same family errors there, so
+the right statement is that `-Ofast` **hides it most of the time, not always**. The `-O2` /
+`-foptimize-sibling-calls` bisection stands; the inference that `-Ofast` is clean does not.
+
+#### Why this went unseen, which matters more than the finding
+
+Three layers each discarded the evidence, each assuming another kept it:
+
+1. `ci-mpi.yml` piped the report through `| tail -30`, so **45 of 55 rows never reached the
+   log**. The full table went only to `$GITHUB_STEP_SUMMARY`, which is not reachable through
+   the API. Three green runs had already gone by.
+2. An ERROR row prints `ERROR ERROR ERROR - -` and nothing else.
+3. `suite_report.py` ran each job with `capture_output=True` and the ERROR branch **dropped
+   both streams**, building its verdict from the return code alone. A crashed job also writes
+   no `.bad`, so the artefact upload had nothing to collect.
+
+The result was eleven failures with **no recorded cause anywhere**, which forced attribution by
+test *name* — guessing. Fixed: `suite_report.py --failure-dir` writes one untruncated log per
+ERRORing test (command, exit status, both streams) and CI uploads it; the `tail` is gone.
+**Rule: truncate for display, never for capture.**
+
+#### ROOT CAUSE (2026-08-26): a collective count driven by rank-local state
+
+`urea_read_and_process_CIF` at 2 ranks. Reproduced **5/5** locally on macOS/arm64 with
+Homebrew GCC 16.1.0 at `-Ofast`, and on Linux/x86_64 with the 16.0.1 snapshot in CI — so it
+is neither platform- nor optimisation-specific. `-n 1` passes **exactly** (0%, 0 ulp).
+
+**`TEXTFILE:move_to_record_external`** (`foofiles/textfile.foo:1263`):
+
+```fortran
+if (rec < (.record+1)) then
+   do ; .move_to_back_record ; if (rec==(.record+1)) exit ; end
+else if (rec > (.record+1)) then
+   do ; .move_to_next_record ; if (rec==(.record+1)) exit ; end
+end
+```
+
+Each iteration of either loop issues one `PARALLEL_BROADCAST_IO`. **The iteration count is
+computed from `.record`, which is rank-local**, so two ranks that disagree about `.record`
+issue different numbers of collectives. That is the milestone-7 rule violated verbatim:
+*whether a collective executes must never depend on state that can differ between ranks.*
+
+And nothing puts them back in step. **`.record` is broadcast in exactly one place in the
+file — `textfile.foo:3550`, in the `flush` (write) path.** The read path maintains it purely
+locally, `+1` in `move_to_next_record` and `-1` in `move_to_back_record`. So the loop count
+depends on `.record`, and `.record` is only kept correct by executing equal loop counts: one
+divergence is permanent and self-amplifying.
+
+**The observed damage.** Once the streams shift by one, every later collective binds to the
+wrong variable. Rank 1 receives a *record counter* into `.IO_status` — the trace shows the
+values 113, 114, 115 cycling — sees `114 /= 0`, and dies at the `DIE_IF` in
+`move_to_next_record`. Master is unaffected and is already writing `urea.cxc`, which comes
+out truncated at 12–16 lines of 101 when `MPI_ABORT` lands.
+
+**Rank 1's stack**, obtained with `lldb` on the *release* binary, no rebuild:
+
+```
+SYSTEM:die <- SYSTEM:die_if <- TEXTFILE:move_to_next_record <- TEXTFILE:move_to_record
+           <- TEXTFILE:move_to_line <- CIF:move_to_end_of_data
+           <- MOLECULE.CE:process_cif_for_cx <- MOLECULE.MAIN:read_keywords
+```
+
+The debug build's `ENSURE(.file.is_open)` fires at `CIF:move_to_end_of_data` — frame 5 of that
+same stack. **Debug and release are one failure, not two.**
+
+##### Three method lessons, all of which cost time here
+
+1. **A broadcast trace of `(length, datatype, value)` cannot detect misalignment.** Rank 1's
+   *n*-th receive *is* master's *n*-th send, so both traces record the same value whatever
+   variable each rank binds it to. The two streams came out byte-identical and were briefly
+   read as "perfect lockstep" — the opposite of the truth. To see a shift, a trace must carry
+   a **call-site identity**, not the payload. 66% of broadcasts here are `1 x MPI_INTEGER`, so
+   shape alone is useless too.
+2. **`lldb` on the optimised binary answered in two minutes what two 30-minute instrumented
+   rebuilds did not.** Break on `die`, not `die_if` — `DIE_IF` expands to
+   `call die_if_(tonto,cond,msg)`, so a breakpoint there fires on every evaluation including
+   the benign ones, and the first stack you get is a startup check.
+3. **The diagnostic text is wrong and cost a wrong turn.** `move_to_next_record` opens
+   nothing; `iostat/=0` there is EOF or a read error. "error opening new file" appears at
+   **seven** sites in `textfile.foo` and one in `file.foo`. It should name the operation and
+   print the rank and the `iostat` value.
+
+##### PARTIAL FIX APPLIED (2026-08-26) — an amplifier removed, the origin still open
+
+`move_to_record_external` now positions the file on the I/O rank alone and broadcasts the
+result, which is the standard pattern:
+
+```fortran
+if (IO_IS_ALLOWED) then
+   ... backwards / forwards loop, both movers now NON-collective ...
+end
+PARALLEL_BROADCAST_IO(.IO_status,tonto.master_processor)   ! exactly one, every rank
+PARALLEL_BROADCAST_IO(.record,   tonto.master_processor)   ! exactly one, every rank
+DIE_IF(.IO_status/=0,"error moving to a record in "//trim(.name))
+```
+
+`move_to_next_record` and `move_to_back_record` lost their collectives entirely; each has
+exactly one caller, so no `_io` twin was needed. Both carry a comment saying they must stay
+non-collective. The loops gained an `exit` on `.IO_status/=0`, because the `DIE_IF` that used
+to terminate a failing loop now lives in the caller. Collective traffic also drops from one
+pair per record stepped to one pair per positioning call.
+
+Positioning on master additionally dissolves a problem that broadcasting inside the loops
+would **not** have fixed: `rec` is not independent of `.record` (`cif.foo:712` sets
+`.end_of_data = .file.record`), so had every rank kept looping they would have disagreed
+about the *target* as well as the position. Non-master ranks now never evaluate the exit
+condition at all.
+
+**It did not cure the test, and the causality was the other way round from what is written
+above.** After the fix, `urea_read_and_process_CIF` at `-n 2` fails 3/3 with
+
+```
+*** An error occurred in MPI_Bcast
+*** MPI_ERR_TRUNCATE: message truncated
+```
+
+`-n 1` and serial still pass exactly. So `move_to_record_external` was an **amplifier**, not
+the origin: the ranks were *already* one collective apart on entry, which is what made
+`.record` diverge. The divergent `.record` was a symptom that had been read as the cause. With
+the amplifier gone the underlying shift surfaces honestly as `MPI_ERR_TRUNCATE` — milestone
+7's original signature — instead of as a bogus "error opening new file".
+
+The fix stays: a collective count driven by rank-local state is a defect on its own terms, it
+sits on the path of every file read, and it was disguising the real failure.
+
+**The origin is upstream of `move_to_record_external`** — in whatever first put the ranks one
+collective apart, before `CIF:move_to_end_of_data` is reached. From rank 1's stack that means
+`CIF:find_end_of_data_block` / `MOLECULE.CE:process_cif_for_cx`.
+
+##### PARTIAL VERIFICATION DONE (2026-08-26, late) — the `long` suite, macOS, 1 rank
+
+Run after the section below was written, so read this first. The **`long` suite** was run
+against the fixed binary: **28/31 loose**, and **all three non-passes are known and
+pre-existing**, none of them caused by the `textfile.foo` change:
+
+| test | why it fails, and since when |
+|---|---|
+| `quartz_NN_HAR_L0_rhf_def2-SVP` | macOS-only, reference is *correct* — `DEFERRED.md`, "fail on macOS only" |
+| `quartz_NN_HAR_L1_rhf_def2-SVP` | same |
+| `ammonium_borane_pHAR_C23` | ERROR — the test blocked by the missing 167 MB LFS asset, its own deferred entry |
+
+So the `long` jobs — the ones no workflow runs, and the heaviest users of the CIF and archive
+reading this change touches — show **no regression**.
+
+**What this does NOT discharge, and the distinction matters.** It was run with
+`build-mpi-local` (macOS/arm64, Homebrew GCC 16.1.0, `-DMPI=1`, `-Ofast`) at **`-n 1`**, not
+with a serial gfortran-14 build on Linux. At one rank `IO_IS_ALLOWED` is always true so the
+new guard is a no-op and the changed control flow is exercised exactly as it would be in
+serial — which is the point — but the compiler, the platform and the macro configuration all
+differ from the baseline in `CLAUDE.md` §5. Treat this as strong evidence of no regression in
+the `long` jobs, not as the owed suite run.
+
+**RUN AND CLEAR (2026-09-03).** `short long hart` on Linux, gfortran-14, serial release:
+[run 33067218748](https://github.com/dylan-jayatilaka/tonto/actions/runs/33067218748) on
+`80dcbfe4`, **88/89 loose, 77 exact**, all four invariant checks passing. The 89th test,
+`ammonium_borane_pHAR_C23`, did not run at all — its 167 MB asset is absent in CI, so it exited
+77, the skip code — and was *reported* as an ERROR, which failed the gating step. That was a
+defect in `scripts/suite_report.py`, not in Tonto: it ran `test.py` directly and, unlike `ctest`,
+knew nothing of `SKIP_RETURN_CODE`. Fixed the same day; a skipped test is now scored `SKIP`, kept
+out of the denominator, and its reason printed under the totals. **So the `textfile.foo` change
+is verified**: 88 of the 88 tests that ran agree at the loose bound.
+
+##### VERIFICATION — DISCHARGED 2026-09-03 (the serial suite ran: 88/89, see above)
+
+**The section below was written on 2026-08-26, when it had not been run.** It is kept because
+the reasoning about *why* a structural change to `textfile.foo` needs a whole-suite gate is
+still the right reasoning for the next such change. **Status as of 2026-09-03.** `foofiles/textfile.foo` is on the path of **every file read
+in Tonto**, so `move_to_record_external` and the two record movers are exercised by essentially
+every job, serial included. The blast radius of that change is the whole suite, not the one MPI
+test it was aimed at. What has been run is only: the reproducer at `-n 2` (still fails,
+`MPI_ERR_TRUNCATE`), and `-n 1` plus a serial run of `urea_read_and_process_CIF` alone (both
+pass exactly, 0%, 0 ulp). That is three jobs out of 89.
+
+The change is *structural* rather than numerical — it moves work under an `IO_IS_ALLOWED`
+guard, which is a no-op in a serial build, and moves a `DIE_IF` out of a loop into its caller.
+So the expectation is no change at all in serial. **That expectation is exactly what has to be
+tested, not asserted** — a loop whose terminating `DIE_IF` moved is precisely the kind of edit
+that can turn a clean failure into a silent one, and the new `exit` on `.IO_status/=0` is a
+control-flow path that did not exist before.
+
+**DISPATCHED 2026-08-27 on `80dcbfe4`, result not yet read** —
+<https://github.com/dylan-jayatilaka/tonto/actions/runs/33067218748>, `short long hart` at
+`fc_version: 14`. **Read the result against the notes below before drawing any conclusion; two
+earlier attempts today were worthless for reasons that had nothing to do with `textfile.foo`.**
+
+*Attempt 1 would not dispatch at all.* `workflow_dispatch` decides whether a workflow *exists*
+from the default branch, but validates its **inputs against the ref you dispatch**. `fc_version`
+had been landed on `master` and not on `origin/develop`, so every attempt returned
+`HTTP 422: Unexpected inputs provided: ["fc_version"]`. Pushing the branch is the prerequisite.
+
+*Attempt 2 ran and measured the workflow, not the code.* It returned **70/89**, and every one of
+its 18 captured failures carried `WARNING: could not run gnuplot` — `ci-full-suite.yml` had never
+installed gnuplot. A plotting job without gnuplot still completes and still gets the numbers
+right; it prints a multi-line warning instead of drawing, which is a **structural** mismatch. It
+also ran with `ppa:ubuntu-toolchain-r/test` enabled, which substituted gfortran 14.3.0 for the
+archive's 14.2.0 and independently reddened `ci.yml`. Both are fixed in `80dcbfe4`.
+
+**Reading attempt 3, and the denominator RESOLVED (2026-09-03).** These runs report **89**
+agreement lines for `short long hart` (55 + 31 + 3), against a quoted baseline of **124/124**.
+The two were never comparable: **124 = 51 short + 28 long + 32 cx + 13 rgbi**, the four
+ctest-registered suites as they stood on 2026-07-15. Neither number was wrong; neither said
+which suites it counted. The same four suites today hold 131. `CLAUDE.md` §5 now states the
+composition beside every score, which is the only thing that stops this recurring. Anything
+below the stated baseline must be attributed, not accepted, and `--failure-dir` output is
+uploaded as an artifact for exactly that.
+
+```bash
+# a release build from the current sources, then the full suite
+cmake -B build -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=release
+cmake --build build -- -j3            # -j3, not -j$(nproc): one JVM per .foo file
+python3 scripts/suite_report.py --program build/tonto --tests-dir tests \
+        --basis-sets basis_sets --suites short long hart \
+        --failure-dir test-failures --log tests.log
+```
+
+**The baseline to compare against** — `short long hart` is **89** tests, of which
+`ammonium_borane_pHAR_C23` skips unless you have fetched its asset. The 2026-08-27 run scored
+**88/89 loose, 77 exact** (see above). Anything below that is a regression from this change and
+must be treated as one. Use `--failure-dir`: an ERRORing
+job writes no `.bad`, so without it the cause is recorded nowhere (that is register row 11).
+
+A second, cheaper gate that is *not* a substitute: `ctest -L short` on the same build. It is
+what CI runs and it will catch a gross breakage in minutes, but it does not exercise the `long`
+jobs where the heavier CIF and archive reading lives — which is the code this change touches.
+
+*(Discharged: the suite ran on 2026-08-27 and was read on 2026-09-03. What follows was the
+standing instruction until then.)* Until the serial suite is green at the baseline, treat the
+`textfile.foo` change as **unproven
+outside three jobs**, whatever the MPI story does.
+
+##### How to find it: the probe must carry CALL-SITE identity
+
+The lesson from the failed attempt above, stated as a method: **do not trace payloads, trace
+call sites.** Rank 1's *n*-th receive *is* master's *n*-th send, so a trace of
+`(length, datatype, value)` is identical on both ranks no matter which variable each binds —
+it cannot see a one-step shift, and it was briefly misread as proof of lockstep.
+
+Two ways to get call-site identity:
+
+1. **`LD_PRELOAD` a PMPI shim — no Tonto rebuild at all, Linux only.** MPI defines the
+   profiling interface, so a small shared library can define `MPI_Bcast` (and the Fortran
+   `mpi_bcast_`), record the caller's return address via `backtrace()`, call `PMPI_Bcast`,
+   and write one line per call to a **per-rank** file. Resolve the addresses afterwards with
+   `addr2line`. Diff the two rank files: the first differing call site is the origin. This is
+   the cheapest option by far and needs no rebuild, no probe in `parallel.foo`, and no
+   recompilation between iterations.
+2. **Emit `__FILE__`/`__LINE__` from the macro.** `PARALLEL_BROADCAST_IO` in
+   `include/macros.in` expands *at each call site*, unlike the template in `parallel.foo`
+   which is one source location for all 25 overloads. That is where call-site identity can be
+   captured in-tree — but it costs a full rebuild per iteration.
+
+Prefer (1). See "Debugging this on Linux" below.
+
+##### Debugging this on Linux — recommended, and better than macOS
+
+The bug reproduces on both platforms (Linux/x86_64 with the gfortran-16.0.1 snapshot in CI,
+macOS/arm64 with Homebrew 16.1.0 locally), so either will do — but **Linux is the better
+place to finish it**, for reasons that are practical rather than aesthetic:
+
+- **`LD_PRELOAD` works properly.** The PMPI shim above is the whole ballgame: call-site
+  identity with no rebuild, so each experiment costs seconds instead of half an hour. macOS
+  has `DYLD_INSERT_LIBRARIES`, but System Integrity Protection strips it from protected
+  binaries and the two-level namespace makes symbol interposition unreliable. On Linux it
+  simply works.
+- **`backtrace()`/`backtrace_symbols()` are in glibc**, so the shim can capture a stack
+  without extra dependencies. macOS has `backtrace()` too, but resolving Fortran symbols in
+  an `-Ofast` binary is poorer.
+- **`gdb` handles gfortran better than `lldb`.** Module symbols, array descriptors and
+  derived types are all more legible; `gdb`'s `--args` plus `mpirun -n 2 xterm -e gdb ...`
+  or `gdb -p` attach per rank is a well-trodden path.
+- **`achari2` already has the toolchain** — gfortran-16 and a working MPI — and it is the
+  machine where the earlier `-O2` bisection was done, so the results stay comparable.
+
+Practical notes for whoever does it:
+
+- Give each rank its **own** output file, always. `TONTO_DEVELOPER_INFO.md` §1a, and it is the one
+  rule that has never yet failed to matter here.
+- Run at exactly `-n 2`. The failure needs a peer rank and nothing more; higher counts add
+  noise and, for fragHAR, change the scheduler shape.
+- `-n 1` and serial are the controls and both pass **exactly** (0%, 0 ulp) — if they ever
+  stop passing, the change under test is wrong, independently of the desync.
+- `mpirun --output tag` prefixes every line with `[job,rank]`, which is how it was
+  established that rank 0 never dies. Cheap and worth doing first.
+- Break on `die`, **not** `die_if`: `DIE_IF` expands to `call die_if_(tonto,cond,msg)`, so a
+  breakpoint on it fires for every evaluation and the first stack you get is a benign startup
+  check.
+
+##### Fix direction (not yet implemented)
+
+Make the collective count independent of rank-local state: decide the number of iterations on
+the IO rank, broadcast **that**, and have every rank loop the same number of times — or
+position the file on master alone and broadcast the resulting `.record`. Do **not** add a
+barrier: it masks the shift instead of removing it. The commented-out `MPI_BARRIER` in
+`parallel.foo`, with a note by Florian describing exactly this symptom ("BCAST interferes with
+a different kind leading to str and Int ... to screw up communication"), was an earlier
+encounter with this bug; it has been removed in favour of a one-line pitfall pointing here,
+because commented-out code that hides a live defect is an invitation to re-enable it.
+
+#### The deterministic one, with its cause
+
+First run with `--failure-dir` produced this immediately:
+
+```
+Error on rank 1: TEXTFILE:move_to_next_record ... error opening new file urea.cif
+MPI_ABORT was invoked on rank 1 in communicator MPI_COMM_WORLD
+```
+
+**The message is wrong and will mislead the next reader as it misled this one.**
+`TEXTFILE:move_to_next_record` (`foofiles/textfile.foo:1316`) opens nothing — it forward-spaces
+one record:
+
+```fortran
+.IO_status = 0
+if (IO_IS_ALLOWED) then
+   read(unit=.unit,fmt="()",iostat=.IO_status)   ! only the IO rank reads
+end
+PARALLEL_BROADCAST_IO(.IO_status,tonto.master_processor)
+DIE_IF(.IO_status/=0,"error opening new file "//trim(.name))
+```
+
+A non-zero `iostat` here is **end-of-file or a read error**, not a failed open. And rank 1 never
+reads: its `.IO_status` arrives by broadcast.
+
+Two candidate mechanisms, **not yet distinguished**:
+
+- **(a) A genuine read failure on the IO rank**, faithfully broadcast. Then master hit EOF too and
+  both ranks die — plausible, since `PARALLEL_BROADCAST_IO` is gated on `is_parallel .and. .not.
+  per_rank_IO_allowed`, which is uniform across ranks.
+- **(b) A desync**, delivering a stale value to rank 1 — the Finding 6 class.
+
+**The discriminator is whether rank 0 reports the same error.** Only rank 1's message survived,
+because `MPI_ABORT` killed the job — that is consistent with either. Settle it with the per-rank
+trace recipe in `TONTO_DEVELOPER_INFO.md` §1a, not by reading the code: three wrong readings of this
+same area are already on record. Two cheap first steps: correct the diagnostic text so it names
+what actually failed, and print the rank and `iostat` value with it.
+
 ### Defect register
 
 Every MPI defect found, and whether it announces itself. **"Silent" is the dangerous column** —
@@ -607,6 +1006,10 @@ those produce wrong numbers or corrupt files with no error at all.
 | 7b | `crystal.foo:4961` `shift_update_ff` | same, and a read-modify-write of the shared file | Loud | **Fixed** |
 | 7c | `get_Hirshfeld_atom_FFs_disk` | no barrier between the scattered writes and the collective reads | Race | **Fixed** |
 | 8 | `system.foo:260` | Seeds not cloned; two broadcasts inside a master-only guard | Silent now, **deadlock** if naively "fixed" | Open |
+| 10 | `textfile.foo:1263` `move_to_record_external` | Loop count -- and so the number of collectives -- computed from rank-local `.record`; `.record` is resynchronised only in the *write* path (`:3550`), never on read. Ranks shift by one and every later collective binds the wrong variable | Loud (abort), but only at >=2 ranks | **Open** (root cause found 2026-08-26) |
+| 10a | `textfile.foo:1316` `move_to_next_record` | `urea_read_and_process_CIF` dies on rank 1 at 2 ranks, deterministically. Mechanism not yet distinguished (real EOF vs desync) — see Finding 7 | Loud (abort) | **Open** |
+| 10b | same | Diagnostic says "error opening new file" for a routine that only *reads a record*, and prints neither the rank nor `iostat` | Misleading | **Open** |
+| 11 | `ci-mpi.yml`, `suite_report.py` | ERROR cause captured then discarded; suite table truncated to the last 30 lines → failures with no recorded reason | **Silent** | **Fixed** |
 | 9 | `system.foo:564` | `MPI_ABORT` commented out → one rank dying hangs the whole job | Hang | **Fixed** |
 | 12 | `textfile.foo` `flush` | `.clear_and_put_margin` called **twice on master**, once elsewhere; it broadcasts, so the ranks desynchronise | Loud (`MPI_ERR_TRUNCATE`) | **Fixed** |
 | 13 | `system.foo` `die` ×3 | error message written only under `IO_is_allowed`, so a dying **non-master** rank said nothing at all | **Silent failure** | **Fixed** |

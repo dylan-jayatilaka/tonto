@@ -111,6 +111,15 @@ If the script is not installed, Tonto says nothing and the job is unaffected. If
 it is installed and fails, that is reported once and the job carries on; the
 `.tex` fragments and `geometry.xyz` are written either way.
 
+**`stdout` never depends on the picture tools.** Absent, present and working, or
+present and broken — the job's `stdout` is the same in all three cases, because a
+failure is reported on `stderr` and never on `stdout`. This is deliberate:
+`stdout` is the scientific result, and is what every blessed reference is compared
+against. Were the warning to go there instead, anyone with a stale or broken
+`make-rgbi-pic` on their `PATH` would fail most of the `tests/rgbi` jobs on a
+picture they never asked for. The practical consequence is that a test or workshop
+reference is valid whether or not the reader has the picture toolchain installed.
+
 To draw them yourself, or to redraw with different options:
 
 ```bash

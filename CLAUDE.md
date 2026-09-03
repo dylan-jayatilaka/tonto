@@ -115,7 +115,7 @@ hoisting `CRYSTAL` out of `MOLECULE` (October), and — long term — the case f
 language with first-class parallelism, argued from the evidence above rather than from taste.
 
 **The working lesson, if you read nothing else:** in this codebase, *inspection does not work and
-measurement does*. `docs/TONTO_DEVELOPER.md` §1a records the recipes — trace to per-rank files, never a
+measurement does*. `docs/TONTO_DEVELOPER_INFO.md` §1a records the recipes — trace to per-rank files, never a
 shared stream; count events between markers; and confirm a code path executes before analysing it.
 
 ## 3. The Foo language (summary)
@@ -143,7 +143,7 @@ Full details in the companion docs (§7).
   toolchain (`foo.pl` already gone, CMake already invoking `FooToFortran`, CI already running
   `ctest -L short`). It is the bridge for porting archived work: merge an `archive/*` branch
   there, where only the semantic drift conflicts, then replay the `:::`→`::` change. See
-  `docs/REPOSITORY_BRANCHES.md` and §7 of `docs/FOO_GRAMMAR_DOCUMENTATION.md`.
+  `docs/TONTO_REPOSITORY_BRANCHES.md` and §7 of `docs/FOO_GRAMMAR_DOCUMENTATION.md`.
 - **`PURE` vs `pure` — the case matters.** Upper-case `PURE`/`ELEMENTAL` are **macros**
   (`include/macros.in`), `#undef`'d to nothing under `USE_PRECONDITIONS` and under `MPI`.
   Lower-case `pure` is passed through as the **literal Fortran keyword** and stays pure in every
@@ -152,6 +152,21 @@ Full details in the companion docs (§7).
   vanishes) and **fails only in a debug or MPI build**, with gfortran's misleading *"There is no
   specific subroutine for the generic `ensure_`"* rather than a purity error. Cost the debug CI
   a red badge on 2026-08-02; see the note at `PARALLEL:reduction_is_allowed`.
+- **Never reach a `WARN`/`ENSURE` through a line continuation.** The sibling trap, and it
+  fails the *other* way round — in **release**, not debug. Under an optimised build
+  `WARN(X)` expands to a **comment** (`! Warning message: X`), so
+
+  ```
+  if (cond) &
+     WARN("...")
+  ```
+
+  leaves a bare `if (cond)` with no statement: *"Syntax error in IF-clause"*. It compiles
+  happily in debug, where the macro is real. Use **`WARN_IF(cond,"...")`**, which exists for
+  exactly this, or the block form `if (cond) then / WARN(...) / end` — an empty block body is
+  legal, a continued `if` with nothing after it is not. Every `WARN` in `foofiles/` uses one of
+  those two. Found 2026-08-23 by the first release build of the `Lolo_CP2K` port; the
+  same rule applies to `WARN_IF`, `ENSURE` and any other macro that vanishes in some build.
 - **Variable attributes** (comma-separated, after the type): `IN`, `OUT`, `INOUT`, `PRIVATE`,
   `READONLY`, `POINTER`, `TARGET`, `SAVE`, `ALLOCATABLE`, `OPTIONAL`.
 - **Modules:** `module NAME … contains … end`; generic `interface NAME … end` blocks.
@@ -176,6 +191,51 @@ mkdir build && cd build
 cmake .. -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=release
 make -j
 ```
+
+**No toolchain PPA in the build or in CI** (rule agreed with Dylan, 2026-08-27). Ubuntu 24.04
+carries `gfortran-14` natively, so `ppa:ubuntu-toolchain-r/test` is used **only** where a compiler
+newer than the distribution's is genuinely required — today that is `ci-mpi.yml` alone, which
+builds 16 — and it goes as soon as that compiler reaches the archive. The reason is not taste:
+**a build whose output is compared against stored references must not silently change where its
+packages come from.** The PPA does not merely *carry* gfortran-14, it carries a **newer minor release**: the Ubuntu
+archive has `14.2.0-4ubuntu2~24.04.1` and the PPA supplied `14.3.0-12ubuntu1~24~ppa1`. Adding it
+to `ci.yml` during the gfortran-16 migration turned the reference build red — `urea_hart_STO-3G_disk_ffs` failing *structurally*, 0% deviation and
+0 ulp, grand total 57/58, reproduced twice. The install assertion missed it because it checks the
+**major** version, which is 14 either way: a guard at the wrong granularity. `ci.yml` now records
+the exact package builds of `gfortran`, `libblas-dev` and `liblapack-dev` on every run, because
+that difference was one package revision wide and invisible without it.
+
+### ⚠ THE MOVE TO gfortran-16 IS BLOCKED ON GCC, AND ONLY ON GCC (2026-09-03)
+
+**The project standard compiler is `gfortran-14`. Do not move to 16 until GCC PR 127197 is
+fixed.** Everything on Tonto's side of that migration is now done. The state, in full, so that
+nobody has to reconstruct it:
+
+| | status |
+|---|---|
+| **gcc's bug** — `-fcheck=bounds` miscompiled | **OPEN.** Filed 2026-09-03 as [GCC PR 127197](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=127197). Awaiting a maintainer. **This is the only blocker.** |
+| **Tonto's bug** — an uninitialised logical | **FIXED** 2026-09-03, `MOLECULE.RHO:make_ANO_interpolators`. |
+| gfortran-16 **release** | Unaffected, and already measured numerically free on Linux and macOS. |
+| gfortran-16 **debug** | Usable but **degraded**: the workaround for PR 127197 is to drop `-fcheck=bounds`, so a 16 debug build has no array bounds checking. That is what makes waiting worthwhile rather than migrating now. |
+
+**Why 16 looked much worse than it was.** A gfortran-16 debug build failed 34 of 71 short tests,
+and that was read as a compiler fault. It was not. Removing `-fcheck=bounds` — *our own
+workaround* — was what caused them, and a **gfortran-14** build fails identically once the flag
+goes. The underlying defect was **ours**: `make_ANO_interpolators` read the logical `first`
+before ever assigning it, so a progress banner printed according to stack garbage. With the flag
+present the garbage read false and the line never appeared; without it the line appeared, shifted
+every subsequent line, and wrecked the reference comparison across the suite. Measured, one file,
+everything else identical: **banner present + no bounds check → 36 of 62 failed; banner deleted +
+no bounds check → 3; banner deleted + bounds check → 3** (the same three in both, and unrelated).
+
+*(An earlier note here and in `DEFERRED.md` blamed `.atom(a).interpolator.deallocated` — an
+`allocatable` component's status appearing to depend on bounds checking. **That attribution was
+wrong**; the cause was two lines below it, and was ordinary undefined behaviour of our own.)*
+
+**When PR 127197 is fixed:** the migration is preserved whole on `develop-gfortran-16` — merge
+that branch and flip `FC_VERSION`, rather than redoing the work. Details:
+`docs/GFORTRAN16_DEBUG_CRASH.md` and `docs/GFORTRAN16_GCC_BUG.md`. It is a clean 16 regression —
+gfortran 12, 13, 14 and 15 all compile the reduced case correctly, and 16.0.1 segfaults.
 
 Other build types: `debug`, `release-static`, and MPI (`-DCMAKE_Fortran_COMPILER=mpifort …
 -DMPI=1`). The MPI must be built with the **same** Fortran compiler — Tonto does `USE mpi` and
@@ -204,7 +264,14 @@ The translator task is **complete**; validation is now **build + `ctest`**:
 - Build a `release` tree and run `ctest` — but, like `make`, **ask before launching a long
   build/test run** (§8). Use the loose criterion in `scripts/test.py` (rel ≤ 0.2% OR
   last-digit ≤ 2) as the pass/fail gate, not exact match.
-- Green on Linux and GitHub Actions CI (short suite 51/51); full release suite 124/124 locally.
+- Green on Linux and GitHub Actions CI. **Quote a score with the suites it counted**, or it
+  cannot be compared with the next one: `short long hart` is **89** tests (55 + 31 + 3) and is
+  what `ci-full-suite.yml` runs; all four ctest-registered suites (`short long cx rgbi`) are
+  **131**. The last full-suite run, 2026-08-27 at gfortran-14, was **88/89 loose, 77 exact**,
+  the 89th being a deliberate skip. *(An older baseline of "124/124" appears in earlier notes:
+  it was `short long cx rgbi` on 2026-07-15, when those suites held 51 + 28 + 32 + 13. It was
+  never the same denominator as CI's 89, and the two were compared for a day in August before
+  anyone noticed.)*
   The debug (`-O0`) build has 4 longstanding FP-boundary/structural failures (see
   `DEFERRED.md`) — not translator bugs.
 - *(Historical, no longer applicable: the translator's `*.F90`/`*.int`/`*.use` output was once
@@ -225,7 +292,7 @@ The translator task is **complete**; validation is now **build + `ctest`**:
   names a `.sbf` file. The dead source went with it in a second commit — `datafile.foo`, the
   commented serialize/deserialize blocks, and `scripts/test.py`'s `diff_sbf`/`is_sbf`/
   `--sbftool` (whose default path pointed into the submodule). `foofiles/` now contains no
-  `sbf` reference at all. See `docs/REPOSITORY_BRANCHES.md`.
+  `sbf` reference at all. See `docs/TONTO_REPOSITORY_BRANCHES.md`.
 - Note that the files can be translated independently *provided* the `types.foo` file
 which defines all the derived types is processed first. The legacy translator uses
 two passes through the module file but it is not clear whether ANTLR4 needs two passes
@@ -270,21 +337,84 @@ versioned with the code it described*, so it could rot silently. Do not add docu
 - `docs/INSTALLING_RGBI.md` — participant-facing install guide. Linux is tested by
   `scripts/docker/rgbi.Dockerfile` in CI; macOS is untested by hand and probed weekly by
   `ci-rgbi-macos.yml`.
-- `docs/TONTO_DEVELOPER.md` — developer reference; §1a is **writing parallel (MPI) code in Foo**, eight
-  pitfalls and the trace recipes that found them.
+- `docs/TONTO_DEVELOPER_INFO.md` — developer reference; §1a is **writing parallel (MPI) code in Foo**, eight
+  pitfalls and the trace recipes that found them; §1b is **build and test traps** — the stale
+  translation when a `.foo` is edited mid-build, why the loose gate passes visibly wrong output,
+  and how `scripts/test.py` actually compares.
 - `docs/FOO_GRAMMAR_DOCUMENTATION.md` — full language description and Foo→Fortran conversion rules.
 - `docs/TONTO_AND_MPI.md` — the parallel build, its numeric characterisation, and the defect register.
+- `docs/BADER_REPORT.md` — the `archive/Bader` port (2026-08-18): the ten procedures that landed, what
+  was deliberately left on the tag, and the two defects found by running it — a basin count that swings
+  from 1 to 13942 with the grid, and voxel volumes summed per point but sized per interval.
+- `docs/TEACHING_MP2.md` — the MP2 teaching lab ported from `archive/Teaching`: `run_mp2` and
+  `run_mp2_exercise`, both `EXCLUDE_FROM_ALL`, and the validation showing `run_mp2` reproduces the
+  library `mp2` keyword to twelve decimals once the frozen-core active space matches.
+- `docs/EXTINCTION_REPORT.md` — the secondary-extinction correction: dormant since 2016-10-02, its
+  eight silent defects, Lorraine Malaspina's prior work on `origin/Lolo_CP2K`, and the reactivation
+  plan. Includes the two decisions that must be taken first — Larson's angular factor or SHELXL
+  eq (62), and what `N_p` should be in the XCW stage of an XWR.
+- `docs/GOF_NOT_CHI2.md` — the quantity called `chi2` throughout the code is a GoF²; the rename, and
+  reporting GoF rather than its square in the refinement tables. Kept separate from the extinction
+  work on purpose.
 - `docs/DFT_STANDARDISATION.md` — milestone 10: the DFT machinery, its three silent defects, the
   functional-interface analysis, and the libxc plan.
 - `docs/BUILDING_ON_WINDOWS.md` — the four WSL-specific traps, the CMake guards, and how they are tested.
 - `docs/TONTO_CONTINUOUS_INTEGRATION.md` — the CI workflows, how to trigger one manually, and how to read a run.
-- `docs/MAKING_CALL_GRAPHS.md` — call/use graphs and dead-code elimination.
-- `docs/EDITING_TONTO_WITH_VIM.md` — vim set-up: tags, folding, completion.
+- `docs/TONTO_CALL_GRAPHS.md` — call/use graphs and dead-code elimination.
+- `docs/TONTO_EDITING_WITH_VIM.md` — vim set-up: tags, folding, completion.
 - `DEFERRED.md` — project-wide deferred issues (was `ANTLR4_DEFERRED.md`).
+
+## 7a. Where prose belongs: source code versus documents
+
+**Agreed with Dylan, 2026-08-18.** A slab of explanatory text is cheap for a model to read
+and expensive for a person. The two audiences get different documents.
+
+**In the source (`foofiles/*.foo`, scripts, CMake) — brief.** A comment says what the code
+does and, where it is not obvious, why. It does **not** narrate how a bug was found, what
+was tried first, which compiler disagreed, or what the symptom looked like. Once a defect
+is fixed, the investigation is history and belongs in a markdown file, not beside the
+code. Three specifics:
+
+- **Procedure header documentation** may be longer, and is the right place for an
+  explanation a caller genuinely needs. Use that latitude sparingly.
+- **Type component descriptions** (`types.foo`) stay **very brief** — a line, ideally.
+- A **pitfall** that would cause the next person to reintroduce the bug may be noted, in
+  one or two lines, pointing at the document that carries the detail.
+
+**In the documents — two kinds, and do not mix them.**
+
+- *User- and developer-facing* (`README.md`, `docs/RUNNING_*`, `docs/BUILDING_*`, the
+  language and structure references): brief, clear, no trace of the debugging process.
+  Pitfalls are stated as facts to know, not as stories about how they were discovered.
+- *Mechanics and history* (`DEFERRED.md`, `docs/TONTO_DEVELOPER_INFO.md`, the per-milestone
+  reports such as `docs/NN_HAR_REPORT.md`, `docs/TONTO_AND_MPI.md`): this is where
+  durable context lives — what was measured, what was ruled out, which recipe found it,
+  what was decided and why. Write these for the next session as much as for a person.
+
+The test: if a comment explains the *bug*, it belongs in a document. If it explains the
+*code*, it belongs in the code — in as few lines as will do.
 
 ## 8. Working agreement
 
 - Plan before coding; don't run `make` / `ctest` without asking.
+- **A parallel build is safe, and `-j` is the right thing to use.** It was not always:
+  before 2026-08-11 each per-file translator JVM ran uncapped, and a JVM with no `-Xmx`
+  takes a quarter of physical RAM as its heap budget and drifts up toward it regardless of
+  live data — one translation of the 4 KB `mat{str}.foo` was measured at **2.1 GB RSS**.
+  `make -j8` then ran eight of those and the kernel started killing processes (Error 137),
+  taking Dylan's desktop session with it. **The fix is already in the tree**:
+  `FOO_TRANSLATOR_XMX` caps every per-file JVM at `512m` (about double what the largest
+  file needs; wall time is flat from 256m to 1g, so it costs nothing), and
+  `FOO_ANALYSIS_XMX` gives the whole-library modes `2g` because only one ever runs.
+  Two consequences worth holding on to:
+  - **Do not "fix" a memory problem by dropping to `-j1`.** The cap is the lever; `-j` is
+    not the bug, and translating serially just makes a full rebuild several times slower
+    for no benefit. Scale `-j` to free memory at roughly 512 MB per job.
+  - **Never remove or raise the cap** without measuring. `make`'s own throttles cannot
+    substitute: `-j` limits process *count* and `-l` triggers on load average, a runqueue
+    metric that knows nothing about memory and lags besides. Since the cap, an
+    over-large file fails as a clean Java `OutOfMemoryError` naming the file rather than
+    a random `SIGKILL`. The reasoning is in `CMakeLists.txt` above `FOO_TRANSLATOR_XMX`.
 
 ### Debugging and instrumenting Foo code — do it in a DEBUG build
 
@@ -323,7 +453,7 @@ to *track*:**
    put a `DIE` in the suspect routine and build with `-fbacktrace`, which names the
    specific procedure *and* its callers in one run. Six consecutive mis-traces of
    `put_ADP2_errors_to` (2026-07-30) were spent inferring by hand what these two
-   steps answer directly. See §3 of `docs/TONTO_DEVELOPER.md`.
+   steps answer directly. See §3 of `docs/TONTO_DEVELOPER_INFO.md`.
 
 1. **Confirm the path executes before analysing it.** A name match is not the overload that
    runs. `put_CIF`, `make_CIF_esds`, `set_pADP_errors_to`, `put_ADP2_errors_to` and
@@ -412,7 +542,9 @@ loose ctest suite as the full build.
    compiled from the ANTLR4-generated Fortran runs the short suite under `scripts/test.py`'s
    **loose** comparison (rel ≤ 0.2% OR last-digit ≤ 2, plus junk-line filtering) and passes
    **51/51** in **GitHub Actions** (green as of `99dc3a1c`, 2026-07-27; `.github/workflows/ci.yml`,
-   README badge). The full release suite is **124/124** loose locally. Residual: the debug (`-O0`)
+   README badge; the short suite has since grown to 55). The full release suite was **124/124**
+   loose locally on that date — `short long cx rgbi`, see §5 for why that number is not
+   comparable with today's. Residual: the debug (`-O0`)
    build has 4 longstanding FP-boundary/structural failures (#47/#64/#87/#91) that are not
    translator bugs and are documented in `DEFERRED.md`; CI runs the short release suite.
 
@@ -472,7 +604,7 @@ before any code is written**, most likely in its own conversation (`/clear`).
      design**, and `put_atom_group_mols` branched on it (`if (.becke_grid.allocated) …` — master
      42 broadcasts, rank 1 zero), which desynced them; it is now non-collective. Because
      TEXTFILE bookkeeping is collective, *printing more on one rank is itself a collective
-     mismatch*. Recorded as pitfall 8 in `docs/TONTO_DEVELOPER.md` §1a, with the per-rank-file trace
+     mismatch*. Recorded as pitfall 8 in `docs/TONTO_DEVELOPER_INFO.md` §1a, with the per-rank-file trace
      recipe that found it after three wrong readings of the code. Still open, both minor:
      `--group-charges-file` for proteins, and the `use_disk_SFs`→`use_disk_FFs` rename. Note
      `fragment_SCF_para`'s scheduler changes shape above 2 ranks, so any parallel fragHAR test
@@ -540,13 +672,41 @@ before any code is written**, most likely in its own conversation (`/clear`).
    would confound the numbers. Full design in `DEFERRED.md`, "MPI: defects found during
    milestone 4".
 
-7. 🔶 **WORKED AROUND (2026-08-05), root cause not fully established.** Bisected to a single
+7. 🔶 **ROOT CAUSE FOUND (2026-08-26), fix not yet written.** `TEXTFILE:move_to_record_external`
+   (`foofiles/textfile.foo:1263`) decides how many times to loop — and each iteration issues a
+   `PARALLEL_BROADCAST_IO` — from **`.record`, which is rank-local**. Nothing resynchronises it:
+   `.record` is broadcast in exactly one place in the file, `:3550`, in the *write* path, never
+   on read. So one disagreement shifts the streams by one collective, permanently, and every
+   later broadcast binds the wrong variable — rank 1 receives a record counter into
+   `.IO_status`, sees `114 /= 0`, and dies. Reproduced 5/5 on macOS/arm64 GCC 16.1.0 at
+   `-Ofast` **and** on Linux CI, `-n 1` exact — so neither platform- nor optimisation-specific.
+   Fix direction, evidence, rank 1's stack and three method lessons: `docs/TONTO_AND_MPI.md`
+   Finding 7. **Do not "fix" it with a barrier** — that masks the shift.
+
+   🔶 **RE-OPENED (2026-08-26) — `-Ofast` is not clean, and the suite that said so is not
+   evidence.** The four CIF tests were recorded as failing at `-O2 -fno-fast-math` and passing at
+   `-Ofast`. CI builds `-Ofast` and the same family errors there, intermittently. So `-Ofast`
+   **hides** this class most of the time rather than not having it; the `-foptimize-sibling-calls`
+   bisection below still stands, but the inference that the shipped build is unaffected does not.
+   Measured the same day: five `ci-mpi.yml` runs on identical code gave ERROR 1, 1, 1, 1 and
+   **11** — so no conclusion may be drawn from a single MPI suite run, including several already
+   in this file. One failure is *not* flaky: `urea_read_and_process_CIF` dies on rank 1 in every
+   run, in `TEXTFILE:move_to_next_record`, and its diagnostic ("error opening new file") names an
+   operation that routine never performs. Full evidence, the two candidate mechanisms and the
+   discriminator: `docs/TONTO_AND_MPI.md` Finding 7. Why it stayed invisible: the report was
+   truncated to its last 30 lines and `suite_report.py` captured each failure's output only to
+   discard it, so eleven errors carried **no recorded cause**. Both fixed (`--failure-dir`, no
+   `tail`). Earlier status follows, and remains accurate for the `-O2` work.
+
+   🔶 **WORKED AROUND (2026-08-05), root cause not fully established.** Bisected to a single
    gcc flag: **`-foptimize-sibling-calls`** — of the 45 flags `-O2` enables over `-O1`, the only
    one whose removal fixes all four tests. A tail call tears down the caller's frame before
    jumping, and *any* statement after a call stops it being a tail call — which is precisely why
    a `write` probe and `-fcheck=all` both made the bug vanish: observing it removed the
    optimisation causing it. It is an interaction, not one bad pass: `-O1` plus all 45 flags
-   passes, and `-O3`/`-Ofast` pass too, so the **shipped release build was never affected**.
+   passes, and `-O3`/`-Ofast` pass too. *(That was read at the time as "the shipped release build
+   was never affected". Superseded — see the 2026-08-26 note above: `-Ofast` errors on the same
+   family intermittently, so it hides this class rather than lacking it.)*
    `CMakeLists.txt` now pins `textfile.F90` to `-fno-optimize-sibling-calls` (nil cost, restores
    the `-O2` control build). **Open:** which tail call, and whether this is a gcc bug or latent
    UB that tail calls merely expose — needs a reduced test case before reporting upstream.
@@ -667,6 +827,37 @@ before any code is written**, most likely in its own conversation (`/clear`).
      a routine name, which collapses the **20 `new_r_*` plus 20 `new_u_*`** duplicated
      procedures. Take this with the libxc wrap, not as a separate migration.
 
+11. 🔶 **IN PROGRESS (opened 2026-08-22) — reactivate the extinction correction.**
+   Authoritative document: **`docs/EXTINCTION_REPORT.md`**. Dormant since 2016-10-02 and
+   reached by no test, so the eight defects found in it were all silent. Decisions taken:
+   adopt the SHELXL form, eq (62) of Bourhis *et al.* (2015); hold `N_p` at the refinement
+   count and add nothing for the XCW Lagrange multiplier, so a `lambda = 0` XCW reproduces
+   the GoF of the HAR it starts from. Ported from `origin/Lolo_CP2K` (Lorraine Malaspina)
+   and extended. **Works**: quartz L1+H gives an extinction factor 14 times its own esd,
+   with GoF² 9.84 → 8.39 and R(F) 0.0120 → 0.0105; urea gives nothing, confirming the
+   consensus that so small a crystal has no extinction. Short suite 62/62. Open: rebless the
+   three `hart` references for the new `_refine_ls_extinction_coef` CIF item, and add a
+   quartz test job.
+
+12. ⬜ **NOT STARTED — choose the XCW Lagrange multiplier by cross-validation.**
+   Design and reasoning: **Appendix A of `docs/EXTINCTION_REPORT.md`**, which records the
+   whole discussion with Dylan of 2026-08-22/23 in question-and-answer form. The short
+   version: cross-validation has been tried and the free-set statistic was too noisy to use,
+   for reasons now understood. The statistic on `m` free reflections has relative standard
+   error `sqrt(2/m)` — 22% for a five percent split of urea's 817 reflections — and
+   `CRYSTAL:set_r_free_reflections` draws an unstratified uniform sample, so the test set is
+   neither of fixed size nor balanced across resolution and intensity. Three pieces of work:
+   stratify and seed the selection; make the fold selectable so that **complete
+   cross-validation** in Brunger's sense can be run, which is what he says is *required* when
+   the test set is small; and revive the free-set calls in
+   `MOLECULE.SCF:make_constraint_data`, commented out at `molecule.scf.foo:2141`.
+   Cross-validation is preferred over an information criterion because it is invariant to a
+   common error in the sigmas, and the free R value uses no sigmas at all — which matters
+   when the GoF is 3 or 7 and nobody believes the true value is 1. The Akaike criterion is
+   kept as a cross-check, with the effective parameter count
+   `trace[(A + lambda B)^-1 lambda B]` and its Monte Carlo estimator both derived in the
+   appendix. Sequence: after milestone 11 is tested, before `docs/GOF_NOT_CHI2.md`.
+
 **Open items** (future directions; details in `DEFERRED.md`)
 
 - **Grammar still ACCEPTS the old submodule call forms** (`.SET:proc`, `.MAIN:proc`, `STR::proc`)
@@ -696,7 +887,7 @@ before any code is written**, most likely in its own conversation (`/clear`).
 
 - Future tasks (own conversations): a module-level *call* graph in `writeDotFiles` (the
   `--simplify`/`--module` **use**-graph tooling is DONE — `scripts/simplify_callgraph.py`,
-  `docs/MAKING_CALL_GRAPHS.md`); introduce Fortran-2008 `submodule` constructs; test the MPI parallel
+  `docs/TONTO_CALL_GRAPHS.md`); introduce Fortran-2008 `submodule` constructs; test the MPI parallel
   build; boilerplate doc comments; and (long-term) a possible move off Fortran. (Testing the MPI build
   is now milestone 4 above.)
 

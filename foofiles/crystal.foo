@@ -4255,10 +4255,17 @@ contains
 
       sf_a :: VEC{CPX}@
       a :: INT
-      diff :: REAL
+      diff, diffmax :: REAL
+      diffmax_hkl :: VEC{INT}(3)
 
-      if (.asymmetric_FF_symmetrization_rss.deallocated) then 
+      if (.asymmetric_FF_symmetrization_rss.deallocated) then
          .asymmetric_FF_symmetrization_rss.create(ff.dim2)
+      end
+      if (.asymmetric_FF_symmetrization_rmax.deallocated) then
+         .asymmetric_FF_symmetrization_rmax.create(ff.dim2)
+      end
+      if (.asymmetric_FF_symmetrization_rmax_hkl.deallocated) then
+         .asymmetric_FF_symmetrization_rmax_hkl.create(ff.dim2,3)
       end
 
       do a = 1,.n_asymmetric_unit_atoms
@@ -4267,8 +4274,10 @@ contains
          .spacegroup.symmetrize_unique_SFs( sf_a, &
                                            .asym_atom_stabilizer(a).element, &
                                            .xray_data.reflections, &
-                                           diff ) 
+                                           diff, diffmax, diffmax_hkl )
          .asymmetric_FF_symmetrization_rss(a) = diff
+         .asymmetric_FF_symmetrization_rmax(a) = diffmax
+         .asymmetric_FF_symmetrization_rmax_hkl(a,:) = diffmax_hkl
          ! Overwrite the form factor
          ff(:,a) = sf_a 
       end
@@ -7272,6 +7281,14 @@ contains
       else;                                         .put_parameters
       end
 
+      ! Form factor asymmetry, as put_refinement_results does. A single
+      ! rigid-atom fit (ha_fit, which is how pHAR runs) ends here rather
+      ! than there, and without this the symmetrization it performed is
+      ! never reported.
+      if (.asymmetric_FF_symmetrization_rss.allocated) then
+         .put_asymmetric_FF_symmetrization_rss
+      end
+
    end
 
    put_refinement_results
@@ -7719,12 +7736,48 @@ contains
       self :: IN
 
    ENSURE(.asymmetric_FF_symmetrization_rss.allocated,"No asymmetric atom Form Factor symmetrization residuals")
+   ENSURE(.asymmetric_FF_symmetrization_rmax.allocated,"No asymmetric atom Form Factor maximum residuals")
+   ENSURE(.asymmetric_FF_symmetrization_rmax_hkl.allocated,"No reflections for the maximum residuals")
    ENSURE(.asym_atom_stabilizer.allocated, "No stabilizer symmetry operators found")
 
       table :: VEC{TABLE_COLUMN}@
-      n_refl :: INT
+      rms, rmx :: VEC{REAL}@
+      hkl :: MAT{INT}@
+      n_refl, a, n_atom :: INT
 
       n_refl = .xray_data.reflections.dim
+      n_atom = .asymmetric_FF_symmetrization_rss.dim
+
+      ! Floor the numerical noise before reporting.
+      !
+      ! For a well-behaved molecular HAR the asymmetry is at the level of
+      ! floating-point rounding -- around 1e-15 -- and at that level neither the
+      ! value NOR the reflection at which the maximum occurs is reproducible:
+      ! the same urea job gives 0.818E-15 at (0,5,2) under gfortran 14.3.0 and
+      ! 0.843E-15 at (-1,-1,-3) under 14.2.0, because the argmax of noise is
+      ! arbitrary. Reporting that verbatim puts unreproducible numbers into every
+      ! blessed reference, which is what reddened CI on 2026-08-18.
+      !
+      ! Anything below the tolerance is numerically zero, so print it as an exact
+      ! zero and drop its meaningless hkl. Real asymmetry survives untouched: the
+      ! pHAR case runs 1e-9 to 5e-8, three orders above this, and the whole point
+      ! of the table is to show that a periodic density is measurably less
+      ! symmetric than a molecular one.
+      rms.create(n_atom)
+      rmx.create(n_atom)
+      hkl.create(n_atom,3)
+
+      rms = sqrt(.asymmetric_FF_symmetrization_rss/n_refl)
+      rmx = .asymmetric_FF_symmetrization_rmax
+      hkl = .asymmetric_FF_symmetrization_rmax_hkl
+
+      do a = 1,n_atom
+         if (rmx(a)<FF_ASYMMETRY_TOL) then
+            rms(a)   = ZERO
+            rmx(a)   = ZERO
+            hkl(a,:) = 0
+         end
+      end
 
       stdout.flush
       stdout.text("=====================")
@@ -7739,31 +7792,58 @@ contains
       stdout.text(". The root-mean squared asymmetry in the form factors" )
       stdout.text("  per reflection) is reported, for each asymm. unit atom.")
       stdout.flush
-      stdout.text("     RMS asymmetry^2 = (1/n_refl) Sum_k |F_k- sym(F_k)|^2")
+      stdout.text("   (RMS asymmetry)^2 = (1/n_refl) Sum_k |F_k-sym(F_k)|^2")
+      stdout.text("    Max asymmetry    = Max_k |F_k-sym(F_k)|, at (h,k,l)")
       stdout.flush
       stdout.text("  It should be zero, to at least 5 d.p's.")
 
-      table.create(4)
-      table(1).set_heading("ID");             
+      table.create(8)
+      table(1).set_heading("ID");
       table(1).set_values(.asymmetric_unit_atom(:).tag)
 
+      ! One significant digit, deliberately. This is a diagnostic: what matters
+      ! is the ORDER OF MAGNITUDE of the symmetry breaking, and 0.1E-04 against
+      ! 0.8E-04 separates two atoms perfectly well. More digits would only
+      ! report bits that differ between compilers (Dylan, 2026-08-18).
       table(2).set_heading("RMS");
       table(2).set_subhead("asymmetry")
       table(2).set_width(9)
       table(2).set_real_precision(1)
       table(2).set_real_fortran_fmt("e") ! First e format in column !!!
-      table(2).set_values(sqrt(.asymmetric_FF_symmetrization_rss/n_refl))
+      table(2).set_values(rms)
 
-      table(3).set_heading("Site symm.")
-      table(3).set_subhead("factor")
-      table(3).set_values(int(.asym_atom_sym_factor) )
+      table(3).set_heading("Max")
+      table(3).set_subhead("asymmetry")
+      table(3).set_width(9)
+      table(3).set_real_precision(1)
+      table(3).set_real_fortran_fmt("e")
+      table(3).set_values(rmx)
 
-      table(4).set_heading("Stabilizer")
-      table(4).set_subhead("symops")
-      table(4).set_values(.asym_atom_stabilizer)
+      table(4).set_heading("-")
+      table(4).set_subhead("h")
+      table(4).set_values(hkl(:,1))
+
+      table(5).set_heading("-")
+      table(5).set_subhead("k")
+      table(5).set_values(hkl(:,2))
+
+      table(6).set_heading("-")
+      table(6).set_subhead("l")
+      table(6).set_values(hkl(:,3))
+
+      table(7).set_heading("Site symm.")
+      table(7).set_subhead("factor")
+      table(7).set_values(int(.asym_atom_sym_factor) )
+
+      table(8).set_heading("Stabilizer")
+      table(8).set_subhead("symops")
+      table(8).set_values(.asym_atom_stabilizer)
       table.put
 
       table.destroy
+      hkl.destroy
+      rmx.destroy
+      rms.destroy
    end
 
    put_unit_cell_geometry
@@ -9643,8 +9723,8 @@ contains
       !  .put_ratio_vs_STL_plot(.xray_data)
       !  .put_ratio_vs_F_exp_plot(.xray_data)
       !  .put_qq_plot(.xray_data)
-         .xray_data.PUT:put_labelled_qq_plot(trim(head)//".free")
-         .xray_data.PUT:put_F_calc_plots(trim(head)//".free")
+         .xray_r_free_data.PUT:put_labelled_qq_plot(trim(head)//".free")
+         .xray_r_free_data.PUT:put_F_calc_plots(trim(head)//".free")
 
       end
 
