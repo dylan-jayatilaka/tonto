@@ -43,10 +43,10 @@ now covers the whole project, so it was renamed.)*
 
 ## WHERE 2026-09-03 LEFT OFF — read this first if you are picking up cold
 
-**One thing is unfinished, and it is first on the list below:** the `tonto_lib` rename in
-`CMakeLists.txt` (`107cc0d9`) is committed but **not fully build-verified** — the session ended
-with the build at 50%, compiling into `CMakeFiles/tonto_lib.dir/`, which is as far as it got.
-Run a build before trusting it. Everything else is either finished or not started.
+**Nothing is in flight.** The one item that was unverified when the session ended — the
+`tonto_lib` rename — finished building afterwards and **works**; it just leaves a cosmetic
+`make` warning to tidy, which is action 0 below. Everything else is either finished or not
+started.
 
 **Branch state.** `develop` carries the day's work; `origin/master` was merged into it, so
 `develop` is a superset. The gfortran-16 migration is preserved whole on
@@ -86,12 +86,30 @@ build has. One file, everything else identical, executable relinked each time.
 
 ### Next actions, in order
 
-0. **Finish verifying the `tonto_lib` rename** (`107cc0d9`) — one build to completion, then
-   `make tonto` and check the *executable's* timestamp actually moves. Cheap, and it is the only
-   thing left half-done. What is already checked: a fresh release tree configures clean and
-   `make help` lists `tonto`, `tonto_lib` and `run_molecule`; the interrupted build was
-   compiling into `CMakeFiles/tonto_lib.dir/` correctly. Nothing on disk changes name and no
-   workflow or script invokes `make tonto`, so the risk is small.
+0. **VERIFIED, but tidy up one warning.** The `tonto_lib` rename (`107cc0d9`) was build-verified
+   after all, at the end of the session: a full gfortran-14 debug build completed exit 0,
+   `make tonto` printed *Linking Fortran executable tonto*, the executable's timestamp moved
+   (09:04:00 → 09:57:23), and `libtonto.a` kept its name. So `make tonto` now builds the program,
+   which was the point.
+
+   **It is not clean, though.** Every `make tonto` prints:
+
+   ```
+   make[3]: Circular CMakeFiles/tonto <- tonto dependency dropped.
+   ```
+
+   because `add_custom_target(tonto ...)` collides with the *file* named `tonto` in the build
+   directory: GNU make sees a target and a file of the same name, calls it circular, drops it and
+   proceeds. Harmless — the link happens — but noisy, and noise in a build log is how real
+   warnings get missed.
+
+   **The clean fix** is to drop the custom target and name the executable target itself: replace
+   `add_executable(run_molecule ...)` + `set_target_properties(... OUTPUT_NAME tonto)` +
+   `add_custom_target(tonto ...)` with a plain `add_executable(tonto ${CMAKE_CURRENT_BINARY_DIR}/run_molecule.F90)`.
+   No collision and no warning. It costs the `run_*` target-naming symmetry with `run_har` and
+   `run_rgbi` (which are fine as they are — nothing is named `hart` or `rgbi`, so they do not
+   collide), and `install(TARGETS run_molecule DESTINATION bin)` must follow the rename. Small and
+   deliberate; do not rush it, and rebuild before trusting it.
 
 1. **macOS in CI, then WSL-MPI** (Dylan, 2026-09-03) — to complete the badge table across
    platforms. **The three macOS workflows are now REGISTERED and dispatchable** (`gh workflow
