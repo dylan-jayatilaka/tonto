@@ -205,19 +205,37 @@ to `ci.yml` during the gfortran-16 migration turned the reference build red — 
 the exact package builds of `gfortran`, `libblas-dev` and `liblapack-dev` on every run, because
 that difference was one package revision wide and invisible without it.
 
-**The project standard compiler is `gfortran-14`.** A migration to 16 was made and reverted on
-2026-08-27. **The reason given for reverting was then overturned the same day** — read
-`DEFERRED.md`, "OVERTURNED ... the 34 debug failures are `-fcheck=bounds`, NOT gfortran-16",
-before acting on any of this. In short: a gfortran-16 *debug* build fails 34 of 71 short tests,
-but so does a **gfortran-14** debug build once `-fcheck=bounds` is removed from one file — so the
-failures follow from the workaround for the bounds-check miscompilation, not from gfortran-16.
-What that exposed instead is a **latent defect in Tonto**: whether an `allocatable` component
-reads as unallocated depends on whether bounds checking is on, which a conforming program should
-not be able to detect. Fix that before re-applying the migration, which is preserved whole on the
-branch `develop-gfortran-16`. The one real gfortran-16 defect remains the `-fcheck=bounds`
-miscompilation: `docs/GFORTRAN16_DEBUG_CRASH.md`, and the report, **filed 2026-09-03 as
-GCC PR 127197**, `docs/GFORTRAN16_GCC_BUG.md`. It is a clean 16 regression: gfortran 12, 13,
-14 and 15 all compile the reduced case correctly and 16.0.1 segfaults.
+### ⚠ THE MOVE TO gfortran-16 IS BLOCKED ON GCC, AND ONLY ON GCC (2026-09-03)
+
+**The project standard compiler is `gfortran-14`. Do not move to 16 until GCC PR 127197 is
+fixed.** Everything on Tonto's side of that migration is now done. The state, in full, so that
+nobody has to reconstruct it:
+
+| | status |
+|---|---|
+| **gcc's bug** — `-fcheck=bounds` miscompiled | **OPEN.** Filed 2026-09-03 as [GCC PR 127197](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=127197). Awaiting a maintainer. **This is the only blocker.** |
+| **Tonto's bug** — an uninitialised logical | **FIXED** 2026-09-03, `MOLECULE.RHO:make_ANO_interpolators`. |
+| gfortran-16 **release** | Unaffected, and already measured numerically free on Linux and macOS. |
+| gfortran-16 **debug** | Usable but **degraded**: the workaround for PR 127197 is to drop `-fcheck=bounds`, so a 16 debug build has no array bounds checking. That is what makes waiting worthwhile rather than migrating now. |
+
+**Why 16 looked much worse than it was.** A gfortran-16 debug build failed 34 of 71 short tests,
+and that was read as a compiler fault. It was not. Removing `-fcheck=bounds` — *our own
+workaround* — was what caused them, and a **gfortran-14** build fails identically once the flag
+goes. The underlying defect was **ours**: `make_ANO_interpolators` read the logical `first`
+before ever assigning it, so a progress banner printed according to stack garbage. With the flag
+present the garbage read false and the line never appeared; without it the line appeared, shifted
+every subsequent line, and wrecked the reference comparison across the suite. Measured, one file,
+everything else identical: **banner present + no bounds check → 36 of 62 failed; banner deleted +
+no bounds check → 3; banner deleted + bounds check → 3** (the same three in both, and unrelated).
+
+*(An earlier note here and in `DEFERRED.md` blamed `.atom(a).interpolator.deallocated` — an
+`allocatable` component's status appearing to depend on bounds checking. **That attribution was
+wrong**; the cause was two lines below it, and was ordinary undefined behaviour of our own.)*
+
+**When PR 127197 is fixed:** the migration is preserved whole on `develop-gfortran-16` — merge
+that branch and flip `FC_VERSION`, rather than redoing the work. Details:
+`docs/GFORTRAN16_DEBUG_CRASH.md` and `docs/GFORTRAN16_GCC_BUG.md`. It is a clean 16 regression —
+gfortran 12, 13, 14 and 15 all compile the reduced case correctly, and 16.0.1 segfaults.
 
 Other build types: `debug`, `release-static`, and MPI (`-DCMAKE_Fortran_COMPILER=mpifort …
 -DMPI=1`). The MPI must be built with the **same** Fortran compiler — Tonto does `USE mpi` and

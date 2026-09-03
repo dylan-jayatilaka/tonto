@@ -41,96 +41,86 @@ now covers the whole project, so it was renamed.)*
 | [Platform-specific](#platform-specific) | macOS/Apple Silicon, gfortran-16 |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## WHERE 2026-08-27 LEFT OFF — read this first if you are picking up cold
+## WHERE 2026-09-03 LEFT OFF — read this first if you are picking up cold
 
-> **UPDATE 2026-09-03.** Actions 1 and 3 below are **done** — the suite run was read and the
-> denominator settled; both are archived at the foot of this file. The list now starts at
-> action 2, the latent `-fcheck=bounds` defect. The GCC bug report is **filed** — PR 127197,
-> 2026-09-03 — so that item is closed too; what is left of it is a duplicate search and
-> waiting for a maintainer.
+**Nothing is in flight.** No build, no CI run, no measurement is waiting on a result. Everything
+below is either finished or not started.
 
-**The measurement that was in flight has landed and it PASSES.** The full suite,
-`short long hart` at gfortran-14, on commit `80dcbfe4`:
-<https://github.com/dylan-jayatilaka/tonto/actions/runs/33067218748> — **88/89 loose, 77 exact**,
-all four invariant checks green. That discharges the verification owed since 2026-08-26 for the
-`textfile.foo` MPI fix, which is on the path of every file read in Tonto and had until then been
-tested by 3 jobs out of 89.
+**Branch state.** `develop` carries the day's work; `origin/master` was merged into it, so
+`develop` is a superset. The gfortran-16 migration is preserved whole on
+`origin/develop-gfortran-16`.
 
-**Two things had to be untangled before that could be read**, and both are now closed:
+### The one thing to know before touching the compiler
 
-- The 89th test was reported as an **ERROR** when it had merely been **skipped**.
-  `ammonium_borane_pHAR_C23` needs a 167 MB asset that CI does not have, so `test.py` exits 77;
-  but `suite_report.py` runs `test.py` directly and never saw the `SKIP_RETURN_CODE` property
-  `ctest` uses, so it scored the skip as a failure and reddened the gate. Fixed.
-- **124/124 versus 89 was not a discrepancy.** The 124 counted `short long cx rgbi` as they
-  stood on 2026-07-15 (51 + 28 + 32 + 13); the 89 counts the three suites the workflow is asked
-  for. Neither score said what it counted, which is the actual defect; `CLAUDE.md` §5 now states
-  the composition beside every number.
+**Moving to gfortran-16 is blocked on GCC, and only on GCC.** Tonto's side is finished. Read
+`CLAUDE.md` §4, "THE MOVE TO gfortran-16 IS BLOCKED ON GCC" — it carries the whole state in a
+table. In one line: the bug report is filed as **GCC PR 127197** and we wait; our own defect,
+which made 16 look far worse than it is, is fixed.
 
-**Nothing is uncommitted.** `origin/develop` is at `659d335c` — three commits past `ac64ad68`,
-which this handover named before they landed; the substantive one is `134152e3`, where the
-reserved ("free") reflection plots were plotting the *fitting* data. `origin/master` has only CI
-configuration. The gfortran-16 migration is preserved whole on `origin/develop-gfortran-16`.
+**The correction that matters, because this file asserted the opposite.** The 34 debug failures
+were *not* caused by an `allocatable` component's status depending on bounds checking. They were
+caused by `MOLECULE.RHO:make_ANO_interpolators` reading the logical `first` before ever assigning
+it, so a progress banner printed according to stack garbage. Deleting eight lines took a
+bounds-check-free debug build from **36 failures of 62 to 3** — the same 3 an ordinary debug
+build has. One file, everything else identical, executable relinked each time.
 
-**What the day established, in one line each:**
+### What was closed on 2026-09-03
 
-- **The migration to gfortran-16 was reverted, then the reason was overturned.** The 34 debug
-  failures are caused by the missing `-fcheck=bounds`, not by gfortran-16: gfortran-14 reproduces
-  them when the flag is removed from one file. What it exposed is a **latent Tonto defect** — an
-  `allocatable` component's status depending on whether bounds checking is on. See
-  *Platform-specific*, "OVERTURNED". **That defect, not the compiler, is the live bug.**
-- **The toolchain PPA must not be in a reference build.** It substituted gfortran 14.3.0 for the
-  archive's 14.2.0 and reddened `ci.yml` twice. Removed everywhere except `ci-mpi.yml`, which
-  needs 16. Rule in `CLAUDE.md` §4.
-- **A missing optional run-time dependency looks exactly like a defect.** No gnuplot meant 18
-  structural failures at 0% deviation. Fixed in `ci-full-suite.yml` and `ci-mpi.yml`.
-- **The Bugzilla account request was sent.** *(Granted 2026-09-03, and the report filed the
-  same day as PR 127197.)* The duplicate search is still owed and cannot be scripted.
+- **The full-suite verification owed for `textfile.foo`** — read at last: **88/89 loose, 77
+  exact**, all four invariant checks green.
+- **A skipped test was scored `ERROR`** by `suite_report.py`, which failed the gate and shortened
+  the denominator. It runs `test.py` directly and so never saw `ctest`'s `SKIP_RETURN_CODE`.
+- **"124 versus 89" was never a discrepancy** — different suites, both right, neither saying what
+  it counted.
+- **GCC PR 127197 filed**, with a five-version bisection (12, 13, 14, 15 correct; 16.0.1
+  segfaults) that makes it a clean regression report.
+- **The uninitialised-logical defect fixed** (above).
+- **A stale `.bad` now clears** when its test starts passing again, per-test — never a sweep of
+  `tests/`, because every build tree shares those directories.
+- **The `tonto` target-name collision fixed.** `tonto` was the *library*; the program came from
+  `make run_molecule`. So `make tonto` built the library, skipped the link, and left a stale
+  binary looking fresh — which silently voided a measurement run before it was noticed. The
+  library is now `tonto_lib` (still `libtonto.a`) and `make tonto` builds the program.
 
-**The next actions, in order** *(1 and 3 were done on 2026-09-03; what remains is renumbered)*:
+### Next actions, in order
 
-1. **Chase the latent defect the confound uncovered** — `.atom(a).interpolator.deallocated`
-   answering differently with and without `-fcheck=bounds`, at `foofiles/molecule.rho.foo:2269`.
-   This is ours, not gcc's, and it is invisible in any build carrying the flag. No second GCC
-   report is owed.
-2. ✅ **DONE 2026-09-03 — the gfortran-16 GCC bug report is filed: PR 127197**
-   (<https://gcc.gnu.org/bugzilla/show_bug.cgi?id=127197>), with a five-version bisection that
-   makes it a clean 16 regression. The duplicate search over resolved bugs and `16 Regression`
-   is still owed and still cannot be scripted — Sourceware refuses automated access.
+1. **macOS in CI, then WSL-MPI** (Dylan, 2026-09-03) — to complete the badge table across
+   platforms. The three macOS workflows already exist and are good; they have **never run**
+   because scheduled workflows only fire from the default branch and they sit on `develop`.
+   Merging to `master` registers them. Dispatch each once — `ci-macos.yml` warns to expect red
+   at 54/55 and says not to bless it away. Then write `ci-wsl-mpi.yml`, the only genuinely
+   missing cell.
+2. **Three pre-existing debug failures nothing is tracking**: `single_atom_scf`,
+   `dft_invariants` and `urea_ccsd_pob-TZVP_Salvador_properties` fail in a plain **gfortran-14**
+   debug build with bounds checking **on**. `ci-debug.yml` cannot see them — it runs two smoke
+   jobs, not the suite. That gap is worth closing at the same time.
+3. **The column-width difference**, unexplained. Identical numbers, one extra space per column,
+   in both a dipole table and a HAR esd table, in a debug build without bounds checking. Two
+   guesses are already dead: it is not the bracketed uncertainty (the dipole test prints none),
+   and `width`/`width_set` both carry proper `DEFAULT` initialisers.
+4. **Turn `-Wno-uninitialized -Wno-maybe-uninitialized` back on** in `DEBUG_FLAGS`. It is the
+   warning class that names the bug just fixed, switched off in the one build where it fires.
+   Expect noise, and note gfortran did **not** flag that particular site at `-O2`, so it is an
+   instrument rather than a cure. A source scan was tried and abandoned: without argument
+   intents it cannot tell a read from an `OUT` write, and every candidate was a false positive.
+5. **The Bugzilla duplicate search** over resolved bugs and `16 Regression`. Sourceware refuses
+   every automated tool — `curl` gets a 429 and the Anubis layer blocks the rest, `WebFetch`
+   included — so **this needs a person at a browser**, as did the filing.
+6. Longer-standing, unchanged: NaN and negative ESDs from the least-squares variance-covariance
+   matrix, and the MPI items behind milestones 6 and 7.
 
-**The methodological lesson of the day, which cost the most time:** a *structural* failure —
-0% numeric deviation, 0 ulp, output differing only in line count — pointed at the **environment**
-three times (a 2023 reference, a missing package, a substituted compiler package) and at a real
-compiler defect once. Read that signature as "the output has extra or missing lines", and check
-what changed around the program before suspecting the program.
+### Two method lessons worth keeping
 
-**Highest-priority open items**, if you are looking for where to start:
-**The gfortran-16 GCC bug report is FILED — PR 127197, 2026-09-03**
-([`docs/GFORTRAN16_GCC_BUG.md`](docs/GFORTRAN16_GCC_BUG.md),
-<https://gcc.gnu.org/bugzilla/show_bug.cgi?id=127197>). Getting there took five weeks for
-reasons worth remembering: Bugzilla sign-up is **not self-service** — it answers *"user account
-creation has been restricted"* and directs you to email
-<gcc-bugzilla-account-request@gcc.gnu.org> — and sourceware refuses scripted access entirely
-(plain `curl` gets a 429, and the Anubis anti-bot layer blocks the rest, WebFetch included).
-**So anything involving that tracker needs a person at a browser**, including the duplicate
-search over resolved bugs and `16 Regression`, which is still outstanding.
-
-**The migration to 16 was attempted and REVERTED on 2026-08-27**, so this bug report is no
-longer the thing blocking it. The decision that morning was to migrate and live with the missing
-bounds check; the local gate that afternoon found a **second and worse defect** — a gfortran-16
-debug build fails 34 of 71 short tests where a gfortran-14 debug build of the same code passes
-exactly. `develop` is back on 14, the migration is preserved on the branch
-`develop-gfortran-16`, and the blocker is now that second defect: see *Platform-specific*,
-"gfortran-16 DEBUG fails 34 of 71 short tests". Filing this report is still worth doing on its
-own merits.
-Then: **macOS in CI** (feasible and free — the repo is public — and it is the only thing that can
-guard the two arm64 `-O2`/`-O3` compiler pins, which today are guarded by nothing and whose
-failure mode is wrong numbers, not crashes; see *Platform-specific*),
-NaN and negative ESDs from the least-squares variance-covariance matrix, and the MPI items
-behind milestones 6 and 7. (`data` statements silently dropped: **fixed 2026-08-04** — see
-below; the audit found no library file was ever affected. **pHAR ships untested** was listed
-here until 2026-08-27 and is no longer true: the test is on `develop`, skips cleanly without
-its 167 MB asset and passes with it — see the archive.)
+- **A *structural* failure — 0% numeric deviation, 0 ulp, output differing only in line count —
+  points at the environment before it points at the program.** On 2026-08-27 that signature meant
+  a 2023 reference, a missing package and a substituted compiler package. On 2026-09-03 the same
+  signature meant a single line of stdout appearing where it never had. Read it as "the output
+  has extra or missing lines" and check what changed *around* the program first. A related trap:
+  a shifted line makes `test.py` compare misaligned numbers, and it will report a confident
+  "200% deviation" between two values that are in fact identical.
+- **Verify the thing you built is the thing you tested.** A wrong `make` target relinked nothing
+  and two "different" cases ran the same binary. Check a timestamp or a `strings` marker before
+  trusting any before/after comparison.
 
 ---
 
@@ -3300,14 +3290,29 @@ gfortran-14 reproduces them exactly when the flag is removed. **No second GCC bu
 owed.** The `-fcheck=bounds` miscompilation (`docs/GFORTRAN16_DEBUG_CRASH.md`) remains real and
 remains the one gfortran-16 defect we have.
 
-**What this leaves, and it is not nothing.** Tonto has a **latent defect of its own**: whether
-`.atom(a).interpolator.deallocated` is true depends on whether bounds checking is switched on.
-`interpolator` is a genuine Fortran `allocatable` component whose initial status the standard
-guarantees, so a conforming program should not be able to tell. Something is reading state it
-should not — and it is invisible in every build that carries the flag, which is every debug build
-before gfortran-16 arrived. Note `.atom(b).interpolator = .atom(a).interpolator` a few lines
-below at `foofiles/molecule.rho.foo:2288`, an intrinsic assignment of a derived type with
-allocatable components. **This is now the interesting bug, and it is ours.**
+**What this leaves, and it is not nothing.** Tonto has a **latent defect of its own**, invisible
+in every build carrying the flag — which is every debug build before gfortran-16 arrived.
+
+> **CORRECTED 2026-09-03, and the correction matters.** This entry named the wrong variable. It
+> said the defect was that `.atom(a).interpolator.deallocated` reads differently with and without
+> bounds checking — an `allocatable` component whose initial status the standard guarantees, which
+> would have been a strange thing for a compiler to expose, and was chased as such.
+>
+> **The actual defect was two lines below**, and is ordinary undefined behaviour of our own:
+> `make_ANO_interpolators` declared `first :: BIN`, read it at `if (first)`, and assigned it only
+> *inside* the branch that read guards. Nothing ever set it TRUE, so a progress banner printed
+> according to whatever was in that stack slot. With `-fcheck=bounds` the garbage read false and
+> the line never appeared — no blessed reference contains it. Without the flag it appeared, shifted
+> every later line by one, and wrecked the reference comparison across the suite.
+>
+> Measured, one file, everything else identical: **banner present + no bounds check → 36 of 62
+> failed; banner deleted + no bounds check → 3; banner deleted + bounds check on → 3**, the same
+> three in each and unrelated to any of this. Fixed by deleting the banner, which had never once
+> printed in the program's history.
+>
+> The lesson is about attribution: the deciding *condition* was correctly located, and the wrong
+> *variable inside it* was blamed. Both were in the same `if`. Reading the enclosing statement
+> rather than the whole procedure cost a week.
 
 **Consequence for the migration.** The case against gfortran-16 is materially weaker than it was
 this morning: what remains against it is the `-fcheck=bounds` miscompilation alone, whose cost is
@@ -3323,8 +3328,12 @@ confound cost about ten minutes: one file, one flag, one relink.
 
 ## gfortran-16 DEBUG fails 34 of 71 short tests — the migration was reverted (2026-08-27)
 
-**Status: open, and the compiler is now isolated by measurement (see below).** The compiler
-migration is blocked on this, not on the bounds-check bug.
+> **RESOLVED 2026-09-03 — and the cause was ours, not the compiler's.** The 34 failures were an
+> uninitialised logical in `MOLECULE.RHO:make_ANO_interpolators` printing a banner according to
+> stack garbage; see the CORRECTION in the entry above. Fixed. **The migration is now blocked on
+> GCC PR 127197 alone**, whose only cost is losing bounds checking in a 16 debug build. Read
+> `CLAUDE.md` §4 for the current state. The rest of this entry is kept because the measurements
+> in it are sound and were what made the diagnosis possible — only the attribution was wrong.
 
 The project standard moved 14 -> 16 on 2026-08-27 and was **reverted hours later**, when the
 local gate was run before pushing. The whole migration is preserved on the branch
