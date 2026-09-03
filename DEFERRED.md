@@ -43,8 +43,10 @@ now covers the whole project, so it was renamed.)*
 
 ## WHERE 2026-09-03 LEFT OFF — read this first if you are picking up cold
 
-**Nothing is in flight.** No build, no CI run, no measurement is waiting on a result. Everything
-below is either finished or not started.
+**One thing is unfinished, and it is first on the list below:** the `tonto_lib` rename in
+`CMakeLists.txt` (`107cc0d9`) is committed but **not fully build-verified** — the session ended
+with the build at 50%, compiling into `CMakeFiles/tonto_lib.dir/`, which is as far as it got.
+Run a build before trusting it. Everything else is either finished or not started.
 
 **Branch state.** `develop` carries the day's work; `origin/master` was merged into it, so
 `develop` is a superset. The gfortran-16 migration is preserved whole on
@@ -84,12 +86,27 @@ build has. One file, everything else identical, executable relinked each time.
 
 ### Next actions, in order
 
+0. **Finish verifying the `tonto_lib` rename** (`107cc0d9`) — one build to completion, then
+   `make tonto` and check the *executable's* timestamp actually moves. Cheap, and it is the only
+   thing left half-done. What is already checked: a fresh release tree configures clean and
+   `make help` lists `tonto`, `tonto_lib` and `run_molecule`; the interrupted build was
+   compiling into `CMakeFiles/tonto_lib.dir/` correctly. Nothing on disk changes name and no
+   workflow or script invokes `make tonto`, so the risk is small.
+
 1. **macOS in CI, then WSL-MPI** (Dylan, 2026-09-03) — to complete the badge table across
-   platforms. The three macOS workflows already exist and are good; they have **never run**
-   because scheduled workflows only fire from the default branch and they sit on `develop`.
-   Merging to `master` registers them. Dispatch each once — `ci-macos.yml` warns to expect red
-   at 54/55 and says not to bless it away. Then write `ci-wsl-mpi.yml`, the only genuinely
-   missing cell.
+   platforms. **The three macOS workflows are now REGISTERED and dispatchable** (`gh workflow
+   list` shows macOS-release, macOS-debug and macOS-MPI), which the merge to `master` on
+   2026-09-03 is what achieved: scheduled workflows only fire from the default branch, and until
+   then they sat on `develop` and had never run once. So the next step is simply to **dispatch
+   each one and read the result** — `ci-macos.yml` warns to expect red at 54/55, failing
+   `urea_ccsd_pob-TZVP_Salvador_properties`, and says explicitly not to bless it away. Badge them
+   once each has run. Then write `ci-wsl-mpi.yml`, the only genuinely missing cell in the table:
+   the Linux and WSL columns have release and debug, Linux has MPI, WSL does not.
+
+   The compiler-matching constraint is the hard part of the WSL-MPI job. Tonto does `USE mpi` and
+   `.mod` files are compiler-version specific, so the MPI must be built by the same compiler as
+   Tonto — which is why `ci-mpi.yml` builds Open MPI from source and caches it. Read
+   `ci-mpi.yml`'s header before starting; `ci-macos-mpi.yml` explains why macOS gets this free.
 2. **Three pre-existing debug failures nothing is tracking**: `single_atom_scf`,
    `dft_invariants` and `urea_ccsd_pob-TZVP_Salvador_properties` fail in a plain **gfortran-14**
    debug build with bounds checking **on**. `ci-debug.yml` cannot see them — it runs two smoke
