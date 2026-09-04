@@ -217,17 +217,25 @@ cycle, so with both flags off **`F_corr` is `F_exp`** and the refinement fits un
 data. The branch that would make them differ carries the comment *"WARNING: this is
 untested & fails"*.
 
-### Why removal belongs on F_exp, not on F_calc
+### Which convention Tonto uses — OVERTURNED, and this is the decision
 
-Agreed with Dylan, 2026-09-04. A deformation map is a difference of **electron densities**:
-the calculated density against the best estimate of the experimental one. f′ and f″ describe
-resonant scattering by core electrons and are not part of any static charge distribution, so
-they must come out of the *observation*, or ρ_exp is not a density at all.
+**Dylan, 2026-09-04, and this is the ruling:** *"in Tonto we should not (often) remove
+anomalous from F_exp. The idea is to always correct F_calc to include the effect, and match
+F_exp."* So `add_dispersion_to_F_calc` is the convention, `remove_dispersion_from_F_exp`
+stays the rarely-used alternative, and **neither is to become a new default**.
 
-Putting dispersion into `F_calc` instead gives a clean **residual** — the anomalous part is
-explained and cancels in the difference — but leaves ρ_exp itself contaminated. That answers
-"what does my model fail to explain", which is a different question from "what is the
-experimental density". Only the second is what a deformation map is for.
+This overturns what this section said earlier the same day. That earlier argument is kept
+below because it is the reason removal exists at all, not because it won:
+
+> A deformation map is a difference of **electron densities**: the calculated density against
+> the best estimate of the experimental one. f′ and f″ describe resonant scattering by core
+> electrons and are not part of any static charge distribution, so on that reading they must
+> come out of the *observation*. Putting dispersion into `F_calc` instead gives a clean
+> **residual** — the anomalous part is explained and cancels in the difference — but leaves
+> ρ_exp itself contaminated.
+
+The practical consequence is that the open item below shrinks: the fallback a mis-honoured
+`remove_dispersion_from_F_exp` currently gives you is the convention Tonto wants anyway.
 
 ### What the code was doing
 
@@ -298,48 +306,74 @@ measurable there. The re-bless is therefore single-cause — the Bijvoet fix alo
 `REFLECTION:F_phase_without_disp` survives, unused for now, because it is what the eventual
 coherent change needs.
 
-### DEFECT: `remove_dispersion_from_F_exp` is accepted, reported, and not honoured
+### DEFECT: `remove_dispersion_from_F_exp` is honoured only when refining
 
-Found 2026-09-04, testing the 2020 comment *"WARNING: this is untested & fails"* rather than
-repeating it. **It does not crash — but the comment was right about the outcome**, and
-"fails" most likely meant "fails to do the right thing". `remove_dispersion_from_f_exp= yes` on
-`L_cysteine_IAM_R_min_max_residuals` runs to exit 0 and reports
+**The 2026-09-04 morning entry that stood here was wrong, and the way it was wrong is worth
+keeping.** It reported that `remove_dispersion_from_f_exp= yes` on
+`L_cysteine_IAM_R_min_max_residuals` gives output identical to `correct_dispersion= yes`, and
+concluded from that identity that the removal never happens. The identity is real. It proves
+nothing.
 
-```
-Correct dispersion? ............ T
-Add dispersion into F_calc ..... F
-Remove dispersion frm F_exp .... T
-```
-
-and then produces output **identical to `correct_dispersion= yes`** — 12 lines differ in the
-whole file, and all of them are the keyword echo, the three flag lines, and the version and
-timing lines. Every number is the same: R(F) 0.0198, GoF 2.0913, residual density
-0.2910 / −0.2372 / 0.0452.
-
-Two conventions cannot legitimately agree to the last digit. The cause is one gate, in
-`CRYSTAL:make_F_calc_from`:
+**`L_cysteine` has no dispersion to correct.** Its CIF declares
 
 ```
-! Include dispersion?
-if (.xray_data.INQ:correct_dispersion) then      ! = add OR remove
-   .get_dispersion_correction(Fa)
-   .xray_data.reflections.set_F_disp(Fa)
-   Fc = Fc + Fa                                  ! added under BOTH conventions
-end
+_atom_type_scat_dispersion_real
+_atom_type_scat_dispersion_imag
+'C' 'C' 0.0000 0.0000   ... and the same for H, N, O and S
 ```
 
-`set_F_disp` correctly belongs there — both conventions need `F_disp` computed — but
-`Fc = Fc + Fa` should be gated on `add_dispersion_to_F_calc` alone. The removal itself lives
-only in `make_F_calc_derivs` (`crystal.foo:4129`, `:4185`), the derivative path, so choosing
-the XD/SHELX convention silently gives the other one.
+and nothing else in the job supplies coefficients, so `F_disp` is identically zero. The
+checked-in reference prints the table of zeros itself, at `stdout:176`. Measured on the
+release build at `real_precision= 10`, three variants of that job — `correct_dispersion= yes`,
+`remove_dispersion_from_f_exp= yes`, and `correct_dispersion= no` — are **byte-identical in
+every number**; only the keyword echo, the flag lines and the timestamps differ. A job in
+which "off" agrees with both conventions to ten decimals cannot tell them apart, so it is not
+evidence about either.
 
-The machinery around it is sound: the keyword exists, `set_remove_disp_from_F_exp` assigns the
-right member, and the two readers guard each other with mutual `DIE_IF`s so both cannot be set.
-It is the gate alone.
+**The lesson.** Before comparing two dispersion conventions, check that the job has non-zero
+f′ and f″. Only two shipped tests do: `yq28_anharm_disp_H_U_iso_IAM_refinement` (S with
+f′ = 2, f″ = 1, set by a `dispersion_coefficients=` block after `process_CIF`) and
+`YLID_IAM_plus_anomalous_residual_density` (coefficients supplied, `correct_dispersion= no`).
+**yq28 is the test bed**; the run comparing add / remove / off on it was started and not
+finished, and is the first thing the next session should do.
 
-**Not fixed here**, deliberately: it is a separate change needing its own re-bless, and one was
-already in flight. The source comment at both sites now records what is measured instead of the
-2020 guess.
+**What the gate actually is, read from the source.** `CRYSTAL:make_F_calc_from`
+(`crystal.foo:4065`) adds dispersion into `F_calc` whenever `correct_dispersion` is true —
+add OR remove. That is **not** a simple wrong gate, and the one-line change proposed in
+`DEFERRED.md` would break the other convention:
+
+- `REFLECTION:remove_anom_from_F_exp` takes `phase = .F_phase = F_calc/|F_calc|`. Removal
+  needs the *full* model phase, because subtracting a complex `F_disp` from a magnitude has
+  no phase-free form (see the next subsection).
+- `REFLECTION:remove_anom_from_F_calc` then does `F_calc = F_calc - F_disp`.
+
+Both require `F_calc` to be carrying dispersion at that moment. Gate the addition on
+`add_dispersion_to_F_calc` alone and, under the remove convention, the phase silently becomes
+the dispersion-free one and `F_disp` is subtracted from an `F_calc` that never had it.
+
+So the sequence in `CRYSTAL:make_F_calc_derivs` — add, optimise the scale, remove from
+`F_exp` to make `F_corr`, remove from `F_calc`, re-optimise — is already the coherent
+XD/SHELX recipe, and the addition it starts from is deliberate.
+
+**The genuine gap is narrower: the removal lives only in the derivative path.** It is in
+`make_F_calc_derivs` (`crystal.foo:4133` and `:4191`) and nowhere else, so a job that sets
+`remove_dispersion_from_f_exp=` and does **not** refine never reaches it: it gets dispersion
+added into `F_calc`, keeps `F_corr = F_exp`, and reports removal as on. Whether the removal
+bites during a refinement is exactly what the unfinished yq28 run would say.
+
+Given the ruling above, the consequence is mild — the convention such a job silently falls
+back to is the one Tonto wants — but it is still a flag that reports itself as honoured and
+is not.
+
+**Two smaller things seen while reading, neither measured:**
+
+- `CRYSTAL:F_exp_scaled_corrected` (`crystal.foo:3775`) is gated on
+  `add_dispersion_to_F_calc` although what it does is *remove* dispersion from `F_exp`, and
+  it subtracts `abs(F_disp)` from the magnitude rather than projecting the complex quantity
+  onto the model phase. It feeds the `.fcf`/`.fco` and CIF reflection tables
+  (`crystal.foo:8628`, `:8755`, `:8870`), not the refinement.
+- `ATOM:has_tabular_dispersion_for` tests `abs(element_xray_dispersion(Z)) >= ZERO`, which is
+  true for every element. Harmless today: its only call sites are commented out.
 
 ### How to remove dispersion from F_exp, as well as it can be done
 
@@ -363,12 +397,17 @@ removes half the problem and discards the anomalous information to do it.
 
 ## 4. Open items
 
-1. **Fix the gate so `remove_dispersion_from_F_exp` is honoured** — `Fc = Fc + Fa` in
-   `CRYSTAL:make_F_calc_from` must depend on `add_dispersion_to_F_calc`, not on
-   `correct_dispersion`. Then `F_corr` finally differs from `F_exp`, the phase can be switched
-   to `F_phase_without_disp` in the same change, and the pair becomes coherent. Only then does
-   it make sense to ask whether removal should be the default for deformation and residual
-   density work. Needs its own re-bless.
+1. **Finish the yq28 measurement first.** Run
+   `yq28_anharm_disp_H_U_iso_IAM_refinement` at `real_precision= 10` with
+   `correct_dispersion= TRUE`, with `remove_dispersion_from_f_exp= TRUE`, and with
+   `correct_dispersion= FALSE`, and diff the three. That says whether the removal bites in a
+   refinement, and it is the only shipped job with non-zero f′ and f″ that refines. Do not
+   repeat the `L_cysteine` comparison: it has none. **Do not apply the one-line gate change
+   in `DEFERRED.md`** — see the defect section above for why it breaks the removal path.
+   The remaining defect, once measured, is that the removal exists only in
+   `CRYSTAL:make_F_calc_derivs`, so a non-refining job gets the add convention while
+   reporting removal. Whatever the fix, `add_dispersion_to_F_calc` stays the convention and
+   neither flag becomes a default — the ruling in §3. Needs its own re-bless.
 2. **The `# of unmatched Fridel pairs` line** — misspelled, misnamed, and uninformative on
    merged data. Batched with other output changes, since any of them re-blesses ~35
    references.
