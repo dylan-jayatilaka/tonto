@@ -418,11 +418,14 @@ rebuilt after a re-prune and rebuilding it. That is why this stays deferred.
 both refinements. Nothing currently checked in gives a wrong answer. The defect
 is latent, and becomes live the moment a job with cutoffs re-enters the block.
 
-## HANDOFF: make the dispersion conventions coherent (2026-09-04)
+## HANDOFF: fix `remove_dispersion_from_F_exp` and make the dispersion conventions coherent (2026-09-04)
 
-**Start a fresh session from here.** The Bijvoet fix has landed and is on `master`; this is
-what was deliberately left. It is not a small fix — real science is involved, and part of the
-decision is not a coding decision.
+**This is the next task, agreed 2026-09-04: start a fresh session from here.** The Bijvoet fix
+has landed and is on `master`; this is what was deliberately left. It is not a small fix — real
+science is involved, and part of the decision is not a coding decision.
+
+The defect entry it fixes is *`remove_dispersion_from_F_exp` is accepted, reported, and not
+honoured*, immediately below.
 
 ### The one-line defect, and the change it forces
 

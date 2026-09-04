@@ -1,0 +1,117 @@
+name: full suite on macOS, monthly
+
+# The macOS counterpart of ci-full-suite.yml, and the only workflow that runs
+# the `long` suite on a Mac.
+#
+# WHY IT EXISTS. macOS-release runs `short hart`; nothing ran `long` there, and
+# nothing ran it on Linux either until ci-full-suite.yml gained a schedule. That
+# matters more on macOS than on Linux, because the differences this project sees
+# between the two platforms are numeric and small: trailing digits in
+# esd-formatted values, a column width, a zero that prints as 0.000000(0) on one
+# platform and 0.00000000(1) on the other. They are invisible unless something
+# compares them regularly.
+#
+# One reference in the tree, tests/hart/urea_hart_STO-3G_disk_ffs/urea.out, was
+# blessed on a Mac (Darwin-25.5.0) and differs from Linux output in exactly that
+# way. Until `hart` was added to ci-macos.yml on 2026-09-04, no macOS job had
+# ever run it.
+#
+# EXPECT DIFFERENCES, AND DO NOT BLESS THEM AWAY. A failure here is information
+# about the platform, not a defect to be silenced -- and blessing on one platform
+# simply moves the failure to the other. See DEFERRED.md, "small numerical
+# differences", and CLAUDE.md on the loose gate.
+#
+# Monthly, unbadged, and continue-on-error is deliberately NOT set: a check that
+# cannot fail tells you nothing.
+
+on:
+  schedule:
+    - cron: '37 3 2 * *'      # 2nd of the month, a day after the Linux run
+  workflow_dispatch:
+    inputs:
+      suites:
+        description: 'Suites to run (space separated: short long hart)'
+        required: false
+        default: 'short long hart'
+      gcc:
+        description: 'gfortran major version (14 = project standard)'
+        required: false
+        default: '14'
+
+jobs:
+  full-suite-macos:
+    name: macOS full suite, gfortran-${{ github.event.inputs.gcc || '14' }}
+    runs-on: macos-14          # Apple silicon
+    timeout-minutes: 350       # the long suite is slow; do not let it be killed silently
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install the toolchain
+        # gnuplot is REQUIRED and its absence is nearly silent: Tonto completes
+        # the job, writes the plot data and script, and prints a seven-line
+        # warning per plot instead of rendering it. That shifts every later line,
+        # so plotting jobs fail STRUCTURALLY -- 0% deviation, 0 ulp. It cost
+        # ci-full-suite.yml its first real run and ci-macos.yml its first two.
+        run: |
+          set -x
+          brew install gcc cmake openjdk gnuplot
+          echo "$(brew --prefix openjdk)/bin" >> "$GITHUB_PATH"
+
+      - name: Which compiler is this, actually
+        run: |
+          set -x
+          gfortran-${{ github.event.inputs.gcc || '14' }} --version | head -1
+          uname -m                       # must say arm64, or the pins are untested
+
+      - name: Configure and build
+        run: |
+          cmake -B build \
+                -DCMAKE_Fortran_COMPILER=gfortran-${{ github.event.inputs.gcc || '14' }} \
+                -DCMAKE_BUILD_TYPE=release
+          cmake --build build -- -j3
+
+      - name: Confirm the arm64 pins were actually applied
+        run: |
+          # The library target is tonto_lib; check the file exists before
+          # grepping it, so a rename cannot masquerade as a lost pin.
+          DIR=build/CMakeFiles/tonto_lib.dir
+          test -f "$DIR/flags.make" || { echo "::error::$DIR/flags.make not found -- has the library target been renamed?"; ls build/CMakeFiles/; exit 1; }
+          grep -q 'fno-schedule-insns' "$DIR/flags.make" \
+            || grep -rq 'fno-schedule-insns' "$DIR/" \
+            || { echo "::error::arm64 pin for shell1quartet.F90 NOT found in the build flags"; exit 1; }
+
+      - name: Test — the loose agreement gate, full suite
+        run: |
+          set -o pipefail
+          {
+            echo '## macOS full suite'
+            echo ''
+            echo 'Columns: **Exact / Loose / Last-digit**.  Gate = **Loose** (rel ≤ 0.2% OR last-digit ≤ 2).'
+            echo ''
+            echo 'Differences from the Linux references are expected and are INFORMATION.'
+            echo 'Do not bless them here — that only moves the failure to the other platform.'
+            echo ''
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          python3 -u scripts/suite_report.py \
+            --program "$PWD/build/tonto" --tests-dir tests --basis-sets "$PWD/basis_sets" \
+            --suites ${{ github.event.inputs.suites || 'short long hart' }} \
+            --log tests-macos-full.log --failure-dir test-failures \
+            2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          status=${PIPESTATUS[0]}
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      - name: Upload the report, failure causes and any .bad outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-full-suite-diagnostics
+          path: |
+            tests-macos-full.log
+            test-failures/**
+            tests/**/*.bad
+          if-no-files-found: warn

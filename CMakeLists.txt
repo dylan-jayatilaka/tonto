@@ -1139,7 +1139,11 @@ set_target_properties(run_molecule PROPERTIES OUTPUT_NAME tonto)
 # `make tonto` builds the PROGRAM called tonto, which is what anyone typing it
 # means. The library is tonto_lib and comes along as a dependency. Before this,
 # `tonto` was the library target and the name silently built the wrong thing.
-add_custom_target(tonto DEPENDS run_molecule)
+# hart comes with it. `tonto` and `hart` are the command line and the more
+# general library exerciser: they go together, and a `make tonto` that leaves a
+# stale `hart` behind is a trap -- on 2026-09-04 it silently compared two hart
+# tests against a pre-change binary.
+add_custom_target(tonto DEPENDS run_molecule run_har)
 set_target_properties(run_har      PROPERTIES OUTPUT_NAME hart)
 set_target_properties(run_rgbi     PROPERTIES OUTPUT_NAME rgbi)
 
