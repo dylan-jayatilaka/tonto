@@ -229,11 +229,16 @@ jobs:
           esac
           printf 'program t\n  use mpi\n  implicit none\n  integer :: e,n\n  call MPI_Init(e)\n  call MPI_Comm_size(MPI_COMM_WORLD,n,e)\n  print *, "ranks =", n\n  call MPI_Finalize(e)\nend program t\n' > "$HOME/t.f90"
           "$prefix/bin/mpifort" "$HOME/t.f90" -o "$HOME/t"
-          if [ "$(id -u)" -eq 0 ]; then
-            export PRTE_MCA_prte_allow_run_as_root=1
-            echo "running as root: PRTE_MCA_prte_allow_run_as_root=1"
-          fi
-          ( cd "$HOME" && "$prefix/bin/mpirun" --oversubscribe -n 2 ./t )
+          # PRTE_MCA_prte_allow_run_as_root=1 does NOT work -- tried 2026-09-04,
+          # and prterun refused anyway while printing the very message that names
+          # the fix: "adding the --allow-run-as-root option to your command line".
+          # So wrap the launcher, and hand the WRAPPER to every later step.
+          # check_mpi_pi.sh and suite_report.py both take the launcher as an
+          # argument, so neither needs to know about this.
+          printf '#!/bin/sh\nexec "%s/bin/mpirun" --allow-run-as-root "$@"\n' \
+                 "$prefix" > "$HOME/mpirun"
+          chmod +x "$HOME/mpirun"
+          ( cd "$HOME" && ./mpirun --oversubscribe -n 2 ./t )
           echo "use mpi compiles and runs under the matching launcher"
 
       - name: Copy the checkout into the Linux filesystem
@@ -304,10 +309,9 @@ jobs:
           # An `[ ... ] && export` one-liner would ABORT the step when the test
           # is false: wsl-bash runs `bash -euo pipefail`, so a false test is a
           # non-zero command. Use an if.
-          if [ "$(id -u)" -eq 0 ]; then export PRTE_MCA_prte_allow_run_as_root=1; fi
           cd ~/tonto
           sh scripts/check_mpi_pi.sh ~/tonto-build/mpi/run_mpi_pi \
-             "$prefix/bin/mpirun" 1 2 4 | tee ~/mpi_pi.log
+             "$HOME/mpirun" 1 2 4 | tee ~/mpi_pi.log
           {
             echo '## MPI invariant — pi versus rank count (GATING)'
             echo '```'
@@ -333,7 +337,6 @@ jobs:
           # An `[ ... ] && export` one-liner would ABORT the step when the test
           # is false: wsl-bash runs `bash -euo pipefail`, so a false test is a
           # non-zero command. Use an if.
-          if [ "$(id -u)" -eq 0 ]; then export PRTE_MCA_prte_allow_run_as_root=1; fi
           cd ~/tonto
           {
             echo '## MPI short suite — 2 ranks, WSL (informational)'
@@ -345,7 +348,7 @@ jobs:
           python3 -u scripts/suite_report.py \
             --program ~/tonto-build/mpi/tonto --tests-dir tests --basis-sets basis_sets \
             --suites short --no-log --failure-dir ~/mpi-test-failures \
-            --mpi --mpi-ranks 2 --mpi-launcher "$prefix/bin/mpirun" \
+            --mpi --mpi-ranks 2 --mpi-launcher "$HOME/mpirun" \
             2>&1 | tee -a "$ws/wsl-mpi-summary.md"
           echo '```' >> "$ws/wsl-mpi-summary.md"
 
