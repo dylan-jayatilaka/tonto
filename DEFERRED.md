@@ -418,6 +418,65 @@ rebuilt after a re-prune and rebuilding it. That is why this stays deferred.
 both refinements. Nothing currently checked in gives a wrong answer. The defect
 is latent, and becomes live the moment a job with cutoffs re-enters the block.
 
+## HANDOFF: make the dispersion conventions coherent (2026-09-04)
+
+**Start a fresh session from here.** The Bijvoet fix has landed and is on `master`; this is
+what was deliberately left. It is not a small fix — real science is involved, and part of the
+decision is not a coding decision.
+
+### The one-line defect, and the change it forces
+
+`CRYSTAL:make_F_calc_from`:
+
+    if (.xray_data.INQ:correct_dispersion) then      ! = add OR remove
+       .get_dispersion_correction(Fa)
+       .xray_data.reflections.set_F_disp(Fa)
+       Fc = Fc + Fa                                  ! wrong gate
+    end
+
+`set_F_disp` belongs under `correct_dispersion` — both conventions need `F_disp` computed.
+`Fc = Fc + Fa` must be gated on `add_dispersion_to_F_calc` alone. Until it is, asking for the
+XD/SHELX convention gives the other one, silently, while reporting itself as on.
+
+**The phase must switch in the same change, not before.** `make_symop_generated_dF_a_v2` uses
+`F_phase` (with dispersion). `F_phase_without_disp` is what a residual map free of the
+anomalous contribution needs — but only once `F_corr` genuinely differs from `F_exp`, which is
+exactly what fixing the gate achieves. Switching one without the other gives a half-corrected
+map that neither convention intends. `REFLECTION:F_phase_without_disp` is kept, unused, for
+this purpose; the comment at the call site says so.
+
+### The decision that is not a coding decision
+
+Which convention should be the **default** for deformation and residual density work?
+Reasoning already agreed (`docs/TONTO_DISPERSION_CORRECTIONS.md` §3): a deformation map is a
+difference of electron densities, f′ and f″ are resonant scattering rather than density, so
+they belong out of the *observation* — `remove_dispersion_from_F_exp`, which is what XD and
+SHELX do. Adding to `F_calc` gives a clean residual but leaves ρ_exp contaminated, which
+answers a different question. Both flags currently default FALSE.
+
+### Expect a re-bless, and know which references can move
+
+Only five references print a residual density block: `L_alanine_minmax_residual_density_map`,
+`L_cysteine_IAM_R_min_max_residuals`, `yq28_anharm_disp_H_U_iso_IAM_refinement`,
+`YLID_IAM_plus_anomalous_residual_density` and `tests/hart/urea_hart_STO-3G`. Anything moving
+outside that set is a bug, not a consequence. Of those, only the ones with dispersion switched
+on can move: `L_cysteine` and `yq28` (`correct_dispersion= yes`/`TRUE`). YLID has
+`correct_dispersion= no`, so `F_disp` is zero and it must **not** move —
+another usable negative control.
+
+### Two traps already paid for
+
+- **Do not count a reflection that is its own Bijvoet partner.** A symop can map `h` to `-h`
+  (`diag(-1,-1,1)` on `(0,2,0)` in `P2₁2₁2₁`); the site symmetry factor owns that case.
+  Counting them gave four wrong predictions.
+- **`L_alanine_minmax_residual_density_map` must stay unchanged.** Zero genuine Bijvoet pairs.
+  If a change makes it move, `f9fb26bc` has been broken.
+
+### While you are there
+
+`REFLECTION:remove_anom_from_F_exp` declares and assigns `II = IMAGIFY(ONE)` and never uses
+it. Harmless; delete it if the routine is touched.
+
 ## `remove_dispersion_from_F_exp` is accepted, reported, and not honoured (2026-09-04)
 
 Tonto offers the two standard dispersion conventions: add the anomalous contribution to
