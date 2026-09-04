@@ -15,7 +15,7 @@ now covers the whole project, so it was renamed.)*
 > filed under live themes (the two MPI-CI `DONE`s, the `TEXTFILE:flush` root cause, the
 > withdrawn suppressed-reduction abort, the dropped-`data`-statements fix, the macOS RGBI
 > badge, the `bond-energy` won't-do, and the keyword-parsing survey), and one live list
-> (*RGBI: known defects*) was stranded inside the archive. **44 live, 18 archived.**
+> (*RGBI: known defects*) was stranded inside the archive.
 >
 > Re-sorted again on 2026-08-27, when `docs/PLOT_PLAN.md` and `docs/WORKSHOP_PLAN.md`
 > were retired: their finished stages are history and went with them, and their four
@@ -23,6 +23,17 @@ now covers the whole project, so it was renamed.)*
 > new *Workshop and examples* theme, which also took in the exercise-4 entry that had
 > been stranded below the archive. The ammonia-borane pHAR entry was closed and archived the
 > same week, on 2026-08-27.
+>
+> Re-sorted again on 2026-09-04: ten finished entries were still filed under live themes,
+> marked `FIXED`, `RESOLVED`, `VERIFIED`, `OVERTURNED` or `DIAGNOSED` — the in-core CCSD
+> search, the two latent command-line bugs, both `hart`-under-MPI entries, the benign
+> column-0 `#ifdef` diagnostic, the run-time-dependency lesson, the whole gfortran-16 debug
+> story (three entries), and the `textfile.foo` verification. Moving them took the live half
+> from 4396 lines to 3518. **36 live, 36 archived.**
+>
+> Still to sort: `MPI: defects found during milestone 4` is a 900-line register whose `###`
+> children are mostly closed but interleaved with live ones. It was left whole rather than
+> dissected.
 >
 > If you add an entry, put it under a theme; when it closes, move it down — a `DONE` heading
 > in a live section is how the drift starts.
@@ -43,8 +54,10 @@ now covers the whole project, so it was renamed.)*
 
 ## WHERE 2026-09-03 LEFT OFF — read this first if you are picking up cold
 
-**Nothing is in flight.** No build, no CI run, no measurement is waiting on a result. Everything
-below is either finished or not started.
+**Nothing is in flight.** The one item that was unverified when the session ended — the
+`tonto_lib` rename — finished building afterwards and **works**; it just leaves a cosmetic
+`make` warning to tidy, which is action 0 below. Everything else is either finished or not
+started.
 
 **Branch state.** `develop` carries the day's work; `origin/master` was merged into it, so
 `develop` is a superset. The gfortran-16 migration is preserved whole on
@@ -84,12 +97,45 @@ build has. One file, everything else identical, executable relinked each time.
 
 ### Next actions, in order
 
+0. **VERIFIED, but tidy up one warning.** The `tonto_lib` rename (`107cc0d9`) was build-verified
+   after all, at the end of the session: a full gfortran-14 debug build completed exit 0,
+   `make tonto` printed *Linking Fortran executable tonto*, the executable's timestamp moved
+   (09:04:00 → 09:57:23), and `libtonto.a` kept its name. So `make tonto` now builds the program,
+   which was the point.
+
+   **It is not clean, though.** Every `make tonto` prints:
+
+   ```
+   make[3]: Circular CMakeFiles/tonto <- tonto dependency dropped.
+   ```
+
+   because `add_custom_target(tonto ...)` collides with the *file* named `tonto` in the build
+   directory: GNU make sees a target and a file of the same name, calls it circular, drops it and
+   proceeds. Harmless — the link happens — but noisy, and noise in a build log is how real
+   warnings get missed.
+
+   **The clean fix** is to drop the custom target and name the executable target itself: replace
+   `add_executable(run_molecule ...)` + `set_target_properties(... OUTPUT_NAME tonto)` +
+   `add_custom_target(tonto ...)` with a plain `add_executable(tonto ${CMAKE_CURRENT_BINARY_DIR}/run_molecule.F90)`.
+   No collision and no warning. It costs the `run_*` target-naming symmetry with `run_har` and
+   `run_rgbi` (which are fine as they are — nothing is named `hart` or `rgbi`, so they do not
+   collide), and `install(TARGETS run_molecule DESTINATION bin)` must follow the rename. Small and
+   deliberate; do not rush it, and rebuild before trusting it.
+
 1. **macOS in CI, then WSL-MPI** (Dylan, 2026-09-03) — to complete the badge table across
-   platforms. The three macOS workflows already exist and are good; they have **never run**
-   because scheduled workflows only fire from the default branch and they sit on `develop`.
-   Merging to `master` registers them. Dispatch each once — `ci-macos.yml` warns to expect red
-   at 54/55 and says not to bless it away. Then write `ci-wsl-mpi.yml`, the only genuinely
-   missing cell.
+   platforms. **The three macOS workflows are now REGISTERED and dispatchable** (`gh workflow
+   list` shows macOS-release, macOS-debug and macOS-MPI), which the merge to `master` on
+   2026-09-03 is what achieved: scheduled workflows only fire from the default branch, and until
+   then they sat on `develop` and had never run once. So the next step is simply to **dispatch
+   each one and read the result** — `ci-macos.yml` warns to expect red at 54/55, failing
+   `urea_ccsd_pob-TZVP_Salvador_properties`, and says explicitly not to bless it away. Badge them
+   once each has run. Then write `ci-wsl-mpi.yml`, the only genuinely missing cell in the table:
+   the Linux and WSL columns have release and debug, Linux has MPI, WSL does not.
+
+   The compiler-matching constraint is the hard part of the WSL-MPI job. Tonto does `USE mpi` and
+   `.mod` files are compiler-version specific, so the MPI must be built by the same compiler as
+   Tonto — which is why `ci-mpi.yml` builds Open MPI from source and caches it. Read
+   `ci-mpi.yml`'s header before starting; `ci-macos-mpi.yml` explains why macOS gets this free.
 2. **Three pre-existing debug failures nothing is tracking**: `single_atom_scf`,
    `dft_invariants` and `urea_ccsd_pob-TZVP_Salvador_properties` fail in a plain **gfortran-14**
    debug build with bounds checking **on**. `ci-debug.yml` cannot see them — it runs two smoke
@@ -198,92 +244,6 @@ state, where it cannot be reached at all.
 The cheap alternative, if nobody intends to finish it: delete `breakdown_data.foo` and the
 dead keyword line from `develop` and leave the work on its two tags, as was done for
 `datafile.foo`. That is a decision for Dylan, not a default.
-
-## Searched for in-core CCSD: it is not in this repository (2026-08-18)
-
-Dylan recalled *"some work on in-core CCSD"* and asked for it to be found and extracted.
-**There is no coupled-cluster solver anywhere in the repository.** Recorded so the
-search is not repeated.
-
-What was searched, all on 2026-08-18:
-
-| where | how | result |
-|---|---|---|
-| `develop` library and runfiles | `grep -i ccsd`, and for `cc`/`ccd`/`cisd`/`lccd`/`cepa`/`mp3`/`mp4` procedure headers, and for `amplitude`/`t1`/`t2`/`doubles`/`coupled cluster` | nothing |
-| every branch and tag (15 archive tags, 5 branches, all remotes) | `git grep -l -i ccsd` over `foofiles/*` and `runfiles/*` | nothing |
-| commit messages, all refs | `git log --all -i --grep=ccsd --grep='coupled cluster'` | three hits, all about *structure factors* — see below |
-| 131 dangling commits | `git fsck --no-reflogs`, then `git grep -i` over all of them for `ccsd`/`coupled.cluster` and for CC procedure headers | nothing |
-| added filenames, all history | `git log --all --diff-filter=A --name-only` filtered for `cc`/`cluster`/`corr` | only `docs/CCTBX_INTO_TONTO.md`, which is cctbx, unrelated |
-
-Every `ccsd` string in the tree is one of three innocent things: a **Gaussian**
-CCSD density matrix read from an fchk file (`tests/{short,long}/urea_ccsd_pob-TZVP_*`,
-whose job files say *"This fchk file has the CCSD density matrix in it"*), a
-literature citation inside `basis_sets/TZP-DKH`, or documentation referring to those
-tests. The three commits — `ed585a29` *"added ability to calculate CCSD structure
-factors"*, `765463f2`, `306ec7f4` — add the ability to compute structure factors
-**from** an externally-computed CC density, not to compute one. The only CC plumbing
-in the library is `MOLECULE.READ:read_gX_CC_dm`, one line of fchk reading.
-
-**What almost certainly is the memory.** The phrase "in core" appears in Tonto against
-**MP2**, not CCSD, and four times: `MOLECULE.MISC:make_r_mp2`, `make_chem_mp2`,
-`make_u_mp2` and `make_gc_mp2` are each documented *"make ... MP2 in core"*, and
-`make_r_mp2` prints *"This is a toy implementation with integrals stored in memory"*.
-Restricted, chemists'-notation, unrestricted and general-complex variants. All four are
-already on `develop`, none is on any archive tag, and nothing needs extracting.
-`make_r_mp2` was validated on 2026-08-18 as part of the `archive/Teaching` port — it
-agrees with a hand-written MP2 to twelve decimals; see `docs/TEACHING_MP2.md`.
-
-### The old Subversion repository was searched too, and it is not there either
-
-Dylan then recalled the pre-GitHub history: a Subversion repository on SourceForge,
-project name forgotten. **It is `tonto-chem`** — <https://sourceforge.net/projects/tonto-chem/>,
-SVN at `svn://svn.code.sf.net/p/tonto-chem/code/`, browsable over HTTPS at
-`https://svn.code.sf.net/p/tonto-chem/code/`. It is still live, at **revision 4411**,
-spanning **1999-06-28 to 2014-06-21** — five years of history that predates the GitHub
-repository and is in no way contained in it.
-
-No `svn` client is installed here and none is needed: the whole log comes back from a
-single DeltaV `REPORT` over HTTPS, and files can be fetched with plain `curl`.
-
-```bash
-# the entire 4411-revision log, authors and changed paths included, in one request
-cat > logreq.xml <<'XML'
-<?xml version="1.0" encoding="utf-8"?>
-<S:log-report xmlns:S="svn:">
-<S:start-revision>4411</S:start-revision><S:end-revision>1</S:end-revision>
-<S:discover-changed-paths/><S:all-revprops/><S:path></S:path>
-</S:log-report>
-XML
-curl -s -X REPORT -H "Content-Type: text/xml" -H "Depth: 0" --data-binary @logreq.xml   "https://svn.code.sf.net/p/tonto-chem/code/!svn/bc/4411/" -o svnlog.xml
-```
-
-What was checked, and the result in every case is **nothing**:
-
-| check | scope | result |
-|---|---|---|
-| commit messages | all 4411 revisions | 6 hits, none a CCSD implementation: reading CC/MP2/MP3 densities from fchk files, the `cc-pVTZ` basis, CCSD **CIF/MIF** files, and `destroy ex,cc in copy` |
-| changed paths | every add/modify/replace/delete in all 4411 revisions, 14 branches and 4 tags | no path ever named for CCSD; the only `cc`-ish matches are `cluster.foo` (the crystal cluster) and `cc-pVDZ` test directories |
-| file contents, newest line | all **166** `.foo` files of `branches/tonto-3.2` | zero `ccsd`, zero `coupled cluster`, zero amplitude names |
-| file contents, other line | all **165** `.foo` files of `trunk/tonto` | the same |
-| the manual | `documentation/tonto.docbook` and `tonto.xml`, ~445 kB each | zero `ccsd` |
-| authors | all 22 | listed below; none committed a correlation method beyond MP2 |
-
-The 22 SVN committers, for the record, since they are not recoverable from the git
-repository: `reaper` (1800, 1999–2005), `dylan_` (1475, 2005–2014), `dylan` (612,
-1999–2005), `tonto` (144), `chris` (52, Roby work), `cassam` (51), `durhammike` (48),
-`bucinsky` (40), `grimwreaper` (22, platforms and BLACS/ScaLAPACK), `magdalos` (19,
-2013, HAR least squares and ADP errors), `awhitton` (14, 2003–2004, PND and
-`diffraction_data`), `jjripsnorter` (12), `josh146` (9), `bdittric` (9),
-`shadowadler` (3, fingerprints), `birger` (3, anomalous dispersion), `smeeton1` (2),
-`vongrabow` (2, ELI-D), `mimisue` (1, vapour keyword), `root` (1), `josh` (1),
-`skw` (1, Roby).
-
-**Conclusion: Dylan's own guess was right — it was never committed.** The work exists in
-neither repository, so there is nothing to extract. If a copy survives it is outside
-version control: an unpushed clone on `sauce` or `achari2` (`git log --all --oneline`
-there settles it in one command), a student's own machine or thesis, or an email
-attachment. Absent that, the in-core MP2 family is the nearest thing that exists and it
-is already on `develop`.
 
 # Correctness — open bugs that give wrong answers
 
@@ -514,25 +474,6 @@ which also makes the setup reproducible and version-controllable, unlike a shell
 
 **NOTE `COMMAND_LINE` does not currently support repeated options**: `has_option` /
 `value_for_option` return the *first* match. Repeatability needs a small addition there.
-
-## Command line: two latent bugs that only a debug build sees
-
-Both were pre-existing in `COMMAND_LINE:process_options` and both are now fixed;
-recorded because they are a *class* of defect this codebase is prone to — a real
-precondition that `USE_PRECONDITIONS` gates away, so release ships the violation.
-
-- **`VEC{STR}:append` with a mismatched CHARACTER length.** `append` is
-  `self = [self,value]`, an array constructor, which requires `value` to have the
-  same length as the array element. `process_options` appended `trim(token(2:))`
-  and the literal `"none"` into a `VEC{STR}(len=256)`. Illegal Fortran; release
-  does not check it, but `-fcheck` aborts — so **every option, in every program,
-  killed a debug build**. Fixed by going through a full-width `STR` first.
-- **`put_command_optarg` overflowed the output buffer.** It asked for a column
-  `width=STR_SIZE` while `BSTR_SIZE == STR_SIZE`, so the 2-character margin put
-  the cursor past the end and tripped `ENSURE(.item_end+len(string)<=BSTR_SIZE)`.
-
-Worth a sweep for other `append(trim(...))` / `append("literal")` calls on
-`VEC{STR}`, and for other `width=STR_SIZE` uses, on the same reasoning.
 
 ## Deferred: `std_err` writes into the *input* file (hard-coded unit collision)
 
@@ -1695,172 +1636,6 @@ through a **call** from inside a parallel do, which no source scan can find.
 depth-counting the parallel-do lock so a recursive inner return cannot release an outer lock
 (restoring the `ENSURE` at `parallel.foo:308`).
 
-## PRIORITY: `hart` has never run under MPI — MPI_ERR_TRUNCATE at 2 ranks
-
-Found 2026-08-03 while attempting milestone 5's last step (parallel fragHAR at 2 ranks). **Not a
-regression** — no argv-driven program has ever been run under MPI.
-
-Evidence, on a local gfortran-14 Open MPI build (`~/opt/openmpi-gf14`, `-Ofast`, `-DMPI=1`,
-`hart` confirmed linked against `libmpi`):
-
-| what | result |
-|---|---|
-| `run_mpi_pi` at 1, 2, 4, 8 ranks | OK — all agree with π and with each other |
-| `tonto` (stdin-driven) at 2 ranks | OK — exit 0, no truncation |
-| `hart --version` / `--help` / no args at 2 ranks | OK — no truncation |
-| `hart … <cif>` at 2 ranks | **`MPI_ERR_TRUNCATE` in `MPI_Bcast`**, reported by rank 1 |
-| `hart --basis NOSUCH <cif>` at 2 ranks | same — so it fails **before** any CIF is read |
-
-So the reductions are sound and `tonto` is fine; the **argv-driven path** breaks, as soon as a
-`<cif-file>` argument is supplied. `MPI_ERR_TRUNCATE` on a broadcast means the ranks are at
-*different* broadcasts — the collective streams have gone out of step.
-
-**The bisect brackets it.** `--help`, `--version` and no-args all `stop` before
-`run_har.foo:203`; supplying an argument is what first reaches the `std_err`
-close / destroy / re-create / `set_name` / `open_for` sequence there.
-
-**A concrete defect of the right shape in that path.** `FILE:close_and_delete` sets
-`.io_status` **inside** an `IO_IS_ALLOWED` guard and then tests it on every rank with no
-broadcast in between — while its sibling `FILE:close` does broadcast it:
-
-| routine | guarded operation | broadcast afterwards? |
-|---|---|---|
-| `FILE:close` | `inquire` | **yes** — `PARALLEL_BROADCAST(.io_status,…)` |
-| `FILE:close_and_delete` | `close(status="delete")` | **no**, then `DIE_IF(.io_status/=0,…)` |
-
-On a non-master rank `.io_status` keeps whatever it held, so that `DIE_IF` is decided on
-rank-local state. This is the milestone-6 rule one level down: not a collective gated on
-rank-local state, but a **branch** taken on it, inside a routine whose branches contain
-collectives.
-
-**LOCALISED 2026-08-03 to a single call.** Method — *bracketing by phase*, which is bisection
-with printed landmarks rather than a debugger, and is worth reusing for any collective desync:
-
-1. A temporary trace in `PARALLEL:broadcast` (the template, so all 25 type instantiations get
-   it) printing the element count of every `MPI_BCAST` to stderr.
-2. Run under `mpirun --tag-output -n 2`, split the stream by rank, and diff. `MPI_ERR_TRUNCATE`
-   **is** a length mismatch, so the first index where the two length sequences differ is the
-   divergence.
-3. Then temporary `PHASE` markers at known points in `run_har.foo`, each printing the running
-   broadcast count, to find which interval contains that index.
-
-Result. The two ranks are **identical for the first 126 broadcasts** and diverge inside one call:
-
-| marker | rank 0 | rank 1 |
-|---|---|---|
-| after stdin created | 5 | 5 |
-| after `process_options` | 30 | 30 |
-| after the `std_err` dance | 36 | 36 |
-| before the option loop | 36 | 36 |
-| before the banner | 106 | 106 |
-| **immediately before the `put`** | **126** | **126** |
-| died | 163 (+37) | 129 (+3) |
-
-So the desync is **inside `stdout.put(.command_optarg,by_column=TRUE,left=TRUE,width=STR_SIZE-8)`**
-in `COMMAND_LINE:put_command_optarg` — i.e. *echoing the command line*. Master performs **37**
-broadcasts there and rank 1 performs **3**. At the divergent index master sends a `STR` (256)
-while rank 1 is at a scalar (1), which is the truncation.
-
-## `hart` NOW WORKS UNDER MPI (2026-08-03) — and reproduces serial exactly
-
-After the `TEXTFILE:flush` fix below, plus removing an over-strict runtime check (next item),
-`hart` runs to completion at 2 ranks and agrees with a serial run **digit for digit** — and from
-*different builds*, release-serial against debug-MPI, which makes the agreement stronger:
-
-| | serial (release) | MPI, 2 ranks (debug) |
-|---|---|---|
-| R(F) | 0.037995 | 0.037995 |
-| N_r / N_p | 817 / 27 | 817 / 27 |
-| GoF^2 | 49.536697 | 49.536697 |
-| GoF | 7.038231 | 7.038231 |
-
-**fragHAR at 2 ranks still fails**, but far later — 884 lines in, past the CIF, the atom groups
-and the ANO data, at *"Making F_pred ..."* — with a **second, distinct** `MPI_ERR_TRUNCATE` in
-the fragment path.
-
-**CONFIRMED 2026-08-03 — it is output inside `fragment_SCF_para`'s `parallel do g`.** Traced with
-phase markers and a per-broadcast counter. The ranks are in *perfect lockstep* right up to the
-loop, and diverge the instant they take different fragments:
-
-| | rank 0 | rank 1 |
-|---|---|---|
-| entering `fragment_SCF` | 127,197 | 127,197 |
-| before `parallel do g` | 141,907 | 141,907 |
-| **fragment taken** | **g=1** | **g=2** |
-| died | 146,858 | 146,815 |
-
-So each rank runs a whole SCF on *its own* fragment, and that work performs collectives — chiefly
-`BUFFER:put_str`, which broadcasts `.string` (256 bytes) and `.item_end` on **every token
-written**, outside the `IO_IS_ALLOWED` guard. Different fragments produce different amounts of
-output, hence different numbers of collectives, hence `MPI_ERR_TRUNCATE`.
-
-**PROPOSED FIX (Dylan, 2026-08-03): make `per_rank_IO_allowed` also switch off the broadcasts.**
-
-The switch already exists and is already used in the right places — `fragment_SCF_para` wraps its
-disk-FF writes in `set_per_rank_IO_allowed(TRUE/FALSE)`. And `SYSTEM:IO_is_allowed`
-(`system.foo:6734`, which overrides the simpler `PARALLEL` version and is the one the
-`IO_IS_ALLOWED` macro calls) honours it:
-
-```foo
-if (.per_rank_IO_allowed) then
-   res = TRUE                                        ! every rank may do I/O
-else
-   res = .is_master_processor OR (NOT .is_parallel)
-end
-```
-
-But it only removes the master-only **guard**. The **broadcasts** stay unconditional — the same
-half-measure as `FILE:per_rank_write`, which also removes the guard and not the synchronisation.
-That is why per-rank file I/O has never actually worked.
-
-The fix is to give the flag its full meaning: when it is set, the ranks are *deliberately* doing
-different I/O, so the bookkeeping broadcasts must be skipped.
-
-```
-#define PARALLEL_BROADCAST_IO(X,Y)   if (tonto%is_parallel .AND. .NOT. tonto%per_rank_IO_allowed) \
-                                        call broadcast_(tonto,X,Y)
-```
-
-Apply it **only** to I/O bookkeeping — `.unit`, `.io_status`, `.record`, `exists`/`is_open`, and
-`BUFFER:put_str`'s buffer and cursor — and leave genuine data broadcasts (`FILE:read`'s payload,
-`plot_grid`'s `pt`, the random seed) alone.
-
-**Why it is safe**, which is the part worth checking: with the broadcasts disabled inside the
-region there is nothing collective left to mismatch, so a rank that takes zero iterations simply
-does nothing and no peer waits on it. The flag itself must be set and cleared *outside* the
-parallel loop so every rank agrees on the mode.
-
-**Refinement (Dylan): one flag conflates two permissions.** `per_rank_IO_allowed` currently means
-both "write my own files" *and* "write to the shared log" — so enabling it for a fragment loop
-also lets every rank interleave `stdout`. They should be separate:
-
-| flag | meaning | broadcasts | who writes |
-|---|---|---|---|
-| *(default)* | shared file, master only | yes | master |
-| `per_rank_self_IO_allowed` | each rank writes its **own** files | **no** | every rank |
-| `per_rank_shared_IO_allowed` | every rank may write the **shared** log | yes | every rank (interleaved, deliberate) |
-
-**The deeper form is per-FILE, not global**: a `FILE`/`TEXTFILE` is intrinsically either shared
-(master writes, state broadcast) or per-rank (each rank owns a copy, nothing broadcast). Marking
-the file removes the need for any global mode and for setting/clearing it around regions — the
-archive is per-rank, `stdout` is shared, and each behaves correctly wherever it is used. Two
-global flags are a cheaper approximation and a reasonable first step.
-
-**No translator change**, unlike every other option considered. It also deletes most of the
-~147,000 broadcasts a fragHAR run performs, so it is a scaling fix as much as a correctness one.
-
-**This is structural, not a bug at a line.** Coarse-grained parallelism over fragments cannot
-work while writing output is a collective operation. Compile-time purity (see the `PURE` design
-above) cannot help either: a fragment SCF legitimately writes archives and output. The two
-options remain (1) make output non-collective inside a parallel region, or (2) suppress or
-serialise it there.
-
-**Note the scale while deciding:** 141,907 broadcasts occur *before the fragment loop even
-starts* — a HAR job spends ~142k collectives producing text. Option (1) would remove nearly all
-of them, so it is a performance fix as much as a correctness one. That is the known register-row territory (the per-fragment,
-**rank-local** calls in `fragment_SCF_norm`/`_para`), and it is a separate hunt. The method that
-found the first one is recorded below and applies unchanged.
-
 ## Root cause behind several of these: `MOLECULE` contains `MOLECULE`s (Dylan, 2026-08-03)
 
 The fragment machinery is a **module/problem mapping** problem, and most of the parallel defects
@@ -2967,35 +2742,6 @@ recompilation of the parent's users). Investigate whether mapping Foo submodules
 submodules simplifies the emitted module graph and compile-time dependencies. Touches
 `emit()`/`buildUseFile()`/`buildInterfaceFile()` and the module-naming scheme.
 
-## Column-0 `#ifdef`/`#endif` inside a program body — benign parser diagnostic
-
-**Date:** 2026-07-28. A release build prints, at ~98%:
-
-```
-[ 98%] Generating run_mpi_test_complete.F90
-line 234:0 extraneous input '<EOF>' expecting {END, USE, 'interface', ... }
-```
-
-**Cause.** `runfiles/run_mpi_test_complete.foo` (and `run_mpi_test.foo`) wrap their executable
-body in a **column-0** `#ifdef MPI ... #endif` that sits between the indented `program` body and
-the final `end program`. Foo block scoping is **indentation-based**; the grammar passes
-`#include`/macros through pre-CPP but does **not** model column-0 `#if*`/`#endif` directives, so
-the indent/dedent tracking can't cleanly match the closing `end program` and the parser reports a
-spurious EOF expectation at the true end of file.
-
-**Impact — benign.** ANTLR error-recovers and still emits valid Fortran (`run_mpi_test_complete.F90`
-ends correctly and the executable links). Only these two MPI test harnesses use the pattern; no
-`foofiles/` module, `tonto`/`hart`, or `ctest` is affected. Not a regression — the files predate
-current work.
-
-**Fix (deferred).** Teach the Foo lexer to treat CPP directive lines
-(`#if`/`#ifdef`/`#ifndef`/`#else`/`#elif`/`#endif`) as passthrough that does not perturb
-indentation/scoping. Low priority. (Separately, 2026-07-28: `run_mpi_test_complete.foo` had its
-variable declarations moved *inside* the `#ifdef MPI` so they don't trigger unused-variable
-warnings in a non-MPI debug build; this does not remove the parser diagnostic above.)
-
----
-
 # hart
 
 ## hart — deferred items
@@ -3248,176 +2994,6 @@ highlighting and tighter editor integration. The repo already ships some vim sup
 
 # Platform-specific
 
-## CI workflows must install every RUN-time dependency, not just build ones (2026-08-27)
-
-**Status: fixed for gnuplot; the class is worth remembering.** `ci-full-suite.yml` ran for the
-first time on 2026-08-27 and returned 70/89. All 18 captured failures carried
-`WARNING: could not run gnuplot` — the workflow installed no gnuplot.
-
-The failure mode is what makes this worth an entry. gnuplot is **not** a build dependency and its
-absence is not an error: Tonto finishes the job, gets every number right, writes the plot data
-*and* the gnuplot script, and prints a multi-line warning instead of rendering. Those extra lines
-are a **structural** mismatch against the stored reference. So a missing *optional, run-time*
-package produces a page of failures at 0% numeric deviation and 0 ulp — indistinguishable at a
-glance from a real defect.
-
-`ci-mpi.yml` had the same hole while running the full short suite, so its suite table carried
-these failures too; see `docs/TONTO_AND_MPI.md`. Both are fixed. `ci-wsl-debug.yml` and
-`release.yml` do not need it — two plain SCF jobs and no tests respectively.
-
-**The general rule:** when adding a workflow that runs the suite, copy the package list from
-`ci.yml`, which is the reference build, rather than writing a shorter one from what the *build*
-needs.
-
-## OVERTURNED (2026-08-27, same day): the 34 debug failures are `-fcheck=bounds`, NOT gfortran-16
-
-**Read this before the entry below, which it corrects.** The confound the entry listed as open
-question 1 was closed the same afternoon, and it reversed the conclusion.
-
-**The experiment.** In the **gfortran-14** debug tree, recompile the single file that holds the
-deciding condition, `molecule.rho.F90`, without `-fcheck=bounds`, and relink. One file, one flag,
-one compiler:
-
-| gfortran-14 tree, `molecule.rho.F90` | `h2o_rhf_STO-3G` |
-|---|---|
-| with `-fcheck=bounds` | **PASS**, exact |
-| **without** `-fcheck=bounds` | **FAIL** — the `Making gaussian ANO interpolators ...` line |
-| with it again (control) | **PASS**, exact |
-
-**So the flag causes the behaviour, and gfortran-16 does not.** The 34 failures are a consequence
-of *our own workaround* — dropping `-fcheck=bounds` on 16 because 16 miscompiles it — and
-gfortran-14 reproduces them exactly when the flag is removed. **No second GCC bug report is
-owed.** The `-fcheck=bounds` miscompilation (`docs/GFORTRAN16_DEBUG_CRASH.md`) remains real and
-remains the one gfortran-16 defect we have.
-
-**What this leaves, and it is not nothing.** Tonto has a **latent defect of its own**, invisible
-in every build carrying the flag — which is every debug build before gfortran-16 arrived.
-
-> **CORRECTED 2026-09-03, and the correction matters.** This entry named the wrong variable. It
-> said the defect was that `.atom(a).interpolator.deallocated` reads differently with and without
-> bounds checking — an `allocatable` component whose initial status the standard guarantees, which
-> would have been a strange thing for a compiler to expose, and was chased as such.
->
-> **The actual defect was two lines below**, and is ordinary undefined behaviour of our own:
-> `make_ANO_interpolators` declared `first :: BIN`, read it at `if (first)`, and assigned it only
-> *inside* the branch that read guards. Nothing ever set it TRUE, so a progress banner printed
-> according to whatever was in that stack slot. With `-fcheck=bounds` the garbage read false and
-> the line never appeared — no blessed reference contains it. Without the flag it appeared, shifted
-> every later line by one, and wrecked the reference comparison across the suite.
->
-> Measured, one file, everything else identical: **banner present + no bounds check → 36 of 62
-> failed; banner deleted + no bounds check → 3; banner deleted + bounds check on → 3**, the same
-> three in each and unrelated to any of this. Fixed by deleting the banner, which had never once
-> printed in the program's history.
->
-> The lesson is about attribution: the deciding *condition* was correctly located, and the wrong
-> *variable inside it* was blamed. Both were in the same `if`. Reading the enclosing statement
-> rather than the whole procedure cost a week.
-
-**Consequence for the migration.** The case against gfortran-16 is materially weaker than it was
-this morning: what remains against it is the `-fcheck=bounds` miscompilation alone, whose cost is
-losing bounds checking in debug — the bargain that was originally accepted and then withdrawn on
-evidence that has now evaporated. `develop-gfortran-16` holds the whole migration. **Do not
-simply re-apply it**: first fix the latent defect above, because a debug build on 16 has no
-bounds checking and would therefore hit it.
-
-**Method note.** The entry below was written with the confound explicitly listed as unresolved,
-and the conclusion was still stated too strongly in the commit message and in `CLAUDE.md`. The
-evidence was 0 occurrences against 34 and it was still the wrong attribution. Closing the
-confound cost about ten minutes: one file, one flag, one relink.
-
-## gfortran-16 DEBUG fails 34 of 71 short tests — the migration was reverted (2026-08-27)
-
-> **RESOLVED 2026-09-03 — and the cause was ours, not the compiler's.** The 34 failures were an
-> uninitialised logical in `MOLECULE.RHO:make_ANO_interpolators` printing a banner according to
-> stack garbage; see the CORRECTION in the entry above. Fixed. **The migration is now blocked on
-> GCC PR 127197 alone**, whose only cost is losing bounds checking in a 16 debug build. Read
-> `CLAUDE.md` §4 for the current state. The rest of this entry is kept because the measurements
-> in it are sound and were what made the diagnosis possible — only the attribution was wrong.
-
-The project standard moved 14 -> 16 on 2026-08-27 and was **reverted hours later**, when the
-local gate was run before pushing. The whole migration is preserved on the branch
-**`develop-gfortran-16`** — retrying means merging that branch and flipping `FC_VERSION`, not
-redoing the work. `ci-mpi.yml` is deliberately left on 16: it builds *release*, which is not
-implicated, and has been green since 2026-08-26.
-
-**The measurement.** `ctest -L short`, x86_64 Linux (sauce), `-DCMAKE_BUILD_TYPE=debug`:
-**37 pass, 34 fail** out of 71 agreement lines.
-
-- **27 failures are structural only** — `max 0%`, `0 ulp`. Every one carries the same extra
-  line, `Making gaussian ANO interpolators ...` (`foofiles/molecule.rho.foo:2280`), emitted
-  when `.atom(a).interpolator.deallocated` is true.
-- **7 fail numerically, and largely**: `h2o_rhf_cc-pVDZ_1e_properties`,
-  `h2o_rhf_cc-pVDZ_E_field_and_1e_properties` and `h2o+_uhf_cc-pVDZ_1e_properties` at **200%**;
-  `urea_ccsd_pob-TZVP_Salvador_properties` **197%**; `h2o_rhf_cc-pVDZ_tdhf` **62.5%**;
-  `nh3_rhf_DZP_HAR` **58.2%**; `nh3_rhf_DZP_HAF_and_structure_factors` **58%**.
-
-**Why this is a compiler difference and not stale references.** Three builds, one test
-(`h2o_rhf_STO-3G`):
-
-| build | compiler | source | result |
-|---|---|---|---|
-| release | 14 | 2026-08-27 | **PASS**, exact |
-| debug | 14 | 2026-08-16 | **PASS**, exact |
-| debug | 16 | 2026-08-27 | **FAIL** — the extra ANO line, 0% numeric |
-
-`foofiles/molecule.rho.foo` has **not changed since 2026-08-16**, so the code holding that
-condition is identical in both debug binaries. The reference for that test dates from
-2023-05-29 and lacks the line, and both gfortran-14 builds agree with it.
-
-**What makes it substantive.** `interpolator` is `INTERPOLATOR@` in `types.foo`, and the
-translator emits it as a genuine Fortran `allocatable` component
-(`type(INTERPOLATOR_TYPE), allocatable :: interpolator`). The standard guarantees an
-allocatable component starts **unallocated**, so its status is not undefined behaviour that a
-compiler may resolve either way. Two conforming compilers disagreeing about it is either a
-gfortran-16 defect or something subtler in how the object is copied — note
-`.atom(b).interpolator = .atom(a).interpolator` a few lines below, an intrinsic assignment of a
-derived type with allocatable components.
-
-**MEASURED 2026-08-27, and it isolates the compiler.** The experiment below was run: a
-gfortran-14 debug build **from the same commit** (`1d5ed7a5`), same machine, same suite.
-
-| debug build, identical source | agreement lines pass / fail | `Making gaussian ANO interpolators` |
-|---|---|---|
-| **gfortran-14** | **70 / 1** | **0 occurrences** |
-| **gfortran-16** | 37 / 34 | 34 occurrences |
-
-Zero against thirty-four. The source-age variable that qualified the earlier three-build table is
-gone, and gfortran-16 is implicated. The one agreement failure under 14 is
-`urea_ccsd_pob-TZVP_Salvador_properties` (4.48%), which fails under 16 as well and is a known
-longstanding case, not part of this.
-
-**A by-product worth recording: the "four longstanding `-O0` failures" figure this file has
-carried for months is wrong on current source.** A gfortran-14 debug build shows **3** ctest
-failures, and two of them are *invariant checks* — `single_atom_scf` and `dft_invariants` — which
-compare the program against itself and so cannot be blessed away. Only one is a reference
-comparison. Whoever revisits the `-O0` entry should start from these three, not from the old four.
-
-**Still not established:**
-
-1. **The `-fcheck=bounds` confound.** The two builds differ by a flag as well as a compiler: 14
-   keeps the bounds check, 16 drops it because 16 miscompiles it, and CMake offers no way to
-   build 14 without it. The flag should not affect whether an `allocatable` component reads as
-   unallocated — but 16's bounds-check codegen is already known to be broken, so this is not
-   nothing. Close it the cheap way, the technique this file records from the `pointgroup` work:
-   recompile the single file with altered flags and relink, rather than rebuilding a tree.
-2. **Whether gfortran-15 shares it.** Installed on sauce, never tested. The gate in
-   `cmake/SetFortranFlags.cmake` is `>= 16` because that is what was measured, not what was
-   established.
-3. **Whether the ANO line and the 7 numeric failures have one cause or two.**
-4. **A second GCC bug report is now probably owed** — subject to (1). It would need the same
-   treatment as the bounds-check one: a reduced reproducer, not a description of Tonto.
-
-**A caution for whoever picks this up.** Do not read the 27 structural failures as cosmetic.
-The extra line means a code path *ran* under 16 that did not run under 14 — interpolators were
-constructed rather than found already present. That the numbers came out identical anyway is
-luck or redundancy, not evidence that the divergence is harmless.
-
-**Related but separate:** the `-fcheck=bounds` miscompilation, `docs/GFORTRAN16_DEBUG_CRASH.md`,
-reported upstream as **GCC PR 127197** on 2026-09-03, `docs/GFORTRAN16_GCC_BUG.md`. A second
-GCC report may be owed here once (1) is done.
-
-
 ## OPEN: long paths to the basis sets fail -- STR is 256 characters
 
 **Reported for the Windows `tonto.exe` and `hart.exe` (untested binaries from
@@ -3516,8 +3092,14 @@ Worth noting in `docs/BUILDING_ON_WINDOWS.md` too, since that page collects the
 Windows traps and this is the one users will hit first.
 
 
+## macOS in CI, with a badge (Dylan, 2026-08-09)
 
-## HIGH PRIORITY: put macOS in CI, with a badge (Dylan, 2026-08-09)
+> **Status 2026-09-04: the workflows exist and have all run.** `ci-macos.yml`,
+> `ci-macos-debug.yml` and `ci-macos-mpi.yml` were dispatched for the first time —
+> debug green on gfortran-14 and 16, MPI green with the pi gate passing at 1, 2 and 4
+> ranks, release 51/55 identical on both compilers. Only the badges remain, and they
+> need the merge to `master`. The feasibility argument below is kept because it is
+> what the workflows were built from.
 
 **It is feasible, and it is free.** `dylan-jayatilaka/tonto` is a **public**
 repository, and GitHub gives public repositories unlimited standard-runner
@@ -3560,63 +3142,6 @@ intact `.o` files and A/B the `theta` tables). So:
 The stale README line ("many failures on the Apple M2 — not recommended") should
 be corrected at the same time; it is wrong about the build, which was always
 clean.
-
-## VERIFIED 2026-09-03: the `textfile.foo` MPI fix, serial suite 88/89 (opened 2026-08-26)
-
-> **Closed.** The owed run is
-> [33067218748](https://github.com/dylan-jayatilaka/tonto/actions/runs/33067218748) —
-> `short long hart`, Linux, gfortran-14, serial release, on `80dcbfe4`: **88/89 loose, 77
-> exact**, four invariant checks green, the 89th a deliberate skip. Move this entry to the
-> archive next time the file is re-sorted. What follows is the entry as written while it was
-> open, and its reasoning about *why* a whole-suite gate was needed still applies to the next
-> structural change in `textfile.foo`.
-
-**Update, same evening: the `long` suite passed with no new failures.** 28/31 loose against
-the fixed binary; the three non-passes are the two known macOS-only `quartz_NN_HAR` jobs
-(references correct) and the pHAR test blocked by its missing 167 MB asset. Run on
-macOS/arm64 with the MPI build at `-n 1`, **not** Linux serial gfortran-14, so it is strong
-evidence rather than the owed run — the compiler, platform and macro configuration all differ
-from the Linux baseline. Detail in `docs/TONTO_AND_MPI.md` Finding 7.
-
-**How to run it without a machine (added 2026-08-26, as Dylan left).**
-`.github/workflows/ci-full-suite.yml` is a **dispatch-only** workflow that builds release
-and runs the full suite with `--failure-dir`. It exists because nothing else runs `long`:
-`ci.yml` runs `short hart` only. Trigger it from the Actions tab (pick any branch) or
-
-```bash
-gh workflow run ci-full-suite.yml --ref develop
-```
-
-It is deliberately **not** a gate: no push or schedule trigger, no badge. It was added as a
-separate file rather than as an option on `ci.yml` because `ci.yml` is the gate and its
-current revision was still running unproven at the time; a new file cannot break an existing
-one. **For the peer picking this up:** if it proves useful, the obvious follow-ups are to give
-it a badge only after one green run, and to consider folding it into `ci.yml` behind an input
-once both are settled. If it turns out to be wrong, deleting the file costs nothing.
-
-
-
-**Do this before the `textfile.foo` change goes anywhere near `master`.** Full detail, the
-exact commands and the baseline: `docs/TONTO_AND_MPI.md` Finding 7, "VERIFICATION STILL OWED".
-
-`move_to_record_external` and the two record movers were changed to position the file on the
-I/O rank and broadcast the result. `foofiles/textfile.foo` is on the path of **every file read
-in Tonto**, so the change is exercised by essentially every job, serial included -- but only
-**three** have been run: the MPI reproducer at `-n 2` (still fails, `MPI_ERR_TRUNCATE` -- the
-fix removed an amplifier, not the origin), and `-n 1` plus serial on
-`urea_read_and_process_CIF` alone, which pass exactly.
-
-Baseline to match: **89** tests for `short long hart` (55 + 31 + 3), of which
-`ammonium_borane_pHAR_C23` skips without its 167 MB asset — so **88/89** is the score to beat,
-and 77 of those were exact. Pass `--failure-dir` so an ERRORing job records its cause.
-*(The "124/124" this entry used to quote counted `short long cx rgbi` on 2026-07-15; see the
-archive.)*
-
-Why it is not merely paperwork: the edit moved a `DIE_IF` out of a loop into its caller and
-added an `exit` on `.IO_status/=0` -- a control-flow path that did not exist before. A loop
-whose terminating check moved is exactly the kind of change that turns a loud failure into a
-quiet one. The expectation is that serial behaviour is unchanged, because the new guard is a
-no-op in a serial build; **that expectation is the thing to test, not to assert.**
 
 ## Add a PARALLEL DEBUG build to CI, on every platform (Dylan, 2026-08-26)
 
@@ -3910,357 +3435,6 @@ ignored by `scripts/test.py`).
 - **Add a regression test**: for an s/p-only basis, `use_spherical_basis= T` and `F` must agree
   (the two bases are mathematically identical below d functions). That single invariant would
   have caught this immediately, on one machine, with no reference file.
-
-## DIAGNOSED (2026-08-25): gfortran-**16** DEBUG builds SEGFAULT — BOTH platforms
-
-> **Authoritative page: [`docs/GFORTRAN16_DEBUG_CRASH.md`](docs/GFORTRAN16_DEBUG_CRASH.md)**
-> — cause, machine-level evidence, reproducer, workaround, and what is still owed.
-> Draft upstream report: [`docs/GFORTRAN16_GCC_BUG.md`](docs/GFORTRAN16_GCC_BUG.md).
-
-**RESOLVED 2026-08-25 — it is a gfortran 16 compiler bug in `-fcheck=bounds`, not a
-Tonto defect and not memory corruption.** For a bounds-checked subscript reached
-through an allocatable component chain, gfortran 16 copies the array descriptor into
-one stack temporary and emits the check reading *another* temporary that is only
-written later in the same statement. The check reads uninitialised stack memory, and
-either faults on a nonsense address or reports a bounds violation that is not real.
-`-fcheck=bounds` is debug-only, which is exactly why gfortran-16 **release** was
-always fine.
-
-Found by disassembling `POINTGROUP:make_character_table` and observing that the only
-*write* to the two slots the faulting check reads is 400 bytes further on. Reduced to
-`scripts/gfortran_bounds_bug.f90` (97 lines, no Tonto): gfortran-14 fine both ways,
-gfortran-16 fine at `-O0`, SIGSEGV at `-O0 -fcheck=bounds` on x86_64. Confirmed in
-Tonto by recompiling `pointgroup.F90` alone without the flag — the segfault goes, the
-run reaches "Making gaussian ANO data …", and the next site of the same shape
-(`atom.F90:7058`, `self%NOs%r(:,n)`) then reports a *false* violation, bounds `(0:0)`
-read out of the garbage descriptor.
-
-**Fix:** `cmake/SetFortranFlags.cmake` omits `-fcheck=bounds` from `DEBUG_FLAGS` on GNU
-Fortran 16 and up, announcing it at configure time; `-DTONTO_FORCE_FCHECK_BOUNDS=ON`
-puts it back for retesting. `scripts/check_gfortran_bounds_bug.py <compiler>` tests a
-compiler. gfortran 15 is untested — neither machine has it — so the gate is on `>= 16`,
-which is what was measured.
-
-**This retires the heap-corruption hypothesis below, and the reasoning that produced
-it.** The two crash sites are two *statements* of the same shape, each independently
-miscompiled — not two innocent victims of one corrupting write. The reduced cases
-"failed to reproduce" because they were built without the descriptor-temporary
-trigger. ASan on macOS was never going to report a stack-slot ordering error inside
-compiler-generated code. The `VEC{OBJECT}` fix (`d8b94cbf`) was a real conformance
-defect worth landing, but was never related to this.
-
-**Confirmed end-to-end the same day.** A whole-tree gfortran-16 debug build on arm64
-macOS compiles clean, runs `h2o_rhf_STO-3G` to **exit 0** (139 before) with
-`Total energy -74.9658`, and takes `ctest -L short` **62/62**.
-
-**Filed 2026-09-03 as GCC PR 127197**, with a five-version bisection (12, 13, 14 and 15
-correct; 16.0.1 segfaults). Record and duplicate search: `docs/GFORTRAN16_GCC_BUG.md`.
-
-**A side observation from that run, not chased.** The two `short` tests that fail in
-the gfortran-14 **release** build on this Mac — `urea_ccsd_pob-TZVP_Salvador_properties`
-(2.99%) and `h2o_rhf_cc-pVDZ_tdhf` (0.231%) — both **pass** in the gfortran-16 debug
-build. `ci-macos.yml` attributes the first to macOS; this says it is not intrinsic to
-the platform or the test. Two variables differ between those builds, compiler *and*
-optimisation, so it does not isolate a cause. The cheap experiment is a gfortran-14
-**debug** build: if they pass there too, the culprit is `-Ofast`, not the compiler.
-
----
-
-*Historical record from 2026-08-24 and earlier follows. Its conclusion is wrong; it is
-kept because the measurements are sound and the reasoning is instructive.*
-
-**Use `gfortran-14` for debug builds, on any platform.** `gfortran-16` release is fine on both
-platforms; its *debug* build segfaults on **both** arm64 macOS and x86_64 Linux — the "only on
-arm64" in the original note was an untested assumption, disproved 2026-08-24 (see progress note
-below).
-
-| build | any SCF job |
-|---|---|
-| macOS, gfortran-**16**, debug | **SIGSEGV** (exit 139, ~2 s) |
-| macOS, gfortran-**14**, debug | **runs to completion** — verified `h2o_rhf_STO-3G` and `urea_rhf_STO-3G_HAR` |
-| macOS, gfortran-16, release | fine (119/124) |
-| Linux, gfortran-16, release | fine (123/124) |
-
-**NOT a regression, and not caused by our changes** — I first wrote this up as a regression on the
-strength of the note below saying the debug build "ran every job to completion" on 2026-07-17.
-That note does **not record its platform** (it says only `gfortran-14, -O0 -g`), and since all work
-before 2026-07-28 was on the Linux box, it was almost certainly Linux. **Dylan spotted this.**
-So arm64-macOS debug was simply an **untested configuration**, and gfortran-14 debug works there
-today — which rules out today's commits entirely.
-
-*Consequence for the compiler migration:* the earlier verdict "the gfortran-16 switch is
-numerically free" was established for **release only**, on both platforms. It does **not** extend
-to debug on arm64. Standardising on 16 therefore needs this caveat, or the crash fixed.
-
-**Symptoms** (gfortran-16.1.0, `-DCMAKE_BUILD_TYPE=debug`, tree `debug/`):
-
-| test | result |
-|---|---|
-| `short/h2o_rhf_STO-3G` (plain SCF) | **SIGSEGV**, exit 139, ~2 s |
-| `long/urea_rhf_STO-3G_HAR` | **SIGSEGV**, exit 139 |
-| `short/nh3_rhf_DZP_HAR` | **SIGSEGV**, exit 139 |
-| `short/urea_read_and_process_CIF` (no SCF) | exit 0, fine |
-
-So it correlates with running an SCF, not with the ADP/esd code.
-
-**Ruled out:**
-- **Stack overflow** — raising `ulimit -s` from 8 MB to 64 MB does not help.
-- **The `shell1quartet.F90` `-O2` pin** — that per-source option applies in *every* build type, so
-  in debug that one file is `-O2` while the rest is `-O0`. Recompiling it at `-O0` and relinking
-  still segfaults. (The pin *should* still be gated to release configs for debuggability — see
-  CLAUDE.md §8 — but it is not the cause.)
-
-**Not yet diagnosed.** `lldb` cannot attach in this environment ("attached to process, but could
-not pause execution"), and `-fbacktrace` prints raw addresses only, so there is no symbolic
-backtrace yet. Options, cheapest first:
-
-1. **Compiler-specific — ANSWERED: yes.** gfortran-14 debug runs the same jobs to completion on
-   the same commit, so the fault is in gfortran-16's debug (`-O0`) codegen on arm64.
-2. To localise it: rebuild the gfortran-16 debug tree with `-fcheck=all` (currently only
-   `-fcheck=bounds`) — `-fcheck=pointer` may turn the segfault into a Fortran runtime error
-   naming a line. Note `lldb` cannot attach in this environment, and `-fbacktrace` yields raw
-   addresses only, so a symbolic backtrace needs either `atos` with the load slide or a
-   different debugger.
-3. Worth checking whether a Linux gfortran-16 debug build crashes too (build started; result
-   pending) — that tells us whether it is arm64-specific or general to gfortran-16.
-**Progress 2026-08-24, on a real arm64 Mac.** Four things established, two of
-which contradict what was written above.
-
-**a. It was masked by a separate bug that stopped the build entirely.** Before any
-segfault could happen, gfortran-16 debug failed to *compile*: `PLOT_GRID:volume`
-and `pixel_volume` (added by `cc530a34`, the serial Bader port) were declared
-lower-case `pure` while calling `PURE` routines. Not compiler-specific -- CI
-(Linux-debug) had been red on it since 2026-08-23, five runs, and gfortran-14
-rejects the same file here. Fixed in `97d8b0e9`; the rule is now written up in
-`docs/FOO_GRAMMAR_DOCUMENTATION.md` ("PURE is contagious upward").
-
-**b. A symbolic backtrace IS obtainable**, contradicting "there is no symbolic
-backtrace yet" above. `lldb` still cannot attach and `-fbacktrace` still prints
-raw addresses, but **macOS writes its own symbolicated crash report** to
-`~/Library/Logs/DiagnosticReports/tonto-*.ips`. Parse the JSON payload:
-
-```
-EXC_BAD_ACCESS, KERN_INVALID_ADDRESS at 0x00000000000000d9
-  make_pg_image_of_shell  <- crash
-  symmetrize_1 / symmetrize_0
-  make_anos_for_atom / make_anos / make_anos_and_interpolators
-  make_promolecule_density_mx / make_promol_guess_mos
-  get_initial_density_mx / get_initial_guess / initialize_scf
-  usual_scf / scf
-```
-
-`0xd9` is a field access off a null base. This is why only jobs with an SCF
-crash: the fault is in building the **promolecule initial guess**.
-
-**c. It is NOT the architecture-tuning flag.** This was the leading hypothesis --
-debug applies `-mtune=native` (via `HOST_FLAG`) while release deliberately avoids
-`native` in favour of `-mcpu=apple-m2`, an asymmetry nobody had pointed at.
-Rebuilt with `-DTONTO_ARCH_FLAG=none`, which removes it: **still exit 139**.
-Refuted. (The asymmetry is still worth removing -- a debug build should carry no
-CPU tuning at all -- but it is not this bug.)
-
-**d. Control, clean.** Same commit, same flags, same machine:
-gfortran-14 debug runs `h2o_rhf_STO-3G` to **exit 0**; gfortran-16 debug gives
-**exit 139**.
-
-**e. It is NOT arm64-specific, and it is NOT a macOS problem.** This is the
-question item 3 below left pending, now answered: a gfortran-16 **debug** build
-on achari2 (Ubuntu 24.04, x86_64) segfaults on the same job, exit 139. The entry
-above said "only (as far as tested) on arm64"; that was untested, not true.
-
-**f. Linux gives the backtrace macOS cannot**, with line numbers, for free:
-
-```
-#3  make_character_table   at pointgroup.F90:1066
-#4  update                 at pointgroup.F90:324
-#5  create_1               at pointgroup.F90:71
-#6  make_anos_for_atom     at molecule.scf.F90:5779
-#7  make_anos / make_anos_and_interpolators / make_promolecule_density_mx
-```
-
-`pointgroup.foo:1018`, inside `POINTGROUP:make_character_table`:
-
-```foo
-   do i = 1, .n_irrep
-      .irrep(i).character.create(.order)
-      do n = 1, .order
-         .irrep(i).character(n) = .irrep(i).mx(:,:,n).trace   ! <- here
-```
-
-So it reads `.irrep(i).mx` for an irrep whose `mx` is **not allocated**. The
-macOS crash is the same class one level out -- `make_pg_image_of_shell` reading
-`.pointgroup.mx(:,:,n)`, `KERN_INVALID_ADDRESS at 0xd9`, a field access off a
-null base -- and both are reached from `make_anos_for_atom`, building the
-promolecule guess for a single-atom molecule.
-
-**So the working conclusion is that this is a latent Tonto bug, not a gfortran-16
-codegen bug**: unallocated pointgroup data that gfortran-14 tolerates and
-gfortran-16 dereferences. That is a much better prognosis than a compiler bug --
-it can be fixed here. It is not yet proven; what is proven is the crash site, on
-two platforms, and that the arch flag is not involved.
-
-**Do the diagnosis on Linux, not on macOS.** `-fbacktrace` there symbolicates
-with file and line for nothing, while macOS needs the crash report in
-`~/Library/Logs/DiagnosticReports/` and gives no line numbers. The Mac was the
-harder machine to work on and was not the necessary one.
-
-**g. Narrowed to the assignment TARGET, with a concrete hypothesis (2026-08-24, gdb on achari2).**
-Runtime values at the fault:
-
-| | |
-|---|---|
-| crash line | `pointgroup.foo:1018` — `.irrep(i).character(n) = .irrep(i).mx(:,:,n).trace` |
-| `i`, `n` | **1, 1** — the very first irrep and first operation |
-| pointgroup | `oh`, `order` 48, `n_irrep` 10 |
-| `ubound(.irrep(1).mx)` | `(1,1,48)` — correct for a 1-D irrep |
-| `ubound(.irrep(4).mx)` | `(3,3,48)` — correct for a 3-D irrep |
-
-So `mx` is allocated correctly and the READ side is sound. (An earlier reading of
-gdb's output suggested every irrep was 1x1x48; that was a misreading of gdb's
-`<repeats>` display, and it is wrong.) By elimination the fault is the WRITE
-target, `.irrep(i).character`, which is allocated on the line immediately above
-by `.create(.order)`.
-
-**It could not be inspected directly**: `print self%irrep(1)%character` gives
-*"A syntax error in expression, near `character'"* — gdb's Fortran parser treats
-`character` as a keyword. Which points at the hypothesis.
-
-**Hypothesis to test next: the component names.** `types.foo:3196` declares
-
-```foo
-   type IRREP
-     label     :: STR(len=4)
-     dimension :: INT          ! <- Fortran keyword
-     character :: VEC{REAL}@   ! <- Fortran keyword, and the allocatable that fails
-```
-
-Both `character` and `dimension` are Fortran keywords used as component names.
-That is legal Fortran and has worked for years, but it is exactly the sort of
-thing a new front-end regresses on, and the failing component is the one that is
-both keyword-named *and* allocatable. gdb's parser already chokes on it.
-
-**REFUTED, same day.** The experiment was run: `character` renamed to `chi`
-throughout (4 references and the declaration — the blast radius is only
-`types.foo`, `irrep.foo` and `pointgroup.foo`), gfortran-16 debug rebuilt,
-`h2o_rhf_STO-3G` rerun. **Still exit 139.** The keyword-named component is not
-the cause, and the rename has been reverted rather than left in the tree, since
-it fixes nothing and would muddy the record. gdb's parser error was a red
-herring about gdb, not about the compiler.
-
-(The names are still poor Fortran — `character` and `dimension` are both
-keywords, and `chi`/`dim` would be better, `chi` being the standard symbol for a
-group character. Worth doing as hygiene, on its own, but it is not this bug.)
-
-**h. The construct itself does NOT reproduce it (2026-08-24).** Two standalone
-reduced cases were written and run under both compilers: (1) an allocatable array
-of a derived type with an allocatable vector component, allocated
-element-by-element in a loop then written through; (2) the same, with the array
-itself a component of an outer derived type, so the access is
-`self%irrep(i)%chi(n)` exactly as in Tonto. **Both compile and run to exit 0
-under gfortran-14 and gfortran-16.** So the shape at the crash site is not, by
-itself, the trigger.
-
-**That is the most useful negative result so far, because of what it implies: the
-crash site is probably not the bug site.** A fault that will not reproduce when
-the construct is isolated, but is reliable inside the full program on two
-platforms, looks like **earlier memory corruption landing somewhere fatal** --
-and gfortran-14 and -16 simply lay memory out differently, so the same corruption
-is benign under one and fatal under the other. That would explain every
-observation at once: compiler-dependent, platform-independent, reproducible in
-situ, not reproducible in isolation, and a read side that checks out while the
-write target does not.
-
-**The leading candidate for that earlier corruption is already in hand.** The
-`-fcheck=all` run stops long before the SCF, during keyword reading, at
-*"Allocatable actual argument 'tmp' is not allocated"* -- `VEC{OBJECT}:read_keys`
-and `:clear_keys`:
-
-```foo
-   read_keys :: leaky
-      self :: allocatable, INOUT
-      tmp :: OBJECT@          ! declared, never created
-      ...
-      tmp.read_keys           ! called on an unallocated allocatable
-```
-
-That is undefined behaviour on every compiler; the uninstrumented run merely
-survives it. The template is inherited by 43 files.
-
-**The experiment was run (2026-08-24), and the `tmp` bug is fixed but was NOT the
-cause.** Four sites in the *allocatable* copy of the template now do
-`tmp.create` / use / `tmp.destroy`, which is the pattern two sibling procedures
-in the same file already used. (The *pointer* copy below the `! Old` marker
-deliberately `nullify`s and is left alone -- the checker's complaint named an
-allocatable.) Result: the `-fcheck=all` violation is gone, and the run gets
-further -- but it still ends in **SIGSEGV, same site, same faulting address
-`0xd9`**. `-fcheck=all` does not catch the fault itself.
-
-**A further clue, and it strengthens the corruption hypothesis: the crash site is
-not the same on the two platforms.**
-
-| platform | crash |
-|---|---|
-| Linux x86_64 | `POINTGROUP:make_character_table`, `pointgroup.foo:1018` |
-| macOS arm64 | `MOLECULE.BASE:make_pg_image_of_shell`, `KERN_INVALID_ADDRESS at 0xd9` |
-
-Both are in the pointgroup machinery reached from `make_anos_for_atom`, but they
-are *different procedures*. A single deterministic logic error would fault in the
-same place on both. Two different faults in the same neighbourhood, neither
-reproducible when the construct is isolated, is what heap corruption looks like:
-whatever is damaged, the layout decides which innocent read dies first.
-
-**The sanitizer was tried on macOS and is INCONCLUSIVE — read this before
-repeating it.** A full `-fsanitize=address -fno-omit-frame-pointer` gfortran-16
-debug build was made and run. ASan is genuinely active (`libasan.8.dylib` linked,
-48 undefined `__asan` symbols), but:
-
-- it produced **no ASan report at all**, and
-- the process died with **SIGBUS (138)** rather than the usual SIGSEGV (139).
-
-A sanitizer that changes the signal but issues no diagnostic has not cleared the
-program; it has failed to instrument usefully. gfortran + ASan on arm64 macOS is
-the suspect, not the absence of a heap bug. **Do not read this as "ASan found
-nothing".**
-
-Stack exhaustion was re-tested at the same time and is genuinely ruled out: the
-plain gfortran-16 debug build still exits 139 with the stack at the hard ceiling
-(`ulimit -s 65520`), as well as at the 8 MB default. That confirms the original
-note.
-
-**Next, and it should be done on Linux.** achari2 has gfortran-16 and a
-conventional toolchain where ASan is reliable; the same build there is the
-obvious repeat, and Linux already proved better for this bug once (it gives
-symbolic backtraces with line numbers for free, which macOS does not). Failing
-that, `valgrind` on Linux would name the offending write directly. The bisect
-option — changing `initial_density=` away from `promolecule` to establish whether
-the damage predates `make_anos_for_atom` — is cheap and still untried.
-
-**Also done and NOT the fix:** the IRREP components `character` and `dimension`
-were renamed to `chi` and `dim` (they are Fortran keywords and were poor names).
-It builds clean and the crash is unchanged, so it is hygiene, not a fix. Note
-`dim` is **reserved in Foo** as the array-size accessor -- renaming DIIS's
-`dimension` method to `dim` turned `d = .dim` into `d = size(self)` on a
-non-array and broke the build, so DIIS keeps its name.
-
-**Still open, and the next step.** `-fcheck=all` does turn a crash into a named
-error, but **not this one** -- it stops earlier, at
-`vec_atom.F90:2018`, with *"Allocatable actual argument 'tmp' is not allocated"*,
-during keyword reading and long before the SCF. That is a real defect in its own
-right (`VEC{OBJECT}:read_keys` and `:clear_keys` declare `tmp :: OBJECT@`, never
-create it, and then call a method on it; the template is inherited by 43 files),
-but it is benign in practice -- the uninstrumented run gets past it and dies
-later somewhere else. So it is **not established** that it causes the segfault.
-To get there: fix or suppress the `tmp` violation, then re-run under
-`-fcheck=all` and see what it names next.
-
-4. **Also wanted (Dylan): a DEBUG CI job.** Debug is the configuration whose job is to catch
-   crashes and precondition violations, yet nothing checks it — CI builds release only, and the
-   debug status here was two weeks stale, which is why this went unnoticed. Design notes: the 4
-   known debug failures (47, 64, 87, 91) must be recorded as *expected* or the job is red from
-   day one and gets ignored; and `-O0` is slow, so the `short` suite (or a few representative
-   jobs — one SCF, one HAR, one CIF-processing) is the sensible scope.
-
----
 
 # Workshop and examples
 
@@ -5883,3 +5057,881 @@ That means updating both drivers (which call it for
 `--print-template-dir` and the preflight), `ctest`'s `rgbi_doctor_selftest`,
 `scripts/rgbi_selftest.sh`, the CI workflows, and four documents — so it is
 worth doing deliberately, not as a side effect.
+
+## Searched for in-core CCSD: it is not in this repository (2026-08-18)
+
+Dylan recalled *"some work on in-core CCSD"* and asked for it to be found and extracted.
+**There is no coupled-cluster solver anywhere in the repository.** Recorded so the
+search is not repeated.
+
+What was searched, all on 2026-08-18:
+
+| where | how | result |
+|---|---|---|
+| `develop` library and runfiles | `grep -i ccsd`, and for `cc`/`ccd`/`cisd`/`lccd`/`cepa`/`mp3`/`mp4` procedure headers, and for `amplitude`/`t1`/`t2`/`doubles`/`coupled cluster` | nothing |
+| every branch and tag (15 archive tags, 5 branches, all remotes) | `git grep -l -i ccsd` over `foofiles/*` and `runfiles/*` | nothing |
+| commit messages, all refs | `git log --all -i --grep=ccsd --grep='coupled cluster'` | three hits, all about *structure factors* — see below |
+| 131 dangling commits | `git fsck --no-reflogs`, then `git grep -i` over all of them for `ccsd`/`coupled.cluster` and for CC procedure headers | nothing |
+| added filenames, all history | `git log --all --diff-filter=A --name-only` filtered for `cc`/`cluster`/`corr` | only `docs/CCTBX_INTO_TONTO.md`, which is cctbx, unrelated |
+
+Every `ccsd` string in the tree is one of three innocent things: a **Gaussian**
+CCSD density matrix read from an fchk file (`tests/{short,long}/urea_ccsd_pob-TZVP_*`,
+whose job files say *"This fchk file has the CCSD density matrix in it"*), a
+literature citation inside `basis_sets/TZP-DKH`, or documentation referring to those
+tests. The three commits — `ed585a29` *"added ability to calculate CCSD structure
+factors"*, `765463f2`, `306ec7f4` — add the ability to compute structure factors
+**from** an externally-computed CC density, not to compute one. The only CC plumbing
+in the library is `MOLECULE.READ:read_gX_CC_dm`, one line of fchk reading.
+
+**What almost certainly is the memory.** The phrase "in core" appears in Tonto against
+**MP2**, not CCSD, and four times: `MOLECULE.MISC:make_r_mp2`, `make_chem_mp2`,
+`make_u_mp2` and `make_gc_mp2` are each documented *"make ... MP2 in core"*, and
+`make_r_mp2` prints *"This is a toy implementation with integrals stored in memory"*.
+Restricted, chemists'-notation, unrestricted and general-complex variants. All four are
+already on `develop`, none is on any archive tag, and nothing needs extracting.
+`make_r_mp2` was validated on 2026-08-18 as part of the `archive/Teaching` port — it
+agrees with a hand-written MP2 to twelve decimals; see `docs/TEACHING_MP2.md`.
+
+### The old Subversion repository was searched too, and it is not there either
+
+Dylan then recalled the pre-GitHub history: a Subversion repository on SourceForge,
+project name forgotten. **It is `tonto-chem`** — <https://sourceforge.net/projects/tonto-chem/>,
+SVN at `svn://svn.code.sf.net/p/tonto-chem/code/`, browsable over HTTPS at
+`https://svn.code.sf.net/p/tonto-chem/code/`. It is still live, at **revision 4411**,
+spanning **1999-06-28 to 2014-06-21** — five years of history that predates the GitHub
+repository and is in no way contained in it.
+
+No `svn` client is installed here and none is needed: the whole log comes back from a
+single DeltaV `REPORT` over HTTPS, and files can be fetched with plain `curl`.
+
+```bash
+# the entire 4411-revision log, authors and changed paths included, in one request
+cat > logreq.xml <<'XML'
+<?xml version="1.0" encoding="utf-8"?>
+<S:log-report xmlns:S="svn:">
+<S:start-revision>4411</S:start-revision><S:end-revision>1</S:end-revision>
+<S:discover-changed-paths/><S:all-revprops/><S:path></S:path>
+</S:log-report>
+XML
+curl -s -X REPORT -H "Content-Type: text/xml" -H "Depth: 0" --data-binary @logreq.xml   "https://svn.code.sf.net/p/tonto-chem/code/!svn/bc/4411/" -o svnlog.xml
+```
+
+What was checked, and the result in every case is **nothing**:
+
+| check | scope | result |
+|---|---|---|
+| commit messages | all 4411 revisions | 6 hits, none a CCSD implementation: reading CC/MP2/MP3 densities from fchk files, the `cc-pVTZ` basis, CCSD **CIF/MIF** files, and `destroy ex,cc in copy` |
+| changed paths | every add/modify/replace/delete in all 4411 revisions, 14 branches and 4 tags | no path ever named for CCSD; the only `cc`-ish matches are `cluster.foo` (the crystal cluster) and `cc-pVDZ` test directories |
+| file contents, newest line | all **166** `.foo` files of `branches/tonto-3.2` | zero `ccsd`, zero `coupled cluster`, zero amplitude names |
+| file contents, other line | all **165** `.foo` files of `trunk/tonto` | the same |
+| the manual | `documentation/tonto.docbook` and `tonto.xml`, ~445 kB each | zero `ccsd` |
+| authors | all 22 | listed below; none committed a correlation method beyond MP2 |
+
+The 22 SVN committers, for the record, since they are not recoverable from the git
+repository: `reaper` (1800, 1999–2005), `dylan_` (1475, 2005–2014), `dylan` (612,
+1999–2005), `tonto` (144), `chris` (52, Roby work), `cassam` (51), `durhammike` (48),
+`bucinsky` (40), `grimwreaper` (22, platforms and BLACS/ScaLAPACK), `magdalos` (19,
+2013, HAR least squares and ADP errors), `awhitton` (14, 2003–2004, PND and
+`diffraction_data`), `jjripsnorter` (12), `josh146` (9), `bdittric` (9),
+`shadowadler` (3, fingerprints), `birger` (3, anomalous dispersion), `smeeton1` (2),
+`vongrabow` (2, ELI-D), `mimisue` (1, vapour keyword), `root` (1), `josh` (1),
+`skw` (1, Roby).
+
+**Conclusion: Dylan's own guess was right — it was never committed.** The work exists in
+neither repository, so there is nothing to extract. If a copy survives it is outside
+version control: an unpushed clone on `sauce` or `achari2` (`git log --all --oneline`
+there settles it in one command), a student's own machine or thesis, or an email
+attachment. Absent that, the in-core MP2 family is the nearest thing that exists and it
+is already on `develop`.
+
+## Command line: two latent bugs that only a debug build sees
+
+Both were pre-existing in `COMMAND_LINE:process_options` and both are now fixed;
+recorded because they are a *class* of defect this codebase is prone to — a real
+precondition that `USE_PRECONDITIONS` gates away, so release ships the violation.
+
+- **`VEC{STR}:append` with a mismatched CHARACTER length.** `append` is
+  `self = [self,value]`, an array constructor, which requires `value` to have the
+  same length as the array element. `process_options` appended `trim(token(2:))`
+  and the literal `"none"` into a `VEC{STR}(len=256)`. Illegal Fortran; release
+  does not check it, but `-fcheck` aborts — so **every option, in every program,
+  killed a debug build**. Fixed by going through a full-width `STR` first.
+- **`put_command_optarg` overflowed the output buffer.** It asked for a column
+  `width=STR_SIZE` while `BSTR_SIZE == STR_SIZE`, so the 2-character margin put
+  the cursor past the end and tripped `ENSURE(.item_end+len(string)<=BSTR_SIZE)`.
+
+Worth a sweep for other `append(trim(...))` / `append("literal")` calls on
+`VEC{STR}`, and for other `width=STR_SIZE` uses, on the same reasoning.
+
+## PRIORITY: `hart` has never run under MPI — MPI_ERR_TRUNCATE at 2 ranks
+
+Found 2026-08-03 while attempting milestone 5's last step (parallel fragHAR at 2 ranks). **Not a
+regression** — no argv-driven program has ever been run under MPI.
+
+Evidence, on a local gfortran-14 Open MPI build (`~/opt/openmpi-gf14`, `-Ofast`, `-DMPI=1`,
+`hart` confirmed linked against `libmpi`):
+
+| what | result |
+|---|---|
+| `run_mpi_pi` at 1, 2, 4, 8 ranks | OK — all agree with π and with each other |
+| `tonto` (stdin-driven) at 2 ranks | OK — exit 0, no truncation |
+| `hart --version` / `--help` / no args at 2 ranks | OK — no truncation |
+| `hart … <cif>` at 2 ranks | **`MPI_ERR_TRUNCATE` in `MPI_Bcast`**, reported by rank 1 |
+| `hart --basis NOSUCH <cif>` at 2 ranks | same — so it fails **before** any CIF is read |
+
+So the reductions are sound and `tonto` is fine; the **argv-driven path** breaks, as soon as a
+`<cif-file>` argument is supplied. `MPI_ERR_TRUNCATE` on a broadcast means the ranks are at
+*different* broadcasts — the collective streams have gone out of step.
+
+**The bisect brackets it.** `--help`, `--version` and no-args all `stop` before
+`run_har.foo:203`; supplying an argument is what first reaches the `std_err`
+close / destroy / re-create / `set_name` / `open_for` sequence there.
+
+**A concrete defect of the right shape in that path.** `FILE:close_and_delete` sets
+`.io_status` **inside** an `IO_IS_ALLOWED` guard and then tests it on every rank with no
+broadcast in between — while its sibling `FILE:close` does broadcast it:
+
+| routine | guarded operation | broadcast afterwards? |
+|---|---|---|
+| `FILE:close` | `inquire` | **yes** — `PARALLEL_BROADCAST(.io_status,…)` |
+| `FILE:close_and_delete` | `close(status="delete")` | **no**, then `DIE_IF(.io_status/=0,…)` |
+
+On a non-master rank `.io_status` keeps whatever it held, so that `DIE_IF` is decided on
+rank-local state. This is the milestone-6 rule one level down: not a collective gated on
+rank-local state, but a **branch** taken on it, inside a routine whose branches contain
+collectives.
+
+**LOCALISED 2026-08-03 to a single call.** Method — *bracketing by phase*, which is bisection
+with printed landmarks rather than a debugger, and is worth reusing for any collective desync:
+
+1. A temporary trace in `PARALLEL:broadcast` (the template, so all 25 type instantiations get
+   it) printing the element count of every `MPI_BCAST` to stderr.
+2. Run under `mpirun --tag-output -n 2`, split the stream by rank, and diff. `MPI_ERR_TRUNCATE`
+   **is** a length mismatch, so the first index where the two length sequences differ is the
+   divergence.
+3. Then temporary `PHASE` markers at known points in `run_har.foo`, each printing the running
+   broadcast count, to find which interval contains that index.
+
+Result. The two ranks are **identical for the first 126 broadcasts** and diverge inside one call:
+
+| marker | rank 0 | rank 1 |
+|---|---|---|
+| after stdin created | 5 | 5 |
+| after `process_options` | 30 | 30 |
+| after the `std_err` dance | 36 | 36 |
+| before the option loop | 36 | 36 |
+| before the banner | 106 | 106 |
+| **immediately before the `put`** | **126** | **126** |
+| died | 163 (+37) | 129 (+3) |
+
+So the desync is **inside `stdout.put(.command_optarg,by_column=TRUE,left=TRUE,width=STR_SIZE-8)`**
+in `COMMAND_LINE:put_command_optarg` — i.e. *echoing the command line*. Master performs **37**
+broadcasts there and rank 1 performs **3**. At the divergent index master sends a `STR` (256)
+while rank 1 is at a scalar (1), which is the truncation.
+
+## `hart` NOW WORKS UNDER MPI (2026-08-03) — and reproduces serial exactly
+
+After the `TEXTFILE:flush` fix below, plus removing an over-strict runtime check
+(the `--fos 0` trap, still filed under MPI),
+`hart` runs to completion at 2 ranks and agrees with a serial run **digit for digit** — and from
+*different builds*, release-serial against debug-MPI, which makes the agreement stronger:
+
+| | serial (release) | MPI, 2 ranks (debug) |
+|---|---|---|
+| R(F) | 0.037995 | 0.037995 |
+| N_r / N_p | 817 / 27 | 817 / 27 |
+| GoF^2 | 49.536697 | 49.536697 |
+| GoF | 7.038231 | 7.038231 |
+
+**fragHAR at 2 ranks still fails**, but far later — 884 lines in, past the CIF, the atom groups
+and the ANO data, at *"Making F_pred ..."* — with a **second, distinct** `MPI_ERR_TRUNCATE` in
+the fragment path.
+
+**CONFIRMED 2026-08-03 — it is output inside `fragment_SCF_para`'s `parallel do g`.** Traced with
+phase markers and a per-broadcast counter. The ranks are in *perfect lockstep* right up to the
+loop, and diverge the instant they take different fragments:
+
+| | rank 0 | rank 1 |
+|---|---|---|
+| entering `fragment_SCF` | 127,197 | 127,197 |
+| before `parallel do g` | 141,907 | 141,907 |
+| **fragment taken** | **g=1** | **g=2** |
+| died | 146,858 | 146,815 |
+
+So each rank runs a whole SCF on *its own* fragment, and that work performs collectives — chiefly
+`BUFFER:put_str`, which broadcasts `.string` (256 bytes) and `.item_end` on **every token
+written**, outside the `IO_IS_ALLOWED` guard. Different fragments produce different amounts of
+output, hence different numbers of collectives, hence `MPI_ERR_TRUNCATE`.
+
+**PROPOSED FIX (Dylan, 2026-08-03): make `per_rank_IO_allowed` also switch off the broadcasts.**
+
+The switch already exists and is already used in the right places — `fragment_SCF_para` wraps its
+disk-FF writes in `set_per_rank_IO_allowed(TRUE/FALSE)`. And `SYSTEM:IO_is_allowed`
+(`system.foo:6734`, which overrides the simpler `PARALLEL` version and is the one the
+`IO_IS_ALLOWED` macro calls) honours it:
+
+```foo
+if (.per_rank_IO_allowed) then
+   res = TRUE                                        ! every rank may do I/O
+else
+   res = .is_master_processor OR (NOT .is_parallel)
+end
+```
+
+But it only removes the master-only **guard**. The **broadcasts** stay unconditional — the same
+half-measure as `FILE:per_rank_write`, which also removes the guard and not the synchronisation.
+That is why per-rank file I/O has never actually worked.
+
+The fix is to give the flag its full meaning: when it is set, the ranks are *deliberately* doing
+different I/O, so the bookkeeping broadcasts must be skipped.
+
+```
+#define PARALLEL_BROADCAST_IO(X,Y)   if (tonto%is_parallel .AND. .NOT. tonto%per_rank_IO_allowed) \
+                                        call broadcast_(tonto,X,Y)
+```
+
+Apply it **only** to I/O bookkeeping — `.unit`, `.io_status`, `.record`, `exists`/`is_open`, and
+`BUFFER:put_str`'s buffer and cursor — and leave genuine data broadcasts (`FILE:read`'s payload,
+`plot_grid`'s `pt`, the random seed) alone.
+
+**Why it is safe**, which is the part worth checking: with the broadcasts disabled inside the
+region there is nothing collective left to mismatch, so a rank that takes zero iterations simply
+does nothing and no peer waits on it. The flag itself must be set and cleared *outside* the
+parallel loop so every rank agrees on the mode.
+
+**Refinement (Dylan): one flag conflates two permissions.** `per_rank_IO_allowed` currently means
+both "write my own files" *and* "write to the shared log" — so enabling it for a fragment loop
+also lets every rank interleave `stdout`. They should be separate:
+
+| flag | meaning | broadcasts | who writes |
+|---|---|---|---|
+| *(default)* | shared file, master only | yes | master |
+| `per_rank_self_IO_allowed` | each rank writes its **own** files | **no** | every rank |
+| `per_rank_shared_IO_allowed` | every rank may write the **shared** log | yes | every rank (interleaved, deliberate) |
+
+**The deeper form is per-FILE, not global**: a `FILE`/`TEXTFILE` is intrinsically either shared
+(master writes, state broadcast) or per-rank (each rank owns a copy, nothing broadcast). Marking
+the file removes the need for any global mode and for setting/clearing it around regions — the
+archive is per-rank, `stdout` is shared, and each behaves correctly wherever it is used. Two
+global flags are a cheaper approximation and a reasonable first step.
+
+**No translator change**, unlike every other option considered. It also deletes most of the
+~147,000 broadcasts a fragHAR run performs, so it is a scaling fix as much as a correctness one.
+
+**This is structural, not a bug at a line.** Coarse-grained parallelism over fragments cannot
+work while writing output is a collective operation. Compile-time purity (see the `PURE` design
+above) cannot help either: a fragment SCF legitimately writes archives and output. The two
+options remain (1) make output non-collective inside a parallel region, or (2) suppress or
+serialise it there.
+
+**Note the scale while deciding:** 141,907 broadcasts occur *before the fragment loop even
+starts* — a HAR job spends ~142k collectives producing text. Option (1) would remove nearly all
+of them, so it is a performance fix as much as a correctness one. That is the known register-row territory (the per-fragment,
+**rank-local** calls in `fragment_SCF_norm`/`_para`), and it is a separate hunt. The method that
+found the first one is recorded below and applies unchanged.
+
+## Column-0 `#ifdef`/`#endif` inside a program body — benign parser diagnostic
+
+**Date:** 2026-07-28. A release build prints, at ~98%:
+
+```
+[ 98%] Generating run_mpi_test_complete.F90
+line 234:0 extraneous input '<EOF>' expecting {END, USE, 'interface', ... }
+```
+
+**Cause.** `runfiles/run_mpi_test_complete.foo` (and `run_mpi_test.foo`) wrap their executable
+body in a **column-0** `#ifdef MPI ... #endif` that sits between the indented `program` body and
+the final `end program`. Foo block scoping is **indentation-based**; the grammar passes
+`#include`/macros through pre-CPP but does **not** model column-0 `#if*`/`#endif` directives, so
+the indent/dedent tracking can't cleanly match the closing `end program` and the parser reports a
+spurious EOF expectation at the true end of file.
+
+**Impact — benign.** ANTLR error-recovers and still emits valid Fortran (`run_mpi_test_complete.F90`
+ends correctly and the executable links). Only these two MPI test harnesses use the pattern; no
+`foofiles/` module, `tonto`/`hart`, or `ctest` is affected. Not a regression — the files predate
+current work.
+
+**Fix (deferred).** Teach the Foo lexer to treat CPP directive lines
+(`#if`/`#ifdef`/`#ifndef`/`#else`/`#elif`/`#endif`) as passthrough that does not perturb
+indentation/scoping. Low priority. (Separately, 2026-07-28: `run_mpi_test_complete.foo` had its
+variable declarations moved *inside* the `#ifdef MPI` so they don't trigger unused-variable
+warnings in a non-MPI debug build; this does not remove the parser diagnostic above.)
+
+---
+
+## CI workflows must install every RUN-time dependency, not just build ones (2026-08-27)
+
+**Status: fixed for gnuplot; the class is worth remembering.** `ci-full-suite.yml` ran for the
+first time on 2026-08-27 and returned 70/89. All 18 captured failures carried
+`WARNING: could not run gnuplot` — the workflow installed no gnuplot.
+
+The failure mode is what makes this worth an entry. gnuplot is **not** a build dependency and its
+absence is not an error: Tonto finishes the job, gets every number right, writes the plot data
+*and* the gnuplot script, and prints a multi-line warning instead of rendering. Those extra lines
+are a **structural** mismatch against the stored reference. So a missing *optional, run-time*
+package produces a page of failures at 0% numeric deviation and 0 ulp — indistinguishable at a
+glance from a real defect.
+
+`ci-mpi.yml` had the same hole while running the full short suite, so its suite table carried
+these failures too; see `docs/TONTO_AND_MPI.md`. Both are fixed. `ci-wsl-debug.yml` and
+`release.yml` do not need it — two plain SCF jobs and no tests respectively.
+
+**The general rule:** when adding a workflow that runs the suite, copy the package list from
+`ci.yml`, which is the reference build, rather than writing a shorter one from what the *build*
+needs.
+
+## OVERTURNED (2026-08-27, same day): the 34 debug failures are `-fcheck=bounds`, NOT gfortran-16
+
+**Read this before the entry below, which it corrects.** The confound the entry listed as open
+question 1 was closed the same afternoon, and it reversed the conclusion.
+
+**The experiment.** In the **gfortran-14** debug tree, recompile the single file that holds the
+deciding condition, `molecule.rho.F90`, without `-fcheck=bounds`, and relink. One file, one flag,
+one compiler:
+
+| gfortran-14 tree, `molecule.rho.F90` | `h2o_rhf_STO-3G` |
+|---|---|
+| with `-fcheck=bounds` | **PASS**, exact |
+| **without** `-fcheck=bounds` | **FAIL** — the `Making gaussian ANO interpolators ...` line |
+| with it again (control) | **PASS**, exact |
+
+**So the flag causes the behaviour, and gfortran-16 does not.** The 34 failures are a consequence
+of *our own workaround* — dropping `-fcheck=bounds` on 16 because 16 miscompiles it — and
+gfortran-14 reproduces them exactly when the flag is removed. **No second GCC bug report is
+owed.** The `-fcheck=bounds` miscompilation (`docs/GFORTRAN16_DEBUG_CRASH.md`) remains real and
+remains the one gfortran-16 defect we have.
+
+**What this leaves, and it is not nothing.** Tonto has a **latent defect of its own**, invisible
+in every build carrying the flag — which is every debug build before gfortran-16 arrived.
+
+> **CORRECTED 2026-09-03, and the correction matters.** This entry named the wrong variable. It
+> said the defect was that `.atom(a).interpolator.deallocated` reads differently with and without
+> bounds checking — an `allocatable` component whose initial status the standard guarantees, which
+> would have been a strange thing for a compiler to expose, and was chased as such.
+>
+> **The actual defect was two lines below**, and is ordinary undefined behaviour of our own:
+> `make_ANO_interpolators` declared `first :: BIN`, read it at `if (first)`, and assigned it only
+> *inside* the branch that read guards. Nothing ever set it TRUE, so a progress banner printed
+> according to whatever was in that stack slot. With `-fcheck=bounds` the garbage read false and
+> the line never appeared — no blessed reference contains it. Without the flag it appeared, shifted
+> every later line by one, and wrecked the reference comparison across the suite.
+>
+> Measured, one file, everything else identical: **banner present + no bounds check → 36 of 62
+> failed; banner deleted + no bounds check → 3; banner deleted + bounds check on → 3**, the same
+> three in each and unrelated to any of this. Fixed by deleting the banner, which had never once
+> printed in the program's history.
+>
+> The lesson is about attribution: the deciding *condition* was correctly located, and the wrong
+> *variable inside it* was blamed. Both were in the same `if`. Reading the enclosing statement
+> rather than the whole procedure cost a week.
+
+**Consequence for the migration.** The case against gfortran-16 is materially weaker than it was
+this morning: what remains against it is the `-fcheck=bounds` miscompilation alone, whose cost is
+losing bounds checking in debug — the bargain that was originally accepted and then withdrawn on
+evidence that has now evaporated. `develop-gfortran-16` holds the whole migration. **Do not
+simply re-apply it**: first fix the latent defect above, because a debug build on 16 has no
+bounds checking and would therefore hit it.
+
+**Method note.** The entry below was written with the confound explicitly listed as unresolved,
+and the conclusion was still stated too strongly in the commit message and in `CLAUDE.md`. The
+evidence was 0 occurrences against 34 and it was still the wrong attribution. Closing the
+confound cost about ten minutes: one file, one flag, one relink.
+
+## gfortran-16 DEBUG fails 34 of 71 short tests — the migration was reverted (2026-08-27)
+
+> **RESOLVED 2026-09-03 — and the cause was ours, not the compiler's.** The 34 failures were an
+> uninitialised logical in `MOLECULE.RHO:make_ANO_interpolators` printing a banner according to
+> stack garbage; see the CORRECTION in the entry above. Fixed. **The migration is now blocked on
+> GCC PR 127197 alone**, whose only cost is losing bounds checking in a 16 debug build. Read
+> `CLAUDE.md` §4 for the current state. The rest of this entry is kept because the measurements
+> in it are sound and were what made the diagnosis possible — only the attribution was wrong.
+
+The project standard moved 14 -> 16 on 2026-08-27 and was **reverted hours later**, when the
+local gate was run before pushing. The whole migration is preserved on the branch
+**`develop-gfortran-16`** — retrying means merging that branch and flipping `FC_VERSION`, not
+redoing the work. `ci-mpi.yml` is deliberately left on 16: it builds *release*, which is not
+implicated, and has been green since 2026-08-26.
+
+**The measurement.** `ctest -L short`, x86_64 Linux (sauce), `-DCMAKE_BUILD_TYPE=debug`:
+**37 pass, 34 fail** out of 71 agreement lines.
+
+- **27 failures are structural only** — `max 0%`, `0 ulp`. Every one carries the same extra
+  line, `Making gaussian ANO interpolators ...` (`foofiles/molecule.rho.foo:2280`), emitted
+  when `.atom(a).interpolator.deallocated` is true.
+- **7 fail numerically, and largely**: `h2o_rhf_cc-pVDZ_1e_properties`,
+  `h2o_rhf_cc-pVDZ_E_field_and_1e_properties` and `h2o+_uhf_cc-pVDZ_1e_properties` at **200%**;
+  `urea_ccsd_pob-TZVP_Salvador_properties` **197%**; `h2o_rhf_cc-pVDZ_tdhf` **62.5%**;
+  `nh3_rhf_DZP_HAR` **58.2%**; `nh3_rhf_DZP_HAF_and_structure_factors` **58%**.
+
+**Why this is a compiler difference and not stale references.** Three builds, one test
+(`h2o_rhf_STO-3G`):
+
+| build | compiler | source | result |
+|---|---|---|---|
+| release | 14 | 2026-08-27 | **PASS**, exact |
+| debug | 14 | 2026-08-16 | **PASS**, exact |
+| debug | 16 | 2026-08-27 | **FAIL** — the extra ANO line, 0% numeric |
+
+`foofiles/molecule.rho.foo` has **not changed since 2026-08-16**, so the code holding that
+condition is identical in both debug binaries. The reference for that test dates from
+2023-05-29 and lacks the line, and both gfortran-14 builds agree with it.
+
+**What makes it substantive.** `interpolator` is `INTERPOLATOR@` in `types.foo`, and the
+translator emits it as a genuine Fortran `allocatable` component
+(`type(INTERPOLATOR_TYPE), allocatable :: interpolator`). The standard guarantees an
+allocatable component starts **unallocated**, so its status is not undefined behaviour that a
+compiler may resolve either way. Two conforming compilers disagreeing about it is either a
+gfortran-16 defect or something subtler in how the object is copied — note
+`.atom(b).interpolator = .atom(a).interpolator` a few lines below, an intrinsic assignment of a
+derived type with allocatable components.
+
+**MEASURED 2026-08-27, and it isolates the compiler.** The experiment below was run: a
+gfortran-14 debug build **from the same commit** (`1d5ed7a5`), same machine, same suite.
+
+| debug build, identical source | agreement lines pass / fail | `Making gaussian ANO interpolators` |
+|---|---|---|
+| **gfortran-14** | **70 / 1** | **0 occurrences** |
+| **gfortran-16** | 37 / 34 | 34 occurrences |
+
+Zero against thirty-four. The source-age variable that qualified the earlier three-build table is
+gone, and gfortran-16 is implicated. The one agreement failure under 14 is
+`urea_ccsd_pob-TZVP_Salvador_properties` (4.48%), which fails under 16 as well and is a known
+longstanding case, not part of this.
+
+**A by-product worth recording: the "four longstanding `-O0` failures" figure this file has
+carried for months is wrong on current source.** A gfortran-14 debug build shows **3** ctest
+failures, and two of them are *invariant checks* — `single_atom_scf` and `dft_invariants` — which
+compare the program against itself and so cannot be blessed away. Only one is a reference
+comparison. Whoever revisits the `-O0` entry should start from these three, not from the old four.
+
+**Still not established:**
+
+1. **The `-fcheck=bounds` confound.** The two builds differ by a flag as well as a compiler: 14
+   keeps the bounds check, 16 drops it because 16 miscompiles it, and CMake offers no way to
+   build 14 without it. The flag should not affect whether an `allocatable` component reads as
+   unallocated — but 16's bounds-check codegen is already known to be broken, so this is not
+   nothing. Close it the cheap way, the technique this file records from the `pointgroup` work:
+   recompile the single file with altered flags and relink, rather than rebuilding a tree.
+2. **Whether gfortran-15 shares it.** Installed on sauce, never tested. The gate in
+   `cmake/SetFortranFlags.cmake` is `>= 16` because that is what was measured, not what was
+   established.
+3. **Whether the ANO line and the 7 numeric failures have one cause or two.**
+4. **A second GCC bug report is now probably owed** — subject to (1). It would need the same
+   treatment as the bounds-check one: a reduced reproducer, not a description of Tonto.
+
+**A caution for whoever picks this up.** Do not read the 27 structural failures as cosmetic.
+The extra line means a code path *ran* under 16 that did not run under 14 — interpolators were
+constructed rather than found already present. That the numbers came out identical anyway is
+luck or redundancy, not evidence that the divergence is harmless.
+
+**Related but separate:** the `-fcheck=bounds` miscompilation, `docs/GFORTRAN16_DEBUG_CRASH.md`,
+reported upstream as **GCC PR 127197** on 2026-09-03, `docs/GFORTRAN16_GCC_BUG.md`. A second
+GCC report may be owed here once (1) is done.
+
+## VERIFIED 2026-09-03: the `textfile.foo` MPI fix, serial suite 88/89 (opened 2026-08-26)
+
+> **Closed.** The owed run is
+> [33067218748](https://github.com/dylan-jayatilaka/tonto/actions/runs/33067218748) —
+> `short long hart`, Linux, gfortran-14, serial release, on `80dcbfe4`: **88/89 loose, 77
+> exact**, four invariant checks green, the 89th a deliberate skip. Move this entry to the
+> archive next time the file is re-sorted. What follows is the entry as written while it was
+> open, and its reasoning about *why* a whole-suite gate was needed still applies to the next
+> structural change in `textfile.foo`.
+
+**Update, same evening: the `long` suite passed with no new failures.** 28/31 loose against
+the fixed binary; the three non-passes are the two known macOS-only `quartz_NN_HAR` jobs
+(references correct) and the pHAR test blocked by its missing 167 MB asset. Run on
+macOS/arm64 with the MPI build at `-n 1`, **not** Linux serial gfortran-14, so it is strong
+evidence rather than the owed run — the compiler, platform and macro configuration all differ
+from the Linux baseline. Detail in `docs/TONTO_AND_MPI.md` Finding 7.
+
+**How to run it without a machine (added 2026-08-26, as Dylan left).**
+`.github/workflows/ci-full-suite.yml` is a **dispatch-only** workflow that builds release
+and runs the full suite with `--failure-dir`. It exists because nothing else runs `long`:
+`ci.yml` runs `short hart` only. Trigger it from the Actions tab (pick any branch) or
+
+```bash
+gh workflow run ci-full-suite.yml --ref develop
+```
+
+It is deliberately **not** a gate: no push or schedule trigger, no badge. It was added as a
+separate file rather than as an option on `ci.yml` because `ci.yml` is the gate and its
+current revision was still running unproven at the time; a new file cannot break an existing
+one. **For the peer picking this up:** if it proves useful, the obvious follow-ups are to give
+it a badge only after one green run, and to consider folding it into `ci.yml` behind an input
+once both are settled. If it turns out to be wrong, deleting the file costs nothing.
+
+
+
+**Do this before the `textfile.foo` change goes anywhere near `master`.** Full detail, the
+exact commands and the baseline: `docs/TONTO_AND_MPI.md` Finding 7, "VERIFICATION STILL OWED".
+
+`move_to_record_external` and the two record movers were changed to position the file on the
+I/O rank and broadcast the result. `foofiles/textfile.foo` is on the path of **every file read
+in Tonto**, so the change is exercised by essentially every job, serial included -- but only
+**three** have been run: the MPI reproducer at `-n 2` (still fails, `MPI_ERR_TRUNCATE` -- the
+fix removed an amplifier, not the origin), and `-n 1` plus serial on
+`urea_read_and_process_CIF` alone, which pass exactly.
+
+Baseline to match: **89** tests for `short long hart` (55 + 31 + 3), of which
+`ammonium_borane_pHAR_C23` skips without its 167 MB asset — so **88/89** is the score to beat,
+and 77 of those were exact. Pass `--failure-dir` so an ERRORing job records its cause.
+*(The "124/124" this entry used to quote counted `short long cx rgbi` on 2026-07-15; see the
+archive.)*
+
+Why it is not merely paperwork: the edit moved a `DIE_IF` out of a loop into its caller and
+added an `exit` on `.IO_status/=0` -- a control-flow path that did not exist before. A loop
+whose terminating check moved is exactly the kind of change that turns a loud failure into a
+quiet one. The expectation is that serial behaviour is unchanged, because the new guard is a
+no-op in a serial build; **that expectation is the thing to test, not to assert.**
+
+## DIAGNOSED (2026-08-25): gfortran-**16** DEBUG builds SEGFAULT — BOTH platforms
+
+> **Authoritative page: [`docs/GFORTRAN16_DEBUG_CRASH.md`](docs/GFORTRAN16_DEBUG_CRASH.md)**
+> — cause, machine-level evidence, reproducer, workaround, and what is still owed.
+> Draft upstream report: [`docs/GFORTRAN16_GCC_BUG.md`](docs/GFORTRAN16_GCC_BUG.md).
+
+**RESOLVED 2026-08-25 — it is a gfortran 16 compiler bug in `-fcheck=bounds`, not a
+Tonto defect and not memory corruption.** For a bounds-checked subscript reached
+through an allocatable component chain, gfortran 16 copies the array descriptor into
+one stack temporary and emits the check reading *another* temporary that is only
+written later in the same statement. The check reads uninitialised stack memory, and
+either faults on a nonsense address or reports a bounds violation that is not real.
+`-fcheck=bounds` is debug-only, which is exactly why gfortran-16 **release** was
+always fine.
+
+Found by disassembling `POINTGROUP:make_character_table` and observing that the only
+*write* to the two slots the faulting check reads is 400 bytes further on. Reduced to
+`scripts/gfortran_bounds_bug.f90` (97 lines, no Tonto): gfortran-14 fine both ways,
+gfortran-16 fine at `-O0`, SIGSEGV at `-O0 -fcheck=bounds` on x86_64. Confirmed in
+Tonto by recompiling `pointgroup.F90` alone without the flag — the segfault goes, the
+run reaches "Making gaussian ANO data …", and the next site of the same shape
+(`atom.F90:7058`, `self%NOs%r(:,n)`) then reports a *false* violation, bounds `(0:0)`
+read out of the garbage descriptor.
+
+**Fix:** `cmake/SetFortranFlags.cmake` omits `-fcheck=bounds` from `DEBUG_FLAGS` on GNU
+Fortran 16 and up, announcing it at configure time; `-DTONTO_FORCE_FCHECK_BOUNDS=ON`
+puts it back for retesting. `scripts/check_gfortran_bounds_bug.py <compiler>` tests a
+compiler. gfortran 15 is untested — neither machine has it — so the gate is on `>= 16`,
+which is what was measured.
+
+**This retires the heap-corruption hypothesis below, and the reasoning that produced
+it.** The two crash sites are two *statements* of the same shape, each independently
+miscompiled — not two innocent victims of one corrupting write. The reduced cases
+"failed to reproduce" because they were built without the descriptor-temporary
+trigger. ASan on macOS was never going to report a stack-slot ordering error inside
+compiler-generated code. The `VEC{OBJECT}` fix (`d8b94cbf`) was a real conformance
+defect worth landing, but was never related to this.
+
+**Confirmed end-to-end the same day.** A whole-tree gfortran-16 debug build on arm64
+macOS compiles clean, runs `h2o_rhf_STO-3G` to **exit 0** (139 before) with
+`Total energy -74.9658`, and takes `ctest -L short` **62/62**.
+
+**Filed 2026-09-03 as GCC PR 127197**, with a five-version bisection (12, 13, 14 and 15
+correct; 16.0.1 segfaults). Record and duplicate search: `docs/GFORTRAN16_GCC_BUG.md`.
+
+**A side observation from that run, not chased.** The two `short` tests that fail in
+the gfortran-14 **release** build on this Mac — `urea_ccsd_pob-TZVP_Salvador_properties`
+(2.99%) and `h2o_rhf_cc-pVDZ_tdhf` (0.231%) — both **pass** in the gfortran-16 debug
+build. `ci-macos.yml` attributes the first to macOS; this says it is not intrinsic to
+the platform or the test. Two variables differ between those builds, compiler *and*
+optimisation, so it does not isolate a cause. The cheap experiment is a gfortran-14
+**debug** build: if they pass there too, the culprit is `-Ofast`, not the compiler.
+
+---
+
+*Historical record from 2026-08-24 and earlier follows. Its conclusion is wrong; it is
+kept because the measurements are sound and the reasoning is instructive.*
+
+**Use `gfortran-14` for debug builds, on any platform.** `gfortran-16` release is fine on both
+platforms; its *debug* build segfaults on **both** arm64 macOS and x86_64 Linux — the "only on
+arm64" in the original note was an untested assumption, disproved 2026-08-24 (see progress note
+below).
+
+| build | any SCF job |
+|---|---|
+| macOS, gfortran-**16**, debug | **SIGSEGV** (exit 139, ~2 s) |
+| macOS, gfortran-**14**, debug | **runs to completion** — verified `h2o_rhf_STO-3G` and `urea_rhf_STO-3G_HAR` |
+| macOS, gfortran-16, release | fine (119/124) |
+| Linux, gfortran-16, release | fine (123/124) |
+
+**NOT a regression, and not caused by our changes** — I first wrote this up as a regression on the
+strength of the note below saying the debug build "ran every job to completion" on 2026-07-17.
+That note does **not record its platform** (it says only `gfortran-14, -O0 -g`), and since all work
+before 2026-07-28 was on the Linux box, it was almost certainly Linux. **Dylan spotted this.**
+So arm64-macOS debug was simply an **untested configuration**, and gfortran-14 debug works there
+today — which rules out today's commits entirely.
+
+*Consequence for the compiler migration:* the earlier verdict "the gfortran-16 switch is
+numerically free" was established for **release only**, on both platforms. It does **not** extend
+to debug on arm64. Standardising on 16 therefore needs this caveat, or the crash fixed.
+
+**Symptoms** (gfortran-16.1.0, `-DCMAKE_BUILD_TYPE=debug`, tree `debug/`):
+
+| test | result |
+|---|---|
+| `short/h2o_rhf_STO-3G` (plain SCF) | **SIGSEGV**, exit 139, ~2 s |
+| `long/urea_rhf_STO-3G_HAR` | **SIGSEGV**, exit 139 |
+| `short/nh3_rhf_DZP_HAR` | **SIGSEGV**, exit 139 |
+| `short/urea_read_and_process_CIF` (no SCF) | exit 0, fine |
+
+So it correlates with running an SCF, not with the ADP/esd code.
+
+**Ruled out:**
+- **Stack overflow** — raising `ulimit -s` from 8 MB to 64 MB does not help.
+- **The `shell1quartet.F90` `-O2` pin** — that per-source option applies in *every* build type, so
+  in debug that one file is `-O2` while the rest is `-O0`. Recompiling it at `-O0` and relinking
+  still segfaults. (The pin *should* still be gated to release configs for debuggability — see
+  CLAUDE.md §8 — but it is not the cause.)
+
+**Not yet diagnosed.** `lldb` cannot attach in this environment ("attached to process, but could
+not pause execution"), and `-fbacktrace` prints raw addresses only, so there is no symbolic
+backtrace yet. Options, cheapest first:
+
+1. **Compiler-specific — ANSWERED: yes.** gfortran-14 debug runs the same jobs to completion on
+   the same commit, so the fault is in gfortran-16's debug (`-O0`) codegen on arm64.
+2. To localise it: rebuild the gfortran-16 debug tree with `-fcheck=all` (currently only
+   `-fcheck=bounds`) — `-fcheck=pointer` may turn the segfault into a Fortran runtime error
+   naming a line. Note `lldb` cannot attach in this environment, and `-fbacktrace` yields raw
+   addresses only, so a symbolic backtrace needs either `atos` with the load slide or a
+   different debugger.
+3. Worth checking whether a Linux gfortran-16 debug build crashes too (build started; result
+   pending) — that tells us whether it is arm64-specific or general to gfortran-16.
+**Progress 2026-08-24, on a real arm64 Mac.** Four things established, two of
+which contradict what was written above.
+
+**a. It was masked by a separate bug that stopped the build entirely.** Before any
+segfault could happen, gfortran-16 debug failed to *compile*: `PLOT_GRID:volume`
+and `pixel_volume` (added by `cc530a34`, the serial Bader port) were declared
+lower-case `pure` while calling `PURE` routines. Not compiler-specific -- CI
+(Linux-debug) had been red on it since 2026-08-23, five runs, and gfortran-14
+rejects the same file here. Fixed in `97d8b0e9`; the rule is now written up in
+`docs/FOO_GRAMMAR_DOCUMENTATION.md` ("PURE is contagious upward").
+
+**b. A symbolic backtrace IS obtainable**, contradicting "there is no symbolic
+backtrace yet" above. `lldb` still cannot attach and `-fbacktrace` still prints
+raw addresses, but **macOS writes its own symbolicated crash report** to
+`~/Library/Logs/DiagnosticReports/tonto-*.ips`. Parse the JSON payload:
+
+```
+EXC_BAD_ACCESS, KERN_INVALID_ADDRESS at 0x00000000000000d9
+  make_pg_image_of_shell  <- crash
+  symmetrize_1 / symmetrize_0
+  make_anos_for_atom / make_anos / make_anos_and_interpolators
+  make_promolecule_density_mx / make_promol_guess_mos
+  get_initial_density_mx / get_initial_guess / initialize_scf
+  usual_scf / scf
+```
+
+`0xd9` is a field access off a null base. This is why only jobs with an SCF
+crash: the fault is in building the **promolecule initial guess**.
+
+**c. It is NOT the architecture-tuning flag.** This was the leading hypothesis --
+debug applies `-mtune=native` (via `HOST_FLAG`) while release deliberately avoids
+`native` in favour of `-mcpu=apple-m2`, an asymmetry nobody had pointed at.
+Rebuilt with `-DTONTO_ARCH_FLAG=none`, which removes it: **still exit 139**.
+Refuted. (The asymmetry is still worth removing -- a debug build should carry no
+CPU tuning at all -- but it is not this bug.)
+
+**d. Control, clean.** Same commit, same flags, same machine:
+gfortran-14 debug runs `h2o_rhf_STO-3G` to **exit 0**; gfortran-16 debug gives
+**exit 139**.
+
+**e. It is NOT arm64-specific, and it is NOT a macOS problem.** This is the
+question item 3 below left pending, now answered: a gfortran-16 **debug** build
+on achari2 (Ubuntu 24.04, x86_64) segfaults on the same job, exit 139. The entry
+above said "only (as far as tested) on arm64"; that was untested, not true.
+
+**f. Linux gives the backtrace macOS cannot**, with line numbers, for free:
+
+```
+#3  make_character_table   at pointgroup.F90:1066
+#4  update                 at pointgroup.F90:324
+#5  create_1               at pointgroup.F90:71
+#6  make_anos_for_atom     at molecule.scf.F90:5779
+#7  make_anos / make_anos_and_interpolators / make_promolecule_density_mx
+```
+
+`pointgroup.foo:1018`, inside `POINTGROUP:make_character_table`:
+
+```foo
+   do i = 1, .n_irrep
+      .irrep(i).character.create(.order)
+      do n = 1, .order
+         .irrep(i).character(n) = .irrep(i).mx(:,:,n).trace   ! <- here
+```
+
+So it reads `.irrep(i).mx` for an irrep whose `mx` is **not allocated**. The
+macOS crash is the same class one level out -- `make_pg_image_of_shell` reading
+`.pointgroup.mx(:,:,n)`, `KERN_INVALID_ADDRESS at 0xd9`, a field access off a
+null base -- and both are reached from `make_anos_for_atom`, building the
+promolecule guess for a single-atom molecule.
+
+**So the working conclusion is that this is a latent Tonto bug, not a gfortran-16
+codegen bug**: unallocated pointgroup data that gfortran-14 tolerates and
+gfortran-16 dereferences. That is a much better prognosis than a compiler bug --
+it can be fixed here. It is not yet proven; what is proven is the crash site, on
+two platforms, and that the arch flag is not involved.
+
+**Do the diagnosis on Linux, not on macOS.** `-fbacktrace` there symbolicates
+with file and line for nothing, while macOS needs the crash report in
+`~/Library/Logs/DiagnosticReports/` and gives no line numbers. The Mac was the
+harder machine to work on and was not the necessary one.
+
+**g. Narrowed to the assignment TARGET, with a concrete hypothesis (2026-08-24, gdb on achari2).**
+Runtime values at the fault:
+
+| | |
+|---|---|
+| crash line | `pointgroup.foo:1018` — `.irrep(i).character(n) = .irrep(i).mx(:,:,n).trace` |
+| `i`, `n` | **1, 1** — the very first irrep and first operation |
+| pointgroup | `oh`, `order` 48, `n_irrep` 10 |
+| `ubound(.irrep(1).mx)` | `(1,1,48)` — correct for a 1-D irrep |
+| `ubound(.irrep(4).mx)` | `(3,3,48)` — correct for a 3-D irrep |
+
+So `mx` is allocated correctly and the READ side is sound. (An earlier reading of
+gdb's output suggested every irrep was 1x1x48; that was a misreading of gdb's
+`<repeats>` display, and it is wrong.) By elimination the fault is the WRITE
+target, `.irrep(i).character`, which is allocated on the line immediately above
+by `.create(.order)`.
+
+**It could not be inspected directly**: `print self%irrep(1)%character` gives
+*"A syntax error in expression, near `character'"* — gdb's Fortran parser treats
+`character` as a keyword. Which points at the hypothesis.
+
+**Hypothesis to test next: the component names.** `types.foo:3196` declares
+
+```foo
+   type IRREP
+     label     :: STR(len=4)
+     dimension :: INT          ! <- Fortran keyword
+     character :: VEC{REAL}@   ! <- Fortran keyword, and the allocatable that fails
+```
+
+Both `character` and `dimension` are Fortran keywords used as component names.
+That is legal Fortran and has worked for years, but it is exactly the sort of
+thing a new front-end regresses on, and the failing component is the one that is
+both keyword-named *and* allocatable. gdb's parser already chokes on it.
+
+**REFUTED, same day.** The experiment was run: `character` renamed to `chi`
+throughout (4 references and the declaration — the blast radius is only
+`types.foo`, `irrep.foo` and `pointgroup.foo`), gfortran-16 debug rebuilt,
+`h2o_rhf_STO-3G` rerun. **Still exit 139.** The keyword-named component is not
+the cause, and the rename has been reverted rather than left in the tree, since
+it fixes nothing and would muddy the record. gdb's parser error was a red
+herring about gdb, not about the compiler.
+
+(The names are still poor Fortran — `character` and `dimension` are both
+keywords, and `chi`/`dim` would be better, `chi` being the standard symbol for a
+group character. Worth doing as hygiene, on its own, but it is not this bug.)
+
+**h. The construct itself does NOT reproduce it (2026-08-24).** Two standalone
+reduced cases were written and run under both compilers: (1) an allocatable array
+of a derived type with an allocatable vector component, allocated
+element-by-element in a loop then written through; (2) the same, with the array
+itself a component of an outer derived type, so the access is
+`self%irrep(i)%chi(n)` exactly as in Tonto. **Both compile and run to exit 0
+under gfortran-14 and gfortran-16.** So the shape at the crash site is not, by
+itself, the trigger.
+
+**That is the most useful negative result so far, because of what it implies: the
+crash site is probably not the bug site.** A fault that will not reproduce when
+the construct is isolated, but is reliable inside the full program on two
+platforms, looks like **earlier memory corruption landing somewhere fatal** --
+and gfortran-14 and -16 simply lay memory out differently, so the same corruption
+is benign under one and fatal under the other. That would explain every
+observation at once: compiler-dependent, platform-independent, reproducible in
+situ, not reproducible in isolation, and a read side that checks out while the
+write target does not.
+
+**The leading candidate for that earlier corruption is already in hand.** The
+`-fcheck=all` run stops long before the SCF, during keyword reading, at
+*"Allocatable actual argument 'tmp' is not allocated"* -- `VEC{OBJECT}:read_keys`
+and `:clear_keys`:
+
+```foo
+   read_keys :: leaky
+      self :: allocatable, INOUT
+      tmp :: OBJECT@          ! declared, never created
+      ...
+      tmp.read_keys           ! called on an unallocated allocatable
+```
+
+That is undefined behaviour on every compiler; the uninstrumented run merely
+survives it. The template is inherited by 43 files.
+
+**The experiment was run (2026-08-24), and the `tmp` bug is fixed but was NOT the
+cause.** Four sites in the *allocatable* copy of the template now do
+`tmp.create` / use / `tmp.destroy`, which is the pattern two sibling procedures
+in the same file already used. (The *pointer* copy below the `! Old` marker
+deliberately `nullify`s and is left alone -- the checker's complaint named an
+allocatable.) Result: the `-fcheck=all` violation is gone, and the run gets
+further -- but it still ends in **SIGSEGV, same site, same faulting address
+`0xd9`**. `-fcheck=all` does not catch the fault itself.
+
+**A further clue, and it strengthens the corruption hypothesis: the crash site is
+not the same on the two platforms.**
+
+| platform | crash |
+|---|---|
+| Linux x86_64 | `POINTGROUP:make_character_table`, `pointgroup.foo:1018` |
+| macOS arm64 | `MOLECULE.BASE:make_pg_image_of_shell`, `KERN_INVALID_ADDRESS at 0xd9` |
+
+Both are in the pointgroup machinery reached from `make_anos_for_atom`, but they
+are *different procedures*. A single deterministic logic error would fault in the
+same place on both. Two different faults in the same neighbourhood, neither
+reproducible when the construct is isolated, is what heap corruption looks like:
+whatever is damaged, the layout decides which innocent read dies first.
+
+**The sanitizer was tried on macOS and is INCONCLUSIVE — read this before
+repeating it.** A full `-fsanitize=address -fno-omit-frame-pointer` gfortran-16
+debug build was made and run. ASan is genuinely active (`libasan.8.dylib` linked,
+48 undefined `__asan` symbols), but:
+
+- it produced **no ASan report at all**, and
+- the process died with **SIGBUS (138)** rather than the usual SIGSEGV (139).
+
+A sanitizer that changes the signal but issues no diagnostic has not cleared the
+program; it has failed to instrument usefully. gfortran + ASan on arm64 macOS is
+the suspect, not the absence of a heap bug. **Do not read this as "ASan found
+nothing".**
+
+Stack exhaustion was re-tested at the same time and is genuinely ruled out: the
+plain gfortran-16 debug build still exits 139 with the stack at the hard ceiling
+(`ulimit -s 65520`), as well as at the 8 MB default. That confirms the original
+note.
+
+**Next, and it should be done on Linux.** achari2 has gfortran-16 and a
+conventional toolchain where ASan is reliable; the same build there is the
+obvious repeat, and Linux already proved better for this bug once (it gives
+symbolic backtraces with line numbers for free, which macOS does not). Failing
+that, `valgrind` on Linux would name the offending write directly. The bisect
+option — changing `initial_density=` away from `promolecule` to establish whether
+the damage predates `make_anos_for_atom` — is cheap and still untried.
+
+**Also done and NOT the fix:** the IRREP components `character` and `dimension`
+were renamed to `chi` and `dim` (they are Fortran keywords and were poor names).
+It builds clean and the crash is unchanged, so it is hygiene, not a fix. Note
+`dim` is **reserved in Foo** as the array-size accessor -- renaming DIIS's
+`dimension` method to `dim` turned `d = .dim` into `d = size(self)` on a
+non-array and broke the build, so DIIS keeps its name.
+
+**Still open, and the next step.** `-fcheck=all` does turn a crash into a named
+error, but **not this one** -- it stops earlier, at
+`vec_atom.F90:2018`, with *"Allocatable actual argument 'tmp' is not allocated"*,
+during keyword reading and long before the SCF. That is a real defect in its own
+right (`VEC{OBJECT}:read_keys` and `:clear_keys` declare `tmp :: OBJECT@`, never
+create it, and then call a method on it; the template is inherited by 43 files),
+but it is benign in practice -- the uninstrumented run gets past it and dies
+later somewhere else. So it is **not established** that it causes the segfault.
+To get there: fix or suppress the `tmp` violation, then re-run under
+`-fcheck=all` and see what it names next.
+
+4. **Also wanted (Dylan): a DEBUG CI job.** Debug is the configuration whose job is to catch
+   crashes and precondition violations, yet nothing checks it — CI builds release only, and the
+   debug status here was two weeks stale, which is why this went unnoticed. Design notes: the 4
+   known debug failures (47, 64, 87, 91) must be recorded as *expected* or the job is red from
+   day one and gets ignored; and `-O0` is slow, so the `short` suite (or a few representative
+   jobs — one SCF, one HAR, one CIF-processing) is the sensible scope.
+
+---

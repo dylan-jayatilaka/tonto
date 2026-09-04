@@ -928,11 +928,21 @@ if(DOT_EXE)
 endif()
 add_dependencies(callgraphs antlr4-translator)
 
-# Target libtonto
-add_library(tonto
+# Target libtonto.
+#
+# The target is tonto_lib, NOT tonto, so that the name `tonto` is free for the
+# executable everyone means when they type `make tonto`. It used to be the
+# library, while the program came from `make run_molecule` (OUTPUT_NAME tonto) --
+# so `make tonto` built the library, skipped the link, and left a stale binary
+# looking freshly built. That cost a whole measurement run on 2026-09-03.
+#
+# OUTPUT_NAME keeps the artefact libtonto.a. Do NOT name the target `libtonto`:
+# CMake prepends the `lib` prefix itself, giving liblibtonto.a.
+add_library(tonto_lib
    ${FORTRAN_SRC}
    ${MACROS}
 )
+set_target_properties(tonto_lib PROPERTIES OUTPUT_NAME tonto)
 
 # types.F90 contains no executable code of its own -- only the ~90 derived-type
 # definitions. But those types have ~585 allocatable/pointer components, so
@@ -1017,12 +1027,12 @@ endif()
 # antlr4-fortran generation step first guarantees every include is present, so the
 # module compile order is derived correctly instead of falling back to list order
 # (where system.F90 precedes types.F90 and type(SYSTEM_TYPE) is undefined).
-add_dependencies(tonto antlr4-fortran)
+add_dependencies(tonto_lib antlr4-fortran)
 
 if(COMPILE_LAPACK)
-	target_link_libraries(tonto lapack blas ${MPI_Fortran_LIBRARIES})
+	target_link_libraries(tonto_lib lapack blas ${MPI_Fortran_LIBRARIES})
 else()
-	target_link_libraries(tonto ${MPI_Fortran_LIBRARIES})
+	target_link_libraries(tonto_lib ${MPI_Fortran_LIBRARIES})
 endif()
 
 # tonto's generated Fortran (.F90/.int/.use) and .mod files all live in the build
@@ -1033,7 +1043,7 @@ endif()
 # has no Fortran modules anyway). That entry only made gfortran warn about a
 # nonexistent include directory when the deps were system-provided (so build/external
 # was never created) -- removed rather than papered over with an empty directory.
-target_include_directories(tonto PUBLIC ${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(tonto_lib PUBLIC ${PROJECT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 
 
 # Standard executables
@@ -1090,41 +1100,46 @@ if(WITH_MPI)
 endif()
 
 # Link exectables
-target_link_libraries(run_molecule      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_buffer        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_dc            tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_dc_derivs     tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_sf            tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_sf_derivs     tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_compare_cifs  tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_dispersion    tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_gaussian_data tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_har           tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_himz          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_mat_real      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_mat_cpx       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_molecule      tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_buffer        tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_dc            tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_dc_derivs     tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_sf            tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_sf_derivs     tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_compare_cifs  tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_dispersion    tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_gaussian_data tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_har           tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_himz          tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_mat_real      tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_mat_cpx       tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_mp2           tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_mp2_exercise  tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-#target_link_libraries(run_mpi_matmul    tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+#target_link_libraries(run_mpi_matmul    tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 if(WITH_MPI)
-    target_link_libraries(run_mpi_pi     tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+    target_link_libraries(run_mpi_pi     tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 endif()
-target_link_libraries(run_qr            tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_real          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_rgbi          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_vec_str       tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_least_squares tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_textfile      tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_system_commands tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_qr            tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_real          tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_rgbi          tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_vec_str       tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_least_squares tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_textfile      tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_system_commands tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 if(WITH_MPI)
-    target_link_libraries(run_mpi_test          tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-    target_link_libraries(run_mpi_test_complete tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+    target_link_libraries(run_mpi_test          tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+    target_link_libraries(run_mpi_test_complete tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 endif()
 target_link_libraries(run_shell2        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 
 
 # Make non-standard-named executables
 set_target_properties(run_molecule PROPERTIES OUTPUT_NAME tonto)
+
+# `make tonto` builds the PROGRAM called tonto, which is what anyone typing it
+# means. The library is tonto_lib and comes along as a dependency. Before this,
+# `tonto` was the library target and the name silently built the wrong thing.
+add_custom_target(tonto DEPENDS run_molecule)
 set_target_properties(run_har      PROPERTIES OUTPUT_NAME hart)
 set_target_properties(run_rgbi     PROPERTIES OUTPUT_NAME rgbi)
 

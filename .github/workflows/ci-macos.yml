@@ -1,4 +1,4 @@
-name: CI (macOS-release)
+name: macOS-release
 
 # The first CI that BUILDS Tonto on a Mac. ci-rgbi-macos.yml only ever probed
 # the picture-tool install list; nothing has ever compiled the Fortran here.
@@ -53,7 +53,12 @@ jobs:
           # gcc provides gfortran; openjdk provides javac for the ANTLR4
           # translator. No BLAS/LAPACK: macOS has Accelerate, and CMake prefers
           # Homebrew OpenBLAS when it is present.
-          brew install gcc cmake openjdk
+          #
+          # gnuplot is NOT optional. Without it nh3_rhf_DZP_HAR and
+          # nh3_rhf_DZP_HAF_and_structure_factors print a seven-line warning per
+          # missing plot, which shifts the output and fails the comparison
+          # structurally -- 0% deviation, 0 ulp. ci.yml has always installed it.
+          brew install gcc cmake openjdk gnuplot
           echo "$(brew --prefix openjdk)/bin" >> "$GITHUB_PATH"
 
       - name: Which compiler is this, actually
@@ -77,9 +82,16 @@ jobs:
           # The pins are the reason this job exists. If they silently stop being
           # applied, the numbers go wrong quietly, so assert them rather than
           # trusting the configure log scrolled past.
-          grep -q 'fno-schedule-insns' build/CMakeFiles/tonto.dir/flags.make \
-            || grep -rq 'fno-schedule-insns' build/CMakeFiles/tonto.dir/ \
-            || { echo "arm64 pin for shell1quartet.F90 NOT found in the build flags"; exit 1; }
+          # The library target is tonto_lib (renamed 2026-09-03). A per-source
+          # pin lands in flags.make as
+          #   # Custom options: CMakeFiles/tonto_lib.dir/shell1quartet.F90.o_OPTIONS = ...
+          # so flags.make is the right file; the recursive grep is belt and braces.
+          # Check the file exists first, so a rename cannot masquerade as a lost pin.
+          DIR=build/CMakeFiles/tonto_lib.dir
+          test -f "$DIR/flags.make" || { echo "::error::$DIR/flags.make not found -- has the library target been renamed?"; ls build/CMakeFiles/; exit 1; }
+          grep -q 'fno-schedule-insns' "$DIR/flags.make" \
+            || grep -rq 'fno-schedule-insns' "$DIR/" \
+            || { echo "::error::arm64 pin for shell1quartet.F90 NOT found in the build flags"; exit 1; }
 
       - name: Test — the loose agreement gate, short suite
         run: |

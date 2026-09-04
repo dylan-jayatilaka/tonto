@@ -1,0 +1,386 @@
+name: WSL-MPI
+
+# The last empty cell in the platform/build-type table. Linux and WSL both have
+# release and debug; Linux has MPI and macOS now has MPI; WSL had none.
+#
+# THE COMPILER IS THE WHOLE PROBLEM, exactly as on Linux. Tonto does `USE mpi`,
+# and Fortran .mod files are compiler-version specific, so the MPI must have been
+# built by the SAME compiler as Tonto. The three platforms solve it three ways:
+#
+#   macOS   free. Homebrew's mpifort and Homebrew's gcc come from one build, so
+#           asking for gfortran-16 gives a matched pair (ci-macos-mpi.yml).
+#   Linux   Open MPI built from source and cached, because ci-mpi.yml pins
+#           FC_VERSION to a compiler the distro's MPI was not built with.
+#   WSL     this file. Same source build as Linux, at the WSL column's own
+#           standard compiler, gfortran-14 -- the one ci-wsl.yml uses, so the
+#           serial and parallel WSL numbers are comparable with each other and
+#           with ci.yml's.
+#
+# WHY NOT JUST `apt install libopenmpi-dev`, which is what
+# docs/BUILDING_ON_WINDOWS.md tells a user to do? Because that pairs the distro's
+# MPI with the distro's DEFAULT gfortran, which on Ubuntu 24.04 is 13, not 14.
+# It is a matched pair and it should work -- the `distro-pairing` job below
+# checks precisely that, cheaply, on an ordinary Linux runner -- but building
+# Tonto with it would introduce a third compiler version into a project whose
+# stored references are compiler-specific (see the zero-esd drift in
+# DEFERRED.md). So: assert the documented path is coherent, and BUILD at 14.
+#
+# Two jobs, on the cheap/expensive split ci-wsl.yml already uses:
+#
+#   distro-pairing  ubuntu-24.04, ~2 min, 1x billing. Does the recipe in
+#                   docs/BUILDING_ON_WINDOWS.md actually give a matched pair?
+#                   Gating -- if it stops being true, the document is wrong.
+#   wsl-mpi         windows-latest (2x billing) inside real WSL2, ~2-3 h cold.
+#                   Builds Open MPI with gfortran-14, then Tonto against it, then
+#                   the pi rank-invariance gate. Schedule and on demand only.
+#
+# The gate is the pi rank-invariance check, as on Linux and macOS: it needs no
+# stored reference, so unlike the suite it cannot be quietly blessed. The suite
+# is informational for the reason ci-mpi.yml gives -- docs/TONTO_AND_MPI.md still
+# has open defect-register rows, so gating on it would be permanently red for
+# reasons that have nothing to do with WSL.
+#
+# Unbadged until it has run green once. A badge on a workflow that has never
+# executed is a red badge on day one.
+
+on:
+  schedule:
+    - cron: '23 5 * * 5'      # Fridays 05:23 UTC, clear of the other MPI jobs
+  workflow_dispatch:
+    inputs:
+      run_wsl_job:
+        description: 'Run the expensive WSL build (uncheck to test only the distro-pairing claim)'
+        type: boolean
+        default: true
+
+env:
+  # The WSL column's standard compiler, same as ci-wsl.yml. Deliberately NOT
+  # ci-mpi.yml's 16: that comes from the toolchain PPA, and CLAUDE.md §4 confines
+  # the PPA to the one workflow that genuinely needs a compiler newer than the
+  # distribution's.
+  FC_VERSION: 14
+  OMPI_VERSION: 5.0.9
+  # Bump when the build recipe changes (configure flags, patches) without
+  # OMPI_VERSION or FC_VERSION moving. The cache key covers WHAT is built; this
+  # covers HOW. Without it a bad tree restores forever under a key that still
+  # looks right.
+  OMPI_BUILD_REV: 1
+
+jobs:
+  # --------------------------------------------------------------------------
+  distro-pairing:
+    name: The documented apt recipe is a matched pair
+    runs-on: ubuntu-24.04     # pinned, not -latest: WSL installs Ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the packages the document names
+        # Verbatim from docs/BUILDING_ON_WINDOWS.md, "Parallel (MPI) builds".
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            openmpi-bin libopenmpi-dev gfortran
+
+      - name: mpifort and the default gfortran must be the same compiler
+        # This is the only thing that makes the documented recipe work, and the
+        # document currently calls it untested. It is a pairing claim, not a
+        # WSL claim, so it does not need a Windows runner.
+        run: |
+          set -euo pipefail
+          mpi_fc=$(mpifort -dumpfullversion)
+          sys_fc=$(gfortran -dumpfullversion)
+          echo "mpifort wraps  GNU Fortran $mpi_fc"
+          echo "gfortran is    GNU Fortran $sys_fc"
+          [ "${mpi_fc%%.*}" = "${sys_fc%%.*}" ] || {
+            echo "::error::apt's mpifort ($mpi_fc) and apt's gfortran ($sys_fc) are different major versions -- the recipe in docs/BUILDING_ON_WINDOWS.md cannot work as written"
+            exit 1; }
+          echo "matched at major version ${mpi_fc%%.*}"
+
+      - name: ...and `use mpi` really compiles and runs with them
+        # The version numbers agreeing is necessary, not sufficient: the .mod
+        # has to be readable. Compile it rather than infer it.
+        run: |
+          set -euo pipefail
+          printf 'program t\n  use mpi\n  implicit none\n  integer :: e,n\n  call MPI_Init(e)\n  call MPI_Comm_size(MPI_COMM_WORLD,n,e)\n  print *, "ranks =", n\n  call MPI_Finalize(e)\nend program t\n' > t.f90
+          mpifort t.f90 -o t
+          mpirun --oversubscribe -n 2 ./t
+
+  # --------------------------------------------------------------------------
+  wsl-mpi:
+    name: Open MPI + Tonto, built with gfortran-14 inside real WSL2
+    # Deliberately NOT `needs: distro-pairing`. The two jobs answer unrelated
+    # questions -- this one builds its own Open MPI at gfortran-14 and never
+    # touches apt's -- so chaining them would let a distro packaging change hide
+    # the WSL MPI coverage behind a failure that has nothing to do with it.
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.run_wsl_job)
+    runs-on: windows-latest
+    # Cold: Open MPI from source (~15 min) + the Foo translation and Fortran
+    # build (~40-70 min on ci-wsl.yml's evidence) + the short suite at 2 ranks.
+    # Warm, with the Open MPI cache restored, roughly 15 minutes less.
+    timeout-minutes: 240
+    steps:
+      - name: Check out with LF line endings
+        # MUST precede actions/checkout. Windows git's core.autocrlf=true rewrites
+        # every file to CRLF; copied into WSL that is trap 3 of
+        # docs/BUILDING_ON_WINDOWS.md and cmake/WSL.cmake rightly refuses to
+        # configure. See the same step in ci-wsl.yml.
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
+      - name: Check out (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up WSL
+        uses: Vampire/setup-wsl@v7
+        with:
+          distribution: Ubuntu-24.04
+          wsl-version: '2'
+          update: 'true'
+          # gcc-14/g++-14 are for Open MPI's own C build: it must be the same
+          # GCC release as the Fortran compiler, or the wrappers pick up a
+          # different runtime. curl/bzip2 fetch and unpack the release tarball.
+          additional-packages: >-
+            gcc gcc-${{ env.FC_VERSION }} g++-${{ env.FC_VERSION }}
+            gfortran-${{ env.FC_VERSION }} libblas-dev liblapack-dev default-jdk
+            python3 perl make cmake git curl bzip2
+
+      - name: Environment
+        shell: wsl-bash {0}
+        run: |
+          echo "kernel : $(cat /proc/sys/kernel/osrelease)"
+          echo "distro : ${WSL_DISTRO_NAME:-?}"
+          echo "user   : $(id -un)"
+          echo "cores  : $(nproc)"
+          free -h | head -2
+          gfortran-${{ env.FC_VERSION }} --version | head -1
+          cmake --version | head -1
+          df -h . | tail -1
+
+      # actions/cache runs on the WINDOWS side and cannot see the WSL
+      # filesystem, so what is cached is a tarball staged in the workspace. The
+      # key carries (Open MPI version, gfortran version, recipe revision)
+      # because that triple is exactly what .mod compatibility depends on.
+      - name: Cache Open MPI (built with gfortran-${{ env.FC_VERSION }})
+        id: ompi-cache
+        uses: actions/cache@v4
+        with:
+          path: ompi-cache
+          key: ompi-${{ env.OMPI_VERSION }}-gfortran${{ env.FC_VERSION }}-r${{ env.OMPI_BUILD_REV }}-wsl-ubuntu2404
+
+      - name: Install Open MPI into WSL (from cache, or build it)
+        shell: wsl-bash {0}
+        # No part_persist patch here, unlike ci-mpi.yml: that works around a
+        # gcc-16 inlining failure and gfortran-14 does not hit it. If FC_VERSION
+        # is ever raised to 16 the patch has to come across too -- the build will
+        # stop with "inlining failed in call to always_inline" and say so.
+        run: |
+          ws="$PWD"
+          prefix="$HOME/opt/openmpi-gf${{ env.FC_VERSION }}"
+          tarball="$ws/ompi-cache/openmpi-${{ env.OMPI_VERSION }}-gf${{ env.FC_VERSION }}.tar.gz"
+          if [ -f "$tarball" ]; then
+            echo "restoring Open MPI from the cached tarball"
+            mkdir -p "$HOME"
+            tar xzf "$tarball" -C "$HOME"
+            test -x "$prefix/bin/mpifort" || { echo "::error::cached tarball did not contain $prefix/bin/mpifort"; exit 1; }
+          else
+            echo "cache miss -- building Open MPI ${{ env.OMPI_VERSION }} from source"
+            cd "$HOME"
+            curl -fsSL -O https://download.open-mpi.org/release/open-mpi/v5.0/openmpi-${{ env.OMPI_VERSION }}.tar.bz2
+            tar xf openmpi-${{ env.OMPI_VERSION }}.tar.bz2
+            cd openmpi-${{ env.OMPI_VERSION }}
+            ./configure --prefix="$prefix" \
+                        FC=gfortran-${{ env.FC_VERSION }} F77=gfortran-${{ env.FC_VERSION }} \
+                        CC=gcc-${{ env.FC_VERSION }} CXX=g++-${{ env.FC_VERSION }} \
+                        --disable-mpi-cxx > configure.log 2>&1 || { tail -40 configure.log; exit 1; }
+            make -j2 > make.log 2>&1 || { tail -40 make.log; exit 1; }
+            make install > install.log 2>&1
+            mkdir -p "$ws/ompi-cache"
+            tar czf "$tarball" -C "$HOME" "opt/openmpi-gf${{ env.FC_VERSION }}"
+            echo "staged $(du -h "$tarball" | cut -f1) for the cache"
+          fi
+
+      - name: The MPI toolchain must match the compiler — assert it
+        shell: wsl-bash {0}
+        # ARTEFACT check, not a process check, for the reason ci-mpi.yml gives:
+        # a whole day of milestone-4 debugging went to checks that could not see
+        # what they were checking.
+        #
+        # setup-wsl runs as root, and Open MPI 5's launcher refuses to start as
+        # root without being told. That refusal exits non-zero WITHOUT running
+        # the program, which reads exactly like a broken reduction -- the same
+        # shape as the --oversubscribe trap already recorded in
+        # scripts/check_mpi_pi.sh. Say so once, here, and export it for every
+        # later step.
+        run: |
+          set -euo pipefail
+          prefix="$HOME/opt/openmpi-gf${{ env.FC_VERSION }}"
+          "$prefix/bin/mpifort" --version | head -1
+          mpi_fc=$("$prefix/bin/mpifort" -dumpfullversion)
+          case "$mpi_fc" in
+            ${{ env.FC_VERSION }}.*) echo "mpifort wraps GNU Fortran $mpi_fc" ;;
+            *) echo "::error::mpifort wraps $mpi_fc, not gfortran-${{ env.FC_VERSION }} -- a stale cache under a reused key"
+               exit 1 ;;
+          esac
+          printf 'program t\n  use mpi\n  implicit none\n  integer :: e,n\n  call MPI_Init(e)\n  call MPI_Comm_size(MPI_COMM_WORLD,n,e)\n  print *, "ranks =", n\n  call MPI_Finalize(e)\nend program t\n' > "$HOME/t.f90"
+          "$prefix/bin/mpifort" "$HOME/t.f90" -o "$HOME/t"
+          if [ "$(id -u)" -eq 0 ]; then
+            export PRTE_MCA_prte_allow_run_as_root=1
+            echo "running as root: PRTE_MCA_prte_allow_run_as_root=1"
+          fi
+          ( cd "$HOME" && "$prefix/bin/mpirun" --oversubscribe -n 2 ./t )
+          echo "use mpi compiles and runs under the matching launcher"
+
+      - name: Copy the checkout into the Linux filesystem
+        shell: wsl-bash {0}
+        # The documented workflow, and not optional: cmake/WSL.cmake rejects a
+        # build tree on the drvfs mount where actions/checkout leaves the repo,
+        # and it would be unusably slow anyway.
+        run: |
+          rm -rf ~/tonto
+          time cp -a "$PWD" ~/tonto
+          echo "copied $(du -sh ~/tonto | cut -f1) to ~/tonto"
+
+      - name: Configure and build (MPI)
+        shell: wsl-bash {0}
+        # $GITHUB_STEP_SUMMARY is a WINDOWS-side variable, invisible in WSL, and
+        # wsl-bash runs `bash -euo pipefail` so merely naming it aborts the step
+        # with "unbound variable". Stage the summary in the workspace; a
+        # Windows-side step at the end appends it. (ci-wsl.yml learned this the
+        # hard way, after a configure that had completely succeeded.)
+        #
+        # -j2 for ci-wsl.yml's reason: translation spawns one JVM per .foo file
+        # and WSL2 gets only part of the runner's RAM. Do not raise it without
+        # watching memory.
+        run: |
+          ws="$PWD"
+          set -o pipefail
+          prefix="$HOME/opt/openmpi-gf${{ env.FC_VERSION }}"
+          cd ~/tonto
+          cmake -B ~/tonto-build/mpi \
+                -DCMAKE_Fortran_COMPILER="$prefix/bin/mpifort" \
+                -DCMAKE_C_COMPILER="$prefix/bin/mpicc" \
+                -DMPI=1 -DCMAKE_BUILD_TYPE=release 2>&1 | tee ~/configure.log
+          cmake --build ~/tonto-build/mpi -- -j2
+          {
+            echo '## WSL MPI configure (WSL lines)'
+            echo '```'
+            grep '^-- WSL:' ~/configure.log || true
+            echo '```'
+          } >> "$ws/wsl-mpi-summary.md"
+
+      - name: The binary really is MPI-linked
+        shell: wsl-bash {0}
+        # -DMPI=1 used to be able to yield a SERIAL binary silently. It is fatal
+        # at configure time now, but assert the artefact anyway.
+        run: |
+          set -euo pipefail
+          test -x ~/tonto-build/mpi/tonto
+          ldd ~/tonto-build/mpi/tonto | grep -q libmpi \
+            || { echo "::error::~/tonto-build/mpi/tonto is not linked against libmpi"; exit 1; }
+          ldd ~/tonto-build/mpi/tonto | grep libmpi | head -3
+          # The library target is tonto_lib (renamed 2026-09-03); check the file
+          # is there before grepping it, so a rename cannot look like a lost flag.
+          flags=~/tonto-build/mpi/CMakeFiles/tonto_lib.dir/flags.make
+          test -f "$flags" || { echo "::warning::$flags not found -- has the library target been renamed?"; ls ~/tonto-build/mpi/CMakeFiles/; }
+          grep -q "DMPI=1" "$flags" \
+            || echo "::warning::-DMPI=1 not found in flags.make (check the build)"
+
+      - name: GATE — pi is independent of rank count
+        shell: wsl-bash {0}
+        # The whole macro surface every parallel routine depends on -- one
+        # `parallel do`, one PARALLEL_SUM -- against an answer known in advance
+        # that must not change with the rank count. It needs no stored
+        # reference, so it cannot be blessed away.
+        run: |
+          ws="$PWD"
+          set -euo pipefail
+          prefix="$HOME/opt/openmpi-gf${{ env.FC_VERSION }}"
+          # An `[ ... ] && export` one-liner would ABORT the step when the test
+          # is false: wsl-bash runs `bash -euo pipefail`, so a false test is a
+          # non-zero command. Use an if.
+          if [ "$(id -u)" -eq 0 ]; then export PRTE_MCA_prte_allow_run_as_root=1; fi
+          cd ~/tonto
+          sh scripts/check_mpi_pi.sh ~/tonto-build/mpi/run_mpi_pi \
+             "$prefix/bin/mpirun" 1 2 4 | tee ~/mpi_pi.log
+          {
+            echo '## MPI invariant — pi versus rank count (GATING)'
+            echo '```'
+            cat ~/mpi_pi.log
+            echo '```'
+          } >> "$ws/wsl-mpi-summary.md"
+
+      - name: Short suite under MPI at 2 ranks (informational)
+        shell: wsl-bash {0}
+        continue-on-error: true
+        # Informational for ci-mpi.yml's reason: docs/TONTO_AND_MPI.md still has
+        # open defect-register rows, so gating on this would be permanently red
+        # for reasons that have nothing to do with WSL. -n 2, not 4: the runner
+        # has 4 vCPUs and WSL2 sees fewer.
+        #
+        # No `tail`, and --failure-dir: an ERROR row prints "ERROR ERROR ERROR"
+        # and a crashed job writes no .bad, so without one log per failure the
+        # cause is recorded nowhere. That cost a run its evidence on 2026-08-26.
+        run: |
+          ws="$PWD"
+          set -o pipefail
+          prefix="$HOME/opt/openmpi-gf${{ env.FC_VERSION }}"
+          # An `[ ... ] && export` one-liner would ABORT the step when the test
+          # is false: wsl-bash runs `bash -euo pipefail`, so a false test is a
+          # non-zero command. Use an if.
+          if [ "$(id -u)" -eq 0 ]; then export PRTE_MCA_prte_allow_run_as_root=1; fi
+          cd ~/tonto
+          {
+            echo '## MPI short suite — 2 ranks, WSL (informational)'
+            echo ''
+            echo 'Gate for this workflow is the pi rank-invariance check, not this table.'
+            echo ''
+            echo '```'
+          } >> "$ws/wsl-mpi-summary.md"
+          python3 -u scripts/suite_report.py \
+            --program ~/tonto-build/mpi/tonto --tests-dir tests --basis-sets basis_sets \
+            --suites short --no-log --failure-dir ~/mpi-test-failures \
+            --mpi --mpi-ranks 2 --mpi-launcher "$prefix/bin/mpirun" \
+            2>&1 | tee -a "$ws/wsl-mpi-summary.md"
+          echo '```' >> "$ws/wsl-mpi-summary.md"
+
+      - name: Collect artifacts out of the Linux filesystem
+        if: always()
+        shell: wsl-bash {0}
+        # upload-artifact runs on the Windows side and cannot see the WSL
+        # filesystem, so copy anything worth keeping back to the workspace.
+        run: |
+          dest="$PWD/wsl-mpi-artifacts"
+          rm -rf "$dest"; mkdir -p "$dest"
+          cp ~/mpi_pi.log ~/configure.log "$dest/" 2>/dev/null || true
+          [ -d ~/mpi-test-failures ] && cp -a ~/mpi-test-failures "$dest/" || true
+          if [ -d ~/tonto/tests ]; then
+            ( cd ~/tonto && find tests -name '*.bad' -print0 \
+                | tar -cf - --null -T - 2>/dev/null ) | ( cd "$dest" && tar -xf - ) || true
+          fi
+          find "$dest" -type f | head -50
+
+      - name: Publish the WSL MPI summary
+        if: always()
+        # Windows-side step (default pwsh), so $env:GITHUB_STEP_SUMMARY is in
+        # scope here even though it is not inside WSL.
+        run: |
+          if (Test-Path wsl-mpi-summary.md) {
+            Get-Content wsl-mpi-summary.md | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+          } else {
+            "No WSL MPI summary was produced - the job failed before Configure." |
+              Add-Content -Path $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Upload logs and any .bad outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-wsl-mpi-diagnostics
+          path: wsl-mpi-artifacts/
+          if-no-files-found: warn
