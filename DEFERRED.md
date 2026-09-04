@@ -2262,7 +2262,33 @@ that trap when timing truncated runs.
 **Open:** where the 46 s actually goes (convergence is not the lever), and why the vdW indices
 are the platform-sensitive part.
 
-### NOT STARTED: `# of unmatched Fridel pairs` reports *every* reflection (and is misspelled)
+### INVESTIGATED 2026-09-04: the count is CORRECT; three reporting defects remain
+
+> **The number is right, and the equality is not suspicious.** Verified independently of Tonto
+> on the one dataset in the suite where the answer is non-trivial,
+> `tests/long/L_alanine_IAM_scale_factor_test`: a script over the raw `.hkl`, reproducing
+> `f_sigma_cutoff= 4.0`, gives **772 kept and 192 unpaired** — Tonto's numbers exactly. The four
+> rejected reflections explain the count: `(-6,-2,-6)` and `(6,2,6)` are a Friedel pair dropped
+> together, `(0,7,1)` and `(4,5,0)` were unpaired, taking 194 to 192. And `gly_ala_100K.hkl`
+> contains **zero** reflections whose mate `(-h,-k,-l)` is also present, so 2514 of 2514 is
+> correct arithmetic on Friedel-merged data — which 33 of the 35 references are.
+>
+> **What is wrong is the line, three times over:** `Fridel` is misspelled; it counts
+> *reflections without a mate*, not *pairs*; and for merged data it merely restates `N_r`, which
+> reads like a fault. Any fix re-blesses 35 references, so the wording is Dylan's call — held
+> 2026-09-04 to be batched with other output changes that may affect the same re-bless.
+>
+> **Two things found on the way, not in the original entry.**
+> `VEC{REFLECTION}:get_all_Friedel_pairs` is **not** only a diagnostic: `crystal.foo:9887` and
+> `:9980` call it to set the multiplicity factor for the Fourier synthesis behind the deformation
+> and residual density maps, so an error in it would be a wrong-answer bug. And it carries a
+> latent one — the inner loop never `exit`s once it finds the mate, so with duplicate Miller
+> indices a reflection can be credited to two partners and the count comes out low. No test
+> dataset has duplicates (all twelve checked), so it cannot bite today. One line to fix.
+
+Original entry follows.
+
+### The original entry: `# of unmatched Fridel pairs` reports *every* reflection (and is misspelled)
 
 Found during the H1 fragHAR archaeology (2026-08-02, `docs/RUNNING_HART.md` §6). In
 `tests/long/gly_ala_fragHAR_rhf_STO-3G/stdout` the refinement-results block reads:
