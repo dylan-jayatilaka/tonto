@@ -477,6 +477,42 @@ another usable negative control.
 `REFLECTION:remove_anom_from_F_exp` declares and assigns `II = IMAGIFY(ONE)` and never uses
 it. Harmless; delete it if the routine is touched.
 
+## The residual-density nearest-atom report is unstable (Dylan, 2026-09-04)
+
+**Dormant, not broken.** `MOLECULE.RHO:get_minmax_residual_density_p` can name the atoms
+nearest the residual-density extrema:
+
+    - nearest atom .............. C6
+    - distance to it ............ 0.43
+
+but it is gated on `.crystal.xray_data.do_minmax_atoms`, `DEFAULT(FALSE)`, and **no test
+anywhere enables it**. Every current reference prints only Maximum / Minimum / RMS. The one
+file carrying the lines is `tests/long/yq28_anharm_disp_H_U_iso_IAM_refinement/stdout.good_residual`,
+a stale leftover, not a compared reference. So switching it on is what would expose the
+problem.
+
+**Why it is unstable.** The extremum tends to fall between two atoms, often on a symmetry
+plane. Two effects compound:
+
+1. `maxa = maxloc(map,dim=1)` picks a **single grid point**. Where the maximum is shared
+   between symmetry-related positions, the winning point flips between symmetry images on the
+   last bits, and the whole nearest-atom set changes with it.
+2. `VEC{ATOM}:nearest_atoms_to(pos,tol)` already returns **all** atoms within `tol` of the
+   nearest — the call site comment says "There could be many" — but it collects them in
+   unit-cell atom index order, so there is no defined tie-break when two atoms are equidistant.
+
+**What Dylan wants** (his words, 2026-09-04): print a sorted list of the nearest atoms within a
+threshold, so the report is stable. Sorting by distance is not enough on its own — a genuine
+tie needs a second key, so sort by distance then by tag. That fixes (2). Fixing (1) needs the
+extremum itself reported in a symmetry-canonical form, or the acceptance that the *set* is the
+answer rather than the point.
+
+The cheaper interim, if it is ever switched on before the proper fix: comment out the two
+`- nearest atom` / `- distance to it` pairs and keep the extrema.
+
+**Do not switch `do_minmax_atoms` on in a test until this is done** — it would make those
+references flap.
+
 ## `remove_dispersion_from_F_exp` is accepted, reported, and not honoured (2026-09-04)
 
 Tonto offers the two standard dispersion conventions: add the anomalous contribution to

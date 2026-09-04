@@ -12,7 +12,7 @@ are not all wired to every push.
 | **Linux&#8209;MPI**      | `ci-mpi.yml` | yes | weekly (Mon), on demand, and on MPI-relevant changes | ~40 min |
 | **WSL&#8209;release**    | `ci-wsl.yml` | yes | `guards` job on every push; the full WSL build when the WSL machinery changes, on demand, and weekly (Mon) *once on `master`* | ~1 min / ~40–70 min |
 | **WSL&#8209;debug**      | `ci-wsl-debug.yml` | yes | weekly (Tue) and on demand — green on `master` since 2026-08-18 | ~60–90 min |
-| **WSL&#8209;MPI**        | `ci-wsl-mpi.yml` | not yet | weekly (Fri) and on demand — not yet on `master`, so it does not run | ~2 min / ~2–3 h |
+| **WSL&#8209;MPI**        | `ci-wsl-mpi.yml` | not yet | weekly (Fri) and on demand — green on first full run, 2026-09-04 | ~25 s / ~55 min |
 | **macOS&#8209;release**  | `ci-macos.yml` | not yet | weekly (Tue) and on demand — first run 2026-09-04, 51/55 | ~20 min × 2 |
 | **macOS&#8209;debug**    | `ci-macos-debug.yml` | not yet | weekly (Thu) and on demand — green on first run, 2026-09-04 | ~12 min × 2 |
 | **macOS&#8209;MPI**      | `ci-macos-mpi.yml` | not yet | weekly (Wed) and on demand | ~40–70 min |
@@ -27,6 +27,22 @@ even though what it tests (`cmake/WSL.cmake`) is not release-specific. It is the
 that WSL work gets a signal on every push without a fifth badge.
 
 ---
+
+## Reading the two MPI workflows
+
+**CI (Linux-MPI)** and **CI (WSL-MPI)** gate on the pi rank-invariance check, not on the test
+suite. The suite step is deliberately informational: `docs/TONTO_AND_MPI.md` still carries open
+defect-register rows, so gating on it would be permanently red for reasons that have nothing to
+do with the platform.
+
+So a line like `GRAND TOTAL: loose 47/55 (ERROR 6)` in a WSL-MPI run is **not** a WSL
+regression — it is the same MPI defect territory the Linux job reports. Compare it against the
+Linux MPI numbers of the same week before drawing any conclusion, and read the gate line
+instead for pass/fail:
+
+```
+ok   mpi_pi   all rank counts (1 2 4) agree with pi and with each other
+```
 
 ## Running a workflow by hand
 
