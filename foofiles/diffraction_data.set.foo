@@ -1962,81 +1962,6 @@ contains
 
    end
 
-   make_phased_dF_a(dF) :: PURE
-   ! Get phased structure factor differences from experimental values
-   ! (without extinction/scale factor correction) for residual map.
-   ! Corrected to remove dispersion 8/1/2019 DJ & HBB
-      self :: IN
-      dF :: VEC{CPX}, OUT
-
-   ENSURE(.reflections.allocated, "no structure factors")
-   ENSURE(dF.dim==.reflections.dim, "incorrect size, dF")
-
-      phase :: VEC{CPX}@
-      ext   :: VEC{REAL}@
-      n_refl :: INT
-
-      n_refl = .reflections.dim
-
-      phase.create(n_refl)
-      ext.create(n_refl)
-
-      ! Phases should not include dispersion (if added)
-      phase = REFLECTION:F_phase_without_disp(.reflections)
-
-      ! These are the scale factors & extinction
-      ext = .F_scale_and_extn_correction
-
-      ! Subtract the predicted value (which includes dispersion)
-      ! Also, place F_exp on an absolute scale
-      dF = (.reflections.F_corr - .reflections.F_pred) * phase / ext
-
-      ext.destroy
-      phase.destroy
-
-   end
-
-   make_phased_dF_b(dF) :: PURE
-   ! Get phased structure factor differences from experimental values
-   ! (without extinction/scale factor correction) for residual map.
-   ! Corrected to remove dispersion 8/1/2019 DJ & HBB
-      self :: IN
-      dF :: MAT3{CPX}@, OUT
-
-   ENSURE(.reflections.allocated, "no structure factors")
-
-      phase :: VEC{CPX}@
-      ext   :: VEC{REAL}@
-      n_refl :: INT
-      r,h,k,l :: INT
-
-      n_refl = .reflections.dim
-
-      phase.create(n_refl)
-      ext.create(n_refl)
-
-      ! Phases should not include dispersion (if added)
-      phase = REFLECTION:F_phase_without_disp(.reflections)
-
-      ! These are the scale factors & extinction
-      ext   = .F_scale_and_extn_correction
-
-      ! Subtract the predicted value (which includes dispersion)
-      ! Also, place F_exp on an absolute scale
-      dF = ZERO
-      do r = 1,n_refl
-         h = .reflections(r).h1
-         k = .reflections(r).h2
-         l = .reflections(r).h3
-         dF(h,k,l) = (.reflections(r).F_corr - .reflections(r).F_pred) * phase(r) / ext(r)
-      end
-      
-      ! Clean
-      ext.destroy
-      phase.destroy
-
-   end
-
    make_symop_generated_dF_a_v2(dF,g1,g2,g3,spacegroup,mult) :: PURE
    ! Make the full set of symmetry generated reciprocal get phased
    ! structure factor differences from experimental values
@@ -2061,7 +1986,7 @@ contains
       t   :: VEC{REAL}(3)
       g,h :: VEC{INT}(3)
       n_refl,n,p0,p,s, ss, Friedel :: INT
-      F_calc,F_disp,F_exp,phase,ci :: CPX
+      dF_n,phase,ci :: CPX
 
       ! No. of reflection
       n_refl = .reflections.dim
@@ -2076,21 +2001,25 @@ contains
       p = 0
       do n = 1,n_refl
 
-         ! F_calc (absolute scale) *including* dispersion
-         F_calc = .reflections(n).F_calc
-
-         ! Dispersion contribution only
-         F_disp = .reflections(n).F_disp
-
-         ! Complex experimental SF (absolute scale)
-         phase  = F_calc/abs(F_calc) 
-         F_exp  = .reflections(n).F_exp*phase/ext(n)
-
-         ! Complex experimental SF without dispersion
-         F_exp  = F_exp - F_disp     ! Kang comment: F_disp here only?
-
-         ! F_calc withot dispersion
-         F_calc = F_calc - F_disp    ! Kang comment:   or here only?
+         ! The Fourier coefficient for this reflection, on absolute scale.
+         !
+         ! F_corr is the observation (it equals F_exp unless
+         ! remove_dispersion_from_F_exp is set), F_pred is |F_calc| carrying the
+         ! scale and extinction corrections, and "ext" returns the difference to
+         ! absolute scale. Since F_calc = |F_calc|.exp(i.phase), this is the
+         ! same quantity the routine computed before, written in the standard
+         ! (|F_o| - |F_c|).exp(i.phase_c) form.
+         !
+         ! THE PHASE IS DELIBERATELY THE ONE THAT INCLUDES DISPERSION.
+         ! F_phase_without_disp is what a residual map free of the anomalous
+         ! contribution needs -- but only once F_corr is dispersion-corrected
+         ! too, which needs remove_dispersion_from_F_exp. While that flag is off
+         ! (its default), F_corr still carries the anomalous signal, so a
+         ! dispersion-free phase would give a half-corrected map that neither
+         ! convention intends. Switch BOTH together, not one.
+         ! See docs/TONTO_DISPERSION_CORRECTIONS.md.
+         phase = .reflections(n).F_phase
+         dF_n  = (.reflections(n).F_corr - .reflections(n).F_pred)*phase/ext(n)
 
          ! Unique miller indices
          h = .reflections(n).Miller_indices
@@ -2124,7 +2053,7 @@ contains
             g3(p) = g(3)
 
             ! Symmetry generated (Delta F)
-            dF(p) = (F_exp - F_calc)*Friedel ! Kang comment: For now, F_disp will cancel each other out and do nothing
+            dF(p) = dF_n*Friedel
             dF(p) = dF(p)*exp(ci*dot_product(h,t)) ! translation part
 
          end

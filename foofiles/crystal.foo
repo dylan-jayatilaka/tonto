@@ -4124,8 +4124,12 @@ contains
    ! .xray_data.PUT:put_F_statistics
    ! .xray_data.PUT:put
 
-      ! Remove dispersion from F_calc, and F_exp to make F_corr?
-      ! WARNING: this is untested & fails
+      ! Remove dispersion from F_calc, and F_exp to make F_corr.
+      ! NOT HONOURED: make_F_calc_from adds dispersion into F_calc whenever
+      ! `correct_dispersion` is true -- which is add OR remove -- so asking to
+      ! remove it from F_exp gives the other convention instead. It runs, and
+      ! reports itself as on. (This note replaced "untested & fails", which was
+      ! right about the outcome.) See docs/TONTO_DISPERSION_CORRECTIONS.md.
       if (.xray_data.remove_dispersion_from_F_exp) then
          .xray_data.reflections.remove_anom_from_F_exp(.xray_data.scale_factor)
          .xray_data.reflections.remove_anom_from_F_calc
@@ -4178,7 +4182,12 @@ contains
       .make_F_predicted_from(sf_e)            ! Always includes dispersion
       sf_e.destroy
 
-      ! Remove dispersion from F_calc, and F_exp to make F_corr?
+      ! Remove dispersion from F_calc, and F_exp to make F_corr.
+      ! NOT HONOURED: make_F_calc_from adds dispersion into F_calc whenever
+      ! `correct_dispersion` is true -- which is add OR remove -- so asking to
+      ! remove it from F_exp gives the other convention instead. It runs, and
+      ! reports itself as on. (This note replaced "untested & fails", which was
+      ! right about the outcome.) See docs/TONTO_DISPERSION_CORRECTIONS.md.
       if (.xray_data.remove_dispersion_from_F_exp) then
          .xray_data.reflections.remove_anom_from_F_exp(.xray_data.scale_factor)
          .xray_data.reflections.remove_anom_from_F_calc
@@ -9850,6 +9859,125 @@ contains
 !
 !   end
 
+   set_Fourier_multiplicities(mult) :: PURE
+   ! Set the multiplicity each reflection carries in the residual-density
+   ! Fourier synthesis: 2 when the conjugate half of reciprocal space is
+   ! absent from the data, 1 when another reflection already supplies it.
+   !
+   ! The conjugate of h is supplied by any reflection whose symmetry
+   ! equivalents include -h. That is the BIJVOET mate, which need not be the
+   ! Friedel mate: in P2(1)2(1)2(1), (h,k,l) and (h,k,-l) are neither
+   ! symmetry equivalent nor Friedel mates, yet each generates the other's
+   ! conjugate half. Testing only for -h itself doubles every such pair.
+   !
+   ! A reflection mapped onto -h by one of its own symops is NOT set to 1
+   ! here: make_symop_generated_dF_a_v2 already divides that case by its site
+   ! symmetry factor.
+      self :: IN
+      mult :: VEC{INT}, OUT
+
+   ENSURE(.xray_data.allocated, "no diffraction data")
+   ENSURE(.xray_data.reflections.allocated, "no structure factors")
+   ENSURE(mult.dim==.xray_data.reflections.dim,"mult: wrong dim")
+
+      key, sorted_key :: VEC{INT}@
+      R :: MAT{REAL}(3,3)
+      h,g :: VEC{INT}(3)
+      i,s,n_refl,n_seitz :: INT
+      found :: BIN
+
+      n_refl  = .xray_data.reflections.dim
+      n_seitz = .spacegroup.n_seitz
+
+      mult = 2
+
+      ! Key each reflection by one integer so the lookup below is a bisection.
+      ! The naive test is O(n_refl^2 . n_seitz), which is minutes on a large
+      ! data set.
+      key.create(n_refl)
+      do i = 1,n_refl
+         key(i) = .Miller_index_key(.xray_data.reflections(i).Miller_indices)
+      end
+
+      sorted_key.create(n_refl)
+      sorted_key = key
+      sorted_key.sort
+
+      do i = 1,n_refl
+
+         h = .xray_data.reflections(i).Miller_indices
+
+         ! Is some symmetry equivalent of -h in the data?
+         do s = 1,n_seitz
+
+            R = transpose(.spacegroup.seitz(1:3,1:3,s))
+            g = -nint(matmul(R,h))
+
+            ! Skip -h generated from h by a symop of its own: that is the site
+            ! symmetry factor's business, not this one's.
+            if (all(g==h)) cycle
+
+            found = .sorted_key_has(sorted_key,.Miller_index_key(g))
+            if (found) then
+               mult(i) = 1
+               exit
+            end
+
+         end
+
+      end
+
+      sorted_key.destroy
+      key.destroy
+
+   end
+
+   sorted_key_has(key,val) result (res) :: PURE
+   ! Return TRUE if the increasing-order list "key" contains "val".
+   ! Bisection: "key" must be sorted.
+      self :: IN
+      key :: VEC{INT}, IN
+      val :: INT, IN
+      res :: BIN
+
+      lo,hi,mid :: INT
+
+      res = FALSE
+      lo  = 1
+      hi  = key.dim
+
+      do
+
+         if (lo>hi) exit
+
+         mid = (lo+hi)/2
+
+         if (key(mid)==val) then
+            res = TRUE
+            exit
+         else if (key(mid)<val) then
+            lo = mid + 1
+         else
+            hi = mid - 1
+         end
+
+      end
+
+   end
+
+   Miller_index_key(h) result (res) :: PURE
+   ! Pack Miller indices into a single integer so a set of reflections can be
+   ! searched by bisection. Base 1024 keeps the product inside a 32-bit INT.
+      self :: IN
+      h :: VEC{INT}(3), IN
+      res :: INT
+
+   ENSURE(maxval(abs(h))<512,"Miller index too large to pack")
+
+      res = ((h(1)+512)*1024 + (h(2)+512))*1024 + (h(3)+512)
+
+   end
+
    make_residual_density_grid(grid,pts) :: PURE
    ! Make the crystal residual error "map" in the unit cell with
    ! the supplied points "pts" in a cartesian system.
@@ -9879,12 +10007,14 @@ contains
       n_refl = .xray_data.reflections.dim*.spacegroup.n_seitz
       ci     = -2*PI * IMAGIFY(ONE)
 
-      ! Multiplicity factor for Friedel-pairs (if any)
+      ! Multiplicity factor for the conjugate half of reciprocal space.
+      ! For a centrosymmetric group every reflection's own symops generate -h,
+      ! so the site symmetry factor handles it and 2 is right throughout.
       mult.create(.xray_data.reflections.dim)
       if (.spacegroup.centrosymmetric) then
          mult = 2
       else
-         .xray_data.reflections.get_all_Friedel_pairs(mult)
+         .set_Fourier_multiplicities(mult)
       end
 
       ! Get phased structure factor differences, absolute scale
@@ -9972,12 +10102,14 @@ contains
       n_refl = .xray_data.reflections.dim*.spacegroup.n_seitz
       ci     = -2*PI * IMAGIFY(ONE)
 
-      ! Multiplicity factor for Friedel-pairs (if any)
+      ! Multiplicity factor for the conjugate half of reciprocal space.
+      ! For a centrosymmetric group every reflection's own symops generate -h,
+      ! so the site symmetry factor handles it and 2 is right throughout.
       mult.create(.xray_data.reflections.dim)
       if (.spacegroup.centrosymmetric) then
          mult = 2
       else
-         .xray_data.reflections.get_all_Friedel_pairs(mult)
+         .set_Fourier_multiplicities(mult)
       end
 
       ! Get phased structure factor differences, absolute scale
@@ -10050,446 +10182,6 @@ contains
       dF.destroy
 
    end
-
-!   make_residual_density_cell_c(map)
-!   ! Make the crystal residual error "map" in the unit cell with
-!   ! "nx", "ny" and "nz" points per cell axis. These must be odd.
-!   ! The "map" array increments first on the x axis, then y, then z
-!   ! i.e. it must be compatible with PLOT_GRID:make_points.
-!   ! This routine takes advantage of the grid structure for speed.
-!   ! This version uses a cube of structure factors.
-!      self :: IN
-!      map :: MAT3{REAL}, OUT
-!
-!   ENSURE(.xray_data.allocated, "no diffraction data")
-!   ENSURE(.xray_data.reflections.allocated, "no structure factors")
-!   ENSURE(.xray_data.INQ:have_F_calc, "no calculated structure factors")
-!   ENSURE(.xray_data.INQ:have_F_pred, "no predicted structure factors")
-!   ENSURE(.xray_data.INQ:have_F_exp, "no experimental structure factors")
-!
-!      n_refl :: INT
-!      nx,ny,nz :: INT
-!      hx,hy,hz :: INT
-!      ix,iy,iz :: INT
-!      xi,yi,zi :: REAL
-!      fac,del  :: REAL
-!      phx,phy,phz :: MAT{CPX}*
-!      h_min,h_max :: VEC{INT}(3)
-!      dF :: MAT3{CPX}*
-!      ci :: CPX
-!
-!      ! Constants
-!      nx = map.dim1
-!      ny = map.dim2
-!      nz = map.dim3
-!      n_refl = .xray_data.reflections.dim
-!      ci     = -2*PI * IMAGIFY(ONE)
-!
-!      ! Maximum Miller indices
-!      h_min = .xray_data.reflections.h_min
-!      h_max = .xray_data.reflections.h_max
-!
-!      ! Get phased structure factor differences
-!      ! (without extinction, but with scale correction)
-!      dF.create(h_min,h_max)
-!      .xray_data.make_phased_dF_b(dF)
-!
-!      ! Prefactor
-!      ! NOTE: Factor 2 assumes Friedel pairs merged and removed
-!      fac = TWO/.unit_cell.volume
-!
-!      ! Make the 1D x phases
-!      phx.create([h_min(1),h_max(1)],[1,nx])
-!      del = ONE/(nx-1)
-!      do ix = 1,nx
-!      do hx = h_min(1),h_max(1)
-!         xi = (ix-1) * del
-!         phx(hx,ix) = exp(ci*hx*xi)
-!      end
-!      end
-!
-!      ! Make the 1D y phases
-!      phy.create([h_min(2),h_max(2)],[1,ny])
-!      del = ONE/(ny-1)
-!      do iy = 1,ny
-!      do hy = h_min(2),h_max(2)
-!         yi = (iy-1) * del
-!         phy(hy,iy) = exp(ci*hy*yi)
-!      end
-!      end
-!
-!      ! Make the 1D z phases
-!      phz.create([h_min(3),h_max(3)],[1,nz])
-!      del = ONE/(nz-1)
-!      do iz = 1,nz
-!      do hz = h_min(3),h_max(3)
-!         zi = (iz-1) * del
-!         phz(hz,iz) = exp(ci*hz*zi) * fac ! <--
-!      end
-!      end
-!
-!      ! Do it
-!      dF.change_basis_to(map,phx,phy,phz)
-!
-!      ! Clean
-!      phx.destroy
-!      phy.destroy
-!      phz.destroy
-!      dF.destroy
-!
-!   end
-
-!   make_residual_density_cell_g(map,nx,ny,nz)
-!   ! Make the crystal residual error "map" in the unit cell with
-!   ! "nx", "ny" and "nz" points per cell axis. These must be odd.
-!   ! The "map" array increments first on the x axis, then y, then z
-!   ! i.e. it must be compatible with PLOT_GRID:make_points.
-!   ! This routine takes advantage of the grid structure for speed.
-!   ! This version need to gather the 1D phases over miller indices.
-!      self :: IN
-!      map :: VEC{REAL}, OUT
-!      nx,ny,nz :: INT, IN
-!
-!   ENSURE(.xray_data.allocated, "no diffraction data")
-!   ENSURE(.xray_data.reflections.allocated, "no structure factors")
-!   ENSURE(.xray_data.INQ:have_F_calc, "no calculated structure factors")
-!   ENSURE(.xray_data.INQ:have_F_pred, "no predicted structure factors")
-!   ENSURE(.xray_data.INQ:have_F_exp, "no experimental structure factors")
-!
-!      n_refl,r,p :: INT
-!      hx,hy,hz :: INT
-!      ix,iy,iz :: INT
-!      xi,yi,zi :: REAL
-!      fac,del,res :: REAL
-!      phx,phy,phz :: MAT{CPX}*
-!      h_max :: VEC{INT}(3)
-!      dF :: VEC{CPX}*
-!      ci :: CPX
-!
-!      ! Constants
-!      n_refl = .xray_data.reflections.dim
-!      ci     = -2*PI * IMAGIFY(ONE)
-!
-!      ! Maximum Miller indices
-!      h_max = .xray_data.reflections.h_max
-!
-!      ! Get phased structure factor differences
-!      ! (without extinction, but with scale correction)
-!      dF.create(n_refl)
-!      .xray_data.make_phased_dF_a(dF)
-!
-!      ! Prefactor
-!      ! NOTE: Factor 2 assumes Friedel pairs merged and removed
-!      fac = TWO/.unit_cell.volume
-!
-!      ! Make the 1D x phases
-!      phx.create([1,nx],[0,h_max(1)])
-!      del = ONE/(nx-1)
-!      do hx = 0,h_max(1)
-!      do ix = 1,nx
-!         xi = (ix-1) * del
-!         phx(ix,hx) = exp(ci*hx*xi)
-!      end
-!      end
-!
-!      ! Make the 1D y phases
-!      phy.create([1,ny],[0,h_max(2)])
-!      del = ONE/(ny-1)
-!      do hy = 0,h_max(2)
-!      do iy = 1,ny
-!         yi = (iy-1) * del
-!         phy(iy,hy) = exp(ci*hy*yi)
-!      end
-!      end
-!
-!      ! Make the 1D z phases
-!      phz.create([1,nz],[0,h_max(3)])
-!      del = ONE/(nz-1)
-!      do hz = 0,h_max(3)
-!      do iz = 1,nz
-!         zi = (iz-1) * del
-!         phz(iz,hz) = exp(ci*hz*zi)
-!      end
-!      end
-!
-!
-!      ! Grid point
-!      p = 0
-!
-!      ! Make the residual map
-!      do iz = 1,nz
-!      do iy = 1,ny
-!      do ix = 1,nx
-!
-!         p = p + 1
-!
-!         res = ZERO
-!         do r = 3,n_refl
-!            hx = .xray_data.reflections(r).h1
-!            hy = .xray_data.reflections(r).h2
-!            hz = .xray_data.reflections(r).h3
-!            res = res + REALIFY(dF(r)*phx(ix,hx)*phy(iy,hy)*phz(iz,hz))
-!         end
-!
-!         map(p) = fac*res
-!
-!      end
-!      end
-!      end
-!
-!      ! Clean
-!      phx.destroy
-!      phy.destroy
-!      phz.destroy
-!      dF.destroy
-!
-!   end
-
-!   make_residual_density_cell_m(map,nx,ny,nz)
-!   ! Make the crystal residual error "map" in the unit cell with
-!   ! "nx", "ny" and "nz" points per cell axis. These must be odd.
-!   ! The "map" array increments first on the x axis, then y, then z
-!   ! i.e. it must be compatible with PLOT_GRID:make_points.
-!   ! This routine takes advantage of the grid structure for speed.
-!   ! This version uses more memory for the 1D phase arrays.
-!      self :: IN
-!      map :: VEC{REAL}, OUT
-!      nx,ny,nz :: INT, IN
-!
-!   ENSURE(.xray_data.allocated, "no diffraction data")
-!   ENSURE(.xray_data.reflections.allocated, "no structure factors")
-!   ENSURE(.xray_data.INQ:have_F_calc, "no calculated structure factors")
-!   ENSURE(.xray_data.INQ:have_F_pred, "no predicted structure factors")
-!   ENSURE(.xray_data.INQ:have_F_exp, "no experimental structure factors")
-!
-!      n_refl,r,p :: INT
-!      hx,hy,hz :: VEC{INT}*
-!      ix,iy,iz :: INT
-!      xi,yi,zi :: REAL
-!      fac,del  :: REAL
-!      dF, phyz :: VEC{CPX}*
-!      phx,phy,phz :: MAT{CPX}*
-!      h_max :: VEC{INT}(3)
-!      ci :: CPX
-!
-!      ! Constants
-!      n_refl = .xray_data.reflections.dim
-!      ci     = -2*PI * IMAGIFY(ONE)
-!
-!      ! Maximum Miller indices
-!      h_max = .xray_data.reflections.h_max
-!
-!      ! Get phased structure factor differences
-!      ! (without extinction, but with scale correction)
-!      dF.create(n_refl)
-!      .xray_data.make_phased_dF_a(dF)
-!
-!      ! Prefactor
-!      ! NOTE: Factor 2 assumes Friedel pairs merged and removed
-!      fac = TWO/.unit_cell.volume
-!      dF  = fac * dF
-!
-!      ! Get h's
-!      hx.create(n_refl)
-!      hy.create(n_refl)
-!      hz.create(n_refl)
-!
-!      hx = .xray_data.reflections(:).h1
-!      hy = .xray_data.reflections(:).h2
-!      hz = .xray_data.reflections(:).h3
-!
-!      ! Make the 1D x phases
-!      phx.create(n_refl,nx)
-!      del = ONE/(nx-1)
-!      do ix = 1,nx
-!         xi = (ix-1) * del
-!         do r = 1,n_refl
-!            phx(r,ix) = exp(ci*hx(r)*xi)
-!         end
-!      end
-!
-!      ! Make the 1D y phases
-!      phy.create(n_refl,ny)
-!      del = ONE/(ny-1)
-!      do iy = 1,ny
-!         yi = (iy-1) * del
-!         do r = 1,n_refl
-!            phy(r,iy) = exp(ci*hy(r)*yi)
-!         end
-!      end
-!
-!      ! Make the 1D z phases
-!      phz.create(n_refl,nz)
-!      del = ONE/(nz-1)
-!      do iz = 1,nz
-!         zi = (iz-1) * del
-!         do r = 1,n_refl
-!            phz(r,iz) = exp(ci*hz(r)*zi) * dF(r) ! <--
-!         end
-!      end
-!
-!
-!      ! Grid point
-!      p = 0
-!
-!      ! Make the residual map
-!      phyz.create(n_refl)
-!
-!      do iz = 1,nz
-!      do iy = 1,ny
-!
-!         phyz = phy(:,iy)*phz(:,iz)
-!
-!         do ix = 1,nx
-!        
-!            p = p + 1
-!            map(p) = sum( REALIFY(phx(:,ix)*phyz(:)) )
-!        
-!         end
-!
-!      end
-!      end
-!
-!      ! Clean
-!      phyz.destroy
-!      phz.destroy
-!      phy.destroy
-!      phx.destroy
-!      hz.destroy
-!      hy.destroy
-!      hx.destroy
-!      dF.destroy
-!
-!   end
-
-!   make_residual_density_cell_p(map,nx,ny,nz)
-!   ! Make the crystal residual error "map" in the unit cell with
-!   ! "nx", "ny" and "nz" points per cell axis. These must be odd.
-!   ! The "map" array increments first on the x axis, then y, then z
-!   ! i.e. it must be compatible with PLOT_GRID:make_points.
-!   ! This routine takes advantage of the grid structure for speed.
-!   ! This version uses a 2D phase array and reduced multiplication.
-!      self :: IN
-!      map :: VEC{REAL}, OUT
-!      nx,ny,nz :: INT, IN
-!
-!   ENSURE(.xray_data.allocated, "no diffraction data")
-!   ENSURE(.xray_data.reflections.allocated, "no structure factors")
-!   ENSURE(.xray_data.INQ:have_F_calc, "no calculated structure factors")
-!   ENSURE(.xray_data.INQ:have_F_pred, "no predicted structure factors")
-!   ENSURE(.xray_data.INQ:have_F_exp, "no experimental structure factors")
-!
-!      n_refl,r,p :: INT
-!      hx,hy,hz :: VEC{INT}*
-!      ix,iy,iz :: INT
-!      xi,yi,zi :: REAL
-!      fac,del  :: REAL
-!      dF, phyz :: VEC{CPX}*
-!      phx,phy,phz :: MAT{CPX}*
-!      ph2 :: MAT3{CPX}*
-!      h_max :: VEC{INT}(3)
-!      ci :: CPX
-!
-!      ! Constants
-!      n_refl = .xray_data.reflections.dim
-!      ci     = -2*PI * IMAGIFY(ONE)
-!
-!      ! Maximum Miller indices
-!      h_max = .xray_data.reflections.h_max
-!
-!      ! Get phased structure factor differences
-!      ! (without extinction, but with scale correction)
-!      dF.create(n_refl)
-!      .xray_data.make_phased_dF_a(dF)
-!
-!      ! Prefactor
-!      ! NOTE: Factor 2 assumes Friedel pairs merged and removed
-!      fac = TWO/.unit_cell.volume
-!
-!      ! Get h's
-!      hx.create(n_refl)
-!      hy.create(n_refl)
-!      hz.create(n_refl)
-!
-!      hx = .xray_data.reflections(:).h1
-!      hy = .xray_data.reflections(:).h2
-!      hz = .xray_data.reflections(:).h3
-!
-!      ! Allocate the 2D phase array
-!      ph2.create(n_refl,ny,nz)
-!
-!      ! Make the 1D z phases
-!      phz.create(n_refl,nz)
-!      del = ONE/(nz-1)
-!      do iz = 1,nz
-!         zi = (iz-1) * del
-!         do r = 1,n_refl
-!            phz(r,iz) = exp(ci*hz(r)*zi)
-!         end
-!      end
-!
-!      ! Make the 1D y phases
-!      phy.create(n_refl,ny)
-!      del = ONE/(ny-1)
-!      do iy = 1,ny
-!         yi = (iy-1) * del
-!         do r = 1,n_refl
-!            phy(r,iy) = exp(ci*hy(r)*yi)
-!         end
-!      end
-!
-!      ! Make the 2D array
-!      do iz = 1,nz
-!      do iy = 1,ny
-!         do r = 1,n_refl
-!            ph2(r,iy,iz) = phy(r,iy)*phz(r,iz)
-!         end
-!      end
-!      end
-!
-!      ! Clean
-!      phy.destroy
-!      phz.destroy
-!
-!      ! Make the 1D x phases
-!      phx.create(n_refl,nx)
-!      del = ONE/(nx-1)
-!      do ix = 1,nx
-!         xi = (ix-1) * del
-!         do r = 1,n_refl
-!            phx(r,ix) = exp(ci*hx(r)*xi) * dF(r) * fac
-!         end
-!      end
-!
-!
-!      ! Grid point
-!      p = 0
-!
-!      ! Make the residual map
-!      do iz = 1,nz
-!      do iy = 1,ny
-!
-!         phyz => ph2(:,iy,iz)
-!
-!         do ix = 1,nx
-!        
-!            p = p + 1
-!            map(p) = sum( REALIFY(phx(:,ix)*phyz) )
-!        
-!         end
-!
-!      end
-!      end
-!
-!      ! Clean
-!      phx.destroy
-!      ph2.destroy
-!      hz.destroy
-!      hy.destroy
-!      hx.destroy
-!      dF.destroy
-!
-!   end
 
 !  ===========================
 !  Cluster generation routines

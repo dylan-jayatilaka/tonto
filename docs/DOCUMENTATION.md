@@ -54,6 +54,7 @@ residue moving into the pages above.
 | [**Deferred issues**](../DEFERRED.md) | the live work: the handover, then every open issue by theme |
 | [**Developer reference**](TONTO_DEVELOPER_INFO.md) | writing parallel (MPI) code in Foo, and build and test traps |
 | [**Tonto and MPI**](TONTO_AND_MPI.md) | the parallel build, its numerics, and the defect register |
+| [**Dispersion corrections**](TONTO_DISPERSION_CORRECTIONS.md) | anomalous dispersion, Bijvoet pairs, and the residual density map |
 | [**DFT standardisation**](DFT_STANDARDISATION.md) | the DFT machinery, its silent defects, and the libxc plan |
 | [**Extinction correction**](EXTINCTION_REPORT.md) | why it has been dormant, its defect register, and the plan to bring it back |
 | [**GoF², not chi2**](GOF_NOT_CHI2.md) | the misnamed goodness of fit, and reporting GoF in place of its square |

@@ -20,7 +20,8 @@ crowds out the direction of the project.
 
 **Which `docs/` files are working documents?** Only those covering an item still in flight —
 today `TONTO_AND_MPI.md`, `TONTO_DEVELOPER_INFO.md`, `PROJECT_HISTORY.md`, `DFT_STANDARDISATION.md`,
-`EXTINCTION_REPORT.md`, `GFORTRAN16_*.md`, `CCTBX_INTO_TONTO.md`, `GOF_NOT_CHI2.md`, and the
+`EXTINCTION_REPORT.md`, `GFORTRAN16_*.md`, `CCTBX_INTO_TONTO.md`, `GOF_NOT_CHI2.md`,
+`TONTO_DISPERSION_CORRECTIONS.md`, and the
 `*_REPORT.md` files. **They are deleted when their item closes**, and their durable residue
 moves into the user-facing pages. Everything else in `docs/` is user-facing.
 

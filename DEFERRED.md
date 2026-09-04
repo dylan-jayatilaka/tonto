@@ -418,6 +418,39 @@ rebuilt after a re-prune and rebuilding it. That is why this stays deferred.
 both refinements. Nothing currently checked in gives a wrong answer. The defect
 is latent, and becomes live the moment a job with cutoffs re-enters the block.
 
+## `remove_dispersion_from_F_exp` is accepted, reported, and not honoured (2026-09-04)
+
+Tonto offers the two standard dispersion conventions: add the anomalous contribution to
+`F_calc` (`correct_dispersion=`), or remove it from `F_exp` (`remove_dispersion_from_f_exp=`,
+"used by XD, Shelx" per `types.foo`). Exactly one should be on, and the readers guard that
+with mutual `DIE_IF`s.
+
+**Choosing the second silently gives you the first.** Measured on
+`tests/long/L_cysteine_IAM_R_min_max_residuals`: it runs to exit 0, prints
+`Remove dispersion frm F_exp .... T`, and produces output identical to `correct_dispersion=
+yes` — 12 lines differ in the whole file and every one is the keyword echo, a flag line, or a
+version/timestamp. R(F), GoF and the residual density agree to the last digit.
+
+One gate, in `CRYSTAL:make_F_calc_from`:
+
+    if (.xray_data.INQ:correct_dispersion) then      ! = add OR remove
+       .get_dispersion_correction(Fa)
+       .xray_data.reflections.set_F_disp(Fa)
+       Fc = Fc + Fa                                  ! added under BOTH conventions
+    end
+
+`set_F_disp` belongs there — both conventions need `F_disp`. `Fc = Fc + Fa` should be gated on
+`add_dispersion_to_F_calc` alone. The removal itself lives only in `make_F_calc_derivs`.
+
+**The 2020 comment said "untested & fails". It does not fail** — it runs, reports itself as
+on, and does nothing. That is the same silent class as the per-rank I/O flag of milestone 5,
+and the comment is why nobody looked: it was read as a diagnosis for six years when it was a
+note-to-self. Both sites now carry what was measured.
+
+Fix it together with switching the residual-density phase to `F_phase_without_disp`, which is
+incoherent until `F_corr` genuinely differs from `F_exp`. Needs its own re-bless. Full detail:
+`docs/TONTO_DISPERSION_CORRECTIONS.md`.
+
 ## DFT: three silent defects — see `docs/DFT_STANDARDISATION.md`
 
 Found 2026-08-12 by measurement on `tests/short/h2o_blyp_cc-pVDZ`. The full
@@ -1534,6 +1567,66 @@ Any of these rewrites the reference, so re-bless deliberately and read the resul
 
 # Build system and toolchain
 
+## HANDOFF: the cascade-rebuild batch — three changes that must move NO number (2026-09-04)
+
+**Do this in a fresh session, and only after the Bijvoet/dispersion re-bless has landed.**
+Its whole value is a control, and the control needs a stable baseline.
+
+**The criterion is the point.** Each of these forces a full rebuild and **none of them may
+change a single digit of output**. Run them together, rebuild, and assert the suite is
+byte-identical. If anything moves, that is a bug in the change, and the assertion is the only
+cheap way to find it. Batching them with a change that legitimately moves references — as was
+briefly considered — destroys exactly that, because any accidental effect hides inside the
+expected diff.
+
+### 1. `types.foo` M0s comments
+Held for the next cascade rebuild; see the entry below. Nothing to work out, just apply.
+
+### 2. Prune dead and stale macros in `include/macros.in`
+145 of 377 are never used in any `.foo` file. **The riskiest of the three**: "unused in
+`foofiles/*.foo`" is not the same as "unused after CPP" — a macro can be referenced from
+another macro, or from C. This is the one that most needs the byte-identical check.
+
+### 3. Remove the circular `tonto` target
+`add_custom_target(tonto DEPENDS run_molecule)` collides with the *file* `tonto` in the build
+directory, so every `make tonto` prints `Circular CMakeFiles/tonto <- tonto dependency dropped.`
+The fix is to drop the custom target and name the executable target itself:
+`add_executable(tonto ...)` in place of `add_executable(run_molecule ...)` +
+`set_target_properties(... OUTPUT_NAME tonto)` + `add_custom_target(tonto ...)`.
+
+**CI implications, checked 2026-09-04 — there are none for the build.** No workflow builds by
+target name; every one does `cmake --build <dir> -- -jN`, which builds `all`. No workflow uses
+`cmake --install`, so `install(TARGETS run_molecule DESTINATION bin)` → `install(TARGETS tonto ...)`
+is a local concern only. `-DPURGE_DEAD_CODE=run_molecule` takes the run-file **stem**, not the
+target, so it is unaffected.
+
+**But there is a trap, and it is the one that already bit us.** Naming the executable target
+`tonto` **recreates `build/CMakeFiles/tonto.dir`** — this time holding the executable's single
+object. The four flag assertions repaired on 2026-09-04 now read `tonto_lib.dir` and stay
+correct, but a stale grep of `CMakeFiles/tonto.dir/flags.make` would start *succeeding* again,
+silently, on the wrong file. Put a comment next to the target saying why the assertions look at
+`tonto_lib`.
+
+One doc to update: `docs/TONTO_DEVELOPER_INFO.md:67` says `make run_molecule`.
+
+### 4. Remove `-Wno-uninitialized` from `DEBUG_FLAGS` — note the direction
+
+`cmake/SetFortranFlags.cmake:118` carries `-Wno-maybe-uninitialized -Wno-uninitialized`. These
+**disable** the warning that `-Wall` would otherwise give, in the only build where it fires —
+and it is the warning class that names the defect fixed on 2026-09-03 (`first` read before
+assignment in `MOLECULE.RHO:make_ANO_interpolators`). To get the diagnostic they must be
+**removed**. An earlier version of this note said "turn `-Wno-uninitialized` back on", which
+reads as enabling the suppression; that wording caused a real misunderstanding on 2026-09-04.
+
+`-Wuninitialized` (definite) is clean; `-Wmaybe-uninitialized` is noisy on Fortran with
+allocatables and optional arguments, which is probably why they were added. Drop the first
+unconditionally; treat the second as a measurement — remove it, count the warnings, decide.
+gfortran did **not** flag that particular site at `-O2`, so it is an instrument, not a cure.
+
+**Before landing it, confirm nothing in CI uses `-Werror`**, so a noisy but correct build does
+not read as a regression. This one changes no numbers but will change the build log.
+
+
 ## Future task: split `types.foo` into several modules (parallel compilation)
 
 **Goal (Dylan):** `types.F90` is the slowest single compile in the build and it is a
@@ -2277,6 +2370,16 @@ are the platform-sensitive part.
 > *reflections without a mate*, not *pairs*; and for merged data it merely restates `N_r`, which
 > reads like a fault. Any fix re-blesses 35 references, so the wording is Dylan's call — held
 > 2026-09-04 to be batched with other output changes that may affect the same re-bless.
+>
+> **CORRECTION 2026-09-04, later the same day.** The Bijvoet double-count figures first
+> recorded here (100% of YLID, 99% of L-cysteine, 44% of NH3, 24% of L-alanine) were **wrong**,
+> and the error is instructive: the counting script treated a reflection mapped onto -h by one
+> of its OWN symops as a doubled pair. That is Kanghyun Chu's `f9fb26bc` case, already handled
+> correctly by the site symmetry factor. Excluding self-partners gives YLID 1704 of 2104,
+> L-cysteine 1614 of 1979, NH3 4 of 88, and **L-alanine 0** -- which is why L-alanine did not
+> move when the fix landed, exactly as it should not. Full measurements, and the fix's effect
+> on every reference that prints a residual density, are in
+> `docs/TONTO_DISPERSION_CORRECTIONS.md`.
 >
 > **Two things found on the way, not in the original entry.**
 > `VEC{REFLECTION}:get_all_Friedel_pairs` is **not** only a diagnostic: `crystal.foo:9887` and
