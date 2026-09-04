@@ -1,26 +1,28 @@
 # Continuous integration — what runs, and how to run it yourself
 
-Four workflows, in `.github/workflows/`, named `(platform)-(build type)`. All of them
+Nine workflows, in `.github/workflows/`, named `(platform)-(build type)`. All of them
 are free: `tonto` is a public repository, so GitHub-hosted standard runners have
 unlimited minutes. What differs between them is **wall-clock time**, which is why they
 are not all wired to every push.
 
 | Workflow | File | Badge | Runs | Time |
-|----------|------|-------|------|------|
-| **CI (Linux-release)** | `ci.yml` | yes | every push / PR to `master`, `develop` | ~15–20 min |
-| **CI (WSL-release)** | `ci-wsl.yml` | yes | `guards` job on every push; the full WSL build when the WSL machinery changes, on demand, and weekly (Mon) *once on `master`* | ~1 min / ~40–70 min |
-| **CI (Linux-debug)** | `ci-debug.yml` | yes | every push / PR to `master`, `develop`, and on demand | ~15 min |
-| **CI (WSL-debug)** | `ci-wsl-debug.yml` | yes | weekly (Tue) and on demand — green on `master` since 2026-08-18 | ~60–90 min |
-| **CI (macOS-release)** | `ci-macos.yml` | not yet | weekly (Tue) and on demand — **never yet run**, the file is not on `master` | ~40–70 min × 2 |
-| **CI (macOS-MPI)** | `ci-macos-mpi.yml` | not yet | weekly (Wed) and on demand — **never yet run**, the file is not on `master` | ~40–70 min |
-| **CI (macOS-debug)** | `ci-macos-debug.yml` | not yet | weekly (Thu) and on demand — **never yet run**, the file is not on `master` | ~40–60 min × 2 |
+|--------------------------|------|-------|------|------|
+| **Linux&#8209;release**  | `ci.yml` | yes | every push / PR to `master`, `develop` | ~15–20 min |
+| **Linux&#8209;debug**    | `ci-debug.yml` | yes | every push / PR to `master`, `develop`, and on demand | ~15 min |
+| **Linux&#8209;MPI**      | `ci-mpi.yml` | yes | weekly (Mon), on demand, and on MPI-relevant changes | ~40 min |
+| **WSL&#8209;release**    | `ci-wsl.yml` | yes | `guards` job on every push; the full WSL build when the WSL machinery changes, on demand, and weekly (Mon) *once on `master`* | ~1 min / ~40–70 min |
+| **WSL&#8209;debug**      | `ci-wsl-debug.yml` | yes | weekly (Tue) and on demand — green on `master` since 2026-08-18 | ~60–90 min |
+| **WSL&#8209;MPI**        | `ci-wsl-mpi.yml` | not yet | weekly (Fri) and on demand — not yet on `master`, so it does not run | ~2 min / ~2–3 h |
+| **macOS&#8209;release**  | `ci-macos.yml` | not yet | weekly (Tue) and on demand — first run 2026-09-04, 51/55 | ~20 min × 2 |
+| **macOS&#8209;debug**    | `ci-macos-debug.yml` | not yet | weekly (Thu) and on demand — green on first run, 2026-09-04 | ~12 min × 2 |
+| **macOS&#8209;MPI**      | `ci-macos-mpi.yml` | not yet | weekly (Wed) and on demand | ~40–70 min |
 
 The two release workflows gate on the **loose** criterion from `scripts/test.py` —
 relative error ≤ 0.2 % **or** last printed digit within ±2 — so their verdicts are
 directly comparable with each other and with a local `make report`. The two debug
 workflows deliberately do **not** run the suite at all; see below.
 
-One wrinkle in the naming: the fast `guards` job lives inside **CI (WSL-release)**
+One wrinkle in the naming: the fast `guards` job lives inside **WSL-release**
 even though what it tests (`cmake/WSL.cmake`) is not release-specific. It is there so
 that WSL work gets a signal on every push without a fifth badge.
 
@@ -92,7 +94,7 @@ broken build — they exist because a gfortran miscompilation on arm64 macOS wen
 for want of exactly such a check, and because `hart` shipped for years with a documented
 option its code rejected.
 
-## CI (WSL-release) — `ci-wsl.yml`
+## WSL-release — `ci-wsl.yml`
 
 Two jobs, because they cost very different amounts of wall-clock. See
 [`BUILDING_ON_WINDOWS.md`](BUILDING_ON_WINDOWS.md) for what is being guarded and why.
@@ -187,7 +189,7 @@ is available and the `wsl-version: '1'` fallback is not needed), the PATH saniti
 dropped **72** Windows directories, a Linux `/usr/bin/cc` and JDK were selected, and
 the memory advisory computed `make -j3` from 4 CPUs / 7 GB.
 
-## CI (WSL-debug) — `ci-wsl-debug.yml`
+## WSL-debug — `ci-wsl-debug.yml`
 
 The debug counterpart of CI (WSL-release), and the WSL counterpart of CI (Linux-debug):
 a `-DCMAKE_BUILD_TYPE=debug` build inside a real WSL2 Ubuntu, followed by the same two
