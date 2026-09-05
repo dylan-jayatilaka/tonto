@@ -84,8 +84,9 @@ and the suite is unchanged across all 1508 produced files.
 **CI is green.** All four workflows that the push to `develop` triggered — Linux-release,
 Linux-debug, Linux-MPI and WSL-release — passed on `f10e77bf`. Linux-debug is the one that
 mattered: it now carries ~688 uninitialised warnings in its log and there is no `-Werror`
-anywhere, so it stays green. Note `ci-mpi.yml` fires on `develop` too, not only `master`, via the
-`include/macros.in` entry in its path filter.
+anywhere, so it stays green. Note `ci-mpi.yml` fires on `develop` too, not only `master`, and its
+path filter is a long list of MPI-relevant files — `include/macros.in` and `molecule.scf.foo` are
+both on it, so ordinary work trips it more often than the name suggests.
 
 **Branch state.** `develop` carries the day's work; `origin/master` was merged into it, so
 `develop` is a superset. The gfortran-16 migration is preserved whole on
