@@ -31,7 +31,8 @@ now covers the whole project, so it was renamed.)*
 > story (three entries), and the `textfile.foo` verification. Moving them took the live half
 > from 4396 lines to 3518. **36 live, 36 archived** (35 and 37 after the dispersion
 > close on 2026-09-05; 35 and 38 after the build-and-toolchain batch the same day,
-> then 33 and 39 once the two defects it found were fixed).
+> then 33 and 39 once the two defects it found
+> were fixed, and 33 and 40 after the `foofiles/` purge).
 >
 > Re-sorted again on 2026-09-05, when the dispersion item closed: a 178-line live HANDOFF and
 > a 22-line live defect entry became one condensed archive entry plus a short list of what is
@@ -48,7 +49,7 @@ now covers the whole project, so it was renamed.)*
 |-------|------------------|
 | [Correctness](#correctness--open-bugs-that-give-wrong-answers) | Open bugs that give wrong answers, including ones with no diagnostic |
 | [MPI](#mpi) | The milestone-4 defect register, the `parallel do` lock, the `MPI_Bcast` desync, architecture options |
-| [Build system and toolchain](#build-system-and-toolchain) | the build tree committed inside `foofiles/`, `get_from` dependency trap, `types.foo` split, OpenBLAS |
+| [Build system and toolchain](#build-system-and-toolchain) | `get_from` dependency trap, `types.foo` split, OpenBLAS |
 | [Test suite and numerics](#test-suite-and-numerics) | Small numerical differences, `-O0` failures, NaN/negative ESDs |
 | [Translator and the Foo language](#translator-and-the-foo-language) | Dropped `data` statements, name-case normalisation, F2008 submodules |
 | [hart](#hart) | Remaining hart items and un-migrated runfiles |
@@ -88,11 +89,17 @@ anywhere, so it stays green. Note `ci-mpi.yml` fires on `develop` too, not only 
 path filter is a long list of MPI-relevant files — `include/macros.in` and `molecule.scf.foo` are
 both on it, so ordinary work trips it more often than the name suggests.
 
-**One thing found at the end of the session, not yet touched:** a whole CMake build tree is
-committed inside `foofiles/` — 1554 files and 77 MB that are not `.foo`, including the linked
-executables — on `master` as well as `develop`. It arrived with the Bijvoet fix in `b292b121`.
-See *A whole build tree is committed inside `foofiles/`* under Build system and toolchain. The
-Bijvoet fix itself is sound and blessed; only its collateral is the problem.
+**A whole CMake build tree was found committed inside `foofiles/`** — 1554 files that are not
+`.foo`, including the linked executables — on `master` as well as `develop`, arrived with the
+Bijvoet fix in `b292b121`. **Removed, from history as well as the tip**, by a scoped
+`git-filter-repo` rewrite with a guard commit ahead of it; `foofiles/` is now 183 files, all
+`.foo`. See the archive entry, which carries three things worth knowing: the naive filter would
+have rewritten every commit back to 2014 and moved every tag, the size saving is far smaller than
+estimated and does not arrive until GitHub runs its own `gc`, and `master` is a protected branch.
+`~/tonto-backup.git` holds the pre-rewrite state until you delete it.
+
+**Three clones still hold the old history** — sauce, achari2 and the macOS box. Each needs
+`git fetch && git reset --hard origin/develop`, not a `git pull`.
 
 **Branch state.** `develop` carries the day's work; `origin/master` was merged into it, so
 `develop` is a superset. The gfortran-16 migration is preserved whole on
@@ -1620,50 +1627,6 @@ Any of these rewrites the reference, so re-bless deliberately and read the resul
 ---
 
 # Build system and toolchain
-
-## A whole build tree is committed inside `foofiles/` (found 2026-09-05)
-
-**On `master` as well as `develop`, and `.gitignore` does not cover any of it.**
-
-`foofiles/` should contain 183 `.foo` files. It tracks **1737**. The other **1554**, about
-**77 MB**, are a CMake build tree that was run inside the source directory and committed:
-
-| | |
-|---|---|
-| 153 `.F90`, 153 `.int`, 153 `.use` | the translator's output |
-| 142 `.mod` | binary module files |
-| 144 `.stamp`, 142 `.build`, 138 `.make`, `CMakeFiles/` | build plumbing |
-| `foofiles/tonto`, `foofiles/hart`, `foofiles/rgbi` | the linked executables |
-| a `.jar`, `.class` files | the translator build |
-
-They arrived in `b292b121` (2026-09-04), the Bijvoet residual-density fix — a good change
-carrying 444,978 unrelated insertions. Nothing since has removed them.
-
-**Why it matters, beyond size.** `CLAUDE.md` §8 says to edit `.foo` and never the generated
-Fortran, and that generated Fortran belongs in the build tree. A stale `foofiles/crystal.F90`
-sitting beside `foofiles/crystal.foo` is exactly the confusion that rule prevents — and it *is*
-stale: it no longer matches what the translator emits today, checked by hash against
-`build/crystal.F90`.
-
-**Why `.gitignore` missed it.** Its executable rules name `run_molecule` and `run_har` — the
-CMake *target* names. The committed binaries are `tonto`, `hart` and `rgbi`, the `OUTPUT_NAME`s.
-After the 2026-09-05 rename the program target is itself called `tonto`, so the ignore file is
-doubly out of step.
-
-**What to do**, in this order, and none of it is started:
-
-1. `git rm -r --cached` the 1554 non-`.foo` paths under `foofiles/`, on `develop`, then merge to
-   `master`. Working trees keep their files; only the index changes.
-2. Extend `.gitignore`: the generated triple (`*.F90`, `*.int`, `*.use`) **under `foofiles/`
-   only** — not repo-wide, since `runfiles/` and the build trees are different cases — plus
-   `*.mod`, `*.stamp`, `CMakeFiles/`, and the real executable names `tonto`, `hart`, `rgbi`.
-   The four stray `.mod` files in the repository root (`pg_m.mod`, `types_m.mod`, `work_m.mod`)
-   and `tests.log` are the same class and should go with it.
-3. **Decide whether to rewrite history.** A plain removal leaves the 77 MB in every clone's
-   object store forever. Rewriting takes it out but rewrites `master`, which is a published
-   branch — Dylan's call, and not to be done without it.
-
-A cheap guard afterwards: a lint asserting `git ls-files foofiles/ | grep -v '\.foo$'` is empty.
 
 ## Future task: split `types.foo` into several modules (parallel compilation)
 
@@ -3662,6 +3625,70 @@ the suite cannot confirm a fix — only that it broke nothing. So two independen
   serial `#else` path after a `DIE` — unreachable, benign.)
 - **The suite.** 143/144 with the same single pre-existing failure, and all **1508 produced files
   identical** to the pre-fix run.
+
+## DONE (2026-09-05): the build tree committed inside `foofiles/`, removed from history
+
+`foofiles/` tracked 1737 files; 1554 were a CMake build tree run inside the source directory and
+committed in `b292b121`, the Bijvoet fix. It is now **183 files, all `.foo`**, on `develop` and
+`master`, in history as well as at the tip.
+
+**What was done, in order:** a guard commit first (`.gitignore` + `scripts/check_foofiles_clean.sh`,
+registered as the `foofiles_clean` ctest, label `short`), then a **scoped** history rewrite with
+`git-filter-repo --partial --refs b292b121~1..{develop,master,wip/sauce}`, then force-push of those
+three refs, then `git clean -f -d -x foofiles/` locally.
+
+**Verified before anything was pushed:** only 3 refs move and **55 are unchanged, including all 27
+tags and `Nice-branch`**; no commits lost (`develop` 3938 -> 3938, `master` 3926 -> 3926); all 183
+`.foo` blobs byte-identical; every path outside `foofiles/` byte-identical in hash, mode and path;
+all commit messages, authors and dates identical across 3938 commits; the removed blobs confirmed
+absent by `cat-file -e`. `FOO_SRC` (`CMakeLists.txt:310`) is an explicit list, not a glob, so the
+build cannot see anything under `foofiles/` but the named `.foo` files.
+
+### Three things worth keeping
+
+**1. The obvious filter was catastrophic, and only verification caught it.** The first attempt
+removed "every non-`.foo` under `foofiles/`" from **all** history. Result: **4309 of 4331 commits
+rewritten back to 2014**, all 27 tags moved, all 9 branches moved — `Nice-branch` included, which
+must never move — and `develop` lost **825 commits** of ancestry to collapsed merges (3938 ->
+3113). The premise in the plan, "only 15 commits are affected, no tag contains `b292b121`", was
+true and *irrelevant*: the filter is applied to every commit, and one stray match in ancient
+history rewrites everything after it. **`--partial --refs <range>` is what limits the blast
+radius**, and it took the run from 4331 commits parsed to 17. Nothing was pushed; the mirror was
+discarded.
+
+**2. The size saving was overstated twice, and is still deferred.**
+
+| estimate | method | figure |
+|---|---|---|
+| planned | summing `%(objectsize:disk)` over the blobs | 47.2 MiB, "25%" |
+| after rewrite | locally repacked mirror, `gc --aggressive` | 15.8 MiB (186.29 -> 170.53) |
+| **what a user gets today** | **fresh `git clone` from GitHub** | **2.3 MiB (186.29 -> 183.97)** |
+
+`objectsize:disk` is not a valid measure for deltified objects — 77 MB of generated Fortran
+deltas and compresses down hard. And **a fresh clone does not shrink on force-push**: GitHub
+serves the pack it has and repacks on its own schedule, so the reclaim is real but arrives
+whenever GitHub's GC runs, not now. The plan asserted "new clones get the smaller history
+immediately"; that is wrong. **If the size is what you want, ask GitHub support to run `gc`.**
+
+The size was never the main reason. A stale `foofiles/crystal.F90` beside `foofiles/crystal.foo`
+is the confusion `CLAUDE.md` §8 exists to prevent, and that is fixed at the tip and in history.
+
+**3. `master` is a protected branch.** Not in the plan, and it stopped the push. Its protection
+is minimal — no required reviews, no required checks, `enforce_admins` off — so only
+`allow_force_pushes: false` was in the way. It was flipped to `true`, `master` pushed, flipped
+back, and the restored protection confirmed **byte-identical** to the recorded original. Anyone
+repeating this must expect the same block.
+
+### Left over
+
+- The guard (`.gitignore`, the lint, the ctest) is on `develop` only. `master` is clean of the
+  junk but does not yet carry the check; it arrives with the next `develop` -> `master` merge.
+- `~/tonto-backup.git` is a full mirror of the pre-rewrite state, kept local so it anchors
+  nothing on the remote. **Delete it once you are satisfied** — until then every old object is
+  recoverable from it.
+- The other clones (sauce, achari2, the macOS box) still hold the old history:
+  `git fetch origin && git reset --hard origin/develop && git clean -n -d -x foofiles/` (look),
+  then `-f`. A plain `git pull` will not do it.
 
 ## DONE (2026-09-05): the four small build-and-toolchain items, and the two defects the last one found
 
