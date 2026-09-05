@@ -30,7 +30,8 @@ now covers the whole project, so it was renamed.)*
 > column-0 `#ifdef` diagnostic, the run-time-dependency lesson, the whole gfortran-16 debug
 > story (three entries), and the `textfile.foo` verification. Moving them took the live half
 > from 4396 lines to 3518. **36 live, 36 archived** (35 and 37 after the dispersion
-> close on 2026-09-05; 35 and 38 after the build-and-toolchain batch the same day).
+> close on 2026-09-05; 35 and 38 after the build-and-toolchain batch the same day,
+> then 33 and 39 once the two defects it found were fixed).
 >
 > Re-sorted again on 2026-09-05, when the dispersion item closed: a 178-line live HANDOFF and
 > a 22-line live defect entry became one condensed archive entry plus a short list of what is
@@ -74,9 +75,17 @@ human at a browser).
 full rebuild, 0 differing.** That assertion was the whole reason for batching them.
 
 **Two new defects came out of the fourth item, and they are why it was worth doing.**
-`MOLECULE.SCF:make_pnd_constraint` never assigns `n_par`; `MOLECULE.TD:do_doubles_Mazur` never
-assigns `Eai`. Both are filed under *Correctness*, both are the same shape as the 2026-09-03
-`first` defect, and neither is covered by a test — which is why both survived.
+`MOLECULE.SCF:make_pnd_constraint` never assigned `n_par`; `MOLECULE.TD:do_doubles_Mazur` never
+assigned `Eai`. Both are the same shape as the 2026-09-03 `first` defect, and neither is covered
+by a test — which is why both survived. **Both are now fixed, verified and archived** (*FIXED
+(2026-09-05): two uninitialised variables*): the compiler's warning count drops by exactly two,
+and the suite is unchanged across all 1508 produced files.
+
+**CI is green.** All four workflows that the push to `develop` triggered — Linux-release,
+Linux-debug, Linux-MPI and WSL-release — passed on `f10e77bf`. Linux-debug is the one that
+mattered: it now carries ~688 uninitialised warnings in its log and there is no `-Werror`
+anywhere, so it stays green. Note `ci-mpi.yml` fires on `develop` too, not only `master`, via the
+`include/macros.in` entry in its path filter.
 
 **Branch state.** `develop` carries the day's work; `origin/master` was merged into it, so
 `develop` is a superset. The gfortran-16 migration is preserved whole on
@@ -138,15 +147,10 @@ build has. One file, everything else identical, executable relinked each time.
    in both a dipole table and a HAR esd table, in a debug build without bounds checking. Two
    guesses are already dead: it is not the bracketed uncertainty (the dipole test prints none),
    and `width`/`width_set` both carry proper `DEFAULT` initialisers.
-4. **The two uninitialised-variable defects the flag change just found** — `n_par` in
-   `MOLECULE.SCF:make_pnd_constraint` and `Eai` in `MOLECULE.TD:do_doubles_Mazur`, both under
-   *Correctness*. `n_par` is a one-line fix that its three sibling routines already carry; `Eai`
-   needs the Mazur theory read first, because the routine looks unfinished. Neither is covered by
-   a test, so neither should move a reference — and nothing will catch a wrong fix either.
-5. **The Bugzilla duplicate search** over resolved bugs and `16 Regression`. Sourceware refuses
+4. **The Bugzilla duplicate search** over resolved bugs and `16 Regression`. Sourceware refuses
    every automated tool — `curl` gets a 429 and the Anubis layer blocks the rest, `WebFetch`
    included — so **this needs a person at a browser**, as did the filing.
-6. Longer-standing, unchanged: NaN and negative ESDs from the least-squares variance-covariance
+5. Longer-standing, unchanged: NaN and negative ESDs from the least-squares variance-covariance
    matrix, and the MPI items behind milestones 6 and 7.
 
 ### Two method lessons worth keeping
@@ -457,51 +461,6 @@ Two Bijvoet traps that must not be relearned:
   (`diag(-1,-1,1)` on `(0,2,0)` in `P2₁2₁2₁`); the site symmetry factor owns that case.
 - **`L_alanine_minmax_residual_density_map` must stay unchanged.** Zero genuine Bijvoet pairs.
   If a change makes it move, `f9fb26bc` has been broken.
-
-## `n_par` is never assigned in `MOLECULE.SCF:make_pnd_constraint` (2026-09-05)
-
-`foofiles/molecule.scf.foo:2919` declares `n_par`, and `:2924` uses it:
-
-```foo
-fac = -G_FACTOR/(TWO*max(n_refl - n_par,1))
-```
-
-It is never assigned anywhere in the routine. So the scale factor of the polarised-neutron-
-diffraction constraint is computed from stack garbage.
-
-**The fix is one line, and the three sibling routines already carry it.** The constraint makers
-at `:2328`, `:2435` and `:2569` each have
-
-```foo
-n_par = .crystal.xray_data.n_param
-```
-
-on the line before their own `fac` assignment. This one lost it.
-
-**No test exercises it** — nothing under `tests/` uses `pnd` — which is both why it survived and
-why fixing it should move no reference. That cuts the other way too: nothing will catch a wrong
-fix, so read the routine rather than pattern-matching the siblings.
-
-Found by removing `-Wno-uninitialized`; see *DONE (2026-09-05): the four small
-build-and-toolchain items*. The same warning class named the 2026-09-03 defect.
-
-## `Eai` is never assigned in `MOLECULE.TD:do_doubles_Mazur` (2026-09-05)
-
-`foofiles/molecule.td.foo:645` declares `Eai`, and `:728` uses it:
-
-```foo
-Ebj = TD.delEab(bj)
-del = TD.eval(n) - Eai - Ebj
-```
-
-`Ebj` is assigned on the line immediately before; `Eai` never is.
-
-By symmetry the missing line is `Eai = TD.delEab(ai)` — **but do not apply that on the strength
-of the symmetry alone.** The routine looks unfinished: `val` is computed in the same loop
-(`val = del*F*F*Aai`) and never used either. Read the Mazur theory before deciding what the line
-should be, or leave it and mark the routine as incomplete.
-
-No test exercises it. Found the same way as the entry above.
 
 ## The residual-density nearest-atom report is unstable (Dylan, 2026-09-04)
 
@@ -3613,6 +3572,45 @@ with no hand-written script at all.
 ---
 
 # Done, resolved and closed (archive)
+
+## FIXED (2026-09-05): two uninitialised variables, both named by the flag change above
+
+Both were read before ever being assigned, both are the same shape as the 2026-09-03 `first`
+defect, and both were invisible to inspection. They exist because the warning that names them
+had been switched off in the only build where it fires.
+
+### `n_par` in `MOLECULE.SCF:make_pnd_constraint`
+`molecule.scf.foo` declared `n_par` and used it in
+
+```foo
+fac = -G_FACTOR/(TWO*max(n_refl - n_par,1))
+```
+
+without ever assigning it, so the polarised-neutron-diffraction constraint's scale factor was
+computed from stack garbage. Fixed with the line the three sibling constraint makers already
+carry, `n_par = .crystal.xray_data.n_param`, on the line before `fac`.
+
+### `Eai` in `MOLECULE.TD:do_doubles_Mazur`
+`molecule.td.foo` declared `Eai` and used it in `del = TD.eval(n) - Eai - Ebj`, with `Ebj`
+assigned on the line immediately before and `Eai` never. Fixed as `Eai = TD.delEab(ai)`.
+
+**The index was checked, not inferred from the symmetry with `Ebj`.** `delEab` is a `VEC{REAL}`
+over the single-excitation composite index, and a commented-out line in the same file,
+`molecule.td.foo:798`, already writes `TD.delEab(ai)`. Worth recording because the routine is
+**still half-written** — `val` is computed in the same loop (`val = del*F*F*Aai`) and never used —
+so it should not be trusted as finished merely because it now compiles without a warning.
+
+### How they were verified, given that no test reaches either routine
+
+Nothing under `tests/` exercises `pnd` or Mazur doubles. That is why both survived, and it means
+the suite cannot confirm a fix — only that it broke nothing. So two independent checks:
+
+- **The compiler.** In a full gfortran-14 debug build, the uninitialised warnings that name a real
+  source variable went from `n_par`, `Eai` and 3x `tmp` to the three `tmp` alone. Totals 688 -> 686:
+  exactly two fewer, and they are the two. (The three `tmp` are `SYSTEM:scan_sum_0/1/2` on the
+  serial `#else` path after a `DIE` — unreachable, benign.)
+- **The suite.** 143/144 with the same single pre-existing failure, and all **1508 produced files
+  identical** to the pre-fix run.
 
 ## DONE (2026-09-05): the four small build-and-toolchain items, and the two defects the last one found
 
