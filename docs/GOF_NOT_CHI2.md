@@ -34,7 +34,18 @@ About 200 identifier occurrences. **The scope must be drawn by hand**; a global
 substitution would be wrong.
 
 - **In scope:** `diffraction_data.{set,put,inq,read}.foo`, `vec{reflection}.foo`,
-  `crystal.foo`, `molecule.{scf,har,main}.foo`, `scf_data.foo`, `real.foo`, `types.foo`.
+  `molecule.{scf,har}.foo`, `scf_data.foo`, `types.foo`, and three comment lines of
+  `crystal.foo`.
+- **Three corrections to the list as first written**, found when the rename was done on
+  2026-09-06. It named `crystal.foo`, `molecule.main.foo` and `real.foo` in scope; none of
+  them wholly is.
+  - `real.foo:849` `chi2(x2,nu)` is a genuine **chi-squared probability distribution**,
+    `incomplete_gamma(nu/2, x2/2)`, correctly named — and it has no callers anywhere.
+    Renaming it would have been wrong.
+  - `molecule.main.foo:488` `case ("put_uc_chi2_old")` is the χ⁽²⁾ susceptibility keyword,
+    the same family as `cluster.foo` and `molecule.cp.foo`.
+  - `crystal.foo` has 17 occurrences, of which **3** are in scope — the comments at `:3864`,
+    `:3884` and `:4052`. The other 14, at `:13614–14063`, are χ⁽²⁾.
 - **Out of scope — do not touch.** `cluster.foo` (14 occurrences) and `molecule.cp.foo`
   (29) use `chi2`, `chi2_nonH` and `chi2_ijk` for the second-order nonlinear
   susceptibility χ⁽²⁾. That is an unrelated quantity and the name is correct.
