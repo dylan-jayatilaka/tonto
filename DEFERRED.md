@@ -479,28 +479,68 @@ phase silently becomes the dispersion-free one and `F_disp` is subtracted from a
 that never had it. The sequence in `CRYSTAL:make_F_calc_derivs` — add, optimise scale, remove
 from `F_exp`, remove from `F_calc`, re-optimise — is already the coherent XD/SHELX recipe.
 
-### What the remaining defect probably is
+### MEASURED on yq28: the removal IS honoured in a refinement
+
+Release build, gfortran-14, `real_precision= 10`, three variants run in parallel from one
+binary, all exit 0:
+
+| | R(F) | GoF | scale | Maximum | Minimum | RMS | how the fit ended |
+|---|---|---|---|---|---|---|---|
+| `correct_dispersion= TRUE` | 0.0382327593 | 1.8857533317 | 1.0135409613 | 0.9108 | −1.6066 | 0.12228 | stopped, chi² increased |
+| `remove_dispersion_from_f_exp= TRUE` | 0.0425862127 | 1.8419179747 | 1.0175692533 | 1.7660 | −2.0338 | 0.12525 | **converged** |
+| `correct_dispersion= FALSE` | 0.0317205940 | 1.3807146369 | 1.0233551701 | 0.8349 | −0.5758 | 0.10146 | stopped, chi² increased |
+
+The first row reproduces the checked-in reference exactly, which is what makes the other two
+trustworthy. Every fit statistic and every refined parameter moves between the conventions,
+and only the removal converges. **So "accepted, reported, and not honoured" is wrong as a
+general claim.** Do not over-read the map extremes: the three refinements end in different
+states after different numbers of cycles, and yq28's f′ = 2, f″ = 1 for S are artificial —
+about ten times the true values at 0.41030 Å.
+
+### The fault that remains, and it is a plain fault
 
 **The removal lives only in the derivative path.** It is in `make_F_calc_derivs`
-(`crystal.foo:4133` and `:4191`) and nowhere else, so a job that sets
-`remove_dispersion_from_f_exp=` and does **not** refine never reaches it: dispersion goes into
-`F_calc`, `F_corr` stays `F_exp`, and the flag reports itself as on. Given the ruling above
-the harm is mild — the fallback is the convention Tonto wants — but a flag that reports
-itself honoured and is not is the same silent class as the milestone-5 per-rank I/O flag.
+(`crystal.foo:4133` and `:4191`), and those are reached only from `get_parameter_shifts_F` →
+`get_parameter_shifts` → the two `LS_structure_fit` loops (`crystal.foo:4359`, `:4497`). So
+**only a least-squares refinement runs the removal.** A job that sets the flag and does not
+refine gets dispersion added into `F_calc`, keeps `F_corr = F_exp`, and prints
+
+```
+Add dispersion into F_calc ..... F
+Remove dispersion frm F_exp .... T
+```
+
+Line 2 says F and it happened; line 3 says T and it did not. The numbers are barely affected,
+because the convention it falls back to is the one Tonto wants — but that is a separate
+question from the report being false, and it does not excuse it. Same silent class as the
+milestone-5 per-rank I/O flag.
+
+`CRYSTAL:make_F_calc_derivs_for_atom` (HAR, `molecule.har.foo:747`) has no removal block at
+all, so it needs the same treatment or an explicit refusal.
 
 ### Next action, in order
 
-1. **Finish the yq28 measurement.** Run `yq28_anharm_disp_H_U_iso_IAM_refinement` at
-   `real_precision= 10` three ways — `correct_dispersion= TRUE`, `remove_dispersion_from_f_exp=
-   TRUE`, `correct_dispersion= FALSE` — and diff. It was started this session and killed
-   unfinished. The three run happily in parallel from one release binary in separate
-   directories; each needs `IO YQ28.cif new.hkl stdin xd.hkl xd.inp xd.mas xd.res` copied in
-   and takes upwards of ten minutes (the residual cube is the slow part). This answers
-   whether the removal bites at all during a refinement, and everything else waits on it.
-2. Then decide the fix, keeping the addition in `make_F_calc_from` as it is. Expect a
-   re-bless only if a reference with non-zero dispersion moves; the five residual-density
-   references and which of them may move are listed in the section further down.
-3. **The phase switch stays parked.** `REFLECTION:F_phase_without_disp` is kept, unused, and
+1. **Move the removal to where every path reaches it.** It cannot go into
+   `make_F_calc_from` — it needs the scale factor, and the scale is optimised after `F_calc`
+   is built. Its home is immediately after that optimisation, in
+   `CRYSTAL:make_F_predicted_from`, which builds `F_calc`, optimises the scale, and is on
+   every path (the refinement, HAR at `molecule.har.foo:1418`, the SCF at
+   `molecule.scf.foo:301`). Put the block there as one call at the end and delete the two
+   copies from `make_F_calc_derivs`. **Keep the addition in `make_F_calc_from` as it is** —
+   the removal consumes it, for the phase.
+
+   The invariant to preserve is **exactly one removal per rebuild of `F_calc`**:
+   `remove_anom_from_F_calc` subtracts `F_disp` from whatever `F_calc` currently holds, so
+   running it twice subtracts twice. Today that is safe only because `make_F_calc_from`
+   rebuilds `F_calc` from scratch and the removal follows immediately; keeping the two in one
+   routine is what keeps it safe.
+2. **Then add a test that sets the flag.** Nothing in `tests/` sets
+   `remove_dispersion_from_f_exp=` today, which is exactly why this survived from 2020. A
+   yq28 variant is the obvious candidate — the numbers for it are in the table above. Without
+   one, the next change to this code has nothing to fail against.
+3. Expect a re-bless only if a reference with non-zero dispersion moves. Only yq28 and YLID
+   have any, and YLID has `correct_dispersion= no`.
+4. **The phase switch stays parked.** `REFLECTION:F_phase_without_disp` is kept, unused, and
    the comment at `diffraction_data.set.foo:2014` says why. Note it would be *wrong* to use
    it after a successful removal: `F_calc` has had `F_disp` subtracted already, so
    `F_calc - F_disp` would subtract it twice. Its own comment claims otherwise and is wrong.
@@ -581,10 +621,12 @@ it would break the removal path are in the HANDOFF section at the top of this fi
 `docs/TONTO_DISPERSION_CORRECTIONS.md`.
 
 What survives: the removal is implemented in `CRYSTAL:make_F_calc_derivs`
-(`crystal.foo:4133`, `:4191`) and nowhere else, so a job that sets the flag and does not
-refine silently gets the add convention while reporting removal as on. Whether it bites
-during a refinement is unmeasured — the yq28 run that would say was started and killed
-unfinished. Needs its own re-bless if anything moves.
+(`crystal.foo:4133`, `:4191`) and nowhere else, and those are reached only from a
+least-squares refinement. Measured on `yq28_anharm_disp_H_U_iso_IAM_refinement`, the removal
+**does** bite when the job refines — every fit statistic moves and it is the only one of the
+three conventions that converges. So the fault is confined to jobs that do not refine: they
+get the add convention while the header reports removal as on. The fix, and the numbers, are
+in the HANDOFF section at the top.
 
 ## DFT: three silent defects — see `docs/DFT_STANDARDISATION.md`
 

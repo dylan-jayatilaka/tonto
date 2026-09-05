@@ -334,8 +334,31 @@ evidence about either.
 f′ and f″. Only two shipped tests do: `yq28_anharm_disp_H_U_iso_IAM_refinement` (S with
 f′ = 2, f″ = 1, set by a `dispersion_coefficients=` block after `process_CIF`) and
 `YLID_IAM_plus_anomalous_residual_density` (coefficients supplied, `correct_dispersion= no`).
-**yq28 is the test bed**; the run comparing add / remove / off on it was started and not
-finished, and is the first thing the next session should do.
+
+### Measured on yq28: the removal IS honoured in a refinement
+
+Release build, gfortran-14, `real_precision= 10`, the three variants run in parallel from one
+binary. All exit 0.
+
+| | R(F) | GoF | scale | Maximum | Minimum | RMS | how the fit ended |
+|---|---|---|---|---|---|---|---|
+| `correct_dispersion= TRUE` | 0.0382327593 | 1.8857533317 | 1.0135409613 | 0.9108 | −1.6066 | 0.12228 | stopped, chi² increased |
+| `remove_dispersion_from_f_exp= TRUE` | 0.0425862127 | 1.8419179747 | 1.0175692533 | 1.7660 | −2.0338 | 0.12525 | **converged** |
+| `correct_dispersion= FALSE` | 0.0317205940 | 1.3807146369 | 1.0233551701 | 0.8349 | −0.5758 | 0.10146 | stopped, chi² increased |
+
+The first row reproduces the checked-in reference exactly, which is what makes the other two
+trustworthy: the reference prints 0.0382 / 1.8858 / 1.0135 / 0.9108 / −1.6066 / 0.1223.
+
+**Every fit statistic and every refined parameter moves between the conventions, and only the
+removal converges.** So `remove_dispersion_from_F_exp` is honoured when the job refines, and
+the entry that said otherwise is wrong as a general claim.
+
+**Two things not to over-read from this table.** The three refinements end in different states
+— two stop on "chi2 has increased, results unreliable" and one converges — so their residual
+maps come from different geometries after different numbers of cycles, and the map extremes
+are not one state seen three ways. And yq28's f′ = 2, f″ = 1 for S are artificial; the true
+values at 0.41030 Å are about a tenth of that. The exaggeration is what makes the test useful
+and also what makes "removal doubles the residual extremes" a statement about this job.
 
 **What the gate actually is, read from the source.** `CRYSTAL:make_F_calc_from`
 (`crystal.foo:4065`) adds dispersion into `F_calc` whenever `correct_dispersion` is true —
@@ -355,15 +378,37 @@ So the sequence in `CRYSTAL:make_F_calc_derivs` — add, optimise the scale, rem
 `F_exp` to make `F_corr`, remove from `F_calc`, re-optimise — is already the coherent
 XD/SHELX recipe, and the addition it starts from is deliberate.
 
-**The genuine gap is narrower: the removal lives only in the derivative path.** It is in
-`make_F_calc_derivs` (`crystal.foo:4133` and `:4191`) and nowhere else, so a job that sets
-`remove_dispersion_from_f_exp=` and does **not** refine never reaches it: it gets dispersion
-added into `F_calc`, keeps `F_corr = F_exp`, and reports removal as on. Whether the removal
-bites during a refinement is exactly what the unfinished yq28 run would say.
+**The genuine fault is narrower, and it is still a fault: the removal lives only in the
+derivative path.** It is in `make_F_calc_derivs` (`crystal.foo:4133` and `:4191`) and nowhere
+else. Those two routines are reached only from `get_parameter_shifts_F` →
+`get_parameter_shifts` → the two `LS_structure_fit` loops (`crystal.foo:4359`, `:4497`), so
+**only a least-squares refinement runs the removal.** A job that sets
+`remove_dispersion_from_f_exp=` and does not refine gets dispersion added into `F_calc`, keeps
+`F_corr = F_exp` — and prints
 
-Given the ruling above, the consequence is mild — the convention such a job silently falls
-back to is the one Tonto wants — but it is still a flag that reports itself as honoured and
-is not.
+```
+Add dispersion into F_calc ..... F
+Remove dispersion frm F_exp .... T
+```
+
+Line 2 says F and it happened; line 3 says T and it did not. The numerical consequence is
+small, because the convention such a job falls back to is the one Tonto wants, but that is a
+separate question from the report being false, and it does not excuse it. This is the same
+silent class as the milestone-5 per-rank I/O flag.
+
+A third derivative routine, `CRYSTAL:make_F_calc_derivs_for_atom` (used by HAR at
+`molecule.har.foo:747`), has no removal block at all, so it needs the same treatment or an
+explicit refusal.
+
+**The fix.** The removal cannot move into `make_F_calc_from`, because it needs the scale
+factor and the scale is optimised after `F_calc` is built. Its home is immediately after that
+optimisation — in `CRYSTAL:make_F_predicted_from`, which builds `F_calc`, optimises the scale,
+and is on every path (the refinement, HAR at `molecule.har.foo:1418`, the SCF at
+`molecule.scf.foo:301`). Move the block there as one call at the end and delete the two copies
+from `make_F_calc_derivs`. The invariant to preserve is **exactly one removal per rebuild of
+`F_calc`**: `remove_anom_from_F_calc` subtracts `F_disp` from whatever `F_calc` holds, so
+running it twice subtracts twice. Keeping the add and the removal in the same routine is what
+makes that safe.
 
 **Two smaller things seen while reading, neither measured:**
 
