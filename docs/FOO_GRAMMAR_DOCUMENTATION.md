@@ -384,8 +384,9 @@ A program is a body of declarations and **executable statements** (like a
 procedure body) ending in a bare `end`; it has **no `contains`** and no internal
 procedures. It is emitted as a real Fortran main program (`program NAME … end
 program`, with its own `_main` so the executable links) rather than a module. The
-CMake targets rename the outputs: `run_molecule` → **tonto**, `run_har` → **hart**,
-`run_rgbi` → **rgbi**.
+The build tree names the executables after the commands, not the run files:
+`run_molecule.foo` builds target **tonto**, `run_har.foo` → **hart**, `run_rgbi.foo`
+→ **rgbi**.
 
 Because a program is a *consumer* of the modules (which live with `types.foo`), the
 translator derives its module registries from the `--types` file's directory, not

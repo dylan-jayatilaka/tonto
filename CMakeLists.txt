@@ -1047,7 +1047,7 @@ target_include_directories(tonto_lib PUBLIC ${PROJECT_BINARY_DIR} ${CMAKE_CURREN
 
 
 # Standard executables
-add_executable(run_molecule      ${CMAKE_CURRENT_BINARY_DIR}/run_molecule.F90)
+add_executable(tonto             ${CMAKE_CURRENT_BINARY_DIR}/run_molecule.F90)
 add_executable(run_buffer        EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_buffer.F90)
 add_executable(run_dc            EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_dc.F90)
 add_executable(run_dc_derivs     EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_dc_derivs.F90)
@@ -1100,7 +1100,7 @@ if(WITH_MPI)
 endif()
 
 # Link exectables
-target_link_libraries(run_molecule      tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(tonto             tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_buffer        tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_dc            tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_dc_derivs     tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
@@ -1113,8 +1113,8 @@ target_link_libraries(run_har           tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBR
 target_link_libraries(run_himz          tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_mat_real      tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_mat_cpx       tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_mp2           tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_mp2_exercise  tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_mp2           tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_mp2_exercise  tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 #target_link_libraries(run_mpi_matmul    tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 if(WITH_MPI)
     target_link_libraries(run_mpi_pi     tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
@@ -1130,26 +1130,29 @@ if(WITH_MPI)
     target_link_libraries(run_mpi_test          tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
     target_link_libraries(run_mpi_test_complete tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 endif()
-target_link_libraries(run_shell2        tonto ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_shell2        tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 
+
+# `make tonto` builds the PROGRAM tonto; the library is tonto_lib and comes along
+# as a dependency. hart comes with it because the two go together, and a
+# `make tonto` leaving a stale hart behind has already cost a measurement run.
+#
+# Do NOT reintroduce `add_custom_target(tonto ...)`: a custom target sharing its
+# name with the file it produces makes GNU make print `Circular CMakeFiles/tonto
+# <- tonto dependency dropped.` on every build.
+#
+# CI's compile-flag assertions must read CMakeFiles/tonto_lib.dir, not
+# CMakeFiles/tonto.dir -- the latter exists again and holds only this executable's
+# single object, so a stale grep of it would succeed on the wrong file.
+add_dependencies(tonto run_har)
 
 # Make non-standard-named executables
-set_target_properties(run_molecule PROPERTIES OUTPUT_NAME tonto)
-
-# `make tonto` builds the PROGRAM called tonto, which is what anyone typing it
-# means. The library is tonto_lib and comes along as a dependency. Before this,
-# `tonto` was the library target and the name silently built the wrong thing.
-# hart comes with it. `tonto` and `hart` are the command line and the more
-# general library exerciser: they go together, and a `make tonto` that leaves a
-# stale `hart` behind is a trap -- on 2026-09-04 it silently compared two hart
-# tests against a pre-change binary.
-add_custom_target(tonto DEPENDS run_molecule run_har)
 set_target_properties(run_har      PROPERTIES OUTPUT_NAME hart)
 set_target_properties(run_rgbi     PROPERTIES OUTPUT_NAME rgbi)
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
-install(TARGETS run_molecule DESTINATION bin)
+install(TARGETS tonto        DESTINATION bin)
 install(TARGETS run_har      DESTINATION bin)
 install(TARGETS run_rgbi     DESTINATION bin)
 

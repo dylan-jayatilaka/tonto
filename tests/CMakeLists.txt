@@ -7,7 +7,7 @@ set(TONTO_EXE "${PROJECT_BINARY_DIR}/tonto"
 
 # The hart tests still pass TONTO_EXE as --program: test.py resolves a test's
 # "program:" key as a sibling of it, so both binaries must live side by side
-# (they do -- run_molecule and run_har both land in PROJECT_BINARY_DIR).
+# (they do -- the tonto and run_har targets both land in PROJECT_BINARY_DIR).
 # HART_EXE is only for the hand-registered invariant check below.
 set(HART_EXE "${PROJECT_BINARY_DIR}/hart"
     CACHE FILEPATH "Hirshfeld atom refinement executable")
@@ -309,4 +309,4 @@ add_custom_target(report
     WORKING_DIRECTORY ${PROJECT_BINARY_DIR}
     USES_TERMINAL
     COMMENT "Tonto per-suite agreement report -> tests.log")
-add_dependencies(report run_molecule run_har)
+add_dependencies(report tonto run_har)
