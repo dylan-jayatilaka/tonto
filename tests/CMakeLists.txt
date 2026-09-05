@@ -260,6 +260,20 @@ add_test(NAME "parallel_lint"
             ${PROJECT_SOURCE_DIR}/foofiles)
 set_tests_properties("parallel_lint" PROPERTIES LABELS "short")
 
+# Invariant test -- no reference output involved, and no build needed.
+#
+# foofiles/ holds .foo sources and nothing else. A build run inside it leaves
+# the translator's output beside the sources it came from, and 1554 such files
+# reached master in b292b121 before anyone noticed. .gitignore now covers them,
+# but an ignore rule is defeated by `git add -f` and broken by renaming a
+# target -- which is how it happened, the old rules naming the CMake targets
+# rather than the OUTPUT_NAMEs. This asserts the end state instead.
+add_test(NAME "foofiles_clean"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND sh ${PROJECT_SOURCE_DIR}/scripts/check_foofiles_clean.sh
+            ${PROJECT_SOURCE_DIR})
+set_tests_properties("foofiles_clean" PROPERTIES LABELS "short")
+
 # Invariant test -- no reference output involved.
 #
 # scripts/rgbi_doctor.sh reports what is missing from the RGBI picture
