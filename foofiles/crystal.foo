@@ -3823,6 +3823,31 @@ contains
 !  Structure factors
 !  =================
 
+   remove_dispersion_if_asked :: private
+   ! Remove the anomalous dispersion from F_exp, to make F_corr, and from
+   ! F_calc -- the XD/Shelx convention -- if that is what was asked for.
+   ! NOTE: call this immediately after the scale factor is optimised, and
+   ! only there. It needs the scale, and it needs F_calc to still carry the
+   ! dispersion that make_F_calc_from added, because remove_anom_from_F_exp
+   ! takes its phase from F_calc. Exactly one call per rebuild of F_calc:
+   ! remove_anom_from_F_calc subtracts F_disp from whatever F_calc holds, so
+   ! calling it twice subtracts twice.
+      self :: INOUT
+
+   ENSURE(.xray_data.allocated, "no xray_data")
+
+      if (.xray_data.remove_dispersion_from_F_exp) then
+
+         .xray_data.reflections.remove_anom_from_F_exp(.xray_data.scale_factor)
+         .xray_data.reflections.remove_anom_from_F_calc
+
+         ! New scale, for the corrected pair
+         .xray_data.SET:make_F_predicted(update_n_param=FALSE)
+
+      end
+
+   end
+
    make_F_predicted(ff)
    ! Make and set the predicted structure factors, F_pred, from
    ! "ff", the unique *fragment* atom form factors for the
@@ -3838,7 +3863,9 @@ contains
 
       ! Optimise scale, extinction & set chi2(F)
       .xray_data.SET:make_F_predicted
-        
+
+      ! Remove dispersion from F_exp, if that convention was asked for
+      .remove_dispersion_if_asked
 
    end
 
@@ -3856,6 +3883,9 @@ contains
 
       ! Optimise scale, extinction & set chi2(F)
       .xray_data.SET:make_F_predicted
+
+      ! Remove dispersion from F_exp, if that convention was asked for
+      .remove_dispersion_if_asked
 
    end
 
@@ -4022,6 +4052,9 @@ contains
       ! Optimise scale, extinction & set chi2(F)
       .xray_data.SET:make_F_predicted
 
+      ! Remove dispersion from F_exp, if that convention was asked for
+      .remove_dispersion_if_asked
+
    end
 
    set_F_calc_from(sf_e)
@@ -4117,24 +4150,12 @@ contains
 
       ! Make and set F_pred with scale & extinction.
       .xray_data.reflections.reset_F_corr_to_F_exp ! We fit to F_corr
-      .make_F_predicted_from(sf_e)            ! Always includes dispersion
+      .make_F_predicted_from(sf_e)  ! ... and applies the dispersion convention
       
       sf_e.destroy
 
    ! .xray_data.PUT:put_F_statistics
    ! .xray_data.PUT:put
-
-      ! Remove dispersion from F_calc, and F_exp to make F_corr.
-      ! This is the only place the removal happens, so a job that sets
-      ! remove_dispersion_from_F_exp without refining silently gets the add
-      ! convention. It needs make_F_calc_from to have added dispersion first:
-      ! remove_anom_from_F_exp takes the phase from F_calc.
-      ! See docs/TONTO_DISPERSION_CORRECTIONS.md.
-      if (.xray_data.remove_dispersion_from_F_exp) then
-         .xray_data.reflections.remove_anom_from_F_exp(.xray_data.scale_factor)
-         .xray_data.reflections.remove_anom_from_F_calc
-         .xray_data.SET:make_F_predicted(update_n_param=FALSE) ! new scale
-      end
 
       ! Sum the symmetry-generated SF's to get
       ! the derivative structure factors dFc
@@ -4179,20 +4200,8 @@ contains
 
       ! Make and set F_pred with scale & extinction.
       .xray_data.reflections.reset_F_corr_to_F_exp ! We fit to F_corr
-      .make_F_predicted_from(sf_e)            ! Always includes dispersion
+      .make_F_predicted_from(sf_e)  ! ... and applies the dispersion convention
       sf_e.destroy
-
-      ! Remove dispersion from F_calc, and F_exp to make F_corr.
-      ! This is the only place the removal happens, so a job that sets
-      ! remove_dispersion_from_F_exp without refining silently gets the add
-      ! convention. It needs make_F_calc_from to have added dispersion first:
-      ! remove_anom_from_F_exp takes the phase from F_calc.
-      ! See docs/TONTO_DISPERSION_CORRECTIONS.md.
-      if (.xray_data.remove_dispersion_from_F_exp) then
-         .xray_data.reflections.remove_anom_from_F_exp(.xray_data.scale_factor)
-         .xray_data.reflections.remove_anom_from_F_calc
-         .xray_data.SET:make_F_predicted(update_n_param=FALSE) ! new scale
-      end
 
       ! Sum the symmetry-generated SF's to get
       ! the derivative structure factors dFc
@@ -4213,10 +4222,16 @@ contains
    ! with respect to positional and ADP parameters for asymmetric unit
    ! atom "a", using "ff", the temperature-independent atomic form
    ! factors. 
+   ! NOTE: this routine sets no F_calc, scale factor or F_pred, so neither
+   ! dispersion convention can be applied here -- hence the DIE. Nothing
+   ! calls it today. See DEFERRED.md.
       self :: INOUT
       a :: INT, IN
       dFc :: MAT{CPX}, OUT
       ff :: VEC{CPX}, IN
+
+   DIE_IF(.xray_data.INQ:correct_dispersion, &
+          "cannot apply a dispersion convention in the per-atom derivative path")
 
    ENSURE(ff.dim1==.n_unique_SF_k_pts, "ff: wrong dim1")
    ENSURE(dFc.dim1==.xray_data.reflections.dim, "dFc: wrong dim1")
@@ -4238,6 +4253,7 @@ contains
       ! Make the symmetry-generated structure factors and their
       ! derivatives including ADPs but no dispersion.
       .make_unique_sf_derivs_for_atom(a,sf_e,sf_d,ff)
+      sf_e.destroy ! not used here, only the derivatives are
 
       ! Sum the symmetry-generated SF's to get
       ! the derivative structure factors dFc

@@ -206,9 +206,10 @@ build/test run** (§11). The pass/fail gate is the **loose** criterion in `scrip
 (rel ≤ 0.2% OR last-digit ≤ 2), not exact match.
 
 **Quote a score with the suites it counted**, or it cannot be compared with the next one:
-`short long hart` is **89** tests (55 + 31 + 3) and is what `ci-full-suite.yml` runs; all four
-ctest-registered suites (`short long cx rgbi`) are **131**. The last full-suite run at
-gfortran-14 was **88/89 loose, 77 exact**, the 89th a deliberate skip. The debug (`-O0`) build
+`short long hart` is **90** tests (55 + 32 + 3) and is what `ci-full-suite.yml` runs; all four
+ctest-registered suites (`short long cx rgbi`) are **132**. The last full-suite run at
+gfortran-14 was **88/89 loose, 77 exact**, the 89th a deliberate skip — taken before
+`yq28_anharm_disp_remove_from_F_exp` was added, so it is a score out of 89. The debug (`-O0`) build
 has longstanding FP-boundary and structural failures listed in `DEFERRED.md` — not translator
 bugs.
 

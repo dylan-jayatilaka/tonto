@@ -400,15 +400,31 @@ A third derivative routine, `CRYSTAL:make_F_calc_derivs_for_atom` (used by HAR a
 `molecule.har.foo:747`), has no removal block at all, so it needs the same treatment or an
 explicit refusal.
 
-**The fix.** The removal cannot move into `make_F_calc_from`, because it needs the scale
-factor and the scale is optimised after `F_calc` is built. Its home is immediately after that
-optimisation — in `CRYSTAL:make_F_predicted_from`, which builds `F_calc`, optimises the scale,
-and is on every path (the refinement, HAR at `molecule.har.foo:1418`, the SCF at
-`molecule.scf.foo:301`). Move the block there as one call at the end and delete the two copies
-from `make_F_calc_derivs`. The invariant to preserve is **exactly one removal per rebuild of
-`F_calc`**: `remove_anom_from_F_calc` subtracts `F_disp` from whatever `F_calc` holds, so
-running it twice subtracts twice. Keeping the add and the removal in the same routine is what
-makes that safe.
+**FIXED 2026-09-05.** `CRYSTAL:remove_dispersion_if_asked` is new and private and holds what
+were the two inline blocks; it is called from the three routines that rebuild `F_calc` and then
+optimise the scale — `make_F_predicted(ff)`, `make_F_predicted(prune)` and
+`make_F_predicted_from` — and the copies in `make_F_calc_derivs` are gone. It could not go into
+`make_F_calc_from`, where the addition lives, because the removal needs the scale factor and
+the scale is optimised afterwards. The addition is unchanged: the removal consumes it, for the
+phase.
+
+The invariant is **exactly one removal per rebuild of `F_calc`**, since
+`remove_anom_from_F_calc` subtracts `F_disp` from whatever `F_calc` holds. The two direct
+`DIFFRACTION_DATA:make_F_predicted` calls that only re-optimise the scale on an existing
+`F_calc` — the `make_f_predicted=` keyword and the pruning loop at
+`diffraction_data.set.foo:873` — deliberately do **not** get the call.
+
+Verified on the release build: `yq28_anharm_disp_H_U_iso_IAM_refinement` reproduces its
+reference exactly, and the remove convention gives the same numbers from the new home as from
+the old. `tests/long/yq28_anharm_disp_remove_from_F_exp` is the new regression test — nothing
+in `tests/` set the flag before, which is why this survived from 2020. The HAR and SCF paths
+now run the removal too and have no test that sets the flag, so they rest on the argument
+rather than on evidence.
+
+`CRYSTAL:make_F_calc_derivs_for_atom` is dead code — its only caller,
+`MOLECULE.HAR:get_derivative_F_calc_for_atom`, has none of its own. It is kept for later
+analysis, with a `DIE_IF` on either dispersion switch, since it sets no `F_calc`, scale or
+`F_pred` and so can apply neither convention.
 
 **Two smaller things seen while reading, neither measured:**
 

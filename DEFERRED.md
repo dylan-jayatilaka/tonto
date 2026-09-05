@@ -515,35 +515,66 @@ because the convention it falls back to is the one Tonto wants — but that is a
 question from the report being false, and it does not excuse it. Same silent class as the
 milestone-5 per-rank I/O flag.
 
-`CRYSTAL:make_F_calc_derivs_for_atom` (HAR, `molecule.har.foo:747`) has no removal block at
-all, so it needs the same treatment or an explicit refusal.
+### `make_F_calc_derivs_for_atom` is dead code, and now DIEs on either switch
 
-### Next action, in order
+`CRYSTAL:make_F_calc_derivs_for_atom` is reached only from
+`MOLECULE.HAR:get_derivative_F_calc_for_atom`, and **that has no callers at all** — so
+nothing in the program reaches it. Dylan's reading (2026-09-05): it was probably written for
+the fragHAR parallel version, or for some tidy-up of the algorithm that was never finished;
+`MOLECULE.HAR:make_LS_mx` next to it carries the comment "Calculate the LS matrix Low memory
+version", which looks like the same effort.
 
-1. **Move the removal to where every path reaches it.** It cannot go into
-   `make_F_calc_from` — it needs the scale factor, and the scale is optimised after `F_calc`
-   is built. Its home is immediately after that optimisation, in
-   `CRYSTAL:make_F_predicted_from`, which builds `F_calc`, optimises the scale, and is on
-   every path (the refinement, HAR at `molecule.har.foo:1418`, the SCF at
-   `molecule.scf.foo:301`). Put the block there as one call at the end and delete the two
-   copies from `make_F_calc_derivs`. **Keep the addition in `make_F_calc_from` as it is** —
-   the removal consumes it, for the phase.
+**Kept for later analysis, per Dylan, with a comment and a `DIE_IF`.** It sets no `F_calc`,
+no scale factor and no `F_pred`, so neither dispersion convention can be applied in it: the
+removal needs the scale, and the addition is untested through this path. It now DIEs if
+either switch is on. Since nothing calls it the DIE costs nothing today, and it stops a
+silently wrong answer if the path is ever revived.
 
-   The invariant to preserve is **exactly one removal per rebuild of `F_calc`**:
-   `remove_anom_from_F_calc` subtracts `F_disp` from whatever `F_calc` currently holds, so
-   running it twice subtracts twice. Today that is safe only because `make_F_calc_from`
-   rebuilds `F_calc` from scratch and the removal follows immediately; keeping the two in one
-   routine is what keeps it safe.
-2. **Then add a test that sets the flag.** Nothing in `tests/` sets
-   `remove_dispersion_from_f_exp=` today, which is exactly why this survived from 2020. A
-   yq28 variant is the obvious candidate — the numbers for it are in the table above. Without
-   one, the next change to this code has nothing to fail against.
-3. Expect a re-bless only if a reference with non-zero dispersion moves. Only yq28 and YLID
-   have any, and YLID has `correct_dispersion= no`.
-4. **The phase switch stays parked.** `REFLECTION:F_phase_without_disp` is kept, unused, and
-   the comment at `diffraction_data.set.foo:2014` says why. Note it would be *wrong* to use
-   it after a successful removal: `F_calc` has had `F_disp` subtracted already, so
-   `F_calc - F_disp` would subtract it twice. Its own comment claims otherwise and is wrong.
+While there: `sf_e` was created, filled by `make_unique_sf_derivs_for_atom`, then never used
+or destroyed — a leak, in a routine not declared `leaky`. Now destroyed.
+
+### FIXED 2026-09-05 — the removal moved to where every path reaches it
+
+`CRYSTAL:remove_dispersion_if_asked` is new and private, and holds what used to be the two
+inline blocks. It is called from the three routines that rebuild `F_calc` and then optimise
+the scale — `make_F_predicted(ff)`, `make_F_predicted(prune)` and `make_F_predicted_from` —
+and the two copies in `make_F_calc_derivs` are gone. It could not go into `make_F_calc_from`,
+which is where the addition lives: the removal needs the scale factor, and the scale is
+optimised afterwards. **The addition stays exactly as it was** — the removal consumes it, for
+the phase.
+
+The invariant, which is why the call sits where it does: **exactly one removal per rebuild of
+`F_calc`**, since `remove_anom_from_F_calc` subtracts `F_disp` from whatever `F_calc` holds.
+The two direct `DIFFRACTION_DATA:make_F_predicted` calls that only re-optimise the scale on an
+existing `F_calc` — the `make_f_predicted=` keyword and the pruning loop at
+`diffraction_data.set.foo:873` — are deliberately **not** given the call, because a removal
+there would subtract twice.
+
+**Verified, release build, gfortran-14.** The binary relinked and carries the change (checked
+by `strings`, not by timestamp alone).
+
+- `yq28_anharm_disp_H_U_iso_IAM_refinement` reproduces its checked-in reference **exactly**:
+  the only 20 diff lines are the banner and the timings, all in `test.py`'s ignore list. The
+  move is numerically neutral where the removal already ran.
+- The remove convention gives the **same numbers from its new home** as it did from the old:
+  R(F) 0.0426, GoF 1.8419, scale 1.0176, Max 1.7660, Min −2.0338, RMS 0.1252, converged.
+
+**New test: `tests/long/yq28_anharm_disp_remove_from_F_exp`**, the same job with
+`remove_dispersion_from_f_exp= TRUE`. Nothing in `tests/` set that flag before, which is
+exactly why the defect survived from 2020. The suite counts in `CLAUDE.md` §7 each go up by
+one. Note the job does not print the flag block, so the *numbers* are the discriminator: if
+the removal ever stops working they revert to the add convention's values and the test fails.
+
+**Known limit of the verification.** The removal now also runs on the HAR path
+(`molecule.har.foo:1418`) and the SCF path (`molecule.scf.foo:301`), and **no shipped test
+sets the flag on either**. Neither is covered by evidence — only by the argument that those
+routines rebuild `F_calc` and optimise the scale in the same order. Worth a test if the
+convention is ever used in anger there.
+
+**Still parked: the phase switch.** `REFLECTION:F_phase_without_disp` is kept, unused, and the
+comment at `diffraction_data.set.foo:2014` says why. Note it would be *wrong* to use it after
+a successful removal: `F_calc` has had `F_disp` subtracted already, so `F_calc - F_disp` would
+subtract it twice. Its own comment claims otherwise and is wrong.
 
 ### Two smaller things seen while reading, neither measured
 
