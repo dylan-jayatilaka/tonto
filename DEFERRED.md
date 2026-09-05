@@ -59,9 +59,29 @@ now covers the whole project, so it was renamed.)*
 | [Platform-specific](#platform-specific) | macOS/Apple Silicon, gfortran-16 |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## WHERE 2026-09-05 LEFT OFF — read this first if you are picking up cold
+## WHERE 2026-09-06 LEFT OFF — read this first if you are picking up cold
 
-**Nothing is in flight.** Two items closed on 2026-09-05.
+**In flight: `docs/GOF_NOT_CHI2.md`** — renaming the stored `chi2` to `GoF2` and making the
+refinement tables print GoF rather than its square. Dylan asked for it on 2026-09-06 and
+reordered it **ahead of milestone 12**, which stays open; nothing in the rename depends on it.
+Three decisions he took at the outset, so they are not reopened: the stored member is `GoF2`
+(not `GoF`) because the objective really is `E + lambda*GoF2`; the CIF value
+`_refine_QCr_Psi_constraint` is written **and read** as `'lambda*GoF2'` with no fallback to the
+old spelling; and the printed "chi2 has increased" warnings are renamed too.
+
+**Milestone 11 (extinction) closed on 2026-09-06.** Its code and reblessing had in fact landed
+on 2026-08-23 — `docs/PROJECT_HISTORY.md` had said otherwise for two weeks. What was actually
+missing was the `hart` test job of the plan's step 4, now
+`tests/hart/urea_hart_STO-3G_extinction`.
+
+**Adding it overturned a published result, and that is the part to carry forward.** `89dbacef`
+records that urea "finds nothing at 1.3 sigma". It does — at Mo K-alpha, which this dataset
+cannot have. At its own 0.3173 A urea shows extinction at **6.3 sigma**. The wrong wavelength
+did not produce an error; it produced a *plausible* answer, because a clamp meant for rounding
+error silently absorbs an impossible one. See *A wavelength inconsistent with the data is
+absorbed silently* under **Correctness** — filed, not fixed.
+
+Two items closed on 2026-09-05.
 
 The **dispersion** item: the flag defect is fixed, verified and archived (*FIXED (2026-09-05):
 dispersion*), and what remains of it is a short list under *Correctness*.
@@ -665,6 +685,58 @@ shortens the distance to 256 characters. Related, and the same root limit:
 *"long paths to the basis sets fail -- STR is 256 characters"* under
 *Platform-specific*.
 
+---
+
+## A wavelength inconsistent with the data is absorbed silently (2026-09-06)
+
+Found while adding `tests/hart/urea_hart_STO-3G_extinction`, and it invalidates a
+result recorded in `89dbacef`.
+
+`VEC{REFLECTION}:set_stl_and_theta` (`foofiles/vec{reflection}.foo:369-370`) clamps
+
+```foo
+         st = stl*lambda
+         if (st> ONE) st =  ONE
+```
+
+The comment above it says *"Take care, numerical accuracy issues"*, so the guard was
+written for a value a rounding error above 1. It also silently absorbs a wavelength that
+**cannot** belong to the data: any reflection with `sin(theta)/lambda > 1/lambda` is given
+`theta = 90` degrees instead of being rejected.
+
+`DIFFRACTION_DATA.INQ:extinction_angle_part` (`foofiles/diffraction_data.inq.foo:563`) then
+compounds it:
+
+```foo
+         s = sin(TWO*.reflections(n).theta)
+         res(n) = TOL(3)*lambda3/max(s,TOL(6))
+```
+
+For a clamped reflection `sin 2theta` is zero, the `max(s,TOL(6))` floor returns `1e-6`, and
+that reflection's angular factor comes out about **10^6 times** a normal one's. The
+least-squares then drives `eps` down to compensate, and reports a small factor with a small
+esd. Exit 0, no warning, a plausible-looking number.
+
+**Measured, on urea (817 reflections, max `sin(theta)/lambda` = 1.438944 A^-1):**
+
+| lambda / A | clamped reflections | extinction factor | significance |
+|---|---|---|---|
+| 0.3173 (this dataset's own) | 0 | 0.462406(73078) | 6.3 sigma |
+| 0.71073 (Mo K-alpha) | 14 of 817 (1.7%) | 0.002569(2008) | 1.3 sigma |
+
+Mo K-alpha is impossible here — it implies `sin theta` = 1.0227. **So `89dbacef`'s claim
+that "urea finds nothing at 1.3 sigma, which is the consensus for so small a crystal" is an
+artefact of the clamp, not a physical result.** Corrected in `docs/PROJECT_HISTORY.md`
+milestone 11.
+
+**What to do, not yet decided.** The obvious repair is for `DIFFRACTION_DATA` to refuse a
+wavelength inconsistent with its own reflections, naming the offending `sin(theta)/lambda` —
+a `DIE`, so it is live in release. Whether the `max(s,TOL(6))` floor should also change is a
+separate question and a larger one: that floor is part of the extinction model, changing it
+moves numbers wherever extinction is on including the quartz reference, and §5 of
+`docs/EXTINCTION_REPORT.md` records that the angular factor is itself still unsettled —
+resolving it needs Larson (1970).
+
 # MPI
 
 ## Parallelise the Bader basin search (Dylan, 2026-08-18)
@@ -968,27 +1040,6 @@ Linux or in CI, suspect this before suspecting a real regression.
   dominated entirely by the fit term, which is exactly when a plain DIIS extrapolation misbehaves.
 - Compare against a run that starts at lambda=0 (not a restart): if the wandering is absent there,
   the restart seed is starting the fit too far from its own optimum.
-
-### PENDING: apply at the next cascade rebuild — types.foo M0s comments
-
-Deliberately **not** applied yet: `types.foo` is included everywhere, so editing it forces a full
-recompile, and this is documentation only. Apply it the next time a cascade is needed anyway.
-People jump to the type component to find out what a field means, so this belongs there rather
-than only in `MOLECULE.SCF`. Exact text (replacing the existing one-line comments):
-
-```foo
-     M0s :: OPMATRIX@
-     ! The unfitted reference MOs, for overlap_with_M0s.
-     ! NOT necessarily the lambda=0 MOs: a RESTART starts at lambda>0 and seeds
-     ! these with the MOs at the restart lambda. Set in MOLECULE.SCF.
-```
-
-```foo
-     overlap_with_M0s :: REAL  DEFAULT(ONE)
-     ! Overlap of the current lambda>0 MOs with the reference M0s.
-     ! For a RESTART the reference is this job's starting point, not lambda=0,
-     ! so the value is not comparable across a restart boundary. See M0s.
-```
 
 ### Two findings from the MPI_Bcast hunt (2026-08-02)
 
@@ -2756,6 +2807,26 @@ widths — the reference wider (`0.00000(5)   0.00000(8)`), the new build
 narrower. Every number is identical, and the test passes 1/1, so `scripts/test.py`
 is insensitive to this whitespace. Untraced, and not worth tracing unless it
 starts mattering.
+
+---
+
+## No XCW job runs with the extinction correction on (2026-09-06)
+
+Step 4 of the plan in `docs/EXTINCTION_REPORT.md` asks for two test jobs. The `hart` one
+is now `tests/hart/urea_hart_STO-3G_extinction`. The second is still owed: an
+X-ray-constrained-wavefunction job with extinction on, so that the XCW constraint gradient's
+extinction term — added during milestone 11, and the reason a wrong gradient would converge
+to a different wavefunction — is covered by something.
+
+`tests/long/nh3_x-ray-constrained-rhf_cc-pVTZ` is the natural choice, being where extinction
+last ran before 2016, and its `stdin:135` still says `optimise_extinction= FALSE`.
+
+**Why it was left out rather than just switched on.** That job is the known-flaky XCW
+convergence case written up above under *small numerical differences*: its SCF wanders to
+-26.4 Ha and an overlap of 0.004 before DIIS recovers, and the blessed reference encodes that
+trajectory. Turning extinction on changes the objective and so changes the path, and a new
+reference would bake in a new one. Decide first whether to diagnose the wandering, then add
+the job — not the other way round.
 
 # Translator and the Foo language
 

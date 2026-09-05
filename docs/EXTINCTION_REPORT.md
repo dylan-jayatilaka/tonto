@@ -240,7 +240,7 @@ the `1/sin 2θ` pole, which needs the wavelength guard of §3 and a low-angle cu
 
 This is a scientific decision, taken before the port rather than during it.
 
-## 6. Port status (2026-08-22, in progress — nothing committed)
+## 6. Port status (landed 2026-08-23 in `89dbacef`; milestone closed 2026-09-06)
 
 Decisions taken by Dylan on 2026-08-22:
 
@@ -251,8 +251,8 @@ Decisions taken by Dylan on 2026-08-22:
   of wavefunction parameters is `N_param(0) = 0`, and `lambda` is a Lagrange multiplier
   rather than a least-squares parameter.
 
-**Done in the working tree.** All five changed files translate without error
-(`FooToFortran`, checked individually); **not yet compiled and not yet run.**
+**Landed.** All five changed files translate, compile and run; the work merged to `develop`
+in `89dbacef` on 2026-08-23.
 
 | File | Change |
 |---|---|
@@ -324,10 +324,10 @@ that pruning runs again.
 and then reverted: it duplicated a keyword that already sat in the right place, and put a
 diffraction-data setting into a namespace where it does not belong.)*
 
-**Still to do.**
-
-1. `min_BFGS`'s commented-out `DIE_IF` on non-convergence (`vec{real}.foo:2166`).
-2. Build, and run the tests of step 4 below.
+**Both done.** `min_BFGS`'s non-convergence guard is live at `vec{real}.foo:2164-2166` — as
+an `ENSURE`, not the `DIE_IF` planned, because the routine is `pure` and a `DIE` there would
+not compile in release. The tests of step 4 are `tests/long/quartz_NN_HAR_L1_rhf_def2-SVP`
+and `tests/hart/urea_hart_STO-3G_extinction`.
 
 **Expected reference changes, beyond any job that switches extinction on.**
 
@@ -337,7 +337,7 @@ diffraction-data setting into a namespace where it does not belong.)*
 - Any job whose GoF² was computed between a structure-factor rebuild and the following
   solve of the normal equations moves by the accumulation of §4b — of order 0.1%.
 
-## 6. Plan
+## 7. Plan — all steps closed except 6, which became milestone 12
 
 1. **Decide** the angular factor (§5) and the XWR parameter count (§4a).
 2. **Port** `58f4a23d` and `3e29ca20` from `origin/Lolo_CP2K` by hand, translating

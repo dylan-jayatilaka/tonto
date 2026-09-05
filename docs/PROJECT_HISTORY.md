@@ -379,17 +379,26 @@ before any code is written**, most likely in its own conversation (`/clear`).
      a routine name, which collapses the **20 `new_r_*` plus 20 `new_u_*`** duplicated
      procedures. Take this with the libxc wrap, not as a separate migration.
 
-11. 🔶 **IN PROGRESS (opened 2026-08-22) — reactivate the extinction correction.**
+11. ✅ **DONE (2026-08-22 to 2026-09-06) — reactivate the extinction correction.**
    Authoritative document: **`docs/EXTINCTION_REPORT.md`**. Dormant since 2016-10-02 and
    reached by no test, so the eight defects found in it were all silent. Decisions taken:
    adopt the SHELXL form, eq (62) of Bourhis *et al.* (2015); hold `N_p` at the refinement
    count and add nothing for the XCW Lagrange multiplier, so a `lambda = 0` XCW reproduces
    the GoF of the HAR it starts from. Ported from `origin/Lolo_CP2K` (Lorraine Malaspina)
    and extended. **Works**: quartz L1+H gives an extinction factor 14 times its own esd,
-   with GoF² 9.84 → 8.39 and R(F) 0.0120 → 0.0105; urea gives nothing, confirming the
-   consensus that so small a crystal has no extinction. Short suite 62/62. Open: rebless the
-   three `hart` references for the new `_refine_ls_extinction_coef` CIF item, and add a
-   quartz test job.
+   with GoF² 9.84 → 8.39 and R(F) 0.0120 → 0.0105. Merged in `89dbacef`; the three `hart`
+   references were reblessed in `f6395f44` and the quartz job made to refine twice, without
+   then with the correction, in `71f94ff0`. Closed by `tests/hart/urea_hart_STO-3G_extinction`,
+   the only test anywhere that exercises `hart --extinction`.
+
+   **One claim made when this merged is wrong, and is corrected here.** `89dbacef` says urea
+   finds nothing at 1.3 σ, "the consensus for so small a crystal". That was measured at a
+   wavelength this dataset cannot have: `urea_init.cif` carries no
+   `_diffrn_radiation_wavelength`, and at Mo Kα the maximum sin(θ)/λ of 1.438944 Å⁻¹ implies
+   sin θ = 1.0227. At the dataset's own 0.3173 Å urea shows extinction at **6.3 σ** —
+   0.462406(73078) — with GoF² 49.556 → 47.256 and R(F) 0.038003 → 0.036585. See the
+   *inconsistent wavelength* entry in `DEFERRED.md` for why the wrong wavelength produced a
+   plausible-looking null rather than a diagnostic.
 
 12. ⬜ **NOT STARTED — choose the XCW Lagrange multiplier by cross-validation.**
    Design and reasoning: **Appendix A of `docs/EXTINCTION_REPORT.md`**, which records the
@@ -408,5 +417,7 @@ before any code is written**, most likely in its own conversation (`/clear`).
    when the GoF is 3 or 7 and nobody believes the true value is 1. The Akaike criterion is
    kept as a cross-check, with the effective parameter count
    `trace[(A + lambda B)^-1 lambda B]` and its Monte Carlo estimator both derived in the
-   appendix. Sequence: after milestone 11 is tested, before `docs/GOF_NOT_CHI2.md`.
+   appendix. This was to have come before `docs/GOF_NOT_CHI2.md`; Dylan reordered the two on
+   2026-09-06, so the naming work goes first and this stays open. Nothing in it depends on
+   the rename.
 

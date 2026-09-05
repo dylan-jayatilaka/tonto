@@ -69,7 +69,7 @@ reads.
 | `--dispersion` | quoted list | none | Dispersion coefficients, e.g. `--dispersion 'S 0.04370 0.04026 Cl 0.05457 0.05224'`. |
 | `--disk-sfs` | `t`/`f` | `f` | Write the aspherical atomic structure factors to disk. |
 | `--dtol` | real | 0.01 | DIIS convergence tolerance. Must lie between 1e-5 and 0.1. |
-| `--extinction` | `t`/`f` | `f` | Correct extinction via the Larson formula. |
+| `--extinction` | `t`/`f` | `f` | Correct extinction, SHELXL eq (62). Needs a wavelength, so pair it with `--wavelength` unless the CIF carries one. |
 | `--fos` | ratio | 3 | Reject reflections with F/sigma below this. |
 | `--fzcut` | z-score | off | Prune reflections whose `(F_pred-F_expt)/sigma` exceeds this. Needs a CIF from a previous HAR. |
 | `--group-charges` | braced list | all 0 | Charge on each atom group, in group order, e.g. `--group-charges '{ 1 -1 }'`. One entry per group; `hart` stops if the count differs. Quote it: the whole list is one option value. |
@@ -85,7 +85,7 @@ reads.
 | `--scf` | `rhf`/`rks` | `rhf` | The SCF wavefunction. |
 | `--shelx-f`, `--shelx-f2` | file | — | Reflections in SHELX fixed format `(I4,I4,I4,8F,8F)`. |
 | `--std-f`, `--std-f2` | file | — | Reflections in free, whitespace-separated format. |
-| `--wavelength` | Å | from the CIF | X-ray wavelength. Needed only when the CIF has no `_diffrn_radiation_wavelength`; it defines each reflection's Bragg angle. |
+| `--wavelength` | Å | from the CIF | X-ray wavelength. Needed only when the CIF has no `_diffrn_radiation_wavelength`; it defines each reflection's Bragg angle. **Give the right one**: a wavelength too long for the data is not rejected, it is silently absorbed — see the *inconsistent wavelength* entry in `DEFERRED.md`. |
 | `--version` | — | — | Print the version and exit 0. |
 
 **Restrictions**, all enforced with a message: zero overall charge; an even
