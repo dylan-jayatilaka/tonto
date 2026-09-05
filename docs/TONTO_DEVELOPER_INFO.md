@@ -64,9 +64,10 @@ procedures:
 mkdir build-slim && cd build-slim
 cmake .. -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=release \
          -DPURGE_DEAD_CODE=run_molecule
-make run_molecule
+make tonto
 ```
 
+The option takes the run-file **stem**, `run_molecule`; the build target is `tonto`.
 This computes reachability from the `run_molecule` (=`tonto`) entry point and drops
 every procedure not reachable from it (~1/3 of the ~7600 procedures), producing a
 smaller binary that passes the identical test suite. The purge is **per executable**
@@ -363,6 +364,22 @@ relation does the checking.
 HAR, and the reflection at which the maximum falls is the argmax of noise, so both differ
 between compilers. Anything printed into a blessed reference must be reproducible --
 see `FF_ASYMMETRY_TOL` in `include/macros.in`.)
+
+### A debug build emits ~690 uninitialised warnings, and ~5 of them mean anything
+
+`DEBUG_FLAGS` no longer suppresses `-Wuninitialized` / `-Wmaybe-uninitialized`: that class named
+two real read-before-assignment defects the day the suppression came off. But 683 of the 688
+warnings are gfortran complaining about its **own** array-descriptor temporaries --
+`x.dim[n].lbound`, `.ubound`, `.stride`, `.offset` -- and name no source variable at all. One
+grep separates signal from noise:
+
+```
+grep -B3 -E '\[-W(maybe-)?uninitialized\]' build.log | grep 'Warning:' \
+  | grep -vE '\.dim\[[0-9]+\]\.(lbound|ubound|stride)|\.offset'
+```
+
+The definite/maybe split is *not* the useful one here -- both classes are almost entirely
+descriptor noise. Descriptor-versus-variable is.
 
 ## 2. Pushing to GitHub
 

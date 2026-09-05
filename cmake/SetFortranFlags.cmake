@@ -115,7 +115,11 @@ elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU")
                        "-fcheck=bounds from DEBUG (compiler bug -- see "
                        "docs/GFORTRAN16_DEBUG_CRASH.md)")
     endif()
-    set(DEBUG_FLAGS   "-Wall -g -fbacktrace ${BOUNDS_CHECK_FLAG} -Wno-maybe-uninitialized -Wno-uninitialized -DUSE_PRECONDITIONS -DDEBUG=1")
+    # -Wall's uninitialised-variable warnings are deliberately NOT suppressed
+    # here. They are the class that named the 2026-09-03 defect (a logical read
+    # before assignment in MOLECULE.RHO:make_ANO_interpolators), and debug is the
+    # only build where they fire.
+    set(DEBUG_FLAGS   "-Wall -g -fbacktrace ${BOUNDS_CHECK_FLAG} -DUSE_PRECONDITIONS -DDEBUG=1")
     set(RELEASE_FLAGS "-Ofast ${ARCH_FLAG} -DUSE_ERROR_MANAGEMENT")
     set(FAST_FLAGS    "-Ofast -faggressive-loop-optimizations -fstrict-aliasing ${ARCH_FLAG} -DUSE_ERROR_MANAGEMENT")
   # set(FAST_FLAGS    "-Ofast -faggressive-loop-optimizations ${ARCH_FLAG}")

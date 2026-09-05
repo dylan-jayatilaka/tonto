@@ -29,7 +29,8 @@ now covers the whole project, so it was renamed.)*
 > search, the two latent command-line bugs, both `hart`-under-MPI entries, the benign
 > column-0 `#ifdef` diagnostic, the run-time-dependency lesson, the whole gfortran-16 debug
 > story (three entries), and the `textfile.foo` verification. Moving them took the live half
-> from 4396 lines to 3518. **36 live, 36 archived** (35 and 37 after 2026-09-05).
+> from 4396 lines to 3518. **36 live, 36 archived** (35 and 37 after the dispersion
+> close on 2026-09-05; 35 and 38 after the build-and-toolchain batch the same day).
 >
 > Re-sorted again on 2026-09-05, when the dispersion item closed: a 178-line live HANDOFF and
 > a 22-line live defect entry became one condensed archive entry plus a short list of what is
@@ -46,7 +47,7 @@ now covers the whole project, so it was renamed.)*
 |-------|------------------|
 | [Correctness](#correctness--open-bugs-that-give-wrong-answers) | Open bugs that give wrong answers, including ones with no diagnostic |
 | [MPI](#mpi) | The milestone-4 defect register, the `parallel do` lock, the `MPI_Bcast` desync, architecture options |
-| [Build system and toolchain](#build-system-and-toolchain) | `get_from` dependency trap, macro pruning, `types.foo` split, OpenBLAS |
+| [Build system and toolchain](#build-system-and-toolchain) | `get_from` dependency trap, `types.foo` split, OpenBLAS |
 | [Test suite and numerics](#test-suite-and-numerics) | Small numerical differences, `-O0` failures, NaN/negative ESDs |
 | [Translator and the Foo language](#translator-and-the-foo-language) | Dropped `data` statements, name-case normalisation, F2008 submodules |
 | [hart](#hart) | Remaining hart items and un-migrated runfiles |
@@ -58,15 +59,24 @@ now covers the whole project, so it was renamed.)*
 
 ## WHERE 2026-09-05 LEFT OFF — read this first if you are picking up cold
 
-**Nothing is in flight.** The dispersion item closed on 2026-09-05: the flag defect is fixed,
-verified and archived (*FIXED (2026-09-05): dispersion*), and what remains of it is a short
-list under *Correctness*. **Dylan is moving next to the several small items under
-[Build system and toolchain](#build-system-and-toolchain)** — start there, and note the
-cascade-rebuild batch at the top of that theme, which is three changes that must move no
-number.
+**Nothing is in flight.** Two items closed on 2026-09-05.
 
-The earlier `tonto_lib` rename is verified and **works**; it just leaves a cosmetic `make`
-warning to tidy, which is action 0 below. Everything else is either finished or not started.
+The **dispersion** item: the flag defect is fixed, verified and archived (*FIXED (2026-09-05):
+dispersion*), and what remains of it is a short list under *Correctness*.
+
+Then the **four small build-and-toolchain items** — the cascade-rebuild batch (`types.foo` M0s
+comments, the macro prune, the circular `tonto` target) and the `-Wno-uninitialized` removal.
+Archived together as *DONE (2026-09-05): the four small build-and-toolchain items*; the two that
+remain in that theme are blocked on other people (gfortran-16 on GCC, the Bugzilla search on a
+human at a browser).
+
+**The cascade batch was asserted, not assumed: 1508 produced files compared before and after a
+full rebuild, 0 differing.** That assertion was the whole reason for batching them.
+
+**Two new defects came out of the fourth item, and they are why it was worth doing.**
+`MOLECULE.SCF:make_pnd_constraint` never assigns `n_par`; `MOLECULE.TD:do_doubles_Mazur` never
+assigns `Eai`. Both are filed under *Correctness*, both are the same shape as the 2026-09-03
+`first` defect, and neither is covered by a test — which is why both survived.
 
 **Branch state.** `develop` carries the day's work; `origin/master` was merged into it, so
 `develop` is a superset. The gfortran-16 migration is preserved whole on
@@ -106,31 +116,6 @@ build has. One file, everything else identical, executable relinked each time.
 
 ### Next actions, in order
 
-0. **VERIFIED, but tidy up one warning.** The `tonto_lib` rename (`107cc0d9`) was build-verified
-   after all, at the end of the session: a full gfortran-14 debug build completed exit 0,
-   `make tonto` printed *Linking Fortran executable tonto*, the executable's timestamp moved
-   (09:04:00 → 09:57:23), and `libtonto.a` kept its name. So `make tonto` now builds the program,
-   which was the point.
-
-   **It is not clean, though.** Every `make tonto` prints:
-
-   ```
-   make[3]: Circular CMakeFiles/tonto <- tonto dependency dropped.
-   ```
-
-   because `add_custom_target(tonto ...)` collides with the *file* named `tonto` in the build
-   directory: GNU make sees a target and a file of the same name, calls it circular, drops it and
-   proceeds. Harmless — the link happens — but noisy, and noise in a build log is how real
-   warnings get missed.
-
-   **The clean fix** is to drop the custom target and name the executable target itself: replace
-   `add_executable(run_molecule ...)` + `set_target_properties(... OUTPUT_NAME tonto)` +
-   `add_custom_target(tonto ...)` with a plain `add_executable(tonto ${CMAKE_CURRENT_BINARY_DIR}/run_molecule.F90)`.
-   No collision and no warning. It costs the `run_*` target-naming symmetry with `run_har` and
-   `run_rgbi` (which are fine as they are — nothing is named `hart` or `rgbi`, so they do not
-   collide), and `install(TARGETS run_molecule DESTINATION bin)` must follow the rename. Small and
-   deliberate; do not rush it, and rebuild before trusting it.
-
 1. **macOS in CI, then WSL-MPI** (Dylan, 2026-09-03) — to complete the badge table across
    platforms. **The three macOS workflows are now REGISTERED and dispatchable** (`gh workflow
    list` shows macOS-release, macOS-debug and macOS-MPI), which the merge to `master` on
@@ -153,11 +138,11 @@ build has. One file, everything else identical, executable relinked each time.
    in both a dipole table and a HAR esd table, in a debug build without bounds checking. Two
    guesses are already dead: it is not the bracketed uncertainty (the dipole test prints none),
    and `width`/`width_set` both carry proper `DEFAULT` initialisers.
-4. **Turn `-Wno-uninitialized -Wno-maybe-uninitialized` back on** in `DEBUG_FLAGS`. It is the
-   warning class that names the bug just fixed, switched off in the one build where it fires.
-   Expect noise, and note gfortran did **not** flag that particular site at `-O2`, so it is an
-   instrument rather than a cure. A source scan was tried and abandoned: without argument
-   intents it cannot tell a read from an `OUT` write, and every candidate was a false positive.
+4. **The two uninitialised-variable defects the flag change just found** — `n_par` in
+   `MOLECULE.SCF:make_pnd_constraint` and `Eai` in `MOLECULE.TD:do_doubles_Mazur`, both under
+   *Correctness*. `n_par` is a one-line fix that its three sibling routines already carry; `Eai`
+   needs the Mazur theory read first, because the routine looks unfinished. Neither is covered by
+   a test, so neither should move a reference — and nothing will catch a wrong fix either.
 5. **The Bugzilla duplicate search** over resolved bugs and `16 Regression`. Sourceware refuses
    every automated tool — `curl` gets a 429 and the Anubis layer blocks the rest, `WebFetch`
    included — so **this needs a person at a browser**, as did the filing.
@@ -472,6 +457,51 @@ Two Bijvoet traps that must not be relearned:
   (`diag(-1,-1,1)` on `(0,2,0)` in `P2₁2₁2₁`); the site symmetry factor owns that case.
 - **`L_alanine_minmax_residual_density_map` must stay unchanged.** Zero genuine Bijvoet pairs.
   If a change makes it move, `f9fb26bc` has been broken.
+
+## `n_par` is never assigned in `MOLECULE.SCF:make_pnd_constraint` (2026-09-05)
+
+`foofiles/molecule.scf.foo:2919` declares `n_par`, and `:2924` uses it:
+
+```foo
+fac = -G_FACTOR/(TWO*max(n_refl - n_par,1))
+```
+
+It is never assigned anywhere in the routine. So the scale factor of the polarised-neutron-
+diffraction constraint is computed from stack garbage.
+
+**The fix is one line, and the three sibling routines already carry it.** The constraint makers
+at `:2328`, `:2435` and `:2569` each have
+
+```foo
+n_par = .crystal.xray_data.n_param
+```
+
+on the line before their own `fac` assignment. This one lost it.
+
+**No test exercises it** — nothing under `tests/` uses `pnd` — which is both why it survived and
+why fixing it should move no reference. That cuts the other way too: nothing will catch a wrong
+fix, so read the routine rather than pattern-matching the siblings.
+
+Found by removing `-Wno-uninitialized`; see *DONE (2026-09-05): the four small
+build-and-toolchain items*. The same warning class named the 2026-09-03 defect.
+
+## `Eai` is never assigned in `MOLECULE.TD:do_doubles_Mazur` (2026-09-05)
+
+`foofiles/molecule.td.foo:645` declares `Eai`, and `:728` uses it:
+
+```foo
+Ebj = TD.delEab(bj)
+del = TD.eval(n) - Eai - Ebj
+```
+
+`Ebj` is assigned on the line immediately before; `Eai` never is.
+
+By symmetry the missing line is `Eai = TD.delEab(ai)` — **but do not apply that on the strength
+of the symmetry alone.** The routine looks unfinished: `val` is computed in the same loop
+(`val = del*F*F*Aai`) and never used either. Read the Mazur theory before deciding what the line
+should be, or leave it and mark the routine as incomplete.
+
+No test exercises it. Found the same way as the entry above.
 
 ## The residual-density nearest-atom report is unstable (Dylan, 2026-09-04)
 
@@ -1625,66 +1655,6 @@ Any of these rewrites the reference, so re-bless deliberately and read the resul
 
 # Build system and toolchain
 
-## HANDOFF: the cascade-rebuild batch — three changes that must move NO number (2026-09-04)
-
-**Do this in a fresh session, and only after the Bijvoet/dispersion re-bless has landed.**
-Its whole value is a control, and the control needs a stable baseline.
-
-**The criterion is the point.** Each of these forces a full rebuild and **none of them may
-change a single digit of output**. Run them together, rebuild, and assert the suite is
-byte-identical. If anything moves, that is a bug in the change, and the assertion is the only
-cheap way to find it. Batching them with a change that legitimately moves references — as was
-briefly considered — destroys exactly that, because any accidental effect hides inside the
-expected diff.
-
-### 1. `types.foo` M0s comments
-Held for the next cascade rebuild; see the entry below. Nothing to work out, just apply.
-
-### 2. Prune dead and stale macros in `include/macros.in`
-145 of 377 are never used in any `.foo` file. **The riskiest of the three**: "unused in
-`foofiles/*.foo`" is not the same as "unused after CPP" — a macro can be referenced from
-another macro, or from C. This is the one that most needs the byte-identical check.
-
-### 3. Remove the circular `tonto` target
-`add_custom_target(tonto DEPENDS run_molecule)` collides with the *file* `tonto` in the build
-directory, so every `make tonto` prints `Circular CMakeFiles/tonto <- tonto dependency dropped.`
-The fix is to drop the custom target and name the executable target itself:
-`add_executable(tonto ...)` in place of `add_executable(run_molecule ...)` +
-`set_target_properties(... OUTPUT_NAME tonto)` + `add_custom_target(tonto ...)`.
-
-**CI implications, checked 2026-09-04 — there are none for the build.** No workflow builds by
-target name; every one does `cmake --build <dir> -- -jN`, which builds `all`. No workflow uses
-`cmake --install`, so `install(TARGETS run_molecule DESTINATION bin)` → `install(TARGETS tonto ...)`
-is a local concern only. `-DPURGE_DEAD_CODE=run_molecule` takes the run-file **stem**, not the
-target, so it is unaffected.
-
-**But there is a trap, and it is the one that already bit us.** Naming the executable target
-`tonto` **recreates `build/CMakeFiles/tonto.dir`** — this time holding the executable's single
-object. The four flag assertions repaired on 2026-09-04 now read `tonto_lib.dir` and stay
-correct, but a stale grep of `CMakeFiles/tonto.dir/flags.make` would start *succeeding* again,
-silently, on the wrong file. Put a comment next to the target saying why the assertions look at
-`tonto_lib`.
-
-One doc to update: `docs/TONTO_DEVELOPER_INFO.md:67` says `make run_molecule`.
-
-### 4. Remove `-Wno-uninitialized` from `DEBUG_FLAGS` — note the direction
-
-`cmake/SetFortranFlags.cmake:118` carries `-Wno-maybe-uninitialized -Wno-uninitialized`. These
-**disable** the warning that `-Wall` would otherwise give, in the only build where it fires —
-and it is the warning class that names the defect fixed on 2026-09-03 (`first` read before
-assignment in `MOLECULE.RHO:make_ANO_interpolators`). To get the diagnostic they must be
-**removed**. An earlier version of this note said "turn `-Wno-uninitialized` back on", which
-reads as enabling the suppression; that wording caused a real misunderstanding on 2026-09-04.
-
-`-Wuninitialized` (definite) is clean; `-Wmaybe-uninitialized` is noisy on Fortran with
-allocatables and optional arguments, which is probably why they were added. Drop the first
-unconditionally; treat the second as a measurement — remove it, count the warnings, decide.
-gfortran did **not** flag that particular site at `-O2`, so it is an instrument, not a cure.
-
-**Before landing it, confirm nothing in CI uses `-Werror`**, so a noisy but correct build does
-not read as a regression. This one changes no numbers but will change the build log.
-
-
 ## Future task: split `types.foo` into several modules (parallel compilation)
 
 **Goal (Dylan):** `types.F90` is the slowest single compile in the build and it is a
@@ -2101,84 +2071,6 @@ in one run. Inspection has now failed twice here.
 **Also found:** `hart`'s early-exit paths return **non-zero under MPI** — `hart --version` at 2
 ranks exits 1, because `stop` runs on one rank without `MPI_FINALIZE` on the others. Harmless
 serially, wrong for any harness, and a separate small fix.
-
-## Deferred: prune dead and stale macros in `include/macros.in`
-
-**Audited 2026-07-29.** Of **377** macros defined, **145 are never used in any `.foo` file**.
-Fewer macros is better for maintenance (Dylan), but they are not all the same kind of thing and
-should not be deleted with one sweep:
-
-**(a) Genuinely dead — delete.** `TONTO_SET_STDERR` / `TONTO_SET_STDERR0` is the clearest case:
-unused *and* it expands to `set_error_output_file_(tonto,X)` / `SYSTEM_set_error_output_file`,
-a routine that **does not exist anywhere in `foofiles/`**. It would fail to compile the moment
-anyone used it.
-
-> **CORRECTION 2026-08-02 — the rest of this list was WRONG and acting on it would have broken
-> the build.** The 2026-07-29 audit grepped only `foofiles/`, and so was blind to two other
-> sources of use. Re-measured:
->
-> | macro | audit said | actually |
-> |---|---|---|
-> | `TONTO_CREATE` | unused | **50 runfiles**, 6 generated `.F90` |
-> | `TONTO_DESTROY` | unused | **48 runfiles**, 6 generated `.F90` |
-> | `PARALLEL_DO_START` / `_STRIDE` | unused | **emitted by the translator**, 10 generated `.F90` |
-> | `LOCK_PARALLEL_DO` / `UNLOCK_PARALLEL_DO` | unused | **emitted by the translator**, 10 generated `.F90` |
-> | `PARALLEL_VECTOR_SUM` | unused | genuinely unused — the only true positive |
->
-> `TONTO_CREATE`/`TONTO_DESTROY` live in `runfiles/`, which the audit did not scan. The
-> `PARALLEL_DO_*` and `*_PARALLEL_DO` family can **never** appear in a `.foo` file by
-> construction: `FooToFortran` writes them into the generated Fortran when it lowers
-> `parallel do`. Any macro audit must cover **three** sources -- `foofiles/`, `runfiles/`, and
-> what the translator emits -- or it will report build-breaking false positives.
-
-**(b) Stale defaults — the real hazard.** Macros that look like the tunable default for
-something but no longer drive anything, because the code sets its own value. Editing one has no
-effect, which is a trap. Worse, at least one has *drifted*:
-
-```
-macros.in:629   ROBY_ZERO_ANGLE_CUTOFF   TOL(2)
-roby.foo:176    .zero_angle_cutoff = TOL(2)*RADIAN_PER_DEGREE     <- not the same value
-```
-
-**These are safe to delete: the value has migrated into the type component's `DEFAULT(...)`
-in `types.foo`** (Dylan — confirmed: `types.foo` carries 1103 `DEFAULT(...)` declarations).
-The documentation is not lost by deleting the macro; it now lives on the component that owns
-it, which is the better place. Checked one by one:
-
-| macro | macro value | `DEFAULT` in `types.foo` | |
-|---|---|---|---|
-| `ROBY_OUTPUT_THETA_INFO` | `TRUE` | `TRUE` | matches |
-| `ROBY_ANALYZE_ALL_ATOM_PAIRS` | `FALSE` | `FALSE` | matches |
-| `QUADRATURE_ACCURACY` | `TOL(6)` | `TOL(6)` | matches |
-| `QUADRATURE_MAXIT` | `10` | `10` | matches |
-| `ISOSURFACE_ISO_VALUE` | `ONE` | `ONE` | matches |
-| `TEXTFILE_MARGIN_WIDTH` | `0` | `0` | matches |
-| `TEXTFILE_SPACING` | `2` | `2` | matches |
-| `TEXTFILE_INT_WIDTH` | `8` | `8` | matches |
-| `ISOSURFACE_TABLE_LENGTH/SPACING/EPS` | `30.0d0` / `0.02d0` / `TOL(9)` | `INTERPOLATOR_TABLE_*` | re-homed to the owning module |
-| `TEXTFILE_COMMENT_CHARS` / `_QUOTE_CHARS` | `"!#"` / `"'"""` | `BUFFER_COMMENT_CHARS` / `BUFFER_QUOTE_CHARS` | re-homed |
-| **`ROBY_ZERO_ANGLE_CUTOFF`** | `TOL(2)` | `TOL(2)*RADIAN_PER_DEGREE` | **DIVERGED** |
-| **`PLOT_GRID_PLOT_FORMAT`** | `"gnuplot.contour"` | `" "` | **DIVERGED** |
-| `DIIS_ERROR_TEMP_CUTOFF`, `FILE_BUFFER_LENGTH` | `TOL(2)`, `1024` | none found | check individually |
-
-The two **DIVERGED** entries are the argument for doing this sooner rather than later: they are
-not merely dead but *wrong*. Anyone "tidying up" by wiring the code to `ROBY_ZERO_ANGLE_CUTOFF`
-would silently drop the degrees→radians conversion.
-
-Remaining unchecked in this class: `ADAPTIVE_QUADRATURE_ACCURACY`, `QUADRATURE_EPS`, the other
-`ISOSURFACE_*`/`PLOT_GRID_*`/`TEXTFILE_*` entries, `MULTI_T_ADP_TOL_0`,
-`REAL_MAX_DECIMAL_PLACES`, `BASIS_LIBRARY_ENV_NAME`, `TONTO_REPOSITORY_BASIS_DIRECTORY` — same
-method: find the component, compare its `DEFAULT` with the macro, delete if superseded.
-
-**(c) Unused but arguably intentional API — leave alone.** Tonto is a library, and these are
-language surface a future `.foo` could legitimately use: the kind/size families (`INT_1_SIZE`,
-`REAL_16_SIZE`, …), the alternate scalar types (`INT_1/2/4/8`, `REAL_4/8/16`, `CPX_4/8/16`,
-`CHR`, `BSTR`), `MAT6`/`MAT7`, and the physical-constant set (`AVOGADROS_NUMBER`, `BOHR_SI`,
-`KCAL_PER_HARTREE`, …). Same reasoning as keeping the `set_width_automatically` fix.
-
-**Caveat on the audit:** it counted uses in `foofiles/*.foo` and inside `macros.in` only. A
-macro could in principle be referenced from another `include/` file or by the build, so confirm
-before deleting any individual one.
 
 ## Deferred: adopt OpenBLAS consistently (single-threaded) on Linux and WSL
 
@@ -3721,6 +3613,112 @@ with no hand-written script at all.
 ---
 
 # Done, resolved and closed (archive)
+
+## DONE (2026-09-05): the four small build-and-toolchain items, and the two defects the last one found
+
+Closed together: the cascade-rebuild batch — the `types.foo` M0s comments, the macro prune and
+the circular `tonto` target — plus the `-Wno-uninitialized` removal.
+
+**The cascade batch moves no number, measured.** That criterion was the whole point of batching
+them, so it was asserted rather than assumed: a full gfortran-14 release suite before (binary
+`c7f88c6c`), a full rebuild, a full suite after (binary `81aba37d`), and every produced file
+compared line by line under `scripts/test.py`'s own junk filter. **1508 files, 0 differing.**
+Both runs 143/144, the one failure being `urea_hart_STO-3G_disk_ffs`, deliberately unblessed.
+
+Thirty-two files differed on the first pass, and all thirty-two were provenance: the wall-clock
+line in `fit.log`, and the `computed by TONTO <version> v. <hash>` header of the `.ffn` and
+`.xyz` files, which moved `ff8f24cf` -> `4e0449dc` because the reconfigure picked up the current
+HEAD. Neither string appears in a compared reference, which is why neither is in `test.py`'s
+junk list — worth knowing before the next before/after comparison.
+
+### 1. `types.foo` M0s comments — applied
+`types.foo:6004` and `:7530`, the text as recorded.
+
+### 2. The circular `tonto` target — fixed, and it flushed out four stale references
+`add_executable(tonto ...)` replaces `add_executable(run_molecule ...)` + `OUTPUT_NAME` +
+`add_custom_target(tonto ...)`, with `add_dependencies(tonto run_har)` keeping hart alongside —
+the custom target carried that, and dropping it silently would have restored the 2026-09-04 trap.
+
+The mechanism, confirmed in the old build tree before the change:
+`build/CMakeFiles/tonto.dir/build.make` carried `CMakeFiles/tonto: tonto` at line 69 and
+`tonto: CMakeFiles/tonto` at line 75. That pair is the warning, and it cannot form without a
+custom target. `make tonto` is now silent and still builds hart, and `cmake --install` puts
+`tonto` in `bin`.
+
+**Naming a real target `tonto` turned four stale references into hard configure errors.** All
+four were missed by the 2026-09-03 `tonto_lib` rename, and all four sit on targets nothing
+builds, which is why nothing noticed: `run_shell2`, `run_mp2` and `run_mp2_exercise` still
+linked against `tonto` — the *old library* name, which CMake had been resolving as a plain
+`-ltonto` — and `tests/CMakeLists.txt` still had `add_dependencies(report run_molecule)`. Two
+docs followed: `docs/TONTO_DEVELOPER_INFO.md` (`make run_molecule`) and
+`docs/FOO_GRAMMAR_DOCUMENTATION.md`, which said the CMake targets rename `run_molecule` to
+`tonto`.
+
+**The trap this leaves.** `CMakeFiles/tonto.dir` exists again, now holding the executable's
+single object. The CI flag assertions must keep reading `CMakeFiles/tonto_lib.dir` — a stale
+grep of `CMakeFiles/tonto.dir/flags.make` would start *succeeding* again, silently, on the wrong
+file. There is a comment saying so next to the target.
+
+### 3. The macro prune — 29 deleted, and the audit re-run properly
+
+**The old entry's numbers were stale and one of its claims was wrong.** It said 145 of 377
+unused, and called `TONTO_SET_STDERR` "the clearest case" of genuinely dead. It is used, in
+`runfiles/run_basis.foo:32` and `runfiles/run_colour.foo:16` — the same blindness to `runfiles/`
+that the 2026-08-02 correction was written to fix, one paragraph below that correction. The
+lesson holds: **any macro audit must cover every source, and the list of sources is longer than
+it looks.**
+
+Re-audited over five: `foofiles/`, `runfiles/`, `foogrammar/FooToFortran.java`, the *bodies* of
+`macros.in`'s own definitions (a macro defined in terms of another is a use), and
+`CMakeLists.txt` / `cmake/` / `scripts/` / `.github/` / `tests/`. Then checked against the
+generated `.F90`, `.int` and `.use` in the build tree afterwards. Result: **96 of 382
+unreferenced**, not 145 of 377.
+
+Deleted the 29 that are class (b) — stale defaults superseded by a `DEFAULT(...)` on the owning
+component in `types.foo`. **382 -> 353 defined, 96 -> 67 unreferenced.** A short note in
+`macros.in` now says why a default that has moved to a component must not be left here too.
+
+A **third divergence**, alongside the two the old entry recorded: `ADAPTIVE_QUADRATURE_ACCURACY`
+was `TOL(3)` against `ADAPTIVE_QUADRATURE.accuracy`'s `DEFAULT(TOL(6))` (`types.foo:1221`).
+
+The 67 left alone are class (c) — the kind and size families, the alternate scalar types, the
+physical constants, the numeric fractions — plus two groups worth naming so they are not
+"tidied" later:
+
+- `INTIFY`, `NINTIFY`, `PAR` are shorthands for Fortran intrinsics and keywords, not defaults.
+  They carry none of class (b)'s hazard, so there is no argument for removing them beyond count.
+- `CLUSTER_H_MAX_`, `CLUSTER_N_ATOM_BITS_` and `CLUSTER_N_ATOM_MAX_` are the *derivation
+  formulae* for the hard-coded `CLUSTER_H_MAX` 7, `CLUSTER_N_ATOM_BITS` 19 and
+  `CLUSTER_N_ATOM_MAX` 524287 that **are** used. Deleting them loses why those numbers are right.
+
+### 4. `-Wno-uninitialized` removed — and it named two bugs immediately
+
+Both suppressions are gone from `DEBUG_FLAGS`. Nothing in the repository uses `-Werror`,
+checked, so a noisy but correct build cannot read as a regression.
+
+**Cost: 688 uninitialised warnings in a full gfortran-14 debug build** — 574 `-Wuninitialized`,
+114 `-Wmaybe-uninitialized`. **683 of them are noise of one single kind:** gfortran warning
+about its own array-descriptor temporaries — `x.dim[n].lbound`, `.ubound`, `.stride`, `.offset`.
+Not one of the 683 names a source variable.
+
+So the expectation this file recorded is **inverted**. `-Wuninitialized` is the noisy class, not
+the clean one, and the split that matters is not definite-versus-maybe but
+**descriptor-versus-variable**.
+
+**Five warnings name something else. Two are real defects**, both filed under *Correctness*,
+both the same shape as the 2026-09-03 `first` defect, both invisible to inspection, and neither
+covered by a test. The other three are `tmp` in `SYSTEM:scan_sum_0/1/2`, on the serial `#else`
+path immediately after a `DIE` — unreachable, benign.
+
+**The signal is only findable by filtering, and one grep does it:**
+
+```
+grep -B3 -E '\[-W(maybe-)?uninitialized\]' build.log | grep 'Warning:' \
+  | grep -vE '\.dim\[[0-9]+\]\.(lbound|ubound|stride)|\.offset'
+```
+
+Two lines out of 688. Worth making an invariant check so the signal is not lost in the noise;
+**not done.**
 
 ## FIXED (2026-09-05): dispersion — the conventions, the void evidence, and the fix
 
