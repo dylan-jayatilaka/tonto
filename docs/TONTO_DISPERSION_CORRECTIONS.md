@@ -458,26 +458,27 @@ removes half the problem and discards the anomalous information to do it.
 
 ## 4. Open items
 
-1. **Finish the yq28 measurement first.** Run
-   `yq28_anharm_disp_H_U_iso_IAM_refinement` at `real_precision= 10` with
-   `correct_dispersion= TRUE`, with `remove_dispersion_from_f_exp= TRUE`, and with
-   `correct_dispersion= FALSE`, and diff the three. That says whether the removal bites in a
-   refinement, and it is the only shipped job with non-zero f′ and f″ that refines. Do not
-   repeat the `L_cysteine` comparison: it has none. **Do not apply the one-line gate change
-   in `DEFERRED.md`** — see the defect section above for why it breaks the removal path.
-   The remaining defect, once measured, is that the removal exists only in
-   `CRYSTAL:make_F_calc_derivs`, so a non-refining job gets the add convention while
-   reporting removal. Whatever the fix, `add_dispersion_to_F_calc` stays the convention and
-   neither flag becomes a default — the ruling in §3. Needs its own re-bless.
-2. **The `# of unmatched Fridel pairs` line** — misspelled, misnamed, and uninformative on
+1. **The residual-density doubling under removal is unexplained.** On yq28 the map extremes
+   roughly double while GoF slightly improves. Not necessarily wrong — the three refinements
+   end in different states, and yq28's coefficients are about ten times the true values — but
+   it is not understood, and it should be before the removal convention is used in earnest.
+2. **The HAR and SCF paths are untested with the flag.** The removal now runs at
+   `molecule.har.foo:1418` and `molecule.scf.foo:301` too, and no shipped test sets
+   `remove_dispersion_from_f_exp=` on either.
+3. **`CRYSTAL:F_exp_scaled_corrected` tests the wrong flag** (`crystal.foo:3775`), and
+   subtracts `abs(F_disp)` rather than projecting onto the model phase. Feeds the
+   `.fcf`/`.fco` and CIF reflection tables. Unmeasured.
+4. **`ATOM:has_tabular_dispersion_for` is always true** — `abs(...) >= ZERO`. Harmless; its
+   only call sites are commented out.
+5. **The `# of unmatched Fridel pairs` line** — misspelled, misnamed, and uninformative on
    merged data. Batched with other output changes, since any of them re-blesses ~35
    references.
-3. **The `YLID_IAM_plus_anomalous_residual_density` name.** The job sets
+6. **The `YLID_IAM_plus_anomalous_residual_density` name.** The job sets
    `correct_dispersion= no`, so f′ and f″ are supplied and applied to nothing: the anomalous
    signal is left in the observations and shows in the map. That is the defensible way to
    look at anomalous scatterers deliberately, and it is what the job does — but the name
    reads as though dispersion were being added.
-4. **Merging.** `make_list_of_Bijvoet_classes` and the two `merge_*` routines are still
+7. **Merging.** `make_list_of_Bijvoet_classes` and the two `merge_*` routines are still
    commented out. Tonto cannot merge; it can only discard.
 
 ## 5. References

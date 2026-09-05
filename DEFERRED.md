@@ -29,7 +29,11 @@ now covers the whole project, so it was renamed.)*
 > search, the two latent command-line bugs, both `hart`-under-MPI entries, the benign
 > column-0 `#ifdef` diagnostic, the run-time-dependency lesson, the whole gfortran-16 debug
 > story (three entries), and the `textfile.foo` verification. Moving them took the live half
-> from 4396 lines to 3518. **36 live, 36 archived.**
+> from 4396 lines to 3518. **36 live, 36 archived** (35 and 37 after 2026-09-05).
+>
+> Re-sorted again on 2026-09-05, when the dispersion item closed: a 178-line live HANDOFF and
+> a 22-line live defect entry became one condensed archive entry plus a short list of what is
+> genuinely still open.
 >
 > Still to sort: `MPI: defects found during milestone 4` is a 900-line register whose `###`
 > children are mostly closed but interleaved with live ones. It was left whole rather than
@@ -52,17 +56,17 @@ now covers the whole project, so it was renamed.)*
 | [Platform-specific](#platform-specific) | macOS/Apple Silicon, gfortran-16 |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-> **2026-09-04, evening.** The dispersion item was picked up and the diagnosis changed: the
-> handoff written for it that morning was wrong, and no code was touched. Read
-> [HANDOFF: the dispersion conventions](#handoff-the-dispersion-conventions--read-this-the-earlier-handoff-was-wrong-2026-09-04-evening)
-> before anything else if that is what you are here for. Everything below is still current.
+## WHERE 2026-09-05 LEFT OFF — read this first if you are picking up cold
 
-## WHERE 2026-09-03 LEFT OFF — read this first if you are picking up cold
+**Nothing is in flight.** The dispersion item closed on 2026-09-05: the flag defect is fixed,
+verified and archived (*FIXED (2026-09-05): dispersion*), and what remains of it is a short
+list under *Correctness*. **Dylan is moving next to the several small items under
+[Build system and toolchain](#build-system-and-toolchain)** — start there, and note the
+cascade-rebuild batch at the top of that theme, which is three changes that must move no
+number.
 
-**Nothing is in flight.** The one item that was unverified when the session ended — the
-`tonto_lib` rename — finished building afterwards and **works**; it just leaves a cosmetic
-`make` warning to tidy, which is action 0 below. Everything else is either finished or not
-started.
+The earlier `tonto_lib` rename is verified and **works**; it just leaves a cosmetic `make`
+warning to tidy, which is action 0 below. Everything else is either finished or not started.
 
 **Branch state.** `develop` carries the day's work; `origin/master` was merged into it, so
 `develop` is a superset. The gfortran-16 migration is preserved whole on
@@ -423,183 +427,51 @@ rebuilt after a re-prune and rebuilding it. That is why this stays deferred.
 both refinements. Nothing currently checked in gives a wrong answer. The defect
 is latent, and becomes live the moment a job with cutoffs re-enters the block.
 
-## HANDOFF: the dispersion conventions — READ THIS, the earlier handoff was wrong (2026-09-04, evening)
+## Dispersion: what is still open after the 2026-09-05 fix
 
-**Status: the diagnosis has changed, no code has been touched.** The morning handoff that
-stood here called this a one-line gate fix. It is not, and the evidence it rested on is void.
-Nothing in `foofiles/` was edited; the whole day's output on this item is the corrected
-reasoning below and in `docs/TONTO_DISPERSION_CORRECTIONS.md`.
+The flag defect is **fixed and verified** — see the archive entry *Dispersion: the conventions,
+the void evidence, and the fix*. The working document is
+`docs/TONTO_DISPERSION_CORRECTIONS.md`. **Dylan's ruling stands and is not to be reopened:**
+always add known or modellable effects into `F_calc` and match `F_exp`; removal from `F_exp`
+is a rarely-used alternative and neither flag becomes a default.
 
-### Dylan's ruling, which settles the science question
+What is genuinely still open:
 
-*"In Tonto we should not (often) remove anomalous from F_exp. The idea is to always correct
-F_calc to include the effect, and match F_exp."* (2026-09-04.)
+1. **The residual-density doubling under removal is unexplained.** On yq28 the map extremes
+   roughly double (0.9108 → 1.7660, −1.6066 → −2.0338) while GoF slightly improves. Not
+   necessarily wrong — the three refinements end in different states, and yq28's f′ = 2,
+   f″ = 1 for S are about ten times the true values at 0.41030 Å — but it is not understood,
+   and it should be before anyone uses the removal convention in earnest.
+2. **The HAR and SCF paths are untested with the flag.** The removal now also runs at
+   `molecule.har.foo:1418` and `molecule.scf.foo:301`, and no shipped test sets
+   `remove_dispersion_from_f_exp=` on either. They rest on the argument that those routines
+   rebuild `F_calc` and optimise the scale in the same order, not on a measurement.
+3. **`CRYSTAL:F_exp_scaled_corrected` (`crystal.foo:3775`) tests the wrong flag.** It is gated
+   on `add_dispersion_to_F_calc` although what it does is *remove* dispersion from `F_exp`,
+   and it subtracts `abs(F_disp)` from the magnitude rather than projecting the complex
+   quantity onto the model phase. It feeds the `.fcf`/`.fco` and CIF reflection tables
+   (`crystal.foo:8628`, `:8755`, `:8870`), not the refinement. Unmeasured.
+4. **`ATOM:has_tabular_dispersion_for` is always true** — it tests
+   `abs(element_xray_dispersion(Z)) >= ZERO`. Harmless today: its only call sites are
+   commented out. Fix it or delete it if that code is ever revived.
+5. **`REFLECTION:remove_anom_from_F_exp` declares and assigns `II = IMAGIFY(ONE)` and never
+   uses it.** A one-line tidy, deliberately not taken with the fix because it would have put
+   an unverified edit into a rebuilt-and-tested change for no gain.
+6. **The phase switch stays parked.** `REFLECTION:F_phase_without_disp` is kept, unused; the
+   comment at `diffraction_data.set.foo:2014` says why. Its *own* comment is wrong: it claims
+   it does nothing once dispersion has been removed, but `F_calc` has had `F_disp` subtracted
+   already, so `F_calc - F_disp` would subtract it twice. Fix the comment when the routine is
+   next touched.
+7. **The `YLID_IAM_plus_anomalous_residual_density` name**, and **merging**
+   (`make_list_of_Bijvoet_classes` and the two `merge_*` routines are still commented out —
+   Tonto cannot merge, only discard). Both in the working document, §4.
 
-So **`add_dispersion_to_F_calc` is Tonto's convention**, `remove_dispersion_from_F_exp` stays
-a rarely-used alternative, and **neither becomes a default**. This overturns the tentative §3
-argument in `docs/TONTO_DISPERSION_CORRECTIONS.md`, which has been rewritten to say so. The
-open question that used to sit here — "which should be the default for deformation and
-residual density work" — is closed. Do not reopen it.
-
-### The evidence the old handoff rested on is void
-
-The measurement was made on `tests/long/L_cysteine_IAM_R_min_max_residuals`. **That job has
-f′ = f″ = 0.0000 for every element** — it is in `AS_Lcys_har_0m.cif`, and the checked-in
-reference prints the table of zeros at `stdout:176`. So `correct_dispersion= yes` there
-corrects nothing.
-
-Measured this session on the release build (`build/tonto`, gfortran-14) at
-`real_precision= 10`: `correct_dispersion= yes`, `remove_dispersion_from_f_exp= yes` and
-`correct_dispersion= no` give **byte-identical numbers**, 16–20 diff lines, all of them
-keyword echo, flag lines and timestamps. "Remove behaves like add" was true — and so does
-"off". The job cannot distinguish any of the three, so it says nothing about either
-convention.
-
-**Rule that follows: before comparing dispersion conventions, check the job has non-zero f′
-and f″.** Exactly two shipped tests do:
-
-| test | coefficients | flag |
-|---|---|---|
-| `yq28_anharm_disp_H_U_iso_IAM_refinement` | S: f′ = 2, f″ = 1, via `dispersion_coefficients=` after `process_CIF` | `correct_dispersion= TRUE`, and it refines |
-| `YLID_IAM_plus_anomalous_residual_density` | supplied | `correct_dispersion= no` |
-
-### The one-line fix would break the other convention — do not apply it
-
-`CRYSTAL:make_F_calc_from` (`crystal.foo:4065`) adds dispersion into `F_calc` under
-`correct_dispersion` (= add OR remove). That addition is **deliberate**, because the removal
-recipe consumes it:
-
-- `REFLECTION:remove_anom_from_F_exp` takes `phase = .F_phase = F_calc/|F_calc|` — removal
-  needs the *full* model phase, there being no phase-free way to subtract a complex `F_disp`
-  from a magnitude.
-- `REFLECTION:remove_anom_from_F_calc` then does `F_calc = F_calc - F_disp`.
-
-Gate the addition on `add_dispersion_to_F_calc` alone and, under the remove convention, the
-phase silently becomes the dispersion-free one and `F_disp` is subtracted from an `F_calc`
-that never had it. The sequence in `CRYSTAL:make_F_calc_derivs` — add, optimise scale, remove
-from `F_exp`, remove from `F_calc`, re-optimise — is already the coherent XD/SHELX recipe.
-
-### MEASURED on yq28: the removal IS honoured in a refinement
-
-Release build, gfortran-14, `real_precision= 10`, three variants run in parallel from one
-binary, all exit 0:
-
-| | R(F) | GoF | scale | Maximum | Minimum | RMS | how the fit ended |
-|---|---|---|---|---|---|---|---|
-| `correct_dispersion= TRUE` | 0.0382327593 | 1.8857533317 | 1.0135409613 | 0.9108 | −1.6066 | 0.12228 | stopped, chi² increased |
-| `remove_dispersion_from_f_exp= TRUE` | 0.0425862127 | 1.8419179747 | 1.0175692533 | 1.7660 | −2.0338 | 0.12525 | **converged** |
-| `correct_dispersion= FALSE` | 0.0317205940 | 1.3807146369 | 1.0233551701 | 0.8349 | −0.5758 | 0.10146 | stopped, chi² increased |
-
-The first row reproduces the checked-in reference exactly, which is what makes the other two
-trustworthy. Every fit statistic and every refined parameter moves between the conventions,
-and only the removal converges. **So "accepted, reported, and not honoured" is wrong as a
-general claim.** Do not over-read the map extremes: the three refinements end in different
-states after different numbers of cycles, and yq28's f′ = 2, f″ = 1 for S are artificial —
-about ten times the true values at 0.41030 Å.
-
-### The fault that remains, and it is a plain fault
-
-**The removal lives only in the derivative path.** It is in `make_F_calc_derivs`
-(`crystal.foo:4133` and `:4191`), and those are reached only from `get_parameter_shifts_F` →
-`get_parameter_shifts` → the two `LS_structure_fit` loops (`crystal.foo:4359`, `:4497`). So
-**only a least-squares refinement runs the removal.** A job that sets the flag and does not
-refine gets dispersion added into `F_calc`, keeps `F_corr = F_exp`, and prints
-
-```
-Add dispersion into F_calc ..... F
-Remove dispersion frm F_exp .... T
-```
-
-Line 2 says F and it happened; line 3 says T and it did not. The numbers are barely affected,
-because the convention it falls back to is the one Tonto wants — but that is a separate
-question from the report being false, and it does not excuse it. Same silent class as the
-milestone-5 per-rank I/O flag.
-
-### `make_F_calc_derivs_for_atom` is dead code, and now DIEs on either switch
-
-`CRYSTAL:make_F_calc_derivs_for_atom` is reached only from
-`MOLECULE.HAR:get_derivative_F_calc_for_atom`, and **that has no callers at all** — so
-nothing in the program reaches it. Dylan's reading (2026-09-05): it was probably written for
-the fragHAR parallel version, or for some tidy-up of the algorithm that was never finished;
-`MOLECULE.HAR:make_LS_mx` next to it carries the comment "Calculate the LS matrix Low memory
-version", which looks like the same effort.
-
-**Kept for later analysis, per Dylan, with a comment and a `DIE_IF`.** It sets no `F_calc`,
-no scale factor and no `F_pred`, so neither dispersion convention can be applied in it: the
-removal needs the scale, and the addition is untested through this path. It now DIEs if
-either switch is on. Since nothing calls it the DIE costs nothing today, and it stops a
-silently wrong answer if the path is ever revived.
-
-While there: `sf_e` was created, filled by `make_unique_sf_derivs_for_atom`, then never used
-or destroyed — a leak, in a routine not declared `leaky`. Now destroyed.
-
-### FIXED 2026-09-05 — the removal moved to where every path reaches it
-
-`CRYSTAL:remove_dispersion_if_asked` is new and private, and holds what used to be the two
-inline blocks. It is called from the three routines that rebuild `F_calc` and then optimise
-the scale — `make_F_predicted(ff)`, `make_F_predicted(prune)` and `make_F_predicted_from` —
-and the two copies in `make_F_calc_derivs` are gone. It could not go into `make_F_calc_from`,
-which is where the addition lives: the removal needs the scale factor, and the scale is
-optimised afterwards. **The addition stays exactly as it was** — the removal consumes it, for
-the phase.
-
-The invariant, which is why the call sits where it does: **exactly one removal per rebuild of
-`F_calc`**, since `remove_anom_from_F_calc` subtracts `F_disp` from whatever `F_calc` holds.
-The two direct `DIFFRACTION_DATA:make_F_predicted` calls that only re-optimise the scale on an
-existing `F_calc` — the `make_f_predicted=` keyword and the pruning loop at
-`diffraction_data.set.foo:873` — are deliberately **not** given the call, because a removal
-there would subtract twice.
-
-**Verified, release build, gfortran-14.** The binary relinked and carries the change (checked
-by `strings`, not by timestamp alone).
-
-- `yq28_anharm_disp_H_U_iso_IAM_refinement` reproduces its checked-in reference **exactly**:
-  the only 20 diff lines are the banner and the timings, all in `test.py`'s ignore list. The
-  move is numerically neutral where the removal already ran.
-- The remove convention gives the **same numbers from its new home** as it did from the old:
-  R(F) 0.0426, GoF 1.8419, scale 1.0176, Max 1.7660, Min −2.0338, RMS 0.1252, converged.
-
-**New test: `tests/long/yq28_anharm_disp_remove_from_F_exp`**, the same job with
-`remove_dispersion_from_f_exp= TRUE`. Nothing in `tests/` set that flag before, which is
-exactly why the defect survived from 2020. The suite counts in `CLAUDE.md` §7 each go up by
-one. Note the job does not print the flag block, so the *numbers* are the discriminator: if
-the removal ever stops working they revert to the add convention's values and the test fails.
-
-**Known limit of the verification.** The removal now also runs on the HAR path
-(`molecule.har.foo:1418`) and the SCF path (`molecule.scf.foo:301`), and **no shipped test
-sets the flag on either**. Neither is covered by evidence — only by the argument that those
-routines rebuild `F_calc` and optimise the scale in the same order. Worth a test if the
-convention is ever used in anger there.
-
-**Still parked: the phase switch.** `REFLECTION:F_phase_without_disp` is kept, unused, and the
-comment at `diffraction_data.set.foo:2014` says why. Note it would be *wrong* to use it after
-a successful removal: `F_calc` has had `F_disp` subtracted already, so `F_calc - F_disp` would
-subtract it twice. Its own comment claims otherwise and is wrong.
-
-### Two smaller things seen while reading, neither measured
-
-- `CRYSTAL:F_exp_scaled_corrected` (`crystal.foo:3775`) is gated on `add_dispersion_to_F_calc`
-  although what it does is *remove* dispersion from `F_exp`, and it subtracts `abs(F_disp)`
-  from the magnitude rather than projecting onto the model phase. It feeds the `.fcf`/`.fco`
-  and CIF reflection tables (`crystal.foo:8628`, `:8755`, `:8870`), not the refinement.
-- `ATOM:has_tabular_dispersion_for` tests `abs(element_xray_dispersion(Z)) >= ZERO`, true for
-  every element. Harmless: its only call sites are commented out.
-
-### Still true from the old handoff
+Two Bijvoet traps that must not be relearned:
 
 - **Do not count a reflection that is its own Bijvoet partner.** A symop can map `h` to `-h`
   (`diag(-1,-1,1)` on `(0,2,0)` in `P2₁2₁2₁`); the site symmetry factor owns that case.
-  Counting them gave four wrong predictions.
 - **`L_alanine_minmax_residual_density_map` must stay unchanged.** Zero genuine Bijvoet pairs.
   If a change makes it move, `f9fb26bc` has been broken.
-- Only five references print a residual density block: `L_alanine_minmax_residual_density_map`,
-  `L_cysteine_IAM_R_min_max_residuals`, `yq28_anharm_disp_H_U_iso_IAM_refinement`,
-  `YLID_IAM_plus_anomalous_residual_density` and `tests/hart/urea_hart_STO-3G`. Anything moving
-  outside that set is a bug, not a consequence. Note `L_cysteine`'s "dispersion: yes" in the
-  table in `docs/TONTO_DISPERSION_CORRECTIONS.md` §2 means the flag, not the coefficients,
-  which are zero.
-- `REFLECTION:remove_anom_from_F_exp` declares and assigns `II = IMAGIFY(ONE)` and never uses
-  it. Harmless; delete it if the routine is touched.
 
 ## The residual-density nearest-atom report is unstable (Dylan, 2026-09-04)
 
@@ -636,28 +508,6 @@ The cheaper interim, if it is ever switched on before the proper fix: comment ou
 
 **Do not switch `do_minmax_atoms` on in a test until this is done** — it would make those
 references flap.
-
-## `remove_dispersion_from_F_exp` is honoured only when refining (2026-09-04, revised)
-
-Tonto offers the two standard dispersion conventions: add the anomalous contribution to
-`F_calc` (`correct_dispersion=`, which sets `add_dispersion_to_F_calc`), or remove it from
-`F_exp` (`remove_dispersion_from_f_exp=`, "used by XD, Shelx" per `types.foo`). Exactly one
-should be on, and the readers guard that with mutual `DIE_IF`s. **Dylan's ruling, 2026-09-04:
-adding to `F_calc` is Tonto's convention and neither flag becomes a default.**
-
-**This entry replaces an earlier one the same day that said the flag is never honoured, on
-evidence that turned out to be void** — the job it was measured on has f′ = f″ = 0 for every
-element. The full correction, the measurement, and why the one-line gate change proposed with
-it would break the removal path are in the HANDOFF section at the top of this file and in
-`docs/TONTO_DISPERSION_CORRECTIONS.md`.
-
-What survives: the removal is implemented in `CRYSTAL:make_F_calc_derivs`
-(`crystal.foo:4133`, `:4191`) and nowhere else, and those are reached only from a
-least-squares refinement. Measured on `yq28_anharm_disp_H_U_iso_IAM_refinement`, the removal
-**does** bite when the job refines — every fit statistic moves and it is the only one of the
-three conventions that converges. So the fault is confined to jobs that do not refine: they
-get the add convention while the header reports removal as on. The fix, and the numbers, are
-in the HANDOFF section at the top.
 
 ## DFT: three silent defects — see `docs/DFT_STANDARDISATION.md`
 
@@ -3871,6 +3721,79 @@ with no hand-written script at all.
 ---
 
 # Done, resolved and closed (archive)
+
+## FIXED (2026-09-05): dispersion — the conventions, the void evidence, and the fix
+
+Three days, two wrong diagnoses, one small fix. The full record is
+`docs/TONTO_DISPERSION_CORRECTIONS.md`; what remains open is under *Correctness*.
+
+**Dylan's ruling (2026-09-04), which settled the science question:** *"in Tonto we should not
+(often) remove anomalous from F_exp. The idea is to always correct F_calc to include the
+effect, and match F_exp."* Generalised the next day: add all known or modellable effects to
+the calculated quantity to get the best agreement with the observation, rather than correcting
+the observation to suit a reduced model. So `add_dispersion_to_F_calc` is the convention,
+removal is the rare alternative, and neither is a default. This overturned a tentative
+argument, written earlier the same day, that removal should become the default for deformation
+maps.
+
+**The first diagnosis was wrong because its evidence was void.** It reported that
+`remove_dispersion_from_f_exp= yes` on `L_cysteine_IAM_R_min_max_residuals` gives output
+identical to `correct_dispersion= yes`, and concluded the flag was never honoured. That job
+has f′ = f″ = 0.0000 for every element — in the CIF, and the checked-in reference prints the
+table of zeros at `stdout:176`. At `real_precision= 10` all three of `yes`, `remove` and `no`
+are byte-identical. A job where "off" also agrees cannot distinguish any of them.
+
+**The lesson worth keeping: before comparing two conventions, check the job can tell them
+apart.** Only two shipped tests have non-zero f′ and f″ — `yq28_anharm_disp_H_U_iso_IAM_-
+refinement` (S with f′ = 2, f″ = 1, and it refines) and `YLID_IAM_plus_anomalous_residual_-
+density` (`correct_dispersion= no`).
+
+**The one-line fix that was proposed would have broken the other convention.** Gating
+`Fc = Fc + Fa` on `add_dispersion_to_F_calc` alone looks obviously right and is not:
+`REFLECTION:remove_anom_from_F_exp` takes its phase from `.F_phase = F_calc/|F_calc|`, and
+`remove_anom_from_F_calc` then subtracts `F_disp`. Both need `F_calc` to be carrying dispersion
+at that moment. There is no phase-free way to subtract a complex `F_disp` from a magnitude, so
+the removal recipe is *add, optimise the scale, take it off both sides* — and the addition is
+a means, not the convention.
+
+**Measured on yq28**, release build, gfortran-14, `real_precision= 10`, three variants in
+parallel, all exit 0:
+
+| | R(F) | GoF | scale | Maximum | Minimum | RMS | fit ended |
+|---|---|---|---|---|---|---|---|
+| `correct_dispersion= TRUE` | 0.0382327593 | 1.8857533317 | 1.0135409613 | 0.9108 | −1.6066 | 0.12228 | stopped, chi² up |
+| `remove_dispersion_from_f_exp= TRUE` | 0.0425862127 | 1.8419179747 | 1.0175692533 | 1.7660 | −2.0338 | 0.12525 | **converged** |
+| `correct_dispersion= FALSE` | 0.0317205940 | 1.3807146369 | 1.0233551701 | 0.8349 | −0.5758 | 0.10146 | stopped, chi² up |
+
+The first row reproduces the checked-in reference exactly, which is what made the other two
+trustworthy. So the removal **is** honoured when the job refines, and the second diagnosis —
+"accepted, reported, and not honoured" — was also wrong as a general claim.
+
+**The real fault, and the fix.** The removal lived in `CRYSTAL:make_F_calc_derivs` and nowhere
+else, and those routines are reached only from the two `LS_structure_fit` loops. A job that set
+the flag and did not refine got the add convention while printing `Remove dispersion frm F_exp
+.... T`. `CRYSTAL:remove_dispersion_if_asked` now holds the removal and is called from the three
+routines that rebuild `F_calc` and then optimise the scale. It could not go into
+`make_F_calc_from`, where the addition is: the removal needs the scale, which is optimised
+afterwards. The invariant is exactly one removal per rebuild of `F_calc`, so the two
+`DIFFRACTION_DATA:make_F_predicted` calls that only re-optimise the scale on an existing
+`F_calc` deliberately do not get it.
+
+Verified: `yq28_anharm_disp_H_U_iso_IAM_refinement` identical to its reference; the removal
+gives the same numbers from its new home as from the old; `ctest -R yq28_anharm_disp` 2/2.
+New test `tests/long/yq28_anharm_disp_remove_from_F_exp` — nothing in `tests/` set that flag
+before, which is why the defect survived from 2020.
+
+**Dead code found on the way.** `CRYSTAL:make_F_calc_derivs_for_atom` is reached only from
+`MOLECULE.HAR:get_derivative_F_calc_for_atom`, which has no callers. Kept for later analysis
+per Dylan, who reads it as unfinished work for the fragHAR parallel version; it now DIEs if
+either dispersion switch is on, since it sets no `F_calc`, scale or `F_pred`. Its `sf_e` was
+created, filled and never destroyed — a leak in a routine not declared `leaky`. Fixed.
+
+**Method lesson.** Two diagnoses in a row were confident, written down as handoffs, and wrong,
+and both would have survived review — the first because the measurement looked decisive, the
+second because the code reading looked decisive. What settled it was a job chosen so that the
+answer could differ, run three ways at ten decimals.
 
 ## RESOLVED (2026-09-03): the 124/124 baseline versus CI's 89 — different suites, both right
 
