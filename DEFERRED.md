@@ -61,25 +61,27 @@ now covers the whole project, so it was renamed.)*
 
 ## WHERE 2026-09-06 LEFT OFF — read this first if you are picking up cold
 
-**In flight: `docs/GOF_NOT_CHI2.md`** — renaming the stored `chi2` to `GoF2` and making the
-refinement tables print GoF rather than its square. Dylan asked for it on 2026-09-06 and
-reordered it **ahead of milestone 12**, which stays open; nothing in the rename depends on it.
-Three decisions he took at the outset, so they are not reopened: the stored member is `GoF2`
-(not `GoF`) because the objective really is `E + lambda*GoF2`; the CIF value
-`_refine_QCr_Psi_constraint` is written **and read** as `'lambda*GoF2'` with no fallback to the
-old spelling; and the printed "chi2 has increased" warnings are renamed too.
+**Nothing is in flight.** Two Science items closed on 2026-09-06: **milestone 11 (extinction)**
+and **`docs/GOF_NOT_CHI2.md`** (the `GoF2` rename, and GoF in the tables). Both are archived
+below with their evidence. Dylan reordered the rename ahead of **milestone 12**, which is the
+natural next item and stays open — its free-set calls are still commented out at
+`molecule.scf.foo:2141`, checked.
 
-**Milestone 11 (extinction) closed on 2026-09-06.** Its code and reblessing had in fact landed
-on 2026-08-23 — `docs/PROJECT_HISTORY.md` had said otherwise for two weeks. What was actually
-missing was the `hart` test job of the plan's step 4, now
-`tests/hart/urea_hart_STO-3G_extinction`.
+**Two findings from those two days matter more than the items themselves.**
 
-**Adding it overturned a published result, and that is the part to carry forward.** `89dbacef`
-records that urea "finds nothing at 1.3 sigma". It does — at Mo K-alpha, which this dataset
-cannot have. At its own 0.3173 A urea shows extinction at **6.3 sigma**. The wrong wavelength
-did not produce an error; it produced a *plausible* answer, because a clamp meant for rounding
-error silently absorbs an impossible one. See *A wavelength inconsistent with the data is
-absorbed silently* under **Correctness** — filed, not fixed.
+1. **A wavelength inconsistent with the data is absorbed silently**, filed live under
+   *Correctness*. It invalidated a published urea result: `89dbacef` records urea finding "nothing
+   at 1.3 sigma", which reproduces only at a wavelength this dataset cannot have. At its own
+   0.3173 A urea shows extinction at **6.3 sigma**. Filed, not fixed — the repair touches the
+   extinction model's angular factor, which `EXTINCTION_REPORT.md` §5 records as unsettled.
+2. **Two `hart` references moved from macOS to Linux**, filed live under *Test suite and
+   numerics*. `urea_hart_STO-3G_disk_ffs` now passes because its reference migrated, not because
+   its 0%-difference column alignment was explained — so the long-standing 143/144 is now 144/144
+   for a reason that is bookkeeping, not repair, and both files may go red on a Mac.
+
+**The habit both of them argue for:** before planning how to do what a row says is missing, run
+`git log` for it. Two of the last three items picked up from the register were already done, and
+in each case a document had carried the claim forward without re-checking it.
 
 Two items closed on 2026-09-05.
 
@@ -2288,6 +2290,35 @@ Caveats, so the next person does not over-read this:
   they pass there too, the culprit is `-Ofast`, not the compiler. Note `ci-macos.yml`'s
   header attributes the first to macOS; that attribution is at least incomplete.
 
+### Two hart references moved from macOS to Linux on 2026-09-06 — expect macOS red
+
+Recorded because it changes what a red badge on a Mac would *mean*, and because it retires
+an observation point for the column-width item in the handover.
+
+The GoF table change (`docs/GOF_NOT_CHI2.md` part B) forced six references to be reblessed.
+Two of them had been blessed on macOS, and **Dylan's decision was to bless all six on
+Linux** rather than hand-edit the two:
+
+| Reference | was | now |
+|---|---|---|
+| `tests/hart/gly_ala_hart_STO-3G/glyala.out` | `Darwin-25.5.0` | Linux |
+| `tests/hart/urea_hart_STO-3G_disk_ffs/urea.out` | `Darwin-25.5.0`, **deliberately failing** | Linux, passing |
+
+Two consequences, neither of them a fix:
+
+1. **`urea_hart_STO-3G_disk_ffs` now passes because its reference moved, not because
+   anything was repaired.** Its failure was a column-alignment difference in the torsion
+   table at 0% numeric difference and 0 ulp — the "1" in the suite's long-standing 143/144.
+   That difference has not been explained; it has been blessed away on this platform. The
+   live *column-width difference* item (handover, item 3) therefore has one fewer place to
+   be observed. `so2_rhf_DZP_anharmonic_cluster_charge_XWR` still shows it.
+2. **Both files may now go red on macOS**, for the same reason they were kept on macOS
+   before. If they do, that is this reblessing, not a regression — check the platform banner
+   in the reference before investigating anything else.
+
+The earlier discipline is recorded in `f6395f44`, which inserted a single CIF line by hand
+precisely to avoid migrating these two files. It no longer applies to them.
+
 ### Lower priority: `ylid` (rgbi) — vdW contact indices differ on macOS
 
 **Status 2026-07-29:** fails on **macOS only** (3.85% max rel); **passes on Linux** against the
@@ -3657,6 +3688,84 @@ with no hand-written script at all.
 ---
 
 # Done, resolved and closed (archive)
+
+## DONE (2026-09-06): milestone 11 closed — and urea does have extinction
+
+**The item was mostly finished before it was picked up.** The task register and
+`docs/PROJECT_HISTORY.md` both listed two open pieces — rebless three `hart` references for
+`_refine_ls_extinction_coef`, and add a quartz test job. Both had landed on **2026-08-23**, in
+`f6395f44` and `71f94ff0`, merged in `89dbacef`. The sentence had been carried forward on
+2026-09-04 without being re-checked. `DEFERRED.md` never tracked the item at all, which is why
+nothing here contradicted it.
+
+**What was genuinely missing** was the *other* half of the plan's step 4: the `hart` job. Added
+as `tests/hart/urea_hart_STO-3G_extinction` — the only test anywhere that exercises
+`hart --extinction`, ~15 s.
+
+**Writing it overturned the merge commit's urea result.** `89dbacef` says urea "finds nothing at
+1.3 sigma, which is the consensus for so small a crystal". Two things were wrong with that:
+
+1. `urea_init.cif` carries no `_diffrn_radiation_wavelength`, and extinction cannot be formed
+   without theta — so the job dies unless a wavelength is supplied. This dataset's own is
+   **0.3173 A**, from `tests/short/urea_lamaGOET_grown_CIF/urea.cif:136`: same cell, same 817
+   reflections.
+2. At that wavelength urea shows extinction at **6.3 sigma** — 0.462406(73078) — with GoF²
+   49.556 -> 47.256 and R(F) 0.038003 -> 0.036585. The 1.3 sigma reproduces exactly at Mo
+   K-alpha, which this data **cannot** have: max `sin(theta)/lambda` is 1.438944 A^-1, implying
+   `sin theta` = 1.0227.
+
+The mechanism is filed live under *Correctness* as *A wavelength inconsistent with the data is
+absorbed silently*. It is worth reading before trusting any other extinction number.
+
+**A `.gitignore` trap, found by being bitten by it.** The new test directory would not `git add`.
+`.gitignore:26` names the executables by OUTPUT_NAME — `tonto`, `hart`, `rgbi`, `run_molecule`,
+`run_har` — itself a tightening after the `foofiles/` build tree was found committed. But they are
+**bare patterns**, so they match a path component of that name at any depth: `tests/hart/` and
+`tests/rgbi/` were excluded wholesale. Existing files there were safe only because tracked files
+ignore `.gitignore`; every new one was silently unaddable. Fixed by re-including the two
+directories, with `build/{hart,tonto,rgbi}` and an in-source `foofiles/hart` checked to still
+ignore.
+
+Also removed here: a live `### PENDING: apply at the next cascade rebuild — types.foo M0s
+comments` block that duplicated an entry already archived as done, its text applied at
+`foofiles/types.foo:7532`.
+
+Commit `612c76a7`. `CLAUDE.md` §7 moved to **91** tests (55 + 32 + 4) for `short long hart`.
+
+## DONE (2026-09-06): GoF², not chi2 — the rename, and GoF in the tables
+
+`docs/GOF_NOT_CHI2.md` carries the analysis and is now a record rather than a plan. Dylan
+reordered this **ahead of milestone 12**, which stays open.
+
+**The stored member is `GoF2`, not `GoF`** — Dylan's decision, and the right way round: the XCW
+objective really is `E + lambda*GoF2` and `SCF_DATA:penalty` must stay squared. The square root
+is taken at output only.
+
+**Done in two deliberately separable stages, so the first could be asserted.** Stage A renamed
+identifiers only, leaving every string literal spelled `chi2`; stage B took the root.
+
+Stage A was verified two ways, because a suite run alone cannot prove a rename moved nothing:
+the suite ran **100/101**, and the pre-rename sources were re-translated and the generated
+Fortran compared with both spellings normalised to a placeholder. Across ten modules the only
+differing line mentioning the quantity was a deliberate `fhe` -> `the` typo fix in a comment.
+Everything else differed only by `get_from` donors left unexpanded in a single-module
+translation, symmetrically on both sides.
+
+**Three scope errors in the plan, corrected in the document.** It named `real.foo`,
+`molecule.main.foo` and `crystal.foo` in scope. `real.foo:849` is a genuine chi-squared
+*probability distribution* with no callers; `molecule.main.foo:488` is the χ⁽²⁾ keyword; only 3 of
+`crystal.foo`'s 17 occurrences were in scope.
+
+**Four tables print GoF now, and the fourth was not in the plan.** The XCW SCF iteration table
+(`scf_data.foo:188`) was already spelled `GoF2`, which is exactly why a grep for `chi2` never
+found it — and it is the only table an XCW run reaches, so it is the one that answers Dylan's
+question. `.penalty` itself stays squared.
+
+**Reblessed six references, 63 numbers, each confirmed `= sqrt(old)` at printed precision.** The
+only other changes were the heading, the `chi2 has increased` warnings, and provenance. Two of
+the six had been blessed on macOS and were, at Dylan's direction, blessed on Linux rather than
+hand-edited — see *Two hart references moved from macOS to Linux* under **Test suite and
+numerics**, which records what that costs.
 
 ## FIXED (2026-09-05): two uninitialised variables, both named by the flag change above
 
