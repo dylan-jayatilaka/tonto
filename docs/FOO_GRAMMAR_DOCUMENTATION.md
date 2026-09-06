@@ -788,7 +788,7 @@ STR::get_next_item(self,item,f,l)    ! explicit NON-generic call (double colon)
 - A single `:` is a *generic* call (the `name_` interface); `::` is a
   *non-generic* call naming a specific procedure (the name must not be overloaded).
   The double-colon form is also how a specific procedure is passed **by name** as an
-  argument (`min_BFGS(self, .::chi2F, .::d_chi2F, …)` → `chi2F`).
+  argument (`min_BFGS(self, .::GoF2F, .::d_GoF2F, …)` → `GoF2F`).
 - **Submodule calls are now auto-resolved — write the bare dot form.** A cross-
   submodule call on `self` is just `.proc(...)` (generic) or `.::proc(...)`
   (non-generic); on a receiver, `recv.proc(...)`. The translator resolves the target

@@ -16,6 +16,13 @@ memory, and a parameter count that stops updating part way through an XWR run.
 form of the correction, the whole intensity path, and an esd for the extinction
 parameter on `origin/Lolo_CP2K` on 2026-08-17. See §2.
 
+**Names in this document are the pre-rename ones.** `docs/GOF_NOT_CHI2.md` landed on
+2026-09-06 and every `chi2` identifier below is now spelled `GoF2` — `chi2F` is `GoF2F`,
+`d_chi2I_d_ext` is `d_GoF2I_d_ext`, `update_n_param_and_chi2` is `update_n_param_and_GoF2`,
+and `DIFFRACTION_DATA`'s `.chi2*` members are `.GoF2*`. The text is left as it was written,
+because it is a record of what was found; only the spelling moved. Quotations keep whatever
+their author wrote.
+
 A related but separate task was agreed at the same time and is written up on its own, in
 `docs/GOF_NOT_CHI2.md`: the quantity the code calls `chi2` is a GoF², and the refinement
 tables should report GoF rather than its square. It is kept apart from this work

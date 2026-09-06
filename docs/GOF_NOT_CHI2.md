@@ -12,10 +12,11 @@ touches files that have nothing to do with diffraction.
 The three parts below are independent of each other and can be done in any order. Only
 part B changes numbers.
 
-**Sequencing.** Dylan asked for this work to follow two other things: the extinction
-reactivation of `docs/EXTINCTION_REPORT.md`, and the question of choosing the XCW
-Lagrange multiplier by the Akaike information criterion, recorded as step 6 of that
-document's plan.
+**Sequencing.** This was to have followed two other things: the extinction reactivation of
+`docs/EXTINCTION_REPORT.md`, and choosing the XCW Lagrange multiplier, recorded as step 6
+of that document's plan. Extinction closed on 2026-09-06; Dylan then reordered the
+remaining two, so this went ahead of the multiplier work, which is milestone 12 and stays
+open. Nothing here depends on it.
 
 ## The quantity
 
@@ -34,7 +35,18 @@ About 200 identifier occurrences. **The scope must be drawn by hand**; a global
 substitution would be wrong.
 
 - **In scope:** `diffraction_data.{set,put,inq,read}.foo`, `vec{reflection}.foo`,
-  `crystal.foo`, `molecule.{scf,har,main}.foo`, `scf_data.foo`, `real.foo`, `types.foo`.
+  `molecule.{scf,har}.foo`, `scf_data.foo`, `types.foo`, and three comment lines of
+  `crystal.foo`.
+- **Three corrections to the list as first written**, found when the rename was done on
+  2026-09-06. It named `crystal.foo`, `molecule.main.foo` and `real.foo` in scope; none of
+  them wholly is.
+  - `real.foo:849` `chi2(x2,nu)` is a genuine **chi-squared probability distribution**,
+    `incomplete_gamma(nu/2, x2/2)`, correctly named — and it has no callers anywhere.
+    Renaming it would have been wrong.
+  - `molecule.main.foo:488` `case ("put_uc_chi2_old")` is the χ⁽²⁾ susceptibility keyword,
+    the same family as `cluster.foo` and `molecule.cp.foo`.
+  - `crystal.foo` has 17 occurrences, of which **3** are in scope — the comments at `:3864`,
+    `:3884` and `:4052`. The other 14, at `:13614–14063`, are χ⁽²⁾.
 - **Out of scope — do not touch.** `cluster.foo` (14 occurrences) and `molecule.cp.foo`
   (29) use `chi2`, `chi2_nonH` and `chi2_ijk` for the second-order nonlinear
   susceptibility χ⁽²⁾. That is an unrelated quantity and the name is correct.
@@ -48,14 +60,29 @@ Renaming the stored member to `GoF2` also documents the trap in §D1 at every us
 
 ## B. Table columns GoF² → GoF — the part that needs reblessing
 
-| Table | Heading now | Value now | Should print |
+| Table | Heading was | Value was | Now prints |
 |---|---|---|---|
-| `put_fit_table_body`, `fit_table(2)` | `chi2` | `.chi2_fit` | `sqrt(.chi2_fit)` |
-| `put_refinement_table_body`, `ref_table(3)` | `chi2 initial` | `.chi2_ref0` | `sqrt(.chi2_ref0)` |
-| `put_refinement_table_body`, `ref_table(4)` | `chi2 final` | `.chi2_ref` | `sqrt(.chi2_ref)` |
+| `put_fit_table_body`, `fit_table(2)` | `chi2` | `.GoF2_fit` | `GoF`, `sqrt(.GoF2_fit)` |
+| `put_refinement_table_body`, `ref_table(3)` | `chi2 initial` | `.GoF2_ref0` | `GoF initial`, `sqrt(.GoF2_ref0)` |
+| `put_refinement_table_body`, `ref_table(4)` | `chi2 final` | `.GoF2_ref` | `GoF final`, `sqrt(.GoF2_ref)` |
+| **`SCF_DATA:set_table`, `table(3)`** | `GoF2` | `.penalty` | `GoF`, `sqrt(.penalty)` |
 
-Every reference containing a refinement table changes: the `tests/hart/` suite, the HAR
-and XWR long tests, and the IAM refinements.
+**The fourth table was missing from this list.** It is the XCW SCF iteration table — the
+one a constrained SCF prints per lambda — and it is the table Dylan asked about, since an
+XCW run reaches no other. Its heading was already spelled `GoF2`, which is why a grep for
+`chi2` did not find it. `.penalty` itself stays squared: `fit_value = energy +
+lambda*penalty` (`scf_data.foo:430`) is the objective. The neighbouring `E+L*GoF2` subhead
+and the `Penalty in F` line are left alone — both name the penalty, which genuinely is a
+GoF².
+
+**The column widths do not move.** All three diffraction columns are sized by
+`set_width_from(TEN**3)`, independent of the value, so taking a square root changes digits
+and not alignment — which matters, because `scripts/test.py` compares line by line.
+
+**Reblessing is four references, not the whole suite**, because the harness compares only
+files named by `output:` in each `IO`. `stdout.full`, `stdout.good_residual` and `*.bad`
+are not compared, and the HAR and XWR long tests print only the `GoF^2(N_p)` block, never a
+table.
 
 The `Model statistics based on structure factors` block already reports both —
 `diffraction_data.put.foo:696–697` prints `GoF^2(N_p)` and `GoF (N_p)` — and needs
@@ -78,5 +105,9 @@ The corresponding **tables** need nothing: `put_GOF_vs_STL_table:976` and
    at output only. The same applies to `.chi2_increased`, whose comparison is unaffected
    by a monotone transform but should not be perturbed gratuitously.
 2. `_refine_QCr_Psi_constraint 'lambda*chi2'` (`diffraction_data.put.foo:60`) is a CIF
-   **value**, not a label. Changing it changes what the file asserts about the
-   refinement, so it is a decision rather than a rename.
+   **value**, not a label. **Decision (Dylan, 2026-09-06): write and read the new spelling
+   only.** It is now `'lambda*GoF2'` at `put.foo:60` and matched as `'lambda*GoF2'` at
+   `read.foo:2542`, with no fallback. What this document did not say is that `:2542` is a
+   *reader*, and the `if` there has no `else` — so a CIF written by an earlier Tonto is no
+   longer recognised as an XCW, and such a job will run **unconstrained without saying so**.
+   No test reblessing was needed: all 15 test CIFs carrying the item say `'none'`.
