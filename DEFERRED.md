@@ -2859,6 +2859,31 @@ trajectory. Turning extinction on changes the objective and so changes the path,
 reference would bake in a new one. Decide first whether to diagnose the wandering, then add
 the job — not the other way round.
 
+## `make report` cannot be run in parallel (2026-09-06)
+
+`ctest -j N` works and is safe: `scripts/test.py:334` gives every job its own scratch
+directory, `$TMPDIR/tonto-tests-$USER/<testname>`, so parallel jobs cannot collide, and each
+test's `.bad` lands in its own `tests/` directory. A `short long hart` run drops from serial
+to about 12 minutes at `-j4`.
+
+`make report` has no equivalent. `scripts/suite_report.py:134` runs one `subprocess.run` per
+test in a plain loop and its argument list (`:178-213`) has no jobs option, so `make -j report`
+does nothing — the serialism is inside the script.
+
+**The change.** Add `--jobs/-j` and wrap that per-test `subprocess.run` in a
+`ThreadPoolExecutor`. Threads suffice, because all the work is in the subprocess and the
+aggregation already happens after the rows are collected.
+
+**Two things to get right.**
+
+- **Row order must stay deterministic**, independent of completion order, or `tests.log` stops
+  being diffable between runs — which is most of what it is for. Collect into a list indexed by
+  submission order, not as futures complete.
+- **Do not let `-j` combine with `--mpi`.** Each MPI job already runs `--mpi-ranks 4`, so the
+  two multiply. Either refuse the combination or divide the rank count into the job count.
+
+Scale `-j` to memory rather than cores, as for `make -j`: some `long` jobs are heavy.
+
 # Translator and the Foo language
 
 ## Cleanup: normalise procedure-name CASE across definition and call sites
