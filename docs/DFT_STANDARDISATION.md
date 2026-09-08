@@ -272,9 +272,9 @@ fix is either to apply it late enough to matter, or to refuse it once the basis
 has been resolved. Refusing is the safer of the two, since silently re-resolving
 a basis under a job that has already used it invites a different bug.
 
-## 5. Defect 4 — an unrecognised functional name silently removes the functional
+## 5. FIXED 2026-08-13: an unrecognised functional name silently removed the functional
 
-`dft_exchange_functional=` and `dft_correlation_functional=` accept any string. A
+**What it was.** `dft_exchange_functional=` and `dft_correlation_functional=` accept any string. A
 name matching no `case` contributes nothing: no exchange, no correlation, no
 diagnostic, exit 0. The results block never states which functional was used.
 
@@ -311,10 +311,47 @@ Two aggravating details:
   `b3lyp` or `pbe`, and exchange and correlation must be given as two separate
   keywords. Most natural spellings are silently wrong.
 
-**The fix is not simply uncommenting the eight lines.** Blank and `"none"` names
-flow through these dispatchers legitimately, so the default must admit them; and
-`gill96` needs either an implementation or removal from the three places that
-bless it. A test asserting that a bogus name fails loudly belongs with the fix.
+**The fix was not simply uncommenting the eight lines.**
+
+**Validation lives at the setter, not the dispatcher — and that is forced.** The
+four dispatchers and both `is_*_functional` queries are declared `PURE`. In a
+release build the upper-case `PURE` macro *is* the Fortran `pure` keyword, while
+`UNKNOWN` expands to `allocate(tonto%known_keywords(...))`, which a pure procedure
+may not do:
+
+    Error: Bad allocate-object at (1) for a PURE procedure
+
+This is the `PURE`/`pure` trap of `CLAUDE.md` §5 reached from a direction that
+section does not describe. The usual advice is "declare it `PURE` so `ENSURE` is
+stripped in release"; but `UNKNOWN` is a `DIE`, gated on `USE_ERROR_MANAGEMENT`
+and **live in release**, so no amount of `PURE` helps. The six dispatcher defaults
+therefore stay commented, each now carrying a note saying why.
+
+`SCF_DATA:set_exchange_functional` and `set_correlation_functional` carry the live
+`case default; UNKNOWN(...)` instead. That is the better place regardless — once
+when the name is read, rather than once per grid batch. Dropping `PURE` from those
+two did not cascade: their only callers are `read_and_set` (a read routine) and
+`MOLECULE.CE:create_wavefunction_file_for_lattice` (`leaky`).
+
+A blank name is admitted explicitly, `case ("       ")` beside `case ("none   ")`
+in all four dispatchers, because `MOLECULE.FOCK` guards only on `/= "none"` and a
+blank would otherwise reach them.
+
+`gill96` is **removed** from all three places that blessed it. With validation live,
+leaving it would have made it an accepted name that dies — worse than not offering
+it at all.
+
+`blyp` now gives *Error in SCF_DATA:set_exchange_functional ... unknown option:
+blyp*, exit 1.
+
+**Limit of the fix, stated plainly.** It catches names arriving through input or
+through `set_*`, which covers every real path — `atom.foo` and `molecule.grid.foo`
+both take their names from `SCF_data`. It does **not** catch a name injected
+straight into a dispatcher by new code. The accepted-name against implemented-name
+lint of §12 is what closes that.
+
+**Guarded by** `scripts/check_dft_invariants.py` check 4 (ctest `dft_invariants`):
+a bogus exchange functional must exit non-zero.
 
 ## 6. Defect 5 — the XC energy is never reported
 
@@ -852,11 +889,14 @@ All three defects above are mechanically detectable. These follow the pattern of
 `scripts/check_parallel_lint.py` — source scans, registered as ctest, visible in
 CI:
 
-1. **Commented-out `case default` in a dispatcher or setter.** Catches all eight
-   functional-name sites directly.
+1. **Commented-out `case default` in a *setter*.** The six dispatcher defaults are
+   deliberately commented and must stay so (§5), so the scan has to know the
+   difference; a setter with a commented default is the bug.
 2. **Accepted-name against implemented-name cross-check.** Every string a `set_*`
    validator or `is_*_functional` blesses must have a live case in all four
-   dispatchers. Catches `gill96`, and catches the next one automatically.
+   dispatchers. This is what would have caught `gill96` on its own, and it is what
+   closes the stated limit of the §5 fix — a name injected straight into a
+   dispatcher by new code.
 3. **`.X.destroy` immediately followed by `.X.create` on the same member.** The
    `initialize_DFT_grids` shape exactly. Rare enough to be near-zero false
    positive; each hit is either a deliberate reset that deserves a comment saying
@@ -872,8 +912,8 @@ Each step gives the next one a trustworthy gate, so the order matters:
    anything.
 2. ⬜ **Rebless the DFT test references** against converged numbers, and add the
    regression test that two `accuracy=` values must differ.
-3. ⬜ **Fix functional-name validation** (§3), resolve `gill96`, add the
-   fails-loudly test.
+3. ✅ **Fix functional-name validation** (§5), resolve `gill96`, add the
+   fails-loudly test. Done 2026-08-13.
 6. ⬜ **Report the XC energy** (§6) — wire up a corrected `put_SCF_energy`. This is
    the instrument the rest of the work needs.
 7. ⬜ **Add the static-analysis checks** (§12), so none of the three classes can

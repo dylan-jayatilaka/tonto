@@ -782,15 +782,19 @@ only so this register stays complete:
 | **RESOLVED 2026-08-14: three causes** (was: "open-shell DFT off by 1.5e-5, cause unknown") | (1) `pruning_scheme= jayatilaka2`, a confound introduced during the investigation -- removed for ROBUSTNESS, not average accuracy: it was actually better closed-shell (3.5e-8) but -1.5e-5 on an open-shell case where every alternative was within 1.6e-6. (2) the VWN5 potential grouped the chain rule wrongly. (3) the VWN3 potential evaluated `VWN_G`/`VWN_dG` at **ZERO instead of zeta**, so it had NO SPIN DEPENDENCE AT ALL. After all three: slater +1.44e-6, +vwn5 +1.455e-6, +vwn3 +1.511e-6 against g09 -- correlation now adds nothing of its own. Tonto's default grid sits ~1.5e-6 from g09; use 5e-6 for any external-reference test. See `docs/DFT_STANDARDISATION.md` section 6a | **FIXED** |
 | **The grid needs far too many points for its accuracy** | At `accuracy= best` (65 radial, L71) every DFT case is ~1.5e-6 from g09, while the two HF cases -- which use no grid -- agree to 1e-10. The seven DFT numbers span only 1.44-1.63e-6 across different functionals, charges and spin treatments, so it is a GRID OFFSET, not functional error. g09 reaches 5e-10 of its converged answer on FineGrid (75,302), a broadly comparable grid. Something in the quadrature (partition weights, radial mapping, normalisation) is likely wrong; a rewrite of the grid construction should be considered. Sets the floor for `dft_reference`'s 5e-6 tolerance. See `docs/DFT_STANDARDISATION.md` section 6b | OPEN — not for now |
 | `use_spherical_basis=` after the `atoms=` block | silently ignored — 25 basis functions instead of 24, 1.6e-3 Hartree, exit 0, no diagnostic | OPEN |
-| Eight `case default; UNKNOWN(...)` lines commented out | an unrecognised functional name silently contributes nothing — `blyp` gives −67.7092 instead of −76.4002, exit 0 | OPEN |
-| `gill96` blessed in three places, implemented nowhere | accepted name that computes nothing, indistinguishable from a typo | OPEN |
+| An unrecognised functional name silently contributes nothing | `blyp` gave −67.7092 instead of −76.4002, exit 0. **Validation lives at the setter, not the dispatcher**, and that is forced, not a preference: the four dispatchers and both `is_*_functional` queries are `PURE`, and `UNKNOWN` is a `DIE` that expands to an `allocate` — illegal in a pure procedure, and `DIE` is live in release, so no amount of `PURE` helps. `SCF_DATA:set_exchange_functional` and `set_correlation_functional` now carry the live `case default; UNKNOWN(...)`; the six dispatcher defaults stay commented, each with a note saying why. A blank name is admitted explicitly beside `"none"`, because `MOLECULE.FOCK` guards only on `/= "none"`. **Limit:** it catches names arriving through input or `set_*`, which is every real path; it does *not* catch a name injected straight into a dispatcher by new code — the accepted-against-implemented lint of `docs/DFT_STANDARDISATION.md` §12 is what closes that | **FIXED** 2026-08-13 |
+| `gill96` blessed in three places, implemented nowhere | Removed from all three — `scf_data.foo` and `is_GGA_functional` / `is_LDA_functional` — because no Gill96 routine exists anywhere in `foofiles/`. With validation live, leaving it would have made it an accepted name that dies, which is worse than not offering it | **FIXED** 2026-08-13 |
 | `MOLECULE.SCF:put_SCF_energy` has no callers and mislabels its output | the XC energy is never reported, so none of the above is visible | OPEN |
 
-**Two consequences that will surface elsewhere.** Every checked-in DFT reference
+**One consequence that will surface elsewhere.** Every checked-in DFT reference
 was produced with the default grid rather than the one its own input requests, so
-they must be reblessed against converged numbers once the grid fix lands. And the
-existing suite cannot detect any of these, because no test varies the grid and
-every test spells its functional correctly.
+they must be reblessed against converged numbers once the grid fix lands.
+
+**What guards these now.** The reference suite could detect none of them — no test
+varied a grid, and every test spelled its functional correctly. `scripts/check_dft_invariants.py`
+(ctest `dft_invariants`, label `short`, 20 STO-3G jobs, about two seconds) tests
+properties rather than blessed numbers, so none of them can be blessed away. Check 4
+is the bogus name: `blyp` as an exchange functional must exit non-zero.
 
 ## Command line: `command_arguments` silently truncates (and is never read)
 

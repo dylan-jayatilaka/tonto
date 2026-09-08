@@ -351,11 +351,12 @@ before any code is written**, most likely in its own conversation (`/clear`).
      Fixed to the guarded-create pattern already used by `MOLECULE.RHO:set_up_becke_grid`.
      **Every DFT test reference must now be reblessed against a converged number**, and a
      regression test must assert that two `accuracy=` values give *different* energies.
-   - ⬜ **An unrecognised functional name silently removes the functional.** `blyp` — the
-     standard name for the functional that test computes — is accepted and gives −67.7092
-     instead of −76.4002, exit 0, no diagnostic. `blyp` with `pbe` is a Coulomb-only run
-     reported as DFT. Eight `case default; UNKNOWN(...)` lines are commented out. `gill96` is
-     blessed as valid in three places and **implemented nowhere**.
+   - ✅ **An unrecognised functional name silently removed the functional.** `blyp` — the
+     standard name for the functional that test computes — was accepted and gave −67.7092
+     instead of −76.4002, exit 0, no diagnostic. `blyp` with `pbe` was a Coulomb-only run
+     reported as DFT. Fixed 2026-08-13 at the two `SCF_DATA` setters rather than in the
+     dispatchers, which are `PURE` and so cannot hold a `DIE`; `gill96`, blessed in three
+     places and implemented nowhere, was removed. Guarded by `dft_invariants` check 4.
    - ⬜ **The XC energy is never reported.** `V_ee` lumps it with Coulomb;
      `MOLECULE.SCF:put_SCF_energy` has zero call sites and mislabels
      `E_xc − ½Tr(P·V_xc)` as the XC energy. This is the missing instrument, not a cosmetic issue.
