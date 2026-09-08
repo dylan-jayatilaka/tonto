@@ -162,7 +162,11 @@ build has. One file, everything else identical, executable relinked each time.
 ### Next actions, in order
 
 1. **macOS in CI, then WSL-MPI** (Dylan, 2026-09-03) — to complete the badge table across
-   platforms. **The three macOS workflows are now REGISTERED and dispatchable** (`gh workflow
+   platforms. **UPDATE 2026-09-08: WSL-MPI is DONE** — `ci-wsl-mpi.yml` ran green from `master`
+   on 2026-09-04 (run `33859963414`), so the last blank cell in the table is filled. **macOS is
+   done as a workflow but RED as a result:** the schedule fired `macOS-release` from `master` on
+   2026-09-08 and both compiler jobs failed the loose gate. What is left of this item is not
+   plumbing but two failing tests — see the *macOS in CI* section below for which. **The three macOS workflows are now REGISTERED and dispatchable** (`gh workflow
    list` shows macOS-release, macOS-debug and macOS-MPI), which the merge to `master` on
    2026-09-03 is what achieved: scheduled workflows only fire from the default branch, and until
    then they sat on `develop` and had never run once. So the next step is simply to **dispatch
@@ -179,7 +183,43 @@ build has. One file, everything else identical, executable relinked each time.
    `dft_invariants` and `urea_ccsd_pob-TZVP_Salvador_properties` fail in a plain **gfortran-14**
    debug build with bounds checking **on**. `ci-debug.yml` cannot see them — it runs two smoke
    jobs, not the suite. That gap is worth closing at the same time.
-3. **The column-width difference** — a mechanism was demonstrated on 2026-09-08, though the
+3. **RED NOW: `urea_hart_STO-3G_disk_ffs` fails on the CI runner. It IS from a rebless (Dylan's
+   reading, confirmed) — but NOT from the esd/column-width class.** `Linux-release` has been red on
+   `develop` since `a58a52d8` (2026-09-06) and again after `39cf7b25`, both of which reblessed this
+   reference from this machine. The test passes here (37 s, checked 2026-09-08) and fails in CI
+   `FAIL FAIL FAIL` at 0 max rel% and 0 max last-digit.
+
+   **Run the comparator on the CI `.bad` file rather than reading the diff by eye** — the diff is
+   full of column-width drift and that drift is a red herring, exactly as the 2026-08-18 decision
+   below says. `agreement_report` reports **139 numeric tokens compared, max_rel 0.0, max_ulp 0.0,
+   and `n_struct` = 1**. Every number agrees. One token fails, and it is not a number:
+
+   ```
+   ref  2  7.039293  0.038003  0.029104  0.013844  0.000224  H1 Uxz  27  19
+   CI   2  7.039293  0.038003  0.029104  0.013844  0.000224  H1 Uyz  27  19
+   ```
+
+   It is the **"Max. Shift param"** column of the rigid-atom fit table — the label of the parameter
+   with the largest shift/esd. `Uxz` and `Uyz` of H1 are symmetry-related and tie to well beyond
+   printed precision, so which one wins the arg-max is decided by noise. A non-numeric token must
+   match exactly, so that single label fails all four criteria on its own.
+
+   **It is not even stable on one machine.** The same line across three reblesses here:
+   `2e3943ec` → `Uxz`, `a58a52d8` → `Uyz`, `39cf7b25` → `Uxz`. It will keep reddening CI at random
+   after any rebless until the tie is made deterministic.
+
+   **Options, Dylan's call, each changing output and so needing a rebless:** break the tie by
+   parameter index when the shifts agree to within a tolerance (smallest, local, and makes the
+   column mean something); or drop the label column, since a tied arg-max is not information.
+
+   **Explicitly NOT the fix:** clamping small esds. That was tried (`26d9166a`), was wrong — its
+   premise `dp>max_dp` is the normal outcome, and it destroyed real esds, `0.03615(19)` → `0.036(0)`
+   — and was reverted (`e522e1ce`) with the standing decision *stop fixing this class, live with
+   it*. The column-width drift in this same diff is that class, and the comparator absorbs it:
+   whitespace is invisible to `.split()`, and `180.00000000(1)` vs `180.000000(0)` passes loose.
+   See the 2026-08-18 update further down before touching `REAL:get_dp_de_le`.
+
+4. **The column-width difference** — a mechanism was demonstrated on 2026-09-08, though the
    original platform pair has not been re-run. Snapping the cell-metric cosines (see the
    `cos(90 degrees)` entry under the priority ESD item) narrowed a column, numbers bit-identical,
    in **three** independent places: the printed reciprocal cell matrix, the ADP esd columns of
@@ -778,12 +818,13 @@ only so this register stays complete:
 | Defect | Effect | Status |
 |---|---|---|
 | `MOLECULE.SET:initialize_DFT_grids` destroyed and recreated the `BECKE_GRID` | **every** user grid setting discarded; all DFT ran at default `accuracy= "low"` while `put_basics` echoed the requested settings back | **FIXED** 2026-08-12 |
-| `rho_cutoff` defaults to 10⁻⁶ | **the long-standing systematic error against g09.** Cross-validation isolated it: HF agrees to 1.2e-10 and Slater to 4.6e-7, but B88 differs by 9.9e-6 — because `x = \|∇ρ\|/ρ^(4/3)` *grows* in the tail the cutoff truncates. Lowering it to 10⁻¹⁰ collapses the full-BLYP gap **300-fold**, from 1.03e-5 to 3.5e-8, and is **free** — timed, no trend at any accuracy. Each derivative order costs another ρ^(-1/3), so meta-GGAs would be far worse | OPEN — change the default; batch the `types.foo` comment onto the next cascade |
+| `rho_cutoff` defaults to 10⁻⁶ | **the long-standing systematic error against g09.** Cross-validation isolated it: HF agrees to 1.2e-10 and Slater to 4.6e-7, but B88 differs by 9.9e-6 — because `x = \|∇ρ\|/ρ^(4/3)` *grows* in the tail the cutoff truncates. Lowering it to 10⁻¹⁰ collapses the full-BLYP gap **300-fold**, from 1.03e-5 to 3.5e-8, and is **free** — timed, no trend at any accuracy. Each derivative order costs another ρ^(-1/3), so meta-GGAs would be far worse | **FIXED** 2026-08-13 (`d38824da`). `BECKE_GRID.rho_cutoff` now defaults to `TOL(10)`; `types.foo` carries the measurement beside the default. Note the two cutoffs are distinct: `DFT_FUNCTIONAL.rho_cutoff` was always `TOL(30)` and was never the problem — `MOLECULE.FOCK` copies the grid's value over it, so it is the grid's that acts |
 | **RESOLVED 2026-08-14: three causes** (was: "open-shell DFT off by 1.5e-5, cause unknown") | (1) `pruning_scheme= jayatilaka2`, a confound introduced during the investigation -- removed for ROBUSTNESS, not average accuracy: it was actually better closed-shell (3.5e-8) but -1.5e-5 on an open-shell case where every alternative was within 1.6e-6. (2) the VWN5 potential grouped the chain rule wrongly. (3) the VWN3 potential evaluated `VWN_G`/`VWN_dG` at **ZERO instead of zeta**, so it had NO SPIN DEPENDENCE AT ALL. After all three: slater +1.44e-6, +vwn5 +1.455e-6, +vwn3 +1.511e-6 against g09 -- correlation now adds nothing of its own. Tonto's default grid sits ~1.5e-6 from g09; use 5e-6 for any external-reference test. See `docs/DFT_STANDARDISATION.md` section 6a | **FIXED** |
 | **The grid needs far too many points for its accuracy** | At `accuracy= best` (65 radial, L71) every DFT case is ~1.5e-6 from g09, while the two HF cases -- which use no grid -- agree to 1e-10. The seven DFT numbers span only 1.44-1.63e-6 across different functionals, charges and spin treatments, so it is a GRID OFFSET, not functional error. g09 reaches 5e-10 of its converged answer on FineGrid (75,302), a broadly comparable grid. Something in the quadrature (partition weights, radial mapping, normalisation) is likely wrong; a rewrite of the grid construction should be considered. Sets the floor for `dft_reference`'s 5e-6 tolerance. See `docs/DFT_STANDARDISATION.md` section 6b | OPEN — not for now |
-| `use_spherical_basis=` after the `atoms=` block | silently ignored — 25 basis functions instead of 24, 1.6e-3 Hartree, exit 0, no diagnostic | OPEN |
+| `use_spherical_basis=` after the `atoms=` block | silently ignored — 25 basis functions instead of 24, 1.6e-3 Hartree, exit 0, no diagnostic | **FIXED** 2026-08-13 (`e72a3ac9`). `MOLECULE.MAIN:read_use_spherical_basis` now carries `DIE_IF(.atom.allocated,...)`. Refusing it was chosen over applying it late: silently re-resolving a basis under a job that has already used it invites a different bug. Guarded by `dft_invariants` check 5 |
 | An unrecognised functional name silently contributes nothing | `blyp` gave −67.7092 instead of −76.4002, exit 0. **Validation lives at the setter, not the dispatcher**, and that is forced, not a preference: the four dispatchers and both `is_*_functional` queries are `PURE`, and `UNKNOWN` is a `DIE` that expands to an `allocate` — illegal in a pure procedure, and `DIE` is live in release, so no amount of `PURE` helps. `SCF_DATA:set_exchange_functional` and `set_correlation_functional` now carry the live `case default; UNKNOWN(...)`; the six dispatcher defaults stay commented, each with a note saying why. A blank name is admitted explicitly beside `"none"`, because `MOLECULE.FOCK` guards only on `/= "none"`. **Limit:** it catches names arriving through input or `set_*`, which is every real path; it does *not* catch a name injected straight into a dispatcher by new code — the accepted-against-implemented lint of `docs/DFT_STANDARDISATION.md` §12 is what closes that | **FIXED** 2026-08-13 |
 | `gill96` blessed in three places, implemented nowhere | Removed from all three — `scf_data.foo` and `is_GGA_functional` / `is_LDA_functional` — because no Gill96 routine exists anywhere in `foofiles/`. With validation live, leaving it would have made it an accepted name that dies, which is worse than not offering it | **FIXED** 2026-08-13 |
+| **`b3lypx` omits the exact exchange, silently** (found 2026-09-08) | `b3lypx` and `b3lypgx` select the *same* exchange routines, and `new_r_B3LYP_x_energy_density` deliberately computes only `0.08*E_LDA + 0.72*E_GGA` — the `0.2*E_HF` third of B3LYP comes from the Fock matrix, gated on `.using_hybrid_exchange`. `SCF_DATA:set_exchange_functional` sets that flag for `b3lypgx` and **not** for `b3lypx`, so a `b3lypx` job silently drops the exact exchange. Measured (STO-3G water, `accuracy= high`): `b3lypx`/`none` −73.0728 against `b3lypgx`/`none` −74.8819, **1.81 Hartree**, exit 0. No test uses `b3lypx` — only `b3lypgx` — so fixing it reblesses nothing. The name-agreement lint cannot catch this: `b3lypx` has a case in every block; what is missing is one flag assignment | OPEN |
 | `MOLECULE.SCF:put_SCF_energy` has no callers and mislabels its output | the XC energy is never reported, so none of the above is visible | OPEN |
 
 **One consequence that will surface elsewhere.** Every checked-in DFT reference
@@ -1202,9 +1243,10 @@ templates solve the **inference**, and the inference is the part that prevents w
 wrong-datatype bugs. Worth a spike on `broadcast` alone to see how many of the 1175 collapse --
 but go in expecting to keep the inference layer.
 
-### BUILD-SYSTEM TRAP: `get_from` donors are invisible to the dependency graph
+### FIXED (2026-08-02): `get_from` donors were invisible to the dependency graph
 
-Per Dylan: "always been an issue." Recorded now with a concrete demonstration and a fix.
+Per Dylan: "always been an issue." Fixed by option 1 below, `4439c4ff`. The mechanism and
+the worked example are kept because they explain what the depfiles are for.
 
 **The mechanism.** Each translation step declares (`CMakeLists.txt:764`):
 
@@ -1231,20 +1273,22 @@ still had the old code. Caught only because the build log was 11 lines and the g
 **This is very likely how the barrier came to be disabled unnoticed in 2021** (`42040312`): a
 two-line commit touching `parallel.foo` would have changed no compiled output for whoever made it.
 
-**The fix, in order of preference:**
+**The fix that was taken: depfiles** (option 1 of the three considered). `FooToFortran` already
+knows every file it reads -- it has to, to resolve `get_from` -- and `loadModule()` is the single
+place donors are parsed, so it cannot miss one. It now writes `<stem>.F90.d` in Make format beside
+its outputs, and `CMakeLists.txt` passes `DEPFILE` on the translation command (CMake >= 3.20, which
+is already required). Verified end to end at the time: `touch foofiles/parallel.foo` regenerates
+`system.F90`, where previously nothing happened. Confirmed still live on 2026-09-08 -- 159 `.F90.d`
+files in the build tree, and `system.F90.d` names `parallel.foo`.
 
-1. **Depfiles.** `FooToFortran` already knows every file it reads -- it has to, to resolve
-   `get_from`. Have it emit a `.d` alongside each `.F90` and pass CMake's `DEPFILE` option on the
-   `add_custom_command` (CMake >= 3.20 with Make/Ninja). Precise, automatic, and self-maintaining
-   as donors change.
-2. **Compute the donor set at configure time** -- scan the `.foo` files for `get_from(` and add
-   the referenced donors to that file's `DEPENDS`. No translator change, but the scan must track
-   the grammar.
-3. **Blunt fallback**: add every `foofiles/*.foo` to every `DEPENDS`. Always correct, but then any
-   edit rebuilds everything -- i.e. permanently what `types.foo` does today.
+The two rejected alternatives, for the record: computing the donor set at configure time by
+scanning for `get_from(` (no translator change, but the scan must track the grammar), and adding
+every `foofiles/*.foo` to every `DEPENDS` (always correct, but then any edit rebuilds everything).
 
-Until this is fixed: **after editing any donor, `touch` a file that is a real dependency** (its
-consumer, or `types.foo`) or you will test a stale binary.
+**Deliberate limitation, and it is still true.** The translator's global tables scan *every* `.foo`
+in `foofiles/`, so strictly every output depends on every input. That is not encoded, because it
+would make every edit a full rebuild. The distinction relied on: a stale *donor* produces wrong
+code, whereas a stale global table risks only a name-resolution detail.
 
 ### Known-flaky: x-ray-constrained SCF convergence wanders violently (long-standing)
 
@@ -3402,6 +3446,14 @@ highlighting and tighter editor integration. The repo already ships some vim sup
 
 ## OPEN: long paths to the basis sets fail -- STR is 256 characters
 
+> **Half done.** `PATH_SIZE` now exists (`include/macros.in:77`, 1024) and `COMMAND_LINE`
+> uses it -- `token` is `STR(len=PATH_SIZE)`, and `command_arguments` is declared with it in
+> `types.foo`. That was the worse half. **The basis-directory half is untouched:**
+> `MOLECULE.MAIN:run` and `:setup` still take `basis_library_dir :: STR`, so the
+> 256-character limit below still bites. Note also that the `PATH_SIZE` comment says
+> "4096 matches Linux PATH_MAX" while defining 1024; settle which was meant when finishing
+> this.
+
 **Reported for the Windows `tonto.exe` and `hart.exe` (untested binaries from
 the release workflow), suspected to be a forward/backslash problem. IT IS NOT.
 Reproduced on LINUX on 2026-08-14 with a long path, so no Windows box is needed
@@ -3500,6 +3552,16 @@ Windows traps and this is the one users will hit first.
 
 ## macOS in CI, with a badge (Dylan, 2026-08-09)
 
+> **Status 2026-09-08: the badges are live, and macOS-release is RED.** The merge to `master`
+> happened, and the weekly schedule fired `macOS-release` from `master` on 2026-09-08 at 09:03Z
+> (run `34207892131`). Both compiler jobs failed the loose gate, at 56/58 on gfortran-14:
+> `h2o_rhf_6-31G(d)_normal_mode_analysis` (**200% relative, 1.4e6 last-digit** -- not a rounding
+> difference) and `urea_ccsd_pob-TZVP_Salvador_properties` (4.48%, 8). The second is also one of
+> the three untracked Linux *debug* failures, so it is one defect showing in two places, not two.
+> Neither is in the *small numerical differences* register, which lists `quartz_NN_HAR_L0/L1` and
+> `ylid`. **So this item is no longer "waiting for a scheduled run" -- it has had one, and the next
+> step is diagnosing those two tests.** The `macOS-debug` and `macOS-MPI` badges are green.
+>
 > **Status 2026-09-04: the workflows exist and have all run.** `ci-macos.yml`,
 > `ci-macos-debug.yml` and `ci-macos-mpi.yml` were dispatched for the first time —
 > debug green on gfortran-14 and 16, MPI green with the pi gate passing at 1, 2 and 4

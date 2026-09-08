@@ -251,7 +251,7 @@ This also could not have been found before the grid fix of §2: with the input
 block inert, every comparison was pinned to one coarse default grid and the
 cutoff could not be varied at all.
 
-## 4. Defect 3 — `use_spherical_basis=` is silently ignored after `atoms=`
+## 4. FIXED 2026-08-13: `use_spherical_basis=` was silently ignored after `atoms=`
 
 The basis is resolved when the atoms are read (`molecule.read.foo:145`,
 `if (.use_spherical_basis) .basis.set_spherical(TRUE)`), so setting the keyword
@@ -267,10 +267,15 @@ Accepted, exit 0, no diagnostic. The bottom of a job file is a natural place to
 put a switch like this, and a user who does so silently gets Cartesian functions
 and an error of 1.6×10⁻³ Hartree — around 1 kcal/mol — in this small example.
 
-Same class as §2: a keyword that is read, has no effect, and says nothing. The
-fix is either to apply it late enough to matter, or to refuse it once the basis
-has been resolved. Refusing is the safer of the two, since silently re-resolving
-a basis under a job that has already used it invites a different bug.
+Same class as §2: a keyword that is read, has no effect, and says nothing. Of the
+two available fixes — apply it late enough to matter, or refuse it once the basis
+has been resolved — **refusing was chosen** (`e72a3ac9`), since silently
+re-resolving a basis under a job that has already used it invites a different bug.
+`MOLECULE.MAIN:read_use_spherical_basis` now carries
+`DIE_IF(.atom.allocated, "use_spherical_basis= must be set BEFORE the atoms= block; the bases are already resolved by then")`.
+
+**Guarded by** `scripts/check_dft_invariants.py` check 5: setting it after the
+`atoms=` block must exit non-zero.
 
 ## 5. FIXED 2026-08-13: an unrecognised functional name silently removed the functional
 
@@ -892,11 +897,15 @@ CI:
 1. **Commented-out `case default` in a *setter*.** The six dispatcher defaults are
    deliberately commented and must stay so (§5), so the scan has to know the
    difference; a setter with a commented default is the bug.
-2. **Accepted-name against implemented-name cross-check.** Every string a `set_*`
-   validator or `is_*_functional` blesses must have a live case in all four
-   dispatchers. This is what would have caught `gill96` on its own, and it is what
-   closes the stated limit of the §5 fix — a name injected straight into a
-   dispatcher by new code.
+2. ✅ **Accepted-name against implemented-name cross-check.** Written 2026-09-08 as
+   `scripts/check_functional_names.py`, ctest `functional_names`, label `short`,
+   0.02 s and no build needed. The six `select case` blocks that name functionals
+   — the two `SCF_DATA` setters as a union, the four dispatchers, and both
+   `is_*_functional` queries — must agree exactly, and it fails in either
+   direction: a name accepted but not implemented computes nothing, and a name
+   implemented but not accepted is dead code that reads as a feature. Checked
+   against the pre-fix tree it reports `gill96` missing from all four dispatchers,
+   and the blank name too. This closes the stated limit of the §5 fix.
 3. **`.X.destroy` immediately followed by `.X.create` on the same member.** The
    `initialize_DFT_grids` shape exactly. Rare enough to be near-zero false
    positive; each hit is either a deliberate reset that deserves a comment saying
@@ -916,8 +925,8 @@ Each step gives the next one a trustworthy gate, so the order matters:
    fails-loudly test. Done 2026-08-13.
 6. ⬜ **Report the XC energy** (§6) — wire up a corrected `put_SCF_energy`. This is
    the instrument the rest of the work needs.
-7. ⬜ **Add the static-analysis checks** (§12), so none of the three classes can
-   return.
+7. ⬜ **Add the remaining static-analysis checks** (§12). Item 2 is done
+   (`functional_names`); items 1, 3 and 4 are not.
 8. ⬜ **Drop the `name` argument** (§10, step 1) — self-contained, and independent
    of everything else here.
 9. ⬜ **Wrap libxc** (§11), gated by the `slater`/`vwn5` agreement test, and take

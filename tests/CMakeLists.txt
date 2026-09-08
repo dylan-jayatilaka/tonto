@@ -260,6 +260,21 @@ add_test(NAME "parallel_lint"
             ${PROJECT_SOURCE_DIR}/foofiles)
 set_tests_properties("parallel_lint" PROPERTIES LABELS "short")
 
+# The accepted-name against implemented-name cross-check for DFT functionals.
+# The section 5 fix made an unrecognised name fatal at the two SCF_DATA setters,
+# which covers every name a user can supply. It cannot cover the other
+# direction: a name the setter BLESSES but no dispatcher implements is accepted,
+# validated, and then computes nothing. That is exactly how gill96 survived --
+# an accepted GGA exchange functional with no routine anywhere in foofiles/.
+# The dispatcher `case default` lines cannot catch it either, being PURE.
+# So it is a source scan: the six select-case blocks that name functionals must
+# agree, and this fails if they drift apart. Instant, and needs no build.
+add_test(NAME "functional_names"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_functional_names.py
+            ${PROJECT_SOURCE_DIR}/foofiles)
+set_tests_properties("functional_names" PROPERTIES LABELS "short")
+
 # Invariant test -- no reference output involved, and no build needed.
 #
 # foofiles/ holds .foo sources and nothing else. A build run inside it leaves
