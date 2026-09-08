@@ -312,9 +312,9 @@ anyway leaves them soft rather than exactly flat.
   branch -- but it would bite any isotropic refinement. Found by a peer session
   and verified here.
 - **Output defects left visible in the blessed references, deliberately**:
-  `Rw(F2)` prints `NaN`, `R_sigma(F2)` prints `0.0000`, and every reflection is
-  reported as an unmatched Friedel pair. The misspelling "Fridel" is in the
-  source.
+  `Rw(F2)` prints `NaN` and `R_sigma(F2)` prints `0.0000`. The third one, every
+  reflection reported as an unmatched "Fridel" pair, was fixed on 2026-09-04
+  (`2e3943ec`): the line now reports `# of Friedel pairs found`.
 
 ## 9. Open
 

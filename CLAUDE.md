@@ -152,7 +152,8 @@ Full details in `docs/FOO_GRAMMAR_DOCUMENTATION.md`.
   Submodule-qualified calls put the submodule before a colon: `.SET:proc` (generic) /
   `.SET::proc` (non-generic); `.:proc` / `.::proc` within the same submodule; `.MAIN:proc`
   for the main module. Explicit calls pass `self`, e.g. `STR:proc(self,…)` /
-  `STR::proc(self,…)`. (See §12 — the grammar still accepts the older call forms.)
+  `STR::proc(self,…)`. The grammar still accepts these older call forms for backward
+  compatibility, though no source uses them; see `docs/FOO_GRAMMAR_DOCUMENTATION.md`.
 - **Control flow:** `if/else if/else … end`, `select case … end`, `do … end`.
 - **Comments:** `!` to end of line. **Constants:** `TRUE`, `FALSE`, `ZERO`, `ONE`, `NULL`.
 - Case-insensitive keywords; identifier case preserved. `;` separates statements on one line.
@@ -393,8 +394,6 @@ the same loose suite as the full build.
 
 Future directions; details in `DEFERRED.md`.
 
-- **Grammar still accepts the old submodule call forms** (`.SET:proc`, `.MAIN:proc`,
-  `STR::proc`) even though the sources no longer use them. Not tightened; harmless.
 - **Relocate the fragment machinery: a `CRYSTAL` should contain several `MOLECULE`s.** Today a
   `MOLECULE` holds a `CRYSTAL` *and* holds `.mol(g)`, which forces
   `MOLECULE.SCF:fragment_scf` to call back into `MOLECULE.SCF:scf` — the call cycle that makes

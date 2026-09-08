@@ -202,7 +202,7 @@ build has. One file, everything else identical, executable relinked each time.
 5. Longer-standing, unchanged: NaN and negative ESDs from the least-squares variance-covariance
    matrix, and the MPI items behind milestones 6 and 7.
 
-### Two method lessons worth keeping
+### Three method lessons worth keeping
 
 - **A *structural* failure — 0% numeric deviation, 0 ulp, output differing only in line count —
   points at the environment before it points at the program.** On 2026-08-27 that signature meant
@@ -214,6 +214,9 @@ build has. One file, everything else identical, executable relinked each time.
 - **Verify the thing you built is the thing you tested.** A wrong `make` target relinked nothing
   and two "different" cases ran the same binary. Check a timestamp or a `strings` marker before
   trusting any before/after comparison.
+- **A test turning green is not evidence.** During the ESD work on 2026-09-08 two tests started
+  passing because a guard had silently switched the new code off — the pass measured the absence
+  of the change, not its correctness. Prefer a diff you have read to a status you have not.
 
 ---
 
@@ -343,52 +346,6 @@ constraint looks identical to too many parameters.
 which makes this concrete evidence for the cctbx work in `docs/CCTBX_INTO_TONTO.md` §6 rather than
 one more argument for it.
 
-## The pseudo-inverse silently CONSTRAINS what you asked to refine (2026-09-08, OPEN — small)
-
-Raised by Dylan asking whether the covariance is correctly obtained from the normal equations.
-**This entry was overstated twice before being got right; the earlier claims are withdrawn.**
-
-**The covariance is correctly formed.** `DIFFRACTION_DATA:solve_normal_equations` builds
-`A(i,j) = sum(sig*dF(:,i)*dF(:,j))` with `sig = 1/sigma^2`, and `rhs(i) = sum(del*dF(:,i))` with
-`del = (F_exp - F_pred)/sigma^2`. So `A = J^T W J`, `rhs = J^T W r`, consistently weighted, and the
-covariance is `GoF2 * A^-1`. Standard, and correct.
-
-**And the near-zero handling is coherent, not a bug.** `MAT{REAL}:solve_ill_linear_equations_v1`
-sets `ival = ZERO` for eigenvalues `<= ZERO` or `<= near_0_tol`, giving those directions zero
-variance; and `diffraction_data.set.foo:2445` then sets
-`.n_param_structure = n_p - .n_0 - .near_0` before recomputing `GoF2`. So a dropped direction is
-removed from the inverse **and** from the parameter count — which is exactly how a *constrained*
-parameter should be treated, and it keeps the `GoF2 = chi2/(N_r - N_p)` denominator right.
-
-**For a direction fixed by symmetry this is simply correct.** Its variance genuinely is zero: the
-parameter is known exactly. That is the same situation as urea's symmetry-fixed
-`U_13 = U_23 = 0.000`, written to the CIF with no bracket at all. Two earlier versions of this
-entry called that a false claim. It is not.
-
-**What is left is a diagnostic gap, not a wrong number.** The eigenvalue test cannot distinguish
-*fixed by symmetry* from *degenerate by over-parameterisation*. In the second case the numbers are
-still self-consistent — but only under the interpretation "Tonto decided to constrain these",
-which is never said out loud. The user asked to refine a parameter, Tonto quietly stopped
-refining it, reported a zero esd for it, and adjusted `N_p` so the `GoF` looks healthy.
-
-The known instance is `molecule.har.foo:1300`: `U_iso` implemented as three identical derivative
-columns, singular by construction and absorbed exactly this way.
-
-**Cheap improvement, no new mathematics.** `n0`, `near_0_evals` and `near_0_evecs` are already
-computed and stored, and `show_near_0_eigenvectors` (`types.foo:3868`) already prints them but
-defaults `FALSE`. Saying, whenever `near_0 > 0`, which parameters carry weight in those
-eigenvectors would turn a silent constraint into a stated one. Reporting those esds as **absent**
-rather than zero would be better still — "infinity" is not assignable and is not what is wanted;
-absent is the right representation, and `VEC{ATOM}:put_CIF_no_esd_note` is already the mechanism.
-
-**The proper answer is the cctbx constraint work** (`docs/CCTBX_INTO_TONTO.md` §6). With
-constraints explicit, the free parameter set is genuinely free, `near_0` should be **zero**, and
-any non-zero value becomes a detectable defect rather than something absorbed in silence.
-
-**Not investigated:** `near_0_tol` is an absolute tolerance (`TOL(3)`) on eigenvalues of
-`J^T W J`, whose scale depends on the data magnitude and the reflection count; a relative
-criterion would be more robust.
-
 ## FIXED (2026-09-08): `M_ani_error` was missing a square root, and it hid itself
 
 `ATOM:set_M_ani_error_from_pADP` computed
@@ -481,7 +438,13 @@ eqs (10) and (11) of `yq28_anharmonicity.pdf` confirm the transform is a pure co
 **Also still true of this routine:** it returns *variances*, not esds, despite the name, and its
 three callers (`crystal.foo` around 8308, 8388 and 9162) each take `sqrt` with **no guard against
 a negative diagonal**. The guarded pattern exists in
-`VEC{ATOM}:get_ADP2s_in_ADP2_principal_axes_in` and should be copied here.
+`VEC{ATOM}:get_ADP2s_in_ADP2_principal_axes_in`.
+
+**CLOSED, WON'T-DO (Dylan, 2026-09-08): a crash is obvious and needs no tracking.** One thing to
+know if it is ever met: in the 2026-07-29 episode recorded further down this file, the same
+unguarded `sqrt` did **not** crash — `sqrt` of a negative gave a NaN that travelled into the CIF
+and printed as `(0)`. A build with `-ffpe-trap=invalid` turns that into the obvious crash; release
+does not. So if the symptom is a silent zero esd rather than a stop, this is the place to look.
 
 ## REMOVED (2026-09-08): ADP standard uncertainties were transformed element-wise on axis change (found 2026-08-16)
 
@@ -2631,71 +2594,6 @@ that trap when timing truncated runs.
 **Open:** where the 46 s actually goes (convergence is not the lever), and why the vdW indices
 are the platform-sensitive part.
 
-### INVESTIGATED 2026-09-04: the count is CORRECT; three reporting defects remain
-
-> **The number is right, and the equality is not suspicious.** Verified independently of Tonto
-> on the one dataset in the suite where the answer is non-trivial,
-> `tests/long/L_alanine_IAM_scale_factor_test`: a script over the raw `.hkl`, reproducing
-> `f_sigma_cutoff= 4.0`, gives **772 kept and 192 unpaired** — Tonto's numbers exactly. The four
-> rejected reflections explain the count: `(-6,-2,-6)` and `(6,2,6)` are a Friedel pair dropped
-> together, `(0,7,1)` and `(4,5,0)` were unpaired, taking 194 to 192. And `gly_ala_100K.hkl`
-> contains **zero** reflections whose mate `(-h,-k,-l)` is also present, so 2514 of 2514 is
-> correct arithmetic on Friedel-merged data — which 33 of the 35 references are.
->
-> **What is wrong is the line, three times over:** `Fridel` is misspelled; it counts
-> *reflections without a mate*, not *pairs*; and for merged data it merely restates `N_r`, which
-> reads like a fault. Any fix re-blesses 35 references, so the wording is Dylan's call — held
-> 2026-09-04 to be batched with other output changes that may affect the same re-bless.
->
-> **CORRECTION 2026-09-04, later the same day.** The Bijvoet double-count figures first
-> recorded here (100% of YLID, 99% of L-cysteine, 44% of NH3, 24% of L-alanine) were **wrong**,
-> and the error is instructive: the counting script treated a reflection mapped onto -h by one
-> of its OWN symops as a doubled pair. That is Kanghyun Chu's `f9fb26bc` case, already handled
-> correctly by the site symmetry factor. Excluding self-partners gives YLID 1704 of 2104,
-> L-cysteine 1614 of 1979, NH3 4 of 88, and **L-alanine 0** -- which is why L-alanine did not
-> move when the fix landed, exactly as it should not. Full measurements, and the fix's effect
-> on every reference that prints a residual density, are in
-> `docs/TONTO_DISPERSION_CORRECTIONS.md`.
->
-> **Two things found on the way, not in the original entry.**
-> `VEC{REFLECTION}:get_all_Friedel_pairs` is **not** only a diagnostic: `crystal.foo:9887` and
-> `:9980` call it to set the multiplicity factor for the Fourier synthesis behind the deformation
-> and residual density maps, so an error in it would be a wrong-answer bug. And it carries a
-> latent one — the inner loop never `exit`s once it finds the mate, so with duplicate Miller
-> indices a reflection can be credited to two partners and the count comes out low. No test
-> dataset has duplicates (all twelve checked), so it cannot bite today. One line to fix.
-
-Original entry follows.
-
-### The original entry: `# of unmatched Fridel pairs` reports *every* reflection (and is misspelled)
-
-Found during the H1 fragHAR archaeology (2026-08-02, `docs/RUNNING_HART.md` §6). In
-`tests/long/gly_ala_fragHAR_rhf_STO-3G/stdout` the refinement-results block reads:
-
-```
-# of reflections,    N_r .......... 2514
-# of unmatched Fridel pairs ....... 2514
-```
-
-i.e. **all 2514 reflections are counted as unmatched Friedel pairs** — a suspicious equality
-rather than an obviously wrong number, so it may be a correct-but-uninformative diagnostic (this
-is a centrosymmetric-in-projection dataset with no anomalous signal to pair up) or a real
-miscount. Nothing downstream is known to consume it, so it is a reporting question, not a
-correctness one, until shown otherwise.
-
-Three things to settle together:
-
-1. Whether the count is right, and what it should be for a dataset with no Friedel mates.
-2. **The line is misspelled** — `Fridel` should be `Friedel`. Reference-visible, so it needs a
-   re-bless of every stdout carrying it; batch it with other cosmetic output fixes rather than
-   spending a re-bless on one word.
-3. It is **new since 2019**, arriving together with a `Using single scale factor ...... T` line.
-   The numeric `Scale factor ...... 0.9768` is still printed directly underneath, so nothing was
-   lost — the block simply gained two lines.
-
-Not a regression in the science: the 2019 and 2026 refinements agree to 4 significant figures
-(table in `docs/RUNNING_HART.md` §6). Deferred until after H1.
-
 ### PRIORITY, NOT STARTED: NaN and negative ESDs from the least-squares variance-covariance matrix
 
 **This is the live thread — pick it up here.** Two impossible esd values are confirmed by
@@ -4399,6 +4297,117 @@ and both would have survived review — the first because the measurement looked
 second because the code reading looked decisive. What settled it was a job chosen so that the
 answer could differ, run three ways at ten decimals.
 
+## CLOSED INTO THE CCTBX WORK (Dylan, 2026-09-08): the pseudo-inverse silently CONSTRAINS what you asked to refine
+
+**Dylan's call: this is understood, and it is part of the cctbx constraint work rather than an
+item of its own.** `docs/CCTBX_INTO_TONTO.md` §7 step 6 already carries the gate that closes it —
+constrained values satisfying `Rx = x`, with `near_0` falling to zero. The analysis is kept here
+because that step needs it.
+
+Raised by Dylan asking whether the covariance is correctly obtained from the normal equations.
+**This entry was overstated twice before being got right; the earlier claims are withdrawn.**
+
+**The covariance is correctly formed.** `DIFFRACTION_DATA:solve_normal_equations` builds
+`A(i,j) = sum(sig*dF(:,i)*dF(:,j))` with `sig = 1/sigma^2`, and `rhs(i) = sum(del*dF(:,i))` with
+`del = (F_exp - F_pred)/sigma^2`. So `A = J^T W J`, `rhs = J^T W r`, consistently weighted, and the
+covariance is `GoF2 * A^-1`. Standard, and correct.
+
+**And the near-zero handling is coherent, not a bug.** `MAT{REAL}:solve_ill_linear_equations_v1`
+sets `ival = ZERO` for eigenvalues `<= ZERO` or `<= near_0_tol`, giving those directions zero
+variance; and `diffraction_data.set.foo:2445` then sets
+`.n_param_structure = n_p - .n_0 - .near_0` before recomputing `GoF2`. So a dropped direction is
+removed from the inverse **and** from the parameter count — which is exactly how a *constrained*
+parameter should be treated, and it keeps the `GoF2 = chi2/(N_r - N_p)` denominator right.
+
+**For a direction fixed by symmetry this is simply correct.** Its variance genuinely is zero: the
+parameter is known exactly. That is the same situation as urea's symmetry-fixed
+`U_13 = U_23 = 0.000`, written to the CIF with no bracket at all. Two earlier versions of this
+entry called that a false claim. It is not.
+
+**What is left is a diagnostic gap, not a wrong number.** The eigenvalue test cannot distinguish
+*fixed by symmetry* from *degenerate by over-parameterisation*. In the second case the numbers are
+still self-consistent — but only under the interpretation "Tonto decided to constrain these",
+which is never said out loud. The user asked to refine a parameter, Tonto quietly stopped
+refining it, reported a zero esd for it, and adjusted `N_p` so the `GoF` looks healthy.
+
+The known instance is `molecule.har.foo:1300`: `U_iso` implemented as three identical derivative
+columns, singular by construction and absorbed exactly this way.
+
+**Cheap improvement, no new mathematics.** `n0`, `near_0_evals` and `near_0_evecs` are already
+computed and stored, and `show_near_0_eigenvectors` (`types.foo:3868`) already prints them but
+defaults `FALSE`. Saying, whenever `near_0 > 0`, which parameters carry weight in those
+eigenvectors would turn a silent constraint into a stated one. Reporting those esds as **absent**
+rather than zero would be better still — "infinity" is not assignable and is not what is wanted;
+absent is the right representation, and `VEC{ATOM}:put_CIF_no_esd_note` is already the mechanism.
+
+**The proper answer is the cctbx constraint work** (`docs/CCTBX_INTO_TONTO.md` §6). With
+constraints explicit, the free parameter set is genuinely free, `near_0` should be **zero**, and
+any non-zero value becomes a detectable defect rather than something absorbed in silence.
+
+**Not investigated:** `near_0_tol` is an absolute tolerance (`TOL(3)`) on eigenvalues of
+`J^T W J`, whose scale depends on the data magnitude and the reflection count; a relative
+criterion would be more robust.
+
+## FIXED (2026-09-04): the `Fridel` line — misspelled, misnamed and uninformative
+
+Found during the H1 fragHAR archaeology (2026-08-02, `docs/RUNNING_HART.md` §6). The
+refinement-results block of `tests/long/gly_ala_fragHAR_rhf_STO-3G/stdout` read:
+
+```
+# of reflections,    N_r .......... 2514
+# of unmatched Fridel pairs ....... 2514
+```
+
+i.e. all 2514 reflections counted as unmatched — a suspicious equality rather than an obviously
+wrong number. `2e3943ec` replaced the second line with `# of Friedel pairs found       =    0`.
+The line was new since 2019, arriving with `Using single scale factor ...... T`; the numeric
+`Scale factor` was still printed underneath, so nothing had been lost, and the 2019 and 2026
+refinements agree to 4 significant figures.
+
+**The count was never wrong, and that was settled before anything was changed.**
+`VEC{REFLECTION}:n_unmatched_Friedel_pairs` is correct. Verified independently of Tonto by a
+script over the raw `.hkl`, on the one shipped dataset where the answer is non-trivial:
+
+| `tests/long/L_alanine_IAM_scale_factor_test` | Tonto | independent count |
+|---|---|---|
+| reflections kept (`f_sigma_cutoff= 4.0`) | 772 | 772 |
+| without a Friedel mate | 192 | 192 |
+
+The four rejected reflections account for the number exactly: `(-6,-2,-6)` and `(6,2,6)` are a
+Friedel pair dropped together, `(0,7,1)` and `(4,5,0)` were unpaired, taking 194 to 192. And
+`gly_ala_100K.hkl` contains **zero** reflections whose mate is also present, so 2514 of 2514 is
+correct arithmetic on Friedel-merged data — which 33 of the 35 references are.
+
+**So all three defects were in what the line SAID:**
+
+1. `Fridel` was misspelled.
+2. It counted reflections *without* a mate, not *pairs*. Wrong twice over.
+3. On merged data it merely restated `N_r`, and two equal numbers read like a fault rather than
+   like "your data are merged".
+
+Reporting the number of pairs, `(N_r - n_unmatched)/2`, fixes all three at once: zero for merged
+data, 290 for L-alanine's unmerged set.
+
+**One real defect found on the way.** `VEC{REFLECTION}:get_all_Friedel_pairs` is not only a
+diagnostic — `crystal.foo:9887` and `:9980` call it to set the multiplicity factor for the
+Fourier synthesis behind the deformation and residual density maps. Its inner loop never
+`exit`ed once it found a mate, so with duplicate Miller indices one reflection could be credited
+to two partners and the count come out low. No test dataset has duplicates (all twelve checked),
+so it changed nothing today, which the re-bless confirms. Fixed in the same commit.
+
+**The references were edited surgically, NOT re-blessed, and that was deliberate.**
+`test.py --bless` adopts the whole produced file, so it absorbs every pre-existing difference in
+that reference. Blessing all 28 silently swallowed the longstanding zero-esd and precision drift
+in `ammonium_borane_pHAR_C23`, `nh3_rhf-consistent-cluster-charge_DZP_HAR`, both `so2_*` and
+`urea_rhf_DZP_consistent-cluster-charge_HAF` — the same rows that report exact=FAIL, loose=PASS
+in a normal run — and would have replaced a Mac-blessed reference
+(`urea_hart_STO-3G_disk_ffs`, Darwin-25.5.0) with Linux output. Converting a known, tolerated
+difference into an accepted reference is a decision, not a side effect of a spelling fix. So the
+28 were reverted and the line was rewritten by hand in 30 files, preserving the column width;
+every file differs by that one line and nothing else, including the three that print it twice or
+three times.
+
+
 ## RESOLVED (2026-09-03): the 124/124 baseline versus CI's 89 — different suites, both right
 
 **The two numbers were never comparable, and neither was wrong.**
@@ -5616,8 +5625,10 @@ neither is a regression and neither blocks H1:
   (least-squares variance-covariance matrix).
 - **`# of unmatched Fridel pairs ....... 2514`** -- new since 2019, and it reports *every*
   reflection as unmatched, having displaced 2019's `Scale factor ...... 0.976789` with
-  `Using single scale factor ...... T`. Either a benign diagnostic or a real miscount; also
-  misspelled (Friedel). Filed in `DEFERRED.md`, to investigate after H1.
+  `Using single scale factor ...... T`. **Fixed 2026-09-04** (`2e3943ec`): the count was right
+  all along -- 2514 of 2514 is what Friedel-merged data looks like -- and the line was
+  misspelled, counted reflections rather than pairs, and restated `N_r`. It now reads
+  `# of Friedel pairs found`. See the archive entry.
 
 ### fragHAR under MPI — DONE (2026-08-03)
 

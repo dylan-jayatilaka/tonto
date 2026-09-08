@@ -770,7 +770,9 @@ Node kinds, in order, each with a finite-difference gate **written before the no
 2. **Special positions** — eq (9) for sites, eqs (11)–(14) for ADPs, via §5.1's crossover.
    Replaces `stabilize_asym_atom_shifts`. *Gate:* constrained values satisfy `Rx = x` to
    ~1e-12; `near_0` falls to zero; shifts agree with the old path, ESDs do not — **state that
-   prediction before running it.**
+   prediction before running it.** A `near_0` of zero is also what closes the silent-constraint
+   diagnostic gap: today a direction dropped by the pseudo-inverse is removed from the covariance
+   *and* from `N_p` without saying whether symmetry or over-parameterisation caused it.
 3. **Shared site / shared U** (C2) — SHELX `EXYZ`/`EADP`. What `thpp.ins` needs.
 4. **Occupancy constraints** (C1) — affine `v = Σ aᵢuᵢ + b`, eq (77), covering two-site
    complementarity (`s=1, a=−1, b=1`) and `SUMP`-style multi-species sites (eqs 78–81). SHELX

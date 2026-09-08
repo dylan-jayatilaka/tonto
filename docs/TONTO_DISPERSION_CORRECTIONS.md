@@ -130,7 +130,8 @@ are a Friedel pair dropped together, `(0,7,1)` and `(4,5,0)` were unpaired, taki
 
 What is wrong there is only the *line*: `Fridel` is misspelled, it counts reflections
 without a mate rather than pairs, and on merged data it restates `N_r` in a way that reads
-like a fault. Held for a batched output re-bless.
+like a fault. **Fixed 2026-09-04** (`2e3943ec`): it now reports pairs, `# of Friedel pairs
+found`, which is zero for merged data and 290 for L-alanine's unmerged set.
 
 ### The double count is live in the shipped tests — and how NOT to count it
 
@@ -470,9 +471,8 @@ removes half the problem and discards the anomalous information to do it.
    `.fcf`/`.fco` and CIF reflection tables. Unmeasured.
 4. **`ATOM:has_tabular_dispersion_for` is always true** — `abs(...) >= ZERO`. Harmless; its
    only call sites are commented out.
-5. **The `# of unmatched Fridel pairs` line** — misspelled, misnamed, and uninformative on
-   merged data. Batched with other output changes, since any of them re-blesses ~35
-   references.
+5. ~~**The `# of unmatched Fridel pairs` line.**~~ Fixed 2026-09-04 (`2e3943ec`); it now
+   reports `# of Friedel pairs found`. See §2.
 6. **The `YLID_IAM_plus_anomalous_residual_density` name.** The job sets
    `correct_dispersion= no`, so f′ and f″ are supplied and applied to nothing: the anomalous
    signal is left in the observations and shows in the map. That is the defensible way to
