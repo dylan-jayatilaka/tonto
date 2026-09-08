@@ -294,120 +294,54 @@ dead keyword line from `develop` and leave the work on its two tags, as was done
 
 # Correctness — open bugs that give wrong answers
 
-## AGREED, NOT YET DONE: report delocalised near-zero eigenvectors (2026-09-08)
+## DONE, BUT THE PREMISE WAS WRONG (2026-09-08): near-zero eigenvector reporting
 
-Dylan asked for this and asked for it as its OWN commit, after the ESD covariance work is
-finished, with its own full rebuild.
+Built as agreed, then **the suite disproved the idea it was built on**. Recorded in full because the
+failure is more useful than the feature.
 
-**Why a plain "near_0 > 0" warning would be useless.** `near_0` is already reported — the fit
-table has a "No. of eig's near 0" column — and for urea's HAR it reads **19 near-zero out of 27
-parameters**. That is not an exceptional condition, it is the normal one: urea is `P-42 21 m` and
-most parameters are fixed by symmetry, leaving only 8 genuinely determined. A warning on
-`near_0 > 0` would fire on essentially every refinement.
-
-**And the eigenVALUE cannot discriminate.** An earlier draft of this proposal claimed a magnitude
-test would separate symmetry zeros from over-parameterisation. **That is wrong.**
-`molecule.har.foo:1300` writes three identical `U_iso` derivative columns, making the normal
-matrix *exactly* singular, so its null eigenvalues sit at round-off — the same place a symmetry
-zero sits. No eigenvalue threshold separates them.
-
-**The eigenVECTOR does.** A symmetry-fixed direction is *localised*: the null vector is
-essentially one parameter. An over-parameterised degeneracy is *delocalised*: the three identical
-`U_iso` columns give something like `(1,-1,0)/sqrt(2)` spread over three parameters.
-
-The standard measure is the **inverse participation ratio**, for a normalised eigenvector `v`:
+**What was built and kept.** `DIFFRACTION_DATA.near_0_IPR`, the inverse participation ratio of each
+near-zero eigenvector,
 
 ```
 IPR = 1 / sum_i v_i^4
 ```
 
-It is 1 when `v` sits entirely on one parameter, and `n` when it is spread evenly over `n`. So
-`IPR ~ 1` means a constrained parameter (expected, benign); `IPR >= 2` means the refinement cannot
-separate two or more parameters (over-parameterised, worth saying). A cut at **1.5** sits between
-those two cases.
+which is 1 when a direction lies on one parameter and n when spread over n. Plus
+`DIFFRACTION_DATA.param_labels`, kept so a direction can be reported by name;
+`update_near_0_IPRs`; and `put_near_0_eigenvector_report`, which lists the parameters mixed in each
+undetermined direction. See Bell and Dean (1970) Discuss. Faraday Soc. 50 p.55-61 and
+Wegner (1980) Z. Phys. B 36 p.209-214 — **page numbers written from memory, check before quoting.**
 
-**Why this dodges the tolerance problem Dylan raised** (*"I think I set values purely by empirical
-experience"*): `near_0_tol` stays exactly as it is, so nothing about which directions get dropped
-changes, and nothing needs reblessing. The new judgement is made on a quantity that is
-**dimensionless and bounded between 1 and n**, where 1.5 is obviously right — unlike an eigenvalue
-of `J^T W J`, whose scale depends on the data magnitude and the reflection count.
-
-**Reference.** The participation ratio is from the localisation literature, not crystallography.
-Cite it in the house style already used in `unit_cell.foo` — surnames, year, journal, volume,
-pages; no initials, no titles:
+**The premise, and why it is false.** The plan was to warn when IPR > 1.5, on the reasoning that a
+symmetry-fixed direction is *localised* on one parameter while over-parameterisation is
+*delocalised*. `short/nh3_rhf_DZP_HAR` killed it immediately:
 
 ```
-! See Bell and Dean (1970) Discuss. Faraday Soc. 50 p.55-61
-! and Wegner (1980) Z. Phys. B 36 p.209-214
+Mixed parameters, approx. no. of ... .. 2.000
+   N px weight .. -0.408
+   N py weight .. -0.408
+   N pz weight ..  0.816
 ```
 
-Bell and Dean introduced the participation ratio, aptly for this codebase, to ask how many atoms
-a vibrational mode of vitreous silica actually involves. Wegner is where the inverse form and the
-name became standard; Thouless (1974) Phys. Rep. 13 p.93-142 is the other common citation.
-**The volume and page numbers were written from memory and MUST be checked before they go into
-the source.**
+Those weights are `(-1,-1,2)/sqrt(6)`, orthogonal to `(1,1,1)`: nitrogen on a **3-fold axis along
+the body diagonal**. A pure symmetry constraint, thoroughly delocalised — IPR 2.0 for the position
+and 3.997 for the ADP block. The warning fired on four perfectly healthy refinements and told the
+user to reduce the model.
 
-**What to build.**
-- `near_0_IPR :: VEC{REAL}@` on `type DIFFRACTION_DATA`, beside `near_0_evals` and `near_0_evecs`
-  (`types.foo:4043-4050`), with the formula and the 1.5 rationale in its comment, per Dylan.
-- The delocalisation cut as a named macro beside the other defaults in `include/macros.in`.
-- A `WARN`-style report, fired only when some IPR exceeds the cut, naming the parameters carrying
-  weight in that eigenvector. Because it only prints when the condition holds, **no currently
-  green test changes**.
+**Urea only looked localised because its symmetry axes happen to align with the cell.** What IPR
+actually measures is whether a constraint fixes one *cartesian component* or a *combination* —
+a fact about the coordinate frame, not about the physics. The eigenvalue cannot make the
+distinction either: exact degeneracy and a symmetry zero both sit at round-off.
 
-**One loose end for whoever does it:** the parameter labels are passed into
-`DIFFRACTION_DATA:initialize_fit_data(n_p,n_f,labels)` (`diffraction_data.set.foo:1387`) and used
-only to size a table column (`:1458`); they do not appear to be stored on the type. Naming the
-parameters will need them kept, or re-derived from
-`VEC{ATOM}:tag_pADP_labels` (`crystal.foo:4625`).
+**So it is gated, not a warning.** Output is behind the existing `show_near_0_eigenvectors`
+(`types.foo`, `DEFAULT(FALSE)`), so no reference moved, and the text says plainly that a symmetry
+constraint looks identical to too many parameters.
 
-## VERIFIED (2026-09-08): the Gram-Charlier convention, against the paper
-
-This was carried for most of a day as *"the 3rd/4th order maps are unverified"*, and it was the
-stated reason for excluding anharmonic atoms from the covariance work. Dylan pointed at the
-source: `yq28_anharmonicity.pdf`, eq (9) and the text around it. It is now settled, and the
-exclusion is lifted.
-
-Equations (10) and (11) of that paper give the relation between the cartesian ADP tensors and the
-unitless Gram-Charlier coefficients:
-
-```
-gamma_GC^{jkl}  = U^C_{pqr}  A*_pj A*_qk A*_rl
-delta_GC^{jklm} = U^C_{pqrs} A*_pj A*_qk A*_rl A*_sm
-```
-
-**A pure tensor contraction with `A*` on every index, with no numerical factors.** Dylan: *"all
-the factors are identical, only the dimensions change"* — confirmed. The dimensions change only
-because `A*` carries 1/length, so `U^C` in `A^3` becomes a unitless gamma.
-
-**Tonto matches this exactly.** `ATOM:change_ADPn_axis_system_to_v2` does
-`adp3.change_basis_to(new3,cell.reciprocal_mx)`, and `MAT3{INTRINSIC}:change_basis_to(new,V)` is
-`matmul(self(:,i,j),V)` on each index — i.e. `new_jkl = sum U_pqr R_pj R_qk R_rl` with
-`R = reciprocal_mx = A*`. That is eq (10) term for term.
-
-**Three consequences.**
-
-1. The value transform is right, and matches published theory.
-2. The covariance construction for ADP3/ADP4 in `ATOM:make_pADP_covariance_from_esds` is right:
-   crystal -> cartesian is the inverse contraction, `back_transform_to(new,direct_mx)`, whose
-   induced packed map is `symmetric_tensor_3/4_product_mx(direct_mx)` — verified numerically to
-   1e-15 — and `A = (A*^T)^-1` makes that the exact inverse of eq (10).
-3. The transpose fix applied to the ADP3/ADP4 blocks of `CRYSTAL:make_CIF_esds` is right. The
-   induced map for `change_basis_to(new,R)`, which puts R on the RIGHT of every index, is
-   `symmetric_tensor_n_product_mx(R^T)` — so passing `reciprocal_mx` un-transposed was wrong, in
-   the same way and for the same reason as the ADP2 block.
-
-**And it resolves a number that looked alarming.** `short/so2_read_anharmonic_GC_cif` now reports
-an ADP3 esd about four times the value itself. That is not a convention error: the esds now follow
-the same contraction the values do, the ~1185x growth is just the cell length cubed, and the
-reading is that this anharmonic parameter is not significant in the cartesian frame.
-
-**Dylan's decision (2026-09-08), recorded so it does not harden into an assumption:** that
-insignificance is *not unexpected, but not necessarily correct either*. The transform is verified;
-whether the resulting anharmonic esds are physically right is a separate question, and it waits on
-the `yq28_anharmonicity` publication. Until then the so2 reference stands as produced, and nobody
-should cite it as evidence that the anharmonic esds are validated -- only that they now follow the
-same contraction as the values.
+**What the failure is worth.** It pins down what a correct diagnosis needs: the
+**site-symmetry-allowed subspace**, so one can ask whether an undetermined direction lies inside it
+(expected) or outside it (a real defect). That is precisely what explicit constraints would supply,
+which makes this concrete evidence for the cctbx work in `docs/CCTBX_INTO_TONTO.md` §6 rather than
+one more argument for it.
 
 ## The pseudo-inverse silently CONSTRAINS what you asked to refine (2026-09-08, OPEN — small)
 
