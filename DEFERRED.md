@@ -29,18 +29,26 @@ now covers the whole project, so it was renamed.)*
 > search, the two latent command-line bugs, both `hart`-under-MPI entries, the benign
 > column-0 `#ifdef` diagnostic, the run-time-dependency lesson, the whole gfortran-16 debug
 > story (three entries), and the `textfile.foo` verification. Moving them took the live half
-> from 4396 lines to 3518. **36 live, 36 archived** (35 and 37 after the dispersion
-> close on 2026-09-05; 35 and 38 after the build-and-toolchain batch the same day,
-> then 33 and 39 once the two defects it found
-> were fixed, and 33 and 40 after the `foofiles/` purge).
+> from 4396 lines to 3518.
 >
 > Re-sorted again on 2026-09-05, when the dispersion item closed: a 178-line live HANDOFF and
 > a 22-line live defect entry became one condensed archive entry plus a short list of what is
 > genuinely still open.
 >
-> Still to sort: `MPI: defects found during milestone 4` is a 900-line register whose `###`
-> children are mostly closed but interleaved with live ones. It was left whole rather than
-> dissected.
+> Re-sorted again on 2026-09-09: six finished entries were still filed under live themes, all
+> closed on 2026-09-08 -- the near-zero eigenvector premise, `M_ani_error`, `make_CIF_esds`,
+> the element-wise ADP esd transform, the `make report` won't-do, and `command_arguments`.
+>
+> **36 live, 50 archived** as of 2026-09-09, counting `##` headings on each side of the archive
+> divider and excluding the handover section. The running tally kept in this paragraph had
+> drifted well out of step with the file, so it was replaced with a count and the method to
+> reproduce it rather than extended again.
+>
+> Still to sort, and deliberately left whole rather than dissected: two long registers whose
+> `###` children are mostly closed but interleaved with live ones -- `MPI: defects found during
+> milestone 4` (~900 lines), and `A related trap found the same way: --fos 0`, whose opening
+> item is fixed but which still carries the `put_str` desync question, the two-collectives-per-
+> token cost, and `hart`'s non-zero early exit under MPI.
 >
 > If you add an entry, put it under a theme; when it closes, move it down — a `DONE` heading
 > in a live section is how the drift starts.
@@ -60,6 +68,10 @@ now covers the whole project, so it was renamed.)*
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
 ## WHERE 2026-09-06 LEFT OFF — read this first if you are picking up cold
+
+> **Still current on 2026-09-09, with one addition.** `command_arguments` was deleted (archived
+> below), and the six entries closed on 2026-09-08 that were still filed under live themes have
+> been moved to the archive. Nothing new is in flight; the ordering below stands.
 
 **Nothing is in flight.** Two Science items closed on 2026-09-06: **milestone 11 (extinction)**
 and **`docs/GOF_NOT_CHI2.md`** (the `GoF2` rename, and GoF in the tables). Both are archived
@@ -371,322 +383,6 @@ dead keyword line from `develop` and leave the work on its two tags, as was done
 
 # Correctness — open bugs that give wrong answers
 
-## DONE, BUT THE PREMISE WAS WRONG (2026-09-08): near-zero eigenvector reporting
-
-Built as agreed, then **the suite disproved the idea it was built on**. Recorded in full because the
-failure is more useful than the feature.
-
-**What was built and kept.** `DIFFRACTION_DATA.near_0_IPR`, the inverse participation ratio of each
-near-zero eigenvector,
-
-```
-IPR = 1 / sum_i v_i^4
-```
-
-which is 1 when a direction lies on one parameter and n when spread over n. Plus
-`DIFFRACTION_DATA.param_labels`, kept so a direction can be reported by name;
-`update_near_0_IPRs`; and `put_near_0_eigenvector_report`, which lists the parameters mixed in each
-undetermined direction. See Bell and Dean (1970) Discuss. Faraday Soc. 50 p.55-61 and
-Wegner (1980) Z. Phys. B 36 p.209-214 — **page numbers written from memory, check before quoting.**
-
-**The premise, and why it is false.** The plan was to warn when IPR > 1.5, on the reasoning that a
-symmetry-fixed direction is *localised* on one parameter while over-parameterisation is
-*delocalised*. `short/nh3_rhf_DZP_HAR` killed it immediately:
-
-```
-Mixed parameters, approx. no. of ... .. 2.000
-   N px weight .. -0.408
-   N py weight .. -0.408
-   N pz weight ..  0.816
-```
-
-Those weights are `(-1,-1,2)/sqrt(6)`, orthogonal to `(1,1,1)`: nitrogen on a **3-fold axis along
-the body diagonal**. A pure symmetry constraint, thoroughly delocalised — IPR 2.0 for the position
-and 3.997 for the ADP block. The warning fired on four perfectly healthy refinements and told the
-user to reduce the model.
-
-**Urea only looked localised because its symmetry axes happen to align with the cell.** What IPR
-actually measures is whether a constraint fixes one *cartesian component* or a *combination* —
-a fact about the coordinate frame, not about the physics. The eigenvalue cannot make the
-distinction either: exact degeneracy and a symmetry zero both sit at round-off.
-
-**So it is gated, not a warning.** Output is behind the existing `show_near_0_eigenvectors`
-(`types.foo`, `DEFAULT(FALSE)`), so no reference moved, and the text says plainly that a symmetry
-constraint looks identical to too many parameters.
-
-**What the failure is worth.** It pins down what a correct diagnosis needs: the
-**site-symmetry-allowed subspace**, so one can ask whether an undetermined direction lies inside it
-(expected) or outside it (a real defect). That is precisely what explicit constraints would supply,
-which makes this concrete evidence for the cctbx work in `docs/CCTBX_INTO_TONTO.md` §6 rather than
-one more argument for it.
-
-## FIXED (2026-09-08): `M_ani_error` was missing a square root, and it hid itself
-
-`ATOM:set_M_ani_error_from_pADP` computed
-
-```foo
-val = dot_product(dU, matmul(.covariance_mx(4:9,4:9),dU))
-.M_ani_error = val/(2*.M_ani)
-```
-
-`dU` is the gradient of `f = M_ani^2` — checked against `set_M_ani_from_pADP`:
-`df/dX4 = 2*X4-X5-X6` and `df/dX7 = 6*X7`, which is exactly what the code builds. So `val` is
-`Var(M_ani^2)`, as the routine's own comment says. Propagating to `M_ani = sqrt(f)` gives
-
-```
-sigma(M_ani) = sigma(M_ani^2) / (2*M_ani) = sqrt(val) / (2*M_ani)
-```
-
-The code used `val` where `sqrt(val)` was meant. **Dimensional analysis settles it without having
-to interpret the comment**: `val` has units of `U^4`, so `val/(2*M_ani)` has units `U^3`, and an
-esd of a quantity with units `U^2` must have units `U^2`.
-
-**Why it survived.** For urea's O atom the correct value is `8.2e-5` and the buggy one `1.9e-10` —
-too small by a factor of **4.4e5**. It therefore always printed as `(0)`, which is
-indistinguishable from the "no covariance matrix was available" case that the note at
-`vec{atom}.foo:12405` explicitly tells the reader about. A wrong number wearing a plausible
-explanation. `M_ani` for that atom should read `0.0138(1)`, not `0.0138(0)`.
-
-Note the second comment in the routine — *"calculate max of the difference on the square root of
-the upper and lower limits of M2_ani"* — describes the **correct** formula: for
-`M = sqrt(M2)`, `sqrt(M2 + sigma) - M ~ sigma/(2M)` where `sigma` is the *standard deviation* of
-`M2`, i.e. `sqrt(val)`. The comment was right and the code did not follow it.
-
-Also guarded in the same routine: `M_ani` is zero whenever the ADP tensor is exactly isotropic or
-absent, which makes the expression singular. That was unreachable while `covariance_mx` was
-unallocated on every CIF-read path; populating it (see the covariance work) makes it reachable, so
-the division is now guarded and reports zero rather than Inf/NaN.
-
-
-## FIXED (2026-09-08): `make_CIF_esds` built its 6x6 map from the wrong transpose
-
-Found while correcting the header comment on `GAUSSIAN_DATA:symmetric_tensor_2_product_mx`, and
-**confirmed numerically before being fixed**, not argued from index algebra.
-
-The header claimed the routine returns the induced map for `D' = R^T D R`. It does not: it returns
-the map for **`D' = R D R^T`**. Verified by building `res` exactly as the code does, applying it to
-a packed random symmetric `D`, and comparing: it matches `R D R^T` to 2e-16 and differs from
-`R^T D R` by O(1). The comment is now corrected.
-
-**The bug that comment was hiding.** `CRYSTAL:make_CIF_esds` passed `.unit_cell.reciprocal_U_mx`
-**un-transposed**, while the ADP *values* go to the crystal frame by
-`MAT:change_basis_to(ADP,reciprocal_U_mx)` — which is `B^T U B` (`MAT{INTRINSIC}:change_basis_using`
-is documented and implemented as `self = V^dagger self V`). The esds must follow the same map as
-the values. Building the true packed map column by column from `B^T U B` and comparing:
-
-| candidate | agreement with the true map |
-|---|---|
-| `symmetric_tensor_2_product_mx(B)` — what the code did | **2.226e-01** |
-| `symmetric_tensor_2_product_mx(B^T)` — what it needed | **0.000e+00** |
-
-Fixed by passing `transpose(.unit_cell.reciprocal_U_mx)`. The other three callers of
-`symmetric_tensor_2_product_mx` all want the sense it actually implements and are untouched:
-`ATOM:transform_pADP_vector_with` and `VEC{ATOM}:rotated_U2_covariance_mx_for_atom` pass the same
-`R` used for `x' = R x`, and the `CRYSTAL` fragment->asym rotation passes a Seitz rotation.
-
-**Size of the error, and why nothing caught it.** Propagating a diagonal cartesian covariance both
-ways, the ratio wrong/right on the reported esd is:
-
-| cell | ratio | error |
-|---|---|---|
-| tetragonal 90/90/90 | 1.000 | **none** — `B` is diagonal, hence symmetric |
-| monoclinic beta=96.4 | 0.989 - 1.011 | ~1% |
-| hexagonal gamma=120 | 0.629 - 1.264 | up to **37%** |
-| triclinic 89/76/66 | 0.696 - 1.153 | up to **30%** |
-
-**Every test in the suite that writes a CIF has an orthogonal cell** — all four `tests/hart/*`,
-`short/urea_lamaGOET_grown_CIF`, `short/kno3_generate_cluster_CIF`, and the YLID job. Quartz is
-hexagonal but never writes a CIF. So this fix **changes no reference**, and equally, nothing in the
-suite would have caught it or would catch a regression. A non-orthogonal CIF-writing test is the
-missing net; see the entry below, which has the same blind spot.
-
-**The 3rd- and 4th-order blocks had the SAME defect, and are also fixed.** They pass
-`.unit_cell.reciprocal_mx` (note: *not* `reciprocal_U_mx` — correct, since the anharmonics are
-reported as dimensionless Gram-Charlier constants), but passed it **un-transposed**. The value
-transform is `change_basis_to(new,reciprocal_mx)`, which puts `R` on the RIGHT of every index, so
-the induced map is `symmetric_tensor_n_product_mx(R^T)`. Both now pass `transpose(...)`.
-Settled against the paper — see *VERIFIED (2026-09-08): the Gram-Charlier convention* above, where
-eqs (10) and (11) of `yq28_anharmonicity.pdf` confirm the transform is a pure contraction with
-`A*` on every index, with no numerical factors.
-
-**Also still true of this routine:** it returns *variances*, not esds, despite the name, and its
-three callers (`crystal.foo` around 8308, 8388 and 9162) each take `sqrt` with **no guard against
-a negative diagonal**. The guarded pattern exists in
-`VEC{ATOM}:get_ADP2s_in_ADP2_principal_axes_in`.
-
-**CLOSED, WON'T-DO (Dylan, 2026-09-08): a crash is obvious and needs no tracking.** One thing to
-know if it is ever met: in the 2026-07-29 episode recorded further down this file, the same
-unguarded `sqrt` did **not** crash — `sqrt` of a negative gave a NaN that travelled into the CIF
-and printed as `(0)`. A build with `-ffpe-trap=invalid` turns that into the obvious crash; release
-does not. So if the symptom is a silent zero esd rather than a stop, this is the place to look.
-
-## REMOVED (2026-09-08): ADP standard uncertainties were transformed element-wise on axis change (found 2026-08-16)
-
-`ATOM:change_ADP2_axis_system_to` (`atom.foo:3733`) converts the ADP *errors*
-between Cartesian and crystal axes by running the tensor congruence over the
-standard deviations themselves:
-
-```foo
-.put_ADP2_errors_to(ADP)
-ADP.change_basis_using(cell.direct_U_mx)   ! M sigma M^T -- on sigmas
-.set_ADP2_errors_to(ADP)
-```
-
-That is invalid whatever the basis convention. The conversion is a congruence,
-`U' = M U M^T`, so each `U'_ij` is a linear combination of **all six** `U_kl`
-and its variance needs the full 6x6 covariance. Running it over sigmas forms
-*signed* combinations of standard deviations, so terms cancel and an entry can
-come out negative. The routine already carried `! ERROR: To fix later` twice.
-The docstring admits it: *"the errors are transformed too, linearly … (this is
-wrong, but in the absence of any covariance we do it)"*.
-
-**Scope — smaller than it first appears, and this took three tries to pin
-down.** There are TWO CIF ADP writers:
-
-| path | esds from | correct? |
-|---|---|---|
-| `crystal.foo:8207` `put_CIF_ADP2(…,esd)` | `CRYSTAL:make_CIF_esds` | **yes** |
-| `crystal.foo:8135` `put_CIF_ADP2(…)` | the atom's own `.pADP_errors` | no |
-
-`make_CIF_esds` already does the right thing — it builds the induced 6x6 map
-with `GAUSSIAN_DATA:symmetric_tensor_2_product_mx` and applies it as a
-quadratic form to the covariance. So the claim that this "affects every
-anisotropic ADP esd Tonto writes to a CIF" is **wrong**; it affects the
-no-covariance writer, which is the `put_cif` path exercised by
-`tests/short/urea_lamaGOET_grown_CIF`.
-
-**A numerical claim that was made and is RETRACTED.** An independent
-calculation appeared to show the CIF esds 38x too large on one component and
-14x too small on another. That comparison was invalid: it assumed
-`U' = M U M^T` with its own packing of the 6-vector. Reproducing the ADP
-*values* validated the 3x3 tensor map but said nothing about the packing,
-which is where the factors of two live.
-
-**MEASURED (2026-09-08), replacing that retracted figure.** Done against
-Tonto's own convention: the value map is `U_cart = V^T U_cif V` with
-`V = direct_U_mx` (`UNIT_CELL:make_direct_U_mx`, and `MAT:change_basis_to`
-is `V^dagger self V`), and the induced 6x6 map is built with the same packing
-`symmetric_tensor_2_product_mx` uses, `U11 U22 U33 U12 U13 U23`. Comparing the
-element-wise result against `sqrt(diag(T V T^T))` for a diagonal input
-covariance — the best a foreign CIF supports — the ratio element-wise/correct is:
-
-| cell | ratio | worst error |
-|---|---|---|
-| urea, tetragonal 90/90/90 | 1.00 everywhere | **exact** (once the metric is snapped) |
-| 4APHmal, monoclinic beta=96.4 | 0.82 - 1.00 | understates by **18%** |
-| mo7c, triclinic 89.2/76.0/66.3 | 0.86 - 1.88 | out by **tens of percent, both ways** |
-
-So it is **tens of percent, not a factor of 38**, and it can err in either
-direction. On an orthogonal cell it is exact, which is why no test in the suite
-shows it: every cell in `tests/short` and `tests/long` that reaches this path is
-orthogonal or hexagonal. Note the "correct" column assumes the input
-uncertainties are uncorrelated, which is an assumption, not a fact — the true
-answer needs the covariance the CIF does not carry.
-
-Only components that actually mix are affected: for the monoclinic cell U22,
-U33 and U23 come out exact because b is the unique axis and only the a-c plane
-mixes. No negative appeared in either test cell — a sign flip needs stronger
-mixing than a 6-degree deviation gives.
-
-### The decision, and why it was parked
-
-Dylan, 2026-08-16: **the ADP errors must be removed, not transformed and not
-zeroed** — *"Leaving them allocated holding possible rubbish is not good, for
-accidental later use."* Absent means "not available", which is true; zero means
-"known exactly", which is false and would be divided by in every shift-on-esd
-test.
-
-An implementation was written and **reverted**, for a reason worth recording:
-
-> **`ENSURE` does not enforce anything in a release build.** The recommendation
-> in `docs/CCTBX_INTO_TONTO.md` §10 says destroying the errors is safe because
-> *"the existing ENSUREs then catch any consumer that needs them, loudly and at
-> the point of use"*. `ENSURE` is gated on `USE_PRECONDITIONS`, which is off in
-> every optimised build, so those guards compile to nothing. Destroying
-> `pADP_errors` turned a wrong-number bug into a **SIGSEGV** in
-> `urea_lamaGOET_grown_CIF` — `put_CIF_ADP2_cryst` requires the array
-> unconditionally. A consumer that must fail in production needs a `DIE`.
-
-The debug build named it in one run (`ATOM:put_ADP2_errors_to_1 ... no
-pADP_errors`, via `put_CIF_ADP2_cryst`), which is the recipe in
-`docs/TONTO_DEVELOPER_INFO.md` §1a working exactly as advertised.
-
-Making "absent" actually representable then means guarding **five** CIF
-writers — 44 `_esu` column headers and 5 value/error table pairs — because
-`pADP_errors` is one vector holding positions, U_iso and ADPs together, so
-destroying it removes the coordinate esds too. That is a change to CIF output
-shape in five places, each needing its own re-bless, and it is a different and
-much larger job than fixing the transform.
-
-### DONE (2026-09-08): the transform is gone
-
-Dylan: *"That is simply wrong and must be removed: we do not have access to the
-variance-covariance matrix so it cannot be done properly."* Correct, and the case
-is stronger than that.
-
-**The transform was not producing the cartesian CIF.** In `MOLECULE:put_CIFs` the
-`.cartesian.cif2` is written *first*, while the atoms are still cartesian and before any
-axis change. The element-wise congruence ran afterwards, on the cartesian -> crystal ->
-cartesian round trip, so its output went into `.archive.cif` and `.fractional.cif1` --
-the **crystal-frame** files.
-
-**And those esds were already in the crystal frame.** They are read from a crystal-frame
-CIF, and `process_CIF` converts the values to cartesian with `change_ESDs=FALSE`, leaving
-the sigmas alone. So writing them back into a crystal-frame CIF needed no transform at
-all: the correct answer was the number already stored. The congruence took a correct value
-and corrupted it by tens of percent. Removing it does not merely limit the damage -- it
-makes `archive.cif` exactly right.
-
-**What was removed:** the four `if (change_err)` blocks in `ATOM:change_ADP2_axis_system_to`
-(both branches) and `ATOM:change_ADPn_axis_system_to_v2` (ADP3 and ADP4, cartesian branch
-only -- the crystal branch never had them, which was itself an asymmetry). With those gone
-`change_ESDs` controlled nothing, so it was stripped from the whole
-`change_*_axis_system_to` family, from `MOLECULE:put_CIFs`, and from every call site. Note
-it had also been dead in `change_pos_axis_system_to` all along -- position esds were never
-transformed either, which is why the cartesian CIF was printing fractional uncertainties
-relabelled as Angstroms.
-
-The `put_cif_with_esds` keyword went with it: it had been passing the value that produced
-the *opposite* of what its name promised, and once the transform was gone it was an exact
-duplicate of `put_cif`. No test used it.
-
-**The rule now:** esd's are never transformed on an axis change. They belong to the frame
-they were made in, and a writer emits them only into that frame, otherwise omitting them
-with `VEC{ATOM}:put_CIF_no_esd_note` saying why.
-
-**Not closed by this.** Nothing *records* which frame the stored esds belong to. The two
-cases in play work out -- a CIF read gives crystal-frame esds, a refinement gives cartesian
-ones passed explicitly as `esd` from `make_CIF_esds` -- but reading a cartesian `.cif2`
-would hit the mirror image of the bug just fixed. Recording the frame alongside the esds
-belongs with the parameter-descriptor migration in `docs/CCTBX_INTO_TONTO.md` §6.
-
-Related and unchanged: the stdout ADP table prints whatever frame the esds are in beside
-values in the table's frame. For an orthogonal cell those agree; for a non-orthogonal one
-they do not. Pre-existing, not introduced here.
-
-### What to do
-
-1. Fix `change_ADP2_axis_system_to` to propagate exactly, `V' = T V T^T`, when
-   a covariance is available. `ATOM` already carries one — `covariance_mx`
-   (`types.foo:2602`), stored by `set_pADP_errors_to` and already used as
-   `.covariance_mx(4:9,4:9)` at `atom.foo:1578` — so no plumbing is needed.
-   Build `T` by pushing each packed unit tensor through the same routine used
-   on the tensor itself, so the convention cannot drift.
-2. Destroy the errors when there is no covariance, per the decision above.
-3. Guard the five writers so the `_esu` columns are omitted rather than filled.
-   Re-bless the affected references; `urea_lamaGOET_grown_CIF` at minimum.
-4. Better: consider splitting `pADP_errors`, or giving it a validity flag, so
-   only the ADP block goes absent and the coordinate writers are untouched.
-   This belongs with the parameter-descriptor migration in
-   `docs/CCTBX_INTO_TONTO.md` §6 rather than as a separate change.
-
-Related, and not fixed either: `molecule.har.foo:1300` implements `U_iso` by
-writing three identical derivative columns (`sf_d(k,4) = sf_d(k,5) =
-sf_d(k,6) = -sf2`), making the normal matrix singular by construction and
-letting the pseudo-inverse absorb it. Verified present. It did **not** affect
-the quartz results in `docs/NN_HAR_REPORT.md`, which refined anisotropically
-and never entered that branch, but it would bite any isotropic refinement.
-
 ## Pruning compounds across repeated `update` calls (Dylan, 2026-08-23)
 
 **Half fixed 2026-08-23. The other half is not a one-liner — a naive attempt
@@ -870,39 +566,6 @@ varied a grid, and every test spelled its functional correctly. `scripts/check_d
 (ctest `dft_invariants`, label `short`, 20 STO-3G jobs, about two seconds) tests
 properties rather than blessed numbers, so none of them can be blessed away. Check 4
 is the bogus name: `blyp` as an exchange functional must exit non-zero.
-
-## Command line: `command_arguments` silently truncates (and is never read)
-
-**Found 2026-08-02** while sizing the `hart --group-charge-spin` option (milestone H1).
-`COMMAND_LINE` has **two** independent 256-character limits, and Fortran truncates a fixed-length
-CHARACTER assignment **silently** in both cases:
-
-1. **Per token.** `item`, `option`, `option_value` and `arg` are all `VEC{STR}@`, i.e. `STR_SIZE`
-   = 256 per element. A single quoted argument longer than that -- e.g.
-   `--group-charge-spin "1 0 1 2 -1 1 ..."` for a protein -- is cut off with no error.
-2. **The whole command line.** `command_arguments :: STR` is **one** 256-character string that
-   `command_line.foo:134` appends *every* token to:
-   `command_arguments = trim(command_arguments)//" "//trim(token.to_quoted_str)//" "`.
-   That overflows after roughly a dozen tokens on **any** command line.
-
-**The saving grace, and the fix.** `command_arguments` is **never read** -- `grep` finds no
-consumer in `foofiles/` or `runfiles/`. It is written and discarded, so the truncation is
-currently harmless. The honest fix is to **delete the field**, not widen it. (`put_command_optarg`
-prints `command_optarg`, a `VEC{STR}` built per option, which is unaffected.)
-
-**Design consequence for `hart --group-charge-spin`** (H1): do not take one quoted blob. Two
-things keep every token short:
-- make the option **repeatable** -- `--group-charge-spin 12 -1 1 --group-charge-spin 47 1 1`;
-- make it an **exceptions list**, defaulting all other groups to `{0 1}`. The tonto keyword being
-  mirrored already works this way and says so in its name: `atom_groups= { keys={charge=}
-  altered_data= {...} }` -- *altered* data. For a protein nearly every residue is neutral singlet;
-  only Asp/Glu, Lys/Arg and metal ions deviate, so a 300-residue structure needs a dozen entries.
-
-For genuinely large cases, fall back to `--group-charge-spin-file <file>`, one `r C M` per line --
-which also makes the setup reproducible and version-controllable, unlike a shell command.
-
-**NOTE `COMMAND_LINE` does not currently support repeated options**: `has_option` /
-`value_for_option` return the *first* match. Repeatability needs a small addition there.
 
 ## Deferred: `std_err` writes into the *input* file (hard-coded unit collision)
 
@@ -3164,38 +2827,6 @@ trajectory. Turning extinction on changes the objective and so changes the path,
 reference would bake in a new one. Decide first whether to diagnose the wandering, then add
 the job — not the other way round.
 
-## CLOSED, WON'T DO (Dylan, 2026-09-08): `make report` cannot be run in parallel
-
-> **Dylan's decision: serial `make report` is fine, because `ctest -j` already covers the
-> case that matters.** The parallel win was for the *report*, not the tests, and the tests
-> are where the wall-clock is. Nothing below is wrong; it is simply not worth the work, and
-> a `--jobs` option would add a way to get non-deterministic row order for no real gain.
-> Kept for the measurement and for the `--mpi` interaction, which anyone adding jobs later
-> would have to rediscover.
-
-`ctest -j N` works and is safe: `scripts/test.py:334` gives every job its own scratch
-directory, `$TMPDIR/tonto-tests-$USER/<testname>`, so parallel jobs cannot collide, and each
-test's `.bad` lands in its own `tests/` directory. A `short long hart` run drops from serial
-to about 12 minutes at `-j4`.
-
-`make report` has no equivalent. `scripts/suite_report.py:134` runs one `subprocess.run` per
-test in a plain loop and its argument list (`:178-213`) has no jobs option, so `make -j report`
-does nothing — the serialism is inside the script.
-
-**The change.** Add `--jobs/-j` and wrap that per-test `subprocess.run` in a
-`ThreadPoolExecutor`. Threads suffice, because all the work is in the subprocess and the
-aggregation already happens after the rows are collected.
-
-**Two things to get right.**
-
-- **Row order must stay deterministic**, independent of completion order, or `tests.log` stops
-  being diffable between runs — which is most of what it is for. Collect into a list indexed by
-  submission order, not as futures complete.
-- **Do not let `-j` combine with `--mpi`.** Each MPI job already runs `--mpi-ranks 4`, so the
-  two multiply. Either refuse the combination or divide the rank count into the job count.
-
-Scale `-j` to memory rather than cores, as for `make -j`: some `long` jobs are heavy.
-
 # Translator and the Foo language
 
 ## Cleanup: normalise procedure-name CASE across definition and call sites
@@ -3487,13 +3118,17 @@ highlighting and tighter editor integration. The repo already ships some vim sup
 
 ## OPEN: long paths to the basis sets fail -- STR is 256 characters
 
-> **Half done.** `PATH_SIZE` now exists (`include/macros.in:77`, 1024) and `COMMAND_LINE`
-> uses it -- `token` is `STR(len=PATH_SIZE)`, and `command_arguments` is declared with it in
-> `types.foo`. That was the worse half. **The basis-directory half is untouched:**
-> `MOLECULE.MAIN:run` and `:setup` still take `basis_library_dir :: STR`, so the
-> 256-character limit below still bites. Note also that the `PATH_SIZE` comment says
-> "4096 matches Linux PATH_MAX" while defining 1024; settle which was meant when finishing
-> this.
+> **Half done.** `PATH_SIZE` now exists (`include/macros.in`, 1024) and `COMMAND_LINE`
+> uses it -- `token` is `STR(len=PATH_SIZE)`, as are `command`, `item`, `option`,
+> `option_value`, `arg` and `command_optarg` in `types.foo`. That was the worse half.
+> **The basis-directory half is untouched:** `MOLECULE.MAIN:run` and `:setup` still take
+> `basis_library_dir :: STR`, so the 256-character limit below still bites.
+>
+> Two things below are now out of date. `command_arguments` **no longer exists** -- it was
+> never read and was deleted on 2026-09-08 rather than widened, so wherever the diagnosis
+> below names it as a thing to resize, there is nothing left to resize; see the archive
+> entry. And the `PATH_SIZE` comment's "4096 matches Linux PATH_MAX" beside a defined 1024
+> is settled: 1024 is the deliberate value and the comment now says so.
 
 **Reported for the Windows `tonto.exe` and `hart.exe` (untested binaries from
 the release workflow), suspected to be a forward/backslash problem. IT IS NOT.
@@ -4043,6 +3678,388 @@ with no hand-written script at all.
 ---
 
 # Done, resolved and closed (archive)
+
+## DONE, BUT THE PREMISE WAS WRONG (2026-09-08): near-zero eigenvector reporting
+
+Built as agreed, then **the suite disproved the idea it was built on**. Recorded in full because the
+failure is more useful than the feature.
+
+**What was built and kept.** `DIFFRACTION_DATA.near_0_IPR`, the inverse participation ratio of each
+near-zero eigenvector,
+
+```
+IPR = 1 / sum_i v_i^4
+```
+
+which is 1 when a direction lies on one parameter and n when spread over n. Plus
+`DIFFRACTION_DATA.param_labels`, kept so a direction can be reported by name;
+`update_near_0_IPRs`; and `put_near_0_eigenvector_report`, which lists the parameters mixed in each
+undetermined direction. See Bell and Dean (1970) Discuss. Faraday Soc. 50 p.55-61 and
+Wegner (1980) Z. Phys. B 36 p.209-214 — **page numbers written from memory, check before quoting.**
+
+**The premise, and why it is false.** The plan was to warn when IPR > 1.5, on the reasoning that a
+symmetry-fixed direction is *localised* on one parameter while over-parameterisation is
+*delocalised*. `short/nh3_rhf_DZP_HAR` killed it immediately:
+
+```
+Mixed parameters, approx. no. of ... .. 2.000
+   N px weight .. -0.408
+   N py weight .. -0.408
+   N pz weight ..  0.816
+```
+
+Those weights are `(-1,-1,2)/sqrt(6)`, orthogonal to `(1,1,1)`: nitrogen on a **3-fold axis along
+the body diagonal**. A pure symmetry constraint, thoroughly delocalised — IPR 2.0 for the position
+and 3.997 for the ADP block. The warning fired on four perfectly healthy refinements and told the
+user to reduce the model.
+
+**Urea only looked localised because its symmetry axes happen to align with the cell.** What IPR
+actually measures is whether a constraint fixes one *cartesian component* or a *combination* —
+a fact about the coordinate frame, not about the physics. The eigenvalue cannot make the
+distinction either: exact degeneracy and a symmetry zero both sit at round-off.
+
+**So it is gated, not a warning.** Output is behind the existing `show_near_0_eigenvectors`
+(`types.foo`, `DEFAULT(FALSE)`), so no reference moved, and the text says plainly that a symmetry
+constraint looks identical to too many parameters.
+
+**What the failure is worth.** It pins down what a correct diagnosis needs: the
+**site-symmetry-allowed subspace**, so one can ask whether an undetermined direction lies inside it
+(expected) or outside it (a real defect). That is precisely what explicit constraints would supply,
+which makes this concrete evidence for the cctbx work in `docs/CCTBX_INTO_TONTO.md` §6 rather than
+one more argument for it.
+
+## FIXED (2026-09-08): `M_ani_error` was missing a square root, and it hid itself
+
+`ATOM:set_M_ani_error_from_pADP` computed
+
+```foo
+val = dot_product(dU, matmul(.covariance_mx(4:9,4:9),dU))
+.M_ani_error = val/(2*.M_ani)
+```
+
+`dU` is the gradient of `f = M_ani^2` — checked against `set_M_ani_from_pADP`:
+`df/dX4 = 2*X4-X5-X6` and `df/dX7 = 6*X7`, which is exactly what the code builds. So `val` is
+`Var(M_ani^2)`, as the routine's own comment says. Propagating to `M_ani = sqrt(f)` gives
+
+```
+sigma(M_ani) = sigma(M_ani^2) / (2*M_ani) = sqrt(val) / (2*M_ani)
+```
+
+The code used `val` where `sqrt(val)` was meant. **Dimensional analysis settles it without having
+to interpret the comment**: `val` has units of `U^4`, so `val/(2*M_ani)` has units `U^3`, and an
+esd of a quantity with units `U^2` must have units `U^2`.
+
+**Why it survived.** For urea's O atom the correct value is `8.2e-5` and the buggy one `1.9e-10` —
+too small by a factor of **4.4e5**. It therefore always printed as `(0)`, which is
+indistinguishable from the "no covariance matrix was available" case that the note at
+`vec{atom}.foo:12405` explicitly tells the reader about. A wrong number wearing a plausible
+explanation. `M_ani` for that atom should read `0.0138(1)`, not `0.0138(0)`.
+
+Note the second comment in the routine — *"calculate max of the difference on the square root of
+the upper and lower limits of M2_ani"* — describes the **correct** formula: for
+`M = sqrt(M2)`, `sqrt(M2 + sigma) - M ~ sigma/(2M)` where `sigma` is the *standard deviation* of
+`M2`, i.e. `sqrt(val)`. The comment was right and the code did not follow it.
+
+Also guarded in the same routine: `M_ani` is zero whenever the ADP tensor is exactly isotropic or
+absent, which makes the expression singular. That was unreachable while `covariance_mx` was
+unallocated on every CIF-read path; populating it (see the covariance work) makes it reachable, so
+the division is now guarded and reports zero rather than Inf/NaN.
+
+
+## FIXED (2026-09-08): `make_CIF_esds` built its 6x6 map from the wrong transpose
+
+Found while correcting the header comment on `GAUSSIAN_DATA:symmetric_tensor_2_product_mx`, and
+**confirmed numerically before being fixed**, not argued from index algebra.
+
+The header claimed the routine returns the induced map for `D' = R^T D R`. It does not: it returns
+the map for **`D' = R D R^T`**. Verified by building `res` exactly as the code does, applying it to
+a packed random symmetric `D`, and comparing: it matches `R D R^T` to 2e-16 and differs from
+`R^T D R` by O(1). The comment is now corrected.
+
+**The bug that comment was hiding.** `CRYSTAL:make_CIF_esds` passed `.unit_cell.reciprocal_U_mx`
+**un-transposed**, while the ADP *values* go to the crystal frame by
+`MAT:change_basis_to(ADP,reciprocal_U_mx)` — which is `B^T U B` (`MAT{INTRINSIC}:change_basis_using`
+is documented and implemented as `self = V^dagger self V`). The esds must follow the same map as
+the values. Building the true packed map column by column from `B^T U B` and comparing:
+
+| candidate | agreement with the true map |
+|---|---|
+| `symmetric_tensor_2_product_mx(B)` — what the code did | **2.226e-01** |
+| `symmetric_tensor_2_product_mx(B^T)` — what it needed | **0.000e+00** |
+
+Fixed by passing `transpose(.unit_cell.reciprocal_U_mx)`. The other three callers of
+`symmetric_tensor_2_product_mx` all want the sense it actually implements and are untouched:
+`ATOM:transform_pADP_vector_with` and `VEC{ATOM}:rotated_U2_covariance_mx_for_atom` pass the same
+`R` used for `x' = R x`, and the `CRYSTAL` fragment->asym rotation passes a Seitz rotation.
+
+**Size of the error, and why nothing caught it.** Propagating a diagonal cartesian covariance both
+ways, the ratio wrong/right on the reported esd is:
+
+| cell | ratio | error |
+|---|---|---|
+| tetragonal 90/90/90 | 1.000 | **none** — `B` is diagonal, hence symmetric |
+| monoclinic beta=96.4 | 0.989 - 1.011 | ~1% |
+| hexagonal gamma=120 | 0.629 - 1.264 | up to **37%** |
+| triclinic 89/76/66 | 0.696 - 1.153 | up to **30%** |
+
+**Every test in the suite that writes a CIF has an orthogonal cell** — all four `tests/hart/*`,
+`short/urea_lamaGOET_grown_CIF`, `short/kno3_generate_cluster_CIF`, and the YLID job. Quartz is
+hexagonal but never writes a CIF. So this fix **changes no reference**, and equally, nothing in the
+suite would have caught it or would catch a regression. A non-orthogonal CIF-writing test is the
+missing net; see the entry below, which has the same blind spot.
+
+**The 3rd- and 4th-order blocks had the SAME defect, and are also fixed.** They pass
+`.unit_cell.reciprocal_mx` (note: *not* `reciprocal_U_mx` — correct, since the anharmonics are
+reported as dimensionless Gram-Charlier constants), but passed it **un-transposed**. The value
+transform is `change_basis_to(new,reciprocal_mx)`, which puts `R` on the RIGHT of every index, so
+the induced map is `symmetric_tensor_n_product_mx(R^T)`. Both now pass `transpose(...)`.
+Settled against the paper — see *VERIFIED (2026-09-08): the Gram-Charlier convention* above, where
+eqs (10) and (11) of `yq28_anharmonicity.pdf` confirm the transform is a pure contraction with
+`A*` on every index, with no numerical factors.
+
+**Also still true of this routine:** it returns *variances*, not esds, despite the name, and its
+three callers (`crystal.foo` around 8308, 8388 and 9162) each take `sqrt` with **no guard against
+a negative diagonal**. The guarded pattern exists in
+`VEC{ATOM}:get_ADP2s_in_ADP2_principal_axes_in`.
+
+**CLOSED, WON'T-DO (Dylan, 2026-09-08): a crash is obvious and needs no tracking.** One thing to
+know if it is ever met: in the 2026-07-29 episode recorded further down this file, the same
+unguarded `sqrt` did **not** crash — `sqrt` of a negative gave a NaN that travelled into the CIF
+and printed as `(0)`. A build with `-ffpe-trap=invalid` turns that into the obvious crash; release
+does not. So if the symptom is a silent zero esd rather than a stop, this is the place to look.
+
+## REMOVED (2026-09-08): ADP standard uncertainties were transformed element-wise on axis change (found 2026-08-16)
+
+`ATOM:change_ADP2_axis_system_to` (`atom.foo:3733`) converts the ADP *errors*
+between Cartesian and crystal axes by running the tensor congruence over the
+standard deviations themselves:
+
+```foo
+.put_ADP2_errors_to(ADP)
+ADP.change_basis_using(cell.direct_U_mx)   ! M sigma M^T -- on sigmas
+.set_ADP2_errors_to(ADP)
+```
+
+That is invalid whatever the basis convention. The conversion is a congruence,
+`U' = M U M^T`, so each `U'_ij` is a linear combination of **all six** `U_kl`
+and its variance needs the full 6x6 covariance. Running it over sigmas forms
+*signed* combinations of standard deviations, so terms cancel and an entry can
+come out negative. The routine already carried `! ERROR: To fix later` twice.
+The docstring admits it: *"the errors are transformed too, linearly … (this is
+wrong, but in the absence of any covariance we do it)"*.
+
+**Scope — smaller than it first appears, and this took three tries to pin
+down.** There are TWO CIF ADP writers:
+
+| path | esds from | correct? |
+|---|---|---|
+| `crystal.foo:8207` `put_CIF_ADP2(…,esd)` | `CRYSTAL:make_CIF_esds` | **yes** |
+| `crystal.foo:8135` `put_CIF_ADP2(…)` | the atom's own `.pADP_errors` | no |
+
+`make_CIF_esds` already does the right thing — it builds the induced 6x6 map
+with `GAUSSIAN_DATA:symmetric_tensor_2_product_mx` and applies it as a
+quadratic form to the covariance. So the claim that this "affects every
+anisotropic ADP esd Tonto writes to a CIF" is **wrong**; it affects the
+no-covariance writer, which is the `put_cif` path exercised by
+`tests/short/urea_lamaGOET_grown_CIF`.
+
+**A numerical claim that was made and is RETRACTED.** An independent
+calculation appeared to show the CIF esds 38x too large on one component and
+14x too small on another. That comparison was invalid: it assumed
+`U' = M U M^T` with its own packing of the 6-vector. Reproducing the ADP
+*values* validated the 3x3 tensor map but said nothing about the packing,
+which is where the factors of two live.
+
+**MEASURED (2026-09-08), replacing that retracted figure.** Done against
+Tonto's own convention: the value map is `U_cart = V^T U_cif V` with
+`V = direct_U_mx` (`UNIT_CELL:make_direct_U_mx`, and `MAT:change_basis_to`
+is `V^dagger self V`), and the induced 6x6 map is built with the same packing
+`symmetric_tensor_2_product_mx` uses, `U11 U22 U33 U12 U13 U23`. Comparing the
+element-wise result against `sqrt(diag(T V T^T))` for a diagonal input
+covariance — the best a foreign CIF supports — the ratio element-wise/correct is:
+
+| cell | ratio | worst error |
+|---|---|---|
+| urea, tetragonal 90/90/90 | 1.00 everywhere | **exact** (once the metric is snapped) |
+| 4APHmal, monoclinic beta=96.4 | 0.82 - 1.00 | understates by **18%** |
+| mo7c, triclinic 89.2/76.0/66.3 | 0.86 - 1.88 | out by **tens of percent, both ways** |
+
+So it is **tens of percent, not a factor of 38**, and it can err in either
+direction. On an orthogonal cell it is exact, which is why no test in the suite
+shows it: every cell in `tests/short` and `tests/long` that reaches this path is
+orthogonal or hexagonal. Note the "correct" column assumes the input
+uncertainties are uncorrelated, which is an assumption, not a fact — the true
+answer needs the covariance the CIF does not carry.
+
+Only components that actually mix are affected: for the monoclinic cell U22,
+U33 and U23 come out exact because b is the unique axis and only the a-c plane
+mixes. No negative appeared in either test cell — a sign flip needs stronger
+mixing than a 6-degree deviation gives.
+
+### The decision, and why it was parked
+
+Dylan, 2026-08-16: **the ADP errors must be removed, not transformed and not
+zeroed** — *"Leaving them allocated holding possible rubbish is not good, for
+accidental later use."* Absent means "not available", which is true; zero means
+"known exactly", which is false and would be divided by in every shift-on-esd
+test.
+
+An implementation was written and **reverted**, for a reason worth recording:
+
+> **`ENSURE` does not enforce anything in a release build.** The recommendation
+> in `docs/CCTBX_INTO_TONTO.md` §10 says destroying the errors is safe because
+> *"the existing ENSUREs then catch any consumer that needs them, loudly and at
+> the point of use"*. `ENSURE` is gated on `USE_PRECONDITIONS`, which is off in
+> every optimised build, so those guards compile to nothing. Destroying
+> `pADP_errors` turned a wrong-number bug into a **SIGSEGV** in
+> `urea_lamaGOET_grown_CIF` — `put_CIF_ADP2_cryst` requires the array
+> unconditionally. A consumer that must fail in production needs a `DIE`.
+
+The debug build named it in one run (`ATOM:put_ADP2_errors_to_1 ... no
+pADP_errors`, via `put_CIF_ADP2_cryst`), which is the recipe in
+`docs/TONTO_DEVELOPER_INFO.md` §1a working exactly as advertised.
+
+Making "absent" actually representable then means guarding **five** CIF
+writers — 44 `_esu` column headers and 5 value/error table pairs — because
+`pADP_errors` is one vector holding positions, U_iso and ADPs together, so
+destroying it removes the coordinate esds too. That is a change to CIF output
+shape in five places, each needing its own re-bless, and it is a different and
+much larger job than fixing the transform.
+
+### DONE (2026-09-08): the transform is gone
+
+Dylan: *"That is simply wrong and must be removed: we do not have access to the
+variance-covariance matrix so it cannot be done properly."* Correct, and the case
+is stronger than that.
+
+**The transform was not producing the cartesian CIF.** In `MOLECULE:put_CIFs` the
+`.cartesian.cif2` is written *first*, while the atoms are still cartesian and before any
+axis change. The element-wise congruence ran afterwards, on the cartesian -> crystal ->
+cartesian round trip, so its output went into `.archive.cif` and `.fractional.cif1` --
+the **crystal-frame** files.
+
+**And those esds were already in the crystal frame.** They are read from a crystal-frame
+CIF, and `process_CIF` converts the values to cartesian with `change_ESDs=FALSE`, leaving
+the sigmas alone. So writing them back into a crystal-frame CIF needed no transform at
+all: the correct answer was the number already stored. The congruence took a correct value
+and corrupted it by tens of percent. Removing it does not merely limit the damage -- it
+makes `archive.cif` exactly right.
+
+**What was removed:** the four `if (change_err)` blocks in `ATOM:change_ADP2_axis_system_to`
+(both branches) and `ATOM:change_ADPn_axis_system_to_v2` (ADP3 and ADP4, cartesian branch
+only -- the crystal branch never had them, which was itself an asymmetry). With those gone
+`change_ESDs` controlled nothing, so it was stripped from the whole
+`change_*_axis_system_to` family, from `MOLECULE:put_CIFs`, and from every call site. Note
+it had also been dead in `change_pos_axis_system_to` all along -- position esds were never
+transformed either, which is why the cartesian CIF was printing fractional uncertainties
+relabelled as Angstroms.
+
+The `put_cif_with_esds` keyword went with it: it had been passing the value that produced
+the *opposite* of what its name promised, and once the transform was gone it was an exact
+duplicate of `put_cif`. No test used it.
+
+**The rule now:** esd's are never transformed on an axis change. They belong to the frame
+they were made in, and a writer emits them only into that frame, otherwise omitting them
+with `VEC{ATOM}:put_CIF_no_esd_note` saying why.
+
+**Not closed by this.** Nothing *records* which frame the stored esds belong to. The two
+cases in play work out -- a CIF read gives crystal-frame esds, a refinement gives cartesian
+ones passed explicitly as `esd` from `make_CIF_esds` -- but reading a cartesian `.cif2`
+would hit the mirror image of the bug just fixed. Recording the frame alongside the esds
+belongs with the parameter-descriptor migration in `docs/CCTBX_INTO_TONTO.md` §6.
+
+Related and unchanged: the stdout ADP table prints whatever frame the esds are in beside
+values in the table's frame. For an orthogonal cell those agree; for a non-orthogonal one
+they do not. Pre-existing, not introduced here.
+
+### What to do
+
+1. Fix `change_ADP2_axis_system_to` to propagate exactly, `V' = T V T^T`, when
+   a covariance is available. `ATOM` already carries one — `covariance_mx`
+   (`types.foo:2602`), stored by `set_pADP_errors_to` and already used as
+   `.covariance_mx(4:9,4:9)` at `atom.foo:1578` — so no plumbing is needed.
+   Build `T` by pushing each packed unit tensor through the same routine used
+   on the tensor itself, so the convention cannot drift.
+2. Destroy the errors when there is no covariance, per the decision above.
+3. Guard the five writers so the `_esu` columns are omitted rather than filled.
+   Re-bless the affected references; `urea_lamaGOET_grown_CIF` at minimum.
+4. Better: consider splitting `pADP_errors`, or giving it a validity flag, so
+   only the ADP block goes absent and the coordinate writers are untouched.
+   This belongs with the parameter-descriptor migration in
+   `docs/CCTBX_INTO_TONTO.md` §6 rather than as a separate change.
+
+Related, and not fixed either: `molecule.har.foo:1300` implements `U_iso` by
+writing three identical derivative columns (`sf_d(k,4) = sf_d(k,5) =
+sf_d(k,6) = -sf2`), making the normal matrix singular by construction and
+letting the pseudo-inverse absorb it. Verified present. It did **not** affect
+the quartz results in `docs/NN_HAR_REPORT.md`, which refined anisotropically
+and never entered that branch, but it would bite any isotropic refinement.
+
+## CLOSED, WON'T DO (Dylan, 2026-09-08): `make report` cannot be run in parallel
+
+> **Dylan's decision: serial `make report` is fine, because `ctest -j` already covers the
+> case that matters.** The parallel win was for the *report*, not the tests, and the tests
+> are where the wall-clock is. Nothing below is wrong; it is simply not worth the work, and
+> a `--jobs` option would add a way to get non-deterministic row order for no real gain.
+> Kept for the measurement and for the `--mpi` interaction, which anyone adding jobs later
+> would have to rediscover.
+
+`ctest -j N` works and is safe: `scripts/test.py:334` gives every job its own scratch
+directory, `$TMPDIR/tonto-tests-$USER/<testname>`, so parallel jobs cannot collide, and each
+test's `.bad` lands in its own `tests/` directory. A `short long hart` run drops from serial
+to about 12 minutes at `-j4`.
+
+`make report` has no equivalent. `scripts/suite_report.py:134` runs one `subprocess.run` per
+test in a plain loop and its argument list (`:178-213`) has no jobs option, so `make -j report`
+does nothing — the serialism is inside the script.
+
+**The change.** Add `--jobs/-j` and wrap that per-test `subprocess.run` in a
+`ThreadPoolExecutor`. Threads suffice, because all the work is in the subprocess and the
+aggregation already happens after the rows are collected.
+
+**Two things to get right.**
+
+- **Row order must stay deterministic**, independent of completion order, or `tests.log` stops
+  being diffable between runs — which is most of what it is for. Collect into a list indexed by
+  submission order, not as futures complete.
+- **Do not let `-j` combine with `--mpi`.** Each MPI job already runs `--mpi-ranks 4`, so the
+  two multiply. Either refuse the combination or divide the rank count into the job count.
+
+Scale `-j` to memory rather than cores, as for `make -j`: some `long` jobs are heavy.
+
+## FIXED (2026-09-08): `command_arguments` was written, truncated and never read
+
+**Found 2026-08-02** while sizing the `hart --group-charge-spin` option (milestone H1);
+deleted 2026-09-08.
+
+`COMMAND_LINE:command_arguments` was a single fixed-length string that
+`command_line.foo` appended *every* command-line token to, quoted and space-separated:
+`.command_arguments = trim(.command_arguments) // " " // trim(token.to_quoted_str) // " "`.
+Fortran truncates a fixed-length CHARACTER assignment **silently**, so the string
+overflowed after roughly a dozen tokens on any command line, with no diagnostic.
+
+**Why it was harmless, and why widening it was the wrong fix.** `grep` found no consumer
+anywhere in `foofiles/` or `runfiles/` -- the field was written on every run and never
+read, so the truncation could not affect a result. Raising its length would have preserved
+a field with no purpose. It was **deleted** instead: the component from `types.foo`, and
+the three statements that maintained it (the initialisation, the per-token append, and the
+closing `trim`) from `COMMAND_LINE:process_options`. `to_quoted_str` stays in use, by
+`command_optarg`.
+
+`include/macros.in` cited `command_arguments` as one of the two reasons `PATH_SIZE` exists;
+that clause went with the field. The same comment claimed "4096 matches Linux PATH_MAX"
+directly above `# define PATH_SIZE 1024` -- corrected to state the value actually chosen.
+
+**Verified.** Full rebuild at gfortran-14 (`types.foo` changed, so nothing was incremental),
+exit 0, no new warnings. `ctest -L hart` 5/5, `ctest -L short` 65/65. No test *could* have
+caught the deletion being wrong -- removing a field nobody reads changes no number -- so the
+compile is the check, and the suites confirm the command-line path still works for both
+`tonto` and `hart`.
+
+**Two things in the original entry are still open and live elsewhere**: the repeatable,
+exceptions-list design for `hart --group-charge-spin`, and the fact that `COMMAND_LINE`
+does not support repeated options (`has_option` / `value_for_option` return the first
+match). Both are recorded under *`hart`: development history*, "The CLI (agreed with Dylan)".
 
 ## DONE (2026-09-06): milestone 11 closed — and urea does have extinction
 
