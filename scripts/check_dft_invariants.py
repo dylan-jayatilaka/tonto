@@ -33,6 +33,12 @@ this?". None needs a reference output, so none can be blessed away.
                                          gave -67.7092 against -76.4002. And
                                          "gill96" was blessed as valid in three
                                          places and implemented nowhere.
+  6  b3lypx == b3lypgx exchange           b3lypx selected B3LYP's exchange
+                                         routine but never set
+                                         .using_hybrid_exchange, so the 0.2*E_HF
+                                         third never entered the Fock matrix.
+                                         1.81 Hartree, exit 0. NO test uses the
+                                         name, so nothing else guards this.
   5  a late use_spherical_basis= is      the bases are resolved when the atoms
      fatal                               are read, so setting it after the
                                          atoms= block was silently ignored --
@@ -64,6 +70,10 @@ import tempfile
 # accuracy= low and high. A generous floor: anything above noise proves the
 # becke_grid block is not inert.
 GRID_MIN_RESPONSE = 1.0e-7
+# b3lypx and b3lypgx select the SAME exchange routines, so with the same
+# correlation they must agree to the last bit. Observed after the 2026-09-08 fix:
+# exactly 0.0. Before it, 1.81 Hartree -- the whole of B3LYP's exact exchange.
+BX_TOL = 1.0e-10
 # An LDA functional must be INSENSITIVE to rho_cutoff. Observed: exactly 0.0 --
 # the restricted LDA routines are vectorised expressions with no cutoff at all.
 LDA_CUTOFF_MAX = 1.0e-10
@@ -224,6 +234,22 @@ def main():
             bad.append("use_spherical_basis= set after the atoms= block exited 0"
                        " -- the bases are already resolved, so it is being"
                        " silently ignored")
+        # 6 -- b3lypx and b3lypgx must give the SAME exchange
+        bx = energy(run, exch="b3lypx",  corr="none")
+        bg = energy(run, exch="b3lypgx", corr="none")
+        d = abs(bx - bg)
+        ok = d < BX_TOL
+        print("  6  b3lypx == b3lypgx exchange     |diff|     = %.3e  %s"
+              % (d, "ok" if ok else "FAIL"))
+        if not ok:
+            bad.append("b3lypx and b3lypgx differ by %.3e (>= %.1e). They select"
+                       " the SAME exchange routine, which computes only"
+                       " 0.08*E_LDA + 0.72*E_GGA -- B3LYP's remaining 0.2*E_HF"
+                       " comes from the Fock matrix, gated on"
+                       " .using_hybrid_exchange. If they differ, one of the two"
+                       " names is not setting that flag and is silently dropping"
+                       " the exact exchange" % (d, BX_TOL))
+
     except RuntimeError as exc:
         bad.append(str(exc))
 
@@ -233,7 +259,7 @@ def main():
         for b in bad:
             print("  - %s" % b)
         return 1
-    print("OK -- all five DFT invariants hold (%d jobs)" % run.n)
+    print("OK -- all six DFT invariants hold (%d jobs)" % run.n)
     return 0
 
 

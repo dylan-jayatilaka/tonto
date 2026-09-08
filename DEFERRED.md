@@ -161,6 +161,26 @@ build has. One file, everything else identical, executable relinked each time.
 
 ### Next actions, in order
 
+0. **VERIFY ON CI — two fixes that CANNOT be checked from this machine.** Both were made here and
+   neither can be confirmed here, so they must be read off the next CI runs. Until then they are
+   *believed* fixed, not known to be.
+
+   - **`Linux-release`, from the tie-break fix + rebless (2026-09-08).** The failure only appears
+     under **gfortran 14.2.0**, and this box has 14.3.0 — locally the test passed both before and
+     after, so a local run proves nothing. What to look for: `urea_hart_STO-3G_disk_ffs` green on
+     the next `develop` push. If it is still red, get the run's `ci-diagnostics` artifact and run
+     `agreement_report` on the `.bad` file (see the item below for how) — do **not** read the diff
+     by eye, which is what sent the first analysis of this into the esd/column-width dead end.
+   - **`macOS-release`, red on `master` since 2026-09-08.** *No macOS machine exists here*, so the
+     two failing tests can only be diagnosed from the CI log:
+     `h2o_rhf_6-31G(d)_normal_mode_analysis` (200% relative, 1.4e6 last-digit) and
+     `urea_ccsd_pob-TZVP_Salvador_properties` (4.48%). Neither is a rounding difference, and
+     neither is fixed. `gh run view <id> --log` or the run's uploaded `.bad` files are the only
+     instruments. Note the second test also fails a **Linux debug** build, so it may be one defect
+     rather than a macOS-specific one — that is the cheaper end to pull, because it *can* be
+     reproduced here.
+
+
 1. **macOS in CI, then WSL-MPI** (Dylan, 2026-09-03) — to complete the badge table across
    platforms. **UPDATE 2026-09-08: WSL-MPI is DONE** — `ci-wsl-mpi.yml` ran green from `master`
    on 2026-09-04 (run `33859963414`), so the last blank cell in the table is filled. **macOS is
@@ -183,8 +203,9 @@ build has. One file, everything else identical, executable relinked each time.
    `dft_invariants` and `urea_ccsd_pob-TZVP_Salvador_properties` fail in a plain **gfortran-14**
    debug build with bounds checking **on**. `ci-debug.yml` cannot see them — it runs two smoke
    jobs, not the suite. That gap is worth closing at the same time.
-3. **RED NOW: `urea_hart_STO-3G_disk_ffs` fails on the CI runner. It IS from a rebless (Dylan's
-   reading, confirmed) — but NOT from the esd/column-width class.** `Linux-release` has been red on
+3. **FIXED 2026-09-08, PENDING CI (see item 0): `urea_hart_STO-3G_disk_ffs` failed on the CI
+   runner. It IS from a rebless (Dylan's reading, confirmed) — but NOT from the esd/column-width
+   class.** `Linux-release` has been red on
    `develop` since `a58a52d8` (2026-09-06) and again after `39cf7b25`, both of which reblessed this
    reference from this machine. The test passes here (37 s, checked 2026-09-08) and fails in CI
    `FAIL FAIL FAIL` at 0 max rel% and 0 max last-digit.
@@ -208,9 +229,22 @@ build has. One file, everything else identical, executable relinked each time.
    `2e3943ec` → `Uxz`, `a58a52d8` → `Uyz`, `39cf7b25` → `Uxz`. It will keep reddening CI at random
    after any rebless until the tie is made deterministic.
 
-   **Options, Dylan's call, each changing output and so needing a rebless:** break the tie by
-   parameter index when the shifts agree to within a tolerance (smallest, local, and makes the
-   column mean something); or drop the label column, since a tied arg-max is not information.
+   **The fix taken (Dylan, 2026-09-08): break the tie by parameter index.** The loop already kept
+   the lowest index on an *exact* tie (`val<=valmax` cycles), which is why this needed a tolerance
+   — the two values are not equal, they differ below printed precision. `update_fit_esds` now runs
+   **two passes**: the first finds the largest shift/esd, the second takes the lowest-indexed
+   parameter reaching it to within `DIFFRACTION_DATA_SHIFT_TIE_TOL`. Two passes and not a tolerance
+   against a running incumbent, which would let the recorded maximum creep upward by the tolerance
+   at every step. All four reported quantities now come from the same parameter, so the row is
+   internally consistent.
+
+   **The tolerance is `TOL(4)` relative, calibrated from the failure and not from principle.** The
+   bound is what the evidence gives: both compilers printed shift/esd as `0.013844` and shift as
+   `0.000224`, so the two candidates round to the same 6-decimal value, differ by under 1e-6
+   absolute, and so by under 7.3e-5 relative at that magnitude. `TOL(4)` clears that with margin
+   and sits far below any difference that would mean something for a convergence diagnostic. The
+   exact gap was **not** measured — that needs a debug build, and the bound was enough to size the
+   constant.
 
    **Explicitly NOT the fix:** clamping small esds. That was tried (`26d9166a`), was wrong — its
    premise `dp>max_dp` is the normal outcome, and it destroyed real esds, `0.03615(19)` → `0.036(0)`
@@ -824,7 +858,7 @@ only so this register stays complete:
 | `use_spherical_basis=` after the `atoms=` block | silently ignored — 25 basis functions instead of 24, 1.6e-3 Hartree, exit 0, no diagnostic | **FIXED** 2026-08-13 (`e72a3ac9`). `MOLECULE.MAIN:read_use_spherical_basis` now carries `DIE_IF(.atom.allocated,...)`. Refusing it was chosen over applying it late: silently re-resolving a basis under a job that has already used it invites a different bug. Guarded by `dft_invariants` check 5 |
 | An unrecognised functional name silently contributes nothing | `blyp` gave −67.7092 instead of −76.4002, exit 0. **Validation lives at the setter, not the dispatcher**, and that is forced, not a preference: the four dispatchers and both `is_*_functional` queries are `PURE`, and `UNKNOWN` is a `DIE` that expands to an `allocate` — illegal in a pure procedure, and `DIE` is live in release, so no amount of `PURE` helps. `SCF_DATA:set_exchange_functional` and `set_correlation_functional` now carry the live `case default; UNKNOWN(...)`; the six dispatcher defaults stay commented, each with a note saying why. A blank name is admitted explicitly beside `"none"`, because `MOLECULE.FOCK` guards only on `/= "none"`. **Limit:** it catches names arriving through input or `set_*`, which is every real path; it does *not* catch a name injected straight into a dispatcher by new code — the accepted-against-implemented lint of `docs/DFT_STANDARDISATION.md` §12 is what closes that | **FIXED** 2026-08-13 |
 | `gill96` blessed in three places, implemented nowhere | Removed from all three — `scf_data.foo` and `is_GGA_functional` / `is_LDA_functional` — because no Gill96 routine exists anywhere in `foofiles/`. With validation live, leaving it would have made it an accepted name that dies, which is worse than not offering it | **FIXED** 2026-08-13 |
-| **`b3lypx` omits the exact exchange, silently** (found 2026-09-08) | `b3lypx` and `b3lypgx` select the *same* exchange routines, and `new_r_B3LYP_x_energy_density` deliberately computes only `0.08*E_LDA + 0.72*E_GGA` — the `0.2*E_HF` third of B3LYP comes from the Fock matrix, gated on `.using_hybrid_exchange`. `SCF_DATA:set_exchange_functional` sets that flag for `b3lypgx` and **not** for `b3lypx`, so a `b3lypx` job silently drops the exact exchange. Measured (STO-3G water, `accuracy= high`): `b3lypx`/`none` −73.0728 against `b3lypgx`/`none` −74.8819, **1.81 Hartree**, exit 0. No test uses `b3lypx` — only `b3lypgx` — so fixing it reblesses nothing. The name-agreement lint cannot catch this: `b3lypx` has a case in every block; what is missing is one flag assignment | OPEN |
+| **`b3lypx` omitted the exact exchange, silently** (found and FIXED 2026-09-08) | `b3lypx` and `b3lypgx` select the *same* exchange routines, and `new_r_B3LYP_x_energy_density` deliberately computes only `0.08*E_LDA + 0.72*E_GGA` — the `0.2*E_HF` third of B3LYP comes from the Fock matrix, gated on `.using_hybrid_exchange`. `SCF_DATA:set_exchange_functional` sets that flag for `b3lypgx` and **not** for `b3lypx`, so a `b3lypx` job silently drops the exact exchange. Measured (STO-3G water, `accuracy= high`): `b3lypx`/`none` −73.0728 against `b3lypgx`/`none` −74.8819, **1.81 Hartree**, exit 0. No test uses `b3lypx` — only `b3lypgx` — so fixing it reblesses nothing. The name-agreement lint cannot catch this: `b3lypx` has a case in every block; what was missing is one flag assignment | **FIXED** 2026-09-08 — `set_exchange_functional` now sets `.using_hybrid_exchange` for `b3lypx` as it already did for `b3lypgx` |
 | `MOLECULE.SCF:put_SCF_energy` has no callers and mislabels its output | the XC energy is never reported, so none of the above is visible | OPEN |
 
 **One consequence that will surface elsewhere.** Every checked-in DFT reference
@@ -3130,7 +3164,14 @@ trajectory. Turning extinction on changes the objective and so changes the path,
 reference would bake in a new one. Decide first whether to diagnose the wandering, then add
 the job — not the other way round.
 
-## `make report` cannot be run in parallel (2026-09-06)
+## CLOSED, WON'T DO (Dylan, 2026-09-08): `make report` cannot be run in parallel
+
+> **Dylan's decision: serial `make report` is fine, because `ctest -j` already covers the
+> case that matters.** The parallel win was for the *report*, not the tests, and the tests
+> are where the wall-clock is. Nothing below is wrong; it is simply not worth the work, and
+> a `--jobs` option would add a way to get non-deterministic row order for no real gain.
+> Kept for the measurement and for the `--mpi` interaction, which anyone adding jobs later
+> would have to rediscover.
 
 `ctest -j N` works and is safe: `scripts/test.py:334` gives every job its own scratch
 directory, `$TMPDIR/tonto-tests-$USER/<testname>`, so parallel jobs cannot collide, and each

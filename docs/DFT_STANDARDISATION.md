@@ -358,6 +358,36 @@ lint of §12 is what closes that.
 **Guarded by** `scripts/check_dft_invariants.py` check 4 (ctest `dft_invariants`):
 a bogus exchange functional must exit non-zero.
 
+## 5a. FIXED 2026-09-08: `b3lypx` silently dropped B3LYP's exact exchange
+
+Found while reading the dispatchers for the §12 name lint, which does *not* catch
+it — `b3lypx` has a case in every block; what was missing is a flag.
+
+`b3lypx` and `b3lypgx` select the **same** exchange routines, and those compute
+only the DFT part:
+
+```
+! Ex = E_LDA + 0.2*(E_HF - E_LDA) + 0.72*(E_GGA - E_LDA)
+E = E + (0.08d0*E_LDA + 0.72d0*E_GGA)
+```
+
+The `0.2*E_HF` third is deliberately absent: it enters through the Fock matrix,
+gated on `SCF_DATA.using_hybrid_exchange` and scaled by `hybrid_exchange_factor`
+(`molecule.fock.foo`). `SCF_DATA:set_exchange_functional` set that flag for
+`b3lypgx` and **not** for `b3lypx`, so a `b3lypx` job ran B3LYP exchange with no
+exact exchange at all — silently, exit 0.
+
+Measured on STO-3G water at `accuracy= high`:
+
+| exchange | correlation | total energy |
+|---|---|---|
+| `b3lypx` | `none` | −73.0728 |
+| `b3lypgx` | `none` | −74.8819 |
+
+**1.81 Hartree**, from one missing assignment. No test in the suite uses
+`b3lypx` — only `b3lypgx` — so the fix reblesses nothing, which is also why the
+reference suite could never have found it.
+
 ## 6. Defect 5 — the XC energy is never reported
 
 `V_ee` in the results block lumps Coulomb and XC together (37.3425 = J + E_xc for
