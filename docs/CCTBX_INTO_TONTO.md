@@ -1126,7 +1126,41 @@ dominated by systematics that are not in the covariance matrix at all: absorptio
 thermal diffuse scattering, scan truncation. The cell term is nowhere near the largest missing
 piece.
 
-### The larger issue: ADP ESDs are transformed element-wise, not by covariance
+### RESOLVED (2026-09-08). ADP ESDs are no longer transformed element-wise
+
+**Everything in this subsection is superseded.** It is kept because the reasoning was sound and
+the conclusion it reached is not the one that was implemented; `DEFERRED.md` carries the record.
+
+What happened, in brief:
+
+- The element-wise congruence on sigmas was **removed**, not corrected. It was never producing
+  the cartesian CIF — that file is written before any axis change — but the crystal-frame one,
+  whose ESDs were already in the crystal frame and needed no transform at all. It was corrupting
+  numbers that were correct: on quartz it inflated them 43% (U11), 87% (U12), 37% (U13).
+- The recommendation below — *destroy the errors when there is no covariance* — was **not**
+  adopted, and is no longer necessary. Instead the covariance is **built** at CIF-read time from
+  the reported uncertainties, taken as uncorrelated, and stored cartesian on the atom. That one
+  assumption is made once, where the information genuinely does not exist, and every later frame
+  change is then exact. The crystal -> cartesian -> crystal round trip returns the input
+  uncertainties bit for bit, verified on a gamma = 120 degree cell.
+- `T V T^T` is positive semi-definite whenever `V` is, so a negative variance and hence a NaN esd
+  became impossible **by construction** rather than by clamping.
+- The scope note below — *five CIF writers, 44 `_esu` headers* — was measured and is wrong. Six
+  routines read `.pADP_errors` without an `esd` argument; five were already absence-safe and only
+  `VEC{ATOM}:put_CIF_ADP2_cryst` required the array unconditionally.
+
+Three defects were found and fixed while doing it, none of which this section anticipated: a
+`cos(90 degrees) = 6.1e-17` residue in the cell metric that made symmetry-zero ESDs come out
+negative with a platform-dependent sign; `CRYSTAL:make_CIF_esds` passing the wrong transpose in
+all three of its ADP2, ADP3 and ADP4 blocks; and `ATOM:set_M_ani_error_from_pADP` missing a
+square root, which made `M_ani`'s ESD 4.4e5 times too small and so indistinguishable from the
+"no covariance available" case the output note describes.
+
+**Why none of it was caught:** until 2026-09-08 no test in the repository wrote a CIF from a
+non-orthogonal cell, and on an orthogonal cell every one of these is invisible.
+`tests/short/quartz_read_CIF_put_CIF` now closes that gap.
+
+### (Superseded) The larger issue: ADP ESDs are transformed element-wise, not by covariance
 
 `atom.foo:3733 change_ADP2_axis_system_to` converts ADPs between Cartesian and crystal axes —
 which is required for CIF output, since `_atom_site_aniso_U_ij` is defined in the crystal-axis
@@ -1224,6 +1258,10 @@ Unallocated is the established "not available" signal. Note that `zero_pADP_erro
 >
 > The encoding is still right and the recommendation stands. What it additionally requires is
 > that the **consumers be made absence-aware first**: five CIF writers, 44 `_esu` column
+> *(CORRECTED 2026-09-08: measured as six routines reading `.pADP_errors` without an `esd`
+> argument, of which five were already absence-safe; only `VEC{ATOM}:put_CIF_ADP2_cryst` required
+> the array unconditionally. And absence turned out not to be needed at all — see the head of
+> this section.)*
 > headers, five value/error table pairs. And because `pADP_errors` holds positions, `U_iso` and
 > ADPs in one vector, destroying it removes the coordinate esds too — which argues for splitting
 > it, or giving it a validity flag, as part of §6's parameter-descriptor migration rather than
@@ -1286,7 +1324,7 @@ Carried forward deliberately. None blocks the others.
 | Item | Where | Size |
 |---|---|---|
 | **`refine_F= FALSE` computes no shifts, silently** | `crystal.foo:4621`, `:4634` — write `get_parameter_shifts_I`; everything below it exists | Small. Precondition for the port, but worth fixing on its own. |
-| **ADP ESDs transformed element-wise on axis change** | `atom.foo:3733 change_ADP2_axis_system_to` — its own docstring says *"this is wrong"*. The congruence `U' = MUMᵀ` mixes all six components, so the ESDs need the full 6×6 covariance, not element-wise σ's. **Affects every anisotropic ADP ESD written to CIF.** Fix: `T V Tᵀ` where a covariance exists (own refinement, and Tonto's own round-tripped CIF); **`destroy` the errors, not zero them, where none exists** (foreign CIF) — see §10 for why zero is a different false claim. `vec{atom}.foo:14564 Hirshfeld_test` shows the correct idiom in the same file | Small-to-moderate. **The largest of the s.u. items** |
+| ~~ADP ESDs transformed element-wise on axis change~~ **DONE 2026-09-08** | The element-wise congruence was **removed**, and the covariance is now built at CIF-read time from the reported uncertainties taken as uncorrelated, stored cartesian on the atom. Every later frame change is then exact, and the crystal round trip returns the input ESDs bit for bit. `destroy`-the-errors was *not* needed. Three further defects fell out: the `cos(90°)` cell-metric residue, a wrong transpose in all three ADP blocks of `make_CIF_esds`, and a missing `sqrt` in `M_ani_error`. See §10 and `DEFERRED.md` | Done |
 | **Cell uncertainties read but never propagated** | §10 — `_geom_bond_distance_esu` omits `σ_cell`. A scientific judgement call, argued in §10, not a defect. The derivation is in §10 *How the propagation is actually done* (implicit differentiation of the normal equations, `S = −B⁻¹M`, with the closed form `S = (∂A/∂c)A⁻¹x̂`) and *The same question for ADPs* (`U_cart = A U* Aᵀ`, so `σ_cell(U)/U = 2σ_a/a` — twice the positional effect) | Small, self-contained. Prefer the closed form over accumulating `M` |
 | **`stabilize_asym_atom_shifts` leaks** | `crystal.foo:5192`, at the `create(n)` pair — per atom per cycle | Small |
 | **`if (n_stab<=1) cycle` guard** | `crystal.foo:5192`, annotated `! Kang debug on 2025.Mar.27` — intended as temporary? | Needs a decision, not code |

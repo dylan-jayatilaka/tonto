@@ -179,10 +179,23 @@ build has. One file, everything else identical, executable relinked each time.
    `dft_invariants` and `urea_ccsd_pob-TZVP_Salvador_properties` fail in a plain **gfortran-14**
    debug build with bounds checking **on**. `ci-debug.yml` cannot see them — it runs two smoke
    jobs, not the suite. That gap is worth closing at the same time.
-3. **The column-width difference**, unexplained. Identical numbers, one extra space per column,
-   in both a dipole table and a HAR esd table, in a debug build without bounds checking. Two
-   guesses are already dead: it is not the bracketed uncertainty (the dipole test prints none),
-   and `width`/`width_set` both carry proper `DEFAULT` initialisers.
+3. **The column-width difference** — a mechanism was demonstrated on 2026-09-08, though the
+   original platform pair has not been re-run. Snapping the cell-metric cosines (see the
+   `cos(90 degrees)` entry under the priority ESD item) narrowed a column, numbers bit-identical,
+   in **three** independent places: the printed reciprocal cell matrix, the ADP esd columns of
+   `urea_lamaGOET_grown_CIF`'s `archive.cif`, and the fractional coordinate column of
+   `urea_hart_STO-3G_disk_ffs`'s `urea.archive.cif`. In each case a quantity that is exactly zero
+   in truth carried a ~1e-17 residue, printed as `0.000000`, but wide enough to change the
+   computed column width.
+   **That also explains the platform dependence**, which was the puzzling part: whether the
+   residue lands on `+6.1e-17`, `-6.1e-17` or `0` varies with the platform's `cos` and rounding,
+   while the printed number is `0.000000` on all of them. A dipole is built from positions, which
+   are built from the cell matrices, so it inherits the same residue — which fits the dipole half
+   of the original report, though that half is inference, not observation.
+   Two earlier guesses remain dead: it is not the bracketed uncertainty (the dipole test prints
+   none), and `width`/`width_set` both carry proper `DEFAULT` initialisers.
+   **To close it:** re-run the original debug/macOS comparison against a build carrying the
+   metric snap. If the widths agree, this item is finished.
 4. **The Bugzilla duplicate search** over resolved bugs and `16 Regression`. Sourceware refuses
    every automated tool — `curl` gets a 429 and the Anubis layer blocks the rest, `WebFetch`
    included — so **this needs a person at a browser**, as did the filing.
@@ -281,7 +294,262 @@ dead keyword line from `develop` and leave the work on its two tags, as was done
 
 # Correctness — open bugs that give wrong answers
 
-## ADP standard uncertainties are transformed element-wise on axis change (2026-08-16)
+## AGREED, NOT YET DONE: report delocalised near-zero eigenvectors (2026-09-08)
+
+Dylan asked for this and asked for it as its OWN commit, after the ESD covariance work is
+finished, with its own full rebuild.
+
+**Why a plain "near_0 > 0" warning would be useless.** `near_0` is already reported — the fit
+table has a "No. of eig's near 0" column — and for urea's HAR it reads **19 near-zero out of 27
+parameters**. That is not an exceptional condition, it is the normal one: urea is `P-42 21 m` and
+most parameters are fixed by symmetry, leaving only 8 genuinely determined. A warning on
+`near_0 > 0` would fire on essentially every refinement.
+
+**And the eigenVALUE cannot discriminate.** An earlier draft of this proposal claimed a magnitude
+test would separate symmetry zeros from over-parameterisation. **That is wrong.**
+`molecule.har.foo:1300` writes three identical `U_iso` derivative columns, making the normal
+matrix *exactly* singular, so its null eigenvalues sit at round-off — the same place a symmetry
+zero sits. No eigenvalue threshold separates them.
+
+**The eigenVECTOR does.** A symmetry-fixed direction is *localised*: the null vector is
+essentially one parameter. An over-parameterised degeneracy is *delocalised*: the three identical
+`U_iso` columns give something like `(1,-1,0)/sqrt(2)` spread over three parameters.
+
+The standard measure is the **inverse participation ratio**, for a normalised eigenvector `v`:
+
+```
+IPR = 1 / sum_i v_i^4
+```
+
+It is 1 when `v` sits entirely on one parameter, and `n` when it is spread evenly over `n`. So
+`IPR ~ 1` means a constrained parameter (expected, benign); `IPR >= 2` means the refinement cannot
+separate two or more parameters (over-parameterised, worth saying). A cut at **1.5** sits between
+those two cases.
+
+**Why this dodges the tolerance problem Dylan raised** (*"I think I set values purely by empirical
+experience"*): `near_0_tol` stays exactly as it is, so nothing about which directions get dropped
+changes, and nothing needs reblessing. The new judgement is made on a quantity that is
+**dimensionless and bounded between 1 and n**, where 1.5 is obviously right — unlike an eigenvalue
+of `J^T W J`, whose scale depends on the data magnitude and the reflection count.
+
+**Reference.** The participation ratio is from the localisation literature, not crystallography.
+Cite it in the house style already used in `unit_cell.foo` — surnames, year, journal, volume,
+pages; no initials, no titles:
+
+```
+! See Bell and Dean (1970) Discuss. Faraday Soc. 50 p.55-61
+! and Wegner (1980) Z. Phys. B 36 p.209-214
+```
+
+Bell and Dean introduced the participation ratio, aptly for this codebase, to ask how many atoms
+a vibrational mode of vitreous silica actually involves. Wegner is where the inverse form and the
+name became standard; Thouless (1974) Phys. Rep. 13 p.93-142 is the other common citation.
+**The volume and page numbers were written from memory and MUST be checked before they go into
+the source.**
+
+**What to build.**
+- `near_0_IPR :: VEC{REAL}@` on `type DIFFRACTION_DATA`, beside `near_0_evals` and `near_0_evecs`
+  (`types.foo:4043-4050`), with the formula and the 1.5 rationale in its comment, per Dylan.
+- The delocalisation cut as a named macro beside the other defaults in `include/macros.in`.
+- A `WARN`-style report, fired only when some IPR exceeds the cut, naming the parameters carrying
+  weight in that eigenvector. Because it only prints when the condition holds, **no currently
+  green test changes**.
+
+**One loose end for whoever does it:** the parameter labels are passed into
+`DIFFRACTION_DATA:initialize_fit_data(n_p,n_f,labels)` (`diffraction_data.set.foo:1387`) and used
+only to size a table column (`:1458`); they do not appear to be stored on the type. Naming the
+parameters will need them kept, or re-derived from
+`VEC{ATOM}:tag_pADP_labels` (`crystal.foo:4625`).
+
+## VERIFIED (2026-09-08): the Gram-Charlier convention, against the paper
+
+This was carried for most of a day as *"the 3rd/4th order maps are unverified"*, and it was the
+stated reason for excluding anharmonic atoms from the covariance work. Dylan pointed at the
+source: `yq28_anharmonicity.pdf`, eq (9) and the text around it. It is now settled, and the
+exclusion is lifted.
+
+Equations (10) and (11) of that paper give the relation between the cartesian ADP tensors and the
+unitless Gram-Charlier coefficients:
+
+```
+gamma_GC^{jkl}  = U^C_{pqr}  A*_pj A*_qk A*_rl
+delta_GC^{jklm} = U^C_{pqrs} A*_pj A*_qk A*_rl A*_sm
+```
+
+**A pure tensor contraction with `A*` on every index, with no numerical factors.** Dylan: *"all
+the factors are identical, only the dimensions change"* — confirmed. The dimensions change only
+because `A*` carries 1/length, so `U^C` in `A^3` becomes a unitless gamma.
+
+**Tonto matches this exactly.** `ATOM:change_ADPn_axis_system_to_v2` does
+`adp3.change_basis_to(new3,cell.reciprocal_mx)`, and `MAT3{INTRINSIC}:change_basis_to(new,V)` is
+`matmul(self(:,i,j),V)` on each index — i.e. `new_jkl = sum U_pqr R_pj R_qk R_rl` with
+`R = reciprocal_mx = A*`. That is eq (10) term for term.
+
+**Three consequences.**
+
+1. The value transform is right, and matches published theory.
+2. The covariance construction for ADP3/ADP4 in `ATOM:make_pADP_covariance_from_esds` is right:
+   crystal -> cartesian is the inverse contraction, `back_transform_to(new,direct_mx)`, whose
+   induced packed map is `symmetric_tensor_3/4_product_mx(direct_mx)` — verified numerically to
+   1e-15 — and `A = (A*^T)^-1` makes that the exact inverse of eq (10).
+3. The transpose fix applied to the ADP3/ADP4 blocks of `CRYSTAL:make_CIF_esds` is right. The
+   induced map for `change_basis_to(new,R)`, which puts R on the RIGHT of every index, is
+   `symmetric_tensor_n_product_mx(R^T)` — so passing `reciprocal_mx` un-transposed was wrong, in
+   the same way and for the same reason as the ADP2 block.
+
+**And it resolves a number that looked alarming.** `short/so2_read_anharmonic_GC_cif` now reports
+an ADP3 esd about four times the value itself. That is not a convention error: the esds now follow
+the same contraction the values do, the ~1185x growth is just the cell length cubed, and the
+reading is that this anharmonic parameter is not significant in the cartesian frame.
+
+**Dylan's decision (2026-09-08), recorded so it does not harden into an assumption:** that
+insignificance is *not unexpected, but not necessarily correct either*. The transform is verified;
+whether the resulting anharmonic esds are physically right is a separate question, and it waits on
+the `yq28_anharmonicity` publication. Until then the so2 reference stands as produced, and nobody
+should cite it as evidence that the anharmonic esds are validated -- only that they now follow the
+same contraction as the values.
+
+## The pseudo-inverse silently CONSTRAINS what you asked to refine (2026-09-08, OPEN — small)
+
+Raised by Dylan asking whether the covariance is correctly obtained from the normal equations.
+**This entry was overstated twice before being got right; the earlier claims are withdrawn.**
+
+**The covariance is correctly formed.** `DIFFRACTION_DATA:solve_normal_equations` builds
+`A(i,j) = sum(sig*dF(:,i)*dF(:,j))` with `sig = 1/sigma^2`, and `rhs(i) = sum(del*dF(:,i))` with
+`del = (F_exp - F_pred)/sigma^2`. So `A = J^T W J`, `rhs = J^T W r`, consistently weighted, and the
+covariance is `GoF2 * A^-1`. Standard, and correct.
+
+**And the near-zero handling is coherent, not a bug.** `MAT{REAL}:solve_ill_linear_equations_v1`
+sets `ival = ZERO` for eigenvalues `<= ZERO` or `<= near_0_tol`, giving those directions zero
+variance; and `diffraction_data.set.foo:2445` then sets
+`.n_param_structure = n_p - .n_0 - .near_0` before recomputing `GoF2`. So a dropped direction is
+removed from the inverse **and** from the parameter count — which is exactly how a *constrained*
+parameter should be treated, and it keeps the `GoF2 = chi2/(N_r - N_p)` denominator right.
+
+**For a direction fixed by symmetry this is simply correct.** Its variance genuinely is zero: the
+parameter is known exactly. That is the same situation as urea's symmetry-fixed
+`U_13 = U_23 = 0.000`, written to the CIF with no bracket at all. Two earlier versions of this
+entry called that a false claim. It is not.
+
+**What is left is a diagnostic gap, not a wrong number.** The eigenvalue test cannot distinguish
+*fixed by symmetry* from *degenerate by over-parameterisation*. In the second case the numbers are
+still self-consistent — but only under the interpretation "Tonto decided to constrain these",
+which is never said out loud. The user asked to refine a parameter, Tonto quietly stopped
+refining it, reported a zero esd for it, and adjusted `N_p` so the `GoF` looks healthy.
+
+The known instance is `molecule.har.foo:1300`: `U_iso` implemented as three identical derivative
+columns, singular by construction and absorbed exactly this way.
+
+**Cheap improvement, no new mathematics.** `n0`, `near_0_evals` and `near_0_evecs` are already
+computed and stored, and `show_near_0_eigenvectors` (`types.foo:3868`) already prints them but
+defaults `FALSE`. Saying, whenever `near_0 > 0`, which parameters carry weight in those
+eigenvectors would turn a silent constraint into a stated one. Reporting those esds as **absent**
+rather than zero would be better still — "infinity" is not assignable and is not what is wanted;
+absent is the right representation, and `VEC{ATOM}:put_CIF_no_esd_note` is already the mechanism.
+
+**The proper answer is the cctbx constraint work** (`docs/CCTBX_INTO_TONTO.md` §6). With
+constraints explicit, the free parameter set is genuinely free, `near_0` should be **zero**, and
+any non-zero value becomes a detectable defect rather than something absorbed in silence.
+
+**Not investigated:** `near_0_tol` is an absolute tolerance (`TOL(3)`) on eigenvalues of
+`J^T W J`, whose scale depends on the data magnitude and the reflection count; a relative
+criterion would be more robust.
+
+## FIXED (2026-09-08): `M_ani_error` was missing a square root, and it hid itself
+
+`ATOM:set_M_ani_error_from_pADP` computed
+
+```foo
+val = dot_product(dU, matmul(.covariance_mx(4:9,4:9),dU))
+.M_ani_error = val/(2*.M_ani)
+```
+
+`dU` is the gradient of `f = M_ani^2` — checked against `set_M_ani_from_pADP`:
+`df/dX4 = 2*X4-X5-X6` and `df/dX7 = 6*X7`, which is exactly what the code builds. So `val` is
+`Var(M_ani^2)`, as the routine's own comment says. Propagating to `M_ani = sqrt(f)` gives
+
+```
+sigma(M_ani) = sigma(M_ani^2) / (2*M_ani) = sqrt(val) / (2*M_ani)
+```
+
+The code used `val` where `sqrt(val)` was meant. **Dimensional analysis settles it without having
+to interpret the comment**: `val` has units of `U^4`, so `val/(2*M_ani)` has units `U^3`, and an
+esd of a quantity with units `U^2` must have units `U^2`.
+
+**Why it survived.** For urea's O atom the correct value is `8.2e-5` and the buggy one `1.9e-10` —
+too small by a factor of **4.4e5**. It therefore always printed as `(0)`, which is
+indistinguishable from the "no covariance matrix was available" case that the note at
+`vec{atom}.foo:12405` explicitly tells the reader about. A wrong number wearing a plausible
+explanation. `M_ani` for that atom should read `0.0138(1)`, not `0.0138(0)`.
+
+Note the second comment in the routine — *"calculate max of the difference on the square root of
+the upper and lower limits of M2_ani"* — describes the **correct** formula: for
+`M = sqrt(M2)`, `sqrt(M2 + sigma) - M ~ sigma/(2M)` where `sigma` is the *standard deviation* of
+`M2`, i.e. `sqrt(val)`. The comment was right and the code did not follow it.
+
+Also guarded in the same routine: `M_ani` is zero whenever the ADP tensor is exactly isotropic or
+absent, which makes the expression singular. That was unreachable while `covariance_mx` was
+unallocated on every CIF-read path; populating it (see the covariance work) makes it reachable, so
+the division is now guarded and reports zero rather than Inf/NaN.
+
+
+## FIXED (2026-09-08): `make_CIF_esds` built its 6x6 map from the wrong transpose
+
+Found while correcting the header comment on `GAUSSIAN_DATA:symmetric_tensor_2_product_mx`, and
+**confirmed numerically before being fixed**, not argued from index algebra.
+
+The header claimed the routine returns the induced map for `D' = R^T D R`. It does not: it returns
+the map for **`D' = R D R^T`**. Verified by building `res` exactly as the code does, applying it to
+a packed random symmetric `D`, and comparing: it matches `R D R^T` to 2e-16 and differs from
+`R^T D R` by O(1). The comment is now corrected.
+
+**The bug that comment was hiding.** `CRYSTAL:make_CIF_esds` passed `.unit_cell.reciprocal_U_mx`
+**un-transposed**, while the ADP *values* go to the crystal frame by
+`MAT:change_basis_to(ADP,reciprocal_U_mx)` — which is `B^T U B` (`MAT{INTRINSIC}:change_basis_using`
+is documented and implemented as `self = V^dagger self V`). The esds must follow the same map as
+the values. Building the true packed map column by column from `B^T U B` and comparing:
+
+| candidate | agreement with the true map |
+|---|---|
+| `symmetric_tensor_2_product_mx(B)` — what the code did | **2.226e-01** |
+| `symmetric_tensor_2_product_mx(B^T)` — what it needed | **0.000e+00** |
+
+Fixed by passing `transpose(.unit_cell.reciprocal_U_mx)`. The other three callers of
+`symmetric_tensor_2_product_mx` all want the sense it actually implements and are untouched:
+`ATOM:transform_pADP_vector_with` and `VEC{ATOM}:rotated_U2_covariance_mx_for_atom` pass the same
+`R` used for `x' = R x`, and the `CRYSTAL` fragment->asym rotation passes a Seitz rotation.
+
+**Size of the error, and why nothing caught it.** Propagating a diagonal cartesian covariance both
+ways, the ratio wrong/right on the reported esd is:
+
+| cell | ratio | error |
+|---|---|---|
+| tetragonal 90/90/90 | 1.000 | **none** — `B` is diagonal, hence symmetric |
+| monoclinic beta=96.4 | 0.989 - 1.011 | ~1% |
+| hexagonal gamma=120 | 0.629 - 1.264 | up to **37%** |
+| triclinic 89/76/66 | 0.696 - 1.153 | up to **30%** |
+
+**Every test in the suite that writes a CIF has an orthogonal cell** — all four `tests/hart/*`,
+`short/urea_lamaGOET_grown_CIF`, `short/kno3_generate_cluster_CIF`, and the YLID job. Quartz is
+hexagonal but never writes a CIF. So this fix **changes no reference**, and equally, nothing in the
+suite would have caught it or would catch a regression. A non-orthogonal CIF-writing test is the
+missing net; see the entry below, which has the same blind spot.
+
+**The 3rd- and 4th-order blocks had the SAME defect, and are also fixed.** They pass
+`.unit_cell.reciprocal_mx` (note: *not* `reciprocal_U_mx` — correct, since the anharmonics are
+reported as dimensionless Gram-Charlier constants), but passed it **un-transposed**. The value
+transform is `change_basis_to(new,reciprocal_mx)`, which puts `R` on the RIGHT of every index, so
+the induced map is `symmetric_tensor_n_product_mx(R^T)`. Both now pass `transpose(...)`.
+Settled against the paper — see *VERIFIED (2026-09-08): the Gram-Charlier convention* above, where
+eqs (10) and (11) of `yq28_anharmonicity.pdf` confirm the transform is a pure contraction with
+`A*` on every index, with no numerical factors.
+
+**Also still true of this routine:** it returns *variances*, not esds, despite the name, and its
+three callers (`crystal.foo` around 8308, 8388 and 9162) each take `sqrt` with **no guard against
+a negative diagonal**. The guarded pattern exists in
+`VEC{ATOM}:get_ADP2s_in_ADP2_principal_axes_in` and should be copied here.
+
+## REMOVED (2026-09-08): ADP standard uncertainties were transformed element-wise on axis change (found 2026-08-16)
 
 `ATOM:change_ADP2_axis_system_to` (`atom.foo:3733`) converts the ADP *errors*
 between Cartesian and crystal axes by running the tensor congruence over the
@@ -319,12 +587,35 @@ no-covariance writer, which is the `put_cif` path exercised by
 **A numerical claim that was made and is RETRACTED.** An independent
 calculation appeared to show the CIF esds 38x too large on one component and
 14x too small on another. That comparison was invalid: it assumed
-`U' = M U M^T` with its own packing of the 6-vector, whereas Tonto's convention
-per `symmetric_tensor_2_product_mx` is `D' = R^T D R` with the off-diagonal
-doubling handled inside the packed form. Reproducing the ADP *values* validated
-the 3x3 tensor map but said nothing about the packing, which is where the
-factors of two live. **The size of the error is therefore NOT known.** Anyone
-picking this up should measure it properly, against Tonto's own convention.
+`U' = M U M^T` with its own packing of the 6-vector. Reproducing the ADP
+*values* validated the 3x3 tensor map but said nothing about the packing,
+which is where the factors of two live.
+
+**MEASURED (2026-09-08), replacing that retracted figure.** Done against
+Tonto's own convention: the value map is `U_cart = V^T U_cif V` with
+`V = direct_U_mx` (`UNIT_CELL:make_direct_U_mx`, and `MAT:change_basis_to`
+is `V^dagger self V`), and the induced 6x6 map is built with the same packing
+`symmetric_tensor_2_product_mx` uses, `U11 U22 U33 U12 U13 U23`. Comparing the
+element-wise result against `sqrt(diag(T V T^T))` for a diagonal input
+covariance — the best a foreign CIF supports — the ratio element-wise/correct is:
+
+| cell | ratio | worst error |
+|---|---|---|
+| urea, tetragonal 90/90/90 | 1.00 everywhere | **exact** (once the metric is snapped) |
+| 4APHmal, monoclinic beta=96.4 | 0.82 - 1.00 | understates by **18%** |
+| mo7c, triclinic 89.2/76.0/66.3 | 0.86 - 1.88 | out by **tens of percent, both ways** |
+
+So it is **tens of percent, not a factor of 38**, and it can err in either
+direction. On an orthogonal cell it is exact, which is why no test in the suite
+shows it: every cell in `tests/short` and `tests/long` that reaches this path is
+orthogonal or hexagonal. Note the "correct" column assumes the input
+uncertainties are uncorrelated, which is an assumption, not a fact — the true
+answer needs the covariance the CIF does not carry.
+
+Only components that actually mix are affected: for the monoclinic cell U22,
+U33 and U23 come out exact because b is the unique axis and only the a-c plane
+mixes. No negative appeared in either test cell — a sign flip needs stronger
+mixing than a 6-degree deviation gives.
 
 ### The decision, and why it was parked
 
@@ -355,6 +646,52 @@ writers — 44 `_esu` column headers and 5 value/error table pairs — because
 destroying it removes the coordinate esds too. That is a change to CIF output
 shape in five places, each needing its own re-bless, and it is a different and
 much larger job than fixing the transform.
+
+### DONE (2026-09-08): the transform is gone
+
+Dylan: *"That is simply wrong and must be removed: we do not have access to the
+variance-covariance matrix so it cannot be done properly."* Correct, and the case
+is stronger than that.
+
+**The transform was not producing the cartesian CIF.** In `MOLECULE:put_CIFs` the
+`.cartesian.cif2` is written *first*, while the atoms are still cartesian and before any
+axis change. The element-wise congruence ran afterwards, on the cartesian -> crystal ->
+cartesian round trip, so its output went into `.archive.cif` and `.fractional.cif1` --
+the **crystal-frame** files.
+
+**And those esds were already in the crystal frame.** They are read from a crystal-frame
+CIF, and `process_CIF` converts the values to cartesian with `change_ESDs=FALSE`, leaving
+the sigmas alone. So writing them back into a crystal-frame CIF needed no transform at
+all: the correct answer was the number already stored. The congruence took a correct value
+and corrupted it by tens of percent. Removing it does not merely limit the damage -- it
+makes `archive.cif` exactly right.
+
+**What was removed:** the four `if (change_err)` blocks in `ATOM:change_ADP2_axis_system_to`
+(both branches) and `ATOM:change_ADPn_axis_system_to_v2` (ADP3 and ADP4, cartesian branch
+only -- the crystal branch never had them, which was itself an asymmetry). With those gone
+`change_ESDs` controlled nothing, so it was stripped from the whole
+`change_*_axis_system_to` family, from `MOLECULE:put_CIFs`, and from every call site. Note
+it had also been dead in `change_pos_axis_system_to` all along -- position esds were never
+transformed either, which is why the cartesian CIF was printing fractional uncertainties
+relabelled as Angstroms.
+
+The `put_cif_with_esds` keyword went with it: it had been passing the value that produced
+the *opposite* of what its name promised, and once the transform was gone it was an exact
+duplicate of `put_cif`. No test used it.
+
+**The rule now:** esd's are never transformed on an axis change. They belong to the frame
+they were made in, and a writer emits them only into that frame, otherwise omitting them
+with `VEC{ATOM}:put_CIF_no_esd_note` saying why.
+
+**Not closed by this.** Nothing *records* which frame the stored esds belong to. The two
+cases in play work out -- a CIF read gives crystal-frame esds, a refinement gives cartesian
+ones passed explicitly as `esd` from `make_CIF_esds` -- but reading a cartesian `.cif2`
+would hit the mirror image of the bug just fixed. Recording the frame alongside the esds
+belongs with the parameter-descriptor migration in `docs/CCTBX_INTO_TONTO.md` §6.
+
+Related and unchanged: the stdout ADP table prints whatever frame the esds are in beside
+values in the table's frame. For an orthogonal cell those agree; for a non-orthogonal one
+they do not. Pre-existing, not introduced here.
 
 ### What to do
 
@@ -2548,6 +2885,60 @@ routine gets away with `n` only because it does `n = 0` / `n = n+1`. Fixed to `d
 transformation fixed here (they appear immediately after `keyword found --> put_cif`). Same class
 of defect, different route; note the earlier finding that `make_CIF_esds` is never called for
 these tests, so the CIF esds come from the atom's stored `.pADP_errors`. Pick that up next.
+
+#### ROOT CAUSE OF THAT SECOND SITE FOUND (2026-09-08) — `cos(90 degrees)` is not zero
+
+**It is round-off in the cell metric, and it was reproduced arithmetically rather than by
+probing.** `UNIT_CELL:make_direct_mx` builds the cell-matrix off-diagonals from `cos(.angle)`,
+and `cos(HALF_PI)` is **6.123e-17** in double precision — PI/2 is not representable, so no way
+of storing the angle makes this exact. For urea, which is tetragonal, `direct_U_mx` and
+`reciprocal_U_mx` are therefore the identity only to 6.1e-17 rather than exactly.
+
+`put_cif` transforms the esds twice (`MOLECULE:put_CIFs`, cartesian -> crystal -> cartesian,
+`change_ESDs` TRUE), and the congruence run on the sigmas leaks that residue into components
+whose true sigma is exactly zero, **with a sign decided by round-off**. Reproducing the exact
+arithmetic of `make_direct_mx` / `make_reciprocal_mx` / `make_*_U_mx` outside Tonto gives, on
+the cartesian -> crystal leg:
+
+| atom | U_13' and U_23' | why |
+|---|---|---|
+| O | **-3.06e-21** | `U_13 = U_23 = 0.000` in the input CIF, no bracket, so sigma is exactly zero |
+| C | **-3.67e-21** | same |
+| N1 | +4.00e-05 | a genuine `0.00008(4)`, untouched |
+
+Two negatives, in the U_13 and U_23 columns, on exactly the two atoms whose sigma is zero —
+which is the `e_neg = 2, e_zero = 2` of 5 rows recorded above, and 2 columns x 2 crystal-frame
+CIFs is the 4 warnings. The guard `NOT .pADP_errors(4:9).is_zero` is what admits O and C and
+excludes the two H atoms.
+
+**It is visible in the blessed reference without running anything.** In
+`4-urea_Tonto_HAR_explicit.archive.cif`, O and C print `0.000000(0)` at six decimals while
+H1A/H1B print `0.00000(0)` at five. Per `REAL:get_dp_de_le` a genuinely zero esd takes the
+`dp = max_dp` branch and every row would agree; six places means those two rows reached
+`log10`, i.e. their esd was not zero.
+
+**FIXED at source, not clamped downstream.** A private module tolerance in `UNIT_CELL`,
+`angle_tolerance = UNIT_CELL_ANGLE_TOLERANCE` (`TOL(9)`, in `include/macros.in`), and a private
+`UNIT_CELL:cell_cosines` that zeroes any cosine below it. `make_volume` and `make_direct_mx` are
+the only two routines that compute the cosines, and `reciprocal_mx`, `direct_U_mx` and
+`reciprocal_U_mx` are all derived from `direct_mx`, so they inherit the exact zeros. An
+orthogonal cell now gets an exactly orthogonal metric and the congruence is exactly the identity.
+
+**Why TOL(9) and not TOL(6).** The test is on the cosine, which is dimensionless, but for a
+small deviation d from a right angle `|cos(PI/2 - d)| = sin(d) ~ d`, so it is an angular
+tolerance in radians. TOL(6) is closer to real data than it looks: an angle reported as
+90.0001 degrees is 1.7e-6 rad off square and would be swallowed. TOL(9) sits seven orders above
+the 6.1e-17 residue and four orders below the finest angle anyone reports (0.001 deg = 1.7e-5 rad).
+
+**Where a tolerance must NOT go: on the esds themselves.** Genuine ADP variances are of order
+1e-6 in atomic units — the 2026-07-30 probe above recorded the real ones at ~1e-6 against noise
+at ~1e-23 — so an absolute cut anywhere near 1e-6 on an esd or variance would destroy real data.
+Where a cut on esds is wanted the precedent is relative:
+`tol = 1.0d-9*maxval(abs(dU))` in `VEC{ATOM}:get_ADP2s_in_ADP2_principal_axes_in`.
+
+**This fixes the round-off form only.** For a genuinely non-orthogonal cell the element-wise
+transform is still wrong by an O(1) factor, because it discards the off-diagonal covariance.
+That is the separate entry under *Correctness*, and it now has a measured size.
 
 **Naming hazard noted (Dylan):** the local `rcm` in these routines is a *rotated covariance
 matrix* (it is the result of `rotated_U2_covariance_mx_for_atom`), but `rcm` conventionally reads

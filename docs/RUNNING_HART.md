@@ -151,11 +151,11 @@ CI runs `--suites short hart`.
   stops early (`--help`, a usage error) leaves a stray file called `stderr`.
   `tonto` does the same, which is why so many `IO` manifests list `delete: stderr`.
 - The `.cif2` restart cycle is accepted but untested end to end.
-- The refinement reports **19 near-zero eigenvalues out of 27 parameters** on the
-  urea test job. That is the normal matrix being close to singular; it is
-  reproduced exactly by `tonto` with the same settings, so it is not a `hart`
-  defect, but it is worth understanding before trusting esds from a job with
-  more parameters.
+- The urea test job reports **19 near-zero eigenvalues out of 27 parameters**.
+  That is symmetry — urea is `P -4 21 m`, so only 8 parameters are determined —
+  and such directions are dropped from the inverse and from the parameter count
+  together. The count alone does not distinguish symmetry from an
+  over-parameterised refinement.
 
 Development history — what was wrong with `hart` before it worked, the fragHAR
 milestones and the MPI work — is in [`../DEFERRED.md`](../DEFERRED.md).

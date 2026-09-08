@@ -362,7 +362,7 @@ contains
       atom.set_axis_system_to("crystal")
       atom.set_positions_to(fg)
       atom.zero_pADP_errors
-      atom.change_axis_system_to("cartesian",.unit_cell,FALSE)
+      atom.change_axis_system_to("cartesian",.unit_cell)
 
       ! Make the fragment data; make it destroyable
       .update_fragment_info(atom)
@@ -1896,7 +1896,7 @@ contains
 !         ! ?
 !         ! Change pos to cartesian
 !         ! Errors (if any) are changed straightforwardly
-!         atom.change_axis_system_to("cartesian",.unit_cell,FALSE)
+!         atom.change_axis_system_to("cartesian",.unit_cell)
 !
 !      end
 !
@@ -8218,6 +8218,7 @@ contains
       thresh :: STR
       lambda :: REAL
       refine_H_U_iso,cart,har :: BIN
+      esd :: VEC{REAL}@
 
       ! Placeholders
       ::put_CIF_crystal_data
@@ -8235,9 +8236,22 @@ contains
       refine_H_U_iso = TRUE
       if (.xray_data.allocated) refine_H_U_iso = .xray_data.refine_H_U_iso
 
-      ! Put the info
-      atom.put_CIF_coords(refine_H_U_iso)
-      atom.put_CIF_ADP2(refine_H_U_iso)
+      ! Put the info.
+      ! If the atoms carry their own covariance matrices -- as they do for
+      ! a structure read from a CIF, where they were derived from the
+      ! reported uncertainties -- the esds are made from those, in whatever
+      ! axis system the atoms are currently in. Otherwise there is nothing
+      ! to make them from and the writers omit them, saying why.
+      if (atom.has_covariance_mxs) then
+         esd.create(atom.no_of_pADPs)
+         .::make_CIF_esds_from_atom_covariances(atom,esd)
+         atom.put_CIF_coords(refine_H_U_iso,esd)
+         atom.put_CIF_ADP2(refine_H_U_iso,esd)
+         esd.destroy
+      else
+         atom.put_CIF_coords(refine_H_U_iso)
+         atom.put_CIF_ADP2(refine_H_U_iso)
+      end
       atom.put_CIF_ADPn(cif)
 
       ! Put covariance matrix  
@@ -8446,6 +8460,89 @@ contains
 
    end
 
+   make_CIF_esds_from_atom_covariances(atom,esd) :: leaky
+   ! Make the "esd"s in the pADP layout for the "atom" list from each
+   ! ATOM's OWN cartesian covariance matrix, rather than from a
+   ! whole-structure one. Used for a structure read from a CIF, whose
+   ! covariances were derived from the reported uncertainties rather than
+   ! measured by a refinement.
+   ! The esds come out in the axis system the atoms are currently in, so
+   ! the crystal-frame writers get back exactly the numbers the CIF
+   ! supplied, and the cartesian writers get genuine cartesian ones.
+   ! NOTE: deliberately NOT done by assembling a block-diagonal
+   ! whole-structure covariance and reusing make_CIF_esds. That matrix is
+   ! passed on to put_CIF_bond_info_tables, which genuinely needs the
+   ! inter-atom off-diagonal blocks; zeros there would report bond esds
+   ! computed as though atomic positions were uncorrelated. See DEFERRED.md.
+      self :: IN
+      atom :: VEC{ATOM}, IN
+      esd :: VEC{REAL}, OUT
+
+   ENSURE(atom.has_covariance_mxs,"an atom has no covariance matrix")
+   ENSURE(esd.dim==atom.no_of_pADPs,"wrong size, esd")
+
+      T,C :: MAT{REAL}@
+      a,n,ab,af,al :: INT
+
+      T.create(34,34)
+      .::make_pADP_frame_map(atom,T)
+
+      esd = ZERO
+
+      do a = 1,atom.dim
+
+         n  = atom(a).no_of_pADPs
+         ab = atom.no_of_pADPs_up_to_atom(a)
+         af = ab + 1
+         al = ab + n
+
+         C.create(n,n)
+         atom(a).covariance_mx.back_transform_to(C,T(1:n,1:n))
+         C.put_diagonal_to(esd(af:al))
+         C.destroy
+
+      end
+
+      T.destroy
+
+      ! Variances -> esds. T V T^T is positive semi-definite whenever V is,
+      ! so this cannot produce a NaN; max() guards only against round-off
+      ! on a component whose true variance is exactly zero.
+      esd = sqrt(max(esd,ZERO))
+
+   end
+
+   make_pADP_frame_map(atom,T) :: private
+   ! Set "T", the 34x34 map taking a CARTESIAN pADP covariance matrix into
+   ! the axis system the "atom" list is currently in. The unit matrix if
+   ! they are already cartesian.
+   ! NOTE the transpose on the ADP2 block. symmetric_tensor_2_product_mx
+   ! (res,R) returns the induced map for U -> R U R^T, but the ADP *values*
+   ! go to the crystal frame by MAT:change_basis_using(reciprocal_U_mx),
+   ! which is B^T U B. The esds must follow the same map as the values, so
+   ! B^T is what goes in. Passing B is silent whenever B is symmetric --
+   ! i.e. for every orthogonal cell, which is every CIF-writing test in the
+   ! suite -- and wrong by up to 37% on a hexagonal one. This is the one
+   ! place that transpose is written down; see DEFERRED.md.
+      self :: IN
+      atom :: VEC{ATOM}, IN
+      T :: MAT{REAL}, INOUT
+
+      T = ZERO
+
+      if (atom(1).ADP_axis_system=="cartesian") then
+         ! Do nothing
+         T.to_unit_mx
+      else
+         ! Usual ADPs & dimensionless positions and (GC) anharmonics
+         T(1:3,1:3) = .unit_cell.inverse_mx ! Reset positional transform
+         GAUSSIAN_DATA:symmetric_tensor_2_product_mx(T( 4: 9, 4: 9),transpose(.unit_cell.reciprocal_U_mx))
+         GAUSSIAN_DATA:symmetric_tensor_3_product_mx(T(10:19,10:19),transpose(.unit_cell.reciprocal_mx))
+         GAUSSIAN_DATA:symmetric_tensor_4_product_mx(T(20:34,20:34),transpose(.unit_cell.reciprocal_mx))
+      end
+
+   end
+
    make_CIF_esds(atom,covariance_mx,esd)
    ! Make the "esd"s in the pADPs for the "atom" list from the
    ! "covariance_mx", required for the "cif" file output.  if
@@ -8478,17 +8575,7 @@ contains
       ! The covariance matrix transformation matrix
       ! This is only applied to the diagonal blocks.
       T.create(34,34)
-      T = ZERO
-      if (atom(1).ADP_axis_system=="cartesian") then 
-         ! Do nothing
-         T.to_unit_mx
-      else                         
-         ! Usual ADPs & dimensionless positions and (GC) anharmonics
-         T(1:3,1:3) = .unit_cell.inverse_mx ! Reset positional transform
-         GAUSSIAN_DATA:symmetric_tensor_2_product_mx(T( 4: 9, 4: 9),.unit_cell.reciprocal_U_mx)
-         GAUSSIAN_DATA:symmetric_tensor_3_product_mx(T(10:19,10:19),.unit_cell.reciprocal_mx)
-         GAUSSIAN_DATA:symmetric_tensor_4_product_mx(T(20:34,20:34),.unit_cell.reciprocal_mx)
-      end
+      .::make_pADP_frame_map(atom,T)
 
       do a = 1,atom.dim
 
@@ -9162,13 +9249,13 @@ contains
       esd = sqrt(esd)
 
       ! Change axis system to crystal
-      .asymmetric_unit_atom.change_axis_system_to("crystal",.unit_cell,FALSE)
+      .asymmetric_unit_atom.change_axis_system_to("crystal",.unit_cell)
 
       ! Dump the data
       .asymmetric_unit_atom.put_excel_with_errors(esd,.xray_data.temperature)
 
       ! Change axes back to cartesian
-      .asymmetric_unit_atom.change_axis_system_to("cartesian",.unit_cell,FALSE)
+      .asymmetric_unit_atom.change_axis_system_to("cartesian",.unit_cell)
 
       ! Clean up
       esd.destroy
@@ -12129,7 +12216,7 @@ contains
       ! Change coordinates to cartesian
       ! Errors (if any) are changed straightforwardly
       ! WARNING: set info_made to FALSE in parent molecule, if any
-      fragment_atom.change_axis_system_to("cartesian",.unit_cell,FALSE)
+      fragment_atom.change_axis_system_to("cartesian",.unit_cell)
 
    end
 
@@ -12200,7 +12287,7 @@ contains
 
       ! Change coordinates to cartesian
       ! Errors (if any) are changed straightforwardly
-      mol_atom.change_axis_system_to("cartesian",.unit_cell,FALSE)
+      mol_atom.change_axis_system_to("cartesian",.unit_cell)
 
    end
 
@@ -12486,7 +12573,7 @@ contains
 
       ! Change pos to cartesian
       ! Errors (if any) are changed straightforwardly
-      atom.change_axis_system_to("cartesian",.unit_cell,FALSE)
+      atom.change_axis_system_to("cartesian",.unit_cell)
 
       ! Update labels/groups
       atom.update

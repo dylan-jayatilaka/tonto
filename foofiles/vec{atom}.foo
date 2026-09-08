@@ -3100,59 +3100,88 @@ contains
 !  Axis system changes
 !  ===================
 
-   change_axis_system_to(axis_system,cell,change_ESDs) :: PURE
-   ! Change the atom axis systems to the desired "axis_system".
-   ! If "change_ESDs" is present and TRUE, the ESDs are changed
-   ! in a straighforward way using the unit_cell, otherwise not.
+   make_pADP_covariances_from_esds(cell) :: leaky
+   ! Make each atom's cartesian covariance matrix from its own standard
+   ! uncertainties, assuming those are uncorrelated. Call this while the
+   ! atoms are still in the crystal frame, i.e. after reading a CIF and
+   ! before the change to cartesians. See ATOM:make_pADP_covariance_from_esds.
       self :: INOUT
-      axis_system :: STR, IN
       cell :: UNIT_CELL, IN
-   ! H_U_iso :: BIN, IN
-      change_ESDs :: BIN, optional, IN
 
       a :: INT
 
+      ! All or nothing. Converting only some atoms would leave
+      ! "pADP_errors" holding cartesian numbers for those and crystal-frame
+      ! numbers for the rest, in one array, with nothing to tell them
+      ! apart -- and no writer could then interpret it. So one atom that
+      ! cannot be converted stops the whole list.
       do a = 1,.dim
-      ! self(a).change_axis_system_to(axis_system,cell,H_U_iso,change_ESDs)
-         self(a).change_axis_system_to(axis_system,cell,change_ESDs)
+         if (NOT self(a).pADP_covariance_can_be_made) return
+      end
+
+      do a = 1,.dim
+         self(a).make_pADP_covariance_from_esds(cell)
       end
 
    end
 
-   change_axis_for_xtal23_system_to(axis_system,cell,change_ESDs) :: PURE
+   any_pADP_covariances_derived result (res) :: pure
+   ! Return TRUE if any atom's covariance matrix was derived from CIF
+   ! standard uncertainties rather than measured by a refinement.
+      self :: IN
+      res :: BIN
+
+      res = any(self(:).pADP_covariances_derived)
+
+   end
+
+   change_axis_system_to(axis_system,cell) :: PURE
    ! Change the atom axis systems to the desired "axis_system".
-   ! If "change_ESDs" is present and TRUE, the ESDs are changed
-   ! in a straighforward way using the unit_cell, otherwise not.
+   ! NOTE: the ESDs are NOT changed. They belong to the frame they were
+   ! made in; transforming them needs the covariance, not the sigmas.
       self :: INOUT
       axis_system :: STR, IN
       cell :: UNIT_CELL, IN
    ! H_U_iso :: BIN, IN
-      change_ESDs :: BIN, optional, IN
 
       a :: INT
 
       do a = 1,.dim
-      ! self(a).change_axis_system_to(axis_system,cell,H_U_iso,change_ESDs)
-         self(a).change_axis_for_xtal23_system_to(axis_system,cell,change_ESDs)
+         self(a).change_axis_system_to(axis_system,cell)
       end
 
    end
 
-   change_ADP2_axis_system_to(axis_system,cell,change_ESDs) :: PURE
+   change_axis_for_xtal23_system_to(axis_system,cell) :: PURE
+   ! Change the atom axis systems to the desired "axis_system".
+   ! NOTE: the ESDs are NOT changed. They belong to the frame they were
+   ! made in; transforming them needs the covariance, not the sigmas.
+      self :: INOUT
+      axis_system :: STR, IN
+      cell :: UNIT_CELL, IN
+   ! H_U_iso :: BIN, IN
+
+      a :: INT
+
+      do a = 1,.dim
+         self(a).change_axis_for_xtal23_system_to(axis_system,cell)
+      end
+
+   end
+
+   change_ADP2_axis_system_to(axis_system,cell) :: PURE
    ! Change the ADP2 axis systems to the desired "axis_system".
-   ! If "change_ESDs" is present and TRUE, the ESDs are changed
-   ! in a straighforward way using the unit_cell, otherwise not.
+   ! NOTE: the ESDs are NOT changed. They belong to the frame they were
+   ! made in; transforming them needs the covariance, not the sigmas.
       self :: INOUT
       axis_system :: STR, IN
       cell :: UNIT_CELL, IN
    ! H_U_iso :: BIN, IN
-      change_ESDs :: BIN, optional, IN
 
       a :: INT
 
       do a = 1,.dim
-      ! self(a).change_ADP2_axis_system_to(axis_system,cell,H_U_iso,change_ESDs)
-         self(a).change_ADP2_axis_system_to(axis_system,cell,change_ESDs)
+         self(a).change_ADP2_axis_system_to(axis_system,cell)
       end
 
    end
@@ -4551,28 +4580,24 @@ contains
       res = any(self.atom_sequence_id > 1)
    end
 
-   has_covariance_mxs result (res) :: PURE
-   ! Return TRUE if all atom have covariance_mx's defined.
-      self :: allocatable, IN
+   has_covariance_mxs result (res) :: pure
+   ! Return TRUE if every atom has a covariance_mx defined.
+   ! NOTE: "self" was declared allocatable purely to allow a .deallocated
+   ! test on it, which meant this could not be called with an ordinary
+   ! VEC{ATOM} dummy argument -- and so it never was. A plain IN self is
+   ! enough: the array exists by the time anyone asks.
+      self :: IN
       res :: BIN
 
       i :: INT
 
-      if (.deallocated) then
+      res = FALSE
 
-         res = FALSE
-        
-      else
-
-         res = TRUE
-         do i = 1,.dim
-            if (self(i).covariance_mx.deallocated) then
-               res = FALSE
-               exit
-            end
-         end
-
+      do i = 1,.dim
+         if (self(i).covariance_mx.deallocated) return
       end
+
+      res = TRUE
 
    end
 
@@ -16854,19 +16879,56 @@ contains
 
    end
 
+   put_CIF_no_esd_note :: selfless, private
+   ! Say, in the CIF, why the loop that follows has no esd's. This is the
+   ! fallback: it fires only when there is nothing at all to make them
+   ! from -- neither a refinement's covariance matrix nor any standard
+   ! uncertainty in the source.
+      stdout.flush
+      stdout.text("# . NO standard uncertainties are given below")
+      stdout.text("# . There is nothing to derive them from: no covariance")
+      stdout.text("#   matrix from a refinement, and no standard uncertainties")
+      stdout.text("#   in the data this structure was read from")
+      stdout.text("# . Omitted means 'not available'. It does not mean zero,")
+      stdout.text("#   which would claim the value is known exactly")
+      stdout.flush
+
+   end
+
+   put_CIF_derived_esd_note :: selfless, private
+   ! Say, in the CIF, that the esd's below were derived rather than
+   ! measured, and on what assumption.
+      stdout.flush
+      stdout.text("# . The standard uncertainties below were DERIVED, not")
+      stdout.text("#   measured. This structure was read from a CIF, which")
+      stdout.text("#   reports uncertainties but not the covariance matrix")
+      stdout.text("#   they must be propagated through. They were taken to be")
+      stdout.text("#   uncorrelated, and a covariance built on that assumption")
+      stdout.text("# . Under that assumption the conversion is exact and")
+      stdout.text("#   reversible: writing this structure back out in")
+      stdout.text("#   fractional coordinates returns the original values")
+      stdout.text("# . Correlations between parameters are therefore assumed,")
+      stdout.text("#   not known. Do not read them as measured")
+      stdout.flush
+
+   end
+
    put_CIF_coords_cartn(refine_H_U_iso) :: private
    ! Output the atoms and ADP's in CIF format to "stdout" in the
-   ! cartesian axis system. This version does override existing esd's.
+   ! cartesian axis system.
+   ! NOTE: no esd's are written. This routine is the no-covariance
+   ! branch, so there is nothing to propagate the stored esd's through.
+   ! See "put_CIF_no_esd_note".
       self :: IN
       refine_H_U_iso :: BIN, IN
 
    ENSURE(self(1).pos_axis_system=="cartesian","not cartesian axis system!")
 
-      blnk,ADP_type :: VEC{STR}@
-      Uiso,Uerr :: VEC{REAL}@
-      xyz,err :: MAT{REAL}@
+      ADP_type :: VEC{STR}@
+      Uiso :: VEC{REAL}@
+      xyz :: MAT{REAL}@
       fac,fac2 :: REAL
-      tabl1,tabl2 :: VEC{TABLE_COLUMN}@
+      tabl1 :: VEC{TABLE_COLUMN}@
 
       ! Unit conversion
       fac  = ANGSTROM_PER_BOHR
@@ -16881,7 +16943,7 @@ contains
       stdout.text("# . These precise data use non-standard CIF tags")
       stdout.text("# . Please keep for a better refinement restart")
       stdout.text("# . Units are in Angstrom")
-      stdout.flush
+      VEC{ATOM}::put_CIF_no_esd_note
       stdout.text("loop_")
       stdout.text("_atom_site_Cartn_label")
       stdout.text("_atom_site_Cartn_x")
@@ -16891,25 +16953,15 @@ contains
       stdout.text("_atom_site_Cartn_adp_type")
       stdout.text("_atom_site_Cartn_occupancy")
       stdout.text("_atom_site_Cartn_disorder_group")
-      stdout.text("_atom_site_Cartn_x_esu")
-      stdout.text("_atom_site_Cartn_y_esu")
-      stdout.text("_atom_site_Cartn_z_esu")
-      stdout.text("_atom_site_Cartn_U_iso_or_equiv_esu")
 
       ! Table column data
-      blnk.create(.dim)
       xyz.create(.dim,3)
-      err.create(.dim,3)
       Uiso.create(.dim)
-      Uerr.create(.dim)
       ADP_type.create(.dim)
 
       ! Get table column data
-      blnk     = " "
       .put_pos_vector_to(xyz,fac)
-      .put_pos_errors_to(err,fac)
       Uiso     = self.U_iso      *fac2
-      Uerr     = self.U_iso_error*fac2
       ADP_type = .ADP_type(refine_H_U_iso)
 
       ! Table 1
@@ -16923,25 +16975,10 @@ contains
       tabl1(7).set_values(self(:).site_occupancy)
       tabl1(8).set_values(self(:).site_disorder_group)
 
-      ! Table 2
-      tabl2.create(5)
-      tabl2(1).set_values(blnk)
-      tabl2(2).set_values(err(:,1))
-      tabl2(3).set_values(err(:,2))
-      tabl2(4).set_values(err(:,3))
-      tabl2(5).set_values(Uerr)
-
-      tabl2(1).set_width(tabl1(1).width)
-      tabl2(2).set_width(tabl1(2).width)
-      tabl2(3).set_width(tabl1(3).width)
-      tabl2(4).set_width(tabl1(4).width)
-      tabl2(5).set_width(tabl1(5).width)
-
-      ! Put tables
-      tabl1.put_body(tabl2)
+      ! Put table
+      tabl1.put_body
 
       ! Clean
-      tabl2.destroy
       tabl1.destroy
 
    end
@@ -16975,7 +17012,11 @@ contains
       stdout.text("# . These precise data use non-standard CIF tags")
       stdout.text("# . Please keep for a better refinement restart")
       stdout.text("# . Units are in Angstrom")
-      stdout.flush
+      if (.any_pADP_covariances_derived) then
+         VEC{ATOM}::put_CIF_derived_esd_note
+      else
+         stdout.flush
+      end
       stdout.text("loop_")
       stdout.text("_atom_site_Cartn_label")
       stdout.text("_atom_site_Cartn_x")
@@ -17266,7 +17307,10 @@ contains
    put_CIF_ADP2_cartn(refine_H_U_iso,esd) :: private
    ! Output the ADP2's in CIF format to "stdout" in cartesian axis system.
    ! If present and TRUE "refine_H_U_iso" removed H ADP printing.
-   ! If present and TRUE "esd" array for whole atom list overrides ! errors.
+   ! If present, "esd" array for whole atom list overrides errors.
+   ! NOTE: if "esd" is absent no esd's are written at all -- that is the
+   ! no-covariance branch, and the stored errors cannot be transformed
+   ! into cartesians. See "put_CIF_no_esd_note".
       self :: IN
       refine_H_U_iso :: BIN, optional, IN
       esd :: VEC{REAL}, optional, IN
@@ -17280,10 +17324,12 @@ contains
       lab :: STR
       fac :: REAL
       i,dim :: INT
-      H_U_iso :: BIN
+      H_U_iso,has_esd :: BIN
 
       H_U_iso = FALSE
       if (present(refine_H_U_iso)) H_U_iso = refine_H_U_iso
+
+      has_esd = present(esd)
 
       ! Unit conversion for ADP's
       fac = ANGSTROM_PER_BOHR
@@ -17297,16 +17343,24 @@ contains
       stdout.text("# . These precise data use non-standard CIF tags")
       stdout.text("# . Please keep for a better refinement restart")
       stdout.text("# . Units are in Angstrom^2")
-      stdout.flush
+      if (NOT has_esd) then
+         VEC{ATOM}::put_CIF_no_esd_note
+      else if (.any_pADP_covariances_derived) then
+         VEC{ATOM}::put_CIF_derived_esd_note
+      else
+         stdout.flush
+      end
       stdout.text("loop_")
       stdout.text("_atom_site_Cartn_ADP2_U_label")
       do i = 1,6
       lab = ATOM:ADP2_index_label(i,form="123-repeated")
       stdout.text("_atom_site_Cartn_ADP2_U_"//trim(lab))
       end
+      if (has_esd) then
       do i = 1,6
       lab = ATOM:ADP2_index_label(i,form="123-repeated")
       stdout.text("_atom_site_Cartn_ADP2_U_"//trim(lab)//"_esu")
+      end
       end
 
       ! Size of table
@@ -17325,21 +17379,13 @@ contains
          ID =  self.tag
          blnk = " "
          self.put_ADP2_vector_to(ADPv,fac)
-         if (present(esd)) then
-            self.put_ADP2_errors_to(ADPe,fac,esd)
-         else if (.has_nonzero_pADP2_errors) then
-            self.put_ADP2_errors_to(ADPe,fac)
-         end
+         if (has_esd) self.put_ADP2_errors_to(ADPe,fac,esd)
       else
          list = .list_of_non_H_atoms
          ID =  self(list).tag
          blnk = " "
          self.put_ADP2_vector_to(ADPv,list,fac)
-         if (present(esd)) then
-            self.put_ADP2_errors_to(ADPe,list,fac,esd)
-         else if (self(list).has_nonzero_pADP2_errors) then
-            self.put_ADP2_errors_to(ADPe,list,fac)
-         end
+         if (has_esd) self.put_ADP2_errors_to(ADPe,list,fac,esd)
       end
 
       ! Table 1
@@ -17353,28 +17399,32 @@ contains
       tabl1(7).set_values(ADPv(:,6))
 
       ! Table 2
-      tabl2.create(7)
-      tabl2(1).set_values(blnk)
-      tabl2(2).set_values(ADPe(:,1))
-      tabl2(3).set_values(ADPe(:,2))
-      tabl2(4).set_values(ADPe(:,3))
-      tabl2(5).set_values(ADPe(:,4))
-      tabl2(6).set_values(ADPe(:,5))
-      tabl2(7).set_values(ADPe(:,6))
+      if (has_esd) then
+         tabl2.create(7)
+         tabl2(1).set_values(blnk)
+         tabl2(2).set_values(ADPe(:,1))
+         tabl2(3).set_values(ADPe(:,2))
+         tabl2(4).set_values(ADPe(:,3))
+         tabl2(5).set_values(ADPe(:,4))
+         tabl2(6).set_values(ADPe(:,5))
+         tabl2(7).set_values(ADPe(:,6))
 
-      tabl2(1).set_width(tabl1(1).width)
-      tabl2(2).set_width(tabl1(2).width)
-      tabl2(3).set_width(tabl1(3).width)
-      tabl2(4).set_width(tabl1(4).width)
-      tabl2(5).set_width(tabl1(5).width)
-      tabl2(6).set_width(tabl1(6).width)
-      tabl2(7).set_width(tabl1(7).width)
+         tabl2(1).set_width(tabl1(1).width)
+         tabl2(2).set_width(tabl1(2).width)
+         tabl2(3).set_width(tabl1(3).width)
+         tabl2(4).set_width(tabl1(4).width)
+         tabl2(5).set_width(tabl1(5).width)
+         tabl2(6).set_width(tabl1(6).width)
+         tabl2(7).set_width(tabl1(7).width)
+      end
 
       ! Put tables
-      tabl1.put_body(tabl2)
+      if (has_esd) then; tabl1.put_body(tabl2)
+      else;              tabl1.put_body
+      end
 
       ! Clean
-      tabl2.destroy
+      if (has_esd) tabl2.destroy
       tabl1.destroy
 
    end

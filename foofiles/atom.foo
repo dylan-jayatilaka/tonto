@@ -1578,8 +1578,23 @@ contains
       val = dot_product(dU, matmul(.covariance_mx(4:9,4:9),dU) )
 
       ! Error - calculate max of of the difference on the square
-      ! root of the upper and lower limits of M2_ani
-      .M_ani_error = val/(2*.M_ani) 
+      ! root of the upper and lower limits of M2_ani. For M = sqrt(M2),
+      ! that difference is sigma(M2)/(2M), and "val" above is the
+      ! VARIANCE of M2 -- so it is sqrt(val) that goes on top. Using val
+      ! itself gave units of U^3 where an esd of U^2 must have units U^2,
+      ! and a number ~4e5 too small, which always printed as "(0)" and so
+      ! looked exactly like the "no covariance available" case. See
+      ! DEFERRED.md.
+      ! NOTE: M_ani is a square root, so this expression is singular at
+      ! M_ani = 0 -- which is the case whenever the ADP tensor is exactly
+      ! isotropic or absent, as it is for an atom read from a CIF with no
+      ! anisotropic ADPs. Linear propagation says nothing about the error
+      ! there, so report zero rather than Inf or NaN.
+      if (.M_ani>ZERO) then
+         .M_ani_error = sqrt(max(val,ZERO))/(2*.M_ani)
+      else
+         .M_ani_error = ZERO
+      end 
 
    end
 
@@ -2192,6 +2207,133 @@ contains
          .set_M_ani_error_from_pADP
       end
       
+   end
+
+   pADP_covariance_can_be_made result (res) :: pure
+   ! Return TRUE if a cartesian covariance matrix can be made for this
+   ! atom from its own standard uncertainties.
+   ! The atom must still be in the crystal frame -- a cartesian CIF needs
+   ! no conversion -- and its parameter count must be one Tonto knows how
+   ! to map: 9 (harmonic), 19 (with ADP3s) or 34 (with ADP4s too).
+   ! NOTE: a real runtime test, not an ENSURE, which compiles to nothing
+   ! in an optimised build.
+      self :: IN
+      res :: BIN
+
+      res = FALSE
+
+      if (.pos_axis_system/="crystal") return
+      if (.ADP_axis_system/="crystal") return
+      ! NOTE: only ask about the ADPn frame if there ARE ADPn's. That
+      ! component DEFAULTs to "cartesian" and is set to "crystal" only by
+      ! the ADP3/ADP4 readers, so testing it unconditionally silently
+      ! disables this for every harmonic structure. Same idiom as
+      ! VEC{ATOM}:all_ADPn_axis_systems_are_cartesian.
+      if (.has_ADP3s AND .ADPn_axis_system/="crystal") return
+      if (.pADP_errors.deallocated) return
+      if (.pADP_errors.dim/=.no_of_pADPs) return
+      if (.pADP_errors.dim/=9 AND .pADP_errors.dim/=19 AND .pADP_errors.dim/=34) return
+
+      res = TRUE
+
+   end
+
+   make_pADP_covariance_from_esds(cell) :: leaky
+   ! Make the cartesian covariance matrix for this atom's positions and
+   ! ADP2's from its own standard uncertainties, ASSUMING THOSE ARE
+   ! UNCORRELATED, and reset the errors from it.
+   !
+   ! Call this while the atom is still in the crystal frame. Afterwards
+   ! ".covariance_mx" -- and hence ".pADP_errors" -- are cartesian, like
+   ! everything else in Tonto, and every later frame change is exact
+   ! because a covariance carries what a sigma throws away.
+   !
+   ! The independence assumption is the one approximation, and it is made
+   ! once, here, at the only point where the information genuinely does
+   ! not exist: a CIF reports uncertainties but not the covariance they
+   ! would have to be propagated through. ".pADP_covariances_derived" is
+   ! set so a consumer can tell this from a refinement's own covariance.
+   !
+   ! NOTE: T V T^T is positive semi-definite whenever V is, so no
+   ! variance can come out negative and no esd can come out NaN. That is
+   ! by construction, not by clamping.
+      self :: INOUT
+      cell :: UNIT_CELL, IN
+
+      T6 :: MAT{REAL}(6,6)
+      T10 :: MAT{REAL}(10,10)
+      T15 :: MAT{REAL}(15,15)
+      D3,C3 :: MAT{REAL}(3,3)
+      D6,C6 :: MAT{REAL}(6,6)
+      D10,C10 :: MAT{REAL}(10,10)
+      D15,C15 :: MAT{REAL}(15,15)
+      V :: MAT{REAL}@
+      s :: VEC{REAL}@
+      n :: INT
+
+      if (NOT .pADP_covariance_can_be_made) return
+
+      n = .no_of_pADPs
+      s.create(n)
+      s = .pADP_errors(1:n)
+
+      ! Positions: dimensionless fractional sigmas -> bohr, via the direct
+      ! cell matrix, which carries the axis change and the units together
+      D3 = ZERO
+      D3.set_diagonal_to(s(1:3)*s(1:3))
+      D3.back_transform_to(C3,cell.direct_mx)
+
+      ! ADP2's: the induced map on the packed vector for the SAME basis
+      ! change the ADP values themselves use, MAT:change_basis_to(direct_U_mx).
+      ! to_tensor_change_basis_of builds exactly that map, in the
+      ! crystallographic 11,22,33,12,13,23 order, so there is no transpose
+      ! left to get backwards -- which is how the sibling defect in
+      ! CRYSTAL:make_CIF_esds arose. See DEFERRED.md.
+      T6.to_tensor_change_basis_of(cell.direct_U_mx,reorder=TRUE)
+
+      D6 = ZERO
+      D6.set_diagonal_to(s(4:9)*s(4:9))
+      D6.back_transform_to(C6,T6)
+
+      ! Assemble. Parameters of different order do not mix under an axis
+      ! change, so the off-diagonal blocks are genuinely zero, not merely
+      ! unknown.
+      V.create(n,n)
+      V = ZERO
+      V(1:3,1:3) = C3
+      V(4:9,4:9) = C6
+
+      ! ADP3's and ADP4's, if this atom is anharmonic. Their value
+      ! transform is MAT3/MAT4:back_transform_to(new,direct_mx), and
+      ! symmetric_tensor_3/4_product_mx(res,R) is exactly the induced map
+      ! for that -- verified numerically to 1e-15 against the tensor
+      ! contraction, R and NOT its transpose. See DEFERRED.md.
+      if (n>=19) then
+         GAUSSIAN_DATA:symmetric_tensor_3_product_mx(T10,cell.direct_mx)
+         D10 = ZERO
+         D10.set_diagonal_to(s(10:19)*s(10:19))
+         D10.back_transform_to(C10,T10)
+         V(10:19,10:19) = C10
+      end
+
+      if (n>=34) then
+         GAUSSIAN_DATA:symmetric_tensor_4_product_mx(T15,cell.direct_mx)
+         D15 = ZERO
+         D15.set_diagonal_to(s(20:34)*s(20:34))
+         D15.back_transform_to(C15,T15)
+         V(20:34,20:34) = C15
+      end
+
+      ! This is the same entry point the refinement path uses: it stores
+      ! the covariance, sets .pADP_errors to sqrt of its diagonal, and
+      ! derives the U_iso and M_ani errors.
+      .set_pADP_errors_to(V,FALSE)
+
+      .pADP_covariances_derived = TRUE
+
+      V.destroy
+      s.destroy
+
    end
 
 
@@ -3603,7 +3745,7 @@ contains
 !  Axis change methods
 !  ===================
 
-   change_axis_system_to(axis_system,cell,change_ESDs) :: PURE
+   change_axis_system_to(axis_system,cell) :: PURE
    ! Change the axis system for the position *and* ADP tensors to "axis_system",
    ! either "crystal" or "cartesian". "cell" holds the unit cell axis system
    ! information. Specify the "form" for the anharmonic ADPs.
@@ -3613,15 +3755,14 @@ contains
       axis_system :: STR, IN
       cell :: UNIT_CELL, IN
    ! H_U_iso :: BIN, IN
-      change_ESDs :: BIN, optional, IN
 
-      .change_pos_axis_system_to(axis_system,cell,change_ESDs)
-      .change_ADP2_axis_system_to(axis_system,cell,change_ESDs)
-      .change_ADPn_axis_system_to_v2(axis_system,cell,change_ESDs)
+      .change_pos_axis_system_to(axis_system,cell)
+      .change_ADP2_axis_system_to(axis_system,cell)
+      .change_ADPn_axis_system_to_v2(axis_system,cell)
 
    end
 
-   change_axis_for_xtal23_system_to(axis_system,cell,change_ESDs) :: PURE
+   change_axis_for_xtal23_system_to(axis_system,cell) :: PURE
    ! Change the axis system for the position *and* ADP tensors to "axis_system",
    ! either "crystal" or "cartesian". "cell" holds the unit cell axis system
    ! information. Specify the "form" for the anharmonic ADPs.
@@ -3631,29 +3772,22 @@ contains
       axis_system :: STR, IN
       cell :: UNIT_CELL, IN
    ! H_U_iso :: BIN, IN
-      change_ESDs :: BIN, optional, IN
 
-      .change_pos_axis_for_xtal23_system_to(axis_system,cell,change_ESDs)
-      .change_ADP2_axis_system_to(axis_system,cell,change_ESDs)
-      .change_ADPn_axis_system_to_v2(axis_system,cell,change_ESDs)
+      .change_pos_axis_for_xtal23_system_to(axis_system,cell)
+      .change_ADP2_axis_system_to(axis_system,cell)
+      .change_ADPn_axis_system_to_v2(axis_system,cell)
 
    end
 
-   change_pos_axis_system_to(axis_system,cell,change_ESDs) :: PURE
+   change_pos_axis_system_to(axis_system,cell) :: PURE
    ! Change atom positions to a new "axis_system".
       self :: INOUT
       axis_system :: STR, IN
       cell :: UNIT_CELL, IN
-      change_ESDs :: BIN, optional, IN
 
    ENSURE(axis_system.is_one_of(["cartesian","crystal  "]),"unknown axis system!")
 
       pos :: VEC{REAL}(3)
-      change_err :: BIN
-
-      change_err = TRUE
-      if (present(change_ESDs)) change_err = change_ESDs
-
       select case (axis_system)
 
       case ("cartesian")
@@ -3678,21 +3812,15 @@ contains
 
    end
 
-   change_pos_axis_for_xtal23_system_to(axis_system,cell,change_ESDs) :: PURE
+   change_pos_axis_for_xtal23_system_to(axis_system,cell) :: PURE
    ! Change atom positions to a new "axis_system".
       self :: INOUT
       axis_system :: STR, IN
       cell :: UNIT_CELL, IN
-      change_ESDs :: BIN, optional, IN
 
    ENSURE(axis_system.is_one_of(["cartesian","crystal  "]),"unknown axis system!")
 
       pos :: VEC{REAL}(3)
-      change_err :: BIN
-
-      change_err = TRUE
-      if (present(change_ESDs)) change_err = change_ESDs
-
       select case (axis_system)
 
       case ("cartesian")
@@ -3717,39 +3845,37 @@ contains
 
    end
 
-   change_ADP_axis_system_to(axis_system,cell,change_ESDs) :: PURE
+   change_ADP_axis_system_to(axis_system,cell) :: PURE
    ! Change *all* ADP tensor to the desired "axis_system". The axes
    ! are described by the unit "cell". 
       self :: INOUT
       axis_system :: STR, IN
       cell :: UNIT_CELL, IN
-      change_ESDs :: BIN, optional, IN
 
-      .change_ADP2_axis_system_to(axis_system,cell,change_ESDs)
-      .change_ADPn_axis_system_to_v2(axis_system,cell,change_ESDs)
+      .change_ADP2_axis_system_to(axis_system,cell)
+      .change_ADPn_axis_system_to_v2(axis_system,cell)
 
    end
 
-   change_ADP2_axis_system_to(axis_system,cell,change_ESDs) :: PURE
+   change_ADP2_axis_system_to(axis_system,cell) :: PURE
    ! Change ADP2/s axis system into the "axis_system" frame.
-   ! If "axis_system" is "cartesian" i.e. trasforming from standard
-   ! crystal axes, then the errors are transformed too, linearly,
-   ! unless forbidden with change_ESDs (this is wrong, but in the
-   ! absence of any covariance we do it).
+   ! NOTE: the ESDs are NOT transformed, and must not be. The congruence
+   ! U' = M U M^T makes every U'_ij a combination of all six U_kl, so the
+   ! variance of U'_ij needs the full 6x6 covariance. Running the
+   ! congruence over the sigmas instead forms signed combinations of
+   ! standard deviations, which understates them, can overstate them, and
+   ! can even come out negative. The ESDs stay in the frame they were made
+   ! in; a writer emits them only into that frame. See DEFERRED.md.
       self :: INOUT
       axis_system :: STR, IN
       cell :: UNIT_CELL, IN
    ! H_U_iso :: BIN, IN
-      change_ESDs :: BIN, optional, IN
 
    ENSURE(axis_system.is_one_of(["cartesian","crystal  "]),"unknown axis system!")
 
       ADP :: MAT{REAL}(3,3)
-      change_err,chk :: BIN
+      chk :: BIN
       val :: REAL
-
-      change_err = TRUE
-      if (present(change_ESDs)) change_err = change_ESDs
 
       chk = FALSE
 
@@ -3792,20 +3918,6 @@ contains
          .set_ADP_tensor(ADP)
 
          ! Change errors?
-         if (change_err) then
-         if (.pADP_errors.allocated) then
-         if (.pADP_errors.dim>=9) then
-         if (NOT .pADP_errors(4:9).is_zero) then
-            .put_ADP2_errors_to(ADP)
-            ADP.change_basis_using(cell.direct_U_mx)
-         ! ERROR: To fix later
-         ! .set_ADP2_errors_to(ADP,H_U_iso)
-            .set_ADP2_errors_to(ADP)
-         end
-         end
-         end
-         end
-
          ! Set U_iso from trace of tensor.
          ! Could also check if supplied U_iso was correct
          if (chk) then
@@ -3826,25 +3938,11 @@ contains
          .set_ADP_tensor(ADP)
 
          ! Change errors?
-         if (change_err) then
-         if (.pADP_errors.allocated) then
-         if (.pADP_errors.dim>=9) then
-         if (NOT .pADP_errors(4:9).is_zero) then
-            .put_ADP2_errors_to(ADP)
-            ADP.change_basis_using(cell.reciprocal_U_mx)
-         ! ERROR: To fix later
-         ! .set_ADP2_errors_to(ADP,H_U_iso)
-            .set_ADP2_errors_to(ADP)
-         end
-         end
-         end
-         end
-
       end
 
    end
 
-   change_ADPn_axis_system_to_v2(axis_system,cell,change_ESDs) :: PURE
+   change_ADPn_axis_system_to_v2(axis_system,cell) :: PURE
    ! Change ADPn vector to the "axis_system" frame.
    ! NOTE: Unlike the ADP2's, in the "crystal" axis_system these are
    ! reported in dimensionless Gram-Charlier "g" form. For
@@ -3855,17 +3953,11 @@ contains
       self :: INOUT
       axis_system :: STR, IN
       cell :: UNIT_CELL, IN
-      change_ESDs :: BIN, optional, IN
 
    ENSURE(axis_system.is_one_of(["cartesian","crystal  "]),"unknown axis system!")
 
       adp3,new3 :: MAT3{REAL}(3,3,3)
       adp4,new4 :: MAT4{REAL}(3,3,3,3)
-      change_err :: BIN
-
-      change_err = TRUE
-      if (present(change_ESDs)) change_err = change_ESDs
-
       select case (axis_system)
 
       case ("cartesian") ! Change INTO cartesian FROM crystal
@@ -3880,37 +3972,11 @@ contains
          adp3.back_transform_to(new3,cell.direct_mx)
          .set_ADP3_vector_to(new3)
 
-         ! Transform errors to cartesian?
-         if (change_err) then
-         if (.pADP_errors.allocated) then
-         if (.pADP_errors.dim>=19) then
-         if (NOT .pADP_errors(10:19).is_zero) then
-         .put_ADP3_errors_to(adp3)
-         adp3.back_transform_to(new3,cell.direct_mx)
-         .set_ADP3_errors_to(new3)
-         end
-         end
-         end
-         end
-
          if (NOT .has_ADP4s) return
 
          .put_ADP4_vector_to(adp4)
          adp4.back_transform_to(new4,cell.direct_mx)
          .set_ADP4_vector_to(new4)
-
-         ! Transform errors to cartesian?
-         if (change_err) then
-         if (.pADP_errors.allocated) then
-         if (.pADP_errors.dim>=34) then
-         if (NOT .pADP_errors(20:34).is_zero) then
-         .put_ADP4_errors_to(adp4)
-         adp4.back_transform_to(new4,cell.direct_mx)
-         .set_ADP4_errors_to(new4)
-         end
-         end
-         end
-         end
 
       case ("crystal")  ! Change INTO crystal FROM cartesian
 
