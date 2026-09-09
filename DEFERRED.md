@@ -39,10 +39,11 @@ now covers the whole project, so it was renamed.)*
 > closed on 2026-09-08 -- the near-zero eigenvector premise, `M_ani_error`, `make_CIF_esds`,
 > the element-wise ADP esd transform, the `make report` won't-do, and `command_arguments`.
 >
-> **36 live, 50 archived** as of 2026-09-09, counting `##` headings on each side of the archive
-> divider and excluding the handover section. The running tally kept in this paragraph had
-> drifted well out of step with the file, so it was replaced with a count and the method to
-> reproduce it rather than extended again.
+> **37 live, 51 archived** as of 2026-09-09, counting `##` headings on each side of the archive
+> divider and excluding the handover section. (The eigenvector sign canonicalisation closed and
+> was archived the same day; the stale `long` references it uncovered were filed live.) The
+> running tally kept in this paragraph had drifted well out of step with the file, so it was
+> replaced with a count and the method to reproduce it rather than extended again.
 >
 > Still to sort, and deliberately left whole rather than dissected: two long registers whose
 > `###` children are mostly closed but interleaved with live ones -- `MPI: defects found during
@@ -71,7 +72,10 @@ now covers the whole project, so it was renamed.)*
 
 > **Still current on 2026-09-09, with one addition.** `command_arguments` was deleted (archived
 > below), and the six entries closed on 2026-09-08 that were still filed under live themes have
-> been moved to the archive. Nothing new is in flight; the ordering below stands.
+> been moved to the archive. Then eigenvector sign canonicalisation landed (archived), and the
+> blast-radius measurement for it turned up **16 stale `long` references**, filed live under
+> *Test suite and numerics* -- red since 2026-09-08 and the one thing here genuinely needing a
+> decision. Nothing else is in flight; the ordering below stands.
 
 **Nothing is in flight.** Two Science items closed on 2026-09-06: **milestone 11 (extinction)**
 and **`docs/GOF_NOT_CHI2.md`** (the `GoF2` rename, and GoF in the tables). Both are archived
@@ -2154,6 +2158,62 @@ OpenBLAS would also oversubscribe cores in MPI builds.
 
 # Test suite and numerics
 
+## OPEN: 16 `long` references went stale on 2026-09-08 and nothing noticed
+
+**Found 2026-09-09** while measuring the blast radius of the eigenvector sign canonicalisation.
+`ctest -L "hart|long"` gives **16 failures out of 38**. None of them is caused by that change --
+see below -- and they have been red since 2026-09-08.
+
+**Cause, established not guessed.** `39cf7b25` *"ESDs: convert the covariance, not the sigmas"*
+(2026-09-08) reblessed **14** references, all in `short`. The `long` ones were left behind; they
+were last blessed on 2026-09-04 by `2e3943ec`.
+
+**The change is a correction, and the numbers confirm it.** Defect 5 of that commit: position esds
+were never propagated at all, so the cartesian CIF printed **fractional** uncertainties scaled only
+by bohr->Angstrom. That predicts an inflation of `cell_edge/0.5292`. On `yq28_H_U_iso_IAM_refinement`
+(cell 7.5853, 7.9412, 14.059) for Cl1:
+
+```
+axis   old esd    predicted   actual
+x      5e-6       7.2e-5      8e-5     (at the rounding edge)
+y      4e-6       6.0e-5      6e-5
+z      3e-6       8.0e-5      7e-5
+```
+
+Two land inside the one-significant-figure band and the third is marginally outside, as expected
+since the cell is not orthogonal and the exact factor needs the full metric. Two further checks:
+the new esds are the physically believable ones (5e-6 A on a chlorine position would be
+extraordinary; ~1e-4 A is right for an IAM refinement at R = 0.034), and **the science did not
+move** -- R(F) 0.0335 and scale factor 1.0131 are identical between reference and new.
+
+**The sign canonicalisation is not involved.** Baseline taken by stashing it and rebuilding:
+`L_alanine_IAM_scale_factor_test`, `urea_rhf_STO-3G_HAR` and `yq28_H_U_iso_IAM_refinement` fail
+**identically** without it, and the `yq28` output is **byte-identical** with and without.
+
+**Why it went unnoticed, which is the part worth fixing.** Routine CI runs `short`; `ci-full-suite.yml`
+is on-demand and last ran on **2026-08-27**. So a change can rebless `short`, leave `long` stale,
+and stay green for as long as nobody asks.
+
+**What to do.** Rebless the 16 against a build carrying `39cf7b25`, checking each diff is
+uncertainties and column widths only -- R factors, scale factors and GoF must not move. That is a
+re-bless of refinement output and a bigger blessing decision than a sign flip, so it is recorded
+here rather than taken. The 16:
+
+```
+L_alanine_IAM_scale_factor_test          L_cysteine_IAM_R_min_max_residuals
+Ph3SiH_rhf_def2-TZVPP_IAM                YLID_IAM_plus_anomalous_residual_density
+ammonium_borane_pHAR_C23                 gly_ala_fragHAR_rhf_STO-3G
+nh3_rhf-consistent-cluster-charge_DZP_HAR quartz_NN_HAR_L0_rhf_def2-SVP
+quartz_NN_HAR_L1_rhf_def2-SVP            so2_rhf_DZP_anharmonic_cluster_charge_XWR
+so2_rhf_DZP_anharmonic_consistent_cluster_charge_HAR
+urea_rhf_DZP_consistent-cluster-charge_HAF urea_rhf_STO-3G_HAR
+yq28_H_U_iso_IAM_refinement              yq28_anharm_disp_H_U_iso_IAM_refinement
+yq28_anharm_disp_remove_from_F_exp
+```
+
+**Consider also** running `long` on a schedule, or on any commit that reblesses a reference. The
+gap that hid this is structural, not a one-off.
+
 ## Deferred: small numerical differences (longstanding) — drill down
 
 Several tests differ from their references only by small numerical amounts — 3rd–4th
@@ -3678,6 +3738,80 @@ with no hand-written script at all.
 ---
 
 # Done, resolved and closed (archive)
+
+## FIXED (2026-09-09): eigenvector signs were arbitrary, and macOS chose differently
+
+**Found** by reading the `macOS-release` diagnostics for run `34207892131` (2026-09-08), which
+failed 56/58 on both compiler jobs. One of the two failures was
+`short/h2o_rhf_6-31G(d)_normal_mode_analysis` at **200% relative, 1.4e6 last-digit** -- numbers
+that look catastrophic and are not.
+
+**What it actually was.** Every eigenvalue was **bit-identical**, max difference exactly 0 across
+all nine, including the three real frequencies 1826.42, 4070.29 and 4188.50 cm^-1. Four of the
+nine eigenvector *columns* were sign-flipped in their entirety; the other five matched to the last
+digit. 200% relative is the arithmetic signature of a sign flip, |x-(-x)|/|x| = 2. An eigenvector
+is defined only up to a sign, LAPACK guarantees nothing about which one it returns, and Accelerate
+on macOS chooses differently from reference LAPACK on Linux. Mode 8 at 4070 cm^-1 is a
+well-separated genuine vibration, so this is **not** confined to the near-zero rotation and
+translation modes.
+
+**The fix.** A canonicalisation, in `VEC{REAL}:canonicalise_sign`: make the largest-magnitude
+element positive. `MAT{REAL}:canonicalise_eigenvector_signs` is the column-wise driver.
+
+**The tie tolerance is the whole point, not a detail.** Elements within a RELATIVE tolerance
+(default `TOL(9)`) of the largest count as tied, and the LOWEST-indexed of them decides. With an
+exact test, two components equal to within round-off select *different* elements on different
+platforms and the vector flips anyway -- the canonicalisation would fail at precisely the case it
+exists for. A generous tolerance is safe: choosing a near-maximal element rather than the maximal
+one is still deterministic.
+
+**Complex needed a stronger rule.** A real eigenvector is arbitrary up to a sign; a complex one up
+to any phase on the unit circle. `VEC{CPX}:canonicalise_phase` therefore *rotates* by
+`conjg(v)/|v|` to make the chosen element real and positive, rather than negating.
+
+**Wired into** `MAT{REAL}:solve_symmetric_eigenproblem` (the `dsyev` path, which is what normal
+modes use), `MAT{REAL}:diagonalize_Davidson`, `MAT{CPX}:solve_hermitian_eigenproblem` and
+`MAT{CPX}:make_real_eigenproblem` (that last one is marked UNTESTED in its own header; wired for
+consistency). `MOLECULE.SCF:diagonalize_r_mx`/`_gen_mx` and both `ROBY:diagonalize_*` need no
+change -- they funnel through those solvers, and their back-transform is a fixed linear map, so a
+deterministic `c~` gives a deterministic `c`.
+
+**DELIBERATELY NOT wired into `MAT{REAL}:diagonalize_Jacobi`, and this is the interesting part.**
+Canonicalising there moved the ADP esds of `short/nh3_rhf_DZP_HAR` and
+`short/nh3_rhf_DZP_HAF_and_structure_factors` **without moving a single value**. Bisected to that
+one call site: with it disabled both refinements pass and the three eigenvector tests still change
+as intended. Two separate things were happening in that one line:
+
+- `U_xz` and `U_yz` esds **swapped** (8 <-> 13). N has `U_yy = U_zz = 0.03800`, so y and z are
+  symmetry-equivalent and those esds are interchangeable. **Nothing can be done here, in
+  principle**: a *degenerate* eigenspace is arbitrary up to a **rotation**, not merely a sign, so
+  sign canonicalisation cannot make it unique. Dylan's reading, and it is right.
+- `U_xx` and `U_yy` esds (19 <-> 20) -- not degeneracy at all, an esd sitting on the 0.000195
+  rounding boundary and tipping either way.
+
+So the rule is: canonicalise where eigenvectors are **reported**, not where they are consumed in
+sign-invariant combinations. `diagonalize_Jacobi` diagonalises the ADP tensor and the refinement
+normal equations, where the eigenvectors enter as `v v^T` and the sign cancels exactly -- fixing
+it buys nothing and costs two reblessed refinements. The reasoning is recorded at the call site.
+
+**`singular_value_decomposition` was left alone on purpose.** Its singular vectors carry the same
+arbitrary sign, but there the sign is only arbitrary as a **linked pair**: flipping column j of
+`L` must be matched by flipping row j of `R^T`, or `self = L D R^T` stops holding and the
+pseudo-inverse silently changes. A different and riskier change; the restriction is documented in
+`MAT{REAL}:canonicalise_eigenvector_signs`.
+
+**Verified.** `ctest -L short` 65/65, `ctest -L hart` 5/5. Three references reblessed, all in
+`short`: `h2o_rhf_6-31G(d)_normal_mode_analysis`, `h2o_rhf_cc-pVDZ_dipole_polarisabilities`,
+`h2o_rhf_cc-pVDZ_electric_polarisation_density_plot`. All three are sign-only: comparing all 309
+numeric tokens of the normal-mode test **ignoring sign**, they agree to 3e-6, which is the
+last-digit noise that test already carried. Line counts 100% of reference, zero structural
+mismatches.
+
+**What this does NOT close.** Whether macOS actually goes green is unverifiable here -- there is no
+Mac. It needs the next `macOS-release` run, and only for the normal-mode test: the other macOS
+failure, `urea_ccsd_pob-TZVP_Salvador_properties`, is unrelated last-digit drift (8 ulp, reading
+as 4.48% only because those properties print to four decimals) and belongs with the LAPACK row.
+
 
 ## DONE, BUT THE PREMISE WAS WRONG (2026-09-08): near-zero eigenvector reporting
 
