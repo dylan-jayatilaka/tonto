@@ -58,7 +58,7 @@ now covers the whole project, so it was renamed.)*
 |-------|------------------|
 | [Correctness](#correctness--open-bugs-that-give-wrong-answers) | Open bugs that give wrong answers, including ones with no diagnostic |
 | [MPI](#mpi) | The milestone-4 defect register, the `parallel do` lock, the `MPI_Bcast` desync, architecture options |
-| [Build system and toolchain](#build-system-and-toolchain) | `get_from` dependency trap, `types.foo` split, OpenBLAS |
+| [Build system and toolchain](#build-system-and-toolchain) | `get_from` dependency trap, OpenBLAS |
 | [Test suite and numerics](#test-suite-and-numerics) | Small numerical differences, `-O0` failures, NaN/negative ESDs |
 | [Translator and the Foo language](#translator-and-the-foo-language) | Dropped `data` statements, name-case normalisation, F2008 submodules |
 | [hart](#hart) | Remaining hart items and un-migrated runfiles |
@@ -1584,41 +1584,6 @@ Any of these rewrites the reference, so re-bless deliberately and read the resul
 ---
 
 # Build system and toolchain
-
-## Future task: split `types.foo` into several modules (parallel compilation)
-
-**Goal (Dylan):** `types.F90` is the slowest single compile in the build and it is a
-**serial bottleneck** — everything `use`s it, so nothing else can start until it finishes.
-Split `types.foo` into several independent modules so they compile in parallel under `-j`.
-
-**Why it is slow — measured (2026-07-28, M2 Pro / Tahoe, gfortran-14):**
-
-| Stage | Time |
-|---|---|
-| parse + `.mod` generation (`-fsyntax-only`) | 0.01 s |
-| `-O0` (codegen only) | 29 s |
-| `-O1` | 45 s |
-| full release flags (`-Ofast … -O2`) | 839 s (~14 min) |
-
-The front end is *instantaneous*, so the ~90 derived-type definitions themselves cost nothing.
-The cost is **codegen**: those types have ~585 allocatable/pointer components, and gfortran
-auto-generates a deep-copy helper per type (`__copy_types_module_<TYPE>`) — 167 text symbols and
-**8.9 MB of `__TEXT`** from 5.7 k lines containing *zero* user-written procedures. Optimising
-that generated boilerplate is what costs the four minutes.
-
-**Interim fix already applied:** `types.F90` is compiled at `-O1`
-(`set_source_files_properties` in `CMakeLists.txt`), 839 s → 45 s (~18x), no runtime cost worth
-measuring (the helpers are memcpy-shaped). The serial-bottleneck problem remains.
-
-**Note — F2008 `submodule` does NOT help here** (cf. the submodule task above): type
-definitions are part of a module's *interface* and cannot live in a submodule, and the
-`__copy_*` helpers are generated where the types are defined. Splitting into several **real
-modules** is what parallelises; submodules only avoid recompilation cascades.
-
-**Care needed:** the split must respect the derived-type dependency order (types with
-components of other derived types), and every `use TYPES_MODULE` site plus the translator's
-`.use`-file generation must follow. Check whether the translator can emit the split
-automatically from one `types.foo` rather than requiring the source be broken up by hand.
 
 ## libxc as the DFT functional engine — see `docs/DFT_STANDARDISATION.md`
 

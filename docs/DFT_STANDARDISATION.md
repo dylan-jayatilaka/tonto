@@ -839,9 +839,7 @@ recomputed inside every functional.
 **Costs, stated honestly.** `types.foo` is the serial compile bottleneck — some
 585 allocatable components whose generated `__copy_*` helpers are why it is pinned
 to `-O1` — so two more types with allocatable members are not free, though two
-small ones are marginal. They are also a natural first candidate for the
-`types.foo` split recorded in `DEFERRED.md`, since nothing outside the DFT path
-would use them. Purity is unaffected: a routine taking a derived type with
+small ones are marginal. Purity is unaffected: a routine taking a derived type with
 allocatable members stays `PURE` provided it does not allocate. And the call
 sites get *simpler*, not harder — `molecule.fock.foo` presently creates and
 destroys `N0,Nx,Ny,Nz,V0,Vx,Vy,Vz` one at a time.

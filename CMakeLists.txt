@@ -952,8 +952,7 @@ set_target_properties(tonto_lib PROPERTIES OUTPUT_NAME tonto)
 # and it buys nothing -- the generated helpers are memcpy-shaped. Measured on
 # M2/Tahoe, gfortran-14: parse+.mod 0.01 s, -O0 29 s, -O1 45 s, full release
 # flags 839 s (~14 min) -- so -O1 is an ~18x saving on the slowest compile.
-# Compile it at -O1 instead. (See DEFERRED.md for the follow-up: splitting
-# types.foo into several modules so they compile in parallel.)
+# Compile it at -O1 instead.
 set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/types.F90
     PROPERTIES COMPILE_OPTIONS "-O1")
 
