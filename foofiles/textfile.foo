@@ -482,6 +482,9 @@ contains
       ! Give up the unit
       .unit = TEXTFILE_NO_UNIT
 
+      ! And stop claiming to be the file an error message should name
+      .forget_IO_info
+
    end
 
    close_and_delete
@@ -502,6 +505,9 @@ contains
 
       ! Give up the unit; see the note in ":close"
       .unit = TEXTFILE_NO_UNIT
+
+      ! And stop claiming to be the file an error message should name
+      .forget_IO_info
 
    end
 
@@ -982,7 +988,7 @@ contains
       string :: STR(len=BSTR_SIZE)
 
       ! Update
-      .update_system_info
+      .update_IO_info
 
       if (.record<size(.internal)) then
 
@@ -991,6 +997,10 @@ contains
          .record    = .record + 1
          string     = .internal(.record)
          .buffer.set_and_analyze(string)
+
+         ! Now the line is in, snapshot it: the call above only had the
+         ! previous one. See .update_IO_info.
+         .update_IO_info
 
       else
 
@@ -1024,7 +1034,7 @@ contains
       too_long :: BIN
 
       ! Update
-      .update_system_info
+      .update_IO_info
 
       ! Read a line.
       !
@@ -1087,6 +1097,10 @@ contains
             ! No errors. Analyze the line
             .buffer.set_and_analyze(string)
             .record = .record + 1
+
+            ! Now the line is in, snapshot it: the call above only had the
+            ! previous one. See .update_IO_info.
+            .update_IO_info
 
       case (TEXTFILE_IOSTAT_EOF)
 
@@ -1218,7 +1232,7 @@ contains
       self :: INOUT
 
       ! Update
-      .update_system_info
+      .update_IO_info
 
       ! Rewind
       .IO_status = 0
@@ -1260,7 +1274,7 @@ contains
       self :: INOUT
 
       ! Update
-      .update_system_info
+      .update_IO_info
 
       ! Read till failure
       do
@@ -1373,7 +1387,7 @@ contains
    ENSURE(rec>=0,"record number must be non-negative")
 
       ! Update
-      .update_system_info
+      .update_IO_info
 
       ! Position the file on the I/O processor ALONE, then broadcast the result.
       ! The number of iterations depends on .record, and on "rec" -- which CIF
@@ -2135,6 +2149,7 @@ contains
       word :: STR
       .update_line
       .buffer.get(word)
+      .update_IO_cursor
    end
 
    next_item result (word) :: leaky
@@ -2163,6 +2178,7 @@ contains
       self :: INOUT
       .update_line
       .buffer.skip_item
+      .update_IO_cursor
    end
 
    skip_next_items(n) :: leaky
@@ -2211,10 +2227,11 @@ contains
       self :: INOUT
       number :: INT, IN
 
-      ! Update
-      .update_system_info
-
       .buffer.move_to_item(number)
+
+      ! The full snapshot, not just the cursor: this is one of the places that
+      ! claims the file, and it may be reached without an intervening read.
+      .update_IO_info
 
    end
 
@@ -2231,6 +2248,7 @@ contains
 
       .update_line
       .buffer.get(value)
+      .update_IO_cursor
 
    end
 
@@ -2260,6 +2278,7 @@ contains
 
       .update_line
       .buffer.get(value,format)
+      .update_IO_cursor
 
    end
 
@@ -2273,6 +2292,7 @@ contains
 
       .update_line
       .buffer.get(value,format)
+      .update_IO_cursor
 
    end
 
@@ -2287,6 +2307,7 @@ contains
 
       .update_line
       .buffer.get_imprecise_real(value,error)
+      .update_IO_cursor
 
    end
 
@@ -3064,6 +3085,7 @@ contains
       i,j,n :: INT
 
       .buffer.move_to_item(1)
+      .update_IO_cursor
 
       do i = 1,mx.dim1
 
@@ -6035,13 +6057,38 @@ contains
 !  System routines
 !  ===============
 
-   update_system_info :: private
-   ! Let the tonto system know info about the file being read,
-   ! in case of error.
-      self :: target
+   update_IO_info :: private
+   ! Let the tonto system know where this file has got to, in case of error.
+   ! Copied by value: a pointer here would outlive the file. See DEFERRED.md.
+      self :: IN
 
 #ifndef NO_TONTO_SYSTEM_CALLS
-      tonto.io_file => self
+      tonto.set_io_file_info(.name,.record,.buffer.string,.buffer.item_end)
+#endif
+
+   end
+
+   update_IO_cursor :: private
+   ! Let the tonto system know how far along the line the parser has got. The
+   ! cursor moves item by item, so it cannot be snapshotted once per line with
+   ! the rest of .update_IO_info; every buffer call that advances it must
+   ! report the new position, or an error message marks the wrong column.
+      self :: IN
+
+#ifndef NO_TONTO_SYSTEM_CALLS
+      tonto.set_io_file_cursor(.buffer.item_end)
+#endif
+
+   end
+
+   forget_IO_info :: private
+   ! Tell the tonto system this file is no longer being read, so an error
+   ! message does not name a file that has been closed. Matched on the name:
+   ! closing an output file must not discard the input file's position.
+      self :: IN
+
+#ifndef NO_TONTO_SYSTEM_CALLS
+      if (tonto.io_file_name==.name) tonto.clear_io_file_info
 #endif
 
    end

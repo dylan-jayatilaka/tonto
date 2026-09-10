@@ -23,12 +23,6 @@ the ones worth reading.
 - **A second `xray_data=` block does not restore the unpruned reflections.** Successive
   prunings compound.
 
-## Diagnostics
-
-- **An error message may be followed by a block of garbled text** under `File name`,
-  `Line number` and `File buffer`. The message itself is correct; the block below it is
-  read from memory that no longer holds a file, and can be ignored.
-
 ## Numerical accuracy and platforms
 
 - **The pass criterion for the test suite is loose**, not exact: 0.2% relative or two

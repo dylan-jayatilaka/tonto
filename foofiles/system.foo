@@ -378,6 +378,45 @@ contains
       .low_verbosity = val
    end
 
+   set_io_file_info(name,record,line,cursor) :: pure
+   ! Record where the file being read had got to, for a later error message.
+   ! Copied by value on purpose: a pointer to the file would outlive it. See
+   ! .report_io_file_info.
+      self :: INOUT
+      name :: STR, IN
+      record :: INT, IN
+      line :: STR, IN
+      cursor :: INT, IN
+
+      .io_file_name   = name
+      .io_file_record = record
+      .io_file_line   = line
+      .io_file_cursor = cursor
+
+   end
+
+   set_io_file_cursor(cursor) :: pure
+   ! Record how far along the current line the parser has got. Separate from
+   ! .set_io_file_info because the cursor moves item by item, long after the
+   ! line was read -- see TEXTFILE:update_IO_cursor.
+      self :: INOUT
+      cursor :: INT, IN
+
+      .io_file_cursor = cursor
+
+   end
+
+   clear_io_file_info :: pure
+   ! Forget the file being read; called when one is closed.
+      self :: INOUT
+
+      .io_file_name   = " "
+      .io_file_record = 0
+      .io_file_line   = " "
+      .io_file_cursor = 0
+
+   end
+
    set_per_rank_IO_allowed(val) :: pure
    ! Set whether every rank may do its own I/O, instead of the master alone.
    ! Used where the ranks deliberately work on different data and so must
@@ -688,46 +727,38 @@ contains
    end
 
    report_io_file_info :: private
-   ! Report info about the most recent open file.
+   ! Report where the file being read had got to.
+   !
+   ! The values are copies held in SYSTEM, never read through a pointer to the
+   ! file: a pointer here outlives its target, and Fortran neither nulls it nor
+   ! lets ASSOCIATED detect that. See DEFERRED.md.
       self :: IN
 
       cursor :: STR(len=BSTR_SIZE)
       item_end :: INT
-      io_file_open,stdout_open :: BIN
+      stdout_open :: BIN
 
-      if (.io_file.associated) then
-      inquire(unit=.io_file.unit,opened=io_file_open)
-      if (io_file_open) then
+      if (.io_file_name==" ") return
 
-      item_end = max(1,.io_file.buffer.item_end)
-      if (item_end>0) cursor = repeat("-",item_end-1)//"^"
+      item_end = max(1,.io_file_cursor)
+      cursor = repeat("-",item_end-1)//"^"
 
       if (.IO_is_allowed) then
          write(.std_err_unit,*)
-         write(.std_err_unit,"('File name   = ',a)")  trim(.io_file.name)
-         write(.std_err_unit,"('Line number = ',i4)")      .io_file.record
-         write(.std_err_unit,"('File buffer = ',a)")  trim(.io_file.buffer.string)
+         write(.std_err_unit,"('File name   = ',a)")  trim(.io_file_name)
+         write(.std_err_unit,"('Line number = ',i4)")      .io_file_record
+         write(.std_err_unit,"('File buffer = ',a)")  trim(.io_file_line)
+         write(.std_err_unit,"('Cursor -------',a)")  trim(cursor)
          inquire(unit=.stdout_unit,opened=stdout_open)
          if (stdout_open) then
          if (.std_err_unit/=.stdout_unit) then
          write(.stdout_unit,*)
-         write(.stdout_unit,"('File name   = ',a)")  trim(.io_file.name)
-         write(.stdout_unit,"('Line number = ',i4)")      .io_file.record
-         write(.stdout_unit,"('File buffer = ',a)")  trim(.io_file.buffer.string)
-         end
-         end
-
-         if (item_end>0) then
-         write(.std_err_unit,"('Cursor -------',a)")  trim(cursor)
-         if (stdout_open) then
-         if (.std_err_unit/=.stdout_unit) then
+         write(.stdout_unit,"('File name   = ',a)")  trim(.io_file_name)
+         write(.stdout_unit,"('Line number = ',i4)")      .io_file_record
+         write(.stdout_unit,"('File buffer = ',a)")  trim(.io_file_line)
          write(.stdout_unit,"('Cursor -------',a)")  trim(cursor)
          end
          end
-         end
-      end
-
-      end
       end
 
       .flush_buffer

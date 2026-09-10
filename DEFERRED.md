@@ -39,13 +39,13 @@ now covers the whole project, so it was renamed.)*
 > closed on 2026-09-08 -- the near-zero eigenvector premise, `M_ani_error`, `make_CIF_esds`,
 > the element-wise ADP esd transform, the `make report` won't-do, and `command_arguments`.
 >
-> **34 live, 57 archived** as of 2026-09-10, counting `##` headings on each side of the archive
-> divider and excluding the handover section. (Six items closed on 2026-09-10: the 16 stale
-> `long` references, the end-of-HAR message, the 256-character input-line limit and the silently
-> absorbed wavelength were archived; the `types.foo` split was deleted outright as a thought
-> bubble; and the end-of-job timing-line truncation was judged too minor for the register and now
-> lives only here. The wavelength fix opened one new live item, the dangling `tonto.io_file`, so
-> the live count is unchanged. One theme was added, *Re-engineering*.) The
+> **33 live, 58 archived** as of 2026-09-10, counting `##` headings on each side of the archive
+> divider and excluding the handover section. (Seven items closed on 2026-09-10: the 16 stale
+> `long` references, the end-of-HAR message, the 256-character input-line limit, the silently
+> absorbed wavelength and the dangling `tonto.io_file` were archived; the `types.foo` split was
+> deleted outright as a thought bubble; and the end-of-job timing-line truncation was judged too
+> minor for the register and now lives only here. The wavelength fix opened the `io_file` item
+> and the same day closed it. One theme was added, *Re-engineering*.) The
 > running tally kept in this paragraph had drifted well out of step with the file, so it was
 > replaced with a count and the method to reproduce it rather than extended again.
 >
@@ -88,9 +88,10 @@ now covers the whole project, so it was renamed.)*
 > **Then the wavelength check landed, on 2026-09-10** — item 1 below, now archived as *FIXED
 > (2026-09-10)*. `DIFFRACTION_DATA.SET:update` refuses a wavelength inconsistent with its own
 > reflections; urea at 0.3173 A is unchanged at 0.462406(73078), Mo K-alpha now dies, and
-> `short long hart` is **103/103**. It opened one new live item under *Correctness*:
-> `tonto.io_file` is a dangling pointer that every `DIE` dereferences, so the new message is
-> followed by a screenful of raw memory. Error path only, nothing computed wrongly.
+> `short long hart` is **103/103**. It turned up one further defect, `tonto.io_file` as a
+> dangling pointer that every `DIE` dereferenced, and **that is fixed and archived too** --
+> `SYSTEM` now holds the reported values by copy rather than a pointer to the file. Both are
+> below with their evidence.
 >
 > Nothing else is in flight; the ordering below stands.
 
@@ -606,79 +607,6 @@ whole family of 256-character limits now follows; see the archived over-long-lin
 Contained: `time.foo` and its callers.
 
 ---
-
-## `tonto.io_file` is a dangling pointer, and every `DIE` dereferences it (2026-09-10)
-
-Found while verifying the wavelength `DIE` below. The new message prints correctly and is
-then followed by a screenful of raw memory:
-
-```
-Error in DIFFRACTION_DATA.SET:update ... wavelength inconsistent with the reflection
-data: 0.710730 A given, but these reflections need 0.694954 A or less; ...
-
-File name   = ^@^@^@^@^@^@ ... 
-Line number =    0
-File buffer = M-q^TM-IM-^G^M-5?!^@^@^@^@^@^@^@w M-sM-CM--M-^G^G@ ...
-```
-
-Those are IEEE doubles from the SCF, read back as characters.
-
-**The mechanism.** `SYSTEM:die` always calls `SYSTEM:report_io_file_info`, which guards on
-`.io_file.associated` and then on `inquire(unit=.io_file.unit,opened=...)`. `io_file` is a
-raw `TEXTFILE*` (`types.foo:485`), pointed at a file by `TEXTFILE:update_system_info`
-(`textfile.foo:6044`, `tonto.io_file => self`) from six read/seek routines. **Nothing ever
-un-points it.** For `hart` the target is the CIF's own `file :: TEXTFILE@` (`types.foo:829`),
-which `CIF:destroy` deallocates at `cif.foo:57`.
-
-**Neither guard can work, and this is the part worth keeping.** Fortran holds no
-back-references between a target and the pointers to it. Deallocating through one pointer
-leaves every other pointer to that object **undefined** — not disassociated. Undefined is
-strictly worse: the standard does not permit `ASSOCIATED` to be *asked* about such a pointer,
-so `.io_file.associated` is not a test that happens to fail here, it is a test with no defined
-answer. `.unit` is then whatever now occupies the memory, and the `inquire` passes or fails by
-accident. Here both passed.
-
-Demonstrated on gfortran-14 in nine lines — `q => p`, `deallocate(p)`, then
-`associated(p) = F`, `associated(q) = T`, and `q%unit` reads back as 2014742325. That is the
-Tonto failure in miniature.
-
-It is the 2026-09-09 recycled-unit defect one level up, and the lesson recorded there
-generalises: an object that caches a *unit* must drop it on close, and an object that caches
-a *pointer* must drop it on destroy — because the language will not do either for you, and
-will not let you detect that it has not.
-
-**Why it matters more than it looks.** It fires only on the error path, so no test sees it,
-and it corrupts precisely the diagnostic a person is reading when something has already gone
-wrong. Nothing is computed incorrectly.
-
-**Dylan's direction (2026-09-10): the alias must be nulled when the target is destroyed.**
-Right, and the language will not do it — so it has to be someone's explicit job. Two ways to
-discharge it, and the choice is still open.
-
-*Null it at the source.* `TEXTFILE:destroy` (and `:close`, since a closed file's buffer is not
-reportable either) clears the alias when it is the one being pointed at:
-
-```foo
-if (associated(tonto.io_file,self)) tonto.io_file => NULL()
-```
-
-The catch is that this guard has the very defect it is fixing — `ASSOCIATED` on an
-already-undefined pointer is undefined. It is sound only as an **invariant**: if every
-`TEXTFILE:destroy` nulls it, `io_file` is never left undefined, so the test always has an
-answer. That holds by induction as long as no `TEXTFILE` reaches its end without going through
-`destroy` — an allocatable component auto-deallocated at scope exit would not. So this route
-owes a survey of how `TEXTFILE`s actually die. The `hart` path at least is clean:
-`cif :: CIF@` is destroyed explicitly (`diffraction_data.read.foo:2458`,
-`diffraction_data.set.foo:810`) and `CIF:destroy_ptr_part` calls `.file.destroy`.
-
-*Or hold no pointer at all.* `report_io_file_info` needs three values — the name, the record
-number and the buffer string. Copy them into `SYSTEM` by value in `update_system_info` and
-there is no alias to invalidate and no invariant to maintain. The cost is a 256-byte string
-copy on every line read, which wants measuring before it is chosen.
-
-Not attempted alongside the wavelength check, deliberately: `report_io_file_info` is on every
-`DIE`, `ENSURE` and `WARN` path in the program, and mixing the two would make both harder to
-review.
 
 # MPI
 
@@ -3539,6 +3467,161 @@ different question and the one that matters.
 ---
 
 # Done, resolved and closed (archive)
+
+## FIXED (2026-09-10): `tonto.io_file` was a dangling pointer, and every `DIE` dereferenced it
+
+The defect is below, unchanged. **Dylan chose the second of the two routes**: hold no pointer
+at all, and copy into `SYSTEM` the values the reporter actually prints.
+
+**What landed.**
+
+- `SYSTEM` (`types.foo`) drops `io_file :: TEXTFILE*` for four plain components —
+  `io_file_name`, `io_file_record`, `io_file_line`, `io_file_cursor` — with
+  `set_io_file_info`, `set_io_file_cursor` and `clear_io_file_info` to write them.
+- `TEXTFILE` gains `update_IO_info` (the snapshot), `update_IO_cursor` (the cursor alone) and
+  `forget_IO_info` (clears the record when the file is closed, matched on the name so closing
+  an output file does not discard the input file's position). The old name
+  `update_system_info` named where the data went rather than what was sent; Dylan renamed all
+  three.
+- `SYSTEM:report_io_file_info` reads the four copies. No pointer, no `ASSOCIATED`, no
+  `inquire`.
+
+**What the route actually cost, which was more than the estimate.** The reporter wanted *live*
+state, and the pointer supplied that for free. A copy has to be pushed, and it needs pushing in
+four kinds of place, **fifteen sites in all**. Only the first was foreseen; the rest came out of
+running the code and reviewing the diff:
+
+| kind | sites | why |
+|---|---|---|
+| top of a read | 5 | claims the file, so a read that fails still names it and the last good line |
+| after `buffer.set_and_analyze` | 2 | the new line and its record number |
+| after a buffer advance | 7 | the cursor, which moves token by token |
+| `move_to_item` | 1 | a full snapshot: it claims the file and can be reached with no intervening read |
+
+The second row is the interesting one. The existing call sat at the *top* of
+`read_line_internal` and `read_line_external`, before `.record` is incremented and before the
+buffer is filled — harmless with a pointer, but with a copy it snapshots the *previous* line.
+The symptom was an empty `File buffer` and a line number one too low, and it was found only by
+provoking a real parse error. The third row is the same lesson again: `BUFFER:get_item` moves
+`item_end` token by token, long after the line was read, so without those pushes the `^` marker
+freezes at the start of every line — the one piece of information the marker exists to give.
+
+So the honest scorecard is fifteen push points against the other route's single null. What keeps
+the choice right is the failure mode: **a missed push misreports a column or a line in a
+diagnostic; a missed null dereferences freed memory.** One is a wrong string, the other is
+undefined behaviour that no test can see. But the surface is larger than it looked when the
+route was chosen, and that is worth knowing if the same trade comes up again.
+
+**Cost, measured.** A push copies a 1024-character name and a 256-character line: **24.5 ns**,
+timed at `-O2` over 200,000 iterations. The largest test input is 18,042 lines, so even 100,000
+pushes cost 2.5 ms against jobs of three to four seconds -- under a tenth of a percent, and far
+below the run-to-run variance, which is +/-11% serially. The suite's own `-j4` timings for the
+two most read-heavy jobs moved by +3% and +14%, but the same tests run serially are a full
+second faster than either figure, so those numbers were measuring contention, not this change.
+
+**Evidence.**
+
+| check | result |
+|---|---|
+| the wavelength `DIE` (file already closed) | message alone, no `File name` block, no garbage |
+| a bad keyword with the file still open | `stdin`, **line 11** (correct), the line's actual text, caret under the `=` of `chrage=` |
+| urea at 0.3173 A | 0.462406(73078), unchanged |
+| `ctest -L "short\|long\|hart"` | **103/103 passed** |
+
+The second row is the one that matters: it is the positive case, and checking only that the
+garbage had gone would have shipped a reporter that printed a blank line and the wrong line
+number.
+
+**The general lesson, and it extends the one from 2026-09-09.** That entry said an object
+caching a *unit* must drop it on close. This one adds: an object caching a *pointer* must drop
+it on destroy -- and the language will neither do it for you nor let you detect that it has not.
+Fortran keeps no back-references, so deallocating through one pointer leaves every other pointer
+to that object **undefined** rather than disassociated, and the standard does not permit
+`ASSOCIATED` to be asked about an undefined pointer. Demonstrated in nine lines on gfortran-14:
+`q => p`, `deallocate(p)`, then `associated(p) = F`, `associated(q) = T`, and `q%unit` reads back
+as 2014742325. It does not crash, because `deallocate` returns the block to the process
+allocator and the pages stay mapped -- which is why this survived for years on the error path.
+
+**Worth recording about the original design.** `tonto.io_file => self` wanted a live view of the
+file, held for free and valid whenever an error happened. That is a reasonable design under
+garbage collection, where holding the reference is what keeps the object alive. It was wrong
+only for the language it was written in. Under the Julia plan this class of defect disappears
+and the original design becomes valid -- a smaller argument than the parallelism one for the
+re-engineering item, but the same shape: a defect invisible to inspection that the language
+could have made impossible.
+
+## `tonto.io_file` is a dangling pointer, and every `DIE` dereferences it (2026-09-10)
+
+Found while verifying the wavelength `DIE` below. The new message prints correctly and is
+then followed by a screenful of raw memory:
+
+```
+Error in DIFFRACTION_DATA.SET:update ... wavelength inconsistent with the reflection
+data: 0.710730 A given, but these reflections need 0.694954 A or less; ...
+
+File name   = ^@^@^@^@^@^@ ... 
+Line number =    0
+File buffer = M-q^TM-IM-^G^M-5?!^@^@^@^@^@^@^@w M-sM-CM--M-^G^G@ ...
+```
+
+Those are IEEE doubles from the SCF, read back as characters.
+
+**The mechanism.** `SYSTEM:die` always calls `SYSTEM:report_io_file_info`, which guards on
+`.io_file.associated` and then on `inquire(unit=.io_file.unit,opened=...)`. `io_file` is a
+raw `TEXTFILE*` (`types.foo:485`), pointed at a file by `TEXTFILE:update_system_info`
+(`textfile.foo:6044`, `tonto.io_file => self`) from six read/seek routines. **Nothing ever
+un-points it.** For `hart` the target is the CIF's own `file :: TEXTFILE@` (`types.foo:829`),
+which `CIF:destroy` deallocates at `cif.foo:57`.
+
+**Neither guard can work, and this is the part worth keeping.** Fortran holds no
+back-references between a target and the pointers to it. Deallocating through one pointer
+leaves every other pointer to that object **undefined** — not disassociated. Undefined is
+strictly worse: the standard does not permit `ASSOCIATED` to be *asked* about such a pointer,
+so `.io_file.associated` is not a test that happens to fail here, it is a test with no defined
+answer. `.unit` is then whatever now occupies the memory, and the `inquire` passes or fails by
+accident. Here both passed.
+
+Demonstrated on gfortran-14 in nine lines — `q => p`, `deallocate(p)`, then
+`associated(p) = F`, `associated(q) = T`, and `q%unit` reads back as 2014742325. That is the
+Tonto failure in miniature.
+
+It is the 2026-09-09 recycled-unit defect one level up, and the lesson recorded there
+generalises: an object that caches a *unit* must drop it on close, and an object that caches
+a *pointer* must drop it on destroy — because the language will not do either for you, and
+will not let you detect that it has not.
+
+**Why it matters more than it looks.** It fires only on the error path, so no test sees it,
+and it corrupts precisely the diagnostic a person is reading when something has already gone
+wrong. Nothing is computed incorrectly.
+
+**Dylan's direction (2026-09-10): the alias must be nulled when the target is destroyed.**
+Right, and the language will not do it — so it has to be someone's explicit job. Two ways to
+discharge it, and the choice is still open.
+
+*Null it at the source.* `TEXTFILE:destroy` (and `:close`, since a closed file's buffer is not
+reportable either) clears the alias when it is the one being pointed at:
+
+```foo
+if (associated(tonto.io_file,self)) tonto.io_file => NULL()
+```
+
+The catch is that this guard has the very defect it is fixing — `ASSOCIATED` on an
+already-undefined pointer is undefined. It is sound only as an **invariant**: if every
+`TEXTFILE:destroy` nulls it, `io_file` is never left undefined, so the test always has an
+answer. That holds by induction as long as no `TEXTFILE` reaches its end without going through
+`destroy` — an allocatable component auto-deallocated at scope exit would not. So this route
+owes a survey of how `TEXTFILE`s actually die. The `hart` path at least is clean:
+`cif :: CIF@` is destroyed explicitly (`diffraction_data.read.foo:2458`,
+`diffraction_data.set.foo:810`) and `CIF:destroy_ptr_part` calls `.file.destroy`.
+
+*Or hold no pointer at all.* `report_io_file_info` needs three values — the name, the record
+number and the buffer string. Copy them into `SYSTEM` by value in `update_system_info` and
+there is no alias to invalidate and no invariant to maintain. The cost is a 256-byte string
+copy on every line read, which wants measuring before it is chosen.
+
+Not attempted alongside the wavelength check, deliberately: `report_io_file_info` is on every
+`DIE`, `ENSURE` and `WARN` path in the program, and mixing the two would make both harder to
+review.
 
 ## FIXED (2026-09-10): a wavelength inconsistent with the data is no longer absorbed silently
 
