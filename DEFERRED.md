@@ -39,12 +39,13 @@ now covers the whole project, so it was renamed.)*
 > closed on 2026-09-08 -- the near-zero eigenvector premise, `M_ani_error`, `make_CIF_esds`,
 > the element-wise ADP esd transform, the `make report` won't-do, and `command_arguments`.
 >
-> **34 live, 56 archived** as of 2026-09-10, counting `##` headings on each side of the archive
-> divider and excluding the handover section. (Five items closed on 2026-09-10: the 16 stale
-> `long` references, the end-of-HAR message, and the 256-character input-line limit were archived;
-> the `types.foo` split was deleted outright as a thought bubble; and the end-of-job timing-line
-> truncation was judged too minor for the register and now lives only here. One theme was added,
-> *Re-engineering*.) The
+> **34 live, 57 archived** as of 2026-09-10, counting `##` headings on each side of the archive
+> divider and excluding the handover section. (Six items closed on 2026-09-10: the 16 stale
+> `long` references, the end-of-HAR message, the 256-character input-line limit and the silently
+> absorbed wavelength were archived; the `types.foo` split was deleted outright as a thought
+> bubble; and the end-of-job timing-line truncation was judged too minor for the register and now
+> lives only here. The wavelength fix opened one new live item, the dangling `tonto.io_file`, so
+> the live count is unchanged. One theme was added, *Re-engineering*.) The
 > running tally kept in this paragraph had drifted well out of step with the file, so it was
 > replaced with a count and the method to reproduce it rather than extended again.
 >
@@ -82,8 +83,16 @@ now covers the whole project, so it was renamed.)*
 > scale factor byte-identical, line counts unchanged. The rebless also replaced the tied arg-max
 > label in `L_cysteine_IAM_R_min_max_residuals` with the deterministic winner from `a9d883e0`.
 > What is **not** closed is the gap that hid them: routine CI runs `short` only, so a change can
-> rebless `short`, leave `long` stale, and stay green. Nothing else is in flight; the ordering
-> below stands.
+> rebless `short`, leave `long` stale, and stay green.
+>
+> **Then the wavelength check landed, on 2026-09-10** — item 1 below, now archived as *FIXED
+> (2026-09-10)*. `DIFFRACTION_DATA.SET:update` refuses a wavelength inconsistent with its own
+> reflections; urea at 0.3173 A is unchanged at 0.462406(73078), Mo K-alpha now dies, and
+> `short long hart` is **103/103**. It opened one new live item under *Correctness*:
+> `tonto.io_file` is a dangling pointer that every `DIE` dereferences, so the new message is
+> followed by a screenful of raw memory. Error path only, nothing computed wrongly.
+>
+> Nothing else is in flight; the ordering below stands.
 
 **Nothing is in flight.** Two Science items closed on 2026-09-06: **milestone 11 (extinction)**
 and **`docs/GOF_NOT_CHI2.md`** (the `GoF2` rename, and GoF in the tables). Both are archived
@@ -93,11 +102,11 @@ natural next item and stays open — its free-set calls are still commented out 
 
 **Two findings from those two days matter more than the items themselves.**
 
-1. **A wavelength inconsistent with the data is absorbed silently**, filed live under
-   *Correctness*. It invalidated a published urea result: `89dbacef` records urea finding "nothing
-   at 1.3 sigma", which reproduces only at a wavelength this dataset cannot have. At its own
-   0.3173 A urea shows extinction at **6.3 sigma**. Filed, not fixed — the repair touches the
-   extinction model's angular factor, which `EXTINCTION_REPORT.md` §5 records as unsettled.
+1. **A wavelength inconsistent with the data is absorbed silently** — **fixed 2026-09-10**,
+   archived below. It invalidated a published urea result: `89dbacef` records urea finding
+   "nothing at 1.3 sigma", which reproduces only at a wavelength this dataset cannot have. At its
+   own 0.3173 A urea shows extinction at **6.3 sigma**. The repair was kept clear of the
+   extinction model's angular factor, which `EXTINCTION_REPORT.md` §5 still records as unsettled.
 2. **Two `hart` references moved from macOS to Linux**, filed live under *Test suite and
    numerics*. `urea_hart_STO-3G_disk_ffs` now passes because its reference migrated, not because
    its 0%-difference column alignment was explained — so the long-standing 143/144 is now 144/144
@@ -598,107 +607,78 @@ Contained: `time.foo` and its callers.
 
 ---
 
-## A wavelength inconsistent with the data is absorbed silently (2026-09-06)
+## `tonto.io_file` is a dangling pointer, and every `DIE` dereferences it (2026-09-10)
 
-Found while adding `tests/hart/urea_hart_STO-3G_extinction`, and it invalidates a
-result recorded in `89dbacef`.
+Found while verifying the wavelength `DIE` below. The new message prints correctly and is
+then followed by a screenful of raw memory:
 
-`VEC{REFLECTION}:set_stl_and_theta` (`foofiles/vec{reflection}.foo:369-370`) clamps
+```
+Error in DIFFRACTION_DATA.SET:update ... wavelength inconsistent with the reflection
+data: 0.710730 A given, but these reflections need 0.694954 A or less; ...
+
+File name   = ^@^@^@^@^@^@ ... 
+Line number =    0
+File buffer = M-q^TM-IM-^G^M-5?!^@^@^@^@^@^@^@w M-sM-CM--M-^G^G@ ...
+```
+
+Those are IEEE doubles from the SCF, read back as characters.
+
+**The mechanism.** `SYSTEM:die` always calls `SYSTEM:report_io_file_info`, which guards on
+`.io_file.associated` and then on `inquire(unit=.io_file.unit,opened=...)`. `io_file` is a
+raw `TEXTFILE*` (`types.foo:485`), pointed at a file by `TEXTFILE:update_system_info`
+(`textfile.foo:6044`, `tonto.io_file => self`) from six read/seek routines. **Nothing ever
+un-points it.** For `hart` the target is the CIF's own `file :: TEXTFILE@` (`types.foo:829`),
+which `CIF:destroy` deallocates at `cif.foo:57`.
+
+**Neither guard can work, and this is the part worth keeping.** Fortran holds no
+back-references between a target and the pointers to it. Deallocating through one pointer
+leaves every other pointer to that object **undefined** — not disassociated. Undefined is
+strictly worse: the standard does not permit `ASSOCIATED` to be *asked* about such a pointer,
+so `.io_file.associated` is not a test that happens to fail here, it is a test with no defined
+answer. `.unit` is then whatever now occupies the memory, and the `inquire` passes or fails by
+accident. Here both passed.
+
+Demonstrated on gfortran-14 in nine lines — `q => p`, `deallocate(p)`, then
+`associated(p) = F`, `associated(q) = T`, and `q%unit` reads back as 2014742325. That is the
+Tonto failure in miniature.
+
+It is the 2026-09-09 recycled-unit defect one level up, and the lesson recorded there
+generalises: an object that caches a *unit* must drop it on close, and an object that caches
+a *pointer* must drop it on destroy — because the language will not do either for you, and
+will not let you detect that it has not.
+
+**Why it matters more than it looks.** It fires only on the error path, so no test sees it,
+and it corrupts precisely the diagnostic a person is reading when something has already gone
+wrong. Nothing is computed incorrectly.
+
+**Dylan's direction (2026-09-10): the alias must be nulled when the target is destroyed.**
+Right, and the language will not do it — so it has to be someone's explicit job. Two ways to
+discharge it, and the choice is still open.
+
+*Null it at the source.* `TEXTFILE:destroy` (and `:close`, since a closed file's buffer is not
+reportable either) clears the alias when it is the one being pointed at:
 
 ```foo
-         st = stl*lambda
-         if (st> ONE) st =  ONE
+if (associated(tonto.io_file,self)) tonto.io_file => NULL()
 ```
 
-The comment above it says *"Take care, numerical accuracy issues"*, so the guard was
-written for a value a rounding error above 1. It also silently absorbs a wavelength that
-**cannot** belong to the data: any reflection with `sin(theta)/lambda > 1/lambda` is given
-`theta = 90` degrees instead of being rejected.
+The catch is that this guard has the very defect it is fixing — `ASSOCIATED` on an
+already-undefined pointer is undefined. It is sound only as an **invariant**: if every
+`TEXTFILE:destroy` nulls it, `io_file` is never left undefined, so the test always has an
+answer. That holds by induction as long as no `TEXTFILE` reaches its end without going through
+`destroy` — an allocatable component auto-deallocated at scope exit would not. So this route
+owes a survey of how `TEXTFILE`s actually die. The `hart` path at least is clean:
+`cif :: CIF@` is destroyed explicitly (`diffraction_data.read.foo:2458`,
+`diffraction_data.set.foo:810`) and `CIF:destroy_ptr_part` calls `.file.destroy`.
 
-`DIFFRACTION_DATA.INQ:extinction_angle_part` (`foofiles/diffraction_data.inq.foo:563`) then
-compounds it:
+*Or hold no pointer at all.* `report_io_file_info` needs three values — the name, the record
+number and the buffer string. Copy them into `SYSTEM` by value in `update_system_info` and
+there is no alias to invalidate and no invariant to maintain. The cost is a 256-byte string
+copy on every line read, which wants measuring before it is chosen.
 
-```foo
-         s = sin(TWO*.reflections(n).theta)
-         res(n) = TOL(3)*lambda3/max(s,TOL(6))
-```
-
-For a clamped reflection `sin 2theta` is zero, the `max(s,TOL(6))` floor returns `1e-6`, and
-that reflection's angular factor comes out about **10^6 times** a normal one's. The
-least-squares then drives `eps` down to compensate, and reports a small factor with a small
-esd. Exit 0, no warning, a plausible-looking number.
-
-**Measured, on urea (817 reflections, max `sin(theta)/lambda` = 1.438944 A^-1):**
-
-| lambda / A | clamped reflections | extinction factor | significance |
-|---|---|---|---|
-| 0.3173 (this dataset's own) | 0 | 0.462406(73078) | 6.3 sigma |
-| 0.71073 (Mo K-alpha) | 14 of 817 (1.7%) | 0.002569(2008) | 1.3 sigma |
-
-Mo K-alpha is impossible here — it implies `sin theta` = 1.0227. **So `89dbacef`'s claim
-that "urea finds nothing at 1.3 sigma, which is the consensus for so small a crystal" is an
-artefact of the clamp, not a physical result.** Corrected in `docs/PROJECT_HISTORY.md`
-milestone 11.
-
-**What to do — the plan (2026-09-10). Dylan is taking this next.**
-
-`DIFFRACTION_DATA` must refuse a wavelength inconsistent with its own reflections, naming the
-offending `sin(theta)/lambda`. A `DIE`, so it is live in release. The placement is not free, for
-three reasons that were worked through rather than guessed.
-
-**1. It cannot go in `set_wavelength`.** That setter is a bare assignment, called from the reader
-at `diffraction_data.read.foo:2369`, `:2510` and `:2582` — a job-file keyword and two CIF paths.
-At that moment the reflections may not have been read at all. The setter holds `lambda` and
-nothing else.
-
-**2. The check needs all three inputs.** The bound is `lambda <= 1/max(stl)`, and
-
-```
-stl(n) = HALF * norm(cell.reciprocal_mx . Miller_indices(n))
-```
-
-so it needs the wavelength, the **unit cell** (through the reciprocal-cell matrix) and **every**
-Miller index. That is precisely why no setter can do it: the question only becomes answerable
-once all three exist.
-
-**3. It cannot go where the clamp is, either.** `VEC{REFLECTION}:set_d_and_theta` is declared
-`PURE`, and the two macros are gated differently: `PURE` is `#undef`'d under `USE_PRECONDITIONS`
-and under `MPI`, so in a **release** build it expands to the real `pure` keyword, while `DIE` is
-gated on `USE_ERROR_MANAGEMENT` and **is live in release**. A `DIE` in that routine would
-therefore compile in debug, where `PURE` vanishes, and fail only in release — the `CLAUDE.md` §5
-trap running the other way round. Putting the check there means stripping `PURE` from a
-per-reflection routine.
-
-**Where it goes.** `DIFFRACTION_DATA.SET:update(unit_cell,spacegroup)`, at
-`diffraction_data.set.foo:695-696`, immediately before
-
-```foo
-.reflection0.set_d_and_theta(unit_cell,.wavelength)
-.reflections.set_d_and_theta(unit_cell,.wavelength)
-```
-
-It is the one place where the wavelength, the cell and the full reflection list are all in hand,
-and it is `leaky`, not `PURE`, so a `DIE` is legal there.
-
-**The split.** The test is per-reflection; the `DIE` need not be.
-
-- `VEC{REFLECTION}` gains a `PURE` inquiry returning the maximum `stl`, or the offending index.
-  No error machinery, so it stays pure, and it costs one pass. There is no such inquiry today —
-  checked, nothing matches `max_stl` or `stl_max`.
-- `DIFFRACTION_DATA.SET:update` does the `DIE`, naming the offending `sin(theta)/lambda`, the
-  implied `sin theta` and the wavelength that produced it. It has the context to say where the
-  bad wavelength came from; the vector routine does not.
-
-**The clamp stays.** The test is `st > ONE + tol`, not `st > ONE`. Rounding at the limiting
-sphere is still absorbed silently — that is what the guard was written for, and it is correct.
-Only a genuine contradiction dies. Urea at Mo K-alpha gives 1.0227, 2% out, so almost any sane
-tolerance separates the two regimes; size the constant from that gap, as
-`DIFFRACTION_DATA_SHIFT_TIE_TOL` was sized from its own failure.
-
-**Explicitly NOT part of this task: the `max(s,TOL(6))` floor.** It is part of the extinction
-model, not of the wavelength check. Changing it moves numbers wherever extinction is on,
-including the quartz reference, and §5 of `docs/EXTINCTION_REPORT.md` records that the angular
-factor is itself still unsettled — resolving it needs Larson (1970). Keep the two apart.
+Not attempted alongside the wavelength check, deliberately: `report_io_file_info` is on every
+`DIE`, `ENSURE` and `WARN` path in the program, and mixing the two would make both harder to
+review.
 
 # MPI
 
@@ -3559,6 +3539,173 @@ different question and the one that matters.
 ---
 
 # Done, resolved and closed (archive)
+
+## FIXED (2026-09-10): a wavelength inconsistent with the data is no longer absorbed silently
+
+The defect, its measurement and the placement argument are below, unchanged from when the
+plan was written; only the outcome is new.
+
+**What landed, in three pieces.**
+
+1. `include/macros.in` — `DIFFRACTION_DATA_STL_LAMBDA_TOL`, `TOL(4)`. Sized from the gap the
+   entry below identifies: cell constants and a wavelength read from a CIF carry six or seven
+   figures, so a reflection sitting exactly on the limiting sphere misses the bound by under
+   1e-5 relative, while Mo K-alpha on urea misses it by 2.3e-2. `TOL(4)` sits two orders above
+   the first and two below the second.
+2. `VEC{REFLECTION}:max_stl(cell)` — a `pure` inquiry returning the largest `sin(theta)/lambda`
+   in the list, worked out from the Miller indices and the reciprocal cell. It needs no prior
+   `set_d_and_theta`, which is the whole point: it answers the question *before* the angles
+   that wavelength implies have been formed. No error machinery, so it stays pure; one pass.
+3. `DIFFRACTION_DATA.SET:update` — the `DIE`, immediately before the two `set_d_and_theta`
+   calls, exactly where the plan put it.
+
+**One thing the plan did not foresee.** The message was first built into a `STR` variable and
+passed as `DIE(msg)`. That compiles and fires, but the output was
+
+```
+Error in wavelength inconsistent with the reflection data: ...
+```
+
+with no routine name. The translator prepends `MODULE:routine ... ` **inside the string
+literal**, so a variable argument loses it. Passing the concatenation inline — a literal first,
+then `//` — restores it, which is what `cif.foo:938` has always done. Worth knowing generally:
+**a `DIE` argument must begin with a string literal or it is anonymous.**
+
+**Evidence.**
+
+| run | result |
+|---|---|
+| urea at its own 0.3173 A, `--extinction t` | 0.462406(73078) — unchanged, to the last digit |
+| urea at 0.71073 A (Mo K-alpha) | exit 1, dies |
+| `ctest -L "short\|long\|hart"` | **103/103 passed** |
+
+The failing run says
+
+```
+Error in DIFFRACTION_DATA.SET:update ... wavelength inconsistent with the reflection data:
+0.710730 A given, but these reflections need 0.694954 A or less; the largest
+sin(theta)/lambda implies sin(theta) = 1.022701
+```
+
+1.022701 is the 1.0227 measured below, so the check sees exactly the contradiction the
+investigation found.
+
+**The 103/103 is the part that was genuinely uncertain.** 93 test files mention a wavelength,
+and every one of them is now asserted to be consistent with its own reflections — an
+assumption the suite had never tested. None was wrong.
+
+**What was deliberately left alone**, both still true and both recorded below: the clamp in
+`VEC{REFLECTION}:set_d_and_theta` stays (it is correct for rounding at the limiting sphere, and
+the new test is `> ONE + tol`, not `> ONE`), and the `max(s,TOL(6))` floor in
+`extinction_angle_part` is untouched — it belongs to the extinction model, whose angular factor
+`docs/EXTINCTION_REPORT.md` §5 still records as unsettled.
+
+**One new item came out of the verification**, filed live under *Correctness*:
+`tonto.io_file` is a dangling pointer and every `DIE` dereferences it, so the new message is
+followed by a screenful of raw memory. Pre-existing, on the error path only, and independent of
+this change.
+
+## A wavelength inconsistent with the data is absorbed silently (2026-09-06)
+
+Found while adding `tests/hart/urea_hart_STO-3G_extinction`, and it invalidates a
+result recorded in `89dbacef`.
+
+`VEC{REFLECTION}:set_stl_and_theta` (`foofiles/vec{reflection}.foo:369-370`) clamps
+
+```foo
+         st = stl*lambda
+         if (st> ONE) st =  ONE
+```
+
+The comment above it says *"Take care, numerical accuracy issues"*, so the guard was
+written for a value a rounding error above 1. It also silently absorbs a wavelength that
+**cannot** belong to the data: any reflection with `sin(theta)/lambda > 1/lambda` is given
+`theta = 90` degrees instead of being rejected.
+
+`DIFFRACTION_DATA.INQ:extinction_angle_part` (`foofiles/diffraction_data.inq.foo:563`) then
+compounds it:
+
+```foo
+         s = sin(TWO*.reflections(n).theta)
+         res(n) = TOL(3)*lambda3/max(s,TOL(6))
+```
+
+For a clamped reflection `sin 2theta` is zero, the `max(s,TOL(6))` floor returns `1e-6`, and
+that reflection's angular factor comes out about **10^6 times** a normal one's. The
+least-squares then drives `eps` down to compensate, and reports a small factor with a small
+esd. Exit 0, no warning, a plausible-looking number.
+
+**Measured, on urea (817 reflections, max `sin(theta)/lambda` = 1.438944 A^-1):**
+
+| lambda / A | clamped reflections | extinction factor | significance |
+|---|---|---|---|
+| 0.3173 (this dataset's own) | 0 | 0.462406(73078) | 6.3 sigma |
+| 0.71073 (Mo K-alpha) | 14 of 817 (1.7%) | 0.002569(2008) | 1.3 sigma |
+
+Mo K-alpha is impossible here — it implies `sin theta` = 1.0227. **So `89dbacef`'s claim
+that "urea finds nothing at 1.3 sigma, which is the consensus for so small a crystal" is an
+artefact of the clamp, not a physical result.** Corrected in `docs/PROJECT_HISTORY.md`
+milestone 11.
+
+**What to do — the plan (2026-09-10). Dylan is taking this next.**
+
+`DIFFRACTION_DATA` must refuse a wavelength inconsistent with its own reflections, naming the
+offending `sin(theta)/lambda`. A `DIE`, so it is live in release. The placement is not free, for
+three reasons that were worked through rather than guessed.
+
+**1. It cannot go in `set_wavelength`.** That setter is a bare assignment, called from the reader
+at `diffraction_data.read.foo:2369`, `:2510` and `:2582` — a job-file keyword and two CIF paths.
+At that moment the reflections may not have been read at all. The setter holds `lambda` and
+nothing else.
+
+**2. The check needs all three inputs.** The bound is `lambda <= 1/max(stl)`, and
+
+```
+stl(n) = HALF * norm(cell.reciprocal_mx . Miller_indices(n))
+```
+
+so it needs the wavelength, the **unit cell** (through the reciprocal-cell matrix) and **every**
+Miller index. That is precisely why no setter can do it: the question only becomes answerable
+once all three exist.
+
+**3. It cannot go where the clamp is, either.** `VEC{REFLECTION}:set_d_and_theta` is declared
+`PURE`, and the two macros are gated differently: `PURE` is `#undef`'d under `USE_PRECONDITIONS`
+and under `MPI`, so in a **release** build it expands to the real `pure` keyword, while `DIE` is
+gated on `USE_ERROR_MANAGEMENT` and **is live in release**. A `DIE` in that routine would
+therefore compile in debug, where `PURE` vanishes, and fail only in release — the `CLAUDE.md` §5
+trap running the other way round. Putting the check there means stripping `PURE` from a
+per-reflection routine.
+
+**Where it goes.** `DIFFRACTION_DATA.SET:update(unit_cell,spacegroup)`, at
+`diffraction_data.set.foo:695-696`, immediately before
+
+```foo
+.reflection0.set_d_and_theta(unit_cell,.wavelength)
+.reflections.set_d_and_theta(unit_cell,.wavelength)
+```
+
+It is the one place where the wavelength, the cell and the full reflection list are all in hand,
+and it is `leaky`, not `PURE`, so a `DIE` is legal there.
+
+**The split.** The test is per-reflection; the `DIE` need not be.
+
+- `VEC{REFLECTION}` gains a `PURE` inquiry returning the maximum `stl`, or the offending index.
+  No error machinery, so it stays pure, and it costs one pass. There is no such inquiry today —
+  checked, nothing matches `max_stl` or `stl_max`.
+- `DIFFRACTION_DATA.SET:update` does the `DIE`, naming the offending `sin(theta)/lambda`, the
+  implied `sin theta` and the wavelength that produced it. It has the context to say where the
+  bad wavelength came from; the vector routine does not.
+
+**The clamp stays.** The test is `st > ONE + tol`, not `st > ONE`. Rounding at the limiting
+sphere is still absorbed silently — that is what the guard was written for, and it is correct.
+Only a genuine contradiction dies. Urea at Mo K-alpha gives 1.0227, 2% out, so almost any sane
+tolerance separates the two regimes; size the constant from that gap, as
+`DIFFRACTION_DATA_SHIFT_TIE_TOL` was sized from its own failure.
+
+**Explicitly NOT part of this task: the `max(s,TOL(6))` floor.** It is part of the extinction
+model, not of the wavelength check. Changing it moves numbers wherever extinction is on,
+including the quartz reference, and §5 of `docs/EXTINCTION_REPORT.md` records that the angular
+factor is itself still unsettled — resolving it needs Larson (1970). Keep the two apart.
 
 ## DECIDED (2026-09-10): 256 characters is the input-line limit, and it stays
 

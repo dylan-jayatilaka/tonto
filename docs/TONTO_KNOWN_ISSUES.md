@@ -20,13 +20,14 @@ the ones worth reading.
   `TONTO_BASIS_SET_DIRECTORY`, `--basis-library` or `hart --basis-dir` are limited to 1024
   characters instead, which is the route to use for a deeply nested directory — on WSL,
   for instance.
-- **A wavelength inconsistent with the data is accepted silently.** Reflections beyond
-  `1/lambda` are given `theta = 90` degrees rather than being rejected, and the extinction
-  correction then weights them about a million times too heavily. **Silent** — the
-  refinement converges and reports a plausible extinction factor. Check that the
-  wavelength you supply is the one the data were measured at.
 - **A second `xray_data=` block does not restore the unpruned reflections.** Successive
   prunings compound.
+
+## Diagnostics
+
+- **An error message may be followed by a block of garbled text** under `File name`,
+  `Line number` and `File buffer`. The message itself is correct; the block below it is
+  read from memory that no longer holds a file, and can be ignored.
 
 ## Numerical accuracy and platforms
 
