@@ -147,6 +147,10 @@ CI runs `--suites short hart`.
 
 ## 5. Known rough edges
 
+- **An input line may not exceed 256 characters**, and a CIF is read through the
+  same line buffer as a job file. An over-long line is refused and named rather
+  than truncated. The CIF *path* is not affected — that may be up to 1024
+  characters, as may `--basis-dir`.
 - `<job>.err` is left behind on a clean run rather than deleted, and a run that
   stops early (`--help`, a usage error) leaves a stray file called `stderr`.
   `tonto` does the same, which is why so many `IO` manifests list `delete: stderr`.
@@ -156,6 +160,9 @@ CI runs `--suites short hart`.
   and such directions are dropped from the inverse and from the parameter count
   together. The count alone does not distinguish symmetry from an
   over-parameterised refinement.
+
+Issues shared with `tonto` are in
+[**Known issues and limits**](TONTO_KNOWN_ISSUES.md).
 
 Development history — what was wrong with `hart` before it worked, the fragHAR
 milestones and the MPI work — is in [`../DEFERRED.md`](../DEFERRED.md).

@@ -399,9 +399,14 @@ Future directions; details in `DEFERRED.md`.
   `MOLECULE.SCF:fragment_scf` to call back into `MOLECULE.SCF:scf` — the call cycle that makes
   the parallel-do lock unsafe where it matters. Moving `fragment_SCF` onto `CRYSTAL` dissolves
   the cycle and the recursion defect.
-- **Long term — re-engineer in a language with first-class parallelism.** Not now, and a bigger
-  task than hoisting `CRYSTAL`. The case is built on evidence: every parallelism defect found so
-  far was invisible to inspection. A language where reductions and collectives are checked
-  constructs removes these classes by construction instead of by lint.
+- **Re-engineering: flatten the object model, and move to a language with first-class
+  parallelism.** Two arguments, and they converge on Julia. *Parallelism:* every defect found so
+  far was invisible to inspection, and a language where reductions and collectives are checked
+  constructs removes those classes by construction instead of by lint. *Data model:* the derived
+  types behave more like persistent data records than objects, and the deep hierarchy is a large
+  part of why the code is inefficient. **The strategy is to destructure inside Foo first** —
+  nothing in Fortran mandates the OO paradigm, it was imposed by the Foo layer, so it can be
+  undone there progressively, making the eventual migration a translation rather than a redesign.
+  Hoisting `CRYSTAL` is the first step. Begins December 2026 or early 2027; see `DEFERRED.md`.
 - A module-level *call* graph in `writeDotFiles`; Fortran-2008 `submodule` constructs;
   boilerplate doc comments.

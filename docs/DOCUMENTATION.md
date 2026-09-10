@@ -21,6 +21,7 @@ parallel (MPI) builds for that platform.
 | [**Running `hart`**](RUNNING_HART.md) | standalone Hirshfeld atom refinement |
 | [**Running `rgbi`**](RUNNING_RGBI.md) | Roby-Gould bond indices and their pictures |
 | [**Installing the RGBI picture tools**](INSTALLING_RGBI.md) | LaTeX, Open Babel, mol2chemfig |
+| [**Known issues and limits**](TONTO_KNOWN_ISSUES.md) | what Tonto does not do, or does wrongly, that you may meet in ordinary use |
 
 ## Learning
 

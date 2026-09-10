@@ -66,6 +66,7 @@ now covers the whole project, so it was renamed.)*
 | [Tooling and editor support](#tooling-and-editor-support) | vim highlighting and integration |
 | [Workshop and examples](#workshop-and-examples) | The SO₂ exercise still owed, and exercise 4's contour plotting |
 | [Platform-specific](#platform-specific) | macOS/Apple Silicon, gfortran-16 |
+| [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
 ## WHERE 2026-09-06 LEFT OFF — read this first if you are picking up cold
@@ -3039,141 +3040,6 @@ highlighting and tighter editor integration. The repo already ships some vim sup
 
 # Platform-specific
 
-## OPEN: long paths to the basis sets fail -- STR is 256 characters
-
-> **Nearly done, and the previous header was wrong.** Measured on the release build,
-> 2026-09-10, with a 639-character path:
->
-> | route | result |
-> |---|---|
-> | `TONTO_BASIS_SET_DIRECTORY` | works -- energy identical to the short path |
-> | `--basis-library <path>` | works |
-> | `basis_directory=` in the job file | **fails**, between 220 and 320 characters |
->
-> The earlier claim that `MOLECULE.MAIN:run` and `:setup` "still take
-> `basis_library_dir :: STR`, so the 256-character limit still bites" was **wrong**: a Foo
-> `STR` dummy translates to `STR(len=*)`, i.e. assumed length, so those dummies never
-> truncated anything. The storage chain -- `VEC{BASIS}:library_directory` and its Slater
-> and Coppens siblings -- is already `STR(len=PATH_SIZE)`. There is nothing to widen there.
->
-> **What remains is one thing:** a path typed into a *job file* is bounded by the
-> 256-character line buffer, `BSTR_SIZE`, because it arrives as part of a line. Since
-> 2026-09-10 that no longer fails silently -- `TEXTFILE:read_line_external` refuses the line
-> and names it -- but it still fails. Letting a job file carry a longer path means raising
-> `BSTR_SIZE`, which is a deliberate decision and not a bug fix; see the note below against
-> moving paths onto `BSTR`. If it is ever taken, derive it (`BSTR_SIZE = PATH_SIZE +`
-> margin) rather than guessing a number from "most paths", which is unanswerable.
->
-> **Blast radius of raising `BSTR_SIZE`, measured 2026-09-10.** One derived-type component,
-> `BUFFER.string` (`types.foo`), plus `TEXTFILE.internal`, which was `STR_SIZE` and is now
-> `BSTR_SIZE` so the two line buffers cannot drift apart. A `BUFFER` lives in a `TEXTFILE`;
-> there are three global textfiles and five `TEXTFILE` slots in `types.foo`, so of order ten
-> instances -- 256 to 1280 would cost about 10 KB. Everything else is nine local variables
-> and function results: `str.foo:69`; `buffer.foo:258, 296, 323, 756, 767`;
-> `textfile.foo` (three); `system.foo:694`.
->
-> Two things below are now out of date. `command_arguments` **no longer exists** -- it was
-> never read and was deleted on 2026-09-08 rather than widened, so wherever the diagnosis
-> below names it as a thing to resize, there is nothing left to resize; see the archive
-> entry. And the `PATH_SIZE` comment's "4096 matches Linux PATH_MAX" beside a defined 1024
-> is settled: 1024 is the deliberate value and the comment now says so.
-
-**Reported for the Windows `tonto.exe` and `hart.exe` (untested binaries from
-the release workflow), suspected to be a forward/backslash problem. IT IS NOT.
-Reproduced on LINUX on 2026-08-14 with a long path, so no Windows box is needed
-to work on it.**
-
-    path length = 544
-    short path : exit=0   -74.963358
-    long path  : exit=1   Error in VEC{BASIS}:read_library_data ...
-                          no library basis set
-
-### Cause
-
-`STR_SIZE` is 256 (`include/macros.in:57`), so a Foo `STR` is
-`character(256)`. The basis directory is read as
-
-```foo
-call get_environment_variable(BASIS_LIBRARY_ENV_NAME, basdir, status=i)
-if (i/=0) basdir = " "
-```
-
-and the Fortran standard sets `status = -1` when the value is **too long for
-the variable supplied**. So a path over 256 characters is truncated, reports
--1, is then blanked by that line, and the code falls back to `./basis_sets` --
-which usually does not exist, giving "no library basis set" with no mention of
-a path problem.
-
-Three call sites, i.e. every program that takes a basis directory:
-`runfiles/run_har.foo:763`, `runfiles/run_molecule.foo:132`,
-`runfiles/run_xtal.foo:122`.
-
-Windows is where it surfaced because paths there are routinely deeper
-(`C:\Users\...\AppData\...`), not because of anything Windows-specific. There
-is no path-separator handling anywhere in `foofiles/`, and none is needed:
-Windows accepts forward slashes in its file APIs.
-
-### History: BSTR was 8192, and shrinking it was reasonable
-
-`git blame` settles this. Peter Spackman introduced `BSTR` in Dec 2015
-(`542350e7`) with `STR_SIZE 512` and **`BSTR_SIZE 8192`** -- a genuine "big
-string". Both were cut to 256 on 2024-11-25 (`f2c47977`, "Tidied TEXTFILE,
-slurp stdin? ...").
-
-**That was defensible.** `BSTR_SIZE` is the JOB-FILE LINE BUFFER:
-`buffer.foo:258` declares `item :: STR(len=BSTR_SIZE)` and `buffer.foo:23`
-warns "The buffer string is of length BSTR_SIZE". Shrinking an 8192-character
-per-line buffer while moving to slurping stdin is exactly the right call, and
-256 is ample for a job-file line.
-
-So do **not** move paths onto `BSTR`: that is the buffer's size, reduced
-deliberately. The error was that ONE constant was serving two requirements that
-differ by an order of magnitude.
-
-### The real scope: COMMAND_LINE is worse than the environment variable
-
-    command           :: STR   ! character(256)
-    command_arguments :: STR   ! EVERY argument, concatenated into one string
-    command_optarg    :: VEC{STR}@
-
-`command_arguments` accumulates all arguments joined together
-(`command_line.foo:134`), so it overflows well before any single path does; and
-`command_optarg` being `VEC{STR}` caps each individual option value -- including
-`--basis <path>` -- at 256. So the command-line route truncates independently of
-`TONTO_BASIS_SET_DIRECTORY`, which is why the report named both programs.
-
-### Two things to fix, and they are separate
-
-**1. Give paths and the command line their own size.** A `PATH_SIZE` (4096
-matches Linux `PATH_MAX`; Windows extended paths reach 32767), used by
-`COMMAND_LINE`'s `command`, `command_arguments` and `command_optarg`, and by the
-three `get_environment_variable` sites. `BUFFER` keeps `BSTR_SIZE` at 256,
-untouched. Raising `STR_SIZE` globally is the blunt alternative and would cost
-memory across the many `STR` members in `types.foo` for a problem in a handful
-of places.
-
-**2. Truncation must FAIL LOUDLY.** Independently of any size,
-
-    if (i/=0) basdir = " "
-
-treats "the value was truncated" (-1) exactly like "the variable is not set"
-(1), silently falling back to `./basis_sets`. Whatever size is chosen, a path
-that does not fit must DIE naming the variable and the length. This is the same
-silent-fallback shape as the DFT defects above, and it is why the failure
-surfaced as "no library basis set" with no mention of a path at all.
-
-### Testing
-
-The reproduction is a shell script away and needs no Windows: build a directory
-tree deeper than 256 characters, point `TONTO_BASIS_SET_DIRECTORY` at it, and
-assert the job still runs. That belongs in the suite alongside
-`check_single_atom_scf.py` -- it is the same kind of coverage gap, in that no
-existing test uses a long path.
-
-Worth noting in `docs/BUILDING_ON_WINDOWS.md` too, since that page collects the
-Windows traps and this is the one users will hit first.
-
-
 ## macOS in CI, with a badge (Dylan, 2026-08-09)
 
 > **Status 2026-09-08: the badges are live, and macOS-release is RED.** The merge to `master`
@@ -3625,7 +3491,242 @@ with no hand-written script at all.
 
 ---
 
+# Re-engineering: flattening the object model, and first-class parallelism
+
+**Dylan, 2026-09-10. Work begins December 2026 or early 2027. The detailed plan will be made
+then; this section records the strategy and why it exists, so the plan starts from something.**
+
+## Two axes, not one, and they converge
+
+Until now only one argument was recorded — `CLAUDE.md` §12 and `docs/PROJECT_HISTORY.md`:
+re-engineer in a language with **first-class parallelism**, argued from evidence rather than
+taste, because every parallelism defect found so far was invisible to inspection and a
+language where reductions and collectives are checked constructs removes those classes by
+construction instead of by lint. No language was named.
+
+Dylan's second argument, recorded here for the first time, is about the **data model**. The
+derived types in `types.foo` behave less like objects than like **persistent data records**,
+and the deep hierarchy is a large part of why the code is inefficient. Flat data entities
+decouple: entities can be created independently of one another instead of only through their
+containers. The ontology of the data is lost; what is bought is flat simplicity in the code.
+
+The two axes converge, because **Julia** answers both — first-class parallelism, and a design
+that favours flat data with behaviour attached by multiple dispatch rather than by containment.
+
+## The strategy: destructure inside Foo first
+
+Do not wait for the migration and then face the hierarchy. **Break the object hierarchy
+progressively in Foo, as far as Foo will go**, so the eventual migration is a translation
+rather than a redesign.
+
+The key observation, and the reason this is possible at all: **nothing in Fortran mandates the
+OO paradigm. It was imposed by the Foo layer.** So it can be undone in the Foo layer, slowly,
+without fighting the target language underneath.
+
+**Why this is a better-shaped plan than the one it replaces.** The recorded item was
+all-or-nothing -- "bigger than hoisting `CRYSTAL`, and not now" -- which is exactly why it has
+sat untouched. Progressive destructuring is a path: each step pays for itself in the current
+codebase whether or not the migration ever happens.
+
+## The first step is already scheduled
+
+**Hoisting `CRYSTAL` out of `MOLECULE`** is a destructuring move, and it is already planned for
+October. Today it is justified only by dissolving the call cycle -- a `MOLECULE` holds a
+`CRYSTAL` *and* holds `.mol(g)`, which forces `MOLECULE.SCF:fragment_scf` to call back into
+`MOLECULE.SCF:scf`, and that cycle is what makes the parallel-do lock unsafe where it matters.
+Under this strategy it gains a second and larger justification: it is the first instance of the
+programme, not a one-off repair. Frame it that way when it is done, and the destructuring that
+follows has a worked example to copy.
+
+## Not to be confused with the string question
+
+Asked and answered on 2026-09-10, so it is not re-opened: whether fat `STR(len=PATH_SIZE)`
+components should be moved out of the derived types. **Measured, and not worth doing.**
+`types.foo` has **639** allocatable/pointer components against **11** fat string components; the
+`__copy_*` deep-copy helpers that make `types.F90` the slowest compile are generated for the
+allocatables, and a fixed-length character component generates none. Seven of the eight types
+carrying a fat string are singletons or near; only `ATOM_GROUP` sits in a real array, and
+`molecule.main.foo:670` allocates a whole `MOLECULE` per atom group, which dwarfs its 3 KB.
+Making such a component `character(len=:), allocatable` would move it *into* the expensive
+class and forfeit `PURE` on assignment. Foo has no deferred-length string today in any case.
+
+That is a micro-optimisation. This section is about the shape of the data model, which is a
+different question and the one that matters.
+
+---
+
 # Done, resolved and closed (archive)
+
+## DECIDED (2026-09-10): 256 characters is the input-line limit, and it stays
+
+**Dylan's decision.** A path typed into a job file is bounded by the 256-character line
+buffer `BSTR_SIZE`, and that is now the documented limit rather than a defect to fix.
+`BSTR_SIZE` is not raised. The measured blast radius of raising it is kept below, in case
+the decision is ever revisited, but nothing is owed against it.
+
+**Why it is acceptable.** The bound applies only to a path that arrives *on an input line*.
+The two routes a user reaches for with a long path are not bounded by it — both were
+measured working at 639 characters:
+
+| route | limit |
+|---|---|
+| `TONTO_BASIS_SET_DIRECTORY` | `PATH_SIZE`, 1024 |
+| `--basis-library`, `hart --basis-dir` | `PATH_SIZE`, 1024 |
+| `basis_directory=` in a job file | `BSTR_SIZE`, 256 |
+
+So a deeply nested path — the WSL case Dylan raised, where a user's data may sit under
+`/mnt/c/Users/...` — has two unbounded routes available, and the limited one fails loudly
+rather than truncating.
+
+**Wider than paths, and this is the part worth knowing.** `BSTR_SIZE` is the line buffer,
+so the limit is on **any input line**, not only one carrying a path. A `CIF` holds a
+`TEXTFILE@` (`types.foo:829`), so a CIF is read through the same buffer as a job file —
+which means the limit applies to `hart`, whose only input is a CIF, and not just to
+`tonto`. The CIF *path* is unaffected: `CIF.file_name` is `STR(len=PATH_SIZE)`.
+
+**Documented in three places**, since a limit nobody can find is not a limit:
+`docs/TONTO_KNOWN_ISSUES.md` (new, and now the home for issues of this kind),
+`docs/RUNNING_HART.md` §5, and `docs/RUNNING_TONTO.md` where the basis-set routes are
+listed.
+
+The original entry follows, unchanged, for its measurements.
+
+---
+### The original entry: long paths to the basis sets fail -- STR is 256 characters
+
+> **Nearly done, and the previous header was wrong.** Measured on the release build,
+> 2026-09-10, with a 639-character path:
+>
+> | route | result |
+> |---|---|
+> | `TONTO_BASIS_SET_DIRECTORY` | works -- energy identical to the short path |
+> | `--basis-library <path>` | works |
+> | `basis_directory=` in the job file | **fails**, between 220 and 320 characters |
+>
+> The earlier claim that `MOLECULE.MAIN:run` and `:setup` "still take
+> `basis_library_dir :: STR`, so the 256-character limit still bites" was **wrong**: a Foo
+> `STR` dummy translates to `STR(len=*)`, i.e. assumed length, so those dummies never
+> truncated anything. The storage chain -- `VEC{BASIS}:library_directory` and its Slater
+> and Coppens siblings -- is already `STR(len=PATH_SIZE)`. There is nothing to widen there.
+>
+> **What remains is one thing:** a path typed into a *job file* is bounded by the
+> 256-character line buffer, `BSTR_SIZE`, because it arrives as part of a line. Since
+> 2026-09-10 that no longer fails silently -- `TEXTFILE:read_line_external` refuses the line
+> and names it -- but it still fails. Letting a job file carry a longer path means raising
+> `BSTR_SIZE`, which is a deliberate decision and not a bug fix; see the note below against
+> moving paths onto `BSTR`. If it is ever taken, derive it (`BSTR_SIZE = PATH_SIZE +`
+> margin) rather than guessing a number from "most paths", which is unanswerable.
+>
+> **Blast radius of raising `BSTR_SIZE`, measured 2026-09-10.** One derived-type component,
+> `BUFFER.string` (`types.foo`), plus `TEXTFILE.internal`, which was `STR_SIZE` and is now
+> `BSTR_SIZE` so the two line buffers cannot drift apart. A `BUFFER` lives in a `TEXTFILE`;
+> there are three global textfiles and five `TEXTFILE` slots in `types.foo`, so of order ten
+> instances -- 256 to 1280 would cost about 10 KB. Everything else is nine local variables
+> and function results: `str.foo:69`; `buffer.foo:258, 296, 323, 756, 767`;
+> `textfile.foo` (three); `system.foo:694`.
+>
+> Two things below are now out of date. `command_arguments` **no longer exists** -- it was
+> never read and was deleted on 2026-09-08 rather than widened, so wherever the diagnosis
+> below names it as a thing to resize, there is nothing left to resize; see the archive
+> entry. And the `PATH_SIZE` comment's "4096 matches Linux PATH_MAX" beside a defined 1024
+> is settled: 1024 is the deliberate value and the comment now says so.
+
+**Reported for the Windows `tonto.exe` and `hart.exe` (untested binaries from
+the release workflow), suspected to be a forward/backslash problem. IT IS NOT.
+Reproduced on LINUX on 2026-08-14 with a long path, so no Windows box is needed
+to work on it.**
+
+    path length = 544
+    short path : exit=0   -74.963358
+    long path  : exit=1   Error in VEC{BASIS}:read_library_data ...
+                          no library basis set
+
+### Cause
+
+`STR_SIZE` is 256 (`include/macros.in:57`), so a Foo `STR` is
+`character(256)`. The basis directory is read as
+
+```foo
+call get_environment_variable(BASIS_LIBRARY_ENV_NAME, basdir, status=i)
+if (i/=0) basdir = " "
+```
+
+and the Fortran standard sets `status = -1` when the value is **too long for
+the variable supplied**. So a path over 256 characters is truncated, reports
+-1, is then blanked by that line, and the code falls back to `./basis_sets` --
+which usually does not exist, giving "no library basis set" with no mention of
+a path problem.
+
+Three call sites, i.e. every program that takes a basis directory:
+`runfiles/run_har.foo:763`, `runfiles/run_molecule.foo:132`,
+`runfiles/run_xtal.foo:122`.
+
+Windows is where it surfaced because paths there are routinely deeper
+(`C:\Users\...\AppData\...`), not because of anything Windows-specific. There
+is no path-separator handling anywhere in `foofiles/`, and none is needed:
+Windows accepts forward slashes in its file APIs.
+
+### History: BSTR was 8192, and shrinking it was reasonable
+
+`git blame` settles this. Peter Spackman introduced `BSTR` in Dec 2015
+(`542350e7`) with `STR_SIZE 512` and **`BSTR_SIZE 8192`** -- a genuine "big
+string". Both were cut to 256 on 2024-11-25 (`f2c47977`, "Tidied TEXTFILE,
+slurp stdin? ...").
+
+**That was defensible.** `BSTR_SIZE` is the JOB-FILE LINE BUFFER:
+`buffer.foo:258` declares `item :: STR(len=BSTR_SIZE)` and `buffer.foo:23`
+warns "The buffer string is of length BSTR_SIZE". Shrinking an 8192-character
+per-line buffer while moving to slurping stdin is exactly the right call, and
+256 is ample for a job-file line.
+
+So do **not** move paths onto `BSTR`: that is the buffer's size, reduced
+deliberately. The error was that ONE constant was serving two requirements that
+differ by an order of magnitude.
+
+### The real scope: COMMAND_LINE is worse than the environment variable
+
+    command           :: STR   ! character(256)
+    command_arguments :: STR   ! EVERY argument, concatenated into one string
+    command_optarg    :: VEC{STR}@
+
+`command_arguments` accumulates all arguments joined together
+(`command_line.foo:134`), so it overflows well before any single path does; and
+`command_optarg` being `VEC{STR}` caps each individual option value -- including
+`--basis <path>` -- at 256. So the command-line route truncates independently of
+`TONTO_BASIS_SET_DIRECTORY`, which is why the report named both programs.
+
+### Two things to fix, and they are separate
+
+**1. Give paths and the command line their own size.** A `PATH_SIZE` (4096
+matches Linux `PATH_MAX`; Windows extended paths reach 32767), used by
+`COMMAND_LINE`'s `command`, `command_arguments` and `command_optarg`, and by the
+three `get_environment_variable` sites. `BUFFER` keeps `BSTR_SIZE` at 256,
+untouched. Raising `STR_SIZE` globally is the blunt alternative and would cost
+memory across the many `STR` members in `types.foo` for a problem in a handful
+of places.
+
+**2. Truncation must FAIL LOUDLY.** Independently of any size,
+
+    if (i/=0) basdir = " "
+
+treats "the value was truncated" (-1) exactly like "the variable is not set"
+(1), silently falling back to `./basis_sets`. Whatever size is chosen, a path
+that does not fit must DIE naming the variable and the length. This is the same
+silent-fallback shape as the DFT defects above, and it is why the failure
+surfaced as "no library basis set" with no mention of a path at all.
+
+### Testing
+
+The reproduction is a shell script away and needs no Windows: build a directory
+tree deeper than 256 characters, point `TONTO_BASIS_SET_DIRECTORY` at it, and
+assert the job still runs. That belongs in the suite alongside
+`check_single_atom_scf.py` -- it is the same kind of coverage gap, in that no
+existing test uses a long path.
+
+Worth noting in `docs/BUILDING_ON_WINDOWS.md` too, since that page collects the
+Windows traps and this is the one users will hit first.
+
+
 
 ## DONE (2026-09-10): the end-of-HAR message, corrected and the references reblessed
 

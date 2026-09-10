@@ -36,7 +36,9 @@ The executable can go anywhere. Two things help:
 
 - Tonto needs the **`basis_sets`** folder — in the same place, or named in the
   input file, or given by `--basis-library`, or by the
-  `TONTO_BASIS_SET_DIRECTORY` environment variable.
+  `TONTO_BASIS_SET_DIRECTORY` environment variable. A path longer than 256
+  characters must use one of the latter two: a path named *in the input file*
+  arrives on an input line, and an input line is limited to 256 characters.
 - A **symbolic link** named `tonto` pointing into the build directory means
   every job picks up the latest build after a recompile.
 - For long jobs, copy the executable to a descriptive name —
