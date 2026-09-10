@@ -39,9 +39,12 @@ now covers the whole project, so it was renamed.)*
 > closed on 2026-09-08 -- the near-zero eigenvector premise, `M_ani_error`, `make_CIF_esds`,
 > the element-wise ADP esd transform, the `make report` won't-do, and `command_arguments`.
 >
-> **37 live, 51 archived** as of 2026-09-09, counting `##` headings on each side of the archive
-> divider and excluding the handover section. (The eigenvector sign canonicalisation closed and
-> was archived the same day; the stale `long` references it uncovered were filed live.) The
+> **34 live, 56 archived** as of 2026-09-10, counting `##` headings on each side of the archive
+> divider and excluding the handover section. (Five items closed on 2026-09-10: the 16 stale
+> `long` references, the end-of-HAR message, and the 256-character input-line limit were archived;
+> the `types.foo` split was deleted outright as a thought bubble; and the end-of-job timing-line
+> truncation was judged too minor for the register and now lives only here. One theme was added,
+> *Re-engineering*.) The
 > running tally kept in this paragraph had drifted well out of step with the file, so it was
 > replaced with a count and the method to reproduce it rather than extended again.
 >
