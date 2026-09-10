@@ -571,26 +571,22 @@ varied a grid, and every test spelled its functional correctly. `scripts/check_d
 properties rather than blessed numbers, so none of them can be blessed away. Check 4
 is the bogus name: `blyp` as an exchange functional must exit non-zero.
 
-## An over-long line aborts with no diagnostic in release (2026-08-09)
+## The end-of-job timing lines still truncate a very long job name (2026-09-10)
 
-`BUFFER:put_str` (`foofiles/buffer.foo:514`) guards the 256-character `STR`
-limit with
+**Half fixed.** `TIME:elapsed_time_message` declared its result `res :: STR(len=132)` -- a
+hard-coded 132 matching nothing else in the codebase, not `STR_SIZE`, not `BSTR_SIZE`. With a
+230-character `name=` the wall-clock line came out at 132 characters and the CPU line at 255,
+both cut mid-name, exit 0. The result is now a plain `STR`, so the two lines agree and the
+odd 132 is gone.
 
-```
-   ENSURE(.item_end+len(string)<=BSTR_SIZE,"cursor beyond buffer end")
-```
+**What is left:** `STR` is 256, so a name long enough still overruns the message and Fortran
+truncates it on assignment, silently. Measured after the fix, 230-character name: 256 and 255
+characters, exit 0, where the text wants about 287.
 
-and `ENSURE` is gated on `USE_PRECONDITIONS`, so it compiles to nothing in
-exactly the build users run. An over-long line therefore dumps core instead of
-reporting itself. It should be a `DIE_IF`, which is gated on
-`USE_ERROR_MANAGEMENT` and is live in release; the routine is declared `PURE`
-(the macro, not the Fortran keyword), so a `DIE_IF` is permitted there.
-
-Sharper since Tonto began drawing its own plots: the emitted gnuplot command
-interpolates a job-name-derived file name into several lines, so a long `name=`
-shortens the distance to 256 characters. Related, and the same root limit:
-*"long paths to the basis sets fail -- STR is 256 characters"* under
-*Platform-specific*.
+Widening the result again only moves the cliff. The repair is either for the message not to
+embed an unbounded name, or for the truncation to be visible -- which is the house rule this
+whole family of 256-character limits now follows; see the archived over-long-line entry.
+Contained: `time.foo` and its callers.
 
 ---
 
@@ -3103,11 +3099,36 @@ highlighting and tighter editor integration. The repo already ships some vim sup
 
 ## OPEN: long paths to the basis sets fail -- STR is 256 characters
 
-> **Half done.** `PATH_SIZE` now exists (`include/macros.in`, 1024) and `COMMAND_LINE`
-> uses it -- `token` is `STR(len=PATH_SIZE)`, as are `command`, `item`, `option`,
-> `option_value`, `arg` and `command_optarg` in `types.foo`. That was the worse half.
-> **The basis-directory half is untouched:** `MOLECULE.MAIN:run` and `:setup` still take
-> `basis_library_dir :: STR`, so the 256-character limit below still bites.
+> **Nearly done, and the previous header was wrong.** Measured on the release build,
+> 2026-09-10, with a 639-character path:
+>
+> | route | result |
+> |---|---|
+> | `TONTO_BASIS_SET_DIRECTORY` | works -- energy identical to the short path |
+> | `--basis-library <path>` | works |
+> | `basis_directory=` in the job file | **fails**, between 220 and 320 characters |
+>
+> The earlier claim that `MOLECULE.MAIN:run` and `:setup` "still take
+> `basis_library_dir :: STR`, so the 256-character limit still bites" was **wrong**: a Foo
+> `STR` dummy translates to `STR(len=*)`, i.e. assumed length, so those dummies never
+> truncated anything. The storage chain -- `VEC{BASIS}:library_directory` and its Slater
+> and Coppens siblings -- is already `STR(len=PATH_SIZE)`. There is nothing to widen there.
+>
+> **What remains is one thing:** a path typed into a *job file* is bounded by the
+> 256-character line buffer, `BSTR_SIZE`, because it arrives as part of a line. Since
+> 2026-09-10 that no longer fails silently -- `TEXTFILE:read_line_external` refuses the line
+> and names it -- but it still fails. Letting a job file carry a longer path means raising
+> `BSTR_SIZE`, which is a deliberate decision and not a bug fix; see the note below against
+> moving paths onto `BSTR`. If it is ever taken, derive it (`BSTR_SIZE = PATH_SIZE +`
+> margin) rather than guessing a number from "most paths", which is unanswerable.
+>
+> **Blast radius of raising `BSTR_SIZE`, measured 2026-09-10.** One derived-type component,
+> `BUFFER.string` (`types.foo`), plus `TEXTFILE.internal`, which was `STR_SIZE` and is now
+> `BSTR_SIZE` so the two line buffers cannot drift apart. A `BUFFER` lives in a `TEXTFILE`;
+> there are three global textfiles and five `TEXTFILE` slots in `types.foo`, so of order ten
+> instances -- 256 to 1280 would cost about 10 KB. Everything else is nine local variables
+> and function results: `str.foo:69`; `buffer.foo:258, 296, 323, 756, 767`;
+> `textfile.foo` (three); `system.foo:694`.
 >
 > Two things below are now out of date. `command_arguments` **no longer exists** -- it was
 > never read and was deleted on 2026-09-08 rather than widened, so wherever the diagnosis
@@ -3663,6 +3684,72 @@ with no hand-written script at all.
 ---
 
 # Done, resolved and closed (archive)
+
+## FIXED (2026-09-10): an over-long line was silent in release, in *both* directions
+
+`BUFFER:put_str` guarded the 256-character buffer with `ENSURE`, which is gated on
+`USE_PRECONDITIONS` and so compiles to nothing in exactly the build users run. Writing past
+`.string` is a wild write into the heap; it corrupted output or segfaulted inside `memmove`,
+always with exit 0 or no message.
+
+**The plan recorded here was unworkable, and that is worth keeping.** It said "it should be a
+`DIE_IF` ... the routine is declared `PURE` (the macro, not the Fortran keyword), so a
+`DIE_IF` is permitted there". True in debug and MPI builds, where `macros.in` `#undef`s
+`PURE` -- but **not in the serial release build, which is the build with the bug**. There
+`PURE` is the real Fortran `pure` and `DIE_IF` expands to `call die_if_(tonto,...)`, which is
+illegal in a pure procedure. This is the same wall the DFT dispatchers hit: *when a live
+check and `pure` conflict, the check wins and `pure` goes.*
+
+The purity cascade turned out to be four routines wide and no wider: `BUFFER:put_str`, the
+five `put_formatted_*` that call it, and `TEXTFILE:clear_and_put_margin` and
+`increment_margin_width`. Every other caller was already impure. Nothing is lost -- these are
+output routines, which are not pure under MPI or debug anyway, and *should* never be pure.
+
+**The input direction was the same defect and had been missed.** An advancing `read` into
+`STR(len=BSTR_SIZE)` blank-pads a short record, silently discards whatever runs past the end,
+and reports `iostat = 0` either way, so a truncated line is indistinguishable from one that
+fitted. That is why a long `basis_directory=` in a job file failed with *"no library basis
+set"*, or with a parse error naming the **next** line.
+
+**A sentinel character does not work** and was rejected: reading into a buffer one character
+longer and testing whether that character is blank is one-sided -- non-blank proves the line
+is too long, blank proves nothing, since a long line may simply have a space at position 257.
+
+**The exact test is a non-advancing read.** With `advance="no"` the outcomes separate, and
+`size=` hands back the record's true length for free:
+
+| `iostat` | meaning |
+|---|---|
+| `< 0`, not EOF | end of record -- the normal case; `size` is the true length |
+| `0` | the buffer filled before the record ended, i.e. **the line is too long** |
+| EOF | end of file |
+| `> 0` | a real read error |
+
+End-of-record and end-of-file are both negative and processor-dependent (`IOSTAT_EOR` and
+`IOSTAT_END` in `ISO_FORTRAN_ENV`). Only EOF is compared against, so no end-of-record
+constant was needed. On the too-long path the rest of the record is read out, both to report
+the true length and to leave the file on the next line. The read stays inside
+`IO_IS_ALLOWED`; the broadcasts stay unconditional and outside it.
+
+`TEXTFILE.internal` -- the in-memory file -- was sized by `STR_SIZE`, not `BSTR_SIZE`, so the
+two line buffers could have drifted apart. It is now `BSTR_SIZE` (no change today, both 256),
+and `create(internal)` refuses caller lines wider than the buffer. That test is exact too:
+the dummy is assumed-length, so `len(internal)` *is* the caller's declared line length.
+
+**Measured after the fix.**
+
+```
+Error in BUFFER:put_str ... output line would be 665 characters, over the
+256 character limit; it is:   --basis-dir /tmp/.../basis_sets
+    -- hart echoing a 650-character --basis-dir; previously 665 bytes into a 256-byte buffer
+
+Error in TEXTFILE:read_line_too_long ... input line 3 is 670 characters, over the
+256 character line limit, in file jf.inp
+    -- previously a parse error naming line 5
+```
+
+`ctest -L short`: 65/65. No size constant was changed; `BSTR_SIZE` stays 256.
+
 
 ## FIXED (2026-09-09): `std_err` wrote into the *input* file — a recycled unit number
 

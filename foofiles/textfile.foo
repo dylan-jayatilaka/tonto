@@ -196,6 +196,12 @@ contains
       self     :: allocatable, OUT
       internal :: VEC{STR}, IN
 
+      ! The dummy is assumed-length, so len() is the CALLER's line length.
+      ! Lines wider than the buffer would be cut by the assignment below --
+      ! the same truncation read_line_external now refuses, and refused here
+      ! for the same reason, so the two paths cannot disagree.
+      DIE_IF(len(internal)>BSTR_SIZE,"internal file lines are longer than the line buffer")
+
       .create
 
       ! Reset some defaults
@@ -1013,21 +1019,65 @@ contains
 
    ENSURE(.is_open,"file is not open")
 
-      string :: STR(len=BSTR_SIZE)
+      string,tail :: STR(len=BSTR_SIZE)
+      length,n :: INT
+      too_long :: BIN
 
       ! Update
       .update_system_info
 
-      ! Read a line
+      ! Read a line.
+      !
+      ! The read is NON-ADVANCING, which is the only way in standard Fortran to
+      ! tell a line that just fitted from one that was cut off. An ordinary
+      ! advancing read blank-pads a short record, silently DISCARDS whatever
+      ! runs past the end of "string", and reports iostat=0 in both cases -- so
+      ! the truncation is invisible. With advance="no" the outcomes separate:
+      !
+      !   iostat < 0, not EOF : end of record -- the normal case; "size" then
+      !                         gives the record's true length
+      !   iostat = 0          : "string" filled before the record ended, i.e.
+      !                         THE LINE IS TOO LONG
+      !   iostat = EOF        : end of file
+      !   iostat > 0          : a real read error
+      !
+      ! End-of-record and end-of-file are both negative and processor-dependent
+      ! (ISO_FORTRAN_ENV names them IOSTAT_EOR and IOSTAT_END). Only EOF is
+      ! compared against below, so no end-of-record constant is needed.
+      !
+      ! Master only, as every read here is; the results are broadcast after.
       .IO_status = 0
-      string = " "
+      string   = " "
+      length   = 0
+      too_long = FALSE
+
       if (IO_IS_ALLOWED) then
-         read(unit=.unit,iostat=.IO_status,fmt="(a)") string
+
+         read(unit=.unit,iostat=.IO_status,fmt="(a)",advance="no",size=length) string
+
+         ! Too long. Read the rest of the record, both to say how long it
+         ! really is and to leave the file positioned on the next line.
+         too_long = .IO_status==0
+         do while (.IO_status==0)
+            read(unit=.unit,iostat=.IO_status,fmt="(a)",advance="no",size=n) tail
+            length = length + n
+         end
+
+         ! Back to the advancing convention used below, where 0 is a good line.
+         ! A positive status is a real error and must survive untouched.
+         if (.IO_status<0 AND .IO_status/=TEXTFILE_IOSTAT_EOF) .IO_status = 0
+
       end
 
-      ! Broadcast
+      ! Broadcast. Unconditional, and outside the guard above, so that every
+      ! rank enters the same collectives.
       PARALLEL_BROADCAST_IO(.IO_status,tonto.master_processor)
       PARALLEL_BROADCAST_IO(string,tonto.master_processor)
+      PARALLEL_BROADCAST_IO(length,tonto.master_processor)
+      PARALLEL_BROADCAST_IO(too_long,tonto.master_processor)
+
+      ! An over-long line is an error, not something to trim quietly
+      if (too_long) .read_line_too_long(length)
 
       ! Is the read OK?
       select case (.IO_status)
@@ -1062,6 +1112,21 @@ contains
          DIE("read error")
 
       end
+
+   end
+
+   read_line_too_long(length) :: private
+   ! An input line was longer than the line buffer. Say so, naming the line and
+   ! its true length: quietly keeping the first BSTR_SIZE characters is how a
+   ! long path in a job file used to fail, with an error naming the NEXT line.
+      self :: IN
+      length :: INT, IN
+
+      msg :: STR
+
+      write(msg,'(a,i0,a,i0,a,i0,a)') "line ",.record+1," is ",length, &
+            " characters, over the ",BSTR_SIZE," character line limit, in file "
+      DIE("input "//trim(msg)//" "//trim(.name))
 
    end
 
@@ -3553,8 +3618,9 @@ contains
 
 !  Clearing, flushing, tabbing, dashing & plain text line
 
-   clear_and_put_margin :: PURE
-   ! Clear the buffer and put a margin in
+   clear_and_put_margin
+   ! Clear the buffer and put a margin in.
+   ! Not PURE, because BUFFER:put_str is not -- it carries a live DIE.
       self :: INOUT
 
       .buffer.clear
@@ -5847,8 +5913,9 @@ contains
 !  Dump OPVECTOR and OPMATRIX
 !  ==========================
 
-   increment_margin_width(val) :: PURE
-   ! Increment the width of the margin in the buffer to "val"
+   increment_margin_width(val)
+   ! Increment the width of the margin in the buffer to "val".
+   ! Not PURE, because .clear_and_put_margin below is not.
       self :: INOUT
       val :: INT, IN
 
