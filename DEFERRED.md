@@ -636,13 +636,65 @@ that "urea finds nothing at 1.3 sigma, which is the consensus for so small a cry
 artefact of the clamp, not a physical result.** Corrected in `docs/PROJECT_HISTORY.md`
 milestone 11.
 
-**What to do, not yet decided.** The obvious repair is for `DIFFRACTION_DATA` to refuse a
-wavelength inconsistent with its own reflections, naming the offending `sin(theta)/lambda` —
-a `DIE`, so it is live in release. Whether the `max(s,TOL(6))` floor should also change is a
-separate question and a larger one: that floor is part of the extinction model, changing it
-moves numbers wherever extinction is on including the quartz reference, and §5 of
-`docs/EXTINCTION_REPORT.md` records that the angular factor is itself still unsettled —
-resolving it needs Larson (1970).
+**What to do — the plan (2026-09-10). Dylan is taking this next.**
+
+`DIFFRACTION_DATA` must refuse a wavelength inconsistent with its own reflections, naming the
+offending `sin(theta)/lambda`. A `DIE`, so it is live in release. The placement is not free, for
+three reasons that were worked through rather than guessed.
+
+**1. It cannot go in `set_wavelength`.** That setter is a bare assignment, called from the reader
+at `diffraction_data.read.foo:2369`, `:2510` and `:2582` — a job-file keyword and two CIF paths.
+At that moment the reflections may not have been read at all. The setter holds `lambda` and
+nothing else.
+
+**2. The check needs all three inputs.** The bound is `lambda <= 1/max(stl)`, and
+
+```
+stl(n) = HALF * norm(cell.reciprocal_mx . Miller_indices(n))
+```
+
+so it needs the wavelength, the **unit cell** (through the reciprocal-cell matrix) and **every**
+Miller index. That is precisely why no setter can do it: the question only becomes answerable
+once all three exist.
+
+**3. It cannot go where the clamp is, either.** `VEC{REFLECTION}:set_d_and_theta` is declared
+`PURE`, and the two macros are gated differently: `PURE` is `#undef`'d under `USE_PRECONDITIONS`
+and under `MPI`, so in a **release** build it expands to the real `pure` keyword, while `DIE` is
+gated on `USE_ERROR_MANAGEMENT` and **is live in release**. A `DIE` in that routine would
+therefore compile in debug, where `PURE` vanishes, and fail only in release — the `CLAUDE.md` §5
+trap running the other way round. Putting the check there means stripping `PURE` from a
+per-reflection routine.
+
+**Where it goes.** `DIFFRACTION_DATA.SET:update(unit_cell,spacegroup)`, at
+`diffraction_data.set.foo:695-696`, immediately before
+
+```foo
+.reflection0.set_d_and_theta(unit_cell,.wavelength)
+.reflections.set_d_and_theta(unit_cell,.wavelength)
+```
+
+It is the one place where the wavelength, the cell and the full reflection list are all in hand,
+and it is `leaky`, not `PURE`, so a `DIE` is legal there.
+
+**The split.** The test is per-reflection; the `DIE` need not be.
+
+- `VEC{REFLECTION}` gains a `PURE` inquiry returning the maximum `stl`, or the offending index.
+  No error machinery, so it stays pure, and it costs one pass. There is no such inquiry today —
+  checked, nothing matches `max_stl` or `stl_max`.
+- `DIFFRACTION_DATA.SET:update` does the `DIE`, naming the offending `sin(theta)/lambda`, the
+  implied `sin theta` and the wavelength that produced it. It has the context to say where the
+  bad wavelength came from; the vector routine does not.
+
+**The clamp stays.** The test is `st > ONE + tol`, not `st > ONE`. Rounding at the limiting
+sphere is still absorbed silently — that is what the guard was written for, and it is correct.
+Only a genuine contradiction dies. Urea at Mo K-alpha gives 1.0227, 2% out, so almost any sane
+tolerance separates the two regimes; size the constant from that gap, as
+`DIFFRACTION_DATA_SHIFT_TIE_TOL` was sized from its own failure.
+
+**Explicitly NOT part of this task: the `max(s,TOL(6))` floor.** It is part of the extinction
+model, not of the wavelength check. Changing it moves numbers wherever extinction is on,
+including the quartz reference, and §5 of `docs/EXTINCTION_REPORT.md` records that the angular
+factor is itself still unsettled — resolving it needs Larson (1970). Keep the two apart.
 
 # MPI
 
@@ -2678,29 +2730,6 @@ harness writes `stdout.bad` on a fail). The five listed above are all that remai
 
 ---
 
-## The end-of-HAR message is stale, and correcting it means reblessing 24 references (2026-08-09)
-
-The message printed at the end of a HAR names `stdout.fit_analysis` — a file
-nothing writes and nothing ever has — calls several small files "this large
-file", names not one file that is actually produced, and closes with "Use Excel
-or gnuplot to view these data", which predates Tonto drawing the pictures
-itself.
-
-A corrected version, naming the real files as dot points, was written and then
-**reverted**, because the old text appears in **24** checked-in references
-(`grep -rl "This large file includes" tests/`), most of them `long` jobs. Worth
-doing as its own change together with the rebless, never as a side effect of
-something else. The reverted wording is in the history of `foofiles/crystal.foo`
-around 2026-08-09.
-
-**A cosmetic difference that is NOT a failure**, recorded so the next person
-does not mistake it for one: a raw `diff` of `tests/short/nh3_rhf_DZP_HAR/stdout`
-against a fresh run shows the `U_xx … U_yz` error table with different column
-widths — the reference wider (`0.00000(5)   0.00000(8)`), the new build
-narrower. Every number is identical, and the test passes 1/1, so `scripts/test.py`
-is insensitive to this whitespace. Untraced, and not worth tracing unless it
-starts mattering.
-
 ---
 
 ## No XCW job runs with the extinction correction on (2026-09-06)
@@ -3597,6 +3626,58 @@ with no hand-written script at all.
 ---
 
 # Done, resolved and closed (archive)
+
+## DONE (2026-09-10): the end-of-HAR message, corrected and the references reblessed
+
+Filed 2026-08-09, closed here. The message named `stdout.fit_analysis` — a file nothing writes
+and nothing ever has — called several small files "this large file", named not one file that is
+actually produced, and closed with "Use Excel or gnuplot to view these data", which predates
+Tonto drawing the pictures itself. A corrected version was written on 2026-08-09 and reverted the
+same day (`4b8bcbca`) because the text sits in checked-in references.
+
+**The wording restored is `d3095d28`'s, with two corrections found by checking it against the
+code rather than trusting it.**
+
+1. **The `.png` is conditional.** The old text said "the picture, drawn for you already", which is
+   true only when gnuplot is on the `PATH`. It now says "if gnuplot is installed", and the closing
+   paragraph tells the reader to install it if a `.png` is missing.
+2. **The QQ plot's data file is `<job>.QQ_plot_with_hkl`, not `<job>.QQ_plot`.** It kept a
+   historical name (`vec{reflection}.foo:3728`) while its `.labels`, `.gnuplot` and `.png` hang off
+   `<job>.QQ_plot`. The message says so rather than naming a file that does not exist — which was
+   the whole complaint against the old text.
+
+The `docs/PLOT_PLAN.md` pointer in the reverted-wording comment went with it. That file does not
+exist.
+
+**Dylan's alternative, considered and not taken.** `4b8bcbca` recorded a second option: filter the
+blurb out of `scripts/test.py`'s comparison instead of reblessing, so the wording could be changed
+freely thereafter. Rejected on 2026-09-10 — it changes how *every* test is compared, and a pattern
+loose enough to hide the blurb is loose enough to hide a plot section that failed to be written at
+all. The rebless is self-verifying; the filter is not.
+
+**19 references reblessed, and the evidence taken first.** 2 `short`, 13 `long`, 4 `hart`. Across
+all 19 the comparator reported **max relative 0% and max last-digit 0 ulp** — every numeric token
+identical. The only mismatches were non-numeric: 34 differing lines where a job prints the block
+once, 61 where it prints it twice (fitted data and the free set). Nothing numeric moved, which is
+what a text-only change must show.
+
+**Not 24 but 23 tracked files carry the old text, and only 19 are compared.** The other four are
+auxiliary copies the harness does not own and does not read:
+`L_alanine_IAM_scale_factor_test/stdout.full`, `YLID_IAM_plus_anomalous_residual_density/stdout.full`,
+`nh3_x-ray-constrained-rhf-cluster-charge_cc-pVTZ/stdout.orig` and
+`yq28_anharm_disp_H_U_iso_IAM_refinement/stdout.good_residual`. They still hold the old wording.
+Left alone deliberately — hand-editing a file no test reads is how a copy quietly diverges — but
+worth knowing they are stale, because a stale uncompared copy is exactly what misleads a later
+reader.
+
+**A cosmetic difference that is NOT a failure**, kept from the original entry because it still
+catches people: a raw `diff` shows column-width drift — the reference wider
+(`0.00000(5)   0.00000(8)`), a fresh build narrower — with every number identical. `scripts/test.py`
+splits into tokens, so whitespace is invisible to it and such a test passes, including under the
+**exact** criterion. Four XCW references showed this on the reciprocal cell matrix during this
+work and it was chased down as a suspected regression before the token-versus-whitespace point
+was recalled. Read the agreement report, never the raw diff. See the column-width item on the
+watch list.
 
 ## DONE (2026-09-10): the 16 stale `long` references, reblessed
 
