@@ -70,12 +70,16 @@ now covers the whole project, so it was renamed.)*
 
 ## WHERE 2026-09-06 LEFT OFF — read this first if you are picking up cold
 
-> **Still current on 2026-09-09, with one addition.** `command_arguments` was deleted (archived
-> below), and the six entries closed on 2026-09-08 that were still filed under live themes have
-> been moved to the archive. Then eigenvector sign canonicalisation landed (archived), and the
-> blast-radius measurement for it turned up **16 stale `long` references**, filed live under
-> *Test suite and numerics* -- red since 2026-09-08 and the one thing here genuinely needing a
-> decision. Nothing else is in flight; the ordering below stands.
+> **Still current on 2026-09-10.** `command_arguments` was deleted (archived below), and the six
+> entries closed on 2026-09-08 that were still filed under live themes have been moved to the
+> archive. Then eigenvector sign canonicalisation landed (archived), and the blast-radius
+> measurement for it turned up **16 stale `long` references**. Those were **reblessed on
+> 2026-09-10 and are archived below**, with the evidence taken first: every R factor, GoF and
+> scale factor byte-identical, line counts unchanged. The rebless also replaced the tied arg-max
+> label in `L_cysteine_IAM_R_min_max_residuals` with the deterministic winner from `a9d883e0`.
+> What is **not** closed is the gap that hid them: routine CI runs `short` only, so a change can
+> rebless `short`, leave `long` stale, and stay green. Nothing else is in flight; the ordering
+> below stands.
 
 **Nothing is in flight.** Two Science items closed on 2026-09-06: **milestone 11 (extinction)**
 and **`docs/GOF_NOT_CHI2.md`** (the `GoF2` rename, and GoF in the tables). Both are archived
@@ -2044,62 +2048,6 @@ OpenBLAS would also oversubscribe cores in MPI builds.
 
 # Test suite and numerics
 
-## OPEN: 16 `long` references went stale on 2026-09-08 and nothing noticed
-
-**Found 2026-09-09** while measuring the blast radius of the eigenvector sign canonicalisation.
-`ctest -L "hart|long"` gives **16 failures out of 38**. None of them is caused by that change --
-see below -- and they have been red since 2026-09-08.
-
-**Cause, established not guessed.** `39cf7b25` *"ESDs: convert the covariance, not the sigmas"*
-(2026-09-08) reblessed **14** references, all in `short`. The `long` ones were left behind; they
-were last blessed on 2026-09-04 by `2e3943ec`.
-
-**The change is a correction, and the numbers confirm it.** Defect 5 of that commit: position esds
-were never propagated at all, so the cartesian CIF printed **fractional** uncertainties scaled only
-by bohr->Angstrom. That predicts an inflation of `cell_edge/0.5292`. On `yq28_H_U_iso_IAM_refinement`
-(cell 7.5853, 7.9412, 14.059) for Cl1:
-
-```
-axis   old esd    predicted   actual
-x      5e-6       7.2e-5      8e-5     (at the rounding edge)
-y      4e-6       6.0e-5      6e-5
-z      3e-6       8.0e-5      7e-5
-```
-
-Two land inside the one-significant-figure band and the third is marginally outside, as expected
-since the cell is not orthogonal and the exact factor needs the full metric. Two further checks:
-the new esds are the physically believable ones (5e-6 A on a chlorine position would be
-extraordinary; ~1e-4 A is right for an IAM refinement at R = 0.034), and **the science did not
-move** -- R(F) 0.0335 and scale factor 1.0131 are identical between reference and new.
-
-**The sign canonicalisation is not involved.** Baseline taken by stashing it and rebuilding:
-`L_alanine_IAM_scale_factor_test`, `urea_rhf_STO-3G_HAR` and `yq28_H_U_iso_IAM_refinement` fail
-**identically** without it, and the `yq28` output is **byte-identical** with and without.
-
-**Why it went unnoticed, which is the part worth fixing.** Routine CI runs `short`; `ci-full-suite.yml`
-is on-demand and last ran on **2026-08-27**. So a change can rebless `short`, leave `long` stale,
-and stay green for as long as nobody asks.
-
-**What to do.** Rebless the 16 against a build carrying `39cf7b25`, checking each diff is
-uncertainties and column widths only -- R factors, scale factors and GoF must not move. That is a
-re-bless of refinement output and a bigger blessing decision than a sign flip, so it is recorded
-here rather than taken. The 16:
-
-```
-L_alanine_IAM_scale_factor_test          L_cysteine_IAM_R_min_max_residuals
-Ph3SiH_rhf_def2-TZVPP_IAM                YLID_IAM_plus_anomalous_residual_density
-ammonium_borane_pHAR_C23                 gly_ala_fragHAR_rhf_STO-3G
-nh3_rhf-consistent-cluster-charge_DZP_HAR quartz_NN_HAR_L0_rhf_def2-SVP
-quartz_NN_HAR_L1_rhf_def2-SVP            so2_rhf_DZP_anharmonic_cluster_charge_XWR
-so2_rhf_DZP_anharmonic_consistent_cluster_charge_HAR
-urea_rhf_DZP_consistent-cluster-charge_HAF urea_rhf_STO-3G_HAR
-yq28_H_U_iso_IAM_refinement              yq28_anharm_disp_H_U_iso_IAM_refinement
-yq28_anharm_disp_remove_from_F_exp
-```
-
-**Consider also** running `long` on a schedule, or on any commit that reblesses a reference. The
-gap that hid this is structural, not a one-off.
-
 ## Deferred: small numerical differences (longstanding) — drill down
 
 Several tests differ from their references only by small numerical amounts — 3rd–4th
@@ -3649,6 +3597,42 @@ with no hand-written script at all.
 ---
 
 # Done, resolved and closed (archive)
+
+## DONE (2026-09-10): the 16 stale `long` references, reblessed
+
+Filed 2026-09-09, closed here. `39cf7b25` *"ESDs: convert the covariance, not the sigmas"*
+(2026-09-08) reblessed **14** references, all in `short`, and left the `long` ones behind. They
+had been red since. Reblessed against `077cd6d8` on the release/gfortran-14 build.
+
+**The evidence taken before blessing, which is the part worth keeping.** The suite ran
+`short long hart`: `short` **56/56**, `hart` **4/4**, `long` **16/32** -- and the 16 red were
+exactly the 16 filed. For every one of them:
+
+- **Every `R(F)`, `Rw(F)`, `R(F2)`, `Rw(F2)`, `GoF`, `GoF^2` and `Scale factor` line was
+  byte-identical to its reference.** The science did not move; that was the condition for
+  blessing and it was checked, not assumed.
+- **Line counts were identical** (435 -> 435, 774 -> 774, ...), so nothing collapsed, and the
+  commit is symmetric: 890 insertions against 890 deletions across 16 files.
+- **15 of 16 had zero structural mismatches.** Every numeric difference had the shape the esd
+  correction predicts -- the value unchanged, the esd larger, so fewer decimals printed:
+  `0.003457(0)` -> `0.0035(7)`, `0.02732(8)` -> `0.027(11)`, `0.0225(0)` -> `0.023(5)`. The two
+  tests reporting 100% max relative are near-zeros collapsing to exact zero
+  (`0.121E-14` -> `0.0E+00`), which is noise at 1e-14, not a result.
+
+**The sixteenth, `L_cysteine_IAM_R_min_max_residuals`, had four structural mismatches, and they
+were the tied arg-max, not the esds.** The Max-Shift parameter label read `Uyy`/`Uzz` in the
+reference and `Uxx` now, with every number on those four lines identical. That reference was last
+blessed by `a58a52d8` (2026-09-06); the tie-break fix `a9d883e0` landed 2026-09-08, so the
+reference predates it. The fresh run writes `Uxx` -- the lowest-indexed parameter -- on **every**
+cycle, where the old reference alternated between `Uxx`, `Uyy` and `Uzz` down the same column.
+So this rebless does not merely refresh that file: it replaces a coin flip with the deterministic
+winner, and stops the test reddening CI at random. See the tie-break entry in the handover section.
+
+**The gap that hid it is still open.** Routine CI runs `short`; `ci-full-suite.yml` is on demand.
+A change can rebless `short`, leave `long` stale, and stay green until somebody asks. Running
+`long` on a schedule, or on any commit that reblesses a reference, remains worth doing and is
+**not** closed by this entry.
+
 
 ## FIXED (2026-09-10): an over-long line was silent in release, in *both* directions
 
