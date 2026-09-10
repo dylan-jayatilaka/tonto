@@ -147,6 +147,25 @@ contains
 
    end
 
+   redirect_std_err_to(file) :: selfless, public
+   ! Close the "stderr" file and send everything written to std_err from now
+   ! on into "file", which must already be open. Used once the real output
+   ! file is known. Repointing the std_err object as well as tonto's error
+   ! unit is what keeps the two channels together: a std_err left merely
+   ! closed used to write into whichever file next took its unit number,
+   ! which in "tonto" was the input file. See DEFERRED.md.
+      file :: TEXTFILE, IN
+
+      if (std_err.exists) std_err.close
+
+      std_err.name   = file.name
+      std_err.unit   = file.unit
+      std_err.action = file.action
+
+      tonto.set_std_err_file(file)
+
+   end
+
 !  ==========
 !  Allocation
 !  ==========
@@ -421,17 +440,26 @@ contains
 !  ==================
 
    close
-   ! Close the input file, if opened.
+   ! Close the input file, if opened, and give up its unit number.
+   ! Clearing ".unit" is not tidiness: Fortran hands a closed unit number
+   ! straight back to the next "newunit=" open, so an object left holding
+   ! one writes into whichever file inherited it. See DEFERRED.md.
       self :: INOUT
 
    DIE_IF(NOT .exists, "not an existing file!")
 
       opened :: BIN
 
-      ! Check if unit is opened
+      ! Check if unit is opened. Only the master inquires, and only when the
+      ! file still holds a unit -- a closed one holds TEXTFILE_NO_UNIT, which
+      ! "inquire" rejects. The broadcast below stays unconditional: no branch
+      ! here may skip a collective.
+      opened = FALSE
       .IO_status = 0
       if (IO_IS_ALLOWED) then
+      if (.unit/=TEXTFILE_NO_UNIT) then
          inquire(unit=.unit,iostat=.IO_status,opened=opened)
+      end
       end
 
       ! Failure?
@@ -444,6 +472,9 @@ contains
          close(unit=.unit)
       end
       end
+
+      ! Give up the unit
+      .unit = TEXTFILE_NO_UNIT
 
    end
 
@@ -462,6 +493,9 @@ contains
       ! Failure?
       PARALLEL_BROADCAST_IO(.IO_status,tonto.master_processor)
       DIE_IF(.IO_status/=0,"error closing and deleting file "//trim(.name))
+
+      ! Give up the unit; see the note in ":close"
+      .unit = TEXTFILE_NO_UNIT
 
    end
 
@@ -857,12 +891,16 @@ contains
    end
 
    unit_used result (res)
-   ! Returns true if the file unit is in use
+   ! Returns true if the file unit is in use.
+   ! A closed file holds no unit, and inquiring on one aborts.
       self :: IN
       res :: BIN
 
+      res = FALSE
       if (IO_IS_ALLOWED) then
+      if (.unit/=TEXTFILE_NO_UNIT) then
          inquire(unit=.unit,opened=res)
+      end
       end
       PARALLEL_BROADCAST_IO(res,tonto.master_processor)
 

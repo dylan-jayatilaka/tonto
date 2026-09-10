@@ -571,81 +571,6 @@ varied a grid, and every test spelled its functional correctly. `scripts/check_d
 properties rather than blessed numbers, so none of them can be blessed away. Check 4
 is the bogus name: `blyp` as an exchange functional must exit non-zero.
 
-## Deferred: `std_err` writes into the *input* file (hard-coded unit collision)
-
-**Found 2026-07-29** while instrumenting `table_column.foo` to chase the zero(error) problem.
-A few `std_err.show(...)` calls added for debugging did not appear in any error log — they were
-**appended to the `stdin` file**, which corrupted the input while it was still being read and
-killed the job with:
-
-```
-Error in TEXTFILE:read_line_bad_EOF ... unexpected end of file
-File name = stdin   Line number = 35
-```
-
-The input file grew from 55 to 101 lines during the run. Reproducible.
-
-**THE RECORDED MECHANISM IS REFUTED (2026-08-27).** The story below — "unit 7 already belonged
-to another open file" — cannot be what happened, and the next person should not spend time on it:
-
-- **No ordinary file can ever hold unit 5, 6 or 7.** `TEXTFILE:open` and its two siblings open
-  with `newunit=.unit` (`textfile.foo:331,378,405`), and Fortran 2008 guarantees `newunit`
-  returns a **negative** number distinct from every unit in use. A collision with a small
-  positive hard-coded unit is impossible by construction.
-- **`.std_err_unit` is never reassigned.** `SYSTEM:set_std_err_unit` and
-  `SYSTEM:set_std_err_file` exist (`system.foo:339,347`) — the latter would repoint it at another
-  file's unit, which *would* produce exactly the reported symptom — but **neither is called
-  anywhere in `foofiles/`**. The only assignment is `system.foo:249`, to the macro.
-- The three macros are distinct and correct: 5, 6, 7 (`include/macros.in:704-706`), and all three
-  create routines exist — `create_stdin:70`, `create_stdout:96`, `create_std_err:124`.
-
-**So the symptom is real and reproducible but its cause is unknown.** The write went *somewhere*;
-`create_std_err` never opens unit 7, and an unconnected unit written by gfortran normally
-auto-connects to `fort.7`, not to the input. Start from an `inquire(unit=7,...)` immediately
-before the failing write, and from **`TEXTFILE:is_open`/`is_open_io`** (`textfile.foo:823,844`),
-which special-case `TEXTFILE_STD_IN_UNIT` and `TEXTFILE_STD_OUT_UNIT` but **not**
-`TEXTFILE_STD_ERR_UNIT` — so `std_err` alone falls through to `inquire(file=.name,...)` on a name
-that was never opened.
-
-**Design intent (Dylan, 2026-08-27):** `std_err` should be created **only in the `run_*.foo`
-programs**, not wherever a diagnostic happens to want it. Worth checking against where
-`create_std_err` is actually reached before choosing a fix.
-
-**Superseded mechanism, kept only so it is not re-derived:** The three units are distinct
-(`TEXTFILE_STDIN_UNIT` 5, `TEXTFILE_STDOUT_UNIT` 6, `TEXTFILE_STDERR_UNIT` 7, `include/macros.in`).
-But `create_std_err` (`textfile.foo`) never *opens* anything — it allocates the object and
-claims the hard-coded unit:
-
-```fortran
-std_err.name   = "stderr"
-std_err.action = "write"
-std_err.unit   = tonto.std_err_unit      ! = 7, hard-coded
-```
-
-Fortran does not pre-connect unit 7, and Tonto hands out units dynamically when it opens files,
-so the likely story is that unit 7 already belonged to another open file (the input) and the
-write simply went there. That has not been proved — worth confirming with an `inquire` on the
-unit at the point of the write.
-
-**Why it matters more than it looks:** a diagnostic channel that silently destroys the input is
-a trap exactly when someone is debugging, and it fails in a way that looks like a *parse* error
-in the user's input rather than an I/O bug. It cost real time here.
-
-**Suggested fix:** have `create_std_err` claim its unit the same way every other file does
-(via the allocator, checking `unit_used`) instead of assuming a fixed number, or open the file
-properly. Note `stdout`/`stdin` share the same hard-coded pattern and may be latently exposed
-to the same collision.
-
-**Naming note:** the object was renamed `stderr` → `std_err` (matching the existing `std_time`,
-`std_name`, `std_output` family) because the Unix name implied Unix behaviour it does not have.
-The *file* it writes is still called `stderr`, so test directories and `IO` manifests are
-unaffected. The CPP macro `TEXTFILE_STDERR_UNIT` was deliberately left alone: it is one of a
-trio with `TEXTFILE_STDIN_UNIT`/`TEXTFILE_STDOUT_UNIT`, and renaming just one would look odd.
-Renaming `stdin`/`stdout` likewise is ~12,500 call sites across 81 foofiles but — importantly —
-**zero** test churn, since the file names are set separately. Deferred as cosmetic.
-
----
-
 ## An over-long line aborts with no diagnostic in release (2026-08-09)
 
 `BUFFER:put_str` (`foofiles/buffer.foo:514`) guards the 256-character `STR`
@@ -2679,9 +2604,9 @@ checking while there.
 **The next probe (one run localises it):** print, per atom block, the counts of NaN and negative
 entries in `covariance_mx(af:al,af:al)` **before** the transform and in `C(af:al,af:al)`
 **after** it, in `make_CIF_esds` (`crystal.foo:8179`). That says immediately whether the defect
-is inherited from the least squares or manufactured by `back_transform_to`. Use `stdout` (NOT
-`std_err` — see the unit-collision item), and the NaN test `x/=x` worked under the current
-release flags.
+is inherited from the least squares or manufactured by `back_transform_to`. `std_err` is now
+safe to use for this (it writes into the output file; see the archived unit-recycling item), but
+`stdout` remains the simpler choice. The NaN test `x/=x` worked under the current release flags.
 
 **Then:** if it is inherited, chase `covariance_mx` back into the least-squares/normal-equations
 inversion; a debug build with `-fcheck=all -ffpe-trap=invalid,zero,overflow` should trap where
@@ -3738,6 +3663,106 @@ with no hand-written script at all.
 ---
 
 # Done, resolved and closed (archive)
+
+## FIXED (2026-09-09): `std_err` wrote into the *input* file — a recycled unit number
+
+**The symptom, recorded 2026-07-29** while instrumenting `table_column.foo` to chase the
+zero(error) problem: a few `std_err.show(...)` calls added for debugging never appeared in any
+error log. They were **appended to the `stdin` file**, corrupting the input while it was still
+being read, and killing the job with
+
+```
+Error in TEXTFILE:read_line_bad_EOF ... unexpected end of file
+File name = stdin   Line number = 35
+```
+
+The input grew from 55 to 101 lines during the run. Reproducible.
+
+**The cause is not the hard-coded unit 7.** That story was already refuted here on 2026-08-27 and
+the refutation was right: `newunit=` cannot collide with a small positive unit. But the
+replacement conclusion — "cause unknown" — was wrong, and it was wrong for one reason: the
+survey looked in `foofiles/` only. `SYSTEM:set_std_err_file` **is** called, from
+`runfiles/run_molecule.foo`, and it is one line of a three-line sequence that does the damage.
+
+**The mechanism.** `TEXTFILE:close` closed the file but left `.unit` holding the number.
+Fortran hands a closed `newunit` number straight back to the next `newunit=` open, so the
+object went on naming a unit that now belonged to somebody else. In `run_molecule.foo` the
+start-up order made that somebody else the input file:
+
+| step | source | unit |
+|---|---|---|
+| `create_std_err`; `std_err.open_for("write")` | `run_molecule.foo:38` | `std_err` → -10 |
+| `stdout.open_for("write")` | `run_molecule.foo:121` | `stdout` → -11 |
+| `std_err.close` | `run_molecule.foo:125` | -10 freed; `std_err.unit` **still -10** |
+| `stdin.open_for("read")` | `run_molecule.foo:130` | `stdin` → **-10** |
+
+From there `std_err` and `stdin` were the same unit, and every `std_err` write went into the
+job file. Nothing in the shipped library writes to `std_err` after start-up, which is why no
+test ever caught it; it fired only for whoever added a diagnostic — exactly when it hurts most.
+
+Confirmed by two standalone gfortran-14 programs (unit recycling on its own, then the four
+steps above): `std_err unit = -10, stdin unit = -10, same = T`, and the "debugging" line lands
+in the input file.
+
+**The fix, in four parts.**
+
+1. `TEXTFILE:close` and `TEXTFILE:close_and_delete` now set `.unit = TEXTFILE_NO_UNIT` (-1,
+   `include/macros.in`). A closed file no longer names a unit anybody else can be given.
+   Writing through one is a Fortran runtime error naming the unit, not a silent write into
+   another file. `close` is a no-op on an already-closed file, so the existing close/reopen
+   pattern in `archive.foo` and elsewhere is unaffected.
+2. New `TEXTFILE::redirect_std_err_to(file)`, which closes the `stderr` file and points *both*
+   the `std_err` object and `tonto.std_err_unit` at `file`. Repointing only the latter was the
+   original half-measure.
+3. `run_molecule.foo` calls it in place of `std_err.close` + `tonto.set_std_err_file(stdout)`.
+   So a `std_err.show(...)` added for debugging now lands in the output file, alongside
+   everything `SYSTEM:die` writes.
+4. **`FILE` had the identical defect and got the identical fix** (`FILE_NO_UNIT`, 2026-09-10). No
+   call site was known to trigger it there — the archive machinery opens and closes in matched
+   pairs — but it was the same latent trap one type over. Three details made it not quite a copy:
+   `FILE:destroy` evaluated `.is_open AND .unit_used`, and Fortran does not promise to
+   short-circuit `.and.`, so the tests are now **nested**; and `FILE:unit_used` and
+   `FILE:is_for_reading` both carried a bare `inquire(unit=…)` with no `iostat`, which aborts on
+   a unit the file no longer holds. Both now answer `FALSE` for a closed file.
+   `is_for_reading` has no callers at all — it was protected anyway rather than left as a trap
+   for the first caller.
+
+**Every unit inquiry is now shaped the same way, and it is the MPI-safe shape.** The read sits
+**inside** `IO_IS_ALLOWED`, nested within the sentinel test, so only the master inquires; the
+result is initialised first and the `PARALLEL_BROADCAST_IO` that follows is **unconditional**.
+No branch skips a collective, so the milestone-6 hazard written up at `FILE:close_and_delete` —
+ranks branching apart and meeting different collectives — cannot arise here even if `.unit` were
+ever to differ between ranks. An earlier draft used an early `if (.unit==NO_UNIT) … else …` that
+jumped over the broadcast; it was rank-uniform and would have worked, but "correct because the
+state happens to agree" is exactly the reasoning that keeps costing this project days. Dylan
+called it: keep the collective unconditional.
+
+`run_har.foo` was never exposed: it does `close_and_delete`, `destroy`, `create_std_err`,
+`open_for("write")`, so it never carries a stale unit, and `hart` opens no input file anyway.
+
+**Verified** on full release builds, twice — before and after the `FILE` half. Both runs of
+`short long hart` (103 tests) give the same 16 failures, and they are exactly the 16 already-red
+`long` references listed under their own item; `short` (65) and `hart` (5) pass. A temporary
+probe in `run_molecule.foo` printed `std_err unit before close = -10`, `stdin unit = -10` — the
+recycling caught in the act — and, with the fix, put its diagnostic in the output file while
+leaving the input byte-identical.
+
+**The general lesson, worth keeping:** a Fortran unit number is only meaningful while the file
+is open. Any object that caches one must drop it on close, or it becomes a pointer to whatever
+the runtime hands out next.
+
+**Naming note, kept from the original entry:** the object was renamed `stderr` → `std_err`
+(matching the existing `std_time`, `std_name`, `std_output` family) because the Unix name
+implied Unix behaviour it does not have. The *file* it writes is still called `stderr`, so test
+directories and `IO` manifests are unaffected. The CPP macros `TEXTFILE_STD_IN_UNIT` /
+`TEXTFILE_STD_OUT_UNIT` / `TEXTFILE_STD_ERR_UNIT` were left alone. Renaming `stdin`/`stdout`
+likewise is ~12,500 call sites across 81 foofiles but — importantly — **zero** test churn,
+since the file names are set separately. Deferred as cosmetic.
+
+**Still open, and now the only part of Dylan's 2026-08-27 note left standing:** `std_err` should
+arguably be created **only** in the `run_*.foo` programs, not wherever a diagnostic wants it.
+That is a tidying question, not a correctness one, now that a stale unit cannot alias another
+file.
 
 ## FIXED (2026-09-09): eigenvector signs were arbitrary, and macOS chose differently
 
