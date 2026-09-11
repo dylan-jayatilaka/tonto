@@ -93,19 +93,31 @@ now covers the whole project, so it was renamed.)*
 > `SYSTEM` now holds the reported values by copy rather than a pointer to the file. Both are
 > below with their evidence.
 >
+> **The eigenvector sign fix cleared `macOS-release`** (run 34466679857 on `master`, 2026-09-10,
+> both gfortran-14 and 16): `h2o_rhf_6-31G(d)_normal_mode_analysis` passes the loose gate at
+> 0.17% on three lines where it had failed at 200%. The only loose failure left on the Mac is
+> `urea_ccsd_pob-TZVP_Salvador_properties` at 4.48%, the LAPACK-thread row; the suite is 55/56.
+>
 > **Then the DFT grid item closed, on 2026-09-10** -- the task-register row *The grid needs
 > far too many points for its accuracy*. It was never the quadrature: `BECKE_GRID:prune_grid`
 > discarded every grid point whose *weight* was below `basis_fn_cutoff`, which threw away the
 > innermost shells of every heavy atom, and threw away more of them the finer the grid got.
 > Every DFT case is now 4-6e-7 from g09 at `best` (was 1.4-1.6e-6), which is the rate g09 itself
 > converges at. `partition_scheme=` was inert for DFT and is now wired; the Becke partition is
-> fifteen times closer to g09 than Stratmann-Scuseria on the same grid, and **whether to make it
-> the default is an open decision** -- see *DFT grid: what is still open* under Correctness.
+> fifteen times closer to g09 than Stratmann-Scuseria on the same grid, and on 2026-09-11 **Becke
+> with `accuracy= medium` became the default** -- see *DFT grid: what is still open* under
+> Correctness for what is left.
 > Four new guards (`lebedev_rules`, `quadrature_rules`, `dft_invariants` 7-9, a Becke row in
-> `dft_reference`). Every DFT and Hirshfeld reference in `short`, `long` and `rgbi` still
-> **passes the loose gate** -- the shifts are in the eighth decimal (`h2o_blyp_cc-pVDZ`
-> −76.40025055 → −76.40025081) -- so nothing is red; whether to rebless for exact match is
-> Dylan's call. The numbers are in `docs/DFT_STANDARDISATION.md` §6b.
+> `dft_reference`). **Then, on 2026-09-11, the defaults changed to Becke partition and
+> `accuracy= medium`** (Dylan's decision; the nine `dft_reference` cases went from 4-6e-7 to
+> 1.5-6.7e-8 against g09). That moved six `short` references past the loose gate and they were
+> **reblessed on Dylan's instruction**: the four water DFT jobs (energies in the sixth decimal
+> and the partition-name lines), `DWGN_lamaGOET_NBO_file_47` (self-consistent cluster charges
+> by 0.4-0.8%), and `urea_ccsd_pob-TZVP_g09_fchk_to_SF_hkl_list` (`oc-hirshfeld` structure
+> factors: weak high-angle reflections by up to 14%, 0.026 e → 0.022 e at sin θ/λ = 0.64;
+> everything strong by far less). The last two say that Hirshfeld-partitioned quantities were
+> grid-limited at the percent level for weak reflections, which matters for HAR. The `long`
+> reblesses are listed in the same commit.
 >
 > Nothing else is in flight; the ordering below stands.
 
@@ -318,9 +330,10 @@ build has. One file, everything else identical, executable relinked each time.
    none), and `width`/`width_set` both carry proper `DEFAULT` initialisers.
    **To close it:** re-run the original debug/macOS comparison against a build carrying the
    metric snap. If the widths agree, this item is finished.
-4. **The Bugzilla duplicate search** over resolved bugs and `16 Regression`. Sourceware refuses
-   every automated tool — `curl` gets a 429 and the Anubis layer blocks the rest, `WebFetch`
-   included — so **this needs a person at a browser**, as did the filing.
+4. **The Bugzilla duplicate search -- DONE by upstream, 2026-09-03.** PR 127197 was marked a
+   duplicate of PR 124661, fixed on trunk nine days after Ubuntu's `16-20260322` snapshot and
+   before the 16.1.0 release. The gfortran-16 move now waits on an Ubuntu package at 16.1.0 or
+   later (`apt-cache policy gfortran-16` still shows the snapshot on 2026-09-11), not on GCC.
 5. Longer-standing, unchanged: NaN and negative ESDs from the least-squares variance-covariance
    matrix, and the MPI items behind milestones 6 and 7.
 
@@ -488,9 +501,19 @@ So the remaining work is not the assignment; it is establishing what must be
 rebuilt after a re-prune and rebuilding it. That is why this stays deferred.
 
 **Scope.** Only jobs that call `update` more than once are affected, which in
-`tests/` is the quartz job alone, and it prunes nothing — 1009 reflections in
-both refinements. Nothing currently checked in gives a wrong answer. The defect
-is latent, and becomes live the moment a job with cutoffs re-enters the block.
+`tests/` is the quartz job alone.
+
+**It went live on 2026-09-11.** With the corrected grid (`06079254`) the quartz L1 job's
+Hirshfeld structure factors moved enough that one weak reflection fell under the default
+`f_calc_cutoff` (0.001) in the second block; the list shrank from 1009 to 1008 under the
+running refinement, and the job that had taken 30 s spun for over an hour with no output
+(`fraghar_refinement`, second pass). Not a crash this time, a hang. Two things were done:
+`DIFFRACTION_DATA.SET:update` now **dies** when a repeated block changes the reflection
+count, naming this entry, so nobody waits an hour again; and the test sets
+`f_calc_cutoff= 0.0` in its second block, with a comment, so it still exercises two
+refinements. That makes the defect visible and avoidable; it does not repair it. The repair
+is still what the previous paragraph says: rebuild the state that is sized against
+`.reflections` after a re-prune from `.reflection0`.
 
 ## Dispersion: what is still open after the 2026-09-05 fix
 
@@ -609,32 +632,77 @@ The weight-threshold defect is closed (see the table above and
 `docs/DFT_STANDARDISATION.md` §6b). Three things came out of the measurement that are
 decisions or investigations rather than fixes, plus some tidying not done:
 
-1. **Should the default partition become Becke?** On the same `best` grid, BLYP water is
-   +5.9e-7 from g09 with Stratmann-Scuseria and −3.8e-8 with Becke (Becke size adjustment);
-   at `accuracy= low` it is −1.2e-5 against −2.6e-6. Fifteen and five times better, for
-   a grid build that is not slower on water. SS was chosen for its linear-scaling screening
-   (the unit-weight sphere and the kill rule), which matters for large systems and not for
-   the test molecules. The right measurement before deciding is karrikinolide or the
-   `long` HAR jobs at `high`, timing and energy both. Dylan's call; not made.
-2. **The Delley partition does not converge to g09.** −1.03e-5 at `best` and −1.05e-5 with
-   100 radial points unpruned, so it is not a grid-size effect. Either the modified Delley
-   cell function of Perez-Jorda and Yang is inherently that coarse on a 3-atom molecule, or
-   `partition_D` is wrong. Not checked against CPL 241 p469. Nobody uses it.
-3. **Why the residual at `best` is 5e-7 and not 5e-8.** Two independent pieces of ~5e-7:
-   the L5/L11 pruning of the inner *half* of the radial range (index thirds, which on the
-   Mura-Knowles grid means L11 out to 0.67 bohr from oxygen, well past the SS unit-weight
-   sphere at 0.33 bohr), and the radial count. Removing either alone does nothing; both
-   together give 1e-8. Treutler-Ahlrichs prescribed those index fractions for *their* radial
-   grid, which puts the L11 boundary at r = ξ. A pruning rule stated in bohr rather than in
-   index fractions, and a `best` with 100 radial points, are the two obvious moves. Dylan's
-   questions of 2026-09-10 belong here: whether to build one molecular grid and prune that,
-   and how to prune without losing accuracy. Summation order is not a factor -- 76 Hartree
-   in double precision is 1e-14, seven orders below anything measured.
+1. **Decided 2026-09-11: the defaults are Becke partition (Becke size adjustment) and
+   `accuracy= medium`.** The full ladder is in `docs/DFT_STANDARDISATION.md` §6b: Becke at
+   `medium` is −4.6e-8 from g09 in 0.8 s where SS at `best` was +5.9e-7 in 13 s. What
+   remains open is the large-molecule cost comparison, where SS's screening is supposed to
+   pay: karrikinolide BLYP/6-31G(d) at `low` took 121 s under SS and 120 s under Becke, and
+   the rest of that ladder, against g09 (−533.954519147): SS +4.6e-7 / −2.5e-5 / −5.1e-5 /
+   −1.5e-6 and Becke −1.4e-4 / +1.6e-5 / +4.5e-6 / −9.4e-7 for low / medium / high / best,
+   at 1.0× / 1.5× / 2.2× / 15× the cost of `low`. **Dylan, 2026-09-11: `medium` stays the
+   default; `high` costs too much, and adaptive pruning (item 3) is to bring the cost down
+   before the default is reconsidered.** Full table in `docs/DFT_STANDARDISATION.md` §6b.
+2. **Delley partition: removed 2026-09-11.** −1.03e-5 from g09 at `best` and −1.05e-5 with
+   100 radial points unpruned, so not a grid-size effect; nothing used it, so it went rather
+   than being checked against CPL 241 p469. `git log -S partition_D` finds it.
+3. **Adaptive angular pruning (Dylan, 2026-09-11) -- the route to a cheaper `high`.** On
+   karrikinolide Becke/`medium` is 1.6e-5 from g09 and `high` 4.5e-6 at 2.2× the cost of
+   `low`, which Dylan judged too much; this item is to recover that accuracy at `medium`'s
+   cost before the default is reconsidered. The residual at `best` is two
+   independent pieces of ~5e-7: the L5/L11 pruning of the inner *half* of the radial range
+   (index thirds, which on the Mura-Knowles grid means L11 out to 0.67 bohr from oxygen, past
+   the partition sphere at 0.33 bohr), and the radial count. Removing either alone does
+   nothing; both together give 1e-8. With the Becke partition the pruning costs far less
+   (`medium` is 4.6e-8), so this is no longer urgent, but the rule is still blind: it lowers
+   the angular order by radial *index*, the same for every atom and molecule, and never looks
+   at what it is integrating. ORCA's `GridPruning 4` decides per point from the magnitude of
+   the basis functions there, which is why its finest preset needs 33k points for water where
+   Tonto's `best` uses ~200k. The criterion is the one the `rho_cutoff` post-mortem in
+   `types.foo` arrived at -- screen on the contribution to the integral -- applied to the
+   *choice of angular order*, not to discarding points. Plan:
+
+   - **Instrument first.** Per radial shell of each unique atom, measure the angular error
+     directly: integrate rho and rho*eps_xc on the shell with L_full and with L5/L11/L23, and
+     print the difference. That is the quantity the rule must predict. Water and karrikinolide,
+     `medium` and `best`, Becke partition. Half a day; it will also say whether the two 5e-7
+     pieces are really independent.
+   - **Define the significance measure.** Cheapest candidate: the largest basis-function
+     magnitude on the shell from `.atom(a).r_max(cutoff)`-style bounds, which
+     `make_displaced_skip_pts` already computes per point; better, the anisotropy of the
+     partition-weighted density on the shell (max minus min over the angular points of a
+     cheap L11 probe). The rule: the lowest L whose predicted shell error is below a
+     per-shell budget, the budget being the requested accuracy divided by the shell count.
+   - **Where it goes.** `apply_pruning_scheme(lebedev_grid,p,i,nr)` is called from four
+     places that must agree (`set_unscaled_grid`, `no_of_pts_for_row`, `no_of_pts_for_atom`,
+     `n1_SS_for_atom`); today it is per-row and molecule-independent. An adaptive rule is
+     per-atom, so the unscaled grid can no longer be shared across a row -- `set_atom_grids`
+     would build per unique atom instead, which it half does already (`unique_atom_for`).
+     Keep the static schemes as `pruning_scheme=` options and add `adaptive`.
+   - **Pin the radial side at the same time.** The Treutler-Ahlrichs index fractions were
+     designed for their radial grid; on Mura-Knowles a rule stated in bohr (fractions of the
+     atom's zeta) is the minimal static fix and the natural fallback when the adaptive
+     measure is unavailable.
+   - **Gate.** `dft_reference` at `medium` must stay within 1e-7 of g09 with fewer points
+     than today; `dft_invariants` 7 (a bigger grid must not make the answer worse) must hold;
+     print the point count so the saving is visible. Time it on karrikinolide.
+   - **A neighbour cutoff in the Becke product, separately.** Pruning cuts the number of
+     points; it does nothing for the cost per point of the Becke *weights*, which is a product
+     over every other atom and is what Stratmann-Scuseria's 0-or-1 cell function avoids. On
+     17 atoms this is invisible (the weights are built once and reused by every SCF
+     iteration; the 15% SS advantage on karrikinolide is all grid work). On a few hundred
+     atoms it would show. The remedy is to restrict the product to atoms within a cutoff of
+     the grid point's parent atom, which is what `overlapping_atom` already is on the DFT
+     path -- so the change may be no more than confirming that list is the one
+     `apply_partition` passes, and measuring on a large system. Do it after pruning, and only
+     if the profile from the SCF-speed item shows the weight build.
+   - Dylan's other questions belong here: whether to build one molecular grid and prune that
+     (the SS `n1_SS` inner sphere is a special case of it), and summation order (not a
+     factor: 76 Hartree in double precision is 1e-14).
+
 4. **Not tidied**: `make_Becke_atom_grid` hard-codes three iterations where the
    `partition_*` family honours `.partition_power`, and uses bare `1.5`/`0.5` literals
    (exactly representable, harmless); the `partition_scheme` comment in `types.foo` still
-   names only "becke and delley" -- a `types.foo` edit is a full rebuild and was not worth
-   paying for a comment.
+   named only "becke and delley" -- corrected 2026-09-11 with the defaults change.
 
 ## The end-of-job timing lines still truncate a very long job name (2026-09-10)
 
@@ -2056,6 +2124,50 @@ OpenBLAS would also oversubscribe cores in MPI builds.
 ---
 
 ---
+
+# Science and features
+
+## Speed up the SCF and the integrals (Dylan, 2026-09-11)
+
+The karrikinolide grid ladder (BLYP/6-31G(d), 17 atoms, promolecule guess, convergence
+1e-8) is the benchmark and the starting data. It came out of the grid work and says the grid
+is not where the time goes:
+
+| `accuracy=` | SS energy | SS time | Becke energy | Becke time |
+|---|---|---|---|---|
+| `low` | −533.954518687 | 121 s | −533.954662894 | 120 s |
+| `medium` | −533.954544224 | 157 s | −533.954503626 | 181 s |
+| `high` | −533.954570020 | 226 s | −533.954514681 | 260 s |
+| `best` | −533.954520631 | 1412 s | −533.954520090 | 1776 s |
+
+Two things to take from it. First, at `low` the whole job is 121 s and the grid is a small
+part of it, so the SCF and the integrals are the target. Second, on 17 atoms the
+Stratmann-Scuseria screening does pay, by 15% at `medium` and `high` and 25% at `best`, where on
+water it cost time; so SS stays as an option and its keyword should say so. Against g09
+(−533.954519147) Becke is monotonic (−1.4e-4, +1.6e-5, +4.5e-6, −9.4e-7 for low to best) and
+SS is not (+4.6e-7 at `low` by cancellation, then −2.5e-5, −5.1e-5, −1.5e-6); the default
+stays Becke/`medium`, see the DFT grid item under Correctness. The raw inputs,
+outputs and timings are in `~/tonto_runs/karrikinolide_grid_ladder_2026-09-11/` and the
+summary in `docs/SCF_SPEED_REPORT.md`.
+
+**Two findings from reading the code (2026-09-11), before any profiling.** The Schwarz bound
+array `.max_I` is rebuilt and destroyed inside every Fock build (`molecule.fock.foo:1396,
+1483`), one (ab|ab) pass per iteration. And **the incremental Fock build is dead**:
+`SCF_DATA.using_delta_build` defaults TRUE and `make_scf_Fock_mx` (`molecule.scf.foo:1575`)
+would build from `.delta_density_mx`, but `make_E_SCF_density_mx` (`molecule.base.foo:358`)
+forms the delta only if that matrix is *already* allocated, and nothing allocates it --
+`molecule.set.foo` only destroys it. The switch is on, echoed, and does nothing, exactly
+like the `becke_grid` block was.
+
+**Plan** (`~/.claude/plans/`, approved 2026-09-11): (1) per-phase timers in the SCF table and
+one `perf` profile of karrikinolide at `medium`; (2) keep `.max_I` across iterations; (3)
+allocate `.delta_density_mx` at SCF start so the existing delta build engages, with a
+periodic full rebuild; (4) a class-batched shell-pair traversal via an index vector, no AO
+reorder (the AO order is load-bearing in `molecule.base/prop/rho/har/grid` and in every
+archive); (5) Rys roots vectorised over T-range bins within a class block -- Dylan's
+idea, and the right shape for it, but gated on the profile showing the roots matter; (6)
+specialised f/g `make_esfs_*` routines, commented out today, if the profile says so.
+`dft_reference` and the karrikinolide energies above are the correctness gate.
 
 # Test suite and numerics
 

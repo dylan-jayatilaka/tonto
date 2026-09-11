@@ -75,22 +75,24 @@ REFERENCE = {
     ("H2O+", 1, 2, "uks", "slater",  "vwn3"): -75.5735204288,
 }
 
-# The same BLYP case with the Becke partition (Becke size adjustment) instead
-# of the default Stratmann-Scuseria one. Same g09 number: a partition scheme
-# is only a way of splitting the integral, and must converge to the same
-# answer. Measured 2026-09-10 at accuracy= best: SS 5.9e-07, Becke 3.8e-08,
-# and Becke on a 100-radial unpruned grid 6.5e-09.
+# The same BLYP case with the Stratmann-Scuseria partition instead of the
+# default Becke one. Same g09 number: a partition scheme is only a way of
+# splitting the integral, and must converge to the same answer. Measured
+# 2026-09-10 at accuracy= best: SS 5.9e-07, Becke 3.8e-08, and Becke on a
+# 100-radial unpruned grid 6.5e-09. Becke became the default on 2026-09-11.
 PARTITION_CASES = {
-    ("H2O", 0, 1, "rks", "becke88", "lyp", "becke"): -76.4002385321,
+    ("H2O", 0, 1, "rks", "becke88", "lyp", "stratmann_scuseria"): -76.4002385321,
 }
 
 # DFT cases carry Tonto's residual grid error against g09's grid at
-# accuracy= best. Measured 2026-09-10, after the weight-threshold defect in
-# BECKE_GRID:prune_grid was removed: 4.1e-07 to 5.9e-07 across the nine cases,
-# where it had been 1.4e-06 to 1.6e-06. This is 2.5x the worst of them; g09's
-# own FineGrid sits 5.1e-07 from its converged value, so it is the grid, not a
-# defect. See docs/DFT_STANDARDISATION.md section 6b.
-TOL_DFT = 1.5e-6
+# accuracy= best. With the Becke partition (the default since 2026-09-11) the
+# nine cases sit 1.5e-08 to 6.7e-08 from g09; this is 4x the worst of them.
+# Before the weight-threshold defect in BECKE_GRID:prune_grid was removed they
+# were 1.4e-06 to 1.6e-06. See docs/DFT_STANDARDISATION.md section 6b.
+TOL_DFT = 3.0e-7
+# The Stratmann-Scuseria row is a coarser partition on the same grid: 5.9e-07
+# measured, the same distance g09's own FineGrid sits from its converged value.
+TOL_SS = 1.5e-6
 # HF uses no grid at all, so it should agree to round-off. Measured 1.2e-10
 # (neutral) and 2.0e-10 (cation). A tight bound here catches a basis, integral
 # or SCF regression that the DFT rows would swamp.
@@ -170,9 +172,11 @@ def main():
     for i, (key, ref) in enumerate(cases):
         name, charge, mult, kind, exch, corr, partition = key
         tol = TOL_HF if kind in ("rhf", "uhf") else TOL_DFT
+        if partition == "stratmann_scuseria":
+            tol = TOL_SS
         grid = ""
         if partition:
-            grid = "partition_scheme= %s partition_scaling_scheme= %s" % (partition, partition)
+            grid = "partition_scheme= %s" % partition
         rc, e = run(exe, basis, workdir, "c%02d" % i, charge, mult, kind, exch, corr, grid)
         label = ("%s+%s" % (exch, corr)) if exch else "--"
         if partition:
@@ -198,8 +202,8 @@ def main():
         print("  means Tonto has moved away from an independently correct answer.")
         print("  Do NOT 'fix' it by editing the constants without establishing why.")
         return 1
-    print("OK -- all %d cases agree with g09 (DFT < %.1e, HF < %.1e)"
-          % (len(cases), TOL_DFT, TOL_HF))
+    print("OK -- all %d cases agree with g09 (DFT < %.1e, SS < %.1e, HF < %.1e)"
+          % (len(cases), TOL_DFT, TOL_SS, TOL_HF))
     return 0
 
 

@@ -59,7 +59,9 @@ this?". None needs a reference output, so none can be blessed away.
   9  partition_scheme= is not inert,     the DFT path called the Stratmann-
      and a bogus name is fatal           Scuseria builder unconditionally, so
                                          partition_scheme= becke gave a
-                                         bit-identical energy.
+                                         bit-identical energy. Becke is the
+                                         default since 2026-09-11; the check
+                                         asks for SS explicitly.
 
 WHY PROPERTIES AND NOT REFERENCES. A blessed reference records what Tonto DID;
 these record what must be TRUE. Every defect above was invisible to the
@@ -302,9 +304,9 @@ def main():
                        " %.3e (>= %.1e)" % (d, BF_CUTOFF_MAX))
 
         # 9 -- partition_scheme= must do something, and a bogus name is fatal
-        ss = energy(run, acc="low", exch="becke88", corr="lyp")
-        bk = energy(run, acc="low", exch="becke88", corr="lyp",
-                    grid="partition_scheme= becke partition_scaling_scheme= becke")
+        ss = energy(run, acc="low", exch="becke88", corr="lyp",
+                    grid="partition_scheme= stratmann_scuseria")
+        bk = energy(run, acc="low", exch="becke88", corr="lyp")
         d = abs(bk - ss)
         ok = d > PARTITION_MIN_RESPONSE
         print("  9  partition_scheme= responds      |SS-becke| = %.3e  %s"

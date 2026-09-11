@@ -17,8 +17,8 @@ give the wrong impression. The science is sound and the numerics are not naive.
 
 - **The grid machinery is thorough and conventional.** Becke 1988 fuzzy-Voronoi
   partitioning with Bragg-Slater radii; Treutler-Ahlrichs and Mura-Knowles radial
-  schemes; Lebedev-Laikov angular grids; Delley and Stratmann-Scuseria partition
-  options; four pruning schemes. The `BECKE_GRID` setters validate their inputs
+  schemes; Lebedev-Laikov angular grids; Becke and Stratmann-Scuseria partition
+  options; three pruning schemes. The `BECKE_GRID` setters validate their inputs
   properly, with `ENSURE(... .is_one_of([...]))` on every one.
 - **The GGA potential uses the standard form** — `V0` plus `Vn·∇(φ_a φ_b)` — which
   avoids needing the Laplacian of the density.
@@ -611,13 +611,71 @@ the `partition` dispatcher (`BECKE_GRID:make_partitioned_grid`), and on the same
 | becke, Treutler-Ahlrichs adjustment | −2.7e-08 |
 | becke, no adjustment | −7.8e-08 |
 | becke, 100 radial, no pruning | −6.5e-09 |
-| delley | −1.03e-05 |
+| delley (removed 2026-09-11) | −1.03e-05 |
 
-The Becke partition is fifteen times closer on the same points, and at
-`accuracy= low` it is 2.6e-06 against Stratmann-Scuseria's 1.2e-05. Changing the
-default is a decision for the maintainer (`DEFERRED.md`). The Delley scheme does
-not improve with the grid and is either inherently that coarse or defective;
-open in `DEFERRED.md`.
+The Becke partition is fifteen times closer on the same points. The whole
+accuracy ladder, BLYP/cc-pVDZ water against g09, wall time on one core:
+
+| `accuracy=` | Stratmann-Scuseria | Becke | time |
+|---|---|---|---|
+| `low` | −1.2e-05 | −2.6e-06 | 0.4 s |
+| `medium` | −3.2e-06 | **−4.6e-08** | 0.8 s |
+| `high` | +9.8e-06 | −1.3e-07 | 1.2 s |
+| `very_high` | +4.5e-07 | −7.0e-08 | 2.2 s |
+| `extreme` | −6.3e-08 | −2.5e-08 | 4.5 s |
+| `best` | +5.9e-07 | −3.8e-08 | 13 s |
+
+Becke at `medium` is ten times closer than Stratmann-Scuseria at `best`, in one
+sixteenth of the time, and the Becke column converges monotonically where the SS
+column does not. **The defaults are therefore `partition_scheme= becke`,
+`partition_scaling_scheme= becke` and `accuracy= medium`** (changed 2026-09-11;
+they had been `stratmann_scuseria`, `none` and `low`). Stratmann-Scuseria's
+advantage is scaling: its cell function is exactly 0 or 1 outside a band, so far
+atoms drop out and points inside the inner sphere need no partition work. On
+three atoms there is nothing to drop, so its overhead shows and its benefit does
+not; a large-molecule comparison is recorded below. The Delley scheme did not
+improve with the grid (−1.05e-05 with 100 radial points unpruned) and was removed
+rather than diagnosed; nothing used it.
+
+
+### The same ladder on a 17-atom molecule, against g09
+
+Karrikinolide, BLYP/6-31G(d), geometry and basis from the g09 checkpoint in
+`tests/long/karrikinolide_blyp_6-31G(d)_Salvador_properties/`; g09 reference
+`BLYP/6-31G(d) 6D SCF=(Tight,Conver=10) Int(Grid=199974)` = −533.954519147. Wall time on one
+core, whole job (the SCF itself is most of the 120 s at `low`):
+
+| `accuracy=` | Stratmann-Scuseria | time | Becke | time | cost vs `low` |
+|---|---|---|---|---|---|
+| `low` | +4.6e-07 | 121 s | −1.44e-04 | 120 s | 1.0× |
+| `medium` | −2.5e-05 | 157 s | +1.55e-05 | 181 s | 1.5× |
+| `high` | −5.1e-05 | 226 s | +4.5e-06 | 260 s | 2.2× |
+| `best` | −1.5e-06 | 1412 s | −9.4e-07 | 1776 s | 15× |
+
+Becke converges monotonically; Stratmann-Scuseria's `low` figure is cancellation (its
+`medium` and `high` are worse), and on this molecule SS is 10–25% cheaper. So the water
+picture does not transfer whole: Becke at `medium` is 1.6e-05 here, not 5e-08.
+**Decision (Dylan, 2026-09-11): `medium` stays the default; the cost of `high` (2.2×) is too
+much for a 3.5× accuracy gain, and adaptive pruning (`DEFERRED.md`) is to bring the cost down
+before the default is reconsidered.** Raw data: `~/tonto_runs/karrikinolide_grid_ladder_2026-09-11/`.
+
+### The g09 reference is confirmed by ORCA and by Tonto in a spherical basis
+
+The g09 BLYP/cc-pVDZ water energy with **spherical** d functions and its
+converged `Int(Grid=199974)` grid is −76.3986368951. Against it:
+
+| code | grid | energy | difference |
+|---|---|---|---|
+| ORCA 6.1.1, `DefGrid3` (its finest preset: IntAcc 4.96, Lebedev-590, adaptive pruning, 32876 points) | | −76.3986363627 | +5.3e-07 |
+| ORCA 6.1.1, IntAcc 8.0, Lebedev-770, no pruning, 136612 points | | −76.3986368851 | **+1.0e-08** |
+| Tonto, `use_spherical_basis= TRUE`, `extreme`, Becke | | −76.3986369190 | −2.4e-08 |
+| Tonto, spherical, `medium`, Becke | | −76.3986367875 | +1.1e-07 |
+| Tonto, spherical, `best`, Stratmann-Scuseria | | −76.3986362913 | +6.0e-07 |
+
+Three codes with three grid constructions agree at 1e-08 once each is pushed
+past its default grid. Note that ORCA's finest preset sits at the same 5e-07 as
+g09's FineGrid and Tonto's SS `best`: the default *accuracy* of the three codes
+is the same, and the differences are in default cost.
 
 ### Two smaller defects found on the way
 

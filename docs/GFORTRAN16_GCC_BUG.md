@@ -4,6 +4,13 @@
 (product `gcc`, component `fortran`). Tonto's workaround and the background:
 `docs/GFORTRAN16_DEBUG_CRASH.md`.
 
+**RESOLVED upstream the same day, as a duplicate of PR 124661**, which was fixed on trunk nine
+days after the snapshot Ubuntu ships (`16-20260322`, r16-8246) and before the GCC 16.1.0
+release. That is why Homebrew's 16.1.0 on macOS never reproduced it. Nothing more is owed to
+Bugzilla. What Tonto waits on now is an Ubuntu `gfortran-16` package at 16.1.0 or a later
+snapshot; check with `apt-cache policy gfortran-16`. Then merge `develop-gfortran-16` and flip
+`FC_VERSION`.
+
 This page is now the **record of what was reported**, not a to-do. Keep it in step with the
 Bugzilla thread: if upstream asks for more, add the answer here as well as there.
 

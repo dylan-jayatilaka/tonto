@@ -59,12 +59,10 @@ the ones worth reading.
 
 ## DFT
 
-- **DFT energies at `accuracy= best` sit about 5×10⁻⁷ from an independent reference**,
-  the same distance Gaussian's FineGrid sits from its own converged value. Add radial
-  points and switch pruning off for better; `partition_scheme= becke` is about ten times
-  closer on the same grid. See `DFT_STANDARDISATION.md` §6b.
-- **The Delley partition does not converge to the reference** (about 10⁻⁵ at any grid).
-  Nothing uses it. See `DEFERRED.md`.
+- **DFT energies at the default grid (Becke partition, `accuracy= medium`) sit about
+  5×10⁻⁸ from an independent reference.** `partition_scheme= stratmann_scuseria` is ten
+  times further off on the same grid and its accuracy is not monotonic in `accuracy=`.
+  See `DFT_STANDARDISATION.md` §6b.
 - **The exchange–correlation energy is never reported separately.** `V_ee` lumps it in
   with the Coulomb term. See `DFT_STANDARDISATION.md`.
 
