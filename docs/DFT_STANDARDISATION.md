@@ -509,70 +509,127 @@ belongs with the long-term re-engineering argued in `CLAUDE.md`. The property
 and reference tests built here are precisely the harness such a transition would
 need: they state what must be true independently of how it is implemented.
 
-## 6b. OPEN: the grid needs far too many points for the accuracy it gives
+## 6b. FIXED 2026-09-10: the grid needed far too many points for its accuracy
 
-**Not for investigation now. Recorded because the evidence is unusually clean
-and it points at an implementation problem, not a tuning question.**
+**The cause was not the quadrature. It was a point-dropping threshold applied to
+the wrong quantity.** Recorded here in full because the symptom table below was
+read for a month as evidence of a partition or normalisation defect, and every
+one of the quadrature components suspected turned out to be correct.
 
-At `accuracy= best` -- Tonto's finest setting, 65 radial points and Lebedev L71
--- every DFT case sits about **1.5e-06** from g09:
+### The symptom
 
-| system | functional | \|Tonto - g09\| |
-|---|---|---|
-| H2O | HF | 6.5e-10 |
-| H2O | slater | 1.512e-06 |
-| H2O | becke88 | 1.584e-06 |
-| H2O | becke88+lyp | 1.629e-06 |
-| H2O | slater+vwn5 | 1.596e-06 |
-| H2O+ | UHF | 2.0e-10 |
-| H2O+ | slater | 1.444e-06 |
-| H2O+ | slater+vwn5 | 1.455e-06 |
-| H2O+ | slater+vwn3 | 1.511e-06 |
+At `accuracy= best` (65 radial points, Lebedev L71) every DFT case sat about
+1.5e-06 from g09, while the grid-free HF cases agreed to 1e-10:
 
-**Two things stand out.**
+| system | functional | \|Tonto − g09\| before | after |
+|---|---|---|---|
+| H2O | HF | 6.5e-10 | 6.5e-10 |
+| H2O | slater | 1.512e-06 | 4.9e-07 |
+| H2O | becke88 | 1.584e-06 | 5.6e-07 |
+| H2O | becke88+lyp | 1.629e-06 | 5.9e-07 |
+| H2O | slater+vwn5 | 1.596e-06 | 5.5e-07 |
+| H2O+ | UHF | 2.0e-10 | 2.0e-10 |
+| H2O+ | slater | 1.444e-06 | 4.2e-07 |
+| H2O+ | slater+vwn5 | 1.455e-06 | 4.1e-07 |
+| H2O+ | slater+vwn3 | 1.511e-06 | 4.6e-07 |
 
-The two HF rows agree to 1e-10 and use NO grid. Every case that touches a grid
-is three to four orders worse. So the residual is the quadrature, not the basis,
-the integrals or the SCF.
+### What was verified correct first
 
-And the seven DFT numbers span 1.44e-06 to 1.63e-06 -- a 13% spread across
-different functionals, different charge states, and both spin treatments. A
-functional error would vary with the functional; a grid offset would not. This
-is a grid offset.
+Static analysis, all confirmed by replaying the code in Python:
 
-### Why this looks like a defect rather than a limit
+- **Every Lebedev grid in `lebedev.foo`** (6 to 5810 points) integrates every
+  monomial up to its claimed order to 1e-16; weights sum to 1; points lie on the
+  sphere. The `! ?` doubts on the `.l =` lines were unfounded and are gone. The
+  `lebedev_rules` ctest now asserts this permanently.
+- **All three radial mappings** (Becke, Treutler-Ahlrichs M4, Mura-Knowles log-3)
+  have the right r(x) and Jacobian, and the Chebyshev weight function is correctly
+  folded out.
+- **The Stratmann-Scuseria weights** match CPL 257 equations 8, 9, 10, 14 and 15
+  with a = 0.64; **the Becke weights** match JCP 88 with the (A5) clamp.
+- `4π r²` appears exactly once.
 
-g09 reaches its converged answer on a FAR smaller grid. Its FineGrid, (75,302),
-gives -76.4002380205 for BLYP against its own converged -76.4002385321 -- within
-**5e-10**. Tonto at 65 radial and L71 is **1.5e-06** from that same number.
+### The cause: `prune_grid` thresholded a *weight* against `basis_fn_cutoff`
 
-Even allowing that g09's grids are pruned and raw point counts are not directly
-comparable, that is roughly three orders of magnitude of accuracy for a grid of
-broadly similar size. Something in the quadrature is not doing the work those
-points should be doing.
+```foo
+if (wts(i)<.basis_fn_cutoff) cycle
+```
 
-Candidates, none investigated:
+A grid weight is a volume element, `4π r² dr ζ³ w_Lebedev`. For oxygen at `best`
+the three innermost radial shells have weights 7e-15, 2e-12 and 5e-11, all below
+the 1e-10 cutoff, and every point in them was discarded. That is where ρ ≈ 300
+and the integrand is largest. The estimated content of those three shells is
+1.0e-06; setting `basis_fn_cutoff= 1e-14` moved the energy by 1.04e-06.
 
-- the **Becke partition weights** and the atomic-size adjustment
-- the **radial mapping** and its scaling (`kind= mura_knowles` by default, with
-  `treutler_ahlrichs` and `becke` also available)
-- the **pruning** interaction -- note `jayatilaka2` was removed in section 6a for
-  being unreliable, and the remaining schemes have not been characterised
-- whether the atomic grids are being **normalised** correctly, which a uniform
-  offset of this kind would be consistent with
+This explains every feature of the symptom. It is independent of the functional
+(the core is where gradient corrections are smallest). It is positive (a negative
+contribution is dropped). And it gets **worse with a finer grid**, because finer
+inner shells have smaller weights: `n_radial_pts= 100` was 2.4e-06, and
+`pruning_scheme= none` was **1.3e-04**, since 1730 angular points make each inner
+weight 124 times smaller than 14 do. That is also why the removed `jayatilaka2`
+scheme looked better closed-shell in §6a: its very coarse inner grids had large
+weights that survived the threshold.
 
-### Why it matters beyond neatness
+The fix drops only points whose weight is exactly zero, which is the routine's
+one legitimate job (points killed by the Stratmann-Scuseria scheme). Points
+beyond the basis are already removed by `no_of_pts_for_atom`.
 
-It sets the floor for everything else. The `dft_reference` test (`long`) has to
-use a 5e-06 tolerance purely because of this, and at `accuracy= high` the
-deviations already exceed that -- so a cheap grid cannot be used for absolute
-comparisons at all. Fixing the quadrature would let that tolerance drop by
-orders of magnitude, and would make every DFT result cheaper as well as more
-accurate.
+### What the grid actually converges to now
 
-**A rewrite of the grid construction should be considered**, not merely a tuning
-pass. This is worth doing before, or as part of, any of the larger re-engineering
-in `CLAUDE.md`.
+BLYP/cc-pVDZ water against g09's converged −76.4002385321:
+
+| grid | Tonto − g09 |
+|---|---|
+| `medium` | −3.2e-06 |
+| `high` | +9.8e-06 |
+| `best` | +5.9e-07 |
+| `best`, 100 radial | +4.9e-07 |
+| `best`, no pruning | +6.6e-07 |
+| `best`, 100 radial, no pruning | **−9.7e-09** |
+| `best`, 150 radial, L131, no pruning | −1.3e-08 |
+
+The residual at `best` is two separate pieces of about 5e-07 each — the L5/L11
+pruning of the inner half of the radial range, and the radial count — and both
+must go before the answer reaches 1e-08.
+
+**This is the same rate g09 converges at.** The earlier claim in this section
+that g09's FineGrid (75,302) was "within 5e-10" of its converged value was an
+arithmetic slip: the numbers recorded in §3 give FineGrid 5.1e-07 and UltraFine
+(99,590) 5.4e-08. Tonto's `best` and its 100-radial unpruned grid sit at the
+same two places.
+
+### The partition scheme matters more than expected
+
+`partition_scheme=` was inert for DFT: `MOLECULE.RHO:make_rho_becke_atom_grid`
+called the Stratmann-Scuseria builder unconditionally. It is now routed through
+the `partition` dispatcher (`BECKE_GRID:make_partitioned_grid`), and on the same
+`best` grid:
+
+| partition | Tonto − g09 |
+|---|---|
+| stratmann_scuseria (default) | +5.9e-07 |
+| becke, Becke size adjustment | **−3.8e-08** |
+| becke, Treutler-Ahlrichs adjustment | −2.7e-08 |
+| becke, no adjustment | −7.8e-08 |
+| becke, 100 radial, no pruning | −6.5e-09 |
+| delley | −1.03e-05 |
+
+The Becke partition is fifteen times closer on the same points, and at
+`accuracy= low` it is 2.6e-06 against Stratmann-Scuseria's 1.2e-05. Changing the
+default is a decision for the maintainer (`DEFERRED.md`). The Delley scheme does
+not improve with the grid and is either inherently that coarse or defective;
+open in `DEFERRED.md`.
+
+### Two smaller defects found on the way
+
+- **The Treutler-Ahlrichs ξ table was multiplied by 1.89.** Table I of JCP 102
+  p346 is in atomic units, and `TA_zeta` reproduces it digit for digit; the
+  "I think these are in Angstroms" conversion put `kind= treutler_ahlrichs`
+  2.2e-04 from g09. Now 1.6e-06 at `best`.
+- **Three unused Gauss rules in `QUADRATURE` were broken transcriptions** of
+  Numerical Recipes (Laguerre, Hermite, Jacobi: the root carried across the loop
+  was reset to zero, plus four slips), and `open_extended_simpson` wrote outside
+  its arrays. Repaired against the book; the `quadrature_rules` ctest runs every
+  rule against closed-form moments.
 
 ## 7. Assessed and deliberately left alone: how E_xc is evaluated
 
@@ -954,7 +1011,8 @@ Each step gives the next one a trustworthy gate, so the order matters:
 6. ⬜ **Report the XC energy** (§6) — wire up a corrected `put_SCF_energy`. This is
    the instrument the rest of the work needs.
 7. ⬜ **Add the remaining static-analysis checks** (§12). Item 2 is done
-   (`functional_names`); items 1, 3 and 4 are not.
+   (`functional_names`); items 1, 3 and 4 are not. `lebedev_rules` and
+   `quadrature_rules` (§6b) are done.
 8. ⬜ **Drop the `name` argument** (§10, step 1) — self-contained, and independent
    of everything else here.
 9. ⬜ **Wrap libxc** (§11), gated by the `slater`/`vwn5` agreement test, and take

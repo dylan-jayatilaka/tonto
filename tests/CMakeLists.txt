@@ -158,6 +158,18 @@ set_tests_properties("system_commands" PROPERTIES LABELS "short")
 
 # Invariant test -- no reference output involved.
 #
+# Every 1-D rule in QUADRATURE against the closed-form moments of its own
+# weight function. Three of the Gauss rules were broken transcriptions of
+# Numerical Recipes for twenty years and nothing noticed, because the DFT grid
+# uses only the Chebyshev and trapezoid rules. The binary self-checks and exits
+# non-zero. Instant.
+add_test(NAME "quadrature_rules"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND ${PROJECT_BINARY_DIR}/run_quadrature)
+set_tests_properties("quadrature_rules" PROPERTIES LABELS "short")
+
+# Invariant test -- no reference output involved.
+#
 # A Foo procedure that takes arguments is a library routine: it can be called
 # by the argv-driven programs (hart, rgbi), which have no job file. So it must
 # not touch stdin. A no-argument keyword handler may, since only the keyword
@@ -259,6 +271,18 @@ add_test(NAME "parallel_lint"
     COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_parallel_lint.py
             ${PROJECT_SOURCE_DIR}/foofiles)
 set_tests_properties("parallel_lint" PROPERTIES LABELS "short")
+
+# Invariant test -- no reference output involved.
+#
+# The Lebedev angular grids are stored as orbit generators, so one wrong
+# literal would shift every DFT energy without any other test noticing. This
+# replays the generators and asserts each grid integrates every monomial up to
+# its claimed order exactly. About two seconds, no build needed.
+add_test(NAME "lebedev_rules"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_lebedev_rules.py
+            ${PROJECT_SOURCE_DIR}/foofiles/lebedev.foo)
+set_tests_properties("lebedev_rules" PROPERTIES LABELS "short")
 
 # The accepted-name against implemented-name cross-check for DFT functionals.
 # The section 5 fix made an unrecognised name fatal at the two SCF_DATA setters,

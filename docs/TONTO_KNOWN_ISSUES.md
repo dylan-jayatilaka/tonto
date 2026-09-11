@@ -59,9 +59,12 @@ the ones worth reading.
 
 ## DFT
 
-- **DFT needs far more grid points than its accuracy suggests.** At `accuracy= best`
-  every DFT case sits about 1.5×10⁻⁶ from an independent reference, while the grid-free
-  Hartree–Fock cases agree to 10⁻¹⁰. It is a grid offset, not a functional error.
+- **DFT energies at `accuracy= best` sit about 5×10⁻⁷ from an independent reference**,
+  the same distance Gaussian's FineGrid sits from its own converged value. Add radial
+  points and switch pruning off for better; `partition_scheme= becke` is about ten times
+  closer on the same grid. See `DFT_STANDARDISATION.md` §6b.
+- **The Delley partition does not converge to the reference** (about 10⁻⁵ at any grid).
+  Nothing uses it. See `DEFERRED.md`.
 - **The exchange–correlation energy is never reported separately.** `V_ee` lumps it in
   with the Coulomb term. See `DFT_STANDARDISATION.md`.
 

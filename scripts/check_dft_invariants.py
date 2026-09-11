@@ -44,6 +44,22 @@ this?". None needs a reference output, so none can be blessed away.
                                          atoms= block was silently ignored --
                                          25 cartesian basis functions instead of
                                          24 spherical, 1.6e-3 Hartree, exit 0.
+  7  a bigger grid does not make the     BECKE_GRID:prune_grid discarded every
+     answer worse                        grid point whose WEIGHT was below
+                                         basis_fn_cutoff (1e-10). The innermost
+                                         shells of a heavy atom have weights of
+                                         1e-14, so the core was thrown away, and
+                                         a finer grid threw away more of it:
+                                         pruning_scheme= none was 80x WORSE than
+                                         the pruned grid. The 1.5e-6 floor
+                                         against g09 was this.
+  8  basis_fn_cutoff is inert at best    the same defect, seen from the other
+                                         side: 1e-10 vs 1e-14 moved the energy
+                                         by 1.0e-6.
+  9  partition_scheme= is not inert,     the DFT path called the Stratmann-
+     and a bogus name is fatal           Scuseria builder unconditionally, so
+                                         partition_scheme= becke gave a
+                                         bit-identical energy.
 
 WHY PROPERTIES AND NOT REFERENCES. A blessed reference records what Tonto DID;
 these record what must be TRUE. Every defect above was invisible to the
@@ -84,6 +100,16 @@ GGA_CUTOFF_MIN = 1.0e-7
 # SCF noise; 1e-8 is ~17x headroom. The defects this catches were 6.3e-4 and
 # 2.4e-7, i.e. four and one orders above the threshold respectively.
 RU_TOL = 1.0e-8
+# Enlarging the grid at accuracy= best must not move the energy by more than
+# ordinary grid convergence. Observed after the 2026-09-10 fix (STO-3G water,
+# becke88+lyp): pruning_scheme= none 6.0e-7, n_radial_pts= 100 2.1e-7. Before
+# it, 1.3e-4 and 2.4e-6 respectively on cc-pVDZ; the defect is 65x the bound.
+BIGGER_GRID_MAX = 2.0e-6
+# basis_fn_cutoff must not move the energy at best. Observed: 1.0e-12.
+BF_CUTOFF_MAX = 1.0e-8
+# The partition scheme must change the energy on a coarse grid. Observed:
+# 3.2e-5 between stratmann_scuseria and becke at accuracy= low.
+PARTITION_MIN_RESPONSE = 1.0e-8
 
 JOB = """{{
    name= h2o
@@ -99,7 +125,7 @@ JOB = """{{
          1      0.599941   -0.767609    0.000000
       }}
    }}
-{spherical}   becke_grid= {{ set_defaults  accuracy= {acc}  rho_cutoff= {cut} }}
+{spherical}   becke_grid= {{ set_defaults  accuracy= {acc}  rho_cutoff= {cut} {grid} }}
    scfdata= {{
       initial_density= promolecule
       kind= {kind}
@@ -123,7 +149,7 @@ class Runner:
         self.n = 0
 
     def __call__(self, acc="low", cut="1.0e-10", kind="rks", exch="slater",
-                 corr="none", spherical=""):
+                 corr="none", spherical="", grid=""):
         """Run one job; return (exit code, total energy or None)."""
         self.n += 1
         d = os.path.join(self.dir, "job%03d" % self.n)
@@ -131,7 +157,7 @@ class Runner:
         inp = os.path.join(d, "stdin")
         with open(inp, "w") as f:
             f.write(JOB.format(acc=acc, cut=cut, kind=kind, exch=exch,
-                               corr=corr, spherical=spherical))
+                               corr=corr, spherical=spherical, grid=grid))
         out = os.path.join(d, "stdout")
         rc = subprocess.call(
             [self.exe, "--input", inp, "--output", out], cwd=d,
@@ -250,6 +276,51 @@ def main():
                        " names is not setting that flag and is silently dropping"
                        " the exact exchange" % (d, BX_TOL))
 
+        # 7 -- a bigger grid must not make the answer worse
+        best = energy(run, acc="best", exch="becke88", corr="lyp")
+        for label, grid in (("pruning_scheme= none", "pruning_scheme= none"),
+                            ("n_radial_pts= 100", "n_radial_pts= 100")):
+            e = energy(run, acc="best", exch="becke88", corr="lyp", grid=grid)
+            d = abs(e - best)
+            ok = d < BIGGER_GRID_MAX
+            print("  7  best vs %-21s |diff|     = %.3e  %s"
+                  % (label, d, "ok" if ok else "FAIL"))
+            if not ok:
+                bad.append("enlarging the grid (%s) moved the best energy by %.3e"
+                           " (>= %.1e) -- are grid points being discarded by a"
+                           " weight threshold again?" % (label, d, BIGGER_GRID_MAX))
+
+        # 8 -- basis_fn_cutoff must be inert at best
+        e = energy(run, acc="best", exch="becke88", corr="lyp",
+                   grid="basis_fn_cutoff= 1e-14")
+        d = abs(e - best)
+        ok = d < BF_CUTOFF_MAX
+        print("  8  basis_fn_cutoff inert at best   |diff|     = %.3e  %s"
+              % (d, "ok" if ok else "FAIL"))
+        if not ok:
+            bad.append("basis_fn_cutoff 1e-10 vs 1e-14 moved the best energy by"
+                       " %.3e (>= %.1e)" % (d, BF_CUTOFF_MAX))
+
+        # 9 -- partition_scheme= must do something, and a bogus name is fatal
+        ss = energy(run, acc="low", exch="becke88", corr="lyp")
+        bk = energy(run, acc="low", exch="becke88", corr="lyp",
+                    grid="partition_scheme= becke partition_scaling_scheme= becke")
+        d = abs(bk - ss)
+        ok = d > PARTITION_MIN_RESPONSE
+        print("  9  partition_scheme= responds      |SS-becke| = %.3e  %s"
+              % (d, "ok" if ok else "FAIL"))
+        if not ok:
+            bad.append("partition_scheme= becke gave the same energy as"
+                       " stratmann_scuseria (%.3e <= %.1e) -- the keyword is"
+                       " inert on the DFT path again" % (d, PARTITION_MIN_RESPONSE))
+        rc, _ = run(grid="partition_scheme= bekce")
+        ok = rc != 0
+        print("  9  bogus partition name is fatal   exit       = %-9d %s"
+              % (rc, "ok" if ok else "FAIL"))
+        if not ok:
+            bad.append("an unrecognised partition_scheme= exited 0 -- it is"
+                       " being silently ignored")
+
     except RuntimeError as exc:
         bad.append(str(exc))
 
@@ -259,7 +330,7 @@ def main():
         for b in bad:
             print("  - %s" % b)
         return 1
-    print("OK -- all six DFT invariants hold (%d jobs)" % run.n)
+    print("OK -- all nine DFT invariants hold (%d jobs)" % run.n)
     return 0
 
 

@@ -75,10 +75,22 @@ REFERENCE = {
     ("H2O+", 1, 2, "uks", "slater",  "vwn3"): -75.5735204288,
 }
 
-# DFT cases carry Tonto's residual grid error against g09's grid -- a consistent
-# ~1.5e-06 at accuracy= best, which is a property of the grid, not a defect.
-# See docs/DFT_STANDARDISATION.md section 6b.
-TOL_DFT = 5.0e-6
+# The same BLYP case with the Becke partition (Becke size adjustment) instead
+# of the default Stratmann-Scuseria one. Same g09 number: a partition scheme
+# is only a way of splitting the integral, and must converge to the same
+# answer. Measured 2026-09-10 at accuracy= best: SS 5.9e-07, Becke 3.8e-08,
+# and Becke on a 100-radial unpruned grid 6.5e-09.
+PARTITION_CASES = {
+    ("H2O", 0, 1, "rks", "becke88", "lyp", "becke"): -76.4002385321,
+}
+
+# DFT cases carry Tonto's residual grid error against g09's grid at
+# accuracy= best. Measured 2026-09-10, after the weight-threshold defect in
+# BECKE_GRID:prune_grid was removed: 4.1e-07 to 5.9e-07 across the nine cases,
+# where it had been 1.4e-06 to 1.6e-06. This is 2.5x the worst of them; g09's
+# own FineGrid sits 5.1e-07 from its converged value, so it is the grid, not a
+# defect. See docs/DFT_STANDARDISATION.md section 6b.
+TOL_DFT = 1.5e-6
 # HF uses no grid at all, so it should agree to round-off. Measured 1.2e-10
 # (neutral) and 2.0e-10 (cation). A tight bound here catches a basis, integral
 # or SCF regression that the DFT rows would swamp.
@@ -98,7 +110,7 @@ JOB = """{{
          1      0.599941   -0.767609    0.000000
       }}
    }}
-   becke_grid= {{ set_defaults  accuracy= best }}
+   becke_grid= {{ set_defaults  accuracy= best {grid} }}
    scfdata= {{
       initial_density= promolecule
       kind= {kind}
@@ -113,7 +125,7 @@ JOB = """{{
 """
 
 
-def run(exe, basis, workdir, tag, charge, mult, kind, exch, corr):
+def run(exe, basis, workdir, tag, charge, mult, kind, exch, corr, grid=""):
     d = os.path.join(workdir, tag)
     os.makedirs(d, exist_ok=True)
     functionals = ""
@@ -123,7 +135,7 @@ def run(exe, basis, workdir, tag, charge, mult, kind, exch, corr):
     inp = os.path.join(d, "stdin")
     with open(inp, "w") as f:
         f.write(JOB.format(charge=charge, mult=mult, kind=kind,
-                           functionals=functionals))
+                           functionals=functionals, grid=grid))
     out = os.path.join(d, "stdout")
     rc = subprocess.call([exe, "--input", inp, "--output", out], cwd=d,
                          env=dict(os.environ, TONTO_BASIS_SET_DIRECTORY=basis),
@@ -151,20 +163,27 @@ def main():
         return 2
     workdir = tempfile.mkdtemp(prefix="dft-reference-")
     bad = []
-    print("  %-6s %-5s %-16s %-20s %-20s %-11s" %
+    print("  %-6s %-5s %-24s %-20s %-20s %-11s" %
           ("SYSTEM", "KIND", "FUNCTIONAL", "TONTO", "g09", "|diff|"))
-    for i, (key, ref) in enumerate(sorted(REFERENCE.items())):
-        name, charge, mult, kind, exch, corr = key
+    cases = [(k + ("",), v) for k, v in sorted(REFERENCE.items())]
+    cases += sorted(PARTITION_CASES.items())
+    for i, (key, ref) in enumerate(cases):
+        name, charge, mult, kind, exch, corr, partition = key
         tol = TOL_HF if kind in ("rhf", "uhf") else TOL_DFT
-        rc, e = run(exe, basis, workdir, "c%02d" % i, charge, mult, kind, exch, corr)
+        grid = ""
+        if partition:
+            grid = "partition_scheme= %s partition_scaling_scheme= %s" % (partition, partition)
+        rc, e = run(exe, basis, workdir, "c%02d" % i, charge, mult, kind, exch, corr, grid)
         label = ("%s+%s" % (exch, corr)) if exch else "--"
+        if partition:
+            label += " (%s)" % partition
         if rc != 0 or e is None:
-            print("  %-6s %-5s %-16s exit=%d, no energy" % (name, kind, label, rc))
+            print("  %-6s %-5s %-24s exit=%d, no energy" % (name, kind, label, rc))
             bad.append("%s/%s/%s failed to run (exit %d)" % (name, kind, label, rc))
             continue
         d = abs(e - ref)
         ok = d < tol
-        print("  %-6s %-5s %-16s %-20.12f %-20.10f %-11.3e %s"
+        print("  %-6s %-5s %-24s %-20.12f %-20.10f %-11.3e %s"
               % (name, kind, label, e, ref, d, "ok" if ok else "FAIL"))
         if not ok:
             bad.append("%s %s %s: |Tonto - g09| = %.3e exceeds %.1e "
@@ -180,7 +199,7 @@ def main():
         print("  Do NOT 'fix' it by editing the constants without establishing why.")
         return 1
     print("OK -- all %d cases agree with g09 (DFT < %.1e, HF < %.1e)"
-          % (len(REFERENCE), TOL_DFT, TOL_HF))
+          % (len(cases), TOL_DFT, TOL_HF))
     return 0
 
 

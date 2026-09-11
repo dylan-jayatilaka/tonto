@@ -93,6 +93,20 @@ now covers the whole project, so it was renamed.)*
 > `SYSTEM` now holds the reported values by copy rather than a pointer to the file. Both are
 > below with their evidence.
 >
+> **Then the DFT grid item closed, on 2026-09-10** -- the task-register row *The grid needs
+> far too many points for its accuracy*. It was never the quadrature: `BECKE_GRID:prune_grid`
+> discarded every grid point whose *weight* was below `basis_fn_cutoff`, which threw away the
+> innermost shells of every heavy atom, and threw away more of them the finer the grid got.
+> Every DFT case is now 4-6e-7 from g09 at `best` (was 1.4-1.6e-6), which is the rate g09 itself
+> converges at. `partition_scheme=` was inert for DFT and is now wired; the Becke partition is
+> fifteen times closer to g09 than Stratmann-Scuseria on the same grid, and **whether to make it
+> the default is an open decision** -- see *DFT grid: what is still open* under Correctness.
+> Four new guards (`lebedev_rules`, `quadrature_rules`, `dft_invariants` 7-9, a Becke row in
+> `dft_reference`). Every DFT and Hirshfeld reference in `short`, `long` and `rgbi` still
+> **passes the loose gate** -- the shifts are in the eighth decimal (`h2o_blyp_cc-pVDZ`
+> −76.40025055 → −76.40025081) -- so nothing is red; whether to rebless for exact match is
+> Dylan's call. The numbers are in `docs/DFT_STANDARDISATION.md` §6b.
+>
 > Nothing else is in flight; the ordering below stands.
 
 **Nothing is in flight.** Two Science items closed on 2026-09-06: **milestone 11 (extinction)**
@@ -572,7 +586,7 @@ only so this register stays complete:
 | `MOLECULE.SET:initialize_DFT_grids` destroyed and recreated the `BECKE_GRID` | **every** user grid setting discarded; all DFT ran at default `accuracy= "low"` while `put_basics` echoed the requested settings back | **FIXED** 2026-08-12 |
 | `rho_cutoff` defaults to 10⁻⁶ | **the long-standing systematic error against g09.** Cross-validation isolated it: HF agrees to 1.2e-10 and Slater to 4.6e-7, but B88 differs by 9.9e-6 — because `x = \|∇ρ\|/ρ^(4/3)` *grows* in the tail the cutoff truncates. Lowering it to 10⁻¹⁰ collapses the full-BLYP gap **300-fold**, from 1.03e-5 to 3.5e-8, and is **free** — timed, no trend at any accuracy. Each derivative order costs another ρ^(-1/3), so meta-GGAs would be far worse | **FIXED** 2026-08-13 (`d38824da`). `BECKE_GRID.rho_cutoff` now defaults to `TOL(10)`; `types.foo` carries the measurement beside the default. Note the two cutoffs are distinct: `DFT_FUNCTIONAL.rho_cutoff` was always `TOL(30)` and was never the problem — `MOLECULE.FOCK` copies the grid's value over it, so it is the grid's that acts |
 | **RESOLVED 2026-08-14: three causes** (was: "open-shell DFT off by 1.5e-5, cause unknown") | (1) `pruning_scheme= jayatilaka2`, a confound introduced during the investigation -- removed for ROBUSTNESS, not average accuracy: it was actually better closed-shell (3.5e-8) but -1.5e-5 on an open-shell case where every alternative was within 1.6e-6. (2) the VWN5 potential grouped the chain rule wrongly. (3) the VWN3 potential evaluated `VWN_G`/`VWN_dG` at **ZERO instead of zeta**, so it had NO SPIN DEPENDENCE AT ALL. After all three: slater +1.44e-6, +vwn5 +1.455e-6, +vwn3 +1.511e-6 against g09 -- correlation now adds nothing of its own. Tonto's default grid sits ~1.5e-6 from g09; use 5e-6 for any external-reference test. See `docs/DFT_STANDARDISATION.md` section 6a | **FIXED** |
-| **The grid needs far too many points for its accuracy** | At `accuracy= best` (65 radial, L71) every DFT case is ~1.5e-6 from g09, while the two HF cases -- which use no grid -- agree to 1e-10. The seven DFT numbers span only 1.44-1.63e-6 across different functionals, charges and spin treatments, so it is a GRID OFFSET, not functional error. g09 reaches 5e-10 of its converged answer on FineGrid (75,302), a broadly comparable grid. Something in the quadrature (partition weights, radial mapping, normalisation) is likely wrong; a rewrite of the grid construction should be considered. Sets the floor for `dft_reference`'s 5e-6 tolerance. See `docs/DFT_STANDARDISATION.md` section 6b | OPEN — not for now |
+| **The grid needs far too many points for its accuracy** | At `accuracy= best` every DFT case was ~1.5e-6 from g09. **Not the quadrature**: the Lebedev tables, the three radial mappings and both partition schemes were verified against the papers and are correct. The cause was `BECKE_GRID:prune_grid` discarding every grid point whose *weight* fell below `basis_fn_cutoff` (1e-10) -- a volume element compared with a basis-function threshold. The three innermost oxygen shells (weights 7e-15 to 5e-11) were thrown away, and a finer grid threw away more: `pruning_scheme= none` was 80x worse. Now 4.1e-7 to 5.9e-7 across the nine cases, the same rate g09 converges at (its FineGrid is 5.1e-7 from converged -- the "5e-10" in the earlier text was an arithmetic slip); a 100-radial unpruned grid reaches 1e-8. Also found and fixed on the way: `partition_scheme=` inert for DFT; the Treutler-Ahlrichs ξ table multiplied by 1.89 (2.2e-4 error); three broken unused Gauss rules in `QUADRATURE`. Guards: `lebedev_rules`, `quadrature_rules`, `dft_invariants` 7-9, a Becke-partition row in `dft_reference`. See `docs/DFT_STANDARDISATION.md` section 6b | **FIXED** 2026-09-10 |
 | `use_spherical_basis=` after the `atoms=` block | silently ignored — 25 basis functions instead of 24, 1.6e-3 Hartree, exit 0, no diagnostic | **FIXED** 2026-08-13 (`e72a3ac9`). `MOLECULE.MAIN:read_use_spherical_basis` now carries `DIE_IF(.atom.allocated,...)`. Refusing it was chosen over applying it late: silently re-resolving a basis under a job that has already used it invites a different bug. Guarded by `dft_invariants` check 5 |
 | An unrecognised functional name silently contributes nothing | `blyp` gave −67.7092 instead of −76.4002, exit 0. **Validation lives at the setter, not the dispatcher**, and that is forced, not a preference: the four dispatchers and both `is_*_functional` queries are `PURE`, and `UNKNOWN` is a `DIE` that expands to an `allocate` — illegal in a pure procedure, and `DIE` is live in release, so no amount of `PURE` helps. `SCF_DATA:set_exchange_functional` and `set_correlation_functional` now carry the live `case default; UNKNOWN(...)`; the six dispatcher defaults stay commented, each with a note saying why. A blank name is admitted explicitly beside `"none"`, because `MOLECULE.FOCK` guards only on `/= "none"`. **Limit:** it catches names arriving through input or `set_*`, which is every real path; it does *not* catch a name injected straight into a dispatcher by new code — the accepted-against-implemented lint of `docs/DFT_STANDARDISATION.md` §12 is what closes that | **FIXED** 2026-08-13 |
 | `gill96` blessed in three places, implemented nowhere | Removed from all three — `scf_data.foo` and `is_GGA_functional` / `is_LDA_functional` — because no Gill96 routine exists anywhere in `foofiles/`. With validation live, leaving it would have made it an accepted name that dies, which is worse than not offering it | **FIXED** 2026-08-13 |
@@ -588,6 +602,39 @@ varied a grid, and every test spelled its functional correctly. `scripts/check_d
 (ctest `dft_invariants`, label `short`, 20 STO-3G jobs, about two seconds) tests
 properties rather than blessed numbers, so none of them can be blessed away. Check 4
 is the bogus name: `blyp` as an exchange functional must exit non-zero.
+
+## DFT grid: what is still open after the 2026-09-10 fix
+
+The weight-threshold defect is closed (see the table above and
+`docs/DFT_STANDARDISATION.md` §6b). Three things came out of the measurement that are
+decisions or investigations rather than fixes, plus some tidying not done:
+
+1. **Should the default partition become Becke?** On the same `best` grid, BLYP water is
+   +5.9e-7 from g09 with Stratmann-Scuseria and −3.8e-8 with Becke (Becke size adjustment);
+   at `accuracy= low` it is −1.2e-5 against −2.6e-6. Fifteen and five times better, for
+   a grid build that is not slower on water. SS was chosen for its linear-scaling screening
+   (the unit-weight sphere and the kill rule), which matters for large systems and not for
+   the test molecules. The right measurement before deciding is karrikinolide or the
+   `long` HAR jobs at `high`, timing and energy both. Dylan's call; not made.
+2. **The Delley partition does not converge to g09.** −1.03e-5 at `best` and −1.05e-5 with
+   100 radial points unpruned, so it is not a grid-size effect. Either the modified Delley
+   cell function of Perez-Jorda and Yang is inherently that coarse on a 3-atom molecule, or
+   `partition_D` is wrong. Not checked against CPL 241 p469. Nobody uses it.
+3. **Why the residual at `best` is 5e-7 and not 5e-8.** Two independent pieces of ~5e-7:
+   the L5/L11 pruning of the inner *half* of the radial range (index thirds, which on the
+   Mura-Knowles grid means L11 out to 0.67 bohr from oxygen, well past the SS unit-weight
+   sphere at 0.33 bohr), and the radial count. Removing either alone does nothing; both
+   together give 1e-8. Treutler-Ahlrichs prescribed those index fractions for *their* radial
+   grid, which puts the L11 boundary at r = ξ. A pruning rule stated in bohr rather than in
+   index fractions, and a `best` with 100 radial points, are the two obvious moves. Dylan's
+   questions of 2026-09-10 belong here: whether to build one molecular grid and prune that,
+   and how to prune without losing accuracy. Summation order is not a factor -- 76 Hartree
+   in double precision is 1e-14, seven orders below anything measured.
+4. **Not tidied**: `make_Becke_atom_grid` hard-codes three iterations where the
+   `partition_*` family honours `.partition_power`, and uses bare `1.5`/`0.5` literals
+   (exactly representable, harmless); the `partition_scheme` comment in `types.foo` still
+   names only "becke and delley" -- a `types.foo` edit is a full rebuild and was not worth
+   paying for a comment.
 
 ## The end-of-job timing lines still truncate a very long job name (2026-09-10)
 

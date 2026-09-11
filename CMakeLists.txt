@@ -668,6 +668,7 @@ set(RUN_SRC
 #   ${RUNFILE_DIR}/run_mpi_matmul.foo
     ${RUNFILE_DIR}/run_mpi_pi.foo
     ${RUNFILE_DIR}/run_qr.foo
+    ${RUNFILE_DIR}/run_quadrature.foo
     ${RUNFILE_DIR}/run_shell2.foo
     ${RUNFILE_DIR}/run_real.foo
     ${RUNFILE_DIR}/run_rgbi.foo
@@ -1080,6 +1081,10 @@ if(WITH_MPI)
     add_executable(run_mpi_pi     ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_pi.F90)
 endif()
 add_executable(run_qr            EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_qr.F90)
+# run_quadrature self-checks every 1-D rule in QUADRATURE against closed-form
+# moments and exits non-zero on a wrong one; the `quadrature_rules` ctest.
+# Not EXCLUDE_FROM_ALL for the same reason as run_system_commands.
+add_executable(run_quadrature    ${CMAKE_CURRENT_BINARY_DIR}/run_quadrature.F90)
 add_executable(run_real          EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_real.F90)
 add_executable(run_rgbi          ${CMAKE_CURRENT_BINARY_DIR}/run_rgbi.F90)
 add_executable(run_vec_str       EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_vec_str.F90)
@@ -1125,6 +1130,7 @@ target_link_libraries(run_vec_str       tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBR
 target_link_libraries(run_least_squares tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_textfile      tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_system_commands tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_quadrature    tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 if(WITH_MPI)
     target_link_libraries(run_mpi_test          tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
     target_link_libraries(run_mpi_test_complete tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
