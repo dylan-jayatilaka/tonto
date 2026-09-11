@@ -1570,6 +1570,9 @@ contains
 
       dF :: OPMATRIX@
       delta_build,add_core :: BIN
+      t0,t1 :: REAL
+
+      t0 = TIME::current_cpu_time()
 
       ! Use a delta fock matrix build?
       delta_build = .SCF_data.do_delta_build &
@@ -1595,10 +1598,14 @@ contains
       .fock_mx = .fock_2e_mx
       .fock_2e_mx.compress
 
+      t1 = TIME::current_cpu_time(); .SCF_data.time_fock_2e = .SCF_data.time_fock_2e + t1 - t0
+
       ! Now do the XC part if needed
       if (.SCF_data.is_DFT_calculation) then
          .add_XC_mx(.fock_mx)
       end
+
+      t0 = TIME::current_cpu_time(); .SCF_data.time_xc = .SCF_data.time_xc + t0 - t1
 
       ! Force update of 1e hamiltonian if required
       if (.SCF_data.using_SC_cluster_charges OR .SCF_data.using_SC_Lorentz_fields) then
@@ -1702,13 +1709,7 @@ contains
 
       do
 
-         .extrapolate_Fock_mx
-         .update_MOs
-         .make_SCF_density_mx
-         .make_scf_Fock_mx
-         .update_SCF_data
-         .update_SCF_data_error
-         .put_SCF_table_body
+         .do_timed_SCF_iteration
 
          if (.SCF_data.SCF_done) exit
 
@@ -1744,13 +1745,7 @@ contains
 
       do
 
-         .extrapolate_Fock_mx
-         .update_MOs
-         .make_SCF_density_mx
-         .make_scf_Fock_mx
-         .update_SCF_data
-         .update_SCF_data_error
-         .put_SCF_table_body
+         .do_timed_SCF_iteration
 
          if (.SCF_data.SCF_done) exit
 
@@ -1764,28 +1759,71 @@ contains
 
    end
    
+   do_timed_SCF_iteration :: leaky
+   ! One SCF iteration, with the CPU time of each phase accumulated in
+   ! .SCF_data and the whole iteration's time put in the table.
+      self :: INOUT
+
+      t0,t1 :: REAL
+
+      t0 = TIME::current_cpu_time()
+      .extrapolate_Fock_mx
+      t1 = TIME::current_cpu_time(); .SCF_data.time_diis = .SCF_data.time_diis + t1 - t0
+      .update_MOs
+      t0 = TIME::current_cpu_time(); .SCF_data.time_diag = .SCF_data.time_diag + t0 - t1
+      .make_SCF_density_mx
+      t1 = TIME::current_cpu_time(); .SCF_data.time_density = .SCF_data.time_density + t1 - t0
+      .make_scf_Fock_mx          ! times its own two parts
+      t0 = TIME::current_cpu_time()
+      .update_SCF_data
+      .update_SCF_data_error
+      .SCF_data.time_iteration = t0 - .SCF_data.time_iteration
+      .put_SCF_table_body
+      .SCF_data.time_iteration = t0
+
+   end
+
    initialize_SCF :: leaky
    ! Initialize any molecular SCF procedure
       self :: INOUT
 
    ENSURE(.SCF_data.allocated,"no SCF_data")
 
+      t0,t1 :: REAL
+
+      .SCF_data.time_1e        = ZERO
+      .SCF_data.time_grid      = ZERO
+      .SCF_data.time_guess     = ZERO
+      .SCF_data.time_fock_2e   = ZERO
+      .SCF_data.time_xc        = ZERO
+      .SCF_data.time_diis      = ZERO
+      .SCF_data.time_diag      = ZERO
+      .SCF_data.time_density   = ZERO
+
       ! Overlap matrix
+      t0 = TIME::current_cpu_time()
       .make_overlap_mx
+      t1 = TIME::current_cpu_time(); .SCF_data.time_1e = .SCF_data.time_1e + t1 - t0
 
       ! Integration grids
       if (.SCF_data.is_DFT_calculation) .initialize_DFT_grids
+      t0 = TIME::current_cpu_time(); .SCF_data.time_grid = .SCF_data.time_grid + t0 - t1
 
       ! Get initial guess
       .get_initial_guess
+      t1 = TIME::current_cpu_time(); .SCF_data.time_guess = .SCF_data.time_guess + t1 - t0
 
       ! Core matrix: both kinds
       .core_mx.destroy
       .make_core_mx(.SCF_data.spinorbital_genre)
       .make_core_mx(.SCF_data.MOs_genre)
+      t0 = TIME::current_cpu_time(); .SCF_data.time_1e = .SCF_data.time_1e + t0 - t1
          
       ! Get Fock matrix
       .make_scf_Fock_mx
+
+      ! The table column is the time between successive rows
+      .SCF_data.time_iteration = TIME::current_cpu_time()
 
       ! Make structure factors?
       ! Read lambda=0 structure factors
@@ -1820,6 +1858,15 @@ contains
       self :: INOUT
 
    ENSURE(.SCF_data.allocated,"no SCF_data")
+
+      .SCF_data.time_1e      = ZERO
+      .SCF_data.time_grid    = ZERO
+      .SCF_data.time_guess   = ZERO
+      .SCF_data.time_fock_2e = ZERO
+      .SCF_data.time_xc      = ZERO
+      .SCF_data.time_diis    = ZERO
+      .SCF_data.time_diag    = ZERO
+      .SCF_data.time_density = ZERO
    ENSURE(NOT .SCF_data.is_constrained_SCF,"fitting not allowed")
 
       ! Overlap matrix
@@ -1839,6 +1886,9 @@ contains
 
       ! Get Fock matrix
       .make_scf_Fock_mx
+
+      ! Timers: the table column is the time between successive rows
+      .SCF_data.time_iteration = TIME::current_cpu_time()
 
       ! Reset all SCF data (except DFT parts)
       .SCF_data.reset

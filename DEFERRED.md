@@ -2159,15 +2159,27 @@ forms the delta only if that matrix is *already* allocated, and nothing allocate
 `molecule.set.foo` only destroys it. The switch is on, echoed, and does nothing, exactly
 like the `becke_grid` block was.
 
-**Plan** (`~/.claude/plans/`, approved 2026-09-11): (1) per-phase timers in the SCF table and
-one `perf` profile of karrikinolide at `medium`; (2) keep `.max_I` across iterations; (3)
-allocate `.delta_density_mx` at SCF start so the existing delta build engages, with a
-periodic full rebuild; (4) a class-batched shell-pair traversal via an index vector, no AO
-reorder (the AO order is load-bearing in `molecule.base/prop/rho/har/grid` and in every
-archive); (5) Rys roots vectorised over T-range bins within a class block -- Dylan's
-idea, and the right shape for it, but gated on the profile showing the roots matter; (6)
-specialised f/g `make_esfs_*` routines, commented out today, if the profile says so.
-`dft_reference` and the karrikinolide energies above are the correctness gate.
+**Step 1 done, 2026-09-11: timers and a profile.** `SCF_DATA` now accumulates CPU time per
+phase (`show_timings= TRUE` in `scfdata=` prints a `Time` column and a summary; off by
+default because timings cannot go into references). On karrikinolide at `medium` the XC
+quadrature is **67%** of the SCF, J and K **28%**, the initial guess 5%, everything else
+under 1%. gprof splits the XC half and half between evaluating the basis functions and
+gradients on the grid (`make_rho_becke_atom_grid`) and the shell-pair × point contraction
+(`add_GGA_XC_mx`), both proportional to the point count; the Rys roots are 6.6% of the run
+and the whole ERI machinery 22%. Tables in `docs/SCF_SPEED_REPORT.md`.
+
+**Plan, reordered by that profile** (`~/.claude/plans/`): (2) the free ones -- build the
+partitioned atom grids once rather than per iteration (the 2.4% labelled
+`set_unique_atoms`), keep `.max_I` across iterations; (3) allocate `.delta_density_mx` at
+SCF start so the existing delta build engages, with a periodic full rebuild -- the J/K
+share on late iterations; (4) **adaptive angular pruning**, which is now the main speed
+item too since two thirds of the run scales with the point count (see the DFT grid item);
+(5) a class-batched shell-pair traversal via an index vector, no AO reorder (the AO order
+is load-bearing in `molecule.base/prop/rho/har/grid` and in every archive), and the Rys
+roots vectorised over T-range bins within a class block -- Dylan's idea and the right shape
+for it, but the ceiling is the 10-15% those routines cost; (6) specialised f/g
+`make_esfs_*` routines, commented out today, if a later profile says so. `dft_reference`
+and the karrikinolide energies above are the correctness gate.
 
 # Test suite and numerics
 
