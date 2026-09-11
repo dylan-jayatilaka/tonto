@@ -97,7 +97,22 @@ Reading it:
   loop, small but pure waste.
 - Diagonalisation, DIIS and the density matrix do not appear.
 
-**Revised order for the plan:** (1) done, these tables; (2) hoist `set_unique_atoms` and
-keep `.max_I` across iterations, both free; (3) wake the delta-density Fock build (saves
-J/K work on late iterations, up to ~25% of the run); (4) adaptive pruning, which attacks the
-67%; (5) class batching and the Rys vectorisation, which together address perhaps 10-15%.
+**Revised order for the plan:** (1) done, these tables; (2) the free ones; (3) wake the
+delta-density Fock build (saves J/K work on late iterations, up to ~25% of the run); (4)
+adaptive pruning, which attacks the 67%; (5) class batching and the Rys vectorisation, which
+together address perhaps 10-15%.
+
+## Step 2, 2026-09-11: the free ones, and what they turned out to be worth
+
+- **`.max_I` across iterations.** The survey said the Schwarz bounds were rebuilt in every
+  Fock build. Reading it properly: `initialize_SCF` already builds them once (after its own
+  first Fock build) and `cleanup_scf` destroys them, so inside an SCF they were cached and
+  only that first build and the non-SCF Fock builds (properties, HAR) paid an extra (ab|ab)
+  pass. The JK drivers now never destroy `.max_I`; the geometry-change routines in
+  `MOLECULE.SET` do. Correct, and nearly free -- but worth a few tenths of a second here,
+  not the iteration-per-pass the plan assumed.
+- **Caching the partitioned atom grids** (the 2.4%) is deferred. The cheap version caches
+  the basis-function values on the pruned grid per atom, which is a quarter of a gigabyte on
+  karrikinolide and grows with the molecule; the right version keeps only a point-index map
+  from the unscaled grid through `compress_zeros` and `prune_grid`, which is a change to the
+  grid-construction routines that adaptive pruning rewrites anyway. Do it there.

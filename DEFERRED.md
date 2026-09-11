@@ -2168,9 +2168,11 @@ gradients on the grid (`make_rho_becke_atom_grid`) and the shell-pair × point c
 (`add_GGA_XC_mx`), both proportional to the point count; the Rys roots are 6.6% of the run
 and the whole ERI machinery 22%. Tables in `docs/SCF_SPEED_REPORT.md`.
 
-**Plan, reordered by that profile** (`~/.claude/plans/`): (2) the free ones -- build the
-partitioned atom grids once rather than per iteration (the 2.4% labelled
-`set_unique_atoms`), keep `.max_I` across iterations; (3) allocate `.delta_density_mx` at
+**Plan, reordered by that profile** (`~/.claude/plans/`): (2) done 2026-09-11 for `.max_I`
+(kept across Fock builds; it was already kept inside an SCF, so the gain is one (ab|ab)
+pass per SCF and per property Fock build); the partitioned-atom-grid cache (the 2.4%) is
+deferred to the adaptive-pruning rewrite, where a point-index map through `compress_zeros`
+and `prune_grid` makes it memory-free; (3) allocate `.delta_density_mx` at
 SCF start so the existing delta build engages, with a periodic full rebuild -- the J/K
 share on late iterations; (4) **adaptive angular pruning**, which is now the main speed
 item too since two thirds of the run scales with the point count (see the DFT grid item);
