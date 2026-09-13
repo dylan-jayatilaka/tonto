@@ -378,17 +378,25 @@ contains
       use_FON = FALSE
       if (.SCF_data.allocated) use_pFON = .SCF_data.using_FON
 
+      ! Save the old density, for damping and for the delta density. This
+      ! must come BEFORE the density matrix is destroyed and re-created
+      ! below: it used to come after, so the "old" density was whatever
+      ! the fresh allocation happened to contain -- usually the previous
+      ! contents, by luck of the allocator, until the second delta build.
+      .old_density_mx.destroy
+      if (do_delta_density OR damping) then
+      if (.density_mx.allocated) then
+      if (.density_mx.has_genre(genre)) then
+         .old_density_mx = .density_mx
+         .old_density_mx.compress
+      end
+      end
+      end
+
       ! Create the density matrix (leaky)
       if (.density_mx.deallocated) .density_mx.create(.n_bf)
       .density_mx.destroy(genre)
       .density_mx.create(genre)
-
-      ! Save the old density if damping
-      .old_density_mx.destroy
-      if (do_delta_density OR damping) then
-         .old_density_mx = .density_mx
-         .old_density_mx.compress
-      end
 
       ! Make the density matrix
       select case (scf_method)
@@ -496,7 +504,7 @@ contains
       end
 
       ! Damp the density matrix if required
-      if (damping) then
+      if (damping AND .old_density_mx.allocated) then
          .old_density_mx.uncompress
          .density_mx.damp(.old_density_mx,.SCF_data.damp_factor)
       end
@@ -505,14 +513,24 @@ contains
    ! do_archive = FALSE
    ! if (do_archive) .put_archive(.density_mx,"density_mx")
 
-      ! Save the delta density matrix for incremental Fock build
-      if (do_delta_density) then
+      ! Save the delta density matrix for incremental Fock build. The old
+      ! density was saved compressed (its square part destroyed), and
+      ! plus() works on square parts, so restore it first; the damping
+      ! branch above did this, which is why only the delta path crashed.
+      if (do_delta_density AND .old_density_mx.allocated) then
+         .old_density_mx.uncompress
          .delta_density_mx = .old_density_mx
          .delta_density_mx.scale_by(-ONE)
          .delta_density_mx.plus(.density_mx)
       else
-         .old_density_mx.destroy
+         ! No delta this iteration: leave nothing stale for the Fock build
+         if (.delta_density_mx.allocated) .delta_density_mx.destroy(genre)
       end
+
+      ! The old density is kept (compressed) for the next call, so that
+      ! damping can see it. It used to be destroyed here, so "damping"
+      ! found no old density and never mixed.
+      if (.old_density_mx.allocated) .old_density_mx.compress
 
    end
 

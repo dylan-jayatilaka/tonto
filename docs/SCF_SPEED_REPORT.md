@@ -116,3 +116,50 @@ together address perhaps 10-15%.
   karrikinolide and grows with the molecule; the right version keeps only a point-index map
   from the unscaled grid through `compress_zeros` and `prune_grid`, which is a change to the
   grid-construction routines that adaptive pruning rewrites anyway. Do it there.
+
+## Step 3, 2026-09-12: the delta-density Fock build, and what it exposed
+
+**Three latent defects in `MOLECULE.BASE:make_SCF_density_mx`**, all found by switching the
+delta build on for the first time:
+
+1. Nothing allocated `.delta_density_mx`, so `use_delta_build= TRUE` (the default) had never
+   built anything incrementally. `initialize_SCF` now allocates it when the flag is on, and
+   `cleanup_scf` destroys it.
+2. The "old" density was saved *after* the density matrix had been destroyed and re-created,
+   so the saved copy was whatever the fresh allocation contained. The first increment worked
+   by allocator luck; the second was garbage (+147 Hartree on water). Now saved first.
+3. The old density was destroyed at the end of every call, so the next call's damping test
+   ("is there an old density?") always failed: **damping has never actually been applied**,
+   although the table said `*Damping on`. It is now kept, compressed, and damping runs for
+   iterations below `damp_finish` as designed.
+
+**Measured on karrikinolide, `medium`, Becke, damping now live:**
+
+| run | iterations | J and K CPU s | final energy − full build | late-iteration ΔE |
+|---|---|---|---|---|
+| full builds (reference) | 14 | 46.6 | 0 | monotonic to 1e-9 |
+| delta, normal cutoffs (1e-9) | 18 | 46.4 | +4e-9 | wobbles ±1e-6 |
+| delta, damping off | 20 | 58.7 | −7e-7 | wobbles ±1e-6 |
+| delta, full rebuild every 3 | 19 | 68.5 | −1e-10 | wobbles ±3e-7 |
+| delta, cutoffs 1e-12 | 15 | 60.4 | −1e-8 | monotonic |
+
+The increments are noisy at the 1e-6 level under the normal Schwarz cutoffs (the test is
+against an absolute cutoff, and a small ΔP puts far more quartets under it), and DIIS then
+chases that noise for extra iterations. Tightening the cutoffs to 1e-12 restores clean
+convergence but admits as many quartets as a full build. **Dylan's decision: `use_delta_build`
+defaults to FALSE**; the machinery is correct and opt-in. A ΔP-scaled screening (Ahmadi and
+Almlöf) is the version that would pay, and it belongs after adaptive pruning, since J and K
+are a quarter of the run here and the XC quadrature two thirds.
+
+`set_using_direct_SCF` used to force `using_delta_build= TRUE`; removed.
+
+## g09 on the same job, for scale
+
+g09, BLYP/6-31G(d), 6D, `SCF=(Tight,Conver=10)`, its default FineGrid, one core:
+**49 s wall, 23 cycles**, energy −533.954537963, i.e. 1.9e-5 from its own converged
+(199974-point) value. Tonto at `medium`/Becke: 177 s, 14 iterations, 1.6e-5 from the same
+converged value. At matched accuracy g09 is 3.6× faster on the job and about 6× faster per
+iteration (2.1 s against 12.6 s). Since Tonto's iteration is two thirds XC quadrature on a
+grid about the size of FineGrid, the per-iteration gap is mostly in the XC evaluation itself,
+not the number of points: the per-point cost of the basis-function evaluation and the
+contraction. That narrows the target further.

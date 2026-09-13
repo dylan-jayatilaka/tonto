@@ -2183,6 +2183,21 @@ for it, but the ceiling is the 10-15% those routines cost; (6) specialised f/g
 `make_esfs_*` routines, commented out today, if a later profile says so. `dft_reference`
 and the karrikinolide energies above are the correctness gate.
 
+**Step 3 done, 2026-09-12/13, with a different outcome from the plan.** Waking the delta
+build exposed three latent defects in `MOLECULE.BASE:make_SCF_density_mx`: nothing allocated
+the delta density (so the default `use_delta_build= TRUE` was inert); the old density was
+saved *after* the density matrix had been re-created, so the copy was allocator luck; and it
+was destroyed at the end of every call, so **damping had never actually been applied** despite
+the `*Damping on` note. All three fixed; damping now runs for iterations below `damp_finish`
+as designed (water 9 → 6 iterations, karrikinolide unchanged). The delta build itself is
+correct but, screened against the normal absolute cutoffs, its increments are noisy at 1e-6
+and cost 4-6 iterations; screened at 1e-12 it converges cleanly but admits as many quartets
+as a full build. **Dylan's decision: `use_delta_build` defaults to FALSE**, opt-in. A
+ΔP-scaled (Ahmadi-Almlöf) screening is the version that would pay; after pruning. Also
+measured: g09 on its FineGrid does the same job in 49 s and 23 cycles at matched accuracy,
+against Tonto's 177 s and 14 -- 6× per iteration, and that gap is mostly the per-point cost of
+the XC evaluation, not the point count. Tables in `docs/SCF_SPEED_REPORT.md`.
+
 # Test suite and numerics
 
 ## Deferred: small numerical differences (longstanding) — drill down
