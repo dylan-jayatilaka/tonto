@@ -1215,9 +1215,134 @@ contains
       ! (in case of new positions) (leaky)
       .becke_grid.set_atom_info(.atom) 
       .becke_grid.set_grid_data
+      .destroy_XC_grid
 
       ! ALWAYS make the overlapping atom lists
       .set_overlapping_atoms_for_atom
+
+   end
+
+   make_XC_grid :: leaky, PURE
+   ! Make the DFT integration grid for the whole molecule: every atom's
+   ! partitioned grid, exactly as make_partitioned_grid returns it, laid
+   ! end to end in .XC_pts/.XC_wts, with atom "a" occupying rows
+   ! .XC_first_pt(a) to .XC_last_pt(a), and .XC_index holding each
+   ! point's row in its unique-atom grid so the cached basis functions
+   ! still apply. Built once per SCF, where the atom grids and their
+   ! partition weights used to be rebuilt on every iteration. Nothing is
+   ! dropped here: a threshold on points is what caused the 2026-09-10
+   ! grid defect (docs/DFT_STANDARDISATION.md 6b).
+      self :: INOUT
+
+   ENSURE(.becke_grid.allocated,"no becke_grid")
+   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
+   ENSURE(.overlapping_atoms_for_atom.allocated,"no overlapping_atoms")
+
+      pts :: VEC{EMAT{REAL}}@
+      wts :: VEC{EVEC{REAL}}@
+      ixs :: VEC{EVEC{INT}}@
+      pt  :: MAT{REAL}@
+      wt  :: VEC{REAL}@
+      ix  :: MAT{REAL}@
+      overlapping_atom :: VEC{INT}@
+      n_tot,c,f,l,k :: INT
+
+      .destroy_XC_grid
+      .XC_first_pt.create(.n_atom)
+      .XC_last_pt.create(.n_atom)
+
+      ! The atom grids, one at a time
+      pts.create(.n_atom)
+      wts.create(.n_atom)
+      ixs.create(.n_atom)
+      n_tot = 0
+      do c = 1,.n_atom
+         overlapping_atom = .overlapping_atoms_for_atom(c).element
+         .becke_grid.make_partitioned_grid(pt,wt,ix,c,overlapping_atom,index=TRUE)
+         .XC_first_pt(c) = n_tot + 1
+         n_tot = n_tot + wt.dim
+         .XC_last_pt(c) = n_tot
+         pts(c).element.create(pt.dim1,3)
+         wts(c).element.create(wt.dim)
+         ixs(c).element.create(wt.dim)
+         pts(c).element = pt
+         wts(c).element = wt
+         do k = 1,wt.dim
+            ixs(c)[k] = nint(ix(k,1))
+         end
+         ix.destroy
+         pt.destroy
+         wt.destroy
+      end
+
+      ! Lay them end to end
+      .XC_pts.create(n_tot,3)
+      .XC_wts.create(n_tot)
+      .XC_index.create(n_tot)
+      do c = 1,.n_atom
+         f = .XC_first_pt(c)
+         l = .XC_last_pt(c)
+         .XC_pts(f:l,:) = pts(c).element
+         .XC_wts(f:l)   = wts(c).element
+         .XC_index(f:l) = ixs(c).element
+      end
+
+      ixs.destroy
+      wts.destroy
+      pts.destroy
+
+   end
+
+   get_XC_grid_for_atom(pt,wt,f0,c) :: leaky, PURE
+   ! Return atom "c"'s slice of the molecular DFT grid and its own basis
+   ! functions "f0" on it, building the grid first if it does not exist
+   ! (a property job outside an SCF).
+      self :: INOUT
+      pt :: MAT{REAL}@, OUT
+      wt :: VEC{REAL}@, OUT
+      f0 :: MAT{REAL}@, OUT
+      c  :: INT, IN
+
+      f,l,n :: INT
+
+      if (.XC_pts.deallocated) .make_XC_grid
+
+      f = .XC_first_pt(c)
+      l = .XC_last_pt(c)
+      n = l - f + 1
+
+      pt.create(n,3)
+      wt.create(n)
+      pt = .XC_pts(f:l,:)
+      wt = .XC_wts(f:l)
+
+      .becke_grid.get_atom_bf_grid(f0,c,.XC_index(f:l))
+
+   end
+
+   get_XC_grid_for_atom(pt,wt,f0,gx,gy,gz,c) :: leaky, PURE
+   ! As above, with the gradients of the basis functions too.
+      self :: INOUT
+      pt :: MAT{REAL}@, OUT
+      wt :: VEC{REAL}@, OUT
+      f0 :: MAT{REAL}@, OUT
+      gx,gy,gz :: MAT{REAL}@, OUT
+      c  :: INT, IN
+
+      f,l,n :: INT
+
+      if (.XC_pts.deallocated) .make_XC_grid
+
+      f = .XC_first_pt(c)
+      l = .XC_last_pt(c)
+      n = l - f + 1
+
+      pt.create(n,3)
+      wt.create(n)
+      pt = .XC_pts(f:l,:)
+      wt = .XC_wts(f:l)
+
+      .becke_grid.get_atom_bf_grid(f0,gx,gy,gz,c,.XC_index(f:l))
 
    end
 
@@ -1258,7 +1383,7 @@ contains
       overlapping_atom = .overlapping_atoms_for_atom(c).element
 
       ! Get the Becke grid for atom "c"
-      .becke_grid.make_partitioned_grid(pt,wt,gridc0,c,overlapping_atom)
+      .get_XC_grid_for_atom(pt,wt,gridc0,c)
       n_pt = pt.dim1
 
       ! Create N0
@@ -1486,7 +1611,7 @@ contains
       overlapping_atom = .overlapping_atoms_for_atom(c).element
 
       ! Get the Becke grid for atom "c"
-      .becke_grid.make_partitioned_grid(pt,wt,gridc0,gridcx,gridcy,gridcz,c,overlapping_atom)
+      .get_XC_grid_for_atom(pt,wt,gridc0,gridcx,gridcy,gridcz,c)
       n_pt = pt.dim1
 
       ! Create N0
@@ -1747,7 +1872,7 @@ contains
       overlapping_atom = .overlapping_atoms_for_atom(c).element
 
       ! Get the Becke grid for atom "c"
-      .becke_grid.make_partitioned_grid(pt,wt,gridc0,c,overlapping_atom)
+      .get_XC_grid_for_atom(pt,wt,gridc0,c)
       n_pt = pt.dim1
 
       ! Create N0a, N0b
@@ -1980,7 +2105,7 @@ contains
       overlapping_atom = .overlapping_atoms_for_atom(c).element
 
       ! Get the Becke grid for atom "c"
-      .becke_grid.make_partitioned_grid(pt,wt,gridc0,gridcx,gridcy,gridcz,c,overlapping_atom)
+      .get_XC_grid_for_atom(pt,wt,gridc0,gridcx,gridcy,gridcz,c)
       n_pt = pt.dim1
 
       ! Create N0 arrays
