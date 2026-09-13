@@ -98,6 +98,31 @@ now covers the whole project, so it was renamed.)*
 > 0.17% on three lines where it had failed at 200%. The only loose failure left on the Mac is
 > `urea_ccsd_pob-TZVP_Salvador_properties` at 4.48%, the LAPACK-thread row; the suite is 55/56.
 >
+> **HANDOFF 2026-09-13, adaptive pruning in progress (Dylan's session quota near its cap).**
+> The plan is `~/.claude/plans/we-are-now-going-validated-island.md` (stages A-E). Done and
+> pushed on `develop`: **stage A** (`1cc51a89`, the molecular XC grid built once per SCF,
+> `MOLECULE.RHO:make_XC_grid`, bit-identical energies) and **stage B** (`93ad9629`, the
+> `put_grid_shell_errors` keyword, tables in `~/tonto_runs/grid_shell_errors_2026-09-13/`
+> with `shell_summary.py`, reading in `docs/SCF_SPEED_REPORT.md`). A karrikinolide table was
+> running at hand-off (`/tmp/.../scratchpad/shell_karr/stdout` if it survived; otherwise rerun:
+> the `stdin` is the karrikinolide `medium` job plus `put_grid_shell_errors` after `scf`).
+> **Next, stage C**: in `make_XC_grid`, after the partition, drop points whose promolecule
+> density is below a new `BECKE_GRID.XC_rho_prune` (default ~1e-12, then measured): the
+> density comes from the atomic interpolators (`MOLECULE.RHO:make_ANO_interpolators`, then
+> `.atom(a).make_interpolated_density(rho,pts)` summed over `overlapping_atom`); on water it
+> removes 8% of `medium`'s points and 25% of `best`'s, the shells beyond ~7 bohr, at no cost
+> in accuracy. **Then stage D**: replace the index-thirds pruning by five zones in bohr from
+> the water profiles -- L5 to 0.25 bohr, L11 to 0.7, the full order from 0.7 to 3 bohr
+> (this zone needs *more* than `medium` gives: L29 leaves 1e-7 per shell there, L59 is
+> needed for 1e-8), L17 to 5 bohr, L11 to 6, L5 to 7 -- as `pruning_scheme= adaptive`,
+> checked against the karrikinolide table for whether the zone edges scale with the bonding
+> distance, and measured with the water/karrikinolide ladder against g09
+> (`docs/DFT_STANDARDISATION.md` §6b). The oracle numbers to beat: `medium`'s per-shell
+> error with 54% of its points; `best`'s with 9%. Gates for every stage: `dft_reference`,
+> `dft_invariants`, `short`, the DFT/HAR/constrained `long` jobs, karrikinolide `medium`
+> energy −533.954503625952 (A and B are bit-identical; C and D are measured, not identical).
+> Timing on this machine is only meaningful when Dylan's `occ-bin` jobs are not running.
+>
 > **Then the DFT grid item closed, on 2026-09-10** -- the task-register row *The grid needs
 > far too many points for its accuracy*. It was never the quadrature: `BECKE_GRID:prune_grid`
 > discarded every grid point whose *weight* was below `basis_fn_cutoff`, which threw away the
