@@ -163,3 +163,37 @@ iteration (2.1 s against 12.6 s). Since Tonto's iteration is two thirds XC quadr
 grid about the size of FineGrid, the per-iteration gap is mostly in the XC evaluation itself,
 not the number of points: the per-point cost of the basis-function evaluation and the
 contraction. That narrows the target further.
+
+## Stage B, 2026-09-13: the per-shell angular error, measured
+
+`put_grid_shell_errors` (a keyword; run after `scf` on a restricted density) integrates,
+for every atom and every radial shell of its grid, the shell's contribution to the electron
+count and to the Dirac exchange energy at the Lebedev order the pruning scheme assigns and at
+L = 5, 11, 17, 23, 29, against L = 59, Becke-partitioned like the real grid. Tables and the
+summariser `shell_summary.py` (minimal order per shell for a target error) are in
+`~/tonto_runs/grid_shell_errors_2026-09-13/`.
+
+Water, BLYP/cc-pVDZ, Becke partition. "Oracle" means the order chosen per shell from the
+converged density, i.e. the best any rule can do:
+
+| grid | points used | Σ per-shell error, used | oracle at 1e-7 per shell | oracle at 1e-8 |
+|---|---|---|---|---|
+| `medium` (30/35 radial, L23/L29) | 12490 | 4.7e-07 | 6772 pts (54%), 1.2e-06 | 11622 (93%), 1.2e-07 |
+| `best` (65/70 radial, L59/L71) | 142492 | 5.3e-08 | 12454 pts (9%), 2.3e-06 | 22608 (16%), 2.0e-07 |
+
+What the shell profiles say, the same for O and H (both scale factor 5):
+
+- **Inner, r < 0.25 bohr: L5 is exact to 1e-9.** Treutler-Ahlrichs' inner third is right.
+- **0.25 to 0.7 bohr: L11 is exact to 1e-8.** Also right.
+- **0.7 to 3 bohr, the bonding shells: the order must rise to L23-L29**, and for 1e-8 per
+  shell on oxygen to L59 between 1.5 and 2.4 bohr. This is where `medium` (L29) leaves
+  1e-7 per shell and where all of its residual against g09 lives; `best`'s L71 there is
+  1e-15, i.e. 6 orders more than needed.
+- **Beyond 3 bohr the order falls again**: L17 to 5 bohr, L11 to 6, L5 to 7.
+- **Beyond about 7 bohr the shells contribute nothing** (|X| < 1e-8 at any order): 3 of
+  35 shells at `medium`, 10 of 70 at `best` -- 8% and 25% of the points -- exist because
+  `basis_fn_cutoff` = 1e-10 puts `r_max` at 9-12 bohr.
+
+So the shape is SG-1's five zones, stated in bohr, with the bonding zone needing *more*
+than today's `medium` and both ends needing far less. The oracle profiles above are the
+target for stage D's rule; stage C (drop points by promolecule density) takes the far end.

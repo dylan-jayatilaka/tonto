@@ -1222,6 +1222,139 @@ contains
 
    end
 
+   put_grid_shell_errors
+   ! For every atom and every radial shell of its DFT grid: the shell's
+   ! contribution to the electron count and to the Dirac exchange energy
+   ! integrated with the angular order the pruning scheme assigns, and the
+   ! error of that and of L = 5, 11, 17, 23, 29 against L = 59 on the same
+   ! shell. Becke-partitioned like the real grid. Run on a converged
+   ! restricted density. A diagnostic for the adaptive-pruning work
+   ! (DEFERRED.md); it says which shells are under- or over-resolved.
+      self :: INOUT
+
+   ENSURE(.becke_grid.allocated,"no becke_grid")
+   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
+   ENSURE(.density_mx.is_allocated_with_genre("r "),"needs a restricted density")
+
+      Ls :: VEC{INT}(6)
+      leb :: LEBEDEV@
+      pt  :: MAT{REAL}@
+      wt,rho :: VEC{REAL}@
+      overlapping_atom :: VEC{INT}@
+      S,X :: VEC{REAL}(6)
+      a,i,k,n,nr,L,L_used,n_used,n_atom_pts :: INT
+      r,wr,S_used,X_used,atom_err,atom_X :: REAL
+
+      Ls = [5,11,17,23,29,59]
+
+      if (.overlapping_atoms_for_atom.deallocated) .set_overlapping_atoms_for_atom
+
+      stdout.flush
+      stdout.text("=================================================")
+      stdout.text("DFT grid: angular error per radial shell, by atom")
+      stdout.text("=================================================")
+      stdout.flush
+      stdout.text("N     = shell contribution to the electron count")
+      stdout.text("X     = shell contribution to the Dirac exchange energy, -(3/4)(3/pi)^(1/3) rho^(4/3)")
+      stdout.text("dX(L) = X at Lebedev order L minus X at L = 59; 'used' is the order the pruning scheme assigns")
+      stdout.flush
+
+      do a = 1,.n_atom
+
+         overlapping_atom = .overlapping_atoms_for_atom(a).element
+         nr = .becke_grid.n_radial_pts_for_atom(a)
+         atom_err = ZERO
+         atom_X   = ZERO
+         n_atom_pts = 0
+
+         stdout.flush
+         stdout.text("Atom "//trim(a.to_str)//"  "//trim(.atom(a).label))
+         stdout.flush
+         stdout.text("  shell   r/bohr   L used  n_pts       N used         X used        dX used"// &
+                     "     dX(5)     dX(11)     dX(17)     dX(23)     dX(29)")
+
+         do i = 1,nr
+
+            .becke_grid.radial_shell_for_atom(a,i,r,wr)
+            L_used = .becke_grid.angular_order_for_shell(a,i)
+
+            ! The shell at each order, partitioned like the real grid
+            do k = 1,6
+               L = Ls(k)
+               leb.destroy
+               leb.create
+               leb.set_l(L)
+               n = leb.n_pts
+               pt.create(n,3)
+               wt.create(n)
+               pt(:,1) = .atom(a).position(1) + r*leb.pts(:,1)
+               pt(:,2) = .atom(a).position(2) + r*leb.pts(:,2)
+               pt(:,3) = .atom(a).position(3) + r*leb.pts(:,3)
+               wt = wr*leb.wts
+               .becke_grid.apply_partition(pt,wt,a,overlapping_atom)
+               rho.create(n)
+               .make_ED_grid_r_v2(rho,pt)
+               S(k) = sum(wt*rho)
+               X(k) = -0.75d0*(THREE/PI)**THIRD * sum(wt*rho**(FOUR/THREE))
+               if (L==L_used) then
+                  S_used = S(k); X_used = X(k); n_used = n
+               end
+               rho.destroy
+               wt.destroy
+               pt.destroy
+            end
+            leb.destroy
+
+            ! The used order is one of the six unless the scheme names another
+            if (all(Ls/=L_used)) then
+               leb.create
+               leb.set_l(L_used)
+               n = leb.n_pts
+               pt.create(n,3)
+               wt.create(n)
+               pt(:,1) = .atom(a).position(1) + r*leb.pts(:,1)
+               pt(:,2) = .atom(a).position(2) + r*leb.pts(:,2)
+               pt(:,3) = .atom(a).position(3) + r*leb.pts(:,3)
+               wt = wr*leb.wts
+               .becke_grid.apply_partition(pt,wt,a,overlapping_atom)
+               rho.create(n)
+               .make_ED_grid_r_v2(rho,pt)
+               S_used = sum(wt*rho)
+               X_used = -0.75d0*(THREE/PI)**THIRD * sum(wt*rho**(FOUR/THREE))
+               n_used = n
+               rho.destroy
+               wt.destroy
+               pt.destroy
+               leb.destroy
+            end
+
+            atom_err = atom_err + abs(X_used-X(6))
+            atom_X   = atom_X + X_used
+            n_atom_pts = n_atom_pts + n_used
+
+            stdout.put(i,width=7)
+            stdout.put(r,width=9,precision=4,fmt="f")
+            stdout.put(L_used,width=7)
+            stdout.put(n_used,width=7)
+            stdout.put(S_used,width=13,precision=6,fmt="f")
+            stdout.put(X_used,width=15,precision=8,fmt="f")
+            stdout.put(X_used-X(6),width=11,precision=2,fmt="e")
+            do k = 1,5
+               stdout.put(X(k)-X(6),width=11,precision=2,fmt="e")
+            end
+            stdout.flush
+
+         end
+
+         stdout.flush
+         stdout.show("  points on this atom's grid ..........",n_atom_pts)
+         stdout.show("  X of this atom's grid ...............",atom_X)
+         stdout.show("  sum over shells of |dX used| ........",atom_err)
+
+      end
+
+   end
+
    make_XC_grid :: leaky, PURE
    ! Make the DFT integration grid for the whole molecule: every atom's
    ! partitioned grid, exactly as make_partitioned_grid returns it, laid
