@@ -197,3 +197,24 @@ What the shell profiles say, the same for O and H (both scale factor 5):
 So the shape is SG-1's five zones, stated in bohr, with the bonding zone needing *more*
 than today's `medium` and both ends needing far less. The oracle profiles above are the
 target for stage D's rule; stage C (drop points by promolecule density) takes the far end.
+
+Karrikinolide at `medium` (17 atoms, 84590 points), the same diagnostic:
+
+| target per shell | oracle points | of today's | summed error |
+|---|---|---|---|
+| 1e-5 | 21976 | 26% | 7.3e-04 |
+| 1e-6 | 42838 | 51% | 7.8e-05 |
+| 1e-7 | 96550 | 114% | 6.2e-06 |
+| 1e-8 | 141470 | 167% | 5.7e-07 |
+| today's scheme | 84590 | 100% | ~5e-05 |
+
+The profiles: every atom is over-resolved inside 0.7 bohr and beyond 4 bohr, the last
+three shells contribute nothing, and the carbons need L59 in their bonding shells (0.9 to
+2.6 bohr; the C–C and C=O bonds have more angular structure than water's O–H) for 1e-7 per
+shell, where `medium` gives them L29. Oxygen and hydrogen need less there. So a zone rule
+with the full order concentrated in the bonding zone and low orders at both ends delivers
+**today's `high` accuracy at about `medium` cost** (114% of the points against 220% of the
+time for `high`) -- the target Dylan set for reconsidering the default. The zone edges in
+bohr are the same for O and H in water and for O and H in karrikinolide; the carbon bonding
+zone reaches further out (to 2.6 bohr against 1.9 for H), i.e. the outer edge tracks the
+bond length, and the inner edges do not move.

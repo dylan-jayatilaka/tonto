@@ -115,8 +115,12 @@ now covers the whole project, so it was renamed.)*
 > the water profiles -- L5 to 0.25 bohr, L11 to 0.7, the full order from 0.7 to 3 bohr
 > (this zone needs *more* than `medium` gives: L29 leaves 1e-7 per shell there, L59 is
 > needed for 1e-8), L17 to 5 bohr, L11 to 6, L5 to 7 -- as `pruning_scheme= adaptive`,
-> checked against the karrikinolide table for whether the zone edges scale with the bonding
-> distance, and measured with the water/karrikinolide ladder against g09
+> **checked 2026-09-13 against the karrikinolide table** (`shell_karr/summary.txt`): the inner
+> edges (0.25, 0.7 bohr) do not move; the outer edge of the full-order zone tracks the bond
+> length (2.6 bohr for C, 1.9 for H); carbons need **L59** in that zone for 1e-7 per shell
+> where `medium` gives L29 -- and that zone is where all of `medium`'s 1.6e-5 residual lives.
+> The oracle: 1e-7 per shell with 114% of `medium`'s points, i.e. today's `high` accuracy at
+> about `medium` cost. Measured with the water/karrikinolide ladder against g09
 > (`docs/DFT_STANDARDISATION.md` §6b). The oracle numbers to beat: `medium`'s per-shell
 > error with 54% of its points; `best`'s with 9%. Gates for every stage: `dft_reference`,
 > `dft_invariants`, `short`, the DFT/HAR/constrained `long` jobs, karrikinolide `medium`
