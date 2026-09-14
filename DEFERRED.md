@@ -2167,6 +2167,63 @@ OpenBLAS would also oversubscribe cores in MPI builds.
 
 # Science and features
 
+## Vectorise the Rys quadrature over shell-quartet classes (Dylan, 2026-09-14)
+
+**Why, in Dylan's words:** it matters for future correlated methods, which are
+integral-heavy and have no DFT grid, and for running the integrals on GPUs. A separate
+item from the DFT-grid work, to be started in its own session.
+
+**What the code does today** (surveyed 2026-09-11; line numbers may have drifted):
+
+- `RYS:get_weights(X)` (`rys.foo:89`) takes **one scalar** `X` and dispatches on `n_roots`:
+  closed-form polynomial fits for 1-3 roots (`get_weights1_t2` ... `_3_t2`, which return t²
+  roots directly), fits for 4-5 roots converted by `rr/(rr+1)`, and the numerical
+  `get_weights6` for 6 or more (moments by `rysfun`, then `ryssmt`, `rysnod`). Inside every fit
+  the polynomial is chosen by **nested branches on the T range** (breakpoints 3e-7, 1, 3, 5, 10,
+  15, 20, 25, 33, 35, 40, 47, 53, 59; e.g. `get_weights2_t2`, `rys.foo:330`). `get_only_weight`
+  is the ssss path. With `GAUSSIAN_DATA_L_MAX` = 4, `n_roots` is at most 9.
+- It is called **once per primitive pair × primitive pair** inside every shell quartet, e.g.
+  `make_esfs_XX` (`shell1quartet.foo:7450`): `rys.get_weights(xx)` inside `do k =
+  1,ab_n_gaussian_pairs / do j = 1,cd_n_gaussian_pairs`. The `RYS` object is created and
+  destroyed per shell quartet (40 M creates on karrikinolide `medium`).
+- Angular-momentum dispatch is per quartet, in `make_esfs` (`shell1quartet.foo:568`), a
+  `select case` on `max(ab_l_sum,cd_l_sum)` with nested ifs. Specialised routines exist up to
+  `dd_pppp`; every f and g variant is commented out (`:615-652`) and falls to the semi-generic
+  `make_esfs_Xs/sX/Xp/pX/Xd/dX/XX` (`:6627-7418`). The transfer step also branches per quartet
+  on `a.l > b.l` (`:8317`, `:9729`). The 2-D integrals are already indexed
+  `Ixa/Iya/Iza(n_roots × n_ab_pairs × n_cd_pairs, dim1, dim2)` and contracted by `form_esfs`.
+- Quartets are enumerated `parallel do ab = 1,.n_shell_pairs / do cd = 1,ab`
+  (`molecule.fock.foo:1410`), with three-level Schwarz screening (`Schwarz_test`), a
+  precomputed `SHELL1PAIR` matrix, and a J-engine. No sort by angular momentum exists.
+- **The AO order is load-bearing**: atom-major, shell-within-atom, contiguous per-atom blocks
+  assumed in `molecule.base/prop/rho/har/grid`, MO normalisation and every archive. **Do not
+  reorder the basis.** Group classes with an index vector over shell pairs instead; the Fock
+  loop already goes through `set_shell2_indices_from` / `set_shell1q_*_from`.
+
+**What the profile says** (gprof, karrikinolide BLYP/6-31G(d) `medium`, `docs/SCF_SPEED_REPORT.md`):
+`RYS:get_weights` 6.6% of the run, `form_esfs` 5.8%, the `make_esfs` dispatcher 4.5%,
+`set_cd_new` 2.3%, the `make_esfs_*` specialisations about 5%, and `RYS`/`MAT{REAL}`
+allocation churn about 2%: the two-electron integrals are about 22% of that DFT job. **For an
+HF or correlated job the share is larger and unmeasured, so the first step is to re-profile a
+job with no grid** (karrikinolide RHF 6-31G(d), and one larger basis with f functions), using
+the gprof tree at `~/github/tonto-prof/prof/` and `scfdata= { show_timings= TRUE }`.
+
+**Shape of the work** (the plan's steps 4-5, to be re-planned from that profile):
+
+1. Hoist the per-quartet allocations (`RYS`, work matrices) out of the quartet loop.
+2. A class-batched traversal: an index vector sorting shell pairs by `(l_a, l_b)` and primitive
+   count, so the dispatch and the transfer choice happen once per class block.
+3. Within a block, gather every primitive quartet's `X` into one array, bin it by the fit's T
+   ranges, and evaluate each bin as a loop over a contiguous slice (`get_weights_vec`), one
+   range test per bin rather than per primitive. Start with 1-5 roots; 6 or more stay scalar.
+   Uniform-shape batches are also what a GPU kernel needs.
+4. Only if the profile says so: revive or generate the specialised f and g routines.
+
+**Gate:** integrals against the scalar path quartet by quartet (`runfiles/run_shell1quartet.foo`
+exists and is unbuilt), agreeing to 1e-14 or bitwise; HF energies bit-identical or to 1e-12;
+`short` and the HF/correlated `long` jobs; timings before and after in
+`docs/SCF_SPEED_REPORT.md`.
+
 ## Speed up the SCF and the integrals (Dylan, 2026-09-11)
 
 The karrikinolide grid ladder (BLYP/6-31G(d), 17 atoms, promolecule guess, convergence
