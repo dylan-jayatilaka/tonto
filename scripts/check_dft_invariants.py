@@ -56,6 +56,11 @@ this?". None needs a reference output, so none can be blessed away.
   8  basis_fn_cutoff is inert at best    the same defect, seen from the other
                                          side: 1e-10 vs 1e-14 moved the energy
                                          by 1.0e-6.
+  10 pruning the grid by the promolecule  a DFT grid point is dropped when the
+     density is inert                    promolecule density there is below
+                                         prune_rho_cutoff. Tightening it must
+                                         not move the energy, or it is
+                                         discarding points that matter.
   9  partition_scheme= is not inert,     the DFT path called the Stratmann-
      and a bogus name is fatal           Scuseria builder unconditionally, so
                                          partition_scheme= becke gave a
@@ -112,6 +117,9 @@ BF_CUTOFF_MAX = 1.0e-8
 # The partition scheme must change the energy on a coarse grid. Observed:
 # 3.2e-5 between stratmann_scuseria and becke at accuracy= low.
 PARTITION_MIN_RESPONSE = 1.0e-8
+# prune_rho_cutoff at its default (1e-12) against 1e-16 must agree. Calibrated
+# 2026-09-14; see docs/SCF_SPEED_REPORT.md.
+PRUNE_MAX = 1.0e-8
 
 JOB = """{{
    name= h2o
@@ -323,6 +331,19 @@ def main():
             bad.append("an unrecognised partition_scheme= exited 0 -- it is"
                        " being silently ignored")
 
+        # 10 -- pruning by the promolecule density must be inert
+        pd = energy(run, acc="medium", exch="becke88", corr="lyp")
+        pt = energy(run, acc="medium", exch="becke88", corr="lyp",
+                    grid="prune_rho_cutoff= 1e-16")
+        d = abs(pd - pt)
+        ok = d < PRUNE_MAX
+        print(" 10  prune_rho_cutoff inert         |diff|     = %.3e  %s"
+              % (d, "ok" if ok else "FAIL"))
+        if not ok:
+            bad.append("prune_rho_cutoff 1e-12 vs 1e-16 moved the energy by %.3e"
+                       " (>= %.1e) -- grid points that matter are being dropped"
+                       % (d, PRUNE_MAX))
+
     except RuntimeError as exc:
         bad.append(str(exc))
 
@@ -332,7 +353,7 @@ def main():
         for b in bad:
             print("  - %s" % b)
         return 1
-    print("OK -- all nine DFT invariants hold (%d jobs)" % run.n)
+    print("OK -- all ten DFT invariants hold (%d jobs)" % run.n)
     return 0
 
 

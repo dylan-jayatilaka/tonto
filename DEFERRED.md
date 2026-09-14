@@ -98,6 +98,17 @@ now covers the whole project, so it was renamed.)*
 > 0.17% on three lines where it had failed at 200%. The only loose failure left on the Mac is
 > `urea_ccsd_pob-TZVP_Salvador_properties` at 4.48%, the LAPACK-thread row; the suite is 55/56.
 >
+> **UPDATE 2026-09-14: stage C done.** `BECKE_GRID.prune_rho_cutoff` (keyword
+> `prune_rho_cutoff=`) drops molecular-grid points where the promolecule density, from the
+> atomic interpolators made silently in `initialize_SCF` after the guess, is below it. It is
+> exact up to the functional's `rho_cutoff` (water: identical energy at 1e-12 to 1e-10,
+> 1.3e-10 at 1e-9) but removes only 3.3% of water's points and 1.7% of karrikinolide's,
+> with no measurable speed-up, because `basis_fn_cutoff` already truncates each atom's radial
+> grid. **Dylan's decision: on by default at 1e-12.** `dft_invariants` check 10 guards it.
+> Stage B's "8% of points" estimate counted shells whose contribution is below 1e-8, a much
+> looser test than the density. **Next is stage D**, the angular zones, which is where the
+> points are. Tables in `docs/SCF_SPEED_REPORT.md`.
+>
 > **HANDOFF 2026-09-13, adaptive pruning in progress (Dylan's session quota near its cap).**
 > The plan is `~/.claude/plans/we-are-now-going-validated-island.md` (stages A-E). Done and
 > pushed on `develop`: **stage A** (`1cc51a89`, the molecular XC grid built once per SCF,

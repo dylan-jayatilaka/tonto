@@ -1362,9 +1362,11 @@ contains
    ! .XC_first_pt(a) to .XC_last_pt(a), and .XC_index holding each
    ! point's row in its unique-atom grid so the cached basis functions
    ! still apply. Built once per SCF, where the atom grids and their
-   ! partition weights used to be rebuilt on every iteration. Nothing is
-   ! dropped here: a threshold on points is what caused the 2026-09-10
-   ! grid defect (docs/DFT_STANDARDISATION.md 6b).
+   ! partition weights used to be rebuilt on every iteration. Points where
+   ! the promolecule density is below .becke_grid.prune_rho_cutoff are
+   ! dropped, if the atomic interpolators exist; the core is never touched.
+   ! Never threshold on the weight: that was the 2026-09-10 grid defect
+   ! (docs/DFT_STANDARDISATION.md 6b).
       self :: INOUT
 
    ENSURE(.becke_grid.allocated,"no becke_grid")
@@ -1377,10 +1379,19 @@ contains
       pt  :: MAT{REAL}@
       wt  :: VEC{REAL}@
       ix  :: MAT{REAL}@
+      rho :: VEC{REAL}@
       overlapping_atom :: VEC{INT}@
-      n_tot,c,f,l,k :: INT
+      n_tot,c,f,l,k,n,b :: INT
+      cut :: REAL
+      prune :: BIN
 
       .destroy_XC_grid
+
+      ! Prune by the promolecule density?
+      cut   = .becke_grid.prune_rho_cutoff
+      prune = cut>ZERO
+      if (prune) prune = .atom.has_all_interpolators
+      .XC_n_unpruned = 0
       .XC_first_pt.create(.n_atom)
       .XC_last_pt.create(.n_atom)
 
@@ -1392,6 +1403,28 @@ contains
       do c = 1,.n_atom
          overlapping_atom = .overlapping_atoms_for_atom(c).element
          .becke_grid.make_partitioned_grid(pt,wt,ix,c,overlapping_atom,index=TRUE)
+         .XC_n_unpruned = .XC_n_unpruned + wt.dim
+         if (prune) then
+            rho.create(wt.dim)
+            rho = ZERO
+            do b = 1,overlapping_atom.dim
+               .atom(overlapping_atom(b)).add_interpolated_density(rho,pt)
+            end
+            k = 0
+            do n = 1,wt.dim
+               if (rho(n)<cut) cycle
+               k = k + 1
+               pt(k,1) = pt(n,1)
+               pt(k,2) = pt(n,2)
+               pt(k,3) = pt(n,3)
+               wt(k)   = wt(n)
+               ix(k,1) = ix(n,1)
+            end
+            pt.shrink(k,3)
+            wt.shrink(k)
+            ix.shrink(k,1)
+            rho.destroy
+         end
          .XC_first_pt(c) = n_tot + 1
          n_tot = n_tot + wt.dim
          .XC_last_pt(c) = n_tot

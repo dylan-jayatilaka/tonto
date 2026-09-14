@@ -218,3 +218,42 @@ time for `high`) -- the target Dylan set for reconsidering the default. The zone
 bohr are the same for O and H in water and for O and H in karrikinolide; the carbon bonding
 zone reaches further out (to 2.6 bohr against 1.9 for H), i.e. the outer edge tracks the
 bond length, and the inner edges do not move.
+
+## Stage C, 2026-09-14: pruning the molecular grid by the promolecule density
+
+`BECKE_GRID.prune_rho_cutoff` (default 1e-12, keyword `prune_rho_cutoff=`, zero keeps every
+point): `MOLECULE.RHO:make_XC_grid` drops a point when the sum of the spherical atomic
+densities of its atom's `overlapping_atom` list is below it. The atomic interpolators are made
+silently in `initialize_SCF`, after the guess. The core is never touched, and nothing is ever
+thresholded on the weight. `show_timings= TRUE` now also prints the point counts before and
+after pruning.
+
+Water, BLYP/cc-pVDZ, `medium`, Becke; unpruned 11854 points, −76.400238578082:
+
+| `prune_rho_cutoff` | points dropped | energy change |
+|---|---|---|
+| 1e-12 (default) | 3.3% | 0 |
+| 1e-11 | 3.3% | 0 |
+| 1e-10 | 3.3% | 0 |
+| 1e-9 | 5.9% | 1.3e-10 |
+| 1e-8 | 6.6% | 7.8e-09 |
+| 1e-7 | 7.7% | 7.9e-08 |
+| 1e-6 | 11.6% | 1.3e-06 |
+
+Karrikinolide, `medium`, Becke, one core, run back to back:
+
+| run | points | energy | XC CPU s | J/K CPU s | wall |
+|---|---|---|---|---|---|
+| `prune_rho_cutoff= 0` | 78926 | −533.954503625952 | 120.0 | 44.3 | 166 s |
+| default 1e-12 | 77594 | −533.954503625954 | 122.1 | 44.3 | 168 s |
+
+**Exact, and worth almost nothing.** The cut is inert up to the functional's own
+`rho_cutoff` (1e-10), and pruning becomes lossy only above it, as the tail analysis predicted.
+But at a safe threshold it removes 2-3% of the points: `basis_fn_cutoff` already truncates
+each atom's radial grid, and the density at the truncation radius is still above 1e-12. The
+stage B estimate of 8% counted shells whose *contribution* is below 1e-8, which is a different
+and much looser test. No measurable time is saved. The saving has to come from stage D, the
+angular orders.
+
+**Dylan's decision, 2026-09-14: keep it on at 1e-12.** It is exact to rounding and costs
+atomic SCFs at SCF start only for DFT jobs without a promolecule guess.
