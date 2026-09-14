@@ -105,7 +105,11 @@ now covers the whole project, so it was renamed.)*
 > switch, decided). The unique-atom basis-function cache is retired for XC (decided). **E0 done**
 (`MAT{REAL}:to_product_of_BLAS`). **E1 measured** with `put_xc_batch_statistics`: on karrikinolide
 box batches cost 0.72-0.86e9 (sum n_pts x n_sig^2) against 1.06-1.29e9 for octant batches and
-1.90e9 for per-atom; start E2 at 2-3 bohr cubes split at 256-512 points. Commits `f832aded` (pushed)
+1.90e9 for per-atom; batches of 512 points (Dylan), `becke_grid= { XC_batch_max_pts= XC_batch_box_edge= }`.
+**E2-E5 done for restricted GGA** behind `scfdata= { use_batched_xc= TRUE }`
+(`MOLECULE.FOCK:add_GGA_XC_mx_batched`): karrikinolide energy within 1.5e-11 of the old path, XC
+73.4 -> 16.9 CPU s, SCF 126 -> 66 s; J and K (46 s) are now 70% of the SCF. Open-shell and LDA
+still take the old path silently when the switch is on. Commits `f832aded` (pushed)
 > and `edfaa1bf` (no-copy) precede it.
 >
 > **FOUND 2026-09-14: a debug build aborts on any `--` option.** `debug/tonto --input stdin

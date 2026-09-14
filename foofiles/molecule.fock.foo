@@ -4416,10 +4416,14 @@ contains
 
       E :: REAL
 
-      if (.SCF_data.using_GGA_functional) then; .add_GGA_XC_mx(K,E)
-      else;                                     .add_LDA_XC_mx(K,E)
+      if (.SCF_data.using_GGA_functional) then
+         if (.SCF_data.using_batched_XC) then; .add_GGA_XC_mx_batched(K,E)
+         else;                                 .add_GGA_XC_mx(K,E)
+         end
+      else
+         .add_LDA_XC_mx(K,E)
       end
-      
+
       .SCF_data.DFT_energy_correction = E
 
    end
@@ -4923,6 +4927,172 @@ contains
       pj.destroy
       pi.destroy
       skipab.destroy
+
+   end
+
+   add_GGA_XC_mx_batched(K,E) :: leaky
+   ! As add_GGA_XC_mx(K,E), batch by batch over the molecular grid
+   ! (MOLECULE.RHO:make_XC_batches). Per batch, with G0,Gx,Gy,Gz the
+   ! significant basis functions and their gradients on the batch points
+   ! and Ds the matching block of D: X = G0 Ds, rho = sum G0*X,
+   ! grad rho = 2 sum G*X; Z = (w V0/2) G0 + w Vx Gx + w Vy Gy + w Vz Gz,
+   ! and the XC matrix block is G0^T Z + Z^T G0.
+      self :: INOUT
+      K :: MAT{REAL}, INOUT
+      E :: REAL, OUT
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.allocated,  "no atom list")
+   ENSURE(.density_mx.allocated,"no density matrix")
+   ENSURE(.density_mx.r.allocated,"no restricted density matrix")
+   ENSURE(.becke_grid.allocated, "no becke_grid")
+   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
+
+      V,Ds,X,Z,Vs :: MAT{REAL}@
+      G0,Gx,Gy,Gz :: MAT{REAL}@
+      N0,Nx,Ny,Nz :: VEC{REAL}@
+      V0,Vx,Vy,Vz,E0,wt :: VEC{REAL}@
+      xs,ys,zs,r2 :: VEC{REAL}@
+      bf :: VEC{INT}@
+      pos :: VEC{REAL}(3)
+      sh :: SHELL1
+      b,f,np,ns,q,p,j,s,fs,ls,fa,na,off :: INT
+
+      if (.XC_pts.deallocated) .make_XC_grid
+      if (.XC_batch_first.deallocated) .make_XC_batches
+
+      E = ZERO
+      V.create(.n_bf,.n_bf)
+      V = ZERO
+
+      do b = 1,.XC_batch_first.dim
+
+         f  = .XC_batch_first(b)
+         np = .XC_batch_last(b) - f + 1
+         fs = .XC_batch_first_shell(b)
+         ls = .XC_batch_last_shell(b)
+         if (ls<fs) cycle
+
+         ! Number of significant basis functions
+         ns = 0
+         do j = fs,ls
+            s = .XC_batch_shell(j)
+            ns = ns + .last_basis_fn_for_shell(s) - .first_basis_fn_for_shell(s) + 1
+         end
+
+         ! Basis functions and gradients on the batch points, shell by shell
+         bf.create(ns)
+         G0.create(np,ns)
+         Gx.create(np,ns)
+         Gy.create(np,ns)
+         Gz.create(np,ns)
+         xs.create(np)
+         ys.create(np)
+         zs.create(np)
+         r2.create(np)
+         off = 0
+         do j = fs,ls
+            s  = .XC_batch_shell(j)
+            fa = .first_basis_fn_for_shell(s)
+            na = .last_basis_fn_for_shell(s) - fa + 1
+            sh = .basis_shell1pair(.basis_shell_for_shell(s),1).a
+            pos = .atom(.atom_for_shell(s)).position
+            sh.position = pos
+            do q = 1,np
+               p = .XC_batch_pt(f+q-1)
+               xs(q) = .XC_pts(p,1) - pos(1)
+               ys(q) = .XC_pts(p,2) - pos(2)
+               zs(q) = .XC_pts(p,3) - pos(3)
+               r2(q) = xs(q)*xs(q) + ys(q)*ys(q) + zs(q)*zs(q)
+            end
+            sh.make_nabla_grid(Gx(:,off+1:off+na),Gy(:,off+1:off+na),Gz(:,off+1:off+na), &
+                               G0(:,off+1:off+na),xs,ys,zs,r2)
+            do q = 1,na
+               bf(off+q) = fa + q - 1
+            end
+            off = off + na
+         end
+         r2.destroy
+         zs.destroy
+         ys.destroy
+         xs.destroy
+
+         ! Density and its gradient
+         Ds.create(ns,ns)
+         Ds = .density_mx.r(bf,bf)
+         X.create(np,ns)
+         X.to_product_of_BLAS(G0,Ds)
+         Ds.destroy
+         N0.create(np); N0 = ZERO
+         Nx.create(np); Nx = ZERO
+         Ny.create(np); Ny = ZERO
+         Nz.create(np); Nz = ZERO
+         do j = 1,ns
+            N0 = N0 + G0(:,j)*X(:,j)
+            Nx = Nx + Gx(:,j)*X(:,j)
+            Ny = Ny + Gy(:,j)*X(:,j)
+            Nz = Nz + Gz(:,j)*X(:,j)
+         end
+         Nx = TWO*Nx
+         Ny = TWO*Ny
+         Nz = TWO*Nz
+         X.destroy
+
+         ! Functional
+         wt.create(np)
+         do q = 1,np
+            wt(q) = .XC_wts(.XC_batch_pt(f+q-1))
+         end
+         E0.create(np)
+         V0.create(np)
+         Vx.create(np)
+         Vy.create(np)
+         Vz.create(np)
+         .new_set_r_XC_potentials(V0,N0,Vx,Vy,Vz,Nx,Ny,Nz)
+         .new_set_r_XC_energy_density(E0,N0,Nx,Ny,Nz)
+         E = E + sum(wt*E0*N0)
+         V0 = HALF*wt*V0
+         Vx = wt*Vx
+         Vy = wt*Vy
+         Vz = wt*Vz
+         Nz.destroy
+         Ny.destroy
+         Nx.destroy
+         N0.destroy
+         E0.destroy
+         wt.destroy
+
+         ! XC matrix block
+         Z.create(np,ns)
+         do j = 1,ns
+            Z(:,j) = V0*G0(:,j) + Vx*Gx(:,j) + Vy*Gy(:,j) + Vz*Gz(:,j)
+         end
+         Vs.create(ns,ns)
+         Vs.to_product_of_BLAS(G0,Z,transpose_a=TRUE)
+         V(bf,bf) = V(bf,bf) + Vs + transpose(Vs)
+
+         Vs.destroy
+         Z.destroy
+         Vz.destroy
+         Vy.destroy
+         Vx.destroy
+         V0.destroy
+         Gz.destroy
+         Gy.destroy
+         Gx.destroy
+         G0.destroy
+         bf.destroy
+
+      end
+
+      ! Add the XC contribution to K
+      K = K + V
+      K.symmetric_reflect
+
+      ! Get DFT energy correction
+      E = E - HALF*V.trace_product_with(.density_mx.r)
+
+      V.destroy
 
    end
 

@@ -1463,24 +1463,11 @@ contains
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.XC_pts.allocated,"no XC grid")
 
-      cen :: MAT{REAL}@
-      r2m :: VEC{REAL}@
-      nfn :: VEC{INT}@
-      lo,hi :: VEC{REAL}(3)
-      cutoff,dd,d2,rn,rs :: REAL
-      s,b,q,p,j,ns,ba :: INT
+      shell,first_shell,last_shell :: VEC{INT}@
+      rn,rs :: REAL
+      s,b,k,ns :: INT
 
-      cutoff = .becke_grid.basis_fn_cutoff
-
-      cen.create(3,.n_shell)
-      r2m.create(.n_shell)
-      nfn.create(.n_shell)
-      do s = 1,.n_shell
-         ba = .basis_shell_for_shell(s)
-         r2m(s) = .basis_shell1pair(ba,1).a.r2_max(cutoff)
-         cen(:,s) = .atom(.atom_for_shell(s)).position
-         nfn(s) = .last_basis_fn_for_shell(s) - .first_basis_fn_for_shell(s) + 1
-      end
+      .make_XC_batch_shells(shell,first_shell,last_shell,perm,first,last)
 
       mean_s = ZERO
       max_s  = 0
@@ -1488,6 +1475,93 @@ contains
       cost2  = ZERO
 
       do b = 1,first.dim
+         ns = 0
+         do k = first_shell(b),last_shell(b)
+            s = shell(k)
+            ns = ns + .last_basis_fn_for_shell(s) - .first_basis_fn_for_shell(s) + 1
+         end
+         rn = last(b) - first(b) + 1
+         rs = ns
+         mean_s = mean_s + rs
+         max_s  = max(max_s,ns)
+         cost1  = cost1 + rn*rs
+         cost2  = cost2 + rn*rs*rs
+      end
+
+      mean_s = mean_s/first.dim
+
+      last_shell.destroy
+      first_shell.destroy
+      shell.destroy
+
+   end
+
+   make_XC_batches :: leaky, PURE
+   ! Batch the molecular DFT grid for the XC quadrature: box batches with
+   ! cubes of edge .becke_grid.XC_batch_box_edge and at most
+   ! .becke_grid.XC_batch_max_pts points, each with its significant shells.
+      self :: INOUT
+
+   ENSURE(.XC_pts.allocated,"no XC grid")
+   ENSURE(.basis_info_made,"no basis info")
+
+      perm,first,last,shell,first_shell,last_shell :: VEC{INT}@
+
+      .destroy_XC_batches
+
+      .make_XC_box_batches(perm,first,last,.becke_grid.XC_batch_box_edge,.becke_grid.XC_batch_max_pts)
+      .make_XC_batch_shells(shell,first_shell,last_shell,perm,first,last)
+
+      .XC_batch_pt          = perm
+      .XC_batch_first       = first
+      .XC_batch_last        = last
+      .XC_batch_shell       = shell
+      .XC_batch_first_shell = first_shell
+      .XC_batch_last_shell  = last_shell
+
+      last_shell.destroy
+      first_shell.destroy
+      shell.destroy
+      last.destroy
+      first.destroy
+      perm.destroy
+
+   end
+
+   make_XC_batch_shells(shell,first_shell,last_shell,perm,first,last) :: leaky, PURE
+   ! For the batches perm(first(b):last(b)) of .XC_pts, the significant
+   ! shells of batch "b", shell(first_shell(b):last_shell(b)): those whose
+   ! basis_fn_cutoff sphere reaches the bounding box of the batch's points,
+   ! so a shell is kept whenever any point of the batch would keep it.
+      self :: IN
+      shell,first_shell,last_shell :: VEC{INT}@, OUT
+      perm,first,last :: VEC{INT}, IN
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.XC_pts.allocated,"no XC grid")
+
+      cen :: MAT{REAL}@
+      r2m :: VEC{REAL}@
+      lo,hi :: VEC{REAL}(3)
+      cutoff,dd,d2 :: REAL
+      s,b,q,p,j,n,n_b :: INT
+
+      cutoff = .becke_grid.basis_fn_cutoff
+      n_b = first.dim
+
+      cen.create(3,.n_shell)
+      r2m.create(.n_shell)
+      do s = 1,.n_shell
+         r2m(s) = .basis_shell1pair(.basis_shell_for_shell(s),1).a.r2_max(cutoff)
+         cen(:,s) = .atom(.atom_for_shell(s)).position
+      end
+
+      shell.create(n_b*.n_shell)
+      first_shell.create(n_b)
+      last_shell.create(n_b)
+      n = 0
+
+      do b = 1,n_b
 
          lo =  huge(ONE)
          hi = -huge(ONE)
@@ -1499,28 +1573,23 @@ contains
             end
          end
 
-         ns = 0
+         first_shell(b) = n + 1
          do s = 1,.n_shell
             d2 = ZERO
             do j = 1,3
                dd = max(ZERO,lo(j)-cen(j,s),cen(j,s)-hi(j))
                d2 = d2 + dd*dd
             end
-            if (d2<=r2m(s)) ns = ns + nfn(s)
+            if (d2>r2m(s)) cycle
+            n = n + 1
+            shell(n) = s
          end
-
-         rn = last(b) - first(b) + 1
-         rs = ns
-         mean_s = mean_s + rs
-         max_s  = max(max_s,ns)
-         cost1  = cost1 + rn*rs
-         cost2  = cost2 + rn*rs*rs
+         last_shell(b) = n
 
       end
 
-      mean_s = mean_s/first.dim
+      shell.shrink(n)
 
-      nfn.destroy
       r2m.destroy
       cen.destroy
 
