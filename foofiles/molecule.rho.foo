@@ -1355,6 +1355,407 @@ contains
 
    end
 
+   put_XC_batch_statistics :: leaky
+   ! For batches of the molecular DFT grid: the number of batches, points
+   ! per batch, significant basis functions per batch, and the costs
+   ! sum(n_pts*n_sig) and sum(n_pts*n_sig^2), for per-atom batches, box
+   ! batches (several cube edges and split limits) and radial-by-octant
+   ! batches. A diagnostic for choosing the stage E batches (DEFERRED.md).
+      self :: INOUT
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.becke_grid.allocated,"no becke_grid")
+   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
+
+      hs :: VEC{REAL}(4)
+      ms :: VEC{INT}(4)
+      perm,first,last :: VEC{INT}@
+      i,k,n :: INT
+
+      hs = [ONE,1.5d0,TWO,THREE]
+      ms = [64,128,256,512]
+
+      if (.overlapping_atoms_for_atom.deallocated) .set_overlapping_atoms_for_atom
+      if (.XC_pts.deallocated) .make_XC_grid
+      n = .XC_pts.dim1
+
+      stdout.flush
+      stdout.text("===========================================")
+      stdout.text("DFT grid: significant basis functions per batch")
+      stdout.text("===========================================")
+      stdout.flush
+      stdout.show("Points in the grid .......",n)
+      stdout.show("Basis function cutoff ....",.becke_grid.basis_fn_cutoff)
+      stdout.flush
+      stdout.text("  scheme   edge/bohr max_pts batches  mean_pts max_pts  mean_sig max_sig"// &
+                  "   sum(n*s)   sum(n*s^2)")
+
+      ! Per-atom batches, for reference
+      perm.create(n)
+      do i = 1,n
+         perm(i) = i
+      end
+      first.create(.n_atom); first = .XC_first_pt
+      last.create(.n_atom);  last  = .XC_last_pt
+      .put_XC_batch_row("atom",ZERO,0,perm,first,last)
+      perm.destroy; first.destroy; last.destroy
+
+      do k = 1,4
+         do i = 1,4
+            .make_XC_box_batches(perm,first,last,hs(i),ms(k))
+            .put_XC_batch_row("box",hs(i),ms(k),perm,first,last)
+            perm.destroy; first.destroy; last.destroy
+         end
+         .make_XC_octant_batches(perm,first,last,ms(k))
+         .put_XC_batch_row("octant",ZERO,ms(k),perm,first,last)
+         perm.destroy; first.destroy; last.destroy
+      end
+
+   end
+
+   put_XC_batch_row(scheme,h,max_pts,perm,first,last) :: private
+   ! One row of put_XC_batch_statistics.
+      self :: IN
+      scheme :: STR, IN
+      h :: REAL, IN
+      max_pts :: INT, IN
+      perm,first,last :: VEC{INT}, IN
+
+      np :: VEC{INT}@
+      mean_p,mean_s,cost1,cost2 :: REAL
+      n_b,max_p,max_s :: INT
+
+      n_b = first.dim
+      np.create(n_b)
+      np = last - first + 1
+      max_p  = maxval(np)
+      mean_p = sum(np)
+      mean_p = mean_p/n_b
+      np.destroy
+
+      .get_XC_batch_costs(mean_s,max_s,cost1,cost2,perm,first,last)
+
+      stdout.put(scheme,width=10)
+      stdout.put(h,width=9,precision=2,fmt="f")
+      stdout.put(max_pts,width=8)
+      stdout.put(n_b,width=8)
+      stdout.put(mean_p,width=10,precision=1,fmt="f")
+      stdout.put(max_p,width=8)
+      stdout.put(mean_s,width=10,precision=1,fmt="f")
+      stdout.put(max_s,width=8)
+      stdout.put(cost1,width=11,precision=3,fmt="e")
+      stdout.put(cost2,width=13,precision=3,fmt="e")
+      stdout.flush
+
+   end
+
+   get_XC_batch_costs(mean_s,max_s,cost1,cost2,perm,first,last) :: PURE
+   ! For the batches perm(first(b):last(b)) of .XC_pts: the mean and largest
+   ! number of significant basis functions "mean_s", "max_s", and the costs
+   ! "cost1" = sum(n_pts*n_sig), "cost2" = sum(n_pts*n_sig^2). A shell is
+   ! significant for a batch if its cutoff sphere reaches the bounding box
+   ! of the batch's points, so it is kept whenever any point would keep it.
+      self :: IN
+      mean_s,cost1,cost2 :: REAL, OUT
+      max_s :: INT, OUT
+      perm,first,last :: VEC{INT}, IN
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.XC_pts.allocated,"no XC grid")
+
+      cen :: MAT{REAL}@
+      r2m :: VEC{REAL}@
+      nfn :: VEC{INT}@
+      lo,hi :: VEC{REAL}(3)
+      cutoff,dd,d2,rn,rs :: REAL
+      s,b,q,p,j,ns,ba :: INT
+
+      cutoff = .becke_grid.basis_fn_cutoff
+
+      cen.create(3,.n_shell)
+      r2m.create(.n_shell)
+      nfn.create(.n_shell)
+      do s = 1,.n_shell
+         ba = .basis_shell_for_shell(s)
+         r2m(s) = .basis_shell1pair(ba,1).a.r2_max(cutoff)
+         cen(:,s) = .atom(.atom_for_shell(s)).position
+         nfn(s) = .last_basis_fn_for_shell(s) - .first_basis_fn_for_shell(s) + 1
+      end
+
+      mean_s = ZERO
+      max_s  = 0
+      cost1  = ZERO
+      cost2  = ZERO
+
+      do b = 1,first.dim
+
+         lo =  huge(ONE)
+         hi = -huge(ONE)
+         do q = first(b),last(b)
+            p = perm(q)
+            do j = 1,3
+               lo(j) = min(lo(j),.XC_pts(p,j))
+               hi(j) = max(hi(j),.XC_pts(p,j))
+            end
+         end
+
+         ns = 0
+         do s = 1,.n_shell
+            d2 = ZERO
+            do j = 1,3
+               dd = max(ZERO,lo(j)-cen(j,s),cen(j,s)-hi(j))
+               d2 = d2 + dd*dd
+            end
+            if (d2<=r2m(s)) ns = ns + nfn(s)
+         end
+
+         rn = last(b) - first(b) + 1
+         rs = ns
+         mean_s = mean_s + rs
+         max_s  = max(max_s,ns)
+         cost1  = cost1 + rn*rs
+         cost2  = cost2 + rn*rs*rs
+
+      end
+
+      mean_s = mean_s/first.dim
+
+      nfn.destroy
+      r2m.destroy
+      cen.destroy
+
+   end
+
+   make_XC_box_batches(perm,first,last,h,max_pts) :: leaky, PURE
+   ! Batch the molecular DFT grid spatially: cut the bounding box of .XC_pts
+   ! into cubes of edge "h" (bohr), then split any cube holding more than
+   ! "max_pts" points into octants until none does. Batch "b" is the points
+   ! perm(first(b):last(b)); .XC_pts itself is not reordered.
+      self :: IN
+      perm,first,last :: VEC{INT}@, OUT
+      h :: REAL, IN
+      max_pts :: INT, IN
+
+   ENSURE(.XC_pts.allocated,"no XC grid")
+   ENSURE(h>ZERO,"cube edge must be positive")
+   ENSURE(max_pts>0,"max_pts must be positive")
+
+      lo,hi,c0 :: VEC{REAL}(3)
+      nc :: VEC{INT}(3)
+      oct_cnt,oct_pos :: VEC{INT}(8)
+      cell,cnt,fill,codes,buf :: VEC{INT}@
+      st_f,st_l :: VEC{INT}@
+      st_h :: VEC{REAL}@
+      st_c :: MAT{REAL}@
+      hw :: REAL
+      n,n_cell,n_leaf,n_st,cap,p,q,j,k,f,l,ix,iy,iz,code :: INT
+
+      n = .XC_pts.dim1
+      do j = 1,3
+         lo(j) = minval(.XC_pts(:,j))
+         hi(j) = maxval(.XC_pts(:,j))
+         nc(j) = max(1,ceiling((hi(j)-lo(j))/h))
+      end
+      n_cell = nc(1)*nc(2)*nc(3)
+
+      ! Bucket the points by cube: cube k is perm(cnt(k)+1:cnt(k+1))
+      cell.create(n)
+      cnt.create(n_cell+1)
+      cnt = 0
+      do p = 1,n
+         ix = min(nc(1),1+int((.XC_pts(p,1)-lo(1))/h))
+         iy = min(nc(2),1+int((.XC_pts(p,2)-lo(2))/h))
+         iz = min(nc(3),1+int((.XC_pts(p,3)-lo(3))/h))
+         k = ix + nc(1)*((iy-1) + nc(2)*(iz-1))
+         cell(p) = k
+         cnt(k+1) = cnt(k+1) + 1
+      end
+      do k = 2,n_cell+1
+         cnt(k) = cnt(k) + cnt(k-1)
+      end
+      perm.create(n)
+      fill.create(n_cell)
+      fill = cnt(1:n_cell)
+      do p = 1,n
+         k = cell(p)
+         fill(k) = fill(k) + 1
+         perm(fill(k)) = p
+      end
+      fill.destroy
+      cell.destroy
+
+      ! Split over-full cubes by octants, depth first
+      first.create(n)
+      last.create(n)
+      codes.create(n)
+      buf.create(n)
+      cap = 512
+      st_f.create(cap)
+      st_l.create(cap)
+      st_h.create(cap)
+      st_c.create(3,cap)
+      n_leaf = 0
+
+      do k = 1,n_cell
+
+         f = cnt(k) + 1
+         l = cnt(k+1)
+         if (l<f) cycle
+
+         iz = (k-1)/(nc(1)*nc(2))
+         iy = (k-1-iz*nc(1)*nc(2))/nc(1)
+         ix =  k-1-iz*nc(1)*nc(2) - iy*nc(1)
+         n_st = 1
+         st_f(1) = f
+         st_l(1) = l
+         st_h(1) = HALF*h
+         st_c(1,1) = lo(1) + (ix+HALF)*h
+         st_c(2,1) = lo(2) + (iy+HALF)*h
+         st_c(3,1) = lo(3) + (iz+HALF)*h
+
+         do while (n_st>0)
+
+            f  = st_f(n_st)
+            l  = st_l(n_st)
+            hw = st_h(n_st)
+            c0 = st_c(:,n_st)
+            n_st = n_st - 1
+
+            ! A batch; the size floor stops coincident points splitting forever
+            if (l-f+1<=max_pts OR hw<1.0d-3) then
+               n_leaf = n_leaf + 1
+               first(n_leaf) = f
+               last(n_leaf)  = l
+               cycle
+            end
+
+            ! Reorder perm(f:l) by octant about the box centre
+            oct_cnt = 0
+            do q = f,l
+               p = perm(q)
+               code = 1
+               if (.XC_pts(p,1)>c0(1)) code = code + 1
+               if (.XC_pts(p,2)>c0(2)) code = code + 2
+               if (.XC_pts(p,3)>c0(3)) code = code + 4
+               codes(q) = code
+               oct_cnt(code) = oct_cnt(code) + 1
+            end
+            oct_pos(1) = f - 1
+            do j = 2,8
+               oct_pos(j) = oct_pos(j-1) + oct_cnt(j-1)
+            end
+            do q = f,l
+               code = codes(q)
+               oct_pos(code) = oct_pos(code) + 1
+               buf(oct_pos(code)) = perm(q)
+            end
+            perm(f:l) = buf(f:l)
+
+            ! Push the non-empty octants
+            q = f - 1
+            do j = 1,8
+               if (oct_cnt(j)>0) then
+                  ENSURE(n_st<cap,"octree stack full")
+                  n_st = n_st + 1
+                  st_f(n_st) = q + 1
+                  st_l(n_st) = q + oct_cnt(j)
+                  st_h(n_st) = HALF*hw
+                  st_c(1,n_st) = c0(1) + (2*mod(j-1,2)-1)*HALF*hw
+                  st_c(2,n_st) = c0(2) + (2*mod((j-1)/2,2)-1)*HALF*hw
+                  st_c(3,n_st) = c0(3) + (2*((j-1)/4)-1)*HALF*hw
+               end
+               q = q + oct_cnt(j)
+            end
+
+         end
+
+      end
+
+      first.shrink(n_leaf)
+      last.shrink(n_leaf)
+
+      st_c.destroy
+      st_h.destroy
+      st_l.destroy
+      st_f.destroy
+      buf.destroy
+      codes.destroy
+      cnt.destroy
+
+   end
+
+   make_XC_octant_batches(perm,first,last,max_pts) :: leaky, PURE
+   ! Batch the molecular DFT grid per atom, by octant about the atom and then
+   ! by radius, "max_pts" points at a time. The comparison for
+   ! make_XC_box_batches.
+      self :: IN
+      perm,first,last :: VEC{INT}@, OUT
+      max_pts :: INT, IN
+
+   ENSURE(.XC_pts.allocated,"no XC grid")
+   ENSURE(max_pts>0,"max_pts must be positive")
+
+      key :: VEC{REAL}@
+      idx,codes :: VEC{INT}@
+      r0,d :: VEC{REAL}(3)
+      n,n_leaf,a,f,l,m,q,p,code,f0 :: INT
+
+      n = .XC_pts.dim1
+      perm.create(n)
+      first.create(n)
+      last.create(n)
+      n_leaf = 0
+
+      do a = 1,.n_atom
+
+         f = .XC_first_pt(a)
+         l = .XC_last_pt(a)
+         m = l - f + 1
+         if (m<1) cycle
+
+         r0 = .atom(a).position
+         key.create(m)
+         idx.create(m)
+         codes.create(m)
+         do q = 1,m
+            p = f + q - 1
+            d = .XC_pts(p,:) - r0
+            code = 0
+            if (d(1)>ZERO) code = code + 1
+            if (d(2)>ZERO) code = code + 2
+            if (d(3)>ZERO) code = code + 4
+            codes(q) = code
+            key(q) = code
+            key(q) = 1000*key(q) + min(sqrt(dot_product(d,d)),999.0d0)
+         end
+         key.quick_sort(idx)
+
+         ! Runs of one octant, cut every max_pts
+         q = 1
+         do while (q<=m)
+            code = codes(idx(q))
+            f0 = q
+            do while (q<=m)
+               if (codes(idx(q))/=code OR q-f0==max_pts) exit
+               q = q + 1
+            end
+            n_leaf = n_leaf + 1
+            first(n_leaf) = f - 1 + f0
+            last(n_leaf)  = f - 1 + q - 1
+            perm(f-1+f0:f-1+q-1) = f - 1 + idx(f0:q-1)
+         end
+
+         codes.destroy
+         idx.destroy
+         key.destroy
+
+      end
+
+      first.shrink(n_leaf)
+      last.shrink(n_leaf)
+
+   end
+
    make_XC_grid :: leaky, PURE
    ! Make the DFT integration grid for the whole molecule: every atom's
    ! partitioned grid, exactly as make_partitioned_grid returns it, laid

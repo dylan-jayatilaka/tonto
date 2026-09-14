@@ -102,7 +102,10 @@ now covers the whole project, so it was renamed.)*
 > (E0 BLAS groundwork and the `get_from` placeholder check; E1 batches as an adaptive spatial
 > box grid (octree), decided; E2-E5 flat per-batch basis functions, density, functional, XC
 > matrix by `dgemm`; E6 parallel over batches; E7 rollout restricted GGA first, with an old/new
-> switch, decided). The unique-atom basis-function cache is retired for XC (decided). Commits `f832aded` (pushed)
+> switch, decided). The unique-atom basis-function cache is retired for XC (decided). **E0 done**
+(`MAT{REAL}:to_product_of_BLAS`). **E1 measured** with `put_xc_batch_statistics`: on karrikinolide
+box batches cost 0.72-0.86e9 (sum n_pts x n_sig^2) against 1.06-1.29e9 for octant batches and
+1.90e9 for per-atom; start E2 at 2-3 bohr cubes split at 256-512 points. Commits `f832aded` (pushed)
 > and `edfaa1bf` (no-copy) precede it.
 >
 > **FOUND 2026-09-14: a debug build aborts on any `--` option.** `debug/tonto --input stdin
