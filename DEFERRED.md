@@ -110,8 +110,11 @@ box batches cost 0.72-0.86e9 (sum n_pts x n_sig^2) against 1.06-1.29e9 for octan
 (`MOLECULE.FOCK:add_GGA_XC_mx_batched`): karrikinolide energy within 1.5e-11 of the old path, XC
 73.4 -> 16.9 CPU s, SCF 126 -> 66 s; J and K (46 s) are now 70% of the SCF. **Open-shell GGA
 done** (`add_GGA_XC_mx_batched(Ka,Kb,E,Ea,Eb)`): water cation doublet within 4e-12, XC 0.64 ->
-0.22 s; karrikinolide as uks within 1.9e-11, XC 115.0 -> 31.1 CPU s, SCF 186 -> 96 s. LDA still
-takes the old path silently when the switch is on. Commits `f832aded` (pushed)
+0.22 s; karrikinolide as uks within 1.9e-11, XC 115.0 -> 31.1 CPU s, SCF 186 -> 96 s. **LDA
+done**: the batched routines became `add_XC_mx_batched(K,E)` and `(Ka,Kb,E,Ea,Eb)`, gradients
+only for a GGA; X-alpha karrikinolide within 2.7e-11, XC 23.6 -> 15.2 CPU s; water cation uxalpha
+identical to 12 decimals. Every DFT kind now takes the batched path when the switch is on. Next:
+the suites with the switch defaulted on, then flip the default and delete the old routines. Commits `f832aded` (pushed)
 > and `edfaa1bf` (no-copy) precede it.
 >
 > **FOUND 2026-09-14: a debug build aborts on any `--` option.** `debug/tonto --input stdin
