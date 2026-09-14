@@ -689,6 +689,49 @@ is the same, and the differences are in default cost.
   its arrays. Repaired against the book; the `quadrature_rules` ctest runs every
   rule against closed-form moments.
 
+## 6c. `pruning_scheme= adaptive`: the angular order by radius (2026-09-14)
+
+The Lebedev order of each radial shell is set by its scaled radius in bohr, not by its index
+in the radial list (`BECKE_GRID:apply_pruning_scheme_adaptive`):
+
+| r < (bohr) | 0.2 | 0.7 | 1.0 | 1.4 | 4.5 | 6.5 | 7.5 | beyond |
+|---|---|---|---|---|---|---|---|---|
+| heavy atom | L5 | L11 | L17 | L23 | **Lb** | L29 | L17 | L5 |
+| H, He | L5 | L11 | L17 | L23 | **L_H** | L17 | L5 | L5 |
+
+`Lb` is the new `l_bonding_angular_grid`, set by `accuracy=` (17, 23, **29**, **59**, 59, 71, 83
+from `very_low` to `best`); `L_H` is `l_H_angular_grid`. Every zone is capped at the peak. Only
+`medium` and `high` are calibrated.
+
+**Calibration.** The zones were read off `put_grid_shell_errors` (stage B, `SCF_SPEED_REPORT.md`):
+per shell, the lowest order within 1e-7 of L59, on water and karrikinolide at `medium`. The
+inner edges are the same for every atom; the carbons' L59 zone reaches 4.3 bohr in karrikinolide.
+Candidate rules were scored offline against those tables before building
+(`~/tonto_runs/grid_shell_errors_2026-09-13/rules.py`); the built grid reproduces the predicted
+orders shell for shell and the summed shell error (6.6e-7 on water).
+
+**Result**, BLYP, Becke partition, one core:
+
+| molecule | grid | points | E − g09 | wall |
+|---|---|---|---|---|
+| water cc-pVDZ | `medium` treutler_ahlrichs | 11467 | −4.6e-08 | |
+| | `medium` adaptive | 9173 | −4.4e-08 | |
+| | `high` treutler_ahlrichs | 19011 | −1.3e-07 | |
+| | `high` adaptive | 20225 | −2.6e-07 | |
+| karrikinolide 6-31G(d) | `medium` treutler_ahlrichs | 77594 | +1.55e-05 | 173 s |
+| | `medium` adaptive | 61089 | +1.56e-05 | 139 s |
+| | `high` treutler_ahlrichs | 125472 | +4.47e-06 | 257 s |
+| | `high` adaptive | 162934 | −3.68e-06 | 343 s |
+
+- **`medium` adaptive: the same energy with 79% of the points and 80% of the time.**
+- **`high` adaptive does not pay:** 20% closer to g09 than treutler_ahlrichs at 34% more time.
+  The per-shell tables predicted 1.5e-6 for it; the rest of the error is not angular (on water
+  `high` is further from g09 than `medium` under both schemes), so the radial grid is the next
+  suspect.
+- `treutler_ahlrichs` stays the default. `dft_invariants` check 11 guards the scheme.
+- **Weakness:** calibrated on two small first-row molecules, one of them near planar. A compact
+  3D molecule and a second-row atom are still to be run (`TONTO_KNOWN_ISSUES.md`).
+
 ## 7. Assessed and deliberately left alone: how E_xc is evaluated
 
 `molecule.fock.foo` accumulates the XC energy as a density-matrix contraction,

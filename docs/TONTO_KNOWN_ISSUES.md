@@ -63,6 +63,9 @@ the ones worth reading.
   5×10⁻⁸ from an independent reference.** `partition_scheme= stratmann_scuseria` is ten
   times further off on the same grid and its accuracy is not monotonic in `accuracy=`.
   See `DFT_STANDARDISATION.md` §6b.
+- **`pruning_scheme= adaptive` is calibrated on two small first-row molecules only**, water
+  and the near-planar karrikinolide. Compact three-dimensional molecules and heavier atoms
+  are untested. See `DFT_STANDARDISATION.md` §6c.
 - **The exchange–correlation energy is never reported separately.** `V_ee` lumps it in
   with the Coulomb term. See `DFT_STANDARDISATION.md`.
 

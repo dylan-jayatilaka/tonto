@@ -61,6 +61,9 @@ this?". None needs a reference output, so none can be blessed away.
                                          prune_rho_cutoff. Tightening it must
                                          not move the energy, or it is
                                          discarding points that matter.
+  11 pruning_scheme= adaptive responds,  a new scheme that silently fell through
+     and stays near the unpruned grid    to no pruning, or whose zones dropped
+                                         the order where it matters.
   9  partition_scheme= is not inert,     the DFT path called the Stratmann-
      and a bogus name is fatal           Scuseria builder unconditionally, so
                                          partition_scheme= becke gave a
@@ -120,6 +123,11 @@ PARTITION_MIN_RESPONSE = 1.0e-8
 # prune_rho_cutoff at its default (1e-12) against 1e-16 must agree. Calibrated
 # 2026-09-14; see docs/SCF_SPEED_REPORT.md.
 PRUNE_MAX = 1.0e-8
+# pruning_scheme= adaptive at medium against the unpruned grid, and against
+# treutler_ahlrichs (must differ). Observed 2026-09-14: 7.5e-7 and 4.2e-7. See
+# docs/DFT_STANDARDISATION.md section 6c.
+ADAPTIVE_MAX = 3.0e-6
+ADAPTIVE_MIN_RESPONSE = 1.0e-12
 
 JOB = """{{
    name= h2o
@@ -344,6 +352,26 @@ def main():
                        " (>= %.1e) -- grid points that matter are being dropped"
                        % (d, PRUNE_MAX))
 
+        # 11 -- adaptive pruning must do something, and stay near no pruning
+        ad = energy(run, acc="medium", exch="becke88", corr="lyp",
+                    grid="pruning_scheme= adaptive")
+        no = energy(run, acc="medium", exch="becke88", corr="lyp",
+                    grid="pruning_scheme= none")
+        d = abs(ad - pd)
+        ok = d > ADAPTIVE_MIN_RESPONSE
+        print(" 11  pruning_scheme= adaptive responds |ad-TA| = %.3e  %s"
+              % (d, "ok" if ok else "FAIL"))
+        if not ok:
+            bad.append("pruning_scheme= adaptive gave the treutler_ahlrichs energy"
+                       " (%.3e <= %.1e) -- the scheme is inert" % (d, ADAPTIVE_MIN_RESPONSE))
+        d = abs(ad - no)
+        ok = d < ADAPTIVE_MAX
+        print(" 11  adaptive near unpruned grid    |diff|     = %.3e  %s"
+              % (d, "ok" if ok else "FAIL"))
+        if not ok:
+            bad.append("pruning_scheme= adaptive is %.3e from the unpruned grid"
+                       " (>= %.1e) -- a zone has too low an order" % (d, ADAPTIVE_MAX))
+
     except RuntimeError as exc:
         bad.append(str(exc))
 
@@ -353,7 +381,7 @@ def main():
         for b in bad:
             print("  - %s" % b)
         return 1
-    print("OK -- all ten DFT invariants hold (%d jobs)" % run.n)
+    print("OK -- all eleven DFT invariants hold (%d jobs)" % run.n)
     return 0
 
 

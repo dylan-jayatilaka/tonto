@@ -257,3 +257,19 @@ angular orders.
 
 **Dylan's decision, 2026-09-14: keep it on at 1e-12.** It is exact to rounding and costs
 atomic SCFs at SCF start only for DFT jobs without a promolecule guess.
+
+## Stage D, 2026-09-14: `pruning_scheme= adaptive`, the angular order by radius
+
+The rule, its calibration and the energies against g09 are in `DFT_STANDARDISATION.md` §6c.
+Karrikinolide, BLYP/6-31G(d), Becke, one core, CPU seconds from `show_timings`:
+
+| grid | points | XC s | J/K s | guess s | wall |
+|---|---|---|---|---|---|
+| `medium` treutler_ahlrichs | 77594 | 125.5 | 46.1 | 9.8 | 173 s |
+| `medium` adaptive | 61089 | 92.9 | 44.5 | 7.3 | 139 s |
+| `high` treutler_ahlrichs | 125472 | 209.8 | 45.1 | 15.1 | 257 s |
+| `high` adaptive | 162934 | 296.8 | 45.0 | 20.9 | 343 s |
+
+The XC time follows the point count (1.5-1.8 ms per point per SCF); J and K do not move. At
+`medium` the saving is a quarter of the XC time for no change in the energy. At `high` the L59
+bonding zone costs more than it buys. The next saving is stage E, the batched XC loop.

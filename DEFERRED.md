@@ -98,6 +98,33 @@ now covers the whole project, so it was renamed.)*
 > 0.17% on three lines where it had failed at 200%. The only loose failure left on the Mac is
 > `urea_ccsd_pob-TZVP_Salvador_properties` at 4.48%, the LAPACK-thread row; the suite is 55/56.
 >
+> **UPDATE 2026-09-14 (later): stage D done, as an option.** `pruning_scheme= adaptive` sets the
+> Lebedev order per radial shell by its radius in bohr, with the bonding-zone peak
+> `l_bonding_angular_grid` tied to `accuracy=` (29 at `medium`, 59 at `high`). On karrikinolide
+> `medium` it gives the same energy (1.56e-5 from g09) with 79% of the points and 80% of the
+> time; at `high` it is 20% closer to g09 than treutler_ahlrichs but 34% slower, so the `high`
+> peak is wrong or the `high` residual is radial -- untested. `treutler_ahlrichs` stays the
+> default; `dft_invariants` check 11 guards it. **Open:** (1) calibrated on water and the
+> near-planar karrikinolide only -- run a compact 3D molecule and a second-row atom before any
+> default change (listed in `docs/TONTO_KNOWN_ISSUES.md`); (2) the `high` residual; (3) stage E.
+> Detail in `docs/DFT_STANDARDISATION.md` §6c and `docs/SCF_SPEED_REPORT.md`; scoring scripts
+> `rules.py`, `zones.py` in `~/tonto_runs/grid_shell_errors_2026-09-13/`. The Rys vectorisation
+> plan drafted the same day is parked under its item in *Science and features*.
+>
+> **Dylan: this is faster, but nowhere near g09's speed -- something else is going on.** The
+> numbers agree. Adaptive `medium` is ~11.6 s per iteration (XC 7.7, J/K 3.7) against g09
+> FineGrid's 2.1 s for the *whole* iteration, so even J/K alone is 1.8x g09's iteration; the gap
+> is not the point count. What g09 visibly does that Tonto does not (from
+> `karrikinolide_grid_ladder_2026-09-11/karr_g09.log`, the 199974-grid run): (a) **a two-pass
+> SCF** -- cycles 1-10 at integral accuracy 1e-5 ("Integral accuracy reduced to 1.0D-05 until
+> final iterations"), then full accuracy after "Initial convergence to 1.0D-05 achieved"; (b)
+> **incremental Fock builds** from the density change, with Schwarz screening scaled by it (our
+> delta build is off, `SCF_SPEED_REPORT.md` step 3, for want of that scaling); (c) presumably
+> batched XC with per-batch significant functions (stage E). The FineGrid log was not kept.
+> **Next measurement, before any more coding:** rerun g09 FineGrid on karrikinolide with `#p`
+> and whatever per-link timing g09 offers (to be looked up) to split its 2.1 s into XC and J/K, and try the two-pass trick in Tonto (a looser Schwarz and grid until ΔE
+> < 1e-5), which needs no new machinery.
+>
 > **UPDATE 2026-09-14: stage C done.** `BECKE_GRID.prune_rho_cutoff` (keyword
 > `prune_rho_cutoff=`) drops molecular-grid points where the promolecule density, from the
 > atomic interpolators made silently in `initialize_SCF` after the guess, is below it. It is
@@ -2223,6 +2250,40 @@ the gprof tree at `~/github/tonto-prof/prof/` and `scfdata= { show_timings= TRUE
 exists and is unbuilt), agreeing to 1e-14 or bitwise; HF energies bit-identical or to 1e-12;
 `short` and the HF/correlated `long` jobs; timings before and after in
 `docs/SCF_SPEED_REPORT.md`.
+
+**Detailed plan for step 3 (drafted 2026-09-14, parked in favour of pruning stage D).** Call it
+"Rys step 3", not "stage D", which is the grid-pruning item.
+
+*Facts found while planning:*
+- Each 1-5 root fit is a nested `if` tree with 8-10 leaves; the breakpoint subset differs per
+  fit. Leaves share work (`exp(-x)`, `f = (w1-e)/(x+x)`, `r/(r+1)`), so the tree does not cut
+  cleanly into bins without carrying those tails into each leaf.
+- 24 live `rys.get_weights` calls in `shell1quartet.foo`, more in `shell2`, `shell4`,
+  `gaussian2`, `gaussian4`; all are `do k / do j / xx / get_weights / use roots at once`.
+- **Per-quartet batches are small** (`n_ab_prims × n_cd_prims`: 1-81 for 6-31G(d) p/d shells,
+  1296 only for the 6-primitive 1s). Sort overhead may eat the gain; the payoff may need the
+  cross-quartet class traversal (step 2) first. The microbenchmark below decides.
+- Release is `-Ofast -march=native` (`cmake/SetFortranFlags.cmake`), so bitwise agreement between
+  a vectorised and a scalar loop is not guaranteed even with identical expressions: gate at 1e-14.
+- 20 of the callers use `parallel do k`; a gather pass must be serial and run on every rank,
+  outside that loop.
+
+*Steps:*
+1. **Split each 1-5 root fit into one `ELEMENTAL` kernel per leaf**, carrying its share of the
+   tails. The scalar `get_weights` keeps its tree but calls the kernels, so the coefficients
+   exist once. Gate: old vs new bitwise over ~1e6 `x` in [0,100], including both sides of every
+   breakpoint.
+2. **`RYS:get_weights_t2(X,root,weight)`**, `X :: VEC{REAL}`, `root,weight :: MAT{REAL}(n_roots,n_X)`:
+   bin label = count of breakpoints `<= x` (the one, branchless, comparison pass); stable counting
+   sort to a permutation; each bin's contiguous slice through its elemental kernel; scatter back.
+   6+ roots stay scalar. Gate: 1e-14 against scalar. Microbenchmark ns per `x` at batch sizes
+   1, 9, 81, 1296, 1e5 to find the break-even.
+3. **Only if (2) wins at per-quartet sizes:** restructure the generic `make_esfs_Xs … XX` into
+   gather `xx`/`rho` over all `(k,j)`, one Rys call, then the existing 2-D integral loop.
+   Otherwise do the class traversal first and return.
+4. **Gate:** `run_shell1quartet` old vs new; HF energies to 1e-12; `short` and HF `long` jobs;
+   timings in `docs/SCF_SPEED_REPORT.md`. Run the no-grid karrikinolide RHF profile alongside
+   step 1.
 
 ## Speed up the SCF and the integrals (Dylan, 2026-09-11)
 

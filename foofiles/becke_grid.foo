@@ -374,7 +374,7 @@ contains
    ! name and accepted the misspelled one (which then matched no case and did
    ! nothing). Release never saw it, ENSURE being compiled out there.
    ! "jayatilaka2" was removed 2026-08-14 -- see apply_pruning_scheme.
-   ENSURE(scheme.is_one_of(["none             ","jayatilaka0      ","jayatilaka1      ","treutler_ahlrichs"]),"unknown pruning scheme")
+   ENSURE(scheme.is_one_of(["none             ","jayatilaka0      ","jayatilaka1      ","treutler_ahlrichs","adaptive         "]),"unknown pruning scheme")
 
       .pruning_scheme = scheme
       .pruning_scheme.to_lower_case
@@ -391,6 +391,7 @@ contains
       case ("jayatilaka0      ")
       case ("jayatilaka1      ")
       case ("treutler_ahlrichs")
+      case ("adaptive         ")
       case default;             UNKNOWN(.pruning_scheme)
       end
 
@@ -490,37 +491,44 @@ contains
          .set_l_H_angular_grid(11)
          .set_l_angular_grid(17)
          .set_n_radial_pts(20)
+         .set_l_bonding_angular_grid(17)
 
       case ("low");
          .set_l_H_angular_grid(17)
          .set_l_angular_grid(23)
          .set_n_radial_pts(25)
+         .set_l_bonding_angular_grid(23)
 
       case ("medium")
          .set_l_H_angular_grid(23)
          .set_l_angular_grid(29)
          .set_n_radial_pts(30)
+         .set_l_bonding_angular_grid(29)
 
       case ("high")
          .set_l_H_angular_grid(29)
          .set_l_angular_grid(35)
          .set_n_radial_pts(35)
+         .set_l_bonding_angular_grid(59)
 
       case ("very_high")
          .set_l_H_angular_grid(35)
          .set_l_angular_grid(47)
          .set_n_radial_pts(45)
+         .set_l_bonding_angular_grid(59)
 
       case ("extreme")
          ! These are better than the Mura-Knowles settings
          .set_l_H_angular_grid(47)
          .set_l_angular_grid(59)
          .set_n_radial_pts(55)
+         .set_l_bonding_angular_grid(71)
 
       case ("best")
          .set_l_H_angular_grid(59)
          .set_l_angular_grid(71)
          .set_n_radial_pts(65)
+         .set_l_bonding_angular_grid(83)
 
       end
 
@@ -619,6 +627,14 @@ contains
       .l_H_angular_grid = l
    end
 
+   set_l_bonding_angular_grid(l) :: PURE
+   ! Set the Lebedev order "l" for the bonding zone of non-H atoms, used
+   ! only by the "adaptive" pruning scheme.
+      self :: INOUT
+      l :: INT, IN
+      .l_bonding_angular_grid = l
+   end
+
    set_reduce_H_angular_grid(reduce) :: PURE
    ! If set TRUE the order of the angular grid for Hydrogen and Helium
    ! are reduced to .l_H_angular_grid.
@@ -667,6 +683,7 @@ contains
       case ("finalize                  "); .set_grid_data
       case ("kind=                     "); .read_kind
       case ("l_angular_grid=           "); .read_l_angular_grid
+      case ("l_bonding_angular_grid=   "); .read_l_bonding_angular_grid
       case ("l_h_angular_grid=         "); .read_l_H_angular_grid
       case ("n_extra_pts_per_shell=    "); .read_n_extra_pts_per_shell
       case ("n_radial_pts=             "); .read_n_radial_pts
@@ -779,6 +796,20 @@ contains
 
       stdin.read(l)
       .set_l_H_angular_grid(l)
+
+      .finalized = FALSE
+
+   end
+
+   read_l_bonding_angular_grid
+   ! Read .l_bonding_angular_grid, the Lebedev order in the bonding zone of
+   ! non-H atoms for the "adaptive" pruning scheme.
+      self :: INOUT
+
+      l :: INT
+
+      stdin.read(l)
+      .set_l_bonding_angular_grid(l)
 
       .finalized = FALSE
 
@@ -1045,10 +1076,12 @@ contains
 
       lebedev_grid :: LEBEDEV@
       p,nr :: INT
+      r,w :: REAL
 
       p  = .period_of(a)
       nr = .no_of_radial_pts(p)
-      .apply_pruning_scheme(lebedev_grid,p,i,nr)
+      .radial_shell_for_atom(a,i,r,w)
+      .apply_pruning_scheme(lebedev_grid,p,i,nr,r)
       res = lebedev_grid.l
 
    end
@@ -1249,7 +1282,7 @@ contains
    ENSURE(.atom.allocated,"no atom list")
    ENSURE(.unique_atom.allocated,"no unique_atom array")
 
-      u,p,p_max,a,np :: INT
+      u,a,np :: INT
       s,s3 :: REAL
 
       ! Create unique-atom points and weights
@@ -1258,44 +1291,29 @@ contains
       .atom_pts.create(.n_unique_atoms)
       .atom_wts.create(.n_unique_atoms)
 
-      ! Maximum period
-      p_max = period(maxval(.atom.atomic_number))
+      ! Loop for each *unique* atom
+      do u = 1,.n_unique_atoms
 
-      ! Loop over atoms with periodic table row=p
-      do p = 1,p_max
+         a = .unique_atom(u)
 
-         if (all(period(.atom.atomic_number)/=p)) cycle
+         ! Set unscaled reference grid for atom "a"
+         .set_unscaled_grid(a)
 
-         ! Set unscaled reference grid for row=p
-         .set_unscaled_grid(p)
+         ! Get "np" points where BF's are large enough
+         np = .no_of_pts_for_atom(a)
 
-         ! Space for distances
-         np = .n_unscaled_pts
+         ! Copy only "np" points, weights, and radii
+         .atom_pts(u).element.create(np,3)
+         .atom_wts(u).element.create(np)
+         .atom_pts(u).element = .unscaled_pts(1:np,:)  ! Copy here
+         .atom_wts(u).element = .unscaled_wts(1:np)
 
-         ! Loop for each *unique* atom
-         do u = 1,.n_unique_atoms
-
-            a = .unique_atom(u)
-
-            if (period(.atom(a).atomic_number)/=p) cycle
-
-            ! Get "np" points where BF's are large enough
-            np = .no_of_pts_for_atom(a)
-
-            ! Copy only "np" points, weights, and radii
-            .atom_pts(u).element.create(np,3)
-            .atom_wts(u).element.create(np)
-            .atom_pts(u).element = .unscaled_pts(1:np,:)  ! Copy here
-            .atom_wts(u).element = .unscaled_wts(1:np)
-
-            ! Do scaling if needed
-            if (.scale_atomic_grids) then
-               s  = .atom_zeta(.atom(a).atomic_number)
-               s3 = s*s*s
-               .atom_pts(u).element = s *.atom_pts(u).element
-               .atom_wts(u).element = s3*.atom_wts(u).element
-            end
-
+         ! Do scaling if needed
+         if (.scale_atomic_grids) then
+            s  = .atom_zeta(.atom(a).atomic_number)
+            s3 = s*s*s
+            .atom_pts(u).element = s *.atom_pts(u).element
+            .atom_wts(u).element = s3*.atom_wts(u).element
          end
 
          ! Clean
@@ -1305,33 +1323,40 @@ contains
 
    end
 
-   set_unscaled_grid(p) :: leaky, private, PURE
+   set_unscaled_grid(a) :: leaky, private, PURE
    ! Set the *unscaled* spherical quadrature grid points and weights
-   ! for an atom on period "p" of the periodic table. The unscaled
-   ! grid is a direct product of the ".radial_grid(p)" and the
-   ! ".lebedev" angular grids. Based on the .pruning_scheme this
-   ! routine may reduce the order of the angular grids for radial
-   ! points near the nucleus. NOTE: unlike the SG-1 grids pruning is
-   ! done *before* scaling and is good for all atoms in a period "p".
+   ! for atom "a". The unscaled grid is a direct product of the
+   ! ".radial_grid(p)" for its row "p" and the ".lebedev" angular
+   ! grids. Based on the .pruning_scheme this routine may reduce the
+   ! order of the angular grid per radial shell. The "adaptive" scheme
+   ! does so by the *scaled* radius, so the grid is made per atom.
       self :: INOUT
-      p :: INT, IN
+      a :: INT, IN
 
    ENSURE(.radial_grid.allocated,"no radial_grid")
    ENSURE(.lebedev_grid.allocated,"no lebedev_grid")
-   ENSURE(.n_pts_for_row.allocated,"no n_pts_for_row")
 
-      i,j,k, np,nr :: INT
-      pi4, r,w, s  :: REAL
+      i,j,k, np,nr,p :: INT
+      pi4, r,w, s, zeta :: REAL
       lebedev_grid :: LEBEDEV@
 
-      np = .n_pts_for_row(p)
+      p  = .period_of(a)
+      nr = .radial_grid(p).n_pts
+
+      zeta = ONE
+      if (.scale_atomic_grids) zeta = .atom_zeta(.atom(a).atomic_number)
+
+      ! Count the points
+      np = 0
+      do i = 1,nr
+         .apply_pruning_scheme(lebedev_grid,p,i,nr,zeta*.radial_grid(p).pts(i))
+         np = np + lebedev_grid.n_pts
+      end
       .n_unscaled_pts = np
 
       .destroy_unscaled_grid
       .unscaled_pts.create(np,3)
       .unscaled_wts.create(np)
-
-      nr = .radial_grid(p).n_pts
 
       ! Factor 4*pi*r^2 included into weights.
       pi4 = FOUR*PI
@@ -1352,7 +1377,7 @@ contains
          s = pi4*r*r*w
 
          ! Set the lebedev grid
-         .apply_pruning_scheme(lebedev_grid,p,i,nr)
+         .apply_pruning_scheme(lebedev_grid,p,i,nr,zeta*r)
 
          do j = 1,lebedev_grid.n_pts ! <-- Loop on angular grid
             k = k + 1
@@ -1531,13 +1556,15 @@ contains
    ENSURE(.n_pts_for_row.allocated,"no n_pts_for_row")
 
       p,nr :: INT
+      r,w :: REAL
 
       ! Period for atom "a"
       p  = period(.atom(a).atomic_number)
       nr = .radial_grid(p).n_pts
 
       ! Get grid
-      .apply_pruning_scheme(res,p,i,nr)
+      .radial_shell_for_atom(a,i,r,w)
+      .apply_pruning_scheme(res,p,i,nr,r)
 
    end
 
@@ -1547,7 +1574,8 @@ contains
 
    no_of_pts_for_row(p) result (res) :: PURE
    ! Return the number of points in the (radial x spherical) grid,
-   ! assuming that the atom is in period "p".
+   ! assuming that the atom is in period "p". For "adaptive" pruning the
+   ! radii are taken unscaled, so this is indicative only.
       self :: IN
       p   :: INT, IN
       res :: INT
@@ -1566,7 +1594,7 @@ contains
       do i = 1,nr
 
          ! Set lebedev grid
-         .apply_pruning_scheme(lebedev_grid,p,i,nr)
+         .apply_pruning_scheme(lebedev_grid,p,i,nr,.radial_grid(p).pts(i))
 
          res = res + lebedev_grid.n_pts
 
@@ -1621,7 +1649,7 @@ contains
          if (r>r_max) exit
 
          ! Set default lebedev grid
-         .apply_pruning_scheme(lebedev_grid,p,i,nr)
+         .apply_pruning_scheme(lebedev_grid,p,i,nr,r)
 
          res = res + lebedev_grid.n_pts
 
@@ -1629,14 +1657,15 @@ contains
 
    end
 
-   apply_pruning_scheme(lebedev_grid,p,i,nr,scheme) :: private, PURE
+   apply_pruning_scheme(lebedev_grid,p,i,nr,r,scheme) :: private, PURE
    ! Set the angular pruning scheme for "lebedev_grid" for an atom in
    ! row "p", for a radial point "i" in a set of "nr" radial points
-   ! arranged in increasing distance. The default grid is
-   ! .lebedev_grid. "scheme" overrides the default scheme.
+   ! arranged in increasing distance, at scaled radius "r" (bohr). The
+   ! default grid is .lebedev_grid. "scheme" overrides the default scheme.
       self :: IN
       lebedev_grid :: LEBEDEV@, OUT
       p,i,nr :: INT, IN
+      r :: REAL, IN
       scheme :: STR, optional, IN
 
    ENSURE(.lebedev_grid.allocated,"no lebedev_grid")
@@ -1661,7 +1690,54 @@ contains
       ! -1.54e-05 where treutler_ahlrichs, jayatilaka0 and jayatilaka1 all
       ! landed within ~1.6e-06. See docs/DFT_STANDARDISATION.md section 6a.
       case ("treutler_ahlrichs"); .apply_pruning_scheme_TA(lebedev_grid,i,nr)
+      case ("adaptive         "); .apply_pruning_scheme_adaptive(lebedev_grid,p,r)
       end
+
+   end
+
+   apply_pruning_scheme_adaptive(lebedev_grid,p,r) :: private, leaky, PURE
+   ! Set the Lebedev order of "lebedev_grid" from the scaled radius "r"
+   ! (bohr) of a radial shell of an atom in row "p":
+   !
+   !    r <  0.2  0.7  1.0  1.4  4.5  6.5  7.5  beyond
+   !    L    5    11   17   23   Lb   29   17   5
+   !
+   ! Lb is .l_bonding_angular_grid, set by the accuracy, and caps every
+   ! zone. For H and He (with .reduce_H_angular_grid) Lb is
+   ! .l_H_angular_grid and the 4.5-6.5 zone is L17, the 6.5-7.5 zone L5.
+   ! The zones are calibrated on per-shell errors for water and
+   ! karrikinolide; see docs/DFT_STANDARDISATION.md section 6c.
+      self :: IN
+      lebedev_grid :: LEBEDEV@, INOUT
+      p :: INT, IN
+      r :: REAL, IN
+
+      L,Lb :: INT
+      H_like :: BIN
+
+      H_like = p==1 AND .reduce_H_angular_grid
+
+      Lb = .l_bonding_angular_grid
+      if (H_like) Lb = .l_H_angular_grid
+
+      if      (r<0.2d0) then; L = 5
+      else if (r<0.7d0) then; L = 11
+      else if (r<1.0d0) then; L = 17
+      else if (r<1.4d0) then; L = 23
+      else if (r<4.5d0) then; L = Lb
+      else if (H_like)  then
+         L = 5
+         if (r<6.5d0) L = 17
+      else
+         L = 5
+         if (r<7.5d0) L = 17
+         if (r<6.5d0) L = 29
+      end
+      L = min(L,Lb)
+
+      lebedev_grid.destroy
+      lebedev_grid.create
+      lebedev_grid.set_l(L)
 
    end
 
@@ -1889,7 +1965,7 @@ contains
          if (r>r_max_SS) exit ! Not unit weight
 
          ! Set lebedev grid
-         .apply_pruning_scheme(lebedev_grid,p,i,nr)
+         .apply_pruning_scheme(lebedev_grid,p,i,nr,r)
 
          res = res + lebedev_grid.n_pts
 
@@ -4691,6 +4767,9 @@ contains
       stdout.flush
       stdout.show("l_angular_grid            =",.l_angular_grid)
       stdout.show("l_H_angular_grid          =",.l_H_angular_grid)
+      if (.pruning_scheme=="adaptive") then
+      stdout.show("l_bonding_angular_grid    =",.l_bonding_angular_grid)
+      end
       stdout.show("reduce_H_angular_grid?    =",.reduce_H_angular_grid)
 
    end
