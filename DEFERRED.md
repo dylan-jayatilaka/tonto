@@ -102,7 +102,7 @@ now covers the whole project, so it was renamed.)*
 > (E0 BLAS groundwork and the `get_from` placeholder check; E1 batches as an adaptive spatial
 > box grid (octree), decided; E2-E5 flat per-batch basis functions, density, functional, XC
 > matrix by `dgemm`; E6 parallel over batches; E7 rollout restricted GGA first, with an old/new
-> switch, decided). One decision open: retiring the unique-atom basis-function cache for XC. Commits `f832aded` (pushed)
+> switch, decided). The unique-atom basis-function cache is retired for XC (decided). Commits `f832aded` (pushed)
 > and `edfaa1bf` (no-copy) precede it.
 >
 > **FOUND 2026-09-14: a debug build aborts on any `--` option.** `debug/tonto --input stdin
