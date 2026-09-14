@@ -99,10 +99,10 @@ now covers the whole project, so it was renamed.)*
 > `urea_ccsd_pob-TZVP_Salvador_properties` at 4.48%, the LAPACK-thread row; the suite is 55/56.
 >
 > **NEXT: stage E, the batched XC quadrature.** Plan: `~/.claude/plans/stage-e-batched-xc.md`
-> (E0 BLAS groundwork and the `get_from` placeholder check; E1 batches in `make_XC_grid`; E2-E5
-> flat per-batch basis functions, density, functional, XC matrix by `dgemm`; E6 parallel over
-> batches; E7 rollout restricted GGA first). Three decisions open there: batch shape, retiring
-> the unique-atom basis-function cache for XC, and an old/new switch. Commits `f832aded` (pushed)
+> (E0 BLAS groundwork and the `get_from` placeholder check; E1 batches as an adaptive spatial
+> box grid (octree), decided; E2-E5 flat per-batch basis functions, density, functional, XC
+> matrix by `dgemm`; E6 parallel over batches; E7 rollout restricted GGA first, with an old/new
+> switch, decided). One decision open: retiring the unique-atom basis-function cache for XC. Commits `f832aded` (pushed)
 > and `edfaa1bf` (no-copy) precede it.
 >
 > **FOUND 2026-09-14: a debug build aborts on any `--` option.** `debug/tonto --input stdin
