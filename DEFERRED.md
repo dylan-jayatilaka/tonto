@@ -98,6 +98,33 @@ now covers the whole project, so it was renamed.)*
 > 0.17% on three lines where it had failed at 200%. The only loose failure left on the Mac is
 > `urea_ccsd_pob-TZVP_Salvador_properties` at 4.48%, the LAPACK-thread row; the suite is 55/56.
 >
+> **FOUND 2026-09-14: a debug build aborts on any `--` option.** `debug/tonto --input stdin
+> --output stdout` stops at start-up: `vec_str.F90:251`, "Different CHARACTER lengths
+> (1024/256) in array constructor", from `VEC{STR}:append_1` (`self = [self,value]`) called by
+> `COMMAND_LINE:process_options` (`command_line.foo`, the `append_(self%option,opt)` whose
+> comment says this was fixed). The option list and the value now have different widths --
+> probably since `79965d5e` (2026-08-15, long paths). So `dft_invariants`, which passes
+> `--input/--output`, cannot run under debug, and neither can `hart`. Release is unaffected.
+> Not fixed. Stage D and the no-copy change were checked in debug without options instead
+> (identical energies to release, exit 0).
+>
+> **UPDATE 2026-09-14 (evening): perf profile, and the no-copy change.** `perf` (Dylan enabled
+> `perf_event_paranoid=1`) showed a fifth of the karrikinolide run in `memmove`/`malloc`/`free`,
+> from allocatable copies inside the shell-pair loops of the restricted GGA
+> `make_rho_becke_atom_grid` and `add_GGA_XC_mx`. Reading the ragged grids in place: bit-identical
+> energy, XC 92.9 -> 75.0 CPU s, wall 139 -> 123 s (`SCF_SPEED_REPORT.md`). The open-shell and LDA
+> twins still copy; not worth fixing if stage E replaces them. Tonto vs g09 per SCF iteration:
+> about 5x (was 6-7x before stage D); whole job 2.5x.
+> **Stage E, decisions so far (Dylan):** (1) replace the ragged per-shell `bf_grd0`/`bf_skip`
+> arrays, masks and index maps by flat per-batch buffers (points x significant functions),
+> allocated once at the largest batch and reused; screen per batch, not per point; density and
+> XC matrix as two matrix products. (2) A non-`PURE` `MAT{REAL}:to_product_of_BLAS` calling
+> `dgemm`; callers written once as a template and instantiated with
+> `get_from(MODULE:template, PRODUCT?=>to_product_of_BLAS)`, only the BLAS instance losing
+> `PURE`. Check first that a placeholder in a call on a local (`X.PRODUCT?(G,D)`) substitutes.
+> (3) Time stage E with reference BLAS and with OpenBLAS in a separate tree before deciding
+> the OpenBLAS item below (it forces a full re-bless).
+>
 > **UPDATE 2026-09-14 (later): stage D done, as an option.** `pruning_scheme= adaptive` sets the
 > Lebedev order per radial shell by its radius in bohr, with the bonding-zone peak
 > `l_bonding_angular_grid` tied to `accuracy=` (29 at `medium`, 59 at `high`). On karrikinolide

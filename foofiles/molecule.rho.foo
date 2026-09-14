@@ -1761,12 +1761,9 @@ contains
    ENSURE(.overlapping_atoms_for_atom.allocated,"no overlapping_atoms")
 
       xa,ya,za,a2 :: VEC{REAL}@
-      ga0,gax,gay,gaz :: VEC{REAL}@
-      gb0,gbx,gby,gbz :: VEC{REAL}@
       ra :: VEC{REAL}(3)
       overlapping_atom, pi,pj,pn :: VEC{INT}@
-      skipa0,skipab, skipa,skipb :: VEC{BIN}@
-      DD :: MAT{REAL}@
+      skipa0,skipab, skipa :: VEC{BIN}@
       gridc0,gridcx,gridcy,gridcz :: MAT{REAL}@
       sha :: SHELL1
       cutoff, Dab, fac, ga,gb :: REAL
@@ -1803,6 +1800,9 @@ contains
       a2.create(n_pt)
       skipa0.create(n_pt)
       skipab.create(n_pt)
+      pi.create(n_pt)
+      pj.create(n_pt)
+      pn.create(n_pt)
 
       ! Loop c-overlapping atoms "oa"
       do ca = 1,overlapping_atom.dim
@@ -1886,11 +1886,8 @@ contains
                   lb = .last_basis_fn_for_shell(sb)
                   nb = lb - fb + 1
 
-                  ! Set the "sb" basis function grid
-                  skipb = bf_skip(sb).element
-
                   ! How many points in common?
-                  skipab(1:n_pt) = skipa OR skipb
+                  skipab(1:n_pt) = skipa OR bf_skip(sb).element
                   n_keep = count(NOT skipab(1:n_pt))
                   if (n_keep==0) cycle
 
@@ -1898,89 +1895,36 @@ contains
                   fac = TWO
                   if (sa==sb) fac = ONE
 
-                  ! Density block
-                  DD = D(fa:la,fb:lb)
+                  ! Map common points to the "sa" and "sb" grids
+                  p = 0
+                  i = 0
+                  j = 0
+                  do n = 1,n_pt
+                     if (NOT skipa(n)) i = i + 1
+                     if (NOT bf_skip(sb)[n]) j = j + 1
+                     if (skipab(n)) cycle
+                     p = p + 1
+                     pi(p) = i
+                     pj(p) = j
+                     pn(p) = n
+                  end
 
-                  if (na*nb==1) then
-
-                     ga0 = bf_gr0(sa)[:,1]
-                     gax = bf_grx(sa)[:,1]
-                     gay = bf_gry(sa)[:,1]
-                     gaz = bf_grz(sa)[:,1]
-
-                     gb0 = bf_gr0(sb)[:,1]
-                     gbx = bf_grx(sb)[:,1]
-                     gby = bf_gry(sb)[:,1]
-                     gbz = bf_grz(sb)[:,1]
-
-                     Dab = fac*DD(1,1)
-
-                     i = 0
-                     j = 0
-                     do n = 1,n_pt
-                        if (NOT skipa(n)) i = i + 1
-                        if (NOT skipb(n)) j = j + 1
-                        if (skipab(n)) cycle
-                        ga = ga0(i)
-                        gb = gb0(j)
-                        N0(n) = N0(n) + Dab* ga*gb
-                        Nx(n) = Nx(n) + Dab*(gax(i)*gb + ga*gbx(j))
-                        Ny(n) = Ny(n) + Dab*(gay(i)*gb + ga*gby(j))
-                        Nz(n) = Nz(n) + Dab*(gaz(i)*gb + ga*gbz(j))
-                     end
-
-                  else
-
-                     ! Create space for gathered index info
-                     pi.create(n_keep)
-                     pj.create(n_keep)
-                     pn.create(n_keep)
-
-                     ! Make mapper arrays
-                     p = 0
-                     i = 0
-                     j = 0
-                     do n = 1,n_pt
-                        if (NOT skipa(n)) i = i + 1
-                        if (NOT skipb(n)) j = j + 1
-                        if (skipab(n)) cycle
-                        p = p + 1
-                        pi(p) = i
-                        pj(p) = j
-                        pn(p) = n
-                     end
-
-                     ! Add density contribution to rho
-                     do a = 1,na
-                        ga0 = bf_gr0(sa)[:,a]
-                        gax = bf_grx(sa)[:,a]
-                        gay = bf_gry(sa)[:,a]
-                        gaz = bf_grz(sa)[:,a]
-                        do b = 1,nb
-                           gb0 = bf_gr0(sb)[:,b]
-                           gbx = bf_grx(sb)[:,b]
-                           gby = bf_gry(sb)[:,b]
-                           gbz = bf_grz(sb)[:,b]
-                           Dab = fac*DD(a,b)
-                           do p = 1,n_keep
-                              i = pi(p)
-                              j = pj(p)
-                              n = pn(p)
-                              ga = ga0(i)
-                              gb = gb0(j)
-                              N0(n) = N0(n) + Dab* ga*gb
-                              Nx(n) = Nx(n) + Dab*(gax(i)*gb + ga*gbx(j))
-                              Ny(n) = Ny(n) + Dab*(gay(i)*gb + ga*gby(j))
-                              Nz(n) = Nz(n) + Dab*(gaz(i)*gb + ga*gbz(j))
-                           end
+                  ! Add density contribution to rho; grids read in place
+                  do a = 1,na
+                     do b = 1,nb
+                        Dab = fac*D(fa+a-1,fb+b-1)
+                        do p = 1,n_keep
+                           i = pi(p)
+                           j = pj(p)
+                           n = pn(p)
+                           ga = bf_gr0(sa)[i,a]
+                           gb = bf_gr0(sb)[j,b]
+                           N0(n) = N0(n) + Dab* ga*gb
+                           Nx(n) = Nx(n) + Dab*(bf_grx(sa)[i,a]*gb + ga*bf_grx(sb)[j,b])
+                           Ny(n) = Ny(n) + Dab*(bf_gry(sa)[i,a]*gb + ga*bf_gry(sb)[j,b])
+                           Nz(n) = Nz(n) + Dab*(bf_grz(sa)[i,a]*gb + ga*bf_grz(sb)[j,b])
                         end
                      end
-
-                     ! Clean up
-                     pn.destroy
-                     pj.destroy
-                     pi.destroy
-
                   end
 
                end ! -- loops sa,sb
@@ -1989,6 +1933,9 @@ contains
       end
 
       ! Clean up
+      pn.destroy
+      pj.destroy
+      pi.destroy
       skipab.destroy
       skipa0.destroy
       a2.destroy

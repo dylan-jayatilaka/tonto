@@ -273,3 +273,31 @@ Karrikinolide, BLYP/6-31G(d), Becke, one core, CPU seconds from `show_timings`:
 The XC time follows the point count (1.5-1.8 ms per point per SCF); J and K do not move. At
 `medium` the saving is a quarter of the XC time for no change in the energy. At `high` the L59
 bonding zone costs more than it buys. The next saving is stage E, the batched XC loop.
+
+## perf profile and the no-copy change, 2026-09-14
+
+`perf record -g` (and `--call-graph dwarf` for callers) on karrikinolide, adaptive `medium`:
+
+| routine | share |
+|---|---|
+| `MOLECULE.RHO:make_rho_becke_atom_grid` (restricted GGA) | 22.3% |
+| `MOLECULE.FOCK:add_GGA_XC_mx` (inner) | 20.8% |
+| `memmove` (libc), 8.8% from each of the two above | 15.4% |
+| `malloc`, `free` | 4.9% |
+| ERI: `get_weights` 6.0, `form_esfs` 5.3, `make_esfs` 4.3, `set_cd_new` 2.6, J engines 2.4, `make_esfs_*` ~6 | ~27% |
+| `exp` (libm) | 2.3% |
+| BLAS/LAPACK (reference netlib) | 0.1% |
+
+A fifth of the run was copying and allocating inside the shell-pair loops of the two XC
+routines: allocatable assignments `ga0 = bf_grd0(sa)[:,a]` (eight per basis-function pair),
+`skipb = bf_skip(sb).element` and `DD = D(fa:la,fb:lb)` per shell pair, and `pi/pj/pn`
+created and destroyed per shell pair. gfortran does not elide these. Reading the grids in
+place and allocating the maps once per atom grid:
+
+| | energy | XC CPU s | J/K CPU s | wall |
+|---|---|---|---|---|
+| before | −533.954503508086 | 92.9 | 44.5 | 139 s |
+| no-copy | −533.954503508086 | 75.0 | 46.8 | 123 s |
+
+Bit-identical, XC −19%. What is left of the XC cost is the per-shell-pair mask merge and
+index maps over every point of the atom grid, and the pair-by-pair contraction: stage E.

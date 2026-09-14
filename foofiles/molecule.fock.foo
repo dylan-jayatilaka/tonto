@@ -4813,18 +4813,19 @@ contains
    ENSURE(.becke_grid.finalized,"no finalized becke_grid")
    ENSURE(.overlapping_atoms_for_atom.allocated,"no overlapping_atoms_for_atom")
 
-      ga0,gax,gay,gaz :: VEC{REAL}@
-      gb0,gbx,gby,gbz :: VEC{REAL}@
       overlapping_atom, pi,pj,pn :: VEC{INT}@
-      skipab, skipa,skipb :: VEC{BIN}@
+      skipab :: VEC{BIN}@
       VV,DD :: MAT{REAL}*
       Dab, fac,val,wal, ga,gb,gab :: REAL
       n_pt,n_keep, ca,cb, oa,fsa,lsa, ob,fsb,lsb :: INT
       sa,fa,la,na, sb,fb,lb,nb, a,b,p,i,j,n :: INT
 
-      ! Skip array for ab shell
+      ! Skip array and common-point maps for the ab shell pair
       n_pt = V0.dim
       skipab.create(n_pt)
+      pi.create(n_pt)
+      pj.create(n_pt)
+      pn.create(n_pt)
 
       ! Overlapping atoms
       overlapping_atom = .overlapping_atoms_for_atom(c).element
@@ -4845,9 +4846,6 @@ contains
             la =  .last_basis_fn_for_shell(sa)
             na = la - fa + 1
 
-            ! Set the "sb" basis function grid
-            skipa = bf_skip(sa).element
-
             ! Loop c-overlapping atoms b
             do cb = 1,ca
 
@@ -4864,11 +4862,8 @@ contains
                   lb = .last_basis_fn_for_shell(sb)
                   nb = lb - fb + 1
 
-                  ! Set the "sb" basis function grid
-                  skipb = bf_skip(sb).element
-
                   ! How many points in common?
-                  skipab(1:n_pt) = skipa OR skipb
+                  skipab(1:n_pt) = bf_skip(sa).element OR bf_skip(sb).element
                   n_keep = count(NOT skipab(1:n_pt))
                   if (n_keep==0) cycle
 
@@ -4880,101 +4875,42 @@ contains
                   VV => V(fa:la,fb:lb)
                   DD => D(fa:la,fb:lb)
 
-                  if (na*nb==1) then
+                  ! Map common points to the "sa" and "sb" grids
+                  p = 0
+                  i = 0
+                  j = 0
+                  do n = 1,n_pt
+                     if (NOT bf_skip(sa)[n]) i = i + 1
+                     if (NOT bf_skip(sb)[n]) j = j + 1
+                     if (skipab(n)) cycle
+                     p = p + 1
+                     pi(p) = i
+                     pj(p) = j
+                     pn(p) = n
+                  end
 
-                     ga0 = bf_grd0(sa)[:,1]
-                     gax = bf_grdx(sa)[:,1]
-                     gay = bf_grdy(sa)[:,1]
-                     gaz = bf_grdz(sa)[:,1]
-
-                     gb0 = bf_grd0(sb)[:,1]
-                     gbx = bf_grdx(sb)[:,1]
-                     gby = bf_grdy(sb)[:,1]
-                     gbz = bf_grdz(sb)[:,1]
-
-                     Dab = fac*DD(1,1)
-
-                     i = 0
-                     j = 0
-                     val = ZERO
-                     wal = ZERO
-                     do n = 1,n_pt
-                        if (NOT skipa(n)) i = i + 1
-                        if (NOT skipb(n)) j = j + 1
-                        if (skipab(n)) cycle
-                        ga  = ga0(i)
-                        gb  = gb0(j)
-                        gab = ga*gb
-                        val = val + V0(n)* gab                  &
-                                  + Vx(n)*(gax(i)*gb+ga*gbx(j)) &
-                                  + Vy(n)*(gay(i)*gb+ga*gby(j)) &
-                                  + Vz(n)*(gaz(i)*gb+ga*gbz(j))
-                        wal = wal + E0(n)*gab
-                     end
-                     VV(1,1) = VV(1,1) + val
-                     E       = E       + wal*Dab
-
-                  else
-
-                     ! Create space for gathered index info
-                     pi.create(n_keep)
-                     pj.create(n_keep)
-                     pn.create(n_keep)
-
-                     ! Make mapper arrays
-                     p = 0
-                     i = 0
-                     j = 0
-                     do n = 1,n_pt
-                        if (NOT skipa(n)) i = i + 1
-                        if (NOT skipb(n)) j = j + 1
-                        if (skipab(n)) cycle
-                        p = p + 1
-                        pi(p) = i
-                        pj(p) = j
-                        pn(p) = n
-                     end
-
-                     ! Add density contribution to rho
-                     do a = 1,na
-                        ga0 = bf_grd0(sa)[:,a]
-                        gax = bf_grdx(sa)[:,a]
-                        gay = bf_grdy(sa)[:,a]
-                        gaz = bf_grdz(sa)[:,a]
-                        do b = 1,nb
-                           gb0 = bf_grd0(sb)[:,b]
-                           gbx = bf_grdx(sb)[:,b]
-                           gby = bf_grdy(sb)[:,b]
-                           gbz = bf_grdz(sb)[:,b]
-                           Dab = fac*DD(a,b)
-                           val = ZERO
-                           wal = ZERO
-                           do p = 1,n_keep
-                              i = pi(p)
-                              j = pj(p)
-                              n = pn(p)
-                              ga  = ga0(i)
-                              gb  = gb0(j)
-                              gab = ga*gb
-                              val = val + V0(n)* gab                  &
-                                        + Vx(n)*(gax(i)*gb+ga*gbx(j)) &
-                                        + Vy(n)*(gay(i)*gb+ga*gby(j)) &
-                                        + Vz(n)*(gaz(i)*gb+ga*gbz(j))
-                              wal = wal + E0(n)*gab
-                           end
-                           VV(a,b) = VV(a,b) + val
-                           E       = E       + wal*Dab
+                  ! Basis function grids are read in place, not copied
+                  do a = 1,na
+                     do b = 1,nb
+                        Dab = fac*DD(a,b)
+                        val = ZERO
+                        wal = ZERO
+                        do p = 1,n_keep
+                           i = pi(p)
+                           j = pj(p)
+                           n = pn(p)
+                           ga  = bf_grd0(sa)[i,a]
+                           gb  = bf_grd0(sb)[j,b]
+                           gab = ga*gb
+                           val = val + V0(n)* gab                                      &
+                                     + Vx(n)*(bf_grdx(sa)[i,a]*gb+ga*bf_grdx(sb)[j,b]) &
+                                     + Vy(n)*(bf_grdy(sa)[i,a]*gb+ga*bf_grdy(sb)[j,b]) &
+                                     + Vz(n)*(bf_grdz(sa)[i,a]*gb+ga*bf_grdz(sb)[j,b])
+                           wal = wal + E0(n)*gab
                         end
+                        VV(a,b) = VV(a,b) + val
+                        E       = E       + wal*Dab
                      end
-
-                  ! stdout.text("VV:")
-                  ! stdout.put(VV)
-
-                     ! Clean up
-                     pn.destroy
-                     pj.destroy
-                     pi.destroy
-
                   end
 
                end ! -- loops sa,sb
@@ -4983,6 +4919,9 @@ contains
       end
 
       ! Clean up
+      pn.destroy
+      pj.destroy
+      pi.destroy
       skipab.destroy
 
    end
