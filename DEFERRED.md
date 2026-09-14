@@ -108,8 +108,10 @@ box batches cost 0.72-0.86e9 (sum n_pts x n_sig^2) against 1.06-1.29e9 for octan
 1.90e9 for per-atom; batches of 512 points (Dylan), `becke_grid= { XC_batch_max_pts= XC_batch_box_edge= }`.
 **E2-E5 done for restricted GGA** behind `scfdata= { use_batched_xc= TRUE }`
 (`MOLECULE.FOCK:add_GGA_XC_mx_batched`): karrikinolide energy within 1.5e-11 of the old path, XC
-73.4 -> 16.9 CPU s, SCF 126 -> 66 s; J and K (46 s) are now 70% of the SCF. Open-shell and LDA
-still take the old path silently when the switch is on. Commits `f832aded` (pushed)
+73.4 -> 16.9 CPU s, SCF 126 -> 66 s; J and K (46 s) are now 70% of the SCF. **Open-shell GGA
+done** (`add_GGA_XC_mx_batched(Ka,Kb,E,Ea,Eb)`): water cation doublet within 4e-12, XC 0.64 ->
+0.22 s; karrikinolide as uks within 1.9e-11, XC 115.0 -> 31.1 CPU s, SCF 186 -> 96 s. LDA still
+takes the old path silently when the switch is on. Commits `f832aded` (pushed)
 > and `edfaa1bf` (no-copy) precede it.
 >
 > **FOUND 2026-09-14: a debug build aborts on any `--` option.** `debug/tonto --input stdin
