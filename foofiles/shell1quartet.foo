@@ -67,6 +67,25 @@ contains
       .ab_center_diff.destroy
    end
 
+   ensure_ab_capacity(n) :: private, leaky, PURE
+   ! Make the (ab| primitive-pair arrays hold at least "n" pairs. They
+   ! are kept between quartets and only grow; use .ab_n_gaussian_pairs.
+      self :: INOUT
+      n :: INT, IN
+
+      if (.ab_exponent_sum.allocated) then
+         if (.ab_exponent_sum.dim>=n) return
+      end
+
+      .destroy_ab
+      .ab_exponent_sum.create(n)
+      .ab_exponent_inv.create(n)
+      .ab_contraction_prefactor.create(n)
+      .ab_pair_center.create(3,n)
+      .ab_center_diff.create(3,n)
+
+   end
+
    destroy_cd :: leaky, PURE
    ! Destroy the shellc and shelld pointer parts of self
       self :: INOUT
@@ -76,6 +95,25 @@ contains
    !  .cd_form_3dints_yz_rms_indices.destroy
       .cd_pair_center.destroy
       .cd_center_diff.destroy
+   end
+
+   ensure_cd_capacity(n) :: private, leaky, PURE
+   ! Make the |cd) primitive-pair arrays hold at least "n" pairs. They
+   ! are kept between quartets and only grow; use .cd_n_gaussian_pairs.
+      self :: INOUT
+      n :: INT, IN
+
+      if (.cd_exponent_sum.allocated) then
+         if (.cd_exponent_sum.dim>=n) return
+      end
+
+      .destroy_cd
+      .cd_exponent_sum.create(n)
+      .cd_exponent_inv.create(n)
+      .cd_contraction_prefactor.create(n)
+      .cd_pair_center.create(3,n)
+      .cd_center_diff.create(3,n)
+
    end
 
 !  ===========
@@ -133,7 +171,8 @@ contains
    ! "same_center" should be set TRUE if pos_a==pos_b.
    ! "skip" can be set TRUE if NOT same_center; it skips gaussian
    ! product pairs which are too small to worry about.
-   ! NOTE: this does not create many pointer parts
+   ! The primitive-pair arrays are reused between calls, see
+   ! ensure_ab_capacity; do not destroy them per quartet.
       self :: INOUT
       shellpr :: SHELL1PAIR, IN
       pos_a :: VEC{REAL}, IN
@@ -141,17 +180,14 @@ contains
       same_center :: BIN, IN
       skip :: BIN, IN
 
-      exponent_sum,exponent_inv :: VEC{REAL}@
       AB,At,P,PAt,b_pos_b :: VEC{REAL}(3)
       a,b,r2ab,b_r2ab,ab_inv,prefac :: REAL
-      i,j,bg,ag :: INT
+      i,j,n,bg,ag :: INT
 
       .is_spherical = shellpr.a.is_spherical ! b must be the same
 
-      .a = shellpr.a
-      .b = shellpr.b
-      .a.position = pos_a
-      .b.position = pos_b
+      .a.set_reusing_storage(shellpr.a,pos_a)
+      .b.set_reusing_storage(shellpr.b,pos_b)
       .ab_same_center = same_center
       .ab_l_max = shellpr.l_max
       .ab_l_min = shellpr.l_min
@@ -165,17 +201,17 @@ contains
       .ab_last_gaussian  = shellpr.last_gaussian
       .n_ab = shellpr.n_gaussian
 
-      .ab_pair_center.create(3,.ab_n_gaussian_pairs)
-      .ab_center_diff.create(3,.ab_n_gaussian_pairs)
+      n = shellpr.n_gaussian_pairs
+      .ensure_ab_capacity(n)
 
       if (NOT skip) then
 
-         .ab_exponent_sum = shellpr.exponent_sum
-         .ab_exponent_inv = shellpr.exponent_inv
+         .ab_exponent_sum(1:n) = shellpr.exponent_sum
+         .ab_exponent_inv(1:n) = shellpr.exponent_inv
 
          if (same_center) then
 
-            .ab_contraction_prefactor = shellpr.contraction_prefactor
+            .ab_contraction_prefactor(1:n) = shellpr.contraction_prefactor
             .r2ab = ZERO
             i = 0
             do bg = 1,.b.n_cc
@@ -195,7 +231,6 @@ contains
          else
 
             ! NOT same center
-            .ab_contraction_prefactor.create(.ab_n_gaussian_pairs)
             ! Want position of shell1 with higher angular momentum.
             if (.a.l > .b.l) then; At = pos_a
             else;                  At = pos_b
@@ -228,7 +263,6 @@ contains
 
       else
 
-         .ab_contraction_prefactor.create(.ab_n_gaussian_pairs)
          ! When skipping, centers must not be the same ....
          ! Want position of shell1 with higher angular momentum.
          ENSURE(NOT same_center,"centers cannot be the same when skipping small ints")
@@ -238,10 +272,6 @@ contains
          AB = pos_a-pos_b
          r2ab = dot_product(AB,AB)
          .r2ab = r2ab
-         .ab_exponent_sum.create(.ab_n_gaussian_pairs)
-         .ab_exponent_inv.create(.ab_n_gaussian_pairs)
-         exponent_sum = shellpr.exponent_sum
-         exponent_inv = shellpr.exponent_inv
          i = 0
          j = 0
          do bg = 1,.b.n_cc
@@ -251,11 +281,11 @@ contains
             do ag = 1,.a.n_cc
                i = i + 1
                a = .a.exponent(ag)
-               ab_inv = exponent_inv(i)
+               ab_inv = shellpr.exponent_inv(i)
                prefac = exp(-a*b_r2ab*ab_inv)
                if (prefac<pair_cutoff) cycle  ! <<<<<<<<<<<<<
                j = j + 1
-               .ab_exponent_sum(j) = exponent_sum(i)
+               .ab_exponent_sum(j) = shellpr.exponent_sum(i)
                .ab_exponent_inv(j) = ab_inv
                .ab_contraction_prefactor(j) = prefac*shellpr.contraction_prefactor(i)
                P = (b_pos_b + a*pos_a) * ab_inv
@@ -279,23 +309,21 @@ contains
    ! "same_center" should be set TRUE if pos_a==pos_b.
    ! "skip" can be set TRUE if NOT same_center; it skips gaussian product
    ! pairs which are too small to worry about.
-   ! NOTE: this does not create many pointer parts
+   ! The primitive-pair arrays are reused between calls, see
+   ! ensure_cd_capacity; do not destroy them per quartet.
       self :: INOUT
       shellpr :: SHELL1PAIR, IN
       pos_c,pos_d :: VEC{REAL}, IN
       same_center,skip :: BIN, IN
 
-      exponent_sum,exponent_inv :: VEC{REAL}@
       CD,Ct,Q,QCt,d_pos_d :: VEC{REAL}(3)
       c,d,r2cd,d_r2cd,cd_inv,prefac :: REAL
-      i,j,dg,cg :: INT
+      i,j,n,dg,cg :: INT
 
       .is_spherical = shellpr.a.is_spherical ! d must be the same
 
-      .c = shellpr.a
-      .d = shellpr.b
-      .c.position = pos_c
-      .d.position = pos_d
+      .c.set_reusing_storage(shellpr.a,pos_c)
+      .d.set_reusing_storage(shellpr.b,pos_d)
 
       .cd_same_center = same_center
       .cd_l_max = shellpr.l_max
@@ -310,17 +338,17 @@ contains
       .cd_last_gaussian  = shellpr.last_gaussian
       .n_cd = shellpr.n_gaussian
 
-      .cd_pair_center.create(3,.cd_n_gaussian_pairs)
-      .cd_center_diff.create(3,.cd_n_gaussian_pairs)
+      n = shellpr.n_gaussian_pairs
+      .ensure_cd_capacity(n)
 
       if (NOT skip) then
 
-         .cd_exponent_sum = shellpr.exponent_sum
-         .cd_exponent_inv = shellpr.exponent_inv
-         
+         .cd_exponent_sum(1:n) = shellpr.exponent_sum
+         .cd_exponent_inv(1:n) = shellpr.exponent_inv
+
          if (same_center) then
-         
-            .cd_contraction_prefactor = shellpr.contraction_prefactor
+
+            .cd_contraction_prefactor(1:n) = shellpr.contraction_prefactor
             .r2cd = ZERO
             i = 0
             do dg = 1,.d.n_cc
@@ -340,7 +368,6 @@ contains
          else 
          
             ! NOT same center
-            .cd_contraction_prefactor.create(.cd_n_gaussian_pairs)
             ! Want position of shell1 with higher angular momentum.
             if (.c.l > .d.l) then; Ct = pos_c
             else;                  Ct = pos_d
@@ -374,7 +401,6 @@ contains
 
       else
 
-         .cd_contraction_prefactor.create(.cd_n_gaussian_pairs)
          ! When skipping, centers must not be the same ....
          ! Want position of shell1 with higher angular momentum.
          if (.c.l > .d.l) then; Ct = pos_c
@@ -383,10 +409,6 @@ contains
          CD = pos_c-pos_d
          r2cd = dot_product(CD,CD)
          .r2cd = r2cd
-         .cd_exponent_sum.create(.cd_n_gaussian_pairs)
-         .cd_exponent_inv.create(.cd_n_gaussian_pairs)
-         exponent_sum = shellpr.exponent_sum
-         exponent_inv = shellpr.exponent_inv
          i = 0
          j = 0
          do dg = 1,.d.n_cc
@@ -396,11 +418,11 @@ contains
             do cg = 1,.c.n_cc
                i = i + 1
                c = .c.exponent(cg)
-               cd_inv  = exponent_inv(i)
+               cd_inv  = shellpr.exponent_inv(i)
                prefac = exp(-c*d_r2cd*cd_inv)
                if (prefac<pair_cutoff) cycle
                j = j + 1
-               .cd_exponent_sum(j) = exponent_sum(i)
+               .cd_exponent_sum(j) = shellpr.exponent_sum(i)
                .cd_exponent_inv(j) = cd_inv
                .cd_contraction_prefactor(j) = prefac*shellpr.contraction_prefactor(i)
                Q = (d_pos_d + c*pos_c) * cd_inv
@@ -903,9 +925,9 @@ contains
       Qx,Qy,Qz,Px,Py,Pz,QPx,QPy,QPz :: REAL
       zeta,eta,xx,ab_cc,cd_cc,rho :: REAL
       j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
-      rys.create(1)
+      rys.set_n_roots(1)
 
       v11 = ZERO
 
@@ -934,7 +956,6 @@ contains
 
       PARALLEL_SUM(v11)
 
-      rys.destroy
 
    end
 
@@ -946,9 +967,9 @@ contains
       Qx,Qy,Qz,Px,Py,Pz,QPx,QPy,QPz :: REAL
       v11,zeta,eta,xx,ab_cc,cd_cc,rho :: REAL
       j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
-      rys.create(1)
+      rys.set_n_roots(1)
 
       esfs = ZERO
 
@@ -977,7 +998,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
    ! .form_esfs(esfs,Iza,Iza,Iza,Iza(:,1,1))
 
@@ -997,9 +1017,9 @@ contains
       zeta,eta,xx,ab_cc,cd_cc,rho,zinv,rho_zinv :: REAL
       wt,t2,t2_rz :: REAL
       j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
-      rys.create(1)
+      rys.set_n_roots(1)
 
       esfs = ZERO
 
@@ -1027,7 +1047,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
                t2      = rys.root(1)
                wt      = rys.weight(1)
@@ -1043,7 +1063,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -1065,9 +1084,9 @@ contains
       zeta,eta,xx,ab_cc,cd_cc,rho,einv,rho_einv :: REAL
       wt,t2,t2_re :: REAL
       j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
-      rys.create(1)
+      rys.set_n_roots(1)
 
       esfs = ZERO
 
@@ -1095,7 +1114,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
                t2      = rys.root(1)
                wt      = rys.weight(1)
@@ -1111,7 +1130,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -1134,10 +1152,10 @@ contains
       Ix12,Iy12,Iz12,Ix21,Iy21,Iz21,Ix22,Iy22,Iz22 :: REAL
       v11,v21,v31,v12,v22,v32,v13,v23,v33 :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 2
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -1173,7 +1191,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -1211,7 +1229,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -1334,10 +1351,10 @@ contains
       Ix31,Iy31,Iz31 :: REAL
       v11,v21,v31,v41,v51,v61 :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 2
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -1367,7 +1384,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -1397,7 +1414,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -1424,10 +1440,10 @@ contains
       Ix31,Iy31,Iz31 :: REAL
       v11,v21,v31,v41,v51,v61,v71,v81,v91,Iy21_wt :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 2
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -1458,7 +1474,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -1493,7 +1509,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -1606,10 +1621,10 @@ contains
       Ix13,Iy13,Iz13 :: REAL
       v11,v12,v13,v14,v15,v16 :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 2
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -1639,7 +1654,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -1669,7 +1684,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -1696,10 +1710,10 @@ contains
       Ix13,Iy13,Iz13 :: REAL
       v11,v18,v12,v19,v13,v16,v14,v15,v17,Iy12_wt :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 2
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -1730,7 +1744,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -1765,7 +1779,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -1879,10 +1892,10 @@ contains
       v11,v21,v31,v41,v51,v61,v12,v22,v32 :: REAL
       v42,v52,v62,v13,v23,v33,v43,v53,v63 :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 2
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -1919,7 +1932,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -1982,7 +1995,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -2024,10 +2036,10 @@ contains
       v12,v82,v22,v92,v32,v62,v42,v52,v72 :: REAL
       v13,v83,v23,v93,v33,v63,v43,v53,v73 :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 2
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -2070,7 +2082,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -2144,7 +2156,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -2293,10 +2304,10 @@ contains
       v11,v21,v31,v12,v22,v32,v13,v23,v33 :: REAL
       v14,v24,v34,v15,v25,v35,v16,v26,v36 :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 2
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -2332,7 +2343,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -2395,7 +2406,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -2437,10 +2447,10 @@ contains
       v29,v32,v39,v13,v16,v23,v26,v33,v36 :: REAL
       v14,v24,v34,v15,v25,v35,v17,v27,v37 :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 2
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -2482,7 +2492,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -2556,7 +2566,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -2708,10 +2717,10 @@ contains
       v14,v24,v34,v44,v54,v64,v15,v25,v35 :: REAL
       v45,v55,v65,v16,v26,v36,v46,v56,v66 :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 3
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -2751,7 +2760,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -2849,7 +2858,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -2917,10 +2925,10 @@ contains
       v15,v25,v35,v45,v55,v65 :: REAL
       v17,v27,v37,v47,v57,v67 :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 3
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -2963,7 +2971,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -3086,7 +3094,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -3172,10 +3179,10 @@ contains
       v45,v55,v75,v16,v86,v26 :: REAL
       v96,v36,v66,v46,v56,v76 :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 3
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -3218,7 +3225,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -3341,7 +3348,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -3427,10 +3433,10 @@ contains
       v15,v85,v25,v95,v35,v65,v45,v55,v75 :: REAL
       v17,v87,v27,v97,v37,v67,v47,v57,v77 :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 3
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -3478,7 +3484,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -3633,7 +3639,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -6641,7 +6646,7 @@ contains
       Ixm1,Iym1,Izm1,Ixp1,Iyp1,Izp1 :: REAL
       n_roots,dim1,dim2 :: INT
       ep1,n,i,j,k,n_sum :: INT
-      rys :: RYS@
+      rys :: RYS
 
       dim1 = .ab_l_sum + 1
       dim2 = .cd_l_sum + 1 ! This is 1
@@ -6651,7 +6656,7 @@ contains
       Iya.create(n_sum,dim1)
       Iza.create(n_sum,dim1)
 
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       i = 0
       do k = 1,.ab_n_gaussian_pairs
@@ -6677,7 +6682,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                i = i + 1
@@ -6714,7 +6719,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       .form_esss(esfs,Ixa,Iya,Iza,Iza(:,1),n_sum)
 
@@ -6740,7 +6744,7 @@ contains
       Ixm1,Iym1,Izm1,Ixp1,Iyp1,Izp1 :: REAL
       n_roots,dim1,dim2 :: INT
       fp1,n,i,j,k,n_sum :: INT
-      rys :: RYS@
+      rys :: RYS
 
       dim1 = .ab_l_sum + 1 ! This is 1
       dim2 = .cd_l_sum + 1
@@ -6750,7 +6754,7 @@ contains
       Iya.create(n_sum,dim2)
       Iza.create(n_sum,dim2)
 
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       i = 0
       do k = 1,.ab_n_gaussian_pairs
@@ -6776,7 +6780,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                i = i + 1
@@ -6813,7 +6817,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       .form_ssfs(esfs,Ixa,Iya,Iza,Iza(:,1),n_sum)
 
@@ -6840,7 +6843,7 @@ contains
       Ixm1,Iym1,Izm1,Ixp1,Iyp1,Izp1 :: REAL
       n_roots,dim1,dim2 :: INT
       e,ep1,n,i,j,k,n_sum :: INT
-      rys :: RYS@
+      rys :: RYS
 
       dim1 = .ab_l_sum + 1                            ! Space for 2D integrals
       dim2 = .cd_l_sum + 1
@@ -6850,7 +6853,7 @@ contains
       Iya.create(n_sum,dim1,dim2)
       Iza.create(n_sum,dim1,dim2)
 
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       i = 0
       do k = 1,.ab_n_gaussian_pairs
@@ -6882,7 +6885,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                i = i + 1
@@ -6944,7 +6947,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
    ! SHELL1QUARTET::form_esfs_rms2(self,esfs,Ixa,Iya,Iza,Iza(:,1,1),n_sum,dim1,dim2)
@@ -6972,7 +6974,7 @@ contains
       Ixm1,Iym1,Izm1,Ixp1,Iyp1,Izp1 :: REAL
       n_roots,dim1,dim2 :: INT
       f,fp1,n,i,j,k,n_sum :: INT
-      rys :: RYS@
+      rys :: RYS
 
       dim1 = .ab_l_sum + 1
       dim2 = .cd_l_sum + 1
@@ -6982,7 +6984,7 @@ contains
       Iya.create(n_sum,dim1,dim2)
       Iza.create(n_sum,dim1,dim2)
 
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       i = 0
       do k = 1,.ab_n_gaussian_pairs
@@ -7013,7 +7015,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                i = i + 1
@@ -7075,7 +7077,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
    ! SHELL1QUARTET::form_esfs_rms2(self,esfs,Ixa,Iya,Iza,Iza(:,1,1),n_sum,dim1,dim2)
@@ -7104,7 +7105,7 @@ contains
       Ixm1,Iym1,Izm1,Ixp1,Iyp1,Izp1 :: REAL
       n_roots,dim1,dim2 :: INT
       e,f,fm1,ep1,n,i,j,k,n_sum :: INT
-      rys :: RYS@
+      rys :: RYS
 
       dim1 = .ab_l_sum + 1
       dim2 = .cd_l_sum + 1
@@ -7114,7 +7115,7 @@ contains
       Iya.create(n_sum,dim1,dim2)
       Iza.create(n_sum,dim1,dim2)
 
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       i = 0
       do k = 1,.ab_n_gaussian_pairs
@@ -7146,7 +7147,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                i = i + 1
@@ -7240,7 +7241,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
    ! SHELL1QUARTET::form_esfs_rms2(self,esfs,Ixa,Iya,Iza,Iza(:,1,1),n_sum,dim1,dim2)
@@ -7269,7 +7269,7 @@ contains
       Ixm1,Iym1,Izm1,Ixp1,Iyp1,Izp1 :: REAL
       n_roots,dim1,dim2 :: INT
       e,f,fm1,ep1,fp1,n,i,j,k,n_sum :: INT
-      rys :: RYS@
+      rys :: RYS
 
       dim1 = .ab_l_sum + 1
       dim2 = .cd_l_sum + 1
@@ -7279,7 +7279,7 @@ contains
       Iya.create(n_sum,dim1,dim2)
       Iza.create(n_sum,dim1,dim2)
 
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       i = 0
       do k = 1,.ab_n_gaussian_pairs
@@ -7311,7 +7311,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                i = i + 1
@@ -7405,7 +7405,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
    ! SHELL1QUARTET::form_esfs_rms2(self,esfs,Ixa,Iya,Iza,Iza(:,1,1),n_sum,dim1,dim2)
@@ -7434,7 +7433,7 @@ contains
       Ixm1,Iym1,Izm1,Ixp1,Iyp1,Izp1 :: REAL
       n_roots,dim1,dim2 :: INT
       e,f,fm1,ep1,fp1,n,i,j,k,n_sum :: INT
-      rys :: RYS@
+      rys :: RYS
 
       dim1 = .ab_l_sum + 1                            ! Space for 2D integrals
       dim2 = .cd_l_sum + 1
@@ -7444,7 +7443,7 @@ contains
       Iya.create(n_sum,dim1,dim2)
       Iza.create(n_sum,dim1,dim2)
 
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       i = 0
       do k = 1,.ab_n_gaussian_pairs
@@ -7476,7 +7475,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                i = i + 1
@@ -7597,7 +7596,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
    ! SHELL1QUARTET::form_esfs_rms2(self,esfs,Ixa,Iya,Iza,Iza(:,1,1),n_sum,dim1,dim2)
