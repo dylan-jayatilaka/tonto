@@ -2319,28 +2319,49 @@ the gprof tree at `~/github/tonto-prof/prof/` and `scfdata= { show_timings= TRUE
      lookups. **cc-pVTZ confirms it: energy identical to 12 decimals, J/K 5.0% slower**
      (1256.32 vs 1196.07 CPU s; `form_esfs_rms2` 29.5% of the run vs `form_esfs` 25.9%). RMS saves
      one multiply per shared `Ix*Iy` but keeps every n_sum-long dot product and adds a stored
-     product vector and scattered writes. Recommendation: leave it off; delete it unless a later
-     restructure changes the balance. The lever for the contraction is fewer long sums (earlier
+     product vector and scattered writes. **Dylan's decision (2026-09-15): keep it, off by default**;
+     on `rys-1c` its `rms2_indices` are built only when `use_rms_esfs= TRUE`
+     (`GAUSSIAN_DATA:make_rms2_indices`), and remade if `set_indices` raises l_max. The lever for the contraction is fewer long sums (earlier
      contraction, class batching). Runs in `~/tonto_runs/rys_profile_2026-09-15/rms_{off,on}_*`.
-   - `rys-1c` = + step 1c, **WIP, does not build yet**. Done: 1c-i (`form_esfs/esss/ssfs` read
+   - `rys-1c` = + step 1c, **done, pushed `74e729f5`**. Karrikinolide RHF 6-31G(d) side by
+     side with the `rys-rms` binary: energy identical to 12 decimals, J/K CPU 52.07 -> 49.17 s
+     (-5.6%), `malloc`+`free` 2.8% -> 0.2%, `grow_to` 0.6%. cc-pVTZ: energy identical, J/K
+     1203.49 -> 1120.31 s (-6.9%), `malloc`+`free` ~3.8% -> ~0.5%; `form_esfs` is now inlined
+     into the generic `make_esfs_*` (`make_esfs_XX` 15%). **Then, `271a4cb9`:** the J-only engine (all pure DFT, RKS
+     and UKS), the open-shell J/K engine, and the 12 `make_ERI` builders (direct/spherical,
+     nosym, CIS, `make_ERI_integrals`) on `ERI_SCRATCH` via `make_ERI_into(work)`;
+     `change_to_spherical` reads `GAUSSIAN_DATA::spherical_harmonics_for` in place instead of
+     copying the whole table per quartet. Validated side by side with `rys-rms`: BLYP 6-31G(d)
+     energy identical, J 59.86 -> 56.34 s (-5.9%), whole job 92.0 -> 88.9 s; RHF 6-31G(d)
+     identical, J/K -7.3%; short UHF and spherical tests identical line for line, spherical
+     2.80 -> 2.37 s. `make_ERIs_for_shellpairs` still allocates (called per pair).
+     **Bug fixed in its own commit on `rys-1c`:** `make_u_JK_engine` had `JBcd => JA(cd)`,
+     putting beta ket-side J into J.a; harmless before because every caller uses J.a+J.b. What went in first: 1c-i (`form_esfs/esss/ssfs` read
      `GAUSSIAN_DATA::nx` in place, translates); `ERI_SCRATCH` type (`types.foo`) and module
      `eri_scratch.foo` (in `CMakeLists.txt`) with `set_sizes_for(pair)` (dry run grouped by l_sum)
      and grow-only `ensure`; the seven generic `make_esfs_Xs..XX` take `Ixa,Iya,Iza` as
      explicit-shape `target, INOUT` dummies (no create/destroy); `MOLECULE.FOCK:make_r_JK_engine`
      declares `work :: ERI_SCRATCH`, calls `work.set_sizes_for(.basis_shell1pair)`, and passes
-     `work` to both `sh4n/sh4s.make_r_JK_engine(...,work)`. **Still to write:** (1) in
-     `shell1quartet.foo`, rename the dispatcher body to `make_esfs_with(esfs,Ix,Iy,Iz)` with
-     `Ix,Iy,Iz :: VEC{REAL}(*)` passed to the seven generics, and keep `make_esfs(esfs)` as a
-     wrapper allocating per-quartet buffers of `((ab_l_sum+cd_l_sum+2)/2)*npab*npcd*(ab_l_sum+1)*
-     (cd_l_sum+1)` for the other callers; (2) a new restricted engine specific
-     `make_r_JK_engine(...,ld,work)` that calls `work.ensure(n_2d,max(n_ab,n_cd),n_ab*n_cd,
-     n_ab*c.n_comp*d.n_comp,ab_n_comp_pairs*cd_n_comp_pairs)` then a kernel with explicit-shape
-     `esfs(.n_ab,.n_cd)`, `ev(.n_ab)`, `fv(.n_cd)` (fv replaces evfv in the (ss|fs) branch, ev in
-     (es|ss)), `ints(.ab_n_comp_pairs*.cd_n_comp_pairs)`, `escd(.n_ab*.c.n_comp*.d.n_comp)`,
-     called non-generically with `work.Ix` etc. -- never pass `work` itself alongside its
-     components (aliasing). Then translate, build, 6-31G(d) side by side against `rys-rms`.
-     Left for 1c-iii: `transfer_l_*` `int_new/int_old`. Gate: energies to 1e-8 accept; for these
+     `work` to both `sh4n/sh4s.make_r_JK_engine(...,work)`. Then: the dispatcher is `make_esfs_with(esfs,Ix,Iy,Iz)`
+     (`VEC{REAL}(*)` buffers) and `make_esfs(esfs)` a wrapper that allocates only when a generic
+     routine will run; a restricted `make_r_JK_engine(...,ld,work)` calls `work.grow_to(...)`
+     (named so, not `ensure`, which would clash with the `ENSURE` macro's generic in debug) and
+     passes `work.Ix` etc. -- never `work` itself alongside them -- to the explicit-shape kernel
+     `make_r_JK_engine_k`. `eri_scratch.F90` must also be in CMake's generated-F90 list. The
+     unrestricted, J-only and nosym engines still use the allocating path. Left for 1c-iii: `transfer_l_*` `int_new/int_old`. Gate: energies to 1e-8 accept; for these
      identical-maths rewrites a shift above ~1e-10 means compare quartet by quartet.
+   **Next measurement (Dylan, 2026-09-15): Tonto against g09 and ORCA on karrikinolide.** The
+   only like-for-like figure so far is BLYP/6-31G(d): g09 FineGrid 49 s wall, 23 cycles; Tonto
+   went 177 s (3.6x) -> 123 s (2.5x, no-copy) -> SCF 66 s after stage E, whole job **not timed**
+   (estimated 75-80 s, about 1.5x). No g09 or ORCA run exists for RHF or for cc-pVTZ. Run, one
+   core each, geometry from `tests/long/karrikinolide_blyp_6-31G(d)_Salvador_properties/
+   karrikinolide.fchk`, same convergence as `~/tonto_runs/rys_profile_2026-09-15/rhf_*/stdin`:
+   RHF/6-31G(d), RHF/cc-pVTZ, BLYP/6-31G(d), BLYP/cc-pVTZ, each with g09 (`6D 10F` to match
+   Tonto's cartesian default), ORCA, and Tonto on the final `rys-1c` binary; record whole-job
+   wall, SCF time, iterations and energy. **ORCA is spherical only**: compare it with Tonto at
+   `use_spherical_basis= TRUE`, which runs the direct `make_ERI_into` builders, not the
+   cartesian engines -- so report both Tonto timings. DFT: match grids by accuracy against a
+   converged reference (g09 `Int(Grid=199974)`), not by name.
    *Step 1c, Dylan's idea:* a dry run over the shell pairs before the SCF returns the maximum
    work-array sizes (primitive pairs, l sums, roots -- all basis-only), so the `Ixa`/`esfs`/
    `escd`/`I` scratch is allocated once in the quartet object and the loop allocates nothing.

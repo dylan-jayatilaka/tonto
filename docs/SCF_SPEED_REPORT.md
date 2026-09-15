@@ -338,9 +338,35 @@ under the same background build load, so only the ratios are meaningful:
 | 1a (second pairing) | −530.980810596157 | 80.54 | 4.3% |
 | 2: fixed-size `RYS`, no per-call `RYS` allocation | −530.980810596155 | 77.29 | 3.2% |
 
+| 2 + RMS code, switched off (`rys-rms`) | −530.980810596155 | 52.07 | 2.8% |
+| 1c: `ERI_SCRATCH` sized by a dry run | −530.980810596155 | 49.17 | 0.2% |
+
 Step 1a is bit-identical and −4.3%; step 2 is −4.0% on top and moves the energy by 2e-12,
 presumably from changed vectorisation of the fixed-size weight arrays. The remaining
 allocations are the `make_esfs_*` 2-D integral arrays and the engine work vectors.
+
+The last two rows are a separate pairing, run with no background build, so their times
+compare with each other only. Step 1c moves those arrays into one `ERI_SCRATCH`, sized
+before the quartet loop from the shell pairs' l sums and primitive counts: J/K −5.6%, energy
+unchanged, allocation down to 0.2% of the run. The per-quartet size check costs 0.6%.
+
+On cc-pVTZ, the same pairing: energy −531.169266412929 for both, J/K 1203.49 → 1120.31 CPU s
+(−6.9%), `malloc`+`free` about 3.8% → 0.5%. With the work arrays passed at fixed shapes the
+compiler folds `form_esfs` into the generic routines, so the contraction now shows under
+`make_esfs_XX` (15% of the run) and its siblings.
+
+**Every builder on `ERI_SCRATCH`** (J-only, open-shell, and the `make_ERI` direct, nosym and
+CIS builders), run side by side with the `rys-rms` binary, all eight jobs at once:
+
+| job | energy (both) | before | after |
+|---|---|---|---|
+| BLYP 6-31G(d) `medium`, J-only engine | −533.954503625982 | J 59.86 s, wall 92.0 s | J 56.34 s (−5.9%), wall 88.9 s |
+| RHF 6-31G(d), J+K engine | −530.980810596155 | J/K 67.56 s | J/K 62.65 s (−7.3%) |
+| short UHF water cation, open-shell engine | stdout identical | 0.21 s | 0.21 s |
+| short spherical cc-pVTZ water, `make_ERI` path | stdout identical | 2.80 s | 2.37 s (−15%) |
+
+The spherical gain is mostly `change_to_spherical` no longer copying the whole
+spherical-harmonic table on every quartet.
 
 **Reduced multiplication scheme** (`form_esfs_rms2`, `scfdata= { use_rms_esfs= }`), same
 binary, off and on side by side:
