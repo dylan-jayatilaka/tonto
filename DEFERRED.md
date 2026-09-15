@@ -108,9 +108,7 @@ now covers the whole project, so it was renamed.)*
 > karrikinolide, RHF and BLYP with 6-31G(d) and cc-pVTZ -- ORCA only against Tonto's
 > spherical basis; (2) run `short` on `rys-1c` and merge it to `develop` (Dylan's go-ahead on
 > any reference change); (3) the `transfer_l_*` work arrays onto `ERI_SCRATCH`; (4) measure
-> what repeated primitives in generally contracted shells cost, then class batching. On
-> sauce the main tree still holds uncommitted step-1a edits (`molecule.fock.foo`,
-> `shell1.foo`, `shell1quartet.foo`) that duplicate `rys-1c` -- discard them.
+> what repeated primitives in generally contracted shells cost, then class batching.
 >
 > **NEXT: stage E, the batched XC quadrature.** Plan: `~/.claude/plans/stage-e-batched-xc.md`
 > (E0 BLAS groundwork and the `get_from` placeholder check; E1 batches as an adaptive spatial
