@@ -341,3 +341,15 @@ under the same background build load, so only the ratios are meaningful:
 Step 1a is bit-identical and −4.3%; step 2 is −4.0% on top and moves the energy by 2e-12,
 presumably from changed vectorisation of the fixed-size weight arrays. The remaining
 allocations are the `make_esfs_*` 2-D integral arrays and the engine work vectors.
+
+**Reduced multiplication scheme** (`form_esfs_rms2`, `scfdata= { use_rms_esfs= }`), same
+binary, off and on side by side:
+
+| basis | energy (off and on) | J/K CPU s off | J/K CPU s on | contraction share off / on |
+|---|---|---|---|---|
+| 6-31G(d) | −530.980810596155 | 51.01 | 51.72 (+1.4%) | 13.1% / 14.3% |
+| cc-pVTZ | −531.169266412929 | 1196.07 | 1256.32 (+5.0%) | 25.9% / 29.5% |
+
+Exact, and slower in both. It saves one multiply per shared `Ix*Iy` column but still takes one
+dot product of length n_sum per `(e,f)` component pair, and adds a stored product vector and
+scattered writes. The hot instructions are the vectorised sums, not the index lookups.

@@ -2316,10 +2316,12 @@ the gprof tree at `~/github/tonto-prof/prof/` and `scfdata= { show_timings= TRUE
    - `rys-rms` = + the reduced multiplication scheme, `scfdata= { use_rms_esfs= TRUE }`, off by
      default. 6-31G(d): energy identical to 12 decimals on/off, but J/K 1% *slower* (51.72 vs
      51.01 s); `perf annotate` shows the time is the `sum(Ixy*Iz)` dot products, not index
-     lookups. cc-pVTZ on/off pair was running at handoff: results in
-     `~/tonto_runs/rys_profile_2026-09-15/rms_{off,on}_cc-pVTZ/` on sauce (stdout, time.log,
-     perf.data). If cc-pVTZ gains nothing either, the lever is fewer long sums (earlier
-     contraction, class batching), not RMS.
+     lookups. **cc-pVTZ confirms it: energy identical to 12 decimals, J/K 5.0% slower**
+     (1256.32 vs 1196.07 CPU s; `form_esfs_rms2` 29.5% of the run vs `form_esfs` 25.9%). RMS saves
+     one multiply per shared `Ix*Iy` but keeps every n_sum-long dot product and adds a stored
+     product vector and scattered writes. Recommendation: leave it off; delete it unless a later
+     restructure changes the balance. The lever for the contraction is fewer long sums (earlier
+     contraction, class batching). Runs in `~/tonto_runs/rys_profile_2026-09-15/rms_{off,on}_*`.
    - `rys-1c` = + step 1c, **WIP, does not build yet**. Done: 1c-i (`form_esfs/esss/ssfs` read
      `GAUSSIAN_DATA::nx` in place, translates); `ERI_SCRATCH` type (`types.foo`) and module
      `eri_scratch.foo` (in `CMakeLists.txt`) with `set_sizes_for(pair)` (dry run grouped by l_sum)
