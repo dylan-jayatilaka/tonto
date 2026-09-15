@@ -420,6 +420,7 @@ set(FOO_SRC
     ${FOO_DIR}/shell1.foo
     ${FOO_DIR}/shell1pair.foo
     ${FOO_DIR}/mat{shell1pair}.foo
+    ${FOO_DIR}/eri_scratch.foo
     ${FOO_DIR}/shell1quartet.foo
     ${FOO_DIR}/shell2.foo
     ${FOO_DIR}/shell4.foo
