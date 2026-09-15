@@ -113,8 +113,20 @@ done** (`add_GGA_XC_mx_batched(Ka,Kb,E,Ea,Eb)`): water cation doublet within 4e-
 0.22 s; karrikinolide as uks within 1.9e-11, XC 115.0 -> 31.1 CPU s, SCF 186 -> 96 s. **LDA
 done**: the batched routines became `add_XC_mx_batched(K,E)` and `(Ka,Kb,E,Ea,Eb)`, gradients
 only for a GGA; X-alpha karrikinolide within 2.7e-11, XC 23.6 -> 15.2 CPU s; water cation uxalpha
-identical to 12 decimals. Every DFT kind now takes the batched path when the switch is on. Next:
-the suites with the switch defaulted on, then flip the default and delete the old routines. Commits `f832aded` (pushed)
+identical to 12 decimals. Every DFT kind now takes the batched path when the switch is on; with
+it defaulted on in a local build, `short` 67/67 and `dft_reference` passed (`30f6cb6a`, pushed).
+**The batched path is now the default** (2026-09-15): `short` 67/67, `dft_reference` and the rgbi
+karrikinolide bond-index test pass, and no reference changed -- four short DFT jobs match exactly.
+**Open: `h2o_rks_B3LYPG_cc-pVDZ` passes only loosely** (E -76.42149322 against the reference
+-76.42149682, V_eN 3e-5 off), identically with the switch off and on and with
+`prune_rho_cutoff= 0`, so it is neither stage E nor stage C. Blessed 2026-08-13; suspects are the
+2026-09-11 grid commits `dd1dd9ad` (Becke partition default) and `06079254` (no weight
+discarding) -- unbisected. Re-bless is Dylan's call. The old per-atom XC routines and the switch
+stay for now; deleting them is a separate decision. After that: E4 (functional set up once per
+SCF -- batched LDA at 15.2 s is nearly batched GGA's 16.5 s, so per-batch overhead dominates),
+then J and K (63-72% of the SCF). Parked stage E items: E6 (`parallel do` over batches, reducing
+V and E), deleting the old per-atom routines and the switch, timing with OpenBLAS (forces a full
+re-bless), and a batch-size scan (256 vs 512). Commits `f832aded` (pushed)
 > and `edfaa1bf` (no-copy) precede it.
 >
 > **FOUND 2026-09-14: a debug build aborts on any `--` option.** `debug/tonto --input stdin
