@@ -2296,6 +2296,54 @@ the gprof tree at `~/github/tonto-prof/prof/` and `scfdata= { show_timings= TRUE
 **Shape of the work** (the plan's steps 4-5, to be re-planned from that profile):
 
 1. Hoist the per-quartet allocations (`RYS`, work matrices) out of the quartet loop.
+
+   **Started 2026-09-15.** No-grid profiles (karrikinolide RHF, `perf`, runs in
+   `~/tonto_runs/rys_profile_2026-09-15/`): J/K is 96-97% of the SCF. 6-31G(d), 51 s:
+   `get_weights` + its `exp` ~19%, `form_esfs` 12%, `make_esfs` (low-l routines inlined) 10%,
+   J/K engine 12%, `malloc`/`free` ~11%, `set_cd_new` ~7%. cc-pVTZ, 1245 s: `form_esfs` 24%
+   (10.7% from `make_esfs_XX`, the generic f path), engine 12% (the K contraction loop), Rys ~10%,
+   `malloc`/`free` ~6.5%; `get_weights6` (6+ roots) only 0.3%. So with f functions the order is
+   `form_esfs`/`make_esfs_XX`, the K loop, allocation, then Rys.
+   *Step 1a* (uncommitted, main tree, built in `hoist/`): `set_ab_new`/`set_cd_new` reuse
+   grow-only pair arrays, `SHELL1:set_reusing_storage` replaces the whole-`SHELL1` copies, and
+   the 61 per-quartet `destroy_ab`/`destroy_cd` calls in `molecule.fock.foo` are gone.
+   *Step 1b* (worktree `../tonto-step2`, branch `rys-step2`, on top of 1a): `RYS` root/weight
+   fixed at 16, `RYS:set_n_roots`, non-allocatable `rys` locals in the 24 `make_esfs_*`.
+   **HANDOFF 2026-09-15 (sauce, Dylan going offline).** Three branches, each a single commit
+   off `4b37c9da` carrying every earlier step, all pushed; none merged to `develop`:
+   - `rys-step2` = step 1a + step 2. Built and timed (report table). Step 1a alone is also
+     uncommitted in the main `develop` tree on sauce -- discard it there, it lives on this branch.
+   - `rys-rms` = + the reduced multiplication scheme, `scfdata= { use_rms_esfs= TRUE }`, off by
+     default. 6-31G(d): energy identical to 12 decimals on/off, but J/K 1% *slower* (51.72 vs
+     51.01 s); `perf annotate` shows the time is the `sum(Ixy*Iz)` dot products, not index
+     lookups. cc-pVTZ on/off pair was running at handoff: results in
+     `~/tonto_runs/rys_profile_2026-09-15/rms_{off,on}_cc-pVTZ/` on sauce (stdout, time.log,
+     perf.data). If cc-pVTZ gains nothing either, the lever is fewer long sums (earlier
+     contraction, class batching), not RMS.
+   - `rys-1c` = + step 1c, **WIP, does not build yet**. Done: 1c-i (`form_esfs/esss/ssfs` read
+     `GAUSSIAN_DATA::nx` in place, translates); `ERI_SCRATCH` type (`types.foo`) and module
+     `eri_scratch.foo` (in `CMakeLists.txt`) with `set_sizes_for(pair)` (dry run grouped by l_sum)
+     and grow-only `ensure`; the seven generic `make_esfs_Xs..XX` take `Ixa,Iya,Iza` as
+     explicit-shape `target, INOUT` dummies (no create/destroy); `MOLECULE.FOCK:make_r_JK_engine`
+     declares `work :: ERI_SCRATCH`, calls `work.set_sizes_for(.basis_shell1pair)`, and passes
+     `work` to both `sh4n/sh4s.make_r_JK_engine(...,work)`. **Still to write:** (1) in
+     `shell1quartet.foo`, rename the dispatcher body to `make_esfs_with(esfs,Ix,Iy,Iz)` with
+     `Ix,Iy,Iz :: VEC{REAL}(*)` passed to the seven generics, and keep `make_esfs(esfs)` as a
+     wrapper allocating per-quartet buffers of `((ab_l_sum+cd_l_sum+2)/2)*npab*npcd*(ab_l_sum+1)*
+     (cd_l_sum+1)` for the other callers; (2) a new restricted engine specific
+     `make_r_JK_engine(...,ld,work)` that calls `work.ensure(n_2d,max(n_ab,n_cd),n_ab*n_cd,
+     n_ab*c.n_comp*d.n_comp,ab_n_comp_pairs*cd_n_comp_pairs)` then a kernel with explicit-shape
+     `esfs(.n_ab,.n_cd)`, `ev(.n_ab)`, `fv(.n_cd)` (fv replaces evfv in the (ss|fs) branch, ev in
+     (es|ss)), `ints(.ab_n_comp_pairs*.cd_n_comp_pairs)`, `escd(.n_ab*.c.n_comp*.d.n_comp)`,
+     called non-generically with `work.Ix` etc. -- never pass `work` itself alongside its
+     components (aliasing). Then translate, build, 6-31G(d) side by side against `rys-rms`.
+     Left for 1c-iii: `transfer_l_*` `int_new/int_old`. Gate: energies to 1e-8 accept; for these
+     identical-maths rewrites a shift above ~1e-10 means compare quartet by quartet.
+   *Step 1c, Dylan's idea:* a dry run over the shell pairs before the SCF returns the maximum
+   work-array sizes (primitive pairs, l sums, roots -- all basis-only), so the `Ixa`/`esfs`/
+   `escd`/`I` scratch is allocated once in the quartet object and the loop allocates nothing.
+   The same fixed sizes are what a GPU kernel needs. Needs the `make_esfs_*` and engine `self`
+   to become `INOUT` (and `target` for the `Ix => Ixa(i,:,:)` pointers).
 2. A class-batched traversal: an index vector sorting shell pairs by `(l_a, l_b)` and primitive
    count, so the dispatch and the transfer choice happen once per class block.
 3. Within a block, gather every primitive quartet's `X` into one array, bin it by the fit's T

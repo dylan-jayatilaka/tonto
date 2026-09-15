@@ -301,3 +301,43 @@ place and allocating the maps once per atom grid:
 
 Bit-identical, XC −19%. What is left of the XC cost is the per-shell-pair mask merge and
 index maps over every point of the atom grid, and the pair-by-pair contraction: stage E.
+
+## No-grid J/K profiles, 2026-09-15
+
+Karrikinolide RHF (no XC), promolecule guess, convergence 1e-8, `perf record -g`, release
+`build/` at `4b37c9da`. Inputs and `perf.data` in `~/tonto_runs/rys_profile_2026-09-15/`.
+
+| basis | energy | wall | J/K share of SCF |
+|---|---|---|---|
+| 6-31G(d) | −530.980810596157 | 51 s | 95.6% |
+| cc-pVTZ | −531.169266412927 | 1245 s | 97.4% |
+
+| routine (share of run) | 6-31G(d) | cc-pVTZ |
+|---|---|---|
+| `RYS:get_weights` + its `exp` | ~19% | ~10% |
+| `SHELL1QUARTET:form_esfs` | 12.0% | 24.3% |
+| `make_esfs` (low-l specialisations inlined) | 10.3% | 4.5% |
+| J/K engine (`make_r_JK_engine`, both levels) | 11.8% | 14.0% |
+| `malloc` + `free` | ~9% | ~6.5% |
+| `set_cd_new` | 5.4% | 3.4% |
+
+- Two thirds of the 6-31G(d) Rys calls come from the low-l routines inlined into `make_esfs`.
+- With f functions `form_esfs` dominates; 10.7% of the run reaches it from `make_esfs_XX`,
+  the generic path for l sums of 3 or more on both sides. The engine's own cost is the K
+  contraction loop. `get_weights6` (6 or more roots) is 0.3%.
+- The `malloc` calls come from `set_shell1q_cd_from` (inlined `set_cd_new` and the
+  whole-`SHELL1` copies), `make_r_fock_mx` and the engine's work vectors.
+
+**Allocation hoisting.** Each step timed side by side with the previous binary on 6-31G(d),
+under the same background build load, so only the ratios are meaningful:
+
+| step | energy | J/K CPU s | `malloc`+`free` |
+|---|---|---|---|
+| baseline | −530.980810596157 | 73.85 | 8.3% |
+| 1a: reused pair arrays and `SHELL1` storage | −530.980810596157 | 70.68 | 4.0% |
+| 1a (second pairing) | −530.980810596157 | 80.54 | 4.3% |
+| 2: fixed-size `RYS`, no per-call `RYS` allocation | −530.980810596155 | 77.29 | 3.2% |
+
+Step 1a is bit-identical and −4.3%; step 2 is −4.0% on top and moves the energy by 2e-12,
+presumably from changed vectorisation of the fixed-size weight arrays. The remaining
+allocations are the `make_esfs_*` 2-D integral arrays and the engine work vectors.
