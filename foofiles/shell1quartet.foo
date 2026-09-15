@@ -169,14 +169,16 @@ contains
 
    end
 
-   set_use_RMS(val)
+   set_use_RMS(val) :: leaky
    ! Set whether the generic make_esfs_* routines contract with the
-   ! reduced multiplication scheme, form_esfs_rms2.
+   ! reduced multiplication scheme, form_esfs_rms2. Its index tables are
+   ! only built when it is switched on.
       self :: INOUT
       val :: BIN, IN
 
       if (FALSE) self = self
       use_RMS = val
+      if (val) GAUSSIAN_DATA::make_rms2_indices
 
    end
 
@@ -601,10 +603,43 @@ contains
 ! This is a general purpose routine which always works
 ! but it calls special case code
 
-   make_esfs(esfs) :: PURE
-   ! Makes the (es|fs) integrals, summed over primitives.
+   make_esfs(esfs) :: leaky, PURE
+   ! Makes the (es|fs) integrals, summed over primitives, allocating the
+   ! 2D integral work arrays for this quartet. The J/K quartet loop uses
+   ! make_esfs_with and an ERI_SCRATCH instead, and does not allocate.
       self :: IN
       esfs :: MAT{REAL}(.n_ab,.n_cd), OUT
+
+      Ix,Iy,Iz :: VEC{REAL}@
+      x1,y1,z1 :: VEC{REAL}(1)
+      n :: INT
+
+      if (max(.ab_l_sum,.cd_l_sum)<=2) then ! Specialised routines only
+
+         SHELL1QUARTET::make_esfs_with(self,esfs,x1,y1,z1)
+
+      else
+
+         n = ((.ab_l_sum+.cd_l_sum+2)/2)*.ab_n_gaussian_pairs*.cd_n_gaussian_pairs &
+           * (.ab_l_sum+1)*(.cd_l_sum+1)
+         Ix.create(n)
+         Iy.create(n)
+         Iz.create(n)
+         SHELL1QUARTET::make_esfs_with(self,esfs,Ix,Iy,Iz)
+         Iz.destroy
+         Iy.destroy
+         Ix.destroy
+
+      end
+
+   end
+
+   make_esfs_with(esfs,Ix,Iy,Iz) :: PURE
+   ! Makes the (es|fs) integrals, summed over primitives. "Ix", "Iy", "Iz"
+   ! are work space for the 2D integrals of the generic routines.
+      self :: IN
+      esfs :: MAT{REAL}(.n_ab,.n_cd), OUT
+      Ix,Iy,Iz :: VEC{REAL}(*), INOUT
 
       l_max :: INT
       l_max = max(.ab_l_sum,.cd_l_sum)
@@ -687,13 +722,13 @@ contains
    !     if (.a.l==2 AND .b.l==2 AND .c.l==2 AND .d.l==2) then
    !                                                      SHELL1QUARTET::make_esfs_gg_dddd(self,esfs)
    !     else
-         if      (                 .cd_l_sum==0) then;    SHELL1QUARTET::make_esfs_Xs(self,esfs)
-         else if (.ab_l_sum==0                 ) then;    SHELL1QUARTET::make_esfs_sX(self,esfs)
-         else if (                 .cd_l_sum==1) then;    SHELL1QUARTET::make_esfs_Xp(self,esfs)
-         else if (.ab_l_sum==1                 ) then;    SHELL1QUARTET::make_esfs_pX(self,esfs)
-         else if (                 .cd_l_sum==2) then;    SHELL1QUARTET::make_esfs_Xd(self,esfs)
-         else if (.ab_l_sum==2                 ) then;    SHELL1QUARTET::make_esfs_dX(self,esfs)
-         else;                                            SHELL1QUARTET::make_esfs_XX(self,esfs)
+         if      (                 .cd_l_sum==0) then;    SHELL1QUARTET::make_esfs_Xs(self,esfs,Ix,Iy,Iz)
+         else if (.ab_l_sum==0                 ) then;    SHELL1QUARTET::make_esfs_sX(self,esfs,Ix,Iy,Iz)
+         else if (                 .cd_l_sum==1) then;    SHELL1QUARTET::make_esfs_Xp(self,esfs,Ix,Iy,Iz)
+         else if (.ab_l_sum==1                 ) then;    SHELL1QUARTET::make_esfs_pX(self,esfs,Ix,Iy,Iz)
+         else if (                 .cd_l_sum==2) then;    SHELL1QUARTET::make_esfs_Xd(self,esfs,Ix,Iy,Iz)
+         else if (.ab_l_sum==2                 ) then;    SHELL1QUARTET::make_esfs_dX(self,esfs,Ix,Iy,Iz)
+         else;                                            SHELL1QUARTET::make_esfs_XX(self,esfs,Ix,Iy,Iz)
    !     else;                                            SHELL1QUARTET::make_esfs_general(self,esfs)
          end
    !     end
@@ -11551,6 +11586,159 @@ contains
             I.destroy
          end
          esfs.destroy
+
+      end
+
+   end
+
+   make_r_JK_engine(Jab,Jcd,Pab,Pcd,K,P,skip_J,skip_K,same,factor,fa,la,fb,lb,fc,lc,fd,ld,work) :: leaky, PURE
+   ! As make_r_JK_engine above, but every work array comes from "work".
+   ! It is grown here only if this quartet needs more than it holds;
+   ! sized beforehand by ERI_SCRATCH:set_sizes_for, nothing is allocated.
+      self :: IN
+      Jab,Jcd :: VEC{REAL}, INOUT
+      Pab,Pcd :: VEC{REAL}, IN
+      K :: MAT{REAL}, INOUT
+      P :: MAT{REAL}, IN
+      skip_J,skip_K,same :: BIN, IN
+      factor :: REAL, IN
+      fa,la,fb,lb,fc,lc,fd,ld :: INT, IN
+      work :: ERI_SCRATCH, INOUT
+
+      n_2d :: INT
+
+      n_2d = ((.ab_l_sum+.cd_l_sum+2)/2)*.ab_n_gaussian_pairs*.cd_n_gaussian_pairs &
+           * (.ab_l_sum+1)*(.cd_l_sum+1)
+
+      work.grow_to(n_2d,max(.n_ab,.n_cd),.n_ab*.n_cd, &
+                  .n_ab*.c.n_comp*.d.n_comp,.ab_n_comp_pairs*.cd_n_comp_pairs)
+
+      ! Pass the components only, never "work" itself alongside them
+      SHELL1QUARTET::make_r_JK_engine_k(self,Jab,Jcd,Pab,Pcd,K,P,skip_J,skip_K,same,factor, &
+         fa,la,fb,lb,fc,lc,fd,ld, &
+         work.Ix,work.Iy,work.Iz,work.esfs,work.escd,work.ints,work.ev,work.fv)
+
+   end
+
+   make_r_JK_engine_k(Jab,Jcd,Pab,Pcd,K,P,skip_J,skip_K,same,factor,fa,la,fb,lb,fc,lc,fd,ld,Ix,Iy,Iz,esfs,escd,ints,ev,fv) :: private, PURE
+   ! The body of make_r_JK_engine with the work arrays passed in. They are
+   ! explicit-shape views of the flat ERI_SCRATCH buffers.
+      self :: IN
+      Jab,Jcd :: VEC{REAL}, INOUT
+      Pab,Pcd :: VEC{REAL}, IN
+      K :: MAT{REAL}, INOUT
+      P :: MAT{REAL}, IN
+      skip_J,skip_K,same :: BIN, IN
+      factor :: REAL, IN
+      fa,la,fb,lb,fc,lc,fd,ld :: INT, IN
+      Ix,Iy,Iz :: VEC{REAL}(*), INOUT
+      esfs :: MAT{REAL}(.n_ab,.n_cd), INOUT
+      escd :: VEC{REAL}(.n_ab*.c.n_comp*.d.n_comp), INOUT
+      ints :: VEC{REAL}(.ab_n_comp_pairs*.cd_n_comp_pairs), INOUT
+      ev :: VEC{REAL}(.n_ab), INOUT
+      fv :: VEC{REAL}(.n_cd), INOUT
+
+      ssss,fac,I_abcd :: REAL
+      a,b,c,d,abcd :: INT
+
+      if      (.ab_l_sum==0 AND .cd_l_sum==0) then       ! Make (ss|ss) integrals
+
+         .make_esfs_ss_0000(ssss)
+         ssss = factor*ssss
+         if (NOT skip_J) then
+            if (same) then
+               Jab(1) = Jab(1) + TWO*ssss*Pcd(1)
+            else
+               Jab(1) = Jab(1) + ssss*Pcd(1)
+               Jcd(1) = Jcd(1) + ssss*Pab(1)
+            end
+         end
+         if (NOT skip_K) then
+            K(fa,fc) = K(fa,fc) + ssss*P(fd,fb)
+            K(fa,fd) = K(fa,fd) + ssss*P(fc,fb)
+            K(fb,fc) = K(fb,fc) + ssss*P(fd,fa)
+            K(fb,fd) = K(fb,fd) + ssss*P(fc,fa)
+         end
+
+      else if (.ab_l_sum==0) then
+
+         SHELL1QUARTET::make_esfs_with(self,fv,Ix,Iy,Iz) ! Make (ss|fs) integrals
+         if (NOT skip_J) then
+            fac = factor*Pab(1)
+            Jab(1) = Jab(1) + factor*sum(fv*Pcd)
+            Jcd    = Jcd    + fac*fv
+         end
+         if (NOT skip_K) then
+            SHELL1QUARTET::transfer_cd_s(self,fv,ints)   ! Transfer, ab = ss
+            abcd = 0
+            do d = fd,ld
+            do c = fc,lc
+               abcd = abcd + 1
+               I_abcd = factor * ints(abcd)
+               K(fa,c) = K(fa,c) + I_abcd*P(d,fb)
+               K(fa,d) = K(fa,d) + I_abcd*P(c,fb)
+               K(fb,c) = K(fb,c) + I_abcd*P(d,fa)
+               K(fb,d) = K(fb,d) + I_abcd*P(c,fa)
+            end
+            end
+         end
+
+      else if (.cd_l_sum==0) then
+
+         SHELL1QUARTET::make_esfs_with(self,ev,Ix,Iy,Iz) ! Make (es|ss) integrals
+         if (NOT skip_J) then
+            fac = factor*Pcd(1)
+            Jcd(1) = Jcd(1) + factor*sum(ev*Pab)
+            Jab    = Jab    + fac*ev
+         end
+         if (NOT skip_K) then
+            SHELL1QUARTET::transfer_ab_s(self,ev,ints)   ! Transfer, cd = ss
+            abcd = 0
+            do b = fb,lb
+            do a = fa,la
+               abcd = abcd + 1
+               I_abcd = factor * ints(abcd)
+               K(a,fc) = K(a,fc) + I_abcd*P(fd,b)
+               K(a,fd) = K(a,fd) + I_abcd*P(fc,b)
+               K(b,fc) = K(b,fc) + I_abcd*P(fd,a)
+               K(b,fd) = K(b,fd) + I_abcd*P(fc,a)
+            end
+            end
+         end
+
+      else
+
+         SHELL1QUARTET::make_esfs_with(self,esfs,Ix,Iy,Iz) ! Make (es|fs) integrals
+         if (NOT skip_J) then
+            ev.to_product_of(esfs,Pcd)
+            fv.to_product_of(esfs,Pab,transpose_a=TRUE)
+            if (same) then
+               fac = TWO*factor
+               Jab = Jab + fac*ev
+            else
+               Jab = Jab + factor*ev
+               Jcd = Jcd + factor*fv
+            end
+         end
+         if (NOT skip_K) then
+            SHELL1QUARTET::transfer_cd(self,esfs,escd)     ! Transfer relations
+            SHELL1QUARTET::transfer_ab(self,escd,ints)
+            abcd = 0
+            do d = fd,ld
+            do c = fc,lc
+            do b = fb,lb
+            do a = fa,la
+               abcd = abcd + 1
+               I_abcd = factor * ints(abcd)
+               K(a,c) = K(a,c) + I_abcd*P(d,b)
+               K(a,d) = K(a,d) + I_abcd*P(c,b)
+               K(b,c) = K(b,c) + I_abcd*P(d,a)
+               K(b,d) = K(b,d) + I_abcd*P(c,a)
+            end
+            end
+            end
+            end
+         end
 
       end
 

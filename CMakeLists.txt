@@ -514,6 +514,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.read.F90
     ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.put.F90
     ${CMAKE_CURRENT_BINARY_DIR}/diis.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/eri_scratch.F90
     ${CMAKE_CURRENT_BINARY_DIR}/file.F90
     ${CMAKE_CURRENT_BINARY_DIR}/gaussian.F90
     ${CMAKE_CURRENT_BINARY_DIR}/gaussian2.F90
