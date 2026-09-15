@@ -98,6 +98,20 @@ now covers the whole project, so it was renamed.)*
 > 0.17% on three lines where it had failed at 200%. The only loose failure left on the Mac is
 > `urea_ccsd_pob-TZVP_Salvador_properties` at 4.48%, the LAPACK-thread row; the suite is 55/56.
 >
+> **START HERE -- 2026-09-15 (evening).** Stage E below is finished and the default. The
+> J/K integral work is done on branch **`rys-1c`** (pushed, not merged): every Fock builder
+> now takes its work arrays from one `ERI_SCRATCH` sized before the quartet loop, validated
+> against the previous binary (energies identical; J/K -6 to -7%, spherical -15%), plus the
+> `JBcd => JB(cd)` fix. The full handoff, with timings and the ordered next steps, is under
+> **"HANDOFF 2026-09-15"** in *Vectorise the Rys quadrature* (search for it); tables in
+> `docs/SCF_SPEED_REPORT.md`. **Next, in order:** (1) time Tonto against g09 and ORCA on
+> karrikinolide, RHF and BLYP with 6-31G(d) and cc-pVTZ -- ORCA only against Tonto's
+> spherical basis; (2) run `short` on `rys-1c` and merge it to `develop` (Dylan's go-ahead on
+> any reference change); (3) the `transfer_l_*` work arrays onto `ERI_SCRATCH`; (4) measure
+> what repeated primitives in generally contracted shells cost, then class batching. On
+> sauce the main tree still holds uncommitted step-1a edits (`molecule.fock.foo`,
+> `shell1.foo`, `shell1quartet.foo`) that duplicate `rys-1c` -- discard them.
+>
 > **NEXT: stage E, the batched XC quadrature.** Plan: `~/.claude/plans/stage-e-batched-xc.md`
 > (E0 BLAS groundwork and the `get_from` placeholder check; E1 batches as an adaptive spatial
 > box grid (octree), decided; E2-E5 flat per-batch basis functions, density, functional, XC
