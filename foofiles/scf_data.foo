@@ -700,14 +700,130 @@ contains
    end
 
    set_ERI_primitive_pair_cutoff(val)
-   ! Set the ERI primitive pair cutoff
+   ! Set the ERI primitive pair cutoff. The value that the integrals
+   ! actually use lives in SHELL1QUARTET; the component is kept in step
+   ! so that .using_nonstandrad_ERI_cutoffs can see it.
       self :: INOUT
       val :: REAL
 
       sh4 :: SHELL1QUARTET
 
-      if (FALSE) self = self
       sh4.set_pair_cutoff(val)
+      .ERI_primitive_pair_cutoff = val
+
+   end
+
+   set_ERI_accuracy(acc)
+   ! Set the four ERI cutoffs together from a named accuracy level, and
+   ! remember the level as the one the user asked for. "very_low" is the
+   ! set of cutoffs Tonto has always used by default.
+      self :: INOUT
+      acc :: STR, IN
+
+   DIE_IF(NOT acc.is_one_of(["very_low","low     ","medium  ","high    "]),"unknown eri_accuracy=, use very_low, low, medium or high")
+
+      .ERI_accuracy = acc
+      .ERI_accuracy.to_lower_case
+      .ERI_accuracy_given = TRUE
+      .apply_ERI_accuracy(.ERI_accuracy)
+
+   end
+
+   apply_ERI_accuracy(acc) :: private
+   ! Set the four ERI cutoffs from the named accuracy level "acc", without
+   ! disturbing the level that was asked for. The primitive pair cutoff
+   ! carries essentially all of the error and is the cheapest to tighten;
+   ! the Schwarz and density cutoffs set the floor beneath it.
+      self :: INOUT
+      acc :: STR, IN
+
+   ENSURE(acc.is_one_of(["very_low","low     ","medium  ","high    "]),"unknown ERI accuracy")
+
+      select case (acc)
+
+      case ("very_low")
+         .set_ERI_primitive_pair_cutoff(TOL(6))
+         .set_ERI_Schwarz_cutoff(TOL(9))
+         .set_ERI_J_density_cutoff(TOL(9))
+         .set_ERI_K_density_cutoff(TOL(9))
+
+      case ("low")
+         .set_ERI_primitive_pair_cutoff(TOL(9))
+         .set_ERI_Schwarz_cutoff(TOL(9))
+         .set_ERI_J_density_cutoff(TOL(9))
+         .set_ERI_K_density_cutoff(TOL(9))
+
+      case ("medium")
+         .set_ERI_primitive_pair_cutoff(TOL(12))
+         .set_ERI_Schwarz_cutoff(TOL(12))
+         .set_ERI_J_density_cutoff(TOL(12))
+         .set_ERI_K_density_cutoff(TOL(12))
+
+      case ("high")
+         .set_ERI_primitive_pair_cutoff(TOL(15))
+         .set_ERI_Schwarz_cutoff(TOL(15))
+         .set_ERI_J_density_cutoff(TOL(15))
+         .set_ERI_K_density_cutoff(TOL(15))
+
+      end
+
+   end
+
+   set_escalate_ERI_accuracy(val) :: PURE
+   ! Set whether the ERI cutoffs are loosened while the density is damped.
+   ! Asking for this puts the named accuracy levels in charge of the cutoffs.
+      self :: INOUT
+      val :: BIN, IN
+
+      .escalate_ERI_accuracy = val
+      .ERI_accuracy_given = TRUE
+
+   end
+
+   ERI_accuracy_rank(acc) result (res) :: PURE
+   ! Return the position of the named ERI accuracy level "acc" in the
+   ! ladder, so that two levels can be compared.
+      self :: IN
+      acc :: STR, IN
+      res :: INT
+
+   ENSURE(acc.is_one_of(["very_low","low     ","medium  ","high    "]),"unknown ERI accuracy")
+
+      select case (acc)
+      case ("very_low"); res = 1
+      case ("low     "); res = 2
+      case ("medium  "); res = 3
+      case ("high    "); res = 4
+      end
+
+   end
+
+   effective_ERI_accuracy result (res) :: pure
+   ! The accuracy level this iteration actually runs at: the level asked
+   ! for, held down to "very_low" while the density is damped if
+   ! escalation is on, and never below "medium" for an x-ray constrained
+   ! SCF -- the fit is to structure factors, and loose integrals move them.
+      self :: IN
+      res :: STR
+
+      res = .ERI_accuracy
+
+      if (.escalate_ERI_accuracy AND .apply_damping) res = "very_low"
+
+      if (.is_constrained_SCF AND .ERI_accuracy_rank(res)<.ERI_accuracy_rank("medium  ")) res = "medium"
+
+   end
+
+   set_ERI_accuracy_for_iteration
+   ! Set the ERI cutoffs for the iteration about to be done. This does
+   ! nothing unless the named accuracy levels are in use: a job that sets
+   ! neither eri_accuracy= nor escalate_eri_accuracy= keeps the cutoffs it
+   ! has.
+      self :: INOUT
+
+      if (NOT .ERI_accuracy_given) return
+
+      .apply_ERI_accuracy(.effective_ERI_accuracy)
 
    end
 
@@ -1306,12 +1422,14 @@ contains
       case ("ee_adiabatic_constant=       "); .read_ee_adiabatic_constant
       case ("elmo_b=                      "); .read_ELMO_B
       case ("elmo_p=                      "); .read_ELMO_P
+      case ("eri_accuracy=                "); .read_ERI_accuracy
       case ("eri_bf_overlap_cutoff=       "); .read_ERI_bf_overlap_cutoff
       case ("eri_disk_cutoff=             "); .read_ERI_disk_cutoff
       case ("eri_j_density_cutoff=        "); .read_ERI_J_density_cutoff
       case ("eri_k_density_cutoff=        "); .read_ERI_K_density_cutoff
       case ("eri_primitive_pair_cutoff=   "); .read_ERI_primitive_pair_cutoff
       case ("eri_schwarz_cutoff=          "); .read_ERI_Schwarz_cutoff
+      case ("escalate_eri_accuracy=       "); .read_escalate_ERI_accuracy
 
       case ("guess_output=                "); .read_guess_output
 
@@ -1532,6 +1650,22 @@ contains
    end
 
    read_ELMO_P :: get_from(OBJECT:read_and_set, VAL_TYPE?=>INT, SET?=>.set_ELMO_P), private
+   ! Generic read and set
+   end
+
+   read_ERI_accuracy :: private
+   ! Read a named ERI accuracy level, one of "very_low", "low", "medium"
+   ! or "high", and set the four ERI cutoffs from it.
+      self :: INOUT
+
+      word :: STR
+
+      stdin.read(word)
+      .set_ERI_accuracy(word)
+
+   end
+
+   read_escalate_ERI_accuracy :: get_from(OBJECT:read_and_set, VAL_TYPE?=>BIN, SET?=>.set_escalate_ERI_accuracy), private
    ! Generic read and set
    end
 
@@ -2525,6 +2659,7 @@ contains
       crystal :: CRYSTAL, optional, IN
 
       q :: VEC{REAL}(3)
+      acc :: STR
 
       if (NOT .output) return
 
@@ -2571,11 +2706,18 @@ contains
       stdout.show("Using SC Lorentz fields        =", .using_SC_Lorentz_fields)
       end
 
-      if (.using_nonstandrad_ERI_cutoffs) then
+      if (.using_nonstandrad_ERI_cutoffs OR .ERI_accuracy_given) then
       stdout.set_real_fortran_fmt("e")
       stdout.flush
       stdout.text("Integrals:")
       stdout.flush
+      if (.ERI_accuracy_given) then
+      acc = .effective_ERI_accuracy
+      stdout.show("ERI accuracy                   =", .ERI_accuracy)
+      stdout.show("Escalate ERI accuracy          =", .escalate_ERI_accuracy)
+      if (acc/=.ERI_accuracy) &
+      stdout.show("ERI accuracy in force          =", acc)
+      end
       stdout.show("ERI disk cutoff                =", .ERI_disk_cutoff)
       stdout.show("ERI Schwarz test cutoff        =", .ERI_Schwarz_cutoff)
       stdout.show("ERI J density cutoff           =", .ERI_J_density_cutoff)

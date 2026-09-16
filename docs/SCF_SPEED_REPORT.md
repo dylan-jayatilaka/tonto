@@ -501,3 +501,30 @@ Against ORCA's exact spherical run (780 s) Tonto goes from 1.48x to 1.11x.
 Note the direct path measured 1231 s here against 1158 s earlier the same day on the same
 binary and input — about 6% of run-to-run spread on this machine, so only the side-by-side
 pairing is meaningful.
+
+## Named ERI accuracy levels, 2026-09-16
+
+`eri_accuracy=` sets the primitive-pair, Schwarz and J/K density cutoffs together; the four
+levels come straight from the scan above. Karrikinolide RHF/6-31G(d) cartesian, one core,
+g09 gives −530.980808229:
+
+| `eri_accuracy=` | four cutoffs | energy | from g09 | cpu |
+|---|---|---|---|---|
+| *(no keyword)* | 1e-6, 1e-9, 1e-9, 1e-9 | −530.980810596152 | 2.4e-6 | 42.0 s |
+| `very_low` | 1e-6, 1e-9, 1e-9, 1e-9 | −530.980810596152 | 2.4e-6 | 45.1 s |
+| `low` | 1e-9, 1e-9, 1e-9, 1e-9 | −530.980808198255 | 3.1e-8 | 47.4 s |
+| `medium` | all 1e-12 | −530.980808227204 | **1.8e-9** | 57.9 s |
+| `high` | all 1e-15 | −530.980808227207 | 1.8e-9 | 64.9 s |
+
+`very_low` reproduces the default energy to every printed digit, which is what it is for: the
+levels change nothing until one is asked for. The three tightened rows reproduce the
+one-at-a-time scan above exactly.
+
+`escalate_eri_accuracy= TRUE` runs the damped iterations at `very_low` and the rest at the level
+asked for. With `medium` that gives −530.980808227196, 8e-12 from the unescalated run and two
+orders inside the level's own accuracy, in 53.3 s against 57.9 s -- about 8%. Two of the
+thirteen iterations are damped, so that is the size of saving the schedule can give.
+
+An x-ray constrained SCF is floored at `medium`, in `SCF_DATA:effective_ERI_accuracy`. The floor
+applies only once a level has been asked for, so existing XCW jobs are untouched; when it bites,
+the options block says so with an `ERI accuracy in force` line.
