@@ -837,6 +837,11 @@ Found by the zinc-finger benchmark ([Zn(SCH3)2(imidazole)2], hand-built geometry
   guess is sane alone, the fault appears only when two atoms (at least Zn with S) are combined in
   the spherical basis, and it is not an atom-order offset. Karrikinolide (C, H, O; d and f at
   cc-pVTZ) did not show it.
+- **The core guess is not a general cure.** Zinc finger BLYP/6-31G(d) spherical with
+  `initial_density= core` (pair-list J) also ended unconverged and silent: E −2697.133733556
+  after 28 minutes. The pair-list J is not the cause -- water BLYP/cc-pVDZ spherical agrees with
+  the engine to 1.8e-10. So the zinc-finger SCF in the spherical 6-31G(d) basis is unstable,
+  not merely badly started; RHF with the core guess happened to converge.
 - **Not yet done:** where the combined spherical promolecule density goes wrong (S alone,
   then the spherical transformation of the atomic density), and why an unconverged SCF prints
   its result without a `not converged` line. The second matters more -- it passes a nonsense
