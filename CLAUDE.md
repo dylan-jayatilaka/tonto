@@ -53,10 +53,11 @@ purpose, and verbose is right there.
 
 ## 2. Current focus
 
-Nothing is in flight. The ordered list of next actions, and the reasoning behind each, is
-the **handover section at the top of `DEFERRED.md`** — read it before starting work. In
-outline: finish the CI platform table (macOS badges, WSL-MPI), then the three untracked
-debug failures, then the open MPI and DFT items.
+The ordered list of next actions, and the reasoning behind each, is the **handover section
+at the top of `DEFERRED.md`** — read it before starting work. In outline: the ERI default
+moved to `low` (re-bless pending), then *Primitive-batched J and K* starting with its
+loop-order pilot, and the zinc-finger benchmark molecule; the CI platform table, the three
+untracked debug failures and the open MPI and DFT items are parked behind those.
 
 **Do not move `DEFERRED.md`'s contents into this file.** This file answers *how does the
 project work*; `DEFERRED.md` answers *what are we doing now*. Merging them loses both.
@@ -268,7 +269,8 @@ versioned with the code it described*, so it could rot silently. Do not add docu
 - `docs/TONTO_DEVELOPER_INFO.md` — developer reference; §1a is **writing parallel (MPI) code in Foo**, eight
   pitfalls and the trace recipes that found them; §1b is **build and test traps** — the stale
   translation when a `.foo` is edited mid-build, why the loose gate passes visibly wrong output,
-  and how `scripts/test.py` actually compares.
+  and how `scripts/test.py` actually compares; §1c is **profiling and timing** — `perf`, not
+  gprof, and why a single timing pair proves nothing under 3%.
 - `docs/FOO_GRAMMAR_DOCUMENTATION.md` — full language description and Foo→Fortran conversion rules.
 - `docs/TONTO_AND_MPI.md` — the parallel build, its numeric characterisation, and the defect register.
 - `docs/BADER_REPORT.md` — the `archive/Bader` port (2026-08-18): the ten procedures that landed, what

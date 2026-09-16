@@ -381,6 +381,28 @@ grep -B3 -E '\[-W(maybe-)?uninitialized\]' build.log | grep 'Warning:' \
 The definite/maybe split is *not* the useful one here -- both classes are almost entirely
 descriptor noise. Descriptor-versus-variable is.
 
+## 1c. Profiling and timing
+
+**Use `perf`, not gprof.** A `-pg` build attributes only about 60% of the samples under
+`-Ofast`, hangs inlined callees under the wrong caller, and needs its own build tree. `perf`
+works on the ordinary release binary:
+
+```bash
+perf record -o perf.data -F 999 -g build/tonto < stdin > stdout     # flat profile
+perf record --call-graph dwarf ...                                 # callers of an inlined symbol
+perf report -i perf.data --no-children --stdio -g none | head -40
+perf annotate -i perf.data --stdio -s <symbol>                     # hot instructions
+```
+
+If `perf record` is refused, `sudo sysctl kernel.perf_event_paranoid=1`. A `.isra.0` suffix on
+a symbol means gfortran cloned it; a specialisation that does not appear at all was inlined into
+its caller.
+
+**A single timing pair proves nothing under about 3%.** The same binary varies by ±2% between
+runs, and several copies running at once each run slower than one alone. For any claimed change
+of that size run every candidate at the same time, repeat three times, and quote the means and
+the spread. Per-phase CPU seconds come from `scfdata= { show_timings= TRUE }`.
+
 ## 2. Pushing to GitHub
 
 You authenticate either with SSH keys (recommended — no secret in the URL) or a

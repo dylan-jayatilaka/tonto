@@ -98,6 +98,19 @@ now covers the whole project, so it was renamed.)*
 > 0.17% on three lines where it had failed at 200%. The only loose failure left on the Mac is
 > `urea_ccsd_pob-TZVP_Salvador_properties` at 4.48%, the LAPACK-thread row; the suite is 55/56.
 >
+> **START HERE -- 2026-09-16 (late). The classical Rys work is wrapped up; the next direction is
+> *Primitive-batched J and K* (pair lists by class, primitive density, early contraction), a live
+> item under *Science and features*, with its step 0 -- the loop-order pilot that puts the
+> primitive index outermost and drops the `Ixa` buffers -- as the first thing to do. The
+> benchmark to add first is the zinc-finger model (its own item). In flight right now: the ERI
+> default moved to `low` (`ERI_primitive_pair_cutoff` 1e-6 -> 1e-9, Dylan's decision), a full
+> rebuild plus `short` and `long` running to see which references move; the re-bless is Dylan's.**
+>
+> Housekeeping done the same evening: worktrees `tonto-1c`, `-rms`, `-sph`, `-step2`, `-prof` and
+> branches `rys-1c`, `rys-rms`, `rys-sph`, `rys-step2`, `rys-vec` removed, local and origin --
+> all merged or carried. The Rys vectorisation item is archived. Profiling is now documented in
+> `docs/TONTO_DEVELOPER_INFO.md` §1c: `perf`, not gprof, and timings need repeats.
+>
 > **START HERE -- 2026-09-16 (night). Item 3, the Rys roots vectorised within a quartet, is
 > built, measured and flat, and merged (`5baf58e6`, `--no-ff`, gate `short` 67/67, no reference
 > changed) so the code and the lessons are on `develop`. Nothing is in flight.**
@@ -2459,175 +2472,6 @@ OpenBLAS would also oversubscribe cores in MPI builds.
 
 # Science and features
 
-## Vectorise the Rys quadrature over shell-quartet classes (Dylan, 2026-09-14)
-
-**Step 3 done and flat, 2026-09-16 (branch `rys-vec`, merged `5baf58e6`).** Per-quartet vectorisation of the
-1 and 2 root fits: kernels 3-4x per X, whole job unchanged within ±1.5% on karrikinolide at both
-bases. Numbers and reasoning in `docs/SCF_SPEED_REPORT.md`, *Rys step 3*; the handover above has
-the two lessons. What remains of this item is step 2, the class-batched traversal, and it now
-carries a different justification: the profile share of the roots is not the wall clock, and the
-2-D integral buffer traffic is the thing to attack.
-
-**Why, in Dylan's words:** it matters for future correlated methods, which are
-integral-heavy and have no DFT grid, and for running the integrals on GPUs. A separate
-item from the DFT-grid work, to be started in its own session.
-
-**What the code does today** (surveyed 2026-09-11; line numbers may have drifted):
-
-- `RYS:get_weights(X)` (`rys.foo:89`) takes **one scalar** `X` and dispatches on `n_roots`:
-  closed-form polynomial fits for 1-3 roots (`get_weights1_t2` ... `_3_t2`, which return t²
-  roots directly), fits for 4-5 roots converted by `rr/(rr+1)`, and the numerical
-  `get_weights6` for 6 or more (moments by `rysfun`, then `ryssmt`, `rysnod`). Inside every fit
-  the polynomial is chosen by **nested branches on the T range** (breakpoints 3e-7, 1, 3, 5, 10,
-  15, 20, 25, 33, 35, 40, 47, 53, 59; e.g. `get_weights2_t2`, `rys.foo:330`). `get_only_weight`
-  is the ssss path. With `GAUSSIAN_DATA_L_MAX` = 4, `n_roots` is at most 9.
-- It is called **once per primitive pair × primitive pair** inside every shell quartet, e.g.
-  `make_esfs_XX` (`shell1quartet.foo:7450`): `rys.get_weights(xx)` inside `do k =
-  1,ab_n_gaussian_pairs / do j = 1,cd_n_gaussian_pairs`. The `RYS` object is created and
-  destroyed per shell quartet (40 M creates on karrikinolide `medium`).
-- Angular-momentum dispatch is per quartet, in `make_esfs` (`shell1quartet.foo:568`), a
-  `select case` on `max(ab_l_sum,cd_l_sum)` with nested ifs. Specialised routines exist up to
-  `dd_pppp`; every f and g variant is commented out (`:615-652`) and falls to the semi-generic
-  `make_esfs_Xs/sX/Xp/pX/Xd/dX/XX` (`:6627-7418`). The transfer step also branches per quartet
-  on `a.l > b.l` (`:8317`, `:9729`). The 2-D integrals are already indexed
-  `Ixa/Iya/Iza(n_roots × n_ab_pairs × n_cd_pairs, dim1, dim2)` and contracted by `form_esfs`.
-- Quartets are enumerated `parallel do ab = 1,.n_shell_pairs / do cd = 1,ab`
-  (`molecule.fock.foo:1410`), with three-level Schwarz screening (`Schwarz_test`), a
-  precomputed `SHELL1PAIR` matrix, and a J-engine. No sort by angular momentum exists.
-- **The AO order is load-bearing**: atom-major, shell-within-atom, contiguous per-atom blocks
-  assumed in `molecule.base/prop/rho/har/grid`, MO normalisation and every archive. **Do not
-  reorder the basis.** Group classes with an index vector over shell pairs instead; the Fock
-  loop already goes through `set_shell2_indices_from` / `set_shell1q_*_from`.
-
-**What the profile says** (gprof, karrikinolide BLYP/6-31G(d) `medium`, `docs/SCF_SPEED_REPORT.md`):
-`RYS:get_weights` 6.6% of the run, `form_esfs` 5.8%, the `make_esfs` dispatcher 4.5%,
-`set_cd_new` 2.3%, the `make_esfs_*` specialisations about 5%, and `RYS`/`MAT{REAL}`
-allocation churn about 2%: the two-electron integrals are about 22% of that DFT job. **For an
-HF or correlated job the share is larger and unmeasured, so the first step is to re-profile a
-job with no grid** (karrikinolide RHF 6-31G(d), and one larger basis with f functions), using
-the gprof tree at `~/github/tonto-prof/prof/` and `scfdata= { show_timings= TRUE }`.
-
-**Shape of the work** (the plan's steps 4-5, to be re-planned from that profile):
-
-1. Hoist the per-quartet allocations (`RYS`, work matrices) out of the quartet loop.
-
-   **Started 2026-09-15.** No-grid profiles (karrikinolide RHF, `perf`, runs in
-   `~/tonto_runs/rys_profile_2026-09-15/`): J/K is 96-97% of the SCF. 6-31G(d), 51 s:
-   `get_weights` + its `exp` ~19%, `form_esfs` 12%, `make_esfs` (low-l routines inlined) 10%,
-   J/K engine 12%, `malloc`/`free` ~11%, `set_cd_new` ~7%. cc-pVTZ, 1245 s: `form_esfs` 24%
-   (10.7% from `make_esfs_XX`, the generic f path), engine 12% (the K contraction loop), Rys ~10%,
-   `malloc`/`free` ~6.5%; `get_weights6` (6+ roots) only 0.3%. So with f functions the order is
-   `form_esfs`/`make_esfs_XX`, the K loop, allocation, then Rys.
-   *Step 1a* (uncommitted, main tree, built in `hoist/`): `set_ab_new`/`set_cd_new` reuse
-   grow-only pair arrays, `SHELL1:set_reusing_storage` replaces the whole-`SHELL1` copies, and
-   the 61 per-quartet `destroy_ab`/`destroy_cd` calls in `molecule.fock.foo` are gone.
-   *Step 1b* (worktree `../tonto-step2`, branch `rys-step2`, on top of 1a): `RYS` root/weight
-   fixed at 16, `RYS:set_n_roots`, non-allocatable `rys` locals in the 24 `make_esfs_*`.
-   **HANDOFF 2026-09-15 (sauce, Dylan going offline).** Three branches, each a single commit
-   off `4b37c9da` carrying every earlier step, all pushed; none merged to `develop`:
-   - `rys-step2` = step 1a + step 2. Built and timed (report table). Step 1a alone is also
-     uncommitted in the main `develop` tree on sauce -- discard it there, it lives on this branch.
-   - `rys-rms` = + the reduced multiplication scheme, `scfdata= { use_rms_esfs= TRUE }`, off by
-     default. 6-31G(d): energy identical to 12 decimals on/off, but J/K 1% *slower* (51.72 vs
-     51.01 s); `perf annotate` shows the time is the `sum(Ixy*Iz)` dot products, not index
-     lookups. **cc-pVTZ confirms it: energy identical to 12 decimals, J/K 5.0% slower**
-     (1256.32 vs 1196.07 CPU s; `form_esfs_rms2` 29.5% of the run vs `form_esfs` 25.9%). RMS saves
-     one multiply per shared `Ix*Iy` but keeps every n_sum-long dot product and adds a stored
-     product vector and scattered writes. **Dylan's decision (2026-09-15): keep it, off by default**;
-     on `rys-1c` its `rms2_indices` are built only when `use_rms_esfs= TRUE`
-     (`GAUSSIAN_DATA:make_rms2_indices`), and remade if `set_indices` raises l_max. The lever for the contraction is fewer long sums (earlier
-     contraction, class batching). Runs in `~/tonto_runs/rys_profile_2026-09-15/rms_{off,on}_*`.
-   - `rys-1c` = + step 1c, **done, pushed `74e729f5`**. Karrikinolide RHF 6-31G(d) side by
-     side with the `rys-rms` binary: energy identical to 12 decimals, J/K CPU 52.07 -> 49.17 s
-     (-5.6%), `malloc`+`free` 2.8% -> 0.2%, `grow_to` 0.6%. cc-pVTZ: energy identical, J/K
-     1203.49 -> 1120.31 s (-6.9%), `malloc`+`free` ~3.8% -> ~0.5%; `form_esfs` is now inlined
-     into the generic `make_esfs_*` (`make_esfs_XX` 15%). **Then, `271a4cb9`:** the J-only engine (all pure DFT, RKS
-     and UKS), the open-shell J/K engine, and the 12 `make_ERI` builders (direct/spherical,
-     nosym, CIS, `make_ERI_integrals`) on `ERI_SCRATCH` via `make_ERI_into(work)`;
-     `change_to_spherical` reads `GAUSSIAN_DATA::spherical_harmonics_for` in place instead of
-     copying the whole table per quartet. Validated side by side with `rys-rms`: BLYP 6-31G(d)
-     energy identical, J 59.86 -> 56.34 s (-5.9%), whole job 92.0 -> 88.9 s; RHF 6-31G(d)
-     identical, J/K -7.3%; short UHF and spherical tests identical line for line, spherical
-     2.80 -> 2.37 s. `make_ERIs_for_shellpairs` still allocates (called per pair).
-     **Bug fixed in its own commit on `rys-1c`:** `make_u_JK_engine` had `JBcd => JA(cd)`,
-     putting beta ket-side J into J.a; harmless before because every caller uses J.a+J.b. What went in first: 1c-i (`form_esfs/esss/ssfs` read
-     `GAUSSIAN_DATA::nx` in place, translates); `ERI_SCRATCH` type (`types.foo`) and module
-     `eri_scratch.foo` (in `CMakeLists.txt`) with `set_sizes_for(pair)` (dry run grouped by l_sum)
-     and grow-only `ensure`; the seven generic `make_esfs_Xs..XX` take `Ixa,Iya,Iza` as
-     explicit-shape `target, INOUT` dummies (no create/destroy); `MOLECULE.FOCK:make_r_JK_engine`
-     declares `work :: ERI_SCRATCH`, calls `work.set_sizes_for(.basis_shell1pair)`, and passes
-     `work` to both `sh4n/sh4s.make_r_JK_engine(...,work)`. Then: the dispatcher is `make_esfs_with(esfs,Ix,Iy,Iz)`
-     (`VEC{REAL}(*)` buffers) and `make_esfs(esfs)` a wrapper that allocates only when a generic
-     routine will run; a restricted `make_r_JK_engine(...,ld,work)` calls `work.grow_to(...)`
-     (named so, not `ensure`, which would clash with the `ENSURE` macro's generic in debug) and
-     passes `work.Ix` etc. -- never `work` itself alongside them -- to the explicit-shape kernel
-     `make_r_JK_engine_k`. `eri_scratch.F90` must also be in CMake's generated-F90 list. The
-     unrestricted, J-only and nosym engines still use the allocating path. Left for 1c-iii: `transfer_l_*` `int_new/int_old`. Gate: energies to 1e-8 accept; for these
-     identical-maths rewrites a shift above ~1e-10 means compare quartet by quartet.
-   **Next measurement (Dylan, 2026-09-15): Tonto against g09 and ORCA on karrikinolide.** The
-   only like-for-like figure so far is BLYP/6-31G(d): g09 FineGrid 49 s wall, 23 cycles; Tonto
-   went 177 s (3.6x) -> 123 s (2.5x, no-copy) -> SCF 66 s after stage E, whole job **not timed**
-   (estimated 75-80 s, about 1.5x). No g09 or ORCA run exists for RHF or for cc-pVTZ. Run, one
-   core each, geometry from `tests/long/karrikinolide_blyp_6-31G(d)_Salvador_properties/
-   karrikinolide.fchk`, same convergence as `~/tonto_runs/rys_profile_2026-09-15/rhf_*/stdin`:
-   RHF/6-31G(d), RHF/cc-pVTZ, BLYP/6-31G(d), BLYP/cc-pVTZ, each with g09 (`6D 10F` to match
-   Tonto's cartesian default), ORCA, and Tonto on the final `rys-1c` binary; record whole-job
-   wall, SCF time, iterations and energy. **ORCA is spherical only**: compare it with Tonto at
-   `use_spherical_basis= TRUE`, which runs the direct `make_ERI_into` builders, not the
-   cartesian engines -- so report both Tonto timings. DFT: match grids by accuracy against a
-   converged reference (g09 `Int(Grid=199974)`), not by name.
-   *Step 1c, Dylan's idea:* a dry run over the shell pairs before the SCF returns the maximum
-   work-array sizes (primitive pairs, l sums, roots -- all basis-only), so the `Ixa`/`esfs`/
-   `escd`/`I` scratch is allocated once in the quartet object and the loop allocates nothing.
-   The same fixed sizes are what a GPU kernel needs. Needs the `make_esfs_*` and engine `self`
-   to become `INOUT` (and `target` for the `Ix => Ixa(i,:,:)` pointers).
-2. A class-batched traversal: an index vector sorting shell pairs by `(l_a, l_b)` and primitive
-   count, so the dispatch and the transfer choice happen once per class block.
-3. Within a block, gather every primitive quartet's `X` into one array, bin it by the fit's T
-   ranges, and evaluate each bin as a loop over a contiguous slice (`get_weights_vec`), one
-   range test per bin rather than per primitive. Start with 1-5 roots; 6 or more stay scalar.
-   Uniform-shape batches are also what a GPU kernel needs.
-4. Only if the profile says so: revive or generate the specialised f and g routines.
-
-**Gate:** integrals against the scalar path quartet by quartet (`runfiles/run_shell1quartet.foo`
-exists and is unbuilt), agreeing to 1e-14 or bitwise; HF energies bit-identical or to 1e-12;
-`short` and the HF/correlated `long` jobs; timings before and after in
-`docs/SCF_SPEED_REPORT.md`.
-
-**Detailed plan for step 3 (drafted 2026-09-14, parked in favour of pruning stage D).** Call it
-"Rys step 3", not "stage D", which is the grid-pruning item.
-
-*Facts found while planning:*
-- Each 1-5 root fit is a nested `if` tree with 8-10 leaves; the breakpoint subset differs per
-  fit. Leaves share work (`exp(-x)`, `f = (w1-e)/(x+x)`, `r/(r+1)`), so the tree does not cut
-  cleanly into bins without carrying those tails into each leaf.
-- 24 live `rys.get_weights` calls in `shell1quartet.foo`, more in `shell2`, `shell4`,
-  `gaussian2`, `gaussian4`; all are `do k / do j / xx / get_weights / use roots at once`.
-- **Per-quartet batches are small** (`n_ab_prims × n_cd_prims`: 1-81 for 6-31G(d) p/d shells,
-  1296 only for the 6-primitive 1s). Sort overhead may eat the gain; the payoff may need the
-  cross-quartet class traversal (step 2) first. The microbenchmark below decides.
-- Release is `-Ofast -march=native` (`cmake/SetFortranFlags.cmake`), so bitwise agreement between
-  a vectorised and a scalar loop is not guaranteed even with identical expressions: gate at 1e-14.
-- 20 of the callers use `parallel do k`; a gather pass must be serial and run on every rank,
-  outside that loop.
-
-*Steps:*
-1. **Split each 1-5 root fit into one `ELEMENTAL` kernel per leaf**, carrying its share of the
-   tails. The scalar `get_weights` keeps its tree but calls the kernels, so the coefficients
-   exist once. Gate: old vs new bitwise over ~1e6 `x` in [0,100], including both sides of every
-   breakpoint.
-2. **`RYS:get_weights_t2(X,root,weight)`**, `X :: VEC{REAL}`, `root,weight :: MAT{REAL}(n_roots,n_X)`:
-   bin label = count of breakpoints `<= x` (the one, branchless, comparison pass); stable counting
-   sort to a permutation; each bin's contiguous slice through its elemental kernel; scatter back.
-   6+ roots stay scalar. Gate: 1e-14 against scalar. Microbenchmark ns per `x` at batch sizes
-   1, 9, 81, 1296, 1e5 to find the break-even.
-3. **Only if (2) wins at per-quartet sizes:** restructure the generic `make_esfs_Xs … XX` into
-   gather `xx`/`rho` over all `(k,j)`, one Rys call, then the existing 2-D integral loop.
-   Otherwise do the class traversal first and return.
-4. **Gate:** `run_shell1quartet` old vs new; HF energies to 1e-12; `short` and HF `long` jobs;
-   timings in `docs/SCF_SPEED_REPORT.md`. Run the no-grid karrikinolide RHF profile alongside
-   step 1.
-
 ## Callers still on the direct J/K builders (2026-09-16)
 
 `rys-sph` moved the **SCF Fock build** onto the cartesian J/K engine for a spherical basis
@@ -2656,6 +2500,79 @@ working code that the SCF simply no longer routes through.
 
 The cheapest first step is `MOLECULE.FOCK:make_JK_direct` (the OPMATRIX dispatcher), because an
 OPMATRIX-level `make_JK_engine_sph` covers `molecule.ce.foo` and gives the others a template.
+
+## Primitive-batched J and K: pair lists by class, primitive density, early contraction (Dylan, 2026-09-16)
+
+**The direction after the classical Rys work**, agreed 2026-09-16. Dylan's idea, with two
+amendments from the measurements. The idea: do the two-electron work at the primitive level,
+organised so the vectorised Rys kernels see batches of thousands rather than one shell quartet's
+2-81, contract with the density expanded into primitives, and parallelise as a classical
+reduction over nodes (GPU nodes eventually).
+
+**Settled points.**
+- **No disk.** The surviving primitive quartets number ~4e8 per Fock build on karrikinolide at
+  6-31G(d) (counted, `docs/SCF_SPEED_REPORT.md` *Rys step 3*), tens of GB stored and growing ~N²;
+  and reading 64 bytes from an NVMe (~20 ns) is slower than recomputing X (~2 ns) and a
+  vectorised root (~8 ns). The 1982 direct-SCF argument, stronger now.
+- **What is stored is the pair list**, ~1e5 entries: for each class (l_a,l_b) the primitive pairs
+  surviving the pair cutoff, with P, zeta, prefactor and the coefficient map to the contracted
+  functions, sorted by class and Schwarz bound. Built once per geometry; every batch is generated
+  from it on the fly. The screening criteria stay as they are (pair prefactor, Schwarz), applied
+  once to the pair list instead of per quartet per Fock build.
+- **Primitive density**: D^prim = C P C^T per pair block -- the same reversal as the spherical
+  path's `P_cart = U P U^T`. Primitive-level Schwarz: sqrt((pq|pq)) * max|D^prim|. The general
+  contraction waste at cc-pVTZ (1.44x on the s shells) disappears with it.
+- **Early contraction, primitive index outermost.** Today `form_esfs` streams the whole
+  `Ixa/Iya/Iza` buffer once per component pair (1296 times for (dd|dd)) and the 2-D recursion
+  writes its tiles at stride `n_sum`. Putting the primitive pair-pair and root outermost, forming
+  the three small tiles (<= 5x5 each) and accumulating `esfs(e,f) += Ix*Iy*Iz` at once reads
+  each tile once, keeps `esfs` in L1, and removes the buffers -- and the `ERI_SCRATCH` traffic
+  -- entirely. Same flops. In the batched form the tile triple is contracted immediately with
+  D^prim on the cd side, so the per-element output is the ab components only.
+
+**Plan, J first** (the J-engine is the clean case; K is the same machinery with a messier index
+pattern, after).
+
+0. **Loop-order pilot on the existing code**: one routine (`make_esfs_XX` or `dd_pppp`), primitive
+   index outermost, no `Ixa` buffer. Measured with repeats, both bases. This tests the
+   memory-bound diagnosis directly and is the cheapest step; do it first.
+1. **Pair list by class.** Build once per geometry; measure its size on karrikinolide at both bases
+   and on the zinc-finger model.
+2. **Primitive density and primitive Schwarz**, replacing the three-level quartet screening.
+3. **One class-quartet J kernel**: pair block A x pair block B, the X matrix, one `get_weights_t2`
+   call, tiles, immediate contraction with D^prim; contract back to J. Validate against the
+   existing engine to 1e-10 on water, then karrikinolide, then the zinc-finger model.
+4. **MPI over class blocks**, `PARALLEL_SUM`. Then K. Then the offload toolchain question
+   (gfortran offload versus nvfortran `do concurrent`), which is its own item.
+
+Gate throughout: energies, `short`, `long`, timings with three repeats and candidates run
+concurrently (the lesson of 2026-09-16), and the bigger molecule, not only karrikinolide.
+
+## Benchmark molecule with a first-row transition metal and sulfur (Dylan, 2026-09-16)
+
+Karrikinolide (17 atoms, C/H/O) is the only benchmark, and every speed conclusion so far is
+conditioned on it. Wanted: a biological metal site, closed shell for the first benchmark so
+RHF/RKS and every reference code agree without multiplet arguments. Basis coverage in
+`basis_sets/`: 6-31G(d), def2-SVP and def2-TZVP carry Zn, Cu, Fe and S; cc-pVTZ carries S only.
+
+- **Chosen: a zinc-finger site model, [Zn(SCH3)2(imidazole)2]** -- Zn(II) d10, two thiolates,
+  two histidines, ~30 atoms. Geometry from a small-molecule CSD structure (experimental and
+  complete), optimised once at BLYP/def2-SVP in ORCA so g09, ORCA and Tonto start from one file.
+  References as for karrikinolide: g09 (`6D 10F` for the cartesian rows) and ORCA (`NoRI` for
+  DFT), one core, run solo.
+- **Recorded for later, not now:** a blue-copper (plastocyanin) site, Cu(II) with 2 His, Cys,
+  Met -- Cu and two sulfurs, open-shell doublet, the UHF/UKS benchmark; a heme model (Fe porphyrin
+  + imidazole + thiolate), 50-70 atoms, whose spin state makes it a poor reference system.
+
+## Unbuilt runfiles rot: `run_real.foo` boilerplate no longer compiles (2026-09-16)
+
+`runfiles/run_real.foo` (EXCLUDE_FROM_ALL) opens with `std_err.create_std_err` and
+`coeff :: VEC{REAL}*` followed by `coeff.create`; `create_std_err` is `selfless` now and
+`VEC{REAL}.create` takes an allocatable, so it fails to compile with "no specific subroutine for
+the generic". Found by copying its boilerplate into `run_rys.foo`. The current idiom is
+`TEXTFILE::create_stdout / TEXTFILE::create_std_err / std_err.open_for("write")` and `@`.
+The other EXCLUDE_FROM_ALL runfiles have not been checked; a `make`-all-runfiles CI step, or
+building them in `ci-full-suite.yml`, would stop this rotting silently.
 
 ## Speed up the SCF and the integrals (Dylan, 2026-09-11)
 
@@ -4185,6 +4102,179 @@ different question and the one that matters.
 ---
 
 # Done, resolved and closed (archive)
+
+## Vectorise the Rys quadrature over shell-quartet classes (Dylan, 2026-09-14)
+
+**CLOSED 2026-09-16, superseded.** Step 3 was built, measured flat, and merged (`5baf58e6`).
+Steps 2 and 4 are not pursued in this form: the successor is *Primitive-batched J and K* in the
+live half, which keeps the kernels and the pair-list idea and drops the per-quartet framing.
+
+**Step 3 done and flat, 2026-09-16 (branch `rys-vec`, merged `5baf58e6`).** Per-quartet vectorisation of the
+1 and 2 root fits: kernels 3-4x per X, whole job unchanged within ±1.5% on karrikinolide at both
+bases. Numbers and reasoning in `docs/SCF_SPEED_REPORT.md`, *Rys step 3*; the handover above has
+the two lessons. What remains of this item is step 2, the class-batched traversal, and it now
+carries a different justification: the profile share of the roots is not the wall clock, and the
+2-D integral buffer traffic is the thing to attack.
+
+**Why, in Dylan's words:** it matters for future correlated methods, which are
+integral-heavy and have no DFT grid, and for running the integrals on GPUs. A separate
+item from the DFT-grid work, to be started in its own session.
+
+**What the code does today** (surveyed 2026-09-11; line numbers may have drifted):
+
+- `RYS:get_weights(X)` (`rys.foo:89`) takes **one scalar** `X` and dispatches on `n_roots`:
+  closed-form polynomial fits for 1-3 roots (`get_weights1_t2` ... `_3_t2`, which return t²
+  roots directly), fits for 4-5 roots converted by `rr/(rr+1)`, and the numerical
+  `get_weights6` for 6 or more (moments by `rysfun`, then `ryssmt`, `rysnod`). Inside every fit
+  the polynomial is chosen by **nested branches on the T range** (breakpoints 3e-7, 1, 3, 5, 10,
+  15, 20, 25, 33, 35, 40, 47, 53, 59; e.g. `get_weights2_t2`, `rys.foo:330`). `get_only_weight`
+  is the ssss path. With `GAUSSIAN_DATA_L_MAX` = 4, `n_roots` is at most 9.
+- It is called **once per primitive pair × primitive pair** inside every shell quartet, e.g.
+  `make_esfs_XX` (`shell1quartet.foo:7450`): `rys.get_weights(xx)` inside `do k =
+  1,ab_n_gaussian_pairs / do j = 1,cd_n_gaussian_pairs`. The `RYS` object is created and
+  destroyed per shell quartet (40 M creates on karrikinolide `medium`).
+- Angular-momentum dispatch is per quartet, in `make_esfs` (`shell1quartet.foo:568`), a
+  `select case` on `max(ab_l_sum,cd_l_sum)` with nested ifs. Specialised routines exist up to
+  `dd_pppp`; every f and g variant is commented out (`:615-652`) and falls to the semi-generic
+  `make_esfs_Xs/sX/Xp/pX/Xd/dX/XX` (`:6627-7418`). The transfer step also branches per quartet
+  on `a.l > b.l` (`:8317`, `:9729`). The 2-D integrals are already indexed
+  `Ixa/Iya/Iza(n_roots × n_ab_pairs × n_cd_pairs, dim1, dim2)` and contracted by `form_esfs`.
+- Quartets are enumerated `parallel do ab = 1,.n_shell_pairs / do cd = 1,ab`
+  (`molecule.fock.foo:1410`), with three-level Schwarz screening (`Schwarz_test`), a
+  precomputed `SHELL1PAIR` matrix, and a J-engine. No sort by angular momentum exists.
+- **The AO order is load-bearing**: atom-major, shell-within-atom, contiguous per-atom blocks
+  assumed in `molecule.base/prop/rho/har/grid`, MO normalisation and every archive. **Do not
+  reorder the basis.** Group classes with an index vector over shell pairs instead; the Fock
+  loop already goes through `set_shell2_indices_from` / `set_shell1q_*_from`.
+
+**What the profile says** (gprof, karrikinolide BLYP/6-31G(d) `medium`, `docs/SCF_SPEED_REPORT.md`):
+`RYS:get_weights` 6.6% of the run, `form_esfs` 5.8%, the `make_esfs` dispatcher 4.5%,
+`set_cd_new` 2.3%, the `make_esfs_*` specialisations about 5%, and `RYS`/`MAT{REAL}`
+allocation churn about 2%: the two-electron integrals are about 22% of that DFT job. **For an
+HF or correlated job the share is larger and unmeasured, so the first step is to re-profile a
+job with no grid** (karrikinolide RHF 6-31G(d), and one larger basis with f functions), using
+the gprof tree at `~/github/tonto-prof/prof/` and `scfdata= { show_timings= TRUE }`.
+
+**Shape of the work** (the plan's steps 4-5, to be re-planned from that profile):
+
+1. Hoist the per-quartet allocations (`RYS`, work matrices) out of the quartet loop.
+
+   **Started 2026-09-15.** No-grid profiles (karrikinolide RHF, `perf`, runs in
+   `~/tonto_runs/rys_profile_2026-09-15/`): J/K is 96-97% of the SCF. 6-31G(d), 51 s:
+   `get_weights` + its `exp` ~19%, `form_esfs` 12%, `make_esfs` (low-l routines inlined) 10%,
+   J/K engine 12%, `malloc`/`free` ~11%, `set_cd_new` ~7%. cc-pVTZ, 1245 s: `form_esfs` 24%
+   (10.7% from `make_esfs_XX`, the generic f path), engine 12% (the K contraction loop), Rys ~10%,
+   `malloc`/`free` ~6.5%; `get_weights6` (6+ roots) only 0.3%. So with f functions the order is
+   `form_esfs`/`make_esfs_XX`, the K loop, allocation, then Rys.
+   *Step 1a* (uncommitted, main tree, built in `hoist/`): `set_ab_new`/`set_cd_new` reuse
+   grow-only pair arrays, `SHELL1:set_reusing_storage` replaces the whole-`SHELL1` copies, and
+   the 61 per-quartet `destroy_ab`/`destroy_cd` calls in `molecule.fock.foo` are gone.
+   *Step 1b* (worktree `../tonto-step2`, branch `rys-step2`, on top of 1a): `RYS` root/weight
+   fixed at 16, `RYS:set_n_roots`, non-allocatable `rys` locals in the 24 `make_esfs_*`.
+   **HANDOFF 2026-09-15 (sauce, Dylan going offline).** Three branches, each a single commit
+   off `4b37c9da` carrying every earlier step, all pushed; none merged to `develop`:
+   - `rys-step2` = step 1a + step 2. Built and timed (report table). Step 1a alone is also
+     uncommitted in the main `develop` tree on sauce -- discard it there, it lives on this branch.
+   - `rys-rms` = + the reduced multiplication scheme, `scfdata= { use_rms_esfs= TRUE }`, off by
+     default. 6-31G(d): energy identical to 12 decimals on/off, but J/K 1% *slower* (51.72 vs
+     51.01 s); `perf annotate` shows the time is the `sum(Ixy*Iz)` dot products, not index
+     lookups. **cc-pVTZ confirms it: energy identical to 12 decimals, J/K 5.0% slower**
+     (1256.32 vs 1196.07 CPU s; `form_esfs_rms2` 29.5% of the run vs `form_esfs` 25.9%). RMS saves
+     one multiply per shared `Ix*Iy` but keeps every n_sum-long dot product and adds a stored
+     product vector and scattered writes. **Dylan's decision (2026-09-15): keep it, off by default**;
+     on `rys-1c` its `rms2_indices` are built only when `use_rms_esfs= TRUE`
+     (`GAUSSIAN_DATA:make_rms2_indices`), and remade if `set_indices` raises l_max. The lever for the contraction is fewer long sums (earlier
+     contraction, class batching). Runs in `~/tonto_runs/rys_profile_2026-09-15/rms_{off,on}_*`.
+   - `rys-1c` = + step 1c, **done, pushed `74e729f5`**. Karrikinolide RHF 6-31G(d) side by
+     side with the `rys-rms` binary: energy identical to 12 decimals, J/K CPU 52.07 -> 49.17 s
+     (-5.6%), `malloc`+`free` 2.8% -> 0.2%, `grow_to` 0.6%. cc-pVTZ: energy identical, J/K
+     1203.49 -> 1120.31 s (-6.9%), `malloc`+`free` ~3.8% -> ~0.5%; `form_esfs` is now inlined
+     into the generic `make_esfs_*` (`make_esfs_XX` 15%). **Then, `271a4cb9`:** the J-only engine (all pure DFT, RKS
+     and UKS), the open-shell J/K engine, and the 12 `make_ERI` builders (direct/spherical,
+     nosym, CIS, `make_ERI_integrals`) on `ERI_SCRATCH` via `make_ERI_into(work)`;
+     `change_to_spherical` reads `GAUSSIAN_DATA::spherical_harmonics_for` in place instead of
+     copying the whole table per quartet. Validated side by side with `rys-rms`: BLYP 6-31G(d)
+     energy identical, J 59.86 -> 56.34 s (-5.9%), whole job 92.0 -> 88.9 s; RHF 6-31G(d)
+     identical, J/K -7.3%; short UHF and spherical tests identical line for line, spherical
+     2.80 -> 2.37 s. `make_ERIs_for_shellpairs` still allocates (called per pair).
+     **Bug fixed in its own commit on `rys-1c`:** `make_u_JK_engine` had `JBcd => JA(cd)`,
+     putting beta ket-side J into J.a; harmless before because every caller uses J.a+J.b. What went in first: 1c-i (`form_esfs/esss/ssfs` read
+     `GAUSSIAN_DATA::nx` in place, translates); `ERI_SCRATCH` type (`types.foo`) and module
+     `eri_scratch.foo` (in `CMakeLists.txt`) with `set_sizes_for(pair)` (dry run grouped by l_sum)
+     and grow-only `ensure`; the seven generic `make_esfs_Xs..XX` take `Ixa,Iya,Iza` as
+     explicit-shape `target, INOUT` dummies (no create/destroy); `MOLECULE.FOCK:make_r_JK_engine`
+     declares `work :: ERI_SCRATCH`, calls `work.set_sizes_for(.basis_shell1pair)`, and passes
+     `work` to both `sh4n/sh4s.make_r_JK_engine(...,work)`. Then: the dispatcher is `make_esfs_with(esfs,Ix,Iy,Iz)`
+     (`VEC{REAL}(*)` buffers) and `make_esfs(esfs)` a wrapper that allocates only when a generic
+     routine will run; a restricted `make_r_JK_engine(...,ld,work)` calls `work.grow_to(...)`
+     (named so, not `ensure`, which would clash with the `ENSURE` macro's generic in debug) and
+     passes `work.Ix` etc. -- never `work` itself alongside them -- to the explicit-shape kernel
+     `make_r_JK_engine_k`. `eri_scratch.F90` must also be in CMake's generated-F90 list. The
+     unrestricted, J-only and nosym engines still use the allocating path. Left for 1c-iii: `transfer_l_*` `int_new/int_old`. Gate: energies to 1e-8 accept; for these
+     identical-maths rewrites a shift above ~1e-10 means compare quartet by quartet.
+   **Next measurement (Dylan, 2026-09-15): Tonto against g09 and ORCA on karrikinolide.** The
+   only like-for-like figure so far is BLYP/6-31G(d): g09 FineGrid 49 s wall, 23 cycles; Tonto
+   went 177 s (3.6x) -> 123 s (2.5x, no-copy) -> SCF 66 s after stage E, whole job **not timed**
+   (estimated 75-80 s, about 1.5x). No g09 or ORCA run exists for RHF or for cc-pVTZ. Run, one
+   core each, geometry from `tests/long/karrikinolide_blyp_6-31G(d)_Salvador_properties/
+   karrikinolide.fchk`, same convergence as `~/tonto_runs/rys_profile_2026-09-15/rhf_*/stdin`:
+   RHF/6-31G(d), RHF/cc-pVTZ, BLYP/6-31G(d), BLYP/cc-pVTZ, each with g09 (`6D 10F` to match
+   Tonto's cartesian default), ORCA, and Tonto on the final `rys-1c` binary; record whole-job
+   wall, SCF time, iterations and energy. **ORCA is spherical only**: compare it with Tonto at
+   `use_spherical_basis= TRUE`, which runs the direct `make_ERI_into` builders, not the
+   cartesian engines -- so report both Tonto timings. DFT: match grids by accuracy against a
+   converged reference (g09 `Int(Grid=199974)`), not by name.
+   *Step 1c, Dylan's idea:* a dry run over the shell pairs before the SCF returns the maximum
+   work-array sizes (primitive pairs, l sums, roots -- all basis-only), so the `Ixa`/`esfs`/
+   `escd`/`I` scratch is allocated once in the quartet object and the loop allocates nothing.
+   The same fixed sizes are what a GPU kernel needs. Needs the `make_esfs_*` and engine `self`
+   to become `INOUT` (and `target` for the `Ix => Ixa(i,:,:)` pointers).
+2. A class-batched traversal: an index vector sorting shell pairs by `(l_a, l_b)` and primitive
+   count, so the dispatch and the transfer choice happen once per class block.
+3. Within a block, gather every primitive quartet's `X` into one array, bin it by the fit's T
+   ranges, and evaluate each bin as a loop over a contiguous slice (`get_weights_vec`), one
+   range test per bin rather than per primitive. Start with 1-5 roots; 6 or more stay scalar.
+   Uniform-shape batches are also what a GPU kernel needs.
+4. Only if the profile says so: revive or generate the specialised f and g routines.
+
+**Gate:** integrals against the scalar path quartet by quartet (`runfiles/run_shell1quartet.foo`
+exists and is unbuilt), agreeing to 1e-14 or bitwise; HF energies bit-identical or to 1e-12;
+`short` and the HF/correlated `long` jobs; timings before and after in
+`docs/SCF_SPEED_REPORT.md`.
+
+**Detailed plan for step 3 (drafted 2026-09-14, parked in favour of pruning stage D).** Call it
+"Rys step 3", not "stage D", which is the grid-pruning item.
+
+*Facts found while planning:*
+- Each 1-5 root fit is a nested `if` tree with 8-10 leaves; the breakpoint subset differs per
+  fit. Leaves share work (`exp(-x)`, `f = (w1-e)/(x+x)`, `r/(r+1)`), so the tree does not cut
+  cleanly into bins without carrying those tails into each leaf.
+- 24 live `rys.get_weights` calls in `shell1quartet.foo`, more in `shell2`, `shell4`,
+  `gaussian2`, `gaussian4`; all are `do k / do j / xx / get_weights / use roots at once`.
+- **Per-quartet batches are small** (`n_ab_prims × n_cd_prims`: 1-81 for 6-31G(d) p/d shells,
+  1296 only for the 6-primitive 1s). Sort overhead may eat the gain; the payoff may need the
+  cross-quartet class traversal (step 2) first. The microbenchmark below decides.
+- Release is `-Ofast -march=native` (`cmake/SetFortranFlags.cmake`), so bitwise agreement between
+  a vectorised and a scalar loop is not guaranteed even with identical expressions: gate at 1e-14.
+- 20 of the callers use `parallel do k`; a gather pass must be serial and run on every rank,
+  outside that loop.
+
+*Steps:*
+1. **Split each 1-5 root fit into one `ELEMENTAL` kernel per leaf**, carrying its share of the
+   tails. The scalar `get_weights` keeps its tree but calls the kernels, so the coefficients
+   exist once. Gate: old vs new bitwise over ~1e6 `x` in [0,100], including both sides of every
+   breakpoint.
+2. **`RYS:get_weights_t2(X,root,weight)`**, `X :: VEC{REAL}`, `root,weight :: MAT{REAL}(n_roots,n_X)`:
+   bin label = count of breakpoints `<= x` (the one, branchless, comparison pass); stable counting
+   sort to a permutation; each bin's contiguous slice through its elemental kernel; scatter back.
+   6+ roots stay scalar. Gate: 1e-14 against scalar. Microbenchmark ns per `x` at batch sizes
+   1, 9, 81, 1296, 1e5 to find the break-even.
+3. **Only if (2) wins at per-quartet sizes:** restructure the generic `make_esfs_Xs … XX` into
+   gather `xx`/`rho` over all `(k,j)`, one Rys call, then the existing 2-D integral loop.
+   Otherwise do the class traversal first and return.
+4. **Gate:** `run_shell1quartet` old vs new; HF energies to 1e-12; `short` and HF `long` jobs;
+   timings in `docs/SCF_SPEED_REPORT.md`. Run the no-grid karrikinolide RHF profile alongside
+   step 1.
 
 ## FIXED (2026-09-10): `tonto.io_file` was a dangling pointer, and every `DIE` dereferenced it
 
