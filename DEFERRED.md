@@ -2611,6 +2611,36 @@ so (dp|dp) and (dd|dd) at 6-31G(d) as well as the f classes at cc-pVTZ.
   +7%, not +25-35%. Suspects: the laptop's thermal state, or the cutoff costs more than the scan
   said. Check with `eri_accuracy= very_low` on an idle machine.
 
+**Step 1 sized from the basis files (2026-09-17), before any code.** `pair_count.py` in
+`~/tonto_runs/pair_list_2026-09-17/` (outputs `karr_counts.txt`, `znfinger_counts.txt`, per class
+there) counts unique shell pairs, their primitive pairs, and those passing Tonto's pair cutoff
+`exp(-ab/(a+b) r^2) >= 1e-9` (same-centre pairs always pass). Then the pairs left once shells
+sharing an exponent on one atom are merged -- with l kept, and with l ignored, since one set of
+tiles built to the class's l-sum serves every l.
+
+| molecule, basis | shell pairs | primitive pairs | surviving | distinct, l kept | distinct, l ignored |
+|---|---|---|---|---|---|
+| karrikinolide 6-31G(d) | 3081 | 18204 | 9410 | 9161 | **4701 (0.50)** |
+| karrikinolide cc-pVTZ | 10731 | 56612 | 28024 | 16969 | 16969 (0.61) |
+| karrikinolide def2-SVP | 3570 | 13364 | 7730 | 7569 | 7569 (0.98) |
+| karrikinolide def2-TZVP | 10585 | 33156 | 19051 | 18791 | 18791 (0.99) |
+| zinc finger 6-31G(d) | 8256 | 56091 | 20947 | 20467 | **10012 (0.48)** |
+| zinc finger def2-SVP | 10011 | 39344 | 16908 | 16624 | 16624 (0.98) |
+| zinc finger def2-TZVP | 26565 | 86757 | 36914 | 36477 | 36477 (0.99) |
+
+- **The pair list is small: 1-4e4 entries.** Stored flat, a few MB. "~1e5" above was generous.
+- **Shared exponents halve the 6-31G(d) pair list** (the sp shells), so the primitive
+  *quartets* fall to a quarter, if the tiles are shared across l. That is the quantitative form
+  of the *Expectations* paragraph's guess about g09 and sp shells. cc-pVTZ gains 0.61 (general
+  contraction), the def2 sets nothing.
+- **Correction to *Settled points*:** "~4e8 surviving primitive quartets per Fock build" at
+  6-31G(d) does not fit these counts: the upper bound before Schwarz, surviving^2/2, is 4.4e7.
+  The *Rys step 3* counters were 217 M X for the 2-root fit alone **per SCF**, all iterations, so
+  the 4e8 is most likely a whole-SCF figure. The no-disk argument is unaffected.
+- **Per-quartet set-up is real work today**: `SHELL1QUARTET:set_ab_new` / `set_cd_new` recompute
+  `exp(-ab r^2/(a+b))`, P and PA for every primitive pair of every quartet, every Fock build --
+  pair-level data rebuilt at quartet frequency. The pair list removes that outright.
+
 ## Benchmark molecule with a first-row transition metal and sulfur (Dylan, 2026-09-16)
 
 Karrikinolide (17 atoms, C/H/O) is the only benchmark, and every speed conclusion so far is
