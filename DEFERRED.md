@@ -2698,6 +2698,21 @@ pair, where the engine applies it only when all four atoms differ. Both are far 
 1e-8 gate, but it is not yet an accuracy-matched comparison. Still serial, J only, no
 shared-exponent tiles, no batching across k.
 
+**cc-pVTZ (karrikinolide BLYP, `low`, one concurrent pair): engine 901.7 s, pair list 621.1 s,
+−31% -- but the energies differ by 8.2e-7** (engine −534.166446623420, list −534.166447442652).
+Chased the same night:
+- **Not the list's screening.** The list with `eri_schwarz_cutoff= 1d-30` gives
+  −534.166447442648, with `eri_primitive_pair_cutoff= 1d-15` −534.166447442646: unmoved.
+- **Not the f-class integrals.** Water BLYP/cc-pVTZ at `high`: both paths −76.442522880796.
+- So the suspect is the **engine's** screening at `low` on a separated-atom molecule with tight
+  s primitives. The deciding run is both paths at `high` on karrikinolide cc-pVTZ (in progress).
+- Meanwhile the list's Schwarz test was changed to AO-based bounds (`3c422055`): the shell
+  pair's `max_I` scaled by the primitive's share of the shell pair's transfer-space bound, and
+  the AO density maxima the engine uses. Transfer-space bounds alone are not bounds on AO
+  contributions, even though they did not cause this discrepancy.
+- Two cc-pVTZ jobs at once were killed by the session memory guard: the kernel holds 4.4 GB of
+  slab on this laptop. Run cc-pVTZ jobs one at a time here.
+
 **Build note:** a full rebuild was killed three times by the session's low-memory guard on this
 14 GB laptop with the desktop running, at `-j6`, `-j3` and `-j2`, never by an actual compile
 (`mat_real.F90`, the file it died on, peaks at 356 MB). Foreground `make -j2` in 10-minute
