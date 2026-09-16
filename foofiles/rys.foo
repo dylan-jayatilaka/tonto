@@ -53,6 +53,9 @@ module RYS
    w45 :: REAL, parameter, private = 1.51614186862443d-03
    w55 :: REAL, parameter, private = 8.62130526143657d-06
 
+   group_min :: INT, parameter, private = 32
+   ! Smallest mixed-range batch that get_weights_t2 groups by T range
+
 contains
 
 !  ==========
@@ -488,6 +491,472 @@ contains
          w2=w22*w1
          .weight(1)=w1-w2
          .weight(2)=w2
+
+      end
+
+   end
+
+!  ======================================
+!  Vectorised 1 and 2 root fits by T range
+!  ======================================
+!  The kernels below are a second copy of the 1 and 2 root fit
+!  coefficients, one leaf per T range so a slice vectorises. The scalar
+!  routines above keep their branch trees, which a call with n = 1
+!  cannot match for speed. runfiles/run_rys.foo checks the two copies
+!  agree; run it after touching either.
+
+   get_weights_t2(n,X,root,weight) :: PURE
+   ! The *t2* roots and weights for the "n" values in "X": root(r,i) and
+   ! weight(r,i) are the r-th root and weight for X(i). For 1 and 2 roots
+   ! the X are grouped by the T range of the fit and each group runs
+   ! through its leaf as one straight loop, which vectorises; 3 or more
+   ! roots take the scalar path for each X.
+      self :: INOUT
+      n :: INT, IN
+      X :: VEC{REAL}(n), IN
+      root,weight :: MAT{REAL}(.n_roots,n), OUT
+
+   ENSURE(n>=0,"n must not be negative")
+   ENSURE(all(X>=ZERO),"Rys X must be positive")
+
+      lab,perm :: VEC{INT}(n)
+      Xg       :: VEC{REAL}(n)
+      rg,wg    :: MAT{REAL}(.n_roots,n)
+      cnt,first,pos :: VEC{INT}(10)
+      i,r,lo,hi :: INT
+
+      ! A quartet can be left with no primitive pairs by the screening
+      if (n==0) return
+
+      if (n==1 OR .n_roots>2) then
+         do i = 1,n
+            .get_weights(X(i))
+            root(:,i)   = .root(1:.n_roots)
+            weight(:,i) = .weight(1:.n_roots)
+         end
+         return
+      end
+
+      ! All in one range: one straight loop through the leaf
+      if (RYS::t_range(minval(X)) == RYS::t_range(maxval(X))) then
+         select case (.n_roots)
+         case (1); RYS::get_weights1_t2_n(n,X,root,weight)
+         case (2); RYS::get_weights2_t2_n(n,X,root,weight)
+         end
+         return
+      end
+
+      ! Mixed ranges. Grouping pays only for a large batch (measured,
+      ! docs/SCF_SPEED_REPORT.md); a small one takes the scalar path.
+      if (n < group_min) then
+         do i = 1,n
+            .get_weights(X(i))
+            root(:,i)   = .root(1:.n_roots)
+            weight(:,i) = .weight(1:.n_roots)
+         end
+         return
+      end
+
+      ! The T range of each X, and how many fall in each
+      cnt = 0
+      do i = 1,n
+         r = RYS::t_range(X(i)) + 1
+         lab(i) = r
+         cnt(r) = cnt(r) + 1
+      end
+
+      ! Gather each range's X into a contiguous slice, run it, scatter back
+      first(1) = 1
+      do r = 2,10
+         first(r) = first(r-1) + cnt(r-1)
+      end
+      pos = first
+      do i = 1,n
+         r = lab(i)
+         Xg(pos(r))   = X(i)
+         perm(pos(r)) = i
+         pos(r) = pos(r) + 1
+      end
+      do r = 1,9
+         if (cnt(r)>0) then
+            lo = first(r)
+            hi = lo + cnt(r) - 1
+            select case (.n_roots)
+            case (1); RYS::get_weights1_t2_n(cnt(r),Xg(lo:hi),rg(:,lo:hi),wg(:,lo:hi))
+            case (2); RYS::get_weights2_t2_n(cnt(r),Xg(lo:hi),rg(:,lo:hi),wg(:,lo:hi))
+            end
+         end
+      end
+      do i = 1,n
+         root(:,perm(i))   = rg(:,i)
+         weight(:,perm(i)) = wg(:,i)
+      end
+
+   end
+
+   t_range(x) result (res) :: selfless, private, PURE
+   ! The T range of "x" in the 1 and 2 root fits: 0 below 3e-7, then one
+   ! more for each of the breakpoints 1, 3, 5, 10, 15, 33, 40 that x reaches.
+   ! The 1 root fit has one leaf for ranges 7 and 8.
+      x :: REAL, IN
+      res :: INT
+
+      res = merge(1,0,x >= 3.0d-07) + merge(1,0,x >= 1.0d+00) &
+          + merge(1,0,x >= 3.0d+00) + merge(1,0,x >= 5.0d+00) &
+          + merge(1,0,x >= 1.0d+01) + merge(1,0,x >= 1.5d+01) &
+          + merge(1,0,x >= 3.3d+01) + merge(1,0,x >= 4.0d+01)
+
+   end
+
+   get_weights1_t2_n(n,x,root,weight) :: selfless, private, PURE
+   ! The one root fit for the "n" values in "x", which must all lie in the
+   ! same T range (see t_range). root and weight are (1,n) so that the
+   ! shape matches the other fits.
+      n :: INT, IN
+      x :: VEC{REAL}(n), IN
+      root,weight :: MAT{REAL}(1,n), OUT
+
+      xi,y,e,f,w1 :: REAL
+      i :: INT
+
+      select case (RYS::t_range(x(1)))
+
+      case (0)
+         do i = 1,n
+            xi = x(i)
+            weight(1,i) = ONE - xi*THIRD
+            root(1,i)   = ONE + TEN/(xi+xi-15d0)
+         end
+
+      case (1)
+         do i = 1,n
+            xi = x(i)
+            f = (((((((( &
+              - 8.36313918003957d-08 *xi &
+              + 1.21222603512827d-06)*xi &
+              - 1.15662609053481d-05)*xi &
+              + 9.25197374512647d-05)*xi &
+              - 6.40994113129432d-04)*xi &
+              + 3.78787044215009d-03)*xi &
+              - 1.85185172458485d-02)*xi &
+              + 7.14285713298222d-02)*xi &
+              - 1.99999999997023d-01)*xi &
+              + 3.33333333333318d-01
+            w1 = (xi+xi)*f + exp(-xi)
+            weight(1,i) = w1
+            root(1,i)   = f/w1
+         end
+
+      case (2)
+         do i = 1,n
+            xi = x(i)
+            y = xi - 2.0d+00
+            f = (((((((((( &
+              - 1.61702782425558d-10 *y &
+              + 1.96215250865776d-09)*y &
+              - 2.14234468198419d-08)*y &
+              + 2.17216556336318d-07)*y &
+              - 1.98850171329371d-06)*y &
+              + 1.62429321438911d-05)*y &
+              - 1.16740298039895d-04)*y &
+              + 7.24888732052332d-04)*y &
+              - 3.79490003707156d-03)*y &
+              + 1.61723488664661d-02)*y &
+              - 5.29428148329736d-02)*y &
+              + 1.15702180856167d-01
+            w1 = (xi+xi)*f + exp(-xi)
+            weight(1,i) = w1
+            root(1,i)   = f/w1
+         end
+
+      case (3)
+         do i = 1,n
+            xi = x(i)
+            y = xi - 4.0d+00
+            f = (((((((((( &
+              - 2.62453564772299d-11 *y &
+              + 3.24031041623823d-10)*y &
+              - 3.614965656163d-09  )*y &
+              + 3.760256799971d-08  )*y &
+              - 3.553558319675d-07  )*y &
+              + 3.022556449731d-06  )*y &
+              - 2.290098979647d-05  )*y &
+              + 1.526537461148d-04  )*y &
+              - 8.81947375894379d-04)*y &
+              + 4.33207949514611d-03)*y &
+              - 1.75257821619926d-02)*y &
+              + 5.28406320615584d-02
+            w1 = (xi+xi)*f + exp(-xi)
+            weight(1,i) = w1
+            root(1,i)   = f/w1
+         end
+
+      case (4)
+         do i = 1,n
+            xi = x(i)
+            e = exp(-xi)
+            w1 = (((((( &
+                 4.6897511375022d-01 /xi &
+               - 6.9955602298985d-01)/xi &
+               + 5.3689283271887d-01)/xi &
+               - 3.2883030418398d-01)/xi &
+               + 2.4645596956002d-01)/xi &
+               - 4.9984072848436d-01)/xi &
+               - 3.1501078774085d-06)*e &
+               + sqrt_pie4/sqrt(xi)
+            f = (w1-e)/(xi+xi)
+            weight(1,i) = w1
+            root(1,i)   = f/w1
+         end
+
+      case (5)
+         do i = 1,n
+            xi = x(i)
+            e = exp(-xi)
+            w1 = ((( &
+               - 1.8784686463512d-01 /xi &
+               + 2.2991849164985d-01)/xi &
+               - 4.9893752514047d-01)/xi &
+               - 2.1916512131607d-05)*e &
+               + sqrt_pie4/sqrt(xi)
+            f = (w1-e)/(xi+xi)
+            weight(1,i) = w1
+            root(1,i)   = f/w1
+         end
+
+      case (6)
+         do i = 1,n
+            xi = x(i)
+            e = exp(-xi)
+            w1 = (( &
+                 1.9623264149430d-01 /xi &
+               - 4.9695241464490d-01)/xi &
+               - 6.0156581186481d-05)*e &
+               + sqrt_pie4/sqrt(xi)
+            f = (w1-e)/(xi+xi)
+            weight(1,i) = w1
+            root(1,i)   = f/w1
+         end
+
+      case default
+         do i = 1,n
+            xi = x(i)
+            weight(1,i) = sqrt_pie4/sqrt(xi)
+            root(1,i)   = HALF/xi
+         end
+
+      end
+
+   end
+
+   get_weights2_t2_n(n,x,root,weight) :: selfless, private, PURE
+   ! The two root fit for the "n" values in "x", which must all lie in the
+   ! same T range (see t_range).
+      n :: INT, IN
+      x :: VEC{REAL}(n), IN
+      root,weight :: MAT{REAL}(2,n), OUT
+
+      xi,y,e,f,r1,r2,w1,w2 :: REAL
+      i :: INT
+
+      select case (RYS::t_range(x(1)))
+
+      case (0)
+         do i = 1,n
+            xi = x(i)
+            r1=1.30693606237085d-01 -2.90430236082028d-02 *xi
+            r2=2.86930639376291d+00 -6.37623643058102d-01 *xi
+            root(1,i)=r1/(r1+ONE)
+            root(2,i)=r2/(r2+ONE)
+            weight(1,i)=6.52145154862545d-01 -1.22713621927067d-01 *xi
+            weight(2,i)=3.47854845137453d-01 -2.10619711404725d-01 *xi
+         end
+
+      case (1)
+         do i = 1,n
+            xi = x(i)
+            f=((((((((-8.36313918003957d-08*xi+1.21222603512827d-06 )*xi- &
+                  1.15662609053481d-05 )*xi+9.25197374512647d-05 )*xi- &
+                  6.40994113129432d-04 )*xi+3.78787044215009d-03 )*xi- &
+                  1.85185172458485d-02 )*xi+7.14285713298222d-02 )*xi- &
+                  1.99999999997023d-01 )*xi+3.33333333333318d-01
+            r1=(((((((-2.35234358048491d-09*xi+2.49173650389842d-08)*xi- &
+                4.558315364581d-08)*xi-2.447252174587d-06)*xi+ &
+                4.743292959463d-05)*xi-5.33184749432408d-04 )*xi+ &
+                4.44654947116579d-03 )*xi-2.90430236084697d-02 )*xi+ &
+                1.30693606237085d-01
+            r2=(((((((-2.47404902329170d-08*xi+2.36809910635906d-07)*xi+ &
+                1.835367736310d-06)*xi-2.066168802076d-05)*xi- &
+                1.345693393936d-04)*xi-5.88154362858038d-05 )*xi+ &
+                5.32735082098139d-02 )*xi-6.37623643056745d-01 )*xi+ &
+                2.86930639376289d+00
+            w1 = (xi+xi)*f + exp(-xi)
+            w2 = ((f-w1)*r1+f)*(ONE+r2)/(r2-r1)
+            root(1,i)=r1/(r1+ONE)
+            root(2,i)=r2/(r2+ONE)
+            weight(1,i)=w1-w2
+            weight(2,i)=w2
+         end
+
+      case (2)
+         do i = 1,n
+            xi = x(i)
+            y = xi-2.0d+00
+            f = ((((((((((-1.61702782425558d-10*y+1.96215250865776d-09)*y- &
+                  2.14234468198419d-08)*y+2.17216556336318d-07)*y- &
+                  1.98850171329371d-06)*y+1.62429321438911d-05)*y- &
+                  1.16740298039895d-04)*y+7.24888732052332d-04)*y- &
+                  3.79490003707156d-03)*y+1.61723488664661d-02)*y- &
+                  5.29428148329736d-02)*y+1.15702180856167d-01
+            r1 = (((((((((-6.36859636616415d-12*y+8.47417064776270d-11)*y- &
+                5.152207846962d-10)*y-3.846389873308d-10)*y+ &
+                8.472253388380d-08)*y-1.85306035634293d-06)*y+ &
+                2.47191693238413d-05)*y-2.49018321709815d-04)*y+ &
+                2.19173220020161d-03)*y-1.63329339286794d-02)*y+ &
+                8.68085688285261d-02
+            r2 = ((((((((( 1.45331350488343d-10*y+2.07111465297976d-09)*y- &
+                1.878920917404d-08)*y-1.725838516261d-07)*y+ &
+                2.247389642339d-06)*y+9.76783813082564d-06)*y- &
+                1.93160765581969d-04)*y-1.58064140671893d-03)*y+ &
+                4.85928174507904d-02)*y-4.30761584997596d-01)*y+ &
+                1.80400974537950d+00
+            w1 = (xi+xi)*f + exp(-xi)
+            w2 = ((f-w1)*r1+f)*(ONE+r2)/(r2-r1)
+            root(1,i)=r1/(r1+ONE)
+            root(2,i)=r2/(r2+ONE)
+            weight(1,i)=w1-w2
+            weight(2,i)=w2
+         end
+
+      case (3)
+         do i = 1,n
+            xi = x(i)
+            y = xi - 4.0d+00
+            f = ((((((((((-2.62453564772299d-11*y+3.24031041623823d-10 )*y- &
+                  3.614965656163d-09)*y+3.760256799971d-08)*y- &
+                  3.553558319675d-07)*y+3.022556449731d-06)*y- &
+                  2.290098979647d-05)*y+1.526537461148d-04)*y- &
+                  8.81947375894379d-04 )*y+4.33207949514611d-03 )*y- &
+                  1.75257821619926d-02 )*y+5.28406320615584d-02
+            r1 = ((((((((-4.11560117487296d-12*y+7.10910223886747d-11)*y- &
+                1.73508862390291d-09 )*y+5.93066856324744d-08 )*y- &
+                9.76085576741771d-07 )*y+1.08484384385679d-05 )*y- &
+                1.12608004981982d-04 )*y+1.16210907653515d-03 )*y- &
+                9.89572595720351d-03 )*y+6.12589701086408d-02
+            r2 = (((((((((-1.80555625241001d-10*y+5.44072475994123d-10)*y+ &
+                1.603498045240d-08)*y-1.497986283037d-07)*y- &
+                7.017002532106d-07)*y+1.85882653064034d-05 )*y- &
+                2.04685420150802d-05 )*y-2.49327728643089d-03 )*y+ &
+                3.56550690684281d-02 )*y-2.60417417692375d-01 )*y+ &
+                1.12155283108289d+00
+            w1 = (xi+xi)*f + exp(-xi)
+            w2 = ((f-w1)*r1+f)*(ONE+r2)/(r2-r1)
+            root(1,i)=r1/(r1+ONE)
+            root(2,i)=r2/(r2+ONE)
+            weight(1,i)=w1-w2
+            weight(2,i)=w2
+         end
+
+      case (4)
+         do i = 1,n
+            xi = x(i)
+            e = exp(-xi)
+            w1 = (((((( 4.6897511375022d-01/xi-6.9955602298985d-01)/xi + &
+                    5.3689283271887d-01)/xi-3.2883030418398d-01)/xi + &
+                    2.4645596956002d-01)/xi-4.9984072848436d-01)/xi - &
+                    3.1501078774085d-06)*e + sqrt_pie4/sqrt(xi)
+            y  = xi - 7.5d+00
+            r1 = (((((((((((((-1.43632730148572d-16*y+2.38198922570405d-16)* &
+                  y+1.358319618800d-14)*y-7.064522786879d-14)*y- &
+                  7.719300212748d-13)*y+7.802544789997d-12)*y+ &
+                  6.628721099436d-11)*y-1.775564159743d-09)*y+ &
+                  1.713828823990d-08)*y-1.497500187053d-07)*y+ &
+                  2.283485114279d-06)*y-3.76953869614706d-05 )*y+ &
+                  4.74791204651451d-04 )*y-4.60448960876139d-03 )*y+ &
+                  3.72458587837249d-02
+            r2 = (((((((((((( 2.48791622798900d-14*y-1.36113510175724d-13)*y- &
+                  2.224334349799d-12)*y+4.190559455515d-11)*y- &
+                  2.222722579924d-10)*y-2.624183464275d-09)*y+ &
+                  6.128153450169d-08)*y-4.383376014528d-07)*y- &
+                  2.49952200232910d-06 )*y+1.03236647888320d-04 )*y- &
+                  1.44614664924989d-03 )*y+1.35094294917224d-02 )*y- &
+                  9.53478510453887d-02 )*y+5.44765245686790d-01
+            f  = (w1-e)/(xi+xi)
+            w2 = ((f-w1)*r1+f)*(ONE+r2)/(r2-r1)
+            root(1,i)=r1/(r1+ONE)
+            root(2,i)=r2/(r2+ONE)
+            weight(1,i)=w1-w2
+            weight(2,i)=w2
+         end
+
+      case (5)
+         do i = 1,n
+            xi = x(i)
+            e = exp(-xi)
+            w1 = (((-1.8784686463512d-01/xi+2.2991849164985d-01)/xi - &
+                      4.9893752514047d-01)/xi-2.1916512131607d-05)*e + sqrt_pie4/sqrt(xi)
+            r1 = ((((-1.01041157064226d-05*xi+1.19483054115173d-03)*xi - &
+                  6.73760231824074d-02)*xi+1.25705571069895d+00)*xi + (((- &
+                  8.57609422987199d+03/xi+5.91005939591842d+03)/xi - &
+                  1.70807677109425d+03)/xi+2.64536689959503d+02)/xi - &
+                  2.38570496490846d+01)*e + r12/(xi-r12)
+            r2 = ((( 3.39024225137123d-04*xi-9.34976436343509d-02)*xi - &
+                  4.22216483306320d+00)*xi + (((-2.08457050986847d+03/xi - &
+                  1.04999071905664d+03)/xi+3.39891508992661d+02)/xi - &
+                  1.56184800325063d+02)/xi+8.00839033297501d+00)*e + r22/(xi-r22)
+            f  = (w1-e)/(xi+xi)
+            w2 = ((f-w1)*r1+f)*(ONE+r2)/(r2-r1)
+            root(1,i)=r1/(r1+ONE)
+            root(2,i)=r2/(r2+ONE)
+            weight(1,i)=w1-w2
+            weight(2,i)=w2
+         end
+
+      case (6)
+         do i = 1,n
+            xi = x(i)
+            e = exp(-xi)
+            w1 = (( 1.9623264149430d-01/xi-4.9695241464490d-01)/xi - &
+                      6.0156581186481d-05)*e + sqrt_pie4/sqrt(xi)
+            r1 = ((((-1.14906395546354d-06*xi+1.76003409708332d-04)*xi - &
+                  1.71984023644904d-02)*xi-1.37292644149838d-01)*xi + (- &
+                  4.75742064274859d+01/xi+9.21005186542857d+00)/xi - &
+                  2.31080873898939d-02)*e + r12/(xi-r12)
+            r2 = ((( 3.64921633404158d-04*xi-9.71850973831558d-02)*xi - &
+                  4.02886174850252d+00)*xi + (-1.35831002139173d+02/xi - &
+                  8.66891724287962d+01)/xi+2.98011277766958d+00)*e + r22/(xi-r22)
+            f  = (w1-e)/(xi+xi)
+            w2 = ((f-w1)*r1+f)*(ONE+r2)/(r2-r1)
+            root(1,i)=r1/(r1+ONE)
+            root(2,i)=r2/(r2+ONE)
+            weight(1,i)=w1-w2
+            weight(2,i)=w2
+         end
+
+      case (7)
+         do i = 1,n
+            xi = x(i)
+            e  = exp(-xi)
+            w1 = sqrt_pie4/sqrt(xi)
+            w2 = ( 4.46857389308400d+00*xi-7.79250653461045d+01)*e + w22*w1
+            r1 = (-8.78947307498880d-01*xi+1.09243702330261d+01)*e + r12/(xi-r12)
+            r2 = (-9.28903924275977d+00*xi+8.10642367843811d+01)*e + r22/(xi-r22)
+            root(1,i)=r1/(r1+ONE)
+            root(2,i)=r2/(r2+ONE)
+            weight(1,i)=w1-w2
+            weight(2,i)=w2
+         end
+
+      case default
+         do i = 1,n
+            xi = x(i)
+            root(1,i)=r12/xi
+            root(2,i)=r22/xi
+            w1=sqrt_pie4/sqrt(xi)
+            w2=w22*w1
+            weight(1,i)=w1-w2
+            weight(2,i)=w2
+         end
 
       end
 
