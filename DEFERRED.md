@@ -2723,7 +2723,7 @@ Chased the same night:
 - **Per-primitive screening loses more than per-shell screening.** With AO bounds alone the list
   at cc-pVTZ `low` gave 517.4 s but −534.166446869381, 2.7e-7 from `high`, against the engine's
   2.3e-8: many small primitive skips add up where the engine skips whole shell quartets. **Fix
-  (`26534...`): divide the cutoff by the kept primitive pairs of both shell pairs**, so what one
+  (`26534ffb`): divide the cutoff by the kept primitive pairs of both shell pairs**, so what one
   shell quartet loses stays under the shell-quartet cutoff. Early exit uses the class's smallest
   count. One job at a time, `low`:
 
