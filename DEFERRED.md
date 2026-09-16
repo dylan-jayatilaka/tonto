@@ -2674,6 +2674,30 @@ differently (the list applies the pair cutoff to every two-atom pair, the engine
 four atoms differ, and the list has no Schwarz test). Water BLYP/cc-pVDZ matches the `short`
 reference to its 8 printed digits. **2x slower, as expected unscreened; speed is the next step.**
 
+**Then two speed steps, same day.** (1) Primitive Schwarz bounds `Q(k) = sqrt(max_e (e_k|e_k))`,
+each class sorted by decreasing Q so the partner loop exits at the first failure against the
+class's largest density element, and the survivors' roots in one `get_weights_t2` call: `low`
+J/K 110 -> 72 s. `perf` then showed the kernel's own loops at 52% and `make_2d` at 12%. (2) **The
+batched kernel** (`add_batch_to_J`): for one k, every (partner, root) is an entry p, the
+recursion coefficients are vectors over p, and the tiles `I(p,e,f)` are built and contracted
+down contiguous columns of at most 256 entries -- the old `Ixa` layout, but over a *batch of
+partners of one pair* rather than one quartet's primitives, and with the density contracted in
+the same pass.
+
+| karrikinolide BLYP/6-31G(d), J/K CPU s | engine | pair list |
+|---|---|---|
+| `high`, one pair | 74.4 | 75.4 (energy 5e-15 from the engine) |
+| `low`, pair 1 | 50.11 | 44.41 |
+| `low`, pair 2 (cores swapped) | 53.83 | 47.50 |
+| `low`, pair 3 | 53.05 | 48.26 |
+| `low`, mean | 52.3 | **46.7, −10.7%** |
+
+**The pair list is now faster than the J engine at `low`, in every pair.** Its `low` energy is
+1.2e-10 from `high` against the engine's 2.4e-11 -- the pair cutoff is applied to every two-atom
+pair, where the engine applies it only when all four atoms differ. Both are far inside the
+1e-8 gate, but it is not yet an accuracy-matched comparison. Still serial, J only, no
+shared-exponent tiles, no batching across k.
+
 **Build note:** a full rebuild was killed three times by the session's low-memory guard on this
 14 GB laptop with the desktop running, at `-j6`, `-j3` and `-j2`, never by an actual compile
 (`mat_real.F90`, the file it died on, peaks at 356 MB). Foreground `make -j2` in 10-minute
