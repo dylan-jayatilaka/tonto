@@ -2717,6 +2717,25 @@ Chased the same night:
   So the 31% above was partly over-screening; re-measured below.
 - **cc-pVTZ at `high`, AO bounds, one job at a time**: list −534.166446600409, J/K 1031.7 s;
   engine −534.166446600410, 1301.9 s. **Identical to 1e-15, list 20.8% faster.** Peak RSS 80 MB.
+- **Bias in every "engine" row above:** the branch binary still dispatched `make_esfs_XX` to the
+  slower loop-order pilot (~3% at cc-pVTZ). The pilot's dispatch was reverted (`93c9afde`) and the
+  engine rows are being re-run on the `develop` binary, whose J engine is otherwise identical.
+- **Per-primitive screening loses more than per-shell screening.** With AO bounds alone the list
+  at cc-pVTZ `low` gave 517.4 s but −534.166446869381, 2.7e-7 from `high`, against the engine's
+  2.3e-8: many small primitive skips add up where the engine skips whole shell quartets. **Fix
+  (`26534...`): divide the cutoff by the kept primitive pairs of both shell pairs**, so what one
+  shell quartet loses stays under the shell-quartet cutoff. Early exit uses the class's smallest
+  count. One job at a time, `low`:
+
+  | karrikinolide BLYP | list energy, from `high` | list J/K s | engine from `high` | engine J/K s (branch binary) |
+  |---|---|---|---|---|
+  | 6-31G(d) | −533.954502154999, 2.2e-11 | 43.85 | 2.4e-11 | 42.50, 43.35, 45.51 |
+  | cc-pVTZ | −534.166446596817, **3.6e-9** | **597.5** | 2.3e-8 | 823.9 |
+
+  **At equal or better accuracy: parity at 6-31G(d), about −27% at cc-pVTZ.** The unscaled list
+  (39.8 s mean at 6-31G(d), 1.0e-11 there) was faster at double zeta, so the count scaling is
+  conservative and could be tuned (a square root, or the count of one side), measured against
+  `high` each time.
 - Two cc-pVTZ jobs at once were killed by the session memory guard: the kernel holds 4.4 GB of
   slab on this laptop. Run cc-pVTZ jobs one at a time here.
 
