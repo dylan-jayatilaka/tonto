@@ -2637,9 +2637,12 @@ tiles built to the class's l-sum serves every l.
   6-31G(d) does not fit these counts: the upper bound before Schwarz, surviving^2/2, is 4.4e7.
   The *Rys step 3* counters were 217 M X for the 2-root fit alone **per SCF**, all iterations, so
   the 4e8 is most likely a whole-SCF figure. The no-disk argument is unaffected.
-- **Per-quartet set-up is real work today**: `SHELL1QUARTET:set_ab_new` / `set_cd_new` recompute
-  `exp(-ab r^2/(a+b))`, P and PA for every primitive pair of every quartet, every Fock build --
-  pair-level data rebuilt at quartet frequency. The pair list removes that outright.
+- **What is precomputed today, and what is not.** `SHELL1PAIR`, one per pair of *basis* shells
+  (element pairs, geometry-free), holds the exponent sums, inverses and coefficient products.
+  The geometry-dependent part -- `exp(-ab r^2/(a+b))`, P, PA -- is rebuilt every Fock build by
+  `SHELL1QUARTET:set_ab_new` once per outer ab pair, and by `set_cd_new` **once per quartet**,
+  inside the cd loop (`molecule.fock.foo:655-692`). Storing that part per atom pair is the pair
+  list, a few MB; storing anything per quartet is what does not fit.
 
 ## Benchmark molecule with a first-row transition metal and sulfur (Dylan, 2026-09-16)
 
