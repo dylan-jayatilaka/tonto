@@ -458,3 +458,46 @@ than 857 s. No default has been changed.
 ORCA's remaining 3.2e-7 on the nuclear repulsion was its Angstrom-to-bohr conversion constant:
 given the geometry in bohr (`! ... Bohrs`), its V_NN is 576.09404496423485 against Tonto's
 576.094044964235, identical to fourteen digits.
+
+### How much of it is each cutoff
+
+RHF/6-31G(d) cartesian, `rys-1c` binary, one at a time from the defaults (primitive pair
+`TOL(6)`, the other three `TOL(9)`). g09 gives −530.980808229.
+
+| setting | energy | from g09 | wall |
+|---|---|---|---|
+| defaults | −530.980810596 | 2.4e-6 | 43.8 s |
+| primitive pair 1e-9 | −530.980808198 | 3.1e-8 | 46.7 s (+7%) |
+| primitive pair 1e-12 | −530.980808197 | 3.2e-8 | 49.8 s (+14%) |
+| primitive pair + Schwarz + J/K density, all 1e-12 | −530.980808227 | **1.8e-9** | 57.2 s (+31%) |
+| all five at 1e-15 | −530.980808227 | 1.8e-9 | 65.0 s (+48%) |
+
+**The primitive-pair cutoff is nearly the whole story, and it is cheap to fix.** Moving it alone
+from 1e-6 to 1e-9 removes 99% of the error — 2.4e-6 down to 3.1e-8 — for 7% in time. Tightening
+it further buys nothing on its own; the residual 3e-8 is the Schwarz and density cutoffs, and
+clearing that costs 31%. Beyond 1e-12 nothing changes but the clock.
+
+That is the shape a named accuracy level wants: a cheap `low` at 1e-9 primitive-pair (1e-8
+accuracy for 7%), and `medium`/`high` tightening all four together for 1e-9 accuracy at 31%.
+
+## The spherical path on the cartesian engine, 2026-09-16
+
+Branch `rys-sph` (`505fb888`), measured against `rys-1c` back to back on an idle machine.
+Karrikinolide RHF/cc-pVTZ spherical, 414 basis functions, f functions throughout:
+
+| path | energy | wall | J and K |
+|---|---|---|---|
+| direct builder (`rys-1c`) | −531.166917814557 | 1231 s | 1220.6 s, 97.6% |
+| cartesian engine (`rys-sph`) | −531.166917812066 | **868 s** | 856.9 s, 97.4% |
+
+**−30%, and the energies agree to 2.5e-12** — the residual being the screening decisions, which
+are now taken on cartesian Schwarz bounds. Water cc-pVTZ spherical (d and f) is identical to all
+twelve printed decimals.
+
+The spherical run now costs the same as the cartesian one (868 against 857 s), which is what the
+algebra says it should: the same cartesian integrals, minus the per-quartet rotation and copies.
+Against ORCA's exact spherical run (780 s) Tonto goes from 1.48x to 1.11x.
+
+Note the direct path measured 1231 s here against 1158 s earlier the same day on the same
+binary and input — about 6% of run-to-run spread on this machine, so only the side-by-side
+pairing is meaningful.

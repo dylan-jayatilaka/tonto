@@ -117,16 +117,27 @@ now covers the whole project, so it was renamed.)*
 > strictly less work than the direct path, which already builds the cartesian block and then
 > rotates it per quartet. Validated so far only on `h2o_rhf_cc-pVTZ_spherical_harmonic_basis`
 > (d and f functions): identical to twelve decimals. **Karrikinolide cc-pVTZ spherical, the real
-> test, was still running at hand-off** -- results in
-> `/tmp/claude-1000/.../scratchpad/karr_sph_{sph,1c}/stdout` if they survive, else rerun the
-> `tonto_rhf_cc-pVTZ_sph` input through both binaries. The old path took 1158 s; the algebra
-> predicts near the cartesian 857 s.
+> test, passed**: 414 functions with f throughout, side by side against `rys-1c`, energy
+> −531.166917812066 against −531.166917814557 (**2.5e-12**, the residual being screening now taken
+> on cartesian Schwarz bounds), wall **868 s against 1231 s, −30%**. The spherical run now costs
+> what the cartesian one does (857 s), as the algebra predicts, and goes from 1.48x to 1.11x
+> ORCA's exact spherical run. Tables in `docs/SCF_SPEED_REPORT.md`.
 >
 > **Owed on `rys-sph` before it merges:** (1) an **l>=2 invariant** comparing `make_r_JK_direct`
 > against the transformed engine -- the suite's `spherical_vs_cartesian` is s/p only, where U is
 > the identity, so it cannot see an error in this code; (2) the **unrestricted** branches still
 > call `make_u_JK_direct`, which also lacks the `parallel do` its engine twin has, so UHF/UKS
 > spherical gets neither the engine nor threading; (3) `short` plus the spherical `long` jobs.
+>
+> **Open decision on (1), Dylan's call.** After this change no restricted SCF can reach the direct
+> spherical builder -- `use_direct_scf=` selects on-the-fly versus disk integrals, not which
+> builder runs -- so a *permanent* two-builder cross-check needs a new keyword existing only to be
+> tested, which this project has been sceptical of. The alternative is to let the existing
+> references be the gate (`h2o_rhf_cc-pVTZ_spherical_harmonic_basis` has d and f,
+> `CHFCl_rhf_cc-pVQZ_spherical_from_nwchem_molden` adds g), delete `make_r_JK_direct`/
+> `make_r_J_direct` for the restricted cases in the same merge, and keep the 2.5e-12 side-by-side
+> comparison as one-time evidence in the commit rather than as machinery. Claude's inclination is
+> the second; not decided.
 >
 > **Next, Dylan's idea (2026-09-16): make the ERI cutoffs a named accuracy level.** `very_low`,
 > `low`, `medium`, `high` setting the four cutoffs together, modelled on `BECKE_GRID:set_accuracy`
@@ -137,9 +148,16 @@ now covers the whole project, so it was renamed.)*
 > **Constraint (Dylan): never below `medium` during XCW**, and make it a floor in the code, not a
 > convention. This overlaps *Known-flaky: x-ray-constrained SCF convergence wanders violently*
 > below, whose excursion to -26.4 Ha coincides exactly with `*Damping was off` at iteration 3 --
-> i.e. the very switch a cutoff schedule would hang off. A cutoff scan (primitive-pair cutoff at
-> 1e-9, 1e-12, and all four at 1e-12) was running at hand-off in
-> `~/tonto_runs/vs_g09_orca_2026-09-16/probe_scan_*`.
+> i.e. the very switch a cutoff schedule would hang off.
+>
+> **The scan that sizes those levels is done** (RHF/6-31G(d) cartesian, `rys-1c`, runs in
+> `~/tonto_runs/vs_g09_orca_2026-09-16/probe_scan_*`; table in `docs/SCF_SPEED_REPORT.md`):
+> **`ERI_primitive_pair_cutoff` alone is 99% of the error and is cheap.** Moving it from its
+> `TOL(6)` default to 1e-9 takes the gap to g09 from 2.4e-6 to **3.1e-8 for +7% in time**;
+> tightening it further alone buys nothing. The residual 3e-8 is the Schwarz and J/K density
+> cutoffs, and clearing those (all four at 1e-12) reaches **1.8e-9 for +31%**. Past 1e-12 only the
+> clock moves. So a `low` level is 1e-9 on the primitive-pair cutoff, and `medium`/`high` tighten
+> all four.
 >
 > **START HERE -- 2026-09-15 (evening).** Stage E below is finished and the default. The
 > J/K integral work is done on branch **`rys-1c`** (pushed, not merged): every Fock builder
