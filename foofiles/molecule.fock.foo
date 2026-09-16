@@ -121,7 +121,7 @@ contains
          K.create(.n_bf,.n_bf)
 
          if (do_direct) then
-            if (.use_spherical_basis) then; .make_r_JK_direct(J,K,P.r)
+            if (.use_spherical_basis) then; .make_r_JK_engine_sph(J,K,P.r)
             else;                          .make_r_JK_engine(J,K,P.r)
             end
          else;                             .make_r_JK_disk(J,K,P.r)
@@ -195,12 +195,12 @@ contains
         
                if (.SCF_data.using_hybrid_exchange) then
                   K.create(.n_bf, .n_bf)
-                  .make_r_JK_direct(F.r,K,P.r)
+                  .make_r_JK_engine_sph(F.r,K,P.r)
                   K = K * (-HALF) * .SCF_data.hybrid_exchange_factor
                   F.r = F.r + K
                   K.destroy
                else
-                  .make_r_J_direct(F.r,P.r)
+                  .make_r_J_engine_sph(F.r,P.r)
                end
         
             else
@@ -278,7 +278,7 @@ contains
       if (add_r12) then
 
          if (do_direct) then
-            if (.use_spherical_basis) then; .make_u_JK_direct(J,K,P)
+            if (.use_spherical_basis) then; .make_u_JK_engine_sph(J,K,P)
             else;                           .make_u_JK_engine(J,K,P)
             end
       ! else
@@ -337,7 +337,7 @@ contains
 
       if (add_r12) then
             if (.use_spherical_basis) then
-               .make_u_JK_direct(J,K,P)
+               .make_u_JK_engine_sph(J,K,P)
             else
                .make_u_JK_engine(J,K,P)
             end
@@ -1223,6 +1223,238 @@ contains
 !  Two-electron J & K matrices
 !  ===========================
 
+   make_cartesian_density(P,Pc) :: leaky, PURE
+   ! Expand the spherical-basis density matrix "P" into the cartesian
+   ! basis as "Pc". A spherical function is a fixed combination of the
+   ! cartesians of its own shell, U, so this is blockwise Pc = U P U^T.
+      self :: IN
+      P  :: MAT{REAL}, IN
+      Pc :: MAT{REAL}, OUT
+
+   ENSURE(Pc.dim1==.n_bf_cartesian,"wrong size, Pc")
+
+      i,j,la,lb :: INT
+      fi,li,fj,lj,gi,hi,gj,hj :: INT
+      W,V :: MAT{REAL}@
+
+      do i = 1,.n_shell
+
+         fi = .first_basis_fn_for_shell(i);     li = .last_basis_fn_for_shell(i)
+         gi = .first_cartesian_bf_for_shell(i); hi = .last_cartesian_bf_for_shell(i)
+         la = .angular_moment_for_shell(i)
+
+      do j = 1,.n_shell
+
+         fj = .first_basis_fn_for_shell(j);     lj = .last_basis_fn_for_shell(j)
+         gj = .first_cartesian_bf_for_shell(j); hj = .last_cartesian_bf_for_shell(j)
+         lb = .angular_moment_for_shell(j)
+
+         if (la<2) then                     ! U is the identity below l=2
+            W.create(li-fi+1,lj-fj+1)
+            W = P(fi:li,fj:lj)
+         else
+            W.create(hi-gi+1,lj-fj+1)
+            W.to_product_of(GAUSSIAN_DATA::spherical_harmonics_for(la).element, &
+                            P(fi:li,fj:lj))
+         end
+
+         if (lb<2) then
+            Pc(gi:hi,gj:hj) = W
+         else
+            V.create(hi-gi+1,hj-gj+1)
+            V.to_product_of(W,GAUSSIAN_DATA::spherical_harmonics_for(lb).element, &
+                            transpose_b=TRUE)
+            Pc(gi:hi,gj:hj) = V
+            V.destroy
+         end
+
+         W.destroy
+
+      end
+      end
+
+   end
+
+   make_spherical_matrix(Mc,M) :: leaky, PURE
+   ! Contract the cartesian-basis matrix "Mc" back to the spherical
+   ! basis as "M", blockwise M = U^T Mc U. The inverse operation to
+   ! .make_cartesian_density, and exact for any matrix linear in the
+   ! density -- which is what J and K are.
+      self :: IN
+      Mc :: MAT{REAL}, IN
+      M  :: MAT{REAL}, OUT
+
+   ENSURE(Mc.dim1==.n_bf_cartesian,"wrong size, Mc")
+
+      i,j,la,lb :: INT
+      fi,li,fj,lj,gi,hi,gj,hj :: INT
+      W,V :: MAT{REAL}@
+
+      do i = 1,.n_shell
+
+         fi = .first_basis_fn_for_shell(i);     li = .last_basis_fn_for_shell(i)
+         gi = .first_cartesian_bf_for_shell(i); hi = .last_cartesian_bf_for_shell(i)
+         la = .angular_moment_for_shell(i)
+
+      do j = 1,.n_shell
+
+         fj = .first_basis_fn_for_shell(j);     lj = .last_basis_fn_for_shell(j)
+         gj = .first_cartesian_bf_for_shell(j); hj = .last_cartesian_bf_for_shell(j)
+         lb = .angular_moment_for_shell(j)
+
+         if (la<2) then
+            W.create(hi-gi+1,hj-gj+1)
+            W = Mc(gi:hi,gj:hj)
+         else
+            W.create(li-fi+1,hj-gj+1)
+            W.to_product_of(GAUSSIAN_DATA::spherical_harmonics_for(la).element, &
+                            Mc(gi:hi,gj:hj),transpose_a=TRUE)
+         end
+
+         if (lb<2) then
+            M(fi:li,fj:lj) = W
+         else
+            V.create(li-fi+1,lj-fj+1)
+            V.to_product_of(W,GAUSSIAN_DATA::spherical_harmonics_for(lb).element)
+            M(fi:li,fj:lj) = V
+            V.destroy
+         end
+
+         W.destroy
+
+      end
+      end
+
+   end
+
+   make_r_JK_engine_sph(J,K,P) :: leaky, PURE
+   ! Make "J" and "K" for a spherical basis using the cartesian J/K
+   ! engine. J and K are linear in P, so expanding P into the cartesian
+   ! basis, building there, and contracting back is exact. This buys a
+   ! spherical basis the J engine, the separate J and K screening, and
+   ! the ERI_SCRATCH work arrays, none of which the direct builder has.
+      self :: INOUT
+      J,K :: MAT{REAL}, OUT
+      P   :: MAT{REAL}, IN
+
+      Pc,Jc,Kc :: MAT{REAL}@
+      first,last :: VEC{INT}@
+      n :: INT
+
+      n = .n_bf_cartesian
+
+      Pc.create(n,n)
+      Jc.create(n,n)
+      Kc.create(n,n)
+
+      .make_cartesian_density(P,Pc)
+
+      ! Drive the engine with cartesian shell limits, then put back
+      first.create(.n_shell); first = .first_basis_fn_for_shell
+      last.create(.n_shell);  last  = .last_basis_fn_for_shell
+
+      .first_basis_fn_for_shell = .first_cartesian_bf_for_shell
+      .last_basis_fn_for_shell  = .last_cartesian_bf_for_shell
+
+      .make_r_JK_engine(Jc,Kc,Pc)
+
+      .first_basis_fn_for_shell = first
+      .last_basis_fn_for_shell  = last
+
+      first.destroy; last.destroy
+
+      .make_spherical_matrix(Jc,J)
+      .make_spherical_matrix(Kc,K)
+
+      Kc.destroy; Jc.destroy; Pc.destroy
+
+   end
+
+   make_r_J_engine_sph(J,P) :: leaky, PURE
+   ! Make "J" for a spherical basis using the cartesian J engine, as in
+   ! .make_r_JK_engine_sph. This is the path every pure DFT job takes.
+      self :: INOUT
+      J :: MAT{REAL}, OUT
+      P :: MAT{REAL}, IN
+
+      Pc,Jc :: MAT{REAL}@
+      first,last :: VEC{INT}@
+      n :: INT
+
+      n = .n_bf_cartesian
+
+      Pc.create(n,n)
+      Jc.create(n,n)
+
+      .make_cartesian_density(P,Pc)
+
+      first.create(.n_shell); first = .first_basis_fn_for_shell
+      last.create(.n_shell);  last  = .last_basis_fn_for_shell
+
+      .first_basis_fn_for_shell = .first_cartesian_bf_for_shell
+      .last_basis_fn_for_shell  = .last_cartesian_bf_for_shell
+
+      .make_r_J_engine(Jc,Pc)
+
+      .first_basis_fn_for_shell = first
+      .last_basis_fn_for_shell  = last
+
+      first.destroy; last.destroy
+
+      .make_spherical_matrix(Jc,J)
+
+      Jc.destroy; Pc.destroy
+
+   end
+
+   make_u_JK_engine_sph(J,K,P) :: leaky, PURE
+   ! Make unrestricted "J" and "K" for a spherical basis using the
+   ! cartesian J/K engine, as in .make_r_JK_engine_sph. This also gives
+   ! unrestricted spherical runs the parallel do that .make_u_JK_direct
+   ! does not have.
+      self :: INOUT
+      J,K :: OPMATRIX, INOUT
+      P   :: OPMATRIX, IN
+
+   ENSURE(J.has_genre("u "),"unrestricted J not created")
+   ENSURE(K.has_genre("u "),"unrestricted K not created")
+   ENSURE(P.has_genre("u "),"unrestricted P not created")
+
+      Pc,Jc,Kc :: OPMATRIX@
+      first,last :: VEC{INT}@
+      n :: INT
+
+      n = .n_bf_cartesian
+
+      Pc.create(n,"u ")
+      Jc.create(n,"u ")
+      Kc.create(n,"u ")
+
+      .make_cartesian_density(P.a,Pc.a)
+      .make_cartesian_density(P.b,Pc.b)
+
+      first.create(.n_shell); first = .first_basis_fn_for_shell
+      last.create(.n_shell);  last  = .last_basis_fn_for_shell
+
+      .first_basis_fn_for_shell = .first_cartesian_bf_for_shell
+      .last_basis_fn_for_shell  = .last_cartesian_bf_for_shell
+
+      .make_u_JK_engine(Jc,Kc,Pc)
+
+      .first_basis_fn_for_shell = first
+      .last_basis_fn_for_shell  = last
+
+      first.destroy; last.destroy
+
+      .make_spherical_matrix(Jc.a,J.a)
+      .make_spherical_matrix(Jc.b,J.b)
+      .make_spherical_matrix(Kc.a,K.a)
+      .make_spherical_matrix(Kc.b,K.b)
+
+      Kc.destroy; Jc.destroy; Pc.destroy
+
+   end
+
    make_r_JK_direct(J,K,P) :: PURE
    ! Make the real coulomb matrix "J" and exchange matrix "K" matrix
    ! from a symmetric density matrix "P" directly.
@@ -1357,7 +1589,8 @@ contains
       J,K  :: MAT{REAL}, OUT
       P    :: MAT{REAL}, IN
 
-   ENSURE(NOT .use_spherical_basis,"not implemented")
+      ! A spherical basis reaches this through .make_r_JK_engine_sph,
+      ! which hands it cartesian J, K, P and cartesian shell limits.
 
       PP, JJ  :: VEC{EVEC{REAL}}@, target
       max_P   :: VEC{REAL}@
@@ -1629,7 +1862,8 @@ contains
       J :: MAT{REAL}, OUT
       P :: MAT{REAL}, IN
 
-   ENSURE(NOT .use_spherical_basis,"not implemented")
+      ! A spherical basis reaches this through .make_r_J_engine_sph,
+      ! which hands it cartesian J, P and cartesian shell limits.
 
       PP,JJ :: VEC{EVEC{REAL}}@, target
       max_P :: VEC{REAL}@
@@ -3688,8 +3922,21 @@ contains
 
          .set_shell2_indices_from(ab,sa,sb,fa,la,na,fb,lb,nb)
 
+         ! The J/K engine works in the cartesian basis, so its Schwarz
+         ! bounds must too: a spherical (ab|ab) is not a bound on the
+         ! cartesian integrals it screens.
+         if (.use_spherical_basis) then
+            fa = .first_cartesian_bf_for_shell(sa)
+            la = .last_cartesian_bf_for_shell(sa)
+            fb = .first_cartesian_bf_for_shell(sb)
+            lb = .last_cartesian_bf_for_shell(sb)
+            na = la - fa + 1
+            nb = lb - fb + 1
+         end
+
          .set_shell1q_ab_from(sa,sb,sh4q,skip=FALSE) ! (ab|ab} shell
          .set_shell1q_cd_from(sa,sb,sh4q,skip=FALSE)
+         sh4q.set_spherical(FALSE)
 
          Iabab.create(na,nb,na,nb)
          SHELL1QUARTET::make_ERI(sh4q,Iabab)
@@ -4087,7 +4334,7 @@ contains
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.allocated,"no atom info")
    ENSURE(JJ.dim==.n_shell_pairs,"wrong size, JJ")
-   ENSURE(J.dim1==.n_bf,"wrong size, J")
+   ENSURE(J.dim1==.n_bf OR J.dim1==.n_bf_cartesian,"wrong size, J")
    ENSURE(J.is_square,"wrong shape, J")
 
       q,fa,la,na,fb,lb,nb :: INT
