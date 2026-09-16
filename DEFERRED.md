@@ -131,47 +131,57 @@ now covers the whole project, so it was renamed.)*
 > `DIE` -- caught by testing rather than by reading.
 >
 > **Item 2, the `transfer_l_*` work arrays onto `ERI_SCRATCH`, is SKIPPED (Dylan, 2026-09-16), and
-> the measurement says he is right.** `perf` on karrikinolide RHF/6-31G(d): the whole
-> `transfer_l_*` family plus every allocator symbol is **4.2%** of the run, and the allocator
-> itself -- `malloc`, `free`, `memmove`, `memcpy` -- is about **1.0%**. The other 3.2% is the
+> the measurement says he is right.** `perf` on karrikinolide RHF, both bases: the allocator
+> -- `malloc`, `free`, `memmove`, `memcpy` -- is **1.1%** at 6-31G(d) and **1.0%** at cc-pVTZ, so f
+> functions do not change the verdict. The `transfer_l_*` family's own 3.1% and 6.3% is arithmetic. The other 3.2% is the
 > transfer routines' own arithmetic, which hoisting their buffers would not touch. So the ceiling
 > was ~1% for a change rewriting 24 `PURE` routines and 30 call sites. Stage 1c had already taken
 > the allocator out of the hot path; this is the leftover, and it is not worth the risk. If it is
 > ever revived, the shape is the established one: a `_k` body taking explicit-shape views of flat
 > `ERI_SCRATCH` buffers, as `make_r_J_engine_k` does.
 >
-> **NEXT: item 3, vectorising the Rys quadrature over shell-quartet classes.** The profile says
-> where to aim. Karrikinolide RHF/6-31G(d), `perf`, flat:
+> **NEXT: item 3, vectorising the Rys quadrature over shell-quartet classes.** Two profiles were
+> taken, and they disagree in a way that decides the plan. `perf` on karrikinolide RHF cartesian,
+> `develop` after the merges; both kept with their `perf.data` in
+> `~/tonto_runs/scf_profiles_2026-09-16/`, table in `docs/SCF_SPEED_REPORT.md`.
 >
-> | symbol | % |
-> |---|---|
-> | `RYS:get_weights` | 17.5 |
-> | `SHELL1QUARTET:make_esfs_with` | 14.4 |
-> | `SHELL1QUARTET:make_r_JK_engine` (the `_1` body) | 9.5 |
-> | `exp` from libm | 6.4 |
-> | `make_esfs_dx` / `_px` / `_xd` / `_xp` / `_xx` | 4.5 / 4.2 / 4.2 / 3.6 / 2.7 |
-> | `SHELL1:set_reusing_storage` | 3.1 |
+> | symbol | 6-31G(d), d functions | cc-pVTZ, f throughout |
+> |---|---|---|
+> | `make_esfs_*` family, all members | **40.5%** | **51.1%** |
+> | `RYS:get_weights` | 17.5% | 8.7% |
+> | `make_esfs_with` (generic, high l) | 14.4% | 6.3% |
+> | `make_esfs_xx` | 2.7% | 15.6% |
+> | `make_r_JK_engine` body | 9.5% | 12.9% |
+> | `transfer_l_*` family | 3.1% | 6.3% |
+> | allocator | 1.1% | 1.0% |
 >
-> `get_weights` and the `make_esfs_*` family together are over half the run, and `get_weights` is
-> reached almost entirely through `make_esfs_with`. **The two strands worth doing are class
-> batching and T-range binning of the roots.**
+> **The basis changes which lever matters.** At 6-31G(d) the roots dominate -- `get_weights` 17.5%
+> plus `make_esfs_with`, the generic routine that calls it, another 14.4%. At cc-pVTZ the roots
+> fall to 8.7% while `make_esfs_xx` climbs to 15.6%: with f functions the 2D integral construction
+> and the contraction outweigh the roots, exactly as the no-grid profiles said. So **T-range
+> binning of the roots is the double-zeta lever and class batching is the triple-zeta one.** The
+> `make_esfs_*` family is the common target, 40-51% of the run either way.
 >
-> **The third strand, generally contracted shells, should be dropped for these bases -- measured.**
-> In cc-pVTZ the general contraction is confined to the s shells: C, N and O each carry two
-> 8-primitive s shells built on identical exponents, so 26 primitives are computed where 18 are
-> distinct (1.44x), and hydrogen has none at all. What could be shared between those two shells is
-> only the 2D-integral construction, since the contraction coefficients still differ -- and with f
-> functions the contraction and the K loop already outweigh the roots. So the shareable part is a
-> fraction of the smaller half of the time. Revisit only for a genuinely general basis (ANO).
+> **Pilot on `make_esfs_xx`, and measure on both bases.** It is the largest single symbol at
+> cc-pVTZ and a member of the family, so what is learned on it generalises. Measuring on one basis
+> would mislead: a change tuned on 6-31G(d) alone would be optimising an 8.7% line at triple zeta.
 >
-> **The shape the pilot should take.** In the `make_esfs_*` routines the roots are fetched one X
-> at a time, deep inside the double loop over primitive pairs -- `xx = rho*|QP|^2` then
+> **The shape of the change.** In the `make_esfs_*` routines the roots are fetched one X at a
+> time, deep inside the double loop over primitive pairs -- `xx = rho*|QP|^2` then
 > `rys.get_weights(xx)`, then the 2D integrals built inline from `rys.root`/`rys.weight` (see
-> `shell1quartet.foo:1312`). T-range binning means a pre-pass that computes every X for the
-> quartet into a vector, evaluates roots and weights for the whole vector by T range, and leaves
-> the 2D integral loop reading them. Do **one** routine first, measure, and only then generalise:
-> the family is large and each member is hand-specialised. `make_esfs_with` is the one to pilot,
-> being both the biggest single symbol and the caller of nearly all the `get_weights` time.
+> `shell1quartet.foo:1312` for a clean example). T-range binning means a pre-pass computing every
+> X for the quartet into a vector, evaluating roots and weights for the whole vector by T range,
+> and leaving the 2D integral loop to read them. Class batching means grouping shell pairs of the
+> same class behind an index vector -- **never reorder the basis** -- so one call covers many
+> quartets. Do one routine, measure on both bases, and only then generalise: the family is large
+> and every member is hand-specialised.
+>
+> **The generally contracted strand should be dropped for these bases -- measured.** In cc-pVTZ the
+> general contraction is confined to the s shells: C, N and O each carry two 8-primitive s shells
+> built on identical exponents, so 26 primitives are computed where 18 are distinct (1.44x), and
+> hydrogen has none at all. What could be shared between those two shells is only the 2D-integral
+> construction, since the contraction coefficients still differ -- and the profile above shows the
+> roots are the smaller half at triple zeta anyway. Revisit only for a genuinely general basis (ANO).
 >
 > **Still owed on this thread:** a `long` run. Routine CI runs `short` only, and that is how 16
 > stale `long` references accumulated on 2026-09-10.

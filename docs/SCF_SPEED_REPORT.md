@@ -528,3 +528,38 @@ thirteen iterations are damped, so that is the size of saving the schedule can g
 An x-ray constrained SCF is floored at `medium`, in `SCF_DATA:effective_ERI_accuracy`. The floor
 applies only once a level has been asked for, so existing XCW jobs are untouched; when it bites,
 the options block says so with an `ERI accuracy in force` line.
+
+## Where the J/K time goes, by basis, 2026-09-16
+
+`perf record --call-graph=dwarf` on karrikinolide RHF, cartesian, one core, the `develop` binary
+after the `rys-1c`/`rys-sph` merges. Both profiles and their `perf.data` are kept in
+`~/tonto_runs/scf_profiles_2026-09-16/`. 6-31G(d) is 41 s and has d functions; cc-pVTZ is 930 CPU
+s and has f throughout.
+
+| symbol | 6-31G(d) | cc-pVTZ |
+|---|---|---|
+| `make_esfs_*` family, all members | **40.5%** | **51.1%** |
+| `RYS:get_weights` | 17.5% | 8.7% |
+| `make_esfs_with` (generic, high l) | 14.4% | 6.3% |
+| `make_esfs_xx` | 2.7% | 15.6% |
+| `make_esfs_dx` / `_xd` / `_px` / `_xp` | 4.5 / 4.2 / 4.2 / 3.6% | 6.8 / 6.0 / 5.0 / 4.5% |
+| `make_r_JK_engine` body (`_1`) | 9.5% | 12.9% |
+| `VEC{REAL}:to_product_of` | 2.9% | 4.4% |
+| `transfer_l_*` family | 3.1% | 6.3% |
+| `exp` from libm | 6.4% | 2.4% |
+| allocator: `malloc`, `free`, `memmove`, `memcpy` | **1.1%** | **1.0%** |
+
+**The allocator is gone.** One percent in both, which is what stage 1c bought and is why moving
+the `transfer_l_*` work arrays onto `ERI_SCRATCH` was dropped: the transfer family's remaining
+3-6% is its own arithmetic, not allocation, and hoisting buffers would not touch it.
+
+**The shape changes with the basis, and that decides what to vectorise.** At 6-31G(d) the roots
+dominate -- `get_weights` alone is 17.5%, and `make_esfs_with`, the generic high-l routine that
+calls it, another 14.4%. At cc-pVTZ the roots fall to 8.7% while `make_esfs_xx` climbs from 2.7%
+to 15.6%: with f functions the 2D integral construction and the contraction outweigh the roots,
+which is what the earlier no-grid profiles said.
+
+So **T-range binning of the roots is the 6-31G(d) lever and class batching is the cc-pVTZ one**,
+and the `make_esfs_*` family is the common target at 40-51% of the run in both. A pilot should
+take one member, restructure it, and measure on both bases -- a change tuned on d functions alone
+would be optimising an 8.7% line at triple zeta.
