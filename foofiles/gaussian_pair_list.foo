@@ -77,24 +77,30 @@ contains
 !  J kernel
 !  ========
 
-   add_to_J(JJ,PP) :: PURE
+   add_to_J(JJ,PP,cutoff) :: PURE
    ! Add to the transfer-space coulomb vectors "JJ" the contribution of
    ! every primitive quartet, contracting at once with the transfer-space
    ! density "PP". Each unordered pair of primitive pairs is visited once.
+   ! A pair of pairs is skipped when its Schwarz bound times the largest
+   ! density element of either shell pair is below "cutoff". Within each
+   ! class the pairs are taken by decreasing bound, so the inner loop stops
+   ! at the first pair that fails against the class's largest density; the
+   ! survivors for one "k" get their roots in one call.
       self :: IN
       JJ :: VEC{EVEC{REAL}}, INOUT
       PP :: VEC{EVEC{REAL}}, IN
+      cutoff :: REAL, IN
 
-      Ix,Iy,Iz :: MAT{REAL}@
-      ev,fv :: VEC{REAL}@
-      nxe,nye,nze,nxf,nyf,nzf :: VEC{INT}@
+      Ix,Iy,Iz,rt,wt :: MAT{REAL}@
+      ev,fv,Q,Qc,P_max,class_P_max,xv :: VEC{REAL}@
+      nxe,nye,nze,nxf,nyf,nzf,order,idx,jv :: VEC{INT}@
       rys :: RYS
-      A,B,k,j,j_last,sp_k,sp_j,n_e,n_f,fe,ff,e,f,n,n_roots,l_e,l_f,l_max :: INT
-      xf,yf,zf :: INT
+      A,B,k,j,k_pos,j_pos,j_last,sp_k,sp_j,n_e,n_f,fe,ff,e,f,n,n_roots,l_e,l_f,l_max :: INT
+      xf,yf,zf,m,i,n_big,first,last :: INT
       zeta,eta,zinv,einv,rho,rho_zinv,rho_einv,half_zinv,half_einv :: REAL
       PAx,PAy,PAz,QCx,QCy,QCz,QPx,QPy,QPz,xx,cc,fac :: REAL
       t2,t2_rz,t2_re,C00x,C00y,C00z,D00x,D00y,D00z,B10,B01,B00 :: REAL
-      t,s,pf :: REAL
+      t,s,pf,Qk,Pk,bound :: REAL
 
       l_max = maxval(.class_l_sum)
       Ix.create(l_max+1,l_max+1)
@@ -104,6 +110,34 @@ contains
       ev.create(n); fv.create(n)
       nxe.create(n); nye.create(n); nze.create(n)
       nxf.create(n); nyf.create(n); nzf.create(n)
+
+      ! Largest density element of each shell pair, and of each class
+      P_max.create(size(PP))
+      do i = 1,size(PP)
+         P_max(i) = maxval(abs(PP(i).element))
+      end
+      class_P_max.create(.n_classes)
+      class_P_max = ZERO
+
+      ! Schwarz bound of each pair; each class's pairs by decreasing bound
+      Q.create(.n_pairs)
+      .make_Schwarz_bounds(Q)
+      order.create(.n_pairs)
+      n_big = maxval(.class_last-.class_first+1)
+      idx.create(max(n_big,1))
+      jv.create(max(n_big,1))
+      xv.create(max(n_big,1))
+      do A = 1,.n_classes
+         first = .class_first(A)
+         last  = .class_last(A)
+         if (last<first) cycle
+         Qc.create(last-first+1)
+         Qc = Q(first:last)
+         Qc.quick_sort(idx(1:last-first+1),decreasing_order=TRUE)
+         order(first:last) = first - 1 + idx(1:last-first+1)
+         Qc.destroy
+         class_P_max(A) = maxval(P_max(.shell_pair(first:last)))
+      end
 
       do A = 1,.n_classes
 
@@ -133,10 +167,20 @@ contains
 
             n_roots = (l_e+l_f+2)/2
             rys.set_n_roots(n_roots)
+            rt.destroy; wt.destroy
+            rt.create(n_roots,max(n_big,1))
+            wt.create(n_roots,max(n_big,1))
 
-            do k = .class_first(A),.class_last(A)
+            do k_pos = .class_first(A),.class_last(A)
 
+               k = order(k_pos)
                sp_k = .shell_pair(k)
+               Qk = Q(k)
+               Pk = P_max(sp_k)
+
+               ! The largest bound in class B fails: so does every other
+               if (Qk*Q(order(.class_first(B)))*max(Pk,class_P_max(B))<cutoff) cycle
+
                zeta = .exponent_sum(k)
                zinv = .exponent_inv(k)
                half_zinv = HALF*zinv
@@ -145,10 +189,30 @@ contains
                PAz = .center_diff(3,k)
 
                j_last = .class_last(B)
-               if (A==B) j_last = k
+               if (A==B) j_last = k_pos
 
-               do j = .class_first(B),j_last
+               ! Gather the surviving partners and their X
+               m = 0
+               do j_pos = .class_first(B),j_last
+                  j = order(j_pos)
+                  bound = Qk*Q(j)
+                  if (bound*max(Pk,class_P_max(B))<cutoff) exit
+                  if (bound*max(Pk,P_max(.shell_pair(j)))<cutoff) cycle
+                  m = m + 1
+                  jv(m) = j
+                  eta = .exponent_sum(j)
+                  QPx = .center(1,j) - .center(1,k)
+                  QPy = .center(2,j) - .center(2,k)
+                  QPz = .center(3,j) - .center(3,k)
+                  xv(m) = zeta*eta/(zeta+eta)*(QPx*QPx + QPy*QPy + QPz*QPz)
+               end
+               if (m==0) cycle
 
+               rys.get_weights_t2(m,xv,rt,wt)
+
+               do i = 1,m
+
+                  j = jv(i)
                   sp_j = .shell_pair(j)
                   eta  = .exponent_sum(j)
                   einv = .exponent_inv(j)
@@ -163,16 +227,14 @@ contains
                   rho = zeta*eta/(zeta+eta)
                   rho_zinv = rho*zinv
                   rho_einv = rho*einv
-                  xx = rho*(QPx*QPx + QPy*QPy + QPz*QPz)
                   cc = TWOPI5ON2*.prefactor(k)*.prefactor(j)*sqrt(rho)
-                  rys.get_weights(xx)
 
                   ev(1:n_e) = ZERO
                   fv(1:n_f) = ZERO
 
                   do n = 1,n_roots
 
-                     t2 = rys.root(n)
+                     t2 = rt(n,i)
                      t2_rz = t2*rho_zinv
                      t2_re = t2*rho_einv
                      C00x = PAx + t2_rz*QPx
@@ -188,7 +250,7 @@ contains
                      GAUSSIAN_PAIR_LIST::make_2d(Ix,l_e,l_f,C00x,D00x,B10,B01,B00)
                      GAUSSIAN_PAIR_LIST::make_2d(Iy,l_e,l_f,C00y,D00y,B10,B01,B00)
                      GAUSSIAN_PAIR_LIST::make_2d(Iz,l_e,l_f,C00z,D00z,B10,B01,B00)
-                     Iz(1:l_e+1,1:l_f+1) = Iz(1:l_e+1,1:l_f+1)*(cc*rys.weight(n))
+                     Iz(1:l_e+1,1:l_f+1) = Iz(1:l_e+1,1:l_f+1)*(cc*wt(n,i))
 
                      do f = 1,n_f
                         xf = nxf(f); yf = nyf(f); zf = nzf(f)
@@ -212,6 +274,70 @@ contains
 
                end
             end
+
+         end
+      end
+
+   end
+
+   make_Schwarz_bounds(Q) :: PURE
+   ! Set "Q(k)" to the square root of the largest diagonal integral
+   ! (e_k|e_k) of pair "k" over its (es| components, so that every
+   ! (e_k|f_j) is bounded by Q(k)*Q(j).
+      self :: IN
+      Q :: VEC{REAL}(.n_pairs), OUT
+
+      Ix,Iy,Iz :: MAT{REAL}@
+      nxe,nye,nze :: VEC{INT}@
+      rys :: RYS
+      A,k,e,n,n_e,fe,l_e,l_max :: INT
+      diag :: VEC{REAL}@
+      zinv,half_zinv,t2_rz,B10,B00,cc :: REAL
+
+      l_max = maxval(.class_l_sum)
+      Ix.create(l_max+1,l_max+1)
+      Iy.create(l_max+1,l_max+1)
+      Iz.create(l_max+1,l_max+1)
+      n = maxval(.class_n_gaussian)
+      nxe.create(n); nye.create(n); nze.create(n)
+      diag.create(n)
+
+      do A = 1,.n_classes
+
+         if (.class_last(A)<.class_first(A)) cycle
+
+         l_e = .class_l_sum(A)
+         n_e = .class_n_gaussian(A)
+         fe  = .class_first_gaussian(A) - 1
+         do e = 1,n_e
+            nxe(e) = GAUSSIAN_DATA::nx(fe+e)
+            nye(e) = GAUSSIAN_DATA::ny(fe+e)
+            nze(e) = GAUSSIAN_DATA::nz(fe+e)
+         end
+
+         rys.set_n_roots(l_e+1)
+         rys.get_weights(ZERO)
+
+         do k = .class_first(A),.class_last(A)
+
+            ! Both sides the same pair: X = 0, rho = zeta/2, QP = 0
+            zinv = .exponent_inv(k)
+            half_zinv = HALF*zinv
+            cc = TWOPI5ON2*.prefactor(k)*.prefactor(k)*sqrt(HALF*.exponent_sum(k))
+
+            diag(1:n_e) = ZERO
+            do n = 1,l_e+1
+               t2_rz = HALF*rys.root(n)
+               B10 = (ONE - t2_rz)*half_zinv
+               B00 = t2_rz*half_zinv
+               GAUSSIAN_PAIR_LIST::make_2d(Ix,l_e,l_e,.center_diff(1,k),.center_diff(1,k),B10,B10,B00)
+               GAUSSIAN_PAIR_LIST::make_2d(Iy,l_e,l_e,.center_diff(2,k),.center_diff(2,k),B10,B10,B00)
+               GAUSSIAN_PAIR_LIST::make_2d(Iz,l_e,l_e,.center_diff(3,k),.center_diff(3,k),B10,B10,B00)
+               do e = 1,n_e
+                  diag(e) = diag(e) + rys.weight(n)*Ix(nxe(e),nxe(e))*Iy(nye(e),nye(e))*Iz(nze(e),nze(e))
+               end
+            end
+            Q(k) = sqrt(abs(cc*maxval(diag(1:n_e))))
 
          end
       end
