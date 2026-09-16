@@ -246,57 +246,13 @@ extension; see `DEFERRED.md`. Each directory has a `README.md` saying this.
 pages migrated into `docs/` — it was superfluous, hard to maintain, and worst of all *not
 versioned with the code it described*, so it could rot silently. Do not add documentation there.
 
-- `README.md` — the leader page: what Tonto is, a quickstart, the documentation index, and what
-  each CI badge means. Deliberately short; detail belongs in `docs/`.
-- Building — one **self-contained** page per platform, each covering prerequisites, build,
-  tests, other build types and MPI for that platform: `docs/BUILDING_ON_LINUX.md`,
-  `docs/BUILDING_ON_MACOS.md`, `docs/BUILDING_ON_WINDOWS.md`. There is deliberately no
-  shared build page — `BUILDING_TONTO.md` was split out and then deleted (2026-08-10),
-  because a chooser page plus per-platform pages still made a reader hop.
-- `docs/DOCUMENTATION.md` — the documentation index, linked from the README. The README
-  itself is deliberately short: badges, what Tonto is, three build links, the workshop,
-  this index, contact. Anything explanatory belongs here or in `docs/`.
-- `docs/RUNNING_TONTO.md` — running Tonto: input/output conventions (`stdin`/`stdout`/`IO`), practical set-up.
-- `docs/TONTO_LIBRARY_STRUCTURE.md` — source and executable layout, and the module structure picture.
-- `docs/RUNNING_HART.md` — the `hart` program: what it hard-codes, its full `--option` reference, how
-  it is tested (`tests/hart/`, the `program:`/`args:` IO keys, the invariant check), and its
-  remaining milestones.
-- `docs/RUNNING_RGBI.md` — the `rgbi` program, the two-halved picture pipeline, the LaTeX traps
-  (two `chemfig`s, one of which fails silently), and how it is tested.
-- `docs/INSTALLING_RGBI.md` — participant-facing install guide. Linux is tested by
-  `scripts/docker/rgbi.Dockerfile` in CI; macOS is untested by hand and probed weekly by
-  `ci-rgbi-macos.yml`.
-- `docs/TONTO_DEVELOPER_INFO.md` — developer reference; §1a is **writing parallel (MPI) code in Foo**, eight
-  pitfalls and the trace recipes that found them; §1b is **build and test traps** — the stale
-  translation when a `.foo` is edited mid-build, why the loose gate passes visibly wrong output,
-  and how `scripts/test.py` actually compares; §1c is **profiling and timing** — `perf`, not
-  gprof, and why a single timing pair proves nothing under 3%.
-- `docs/FOO_GRAMMAR_DOCUMENTATION.md` — full language description and Foo→Fortran conversion rules.
-- `docs/TONTO_AND_MPI.md` — the parallel build, its numeric characterisation, and the defect register.
-- `docs/BADER_REPORT.md` — the `archive/Bader` port (2026-08-18): the ten procedures that landed, what
-  was deliberately left on the tag, and the two defects found by running it — a basin count that swings
-  from 1 to 13942 with the grid, and voxel volumes summed per point but sized per interval.
-- `docs/TEACHING_MP2.md` — the MP2 teaching lab ported from `archive/Teaching`: `run_mp2` and
-  `run_mp2_exercise`, both `EXCLUDE_FROM_ALL`, and the validation showing `run_mp2` reproduces the
-  library `mp2` keyword to twelve decimals once the frozen-core active space matches.
-- `docs/EXTINCTION_REPORT.md` — the secondary-extinction correction: dormant since 2016-10-02, its
-  eight silent defects, Lorraine Malaspina's prior work on `origin/Lolo_CP2K`, and the reactivation
-  plan. Includes the two decisions that must be taken first — Larson's angular factor or SHELXL
-  eq (62), and what `N_p` should be in the XCW stage of an XWR.
-- `docs/GOF_NOT_CHI2.md` — the quantity called `chi2` throughout the code is a GoF²; the rename, and
-  reporting GoF rather than its square in the refinement tables. Kept separate from the extinction
-  work on purpose.
-- `docs/DFT_STANDARDISATION.md` — milestone 10: the DFT machinery, its three silent defects, the
-  functional-interface analysis, and the libxc plan.
-- `docs/BUILDING_ON_WINDOWS.md` — the four WSL-specific traps, the CMake guards, and how they are tested.
-- `docs/TONTO_CONTINUOUS_INTEGRATION.md` — the CI workflows, how to trigger one manually, and how to read a run.
-- `docs/TONTO_CALL_GRAPHS.md` — call/use graphs and dead-code elimination.
-- `docs/TONTO_EDITING_WITH_VIM.md` — vim set-up: tags, folding, completion.
-- `DEFERRED.md` — the live work: the handover section at the top, then every open issue by
-  theme, then an archive of closed ones. **A working document** (§1).
-- `docs/PROJECT_HISTORY.md` — why the ANTLR4 translator exists and what the twelve milestones
-  found. Background, not current work. **A working document** (§1).
-
+The index is `docs/DOCUMENTATION.md`, linked from the README; one self-contained building
+page per platform (`docs/BUILDING_ON_{LINUX,MACOS,WINDOWS}.md`); `docs/RUNNING_TONTO.md`,
+`docs/RUNNING_HART.md` and `docs/RUNNING_RGBI.md` for the three programs;
+`docs/TONTO_DEVELOPER_INFO.md` for the developer reference (§1a MPI pitfalls, §1b build and
+test traps, §1c profiling and timing); `docs/FOO_GRAMMAR_DOCUMENTATION.md` for the language.
+`DEFERRED.md` is the live work and `docs/PROJECT_HISTORY.md` the background — both working
+documents (§1). The `*_REPORT.md` and per-item pages in `docs/` are working documents too.
 
 ## 11. Working agreement
 
@@ -343,56 +299,15 @@ loop stays usable.
 build type, so in a debug build that one file is compiled `-O2`. Harmless for correctness, but
 it hampers debugging that file.
 
-### `hart` build/run
+### `hart`, the translator and the analysis modes
 
-`run_har` is built by the ordinary `make`, so `build/hart` appears alongside `build/tonto`.
-A ~5 s end-to-end job:
-
-```bash
-mkdir -p /tmp/hart && cd /tmp/hart
-cp <repo>/tests/hart/urea_hart_STO-3G/urea_init.cif .
-TONTO_BASIS_SET_DIRECTORY=<repo>/basis_sets \
-  <repo>/build/hart --job urea --basis STO-3G --grid-accuracy low urea_init.cif
-ctest -L hart      # the suite + the options invariant check
-```
-
-Full option reference: `docs/RUNNING_HART.md`.
-
-### Translator build/run
-
-Helper script: `scripts/build_translator.sh`.
-
-```bash
-scripts/build_translator.sh                    # generate parser + compile translator
-scripts/build_translator.sh foofiles/irrep.foo # translate one module into antlr4-release/
-
-# Equivalent manual invocation:
-JAR=$PWD/external/antlr-4.13.2-complete.jar   # absolute; override with $ANTLR_JAR
-( cd foogrammar && java -cp "$JAR" org.antlr.v4.Tool -visitor -o ../build/translator/gen Foo.g4 )
-javac -cp "$JAR" -d build/translator/classes build/translator/gen/*.java foogrammar/FooToFortran.java
-java -cp "$JAR:build/translator/classes" FooToFortran \
-     --types foofiles/types.foo --foo foofiles/irrep.foo --out-dir antlr4-release
-```
-
-`FooToFortran` writes `<stem>.F90`, `<stem>.int`, `<stem>.use` (stem maps `vec{real}.foo` →
-`vec_real`). `types.foo` must be passed so the derived-type table is built first (§8). This
-single-module path is a dev aid; the normal build is via CMake.
-
-### Analysis modes — call graph and dead-code elimination
-
-```bash
-# DOT graphs (no root needed) + dead-code report (root needed); shares one graph build:
-java -cp "$JAR:build/translator/classes" FooToFortran --types foofiles/types.foo \
-     --dead-code-report runfiles/run_molecule.foo --call-graph-report --out-dir <dir>
-# Purge: emit only procedures reachable from run_molecule into <dir>:
-java -cp "$JAR:build/translator/classes" FooToFortran --types foofiles/types.foo \
-     --purge-dead-code runfiles/run_molecule.foo --out-dir <dir>
-```
-
-CMake exposes these as the `callgraphs` target and the `-DPURGE_DEAD_CODE=<stem>` option (a
-**separate** build tree — purge is per-executable). Wholesale-`use` modules (`TYPES`/`SYSTEM`)
-are never pruned. A purged release build compiles clean, drops ~32% of procedures, and passes
-the same loose suite as the full build.
+`hart` is built by the ordinary `make` and appears next to `build/tonto`; a 5-second job and
+the full option reference are in `docs/RUNNING_HART.md`. The translator is built and run by
+`scripts/build_translator.sh` (no argument: build; a `.foo` path: translate that one module
+into `antlr4-release/`), and `types.foo` is always passed first (§8). The call-graph and
+dead-code modes (`--call-graph-report`, `--dead-code-report`, `--purge-dead-code`; CMake
+`callgraphs` target and `-DPURGE_DEAD_CODE=<stem>` in a separate build tree) are in
+`docs/TONTO_DEVELOPER_INFO.md` §1. Wholesale-`use` modules are never pruned.
 
 ## 12. Open items
 
