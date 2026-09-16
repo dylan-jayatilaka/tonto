@@ -123,11 +123,17 @@ now covers the whole project, so it was renamed.)*
 > what the cartesian one does (857 s), as the algebra predicts, and goes from 1.48x to 1.11x
 > ORCA's exact spherical run. Tables in `docs/SCF_SPEED_REPORT.md`.
 >
-> **Owed on `rys-sph` before it merges:** (1) an **l>=2 invariant** comparing `make_r_JK_direct`
-> against the transformed engine -- the suite's `spherical_vs_cartesian` is s/p only, where U is
-> the identity, so it cannot see an error in this code; (2) the **unrestricted** branches still
-> call `make_u_JK_direct`, which also lacks the `parallel do` its engine twin has, so UHF/UKS
-> spherical gets neither the engine nor threading; (3) `short` plus the spherical `long` jobs.
+> **Unrestricted done too** (second commit on the branch): `make_u_JK_engine_sph` transforms the
+> alpha and beta densities up, calls `make_u_JK_engine`, brings `J.a/J.b/K.a/K.b` back down, and
+> the UHF and UKS spherical branches use it. That also gives unrestricted spherical runs the
+> `parallel do` they never had, since `make_u_JK_direct` loops serially. Validated on a water
+> cation cc-pVTZ spherical doublet: −75.656094899484 on both branches, identical to twelve
+> decimals, 1.09 s against 1.52 s.
+>
+> **Owed on `rys-sph` before it merges:** `short` plus the spherical `long` jobs -- and note the
+> branch sits on `rys-1c`, which is also unmerged, so one `short` run discharges both it and step
+> (2) of the 2026-09-15 handoff. No l>=2 invariant is owed: Dylan decided the existing references
+> are the gate (see below).
 >
 > **Decided (Dylan, 2026-09-16): the existing references are the gate.** No new keyword, no
 > two-builder cross-check kept as machinery. `h2o_rhf_cc-pVTZ_spherical_harmonic_basis` covers d
