@@ -98,6 +98,40 @@ now covers the whole project, so it was renamed.)*
 > 0.17% on three lines where it had failed at 200%. The only loose failure left on the Mac is
 > `urea_ccsd_pob-TZVP_Salvador_properties` at 4.48%, the LAPACK-thread row; the suite is 55/56.
 >
+> **START HERE -- 2026-09-17 (morning). Overnight on branch `esfs-order` (pushed, not merged):
+> step 0 answered, step 3 built for J, the zinc-finger comparison suite running.** Details under
+> *Primitive-batched J and K*; runs in `~/tonto_runs/{esfs_order,pair_list,gpl_J}_2026-09-17/`.
+>
+> 1. **Step 0, the loop-order pilot: not memory-bound, not merged.** Primitive index outermost,
+>    no `Ixa` buffers: energies to 1e-14 but J/K +1.9% at 6-31G(d) and +2.9% at cc-pVTZ, three
+>    pairs each, same sign every time. `perf stat` miss rates were single-digit. The long
+>    contiguous dot product is what the compiler vectorises. Reverted on the branch (`93c9afde`).
+> 2. **Pair lists are small**: 1-4e4 surviving primitive pairs for karrikinolide and the zinc
+>    finger at every basis. Shared exponents halve 6-31G(d)'s list (sp shells); def2 gains nothing.
+> 3. **`GAUSSIAN_PAIR_LIST` J kernel (`gaussian_pair_list.foo`), `scfdata= { use_gaussian_pair_J=
+>    TRUE }`, default FALSE.** Pair list built per J build; each unordered pair of primitive pairs
+>    once; per k, partners and roots batched into contiguous columns of <= 256; contraction with
+>    the transfer-space density in the same pass; AO-based primitive Schwarz bounds with the
+>    cutoff divided by both shell pairs' primitive counts. **Identical to the engine to 1e-14 at
+>    `high` (6-31G(d) and cc-pVTZ). Against `develop`, BLYP karrikinolide at equal or better
+>    accuracy: parity at 6-31G(d), −22% at cc-pVTZ `low`, −15% at `high`.** Serial, J only.
+> 4. **Two traps found**: transfer-space Schwarz bounds are not AO bounds (cost 8e-7 at cc-pVTZ
+>    before the fix); and `eri_accuracy=` silently overrides explicit `eri_*_cutoff=` every
+>    iteration, which voided two diagnostic runs.
+> 5. **Zinc-finger suite** (`~/tonto_runs/vs_g09_orca_znfinger_2026-09-17/`, `suite.log`): hand-built
+>    geometry, RHF and BLYP at 6-31G(d) (Tonto cartesian vs g09 6D 10F; Tonto spherical vs ORCA)
+>    and def2-SVP/def2-TZVP (spherical, all three), one core, one job at a time, Tonto `develop`
+>    plus pair-list BLYP rows. Started 04:36; def2-TZVP will run into the morning.
+> 6. **Laptop memory**: the session guard kills background tasks here (4.4 GB kernel slab); long
+>    runs were launched detached with `setsid nohup`, one job at a time, each under 100 MB
+>    (g09/ORCA capped at 2 GB). Old session scratch moved off `/tmp` to
+>    `~/tonto_runs/old_session_scratch_2026-09-17/`.
+>
+> **Open decisions for Dylan:** tune the count-scaled cutoff (it costs the 10% gain the unscaled
+> list had at 6-31G(d)); K (the harder index pattern) -- shell-quartet digestion fed from the
+> list, or something else; batching across k (the GPU shape); `short`/`long` owed before any
+> merge (the switch is off by default, and the pilot is reverted, so no reference should move).
+>
 > **START HERE -- 2026-09-16 (late). The classical Rys work is wrapped up; the next direction is
 > *Primitive-batched J and K* (pair lists by class, primitive density, early contraction), a live
 > item under *Science and features*, with its step 0 -- the loop-order pilot that puts the
@@ -2732,7 +2766,13 @@ Chased the same night:
   | 6-31G(d) | −533.954502154999, 2.2e-11 | 43.85 | 2.4e-11 | 42.50, 43.35, 45.51 |
   | cc-pVTZ | −534.166446596817, **3.6e-9** | **597.5** | 2.3e-8 | 823.9 |
 
-  **At equal or better accuracy: parity at 6-31G(d), about −27% at cc-pVTZ.** The unscaled list
+  **The clean baseline, `develop` binary (`7d2c236a`), one job at a time:** 6-31G(d) `low`
+  43.30, 44.57, 44.22 s (mean 44.0, energy −533.954502153037); cc-pVTZ `low` **767.3 s**
+  (−534.166446623418); cc-pVTZ `high` **1209.7 s** (−534.166446600421, 1.2e-14 from the list).
+
+  **Against `develop`, at equal or better accuracy: parity at 6-31G(d) (43.85 against 44.0),
+  −22% at cc-pVTZ `low` (597.5 against 767.3, and 3.6e-9 from `high` against 2.3e-8), −15% at
+  cc-pVTZ `high` (1031.7, unscaled cutoff, against 1209.7).** The unscaled list
   (39.8 s mean at 6-31G(d), 1.0e-11 there) was faster at double zeta, so the count scaling is
   conservative and could be tuned (a square root, or the count of one side), measured against
   `high` each time.
