@@ -125,8 +125,8 @@ now covers the whole project, so it was renamed.)*
 > out) -- silent in release, a debug `ENSURE` stop. Found because the counters were compiled with
 > `USE_PRECONDITIONS`; the §11 rule again.
 >
-> The energy moves by 5e-12 on karrikinolide, inside every gate; a `long` run is still owed on
-> this whole thread, as before.
+> The energy moves by 5e-12 on karrikinolide, inside every gate. **`long` run on the merged
+> tree: 33/33 loose**, which discharges the run owed on this thread since 2026-09-15.
 >
 > **START HERE -- 2026-09-16 (evening). `rys-1c` and `rys-sph` are merged; item 3 is next and
 > nothing is in flight.**
@@ -214,8 +214,9 @@ now covers the whole project, so it was renamed.)*
 > construction, since the contraction coefficients still differ -- and the profile above shows the
 > roots are the smaller half at triple zeta anyway. Revisit only for a genuinely general basis (ANO).
 >
-> **Still owed on this thread:** a `long` run. Routine CI runs `short` only, and that is how 16
-> stale `long` references accumulated on 2026-09-10.
+> **`long` was owed on this thread** and was run on 2026-09-16 after the `rys-vec` merge: 33/33.
+> Routine CI runs `short` only, and that is how 16 stale `long` references accumulated on
+> 2026-09-10.
 >
 > **START HERE -- 2026-09-16.** Step (1) of yesterday's list is **done**: Tonto timed against
 > g09 and ORCA on karrikinolide, RHF and BLYP, 6-31G(d), cc-pVTZ, def2-SVP and def2-TZVP, one
