@@ -84,32 +84,39 @@ contains
    ! A pair of pairs is skipped when its Schwarz bound times the largest
    ! density element of either shell pair is below "cutoff". Within each
    ! class the pairs are taken by decreasing bound, so the inner loop stops
-   ! at the first pair that fails against the class's largest density; the
-   ! survivors for one "k" get their roots in one call.
+   ! at the first pair that fails against the class's largest density. The
+   ! survivors for one "k" are done in batches of at most "batch_max"
+   ! (partner,root) entries, see add_batch_to_J.
       self :: IN
       JJ :: VEC{EVEC{REAL}}, INOUT
       PP :: VEC{EVEC{REAL}}, IN
       cutoff :: REAL, IN
 
-      Ix,Iy,Iz,rt,wt :: MAT{REAL}@
-      ev,fv,Q,Qc,P_max,class_P_max,xv :: VEC{REAL}@
+      batch_max :: INT, parameter = 256
+
+      Ix,Iy,Iz :: MAT3{REAL}@
+      rt,wt,Pg,fvp :: MAT{REAL}@
+      ev,Q,Qc,P_max,class_P_max,xv,C00x,C00y,C00z,D00x,D00y,D00z,B10,B01,B00,W :: VEC{REAL}@
       nxe,nye,nze,nxf,nyf,nzf,order,idx,jv :: VEC{INT}@
       rys :: RYS
-      A,B,k,j,k_pos,j_pos,j_last,sp_k,sp_j,n_e,n_f,fe,ff,e,f,n,n_roots,l_e,l_f,l_max :: INT
-      xf,yf,zf,m,i,n_big,first,last :: INT
-      zeta,eta,zinv,einv,rho,rho_zinv,rho_einv,half_zinv,half_einv :: REAL
-      PAx,PAy,PAz,QCx,QCy,QCz,QPx,QPy,QPz,xx,cc,fac :: REAL
-      t2,t2_rz,t2_re,C00x,C00y,C00z,D00x,D00y,D00z,B10,B01,B00 :: REAL
-      t,s,pf,Qk,Pk,bound :: REAL
+      A,B,k,j,k_pos,j_pos,j_last,sp_k,n_e,n_f,fe,ff,e,f,n,n_roots,l_e,l_f,l_max :: INT
+      m,i,n_big,first,last,chunk,c0,mc :: INT
+      zeta,eta,QPx,QPy,QPz,Qk,Pk,bound :: REAL
 
       l_max = maxval(.class_l_sum)
-      Ix.create(l_max+1,l_max+1)
-      Iy.create(l_max+1,l_max+1)
-      Iz.create(l_max+1,l_max+1)
+      Ix.create(batch_max,l_max+1,l_max+1)
+      Iy.create(batch_max,l_max+1,l_max+1)
+      Iz.create(batch_max,l_max+1,l_max+1)
       n = maxval(.class_n_gaussian)
-      ev.create(n); fv.create(n)
+      ev.create(n)
+      Pg.create(batch_max,n)
+      fvp.create(batch_max,n)
       nxe.create(n); nye.create(n); nze.create(n)
       nxf.create(n); nyf.create(n); nzf.create(n)
+      C00x.create(batch_max); C00y.create(batch_max); C00z.create(batch_max)
+      D00x.create(batch_max); D00y.create(batch_max); D00z.create(batch_max)
+      B10.create(batch_max); B01.create(batch_max); B00.create(batch_max)
+      W.create(batch_max)
 
       ! Largest density element of each shell pair, and of each class
       P_max.create(size(PP))
@@ -123,10 +130,10 @@ contains
       Q.create(.n_pairs)
       .make_Schwarz_bounds(Q)
       order.create(.n_pairs)
-      n_big = maxval(.class_last-.class_first+1)
-      idx.create(max(n_big,1))
-      jv.create(max(n_big,1))
-      xv.create(max(n_big,1))
+      n_big = max(maxval(.class_last-.class_first+1),1)
+      idx.create(n_big)
+      jv.create(n_big)
+      xv.create(n_big)
       do A = 1,.n_classes
          first = .class_first(A)
          last  = .class_last(A)
@@ -167,9 +174,10 @@ contains
 
             n_roots = (l_e+l_f+2)/2
             rys.set_n_roots(n_roots)
+            chunk = max(batch_max/n_roots,1)
             rt.destroy; wt.destroy
-            rt.create(n_roots,max(n_big,1))
-            wt.create(n_roots,max(n_big,1))
+            rt.create(n_roots,chunk)
+            wt.create(n_roots,chunk)
 
             do k_pos = .class_first(A),.class_last(A)
 
@@ -182,11 +190,6 @@ contains
                if (Qk*Q(order(.class_first(B)))*max(Pk,class_P_max(B))<cutoff) cycle
 
                zeta = .exponent_sum(k)
-               zinv = .exponent_inv(k)
-               half_zinv = HALF*zinv
-               PAx = .center_diff(1,k)
-               PAy = .center_diff(2,k)
-               PAz = .center_diff(3,k)
 
                j_last = .class_last(B)
                if (A==B) j_last = k_pos
@@ -206,75 +209,188 @@ contains
                   QPz = .center(3,j) - .center(3,k)
                   xv(m) = zeta*eta/(zeta+eta)*(QPx*QPx + QPy*QPy + QPz*QPz)
                end
-               if (m==0) cycle
 
-               rys.get_weights_t2(m,xv,rt,wt)
-
-               do i = 1,m
-
-                  j = jv(i)
-                  sp_j = .shell_pair(j)
-                  eta  = .exponent_sum(j)
-                  einv = .exponent_inv(j)
-                  half_einv = HALF*einv
-                  QCx = .center_diff(1,j)
-                  QCy = .center_diff(2,j)
-                  QCz = .center_diff(3,j)
-                  QPx = .center(1,j) - .center(1,k)
-                  QPy = .center(2,j) - .center(2,k)
-                  QPz = .center(3,j) - .center(3,k)
-
-                  rho = zeta*eta/(zeta+eta)
-                  rho_zinv = rho*zinv
-                  rho_einv = rho*einv
-                  cc = TWOPI5ON2*.prefactor(k)*.prefactor(j)*sqrt(rho)
-
-                  ev(1:n_e) = ZERO
-                  fv(1:n_f) = ZERO
-
-                  do n = 1,n_roots
-
-                     t2 = rt(n,i)
-                     t2_rz = t2*rho_zinv
-                     t2_re = t2*rho_einv
-                     C00x = PAx + t2_rz*QPx
-                     C00y = PAy + t2_rz*QPy
-                     C00z = PAz + t2_rz*QPz
-                     D00x = QCx - t2_re*QPx
-                     D00y = QCy - t2_re*QPy
-                     D00z = QCz - t2_re*QPz
-                     B10 = (ONE - t2_rz)*half_zinv
-                     B01 = (ONE - t2_re)*half_einv
-                     B00 = t2_rz*half_einv
-
-                     GAUSSIAN_PAIR_LIST::make_2d(Ix,l_e,l_f,C00x,D00x,B10,B01,B00)
-                     GAUSSIAN_PAIR_LIST::make_2d(Iy,l_e,l_f,C00y,D00y,B10,B01,B00)
-                     GAUSSIAN_PAIR_LIST::make_2d(Iz,l_e,l_f,C00z,D00z,B10,B01,B00)
-                     Iz(1:l_e+1,1:l_f+1) = Iz(1:l_e+1,1:l_f+1)*(cc*wt(n,i))
-
-                     do f = 1,n_f
-                        xf = nxf(f); yf = nyf(f); zf = nzf(f)
-                        pf = PP(sp_j).element(f)
-                        s = ZERO
-                        do e = 1,n_e
-                           t = Ix(nxe(e),xf)*Iy(nye(e),yf)*Iz(nze(e),zf)
-                           ev(e) = ev(e) + t*pf
-                           s = s + t*PP(sp_k).element(e)
-                        end
-                        fv(f) = fv(f) + s
-                     end
-
-                  end
-
-                  fac = .factor(k)*.factor(j)
-                  JJ(sp_k).element(1:n_e) = JJ(sp_k).element(1:n_e) + fac*ev(1:n_e)
-                  if (j/=k) then
-                     JJ(sp_j).element(1:n_f) = JJ(sp_j).element(1:n_f) + fac*fv(1:n_f)
-                  end
-
+               do c0 = 1,m,chunk
+                  mc = min(chunk,m-c0+1)
+                  rys.get_weights_t2(mc,xv(c0:c0+mc-1),rt,wt)
+                  .add_batch_to_J(JJ,PP,k,jv(c0:c0+mc-1),mc,n_roots,mc*n_roots, &
+                     l_e,l_f,n_e,n_f,nxe,nye,nze,nxf,nyf,nzf,rt,wt,Ix,Iy,Iz, &
+                     C00x,C00y,C00z,D00x,D00y,D00z,B10,B01,B00,W,Pg,fvp,ev)
                end
+
             end
 
+         end
+      end
+
+   end
+
+   add_batch_to_J(JJ,PP,k,jv,m,n_roots,n_p,l_e,l_f,n_e,n_f,nxe,nye,nze,nxf,nyf,nzf,rt,wt,Ix,Iy,Iz,C00x,C00y,C00z,D00x,D00y,D00z,B10,B01,B00,W,Pg,fvp,ev) :: private, PURE
+   ! Add to "JJ" the quartets of pair "k" with the "m" pairs "jv", whose
+   ! roots and weights are "rt" and "wt". Each (partner,root) is one entry
+   ! p of n_p = m*n_roots, and every array is laid out with p first, so the
+   ! 2D recursions and the contraction run down contiguous columns. The
+   ! work arrays are explicit-shape views of the caller's buffers.
+      self :: IN
+      JJ :: VEC{EVEC{REAL}}, INOUT
+      PP :: VEC{EVEC{REAL}}, IN
+      k,m,n_roots,n_p,l_e,l_f,n_e,n_f :: INT, IN
+      jv :: VEC{INT}(m), IN
+      nxe,nye,nze :: VEC{INT}(*), IN
+      nxf,nyf,nzf :: VEC{INT}(*), IN
+      rt,wt :: MAT{REAL}(n_roots,m), IN
+      Ix,Iy,Iz :: MAT3{REAL}(n_p,l_e+1,l_f+1), INOUT
+      C00x,C00y,C00z,D00x,D00y,D00z,B10,B01,B00,W :: VEC{REAL}(n_p), INOUT
+      Pg,fvp :: MAT{REAL}(n_p,n_f), INOUT
+      ev :: VEC{REAL}(n_e), INOUT
+
+      i,j,n,p,e,f,sp_k,sp_j,xe,ye,ze,xf,yf,zf :: INT
+      zeta,eta,zinv,einv,rho,rho_zinv,rho_einv,half_zinv,half_einv :: REAL
+      PAx,PAy,PAz,QCx,QCy,QCz,QPx,QPy,QPz,cc,t2,t2_rz,t2_re,t,s,pk,fac :: REAL
+
+      sp_k = .shell_pair(k)
+      zeta = .exponent_sum(k)
+      zinv = .exponent_inv(k)
+      half_zinv = HALF*zinv
+      PAx = .center_diff(1,k)
+      PAy = .center_diff(2,k)
+      PAz = .center_diff(3,k)
+
+      ! Recursion coefficients, weight and cd density for each entry
+      p = 0
+      do i = 1,m
+         j = jv(i)
+         sp_j = .shell_pair(j)
+         eta  = .exponent_sum(j)
+         einv = .exponent_inv(j)
+         half_einv = HALF*einv
+         QCx = .center_diff(1,j)
+         QCy = .center_diff(2,j)
+         QCz = .center_diff(3,j)
+         QPx = .center(1,j) - .center(1,k)
+         QPy = .center(2,j) - .center(2,k)
+         QPz = .center(3,j) - .center(3,k)
+         rho = zeta*eta/(zeta+eta)
+         rho_zinv = rho*zinv
+         rho_einv = rho*einv
+         cc = TWOPI5ON2*.prefactor(k)*.prefactor(j)*sqrt(rho)*.factor(j)
+         do n = 1,n_roots
+            p = p + 1
+            t2 = rt(n,i)
+            t2_rz = t2*rho_zinv
+            t2_re = t2*rho_einv
+            C00x(p) = PAx + t2_rz*QPx
+            C00y(p) = PAy + t2_rz*QPy
+            C00z(p) = PAz + t2_rz*QPz
+            D00x(p) = QCx - t2_re*QPx
+            D00y(p) = QCy - t2_re*QPy
+            D00z(p) = QCz - t2_re*QPz
+            B10(p) = (ONE - t2_rz)*half_zinv
+            B01(p) = (ONE - t2_re)*half_einv
+            B00(p) = t2_rz*half_einv
+            W(p) = cc*wt(n,i)
+         end
+      end
+      do f = 1,n_f
+         p = 0
+         do i = 1,m
+            t = PP(.shell_pair(jv(i))).element(f)
+            do n = 1,n_roots
+               p = p + 1
+               Pg(p,f) = t
+            end
+         end
+      end
+
+      GAUSSIAN_PAIR_LIST::make_2d_batch(Ix,n_p,l_e,l_f,C00x,D00x,B10,B01,B00)
+      GAUSSIAN_PAIR_LIST::make_2d_batch(Iy,n_p,l_e,l_f,C00y,D00y,B10,B01,B00)
+      GAUSSIAN_PAIR_LIST::make_2d_batch(Iz,n_p,l_e,l_f,C00z,D00z,B10,B01,B00)
+      do f = 1,l_f+1
+      do e = 1,l_e+1
+         do p = 1,n_p
+            Iz(p,e,f) = Iz(p,e,f)*W(p)
+         end
+      end
+      end
+
+      ! Contract: ab side with the cd density, cd side with the ab density
+      ev = ZERO
+      fvp = ZERO
+      do f = 1,n_f
+         xf = nxf(f); yf = nyf(f); zf = nzf(f)
+         do e = 1,n_e
+            xe = nxe(e); ye = nye(e); ze = nze(e)
+            pk = PP(sp_k).element(e)
+            s = ZERO
+            do p = 1,n_p
+               t = Ix(p,xe,xf)*Iy(p,ye,yf)*Iz(p,ze,zf)
+               s = s + t*Pg(p,f)
+               fvp(p,f) = fvp(p,f) + t*pk
+            end
+            ev(e) = ev(e) + s
+         end
+      end
+
+      fac = .factor(k)
+      JJ(sp_k).element(1:n_e) = JJ(sp_k).element(1:n_e) + fac*ev
+      p = 0
+      do i = 1,m
+         j = jv(i)
+         if (j==k) then
+            p = p + n_roots
+            cycle
+         end
+         sp_j = .shell_pair(j)
+         do n = 1,n_roots
+            p = p + 1
+            JJ(sp_j).element(1:n_f) = JJ(sp_j).element(1:n_f) + fac*fvp(p,1:n_f)
+         end
+      end
+
+   end
+
+   make_2d_batch(I,n_p,l_e,l_f,C00,D00,B10,B01,B00) :: selfless, private, PURE
+   ! Make the 2D Rys integrals "I(p,e+1,f+1)", e<=l_e, f<=l_f, for one
+   ! cartesian direction and all n_p entries p, by the vertical recursions.
+      n_p,l_e,l_f :: INT, IN
+      I :: MAT3{REAL}(n_p,l_e+1,l_f+1), INOUT
+      C00,D00,B10,B01,B00 :: VEC{REAL}(n_p), IN
+
+      p,e,f :: INT
+
+      do p = 1,n_p
+         I(p,1,1) = ONE
+      end
+      if (l_e>0) then
+         do p = 1,n_p
+            I(p,2,1) = C00(p)
+         end
+      end
+      do e = 2,l_e
+         do p = 1,n_p
+            I(p,e+1,1) = C00(p)*I(p,e,1) + (e-1)*B10(p)*I(p,e-1,1)
+         end
+      end
+
+      do f = 1,l_f
+         if (f==1) then
+            do p = 1,n_p
+               I(p,1,2) = D00(p)
+            end
+         else
+            do p = 1,n_p
+               I(p,1,f+1) = D00(p)*I(p,1,f) + (f-1)*B01(p)*I(p,1,f-1)
+            end
+         end
+         if (l_e>0) then
+            do p = 1,n_p
+               I(p,2,f+1) = C00(p)*I(p,1,f+1) + f*B00(p)*I(p,1,f)
+            end
+         end
+         do e = 2,l_e
+            do p = 1,n_p
+               I(p,e+1,f+1) = C00(p)*I(p,e,f+1) + (e-1)*B10(p)*I(p,e-1,f+1) + f*B00(p)*I(p,e,f)
+            end
          end
       end
 
