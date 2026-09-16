@@ -2701,15 +2701,20 @@ shared-exponent tiles, no batching across k.
 **cc-pVTZ (karrikinolide BLYP, `low`, one concurrent pair): engine 901.7 s, pair list 621.1 s,
 −31% -- but the energies differ by 8.2e-7** (engine −534.166446623420, list −534.166447442652).
 Chased the same night:
-- **Not the list's screening.** The list with `eri_schwarz_cutoff= 1d-30` gives
-  −534.166447442648, with `eri_primitive_pair_cutoff= 1d-15` −534.166447442646: unmoved.
+- ~~Not the list's screening~~ -- **WRONG, the diagnostic was void.** The list with
+  `eri_schwarz_cutoff= 1d-30` gave −534.166447442648 and with `eri_primitive_pair_cutoff= 1d-15`
+  −534.166447442646, apparently unmoved. But both inputs also said `eri_accuracy= low`, and
+  `SCF_DATA:set_ERI_accuracy_for_iteration` re-applies the named level's cutoffs **every
+  iteration** once `eri_accuracy=` is given, silently overriding any individual `eri_*_cutoff=`.
+  Both runs used the `low` cutoffs. **Trap worth fixing:** an explicit cutoff next to a named
+  level should either win or be refused, not be silently discarded.
 - **Not the f-class integrals.** Water BLYP/cc-pVTZ at `high`: both paths −76.442522880796.
-- So the suspect is the **engine's** screening at `low` on a separated-atom molecule with tight
-  s primitives. The deciding run is both paths at `high` on karrikinolide cc-pVTZ (in progress).
-- Meanwhile the list's Schwarz test was changed to AO-based bounds (`3c422055`): the shell
-  pair's `max_I` scaled by the primitive's share of the shell pair's transfer-space bound, and
-  the AO density maxima the engine uses. Transfer-space bounds alone are not bounds on AO
-  contributions, even though they did not cause this discrepancy.
+- **The cause was the list's transfer-space Schwarz bounds.** With AO-based bounds (`3c422055`:
+  the shell pair's `max_I` scaled by the primitive's share of the shell pair's largest
+  transfer-space bound, and the AO density maxima the engine uses) the list at `high` gives
+  **−534.166446600409**, 2.3e-8 from the engine at `low`, 8.4e-7 from the old list value.
+  Transfer-space quantities are not bounds on AO contributions; the forward transfer amplifies.
+  Serial J/K 1031.7 s at `high`. So the 31% above was partly over-screening; re-measure.
 - Two cc-pVTZ jobs at once were killed by the session memory guard: the kernel holds 4.4 GB of
   slab on this laptop. Run cc-pVTZ jobs one at a time here.
 
