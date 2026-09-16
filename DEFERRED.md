@@ -2528,7 +2528,32 @@ reduction over nodes (GPU nodes eventually).
   the three small tiles (<= 5x5 each) and accumulating `esfs(e,f) += Ix*Iy*Iz` at once reads
   each tile once, keeps `esfs` in L1, and removes the buffers -- and the `ERI_SCRATCH` traffic
   -- entirely. Same flops. In the batched form the tile triple is contracted immediately with
-  D^prim on the cd side, so the per-element output is the ab components only.
+  D^prim on the cd side, so the per-element output is the ab components only. The shape:
+
+  ```
+  esfs = 0
+  for each primitive pair-pair (k,j) and root n:          ! outermost
+     build the three tiles Ix(e,f), Iy(e,f), Iz(e,f)       ! <= 5x5 each: registers / L1
+     for each component pair (e,f):                        ! innermost, contiguous in esfs
+        esfs(e,f) += Ix(xe,xf) * Iy(ye,yf) * Iz(ze,zf)     ! nothing else is read or written
+  ```
+
+  against today's `Ix => Ixa(i,:,:)` filled at stride `n_sum` and then
+  `esfs(e,f) = sum(Ix(:,xe,xf)*Iy(:,ye,yf)*Iz(:,ze,zf))` once per component pair.
+
+  **The memory-traffic diagnosis is inferred, not verified.** The evidence is circumstantial:
+  the Rys symbols' `perf` share fell three points while the clock stood, and three concurrent
+  copies each ran ~15% slower than one. Both fit a build limited by traffic through the 2-D
+  buffers, and neither proves it. The loop-order pilot (step 0) is the direct test; `perf stat
+  -e cache-misses,LLC-load-misses` on one job before it is the cheap corroboration.
+
+**Expectations, set by Dylan (2026-09-16).** This may not close the gap to g09 and ORCA where
+they do exact J and K: those codes carry hundreds if not thousands of hours of thought, and
+getting close is the realistic aim; exceeding them needs a different algorithm, not a better
+loop. Where the primitive scheme may help against a specialised basis like 6-31G(d), whose sp
+shells share exponents, is that shared exponents are exactly what a primitive pair list and a
+primitive density exploit once instead of per shell -- whether that is what g09 does with them
+is not known here.
 
 **Plan, J first** (the J-engine is the clean case; K is the same machinery with a messier index
 pattern, after).
