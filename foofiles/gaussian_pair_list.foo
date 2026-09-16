@@ -82,7 +82,8 @@ contains
    ! every primitive quartet, contracting at once with the transfer-space
    ! density "PP". Each unordered pair of primitive pairs is visited once.
    ! A pair of pairs is skipped when its Schwarz bound times the largest
-   ! density element "P_max" of either shell pair is below "cutoff". The
+   ! density element "P_max" of either shell pair is below "cutoff" divided
+   ! by the primitive pair counts of both shell pairs. The
    ! bound of a pair is the AO bound "I_max" of its shell pair, sqrt of
    ! the largest (ab|ab), scaled by the pair's share of the largest
    ! transfer-space bound in that shell pair; the transfer coefficients
@@ -103,11 +104,11 @@ contains
       Ix,Iy,Iz :: MAT3{REAL}@
       rt,wt,Pg,fvp :: MAT{REAL}@
       ev,Q,Qc,Q_sp,class_P_max,xv,C00x,C00y,C00z,D00x,D00y,D00z,B10,B01,B00,W :: VEC{REAL}@
-      nxe,nye,nze,nxf,nyf,nzf,order,idx,jv :: VEC{INT}@
+      nxe,nye,nze,nxf,nyf,nzf,order,idx,jv,n_sp,class_n_min :: VEC{INT}@
       rys :: RYS
       A,B,k,j,k_pos,j_pos,j_last,sp_k,n_e,n_f,fe,ff,e,f,n,n_roots,l_e,l_f,l_max :: INT
       m,i,n_big,first,last,chunk,c0,mc :: INT
-      zeta,eta,QPx,QPy,QPz,Qk,Pk,bound :: REAL
+      zeta,eta,QPx,QPy,QPz,Qk,Pk,bound,cut_k,cut_B :: REAL
 
       l_max = maxval(.class_l_sum)
       Ix.create(batch_max,l_max+1,l_max+1)
@@ -126,6 +127,17 @@ contains
 
       class_P_max.create(.n_classes)
       class_P_max = ZERO
+
+      ! Primitive pairs kept per shell pair: the cutoff for a pair of pairs
+      ! is divided by both counts, so what one shell quartet loses to
+      ! screening stays below "cutoff", as for the shell-quartet test
+      n_sp.create(size(I_max))
+      n_sp = 0
+      do k = 1,.n_pairs
+         n_sp(.shell_pair(k)) = n_sp(.shell_pair(k)) + 1
+      end
+      class_n_min.create(.n_classes)
+      class_n_min = 1
 
       ! Schwarz bound of each pair; each class's pairs by decreasing bound
       Q.create(.n_pairs)
@@ -155,6 +167,7 @@ contains
          order(first:last) = first - 1 + idx(1:last-first+1)
          Qc.destroy
          class_P_max(A) = maxval(P_max(.shell_pair(first:last)))
+         class_n_min(A) = minval(n_sp(.shell_pair(first:last)))
       end
 
       do A = 1,.n_classes
@@ -197,8 +210,11 @@ contains
                Qk = Q(k)
                Pk = P_max(sp_k)
 
-               ! The largest bound in class B fails: so does every other
-               if (Qk*Q(order(.class_first(B)))*max(Pk,class_P_max(B))<cutoff) cycle
+               ! The largest bound in class B fails the loosest cutoff: so
+               ! does every other
+               cut_k = cutoff/n_sp(sp_k)
+               cut_B = cut_k/class_n_min(B)
+               if (Qk*Q(order(.class_first(B)))*max(Pk,class_P_max(B))<cut_B) cycle
 
                zeta = .exponent_sum(k)
 
@@ -210,8 +226,8 @@ contains
                do j_pos = .class_first(B),j_last
                   j = order(j_pos)
                   bound = Qk*Q(j)
-                  if (bound*max(Pk,class_P_max(B))<cutoff) exit
-                  if (bound*max(Pk,P_max(.shell_pair(j)))<cutoff) cycle
+                  if (bound*max(Pk,class_P_max(B))<cut_B) exit
+                  if (bound*max(Pk,P_max(.shell_pair(j)))<cut_k/n_sp(.shell_pair(j))) cycle
                   m = m + 1
                   jv(m) = j
                   eta = .exponent_sum(j)
