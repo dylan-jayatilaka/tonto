@@ -379,3 +379,82 @@ binary, off and on side by side:
 Exact, and slower in both. It saves one multiply per shared `Ix*Iy` column but still takes one
 dot product of length n_sum per `(e,f)` component pair, and adds a stored product vector and
 scattered writes. The hot instructions are the vectorised sums, not the index lookups.
+
+## Tonto against g09 and ORCA, 2026-09-16
+
+Karrikinolide, 17 atoms, geometry from the same g09 checkpoint as every run above. One core
+each, run one at a time on an idle machine. Tonto is the `rys-1c` binary. Convergence 1e-8
+with a promolecule guess; g09 `SCF=(Tight,Conver=10)`; ORCA `TightSCF`. Inputs, outputs and
+timings in `~/tonto_runs/vs_g09_orca_2026-09-16/`.
+
+**Read the timings with the accuracy caveat below** — at Tonto's default cutoffs these runs are
+not accuracy-matched to the other two codes.
+
+Cartesian comparison (g09 forced to `6D 10F` to match Tonto's default):
+
+| job | Tonto | g09 |
+|---|---|---|
+| RHF/6-31G(d), 177 fn | 43.8 s | 6.9 s |
+| BLYP/6-31G(d) | 60.5 s | 38.6 s |
+| RHF/cc-pVTZ, 475 fn | 857 s | 907 s |
+| BLYP/cc-pVTZ | 810 s | 591 s |
+
+Spherical comparison (ORCA has no cartesian option; Tonto `use_spherical_basis= TRUE`):
+
+| job | Tonto | ORCA exact | ORCA default | g09 |
+|---|---|---|---|---|
+| RHF/6-31G(d), 166 fn | 54.2 s | 42.8 s | 42.8 s | — |
+| BLYP/6-31G(d) | 79.0 s | 54.4 s | 17.0 s | — |
+| RHF/cc-pVTZ, 414 fn | 1158 s | 780 s | 726 s | — |
+| BLYP/cc-pVTZ | 1471 s | 707 s | 50 s | — |
+| RHF/def2-SVP | 54.6 s | 42.4 s | 43.2 s | 8.5 s |
+| BLYP/def2-SVP | 81.7 s | 53.9 s | 17.2 s | 46.3 s |
+| RHF/def2-TZVP | 900 s | 604 s | 604 s | 785 s |
+| BLYP/def2-TZVP | 1089 s | 635 s | 47 s | 510 s |
+
+The def2 rows are spherical in all three codes, g09 at its default 5D 7F: the def2 sets are
+defined for spherical harmonics, so a cartesian def2 run compares something nobody uses.
+
+**What the table says.** The six-fold gap at 6-31G(d) is a small-basis effect and not worth
+chasing — g09 optimises that case heavily. At triple zeta Tonto is level with g09 on cartesian
+RHF (857 against 907 s) and 1.15x on def2-TZVP. The weak case is **DFT on a spherical basis**:
+2.1x g09 at def2-TZVP and 2.1x ORCA at cc-pVTZ, because the spherical path cannot reach the J
+engine at all. That is what the `rys-sph` branch addresses.
+
+**ORCA's default is density fitting, not better integrals.** For BLYP it uses RI-J with the
+`def2/J` auxiliary set (`SPLIT-RIJ`), which is where all of its speed comes from: 17.0 s against
+54.4 s for its own exact run at 6-31G(d), 50 s against 707 s at cc-pVTZ. It costs 3.9e-4 Eh at
+6-31G(d) and 4.0e-4 at cc-pVTZ, and the fitted energy is *below* the exact one, so it is not
+variational. For Hartree-Fock, ORCA used no approximation: `NoRI` and the default gave the same
+energy to every digit and the same time to 50 ms. ORCA and g09 both do incremental Fock builds;
+Tonto's delta build exists and is switched off.
+
+### The ~1e-6 energy difference was Tonto's screening, not a defect
+
+g09 and ORCA agree with each other to about 4e-9 on the def2 RHF jobs. Tonto differed from that
+pair by 8.1e-7 at def2-SVP and 5.6e-7 at def2-TZVP, **and the sign flipped between them** — the
+signature of discarded contributions rather than a missing term.
+
+With every cutoff at 1e-15 (`eri_schwarz_cutoff=`, `eri_j_density_cutoff=`,
+`eri_k_density_cutoff=`, `eri_bf_overlap_cutoff=`, `eri_primitive_pair_cutoff=`), RHF/6-31G(d):
+
+| | default cutoffs | at 1e-15 | reference |
+|---|---|---|---|
+| cartesian | −530.980810596 | **−530.980808227** | g09 −530.980808229 |
+| spherical | −530.979037749 | **−530.979034991** | ORCA −530.979034988 |
+
+Agreement improves from ~2.5e-6 to **1.8e-9 against g09 and 2.7e-9 against ORCA**, which is the
+level those two agree with each other. So the integrals, the basis handling and the spherical
+transform are all sound; the defaults are simply loose — `ERI_primitive_pair_cutoff` is
+`TOL(6)`, the other three `TOL(9)` (`types.foo`).
+
+**The cost is about +48%** on RHF/6-31G(d): 43.8 → 65.0 s cartesian, 54.2 → 80.4 s spherical.
+
+**So the timings above understate the gap at matched accuracy.** Tonto's default run trades
+roughly a microhartree for about a third of the run time; g09 at `SCF=Tight` and ORCA at
+`TightSCF` are not making that trade. A like-for-like RHF/cc-pVTZ figure would be nearer 1270 s
+than 857 s. No default has been changed.
+
+ORCA's remaining 3.2e-7 on the nuclear repulsion was its Angstrom-to-bohr conversion constant:
+given the geometry in bohr (`! ... Bohrs`), its V_NN is 576.09404496423485 against Tonto's
+576.094044964235, identical to fourteen digits.

@@ -98,6 +98,49 @@ now covers the whole project, so it was renamed.)*
 > 0.17% on three lines where it had failed at 200%. The only loose failure left on the Mac is
 > `urea_ccsd_pob-TZVP_Salvador_properties` at 4.48%, the LAPACK-thread row; the suite is 55/56.
 >
+> **START HERE -- 2026-09-16.** Step (1) of yesterday's list is **done**: Tonto timed against
+> g09 and ORCA on karrikinolide, RHF and BLYP, 6-31G(d), cc-pVTZ, def2-SVP and def2-TZVP, one
+> core each, run solo. Tables in `docs/SCF_SPEED_REPORT.md`; runs in
+> `~/tonto_runs/vs_g09_orca_2026-09-16/`. **Three findings.** (a) At triple zeta Tonto is level
+> with g09 on cartesian RHF and 1.15x on def2-TZVP; the weak case is **DFT on a spherical
+> basis**, 2.1x g09 and 2.1x ORCA, because the spherical path cannot reach the J engine.
+> (b) The ~1e-6 disagreement with both codes was **Tonto's default screening, not a defect**:
+> with every ERI cutoff at 1e-15, Tonto meets g09 to 1.8e-9 and ORCA to 2.7e-9, which is where
+> those two meet each other. Cost about +48%. **So the headline timings are not accuracy-matched
+> to g09/ORCA** -- a like-for-like RHF/cc-pVTZ figure is nearer 1270 s than 857 s. No default
+> changed; that is Dylan's call. (c) ORCA's BLYP speed is RI-J density fitting (`def2/J`), worth
+> 4e-4 Eh and not variational; for HF it uses no approximation at all.
+>
+> **Branch `rys-sph`** (off `rys-1c`, worktree `/home/dylan/github/tonto-sph`, commit `505fb888`,
+> pushed) makes a spherical basis build J and K with the **cartesian engine**: expand P into the
+> cartesian basis blockwise (`P_cart = U P U^T`), build, contract back (`U^T J U`). Exact, and
+> strictly less work than the direct path, which already builds the cartesian block and then
+> rotates it per quartet. Validated so far only on `h2o_rhf_cc-pVTZ_spherical_harmonic_basis`
+> (d and f functions): identical to twelve decimals. **Karrikinolide cc-pVTZ spherical, the real
+> test, was still running at hand-off** -- results in
+> `/tmp/claude-1000/.../scratchpad/karr_sph_{sph,1c}/stdout` if they survive, else rerun the
+> `tonto_rhf_cc-pVTZ_sph` input through both binaries. The old path took 1158 s; the algebra
+> predicts near the cartesian 857 s.
+>
+> **Owed on `rys-sph` before it merges:** (1) an **l>=2 invariant** comparing `make_r_JK_direct`
+> against the transformed engine -- the suite's `spherical_vs_cartesian` is s/p only, where U is
+> the identity, so it cannot see an error in this code; (2) the **unrestricted** branches still
+> call `make_u_JK_direct`, which also lacks the `parallel do` its engine twin has, so UHF/UKS
+> spherical gets neither the engine nor threading; (3) `short` plus the spherical `long` jobs.
+>
+> **Next, Dylan's idea (2026-09-16): make the ERI cutoffs a named accuracy level.** `very_low`,
+> `low`, `medium`, `high` setting the four cutoffs together, modelled on `BECKE_GRID:set_accuracy`
+> (`becke_grid.foo:477`), which already validates that vocabulary. Optionally escalate per
+> iteration: `very_low` while the density is damped anyway -- damping is on by default for
+> iterations 1-2, `.using_damping AND .iteration < .damp_finish` at `scf_data.foo:2450`,
+> `damp_factor= 0.5`, `damp_finish= 3` -- rising to the requested level once damping ends.
+> **Constraint (Dylan): never below `medium` during XCW**, and make it a floor in the code, not a
+> convention. This overlaps *Known-flaky: x-ray-constrained SCF convergence wanders violently*
+> below, whose excursion to -26.4 Ha coincides exactly with `*Damping was off` at iteration 3 --
+> i.e. the very switch a cutoff schedule would hang off. A cutoff scan (primitive-pair cutoff at
+> 1e-9, 1e-12, and all four at 1e-12) was running at hand-off in
+> `~/tonto_runs/vs_g09_orca_2026-09-16/probe_scan_*`.
+>
 > **START HERE -- 2026-09-15 (evening).** Stage E below is finished and the default. The
 > J/K integral work is done on branch **`rys-1c`** (pushed, not merged): every Fock builder
 > now takes its work arrays from one `ERI_SCRATCH` sized before the quartet loop, validated
