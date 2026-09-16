@@ -563,3 +563,65 @@ So **T-range binning of the roots is the 6-31G(d) lever and class batching is th
 and the `make_esfs_*` family is the common target at 40-51% of the run in both. A pilot should
 take one member, restructure it, and measure on both bases -- a change tuned on d functions alone
 would be optimising an 8.7% line at triple zeta.
+
+## Rys step 3, 2026-09-16: vectorising the roots within a shell quartet
+
+Branch `rys-vec`. The 1 and 2 root fits were written a second time as slice kernels, one leaf
+per T range so a contiguous slice of X runs as one straight loop (`RYS:get_weights1_t2_n`,
+`get_weights2_t2_n`); `RYS:get_weights_t2(n,X,root,weight)` is the vector entry, and the
+eleven low-l `make_esfs_*` routines with 1 or 2 roots (`ps_psss` ... `pd_pspp`) gather every
+primitive quartet's X in a pre-pass and make one call. The scalar trees are untouched;
+`runfiles/run_rys.foo` checks the two copies agree and times both. Everything below is
+karrikinolide RHF, one core; runs and `perf.data` in `~/tonto_runs/rys_vec_2026-09-16/`.
+
+**The kernels themselves are fast.** `run_rys`, idle machine, ns per X, scalar tree against
+vector call, all X in one T range: 1 root 23.6 → 7.4 at batch 81; 2 roots 31.9 → 10.5. Three
+to four times, from batch 9 upwards. Agreement with the scalar path is 4.4e-16 (one ulp of
+`-Ofast` reassociation); the scalar path's output is bitwise identical to `develop` on a
+16 000-point dump.
+
+**The batches are not in one range.** Counters compiled in for one run (never in a real
+build), 6-31G(d), X evaluated per SCF by the 2 root fit:
+
+| batch size | 1 | 2-9 | 10-81 | 82-1296 |
+|---|---|---|---|---|
+| X in same-range batches | 1.5 M | 11.0 M | 24.4 M | 12.2 M |
+| X in mixed-range batches | -- | 34.3 M | 99.7 M | 33.7 M |
+
+77% of the 217 M X sit in batches that straddle a T range; the 1 root fit is 72%. Batches of
+one are under 1%. A min/max test that sends a mixed batch to the scalar path therefore
+vectorises about a fifth of the work.
+
+**Grouping by range inside the call** (label each X, count, gather into per-range slices, run,
+scatter back) is 1.6x the scalar path on a representative mixed batch (X on [1,15), four
+polynomial ranges) at 81 X and above, and *slower* at 9 X, where the labelling and scatter
+cost more than the leaf. It is switched on only for mixed batches of 32 or more
+(`RYS::group_min`).
+
+**Whole-job result: flat.** Three binaries run concurrently, three repeats, J and K CPU s:
+
+| repeat | `develop` | min/max only | min/max + grouping ≥ 32 |
+|---|---|---|---|
+| 1 | 60.37 | 60.06 | 60.28 |
+| 2 | 62.71 | 63.17 | 64.70 |
+| 3 | 64.00 | 63.97 | 64.36 |
+| mean | 62.4 | 62.4 | 63.1 |
+
+Energies −530.980810596152 / ...151 / ...157. Single pairings earlier the same evening had
+given −4.3%, +2.6% and +1.4% for the same three: **the pair-to-pair spread of one binary is
+±2%, and a single side-by-side pair cannot resolve a change of that size.** cc-pVTZ, one pair,
+min/max binary: 1108.3 → 1091.3 s (−1.5%), energy within 1e-11.
+
+`perf` on the vectorised binary shows the Rys symbols' share falling from 24% to 21% of the
+run while the clock does not move, and three concurrent copies of either binary each run about
+15% slower than one alone. Both say the J/K build is not bound by the roots' arithmetic on
+this machine: memory traffic through the 2-D integral buffers is the more likely limit, and
+that is what class batching would have to address, not the roots.
+
+**What this does not say.** One 17-atom molecule. A larger system moves the X distribution
+outward and screens more quartets away, so the same-range fraction and the batch shape can
+both differ; the counters above are the measurement to repeat before generalising.
+
+**One defect found by the way.** `get_weights_t2` is reached with n = 0 -- a quartet whose
+primitive pairs were all screened out. Silent in release (`minval` of an empty array, an empty
+loop); a debug build's `ENSURE` stopped on it. It returns at once now.

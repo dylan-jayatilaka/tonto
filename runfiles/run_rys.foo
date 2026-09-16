@@ -1,0 +1,162 @@
+! Copyright (C) Dylan Jayatilaka, 2026
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+
+program run_RYS
+
+! Three checks on the Rys roots and weights, all on stdout.
+!
+! 1. "dump": the scalar get_weights for 1 and 2 roots on a fixed grid of
+!    X, printed to 17 significant figures, both sides of every T-range
+!    breakpoint included. Diff this against the same dump from another
+!    build to show the scalar path is bitwise unchanged.
+! 2. "vector vs scalar": get_weights_t2 against get_weights on random X,
+!    batches within one T range and batches spanning them.
+! 3. "timing": ns per X for the scalar loop and the vector call at batch
+!    sizes 1, 9, 81, 1296 and 100000, for X in one T range, in four
+!    adjacent ranges, and spread over all of them.
+
+   implicit none
+
+   rys :: RYS
+   X :: VEC{REAL}@
+   root,weight :: MAT{REAL}@
+   nr,n,i,k,rep,n_rep,b :: INT
+   x1,lo,hi,dmax,d,t0,t1,t_scalar,t_vector :: REAL
+   sizes :: VEC{INT}(5)
+   bp :: VEC{REAL}(8)
+
+   TONTO_CREATE
+
+   TEXTFILE::create_stdout
+   TEXTFILE::create_std_err
+   std_err.open_for("write")
+   stdout.set_real_precision(17)
+   stdout.set_real_width(26)
+
+   bp = [3.0d-07, 1d0, 3d0, 5d0, 10d0, 15d0, 33d0, 40d0]
+
+   ! 1. Dump
+   stdout.text("dump: x root(1:nr) weight(1:nr)")
+   do nr = 1,2
+      rys.set_n_roots(nr)
+      stdout.show("n_roots =",nr)
+      ! Both sides of every breakpoint, and a coarse ladder
+      do k = 1,8
+         x1 = bp(k)
+         rys.get_weights(nearest(x1,-ONE)); stdout.put(nearest(x1,-ONE)); stdout.put(rys.root(1:nr)); stdout.put(rys.weight(1:nr)); stdout.flush
+         rys.get_weights(x1);               stdout.put(x1);               stdout.put(rys.root(1:nr)); stdout.put(rys.weight(1:nr)); stdout.flush
+         rys.get_weights(nearest(x1,ONE));  stdout.put(nearest(x1,ONE));  stdout.put(rys.root(1:nr)); stdout.put(rys.weight(1:nr)); stdout.flush
+      end
+      do k = 0,2000
+         x1 = 0.05d0*k
+         rys.get_weights(x1); stdout.put(x1); stdout.put(rys.root(1:nr)); stdout.put(rys.weight(1:nr)); stdout.flush
+      end
+   end
+
+   n = 100000
+   X.create(n)
+
+   ! 2. Vector against scalar
+#ifndef DUMP_ONLY
+   stdout.flush
+   stdout.text("vector vs scalar: n_roots range_lo range_hi n max|diff|")
+   do nr = 1,2
+      rys.set_n_roots(nr)
+      root.create(nr,n)
+      weight.create(nr,n)
+      ! Within each T range, then over the whole [0,100)
+      do k = 0,8
+         lo = ZERO; if (k>0) lo = bp(k)
+         hi = 100d0; if (k<8) hi = bp(k+1)
+         call random_number(X)
+         X = lo + (hi-lo)*X
+         rys.get_weights_t2(n,X,root,weight)
+         dmax = ZERO
+         do i = 1,n
+            rys.get_weights(X(i))
+            dmax = max(dmax,maxval(abs(rys.root(1:nr)-root(1:nr,i))),maxval(abs(rys.weight(1:nr)-weight(1:nr,i))))
+         end
+         stdout.put(nr); stdout.put(lo); stdout.put(hi); stdout.put(n); stdout.put(dmax); stdout.flush
+      end
+      call random_number(X)
+      X = 100d0*X
+      rys.get_weights_t2(n,X,root,weight)
+      dmax = ZERO
+      do i = 1,n
+         rys.get_weights(X(i))
+         dmax = max(dmax,maxval(abs(rys.root(1:nr)-root(1:nr,i))),maxval(abs(rys.weight(1:nr)-weight(1:nr,i))))
+      end
+      stdout.put(nr); stdout.put(ZERO); stdout.put(100d0); stdout.put(n); stdout.put(dmax); stdout.flush
+      root.destroy
+      weight.destroy
+   end
+
+#endif
+
+   ! 3. Timing
+   stdout.flush
+   stdout.set_real_precision(3)
+   stdout.set_real_width(12)
+   stdout.text("timing: n_roots range batch ns_per_x_scalar ns_per_x_vector")
+   sizes = [1, 9, 81, 1296, 100000]
+   do nr = 1,2
+      rys.set_n_roots(nr)
+      root.create(nr,100000)
+      weight.create(nr,100000)
+      do k = 1,3
+         ! k=1: one T range, [5,10); k=2: four adjacent polynomial ranges,
+         ! [1,15), the shape of a real quartet's batch; k=3: all ranges, [0,100)
+         if      (k==1) then; lo = 5d0;  hi = 10d0
+         else if (k==2) then; lo = ONE;  hi = 15d0
+         else;                lo = ZERO; hi = 100d0
+         end
+         do b = 1,5
+            n = sizes(b)
+            call random_number(X)
+            X = lo + (hi-lo)*X
+            n_rep = max(1, 20000000/n)
+            call cpu_time(t0)
+            do rep = 1,n_rep
+               do i = 1,n
+                  rys.get_weights(X(i))
+                  root(1:nr,i) = rys.root(1:nr)
+                  weight(1:nr,i) = rys.weight(1:nr)
+               end
+               X(1) = X(1) + tiny(ONE) ! defeat hoisting
+            end
+            call cpu_time(t1)
+            t_scalar = (t1-t0)*1d9/(real(n_rep,kind=REAL_KIND)*n)
+            t_vector = ZERO
+#ifndef DUMP_ONLY
+            call cpu_time(t0)
+            do rep = 1,n_rep
+               rys.get_weights_t2(n,X,root,weight)
+               X(1) = X(1) + tiny(ONE)
+            end
+            call cpu_time(t1)
+            t_vector = (t1-t0)*1d9/(real(n_rep,kind=REAL_KIND)*n)
+#endif
+            stdout.put(nr); stdout.put(k); stdout.put(n); stdout.put(t_scalar); stdout.put(t_vector); stdout.flush
+         end
+      end
+      root.destroy
+      weight.destroy
+   end
+
+   X.destroy
+
+end

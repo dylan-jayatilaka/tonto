@@ -98,6 +98,36 @@ now covers the whole project, so it was renamed.)*
 > 0.17% on three lines where it had failed at 200%. The only loose failure left on the Mac is
 > `urea_ccsd_pob-TZVP_Salvador_properties` at 4.48%, the LAPACK-thread row; the suite is 55/56.
 >
+> **START HERE -- 2026-09-16 (night). Item 3, the Rys roots vectorised within a quartet, is
+> built, measured and flat. Branch `rys-vec` (worktree `../tonto-vec`), unmerged; Dylan to say
+> whether it merges or is parked.**
+>
+> What was built: the 1 and 2 root fits as slice kernels (one leaf per T range), a vector entry
+> `RYS:get_weights_t2`, a gathered call in the eleven low-l `make_esfs_*` routines, and
+> `runfiles/run_rys.foo` to check and time it. Scalar trees untouched and bitwise identical to
+> `develop`; the kernels agree to 4.4e-16 and are 3-4x faster per X on a same-range batch.
+> **Whole job, karrikinolide RHF/6-31G(d): no change** -- three binaries, three repeats, means
+> 62.4 / 62.4 / 63.1 J/K CPU s for `develop`, min/max-only and grouping. cc-pVTZ one pair,
+> −1.5%. Tables and the reasoning in `docs/SCF_SPEED_REPORT.md`, *Rys step 3*.
+>
+> **Two lessons that outlast the item.** (1) **A single side-by-side pair resolves nothing under
+> about 3%**: the same baseline binary gave 51.3 to 53.6 s across four pairings that evening,
+> and the first pairing's "−4.3%" was noise. Repeat, and run the candidates concurrently so they
+> share conditions. (2) **77% of the 2-root X sit in batches that straddle a T range**, counted,
+> so the min/max test vectorises a fifth of the work; grouping by range recovers the rest but
+> costs more than it saves below ~32 X, and the batches are mostly 2-81. The roots' arithmetic is
+> not what bounds the J/K build -- the Rys share falls 3 points in `perf` while the clock stands,
+> and three concurrent copies each run 15% slower than one -- so memory traffic through the 2-D
+> integral buffers is the likelier limit, which is a class-batching question, not a roots one.
+> **Karrikinolide only**; a bigger system is owed before any of this is generalised (Dylan).
+>
+> **One defect fixed on the branch**: `get_weights_t2` with n = 0 (all primitive pairs screened
+> out) -- silent in release, a debug `ENSURE` stop. Found because the counters were compiled with
+> `USE_PRECONDITIONS`; the §11 rule again.
+>
+> **Owed if it merges**: `short`; the energy moves by 5e-12 on karrikinolide, inside every gate.
+> **If parked**: cherry-pick the docs commit (`SCF_SPEED_REPORT.md`, this handover) to `develop`.
+>
 > **START HERE -- 2026-09-16 (evening). `rys-1c` and `rys-sph` are merged; item 3 is next and
 > nothing is in flight.**
 >
@@ -2429,6 +2459,13 @@ OpenBLAS would also oversubscribe cores in MPI builds.
 # Science and features
 
 ## Vectorise the Rys quadrature over shell-quartet classes (Dylan, 2026-09-14)
+
+**Step 3 done and flat, 2026-09-16 (branch `rys-vec`, unmerged).** Per-quartet vectorisation of the
+1 and 2 root fits: kernels 3-4x per X, whole job unchanged within ±1.5% on karrikinolide at both
+bases. Numbers and reasoning in `docs/SCF_SPEED_REPORT.md`, *Rys step 3*; the handover above has
+the two lessons. What remains of this item is step 2, the class-batched traversal, and it now
+carries a different justification: the profile share of the roots is not the wall clock, and the
+2-D integral buffer traffic is the thing to attack.
 
 **Why, in Dylan's words:** it matters for future correlated methods, which are
 integral-heavy and have no DFT grid, and for running the integrals on GPUs. A separate
