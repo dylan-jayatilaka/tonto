@@ -2606,6 +2606,17 @@ so (dp|dp) and (dd|dd) at 6-31G(d) as well as the f classes at cc-pVTZ.
 - **6-31G(d), three concurrent pairs, cores swapped between pairs, J/K CPU s**: base 50.77,
   53.37, 56.30 (mean 53.48); pilot 52.18, 54.08, 57.26 (mean 54.51). **+1.9%, same sign in every
   pair.** `make_esfs_XX` is a small share at this basis, so this says little; cc-pVTZ is the test.
+- **cc-pVTZ, three pairs, J/K CPU s**: base 1090.72, 1085.58, 1052.51 (mean 1076.3); pilot
+  1132.08, 1107.98, 1082.10 (mean 1107.4). **+2.9%, same sign in every pair**; energy 9e-15.
+  With `make_esfs_XX` at 15.6% of the run, the routine itself is roughly 20% slower.
+- **Conclusion: the CPU build is not limited by traffic through the `Ixa` buffers.** Removing
+  them and reading each tile once made the routine slower, not faster: the long contiguous dot
+  product over primitives that `form_esfs` streams is what the compiler vectorises, and the
+  indexed tile gathers of the per-root form are not. The `perf stat` miss rates said the same.
+  So the loop order is not a CPU lever; the batched kernel's case rests on (i) removing the
+  per-quartet pair recomputation and set-up, (ii) vectorising X, roots and tiles over *large*
+  batches, and (iii) the GPU, where the per-primitive-pair form with no buffer is the natural
+  shape. **The pilot is not to be merged**; it stays on `esfs-order` as the record.
 - **Unexplained, not chased yet:** the baseline J/K here is 54 s (6-31G(d)) and 1143 s (cc-pVTZ)
   against 39.9 s and 914 s in the 2026-09-16 profile runs. The `low` default was measured at
   +7%, not +25-35%. Suspects: the laptop's thermal state, or the cutoff costs more than the scan
