@@ -2714,7 +2714,9 @@ Chased the same night:
   transfer-space bound, and the AO density maxima the engine uses) the list at `high` gives
   **−534.166446600409**, 2.3e-8 from the engine at `low`, 8.4e-7 from the old list value.
   Transfer-space quantities are not bounds on AO contributions; the forward transfer amplifies.
-  Serial J/K 1031.7 s at `high`. So the 31% above was partly over-screening; re-measure.
+  So the 31% above was partly over-screening; re-measured below.
+- **cc-pVTZ at `high`, AO bounds, one job at a time**: list −534.166446600409, J/K 1031.7 s;
+  engine −534.166446600410, 1301.9 s. **Identical to 1e-15, list 20.8% faster.** Peak RSS 80 MB.
 - Two cc-pVTZ jobs at once were killed by the session memory guard: the kernel holds 4.4 GB of
   slab on this laptop. Run cc-pVTZ jobs one at a time here.
 
