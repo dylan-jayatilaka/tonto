@@ -813,6 +813,29 @@ dead keyword line from `develop` and leave the work on its two tags, as was done
 
 # Correctness — open bugs that give wrong answers
 
+## The promolecule guess is wrong in a spherical basis with zinc, and the SCF reports an unconverged energy silently (2026-09-17)
+
+Found by the zinc-finger benchmark ([Zn(SCH3)2(imidazole)2], hand-built geometry, RHF/6-31G(d),
+`develop` `7d2c236a`). Runs in `~/tonto_runs/zn_sph_bug_2026-09-17/` and
+`~/tonto_runs/vs_g09_orca_znfinger_2026-09-17/tonto_rhf_6-31G(d)_sph/stdout.promolecule_unconverged`.
+
+- **Two defects.** (1) With `use_spherical_basis= TRUE` and `initial_density= promolecule` the
+  first energy is far off: the zinc finger starts at −1943.3 (the answer is −3101.4645) and
+  the SCF wanders between −2500 and −2730 for 24 minutes. (2) **It then prints `SCF results`
+  with E = −2538.512935, virial 1.863, and no warning that it never converged.**
+- The cartesian run from the same guess converges normally (−3101.474629556, 2.2e-6 from g09's
+  6D 10F energy). ZnS at 3.9 bohr, spherical: iteration 0 at −1328.6 against −2174.9
+  cartesian, and it does recover (−2174.9544835, 15 iterations). The zinc atom alone is fine
+  both ways. So the spherical promolecule density is wrong for at least one of Zn or S; a
+  molecule can recover from it or not.
+- **`initial_density= core` in the spherical basis converges** (−3101.464456 at iteration 18,
+  heading for ORCA's −3101.464459). The suite's spherical Tonto rows were switched to the core
+  guess; the cartesian rows keep promolecule.
+- **Not yet done:** which atom's promolecule block is wrong in the spherical basis (S alone,
+  then the spherical transformation of the atomic density), and why an unconverged SCF prints
+  its result without a `not converged` line. The second matters more -- it passes a nonsense
+  energy downstream silently.
+
 ## Pruning compounds across repeated `update` calls (Dylan, 2026-08-23)
 
 **Half fixed 2026-08-23. The other half is not a one-liner — a naive attempt
