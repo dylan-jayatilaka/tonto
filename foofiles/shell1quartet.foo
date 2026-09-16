@@ -35,6 +35,9 @@ module SHELL1QUARTET
 
    pair_cutoff :: REAL, private = SHELL1QUARTET_ERI_PAIR_CUTOFF
 
+   ! Contract the generic (es|fs) with the reduced multiplication scheme
+   use_RMS :: BIN, private = FALSE
+
 contains
 
 !  ==========
@@ -67,6 +70,25 @@ contains
       .ab_center_diff.destroy
    end
 
+   ensure_ab_capacity(n) :: private, leaky, PURE
+   ! Make the (ab| primitive-pair arrays hold at least "n" pairs. They
+   ! are kept between quartets and only grow; use .ab_n_gaussian_pairs.
+      self :: INOUT
+      n :: INT, IN
+
+      if (.ab_exponent_sum.allocated) then
+         if (.ab_exponent_sum.dim>=n) return
+      end
+
+      .destroy_ab
+      .ab_exponent_sum.create(n)
+      .ab_exponent_inv.create(n)
+      .ab_contraction_prefactor.create(n)
+      .ab_pair_center.create(3,n)
+      .ab_center_diff.create(3,n)
+
+   end
+
    destroy_cd :: leaky, PURE
    ! Destroy the shellc and shelld pointer parts of self
       self :: INOUT
@@ -76,6 +98,25 @@ contains
    !  .cd_form_3dints_yz_rms_indices.destroy
       .cd_pair_center.destroy
       .cd_center_diff.destroy
+   end
+
+   ensure_cd_capacity(n) :: private, leaky, PURE
+   ! Make the |cd) primitive-pair arrays hold at least "n" pairs. They
+   ! are kept between quartets and only grow; use .cd_n_gaussian_pairs.
+      self :: INOUT
+      n :: INT, IN
+
+      if (.cd_exponent_sum.allocated) then
+         if (.cd_exponent_sum.dim>=n) return
+      end
+
+      .destroy_cd
+      .cd_exponent_sum.create(n)
+      .cd_exponent_inv.create(n)
+      .cd_contraction_prefactor.create(n)
+      .cd_pair_center.create(3,n)
+      .cd_center_diff.create(3,n)
+
    end
 
 !  ===========
@@ -128,12 +169,26 @@ contains
 
    end
 
+   set_use_RMS(val) :: leaky
+   ! Set whether the generic make_esfs_* routines contract with the
+   ! reduced multiplication scheme, form_esfs_rms2. Its index tables are
+   ! only built when it is switched on.
+      self :: INOUT
+      val :: BIN, IN
+
+      if (FALSE) self = self
+      use_RMS = val
+      if (val) GAUSSIAN_DATA::make_rms2_indices
+
+   end
+
    set_ab_new(shellpr,pos_a,pos_b,same_center,skip) :: leaky, PURE
    ! Set the a and b parts from "shellpr" but override the positions.
    ! "same_center" should be set TRUE if pos_a==pos_b.
    ! "skip" can be set TRUE if NOT same_center; it skips gaussian
    ! product pairs which are too small to worry about.
-   ! NOTE: this does not create many pointer parts
+   ! The primitive-pair arrays are reused between calls, see
+   ! ensure_ab_capacity; do not destroy them per quartet.
       self :: INOUT
       shellpr :: SHELL1PAIR, IN
       pos_a :: VEC{REAL}, IN
@@ -141,17 +196,14 @@ contains
       same_center :: BIN, IN
       skip :: BIN, IN
 
-      exponent_sum,exponent_inv :: VEC{REAL}@
       AB,At,P,PAt,b_pos_b :: VEC{REAL}(3)
       a,b,r2ab,b_r2ab,ab_inv,prefac :: REAL
-      i,j,bg,ag :: INT
+      i,j,n,bg,ag :: INT
 
       .is_spherical = shellpr.a.is_spherical ! b must be the same
 
-      .a = shellpr.a
-      .b = shellpr.b
-      .a.position = pos_a
-      .b.position = pos_b
+      .a.set_reusing_storage(shellpr.a,pos_a)
+      .b.set_reusing_storage(shellpr.b,pos_b)
       .ab_same_center = same_center
       .ab_l_max = shellpr.l_max
       .ab_l_min = shellpr.l_min
@@ -165,17 +217,17 @@ contains
       .ab_last_gaussian  = shellpr.last_gaussian
       .n_ab = shellpr.n_gaussian
 
-      .ab_pair_center.create(3,.ab_n_gaussian_pairs)
-      .ab_center_diff.create(3,.ab_n_gaussian_pairs)
+      n = shellpr.n_gaussian_pairs
+      .ensure_ab_capacity(n)
 
       if (NOT skip) then
 
-         .ab_exponent_sum = shellpr.exponent_sum
-         .ab_exponent_inv = shellpr.exponent_inv
+         .ab_exponent_sum(1:n) = shellpr.exponent_sum
+         .ab_exponent_inv(1:n) = shellpr.exponent_inv
 
          if (same_center) then
 
-            .ab_contraction_prefactor = shellpr.contraction_prefactor
+            .ab_contraction_prefactor(1:n) = shellpr.contraction_prefactor
             .r2ab = ZERO
             i = 0
             do bg = 1,.b.n_cc
@@ -195,7 +247,6 @@ contains
          else
 
             ! NOT same center
-            .ab_contraction_prefactor.create(.ab_n_gaussian_pairs)
             ! Want position of shell1 with higher angular momentum.
             if (.a.l > .b.l) then; At = pos_a
             else;                  At = pos_b
@@ -228,7 +279,6 @@ contains
 
       else
 
-         .ab_contraction_prefactor.create(.ab_n_gaussian_pairs)
          ! When skipping, centers must not be the same ....
          ! Want position of shell1 with higher angular momentum.
          ENSURE(NOT same_center,"centers cannot be the same when skipping small ints")
@@ -238,10 +288,6 @@ contains
          AB = pos_a-pos_b
          r2ab = dot_product(AB,AB)
          .r2ab = r2ab
-         .ab_exponent_sum.create(.ab_n_gaussian_pairs)
-         .ab_exponent_inv.create(.ab_n_gaussian_pairs)
-         exponent_sum = shellpr.exponent_sum
-         exponent_inv = shellpr.exponent_inv
          i = 0
          j = 0
          do bg = 1,.b.n_cc
@@ -251,11 +297,11 @@ contains
             do ag = 1,.a.n_cc
                i = i + 1
                a = .a.exponent(ag)
-               ab_inv = exponent_inv(i)
+               ab_inv = shellpr.exponent_inv(i)
                prefac = exp(-a*b_r2ab*ab_inv)
                if (prefac<pair_cutoff) cycle  ! <<<<<<<<<<<<<
                j = j + 1
-               .ab_exponent_sum(j) = exponent_sum(i)
+               .ab_exponent_sum(j) = shellpr.exponent_sum(i)
                .ab_exponent_inv(j) = ab_inv
                .ab_contraction_prefactor(j) = prefac*shellpr.contraction_prefactor(i)
                P = (b_pos_b + a*pos_a) * ab_inv
@@ -279,23 +325,21 @@ contains
    ! "same_center" should be set TRUE if pos_a==pos_b.
    ! "skip" can be set TRUE if NOT same_center; it skips gaussian product
    ! pairs which are too small to worry about.
-   ! NOTE: this does not create many pointer parts
+   ! The primitive-pair arrays are reused between calls, see
+   ! ensure_cd_capacity; do not destroy them per quartet.
       self :: INOUT
       shellpr :: SHELL1PAIR, IN
       pos_c,pos_d :: VEC{REAL}, IN
       same_center,skip :: BIN, IN
 
-      exponent_sum,exponent_inv :: VEC{REAL}@
       CD,Ct,Q,QCt,d_pos_d :: VEC{REAL}(3)
       c,d,r2cd,d_r2cd,cd_inv,prefac :: REAL
-      i,j,dg,cg :: INT
+      i,j,n,dg,cg :: INT
 
       .is_spherical = shellpr.a.is_spherical ! d must be the same
 
-      .c = shellpr.a
-      .d = shellpr.b
-      .c.position = pos_c
-      .d.position = pos_d
+      .c.set_reusing_storage(shellpr.a,pos_c)
+      .d.set_reusing_storage(shellpr.b,pos_d)
 
       .cd_same_center = same_center
       .cd_l_max = shellpr.l_max
@@ -310,17 +354,17 @@ contains
       .cd_last_gaussian  = shellpr.last_gaussian
       .n_cd = shellpr.n_gaussian
 
-      .cd_pair_center.create(3,.cd_n_gaussian_pairs)
-      .cd_center_diff.create(3,.cd_n_gaussian_pairs)
+      n = shellpr.n_gaussian_pairs
+      .ensure_cd_capacity(n)
 
       if (NOT skip) then
 
-         .cd_exponent_sum = shellpr.exponent_sum
-         .cd_exponent_inv = shellpr.exponent_inv
-         
+         .cd_exponent_sum(1:n) = shellpr.exponent_sum
+         .cd_exponent_inv(1:n) = shellpr.exponent_inv
+
          if (same_center) then
-         
-            .cd_contraction_prefactor = shellpr.contraction_prefactor
+
+            .cd_contraction_prefactor(1:n) = shellpr.contraction_prefactor
             .r2cd = ZERO
             i = 0
             do dg = 1,.d.n_cc
@@ -340,7 +384,6 @@ contains
          else 
          
             ! NOT same center
-            .cd_contraction_prefactor.create(.cd_n_gaussian_pairs)
             ! Want position of shell1 with higher angular momentum.
             if (.c.l > .d.l) then; Ct = pos_c
             else;                  Ct = pos_d
@@ -374,7 +417,6 @@ contains
 
       else
 
-         .cd_contraction_prefactor.create(.cd_n_gaussian_pairs)
          ! When skipping, centers must not be the same ....
          ! Want position of shell1 with higher angular momentum.
          if (.c.l > .d.l) then; Ct = pos_c
@@ -383,10 +425,6 @@ contains
          CD = pos_c-pos_d
          r2cd = dot_product(CD,CD)
          .r2cd = r2cd
-         .cd_exponent_sum.create(.cd_n_gaussian_pairs)
-         .cd_exponent_inv.create(.cd_n_gaussian_pairs)
-         exponent_sum = shellpr.exponent_sum
-         exponent_inv = shellpr.exponent_inv
          i = 0
          j = 0
          do dg = 1,.d.n_cc
@@ -396,11 +434,11 @@ contains
             do cg = 1,.c.n_cc
                i = i + 1
                c = .c.exponent(cg)
-               cd_inv  = exponent_inv(i)
+               cd_inv  = shellpr.exponent_inv(i)
                prefac = exp(-c*d_r2cd*cd_inv)
                if (prefac<pair_cutoff) cycle
                j = j + 1
-               .cd_exponent_sum(j) = exponent_sum(i)
+               .cd_exponent_sum(j) = shellpr.exponent_sum(i)
                .cd_exponent_inv(j) = cd_inv
                .cd_contraction_prefactor(j) = prefac*shellpr.contraction_prefactor(i)
                Q = (d_pos_d + c*pos_c) * cd_inv
@@ -502,6 +540,86 @@ contains
 
    end
 
+   make_ERI_into(work) :: public, leaky, PURE
+   ! Makes the (ab|cd) integrals, summed over the primitives, into
+   ! work.abcd. Every work array comes from "work", grown here only if this
+   ! quartet needs more than it holds; sized beforehand by
+   ! ERI_SCRATCH:set_sizes_for, nothing is allocated.
+      self :: IN
+      work :: ERI_SCRATCH, INOUT
+
+      n_2d :: INT
+
+      n_2d = ((.ab_l_sum+.cd_l_sum+2)/2)*.ab_n_gaussian_pairs*.cd_n_gaussian_pairs &
+           * (.ab_l_sum+1)*(.cd_l_sum+1)
+
+      work.grow_to(n_2d,max(.n_ab,.n_cd),.n_ab*.n_cd, &
+                   .n_ab*.c.n_comp*.d.n_comp,.ab_n_comp_pairs*.cd_n_comp_pairs)
+      work.grow_abcd_to(.ab_n_comp_pairs*.cd_n_comp_pairs)
+
+      ! Pass the components only, never "work" itself alongside them
+      SHELL1QUARTET::make_ERI_k(self,work.abcd,work.Ix,work.Iy,work.Iz,work.esfs,work.escd,work.ints)
+
+   end
+
+   make_ERI_k(abcd,Ix,Iy,Iz,esfs,escd,W) :: private, PURE
+   ! The body of make_ERI with the work arrays passed in. "W" is the
+   ! cartesian block, used only when a spherical transformation is needed.
+      self :: IN
+      abcd :: VEC{REAL}(*), OUT
+      Ix,Iy,Iz,esfs,escd :: VEC{REAL}(*), INOUT
+      W :: MAT4{REAL}(.a.n_comp,.b.n_comp,.c.n_comp,.d.n_comp), INOUT
+
+      if (NOT .is_spherical) then
+
+         SHELL1QUARTET::make_ERI_c_k(self,abcd,Ix,Iy,Iz,esfs,escd)
+
+      elseif (max(.ab_l_max,.cd_l_max)<2) then
+
+         SHELL1QUARTET::make_ERI_c_k(self,abcd,Ix,Iy,Iz,esfs,escd)
+
+      else
+
+         SHELL1QUARTET::make_ERI_c_k(self,W,Ix,Iy,Iz,esfs,escd)
+         SHELL1QUARTET::change_to_spherical(self,W,abcd)
+
+      end
+
+   end
+
+   make_ERI_c_k(abcd,Ix,Iy,Iz,esfs,escd) :: private, PURE
+   ! The body of make_ERI_c with the work arrays passed in.
+      self :: IN
+      abcd :: VEC{REAL}(*), OUT
+      Ix,Iy,Iz,esfs,escd :: VEC{REAL}(*), INOUT
+
+      ssss :: REAL
+
+      if      (.ab_l_sum==0 AND .cd_l_sum==0) then
+
+         .make_esfs_ss_0000(ssss)
+         abcd(1) = ssss
+
+      else if (.ab_l_sum==0) then
+
+         SHELL1QUARTET::make_esfs_with(self,esfs,Ix,Iy,Iz) ! Make (es|fs) integrals
+         SHELL1QUARTET::transfer_cd_s(self,esfs,abcd)      ! Transfer, ab = ss
+
+      else if (.cd_l_sum==0) then
+
+         SHELL1QUARTET::make_esfs_with(self,esfs,Ix,Iy,Iz) ! Make (es|fs) integrals
+         SHELL1QUARTET::transfer_ab_s(self,esfs,abcd)      ! Transfer, cd = ss
+
+      else
+
+         SHELL1QUARTET::make_esfs_with(self,esfs,Ix,Iy,Iz) ! Make (es|fs) integrals
+         SHELL1QUARTET::transfer_cd(self,esfs,escd)        ! Transfer relations
+         SHELL1QUARTET::transfer_ab(self,escd,abcd)
+
+      end
+
+   end
+
    change_to_spherical(C,S) :: PURE
    ! Normalise a cartesian integral block "C" to a spherical integral
    ! block "S" . "C" is destroyed.
@@ -509,11 +627,7 @@ contains
       C :: MAT4{REAL}, IN
       S :: MAT4{REAL}(.a.n_sph,.b.n_sph,.c.n_sph,.d.n_sph), OUT
 
-      UU  :: VEC{EMAT{REAL}}@
-      U :: MAT{REAL}@
       W,WW :: MAT4{REAL}@
-
-      UU = GAUSSIAN_DATA::spherical_harmonics_for
 
       if (max(.ab_l_max,.cd_l_max)<2) then
 
@@ -524,33 +638,29 @@ contains
          W = C
 
          if (.a.l>=2) then
-            U = UU(.a.l).element
             WW.destroy
             WW.create(.a.n_sph,.b.n_comp,.c.n_comp,.d.n_comp)
-            W.change_index_1_to(WW,U)
+            W.change_index_1_to(WW,GAUSSIAN_DATA::spherical_harmonics_for(.a.l).element)
             W = WW
          end
 
          if (.b.l>=2) then
-            U = UU(.b.l).element
             WW.destroy
             WW.create(.a.n_sph,.b.n_sph,.c.n_comp,.d.n_comp)
-            W.change_index_2_to(WW,U)
+            W.change_index_2_to(WW,GAUSSIAN_DATA::spherical_harmonics_for(.b.l).element)
             W = WW
          end
 
          if (.c.l>=2) then
-            U = UU(.c.l).element
             WW.destroy
             WW.create(.a.n_sph,.b.n_sph,.c.n_sph,.d.n_comp)
-            W.change_index_3_to(WW,U)
+            W.change_index_3_to(WW,GAUSSIAN_DATA::spherical_harmonics_for(.c.l).element)
             W = WW
          end
 
          if (.d.l>=2) then
-            U = UU(.d.l).element
             WW.create(.a.n_sph,.b.n_sph,.c.n_sph,.d.n_sph)
-            W.change_index_4_to(WW,U)
+            W.change_index_4_to(WW,GAUSSIAN_DATA::spherical_harmonics_for(.d.l).element)
             W = WW
          end
 
@@ -565,10 +675,43 @@ contains
 ! This is a general purpose routine which always works
 ! but it calls special case code
 
-   make_esfs(esfs) :: PURE
-   ! Makes the (es|fs) integrals, summed over primitives.
+   make_esfs(esfs) :: leaky, PURE
+   ! Makes the (es|fs) integrals, summed over primitives, allocating the
+   ! 2D integral work arrays for this quartet. The J/K quartet loop uses
+   ! make_esfs_with and an ERI_SCRATCH instead, and does not allocate.
       self :: IN
       esfs :: MAT{REAL}(.n_ab,.n_cd), OUT
+
+      Ix,Iy,Iz :: VEC{REAL}@
+      x1,y1,z1 :: VEC{REAL}(1)
+      n :: INT
+
+      if (max(.ab_l_sum,.cd_l_sum)<=2) then ! Specialised routines only
+
+         SHELL1QUARTET::make_esfs_with(self,esfs,x1,y1,z1)
+
+      else
+
+         n = ((.ab_l_sum+.cd_l_sum+2)/2)*.ab_n_gaussian_pairs*.cd_n_gaussian_pairs &
+           * (.ab_l_sum+1)*(.cd_l_sum+1)
+         Ix.create(n)
+         Iy.create(n)
+         Iz.create(n)
+         SHELL1QUARTET::make_esfs_with(self,esfs,Ix,Iy,Iz)
+         Iz.destroy
+         Iy.destroy
+         Ix.destroy
+
+      end
+
+   end
+
+   make_esfs_with(esfs,Ix,Iy,Iz) :: PURE
+   ! Makes the (es|fs) integrals, summed over primitives. "Ix", "Iy", "Iz"
+   ! are work space for the 2D integrals of the generic routines.
+      self :: IN
+      esfs :: MAT{REAL}(.n_ab,.n_cd), OUT
+      Ix,Iy,Iz :: VEC{REAL}(*), INOUT
 
       l_max :: INT
       l_max = max(.ab_l_sum,.cd_l_sum)
@@ -651,13 +794,13 @@ contains
    !     if (.a.l==2 AND .b.l==2 AND .c.l==2 AND .d.l==2) then
    !                                                      SHELL1QUARTET::make_esfs_gg_dddd(self,esfs)
    !     else
-         if      (                 .cd_l_sum==0) then;    SHELL1QUARTET::make_esfs_Xs(self,esfs)
-         else if (.ab_l_sum==0                 ) then;    SHELL1QUARTET::make_esfs_sX(self,esfs)
-         else if (                 .cd_l_sum==1) then;    SHELL1QUARTET::make_esfs_Xp(self,esfs)
-         else if (.ab_l_sum==1                 ) then;    SHELL1QUARTET::make_esfs_pX(self,esfs)
-         else if (                 .cd_l_sum==2) then;    SHELL1QUARTET::make_esfs_Xd(self,esfs)
-         else if (.ab_l_sum==2                 ) then;    SHELL1QUARTET::make_esfs_dX(self,esfs)
-         else;                                            SHELL1QUARTET::make_esfs_XX(self,esfs)
+         if      (                 .cd_l_sum==0) then;    SHELL1QUARTET::make_esfs_Xs(self,esfs,Ix,Iy,Iz)
+         else if (.ab_l_sum==0                 ) then;    SHELL1QUARTET::make_esfs_sX(self,esfs,Ix,Iy,Iz)
+         else if (                 .cd_l_sum==1) then;    SHELL1QUARTET::make_esfs_Xp(self,esfs,Ix,Iy,Iz)
+         else if (.ab_l_sum==1                 ) then;    SHELL1QUARTET::make_esfs_pX(self,esfs,Ix,Iy,Iz)
+         else if (                 .cd_l_sum==2) then;    SHELL1QUARTET::make_esfs_Xd(self,esfs,Ix,Iy,Iz)
+         else if (.ab_l_sum==2                 ) then;    SHELL1QUARTET::make_esfs_dX(self,esfs,Ix,Iy,Iz)
+         else;                                            SHELL1QUARTET::make_esfs_XX(self,esfs,Ix,Iy,Iz)
    !     else;                                            SHELL1QUARTET::make_esfs_general(self,esfs)
          end
    !     end
@@ -903,9 +1046,9 @@ contains
       Qx,Qy,Qz,Px,Py,Pz,QPx,QPy,QPz :: REAL
       zeta,eta,xx,ab_cc,cd_cc,rho :: REAL
       j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
-      rys.create(1)
+      rys.set_n_roots(1)
 
       v11 = ZERO
 
@@ -934,7 +1077,6 @@ contains
 
       PARALLEL_SUM(v11)
 
-      rys.destroy
 
    end
 
@@ -946,9 +1088,9 @@ contains
       Qx,Qy,Qz,Px,Py,Pz,QPx,QPy,QPz :: REAL
       v11,zeta,eta,xx,ab_cc,cd_cc,rho :: REAL
       j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
-      rys.create(1)
+      rys.set_n_roots(1)
 
       esfs = ZERO
 
@@ -977,7 +1119,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
    ! .form_esfs(esfs,Iza,Iza,Iza,Iza(:,1,1))
 
@@ -997,9 +1138,9 @@ contains
       zeta,eta,xx,ab_cc,cd_cc,rho,zinv,rho_zinv :: REAL
       wt,t2,t2_rz :: REAL
       j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
-      rys.create(1)
+      rys.set_n_roots(1)
 
       esfs = ZERO
 
@@ -1027,7 +1168,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
                t2      = rys.root(1)
                wt      = rys.weight(1)
@@ -1043,7 +1184,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -1065,9 +1205,9 @@ contains
       zeta,eta,xx,ab_cc,cd_cc,rho,einv,rho_einv :: REAL
       wt,t2,t2_re :: REAL
       j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
-      rys.create(1)
+      rys.set_n_roots(1)
 
       esfs = ZERO
 
@@ -1095,7 +1235,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
                t2      = rys.root(1)
                wt      = rys.weight(1)
@@ -1111,7 +1251,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -1134,10 +1273,10 @@ contains
       Ix12,Iy12,Iz12,Ix21,Iy21,Iz21,Ix22,Iy22,Iz22 :: REAL
       v11,v21,v31,v12,v22,v32,v13,v23,v33 :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 2
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -1173,7 +1312,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -1211,7 +1350,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -1334,10 +1472,10 @@ contains
       Ix31,Iy31,Iz31 :: REAL
       v11,v21,v31,v41,v51,v61 :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 2
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -1367,7 +1505,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -1397,7 +1535,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -1424,10 +1561,10 @@ contains
       Ix31,Iy31,Iz31 :: REAL
       v11,v21,v31,v41,v51,v61,v71,v81,v91,Iy21_wt :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 2
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -1458,7 +1595,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -1493,7 +1630,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -1606,10 +1742,10 @@ contains
       Ix13,Iy13,Iz13 :: REAL
       v11,v12,v13,v14,v15,v16 :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 2
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -1639,7 +1775,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -1669,7 +1805,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -1696,10 +1831,10 @@ contains
       Ix13,Iy13,Iz13 :: REAL
       v11,v18,v12,v19,v13,v16,v14,v15,v17,Iy12_wt :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 2
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -1730,7 +1865,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -1765,7 +1900,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -1879,10 +2013,10 @@ contains
       v11,v21,v31,v41,v51,v61,v12,v22,v32 :: REAL
       v42,v52,v62,v13,v23,v33,v43,v53,v63 :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 2
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -1919,7 +2053,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -1982,7 +2116,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -2024,10 +2157,10 @@ contains
       v12,v82,v22,v92,v32,v62,v42,v52,v72 :: REAL
       v13,v83,v23,v93,v33,v63,v43,v53,v73 :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 2
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -2070,7 +2203,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -2144,7 +2277,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -2293,10 +2425,10 @@ contains
       v11,v21,v31,v12,v22,v32,v13,v23,v33 :: REAL
       v14,v24,v34,v15,v25,v35,v16,v26,v36 :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 2
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -2332,7 +2464,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -2395,7 +2527,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -2437,10 +2568,10 @@ contains
       v29,v32,v39,v13,v16,v23,v26,v33,v36 :: REAL
       v14,v24,v34,v15,v25,v35,v17,v27,v37 :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 2
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -2482,7 +2613,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -2556,7 +2687,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -2708,10 +2838,10 @@ contains
       v14,v24,v34,v44,v54,v64,v15,v25,v35 :: REAL
       v45,v55,v65,v16,v26,v36,v46,v56,v66 :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 3
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -2751,7 +2881,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -2849,7 +2979,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -2917,10 +3046,10 @@ contains
       v15,v25,v35,v45,v55,v65 :: REAL
       v17,v27,v37,v47,v57,v67 :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 3
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -2963,7 +3092,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -3086,7 +3215,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -3172,10 +3300,10 @@ contains
       v45,v55,v75,v16,v86,v26 :: REAL
       v96,v36,v66,v46,v56,v76 :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 3
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -3218,7 +3346,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -3341,7 +3469,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -3427,10 +3554,10 @@ contains
       v15,v85,v25,v95,v35,v65,v45,v55,v75 :: REAL
       v17,v87,v27,v97,v37,v67,v47,v57,v77 :: REAL
       n_roots,n,j,k :: INT
-      rys :: RYS@
+      rys :: RYS
 
       n_roots = 3
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       esfs = ZERO
 
@@ -3478,7 +3605,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                t2      = rys.root(n)
@@ -3633,7 +3760,6 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       ! .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
 
@@ -6624,12 +6750,12 @@ contains
 !     Ixa.destroy
 !   end
 
-   make_esfs_Xs(esfs) :: private, PURE
+   make_esfs_Xs(esfs,Ixa,Iya,Iza) :: private, PURE
    ! Makes the initial (es|fs) integrals, summed over the primitives
       self :: IN
       esfs :: VEC{REAL}(.n_ab), OUT
 
-      Ixa,Iya,Iza :: MAT{REAL}@, target
+      Ixa,Iya,Iza :: MAT{REAL}(((.ab_l_sum+.cd_l_sum+2)/2)*.ab_n_gaussian_pairs*.cd_n_gaussian_pairs,.ab_l_sum+1), target, INOUT
       Ix,Iy,Iz :: VEC{REAL}*
       QPx,QPy,QPz,PAx,PAy,PAz,Qx,Qy,Qz,Px,Py,Pz :: REAL
       zeta,eta,xx,ab_cc,cd_cc,rho,zinv,rho_zinv :: REAL
@@ -6641,17 +6767,14 @@ contains
       Ixm1,Iym1,Izm1,Ixp1,Iyp1,Izp1 :: REAL
       n_roots,dim1,dim2 :: INT
       ep1,n,i,j,k,n_sum :: INT
-      rys :: RYS@
+      rys :: RYS
 
       dim1 = .ab_l_sum + 1
       dim2 = .cd_l_sum + 1 ! This is 1
       n_roots = (dim1+dim2)/2
       n_sum = n_roots * .ab_n_gaussian_pairs * .cd_n_gaussian_pairs
-      Ixa.create(n_sum,dim1)
-      Iya.create(n_sum,dim1)
-      Iza.create(n_sum,dim1)
 
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       i = 0
       do k = 1,.ab_n_gaussian_pairs
@@ -6677,7 +6800,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                i = i + 1
@@ -6714,21 +6837,17 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       .form_esss(esfs,Ixa,Iya,Iza,Iza(:,1),n_sum)
 
-      Iza.destroy
-      Iya.destroy
-      Ixa.destroy
    end
 
-   make_esfs_sX(esfs) :: private, PURE
+   make_esfs_sX(esfs,Ixa,Iya,Iza) :: private, PURE
    ! Makes the initial (es|fs) integrals, summed over the primitives
       self :: IN
       esfs :: VEC{REAL}(.n_cd), OUT
 
-      Ixa,Iya,Iza :: MAT{REAL}@, target
+      Ixa,Iya,Iza :: MAT{REAL}(((.ab_l_sum+.cd_l_sum+2)/2)*.ab_n_gaussian_pairs*.cd_n_gaussian_pairs,.cd_l_sum+1), target, INOUT
       Ix,Iy,Iz :: VEC{REAL}*
       QPx,QPy,QPz,Qx,Qy,Qz,QCx,QCy,QCz,Px,Py,Pz :: REAL
       zeta,eta,xx,ab_cc,cd_cc,rho,einv,rho_einv :: REAL
@@ -6740,17 +6859,14 @@ contains
       Ixm1,Iym1,Izm1,Ixp1,Iyp1,Izp1 :: REAL
       n_roots,dim1,dim2 :: INT
       fp1,n,i,j,k,n_sum :: INT
-      rys :: RYS@
+      rys :: RYS
 
       dim1 = .ab_l_sum + 1 ! This is 1
       dim2 = .cd_l_sum + 1
       n_roots = (dim1+dim2)/2
       n_sum = n_roots * .ab_n_gaussian_pairs * .cd_n_gaussian_pairs
-      Ixa.create(n_sum,dim2)
-      Iya.create(n_sum,dim2)
-      Iza.create(n_sum,dim2)
 
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       i = 0
       do k = 1,.ab_n_gaussian_pairs
@@ -6776,7 +6892,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                i = i + 1
@@ -6813,21 +6929,17 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
       .form_ssfs(esfs,Ixa,Iya,Iza,Iza(:,1),n_sum)
 
-      Iza.destroy
-      Iya.destroy
-      Ixa.destroy
    end
 
-   make_esfs_Xp(esfs) :: private, PURE
+   make_esfs_Xp(esfs,Ixa,Iya,Iza) :: private, PURE
    ! Makes the initial (es|fs) integrals, summed over the primitives
       self :: IN
       esfs :: MAT{REAL}(.n_ab,.n_cd), OUT
 
-      Ixa,Iya,Iza :: MAT3{REAL}@, target
+      Ixa,Iya,Iza :: MAT3{REAL}(((.ab_l_sum+.cd_l_sum+2)/2)*.ab_n_gaussian_pairs*.cd_n_gaussian_pairs,.ab_l_sum+1,.cd_l_sum+1), target, INOUT
       Ix,Iy,Iz :: MAT{REAL}*
       QPx,QPy,QPz,PAx,PAy,PAz,Qx,Qy,Qz,QCx,QCy,QCz,Px,Py,Pz :: REAL
       zeta,eta,xx,ab_cc,cd_cc,rho,zinv,einv,rho_zinv,rho_einv :: REAL
@@ -6840,17 +6952,14 @@ contains
       Ixm1,Iym1,Izm1,Ixp1,Iyp1,Izp1 :: REAL
       n_roots,dim1,dim2 :: INT
       e,ep1,n,i,j,k,n_sum :: INT
-      rys :: RYS@
+      rys :: RYS
 
       dim1 = .ab_l_sum + 1                            ! Space for 2D integrals
       dim2 = .cd_l_sum + 1
       n_roots = (dim1+dim2)/2
       n_sum = n_roots * .ab_n_gaussian_pairs * .cd_n_gaussian_pairs
-      Ixa.create(n_sum,dim1,dim2)                     ! Allocate 2D integrals
-      Iya.create(n_sum,dim1,dim2)
-      Iza.create(n_sum,dim1,dim2)
 
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       i = 0
       do k = 1,.ab_n_gaussian_pairs
@@ -6882,7 +6991,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                i = i + 1
@@ -6944,22 +7053,19 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
-      .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
-   ! SHELL1QUARTET::form_esfs_rms2(self,esfs,Ixa,Iya,Iza,Iza(:,1,1),n_sum,dim1,dim2)
+      if (use_RMS) then; SHELL1QUARTET::form_esfs_rms2(self,esfs,Ixa,Iya,Iza,Iza(:,1,1),n_sum,dim1,dim2)
+      else;              .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
+      end
 
-      Iza.destroy
-      Iya.destroy
-      Ixa.destroy
    end
 
-   make_esfs_pX(esfs) :: private, PURE
+   make_esfs_pX(esfs,Ixa,Iya,Iza) :: private, PURE
    ! Makes the initial (es|fs) integrals, summed over the primitives
       self :: IN
       esfs :: MAT{REAL}(.n_ab,.n_cd), OUT
 
-      Ixa,Iya,Iza :: MAT3{REAL}@, target
+      Ixa,Iya,Iza :: MAT3{REAL}(((.ab_l_sum+.cd_l_sum+2)/2)*.ab_n_gaussian_pairs*.cd_n_gaussian_pairs,.ab_l_sum+1,.cd_l_sum+1), target, INOUT
       Ix,Iy,Iz :: MAT{REAL}*
       QPx,QPy,QPz,PAx,PAy,PAz,Qx,Qy,Qz,QCx,QCy,QCz,Px,Py,Pz :: REAL
       zeta,eta,xx,ab_cc,cd_cc,rho,zinv,einv,rho_zinv,rho_einv :: REAL
@@ -6972,17 +7078,14 @@ contains
       Ixm1,Iym1,Izm1,Ixp1,Iyp1,Izp1 :: REAL
       n_roots,dim1,dim2 :: INT
       f,fp1,n,i,j,k,n_sum :: INT
-      rys :: RYS@
+      rys :: RYS
 
       dim1 = .ab_l_sum + 1
       dim2 = .cd_l_sum + 1
       n_roots = (dim1+dim2)/2
       n_sum = n_roots * .ab_n_gaussian_pairs * .cd_n_gaussian_pairs
-      Ixa.create(n_sum,dim1,dim2)
-      Iya.create(n_sum,dim1,dim2)
-      Iza.create(n_sum,dim1,dim2)
 
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       i = 0
       do k = 1,.ab_n_gaussian_pairs
@@ -7013,7 +7116,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                i = i + 1
@@ -7075,22 +7178,19 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
-      .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
-   ! SHELL1QUARTET::form_esfs_rms2(self,esfs,Ixa,Iya,Iza,Iza(:,1,1),n_sum,dim1,dim2)
+      if (use_RMS) then; SHELL1QUARTET::form_esfs_rms2(self,esfs,Ixa,Iya,Iza,Iza(:,1,1),n_sum,dim1,dim2)
+      else;              .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
+      end
 
-      Iza.destroy
-      Iya.destroy
-      Ixa.destroy
    end
 
-   make_esfs_Xd(esfs) :: private, PURE
+   make_esfs_Xd(esfs,Ixa,Iya,Iza) :: private, PURE
    ! Makes the initial (es|fs) integrals, summed over the primitives
       self :: IN
       esfs :: MAT{REAL}(.n_ab,.n_cd), OUT
 
-      Ixa,Iya,Iza :: MAT3{REAL}@, target
+      Ixa,Iya,Iza :: MAT3{REAL}(((.ab_l_sum+.cd_l_sum+2)/2)*.ab_n_gaussian_pairs*.cd_n_gaussian_pairs,.ab_l_sum+1,.cd_l_sum+1), target, INOUT
       Ix,Iy,Iz :: MAT{REAL}*
       Ix_f,Iy_f,Iz_f,Ix_1,Iy_1,Iz_1 :: VEC{REAL}*
       QPx,QPy,QPz,PAx,PAy,PAz,Qx,Qy,Qz,QCx,QCy,QCz,Px,Py,Pz :: REAL
@@ -7104,17 +7204,14 @@ contains
       Ixm1,Iym1,Izm1,Ixp1,Iyp1,Izp1 :: REAL
       n_roots,dim1,dim2 :: INT
       e,f,fm1,ep1,n,i,j,k,n_sum :: INT
-      rys :: RYS@
+      rys :: RYS
 
       dim1 = .ab_l_sum + 1
       dim2 = .cd_l_sum + 1
       n_roots = (dim1+dim2)/2
       n_sum = n_roots * .ab_n_gaussian_pairs * .cd_n_gaussian_pairs
-      Ixa.create(n_sum,dim1,dim2)
-      Iya.create(n_sum,dim1,dim2)
-      Iza.create(n_sum,dim1,dim2)
 
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       i = 0
       do k = 1,.ab_n_gaussian_pairs
@@ -7146,7 +7243,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                i = i + 1
@@ -7240,22 +7337,19 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
-      .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
-   ! SHELL1QUARTET::form_esfs_rms2(self,esfs,Ixa,Iya,Iza,Iza(:,1,1),n_sum,dim1,dim2)
+      if (use_RMS) then; SHELL1QUARTET::form_esfs_rms2(self,esfs,Ixa,Iya,Iza,Iza(:,1,1),n_sum,dim1,dim2)
+      else;              .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
+      end
 
-      Iza.destroy
-      Iya.destroy
-      Ixa.destroy
    end
 
-   make_esfs_dX(esfs) :: private, PURE
+   make_esfs_dX(esfs,Ixa,Iya,Iza) :: private, PURE
    ! Makes the initial (es|fs) integrals, summed over the primitives
       self :: IN
       esfs :: MAT{REAL}(.n_ab,.n_cd), OUT
 
-      Ixa,Iya,Iza :: MAT3{REAL}@, target
+      Ixa,Iya,Iza :: MAT3{REAL}(((.ab_l_sum+.cd_l_sum+2)/2)*.ab_n_gaussian_pairs*.cd_n_gaussian_pairs,.ab_l_sum+1,.cd_l_sum+1), target, INOUT
       Ix,Iy,Iz :: MAT{REAL}*
       Ix_f,Iy_f,Iz_f,Ix_1,Iy_1,Iz_1 :: VEC{REAL}*
       QPx,QPy,QPz,PAx,PAy,PAz,Qx,Qy,Qz,QCx,QCy,QCz,Px,Py,Pz :: REAL
@@ -7269,17 +7363,14 @@ contains
       Ixm1,Iym1,Izm1,Ixp1,Iyp1,Izp1 :: REAL
       n_roots,dim1,dim2 :: INT
       e,f,fm1,ep1,fp1,n,i,j,k,n_sum :: INT
-      rys :: RYS@
+      rys :: RYS
 
       dim1 = .ab_l_sum + 1
       dim2 = .cd_l_sum + 1
       n_roots = (dim1+dim2)/2
       n_sum = n_roots * .ab_n_gaussian_pairs * .cd_n_gaussian_pairs
-      Ixa.create(n_sum,dim1,dim2)
-      Iya.create(n_sum,dim1,dim2)
-      Iza.create(n_sum,dim1,dim2)
 
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       i = 0
       do k = 1,.ab_n_gaussian_pairs
@@ -7311,7 +7402,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                i = i + 1
@@ -7405,22 +7496,19 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
-      .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
-   ! SHELL1QUARTET::form_esfs_rms2(self,esfs,Ixa,Iya,Iza,Iza(:,1,1),n_sum,dim1,dim2)
+      if (use_RMS) then; SHELL1QUARTET::form_esfs_rms2(self,esfs,Ixa,Iya,Iza,Iza(:,1,1),n_sum,dim1,dim2)
+      else;              .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
+      end
 
-      Iza.destroy
-      Iya.destroy
-      Ixa.destroy
    end
 
-   make_esfs_XX(esfs) :: private, PURE
+   make_esfs_XX(esfs,Ixa,Iya,Iza) :: private, PURE
    ! Makes the initial (es|fs) integrals, summed over the primitives
       self :: IN
       esfs :: MAT{REAL}(.n_ab,.n_cd), OUT
 
-      Ixa,Iya,Iza :: MAT3{REAL}@, target
+      Ixa,Iya,Iza :: MAT3{REAL}(((.ab_l_sum+.cd_l_sum+2)/2)*.ab_n_gaussian_pairs*.cd_n_gaussian_pairs,.ab_l_sum+1,.cd_l_sum+1), target, INOUT
       Ix,Iy,Iz :: MAT{REAL}*
       Ix_f,Iy_f,Iz_f,Ix_1,Iy_1,Iz_1 :: VEC{REAL}*
       QPx,QPy,QPz,PAx,PAy,PAz,Qx,Qy,Qz,QCx,QCy,QCz,Px,Py,Pz :: REAL
@@ -7434,17 +7522,14 @@ contains
       Ixm1,Iym1,Izm1,Ixp1,Iyp1,Izp1 :: REAL
       n_roots,dim1,dim2 :: INT
       e,f,fm1,ep1,fp1,n,i,j,k,n_sum :: INT
-      rys :: RYS@
+      rys :: RYS
 
       dim1 = .ab_l_sum + 1                            ! Space for 2D integrals
       dim2 = .cd_l_sum + 1
       n_roots = (dim1+dim2)/2
       n_sum = n_roots * .ab_n_gaussian_pairs * .cd_n_gaussian_pairs
-      Ixa.create(n_sum,dim1,dim2)                     ! Allocate 2D integrals
-      Iya.create(n_sum,dim1,dim2)
-      Iza.create(n_sum,dim1,dim2)
 
-      rys.create(n_roots)
+      rys.set_n_roots(n_roots)
 
       i = 0
       do k = 1,.ab_n_gaussian_pairs
@@ -7476,7 +7561,7 @@ contains
             QPx = Qx - Px;   QPy = Qy - Py;   QPz = Qz - Pz
             xx  = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
             rys.get_weights(xx)
-            rys.weight = rys.weight * ab_cc * cd_cc * sqrt(rho)
+            rys.weight(1:rys.n_roots) = rys.weight(1:rys.n_roots) * ab_cc * cd_cc * sqrt(rho)
             ! Now make the 2 dimensional integrals.
             do n = 1,n_roots
                i = i + 1
@@ -7597,14 +7682,11 @@ contains
          end     ! -- loops over c,d
       end         ! -- loops over a,b
 
-      rys.destroy
 
-      .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
-   ! SHELL1QUARTET::form_esfs_rms2(self,esfs,Ixa,Iya,Iza,Iza(:,1,1),n_sum,dim1,dim2)
+      if (use_RMS) then; SHELL1QUARTET::form_esfs_rms2(self,esfs,Ixa,Iya,Iza,Iza(:,1,1),n_sum,dim1,dim2)
+      else;              .form_esfs(esfs,Ixa,Iya,Iza,Iza(:,1,1))
+      end
 
-      Iza.destroy
-      Iya.destroy
-      Ixa.destroy
 
    end
 
@@ -7621,9 +7703,7 @@ contains
       Ix,Iy,Iz :: MAT3{REAL}, IN
       wt :: VEC{REAL}, IN
 
-      ex,ey,ez :: VEC{INT}@
-      fx,fy,fz :: VEC{INT}@
-      fe,le,ff,lf,e,f,ze,ye,xe,zf,yf,xf :: INT
+      fe,ff,e,f,ze,ye,xe,zf,yf,xf :: INT
 
       if      (.ab_l_max==0 AND .cd_l_max==0) then
 
@@ -7631,16 +7711,17 @@ contains
 
       else
 
-         fe = .ab_first_gaussian; le = .ab_last_gaussian
-         ff = .cd_first_gaussian; lf = .cd_last_gaussian
-
-         ex = GAUSSIAN_DATA::nx(fe:le); ey = GAUSSIAN_DATA::ny(fe:le); ez = GAUSSIAN_DATA::nz(fe:le)
-         fx = GAUSSIAN_DATA::nx(ff:lf); fy = GAUSSIAN_DATA::ny(ff:lf); fz = GAUSSIAN_DATA::nz(ff:lf)
+         fe = .ab_first_gaussian - 1
+         ff = .cd_first_gaussian - 1
 
          do f = 1,esfs.dim2
-            xf = fx(f); yf = fy(f); zf = fz(f)
+            xf = GAUSSIAN_DATA::nx(ff+f)
+            yf = GAUSSIAN_DATA::ny(ff+f)
+            zf = GAUSSIAN_DATA::nz(ff+f)
             do e = 1,esfs.dim1
-               xe = ex(e); ye = ey(e); ze = ez(e)
+               xe = GAUSSIAN_DATA::nx(fe+e)
+               ye = GAUSSIAN_DATA::ny(fe+e)
+               ze = GAUSSIAN_DATA::nz(fe+e)
                esfs(e,f) = sum(Ix(:,xe,xf)*Iy(:,ye,yf)*Iz(:,ze,zf))
             end
          end
@@ -7658,8 +7739,7 @@ contains
       Ix,Iy,Iz :: MAT{REAL}(n_sum,*), IN
       wt :: VEC{REAL}, IN
 
-      ex,ey,ez :: VEC{INT}@
-      fe,le,e,ze,ye,xe :: INT
+      fe,e,ze,ye,xe :: INT
 
 !     Ixy :: VEC{REAL}*
 !     exyz0,eyz0,exz0,exy0,ez0,ey0,ex0,en0,ea0,e0,erms :: VEC{INT}*
@@ -7673,15 +7753,12 @@ contains
 
       else
 
-         fe = .ab_first_gaussian
-         le = .ab_last_gaussian
-
-         ex = GAUSSIAN_DATA::nx(fe:le)
-         ey = GAUSSIAN_DATA::ny(fe:le)
-         ez = GAUSSIAN_DATA::nz(fe:le)
+         fe = .ab_first_gaussian - 1
 
          do e = 1,esfs.dim
-            xe = ex(e); ye = ey(e); ze = ez(e)
+            xe = GAUSSIAN_DATA::nx(fe+e)
+            ye = GAUSSIAN_DATA::ny(fe+e)
+            ze = GAUSSIAN_DATA::nz(fe+e)
             esfs(e) = sum(Ix(:,xe)*Iy(:,ye)*Iz(:,ze))
          end
 
@@ -7770,8 +7847,7 @@ contains
       Ix,Iy,Iz :: MAT{REAL}(n_sum,*), IN
       wt :: VEC{REAL}, IN
 
-      fx,fy,fz :: VEC{INT}@
-      ff,lf,f,zf,yf,xf :: INT
+      ff,f,zf,yf,xf :: INT
 
 !     Ixy :: VEC{REAL}*
 !     fxyz0,fyz0,fxz0,fxy0,fz0,fy0,fx0,fn0,fa0,f0,frms :: VEC{INT}*
@@ -7785,15 +7861,12 @@ contains
 
       else
 
-         ff = .cd_first_gaussian
-         lf = .cd_last_gaussian
-
-         fx = GAUSSIAN_DATA::nx(ff:lf)
-         fy = GAUSSIAN_DATA::ny(ff:lf)
-         fz = GAUSSIAN_DATA::nz(ff:lf)
+         ff = .cd_first_gaussian - 1
 
          do f = 1,esfs.dim
-            xf = fx(f); yf = fy(f); zf = fz(f)
+            xf = GAUSSIAN_DATA::nx(ff+f)
+            yf = GAUSSIAN_DATA::ny(ff+f)
+            zf = GAUSSIAN_DATA::nz(ff+f)
             esfs(f) = sum(Ix(:,xf)*Iy(:,yf)*Iz(:,zf))
          end
 
@@ -7868,6 +7941,69 @@ contains
 !           Ixy.destroy
 !        end
       end
+   end
+
+   form_esfs_rms2(esfs,Ix,Iy,Iz,wt,n_sum,dim1,dim2) :: private, PURE
+   ! Forms (es|fs) from the two dimensional integrals, summed over
+   ! primitives, by the reduced multiplication scheme: each Ix*Iy column
+   ! product is formed once and shared, and unit factors are skipped.
+   ! The indices are GAUSSIAN_DATA::rms2_indices(.ab_l_tri,.cd_l_tri).
+   ! The Rys weights must already be folded into Iz.
+      self :: IN
+      esfs :: VEC{REAL}(.n_ab*.n_cd), OUT
+      n_sum,dim1,dim2 :: INT, IN
+      Ix,Iy,Iz :: MAT{REAL}(n_sum,dim1*dim2), IN
+      wt :: VEC{REAL}(n_sum), IN
+
+      Ixy :: VEC{REAL}@
+      i,n,n1,nx,ny,t1,t2,jx,jy :: INT
+
+      if (.ab_l_max==0 AND .cd_l_max==0) then
+
+         esfs(1) = sum(wt)
+
+      else
+
+         t1 = .ab_l_tri
+         t2 = .cd_l_tri
+         n  = .n_ab*.n_cd
+         n1 = GAUSSIAN_DATA::rms2_indices(t1,t2).no_Ixy_is_1
+         nx = GAUSSIAN_DATA::rms2_indices(t1,t2).no_Ixy_is_x
+         ny = GAUSSIAN_DATA::rms2_indices(t1,t2).no_Ixy_is_y
+         jx = 1
+         jy = 1
+
+         do i = 1,n1
+            esfs(GAUSSIAN_DATA::rms2_indices(t1,t2).ef(i)) = &
+               sum(Iz(:,GAUSSIAN_DATA::rms2_indices(t1,t2).efz(i)))
+         end
+
+         do i = n1+1,nx
+            if (GAUSSIAN_DATA::rms2_indices(t1,t2).do_Ixy_is_x(i)) &
+               jx = GAUSSIAN_DATA::rms2_indices(t1,t2).efx(i)
+            esfs(GAUSSIAN_DATA::rms2_indices(t1,t2).ef(i)) = &
+               sum(Ix(:,jx)*Iz(:,GAUSSIAN_DATA::rms2_indices(t1,t2).efz(i)))
+         end
+
+         do i = nx+1,ny
+            if (GAUSSIAN_DATA::rms2_indices(t1,t2).do_Ixy_is_y(i)) &
+               jy = GAUSSIAN_DATA::rms2_indices(t1,t2).efy(i)
+            esfs(GAUSSIAN_DATA::rms2_indices(t1,t2).ef(i)) = &
+               sum(Iy(:,jy)*Iz(:,GAUSSIAN_DATA::rms2_indices(t1,t2).efz(i)))
+         end
+
+         Ixy.create(n_sum)
+         do i = ny+1,n
+            if (GAUSSIAN_DATA::rms2_indices(t1,t2).do_Ixy(i)) &
+               Ixy = Ix(:,GAUSSIAN_DATA::rms2_indices(t1,t2).efx(i)) &
+                   * Iy(:,GAUSSIAN_DATA::rms2_indices(t1,t2).efy(i))
+            esfs(GAUSSIAN_DATA::rms2_indices(t1,t2).ef(i)) = &
+               sum(Ixy*Iz(:,GAUSSIAN_DATA::rms2_indices(t1,t2).efz(i)))
+         end
+         Ixy.destroy
+
+      end
+
    end
 
 !   form_esfs_rms2(esfs,Ix,Iy,Iz,wt,n_sum,dim1,dim2) :: private
@@ -11383,6 +11519,94 @@ contains
 
    end
 
+   make_r_J_engine(Jab,Jcd,Pab,Pcd,factor,same,work) :: leaky, PURE
+   ! As make_r_J_engine above, but every work array comes from "work".
+   ! It is grown here only if this quartet needs more than it holds;
+   ! sized beforehand by ERI_SCRATCH:set_sizes_for, nothing is allocated.
+      self :: IN
+      Jab,Jcd :: VEC{REAL}, INOUT
+      Pab,Pcd :: VEC{REAL}, IN
+      factor :: REAL, IN
+      same :: BIN, IN
+      work :: ERI_SCRATCH, INOUT
+
+   ENSURE(.n_ab==Jab.dim,"size of Jab wrong")
+   ENSURE(.n_cd==Jcd.dim,"size of Jcd wrong")
+   ENSURE(.n_ab==Pab.dim,"size of Pab wrong")
+   ENSURE(.n_cd==Pcd.dim,"size of Pcd wrong")
+
+      n_2d :: INT
+
+      n_2d = ((.ab_l_sum+.cd_l_sum+2)/2)*.ab_n_gaussian_pairs*.cd_n_gaussian_pairs &
+           * (.ab_l_sum+1)*(.cd_l_sum+1)
+
+      ! The J engine needs no (es|cd) or (ab|cd) space
+      work.grow_to(n_2d,max(.n_ab,.n_cd),.n_ab*.n_cd,0,0)
+
+      ! Pass the components only, never "work" itself alongside them
+      SHELL1QUARTET::make_r_J_engine_k(self,Jab,Jcd,Pab,Pcd,factor,same, &
+         work.Ix,work.Iy,work.Iz,work.esfs,work.ev,work.fv)
+
+   end
+
+   make_r_J_engine_k(Jab,Jcd,Pab,Pcd,factor,same,Ix,Iy,Iz,esfs,ev,fv) :: private, PURE
+   ! The body of make_r_J_engine with the work arrays passed in. They are
+   ! explicit-shape views of the flat ERI_SCRATCH buffers.
+      self :: IN
+      Jab,Jcd :: VEC{REAL}, INOUT
+      Pab,Pcd :: VEC{REAL}, IN
+      factor :: REAL, IN
+      same :: BIN, IN
+      Ix,Iy,Iz :: VEC{REAL}(*), INOUT
+      esfs :: MAT{REAL}(.n_ab,.n_cd), INOUT
+      ev :: VEC{REAL}(.n_ab), INOUT
+      fv :: VEC{REAL}(.n_cd), INOUT
+
+      ssss,fac :: REAL
+
+      if      (.ab_l_sum==0 AND .cd_l_sum==0) then
+
+         .make_esfs_ss_0000(ssss)
+         ssss = factor*ssss
+         if (same) then
+            ssss = TWO*ssss
+            Jab(1) = Jab(1) + ssss*Pcd(1)
+         else
+            Jab(1) = Jab(1) + ssss*Pcd(1)
+            Jcd(1) = Jcd(1) + ssss*Pab(1)
+         end
+
+      else if (.ab_l_sum==0) then
+
+         SHELL1QUARTET::make_esfs_with(self,fv,Ix,Iy,Iz) ! Make (ss|fs) integrals
+         fac = factor*Pab(1)
+         Jab(1) = Jab(1) + factor*sum(fv*Pcd)
+         Jcd    = Jcd    + fac*fv
+
+      else if (.cd_l_sum==0) then
+
+         SHELL1QUARTET::make_esfs_with(self,ev,Ix,Iy,Iz) ! Make (es|ss) integrals
+         fac = factor*Pcd(1)
+         Jcd(1) = Jcd(1) + factor*sum(ev*Pab)
+         Jab    = Jab    + fac*ev
+
+      else
+
+         SHELL1QUARTET::make_esfs_with(self,esfs,Ix,Iy,Iz) ! Make (es|fs) integrals
+         ev.to_product_of(esfs,Pcd)
+         fv.to_product_of(esfs,Pab,transpose_a=TRUE)
+         if (same) then
+            fac = TWO*factor
+            Jab = Jab + fac*ev
+         else
+            Jab = Jab + factor*ev
+            Jcd = Jcd + factor*fv
+         end
+
+      end
+
+   end
+
    make_r_JK_engine(Jab,Jcd,Pab,Pcd,K,P,skip_J,skip_K,same,factor,fa,la,fb,lb,fc,lc,fd,ld) :: PURE
    ! Makes the J matrix directly from the (es|fs) integrals (J matrix
    ! engine).  Makes the K matrix normally. There are independent
@@ -11522,6 +11746,159 @@ contains
             I.destroy
          end
          esfs.destroy
+
+      end
+
+   end
+
+   make_r_JK_engine(Jab,Jcd,Pab,Pcd,K,P,skip_J,skip_K,same,factor,fa,la,fb,lb,fc,lc,fd,ld,work) :: leaky, PURE
+   ! As make_r_JK_engine above, but every work array comes from "work".
+   ! It is grown here only if this quartet needs more than it holds;
+   ! sized beforehand by ERI_SCRATCH:set_sizes_for, nothing is allocated.
+      self :: IN
+      Jab,Jcd :: VEC{REAL}, INOUT
+      Pab,Pcd :: VEC{REAL}, IN
+      K :: MAT{REAL}, INOUT
+      P :: MAT{REAL}, IN
+      skip_J,skip_K,same :: BIN, IN
+      factor :: REAL, IN
+      fa,la,fb,lb,fc,lc,fd,ld :: INT, IN
+      work :: ERI_SCRATCH, INOUT
+
+      n_2d :: INT
+
+      n_2d = ((.ab_l_sum+.cd_l_sum+2)/2)*.ab_n_gaussian_pairs*.cd_n_gaussian_pairs &
+           * (.ab_l_sum+1)*(.cd_l_sum+1)
+
+      work.grow_to(n_2d,max(.n_ab,.n_cd),.n_ab*.n_cd, &
+                  .n_ab*.c.n_comp*.d.n_comp,.ab_n_comp_pairs*.cd_n_comp_pairs)
+
+      ! Pass the components only, never "work" itself alongside them
+      SHELL1QUARTET::make_r_JK_engine_k(self,Jab,Jcd,Pab,Pcd,K,P,skip_J,skip_K,same,factor, &
+         fa,la,fb,lb,fc,lc,fd,ld, &
+         work.Ix,work.Iy,work.Iz,work.esfs,work.escd,work.ints,work.ev,work.fv)
+
+   end
+
+   make_r_JK_engine_k(Jab,Jcd,Pab,Pcd,K,P,skip_J,skip_K,same,factor,fa,la,fb,lb,fc,lc,fd,ld,Ix,Iy,Iz,esfs,escd,ints,ev,fv) :: private, PURE
+   ! The body of make_r_JK_engine with the work arrays passed in. They are
+   ! explicit-shape views of the flat ERI_SCRATCH buffers.
+      self :: IN
+      Jab,Jcd :: VEC{REAL}, INOUT
+      Pab,Pcd :: VEC{REAL}, IN
+      K :: MAT{REAL}, INOUT
+      P :: MAT{REAL}, IN
+      skip_J,skip_K,same :: BIN, IN
+      factor :: REAL, IN
+      fa,la,fb,lb,fc,lc,fd,ld :: INT, IN
+      Ix,Iy,Iz :: VEC{REAL}(*), INOUT
+      esfs :: MAT{REAL}(.n_ab,.n_cd), INOUT
+      escd :: VEC{REAL}(.n_ab*.c.n_comp*.d.n_comp), INOUT
+      ints :: VEC{REAL}(.ab_n_comp_pairs*.cd_n_comp_pairs), INOUT
+      ev :: VEC{REAL}(.n_ab), INOUT
+      fv :: VEC{REAL}(.n_cd), INOUT
+
+      ssss,fac,I_abcd :: REAL
+      a,b,c,d,abcd :: INT
+
+      if      (.ab_l_sum==0 AND .cd_l_sum==0) then       ! Make (ss|ss) integrals
+
+         .make_esfs_ss_0000(ssss)
+         ssss = factor*ssss
+         if (NOT skip_J) then
+            if (same) then
+               Jab(1) = Jab(1) + TWO*ssss*Pcd(1)
+            else
+               Jab(1) = Jab(1) + ssss*Pcd(1)
+               Jcd(1) = Jcd(1) + ssss*Pab(1)
+            end
+         end
+         if (NOT skip_K) then
+            K(fa,fc) = K(fa,fc) + ssss*P(fd,fb)
+            K(fa,fd) = K(fa,fd) + ssss*P(fc,fb)
+            K(fb,fc) = K(fb,fc) + ssss*P(fd,fa)
+            K(fb,fd) = K(fb,fd) + ssss*P(fc,fa)
+         end
+
+      else if (.ab_l_sum==0) then
+
+         SHELL1QUARTET::make_esfs_with(self,fv,Ix,Iy,Iz) ! Make (ss|fs) integrals
+         if (NOT skip_J) then
+            fac = factor*Pab(1)
+            Jab(1) = Jab(1) + factor*sum(fv*Pcd)
+            Jcd    = Jcd    + fac*fv
+         end
+         if (NOT skip_K) then
+            SHELL1QUARTET::transfer_cd_s(self,fv,ints)   ! Transfer, ab = ss
+            abcd = 0
+            do d = fd,ld
+            do c = fc,lc
+               abcd = abcd + 1
+               I_abcd = factor * ints(abcd)
+               K(fa,c) = K(fa,c) + I_abcd*P(d,fb)
+               K(fa,d) = K(fa,d) + I_abcd*P(c,fb)
+               K(fb,c) = K(fb,c) + I_abcd*P(d,fa)
+               K(fb,d) = K(fb,d) + I_abcd*P(c,fa)
+            end
+            end
+         end
+
+      else if (.cd_l_sum==0) then
+
+         SHELL1QUARTET::make_esfs_with(self,ev,Ix,Iy,Iz) ! Make (es|ss) integrals
+         if (NOT skip_J) then
+            fac = factor*Pcd(1)
+            Jcd(1) = Jcd(1) + factor*sum(ev*Pab)
+            Jab    = Jab    + fac*ev
+         end
+         if (NOT skip_K) then
+            SHELL1QUARTET::transfer_ab_s(self,ev,ints)   ! Transfer, cd = ss
+            abcd = 0
+            do b = fb,lb
+            do a = fa,la
+               abcd = abcd + 1
+               I_abcd = factor * ints(abcd)
+               K(a,fc) = K(a,fc) + I_abcd*P(fd,b)
+               K(a,fd) = K(a,fd) + I_abcd*P(fc,b)
+               K(b,fc) = K(b,fc) + I_abcd*P(fd,a)
+               K(b,fd) = K(b,fd) + I_abcd*P(fc,a)
+            end
+            end
+         end
+
+      else
+
+         SHELL1QUARTET::make_esfs_with(self,esfs,Ix,Iy,Iz) ! Make (es|fs) integrals
+         if (NOT skip_J) then
+            ev.to_product_of(esfs,Pcd)
+            fv.to_product_of(esfs,Pab,transpose_a=TRUE)
+            if (same) then
+               fac = TWO*factor
+               Jab = Jab + fac*ev
+            else
+               Jab = Jab + factor*ev
+               Jcd = Jcd + factor*fv
+            end
+         end
+         if (NOT skip_K) then
+            SHELL1QUARTET::transfer_cd(self,esfs,escd)     ! Transfer relations
+            SHELL1QUARTET::transfer_ab(self,escd,ints)
+            abcd = 0
+            do d = fd,ld
+            do c = fc,lc
+            do b = fb,lb
+            do a = fa,la
+               abcd = abcd + 1
+               I_abcd = factor * ints(abcd)
+               K(a,c) = K(a,c) + I_abcd*P(d,b)
+               K(a,d) = K(a,d) + I_abcd*P(c,b)
+               K(b,c) = K(b,c) + I_abcd*P(d,a)
+               K(b,d) = K(b,d) + I_abcd*P(c,a)
+            end
+            end
+            end
+            end
+         end
 
       end
 
@@ -11708,6 +12085,207 @@ contains
          end
 
          esfs.destroy
+
+      end
+
+   end
+
+   make_r_JK_engine(JAab,JBab,JAcd,JBcd,PAab,PBab,PAcd,PBcd,Ka,Kb,Pa,Pb,sJ,sK,same,factor,fa,la,fb,lb,fc,lc,fd,ld,work) :: leaky, PURE
+   ! As the open-shell make_r_JK_engine above, but every work array comes
+   ! from "work". It is grown here only if this quartet needs more than it
+   ! holds; sized beforehand by ERI_SCRATCH:set_sizes_for, nothing is allocated.
+      self :: IN
+      JAab,JBab,JAcd,JBcd :: VEC{REAL}, INOUT
+      PAab,PBab,PAcd,PBcd :: VEC{REAL}, IN
+      Ka,Kb :: MAT{REAL}, INOUT
+      Pa,Pb :: MAT{REAL}, IN
+      sJ,sK,same :: BIN, IN ! skip_J, skip_K, same
+      factor :: REAL, IN
+      fa,la,fb,lb,fc,lc,fd,ld :: INT, IN
+      work :: ERI_SCRATCH, INOUT
+
+      n_2d :: INT
+
+      n_2d = ((.ab_l_sum+.cd_l_sum+2)/2)*.ab_n_gaussian_pairs*.cd_n_gaussian_pairs &
+           * (.ab_l_sum+1)*(.cd_l_sum+1)
+
+      work.grow_to(n_2d,max(.n_ab,.n_cd),.n_ab*.n_cd, &
+                   .n_ab*.c.n_comp*.d.n_comp,.ab_n_comp_pairs*.cd_n_comp_pairs)
+
+      ! Pass the components only, never "work" itself alongside them
+      SHELL1QUARTET::make_u_JK_engine_k(self,JAab,JBab,JAcd,JBcd,PAab,PBab,PAcd,PBcd,Ka,Kb,Pa,Pb, &
+         sJ,sK,same,factor,fa,la,fb,lb,fc,lc,fd,ld, &
+         work.Ix,work.Iy,work.Iz,work.esfs,work.escd,work.ints,work.ev,work.fv)
+
+   end
+
+   make_u_JK_engine_k(JAab,JBab,JAcd,JBcd,PAab,PBab,PAcd,PBcd,Ka,Kb,Pa,Pb,sJ,sK,same,factor,fa,la,fb,lb,fc,lc,fd,ld,Ix,Iy,Iz,esfs,escd,ints,ev,fv) :: private, PURE
+   ! The body of the open-shell make_r_JK_engine with the work arrays passed
+   ! in. They are explicit-shape views of the flat ERI_SCRATCH buffers.
+      self :: IN
+      JAab,JBab,JAcd,JBcd :: VEC{REAL}, INOUT
+      PAab,PBab,PAcd,PBcd :: VEC{REAL}, IN
+      Ka,Kb :: MAT{REAL}, INOUT
+      Pa,Pb :: MAT{REAL}, IN
+      sJ,sK,same :: BIN, IN ! skip_J, skip_K, same
+      factor :: REAL, IN
+      fa,la,fb,lb,fc,lc,fd,ld :: INT, IN
+      Ix,Iy,Iz :: VEC{REAL}(*), INOUT
+      esfs :: MAT{REAL}(.n_ab,.n_cd), INOUT
+      escd :: VEC{REAL}(.n_ab*.c.n_comp*.d.n_comp), INOUT
+      ints :: VEC{REAL}(.ab_n_comp_pairs*.cd_n_comp_pairs), INOUT
+      ev :: VEC{REAL}(.n_ab), INOUT
+      fv :: VEC{REAL}(.n_cd), INOUT
+
+      ssss,fac,I_abcd :: REAL
+      a,b,c,d,abcd :: INT
+
+      if      (.ab_l_sum==0 AND .cd_l_sum==0) then       ! Make (ss|ss) integrals
+
+         .make_esfs_ss_0000(ssss)
+         ssss = factor*ssss
+
+         if (NOT sJ) then
+            if (same) then
+               JAab(1) = JAab(1) + TWO*ssss*PAcd(1)
+               JBab(1) = JBab(1) + TWO*ssss*PBcd(1)
+            else
+               JAab(1) = JAab(1) + ssss*PAcd(1)
+               JAcd(1) = JAcd(1) + ssss*PAab(1)
+               JBab(1) = JBab(1) + ssss*PBcd(1)
+               JBcd(1) = JBcd(1) + ssss*PBab(1)
+            end
+         end
+
+         if (NOT sK) then
+            Ka(fa,fc) = Ka(fa,fc) + ssss*Pa(fd,fb)
+            Ka(fa,fd) = Ka(fa,fd) + ssss*Pa(fc,fb)
+            Ka(fb,fc) = Ka(fb,fc) + ssss*Pa(fd,fa)
+            Ka(fb,fd) = Ka(fb,fd) + ssss*Pa(fc,fa)
+            Kb(fa,fc) = Kb(fa,fc) + ssss*Pb(fd,fb)
+            Kb(fa,fd) = Kb(fa,fd) + ssss*Pb(fc,fb)
+            Kb(fb,fc) = Kb(fb,fc) + ssss*Pb(fd,fa)
+            Kb(fb,fd) = Kb(fb,fd) + ssss*Pb(fc,fa)
+         end
+
+      else if (.ab_l_sum==0) then
+
+
+         SHELL1QUARTET::make_esfs_with(self,fv,Ix,Iy,Iz)            ! Make (ss|fs) integrals
+
+         if (NOT sJ) then
+            fac = factor*PAab(1)
+            JAab(1) = JAab(1) + factor*sum(fv*PAcd)
+            JAcd    = JAcd    + fac*fv
+            fac = factor*PBab(1)
+            JBab(1) = JBab(1) + factor*sum(fv*PBcd)
+            JBcd    = JBcd    + fac*fv
+         end
+
+         if (NOT sK) then
+            SHELL1QUARTET::transfer_cd_s(self,fv,ints)   ! Transfer, ab = ss
+            abcd = 0
+            do d = fd,ld
+            do c = fc,lc
+               abcd = abcd + 1
+               I_abcd = factor * ints(abcd)
+               Ka(fa,c) = Ka(fa,c) + I_abcd*Pa(d,fb)
+               Ka(fa,d) = Ka(fa,d) + I_abcd*Pa(c,fb)
+               Ka(fb,c) = Ka(fb,c) + I_abcd*Pa(d,fa)
+               Ka(fb,d) = Ka(fb,d) + I_abcd*Pa(c,fa)
+               Kb(fa,c) = Kb(fa,c) + I_abcd*Pb(d,fb)
+               Kb(fa,d) = Kb(fa,d) + I_abcd*Pb(c,fb)
+               Kb(fb,c) = Kb(fb,c) + I_abcd*Pb(d,fa)
+               Kb(fb,d) = Kb(fb,d) + I_abcd*Pb(c,fa)
+            end
+            end
+         end
+
+
+      else if (.cd_l_sum==0) then
+
+
+         SHELL1QUARTET::make_esfs_with(self,ev,Ix,Iy,Iz)            ! Make (es|ss) integrals
+
+         if (NOT sJ) then
+            fac = factor*PAcd(1)
+            JAcd(1) = JAcd(1) + factor*sum(ev*PAab)
+            JAab    = JAab    + fac*ev
+            fac = factor*PBcd(1)
+            JBcd(1) = JBcd(1) + factor*sum(ev*PBab)
+            JBab    = JBab    + fac*ev
+         end
+
+         if (NOT sK) then
+            SHELL1QUARTET::transfer_ab_s(self,ev,ints)   ! Transfer, cd = ss
+            abcd = 0
+            do b = fb,lb
+            do a = fa,la
+               abcd = abcd + 1
+               I_abcd = factor * ints(abcd)
+               Ka(a,fc) = Ka(a,fc) + I_abcd*Pa(fd,b)
+               Ka(a,fd) = Ka(a,fd) + I_abcd*Pa(fc,b)
+               Ka(b,fc) = Ka(b,fc) + I_abcd*Pa(fd,a)
+               Ka(b,fd) = Ka(b,fd) + I_abcd*Pa(fc,a)
+               Kb(a,fc) = Kb(a,fc) + I_abcd*Pb(fd,b)
+               Kb(a,fd) = Kb(a,fd) + I_abcd*Pb(fc,b)
+               Kb(b,fc) = Kb(b,fc) + I_abcd*Pb(fd,a)
+               Kb(b,fd) = Kb(b,fd) + I_abcd*Pb(fc,a)
+            end
+            end
+         end
+
+
+      else
+
+
+         SHELL1QUARTET::make_esfs_with(self,esfs,Ix,Iy,Iz)            ! Make (es|fs) integrals
+
+         if (NOT sJ) then
+            ev.to_product_of(esfs,PAcd)
+            fv.to_product_of(esfs,PAab,transpose_a=TRUE)
+            if (same) then
+               fac = TWO*factor
+               JAab = JAab + fac*ev
+            else
+               JAab = JAab + factor*ev
+               JAcd = JAcd + factor*fv
+            end
+            ev.to_product_of(esfs,PBcd)
+            fv.to_product_of(esfs,PBab,transpose_a=TRUE)
+            if (same) then
+               fac = TWO*factor
+               JBab = JBab + fac*ev
+            else
+               JBab = JBab + factor*ev
+               JBcd = JBcd + factor*fv
+            end
+         end
+
+         if (NOT sK) then
+            SHELL1QUARTET::transfer_cd(self,esfs,escd)     ! Transfer relations
+            SHELL1QUARTET::transfer_ab(self,escd,ints)
+            abcd = 0
+            do d = fd,ld
+            do c = fc,lc
+            do b = fb,lb
+            do a = fa,la
+               abcd = abcd + 1
+               I_abcd = factor * ints(abcd)
+               Ka(a,c) = Ka(a,c) + I_abcd*Pa(d,b)
+               Ka(a,d) = Ka(a,d) + I_abcd*Pa(c,b)
+               Ka(b,c) = Ka(b,c) + I_abcd*Pa(d,a)
+               Ka(b,d) = Ka(b,d) + I_abcd*Pa(c,a)
+               Kb(a,c) = Kb(a,c) + I_abcd*Pb(d,b)
+               Kb(a,d) = Kb(a,d) + I_abcd*Pb(c,b)
+               Kb(b,c) = Kb(b,c) + I_abcd*Pb(d,a)
+               Kb(b,d) = Kb(b,d) + I_abcd*Pb(c,a)
+            end
+            end
+            end
+            end
+         end
+
 
       end
 
