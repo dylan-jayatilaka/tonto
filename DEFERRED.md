@@ -2586,6 +2586,31 @@ pattern, after).
 Gate throughout: energies, `short`, `long`, timings with three repeats and candidates run
 concurrently (the lesson of 2026-09-16), and the bigger molecule, not only karrikinolide.
 
+**Step 0 in progress (2026-09-17, branch `esfs-order`, runs in
+`~/tonto_runs/esfs_order_2026-09-17/`).** `make_esfs_XX_po` in `shell1quartet.foo`: GAUSSIAN4's
+loop order inside `make_esfs_XX`, tiles as local `MAT{REAL}(l_ab+1,l_cd+1)`, `esfs(e,f) +=
+Ix*Iy*Iz` per root; `make_esfs_XX` kept for `use_RMS`. It covers quartets with both l-sums >= 3,
+so (dp|dp) and (dd|dd) at 6-31G(d) as well as the f classes at cc-pVTZ.
+
+- **`perf stat` before the change** (baseline binary at `7d2c236a`, one pinned core):
+
+  | | instructions/cycle | L1-dcache miss | LLC miss | cache-misses/refs |
+  |---|---|---|---|---|
+  | 6-31G(d) | 2.08 | 3.4% | 4.3% | 6.1% |
+  | cc-pVTZ | 2.03 | 4.1% | 3.4% | 3.6% |
+
+  Two instructions per cycle and single-digit miss rates do not look like a memory-bound build.
+  **The cc-pVTZ counts are contaminated**: a Python script ran on another core for ~10 minutes of
+  the 19. Repeat solo if the cache argument comes to rest on them.
+- **Energy**: 6-31G(d) −530.980810596151 against −530.980810596157 (6e-15). Correct.
+- **6-31G(d), three concurrent pairs, cores swapped between pairs, J/K CPU s**: base 50.77,
+  53.37, 56.30 (mean 53.48); pilot 52.18, 54.08, 57.26 (mean 54.51). **+1.9%, same sign in every
+  pair.** `make_esfs_XX` is a small share at this basis, so this says little; cc-pVTZ is the test.
+- **Unexplained, not chased yet:** the baseline J/K here is 54 s (6-31G(d)) and 1143 s (cc-pVTZ)
+  against 39.9 s and 914 s in the 2026-09-16 profile runs. The `low` default was measured at
+  +7%, not +25-35%. Suspects: the laptop's thermal state, or the cutoff costs more than the scan
+  said. Check with `eri_accuracy= very_low` on an idle machine.
+
 ## Benchmark molecule with a first-row transition metal and sulfur (Dylan, 2026-09-16)
 
 Karrikinolide (17 atoms, C/H/O) is the only benchmark, and every speed conclusion so far is
@@ -2594,10 +2619,45 @@ RHF/RKS and every reference code agree without multiplet arguments. Basis covera
 `basis_sets/`: 6-31G(d), def2-SVP and def2-TZVP carry Zn, Cu, Fe and S; cc-pVTZ carries S only.
 
 - **Chosen: a zinc-finger site model, [Zn(SCH3)2(imidazole)2]** -- Zn(II) d10, two thiolates,
-  two histidines, ~30 atoms. Geometry from a small-molecule CSD structure (experimental and
-  complete), optimised once at BLYP/def2-SVP in ORCA so g09, ORCA and Tonto start from one file.
+  two histidines, 29 atoms, 152 electrons, neutral closed shell. **Geometry hand-built
+  (2026-09-17), not optimised -- Dylan: reasonable is enough.** Tetrahedral Zn, Zn-S 2.33, Zn-N
+  2.05, S-C 1.82, Zn-S-C 105, ring bonds 1.36 A (regular pentagon), ligand torsions chosen to
+  maximise the closest interligand contact (H...H 2.37 A). `obabel` reads back
+  `CS[Zn](N1[CH]NC=C1)(N1[CH]NC=C1)SC`. Builder and `znfinger.xyz` in
+  `~/tonto_runs/zinc_finger_2026-09-17/`; the coordinates are below so they are versioned.
   References as for karrikinolide: g09 (`6D 10F` for the cartesian rows) and ORCA (`NoRI` for
   DFT), one core, run solo.
+  ```
+  Zn     0.000000     0.000000     0.000000
+  S      1.345226     1.345226     1.345226
+  C      1.617187     2.860270     0.374104
+  H      1.671477     2.608132    -0.684942
+  H      0.791484     3.551959     0.541079
+  H      2.551477     3.328024     0.684602
+  S      1.345226    -1.345226    -1.345226
+  C      1.617187    -2.860270    -0.374104
+  H      1.671477    -2.608132     0.684942
+  H      0.791484    -3.551959    -0.541079
+  H      2.551477    -3.328024    -0.684602
+  N     -1.183568     1.183568    -1.183568
+  C     -1.645095     0.867091    -2.423098
+  H     -1.452411    -0.051891    -2.956713
+  N     -2.391861     1.911028    -2.872694
+  H     -2.863618     1.963002    -3.764234
+  C     -2.391861     2.872694    -1.911028
+  H     -2.896314     3.826024    -1.966604
+  C     -1.645095     2.423098    -0.867091
+  H     -1.452411     2.956713     0.051891
+  N     -1.183568    -1.183568     1.183568
+  C     -1.645095    -0.867091     2.423098
+  H     -1.452411     0.051891     2.956713
+  N     -2.391861    -1.911028     2.872694
+  H     -2.863618    -1.963002     3.764234
+  C     -2.391861    -2.872694     1.911028
+  H     -2.896314    -3.826024     1.966604
+  C     -1.645095    -2.423098     0.867091
+  H     -1.452411    -2.956713    -0.051891
+  ```
 - **Recorded for later, not now:** a blue-copper (plastocyanin) site, Cu(II) with 2 His, Cys,
   Met -- Cu and two sulfurs, open-shell doublet, the UHF/UKS benchmark; a heme model (Fe porphyrin
   + imidazole + thiolate), 50-70 atoms, whose spin state makes it a poor reference system.
