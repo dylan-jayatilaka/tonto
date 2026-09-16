@@ -99,8 +99,8 @@ now covers the whole project, so it was renamed.)*
 > `urea_ccsd_pob-TZVP_Salvador_properties` at 4.48%, the LAPACK-thread row; the suite is 55/56.
 >
 > **START HERE -- 2026-09-16 (night). Item 3, the Rys roots vectorised within a quartet, is
-> built, measured and flat. Branch `rys-vec` (worktree `../tonto-vec`), unmerged; Dylan to say
-> whether it merges or is parked.**
+> built, measured and flat, and merged (`5baf58e6`, `--no-ff`, gate `short` 67/67, no reference
+> changed) so the code and the lessons are on `develop`. Nothing is in flight.**
 >
 > What was built: the 1 and 2 root fits as slice kernels (one leaf per T range), a vector entry
 > `RYS:get_weights_t2`, a gathered call in the eleven low-l `make_esfs_*` routines, and
@@ -125,8 +125,8 @@ now covers the whole project, so it was renamed.)*
 > out) -- silent in release, a debug `ENSURE` stop. Found because the counters were compiled with
 > `USE_PRECONDITIONS`; the §11 rule again.
 >
-> **Owed if it merges**: `short`; the energy moves by 5e-12 on karrikinolide, inside every gate.
-> **If parked**: cherry-pick the docs commit (`SCF_SPEED_REPORT.md`, this handover) to `develop`.
+> The energy moves by 5e-12 on karrikinolide, inside every gate; a `long` run is still owed on
+> this whole thread, as before.
 >
 > **START HERE -- 2026-09-16 (evening). `rys-1c` and `rys-sph` are merged; item 3 is next and
 > nothing is in flight.**
@@ -2460,7 +2460,7 @@ OpenBLAS would also oversubscribe cores in MPI builds.
 
 ## Vectorise the Rys quadrature over shell-quartet classes (Dylan, 2026-09-14)
 
-**Step 3 done and flat, 2026-09-16 (branch `rys-vec`, unmerged).** Per-quartet vectorisation of the
+**Step 3 done and flat, 2026-09-16 (branch `rys-vec`, merged `5baf58e6`).** Per-quartet vectorisation of the
 1 and 2 root fits: kernels 3-4x per X, whole job unchanged within ±1.5% on karrikinolide at both
 bases. Numbers and reasoning in `docs/SCF_SPEED_REPORT.md`, *Rys step 3*; the handover above has
 the two lessons. What remains of this item is step 2, the class-batched traversal, and it now
