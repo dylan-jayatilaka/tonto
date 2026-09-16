@@ -98,6 +98,84 @@ now covers the whole project, so it was renamed.)*
 > 0.17% on three lines where it had failed at 200%. The only loose failure left on the Mac is
 > `urea_ccsd_pob-TZVP_Salvador_properties` at 4.48%, the LAPACK-thread row; the suite is 55/56.
 >
+> **START HERE -- 2026-09-16 (evening). `rys-1c` and `rys-sph` are merged; item 3 is next and
+> nothing is in flight.**
+>
+> **Merged to `develop` and pushed** (`2d892a1a`, `3ddc1ff9`), two `--no-ff` merges. The gate was
+> `short` 67/67 plus `spherical_vs_cartesian`, `h2o_rhf_cc-pVTZ_spherical_harmonic_basis` (d and
+> f) and `CHFCl_rhf_cc-pVQZ_spherical_from_nwchem_molden` (g), run on the `rys-sph` worktree,
+> whose source is byte-identical to the merge result. No reference changed. That discharged both
+> branches at once, `rys-sph` sitting on `rys-1c`.
+>
+> **The named ERI accuracy level is done** (`c6ef84c7`). `eri_accuracy= very_low|low|medium|high`
+> sets the primitive-pair, Schwarz and J/K density cutoffs together; `escalate_eri_accuracy= TRUE`
+> runs the damped iterations at `very_low`. Karrikinolide RHF/6-31G(d) reproduces the
+> one-at-a-time scan to every printed digit -- 2.4e-6, 3.1e-8, 1.8e-9, 1.8e-9 from g09 at 42.0,
+> 47.4, 57.9 and 64.9 s -- and escalation gives `medium` for 53.3 s, 8e-12 from the unescalated
+> energy. Table in `docs/SCF_SPEED_REPORT.md`.
+>
+> **The XCW floor, and the one decision inside it that is worth revisiting.** `medium` is a floor
+> in the code, in `SCF_DATA:effective_ERI_accuracy`, as decided -- but it bites **only once a
+> level has been asked for**. A job naming neither keyword keeps today's cutoffs even if it is an
+> XCW job. The alternative, a blanket floor, would retighten every existing XCW run and force a
+> re-bless of those references, which is Dylan's call and was not taken. When the floor does bite,
+> the options block prints an `ERI accuracy in force` line, so it is never silent.
+>
+> **Two traps found while testing this, both worth remembering.** (1) `h2o_rhf_cc-pVTZ` cannot see
+> the ERI cutoffs **at all** -- with three mutually close atoms nearly every quartet takes the
+> `skip=FALSE` path, which does no primitive-pair screening, and even a pair cutoff of 1e-2 leaves
+> the energy unchanged to twelve decimals. Any test of ERI screening needs separated atoms;
+> karrikinolide is the right size. (2) The first cut guarded the level name with `ENSURE`, so in a
+> release build `eri_accuracy= bogus` silently fell through the `select case` and changed nothing.
+> It is a `DIE_IF` now. This is the §11 rule -- a check that must fire in production has to be a
+> `DIE` -- caught by testing rather than by reading.
+>
+> **Item 2, the `transfer_l_*` work arrays onto `ERI_SCRATCH`, is SKIPPED (Dylan, 2026-09-16), and
+> the measurement says he is right.** `perf` on karrikinolide RHF/6-31G(d): the whole
+> `transfer_l_*` family plus every allocator symbol is **4.2%** of the run, and the allocator
+> itself -- `malloc`, `free`, `memmove`, `memcpy` -- is about **1.0%**. The other 3.2% is the
+> transfer routines' own arithmetic, which hoisting their buffers would not touch. So the ceiling
+> was ~1% for a change rewriting 24 `PURE` routines and 30 call sites. Stage 1c had already taken
+> the allocator out of the hot path; this is the leftover, and it is not worth the risk. If it is
+> ever revived, the shape is the established one: a `_k` body taking explicit-shape views of flat
+> `ERI_SCRATCH` buffers, as `make_r_J_engine_k` does.
+>
+> **NEXT: item 3, vectorising the Rys quadrature over shell-quartet classes.** The profile says
+> where to aim. Karrikinolide RHF/6-31G(d), `perf`, flat:
+>
+> | symbol | % |
+> |---|---|
+> | `RYS:get_weights` | 17.5 |
+> | `SHELL1QUARTET:make_esfs_with` | 14.4 |
+> | `SHELL1QUARTET:make_r_JK_engine` (the `_1` body) | 9.5 |
+> | `exp` from libm | 6.4 |
+> | `make_esfs_dx` / `_px` / `_xd` / `_xp` / `_xx` | 4.5 / 4.2 / 4.2 / 3.6 / 2.7 |
+> | `SHELL1:set_reusing_storage` | 3.1 |
+>
+> `get_weights` and the `make_esfs_*` family together are over half the run, and `get_weights` is
+> reached almost entirely through `make_esfs_with`. **The two strands worth doing are class
+> batching and T-range binning of the roots.**
+>
+> **The third strand, generally contracted shells, should be dropped for these bases -- measured.**
+> In cc-pVTZ the general contraction is confined to the s shells: C, N and O each carry two
+> 8-primitive s shells built on identical exponents, so 26 primitives are computed where 18 are
+> distinct (1.44x), and hydrogen has none at all. What could be shared between those two shells is
+> only the 2D-integral construction, since the contraction coefficients still differ -- and with f
+> functions the contraction and the K loop already outweigh the roots. So the shareable part is a
+> fraction of the smaller half of the time. Revisit only for a genuinely general basis (ANO).
+>
+> **The shape the pilot should take.** In the `make_esfs_*` routines the roots are fetched one X
+> at a time, deep inside the double loop over primitive pairs -- `xx = rho*|QP|^2` then
+> `rys.get_weights(xx)`, then the 2D integrals built inline from `rys.root`/`rys.weight` (see
+> `shell1quartet.foo:1312`). T-range binning means a pre-pass that computes every X for the
+> quartet into a vector, evaluates roots and weights for the whole vector by T range, and leaves
+> the 2D integral loop reading them. Do **one** routine first, measure, and only then generalise:
+> the family is large and each member is hand-specialised. `make_esfs_with` is the one to pilot,
+> being both the biggest single symbol and the caller of nearly all the `get_weights` time.
+>
+> **Still owed on this thread:** a `long` run. Routine CI runs `short` only, and that is how 16
+> stale `long` references accumulated on 2026-09-10.
+>
 > **START HERE -- 2026-09-16.** Step (1) of yesterday's list is **done**: Tonto timed against
 > g09 and ORCA on karrikinolide, RHF and BLYP, 6-31G(d), cc-pVTZ, def2-SVP and def2-TZVP, one
 > core each, run solo. Tables in `docs/SCF_SPEED_REPORT.md`; runs in
