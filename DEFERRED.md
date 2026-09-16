@@ -831,7 +831,13 @@ Found by the zinc-finger benchmark ([Zn(SCH3)2(imidazole)2], hand-built geometry
 - **`initial_density= core` in the spherical basis converges** (−3101.464456 at iteration 18,
   heading for ORCA's −3101.464459). The suite's spherical Tonto rows were switched to the core
   guess; the cartesian rows keep promolecule.
-- **Not yet done:** which atom's promolecule block is wrong in the spherical basis (S alone,
+- **Narrowed (iteration-0 energies, promolecule guess):** S atom alone −397.239 cartesian,
+  −397.387 spherical; Zn atom alone −1730.93 and −1737.82 -- both sane. ZnS −2174.89 cartesian,
+  **−1328.60 spherical**, and identical to every digit with the atom order reversed. So each atom's
+  guess is sane alone, the fault appears only when two atoms (at least Zn with S) are combined in
+  the spherical basis, and it is not an atom-order offset. Karrikinolide (C, H, O; d and f at
+  cc-pVTZ) did not show it.
+- **Not yet done:** where the combined spherical promolecule density goes wrong (S alone,
   then the spherical transformation of the atomic density), and why an unconverged SCF prints
   its result without a `not converged` line. The second matters more -- it passes a nonsense
   energy downstream silently.
