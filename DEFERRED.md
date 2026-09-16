@@ -114,12 +114,13 @@ now covers the whole project, so it was renamed.)*
 > 47.4, 57.9 and 64.9 s -- and escalation gives `medium` for 53.3 s, 8e-12 from the unescalated
 > energy. Table in `docs/SCF_SPEED_REPORT.md`.
 >
-> **The XCW floor, and the one decision inside it that is worth revisiting.** `medium` is a floor
-> in the code, in `SCF_DATA:effective_ERI_accuracy`, as decided -- but it bites **only once a
-> level has been asked for**. A job naming neither keyword keeps today's cutoffs even if it is an
-> XCW job. The alternative, a blanket floor, would retighten every existing XCW run and force a
-> re-bless of those references, which is Dylan's call and was not taken. When the floor does bite,
-> the options block prints an `ERI accuracy in force` line, so it is never silent.
+> **The XCW floor. Settled (Dylan, 2026-09-16): it applies only when a level has been asked for.**
+> `medium` is a floor in the code, in `SCF_DATA:effective_ERI_accuracy`, but it bites only once
+> `eri_accuracy=` or `escalate_eri_accuracy=` is given. A job naming neither keeps today's cutoffs
+> even if it is an XCW job, so no existing reference moves. The alternative considered and
+> rejected was a blanket floor, which would have retightened every XCW run and forced a re-bless.
+> When the floor does bite the options block prints an `ERI accuracy in force` line, so it is
+> never silent.
 >
 > **Two traps found while testing this, both worth remembering.** (1) `h2o_rhf_cc-pVTZ` cannot see
 > the ERI cutoffs **at all** -- with three mutually close atoms nearly every quartet takes the
