@@ -118,7 +118,12 @@ now covers the whole project, so it was renamed.)*
 > 4. **Two traps found**: transfer-space Schwarz bounds are not AO bounds (cost 8e-7 at cc-pVTZ
 >    before the fix); and `eri_accuracy=` silently overrides explicit `eri_*_cutoff=` every
 >    iteration, which voided two diagnostic runs.
-> 5. **Zinc-finger suite** (`~/tonto_runs/vs_g09_orca_znfinger_2026-09-17/`, `suite.log`): hand-built
+> 5. **Zinc-finger suite found a serious defect: spherical Tonto does not converge for it, at
+>    6-31G(d) or def2-SVP, promolecule or core guess, and prints the unconverged energy with no
+>    warning** (see the Correctness entry *The promolecule guess is wrong in a spherical basis*).
+>    Cartesian Tonto is fine (RHF/6-31G(d) 2.2e-6 from g09). Spherical Tonto rows withdrawn;
+>    cartesian def2 rows added. **Zinc-finger suite** (`~/tonto_runs/vs_g09_orca_znfinger_2026-09-17/`,
+>    `suite.log`, then `rerun.log`, `rerun2.log`, `cart.log`; `collect.py` tabulates): hand-built
 >    geometry, RHF and BLYP at 6-31G(d) (Tonto cartesian vs g09 6D 10F; Tonto spherical vs ORCA)
 >    and def2-SVP/def2-TZVP (spherical, all three), one core, one job at a time, Tonto `develop`
 >    plus pair-list BLYP rows. Started 04:36; def2-TZVP will run into the morning.
@@ -842,6 +847,14 @@ Found by the zinc-finger benchmark ([Zn(SCH3)2(imidazole)2], hand-built geometry
   after 28 minutes. The pair-list J is not the cause -- water BLYP/cc-pVDZ spherical agrees with
   the engine to 1.8e-10. So the zinc-finger SCF in the spherical 6-31G(d) basis is unstable,
   not merely badly started; RHF with the core guess happened to converge.
+- **It is not basis-specific.** RHF/def2-SVP spherical, core guess: −2036.299600237 after 23
+  minutes, silent, against g09 −3100.927836570 and ORCA −3100.927836555. **Every spherical Tonto
+  row for the zinc finger is unusable**, so the remaining ones were withdrawn from the suite
+  and cartesian def2 rows (engine and pair list) added; those compare Tonto with itself, not
+  with the spherical g09/ORCA def2 rows. Suspects to check first: the spherical path of the
+  J/K engine, new since 2026-09-16 (`rys-sph`: P expanded to cartesian, built, contracted back),
+  validated on C/H/O/F/Cl molecules only; and anything spherical specific to Zn's shells.
+  ZnS alone converges spherically, so a small reproducer may need more atoms.
 - **Not yet done:** where the combined spherical promolecule density goes wrong (S alone,
   then the spherical transformation of the atomic density), and why an unconverged SCF prints
   its result without a `not converged` line. The second matters more -- it passes a nonsense
