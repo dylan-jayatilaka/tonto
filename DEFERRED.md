@@ -2655,6 +2655,31 @@ tiles built to the class's l-sum serves every l.
   inside the cd loop (`molecule.fock.foo:655-692`). Storing that part per atom pair is the pair
   list, a few MB; storing anything per quartet is what does not fit.
 
+**Step 3 prototype built and correct (2026-09-17, branch `esfs-order`, runs in
+`~/tonto_runs/gpl_J_2026-09-17/`).** `GAUSSIAN_PAIR_LIST` (`gaussian_pair_list.foo`), built by
+`MOLECULE.FOCK:make_gaussian_pair_list`, used by `make_r_J_gaussian_pairs` when
+`scfdata= { use_gaussian_pair_J= TRUE }` (default FALSE). One pass per unordered pair of
+primitive pairs, generic 2D recursion, immediate contraction with the transfer-space density
+`PP`; the transfer relations are untouched. No Schwarz screening, scalar roots, serial.
+
+| karrikinolide BLYP/6-31G(d) | energy | J/K CPU s |
+|---|---|---|
+| `eri_accuracy= high`, engine | −533.954502177247 | 74.4 |
+| `eri_accuracy= high`, pair list | **−533.954502177247** | 145.7 |
+| `low`, engine | −533.954502153045 | 54.1 |
+| `low`, pair list | −533.954502190820 | 109.9 |
+
+Identical to every printed digit at `high`; 3.8e-11 apart at `low`, where the two screen
+differently (the list applies the pair cutoff to every two-atom pair, the engine only when all
+four atoms differ, and the list has no Schwarz test). Water BLYP/cc-pVDZ matches the `short`
+reference to its 8 printed digits. **2x slower, as expected unscreened; speed is the next step.**
+
+**Build note:** a full rebuild was killed three times by the session's low-memory guard on this
+14 GB laptop with the desktop running, at `-j6`, `-j3` and `-j2`, never by an actual compile
+(`mat_real.F90`, the file it died on, peaks at 356 MB). Foreground `make -j2` in 10-minute
+chunks completed it. Old session scratch (1.1 GB) was moved out of the RAM-backed `/tmp` to
+`~/tonto_runs/old_session_scratch_2026-09-17/`.
+
 ## Benchmark molecule with a first-row transition metal and sulfur (Dylan, 2026-09-16)
 
 Karrikinolide (17 atoms, C/H/O) is the only benchmark, and every speed conclusion so far is
