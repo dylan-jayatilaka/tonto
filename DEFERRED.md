@@ -129,15 +129,23 @@ now covers the whole project, so it was renamed.)*
 > call `make_u_JK_direct`, which also lacks the `parallel do` its engine twin has, so UHF/UKS
 > spherical gets neither the engine nor threading; (3) `short` plus the spherical `long` jobs.
 >
-> **Open decision on (1), Dylan's call.** After this change no restricted SCF can reach the direct
-> spherical builder -- `use_direct_scf=` selects on-the-fly versus disk integrals, not which
-> builder runs -- so a *permanent* two-builder cross-check needs a new keyword existing only to be
-> tested, which this project has been sceptical of. The alternative is to let the existing
-> references be the gate (`h2o_rhf_cc-pVTZ_spherical_harmonic_basis` has d and f,
-> `CHFCl_rhf_cc-pVQZ_spherical_from_nwchem_molden` adds g), delete `make_r_JK_direct`/
-> `make_r_J_direct` for the restricted cases in the same merge, and keep the 2.5e-12 side-by-side
-> comparison as one-time evidence in the commit rather than as machinery. Claude's inclination is
-> the second; not decided.
+> **Decided (Dylan, 2026-09-16): the existing references are the gate.** No new keyword, no
+> two-builder cross-check kept as machinery. `h2o_rhf_cc-pVTZ_spherical_harmonic_basis` covers d
+> and f, `CHFCl_rhf_cc-pVQZ_spherical_from_nwchem_molden` adds g, and the 2.5e-12 side-by-side
+> comparison against `rys-1c` stands as one-time evidence in commit `505fb888`.
+>
+> **But the direct builders cannot be commented out, and an earlier note here calling them dead
+> was too broad.** They stopped being used by the *SCF Fock build* only. Live, basis-independent
+> callers remain: `make_r_JK_direct` from the Huzinaga-Arnau and Hunt-Goddard canonicalisations
+> (`molecule.scf.foo:7228`, `7244`), the CPHF `A.U` product (`molecule.cp.foo:1813`) and the TD
+> code (`molecule.td.foo:686`, `717`); `make_r_J_direct` from `molecule.scf.foo:7236`; and
+> `MOLECULE.FOCK:make_JK_direct` dispatches to both for the spherical energy expectation
+> (`molecule.ce.foo:694`). There is also `make_r_K_direct` (`molecule.scf.foo:7223`). So they stay
+> as they are -- reactivating them for a spherical SCF needs only the one-line branch in
+> `make_r_Fock_mx` put back.
+>
+> **Worth a later look:** `molecule.ce.foo:694` still takes the direct path for a spherical energy
+> expectation, so it would gain from an OPMATRIX-level engine wrapper too. Not done.
 >
 > **Next, Dylan's idea (2026-09-16): make the ERI cutoffs a named accuracy level.** `very_low`,
 > `low`, `medium`, `high` setting the four cutoffs together, modelled on `BECKE_GRID:set_accuracy`
@@ -2486,6 +2494,35 @@ exists and is unbuilt), agreeing to 1e-14 or bitwise; HF energies bit-identical 
 4. **Gate:** `run_shell1quartet` old vs new; HF energies to 1e-12; `short` and HF `long` jobs;
    timings in `docs/SCF_SPEED_REPORT.md`. Run the no-grid karrikinolide RHF profile alongside
    step 1.
+
+## Callers still on the direct J/K builders (2026-09-16)
+
+`rys-sph` moved the **SCF Fock build** onto the cartesian J/K engine for a spherical basis
+(restricted and, from the second commit, unrestricted). Every other caller of the direct builders
+was left alone, and each is basis-independent -- it calls the direct builder whether the basis is
+spherical or not, so a spherical job still pays the old cost there. Migrating one means wrapping
+it the way `MOLECULE.FOCK:make_r_JK_engine_sph` does: transform the density up with
+`.make_cartesian_density`, swap the two shell-limit tables, call the engine, swap back, and bring
+the result down with `.make_spherical_matrix`.
+
+| caller | builder used | what it is |
+|---|---|---|
+| `molecule.scf.foo:7228` | `make_r_JK_direct` | `hunt-goddard-1` virtual-MO canonicalisation |
+| `molecule.scf.foo:7236` | `make_r_J_direct` | `hunt-goddard-3` canonicalisation |
+| `molecule.scf.foo:7244` | `make_r_JK_direct` | `huzinaga-arnau` canonicalisation |
+| `molecule.scf.foo:7223` | `make_r_K_direct` | `exchange` canonicalisation |
+| `molecule.cp.foo:1813` | `make_r_JK_direct` | CPHF `add_A_times_U`, the A.U product |
+| `molecule.td.foo:686`, `:717` | `make_r_JK_direct` | TD `do_u_CIS_SS_AV_prod`, ground-state and delta Fock |
+| `molecule.ce.foo:694` | `make_JK_direct` | spherical energy expectation, via the OPMATRIX dispatcher |
+
+All are live: `canonicalize_virtual_MOs` is called from `molecule.scf.foo:1719`, `add_A_times_U`
+from `molecule.cp.foo:1047`, and `do_u_CIS_SS_AV_prod` is passed as a procedure argument to
+`eigensolve_Davidson` (`molecule.td.foo:565`) -- which is why a plain caller grep shows it as
+unused. **So none of the direct builders can be commented out or deleted**; they are ordinary
+working code that the SCF simply no longer routes through.
+
+The cheapest first step is `MOLECULE.FOCK:make_JK_direct` (the OPMATRIX dispatcher), because an
+OPMATRIX-level `make_JK_engine_sph` covers `molecule.ce.foo` and gives the others a template.
 
 ## Speed up the SCF and the integrals (Dylan, 2026-09-11)
 
