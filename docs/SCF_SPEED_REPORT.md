@@ -625,3 +625,27 @@ both differ; the counters above are the measurement to repeat before generalisin
 **One defect found by the way.** `get_weights_t2` is reached with n = 0 -- a quartet whose
 primitive pairs were all screened out. Silent in release (`minval` of an empty array, an empty
 loop); a debug build's `ENSURE` stopped on it. It returns at once now.
+
+## The ERI default moved to `low`, 2026-09-16
+
+`ERI_primitive_pair_cutoff` 1e-6 → 1e-9 (`types.foo`), `ERI_accuracy` default `"low"`;
+`very_low` now names the old cutoffs and reproduces the older references. Cost on karrikinolide
+RHF/6-31G(d): +7% for 2.4e-6 → 3.1e-8 from g09 (the scan above). Dylan's decision.
+
+Full rebuild, `scripts/suite_report.py`:
+
+| suite | loose | last-digit | exact | moved by the cutoff | not the cutoff |
+|---|---|---|---|---|---|
+| `short` | 56/56 | 55 | 53 | `nhfcl_rhf_DZP_unit_cell_refractive_indices` (0.36% on one value, one unit) | `h2o_rhf_cc-pVDZ_tdhf` (known runner-sensitive, relaxed bound); `4AP_rhf_STO-3G_read_fchk_and_cif_z_p_2` (ESD suffix `(5)`→`(6)` on four U_eq, reference from another kernel -- no ERIs in the job) |
+| `long` | 32/32 | 32 | 27 | `cyclazine_rhf_cc-pVDZ_VMO_canonicalization`, `quartz_NN_HAR_L0/L1_rhf_def2-SVP`, `so2_rhf_DZP_anharmonic_cluster_charge_XWR`, `urea_rblyp_3-21G_generate_SF_stats` -- each one unit in the last printed digit (e.g. SO₂ E_e −656.105 → −656.104) | -- |
+
+**No reference was re-blessed.** `scripts/test.py --bless` adopts a produced file only when it
+fails the loose gate, and every one of these passes it -- the harness encodes the project's
+convention that loose is the gate and last-digit exact failures are tolerated, not blessed away.
+The six shifts are recorded here instead. Water-sized jobs cannot see the cutoff at all (three close atoms leave almost no primitive pair below 1e-6), which is why `short` barely
+moved.
+
+Suite timings from this run are not quoted: the agreement report for `short` was run while the
+`long` ctest was still going, so the after-column is contaminated. A clean comparison needs no
+second binary -- `eri_accuracy= very_low` in the input reproduces the old cutoffs on the same
+executable.

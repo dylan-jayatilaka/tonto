@@ -102,9 +102,11 @@ now covers the whole project, so it was renamed.)*
 > *Primitive-batched J and K* (pair lists by class, primitive density, early contraction), a live
 > item under *Science and features*, with its step 0 -- the loop-order pilot that puts the
 > primitive index outermost and drops the `Ixa` buffers -- as the first thing to do. The
-> benchmark to add first is the zinc-finger model (its own item). In flight right now: the ERI
-> default moved to `low` (`ERI_primitive_pair_cutoff` 1e-6 -> 1e-9, Dylan's decision), a full
-> rebuild plus `short` and `long` running to see which references move; the re-bless is Dylan's.**
+> benchmark to add first is the zinc-finger model (its own item). The ERI default is now `low`
+> (`ERI_primitive_pair_cutoff` 1e-6 -> 1e-9, Dylan's decision): `short` 56/56 loose, `long` 32/32;
+> six references shift by one unit in the last printed digit and none was re-blessed, because
+> `test.py --bless` adopts only what fails the loose gate -- loose is the gate. Table in
+> `docs/SCF_SPEED_REPORT.md`, *The ERI default moved to `low`*. Nothing is in flight.**
 >
 > Housekeeping done the same evening: worktrees `tonto-1c`, `-rms`, `-sph`, `-step2`, `-prof` and
 > branches `rys-1c`, `rys-rms`, `rys-sph`, `rys-step2`, `rys-vec` removed, local and origin --
@@ -2547,6 +2549,17 @@ reduction over nodes (GPU nodes eventually).
   buffers, and neither proves it. The loop-order pilot (step 0) is the direct test; `perf stat
   -e cache-misses,LLC-load-misses` on one job before it is the cheap corroboration.
 
+**Lineage (Dylan, 2026-09-16): this is GAUSSIAN4's loop order.** `GAUSSIAN4:make_ERI_ints` is
+the formula for one primitive quartet -- roots, 2-D integrals, transfer, `sum(Ix*Iy*Iz,dim=1)`
+over roots -- and `SHELL4` puts the four primitive loops outside it and accumulates with the
+contraction coefficients: primitive index outermost, tiles per primitive, no buffer. What
+`SHELL1QUARTET` changed when it replaced that was two things: the transfer relation moved to
+after the contraction (the real gain -- the HRR is exponent-independent), and the primitive
+index became the innermost long dot product for vectorisation, which is where the `Ixa`
+buffers and their traffic came from. Step 0 is GAUSSIAN4's order put back inside `make_esfs_*`,
+keeping the transfer where SHELL1QUARTET put it. GAUSSIAN4 had no batching, no pair list and no
+primitive density; those are what the plan adds.
+
 **Expectations, set by Dylan (2026-09-16).** This may not close the gap to g09 and ORCA where
 they do exact J and K: those codes carry hundreds if not thousands of hours of thought, and
 getting close is the realistic aim; exceeding them needs a different algorithm, not a better
@@ -2588,6 +2601,13 @@ RHF/RKS and every reference code agree without multiplet arguments. Basis covera
 - **Recorded for later, not now:** a blue-copper (plastocyanin) site, Cu(II) with 2 His, Cys,
   Met -- Cu and two sulfurs, open-shell doublet, the UHF/UKS benchmark; a heme model (Fe porphyrin
   + imidazole + thiolate), 50-70 atoms, whose spin state makes it a poor reference system.
+
+## `suite_report.py` tabulates wall time only; every job already prints CPU time (2026-09-16)
+
+Each Tonto job ends with both `Wall-clock time taken` and `CPU time taken` lines, which the
+harness strips from the comparison; `ctest` and `scripts/suite_report.py` show wall time only.
+A CPU column in `suite_report.py` (parsed from the job's own line) would make suite timings
+comparable across machine load. Small; Dylan's question 2026-09-16.
 
 ## Unbuilt runfiles rot: `run_real.foo` boilerplate no longer compiles (2026-09-16)
 
