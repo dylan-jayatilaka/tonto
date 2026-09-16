@@ -405,6 +405,7 @@ set(FOO_SRC
     ${FOO_DIR}/gaussian.foo
     ${FOO_DIR}/gaussian2.foo
     ${FOO_DIR}/gaussian4.foo
+    ${FOO_DIR}/gaussian_pair_list.foo
     ${FOO_DIR}/interpolator.foo
     ${FOO_DIR}/l_bfgs.foo
     ${FOO_DIR}/marchingcube.foo
@@ -519,6 +520,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/gaussian.F90
     ${CMAKE_CURRENT_BINARY_DIR}/gaussian2.F90
     ${CMAKE_CURRENT_BINARY_DIR}/gaussian4.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/gaussian_pair_list.F90
     ${CMAKE_CURRENT_BINARY_DIR}/gaussian_data.F90
     ${CMAKE_CURRENT_BINARY_DIR}/int.F90
     ${CMAKE_CURRENT_BINARY_DIR}/interpolator.F90

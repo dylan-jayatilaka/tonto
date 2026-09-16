@@ -1876,6 +1876,11 @@ contains
       skip,ab_same,cd_same,any_same,no_max_I,ab_eq_cd :: BIN
       work :: ERI_SCRATCH
 
+      if (.SCF_data.using_gaussian_pair_J) then
+         .make_r_J_gaussian_pairs(J,P)
+         return
+      end
+
       .reverse_transfer(P,PP)
       .create_transfer(JJ)
 
@@ -1972,6 +1977,126 @@ contains
 
       JJ.destroy
       PP.destroy
+
+   end
+
+   make_r_J_gaussian_pairs(J,P) :: PURE
+   ! Make the real coulomb matrix "J" from a symmetric density matrix "P"
+   ! with the primitive pair list: as make_r_J_engine, with no Schwarz
+   ! screening and the pair cutoff applied to every pair of two atoms.
+      self :: INOUT
+      J :: MAT{REAL}, OUT
+      P :: MAT{REAL}, IN
+
+      PP,JJ :: VEC{EVEC{REAL}}@
+      gpl :: GAUSSIAN_PAIR_LIST
+
+      .reverse_transfer(P,PP)
+      .create_transfer(JJ)
+      .make_gaussian_pair_list(gpl)
+
+      J = ZERO
+      gpl.add_to_J(JJ,PP)
+
+      .forward_transfer(JJ,J)
+      .weight_diagonal_blocks(J,TWO)
+      J = TWO*J
+      J.symmetric_reflect
+
+      JJ.destroy
+      PP.destroy
+
+   end
+
+   make_gaussian_pair_list(gpl) :: leaky, PURE
+   ! Make the primitive pair list "gpl" for the current geometry. A pair
+   ! on two atoms is kept if its gaussian product exponential is at least
+   ! .SCF_data.ERI_primitive_pair_cutoff; a pair on one atom is always kept.
+   ! Pairs are grouped by (l_max,l_min) class, and by shell pair within it.
+      self :: IN
+      gpl :: GAUSSIAN_PAIR_LIST, INOUT
+
+   ENSURE(.basis_shell1pair.allocated,"no precomputed shell pair information")
+
+      AB,At,pos_a,pos_b,Pc :: VEC{REAL}(3)
+      a,b,r2ab,ab_inv,ex,cutoff :: REAL
+      pass,n_classes,cls,l_max,l_min,q,aa,bb,sa,sb,atom_a,atom_b :: INT
+      fa,la,na,fb,lb,nb,ag,bg,i,m :: INT
+      same :: BIN
+
+      cutoff = .SCF_data.ERI_primitive_pair_cutoff
+      n_classes = (.basis_l_max+1)*(.basis_l_max+2)/2
+
+      ! Pass 1 counts the pairs kept, pass 2 stores them
+      do pass = 1,2
+
+         m = 0
+         cls = 0
+         do l_max = 0,.basis_l_max
+         do l_min = 0,l_max
+
+            cls = cls + 1
+            if (pass==2) gpl.class_first(cls) = m + 1
+
+            do q = 1,.n_shell_pairs
+
+               .set_shell2_indices_from(q,aa,bb,fa,la,na,fb,lb,nb,atom_a,atom_b)
+               sa = .basis_shell_for_shell(aa)
+               sb = .basis_shell_for_shell(bb)
+               if (.basis_shell1pair(sa,sb).l_max/=l_max) cycle
+               if (.basis_shell1pair(sa,sb).l_min/=l_min) cycle
+
+               if (pass==2) then
+                  gpl.class_l_sum(cls) = .basis_shell1pair(sa,sb).l_sum
+                  gpl.class_first_gaussian(cls) = .basis_shell1pair(sa,sb).first_gaussian
+                  gpl.class_n_gaussian(cls) = .basis_shell1pair(sa,sb).n_gaussian
+               end
+
+               pos_a = .atom(atom_a).position
+               pos_b = .atom(atom_b).position
+               same = atom_a==atom_b
+               if (.basis_shell1pair(sa,sb).a.l > .basis_shell1pair(sa,sb).b.l) then; At = pos_a
+               else;                                                                  At = pos_b
+               end
+               AB = pos_a - pos_b
+               r2ab = dot_product(AB,AB)
+
+               i = 0
+               do bg = 1,.basis_shell1pair(sa,sb).b.n_cc
+                  b = .basis_shell1pair(sa,sb).b.exponent(bg)
+                  do ag = 1,.basis_shell1pair(sa,sb).a.n_cc
+                     i = i + 1
+                     a = .basis_shell1pair(sa,sb).a.exponent(ag)
+                     ab_inv = .basis_shell1pair(sa,sb).exponent_inv(i)
+                     ex = ONE
+                     if (NOT same) then
+                        ex = exp(-a*b*r2ab*ab_inv)
+                        if (ex<cutoff) cycle
+                     end
+                     m = m + 1
+                     if (pass==1) cycle
+                     Pc = (b*pos_b + a*pos_a)*ab_inv
+                     gpl.shell_pair(m) = q
+                     gpl.factor(m) = ONE
+                     if (aa==bb) gpl.factor(m) = HALF
+                     gpl.exponent_sum(m) = .basis_shell1pair(sa,sb).exponent_sum(i)
+                     gpl.exponent_inv(m) = ab_inv
+                     gpl.prefactor(m) = ex*.basis_shell1pair(sa,sb).contraction_prefactor(i)
+                     gpl.center(:,m) = Pc
+                     gpl.center_diff(:,m) = Pc - At
+                  end
+               end
+
+            end
+
+            if (pass==2) gpl.class_last(cls) = m
+
+         end
+         end
+
+         if (pass==1) gpl.set_sizes(m,n_classes)
+
+      end
 
    end
 

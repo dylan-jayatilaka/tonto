@@ -1,0 +1,248 @@
+!=====================================================================
+!
+! GAUSSIAN_PAIR_LIST :
+!
+! The primitive gaussian pairs of a molecule's basis that survive the
+! pair cutoff, stored flat and grouped by (l_max,l_min) class. Built
+! once per geometry; the two-electron kernels loop over two class
+! blocks at a time, with no per-quartet set-up.
+!
+! Copyright (C) Dylan Jayatilaka, 2026
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!=====================================================================
+
+module GAUSSIAN_PAIR_LIST
+
+   implicit none
+
+contains
+
+!  ==========
+!  Allocation
+!  ==========
+
+   create :: get_from(OBJECT), leaky, PURE
+   ! Allocate an object
+   end
+
+   destroy :: get_from(OBJECT), leaky, PURE
+   ! Deallocate "self"
+   end
+
+   set_sizes(n_pairs,n_classes) :: leaky, PURE
+   ! Allocate the pair and class arrays for "n_pairs" pairs and
+   ! "n_classes" classes.
+      self :: INOUT
+      n_pairs,n_classes :: INT, IN
+
+      .n_pairs = n_pairs
+      .n_classes = n_classes
+
+      .class_first.create(n_classes)
+      .class_last.create(n_classes)
+      .class_l_sum.create(n_classes)
+      .class_first_gaussian.create(n_classes)
+      .class_n_gaussian.create(n_classes)
+      .class_first = 1
+      .class_last = 0
+      .class_l_sum = 0
+      .class_first_gaussian = 1
+      .class_n_gaussian = 1
+
+      .shell_pair.create(n_pairs)
+      .factor.create(n_pairs)
+      .exponent_sum.create(n_pairs)
+      .exponent_inv.create(n_pairs)
+      .prefactor.create(n_pairs)
+      .center.create(3,n_pairs)
+      .center_diff.create(3,n_pairs)
+
+   end
+
+!  ========
+!  J kernel
+!  ========
+
+   add_to_J(JJ,PP) :: PURE
+   ! Add to the transfer-space coulomb vectors "JJ" the contribution of
+   ! every primitive quartet, contracting at once with the transfer-space
+   ! density "PP". Each unordered pair of primitive pairs is visited once.
+      self :: IN
+      JJ :: VEC{EVEC{REAL}}, INOUT
+      PP :: VEC{EVEC{REAL}}, IN
+
+      Ix,Iy,Iz :: MAT{REAL}@
+      ev,fv :: VEC{REAL}@
+      nxe,nye,nze,nxf,nyf,nzf :: VEC{INT}@
+      rys :: RYS
+      A,B,k,j,j_last,sp_k,sp_j,n_e,n_f,fe,ff,e,f,n,n_roots,l_e,l_f,l_max :: INT
+      xf,yf,zf :: INT
+      zeta,eta,zinv,einv,rho,rho_zinv,rho_einv,half_zinv,half_einv :: REAL
+      PAx,PAy,PAz,QCx,QCy,QCz,QPx,QPy,QPz,xx,cc,fac :: REAL
+      t2,t2_rz,t2_re,C00x,C00y,C00z,D00x,D00y,D00z,B10,B01,B00 :: REAL
+      t,s,pf :: REAL
+
+      l_max = maxval(.class_l_sum)
+      Ix.create(l_max+1,l_max+1)
+      Iy.create(l_max+1,l_max+1)
+      Iz.create(l_max+1,l_max+1)
+      n = maxval(.class_n_gaussian)
+      ev.create(n); fv.create(n)
+      nxe.create(n); nye.create(n); nze.create(n)
+      nxf.create(n); nyf.create(n); nzf.create(n)
+
+      do A = 1,.n_classes
+
+         if (.class_last(A)<.class_first(A)) cycle
+
+         l_e = .class_l_sum(A)
+         n_e = .class_n_gaussian(A)
+         fe  = .class_first_gaussian(A) - 1
+         do e = 1,n_e
+            nxe(e) = GAUSSIAN_DATA::nx(fe+e)
+            nye(e) = GAUSSIAN_DATA::ny(fe+e)
+            nze(e) = GAUSSIAN_DATA::nz(fe+e)
+         end
+
+         do B = 1,A
+
+            if (.class_last(B)<.class_first(B)) cycle
+
+            l_f = .class_l_sum(B)
+            n_f = .class_n_gaussian(B)
+            ff  = .class_first_gaussian(B) - 1
+            do f = 1,n_f
+               nxf(f) = GAUSSIAN_DATA::nx(ff+f)
+               nyf(f) = GAUSSIAN_DATA::ny(ff+f)
+               nzf(f) = GAUSSIAN_DATA::nz(ff+f)
+            end
+
+            n_roots = (l_e+l_f+2)/2
+            rys.set_n_roots(n_roots)
+
+            do k = .class_first(A),.class_last(A)
+
+               sp_k = .shell_pair(k)
+               zeta = .exponent_sum(k)
+               zinv = .exponent_inv(k)
+               half_zinv = HALF*zinv
+               PAx = .center_diff(1,k)
+               PAy = .center_diff(2,k)
+               PAz = .center_diff(3,k)
+
+               j_last = .class_last(B)
+               if (A==B) j_last = k
+
+               do j = .class_first(B),j_last
+
+                  sp_j = .shell_pair(j)
+                  eta  = .exponent_sum(j)
+                  einv = .exponent_inv(j)
+                  half_einv = HALF*einv
+                  QCx = .center_diff(1,j)
+                  QCy = .center_diff(2,j)
+                  QCz = .center_diff(3,j)
+                  QPx = .center(1,j) - .center(1,k)
+                  QPy = .center(2,j) - .center(2,k)
+                  QPz = .center(3,j) - .center(3,k)
+
+                  rho = zeta*eta/(zeta+eta)
+                  rho_zinv = rho*zinv
+                  rho_einv = rho*einv
+                  xx = rho*(QPx*QPx + QPy*QPy + QPz*QPz)
+                  cc = TWOPI5ON2*.prefactor(k)*.prefactor(j)*sqrt(rho)
+                  rys.get_weights(xx)
+
+                  ev(1:n_e) = ZERO
+                  fv(1:n_f) = ZERO
+
+                  do n = 1,n_roots
+
+                     t2 = rys.root(n)
+                     t2_rz = t2*rho_zinv
+                     t2_re = t2*rho_einv
+                     C00x = PAx + t2_rz*QPx
+                     C00y = PAy + t2_rz*QPy
+                     C00z = PAz + t2_rz*QPz
+                     D00x = QCx - t2_re*QPx
+                     D00y = QCy - t2_re*QPy
+                     D00z = QCz - t2_re*QPz
+                     B10 = (ONE - t2_rz)*half_zinv
+                     B01 = (ONE - t2_re)*half_einv
+                     B00 = t2_rz*half_einv
+
+                     GAUSSIAN_PAIR_LIST::make_2d(Ix,l_e,l_f,C00x,D00x,B10,B01,B00)
+                     GAUSSIAN_PAIR_LIST::make_2d(Iy,l_e,l_f,C00y,D00y,B10,B01,B00)
+                     GAUSSIAN_PAIR_LIST::make_2d(Iz,l_e,l_f,C00z,D00z,B10,B01,B00)
+                     Iz(1:l_e+1,1:l_f+1) = Iz(1:l_e+1,1:l_f+1)*(cc*rys.weight(n))
+
+                     do f = 1,n_f
+                        xf = nxf(f); yf = nyf(f); zf = nzf(f)
+                        pf = PP(sp_j).element(f)
+                        s = ZERO
+                        do e = 1,n_e
+                           t = Ix(nxe(e),xf)*Iy(nye(e),yf)*Iz(nze(e),zf)
+                           ev(e) = ev(e) + t*pf
+                           s = s + t*PP(sp_k).element(e)
+                        end
+                        fv(f) = fv(f) + s
+                     end
+
+                  end
+
+                  fac = .factor(k)*.factor(j)
+                  JJ(sp_k).element(1:n_e) = JJ(sp_k).element(1:n_e) + fac*ev(1:n_e)
+                  if (j/=k) then
+                     JJ(sp_j).element(1:n_f) = JJ(sp_j).element(1:n_f) + fac*fv(1:n_f)
+                  end
+
+               end
+            end
+
+         end
+      end
+
+   end
+
+   make_2d(I,l_e,l_f,C00,D00,B10,B01,B00) :: selfless, private, PURE
+   ! Make the 2D Rys integrals "I(e+1,f+1)", e<=l_e, f<=l_f, for one
+   ! cartesian direction by the vertical recursions.
+      I :: MAT{REAL}, INOUT
+      l_e,l_f :: INT, IN
+      C00,D00,B10,B01,B00 :: REAL, IN
+
+      e,f :: INT
+
+      I(1,1) = ONE
+      if (l_e>0) I(2,1) = C00
+      do e = 2,l_e
+         I(e+1,1) = C00*I(e,1) + (e-1)*B10*I(e-1,1)
+      end
+
+      do f = 1,l_f
+         if (f==1) then; I(1,2) = D00
+         else;           I(1,f+1) = D00*I(1,f) + (f-1)*B01*I(1,f-1)
+         end
+         do e = 1,l_e
+            I(e+1,f+1) = C00*I(e,f+1) + f*B00*I(e,f)
+            if (e>1) I(e+1,f+1) = I(e+1,f+1) + (e-1)*B10*I(e-1,f+1)
+         end
+      end
+
+   end
+
+end
