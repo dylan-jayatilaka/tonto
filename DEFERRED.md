@@ -2695,6 +2695,29 @@ RHF/RKS and every reference code agree without multiplet arguments. Basis covera
   Met -- Cu and two sulfurs, open-shell doublet, the UHF/UKS benchmark; a heme model (Fe porphyrin
   + imidazole + thiolate), 50-70 atoms, whose spin state makes it a poor reference system.
 
+## Do exponents shared across l cost accuracy in molecules? (Dylan, 2026-09-17)
+
+The pair counts under *Primitive-batched J and K* show shared exponents halving the 6-31G(d)
+pair list (sp shells), so a basis designed with s, p, d, f sharing exponents could make the
+primitive-level work several times cheaper. Dylan's question: differing exponents presumably buy
+something in the molecular context, and it is not clear anyone has measured the trade-off.
+
+What is known, from memory and **to be checked against the literature before it is relied on**:
+Pople's sp shells were chosen for integral speed; even-tempered and well-tempered sets
+(Ruedenberg, Huzinaga) and universal sets (Clementi, Silver, Wilson) share exponent series across
+l and need more functions for a given energy; general contraction and ANO sets (Raffenetti;
+Almlof and Taylor) share within one l, uncontroversially. Modern segmented sets (def2, pc-n,
+cc-pVnZ) optimise each l separately, and the polarisation exponents come out far from the s/p
+ones -- which suggests the constraint costs most in the functions that describe bonding. No
+study of accuracy lost against integral time saved is known here.
+
+**Cheap evidence, no new code:** 6-31G(d) (shared) against def2-SVP (unshared) on karrikinolide,
+both against a large-basis energy -- Tonto, g09 and ORCA numbers already exist in
+`~/tonto_runs/vs_g09_orca_2026-09-16/`. Weak, since the sets differ in more than sharing.
+**Controlled test:** def2-SVP with the valence p exponents forced onto the s ones, re-contracted,
+energy lost measured. That is basis design, a project of its own. Not pursued now: the batched
+kernels exploit sharing where a basis has it and cost nothing where it does not.
+
 ## `suite_report.py` tabulates wall time only; every job already prints CPU time (2026-09-16)
 
 Each Tonto job ends with both `Wall-clock time taken` and `CPU time taken` lines, which the
