@@ -855,6 +855,18 @@ Found by the zinc-finger benchmark ([Zn(SCH3)2(imidazole)2], hand-built geometry
   J/K engine, new since 2026-09-16 (`rys-sph`: P expanded to cartesian, built, contracted back),
   validated on C/H/O/F/Cl molecules only; and anything spherical specific to Zn's shells.
   ZnS alone converges spherically, so a small reproducer may need more atoms.
+- **Small reproducer: Zn(SCH3)2, 11 atoms, RHF/6-31G(d)**, `~/tonto_runs/zn_sph_bug_2026-09-17/
+  znsme2_sph{FALSE,TRUE}/stdin` (the first 11 atoms of the zinc finger), ~2 s per iteration.
+  Cartesian: iteration 0 −2651.6886, converged −2651.7564036355 in 10 iterations. Spherical:
+  iteration 0 −1709.64, then thrashes around −2346 to −2349 with gradient ~15 to iteration 75.
+  **Identical at `eri_accuracy= high`**, so not screening. An energy 300 Eh above the cartesian
+  one with a gradient that never falls says the spherical Hamiltonian itself is wrong for this
+  molecule, not just the start. The overlap eigenvalue histogram also differs oddly (spherical:
+  47 of 110 eigenvalues above 1; cartesian: 27 of 119). ZnS and single atoms are sane, and so
+  were karrikinolide (C/H/O, d and f) and CHFCl cc-pVQZ -- whose d shells are uncontracted.
+  **First hypothesis: the spherical transformation or normalisation of a contracted d shell**
+  (Zn's `D 3` in 6-31G(d), contracted d in def2-SVP) -- but then why is ZnS sane? Check the
+  spherical overlap diagonal first.
 - **Not yet done:** where the combined spherical promolecule density goes wrong (S alone,
   then the spherical transformation of the atomic density), and why an unconverged SCF prints
   its result without a `not converged` line. The second matters more -- it passes a nonsense
