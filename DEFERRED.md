@@ -121,7 +121,11 @@ now covers the whole project, so it was renamed.)*
 > 5. **Zinc-finger suite found a serious defect: spherical Tonto does not converge for it, at
 >    6-31G(d) or def2-SVP, promolecule or core guess, and prints the unconverged energy with no
 >    warning** (see the Correctness entry *The promolecule guess is wrong in a spherical basis*).
->    Cartesian Tonto is fine (RHF/6-31G(d) 2.2e-6 from g09). Spherical Tonto rows withdrawn;
+>    Cartesian Tonto is fine (RHF/6-31G(d) 2.2e-6 from g09). Spherical RHF/6-31G(d) from the
+>    core guess did converge (2.6e-6 from ORCA, 2.1x ORCA's time). **Pair list on the zinc
+>    finger, BLYP/6-31G(d) cartesian: at `low` 6.6e-8 from `high` against the engine's 2.3e-6,
+>    and 11.6% faster; at `high` identical and 18% slower.** g09/ORCA references and Tonto rows
+>    in `docs/SCF_SPEED_REPORT.md`, *The zinc-finger benchmark*. Spherical Tonto rows withdrawn;
 >    cartesian def2 rows added. **Zinc-finger suite** (`~/tonto_runs/vs_g09_orca_znfinger_2026-09-17/`,
 >    `suite.log`, then `rerun.log`, `rerun2.log`, `cart.log`; `collect.py` tabulates): hand-built
 >    geometry, RHF and BLYP at 6-31G(d) (Tonto cartesian vs g09 6D 10F; Tonto spherical vs ORCA)
