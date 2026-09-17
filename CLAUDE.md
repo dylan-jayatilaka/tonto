@@ -55,10 +55,10 @@ purpose, and verbose is right there.
 
 The ordered list of next actions, and the reasoning behind each, is the **handover section
 at the top of `DEFERRED.md`** — read it before starting work. In outline: the SCF speed-up —
-the primitive pair list for J (branch `esfs-order`) and density-fitted J for pure DFT (branch
-`ri-j`), both unmerged with `short` and `long` owed, then COSX for the exchange, to be planned
-first; the CI platform table, the three untracked debug failures and the open MPI and DFT
-items are parked behind those.
+the primitive pair list for J (branch `esfs-order`), density-fitted J (branch `ri-j`) and COSX
+for the exchange of HF and hybrids (branch `cosx`), each branch off the one before and all
+unmerged with `long` owed; the CI platform table, the three untracked debug failures and the
+open MPI and DFT items are parked behind those.
 
 **Do not move `DEFERRED.md`'s contents into this file.** This file answers *how does the
 project work*; `DEFERRED.md` answers *what are we doing now*. Merging them loses both.

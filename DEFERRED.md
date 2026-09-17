@@ -101,6 +101,41 @@ now covers the whole project, so it was renamed.)*
 > **The method, the loop-order explanation and the failed attempts are now summarised for a fresh
 > reader in `docs/TONTO_SCF_SPEED_UP.md`** (Dylan, 2026-09-17); this file stays the task register.
 >
+> **START HERE -- 2026-09-17 (night). COSX works for closed-shell HF and hybrids: branch `cosx`
+> (off `ri-j`, pushed, not merged), `scfdata= { use_COSX= TRUE }`, with `use_RI_J= TRUE` for the J
+> half. Method: `docs/TONTO_SCF_SPEED_UP.md` 5b; every number: `docs/SCF_SPEED_REPORT.md`, *COSX*;
+> plan: `~/.claude/plans/glittery-whistling-fiddle.md`; runs: `~/tonto_runs/cosx_2026-09-17/`.
+> The exact J and K routes are untouched (Dylan: they stay as the fall-back); `short` is 67/67.**
+>
+> 1. **Accuracy is there.** COSX error, E(RI-J, COSX) - E(RI-J, exact K): water -1.6e-8,
+>    karrikinolide def2-SVP +2.9e-6, def2-TZVP -1.6e-6 (ORCA: -3.6e-7, +2.3e-6, -5.7e-6). The RI-J
+>    errors with exact K match ORCA `RIJONX` to 1e-8, RHF and UHF.
+> 2. **Speed is half way.** J/K, RI-J + COSX against the exact engine: karrikinolide def2-TZVP 343
+>    against 757-892 s; zinc finger def2-TZVP 1006 against 1527 s, 676 s with OpenBLAS (whole job
+>    737 s; ORCA `RIJCOSX` 499 s, Tonto exact 1583 s). **At def2-SVP it loses** (285 against 151 s),
+>    as in ORCA. Timings are single runs; triplicates are owed.
+> 3. **What it is:** the potentials at grid points come from the pair-list kernel (a point is an s
+>    primitive of infinite exponent in the RI-J kernel); the grid side is the XC batch machinery;
+>    its own grid (`cosx_grid_accuracy= very_low`), overlap fitting, and the final energy from one
+>    more build on `cosx_final_grid_accuracy= high`, orbitals unchanged.
+> 4. **The levers left, in order of what they are worth** (Dylan to order): (a) **a grid made for
+>    this integrand** -- the error falls with the angular order in the bonding region (`high` has
+>    59 there, `medium` 29 and is no better than `very_low`), not with radial points, and the final
+>    build on `high` is a quarter to a third of the time; that wants `cosx_grid= { ... }` blocks in
+>    place of the two accuracy names, and a calibration like Stage B; (b) OpenBLAS, a third off
+>    (the parked item); (c) the kernel: Rys roots 17%, contraction 26%, transfer 20%. Screening is
+>    *not* a lever below a few dozen atoms: nothing is negligible.
+> 5. **Owed:** unrestricted COSX and hybrid DFT through it (the KS routines route through
+>    `make_r_JK`, so closed-shell hybrids run, but none has been validated -- see 6); MPI; HAR;
+>    `long`; a `short` test (water RIJCOSX -75.9569243059, input in the runs directory; blessing is
+>    Dylan's); user-facing keyword documentation at merge; `put_options` does not echo the COSX
+>    settings yet.
+> 6. **Two DFT defects found on the way** (entry *B3LYP is 2e-4 Eh from g09 and ORCA*): closed-shell
+>    B3LYP is 2.1e-4 from both codes, in the VWN3 and VWN5 forms alike, where BLYP agrees to 3e-6;
+>    unrestricted BLYP is 1.1e-4 out. Undiagnosed. And one fixed, **on its own commit for Dylan to
+>    keep or drop** (`b149adff`): `make_u_KS_Fock_mx` gave both spins -(f/2)(K.a+K.b); UKS B3LYP
+>    H2O+ went from 4.3e-2 Eh out to the same 2.0e-4.
+>
 > **NEXT (Dylan, 2026-09-17, evening): COSX -- the chain-of-spheres exchange, for HF and hybrids.
 > Start with a planning session, as for RI-J; no code before the plan.** The 2026-09-17 decision
 > "COSX and RI-K not pursued yet" is superseded for COSX; RI-K stays parked. Background: the entry
@@ -3028,6 +3063,9 @@ chunks completed it. Old session scratch (1.1 GB) was moved out of the RAM-backe
 
 **Decision (Dylan): RI-J first. COSX and RI-K are not to be pursued yet. A big job, to be planned
 separately, not inside the J/K speed-up session that raised it.**
+
+**COSX, 2026-09-17 (night): built on branch `cosx`; see the handover at the top. RI-J now also runs
+with exact exchange (`RIJONX`), validated against ORCA to 1e-8.**
 
 **Status 2026-09-17: built and validated on branch `ri-j`; see the handover at the top and
 `docs/SCF_SPEED_REPORT.md`, *RI-J*.** Shape chosen (Dylan): three-centre integrals from the pair-list

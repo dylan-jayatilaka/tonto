@@ -272,6 +272,54 @@ of the fitted density on structure factors; MPI; `short` and `long` before mergi
 
 ---
 
+## 5b. COSX: the exchange matrix by quadrature (branch `cosx`)
+
+`scfdata= { use_COSX= TRUE }`, for HF and hybrids, closed shell so far; with `use_RI_J= TRUE` it is
+what ORCA calls `RIJCOSX`. Off by default: the exact J and K routes are untouched and remain the
+route for work that must not be approximate.
+
+- **The method.** One electron is integrated on a grid, the other analytically:
+  K(m,n) = sum over grid points g of w(g) X(g,m) sum_s A(g;n,s) F(g,s), then made symmetric. X are the
+  basis function values, F = X P, and A(g;n,s) is the potential at point g of the product of
+  functions n and s.
+- **The potentials come from the pair-list kernel.** A grid point is the limit of an auxiliary s
+  primitive of infinite exponent in the RI-J kernel, so
+  `GAUSSIAN_PAIR_LIST:make_point_potentials` is that kernel with no recursion on the point's side:
+  1-D tiles, all the points of a batch in one contiguous loop. It returns (es| integrals; the
+  shell pair's transfer, written out once per build as a matrix, turns them into (ab|.
+- **The grid side is the XC batch machinery** (section 2): box batches of up to 512 points with
+  their significant shells, F and K as two matrix products per batch
+  (`MOLECULE.FOCK:make_r_K_COSX_on`). It works in the cartesian functions, so a spherical basis
+  goes through U P U^T and back, as in 3.3.
+- **Its own grid**, `cosx_grid_accuracy=` (default `very_low`), made by `initialize_COSX`, so HF
+  needs no DFT grid and a hybrid keeps its XC grid.
+- **Overlap fitting** (`use_cosx_overlap_fitting=`, on): the quadrature index of K is multiplied by
+  S S_num^-1, S_num being the overlap matrix by quadrature on the same grid. It cuts the error of
+  the coarsest grid thirteen-fold.
+- **The final energy comes from a finer grid** (`cosx_final_grid_accuracy=`, default `high`): one
+  more Fock build for the converged density, orbitals unchanged. The grid error of K falls slowly
+  and unsteadily with the grid (karrikinolide: 1.5e-5, 2.9e-5, -1.5e-5, 2.0e-6 Eh from `very_low`
+  to `high`), but the energy is stationary, so the coarse SCF grid costs second order only.
+- **Screening**: on each batch a shell pair is skipped when its Schwarz bound times the largest F
+  of its two shells there is below the Schwarz cutoff. It gains little on a 17-atom molecule,
+  where every shell is linked to every batch through the density.
+- **Result so far:** the COSX error is 2e-8 Eh for water and 3e-6 for karrikinolide, ORCA's being
+  4e-7 and 2e-6; it is a hundred times smaller than the RI-J error it travels with. J and K, RI-J
+  plus COSX against the exact engine: karrikinolide def2-TZVP 343 s against 757-892 s; zinc finger
+  def2-TZVP 1006 s against 1527 s, and 676 s with OpenBLAS, where ORCA's whole `RIJCOSX` job is
+  499 s. **At def2-SVP it loses** (zinc finger 285 s against 151 s), as it does in ORCA: the exact
+  K is cheap in a small basis, and COSX costs points times shell pairs whatever the basis.
+  Numbers: `SCF_SPEED_REPORT.md`, *COSX*.
+- **Where the time goes** (karrikinolide def2-TZVP): the point-potential kernel 26%, the transfer
+  and the contraction with F 20%, `dgemm` with the reference BLAS 18%, the Rys roots 17%. The
+  final build on `high` is a quarter to a third of the whole, having seven times the points.
+
+Still to do: a grid made for this integrand (the error falls with the angular order in the
+bonding region, not with the radial points, so the named XC levels are a poor ladder for it);
+unrestricted and hybrid DFT; timings in triplicate; MPI; HAR; `long` before merging.
+
+---
+
 ## 6. What was tried and did not pay
 
 Each is one line here; the numbers are in `SCF_SPEED_REPORT.md` under the heading named.
@@ -285,6 +333,8 @@ Each is one line here; the numbers are in `SCF_SPEED_REPORT.md` under the headin
 | Moving the `transfer_l_*` work arrays onto `ERI_SCRATCH` | Skipped: the allocator was already 1% of the run. | *Where the J/K time goes* |
 | Primitive index outermost in `make_esfs_XX` | 2-3% slower (section 4). | `DEFERRED.md`, step 0 |
 | Sharing primitives across generally contracted shells at cc-pVTZ | Not worth it at the shell-quartet level: the sharing is confined to the s shells, 1.44×, and the contraction coefficients differ. Revisited in the pair list (5.4). | `DEFERRED.md` |
+| Tighter or looser screening of COSX on a 17-atom molecule | Nothing to skip: every shell pair matters on every batch. 1e-7 for 1e-9 saves 3% and costs 5e-6 Eh. | *COSX* |
+| A coarser grid than `very_low` for the COSX iterations | A third less time, but 6.7e-5 Eh out after the final build, against 2.9e-6. | *COSX* |
 | Promolecule-density pruning of the grid | Exact, kept, but saves almost nothing. | *Stage C* |
 | Adaptive angular pruning at `high` | Costs more than `treutler_ahlrichs` there. Kept as an option. | *Stage D* |
 

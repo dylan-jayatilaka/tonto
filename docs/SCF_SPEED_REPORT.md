@@ -852,3 +852,76 @@ LAPACK as well as BLAS. One run each, CPU s:
 XC is 6.5 times faster and the job 2.4 times, for a 1.1e-10 Eh change. ORCA's whole job is 85 s.
 J is now the largest part again (47%). The OpenBLAS item in `DEFERRED.md` (*adopt OpenBLAS
 consistently*) has the hazards: threads must be pinned to one, and it forces a full re-bless.
+
+## COSX: the exchange matrix by quadrature, 2026-09-17/18
+
+Branch `cosx` (off `ri-j`). `scfdata= { use_COSX= TRUE }`, with `use_RI_J= TRUE` and an auxiliary
+basis for the J half. Plan: `~/.claude/plans/glittery-whistling-fiddle.md`; method:
+`TONTO_SCF_SPEED_UP.md` 5b. Runs in `~/tonto_runs/cosx_2026-09-17/`, one core, reference BLAS
+unless said. ORCA is 6.1.1 with `def2/J`; its COSX error is `RIJCOSX` − `RIJONX`, its RI-J error
+`RIJONX` − `NoRI`.
+
+**RI-J with exact exchange** (stage 1), water def2-SVP spherical, `high`, E(RI-J) − E(exact):
+
+| job | Tonto exact | Tonto error | ORCA error |
+|---|---|---|---|
+| RHF | −75.9568186308 | −1.056590e-4 | −1.056590e-4 |
+| UHF, H2O+ | −75.5627274358 | −1.590606e-4 | −1.590606e-4 |
+| B3LYP/G | −76.3569949374 | −8.9630e-5 | −8.9742e-5 |
+| karrikinolide RHF def2-SVP | −530.575885625111 | −5.12129e-4 | −5.12141e-4 |
+
+The exact RHF and UHF energies agree with ORCA to 1e-9. B3LYP does not (2.1e-4): `DEFERRED.md`,
+*B3LYP is 2e-4 Eh from g09 and ORCA*.
+
+**The COSX error against the grid**, E(COSX) − E(exact K), spherical, `high`, SCF and energy on the
+same grid (`cosx_final_grid_accuracy= none` in effect):
+
+| grid | water, no fitting | water, overlap fitting | karrikinolide def2-SVP, no fitting | with fitting |
+|---|---|---|---|---|
+| `very_low` | +1.91e-4 | +1.43e-5 | +3.88e-4 | +1.46e-5 |
+| `low` | +5.47e-6 | +4.97e-6 | −9.1e-5 | +2.90e-5 |
+| `medium` | −3.39e-7 | −4.4e-8 | +2.42e-5 | −1.48e-5 |
+| `high` | −3.16e-7 | −6.5e-8 | +5.1e-6 | +1.95e-6 |
+| `very_high` | −4.2e-8 | | | |
+| ORCA, DefGrid3 (water) / default | | −3.6e-7 | | +2.28e-6 |
+
+Cartesian water gives the same errors as spherical to 1e-8. The error converges, but not
+steadily, and only `high` matches ORCA. **So the SCF runs on `very_low` and the energy of the
+converged density is taken from one more build on `high`** (the defaults): water −1.6e-8,
+karrikinolide def2-SVP +2.9e-6 (`very_high` for the final build: +1.3e-6; `medium`: −1.4e-5).
+Karrikinolide def2-TZVP at the defaults and `low`: −531.184874863, which is −1.6e-6 from ORCA's
+`RIJONX` and +4.1e-6 from its `RIJCOSX`.
+
+**Screening.** Whole job, `low` against `high`, karrikinolide def2-SVP 2.2e-9 Eh, def2-TZVP 8.6e-8
+(RI-J's own share of that is 4.9e-8). It buys no time at 17 atoms: every shell pair matters on
+every batch. Loosening the cutoff to 1e-7 moves the energy 5e-6 for 3% of the time, and 1e-5
+stops the SCF converging. The cost is points times shell pairs.
+
+**Tried and dropped:** a grid level `coarse` (15 radial points, 50 angular) for the iterations.
+With the final energy at `high`, karrikinolide def2-SVP is 6.7e-5 out where `very_low` is 2.9e-6,
+for a third less time.
+
+**First timings**, J/K CPU s, one run each, reference BLAS, some taken with another job running:
+
+| job | exact engine | RI-J + COSX |
+|---|---|---|
+| karrikinolide def2-SVP | 53 (`low`), 64 (`high`) | 73 (`very_low` grid, no final build) |
+| karrikinolide def2-TZVP | 892 (`low`, 2026-09-16), 757 (`high`) | 343 (defaults, under `perf`) |
+| zinc finger def2-SVP, cartesian | 151 (`low`) | 285 (defaults) |
+| zinc finger def2-TZVP, cartesian | 1527 (`low`) | 1006 (defaults; builds running on other cores) |
+| the same with OpenBLAS 0.3.32, one thread, machine idle | | 676 (whole job 737 s; energy the same to 1e-9) |
+
+Zinc finger def2-TZVP: −3102.032007539 against the exact −3102.031243033, −7.65e-4 in all (ORCA's
+`RIJCOSX`, spherical: −7.0e-4, 499 s whole job against Tonto's 1084 s, or 737 s with OpenBLAS; Tonto's
+exact job is 1583 s). The final build on `high`
+has seven times the points of `very_low`, so it costs as much as seven iterations: a quarter to a
+third of the J/K time.
+
+At def2-SVP COSX gains nothing, in ORCA too (42 s exact, 53 s `RIJCOSX`). Profile of the def2-TZVP
+job: the point-potential kernel 21%, the transfer and the G update in `make_r_K_COSX_on` 20%,
+`dgemm` (reference) 18%, Rys roots 17%, the 1-D recursions 5%, RI-J 4%.
+
+`short` on this branch's release build: 67/67. Water RHF/def2-SVP spherical with `use_RI_J=` and
+`use_COSX=` at the defaults, a candidate `short` test (`cosx_2026-09-17/final/water_rijcosx_test`):
+−75.9569243059, which is −1.6e-8 from Tonto's RI-J with exact K and +3.5e-7 from ORCA's `RIJCOSX`.
+Not added: blessing a reference is Dylan's call.
