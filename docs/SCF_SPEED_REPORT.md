@@ -649,3 +649,37 @@ Suite timings from this run are not quoted: the agreement report for `short` was
 `long` ctest was still going, so the after-column is contaminated. A clean comparison needs no
 second binary -- `eri_accuracy= very_low` in the input reproduces the old cutoffs on the same
 executable.
+
+## The zinc-finger benchmark, 2026-09-17
+
+[Zn(SCH3)2(imidazole)2], 29 atoms, 152 electrons, closed shell; hand-built geometry (DEFERRED,
+*Benchmark molecule*). One core, one job at a time, `%mem=2GB` / `%maxcore 2000`. g09 at
+`SCF=(Tight,Conver=10)`, 6D 10F for 6-31G(d) and 5D 7F for def2; ORCA `TightSCF`, spherical
+always, `NoRI` for "exact". Tonto `develop` `7d2c236a` at the `low` default, promolecule guess.
+Runs in `~/tonto_runs/vs_g09_orca_znfinger_2026-09-17/`, tabulated by `collect.py`.
+
+| job | g09 energy | g09 wall s | ORCA exact energy | ORCA exact s | ORCA default s |
+|---|---|---|---|---|---|
+| RHF/6-31G(d) | −3101.474631730 (cart) | 69.6 | −3101.464459344 (sph) | 161.9 | 160.2 |
+| BLYP/6-31G(d) | −3107.616344890 (cart) | 95.8 | −3107.585179071 (sph) | 199.4 | 41.5 |
+| RHF/def2-SVP | −3100.927836570 | 113.6 | −3100.927836555 | 135.7 | 136.6 |
+| BLYP/def2-SVP | −3107.067669050 | 114.6 | −3107.067632439 | 159.3 | 33.3 |
+| RHF/def2-TZVP | −3102.025942750 | 1365.2 | −3102.025942739 | 1566.0 | 1578.5 |
+| BLYP/def2-TZVP | −3108.214409100 | 652.9 | −3108.214407078 | 1378.6 | 84.7 |
+
+g09 and ORCA agree to 1-2e-8 on RHF and to 2-4e-5 on BLYP, where their grids differ. ORCA's
+BLYP default is RI-J (0.9e-3 to 0.8e-3 Eh below its exact energy).
+
+**Tonto, cartesian 6-31G(d)** (like-for-like with g09):
+
+| job | energy | wall s | J/K CPU s |
+|---|---|---|---|
+| RHF, J/K engine | −3101.474629556 (2.2e-6 from g09) | 178.9 | 173.7 |
+| BLYP, J engine | −3107.616217177 (1.3e-4 from g09, grid) | 280.2 | 215.6 |
+| BLYP, pair-list J | −3107.616219403 | 241.5 | 190.7 (−11.6%) |
+
+So on this molecule Tonto is 2.6x g09 for RHF/6-31G(d) and 2.9x for BLYP (2.5x with the pair
+list). The pair-list and engine BLYP energies differ by 2.2e-6 at `low`; the `high` pair is
+queued to say which is nearer. **Spherical Tonto does not converge for this molecule** (DEFERRED,
+Correctness), so there is no like-for-like Tonto row against ORCA or the def2 references yet;
+cartesian def2 Tonto rows (engine and pair list) are queued as a self-comparison.
