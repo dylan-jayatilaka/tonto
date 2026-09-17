@@ -780,7 +780,7 @@ because the two codes' DFT grids differ (3.6e-6 Eh on water) and that cancels in
 |---|---|---|---|---|
 | water def2-SVP | −76.3369284357 | −76.3370150493 | −8.6614e-5 | −8.6614e-5 |
 | karrikinolide def2-SVP | −533.567022653898 | −533.567470685761 | −4.48032e-4 | −4.48022e-4 |
-| karrikinolide def2-TZVP | (running) | −534.174715902972 | | −3.57452e-4 |
+| karrikinolide def2-TZVP | −534.174358453943 | −534.174715902972 | −3.57449e-4 | −3.57452e-4 |
 
 Cartesian water against g09 `BLYP/def2SVP/W06 6D 10F Int=UltraFine`: g09 −76.3386375800 exact,
 −76.3387315359 fitted, error −9.40e-5; Tonto −76.3386407081 and −76.3387336665, error −9.30e-5.
@@ -803,6 +803,10 @@ finger, engine for karrikinolide).
 | karrikinolide def2-TZVP, spherical | 999.8 | 24.3 | 41 | 120 s | −3.580e-4 |
 | zinc finger def2-SVP, cartesian | 132.3 | 21.0 | 6.3 | 81 s | −9.51e-4 |
 | zinc finger def2-TZVP, cartesian | 1207.3 | 68.6 | 17.6 | 337 s | −8.17e-4 |
+
+The karrikinolide "before" rows are the 2026-09-16 `develop` runs. On this branch's build the exact
+engine at `high` takes 756.9 s for def2-TZVP and 65.4 s for def2-SVP, against RI-J's 28.5 s and 9.8 s
+at `high`: 27 and 6.7 times.
 
 ORCA's fitting errors for the zinc finger are −8.74e-4 and −7.53e-4, in a spherical basis, so not
 comparable digit for digit with these cartesian rows.

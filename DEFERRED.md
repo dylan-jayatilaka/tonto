@@ -141,9 +141,9 @@ now covers the whole project, so it was renamed.)*
 >    **Larger molecules (release build, `~/tonto_runs/ri_j_2026-09-17/`):** karrikinolide
 >    def2-SVP spherical at `high`, fitting error -4.48032e-4 against ORCA -4.48022e-4. **Trap:** the
 >    exact row must be at `high` -- the old `low` engine row is 3.6e-7 off, which first looked like
->    an RI-J error. RI-J `low` against `high`: 1.8e-8 (def2-SVP), 4.9e-8 (def2-TZVP). The
->    def2-TZVP exact `high` row was still running at the time of writing: `queue2.log` there;
->    expect about -534.174358451 if the ORCA error -3.57452e-4 is reproduced.
+>    an RI-J error. RI-J `low` against `high`: 1.8e-8 (def2-SVP), 4.9e-8 (def2-TZVP). At
+>    def2-TZVP, `high`: exact -534.174358453943, RI-J -534.174715902972, fitting error
+>    -3.57449e-4 against ORCA -3.57452e-4 (3.5e-9 apart).
 > 5. **Suspected defect seen in passing, not touched:** `make_u_KS_Fock_mx` adds
 >    `K.a + K.b` to both `F.a` and `F.b` for hybrids; right for a closed shell, apparently wrong
 >    for an open one. To be checked against g09 UB3LYP before anything is changed.
