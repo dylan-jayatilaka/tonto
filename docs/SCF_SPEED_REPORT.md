@@ -677,7 +677,6 @@ BLYP default is RI-J, 0.75e-3 to 0.87e-3 Eh below its exact energy.
 | RHF, J/K engine | −3101.474629556 (2.2e-6 from g09) | 178.9 | 173.7 |
 | BLYP, J engine | −3107.616217177 (1.3e-4 from g09, grid) | 280.2 | 215.6 |
 | BLYP, pair-list J | −3107.616219403 | 241.5 | 190.7 (−11.6%) |
-
 | BLYP `high`, J engine | −3107.616219469 | 371.1 | 319.6 |
 | BLYP `high`, pair-list J | −3107.616219469 | 428.8 | 378.4 |
 
@@ -691,5 +690,21 @@ an engine run at `medium` would place it.
 **Tonto, spherical RHF/6-31G(d), core guess**: −3101.464456724 (2.6e-6 from ORCA), 345.1 s wall
 (338.8 s J/K) against ORCA's 161.9 s: 2.1x. With the promolecule guess the same job never
 converged, and the spherical def2-SVP RHF job did not converge even from the core guess
-(DEFERRED, Correctness). Cartesian def2 Tonto rows (engine and pair list) are queued as a
-self-comparison.
+(DEFERRED, Correctness).
+
+**Tonto, cartesian def2** -- a self-comparison only: a cartesian def2 basis has more functions than
+the spherical one g09 and ORCA use, so the energies are not comparable with theirs.
+
+| job | energy | wall s | J/K CPU s |
+|---|---|---|---|
+| RHF/def2-SVP, J/K engine | −3100.976345540 | 156.9 | 151.3 |
+| BLYP/def2-SVP, J engine | −3107.106181806 | 196.5 | 137.4 |
+| BLYP/def2-SVP, pair-list J | −3107.106183488 | 189.0 | 132.3 (−3.7%) |
+| RHF/def2-TZVP, J/K engine | −3102.031243033 | 1564.8 | 1526.9 |
+| BLYP/def2-TZVP, J engine | −3108.233152525 | 1648.1 | 1388.3 |
+| BLYP/def2-TZVP, pair-list J | −3108.233153632 | 1477.1 | 1207.3 (−13.0%) |
+
+The pair-list BLYP energies sit 1.7e-6 (SVP) and 1.1e-6 (TZVP) below the engine's -- the size and
+direction of the engine's 2.3e-6 `low` error at 6-31G(d), so probably the same screening loss; no
+`high` run was made for def2 to confirm it. One timing each, so the SVP difference is inside the noise; the TZVP one is not.
+RHF/def2-TZVP costs about 1.1x the BLYP J build, the same ratio as at def2-SVP.

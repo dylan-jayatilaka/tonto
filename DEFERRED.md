@@ -152,6 +152,15 @@ now covers the whole project, so it was renamed.)*
 > feeding the existing quartet digestion from the list's batches, or a primitive-level K -- with
 > `docs/TONTO_SCF_SPEED_UP.md` §3.2 and §5.4 as the background.
 >
+> **Later the same day (2026-09-17): K share measured, RI-J chosen.** Pair-list J plus engine K
+> is *slower* for RHF (95.7 against 55.5 s J/K, karrikinolide 6-31G(d), three repeats): the
+> combined engine gets J almost free, so only K matters for HF and hybrids, and exact HF is near
+> its limit (Tonto ~1.1x g09 at def2-TZVP). The measurement edit to `make_r_JK_engine` is on the
+> branch, measurement only. Queued: cc-pVTZ repeats, a karrikinolide RHF `high` reference (the
+> switch moves the `low` energy by 1.9e-6), a `perf` profile of the RHF K build, and ORCA
+> `RIJCOSX`/`RIJK` on the zinc finger. **Direction: RI-J for pure DFT, planned separately** --
+> see *RI-J for pure DFT* under *Science and features*.
+>
 > **Open decisions for Dylan:** tune the count-scaled cutoff (it costs the 10% gain the unscaled
 > list had at 6-31G(d)); K (the harder index pattern) -- shell-quartet digestion fed from the
 > list, or something else; batching across k (the GPU shape); `short`/`long` owed before any
@@ -2879,6 +2888,49 @@ Chased the same night:
 (`mat_real.F90`, the file it died on, peaks at 356 MB). Foreground `make -j2` in 10-minute
 chunks completed it. Old session scratch (1.1 GB) was moved out of the RAM-backed `/tmp` to
 `~/tonto_runs/old_session_scratch_2026-09-17/`.
+
+## RI-J for pure DFT; COSX and RI-K not pursued yet (Dylan, 2026-09-17)
+
+**Decision (Dylan): RI-J first. COSX and RI-K are not to be pursued yet. A big job, to be planned
+separately, not inside the J/K speed-up session that raised it.**
+
+**Why.** For exact HF the J/K build is close to its limit: zinc finger RHF/def2-TZVP, Tonto 1527 s
+J/K (cartesian, so more functions) against g09 1365 s and ORCA 1566 s wall, *The zinc-finger
+benchmark* in `docs/SCF_SPEED_REPORT.md`. And for HF and hybrids a separate J gains nothing,
+because the combined engine gets J almost free from K's integrals: karrikinolide RHF/6-31G(d),
+pair-list J plus engine K 95.7 s against the combined engine's 55.5 s (three repeats; cc-pVTZ
+pending, `~/tonto_runs/k_share_2026-09-17/`). The large gap is in pure DFT: BLYP/def2-TZVP, Tonto
+pair-list J 1207 s against ORCA's RI-J default 84.7 s, which is 0.75e-3 Eh from its exact energy.
+
+**RI-J in outline.** Expand each product chi_mu chi_nu in an auxiliary basis {P}:
+(mu nu|lam sig) ~ sum_PQ (mu nu|P) [V^-1]_PQ (Q|lam sig), V_PQ = (P|Q). Per iteration: d_Q =
+sum (Q|lam sig) P_lam_sig, solve V c = d (Cholesky of V, once per geometry), J_mu_nu = sum_P
+(mu nu|P) c_P. Cost ~ N_aux N^2, no four-index integrals. The Coulomb metric makes the error in
+the Coulomb energy one-signed and quadratic in the fitting error, and smooth with geometry.
+
+**What Tonto has and needs.**
+- **Three-centre integrals are the easy part** (Dylan): (mu nu|P) is (ab|c0) -- a quartet with an
+  s function of zero exponent in the fourth slot -- so the existing quartet code, or a trimmed
+  copy of it, gives them; (P|Q) likewise with two such slots.
+- **Auxiliary basis sets**: reading `def2/J` (universal for def2) and the cc-pVnZ fitting sets
+  into the basis library. Crystal bases such as pob-TZVP have none, so automatic generation
+  (ORCA's `AutoAux` scheme) is owed for HAR use.
+- **Storage**: (mu nu|P) is N_aux N^2/2 doubles if stored, which is GB at triple zeta; a direct
+  per-iteration build with the pair list's screening is the other shape. Undecided.
+- **Accuracy target**: breaks the 1e-8 Eh agreement with the exact build, so an option, not the
+  default; the fitted density's effect on structure factors has to be measured before HAR uses
+  it.
+- **External validation**: ORCA default (RI-J) BLYP and g09 density-fitting rows on the zinc
+  finger and karrikinolide.
+
+**COSX and RI-K, recorded for later.** COSX (Neese 2009): the r1 integral of each exchange
+integral done on the DFT grid, r2 analytic as a potential integral at the grid point; linked
+screening makes it near-linear for large systems; grid error ~1e-5-1e-4 Eh, cut by overlap
+fitting. Tonto has the grid, basis values on it and potential integrals at points. RI-K needs a
+per-occupied three-index tensor, ~N^4 and GB of storage, and suits small molecules with large
+bases. ORCA's pairing: RIJCOSX for hybrids on large systems, RIJK for smaller ones. Dylan tried a
+grid-based exchange long ago; no code survives. An ORCA `RIJCOSX` and `RIJK` RHF/def2-TZVP run on
+the zinc finger is queued to measure speed and error on our own benchmark.
 
 ## Benchmark molecule with a first-row transition metal and sulfur (Dylan, 2026-09-16)
 
