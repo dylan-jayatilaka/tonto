@@ -2976,8 +2976,8 @@ kernel with an auxiliary primitive as a one-centre (L,0) pair; direct, two passe
 auxiliary functions always spherical; closed-shell and unrestricted pure DFT; serial;
 `def2-universal-jfit` only. **Still owed:** automatic auxiliary bases (pob-TZVP has none, so HAR
 cannot use RI-J yet); the effect of the fitted density on structure factors, to be measured before
-HAR uses it; MPI; a g09 `/W06` cartesian cross-check row (ORCA is spherical, so the cartesian
-zinc-finger errors have no outside row); a `short` test; user-facing documentation of the two
+HAR uses it; MPI; g09 `/W06` rows for the cartesian zinc finger (on water g09 and Tonto agree
+to 1e-6 in the fitting error, ORCA and Tonto to 1e-8; why g09 is looser is not known); a `short` test; user-facing documentation of the two
 keywords when it merges; a stored variant only if a profile asks for it (J is now 20% of the job).
 
 **Why.** For exact HF the J/K build is close to its limit: zinc finger RHF/def2-TZVP, Tonto 1527 s

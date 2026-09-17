@@ -782,7 +782,12 @@ because the two codes' DFT grids differ (3.6e-6 Eh on water) and that cancels in
 | karrikinolide def2-SVP | −533.567022653898 | −533.567470685761 | −4.48032e-4 | −4.48022e-4 |
 | karrikinolide def2-TZVP | (running) | −534.174715902972 | | −3.57452e-4 |
 
-Water: cartesian error −9.30e-5; UKS RI-J equals RKS to 2e-10; debug and release builds agree to
+Cartesian water against g09 `BLYP/def2SVP/W06 6D 10F Int=UltraFine`: g09 −76.3386375800 exact,
+−76.3387315359 fitted, error −9.40e-5; Tonto −76.3386407081 and −76.3387336665, error −9.30e-5.
+They agree to 1e-6, not to 1e-8 as with ORCA; g09's fit may differ in detail (not pursued). g09
+keeps the fitting functions pure, "W06 (5D, 7F)", 71 of them, under `6D 10F`, as Tonto does.
+
+Water: UKS RI-J equals RKS to 2e-10; debug and release builds agree to
 every printed digit. The exact rows must be at `high`: at `low` the engine's exact karrikinolide
 def2-SVP energy is 3.6e-7 off, which at first looked like an RI-J discrepancy.
 
