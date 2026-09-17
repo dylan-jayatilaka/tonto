@@ -101,6 +101,33 @@ now covers the whole project, so it was renamed.)*
 > **The method, the loop-order explanation and the failed attempts are now summarised for a fresh
 > reader in `docs/TONTO_SCF_SPEED_UP.md`** (Dylan, 2026-09-17); this file stays the task register.
 >
+> **NEXT (Dylan, 2026-09-18): a grid made for COSX. Plan it first, in a fresh session.** What is
+> known, so the plan can start from it (numbers: `docs/SCF_SPEED_REPORT.md`, *COSX*):
+> - The COSX error does not fall steadily along the named XC levels. Karrikinolide def2-SVP, with
+>   overlap fitting, SCF and energy on one grid: `very_low` +1.5e-5, `low` +2.9e-5, `medium` -1.5e-5,
+>   `high` +2.0e-6. What separates `high` is the angular order in the bonding region (59, against
+>   29 at `medium`), not the radial points (35 against 30). So the knobs to scan are
+>   `l_bonding_angular_grid`, `l_angular_grid`, `l_H_angular_grid` and `n_radial_pts`, separately.
+> - Two grids are wanted, with different jobs. The **iteration grid** only has to give orbitals
+>   good to second order: `very_low` (20 radial, 110 angular) is enough, and 15 radial with 50
+>   angular is not (6.7e-5 after the final build, against 2.9e-6). The **final grid** sets the
+>   energy error to first order and is used once; `high` has seven times the points of
+>   `very_low`, so that one build is a quarter to a third of the J/K time. The aim is ORCA's error
+>   (2e-6 on karrikinolide) for two or three times the iteration grid's points, not seven.
+> - The code reads two accuracy names (`cosx_grid_accuracy=`, `cosx_final_grid_accuracy=`) and
+>   `initialize_COSX` makes a default `BECKE_GRID` at that level. A scan needs the grid's own
+>   keywords, so: `cosx_grid= { ... }` and `cosx_final_grid= { ... }` blocks read as `becke_grid=`
+>   is, the two names becoming their defaults. Put every new type component in one edit
+>   (`types.foo` is a 25-minute rebuild each time).
+> - Test molecule: karrikinolide def2-SVP spherical at `high` (one SCF is about 100 s; the
+>   reference, RI-J with exact K, is -530.576397753870), then def2-TZVP and the zinc finger to
+>   confirm. The integrand to think about is sum over n,s of F(g,n) A(g;n,s) F(g,s): smooth like
+>   an XC integrand, but with the potentials of tight core pairs of *neighbouring* atoms in it.
+> - Not levers: screening (nothing is negligible at 17-29 atoms) and a looser cutoff.
+>   After the grid: OpenBLAS (16% of the zinc finger job), then the kernel (Rys roots 17%,
+>   contraction 26%, transfer 20%).
+> - `short` now has `h2o_rhf_def2-SVP_RIJCOSX` (-75.95692431), added at Dylan's word; 68/68.
+>
 > **START HERE -- 2026-09-17 (night). COSX works for closed-shell HF and hybrids: branch `cosx`
 > (off `ri-j`, pushed, not merged), `scfdata= { use_COSX= TRUE }`, with `use_RI_J= TRUE` for the J
 > half. Method: `docs/TONTO_SCF_SPEED_UP.md` 5b; every number: `docs/SCF_SPEED_REPORT.md`, *COSX*;
@@ -128,8 +155,7 @@ now covers the whole project, so it was renamed.)*
 >    *not* a lever below a few dozen atoms: nothing is negligible.
 > 5. Unrestricted COSX and hybrids run (`make_u_JK`): on water the COSX error is 9e-9 for UHF,
 >    6.5e-7 for B3LYP, 4.9e-7 for UKS B3LYP; nothing larger has been tried. **Owed:** MPI; HAR;
->    `long`; a `short` test (water RIJCOSX -75.9569243059, input in the runs directory; blessing is
->    Dylan's); user-facing keyword documentation at merge; `put_options` does not echo the COSX
+>    `long`; user-facing keyword documentation at merge; `put_options` does not echo the COSX
 >    settings yet.
 > 6. **Two DFT defects found on the way** (entry *B3LYP is 2e-4 Eh from g09 and ORCA*): closed-shell
 >    B3LYP is 2.1e-4 from both codes, in the VWN3 and VWN5 forms alike, where BLYP agrees to 3e-6;
