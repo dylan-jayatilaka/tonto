@@ -274,7 +274,7 @@ of the fitted density on structure factors; MPI; `short` and `long` before mergi
 
 ## 5b. COSX: the exchange matrix by quadrature (branch `cosx`)
 
-`scfdata= { use_COSX= TRUE }`, for HF and hybrids, closed shell so far; with `use_RI_J= TRUE` it is
+`scfdata= { use_COSX= TRUE }`, for HF and hybrids, restricted and unrestricted; with `use_RI_J= TRUE` it is
 what ORCA calls `RIJCOSX`. Off by default: the exact J and K routes are untouched and remain the
 route for work that must not be approximate.
 
@@ -316,7 +316,7 @@ route for work that must not be approximate.
 
 Still to do: a grid made for this integrand (the error falls with the angular order in the
 bonding region, not with the radial points, so the named XC levels are a poor ladder for it);
-unrestricted and hybrid DFT; timings in triplicate; MPI; HAR; `long` before merging.
+hybrids on something larger than water; timings in triplicate; MPI; HAR; `long` before merging.
 
 ---
 

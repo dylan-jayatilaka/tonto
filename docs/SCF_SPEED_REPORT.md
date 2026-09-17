@@ -925,3 +925,13 @@ job: the point-potential kernel 21%, the transfer and the G update in `make_r_K_
 `use_COSX=` at the defaults, a candidate `short` test (`cosx_2026-09-17/final/water_rijcosx_test`):
 −75.9569243059, which is −1.6e-8 from Tonto's RI-J with exact K and +3.5e-7 from ORCA's `RIJCOSX`.
 Not added: blessing a reference is Dylan's call.
+
+**Unrestricted, and hybrids** (`make_u_JK`; the KS routines go through `make_r_JK` and `make_u_JK`).
+Water def2-SVP spherical, `high`, defaults otherwise, E(COSX) − E(exact K) with the same J:
+
+| job | Tonto | ORCA |
+|---|---|---|
+| UHF H2O+, RI-J | +9.1e-9 | −1.3e-6 |
+| B3LYP/G, RI-J | +6.5e-7 | −3.0e-7 |
+| UKS B3LYP/G H2O+, exact J | +4.9e-7 | |
+

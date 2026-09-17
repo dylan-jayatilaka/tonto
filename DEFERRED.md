@@ -125,8 +125,8 @@ now covers the whole project, so it was renamed.)*
 >    place of the two accuracy names, and a calibration like Stage B; (b) OpenBLAS, a third off
 >    (the parked item); (c) the kernel: Rys roots 17%, contraction 26%, transfer 20%. Screening is
 >    *not* a lever below a few dozen atoms: nothing is negligible.
-> 5. **Owed:** unrestricted COSX and hybrid DFT through it (the KS routines route through
->    `make_r_JK`, so closed-shell hybrids run, but none has been validated -- see 6); MPI; HAR;
+> 5. Unrestricted COSX and hybrids run (`make_u_JK`): on water the COSX error is 9e-9 for UHF,
+>    6.5e-7 for B3LYP, 4.9e-7 for UKS B3LYP; nothing larger has been tried. **Owed:** MPI; HAR;
 >    `long`; a `short` test (water RIJCOSX -75.9569243059, input in the runs directory; blessing is
 >    Dylan's); user-facing keyword documentation at merge; `put_options` does not echo the COSX
 >    settings yet.
