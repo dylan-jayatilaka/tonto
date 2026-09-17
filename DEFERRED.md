@@ -836,6 +836,15 @@ dead keyword line from `develop` and leave the work on its two tags, as was done
 > `MOLECULE.BASE:make_SCF_density_mx` (`molecule.base.foo:330-379`), `SCF_data.apply_pFON`,
 > `temperature_for_pFON`, `using_FON`. The spherical-vs-cartesian contrast below is still
 > unexplained under that hypothesis and worth keeping in view.
+>
+> **Dylan's refinement, to investigate:** the two may be one story. The cartesian basis carries
+> the s-type contaminant of each d shell (x²+y²+z²) and the p-type contaminants of each f shell;
+> the spherical basis removes them. If those extra functions stabilise the near-degenerate
+> states, removing them could tip the SCF into oscillation. Cheap tests on the 11-atom
+> Zn(SCH3)2 reproducer: the HOMO-LUMO gap of the converged cartesian run (small supports the
+> low-lying-states picture); a spherical run started from the converged cartesian orbitals
+> projected into the spherical basis (if it holds, the problem is reaching the state, not the
+> state); and the same molecule with the diffuse or polarisation functions trimmed.
 
 Found by the zinc-finger benchmark ([Zn(SCH3)2(imidazole)2], hand-built geometry, RHF/6-31G(d),
 `develop` `7d2c236a`). Runs in `~/tonto_runs/zn_sph_bug_2026-09-17/` and
