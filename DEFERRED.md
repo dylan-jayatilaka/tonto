@@ -101,6 +101,29 @@ now covers the whole project, so it was renamed.)*
 > **The method, the loop-order explanation and the failed attempts are now summarised for a fresh
 > reader in `docs/TONTO_SCF_SPEED_UP.md`** (Dylan, 2026-09-17); this file stays the task register.
 >
+> **NEXT (Dylan, 2026-09-17, evening): COSX -- the chain-of-spheres exchange, for HF and hybrids.
+> Start with a planning session, as for RI-J; no code before the plan.** The 2026-09-17 decision
+> "COSX and RI-K not pursued yet" is superseded for COSX; RI-K stays parked. Background: the entry
+> *RI-J for pure DFT; COSX and RI-K not pursued yet* (outline of COSX, what Tonto has), and
+> `docs/SCF_SPEED_REPORT.md`, *ORCA's approximate exchange on the zinc finger* -- the row to beat
+> and to validate against: ORCA `RIJCOSX` RHF/def2-TZVP -3102.026644041, error -7.0e-4 Eh, 499 s
+> against 1566 s exact. RI-J, the J half, is done (below).
+>
+> Points for the plan:
+> - **COSX lives on the DFT grid, and the grid code is now Tonto's slowest part**: with RI-J the zinc
+>   finger BLYP/def2-TZVP spends 215 s of 339 s in the XC quadrature, ORCA's whole job being 85 s.
+>   COSX makes a grid pass per iteration through the same machinery (basis function values on the
+>   grid), so profile the XC quadrature first or alongside; what speeds it up serves both.
+> - To decide: the grid for the exchange (ORCA uses a smaller one than for XC, and a larger one
+>   for the final energy); overlap fitting to cut the grid error; the screening; how the analytic
+>   half, the potential integrals (ab|r_g) at each grid point, is batched -- it is a pair-list
+>   shape, a grid point being a one-centre s "pair" of infinite exponent.
+> - Validation as for RI-J: compare the *error* E(COSX) - E(exact) with ORCA's, at `high` for the
+>   exact row (the trap below), water first, then karrikinolide and the zinc finger.
+> - RI-J is wanted with it for hybrids (`RIJCOSX`): `use_RI_J=` dies today when there is exact
+>   exchange, and `make_r_JK_engine` builds J and K together, so the Fock routines need a J-only
+>   plus K-only route.
+>
 > **START HERE -- 2026-09-17 (afternoon). RI-J works: on branch `ri-j` (off `esfs-order`,
 > pushed), validated against ORCA to 1e-8 Eh in the fitting error, and J is 6-40 times faster
 > (zinc finger BLYP/def2-TZVP 1207 -> 69 s; whole job 337 s, of which XC is 215 s -- the next
