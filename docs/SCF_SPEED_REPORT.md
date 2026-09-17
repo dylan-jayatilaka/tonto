@@ -667,8 +667,8 @@ Runs in `~/tonto_runs/vs_g09_orca_znfinger_2026-09-17/`, tabulated by `collect.p
 | RHF/def2-TZVP | −3102.025942750 | 1365.2 | −3102.025942739 | 1566.0 | 1578.5 |
 | BLYP/def2-TZVP | −3108.214409100 | 652.9 | −3108.214407078 | 1378.6 | 84.7 |
 
-g09 and ORCA agree to 1-2e-8 on RHF and to 2-4e-5 on BLYP, where their grids differ. ORCA's
-BLYP default is RI-J (0.9e-3 to 0.8e-3 Eh below its exact energy).
+g09 and ORCA agree to 1-2e-8 on def2 RHF and to 2e-6 (TZVP) to 4e-5 (SVP) on def2 BLYP, where their grids differ. ORCA's
+BLYP default is RI-J, 0.75e-3 to 0.87e-3 Eh below its exact energy.
 
 **Tonto, cartesian 6-31G(d)** (like-for-like with g09):
 
