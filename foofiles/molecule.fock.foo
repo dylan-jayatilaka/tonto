@@ -120,10 +120,7 @@ contains
          J.create(.n_bf,.n_bf)
          K.create(.n_bf,.n_bf)
 
-         if (do_direct) then
-            if (.use_spherical_basis) then; .make_r_JK_engine_sph(J,K,P.r)
-            else;                          .make_r_JK_engine(J,K,P.r)
-            end
+         if (do_direct) then;              .make_r_JK(J,K,P.r)
          else;                             .make_r_JK_disk(J,K,P.r)
          end
 
@@ -191,30 +188,16 @@ contains
 
          if (do_direct) then
         
-            if (.use_spherical_basis) then
-        
-               if (.SCF_data.using_hybrid_exchange) then
-                  K.create(.n_bf, .n_bf)
-                  .make_r_JK_engine_sph(F.r,K,P.r)
-                  K = K * (-HALF) * .SCF_data.hybrid_exchange_factor
-                  F.r = F.r + K
-                  K.destroy
-               else
-                  .make_r_J_engine_sph(F.r,P.r)
-               end
-        
+            if (.SCF_data.using_hybrid_exchange) then
+               K.create(.n_bf, .n_bf)
+               .make_r_JK(F.r,K,P.r)
+               K = K * (-HALF) * .SCF_data.hybrid_exchange_factor
+               F.r = F.r + K
+               K.destroy
+            else if (.use_spherical_basis) then
+               .make_r_J_engine_sph(F.r,P.r)
             else
-        
-               if (.SCF_data.using_hybrid_exchange) then
-                  K.create(.n_bf, .n_bf)
-                  .make_r_JK_engine(F.r,K,P.r)
-                  K = K * (-HALF) * .SCF_data.hybrid_exchange_factor
-                  F.r = F.r + K
-                  K.destroy
-               else
-                  .make_r_J_engine(F.r,P.r)
-               end
-        
+               .make_r_J_engine(F.r,P.r)
             end
         
          else                             
@@ -2357,6 +2340,280 @@ contains
          if (pass==1) gpl.set_sizes(m,n_classes)
 
       end
+
+   end
+
+   make_r_JK(J,K,P) :: leaky
+   ! Make "J" and "K" for the restricted density "P", with integrals on
+   ! the fly: by the J/K engine, or with .SCF_data.using_COSX, J apart
+   ! and K by quadrature. Without a grid (the atoms of a promolecule
+   ! guess) the engine is used.
+      self :: INOUT
+      J,K :: MAT{REAL}, OUT
+      P   :: MAT{REAL}, IN
+
+      if (.SCF_data.using_COSX AND .becke_grid.allocated) then
+         if (.use_spherical_basis) then; .make_r_J_engine_sph(J,P)
+         else;                          .make_r_J_engine(J,P)
+         end
+         .make_r_K_COSX(K,P)
+      else
+         if (.use_spherical_basis) then; .make_r_JK_engine_sph(J,K,P)
+         else;                          .make_r_JK_engine(J,K,P)
+         end
+      end
+
+   end
+
+   make_r_K_COSX(K,P) :: leaky
+   ! Make the exchange matrix "K" from the symmetric density "P" by the
+   ! chain-of-spheres method on the molecular DFT grid. A spherical basis
+   ! is taken through the cartesian functions, as .make_r_JK_engine_sph.
+      self :: INOUT
+      K :: MAT{REAL}, OUT
+      P :: MAT{REAL}, IN
+
+   ENSURE(.becke_grid.allocated,"no becke_grid")
+
+      Pc,Kc :: MAT{REAL}@
+      first,last :: VEC{INT}@
+      n :: INT
+
+      if (.XC_pts.deallocated) .make_XC_grid
+      if (.XC_batch_first.deallocated) .make_XC_batches
+
+      if (NOT .use_spherical_basis) then
+
+         .make_r_K_COSX_on(K,P,.XC_pts,.XC_wts,.XC_batch_pt,.XC_batch_first,.XC_batch_last, &
+                           .XC_batch_shell,.XC_batch_first_shell,.XC_batch_last_shell)
+
+      else
+
+         n = .n_bf_cartesian
+         Pc.create(n,n)
+         Kc.create(n,n)
+         .make_cartesian_density(P,Pc)
+
+         first.create(.n_shell); first = .first_basis_fn_for_shell
+         last.create(.n_shell);  last  = .last_basis_fn_for_shell
+         .first_basis_fn_for_shell = .first_cartesian_bf_for_shell
+         .last_basis_fn_for_shell  = .last_cartesian_bf_for_shell
+
+         .make_r_K_COSX_on(Kc,Pc,.XC_pts,.XC_wts,.XC_batch_pt,.XC_batch_first,.XC_batch_last, &
+                           .XC_batch_shell,.XC_batch_first_shell,.XC_batch_last_shell)
+
+         .first_basis_fn_for_shell = first
+         .last_basis_fn_for_shell  = last
+         first.destroy; last.destroy
+
+         .make_spherical_matrix(Kc,K)
+         Kc.destroy; Pc.destroy
+
+      end
+
+   end
+
+   make_r_K_COSX_on(K,P,pts,wts,batch_pt,batch_first,batch_last,batch_shell,batch_first_shell,batch_last_shell) :: leaky
+   ! The chain-of-spheres exchange matrix on the grid "pts", "wts",
+   ! batched as MOLECULE.RHO:make_XC_batches does, in the cartesian
+   ! functions: K(m,n) = sum_g w(g) X(g,m) sum_s A(g;n,s) F(g,s), made
+   ! symmetric, where X are the basis functions at the points, F = X P,
+   ! and A(g;n,s) is the potential at point g of the product of functions
+   ! n and s. The potentials come from the primitive pair list, one
+   ! shell pair and one batch at a time, as (es| integrals that the
+   ! transfer matrix of the shell pair turns into (ab|.
+      self :: INOUT
+      K :: MAT{REAL}, OUT
+      P :: MAT{REAL}, IN
+      pts :: MAT{REAL}, IN
+      wts :: VEC{REAL}, IN
+      batch_pt,batch_first,batch_last,batch_shell,batch_first_shell,batch_last_shell :: VEC{INT}, IN
+
+   ENSURE(K.dim1==P.dim1,"K and P differ in size")
+
+      gpl :: GAUSSIAN_PAIR_LIST
+      T :: VEC{EMAT{REAL}}@
+      sp_class,sp_first,sp_last,bf :: VEC{INT}@
+      G0,Ps,F,G,Ks,E,Ix,Iy,Iz,rt,wr,Wab :: MAT{REAL}@
+      xs,ys,zs,xv,Dx,Dy,Dz,B01,W,es,col :: VEC{REAL}@
+      sh :: SHELL1
+      sh2 :: SHELL2
+      ib,f0,np,ns,q,ip,j,s,fs,ls,fa,la,na,fb,lb,nb,aa,bb,off,n,cls,kp,ie,i,ja,jb :: INT
+      l_max,r_max,np_max,n_e,l_f,n_roots :: INT
+      tv :: REAL
+
+      n = K.dim1
+
+      .make_gaussian_pair_list(gpl)
+
+      ! The class and the primitives of each shell pair, which are contiguous
+      sp_class.create(.n_shell_pairs); sp_class = 0
+      sp_first.create(.n_shell_pairs); sp_first = 1
+      sp_last.create(.n_shell_pairs);  sp_last  = 0
+      do cls = 1,gpl.n_classes
+         do kp = gpl.class_first(cls),gpl.class_last(cls)
+            q = gpl.shell_pair(kp)
+            if (sp_class(q)==0) then
+               sp_class(q) = cls
+               sp_first(q) = kp
+            end
+            sp_last(q) = kp
+         end
+      end
+
+      ! The transfer of each shell pair as a matrix, (ab| from (es|
+      T.create(.n_shell_pairs)
+      do q = 1,.n_shell_pairs
+         if (sp_class(q)==0) cycle
+         .set_shell2_from(q,sh2,fa,la,na,fb,lb,nb)
+         n_e = sh2.n_gaussian
+         T(q).element.create(na*nb,n_e)
+         es.create(n_e)
+         Wab.create(na,nb)
+         do ie = 1,n_e
+            es = ZERO
+            es(ie) = ONE
+            sh2.transfer(es,Wab)
+            T(q).element(:,ie) = reshape(Wab,[na*nb])
+         end
+         Wab.destroy
+         es.destroy
+         sh2.destroy_ptr_part
+      end
+
+      ! Work arrays for the largest batch and class
+      l_max  = maxval(gpl.class_l_sum)
+      r_max  = (l_max+2)/2
+      np_max = maxval(batch_last-batch_first+1)
+      xv.create(np_max)
+      rt.create(r_max,np_max)
+      wr.create(r_max,np_max)
+      Ix.create(np_max*r_max,l_max+1)
+      Iy.create(np_max*r_max,l_max+1)
+      Iz.create(np_max*r_max,l_max+1)
+      Dx.create(np_max*r_max)
+      Dy.create(np_max*r_max)
+      Dz.create(np_max*r_max)
+      B01.create(np_max*r_max)
+      W.create(np_max*r_max)
+
+      K = ZERO
+
+      do ib = 1,batch_first.dim
+
+         f0  = batch_first(ib)
+         np = batch_last(ib) - f0 + 1
+         fs = batch_first_shell(ib)
+         ls = batch_last_shell(ib)
+         if (ls<fs) cycle
+
+         ns = 0
+         do j = fs,ls
+            s = batch_shell(j)
+            ns = ns + .last_basis_fn_for_shell(s) - .first_basis_fn_for_shell(s) + 1
+         end
+
+         ! The cartesian basis functions on the batch
+         xs.create(np)
+         ys.create(np)
+         zs.create(np)
+         do q = 1,np
+            ip = batch_pt(f0+q-1)
+            xs(q) = pts(ip,1)
+            ys(q) = pts(ip,2)
+            zs(q) = pts(ip,3)
+         end
+         bf.create(ns)
+         G0.create(np,ns)
+         off = 0
+         do j = fs,ls
+            s  = batch_shell(j)
+            fa = .first_basis_fn_for_shell(s)
+            na = .last_basis_fn_for_shell(s) - fa + 1
+            sh = .basis_shell1pair(.basis_shell_for_shell(s),1).a
+            sh.position = .atom(.atom_for_shell(s)).position
+            sh.is_spherical = FALSE
+            sh.make_grid(G0(:,off+1:off+na),xs,ys,zs)
+            do q = 1,na
+               bf(off+q) = fa + q - 1
+            end
+            off = off + na
+         end
+
+         ! F = X P
+         Ps.create(ns,n)
+         Ps = P(bf,:)
+         F.create(np,n)
+         F.to_product_of_BLAS(G0,Ps)
+         Ps.destroy
+
+         ! G(g,n) = sum_s A(g;n,s) F(g,s)
+         G.create(np,n)
+         G = ZERO
+         col.create(np)
+         do q = 1,.n_shell_pairs
+
+            cls = sp_class(q)
+            if (cls==0) cycle
+
+            .set_shell2_indices_from(q,aa,bb,fa,la,na,fb,lb,nb)
+            n_e = gpl.class_n_gaussian(cls)
+            l_f = gpl.class_l_sum(cls)
+            n_roots = (l_f+2)/2
+
+            E.create(np,n_e)
+            gpl.make_point_potentials(E,cls,sp_first(q),sp_last(q),np,n_roots,np*n_roots,l_f,n_e, &
+                                      xs,ys,zs,xv,rt,wr,Ix,Iy,Iz,Dx,Dy,Dz,B01,W)
+
+            i = 0
+            do jb = 1,nb
+            do ja = 1,na
+               i = i + 1
+               col = ZERO
+               do ie = 1,n_e
+                  tv = T(q).element(i,ie)
+                  if (tv==ZERO) cycle
+                  col = col + tv*E(:,ie)
+               end
+               G(:,fa+ja-1) = G(:,fa+ja-1) + col*F(:,fb+jb-1)
+               if (aa/=bb) G(:,fb+jb-1) = G(:,fb+jb-1) + col*F(:,fa+ja-1)
+            end
+            end
+
+            E.destroy
+
+         end
+         col.destroy
+         F.destroy
+
+         ! K = (w X)^T G
+         do j = 1,ns
+            do q = 1,np
+               G0(q,j) = wts(batch_pt(f0+q-1))*G0(q,j)
+            end
+         end
+         Ks.create(ns,n)
+         Ks.to_product_of_BLAS(G0,G,transpose_a=TRUE)
+         K(bf,:) = K(bf,:) + Ks
+
+         Ks.destroy
+         G.destroy
+         G0.destroy
+         bf.destroy
+         zs.destroy
+         ys.destroy
+         xs.destroy
+
+      end
+
+      K = HALF*(K + transpose(K))
+
+      W.destroy; B01.destroy
+      Dz.destroy; Dy.destroy; Dx.destroy
+      Iz.destroy; Iy.destroy; Ix.destroy
+      wr.destroy; rt.destroy; xv.destroy
+      T.destroy
+      sp_last.destroy; sp_first.destroy; sp_class.destroy
 
    end
 

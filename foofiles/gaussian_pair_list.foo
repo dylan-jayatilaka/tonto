@@ -807,6 +807,118 @@ contains
 
    end
 
+!  ==================================
+!  Potential integrals at points (COSX)
+!  ==================================
+
+   make_point_potentials(E,cls,first,last,n_pt,n_roots,n_p,l_f,n_f,x,y,z,xv,rt,wt,Ix,Iy,Iz,Dx,Dy,Dz,B01,W) :: PURE
+   ! Set "E(g,f)" to the integral of the (es| component f with
+   ! 1/|r-r_g|, r_g = (x(g),y(g),z(g)), summed over the primitive pairs
+   ! "first" to "last", which must belong to one shell pair, of class
+   ! "cls". A point is the limit of an auxiliary s primitive of infinite
+   ! exponent in add_batch_to_RI_J, so there is no recursion on its
+   ! side. l_f, n_f and n_roots = (l_f+2)/2 are those of the class. Entry
+   ! p = (n-1)*n_pt+g of n_p = n_pt*n_roots is root n at point g, so the
+   ! loops over points are contiguous. The work arrays are
+   ! explicit-shape views of the caller's buffers.
+      self :: IN
+      cls,first,last,n_pt,n_roots,n_p,l_f,n_f :: INT, IN
+      E :: MAT{REAL}(n_pt,n_f), OUT
+      x,y,z :: VEC{REAL}(n_pt), IN
+      xv :: VEC{REAL}(n_pt), INOUT
+      rt,wt :: MAT{REAL}(n_roots,n_pt), INOUT
+      Ix,Iy,Iz :: MAT{REAL}(n_p,l_f+1), INOUT
+      Dx,Dy,Dz,B01,W :: VEC{REAL}(n_p), INOUT
+
+      rys :: RYS
+      k,g,n,p,f,ff,xf,yf,zf,p0 :: INT
+      zeta,half_zinv,cc,Px,Py,Pz,PCx,PCy,PCz,t2 :: REAL
+
+      ff = .class_first_gaussian(cls) - 1
+      rys.set_n_roots(n_roots)
+
+      E = ZERO
+
+      do k = first,last
+
+         zeta = .exponent_sum(k)
+         half_zinv = HALF*.exponent_inv(k)
+         cc = TWO*PI*.prefactor(k)*sqrt(zeta)
+         Px = .center(1,k)
+         Py = .center(2,k)
+         Pz = .center(3,k)
+         PCx = .center_diff(1,k)
+         PCy = .center_diff(2,k)
+         PCz = .center_diff(3,k)
+
+         do g = 1,n_pt
+            xv(g) = zeta*((Px-x(g))*(Px-x(g)) + (Py-y(g))*(Py-y(g)) + (Pz-z(g))*(Pz-z(g)))
+         end
+         rys.get_weights_t2(n_pt,xv,rt,wt)
+
+         p = 0
+         do n = 1,n_roots
+            do g = 1,n_pt
+               p = p + 1
+               t2 = rt(n,g)
+               Dx(p) = PCx - t2*(Px-x(g))
+               Dy(p) = PCy - t2*(Py-y(g))
+               Dz(p) = PCz - t2*(Pz-z(g))
+               B01(p) = (ONE - t2)*half_zinv
+               W(p) = cc*wt(n,g)
+            end
+         end
+
+         GAUSSIAN_PAIR_LIST::make_1d_batch(Ix,n_p,l_f,Dx,B01)
+         GAUSSIAN_PAIR_LIST::make_1d_batch(Iy,n_p,l_f,Dy,B01)
+         GAUSSIAN_PAIR_LIST::make_1d_batch(Iz,n_p,l_f,Dz,B01)
+         do f = 1,l_f+1
+            do p = 1,n_p
+               Iz(p,f) = Iz(p,f)*W(p)
+            end
+         end
+
+         do f = 1,n_f
+            xf = GAUSSIAN_DATA::nx(ff+f)
+            yf = GAUSSIAN_DATA::ny(ff+f)
+            zf = GAUSSIAN_DATA::nz(ff+f)
+            do n = 1,n_roots
+               p0 = (n-1)*n_pt
+               do g = 1,n_pt
+                  E(g,f) = E(g,f) + Ix(p0+g,xf)*Iy(p0+g,yf)*Iz(p0+g,zf)
+               end
+            end
+         end
+
+      end
+
+   end
+
+   make_1d_batch(I,n_p,l_f,D00,B01) :: selfless, private, PURE
+   ! Make the 1D Rys integrals "I(p,f+1)", f<=l_f, for one cartesian
+   ! direction and all n_p entries p: make_2d_batch with l_e = 0.
+      n_p,l_f :: INT, IN
+      I :: MAT{REAL}(n_p,l_f+1), INOUT
+      D00,B01 :: VEC{REAL}(n_p), IN
+
+      p,f :: INT
+
+      do p = 1,n_p
+         I(p,1) = ONE
+      end
+      if (l_f>0) then
+         do p = 1,n_p
+            I(p,2) = D00(p)
+         end
+      end
+      do f = 2,l_f
+         do p = 1,n_p
+            I(p,f+1) = D00(p)*I(p,f) + (f-1)*B01(p)*I(p,f-1)
+         end
+      end
+
+   end
+
 !  ======
 !  Bounds
 !  ======
