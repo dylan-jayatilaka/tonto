@@ -247,6 +247,31 @@ faster at triple zeta and slower at 6-31G(d), where the count-scaled cutoff beco
 
 ---
 
+## 5a. RI-J: density fitting of J for pure DFT (branch `ri-j`)
+
+`auxiliary_basis_name= def2-universal-jfit` with `scfdata= { use_RI_J= TRUE }`. Off by default,
+because it changes the energy by 1e-4 to 1e-3 Eh; stops with a message for HF and hybrids, where a
+separate J gains nothing (section 7).
+
+- The density is fitted in an auxiliary basis with the Coulomb metric: d_Q = (Q|rho), V c = d,
+  J_ab = sum_Q (ab|Q) c_Q. The fitting error in the energy is one-signed (negative) and matches
+  ORCA's with the same auxiliary basis to 1e-8 Eh.
+- **The three-centre integrals come from the pair-list kernel.** An auxiliary primitive is a
+  one-centre "pair" of class (L,0), so `GAUSSIAN_PAIR_LIST:add_to_RI_J` is the batched J kernel with
+  one side taken from a second list. Nothing is stored: two passes per J build. There are only a
+  few hundred auxiliary primitives against 1-4 x 10^4 orbital pairs, so a pass is about 10^7
+  primitive integrals where the exact J does 10^9.
+- The metric's Cholesky factor is made once per SCF (`MOLECULE.FOCK:initialize_RI_J`). Auxiliary
+  functions are always spherical, whatever the orbital basis: cartesian f and g shells carry
+  lower-l contaminants that make the metric nearly singular.
+- **Result:** J is 6-40 times faster (zinc finger def2-TZVP 1207 -> 69 s, karrikinolide def2-TZVP
+  1000 -> 24 s), and the XC quadrature becomes the largest part of the job.
+
+Still to do: automatic auxiliary bases for basis sets that have none (pob-TZVP, so HAR); the effect
+of the fitted density on structure factors; MPI; `short` and `long` before merging.
+
+---
+
 ## 6. What was tried and did not pay
 
 Each is one line here; the numbers are in `SCF_SPEED_REPORT.md` under the heading named.

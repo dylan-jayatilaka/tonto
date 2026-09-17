@@ -764,3 +764,44 @@ One core, against ORCA `NoRI` −3102.025942739 in 1566 s wall:
 | `RIJK` | −3102.025484906 | +4.6e-4 | 421 |
 
 Both are three to four times faster than the exact build, at errors of the size RI-J makes for BLYP.
+
+## RI-J: density-fitted J on the primitive pair list, 2026-09-17
+
+Branch `ri-j`. `auxiliary_basis_name= def2-universal-jfit` and `scfdata= { use_RI_J= TRUE }`; pure DFT
+only. Direct: each J build makes two passes over the three-centre integrals (auxiliary primitive |
+primitive pair), d = (Q|P), V c = d by a Cholesky factor made once per SCF, J = (ab|Q) c. The
+auxiliary functions are always spherical. Runs in `~/tonto_runs/ri_j_2026-09-17/`, one core, one job
+at a time.
+
+**Correctness, against ORCA 6.1.1 with `def2/J`.** The fitting error E(RI-J) − E(exact) is compared,
+because the two codes' DFT grids differ (3.6e-6 Eh on water) and that cancels in the difference.
+
+| job, spherical, BLYP, `high` | Tonto exact | Tonto RI-J | Tonto error | ORCA error |
+|---|---|---|---|---|
+| water def2-SVP | −76.3369284357 | −76.3370150493 | −8.6614e-5 | −8.6614e-5 |
+| karrikinolide def2-SVP | −533.567022653898 | −533.567470685761 | −4.48032e-4 | −4.48022e-4 |
+| karrikinolide def2-TZVP | (running) | −534.174715902972 | | −3.57452e-4 |
+
+Water: cartesian error −9.30e-5; UKS RI-J equals RKS to 2e-10; debug and release builds agree to
+every printed digit. The exact rows must be at `high`: at `low` the engine's exact karrikinolide
+def2-SVP energy is 3.6e-7 off, which at first looked like an RI-J discrepancy.
+
+**Screening.** RI-J at `low` against `high`: water 4e-10, karrikinolide def2-SVP 1.8e-8, def2-TZVP
+4.9e-8.
+
+**Speed at `low`, J/K CPU s.** "Before" is the best exact J on the same input (pair list for the zinc
+finger, engine for karrikinolide).
+
+| job | before | RI-J | ratio | whole job, RI-J | fitting error (exact at `low`) |
+|---|---|---|---|---|---|
+| karrikinolide def2-SVP, spherical | 58.9 | 6.9 | 8.6 | 31 s | −4.477e-4 |
+| karrikinolide def2-TZVP, spherical | 999.8 | 24.3 | 41 | 120 s | −3.580e-4 |
+| zinc finger def2-SVP, cartesian | 132.3 | 21.0 | 6.3 | 81 s | −9.51e-4 |
+| zinc finger def2-TZVP, cartesian | 1207.3 | 68.6 | 17.6 | 337 s | −8.17e-4 |
+
+ORCA's fitting errors for the zinc finger are −8.74e-4 and −7.53e-4, in a spherical basis, so not
+comparable digit for digit with these cartesian rows.
+
+**Where the time goes now**, zinc finger def2-TZVP with RI-J (338.9 CPU s): XC matrix and energy
+214.9 (63%), J 68.6 (20%), initial guess 22.1, diagonalisation 19.0, DIIS 8.9. ORCA's whole job is
+85 s. The XC quadrature is the next bottleneck.
