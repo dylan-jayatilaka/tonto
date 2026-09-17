@@ -148,6 +148,10 @@ now covers the whole project, so it was renamed.)*
 > **Zinc-finger spherical failure is out of scope for the integral work** (Dylan): see its
 > Correctness entry, possibly low-lying states needing pFON.
 >
+> **NEXT (Dylan, 2026-09-17): the K terms from the pair list.** Start by deciding the shape --
+> feeding the existing quartet digestion from the list's batches, or a primitive-level K -- with
+> `docs/TONTO_SCF_SPEED_UP.md` §3.2 and §5.4 as the background.
+>
 > **Open decisions for Dylan:** tune the count-scaled cutoff (it costs the 10% gain the unscaled
 > list had at 6-31G(d)); K (the harder index pattern) -- shell-quartet digestion fed from the
 > list, or something else; batching across k (the GPU shape); `short`/`long` owed before any
