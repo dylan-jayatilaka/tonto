@@ -336,7 +336,7 @@ contains
       K.create(.n_bf, "u ")
 
       if (add_r12) then
-         if (.SCF_data.using_RI_J AND .RI_metric_factor.allocated) then
+         if (.SCF_data.using_RI_J AND .RI_metric_factor.allocated AND NOT .SCF_data.using_hybrid_exchange) then
             ! No exact exchange: one fit of the total density serves both
             J.b = P.a + P.b
             if (.use_spherical_basis) then; .make_r_J_engine_sph(J.a,J.b)
@@ -1613,11 +1613,13 @@ contains
       J_list :: MAT{REAL}@
       work :: ERI_SCRATCH
 
-      ! With the pair list, J comes from the list and the loop below makes K only
+      ! With the pair list or RI-J, J comes from .make_r_J_engine, which
+      ! chooses between them, and the loop below makes K only
       list_J = .SCF_data.using_gaussian_pair_J
+      if (.SCF_data.using_RI_J AND .RI_metric_factor.allocated) list_J = TRUE
       if (list_J) then
          J_list.create(J.dim1,J.dim2)
-         .make_r_J_gaussian_pairs(J_list,P)
+         .make_r_J_engine(J_list,P)
       end
 
       ! Prepare for J-matrix engine
@@ -3160,8 +3162,19 @@ contains
       ab,cd,aa,bb,cc,dd,fa,fb,fc,fd,la,lb,lc,ld :: INT
       na,nb,nc,nd,atom_a,atom_b,atom_c,atom_d :: INT
       factor,cutoff,JP_cut,KP_cut,P_max,IP_max :: REAL
-      skip_J,skip_K,ab_same,cd_same,any_same,no_max_I,ab_eq_cd :: BIN
+      skip_J,skip_K,ab_same,cd_same,any_same,no_max_I,ab_eq_cd,list_J :: BIN
+      Ja_list,Jb_list :: MAT{REAL}@
       work :: ERI_SCRATCH
+
+      ! As in .make_r_JK_engine: J apart, and the loop below makes K only
+      list_J = .SCF_data.using_gaussian_pair_J
+      if (.SCF_data.using_RI_J AND .RI_metric_factor.allocated) list_J = TRUE
+      if (list_J) then
+         Ja_list.create(J.a.dim1,J.a.dim2)
+         Jb_list.create(J.b.dim1,J.b.dim2)
+         .make_r_J_engine(Ja_list,P.a)
+         .make_r_J_engine(Jb_list,P.b)
+      end
 
       ! Prepare for J-matrix engine
       .reverse_transfer(P.a,PA)
@@ -3221,6 +3234,7 @@ contains
 
             ::Schwarz_test(skip_J,skip_K,cutoff,JP_cut,KP_cut,ab,cd,aa,bb,cc,dd,max_P,.max_I)
 
+            if (list_J) skip_J = TRUE
             if (skip_J AND skip_K) cycle
 
             ! Set up |cd) J/P matrix vectors
@@ -3293,6 +3307,13 @@ contains
       ! Clean up transfer arrays
       JB.destroy; JA.destroy
       PB.destroy; PA.destroy
+
+      if (list_J) then
+         J.a = Ja_list
+         J.b = Jb_list
+         Jb_list.destroy
+         Ja_list.destroy
+      end
 
    end
 
