@@ -140,8 +140,9 @@ now covers the whole project, so it was renamed.)*
 > 6. **The detached queue** of the midday handover: the ORCA `RIJCOSX`/`RIJK` rows and the
 >    6-31G(d) profile split are in `docs/SCF_SPEED_REPORT.md` (generation and set-up are three
 >    quarters of the RHF build, digestion one seventh, so K from the pair list meets its
->    condition at 6-31G(d) -- Dylan to decide). cc-pVTZ `high`, switch off: -531.169262524774.
->    Still owed: the cc-pVTZ profile split, when `queue.log` says `DONE`.
+>    condition at 6-31G(d) and at cc-pVTZ, where generation is 62% and digestion 16% -- Dylan
+>    to decide). cc-pVTZ `high`, switch off: -531.169262524774; at `low` the engine is 3.9e-6
+>    below it and the list 5.9e-7. The queue is `DONE` and nothing of it is owed.
 >
 > **START HERE -- 2026-09-17 (midday). The K share is measured, exact HF is near its limit, and
 > the direction is now RI-J for pure DFT, to be planned in its own session (Dylan). Branch

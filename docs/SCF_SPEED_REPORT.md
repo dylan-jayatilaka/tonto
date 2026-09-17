@@ -743,9 +743,16 @@ Karrikinolide RHF/6-31G(d), combined engine, 47.0 s J/K under `perf`
 | 3.1% | transfer: `transfer_*` |
 | 9.0% | the rest |
 
-So generation and per-quartet set-up are three quarters of the build, and digestion one seventh: the
-condition set for K from the pair list (worth it only if generation dominates K) is met at 6-31G(d).
-The cc-pVTZ profile is queued.
+The same at cc-pVTZ (1047.7 s J/K under `perf`, `perf_cc-pVTZ/perf.data`): generation 61.7%,
+digestion 15.8%, set-up and memory 7.8%, transfer 6.3%, the rest 8.0%.
+
+So generation and per-quartet set-up are 70-75% of the build at both basis sets, and digestion about
+one seventh: the condition set for K from the pair list (worth it only if generation dominates K) is
+met.
+
+`high` reference at cc-pVTZ, switch off: −531.169262524774 (2179 s J/K). At `low` the engine
+(−531.169266412952) is 3.9e-6 below it and pair-list J with engine K (−531.169263118355) is 5.9e-7
+below: the list screens better here too, as at 6-31G(d).
 
 ### ORCA's approximate exchange on the zinc finger, RHF/def2-TZVP
 
