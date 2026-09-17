@@ -54,10 +54,11 @@ purpose, and verbose is right there.
 ## 2. Current focus
 
 The ordered list of next actions, and the reasoning behind each, is the **handover section
-at the top of `DEFERRED.md`** — read it before starting work. In outline: the ERI default
-moved to `low` (re-bless pending), then *Primitive-batched J and K* starting with its
-loop-order pilot, and the zinc-finger benchmark molecule; the CI platform table, the three
-untracked debug failures and the open MPI and DFT items are parked behind those.
+at the top of `DEFERRED.md`** — read it before starting work. In outline: the SCF speed-up —
+the primitive pair list for J (branch `esfs-order`) and density-fitted J for pure DFT (branch
+`ri-j`), both unmerged with `short` and `long` owed, then COSX for the exchange, to be planned
+first; the CI platform table, the three untracked debug failures and the open MPI and DFT
+items are parked behind those.
 
 **Do not move `DEFERRED.md`'s contents into this file.** This file answers *how does the
 project work*; `DEFERRED.md` answers *what are we doing now*. Merging them loses both.
