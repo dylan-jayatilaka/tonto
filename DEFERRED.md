@@ -124,6 +124,16 @@ now covers the whole project, so it was renamed.)*
 >   exchange, and `make_r_JK_engine` builds J and K together, so the Fock routines need a J-only
 >   plus K-only route.
 >
+> **Profile taken, 2026-09-17 (evening), before the COSX plan.** The XC time is not Tonto's grid
+> code: 58% of the zinc finger RI-J job is `dgemm_` in the netlib reference BLAS, the two matrix
+> products per batch; the basis function values are 1%. With OpenBLAS (one thread, unpacked from
+> the package, nothing installed or rebuilt) XC goes 214.9 -> 32.9 s and the job 339 -> 139 s, for
+> 1.1e-10 Eh. Table: `docs/SCF_SPEED_REPORT.md`, *Where the XC time goes*. So the batch code needs
+> no rework before COSX is built on it, and COSX's own contractions should be `dgemm`-shaped. It
+> raises the parked OpenBLAS item (*adopt OpenBLAS consistently*; forces a re-bless) -- Dylan to
+> decide. **Dylan, same evening: the exact J and K routes stay, as the fall-back for
+> non-approximate work; RI-J and COSX are options beside them.**
+>
 > **START HERE -- 2026-09-17 (afternoon). RI-J works: on branch `ri-j` (off `esfs-order`,
 > pushed), validated against ORCA to 1e-8 Eh in the fitting error, and J is 6-40 times faster
 > (zinc finger BLYP/def2-TZVP 1207 -> 69 s; whole job 337 s, of which XC is 215 s -- the next

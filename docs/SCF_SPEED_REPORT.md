@@ -814,3 +814,41 @@ comparable digit for digit with these cartesian rows.
 **Where the time goes now**, zinc finger def2-TZVP with RI-J (338.9 CPU s): XC matrix and energy
 214.9 (63%), J 68.6 (20%), initial guess 22.1, diagonalisation 19.0, DIIS 8.9. ORCA's whole job is
 85 s. The XC quadrature is the next bottleneck.
+
+## Where the XC time goes: it is the reference `dgemm`, 2026-09-17 (evening)
+
+Taken before planning COSX, which shares the grid machinery. Zinc finger BLYP/def2-TZVP cartesian
+with RI-J at `low`, the 337 s row above, same binary (`tonto_ri`) and input, one core. Runs in
+`~/tonto_runs/xc_profile_2026-09-17/`.
+
+**Flat `perf record`** (377 s under perf, XC 235 s, energy unchanged):
+
+| share | where |
+|---|---|
+| 58.1% | `dgemm_` in `libblas.so.3` -- the netlib reference BLAS, which is what Ubuntu links by default |
+| 15.6% | `GAUSSIAN_PAIR_LIST:add_to_RI_J` |
+| 10.5% | `MAT{REAL}:to_product_of`, the hand-written matrix product (initial guess, DIIS, MO update) |
+| 2.7% | `add_XC_mx_batched` itself (gather, scatter, the density loops) |
+| 1.2% | `SHELL1:make_nabla_grid_c`, the basis function values and gradients |
+| 1.2% | `dlasr_` (LAPACK, the eigensolver) |
+
+So the XC quadrature is almost entirely its two matrix products per batch, and the basis function
+values are 1% of the job. The functional does not appear.
+
+**The same job with OpenBLAS.** `libopenblas0-serial` 0.3.32 unpacked from the Ubuntu package into
+the run directory and put first on `LD_LIBRARY_PATH` -- nothing installed, no rebuild; it replaces
+LAPACK as well as BLAS. One run each, CPU s:
+
+| | reference BLAS | OpenBLAS, one thread |
+|---|---|---|
+| XC matrix and energy | 214.9 | 32.9 |
+| Fock build (RI-J) | 68.6 | 65.8 |
+| Initial guess | 22.1 | 10.0 |
+| MO update | 19.0 | 15.9 |
+| DIIS | 8.9 | 8.8 |
+| Total | 338.9 | 139.0 |
+| Energy | −3108.233970109783 | −3108.233970109675 |
+
+XC is 6.5 times faster and the job 2.4 times, for a 1.1e-10 Eh change. ORCA's whole job is 85 s.
+J is now the largest part again (47%). The OpenBLAS item in `DEFERRED.md` (*adopt OpenBLAS
+consistently*) has the hazards: threads must be pinned to one, and it forces a full re-bless.
