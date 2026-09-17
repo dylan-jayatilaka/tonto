@@ -153,12 +153,19 @@ now covers the whole project, so it was renamed.)*
 > `docs/TONTO_SCF_SPEED_UP.md` §3.2 and §5.4 as the background.
 >
 > **Later the same day (2026-09-17): K share measured, RI-J chosen.** Pair-list J plus engine K
-> is *slower* for RHF (95.7 against 55.5 s J/K, karrikinolide 6-31G(d), three repeats): the
+> is *slower* for RHF (95.7 against 55.5 s J/K at 6-31G(d), 1569 against 1083 s at cc-pVTZ,
+> karrikinolide, three repeats each; `docs/SCF_SPEED_REPORT.md`, *The K share*): the
 > combined engine gets J almost free, so only K matters for HF and hybrids, and exact HF is near
 > its limit (Tonto ~1.1x g09 at def2-TZVP). The measurement edit to `make_r_JK_engine` is on the
-> branch, measurement only. Queued: cc-pVTZ repeats, a karrikinolide RHF `high` reference (the
-> switch moves the `low` energy by 1.9e-6), a `perf` profile of the RHF K build, and ORCA
-> `RIJCOSX`/`RIJK` on the zinc finger. **Direction: RI-J for pure DFT, planned separately** --
+> branch, measurement only. **Running detached at clear time** (`~/tonto_runs/k_share_2026-09-17/queue.sh`,
+> results in `queue.log`, `DONE` at the end, ~75 min from 11:45): karrikinolide RHF `high` references
+> at 6-31G(d) (off and on) and cc-pVTZ (off) -- the switch moves the `low` energy by +1.9e-6 and
+> −3.3e-6, and which side is nearer `high` is unknown; flat `perf record` profiles of the RHF build
+> (`perf_6-31Gd/perf.data`, `perf_cc-pVTZ/perf.data`) to split K into integral generation, transfer
+> and digestion; and ORCA `RIJCOSX` and `RIJK` RHF/def2-TZVP on the zinc finger
+> (`vs_g09_orca_znfinger_2026-09-17/orca_rhf_def2-TZVP_{RIJCOSX,RIJK}`, against NoRI
+> −3102.025942739 and 1566 s). **First job next session:** read `queue.log`, `perf report` both
+> profiles, and add the rows to `docs/SCF_SPEED_REPORT.md`. **Direction: RI-J for pure DFT, planned separately** --
 > see *RI-J for pure DFT* under *Science and features*.
 >
 > **Open decisions for Dylan:** tune the count-scaled cutoff (it costs the 10% gain the unscaled
@@ -2899,7 +2906,7 @@ J/K (cartesian, so more functions) against g09 1365 s and ORCA 1566 s wall, *The
 benchmark* in `docs/SCF_SPEED_REPORT.md`. And for HF and hybrids a separate J gains nothing,
 because the combined engine gets J almost free from K's integrals: karrikinolide RHF/6-31G(d),
 pair-list J plus engine K 95.7 s against the combined engine's 55.5 s (three repeats; cc-pVTZ
-pending, `~/tonto_runs/k_share_2026-09-17/`). The large gap is in pure DFT: BLYP/def2-TZVP, Tonto
+1569 against 1083 s, `~/tonto_runs/k_share_2026-09-17/`). The large gap is in pure DFT: BLYP/def2-TZVP, Tonto
 pair-list J 1207 s against ORCA's RI-J default 84.7 s, which is 0.75e-3 Eh from its exact energy.
 
 **RI-J in outline.** Expand each product chi_mu chi_nu in an auxiliary basis {P}:

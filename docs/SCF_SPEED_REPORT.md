@@ -708,3 +708,20 @@ The pair-list BLYP energies sit 1.7e-6 (SVP) and 1.1e-6 (TZVP) below the engine'
 direction of the engine's 2.3e-6 `low` error at 6-31G(d), so probably the same screening loss; no
 `high` run was made for def2 to confirm it. One timing each, so the SVP difference is inside the noise; the TZVP one is not.
 RHF/def2-TZVP costs about 1.1x the BLYP J build, the same ratio as at def2-SVP.
+
+## The K share: pair-list J beside the combined engine, 2026-09-17
+
+Karrikinolide RHF at `low`, promolecule guess. `off` is the `develop` combined J/K engine; `on` sets
+`use_gaussian_pair_J= TRUE`, so `make_r_JK_engine` takes J from the pair list and runs its quartet
+loop for K only. Three pairs, the two runs of each pair concurrent on cores 1 and 3. J/K CPU s.
+Runs in `~/tonto_runs/k_share_2026-09-17/`.
+
+| basis | off | on | on/off | energy on − off |
+|---|---|---|---|---|
+| 6-31G(d) | 53.8 55.9 57.0, mean 55.5 | 93.8 94.5 98.8, mean 95.7 | 1.72 | +1.9e-6 |
+| cc-pVTZ | 1104.7 1069.5 1073.5, mean 1082.5 | 1590.0 1558.1 1559.9, mean 1569.3 | 1.45 | −3.3e-6 |
+
+The engine's K loop costs about what the combined build costs, so J from the combined engine is
+nearly free and the separate J pass is pure overhead. For HF and hybrids only K matters. RHF water
+6-31G(d) at `high` gives identical energies on and off, so the energy shifts at `low` are the two
+screenings differing; `high` references for karrikinolide are queued (`queue.sh`, `queue.log`).
