@@ -729,3 +729,31 @@ screenings differing; `high` references for karrikinolide are queued (`queue.sh`
 `high` reference, 6-31G(d): −530.980808227207 off, −530.980808227198 on (140.7 s J/K on, 76.3 s
 off). At `low` the engine is 2.37e-6 below it and the pair list 4.7e-7: the list's primitive
 screening is five times more accurate here, as on the zinc finger.
+
+### Where the RHF build spends its time (flat `perf record`, 6-31G(d), `low`)
+
+Karrikinolide RHF/6-31G(d), combined engine, 47.0 s J/K under `perf`
+(`~/tonto_runs/k_share_2026-09-17/perf_6-31Gd/perf.data`), symbols grouped:
+
+| share | what |
+|---|---|
+| 59.5% | integral generation: `make_esfs*`, `RYS:*`, `exp` |
+| 14.5% | quartet set-up and memory: `set_cd_new`, `set_reusing_storage`, `set_shell2_indices_from`, `malloc` |
+| 13.6% | J and K digestion: `make_r_JK_engine*` |
+| 3.1% | transfer: `transfer_*` |
+| 9.0% | the rest |
+
+So generation and per-quartet set-up are three quarters of the build, and digestion one seventh: the
+condition set for K from the pair list (worth it only if generation dominates K) is met at 6-31G(d).
+The cc-pVTZ profile is queued.
+
+### ORCA's approximate exchange on the zinc finger, RHF/def2-TZVP
+
+One core, against ORCA `NoRI` −3102.025942739 in 1566 s wall:
+
+| method | energy | error / Eh | wall / s |
+|---|---|---|---|
+| `RIJCOSX` | −3102.026644041 | −7.0e-4 | 499 |
+| `RIJK` | −3102.025484906 | +4.6e-4 | 421 |
+
+Both are three to four times faster than the exact build, at errors of the size RI-J makes for BLYP.
