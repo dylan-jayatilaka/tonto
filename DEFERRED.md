@@ -101,6 +101,41 @@ now covers the whole project, so it was renamed.)*
 > **The method, the loop-order explanation and the failed attempts are now summarised for a fresh
 > reader in `docs/TONTO_SCF_SPEED_UP.md`** (Dylan, 2026-09-17); this file stays the task register.
 >
+> **START HERE -- 2026-09-17 (midday). The K share is measured, exact HF is near its limit, and
+> the direction is now RI-J for pure DFT, to be planned in its own session (Dylan). Branch
+> `esfs-order`, pushed, not merged. A detached queue is running.**
+>
+> 1. **For HF and hybrids a separate J gains nothing.** `use_gaussian_pair_J= TRUE` now also makes
+>    `make_r_JK_engine` take J from the list and run the quartet loop for K only -- measurement
+>    code, off by default. Karrikinolide RHF, three concurrent pairs: J/K 55.5 -> 95.7 s at
+>    6-31G(d), 1083 -> 1569 s at cc-pVTZ. The combined engine gets J almost free from K's
+>    integrals, so only a faster K helps. Table: `docs/SCF_SPEED_REPORT.md`, *The K share*.
+> 2. **Exact HF is close to the established codes**: zinc finger RHF/def2-TZVP, Tonto 1527 s J/K
+>    (cartesian, more functions), g09 1365 s, ORCA 1566 s. The big gap is pure DFT: BLYP
+>    def2-TZVP, Tonto pair-list J 1207 s against ORCA RI-J 85 s.
+> 3. **Decision (Dylan): RI-J first; COSX and RI-K not pursued yet.** New entry *RI-J for pure
+>    DFT; COSX and RI-K not pursued yet* under *Science and features*: the outline, what Tonto has
+>    (three-centre integrals from the Obara-Saika quartet code with a zero-exponent s shell) and
+>    what it needs (auxiliary bases, storage shape, accuracy target, validation). **Needs a
+>    separate planning session before any code.**
+> 4. **The pair list screens better than the engine at `low` for RHF too.** Karrikinolide
+>    RHF/6-31G(d) `high` −530.980808227 (off and on agree to 1e-14); at `low` the engine is
+>    2.4e-6 below it, the list 4.7e-7.
+> 5. **K from the pair list is now conditional**: worth building only if the profile (item 6)
+>    shows integral generation dominating K; expect 10-20% at best.
+> 6. **Detached queue** `~/tonto_runs/k_share_2026-09-17/queue.sh`, log `queue.log` (`DONE` at the
+>    end, expected ~13:00), one job at a time: [done] the 6-31G(d) `high` pair above; flat `perf
+>    record` of the RHF 6-31G(d) build (`perf_6-31Gd/perf.data`); ORCA `RIJCOSX` and `RIJK`
+>    RHF/def2-TZVP on the zinc finger (`vs_g09_orca_znfinger_2026-09-17/orca_rhf_def2-TZVP_{RIJCOSX,RIJK}`,
+>    against NoRI −3102.025942739, 1566 s); cc-pVTZ `high` reference with the switch off (the
+>    switch moved the `low` energy by −3.3e-6 there); `perf record` at cc-pVTZ (`perf_cc-pVTZ/`).
+>
+> **First job next session:** read `queue.log`; `perf report -i perf_*/perf.data` and split the RHF
+> build into integral generation (`make_esfs*`, `RYS:*`), transfer (`transfer_*`) and K digestion
+> (`make_r_JK_engine_k`); add the ORCA RI rows (energy error and time) and the profile split to
+> `docs/SCF_SPEED_REPORT.md`; then decide with Dylan whether K from the pair list is worth it,
+> and schedule the RI-J planning session.
+>
 > **START HERE -- 2026-09-17 (morning). Overnight on branch `esfs-order` (pushed, not merged):
 > step 0 answered, step 3 built for J, the zinc-finger comparison suite running.** Details under
 > *Primitive-batched J and K*; runs in `~/tonto_runs/{esfs_order,pair_list,gpl_J}_2026-09-17/`.
@@ -139,38 +174,19 @@ now covers the whole project, so it was renamed.)*
 >    (g09/ORCA capped at 2 GB). Old session scratch moved off `/tmp` to
 >    `~/tonto_runs/old_session_scratch_2026-09-17/`.
 >
-> **First job next session:** two detached runs finish after this session -- zinc finger BLYP and
-> RHF def2-TZVP cartesian on the `develop` engine (`cart.log` in
-> `~/tonto_runs/vs_g09_orca_znfinger_2026-09-17/`). Run `collect.py` there and add the TZVP rows
-> (with the pair-list BLYP row, J/K 1207.3 s) to `docs/SCF_SPEED_REPORT.md`, *The zinc-finger
-> benchmark*.
+> *(Done 2026-09-17 midday: the def2-TZVP cartesian rows are in `docs/SCF_SPEED_REPORT.md`.)*
 >
 > **Zinc-finger spherical failure is out of scope for the integral work** (Dylan): see its
 > Correctness entry, possibly low-lying states needing pFON.
 >
-> **NEXT (Dylan, 2026-09-17): the K terms from the pair list.** Start by deciding the shape --
+> *(Superseded at midday -- see the START HERE above.)* **NEXT (Dylan, 2026-09-17): the K terms from the pair list.** Start by deciding the shape --
 > feeding the existing quartet digestion from the list's batches, or a primitive-level K -- with
 > `docs/TONTO_SCF_SPEED_UP.md` §3.2 and §5.4 as the background.
 >
-> **Later the same day (2026-09-17): K share measured, RI-J chosen.** Pair-list J plus engine K
-> is *slower* for RHF (95.7 against 55.5 s J/K at 6-31G(d), 1569 against 1083 s at cc-pVTZ,
-> karrikinolide, three repeats each; `docs/SCF_SPEED_REPORT.md`, *The K share*): the
-> combined engine gets J almost free, so only K matters for HF and hybrids, and exact HF is near
-> its limit (Tonto ~1.1x g09 at def2-TZVP). The measurement edit to `make_r_JK_engine` is on the
-> branch, measurement only. **Running detached at clear time** (`~/tonto_runs/k_share_2026-09-17/queue.sh`,
-> results in `queue.log`, `DONE` at the end, ~75 min from 11:45): karrikinolide RHF `high` references
-> at 6-31G(d) (off and on) and cc-pVTZ (off) -- the switch moves the `low` energy by +1.9e-6 and
-> −3.3e-6, and which side is nearer `high` is unknown; flat `perf record` profiles of the RHF build
-> (`perf_6-31Gd/perf.data`, `perf_cc-pVTZ/perf.data`) to split K into integral generation, transfer
-> and digestion; and ORCA `RIJCOSX` and `RIJK` RHF/def2-TZVP on the zinc finger
-> (`vs_g09_orca_znfinger_2026-09-17/orca_rhf_def2-TZVP_{RIJCOSX,RIJK}`, against NoRI
-> −3102.025942739 and 1566 s). **First job next session:** read `queue.log`, `perf report` both
-> profiles, and add the rows to `docs/SCF_SPEED_REPORT.md`. **Direction: RI-J for pure DFT, planned separately** --
-> see *RI-J for pure DFT* under *Science and features*.
->
 > **Open decisions for Dylan:** tune the count-scaled cutoff (it costs the 10% gain the unscaled
 > list had at 6-31G(d)); K (the harder index pattern) -- shell-quartet digestion fed from the
-> list, or something else; batching across k (the GPU shape); `short`/`long` owed before any
+> list, or something else *(answered at midday: K from the list pays only if the profile shows
+> integral generation dominating K)*; batching across k (the GPU shape); `short`/`long` owed before any
 > merge (the switch is off by default, and the pilot is reverted, so no reference should move).
 >
 > **START HERE -- 2026-09-16 (late). The classical Rys work is wrapped up; the next direction is

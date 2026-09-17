@@ -725,3 +725,7 @@ The engine's K loop costs about what the combined build costs, so J from the com
 nearly free and the separate J pass is pure overhead. For HF and hybrids only K matters. RHF water
 6-31G(d) at `high` gives identical energies on and off, so the energy shifts at `low` are the two
 screenings differing; `high` references for karrikinolide are queued (`queue.sh`, `queue.log`).
+
+`high` reference, 6-31G(d): −530.980808227207 off, −530.980808227198 on (140.7 s J/K on, 76.3 s
+off). At `low` the engine is 2.37e-6 below it and the pair list 4.7e-7: the list's primitive
+screening is five times more accurate here, as on the zinc finger.
