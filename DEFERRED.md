@@ -101,6 +101,33 @@ now covers the whole project, so it was renamed.)*
 > **The method, the loop-order explanation and the failed attempts are now summarised for a fresh
 > reader in `docs/TONTO_SCF_SPEED_UP.md`** (Dylan, 2026-09-17); this file stays the task register.
 >
+> **START HERE -- 2026-09-17 (afternoon). RI-J is planned and written, on branch `ri-j` (off
+> `esfs-order`); first compile and the water checks are in progress.** Plan:
+> `~/.claude/plans/jaunty-discovering-kahan.md`, summarised in the entry *RI-J for pure DFT*.
+>
+> 1. **Decisions (Dylan):** integrals from the pair-list kernel, an auxiliary primitive being a
+>    one-centre pair of class (L,0); direct, two passes per J build, nothing stored; closed-shell
+>    and unrestricted pure DFT, serial, `def2-universal-jfit` only. Owed: automatic auxiliary
+>    bases (pob-TZVP, so HAR), MPI, a stored variant if timings ask, the effect on structure factors.
+> 2. **Written:** `auxiliary_basis_name=` (on `MOLECULE`, not `ATOM`; always spherical);
+>    `scfdata= { use_RI_J= TRUE }`, which dies for HF and hybrids; `GAUSSIAN_PAIR_LIST:add_to_RI_J`
+>    and `make_coulomb_metric`; `MOLECULE.FOCK:make_r_J_RI`, `initialize_RI_J` (called from
+>    `initialize_SCF`, before the guess), `make_auxiliary_pair_list`; `MAT{REAL}:to_cholesky_factor`
+>    and `solve_cholesky_equation`; `basis_sets/def2-universal-jfit` from the Basis Set Exchange.
+> 3. **Also written, for Dylan's other work:** three-centre overlaps <a b c> as an array --
+>    `GAUSSIAN2:make_3_center_overlap_ints` (Gauss-Hermite, like the two-centre overlaps),
+>    `SHELL2:make_3_center_overlap_ints`, `MOLECULE.INTS:make_3_center_overlaps(S)`; the third
+>    function is the auxiliary basis, which may name any library basis. Check keyword
+>    `put_3_center_overlaps_check` compares with quadrature on the DFT grid.
+> 4. **Outside reference for the fitting error:** ORCA 6.1.1 water BLYP/def2-SVP, `def2/J`:
+>    -76.337011437 with RI, -76.336924823 `NoRI`, so -8.66e-5 Eh. Tonto spherical should match this
+>    difference. Inputs for Tonto and ORCA are in the session scratchpad and are trivial to remake.
+> 5. **Suspected defect seen in passing, not touched:** `make_u_KS_Fock_mx` adds
+>    `K.a + K.b` to both `F.a` and `F.b` for hybrids; right for a closed shell, apparently wrong
+>    for an open one. To be checked against g09 UB3LYP before anything is changed.
+> 6. **The detached queue** of the midday handover finished its ORCA rows (RIJK -3102.025484906,
+>    7:01 wall) and was on the cc-pVTZ `high` reference; its first job below is still owed.
+>
 > **START HERE -- 2026-09-17 (midday). The K share is measured, exact HF is near its limit, and
 > the direction is now RI-J for pure DFT, to be planned in its own session (Dylan). Branch
 > `esfs-order`, pushed, not merged. A detached queue is running.**
