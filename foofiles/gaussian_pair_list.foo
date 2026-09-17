@@ -103,8 +103,8 @@ contains
 
       Ix,Iy,Iz :: MAT3{REAL}@
       rt,wt,Pg,fvp :: MAT{REAL}@
-      ev,Q,Qc,Q_sp,class_P_max,xv,C00x,C00y,C00z,D00x,D00y,D00z,B10,B01,B00,W :: VEC{REAL}@
-      nxe,nye,nze,nxf,nyf,nzf,order,idx,jv,n_sp,class_n_min :: VEC{INT}@
+      ev,Q,class_P_max,xv,C00x,C00y,C00z,D00x,D00y,D00z,B10,B01,B00,W :: VEC{REAL}@
+      nxe,nye,nze,nxf,nyf,nzf,order,jv,n_sp,class_n_min :: VEC{INT}@
       rys :: RYS
       A,B,k,j,k_pos,j_pos,j_last,sp_k,n_e,n_f,fe,ff,e,f,n,n_roots,l_e,l_f,l_max :: INT
       m,i,n_big,first,last,chunk,c0,mc :: INT
@@ -141,31 +141,16 @@ contains
 
       ! Schwarz bound of each pair; each class's pairs by decreasing bound
       Q.create(.n_pairs)
-      .make_Schwarz_bounds(Q)
-      Q_sp.create(size(I_max))
-      Q_sp = ZERO
-      do k = 1,.n_pairs
-         sp_k = .shell_pair(k)
-         Q_sp(sp_k) = max(Q_sp(sp_k),Q(k))
-      end
-      do k = 1,.n_pairs
-         sp_k = .shell_pair(k)
-         if (Q_sp(sp_k)>ZERO) Q(k) = I_max(sp_k)*Q(k)/Q_sp(sp_k)
-      end
+      .make_AO_Schwarz_bounds(Q,I_max)
       order.create(.n_pairs)
+      .make_class_order(order,Q)
       n_big = max(maxval(.class_last-.class_first+1),1)
-      idx.create(n_big)
       jv.create(n_big)
       xv.create(n_big)
       do A = 1,.n_classes
          first = .class_first(A)
          last  = .class_last(A)
          if (last<first) cycle
-         Qc.create(last-first+1)
-         Qc = Q(first:last)
-         Qc.quick_sort(idx(1:last-first+1),decreasing_order=TRUE)
-         order(first:last) = first - 1 + idx(1:last-first+1)
-         Qc.destroy
          class_P_max(A) = maxval(P_max(.shell_pair(first:last)))
          class_n_min(A) = minval(n_sp(.shell_pair(first:last)))
       end
@@ -419,6 +404,463 @@ contains
                I(p,e+1,f+1) = C00(p)*I(p,e,f+1) + (e-1)*B10(p)*I(p,e-1,f+1) + f*B00(p)*I(p,e,f)
             end
          end
+      end
+
+   end
+
+!  ==========================
+!  Density fitting of J (RI-J)
+!  ==========================
+
+   add_to_RI_J(aux,make_d,d,PP,JJ,c,cutoff,I_max,w_max) :: PURE
+   ! One pass of a density-fitted coulomb build over the three-center
+   ! integrals (k|j), j a pair of "self" and k an auxiliary primitive of
+   ! "aux": a list of one-center pairs of class (L,0) whose .shell_pair
+   ! is the auxiliary shell. If "make_d", add to "d" the integrals of
+   ! the auxiliary functions with the transfer-space density "PP":
+   ! d(s).element(e) is for cartesian component e of auxiliary shell s.
+   ! Otherwise add to the transfer-space coulomb vectors "JJ" the
+   ! integrals contracted with the fitting coefficients "c", laid out as
+   ! "d"; "JJ" is then finished as in add_to_J, but without the last
+   ! factor of two. An integral is skipped when its bound times a weight
+   ! is below "cutoff" divided by the primitive counts of its shell pair
+   ! and its auxiliary shell. The weight is "w_max": for "d" the largest
+   ! density element of each shell pair, for "JJ" the largest coefficient
+   ! of each auxiliary shell. The bounds are as in add_to_J, from "I_max".
+      self :: IN
+      aux :: GAUSSIAN_PAIR_LIST, IN
+      make_d :: BIN, IN
+      d,JJ :: VEC{EVEC{REAL}}, INOUT
+      PP,c :: VEC{EVEC{REAL}}, IN
+      cutoff :: REAL, IN
+      I_max,w_max :: VEC{REAL}, IN
+
+      batch_max :: INT, parameter = 256
+
+      Ix,Iy,Iz :: MAT3{REAL}@
+      rt,wt,Pg,fvp :: MAT{REAL}@
+      ev,Q,Q_aux,class_w_max,xv,C00x,C00y,C00z,D00x,D00y,D00z,B10,B01,B00,W :: VEC{REAL}@
+      nxe,nye,nze,nxf,nyf,nzf,order,jv,n_sp,n_as,class_n_max :: VEC{INT}@
+      rys :: RYS
+      A,B,k,j,j_pos,s_k,sp_j,n_e,n_f,fe,ff,e,f,n,n_roots,l_e,l_f :: INT
+      m,n_big,first,last,chunk,c0,mc :: INT
+      zeta,eta,QPx,QPy,QPz,bound,cut_k,wk :: REAL
+
+      l_e = maxval(aux.class_l_sum)
+      l_f = maxval(.class_l_sum)
+      Ix.create(batch_max,l_e+1,l_f+1)
+      Iy.create(batch_max,l_e+1,l_f+1)
+      Iz.create(batch_max,l_e+1,l_f+1)
+      n = maxval(aux.class_n_gaussian)
+      ev.create(n)
+      nxe.create(n); nye.create(n); nze.create(n)
+      n = maxval(.class_n_gaussian)
+      Pg.create(batch_max,n)
+      fvp.create(batch_max,n)
+      nxf.create(n); nyf.create(n); nzf.create(n)
+      C00x.create(batch_max); C00y.create(batch_max); C00z.create(batch_max)
+      D00x.create(batch_max); D00y.create(batch_max); D00z.create(batch_max)
+      B10.create(batch_max); B01.create(batch_max); B00.create(batch_max)
+      W.create(batch_max)
+
+      ! Primitives kept per shell pair, and per auxiliary shell
+      n_sp.create(size(I_max))
+      n_sp = 0
+      do j = 1,.n_pairs
+         n_sp(.shell_pair(j)) = n_sp(.shell_pair(j)) + 1
+      end
+      n_as.create(size(d))
+      n_as = 0
+      do k = 1,aux.n_pairs
+         n_as(aux.shell_pair(k)) = n_as(aux.shell_pair(k)) + 1
+      end
+
+      ! Bounds; each class's pairs by decreasing bound
+      Q.create(.n_pairs)
+      .make_AO_Schwarz_bounds(Q,I_max)
+      order.create(.n_pairs)
+      .make_class_order(order,Q)
+      Q_aux.create(aux.n_pairs)
+      aux.make_Schwarz_bounds(Q_aux)
+
+      n_big = max(maxval(.class_last-.class_first+1),1)
+      jv.create(n_big)
+      xv.create(n_big)
+      class_w_max.create(.n_classes)
+      class_n_max.create(.n_classes)
+      class_w_max = ZERO
+      class_n_max = 1
+      do B = 1,.n_classes
+         first = .class_first(B)
+         last  = .class_last(B)
+         if (last<first) cycle
+         if (make_d) class_w_max(B) = maxval(w_max(.shell_pair(first:last)))
+         class_n_max(B) = maxval(n_sp(.shell_pair(first:last)))
+      end
+
+      do A = 1,aux.n_classes
+
+         if (aux.class_last(A)<aux.class_first(A)) cycle
+
+         l_e = aux.class_l_sum(A)
+         n_e = aux.class_n_gaussian(A)
+         fe  = aux.class_first_gaussian(A) - 1
+         do e = 1,n_e
+            nxe(e) = GAUSSIAN_DATA::nx(fe+e)
+            nye(e) = GAUSSIAN_DATA::ny(fe+e)
+            nze(e) = GAUSSIAN_DATA::nz(fe+e)
+         end
+
+         do B = 1,.n_classes
+
+            if (.class_last(B)<.class_first(B)) cycle
+
+            l_f = .class_l_sum(B)
+            n_f = .class_n_gaussian(B)
+            ff  = .class_first_gaussian(B) - 1
+            do f = 1,n_f
+               nxf(f) = GAUSSIAN_DATA::nx(ff+f)
+               nyf(f) = GAUSSIAN_DATA::ny(ff+f)
+               nzf(f) = GAUSSIAN_DATA::nz(ff+f)
+            end
+
+            n_roots = (l_e+l_f+2)/2
+            rys.set_n_roots(n_roots)
+            chunk = max(batch_max/n_roots,1)
+            rt.destroy; wt.destroy
+            rt.create(n_roots,chunk)
+            wt.create(n_roots,chunk)
+
+            do k = aux.class_first(A),aux.class_last(A)
+
+               s_k = aux.shell_pair(k)
+               cut_k = cutoff/n_as(s_k)
+               zeta = aux.exponent_sum(k)
+               if (make_d) then; wk = class_w_max(B)
+               else;             wk = w_max(s_k)
+               end
+
+               ! Gather the surviving partners and their X
+               m = 0
+               do j_pos = .class_first(B),.class_last(B)
+                  j = order(j_pos)
+                  sp_j = .shell_pair(j)
+                  bound = Q_aux(k)*Q(j)
+                  if (bound*wk<cut_k/class_n_max(B)) exit
+                  if (make_d) then
+                     if (bound*w_max(sp_j)<cut_k/n_sp(sp_j)) cycle
+                  else
+                     if (bound*wk<cut_k/n_sp(sp_j)) cycle
+                  end
+                  m = m + 1
+                  jv(m) = j
+                  eta = .exponent_sum(j)
+                  QPx = .center(1,j) - aux.center(1,k)
+                  QPy = .center(2,j) - aux.center(2,k)
+                  QPz = .center(3,j) - aux.center(3,k)
+                  xv(m) = zeta*eta/(zeta+eta)*(QPx*QPx + QPy*QPy + QPz*QPz)
+               end
+
+               do c0 = 1,m,chunk
+                  mc = min(chunk,m-c0+1)
+                  rys.get_weights_t2(mc,xv(c0:c0+mc-1),rt,wt)
+                  .add_batch_to_RI_J(aux,make_d,d,PP,JJ,c,k,jv(c0:c0+mc-1),mc,n_roots,mc*n_roots, &
+                     l_e,l_f,n_e,n_f,nxe,nye,nze,nxf,nyf,nzf,rt,wt,Ix,Iy,Iz, &
+                     C00x,C00y,C00z,D00x,D00y,D00z,B10,B01,B00,W,Pg,fvp,ev)
+               end
+
+            end
+
+         end
+      end
+
+   end
+
+   add_batch_to_RI_J(aux,make_d,d,PP,JJ,c,k,jv,m,n_roots,n_p,l_e,l_f,n_e,n_f,nxe,nye,nze,nxf,nyf,nzf,rt,wt,Ix,Iy,Iz,C00x,C00y,C00z,D00x,D00y,D00z,B10,B01,B00,W,Pg,fvp,ev) :: private, PURE
+   ! The integrals of auxiliary primitive "k" of "aux" with the "m"
+   ! pairs "jv", contracted as add_to_RI_J describes. The layout is that
+   ! of add_batch_to_J, the auxiliary primitive on the e side.
+      self :: IN
+      aux :: GAUSSIAN_PAIR_LIST, IN
+      make_d :: BIN, IN
+      d,JJ :: VEC{EVEC{REAL}}, INOUT
+      PP,c :: VEC{EVEC{REAL}}, IN
+      k,m,n_roots,n_p,l_e,l_f,n_e,n_f :: INT, IN
+      jv :: VEC{INT}(m), IN
+      nxe,nye,nze :: VEC{INT}(*), IN
+      nxf,nyf,nzf :: VEC{INT}(*), IN
+      rt,wt :: MAT{REAL}(n_roots,m), IN
+      Ix,Iy,Iz :: MAT3{REAL}(n_p,l_e+1,l_f+1), INOUT
+      C00x,C00y,C00z,D00x,D00y,D00z,B10,B01,B00,W :: VEC{REAL}(n_p), INOUT
+      Pg,fvp :: MAT{REAL}(n_p,n_f), INOUT
+      ev :: VEC{REAL}(n_e), INOUT
+
+      i,j,n,p,e,f,s_k,sp_j,xe,ye,ze,xf,yf,zf :: INT
+      zeta,eta,zinv,einv,rho,rho_zinv,rho_einv,half_zinv,half_einv :: REAL
+      PAx,PAy,PAz,QCx,QCy,QCz,QPx,QPy,QPz,cc,t2,t2_rz,t2_re,t,s,ck :: REAL
+
+      s_k  = aux.shell_pair(k)
+      zeta = aux.exponent_sum(k)
+      zinv = aux.exponent_inv(k)
+      half_zinv = HALF*zinv
+      PAx = aux.center_diff(1,k)
+      PAy = aux.center_diff(2,k)
+      PAz = aux.center_diff(3,k)
+
+      ! Recursion coefficients and weight for each entry
+      p = 0
+      do i = 1,m
+         j = jv(i)
+         eta  = .exponent_sum(j)
+         einv = .exponent_inv(j)
+         half_einv = HALF*einv
+         QCx = .center_diff(1,j)
+         QCy = .center_diff(2,j)
+         QCz = .center_diff(3,j)
+         QPx = .center(1,j) - aux.center(1,k)
+         QPy = .center(2,j) - aux.center(2,k)
+         QPz = .center(3,j) - aux.center(3,k)
+         rho = zeta*eta/(zeta+eta)
+         rho_zinv = rho*zinv
+         rho_einv = rho*einv
+         cc = TWOPI5ON2*aux.prefactor(k)*.prefactor(j)*sqrt(rho)*.factor(j)
+         do n = 1,n_roots
+            p = p + 1
+            t2 = rt(n,i)
+            t2_rz = t2*rho_zinv
+            t2_re = t2*rho_einv
+            C00x(p) = PAx + t2_rz*QPx
+            C00y(p) = PAy + t2_rz*QPy
+            C00z(p) = PAz + t2_rz*QPz
+            D00x(p) = QCx - t2_re*QPx
+            D00y(p) = QCy - t2_re*QPy
+            D00z(p) = QCz - t2_re*QPz
+            B10(p) = (ONE - t2_rz)*half_zinv
+            B01(p) = (ONE - t2_re)*half_einv
+            B00(p) = t2_rz*half_einv
+            W(p) = cc*wt(n,i)
+         end
+      end
+
+      GAUSSIAN_PAIR_LIST::make_2d_batch(Ix,n_p,l_e,l_f,C00x,D00x,B10,B01,B00)
+      GAUSSIAN_PAIR_LIST::make_2d_batch(Iy,n_p,l_e,l_f,C00y,D00y,B10,B01,B00)
+      GAUSSIAN_PAIR_LIST::make_2d_batch(Iz,n_p,l_e,l_f,C00z,D00z,B10,B01,B00)
+      do f = 1,l_f+1
+      do e = 1,l_e+1
+         do p = 1,n_p
+            Iz(p,e,f) = Iz(p,e,f)*W(p)
+         end
+      end
+      end
+
+      if (make_d) then
+
+         ! The density of each partner, then the sum over all of them.
+         ! The factor of two: a shell pair stands for (ab| and (ba|
+         do f = 1,n_f
+            p = 0
+            do i = 1,m
+               t = PP(.shell_pair(jv(i))).element(f)
+               do n = 1,n_roots
+                  p = p + 1
+                  Pg(p,f) = t
+               end
+            end
+         end
+         ev = ZERO
+         do f = 1,n_f
+            xf = nxf(f); yf = nyf(f); zf = nzf(f)
+            do e = 1,n_e
+               xe = nxe(e); ye = nye(e); ze = nze(e)
+               s = ZERO
+               do p = 1,n_p
+                  s = s + Ix(p,xe,xf)*Iy(p,ye,yf)*Iz(p,ze,zf)*Pg(p,f)
+               end
+               ev(e) = ev(e) + s
+            end
+         end
+         d(s_k).element(1:n_e) = d(s_k).element(1:n_e) + TWO*ev
+
+      else
+
+         fvp = ZERO
+         do f = 1,n_f
+            xf = nxf(f); yf = nyf(f); zf = nzf(f)
+            do e = 1,n_e
+               xe = nxe(e); ye = nye(e); ze = nze(e)
+               ck = c(s_k).element(e)
+               do p = 1,n_p
+                  fvp(p,f) = fvp(p,f) + Ix(p,xe,xf)*Iy(p,ye,yf)*Iz(p,ze,zf)*ck
+               end
+            end
+         end
+         p = 0
+         do i = 1,m
+            sp_j = .shell_pair(jv(i))
+            do n = 1,n_roots
+               p = p + 1
+               JJ(sp_j).element(1:n_f) = JJ(sp_j).element(1:n_f) + fvp(p,1:n_f)
+            end
+         end
+
+      end
+
+   end
+
+   make_coulomb_metric(V,first) :: PURE
+   ! For a list of auxiliary primitives, as in add_to_RI_J, make "V",
+   ! the coulomb integrals (s e|s' f) between the contracted cartesian
+   ! auxiliary functions. Function e of auxiliary shell s is row
+   ! first(s)+e-1 of "V".
+      self :: IN
+      V :: MAT{REAL}, OUT
+      first :: VEC{INT}, IN
+
+      Ix,Iy,Iz :: MAT{REAL}@
+      nxe,nye,nze,nxf,nyf,nzf :: VEC{INT}@
+      rys :: RYS
+      A,B,k,j,e,f,n,n_e,n_f,fe,ff,l_e,l_f,l_max,row,col :: INT
+      zeta,eta,rho,rho_zinv,rho_einv,half_zinv,half_einv,t2_rz,t2_re,B10,B01,B00,cc,w :: REAL
+      QP :: VEC{REAL}(3)
+
+      l_max = maxval(.class_l_sum)
+      Ix.create(l_max+1,l_max+1)
+      Iy.create(l_max+1,l_max+1)
+      Iz.create(l_max+1,l_max+1)
+      n = maxval(.class_n_gaussian)
+      nxe.create(n); nye.create(n); nze.create(n)
+      nxf.create(n); nyf.create(n); nzf.create(n)
+
+      V = ZERO
+
+      do A = 1,.n_classes
+
+         if (.class_last(A)<.class_first(A)) cycle
+
+         l_e = .class_l_sum(A)
+         n_e = .class_n_gaussian(A)
+         fe  = .class_first_gaussian(A) - 1
+         do e = 1,n_e
+            nxe(e) = GAUSSIAN_DATA::nx(fe+e)
+            nye(e) = GAUSSIAN_DATA::ny(fe+e)
+            nze(e) = GAUSSIAN_DATA::nz(fe+e)
+         end
+
+         do B = 1,.n_classes
+
+            if (.class_last(B)<.class_first(B)) cycle
+
+            l_f = .class_l_sum(B)
+            n_f = .class_n_gaussian(B)
+            ff  = .class_first_gaussian(B) - 1
+            do f = 1,n_f
+               nxf(f) = GAUSSIAN_DATA::nx(ff+f)
+               nyf(f) = GAUSSIAN_DATA::ny(ff+f)
+               nzf(f) = GAUSSIAN_DATA::nz(ff+f)
+            end
+
+            rys.set_n_roots((l_e+l_f+2)/2)
+
+            do k = .class_first(A),.class_last(A)
+
+               zeta = .exponent_sum(k)
+               half_zinv = HALF*.exponent_inv(k)
+               row = first(.shell_pair(k)) - 1
+
+               do j = .class_first(B),.class_last(B)
+
+                  eta = .exponent_sum(j)
+                  half_einv = HALF*.exponent_inv(j)
+                  col = first(.shell_pair(j)) - 1
+
+                  QP  = .center(:,j) - .center(:,k)
+                  rho = zeta*eta/(zeta+eta)
+                  rho_zinv = rho*.exponent_inv(k)
+                  rho_einv = rho*.exponent_inv(j)
+                  cc = TWOPI5ON2*.prefactor(k)*.prefactor(j)*sqrt(rho)
+
+                  rys.get_weights(rho*dot_product(QP,QP))
+
+                  do n = 1,rys.n_roots
+                     t2_rz = rys.root(n)*rho_zinv
+                     t2_re = rys.root(n)*rho_einv
+                     B10 = (ONE - t2_rz)*half_zinv
+                     B01 = (ONE - t2_re)*half_einv
+                     B00 = t2_rz*half_einv
+                     GAUSSIAN_PAIR_LIST::make_2d(Ix,l_e,l_f,t2_rz*QP(1),-t2_re*QP(1),B10,B01,B00)
+                     GAUSSIAN_PAIR_LIST::make_2d(Iy,l_e,l_f,t2_rz*QP(2),-t2_re*QP(2),B10,B01,B00)
+                     GAUSSIAN_PAIR_LIST::make_2d(Iz,l_e,l_f,t2_rz*QP(3),-t2_re*QP(3),B10,B01,B00)
+                     w = cc*rys.weight(n)
+                     do f = 1,n_f
+                     do e = 1,n_e
+                        V(row+e,col+f) = V(row+e,col+f) &
+                           + w*Ix(nxe(e),nxf(f))*Iy(nye(e),nyf(f))*Iz(nze(e),nzf(f))
+                     end
+                     end
+                  end
+
+               end
+            end
+
+         end
+      end
+
+   end
+
+!  ======
+!  Bounds
+!  ======
+
+   make_AO_Schwarz_bounds(Q,I_max) :: PURE
+   ! Set "Q(k)" to the bound of pair "k" in the AO basis: the AO bound
+   ! "I_max" of its shell pair, scaled by the pair's share of the largest
+   ! transfer-space bound in that shell pair. Transfer-space values alone
+   ! do not bound AO contributions.
+      self :: IN
+      Q :: VEC{REAL}(.n_pairs), OUT
+      I_max :: VEC{REAL}, IN
+
+      Q_sp :: VEC{REAL}@
+      k,sp_k :: INT
+
+      .make_Schwarz_bounds(Q)
+
+      Q_sp.create(size(I_max))
+      Q_sp = ZERO
+      do k = 1,.n_pairs
+         sp_k = .shell_pair(k)
+         Q_sp(sp_k) = max(Q_sp(sp_k),Q(k))
+      end
+      do k = 1,.n_pairs
+         sp_k = .shell_pair(k)
+         if (Q_sp(sp_k)>ZERO) Q(k) = I_max(sp_k)*Q(k)/Q_sp(sp_k)
+      end
+      Q_sp.destroy
+
+   end
+
+   make_class_order(order,Q) :: PURE
+   ! Set "order" so that order(first:last) lists the pairs of each
+   ! class by decreasing "Q".
+      self :: IN
+      order :: VEC{INT}(.n_pairs), OUT
+      Q :: VEC{REAL}(.n_pairs), IN
+
+      Qc :: VEC{REAL}@
+      idx :: VEC{INT}@
+      A,first,last :: INT
+
+      do A = 1,.n_classes
+         first = .class_first(A)
+         last  = .class_last(A)
+         if (last<first) cycle
+         Qc.create(last-first+1)
+         idx.create(last-first+1)
+         Qc = Q(first:last)
+         Qc.quick_sort(idx,decreasing_order=TRUE)
+         order(first:last) = first - 1 + idx
+         idx.destroy
+         Qc.destroy
       end
 
    end

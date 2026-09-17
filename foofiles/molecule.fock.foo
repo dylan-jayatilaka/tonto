@@ -336,11 +336,20 @@ contains
       K.create(.n_bf, "u ")
 
       if (add_r12) then
+         if (.SCF_data.using_RI_J AND .RI_metric_factor.allocated) then
+            ! No exact exchange: one fit of the total density serves both
+            J.b = P.a + P.b
+            if (.use_spherical_basis) then; .make_r_J_engine_sph(J.a,J.b)
+            else;                           .make_r_J_engine(J.a,J.b)
+            end
+            J.b = ZERO
+         else
             if (.use_spherical_basis) then
                .make_u_JK_engine_sph(J,K,P)
             else
                .make_u_JK_engine(J,K,P)
             end
+         end
 
          F.a = J.a + J.b
          F.b  = J.a + J.b
@@ -1890,6 +1899,12 @@ contains
       skip,ab_same,cd_same,any_same,no_max_I,ab_eq_cd :: BIN
       work :: ERI_SCRATCH
 
+      ! Atoms in a promolecule guess have no metric, and take the exact J
+      if (.SCF_data.using_RI_J AND .RI_metric_factor.allocated) then
+         .make_r_J_RI(J,P)
+         return
+      end
+
       if (.SCF_data.using_gaussian_pair_J) then
          .make_r_J_gaussian_pairs(J,P)
          return
@@ -2025,6 +2040,229 @@ contains
 
       JJ.destroy
       PP.destroy
+
+   end
+
+   make_r_J_RI(J,P) :: PURE
+   ! Make the real coulomb matrix "J" from a symmetric density matrix "P"
+   ! by density fitting in the auxiliary basis with the coulomb metric
+   ! (RI-J): d = (Q|P), V c = d, J = (ab|Q) c. Nothing is stored; each
+   ! build makes two passes over the three-center integrals.
+   ! .initialize_RI_J must have been called at this geometry.
+      self :: INOUT
+      J :: MAT{REAL}, OUT
+      P :: MAT{REAL}, IN
+
+   ENSURE(.RI_metric_factor.allocated,"call .initialize_RI_J first")
+
+      PP,JJ,d,c :: VEC{EVEC{REAL}}@
+      max_P,c_max,ds,cs :: VEC{REAL}@
+      U :: MAT{REAL}@
+      shell_l,first_cart,first_sph :: VEC{INT}@
+      gpl,aux :: GAUSSIAN_PAIR_LIST
+      s,l,f,n,n_shell :: INT
+      cutoff :: REAL
+
+      .reverse_transfer(P,PP)
+      .create_transfer(JJ)
+      .make_gaussian_pair_list(gpl)
+      .make_auxiliary_pair_list(aux,shell_l,first_cart,first_sph)
+
+      if (.max_I.deallocated) .initialize_max_I
+      max_P.create(.n_shell_pairs)
+      .make_max_density_elements(max_P,P)
+
+      n_shell = shell_l.dim
+      d.create(n_shell)
+      c.create(n_shell)
+      do s = 1,n_shell
+         n = GAUSSIAN_DATA:n_comp(shell_l(s))
+         d(s).element.create(n)
+         c(s).element.create(n)
+         d(s).element = ZERO
+         c(s).element = ZERO
+      end
+
+      cutoff = .SCF_data.ERI_Schwarz_cutoff
+
+      ! The auxiliary functions with the density
+      gpl.add_to_RI_J(aux,TRUE,d,PP,JJ,c,cutoff,.max_I,max_P)
+
+      ! The fitting coefficients: spherical, solve, back to cartesian
+      n = .RI_metric_factor.dim1
+      ds.create(n)
+      cs.create(n)
+      do s = 1,n_shell
+         l = shell_l(s)
+         f = first_sph(s)
+         if (l<2) then
+            ds(f:f+2*l) = d(s).element
+         else
+            U = GAUSSIAN_DATA::spherical_harmonics_for(l).element
+            ds(f:f+2*l) = matmul(d(s).element,U)
+         end
+      end
+      .RI_metric_factor.solve_cholesky_equation(ds,cs)
+      c_max.create(n_shell)
+      do s = 1,n_shell
+         l = shell_l(s)
+         f = first_sph(s)
+         if (l<2) then
+            c(s).element = cs(f:f+2*l)
+         else
+            U = GAUSSIAN_DATA::spherical_harmonics_for(l).element
+            c(s).element = matmul(U,cs(f:f+2*l))
+         end
+         c_max(s) = maxval(abs(c(s).element))
+      end
+
+      ! The coulomb matrix of the fitted density
+      gpl.add_to_RI_J(aux,FALSE,d,PP,JJ,c,cutoff,.max_I,c_max)
+
+      J = ZERO
+      .forward_transfer(JJ,J)
+      .weight_diagonal_blocks(J,TWO)
+      J.symmetric_reflect
+
+      c_max.destroy
+      cs.destroy; ds.destroy
+      c.destroy; d.destroy
+      max_P.destroy
+      JJ.destroy
+      PP.destroy
+
+   end
+
+   initialize_RI_J :: leaky
+   ! Read the auxiliary basis sets if need be, and make
+   ! .RI_metric_factor, the Cholesky factor of the coulomb metric
+   ! between the spherical auxiliary functions, for this geometry.
+      self :: INOUT
+
+      Vc,X,W,U :: MAT{REAL}@
+      shell_l,first_cart,first_sph :: VEC{INT}@
+      aux :: GAUSSIAN_PAIR_LIST
+      s,l,k,fc,fs,n_shell,n_cart,n_sph :: INT
+
+      .resolve_auxiliary_bases
+      .make_auxiliary_pair_list(aux,shell_l,first_cart,first_sph)
+
+      n_shell = shell_l.dim
+      n_cart = first_cart(n_shell) + GAUSSIAN_DATA:n_comp(shell_l(n_shell)) - 1
+      n_sph  = first_sph(n_shell) + 2*shell_l(n_shell)
+
+      Vc.create(n_cart,n_cart)
+      aux.make_coulomb_metric(Vc,first_cart)
+
+      ! Cartesian to spherical
+      X.create(n_cart,n_sph)
+      X = ZERO
+      do s = 1,n_shell
+         l  = shell_l(s)
+         fc = first_cart(s)
+         fs = first_sph(s)
+         if (l<2) then
+            do k = 0,2*l
+               X(fc+k,fs+k) = ONE
+            end
+         else
+            U = GAUSSIAN_DATA::spherical_harmonics_for(l).element
+            X(fc:fc+GAUSSIAN_DATA:n_comp(l)-1,fs:fs+2*l) = U
+         end
+      end
+
+      W.create(n_cart,n_sph)
+      W.to_product_of(Vc,X)
+      .RI_metric_factor.destroy
+      .RI_metric_factor.create(n_sph,n_sph)
+      .RI_metric_factor.to_product_of(X,W,transpose_a=TRUE)
+      .RI_metric_factor.to_cholesky_factor
+
+      W.destroy
+      X.destroy
+      Vc.destroy
+
+   end
+
+   make_auxiliary_pair_list(aux,shell_l,first_cart,first_sph) :: leaky, PURE
+   ! Make "aux", the auxiliary primitives as a list of one-center pairs
+   ! of class (L,0), for GAUSSIAN_PAIR_LIST:add_to_RI_J. The auxiliary
+   ! shells are numbered in atom order, and for each "shell_l" is its
+   ! angular momentum and "first_cart" and "first_sph" its first
+   ! cartesian and spherical function.
+      self :: IN
+      aux :: GAUSSIAN_PAIR_LIST, INOUT
+      shell_l,first_cart,first_sph :: VEC{INT}@, OUT
+
+   ENSURE(.auxiliary_basis_for_atom.allocated,"auxiliary bases not resolved")
+
+      atom,b,k,g,s,m,l,l_max,n_shell,n_prim,fc,fs :: INT
+      a :: REAL
+
+      n_shell = 0
+      n_prim  = 0
+      l_max   = 0
+      do atom = 1,.n_atom
+         b = .auxiliary_basis_for_atom(atom)
+         n_shell = n_shell + .auxiliary_basis(b).n_shell
+         do k = 1,.auxiliary_basis(b).n_shell
+            n_prim = n_prim + .auxiliary_basis(b).shell(k).n_cc
+            l_max  = max(l_max,.auxiliary_basis(b).shell(k).l)
+         end
+      end
+
+      shell_l.create(n_shell)
+      first_cart.create(n_shell)
+      first_sph.create(n_shell)
+      s  = 0
+      fc = 1
+      fs = 1
+      do atom = 1,.n_atom
+         b = .auxiliary_basis_for_atom(atom)
+         do k = 1,.auxiliary_basis(b).n_shell
+            s = s + 1
+            l = .auxiliary_basis(b).shell(k).l
+            shell_l(s) = l
+            first_cart(s) = fc
+            first_sph(s)  = fs
+            fc = fc + GAUSSIAN_DATA:n_comp(l)
+            fs = fs + 2*l + 1
+         end
+      end
+
+      aux.set_sizes(n_prim,l_max+1)
+
+      m = 0
+      do l = 0,l_max
+
+         aux.class_first(l+1) = m + 1
+         aux.class_l_sum(l+1) = l
+         aux.class_first_gaussian(l+1) = GAUSSIAN_DATA:n_comp_up_to(l-1) + 1
+         aux.class_n_gaussian(l+1) = GAUSSIAN_DATA:n_comp(l)
+
+         s = 0
+         do atom = 1,.n_atom
+            b = .auxiliary_basis_for_atom(atom)
+            do k = 1,.auxiliary_basis(b).n_shell
+               s = s + 1
+               if (.auxiliary_basis(b).shell(k).l/=l) cycle
+               do g = 1,.auxiliary_basis(b).shell(k).n_cc
+                  m = m + 1
+                  a = .auxiliary_basis(b).shell(k).exponent(g)
+                  aux.shell_pair(m) = s
+                  aux.factor(m) = ONE
+                  aux.exponent_sum(m) = a
+                  aux.exponent_inv(m) = ONE/a
+                  aux.prefactor(m) = .auxiliary_basis(b).shell(k).contraction(g)/(a*sqrt(a))
+                  aux.center(:,m) = .atom(atom).position
+                  aux.center_diff(:,m) = ZERO
+               end
+            end
+         end
+
+         aux.class_last(l+1) = m
+
+      end
 
    end
 
