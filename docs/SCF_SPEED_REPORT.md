@@ -935,3 +935,19 @@ Water def2-SVP spherical, `high`, defaults otherwise, E(COSX) − E(exact K) wit
 | B3LYP/G, RI-J | +6.5e-7 | −3.0e-7 |
 | UKS B3LYP/G H2O+, exact J | +4.9e-7 | |
 
+**Timings in triplicate**, zinc finger RHF/def2-TZVP cartesian, defaults, the three candidates at
+once on logical CPUs 1, 2 and 3 (three physical cores), three rounds
+(`cosx_2026-09-17/timing/`). Under that load every job is about 20% slower than alone, so the
+ratios are the result. CPU s:
+
+| | J/K, rounds 1-3 | mean | whole job, mean | ratio to exact, whole job |
+|---|---|---|---|---|
+| exact engine | 1834, 1838, 1847 | 1840 | 1916 | 1 |
+| RI-J + COSX, reference BLAS | 1065, 1059, 1059 | 1061 | 1161 | 1.65 |
+| RI-J + COSX, OpenBLAS | 900, 894, 892 | 895 | 977 | 1.96 |
+
+The rounds agree to 1%. The exact job runs on alone for its last third, which flatters it a
+little. A first attempt pinned the jobs to CPUs 1, 3 and 5; 5 is the hyperthread twin of 1, and
+those rows were discarded (`queue_bad_pinning.log`). The single 1006 s row above was taken with a
+build on CPUs 4-7, so it was disturbed the same way; the 676 s OpenBLAS row was on an idle machine.
+

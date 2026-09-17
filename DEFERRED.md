@@ -112,8 +112,9 @@ now covers the whole project, so it was renamed.)*
 >    errors with exact K match ORCA `RIJONX` to 1e-8, RHF and UHF.
 > 2. **Speed is half way.** J/K, RI-J + COSX against the exact engine: karrikinolide def2-TZVP 343
 >    against 757-892 s; zinc finger def2-TZVP 1006 against 1527 s, 676 s with OpenBLAS (whole job
->    737 s; ORCA `RIJCOSX` 499 s, Tonto exact 1583 s). **At def2-SVP it loses** (285 against 151 s),
->    as in ORCA. Timings are single runs; triplicates are owed.
+>    737 s; ORCA `RIJCOSX` 499 s, Tonto exact 1583 s). In triplicate, the three side by side, the
+>    whole job is 1.65 times faster than exact with the reference BLAS and 1.96 times with
+>    OpenBLAS, the rounds agreeing to 1%. **At def2-SVP it loses** (285 against 151 s), as in ORCA.
 > 3. **What it is:** the potentials at grid points come from the pair-list kernel (a point is an s
 >    primitive of infinite exponent in the RI-J kernel); the grid side is the XC batch machinery;
 >    its own grid (`cosx_grid_accuracy= very_low`), overlap fitting, and the final energy from one

@@ -307,7 +307,8 @@ route for work that must not be approximate.
   4e-7 and 2e-6; it is a hundred times smaller than the RI-J error it travels with. J and K, RI-J
   plus COSX against the exact engine: karrikinolide def2-TZVP 343 s against 757-892 s; zinc finger
   def2-TZVP 1006 s against 1527 s, and 676 s with OpenBLAS, where ORCA's whole `RIJCOSX` job is
-  499 s. **At def2-SVP it loses** (zinc finger 285 s against 151 s), as it does in ORCA: the exact
+  499 s; in triplicate, side by side, the whole job is 1.65 times faster than exact, 1.96 times
+  with OpenBLAS. **At def2-SVP it loses** (zinc finger 285 s against 151 s), as it does in ORCA: the exact
   K is cheap in a small basis, and COSX costs points times shell pairs whatever the basis.
   Numbers: `SCF_SPEED_REPORT.md`, *COSX*.
 - **Where the time goes** (karrikinolide def2-TZVP): the point-potential kernel 26%, the transfer
@@ -316,7 +317,7 @@ route for work that must not be approximate.
 
 Still to do: a grid made for this integrand (the error falls with the angular order in the
 bonding region, not with the radial points, so the named XC levels are a poor ladder for it);
-hybrids on something larger than water; timings in triplicate; MPI; HAR; `long` before merging.
+hybrids on something larger than water; MPI; HAR; `long` before merging.
 
 ---
 
@@ -368,6 +369,8 @@ about 8e-4 Eh.
 - **Transfer-space quantities are not AO bounds** (section 5.2).
 - **One pair of timings cannot resolve 3%.** Repeat three times, and run the candidates at the same
   time.
+- **On this laptop logical CPUs 4-7 are the hyperthread twins of 0-3.** Concurrent timing jobs go
+  on CPUs 1, 2 and 3; a job on 5 shares a core with the one on 1 (`lscpu -e=CPU,CORE`).
 - **On this laptop, long background jobs can be killed by the session's memory guard** even though
   Tonto uses under 100 MB; run them detached and one at a time.
 - **Spherical-basis SCF on the zinc finger does not converge**, and Tonto prints the unconverged
