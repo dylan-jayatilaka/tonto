@@ -678,8 +678,18 @@ BLYP default is RI-J, 0.75e-3 to 0.87e-3 Eh below its exact energy.
 | BLYP, J engine | −3107.616217177 (1.3e-4 from g09, grid) | 280.2 | 215.6 |
 | BLYP, pair-list J | −3107.616219403 | 241.5 | 190.7 (−11.6%) |
 
+| BLYP `high`, J engine | −3107.616219469 | 371.1 | 319.6 |
+| BLYP `high`, pair-list J | −3107.616219469 | 428.8 | 378.4 |
+
 So on this molecule Tonto is 2.6x g09 for RHF/6-31G(d) and 2.9x for BLYP (2.5x with the pair
-list). The pair-list and engine BLYP energies differ by 2.2e-6 at `low`; the `high` pair is
-queued to say which is nearer. **Spherical Tonto does not converge for this molecule** (DEFERRED,
-Correctness), so there is no like-for-like Tonto row against ORCA or the def2 references yet;
-cartesian def2 Tonto rows (engine and pair list) are queued as a self-comparison.
+list). **At `low` the pair-list energy is 6.6e-8 from `high`, the engine's 2.3e-6** -- the
+engine's shell-quartet screening loses 35 times more on this molecule than the count-scaled
+primitive screening, and the list is also 11.6% faster. At `high` the list is 18% slower: the
+count-scaled cutoff is very tight there. So neither `low` row is accuracy-matched to the other;
+an engine run at `medium` would place it.
+
+**Tonto, spherical RHF/6-31G(d), core guess**: −3101.464456724 (2.6e-6 from ORCA), 345.1 s wall
+(338.8 s J/K) against ORCA's 161.9 s: 2.1x. With the promolecule guess the same job never
+converged, and the spherical def2-SVP RHF job did not converge even from the core guess
+(DEFERRED, Correctness). Cartesian def2 Tonto rows (engine and pair list) are queued as a
+self-comparison.
