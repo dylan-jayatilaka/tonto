@@ -101,9 +101,13 @@ now covers the whole project, so it was renamed.)*
 > **The method, the loop-order explanation and the failed attempts are now summarised for a fresh
 > reader in `docs/TONTO_SCF_SPEED_UP.md`** (Dylan, 2026-09-17); this file stays the task register.
 >
-> **START HERE -- 2026-09-17 (afternoon). RI-J is planned, written and correct on water, on
-> branch `ri-j` (off `esfs-order`, pushed). Next: a release build, the primitive counts, and the
-> karrikinolide and zinc-finger accuracy and timing rows (plan stages 2 and 6).** Plan:
+> **START HERE -- 2026-09-17 (afternoon). RI-J works: on branch `ri-j` (off `esfs-order`,
+> pushed), validated against ORCA to 1e-8 Eh in the fitting error, and J is 6-40 times faster
+> (zinc finger BLYP/def2-TZVP 1207 -> 69 s; whole job 337 s, of which XC is 215 s -- the next
+> bottleneck, ORCA's whole job being 85 s). Tables: `docs/SCF_SPEED_REPORT.md`, *RI-J*.
+> Next, for Dylan to order: `short`/`long` and a merge route for `esfs-order` + `ri-j`; a `short`
+> test for RI-J (water BLYP/def2-SVP, numbers above, blessing is Dylan's call); the XC
+> quadrature; automatic auxiliary bases; K from the pair list (condition met).** Plan:
 > `~/.claude/plans/jaunty-discovering-kahan.md`, summarised in the entry *RI-J for pure DFT*.
 >
 > 1. **Decisions (Dylan):** integrals from the pair-list kernel, an auxiliary primitive being a
@@ -134,6 +138,12 @@ now covers the whole project, so it was renamed.)*
 >    been built since the 14th): `SCF_DATA:effective_ERI_accuracy` was `pure` but reaches an
 >    `ENSURE`; and `make_max_density_elements` checked the density against the spherical `.n_bf`
 >    while the spherical path hands it a cartesian one, which killed every spherical SCF in debug.
+>    **Larger molecules (release build, `~/tonto_runs/ri_j_2026-09-17/`):** karrikinolide
+>    def2-SVP spherical at `high`, fitting error -4.48032e-4 against ORCA -4.48022e-4. **Trap:** the
+>    exact row must be at `high` -- the old `low` engine row is 3.6e-7 off, which first looked like
+>    an RI-J error. RI-J `low` against `high`: 1.8e-8 (def2-SVP), 4.9e-8 (def2-TZVP). The
+>    def2-TZVP exact `high` row was still running at the time of writing: `queue2.log` there;
+>    expect about -534.174358451 if the ORCA error -3.57452e-4 is reproduced.
 > 5. **Suspected defect seen in passing, not touched:** `make_u_KS_Fock_mx` adds
 >    `K.a + K.b` to both `F.a` and `F.b` for hybrids; right for a closed shell, apparently wrong
 >    for an open one. To be checked against g09 UB3LYP before anything is changed.
@@ -2959,6 +2969,16 @@ chunks completed it. Old session scratch (1.1 GB) was moved out of the RAM-backe
 
 **Decision (Dylan): RI-J first. COSX and RI-K are not to be pursued yet. A big job, to be planned
 separately, not inside the J/K speed-up session that raised it.**
+
+**Status 2026-09-17: built and validated on branch `ri-j`; see the handover at the top and
+`docs/SCF_SPEED_REPORT.md`, *RI-J*.** Shape chosen (Dylan): three-centre integrals from the pair-list
+kernel with an auxiliary primitive as a one-centre (L,0) pair; direct, two passes, nothing stored;
+auxiliary functions always spherical; closed-shell and unrestricted pure DFT; serial;
+`def2-universal-jfit` only. **Still owed:** automatic auxiliary bases (pob-TZVP has none, so HAR
+cannot use RI-J yet); the effect of the fitted density on structure factors, to be measured before
+HAR uses it; MPI; a g09 `/W06` cartesian cross-check row (ORCA is spherical, so the cartesian
+zinc-finger errors have no outside row); a `short` test; user-facing documentation of the two
+keywords when it merges; a stored variant only if a profile asks for it (J is now 20% of the job).
 
 **Why.** For exact HF the J/K build is close to its limit: zinc finger RHF/def2-TZVP, Tonto 1527 s
 J/K (cartesian, so more functions) against g09 1365 s and ORCA 1566 s wall, *The zinc-finger
