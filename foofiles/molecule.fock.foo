@@ -2605,9 +2605,13 @@ contains
    ! F = X P, and A(g;n,s) is the potential at point g of the product of
    ! functions n and s. The potentials come from the primitive pair
    ! list, one shell pair and one batch at a time, as (es| integrals that
-   ! the transfer matrix of the shell pair turns into (ab|. A shell pair
-   ! is skipped on a batch when its Schwarz bound times the largest F of
-   ! its two shells there is below .SCF_data.ERI_Schwarz_cutoff.
+   ! the transfer matrix of the shell pair turns into (ab|. On a batch,
+   ! a shell pair is skipped when its Schwarz bound, times the largest F
+   ! of its two shells there, times the largest sum over the batch of
+   ! |w X| for one function, is below .SCF_data.ERI_Schwarz_cutoff: that
+   ! product estimates what the pair adds to an element of K. A primitive
+   ! pair is skipped likewise, by its own bound and the cutoff divided by
+   ! the number of primitive pairs of its shell pair.
       self :: INOUT
       K :: MAT{REAL}, OUT
       P :: MAT{REAL}, IN
@@ -2620,13 +2624,13 @@ contains
       gpl :: GAUSSIAN_PAIR_LIST
       T :: VEC{EMAT{REAL}}@
       sp_class,sp_first,sp_last,bf :: VEC{INT}@
-      G0,Ps,F,G,Ks,E,Ix,Iy,Iz,rt,wr,Wab :: MAT{REAL}@
-      xs,ys,zs,xv,Dx,Dy,Dz,B01,W,es,col,F_max :: VEC{REAL}@
+      G0,Gw,Ps,F,G,Ks,Ix,Iy,Iz,rt,wr,Wab,Eb :: MAT{REAL}@
+      xs,ys,zs,xv,Dx,Dy,Dz,B01,W,es,col,F_max,Qp :: VEC{REAL}@
       sh :: SHELL1
       sh2 :: SHELL2
       ib,f0,np,ns,q,ip,j,s,fs,ls,fa,la,na,fb,lb,nb,aa,bb,off,n,cls,kp,ie,i,ja,jb :: INT
-      l_max,r_max,np_max,n_e,l_f,n_roots :: INT
-      tv,cutoff :: REAL
+      l_max,r_max,np_max,n_e,l_f,n_roots,e0 :: INT
+      tv,cutoff,wF,Xw_sum :: REAL
 
       n = K.dim1
 
@@ -2635,6 +2639,10 @@ contains
       F_max.create(.n_shell)
 
       .make_gaussian_pair_list(gpl)
+
+      ! The bound of each primitive pair, as for the J kernel
+      Qp.create(gpl.n_pairs)
+      gpl.make_AO_Schwarz_bounds(Qp,.max_I)
 
       ! The class and the primitives of each shell pair, which are contiguous
       sp_class.create(.n_shell_pairs); sp_class = 0
@@ -2686,6 +2694,7 @@ contains
       Dz.create(np_max*r_max)
       B01.create(np_max*r_max)
       W.create(np_max*r_max)
+      Eb.create(np_max*maxval(gpl.class_n_gaussian),1)
 
       K = ZERO
 
@@ -2742,6 +2751,17 @@ contains
             F_max(s) = maxval(abs(F(:,.first_basis_fn_for_shell(s):.last_basis_fn_for_shell(s))))
          end
 
+         ! w X, and the largest sum of |w X| for one function
+         Gw.create(np,ns)
+         Xw_sum = ZERO
+         do j = 1,ns
+            do q = 1,np
+               Gw(q,j) = wts(batch_pt(f0+q-1))*G0(q,j)
+            end
+            Xw_sum = max(Xw_sum,sum(abs(Gw(:,j))))
+         end
+         G0.destroy
+
          ! G(g,n) = sum_s A(g;n,s) F(g,s)
          G.create(np,n)
          G = ZERO
@@ -2752,15 +2772,16 @@ contains
             if (cls==0) cycle
 
             .set_shell2_indices_from(q,aa,bb,fa,la,na,fb,lb,nb)
-            if (.max_I(q)*max(F_max(aa),F_max(bb))<cutoff) cycle
+            wF = max(F_max(aa),F_max(bb))*Xw_sum
+            if (.max_I(q)*wF<cutoff) cycle
 
             n_e = gpl.class_n_gaussian(cls)
             l_f = gpl.class_l_sum(cls)
             n_roots = (l_f+2)/2
 
-            E.create(np,n_e)
-            gpl.make_point_potentials(E,cls,sp_first(q),sp_last(q),np,n_roots,np*n_roots,l_f,n_e, &
-                                      xs,ys,zs,xv,rt,wr,Ix,Iy,Iz,Dx,Dy,Dz,B01,W)
+            ! Eb is E(np,n_e), column ie starting after e0 = (ie-1)*np
+            gpl.make_point_potentials(Eb,cls,sp_first(q),sp_last(q),Qp,cutoff/(wF*(sp_last(q)-sp_first(q)+1)), &
+                                      np,n_roots,np*n_roots,l_f,n_e,xs,ys,zs,xv,rt,wr,Ix,Iy,Iz,Dx,Dy,Dz,B01,W)
 
             i = 0
             do jb = 1,nb
@@ -2770,32 +2791,26 @@ contains
                do ie = 1,n_e
                   tv = T(q).element(i,ie)
                   if (tv==ZERO) cycle
-                  col = col + tv*E(:,ie)
+                  e0 = (ie-1)*np
+                  col = col + tv*Eb(e0+1:e0+np,1)
                end
                G(:,fa+ja-1) = G(:,fa+ja-1) + col*F(:,fb+jb-1)
                if (aa/=bb) G(:,fb+jb-1) = G(:,fb+jb-1) + col*F(:,fa+ja-1)
             end
             end
 
-            E.destroy
-
          end
          col.destroy
          F.destroy
 
          ! K = (w X)^T G
-         do j = 1,ns
-            do q = 1,np
-               G0(q,j) = wts(batch_pt(f0+q-1))*G0(q,j)
-            end
-         end
          Ks.create(ns,n)
-         Ks.to_product_of_BLAS(G0,G,transpose_a=TRUE)
+         Ks.to_product_of_BLAS(Gw,G,transpose_a=TRUE)
          K(bf,:) = K(bf,:) + Ks
 
          Ks.destroy
          G.destroy
-         G0.destroy
+         Gw.destroy
          bf.destroy
          zs.destroy
          ys.destroy
@@ -2803,6 +2818,8 @@ contains
 
       end
 
+      Eb.destroy
+      Qp.destroy
       F_max.destroy
       W.destroy; B01.destroy
       Dz.destroy; Dy.destroy; Dx.destroy
