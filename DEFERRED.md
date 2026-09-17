@@ -101,6 +101,11 @@ now covers the whole project, so it was renamed.)*
 > **The method, the loop-order explanation and the failed attempts are now summarised for a fresh
 > reader in `docs/TONTO_SCF_SPEED_UP.md`** (Dylan, 2026-09-17); this file stays the task register.
 >
+> **MERGED 2026-09-18 (Dylan): `esfs-order`, `ri-j` and `cosx` are in `develop` and `master`, by
+> fast-forward. Before the merge, on the release build of `cosx`: `short` 68/68, `long` and `hart`
+> 38/38, so `short long hart` 106/106 by the loose gate. The pair-list J, RI-J and COSX are all off
+> by default. The three feature branches still exist, local and remote.**
+>
 > **NEXT (Dylan, 2026-09-18): a grid made for COSX. Plan it first, in a fresh session.** What is
 > known, so the plan can start from it (numbers: `docs/SCF_SPEED_REPORT.md`, *COSX*):
 > - The COSX error does not fall steadily along the named XC levels. Karrikinolide def2-SVP, with
@@ -159,9 +164,9 @@ now covers the whole project, so it was renamed.)*
 >    settings yet.
 > 6. **Two DFT defects found on the way** (entry *B3LYP is 2e-4 Eh from g09 and ORCA*): closed-shell
 >    B3LYP is 2.1e-4 from both codes, in the VWN3 and VWN5 forms alike, where BLYP agrees to 3e-6;
->    unrestricted BLYP is 1.1e-4 out. Undiagnosed. And one fixed, **on its own commit for Dylan to
->    keep or drop** (`b149adff`): `make_u_KS_Fock_mx` gave both spins -(f/2)(K.a+K.b); UKS B3LYP
->    H2O+ went from 4.3e-2 Eh out to the same 2.0e-4.
+>    unrestricted BLYP is 1.1e-4 out. **Both undiagnosed, for future investigation.** And one fixed
+>    and kept (Dylan, 2026-09-18; `b149adff`): `make_u_KS_Fock_mx` gave both spins -(f/2)(K.a+K.b);
+>    UKS B3LYP H2O+ went from 4.3e-2 Eh out to the same 2.0e-4.
 >
 > **NEXT (Dylan, 2026-09-17, evening): COSX -- the chain-of-spheres exchange, for HF and hybrids.
 > Start with a planning session, as for RI-J; no code before the plan.** The 2026-09-17 decision
@@ -1303,7 +1308,7 @@ B3LYP routines, or the 0.08 Slater term. The unrestricted BLYP row is a separate
 closed-shell BLYP agrees). Neither is diagnosed. No B3LYP row was in the g09 comparisons of
 `docs/DFT_STANDARDISATION.md`; `short/h2o_rks_B3LYPG_cc-pVDZ` compares Tonto with itself.
 
-**Fixed on the way, on its own commit on `cosx` (`b149adff`), Dylan to keep or drop:**
+**Fixed on the way (`b149adff`), and kept (Dylan, 2026-09-18):**
 `make_u_KS_Fock_mx` added -(f/2)(K.a + K.b) to both spins, right only for a closed shell. UKS
 B3LYP H2O+: -75.862337375 before, -75.905210814 after, ORCA -75.905414918 -- from 4.3e-2 away to
 the same 2.0e-4 as the closed shell. No test uses an unrestricted hybrid.
