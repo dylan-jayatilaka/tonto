@@ -101,8 +101,9 @@ now covers the whole project, so it was renamed.)*
 > **The method, the loop-order explanation and the failed attempts are now summarised for a fresh
 > reader in `docs/TONTO_SCF_SPEED_UP.md`** (Dylan, 2026-09-17); this file stays the task register.
 >
-> **START HERE -- 2026-09-17 (afternoon). RI-J is planned and written, on branch `ri-j` (off
-> `esfs-order`); first compile and the water checks are in progress.** Plan:
+> **START HERE -- 2026-09-17 (afternoon). RI-J is planned, written and correct on water, on
+> branch `ri-j` (off `esfs-order`, pushed). Next: a release build, the primitive counts, and the
+> karrikinolide and zinc-finger accuracy and timing rows (plan stages 2 and 6).** Plan:
 > `~/.claude/plans/jaunty-discovering-kahan.md`, summarised in the entry *RI-J for pure DFT*.
 >
 > 1. **Decisions (Dylan):** integrals from the pair-list kernel, an auxiliary primitive being a
@@ -122,11 +123,25 @@ now covers the whole project, so it was renamed.)*
 > 4. **Outside reference for the fitting error:** ORCA 6.1.1 water BLYP/def2-SVP, `def2/J`:
 >    -76.337011437 with RI, -76.336924823 `NoRI`, so -8.66e-5 Eh. Tonto spherical should match this
 >    difference. Inputs for Tonto and ORCA are in the session scratchpad and are trivial to remake.
+>    **Result (debug build, `high`):** spherical Tonto -76.3369284357 exact, -76.3370150493 RI-J,
+>    a fitting error of -8.6614e-5 against ORCA's -8.6614e-5 (they agree to 5e-10; the absolute
+>    energies differ by 3.6e-6, the two DFT grids). Cartesian: -76.3386407081 and -76.3387336665,
+>    -9.30e-5. UKS RI-J -76.3387336663. Screening: `low` is 4e-10 from `high`, `very_low` 8e-9.
+>    Three-centre overlaps, water cc-pVTZ with cc-pVTZ as the third function, against the DFT
+>    grid at `very_high`: largest difference 1.8e-6 cartesian and 4.3e-6 spherical, beside 0.8e-6
+>    and 1.5e-6 for the exactly known two-centre overlaps on the same grid -- quadrature noise.
+>    **Two debug-only defects from 2026-09-16 found and fixed on the way** (the debug tree had not
+>    been built since the 14th): `SCF_DATA:effective_ERI_accuracy` was `pure` but reaches an
+>    `ENSURE`; and `make_max_density_elements` checked the density against the spherical `.n_bf`
+>    while the spherical path hands it a cartesian one, which killed every spherical SCF in debug.
 > 5. **Suspected defect seen in passing, not touched:** `make_u_KS_Fock_mx` adds
 >    `K.a + K.b` to both `F.a` and `F.b` for hybrids; right for a closed shell, apparently wrong
 >    for an open one. To be checked against g09 UB3LYP before anything is changed.
-> 6. **The detached queue** of the midday handover finished its ORCA rows (RIJK -3102.025484906,
->    7:01 wall) and was on the cc-pVTZ `high` reference; its first job below is still owed.
+> 6. **The detached queue** of the midday handover: the ORCA `RIJCOSX`/`RIJK` rows and the
+>    6-31G(d) profile split are in `docs/SCF_SPEED_REPORT.md` (generation and set-up are three
+>    quarters of the RHF build, digestion one seventh, so K from the pair list meets its
+>    condition at 6-31G(d) -- Dylan to decide). cc-pVTZ `high`, switch off: -531.169262524774.
+>    Still owed: the cc-pVTZ profile split, when `queue.log` says `DONE`.
 >
 > **START HERE -- 2026-09-17 (midday). The K share is measured, exact HF is near its limit, and
 > the direction is now RI-J for pure DFT, to be planned in its own session (Dylan). Branch
