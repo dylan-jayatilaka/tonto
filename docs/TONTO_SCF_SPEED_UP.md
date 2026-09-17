@@ -296,4 +296,6 @@ about 8e-4 Eh.
 - **On this laptop, long background jobs can be killed by the session's memory guard** even though
   Tonto uses under 100 MB; run them detached and one at a time.
 - **Spherical-basis SCF on the zinc finger does not converge**, and Tonto prints the unconverged
-  energy without a warning. Cartesian is fine. Open, and serious (`DEFERRED.md`, *Correctness*).
+  energy without a warning. Cartesian is fine. A separate SCF-convergence problem, possibly
+  low-lying states needing fractional occupation, not an integral defect (`DEFERRED.md`,
+  *Correctness*).

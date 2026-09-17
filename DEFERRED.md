@@ -139,6 +139,9 @@ now covers the whole project, so it was renamed.)*
 >    (g09/ORCA capped at 2 GB). Old session scratch moved off `/tmp` to
 >    `~/tonto_runs/old_session_scratch_2026-09-17/`.
 >
+> **Zinc-finger spherical failure is out of scope for the integral work** (Dylan): see its
+> Correctness entry, possibly low-lying states needing pFON.
+>
 > **Open decisions for Dylan:** tune the count-scaled cutoff (it costs the 10% gain the unscaled
 > list had at 6-31G(d)); K (the harder index pattern) -- shell-quartet digestion fed from the
 > list, or something else; batching across k (the GPU shape); `short`/`long` owed before any
@@ -826,6 +829,13 @@ dead keyword line from `develop` and leave the work on its two tags, as was done
 # Correctness — open bugs that give wrong answers
 
 ## The promolecule guess is wrong in a spherical basis with zinc, and the SCF reports an unconverged energy silently (2026-09-17)
+
+> **Dylan (2026-09-17): a separate problem from the integral work, not to be fixed on that
+> branch or conflated with it.** His hypothesis: low-lying excited states, which may need a
+> fractional-occupation method. A skeleton exists and is marked untested:
+> `MOLECULE.BASE:make_SCF_density_mx` (`molecule.base.foo:330-379`), `SCF_data.apply_pFON`,
+> `temperature_for_pFON`, `using_FON`. The spherical-vs-cartesian contrast below is still
+> unexplained under that hypothesis and worth keeping in view.
 
 Found by the zinc-finger benchmark ([Zn(SCH3)2(imidazole)2], hand-built geometry, RHF/6-31G(d),
 `develop` `7d2c236a`). Runs in `~/tonto_runs/zn_sph_bug_2026-09-17/` and
