@@ -98,6 +98,9 @@ now covers the whole project, so it was renamed.)*
 > 0.17% on three lines where it had failed at 200%. The only loose failure left on the Mac is
 > `urea_ccsd_pob-TZVP_Salvador_properties` at 4.48%, the LAPACK-thread row; the suite is 55/56.
 >
+> **The method, the loop-order explanation and the failed attempts are now summarised for a fresh
+> reader in `docs/TONTO_SCF_SPEED_UP.md`** (Dylan, 2026-09-17); this file stays the task register.
+>
 > **START HERE -- 2026-09-17 (morning). Overnight on branch `esfs-order` (pushed, not merged):
 > step 0 answered, step 3 built for J, the zinc-finger comparison suite running.** Details under
 > *Primitive-batched J and K*; runs in `~/tonto_runs/{esfs_order,pair_list,gpl_J}_2026-09-17/`.
