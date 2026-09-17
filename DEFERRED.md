@@ -104,7 +104,7 @@ now covers the whole project, so it was renamed.)*
 > **MERGED 2026-09-18 (Dylan): `esfs-order`, `ri-j` and `cosx` are in `develop` and `master`, by
 > fast-forward. Before the merge, on the release build of `cosx`: `short` 68/68, `long` and `hart`
 > 38/38, so `short long hart` 106/106 by the loose gate. The pair-list J, RI-J and COSX are all off
-> by default. The three feature branches still exist, local and remote.**
+> by default. The three feature branches were then deleted, local and remote (Dylan).**
 >
 > **NEXT (Dylan, 2026-09-18): a grid made for COSX. Plan it first, in a fresh session.** What is
 > known, so the plan can start from it (numbers: `docs/SCF_SPEED_REPORT.md`, *COSX*):

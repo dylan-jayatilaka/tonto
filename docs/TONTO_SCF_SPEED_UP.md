@@ -182,7 +182,7 @@ section 5, and it is also the shape a GPU needs.
 
 ## 5. The primitive pair list and the batched J kernel (in progress)
 
-On branch `esfs-order`, behind `scfdata= { use_gaussian_pair_J= TRUE }`, off by default. J only.
+Behind `scfdata= { use_gaussian_pair_J= TRUE }`, off by default. J only.
 
 ### 5.1 The idea
 
@@ -247,11 +247,11 @@ faster at triple zeta and slower at 6-31G(d), where the count-scaled cutoff beco
 
 ---
 
-## 5a. RI-J: density fitting of J for pure DFT (branch `ri-j`)
+## 5a. RI-J: density fitting of J
 
 `auxiliary_basis_name= def2-universal-jfit` with `scfdata= { use_RI_J= TRUE }`. Off by default,
-because it changes the energy by 1e-4 to 1e-3 Eh; stops with a message for HF and hybrids, where a
-separate J gains nothing (section 7).
+because it changes the energy by 1e-4 to 1e-3 Eh. It runs for HF and hybrids too, the exact K then
+coming from the quartet loop, but gains nothing there on its own: its use is with COSX (5b).
 
 - The density is fitted in an auxiliary basis with the Coulomb metric: d_Q = (Q|rho), V c = d,
   J_ab = sum_Q (ab|Q) c_Q. The fitting error in the energy is one-signed (negative) and matches
@@ -272,7 +272,7 @@ of the fitted density on structure factors; MPI; `short` and `long` before mergi
 
 ---
 
-## 5b. COSX: the exchange matrix by quadrature (branch `cosx`)
+## 5b. COSX: the exchange matrix by quadrature
 
 `scfdata= { use_COSX= TRUE }`, for HF and hybrids, restricted and unrestricted; with `use_RI_J= TRUE` it is
 what ORCA calls `RIJCOSX`. Off by default: the exact J and K routes are untouched and remain the
