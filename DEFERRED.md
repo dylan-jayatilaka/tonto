@@ -139,6 +139,12 @@ now covers the whole project, so it was renamed.)*
 >    (g09/ORCA capped at 2 GB). Old session scratch moved off `/tmp` to
 >    `~/tonto_runs/old_session_scratch_2026-09-17/`.
 >
+> **First job next session:** two detached runs finish after this session -- zinc finger BLYP and
+> RHF def2-TZVP cartesian on the `develop` engine (`cart.log` in
+> `~/tonto_runs/vs_g09_orca_znfinger_2026-09-17/`). Run `collect.py` there and add the TZVP rows
+> (with the pair-list BLYP row, J/K 1207.3 s) to `docs/SCF_SPEED_REPORT.md`, *The zinc-finger
+> benchmark*.
+>
 > **Zinc-finger spherical failure is out of scope for the integral work** (Dylan): see its
 > Correctness entry, possibly low-lying states needing pFON.
 >
