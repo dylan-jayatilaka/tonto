@@ -2345,13 +2345,13 @@ contains
    make_r_JK(J,K,P) :: leaky
    ! Make "J" and "K" for the restricted density "P", with integrals on
    ! the fly: by the J/K engine, or with .SCF_data.using_COSX, J apart
-   ! and K by quadrature. Without a grid (the atoms of a promolecule
-   ! guess) the engine is used.
+   ! and K by quadrature. Without .initialize_COSX (the atoms of a
+   ! promolecule guess) the engine is used.
       self :: INOUT
       J,K :: MAT{REAL}, OUT
       P   :: MAT{REAL}, IN
 
-      if (.SCF_data.using_COSX AND .becke_grid.allocated) then
+      if (.SCF_data.using_COSX AND .COSX_pts.allocated) then
          if (.use_spherical_basis) then; .make_r_J_engine_sph(J,P)
          else;                          .make_r_J_engine(J,P)
          end
@@ -2366,25 +2366,24 @@ contains
 
    make_r_K_COSX(K,P) :: leaky
    ! Make the exchange matrix "K" from the symmetric density "P" by the
-   ! chain-of-spheres method on the molecular DFT grid. A spherical basis
-   ! is taken through the cartesian functions, as .make_r_JK_engine_sph.
+   ! chain-of-spheres method on the grid of .initialize_COSX. A spherical
+   ! basis is taken through the cartesian functions, as
+   ! .make_r_JK_engine_sph. The quadrature index of K is then multiplied
+   ! by .COSX_fit, if it exists (overlap fitting), and K is made symmetric.
       self :: INOUT
       K :: MAT{REAL}, OUT
       P :: MAT{REAL}, IN
 
-   ENSURE(.becke_grid.allocated,"no becke_grid")
+   ENSURE(.COSX_pts.allocated,"call .initialize_COSX first")
 
-      Pc,Kc :: MAT{REAL}@
+      Pc,Kc,Kf :: MAT{REAL}@
       first,last :: VEC{INT}@
       n :: INT
 
-      if (.XC_pts.deallocated) .make_XC_grid
-      if (.XC_batch_first.deallocated) .make_XC_batches
-
       if (NOT .use_spherical_basis) then
 
-         .make_r_K_COSX_on(K,P,.XC_pts,.XC_wts,.XC_batch_pt,.XC_batch_first,.XC_batch_last, &
-                           .XC_batch_shell,.XC_batch_first_shell,.XC_batch_last_shell)
+         .make_r_K_COSX_on(K,P,.COSX_pts,.COSX_wts,.COSX_batch_pt,.COSX_batch_first,.COSX_batch_last, &
+                           .COSX_batch_shell,.COSX_batch_first_shell,.COSX_batch_last_shell)
 
       else
 
@@ -2398,8 +2397,8 @@ contains
          .first_basis_fn_for_shell = .first_cartesian_bf_for_shell
          .last_basis_fn_for_shell  = .last_cartesian_bf_for_shell
 
-         .make_r_K_COSX_on(Kc,Pc,.XC_pts,.XC_wts,.XC_batch_pt,.XC_batch_first,.XC_batch_last, &
-                           .XC_batch_shell,.XC_batch_first_shell,.XC_batch_last_shell)
+         .make_r_K_COSX_on(Kc,Pc,.COSX_pts,.COSX_wts,.COSX_batch_pt,.COSX_batch_first,.COSX_batch_last, &
+                           .COSX_batch_shell,.COSX_batch_first_shell,.COSX_batch_last_shell)
 
          .first_basis_fn_for_shell = first
          .last_basis_fn_for_shell  = last
@@ -2410,17 +2409,205 @@ contains
 
       end
 
+      if (.COSX_fit.allocated) then
+         Kf.create(K.dim1,K.dim2)
+         Kf.to_product_of_BLAS(.COSX_fit,K)
+         K = Kf
+         Kf.destroy
+      end
+
+      K = HALF*(K + transpose(K))
+
+   end
+
+   initialize_COSX :: leaky
+   ! Make the grid for the chain-of-spheres exchange, a BECKE_GRID of
+   ! accuracy .SCF_data.COSX_grid_accuracy, and its batches, for this
+   ! geometry. They are made by the XC grid routines with .COSX_grid
+   ! standing in for .becke_grid; the XC grid is put back untouched.
+      self :: INOUT
+
+   ENSURE(.SCF_data.allocated,"no SCF_data")
+
+      grid :: BECKE_GRID@
+      pts :: MAT{REAL}@
+      wts :: VEC{REAL}@
+      index,first_pt,last_pt,b_pt,b_first,b_last,b_shell,b_first_shell,b_last_shell :: VEC{INT}@
+      overlapping :: VEC{EVEC{INT}}@
+      n_unpruned :: INT
+
+      .destroy_COSX_grid
+      .COSX_grid.create
+      .COSX_grid.set_accuracy(.SCF_data.COSX_grid_accuracy)
+
+      ! Put the XC grid aside
+      call move_alloc(.becke_grid,grid)
+      call move_alloc(.XC_pts,pts)
+      call move_alloc(.XC_wts,wts)
+      call move_alloc(.XC_index,index)
+      call move_alloc(.XC_first_pt,first_pt)
+      call move_alloc(.XC_last_pt,last_pt)
+      call move_alloc(.XC_batch_pt,b_pt)
+      call move_alloc(.XC_batch_first,b_first)
+      call move_alloc(.XC_batch_last,b_last)
+      call move_alloc(.XC_batch_shell,b_shell)
+      call move_alloc(.XC_batch_first_shell,b_first_shell)
+      call move_alloc(.XC_batch_last_shell,b_last_shell)
+      call move_alloc(.overlapping_atoms_for_atom,overlapping)
+      n_unpruned = .XC_n_unpruned
+
+      ! The exchange grid, made as the XC grid is
+      call move_alloc(.COSX_grid,.becke_grid)
+      .becke_grid.set_atom_info(.atom)
+      .becke_grid.set_grid_data
+      .set_overlapping_atoms_for_atom
+      .make_XC_grid
+      .make_XC_batches
+      call move_alloc(.XC_pts,.COSX_pts)
+      call move_alloc(.XC_wts,.COSX_wts)
+      call move_alloc(.XC_batch_pt,.COSX_batch_pt)
+      call move_alloc(.XC_batch_first,.COSX_batch_first)
+      call move_alloc(.XC_batch_last,.COSX_batch_last)
+      call move_alloc(.XC_batch_shell,.COSX_batch_shell)
+      call move_alloc(.XC_batch_first_shell,.COSX_batch_first_shell)
+      call move_alloc(.XC_batch_last_shell,.COSX_batch_last_shell)
+      .destroy_XC_grid
+      call move_alloc(.becke_grid,.COSX_grid)
+
+      ! Put the XC grid back
+      call move_alloc(grid,.becke_grid)
+      call move_alloc(pts,.XC_pts)
+      call move_alloc(wts,.XC_wts)
+      call move_alloc(index,.XC_index)
+      call move_alloc(first_pt,.XC_first_pt)
+      call move_alloc(last_pt,.XC_last_pt)
+      call move_alloc(b_pt,.XC_batch_pt)
+      call move_alloc(b_first,.XC_batch_first)
+      call move_alloc(b_last,.XC_batch_last)
+      call move_alloc(b_shell,.XC_batch_shell)
+      call move_alloc(b_first_shell,.XC_batch_first_shell)
+      call move_alloc(b_last_shell,.XC_batch_last_shell)
+      call move_alloc(overlapping,.overlapping_atoms_for_atom)
+      .XC_n_unpruned = n_unpruned
+
+      if (.SCF_data.using_COSX_overlap_fitting) .make_COSX_fit
+
+   end
+
+   make_COSX_fit :: leaky
+   ! Make .COSX_fit = S S_num^-1, where S_num is the overlap matrix by
+   ! quadrature on .COSX_pts. Applied to the quadrature index of the
+   ! COSX exchange matrix it makes the quadrature exact for every
+   ! product of two basis functions (overlap fitting).
+      self :: INOUT
+
+   ENSURE(.COSX_pts.allocated,"no COSX grid")
+
+      S_num,G0,Gw,Ss,Y :: MAT{REAL}@
+      xs,ys,zs,rhs,sol :: VEC{REAL}@
+      bf :: VEC{INT}@
+      sh :: SHELL1
+      ib,f0,np,ns,q,ip,j,s,fs,ls,fa,na,off :: INT
+      fail :: BIN
+
+      .make_overlap_mx
+
+      S_num.create(.n_bf,.n_bf)
+      S_num = ZERO
+
+      do ib = 1,.COSX_batch_first.dim
+
+         f0 = .COSX_batch_first(ib)
+         np = .COSX_batch_last(ib) - f0 + 1
+         fs = .COSX_batch_first_shell(ib)
+         ls = .COSX_batch_last_shell(ib)
+         if (ls<fs) cycle
+
+         ns = 0
+         do j = fs,ls
+            s = .COSX_batch_shell(j)
+            ns = ns + .last_basis_fn_for_shell(s) - .first_basis_fn_for_shell(s) + 1
+         end
+
+         xs.create(np)
+         ys.create(np)
+         zs.create(np)
+         do q = 1,np
+            ip = .COSX_batch_pt(f0+q-1)
+            xs(q) = .COSX_pts(ip,1)
+            ys(q) = .COSX_pts(ip,2)
+            zs(q) = .COSX_pts(ip,3)
+         end
+         bf.create(ns)
+         G0.create(np,ns)
+         off = 0
+         do j = fs,ls
+            s  = .COSX_batch_shell(j)
+            fa = .first_basis_fn_for_shell(s)
+            na = .last_basis_fn_for_shell(s) - fa + 1
+            sh = .basis_shell1pair(.basis_shell_for_shell(s),1).a
+            sh.position = .atom(.atom_for_shell(s)).position
+            sh.make_grid(G0(:,off+1:off+na),xs,ys,zs)
+            do q = 1,na
+               bf(off+q) = fa + q - 1
+            end
+            off = off + na
+         end
+
+         Gw.create(np,ns)
+         do j = 1,ns
+            do q = 1,np
+               Gw(q,j) = .COSX_wts(.COSX_batch_pt(f0+q-1))*G0(q,j)
+            end
+         end
+         Ss.create(ns,ns)
+         Ss.to_product_of_BLAS(G0,Gw,transpose_a=TRUE)
+         S_num(bf,bf) = S_num(bf,bf) + Ss
+
+         Ss.destroy
+         Gw.destroy
+         G0.destroy
+         bf.destroy
+         zs.destroy
+         ys.destroy
+         xs.destroy
+
+      end
+
+      ! Y = S_num^-1 S, and S S_num^-1 is its transpose
+      S_num.to_cholesky_factor(fail)
+      DIE_IF(fail,"the overlap matrix on the COSX grid is not positive definite")
+      Y.create(.n_bf,.n_bf)
+      rhs.create(.n_bf)
+      sol.create(.n_bf)
+      do j = 1,.n_bf
+         rhs = .overlap_mx(:,j)
+         S_num.solve_cholesky_equation(rhs,sol)
+         Y(:,j) = sol
+      end
+      sol.destroy
+      rhs.destroy
+
+      .COSX_fit.destroy
+      .COSX_fit.create(.n_bf,.n_bf)
+      .COSX_fit = transpose(Y)
+
+      Y.destroy
+      S_num.destroy
+
    end
 
    make_r_K_COSX_on(K,P,pts,wts,batch_pt,batch_first,batch_last,batch_shell,batch_first_shell,batch_last_shell) :: leaky
    ! The chain-of-spheres exchange matrix on the grid "pts", "wts",
    ! batched as MOLECULE.RHO:make_XC_batches does, in the cartesian
-   ! functions: K(m,n) = sum_g w(g) X(g,m) sum_s A(g;n,s) F(g,s), made
-   ! symmetric, where X are the basis functions at the points, F = X P,
-   ! and A(g;n,s) is the potential at point g of the product of functions
-   ! n and s. The potentials come from the primitive pair list, one
-   ! shell pair and one batch at a time, as (es| integrals that the
-   ! transfer matrix of the shell pair turns into (ab|.
+   ! functions: K(m,n) = sum_g w(g) X(g,m) sum_s A(g;n,s) F(g,s), not
+   ! made symmetric, where X are the basis functions at the points,
+   ! F = X P, and A(g;n,s) is the potential at point g of the product of
+   ! functions n and s. The potentials come from the primitive pair
+   ! list, one shell pair and one batch at a time, as (es| integrals that
+   ! the transfer matrix of the shell pair turns into (ab|. A shell pair
+   ! is skipped on a batch when its Schwarz bound times the largest F of
+   ! its two shells there is below .SCF_data.ERI_Schwarz_cutoff.
       self :: INOUT
       K :: MAT{REAL}, OUT
       P :: MAT{REAL}, IN
@@ -2434,14 +2621,18 @@ contains
       T :: VEC{EMAT{REAL}}@
       sp_class,sp_first,sp_last,bf :: VEC{INT}@
       G0,Ps,F,G,Ks,E,Ix,Iy,Iz,rt,wr,Wab :: MAT{REAL}@
-      xs,ys,zs,xv,Dx,Dy,Dz,B01,W,es,col :: VEC{REAL}@
+      xs,ys,zs,xv,Dx,Dy,Dz,B01,W,es,col,F_max :: VEC{REAL}@
       sh :: SHELL1
       sh2 :: SHELL2
       ib,f0,np,ns,q,ip,j,s,fs,ls,fa,la,na,fb,lb,nb,aa,bb,off,n,cls,kp,ie,i,ja,jb :: INT
       l_max,r_max,np_max,n_e,l_f,n_roots :: INT
-      tv :: REAL
+      tv,cutoff :: REAL
 
       n = K.dim1
+
+      cutoff = .SCF_data.ERI_Schwarz_cutoff
+      if (.max_I.deallocated) .initialize_max_I
+      F_max.create(.n_shell)
 
       .make_gaussian_pair_list(gpl)
 
@@ -2546,6 +2737,11 @@ contains
          F.to_product_of_BLAS(G0,Ps)
          Ps.destroy
 
+         ! The largest F of each shell on this batch
+         do s = 1,.n_shell
+            F_max(s) = maxval(abs(F(:,.first_basis_fn_for_shell(s):.last_basis_fn_for_shell(s))))
+         end
+
          ! G(g,n) = sum_s A(g;n,s) F(g,s)
          G.create(np,n)
          G = ZERO
@@ -2556,6 +2752,8 @@ contains
             if (cls==0) cycle
 
             .set_shell2_indices_from(q,aa,bb,fa,la,na,fb,lb,nb)
+            if (.max_I(q)*max(F_max(aa),F_max(bb))<cutoff) cycle
+
             n_e = gpl.class_n_gaussian(cls)
             l_f = gpl.class_l_sum(cls)
             n_roots = (l_f+2)/2
@@ -2605,8 +2803,7 @@ contains
 
       end
 
-      K = HALF*(K + transpose(K))
-
+      F_max.destroy
       W.destroy; B01.destroy
       Dz.destroy; Dy.destroy; Dx.destroy
       Iz.destroy; Iy.destroy; Ix.destroy

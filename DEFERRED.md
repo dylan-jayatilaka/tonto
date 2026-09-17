@@ -1220,6 +1220,32 @@ varied a grid, and every test spelled its functional correctly. `scripts/check_d
 properties rather than blessed numbers, so none of them can be blessed away. Check 4
 is the bogus name: `blyp` as an exchange functional must exit non-zero.
 
+## B3LYP is 2e-4 Eh from g09 and ORCA; unrestricted BLYP 1e-4 (found 2026-09-17)
+
+Found while checking RI-J with exact exchange (`~/tonto_runs/cosx_2026-09-17/stage1/`). Water,
+def2-SVP, `eri_accuracy= high`, grid at its default:
+
+| job | Tonto | reference | difference |
+|---|---|---|---|
+| RHF, spherical | -75.9568186308 | ORCA -75.9568186299 | 1e-9 |
+| UHF H2O+, spherical | -75.5627274358 | ORCA -75.5627274356 | 2e-10 |
+| BLYP, spherical | -76.3369284357 | g09 -76.3369252175 | 3e-6 (the grids) |
+| B3LYP (`b3lypgx`/`b3lypgc`), spherical | -76.3569949374 | g09 -76.3572084520, ORCA `B3LYP/G` -76.3572081004 | **+2.13e-4** |
+| B3LYP, cartesian | -76.3585000471 | g09 `6D 10F` -76.3588047292 | **+3.05e-4** |
+| B3LYP VWN5 form (`b3lypx`/`b3lypc`), spherical | -76.3198775077 | ORCA `B3LYP` -76.3200906619 | **+2.13e-4** |
+| UKS BLYP H2O+, spherical | -75.8895525262 | ORCA -75.8896636512 | **+1.1e-4** |
+
+The same 2.13e-4 with VWN3 and VWN5 says the VWN part is not the cause; exact exchange is right
+(RHF agrees) and B88 and LYP are right in BLYP. What is left is how the pieces are combined in the
+B3LYP routines, or the 0.08 Slater term. The unrestricted BLYP row is a separate question (the
+closed-shell BLYP agrees). Neither is diagnosed. No B3LYP row was in the g09 comparisons of
+`docs/DFT_STANDARDISATION.md`; `short/h2o_rks_B3LYPG_cc-pVDZ` compares Tonto with itself.
+
+**Fixed on the way, on its own commit on `cosx` (`b149adff`), Dylan to keep or drop:**
+`make_u_KS_Fock_mx` added -(f/2)(K.a + K.b) to both spins, right only for a closed shell. UKS
+B3LYP H2O+: -75.862337375 before, -75.905210814 after, ORCA -75.905414918 -- from 4.3e-2 away to
+the same 2.0e-4 as the closed shell. No test uses an unrestricted hybrid.
+
 ## DFT grid: what is still open after the 2026-09-10 fix
 
 The weight-threshold defect is closed (see the table above and
