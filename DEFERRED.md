@@ -73,6 +73,61 @@ now covers the whole project, so it was renamed.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## START HERE, 2026-09-18 (evening): the COSX grid -- plan drafted, decisions owed
+
+> Nothing was built or run in the planning session. The plan below is what was drafted from the
+> handover, the code and the stage-4 runs; three decisions are Dylan's before any code.
+>
+> **A finding that changes the plan.** The paragraph further down says `high` separates from
+> `medium` because the bonding-region angular order is 59 against 29. That setting,
+> `l_bonding_angular_grid`, is read only by `pruning_scheme= adaptive`; the default is
+> `treutler_ahlrichs` (`types.foo`, `BECKE_GRID.pruning_scheme`), and neither the COSX code nor
+> any stage-4 input (`~/tonto_runs/cosx_2026-09-17/stage4/*/stdin`) changes it. So every COSX grid
+> number so far used Treutler-Ahlrichs pruning and the 59 never took effect. From `medium` to
+> `high` only three things changed: heavy-atom angular 29 -> 35, hydrogen angular 23 -> 29,
+> radial 30 -> 35. For those small steps the karrikinolide error went +1.5e-5, +2.9e-5, -1.5e-5,
+> +2.0e-6: more like an error changing sign than one converging, and `high` may be good partly by
+> luck. The same claim is in `docs/TONTO_SCF_SPEED_UP.md` 5b ("the error falls with the angular
+> order in the bonding region"); both are to be corrected once Dylan has seen this.
+>
+> **The plan.**
+>
+> 1. **Measure before designing; no `types.foo` change.** A diagnostic like
+>    `MOLECULE.RHO:put_grid_shell_errors` (which calibrated the adaptive XC pruning, stage B): for
+>    a converged density, per atom and per radial shell, the shell's contribution to the exchange
+>    energy at Lebedev orders 5, 11, 17, 23, 29 against 59. A keyword run after `scf`, so one
+>    karrikinolide def2-SVP job gives the whole angular table and no SCF per grid is needed. Run it
+>    at 35 and at 65 radial points; the difference of the L59 totals is the radial error on its
+>    own. The exchange integrand has the potentials of tight core pairs of neighbouring atoms in
+>    it, so the angular demand is expected further in than for XC -- a guess until measured.
+> 2. **The input blocks, one `types.foo` edit.** `cosx_grid= { ... }` and `cosx_final_grid= { ... }`
+>    read with `BECKE_GRID:read_keywords`; `very_low` and `high` become their defaults. Proposed:
+>    hold the two grids in `SCF_DATA` next to the COSX switches, read inside `scfdata=`, so there is
+>    no ordering question against `becke_grid=`; drop the two `cosx_*_grid_accuracy=` names (merged
+>    today, one test uses them at the defaults). `initialize_COSX` takes the grid as an argument
+>    instead of swapping the accuracy string. Any component a COSX-specific pruning rule needs (its
+>    own zone table or a `cosx` pruning scheme) goes in the same edit, so the 25-minute rebuild is
+>    paid once. `put_options` echoes the COSX settings, which is owed anyway.
+> 3. **Calibrate and confirm.** Score candidate zone rules offline against the stage-1 tables, as
+>    `~/tonto_runs/grid_shell_errors_2026-09-13/rules.py` did for XC; build only the winners.
+>    Target for the final grid: ORCA's 2e-6 on karrikinolide def2-SVP for two to three times the
+>    iteration grid's points (seven today). Check whether the iteration grid can lose points under
+>    a zoned cut (the 15-radial/50-angular failure was a uniform cut). Confirm on karrikinolide
+>    def2-TZVP and the zinc finger, whose Zn and S also cover the second-row gap the adaptive XC
+>    scheme still has. Timing in triplicate, candidates side by side.
+>    `h2o_rhf_def2-SVP_RIJCOSX` will move if the defaults change; show the numbers, the re-bless
+>    is Dylan's call. Reference for karrikinolide def2-SVP spherical: RI-J with exact K,
+>    -530.576397753870; one SCF at `high` is about 100 s.
+>
+> **Decisions owed by Dylan.**
+>
+> 1. Start with the stage-1 diagnostic rather than a brute-force scan of the four knobs
+>    (`l_angular_grid`, `l_H_angular_grid`, `l_bonding_angular_grid`, `n_radial_pts`) at about
+>    100 s per SCF? Recommended: the diagnostic; a scan would chase the sign-changing error.
+> 2. Grid blocks inside `scfdata=`, the two accuracy names dropped? Recommended: yes.
+> 3. Stage 1 needs a release build of `master` and a few 100 s karrikinolide jobs: permission to
+>    build with `make -j`, and which tree.
+
 ## WHERE 2026-09-06 LEFT OFF — read this first if you are picking up cold
 
 > **Still current on 2026-09-10.** `command_arguments` was deleted (archived below), and the six
