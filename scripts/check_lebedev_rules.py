@@ -29,7 +29,19 @@ import math
 import re
 import sys
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError:
+    # 77 is the automake "could not run" convention the rest of the harness
+    # already uses (SKIP_RETURN_CODE in tests/CMakeLists.txt). numpy is not a
+    # Tonto build dependency and is declared nowhere: this check has simply
+    # been passing in CI because the GitHub runner images happen to ship it,
+    # and failing red on any clean machine whose python3 does not -- macOS
+    # Command Line Tools python, for one. A missing optional module is a test
+    # that cannot run, not a test that failed.
+    sys.stderr.write('SKIPPED: check_lebedev_rules needs numpy -- '
+                     'install it with:  python3 -m pip install --user numpy\n')
+    sys.exit(77)
 
 TOL_SUM = 1e-13
 TOL_SPHERE = 1e-14

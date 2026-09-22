@@ -282,7 +282,10 @@ add_test(NAME "lebedev_rules"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_lebedev_rules.py
             ${PROJECT_SOURCE_DIR}/foofiles/lebedev.foo)
-set_tests_properties("lebedev_rules" PROPERTIES LABELS "short")
+# SKIP_RETURN_CODE: the script needs numpy, which is not a Tonto dependency
+# and is not installed by any workflow -- see the import guard in the script.
+set_tests_properties("lebedev_rules" PROPERTIES LABELS "short"
+                                                SKIP_RETURN_CODE 77)
 
 # The accepted-name against implemented-name cross-check for DFT functionals.
 # The section 5 fix made an unrecognised name fatal at the two SCF_DATA setters,
