@@ -2792,6 +2792,70 @@ in one run. Inspection has now failed twice here.
 ranks exits 1, because `stop` runs on one rank without `MPI_FINALIZE` on the others. Harmless
 serially, wrong for any harness, and a separate small fix.
 
+## The BLAS kernel is part of the reference (2026-09-22)
+
+**The finding.** Homebrew's OpenBLAS is a `DYNAMIC_ARCH` build: it carries ~19 ARM kernels and
+picks one at run time from the detected CPU. An M2 Pro picks `neoversen1` -- an ARM *server*
+core -- and another Mac may pick `vortexm4` or `armv8`. They do not agree. The same
+single-threaded `dgemm`, 1500x1500:
+
+| kernel | speed | result |
+|---|---|---|
+| `neoversen1` (auto-detected here) | 52.5 GFLOP/s | `C[0]=1499.9999999984996` |
+| `armv8` | 52.2 GFLOP/s | `C[0]=1499.9999999985027` |
+| `vortexm4` | 52.9 GFLOP/s | `C[0]=1499.9999999984859` |
+
+So a stored reference silently belongs to whichever kernel generated it. This is a **second
+axis**, independent of the thread count: pinning threads does not touch it.
+
+**What was done** (`6a464edf`): `OPENBLAS_CORETYPE=ARMV8` pinned in the same two places as the
+thread count, **arm64 macOS only**. The core names are architecture-specific, and an
+unrecognised value does not warn -- `OPENBLAS_CORETYPE=bogus` silently drops to the slowest
+baseline kernel. An explicitly set value is respected rather than clobbered, and `test.py`
+announces it, because a silent kernel change moving last digits is the thing being prevented.
+
+**Two things this does NOT settle, and they matter more than the pinning.**
+
+**1. `urea_ccsd_pob-TZVP_Salvador_properties` was not really fixed.** The pin makes it pass --
+deterministically, three runs each way, `armv8` PASS and `neoversen1`/`vortexm4` FAIL -- and
+`short` went 68/70 to 69/70 with no re-bless. But the quantity that moves is a **near-zero
+symmetry residual**: the N1/N2 row of the Salvador properties table carries `+0.0066` and
+`-0.0066` where the rest of that column is exactly `0.0000`, beside row-neighbours of about 4.
+The kernel moves it by 2e-4, which is 2.99% *relatively*, and the loose gate's relative
+criterion is what fails. `--abs-tol` exists for exactly this and defaults to **1e-7** -- far too
+tight to floor a 2e-4 movement on a residual whose true value is zero.
+
+So the test asserts numerical noise under a relative tolerance. Pinning fixes the *symptom on
+this machine*; the test stays fragile and will break again on the next kernel, the next Homebrew
+bump, or Linux adoption. **The real repair is the near-zero floor, not the pin**, and this row
+should not be recorded as closed on the strength of the pin alone.
+
+**2. The harness is pinned and production is not, which is incoherent.** Dylan's objection, and
+it is right: the suite now certifies a configuration no user runs. A user on this Mac gets
+`neoversen1`, and numbers that do not match the references the suite just went green against.
+
+**Tonto cannot fix this from inside.** Measured -- OpenBLAS binds its kernel in its library
+constructor, at load, so `setenv` from `main` has no effect:
+
+```
+at load      : neoversen1
+after setenv : neoversen1      # OPENBLAS_CORETYPE=ARMV8, set after the library is in
+```
+
+The environment must be set before the process starts. That leaves: a wrapper script around the
+installed binary (which `mpirun` complicates), linking a non-`DYNAMIC_ARCH` BLAS, documenting the
+variable for users, or not pinning at all and accepting machine-specific references.
+**Undecided -- Dylan's call**, and it should be taken together with the near-zero floor above,
+because if the gate floors near-zero residuals properly, the kernel may not need pinning for
+correctness at all -- only for exact-match reproducibility.
+
+**What this adds to the adoption item below.** Ubuntu's OpenBLAS is also a `DYNAMIC_ARCH` build,
+so adopting it on Linux imports this problem there: references tied to whichever x86 kernel the
+generating machine detects (`HASWELL` / `SKYLAKEX` / `ZEN` ...). The Linux re-bless must
+therefore **choose and pin an x86 coretype**, or the new references will be no more portable than
+the old macOS ones were. The `PINNED_CORETYPE` hook in `scripts/test.py` is already there and
+needs only an x86 branch.
+
 ## Deferred: adopt OpenBLAS consistently (single-threaded) on Linux and WSL
 
 **Decision (2026-07-30): not now.** Do the Mac/Linux numerical comparison first. The intended
@@ -2844,11 +2908,20 @@ test outright.
 
 The sharper hazard is **threading**. Reference BLAS is single-threaded; OpenBLAS is not, and its
 results vary with thread *count*, because the blocking — and hence the reduction order — changes.
-Every stored reference in `tests/` was generated against single-threaded reference BLAS. Adopting
-OpenBLAS without pinning threads would produce run-to-run last-digit noise indistinguishable from
-regressions. Hence the decision above: **one thread**, via `OPENBLAS_NUM_THREADS=1`, set in the
-harness (`scripts/test.py` / `scripts/suite_report.py`) so it cannot be forgotten. Multithreaded
-OpenBLAS would also oversubscribe cores in MPI builds.
+Every stored reference in `tests/` was generated against single-threaded reference BLAS **on
+Linux and WSL. That was never true on macOS**, which has linked Homebrew's OpenBLAS since
+`CMakeLists.txt:110` -- a `USE_OPENMP` build, unpinned, with twelve threads available. The
+sentence stood here uncorrected until 2026-09-22, and anyone planning the re-bless from it would
+have planned the wrong thing.
+
+**Thread pinning is now done, ahead of this item, and cost nothing** (2026-09-22, `cbd72607`):
+`OPENBLAS_NUM_THREADS`, `OMP_NUM_THREADS`, `VECLIB_MAXIMUM_THREADS` and `MKL_NUM_THREADS`, all
+four because which one is authoritative depends on how the BLAS was built. Set in
+`scripts/test.py` (`ONE_THREAD_ENV`, which covers `suite_report.py` too, it driving `test.py`)
+and, for the dozen checker tests that bypass `test.py`, as a test property in
+`tests/CMakeLists.txt`. The short suite was unchanged either way, 68/70, and the same wall-clock
+-- 43.25 s pinned against 43.71 s. **The speed of OpenBLAS is in its kernels, not its threads.**
+Multithreaded OpenBLAS would also oversubscribe cores in MPI builds: ranks x threads.
 
 ### Suggested order when this is picked up
 
