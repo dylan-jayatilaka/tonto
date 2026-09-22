@@ -363,3 +363,21 @@ add_custom_target(report
     USES_TERMINAL
     COMMENT "Tonto per-suite agreement report -> tests.log")
 add_dependencies(report tonto run_har)
+
+# One BLAS thread for every test, including the checker scripts.
+#
+# scripts/test.py pins the thread count itself (see ONE_THREAD_ENV there for
+# why, and why it takes four variables), which covers every suite registered
+# through add_all_tests.  The checker scripts above run tonto directly and so
+# would keep whatever the machine's BLAS chose by default -- exactly the
+# inconsistency the pinning exists to remove.  Applied here in one loop rather
+# than per add_test, so a test added later cannot quietly miss it.
+get_property(_tonto_tests DIRECTORY PROPERTY TESTS)
+foreach(_t ${_tonto_tests})
+    set_property(TEST ${_t} APPEND PROPERTY ENVIRONMENT
+        OMP_NUM_THREADS=1
+        OPENBLAS_NUM_THREADS=1
+        VECLIB_MAXIMUM_THREADS=1
+        MKL_NUM_THREADS=1)
+endforeach()
+unset(_tonto_tests)

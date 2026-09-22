@@ -402,9 +402,61 @@ def compare_outputs(f1, f2, args):
         return d
 
 
+# One BLAS thread, on every platform and in every build.
+#
+# The netlib reference BLAS is single-threaded, but OpenBLAS is not -- macOS
+# has linked Homebrew's USE_OPENMP build all along -- and its blocking, and so
+# its reduction order, changes with the thread count.  An unpinned run
+# therefore produces last-digit noise that cannot be told apart from a real
+# regression.  Under MPI it is worse than noise: each rank spawns its own pool,
+# so ranks x threads oversubscribe the machine and any timing is meaningless.
+#
+# Pinning costs nothing measurable (the short suite is the same wall-clock
+# either way) because the speed of OpenBLAS is in its kernels, not its threads.
+#
+# Four variables, because which one is authoritative depends on how the BLAS
+# was built, and Tonto may link any of them.
+ONE_THREAD_ENV = {
+    'OMP_NUM_THREADS': '1',         # OpenBLAS built USE_OPENMP (Homebrew's)
+    'OPENBLAS_NUM_THREADS': '1',    # OpenBLAS built with pthreads (Ubuntu's)
+    'VECLIB_MAXIMUM_THREADS': '1',  # Accelerate, the macOS fallback
+    'MKL_NUM_THREADS': '1',         # MKL, if anyone links it
+}
+
+
+_CPU_TIME = re.compile(r'CPU time taken.*?\bis\s+([\d.eE+-]+)\s+CPU seconds')
+
+
+def job_cpu_seconds(paths):
+    """The CPU seconds the job reports for itself, summed over its outputs.
+
+    ctest reports wall-clock, which moves with whatever else the machine is
+    doing, so two suite runs taken under different load cannot be compared.
+    Every tonto job already prints its own CPU accounting (TIME:cpu_time_taken,
+    always "... is <float> CPU seconds."), and that number is load-independent;
+    this lifts it out so suite_report.py can put it in a column.
+
+    Returns None when no output carries the line -- a job that died early, or
+    an argv-driven program that prints no timing -- which the report shows as
+    "-" rather than as a zero.
+    """
+    total = None
+    for path in paths:
+        try:
+            with open(path, errors='replace') as f:
+                for line in f:
+                    m = _CPU_TIME.search(line)
+                    if m:
+                        total = (total or 0.0) + float(m.group(1))
+        except OSError:
+            continue
+    return total
+
+
 def run_test(args, test_dir, io_files):
     env = dict(os.environ)
     env['TONTO_BASIS_SET_DIRECTORY'] = args.basis_sets
+    env.update(ONE_THREAD_ENV)
     kwargs = {
         'shell': False,
         'universal_newlines': True,
@@ -447,6 +499,13 @@ def run_test(args, test_dir, io_files):
         completed = (retcode == 0)
 
         timings['tonto'] = time.time() - sum(t for t in timings.values())
+
+        # Printed regardless of log level, as the AGREEMENT row is: this line
+        # is suite_report.py's input, not a diagnostic.
+        cpu = job_cpu_seconds(io_files['output'])
+        if cpu is not None:
+            sys.stdout.write('CPUTIME %.3f\n' % cpu)
+
         files_equivalent = []
 
         if completed:
