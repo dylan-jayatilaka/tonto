@@ -5,6 +5,7 @@ from tempfile import gettempdir
 import getpass
 from getpass import getuser
 import os
+import platform
 from os.path import abspath, join
 from itertools import zip_longest
 import sys
@@ -416,6 +417,31 @@ def compare_outputs(f1, f2, args):
 #
 # Four variables, because which one is authoritative depends on how the BLAS
 # was built, and Tonto may link any of them.
+# Pin the OpenBLAS kernel too, on Apple Silicon.
+#
+# Homebrew's OpenBLAS is a DYNAMIC_ARCH build: it carries ~19 ARM kernels and
+# chooses one at run time from the detected CPU. An M2 Pro selects neoversen1
+# -- an ARM *server* core -- and a different Mac may select vortexm4 or armv8.
+# The kernels do not agree: the same single-threaded dgemm gives
+# ...84996 (neoversen1), ...85027 (armv8), ...84859 (vortexm4). So a stored
+# reference silently belongs to whichever kernel generated it, and a test can
+# fail on a colleague's Mac for no reason but its CPU.
+#
+# ARMV8 because the references in tests/ already agree with it: under ARMV8 the
+# short suite passes 69/70 on this machine, where the auto-detected neoversen1
+# fails urea_ccsd_pob-TZVP_Salvador_properties (deterministically, 3 runs each
+# way). It is the generic baseline, but on this hardware it costs nothing
+# measurable -- 52.2 GFLOP/s against neoversen1's 52.5 and vortexm4's 52.9.
+#
+# arm64 macOS ONLY. The core names are architecture-specific: ARMV8 on an x86_64
+# box is not recognised, and an unrecognised value does not warn -- it silently
+# falls back to the slowest baseline kernel. Linux and WSL link the netlib
+# reference BLAS today, which ignores this variable entirely; when the OpenBLAS
+# adoption item lands there it will need its own value, not this one.
+PINNED_CORETYPE = ('ARMV8'
+                   if sys.platform == 'darwin' and platform.machine() == 'arm64'
+                   else None)
+
 ONE_THREAD_ENV = {
     'OMP_NUM_THREADS': '1',         # OpenBLAS built USE_OPENMP (Homebrew's)
     'OPENBLAS_NUM_THREADS': '1',    # OpenBLAS built with pthreads (Ubuntu's)
@@ -457,6 +483,13 @@ def run_test(args, test_dir, io_files):
     env = dict(os.environ)
     env['TONTO_BASIS_SET_DIRECTORY'] = args.basis_sets
     env.update(ONE_THREAD_ENV)
+    if PINNED_CORETYPE and 'OPENBLAS_CORETYPE' not in os.environ:
+        env['OPENBLAS_CORETYPE'] = PINNED_CORETYPE
+    elif PINNED_CORETYPE:
+        # Deliberate override -- announced, never silent, because a kernel
+        # change moves last digits and this is how that gets diagnosed.
+        sys.stdout.write('CORETYPE OVERRIDE %s (pinned default is %s)\n'
+                         % (os.environ['OPENBLAS_CORETYPE'], PINNED_CORETYPE))
     kwargs = {
         'shell': False,
         'universal_newlines': True,

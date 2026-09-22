@@ -372,12 +372,23 @@ add_dependencies(report tonto run_har)
 # would keep whatever the machine's BLAS chose by default -- exactly the
 # inconsistency the pinning exists to remove.  Applied here in one loop rather
 # than per add_test, so a test added later cannot quietly miss it.
+set(_tonto_test_env
+    OMP_NUM_THREADS=1
+    OPENBLAS_NUM_THREADS=1
+    VECLIB_MAXIMUM_THREADS=1
+    MKL_NUM_THREADS=1)
+
+# And the OpenBLAS kernel, on Apple Silicon only -- see PINNED_CORETYPE in
+# scripts/test.py for why ARMV8 and why the references agree with it.
+# arm64 ONLY: the core names are architecture-specific, and an unrecognised
+# value does not warn, it silently drops to the slowest baseline kernel.
+if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
+    list(APPEND _tonto_test_env OPENBLAS_CORETYPE=ARMV8)
+endif()
+
 get_property(_tonto_tests DIRECTORY PROPERTY TESTS)
 foreach(_t ${_tonto_tests})
-    set_property(TEST ${_t} APPEND PROPERTY ENVIRONMENT
-        OMP_NUM_THREADS=1
-        OPENBLAS_NUM_THREADS=1
-        VECLIB_MAXIMUM_THREADS=1
-        MKL_NUM_THREADS=1)
+    set_property(TEST ${_t} APPEND PROPERTY ENVIRONMENT ${_tonto_test_env})
 endforeach()
 unset(_tonto_tests)
+unset(_tonto_test_env)
