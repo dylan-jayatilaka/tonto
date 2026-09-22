@@ -2897,8 +2897,92 @@ now passes under `armv8`, `neoversen1` and `vortexm4` alike -- **it no longer de
 pin**, which is the point: the pin protects this machine, the tolerance protects against the next
 Homebrew bump, the next Mac and Linux adoption.
 
-*Still open:* why Hirshfeld and not Salvador; and whether the table should print 4 decimals at
-all, when the quantity is only reproducible to 3.
+### Closed as UNRESOLVED (2026-09-22). Where it got to, and what is left
+
+**The phenomenon is well characterised; the cause is located but not confirmed.** Four hypotheses
+were tested and all four are dead:
+
+| hypothesis | killed by |
+|---|---|
+| near-zero residuals amplified in the tails | the scatter is uniform across moment order (r^0, r^1, r^2 all 1-4e-4); tails would make r^2 much the worst |
+| quadrature accuracy | `high` -> `very_high` -> `best` does not shrink the kernel gap at all |
+| the `epsilon(ONE)` cutoff flipping points in/out of the grid | probed: retained point counts *identical* between kernels for every atom (7910, 8344, 4984 ...), as are the counts the cutoff zeroes (254, 432, 292 ...) |
+| the atomic SCF convergence tolerance | flooring the guess SCF at 1e-8 left it unchanged: max kernel difference 4.0e-4 -> 5.0e-4, 34 -> 31 values differing |
+
+**Where it actually starts, measured.** Running with `guess_output= TRUE` shows the divergence at
+**iteration 0 of carbon's atomic SCF**, straight from the core guess:
+
+```
+       energy                gradient
+ARMV8   -37.631563142113     0.396926238412
+NEOV.   -37.631563142113     0.397177703351
+```
+
+**The energy is bit-identical and the gradient differs by 2.5e-4** -- and it stays that way
+through iterations 1, 2 and 3. Identical energy with a different gradient means *the same energy
+from a different density matrix*, and 2.5e-4 is far too large to be rounding in `FDS-SDF`
+(`MOLECULE.SCF:make_DIIS_commutator_r`, whose `antisymmetric_fold` is cancellation-prone, would
+inflate *relative* error from a 1e-16 perturbation, not produce 2.5e-4 absolute on O(1)
+matrices).
+
+**The leading hypothesis, not confirmed: degenerate atomic orbitals.** Carbon's 2p shell is
+three-fold degenerate, so `make_core_mx_guess_MOs` diagonalises a matrix with degenerate
+eigenvalues and LAPACK's choice of eigenvectors *within* that subspace is arbitrary and
+kernel-dependent. Occupying 2p^2 in a different orientation gives the same energy and a
+different, symmetry-broken density. It fits every observation, including why Salvador is immune
+(it runs no atomic calculation at all) and why tightening convergence did not help (the SCF
+converges tightly to *different points of a degenerate manifold*). It is the same family as the
+eigenvector-sign canonicalisation already fixed in this project. **Confirming it means dumping
+the carbon core-guess density matrix under two kernels and checking that it differs while its
+energy does not.** One debug build; not done.
+
+**Note the ordering defect this exposes.** `MOLECULE.SCF:make_ANOs_for_atom` spherically averages
+*after* the SCF has converged (`mol.symmetrize(mol.density_mx)`, pointgroup `oh`). Averaging a
+solution that already broke symmetry is not the same as converging a symmetric one, which is
+consistent with the residual.
+
+**pFON is not the answer, twice over** (investigated 2026-09-22; Dylan was right to doubt it):
+- **It is disabled by a typo.** `molecule.base.foo`: `use_FON = FALSE` is followed by
+  `if (.SCF_data.allocated) use_pFON = .SCF_data.using_FON` -- assigning to `use_pFON`, not
+  `use_FON`, three lines after `use_pFON` was correctly set from `.apply_pFON`. Since
+  `using_FON` defaults FALSE this clobbers `use_pFON` to FALSE on every SCF, so
+  `use_pFON_damping= TRUE` does nothing; and `use_FON` is never assigned, so the
+  finite-temperature FON branch is dead code. No test exercises either, which is why it
+  survived. **Fixed 2026-09-22**; safe by default, both flags defaulting FALSE.
+- **Even working it is the wrong tool.** `temperature_for_pFON` anneals: 1000 - 50*iteration,
+  zero by iteration 20, and zero immediately once `DIIS_error < DIIS_error_temp_cutoff`
+  (default 1e-2). Carbon's atomic SCF is already at 0.0059 by iteration 3, so pFON would switch
+  off there. The degeneracy problem lives **at T=0**, where occupations are integer again --
+  pFON helps you *reach* a solution, not choose *which* degenerate one.
+
+**Dylan's test-charge idea, recorded for whoever picks this up.** Break the degeneracy with a
+small test charge so the atomic SCF has a unique solution. **One charge is not enough**: a charge
+on z gives C-infinity-v, which splits `pz` from `(px,py)` but leaves those two degenerate. A
+second charge on y drops it to D2h, where `px`, `py`, `pz` transform as B3u, B2u, B1u -- three
+different irreps, all inequivalent. (D2h generically splits d as well: Ag, Ag, B1g, B2g, B3g, the
+two Ag's not being symmetry-forced to coincide.) **The caveat to weigh first:** test charges
+polarise the atomic density, so the ANOs are no longer free-atom densities and the Hirshfeld
+promolecule is biased -- and Hirshfeld's definition rests on free-atom references. Small enough
+not to bias means a small splitting, which brings back near-degeneracy and the same
+ill-conditioning. The alternative is equal fractional occupation of degenerate shells *maintained
+to convergence* (not annealed away, as pFON does), or canonicalising the degenerate subspace
+after diagonalisation.
+
+**Done on the way, and kept:** `guess_convergence=` in `scfdata=` (default 1e-8), so a guess SCF
+converges on its own terms instead of inheriting the parent's tolerance. It does **not** fix the
+kernel spread -- it was implemented because the inheritance is wrong on its own merits: a job run
+at `convergence= 1e-4` was building the atomic densities behind the ANOs, the promolecule and the
+Hirshfeld weights to 1e-4, invisibly. A first attempt floored it silently inside
+`set_SCF_guess_defaults_from`; Dylan rejected that -- the user asked for a tolerance and can
+raise it themselves -- so it is a documented, settable keyword echoed by `put_options` instead.
+
+**Owed: `put_options` does not echo `guess_convergence`.** Adding the line shifts every SCF job's
+output by one and so needs a deliberate re-bless -- three `short` tests failed *structurally* on
+it, with `max rel 0%` and `max ulp 0`, which is the signature. The line is written and commented
+out at the echo site. Same debt as the COSX settings.
+
+*Also still open:* whether the Hirshfeld table should print 4 decimals at all, when the quantity
+is reproducible to 3.
 
 **2. The harness is pinned and production is not, which is incoherent.** Dylan's objection, and
 it is right: the suite now certifies a configuration no user runs. A user on this Mac gets
