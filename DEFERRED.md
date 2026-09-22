@@ -2835,10 +2835,57 @@ magnitude is small: 3e-4 on `|Q|` = 6.79 is 0.006% and passes, the same 2e-4 on 
 is 2.99% and fails. Nine tokens fail in all, the largest being a carbon atomic charge, 0.1979
 against 0.1984 -- nowhere near zero.
 
-*A fact worth knowing, and unexplained.* It is **the Hirshfeld moments only**. On the identical
-density, grid and radii, the Salvador moments in the same job are **bit-identical** across both
-kernels and all three accuracies; the Hirshfeld ones differ in 10 of 16 rows at `high` and 14 of
-16 at `best`. Why the two partitionings differ so sharply in reproducibility is not established.
+*Why Hirshfeld and not Salvador -- diagnosed.* It is **the Hirshfeld moments only**: on the
+identical density, grid and radii the Salvador moments are **bit-identical** across both kernels
+and all three accuracies, while Hirshfeld differs in 10 of 16 rows at `high` and 14 of 16 at
+`best`. The two paths diverge in exactly one step, and both halves of the explanation are in the
+code.
+
+**The source of the kernel dependence.** `MOLECULE.SCF:make_HA_info` calls
+`make_ANOs_and_interpolators`: the Hirshfeld weight needs *atomic* densities, so it runs atomic
+calculations whose eigensolves go through LAPACK, and the resulting interpolator tables differ in
+their last bits from one BLAS kernel to the next. The Salvador weight
+(`BECKE_GRID:make_Salvador_atom_grid_v0`) is the normalised Voronoi cell function of the nuclear
+positions and the Salvador radii -- **no density, no eigensolve, nothing for a BLAS kernel to
+change**. That is the whole asymmetry.
+
+**The amplifier.** `MOLECULE.RHO:make_stockholder_atom_weight_int` (the routine that runs:
+`use_interpolators` defaults TRUE; `_acc` carries the identical code) forms the weight as
+
+```
+do i = 1,n_pts
+   if (grid(i)>epsilon(ONE)) then; grid(i) = rho_a(i)/grid(i)
+   else;                           grid(i) = ZERO
+   end
+end
+```
+
+where `grid` is the promolecule density. Two consequences, neither of which Salvador has. A point
+whose promolecule density sits near `epsilon(ONE)` (2.2e-16) can be given weight **exactly zero**
+and is then **deleted outright** by `BECKE_GRID:prune_grid`, which drops zero-weight points -- so
+whether a point contributes at all is decided by a comparison against machine epsilon on a
+quantity that differs per kernel. And a point that survives just above the threshold forms
+`rho_a/grid` from two near-denormal numbers, which can land anywhere in [0,1].
+
+This also explains the direction that first looked wrong: a finer grid adds points in the far
+tails, exactly where the promolecule density approaches epsilon, so `best` makes **more**
+borderline decisions than `high`, not fewer.
+
+**The candidate repair, not attempted.** The docstring of the same routine says *"the
+CLUSTER.atom_density_cutoff must be the same as the BECKE_GRID.basis_fn_cutoff"*, yet the code
+thresholds against `epsilon(ONE)`. Thresholding instead on a physically meaningful density cutoff
+would put the in/out decision where the contribution is negligible and would never form the ratio
+between near-denormals. **It moves every Hirshfeld number and so forces a re-bless of the HAR
+tests**, which is why it is recorded rather than done.
+
+*Confidence.* The code path is established by reading; the quantitative attribution -- that this
+is what produces the observed 1-4e-4 -- is inferred. Confirming it means probing the retained
+point count per atom under two kernels in a debug build.
+
+*Reducing the printed precision does not work.* Measured: at `real_precision= 3` the tables still
+differ (C `Qyy` -3.972 against -3.973; N1 `Q_yz` 0.007 against 0.006), because the 1-4e-4 scatter
+straddles the 5e-4 rounding boundary -- and `Q_yz` is *relatively* worse at 3 dp than at 4. Hiding
+it would take 2 dp, too coarse for atomic moments.
 
 *The repair, applied.* `last_digit_tol= 6` for this test, in `KNOWN_MARGINAL` -- which was moved
 into `scripts/test.py`, because **ctest reaches the comparison through `test.py` with the default
