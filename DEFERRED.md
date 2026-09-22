@@ -2849,38 +2849,39 @@ their last bits from one BLAS kernel to the next. The Salvador weight
 positions and the Salvador radii -- **no density, no eigensolve, nothing for a BLAS kernel to
 change**. That is the whole asymmetry.
 
-**The amplifier.** `MOLECULE.RHO:make_stockholder_atom_weight_int` (the routine that runs:
-`use_interpolators` defaults TRUE; `_acc` carries the identical code) forms the weight as
+**The mechanism, measured with a probe in a debug build (2026-09-22).** The atomic densities
+themselves differ, and by far more than rounding. Probing `sum(grid)`, the promolecule density
+summed over an atom's grid, under the two kernels:
 
-```
-do i = 1,n_pts
-   if (grid(i)>epsilon(ONE)) then; grid(i) = rho_a(i)/grid(i)
-   else;                           grid(i) = ZERO
-   end
-end
-```
+| atom | `armv8` | `neoversen1` | relative |
+|---|---|---|---|
+| 1 | 3652.3688339449 | 3652.0555237848 | **8.6e-5** |
+| 2 | 5719.7149599702 | 5719.7508630768 | 6.3e-6 |
+| 3 | 4334.7551913845 | 4334.8310743175 | **1.8e-5** |
 
-where `grid` is the promolecule density. Two consequences, neither of which Salvador has. A point
-whose promolecule density sits near `epsilon(ONE)` (2.2e-16) can be given weight **exactly zero**
-and is then **deleted outright** by `BECKE_GRID:prune_grid`, which drops zero-weight points -- so
-whether a point contributes at all is decided by a comparison against machine epsilon on a
-quantity that differs per kernel. And a point that survives just above the threshold forms
-`rho_a/grid` from two near-denormal numbers, which can land anywhere in [0,1].
+That is **eleven orders of magnitude above machine epsilon**, so it is not floating-point noise in
+the quadrature. Weights differing by 1e-5 relative give moments of magnitude ~4 differing by
+~1e-4, which is exactly the scatter observed.
 
-This also explains the direction that first looked wrong: a finer grid adds points in the far
-tails, exactly where the promolecule density approaches epsilon, so `best` makes **more**
-borderline decisions than `high`, not fewer.
+**Why the atomic densities differ at all: `MOLECULE.SCF:make_ANOs` runs a per-atom iterative
+SCF** (`make_ANOs_for_atom(a,converged)`). A different BLAS kernel takes a different iteration
+path and lands on a different point *within the atomic SCF's convergence tolerance*. The
+Hirshfeld weights therefore inherit that tolerance, and the kernel merely selects which point
+inside it you get.
 
-**The candidate repair, not attempted.** The docstring of the same routine says *"the
-CLUSTER.atom_density_cutoff must be the same as the BECKE_GRID.basis_fn_cutoff"*, yet the code
-thresholds against `epsilon(ONE)`. Thresholding instead on a physically meaningful density cutoff
-would put the in/out decision where the contribution is negligible and would never form the ratio
-between near-denormals. **It moves every Hirshfeld number and so forces a re-bless of the HAR
-tests**, which is why it is recorded rather than done.
+**So the Hirshfeld moments are only meaningful to about 1e-4 whatever the BLAS**, and printing
+them to four decimals overstates their precision. **The proper repair is to tighten the atomic
+ANO SCF convergence**, not to widen the gate and not to change the grid.
 
-*Confidence.* The code path is established by reading; the quantitative attribution -- that this
-is what produces the observed 1-4e-4 -- is inferred. Confirming it means probing the retained
-point count per atom under two kernels in a debug build.
+**A hypothesis recorded here earlier, and now REFUTED.** The `epsilon(ONE)` threshold in
+`make_stockholder_atom_weight_int` -- weight set to exactly `ZERO` below it, the point then
+deleted by `BECKE_GRID:prune_grid` -- looked like a discrete amplifier that would flip points in
+and out per kernel. It does not. Probed directly: the retained point counts are **identical**
+between kernels for every atom (7910, 8344, 4984 ...), and so are the counts the epsilon test
+zeroes (254, 432, 292 ...). The point sets are the same; only the values differ. The threshold is
+still questionable on its own terms -- the routine's docstring says the cutoff should be
+`BECKE_GRID.basis_fn_cutoff`, while the code uses `epsilon(ONE)` -- but it is **not** the cause
+here.
 
 *Reducing the printed precision does not work.* Measured: at `real_precision= 3` the tables still
 differ (C `Qyy` -3.972 against -3.973; N1 `Q_yz` 0.007 against 0.006), because the 1-4e-4 scatter
