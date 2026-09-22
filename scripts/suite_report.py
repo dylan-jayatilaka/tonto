@@ -48,10 +48,11 @@ SUITES = ['short', 'hart', 'rgbi', 'long', 'cx']
 # every other test. This is a WORKAROUND, not a fix -- the aim is to remove entries
 # by understanding each discrepancy. See DEFERRED.md "small numerical
 # differences". Keys are the test-dir basename.
-KNOWN_MARGINAL = {
-    'h2o_rhf_cc-pVDZ_tdhf': {'rel_tol': 5e-3},     # TDHF response, rel ~0.12% vs 0.2% gate
-    'nh3_rhf_DZP_HAR':      {'last_digit_tol': 4},  # near-zero value, passes only on ulp<=2
-}
+# Single source of truth: the table lives in test.py, because ctest reaches the
+# comparison through test.py with the DEFAULT tolerances and never through this
+# file. Keeping a second copy here is how the two paths drift apart.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from test import KNOWN_MARGINAL  # noqa: E402
 
 # "Could not run", as distinct from "ran and disagreed" -- scripts/test.py exits
 # with this when a declared input is absent (the pHAR asset, say). CMake pairs it

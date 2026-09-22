@@ -2816,19 +2816,41 @@ announces it, because a silent kernel change moving last digits is the thing bei
 
 **Two things this does NOT settle, and they matter more than the pinning.**
 
-**1. `urea_ccsd_pob-TZVP_Salvador_properties` was not really fixed.** The pin makes it pass --
-deterministically, three runs each way, `armv8` PASS and `neoversen1`/`vortexm4` FAIL -- and
-`short` went 68/70 to 69/70 with no re-bless. But the quantity that moves is a **near-zero
-symmetry residual**: the N1/N2 row of the Salvador properties table carries `+0.0066` and
-`-0.0066` where the rest of that column is exactly `0.0000`, beside row-neighbours of about 4.
-The kernel moves it by 2e-4, which is 2.99% *relatively*, and the loose gate's relative
-criterion is what fails. `--abs-tol` exists for exactly this and defaults to **1e-7** -- far too
-tight to floor a 2e-4 movement on a residual whose true value is zero.
+**1. `urea_ccsd_pob-TZVP_Salvador_properties` is now understood, and the pin is not what fixes
+it.** Diagnosed 2026-09-22; two earlier readings in this entry were wrong and are replaced.
 
-So the test asserts numerical noise under a relative tolerance. Pinning fixes the *symptom on
-this machine*; the test stays fragile and will break again on the next kernel, the next Homebrew
-bump, or Linux adoption. **The real repair is the near-zero floor, not the pin**, and this row
-should not be recorded as closed on the strength of the pin alone.
+*What it is not.* **Not quadrature accuracy.** Refining the grid does not shrink the kernel
+disagreement at all -- the carbon Hirshfeld quadrupole row is 6.7857 (`armv8`) against 6.7861
+(`neoversen1`) at `accuracy= high`, at `very_high` and at `best` alike, while within one kernel
+`high` -> `very_high` moves values by <= 1e-4 and `very_high` -> `best` by nothing. The grid is
+converged; the gap is not the grid. **Not a threshold flip either**: the Salvador radii and the
+grid point counts are identical between kernels.
+
+*What it is.* The disagreement is a **uniform 1-4 units in the last printed place**, and it does
+**not** grow with moment order -- charge (r^0), dipole (r^1) and quadrupole (r^2) all show the
+same 1-4e-4 absolute scatter. (An earlier reading here blamed near-zero residuals in the tails;
+that predicts the r^2 moments would be much the worst, and they are not. Refuted by measurement.)
+Because the scatter is a fixed absolute amount, the *relative* criterion fails only where the
+magnitude is small: 3e-4 on `|Q|` = 6.79 is 0.006% and passes, the same 2e-4 on `Q_yz` = 0.0066
+is 2.99% and fails. Nine tokens fail in all, the largest being a carbon atomic charge, 0.1979
+against 0.1984 -- nowhere near zero.
+
+*A fact worth knowing, and unexplained.* It is **the Hirshfeld moments only**. On the identical
+density, grid and radii, the Salvador moments in the same job are **bit-identical** across both
+kernels and all three accuracies; the Hirshfeld ones differ in 10 of 16 rows at `high` and 14 of
+16 at `best`. Why the two partitionings differ so sharply in reproducibility is not established.
+
+*The repair, applied.* `last_digit_tol= 6` for this test, in `KNOWN_MARGINAL` -- which was moved
+into `scripts/test.py`, because **ctest reaches the comparison through `test.py` with the default
+tolerances and never through `suite_report.py`**, so the override as it stood widened `make
+report` and left ctest failing. `suite_report.py` now imports the table rather than keeping a
+second copy. Applied by relaxing only, so a wider bound on the command line still wins. The test
+now passes under `armv8`, `neoversen1` and `vortexm4` alike -- **it no longer depends on the
+pin**, which is the point: the pin protects this machine, the tolerance protects against the next
+Homebrew bump, the next Mac and Linux adoption.
+
+*Still open:* why Hirshfeld and not Salvador; and whether the table should print 4 decimals at
+all, when the quantity is only reproducible to 3.
 
 **2. The harness is pinned and production is not, which is incoherent.** Dylan's objection, and
 it is right: the suite now certifies a configuration no user runs. A user on this Mac gets
