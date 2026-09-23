@@ -3593,6 +3593,46 @@ the XC evaluation, not the point count. Tables in `docs/SCF_SPEED_REPORT.md`.
 
 # Test suite and numerics
 
+## numpy is an undeclared test dependency, and the skip that hides it
+
+`scripts/check_lebedev_rules.py` needs numpy. **No workflow installs it.** The check has been
+passing in CI only because the GitHub runner images happen to ship numpy -- an undeclared
+dependency satisfied by luck of the image, which is not a property anyone chose and not one that
+will necessarily survive an image change.
+
+On any clean developer machine it failed outright: macOS `python3` is the Command Line Tools
+build (3.9.6), which ships no numpy, unlike the old system python 2.7. Found 2026-09-22 on a
+fresh `release` tree, where `short` was 69/70 for this reason alone.
+
+**What was done (`90cc74fa`)** is a mitigation, not the fix: the script now exits 77 with the pip
+command, and `lebedev_rules` declares `SKIP_RETURN_CODE 77`, so a clean clone gets a *skip*
+rather than a red suite. `add_all_tests` sets that property for every suite test; the standalone
+checks like this one never had it.
+
+**Why that is not enough, and is arguably worse.** A skip is silent. If the runner image ever
+drops numpy, `lebedev_rules` stops running, CI stays green, and the Lebedev grids -- where one
+wrong literal shifts every DFT energy with nothing else noticing, which is the whole reason the
+check exists -- are no longer checked by anything. The mitigation converted a loud failure into a
+quiet absence.
+
+**The rigorous fix, in two parts:**
+
+1. **Declare the dependency and install it.** numpy goes into the workflows that run the suite,
+   and into the developer prerequisites in `docs/BUILDING_ON_*.md` beside `python3`. Then the
+   check runs everywhere by construction rather than by luck.
+2. **Make a skip in CI an error.** A skipped test is a legitimate local outcome and an
+   illegitimate CI one: on a runner, everything declared should run. `ctest` reports skips
+   distinctly, so a workflow step can assert the skip count is zero (or matches an explicit
+   allow-list). This is not specific to numpy -- `tests/long/ammonium_borane_pHAR_C23` skips on
+   its uncommitted 167 MB asset too, and the same argument applies: the suite should say out loud
+   what it did not run.
+
+An alternative to part 1 worth weighing: **drop the numpy dependency**. The script replays orbit
+generators and integrates monomials -- arithmetic that plain Python does perfectly well for a
+~2 s check. That removes the question rather than answering it, at the cost of a slower and
+slightly longer script.
+
+
 ## Deferred: small numerical differences (longstanding) — drill down
 
 Several tests differ from their references only by small numerical amounts — 3rd–4th
