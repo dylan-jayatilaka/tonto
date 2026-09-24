@@ -48,10 +48,11 @@ SUITES = ['short', 'hart', 'rgbi', 'long', 'cx']
 # every other test. This is a WORKAROUND, not a fix -- the aim is to remove entries
 # by understanding each discrepancy. See DEFERRED.md "small numerical
 # differences". Keys are the test-dir basename.
-KNOWN_MARGINAL = {
-    'h2o_rhf_cc-pVDZ_tdhf': {'rel_tol': 5e-3},     # TDHF response, rel ~0.12% vs 0.2% gate
-    'nh3_rhf_DZP_HAR':      {'last_digit_tol': 4},  # near-zero value, passes only on ulp<=2
-}
+# Single source of truth: the table lives in test.py, because ctest reaches the
+# comparison through test.py with the DEFAULT tolerances and never through this
+# file. Keeping a second copy here is how the two paths drift apart.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from test import KNOWN_MARGINAL  # noqa: E402
 
 # "Could not run", as distinct from "ran and disagreed" -- scripts/test.py exits
 # with this when a declared input is absent (the pHAR asset, say). CMake pairs it
@@ -66,6 +67,12 @@ _ROW = re.compile(
     r'rel<=\S+?=(?P<rel>\w+)\(max\s*(?P<maxrel>[\d.eE+-]+)\s*%\).*?'
     r'lastdig<=\S+?=(?P<ld>\w+)\(max\s*(?P<maxulp>[\d.eE+-]+)\s*ulp\).*?'
     r'LOOSE=(?P<loose>\w+)')
+
+
+# The job's own CPU accounting, printed by test.py (see job_cpu_seconds there).
+# Wall-clock moves with machine load; this does not, so it is what makes two
+# suite runs on differently-loaded machines comparable.
+_CPU = re.compile(r'^CPUTIME\s+([\d.eE+-]+)')
 
 
 class _Tee:
@@ -134,6 +141,8 @@ def score_test(test_py, test_dir, args):
     p = subprocess.run(cmd, capture_output=True, text=True)
     rows = [m for m in (_ROW.search(l) for l in p.stdout.splitlines()
                         if l.startswith('AGREEMENT')) if m]
+    cpus = [float(m.group(1)) for m in (_CPU.match(l) for l in p.stdout.splitlines()) if m]
+    cpu = sum(cpus) if cpus else None
     if not rows:
         # No comparison happened. Either the test declined to run (SKIP_EXIT_CODE,
         # e.g. a missing large asset), which is not a defect and must not be scored
@@ -142,7 +151,8 @@ def score_test(test_py, test_dir, args):
             reason = next((l for l in p.stdout.splitlines()
                            if l.startswith('SKIPPED:')), 'no reason given')
             return {'status': 'SKIP', 'reason': reason.partition('--')[2].strip()
-                                                or reason, 'rc': p.returncode}
+                                                or reason, 'rc': p.returncode,
+                    'cpu': cpu}
         status = 'ERROR' if p.returncode != 0 else 'PASS'
         # KEEP THE REASON. This output is already captured above and used to be
         # thrown away here, so an ERROR row said only "ERROR ERROR ERROR - -" and
@@ -155,7 +165,7 @@ def score_test(test_py, test_dir, args):
         return {'status': status, 'exact': p.returncode == 0,
                 'rel': p.returncode == 0, 'ld': p.returncode == 0,
                 'loose': p.returncode == 0, 'max_rel': 0.0, 'max_ulp': 0.0,
-                'rc': p.returncode}
+                'rc': p.returncode, 'cpu': cpu}
 
     def worst(field):
         return all(m.group(field) == 'PASS' for m in rows)
@@ -164,7 +174,7 @@ def score_test(test_py, test_dir, args):
             'loose': p.returncode == 0,
             'max_rel': max(float(m.group('maxrel')) for m in rows),
             'max_ulp': max(float(m.group('maxulp')) for m in rows),
-            'rc': p.returncode}
+            'rc': p.returncode, 'cpu': cpu}
 
 
 def yn(ok):
@@ -243,11 +253,39 @@ def main():
 
     relpct = args.rel_tol * 100
     ldk = args.last_digit_tol
-    NAMEW = 50
+
+    # The name column is sized to the longest name actually being reported,
+    # across every suite in this run, so the table is as narrow as the content
+    # allows and stays the same width from one suite to the next. Clamped: a
+    # very short suite should not collapse the column, and one pathological
+    # name should not push the numbers off a terminal.
+    _names = [d for suite in args.suites
+              for d in (os.listdir(os.path.join(args.tests_dir, suite))
+                        if os.path.isdir(os.path.join(args.tests_dir, suite)) else [])]
+    NAMEW = max(30, min(54, max((len(n) for n in _names), default=30)))
+
     # Column order: exact, lastdig, then loose LAST -- loose is the OR of the
     # other two, so it reads naturally as the rightmost of the three verdicts.
-    hdr = ('%-*s  %-6s %-7s %-6s  %9s  %9s'
-           % (NAMEW, 'test name', 'exact', 'lastdig', 'loose', 'max rel%', 'max LDD'))
+    # Verdicts are left-aligned under left-aligned headings, numbers are right
+    # aligned under right-aligned ones, so every heading sits over its column.
+    COLUMNS = [('test name', NAMEW, 'L'), ('exact', 5, 'L'), ('lastdig', 7, 'L'),
+               ('loose', 5, 'L'), ('max rel%', 9, 'R'), ('max LDD', 8, 'R'),
+               ('cpu s', 9, 'R')]
+    GAP = '  '
+
+    def cells(specs, values):
+        """Format values into their columns. One place, so a column added later
+        cannot leave a print site behind -- which is how this table came to
+        have separators of two different widths."""
+        return [('%-*s' if a == 'L' else '%*s') % (w, str(v)[:w])
+                for (_, w, a), v in zip(specs, values)]
+
+    def row(values):
+        return GAP.join(cells(COLUMNS, values))
+
+    hdr = row([c[0] for c in COLUMNS])
+    rule = GAP.join('-' * w for _, w, _ in COLUMNS)
+    WIDTH = len(rule)
     grand = {'n': 0, 'exact': 0, 'loose': 0, 'ld': 0, 'err': 0, 'skip': 0}
     widened = []   # known-marginal tests run with a relaxed bound (reported below)
     skipped = []   # (test, reason) for tests that declined to run (reported below)
@@ -267,6 +305,9 @@ def main():
     print('Compared to the reference, we also report:')
     print('. the maximum relative % disagreement (max rel%)')
     print('. the maximim last digit difference   (max LDD )')
+    print('')
+    print('cpu s is the job\'s OWN reported CPU time, not wall-clock, so two')
+    print('runs on differently-loaded machines stay comparable.')
 
     for suite in args.suites:
         sdir = os.path.join(args.tests_dir, suite)
@@ -280,15 +321,15 @@ def main():
                        or os.path.isfile(os.path.join(sdir, d, 'IO')))
         print('')
         print('SUITE: %s (%d tests)' % (suite, len(tests)))
-        print('_' * 95 + '\n')
+        print('')
         print(hdr)
-        print('_' * 95 + '\n')
+        print(rule)
         sub = {'n': 0, 'exact': 0, 'loose': 0, 'ld': 0, 'err': 0, 'skip': 0}
         for t in tests:
             # Print the name *before* running the test, and only then its
             # verdict columns, so a slow test shows as a visibly pending line
             # instead of silence.  Some tests here run for minutes.
-            print('%-*s  ' % (NAMEW, t[:NAMEW]), end='', flush=True)
+            print(cells(COLUMNS[:1], [t])[0] + GAP, end='', flush=True)
             r = score_test(test_py, os.path.join(sdir, t), args)
             # A skipped test is NOT in the denominator: it was never run, so
             # scoring it either way would misreport the build. It is counted
@@ -297,24 +338,26 @@ def main():
             if r['status'] == 'SKIP':
                 sub['skip'] += 1
                 skipped.append((t, r['reason']))
-                print('%-6s %-7s %-6s  %9s  %9s'
-                      % ('SKIP', 'SKIP', 'SKIP', '-', '-'))
+                print(GAP.join(cells(COLUMNS[1:],
+                      ['SKIP', 'SKIP', 'SKIP', '-', '-', '-'])))
                 continue
             sub['n'] += 1
             if t in KNOWN_MARGINAL:
                 widened.append(t)
             if r['status'] == 'ERROR':
                 sub['err'] += 1
-                print('%-6s %-7s %-6s  %9s  %9s'
-                      % ('ERROR', 'ERROR', 'ERROR', '-', '-'))
+                print(GAP.join(cells(COLUMNS[1:],
+                      ['ERROR', 'ERROR', 'ERROR', '-', '-',
+                       '-' if r.get('cpu') is None else '%.3f' % r['cpu']])))
                 continue
             sub['exact'] += r['exact']
             sub['loose'] += r['loose']
             sub['ld'] += r['ld']
-            print('%-6s %-7s %-6s  %9.3g  %9.3g'
-                  % (yn(r['exact']), yn(r['ld']),
-                     yn(r['loose']), r['max_rel'], r['max_ulp']))
-        print('_' * 95 + '\n')
+            print(GAP.join(cells(COLUMNS[1:],
+                  [yn(r['exact']), yn(r['ld']), yn(r['loose']),
+                   '%.3g' % r['max_rel'], '%.3g' % r['max_ulp'],
+                   '-' if r.get('cpu') is None else '%.3f' % r['cpu']])))
+        print(rule)
         print('%s subtotal:  loose %d/%d   (exact %d, lastdig %d%s%s)'
               % (suite, sub['loose'], sub['n'], sub['exact'], sub['ld'],
                  ', ERROR %d' % sub['err'] if sub['err'] else '',
@@ -322,12 +365,13 @@ def main():
         for k in grand:
             grand[k] += sub[k]
 
-    print('_' * 95 + '\n')
+    print('')
+    print('=' * WIDTH)
     print('GRAND TOTAL:  loose %d/%d   (exact %d, lastdig %d%s%s)'
           % (grand['loose'], grand['n'], grand['exact'], grand['ld'],
              ', ERROR %d' % grand['err'] if grand['err'] else '',
              ', SKIPPED %d' % grand['skip'] if grand['skip'] else ''))
-    print('_' * 95)
+    print('=' * WIDTH)
     if skipped:
         print('\nSkipped -- these tests declined to run and are NOT in the totals '
               'above:')
@@ -376,10 +420,13 @@ def main():
                        [os.path.join(os.path.dirname(here), 'foofiles')]))
         print('')
         print('INVARIANT CHECKS (no reference output involved)')
-        print('_' * 95 + '\n')
+        print('')
+        # Their own width: these labels are sentences, not test directory
+        # names, so the table column above does not fit them.
+        CHKW = max(len(n) for n, _, _ in checks)
         for name, script, cmd_args in checks:
             if not os.path.exists(script):
-                print('%-*s  %s' % (NAMEW, name[:NAMEW], 'SKIP (script not found)'))
+                print('%-*s  %s' % (CHKW, name, 'SKIP (script not found)'))
                 continue
             runner = 'python3' if script.endswith('.py') else 'sh'
             proc = subprocess.run([runner, script] + cmd_args,
@@ -387,12 +434,11 @@ def main():
                                   stderr=subprocess.STDOUT,
                                   universal_newlines=True)
             ok = (proc.returncode == 0)
-            print('%-*s  %s' % (NAMEW, name[:NAMEW], yn(ok)))
+            print('%-*s  %s' % (CHKW, name, yn(ok)))
             if not ok:
                 invariants_ok = False
                 for line in proc.stdout.strip().splitlines():
                     print('    %s' % line)
-        print('_' * 95)
 
     if logf:
         print('\n(report written to %s)' % os.path.abspath(args.log))

@@ -73,6 +73,104 @@ now covers the whole project, so it was renamed.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## START HERE, 2026-09-24 (evening): the re-bless is DONE; one push is owed
+
+**Everything below is pushed to `develop`. The re-bless is complete** and the full suite is
+**153 tests, 0 failures, 3 skips** on the `reference` profile on Linux (Ubuntu 24.04, gfortran
+14.2.0, netlib LAPACK 3.12.0). 13 references were re-blessed in `09d5fb99`, each matched to a cause
+first by building the parent commit `e50673c8` in a second worktree and comparing failure lists.
+
+**The one thing owed: `develop` -> `master`, Dylan's call.** CI will run the `reference` profile for
+the first time on that push, so the `Linux-release` badge is the real test of whether blessing on the
+Linux box and gating on a pinned `ubuntu-24.04` runner agree. The failure sets matched all evening,
+so green is expected -- but it is a prediction, not a measurement.
+
+### What this pass changed
+
+The Becke grid inheritance fix, so fragments honour the parent's settings -- which is why
+`--grid-accuracy` had silently done nothing on every fragHAR job. `gly_ala_fragHAR` on the `low`
+grid, 66 -> 33 s. SCF option reporting plus the `guess_convergence` echo. The `yq28` unreachable
+convergence tolerance deleted, which made two of those three jobs converge for the first time and cut
+them 37-46%. Architecture tuning made opt-in, a `reference` build type added, the Linux CI runners
+pinned to `ubuntu-24.04`, and CI switched to the `reference` profile so what it checks is what was
+blessed. `docs/TONTO_BLESSING_TESTS.md`, `docs/TONTO_RI_FITTING_PLAN.md`,
+`docs/TONTO_CRYSTAL_HOIST_PLAN.md`. The rgbi selftest skip guard.
+
+### Deliberately left failing, and why
+
+`tests/long/quartz_NN_HAR_L1_rhf_def2-SVP`. Its diff looks like a 100% deviation and is nothing of
+the kind: rows 854 and 855 swap because two reflections tied to 0.007 in `F_z` cross over, so a
+row-by-row comparison reads different reflections against each other while the same reflection agrees
+to 0.13%. **That reference is correct** and blessing it would only bake one machine's ordering in. It
+fails at the parent commit too, and it is a `long` test, so the routine CI gate is unaffected. Fix is
+a deterministic tie-break on `h`, `k`, `l`; recorded as its own task.
+
+### Three claims made during this pass that were WRONG
+
+Recorded because the method was at fault, not the conclusion. (1) The `cos`/`sin` accumulator revert
+`dace267a` blamed `quartz_NN_HAR_L1`; that job fails at the parent commit, so the stated reason is
+false -- the revert stands on its own merit, being measured performance-neutral. (2) The three
+`urea_hart` failures were called pre-existing on the strength of an isolation experiment that
+neutralised one of two changes. They are the `guess_convergence` line. (3) `quartz_NN_HAR_L1`'s diff
+was twice described as "one ulp becoming 1.3% in a derived ratio" -- once from the wrong build, once
+from zipping diff hunks positionally, which manufactures large differences exactly as the harness's
+own misalignment does. **Only a line-indexed comparison of whole files is trustworthy.**
+
+## START HERE, 2026-09-18 (evening): the COSX grid -- plan drafted, decisions owed
+
+> Nothing was built or run in the planning session. The plan below is what was drafted from the
+> handover, the code and the stage-4 runs; three decisions are Dylan's before any code.
+>
+> **A finding that changes the plan.** The paragraph further down says `high` separates from
+> `medium` because the bonding-region angular order is 59 against 29. That setting,
+> `l_bonding_angular_grid`, is read only by `pruning_scheme= adaptive`; the default is
+> `treutler_ahlrichs` (`types.foo`, `BECKE_GRID.pruning_scheme`), and neither the COSX code nor
+> any stage-4 input (`~/tonto_runs/cosx_2026-09-17/stage4/*/stdin`) changes it. So every COSX grid
+> number so far used Treutler-Ahlrichs pruning and the 59 never took effect. From `medium` to
+> `high` only three things changed: heavy-atom angular 29 -> 35, hydrogen angular 23 -> 29,
+> radial 30 -> 35. For those small steps the karrikinolide error went +1.5e-5, +2.9e-5, -1.5e-5,
+> +2.0e-6: more like an error changing sign than one converging, and `high` may be good partly by
+> luck. The same claim is in `docs/TONTO_SCF_SPEED_UP.md` 5b ("the error falls with the angular
+> order in the bonding region"); both are to be corrected once Dylan has seen this.
+>
+> **The plan.**
+>
+> 1. **Measure before designing; no `types.foo` change.** A diagnostic like
+>    `MOLECULE.RHO:put_grid_shell_errors` (which calibrated the adaptive XC pruning, stage B): for
+>    a converged density, per atom and per radial shell, the shell's contribution to the exchange
+>    energy at Lebedev orders 5, 11, 17, 23, 29 against 59. A keyword run after `scf`, so one
+>    karrikinolide def2-SVP job gives the whole angular table and no SCF per grid is needed. Run it
+>    at 35 and at 65 radial points; the difference of the L59 totals is the radial error on its
+>    own. The exchange integrand has the potentials of tight core pairs of neighbouring atoms in
+>    it, so the angular demand is expected further in than for XC -- a guess until measured.
+> 2. **The input blocks, one `types.foo` edit.** `cosx_grid= { ... }` and `cosx_final_grid= { ... }`
+>    read with `BECKE_GRID:read_keywords`; `very_low` and `high` become their defaults. Proposed:
+>    hold the two grids in `SCF_DATA` next to the COSX switches, read inside `scfdata=`, so there is
+>    no ordering question against `becke_grid=`; drop the two `cosx_*_grid_accuracy=` names (merged
+>    today, one test uses them at the defaults). `initialize_COSX` takes the grid as an argument
+>    instead of swapping the accuracy string. Any component a COSX-specific pruning rule needs (its
+>    own zone table or a `cosx` pruning scheme) goes in the same edit, so the 25-minute rebuild is
+>    paid once. `put_options` echoes the COSX settings, which is owed anyway.
+> 3. **Calibrate and confirm.** Score candidate zone rules offline against the stage-1 tables, as
+>    `~/tonto_runs/grid_shell_errors_2026-09-13/rules.py` did for XC; build only the winners.
+>    Target for the final grid: ORCA's 2e-6 on karrikinolide def2-SVP for two to three times the
+>    iteration grid's points (seven today). Check whether the iteration grid can lose points under
+>    a zoned cut (the 15-radial/50-angular failure was a uniform cut). Confirm on karrikinolide
+>    def2-TZVP and the zinc finger, whose Zn and S also cover the second-row gap the adaptive XC
+>    scheme still has. Timing in triplicate, candidates side by side.
+>    `h2o_rhf_def2-SVP_RIJCOSX` will move if the defaults change; show the numbers, the re-bless
+>    is Dylan's call. Reference for karrikinolide def2-SVP spherical: RI-J with exact K,
+>    -530.576397753870; one SCF at `high` is about 100 s.
+>
+> **Decisions owed by Dylan.**
+>
+> 1. Start with the stage-1 diagnostic rather than a brute-force scan of the four knobs
+>    (`l_angular_grid`, `l_H_angular_grid`, `l_bonding_angular_grid`, `n_radial_pts`) at about
+>    100 s per SCF? Recommended: the diagnostic; a scan would chase the sign-changing error.
+> 2. Grid blocks inside `scfdata=`, the two accuracy names dropped? Recommended: yes.
+> 3. Stage 1 needs a release build of `master` and a few 100 s karrikinolide jobs: permission to
+>    build with `make -j`, and which tree.
+
 ## WHERE 2026-09-06 LEFT OFF — read this first if you are picking up cold
 
 > **Still current on 2026-09-10.** `command_arguments` was deleted (archived below), and the six
@@ -923,8 +1021,19 @@ build has. One file, everything else identical, executable relinked each time.
    metric snap. If the widths agree, this item is finished.
 4. **The Bugzilla duplicate search -- DONE by upstream, 2026-09-03.** PR 127197 was marked a
    duplicate of PR 124661, fixed on trunk nine days after Ubuntu's `16-20260322` snapshot and
-   before the 16.1.0 release. The gfortran-16 move now waits on an Ubuntu package at 16.1.0 or
-   later (`apt-cache policy gfortran-16` still shows the snapshot on 2026-09-11), not on GCC.
+   before the 16.1.0 release.
+
+   **But 16.1.0 is NOT the whole blocker -- tested 2026-09-24 and it fails.** Homebrew now ships
+   GCC 16.1.0, so the claim became checkable on macOS. A gfortran-16.1.0 **debug** build SIGSEGVs
+   on `tests/short/h2o_rhf_cc-pVDZ`, which gfortran-14 debug runs clean on the same machine -- and
+   it does so with `-fcheck=bounds` **already omitted**, which is what the build does on 16 today.
+   By the criterion in `docs/GFORTRAN16_DEBUG_CRASH.md` (correct without the flag, failing with it)
+   that means **this is not the bounds bug, and dropping the flag does not make a 16 debug build
+   usable.** So waiting for an Ubuntu 16.1.0 package is necessary and **not sufficient**; the
+   release half is unaffected, carrying no `-fcheck`. The crash site is not established -- `atos`
+   misattributes on that binary -- and x86_64 is untested, the Linux box having only the pre-fix
+   `16.0.1` PPA snapshot. Wanted: an `lldb` session, and an x86_64 machine at 16.1.0. Full record
+   and two method traps in `docs/GFORTRAN16_DEBUG_CRASH.md`.
 5. Longer-standing, unchanged: NaN and negative ESDs from the least-squares variance-covariance
    matrix, and the MPI items behind milestones 6 and 7.
 
@@ -2456,6 +2565,17 @@ which calls nothing back, and:
 Large refactor, and the right one. Worth noting as the destination even if the interim fixes
 above are taken first, so they are understood as interim.
 
+### Requirements the hoist should deliver (2026-09-24)
+
+Three, found while fixing the Becke grid bug: **one** fragment-initialisation point (three routines
+build fragments today and the grid was missing from all three, which is why it went unnoticed); the
+fragmentation scheme as a **named value** rather than three flags across two objects, which is what
+a `select case` needs to switch on; and three divergences between the capping and `atom_indices`
+paths that the hoist should settle deliberately rather than inherit.
+
+**None of it is worth refactoring first** -- the hoist rewrites this dispatch anyway. Detail,
+sequencing and the traps: `docs/TONTO_CRYSTAL_HOIST_PLAN.md`.
+
 ## Design (2026-08-03): let MPI keep `PURE`, so the compiler forbids I/O in parallel regions
 
 Dylan's proposal, and it is a good one: if output inside a parallel region desynchronises the
@@ -2737,7 +2857,243 @@ in one run. Inspection has now failed twice here.
 ranks exits 1, because `stop` runs on one rank without `MPI_FINALIZE` on the others. Harmless
 serially, wrong for any harness, and a separate small fix.
 
+## The BLAS kernel is part of the reference (2026-09-22)
+
+**The finding.** Homebrew's OpenBLAS is a `DYNAMIC_ARCH` build: it carries ~19 ARM kernels and
+picks one at run time from the detected CPU. An M2 Pro picks `neoversen1` -- an ARM *server*
+core -- and another Mac may pick `vortexm4` or `armv8`. They do not agree. The same
+single-threaded `dgemm`, 1500x1500:
+
+| kernel | speed | result |
+|---|---|---|
+| `neoversen1` (auto-detected here) | 52.5 GFLOP/s | `C[0]=1499.9999999984996` |
+| `armv8` | 52.2 GFLOP/s | `C[0]=1499.9999999985027` |
+| `vortexm4` | 52.9 GFLOP/s | `C[0]=1499.9999999984859` |
+
+So a stored reference silently belongs to whichever kernel generated it. This is a **second
+axis**, independent of the thread count: pinning threads does not touch it.
+
+**What was done** (`6a464edf`): `OPENBLAS_CORETYPE=ARMV8` pinned in the same two places as the
+thread count, **arm64 macOS only**. The core names are architecture-specific, and an
+unrecognised value does not warn -- `OPENBLAS_CORETYPE=bogus` silently drops to the slowest
+baseline kernel. An explicitly set value is respected rather than clobbered, and `test.py`
+announces it, because a silent kernel change moving last digits is the thing being prevented.
+
+**Two things this does NOT settle, and they matter more than the pinning.**
+
+**1. `urea_ccsd_pob-TZVP_Salvador_properties` is now understood, and the pin is not what fixes
+it.** Diagnosed 2026-09-22; two earlier readings in this entry were wrong and are replaced.
+
+*What it is not.* **Not quadrature accuracy.** Refining the grid does not shrink the kernel
+disagreement at all -- the carbon Hirshfeld quadrupole row is 6.7857 (`armv8`) against 6.7861
+(`neoversen1`) at `accuracy= high`, at `very_high` and at `best` alike, while within one kernel
+`high` -> `very_high` moves values by <= 1e-4 and `very_high` -> `best` by nothing. The grid is
+converged; the gap is not the grid. **Not a threshold flip either**: the Salvador radii and the
+grid point counts are identical between kernels.
+
+*What it is.* The disagreement is a **uniform 1-4 units in the last printed place**, and it does
+**not** grow with moment order -- charge (r^0), dipole (r^1) and quadrupole (r^2) all show the
+same 1-4e-4 absolute scatter. (An earlier reading here blamed near-zero residuals in the tails;
+that predicts the r^2 moments would be much the worst, and they are not. Refuted by measurement.)
+Because the scatter is a fixed absolute amount, the *relative* criterion fails only where the
+magnitude is small: 3e-4 on `|Q|` = 6.79 is 0.006% and passes, the same 2e-4 on `Q_yz` = 0.0066
+is 2.99% and fails. Nine tokens fail in all, the largest being a carbon atomic charge, 0.1979
+against 0.1984 -- nowhere near zero.
+
+*Why Hirshfeld and not Salvador -- diagnosed.* It is **the Hirshfeld moments only**: on the
+identical density, grid and radii the Salvador moments are **bit-identical** across both kernels
+and all three accuracies, while Hirshfeld differs in 10 of 16 rows at `high` and 14 of 16 at
+`best`. The two paths diverge in exactly one step, and both halves of the explanation are in the
+code.
+
+**The source of the kernel dependence.** `MOLECULE.SCF:make_HA_info` calls
+`make_ANOs_and_interpolators`: the Hirshfeld weight needs *atomic* densities, so it runs atomic
+calculations whose eigensolves go through LAPACK, and the resulting interpolator tables differ in
+their last bits from one BLAS kernel to the next. The Salvador weight
+(`BECKE_GRID:make_Salvador_atom_grid_v0`) is the normalised Voronoi cell function of the nuclear
+positions and the Salvador radii -- **no density, no eigensolve, nothing for a BLAS kernel to
+change**. That is the whole asymmetry.
+
+**The mechanism, measured with a probe in a debug build (2026-09-22).** The atomic densities
+themselves differ, and by far more than rounding. Probing `sum(grid)`, the promolecule density
+summed over an atom's grid, under the two kernels:
+
+| atom | `armv8` | `neoversen1` | relative |
+|---|---|---|---|
+| 1 | 3652.3688339449 | 3652.0555237848 | **8.6e-5** |
+| 2 | 5719.7149599702 | 5719.7508630768 | 6.3e-6 |
+| 3 | 4334.7551913845 | 4334.8310743175 | **1.8e-5** |
+
+That is **eleven orders of magnitude above machine epsilon**, so it is not floating-point noise in
+the quadrature. Weights differing by 1e-5 relative give moments of magnitude ~4 differing by
+~1e-4, which is exactly the scatter observed.
+
+**Why the atomic densities differ at all: `MOLECULE.SCF:make_ANOs` runs a per-atom iterative
+SCF** (`make_ANOs_for_atom(a,converged)`). A different BLAS kernel takes a different iteration
+path and lands on a different point *within the atomic SCF's convergence tolerance*. The
+Hirshfeld weights therefore inherit that tolerance, and the kernel merely selects which point
+inside it you get.
+
+**So the Hirshfeld moments are only meaningful to about 1e-4 whatever the BLAS**, and printing
+them to four decimals overstates their precision. **The proper repair is to tighten the atomic
+ANO SCF convergence**, not to widen the gate and not to change the grid.
+
+**A hypothesis recorded here earlier, and now REFUTED.** The `epsilon(ONE)` threshold in
+`make_stockholder_atom_weight_int` -- weight set to exactly `ZERO` below it, the point then
+deleted by `BECKE_GRID:prune_grid` -- looked like a discrete amplifier that would flip points in
+and out per kernel. It does not. Probed directly: the retained point counts are **identical**
+between kernels for every atom (7910, 8344, 4984 ...), and so are the counts the epsilon test
+zeroes (254, 432, 292 ...). The point sets are the same; only the values differ. The threshold is
+still questionable on its own terms -- the routine's docstring says the cutoff should be
+`BECKE_GRID.basis_fn_cutoff`, while the code uses `epsilon(ONE)` -- but it is **not** the cause
+here.
+
+*Reducing the printed precision does not work.* Measured: at `real_precision= 3` the tables still
+differ (C `Qyy` -3.972 against -3.973; N1 `Q_yz` 0.007 against 0.006), because the 1-4e-4 scatter
+straddles the 5e-4 rounding boundary -- and `Q_yz` is *relatively* worse at 3 dp than at 4. Hiding
+it would take 2 dp, too coarse for atomic moments.
+
+*The repair, applied.* `last_digit_tol= 6` for this test, in `KNOWN_MARGINAL` -- which was moved
+into `scripts/test.py`, because **ctest reaches the comparison through `test.py` with the default
+tolerances and never through `suite_report.py`**, so the override as it stood widened `make
+report` and left ctest failing. `suite_report.py` now imports the table rather than keeping a
+second copy. Applied by relaxing only, so a wider bound on the command line still wins. The test
+now passes under `armv8`, `neoversen1` and `vortexm4` alike -- **it no longer depends on the
+pin**, which is the point: the pin protects this machine, the tolerance protects against the next
+Homebrew bump, the next Mac and Linux adoption.
+
+### Closed as UNRESOLVED (2026-09-22). Where it got to, and what is left
+
+**The phenomenon is well characterised; the cause is located but not confirmed.** Four hypotheses
+were tested and all four are dead:
+
+| hypothesis | killed by |
+|---|---|
+| near-zero residuals amplified in the tails | the scatter is uniform across moment order (r^0, r^1, r^2 all 1-4e-4); tails would make r^2 much the worst |
+| quadrature accuracy | `high` -> `very_high` -> `best` does not shrink the kernel gap at all |
+| the `epsilon(ONE)` cutoff flipping points in/out of the grid | probed: retained point counts *identical* between kernels for every atom (7910, 8344, 4984 ...), as are the counts the cutoff zeroes (254, 432, 292 ...) |
+| the atomic SCF convergence tolerance | flooring the guess SCF at 1e-8 left it unchanged: max kernel difference 4.0e-4 -> 5.0e-4, 34 -> 31 values differing |
+
+**Where it actually starts, measured.** Running with `guess_output= TRUE` shows the divergence at
+**iteration 0 of carbon's atomic SCF**, straight from the core guess:
+
+```
+       energy                gradient
+ARMV8   -37.631563142113     0.396926238412
+NEOV.   -37.631563142113     0.397177703351
+```
+
+**The energy is bit-identical and the gradient differs by 2.5e-4** -- and it stays that way
+through iterations 1, 2 and 3. Identical energy with a different gradient means *the same energy
+from a different density matrix*, and 2.5e-4 is far too large to be rounding in `FDS-SDF`
+(`MOLECULE.SCF:make_DIIS_commutator_r`, whose `antisymmetric_fold` is cancellation-prone, would
+inflate *relative* error from a 1e-16 perturbation, not produce 2.5e-4 absolute on O(1)
+matrices).
+
+**The leading hypothesis, not confirmed: degenerate atomic orbitals.** Carbon's 2p shell is
+three-fold degenerate, so `make_core_mx_guess_MOs` diagonalises a matrix with degenerate
+eigenvalues and LAPACK's choice of eigenvectors *within* that subspace is arbitrary and
+kernel-dependent. Occupying 2p^2 in a different orientation gives the same energy and a
+different, symmetry-broken density. It fits every observation, including why Salvador is immune
+(it runs no atomic calculation at all) and why tightening convergence did not help (the SCF
+converges tightly to *different points of a degenerate manifold*). It is the same family as the
+eigenvector-sign canonicalisation already fixed in this project. **Confirming it means dumping
+the carbon core-guess density matrix under two kernels and checking that it differs while its
+energy does not.** One debug build; not done.
+
+**Note the ordering defect this exposes.** `MOLECULE.SCF:make_ANOs_for_atom` spherically averages
+*after* the SCF has converged (`mol.symmetrize(mol.density_mx)`, pointgroup `oh`). Averaging a
+solution that already broke symmetry is not the same as converging a symmetric one, which is
+consistent with the residual.
+
+**pFON is not the answer, twice over** (investigated 2026-09-22; Dylan was right to doubt it):
+- **It is disabled by a typo.** `molecule.base.foo`: `use_FON = FALSE` is followed by
+  `if (.SCF_data.allocated) use_pFON = .SCF_data.using_FON` -- assigning to `use_pFON`, not
+  `use_FON`, three lines after `use_pFON` was correctly set from `.apply_pFON`. Since
+  `using_FON` defaults FALSE this clobbers `use_pFON` to FALSE on every SCF, so
+  `use_pFON_damping= TRUE` does nothing; and `use_FON` is never assigned, so the
+  finite-temperature FON branch is dead code. No test exercises either, which is why it
+  survived. **Fixed 2026-09-22**; safe by default, both flags defaulting FALSE.
+- **Even working it is the wrong tool.** `temperature_for_pFON` anneals: 1000 - 50*iteration,
+  zero by iteration 20, and zero immediately once `DIIS_error < DIIS_error_temp_cutoff`
+  (default 1e-2). Carbon's atomic SCF is already at 0.0059 by iteration 3, so pFON would switch
+  off there. The degeneracy problem lives **at T=0**, where occupations are integer again --
+  pFON helps you *reach* a solution, not choose *which* degenerate one.
+
+**Dylan's test-charge idea, recorded for whoever picks this up.** Break the degeneracy with a
+small test charge so the atomic SCF has a unique solution. **One charge is not enough**: a charge
+on z gives C-infinity-v, which splits `pz` from `(px,py)` but leaves those two degenerate. A
+second charge on y drops it to D2h, where `px`, `py`, `pz` transform as B3u, B2u, B1u -- three
+different irreps, all inequivalent. (D2h generically splits d as well: Ag, Ag, B1g, B2g, B3g, the
+two Ag's not being symmetry-forced to coincide.) **The caveat to weigh first:** test charges
+polarise the atomic density, so the ANOs are no longer free-atom densities and the Hirshfeld
+promolecule is biased -- and Hirshfeld's definition rests on free-atom references. Small enough
+not to bias means a small splitting, which brings back near-degeneracy and the same
+ill-conditioning. The alternative is equal fractional occupation of degenerate shells *maintained
+to convergence* (not annealed away, as pFON does), or canonicalising the degenerate subspace
+after diagonalisation.
+
+**Done on the way, and kept:** `guess_convergence=` in `scfdata=` (default 1e-8), so a guess SCF
+converges on its own terms instead of inheriting the parent's tolerance. It does **not** fix the
+kernel spread -- it was implemented because the inheritance is wrong on its own merits: a job run
+at `convergence= 1e-4` was building the atomic densities behind the ANOs, the promolecule and the
+Hirshfeld weights to 1e-4, invisibly. A first attempt floored it silently inside
+`set_SCF_guess_defaults_from`; Dylan rejected that -- the user asked for a tolerance and can
+raise it themselves -- so it is a documented, settable keyword echoed by `put_options` instead.
+
+**Owed: `put_options` does not echo `guess_convergence`.** Adding the line shifts every SCF job's
+output by one and so needs a deliberate re-bless -- three `short` tests failed *structurally* on
+it, with `max rel 0%` and `max ulp 0`, which is the signature. The line is written and commented
+out at the echo site. Same debt as the COSX settings.
+
+*Also still open:* whether the Hirshfeld table should print 4 decimals at all, when the quantity
+is reproducible to 3.
+
+**2. The harness is pinned and production is not, which is incoherent.** Dylan's objection, and
+it is right: the suite now certifies a configuration no user runs. A user on this Mac gets
+`neoversen1`, and numbers that do not match the references the suite just went green against.
+
+**Tonto cannot fix this from inside.** Measured -- OpenBLAS binds its kernel in its library
+constructor, at load, so `setenv` from `main` has no effect:
+
+```
+at load      : neoversen1
+after setenv : neoversen1      # OPENBLAS_CORETYPE=ARMV8, set after the library is in
+```
+
+The environment must be set before the process starts. That leaves: a wrapper script around the
+installed binary (which `mpirun` complicates), linking a non-`DYNAMIC_ARCH` BLAS, documenting the
+variable for users, or not pinning at all and accepting machine-specific references.
+**Undecided -- Dylan's call**, and it should be taken together with the near-zero floor above,
+because if the gate floors near-zero residuals properly, the kernel may not need pinning for
+correctness at all -- only for exact-match reproducibility.
+
+**What this adds to the adoption item below.** Ubuntu's OpenBLAS is also a `DYNAMIC_ARCH` build,
+so adopting it on Linux imports this problem there: references tied to whichever x86 kernel the
+generating machine detects (`HASWELL` / `SKYLAKEX` / `ZEN` ...). The Linux re-bless must
+therefore **choose and pin an x86 coretype**, or the new references will be no more portable than
+the old macOS ones were. The `PINNED_CORETYPE` hook in `scripts/test.py` is already there and
+needs only an x86 branch.
+
 ## Deferred: adopt OpenBLAS consistently (single-threaded) on Linux and WSL
+
+**CAVEAT added 2026-09-24, to be dealt with when this is implemented: OpenBLAS dispatches on the
+CPU, so adopting it costs cross-machine reproducibility.** It selects kernels from the detected
+microarchitecture, so two machines with identical compilers and identical flags would again produce
+different last bits -- which the suite's ill-conditioned derived quantities amplify past the gate
+(see *PARKED with the source identified: the macOS red on `gly_ala_fragHAR`*). Netlib reference
+BLAS has no dispatch, which is the only reason today's Linux references are stable between machines
+at all.
+
+A container does **not** solve it: a container shares the host kernel and CPU, and `CPUID` is not
+virtualised, so OpenBLAS inside the image still sees the real host CPU. `OPENBLAS_CORETYPE` does
+force a kernel, but only one already compiled into that build, and the accepted names shift between
+OpenBLAS releases.
+
+So if this is adopted, it needs `OPENBLAS_CORETYPE` pinned as well as one thread -- or, more
+simply, netlib kept for the `reference` build type while users get OpenBLAS. The two decisions look
+independent and are not. See `docs/TONTO_BLESSING_TESTS.md`.
+
 
 **Decision (2026-07-30): not now.** Do the Mac/Linux numerical comparison first. The intended
 end state is **OpenBLAS, pinned to one thread, on every platform** — matching what macOS already
@@ -2789,11 +3145,20 @@ test outright.
 
 The sharper hazard is **threading**. Reference BLAS is single-threaded; OpenBLAS is not, and its
 results vary with thread *count*, because the blocking — and hence the reduction order — changes.
-Every stored reference in `tests/` was generated against single-threaded reference BLAS. Adopting
-OpenBLAS without pinning threads would produce run-to-run last-digit noise indistinguishable from
-regressions. Hence the decision above: **one thread**, via `OPENBLAS_NUM_THREADS=1`, set in the
-harness (`scripts/test.py` / `scripts/suite_report.py`) so it cannot be forgotten. Multithreaded
-OpenBLAS would also oversubscribe cores in MPI builds.
+Every stored reference in `tests/` was generated against single-threaded reference BLAS **on
+Linux and WSL. That was never true on macOS**, which has linked Homebrew's OpenBLAS since
+`CMakeLists.txt:110` -- a `USE_OPENMP` build, unpinned, with twelve threads available. The
+sentence stood here uncorrected until 2026-09-22, and anyone planning the re-bless from it would
+have planned the wrong thing.
+
+**Thread pinning is now done, ahead of this item, and cost nothing** (2026-09-22, `cbd72607`):
+`OPENBLAS_NUM_THREADS`, `OMP_NUM_THREADS`, `VECLIB_MAXIMUM_THREADS` and `MKL_NUM_THREADS`, all
+four because which one is authoritative depends on how the BLAS was built. Set in
+`scripts/test.py` (`ONE_THREAD_ENV`, which covers `suite_report.py` too, it driving `test.py`)
+and, for the dozen checker tests that bypass `test.py`, as a test property in
+`tests/CMakeLists.txt`. The short suite was unchanged either way, 68/70, and the same wall-clock
+-- 43.25 s pinned against 43.71 s. **The speed of OpenBLAS is in its kernels, not its threads.**
+Multithreaded OpenBLAS would also oversubscribe cores in MPI builds: ranks x threads.
 
 ### Suggested order when this is picked up
 
@@ -3147,6 +3512,140 @@ bases. ORCA's pairing: RIJCOSX for hybrids on large systems, RIJK for smaller on
 grid-based exchange long ago; no code survives. An ORCA `RIJCOSX` and `RIJK` RHF/def2-TZVP run on
 the zinc finger is queued to measure speed and error on our own benchmark.
 
+## Restructure the aspherical form factor loop as blocked BLAS (Dylan, 2026-09-24)
+
+**Decision (Dylan, 2026-09-24): a separate session, in its own context.** The three cheap items
+beside it -- two macro cycles, the grid-inheritance fix, and replacing the complex exponential --
+were taken in the 2026-09-24 pass; this one is real work and was deliberately deferred.
+
+**What.** The `do k / do i` loop in `MOLECULE.RHO:get_Hirshfeld_atom_FFs_disk`
+(`foofiles/molecule.rho.foo`) is a matrix product, `kr = k_pts . transpose(pt)`. Blocked over `k`
+tiles -- a full `n_k x n_pt` is 180 MB at gly_ala size, so it must be tiled, not materialised --
+it becomes one DGEMM, a vectorised `cos`/`sin` over the tile, then one DGEMV against `rho`.
+
+**Why it is worth a session.** That loop is **81.6% of a fragHAR job**, measured: first profile of
+`tests/long/gly_ala_fragHAR_rhf_STO-3G`, 2026-09-24, in `docs/TONTO_RI_FITTING_PLAN.md` section 1.
+The other items in that pass took the wasted `exp(0)` and cut the number of passes; the remaining
+bulk is the `n_k x n_pt` transcendentals themselves, and only a restructure touches those.
+
+**A third lever belongs with it**: prune on `abs(rho*wt)` rather than on the weight alone. A grid
+point contributing nothing still costs a full `k` loop, so the saving multiplies against every
+reflection. Error-controllable, and independent of the BLAS shape.
+
+**Relation to the RI fitting item below.** They are alternatives in the limit -- RI fitting removes
+the `n_k x n_pt` work entirely rather than making it faster -- but not exclusive: the BLAS
+restructure is a bounded change to existing code and the RI route is a research project, so doing
+this first costs nothing if RI later supersedes it.
+
+**Detail**: `docs/TONTO_RI_FITTING_PLAN.md` section 7, item 2.
+
+## Aspherical form factors by RI density fitting (Dylan, 2026-09-24)
+
+**Dylan's proposal.** Expand the Hirshfeld atomic densities with the RI machinery already in the
+tree, rather than writing a fresh multipole/Bessel transform. It must be a **density** fit, not
+the Coulomb (potential) fit that regular RI-J does. *Distinct from* the "effect of the fitted
+density on structure factors" owed in the RI-J entry above: that is about SFs computed from an
+RI-J *SCF* density, this is about fitting `w_a rho` itself so that its transform is analytic.
+
+**Why, from the first profile of a fragHAR job** (2026-09-24, `sample`, release, gly_ala_fragHAR,
+4965 samples over 66 s):
+
+| | share |
+|---|---|
+| libm `sin`/`cos`/`exp`/`cexp`, all from one line | 81.6% |
+| Fock build (Rys, `shell1quartet`) + grid density | 8.0% |
+| LS normal equations solve | ~2% |
+| all disk I/O, archive writes and opens included | <=2.2% |
+
+The line is `molecule.rho.foo:6120`, the `do k / do i` loop of
+`MOLECULE.RHO:get_Hirshfeld_atom_FFs_disk`: `n_k x n_pt` complex exponentials per atom. So the ASF
+quadrature *is* the cost of a fragHAR job. The SCF is not, which is why RI-J and COSX cannot fix
+it -- an infinitely fast Fock build saves 8%. Disk is not, either: the `per_rank_write` subtree is
+4 samples of 4965.
+
+**The scheme.** For each Hirshfeld atom `a`, fit `rho_a(r) = w_a(r) rho(r)` in an atom-centred
+auxiliary basis, `rho_a ~ sum_P c_P^a chi_P`. The transform is then analytic and linear in the
+coefficients, `f_a(k) = sum_P c_P^a chi~_P(k)`. Per atom: `n_aux x n_pt` to build the right-hand
+side on the grid, an `O(n_aux^2)` solve, then `n_aux x n_k` analytic FT in which only about
+`n_shell_aux x n_k` exponentials appear -- the radial factor `exp(-k^2/4 alpha)` depends on the
+shell, not on the component. The `n_k x n_pt` transcendentals disappear.
+
+**The win grows with the reflection count**, which is the regime that matters. The grid work goes
+from `n_k x n_pt` to `n_aux x n_pt`, a factor `n_k / n_aux`: gly_ala is `n_k` = 2514 against a few
+hundred auxiliary functions per fragment, so 6-12x; a protein at 1e5 reflections is 1e2-1e3x. And
+`w_a rho` is localised on atom `a`, so a local auxiliary basis keeps `n_aux` small.
+
+**Why it has to be a density fit -- the metric is the whole point.** The fit minimises a norm of
+`Delta rho = rho_a - rho~_a`, and because the Coulomb kernel is `4 pi / k^2` in Fourier space, the
+choice of metric is the choice of *which reflections* the fit is accurate for:
+
+- **Coulomb metric** (RI-J's): minimises `integral |Delta rho~(k)|^2 / k^2 dk`. Errors at large `k`
+  are weighted *down* by `1/k^2`, so the fit is least accurate exactly at high resolution, where a
+  charge-density refinement needs it most. Wrong for this purpose -- which is Dylan's point.
+- **Overlap metric**: minimises `integral |Delta rho~(k)|^2 dk`, uniform in `k`. One new metric
+  builder, everything else reused.
+- **Reflection-weighted k-space metric**: minimise `sum_hkl w_hkl |Delta f_a(k_hkl)|^2` directly,
+  which is optimal for the quantity actually being refined. `A_PQ = sum_k w_k chi~_P*(k)
+  chi~_Q(k)` is SPD and depends only on the geometry and the hkl list, **not on the density**, so
+  it is built and factored once per geometry and reused across every SCF and LS iteration --
+  exactly as `.RI_metric_factor` is today. Building it is `n_aux^2 x n_k`, which is a reason to
+  amortise it, not a reason to avoid it.
+
+All three are symmetric positive-definite, so the existing factorisation and solve are reused
+unchanged whichever is chosen.
+
+**How the coefficients are solved today, since it was asked: Cholesky, not LU.**
+`MOLECULE.FOCK:initialize_RI_J` (`molecule.fock.foo:2114`) builds the Coulomb metric over the
+auxiliary pair list, transforms cartesian to spherical, and calls `.to_cholesky_factor` -- once per
+geometry. Each iteration then does one `.RI_metric_factor.solve_cholesky_equation(ds,cs)`
+(`:2084`), a forward/back substitution, `O(n_aux^2)`. Cholesky is the right tool for an SPD metric:
+half the work of LU, and no pivoting. Keep it. One caveat -- overlap metrics are less well
+conditioned than Coulomb ones, so a near-singular auxiliary set could make a bare Cholesky fail
+where RI-J's does not. A pivoted or eigenvalue-truncated fallback may be owed, and the condition
+number should be reported rather than discovered.
+
+**What already exists.** This is mostly assembly, which is the argument for this route over a
+fresh multipole-Bessel implementation:
+
+- `MOLECULE.FOCK:resolve_auxiliary_bases` and `make_auxiliary_pair_list` -- auxiliary basis
+  reading and the pair list, in which each auxiliary primitive is already a **one-centre (L,0)
+  pair**.
+- `SHELL2:make_ft_static` / `make_ft_c` / `make_ft_component` (`shell2.foo:493`) -- the analytic
+  Gaussian transform behind the ordinary molecular structure factors. A one-centre (L,0) pair is
+  precisely what it takes, so the transform of the fitted density needs **no new integral code**.
+- `to_cholesky_factor`, `solve_cholesky_equation`.
+- `SHELL1:make_grid` -- auxiliary basis values on the Becke grid, for the right-hand side.
+- **New**: the metric builder (`make_coulomb_metric` is the template), the grid right-hand side
+  `b_P = integral chi_P w_a rho`, and the contraction of `c_P` with the analytic FT.
+
+**The right-hand side stays on the grid.** `w_a` is a ratio of promolecule densities, not a
+Gaussian, so `b_P` cannot be analytic. That is affordable -- it is `n_aux x n_pt`, not
+`n_k x n_pt` -- but the Becke grid does not go away, and grid accuracy still matters.
+
+**What must be measured before it is believed.**
+
+- Fit error against the reflection set, per metric. The honest comparison is fit error against
+  *quadrature* error at equal cost, not against exact: the present numbers carry quadrature error
+  of their own.
+- Whether a `def2-universal-jfit`-shaped set is flexible enough for `w_a rho`, which has a nuclear
+  cusp and kinks where the weight function turns over. Auxiliary bases for the crystal bases
+  (pob-TZVP) do not exist at all, which is already owed for RI-J.
+- The effect on refined parameters **and their esds**, not just on `f_a`. This feeds the LS design
+  matrix, so a smooth systematic fit error is more dangerous than a noisy one.
+- That the ASF derivatives for the design matrix come out analytically from the same coefficients,
+  as they should.
+
+**Three cheap wins in the present loop, independent of all this**, and worth taking first:
+
+1. `exp(IMAGIFY(kr))` -> two real accumulators with `cos`/`sin`. gfortran sends it to libm `cexp`,
+   which computes `exp(real part)` and the real part is always zero: **12.6% of the whole run is
+   `exp(0.0)`**. It also lets the loop vectorise, which a complex accumulator prevents.
+2. The loop is a matrix product, `kr = k_pts . pt^T`. Blocked over `k` tiles (a full
+   `n_k x n_pt` is 180 MB at gly_ala size): one DGEMM, vectorised `cos`/`sin` over the tile, one
+   DGEMV against `rho`.
+3. Prune on `|rho w|`, not on the weight alone -- a point contributing nothing still costs a full
+   `k` loop.
+
 ## Benchmark molecule with a first-row transition metal and sulfur (Dylan, 2026-09-16)
 
 Karrikinolide (17 atoms, C/H/O) is the only benchmark, and every speed conclusion so far is
@@ -3311,6 +3810,46 @@ the XC evaluation, not the point count. Tables in `docs/SCF_SPEED_REPORT.md`.
 
 # Test suite and numerics
 
+## numpy is an undeclared test dependency, and the skip that hides it
+
+`scripts/check_lebedev_rules.py` needs numpy. **No workflow installs it.** The check has been
+passing in CI only because the GitHub runner images happen to ship numpy -- an undeclared
+dependency satisfied by luck of the image, which is not a property anyone chose and not one that
+will necessarily survive an image change.
+
+On any clean developer machine it failed outright: macOS `python3` is the Command Line Tools
+build (3.9.6), which ships no numpy, unlike the old system python 2.7. Found 2026-09-22 on a
+fresh `release` tree, where `short` was 69/70 for this reason alone.
+
+**What was done (`90cc74fa`)** is a mitigation, not the fix: the script now exits 77 with the pip
+command, and `lebedev_rules` declares `SKIP_RETURN_CODE 77`, so a clean clone gets a *skip*
+rather than a red suite. `add_all_tests` sets that property for every suite test; the standalone
+checks like this one never had it.
+
+**Why that is not enough, and is arguably worse.** A skip is silent. If the runner image ever
+drops numpy, `lebedev_rules` stops running, CI stays green, and the Lebedev grids -- where one
+wrong literal shifts every DFT energy with nothing else noticing, which is the whole reason the
+check exists -- are no longer checked by anything. The mitigation converted a loud failure into a
+quiet absence.
+
+**The rigorous fix, in two parts:**
+
+1. **Declare the dependency and install it.** numpy goes into the workflows that run the suite,
+   and into the developer prerequisites in `docs/BUILDING_ON_*.md` beside `python3`. Then the
+   check runs everywhere by construction rather than by luck.
+2. **Make a skip in CI an error.** A skipped test is a legitimate local outcome and an
+   illegitimate CI one: on a runner, everything declared should run. `ctest` reports skips
+   distinctly, so a workflow step can assert the skip count is zero (or matches an explicit
+   allow-list). This is not specific to numpy -- `tests/long/ammonium_borane_pHAR_C23` skips on
+   its uncommitted 167 MB asset too, and the same argument applies: the suite should say out loud
+   what it did not run.
+
+An alternative to part 1 worth weighing: **drop the numpy dependency**. The script replays orbit
+generators and integrates monomials -- arithmetic that plain Python does perfectly well for a
+~2 s check. That removes the question rather than answering it, at the cost of a slower and
+slightly longer script.
+
+
 ## Deferred: small numerical differences (longstanding) — drill down
 
 Several tests differ from their references only by small numerical amounts — 3rd–4th
@@ -3454,6 +3993,101 @@ Two consequences, neither of them a fix:
 
 The earlier discipline is recorded in `f6395f44`, which inserted a single CIF line by hand
 precisely to avoid migrating these two files. It no longer applies to them.
+
+### Attribution of the 2026-09-24 suite run, and a correction
+
+Measured on one Linux box (Ubuntu 24.04, gfortran 14.2.0) by building the parent commit
+`e50673c8` in a second worktree and running the affected tests against both builds. Worth keeping
+because two of the intermediate conclusions were **wrong**, and the way they were wrong is the
+lesson.
+
+**Caused by the change, all of them a single added output line, all resolved by reblessing:**
+`h2o_rhf_cc-pVQZ_from_nwchem_molden`, `nh3_rhf_DZP_ED_grid`,
+`CHFCl_rhf_cc-pVQZ_spherical_from_nwchem_molden` and the three `urea_hart_STO-3G*` jobs take the
+`guess_convergence` echo; `h2o_rhf_def2-SVP_RIJCOSX` takes the options block it now asks for.
+`urea.out` is exactly one line longer than its reference, 1373 against 1372, and that line is
+`Guess SCF convergence`.
+
+**Pre-existing on that box, failing at the parent commit too:** `h2o_rhf_cc-pVDZ_tdhf`,
+`quartz_NN_HAR_L1_rhf_def2-SVP`, and both `gly_ala` jobs. Their references were made with GNU
+14.3.0 on kernel 7.0.0; a different *minor* gfortran release is enough, exactly as CLAUDE.md §6
+warns.
+
+**The Becke grid fix changed no test's numbers except the two `gly_ala` jobs**, which is what it
+was scoped to do. Everything else it touched gained output lines only.
+
+**Two wrong turns, recorded because the method was the fault, not the conclusion.**
+
+1. The `cos`/`sin` accumulators were reverted in `dace267a` on the hypothesis that they had tripped
+   `quartz_NN_HAR_L1`. **They had not** -- that job fails identically at the parent commit. The
+   revert stands on its own merit, since the change was measured performance-neutral and the
+   blocked-BLAS restructure will rewrite the loop anyway, but *that commit message's stated reason
+   is false.* Read this entry, not it.
+2. The three `urea_hart` failures were then called pre-existing, on the strength of an isolation
+   experiment that neutralised the grid inheritance while leaving the `guess_convergence` line in
+   place. They are not pre-existing; they are that line.
+
+Both mistakes came from forming a hypothesis before reading the diff, and from an "isolation"
+experiment that isolated only one of two changes. The cheap discipline that settled it in the end:
+**build the parent commit and compare failure lists**, which is one build and admits no
+hypothesis at all.
+
+### PARKED with the source identified: the macOS red on `gly_ala_fragHAR` is the ADP axis ratio (2026-09-24)
+
+**Dylan's decision 2026-09-24: parked.** The stable alternative changes what the column means and
+loses readability, so the column stays as it is. Recorded because the source is now *known and
+quantified*, which it was not before: this is a named instance of *The BLAS kernel is part of the
+reference*, not a mystery.
+
+**The measurement.** `tests/long/gly_ala_fragHAR_rhf_STO-3G` on macOS/openblas/arm64 against the
+committed Linux/reference-BLAS `stdout`, comparing every token:
+
+| | |
+|---|---|
+| numeric tokens compared | 3123 |
+| lines whose token count differs | **0** |
+| non-numeric differences (`T`/`F` flags included) | **0** |
+| tokens outside the 0.2% loose gate | **2** |
+
+The two, both in the **Axis ratio** column of the ADP table:
+
+```
+H1C-4-GLY-1    -35.5009  vs  -35.4053    0.269%
+H2AB-7-GLY-1   -88.1587  vs  -88.7684    0.692%
+```
+
+Every other token agrees to better than 0.11%, and **all the ADPs and their esds are identical in
+every printed digit**. The `Rw(F2) = NaN` token also shows as a difference because NaN never equals
+itself; both files carry it, and it long predates this (see `docs/RUNNING_HART.md` §6).
+
+**Why the column cannot be stabilised by rounding.** `ATOM:ADP_principal_axis_ratio`
+(`foofiles/atom.foo:6633`) returns `maxeval/mineval` of the ADP tensor, with a magic `1000.0` when
+`abs(mineval)<TOL(3)` -- that sentinel is itself a symptom. Both offending atoms are flagged
+**NPD = T**: non-positive-definite, so `mineval` is negative and near zero and the quotient has no
+stable value. The discrepancy is **0.61 absolute on -88.17**, so it survives any rounding: 2 dp
+gives -88.16 against -88.77, and 0 dp gives -88 against -89.
+
+What *would* be stable is the reciprocal, `mineval/maxeval`: bounded in [-1,1], no sentinel needed,
+and both atoms then agree at 4 dp (-0.0113 and -0.0282, from absolute differences of 8e-5).
+**Rejected by Dylan**: a large positive number is the readable form, and a small negative fraction
+is hard to gauge. Other options if it is ever revisited -- suppress the ratio for NPD atoms (Dylan
+dislikes a dash), or give that one column its own tolerance.
+
+The class of problem, and what a user should do about a failure like this, is in
+`docs/TONTO_BLESSING_TESTS.md`; this entry keeps the measurement.
+
+**What this means in practice.** Two ill-conditioned *derived* quantities are what make these jobs
+platform-fragile, not the physics:
+
+- this axis ratio, a quotient by a near-zero eigenvalue;
+- the **macro-iteration count** of the hart twin, which differs 3 (macOS) against 6 (the Linux
+  reference) because the shifts deciding it are 1-6% of an esd, i.e. 1e-4 to 1e-5 Angstrom. At
+  that level *which* parameter shifts most is arbitrary -- macOS says `H3 Uxy`, Linux `O1 Uxz` --
+  and the count is structural in any output that prints the table. `gly_ala_fragHAR` is immune to
+  that one only because it sets `show_refinement_output= FALSE`.
+
+The converged science agrees across the platforms to ~3e-5 relative, five significant figures:
+R(F) 0.032422 against 0.032421, GoF 3.354131 against 3.354027.
 
 ### Lower priority: `ylid` (rgbi) — vdW contact indices differ on macOS
 

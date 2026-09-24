@@ -282,7 +282,10 @@ add_test(NAME "lebedev_rules"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_lebedev_rules.py
             ${PROJECT_SOURCE_DIR}/foofiles/lebedev.foo)
-set_tests_properties("lebedev_rules" PROPERTIES LABELS "short")
+# SKIP_RETURN_CODE: the script needs numpy, which is not a Tonto dependency
+# and is not installed by any workflow -- see the import guard in the script.
+set_tests_properties("lebedev_rules" PROPERTIES LABELS "short"
+                                                SKIP_RETURN_CODE 77)
 
 # The accepted-name against implemented-name cross-check for DFT functionals.
 # The section 5 fix made an unrecognised name fatal at the two SCF_DATA setters,
@@ -363,3 +366,32 @@ add_custom_target(report
     USES_TERMINAL
     COMMENT "Tonto per-suite agreement report -> tests.log")
 add_dependencies(report tonto run_har)
+
+# One BLAS thread for every test, including the checker scripts.
+#
+# scripts/test.py pins the thread count itself (see ONE_THREAD_ENV there for
+# why, and why it takes four variables), which covers every suite registered
+# through add_all_tests.  The checker scripts above run tonto directly and so
+# would keep whatever the machine's BLAS chose by default -- exactly the
+# inconsistency the pinning exists to remove.  Applied here in one loop rather
+# than per add_test, so a test added later cannot quietly miss it.
+set(_tonto_test_env
+    OMP_NUM_THREADS=1
+    OPENBLAS_NUM_THREADS=1
+    VECLIB_MAXIMUM_THREADS=1
+    MKL_NUM_THREADS=1)
+
+# And the OpenBLAS kernel, on Apple Silicon only -- see PINNED_CORETYPE in
+# scripts/test.py for why ARMV8 and why the references agree with it.
+# arm64 ONLY: the core names are architecture-specific, and an unrecognised
+# value does not warn, it silently drops to the slowest baseline kernel.
+if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
+    list(APPEND _tonto_test_env OPENBLAS_CORETYPE=ARMV8)
+endif()
+
+get_property(_tonto_tests DIRECTORY PROPERTY TESTS)
+foreach(_t ${_tonto_tests})
+    set_property(TEST ${_t} APPEND PROPERTY ENVIRONMENT ${_tonto_test_env})
+endforeach()
+unset(_tonto_tests)
+unset(_tonto_test_env)

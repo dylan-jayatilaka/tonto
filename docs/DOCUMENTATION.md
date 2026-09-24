@@ -40,6 +40,7 @@ parallel (MPI) builds for that platform.
 | [**The Foo language**](FOO_GRAMMAR_DOCUMENTATION.md) | the language and its translation to Fortran |
 | [**Foo compared with Fortran**](FOO_LANGUAGE_VS_FORTRAN.md) | for readers who know Fortran |
 | [**Continuous integration**](TONTO_CONTINUOUS_INTEGRATION.md) | what each workflow runs, and what each badge means |
+| [**Running the tests, and blessing**](TONTO_BLESSING_TESTS.md) | the loose criterion, why two machines differ in the last bits, and how to bless by hand |
 | [**Call graphs**](TONTO_CALL_GRAPHS.md) | call/use graphs and dead-code elimination |
 | [**Repository branches**](TONTO_REPOSITORY_BRANCHES.md) | what is live, what was archived, and how to recover it |
 | [**Editing with vim**](TONTO_EDITING_WITH_VIM.md) | tags, folding, completion |

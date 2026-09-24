@@ -21,12 +21,13 @@ crowds out the direction of the project.
 **Which `docs/` files are working documents?** Only those covering an item still in flight —
 today `TONTO_AND_MPI.md`, `TONTO_DEVELOPER_INFO.md`, `PROJECT_HISTORY.md`, `DFT_STANDARDISATION.md`,
 `EXTINCTION_REPORT.md`, `GFORTRAN16_*.md`, `TONTO_SCF_SPEED_UP.md`, `CCTBX_INTO_TONTO.md`, `GOF_NOT_CHI2.md`,
-`TONTO_DISPERSION_CORRECTIONS.md`, and the
-`*_REPORT.md` files. **They are deleted when their item closes**, and their durable residue
+`TONTO_DISPERSION_CORRECTIONS.md`, `TONTO_RI_FITTING_PLAN.md`, and the
+`*_REPORT.md` and `*_PLAN.md` files. **They are deleted when their item closes**, and their durable residue
 moves into the user-facing pages. Everything else in `docs/` is user-facing.
 
 **Specific rules for user-facing pages** (`README.md`, `docs/BUILDING_*`, `docs/RUNNING_*`,
-`docs/INSTALLING_*`, `docs/DOCUMENTATION.md`, `docs/FOO_*`, `docs/TONTO_LIBRARY_STRUCTURE.md`,
+`docs/INSTALLING_*`, `docs/DOCUMENTATION.md`, `docs/FOO_*`, `docs/TONTO_BLESSING_TESTS.md`,
+`docs/TONTO_LIBRARY_STRUCTURE.md`,
 `docs/TONTO_CALL_GRAPHS.md`, `docs/TONTO_EDITING_WITH_VIM.md`, `docs/TONTO_CONTINUOUS_INTEGRATION.md`):
 
 - **No dates, no commit hashes, no run numbers.** If a sentence needs one, it is history.
@@ -173,8 +174,11 @@ cmake .. -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=release
 make -j
 ```
 
-**The project standard compiler is `gfortran-14`.** Do not move to 16 until Ubuntu's
-`gfortran-16` package reaches 16.1.0 or later: the `-fcheck=bounds` miscompilation
+**The project standard compiler is `gfortran-14`.** Do not move to 16 yet. An Ubuntu
+`gfortran-16` package at 16.1.0 or later is **necessary but not sufficient** — macOS has
+16.1.0 and its *debug* build still segfaults with `-fcheck=bounds` already omitted, so the
+blocker is not only the bounds bug; see `docs/GFORTRAN16_DEBUG_CRASH.md`. The
+`-fcheck=bounds` miscompilation
 ([GCC PR 127197](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=127197), a duplicate of
 PR 124661) is fixed upstream but the shipped `16-20260322` snapshot predates the fix.
 Everything on Tonto's side is done and is preserved on `develop-gfortran-16`; merge that

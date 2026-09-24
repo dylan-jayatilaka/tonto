@@ -118,6 +118,48 @@ crashing Tonto at `make_pg_image_of_shell`. Trust a failure; do not use a pass t
 clear a compiler whose debug builds are failing. Check the generated code by hand
 instead, for the signature above.
 
+## 16.1.0 is available on macOS, and a debug build still segfaults -- with the flag already off
+
+Measured 2026-09-24 on arm64 macOS, Homebrew GCC 16.1.0 (`gfortran-16`), against gfortran-14 on the
+same machine and the same job, `tests/short/h2o_rhf_cc-pVDZ` run with no command-line options:
+
+| build | result |
+|---|---|
+| gfortran-14, debug | **clean, 0.54 s** |
+| gfortran-16.1.0, debug, `-fcheck=bounds` **omitted** (the current default on 16) | **SIGSEGV, 0.11 s** |
+| gfortran-16.1.0, debug, `-DTONTO_FORCE_FCHECK_BOUNDS=ON` | SIGSEGV |
+
+**Two conclusions, and the second is the awkward one.**
+
+1. **The reproducer passes at 16.1.0** (`scripts/check_gfortran_bounds_bug.py gfortran-16`: correct
+   both with and without the flag). As this page already warns, a pass on arm64 is not proof --
+   so that alone settles nothing.
+2. **This crash is not the bounds bug.** The criterion on this page is "correct without the flag and
+   failing with it"; here it fails *both* ways. So **dropping `-fcheck=bounds` does not make a
+   gfortran-16 debug build usable**, and whatever is wrong is either a second compiler defect or a
+   Tonto defect that only 16 exposes.
+
+**Consequence for the move to 16.** `CLAUDE.md` §6 says to wait for Ubuntu to reach "16.1.0 or
+later", on the reasoning that PR 127197's fix landed before 16.1.0. That threshold is necessary and
+**not sufficient**: 16.1.0 is in hand on one platform and debug still does not work. The release
+build remains unaffected -- it carries no `-fcheck` -- so the *release* half of the migration is
+still as described.
+
+**Not yet established, and needed before anyone rewrites the guidance:** the crash site. `atos`
+misattributes it on this binary -- three distinct frames resolved to one line, in a routine the job
+never reaches -- so the two runs gave inconsistent answers and neither is quoted here. This wants an
+`lldb` session on the 16 debug binary, not symbol arithmetic. Also unknown: whether x86_64 behaves
+the same, since the Linux box has only the pre-fix `16.0.1` PPA snapshot.
+
+**Method note.** Reaching this took two false starts worth remembering. Passing `--input` to a debug
+binary aborts instantly at `vec_str.F90:251` ("Different CHARACTER lengths (1024/256)") -- the
+separate `--`-option defect -- so a debug job must rely on the default `stdin`/`stdout` in its
+directory. And `tests/long/urea_rhf_STO-3G_HAR`, which `CLAUDE.md` §11 recommends as the quick debug
+job, does **not** run clean in a gfortran-14 debug build here either: it dies after 6.5 s in the
+error handler itself, "Attempt to DEALLOCATE unallocated 'tonto_bug'" at `system.F90:481`, which
+masks whatever the real error was. Use a job with a known-clean baseline, or the comparison
+establishes nothing.
+
 ## Still open
 
 - **Reported to GCC as PR 127197** on 2026-09-03, with a five-version bisection (12, 13, 14
