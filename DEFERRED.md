@@ -700,7 +700,27 @@ re-bless), and a batch-size scan (256 vs 512). Commits `f832aded` (pushed)
 > comment says this was fixed). The option list and the value now have different widths --
 > probably since `79965d5e` (2026-08-15, long paths). So `dft_invariants`, which passes
 > `--input/--output`, cannot run under debug, and neither can `hart`. Release is unaffected.
-> Not fixed. Stage D and the no-copy change were checked in debug without options instead
+> **FIXED 2026-09-24.** It is the *second* option, not any: the first append is a one-element
+> constructor. `process_options` declared `opt,no_val :: STR` (256) but `79965d5e` had widened
+> `.option`/`.option_value` to `PATH_SIZE` (1024), so `[self,value]` mixed two lengths. The locals
+> are now `PATH_SIZE`; the append stays strict on purpose, so a mismatch aborts rather than
+> truncates. Verified: `debug/tonto --help --version` and `debug/hart --help --version` exit 0;
+> `urea_rhf_STO-3G_HAR` under debug with `--input/--output/--basis-library` reaches the same
+> energy as release (-220.9879) and then hits a **separate debug-only failure**: the
+> `ENSURE(.wavelength>ZERO,"extinction needs a wavelength")` in
+> `DIFFRACTION_DATA.INQ:extinction_angle_part` (from `baf3d889`) fires at `HAR_refinement` with
+> `optimise_extinction= NO`. Release passes. **Also fixed, same day:** `d_F_pred_dX` and
+> `d_I_pred_dX` evaluated `.extinction_factor*.extinction_angle_part` unconditionally, so the
+> angle part's wavelength precondition fired even when the factor was zero and the product
+> could only be zero. Both now skip the angle part when the factor is zero, the gate the other
+> callers already use. Under debug via `scripts/test.py`: `urea_rhf_STO-3G_HAR`,
+> `L_alanine_IAM_scale_factor_test` and the extinction-on
+> `nh2cn_b3lyp_cc-pVTZ_g94_fchk_to_SF_stl_limit` all exact. The extinction-on HAR job
+> `quartz_NN_HAR_L1_rhf_def2-SVP` could not be used as the check: under debug it stops earlier
+> at a **third debug-only precondition**, `DIFFRACTION_DATA.SET:set_F_calc_cutoff` "cutoff must
+> be positive", on the job's own `f_calc_cutoff= 0.0` (stdin line 75). Release accepts the
+> value. Not fixed; either the ENSURE should allow zero or the job should not ask for it.
+> Stage D and the no-copy change were checked in debug without options instead
 > (identical energies to release, exit 0).
 >
 > **UPDATE 2026-09-14 (evening): perf profile, and the no-copy change.** `perf` (Dylan enabled
