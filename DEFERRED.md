@@ -3038,7 +3038,7 @@ OpenBLAS releases.
 
 So if this is adopted, it needs `OPENBLAS_CORETYPE` pinned as well as one thread -- or, more
 simply, netlib kept for the `reference` build type while users get OpenBLAS. The two decisions look
-independent and are not. See `docs/TONTO_REPRODUCIBILITY.md`.
+independent and are not. See `docs/TONTO_BLESSING_TESTS.md`.
 
 
 **Decision (2026-07-30): not now.** Do the Mac/Linux numerical comparison first. The intended
@@ -3980,6 +3980,9 @@ and both atoms then agree at 4 dp (-0.0113 and -0.0282, from absolute difference
 **Rejected by Dylan**: a large positive number is the readable form, and a small negative fraction
 is hard to gauge. Other options if it is ever revisited -- suppress the ratio for NPD atoms (Dylan
 dislikes a dash), or give that one column its own tolerance.
+
+The class of problem, and what a user should do about a failure like this, is in
+`docs/TONTO_BLESSING_TESTS.md`; this entry keeps the measurement.
 
 **What this means in practice.** Two ill-conditioned *derived* quantities are what make these jobs
 platform-fragile, not the physics:

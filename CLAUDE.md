@@ -26,7 +26,8 @@ today `TONTO_AND_MPI.md`, `TONTO_DEVELOPER_INFO.md`, `PROJECT_HISTORY.md`, `DFT_
 moves into the user-facing pages. Everything else in `docs/` is user-facing.
 
 **Specific rules for user-facing pages** (`README.md`, `docs/BUILDING_*`, `docs/RUNNING_*`,
-`docs/INSTALLING_*`, `docs/DOCUMENTATION.md`, `docs/FOO_*`, `docs/TONTO_LIBRARY_STRUCTURE.md`,
+`docs/INSTALLING_*`, `docs/DOCUMENTATION.md`, `docs/FOO_*`, `docs/TONTO_BLESSING_TESTS.md`,
+`docs/TONTO_LIBRARY_STRUCTURE.md`,
 `docs/TONTO_CALL_GRAPHS.md`, `docs/TONTO_EDITING_WITH_VIM.md`, `docs/TONTO_CONTINUOUS_INTEGRATION.md`):
 
 - **No dates, no commit hashes, no run numbers.** If a sentence needs one, it is history.
