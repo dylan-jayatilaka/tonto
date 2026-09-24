@@ -73,9 +73,15 @@ You now have **`build/tonto`** and **`build/hart`** (`hart --help`; see
 ## 4. Run the tests
 
 ```bash
+export CTEST_OUTPUT_ON_FAILURE=1   # so a failure says why, not just that it failed
 ctest -L short        # about a minute
 ctest                 # the full suite
 ```
+
+Without `CTEST_OUTPUT_ON_FAILURE`, `ctest` prints only pass or fail. With it, each
+failure shows its one-line agreement summary — worst relative difference and worst
+last digit — which is usually enough to classify the failure without re-running.
+`make report` gives the same thing for every test, passing or not, in `tests.log`.
 
 macOS shows tiny last-digit differences in a few tests. The comparison is
 deliberately loose — relative difference ≤ 0.2%, or last printed digit within
