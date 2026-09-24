@@ -174,8 +174,11 @@ cmake .. -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=release
 make -j
 ```
 
-**The project standard compiler is `gfortran-14`.** Do not move to 16 until Ubuntu's
-`gfortran-16` package reaches 16.1.0 or later: the `-fcheck=bounds` miscompilation
+**The project standard compiler is `gfortran-14`.** Do not move to 16 yet. An Ubuntu
+`gfortran-16` package at 16.1.0 or later is **necessary but not sufficient** — macOS has
+16.1.0 and its *debug* build still segfaults with `-fcheck=bounds` already omitted, so the
+blocker is not only the bounds bug; see `docs/GFORTRAN16_DEBUG_CRASH.md`. The
+`-fcheck=bounds` miscompilation
 ([GCC PR 127197](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=127197), a duplicate of
 PR 124661) is fixed upstream but the shipped `16-20260322` snapshot predates the fix.
 Everything on Tonto's side is done and is preserved on `develop-gfortran-16`; merge that
