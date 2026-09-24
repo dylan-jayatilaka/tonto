@@ -3940,6 +3940,44 @@ Two consequences, neither of them a fix:
 The earlier discipline is recorded in `f6395f44`, which inserted a single CIF line by hand
 precisely to avoid migrating these two files. It no longer applies to them.
 
+### Attribution of the 2026-09-24 suite run, and a correction
+
+Measured on one Linux box (Ubuntu 24.04, gfortran 14.2.0) by building the parent commit
+`e50673c8` in a second worktree and running the affected tests against both builds. Worth keeping
+because two of the intermediate conclusions were **wrong**, and the way they were wrong is the
+lesson.
+
+**Caused by the change, all of them a single added output line, all resolved by reblessing:**
+`h2o_rhf_cc-pVQZ_from_nwchem_molden`, `nh3_rhf_DZP_ED_grid`,
+`CHFCl_rhf_cc-pVQZ_spherical_from_nwchem_molden` and the three `urea_hart_STO-3G*` jobs take the
+`guess_convergence` echo; `h2o_rhf_def2-SVP_RIJCOSX` takes the options block it now asks for.
+`urea.out` is exactly one line longer than its reference, 1373 against 1372, and that line is
+`Guess SCF convergence`.
+
+**Pre-existing on that box, failing at the parent commit too:** `h2o_rhf_cc-pVDZ_tdhf`,
+`quartz_NN_HAR_L1_rhf_def2-SVP`, and both `gly_ala` jobs. Their references were made with GNU
+14.3.0 on kernel 7.0.0; a different *minor* gfortran release is enough, exactly as CLAUDE.md §6
+warns.
+
+**The Becke grid fix changed no test's numbers except the two `gly_ala` jobs**, which is what it
+was scoped to do. Everything else it touched gained output lines only.
+
+**Two wrong turns, recorded because the method was the fault, not the conclusion.**
+
+1. The `cos`/`sin` accumulators were reverted in `dace267a` on the hypothesis that they had tripped
+   `quartz_NN_HAR_L1`. **They had not** -- that job fails identically at the parent commit. The
+   revert stands on its own merit, since the change was measured performance-neutral and the
+   blocked-BLAS restructure will rewrite the loop anyway, but *that commit message's stated reason
+   is false.* Read this entry, not it.
+2. The three `urea_hart` failures were then called pre-existing, on the strength of an isolation
+   experiment that neutralised the grid inheritance while leaving the `guess_convergence` line in
+   place. They are not pre-existing; they are that line.
+
+Both mistakes came from forming a hypothesis before reading the diff, and from an "isolation"
+experiment that isolated only one of two changes. The cheap discipline that settled it in the end:
+**build the parent commit and compare failure lists**, which is one build and admits no
+hypothesis at all.
+
 ### PARKED with the source identified: the macOS red on `gly_ala_fragHAR` is the ADP axis ratio (2026-09-24)
 
 **Dylan's decision 2026-09-24: parked.** The stable alternative changes what the column means and
