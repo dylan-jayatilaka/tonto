@@ -62,7 +62,11 @@ cmake .. -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=reference
 ```
 
 `-O2 -fno-fast-math`, no architecture tuning. Slower than `release`, and not what users build. With
-netlib BLAS the only remaining input is the compiler version. Bless with this.
+netlib BLAS the only remaining input is the compiler version.
+
+**Bless with this, and note CI builds it too** — every workflow that compares against references
+uses `reference`, so what CI checks and what you blessed are the same thing. `release` remains the
+build for actual work, and `release-static` is what the published binaries use.
 
 ## Blessing, by hand
 
