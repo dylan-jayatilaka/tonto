@@ -106,6 +106,27 @@ call graph in `writeDotFiles`; boilerplate documentation comments; parallelising
 search; folding the RGBI picture toolchain into one codebase; vim highlighting. Their entries below
 stand; they are simply not in the open count.
 
+## 2026-09-25 (overnight): repeated `xray_data=` blocks re-prune; the pruning item is closed
+
+**Pushed to `develop`: `0bbe7a1e` (the fix) and `25dd95d0` (the re-blessed quartz L1 reference).**
+Dylan chose the design: a repeated block re-prunes in place, compounding accepted, and the form
+factors on disk are cut to the survivors rather than recomputed. The full account, with the
+measured mechanism, is the archived entry *Pruning compounds across repeated `update` calls*.
+Two things it found on the way are fixed in the same commit: the BFGS iteration cap in
+`VEC{REAL}:min_BFGS` and `minimize_BFGS` tested the wrong variable and never fired, which is what
+turned a bad start into an hour-long spin; and two debug-only `ENSURE`s forbade zero cutoffs and a
+second refinement in one job. Neither is reached in CI.
+
+**Verified.** macOS release: short suite 69/70, the failure being the RIJCOSX drift above; quartz
+L0 passes; quartz L1 runs to the end in release (27 s) and debug (49 s). achari2, `reference`
+profile: quartz L1 exact against the new reference. CI on the two pushes was in progress at
+hand-off: `WSL-release` green on both, `Linux-debug` green on the first; check `Linux-release`,
+`Linux-debug` and `Linux-MPI` before merging to `master`.
+
+**Known and unchanged:** quartz L0 and L1 still fail on macOS only, in first-pass per-shell
+ratios (0.847%, 759 ulp against the new reference), the documented cross-platform category; see
+*Test suite and numerics*. **Owed, unchanged:** `develop` -> `master`, Dylan's call.
+
 ## 2026-09-24 (evening): the re-bless is DONE; one push is owed
 
 **Everything below is pushed to `develop`. The re-bless is complete** and the full suite is
