@@ -2511,6 +2511,39 @@ which calls nothing back, and:
 Large refactor, and the right one. Worth noting as the destination even if the interim fixes
 above are taken first, so they are understood as interim.
 
+### Requirements the hoist should deliver (2026-09-24)
+
+Found while fixing the grid-inheritance bug (below, *Fragments did not inherit the Becke grid*).
+The hoist rewrites the fragmentation dispatch anyway, so **none of this is worth refactoring
+first** -- it would be thrown away. It is written here so October starts from a specification
+rather than rediscovering it.
+
+1. **One fragment-initialisation point.** Three routines build fragments today --
+   `MOLECULE.SET:set_molecule_from_atom_group`, `MOLECULE.BASE:set_Ryde_cap_for_group` and the
+   NN block in `set_NN_capped_groups` -- and each repeats the same tail: name, basis, charge,
+   atom info, multiplicity, `set_SCF_guess_defaults_from`, crystal copy, `resolve_ANOs_from`.
+   That is exactly why the Becke grid was missed: three places to add a line, and it was added to
+   none of them. Whatever owns the fragments after the hoist must initialise them in one place.
+
+2. **The scheme should be a named value, not three flags.** `MOLECULE.BASE:update_atom_groups`
+   (`molecule.base.foo:1527`) dispatches on `.crystal.use_Ryde_capping`, `.crystal.use_NN` and
+   `.atom_group.has_atom_indices` -- three flags across two objects, so the scheme exists nowhere
+   as a value. Nothing can echo it, validate it or put it in the CIF; the precedence is whatever
+   the `if` chain happens to be; and `use_Ryde_capping` with `use_NN` silently gives Ryde. Dylan
+   wants a `select case`, which is right, but it needs something to switch on: a
+   `fragmentation_scheme` ("connected" / "atom_indices" / "Ryde" / "NN") resolved **once** from
+   the user's keywords, with the precedence written down and a `DIE` on a conflicting pair. After
+   the hoist it belongs on the `CRYSTAL`, which is what holds the fragments.
+
+3. **Three divergences between the paths are decisions, not style** -- the hoist should choose
+   each deliberately rather than inherit whichever branch gets ported first:
+
+   | | capping paths (Ryde, NN) | `atom_indices` path |
+   |---|---|---|
+   | crystal copy | `set_minimal_copy` (`molecule.base.foo:1910`, `:1979`) | full copy; `update_group_crystal_and_ANOs` even carries the comment *"Should be minimal copy?"* |
+   | basis | `set_basis_name(.basis_name)` | `resolve_bases_and_update_from(self)` |
+   | charge and multiplicity | setters, guarded by `spin_multiplicity_set` | direct assignment |
+
 ## Design (2026-08-03): let MPI keep `PURE`, so the compiler forbids I/O in parallel regions
 
 Dylan's proposal, and it is a good one: if output inside a parallel region desynchronises the
@@ -3428,6 +3461,140 @@ per-occupied three-index tensor, ~N^4 and GB of storage, and suits small molecul
 bases. ORCA's pairing: RIJCOSX for hybrids on large systems, RIJK for smaller ones. Dylan tried a
 grid-based exchange long ago; no code survives. An ORCA `RIJCOSX` and `RIJK` RHF/def2-TZVP run on
 the zinc finger is queued to measure speed and error on our own benchmark.
+
+## Restructure the aspherical form factor loop as blocked BLAS (Dylan, 2026-09-24)
+
+**Decision (Dylan, 2026-09-24): a separate session, in its own context.** The three cheap items
+beside it -- two macro cycles, the grid-inheritance fix, and replacing the complex exponential --
+were taken in the 2026-09-24 pass; this one is real work and was deliberately deferred.
+
+**What.** The `do k / do i` loop in `MOLECULE.RHO:get_Hirshfeld_atom_FFs_disk`
+(`foofiles/molecule.rho.foo`) is a matrix product, `kr = k_pts . transpose(pt)`. Blocked over `k`
+tiles -- a full `n_k x n_pt` is 180 MB at gly_ala size, so it must be tiled, not materialised --
+it becomes one DGEMM, a vectorised `cos`/`sin` over the tile, then one DGEMV against `rho`.
+
+**Why it is worth a session.** That loop is **81.6% of a fragHAR job**, measured: first profile of
+`tests/long/gly_ala_fragHAR_rhf_STO-3G`, 2026-09-24, in `docs/TONTO_RI_FITTING_PLAN.md` section 1.
+The other items in that pass took the wasted `exp(0)` and cut the number of passes; the remaining
+bulk is the `n_k x n_pt` transcendentals themselves, and only a restructure touches those.
+
+**A third lever belongs with it**: prune on `abs(rho*wt)` rather than on the weight alone. A grid
+point contributing nothing still costs a full `k` loop, so the saving multiplies against every
+reflection. Error-controllable, and independent of the BLAS shape.
+
+**Relation to the RI fitting item below.** They are alternatives in the limit -- RI fitting removes
+the `n_k x n_pt` work entirely rather than making it faster -- but not exclusive: the BLAS
+restructure is a bounded change to existing code and the RI route is a research project, so doing
+this first costs nothing if RI later supersedes it.
+
+**Detail**: `docs/TONTO_RI_FITTING_PLAN.md` section 7, item 2.
+
+## Aspherical form factors by RI density fitting (Dylan, 2026-09-24)
+
+**Dylan's proposal.** Expand the Hirshfeld atomic densities with the RI machinery already in the
+tree, rather than writing a fresh multipole/Bessel transform. It must be a **density** fit, not
+the Coulomb (potential) fit that regular RI-J does. *Distinct from* the "effect of the fitted
+density on structure factors" owed in the RI-J entry above: that is about SFs computed from an
+RI-J *SCF* density, this is about fitting `w_a rho` itself so that its transform is analytic.
+
+**Why, from the first profile of a fragHAR job** (2026-09-24, `sample`, release, gly_ala_fragHAR,
+4965 samples over 66 s):
+
+| | share |
+|---|---|
+| libm `sin`/`cos`/`exp`/`cexp`, all from one line | 81.6% |
+| Fock build (Rys, `shell1quartet`) + grid density | 8.0% |
+| LS normal equations solve | ~2% |
+| all disk I/O, archive writes and opens included | <=2.2% |
+
+The line is `molecule.rho.foo:6120`, the `do k / do i` loop of
+`MOLECULE.RHO:get_Hirshfeld_atom_FFs_disk`: `n_k x n_pt` complex exponentials per atom. So the ASF
+quadrature *is* the cost of a fragHAR job. The SCF is not, which is why RI-J and COSX cannot fix
+it -- an infinitely fast Fock build saves 8%. Disk is not, either: the `per_rank_write` subtree is
+4 samples of 4965.
+
+**The scheme.** For each Hirshfeld atom `a`, fit `rho_a(r) = w_a(r) rho(r)` in an atom-centred
+auxiliary basis, `rho_a ~ sum_P c_P^a chi_P`. The transform is then analytic and linear in the
+coefficients, `f_a(k) = sum_P c_P^a chi~_P(k)`. Per atom: `n_aux x n_pt` to build the right-hand
+side on the grid, an `O(n_aux^2)` solve, then `n_aux x n_k` analytic FT in which only about
+`n_shell_aux x n_k` exponentials appear -- the radial factor `exp(-k^2/4 alpha)` depends on the
+shell, not on the component. The `n_k x n_pt` transcendentals disappear.
+
+**The win grows with the reflection count**, which is the regime that matters. The grid work goes
+from `n_k x n_pt` to `n_aux x n_pt`, a factor `n_k / n_aux`: gly_ala is `n_k` = 2514 against a few
+hundred auxiliary functions per fragment, so 6-12x; a protein at 1e5 reflections is 1e2-1e3x. And
+`w_a rho` is localised on atom `a`, so a local auxiliary basis keeps `n_aux` small.
+
+**Why it has to be a density fit -- the metric is the whole point.** The fit minimises a norm of
+`Delta rho = rho_a - rho~_a`, and because the Coulomb kernel is `4 pi / k^2` in Fourier space, the
+choice of metric is the choice of *which reflections* the fit is accurate for:
+
+- **Coulomb metric** (RI-J's): minimises `integral |Delta rho~(k)|^2 / k^2 dk`. Errors at large `k`
+  are weighted *down* by `1/k^2`, so the fit is least accurate exactly at high resolution, where a
+  charge-density refinement needs it most. Wrong for this purpose -- which is Dylan's point.
+- **Overlap metric**: minimises `integral |Delta rho~(k)|^2 dk`, uniform in `k`. One new metric
+  builder, everything else reused.
+- **Reflection-weighted k-space metric**: minimise `sum_hkl w_hkl |Delta f_a(k_hkl)|^2` directly,
+  which is optimal for the quantity actually being refined. `A_PQ = sum_k w_k chi~_P*(k)
+  chi~_Q(k)` is SPD and depends only on the geometry and the hkl list, **not on the density**, so
+  it is built and factored once per geometry and reused across every SCF and LS iteration --
+  exactly as `.RI_metric_factor` is today. Building it is `n_aux^2 x n_k`, which is a reason to
+  amortise it, not a reason to avoid it.
+
+All three are symmetric positive-definite, so the existing factorisation and solve are reused
+unchanged whichever is chosen.
+
+**How the coefficients are solved today, since it was asked: Cholesky, not LU.**
+`MOLECULE.FOCK:initialize_RI_J` (`molecule.fock.foo:2114`) builds the Coulomb metric over the
+auxiliary pair list, transforms cartesian to spherical, and calls `.to_cholesky_factor` -- once per
+geometry. Each iteration then does one `.RI_metric_factor.solve_cholesky_equation(ds,cs)`
+(`:2084`), a forward/back substitution, `O(n_aux^2)`. Cholesky is the right tool for an SPD metric:
+half the work of LU, and no pivoting. Keep it. One caveat -- overlap metrics are less well
+conditioned than Coulomb ones, so a near-singular auxiliary set could make a bare Cholesky fail
+where RI-J's does not. A pivoted or eigenvalue-truncated fallback may be owed, and the condition
+number should be reported rather than discovered.
+
+**What already exists.** This is mostly assembly, which is the argument for this route over a
+fresh multipole-Bessel implementation:
+
+- `MOLECULE.FOCK:resolve_auxiliary_bases` and `make_auxiliary_pair_list` -- auxiliary basis
+  reading and the pair list, in which each auxiliary primitive is already a **one-centre (L,0)
+  pair**.
+- `SHELL2:make_ft_static` / `make_ft_c` / `make_ft_component` (`shell2.foo:493`) -- the analytic
+  Gaussian transform behind the ordinary molecular structure factors. A one-centre (L,0) pair is
+  precisely what it takes, so the transform of the fitted density needs **no new integral code**.
+- `to_cholesky_factor`, `solve_cholesky_equation`.
+- `SHELL1:make_grid` -- auxiliary basis values on the Becke grid, for the right-hand side.
+- **New**: the metric builder (`make_coulomb_metric` is the template), the grid right-hand side
+  `b_P = integral chi_P w_a rho`, and the contraction of `c_P` with the analytic FT.
+
+**The right-hand side stays on the grid.** `w_a` is a ratio of promolecule densities, not a
+Gaussian, so `b_P` cannot be analytic. That is affordable -- it is `n_aux x n_pt`, not
+`n_k x n_pt` -- but the Becke grid does not go away, and grid accuracy still matters.
+
+**What must be measured before it is believed.**
+
+- Fit error against the reflection set, per metric. The honest comparison is fit error against
+  *quadrature* error at equal cost, not against exact: the present numbers carry quadrature error
+  of their own.
+- Whether a `def2-universal-jfit`-shaped set is flexible enough for `w_a rho`, which has a nuclear
+  cusp and kinks where the weight function turns over. Auxiliary bases for the crystal bases
+  (pob-TZVP) do not exist at all, which is already owed for RI-J.
+- The effect on refined parameters **and their esds**, not just on `f_a`. This feeds the LS design
+  matrix, so a smooth systematic fit error is more dangerous than a noisy one.
+- That the ASF derivatives for the design matrix come out analytically from the same coefficients,
+  as they should.
+
+**Three cheap wins in the present loop, independent of all this**, and worth taking first:
+
+1. `exp(IMAGIFY(kr))` -> two real accumulators with `cos`/`sin`. gfortran sends it to libm `cexp`,
+   which computes `exp(real part)` and the real part is always zero: **12.6% of the whole run is
+   `exp(0.0)`**. It also lets the loop vectorise, which a complex accumulator prevents.
+2. The loop is a matrix product, `kr = k_pts . pt^T`. Blocked over `k` tiles (a full
+   `n_k x n_pt` is 180 MB at gly_ala size): one DGEMM, vectorised `cos`/`sin` over the tile, one
+   DGEMV against `rho`.
+3. Prune on `|rho w|`, not on the weight alone -- a point contributing nothing still costs a full
+   `k` loop.
 
 ## Benchmark molecule with a first-row transition metal and sulfur (Dylan, 2026-09-16)
 
