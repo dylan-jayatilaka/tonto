@@ -22,6 +22,11 @@ relative error ≤ 0.2 % **or** last printed digit within ±2 — so their verdi
 directly comparable with each other and with a local `make report`. The two debug
 workflows deliberately do **not** run the suite at all; see below.
 
+Every workflow that compares against a stored reference builds
+`-DCMAKE_BUILD_TYPE=reference`, not `release`: the same profile references are
+blessed with, so a red badge means a regression rather than a compiler-flag
+difference. See `docs/TONTO_BLESSING_TESTS.md`.
+
 One wrinkle in the naming: the fast `guards` job lives inside **WSL-release**
 even though what it tests (`cmake/WSL.cmake`) is not release-specific. It is there so
 that WSL work gets a signal on every push without a fifth badge.

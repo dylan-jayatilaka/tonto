@@ -85,7 +85,8 @@ last digit — which is usually enough to classify the failure without re-runnin
 
 macOS shows tiny last-digit differences in a few tests. The comparison is
 deliberately loose — relative difference ≤ 0.2%, or last printed digit within
-2 — and counts those as passes.
+2 — and counts those as passes. `docs/TONTO_BLESSING_TESTS.md` says what to do
+about the few that fail anyway, and how to bless a reference yourself.
 
 > **Do not use `gfortran-16` for debug builds.** It has two separate defects
 > there: it miscompiles `-fcheck=bounds` (so the build drops the flag and you get

@@ -83,9 +83,10 @@ failure shows its one-line agreement summary — worst relative difference and w
 last digit — which is usually enough to classify the failure without re-running.
 `make report` gives the same thing for every test, passing or not, in `tests.log`.
 
-The comparison is deliberately loose — relative difference ≤ 0.2%, or last
-printed digit within 2 — because the references were blessed on one compiler
-and one machine.
+The comparison is deliberately loose — relative difference ≤ 0.2%, or last printed
+digit within 2 — because the references were blessed on one compiler and one
+machine. `docs/TONTO_BLESSING_TESTS.md` says what to do when a test fails anyway,
+and how to bless a reference yourself.
 
 
 ## Other build types
