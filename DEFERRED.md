@@ -3023,6 +3023,24 @@ needs only an x86 branch.
 
 ## Deferred: adopt OpenBLAS consistently (single-threaded) on Linux and WSL
 
+**CAVEAT added 2026-09-24, to be dealt with when this is implemented: OpenBLAS dispatches on the
+CPU, so adopting it costs cross-machine reproducibility.** It selects kernels from the detected
+microarchitecture, so two machines with identical compilers and identical flags would again produce
+different last bits -- which the suite's ill-conditioned derived quantities amplify past the gate
+(see *PARKED with the source identified: the macOS red on `gly_ala_fragHAR`*). Netlib reference
+BLAS has no dispatch, which is the only reason today's Linux references are stable between machines
+at all.
+
+A container does **not** solve it: a container shares the host kernel and CPU, and `CPUID` is not
+virtualised, so OpenBLAS inside the image still sees the real host CPU. `OPENBLAS_CORETYPE` does
+force a kernel, but only one already compiled into that build, and the accepted names shift between
+OpenBLAS releases.
+
+So if this is adopted, it needs `OPENBLAS_CORETYPE` pinned as well as one thread -- or, more
+simply, netlib kept for the `reference` build type while users get OpenBLAS. The two decisions look
+independent and are not. See `docs/TONTO_REPRODUCIBILITY.md`.
+
+
 **Decision (2026-07-30): not now.** Do the Mac/Linux numerical comparison first. The intended
 end state is **OpenBLAS, pinned to one thread, on every platform** — matching what macOS already
 does — but getting there means **redoing the reference outputs completely**, so it must not be

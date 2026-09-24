@@ -18,12 +18,24 @@ SET(GNUGENERIC "-mtune=generic")
 # So native tuning is switched off automatically when CMAKE_CROSSCOMPILING is
 # set, and must be stated explicitly for the target instead.
 #
-#   -DTONTO_ARCH_FLAG=auto                     (default) tune for the build host
-#   -DTONTO_ARCH_FLAG=none                     no architecture tuning at all
+#   -DTONTO_ARCH_FLAG=none                     (default) no architecture tuning
+#   -DTONTO_ARCH_FLAG=auto                     tune for the build host
 #   -DTONTO_ARCH_FLAG="-march=znver3"          explicit flags for the target CPU
 #
-set(TONTO_ARCH_FLAG "auto" CACHE STRING
-    "Architecture tuning: 'auto' (tune for build host), 'none', or explicit flags for the target CPU")
+# THE DEFAULT IS "none", AND THAT IS A REPRODUCIBILITY DECISION, not a
+# performance oversight. Native tuning bakes the build host's instruction set
+# into the binary, so two machines with the *same* compiler and the same BLAS
+# still produce different last bits -- and the suite's ill-conditioned derived
+# quantities (an ADP axis ratio dividing by a near-zero eigenvalue, say) amplify
+# one ulp past the 0.2% gate. That cost a whole afternoon on 2026-09-24: a Linux
+# box with gfortran 14.2.0 could not reproduce references made with 14.3.0, and
+# native tuning was one of the reasons it could not have even with the compilers
+# matched. Reference-comparable by default; opt in to the speed.
+#
+#   cmake .. -DTONTO_ARCH_FLAG=auto            for a fast local build
+#
+set(TONTO_ARCH_FLAG "none" CACHE STRING
+    "Architecture tuning: 'none' (default, reproducible), 'auto' (tune for build host), or explicit flags")
 
 set(TONTO_ARCH_EXPLICIT "")
 set(TONTO_ARCH_NATIVE OFF)
@@ -121,6 +133,7 @@ elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU")
     # only build where they fire.
     set(DEBUG_FLAGS   "-Wall -g -fbacktrace ${BOUNDS_CHECK_FLAG} -DUSE_PRECONDITIONS -DDEBUG=1")
     set(RELEASE_FLAGS "-Ofast ${ARCH_FLAG} -DUSE_ERROR_MANAGEMENT")
+    set(REFERENCE_FLAGS "-O2 -fno-fast-math ${ARCH_FLAG} -DUSE_ERROR_MANAGEMENT")
     set(FAST_FLAGS    "-Ofast -faggressive-loop-optimizations -fstrict-aliasing ${ARCH_FLAG} -DUSE_ERROR_MANAGEMENT")
   # set(FAST_FLAGS    "-Ofast -faggressive-loop-optimizations ${ARCH_FLAG}")
 elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "NAG")
@@ -137,6 +150,12 @@ else()
 endif()
 
 set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -D${COMPILER} -D${COMPILER}_on_${CMAKE_SYSTEM_NAME} ${HOST_FLAG}")
+# REFERENCE falls back to the compiler's RELEASE flags where no reproducible
+# profile has been worked out; only the GNU branch sets it explicitly so far.
+if(NOT DEFINED REFERENCE_FLAGS)
+    set(REFERENCE_FLAGS "${RELEASE_FLAGS}")
+endif()
+
 # Make sure the build type is uppercase
 string(TOUPPER "${CMAKE_BUILD_TYPE}" BT)
 
@@ -145,6 +164,23 @@ if(BT STREQUAL "RELEASE")
       "Choose the type of build, options are DEBUG, RELEASE, or TESTING."
       FORCE)
     set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${RELEASE_FLAGS}")
+elseif(BT STREQUAL "REFERENCE")
+    # The profile references are BLESSED with, and the most reproducible one
+    # available: -O2 with IEEE semantics instead of -Ofast.
+    #
+    # -Ofast implies -ffast-math, which permits FP reassociation -- and each
+    # compiler version reassociates and vectorises differently, so an -Ofast
+    # build drifts in the last bits from one gfortran release to the next even
+    # on identical hardware. -O2 -fno-fast-math does not. Combined with
+    # TONTO_ARCH_FLAG=none and netlib BLAS (no runtime CPU dispatch, unlike
+    # OpenBLAS), the only remaining input is the compiler version itself.
+    #
+    # Slower than RELEASE, and deliberately not what users build. See
+    # docs/TONTO_REPRODUCIBILITY.md.
+    set(CMAKE_BUILD_TYPE RELEASE CACHE STRING
+      "Choose the type of build, options are DEBUG, RELEASE, REFERENCE, or TESTING."
+      FORCE)
+    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${REFERENCE_FLAGS}")
 elseif(BT STREQUAL "RELEASE-STATIC")
     set(CMAKE_BUILD_TYPE RELEASE CACHE STRING
       "Choose the type of build, options are DEBUG, RELEASE, or TESTING."
@@ -172,7 +208,7 @@ ELSEIF(NOT BT)
     MESSAGE(STATUS "CMAKE_BUILD_TYPE not provided, default: RELEASE")
     set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${RELEASE_FLAGS}")
 ELSE()
-    MESSAGE(FATAL_ERROR "CMAKE_BUILD_TYPE not valid, choices are DEBUG, RELEASE, or TESTING")
+    MESSAGE(FATAL_ERROR "CMAKE_BUILD_TYPE not valid, choices are DEBUG, RELEASE, REFERENCE, RELEASE-STATIC, FAST or TESTING")
 ENDIF(BT STREQUAL "RELEASE")
 
 # Set default macros
