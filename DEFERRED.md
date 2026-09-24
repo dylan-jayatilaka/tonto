@@ -2513,36 +2513,14 @@ above are taken first, so they are understood as interim.
 
 ### Requirements the hoist should deliver (2026-09-24)
 
-Found while fixing the grid-inheritance bug (below, *Fragments did not inherit the Becke grid*).
-The hoist rewrites the fragmentation dispatch anyway, so **none of this is worth refactoring
-first** -- it would be thrown away. It is written here so October starts from a specification
-rather than rediscovering it.
+Three, found while fixing the Becke grid bug: **one** fragment-initialisation point (three routines
+build fragments today and the grid was missing from all three, which is why it went unnoticed); the
+fragmentation scheme as a **named value** rather than three flags across two objects, which is what
+a `select case` needs to switch on; and three divergences between the capping and `atom_indices`
+paths that the hoist should settle deliberately rather than inherit.
 
-1. **One fragment-initialisation point.** Three routines build fragments today --
-   `MOLECULE.SET:set_molecule_from_atom_group`, `MOLECULE.BASE:set_Ryde_cap_for_group` and the
-   NN block in `set_NN_capped_groups` -- and each repeats the same tail: name, basis, charge,
-   atom info, multiplicity, `set_SCF_guess_defaults_from`, crystal copy, `resolve_ANOs_from`.
-   That is exactly why the Becke grid was missed: three places to add a line, and it was added to
-   none of them. Whatever owns the fragments after the hoist must initialise them in one place.
-
-2. **The scheme should be a named value, not three flags.** `MOLECULE.BASE:update_atom_groups`
-   (`molecule.base.foo:1527`) dispatches on `.crystal.use_Ryde_capping`, `.crystal.use_NN` and
-   `.atom_group.has_atom_indices` -- three flags across two objects, so the scheme exists nowhere
-   as a value. Nothing can echo it, validate it or put it in the CIF; the precedence is whatever
-   the `if` chain happens to be; and `use_Ryde_capping` with `use_NN` silently gives Ryde. Dylan
-   wants a `select case`, which is right, but it needs something to switch on: a
-   `fragmentation_scheme` ("connected" / "atom_indices" / "Ryde" / "NN") resolved **once** from
-   the user's keywords, with the precedence written down and a `DIE` on a conflicting pair. After
-   the hoist it belongs on the `CRYSTAL`, which is what holds the fragments.
-
-3. **Three divergences between the paths are decisions, not style** -- the hoist should choose
-   each deliberately rather than inherit whichever branch gets ported first:
-
-   | | capping paths (Ryde, NN) | `atom_indices` path |
-   |---|---|---|
-   | crystal copy | `set_minimal_copy` (`molecule.base.foo:1910`, `:1979`) | full copy; `update_group_crystal_and_ANOs` even carries the comment *"Should be minimal copy?"* |
-   | basis | `set_basis_name(.basis_name)` | `resolve_bases_and_update_from(self)` |
-   | charge and multiplicity | setters, guarded by `spin_multiplicity_set` | direct assignment |
+**None of it is worth refactoring first** -- the hoist rewrites this dispatch anyway. Detail,
+sequencing and the traps: `docs/TONTO_CRYSTAL_HOIST_PLAN.md`.
 
 ## Design (2026-08-03): let MPI keep `PURE`, so the compiler forbids I/O in parallel regions
 
@@ -3943,6 +3921,60 @@ Two consequences, neither of them a fix:
 
 The earlier discipline is recorded in `f6395f44`, which inserted a single CIF line by hand
 precisely to avoid migrating these two files. It no longer applies to them.
+
+### PARKED with the source identified: the macOS red on `gly_ala_fragHAR` is the ADP axis ratio (2026-09-24)
+
+**Dylan's decision 2026-09-24: parked.** The stable alternative changes what the column means and
+loses readability, so the column stays as it is. Recorded because the source is now *known and
+quantified*, which it was not before: this is a named instance of *The BLAS kernel is part of the
+reference*, not a mystery.
+
+**The measurement.** `tests/long/gly_ala_fragHAR_rhf_STO-3G` on macOS/openblas/arm64 against the
+committed Linux/reference-BLAS `stdout`, comparing every token:
+
+| | |
+|---|---|
+| numeric tokens compared | 3123 |
+| lines whose token count differs | **0** |
+| non-numeric differences (`T`/`F` flags included) | **0** |
+| tokens outside the 0.2% loose gate | **2** |
+
+The two, both in the **Axis ratio** column of the ADP table:
+
+```
+H1C-4-GLY-1    -35.5009  vs  -35.4053    0.269%
+H2AB-7-GLY-1   -88.1587  vs  -88.7684    0.692%
+```
+
+Every other token agrees to better than 0.11%, and **all the ADPs and their esds are identical in
+every printed digit**. The `Rw(F2) = NaN` token also shows as a difference because NaN never equals
+itself; both files carry it, and it long predates this (see `docs/RUNNING_HART.md` §6).
+
+**Why the column cannot be stabilised by rounding.** `ATOM:ADP_principal_axis_ratio`
+(`foofiles/atom.foo:6633`) returns `maxeval/mineval` of the ADP tensor, with a magic `1000.0` when
+`abs(mineval)<TOL(3)` -- that sentinel is itself a symptom. Both offending atoms are flagged
+**NPD = T**: non-positive-definite, so `mineval` is negative and near zero and the quotient has no
+stable value. The discrepancy is **0.61 absolute on -88.17**, so it survives any rounding: 2 dp
+gives -88.16 against -88.77, and 0 dp gives -88 against -89.
+
+What *would* be stable is the reciprocal, `mineval/maxeval`: bounded in [-1,1], no sentinel needed,
+and both atoms then agree at 4 dp (-0.0113 and -0.0282, from absolute differences of 8e-5).
+**Rejected by Dylan**: a large positive number is the readable form, and a small negative fraction
+is hard to gauge. Other options if it is ever revisited -- suppress the ratio for NPD atoms (Dylan
+dislikes a dash), or give that one column its own tolerance.
+
+**What this means in practice.** Two ill-conditioned *derived* quantities are what make these jobs
+platform-fragile, not the physics:
+
+- this axis ratio, a quotient by a near-zero eigenvalue;
+- the **macro-iteration count** of the hart twin, which differs 3 (macOS) against 6 (the Linux
+  reference) because the shifts deciding it are 1-6% of an esd, i.e. 1e-4 to 1e-5 Angstrom. At
+  that level *which* parameter shifts most is arbitrary -- macOS says `H3 Uxy`, Linux `O1 Uxz` --
+  and the count is structural in any output that prints the table. `gly_ala_fragHAR` is immune to
+  that one only because it sets `show_refinement_output= FALSE`.
+
+The converged science agrees across the platforms to ~3e-5 relative, five significant figures:
+R(F) 0.032422 against 0.032421, GoF 3.354131 against 3.354027.
 
 ### Lower priority: `ylid` (rgbi) — vdW contact indices differ on macOS
 
