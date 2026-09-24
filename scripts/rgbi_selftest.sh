@@ -44,8 +44,13 @@ BASE_TOOLS="uname grep sed awk tr head cat readlink"
 # PATH, so `ctest` runs without pdflatex even where TeX is installed. Failing
 # then would report a defect in the doctor when the only fact established is
 # that this shell cannot see TeX. Skip instead, loudly, with ctest's skip code.
+# The list must be every tool the good-path sandboxes symlink in (see GOOD and
+# the "template directory" case below), not just the TeX ones: a host with TeX
+# but without, say, mol2chemfig would otherwise skip nothing, build an
+# incomplete "complete" sandbox, and fail the good-path cases for exactly the
+# wrong reason.
 MISSING_HOST_TOOLS=""
-for _t in pdflatex pdfcrop kpsewhich; do
+for _t in pdflatex pdfcrop gs kpsewhich obabel mol2chemfig; do
     command -v "$_t" >/dev/null 2>&1 || MISSING_HOST_TOOLS="$MISSING_HOST_TOOLS $_t"
 done
 if [ -n "$MISSING_HOST_TOOLS" ]; then
