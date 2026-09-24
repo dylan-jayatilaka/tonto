@@ -73,7 +73,40 @@ now covers the whole project, so it was renamed.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## START HERE, 2026-09-24 (evening): the re-bless is DONE; one push is owed
+## START HERE, 2026-09-24 (night): master is merged and green; two debug fixes; seven items parked
+
+**The push owed below has happened.** `develop` was merged to `master` as `43d35f44`, and that
+push's CI is green on `Linux-release` (the first run of the `reference` profile), `Linux-debug`,
+`Linux-MPI` and the RGBI toolchain; `WSL-release` was still running when last looked at. So the
+prediction at the end of the evening block held.
+
+**Two debug-only preconditions fixed, `5802ace0` on `develop`.** (1) A *second* `--` option
+aborted every debug binary: `process_options` kept two 256-wide locals after `79965d5e` widened
+the option arrays to `PATH_SIZE`, and the append's array constructor mixed the widths. (2) With
+that gone, `urea_rhf_STO-3G_HAR` under debug died on the wavelength precondition in
+`extinction_angle_part`, reached from `d_F_pred_dX` with a zero extinction factor; both derivative
+twins now skip the angle part when the factor is zero. Detail in the stage E log below and in the
+commit. **Found and left:** `quartz_NN_HAR_L1` under debug stops at `set_F_calc_cutoff` on its own
+`f_calc_cutoff= 0.0` -- part of the live pruning item.
+
+**Watch: `h2o_rhf_def2-SVP_RIJCOSX` drifts on the Mac.** After the merge, a macOS release build
+(`-O3`, OpenBLAS) fails it: the COSX SCF block is 3.4e-4 Eh off the Linux reference (E -75.92079838
+against -75.92113706, V_eN 1.7e-2 off) while the final exact-K energy matches to all digits, so it is
+the COSX pass alone. The job has no diffraction data, so it is not the `5802ace0` change. The last
+macOS CI (2026-09-22, before the merge) had this test at loose-pass, 1.3e-8 -- so either the grid
+commits `124a9584`/`dace267a` moved the COSX numbers on the Mac, or this machine differs from the
+runner. `macOS-release` was dispatched on the merged `master` to tell those apart:
+https://github.com/dylan-jayatilaka/tonto/actions/runs/36049317190. Read that run before doing
+anything else with this.
+
+**Seven items parked as "Later" on the task register** (2026-09-24, Dylan): too large, or too
+little return, to take on now; not diagnosed-and-abandoned, which is what "Parked" means there.
+The energy breakdown inert on `develop`; Fortran-2008 `submodule` constructs; a module-level
+call graph in `writeDotFiles`; boilerplate documentation comments; parallelising the Bader basin
+search; folding the RGBI picture toolchain into one codebase; vim highlighting. Their entries below
+stand; they are simply not in the open count.
+
+## 2026-09-24 (evening): the re-bless is DONE; one push is owed
 
 **Everything below is pushed to `develop`. The re-bless is complete** and the full suite is
 **153 tests, 0 failures, 3 skips** on the `reference` profile on Linux (Ubuntu 24.04, gfortran
