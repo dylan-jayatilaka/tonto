@@ -73,6 +73,60 @@ now covers the whole project, so it was renamed.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## START HERE, 2026-09-24: the rebless is set up and NOT YET DONE
+
+Everything below is pushed to `develop` (tip `f7f13304`). **No reference has been blessed.**
+A full suite run is in progress, detached, on the Linux box; pick it up from there.
+
+**Where the run is.** `achari2:~/github/tonto-rebless/refbuild/rebless.stdout` (and
+`rebless.log`). It is a `reference`-profile build -- `-O2 -fno-fast-math`, no architecture
+tuning -- at commit `f7f13304`, started detached with `setsid` so it survives a session ending.
+`~/github/tonto-rebless` is a worktree; do **not** build in `~/github/tonto`, which is Dylan's
+own dirty `gaussian-IAM` tree.
+
+**What this pass changed** (all pushed): the Becke grid inheritance fix so fragments honour the
+parent's settings; `gly_ala_fragHAR` on the `low` grid (66 -> 33 s); SCF option reporting plus the
+`guess_convergence` echo; the `yq28` unreachable convergence tolerance deleted; architecture
+tuning made opt-in; a `reference` build type; the Linux CI runners pinned to `ubuntu-24.04`; CI
+switched to the `reference` profile; `docs/TONTO_BLESSING_TESTS.md`; the rgbi selftest skip guard.
+
+### The attribution table -- this is what makes the rebless safe
+
+Established by building the parent commit `e50673c8` in a second worktree and comparing failure
+lists on the same machine. **Rebuild that if this table is ever in doubt; do not re-derive it by
+reasoning.** Counts are from the run before the `yq28` fix, so expect the `yq28` rows to have
+moved.
+
+| group | tests | verdict |
+|---|---|---|
+| added output line | `h2o_rhf_cc-pVQZ_from_nwchem_molden`, `nh3_rhf_DZP_ED_grid`, `CHFCl_rhf_cc-pVQZ_spherical_from_nwchem_molden`, `urea_hart_STO-3G`, `urea_hart_STO-3G_disk_ffs`, `urea_hart_STO-3G_extinction` | bless -- the `guess_convergence` line, nothing else |
+| options block | `h2o_rhf_def2-SVP_RIJCOSX` | bless -- it now records the options it exercises, 0% and 0 ulp |
+| grid level, intended | `gly_ala_hart_STO-3G`, `gly_ala_fragHAR_rhf_STO-3G` | bless |
+| tolerance fix | the three `yq28_*` jobs | bless -- they now converge, statistics unchanged to 4 dp |
+| `-Ofast` -> `-O2` | `quartz_NN_HAR_L0_rhf_def2-SVP`, `urea_ccsd_pob-TZVP_Salvador_properties` | bless -- last-digit only, diffs read, no verdict changed |
+| pre-existing | `h2o_rhf_cc-pVDZ_tdhf`, `quartz_NN_HAR_L1_rhf_def2-SVP` | fail at the parent commit too; read before blessing |
+| not a rebless | `rgbi_doctor_selftest`, `lebedev_rules`, `ammonium_borane_pHAR_C23` | environment: the first should now SKIP (unverified), the others need numpy / missing inputs |
+
+**Anything not in that table is new and must be read, not blessed.** The `-O2` switch is the
+uncertain part: it is what exposed the `yq28` defect, and it could expose another.
+
+### The sequence still owed
+
+1. Read the failure list in `rebless.stdout` against the table above.
+2. Bless per test: `python3 ../scripts/test.py --bless --program ./tonto --test-directory ../tests/<suite>/<name> --basis-sets ../basis_sets --log-level=WARNING` -- see `docs/TONTO_BLESSING_TESTS.md`.
+3. Re-run the suite to confirm green, and push the references.
+4. Then Dylan's call: `develop` -> `master` for the CI check, since CI now builds the `reference`
+   profile and has never run it.
+
+**Do not bless on macOS.** A reference carries `Platform:` and `Compiler:` in its banner; read them.
+
+### Two claims from this session that were WRONG, lest they be repeated
+
+The `cos`/`sin` accumulator revert (`dace267a`) blamed `quartz_NN_HAR_L1`; that job fails at the
+parent commit. And the three `urea_hart` failures were called pre-existing on the strength of an
+isolation experiment that neutralised one of two changes. Both came from forming a hypothesis
+before reading the diff. See *Attribution of the 2026-09-24 suite run, and a correction*.
+
 ## START HERE, 2026-09-18 (evening): the COSX grid -- plan drafted, decisions owed
 
 > Nothing was built or run in the planning session. The plan below is what was drafted from the
