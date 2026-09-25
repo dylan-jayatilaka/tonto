@@ -114,8 +114,10 @@ under *Test suite and numerics*. In short: the committed test differs across pla
 on 5 lines; with vdW on, only the two `% Cov` percentage columns move, because they are ratios of
 indices that are 0.00-0.05 for a vdW pair; and "off" is *slower* than "on" because `ROBY:do_pair`
 computes bonded **or** vdW pairs when the flag is off and then prints only the bonded ones, 70
-unprinted pairs at 0.7 s each. **Owed:** whether to make the off branch bonded-only (ylid ~18 s,
-reference expected byte-unchanged). The register row is untouched pending that.
+unprinted pairs at 0.7 s each. **Dylan chose bonded-only** (`5e45a925`): rebuilt and rerun on both
+machines, all 13 rgbi outputs identical before and after, ylid 62 -> 26 s (Mac) and 78 -> 31 s
+(Linux). Row closed. Left for the next re-bless: `NF`, `karrikinolide_g09` and `ylid` are 1-ulp
+off their references on the bless platform, from before this change.
 
 ## 2026-09-25 (evening): the reduced multiplication scheme is archived and deleted
 
@@ -4158,12 +4160,20 @@ header attributes the first to macOS; that attribution is at least incomplete.
 > them, and ylid has that off. So about 50 of ylid's 70 s compute results nobody sees, and the
 > same applies to every rgbi job with the default flag.
 >
-> **Decision owed (Dylan):** make `do_pair`'s `else` branch bonded-only, dropping the
-> `OR .atom.vdw_bonded`. Expected: ylid at ~18 s, the reference byte-unchanged because each
-> pair's indices are computed independently (no cross-pair aggregate in the loop at
-> `roby.foo:910`). The `OR` may be deliberate for dials with vdW contacts; if so, a third
-> setting is the alternative. Not done: it is a behaviour change in a scientific flag, and a
-> `roby.foo` rebuild. The old entry follows.
+> **DONE (Dylan's decision, 2026-09-25, `5e45a925`): `do_pair`'s `else` branch is bonded-only.**
+> Verified on both machines by rebuilding and rerunning all 13 rgbi tests: on the Mac every
+> output is byte-identical before and after (the four that differ from their references still
+> differ by the same lines); on achari2's reference build every test scores as before and
+> ylid's output is identical before and after. ylid: 62 -> 26 s on the Mac, 78 -> 31 s on
+> Linux; karrikinolide 1.5 -> 0.9 s. One visible change for users: a default run with
+> `output_theta_info= YES` now draws dials for the bonded pairs only, which is what
+> `docs/RUNNING_RGBI.md` already said. ylid's input leaves `analyze_vdw_atom_pairs= T`
+> commented out so a reader sees the option. **Register row closed.**
+>
+> **Seen in passing, for the next re-bless:** on the bless platform itself three rgbi references
+> are no longer exact -- `NF` and `karrikinolide_..._g09_...` by 1 ulp, `ylid` on 9 lines by
+> 1 ulp -- all loose-pass and all pre-dating this change (the Mac's before/after outputs are
+> identical). The old entry follows.
 
 **Status 2026-07-29:** fails on **macOS only** (3.85% max rel); **passes on Linux** against the
 current reference, with both platforms on gfortran-16 and LAPACK 3.12.0.
