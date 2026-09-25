@@ -75,6 +75,36 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## 2026-09-25 (night): the BN `-O2` pin is guarded, and there was only ever one pin
+
+**The register's RGBI row asked for "a test guarding the `-O2` pin on BN's Roby populations".
+Closed.** Two findings and one change:
+
+- **There is one arm64 pin, not two.** `CMakeLists.txt` pins `shell1quartet.F90` to
+  `-O2 -fno-schedule-insns` on arm64 macOS (`a3ec1b07`), and `cmake/SetFortranFlags.cmake`
+  adds `-fno-schedule-insns` build-wide for the same fault. The "second pin at
+  `CMakeLists.txt:883` for rgbi/BN's Roby populations" that the macOS-in-CI entry, the RGBI
+  defects entry, `ci-macos.yml`'s header and `docs/TONTO_CONTINUOUS_INTEGRATION.md` all
+  repeated was the *same* pin: at `add3adef`, which wrote the note, line 883 is the line of
+  the pin's own comment that mentions BN. `git log -S"Roby populations"` over the CMake files
+  finds `a3ec1b07` and nothing else. All four places now say so.
+- **The pin was already guarded, but not by BN.** `spherical_vs_cartesian` (label `short`)
+  is an invariant that fails on the miscompiled build, and `ci-macos.yml` asserts the pin
+  in `flags.make`. What no macOS job ran was the `rgbi` suite, so BN itself -- the test whose
+  numbers first showed the fault, and the one the row named -- never ran on Apple silicon.
+- **Change: `ci-macos.yml` now runs `short hart rgbi`.** Measured here first, on this M2
+  (gfortran-14 release, today's `release/` tree): `ctest -L rgbi` is 14/14 including BN and
+  `ylid`, 64 s wall, and `spherical_vs_cartesian` passes. `suite_report.py` already accepts
+  `rgbi`. `ci-full-suite-macos.yml` keeps `short long hart`, matching the Linux definition
+  of "full suite" (106 tests).
+
+**Not done, and known:** nothing re-demonstrates that BN *fails* without the pin on today's
+compiler; the evidence is the historical 82/124 -> 118/124 and rgbi 1/13 -> 12/13 at
+`a3ec1b07`, and the gfortran-16 `TONTO_SKIP_ARM64_WORKAROUNDS=ON` build that reproduced the
+invariant failure. A rebuild without the pin is a 20-minute job on this Mac and was not run.
+The workflow is still scheduled-and-manual, unbadged; dispatch `macOS-release` once to see
+the rgbi section in the summary.
+
 ## 2026-09-25 (evening): the reduced multiplication scheme is archived and deleted
 
 **The register's quick item "Archive the reduced multiplication scheme, then delete it" is
@@ -5037,10 +5067,15 @@ were cleared of developer material. None is fixed.
   `hart` check's twin, registered as the `rgbi_options` ctest and as a
   `suite_report.py` invariant check, so CI runs it. No reference carries any of the
   changed strings, so nothing was reblessed.
-- `CMakeLists.txt:883` pins a file to `-O2` because **"rgbi/BN's Roby
-  populations were wrong"** at other optimisation levels. Read that comment
-  before touching optimisation flags for this program. No test guards it — see
-  the macOS-in-CI item below.
+- `shell1quartet.F90` is pinned to `-O2 -fno-schedule-insns` on arm64 macOS
+  (`CMakeLists.txt`, the block headed WORKAROUND) because at `-O3` the
+  two-electron integrals come out wrong and **rgbi/BN's Roby populations were
+  wrong** with them. Read that comment before touching optimisation flags. It
+  is the only such pin: the "second pin for BN's Roby populations" in earlier
+  notes was this one, cited by the line number of its comment. **Guarded since
+  2026-09-25** by `ci-macos.yml`, which runs the `rgbi` suite (BN included) and
+  the `spherical_vs_cartesian` invariant on Apple silicon; see the handover
+  entry of that date.
 
 **In the pictures**
 
@@ -5120,8 +5155,11 @@ diverging boron atomic SCF and rgbi/BN's populations were symptoms of it, not
 independent defects. **That pin is currently guarded by nothing.** Delete it, or
 have a compiler upgrade change what the flag means, and the suite goes quietly
 wrong on every Mac while Linux CI stays green. A macOS job is the only thing
-that can see it. Note `CMakeLists.txt:883` carries a second such pin for the
-same reason (rgbi/BN's Roby populations), likewise unguarded.
+that can see it. (An earlier version of this note said `CMakeLists.txt:883`
+carried a *second* pin for rgbi/BN's Roby populations. It did not: line 883
+was inside the comment of the same pin. There is one pin. Corrected
+2026-09-25, when `ci-macos.yml` gained the `rgbi` suite so that BN runs on
+Apple silicon.)
 
 **What it needs:** `brew install gcc cmake openjdk` (the translator needs a JDK;
 BLAS/LAPACK already default to Homebrew OpenBLAS on macOS rather than

@@ -348,12 +348,12 @@ renamed `develop` on 2026-08-11 and the badges never pointed at it.)
   day after WSL-release, so two hour-long Windows jobs never queue against each
   other.
 
-**macOS**, added 2026-08-24. macOS runners are free for this public repository,
-and a macOS job is the only thing that can guard the two arm64 compiler pins
-whose failure mode is wrong numbers rather than crashes — `shell1quartet.F90`'s
-`-O2 -fno-schedule-insns`, and the second pin for rgbi/BN's Roby populations.
-Neither was guarded by anything before. `ci-macos.yml` asserts the pin is still
-in the build flags rather than trusting it.
+**macOS**. macOS runners are free for this public repository, and a macOS job
+is the only thing that can guard the arm64 compiler pin whose failure mode is
+wrong numbers rather than a crash: `shell1quartet.F90` at `-O2 -fno-schedule-insns`.
+`ci-macos.yml` asserts the pin is still in the build flags, and runs the two
+tests that fail without it — the `spherical_vs_cartesian` invariant in `short`,
+and rgbi's `BN`, whose Roby populations first showed the fault.
 
 Both jobs are **unbadged on purpose**, following the rollout in `TASKS_AND_HISTORY.md`:
 run them, gather evidence, badge when they have something steady to say. Measured
