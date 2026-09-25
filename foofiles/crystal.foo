@@ -196,7 +196,7 @@ contains
          end
 
          ! Prune reflections
-         .xray_data.SET:update(.unit_cell,.spacegroup) ! NOT PURE
+         .update_xray_data
 
          if (.r_free_percentage>0 AND .xray_data.reflections.allocated) then
             .xray_r_free_data = .xray_data
@@ -591,7 +591,7 @@ contains
 
       if (.xray_data.deallocated) .xray_data.SET:create
       .xray_data.READ:read_keywords
-      .xray_data.SET:update(.unit_cell,.spacegroup)
+      .update_xray_data
 
    end
 
@@ -707,13 +707,113 @@ contains
       if (.xray_data.deallocated) .xray_data.SET:create
       .xray_data.SET:set_data_kind("x-ray")
       .xray_data.READ:read_CIF(cif)
-      .xray_data.SET:update(.unit_cell,.spacegroup)
+      .update_xray_data
 
       ! Update
       .update_diffraction_data
 
       ! Eventually, this will be used
       .asymmetric_unit_source = "from-cif"
+
+   end
+
+   update_xray_data :: leaky
+   ! Update .xray_data for the unit cell and spacegroup, which prunes
+   ! the reflections. A repeated xray_data= block re-prunes in place;
+   ! the form factors on disk are cut down to match, not recomputed.
+      self :: INOUT
+
+   ENSURE(.xray_data.allocated,"no diffraction data")
+
+      old :: VEC{REFLECTION}@
+
+      if (.xray_data.reflections.allocated) old = .xray_data.reflections
+
+      .xray_data.SET:update(.unit_cell,.spacegroup) ! NOT PURE
+
+      if (old.allocated) then
+         if (.xray_data.reflections.dim<old.dim) .prune_disk_SFs(old)
+         old.destroy
+      end
+
+   end
+
+   prune_disk_SFs(old) :: leaky, private
+   ! Cut each unique fragment atom's "<tag>-SFs" file, written for the
+   ! reflection list "old", down to the reflections now in .xray_data,
+   ! which must be a subset of "old" in the same order. A file is one
+   ! record of .spacegroup.n_unique_SF_symops blocks, each in reflection
+   ! order, so only the pruned reflections drop out of every block.
+   ! Atoms without a file (caps, zero site factor) are skipped.
+      self :: IN
+      old  :: VEC{REFLECTION}, IN
+
+   ENSURE(.xray_data.allocated,"no diffraction data")
+   ENSURE(.xray_data.reflections.allocated,"no reflection data")
+
+      n_sym,n_old,n_new, u,f,s,n,i :: INT
+      keep :: VEC{INT}@
+      ff_old,ff_new :: VEC{CPX}@
+      arch :: ARCHIVE@
+
+      if (NOT .xray_data.use_disk_SFs) return
+      if (NOT .fragment_info_made) return
+      if (NOT .xray_data.reflections.have_F_calc) return ! no refinement yet, so no files of ours
+
+      n_sym = .spacegroup.n_unique_SF_symops
+      n_old = old.dim
+      n_new = .xray_data.reflections.dim
+
+      ! keep(n) is where the n-th current reflection sits in "old"
+      keep.create(n_new)
+      i = 0
+      do n = 1,n_new
+         do
+            i = i + 1
+            DIE_IF(i>n_old,"pruned reflection list is not a subset of the old one")
+            if (old(i).h1/=.xray_data.reflections(n).h1) cycle
+            if (old(i).h2/=.xray_data.reflections(n).h2) cycle
+            if (old(i).h3/=.xray_data.reflections(n).h3) cycle
+            exit
+         end
+         keep(n) = i
+      end
+
+      ff_old.create(n_sym*n_old)
+      ff_new.create(n_sym*n_new)
+
+      stdout.flush
+      stdout.show("Form factors on disk cut to kept reflections, from ",n_old)
+      stdout.show("                                               to ",n_new)
+
+      ! Loop over unique *frag* atoms
+      do u = 1,.n_unique_frag_atoms
+
+         f = .unique_frag_atom(u)
+
+         ! Read, cut down, and write back. FILE:read is master-only and
+         ! broadcasts; FILE:write is master-only. See shift_update_ff.
+         arch.create(trim(.fragment_atom(f).tag)//"-SFs")
+         if (.xray_data.use_text_SFs) arch.set_format("ascii")
+
+         if (arch.exists) then
+            arch.read(ff_old)
+            do s = 1,n_sym
+            do n = 1,n_new
+               ff_new((s-1)*n_new+n) = ff_old((s-1)*n_old+keep(n))
+            end
+            end
+            arch.write(ff_new)
+         end
+
+         arch.destroy
+
+      end
+
+      ! Clean
+      ff_new.destroy
+      ff_old.destroy
+      keep.destroy
 
    end
 
@@ -755,7 +855,7 @@ contains
       if (.xray_data.deallocated) .xray_data.SET:create
       .xray_data.SET:set_data_kind("x-ray")
       .xray_data.READ:read_CIF(cif)
-      .xray_data.SET:update(.unit_cell,.spacegroup)
+      .update_xray_data
 
       ! Update
       .update_diffraction_data

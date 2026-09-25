@@ -73,7 +73,61 @@ now covers the whole project, so it was renamed.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## START HERE, 2026-09-24 (evening): the re-bless is DONE; one push is owed
+## START HERE, 2026-09-24 (night): master is merged and green; two debug fixes; seven items parked
+
+**The push owed below has happened.** `develop` was merged to `master` as `43d35f44`, and that
+push's CI is green on `Linux-release` (the first run of the `reference` profile), `Linux-debug`,
+`Linux-MPI` and the RGBI toolchain; `WSL-release` was still running when last looked at. So the
+prediction at the end of the evening block held.
+
+**Two debug-only preconditions fixed, `5802ace0` on `develop`.** (1) A *second* `--` option
+aborted every debug binary: `process_options` kept two 256-wide locals after `79965d5e` widened
+the option arrays to `PATH_SIZE`, and the append's array constructor mixed the widths. (2) With
+that gone, `urea_rhf_STO-3G_HAR` under debug died on the wavelength precondition in
+`extinction_angle_part`, reached from `d_F_pred_dX` with a zero extinction factor; both derivative
+twins now skip the angle part when the factor is zero. Detail in the stage E log below and in the
+commit. **Found and left:** `quartz_NN_HAR_L1` under debug stops at `set_F_calc_cutoff` on its own
+`f_calc_cutoff= 0.0` -- part of the live pruning item.
+
+**Watch: `h2o_rhf_def2-SVP_RIJCOSX` drifts on the Mac.** After the merge, a macOS release build
+(`-O3`, OpenBLAS) fails it: the COSX SCF block is 3.4e-4 Eh off the Linux reference (E -75.92079838
+against -75.92113706, V_eN 1.7e-2 off) while the final exact-K energy matches to all digits, so it is
+the COSX pass alone. The job has no diffraction data, so it is not the `5802ace0` change. The last
+macOS CI (2026-09-22, before the merge) had this test at loose-pass, 1.3e-8 -- so either the grid
+commits `124a9584`/`dace267a` moved the COSX numbers on the Mac, or this machine differs from the
+runner. `macOS-release` was dispatched on the merged `master` to tell those apart:
+https://github.com/dylan-jayatilaka/tonto/actions/runs/36049317190. Read that run before doing
+anything else with this.
+
+**Seven items parked as "Later" on the task register** (2026-09-24, Dylan): too large, or too
+little return, to take on now; not diagnosed-and-abandoned, which is what "Parked" means there.
+The energy breakdown inert on `develop`; Fortran-2008 `submodule` constructs; a module-level
+call graph in `writeDotFiles`; boilerplate documentation comments; parallelising the Bader basin
+search; folding the RGBI picture toolchain into one codebase; vim highlighting. Their entries below
+stand; they are simply not in the open count.
+
+## 2026-09-25 (overnight): repeated `xray_data=` blocks re-prune; the pruning item is closed
+
+**Pushed to `develop`: `0bbe7a1e` (the fix) and `25dd95d0` (the re-blessed quartz L1 reference).**
+Dylan chose the design: a repeated block re-prunes in place, compounding accepted, and the form
+factors on disk are cut to the survivors rather than recomputed. The full account, with the
+measured mechanism, is the archived entry *Pruning compounds across repeated `update` calls*.
+Two things it found on the way are fixed in the same commit: the BFGS iteration cap in
+`VEC{REAL}:min_BFGS` and `minimize_BFGS` tested the wrong variable and never fired, which is what
+turned a bad start into an hour-long spin; and two debug-only `ENSURE`s forbade zero cutoffs and a
+second refinement in one job. Neither is reached in CI.
+
+**Verified.** macOS release: short suite 69/70, the failure being the RIJCOSX drift above; quartz
+L0 passes; quartz L1 runs to the end in release (27 s) and debug (49 s). achari2, `reference`
+profile: quartz L1 exact against the new reference. CI on the two pushes was in progress at
+hand-off: `WSL-release` green on both, `Linux-debug` green on the first; check `Linux-release`,
+`Linux-debug` and `Linux-MPI` before merging to `master`.
+
+**Known and unchanged:** quartz L0 and L1 still fail on macOS only, in first-pass per-shell
+ratios (0.847%, 759 ulp against the new reference), the documented cross-platform category; see
+*Test suite and numerics*. **Owed, unchanged:** `develop` -> `master`, Dylan's call.
+
+## 2026-09-24 (evening): the re-bless is DONE; one push is owed
 
 **Everything below is pushed to `develop`. The re-bless is complete** and the full suite is
 **153 tests, 0 failures, 3 skips** on the `reference` profile on Linux (Ubuntu 24.04, gfortran
@@ -700,7 +754,27 @@ re-bless), and a batch-size scan (256 vs 512). Commits `f832aded` (pushed)
 > comment says this was fixed). The option list and the value now have different widths --
 > probably since `79965d5e` (2026-08-15, long paths). So `dft_invariants`, which passes
 > `--input/--output`, cannot run under debug, and neither can `hart`. Release is unaffected.
-> Not fixed. Stage D and the no-copy change were checked in debug without options instead
+> **FIXED 2026-09-24.** It is the *second* option, not any: the first append is a one-element
+> constructor. `process_options` declared `opt,no_val :: STR` (256) but `79965d5e` had widened
+> `.option`/`.option_value` to `PATH_SIZE` (1024), so `[self,value]` mixed two lengths. The locals
+> are now `PATH_SIZE`; the append stays strict on purpose, so a mismatch aborts rather than
+> truncates. Verified: `debug/tonto --help --version` and `debug/hart --help --version` exit 0;
+> `urea_rhf_STO-3G_HAR` under debug with `--input/--output/--basis-library` reaches the same
+> energy as release (-220.9879) and then hits a **separate debug-only failure**: the
+> `ENSURE(.wavelength>ZERO,"extinction needs a wavelength")` in
+> `DIFFRACTION_DATA.INQ:extinction_angle_part` (from `baf3d889`) fires at `HAR_refinement` with
+> `optimise_extinction= NO`. Release passes. **Also fixed, same day:** `d_F_pred_dX` and
+> `d_I_pred_dX` evaluated `.extinction_factor*.extinction_angle_part` unconditionally, so the
+> angle part's wavelength precondition fired even when the factor was zero and the product
+> could only be zero. Both now skip the angle part when the factor is zero, the gate the other
+> callers already use. Under debug via `scripts/test.py`: `urea_rhf_STO-3G_HAR`,
+> `L_alanine_IAM_scale_factor_test` and the extinction-on
+> `nh2cn_b3lyp_cc-pVTZ_g94_fchk_to_SF_stl_limit` all exact. The extinction-on HAR job
+> `quartz_NN_HAR_L1_rhf_def2-SVP` could not be used as the check: under debug it stops earlier
+> at a **third debug-only precondition**, `DIFFRACTION_DATA.SET:set_F_calc_cutoff` "cutoff must
+> be positive", on the job's own `f_calc_cutoff= 0.0` (stdin line 75). Release accepts the
+> value. Not fixed; either the ENSURE should allow zero or the job should not ask for it.
+> Stage D and the no-copy change were checked in debug without options instead
 > (identical energies to release, exit 0).
 >
 > **UPDATE 2026-09-14 (evening): perf profile, and the no-copy change.** `perf` (Dylan enabled
@@ -1201,89 +1275,6 @@ Found by the zinc-finger benchmark ([Zn(SCH3)2(imidazole)2], hand-built geometry
   then the spherical transformation of the atomic density), and why an unconverged SCF prints
   its result without a `not converged` line. The second matters more -- it passes a nonsense
   energy downstream silently.
-
-## Pruning compounds across repeated `update` calls (Dylan, 2026-08-23)
-
-**Half fixed 2026-08-23. The other half is not a one-liner — a naive attempt
-corrupts the heap.**
-
-Found while making `tests/long/quartz_NN_HAR_L1_rhf_def2-SVP` refine twice, once
-without the extinction correction and once with it, which puts a second
-`xray_data=` block in the middle of a job.
-
-`DIFFRACTION_DATA.SET:update` (`diffraction_data.set.foo:664`) does, in order:
-
-```
-.reflection0 = .reflections     ! "keep original reflections"
-.reflection0.set_d_and_theta(...)
-.reflections.set_d_and_theta(...)
-...
-.prune_reflections              ! operates on .reflections, in place
-.sort_reflections
-```
-
-`.reflection0` is the pristine copy that ought to exist, and `types.foo:3502`
-declares it as the original input structure factors before pruning. It is not
-the cross-validation machinery — that is `CRYSTAL.xray_r_free_data`, a separate
-`DIFFRACTION_DATA` holding the held-out reflections. It is maintained properly,
-receiving `set_d_and_theta`, the equivalence factors and any `exp_scale_factor`
-scaling alongside `.reflections`. But **the only place it is ever read is the
-`show_rejects` diagnostic** (`diffraction_data.set.foo:727`), which prints the
-list before and after pruning. Nothing refits from it and nothing prunes from it.
-
-**Why it matters, in Dylan's words.** Re-running the pruning is legitimate: the
-geometry has changed, so which reflections deserve to be rejected can change
-with it. That is exactly why it must run against the *original* data. Pruning
-the survivors of an earlier pruning can only ever remove more, so a reflection
-rejected on the starting geometry can never come back once the model has
-improved, even if it now fits perfectly well. The first pruning is done on the
-worst model the job will ever have, and its verdict is currently permanent.
-
-**Fixed: the copy is no longer clobbered.** It was refreshed from `.reflections`
-on *every* call, so the second `update` overwrote it with the already-pruned set
-and the original data was gone for the rest of the job. It is now taken once:
-
-```
-if (.reflection0.deallocated) .reflection0 = .reflections
-```
-
-No behaviour changes except that `show_rejects` now shows the true original.
-
-**Open: pruning still works on `.reflections` in place**, so successive prunings
-compound. The obvious fix — restore the working set from the pristine copy
-before pruning again —
-
-```
-.reflections.destroy
-.reflections = .reflection0
-```
-
-**was tried and aborts the quartz job** with `malloc(): invalid size (unsorted)`
-during the second refinement. Both components are `VEC{REFLECTION}@`, i.e.
-allocatable, and `REFLECTION` has no pointer components, so the assignment
-itself is a legitimate deep copy. The corruption therefore comes from downstream
-state that is tied to the reflection array and does not survive its wholesale
-replacement — the calculated and predicted structure factors, the group
-assignments, and whatever the fragment and refinement machinery sizes against
-`.reflections.dim`. Replacing the array mid-job invalidates all of it.
-
-So the remaining work is not the assignment; it is establishing what must be
-rebuilt after a re-prune and rebuilding it. That is why this stays deferred.
-
-**Scope.** Only jobs that call `update` more than once are affected, which in
-`tests/` is the quartz job alone.
-
-**It went live on 2026-09-11.** With the corrected grid (`06079254`) the quartz L1 job's
-Hirshfeld structure factors moved enough that one weak reflection fell under the default
-`f_calc_cutoff` (0.001) in the second block; the list shrank from 1009 to 1008 under the
-running refinement, and the job that had taken 30 s spun for over an hour with no output
-(`fraghar_refinement`, second pass). Not a crash this time, a hang. Two things were done:
-`DIFFRACTION_DATA.SET:update` now **dies** when a repeated block changes the reflection
-count, naming this entry, so nobody waits an hour again; and the test sets
-`f_calc_cutoff= 0.0` in its second block, with a comment, so it still exercises two
-refinements. That makes the defect visible and avoidable; it does not repair it. The repair
-is still what the previous paragraph says: rebuild the state that is sized against
-`.reflections` after a re-prune from `.reflection0`.
 
 ## Dispersion: what is still open after the 2026-09-05 fix
 
@@ -5400,6 +5391,71 @@ different question and the one that matters.
 ---
 
 # Done, resolved and closed (archive)
+
+## Pruning compounds across repeated `update` calls (Dylan, 2026-08-23)
+
+**CLOSED 2026-09-24.** A repeated `xray_data=` block re-prunes the working list in place,
+and the aspherical form factors on disk are cut down to the survivors instead of going
+stale. The design, in Dylan's words: prune whenever a block is read; accept that successive
+prunings compound, because few reflections go; and if that worries you, rerun the job at
+the final geometry, which prunes the full list afresh. `reflection0` is taken once and is
+read only by `show_rejects`.
+
+**The defect.** Found making `tests/long/quartz_NN_HAR_L1_rhf_def2-SVP` refine twice, the
+second time with the extinction correction, via a second `xray_data=` block mid-job.
+`DIFFRACTION_DATA.SET:update` refreshed `reflection0` from the already-pruned list on every
+call (fixed 2026-08-23, `0ef21949`) and pruned `.reflections` in place. On 2026-09-11 the
+corrected grid moved one weak reflection under the default `f_calc_cutoff` in the second
+block, the list went from 1009 to 1008, and the second `fraghar_refinement` spun for an hour
+with no output. A `DIE` on a repeated block that changed the count, and `f_calc_cutoff= 0.0`
+in the test, made it visible and avoidable but not fixed.
+
+**What the hang was, measured.** Two defects stacked. First, the form factors.
+`MOLECULE.HAR:fragHAR_refinement` skips the fragment SCF when F_pred already exist, so a
+second refinement's iteration 0 reads the `<tag>-SFs` files written at the end of the first.
+Each file is one unformatted record of `n_unique_SF_symops` blocks, each in reflection order.
+A sequential read of a shorter array from a longer record silently takes the leading
+elements, so with one reflection gone every k-point behind it is shifted by one within each
+block, and `shift_update_ff` then writes the misaligned, shortened array back. With the
+refinement table shown, iteration 1 of the second pass started at GoF 169 and R 0.58 against
+a first pass that ended at GoF 2.4; without pruning it starts at GoF 2.65. Second, the
+optimiser. `VEC{REAL}:min_BFGS` and `minimize_BFGS` capped their loop with `if (i > itmax)`,
+where `i` is the leftover index of the Hessian initialisation loop, not `iter`, so the cap
+never fired. Stack samples of the spinning job sat in `optimize_F_extinction_factor` →
+`min_BFGS` → `min_brack` → `GoF2F`: the extinction line search on a garbage model, with no
+way out. Without extinction the same garbage start recovers by iteration 3, since every
+iteration after the first regenerates the files. `DIFFRACTION_DATA` itself holds nothing sized
+against the list; the per-reflection results live inside each `REFLECTION`, the form factors
+on disk, and each fragment carries its own copy of the crystal via `set_minimal_copy`,
+rebuilt every iteration.
+
+**The fix.** Every call of `DIFFRACTION_DATA.SET:update` in `CRYSTAL` now goes through
+`CRYSTAL:update_xray_data`, which keeps a copy of the list across the call and, when it
+shrinks, has `CRYSTAL:prune_disk_SFs` rewrite every unique fragment atom's file from the old
+list to the new by Miller-index match, block by block, printing the two counts. The first
+attempt hooked `update_diffraction_data` only, and never ran: the `xray_data=` reader calls
+`update` directly, so the shrink had already happened by the time the hook looked. The filter
+runs only when the reflections carry F_calc, so a fresh job never touches files left by an
+earlier run. The BFGS cap now tests `iter`. The `DIE` is gone and so is the quartz
+workaround, so its second block prunes for real; the reference must be re-blessed on the
+Linux host, since the second pass now has 1008 reflections (R(F) 0.0083 against 0.0084,
+extinction 1.8301 against 1.8306). Recomputing the form factors instead would cost one
+fragment SCF pass, the same as one refinement iteration, so the filter is an economy; the
+in-loop pruning under `max_prune_iterations` would want the same treatment if it is ever
+switched on, since `CRYSTAL:LS_structure_fit` prunes and then reads the files.
+
+**The restore abort was never explained** and is no longer reachable, since the pristine copy
+is not restored. It cannot have been the stale files: the copy carries no F_calc, so a restore
+forces a fresh fragment SCF and new files. Whatever crashed was elsewhere.
+
+**Also fixed the same day:** all seven cutoff setters in `DIFFRACTION_DATA.SET` rejected zero
+with `ENSURE(val>ZERO)`, while every prune test is `> ZERO`, so zero is the natural "off".
+The quartz workaround only passed because release compiles `ENSURE` away; in a debug build
+it died at the second block with "cutoff must be positive". They now accept zero. The debug
+build then died one step later, in `DIFFRACTION_DATA.SET:initialize_refinement_data`, on
+`ENSURE(.ref_iteration==0)`: the counter is zeroed by `set_refinement_data` on the next line,
+so the check only ever forbade a second refinement in one job. It is gone. Neither check was
+ever reached in CI, which runs a quick job in debug and never the quartz job.
 
 ## Vectorise the Rys quadrature over shell-quartet classes (Dylan, 2026-09-14)
 
