@@ -106,6 +106,32 @@ call graph in `writeDotFiles`; boilerplate documentation comments; parallelising
 search; folding the RGBI picture toolchain into one codebase; vim highlighting. Their entries below
 stand; they are simply not in the open count.
 
+## 2026-09-25 (afternoon): in-loop pruning cuts the form factor files too; the register's quick item is closed
+
+**Pushed to `develop`:** the residue the overnight entry left,
+"the in-loop pruning under `max_prune_iterations` would want the same treatment". It has it. Every
+prune of a list that already has form factors on disk -- the three pre-refinement prunes in
+`MOLECULE.HAR` and the in-loop one in `CRYSTAL:LS_structure_fit` -- now goes through a new
+`CRYSTAL:prune_xray_data`, which is `update_xray_data`'s shape: copy the list, prune, and if it
+shrank call `prune_disk_SFs` with the copy. Measured on quartz L1 with `max_prune_iterations= 2`
+and `f_z_cutoff= 4.0`, first refinement only: unfixed, the pre-loop prune took 1009 to 802, the
+first fit cycle read the 1009-sized files and started at GoF 150.7, R 0.63, and the in-loop prune
+then cut 802 to 20 to 19 to 1 and "converged" on one reflection with NaN shifts. Fixed, the same
+job starts at GoF 1.93, prunes 802 to 794 to 791 inside the loop with the files cut each time, and
+converges at GoF 1.44, R(F) 0.0070 in three refinement iterations. Job and both outputs are in the
+session scratchpad, not the tree.
+
+**Also fixed:** `DIFFRACTION_DATA.INQ:is_F_calc_prunable` ended with `res = .ref_iteration <=
+.max_prune_iterations`, which threw away the cutoff test above it; it is `res AND` now. With the
+default `-1` both forms are always false, so the default path is byte-for-byte what it was: the
+quartz L1 test on this Mac fails against the Linux reference by exactly the known 0.847% and 759 ulp.
+
+**Found and left, noted in the code:** `DIFFRACTION_DATA.SET:prune_reflections` adds
+`F_sigma_noise` on every call, so with `f_sigma_noise=` set (default zero, off; nothing in the tree
+sets it) a repeated `xray_data=` block, a pre-refinement prune or an in-loop prune adds fresh noise
+and inflates every F_sigma again. It should be added once, when the data are read -- Dylan's call
+on 2026-09-25. A `BUG:` comment sits at the add site. Not on the register.
+
 ## 2026-09-25 (overnight): repeated `xray_data=` blocks re-prune; the pruning item is closed
 
 **Pushed to `develop`: `0bbe7a1e` (the fix) and `25dd95d0` (the re-blessed quartz L1 reference).**
@@ -5440,9 +5466,10 @@ earlier run. The BFGS cap now tests `iter`. The `DIE` is gone and so is the quar
 workaround, so its second block prunes for real; the reference must be re-blessed on the
 Linux host, since the second pass now has 1008 reflections (R(F) 0.0083 against 0.0084,
 extinction 1.8301 against 1.8306). Recomputing the form factors instead would cost one
-fragment SCF pass, the same as one refinement iteration, so the filter is an economy; the
-in-loop pruning under `max_prune_iterations` would want the same treatment if it is ever
-switched on, since `CRYSTAL:LS_structure_fit` prunes and then reads the files.
+fragment SCF pass, the same as one refinement iteration, so the filter is an economy. The
+in-loop pruning under `max_prune_iterations` got the same treatment on 2026-09-25 (afternoon
+entry above): `CRYSTAL:prune_xray_data` wraps every prune of a list that has files, and the
+predicate that gates it, `is_F_calc_prunable`, no longer discards its own cutoff test.
 
 **The restore abort was never explained** and is no longer reachable, since the pristine copy
 is not restored. It cannot have been the stale files: the copy carries no F_calc, so a restore
