@@ -3462,6 +3462,35 @@ and `e_field_magnitude` on the same 41^3 grid (1 A box on O, water cc-pVDZ): |E|
 central-difference |grad V| to a median 8e-4 beyond 0.6 A of the nucleus, in both bases, and
 doubling the step multiplies the difference by 4.0 -- truncation error, not a defect.
 
+**Migrated 2026-09-25, and verified** (macOS release, gfortran-14): `cyclazine_rhf_cc-pVDZ_VMO_canonicalization` and `h2o_rhf_cc-pVDZ_dipole_polarisabilities` (which reaches `add_A_times_U` through beta) pass; `short` 68 passed, 1 skipped (`rgbi_doctor_selftest`), 1 failed -- `h2o_rhf_def2-SVP_RIJCOSX`, the known Mac COSX drift, which run alone gives the recorded -75.92079838 at iteration 0 and the reference's converged energy. Not timed, by decision (Dylan). The four canonicalisations, CPHF
+`add_A_times_U` and `do_doubles_Mazur` now call the engine. The `exchange` case takes K from
+`make_r_JK_engine` and discards J, since there is no K-only engine; the direct builders'
+normalisation and K accumulation were checked to be identical to the engine's. **The dispatch
+is factorised rather than repeated:** the cartesian bodies are now `make_r_JK_engine_c`,
+`make_r_J_engine_c` and `make_u_JK_engine_c`, and the plain names -- formerly the `_sph`
+wrappers -- choose the basis themselves, so the ten `if (.use_spherical_basis)` branches at the
+call sites are gone. The shell-limit swap the three wrappers and COSX each repeated is
+`set_cartesian_shell_limits` / `reset_shell_limits`. Side effect: `make_J_engine` and
+`make_u_J_engine`, which had no spherical path, now have one (neither has a caller).
+Corrections to the table above: the TD calls are in `do_doubles_Mazur`, **not**
+`do_u_CIS_SS_AV_prod`, and it is unreachable -- its only caller `do_doubles` is called only
+from a commented-out line (`molecule.td.foo:568`). Kept, by decision (Dylan). Its
+`Fe = Fe - Kd` (an n x n matrix from an nv x no one) is fixed to `Ke`; `val` is still computed
+and never accumulated. The cyclazine test is **cartesian**, so the gain there, if any, is the
+engine's screening, not the spherical path; it does one J/K build per SCF, after convergence,
+four SCFs in all. The direct builders now have one caller, the OPMATRIX
+`make_JK_direct`, which has none; they are kept.
+
+## Migrate the TD `*_CIS_*` AV products onto the J/K engine (Dylan, 2026-09-25)
+
+The live TD code does not use the direct builders but has its own quartet loops:
+`MOLECULE.FOCK:u_CIS_AV` (from `do_u_CIS_SS_AV_prod`), `r_CIS_S0_AV` and `r_CIS_S1_AV` (from
+`molecule.td.foo:1010`, `:1050`), each the "expensive" 2e part of a Davidson AV product. They
+build J/K-like matrices for many trial densities at once, so they are a multi-density
+migration, not a call swap: either loop the engine over the densities or teach the engine a
+batch of densities. Spherical handling to be checked -- they take integrals through
+`make_ERI_into`, as the direct builders do. Measure first: a TD job's time in these routines.
+
 ## Primitive-batched J and K: pair lists by class, primitive density, early contraction (Dylan, 2026-09-16)
 
 **The direction after the classical Rys work**, agreed 2026-09-16. Dylan's idea, with two
@@ -4952,7 +4981,7 @@ records, per lower-cased procedure name, the **set of distinct spellings** seen 
 definition header and all call sites; flag any name with >1 spelling, listing file:line of each
 variant. Then normalise — the definition's spelling is the natural canonical form — and rewrite
 the call sites (a targeted, parse-tree-driven edit like `--add-self-intent`, NOT a blind sed,
-so commented-out and string-literal occurrences are left alone). Related: [[submodule-call-autoresolution-done]]
+so commented-out and string-literal occurrences are left alone). **Decided (Dylan, 2026-09-25):** the canonical spelling is the definition's, or for a type-bound name the one in `types.foo`. Expected to be few. Churn is the real cost (conflicts with `develop-gfortran-16` and any branch in flight); a build-free check is that the lower-cased translator output is byte-identical before and after. First step: the report mode alone, to count them. Related: [[submodule-call-autoresolution-done]]
 already hit a case bug in the submodule registry (commit 627db872); this is the same family.
 
 ## Future task: introduce Fortran-2008 `submodule` constructs

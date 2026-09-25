@@ -194,8 +194,6 @@ contains
                K = K * (-HALF) * .SCF_data.hybrid_exchange_factor
                F.r = F.r + K
                K.destroy
-            else if (.use_spherical_basis) then
-               .make_r_J_engine_sph(F.r,P.r)
             else
                .make_r_J_engine(F.r,P.r)
             end
@@ -320,9 +318,7 @@ contains
          if (.SCF_data.using_RI_J AND .RI_metric_factor.allocated AND NOT .SCF_data.using_hybrid_exchange) then
             ! No exact exchange: one fit of the total density serves both
             J.b = P.a + P.b
-            if (.use_spherical_basis) then; .make_r_J_engine_sph(J.a,J.b)
-            else;                           .make_r_J_engine(J.a,J.b)
-            end
+            .make_r_J_engine(J.a,J.b)
             J.b = ZERO
          else
             .make_u_JK(J,K,P)
@@ -1312,12 +1308,38 @@ contains
 
    end
 
-   make_r_JK_engine_sph(J,K,P) :: leaky, PURE
-   ! Make "J" and "K" for a spherical basis using the cartesian J/K
-   ! engine. J and K are linear in P, so expanding P into the cartesian
-   ! basis, building there, and contracting back is exact. This buys a
-   ! spherical basis the J engine, the separate J and K screening, and
-   ! the ERI_SCRATCH work arrays, none of which the direct builder has.
+   set_cartesian_shell_limits(first,last) :: leaky, PURE
+   ! Put the cartesian shell limits in place of the spherical ones, so a
+   ! builder that works only in a cartesian basis can be run. The limits
+   ! it replaces are kept in "first" and "last" for .reset_shell_limits.
+      self :: INOUT
+      first,last :: VEC{INT}@, OUT
+
+      first.create(.n_shell); first = .first_basis_fn_for_shell
+      last.create(.n_shell);  last  = .last_basis_fn_for_shell
+
+      .first_basis_fn_for_shell = .first_cartesian_bf_for_shell
+      .last_basis_fn_for_shell  = .last_cartesian_bf_for_shell
+
+   end
+
+   reset_shell_limits(first,last) :: leaky, PURE
+   ! Put back the shell limits kept by .set_cartesian_shell_limits.
+      self :: INOUT
+      first,last :: VEC{INT}@, INOUT
+
+      .first_basis_fn_for_shell = first
+      .last_basis_fn_for_shell  = last
+
+      first.destroy; last.destroy
+
+   end
+
+   make_r_JK_engine(J,K,P) :: leaky, PURE
+   ! Make "J" and "K" from a symmetric density matrix "P" with the J/K
+   ! engine, .make_r_JK_engine_c. A spherical basis is built in the
+   ! cartesian one: J and K are linear in P, so expanding P, building,
+   ! and contracting back is exact.
       self :: INOUT
       J,K :: MAT{REAL}, OUT
       P   :: MAT{REAL}, IN
@@ -1326,28 +1348,18 @@ contains
       first,last :: VEC{INT}@
       n :: INT
 
-      n = .n_bf_cartesian
+      if (NOT .use_spherical_basis) then
+         .make_r_JK_engine_c(J,K,P)
+         return
+      end
 
-      Pc.create(n,n)
-      Jc.create(n,n)
-      Kc.create(n,n)
+      n = .n_bf_cartesian
+      Pc.create(n,n); Jc.create(n,n); Kc.create(n,n)
 
       .make_cartesian_density(P,Pc)
-
-      ! Drive the engine with cartesian shell limits, then put back
-      first.create(.n_shell); first = .first_basis_fn_for_shell
-      last.create(.n_shell);  last  = .last_basis_fn_for_shell
-
-      .first_basis_fn_for_shell = .first_cartesian_bf_for_shell
-      .last_basis_fn_for_shell  = .last_cartesian_bf_for_shell
-
-      .make_r_JK_engine(Jc,Kc,Pc)
-
-      .first_basis_fn_for_shell = first
-      .last_basis_fn_for_shell  = last
-
-      first.destroy; last.destroy
-
+      .set_cartesian_shell_limits(first,last)
+      .make_r_JK_engine_c(Jc,Kc,Pc)
+      .reset_shell_limits(first,last)
       .make_spherical_matrix(Jc,J)
       .make_spherical_matrix(Kc,K)
 
@@ -1355,9 +1367,9 @@ contains
 
    end
 
-   make_r_J_engine_sph(J,P) :: leaky, PURE
-   ! Make "J" for a spherical basis using the cartesian J engine, as in
-   ! .make_r_JK_engine_sph. This is the path every pure DFT job takes.
+   make_r_J_engine(J,P) :: leaky, PURE
+   ! Make "J" from a symmetric density matrix "P" with the J engine,
+   ! .make_r_J_engine_c, a spherical basis as in .make_r_JK_engine.
       self :: INOUT
       J :: MAT{REAL}, OUT
       P :: MAT{REAL}, IN
@@ -1366,37 +1378,27 @@ contains
       first,last :: VEC{INT}@
       n :: INT
 
-      n = .n_bf_cartesian
+      if (NOT .use_spherical_basis) then
+         .make_r_J_engine_c(J,P)
+         return
+      end
 
-      Pc.create(n,n)
-      Jc.create(n,n)
+      n = .n_bf_cartesian
+      Pc.create(n,n); Jc.create(n,n)
 
       .make_cartesian_density(P,Pc)
-
-      first.create(.n_shell); first = .first_basis_fn_for_shell
-      last.create(.n_shell);  last  = .last_basis_fn_for_shell
-
-      .first_basis_fn_for_shell = .first_cartesian_bf_for_shell
-      .last_basis_fn_for_shell  = .last_cartesian_bf_for_shell
-
-      .make_r_J_engine(Jc,Pc)
-
-      .first_basis_fn_for_shell = first
-      .last_basis_fn_for_shell  = last
-
-      first.destroy; last.destroy
-
+      .set_cartesian_shell_limits(first,last)
+      .make_r_J_engine_c(Jc,Pc)
+      .reset_shell_limits(first,last)
       .make_spherical_matrix(Jc,J)
 
       Jc.destroy; Pc.destroy
 
    end
 
-   make_u_JK_engine_sph(J,K,P) :: leaky, PURE
-   ! Make unrestricted "J" and "K" for a spherical basis using the
-   ! cartesian J/K engine, as in .make_r_JK_engine_sph. This also gives
-   ! unrestricted spherical runs the parallel do that .make_u_JK_direct
-   ! does not have.
+   make_u_JK_engine(J,K,P) :: leaky, PURE
+   ! Make unrestricted "J" and "K" from "P" with the J/K engine,
+   ! .make_u_JK_engine_c, a spherical basis as in .make_r_JK_engine.
       self :: INOUT
       J,K :: OPMATRIX, INOUT
       P   :: OPMATRIX, IN
@@ -1409,28 +1411,19 @@ contains
       first,last :: VEC{INT}@
       n :: INT
 
-      n = .n_bf_cartesian
+      if (NOT .use_spherical_basis) then
+         .make_u_JK_engine_c(J,K,P)
+         return
+      end
 
-      Pc.create(n,"u ")
-      Jc.create(n,"u ")
-      Kc.create(n,"u ")
+      n = .n_bf_cartesian
+      Pc.create(n,"u "); Jc.create(n,"u "); Kc.create(n,"u ")
 
       .make_cartesian_density(P.a,Pc.a)
       .make_cartesian_density(P.b,Pc.b)
-
-      first.create(.n_shell); first = .first_basis_fn_for_shell
-      last.create(.n_shell);  last  = .last_basis_fn_for_shell
-
-      .first_basis_fn_for_shell = .first_cartesian_bf_for_shell
-      .last_basis_fn_for_shell  = .last_cartesian_bf_for_shell
-
-      .make_u_JK_engine(Jc,Kc,Pc)
-
-      .first_basis_fn_for_shell = first
-      .last_basis_fn_for_shell  = last
-
-      first.destroy; last.destroy
-
+      .set_cartesian_shell_limits(first,last)
+      .make_u_JK_engine_c(Jc,Kc,Pc)
+      .reset_shell_limits(first,last)
       .make_spherical_matrix(Jc.a,J.a)
       .make_spherical_matrix(Jc.b,J.b)
       .make_spherical_matrix(Kc.a,K.a)
@@ -1566,7 +1559,7 @@ contains
 
    end
 
-   make_r_JK_engine(J,K,P) :: PURE
+   make_r_JK_engine_c(J,K,P) :: PURE
    ! Make the restricted real coulomb matrix "J" from a symmetric
    ! density matrix "P" directly. This uses the J matrix engine, but
    ! it can be easily disabled.
@@ -1574,8 +1567,7 @@ contains
       J,K  :: MAT{REAL}, OUT
       P    :: MAT{REAL}, IN
 
-      ! A spherical basis reaches this through .make_r_JK_engine_sph,
-      ! which hands it cartesian J, K, P and cartesian shell limits.
+      ! Cartesian only: a spherical basis comes through .make_r_JK_engine.
 
       PP, JJ  :: VEC{EVEC{REAL}}@, target
       max_P   :: VEC{REAL}@
@@ -1595,7 +1587,7 @@ contains
       if (.SCF_data.using_RI_J AND .RI_metric_factor.allocated) list_J = TRUE
       if (list_J) then
          J_list.create(J.dim1,J.dim2)
-         .make_r_J_engine(J_list,P)
+         .make_r_J_engine_c(J_list,P)
       end
 
       ! Prepare for J-matrix engine
@@ -1855,7 +1847,7 @@ contains
       .make_r_J_engine(J.b, P.b)
    end
 
-   make_r_J_engine(J,P) :: PURE
+   make_r_J_engine_c(J,P) :: PURE
    ! Make the real coulomb matrix "J" from a symmetric density matrix
    ! "P" directly. This uses the J matrix engine, but it can be easily
    ! disabled.
@@ -1863,8 +1855,7 @@ contains
       J :: MAT{REAL}, OUT
       P :: MAT{REAL}, IN
 
-      ! A spherical basis reaches this through .make_r_J_engine_sph,
-      ! which hands it cartesian J, P and cartesian shell limits.
+      ! Cartesian only: a spherical basis comes through .make_r_J_engine.
 
       PP,JJ :: VEC{EVEC{REAL}}@, target
       max_P :: VEC{REAL}@
@@ -2346,14 +2337,10 @@ contains
       P   :: MAT{REAL}, IN
 
       if (.SCF_data.using_COSX AND .COSX_pts.allocated) then
-         if (.use_spherical_basis) then; .make_r_J_engine_sph(J,P)
-         else;                          .make_r_J_engine(J,P)
-         end
+         .make_r_J_engine(J,P)
          .make_r_K_COSX(K,P)
       else
-         if (.use_spherical_basis) then; .make_r_JK_engine_sph(J,K,P)
-         else;                          .make_r_JK_engine(J,K,P)
-         end
+         .make_r_JK_engine(J,K,P)
       end
 
    end
@@ -2365,19 +2352,12 @@ contains
       P   :: OPMATRIX, IN
 
       if (.SCF_data.using_COSX AND .COSX_pts.allocated) then
-         if (.use_spherical_basis) then
-            .make_r_J_engine_sph(J.a,P.a)
-            .make_r_J_engine_sph(J.b,P.b)
-         else
-            .make_r_J_engine(J.a,P.a)
-            .make_r_J_engine(J.b,P.b)
-         end
+         .make_r_J_engine(J.a,P.a)
+         .make_r_J_engine(J.b,P.b)
          .make_r_K_COSX(K.a,P.a)
          .make_r_K_COSX(K.b,P.b)
       else
-         if (.use_spherical_basis) then; .make_u_JK_engine_sph(J,K,P)
-         else;                          .make_u_JK_engine(J,K,P)
-         end
+         .make_u_JK_engine(J,K,P)
       end
 
    end
@@ -2386,7 +2366,7 @@ contains
    ! Make the exchange matrix "K" from the symmetric density "P" by the
    ! chain-of-spheres method on the grid of .initialize_COSX. A spherical
    ! basis is taken through the cartesian functions, as
-   ! .make_r_JK_engine_sph. The quadrature index of K is then multiplied
+   ! .make_r_JK_engine. The quadrature index of K is then multiplied
    ! by .COSX_fit, if it exists (overlap fitting), and K is made symmetric.
       self :: INOUT
       K :: MAT{REAL}, OUT
@@ -2410,17 +2390,10 @@ contains
          Kc.create(n,n)
          .make_cartesian_density(P,Pc)
 
-         first.create(.n_shell); first = .first_basis_fn_for_shell
-         last.create(.n_shell);  last  = .last_basis_fn_for_shell
-         .first_basis_fn_for_shell = .first_cartesian_bf_for_shell
-         .last_basis_fn_for_shell  = .last_cartesian_bf_for_shell
-
+         .set_cartesian_shell_limits(first,last)
          .make_r_K_COSX_on(Kc,Pc,.COSX_pts,.COSX_wts,.COSX_batch_pt,.COSX_batch_first,.COSX_batch_last, &
                            .COSX_batch_shell,.COSX_batch_first_shell,.COSX_batch_last_shell)
-
-         .first_basis_fn_for_shell = first
-         .last_basis_fn_for_shell  = last
-         first.destroy; last.destroy
+         .reset_shell_limits(first,last)
 
          .make_spherical_matrix(Kc,K)
          Kc.destroy; Pc.destroy
@@ -3581,8 +3554,7 @@ contains
 
    make_JK_engine(J,K,P) :: leaky, PURE
    ! Make "J" and "K" from a symmetric density matrix "P" with the J/K
-   ! engine. A spherical basis goes through the cartesian engine via the
-   ! _sph wrappers.
+   ! engine, in either basis.
       self :: INOUT
       J,K  :: OPMATRIX, INOUT
       P    :: OPMATRIX, IN
@@ -3591,13 +3563,9 @@ contains
    ENSURE(J.genre == P.genre, "J and P have different spinorbital kinds")
 
       if (J.has_genre("u ")) then
-         if (.use_spherical_basis) then; .make_u_JK_engine_sph(J,K,P)
-         else;                          .make_u_JK_engine(J,K,P)
-         end
+         .make_u_JK_engine(J,K,P)
       else
-         if (.use_spherical_basis) then; .make_r_JK_engine_sph(J.r,K.r,P.r)
-         else;                          .make_r_JK_engine(J.r,K.r,P.r)
-         end
+         .make_r_JK_engine(J.r,K.r,P.r)
       end
 
    end
@@ -3636,7 +3604,7 @@ contains
 
    end
 
-   make_u_JK_engine(J,K,P) :: PURE
+   make_u_JK_engine_c(J,K,P) :: PURE
    ! Make the real coulomb matrix "J" from a symmetric density matrix "P"
    ! directly. This uses the J matrix engine, but it can be easily disabled.
       self :: INOUT
@@ -3665,8 +3633,8 @@ contains
       if (list_J) then
          Ja_list.create(J.a.dim1,J.a.dim2)
          Jb_list.create(J.b.dim1,J.b.dim2)
-         .make_r_J_engine(Ja_list,P.a)
-         .make_r_J_engine(Jb_list,P.b)
+         .make_r_J_engine_c(Ja_list,P.a)
+         .make_r_J_engine_c(Jb_list,P.b)
       end
 
       ! Prepare for J-matrix engine
