@@ -9,7 +9,7 @@ Three documents cover this work, and they do different jobs:
 |---|---|
 | **this page** | the method as it stands, and the lessons -- read first |
 | `docs/SCF_SPEED_REPORT.md` | the measurements: every table, in the order they were taken |
-| `DEFERRED.md`, *Speed up the SCF*, *Primitive-batched J and K* | the task register: decisions, open items, next steps |
+| `TASKS_AND_HISTORY.md`, *Speed up the SCF*, *Primitive-batched J and K* | the task register: decisions, open items, next steps |
 
 All timings below are one core, karrikinolide (C8H6O3, 17 atoms) unless the zinc finger
 [Zn(SCH3)2(imidazole)2] is named. Timings on this laptop vary by 2-6% between runs of the same binary, so a comparison
@@ -120,7 +120,7 @@ once a level is given.
 
 **Trap:** once `eri_accuracy=` is given, the level's cutoffs are re-applied at every iteration,
 so an explicit `eri_schwarz_cutoff=` or similar in the same input is silently overwritten. Do not
-combine them until this is fixed (`DEFERRED.md`).
+combine them until this is fixed (`TASKS_AND_HISTORY.md`).
 
 ### 3.5 Memory handling
 
@@ -335,8 +335,8 @@ Each is one line here; the numbers are in `SCF_SPEED_REPORT.md` under the headin
 | Reduced multiplication scheme for the contraction (`use_rms_esfs=`) | Exact but 1.4-5% slower: it adds stored products and scattered writes to a loop that was already vectorised. | *No-grid J/K profiles* |
 | Vectorising the Rys roots within one quartet | The root kernels are 3-4× faster per X, but 77% of X fall in batches that straddle a T range, and the whole job did not move. | *Rys step 3* |
 | Moving the `transfer_l_*` work arrays onto `ERI_SCRATCH` | Skipped: the allocator was already 1% of the run. | *Where the J/K time goes* |
-| Primitive index outermost in `make_esfs_XX` | 2-3% slower (section 4). | `DEFERRED.md`, step 0 |
-| Sharing primitives across generally contracted shells at cc-pVTZ | Not worth it at the shell-quartet level: the sharing is confined to the s shells, 1.44×, and the contraction coefficients differ. Revisited in the pair list (5.4). | `DEFERRED.md` |
+| Primitive index outermost in `make_esfs_XX` | 2-3% slower (section 4). | `TASKS_AND_HISTORY.md`, step 0 |
+| Sharing primitives across generally contracted shells at cc-pVTZ | Not worth it at the shell-quartet level: the sharing is confined to the s shells, 1.44×, and the contraction coefficients differ. Revisited in the pair list (5.4). | `TASKS_AND_HISTORY.md` |
 | Tighter or looser screening of COSX on a 17-atom molecule | Nothing to skip: every shell pair matters on every batch. 1e-7 for 1e-9 saves 3% and costs 5e-6 Eh. | *COSX* |
 | A coarser grid than `very_low` for the COSX iterations | A third less time, but 6.7e-5 Eh out after the final build, against 2.9e-6. | *COSX* |
 | Promolecule-density pruning of the grid | Exact, kept, but saves almost nothing. | *Stage C* |
@@ -378,5 +378,5 @@ about 8e-4 Eh.
   Tonto uses under 100 MB; run them detached and one at a time.
 - **Spherical-basis SCF on the zinc finger does not converge**, and Tonto prints the unconverged
   energy without a warning. Cartesian is fine. A separate SCF-convergence problem, possibly
-  low-lying states needing fractional occupation, not an integral defect (`DEFERRED.md`,
+  low-lying states needing fractional occupation, not an integral defect (`TASKS_AND_HISTORY.md`,
   *Correctness*).

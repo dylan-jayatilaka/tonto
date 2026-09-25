@@ -47,7 +47,7 @@ what a grid-based basin boundary is.
 **The parallel half.** Max Davidson's linked-list rework of
 `cubes_to_basin_parallel` is mid-debug: its convergence loop is replaced by a
 hard-coded three iterations, and every merge branch leaks the node it just
-allocated. Recorded in `DEFERRED.md` under *"Parallelise the Bader basin search"*,
+allocated. Recorded in `TASKS_AND_HISTORY.md` under *"Parallelise the Bader basin search"*,
 with the specific defects and the recovery commands, because the idea is sound and
 worth returning to. `develop`'s existing `cubes_to_basin_parallel` is untouched.
 
@@ -230,4 +230,4 @@ irregular.
    reached in any of the runs above with a believable basin set, so it is compiled
    and unexercised. Note also that capping is not done, so a basin cut by the plot
    grid boundary gives an open surface.
-5. **Then parallelise** — see `DEFERRED.md`.
+5. **Then parallelise** — see `TASKS_AND_HISTORY.md`.

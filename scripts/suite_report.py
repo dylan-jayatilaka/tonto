@@ -52,7 +52,7 @@ SUITES = ['short', 'hart', 'rgbi', 'long', 'cx']
 # eigensolver ordering, FP reassociation) can flip the verdict. Give just these a
 # documented wider loose bound so CI does not flicker; the strict gate stays for
 # every other test. This is a WORKAROUND, not a fix -- the aim is to remove entries
-# by understanding each discrepancy. See DEFERRED.md "small numerical
+# by understanding each discrepancy. See TASKS_AND_HISTORY.md "small numerical
 # differences". Keys are the test-dir basename.
 # Single source of truth: the table lives in test.py, because ctest reaches the
 # comparison through test.py with the DEFAULT tolerances and never through this
@@ -400,7 +400,7 @@ def main():
                   % (len(unexpected), ', '.join(unexpected)))
     if widened:
         print('\nNote: relaxed loose bound applied to known runner-sensitive tests '
-              '(workaround; see DEFERRED.md "small numerical differences"):')
+              '(workaround; see TASKS_AND_HISTORY.md "small numerical differences"):')
         for t in widened:
             print('  * %-48s %s' % (t, ', '.join('%s=%g' % kv
                                     for kv in KNOWN_MARGINAL[t].items())))
@@ -411,7 +411,7 @@ def main():
     # reference, so they need no reference output and cannot be silently
     # blessed by regenerating references on a broken build. They also need
     # only one machine, which is what makes them useful for platform-specific
-    # miscompilations -- see DEFERRED.md, "verify the macOS build".
+    # miscompilations -- see TASKS_AND_HISTORY.md, "verify the macOS build".
     # ------------------------------------------------------------------
     invariants_ok = True
     if not args.no_invariant_checks:

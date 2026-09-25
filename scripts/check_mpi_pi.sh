@@ -18,7 +18,7 @@
 # `parallel do`, and DO_IN_PARALLEL is false while that lock is held, so a
 # PARALLEL_SUM written in the loop body never executes. Every rank silently
 # kept only its own 1/n_ranks of the terms. A wrong-but-plausible number came
-# out and no test noticed. See DEFERRED.md.
+# out and no test noticed. See TASKS_AND_HISTORY.md.
 #
 # Distinguishing the two failure modes matters:
 #   - wrong at EVERY rank count (including -n 1) -> the reduction or the

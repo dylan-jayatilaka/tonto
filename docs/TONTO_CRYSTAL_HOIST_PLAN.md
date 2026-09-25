@@ -1,7 +1,7 @@
 # Hoisting CRYSTAL out of MOLECULE — plan
 
 **Working document** (CLAUDE.md §1): delete it when the item closes, moving whatever is durable
-into the user-facing pages. Live status is the entry in `DEFERRED.md`, *Root cause behind several
+into the user-facing pages. Live status is the entry in `TASKS_AND_HISTORY.md`, *Root cause behind several
 of these: `MOLECULE` contains `MOLECULE`s*.
 
 **Status 2026-09-24: sketch only, to be worked out in detail before any code moves.** Dylan's, for
@@ -29,12 +29,12 @@ it is currently made inside a `MOLECULE` method that is simultaneously "do an SC
 SCFs on my children" -- which is why `fragment_SCF_para` carries `per_rank_IO_allowed` toggling,
 per-fragment archives and a work scheduler.
 
-Full reasoning in `DEFERRED.md`; MPI consequences in `docs/TONTO_AND_MPI.md`.
+Full reasoning in `TASKS_AND_HISTORY.md`; MPI consequences in `docs/TONTO_AND_MPI.md`.
 
 
 ## 2. Requirements found 2026-09-24, while fixing the Becke grid bug
 
-These came out of a real defect and are the concrete part of this plan. See `DEFERRED.md`,
+These came out of a real defect and are the concrete part of this plan. See `TASKS_AND_HISTORY.md`,
 *Fragments did not inherit the Becke grid*.
 
 ### 2a. One fragment-initialisation point

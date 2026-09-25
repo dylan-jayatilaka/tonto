@@ -3,7 +3,7 @@
 What Tonto does not do, or does wrongly, that you may meet in ordinary use. One or two
 lines each, with a pointer to the document that carries the detail.
 
-**This is not a bug tracker.** `DEFERRED.md` is the live register of work, and it holds
+**This is not a bug tracker.** `TASKS_AND_HISTORY.md` is the live register of work, and it holds
 the reasoning, the measurements and the plans. This page answers a narrower question:
 *I hit something odd — is it known?*
 

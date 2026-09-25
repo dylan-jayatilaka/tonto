@@ -56,7 +56,7 @@ test_categories = ['short', 'cx', 'long', 'geminal', 'relativistic']
 # command line still works and this can never silently tighten a run.
 #
 # A WORKAROUND, not a fix: the aim is to remove entries by understanding each
-# discrepancy. See DEFERRED.md, "The BLAS kernel is part of the reference".
+# discrepancy. See TASKS_AND_HISTORY.md, "The BLAS kernel is part of the reference".
 # Keys are the test-dir basename.
 KNOWN_MARGINAL = {
     'h2o_rhf_cc-pVDZ_tdhf': {'rel_tol': 5e-3},     # TDHF response, rel ~0.12% vs 0.2% gate

@@ -1374,7 +1374,7 @@ public final class FooToFortran {
      *  encoded here: doing so would make every edit a full rebuild, which is what
      *  editing types.foo already costs. Donors are the case that silently produces
      *  WRONG results; the global-table dependency only risks a stale name-resolution
-     *  detail. See DEFERRED.md. */
+     *  detail. See TASKS_AND_HISTORY.md. */
     static void writeDepFile(Path outDir, String name, Path fooPath, java.util.Set<Path> deps)
             throws IOException {
         Path target = outDir.resolve(outStem(name) + ".F90").toAbsolutePath().normalize();

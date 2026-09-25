@@ -275,7 +275,7 @@ before assuming the debug build itself is broken.
 
 Its scope was always deliberately narrow: it does **not** run the full short suite,
 because the debug (`-O0`) build has four longstanding FP-boundary/structural failures
-documented in [`../DEFERRED.md`](../DEFERRED.md). Widen the scope once
+documented in [`../TASKS_AND_HISTORY.md`](../TASKS_AND_HISTORY.md). Widen the scope once
 those are triaged.
 
 **To disable again**, if it turns red and you want the noise gone: comment out the
@@ -300,7 +300,7 @@ Two gaps worth naming rather than leaving as blanks. **The three macOS workflow 
 exist and are written**, but a `schedule:` trigger only fires from the default branch, so
 until they reach `master` they never run — that is the single reason macOS has no badge.
 **No platform has a parallel *debug* build**, which is where an MPI precondition failure
-would actually be caught; see `DEFERRED.md`.
+would actually be caught; see `TASKS_AND_HISTORY.md`.
 
 The build types are the rows because that is the axis that grows: platforms have been
 Linux, Windows/WSL and macOS for years, while build types have gone release → debug → MPI
@@ -314,7 +314,7 @@ renamed `develop` on 2026-08-11 and the badges never pointed at it.)
 
 - **Linux-release** — the gate. This one must be green.
 - **Linux-debug** — carries four longstanding `-O0` floating-point and
-  structural failures that are not code defects (see `DEFERRED.md`), so its
+  structural failures that are not code defects (see `TASKS_AND_HISTORY.md`), so its
   suite step is informational.
 - **Linux-MPI** — not on every push. `USE mpi` makes `.mod` files
   compiler-version specific, so the MPI must be built by the same compiler as
@@ -333,7 +333,7 @@ renamed `develop` on 2026-08-11 and the badges never pointed at it.)
   ~8–10 min rebuild, then seconds again). Ubuntu 24.04's repositories stop at
   gcc-14, so 16 comes from `ppa:ubuntu-toolchain-r/test`, and the install step
   asserts it landed rather than falling back to 14 — a 14 MPI labelled 16 is
-  exactly the silent class this project keeps finding by measurement. `DEFERRED.md`
+  exactly the silent class this project keeps finding by measurement. `TASKS_AND_HISTORY.md`
   records gfortran-16 **release** as numerically free on both platforms; that
   verdict does not extend to debug, where 16 segfaults in `-fcheck=bounds`
   ([`GFORTRAN16_DEBUG_CRASH.md`](GFORTRAN16_DEBUG_CRASH.md)). This job builds
@@ -355,7 +355,7 @@ whose failure mode is wrong numbers rather than crashes — `shell1quartet.F90`'
 Neither was guarded by anything before. `ci-macos.yml` asserts the pin is still
 in the build flags rather than trusting it.
 
-Both jobs are **unbadged on purpose**, following the rollout in `DEFERRED.md`:
+Both jobs are **unbadged on purpose**, following the rollout in `TASKS_AND_HISTORY.md`:
 run them, gather evidence, badge when they have something steady to say. Measured
 by hand on Apple silicon before the workflows were written (2026-08-24,
 gfortran-14, release): the short suite is **54/55** under the loose gate, failing
@@ -364,7 +364,7 @@ one discrepancy is what these jobs exist to characterise, and it is not to be
 blessed away.
 
 `ci-macos.yml` runs a **matrix over gfortran-14 and gfortran-16**, because the
-compiler standard is a live question: `DEFERRED.md` records the gfortran-16
+compiler standard is a live question: `TASKS_AND_HISTORY.md` records the gfortran-16
 *release* switch as numerically free on both platforms, while its *debug* build
 segfaults on arm64. Only release is matrixed for that reason, and the macOS debug
 column stays empty.

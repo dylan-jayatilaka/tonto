@@ -1,10 +1,12 @@
-# Deferred issues
+# Tasks and history
 
-Tracked for later attention. None of these block compilation; they are
-correctness-of-match or robustness refinements.
+The project's working document: the handover at the top, the live tasks by theme, and the
+archive with the reasoning behind everything closed. The web task register is the tasks-only
+view of this file; this file is the source of truth where they disagree.
 
-*(This file began as `ANTLR4_DEFERRED.md`, a list of translator loose ends. It
-now covers the whole project, so it was renamed.)*
+*(This file began as `ANTLR4_DEFERRED.md`, a list of translator loose ends, became
+`DEFERRED.md` when it grew to cover the whole project, and was renamed again on 2026-09-25,
+because by then it held far more than deferred items.)*
 
 > **Organisation.** Two halves. Everything above the archive is **live**; everything in
 > [Archive](#done-resolved-and-closed-archive) is **finished** — done, resolved, withdrawn or
@@ -1301,7 +1303,7 @@ The existing slabs are **worth keeping for now**, because we are in the thick of
 they describe and the context is still live.
 
 When this settles, sweep them: keep the sentence that stops the bug being reintroduced,
-move the rest into `DEFERRED.md` or the relevant `docs/` report, and leave a pointer.
+move the rest into `TASKS_AND_HISTORY.md` or the relevant `docs/` report, and leave a pointer.
 Known offenders, all recent:
 
 - `crystal.foo`, `CRYSTAL:put_asymmetric_FF_symmetrization_rss` — the noise-floor comment
@@ -5161,7 +5163,7 @@ WSL-debug jobs are green first.
 
 **Shape it like `ci-debug.yml`, not like a suite run.** Build, then a couple of fast jobs at
 `-n 2` to prove the binary executes and the ranks stay in step. A full numeric suite under
-debug MPI would be slow and would inherit the `-O0` failures already in `DEFERRED.md`.
+debug MPI would be slow and would inherit the `-O0` failures already in `TASKS_AND_HISTORY.md`.
 
 **Three cautions.**
 
@@ -7093,7 +7095,7 @@ match). Both are recorded under *`hart`: development history*, "The CLI (agreed 
 `docs/PROJECT_HISTORY.md` both listed two open pieces — rebless three `hart` references for
 `_refine_ls_extinction_coef`, and add a quartz test job. Both had landed on **2026-08-23**, in
 `f6395f44` and `71f94ff0`, merged in `89dbacef`. The sentence had been carried forward on
-2026-09-04 without being re-checked. `DEFERRED.md` never tracked the item at all, which is why
+2026-09-04 without being re-checked. `TASKS_AND_HISTORY.md` never tracked the item at all, which is why
 nothing here contradicted it.
 
 **What was genuinely missing** was the *other* half of the plan's step 4: the `hart` job. Added
@@ -8528,7 +8530,7 @@ this shape.
    this from an exit code, which is a large part of why it went unnoticed.
 3. **Rejected every basis set, including its own default.** The translator
    silently drops `data` statements at `program` scope, so `allowed_bases` and
-   `grid_levels` were uninitialised. See `DEFERRED.md` — the translator is the
+   `grid_levels` were uninitialised. See `TASKS_AND_HISTORY.md` — the translator is the
    real bug and it is a silently-wrong-answer class.
 4. **Segfaulted in the SCF.** It set the promolecule guess and then immediately
    overwrote it with `set_initial_density(spinorbitals)`, which means *read a
@@ -8538,7 +8540,7 @@ this shape.
    qualifier — dereferencing an unallocated `TEXTFILE` the first time the
    refinement re-read its density archive.
 
-Two further latent bugs in `COMMAND_LINE` (documented in `DEFERRED.md`) meant no
+Two further latent bugs in `COMMAND_LINE` (documented in `TASKS_AND_HISTORY.md`) meant no
 Tonto program could parse a command line at all under a debug build, which is
 why the debug diagnosis had to be unblocked before it could be used.
 
@@ -8707,7 +8709,7 @@ needs code; `C` works today.
 - **`--group-charge-spin r C M`** -- **repeatable**, and an **exceptions list**: everything not
   named defaults to `{0 1}`. This mirrors the tonto keyword it replaces, whose name already says
   so: `atom_groups= { keys={charge=} altered_data= {...} }`. Keeps every token well under the
-  256-character `STR` limit (see the COMMAND_LINE entry in `DEFERRED.md`); a 300-residue protein
+  256-character `STR` limit (see the COMMAND_LINE entry in `TASKS_AND_HISTORY.md`); a 300-residue protein
   needs a dozen entries, not 300. `--group-charge-spin-file <file>` as the fallback for large
   cases -- also reproducible and version-controllable, unlike a shell line.
 - **`COMMAND_LINE` does not yet support repeated options** (`has_option`/`value_for_option` return
@@ -8771,7 +8773,7 @@ Re-enabling `.cif.use_fragments` is not required and should not be attempted --
 Two observations recorded rather than acted on, both present in 2019 as well as today, so
 neither is a regression and neither blocks H1:
 
-- **`Rw(F2) ....... NaN`** in both. Same root as the NaN/negative-esd item in `DEFERRED.md`
+- **`Rw(F2) ....... NaN`** in both. Same root as the NaN/negative-esd item in `TASKS_AND_HISTORY.md`
   (least-squares variance-covariance matrix).
 - **`# of unmatched Fridel pairs ....... 2514`** -- new since 2019, and it reports *every*
   reflection as unmatched, having displaced 2019's `Scale factor ...... 0.976789` with
@@ -8846,7 +8848,7 @@ could not break a test, and did not.
 
 **H4 — test the `.cif2` restart round trip.**
 
-Tracked alongside the rest of the project's deferred work in `DEFERRED.md`.
+Tracked alongside the rest of the project's deferred work in `TASKS_AND_HISTORY.md`.
 
 ---
 

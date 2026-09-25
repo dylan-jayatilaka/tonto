@@ -16,7 +16,7 @@
 #   `archive/release-pHAR-broken`, which nobody checks out, and this script is
 #   how you opt in. The test SKIPS when the asset is absent.
 #
-# The asset is verified to be retrievable: see DEFERRED.md, "Reinstate the
+# The asset is verified to be retrievable: see TASKS_AND_HISTORY.md, "Reinstate the
 # ammonia-borane pHAR test". Its sha256 is the LFS oid below.
 #
 # Usage:   scripts/fetch_phar_asset.sh [destination-directory]
@@ -82,7 +82,7 @@ print(a.get("href",""))')
    if [ -z "$HREF" ]; then
       echo "fetch_phar_asset: the LFS object is not retrievable." >&2
       echo "  It may have been pruned, or the bandwidth quota exhausted." >&2
-      echo "  Regenerate it from Crystal23_InputFiles.zip instead -- see DEFERRED.md." >&2
+      echo "  Regenerate it from Crystal23_InputFiles.zip instead -- see TASKS_AND_HISTORY.md." >&2
       exit 1
    fi
    curl -s -o "$DEST/$NAME" "$HREF"

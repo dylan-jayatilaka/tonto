@@ -364,7 +364,7 @@ and also what makes "removal doubles the residual extremes" a statement about th
 **What the gate actually is, read from the source.** `CRYSTAL:make_F_calc_from`
 (`crystal.foo:4065`) adds dispersion into `F_calc` whenever `correct_dispersion` is true —
 add OR remove. That is **not** a simple wrong gate, and the one-line change proposed in
-`DEFERRED.md` would break the other convention:
+`TASKS_AND_HISTORY.md` would break the other convention:
 
 - `REFLECTION:remove_anom_from_F_exp` takes `phase = .F_phase = F_calc/|F_calc|`. Removal
   needs the *full* model phase, because subtracting a complex `F_disp` from a magnitude has

@@ -1131,7 +1131,7 @@ piece.
 ### RESOLVED (2026-09-08). ADP ESDs are no longer transformed element-wise
 
 **Everything in this subsection is superseded.** It is kept because the reasoning was sound and
-the conclusion it reached is not the one that was implemented; `DEFERRED.md` carries the record.
+the conclusion it reached is not the one that was implemented; `TASKS_AND_HISTORY.md` carries the record.
 
 What happened, in brief:
 
@@ -1275,7 +1275,7 @@ Unallocated is the established "not available" signal. Note that `zero_pADP_erro
 > the induced 6×6 map with `GAUSSIAN_DATA:symmetric_tensor_2_product_mx` and applies it as a
 > proper quadratic form to the covariance.** Only the no-covariance writer at `crystal.foo:8135`
 > is affected. Full record, including a retracted numerical claim about the size of the error,
-> in `DEFERRED.md`.
+> in `TASKS_AND_HISTORY.md`.
 
 **If a number is genuinely required**, the honest one is the conservative upper bound. Since
 `|cov(U_kl,U_mn)| ≤ σ_kl σ_mn`,
@@ -1326,7 +1326,7 @@ Carried forward deliberately. None blocks the others.
 | Item | Where | Size |
 |---|---|---|
 | **`refine_F= FALSE` computes no shifts, silently** | `crystal.foo:4621`, `:4634` — write `get_parameter_shifts_I`; everything below it exists | Small. Precondition for the port, but worth fixing on its own. |
-| ~~ADP ESDs transformed element-wise on axis change~~ **DONE 2026-09-08** | The element-wise congruence was **removed**, and the covariance is now built at CIF-read time from the reported uncertainties taken as uncorrelated, stored cartesian on the atom. Every later frame change is then exact, and the crystal round trip returns the input ESDs bit for bit. `destroy`-the-errors was *not* needed. Three further defects fell out: the `cos(90°)` cell-metric residue, a wrong transpose in all three ADP blocks of `make_CIF_esds`, and a missing `sqrt` in `M_ani_error`. See §10 and `DEFERRED.md` | Done |
+| ~~ADP ESDs transformed element-wise on axis change~~ **DONE 2026-09-08** | The element-wise congruence was **removed**, and the covariance is now built at CIF-read time from the reported uncertainties taken as uncorrelated, stored cartesian on the atom. Every later frame change is then exact, and the crystal round trip returns the input ESDs bit for bit. `destroy`-the-errors was *not* needed. Three further defects fell out: the `cos(90°)` cell-metric residue, a wrong transpose in all three ADP blocks of `make_CIF_esds`, and a missing `sqrt` in `M_ani_error`. See §10 and `TASKS_AND_HISTORY.md` | Done |
 | **Cell uncertainties read but never propagated** | §10 — `_geom_bond_distance_esu` omits `σ_cell`. A scientific judgement call, argued in §10, not a defect. The derivation is in §10 *How the propagation is actually done* (implicit differentiation of the normal equations, `S = −B⁻¹M`, with the closed form `S = (∂A/∂c)A⁻¹x̂`) and *The same question for ADPs* (`U_cart = A U* Aᵀ`, so `σ_cell(U)/U = 2σ_a/a` — twice the positional effect) | Small, self-contained. Prefer the closed form over accumulating `M` |
 | **`stabilize_asym_atom_shifts` leaks** | `crystal.foo:5192`, at the `create(n)` pair — per atom per cycle | Small |
 | **`if (n_stab<=1) cycle` guard** | `crystal.foo:5192`, annotated `! Kang debug on 2025.Mar.27` — intended as temporary? | Needs a decision, not code |

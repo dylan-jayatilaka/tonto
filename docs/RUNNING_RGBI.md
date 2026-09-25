@@ -198,4 +198,4 @@ turn off.
 doctor itself is not a ctest: CI has none of the arcane software. The install
 list is covered by `scripts/docker/rgbi.Dockerfile` and `.github/workflows/ci-rgbi.yml`.
 
-Known defects and rough edges are in [`../DEFERRED.md`](../DEFERRED.md).
+Known defects and rough edges are in [`../TASKS_AND_HISTORY.md`](../TASKS_AND_HISTORY.md).

@@ -168,7 +168,7 @@ Worth knowing before interpreting any numeric difference:
   cannot hold. This is a large codegen change — it costs common-subexpression elimination,
   loop-invariant hoisting and `elemental` vectorisation everywhere — and it is why an MPI build
   differs from serial **even at one rank**. Only routines that transitively reach a `PARALLEL_*`
-  macro actually need it; narrowing that set is recorded in `DEFERRED.md`.
+  macro actually need it; narrowing that set is recorded in `TASKS_AND_HISTORY.md`.
 - The `PARALLEL` type layout differs (`types.foo:376` has `#ifdef MPI` members).
 - Work is distributed **cyclically**: rank *r* takes iterations *r, r+P, r+2P, …*
   (`parallel.foo:243`). Partial sums are therefore rank-partitioned, and reduction order depends
@@ -176,7 +176,7 @@ Worth knowing before interpreting any numeric difference:
 
 ## 5. Defects found on first contact
 
-Full detail, with evidence, in `DEFERRED.md` under *"MPI: defects found during
+Full detail, with evidence, in `TASKS_AND_HISTORY.md` under *"MPI: defects found during
 milestone 4"*. Summary:
 
 **Fixed** (these produced wrong answers, not drift, and would have made the characterisation
@@ -209,7 +209,7 @@ Pitfall 8 in `docs/TONTO_DEVELOPER_INFO.md` §1a, with the trace-based recipe th
 **Not yet fixed** — a latent collective-inside-a-master-guard deadlock in `SYSTEM:initialize`, a
 commented-out `MPI_ABORT` (so one rank dying hangs the job), HAR writing the same file from every
 rank, an out-of-bounds read in the `fragment_SCF_para` RMA work queue, and a QTAIM decomposition
-that breaks at `nprocs == 1`. See `DEFERRED.md`.
+that breaks at `nprocs == 1`. See `TASKS_AND_HISTORY.md`.
 
 ### The root cause, and the agreed fix
 
@@ -424,7 +424,7 @@ message, i.e. paired with the adjacent `string` broadcast. Reached via `VEC{ATOM
 `read_smcif_atoms_xtal` -> `CIF:find_looped_item` -> `TEXTFILE:look_for_item`. Re-enabling the 2021
 `MPI_BARRIER` makes all three tests pass, which rules out a sequence-length mismatch (that would
 deadlock) and points at the fact that every `PARALLEL_BROADCAST` is conditional on
-`WORK_IS_SHARED` and can be silently skipped on one rank. See `DEFERRED.md`. What makes the ranks
+`WORK_IS_SHARED` and can be silently skipped on one rank. See `TASKS_AND_HISTORY.md`. What makes the ranks
 disagree is still open.
 
 The original note follows. It had **not** been diagnosed at the time of writing. Doing so needs a debug MPI build on Linux (`-fcheck=bounds`
@@ -790,7 +790,7 @@ pre-existing**, none of them caused by the `textfile.foo` change:
 
 | test | why it fails, and since when |
 |---|---|
-| `quartz_NN_HAR_L0_rhf_def2-SVP` | macOS-only, reference is *correct* — `DEFERRED.md`, "fail on macOS only" |
+| `quartz_NN_HAR_L0_rhf_def2-SVP` | macOS-only, reference is *correct* — `TASKS_AND_HISTORY.md`, "fail on macOS only" |
 | `quartz_NN_HAR_L1_rhf_def2-SVP` | same |
 | `ammonium_borane_pHAR_C23` | ERROR — the test blocked by the missing 167 MB LFS asset, its own deferred entry |
 
@@ -1078,5 +1078,5 @@ sites, in code that had never once been executed.
 **Recommendation.** MPI is usable for the SCF/property paths exercised by the short suite. It is
 **not** yet safe for anything driving `plot_grid`'s points file or `archive.foo`'s VAPOR/stream/
 VTK writers (Finding 5), nor for HAR, whose `parallel_write` path writes the same file from every
-rank (`DEFERRED.md`). Those need the audit in milestone 6.
+rank (`TASKS_AND_HISTORY.md`). Those need the audit in milestone 6.
 

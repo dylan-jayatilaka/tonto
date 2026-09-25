@@ -656,7 +656,7 @@ Becke converges monotonically; Stratmann-Scuseria's `low` figure is cancellation
 `medium` and `high` are worse), and on this molecule SS is 10–25% cheaper. So the water
 picture does not transfer whole: Becke at `medium` is 1.6e-05 here, not 5e-08.
 **Decision (Dylan, 2026-09-11): `medium` stays the default; the cost of `high` (2.2×) is too
-much for a 3.5× accuracy gain, and adaptive pruning (`DEFERRED.md`) is to bring the cost down
+much for a 3.5× accuracy gain, and adaptive pruning (`TASKS_AND_HISTORY.md`) is to bring the cost down
 before the default is reconsidered.** Raw data: `~/tonto_runs/karrikinolide_grid_ladder_2026-09-11/`.
 
 ### The g09 reference is confirmed by ORCA and by Tonto in a spherical basis

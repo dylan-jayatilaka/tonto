@@ -220,7 +220,7 @@ if(MPI)
        # MPI_Fortran_COMPILE_OPTIONS), so this assigns "" -- and it is an
        # assignment, not an append, so it also wipes any user -DCMAKE_Fortran_FLAGS.
        # Survivable only because SetFortranFlags rebuilds the flags afterwards.
-       # See DEFERRED.md.
+       # See TASKS_AND_HISTORY.md.
        set(CMAKE_Fortran_FLAGS "${MPI_Fortran_FLAGS}")
        set(WITH_MPI ON CACHE STRING "" FORCE)
        include_directories(${MPI_Fortran_INCLUDE_PATH})
@@ -1005,7 +1005,7 @@ set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/textfile.F90
 #
 # NOT yet established whether this is a GCC backend bug or latent undefined
 # behaviour in the emitted code that optimisation exposes -- see
-# DEFERRED.md. If it is UB, this only masks it.
+# TASKS_AND_HISTORY.md. If it is UB, this only masks it.
 # Set -DTONTO_SKIP_ARM64_WORKAROUNDS=ON to build WITHOUT this (and the matching
 # flag in cmake/SetFortranFlags.cmake), so a newer gfortran can be tested for the
 # miscompilation: configure with it ON, build, then run

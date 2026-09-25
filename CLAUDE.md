@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 Durable, project-wide context for Claude Code, read at the start of every session.
-**Stable facts only** — build, test, layout, conventions. Live work is in `DEFERRED.md`;
+**Stable facts only** — build, test, layout, conventions. Live work is in `TASKS_AND_HISTORY.md`;
 the story of how the build and translator came to be is in `docs/PROJECT_HISTORY.md`.
 
 ## 1. How to write for this project
@@ -16,7 +16,7 @@ crowds out the direction of the project.
 |---|---|---|
 | **Source** — `foofiles/*.foo`, `scripts/`, CMake | whoever edits the line | Say what the code does, and why if it is not obvious. Nothing else. |
 | **`docs/` and `README.md`** | a person, once | Brief. Facts to know, never how they were found. |
-| **Working documents** — `DEFERRED.md`, `docs/PROJECT_HISTORY.md`, `docs/TONTO_AND_MPI.md`, `docs/TONTO_DEVELOPER_INFO.md`, and the per-item reports and plans | the next session | Free to be long. What was measured, what was ruled out, what was decided and why. |
+| **Working documents** — `TASKS_AND_HISTORY.md`, `docs/PROJECT_HISTORY.md`, `docs/TONTO_AND_MPI.md`, `docs/TONTO_DEVELOPER_INFO.md`, and the per-item reports and plans | the next session | Free to be long. What was measured, what was ruled out, what was decided and why. |
 
 **Which `docs/` files are working documents?** Only those covering an item still in flight —
 today `TONTO_AND_MPI.md`, `TONTO_DEVELOPER_INFO.md`, `PROJECT_HISTORY.md`, `DFT_STANDARDISATION.md`,
@@ -55,14 +55,14 @@ purpose, and verbose is right there.
 ## 2. Current focus
 
 The ordered list of next actions, and the reasoning behind each, is the **handover section
-at the top of `DEFERRED.md`** — read it before starting work. In outline: the SCF speed-up —
+at the top of `TASKS_AND_HISTORY.md`** — read it before starting work. In outline: the SCF speed-up —
 the primitive pair list for J, density-fitted J (RI-J) and COSX for the exchange of HF and
 hybrids are merged, all three options off by default; next is a grid made for COSX, to be
 planned first. The CI platform table, the three untracked debug failures and the open MPI and
 DFT items are parked behind that.
 
-**Do not move `DEFERRED.md`'s contents into this file.** This file answers *how does the
-project work*; `DEFERRED.md` answers *what are we doing now*. Merging them loses both.
+**Do not move `TASKS_AND_HISTORY.md`'s contents into this file.** This file answers *how does the
+project work*; `TASKS_AND_HISTORY.md` answers *what are we doing now*. Merging them loses both.
 
 ## 3. What this project is
 
@@ -219,7 +219,7 @@ build/test run** (§11). The pass/fail gate is the **loose** criterion in `scrip
 `ci-full-suite.yml` runs; the four suites `short long cx rgbi` are **146**. The last full-suite run at
 gfortran-14 was **88/89 loose, 77 exact**, the 89th a deliberate skip — taken before
 `yq28_anharm_disp_remove_from_F_exp` was added, so it is a score out of 89. The debug (`-O0`) build
-has longstanding FP-boundary and structural failures listed in `DEFERRED.md` — not translator
+has longstanding FP-boundary and structural failures listed in `TASKS_AND_HISTORY.md` — not translator
 bugs.
 
 ## 8. Conventions & gotchas
@@ -242,7 +242,7 @@ versus not, rather than subject matter.
 The drivers in `rgbi-scripts/` deliberately have **no `.sh` extension**: they are commands
 on `PATH`, named as commands are. `scripts/*.sh` keep theirs because they are invoked by
 path. The one inconsistency is `rgbi_doctor.sh`, which is installed into `bin` with its
-extension; see `DEFERRED.md`. Each directory has a `README.md` saying this.
+extension; see `TASKS_AND_HISTORY.md`. Each directory has a `README.md` saying this.
 
 
 ## 10. Reference docs in this repo
@@ -256,7 +256,7 @@ page per platform (`docs/BUILDING_ON_{LINUX,MACOS,WINDOWS}.md`); `docs/RUNNING_T
 `docs/RUNNING_HART.md` and `docs/RUNNING_RGBI.md` for the three programs;
 `docs/TONTO_DEVELOPER_INFO.md` for the developer reference (§1a MPI pitfalls, §1b build and
 test traps, §1c profiling and timing); `docs/FOO_GRAMMAR_DOCUMENTATION.md` for the language.
-`DEFERRED.md` is the live work and `docs/PROJECT_HISTORY.md` the background — both working
+`TASKS_AND_HISTORY.md` is the live work and `docs/PROJECT_HISTORY.md` the background — both working
 documents (§1). The `*_REPORT.md` and per-item pages in `docs/` are working documents too.
 
 ## 11. Working agreement
@@ -316,7 +316,7 @@ dead-code modes (`--call-graph-report`, `--dead-code-report`, `--purge-dead-code
 
 ## 12. Open items
 
-Future directions; details in `DEFERRED.md`.
+Future directions; details in `TASKS_AND_HISTORY.md`.
 
 - **Relocate the fragment machinery: a `CRYSTAL` should contain several `MOLECULE`s.** Today a
   `MOLECULE` holds a `CRYSTAL` *and* holds `.mol(g)`, which forces
@@ -331,6 +331,6 @@ Future directions; details in `DEFERRED.md`.
   part of why the code is inefficient. **The strategy is to destructure inside Foo first** —
   nothing in Fortran mandates the OO paradigm, it was imposed by the Foo layer, so it can be
   undone there progressively, making the eventual migration a translation rather than a redesign.
-  Hoisting `CRYSTAL` is the first step. Begins December 2026 or early 2027; see `DEFERRED.md`.
+  Hoisting `CRYSTAL` is the first step. Begins December 2026 or early 2027; see `TASKS_AND_HISTORY.md`.
 - A module-level *call* graph in `writeDotFiles`; Fortran-2008 `submodule` constructs;
   boilerplate doc comments.

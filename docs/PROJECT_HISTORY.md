@@ -6,7 +6,7 @@ each one found. It is kept because the reasoning explains why the code looks as 
 
 **It is a *mechanics and history* document** in the sense of `CLAUDE.md` §1 — written for
 the next session as much as for a person, and free to be long. Live work is in
-`DEFERRED.md`; stable facts about how the project is built and tested are in `CLAUDE.md`.
+`TASKS_AND_HISTORY.md`; stable facts about how the project is built and tested are in `CLAUDE.md`.
 
 ---
 
@@ -98,7 +98,7 @@ shared stream; count events between markers; and confirm a code path executes be
    loose locally on that date — `short long cx rgbi`, see §5 for why that number is not
    comparable with today's. Residual: the debug (`-O0`)
    build has 4 longstanding FP-boundary/structural failures (#47/#64/#87/#91) that are not
-   translator bugs and are documented in `DEFERRED.md`; CI runs the short release suite.
+   translator bugs and are documented in `TASKS_AND_HISTORY.md`; CI runs the short release suite.
 
 **Milestones 4 and 5 — the remaining work on this project** (agreed 2026-07-31). These two are
 independent and can run in parallel; milestone 5 is the more important, and should be **planned
@@ -195,9 +195,9 @@ before any code is written**, most likely in its own conversation (`/clear`).
      reduction is correct). `shell1quartet.foo` alone has 17 such loops and the check aborted
      every debug MPI run. It cannot be a `WARN` either — those sites fire per shell-quartet. The
      **lint** is the right enforcement: the real bug is *lexical* containment, which it detects
-     precisely. Full reasoning in `DEFERRED.md`.
+     precisely. Full reasoning in `TASKS_AND_HISTORY.md`.
    - ⬜ **Fix the parallel-do lock — three defects, one mechanism** (design agreed 2026-08-03,
-     full write-up in `DEFERRED.md`): (a) recursion clears an outer lock — depth-count it;
+     full write-up in `TASKS_AND_HISTORY.md`): (a) recursion clears an outer lock — depth-count it;
      (b) it assumes routine names are unique, which overloads break in principle (currently
      holds, since the translator suffixes them); (c) `LOCK_PARALLEL_DO` is emitted inside the
      loop body. **Correction: this is only worth fixing if lock-gated behaviour is wanted**, and
@@ -221,7 +221,7 @@ before any code is written**, most likely in its own conversation (`/clear`).
      through a **call** from inside one.
 
    Sequenced *after* milestone 4's characterisation, because changing the lowering mid-flight
-   would confound the numbers. Full design in `DEFERRED.md`, "MPI: defects found during
+   would confound the numbers. Full design in `TASKS_AND_HISTORY.md`, "MPI: defects found during
    milestone 4".
 
 7. 🔶 **ROOT CAUSE FOUND (2026-08-26), fix not yet written.** `TEXTFILE:move_to_record_external`
@@ -398,7 +398,7 @@ before any code is written**, most likely in its own conversation (`/clear`).
    `_diffrn_radiation_wavelength`, and at Mo Kα the maximum sin(θ)/λ of 1.438944 Å⁻¹ implies
    sin θ = 1.0227. At the dataset's own 0.3173 Å urea shows extinction at **6.3 σ** —
    0.462406(73078) — with GoF² 49.556 → 47.256 and R(F) 0.038003 → 0.036585. See the
-   *inconsistent wavelength* entry in `DEFERRED.md` for why the wrong wavelength produced a
+   *inconsistent wavelength* entry in `TASKS_AND_HISTORY.md` for why the wrong wavelength produced a
    plausible-looking null rather than a diagnostic.
 
 12. ⬜ **NOT STARTED — choose the XCW Lagrange multiplier by cross-validation.**

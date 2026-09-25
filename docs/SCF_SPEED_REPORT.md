@@ -1,7 +1,7 @@
 # SCF and integral speed: benchmark data
 
-**A working document** for the *Speed up the SCF and the integrals* item in `DEFERRED.md`.
-Holds the measurements; the reasoning and plan are in `DEFERRED.md`.
+**A working document** for the *Speed up the SCF and the integrals* item in `TASKS_AND_HISTORY.md`.
+Holds the measurements; the reasoning and plan are in `TASKS_AND_HISTORY.md`.
 
 ## Karrikinolide grid ladder, 2026-09-11
 
@@ -652,7 +652,7 @@ executable.
 
 ## The zinc-finger benchmark, 2026-09-17
 
-[Zn(SCH3)2(imidazole)2], 29 atoms, 152 electrons, closed shell; hand-built geometry (DEFERRED,
+[Zn(SCH3)2(imidazole)2], 29 atoms, 152 electrons, closed shell; hand-built geometry (TASKS_AND_HISTORY,
 *Benchmark molecule*). One core, one job at a time, `%mem=2GB` / `%maxcore 2000`. g09 at
 `SCF=(Tight,Conver=10)`, 6D 10F for 6-31G(d) and 5D 7F for def2; ORCA `TightSCF`, spherical
 always, `NoRI` for "exact". Tonto `develop` `7d2c236a` at the `low` default, promolecule guess.
@@ -690,7 +690,7 @@ an engine run at `medium` would place it.
 **Tonto, spherical RHF/6-31G(d), core guess**: −3101.464456724 (2.6e-6 from ORCA), 345.1 s wall
 (338.8 s J/K) against ORCA's 161.9 s: 2.1x. With the promolecule guess the same job never
 converged, and the spherical def2-SVP RHF job did not converge even from the core guess
-(DEFERRED, Correctness).
+(TASKS_AND_HISTORY, Correctness).
 
 **Tonto, cartesian def2** -- a self-comparison only: a cartesian def2 basis has more functions than
 the spherical one g09 and ORCA use, so the energies are not comparable with theirs.
@@ -850,7 +850,7 @@ LAPACK as well as BLAS. One run each, CPU s:
 | Energy | −3108.233970109783 | −3108.233970109675 |
 
 XC is 6.5 times faster and the job 2.4 times, for a 1.1e-10 Eh change. ORCA's whole job is 85 s.
-J is now the largest part again (47%). The OpenBLAS item in `DEFERRED.md` (*adopt OpenBLAS
+J is now the largest part again (47%). The OpenBLAS item in `TASKS_AND_HISTORY.md` (*adopt OpenBLAS
 consistently*) has the hazards: threads must be pinned to one, and it forces a full re-bless.
 
 ## COSX: the exchange matrix by quadrature, 2026-09-17/18
@@ -870,7 +870,7 @@ unless said. ORCA is 6.1.1 with `def2/J`; its COSX error is `RIJCOSX` − `RIJON
 | B3LYP/G | −76.3569949374 | −8.9630e-5 | −8.9742e-5 |
 | karrikinolide RHF def2-SVP | −530.575885625111 | −5.12129e-4 | −5.12141e-4 |
 
-The exact RHF and UHF energies agree with ORCA to 1e-9. B3LYP does not (2.1e-4): `DEFERRED.md`,
+The exact RHF and UHF energies agree with ORCA to 1e-9. B3LYP does not (2.1e-4): `TASKS_AND_HISTORY.md`,
 *B3LYP is 2e-4 Eh from g09 and ORCA*.
 
 **The COSX error against the grid**, E(COSX) − E(exact K), spherical, `high`, SCF and energy on the

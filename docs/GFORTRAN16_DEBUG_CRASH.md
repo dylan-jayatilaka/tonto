@@ -2,13 +2,13 @@
 
 **Status 2026-09-03: root cause established, worked around, and FILED upstream as GCC PR 127197**
 (<https://gcc.gnu.org/bugzilla/show_bug.cgi?id=127197>).
-`DEFERRED.md` carries the same finding woven into the longer record.
+`TASKS_AND_HISTORY.md` carries the same finding woven into the longer record.
 
 **A migration to gfortran-16 was made and REVERTED on 2026-08-27.** It was made accepting a
 debug build with no array bounds checking; it was reverted hours later when the local gate found
 a *second*, worse defect — a gfortran-16 debug build fails **34 of 71** short tests where a
 gfortran-14 debug build of the same code passes exactly. So the bounds-check bug described here
-is **not the only reason** to avoid 16 for debug builds; see `DEFERRED.md` for the second. The
+is **not the only reason** to avoid 16 for debug builds; see `TASKS_AND_HISTORY.md` for the second. The
 migration is preserved on the branch `develop-gfortran-16`. Release builds on 16 remain fine.
 
 ## The one-paragraph version

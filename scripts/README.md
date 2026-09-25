@@ -11,4 +11,4 @@ that is the distinction between the two directories, not the subject matter.
 
 One exception, and it is an inconsistency rather than a rule: `rgbi_doctor.sh`
 *is* installed, into `bin`, extension and all (`CMakeLists.txt`). A user-facing
-command should be named like one — see `DEFERRED.md`.
+command should be named like one — see `TASKS_AND_HISTORY.md`.

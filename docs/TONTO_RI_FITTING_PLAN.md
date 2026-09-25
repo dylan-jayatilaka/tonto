@@ -1,7 +1,7 @@
 # Aspherical form factors by RI density fitting — plan
 
 **Working document** (CLAUDE.md §1): delete it when the item closes, moving whatever is durable
-into the user-facing pages. Live status is the entry in `DEFERRED.md`, *Aspherical form factors by
+into the user-facing pages. Live status is the entry in `TASKS_AND_HISTORY.md`, *Aspherical form factors by
 RI density fitting*.
 
 **Status 2026-09-24: sketch only.** Nothing is implemented. Dylan's proposal, recorded with the
@@ -13,7 +13,7 @@ the tree rather than writing a fresh multipole/Bessel transform. It must be a **
 the Coulomb (potential) fit that regular RI-J does.
 
 Distinct from the *"effect of the fitted density on structure factors"* owed in the RI-J entry of
-`DEFERRED.md`: that concerns structure factors computed from an RI-J **SCF** density; this concerns
+`TASKS_AND_HISTORY.md`: that concerns structure factors computed from an RI-J **SCF** density; this concerns
 fitting `w_a rho` itself so that its Fourier transform becomes analytic.
 
 
