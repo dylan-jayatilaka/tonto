@@ -904,8 +904,9 @@ own misalignment does. **Only a line-indexed comparison of whole files is trustw
 > as they are -- reactivating them for a spherical SCF needs only the one-line branch in
 > `make_r_Fock_mx` put back.
 >
-> **Worth a later look:** `molecule.ce.foo:694` still takes the direct path for a spherical energy
-> expectation, so it would gain from an OPMATRIX-level engine wrapper too. Not done.
+> **Done 2026-09-25:** `MOLECULE.FOCK:make_JK_engine`, the OPMATRIX dispatcher, now checks
+> `.use_spherical_basis` and calls the `_sph` wrappers, so `molecule.ce.foo` makes one call. No
+> run-time gain: that caller is unreachable (see *Callers still on the direct J/K builders*).
 >
 > **Next, Dylan's idea (2026-09-16): make the ERI cutoffs a named accuracy level.** `very_low`,
 > `low`, `medium`, `high` setting the four cutoffs together, modelled on `BECKE_GRID:set_accuracy`
@@ -3411,7 +3412,6 @@ the result down with `.make_spherical_matrix`.
 | `molecule.scf.foo:7223` | `make_r_K_direct` | `exchange` canonicalisation |
 | `molecule.cp.foo:1813` | `make_r_JK_direct` | CPHF `add_A_times_U`, the A.U product |
 | `molecule.td.foo:686`, `:717` | `make_r_JK_direct` | TD `do_u_CIS_SS_AV_prod`, ground-state and delta Fock |
-| `molecule.ce.foo:694` | `make_JK_direct` | spherical energy expectation, via the OPMATRIX dispatcher |
 
 All are live: `canonicalize_virtual_MOs` is called from `molecule.scf.foo:1719`, `add_A_times_U`
 from `molecule.cp.foo:1047`, and `do_u_CIS_SS_AV_prod` is passed as a procedure argument to
@@ -3419,8 +3419,23 @@ from `molecule.cp.foo:1047`, and `do_u_CIS_SS_AV_prod` is passed as a procedure 
 unused. **So none of the direct builders can be commented out or deleted**; they are ordinary
 working code that the SCF simply no longer routes through.
 
-The cheapest first step is `MOLECULE.FOCK:make_JK_direct` (the OPMATRIX dispatcher), because an
-OPMATRIX-level `make_JK_engine_sph` covers `molecule.ce.foo` and gives the others a template.
+**`molecule.ce.foo:694` closed 2026-09-25**, by making the OPMATRIX dispatcher
+`MOLECULE.FOCK:make_JK_engine` basis-aware: a spherical basis now goes to
+`make_{r,u}_JK_engine_sph`, and the `ce.foo` branch to `make_JK_direct` is gone. That leaves the
+OPMATRIX `make_JK_direct` with no caller; it is kept with the other direct builders. The change is
+a tidy-up, not a speed-up: `make_monomer_energies_for_lattice_energy` is reached only from
+`total_lattice_energy`, whose sole call is in the commented-out `lattice_energy` keyword
+(`molecule.main.foo:296`, `:1586`). The `molecule.prop.foo` intermolecular-energy routines, which
+call `make_JK_engine` unguarded, now also get a spherical basis right; they appear to belong to the
+same unreachable lattice-energy code (`ce.foo:886`), not traced in full. Verified by a macOS release
+build (gfortran-14, OpenBLAS) and `short`: 68 passed, 1 skipped (`rgbi_doctor_selftest`), 1 failed --
+`h2o_rhf_def2-SVP_RIJCOSX`, the known Mac COSX drift. Run alone three times it gives the recorded
+-75.92079838 each time; under `ctest -j6` it gave -75.92128426, so the drift also depends on load.
+
+**Open, found the same day, not yet checked:** CPHF calls `make_r_JK_engine` directly, with no
+spherical guard (`molecule.cp.foo:1396`, `:1648`). The engine assumes cartesian shell limits, so a
+spherical CPHF job may pair spherical limits with cartesian integral blocks. Check with a
+spherical CPHF run before anything else; if it is wrong, route both through `make_r_JK_engine_sph`.
 
 ## Primitive-batched J and K: pair lists by class, primitive density, early contraction (Dylan, 2026-09-16)
 
