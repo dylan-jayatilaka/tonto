@@ -28,7 +28,7 @@ Then, **inside** the Ubuntu shell:
 ```bash
 sudo apt update
 sudo apt install -y gcc gfortran-14 libblas-dev liblapack-dev default-jdk \
-                    python3 perl make cmake git gnuplot
+                    python3 python3-numpy perl make cmake git gnuplot
 
 # Clone into your Linux home -- NOT into /mnt/c. See "Where to put the code".
 cd ~

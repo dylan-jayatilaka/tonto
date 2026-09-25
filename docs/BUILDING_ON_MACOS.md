@@ -18,7 +18,7 @@ xcode-select --install
 Then the rest:
 
 ```bash
-brew install gcc cmake openjdk python3 gnuplot
+brew install gcc cmake openjdk python3 numpy gnuplot
 ```
 
 - `gcc` provides **`gfortran`**. This project standardises on **`gfortran-14`**.
@@ -36,6 +36,8 @@ brew install gcc cmake openjdk python3 gnuplot
   diagnostic plots a refinement writes. Without it the job still completes and
   the data files and gnuplot scripts are still written; you get a warning and
   no pictures.
+- `python3` runs the test harness, and `numpy` the Lebedev grid check among the
+  invariant checks. Without numpy that check reports itself skipped.
 - Optional parallel build: `brew install open-mpi` — see the compiler-matching
   rule below.
 

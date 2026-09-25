@@ -10,7 +10,7 @@ pass from a clean machine to a tested binary. Other platforms: [macOS](BUILDING_
 
 ```bash
 sudo apt install make cmake default-jdk gfortran-14 libblas-dev liblapack-dev \
-                 python3 gnuplot git
+                 python3 python3-numpy gnuplot git
 ```
 
 - **`gfortran-14`, not the distro default `gfortran`.** Ubuntu 24.04's plain
@@ -35,7 +35,8 @@ sudo apt install make cmake default-jdk gfortran-14 libblas-dev liblapack-dev \
   Without it the job still completes and both the data and the scripts are
   still written; you get a warning naming the command to run by hand, and no
   pictures.
-- `python3` runs the test harness.
+- `python3` runs the test harness, and `python3-numpy` the Lebedev grid check among
+  the invariant checks. Without numpy that check reports itself skipped.
 - Optional: `graphviz` for the developer call-graphs;
   `openmpi-bin libopenmpi-dev` for a parallel build.
 

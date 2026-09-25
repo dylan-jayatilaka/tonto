@@ -110,10 +110,16 @@ The reference build. Ubuntu, `gfortran-14`, release, then the **short** and **ha
 suites through `scripts/suite_report.py`. It also runs the **invariant checks**, which
 compare the program against itself rather than against a stored reference (spherical vs
 cartesian bases must agree below d functions; `hart --help` must list exactly the options
-`run_har.foo` accepts). Those cannot be silently blessed by regenerating references on a
-broken build — they exist because a gfortran miscompilation on arm64 macOS went unnoticed
-for want of exactly such a check, and because `hart` shipped for years with a documented
-option its code rejected.
+`run_har.foo` accepts; the Lebedev grids must integrate exactly to their claimed order).
+Those cannot be silently blessed by regenerating references on a broken build — they exist
+because a gfortran miscompilation on arm64 macOS went unnoticed for want of exactly such a
+check, and because `hart` shipped for years with a documented option its code rejected.
+
+**A skip is an error in CI.** Every suite-running workflow passes `--skips-are-errors`, so a
+test or check that declines to run (exit 77, e.g. numpy missing) reddens the run instead of
+dropping out of the totals; the pHAR job's unfetched asset is the one skip the full suite
+allows. The `ctest` registrations are not what CI runs: `suite_report.py` is, so a check
+added only in `tests/CMakeLists.txt` is not in CI.
 
 ## WSL-release — `ci-wsl.yml`
 

@@ -282,8 +282,9 @@ add_test(NAME "lebedev_rules"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_lebedev_rules.py
             ${PROJECT_SOURCE_DIR}/foofiles/lebedev.foo)
-# SKIP_RETURN_CODE: the script needs numpy, which is not a Tonto dependency
-# and is not installed by any workflow -- see the import guard in the script.
+# SKIP_RETURN_CODE: the script needs numpy, a declared test dependency
+# (docs/BUILDING_ON_*). Without it the check reports itself skipped here; CI
+# runs it through scripts/suite_report.py, where a skip is an error.
 set_tests_properties("lebedev_rules" PROPERTIES LABELS "short"
                                                 SKIP_RETURN_CODE 77)
 

@@ -30,6 +30,12 @@ Tolerances (mirror scripts/test.py):
     --rel-tol         loose RELATIVE tolerance   (fraction; default 2e-3 = 0.2%)
     --last-digit-tol  loose LAST-DIGIT tolerance  (units of last place; default 2)
     --abs-tol         absolute near-zero floor    (default 1e-7)
+
+After the suites it runs the INVARIANT CHECKS, which compare the program (or
+the sources) against themselves and need no reference output. A test or check
+that cannot run exits 77 and is reported as SKIP, outside the totals; in CI
+pass --skips-are-errors so that a skip fails the run unless it is named by
+--allow-skip, because a silent skip is how a check stops being checked.
 """
 
 import argparse
@@ -222,6 +228,14 @@ def main():
                          'file, so without this its cause is recorded nowhere.')
     ap.add_argument('--no-invariant-checks', action='store_true',
                     help='skip the self-validating invariant checks run after the suites')
+    ap.add_argument('--skips-are-errors', action='store_true',
+                    help='a test or invariant check that declines to run (exit 77) '
+                         'fails the run unless named by --allow-skip. For CI: on a '
+                         'runner everything declared should run.')
+    ap.add_argument('--allow-skip', action='append', default=[], metavar='NAME',
+                    help='a test directory, or an invariant check script without its '
+                         'extension, whose skip is expected (repeatable), e.g. '
+                         'ammonium_borane_pHAR_C23 when its 167 MB asset is not fetched')
     args = ap.parse_args()
 
     # Resolve every path to an absolute one *before* anything runs. The
@@ -377,6 +391,13 @@ def main():
               'above:')
         for t, why in skipped:
             print('  * %-48s %s' % (t, why))
+    skips_ok = True
+    if args.skips_are_errors:
+        unexpected = [t for t, _ in skipped if t not in args.allow_skip]
+        if unexpected:
+            skips_ok = False
+            print('\nERROR: %d skipped test(s) not named by --allow-skip: %s'
+                  % (len(unexpected), ', '.join(unexpected)))
     if widened:
         print('\nNote: relaxed loose bound applied to known runner-sensitive tests '
               '(workaround; see DEFERRED.md "small numerical differences"):')
@@ -418,6 +439,13 @@ def main():
         checks.append(('MPI: no interior collectives, no raw .unit I/O',
                        os.path.join(here, 'check_parallel_lint.py'),
                        [os.path.join(os.path.dirname(here), 'foofiles')]))
+        # The Lebedev grids are stored as orbit generators, so one wrong literal
+        # shifts every DFT energy with nothing else noticing. Needs numpy, a
+        # declared test dependency (docs/BUILDING_ON_*); without it the script
+        # exits 77 and the check is reported as SKIP.
+        checks.append(('Lebedev grids integrate exactly to their order',
+                       os.path.join(here, 'check_lebedev_rules.py'),
+                       [os.path.join(os.path.dirname(here), 'foofiles', 'lebedev.foo')]))
         print('')
         print('INVARIANT CHECKS (no reference output involved)')
         print('')
@@ -433,6 +461,17 @@ def main():
                                   stdout=subprocess.PIPE,
                                   stderr=subprocess.STDOUT,
                                   universal_newlines=True)
+            if proc.returncode == SKIP_EXIT_CODE:
+                reason = next((l for l in proc.stdout.splitlines()
+                               if l.startswith('SKIPPED:')), '')
+                why = reason.partition('--')[2].strip() or reason
+                print('%-*s  %s' % (CHKW, name, 'SKIP' + (' -- ' + why if why else '')))
+                key = os.path.splitext(os.path.basename(script))[0]
+                if args.skips_are_errors and key not in args.allow_skip:
+                    invariants_ok = False
+                    print('    ERROR: a check that cannot run is an error under '
+                          '--skips-are-errors (allow it with --allow-skip %s)' % key)
+                continue
             ok = (proc.returncode == 0)
             print('%-*s  %s' % (CHKW, name, yn(ok)))
             if not ok:
@@ -444,9 +483,9 @@ def main():
         print('\n(report written to %s)' % os.path.abspath(args.log))
         sys.stdout = sys.__stdout__
         logf.close()
-    # Exit non-zero if any test failed the loose (pass-deciding) criterion, or
-    # if an invariant check failed.
-    sys.exit(0 if (grand['loose'] == grand['n'] and invariants_ok) else 1)
+    # Exit non-zero if any test failed the loose (pass-deciding) criterion, if
+    # an invariant check failed, or if a skip was an error.
+    sys.exit(0 if (grand['loose'] == grand['n'] and invariants_ok and skips_ok) else 1)
 
 
 if __name__ == '__main__':
