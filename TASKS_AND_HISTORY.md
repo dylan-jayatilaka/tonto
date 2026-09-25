@@ -897,7 +897,7 @@ own misalignment does. **Only a line-indexed comparison of whole files is trustw
 > **But the direct builders cannot be commented out, and an earlier note here calling them dead
 > was too broad.** They stopped being used by the *SCF Fock build* only. Live, basis-independent
 > callers remain: `make_r_JK_direct` from the Huzinaga-Arnau and Hunt-Goddard canonicalisations
-> (`molecule.scf.foo:7228`, `7244`), the CPHF `A.U` product (`molecule.cp.foo:1813`) and the TD
+> (`molecule.scf.foo:7228`, `7244`), the CPHF `A.U` product (`molecule.cp.foo:1817`) and the TD
 > code (`molecule.td.foo:686`, `717`); `make_r_J_direct` from `molecule.scf.foo:7236`; and
 > `MOLECULE.FOCK:make_JK_direct` dispatches to both for the spherical energy expectation
 > (`molecule.ce.foo:694`). There is also `make_r_K_direct` (`molecule.scf.foo:7223`). So they stay
@@ -3410,7 +3410,7 @@ the result down with `.make_spherical_matrix`.
 | `molecule.scf.foo:7236` | `make_r_J_direct` | `hunt-goddard-3` canonicalisation |
 | `molecule.scf.foo:7244` | `make_r_JK_direct` | `huzinaga-arnau` canonicalisation |
 | `molecule.scf.foo:7223` | `make_r_K_direct` | `exchange` canonicalisation |
-| `molecule.cp.foo:1813` | `make_r_JK_direct` | CPHF `add_A_times_U`, the A.U product |
+| `molecule.cp.foo:1817` | `make_r_JK_direct` | CPHF `add_A_times_U`, the A.U product |
 | `molecule.td.foo:686`, `:717` | `make_r_JK_direct` | TD `do_u_CIS_SS_AV_prod`, ground-state and delta Fock |
 
 All are live: `canonicalize_virtual_MOs` is called from `molecule.scf.foo:1719`, `add_A_times_U`
@@ -3432,10 +3432,35 @@ build (gfortran-14, OpenBLAS) and `short`: 68 passed, 1 skipped (`rgbi_doctor_se
 `h2o_rhf_def2-SVP_RIJCOSX`, the known Mac COSX drift. Run alone three times it gives the recorded
 -75.92079838 each time; under `ctest -j6` it gave -75.92128426, so the drift also depends on load.
 
-**Open, found the same day, not yet checked:** CPHF calls `make_r_JK_engine` directly, with no
-spherical guard (`molecule.cp.foo:1396`, `:1648`). The engine assumes cartesian shell limits, so a
-spherical CPHF job may pair spherical limits with cartesian integral blocks. Check with a
-spherical CPHF run before anything else; if it is wrong, route both through `make_r_JK_engine_sph`.
+**CPHF in a spherical basis closed 2026-09-25 -- it was wrong, for two reasons.** Found with
+`short/h2o_rhf_cc-pVDZ_dipole_polarisabilities` run with `use_spherical_basis= TRUE`: mean alpha
+5.8634 against 5.4164 cartesian, and a z component of beta (0.7355) for a molecule in the xy plane.
+(1) CPHF called `make_r_JK_engine` directly (`molecule.cp.foo:1396`, `:1648`), as did
+`put_Coulomb_energy` (`molecule.prop.foo:2889`); all three now branch on `.use_spherical_basis`
+like `make_r_JK`. (2) **Eight `SHELL2` property builders had no spherical path** -- dipole,
+quadrupole, octupole, E field, E gradient, L, spin-orbit and B-field spin-orbit: they filled
+cartesian blocks into the spherical index ranges `MOLECULE.INTS` hands them. So in a spherical basis
+the CPHF right-hand side, the printed multipole moments and the `E_field=` term in the SCF were all
+wrong. Each body is now `*_c`, behind a wrapper that applies `change_to_spherical`, as
+`make_generic_ints` does for the overlap; a cartesian basis takes the same code as before.
+Verified (macOS release, gfortran-14): spherical CPHF mean alpha 5.3857 against a finite-field
+5.38586 (F = 0.005, SCF to 1e-10, which also shows E(+F) = E(-F) for z again); beta_z 0.0000;
+cartesian unchanged (5.4164, the finite-field alpha_zz 3.0586 matching CPHF). `short`: 68 passed,
+1 skipped, 1 failed -- `h2o_rhf_def2-SVP_RIJCOSX`, now -75.92128426 at iteration 0 even alone; the
+converged energy matches the reference to all printed digits, the difference is confined to the
+promolecule guess, and COSX calls none of the changed routines. **Not done, by decision (Dylan):** a spherical polarisability test -- the re-bless costs more than
+it is worth; a debug build over the spherical job stands in for it.
+
+**`MOLECULE.GRID:make_E_field_grid` fixed the same day** -- found while auditing the callers of
+`make_E_field_ints`, and wrong in any basis. Its density `D` was created and never filled, the slice
+read `D(fb:lb,fa:lb)`, off-diagonal blocks were not doubled, the nuclear term was added inside the
+shell-pair loop (once per pair), and `VEC{ATOM}:add_nuclear_E_field_at_points_to` took `res` as
+`(3,n_pt)` while its only caller passes `(n_pt,3)`. The plot was also unreachable:
+`set_becke_grid_for_plot` had no `e_field_magnitude` entry and died in its default branch. Now
+rewritten on the pattern of `make_electronic_pot_grid_r`. Verified by plotting `electric_potential`
+and `e_field_magnitude` on the same 41^3 grid (1 A box on O, water cc-pVDZ): |E| matches the
+central-difference |grad V| to a median 8e-4 beyond 0.6 A of the nucleus, in both bases, and
+doubling the step multiplies the difference by 4.0 -- truncation error, not a defect.
 
 ## Primitive-batched J and K: pair lists by class, primitive density, early contraction (Dylan, 2026-09-16)
 

@@ -5584,76 +5584,59 @@ contains
    end
 
    make_E_field_grid(E,pt) :: PURE
-   ! Make the electric field "E" at a series of points "pt"
+   ! Make the electric field "E" at a series of points "pt", nuclei
+   ! included, from the restricted density matrix
       self :: IN
       E :: MAT{REAL}, OUT
       pt :: MAT{REAL}, IN
 
    ENSURE(.basis_info_made, "no basis set")
-   ENSURE(.density_mx.has_any_genre,"no density matrix")
+   ENSURE(.density_mx.is_allocated_with_genre("r "), "no restricted density matrix")
    ENSURE(E.dim1==pt.dim1,"wrong dim1, E & pt")
    ENSURE(E.dim2==3,      "wrong dim2, E")
 
-      D,Dba,Ex,Ey,Ez :: MAT{REAL}@
-      q,fa,fb,la,lb,na,nb, p,n_pt :: INT
+      Dab,Ex,Ey,Ez :: MAT{REAL}@
+      q,fa,fb,la,lb,na,nb,p,n_pt :: INT
       fac :: REAL
       sh :: SHELL2
 
-      ! No of grid points
       n_pt = pt.dim1
 
-      ! The imaginary part of AO density matrix
-      D.create(.n_bf,.n_bf)
-
-      ! Initialize
       E = ZERO
 
-      ! Loop over integral blocks
       parallel do q = 1,.n_shell_pairs
 
-         ! Get shell indices (leaky)
          .set_shell2_from(q,sh,fa,la,na,fb,lb,nb)
-        
-         ! Get the density matrix
-         Dba.create(nb,na)
-         Dba = D(fb:lb,fa:lb)
-        
-         ! Electric field integrals
+
+         ! Off-diagonal blocks stand for their transpose too
+         Dab = .density_mx.r(fa:la,fb:lb)
+         fac = TWO
+         if (fa==fb) fac = ONE
+
          Ex.create(na,nb)
          Ey.create(na,nb)
          Ez.create(na,nb)
-        
-         ! Loop over points
+
+         ! Minus sign for electron charge
          do p = 1,n_pt
-        
             sh.make_E_field_ints(Ex,Ey,Ez,pt(p,:))
-        
-            fac = TWO
-            if (fa==fb) FAC = ONE
-        
-            E(p,1) = E(p,1) + Ex.trace_product_with(Dba)
-            E(p,2) = E(p,2) + Ey.trace_product_with(Dba)
-            E(p,3) = E(p,3) + Ez.trace_product_with(Dba)
-        
+            E(p,1) = E(p,1) - fac*sum(Ex*Dab)
+            E(p,2) = E(p,2) - fac*sum(Ey*Dab)
+            E(p,3) = E(p,3) - fac*sum(Ez*Dab)
          end
-        
-         ! Add nuclear contribution
-         .atom.add_nuclear_E_field_at_points_to(E,pt)
-        
-         ! Clean
+
          Ez.destroy
          Ey.destroy
          Ex.destroy
-         Dba.destroy
+         Dab.destroy
 
       end
-
-      ! Clean
-      D.destroy
 
       if (WORK_IS_SHARED) then
          PARALLEL_SUM(E)
       end
+
+      .atom.add_nuclear_E_field_at_points_to(E,pt)
 
    end
 
