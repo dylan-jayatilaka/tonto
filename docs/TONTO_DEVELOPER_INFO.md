@@ -347,6 +347,11 @@ From `scripts/test.py`, and worth knowing before theorising about a red test:
 - A **token-count** difference fails every criterion, loose included. This is the one way
   column drift can still redden a test: these tables are dense enough that one extra
   character merges `O1` with the number beside it and the line loses a token.
+- **Lines pair by position, then by content.** Within one diff hunk, an old line whose
+  positional partner fails loose is matched against the still-unclaimed new lines, so a
+  sorted table whose rows swapped order compares each row against itself. The report
+  counts such lines as *matched out of position*; the worst-reflections table, sorted on
+  a noisy key, is why.
 
 ### A redundant second statistic is the cheapest invariant you can print
 
