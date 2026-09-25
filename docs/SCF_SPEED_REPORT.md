@@ -380,6 +380,8 @@ Exact, and slower in both. It saves one multiply per shared `Ix*Iy` column but s
 dot product of length n_sum per `(e,f)` component pair, and adds a stored product vector and
 scattered writes. The hot instructions are the vectorised sums, not the index lookups.
 
+Removed from the tree on 2026-09-25; the code is at the tag `archive/rms-esfs`.
+
 ## Tonto against g09 and ORCA, 2026-09-16
 
 Karrikinolide, 17 atoms, geometry from the same g09 checkpoint as every run above. One core

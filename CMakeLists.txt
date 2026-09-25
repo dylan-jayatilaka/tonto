@@ -397,10 +397,7 @@ set(FOO_SRC
     ${FOO_DIR}/diis.foo
     ${FOO_DIR}/rys.foo
     ${FOO_DIR}/rms_indices.foo
-    ${FOO_DIR}/rms2_indices.foo
     ${FOO_DIR}/mat{rms_indices}.foo
-    ${FOO_DIR}/mat{rms2_indices}.foo
-    ${FOO_DIR}/mat4{rms2_indices}.foo
     ${FOO_DIR}/gaussian_data.foo
     ${FOO_DIR}/gaussian.foo
     ${FOO_DIR}/gaussian2.foo
@@ -547,7 +544,6 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/mat_evec_int.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_evec_real.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_emat_real.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/mat_rms2_indices.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_rms_indices.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_shell1pair.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_str.F90
@@ -582,7 +578,6 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/quadrature.F90
     ${CMAKE_CURRENT_BINARY_DIR}/real.F90
     ${CMAKE_CURRENT_BINARY_DIR}/reflection.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/rms2_indices.F90
     ${CMAKE_CURRENT_BINARY_DIR}/rms_indices.F90
     ${CMAKE_CURRENT_BINARY_DIR}/roby.F90
     ${CMAKE_CURRENT_BINARY_DIR}/rys.F90

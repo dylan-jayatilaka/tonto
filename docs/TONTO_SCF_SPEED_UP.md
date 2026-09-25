@@ -332,7 +332,7 @@ Each is one line here; the numbers are in `SCF_SPEED_REPORT.md` under the headin
 |---|---|---|
 | Incremental (delta-density) Fock builds | Correct after three latent defects were fixed, but the increments are noisy under absolute Schwarz cutoffs and DIIS chases the noise: no saving. Off by default. A ΔP-scaled screening would be the version to try. | *Step 3* |
 | Loose integrals until partly converged (g09's two-pass) | Became `escalate_eri_accuracy=`; worth about 8%, because only two iterations are damped. | *Named ERI accuracy levels* |
-| Reduced multiplication scheme for the contraction (`use_rms_esfs=`) | Exact but 1.4-5% slower: it adds stored products and scattered writes to a loop that was already vectorised. | *No-grid J/K profiles* |
+| Reduced multiplication scheme for the contraction (`use_rms_esfs=`) | Exact but 1.4-5% slower: it adds stored products and scattered writes to a loop that was already vectorised. Removed from the tree; the code is at the tag `archive/rms-esfs`. | *No-grid J/K profiles* |
 | Vectorising the Rys roots within one quartet | The root kernels are 3-4× faster per X, but 77% of X fall in batches that straddle a T range, and the whole job did not move. | *Rys step 3* |
 | Moving the `transfer_l_*` work arrays onto `ERI_SCRATCH` | Skipped: the allocator was already 1% of the run. | *Where the J/K time goes* |
 | Primitive index outermost in `make_esfs_XX` | 2-3% slower (section 4). | `TASKS_AND_HISTORY.md`, step 0 |

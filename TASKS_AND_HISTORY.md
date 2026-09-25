@@ -75,6 +75,23 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## 2026-09-25 (evening): the reduced multiplication scheme is archived and deleted
+
+**The register's quick item "Archive the reduced multiplication scheme, then delete it" is
+done.** `develop` at `69da3dcc` carries the annotated tag `archive/rms-esfs` (`git tag -n99 -l
+archive/rms-esfs` says what the scheme was, why it went, and which files to look in), and the
+next commit removes it. Gone: `form_esfs_rms2`, `use_RMS` and `set_use_RMS` from `SHELL1QUARTET`,
+with the commented-out RMS versions of `form_esfs`, `form_esss` and `form_ssfs` that sat beside
+them (689 lines in that file alone); `make_rms2_indices` and `rms2_indices` from `GAUSSIAN_DATA`;
+`use_rms_esfs=` from `SCF_DATA`; `RMS2_INDICES`, `MAT{RMS2_INDICES}`, `MAT4{RMS2_INDICES}` and the
+never-referenced `*_form_3dints_yz_rms_indices` components from `types.foo`; the three modules
+`rms2_indices.foo`, `mat{rms2_indices}.foo` and `mat4{rms2_indices}.foo` from the tree and
+`CMakeLists.txt`. **Kept, deliberately:** the shell-pair `RMS_INDICES` tables, which `SHELL2`'s
+Fourier-transform integrals still read. Verification is in the archive entry *DONE (2026-09-25):
+the reduced multiplication scheme, archived and deleted*. The row is off the register.
+`docs/images/module_structure.svg` still draws an `RMS2_INDICES` node: it is the `callgraphs`
+target's output, regenerated when that next runs, not edited by hand.
+
 ## 2026-09-25 (late afternoon): the worst-reflections table is order-stable; numpy is declared, and a skip in CI is an error
 
 **Pushed to `develop`, five commits:** `6613ce14` (the table, the sorter and the harness),
@@ -5585,6 +5602,46 @@ different question and the one that matters.
 ---
 
 # Done, resolved and closed (archive)
+
+## DONE (2026-09-25): the reduced multiplication scheme, archived and deleted
+
+**What it was.** In `SHELL1QUARTET`'s generic `make_esfs_*` routines the `(es|fs)` integrals
+are the sum over primitive pairs and Rys roots of `Ix*Iy*Iz`. The reduced multiplication
+scheme (RMS) formed each shared `Ix*Iy` column product once, skipped unit factors, and
+scattered the results through index tables: `form_esfs_rms2`, reading
+`GAUSSIAN_DATA::rms2_indices`, a matrix of `RMS2_INDICES` built by
+`MAT{RMS2_INDICES}:set_indices` from the shell-pair `RMS_INDICES` tables. It dates from the
+SourceForge era (the `GAUSSIAN_DATA` header says 2006; the files arrived with tonto-3.2 in
+`554235e9`) and was switched on by `scfdata= { use_rms_esfs= TRUE }`, a keyword added on
+2026-09-15 when the scheme was revived on the `rys-rms` branch, off by default.
+
+**Why it went.** Measured on karrikinolide RHF, same binary, off and on side by side
+(`docs/SCF_SPEED_REPORT.md`, *Reduced multiplication scheme*): energies identical to 12
+decimals at both bases; J/K CPU 51.01 → 51.72 s at 6-31G(d) (+1.4%) and 1196.07 → 1256.32 s
+at cc-pVTZ (+5.0%), the contraction's share of the run rising from 25.9% to 29.5% at cc-pVTZ.
+It saves one multiply per shared `Ix*Iy` column but keeps every n_sum-long dot product, and adds
+a stored product vector and scattered writes to a loop that was already vectorised; `perf
+annotate` put the time in the vectorised sums, not the index lookups. Dylan decided on
+2026-09-15 to keep it off by default, and on 2026-09-25 to archive and delete it.
+
+**What was done.** `develop` at `69da3dcc`, the last commit carrying the scheme, is tagged
+`archive/rms-esfs` with an annotation written for the reader in five years; it is listed in
+`docs/TONTO_REPOSITORY_BRANCHES.md` under *Removed code, archived as a tag of `develop`*. The
+following commit removes: `form_esfs_rms2`, the `use_RMS` module variable and `set_use_RMS`
+in `shell1quartet.foo`, the five `if (use_RMS)` branches (each now a plain `.form_esfs` call),
+and the commented-out RMS-era versions of `form_esfs_rms2` (two), `form_esfs`, `form_esss`
+and `form_ssfs`; `make_rms2_indices`, `rms2_indices` and its remake-on-`set_indices` hook in
+`gaussian_data.foo`; `set_using_RMS_ESFS`, `read_using_RMS_ESFS` and the `use_rms_esfs=` case
+in `scf_data.foo`; the `RMS2_INDICES` type, its `MAT` and `MAT4` array types, and the two
+`*_form_3dints_yz_rms_indices` components of `SHELL1QUARTET` (declared, never referenced except
+in commented `destroy` calls) in `types.foo`; the modules `rms2_indices.foo`,
+`mat{rms2_indices}.foo` and `mat4{rms2_indices}.foo`, and their lines in `CMakeLists.txt`.
+**Kept:** `rms_indices.foo`, `mat{rms_indices}.foo`, the `RMS_INDICES` type and
+`GAUSSIAN_DATA::rms_indices`, because `SHELL2` reads them for the Fourier-transform integrals.
+No test input used `use_rms_esfs=`, so no reference moves.
+
+**Verification.** The four edited modules translate cleanly and no RMS2 name survives in their generated `.F90`, `.int` or `.use`. A full gfortran-14 release rebuild on the Mac (`types.foo` changed, so every module) completed with no error, and `ctest` passed `h2o_rhf_6-31G(d)`, `h2o_rhf_cc-pVDZ`, `h2o_rhf_cc-pVTZ_spherical_harmonic_basis` (f functions, so the generic `make_esfs_XX` contraction that hosted the switch) and `urea_rhf_STO-3G_HAR`, 4 of 4, against the stored references. The removed code was off by default and no test input set `use_rms_esfs=`, so a pass is what the deletion predicts; CI on the pushed commit is the wider check.
+
 
 ## Pruning compounds across repeated `update` calls (Dylan, 2026-08-23)
 

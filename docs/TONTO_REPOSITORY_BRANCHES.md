@@ -74,6 +74,16 @@ They were tagged anyway, so that nothing anywhere became unreachable.
 `plots-and-system-command` was deleted without a tag, because its tip commit
 `a268b8bc` is an ancestor of `master`. Its content is already in the main line.
 
+### Removed code, archived as a tag of `develop`
+
+Code deleted from the main line after a measurement, not a branch. The tag is the last
+commit that carries it, and the following commit removes it, so `git diff <tag> develop`
+on the files named in the annotation shows exactly what went.
+
+| Tag | What it holds |
+|---|---|
+| `archive/rms-esfs` | The reduced multiplication scheme for the `(es|fs)` contraction in `SHELL1QUARTET`: `form_esfs_rms2`, the `RMS2_INDICES` tables and the `use_rms_esfs=` keyword. Exact, and 1.4-5% slower than the plain contraction at both bases measured; see `docs/SCF_SPEED_REPORT.md`. The shell-pair `RMS_INDICES` tables are not part of it and stay live in `SHELL2`. |
+
 ### The pHAR test: an open dependency, now resolved (2026-08-16)
 
 `archive/release-pHAR-broken` is the authoritative copy of the ammonia-borane
