@@ -105,6 +105,18 @@ invariant failure. A rebuild without the pin is a 20-minute job on this Mac and 
 The workflow is still scheduled-and-manual, unbadged; dispatch `macOS-release` once to see
 the rgbi section in the summary.
 
+### `ylid` on macOS: investigated, both questions answered, closing is Dylan's call
+
+The register row *"`ylid` vdW contact indices differ on macOS"* asked why the indices differ and
+where the 46 s goes. Both answered by running ylid with vdW on and off on this Mac and on achari2
+with the same Roby source and comparing line by line; full record at the top of the `ylid` entry
+under *Test suite and numerics*. In short: the committed test differs across platforms by 1 ulp
+on 5 lines; with vdW on, only the two `% Cov` percentage columns move, because they are ratios of
+indices that are 0.00-0.05 for a vdW pair; and "off" is *slower* than "on" because `ROBY:do_pair`
+computes bonded **or** vdW pairs when the flag is off and then prints only the bonded ones, 70
+unprinted pairs at 0.7 s each. **Owed:** whether to make the off branch bonded-only (ylid ~18 s,
+reference expected byte-unchanged). The register row is untouched pending that.
+
 ## 2026-09-25 (evening): the reduced multiplication scheme is archived and deleted
 
 **The register's quick item "Archive the reduced multiplication scheme, then delete it" is
@@ -4108,6 +4120,50 @@ header attributes the first to macOS; that attribution is at least incomplete.
 
 
 ## `ylid` (rgbi): vdW contact indices differ on macOS
+
+> **Investigated 2026-09-25, both open questions answered; closing is Dylan's call.** Measured
+> with the same Roby source on both machines (`roby.foo` last changed 2026-08-26): this M2 with
+> gfortran-14.3 release (`-Ofast`, OpenBLAS) against achari2's `reference` build (gfortran-14.2,
+> `-O2 -fno-fast-math`, netlib), ylid run with `analyze_vdw_atom_pairs=` both ways, outputs
+> compared line by line.
+>
+> **The test as committed (vdW off) is not platform-sensitive.** Mac and Linux differ on 5 of
+> 607 lines, every one by 1 ulp at the 2-decimal precision of the bond table, every one in the
+> `% Cov` columns. Against the committed reference the Mac differs on 18 lines and the *Linux
+> reference build itself* on 9, all 1 ulp: the reference has drifted by last digits since it was
+> blessed on 2026-07-31, on the bless platform, so those 9 are code drift and not the Mac.
+> Passes loose everywhere; a candidate for the next routine re-bless, not a defect.
+>
+> **Why the vdW indices differ (answered).** With vdW on, Mac and Linux differ on 40 lines, all
+> inside the vdW table, and in all but one of them only the last two columns move: `% Cov
+> Pythag.` and `% Cov Araki`. Largest move 0.09 on values of 60-75, i.e. 0.14%; the indices
+> themselves (`Cov.`, `Ionic`, `Bond`) agree to the printed digit except one 1-ulp case
+> (`S--O2` 0.05/0.04). The mechanism is the formula, `ROBY:gould_bond_index`:
+> `pccp = 100 c²/(c²+i²)` and `pcca = 100 (2/π) asin(c/√(c²+i²))`. For a vdW pair `c` and `i`
+> are 0.00-0.05, so a last-bit difference in the theta populations that is invisible in `c`
+> printed to 2 decimals is 0.1 in a percentage built from it. It is the near-zero relative
+> metric again (row 64 of the debug table), not an unstable vdW code path: under the loose gate
+> the vdW-on comparison would pass today (max rel 0.14%, ulp within rel). July's 3.85% was
+> measured against a March reference at code that has since changed; it is not reproducible
+> as a platform effect now.
+>
+> **Where the time goes (answered), and it is not vdW work being skipped.** Timings today,
+> Mac / Linux: vdW **on** 50 / 61 s, **off** 70 / 78 s, so the inversion is on both platforms.
+> `ROBY:do_pair` (`foofiles/roby.foo:553`) decides which group pairs the bond-index loop
+> computes: with the flag on, *vdW pairs only*; with it off, **bonded OR vdW** (the `OR` is from
+> `a9fc7cd4`, 2024-11-05). ylid has 25 bonded and 70 vdW pairs, so "off" computes 95 pairs and
+> "on" 70, at 0.7 s a pair either way. With the flag off **none of the 70 vdW results is
+> printed**: every table (`put_bond_table*`, the sorted tables, the `.tex` fragments) selects its
+> rows with `get_bonded_atoms`; only the dial diagrams under `output_theta_info= YES` would show
+> them, and ylid has that off. So about 50 of ylid's 70 s compute results nobody sees, and the
+> same applies to every rgbi job with the default flag.
+>
+> **Decision owed (Dylan):** make `do_pair`'s `else` branch bonded-only, dropping the
+> `OR .atom.vdw_bonded`. Expected: ylid at ~18 s, the reference byte-unchanged because each
+> pair's indices are computed independently (no cross-pair aggregate in the loop at
+> `roby.foo:910`). The `OR` may be deliberate for dials with vdW contacts; if so, a third
+> setting is the alternative. Not done: it is a behaviour change in a scientific flag, and a
+> `roby.foo` rebuild. The old entry follows.
 
 **Status 2026-07-29:** fails on **macOS only** (3.85% max rel); **passes on Linux** against the
 current reference, with both platforms on gfortran-16 and LAPACK 3.12.0.
