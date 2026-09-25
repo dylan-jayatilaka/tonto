@@ -157,8 +157,8 @@ synthetic two-test suite, details in the commit.
 **Found and not fixed, new entry under *Test suite and numerics*:** six other ctest
 registrations run in no workflow.
 
-**Owed:** `sudo apt install python3-numpy` on achari2, so `ctest` there runs the Lebedev check
-(not done: Dylan's machine).
+**Done by Dylan the same afternoon:** `python3-numpy` installed on achari2, so `ctest` there
+runs the Lebedev check; verified with `ctest -R lebedev_rules` in the reference tree.
 
 ### The register, and the small-numerical-differences split (Dylan, 2026-09-25)
 
