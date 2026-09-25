@@ -2411,16 +2411,17 @@ contains
 
    end
 
-   initialize_COSX :: leaky
-   ! Make the grid for the chain-of-spheres exchange, a BECKE_GRID of
-   ! accuracy .SCF_data.COSX_grid_accuracy, and its batches, for this
-   ! geometry. They are made by the XC grid routines with .COSX_grid
-   ! standing in for .becke_grid; the XC grid is put back untouched.
+   initialize_COSX(grid) :: leaky
+   ! Make .COSX_grid, the grid for the chain-of-spheres exchange, from
+   ! "grid", and its batches, for this geometry. They are made by the XC
+   ! grid routines with .COSX_grid standing in for .becke_grid; the XC
+   ! grid is put back untouched.
       self :: INOUT
+      grid :: BECKE_GRID, IN
 
    ENSURE(.SCF_data.allocated,"no SCF_data")
 
-      grid :: BECKE_GRID@
+      xc_grid :: BECKE_GRID@
       pts :: MAT{REAL}@
       wts :: VEC{REAL}@
       index,first_pt,last_pt,b_pt,b_first,b_last,b_shell,b_first_shell,b_last_shell :: VEC{INT}@
@@ -2429,10 +2430,10 @@ contains
 
       .destroy_COSX_grid
       .COSX_grid.create
-      .COSX_grid.set_accuracy(.SCF_data.COSX_grid_accuracy)
+      .COSX_grid = grid
 
       ! Put the XC grid aside
-      call move_alloc(.becke_grid,grid)
+      call move_alloc(.becke_grid,xc_grid)
       call move_alloc(.XC_pts,pts)
       call move_alloc(.XC_wts,wts)
       call move_alloc(.XC_index,index)
@@ -2466,7 +2467,7 @@ contains
       call move_alloc(.becke_grid,.COSX_grid)
 
       ! Put the XC grid back
-      call move_alloc(grid,.becke_grid)
+      call move_alloc(xc_grid,.becke_grid)
       call move_alloc(pts,.XC_pts)
       call move_alloc(wts,.XC_wts)
       call move_alloc(index,.XC_index)
@@ -2482,6 +2483,9 @@ contains
       .XC_n_unpruned = n_unpruned
 
       if (.SCF_data.using_COSX_overlap_fitting) .make_COSX_fit
+
+      if (.SCF_data.show_timings) &
+      stdout.show("COSX grid points ...............",.COSX_pts.dim1)
 
    end
 
@@ -2818,6 +2822,193 @@ contains
       wr.destroy; rt.destroy; xv.destroy
       T.destroy
       sp_last.destroy; sp_first.destroy; sp_class.destroy
+
+   end
+
+   put_COSX_shell_errors :: leaky
+   ! For every atom and every radial shell of its DFT grid: the shell's
+   ! contribution to the chain-of-spheres exchange energy -(1/4) tr(P K)
+   ! at the angular order the pruning scheme assigns, and the error of that
+   ! and of L = 5, 11, ... 59 against L = 89 on the same shell.
+   ! Becke-partitioned like the real grid, with no overlap fitting. The
+   ! molecular totals are compared with the exact exchange energy. Run on
+   ! a converged restricted density. A diagnostic for the COSX grid
+   ! (TASKS_AND_HISTORY.md); the analogue of MOLECULE.RHO:put_grid_shell_errors.
+      self :: INOUT
+
+   ENSURE(.becke_grid.allocated,"no becke_grid")
+   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
+   ENSURE(.density_mx.is_allocated_with_genre("r "),"needs a restricted density")
+
+      Ls :: VEC{INT}(11)
+      P,J,Kx :: MAT{REAL}@
+      first,last :: VEC{INT}@
+      overlapping_atom :: VEC{INT}@
+      X,X_mol :: VEC{REAL}(11)
+      a,i,k,nr,nL,L_used,n,n_used,n_atom_pts :: INT
+      r,wr,X_used,X_used_mol,atom_err,atom_X,X_exact :: REAL
+      head :: STR
+
+      ! The last order is the reference
+      Ls = [5,11,17,23,29,35,41,47,53,59,89]
+      nL = size(Ls)
+
+      if (.overlapping_atoms_for_atom.deallocated) .set_overlapping_atoms_for_atom
+
+      ! The exact exchange energy, for the molecular totals
+      J.create(.n_bf,.n_bf)
+      Kx.create(.n_bf,.n_bf)
+      .make_r_JK_engine(J,Kx,.density_mx.r)
+      X_exact = -0.25d0*sum(.density_mx.r*Kx)
+      Kx.destroy; J.destroy
+
+      ! The quadrature works in the cartesian functions; tr(P K) is the same
+      if (.use_spherical_basis) then
+         P.create(.n_bf_cartesian,.n_bf_cartesian)
+         .make_cartesian_density(.density_mx.r,P)
+         .set_cartesian_shell_limits(first,last)
+      else
+         P.create(.n_bf,.n_bf)
+         P = .density_mx.r
+      end
+
+      stdout.flush
+      stdout.text("=======================================================")
+      stdout.text("COSX grid: angular error per radial shell, by atom")
+      stdout.text("=======================================================")
+      stdout.flush
+      stdout.text("X     = shell contribution to the COSX exchange energy, -(1/4) tr(P K)")
+      stdout.text("dX(L) = X at Lebedev order L minus X at L = "//trim(Ls(nL).to_str)// &
+                  "; 'used' is the order the pruning scheme assigns")
+      stdout.flush
+
+      head = "  shell   r/bohr   L used  n_pts         X used        dX used"
+      do k = 1,nL-1
+         head = trim(head)//"   dX("//trim(Ls(k).to_str)//")"
+      end
+
+      X_mol = ZERO
+      X_used_mol = ZERO
+
+      do a = 1,.n_atom
+
+         overlapping_atom = .overlapping_atoms_for_atom(a).element
+         nr = .becke_grid.n_radial_pts_for_atom(a)
+         atom_err = ZERO
+         atom_X   = ZERO
+         n_atom_pts = 0
+
+         stdout.flush
+         stdout.text("Atom "//trim(a.to_str)//"  "//trim(.atom(a).label))
+         stdout.flush
+         stdout.text(trim(head))
+
+         do i = 1,nr
+
+            .becke_grid.radial_shell_for_atom(a,i,r,wr)
+            L_used = .becke_grid.angular_order_for_shell(a,i)
+
+            do k = 1,nL
+               .COSX_shell_energy(X(k),n,P,a,r,wr,Ls(k),overlapping_atom)
+               if (Ls(k)==L_used) then
+                  X_used = X(k); n_used = n
+               end
+            end
+            if (all(Ls/=L_used)) &
+               .COSX_shell_energy(X_used,n_used,P,a,r,wr,L_used,overlapping_atom)
+
+            X_mol = X_mol + X
+            X_used_mol = X_used_mol + X_used
+            atom_err = atom_err + abs(X_used-X(nL))
+            atom_X   = atom_X + X_used
+            n_atom_pts = n_atom_pts + n_used
+
+            stdout.put(i,width=7)
+            stdout.put(r,width=9,precision=4,fmt="f")
+            stdout.put(L_used,width=7)
+            stdout.put(n_used,width=7)
+            stdout.put(X_used,width=15,precision=8,fmt="f")
+            stdout.put(X_used-X(nL),width=11,precision=2,fmt="e")
+            do k = 1,nL-1
+               stdout.put(X(k)-X(nL),width=11,precision=2,fmt="e")
+            end
+            stdout.flush
+
+         end
+
+         stdout.flush
+         stdout.show("  points on this atom's grid ..........",n_atom_pts)
+         stdout.show("  X of this atom's grid ...............",atom_X)
+         stdout.show("  sum over shells of |dX used| ........",atom_err)
+
+      end
+
+      if (.use_spherical_basis) .reset_shell_limits(first,last)
+      P.destroy
+
+      stdout.flush
+      stdout.show("Exact exchange energy .................",X_exact)
+      stdout.show("COSX exchange energy, orders used .....",X_used_mol)
+      stdout.flush
+      stdout.text("      L        X_COSX - X_exact")
+      do k = 1,nL
+         stdout.put(Ls(k),width=7)
+         stdout.put(X_mol(k)-X_exact,width=24,precision=4,fmt="e")
+         stdout.flush
+      end
+
+   end
+
+   COSX_shell_energy(X,n,P,a,r,wr,L,overlapping_atom) :: leaky, private
+   ! The chain-of-spheres exchange energy "X" = -(1/4) tr(P K) of the
+   ! Lebedev shell of order "L", radius "r" and radial weight "wr" about
+   ! atom "a", Becke-partitioned with "overlapping_atom", and its number
+   ! of points "n". "P" is in the basis the shell limits describe.
+      self :: INOUT
+      X :: REAL, OUT
+      n :: INT, OUT
+      P :: MAT{REAL}, IN
+      a,L :: INT, IN
+      r,wr :: REAL, IN
+      overlapping_atom :: VEC{INT}, IN
+
+      leb :: LEBEDEV@
+      pt,K :: MAT{REAL}@
+      wt :: VEC{REAL}@
+      b_pt,b_shell :: VEC{INT}@
+      i :: INT
+
+      leb.create
+      leb.set_l(L)
+      n = leb.n_pts
+      pt.create(n,3)
+      wt.create(n)
+      pt(:,1) = .atom(a).position(1) + r*leb.pts(:,1)
+      pt(:,2) = .atom(a).position(2) + r*leb.pts(:,2)
+      pt(:,3) = .atom(a).position(3) + r*leb.pts(:,3)
+      wt = wr*leb.wts
+      leb.destroy
+      .becke_grid.apply_partition(pt,wt,a,overlapping_atom)
+
+      ! One batch holding every point and every shell
+      b_pt.create(n)
+      do i = 1,n
+         b_pt(i) = i
+      end
+      b_shell.create(.n_shell)
+      do i = 1,.n_shell
+         b_shell(i) = i
+      end
+
+      K.create(P.dim1,P.dim2)
+      .make_r_K_COSX_on(K,P,pt,wt,b_pt,[1],[n],b_shell,[1],[.n_shell])
+      X = -0.25d0*sum(P*K)
+
+      K.destroy
+      b_shell.destroy
+      b_pt.destroy
+      wt.destroy
+      pt.destroy
 
    end
 
