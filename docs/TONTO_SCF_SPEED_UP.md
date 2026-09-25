@@ -315,9 +315,12 @@ route for work that must not be approximate.
   and the contraction with F 20%, `dgemm` with the reference BLAS 18%, the Rys roots 17%. The
   final build on `high` is a quarter to a third of the whole, having seven times the points.
 
-Still to do: a grid made for this integrand (the error falls with the angular order in the
-bonding region, not with the radial points, so the named XC levels are a poor ladder for it);
-hybrids on something larger than water; MPI; HAR; `long` before merging.
+Still to do: a grid made for this integrand. The named XC levels are a poor ladder for it:
+from `medium` to `high` only the heavy-atom angular order (29 to 35), the hydrogen angular order
+(23 to 29) and the radial count (30 to 35) change, because the bonding-region order
+`l_bonding_angular_grid` is read only by `pruning_scheme= adaptive` and the default pruning is
+Treutler-Ahlrichs; along that ladder the karrikinolide error changes sign rather than falling.
+Then hybrids on something larger than water; MPI; HAR; `long` before merging.
 
 ---
 

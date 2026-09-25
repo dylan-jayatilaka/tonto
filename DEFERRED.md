@@ -73,6 +73,128 @@ now covers the whole project, so it was renamed.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## 2026-09-25 (late afternoon): the worst-reflections table is order-stable; numpy is declared, and a skip in CI is an error
+
+**Pushed to `develop`, five commits:** `6613ce14` (the table, the sorter and the harness),
+`329804ec` (17 references reblessed on the Linux box), `56634f2c` (numpy and the skip rule),
+`ea61a16f` (four more references, the `hart` suite's, missed by the first search) and `74e0daa2`
+(the rgbi `--help` half of the RGBI row, below). **CI on `ea61a16f` is green**: `Linux-release`
+run 36143684404 has the numpy step printing `numpy 1.26.4`, `GRAND TOTAL: loose 63/63 (exact 51,
+lastdig 62)`, no SKIPPED line, and the invariant checks all PASS including the new one
+(MPI: no interior collectives, no raw .unit I/O PASS; Lebedev grids integrate exactly to their order PASS). `Linux-debug` and `WSL-release` green too; `Linux-MPI` did not trigger, its path filter
+excluding a tests-only commit. The runs on the three earlier commits are red on purpose: the
+first on the four `short` and four `hart` references before their rebless, the next two on the
+`hart` four. CI on `74e0daa2` was in progress when this was written; it is the first run of the
+rgbi options check.
+
+### The worst-reflections table (register: "Give the worst-agreement reflection table a deterministic tie-break")
+
+The register row proposed sorting on `abs(F_z)` then `(h,k,l)`. **That would have done nothing**,
+as the 2026-08-26 entry under *small numerical differences* already said: the quartz L1 pairs
+that swap are 0.05-0.19% apart in `F_z` and drift by about 0.1%, so the primary comparison itself
+reverses and a secondary key is never consulted. No order on a noisy continuous key is
+platform-stable, and that one reference has five adjacent pairs inside 0.2%.
+
+What was done instead, all in `6613ce14`:
+
+1. `VEC{OBJECT}:quick_sort(indices,decreasing_order,then_by)`: an optional `MAT{INT}` of
+   tie-break keys, one row per element; runs of *exactly* equal elements are ordered by their
+   rows (`order_ties_by`, through the new `VEC{INT}:sort_by_rows`). Instantiated in `VEC{INT}`,
+   `VEC{REAL}` and `VEC{STR}`. This is the sorter Dylan asked for: it makes true ties
+   deterministic (the `Uxx`/`Uyy` class) and is used here with `(h,k,l)`. It does nothing for
+   near-ties, and cannot.
+2. `DIFFRACTION_DATA.PUT:put_N_worst_reflections` prints two tables of `n/2`, the largest `F_z`
+   and the smallest, each worst first, with the statistics of the `n` together above them.
+   Dylan's requirement was that the outliers stay at the top of a list, which is why `(h,k,l)`
+   order for the whole table was rejected. The header now gives the sign actually computed,
+   `F_z = (F_exp-F_pred)/F_sigma`; the old text said `(F_calc-F_pred)`.
+3. The `#` column is the reflection's position in the data set
+   (`VEC{REFLECTION}:put_structure_factor_table(index)`), not the row number. A row carries its
+   identity, so a crossover is a permutation of two whole lines rather than a change of rank in
+   two integer tokens.
+4. `scripts/test.py` pairs differing lines by position first and then, for a line whose
+   positional partner fails loose, by content against the still-unclaimed failing new lines
+   anywhere in the file. `ndiff` reports a moved line as a deletion in one hunk and an insertion
+   in another, which is why a per-hunk search, the first attempt, matched nothing. A new line
+   that passed by position is never reused; unmatched lines still fail; the number of lines
+   matched out of position is printed. Verified on the four stored `.bad` files (verdicts
+   unchanged) and on synthetic edits of the quartz L1 reference: a pure swap, a swap with 0.1%
+   drift and a 3-cycle pass; a swap with a 9% change, a duplicated row, an inserted row and a
+   dropped row fail.
+
+**The rebless (`329804ec`, `ea61a16f`).** Every reference printing the table, 21 in all (4
+`short`, 13 `long`, 4 `hart`), blessed on achari2 in the `reference` profile from `6613ce14`.
+Evidence first: with every *Worst reflections* section and the banner stripped from both files,
+all 21 pass loose against their old references with zero structural or reordered lines -- 14
+byte-identical, 7 within 7 ulp or 0.013%, the pre-existing drift between this box and references
+blessed elsewhere. The R factors and GoF above each table are unchanged, so the selection is
+unchanged. The scripts are `~/github/tonto-rebless/reference/{strip_worst.py,check17.py,
+check_more.py,tests17.txt,tests_more.txt}` on achari2.
+
+**The miss, so it is not repeated:** the first search was `grep -l "Worst reflections"
+tests/*/*/stdout`, and the `hart` suite compares `urea.out`/`glyala.out` declared through `IO`
+manifests, not `stdout`. CI on `329804ec` found them. When a table changes shape, search every
+tracked file under `tests/`, then keep only those a manifest or the `stdout` convention actually
+compares (`stdout.full`, `stdout.orig` and `stdout.good_residual` are tracked strays that hit the
+grep and are compared by nothing).
+
+**Still possible, and accepted:** a crossover across the selection boundary (rank `n/2` against
+`n/2+1`) replaces a row rather than moving it, and that fails. The gaps there are ten times the
+adjacent ones, so it is rare, not impossible.
+
+### numpy and the Lebedev check (register: "numpy is an undeclared test dependency, and the skip hides it")
+
+**The entry's premise was wrong.** No workflow runs `ctest`, and `scripts/suite_report.py` did
+not list the Lebedev check among its invariant checks, so the check had never run in CI at all,
+not "by luck of the runner image". It also skips on achari2, which has no numpy. Done in
+`56634f2c`: `suite_report.py` runs `check_lebedev_rules.py` as a fifth invariant check; new
+`--skips-are-errors` and `--allow-skip NAME` (a test directory, or a check script without its
+extension); every gating workflow passes the flag, the two full-suite workflows allow
+`ammonium_borane_pHAR_C23`; numpy is installed, and its import asserted in a step of its own, in
+each of the eight suite-running workflows; the three building pages list it. Checked on a
+synthetic two-test suite, details in the commit.
+
+**Found and not fixed, new entry under *Test suite and numerics*:** six other ctest
+registrations run in no workflow.
+
+**Owed:** `sudo apt install python3-numpy` on achari2, so `ctest` there runs the Lebedev check
+(not done: Dylan's machine).
+
+### The register, and the small-numerical-differences split (Dylan, 2026-09-25)
+
+Both rows removed and one added (*Six registered ctests run in no workflow*). Then, at Dylan's
+direction, *The small numerical differences register* was split into its three live threads --
+the XCW `Penalty in F` drift, `ylid` on macOS, and the two Mac-only gfortran-14 release failures --
+as their own sections under *Test suite and numerics* and their own register rows; the old
+section keeps the closed, parked and undecided residue under a heading that says so. Left for
+Dylan: whether the 2026-07-30 NaN/negative esd thread in that residue was closed by the
+2026-09-08 esd fixes. Register tally 44 open, 10 quick.
+
+### The rgbi `--help` half of "RGBI defects and rough edges" (2026-09-25)
+
+Done while the CI runs were pending, being orthogonal: the help text, a non-zero exit on a usage
+error, and `scripts/check_rgbi_options.sh` wired in beside the hart one (detail under *RGBI: known
+defects and rough edges*). Checked on achari2 against a rebuilt `rgbi`. The other half of that
+register row, a test guarding the `-O2` pin on BN's Roby populations, is not cosmetic: the pin
+exists for an arm64 macOS miscompilation, so the guard only earns its keep in a macOS CI job and
+the row now says only that.
+
+### The two Mac-only failures: run, and no longer failing (2026-09-25)
+
+Dylan approved a gfortran-14 debug build on the Mac (`debug/`, 20 min at `-j6`) for the
+experiment the split-out row asked for. Result: both tests pass loose in release *and* debug here,
+so the row is closed, and the debug run gives the parked Hirshfeld-moments item a second data
+point -- Hirshfeld moments move by 3-4e-4 while the Salvador moments from the same density and
+grid are byte-identical. Entry under *Test suite and numerics*.
+
+### The bonding-region claim, corrected (2026-09-25)
+
+The register's *Correct the bonding-region claim in the speed-up documents* row is closed: the
+sentence in `docs/TONTO_SCF_SPEED_UP.md` 5b now gives the three settings that actually change
+from `medium` to `high`, and the two passages in the COSX handover below carry a bracketed
+correction rather than a silent rewrite, since they are the record of what was believed when the
+stage-4 numbers were taken.
+
 ## START HERE, 2026-09-24 (night): master is merged and green; two debug fixes; seven items parked
 
 **The push owed below has happened.** `develop` was merged to `master` as `43d35f44`, and that
@@ -182,8 +304,9 @@ blessed. `docs/TONTO_BLESSING_TESTS.md`, `docs/TONTO_RI_FITTING_PLAN.md`,
 the kind: rows 854 and 855 swap because two reflections tied to 0.007 in `F_z` cross over, so a
 row-by-row comparison reads different reflections against each other while the same reflection agrees
 to 0.13%. **That reference is correct** and blessing it would only bake one machine's ordering in. It
-fails at the parent commit too, and it is a `long` test, so the routine CI gate is unaffected. Fix is
-a deterministic tie-break on `h`, `k`, `l`; recorded as its own task.
+fails at the parent commit too, and it is a `long` test, so the routine CI gate is unaffected.
+**Closed later the same day**, see the entry above: a tie-break on `(h,k,l)` would not have done it,
+because the pair was not tied.
 
 ### Three claims made during this pass that were WRONG
 
@@ -210,8 +333,10 @@ own misalignment does. **Only a line-indexed comparison of whole files is trustw
 > `high` only three things changed: heavy-atom angular 29 -> 35, hydrogen angular 23 -> 29,
 > radial 30 -> 35. For those small steps the karrikinolide error went +1.5e-5, +2.9e-5, -1.5e-5,
 > +2.0e-6: more like an error changing sign than one converging, and `high` may be good partly by
-> luck. The same claim is in `docs/TONTO_SCF_SPEED_UP.md` 5b ("the error falls with the angular
-> order in the bonding region"); both are to be corrected once Dylan has seen this.
+> luck. The same claim was in `docs/TONTO_SCF_SPEED_UP.md` 5b ("the error falls with the angular
+> order in the bonding region"); **both corrected on 2026-09-25**, after checking in
+> `becke_grid.foo` that `apply_pruning_scheme_adaptive` is the only reader of
+> `l_bonding_angular_grid` and that `types.foo` defaults `pruning_scheme` to `treutler_ahlrichs`.
 >
 > **The plan.**
 >
@@ -288,8 +413,10 @@ own misalignment does. **Only a line-indexed comparison of whole files is trustw
 > known, so the plan can start from it (numbers: `docs/SCF_SPEED_REPORT.md`, *COSX*):
 > - The COSX error does not fall steadily along the named XC levels. Karrikinolide def2-SVP, with
 >   overlap fitting, SCF and energy on one grid: `very_low` +1.5e-5, `low` +2.9e-5, `medium` -1.5e-5,
->   `high` +2.0e-6. What separates `high` is the angular order in the bonding region (59, against
->   29 at `medium`), not the radial points (35 against 30). So the knobs to scan are
+>   `high` +2.0e-6. *(Corrected 2026-09-25: under the default Treutler-Ahlrichs pruning what
+>   separates `high` from `medium` is heavy-atom angular 29 -> 35, hydrogen 23 -> 29 and radial
+>   30 -> 35; the bonding-region order, 59 against 29, is read only by `pruning_scheme= adaptive`
+>   and never took effect.)* So the knobs to scan are
 >   `l_bonding_angular_grid`, `l_angular_grid`, `l_H_angular_grid` and `n_radial_pts`, separately.
 > - Two grids are wanted, with different jobs. The **iteration grid** only has to give orbitals
 >   good to second order: `very_low` (20 radial, 110 angular) is enough, and 15 radial with 50
@@ -330,8 +457,9 @@ own misalignment does. **Only a line-indexed comparison of whole files is trustw
 >    its own grid (`cosx_grid_accuracy= very_low`), overlap fitting, and the final energy from one
 >    more build on `cosx_final_grid_accuracy= high`, orbitals unchanged.
 > 4. **The levers left, in order of what they are worth** (Dylan to order): (a) **a grid made for
->    this integrand** -- the error falls with the angular order in the bonding region (`high` has
->    59 there, `medium` 29 and is no better than `very_low`), not with radial points, and the final
+>    this integrand** -- *(corrected 2026-09-25: the bonding-region order never took effect under
+>    the default pruning; from `medium` to `high` the angular orders rose 29 -> 35 and 23 -> 29
+>    and the radial count 30 -> 35, and the error changed sign rather than falling)* -- and the final
 >    build on `high` is a quarter to a third of the time; that wants `cosx_grid= { ... }` blocks in
 >    place of the two accuracy names, and a calibration like Stage B; (b) OpenBLAS, a third off
 >    (the parked item); (c) the kernel: Rys roots 17%, contraction 26%, transfer 20%. Screening is
@@ -3827,56 +3955,21 @@ the XC evaluation, not the point count. Tables in `docs/SCF_SPEED_REPORT.md`.
 
 # Test suite and numerics
 
-## numpy is an undeclared test dependency, and the skip that hides it
+## Six registered ctests run in no workflow (found 2026-09-25)
 
-`scripts/check_lebedev_rules.py` needs numpy. **No workflow installs it.** The check has been
-passing in CI only because the GitHub runner images happen to ship numpy -- an undeclared
-dependency satisfied by luck of the image, which is not a property anyone chose and not one that
-will necessarily survive an image change.
+CI runs `scripts/suite_report.py`, never `ctest`, so a check registered only in
+`tests/CMakeLists.txt` is not in CI: `quadrature_rules`, `dft_invariants`, `dft_reference`,
+`single_atom_scf`, `system_commands` and `functional_names`. (`lebedev_rules` was the seventh
+until `56634f2c`; `spherical_vs_cartesian`, `hart_options`, `library_stdin` and `parallel_lint`
+are run by `suite_report.py`; `mpi_pi_rank_invariant` and `rgbi_doctor_selftest` by their
+workflows directly.) Three of the six are the "three debug failures nothing is tracking".
 
-On any clean developer machine it failed outright: macOS `python3` is the Command Line Tools
-build (3.9.6), which ships no numpy, unlike the old system python 2.7. Found 2026-09-22 on a
-fresh `release` tree, where `short` was 69/70 for this reason alone.
-
-**What was done (`90cc74fa`)** is a mitigation, not the fix: the script now exits 77 with the pip
-command, and `lebedev_rules` declares `SKIP_RETURN_CODE 77`, so a clean clone gets a *skip*
-rather than a red suite. `add_all_tests` sets that property for every suite test; the standalone
-checks like this one never had it.
-
-**Why that is not enough, and is arguably worse.** A skip is silent. If the runner image ever
-drops numpy, `lebedev_rules` stops running, CI stays green, and the Lebedev grids -- where one
-wrong literal shifts every DFT energy with nothing else noticing, which is the whole reason the
-check exists -- are no longer checked by anything. The mitigation converted a loud failure into a
-quiet absence.
-
-**The rigorous fix, in two parts:**
-
-1. **Declare the dependency and install it.** numpy goes into the workflows that run the suite,
-   and into the developer prerequisites in `docs/BUILDING_ON_*.md` beside `python3`. Then the
-   check runs everywhere by construction rather than by luck.
-2. **Make a skip in CI an error.** A skipped test is a legitimate local outcome and an
-   illegitimate CI one: on a runner, everything declared should run. `ctest` reports skips
-   distinctly, so a workflow step can assert the skip count is zero (or matches an explicit
-   allow-list). This is not specific to numpy -- `tests/long/ammonium_borane_pHAR_C23` skips on
-   its uncommitted 167 MB asset too, and the same argument applies: the suite should say out loud
-   what it did not run.
-
-An alternative to part 1 worth weighing: **drop the numpy dependency**. The script replays orbit
-generators and integrates monomials -- arithmetic that plain Python does perfectly well for a
-~2 s check. That removes the question rather than answering it, at the cost of a slower and
-slightly longer script.
+**Fix:** either have `suite_report.py` take its invariant checks from one list shared with
+`tests/CMakeLists.txt`, or run `ctest -L short` in `ci.yml` beside the report. Whichever needs a
+built runfile (`system_commands`, `quadrature_rules`) must be built by the workflow's `make`.
 
 
-## Deferred: small numerical differences (longstanding) — drill down
-
-Several tests differ from their references only by small numerical amounts — 3rd–4th
-significant figure, or a last-digit wobble on a near-zero value. They pass the loose gate
-(rel ≤ 0.2% OR last-digit ≤ 2), but some sit close enough to the boundary that a different
-runner/CPU (BLAS / eigensolver ordering, FP reassociation) flips the verdict — this is the
-**CI flake** seen on GitHub Actions (same binary, pass on one runner, fail on the next).
-**Dylan wants to drill down** on each and fix the root cause, not merely tolerate them.
-
-### The XCW `Penalty in F` drift, found while reblessing (2026-08-26)
+## The XCW `Penalty in F` drift: 0.28% unexplained, and the formula is assumed (2026-08-26)
 
 **Filed here at Dylan's direction**, alongside the other small numerical differences:
 they look alike and may well have *unrelated* causes, but one register is the place to
@@ -3909,6 +4002,86 @@ Caveats, so the next person does not over-read this:
   falls 0.06–0.21% short of the pure-`N_p` prediction, but the references carry only 4
   significant figures, which alone accounts for ~0.09%. The `Penalty` residual is on
   values printed to the same precision and is three times larger, so that one is real.
+
+
+## CLOSED (2026-09-25): `urea_ccsd_pob-TZVP_Salvador_properties` and `h2o_rhf_cc-pVDZ_tdhf` on a Mac in gfortran-14 release
+
+**The experiment below was run on 2026-09-25 and the premise is stale.** On this Mac
+(arm64, OpenBLAS, gfortran 14.3.0) both tests now **pass loose in release and in debug**, with the
+widened tolerances in `KNOWN_MARGINAL` (`last_digit_tol` 6 for Salvador, `rel_tol` 0.5% for
+tdhf); tdhf is exact in debug and 0.04% in release. So there is nothing to isolate. What the
+debug run did show, from a hand run of the Salvador job against its Linux reference: the
+**Hirshfeld** charges and moments move by 3-4e-4 (12 lines), two Mayer-Salvador radii by 1e-4,
+and the **Salvador** charges and moments are byte-identical to four decimals -- the same
+pattern the OpenBLAS-kernel comparison gave, and evidence for the parked Hirshfeld-moments
+item's hypothesis (the free-atom densities, not the quadrature or the weights). Register row
+removed; the original entry follows.
+
+**`urea_ccsd_pob-TZVP_Salvador_properties` (2.99%) and `h2o_rhf_cc-pVDZ_tdhf` (0.231%)
+both PASS in a gfortran-16 debug build** while failing in gfortran-14 release on the same
+Mac. Two variables differ between those builds — compiler *and* optimisation — so this
+isolates nothing by itself. The cheap next experiment is a gfortran-14 **debug** build: if
+they pass there too, the culprit is `-Ofast`, not the compiler. Note `ci-macos.yml`'s
+header attributes the first to macOS; that attribution is at least incomplete.
+
+
+## `ylid` (rgbi): vdW contact indices differ on macOS
+
+**Status 2026-07-29:** fails on **macOS only** (3.85% max rel); **passes on Linux** against the
+current reference, with both platforms on gfortran-16 and LAPACK 3.12.0.
+
+**Where the difference lives:** splitting the diff at the *"Roby-Gould bond indices: VDW
+interactions only"* boundary gives **14 of 17** differing hunks inside the vdW section and only
+3 outside it (the largest of those being a Roby population, `C1 8.95` vs `8.96`). So the
+van der Waals contacts — non-bonded pairs at 2.3–3.3 Å, enabled by `analyze_vdw_atom_pairs= T`
+— carry most of the instability, as Dylan expected.
+
+> **SUPERSEDED 2026-08-02.** This was written when vdW analysis was still ON. It is now **OFF**:
+> Dylan turned it off in `99b1b535` (2026-07-31, *"tests(ylid): turn vdW contact analysis off"*),
+> and `tests/rgbi/ylid/stdin:26` reads `analyze_vdw_atom_pairs= F`. The test's own comment records
+> the reasoning -- the vdW section was the whole of the macOS/Linux disagreement, and this test
+> exists to exercise Roby bond indices, which do not need it. The argument below was not
+> persuasive at the time and is kept only for the timing data (vdW ON ~46 s, OFF ~59 s), which
+> remains an unexplained oddity: turning work *off* made the job *slower*.
+
+**Considered and NOT adopted at the time: turning the vdW pairs off and re-blessing.** Two reasons:
+
+1. **It would break Linux.** ylid currently *passes* there, so a re-bless would enshrine macOS
+   numbers and flip the platform that is presently correct.
+2. **It does not speed the test up** — the opposite. Measured interleaved, three rounds:
+   vdW **ON** 45.9 / 46.7 / 46.3 s, **OFF** 59.5 / 59.5 / 59.1 s, i.e. ~13 s *slower* with
+   fewer output lines (607 vs 660). Whatever `analyze_vdw_atom_pairs= F` does, it is not
+   "skip work" — it selects a different and more expensive set of pairs. That oddity is worth
+   understanding on its own; a flag that costs time when disabled is a bug smell.
+
+It would also drop coverage of the vdW code path, and the 3 non-vdW hunks would likely remain.
+
+**Also ruled out:** tightening the guess-SCF convergence. Settings from `convergence= 1e-3`
+(default) down to `1e-6` leave both the runtime (~46 s throughout) and the disagreement
+essentially unchanged (108 → 106 differing lines); `1e-8` makes the atomic SCF fail to converge
+outright, so `make_ANOs` DIEs and the job aborts — which is the DIE working as intended, but it
+also produced a *shorter* output that briefly looked like a speed-up and a perfect match. Beware
+that trap when timing truncated runs.
+
+**Open:** where the 46 s actually goes (convergence is not the lever), and why the vdW indices
+are the platform-sensitive part.
+
+
+## Small numerical differences: the closed, parked and undecided residue (quartz, the moved hart references, the gly_ala ADP ratio, the NaN esds)
+
+> **Split on 2026-09-25 (Dylan):** the three live threads that were filed here are now their own
+> sections above -- the XCW `Penalty in F` drift, `ylid` on macOS, and the two Mac-only gfortran-14
+> release failures -- and their register rows. What remains here is closed, parked, or awaiting a
+> decision: quartz L0/L1 (closed), the two hart references moved to Linux, the 2026-09-24 attribution,
+> the parked gly_ala ADP axis ratio, and the NaN/negative esd thread of 2026-07-30, which the
+> 2026-09-08 esd fixes may have closed and nobody has said so.
+
+Several tests differ from their references only by small numerical amounts — 3rd–4th
+significant figure, or a last-digit wobble on a near-zero value. They pass the loose gate
+(rel ≤ 0.2% OR last-digit ≤ 2), but some sit close enough to the boundary that a different
+runner/CPU (BLAS / eigensolver ordering, FP reassociation) flips the verdict — this is the
+**CI flake** seen on GitHub Actions (same binary, pass on one runner, fail on the next).
+**Dylan wants to drill down** on each and fix the root cause, not merely tolerate them.
 
 ### Two more for the same register
 
@@ -3975,13 +4148,11 @@ Caveats, so the next person does not over-read this:
   **Do not bless these on a Mac.** It would bake macOS numbers into a Linux-gated project
   and leave Linux passing on under a third of the tolerance. Generating references on
   Linux/gfortran-14 is what exposed that they needed no reblessing at all.
-- **`urea_ccsd_pob-TZVP_Salvador_properties` (2.99%) and `h2o_rhf_cc-pVDZ_tdhf` (0.231%)
-  both PASS in a gfortran-16 debug build** while failing in gfortran-14 release on the same
-  Mac. Two variables differ between those builds — compiler *and* optimisation — so this
-  isolates nothing by itself. The cheap next experiment is a gfortran-14 **debug** build: if
-  they pass there too, the culprit is `-Ofast`, not the compiler. Note `ci-macos.yml`'s
-  header attributes the first to macOS; that attribution is at least incomplete.
 
+  **Closed 2026-09-25.** Rows now carry their data-set index and the harness pairs reordered
+  lines by content, so a crossover is a reorder and not a failure; the tie-break sorter that
+  was also added does nothing for this case, exactly as said above. Archive entry *DONE
+  (2026-09-25): the worst-reflections table is order-stable*.
 ### Two hart references moved from macOS to Linux on 2026-09-06 — expect macOS red
 
 Recorded because it changes what a red badge on a Mac would *mean*, and because it retires
@@ -4105,47 +4276,6 @@ platform-fragile, not the physics:
 
 The converged science agrees across the platforms to ~3e-5 relative, five significant figures:
 R(F) 0.032422 against 0.032421, GoF 3.354131 against 3.354027.
-
-### Lower priority: `ylid` (rgbi) — vdW contact indices differ on macOS
-
-**Status 2026-07-29:** fails on **macOS only** (3.85% max rel); **passes on Linux** against the
-current reference, with both platforms on gfortran-16 and LAPACK 3.12.0.
-
-**Where the difference lives:** splitting the diff at the *"Roby-Gould bond indices: VDW
-interactions only"* boundary gives **14 of 17** differing hunks inside the vdW section and only
-3 outside it (the largest of those being a Roby population, `C1 8.95` vs `8.96`). So the
-van der Waals contacts — non-bonded pairs at 2.3–3.3 Å, enabled by `analyze_vdw_atom_pairs= T`
-— carry most of the instability, as Dylan expected.
-
-> **SUPERSEDED 2026-08-02.** This was written when vdW analysis was still ON. It is now **OFF**:
-> Dylan turned it off in `99b1b535` (2026-07-31, *"tests(ylid): turn vdW contact analysis off"*),
-> and `tests/rgbi/ylid/stdin:26` reads `analyze_vdw_atom_pairs= F`. The test's own comment records
-> the reasoning -- the vdW section was the whole of the macOS/Linux disagreement, and this test
-> exists to exercise Roby bond indices, which do not need it. The argument below was not
-> persuasive at the time and is kept only for the timing data (vdW ON ~46 s, OFF ~59 s), which
-> remains an unexplained oddity: turning work *off* made the job *slower*.
-
-**Considered and NOT adopted at the time: turning the vdW pairs off and re-blessing.** Two reasons:
-
-1. **It would break Linux.** ylid currently *passes* there, so a re-bless would enshrine macOS
-   numbers and flip the platform that is presently correct.
-2. **It does not speed the test up** — the opposite. Measured interleaved, three rounds:
-   vdW **ON** 45.9 / 46.7 / 46.3 s, **OFF** 59.5 / 59.5 / 59.1 s, i.e. ~13 s *slower* with
-   fewer output lines (607 vs 660). Whatever `analyze_vdw_atom_pairs= F` does, it is not
-   "skip work" — it selects a different and more expensive set of pairs. That oddity is worth
-   understanding on its own; a flag that costs time when disabled is a bug smell.
-
-It would also drop coverage of the vdW code path, and the 3 non-vdW hunks would likely remain.
-
-**Also ruled out:** tightening the guess-SCF convergence. Settings from `convergence= 1e-3`
-(default) down to `1e-6` leave both the runtime (~46 s throughout) and the disagreement
-essentially unchanged (108 → 106 differing lines); `1e-8` makes the atomic SCF fail to converge
-outright, so `make_ANOs` DIEs and the job aborts — which is the DIE working as intended, but it
-also produced a *shorter* output that briefly looked like a speed-up and a perfect match. Beware
-that trap when timing truncated runs.
-
-**Open:** where the 46 s actually goes (convergence is not the lever), and why the vdW indices
-are the platform-sensitive part.
 
 ### PRIORITY, NOT STARTED: NaN and negative ESDs from the least-squares variance-covariance matrix
 
@@ -4847,11 +4977,14 @@ were cleared of developer material. None is fixed.
 
 **In the program**
 
-- **`rgbi --help` calls the program `run_rgbi`**, which is the CMake target name
-  rather than what gets installed, and points at a `./rgbi-script` folder, which
-  is spelled `rgbi-scripts`. Both cosmetic. `hart` has an invariant check
-  comparing `--help` against its option `case` labels
-  (`scripts/check_hart_options.sh`); `rgbi` has three options and no such check.
+- **FIXED 2026-09-25: `rgbi --help` called the program `run_rgbi`** and pointed at a
+  `./rgbi-script` folder. The text now says `rgbi` and names the installed
+  `make-rgbi-pic`/`make-rgbi-dials` scripts; the header's copied "You have run hart"
+  line and four typos went with it, and a usage error (no file, or two) now exits
+  non-zero through `DIE` instead of `stop`. `scripts/check_rgbi_options.sh` is the
+  `hart` check's twin, registered as the `rgbi_options` ctest and as a
+  `suite_report.py` invariant check, so CI runs it. No reference carries any of the
+  changed strings, so nothing was reblessed.
 - `CMakeLists.txt:883` pins a file to `-O2` because **"rgbi/BN's Roby
   populations were wrong"** at other optimisation levels. Read that comment
   before touching optimisation flags for this program. No test guards it — see
@@ -5656,6 +5789,67 @@ exists and is unbuilt), agreeing to 1e-14 or bitwise; HF energies bit-identical 
 4. **Gate:** `run_shell1quartet` old vs new; HF energies to 1e-12; `short` and HF `long` jobs;
    timings in `docs/SCF_SPEED_REPORT.md`. Run the no-grid karrikinolide RHF profile alongside
    step 1.
+
+## DONE (2026-09-25): the worst-reflections table is order-stable, and the harness pairs reordered rows
+
+`quartz_NN_HAR_L1_rhf_def2-SVP` failed whenever two near-tied reflections crossed over in the
+table printed by `DIFFRACTION_DATA.PUT:put_N_worst_reflections`. The fix is four things in
+`6613ce14` -- a `then_by` tie-break on `quick_sort`, two tables each worst first, a `#` column
+that is the reflection's position in the data set, and content pairing of reordered lines in
+`scripts/test.py` -- and the 21 references that print the table were reblessed on the Linux box in
+`329804ec` and `ea61a16f`. The full account, with what was tried first and why a tie-break alone could never
+have worked, is the 2026-09-25 (late afternoon) handover entry. The 2026-08-26 analysis under
+*small numerical differences* ("a tie-break on `(h,k,l)` will NOT fix this") stands and was the
+reason the fix took the shape it did.
+
+
+## FIXED (2026-09-25): numpy is a declared test dependency, the Lebedev check runs in CI, and a skip there is an error
+
+**Closed by `56634f2c`; see the 2026-09-25 (late afternoon) handover.** The premise below
+was wrong in one respect: the check had not been passing in CI by luck, it had never run
+there, because no workflow runs `ctest` and `suite_report.py` did not list it. Both parts of
+the rigorous fix were done; the alternative (dropping numpy) was not taken, since the monomial
+integration is ~1e8 multiply-adds and would take a minute in plain Python. The original
+entry follows.
+
+
+`scripts/check_lebedev_rules.py` needs numpy. **No workflow installs it.** The check has been
+passing in CI only because the GitHub runner images happen to ship numpy -- an undeclared
+dependency satisfied by luck of the image, which is not a property anyone chose and not one that
+will necessarily survive an image change.
+
+On any clean developer machine it failed outright: macOS `python3` is the Command Line Tools
+build (3.9.6), which ships no numpy, unlike the old system python 2.7. Found 2026-09-22 on a
+fresh `release` tree, where `short` was 69/70 for this reason alone.
+
+**What was done (`90cc74fa`)** is a mitigation, not the fix: the script now exits 77 with the pip
+command, and `lebedev_rules` declares `SKIP_RETURN_CODE 77`, so a clean clone gets a *skip*
+rather than a red suite. `add_all_tests` sets that property for every suite test; the standalone
+checks like this one never had it.
+
+**Why that is not enough, and is arguably worse.** A skip is silent. If the runner image ever
+drops numpy, `lebedev_rules` stops running, CI stays green, and the Lebedev grids -- where one
+wrong literal shifts every DFT energy with nothing else noticing, which is the whole reason the
+check exists -- are no longer checked by anything. The mitigation converted a loud failure into a
+quiet absence.
+
+**The rigorous fix, in two parts:**
+
+1. **Declare the dependency and install it.** numpy goes into the workflows that run the suite,
+   and into the developer prerequisites in `docs/BUILDING_ON_*.md` beside `python3`. Then the
+   check runs everywhere by construction rather than by luck.
+2. **Make a skip in CI an error.** A skipped test is a legitimate local outcome and an
+   illegitimate CI one: on a runner, everything declared should run. `ctest` reports skips
+   distinctly, so a workflow step can assert the skip count is zero (or matches an explicit
+   allow-list). This is not specific to numpy -- `tests/long/ammonium_borane_pHAR_C23` skips on
+   its uncommitted 167 MB asset too, and the same argument applies: the suite should say out loud
+   what it did not run.
+
+An alternative to part 1 worth weighing: **drop the numpy dependency**. The script replays orbit
+generators and integrates monomials -- arithmetic that plain Python does perfectly well for a
+~2 s check. That removes the question rather than answering it, at the cost of a slower and
+slightly longer script.
+
 
 ## FIXED (2026-09-10): `tonto.io_file` was a dangling pointer, and every `DIE` dereferenced it
 
