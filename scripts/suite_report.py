@@ -427,6 +427,13 @@ def main():
             checks.append(('hart options vs its --help text',
                            os.path.join(here, 'check_hart_options.sh'),
                            [hart, run_har, args.basis_sets]))
+        # And rgbi's, on the same footing.
+        rgbi = os.path.join(os.path.dirname(args.program), 'rgbi')
+        run_rgbi = os.path.join(os.path.dirname(here), 'runfiles', 'run_rgbi.foo')
+        if os.path.exists(rgbi):
+            checks.append(('rgbi options vs its --help text',
+                           os.path.join(here, 'check_rgbi_options.sh'),
+                           [rgbi, run_rgbi]))
         # Source-level, no binary needed: a procedure taking arguments is a
         # library routine and must not touch stdin, or it breaks every
         # argv-driven program. Runs from python3, not sh -- see below.

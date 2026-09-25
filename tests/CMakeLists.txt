@@ -141,6 +141,14 @@ add_test(NAME "hart_options"
             ${HART_EXE} ${PROJECT_SOURCE_DIR}/runfiles/run_har.foo ${BASIS_SETS})
 set_tests_properties("hart_options" PROPERTIES LABELS "hart")
 
+# The same check for rgbi, whose --help had named the CMake target run_rgbi
+# and a misspelled scripts folder for as long as it existed.
+add_test(NAME "rgbi_options"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND sh ${PROJECT_SOURCE_DIR}/scripts/check_rgbi_options.sh
+            ${PROJECT_BINARY_DIR}/rgbi ${PROJECT_SOURCE_DIR}/runfiles/run_rgbi.foo)
+set_tests_properties("rgbi_options" PROPERTIES LABELS "rgbi")
+
 # Invariant test -- no reference output involved.
 #
 # The SYSTEM_COMMAND exerciser. It shells out for real: it writes a file with
