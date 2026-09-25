@@ -53,7 +53,7 @@ residue moving into the pages above.
 
 | | |
 |---|---|
-| [**Deferred issues**](../TASKS_AND_HISTORY.md) | the live work: the handover, then every open issue by theme |
+| [**Tasks and history**](../TASKS_AND_HISTORY.md) | the live work: the handover, then every open issue by theme |
 | [**Developer reference**](TONTO_DEVELOPER_INFO.md) | writing parallel (MPI) code in Foo, and build and test traps |
 | [**Tonto and MPI**](TONTO_AND_MPI.md) | the parallel build, its numerics, and the defect register |
 | [**Dispersion corrections**](TONTO_DISPERSION_CORRECTIONS.md) | anomalous dispersion, Bijvoet pairs, and the residual density map |
