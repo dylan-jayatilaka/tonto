@@ -435,6 +435,7 @@ set(FOO_SRC
     ${FOO_DIR}/reflection.foo
     ${FOO_DIR}/crystal.foo
     ${FOO_DIR}/crystal23.foo
+    ${FOO_DIR}/fourier_sums.foo
     ${FOO_DIR}/spherical_harmonic.foo
     ${FOO_DIR}/t_tensor.foo
     ${FOO_DIR}/table_column.foo
@@ -507,6 +508,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/cpx.F90
     ${CMAKE_CURRENT_BINARY_DIR}/crystal.F90
     ${CMAKE_CURRENT_BINARY_DIR}/crystal23.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/fourier_sums.F90
 #   ${CMAKE_CURRENT_BINARY_DIR}/datafile.F90
     ${CMAKE_CURRENT_BINARY_DIR}/dft_functional.F90
     ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.inq.F90

@@ -4739,22 +4739,30 @@ contains
    ENSURE(.becke_grid.finalized,"no finalized becke_grid")
 
       rgrid :: QUADRATURE@
+      wts :: VEC{REAL}@
+      i,n :: INT
 
-      ! Radial grid
+      ! Number of radial shells
       rgrid = .becke_grid.radial_grid_for_atom(c)
+      n = rgrid.n_pts
+      rgrid.destroy
 
-      ! Radial quadrature pts
-      pts = rgrid.pts
+      ! Radii, and weights 4 pi r^2 dr with the atomic scale factor
+      pts.create(n)
+      wts.create(n)
+      do i = 1,n
+         .becke_grid.radial_shell_for_atom(c,i,pts(i),wts(i))
+      end
 
       ! Averaged densities
-      N0.create(rgrid.n_pts)
+      N0.create(n)
       .make_sph_avgd_SA_ED_v0(N0,pts,c)
 
       ! N0 x radial weights
-      N0 = N0*rgrid.wts
+      N0 = N0*wts
 
       ! Clean
-      rgrid.destroy
+      wts.destroy
 
    end
 
@@ -5267,12 +5275,9 @@ contains
       pt, k_pts   :: MAT{REAL}@
       cutoff      :: REAL
       ss,sc,s2    :: REAL
-      k1,k2,k3,kr :: REAL
       n_atom, u,c :: INT
-      n_k,  k     :: INT
-      n_pt, i     :: INT
+      n_k         :: INT
       spin        :: BIN
-      sf          :: CPX
 
       ! Asymmetric unit atoms
       n_atom = .crystal.asymmetric_unit_atom.dim
@@ -5316,21 +5321,11 @@ contains
 
          ! Get the Becke grid for atom "c" (leaky)
          .make_Hirshfeld_atom_ED_grid(rho,pt,c,.density_mx.r)
-         n_pt = pt.dim1   ! <-- New n_pt !!!
 
          ! The (unique) atomic form factors
          ! Fourier transform, yay!
-         do k = 1,n_k
-            k1 = k_pts(k,1)
-            k2 = k_pts(k,2)
-            k3 = k_pts(k,3)
-            sf = IMAGIFY(ZERO)
-            do i = 1,n_pt
-               kr = k1*pt(i,1)+k2*pt(i,2)+k3*pt(i,3)
-               sf = sf + rho(i)*exp(IMAGIFY(kr))
-            end
-            ff(k,u) = sf * s2 * .atom(c).site_occupancy ! <-----
-         end
+         FOURIER_SUMS:exp_ikr_sums(ff(:,u),k_pts,pt,rho)
+         ff(:,u) = ff(:,u) * s2 * .atom(c).site_occupancy
 
          ! Clean up
          rho.destroy
@@ -5372,11 +5367,8 @@ contains
       pt, k_pts   :: MAT{REAL}@
       cutoff      :: REAL
       ss,sc,s2    :: REAL
-      k1,k2,k3,kr :: REAL
       n_atom, u,c :: INT
-      n_k,  k     :: INT
-      n_pt, i     :: INT
-      sf          :: CPX
+      n_k         :: INT
 
       ! Asymmetric unit atoms
       n_atom = .crystal.asymmetric_unit_atom.dim
@@ -5415,21 +5407,11 @@ contains
          ! Get the Becke grid for atom "c" (leaky)
          ! Grid points "pt" are around position "rc"
          .make_Salvador_atom_ED_grid(rho,pt,c,.density_mx.r)
-         n_pt = pt.dim1   ! <-- New n_pt !!!
 
          ! The (unique) atomic form factors
          ! Fourier transform, yay!
-         do k = 1,n_k
-            k1 = k_pts(k,1)
-            k2 = k_pts(k,2)
-            k3 = k_pts(k,3)
-            sf = IMAGIFY(ZERO)
-            do i = 1,n_pt
-               kr = k1*pt(i,1)+k2*pt(i,2)+k3*pt(i,3)
-               sf = sf + rho(i)*exp(IMAGIFY(kr))
-            end
-            ff(k,u) = sf * s2 * .atom(c).site_occupancy ! <-----
-         end
+         FOURIER_SUMS:exp_ikr_sums(ff(:,u),k_pts,pt,rho)
+         ff(:,u) = ff(:,u) * s2 * .atom(c).site_occupancy
 
          ! Clean up
          rho.destroy
@@ -5471,12 +5453,10 @@ contains
       k_pts       :: MAT{REAL}@
       cutoff      :: REAL
       ss,sc,s2    :: REAL
-      kk,kr,kc    :: REAL
+      kk, sf      :: VEC{REAL}@
+      kc          :: REAL
       n_atom, u,c :: INT
       n_k,  k     :: INT
-      n_pt, i     :: INT
-      sf          :: REAL
-      sfc         :: CPX
 
       ! Asymmetric unit atoms
       n_atom = .crystal.asymmetric_unit_atom.dim
@@ -5492,6 +5472,12 @@ contains
       ! and the necessary k points
       k_pts.create(n_k,3)
       .crystal.make_unique_X_SF_k_pts(k_pts)
+
+      ! Length of each k
+      kk.create(n_k)
+      do k = 1,n_k
+         kk(k) = norm2(k_pts(k,:))
+      end
 
       ! Density matrix (leaky)
       .make_r_density_mx
@@ -5515,23 +5501,17 @@ contains
          ! Get the Becke grid for atom "c" (leaky)
          ! Note: "pt" is around the origin, not "rc"
          .make_sph_avgd_SA_ED_grid(rho,pt,c)
-         n_pt = pt.dim1   ! <-- New n_pt !!!
 
-         ! The (unique) atomic form factors
-         ! Fourier transform, yay!
+         ! The (unique) atomic form factors, times the position phase
+         sf.create(n_k)
+         FOURIER_SUMS:sinc_kr_sums(sf,kk,pt,rho)
          do k = 1,n_k
-            kk = norm2(k_pts(k,:))
-            sf = ZERO
-            do i = 1,n_pt
-               kr = kk*pt(i)
-               sf = sf + rho(i)*sin(kr)/kr
-            end
-            kc  = dot_product(k_pts(k,:),rc)
-            sfc = exp(IMAGIFY(kc)) ! position phase
-            ff(k,u) = sfc * s2 * .atom(c).site_occupancy ! <-----
+            kc = dot_product(k_pts(k,:),rc)
+            ff(k,u) = sf(k) * exp(IMAGIFY(kc)) * s2 * .atom(c).site_occupancy
          end
 
          ! Clean up
+         sf.destroy
          rho.destroy
          pt.destroy
 
@@ -5543,6 +5523,7 @@ contains
       end
 
       ! Clean up
+      kk.destroy
       k_pts.destroy
 
    end
@@ -5792,10 +5773,9 @@ contains
       library  :: STR(len=PATH_SIZE)
       cluster  :: CRYSTAL@
       HS_atoms :: VEC{ATOM}@
-      sa,  k1,k2,k3,kr :: REAL
+      sa :: REAL
       n_atom, n_k,n_pt :: INT
-      a,i,k :: INT
-      sf :: CPX
+      a,i :: INT
       tmp_atom :: VEC{ATOM}@
       found :: BIN
       pos1,pos2 :: VEC{REAL}(3)
@@ -5947,17 +5927,8 @@ contains
 
          ! Make the (symmetry-generated) atomic form factors "ff"
          ! Fourier transform, yay!
-         do k = 1,n_k
-            k1 = k_pts(k,1)
-            k2 = k_pts(k,2)
-            k3 = k_pts(k,3)
-            sf = IMAGIFY(ZERO)
-            do i = 1,n_pt
-               kr = k1*pt(i,1)+k2*pt(i,2)+k3*pt(i,3)
-               sf = sf + rho(i)*exp(IMAGIFY(kr))
-            end
-            ff(k,a) = sf * sa ! <-----
-         end
+         FOURIER_SUMS:exp_ikr_sums(ff(:,a),k_pts,pt,rho)
+         ff(:,a) = ff(:,a) * sa
 
          rho.destroy
          wt.destroy
@@ -6040,11 +6011,9 @@ contains
       pt     :: MAT{REAL}@
       k_pts  :: MAT{REAL}@
       n_unique, n_atom :: INT
-      u,c,k,n_k,i,n_pt :: INT
+      u,c,n_k,n_pt :: INT
       cutoff,sc,s2 :: REAL
-      k1,k2,k3, kr :: REAL
       sf_u   :: VEC{CPX}@
-      sf     :: CPX
       spin   :: BIN
       arch   :: ARCHIVE@
 
@@ -6115,17 +6084,8 @@ contains
          rho = rho*wt
 
          ! Get aspherical form factor sf_u
-         do k = 1,n_k
-            k1 = k_pts(k,1)
-            k2 = k_pts(k,2)
-            k3 = k_pts(k,3)
-            sf = IMAGIFY(ZERO)
-            do i = 1,n_pt
-               kr = k1*pt(i,1)+k2*pt(i,2)+k3*pt(i,3)
-               sf = sf + rho(i)*exp(IMAGIFY(kr))
-            end
-            sf_u(k) = sf * s2
-         end
+         FOURIER_SUMS:exp_ikr_sums(sf_u,k_pts,pt,rho)
+         sf_u = sf_u * s2
 
          ! Write out sf_u
          arch.create(trim(.atom(c).tag)//"-SFs")
@@ -6190,10 +6150,8 @@ contains
       pt     :: MAT{REAL}@
       k_pts  :: MAT{REAL}@
       cutoff,sc,s2 :: REAL
-      k1,k2,k3, kr :: REAL
-      sf     :: CPX
-      k,n_k  :: INT
-      i,n_pt :: INT
+      n_k    :: INT
+      n_pt   :: INT
       c      :: INT
       spin   :: BIN
 
@@ -6254,17 +6212,8 @@ contains
          rho = rho*wt
 
          ! Make the (unique) structure factors
-         do k = 1,n_k
-            k1 = k_pts(k,1)
-            k2 = k_pts(k,2)
-            k3 = k_pts(k,3)
-            sf = IMAGIFY(ZERO)
-            do i = 1,n_pt
-               kr = k1*pt(i,1)+k2*pt(i,2)+k3*pt(i,3)
-               sf = sf + rho(i)*exp(IMAGIFY(kr))
-            end
-            ff(k) = sf * s2 * .atom(c).site_occupancy
-         end
+         FOURIER_SUMS:exp_ikr_sums(ff,k_pts,pt,rho)
+         ff = ff * s2 * .atom(c).site_occupancy
 
          ! Clean up atom "c" stuff
          rho.destroy
