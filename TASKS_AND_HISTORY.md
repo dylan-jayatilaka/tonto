@@ -75,7 +75,35 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## START HERE, 2026-09-25 (late night): the COSX grid -- decisions taken, stage 1 running unattended
+## START HERE, 2026-09-26 (morning): the COSX grid -- measured; C/H/O solved, Zn and S need a design decision
+
+**Where it stands.** Commit `4f763074` on `develop`, **local, not pushed**: the
+`put_cosx_shell_errors` diagnostic and the `cosx_grid= { }` / `cosx_final_grid= { }` blocks. No
+number moves; `h2o_rhf_def2-SVP_RIJCOSX` differs only in its options echo, so it needs a re-bless
+for that (Dylan's, any time) -- which is why it is not pushed: pushing turns that test red.
+**Defaults unchanged.** Every run and number is below; runs in `achari2:~/tonto_runs/cosx_grid_2026-09-25/`.
+
+- **C/H/O: done.** Iterations `low` and a final grid of `pruning_scheme= adaptive` with
+  `l_bonding_angular_grid= 47`, `l_H_angular_grid= 29`, 55 radial points: karrikinolide def2-SVP
+  +1.1e-6, def2-TZVP +1.2e-8, against +2.8e-6 and -1.6e-6 for the old defaults. The patch that
+  makes these the defaults is `cosx_defaults_low_adaptive47.patch` in that directory.
+- **Zn and S: not done.** The zinc finger is +2.6e-5 (def2-SVP) and +6.2e-6 (def2-TZVP) with the
+  old defaults and no better with the C/H/O rule. Its error is angular, on Zn and S: an
+  unpruned final grid at L59 or L71 brings it to -1.8e-6 / +2.7e-6 and -2.2e-6 / +1.7e-6, at
+  1.3-1.8 million points. A rule with orders by row (C/N 47, S 59, Zn 53, and the bonding order
+  kept to the edge of the grid for rows 3 and 4) scores about -3e-6 raw at a quarter of those
+  points.
+- **Decision owed (Dylan):** build that rule? It needs new `BECKE_GRID` components (a `types.foo`
+  edit): per-row bonding orders and an outer zone that does not drop for heavy atoms -- either as
+  an extension of `adaptive`, which XC can also select, or as a separate `cosx` scheme. It is
+  calibrated on one molecule with Zn and S, so a second one (the blue-copper site, or a smaller
+  S/transition-metal molecule) should confirm it.
+- **Also noted:** the `low` iteration grid costs ~1e-6 less than `very_low` in accuracy but doubles
+  the zinc finger's iteration points; overlap fitting adds ~2-7e-7 on a fine grid; a ~1e-6 floor on
+  karrikinolide that more points do not move (Becke partition or a point cutoff) was not chased.
+  No timing is clean: jobs ran several at a time.
+
+### The COSX grid, 2026-09-25 (late night): decisions taken, stage 1 running unattended
 
 **Dylan's three decisions** on the plan of 2026-09-18 (below): (1) measure first, with a per-shell
 diagnostic, not a scan of the grid knobs; (2) `cosx_grid= { }` and `cosx_final_grid= { }` inside
@@ -199,6 +227,31 @@ adaptive zones already have a known second-row gap for XC. The `low` iteration g
 the zinc finger's iteration points (74 676 against 37 800). **Next:** `put_cosx_shell_errors` on the
 zinc finger def2-SVP at 55 and 75 radial points, to see which atoms and zones carry the error. The
 defaults edit (iterations `low`, final adaptive 47/29 at 55) is kept aside, not committed.
+
+**Zinc finger def2-SVP, per-shell** (`put_cosx_shell_errors`, cartesian, 55 and 75 radial points,
+1 h 47 and 2 h 19 on achari2). Exact exchange -192.6879966350. Uniform L, X_COSX - X_exact at 75
+radial: L41 -1.3e-5, L47 -3.8e-6, L53 -3.3e-6, L59 -1.1e-6, L89 +6.2e-7; the L89 totals at 55 and
+75 radial differ by 2e-7, so **the zinc finger's error is angular, not radial**. By zone:
+- C, N, H behave as on karrikinolide: 47/29 is enough.
+- **S, 2.5-6.5 bohr (scaled): still converging at L59** (-1.7e-6 there), roughly halving per six
+  orders.
+- **Zn, 2.5 bohr outwards, and its tail beyond 6.5**: the tail shells (4.6-7.7 bohr) oscillate in
+  sign shell by shell, +-5e-5 at L29 and +-6e-6 at L47, so per-element totals flatter by
+  cancellation. Zn needs about L53 all the way out; the adaptive scheme drops heavy atoms to L29
+  beyond 4.5 and L17 beyond 6.5.
+- Scored: orders by row (H 29, C/N 47, S 59, Zn 53, the bonding order kept to the end of the grid
+  for rows 3 and 4) gives about -3e-6 raw at 0.96 of Treutler-Ahlrichs `high`'s points, against
+  -9e-5 for Treutler-Ahlrichs `high` itself.
+
+**A decision for Dylan, not taken overnight.** The adaptive scheme has one bonding order for every
+atom other than hydrogen, and no outer zone for rows 3+. A COSX grid good on Zn and S needs orders
+by row and an outer zone that does not drop for heavy atoms -- new `BECKE_GRID` components (a
+`types.foo` edit), user-facing keywords, and a choice between extending `adaptive` (which XC can
+select too) and a separate `cosx` scheme; calibrated so far on one molecule with Zn and S.
+
+**Unpruned final grids on the zinc finger** (`pruning_scheme= none`, H at L29, 55 radial,
+iterations `low`): def2-SVP -1.8e-6 at L59 (1 301 310 points) and -2.2e-6 at L71 (1 774 458);
+def2-TZVP +2.7e-6 and +1.7e-6. So enough angular order does reach the target on Zn and S.
 
 **Register, same night (Dylan).** *Make each build type a named intent* and *A portable definition
 of the reference platform* are one superitem, *Reproducible builds*: "reference" needs both the
