@@ -210,3 +210,39 @@ H1 0.055(6), H3 0.044(5) Å².
   is how it gets the bonds wrong. A lower R is not a better geometry here.
 - To say which N–H is right needs the neutron values for urea (thought to be about
   1.00–1.01 Å; to be checked against the published structure).
+
+# 4. All models against the neutron structure
+
+Urea, 123 K. The X-ray data appear to be Birkedal et al.'s 123 K synchrotron set
+(Acta Cryst. A60, 371, 2004; sin θ/λ to 1.44 Å⁻¹). The neutron reference is
+Swaminathan, Craven & McMullan, Acta Cryst. B40, 300 (1984), at 123 K, as tabulated by
+Wall, IUCrJ 3, 237 (2016), Table 4. In our files H1 is the hydrogen on the O side (cis);
+that it matches the neutron H1 has not been checked -- the two neutron values differ by
+only 0.006 Å, so the comparison does not depend on it.
+
+| model | basis | N–H1 /Å | N–H3 /Å | O=C /Å | R(F) | GoF |
+|---|---|---|---|---|---|---|
+| **neutron, 123 K** | | **1.006** | **1.000** | **1.257** | | |
+| IAM (International Tables; SDS H) | -- | 0.905(10) | 0.888(12) | 1.2583(8) | 0.0284 | 6.50 |
+| Hirshfeld | def2-SVP | 1.028(5) | 0.986(6) | 1.2558(4) | 0.0181 | 3.30 |
+| Salvador | def2-SVP | 1.038(5) | 1.026(5) | 1.2557(4) | 0.0190 | 3.54 |
+| `tfvp` | def2-SVP | 1.036(4) | 1.023(4) | 1.2555(4) | 0.0188 | 3.48 |
+| `sph-tfvp` | def2-SVP | 1.069(12) | 0.981(15) | 1.2545(10) | 0.0341 | 8.16 |
+| `sph-tfvp` | STO-3G | 1.048(15) | 0.944(15) | 1.2542(13) | 0.0455 | 10.5 |
+| `sph-tfva` | def2-SVP | does not converge | | | 0.044 | 11.6 |
+
+Differences from the neutron values, N–H1 / N–H3, in Å:
+
+| model | N–H1 | N–H3 |
+|---|---|---|
+| IAM | −0.101 | −0.112 |
+| Hirshfeld, def2-SVP | +0.022 | −0.014 |
+| Salvador, def2-SVP | +0.032 | +0.026 |
+| `tfvp`, def2-SVP | +0.030 | +0.023 |
+| `sph-tfvp`, def2-SVP | +0.063 | −0.019 |
+
+- Hirshfeld in def2-SVP is closest (within 0.022 Å); the Salvador variants are 0.02–0.03 Å
+  long; `sph-tfvp` is within 0.06 Å but uneven; IAM is 0.1 Å short.
+- These are small basis sets and an isolated-molecule wavefunction with cluster charges;
+  published HAR on these data reaches a few mÅ with larger bases. The comparison between
+  models at the same basis is the point here, not the absolute values.
