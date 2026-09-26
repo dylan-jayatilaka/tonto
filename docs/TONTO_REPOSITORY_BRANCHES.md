@@ -83,6 +83,7 @@ on the files named in the annotation shows exactly what went.
 | Tag | What it holds |
 |---|---|
 | `archive/rms-esfs` | The reduced multiplication scheme for the `(es|fs)` contraction in `SHELL1QUARTET`: `form_esfs_rms2`, the `RMS2_INDICES` tables and the `use_rms_esfs=` keyword. Exact, and 1.4-5% slower than the plain contraction at both bases measured; see `docs/SCF_SPEED_REPORT.md`. The shell-pair `RMS_INDICES` tables are not part of it and stay live in `SHELL2`. |
+| `archive/lattice-energy` | The CrystalExplorer lattice energy by summing pair energies: `pair_energy.foo`, `vec{pair_energy}.foo`, the `PAIR_ENERGY` types, `MOLECULE.CE:total_lattice_energy` and its helpers, `CLUSTER:make_pairs_within_radius_of`, and the keywords `pair_energy_model=` and `lattice_energy_convergence=`. None of it could be reached: the keyword that called it was commented out. |
 
 ### The pHAR test: an open dependency, now resolved (2026-08-16)
 

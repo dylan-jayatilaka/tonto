@@ -116,13 +116,16 @@ from a fresh job's.** Next: in a debug build, print the norms of J and K from bo
 to see which differs, then find what the RI-J/COSX iterations leave behind. Runs:
 `achari2:~/tonto_runs/exact_final_2026-09-26/` (including `w_twojob/`).
 
-**Also found today, not started:** the lattice-energy code is dead -- `MOLECULE.CE:total_lattice_energy`
-is called only from a commented-out keyword; the dead-code report lists all 21 `PAIR_ENERGY`
-procedures and 21 of 23 in `VEC{PAIR_ENERGY}`, the other two being the setters behind the keywords
-`pair_energy_model=` and `lattice_energy_convergence=`, which no test uses. Dylan: remove it, with
-an `archive/lattice-energy` tag on the last commit that has it (the convention in
-`docs/TONTO_REPOSITORY_BRANCHES.md`), before the full suite run. Also three watcher loops from
-earlier sessions (55 days old, `while pgrep -f ...` matching themselves) were killed on achari2.
+**Done: the dead lattice-energy code is removed** on `develop`, tagged `archive/lattice-energy` on the
+commit before (`4d1e18c9`). Gone: `pair_energy.foo`, `vec{pair_energy}.foo`, both types, the lattice
+section of `molecule.ce.foo`, `CLUSTER:make_pairs_within_radius_of`, and the keywords
+`pair_energy_model=` and `lattice_energy_convergence=`. A macOS release build compiles. No test
+used any of it. Now unreachable and left in place: `MOLECULE.PROP:symmetric_intermolecular_qm_energies`
+and `intermolecular_polarization_energy`, whose only caller was `total_lattice_energy` -- they sit
+next to the inert energy breakdown, so whether they go is Dylan's call. **Next:** merge `develop`
+into `show-labels-cpp-fix` and run its full suite there, which covers both changes. Also three
+watcher loops from earlier sessions (55 days old, `while pgrep -f ...` matching themselves) were
+killed on achari2.
 
 ## 2026-09-26 (afternoon): the RI metric is done; three new register rows
 
