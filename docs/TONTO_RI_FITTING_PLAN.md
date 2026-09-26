@@ -78,6 +78,13 @@ Gaussian, so `b_P = integral chi_P w_a rho` cannot be an analytic integral. That
 it is `n_aux x n_pt`, not `n_k x n_pt` — but the Becke grid does not go away and grid accuracy
 still matters.
 
+**Per atom first, per molecule later** (Dylan, 2026-09-26). The fit is per Hirshfeld atom to begin
+with; the X-ray work will later want one fit of the whole molecular density. Per atom, the metric
+is small (a few hundred functions on one centre) and cheap. Per molecule it is one metric over every
+auxiliary function -- AuCarbene4-sized, 3012 x 3012 for 104 atoms in univ-JFIT -- and then building
+it, transforming it and factoring it all matter: on achari2 (netlib BLAS) the Cholesky factor of
+that size is 3.7 s, the Coulomb integrals 0.5 s, the spherical transform 0.1 s (section 4).
+
 
 ## 3. The metric is the whole point
 
@@ -110,9 +117,11 @@ is chosen.
 
 Asked during the 2026-09-24 discussion, so recorded here.
 
-`MOLECULE.FOCK:initialize_RI_J` (`foofiles/molecule.fock.foo:2114`) builds the Coulomb metric over
-the auxiliary pair list, transforms cartesian to spherical, and calls `.to_cholesky_factor` — once
-per geometry. Each iteration then does one `.RI_metric_factor.solve_cholesky_equation(ds,cs)`
+`MOLECULE.FOCK:initialize_RI_J` calls `make_RI_metric`, which builds the Coulomb metric over the
+auxiliary pair list in cartesian functions and transforms it to spherical ones a shell pair at a
+time (`make_spherical_metric`), and then `.to_cholesky_factor` — once per geometry. (Until
+2026-09-26 the transform was two dense matrix products: 240 of 244 s on AuCarbene4. A per-molecule
+overlap metric must be transformed the same blockwise way.) Each iteration then does one `.RI_metric_factor.solve_cholesky_equation(ds,cs)`
 (`:2084`), a forward/back substitution, `O(n_aux^2)`.
 
 **Keep Cholesky.** It is the right tool for an SPD metric: half the work of LU, and no pivoting.
@@ -134,6 +143,7 @@ implementation.
 | analytic Gaussian transform | `SHELL2:make_ft_static` / `make_ft_c` / `make_ft_component`, `foofiles/shell2.foo:493` | computes the ordinary molecular structure factors, and a one-centre (L,0) pair is exactly what it takes — so **no new integral code** for the transform of the fitted density |
 | Cholesky factor and solve | `MAT{REAL}:to_cholesky_factor`, `solve_cholesky_equation` | reused unchanged |
 | auxiliary values on the Becke grid | `SHELL1:make_grid` | for the right-hand side |
+| metric setup | `MOLECULE.FOCK:make_RI_metric`, `make_spherical_metric` | the auxiliary basis, pair list and shell-pair spherical transform are the same for any metric; give it a choice of metric, since only the integral step differs |
 
 **New work**: the metric builder (`GAUSSIAN_PAIR_LIST:make_coulomb_metric` is the template), the
 grid right-hand side `b_P`, and the contraction of `c_P` with the analytic transform.

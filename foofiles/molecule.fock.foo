@@ -2108,26 +2108,49 @@ contains
    ! between the spherical auxiliary functions, for this geometry.
       self :: INOUT
 
+      .make_RI_metric(.RI_metric_factor)
+      .RI_metric_factor.to_cholesky_factor
+
+   end
+
+   make_RI_metric(V,times,n_shell,n_cart) :: leaky
+   ! Make "V", the coulomb metric (P|1/r12|Q) between the spherical
+   ! auxiliary functions, for this geometry, reading the auxiliary basis
+   ! sets if need be. It is made in the cartesian functions by the Rys
+   ! kernel on the auxiliary pair list, then transformed a shell pair at
+   ! a time (.make_spherical_metric). If present, "times" returns the CPU
+   ! seconds of those two steps, and "n_shell" and "n_cart" the numbers
+   ! of auxiliary shells and cartesian auxiliary functions.
+      self :: INOUT
+      V :: MAT{REAL}@, OUT
+      times :: VEC{REAL}(2), optional, OUT
+      n_shell,n_cart :: INT, optional, OUT
+
       Vc :: MAT{REAL}@
       shell_l,first_cart,first_sph :: VEC{INT}@
       aux :: GAUSSIAN_PAIR_LIST
-      n_shell,n_cart,n_sph :: INT
+      t0,t1 :: REAL
+      ns,nc,n_sph :: INT
 
       .resolve_auxiliary_bases
       .make_auxiliary_pair_list(aux,shell_l,first_cart,first_sph)
 
-      n_shell = shell_l.dim
-      n_cart = first_cart(n_shell) + GAUSSIAN_DATA:n_comp(shell_l(n_shell)) - 1
-      n_sph  = first_sph(n_shell) + 2*shell_l(n_shell)
+      ns = shell_l.dim
+      nc = first_cart(ns) + GAUSSIAN_DATA:n_comp(shell_l(ns)) - 1
+      n_sph = first_sph(ns) + 2*shell_l(ns)
 
-      Vc.create(n_cart,n_cart)
+      Vc.create(nc,nc)
+      t0 = TIME::current_cpu_time()
       aux.make_coulomb_metric(Vc,first_cart)
+      t1 = TIME::current_cpu_time()
 
-      .RI_metric_factor.destroy
-      .RI_metric_factor.create(n_sph,n_sph)
-      .make_spherical_metric(.RI_metric_factor,Vc,shell_l,first_cart,first_sph)
+      V.create(n_sph,n_sph)
+      .make_spherical_metric(V,Vc,shell_l,first_cart,first_sph)
       Vc.destroy
-      .RI_metric_factor.to_cholesky_factor
+
+      if (present(times)) times = [t1-t0, TIME::current_cpu_time()-t1]
+      if (present(n_shell)) n_shell = ns
+      if (present(n_cart))  n_cart  = nc
 
    end
 
@@ -2179,8 +2202,8 @@ contains
    put_RI_metric_timings :: leaky
    ! Time the three steps of .initialize_RI_J for this geometry and
    ! auxiliary basis: the cartesian coulomb metric (the Rys kernel on
-   ! the auxiliary pair list), its transformation to the spherical
-   ! functions (.make_spherical_metric), and the Cholesky factor. Each
+   ! the auxiliary pair list) and its transformation to the spherical
+   ! functions, both by .make_RI_metric, and the Cholesky factor. Each
    ! step is timed three times and the least CPU time is put, on lines
    ! that begin "CPU time" so the
    ! test harness ignores them; log det V, from the Cholesky factor, is
@@ -2189,56 +2212,45 @@ contains
    ! two-center integrals (TASKS_AND_HISTORY.md).
       self :: INOUT
 
-      Vc,V :: MAT{REAL}@
-      shell_l,first_cart,first_sph :: VEC{INT}@
-      aux :: GAUSSIAN_PAIR_LIST
+      V :: MAT{REAL}@
       t :: VEC{REAL}(3)
+      tt :: VEC{REAL}(2)
       t0,t1,log_det :: REAL
       k,n_shell,n_cart,n_sph,rep :: INT
 
-      .resolve_auxiliary_bases
-      .make_auxiliary_pair_list(aux,shell_l,first_cart,first_sph)
-
-      n_shell = shell_l.dim
-      n_cart = first_cart(n_shell) + GAUSSIAN_DATA:n_comp(shell_l(n_shell)) - 1
-      n_sph  = first_sph(n_shell) + 2*shell_l(n_shell)
-
-      Vc.create(n_cart,n_cart)
-      V.create(n_sph,n_sph)
       t = huge(ONE)
 
       do rep = 1,3
+         .make_RI_metric(V,tt,n_shell,n_cart)
+         t(1) = min(t(1),tt(1))
+         t(2) = min(t(2),tt(2))
          t0 = TIME::current_cpu_time()
-         aux.make_coulomb_metric(Vc,first_cart)
-         t1 = TIME::current_cpu_time(); t(1) = min(t(1),t1-t0)
-         .make_spherical_metric(V,Vc,shell_l,first_cart,first_sph)
-         t0 = TIME::current_cpu_time(); t(2) = min(t(2),t0-t1)
          V.to_cholesky_factor
          t1 = TIME::current_cpu_time(); t(3) = min(t(3),t1-t0)
       end
+      n_sph = V.dim1
 
       stdout.flush
-      stdout.text("===================================")
+      stdout.text("=====================================")
       stdout.text("Coulomb metric of the auxiliary basis")
-      stdout.text("===================================")
+      stdout.text("=====================================")
       stdout.flush
-      stdout.show("Auxiliary basis ................",.auxiliary_basis_name)
-      stdout.show("Auxiliary shells ...............",n_shell)
-      stdout.show("Spherical functions ............",n_sph)
-      stdout.show("Cartesian functions ............",n_cart)
+      stdout.show("Auxiliary basis                =",.auxiliary_basis_name)
+      stdout.show("Auxiliary shells               =",n_shell)
+      stdout.show("Spherical functions            =",n_sph)
+      stdout.show("Cartesian functions            =",n_cart)
       log_det = ZERO
       do k = 1,n_sph
          log_det = log_det + TWO*log(V(k,k))
       end
-      stdout.show("log det V ......................",log_det)
+      stdout.show("log det V                      =",log_det)
       stdout.flush
-      stdout.show("CPU time, cartesian metric (Rys)",t(1))
-      stdout.show("CPU time, to spherical .........",t(2))
-      stdout.show("CPU time, Cholesky factor ......",t(3))
-      stdout.show("CPU time, total ................",sum(t))
+      stdout.show("CPU time, Rys integrals        =",t(1))
+      stdout.show("CPU time, to spherical         =",t(2))
+      stdout.show("CPU time, Cholesky factor      =",t(3))
+      stdout.show("CPU time, total                =",sum(t))
 
       V.destroy
-      Vc.destroy
 
    end
 
@@ -2574,7 +2586,7 @@ contains
       if (.SCF_data.using_COSX_overlap_fitting) .make_COSX_fit
 
       if (.SCF_data.show_timings) &
-      stdout.show("COSX grid points ...............",.COSX_pts.dim1)
+      stdout.show("COSX grid points               =",.COSX_pts.dim1)
 
    end
 
@@ -2962,9 +2974,9 @@ contains
       end
 
       stdout.flush
-      stdout.text("=======================================================")
+      stdout.text("==================================================")
       stdout.text("COSX grid: angular error per radial shell, by atom")
-      stdout.text("=======================================================")
+      stdout.text("==================================================")
       stdout.flush
       stdout.text("X     = shell contribution to the COSX exchange energy, -(1/4) tr(P K)")
       stdout.text("dX(L) = X at Lebedev order L minus X at L = "//trim(Ls(nL).to_str)// &
@@ -3026,9 +3038,9 @@ contains
          end
 
          stdout.flush
-         stdout.show("  points on this atom's grid ..........",n_atom_pts)
-         stdout.show("  X of this atom's grid ...............",atom_X)
-         stdout.show("  sum over shells of |dX used| ........",atom_err)
+         stdout.show("  points on this atom's grid          =",n_atom_pts)
+         stdout.show("  X of this atom's grid               =",atom_X)
+         stdout.show("  sum over shells of |dX used|        =",atom_err)
 
       end
 
@@ -3036,8 +3048,8 @@ contains
       P.destroy
 
       stdout.flush
-      stdout.show("Exact exchange energy .................",X_exact)
-      stdout.show("COSX exchange energy, orders used .....",X_used_mol)
+      stdout.show("Exact exchange energy                 =",X_exact)
+      stdout.show("COSX exchange energy, orders used     =",X_used_mol)
       stdout.flush
       stdout.text("      L        X_COSX - X_exact")
       do k = 1,nL

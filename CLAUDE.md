@@ -239,6 +239,10 @@ bugs.
 ## 8. Conventions & gotchas
 
 - Edit `.foo` sources in `foofiles/`, never the generated Fortran.
+- **`stdout.show` labels end in spaces and `=`**, as in `"Total energy        ="`: `show` turns them
+  into a row of dots that lines up with the lines around it. Never write the dots yourself, and
+  use `dots=FALSE` for a sentence; a label without `=` gets a short ` ..` that aligns with nothing.
+  Match a heading's `====` underline to its text.
 - During a normal build, generated Fortran lands in the build tree (e.g. `build/`, `release/`);
   do not hand-edit it — edit the `.foo` sources instead.
 - `external/lapack-release` is the **only** git submodule; clone with `--recursive`. ANTLR4 is
