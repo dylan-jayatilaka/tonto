@@ -187,7 +187,7 @@ For the pictures, 32 reference PDFs are committed across 11 of the 13
 directories. Nothing compares them automatically; they are visual targets.
 
 - **Fast loop:** a diatomic (N2, BN, CO). Seconds, and exercises both halves.
-- **The gate:** `ylid` — the only case with hydrogens, so the only one that
+- **The main check:** `ylid` — the only case with hydrogens, so the only one that
   exercises the `+H`/`-H` split, the atom labelling and a multi-bond dial table.
   About 2 minutes to run, 15 seconds to draw.
 

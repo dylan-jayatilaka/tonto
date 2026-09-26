@@ -10,6 +10,20 @@ Read this first. It is the rule most often broken, and breaking it is expensive:
 of explanatory text is cheap for a model to write and costly for a person to read, and it
 crowds out the direction of the project.
 
+**Plain language, everywhere.** Dylan is a scientific programmer, not a software engineer,
+and Tonto's users are scientists. Write for them — in documents, in code comments, in commit
+messages and in conversation. Use a jargon word only when no plain word will do, and then say
+what it means the first time. Say what happens rather than naming the practice:
+
+| Not this | This |
+|---|---|
+| the suite is gated on the loose criterion | a test passes if every number agrees with its reference to 0.2%, or to within 2 in the last digit |
+| a red badge means a regression | a failed test means Tonto's results have changed |
+| not a flag difference | not a difference in compiler settings |
+| `WARN` is gated on `USE_PRECONDITIONS` | `WARN` exists only when `USE_PRECONDITIONS` is defined |
+
+One idea per sentence. If a sentence has to be read twice, rewrite it.
+
 **Three kinds of writing, and they do not mix.**
 
 | Where | Audience | Rule |
@@ -211,8 +225,8 @@ those to warnings. `scripts/wsl_doctor.sh` is the user-facing preflight;
 ## 7. Validation
 
 Build a `release` tree and run `ctest` — but, like `make`, **ask before launching a long
-build/test run** (§11). The pass/fail gate is the **loose** criterion in `scripts/test.py`
-(rel ≤ 0.2% OR last-digit ≤ 2), not exact match.
+build/test run** (§11). A test passes by the **loose** criterion in `scripts/test.py`
+(every number within 0.2%, or within 2 in the last printed digit), not by exact match.
 
 **Quote a score with the suites it counted**, or it cannot be compared with the next one:
 `short long hart` is **106** tests (68 + 33 + 5, by `ctest -N -L`) and is what
@@ -262,6 +276,7 @@ documents (§1). The `*_REPORT.md` and per-item pages in `docs/` are working doc
 ## 11. Working agreement
 
 - Plan before coding; don't run `make` / `ctest` without asking.
+- **Write in plain language** (§1) — chat, documents, comments and commit messages alike.
 - **A parallel build is safe, and `-j` is the right thing to use.** `FOO_TRANSLATOR_XMX` caps
   every per-file translator JVM at `512m`, and `FOO_ANALYSIS_XMX` gives the whole-library modes
   `2g`. Scale `-j` to free memory at roughly 512 MB per job. Two rules follow:
@@ -277,8 +292,8 @@ documents (§1). The `*_REPORT.md` and per-item pages in `docs/` are working doc
 - **`#undef`s `PURE`**, so a probe can go inside a `PURE` routine. In release, `PURE` is real and
   a `stdout.show`/`flush` there fails to compile — usually with a misleading "no specific
   subroutine for the generic `flush_`" rather than a purity error.
-- **activates `WARN` / `WARN_IF`**, which are gated on `USE_PRECONDITIONS` and so compile to
-  nothing in release. `DIE`/`DIE_IF` are gated on `USE_ERROR_MANAGEMENT` and *are* live in
+- **activates `WARN` / `WARN_IF`**, which exist only when `USE_PRECONDITIONS` is defined and so
+  compile to nothing in release. `DIE`/`DIE_IF` exist when `USE_ERROR_MANAGEMENT` is defined, and so *are* live in
   release. A check that must fire in production has to be a `DIE`.
 - adds `-fcheck=bounds`.
 

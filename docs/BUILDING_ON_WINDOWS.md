@@ -194,8 +194,8 @@ CMake Error at CMakeLists.txt:16 (project):
   No CMAKE_C_COMPILER could be found.
 ```
 
-Ubuntu CI runners and most desktop installs ship `gcc` already, which is why this
-only bites on a bare WSL image. `scripts/wsl_doctor.sh` checks for it.
+Most Ubuntu installations already have `gcc`; a fresh WSL Ubuntu does not.
+`scripts/wsl_doctor.sh` checks for it.
 
 ## Other build types
 
@@ -241,15 +241,14 @@ not reproduce.
 
 Two layers, because they cost very different amounts — see `.github/workflows/ci-wsl.yml`:
 
-- **`scripts/wsl_selftest.sh`** — every condition above is path- or file-shaped, so all
-  of them can be simulated on an ordinary Linux box. The self-test drives
-  `cmake/WSL.cmake` through a throwaway harness project and asserts, for each case, both
-  the exit status and the message. It takes seconds and runs on **every push**.
-- **A real WSL2 Ubuntu on a Windows runner** — configures, builds, and runs the short
-  suite through `scripts/suite_report.py`, with the same loose gate as Linux CI so the
-  numbers are directly comparable. It also re-checks the guards against a genuine drvfs
-  mount and a genuine interop `PATH`. This runs weekly, on demand, and on any push that
-  touches the WSL machinery.
+- **`scripts/wsl_selftest.sh`** — every problem above depends only on paths and files, so
+  all of them can be imitated on an ordinary Linux machine. The self-test runs
+  `cmake/WSL.cmake` on each case and checks both that it stops and that it prints the right
+  message. It takes seconds and runs on **every push** to GitHub.
+- **A real WSL 2 Ubuntu on a Windows machine at GitHub** — builds Tonto and runs the `short`
+  tests with the same pass criterion as on Linux, so the results can be compared directly. It
+  also repeats the checks on a real Windows drive and a real Windows `PATH`. It runs weekly,
+  on request, and whenever the WSL build files change.
 
-See [`TONTO_CONTINUOUS_INTEGRATION.md`](TONTO_CONTINUOUS_INTEGRATION.md) for how to start either job by hand and how to read the result —
-including the reason a manual run needs the workflow file on the default branch.
+[`TONTO_CONTINUOUS_INTEGRATION.md`](TONTO_CONTINUOUS_INTEGRATION.md) says how to run either
+check by hand and how to read the result.

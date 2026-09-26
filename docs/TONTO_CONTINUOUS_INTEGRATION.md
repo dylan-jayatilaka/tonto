@@ -1,79 +1,87 @@
 # Continuous integration
 
-The workflows live in `.github/workflows/`. The repository is public, so GitHub-hosted
-runners are free; what differs is wall-clock time, which is why only the quick ones run on
-every push.
+GitHub builds and tests Tonto automatically. Each set of checks is a *workflow*, described
+by a file in `.github/workflows/`. GitHub runs them free of charge because the repository is
+public. Some take over an hour, so only the quick ones run every time a change is pushed; the
+rest run weekly or monthly.
 
 ## What runs
 
-| Workflow | File | Badge | Runs |
+| Workflow | File | Badge | When it runs |
 |---|---|---|---|
-| Linux-release | `ci.yml` | yes | every push / PR to `master` and `develop` |
-| Linux-debug | `ci-debug.yml` | yes | every push / PR to `master` and `develop` |
-| Linux-MPI | `ci-mpi.yml` | yes | weekly (Mon), on demand, and on pushes touching MPI code |
-| WSL-release | `ci-wsl.yml` | yes | `guards` job on every push; the full WSL build weekly (Mon), on demand, and on pushes touching the WSL machinery |
-| WSL-debug | `ci-wsl-debug.yml` | yes | weekly (Tue), on demand |
-| WSL-MPI | `ci-wsl-mpi.yml` | no | weekly (Fri), on demand |
-| macOS-release | `ci-macos.yml` | yes | weekly (Tue), on demand; gfortran-14 and 16 |
-| macOS-debug | `ci-macos-debug.yml` | yes | weekly (Thu), on demand |
-| macOS-MPI | `ci-macos-mpi.yml` | yes | weekly (Wed), on demand; gfortran-16 with Homebrew Open MPI |
-| Full suite | `ci-full-suite.yml`, `ci-full-suite-macos.yml` | no | monthly (1st, 2nd), on demand |
-| RGBI tools | `ci-rgbi.yml`, `ci-rgbi-macos.yml` | no | weekly, and on pushes touching `rgbi-scripts/` |
-| Release | `release.yml` | — | a `v*` tag: builds and publishes the Linux and Windows binaries |
+| Linux-release | `ci.yml` | yes | every push to `master` or `develop` |
+| Linux-debug | `ci-debug.yml` | yes | every push to `master` or `develop` |
+| Linux-MPI | `ci-mpi.yml` | yes | Mondays, on request, and when MPI code changes |
+| WSL-release | `ci-wsl.yml` | yes | a one-minute check every push; the full Windows build on Mondays, on request, and when the WSL build files change |
+| WSL-debug | `ci-wsl-debug.yml` | yes | Tuesdays, on request |
+| WSL-MPI | `ci-wsl-mpi.yml` | no | Fridays, on request |
+| macOS-release | `ci-macos.yml` | yes | Tuesdays, on request; with gfortran-14 and gfortran-16 |
+| macOS-debug | `ci-macos-debug.yml` | yes | Thursdays, on request |
+| macOS-MPI | `ci-macos-mpi.yml` | yes | Wednesdays, on request; gfortran-16 with Homebrew's Open MPI |
+| Full suite | `ci-full-suite.yml`, `ci-full-suite-macos.yml` | no | on the 1st and 2nd of each month, on request |
+| RGBI tools | `ci-rgbi.yml`, `ci-rgbi-macos.yml` | no | weekly, and when `rgbi-scripts/` changes |
+| Release | `release.yml` | — | when a version tag `v*` is pushed: builds the Linux and Windows downloads |
 
-Badges track `master`. No platform has a parallel *debug* build.
+The badges on the README show the latest result on `master`. No platform yet tests a
+parallel *debug* build.
 
 ## What each one checks
 
-- **Release** workflows build `-DCMAKE_BUILD_TYPE=reference` — the profile references are
-  blessed with, so a red badge means a regression, not a flag difference — and run the
-  `short` suite (and `hart`, except under WSL) through `scripts/suite_report.py`, gated on the **loose**
-  criterion (relative error ≤ 0.2 % or last printed digit within ±2). They also run the
-  invariant checks, which compare the program against itself (spherical against cartesian
-  bases, `hart --help` against the options it accepts, Lebedev grids against their order).
-  `ci-macos.yml` also asserts the arm64 `-O2` pin on `shell1quartet.F90` is in the flags.
-- **Debug** workflows build `debug` and run two quick jobs to prove the binary runs. They do
-  not run the suite: the `-O0` build has known floating-point boundary failures, listed in
-  `TASKS_AND_HISTORY.md`.
-- **MPI** workflows gate on the π rank-invariance check (`scripts/check_mpi_pi.sh`). The suite
-  step is informational — the MPI build has open defects (`docs/TONTO_AND_MPI.md`) — so read
-  the gate line, not the suite total.
-- **Full suite** runs `short`, `long` and `hart`; nothing else runs `long`.
+- **Release workflows** build Tonto with the same compiler settings used to make the stored
+  reference outputs (`-DCMAKE_BUILD_TYPE=reference`). So when a test fails, Tonto's results
+  have changed; it is not because the compiler settings differ. They run the `short` tests,
+  and the `hart` tests except under WSL. A test passes if every number in its output agrees
+  with the reference to within 0.2%, or to within 2 in the last printed digit.
+- **Release workflows also run self-consistency checks**, which need no stored reference: a
+  spherical and a cartesian basis must give the same answer where they should, `hart --help`
+  must list exactly the options `hart` accepts, and each Lebedev grid must integrate exactly to
+  its stated order. On a Mac, `ci-macos.yml` also checks that `shell1quartet.F90` is still
+  compiled at `-O2`, which Apple silicon needs.
+- **Debug workflows** build the debug version and run two quick jobs, to show that it builds
+  and runs. They do not run the test suite, because the debug build has some known failures
+  (listed in `TASKS_AND_HISTORY.md`).
+- **MPI workflows** pass if π comes out the same on 1, 2 and 4 processes
+  (`scripts/check_mpi_pi.sh`). They run the test suite too, but only for information: the
+  parallel build still has known faults (`docs/TONTO_AND_MPI.md`). Read the π line, not the
+  suite total.
+- **The full suite** runs the `short`, `long` and `hart` tests. It is the only workflow that
+  runs `long`.
 
-**A skip is an error.** Suite runs pass `--skips-are-errors`, so a test that declines to run
-reddens the run. CI runs `suite_report.py`, not `ctest`: a check registered only in
-`tests/CMakeLists.txt` is not in CI.
+A test that does not run at all — for example because `numpy` is missing — counts as a
+failure. The workflows run the tests with `scripts/suite_report.py`, not `ctest`, so a check
+added only to `tests/CMakeLists.txt` is not tested on GitHub.
 
 ## Running a workflow by hand
 
-A workflow can be dispatched, and its `schedule:` fires, **only if its file is on `master`**.
-A workflow that exists only on another branch never runs.
+GitHub can only run a workflow — by hand or on its weekly schedule — **if its file is on the
+`master` branch**. A workflow that exists only on another branch never runs.
 
 ```bash
-gh workflow run ci-macos.yml --ref develop
-gh workflow run ci-wsl.yml --ref develop -f run_full_build=false   # guards only
-gh run list --workflow=ci-macos.yml
-gh run view --log-failed
-gh run download <run-id>          # tests.log and *.bad outputs
+gh workflow run ci-macos.yml --ref develop                        # run it on develop
+gh workflow run ci-wsl.yml --ref develop -f run_full_build=false  # the one-minute WSL check only
+gh run list --workflow=ci-macos.yml                               # recent results
+gh run view --log-failed                                          # what went wrong
+gh run download <run-id>                                          # tests.log and the *.bad outputs
 ```
 
-Or: **Actions** → the workflow → **Run workflow** → pick a branch.
+Or on the website: **Actions** → choose the workflow → **Run workflow** → choose a branch.
 
-Every run writes its agreement table to the run's **Summary** page; `tests.log` and any
-`*.bad` files are attached as artifacts.
+Each run shows its table of test results on the run's **Summary** page. The full log,
+`tests.log`, and the output of any failed test, `*.bad`, can be downloaded from the run.
 
 ## Changing a workflow
 
-- **The compiler** for Linux-MPI is `FC_VERSION` in `ci-mpi.yml`; the Open MPI cache key
-  carries it. The MPI must be built by the same compiler as Tonto, which is why Linux builds
-  Open MPI from source and macOS can use Homebrew's.
-- **Scheduled runs stop** after 60 days without repository activity; re-enable them in the
+- **The compiler for Linux-MPI** is set by `FC_VERSION` in `ci-mpi.yml`. The MPI library must be
+  built with the same compiler as Tonto, so the Linux workflow builds Open MPI itself and keeps
+  it for later runs; changing `FC_VERSION` makes it rebuild. macOS can use Homebrew's Open MPI.
+- **Weekly runs stop** if the repository has no activity for 60 days. Turn them back on in the
   Actions tab.
-- **Disabling a badged workflow:** comment out its `push`/`pull_request` triggers (keep
-  `workflow_dispatch`) and comment out its badge in `README.md` — both, or the badge points
-  at a workflow that never runs.
-- **Inside WSL** (`ci-wsl*.yml`): set `core.autocrlf false` before `actions/checkout`, or the
-  CRLF guard in `cmake/WSL.cmake` refuses to configure; install `gcc`, which a bare WSL Ubuntu
-  lacks; and write `$GITHUB_STEP_SUMMARY`, `$GITHUB_OUTPUT` and `$GITHUB_ENV` from a
-  Windows-side step, since they are not visible inside the distro. If a runner loses nested
-  virtualisation, set `wsl-version: '1'`.
+- **To switch off a workflow that has a badge,** comment out its `push` and `pull_request`
+  lines (keep `workflow_dispatch`, so it can still be run by hand) and comment out its badge in
+  `README.md`. Do both, or the badge keeps showing an old result.
+- **The WSL workflows** (`ci-wsl*.yml`) have three traps. Git on Windows must be told not to
+  convert line endings (`core.autocrlf false`) before the checkout step, or the WSL build
+  refuses to start. A bare WSL Ubuntu has no C compiler, so `gcc` must be installed. And the
+  GitHub variables for the run summary (`$GITHUB_STEP_SUMMARY`, `$GITHUB_OUTPUT`, `$GITHUB_ENV`)
+  are not visible inside WSL, so they must be written from a Windows step. If WSL 2 fails to
+  start on GitHub's Windows machines, set `wsl-version: '1'`.

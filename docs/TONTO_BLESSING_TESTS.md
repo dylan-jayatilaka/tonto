@@ -45,13 +45,14 @@ Check whether a failure is one of these before investigating it. Measured cases 
    cmake .. -DTONTO_ARCH_FLAG="-march=znver3"     # or a named target
    ```
 
-2. **Fast-math.** `release` uses `-Ofast`, which permits floating-point reassociation. Compilers
-   reassociate differently from release to release, so `-Ofast` drifts between compiler versions on
-   the same hardware.
+2. **Fast-math.** `release` uses `-Ofast`, which lets the compiler change the order of
+   floating-point operations. Different compiler versions choose different orders, so the last
+   digits change between compiler versions, even on the same machine.
 
-3. **The BLAS.** Netlib reference BLAS/LAPACK has no runtime CPU dispatch, so it is deterministic.
-   OpenBLAS picks kernels from the detected microarchitecture, which reintroduces machine
-   dependence — and a container does not help, because a container shares the host CPU.
+3. **The BLAS.** The reference (netlib) BLAS and LAPACK run the same code on every processor,
+   so they give the same results everywhere. OpenBLAS chooses different code for different
+   processors, so its results depend on the machine — and running in a container does not help,
+   because a container uses the machine's own processor.
 
 4. **The compiler version**, including a different *minor* release of the same major version.
 
@@ -89,7 +90,8 @@ Four rules:
 - **Read every diff first.** `--bless` refuses output that shrinks by more than
   `--bless-min-line-ratio`, and nothing else protects you. Separate the three cases: an added output
   line (structural, harmless), one of the unstable quantities above, and a genuine numerical change.
-- **Bless on the platform the badges gate on.** A reference carries `Platform:` and `Compiler:` in
-  its banner — read them before assuming your machine can reproduce it.
+- **Bless on the platform the badges test on** (Linux, gfortran-14, reference BLAS). A reference
+  output records `Platform:` and `Compiler:` at the top — read them before assuming your machine
+  can reproduce it.
 - **One reason at a time.** Two changes blessed together cannot be told apart afterwards.
 - **`--bless-anyway` overrides the shrink guard.** If you need it, you probably have a broken build.

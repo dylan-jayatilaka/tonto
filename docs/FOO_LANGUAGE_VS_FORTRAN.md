@@ -27,13 +27,13 @@ symbol table in the parser.
 | chain link | `complexDataRefTail : sectionSubscriptRef \| PCT NAME` | `trailer : (DOT\|PERCENT) name \| LPAREN argList? RPAREN \| …` |
 | section arg | `sectionSubscript` / `subscriptTripletTail` | `arg` |
 | component sep | `%` (`PCT`) | `.` or `%` (synonyms) |
-| **who resolves `A(I)`?** | **nobody** — the downstream pass was never written | `FooToFortran.java`, via `curType` + `types.isComponent` |
+| **who resolves `A(I)`?** | **nobody** — the later step that would do it was never written | `FooToFortran.java`, via `curType` + `types.isComponent` |
 
 The last row is the whole difference. grammars-v4 "resolves" the array-vs-function
 ambiguity by *collapsing* it: `functionReference` matches only `F()` or a call carrying a
 keyword argument, so every positional call `SIN(X)` parses as an array reference, and
 `primary` lists `nameDataRef` first so the array reading always wins. Statement functions
-versus array assignment are likewise merged into `sFExprListRef`. Nothing downstream ever
+versus array assignment are likewise merged into `sFExprListRef`. No later step ever
 tells them apart.
 
 `Foo.g4` has the same permissive chain but the translator *does* the pass. `translatePostfix`
