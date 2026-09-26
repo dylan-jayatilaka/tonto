@@ -77,21 +77,23 @@ because by then it held far more than deferred items.)*
 
 ## START HERE, 2026-09-26 (night): labels merged; one branch waiting -- read this first
 
-**Branch `fourier-sums` (pushed, not merged): the form-factor Fourier sums, and `sph-tfva`.**
-- `a7db4107` stage 1: `foofiles/fourier_sums.foo`, module `FOURIER_SUMS` with no type of its own;
-  the six copies of the exp(i k.r) loop and the sin(kr)/kr loop call it. Checked on achari2: every
-  test run with the develop and the branch reference builds gives identical agreement lines (169
-  compared outputs, 147 exact with each, none failing).
-- `a85aa9f9` stage 3: loops swapped and a vectorising sin/cos (version F), with the file's own
-  compiler flags; the reasons, the A-F timings and a warning about other compilers are in the module
-  header, and `scripts/ff_loop_bench.f90` is now tracked. Quartz L1 HAR on the Mac 26.8 s -> 20.6 s.
-  **Owed before merging:** the full suite on achari2 and one re-bless of the HAR tests (expected
-  changes: last digits, and the ADP column widths of the parked column-width item).
-- `50a10d21`: `sph-tfva` averages over each shell's Lebedev grid (`make_sph_avgd_SA_ED_v1`,
-  rewritten -- it had never run); electron counts equal the Salvador populations to 4 decimals. Also
-  fixes `BECKE_GRID:make_Salvador_cell_fn`'s debug-only check (`pts.dim1` for `pts.dim2`), which
-  stopped every debug run using Salvador atoms -- likely the untracked debug failure of
-  `urea_ccsd_pob-TZVP_Salvador_properties`; confirm by running it in a debug build.
+**Merged to `develop` on 2026-09-27: branches `fourier-sums` and `tfvp`.** The research results
+are in `docs/RESEARCH_ON_SALVADOR_MODELS.md`. What went in:
+- `FOURIER_SUMS` (`foofiles/fourier_sums.foo`): the form-factor sums in one module, loops swapped,
+  a vectorising sin/cos with the file's own compiler flags (reasons and A-F timings in its header;
+  `scripts/ff_loop_bench.f90` tracked). Full suite on achari2 at `63075d7e`: 156/156, no re-bless
+  needed. hart suite CPU 202 -> 84 s.
+- Salvador cell function N^3 -> N^2, one copy instead of two (`b3353d40`); weights bit-identical on
+  karrikinolide; 182-atom alkane 4 min 38 s -> 1 min 26 s.
+- Density on grids in batches (`make_ED_grid_r_v2`, `5f945a95`), and `dgemm` declared pure so it
+  can use BLAS (`21c01a1a`): karrikinolide Salvador test 8.7 s -> 1.3 s. Full suite at `5f945a95`
+  passed. **The later commits -- tfvp, the pure dgemm (a full rebuild), sph-tfvp -- have not had
+  a full suite run yet: run one on `develop`.**
+- New partition models `tfvp` and `sph-tfvp`; three sph-tfva bugs fixed; the debug-only check in
+  `make_Salvador_cell_fn` fixed (likely the untracked debug failure of
+  `urea_ccsd_pob-TZVP_Salvador_properties`: confirm).
+- **No tests yet for tfvp or sph-tfvp.** `tests/long/urea_rhf_STO-3G_TFVP_HAR/` exists locally
+  on the Mac without a reference; bless it on achari2.
 
 **`sph-tfva` (spherically averaged Salvador atoms): a science result, not a code bug.** Urea STO-3G
 (`long/urea_rhf_STO-3G_HAR` with only `partition_model=` changed). The form factors agree with the
