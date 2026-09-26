@@ -77,6 +77,43 @@ because by then it held far more than deferred items.)*
 
 ## START HERE, 2026-09-26 (night): labels merged; one branch waiting -- read this first
 
+**Branch `fourier-sums` (pushed, not merged): the form-factor Fourier sums, and `sph-tfva`.**
+- `a7db4107` stage 1: `foofiles/fourier_sums.foo`, module `FOURIER_SUMS` with no type of its own;
+  the six copies of the exp(i k.r) loop and the sin(kr)/kr loop call it. Checked on achari2: every
+  test run with the develop and the branch reference builds gives identical agreement lines (169
+  compared outputs, 147 exact with each, none failing).
+- `a85aa9f9` stage 3: loops swapped and a vectorising sin/cos (version F), with the file's own
+  compiler flags; the reasons, the A-F timings and a warning about other compilers are in the module
+  header, and `scripts/ff_loop_bench.f90` is now tracked. Quartz L1 HAR on the Mac 26.8 s -> 20.6 s.
+  **Owed before merging:** the full suite on achari2 and one re-bless of the HAR tests (expected
+  changes: last digits, and the ADP column widths of the parked column-width item).
+- `50a10d21`: `sph-tfva` averages over each shell's Lebedev grid (`make_sph_avgd_SA_ED_v1`,
+  rewritten -- it had never run); electron counts equal the Salvador populations to 4 decimals. Also
+  fixes `BECKE_GRID:make_Salvador_cell_fn`'s debug-only check (`pts.dim1` for `pts.dim2`), which
+  stopped every debug run using Salvador atoms -- likely the untracked debug failure of
+  `urea_ccsd_pob-TZVP_Salvador_properties`; confirm by running it in a debug build.
+
+**`sph-tfva` (spherically averaged Salvador atoms): a science result, not a code bug.** Urea STO-3G
+(`long/urea_rhf_STO-3G_HAR` with only `partition_model=` changed). The form factors agree with the
+Salvador ones to 0.13 (the aspherical part), yet the HAR fails:
+
+| model | outcome |
+|---|---|
+| Salvador, all aspherical | converges, R 0.038 |
+| spherical H, aspherical C/N/O (experimental build) | converges in 5 cycles, R 0.041 |
+| aspherical H, spherical C/N/O (experimental build) | H1 moves 0.79 bohr in cycle 1, then segfault -- possibly the experimental edit, unchecked |
+| sph-tfva, all spherical | first fit starts at R 0.054, then H1 runs away, R = 1 |
+| sph-tfva, H U isotropic | converges to R 0.0533, then flip-flops for ever between two values of H3's U_iso (0.0018 A^2 apart, shift/esd 0.14 > 0.01) |
+| sph-tfva, H fixed | final R 0.096 |
+
+So spherical averaging is fine for H (the Salvador H is nearly spherical) and not for C, N, O: the
+fit rebuilds their missing bonding density by moving the hydrogens. First guess was the opposite,
+and was wrong. **Next (Dylan: keep going):** a larger basis than STO-3G and one or two more
+molecules; then decide what `sph-tfva` should be (spherical H only is a candidate model), and add
+a test. The second "Structure refinement results" block's R is above the first for every model
+(Salvador 0.038 -> 0.042, TFVA 0.053 -> 0.084): find what it is. Note also that
+`MOLECULE.HAR:make_LS_mx` always builds Hirshfeld form factors whatever the partition model.
+
 **`show-labels-cpp-fix` is merged into `develop`** (`12dd6bf8`). The branch can be deleted. What it
 brought: 146 `stdout.show` labels fixed; `scripts/check_show_labels.py`, which runs as the short
 ctest `show_labels`; and the translator fix for preprocessor lines before `contains`, which makes
