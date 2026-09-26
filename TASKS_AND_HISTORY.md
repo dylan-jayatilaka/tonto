@@ -106,11 +106,16 @@ Salvador ones to 0.13 (the aspherical part), yet the HAR fails:
 | sph-tfva, H U isotropic | converges to R 0.0533, then flip-flops for ever between two values of H3's U_iso (0.0018 A^2 apart, shift/esd 0.14 > 0.01) |
 | sph-tfva, H fixed | final R 0.096 |
 
+In def2-SVP the same pattern: Salvador R 0.0190 (GoF 3.54, converges); spherical H only R 0.0209
+(GoF 3.86, converges); sph-tfva R 0.044 (GoF 11.6), no runaway but a flip-flop of H1 by 0.034 bohr
+for ever.
+
 So spherical averaging is fine for H (the Salvador H is nearly spherical) and not for C, N, O: the
 fit rebuilds their missing bonding density by moving the hydrogens. First guess was the opposite,
-and was wrong. **Next (Dylan: keep going):** a larger basis than STO-3G and one or two more
-molecules; then decide what `sph-tfva` should be (spherical H only is a candidate model), and add
-a test. The second "Structure refinement results" block's R is above the first for every model
+and was wrong. No case yet where the all-spherical model works; candidates are crystals of nearly
+spherical atoms -- ionic (NaCl, MgO), simple metals, noble-gas solids. The keyword help marks it
+experimental. **Next:** one of those crystals, and one or two more molecules; then decide what
+`sph-tfva` should be (spherical H only is a candidate model), and add a test. The second "Structure refinement results" block's R is above the first for every model
 (Salvador 0.038 -> 0.042, TFVA 0.053 -> 0.084): find what it is. Note also that
 `MOLECULE.HAR:make_LS_mx` always builds Hirshfeld form factors whatever the partition model.
 
