@@ -75,6 +75,97 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## 2026-09-26: finish a COSX SCF with one exact J/K build (science item, not started)
+
+**Register row:** *Finish a COSX SCF with one exact J/K build*. Dylan's idea: iterate with RI-J and
+COSX, then polish with exact integrals.
+
+**Why it looks worth doing -- thiotepa** (C6H12N3PS, PubChem CID 5453 3D conformer, RHF, spherical,
+`convergence= 1e-8`, release build on achari2, one job at a time; runs in
+`achari2:~/tonto_runs/thiotepa_2026-09-26/`):
+
+| basis | job | energy / Eh | error vs exact | wall | J/K CPU s |
+|---|---|---|---|---|---|
+| def2-SVP | exact | -1135.1745545854 | -- | 2:36 | 152.6 |
+| def2-SVP | RI-J, exact K | -1135.1754179347 | -8.6e-4 | 2:43 | -- |
+| def2-SVP | RI-J + COSX | -1135.1754251442 | -8.7e-4 | 4:07 | 237.4 |
+| def2-TZVP | exact | -1135.8954935249 | -- | 26:56 | 1594 |
+| def2-TZVP | RI-J, exact K | -1135.8961418358 | -6.5e-4 | 25:39 | 1517 |
+| def2-TZVP | RI-J + COSX | -1135.8961369690 | -6.4e-4 | 14:20 | 825 |
+
+COSX at the current defaults adds only -7e-6 (SVP) and +5e-6 (TZVP) to RI-J's error; it loses at
+def2-SVP (1.6x slower) and wins at def2-TZVP (1.9x faster). **In def2-TZVP an exact iteration costs
+84 s and a COSX iteration 34.5 s -- but the single build on the final COSX grid (167 562 points,
+5.8x the iteration grid) costs about 204 s.** So one exact build in its place would be ~2 minutes
+faster, and would remove the grid error and, with exact J too, RI-J's -6.4e-4, leaving only the
+second-order error of using the COSX orbitals. The alternative, a few full exact iterations at the
+end, would reproduce the exact result for about 18 x 34.5 + 3 x 84 s, against 1594 s.
+
+**What others do.** The ORCA manual (6.1, *Resolution of the Identity*, COSX) uses three COSX grids,
+the largest for the final energy, and says the default errors "can be made smaller ... by running
+the final SCF cycle without this approximation" -- by hand, with a second calculation; no keyword
+for it was found. PySCF's SGX switches grid levels only (`grids_level_i`, `grids_level_f`).
+Nothing seen does it automatically; a wider literature check is part of the item.
+
+**Plan.** (1) Test without code: rerun thiotepa def2-TZVP RI-J + COSX keeping its archives (the jobs
+above end with `delete_scf_archives`), then one exact iteration from those orbitals; compare with
+the exact -1135.8954935249. (2) If it holds, make it an option of the final step
+(`make_COSX_final_energy`: an exact build instead of the final grid), and check karrikinolide
+def2-TZVP and the zinc finger. (3) Consider it as the default.
+
+**Second part: progressive COSX grids** (Dylan). A small grid early, a medium one near
+convergence, as ORCA does (three grids). The integral analogue, `escalate_eri_accuracy= TRUE`
+(loose cutoffs while damping), gained only 8% on karrikinolide RHF/6-31G(d) (53.3 against 57.9 s),
+because loose exact integrals are not much cheaper; COSX time scales with the grid's points, so the
+gain could be larger here, but that 8% is the figure to beat. Note the iteration grid is not free to
+shrink: `very_low` against `low` cost ~1e-6 through the orbitals on karrikinolide.
+
+**Also owed:** a g09 exact RHF/def2-TZVP on thiotepa, as another data point (input ready at
+`achari2:~/tonto_runs/thiotepa_2026-09-26/g09_rhf_def2TZVP.gjf`). g09 runs only on Dylan's laptop.
+
+## 2026-09-26: the RI-J metric -- a dense transform takes 98% of its time
+
+**Register row:** *RI metric: blockwise spherical transform, lower triangle only* (S).
+
+**Why it was looked at.** Dylan asked how Tonto's Rys integrals compare with the McMurchie-Davidson
+method of Peels and Knizia, JCTC 16, 2570 (2020). What that paper times is **two-centre** integrals
+only: overlap and kinetic matrices, and the Coulomb metric (A|1/r12|B) of a fitting basis -- not an
+SCF J or JK build. Its Table 3 gives the univ-JFIT metric of "AuCarbene4" (104 atoms, Fig. 1;
+geometry from Nunes dos Santos Comprido et al., Angew. Chem. Int. Ed. 54, 10336 (2015), SI
+pp. S12-S13) as 3012 x 3012 in 138 ms on one core of a 2.7 GHz Xeon E-2176M, about 41 cycles per
+element. Their overlap/kinetic rows cannot be reproduced: Tonto's def2 files stop at Kr (Au needs an
+ECP) and there is no def2-QZVPP.
+
+**Measured**, `put_ri_metric_timings` (new keyword, `e8b21c1e`), reference build on achari2
+(Xeon W-2123, ~3.7 GHz, netlib BLAS), least of three:
+
+| step | CPU s |
+|---|---|
+| cartesian metric, Rys (3661 x 3661) | 0.49 |
+| to spherical, two dense products | 246.8 |
+| Cholesky (3012 x 3012) | 3.7 |
+
+3012 spherical functions, as in the paper; log det V = -1949.446393. **The integrals are ~3x the
+paper per element computed** (about 135 cycles per cartesian element of the full square, against
+their 41 per spherical element of a triangle). **The dense transform is the whole cost**:
+`initialize_RI_J` forms V X and X^T V X against a block-diagonal X, ~8e10 flops at 0.3 GFlop/s.
+Per shell pair, U_s^T V(s,t) U_t is ~1e8. It is a one-off per SCF, which is why water and
+karrikinolide never showed it; on 104 atoms it is four minutes before the first iteration.
+
+**Why the paper's trick does not transfer to Rys.** Their spherical results come from Hobson's
+theorem: a solid harmonic prefactor becomes a solid harmonic of the gradient, which for two centres
+acts on one function of A-C, and their recurrence coefficients depend only on A-C, so they contract
+primitives before recurring. Rys factorises into x, y, z per root: cartesian monomials separate,
+solid harmonics do not, and its recurrences depend on roots and exponents -- so the spherical
+transform can only follow the 1D assembly, and contraction cannot precede it. For two-centre
+integrals MD with Hobson is simply the better tool; the paper credits Ahlrichs with the same idea on
+the auxiliary side of three-centre (ab|Q), which is where it would matter for Tonto's RI-J.
+
+**Test held back.** `tests/long/aucarbene4_def2-universal-jfit_coulomb_metric` (input and blessed
+output in `achari2:~/tonto_runs/aucarbene4_2026-09-26/test_dir/`) takes ~4 min today, all of it the
+transform: it goes in with the fix. Thiotepa (C6H12N3PS, PubChem CID 5453) is proposed as the
+N/P/S companion to karrikinolide; its exact / RI-J / RIJCOSX runs are queued on achari2.
+
 ## CLOSED 2026-09-26: the COSX grid -- retired in favour of adopting published element-dependent grids
 
 **Closed by Dylan's decision.** For most applications milli-Hartree accuracy, or a little beyond, is
