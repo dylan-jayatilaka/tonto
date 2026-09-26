@@ -229,7 +229,8 @@ only 0.006 Å, so the comparison does not depend on it.
 | `tfvp` | def2-SVP | 1.036(4) | 1.023(4) | 1.2555(4) | 0.0188 | 3.48 |
 | `sph-tfvp` | def2-SVP | 1.069(12) | 0.981(15) | 1.2545(10) | 0.0341 | 8.16 |
 | `sph-tfvp` | STO-3G | 1.048(15) | 0.944(15) | 1.2542(13) | 0.0455 | 10.5 |
-| `sph-tfva` | def2-SVP | does not converge | | | 0.044 | 11.6 |
+| `sph-tfva` | def2-SVP | does not converge (flip-flops) | | | 0.044 | 11.6 |
+| `sph-tfva` | STO-3G | does not converge (H1 runs away) | | | 1.0 | -- |
 
 Differences from the neutron values, N–H1 / N–H3, in Å:
 
