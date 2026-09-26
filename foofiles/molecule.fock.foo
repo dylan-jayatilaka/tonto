@@ -2153,6 +2153,91 @@ contains
 
    end
 
+   put_RI_metric_timings :: leaky
+   ! Time the three steps of .initialize_RI_J for this geometry and
+   ! auxiliary basis: the cartesian coulomb metric (the Rys kernel on
+   ! the auxiliary pair list), its transformation to the spherical
+   ! functions, and the Cholesky factor. Each step is timed three times
+   ! and the least CPU time is put, on lines that begin "CPU time" so the
+   ! test harness ignores them; log det V, from the Cholesky factor, is
+   ! the check on the integrals. Needs only the atoms and
+   ! auxiliary_basis_name=. For comparison with published timings of
+   ! two-center integrals (TASKS_AND_HISTORY.md).
+      self :: INOUT
+
+      Vc,X,W,V,U :: MAT{REAL}@
+      shell_l,first_cart,first_sph :: VEC{INT}@
+      aux :: GAUSSIAN_PAIR_LIST
+      t :: VEC{REAL}(3)
+      t0,t1,log_det :: REAL
+      s,l,k,fc,fs,n_shell,n_cart,n_sph,rep :: INT
+
+      .resolve_auxiliary_bases
+      .make_auxiliary_pair_list(aux,shell_l,first_cart,first_sph)
+
+      n_shell = shell_l.dim
+      n_cart = first_cart(n_shell) + GAUSSIAN_DATA:n_comp(shell_l(n_shell)) - 1
+      n_sph  = first_sph(n_shell) + 2*shell_l(n_shell)
+
+      X.create(n_cart,n_sph)
+      X = ZERO
+      do s = 1,n_shell
+         l  = shell_l(s)
+         fc = first_cart(s)
+         fs = first_sph(s)
+         if (l<2) then
+            do k = 0,2*l
+               X(fc+k,fs+k) = ONE
+            end
+         else
+            U = GAUSSIAN_DATA::spherical_harmonics_for(l).element
+            X(fc:fc+GAUSSIAN_DATA:n_comp(l)-1,fs:fs+2*l) = U
+         end
+      end
+
+      Vc.create(n_cart,n_cart)
+      W.create(n_cart,n_sph)
+      V.create(n_sph,n_sph)
+      t = huge(ONE)
+
+      do rep = 1,3
+         t0 = TIME::current_cpu_time()
+         aux.make_coulomb_metric(Vc,first_cart)
+         t1 = TIME::current_cpu_time(); t(1) = min(t(1),t1-t0)
+         W.to_product_of(Vc,X)
+         V.to_product_of(X,W,transpose_a=TRUE)
+         t0 = TIME::current_cpu_time(); t(2) = min(t(2),t0-t1)
+         V.to_cholesky_factor
+         t1 = TIME::current_cpu_time(); t(3) = min(t(3),t1-t0)
+      end
+
+      stdout.flush
+      stdout.text("===================================")
+      stdout.text("Coulomb metric of the auxiliary basis")
+      stdout.text("===================================")
+      stdout.flush
+      stdout.show("Auxiliary basis ................",.auxiliary_basis_name)
+      stdout.show("Auxiliary shells ...............",n_shell)
+      stdout.show("Spherical functions ............",n_sph)
+      stdout.show("Cartesian functions ............",n_cart)
+      log_det = ZERO
+      do k = 1,n_sph
+         log_det = log_det + TWO*log(V(k,k))
+      end
+      stdout.show("log det V ......................",log_det)
+      stdout.flush
+      stdout.show("CPU time, cartesian metric (Rys)",t(1))
+      stdout.show("CPU time, to spherical (DGEMM) .",t(2))
+      stdout.show("CPU time, Cholesky factor ......",t(3))
+      stdout.show("CPU time, total ................",sum(t))
+
+      V.destroy
+      W.destroy
+      Vc.destroy
+      X.destroy
+
+   end
+
    make_auxiliary_pair_list(aux,shell_l,first_cart,first_sph) :: leaky, PURE
    ! Make "aux", the auxiliary primitives as a list of one-center pairs
    ! of class (L,0), for GAUSSIAN_PAIR_LIST:add_to_RI_J. The auxiliary

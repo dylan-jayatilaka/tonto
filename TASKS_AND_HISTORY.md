@@ -75,7 +75,23 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## START HERE, 2026-09-26 (morning): the COSX grid -- measured; C/H/O solved, Zn and S need a design decision
+## CLOSED 2026-09-26: the COSX grid -- retired in favour of adopting published element-dependent grids
+
+**Closed by Dylan's decision.** For most applications milli-Hartree accuracy, or a little beyond, is
+what matters, and COSX is itself an approximation: on the zinc finger def2-TZVP, ORCA's RIJCOSX is
+-7e-4 from exact and Tonto's RI-J alone about -8e-4, while the old defaults' grid error is at most
+2.6e-5. So the 2e-6 target was too tight, and the Zn/S grids it called for cost more than they are
+worth. And per-element grids are not new: SG-1/SG-0/SG-2/SG-3 (Dasgupta and Herbert, J. Comput.
+Chem. 38, 869 (2017)) for XC, and for COSX the globally optimised grids of Helmich-Paris, de Souza,
+Neese and Izsak, J. Chem. Phys. 155, 104109 (2021) -- ORCA's, with errors well under 0.1 kcal/mol.
+Calibrating our own from C/H/O would miss N, P and S, which most organic molecules need. **New
+register row:** *Adopt published element-dependent grids, for COSX and XC* -- implement their zone
+tables, and first choose a test set with care (compact 3D molecules covering H, C, N, O, P, S, a
+halogen and one or two transition metals). Kept from this item: `put_cosx_shell_errors` and the
+`cosx_grid= { }` / `cosx_final_grid= { }` blocks, both on `develop`; the defaults are unchanged,
+and `cosx_defaults_low_adaptive47.patch` stays on achari2 for reference only.
+
+### What was measured (2026-09-26 morning)
 
 **Where it stands.** Commit `4f763074` on `develop`, **local, not pushed**: the
 `put_cosx_shell_errors` diagnostic and the `cosx_grid= { }` / `cosx_final_grid= { }` blocks. No
