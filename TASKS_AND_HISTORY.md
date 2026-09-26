@@ -75,6 +75,57 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## 2026-09-26 (afternoon): the RI metric is done; three new register rows
+
+**RI metric -- DONE, register row closed.** `1cf0dced`: the spherical transform is done a shell
+pair at a time (`make_spherical_metric`), 239.6 s -> 0.109 s on AuCarbene4. `7bb5bbc3`:
+`make_RI_metric` makes the metric as a procedure of its own; `initialize_RI_J` and
+`put_ri_metric_timings` call it. Test `tests/long/aucarbene4_def2-universal-jfit_coulomb_metric`
+(`c93e07ee`, re-blessed `01915f02`), 13 s. Left, not worth a row: computing only the lower
+triangle of the cartesian metric would save half of its 0.5 s.
+
+**New row, priority: the version stamp must name the code actually built.** The header's
+`Version: ... v. <commit>` and `Build-date` are read when the build is configured
+(`CMakeLists.txt` 8-15, 83-93) into `macros`, so an incremental `make` keeps stale values -- a
+tree at `7bb5bbc3` printed `1cf0dced` -- and uncommitted changes are never shown. Users quote this
+line in error reports (Dylan). Fix: a CMake step on every build writes `git describe --always
+--dirty` and the date to a small file of its own, rewritten only on change, included only by
+`molecule.main.foo` and `molecule.put.foo` (not `macros`, which every file includes).
+
+**New row: every `stdout.show` label should end in `=`.** `show` turns trailing spaces and `=`
+into dots aligned with the neighbouring lines; without `=` a label gets a stub ` ..`. This week's
+labels wrote the dots by hand (fixed in `7bb5bbc3`, convention in `CLAUDE.md` section 8); 175 older
+labels lack the `=`, back to at least April 2025, 31 in `vec{pair_energy}.foo`, many in stored test
+outputs, so fixing them means a text-only re-bless.
+
+**Row rewritten: one Fourier-sum module for the form factors, with a fast sin/cos.** The form factor
+sum is written out in seven routines (`make_Hirshfeld_atom_FFs`, `get_Hirshfeld_atom_FFs_disk`,
+`get_Hirshfeld_atom_FFs_for_atom`, `make_Salvador_atom_FFs`, `make_C23_Hirshfeld_atom_FFs`,
+`make_sph_TFVA_atom_FFs` (sin(kr)/kr), `MOLECULE.HAR:make_LS_mx`) that differ only in how they
+prepare points and weights. Plan (Dylan and Claude): a standalone module -- not a MOLECULE
+submodule, since CRYSTAL's structure-factor phases can use it too -- in its own file compiled with
+`-O3 -fno-math-errno -fno-trapping-math`, not `-Ofast`; move the seven onto it with the library
+cos/sin first (no numbers change), then switch to the fast sin/cos with one HAR re-bless.
+
+Measured with `scripts/ff_loop_bench.f90` (kept out of git by `.git/info/exclude`), 8000 k x 6000
+points, ns per term:
+
+| build | as now | loops swapped | own sin/cos (E) | own sin/cos, no integers (F) | BLAS tiles |
+|---|---|---|---|---|---|
+| Mac, `-Ofast -mcpu=apple-m2` (`-fno-associative-math` for E, F) | 18.3 | 18.5 | 2.0 | 3.2 | 17.5 |
+| Linux, `-Ofast` (release today) | 10.0-12.6 | 12.4 | 18.1 | wrong | 14.1 |
+| Linux, `-O3 -fno-math-errno -fno-trapping-math` | 34.2 | 12.4 | 18.9 | 9.5 | 14.0 |
+| Linux, the same with `-march=native` | 33.3 | 3.8 | 2.4 | 3.0 | 7.4 |
+
+The cost is the cosines and sines. glibc supplies vector ones that gfortran uses at `-Ofast`, which
+is why today's loop is already 10 ns on Linux; the Mac has none, hence 18. E vectorises only where
+the vector instructions can round and convert doubles (the Mac; Linux with `-march=native`); F uses
+real arithmetic only (rounding by adding and subtracting 1.5*2^52) and vectorises on generic x86-64
+too. **`-Ofast` breaks both**: it regroups the three-part pi/2 reduction (up to 207 units in the last
+place) and removes F's rounding trick altogether; `-fno-associative-math` alone is not enough for F
+(fused multiply-add and reciprocal maths also bite). Hence the file's own flags. Accuracy with them:
+within 1 unit in the last place for |x| <= 200; the form factors agree with today's to ~3e-16.
+
 ## 2026-09-26: finish a COSX SCF with one exact J/K build (science item, not started)
 
 **Register row:** *Finish a COSX SCF with one exact J/K build*. Dylan's idea: iterate with RI-J and
