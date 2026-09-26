@@ -75,26 +75,22 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## START HERE, 2026-09-26 (night): two branches waiting -- read this first
+## START HERE, 2026-09-26 (night): labels merged; one branch waiting -- read this first
 
-**`develop` is clean and green.** Two pieces of work are on their own branches:
+**`show-labels-cpp-fix` is merged into `develop`** (`12dd6bf8`). The branch can be deleted. What it
+brought: 146 `stdout.show` labels fixed; `scripts/check_show_labels.py`, which runs as the short
+ctest `show_labels`; and the translator fix for preprocessor lines before `contains`, which makes
+`molecule.main`'s ENSURE checks live in release. The full suite on achari2 at `2521e961` (reference
+build) passed 152 of 156 in short, long, hart, cx and rgbi. The four failures differed only in label
+lines, and were re-blessed in `8c54eb1a`. **A full suite takes 21 min to build and 8.5 min to test on
+achari2, at `ctest -j6`.** Two notes:
+- **The `samuel` tests are not registered with ctest and cannot run**: the energy breakdown they test
+  is switched off, and the first stops for a missing input file. Their references keep the old
+  labels. Dylan: they will be revived eventually; low priority.
+- **A label lost its dots:** quartz now prints `Form factors on disk cut to kept reflections, from  1009`,
+  and `to  1008` under it, lined up with nothing. A small fix, not started.
 
-**1. `show-labels-cpp-fix` (`c55ec5b8`) -- finished, needs a full suite run before merging.**
-146 `stdout.show` labels fixed (117 plain and 20 ending in ":" now end in "="; 9 sentences say
-`dots=FALSE`); `scripts/check_show_labels.py`, which fails on a label without "=" or `dots=FALSE`
-and on a heading rule of the wrong length, registered as the short ctest `show_labels` and in
-`scripts/suite_report.py`; and the translator fix -- preprocessor and comment lines between a
-module's last data item and `contains` were dropped. Translating everything before and after:
-9 files change, 7 only regain comments; **`mat_int` regains integer `ZERO`/`ONE`** and
-**`molecule.main` regains `#define ENSURE(X,Y) ENSURE0(X,Y)`, so its ENSURE checks are live in
-release** -- kept deliberately (Dylan: that module reads user input). A macOS release build
-compiles. **To merge:** full suite (short long hart cx rgbi samuel); re-bless the six tests with a
-fixed label, after checking each difference is a label line: short/h2o+_uhf_cc-pVDZ_1e_properties,
-short/h2o_mp2_6-31G(d), hart/urea_hart_STO-3G_extinction, long/quartz_NN_HAR_L1_rhf_def2-SVP,
-samuel/ethanol_formamide_breakdown, samuel/sucacb_energies_breakdown. Any other difference comes
-from the live ENSURE or the integer ZERO/ONE.
-
-**2. `exact-final-energy` (`76d1d87f`) -- WIP, an unexplained error.** `scfdata= {
+**The other branch waiting: `exact-final-energy` (`76d1d87f`) -- WIP, an unexplained error.** `scfdata= {
 use_exact_final_energy= TRUE }` (off by default): after an RI-J/COSX SCF, one full Fock build with
 exact J and K from the converged density. Also makes both final steps discard `.delta_density_mx`
 (a latent bug with `use_delta_build= TRUE`). Tested on achari2:
@@ -122,8 +118,7 @@ section of `molecule.ce.foo`, `CLUSTER:make_pairs_within_radius_of`, and the key
 `pair_energy_model=` and `lattice_energy_convergence=`. A macOS release build compiles. No test
 used any of it. Now unreachable and left in place: `MOLECULE.PROP:symmetric_intermolecular_qm_energies`
 and `intermolecular_polarization_energy`, whose only caller was `total_lattice_energy` -- they sit
-next to the inert energy breakdown, so whether they go is Dylan's call. **Next:** merge `develop`
-into `show-labels-cpp-fix` and run its full suite there, which covers both changes. Also three
+next to the inert energy breakdown, so whether they go is Dylan's call. Also three
 watcher loops from earlier sessions (55 days old, `while pgrep -f ...` matching themselves) were
 killed on achari2.
 
