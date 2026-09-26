@@ -29,9 +29,12 @@ later.
   effect on refined parameters and their esds; the reflection-weighted metric (section 3);
   per-molecule fits; tests. Only after (a) shows the fit is good enough.
 
-Before either: **re-measure.** Section 1's profile predates the `FOURIER_SUMS` change of
-2026-09-26/27, which made the form-factor sum several times faster (hart suite 2.4x), so its share
-of a fragHAR job must be measured again.
+**Re-measured 2026-09-27** (macOS `sample`, release build of `develop`, same job): gly_ala fragHAR
+now takes **16.3 s against 66 s**, and the form-factor sum (`FOURIER_SUMS:exp_ikr_sums`) is **33%**
+of the samples, against 81.6% in section 1. Fock builds are 23%, the LS normal equations about 9%.
+So for a job of this size (2514 reflections) the fit can save at most about a third; the case for
+it as a speed-up now rests on large reflection sets, where the n_k x n_pt sum still dominates.
+Stage (a) stands as an option on its own merits.
 
 **The proposal (Dylan).** Expand the Hirshfeld atomic densities using the RI machinery already in
 the tree rather than writing a fresh multipole/Bessel transform. It must be a **density** fit, not
