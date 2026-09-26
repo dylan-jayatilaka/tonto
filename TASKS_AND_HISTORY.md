@@ -87,13 +87,12 @@ are in `docs/RESEARCH_ON_SALVADOR_MODELS.md`. What went in:
   karrikinolide; 182-atom alkane 4 min 38 s -> 1 min 26 s.
 - Density on grids in batches (`make_ED_grid_r_v2`, `5f945a95`), and `dgemm` declared pure so it
   can use BLAS (`21c01a1a`): karrikinolide Salvador test 8.7 s -> 1.3 s. Full suite at `5f945a95`
-  passed. **The later commits -- tfvp, the pure dgemm (a full rebuild), sph-tfvp -- have not had
-  a full suite run yet: run one on `develop`.**
+  passed, and so did the full suite of the merged `develop` (`29263d6a`, all of the above): 156/156.
 - New partition models `tfvp` and `sph-tfvp`; three sph-tfva bugs fixed; the debug-only check in
   `make_Salvador_cell_fn` fixed (likely the untracked debug failure of
   `urea_ccsd_pob-TZVP_Salvador_properties`: confirm).
-- **No tests yet for tfvp or sph-tfvp.** `tests/long/urea_rhf_STO-3G_TFVP_HAR/` exists locally
-  on the Mac without a reference; bless it on achari2.
+- Test `long/urea_rhf_STO-3G_TFVP_HAR` added, blessed on achari2 (`66a82ed6`, R 0.0381). No test
+  for `sph-tfvp` yet: add one if the model is kept.
 
 **`sph-tfva` (spherically averaged Salvador atoms): a science result, not a code bug.** Urea STO-3G
 (`long/urea_rhf_STO-3G_HAR` with only `partition_model=` changed). The form factors agree with the
