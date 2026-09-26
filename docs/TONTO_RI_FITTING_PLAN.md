@@ -157,9 +157,11 @@ grid right-hand side `b_P`, and the contraction of `c_P` with the analytic trans
 
 Worth taking first; they are small and they do not depend on any of the above.
 
-1. **`exp(IMAGIFY(kr))` -> two real accumulators with `cos` / `sin`.** **DONE 2026-09-24, and it
-   is performance-NEUTRAL** — 33.27 s against 32.68 s, inside the noise, with bit-identical output.
-   Kept anyway: it is the shape the BLAS restructure needs, and it cost nothing.
+1. **`exp(IMAGIFY(kr))` -> two real accumulators with `cos` / `sin`.** Tried 2026-09-24 and
+   **reverted** (`dace267a`): performance-neutral — 33.27 s against 32.68 s, inside the noise — and
+   it perturbs the last digits of every HAR job, so it was not worth a re-bless on its own. The loop
+   exists in seven copies (six in `molecule.rho.foo`, one in `molecule.har.foo`); factor them into
+   one routine before restructuring.
 
    **The prediction was wrong, and how it was wrong is the lesson.** It was forecast at 12.6% by
    attributing `exp` samples to a `cexp` parent in the `sample` call tree. That attribution is not
@@ -169,7 +171,10 @@ Worth taking first; they are small and they do not depend on any of the above.
    `cexp` evidently already fast-paths a zero real part, and computing `sin` and `cos` separately
    costs about what one `cexp` did. **Trust wall-clock for libm-bound loops, not per-symbol shares
    from `sample`.**
-2. **The loop is a matrix product**, `kr = k_pts . transpose(pt)`. Blocked over `k` tiles — a full
+2. **The loop is a matrix product**, `kr = k_pts . transpose(pt)`. The cost is the `n_k x n_pt`
+   cosines and sines, not the dot products, so the gain depends on vectorising `cos`/`sin` over a
+   tile (glibc's vector library under `-Ofast` on Linux; nothing equivalent in gfortran on macOS).
+   Time a vectorised tile on its own first. Blocked over `k` tiles — a full
    `n_k x n_pt` is 180 MB at gly_ala size — giving one DGEMM, a vectorised `cos`/`sin` over the
    tile, then one DGEMV against `rho`.
 3. **Prune on `abs(rho*wt)`, not on the weight alone.** A point that contributes nothing still

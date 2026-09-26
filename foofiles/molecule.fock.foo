@@ -2108,10 +2108,10 @@ contains
    ! between the spherical auxiliary functions, for this geometry.
       self :: INOUT
 
-      Vc,X,W,U :: MAT{REAL}@
+      Vc :: MAT{REAL}@
       shell_l,first_cart,first_sph :: VEC{INT}@
       aux :: GAUSSIAN_PAIR_LIST
-      s,l,k,fc,fs,n_shell,n_cart,n_sph :: INT
+      n_shell,n_cart,n_sph :: INT
 
       .resolve_auxiliary_bases
       .make_auxiliary_pair_list(aux,shell_l,first_cart,first_sph)
@@ -2123,33 +2123,56 @@ contains
       Vc.create(n_cart,n_cart)
       aux.make_coulomb_metric(Vc,first_cart)
 
-      ! Cartesian to spherical
-      X.create(n_cart,n_sph)
-      X = ZERO
-      do s = 1,n_shell
-         l  = shell_l(s)
-         fc = first_cart(s)
-         fs = first_sph(s)
-         if (l<2) then
-            do k = 0,2*l
-               X(fc+k,fs+k) = ONE
+      .RI_metric_factor.destroy
+      .RI_metric_factor.create(n_sph,n_sph)
+      .make_spherical_metric(.RI_metric_factor,Vc,shell_l,first_cart,first_sph)
+      Vc.destroy
+      .RI_metric_factor.to_cholesky_factor
+
+   end
+
+   make_spherical_metric(V,Vc,shell_l,first_cart,first_sph) :: leaky, PURE
+   ! Make "V", the metric between the spherical auxiliary functions,
+   ! from "Vc", that between the cartesian ones, a block per pair of
+   ! shells: V(s,t) = U_s^T Vc(s,t) U_t, where U_l is the cartesian to
+   ! spherical matrix of angular momentum l, the identity below l = 2.
+   ! "shell_l", "first_cart" and "first_sph" are as from
+   ! .make_auxiliary_pair_list.
+      self :: IN
+      V :: MAT{REAL}, OUT
+      Vc :: MAT{REAL}, IN
+      shell_l,first_cart,first_sph :: VEC{INT}, IN
+
+      U :: VEC{EMAT{REAL}}@
+      s,t,ls,lt,cs,ct,ss,st,ncs,nct,nss,nst,l :: INT
+
+      U.create(maxval(shell_l)+1)
+      do l = 2,maxval(shell_l)
+         U(l+1).element = GAUSSIAN_DATA::spherical_harmonics_for(l).element
+      end
+
+      do t = 1,shell_l.dim
+         lt  = shell_l(t)
+         ct  = first_cart(t); nct = GAUSSIAN_DATA:n_comp(lt)
+         st  = first_sph(t);  nst = 2*lt + 1
+         do s = 1,shell_l.dim
+            ls  = shell_l(s)
+            cs  = first_cart(s); ncs = GAUSSIAN_DATA:n_comp(ls)
+            ss  = first_sph(s);  nss = 2*ls + 1
+            if (ls<2 AND lt<2) then
+               V(ss:ss+nss-1,st:st+nst-1) = Vc(cs:cs+ncs-1,ct:ct+nct-1)
+            else if (ls<2) then
+               V(ss:ss+nss-1,st:st+nst-1) = matmul(Vc(cs:cs+ncs-1,ct:ct+nct-1),U(lt+1).element)
+            else if (lt<2) then
+               V(ss:ss+nss-1,st:st+nst-1) = matmul(transpose(U(ls+1).element),Vc(cs:cs+ncs-1,ct:ct+nct-1))
+            else
+               V(ss:ss+nss-1,st:st+nst-1) = matmul(transpose(U(ls+1).element), &
+                                            matmul(Vc(cs:cs+ncs-1,ct:ct+nct-1),U(lt+1).element))
             end
-         else
-            U = GAUSSIAN_DATA::spherical_harmonics_for(l).element
-            X(fc:fc+GAUSSIAN_DATA:n_comp(l)-1,fs:fs+2*l) = U
          end
       end
 
-      W.create(n_cart,n_sph)
-      W.to_product_of(Vc,X)
-      .RI_metric_factor.destroy
-      .RI_metric_factor.create(n_sph,n_sph)
-      .RI_metric_factor.to_product_of(X,W,transpose_a=TRUE)
-      .RI_metric_factor.to_cholesky_factor
-
-      W.destroy
-      X.destroy
-      Vc.destroy
+      U.destroy
 
    end
 
@@ -2157,20 +2180,21 @@ contains
    ! Time the three steps of .initialize_RI_J for this geometry and
    ! auxiliary basis: the cartesian coulomb metric (the Rys kernel on
    ! the auxiliary pair list), its transformation to the spherical
-   ! functions, and the Cholesky factor. Each step is timed three times
-   ! and the least CPU time is put, on lines that begin "CPU time" so the
+   ! functions (.make_spherical_metric), and the Cholesky factor. Each
+   ! step is timed three times and the least CPU time is put, on lines
+   ! that begin "CPU time" so the
    ! test harness ignores them; log det V, from the Cholesky factor, is
    ! the check on the integrals. Needs only the atoms and
    ! auxiliary_basis_name=. For comparison with published timings of
    ! two-center integrals (TASKS_AND_HISTORY.md).
       self :: INOUT
 
-      Vc,X,W,V,U :: MAT{REAL}@
+      Vc,V :: MAT{REAL}@
       shell_l,first_cart,first_sph :: VEC{INT}@
       aux :: GAUSSIAN_PAIR_LIST
       t :: VEC{REAL}(3)
       t0,t1,log_det :: REAL
-      s,l,k,fc,fs,n_shell,n_cart,n_sph,rep :: INT
+      k,n_shell,n_cart,n_sph,rep :: INT
 
       .resolve_auxiliary_bases
       .make_auxiliary_pair_list(aux,shell_l,first_cart,first_sph)
@@ -2179,24 +2203,7 @@ contains
       n_cart = first_cart(n_shell) + GAUSSIAN_DATA:n_comp(shell_l(n_shell)) - 1
       n_sph  = first_sph(n_shell) + 2*shell_l(n_shell)
 
-      X.create(n_cart,n_sph)
-      X = ZERO
-      do s = 1,n_shell
-         l  = shell_l(s)
-         fc = first_cart(s)
-         fs = first_sph(s)
-         if (l<2) then
-            do k = 0,2*l
-               X(fc+k,fs+k) = ONE
-            end
-         else
-            U = GAUSSIAN_DATA::spherical_harmonics_for(l).element
-            X(fc:fc+GAUSSIAN_DATA:n_comp(l)-1,fs:fs+2*l) = U
-         end
-      end
-
       Vc.create(n_cart,n_cart)
-      W.create(n_cart,n_sph)
       V.create(n_sph,n_sph)
       t = huge(ONE)
 
@@ -2204,8 +2211,7 @@ contains
          t0 = TIME::current_cpu_time()
          aux.make_coulomb_metric(Vc,first_cart)
          t1 = TIME::current_cpu_time(); t(1) = min(t(1),t1-t0)
-         W.to_product_of(Vc,X)
-         V.to_product_of(X,W,transpose_a=TRUE)
+         .make_spherical_metric(V,Vc,shell_l,first_cart,first_sph)
          t0 = TIME::current_cpu_time(); t(2) = min(t(2),t0-t1)
          V.to_cholesky_factor
          t1 = TIME::current_cpu_time(); t(3) = min(t(3),t1-t0)
@@ -2227,14 +2233,12 @@ contains
       stdout.show("log det V ......................",log_det)
       stdout.flush
       stdout.show("CPU time, cartesian metric (Rys)",t(1))
-      stdout.show("CPU time, to spherical (DGEMM) .",t(2))
+      stdout.show("CPU time, to spherical .........",t(2))
       stdout.show("CPU time, Cholesky factor ......",t(3))
       stdout.show("CPU time, total ................",sum(t))
 
       V.destroy
-      W.destroy
       Vc.destroy
-      X.destroy
 
    end
 
