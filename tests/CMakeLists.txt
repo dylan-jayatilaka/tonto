@@ -280,6 +280,14 @@ add_test(NAME "parallel_lint"
             ${PROJECT_SOURCE_DIR}/foofiles)
 set_tests_properties("parallel_lint" PROPERTIES LABELS "short")
 
+# Source-level and instant: every stdout.show label ends in "=" (or says
+# dots=FALSE), so the dots line up, and heading rules match their headings.
+add_test(NAME "show_labels"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_show_labels.py
+            ${PROJECT_SOURCE_DIR}/foofiles ${PROJECT_SOURCE_DIR}/runfiles)
+set_tests_properties("show_labels" PROPERTIES LABELS "short")
+
 # Invariant test -- no reference output involved.
 #
 # The Lebedev angular grids are stored as orbit generators, so one wrong

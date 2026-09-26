@@ -1668,6 +1668,9 @@ public final class FooToFortran {
                 } else if (ch instanceof org.antlr.v4.runtime.tree.TerminalNode
                            && ((org.antlr.v4.runtime.tree.TerminalNode) ch).getSymbol().getType() == FooLexer.CONTAINS) {
                     if (!implicitDone) { emitImplicitBlock(stem); implicitDone = true; }
+                    // Comments and preprocessor lines after the last data item, which
+                    // no later data item would flush -- e.g. a module's own #define.
+                    c.flushHidden(f90, ((org.antlr.v4.runtime.tree.TerminalNode) ch).getSymbol().getTokenIndex(), 3);
                     f90.append("\ncontains\n");
                     c.pos = Math.max(c.pos, ((org.antlr.v4.runtime.tree.TerminalNode) ch).getSymbol().getTokenIndex() + 1);
                     c.lastLine = -1;

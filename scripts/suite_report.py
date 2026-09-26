@@ -446,6 +446,12 @@ def main():
         checks.append(('MPI: no interior collectives, no raw .unit I/O',
                        os.path.join(here, 'check_parallel_lint.py'),
                        [os.path.join(os.path.dirname(here), 'foofiles')]))
+        # Also source-level: printed labels end in "=" so their dots line up,
+        # and heading rules match their headings.
+        checks.append(('printed labels and headings line up',
+                       os.path.join(here, 'check_show_labels.py'),
+                       [os.path.join(os.path.dirname(here), 'foofiles'),
+                        os.path.join(os.path.dirname(here), 'runfiles')]))
         # The Lebedev grids are stored as orbit generators, so one wrong literal
         # shifts every DFT energy with nothing else noticing. Needs numpy, a
         # declared test dependency (docs/BUILDING_ON_*); without it the script
