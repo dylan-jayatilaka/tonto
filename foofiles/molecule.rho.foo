@@ -3590,16 +3590,75 @@ contains
 !  Salvador-RC neighbours & radii
 !  ==============================
 
-   make_Salvador_radii :: PURE
-   ! Put the Salvador & Ramos-Cordoba radii for each atom.
+   make_Salvador_radii :: leaky
+   ! Put the Salvador & Ramos-Cordoba radii for each atom. For the
+   ! "oc-tfvp" partition model they are found on the promolecule density
+   ! rather than the molecular one.
       self :: INOUT
 
    ENSURE(.atom.allocated,"no atoms")
 
-      .make_Salvador_radii_orig(.Salvador_bonds_for &
-                                ,.Salvador_radii_for &
-                                ,.Salvador_chi       )
+      if (.uses_promolecule_Salvador_radii) then
+         .make_Salvador_radii_promolecule
+      else
+         .make_Salvador_radii_orig(.Salvador_bonds_for &
+                                   ,.Salvador_radii_for &
+                                   ,.Salvador_chi       )
+      end
    ! .make_Salvador_radii_orig(.Salvador_radii_for,50,400)
+
+   end
+
+   uses_promolecule_Salvador_radii result (res) :: pure
+   ! Return TRUE if the Salvador radii are to be found on the promolecule
+   ! density: the "oc-tfvp" partition model.
+      self :: IN
+      res  :: BIN
+
+      res = FALSE
+      if (.crystal.deallocated) return
+      if (.crystal.xray_data.deallocated) return
+      res = .crystal.xray_data.partition_model=="oc-tfvp"
+
+   end
+
+   make_Salvador_radii_promolecule :: leaky
+   ! Make the Salvador neighbours, and the Mayer-Salvador radii and size
+   ! adjustments "chi" found on the promolecule density: the sum of the
+   ! atoms' ANO densities, built as put_Salvador_radii does.
+      self :: INOUT
+
+   ENSURE(.atom.allocated,"no atoms")
+
+      DM :: OPMATRIX@
+      ra,rb :: VEC{REAL}(3)
+      fac :: REAL
+      a,b,n :: INT
+
+      ! Neighbours
+      .atom.make_Salvador_neighbours(.Salvador_bonds_for)
+
+      ! Promolecule density matrix
+      .add_ANO_densities(DM)
+      DM.convert_to("r",factor=HALF)
+
+      ! Radii
+      .make_Salvador_radii_pro(.Salvador_radii_for,.Salvador_bonds_for,DM.r)
+      DM.destroy
+
+      ! Size adjustments, as make_Salvador_radii_orig makes them
+      .Salvador_chi.destroy
+      .Salvador_chi.create(.atom.dim,.atom.dim)
+      .Salvador_chi = ONE
+      do a = 1,.atom.dim
+         ra = .atom(a).position
+         do n = 1,.Salvador_bonds_for(a).element.dim
+            b   = .Salvador_bonds_for(a)[n]
+            rb  = .atom(b).position
+            fac = .Salvador_radii_for(a)[n]/norm2(rb-ra)
+            .Salvador_chi(a,b) = fac/(ONE-fac)
+         end
+      end
 
    end
 
@@ -5287,6 +5346,7 @@ contains
       case("oc-g-salvador "); .make_gSalvador_atom_FFs(ff)
       case("oc-hirshfeld  "); .make_Hirshfeld_atom_FFs(ff)
       case("oc-salvador   "); .make_Salvador_atom_FFs(ff)
+      case("oc-tfvp       "); .make_Salvador_atom_FFs(ff)
       case("oc-sph-tfva   "); .make_sph_TFVA_atom_FFs(ff)
       end
 
