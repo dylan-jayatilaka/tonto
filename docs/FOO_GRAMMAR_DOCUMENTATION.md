@@ -562,7 +562,7 @@ data section, before `contains`):
   `NAME_` is emitted too (so a call `x.uncompress_from_pyramid` resolves via
   `uncompress_from_pyramid_` → the member's procedures).
 
-> Note: `foo.pl`'s module-interface-scope handler is a no-op, so `release/` omits
+> Note: `foo.pl`'s module-interface-scope handler does nothing, so `release/` omits
 > these interface blocks from the `.int` — which is why some of its own `.F90`
 > executables fail to link. The new translator emits them (a small, deliberate
 > `.int` deviation) so the calls resolve and the build links.
@@ -866,7 +866,7 @@ The clause exists because the hand-written form has one correct position and
 several plausible wrong ones. `PARALLEL_SUM(X)` expands to
 `if (WORK_IS_SHARED) call parallel_sum_(tonto,X)`, and `WORK_IS_SHARED` is
 **false while the loop holds the parallel-do lock** — so a `PARALLEL_SUM`
-written *inside* the loop body is a no-op that looks correct, and each rank
+written *inside* the loop body does nothing, though it looks correct, and each process
 keeps only its `1/n_ranks` share of the answer. Four such sites in
 `molecule.grid.foo` did exactly that. The clause makes the mistake
 unexpressible; `scripts/check_parallel_lint.py` catches the hand-written form.
@@ -892,7 +892,7 @@ The C preprocessor (`include/macros.in`) provides, among others:
   procedure (before the first executable statement). These compile out unless
   `-DUSE_PRE_AND_POST_CONDITIONS` / `-DUSE_PRECONDITIONS` is set. **They must not
   appear in lowercase `pure`/`elemental` procedures** (see §7).
-- **`UNKNOWN(word)`** — used in the `case default` of a keyword dispatcher; it
+- **`UNKNOWN(word)`** — used in the `case default` of a keyword `select case`; it
   builds an "unknown keyword, known are: …" error from the enclosing
   `select case` labels.
 - **`DEFAULT(x)`** — a component initialiser.

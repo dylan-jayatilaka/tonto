@@ -97,12 +97,13 @@ about the few that fail anyway, and how to bless a reference yourself.
 > 2026-08-27 for that reason. Release builds on 16 are fine. See
 > [`GFORTRAN16_DEBUG_CRASH.md`](GFORTRAN16_DEBUG_CRASH.md).
 
-## One macOS-specific oddity: the arm64 compiler pin
+## One macOS-specific oddity: one file compiled differently on Apple silicon
 
-**arm64.** `shell1quartet.F90` is pinned to `-O2 -fno-schedule-insns` on arm64
-macOS, working around a gfortran miscompilation of the two-electron integral
-code. `CMakeLists.txt` explains it at the pin. Nothing to do; it is mentioned
-so the odd flag in the build log is not a mystery.
+On Apple silicon (arm64), `shell1quartet.F90` is always compiled with
+`-O2 -fno-schedule-insns`, because gfortran compiles that part of the two-electron
+integral code wrongly at higher optimisation. `CMakeLists.txt` explains it where the
+setting is made. There is nothing to do; it is mentioned so the unusual setting in the
+build log is not a mystery.
 
 
 ## Other build types
