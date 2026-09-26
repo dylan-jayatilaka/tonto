@@ -228,6 +228,11 @@ only 0.006 Å, so the comparison does not depend on it.
 |---|---|---|---|---|---|---|
 | **neutron, 123 K** | | **1.006** | **1.000** | **1.257** | | |
 | IAM (International Tables; SDS H) | -- | 0.905(10) | 0.888(12) | 1.2583(8) | 0.0284 | 6.50 |
+| Hirshfeld | def2-TZVP | 1.025(4) | 0.989(5) | 1.2560(4) | 0.0167 | 2.94 |
+| Salvador | def2-TZVP | 1.033(4) | 1.017(4) | 1.2560(4) | 0.0170 | 3.10 |
+| `tfvp` | def2-TZVP | 1.032(4) | 1.017(4) | 1.2558(4) | 0.0170 | 3.07 |
+| `sph-tfvp` | def2-TZVP | 1.045(10) | 0.977(12) | 1.2553(9) | 0.0316 | 7.06 |
+| `sph-tfva` | def2-TZVP | 1.11(2) | 0.954(19) | 1.2518(14) | 0.0422 | 11.0 (no convergence) |
 | Hirshfeld | def2-SVP | 1.028(5) | 0.986(6) | 1.2558(4) | 0.0181 | 3.30 |
 | Salvador | def2-SVP | 1.038(5) | 1.026(5) | 1.2557(4) | 0.0190 | 3.54 |
 | `tfvp` | def2-SVP | 1.036(4) | 1.023(4) | 1.2555(4) | 0.0188 | 3.48 |
@@ -241,13 +246,20 @@ Differences from the neutron values, N–H1 / N–H3, in Å:
 | model | N–H1 | N–H3 |
 |---|---|---|
 | IAM | −0.101 | −0.112 |
+| Hirshfeld, def2-TZVP | +0.019 | −0.011 |
+| Salvador, def2-TZVP | +0.027 | +0.017 |
+| `tfvp`, def2-TZVP | +0.026 | +0.017 |
+| `sph-tfvp`, def2-TZVP | +0.039 | −0.023 |
 | Hirshfeld, def2-SVP | +0.022 | −0.014 |
 | Salvador, def2-SVP | +0.032 | +0.026 |
 | `tfvp`, def2-SVP | +0.030 | +0.023 |
 | `sph-tfvp`, def2-SVP | +0.063 | −0.019 |
 
-- Hirshfeld in def2-SVP is closest (within 0.022 Å); the Salvador variants are 0.02–0.03 Å
-  long; `sph-tfvp` is within 0.06 Å but uneven; IAM is 0.1 Å short.
+- Hirshfeld is closest (def2-TZVP within 0.019 Å); the Salvador variants are 0.02–0.03 Å
+  long; `sph-tfvp` is within 0.04–0.06 Å but uneven; IAM is 0.1 Å short.
+- def2-SVP -> def2-TZVP moves every aspherical model a few mÅ toward the neutron values and
+  lowers R by about 0.002. `sph-tfva` still does not converge in def2-TZVP (stopped after 100
+  cycles, 9.6 min against about 1 min for the others).
 - O=C is close in every model but not within the X-ray esds: against 1.257 Å, Hirshfeld
   1.2558(4) is 3 esds short, `sph-tfvp` 1.2545(10) 2.5 short, IAM 1.2583(8) 1.6 long.
 - **The neutron values are quoted without esds** (Wall 2016 gives none), and it is not known
