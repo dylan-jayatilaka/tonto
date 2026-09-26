@@ -75,6 +75,27 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## START HERE, 2026-09-26 (evening): `use_exact_final_energy` written, NOT committed, test running
+
+**Uncommitted in the working tree on the Mac** (`types.foo`, `scf_data.foo`, `molecule.scf.foo`):
+`scfdata= { use_exact_final_energy= TRUE }`, off by default. After an SCF that used RI-J or COSX,
+`MOLECULE.SCF:make_exact_final_energy` does one full Fock build with exact J and K from the
+converged density and updates the energies; it takes the place of the COSX final-grid step. Both
+final steps now discard `.delta_density_mx` first, so an incremental build can never reuse the
+approximate Fock matrix (a latent bug with `use_delta_build= TRUE`). The options echo prints
+"Exact J and K for final energy" when it is on.
+
+**Its test** was running on achari2 at the end of the session:
+`~/tonto_runs/exact_final_2026-09-26/chain16.log` (done when `chain16.done` exists), on
+`~/github/tonto-sph` at `b21322ad` plus `all.patch`. Pass criteria: `w_default` gives -75.95692431
+(the stored reference; the option is off); `w_exactfinal` is within ~1e-7 of `w_exact` (the exact-
+integral water run) and prints the echo line; `w_exactfinal_debug` runs clean under bounds checking;
+`thio` gives -1135.8954933748 (the two-job test below). If all pass, commit the three files; the
+RIJCOSX test's output does not change, since the option is off by default.
+
+**Also on disk, deliberately not committed:** `scripts/ff_loop_bench.f90` (excluded in
+`.git/info/exclude`), the form-factor loop timing test.
+
 ## 2026-09-26 (afternoon): the RI metric is done; three new register rows
 
 **RI metric -- DONE, register row closed.** `1cf0dced`: the spherical transform is done a shell
