@@ -4,9 +4,34 @@
 into the user-facing pages. Live status is the entry in `TASKS_AND_HISTORY.md`, *Aspherical form factors by
 RI density fitting*.
 
-**Status 2026-09-24: sketch only.** Nothing is implemented. Dylan's proposal, recorded with the
+**Status 2026-09-27: sketch only, now split into stages (a) and (b) below.** Nothing is implemented. Dylan's proposal, recorded with the
 profile that motivates it and a survey of what the tree already has. To be worked out in detail
 later.
+
+**Two stages (Dylan, 2026-09-27).**
+
+- **(a) An option: fitted Hirshfeld atoms.** For each Hirshfeld atom, fit `w_a rho` in functions
+  on that atom only, with the **overlap** metric, and take its form factors from the fit. Useful
+  in its own right as a partition option, and it answers the first question: is the fit accurate
+  enough? Measure the fitted form factors against the quadrature ones over all reflections, and
+  time both.
+  - **Auxiliary functions: an even-tempered set** on each atom (exponents in geometric
+    progression, up to some L), not a specialised basis -- so it works for any basis, pob-TZVP
+    included, where no RI auxiliary set exists.
+  - **No Gaussian products.** Each auxiliary function sits on one centre, so the fitted density,
+    its value anywhere, and its transform are sums of single Gaussians -- much cheaper than the
+    molecular density, which needs products of basis-function pairs. The right-hand side
+    `b_P = integral chi_P w_a rho` still needs `rho` on the Becke grid once per fit.
+  - For functions on one centre the overlap metric is analytic and block-diagonal in (l,m).
+  - Risk to find out first: `w_a rho` has a cusp, and a tail toward the neighbours; functions
+    on one centre may need a high L to fit it.
+- **(b) Use it in refinement.** The design-matrix derivatives from the same coefficients; the
+  effect on refined parameters and their esds; the reflection-weighted metric (section 3);
+  per-molecule fits; tests. Only after (a) shows the fit is good enough.
+
+Before either: **re-measure.** Section 1's profile predates the `FOURIER_SUMS` change of
+2026-09-26/27, which made the form-factor sum several times faster (hart suite 2.4x), so its share
+of a fragHAR job must be measured again.
 
 **The proposal (Dylan).** Expand the Hirshfeld atomic densities using the RI machinery already in
 the tree rather than writing a fresh multipole/Bessel transform. It must be a **density** fit, not
