@@ -84,7 +84,7 @@ ctest --test-dir build-mpi -L mpi
 sh scripts/check_mpi_pi.sh build-mpi/run_mpi_pi $OMPI/bin/mpirun 1 2 4
 
 # the reference suite, under the launcher
-python3 scripts/suite_report.py --program build-mpi/tonto --suites short \
+python3 scripts/suite_report.py --build-dir build-mpi --suites short \
         --mpi --mpi-ranks 4 --mpi-launcher $OMPI/bin/mpirun
 ```
 
@@ -863,7 +863,7 @@ uploaded as an artifact for exactly that.
 # a release build from the current sources, then the full suite
 cmake -B build -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=release
 cmake --build build -- -j3            # -j3, not -j$(nproc): one JVM per .foo file
-python3 scripts/suite_report.py --program build/tonto --tests-dir tests \
+python3 scripts/suite_report.py --build-dir build --tests-dir tests \
         --basis-sets basis_sets --suites short long hart \
         --failure-dir test-failures --log tests.log
 ```

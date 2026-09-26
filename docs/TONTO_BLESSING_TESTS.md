@@ -75,15 +75,14 @@ One test at a time, from the build tree:
 
 ```bash
 python3 ../scripts/test.py --bless \
-        --program        ./tonto \
+        --build-dir      . \
         --test-directory ../tests/long/gly_ala_fragHAR_rhf_STO-3G \
         --basis-sets     ../basis_sets \
         --log-level=WARNING
 ```
 
-Drop `--bless` to see the agreement line without touching anything. For a `hart` or `rgbi` test,
-`--program` still points at `tonto`: the test's `IO` manifest names the real program, resolved as a
-sibling.
+Drop `--bless` to see the agreement line without touching anything. A `hart` or `rgbi` test takes
+the same `--build-dir`: its `IO` manifest names the program, which is run from that directory.
 
 Four rules:
 

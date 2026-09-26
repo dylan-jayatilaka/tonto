@@ -5,10 +5,11 @@ set(TEST_SCRIPT "${PROJECT_SOURCE_DIR}/scripts/test.py"
 set(TONTO_EXE "${PROJECT_BINARY_DIR}/tonto"
     CACHE FILEPATH "Test executable")
 
-# The hart tests still pass TONTO_EXE as --program: test.py resolves a test's
-# "program:" key as a sibling of it, so both binaries must live side by side
-# (they do -- the tonto and run_har targets both land in PROJECT_BINARY_DIR).
-# HART_EXE is only for the hand-registered invariant check below.
+# test.py and suite_report.py take the directory holding TONTO_EXE, and run
+# tonto -- or the program a test's IO file names, such as hart -- from it, so
+# the binaries must live side by side (the tonto and run_har targets both land
+# in PROJECT_BINARY_DIR). HART_EXE is only for the invariant check below.
+get_filename_component(TONTO_BUILD_DIR "${TONTO_EXE}" DIRECTORY)
 set(HART_EXE "${PROJECT_BINARY_DIR}/hart"
     CACHE FILEPATH "Hirshfeld atom refinement executable")
 
@@ -54,7 +55,7 @@ function(add_all_tests)
             COMMAND python3  ${TEST_SCRIPT}
             --test-directory "${CMAKE_CURRENT_SOURCE_DIR}/${D}"
             --basis-sets     "${BASIS_SETS}"
-            --program        "${TONTO_EXE}"
+            --build-dir      "${TONTO_BUILD_DIR}"
             # WARNING (not DEBUG): keeps test.py's captured output to just the
             # one-line AGREEMENT row (+ worst-offender notes), which test.py prints
             # regardless of log level. So `ctest --output-on-failure` / `ctest -V`
@@ -375,7 +376,7 @@ add_custom_target(report
     # (a tty is line-buffered, a pipe is 8 KB-buffered -- which is the whole
     # report, so it would all appear only at the end and look like a hang).
     COMMAND python3 -u ${PROJECT_SOURCE_DIR}/scripts/suite_report.py
-            --program    ${TONTO_EXE}
+            --build-dir  ${TONTO_BUILD_DIR}
             --tests-dir  ${CMAKE_CURRENT_SOURCE_DIR}
             --basis-sets ${BASIS_SETS}
             --log        ${PROJECT_BINARY_DIR}/tests.log

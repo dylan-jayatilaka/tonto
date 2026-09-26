@@ -465,8 +465,8 @@ def parse_IO_file(path):
       input:   extra file to copy into the run directory (repeatable)
       output:  file to compare against the reference     (repeatable)
       delete:  recorded but unused
-      program: executable to run instead of the default, resolved as a
-               sibling of --program e.g. "hart" -> <build>/hart
+      program: executable to run instead of tonto, found in --build-dir,
+               e.g. "hart" -> <build>/hart
       args:    command line for that program, split shell-style
 
     A job with no "program:" is a plain tonto job: it reads a file called
@@ -618,15 +618,9 @@ def run_test(args, test_dir, io_files):
         'universal_newlines': True,
         'env': env,
     }
-    # A test may name a different executable -- resolved as a sibling of
-    # --program, which main() has already made absolute, so that e.g.
-    # "program: hart" picks up <build>/hart from whichever build tree is
-    # under test.
-    if io_files['program']:
-        executable = join(os.path.dirname(abspath(args.program)),
-                          io_files['program'])
-    else:
-        executable = args.program
+    # The program is tonto, or the one the test's IO file names (e.g.
+    # "program: hart"), from the build tree under test.
+    executable = join(args.build_dir, io_files['program'] or 'tonto')
 
     if args.mpi:
         # Rank count is a knob, not a constant: MPI reduction order depends on it,
@@ -744,8 +738,12 @@ def main():
     import argparse
     import os
     parser = argparse.ArgumentParser()
-    parser.add_argument('--program', '-p', default='./tonto',
-                        help='Program to use to run the test jobs i.e. tonto')
+    parser.add_argument('--build-dir', '-d', default='.',
+                        help='Build directory holding tonto, and hart and '
+                             'rgbi; a test runs tonto unless its IO file '
+                             'names another program (default: .)')
+    parser.add_argument('--program', '-p', default=None,
+                        help=argparse.SUPPRESS)
     parser.add_argument('--test-directory', '-t', default='.',
                         help='Directory in which tests are located')
     parser.add_argument('--compare-program', '-c', default=None,
@@ -788,6 +786,9 @@ def main():
                              'last printed decimal place (default 2). A number '
                              'passes loose if it is within rel-tol OR last-digit-tol.')
     args = parser.parse_args()
+    if args.program is not None:
+        parser.error('--program is now --build-dir DIR: the directory '
+                     'holding tonto (and hart, rgbi), not the program')
     # Resolve all paths to absolute up front: run_test() chdir's into a temp
     # directory before copying inputs / reading the basis sets, so a *relative*
     # --test-directory or --basis-sets would be resolved against the temp dir
@@ -795,14 +796,9 @@ def main():
     # invocation dir.
     args.test_directory = os.path.abspath(args.test_directory)
     args.basis_sets = os.path.abspath(args.basis_sets)
-    # --program too, and for the same reason: subprocess resolves it from inside
-    # the temp directory, so `--program build/tonto` died with a FileNotFoundError
-    # naming a binary that was sitting right there in the invocation directory.
-    # (Left out when the others were absolutised; it broke the debug CI job, and
-    # the default './tonto' has the same flaw.) A bare name with no separator is
-    # left alone so it can still be found on PATH.
-    if os.sep in args.program or os.path.exists(args.program):
-        args.program = os.path.abspath(args.program)
+    # --build-dir too, and for the same reason: the program is run from
+    # inside the temp directory.
+    args.build_dir = os.path.abspath(args.build_dir)
     logging.basicConfig(level=args.log_level)
 
     # Widen the gate for a known-marginal test (see KNOWN_MARGINAL above).

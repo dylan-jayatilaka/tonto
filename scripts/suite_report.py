@@ -22,8 +22,8 @@ several compared output files is scored on its worst file.
 
 Usage
 -----
-    python3 scripts/suite_report.py --program build/tonto
-    python3 scripts/suite_report.py -p build-rel/tonto --suites short rgbi
+    python3 scripts/suite_report.py --build-dir build
+    python3 scripts/suite_report.py -d build-rel --suites short rgbi
     python3 scripts/suite_report.py --rel-tol 1e-3 --last-digit-tol 1
 
 Tolerances (mirror scripts/test.py):
@@ -133,7 +133,7 @@ def score_test(test_py, test_dir, args):
     cmd = ['python3', test_py,
            '--test-directory', test_dir,
            '--basis-sets', args.basis_sets,
-           '--program', args.program,
+           '--build-dir', args.build_dir,
            '--log-level=ERROR',
            '--rel-tol', repr(rel_tol),
            '--last-digit-tol', repr(ld_tol),
@@ -192,8 +192,10 @@ def main():
     root = os.path.dirname(here)
     ap = argparse.ArgumentParser(
         description='Per-suite agreement report for the Tonto test jobs.')
-    ap.add_argument('--program', '-p', default=os.path.join(root, 'build', 'tonto'),
-                    help='tonto executable to test (default: build/tonto)')
+    ap.add_argument('--build-dir', '-d', default=os.path.join(root, 'build'),
+                    help='build directory holding tonto, hart and rgbi '
+                         '(default: build/)')
+    ap.add_argument('--program', '-p', default=None, help=argparse.SUPPRESS)
     ap.add_argument('--tests-dir', '-t', default=os.path.join(root, 'tests'),
                     help='root tests directory (default: tests/)')
     ap.add_argument('--basis-sets', '-b', default=os.path.join(root, 'basis_sets'),
@@ -246,7 +248,11 @@ def main():
     # moment they started running from this driver, while local runs and the
     # CMake `report` target -- both of which pass absolute paths -- stayed green.
     # test.py guards the same way for the same reason.
-    args.program = os.path.abspath(args.program)
+    if args.program is not None:
+        ap.error('--program is now --build-dir DIR: the directory holding '
+                 'tonto (and hart, rgbi), not the program')
+    args.build_dir = os.path.abspath(args.build_dir)
+    args.program = os.path.join(args.build_dir, 'tonto')
     args.basis_sets = os.path.abspath(args.basis_sets)
     args.tests_dir = os.path.abspath(args.tests_dir)
     # Absolutised for the same reason as the others: the invariant checks chdir
@@ -421,14 +427,14 @@ def main():
         # hart's --help text is its only interface documentation, so it must
         # agree with the option case labels in run_har.foo. Only meaningful if
         # hart was built -- it lives beside tonto in the same build tree.
-        hart = os.path.join(os.path.dirname(args.program), 'hart')
+        hart = os.path.join(args.build_dir, 'hart')
         run_har = os.path.join(os.path.dirname(here), 'runfiles', 'run_har.foo')
         if os.path.exists(hart):
             checks.append(('hart options vs its --help text',
                            os.path.join(here, 'check_hart_options.sh'),
                            [hart, run_har, args.basis_sets]))
         # And rgbi's, on the same footing.
-        rgbi = os.path.join(os.path.dirname(args.program), 'rgbi')
+        rgbi = os.path.join(args.build_dir, 'rgbi')
         run_rgbi = os.path.join(os.path.dirname(here), 'runfiles', 'run_rgbi.foo')
         if os.path.exists(rgbi):
             checks.append(('rgbi options vs its --help text',

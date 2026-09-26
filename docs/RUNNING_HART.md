@@ -123,7 +123,7 @@ output:  urea.out
 output:  urea.archive.cif
 ```
 
-`program:` is resolved as a sibling of `--program`, so `hart` is found in
+`program:` is run from `test.py`'s `--build-dir`, so `hart` comes from
 whichever build tree is under test. `args:` is split shell-style and appended.
 The reference that matters is `urea.archive.cif`: it carries the refined
 coordinates and ADPs as `0.02071(18)`, which `test.py` compares with its
