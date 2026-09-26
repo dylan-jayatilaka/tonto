@@ -183,3 +183,30 @@ fits twice as badly as the aspherical ones, its esds are two to three times larg
 its N–H bonds scatter by ±0.04 Å about the aspherical values. Why the promolecule radii
 stabilise it is not known: they move the C–N boundary 0.1 Å toward N, which gives the
 spherical C more of the bond density; that is a guess, not measured.
+
+### Against the independent atom model (IAM)
+
+`IAM_refinement` on the same urea data. Tonto's IAM uses International Tables form factors
+for the neutral heavy atoms and Stewart–Davidson–Simpson bonded-atom form factors for H.
+
+| model | N–H1 /Å | N–H3 /Å | R(F) | GoF |
+|---|---|---|---|---|
+| IAM (SDS H) | 0.905(10) | 0.888(12) | 0.0284 | 6.50 |
+| `sph-tfvp`, STO-3G | 1.048(15) | 0.944(15) | 0.0455 | 10.5 |
+| `sph-tfvp`, def2-SVP | 1.069(12) | 0.981(15) | 0.0341 | 8.16 |
+| Hirshfeld, def2-SVP | 1.028(5) | 0.986(6) | 0.0181 | 3.30 |
+| Salvador, def2-SVP | 1.038(5) | 1.026(5) | 0.0190 | 3.54 |
+| `tfvp`, def2-SVP | 1.036(4) | 1.023(4) | 0.0188 | 3.48 |
+
+IAM: O=C 1.2583(8), N–C 1.3386(7) Å; U_iso O 0.01565(15), N 0.02322(17), C 0.01244(15),
+H1 0.055(6), H3 0.044(5) Å².
+
+- IAM shortens N–H by about 0.1 Å, as it always does. `sph-tfvp` does not: its N–H bonds
+  are near the aspherical models', with esds two to three times larger and more scatter.
+  A spherical average of the *molecular* density about the H nucleus already includes the
+  density drawn into the bond; a free-atom H does not.
+- IAM nonetheless fits better than `sph-tfvp` (R 0.028 against 0.034), and better than the
+  STO-3G HARs: it absorbs the bonding density by moving the H atoms and adjusting the U, which
+  is how it gets the bonds wrong. A lower R is not a better geometry here.
+- To say which N–H is right needs the neutron values for urea (thought to be about
+  1.00–1.01 Å; to be checked against the published structure).
