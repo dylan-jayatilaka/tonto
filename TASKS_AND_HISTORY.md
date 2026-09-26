@@ -75,26 +75,54 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## START HERE, 2026-09-26 (evening): `use_exact_final_energy` written, NOT committed, test running
+## START HERE, 2026-09-26 (night): two branches waiting -- read this first
 
-**Uncommitted in the working tree on the Mac** (`types.foo`, `scf_data.foo`, `molecule.scf.foo`):
-`scfdata= { use_exact_final_energy= TRUE }`, off by default. After an SCF that used RI-J or COSX,
-`MOLECULE.SCF:make_exact_final_energy` does one full Fock build with exact J and K from the
-converged density and updates the energies; it takes the place of the COSX final-grid step. Both
-final steps now discard `.delta_density_mx` first, so an incremental build can never reuse the
-approximate Fock matrix (a latent bug with `use_delta_build= TRUE`). The options echo prints
-"Exact J and K for final energy" when it is on.
+**`develop` is clean and green.** Two pieces of work are on their own branches:
 
-**Its test** was running on achari2 at the end of the session:
-`~/tonto_runs/exact_final_2026-09-26/chain16.log` (done when `chain16.done` exists), on
-`~/github/tonto-sph` at `b21322ad` plus `all.patch`. Pass criteria: `w_default` gives -75.95692431
-(the stored reference; the option is off); `w_exactfinal` is within ~1e-7 of `w_exact` (the exact-
-integral water run) and prints the echo line; `w_exactfinal_debug` runs clean under bounds checking;
-`thio` gives -1135.8954933748 (the two-job test below). If all pass, commit the three files; the
-RIJCOSX test's output does not change, since the option is off by default.
+**1. `show-labels-cpp-fix` (`c55ec5b8`) -- finished, needs a full suite run before merging.**
+146 `stdout.show` labels fixed (117 plain and 20 ending in ":" now end in "="; 9 sentences say
+`dots=FALSE`); `scripts/check_show_labels.py`, which fails on a label without "=" or `dots=FALSE`
+and on a heading rule of the wrong length, registered as the short ctest `show_labels` and in
+`scripts/suite_report.py`; and the translator fix -- preprocessor and comment lines between a
+module's last data item and `contains` were dropped. Translating everything before and after:
+9 files change, 7 only regain comments; **`mat_int` regains integer `ZERO`/`ONE`** and
+**`molecule.main` regains `#define ENSURE(X,Y) ENSURE0(X,Y)`, so its ENSURE checks are live in
+release** -- kept deliberately (Dylan: that module reads user input). A macOS release build
+compiles. **To merge:** full suite (short long hart cx rgbi samuel); re-bless the six tests with a
+fixed label, after checking each difference is a label line: short/h2o+_uhf_cc-pVDZ_1e_properties,
+short/h2o_mp2_6-31G(d), hart/urea_hart_STO-3G_extinction, long/quartz_NN_HAR_L1_rhf_def2-SVP,
+samuel/ethanol_formamide_breakdown, samuel/sucacb_energies_breakdown. Any other difference comes
+from the live ENSURE or the integer ZERO/ONE.
 
-**Also on disk, deliberately not committed:** `scripts/ff_loop_bench.f90` (excluded in
-`.git/info/exclude`), the form-factor loop timing test.
+**2. `exact-final-energy` (`76d1d87f`) -- WIP, an unexplained error.** `scfdata= {
+use_exact_final_energy= TRUE }` (off by default): after an RI-J/COSX SCF, one full Fock build with
+exact J and K from the converged density. Also makes both final steps discard `.delta_density_mx`
+(a latent bug with `use_delta_build= TRUE`). Tested on achari2:
+
+| | exact SCF | two-job route | in-code option |
+|---|---|---|---|
+| water def2-SVP | -75.95681863 | -75.95681861 (2e-8) | -75.95681836 (2.7e-7) |
+| thiotepa def2-TZVP | -1135.8954935249 | -1135.8954933748 (1.5e-7) | -1135.8954874932 (6.0e-6) |
+
+The two-job route (the COSX job keeps its density; a second job reads it with
+`initial_density= restricted`, `max_iterations= 1`, and prints the iteration-0 energy -- one full
+exact build, checked in `initialize_SCF`) and the option should compute the same number. Option
+off, water gives the reference unchanged; release and debug agree. **Ruled out:** a delta build;
+COSX or RI-J still used (both chosen by flag); cutoffs (changed only by a named accuracy level);
+the cached Schwarz bounds (`.max_I.destroy` first changed nothing); a different density
+(`archive_SCF_results` writes `.density_mx` as it is); a stored energy correction (RHF is
+1/2 tr P(F+h)). **So the exact Fock matrix built in-process after the RI-J/COSX iterations differs
+from a fresh job's.** Next: in a debug build, print the norms of J and K from both routes on water
+to see which differs, then find what the RI-J/COSX iterations leave behind. Runs:
+`achari2:~/tonto_runs/exact_final_2026-09-26/` (including `w_twojob/`).
+
+**Also found today, not started:** the lattice-energy code is dead -- `MOLECULE.CE:total_lattice_energy`
+is called only from a commented-out keyword; the dead-code report lists all 21 `PAIR_ENERGY`
+procedures and 21 of 23 in `VEC{PAIR_ENERGY}`, the other two being the setters behind the keywords
+`pair_energy_model=` and `lattice_energy_convergence=`, which no test uses. Dylan: remove it, with
+an `archive/lattice-energy` tag on the last commit that has it (the convention in
+`docs/TONTO_REPOSITORY_BRANCHES.md`), before the full suite run. Also three watcher loops from
+earlier sessions (55 days old, `while pgrep -f ...` matching themselves) were killed on achari2.
 
 ## 2026-09-26 (afternoon): the RI metric is done; three new register rows
 
