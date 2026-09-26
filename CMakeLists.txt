@@ -451,7 +451,6 @@ set(FOO_SRC
    #${FOO_DIR}/vec{gsd_tree}.foo
     ${FOO_DIR}/vec{interpolator}.foo
     ${FOO_DIR}/vec{irrep}.foo
-    ${FOO_DIR}/vec{pair_energy}.foo
     ${FOO_DIR}/vec{quadrature}.foo
    #${FOO_DIR}/vec{rys}.foo
     ${FOO_DIR}/vec{reflection}.foo
@@ -463,7 +462,6 @@ set(FOO_SRC
     ${FOO_DIR}/opmatrix.foo
     ${FOO_DIR}/opvector.foo
     ${FOO_DIR}/mo_localiser.foo
-    ${FOO_DIR}/pair_energy.foo
     ${FOO_DIR}/molecule.inq.foo
     ${FOO_DIR}/molecule.set.foo
     ${FOO_DIR}/molecule.read.foo
@@ -577,7 +575,6 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/opmatrix.F90
     ${CMAKE_CURRENT_BINARY_DIR}/opvector.F90
     ${CMAKE_CURRENT_BINARY_DIR}/plot_grid.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/pair_energy.F90
     ${CMAKE_CURRENT_BINARY_DIR}/pointgroup.F90
     ${CMAKE_CURRENT_BINARY_DIR}/quadrature.F90
     ${CMAKE_CURRENT_BINARY_DIR}/real.F90
@@ -620,7 +617,6 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/vec_emat_int.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_emat_real.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_emat3_real.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/vec_pair_energy.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_quadrature.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_real.F90
     #${CMAKE_CURRENT_BINARY_DIR}/vec_rys.F90
