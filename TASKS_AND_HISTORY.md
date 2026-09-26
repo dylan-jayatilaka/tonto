@@ -4595,16 +4595,6 @@ the XC evaluation, not the point count. Tables in `docs/SCF_SPEED_REPORT.md`.
 
 # Test suite and numerics
 
-## Rename `test.py --program` to `--build-dir` (Dylan, 2026-09-26)
-
-For a test whose `IO` file names a program (`program: hart`), `--program` is used only to find
-the build directory, and the named program is run from there. So `ctest` hands every hart test
-`tonto`, which confuses anyone reading it. Make the option `--build-dir`: run `tonto` from it by
-default, or the program `IO` names. Do the same in `suite_report.py`. Seventeen files pass
-`--program`: the two scripts, `tests/CMakeLists.txt`, 11 workflows and 3 docs
-(`TONTO_BLESSING_TESTS.md`, `TONTO_AND_MPI.md`, `RUNNING_HART.md`). Check how `--mpi` and
-`--compare-program` use it first.
-
 ## A `show` label that lost its dots (found 2026-09-26)
 
 The form-factor pruning report now prints `Form factors on disk cut to kept reflections, from  1009`
@@ -6266,6 +6256,21 @@ different question and the one that matters.
 ---
 
 # Done, resolved and closed (archive)
+
+## DONE 2026-09-27: `test.py --program` renamed `--build-dir`
+
+For a test whose `IO` file names a program (`program: hart`), `--program` is used only to find
+the build directory, and the named program is run from there. So `ctest` hands every hart test
+`tonto`, which confuses anyone reading it. Make the option `--build-dir`: run `tonto` from it by
+default, or the program `IO` names. Do the same in `suite_report.py`. Seventeen files pass
+`--program`: the two scripts, `tests/CMakeLists.txt`, 11 workflows and 3 docs
+(`TONTO_BLESSING_TESTS.md`, `TONTO_AND_MPI.md`, `RUNNING_HART.md`). Check how `--mpi` and
+`--compare-program` use it first.
+
+Done in `08c93a6b`: both `test.py` and `suite_report.py` take `--build-dir DIR` (`-d`); the old
+option stops with a message naming the new one. `tests/CMakeLists.txt` passes the directory of
+`TONTO_EXE`, so an override still works.
+
 
 ## DONE (2026-09-25): the reduced multiplication scheme, archived and deleted
 
