@@ -266,9 +266,12 @@ contains
    end
 
    make_ED_grid_r_v2(grid,pts,DM,tol) :: PURE
-   ! Add to "grid" the electron density values at the the points "pt",
-   ! for density matrix "DM". Only terms bigger than "tol" are considered.
-   ! NOTE: This is Kanghyun's version. Now working.
+   ! Set "grid" to the electron density at the points "pts" for density
+   ! matrix "DM", batch by batch, as the batched XC quadrature does. The
+   ! points are cut into small boxes (make_box_batches); for each box, G
+   ! holds the basis functions of every shell whose "tol" sphere reaches
+   ! it, X = G D_s with D_s the matching block of "DM", and the density is
+   ! sum_j G(:,j)*X(:,j).
       self :: IN
       grid :: VEC{REAL}, OUT
       pts  :: MAT{REAL}, IN
@@ -280,69 +283,98 @@ contains
    ENSURE(DM.is_square,   "wrong shape, DM")
    ENSURE(DM.dim1==.n_bf, "wrong size, DM")
 
-      psi  :: VEC{EVEC{REAL}}@
-      ind  :: VEC{EVEC{INT}}@
-      mask :: VEC{BIN}@
-      bf   :: MAT{REAL}@
-      same,pi,pj :: VEC{INT}@
-      n_pts, s,fs,ls,ns, i,j :: INT
-      sh   :: SHELL1
-      Dij  :: REAL
-      eps  :: REAL
+      G, X, Ds :: MAT{REAL}@
+      xs,ys,zs,rho :: VEC{REAL}@
+      perm,first,last,shell,first_shell,last_shell,bf :: VEC{INT}@
+      sh :: SHELL1
+      eps, h :: REAL
+      max_pts, b,f,np,ns,j,q,s,fs,ls,n,off :: INT
 
       ! Same as .becke_grid.basis_fn_cutoff
       eps = SHELL_BASIS_FN_CUTOFF
       if (present(tol)) eps = tol
 
-      ! Zero
+      ! Batch sizes as for the XC quadrature
+      h = THREE
+      max_pts = 512
+      if (.becke_grid.allocated) then
+         h = .becke_grid.XC_batch_box_edge
+         max_pts = .becke_grid.XC_batch_max_pts
+      end
+
       grid = ZERO
+      if (pts.dim1==0) return
 
-      ! Sparse storage of significant b.f. values on grid:
-      ! placed in "psi", corresponding indices in "ind".
-      psi.create(.n_bf)
-      ind.create(.n_bf)
+      .make_box_batches(pts,perm,first,last,h,max_pts)
+      .make_batch_shells(pts,eps,shell,first_shell,last_shell,perm,first,last)
 
-      ! Loop over shells "s"
-      n_pts = pts.dim1
-      mask.create(n_pts)
-      do s = 1,.n_shell 
-         .set_shell1_from(s,sh,fs,ls,ns)
-         bf.create(n_pts,ns)
-         sh.make_grid(bf,pts(:,1),pts(:,2),pts(:,3))
-         ! Basis fn. "i"
-         do i = fs,ls
-            mask = abs(bf(:,i-fs+1))>eps
-            ! Store large values for each b.f.
-            psi(i).element = pack(bf(:,i-fs+1)   ,mask)
-            ind(i).element = pack([(j,j=1,n_pts)],mask)
+      do b = 1,first.dim
+
+         if (last_shell(b)<first_shell(b)) cycle
+         f  = first(b)
+         np = last(b) - f + 1
+
+         ! Number of basis functions in the batch's shells
+         ns = 0
+         do j = first_shell(b),last_shell(b)
+            s = shell(j)
+            ns = ns + .last_basis_fn_for_shell(s) - .first_basis_fn_for_shell(s) + 1
          end
-         bf.destroy
-      end
-      mask.destroy
 
-      ! psi*psi product
-      grid = ZERO 
-      do i = 1,.n_bf 
-      do j = 1,i
-         ! DM is symmetric
-         Dij = DM(i,j)
-         if (j<i) Dij = Dij + Dij
-         ! DM value large enough?
-         if (abs(Dij)>eps) then
-            VEC{INT}:common_indices_in(ind(i)[:],ind(j)[:],pi,pj,same)
-            ! Common indices?
-            if (same.dim>0) then
-               grid(same) = grid(same) + Dij*psi(i)[pi]*psi(j)[pj]
+         ! The batch's points
+         xs.create(np)
+         ys.create(np)
+         zs.create(np)
+         do q = 1,np
+            xs(q) = pts(perm(f+q-1),1)
+            ys(q) = pts(perm(f+q-1),2)
+            zs(q) = pts(perm(f+q-1),3)
+         end
+
+         ! Basis functions on the points, shell by shell
+         bf.create(ns)
+         G.create(np,ns)
+         off = 0
+         do j = first_shell(b),last_shell(b)
+            .set_shell1_from(shell(j),sh,fs,ls,n)
+            sh.make_grid(G(:,off+1:off+n),xs,ys,zs)
+            do q = 1,n
+               bf(off+q) = fs + q - 1
             end
-            pi.destroy
-            pj.destroy
-            same.destroy
+            off = off + n
          end
-      end
+         zs.destroy
+         ys.destroy
+         xs.destroy
+
+         ! Density: sum_j G(:,j) (G D_s)(:,j)
+         Ds.create(ns,ns)
+         Ds = DM(bf,bf)
+         X.create(np,ns)
+         X.to_product_of(G,Ds)
+         rho.create(np)
+         rho = ZERO
+         do j = 1,ns
+            rho = rho + G(:,j)*X(:,j)
+         end
+         do q = 1,np
+            grid(perm(f+q-1)) = rho(q)
+         end
+
+         rho.destroy
+         X.destroy
+         Ds.destroy
+         G.destroy
+         bf.destroy
+
       end
 
-      ind.destroy
-      psi.destroy
+      last_shell.destroy
+      first_shell.destroy
+      shell.destroy
+      last.destroy
+      first.destroy
+      perm.destroy
 
    end
 
@@ -1529,24 +1561,35 @@ contains
    end
 
    make_XC_batch_shells(shell,first_shell,last_shell,perm,first,last) :: leaky, PURE
-   ! For the batches perm(first(b):last(b)) of .XC_pts, the significant
+   ! The significant shells of the batches of .XC_pts; see make_batch_shells.
+      self :: IN
+      shell,first_shell,last_shell :: VEC{INT}@, OUT
+      perm,first,last :: VEC{INT}, IN
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.XC_pts.allocated,"no XC grid")
+      .make_batch_shells(.XC_pts,.becke_grid.basis_fn_cutoff,shell,first_shell,last_shell,perm,first,last)
+   end
+
+   make_batch_shells(pts,cutoff,shell,first_shell,last_shell,perm,first,last) :: leaky, PURE
+   ! For the batches perm(first(b):last(b)) of "pts", the significant
    ! shells of batch "b", shell(first_shell(b):last_shell(b)): those whose
-   ! basis_fn_cutoff sphere reaches the bounding box of the batch's points,
+   ! "cutoff" sphere reaches the bounding box of the batch's points,
    ! so a shell is kept whenever any point of the batch would keep it.
       self :: IN
+      pts :: MAT{REAL}, IN
+      cutoff :: REAL, IN
       shell,first_shell,last_shell :: VEC{INT}@, OUT
       perm,first,last :: VEC{INT}, IN
 
    ENSURE(.basis_info_made,"no basis info")
-   ENSURE(.XC_pts.allocated,"no XC grid")
+   ENSURE(pts.dim2==3,"pts: need 3 columns")
 
       cen :: MAT{REAL}@
       r2m :: VEC{REAL}@
       lo,hi :: VEC{REAL}(3)
-      cutoff,dd,d2 :: REAL
+      dd,d2 :: REAL
       s,b,q,p,j,n,n_b :: INT
 
-      cutoff = .becke_grid.basis_fn_cutoff
       n_b = first.dim
 
       cen.create(3,.n_shell)
@@ -1568,8 +1611,8 @@ contains
          do q = first(b),last(b)
             p = perm(q)
             do j = 1,3
-               lo(j) = min(lo(j),.XC_pts(p,j))
-               hi(j) = max(hi(j),.XC_pts(p,j))
+               lo(j) = min(lo(j),pts(p,j))
+               hi(j) = max(hi(j),pts(p,j))
             end
          end
 
@@ -1596,16 +1639,27 @@ contains
    end
 
    make_XC_box_batches(perm,first,last,h,max_pts) :: leaky, PURE
-   ! Batch the molecular DFT grid spatially: cut the bounding box of .XC_pts
-   ! into cubes of edge "h" (bohr), then split any cube holding more than
-   ! "max_pts" points into octants until none does. Batch "b" is the points
-   ! perm(first(b):last(b)); .XC_pts itself is not reordered.
+   ! Batch the molecular DFT grid .XC_pts spatially; see make_box_batches.
       self :: IN
       perm,first,last :: VEC{INT}@, OUT
       h :: REAL, IN
       max_pts :: INT, IN
-
    ENSURE(.XC_pts.allocated,"no XC grid")
+      .make_box_batches(.XC_pts,perm,first,last,h,max_pts)
+   end
+
+   make_box_batches(pts,perm,first,last,h,max_pts) :: leaky, PURE
+   ! Batch the points "pts" spatially: cut their bounding box
+   ! into cubes of edge "h" (bohr), then split any cube holding more than
+   ! "max_pts" points into octants until none does. Batch "b" is the points
+   ! perm(first(b):last(b)); "pts" itself is not reordered.
+      self :: IN
+      pts :: MAT{REAL}, IN
+      perm,first,last :: VEC{INT}@, OUT
+      h :: REAL, IN
+      max_pts :: INT, IN
+
+   ENSURE(pts.dim2==3,"pts: need 3 columns")
    ENSURE(h>ZERO,"cube edge must be positive")
    ENSURE(max_pts>0,"max_pts must be positive")
 
@@ -1619,10 +1673,10 @@ contains
       hw :: REAL
       n,n_cell,n_leaf,n_st,cap,p,q,j,k,f,l,ix,iy,iz,code :: INT
 
-      n = .XC_pts.dim1
+      n = pts.dim1
       do j = 1,3
-         lo(j) = minval(.XC_pts(:,j))
-         hi(j) = maxval(.XC_pts(:,j))
+         lo(j) = minval(pts(:,j))
+         hi(j) = maxval(pts(:,j))
          nc(j) = max(1,ceiling((hi(j)-lo(j))/h))
       end
       n_cell = nc(1)*nc(2)*nc(3)
@@ -1632,9 +1686,9 @@ contains
       cnt.create(n_cell+1)
       cnt = 0
       do p = 1,n
-         ix = min(nc(1),1+int((.XC_pts(p,1)-lo(1))/h))
-         iy = min(nc(2),1+int((.XC_pts(p,2)-lo(2))/h))
-         iz = min(nc(3),1+int((.XC_pts(p,3)-lo(3))/h))
+         ix = min(nc(1),1+int((pts(p,1)-lo(1))/h))
+         iy = min(nc(2),1+int((pts(p,2)-lo(2))/h))
+         iz = min(nc(3),1+int((pts(p,3)-lo(3))/h))
          k = ix + nc(1)*((iy-1) + nc(2)*(iz-1))
          cell(p) = k
          cnt(k+1) = cnt(k+1) + 1
@@ -1703,9 +1757,9 @@ contains
             do q = f,l
                p = perm(q)
                code = 1
-               if (.XC_pts(p,1)>c0(1)) code = code + 1
-               if (.XC_pts(p,2)>c0(2)) code = code + 2
-               if (.XC_pts(p,3)>c0(3)) code = code + 4
+               if (pts(p,1)>c0(1)) code = code + 1
+               if (pts(p,2)>c0(2)) code = code + 2
+               if (pts(p,3)>c0(3)) code = code + 4
                codes(q) = code
                oct_cnt(code) = oct_cnt(code) + 1
             end
