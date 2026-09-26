@@ -4412,9 +4412,10 @@ contains
 
    make_sph_avgd_SA_ED_v1(avg,pts,c) :: PURE
    ! Make "avg", the spherically averaged Salvador atom electron
-   ! densities for atom "c" evaluated at a set of radial "pts" away
-   ! from the nuclear position.
-   ! NOTE: ths "pts" should be from .becke_grid.radial_grid(p).pts
+   ! densities for atom "c" at the radii "pts" of its Becke radial
+   ! shells, averaging over each shell's Lebedev grid. The Becke
+   ! partition weights are not used: the average is over the whole
+   ! sphere, and the Salvador weight takes it to zero at other nuclei.
       self :: IN
       avg  :: VEC{REAL}, OUT
       pts  :: VEC{REAL}, IN
@@ -4424,50 +4425,36 @@ contains
    ENSURE(.becke_grid.allocated,"no becke_grid")
    ENSURE(.becke_grid.finalized,"becke_grid not finalized")
 
-      rc        :: VEC{REAL}(3)
-      wts,Wc,N0 :: VEC{REAL}@
-      shell     :: MAT{REAL}@
-      lebedev   :: LEBEDEV@
-      i         :: INT
-      r         :: REAL
+      rc      :: VEC{REAL}(3)
+      Wc,N0   :: VEC{REAL}@
+      shell   :: MAT{REAL}@
+      lebedev :: LEBEDEV@
+      i,j     :: INT
 
-      ! Atom "c" pos
       rc = .atom(c).position
 
-      ! Radial pts
       do i = 1,pts.dim
 
-         ! Radius "r"
-         r = pts(i)
-
-         ! Shell radius "r"
+         ! Shell "i" of radius pts(i) around atom "c"
          lebedev = .becke_grid.angular_grid_for_atom(c,i)
-         shell = r*r*lebedev.pts ! Quad. pts
-         wts   =     lebedev.wts ! Quad. weights
+         shell = pts(i)*lebedev.pts
+         do j = 1,3
+            shell(:,j) = shell(:,j) + rc(j)
+         end
 
-         ! Displace to "rc"
-         shell = shell + spread(rc,dim=2,ncopies=shell.dim2)
-
-         ! Salvador atom "Wc" on "shell"
-         Wc.create(shell.dim1)  ! Salvador atom
+         ! Salvador atom "c" density on the shell
+         Wc.create(shell.dim1)
          .becke_grid.make_Salvador_cell_fn(Wc,shell,c)
-
-         ! Prune "shell"
-         wts = Wc*wts ! <---
-      ! .becke_grid.prune_grid(shell,wts)
-
-         ! ED for atom "c" on "shell"
          N0.create(shell.dim1)
          .make_ED_grid_r(N0,shell)
 
-         ! Population of shell 
-         avg(i) = sum(N0*wts) ! Integrate
+         ! Average: the Lebedev weights sum to one
+         avg(i) = sum(lebedev.wts*Wc*N0)
 
-         ! Clean
          N0.destroy
          Wc.destroy
-         wts.destroy
          shell.destroy
+         lebedev.destroy
 
       end
 
@@ -4756,7 +4743,7 @@ contains
 
       ! Averaged densities
       N0.create(n)
-      .make_sph_avgd_SA_ED_v0(N0,pts,c)
+      .make_sph_avgd_SA_ED_v1(N0,pts,c)
 
       ! N0 x radial weights
       N0 = N0*wts
