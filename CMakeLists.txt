@@ -435,6 +435,7 @@ set(FOO_SRC
     ${FOO_DIR}/reflection.foo
     ${FOO_DIR}/crystal.foo
     ${FOO_DIR}/crystal23.foo
+    ${FOO_DIR}/fourier_sums.foo
     ${FOO_DIR}/spherical_harmonic.foo
     ${FOO_DIR}/t_tensor.foo
     ${FOO_DIR}/table_column.foo
@@ -507,6 +508,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/cpx.F90
     ${CMAKE_CURRENT_BINARY_DIR}/crystal.F90
     ${CMAKE_CURRENT_BINARY_DIR}/crystal23.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/fourier_sums.F90
 #   ${CMAKE_CURRENT_BINARY_DIR}/datafile.F90
     ${CMAKE_CURRENT_BINARY_DIR}/dft_functional.F90
     ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.inq.F90
@@ -1017,6 +1019,15 @@ if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64"
         PROPERTIES COMPILE_OPTIONS "-O2;-fno-schedule-insns")
     message(STATUS "arm64 macOS: pinning shell1quartet.F90 to -O2 "
                    "(gfortran miscompilation workaround)")
+endif()
+
+# fourier_sums.F90 computes its own sin and cos, which -ffast-math breaks, so it
+# is compiled without fast math in every optimised build; the reasons and the
+# timings are at the top of foofiles/fourier_sums.foo. The last -O wins, so -O3
+# here also undoes a release build's -Ofast. Debug builds keep their own flags.
+if("${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU" AND NOT BT STREQUAL "DEBUG")
+    set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/fourier_sums.F90
+        PROPERTIES COMPILE_OPTIONS "-O3;-fno-fast-math;-fno-math-errno;-fno-trapping-math")
 endif()
 
 # Generate ALL Foo->Fortran output (every .F90 and its co-generated .int/.use)

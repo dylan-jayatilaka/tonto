@@ -36,7 +36,7 @@ One idea per sentence. If a sentence has to be read twice, rewrite it.
 today `TONTO_AND_MPI.md`, `TONTO_DEVELOPER_INFO.md`, `PROJECT_HISTORY.md`, `DFT_STANDARDISATION.md`,
 `EXTINCTION_REPORT.md`, `GFORTRAN16_*.md`, `TONTO_SCF_SPEED_UP.md`, `CCTBX_INTO_TONTO.md`, `GOF_NOT_CHI2.md`,
 `TONTO_DISPERSION_CORRECTIONS.md`, `TONTO_RI_FITTING_PLAN.md`, and the
-`*_REPORT.md` and `*_PLAN.md` files. **They are deleted when their item closes**, and their durable residue
+`*_REPORT.md`, `*_PLAN.md` and `RESEARCH_ON_*.md` files. **They are deleted when their item closes**, and their durable residue
 moves into the user-facing pages. Everything else in `docs/` is user-facing.
 
 **Specific rules for user-facing pages** (`README.md`, `docs/BUILDING_*`, `docs/RUNNING_*`,

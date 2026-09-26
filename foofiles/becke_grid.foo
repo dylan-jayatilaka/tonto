@@ -2689,78 +2689,16 @@ contains
    ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
    ENSURE(.Salvador_chi.allocated,"no Salvador_chi.")
 
-      Pa, Pi, Ps   :: VEC{REAL}@
-      ri, rj, rg   :: VEC{REAL}(3)
-      dgi,dgj, chi :: REAL
-      dij, mu, s   :: REAL
-      n_atoms, i,j :: INT
-      n_pts,   g   :: INT
+      Wa :: VEC{REAL}@
 
       ! Unnormalized grid for atom "a"
       .:make_atom_grid(pts,wts,a)
 
-      ! Sizes
-      n_atoms = .atom.dim
-      n_pts   = pts.dim1
-
-      ! Cell functions
-      Ps.create(n_pts) ! Sum_i P_i
-      Pa.create(n_pts) ! a-th cell fn
-      Pi.create(n_pts) ! i-th cell fn
-      Ps = ZERO        ! <--- NOTE
-
-      ! Sum cell fns. Pi
-      do i = 1,n_atoms
-
-         ri = .atom(i).position
-
-         Pi = ONE ! <--- NOTE
-
-         ! Product over step fns.
-         ! Pi = Prod_j s(mu_ij)
-         do j = 1,n_atoms
-
-            if (i==j) cycle
-
-            rj  = .atom(j).position
-            dij = ONE/norm2(rj-ri)
-
-            ! Becke size adjustment
-            chi = .Salvador_chi(i,j)
-
-            ! Grid points "g"
-            do g = 1,n_pts
-               rg  = pts(g,:)
-               dgi = norm2(ri-rg)
-               dgj = norm2(rj-rg)
-               mu  = (dgi-dgj)*dij 
-               mu  = (ONE+mu-chi*(ONE-mu)) / &
-                     (ONE+mu+chi*(ONE-mu))  ! Eq. (9) nu'
-               mu  = HALF*mu*(THREE-mu*mu)  ! Stiffness 4
-               mu  = HALF*mu*(THREE-mu*mu)
-               mu  = HALF*mu*(THREE-mu*mu)
-               mu  = HALF*mu*(THREE-mu*mu)
-               s   = HALF*(ONE-mu)          ! Eq. (5)
-               Pi(g) = Pi(g) * s            ! Eq. (4) RHS
-            end
-
-         end
-
-         ! Keep Pa
-         if (i==a) Pa = Pi
-
-         ! Add & store
-         Ps = Ps + Pi
-
-      end
-
-      ! Normalize/modify wts
-      wts = wts * Pa/Ps
-
-      ! Clean
-      Pi.destroy
-      Pa.destroy
-      Ps.destroy
+      ! Salvador weights for atom "a"
+      Wa.create(pts.dim1)
+      .make_Salvador_cell_fn(Wa,pts,a)
+      wts = wts*Wa
+      Wa.destroy
 
    end
 
@@ -2888,6 +2826,11 @@ contains
    ! Make the *normalised* Salvador atom weights "Wa" for atom "a"
    ! evaluated on the set of points "pts". 
    ! See Eqn. (4) in Salvador (2013) JCP 139 p 071103.
+   ! At each point, atom i's cell function P_i is a product of step
+   ! factors, each <= 1, so it is at most the factor for the atom
+   ! nearest the point. Where that factor is below 1e-15, P_i is left
+   ! out; that makes the cost N^2 rather than N^3 for N atoms. The kept
+   ! P_i are computed exactly as without the test.
       self :: IN
       Wa   :: VEC{REAL}, OUT
       pts  :: MAT{REAL}, IN
@@ -2895,79 +2838,133 @@ contains
 
    ENSURE(.finalized,"call the set_grid_data routine")
    ENSURE(Wa.dim==pts.dim1,"incompatble dim1, Wa and pts")
-   ENSURE(3==pts.dim1,"wrong dim2, pts")
+   ENSURE(3==pts.dim2,"wrong dim2, pts")
    ENSURE(.atom.allocated,"no atom list")
    ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
 
-      Pa, Pi, Ps   :: VEC{REAL}@
-      ri, rj, rg   :: VEC{REAL}(3)
-      dgi,dgj, chi :: REAL
-      dij, mu, s   :: REAL
-      n_atoms, i,j :: INT
-      n_pts,   g   :: INT
+      D, inv_R      :: MAT{REAL}@
+      Pa, Pi, Ps    :: VEC{REAL}@
+      near, idx     :: VEC{INT}@
+      keep          :: VEC{BIN}@
+      ri, rj        :: VEC{REAL}(3)
+      mu, eps       :: REAL
+      n_atoms, i,j  :: INT
+      n_pts, g,k,q  :: INT
+      blk, b0,b1,nb :: INT
+      m             :: INT
+
+      eps = TOL(15)
+      blk = 2048
 
       ! Sizes
       n_atoms = .atom.dim
       n_pts   = pts.dim1
 
-      ! Cell functions
-      Ps.create(n_pts) ! Sum_i P_i
-      Pa.create(n_pts) ! a-th cell fn
-      Pi.create(n_pts) ! i-th cell fn
-      Ps = ZERO        ! <--- NOTE
-
-      ! Sum cell fns. Pi
+      ! Inverse interatomic distances
+      inv_R.create(n_atoms,n_atoms)
+      inv_R = ZERO
       do i = 1,n_atoms
-
          ri = .atom(i).position
-
-         Pi = ONE ! <--- NOTE
-
-         ! Product over step fns.
-         ! Pi = Prod_j s(mu_ij)
          do j = 1,n_atoms
-
             if (i==j) cycle
+            rj = .atom(j).position
+            inv_R(i,j) = ONE/norm2(rj-ri)
+         end
+      end
 
-            rj  = .atom(j).position
-            dij = ONE/norm2(rj-ri)
+      nb = min(blk,n_pts)
+      D.create(nb,n_atoms)  ! Point-atom distances
+      near.create(nb)       ! Nearest atom to each point
+      keep.create(nb)
+      Ps.create(nb)         ! Sum_i P_i
+      Pa.create(nb)         ! a-th cell fn
+      Pi.create(nb)         ! i-th cell fn, on the kept points
 
-            ! Becke size adjustment
-            chi = .Salvador_chi(i,j)
+      ! Blocks of points
+      do b0 = 1,n_pts,blk
 
-            ! Grid points "g"
-            do g = 1,n_pts
-               rg  = pts(g,:)
-               dgi = norm2(ri-rg)
-               dgj = norm2(rj-rg)
-               mu  = (dgi-dgj)*dij 
-               mu  = (ONE+mu-chi*(ONE-mu)) / &
-                     (ONE+mu+chi*(ONE-mu))  ! Eq. (9) nu'
-               mu  = HALF*mu*(THREE-mu*mu)  ! Stiffness 4
-               mu  = HALF*mu*(THREE-mu*mu)
-               mu  = HALF*mu*(THREE-mu*mu)
-               mu  = HALF*mu*(THREE-mu*mu)
-               s   = HALF*(ONE-mu)          ! Eq. (5)
-               Pi(g) = Pi(g) * s            ! Eq. (4) RHS
+         b1 = min(b0+blk-1,n_pts)
+         nb = b1 - b0 + 1
+
+         do i = 1,n_atoms
+            ri = .atom(i).position
+            do g = 1,nb
+               D(g,i) = norm2(ri-pts(b0+g-1,:))
             end
+         end
+         do g = 1,nb
+            near(g) = minloc(D(g,:),1)
+         end
+
+         Ps(1:nb) = ZERO
+         Pa(1:nb) = ZERO
+
+         do i = 1,n_atoms
+
+            ! Points where P_i can matter: bounded by the nearest atom
+            do g = 1,nb
+               k = near(g)
+               if (k==i) then
+                  keep(g) = TRUE
+               else
+                  mu = (D(g,i)-D(g,k))*inv_R(i,k)
+                  keep(g) = .Salvador_step(mu,.Salvador_chi(i,k))>eps
+               end
+            end
+            m = count(keep(1:nb))
+            if (m==0) cycle
+            idx = pack([(g,g=1,nb)],keep(1:nb))
+
+            ! P_i = Prod_j s(mu_ij), Eq. (4) RHS
+            Pi(1:m) = ONE
+            do j = 1,n_atoms
+               if (i==j) cycle
+               do q = 1,m
+                  g = idx(q)
+                  mu = (D(g,i)-D(g,j))*inv_R(i,j)
+                  Pi(q) = Pi(q) * .Salvador_step(mu,.Salvador_chi(i,j))
+               end
+            end
+
+            ! Keep Pa; add to Ps
+            if (i==a) Pa(idx) = Pi(1:m)
+            Ps(idx) = Ps(idx) + Pi(1:m)
 
          end
 
-         ! Keep Pa
-         if (i==a) Pa = Pi
-
-         ! Add & store
-         Ps = Ps + Pi
+         ! Normalize
+         Wa(b0:b1) = Pa(1:nb)/Ps(1:nb)
 
       end
 
-      ! Normalize
-      Wa = Pa/Ps
-
       ! Clean
+      idx.destroy
       Pi.destroy
       Pa.destroy
       Ps.destroy
+      keep.destroy
+      near.destroy
+      D.destroy
+      inv_R.destroy
+
+   end
+
+   Salvador_step(mu,chi) result (res) :: selfless, PURE
+   ! The Becke step factor s for the Salvador cell function, for
+   ! elliptical coordinate "mu" and size adjustment "chi". Eqs. (5), (9)
+   ! in Salvador (2013) JCP 139 p 071103, with stiffness 4.
+      mu,chi :: REAL, IN
+      res    :: REAL
+
+      nu :: REAL
+
+      nu  = (ONE+mu-chi*(ONE-mu)) / &
+            (ONE+mu+chi*(ONE-mu))  ! Eq. (9) nu'
+      nu  = HALF*nu*(THREE-nu*nu)  ! Stiffness 4
+      nu  = HALF*nu*(THREE-nu*nu)
+      nu  = HALF*nu*(THREE-nu*nu)
+      nu  = HALF*nu*(THREE-nu*nu)
+      res = HALF*(ONE-nu)          ! Eq. (5)
 
    end
 
@@ -2984,7 +2981,7 @@ contains
 !
 !   ENSURE(.finalized,"call the set_grid_data routine")
 !   ENSURE(Wa.dim==pts.dim1,"incompatble dim1, Wa and pts")
-!   ENSURE(3==pts.dim1,"wrong dim2, pts")
+!   ENSURE(3==pts.dim2,"wrong dim2, pts")
 !   ENSURE(.atom.allocated,"no atom list")
 !   ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
 !

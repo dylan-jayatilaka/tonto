@@ -1,0 +1,194 @@
+!---------------------------------------------------------------------------
+!
+! FOURIER_SUMS: Fourier transforms of a density given on a set of points.
+!
+! Plain procedures belonging to no object: the form factor routines in
+! MOLECULE.RHO and MOLECULE.HAR prepare the points and weights, and call
+! these to do the sums.
+!
+! WHY THIS FILE IS WRITTEN AS IT IS
+!
+! The sum f(k) = sum_i w_i exp(i k.r_i) takes most of the time of a HAR
+! job (81.6% of a fragHAR job), and nearly all of that is the n_k x n_pt
+! cosines and sines. Six ways of doing it were timed, on 8000 k and 6000
+! points, with scripts/ff_loop_bench.f90. Nanoseconds per term:
+!
+!                                 Mac    Linux   Linux     Linux, flags
+!                                 M2     -Ofast  as below  below + native
+!   A  k outside, complex exp     18.3   10-12.6  34.2     33.3
+!   B  real cos and sin sums      (no better than A)
+!   C  tiles of k: DGEMM for k.r,
+!      cos/sin, DGEMV with w      17.5   14.1     14.0      7.4
+!   D  points outside, k inside   18.5   12.4     12.4      3.8
+!   E  as D, own sin/cos, using
+!      integer rounding            2.0   18.1     18.9      2.4
+!   F  as E, real arithmetic only  3.2   wrong     9.5      3.0
+!
+! (Mac: -Ofast -mcpu=apple-m2, with -fno-associative-math for E and F.
+! "Linux, as below" is generic x86-64 with this file's flags.)
+!
+! What the table says:
+! - The cost is sin and cos, not the dot products, so the question is
+!   whether the compiler can vectorise them: compute several at once in
+!   the processor's vector instructions.
+! - A is fast on Linux only because glibc supplies vector sin and cos
+!   that gfortran calls under -Ofast. macOS has none, hence 18 ns.
+! - Loops swapped (D) put k innermost, the shape that vectorises.
+! - E and F compute sin and cos in Fortran, so any compiler can vectorise
+!   them. E rounds with integer instructions, which generic x86-64 vector
+!   code lacks; F rounds by adding and subtracting 1.5*2^52, and so
+!   vectorises everywhere. F is used: fastest or near it on every build.
+! - BLAS tiling (C) never wins, and was dropped.
+!
+! COMPILER FLAGS. -Ofast breaks F: it regroups the three-part pi/2
+! reduction (errors up to 207 units in the last place) and removes the
+! 1.5*2^52 rounding altogether. -fno-associative-math alone is not
+! enough. So this file is compiled -O3 -fno-fast-math -fno-math-errno
+! -fno-trapping-math in every optimised build (CMakeLists.txt). With
+! those flags sin_cos is within 1 unit in the last place for |x| <= 200,
+! and the form factors agree with the library sin and cos to ~3e-16.
+!
+! These results belong to gfortran 14 on these processors. Another
+! compiler, or another language, may vectorise the library sin and cos
+! itself, and make sin_cos unnecessary: time it again before porting.
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+!---------------------------------------------------------------------------
+
+module FOURIER_SUMS
+
+   implicit none
+
+   ! Constants for sin_cos: 2/pi, 1.5*2^52 for rounding, pi/2 in three parts
+   ! (Cody-Waite), and the Cephes polynomial coefficients for sin and cos.
+   sc_2_on_pi :: REAL, parameter = 0.63661977236758134308d0
+   sc_big     :: REAL, parameter = 6755399441055744.0d0
+   sc_p1 :: REAL, parameter = 1.57079625129699707031d0
+   sc_p2 :: REAL, parameter = 7.54978941586159635335d-8
+   sc_p3 :: REAL, parameter = 5.39030285815811905290d-15
+   sc_s1 :: REAL, parameter = -1.66666666666666307295d-1
+   sc_s2 :: REAL, parameter =  8.33333333332211858878d-3
+   sc_s3 :: REAL, parameter = -1.98412698295895385996d-4
+   sc_s4 :: REAL, parameter =  2.75573136213857245213d-6
+   sc_s5 :: REAL, parameter = -2.50507477628578072866d-8
+   sc_s6 :: REAL, parameter =  1.58962301576546568060d-10
+   sc_c1 :: REAL, parameter =  4.16666666666665929218d-2
+   sc_c2 :: REAL, parameter = -1.38888888888730564116d-3
+   sc_c3 :: REAL, parameter =  2.48015872888517045348d-5
+   sc_c4 :: REAL, parameter = -2.75573141792967388112d-7
+   sc_c5 :: REAL, parameter =  2.08757008419747316778d-9
+   sc_c6 :: REAL, parameter = -1.13585365213876817300d-11
+
+contains
+
+   exp_ikr_sums(res,k_pts,pt,w) :: selfless, PURE
+   ! Set "res(k)" to the sum over points "i" of w(i)*exp(i k.r_i),
+   ! where "k" is row k of "k_pts" and "r_i" is row i of "pt".
+   ! The loop over k is innermost so that it vectorises, sin and cos
+   ! included; each k still sums its points in order.
+      res   :: VEC{CPX}, OUT
+      k_pts :: MAT{REAL}, IN
+      pt    :: MAT{REAL}, IN
+      w     :: VEC{REAL}, IN
+
+   ENSURE(res.dim==k_pts.dim1,"res and k_pts: different number of k")
+   ENSURE(k_pts.dim2==3,"k_pts: need 3 columns")
+   ENSURE(pt.dim2==3,"pt: need 3 columns")
+   ENSURE(w.dim==pt.dim1,"w and pt: different number of points")
+
+      re,im :: VEC{REAL}@
+      x,y,z,wi,kr,s,c :: REAL
+      k,i :: INT
+
+      re.create(k_pts.dim1); re = ZERO
+      im.create(k_pts.dim1); im = ZERO
+
+      do i = 1,pt.dim1
+         x  = pt(i,1)
+         y  = pt(i,2)
+         z  = pt(i,3)
+         wi = w(i)
+         do k = 1,k_pts.dim1
+            kr = k_pts(k,1)*x+k_pts(k,2)*y+k_pts(k,3)*z
+            FOURIER_SUMS::sin_cos(kr,s,c)
+            re(k) = re(k) + wi*c
+            im(k) = im(k) + wi*s
+         end
+      end
+
+      res = COMPLEXIFY(re,im)
+
+      im.destroy
+      re.destroy
+
+   end
+
+   sinc_kr_sums(res,k,r,w) :: selfless, PURE
+   ! Set "res(j)" to the sum over points "i" of w(i)*sin(kr)/kr, with
+   ! k = k(j) and r = r(i): the transform of a spherical density given
+   ! at radii "r" with radial weights "w". The limit 1 is used at kr = 0.
+      res :: VEC{REAL}, OUT
+      k   :: VEC{REAL}, IN
+      r   :: VEC{REAL}, IN
+      w   :: VEC{REAL}, IN
+
+   ENSURE(res.dim==k.dim,"res and k: different lengths")
+   ENSURE(w.dim==r.dim,"w and r: different lengths")
+
+      ri,wi,kr,s,c :: REAL
+      j,i :: INT
+
+      res = ZERO
+      do i = 1,r.dim
+         ri = r(i)
+         wi = w(i)
+         do j = 1,k.dim
+            kr = k(j)*ri
+            FOURIER_SUMS::sin_cos(kr,s,c)
+            res(j) = res(j) + wi*merge(ONE,s/kr,kr==ZERO)
+         end
+      end
+
+   end
+
+   sin_cos(x,s,c) :: selfless, ELEMENTAL, private
+   ! Set "s" and "c" to sin(x) and cos(x), within 1 unit in the last place
+   ! for |x| <= 200, using real arithmetic only so that a loop calling it
+   ! vectorises on any processor. x is reduced to r in [-pi/4,pi/4] by a
+   ! three-part pi/2, and the quadrant chosen by real comparisons.
+   ! Needs this file's compiler flags: see the top of the file.
+      x :: REAL, IN
+      s,c :: REAL, OUT
+
+      n,q,r,z,sr,cr :: REAL
+      even :: BIN
+
+      n  = (x*sc_2_on_pi + sc_big) - sc_big                    ! nearest integer
+      q  = n - FOUR*((0.25d0*n - 0.375d0 + sc_big) - sc_big)   ! n mod 4
+      r  = ((x - n*sc_p1) - n*sc_p2) - n*sc_p3
+      z  = r*r
+      sr = r + r*z*(sc_s1 + z*(sc_s2 + z*(sc_s3 + z*(sc_s4 + z*(sc_s5 + z*sc_s6)))))
+      cr = ONE - HALF*z + z*z*(sc_c1 + z*(sc_c2 + z*(sc_c3 + z*(sc_c4 + z*(sc_c5 + z*sc_c6)))))
+      even = q==ZERO OR q==TWO
+      s  = merge(sr,cr,even)
+      c  = merge(cr,sr,even)
+      s  = merge(-s,s,q>=TWO)
+      c  = merge(-c,c,q==ONE OR q==TWO)
+
+   end
+
+end
