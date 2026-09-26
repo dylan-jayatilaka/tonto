@@ -1021,6 +1021,15 @@ if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64"
                    "(gfortran miscompilation workaround)")
 endif()
 
+# fourier_sums.F90 computes its own sin and cos, which -ffast-math breaks, so it
+# is compiled without fast math in every optimised build; the reasons and the
+# timings are at the top of foofiles/fourier_sums.foo. The last -O wins, so -O3
+# here also undoes a release build's -Ofast. Debug builds keep their own flags.
+if("${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU" AND NOT BT STREQUAL "DEBUG")
+    set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/fourier_sums.F90
+        PROPERTIES COMPILE_OPTIONS "-O3;-fno-fast-math;-fno-math-errno;-fno-trapping-math")
+endif()
+
 # Generate ALL Foo->Fortran output (every .F90 and its co-generated .int/.use)
 # before compiling any object. The .use files carry the inter-module `use`
 # statements (e.g. system.use has `use TYPES_MODULE`) and are pulled in via
