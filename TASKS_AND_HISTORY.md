@@ -92,6 +92,21 @@ line in error reports (Dylan). Fix: a CMake step on every build writes `git desc
 --dirty` and the date to a small file of its own, rewritten only on change, included only by
 `molecule.main.foo` and `molecule.put.foo` (not `macros`, which every file includes).
 
+**Version stamp -- DONE the same day** (row closed). `cmake/BuildStamp.cmake`, run on every build by
+the `build_stamp` target, writes `build_stamp` with the version, `git rev-parse --short=8 HEAD` plus
+`-dirty-<first 7 of the SHA1 of git diff HEAD>` when there are uncommitted changes, and the date,
+rewriting it only when that changes. It left `macros`; `molecule.main.foo`, `molecule.put.foo` and
+the six runfiles that print it `#include "build_stamp"`. Tested on achari2: the header read
+`5a551ec0-dirty-a1b3c89`; a no-change `make` compiled nothing; a one-line change gave a new
+fingerprint and date and recompiled only molecule.put, molecule.main, run_molecule and run_har.
+
+**Found on the way -- a translator bug, new row.** Preprocessor lines in a module between the last
+data item and `contains` are dropped: `flushHidden` runs before each module data item, so hidden
+tokens with no item after them are never written. So `molecule.main.foo`'s `#  undef ENSURE` /
+`#  define ENSURE(X,Y) ENSURE0(X,Y)` has never reached the Fortran. The stamp's `#include` is placed
+before `implicit none` to avoid it. Fix the translator (flush up to `contains`), then decide whether
+that ENSURE redefinition is still wanted -- it will change behaviour once it takes effect.
+
 **New row: every `stdout.show` label should end in `=`.** `show` turns trailing spaces and `=`
 into dots aligned with the neighbouring lines; without `=` a label gets a stub ` ..`. This week's
 labels wrote the dots by hand (fixed in `7bb5bbc3`, convention in `CLAUDE.md` section 8); 175 older
@@ -163,6 +178,26 @@ above end with `delete_scf_archives`), then one exact iteration from those orbit
 the exact -1135.8954935249. (2) If it holds, make it an option of the final step
 (`make_COSX_final_energy`: an exact build instead of the final grid), and check karrikinolide
 def2-TZVP and the zinc finger. (3) Consider it as the default.
+
+**Tested 2026-09-26 -- it works.** Thiotepa def2-TZVP: the RI-J + COSX SCF kept its density, then a
+second job read it (`initial_density= restricted`) and did exact-integral iterations
+(`max_iterations= 1`), `achari2:~/tonto_runs/cosx_exact_finish_2026-09-26/`:
+
+| | energy / Eh | against the exact SCF |
+|---|---|---|
+| exact SCF | -1135.8954935249 | -- |
+| RI-J + COSX SCF | -1135.8961369690 | -6.4e-4 |
+| one exact build from the COSX density (iteration 0) | -1135.8954933748 | +1.5e-7 |
+| one more exact iteration | -1135.8954935002 | +2.5e-8 |
+
+The error left is second order in the orbitals, as expected. **Cost correction:** a first exact
+build from scratch takes 167 s, not the 84 s quoted above -- 84 s is an exact iteration inside an
+SCF, which rebuilds only from the change in density. Still less than the 204 s final COSX-grid
+build it would replace. Whole J/K: ~620 s of COSX iterations + 167 s, against 1594 s exact -- half
+the time, energy within 1.5e-7. To check: larger molecules, where an exact build grows faster than a
+COSX one. **Next:** make it an option of `make_COSX_final_energy` (an exact J and K build instead of
+the final grid), then karrikinolide and the zinc finger. Note for such tests: Tonto writes its output
+to the file `stdout` in the working directory, so two jobs in one directory overwrite each other's.
 
 **Second part: progressive COSX grids** (Dylan). A small grid early, a medium one near
 convergence, as ORCA does (three grids). The integral analogue, `escalate_eri_accuracy= TRUE`

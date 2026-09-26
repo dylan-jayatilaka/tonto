@@ -5,11 +5,11 @@ cmake_policy(VERSION 3.20)
 # Allow arbitrary characters in test names
 cmake_policy(SET CMP0110 NEW)
 
-# Tonto version info and build date
+# Tonto version, for the project and packaging. What Tonto prints -- version,
+# git commit and build date -- is the build stamp below, remade on every build.
 string(TIMESTAMP VERSION_MAJOR "%y")
 string(TIMESTAMP VERSION_MINOR "%m")
 string(TIMESTAMP VERSION_MINOR_MINOR "%d")
-string(TIMESTAMP TONTO_BUILD_DATE "%Y.%m.%d %H:%M")
 
 # Tonto
 set(TONTO_VERSION "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_MINOR_MINOR}")
@@ -80,17 +80,21 @@ if(NOT ANTLR4_JAR)
 endif()
 message(STATUS "Using ANTLR4 jar: ${ANTLR4_JAR}")
 
-# Git
-find_package(Git)
-if(${GIT_FOUND})
-    execute_process(COMMAND
-        "${GIT_EXECUTABLE}" log "-n 1" "--pretty=%h"
-        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-        OUTPUT_VARIABLE TONTO_GIT_REVISION
-        OUTPUT_STRIP_TRAILING_WHITESPACE)
-else()
-    set(TONTO_GIT_REVISION "Unknown git revision")
-endif()
+# Build stamp: the version, git commit (marked -dirty- when there are uncommitted
+# changes) and build date that Tonto prints in its output and CIF files. It is
+# remade on every build, not only when CMake configures, so it always names the
+# code that was built. Only molecule.main, molecule.put and the programs in
+# runfiles/ include it, so a new stamp recompiles those alone. See
+# cmake/BuildStamp.cmake.
+set(BUILD_STAMP ${PROJECT_BINARY_DIR}/build_stamp)
+set(BUILD_STAMP_COMMAND ${CMAKE_COMMAND}
+    -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR} -DOUTPUT=${BUILD_STAMP}
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildStamp.cmake)
+execute_process(COMMAND ${BUILD_STAMP_COMMAND})
+add_custom_target(build_stamp ALL
+    COMMAND ${BUILD_STAMP_COMMAND}
+    BYPRODUCTS ${BUILD_STAMP}
+    COMMENT "Updating the build stamp")
 
 # Testing?
 enable_testing()
@@ -944,6 +948,7 @@ add_library(tonto_lib
    ${MACROS}
 )
 set_target_properties(tonto_lib PROPERTIES OUTPUT_NAME tonto)
+add_dependencies(tonto_lib build_stamp)
 
 # types.F90 contains no executable code of its own -- only the ~90 derived-type
 # definitions. But those types have ~585 allocatable/pointer components, so
