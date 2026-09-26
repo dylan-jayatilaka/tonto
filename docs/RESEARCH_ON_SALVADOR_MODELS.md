@@ -1,8 +1,8 @@
 # Research: variants of the Salvador atom model
 
-Two variants of the Salvador (TFVA) partition, both measured on urea:
-`sph-tfva`, the spherically averaged Salvador atom, and `tfvp`, the Salvador
-atom with its radii taken from the promolecule.
+Variants of the Salvador (TFVA) partition, measured on urea: `sph-tfva`, the
+spherically averaged Salvador atom; `tfvp`, the Salvador atom with its radii taken
+from the promolecule; and `sph-tfvp`, both at once.
 
 # 1. Spherically averaged Salvador atoms (`sph-tfva`)
 
@@ -163,3 +163,23 @@ What the table says:
 - A reference for the N–H bonds (neutron data for urea) to say which model is right.
 - A larger molecule, and one without hydrogen-bond donors.
 - The test `long/urea_rhf_STO-3G_TFVP_HAR`, to be blessed on the Linux reference host.
+
+# 3. Spherically averaged, with promolecule radii (`sph-tfvp`)
+
+`sph-tfva`'s form factors with `tfvp`'s radii. Expected, like `sph-tfva`, not to
+converge. **It converges**, in both bases:
+
+| urea | `sph-tfva` | `sph-tfvp` | `tfvp` (aspherical) |
+|---|---|---|---|
+| STO-3G | H1 runs away, R = 1 | R 0.0455, GoF 10.5, 4 cycles | R 0.0381, GoF 7.04 |
+| def2-SVP | never converges; R 0.044, GoF 11.6 | R 0.0341, GoF 8.16, 6 cycles | R 0.0188, GoF 3.48 |
+
+def2-SVP, `sph-tfvp` against `tfvp`: O=C 1.2545(10) against 1.2555(4) Å; N–C 1.3351(8)
+against 1.3408(3); N–H1 1.069(12) against 1.036(4); N–H3 0.981(15) against 1.023(4).
+U_iso O 0.01479(18), N 0.0217(2), C 0.01219(19), H1 0.060(9), H3 0.059(7) Å².
+
+So the promolecule radii are enough to make the spherical model stable, though it still
+fits twice as badly as the aspherical ones, its esds are two to three times larger, and
+its N–H bonds scatter by ±0.04 Å about the aspherical values. Why the promolecule radii
+stabilise it is not known: they move the C–N boundary 0.1 Å toward N, which gives the
+spherical C more of the bond density; that is a guess, not measured.
