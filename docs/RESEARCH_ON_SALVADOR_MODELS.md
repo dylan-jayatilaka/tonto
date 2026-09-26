@@ -163,6 +163,10 @@ What the table says:
 - A reference for the N–H bonds (neutron data for urea) to say which model is right.
 - A larger molecule, and one without hydrogen-bond donors.
 - The test `long/urea_rhf_STO-3G_TFVP_HAR`, to be blessed on the Linux reference host.
+- Related published work: Chodkiewicz & Woźniak, "Towards improved accuracy of Hirshfeld
+  atom refinement with an alternative electron density partition", IUCrJ (2025) -- an
+  "exponential Hirshfeld" partition with an exponent n that reduces atomic overlap (n = 1 is
+  Hirshfeld). Read before going further with partition variants.
 
 # 3. Spherically averaged, with promolecule radii (`sph-tfvp`)
 
@@ -244,6 +248,12 @@ Differences from the neutron values, N–H1 / N–H3, in Å:
 
 - Hirshfeld in def2-SVP is closest (within 0.022 Å); the Salvador variants are 0.02–0.03 Å
   long; `sph-tfvp` is within 0.06 Å but uneven; IAM is 0.1 Å short.
+- O=C is close in every model but not within the X-ray esds: against 1.257 Å, Hirshfeld
+  1.2558(4) is 3 esds short, `sph-tfvp` 1.2545(10) 2.5 short, IAM 1.2583(8) 1.6 long.
+- **The neutron values are quoted without esds** (Wall 2016 gives none), and it is not known
+  here whether they are the raw values or those corrected for thermal motion, which the
+  original paper also gives. Both are in Swaminathan, Craven & McMullan (1984), not
+  consulted. The X-ray values here are uncorrected.
 - These are small basis sets and an isolated-molecule wavefunction with cluster charges;
   published HAR on these data reaches a few mÅ with larger bases. The comparison between
   models at the same basis is the point here, not the absolute values.
