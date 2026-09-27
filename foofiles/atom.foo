@@ -6174,6 +6174,123 @@ contains
    ! Symmetrize a matrix "mat" using "pointgroup"
    end
 
+   spherically_average(mat,is_spherical) :: leaky
+   ! Replace "mat", a density-like matrix over this atom's basis, by its
+   ! average over all rotations, so that it is spherical. Set "is_spherical"
+   ! if the basis is spherical. A point group cannot do this beyond p: "oh"
+   ! leaves d-d blocks cubic, and "ih" fails from f-f on. So the average is
+   ! over a grid of z-y-z Euler angles, exact for the angular components up
+   ! to L = 2 l_max that products of the shells contain: L+1 equally spaced
+   ! alpha and gamma, and L/2+1 Gauss-Legendre points in cos(beta).
+      self :: IN
+      mat :: MAT{REAL}, INOUT
+      is_spherical :: BIN, IN
+
+   ENSURE(mat.is_square,"non-square matrix")
+   ENSURE(mat.dim1==.basis.n_bf,"incorrectly dimensioned matrix")
+
+      first,last,momentum :: VEC{INT}@
+      q :: QUADRATURE@
+      R,dtr,ftr,gtr :: MAT3{REAL}@
+      wt :: VEC{REAL}@
+      sym,W,tra,trb :: MAT{REAL}@
+      l_max,L,n_ag,n_b,n_rot,i,j,k,n,a,b,na,nb,fa,fb,la,lb :: INT
+      alpha,beta,gamma :: REAL
+
+      .set_shell_limits(first,last,momentum)
+      l_max = maxval(momentum)
+      DIE_IF(l_max>4,"h functions or higher are not done")
+
+      ! The rotations and their weights
+      L     = 2*l_max
+      n_ag  = L + 1
+      n_b   = L/2 + 1
+      n_rot = n_ag*n_b*n_ag
+      q.create
+      q.set_kind("gauss_legendre")
+      q.set_n_pts(n_b)
+      q.set_quadrature_points
+      R.create(3,3,n_rot)
+      wt.create(n_rot)
+      n = 0
+      do i = 1,n_ag
+         alpha = TWO*PI*(i-1)/n_ag
+         do j = 1,n_b
+            beta = acos(q.pts(j))
+            do k = 1,n_ag
+               gamma = TWO*PI*(k-1)/n_ag
+               n = n + 1
+               R(:,:,n).to_euler_rotation_mx(alpha,beta,gamma)
+               wt(n) = q.wts(j)/(TWO*n_ag*n_ag)
+            end
+         end
+      end
+      q.destroy
+
+      ! Representation matrices for d, f and g shells
+      if (l_max>=2) dtr = GAUSSIAN_DATA:d_xyz_rep_matrices_for(R,is_spherical)
+      if (l_max>=3) ftr = GAUSSIAN_DATA:f_xyz_rep_matrices_for(R,is_spherical)
+      if (l_max>=4) gtr = GAUSSIAN_DATA:g_xyz_rep_matrices_for(R,is_spherical)
+
+      ! Average
+      sym.create(.basis.n_bf,.basis.n_bf)
+      sym = ZERO
+      do n = 1,n_rot
+      do a = 1,.basis.n_shell
+
+         select case (momentum(a))
+         case (0); tra.create(1,1); tra = ONE
+         case (1); tra = R(:,:,n)
+         case (2); tra = dtr(:,:,n)
+         case (3); tra = ftr(:,:,n)
+         case (4); tra = gtr(:,:,n)
+         end
+         fa = first(a)
+         la =  last(a)
+         na = la - fa + 1
+
+         do b = 1,.basis.n_shell
+
+            select case (momentum(b))
+            case (0); trb.create(1,1); trb = ONE
+            case (1); trb = R(:,:,n)
+            case (2); trb = dtr(:,:,n)
+            case (3); trb = ftr(:,:,n)
+            case (4); trb = gtr(:,:,n)
+            end
+            fb = first(b)
+            lb =  last(b)
+            nb = lb - fb + 1
+
+            W.create(na,nb)
+            W.to_product_of(tra,mat(fa:la,fb:lb))
+            W = wt(n)*W
+            sym(fa:la,fb:lb).plus_product_of(W,trb,transpose_b=TRUE)
+            W.destroy
+            trb.destroy
+
+         end
+
+         tra.destroy
+
+      end
+      end
+
+      mat = sym
+
+      ! Clean up
+      sym.destroy
+      wt.destroy
+      gtr.destroy
+      ftr.destroy
+      dtr.destroy
+      R.destroy
+      momentum.destroy
+      last.destroy
+      first.destroy
+
+   end
+
    symmetrize(mat,pointgroup) :: get_from(symmetrize, TYPE?=>CPX), PURE
    ! Symmetrize a matrix "mat" using "pointgroup"
    end
