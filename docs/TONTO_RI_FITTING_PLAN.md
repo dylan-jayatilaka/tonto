@@ -7,7 +7,10 @@ RI density fitting*.
 **Status 2026-09-27 (night): stage (a) works**, on branch `oc-ri`: `partition_model= oc-ri`,
 with `RI_l_max=` and `RI_exponent_ratio=`, and the check task `put_ri_ff_check`. Measured on urea
 and gly_ala, in release and debug builds, as a form-factor check and in full HARs. Results in
-[Stage (a) measurements](#stage-a-measurements). Not yet in the test suite. How it works is set out
+[Stage (a) measurements](#stage-a-measurements). Not yet in the test suite. Existing results
+unchanged: on the Mac, `short`, `long` and `hart` give the same failures as `develop` (the known
+macOS drifts of `h2o_rhf_def2-SVP_RIJCOSX` and `quartz_NN_HAR_L1_rhf_def2-SVP`, the latter
+checked against a `develop` build); not yet run on achari2. How it works is set out
 in [How the fitted Hirshfeld atom works](#how-the-fitted-hirshfeld-atom-works) below, written to
 be read on its own; the rest of the document is the record of how the plan was reached.
 
