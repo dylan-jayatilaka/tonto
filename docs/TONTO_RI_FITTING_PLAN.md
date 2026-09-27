@@ -4,7 +4,7 @@
 into the user-facing pages. Live status is the entry in `TASKS_AND_HISTORY.md`, *Aspherical form factors by
 RI density fitting*.
 
-**Status 2026-09-27 (night): stage (a) works**, on branch `oc-ri`: `partition_model= oc-ri`,
+**Status 2026-09-27: stage (a) done and merged to `develop`; stage (b) is open.** Stage (a): `partition_model= oc-ri`,
 with `RI_l_max=` and `RI_exponent_ratio=`, and the check task `put_ri_ff_check`. Measured on urea
 and gly_ala, in release and debug builds, as a form-factor check and in full HARs. Results in
 [Stage (a) measurements](#stage-a-measurements). Not yet in the test suite. Existing results

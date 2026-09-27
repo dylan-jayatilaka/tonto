@@ -77,6 +77,13 @@ because by then it held far more than deferred items.)*
 
 ## START HERE, 2026-09-26 (night): labels merged; one branch waiting -- read this first
 
+**2026-09-27: `oc-ri` merged to `develop`** (`bd821d23`): stage (a) of fitted Hirshfeld atoms,
+`partition_model= oc-ri`. HARs match Hirshfeld to under 0.1 esd and run faster (urea 3.3 -> 2.0 s,
+gly_ala fragHAR 15.2 -> 11.4 s). Checked on the Mac only (`short`, `long`, `hart`: the known macOS
+failures only); **run the full suite on achari2 next**. Stage (b) is the open item; see the entry
+*Aspherical form factors by RI density fitting* and `docs/TONTO_RI_FITTING_PLAN.md`. Also merged
+the same day: the WSL numpy fix (`d5d52000`), confirmed by a full WSL run.
+
 **Merged to `develop` on 2026-09-27: branches `fourier-sums` and `tfvp`.** The research results
 are in `docs/RESEARCH_ON_SALVADOR_MODELS.md`. What went in:
 - `FOURIER_SUMS` (`foofiles/fourier_sums.foo`): the form-factor sums in one module, loops swapped,
@@ -4326,14 +4333,15 @@ Two related pieces, both science, neither started.
 
 ## Aspherical form factors by RI density fitting (Dylan, 2026-09-24)
 
-**Status 2026-09-27 (night): stage (a) works, on branch `oc-ri`.** `partition_model= oc-ri` fits
+**Status 2026-09-27: stage (a) done, merged to `develop`** (branch `oc-ri`, merge `bd821d23`). `partition_model= oc-ri` fits
 each Hirshfeld atom in Gaussians times spherical harmonics (L = 7, even-tempered exponents, ratio
 1.5) with the overlap metric, and takes its form factors analytically. Form factors agree with the
 grid sums to 0.02-0.06% for C, N, O and 0.2% for H on a converged grid. HARs reproduce Hirshfeld
 to under 0.1 esd: urea 3.3 -> 2.0 s, gly_ala fragHAR 15.2 -> 11.4 s. One trap found and fixed:
 the default Treutler-Ahlrichs pruning (degree-5 spheres near the nucleus) wrecks l >= 6 unless
 those shells are left out, which the code now does. Method, measurements and open questions:
-`docs/TONTO_RI_FITTING_PLAN.md`. Next: a test, a job with many reflections, then stage (b).
+`docs/TONTO_RI_FITTING_PLAN.md`. **Open: stage (b)** -- use in refinement, with a test for
+`oc-ri` (blessed on achari2) and a job with many reflections, where the saving should be largest.
 
 **Dylan's proposal.** Expand the Hirshfeld atomic densities with the RI machinery already in the
 tree, rather than writing a fresh multipole/Bessel transform. It must be a **density** fit, not
