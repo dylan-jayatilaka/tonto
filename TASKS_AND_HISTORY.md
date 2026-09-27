@@ -4326,6 +4326,15 @@ Two related pieces, both science, neither started.
 
 ## Aspherical form factors by RI density fitting (Dylan, 2026-09-24)
 
+**Status 2026-09-27 (night): stage (a) works, on branch `oc-ri`.** `partition_model= oc-ri` fits
+each Hirshfeld atom in Gaussians times spherical harmonics (L = 7, even-tempered exponents, ratio
+1.5) with the overlap metric, and takes its form factors analytically. Form factors agree with the
+grid sums to 0.02-0.06% for C, N, O and 0.2% for H on a converged grid. HARs reproduce Hirshfeld
+to under 0.1 esd: urea 3.3 -> 2.0 s, gly_ala fragHAR 15.2 -> 11.4 s. One trap found and fixed:
+the default Treutler-Ahlrichs pruning (degree-5 spheres near the nucleus) wrecks l >= 6 unless
+those shells are left out, which the code now does. Method, measurements and open questions:
+`docs/TONTO_RI_FITTING_PLAN.md`. Next: a test, a job with many reflections, then stage (b).
+
 **Dylan's proposal.** Expand the Hirshfeld atomic densities with the RI machinery already in the
 tree, rather than writing a fresh multipole/Bessel transform. It must be a **density** fit, not
 the Coulomb (potential) fit that regular RI-J does. *Distinct from* the "effect of the fitted

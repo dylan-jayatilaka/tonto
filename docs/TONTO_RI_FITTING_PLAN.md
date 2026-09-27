@@ -4,10 +4,10 @@
 into the user-facing pages. Live status is the entry in `TASKS_AND_HISTORY.md`, *Aspherical form factors by
 RI density fitting*.
 
-**Status 2026-09-27 (night): stage (a) built and measured on urea**, on branch `oc-ri`:
-`partition_model= oc-ri`, with `RI_l_max=` and `RI_exponent_ratio=`, and the check task
-`put_ri_ff_check`. Results in [Stage (a) measurements](#stage-a-measurements). Not yet run in a
-HAR, nor in a release build. How it works is set out
+**Status 2026-09-27 (night): stage (a) works**, on branch `oc-ri`: `partition_model= oc-ri`,
+with `RI_l_max=` and `RI_exponent_ratio=`, and the check task `put_ri_ff_check`. Measured on urea
+and gly_ala, in release and debug builds, as a form-factor check and in full HARs. Results in
+[Stage (a) measurements](#stage-a-measurements). Not yet in the test suite. How it works is set out
 in [How the fitted Hirshfeld atom works](#how-the-fitted-hirshfeld-atom-works) below, written to
 be read on its own; the rest of the document is the record of how the plan was reached.
 
@@ -266,8 +266,28 @@ What these say:
   at every ratio, because the harmonics dominate it.
 - **Extending the exponents one step more diffuse changes nothing.** H's 0.2% does not come from its
   tail.
-- **Time:** the fit takes 0.04–0.08 s per atom against 1.6–4.8 s for the grid sum. That is in a
-  debug build, so the ratio, not the times, is what carries over.
+- **Time, release build:** on the default grid the fit takes 0.11 s for the five atoms against
+  0.52 s for the grid sum (0.014–0.034 s per atom against 0.07–0.13 s); on the very high grid
+  0.21 s against 1.76 s. The fit's grid work does not grow with the number of reflections.
+
+**In a HAR** (release build, default settings of each test, only `partition_model=` changed):
+
+| job | model | wall time | R(F) | GoF | largest position shift |
+|---|---|---|---|---|---|
+| urea STO-3G HAR, 817 refl. | oc-hirshfeld | 3.3 s | 0.0379 | 7.0356 | -- |
+| | oc-ri | 2.0 s | 0.0380 | 7.0402 | H3 0.6 mÅ (0.08 esd); O 0.05 mÅ |
+| gly_ala fragHAR STO-3G, 2514 refl. | oc-hirshfeld | 15.2 s | 0.0324 | 3.3535 | -- |
+| | oc-ri | 11.4 s | 0.0324 | 3.3539 | H 1.4 mÅ (0.08 esd); heavy atoms 0.09 mÅ (0.12 esd) |
+
+ADPs agree to 1 in the last printed digit. The gly_ala saving, a quarter of the job, is what
+section 1's profile allows: the grid sum was a third of it.
+
+**Against a converged grid** (urea HAR, reference: `oc-hirshfeld` on the very high grid), at the
+precision the CIF prints: `oc-hirshfeld` on the low grid and `oc-ri` on the very high grid match it
+except 0.05 mÅ on O; `oc-ri` on the low grid differs by 0.8 mÅ on H3. For this job the grid
+matters little either way, so it cannot say whether the fit or the sum is closer to exact on a
+coarse grid. H's form factor is small (rms 0.09 e), so an 8% error in it is small in absolute
+terms.
 
 ### Cost
 
@@ -300,9 +320,11 @@ out.
 
 - The effect on refined parameters and their esds, which is what matters in the end. The
   published expansion needed $L = 7$ to keep bonds to hydrogen within 1 mÅ of unexpanded HAR.
-- Timings in a release build, and on a job with many reflections.
-- Whether the fitted form factors are closer to exact than the grid sums on the default grid, as
-  the measurements suggest: compare both against a very fine grid.
+- A job with many reflections, where the saving should be largest; and a profile of the fit
+  itself (0.02–0.06 s per atom), which has not been looked at.
+- Whether the fitted form factors are closer to exact than the grid sums on a coarse grid, on a
+  job where the grid matters.
+- A test in the suite for `oc-ri`, and whether it should be the default for HAR.
 - Heavier atoms and larger bases (def2-TZVP, pob-TZVP), where the exponent range is wider.
 
 
