@@ -87,7 +87,11 @@ path to convergence only; the converged energy is identical) and `quartz_NN_HAR_
 (1008 reflections; R(F) 0.0100 -> 0.0099, GoF^2 7.0046 -> 6.9816). **No other test moved beyond
 its tolerance.** On the Mac, a release build of the same commit then passed **short, long and hart:
 111 tests, 0 failures, 2 skips** -- the first clean Mac run; RIJCOSX now agrees with the Linux
-reference exactly. The register row *drifts on a Mac* can be closed.
+reference exactly. The register row *drifts on a Mac* is closed.
+
+**The same fix closes the parked *Hirshfeld moments move between BLAS kernels*** (entry *The BLAS
+kernel is part of the reference*): `urea_ccsd_pob-TZVP_Salvador_properties` under the ARMV8 and
+NEOVERSEN1 kernels differed in 12 lines with the old binary and in none with the new one.
 
 Left behind: `achari2:~/github/tonto-rebless` is back on `develop` (behind origin; pull before the
 next bless), but its `reference/` build holds `mac-drift` code, so rebuild before blessing.
@@ -3196,6 +3200,14 @@ ranks exits 1, because `stop` runs on one rank without `MPI_FINALIZE` on the oth
 serially, wrong for any harness, and a separate small fix.
 
 ## The BLAS kernel is part of the reference (2026-09-22)
+
+> **2026-09-27: the Hirshfeld-moment part is fixed** by the exact spherical average of the ANO
+> atoms (merge `8a189453`; see the handover at the top). The degenerate 2p shell was the right
+> suspect, but the kernel dependence came through the cube-group average, which left the atoms'
+> d functions set by the orientation of that shell. Measured on the Mac with
+> `short/urea_ccsd_pob-TZVP_Salvador_properties` under `OPENBLAS_CORETYPE=ARMV8` and
+> `NEOVERSEN1`: old binary, 12 output lines differ; new binary, none (timings aside). The
+> "split the degenerate atomic guess" repair is no longer needed. Register rows removed.
 
 **The finding.** Homebrew's OpenBLAS is a `DYNAMIC_ARCH` build: it carries ~19 ARM kernels and
 picks one at run time from the detected CPU. An M2 Pro picks `neoversen1` -- an ARM *server*
