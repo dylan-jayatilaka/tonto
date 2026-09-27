@@ -4,8 +4,10 @@
 into the user-facing pages. Live status is the entry in `TASKS_AND_HISTORY.md`, *Aspherical form factors by
 RI density fitting*.
 
-**Status 2026-09-27: stage (a) written, not yet built or run**, on branch `oc-ri`:
-`partition_model= oc-ri`, with `RI_l_max=` and `RI_exponent_ratio=`. How it works is set out
+**Status 2026-09-27 (night): stage (a) built and measured on urea**, on branch `oc-ri`:
+`partition_model= oc-ri`, with `RI_l_max=` and `RI_exponent_ratio=`, and the check task
+`put_ri_ff_check`. Results in [Stage (a) measurements](#stage-a-measurements). Not yet run in a
+HAR, nor in a release build. How it works is set out
 in [How the fitted Hirshfeld atom works](#how-the-fitted-hirshfeld-atom-works) below, written to
 be read on its own; the rest of the document is the record of how the plan was reached.
 
@@ -113,11 +115,12 @@ $$
   $(L+1)^2 = 64$ angular functions.
 - $N_{nl}$ makes $\int_0^\infty g_{nl}^2\, r^2\,dr = 1$.
 - The exponents $\alpha_n$ are **even-tempered**: they start at twice the largest basis exponent on
-  the atom and are divided by `RI_exponent_ratio=` (2 by default) each time, until they reach the
+  the atom and are divided by `RI_exponent_ratio=` (1.5 by default) each time, until they reach the
   smallest basis exponent. The range covers the density, whose tightest part has twice the largest
   basis exponent. This needs no special auxiliary basis, so it works with any orbital basis.
 
-A carbon atom in def2-TZVP gets about 19 exponents, so about $19 \times 64 \approx 1200$ functions.
+A carbon atom in STO-3G gets 16 exponents at the default ratio, so $16 \times 64 = 1024$
+functions; in def2-TZVP about 30.
 
 ### The fit
 
@@ -189,15 +192,19 @@ function $\rho_{lm}(r)$ by the Gaussians $g_{nl}(r)$, with weight $r^2\,dr$. The
 method uses $\rho_{lm}$ itself, on the radial grid; this one replaces it by a Gaussian fit. With a
 complete set of Gaussians the two would agree.
 
-Two ways to compute $b$:
+The code computes $b$ this way: it groups the points into shells by their distance from the
+nucleus, projects each shell onto the harmonics, and then does the radial sums. That costs
+$n_{pt}(L+1)^2$ and then $n_{shell}\, n_\alpha (L+1)^2$, about 0.6 M operations for a gly_ala
+atom, against about 11 M point by point.
 
-| | work per atom | gly_ala atom |
-|---|---|---|
-| point by point (what the code does now) | $n_{pt} \times n_\alpha$ exponentials, $n_{pt} \times n_\alpha (L+1)^2$ multiply-adds | ~11 M |
-| projection first, then the radial sums | $n_{pt} \times (L+1)^2$, then $n_{shell} \times n_\alpha (L+1)^2$ | ~0.6 M |
-
-The second is about 20 lines more code. It also shows, for each $l$, where a set of Gaussians fails
-to fit: at the nuclear cusp, or in the tail.
+**A shell is used for a harmonic only if its angular grid can integrate it.** A Lebedev sphere of
+degree $D$ integrates $Y_{lm}$ exactly only for $l \le D$. Tonto's default Treutler–Ahlrichs
+pruning puts a degree-5 sphere on the inner third of the radial shells, where the density is
+nearly spherical and very large. Summed there, its $l = 0$ part leaks into $l \ge 6$ and ruins the
+fit. So shell $s$ contributes to harmonic $l$ only if $l \le D_s - 4$. The margin of 4 also keeps
+out the atom's own low-$l$ parts, which a marginal shell would alias into high $l$. The degree comes
+from the number of points on the shell, taking the next smaller Lebedev sphere if some points are
+missing. Near the nucleus the true high-$l$ density grows only as $r^l$, so little is lost.
 
 ### The transform of the fit is a formula
 
@@ -224,6 +231,44 @@ $$
 Per reflection this needs $n_\alpha$ exponentials, which are shared by every $l$ and $m$, and one
 sine and cosine for the phase. The rest is multiplication and addition.
 
+### Stage (a) measurements
+
+`put_ri_ff_check` computes, for every unique atom, both the grid sum and the fitted form factors
+at all the reflections (with their symmetry equivalents), and reports:
+- **rms/rms**: the RMS of $|\tilde f_a - f_a|$ over the reflections, divided by the RMS of $|f_a|$;
+- **res**: the fit's residual in real space, $\|\rho_a - \tilde\rho_a\| / \|\rho_a\|$, on the grid;
+- **ft chk**: the analytic transform of the fit against a grid sum of the fitted density. This is
+  zero when the grid integrates the fit exactly, so it measures the grid sum's own error.
+
+Urea, RHF/STO-3G, 6536 reflections with symmetry equivalents, up to $\sin\theta/\lambda$ = 1.44
+Å$^{-1}$, debug build, $L = 7$:
+
+| grid | ratio | quantity | O | N | C | H |
+|---|---|---|---|---|---|---|
+| very high | 2.0 | rms/rms | 0.13% | 0.15% | 0.11% | 0.29% |
+| very high | 1.5 | rms/rms | **0.02%** | **0.04%** | **0.06%** | **0.19%** |
+| very high | 1.5 | res | 0.05% | 0.05% | 0.05% | 0.23% |
+| very high | 1.5 | ft chk | 0.00% | 0.00% | 0.00% | 0.10% |
+| high | 2.0 | rms/rms | 0.13% | 0.15% | 0.12% | 0.53% |
+| high | 2.0 | ft chk | 0.01% | 0.02% | 0.06% | 0.60% |
+| low | 2.0 | rms/rms | 0.24% | 0.49% | 0.87% | 7.9% |
+| low | 2.0 | ft chk | 0.20% | 0.39% | 0.89% | 7.8% |
+
+What these say:
+- **The fit is good to a few hundredths of a percent for C, N and O**, and 0.2% for H, at the
+  default ratio 1.5. The residual does not change with $L$ from 7 to 10, nor with the grid.
+- **On coarser grids the difference is the grid sum's error, not the fit's.** "ft chk" follows
+  "rms/rms" closely. On the low grid the sum over points is 8% out for H, while the fit's real-space
+  residual stays at 0.4%. So on the default grids the fitted form factors are probably closer to
+  exact than the grid sums are. That needs its own test against a converged grid before it is
+  claimed.
+- **Ratio 1.5 is the sweet spot:** 1.7 gives 0.07%, 1.3 no better than 1.5. The fit costs the same
+  at every ratio, because the harmonics dominate it.
+- **Extending the exponents one step more diffuse changes nothing.** H's 0.2% does not come from its
+  tail.
+- **Time:** the fit takes 0.04–0.08 s per atom against 1.6–4.8 s for the grid sum. That is in a
+  debug build, so the ratio, not the times, is what carries over.
+
 ### Cost
 
 Arithmetic estimates for one gly_ala atom, not yet measured:
@@ -248,14 +293,17 @@ out.
 | the exponents | `MOLECULE.RHO:make_RI_exponents` |
 | the choice between the sum over points and the fit | `MOLECULE.RHO:make_atom_FFs_on_grid`, called by the three Hirshfeld form-factor routines in `MOLECULE.RHO` and by `MOLECULE.HAR:make_LS_mx` |
 | spherical harmonics up to `RI_l_max` | `GAUSSIAN_DATA:set_indices`, called from `MOLECULE.SCF:make_atom_partition_info` |
+| the degree of a grid shell | `FOURIER_SUMS:lebedev_degree` |
+| the check against the grid sum | `MOLECULE.MAIN:put_RI_FF_check`, keyword `put_ri_ff_check` |
 
 ### What is still to be found out
 
-- How closely $\tilde f_a$ matches the quadrature $f_a$, by resolution shell, and how that depends
-  on `RI_l_max=` and `RI_exponent_ratio=`.
 - The effect on refined parameters and their esds, which is what matters in the end. The
   published expansion needed $L = 7$ to keep bonds to hydrogen within 1 mÅ of unexpanded HAR.
-- Whether the Gaussians fit the nuclear cusp well enough at the default exponent range.
+- Timings in a release build, and on a job with many reflections.
+- Whether the fitted form factors are closer to exact than the grid sums on the default grid, as
+  the measurements suggest: compare both against a very fine grid.
+- Heavier atoms and larger bases (def2-TZVP, pob-TZVP), where the exponent range is wider.
 
 
 ## 1. Why — the measurement

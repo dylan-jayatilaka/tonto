@@ -169,7 +169,7 @@ contains
 
    end
 
-   fitted_exp_ikr_sums(res,k_pts,pt,w,centre,alpha,l_max) :: selfless, leaky, PURE
+   fitted_exp_ikr_sums(res,k_pts,pt,w,centre,alpha,l_max,fit) :: selfless, leaky, PURE
    ! Set "res(k)" to the transform, sum over i of w(i)*exp(i k.r_i) as in
    ! exp_ikr_sums, but of a fit to the density rather than of the points.
    ! The fitting functions sit on "centre": N r^l exp(-alpha r^2) Y_lm, one
@@ -178,6 +178,7 @@ contains
    ! Parseval weights the error in res equally at every k. The metric is
    ! diagonal in (l,m), and the transform of each function is analytic:
    !   (pi/a)^(3/2) (i/2a)^l k^l Y_lm(k^) exp(-k^2/4a).
+   ! If present, "fit" is set to the fitted density at the points, for checks.
    ! See docs/TONTO_RI_FITTING_PLAN.md.
       res    :: VEC{CPX}, OUT
       k_pts  :: MAT{REAL}, IN
@@ -186,6 +187,7 @@ contains
       centre :: VEC{REAL}(3), IN
       alpha  :: VEC{REAL}, IN
       l_max  :: INT, IN
+      fit    :: VEC{REAL}, OUT, optional
 
    ENSURE(res.dim==k_pts.dim1,"res and k_pts: different number of k")
    ENSURE(k_pts.dim2==3,"k_pts: need 3 columns")
@@ -194,10 +196,11 @@ contains
    ENSURE(l_max>=0,"l_max is negative")
    ENSURE(all(alpha>ZERO),"exponents must be positive")
 
-      r,Y,Yk,E,G,B,C,V,N,T,S :: MAT{REAL}@
-      bv,cv,re,im,sum_l :: VEC{REAL}@
-      gam,kr,s,cs :: REAL
-      n_pt,n_k,n_a,n_lm,l,l1,m,f,i,j,k :: INT
+      r,Y,Yk,E,G,B,C,V,N,T,S,Fp,Pj :: MAT{REAL}@
+      bv,cv,re,im,sum_l,rad :: VEC{REAL}@
+      ind,first :: VEC{INT}@
+      gam,kr,sn,cs :: REAL
+      n_pt,n_k,n_a,n_lm,n_s,l,l1,m,f,i,j,k,ip,ish,D :: INT
 
       n_pt = pt.dim1
       n_k  = k_pts.dim1
@@ -227,20 +230,52 @@ contains
          T(:,l1) = N(:,l1)*(PI/alpha)**1.5d0/(TWO*alpha)**l
       end
 
-      ! Right-hand side: B(n,lm) = sum_i w_i exp(-a_n r_i^2) r_i^l Y_lm
-      E.create(n_pt,n_a)
-      do j = 1,n_a
-         E(:,j) = w*exp(-alpha(j)*(r(:,1)**2+r(:,2)**2+r(:,3)**2))
+      ! Right-hand side B(n,lm) = sum_i w_i exp(-a_n r_i^2) r_i^l Y_lm,
+      ! taken a shell of the grid at a time: the points of a shell share one
+      ! radius R_s, so P(s,lm) = sum over the shell of w_i r_i^l Y_lm is the
+      ! projection of the density onto Y_lm, and B = sum_s exp(-a R_s^2) P.
+      ! A Lebedev shell of degree D integrates Y_lm exactly only for l <= D,
+      ! so it is left out for higher l. Pruned grids use degree 5 near the
+      ! nucleus, where the density is nearly spherical: kept in, its l = 0
+      ! part leaks into l >= 6 and ruins the fit.
+      rad.create(n_pt)
+      rad = sqrt(r(:,1)**2+r(:,2)**2+r(:,3)**2)
+      ind.create(n_pt)
+      rad.quick_sort(ind)
+      first.create(n_pt+1)
+      n_s = 1
+      first(1) = 1
+      do ip = 2,n_pt
+         if (rad(ind(ip))-rad(ind(first(n_s)))>1.0d-9) then
+            n_s = n_s + 1
+            first(n_s) = ip
+         end
+      end
+      first(n_s+1) = n_pt + 1
+      Pj.create(n_s,n_lm)
+      E.create(n_s,n_a)
+      do ish = 1,n_s
+         Pj(ish,:) = ZERO
+         do ip = first(ish),first(ish+1)-1
+            i = ind(ip)
+            Pj(ish,:) = Pj(ish,:) + w(i)*Y(i,:)
+         end
+         D = FOURIER_SUMS::lebedev_degree(first(ish+1)-first(ish))
+         D = max(D-4,0)
+         if (D<l_max) Pj(ish,(D+1)**2+1:) = ZERO
+         E(ish,:) = exp(-alpha*rad(ind(first(ish)))**2)
       end
       B.create(n_a,n_lm)
-      B.to_product_of_BLAS(E,Y,transpose_a=TRUE)
+      B.to_product_of_BLAS(E,Pj,transpose_a=TRUE)
       E.destroy
-      Y.destroy
-      r.destroy
+      Pj.destroy
+      first.destroy
+      ind.destroy
+      rad.destroy
 
       ! Solve one overlap block per l, the same for every m. The overlap of
       ! two normalised functions is (2 sqrt(a b)/(a+b))^(l+3/2).
-      ! C holds the coefficients times the transform factor T.
+      ! C holds the coefficients times N.
       C.create(n_a,n_lm)
       S.create(n_a,n_a)
       bv.create(n_a)
@@ -257,7 +292,31 @@ contains
          do m = 1,2*l+1
             bv = N(:,l1)*B(:,f+m)
             S.solve_cholesky_equation(bv,cv)
-            C(:,f+m) = cv*T(:,l1)
+            C(:,f+m) = cv*N(:,l1)
+         end
+      end
+
+      ! The fitted density at the points: sum over n,lm of
+      ! c N exp(-a r^2) r^l Y_lm
+      if (present(fit)) then
+         E.create(n_pt,n_a)
+         do j = 1,n_a
+            E(:,j) = exp(-alpha(j)*(r(:,1)**2+r(:,2)**2+r(:,3)**2))
+         end
+         Fp.create(n_pt,n_lm)
+         Fp.to_product_of_BLAS(E,C)
+         fit = sum(Fp*Y,dim=2)
+         Fp.destroy
+         E.destroy
+      end
+      Y.destroy
+      r.destroy
+
+      ! Fold the transform factor into the coefficients
+      do l = 0,l_max
+         f = l*l
+         do m = 1,2*l+1
+            C(:,f+m) = C(:,f+m)*T(:,l+1)/N(:,l+1)
          end
       end
       cv.destroy
@@ -299,12 +358,37 @@ contains
       ! Move the fit to the centre: times exp(i k.centre)
       do k = 1,n_k
          kr = k_pts(k,1)*centre(1)+k_pts(k,2)*centre(2)+k_pts(k,3)*centre(3)
-         FOURIER_SUMS::sin_cos(kr,s,cs)
-         res(k) = COMPLEXIFY(re(k)*cs-im(k)*s,re(k)*s+im(k)*cs)
+         FOURIER_SUMS::sin_cos(kr,sn,cs)
+         res(k) = COMPLEXIFY(re(k)*cs-im(k)*sn,re(k)*sn+im(k)*cs)
       end
 
       im.destroy
       re.destroy
+
+   end
+
+   lebedev_degree(n) result (res) :: selfless, pure, private
+   ! Return the degree of the largest Lebedev grid with at most "n" points:
+   ! the highest l of the spherical harmonics it integrates exactly. A shell
+   ! with some points removed is taken to be the grid below, to be safe.
+      n :: INT, IN
+      res :: INT
+
+      sizes,degree :: VEC{INT}(32)
+      i :: INT
+
+      sizes  = [   6,  14,  26,  38,  50,  74,  86, 110, 146, 170, 194, 230, &
+                 266, 302, 350, 434, 590, 770, 974,1202,1454,1730,2030,2354, &
+                2702,3074,3470,3890,4334,4802,5294,5810 ]
+      degree = [   3,   5,   7,   9,  11,  13,  15,  17,  19,  21,  23,  25, &
+                  27,  29,  31,  35,  41,  47,  53,  59,  65,  71,  77,  83, &
+                  89,  95, 101, 107, 113, 119, 125, 131 ]
+
+      res = 0
+      do i = 1,32
+         if (sizes(i)>n) exit
+         res = degree(i)
+      end
 
    end
 
@@ -357,7 +441,7 @@ contains
    ENSURE(U.dim2==2*l+1,"U: wrong number of columns")
 
       A,G :: MAT{REAL}@
-      off :: REAL
+      off,gl :: REAL
       f,nc,c,d,m,n :: INT
 
       nc = GAUSSIAN_DATA::n_comp(l)
@@ -388,6 +472,23 @@ contains
       end
       end
    ENSURE(off<1.0d-10,"harmonics are not orthogonal")
+
+      ! A harmonic is orthogonal on the sphere to every polynomial of
+      ! degree l-2, which is what makes the transform formula hold
+      off = ZERO
+      if (l>=2) then
+         n = GAUSSIAN_DATA::n_comp_up_to(l-3)
+         do d = 1,GAUSSIAN_DATA::n_comp(l-2)
+         do m = 1,2*l+1
+            gl = ZERO
+            do c = 1,nc
+               gl = gl + U(c,m)*FOURIER_SUMS::sphere_integral(GAUSSIAN_DATA::pp(:,f+c)+GAUSSIAN_DATA::pp(:,n+d))
+            end
+            off = max(off,abs(gl))
+         end
+         end
+      end
+   ENSURE(off<1.0d-10,"harmonics are not harmonic")
 
       G.destroy
 
