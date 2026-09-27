@@ -77,6 +77,19 @@ because by then it held far more than deferred items.)*
 
 ## START HERE, 2026-09-26 (night): labels merged; one branch waiting -- read this first
 
+**Next (Dylan, 2026-09-27): diagnose the Mac numerical drift.** Two tests fail on this Mac and
+pass on Linux, and both reproduced on 2026-09-27 with `develop` itself (`d5d52000`, a release build
+in a separate worktree), so neither comes from new work:
+- `short/h2o_rhf_def2-SVP_RIJCOSX`: worst line V_eN -199.88557304 against the reference
+  -199.89305160, the same value as on 2026-09-25. Earlier notes: the COSX SCF block is off by
+  3.4e-4 Eh while the final exact-K energy matches; iteration 0 (the promolecule guess) already
+  differs; it gave -75.92079838 run alone and -75.92128426 under `ctest -j6`, so it depends on load
+  (OpenBLAS threads suspected). The macOS CI runner passes it. Register row: *drifts on a Mac*.
+- `long/quartz_NN_HAR_L1_rhf_def2-SVP`: worst line 13.9930 against 13.9171 (row 13 of a table by
+  resolution shell), worst relative 0.0117 against 0.0118.
+Start by comparing the toolchains (OpenBLAS build and version, the exact gfortran-14 minor) and by
+pinning OpenBLAS to one thread, before looking at COSX or HAR code.
+
 **2026-09-27: `oc-ri` merged to `develop`** (`bd821d23`): stage (a) of fitted Hirshfeld atoms,
 `partition_model= oc-ri`. HARs match Hirshfeld to under 0.1 esd and run faster (urea 3.3 -> 2.0 s,
 gly_ala fragHAR 15.2 -> 11.4 s). Checked on the Mac only (`short`, `long`, `hart`: the known macOS
