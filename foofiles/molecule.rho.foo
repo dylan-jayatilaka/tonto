@@ -5346,6 +5346,7 @@ contains
       case("oc-g-hirshfeld"); .make_gHirshfeld_atom_FFs(ff)
       case("oc-g-salvador "); .make_gSalvador_atom_FFs(ff)
       case("oc-hirshfeld  "); .make_Hirshfeld_atom_FFs(ff)
+      case("oc-ri         "); .make_Hirshfeld_atom_FFs(ff)
       case("oc-salvador   "); .make_Salvador_atom_FFs(ff)
       case("oc-tfvp       "); .make_Salvador_atom_FFs(ff)
       case("oc-sph-tfvp   "); .make_sph_TFVA_atom_FFs(ff)
@@ -5427,7 +5428,7 @@ contains
 
          ! The (unique) atomic form factors
          ! Fourier transform, yay!
-         FOURIER_SUMS:exp_ikr_sums(ff(:,u),k_pts,pt,rho)
+         .make_atom_FFs_on_grid(ff(:,u),k_pts,pt,rho,c)
          ff(:,u) = ff(:,u) * s2 * .atom(c).site_occupancy
 
          ! Clean up
@@ -5443,6 +5444,58 @@ contains
 
       ! Clean up
       k_pts.destroy
+
+   end
+
+   make_atom_FFs_on_grid(ff,k_pts,pt,rho,c) :: leaky, PURE
+   ! Set "ff" to the transform at "k_pts" of the density of atom "c", given
+   ! as "rho", its values times the grid weights, at points "pt": by the
+   ! sum over the points, or, for partition_model= oc-ri, from a fit of it
+   ! in functions on atom "c".
+      self  :: IN
+      ff    :: VEC{CPX}, OUT
+      k_pts :: MAT{REAL}, IN
+      pt    :: MAT{REAL}, IN
+      rho   :: VEC{REAL}, IN
+      c     :: INT, IN
+
+   ENSURE(.crystal.allocated, "no crystal")
+   ENSURE(.crystal.xray_data.allocated, "no reflection data")
+
+      alpha :: VEC{REAL}@
+
+      if (.crystal.xray_data.partition_model=="oc-ri") then
+         .make_RI_exponents(alpha,c)
+         FOURIER_SUMS:fitted_exp_ikr_sums(ff,k_pts,pt,rho,.atom(c).position,alpha,.crystal.xray_data.RI_l_max)
+         alpha.destroy
+      else
+         FOURIER_SUMS:exp_ikr_sums(ff,k_pts,pt,rho)
+      end
+
+   end
+
+   make_RI_exponents(alpha,c) :: leaky, PURE
+   ! Make "alpha", the exponents of the oc-ri fitting functions on atom
+   ! "c": twice its largest basis exponent, then each divided by
+   ! RI_exponent_ratio, down to its smallest basis exponent.
+      self  :: IN
+      alpha :: VEC{REAL}@, OUT
+      c     :: INT, IN
+
+   ENSURE(.atom(c).basis.allocated, "no basis for atom "//trim(c.to_str))
+
+      a_hi,a_lo,ratio :: REAL
+      n,i :: INT
+
+      a_hi  = TWO*.atom(c).basis.shell.max_exponent
+      a_lo  = .atom(c).basis.shell.min_exponent
+      ratio = .crystal.xray_data.RI_exponent_ratio
+      n = 1 + floor(log(a_hi/a_lo)/log(ratio))
+
+      alpha.create(n)
+      do i = 1,n
+         alpha(i) = a_hi/ratio**(i-1)
+      end
 
    end
 
@@ -6187,7 +6240,7 @@ contains
          rho = rho*wt
 
          ! Get aspherical form factor sf_u
-         FOURIER_SUMS:exp_ikr_sums(sf_u,k_pts,pt,rho)
+         .make_atom_FFs_on_grid(sf_u,k_pts,pt,rho,c)
          sf_u = sf_u * s2
 
          ! Write out sf_u
@@ -6315,7 +6368,7 @@ contains
          rho = rho*wt
 
          ! Make the (unique) structure factors
-         FOURIER_SUMS:exp_ikr_sums(ff,k_pts,pt,rho)
+         .make_atom_FFs_on_grid(ff,k_pts,pt,rho,c)
          ff = ff * s2 * .atom(c).site_occupancy
 
          ! Clean up atom "c" stuff

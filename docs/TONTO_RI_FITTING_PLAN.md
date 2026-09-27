@@ -4,9 +4,15 @@
 into the user-facing pages. Live status is the entry in `TASKS_AND_HISTORY.md`, *Aspherical form factors by
 RI density fitting*.
 
-**Status 2026-09-27: sketch only, now split into stages (a) and (b) below.** Nothing is implemented. Dylan's proposal, recorded with the
-profile that motivates it and a survey of what the tree already has. To be worked out in detail
-later.
+**Status 2026-09-27 (night): stage (a) works**, on branch `oc-ri`: `partition_model= oc-ri`,
+with `RI_l_max=` and `RI_exponent_ratio=`, and the check task `put_ri_ff_check`. Measured on urea
+and gly_ala, in release and debug builds, as a form-factor check and in full HARs. Results in
+[Stage (a) measurements](#stage-a-measurements). Not yet in the test suite. Existing results
+unchanged: on the Mac, `short`, `long` and `hart` give the same failures as `develop` (the known
+macOS drifts of `h2o_rhf_def2-SVP_RIJCOSX` and `quartz_NN_HAR_L1_rhf_def2-SVP`, the latter
+checked against a `develop` build); not yet run on achari2. How it works is set out
+in [How the fitted Hirshfeld atom works](#how-the-fitted-hirshfeld-atom-works) below, written to
+be read on its own; the rest of the document is the record of how the plan was reached.
 
 **Two stages (Dylan, 2026-09-27).**
 
@@ -29,6 +35,29 @@ later.
   effect on refined parameters and their esds; the reflection-weighted metric (section 3);
   per-molecule fits; tests. Only after (a) shows the fit is good enough.
 
+**Literature check, 2026-09-27: a published scheme exists.** Chodkiewicz et al., *Transferable
+Hirshfeld atom model for rapid evaluation of aspherical atomic form factors*, IUCrJ 11 (2024)
+[lt5065](https://journals.iucr.org/m/issues/2024/02/00/lt5065/index.html). They expand each
+Hirshfeld atom as `rho_a(r) = sum_lm R_lm(r) Y_lm(r^)`, get `R_lm` by projection on the atom's
+angular grid (no fit), and take form factors by a Fourier-Bessel transform of each `R_lm`. Refined
+against unexpanded HAR, max |Delta R(X-H)| is 3.9 / 2.9 / 1.6 / 0.95 mA at L_max 4 / 5 / 6 / 7;
+L_max = 7 is their choice. Their speed-up is quoted for whole calculations, not the form-factor step:
+"about 50 times" on the larger systems, but their crambin example (642 atoms, 68 s against ~17 min
+on 12 cores) is 15x. The method is essentially that of Koritsanszky, Volkov and Coppens (projection
+of stockholder atoms onto spherical harmonics). Two consequences for stage (a):
+- **L_max must be about 7.** An even-tempered Gaussian set then has ~20 x 64 = 1280 functions per
+  atom, so the grid right-hand side `n_pt x n_aux` is about half the cost of the present
+  `n_pt x n_k` sum at gly_ala size. The Gaussian route saves little until `n_k` is large.
+- **With the overlap metric, the Gaussian fit is this projection with the radial part fitted.**
+  The `Y_lm` are orthogonal, so the metric splits by (l,m), and each block fits `R_lm` in Gaussians.
+  On the same grid, `b_P` can be taken from the projected `R_lm` on the radial points instead of
+  from all points: the same numbers, `n_rad x n_exp` per (l,m) instead of `n_pt x n_exp`. So
+  projecting first makes the Gaussian fit cheaper, and shows directly, per l, where a Gaussian set
+  fails (cusp, tail). `FOURIER_SUMS:sinc_kr_sums` is already the l = 0 Fourier-Bessel transform.
+  Cost estimates per gly_ala atom (arithmetic, not measured) are in section 1a.
+The grid points come from radial shells times a Lebedev sphere (`BECKE_GRID:make_atom_grid`), so
+grouping points by distance from the nucleus gives the shells the projection needs, pruned or not.
+
 **Re-measured 2026-09-27** (macOS `sample`, release build of `develop`, same job): gly_ala fragHAR
 now takes **16.3 s against 66 s**, and the form-factor sum (`FOURIER_SUMS:exp_ikr_sums`) is **33%**
 of the samples, against 81.6% in section 1. Fock builds are 23%, the LS normal equations about 9%.
@@ -43,6 +72,263 @@ the Coulomb (potential) fit that regular RI-J does.
 Distinct from the *"effect of the fitted density on structure factors"* owed in the RI-J entry of
 `TASKS_AND_HISTORY.md`: that concerns structure factors computed from an RI-J **SCF** density; this concerns
 fitting `w_a rho` itself so that its Fourier transform becomes analytic.
+
+
+## How the fitted Hirshfeld atom works
+
+This section is written for a reader who knows what a Hirshfeld atom and a form factor are, and
+nothing else about this work. It describes `partition_model= oc-ri`.
+
+### What is computed today
+
+A Hirshfeld atom *a* is the molecular density $\rho$ times the stockholder weight $w_a$. Its
+form factor at a scattering vector $\mathbf k$ (with $2\pi$ included, so $|\mathbf k| = 4\pi
+\sin\theta/\lambda$) is its Fourier transform, and Tonto evaluates it on the atom's Becke grid,
+points $\mathbf r_i$ with weights $W_i$:
+
+$$
+f_a(\mathbf k) = \int w_a(\mathbf r)\,\rho(\mathbf r)\,e^{i\mathbf k\cdot\mathbf r}\,d^3r
+\;\approx\; \sum_i \rho_{a,i}\, e^{i\mathbf k\cdot\mathbf r_i},
+\qquad \rho_{a,i} = W_i\, w_a(\mathbf r_i)\,\rho(\mathbf r_i).
+$$
+
+That is one sine and one cosine for every reflection and every grid point: $n_k \times n_{pt}$ of
+them per atom, about 23 million for a gly_ala atom (2514 reflections, about 9000 points). It is the
+largest single cost of a HAR job.
+
+### The idea
+
+Fit the atom's density in a few hundred functions whose Fourier transforms are known exactly. The
+grid is then used once per atom to find the fit, and the form factors come from a formula. No
+sine or cosine over the grid is needed.
+
+### The fitting functions
+
+Every function sits on the nucleus of atom *a*, and coordinates are measured from it. Each is a
+Gaussian radial part times a real spherical harmonic:
+
+$$
+\chi_{nlm}(\mathbf r) = g_{nl}(r)\,Y_{lm}(\hat{\mathbf r}),
+\qquad g_{nl}(r) = N_{nl}\, r^l e^{-\alpha_n r^2},
+\qquad N_{nl} = \left[\frac{2\,(2\alpha_n)^{l+3/2}}{\Gamma(l+3/2)}\right]^{1/2}.
+$$
+
+- The $Y_{lm}$ are the real spherical harmonics, normalised so that $\int Y_{lm}Y_{l'm'}\,d\Omega =
+  \delta_{ll'}\delta_{mm'}$. They run from $l = 0$ to $L$ = `RI_l_max=`, which is 7 by default:
+  $(L+1)^2 = 64$ angular functions.
+- $N_{nl}$ makes $\int_0^\infty g_{nl}^2\, r^2\,dr = 1$.
+- The exponents $\alpha_n$ are **even-tempered**: they start at twice the largest basis exponent on
+  the atom and are divided by `RI_exponent_ratio=` (1.5 by default) each time, until they reach the
+  smallest basis exponent. The range covers the density, whose tightest part has twice the largest
+  basis exponent. This needs no special auxiliary basis, so it works with any orbital basis.
+
+A carbon atom in STO-3G gets 16 exponents at the default ratio, so $16 \times 64 = 1024$
+functions; in def2-TZVP about 30.
+
+### The fit
+
+The fitted density is $\tilde\rho_a = \sum_{nlm} c_{nlm}\,\chi_{nlm}$. The coefficients minimise
+the squared error integrated over all space, the **overlap norm**:
+
+$$
+\int \bigl(\rho_a - \tilde\rho_a\bigr)^2\, d^3r \;\;\text{is least}
+\quad\Longleftrightarrow\quad
+\mathbf S\,\mathbf c = \mathbf b,
+\qquad S_{PQ} = \int \chi_P\,\chi_Q\,d^3r,
+\qquad b_P = \int \chi_P\,\rho_a\,d^3r .
+$$
+
+**Why this norm.** Parseval's theorem says the same number measures the error in the form factors,
+weighted equally at every $\mathbf k$:
+
+$$
+\int \bigl|f_a(\mathbf k) - \tilde f_a(\mathbf k)\bigr|^2\, d^3k
+= (2\pi)^3 \int \bigl(\rho_a - \tilde\rho_a\bigr)^2\, d^3r .
+$$
+
+So the fit is as good at high resolution as at low. The Coulomb norm used for RI-J in the SCF
+weights the error by $1/k^2$, which makes the fit worst at high resolution, where a charge-density
+refinement needs it most. That is why this fit does not reuse the RI-J metric.
+
+### The overlap matrix is small and exact
+
+The angular integral of two harmonics is zero unless $l = l'$ and $m = m'$. So $\mathbf S$ falls
+apart into one small block for each $l$, the same for every $m$:
+
+$$
+S_{nlm,\,n'l'm'} = \delta_{ll'}\,\delta_{mm'}\; s^{(l)}_{nn'},
+\qquad
+s^{(l)}_{nn'} = \int_0^\infty g_{nl}\,g_{n'l}\,r^2\,dr
+= \left(\frac{2\sqrt{\alpha_n\alpha_{n'}}}{\alpha_n + \alpha_{n'}}\right)^{l+3/2}.
+$$
+
+With about 20 exponents, that is eight $20\times 20$ matrices for $L = 7$. Each is factored once
+by Cholesky ($s^{(l)} = \mathbf L\mathbf L^{\mathsf T}$) and used for all $2l+1$ values of $m$.
+How well conditioned they are depends only on the exponent ratio: a ratio near 1 makes neighbouring
+functions nearly the same, and the matrix nearly singular.
+
+### The right-hand side, and the spherical-harmonic projection inside it
+
+$b$ is the only step that needs the grid:
+
+$$
+b_{nlm} \approx \sum_i \rho_{a,i}\; g_{nl}(r_i)\; Y_{lm}(\hat{\mathbf r}_i).
+$$
+
+The Becke grid of an atom is a set of radial shells, each a Lebedev sphere of directions: point *i*
+is shell *j* at radius $R_j$, direction $\hat{\mathbf q}$. Summing over the directions of each shell
+first:
+
+$$
+b_{nlm} = \sum_j g_{nl}(R_j)\; P_{lm}(j),
+\qquad
+P_{lm}(j) = \sum_{\hat{\mathbf q}\,\in\,\text{shell } j} \rho_{a,j\hat{\mathbf q}}\; Y_{lm}(\hat{\mathbf q}).
+$$
+
+$P_{lm}(j)$ is the **projection of the atom onto spherical harmonics**. It is the radial function
+$\rho_{lm}(R_j) = \int \rho_a(R_j\hat{\mathbf q})\,Y_{lm}(\hat{\mathbf q})\,d\Omega$ times the
+shell's radial weight. This is the expansion of Koritsanszky, Volkov and Coppens, and of Chodkiewicz
+et al. (2024). Grouping by shell reorders the same sum, so it gives exactly the same $b$.
+
+Seen this way, the fit for each $(l,m)$ is a one-dimensional least-squares fit of the radial
+function $\rho_{lm}(r)$ by the Gaussians $g_{nl}(r)$, with weight $r^2\,dr$. The published
+method uses $\rho_{lm}$ itself, on the radial grid; this one replaces it by a Gaussian fit. With a
+complete set of Gaussians the two would agree.
+
+The code computes $b$ this way: it groups the points into shells by their distance from the
+nucleus, projects each shell onto the harmonics, and then does the radial sums. That costs
+$n_{pt}(L+1)^2$ and then $n_{shell}\, n_\alpha (L+1)^2$, about 0.6 M operations for a gly_ala
+atom, against about 11 M point by point.
+
+**A shell is used for a harmonic only if its angular grid can integrate it.** A Lebedev sphere of
+degree $D$ integrates $Y_{lm}$ exactly only for $l \le D$. Tonto's default Treutler–Ahlrichs
+pruning puts a degree-5 sphere on the inner third of the radial shells, where the density is
+nearly spherical and very large. Summed there, its $l = 0$ part leaks into $l \ge 6$ and ruins the
+fit. So shell $s$ contributes to harmonic $l$ only if $l \le D_s - 4$. The margin of 4 also keeps
+out the atom's own low-$l$ parts, which a marginal shell would alias into high $l$. The degree comes
+from the number of points on the shell, taking the next smaller Lebedev sphere if some points are
+missing. Near the nucleus the true high-$l$ density grows only as $r^l$, so little is lost.
+
+### The transform of the fit is a formula
+
+A Gaussian times a spherical harmonic transforms into the same harmonic, now in the direction of
+$\mathbf k$:
+
+$$
+\int e^{i\mathbf k\cdot\mathbf r}\; r^l Y_{lm}(\hat{\mathbf r})\, e^{-\alpha r^2}\, d^3r
+= \left(\frac{\pi}{\alpha}\right)^{3/2}
+\left(\frac{i}{2\alpha}\right)^{l}
+k^l\, Y_{lm}(\hat{\mathbf k})\; e^{-k^2/4\alpha}.
+$$
+
+For $l = 0$ this is the familiar transform of a Gaussian. Each power of $\mathbf r$ brings
+down a factor $i\mathbf k/2\alpha$, which gives the rest. So, putting the atom back at its position
+$\mathbf r_a$:
+
+$$
+\tilde f_a(\mathbf k) = e^{i\mathbf k\cdot\mathbf r_a}
+\sum_{l=0}^{L} i^l \sum_{m=-l}^{l} k^l\,Y_{lm}(\hat{\mathbf k})
+\sum_n c_{nlm}\, N_{nl}\left(\frac{\pi}{\alpha_n}\right)^{3/2}(2\alpha_n)^{-l}\, e^{-k^2/4\alpha_n}.
+$$
+
+Per reflection this needs $n_\alpha$ exponentials, which are shared by every $l$ and $m$, and one
+sine and cosine for the phase. The rest is multiplication and addition.
+
+### Stage (a) measurements
+
+`put_ri_ff_check` computes, for every unique atom, both the grid sum and the fitted form factors
+at all the reflections (with their symmetry equivalents), and reports:
+- **rms/rms**: the RMS of $|\tilde f_a - f_a|$ over the reflections, divided by the RMS of $|f_a|$;
+- **res**: the fit's residual in real space, $\|\rho_a - \tilde\rho_a\| / \|\rho_a\|$, on the grid;
+- **ft chk**: the analytic transform of the fit against a grid sum of the fitted density. This is
+  zero when the grid integrates the fit exactly, so it measures the grid sum's own error.
+
+Urea, RHF/STO-3G, 6536 reflections with symmetry equivalents, up to $\sin\theta/\lambda$ = 1.44
+Å$^{-1}$, debug build, $L = 7$:
+
+| grid | ratio | quantity | O | N | C | H |
+|---|---|---|---|---|---|---|
+| very high | 2.0 | rms/rms | 0.13% | 0.15% | 0.11% | 0.29% |
+| very high | 1.5 | rms/rms | **0.02%** | **0.04%** | **0.06%** | **0.19%** |
+| very high | 1.5 | res | 0.05% | 0.05% | 0.05% | 0.23% |
+| very high | 1.5 | ft chk | 0.00% | 0.00% | 0.00% | 0.10% |
+| high | 2.0 | rms/rms | 0.13% | 0.15% | 0.12% | 0.53% |
+| high | 2.0 | ft chk | 0.01% | 0.02% | 0.06% | 0.60% |
+| low | 2.0 | rms/rms | 0.24% | 0.49% | 0.87% | 7.9% |
+| low | 2.0 | ft chk | 0.20% | 0.39% | 0.89% | 7.8% |
+
+What these say:
+- **The fit is good to a few hundredths of a percent for C, N and O**, and 0.2% for H, at the
+  default ratio 1.5. The residual does not change with $L$ from 7 to 10, nor with the grid.
+- **On coarser grids the difference is the grid sum's error, not the fit's.** "ft chk" follows
+  "rms/rms" closely. On the low grid the sum over points is 8% out for H, while the fit's real-space
+  residual stays at 0.4%. So on the default grids the fitted form factors are probably closer to
+  exact than the grid sums are. That needs its own test against a converged grid before it is
+  claimed.
+- **Ratio 1.5 is the sweet spot:** 1.7 gives 0.07%, 1.3 no better than 1.5. The fit costs the same
+  at every ratio, because the harmonics dominate it.
+- **Extending the exponents one step more diffuse changes nothing.** H's 0.2% does not come from its
+  tail.
+- **Time, release build:** on the default grid the fit takes 0.11 s for the five atoms against
+  0.52 s for the grid sum (0.014–0.034 s per atom against 0.07–0.13 s); on the very high grid
+  0.21 s against 1.76 s. The fit's grid work does not grow with the number of reflections.
+
+**In a HAR** (release build, default settings of each test, only `partition_model=` changed):
+
+| job | model | wall time | R(F) | GoF | largest position shift |
+|---|---|---|---|---|---|
+| urea STO-3G HAR, 817 refl. | oc-hirshfeld | 3.3 s | 0.0379 | 7.0356 | -- |
+| | oc-ri | 2.0 s | 0.0380 | 7.0402 | H3 0.6 mÅ (0.08 esd); O 0.05 mÅ |
+| gly_ala fragHAR STO-3G, 2514 refl. | oc-hirshfeld | 15.2 s | 0.0324 | 3.3535 | -- |
+| | oc-ri | 11.4 s | 0.0324 | 3.3539 | H 1.4 mÅ (0.08 esd); heavy atoms 0.09 mÅ (0.12 esd) |
+
+ADPs agree to 1 in the last printed digit. The gly_ala saving, a quarter of the job, is what
+section 1's profile allows: the grid sum was a third of it.
+
+**Against a converged grid** (urea HAR, reference: `oc-hirshfeld` on the very high grid), at the
+precision the CIF prints: `oc-hirshfeld` on the low grid and `oc-ri` on the very high grid match it
+except 0.05 mÅ on O; `oc-ri` on the low grid differs by 0.8 mÅ on H3. For this job the grid
+matters little either way, so it cannot say whether the fit or the sum is closer to exact on a
+coarse grid. H's form factor is small (rms 0.09 e), so an 8% error in it is small in absolute
+terms.
+
+### Cost
+
+Arithmetic estimates for one gly_ala atom, not yet measured:
+
+| step | estimate |
+|---|---|
+| today's sum over the grid | 70–230 ms |
+| $b$, point by point | ~10 ms |
+| $b$ by projection | ~1 ms |
+| overlap matrices and Cholesky | microseconds |
+| the analytic transform | ~3 ms |
+
+The density on the grid has to be computed whichever way the form factors are taken, so it is left
+out.
+
+### Where it is in the code
+
+| piece | procedure |
+|---|---|
+| fit and transform | `FOURIER_SUMS:fitted_exp_ikr_sums` |
+| spherical harmonics at points and at $\mathbf k$ | `FOURIER_SUMS:make_solid_harmonics`, from `GAUSSIAN_DATA:spherical_harmonics_for`, normalised exactly by `make_normalised_harmonics` |
+| the exponents | `MOLECULE.RHO:make_RI_exponents` |
+| the choice between the sum over points and the fit | `MOLECULE.RHO:make_atom_FFs_on_grid`, called by the three Hirshfeld form-factor routines in `MOLECULE.RHO` and by `MOLECULE.HAR:make_LS_mx` |
+| spherical harmonics up to `RI_l_max` | `GAUSSIAN_DATA:set_indices`, called from `MOLECULE.SCF:make_atom_partition_info` |
+| the degree of a grid shell | `FOURIER_SUMS:lebedev_degree` |
+| the check against the grid sum | `MOLECULE.MAIN:put_RI_FF_check`, keyword `put_ri_ff_check` |
+
+### What is still to be found out
+
+- The effect on refined parameters and their esds, which is what matters in the end. The
+  published expansion needed $L = 7$ to keep bonds to hydrogen within 1 mÅ of unexpanded HAR.
+- A job with many reflections, where the saving should be largest; and a profile of the fit
+  itself (0.02–0.06 s per atom), which has not been looked at.
+- Whether the fitted form factors are closer to exact than the grid sums on a coarse grid, on a
+  job where the grid matters.
+- A test in the suite for `oc-ri`, and whether it should be the default for HAR.
+- Heavier atoms and larger bases (def2-TZVP, pob-TZVP), where the exponent range is wider.
 
 
 ## 1. Why — the measurement
@@ -75,6 +361,26 @@ end
 RI-J and COSX cannot fix it — the whole Fock build is 8%, and an infinitely fast SCF saves 8%.
 Neither is disk the cost: the `per_rank_write` subtree is 4 samples of 4965, against a guess that
 it might be significant.
+
+
+## 1a. Cost estimates per atom, gly_ala (2026-09-27, arithmetic only, not measured)
+
+Assumed: `n_pt` ~ 9000 (about 45 radial shells x 194 Lebedev points, `l_angular_grid` 23);
+`n_k` = 2514; L_max = 7, so 64 (l,m); 20 even-tempered exponents, so 1280 Gaussians. Evaluating
+the density on the grid is the same for every route and is left out.
+
+| step | work | estimate |
+|---|---|---|
+| today: `exp_ikr_sums` | 22.6 M sin/cos pairs | 70-230 ms |
+| projection onto `Y_lm` | 64 `Y_lm` per point, 0.6 M multiply-adds | ~1 ms |
+| Gaussian `b_P` directly on the grid | 0.2 M `exp`, 11.5 M multiply-adds | ~10 ms |
+| Gaussian `b_P` from the projection | 64 x 45 x 20 = 58 k | negligible |
+| overlap metric and Cholesky | 8 blocks of 20 x 20, closed form | microseconds |
+| Fourier-Bessel transform | 113 k `j_l` sets, 7.2 M multiply-adds | 5-10 ms |
+| Gaussian transform | 0.4 k x 8 radial factors per k, 3.2 M multiply-adds | ~3 ms |
+
+Both routes are 10x or more below today's sum, and differ from each other by a few ms. Speed does not
+choose between them; accuracy per basis choice, and what the functions are wanted for, do.
 
 
 ## 2. The scheme

@@ -6,6 +6,10 @@
 ! MOLECULE.RHO and MOLECULE.HAR prepare the points and weights, and call
 ! these to do the sums.
 !
+! fitted_exp_ikr_sums gives the same sum from a fit of the density in
+! functions on one centre, whose transform is analytic: the oc-ri
+! partition model. It uses BLAS, and no sin or cos except for the phase.
+!
 ! WHY THIS FILE IS WRITTEN AS IT IS
 !
 ! The sum f(k) = sum_i w_i exp(i k.r_i) takes most of the time of a HAR
@@ -161,6 +165,355 @@ contains
             FOURIER_SUMS::sin_cos(kr,s,c)
             res(j) = res(j) + wi*merge(ONE,s/kr,kr==ZERO)
          end
+      end
+
+   end
+
+   fitted_exp_ikr_sums(res,k_pts,pt,w,centre,alpha,l_max,fit) :: selfless, leaky, PURE
+   ! Set "res(k)" to the transform, sum over i of w(i)*exp(i k.r_i) as in
+   ! exp_ikr_sums, but of a fit to the density rather than of the points.
+   ! The fitting functions sit on "centre": N r^l exp(-alpha r^2) Y_lm, one
+   ! for each exponent in "alpha" and each real spherical harmonic Y_lm up
+   ! to "l_max". The fit minimises the overlap norm of the error, which by
+   ! Parseval weights the error in res equally at every k. The metric is
+   ! diagonal in (l,m), and the transform of each function is analytic:
+   !   (pi/a)^(3/2) (i/2a)^l k^l Y_lm(k^) exp(-k^2/4a).
+   ! If present, "fit" is set to the fitted density at the points, for checks.
+   ! See docs/TONTO_RI_FITTING_PLAN.md.
+      res    :: VEC{CPX}, OUT
+      k_pts  :: MAT{REAL}, IN
+      pt     :: MAT{REAL}, IN
+      w      :: VEC{REAL}, IN
+      centre :: VEC{REAL}(3), IN
+      alpha  :: VEC{REAL}, IN
+      l_max  :: INT, IN
+      fit    :: VEC{REAL}, OUT, optional
+
+   ENSURE(res.dim==k_pts.dim1,"res and k_pts: different number of k")
+   ENSURE(k_pts.dim2==3,"k_pts: need 3 columns")
+   ENSURE(pt.dim2==3,"pt: need 3 columns")
+   ENSURE(w.dim==pt.dim1,"w and pt: different number of points")
+   ENSURE(l_max>=0,"l_max is negative")
+   ENSURE(all(alpha>ZERO),"exponents must be positive")
+
+      r,Y,Yk,E,G,B,C,V,N,T,S,Lc,Fp,Pj :: MAT{REAL}@
+      bv,cv,re,im,sum_l,rad :: VEC{REAL}@
+      ind,first :: VEC{INT}@
+      gam,kr,sn,cs :: REAL
+      n_pt,n_k,n_a,n_lm,n_s,l,l1,m,f,i,j,k,ip,ish,D :: INT
+
+      n_pt = pt.dim1
+      n_k  = k_pts.dim1
+      n_a  = alpha.dim
+      n_lm = (l_max+1)*(l_max+1)
+
+      ! Points relative to the centre
+      r.create(n_pt,3)
+      do i = 1,3
+         r(:,i) = pt(:,i) - centre(i)
+      end
+
+      ! Solid harmonics r^l Y_lm at the points, and k^l Y_lm at the k
+      Y.create(n_pt,n_lm)
+      FOURIER_SUMS::make_solid_harmonics(Y,r,l_max)
+      Yk.create(n_k,n_lm)
+      FOURIER_SUMS::make_solid_harmonics(Yk,k_pts,l_max)
+
+      ! N normalises N r^l exp(-a r^2) over r^2 dr; T also holds the
+      ! factor (pi/a)^(3/2) (2a)^(-l) of its transform. Column l+1.
+      N.create(n_a,l_max+1)
+      T.create(n_a,l_max+1)
+      do l = 0,l_max
+         l1 = l + 1
+         gam = l1.double_factorial*sqrt(PI)/TWO**l1   ! Gamma(l+3/2)
+         N(:,l1) = sqrt(TWO*(TWO*alpha)**(l+1.5d0)/gam)
+         T(:,l1) = N(:,l1)*(PI/alpha)**1.5d0/(TWO*alpha)**l
+      end
+
+      ! Right-hand side B(n,lm) = sum_i w_i exp(-a_n r_i^2) r_i^l Y_lm,
+      ! taken a shell of the grid at a time: the points of a shell share one
+      ! radius R_s, so P(s,lm) = sum over the shell of w_i r_i^l Y_lm is the
+      ! projection of the density onto Y_lm, and B = sum_s exp(-a R_s^2) P.
+      ! A Lebedev shell of degree D integrates Y_lm exactly only for l <= D,
+      ! so it is left out for higher l. Pruned grids use degree 5 near the
+      ! nucleus, where the density is nearly spherical: kept in, its l = 0
+      ! part leaks into l >= 6 and ruins the fit.
+      rad.create(n_pt)
+      rad = sqrt(r(:,1)**2+r(:,2)**2+r(:,3)**2)
+      ind.create(n_pt)
+      rad.quick_sort(ind)
+      first.create(n_pt+1)
+      n_s = 1
+      first(1) = 1
+      do ip = 2,n_pt
+         if (rad(ind(ip))-rad(ind(first(n_s)))>1.0d-9) then
+            n_s = n_s + 1
+            first(n_s) = ip
+         end
+      end
+      first(n_s+1) = n_pt + 1
+      Pj.create(n_s,n_lm)
+      E.create(n_s,n_a)
+      do ish = 1,n_s
+         Pj(ish,:) = ZERO
+         do ip = first(ish),first(ish+1)-1
+            i = ind(ip)
+            Pj(ish,:) = Pj(ish,:) + w(i)*Y(i,:)
+         end
+         D = FOURIER_SUMS::lebedev_degree(first(ish+1)-first(ish))
+         D = max(D-4,0)
+         if (D<l_max) Pj(ish,(D+1)**2+1:) = ZERO
+         E(ish,:) = exp(-alpha*rad(ind(first(ish)))**2)
+      end
+      B.create(n_a,n_lm)
+      B.to_product_of_BLAS(E,Pj,transpose_a=TRUE)
+      E.destroy
+      Pj.destroy
+      first.destroy
+      ind.destroy
+      rad.destroy
+
+      ! Solve one overlap block per l, the same for every m. The overlap of
+      ! two normalised functions is (2 sqrt(a b)/(a+b))^(l+3/2).
+      ! C holds the coefficients times N.
+      C.create(n_a,n_lm)
+      S.create(n_a,n_a)
+      Lc.create(n_a,n_a)
+      bv.create(n_a)
+      cv.create(n_a)
+      do l = 0,l_max
+         l1 = l + 1
+         do j = 1,n_a
+         do i = 1,n_a
+            S(i,j) = (TWO*sqrt(alpha(i)*alpha(j))/(alpha(i)+alpha(j)))**(l+1.5d0)
+         end
+         end
+         Lc = ONE    ! Cholesky_decomposition checks its diagonal on entry
+         S.Cholesky_decomposition(Lc)
+         f = l*l
+         do m = 1,2*l+1
+            bv = N(:,l1)*B(:,f+m)
+            Lc.solve_cholesky_equation(bv,cv)
+            C(:,f+m) = cv*N(:,l1)
+         end
+      end
+
+      ! The fitted density at the points: sum over n,lm of
+      ! c N exp(-a r^2) r^l Y_lm
+      if (present(fit)) then
+         E.create(n_pt,n_a)
+         do j = 1,n_a
+            E(:,j) = exp(-alpha(j)*(r(:,1)**2+r(:,2)**2+r(:,3)**2))
+         end
+         Fp.create(n_pt,n_lm)
+         Fp.to_product_of_BLAS(E,C)
+         fit = sum(Fp*Y,dim=2)
+         Fp.destroy
+         E.destroy
+      end
+      Y.destroy
+      r.destroy
+
+      ! Fold the transform factor into the coefficients
+      do l = 0,l_max
+         f = l*l
+         do m = 1,2*l+1
+            C(:,f+m) = C(:,f+m)*T(:,l+1)/N(:,l+1)
+         end
+      end
+      cv.destroy
+      bv.destroy
+      Lc.destroy
+      S.destroy
+      B.destroy
+      T.destroy
+      N.destroy
+
+      ! Radial factors exp(-k^2/4a), then V(k,lm) = sum_n G(k,n) C(n,lm)
+      G.create(n_k,n_a)
+      do j = 1,n_a
+         G(:,j) = exp(-(k_pts(:,1)**2+k_pts(:,2)**2+k_pts(:,3)**2)/(FOUR*alpha(j)))
+      end
+      V.create(n_k,n_lm)
+      V.to_product_of_BLAS(G,C)
+      V = V*Yk
+      G.destroy
+      C.destroy
+      Yk.destroy
+
+      ! Sum over (l,m) with the factor i^l
+      re.create(n_k); re = ZERO
+      im.create(n_k); im = ZERO
+      sum_l.create(n_k)
+      do l = 0,l_max
+         f = l*l
+         sum_l = sum(V(:,f+1:f+2*l+1),dim=2)
+         select case (mod(l,4))
+         case (0); re = re + sum_l
+         case (1); im = im + sum_l
+         case (2); re = re - sum_l
+         case (3); im = im - sum_l
+         end
+      end
+      sum_l.destroy
+      V.destroy
+
+      ! Move the fit to the centre: times exp(i k.centre)
+      do k = 1,n_k
+         kr = k_pts(k,1)*centre(1)+k_pts(k,2)*centre(2)+k_pts(k,3)*centre(3)
+         FOURIER_SUMS::sin_cos(kr,sn,cs)
+         res(k) = COMPLEXIFY(re(k)*cs-im(k)*sn,re(k)*sn+im(k)*cs)
+      end
+
+      im.destroy
+      re.destroy
+
+   end
+
+   lebedev_degree(n) result (res) :: selfless, pure, private
+   ! Return the degree of the largest Lebedev grid with at most "n" points:
+   ! the highest l of the spherical harmonics it integrates exactly. A shell
+   ! with some points removed is taken to be the grid below, to be safe.
+      n :: INT, IN
+      res :: INT
+
+      sizes,degree :: VEC{INT}(32)
+      i :: INT
+
+      sizes  = [   6,  14,  26,  38,  50,  74,  86, 110, 146, 170, 194, 230, &
+                 266, 302, 350, 434, 590, 770, 974,1202,1454,1730,2030,2354, &
+                2702,3074,3470,3890,4334,4802,5294,5810 ]
+      degree = [   3,   5,   7,   9,  11,  13,  15,  17,  19,  21,  23,  25, &
+                  27,  29,  31,  35,  41,  47,  53,  59,  65,  71,  77,  83, &
+                  89,  95, 101, 107, 113, 119, 125, 131 ]
+
+      res = 0
+      do i = 1,32
+         if (sizes(i)>n) exit
+         res = degree(i)
+      end
+
+   end
+
+   make_solid_harmonics(Y,r,l_max) :: selfless, leaky, PURE, private
+   ! Set columns l*l+1 to (l+1)^2 of "Y" to the solid harmonics
+   ! |r|^l Y_lm(r^) at the points "r", for l = 0 to "l_max". Y_lm are real
+   ! spherical harmonics normalised to 1 over the unit sphere, with m in
+   ! the order of GAUSSIAN_DATA:spherical_harmonics_for.
+      Y     :: MAT{REAL}, OUT
+      r     :: MAT{REAL}, IN
+      l_max :: INT, IN
+
+   ENSURE(r.dim2==3,"r: need 3 columns")
+   ENSURE(Y.dim1==r.dim1,"Y and r: different number of points")
+   ENSURE(Y.dim2==(l_max+1)*(l_max+1),"Y: wrong number of columns")
+   ENSURE(l_max<=GAUSSIAN_DATA::l_max_saved,"l_max too large: raise it with GAUSSIAN_DATA:set_indices")
+
+      U,M :: MAT{REAL}@
+      p :: VEC{INT}(3)
+      l,c,f,nc :: INT
+
+      do l = 0,l_max
+         nc = GAUSSIAN_DATA::n_comp(l)
+         f  = GAUSSIAN_DATA::n_comp_up_to(l-1)
+         M.create(r.dim1,nc)
+         do c = 1,nc
+            p = GAUSSIAN_DATA::pp(:,f+c)
+            M(:,c) = r(:,1)**p(1) * r(:,2)**p(2) * r(:,3)**p(3)
+         end
+         U.create(nc,2*l+1)
+         FOURIER_SUMS::make_normalised_harmonics(U,l)
+         Y(:,l*l+1:(l+1)*(l+1)) = matmul(M,U)
+         U.destroy
+         M.destroy
+      end
+
+   end
+
+   make_normalised_harmonics(U,l) :: selfless, PURE, private
+   ! Set "U(c,m)" to the coefficients of the monomials x^i y^j z^k of
+   ! degree "l", in GAUSSIAN_DATA's order, in the real spherical harmonic
+   ! Y_lm: GAUSSIAN_DATA:spherical_harmonics_for(l), rescaled so that each
+   ! Y_lm has integral 1 over the unit sphere. The normalisation is done
+   ! here, from exact integrals, so that it does not depend on the
+   ! convention of those coefficients.
+      U :: MAT{REAL}, OUT
+      l :: INT, IN
+
+   ENSURE(U.dim1==GAUSSIAN_DATA::n_comp(l),"U: wrong number of rows")
+   ENSURE(U.dim2==2*l+1,"U: wrong number of columns")
+
+      A,G :: MAT{REAL}@
+      off,gl :: REAL
+      f,nc,c,d,m,n :: INT
+
+      nc = GAUSSIAN_DATA::n_comp(l)
+      f  = GAUSSIAN_DATA::n_comp_up_to(l-1)
+      U  = GAUSSIAN_DATA::spherical_harmonics_for(l).element
+
+      ! A(c,d) = integral of monomials c and d over the unit sphere, and
+      ! G(m,n) = the same for Y_lm and Y_ln
+      A.create(nc,nc)
+      do d = 1,nc
+      do c = 1,nc
+         A(c,d) = FOURIER_SUMS::sphere_integral(GAUSSIAN_DATA::pp(:,f+c)+GAUSSIAN_DATA::pp(:,f+d))
+      end
+      end
+      G.create(2*l+1,2*l+1)
+      G = matmul(transpose(U),matmul(A,U))
+      A.destroy
+
+      do m = 1,2*l+1
+         U(:,m) = U(:,m)/sqrt(G(m,m))
+      end
+
+      ! Different m must be orthogonal
+      off = ZERO
+      do n = 1,2*l+1
+      do m = 1,2*l+1
+         if (m/=n) off = max(off,abs(G(m,n))/sqrt(G(m,m)*G(n,n)))
+      end
+      end
+   ENSURE(off<1.0d-10,"harmonics are not orthogonal")
+
+      ! A harmonic is orthogonal on the sphere to every polynomial of
+      ! degree l-2, which is what makes the transform formula hold
+      off = ZERO
+      if (l>=2) then
+         n = GAUSSIAN_DATA::n_comp_up_to(l-3)
+         do d = 1,GAUSSIAN_DATA::n_comp(l-2)
+         do m = 1,2*l+1
+            gl = ZERO
+            do c = 1,nc
+               gl = gl + U(c,m)*FOURIER_SUMS::sphere_integral(GAUSSIAN_DATA::pp(:,f+c)+GAUSSIAN_DATA::pp(:,n+d))
+            end
+            off = max(off,abs(gl))
+         end
+         end
+      end
+   ENSURE(off<1.0d-10,"harmonics are not harmonic")
+
+      G.destroy
+
+   end
+
+   sphere_integral(p) result (res) :: selfless, pure, private
+   ! Return the integral of x^p(1) y^p(2) z^p(3) over the unit sphere:
+   ! 4 pi (p1-1)!! (p2-1)!! (p3-1)!! / (p1+p2+p3+1)!! if every p is even,
+   ! otherwise zero. INT:double_factorial of n is (2n-1)!!.
+      p :: VEC{INT}(3), IN
+      res :: REAL
+
+      h :: VEC{INT}(3)
+      t :: INT
+
+      if (any(mod(p,2)/=0)) then
+         res = ZERO
+      else
+         h = p/2
+         t = sum(h) + 1
+         res = FOUR*PI*h(1).double_factorial*h(2).double_factorial*h(3).double_factorial &
+             / t.double_factorial
       end
 
    end

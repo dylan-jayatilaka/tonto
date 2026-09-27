@@ -425,6 +425,7 @@ contains
    ! case ("put_hirshfeld_polarizabilities"); .put_H_polarisabilities
       case ("put_hirshfeld_moments         "); .put_HA_moments
       case ("put_hirshfeld_test            "); .put_Hirshfeld_test
+      case ("put_ri_ff_check               "); .put_RI_FF_check
    ! case ("put_interpolator_list         "); .put_interpolator_list
    ! case ("put_km_1e_properties          "); .put_1e_properties_with_KM
       case ("put_mayer_bond_indices        "); .put_Mayer_bond_indices
@@ -1613,6 +1614,174 @@ contains
    end
 
 !  P
+
+   put_RI_FF_check :: leaky
+   ! For each unique fragment atom, compare the Hirshfeld atom form factors
+   ! from the sum over its grid points with those from its oc-ri fit, by
+   ! sin(theta)/lambda shell, and time both. Uses RI_l_max= and
+   ! RI_exponent_ratio= whatever the partition model. Also checks the fit
+   ! two ways: its residual in real space, |rho_a - fit|/|rho_a| on the
+   ! grid; and its analytic transform against a sum of it over the grid.
+      self :: INOUT
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.density_mx.allocated,"no density matrix")
+   ENSURE(.crystal.allocated,"no crystal")
+   ENSURE(.crystal.xray_data.allocated,"no reflection data")
+   ENSURE(.crystal.fragment_info_made,"no crystal fragment info")
+
+      table :: VEC{TABLE_COLUMN}@
+      k_pts,pt :: MAT{REAL}@
+      rho,stl,alpha,d2,f2,wt,wa,rt :: VEC{REAL}@
+      fq,fr,fg :: VEC{CPX}@
+      label :: VEC{STR}@
+      n_pt,n_al :: VEC{INT}@
+      rms_f,rms_d,max_d,t_sum,t_fit,res_r,chk_t :: VEC{REAL}@
+      edge :: VEC{REAL}(7)
+      b_n :: VEC{INT}(6)
+      b_f2,b_d2,b_max :: VEC{REAL}(6)
+      b_lo,b_hi,b_rf,b_rd,b_rel :: VEC{REAL}@
+      t0,t1 :: REAL
+      n_u,n_k,u,c,k,b,l_max :: INT
+
+      l_max = .crystal.xray_data.RI_l_max
+      GAUSSIAN_DATA:set_indices(l_max)
+      .make_atom_partition_info
+      .make_r_density_mx
+
+      ! k points, and sin(theta)/lambda in 1/Angstrom
+      n_k = .crystal.n_unique_SF_k_pts
+      k_pts.create(n_k,3)
+      .crystal.make_unique_X_SF_k_pts(k_pts)
+      stl.create(n_k)
+      stl = sqrt(k_pts(:,1)**2+k_pts(:,2)**2+k_pts(:,3)**2)/(FOUR*PI)*BOHR_PER_ANGSTROM
+
+      ! Resolution shells
+      edge = [ZERO,0.3d0,0.5d0,0.7d0,0.9d0,1.1d0,huge(ONE)]
+      b_n = 0; b_f2 = ZERO; b_d2 = ZERO; b_max = ZERO
+
+      n_u = .crystal.n_unique_frag_atoms
+      label.create(n_u); n_pt.create(n_u); n_al.create(n_u)
+      rms_f.create(n_u); rms_d.create(n_u); max_d.create(n_u)
+      t_sum.create(n_u); t_fit.create(n_u); res_r.create(n_u); chk_t.create(n_u)
+      fq.create(n_k); fr.create(n_k); fg.create(n_k); d2.create(n_k); f2.create(n_k)
+
+      do u = 1,n_u
+
+         c = .crystal.unique_frag_atom(u)
+         label(u) = .atom(c).label
+
+         ! Grid weights, stockholder weights and density, kept apart
+         .becke_grid.make_atom_grid(pt,wt,c)
+         wa.create(pt.dim1)
+         .make_stockholder_atom_weight(wa,c,pt)
+         rt.create(pt.dim1)
+         .make_ED_grid_r_v2(rt,pt,.density_mx.r,.becke_grid.basis_fn_cutoff)
+         rt = wa*rt                ! rho_a
+         rho.create(pt.dim1)
+         rho = wt*rt               ! rho_a times the grid weight
+         .make_RI_exponents(alpha,c)
+         n_pt(u) = pt.dim1
+         n_al(u) = alpha.dim
+
+         t0 = TIME::current_cpu_time()
+         FOURIER_SUMS:exp_ikr_sums(fq,k_pts,pt,rho)
+         t1 = TIME::current_cpu_time()
+         FOURIER_SUMS:fitted_exp_ikr_sums(fr,k_pts,pt,rho,.atom(c).position,alpha,l_max,fit=wa)
+         t_fit(u) = TIME::current_cpu_time() - t1
+         t_sum(u) = t1 - t0
+
+         ! wa now holds the fit. Its residual, and its transform by a sum
+         res_r(u) = sqrt(sum(wt*(rt-wa)**2)/sum(wt*rt**2))
+         wa = wt*wa
+         FOURIER_SUMS:exp_ikr_sums(fg,k_pts,pt,wa)
+         chk_t(u) = sqrt(sum(abs(fr-fg)**2)/sum(abs(fg)**2))
+
+         d2 = abs(fr-fq)**2
+         f2 = abs(fq)**2
+         rms_f(u) = sqrt(sum(f2)/n_k)
+         rms_d(u) = sqrt(sum(d2)/n_k)
+         max_d(u) = sqrt(maxval(d2))
+
+         do k = 1,n_k
+            do b = 1,6
+               if (stl(k)>=edge(b) AND stl(k)<edge(b+1)) exit
+            end
+            b_n(b)   = b_n(b) + 1
+            b_f2(b)  = b_f2(b) + f2(k)
+            b_d2(b)  = b_d2(b) + d2(k)
+            b_max(b) = max(b_max(b),sqrt(d2(k)))
+         end
+
+         alpha.destroy
+         rho.destroy
+         rt.destroy
+         wa.destroy
+         wt.destroy
+         pt.destroy
+
+      end
+
+      stdout.flush
+      stdout.text("====================================================")
+      stdout.text("Hirshfeld atom form factors: fit (oc-ri) against sum")
+      stdout.text("====================================================")
+      stdout.flush
+      stdout.show("RI_l_max                    =",l_max)
+      stdout.show("RI_exponent_ratio           =",.crystal.xray_data.RI_exponent_ratio)
+      stdout.show("Number of k points          =",n_k)
+      stdout.show("CPU time, sum over points   =",sum(t_sum))
+      stdout.show("CPU time, fit               =",sum(t_fit))
+      stdout.flush
+      stdout.text(". |f| and |df| in electrons; df = fit - sum. Times in s.")
+      stdout.text(". res: |rho_a - fit|/|rho_a| on the grid. ft chk: rms")
+      stdout.text("  relative difference, analytic transform of the fit")
+      stdout.text("  against its sum over the grid.")
+      stdout.flush
+
+      table.create(11)
+      table(1).set_heading("Atom");      table(1).set_values(label)
+      table(2).set_heading("n_pt");      table(2).set_values(n_pt)
+      table(3).set_heading("n_exp");     table(3).set_values(n_al)
+      table(4).set_heading("rms |f|");   table(4).set_values(rms_f)
+      table(5).set_heading("rms |df|");  table(5).set_values(rms_d)
+      table(6).set_heading("max |df|");  table(6).set_values(max_d)
+      table(7).set_heading("rms/rms");   table(7).set_values(rms_d/rms_f)
+      table(8).set_heading("t sum");     table(8).set_values(t_sum)
+      table(9).set_heading("t fit");     table(9).set_values(t_fit)
+      table(10).set_heading("res");      table(10).set_values(res_r)
+      table(11).set_heading("ft chk");   table(11).set_values(chk_t)
+      table.put(label_rows=FALSE)
+      table.destroy
+
+      stdout.flush
+      stdout.text(". By sin(theta)/lambda shell, all atoms, in 1/Angstrom.")
+      stdout.flush
+
+      b_lo = edge(1:6)
+      b_hi = edge(2:7)
+      b_hi(6) = maxval(stl)
+      b_rf = sqrt(b_f2/max(b_n,1))
+      b_rd = sqrt(b_d2/max(b_n,1))
+      b_rel = b_rd/max(b_rf,tiny(ONE))
+      table.create(7)
+      table(1).set_heading("stl from");  table(1).set_values(b_lo)
+      table(2).set_heading("stl to");    table(2).set_values(b_hi)
+      table(3).set_heading("n");         table(3).set_values(b_n)
+      table(4).set_heading("rms |f|");   table(4).set_values(b_rf)
+      table(5).set_heading("rms |df|");  table(5).set_values(b_rd)
+      table(6).set_heading("max |df|");  table(6).set_values(b_max)
+      table(7).set_heading("rms/rms");   table(7).set_values(b_rel)
+      table.put(label_rows=FALSE)
+      table.destroy
+
+      f2.destroy; d2.destroy; fg.destroy; fr.destroy; fq.destroy
+      chk_t.destroy; res_r.destroy
+      t_fit.destroy; t_sum.destroy; max_d.destroy; rms_d.destroy; rms_f.destroy
+      n_al.destroy; n_pt.destroy; label.destroy
+      stl.destroy; k_pts.destroy
+
+   end
 
    put_Hirshfeld_test
    ! Set pair-energy model
