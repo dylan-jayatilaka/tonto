@@ -78,12 +78,21 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## START HERE, 2026-09-27: the Mac drift -- both causes fixed on branch `mac-drift`; re-bless under way
+## START HERE, 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
 
-**Branch `mac-drift`** (pushed; based on `develop` `ec55d9eb`). Four commits:
-`21b5e386` spherical rotation matrices, `0a2c9fbe` averaging over all rotations, `0538d70c` quartz
-reflection, plus TASKS. **Not to be merged until the suite is re-blessed on achari2** -- the
-averaging change moves every test that prints a promolecule guess or uses the ANO atoms.
+**Done: branch `mac-drift` merged to `develop`.** Full suite on achari2 (reference build) at
+`0538d70c`: 157 tests, 2 failures, 2 skips (the usual two). The two failures were exactly the
+expected ones and were re-blessed in `3182fcac`: `h2o_rhf_def2-SVP_RIJCOSX` (guess lines and the
+path to convergence only; the converged energy is identical) and `quartz_NN_HAR_L1_rhf_def2-SVP`
+(1008 reflections; R(F) 0.0100 -> 0.0099, GoF^2 7.0046 -> 6.9816). **No other test moved beyond
+its tolerance.** On the Mac, a release build of the same commit then passed **short, long and hart:
+111 tests, 0 failures, 2 skips** -- the first clean Mac run; RIJCOSX now agrees with the Linux
+reference exactly. The register row *drifts on a Mac* can be closed.
+
+Left behind: `achari2:~/github/tonto-rebless` is back on `develop` (behind origin; pull before the
+next bless), but its `reference/` build holds `mac-drift` code, so rebuild before blessing.
+`build-drift/` on the Mac is a scratch tree, safe to delete. Still open from the zinc entry: re-run
+the zinc finger and Zn(SCH3)2 (their inputs are gone) and the silent unconverged SCF result.
 
 **The RIJCOSX drift was the promolecule guess, not COSX.** Measured on the Mac: `-Ofast` and
 `-O2 -fno-fast-math` give identical output; with RI-J and COSX off the gap stays (exact J/K,
@@ -117,14 +126,6 @@ column is a per-shell mean of ratios; reflection (0 5 8) has F_pred ~0.0003 agai
 ratio ~800, so it alone set shell 13 to 13.92 and a last-digit change moved it by 0.5%. At Dylan's
 word it is commented out in `HKLdata.quartz`, with the reason; 1008 reflections, shell 13 now
 1.0067. (0 4 5), ratio 21 in shell 9, is not fragile and stays.
-
-**In progress:** `achari2:~/github/tonto-rebless` is detached at `origin/mac-drift` and its
-`reference/` tree is building (log `~/tonto_runs/mac_drift_make2.log`). Then: the full suite
-unblessed; match every failure to the guess or the ANO atoms; bless; commit the references on
-`mac-drift`; **`git checkout develop` in that worktree afterwards**. Then the macOS check: the RIJCOSX
-and quartz tests should pass on this Mac. Still open from the zinc entry: re-run the zinc finger
-and Zn(SCH3)2 (their inputs are gone) and the silent unconverged SCF result.
-`build-drift/` on the Mac is a scratch release tree of `mac-drift`, safe to delete.
 
 ## 2026-09-26 (night): labels merged; one branch waiting
 
