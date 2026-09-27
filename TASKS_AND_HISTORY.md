@@ -57,6 +57,9 @@ because by then it held far more than deferred items.)*
 > item is fixed but which still carries the `put_str` desync question, the two-collectives-per-
 > token cost, and `hart`'s non-zero early exit under MPI.
 >
+> Re-sorted again on 2026-09-27: seven closed session logs (417 lines) that sat between the
+> handover and the themed sections moved to the top of the archive, unchanged.
+>
 > If you add an entry, put it under a theme; when it closes, move it down — a `DONE` heading
 > in a live section is how the drift starts.
 
@@ -411,275 +414,6 @@ output in `achari2:~/tonto_runs/aucarbene4_2026-09-26/test_dir/`) takes ~4 min t
 transform: it goes in with the fix. Thiotepa (C6H12N3PS, PubChem CID 5453) is proposed as the
 N/P/S companion to karrikinolide; its exact / RI-J / RIJCOSX runs are queued on achari2.
 
-## CLOSED 2026-09-26: the COSX grid -- retired in favour of adopting published element-dependent grids
-
-**Closed by Dylan's decision.** For most applications milli-Hartree accuracy, or a little beyond, is
-what matters, and COSX is itself an approximation: on the zinc finger def2-TZVP, ORCA's RIJCOSX is
--7e-4 from exact and Tonto's RI-J alone about -8e-4, while the old defaults' grid error is at most
-2.6e-5. So the 2e-6 target was too tight, and the Zn/S grids it called for cost more than they are
-worth. And per-element grids are not new: SG-1/SG-0/SG-2/SG-3 (Dasgupta and Herbert, J. Comput.
-Chem. 38, 869 (2017)) for XC, and for COSX the globally optimised grids of Helmich-Paris, de Souza,
-Neese and Izsak, J. Chem. Phys. 155, 104109 (2021) -- ORCA's, with errors well under 0.1 kcal/mol.
-Calibrating our own from C/H/O would miss N, P and S, which most organic molecules need. **New
-register row:** *Adopt published element-dependent grids, for COSX and XC* -- implement their zone
-tables, and first choose a test set with care (compact 3D molecules covering H, C, N, O, P, S, a
-halogen and one or two transition metals). Kept from this item: `put_cosx_shell_errors` and the
-`cosx_grid= { }` / `cosx_final_grid= { }` blocks, both on `develop`; the defaults are unchanged,
-and `cosx_defaults_low_adaptive47.patch` stays on achari2 for reference only.
-
-### What was measured (2026-09-26 morning)
-
-**Where it stands.** Commit `4f763074` on `develop`, **local, not pushed**: the
-`put_cosx_shell_errors` diagnostic and the `cosx_grid= { }` / `cosx_final_grid= { }` blocks. No
-number moves; `h2o_rhf_def2-SVP_RIJCOSX` differs only in its options echo, so it needs a re-bless
-for that (Dylan's, any time) -- which is why it is not pushed: pushing turns that test red.
-**Defaults unchanged.** Every run and number is below; runs in `achari2:~/tonto_runs/cosx_grid_2026-09-25/`.
-
-- **C/H/O: done.** Iterations `low` and a final grid of `pruning_scheme= adaptive` with
-  `l_bonding_angular_grid= 47`, `l_H_angular_grid= 29`, 55 radial points: karrikinolide def2-SVP
-  +1.1e-6, def2-TZVP +1.2e-8, against +2.8e-6 and -1.6e-6 for the old defaults. The patch that
-  makes these the defaults is `cosx_defaults_low_adaptive47.patch` in that directory.
-- **Zn and S: not done.** The zinc finger is +2.6e-5 (def2-SVP) and +6.2e-6 (def2-TZVP) with the
-  old defaults and no better with the C/H/O rule. Its error is angular, on Zn and S: an
-  unpruned final grid at L59 or L71 brings it to -1.8e-6 / +2.7e-6 and -2.2e-6 / +1.7e-6, at
-  1.3-1.8 million points. A rule with orders by row (C/N 47, S 59, Zn 53, and the bonding order
-  kept to the edge of the grid for rows 3 and 4) scores about -3e-6 raw at a quarter of those
-  points.
-- **Decision owed (Dylan):** build that rule? It needs new `BECKE_GRID` components (a `types.foo`
-  edit): per-row bonding orders and an outer zone that does not drop for heavy atoms -- either as
-  an extension of `adaptive`, which XC can also select, or as a separate `cosx` scheme. It is
-  calibrated on one molecule with Zn and S, so a second one (the blue-copper site, or a smaller
-  S/transition-metal molecule) should confirm it.
-- **Also noted:** the `low` iteration grid costs ~1e-6 less than `very_low` in accuracy but doubles
-  the zinc finger's iteration points; overlap fitting adds ~2-7e-7 on a fine grid; a ~1e-6 floor on
-  karrikinolide that more points do not move (Becke partition or a point cutoff) was not chased.
-  No timing is clean: jobs ran several at a time.
-
-### The COSX grid, 2026-09-25 (late night): decisions taken, stage 1 running unattended
-
-**Dylan's three decisions** on the plan of 2026-09-18 (below): (1) measure first, with a per-shell
-diagnostic, not a scan of the grid knobs; (2) `cosx_grid= { }` and `cosx_final_grid= { }` inside
-`scfdata=`, the two `cosx_*_grid_accuracy=` names dropped; (3) run on achari2. He then authorised
-the whole sequence overnight without checking in; the re-bless of `h2o_rhf_def2-SVP_RIJCOSX`
-stays his, and can be done at any time.
-
-**Where it runs.** achari2, `~/github/tonto-sph` moved from `34fd0084` to `develop` (`b9505f8f`);
-its uncommitted edits, an earlier draft of `b9505f8f` with the `_sph` names, are saved as
-`~/tonto-sph-wip-2026-09-25.patch`. `debug/` is used only to check new code; every number comes
-from a new `release/` tree there. Runs: `~/tonto_runs/cosx_grid_2026-09-25/`. The run
-directories cited in the 2026-09-18 plan (`~/tonto_runs/cosx_2026-09-17/`,
-`grid_shell_errors_2026-09-13/`) no longer exist on either machine, so the stage-1 tables are
-remade rather than reused; the karrikinolide geometry is taken from the test suite's `.fchk`.
-
-**The diagnostic: `put_cosx_shell_errors`** (MOLECULE.FOCK, a keyword after `scf` on a restricted
-density). For each atom and radial shell of `.becke_grid`, the shell's COSX exchange energy
--(1/4) tr(P K) at Lebedev 5, 11, 17, 23, 29, 59 and at the pruned order, with no overlap fitting;
-then molecular totals against the exact exchange energy. It calls `make_r_K_COSX_on` on one shell
-at a time as a single batch, so no kernel is copied. **Checked on water (debug build):** runs
-clean under bounds checking; with 20 radial points the totals against exact are L5 -2.2e-2,
-L11 +6.4e-4, L17 +3.3e-5, L23 +7.1e-6, L29 +6.8e-6, L59 +6.9e-6 -- flat from L23 up, so the
-residual is radial or partition error. On O, L5 is good to 1e-9 inside 0.15 bohr.
-
-**Stage 1 measured: karrikinolide def2-SVP, release, achari2.** Density from RI-J with exact K
-(-530.57639858 at `convergence= 1e-6`; the older reference -530.576397753870 differs by 8e-7, so
-step 3 remakes it under the same settings as the COSX runs). `becke_grid= { accuracy= high }`
-at 35 and at 65 radial points; per-shell COSX exchange at L = 5 ... 59 against L = 89, no
-overlap fitting. Exact exchange -68.12103930. Molecular totals, uniform L, X_COSX - X_exact:
-
-| L | 35 radial | 65 radial |
-|---|---|---|
-| 23 | -2.4e-6 | -3.7e-6 |
-| 29 | +9.4e-6 | +1.3e-5 |
-| 35 | +5.8e-6 | +1.1e-5 |
-| 41 | -3.8e-8 | +5.3e-6 |
-| 47 | -3.2e-6 | +5.1e-7 |
-| 59 | -3.6e-6 | +7.0e-7 |
-| 89 | -3.5e-6 | +8.2e-7 |
-
-- **The radial error at 35 points is about -4.3e-6**, twice the 2e-6 target: the final grid needs
-  more than 35 radial points. At 65 the residual is +8e-7.
-- **The angular error converges by L47**, and is not monotone below it: the sign change seen
-  along the named levels is in the quadrature itself, not an artefact of pruning.
-- **By zone** (65 radial, sum of dX over shells): inside 1.4 bohr the adaptive scheme's zones
-  (L5 < 0.2, L11 < 0.7, L17 < 1.0, L23 < 1.4) leave < 1e-8 on every element. **Carbon at 1.4-4.5
-  bohr needs L47** (L41 leaves +3.9e-6 there, L47 -6e-7); oxygen is done at L35 and hydrogen at L29.
-  Carbon at 4.5-6.5 carries +1e-6 at L29.
-- **Scored offline** (`adaptive` zones, Lb heavy / LH hydrogen / outer zone), angular error and
-  points against Treutler-Ahlrichs `high` (+1.0e-5, 242 092 points at 65 radial):
-  Lb47/LH29/L29 +2.7e-7 at 0.86 of the points; Lb41 +4.7e-6 at 0.74; Lb35 +1.0e-5 at 0.63;
-  Lb53 +9e-7 at 1.05. **Candidate for the final grid: `pruning_scheme= adaptive`,
-  `l_bonding_angular_grid= 47`, `l_H_angular_grid= 29`**, which needs no new pruning code.
-  These are raw quadrature errors; overlap fitting cancels part of them, so step 3 decides with
-  real RIJCOSX runs, radial count included.
-
-**Step 2 written (`types.foo`, one rebuild).** `SCF_DATA.COSX_grid` and `COSX_final_grid`
-(`BECKE_GRID@`) replace the two accuracy strings, read by `cosx_grid= { }` and
-`cosx_final_grid= { }` inside `scfdata=` as `becke_grid=` is; `use_cosx_final_grid= FALSE`
-replaces the old `"none"`. `SCF_DATA:make_COSX_grids` makes whichever was not read at its
-default -- still `very_low` and `high`, so this step moves no numbers, only the options echo,
-which now lists each grid's accuracy, radial count, angular orders and pruning scheme.
-`initialize_COSX(grid)` takes the grid as an argument.
-Verified on water, release and debug (bounds checking): defaults -75.95692431 (the stored
-reference), explicit `very_low`/`high` blocks identical, an adaptive final block read and used
-(-75.95692433), `use_cosx_final_grid= FALSE` gives the iteration-grid energy (-75.95691006). The
-only change to `h2o_rhf_def2-SVP_RIJCOSX`'s output is the options echo. The echo prints the
-bonding-region order only for `pruning_scheme= adaptive`, the one scheme that reads it.
-
-**Step 3, real RIJCOSX runs, karrikinolide def2-SVP spherical** (`convergence= 1e-8`; error against
-RI-J with exact K under the same settings, -530.57639858; release, achari2, several jobs at once).
-
-| iteration grid | final grid | fitting | error |
-|---|---|---|---|
-| very_low | high (old defaults) | on | +3.8e-6 |
-| very_low | adaptive 47/29, 35 / 45 / 55 / 65 radial | on | +5.6 / +3.2 / +2.0 / +2.8e-6 |
-| low | adaptive 47/29, 65 | on | +1.8e-6 |
-| adaptive 47/29, 65, no final step | -- | on | +1.8e-6 |
-| adaptive 47/29, 65, no final step | -- | off | +1.0e-6 |
-| high, no final step | -- | on | +2.8e-6 |
-
-- **`very_low` iterations cost ~1e-6 through the orbitals** (second order, so always positive);
-  `low` recovers it -- as good as iterating on the fine grid.
-- **With the fine grid and no fitting the error, 1.0e-6, is what stage 1 predicted** for that grid
-  (angular 3e-7 plus a +8e-7 residue at L89 and 65 radial points that is not radial). So the
-  diagnostic's raw numbers carry over to real runs; fitting adds ~2-7e-7 on a fine grid.
-
-Then with `cosx_grid= { accuracy= low }` (45 969 points) and `show_timings= TRUE`, which now also
-prints each COSX grid's point count:
-
-| final grid | points | fitting | error |
-|---|---|---|---|
-| none | -- | on | +3.0e-5 |
-| high | 127 029 (2.8x) | on | +2.8e-6 |
-| adaptive 41/29, 55 | 153 610 (3.3x) | on | +1.4e-6 |
-| adaptive 47/29, 45 | 149 818 (3.3x) | on | +2.3e-6 |
-| **adaptive 47/29, 55** | **179 338 (3.9x)** | on | **+1.1e-6** |
-| adaptive 47/29, 65 | 207 229 (4.5x) | on | +1.8e-6 |
-| adaptive 47/29, 55 / 65 | | off | +8.3e-7 / +1.2e-6 |
-
-Below 55 radial points the error is radial; above it, it sits at a ~1e-6 floor that more points do
-not move -- the L89 residue, most likely the Becke partition or a point cutoff, not chased.
-**Candidate defaults: iterations `low`, final grid adaptive 47/29 at 55 radial points, fitting on**
-(+1.1e-6 against +2.8e-6 for the old final grid at the same iteration grid). Adaptive 41/29 is
-the cheaper alternative. Turning fitting off for the final grid alone would buy ~2e-7 and needs
-another `types.foo` component: not done.
-
-**Step 4: the candidate does NOT hold on the zinc finger; defaults left unchanged.** Error against
-RI-J with exact K, same settings (`convergence= 1e-8`, six jobs at a time, so timings rough):
-
-| molecule | old: very_low + high | low + adaptive 47/29, 55 | low + adaptive 41/29, 55 |
-|---|---|---|---|
-| karrikinolide def2-TZVP, spherical | -1.6e-6 | **+1.2e-8** | -3.7e-8 |
-| zinc finger def2-SVP, cartesian | +2.6e-5 | +3.5e-5 | +2.4e-5 |
-| zinc finger def2-TZVP, cartesian | +6.2e-6 | -5.2e-6 | -1.8e-5 |
-
-Exact references: karrikinolide def2-TZVP -531.1848732290; zinc finger def2-SVP -3100.9773093072,
-def2-TZVP -3102.0320136957. On C/H/O the new grid is excellent; on the zinc finger neither grid is
-within 2e-6, and the new one is no better. Everything so far was calibrated on C, H and O, and the
-adaptive zones already have a known second-row gap for XC. The `low` iteration grid also doubles
-the zinc finger's iteration points (74 676 against 37 800). **Next:** `put_cosx_shell_errors` on the
-zinc finger def2-SVP at 55 and 75 radial points, to see which atoms and zones carry the error. The
-defaults edit (iterations `low`, final adaptive 47/29 at 55) is kept aside, not committed.
-
-**Zinc finger def2-SVP, per-shell** (`put_cosx_shell_errors`, cartesian, 55 and 75 radial points,
-1 h 47 and 2 h 19 on achari2). Exact exchange -192.6879966350. Uniform L, X_COSX - X_exact at 75
-radial: L41 -1.3e-5, L47 -3.8e-6, L53 -3.3e-6, L59 -1.1e-6, L89 +6.2e-7; the L89 totals at 55 and
-75 radial differ by 2e-7, so **the zinc finger's error is angular, not radial**. By zone:
-- C, N, H behave as on karrikinolide: 47/29 is enough.
-- **S, 2.5-6.5 bohr (scaled): still converging at L59** (-1.7e-6 there), roughly halving per six
-  orders.
-- **Zn, 2.5 bohr outwards, and its tail beyond 6.5**: the tail shells (4.6-7.7 bohr) oscillate in
-  sign shell by shell, +-5e-5 at L29 and +-6e-6 at L47, so per-element totals flatter by
-  cancellation. Zn needs about L53 all the way out; the adaptive scheme drops heavy atoms to L29
-  beyond 4.5 and L17 beyond 6.5.
-- Scored: orders by row (H 29, C/N 47, S 59, Zn 53, the bonding order kept to the end of the grid
-  for rows 3 and 4) gives about -3e-6 raw at 0.96 of Treutler-Ahlrichs `high`'s points, against
-  -9e-5 for Treutler-Ahlrichs `high` itself.
-
-**A decision for Dylan, not taken overnight.** The adaptive scheme has one bonding order for every
-atom other than hydrogen, and no outer zone for rows 3+. A COSX grid good on Zn and S needs orders
-by row and an outer zone that does not drop for heavy atoms -- new `BECKE_GRID` components (a
-`types.foo` edit), user-facing keywords, and a choice between extending `adaptive` (which XC can
-select too) and a separate `cosx` scheme; calibrated so far on one molecule with Zn and S.
-
-**Unpruned final grids on the zinc finger** (`pruning_scheme= none`, H at L29, 55 radial,
-iterations `low`): def2-SVP -1.8e-6 at L59 (1 301 310 points) and -2.2e-6 at L71 (1 774 458);
-def2-TZVP +2.7e-6 and +1.7e-6. So enough angular order does reach the target on Zn and S.
-
-**Register, same night (Dylan).** *Make each build type a named intent* and *A portable definition
-of the reference platform* are one superitem, *Reproducible builds*: "reference" needs both the
-flags (stage 1, the build intents, first) and the toolchain (stage 2, a pinned image, only when a
-re-bless must happen away from achari2 and the CI runner). Their entries below stand.
-
-**macOS CI badges added to the README, on `master` (`850f3306`, Dylan).** There had never been
-live macOS badges: the table carried *"not running yet"* placeholders until `e727f72d`
-(2026-08-27) removed them, because the macOS workflows only reached `master` -- where GitHub fires
-`schedule:` -- with the merge. Since then all three have run weekly: debug and MPI green three
-weeks running; release red on 09-15 and 09-22 (`urea_ccsd_pob-TZVP_Salvador_properties` at 4.48%,
-the LAPACK-thread row), green on the 09-24 dispatch. Dylan's word: show release too; a red badge
-is what the table is for. `docs/TONTO_CONTINUOUS_INTEGRATION.md` still says "badge: not yet" in
-its macOS rows.
-
-## 2026-09-25 (night): the BN `-O2` pin is guarded, and there was only ever one pin
-
-**The register's RGBI row asked for "a test guarding the `-O2` pin on BN's Roby populations".
-Closed.** Two findings and one change:
-
-- **There is one arm64 pin, not two.** `CMakeLists.txt` pins `shell1quartet.F90` to
-  `-O2 -fno-schedule-insns` on arm64 macOS (`a3ec1b07`), and `cmake/SetFortranFlags.cmake`
-  adds `-fno-schedule-insns` build-wide for the same fault. The "second pin at
-  `CMakeLists.txt:883` for rgbi/BN's Roby populations" that the macOS-in-CI entry, the RGBI
-  defects entry, `ci-macos.yml`'s header and `docs/TONTO_CONTINUOUS_INTEGRATION.md` all
-  repeated was the *same* pin: at `add3adef`, which wrote the note, line 883 is the line of
-  the pin's own comment that mentions BN. `git log -S"Roby populations"` over the CMake files
-  finds `a3ec1b07` and nothing else. All four places now say so.
-- **The pin was already guarded, but not by BN.** `spherical_vs_cartesian` (label `short`)
-  is an invariant that fails on the miscompiled build, and `ci-macos.yml` asserts the pin
-  in `flags.make`. What no macOS job ran was the `rgbi` suite, so BN itself -- the test whose
-  numbers first showed the fault, and the one the row named -- never ran on Apple silicon.
-- **Change: `ci-macos.yml` now runs `short hart rgbi`.** Measured here first, on this M2
-  (gfortran-14 release, today's `release/` tree): `ctest -L rgbi` is 14/14 including BN and
-  `ylid`, 64 s wall, and `spherical_vs_cartesian` passes. `suite_report.py` already accepts
-  `rgbi`. `ci-full-suite-macos.yml` keeps `short long hart`, matching the Linux definition
-  of "full suite" (106 tests).
-
-**Not done, and known:** nothing re-demonstrates that BN *fails* without the pin on today's
-compiler; the evidence is the historical 82/124 -> 118/124 and rgbi 1/13 -> 12/13 at
-`a3ec1b07`, and the gfortran-16 `TONTO_SKIP_ARM64_WORKAROUNDS=ON` build that reproduced the
-invariant failure. A rebuild without the pin is a 20-minute job on this Mac and was not run.
-The workflow is still scheduled-and-manual, unbadged; dispatch `macOS-release` once to see
-the rgbi section in the summary.
-
-### `ylid` on macOS: investigated, both questions answered, closing is Dylan's call
-
-The register row *"`ylid` vdW contact indices differ on macOS"* asked why the indices differ and
-where the 46 s goes. Both answered by running ylid with vdW on and off on this Mac and on achari2
-with the same Roby source and comparing line by line; full record at the top of the `ylid` entry
-under *Test suite and numerics*. In short: the committed test differs across platforms by 1 ulp
-on 5 lines; with vdW on, only the two `% Cov` percentage columns move, because they are ratios of
-indices that are 0.00-0.05 for a vdW pair; and "off" is *slower* than "on" because `ROBY:do_pair`
-computes bonded **or** vdW pairs when the flag is off and then prints only the bonded ones, 70
-unprinted pairs at 0.7 s each. **Dylan chose bonded-only** (`5e45a925`): rebuilt and rerun on both
-machines, all 13 rgbi outputs identical before and after, ylid 62 -> 26 s (Mac) and 78 -> 31 s
-(Linux). Row closed. Left for the next re-bless: `NF`, `karrikinolide_g09` and `ylid` are 1-ulp
-off their references on the bless platform, from before this change.
-
-## 2026-09-25 (evening): the reduced multiplication scheme is archived and deleted
-
-**The register's quick item "Archive the reduced multiplication scheme, then delete it" is
-done.** `develop` at `69da3dcc` carries the annotated tag `archive/rms-esfs` (`git tag -n99 -l
-archive/rms-esfs` says what the scheme was, why it went, and which files to look in), and the
-next commit removes it. Gone: `form_esfs_rms2`, `use_RMS` and `set_use_RMS` from `SHELL1QUARTET`,
-with the commented-out RMS versions of `form_esfs`, `form_esss` and `form_ssfs` that sat beside
-them (689 lines in that file alone); `make_rms2_indices` and `rms2_indices` from `GAUSSIAN_DATA`;
-`use_rms_esfs=` from `SCF_DATA`; `RMS2_INDICES`, `MAT{RMS2_INDICES}`, `MAT4{RMS2_INDICES}` and the
-never-referenced `*_form_3dints_yz_rms_indices` components from `types.foo`; the three modules
-`rms2_indices.foo`, `mat{rms2_indices}.foo` and `mat4{rms2_indices}.foo` from the tree and
-`CMakeLists.txt`. **Kept, deliberately:** the shell-pair `RMS_INDICES` tables, which `SHELL2`'s
-Fourier-transform integrals still read. Verification is in the archive entry *DONE (2026-09-25):
-the reduced multiplication scheme, archived and deleted*. The row is off the register.
-`docs/images/module_structure.svg` still draws an `RMS2_INDICES` node: it is the `callgraphs`
-target's output, regenerated when that next runs, not edited by hand.
-
 ## 2026-09-25 (late afternoon): the worst-reflections table is order-stable; numpy is declared, and a skip in CI is an error
 
 **Pushed to `develop`, five commits:** `6613ce14` (the table, the sorter and the harness),
@@ -840,154 +574,6 @@ The energy breakdown inert on `develop`; Fortran-2008 `submodule` constructs; a 
 call graph in `writeDotFiles`; boilerplate documentation comments; parallelising the Bader basin
 search; folding the RGBI picture toolchain into one codebase; vim highlighting. Their entries below
 stand; they are simply not in the open count.
-
-## 2026-09-25 (afternoon): in-loop pruning cuts the form factor files too; the register's quick item is closed
-
-**Pushed to `develop`:** the residue the overnight entry left,
-"the in-loop pruning under `max_prune_iterations` would want the same treatment". It has it. Every
-prune of a list that already has form factors on disk -- the three pre-refinement prunes in
-`MOLECULE.HAR` and the in-loop one in `CRYSTAL:LS_structure_fit` -- now goes through a new
-`CRYSTAL:prune_xray_data`, which is `update_xray_data`'s shape: copy the list, prune, and if it
-shrank call `prune_disk_SFs` with the copy. Measured on quartz L1 with `max_prune_iterations= 2`
-and `f_z_cutoff= 4.0`, first refinement only: unfixed, the pre-loop prune took 1009 to 802, the
-first fit cycle read the 1009-sized files and started at GoF 150.7, R 0.63, and the in-loop prune
-then cut 802 to 20 to 19 to 1 and "converged" on one reflection with NaN shifts. Fixed, the same
-job starts at GoF 1.93, prunes 802 to 794 to 791 inside the loop with the files cut each time, and
-converges at GoF 1.44, R(F) 0.0070 in three refinement iterations. Job and both outputs are in the
-session scratchpad, not the tree.
-
-**Also fixed:** `DIFFRACTION_DATA.INQ:is_F_calc_prunable` ended with `res = .ref_iteration <=
-.max_prune_iterations`, which threw away the cutoff test above it; it is `res AND` now. With the
-default `-1` both forms are always false, so the default path is byte-for-byte what it was: the
-quartz L1 test on this Mac fails against the Linux reference by exactly the known 0.847% and 759 ulp.
-
-**Found and left, noted in the code:** `DIFFRACTION_DATA.SET:prune_reflections` adds
-`F_sigma_noise` on every call, so with `f_sigma_noise=` set (default zero, off; nothing in the tree
-sets it) a repeated `xray_data=` block, a pre-refinement prune or an in-loop prune adds fresh noise
-and inflates every F_sigma again. It should be added once, when the data are read -- Dylan's call
-on 2026-09-25. A `BUG:` comment sits at the add site. Not on the register.
-
-## 2026-09-25 (overnight): repeated `xray_data=` blocks re-prune; the pruning item is closed
-
-**Pushed to `develop`: `0bbe7a1e` (the fix) and `25dd95d0` (the re-blessed quartz L1 reference).**
-Dylan chose the design: a repeated block re-prunes in place, compounding accepted, and the form
-factors on disk are cut to the survivors rather than recomputed. The full account, with the
-measured mechanism, is the archived entry *Pruning compounds across repeated `update` calls*.
-Two things it found on the way are fixed in the same commit: the BFGS iteration cap in
-`VEC{REAL}:min_BFGS` and `minimize_BFGS` tested the wrong variable and never fired, which is what
-turned a bad start into an hour-long spin; and two debug-only `ENSURE`s forbade zero cutoffs and a
-second refinement in one job. Neither is reached in CI.
-
-**Verified.** macOS release: short suite 69/70, the failure being the RIJCOSX drift above; quartz
-L0 passes; quartz L1 runs to the end in release (27 s) and debug (49 s). achari2, `reference`
-profile: quartz L1 exact against the new reference. CI on the two pushes was in progress at
-hand-off: `WSL-release` green on both, `Linux-debug` green on the first; check `Linux-release`,
-`Linux-debug` and `Linux-MPI` before merging to `master`.
-
-**Known and unchanged:** quartz L0 and L1 still fail on macOS only, in first-pass per-shell
-ratios (0.847%, 759 ulp against the new reference), the documented cross-platform category; see
-*Test suite and numerics*. **Owed, unchanged:** `develop` -> `master`, Dylan's call.
-
-## 2026-09-24 (evening): the re-bless is DONE; one push is owed
-
-**Everything below is pushed to `develop`. The re-bless is complete** and the full suite is
-**153 tests, 0 failures, 3 skips** on the `reference` profile on Linux (Ubuntu 24.04, gfortran
-14.2.0, netlib LAPACK 3.12.0). 13 references were re-blessed in `09d5fb99`, each matched to a cause
-first by building the parent commit `e50673c8` in a second worktree and comparing failure lists.
-
-**The one thing owed: `develop` -> `master`, Dylan's call.** CI will run the `reference` profile for
-the first time on that push, so the `Linux-release` badge is the real test of whether blessing on the
-Linux box and gating on a pinned `ubuntu-24.04` runner agree. The failure sets matched all evening,
-so green is expected -- but it is a prediction, not a measurement.
-
-### What this pass changed
-
-The Becke grid inheritance fix, so fragments honour the parent's settings -- which is why
-`--grid-accuracy` had silently done nothing on every fragHAR job. `gly_ala_fragHAR` on the `low`
-grid, 66 -> 33 s. SCF option reporting plus the `guess_convergence` echo. The `yq28` unreachable
-convergence tolerance deleted, which made two of those three jobs converge for the first time and cut
-them 37-46%. Architecture tuning made opt-in, a `reference` build type added, the Linux CI runners
-pinned to `ubuntu-24.04`, and CI switched to the `reference` profile so what it checks is what was
-blessed. `docs/TONTO_BLESSING_TESTS.md`, `docs/TONTO_RI_FITTING_PLAN.md`,
-`docs/TONTO_CRYSTAL_HOIST_PLAN.md`. The rgbi selftest skip guard.
-
-### Deliberately left failing, and why
-
-`tests/long/quartz_NN_HAR_L1_rhf_def2-SVP`. Its diff looks like a 100% deviation and is nothing of
-the kind: rows 854 and 855 swap because two reflections tied to 0.007 in `F_z` cross over, so a
-row-by-row comparison reads different reflections against each other while the same reflection agrees
-to 0.13%. **That reference is correct** and blessing it would only bake one machine's ordering in. It
-fails at the parent commit too, and it is a `long` test, so the routine CI gate is unaffected.
-**Closed later the same day**, see the entry above: a tie-break on `(h,k,l)` would not have done it,
-because the pair was not tied.
-
-### Three claims made during this pass that were WRONG
-
-Recorded because the method was at fault, not the conclusion. (1) The `cos`/`sin` accumulator revert
-`dace267a` blamed `quartz_NN_HAR_L1`; that job fails at the parent commit, so the stated reason is
-false -- the revert stands on its own merit, being measured performance-neutral. (2) The three
-`urea_hart` failures were called pre-existing on the strength of an isolation experiment that
-neutralised one of two changes. They are the `guess_convergence` line. (3) `quartz_NN_HAR_L1`'s diff
-was twice described as "one ulp becoming 1.3% in a derived ratio" -- once from the wrong build, once
-from zipping diff hunks positionally, which manufactures large differences exactly as the harness's
-own misalignment does. **Only a line-indexed comparison of whole files is trustworthy.**
-
-## START HERE, 2026-09-18 (evening): the COSX grid -- plan drafted, decisions owed
-
-> Nothing was built or run in the planning session. The plan below is what was drafted from the
-> handover, the code and the stage-4 runs; three decisions are Dylan's before any code.
->
-> **A finding that changes the plan.** The paragraph further down says `high` separates from
-> `medium` because the bonding-region angular order is 59 against 29. That setting,
-> `l_bonding_angular_grid`, is read only by `pruning_scheme= adaptive`; the default is
-> `treutler_ahlrichs` (`types.foo`, `BECKE_GRID.pruning_scheme`), and neither the COSX code nor
-> any stage-4 input (`~/tonto_runs/cosx_2026-09-17/stage4/*/stdin`) changes it. So every COSX grid
-> number so far used Treutler-Ahlrichs pruning and the 59 never took effect. From `medium` to
-> `high` only three things changed: heavy-atom angular 29 -> 35, hydrogen angular 23 -> 29,
-> radial 30 -> 35. For those small steps the karrikinolide error went +1.5e-5, +2.9e-5, -1.5e-5,
-> +2.0e-6: more like an error changing sign than one converging, and `high` may be good partly by
-> luck. The same claim was in `docs/TONTO_SCF_SPEED_UP.md` 5b ("the error falls with the angular
-> order in the bonding region"); **both corrected on 2026-09-25**, after checking in
-> `becke_grid.foo` that `apply_pruning_scheme_adaptive` is the only reader of
-> `l_bonding_angular_grid` and that `types.foo` defaults `pruning_scheme` to `treutler_ahlrichs`.
->
-> **The plan.**
->
-> 1. **Measure before designing; no `types.foo` change.** A diagnostic like
->    `MOLECULE.RHO:put_grid_shell_errors` (which calibrated the adaptive XC pruning, stage B): for
->    a converged density, per atom and per radial shell, the shell's contribution to the exchange
->    energy at Lebedev orders 5, 11, 17, 23, 29 against 59. A keyword run after `scf`, so one
->    karrikinolide def2-SVP job gives the whole angular table and no SCF per grid is needed. Run it
->    at 35 and at 65 radial points; the difference of the L59 totals is the radial error on its
->    own. The exchange integrand has the potentials of tight core pairs of neighbouring atoms in
->    it, so the angular demand is expected further in than for XC -- a guess until measured.
-> 2. **The input blocks, one `types.foo` edit.** `cosx_grid= { ... }` and `cosx_final_grid= { ... }`
->    read with `BECKE_GRID:read_keywords`; `very_low` and `high` become their defaults. Proposed:
->    hold the two grids in `SCF_DATA` next to the COSX switches, read inside `scfdata=`, so there is
->    no ordering question against `becke_grid=`; drop the two `cosx_*_grid_accuracy=` names (merged
->    today, one test uses them at the defaults). `initialize_COSX` takes the grid as an argument
->    instead of swapping the accuracy string. Any component a COSX-specific pruning rule needs (its
->    own zone table or a `cosx` pruning scheme) goes in the same edit, so the 25-minute rebuild is
->    paid once. `put_options` echoes the COSX settings, which is owed anyway.
-> 3. **Calibrate and confirm.** Score candidate zone rules offline against the stage-1 tables, as
->    `~/tonto_runs/grid_shell_errors_2026-09-13/rules.py` did for XC; build only the winners.
->    Target for the final grid: ORCA's 2e-6 on karrikinolide def2-SVP for two to three times the
->    iteration grid's points (seven today). Check whether the iteration grid can lose points under
->    a zoned cut (the 15-radial/50-angular failure was a uniform cut). Confirm on karrikinolide
->    def2-TZVP and the zinc finger, whose Zn and S also cover the second-row gap the adaptive XC
->    scheme still has. Timing in triplicate, candidates side by side.
->    `h2o_rhf_def2-SVP_RIJCOSX` will move if the defaults change; show the numbers, the re-bless
->    is Dylan's call. Reference for karrikinolide def2-SVP spherical: RI-J with exact K,
->    -530.576397753870; one SCF at `high` is about 100 s.
->
-> **Decisions owed by Dylan.**
->
-> 1. Start with the stage-1 diagnostic rather than a brute-force scan of the four knobs
->    (`l_angular_grid`, `l_H_angular_grid`, `l_bonding_angular_grid`, `n_radial_pts`) at about
->    100 s per SCF? Recommended: the diagnostic; a scan would chase the sign-changing error.
-> 2. Grid blocks inside `scfdata=`, the two accuracy names dropped? Recommended: yes.
-> 3. Stage 1 needs a release build of `master` and a few 100 s karrikinolide jobs: permission to
->    build with `make -j`, and which tree.
 
 ## WHERE 2026-09-06 LEFT OFF — read this first if you are picking up cold
 
@@ -6347,6 +5933,426 @@ different question and the one that matters.
 ---
 
 # Done, resolved and closed (archive)
+
+*(The next seven entries were closed session logs filed above the themed sections; moved here unchanged on 2026-09-27.)*
+
+## CLOSED 2026-09-26: the COSX grid -- retired in favour of adopting published element-dependent grids
+
+**Closed by Dylan's decision.** For most applications milli-Hartree accuracy, or a little beyond, is
+what matters, and COSX is itself an approximation: on the zinc finger def2-TZVP, ORCA's RIJCOSX is
+-7e-4 from exact and Tonto's RI-J alone about -8e-4, while the old defaults' grid error is at most
+2.6e-5. So the 2e-6 target was too tight, and the Zn/S grids it called for cost more than they are
+worth. And per-element grids are not new: SG-1/SG-0/SG-2/SG-3 (Dasgupta and Herbert, J. Comput.
+Chem. 38, 869 (2017)) for XC, and for COSX the globally optimised grids of Helmich-Paris, de Souza,
+Neese and Izsak, J. Chem. Phys. 155, 104109 (2021) -- ORCA's, with errors well under 0.1 kcal/mol.
+Calibrating our own from C/H/O would miss N, P and S, which most organic molecules need. **New
+register row:** *Adopt published element-dependent grids, for COSX and XC* -- implement their zone
+tables, and first choose a test set with care (compact 3D molecules covering H, C, N, O, P, S, a
+halogen and one or two transition metals). Kept from this item: `put_cosx_shell_errors` and the
+`cosx_grid= { }` / `cosx_final_grid= { }` blocks, both on `develop`; the defaults are unchanged,
+and `cosx_defaults_low_adaptive47.patch` stays on achari2 for reference only.
+
+### What was measured (2026-09-26 morning)
+
+**Where it stands.** Commit `4f763074` on `develop`, **local, not pushed**: the
+`put_cosx_shell_errors` diagnostic and the `cosx_grid= { }` / `cosx_final_grid= { }` blocks. No
+number moves; `h2o_rhf_def2-SVP_RIJCOSX` differs only in its options echo, so it needs a re-bless
+for that (Dylan's, any time) -- which is why it is not pushed: pushing turns that test red.
+**Defaults unchanged.** Every run and number is below; runs in `achari2:~/tonto_runs/cosx_grid_2026-09-25/`.
+
+- **C/H/O: done.** Iterations `low` and a final grid of `pruning_scheme= adaptive` with
+  `l_bonding_angular_grid= 47`, `l_H_angular_grid= 29`, 55 radial points: karrikinolide def2-SVP
+  +1.1e-6, def2-TZVP +1.2e-8, against +2.8e-6 and -1.6e-6 for the old defaults. The patch that
+  makes these the defaults is `cosx_defaults_low_adaptive47.patch` in that directory.
+- **Zn and S: not done.** The zinc finger is +2.6e-5 (def2-SVP) and +6.2e-6 (def2-TZVP) with the
+  old defaults and no better with the C/H/O rule. Its error is angular, on Zn and S: an
+  unpruned final grid at L59 or L71 brings it to -1.8e-6 / +2.7e-6 and -2.2e-6 / +1.7e-6, at
+  1.3-1.8 million points. A rule with orders by row (C/N 47, S 59, Zn 53, and the bonding order
+  kept to the edge of the grid for rows 3 and 4) scores about -3e-6 raw at a quarter of those
+  points.
+- **Decision owed (Dylan):** build that rule? It needs new `BECKE_GRID` components (a `types.foo`
+  edit): per-row bonding orders and an outer zone that does not drop for heavy atoms -- either as
+  an extension of `adaptive`, which XC can also select, or as a separate `cosx` scheme. It is
+  calibrated on one molecule with Zn and S, so a second one (the blue-copper site, or a smaller
+  S/transition-metal molecule) should confirm it.
+- **Also noted:** the `low` iteration grid costs ~1e-6 less than `very_low` in accuracy but doubles
+  the zinc finger's iteration points; overlap fitting adds ~2-7e-7 on a fine grid; a ~1e-6 floor on
+  karrikinolide that more points do not move (Becke partition or a point cutoff) was not chased.
+  No timing is clean: jobs ran several at a time.
+
+### The COSX grid, 2026-09-25 (late night): decisions taken, stage 1 running unattended
+
+**Dylan's three decisions** on the plan of 2026-09-18 (below): (1) measure first, with a per-shell
+diagnostic, not a scan of the grid knobs; (2) `cosx_grid= { }` and `cosx_final_grid= { }` inside
+`scfdata=`, the two `cosx_*_grid_accuracy=` names dropped; (3) run on achari2. He then authorised
+the whole sequence overnight without checking in; the re-bless of `h2o_rhf_def2-SVP_RIJCOSX`
+stays his, and can be done at any time.
+
+**Where it runs.** achari2, `~/github/tonto-sph` moved from `34fd0084` to `develop` (`b9505f8f`);
+its uncommitted edits, an earlier draft of `b9505f8f` with the `_sph` names, are saved as
+`~/tonto-sph-wip-2026-09-25.patch`. `debug/` is used only to check new code; every number comes
+from a new `release/` tree there. Runs: `~/tonto_runs/cosx_grid_2026-09-25/`. The run
+directories cited in the 2026-09-18 plan (`~/tonto_runs/cosx_2026-09-17/`,
+`grid_shell_errors_2026-09-13/`) no longer exist on either machine, so the stage-1 tables are
+remade rather than reused; the karrikinolide geometry is taken from the test suite's `.fchk`.
+
+**The diagnostic: `put_cosx_shell_errors`** (MOLECULE.FOCK, a keyword after `scf` on a restricted
+density). For each atom and radial shell of `.becke_grid`, the shell's COSX exchange energy
+-(1/4) tr(P K) at Lebedev 5, 11, 17, 23, 29, 59 and at the pruned order, with no overlap fitting;
+then molecular totals against the exact exchange energy. It calls `make_r_K_COSX_on` on one shell
+at a time as a single batch, so no kernel is copied. **Checked on water (debug build):** runs
+clean under bounds checking; with 20 radial points the totals against exact are L5 -2.2e-2,
+L11 +6.4e-4, L17 +3.3e-5, L23 +7.1e-6, L29 +6.8e-6, L59 +6.9e-6 -- flat from L23 up, so the
+residual is radial or partition error. On O, L5 is good to 1e-9 inside 0.15 bohr.
+
+**Stage 1 measured: karrikinolide def2-SVP, release, achari2.** Density from RI-J with exact K
+(-530.57639858 at `convergence= 1e-6`; the older reference -530.576397753870 differs by 8e-7, so
+step 3 remakes it under the same settings as the COSX runs). `becke_grid= { accuracy= high }`
+at 35 and at 65 radial points; per-shell COSX exchange at L = 5 ... 59 against L = 89, no
+overlap fitting. Exact exchange -68.12103930. Molecular totals, uniform L, X_COSX - X_exact:
+
+| L | 35 radial | 65 radial |
+|---|---|---|
+| 23 | -2.4e-6 | -3.7e-6 |
+| 29 | +9.4e-6 | +1.3e-5 |
+| 35 | +5.8e-6 | +1.1e-5 |
+| 41 | -3.8e-8 | +5.3e-6 |
+| 47 | -3.2e-6 | +5.1e-7 |
+| 59 | -3.6e-6 | +7.0e-7 |
+| 89 | -3.5e-6 | +8.2e-7 |
+
+- **The radial error at 35 points is about -4.3e-6**, twice the 2e-6 target: the final grid needs
+  more than 35 radial points. At 65 the residual is +8e-7.
+- **The angular error converges by L47**, and is not monotone below it: the sign change seen
+  along the named levels is in the quadrature itself, not an artefact of pruning.
+- **By zone** (65 radial, sum of dX over shells): inside 1.4 bohr the adaptive scheme's zones
+  (L5 < 0.2, L11 < 0.7, L17 < 1.0, L23 < 1.4) leave < 1e-8 on every element. **Carbon at 1.4-4.5
+  bohr needs L47** (L41 leaves +3.9e-6 there, L47 -6e-7); oxygen is done at L35 and hydrogen at L29.
+  Carbon at 4.5-6.5 carries +1e-6 at L29.
+- **Scored offline** (`adaptive` zones, Lb heavy / LH hydrogen / outer zone), angular error and
+  points against Treutler-Ahlrichs `high` (+1.0e-5, 242 092 points at 65 radial):
+  Lb47/LH29/L29 +2.7e-7 at 0.86 of the points; Lb41 +4.7e-6 at 0.74; Lb35 +1.0e-5 at 0.63;
+  Lb53 +9e-7 at 1.05. **Candidate for the final grid: `pruning_scheme= adaptive`,
+  `l_bonding_angular_grid= 47`, `l_H_angular_grid= 29`**, which needs no new pruning code.
+  These are raw quadrature errors; overlap fitting cancels part of them, so step 3 decides with
+  real RIJCOSX runs, radial count included.
+
+**Step 2 written (`types.foo`, one rebuild).** `SCF_DATA.COSX_grid` and `COSX_final_grid`
+(`BECKE_GRID@`) replace the two accuracy strings, read by `cosx_grid= { }` and
+`cosx_final_grid= { }` inside `scfdata=` as `becke_grid=` is; `use_cosx_final_grid= FALSE`
+replaces the old `"none"`. `SCF_DATA:make_COSX_grids` makes whichever was not read at its
+default -- still `very_low` and `high`, so this step moves no numbers, only the options echo,
+which now lists each grid's accuracy, radial count, angular orders and pruning scheme.
+`initialize_COSX(grid)` takes the grid as an argument.
+Verified on water, release and debug (bounds checking): defaults -75.95692431 (the stored
+reference), explicit `very_low`/`high` blocks identical, an adaptive final block read and used
+(-75.95692433), `use_cosx_final_grid= FALSE` gives the iteration-grid energy (-75.95691006). The
+only change to `h2o_rhf_def2-SVP_RIJCOSX`'s output is the options echo. The echo prints the
+bonding-region order only for `pruning_scheme= adaptive`, the one scheme that reads it.
+
+**Step 3, real RIJCOSX runs, karrikinolide def2-SVP spherical** (`convergence= 1e-8`; error against
+RI-J with exact K under the same settings, -530.57639858; release, achari2, several jobs at once).
+
+| iteration grid | final grid | fitting | error |
+|---|---|---|---|
+| very_low | high (old defaults) | on | +3.8e-6 |
+| very_low | adaptive 47/29, 35 / 45 / 55 / 65 radial | on | +5.6 / +3.2 / +2.0 / +2.8e-6 |
+| low | adaptive 47/29, 65 | on | +1.8e-6 |
+| adaptive 47/29, 65, no final step | -- | on | +1.8e-6 |
+| adaptive 47/29, 65, no final step | -- | off | +1.0e-6 |
+| high, no final step | -- | on | +2.8e-6 |
+
+- **`very_low` iterations cost ~1e-6 through the orbitals** (second order, so always positive);
+  `low` recovers it -- as good as iterating on the fine grid.
+- **With the fine grid and no fitting the error, 1.0e-6, is what stage 1 predicted** for that grid
+  (angular 3e-7 plus a +8e-7 residue at L89 and 65 radial points that is not radial). So the
+  diagnostic's raw numbers carry over to real runs; fitting adds ~2-7e-7 on a fine grid.
+
+Then with `cosx_grid= { accuracy= low }` (45 969 points) and `show_timings= TRUE`, which now also
+prints each COSX grid's point count:
+
+| final grid | points | fitting | error |
+|---|---|---|---|
+| none | -- | on | +3.0e-5 |
+| high | 127 029 (2.8x) | on | +2.8e-6 |
+| adaptive 41/29, 55 | 153 610 (3.3x) | on | +1.4e-6 |
+| adaptive 47/29, 45 | 149 818 (3.3x) | on | +2.3e-6 |
+| **adaptive 47/29, 55** | **179 338 (3.9x)** | on | **+1.1e-6** |
+| adaptive 47/29, 65 | 207 229 (4.5x) | on | +1.8e-6 |
+| adaptive 47/29, 55 / 65 | | off | +8.3e-7 / +1.2e-6 |
+
+Below 55 radial points the error is radial; above it, it sits at a ~1e-6 floor that more points do
+not move -- the L89 residue, most likely the Becke partition or a point cutoff, not chased.
+**Candidate defaults: iterations `low`, final grid adaptive 47/29 at 55 radial points, fitting on**
+(+1.1e-6 against +2.8e-6 for the old final grid at the same iteration grid). Adaptive 41/29 is
+the cheaper alternative. Turning fitting off for the final grid alone would buy ~2e-7 and needs
+another `types.foo` component: not done.
+
+**Step 4: the candidate does NOT hold on the zinc finger; defaults left unchanged.** Error against
+RI-J with exact K, same settings (`convergence= 1e-8`, six jobs at a time, so timings rough):
+
+| molecule | old: very_low + high | low + adaptive 47/29, 55 | low + adaptive 41/29, 55 |
+|---|---|---|---|
+| karrikinolide def2-TZVP, spherical | -1.6e-6 | **+1.2e-8** | -3.7e-8 |
+| zinc finger def2-SVP, cartesian | +2.6e-5 | +3.5e-5 | +2.4e-5 |
+| zinc finger def2-TZVP, cartesian | +6.2e-6 | -5.2e-6 | -1.8e-5 |
+
+Exact references: karrikinolide def2-TZVP -531.1848732290; zinc finger def2-SVP -3100.9773093072,
+def2-TZVP -3102.0320136957. On C/H/O the new grid is excellent; on the zinc finger neither grid is
+within 2e-6, and the new one is no better. Everything so far was calibrated on C, H and O, and the
+adaptive zones already have a known second-row gap for XC. The `low` iteration grid also doubles
+the zinc finger's iteration points (74 676 against 37 800). **Next:** `put_cosx_shell_errors` on the
+zinc finger def2-SVP at 55 and 75 radial points, to see which atoms and zones carry the error. The
+defaults edit (iterations `low`, final adaptive 47/29 at 55) is kept aside, not committed.
+
+**Zinc finger def2-SVP, per-shell** (`put_cosx_shell_errors`, cartesian, 55 and 75 radial points,
+1 h 47 and 2 h 19 on achari2). Exact exchange -192.6879966350. Uniform L, X_COSX - X_exact at 75
+radial: L41 -1.3e-5, L47 -3.8e-6, L53 -3.3e-6, L59 -1.1e-6, L89 +6.2e-7; the L89 totals at 55 and
+75 radial differ by 2e-7, so **the zinc finger's error is angular, not radial**. By zone:
+- C, N, H behave as on karrikinolide: 47/29 is enough.
+- **S, 2.5-6.5 bohr (scaled): still converging at L59** (-1.7e-6 there), roughly halving per six
+  orders.
+- **Zn, 2.5 bohr outwards, and its tail beyond 6.5**: the tail shells (4.6-7.7 bohr) oscillate in
+  sign shell by shell, +-5e-5 at L29 and +-6e-6 at L47, so per-element totals flatter by
+  cancellation. Zn needs about L53 all the way out; the adaptive scheme drops heavy atoms to L29
+  beyond 4.5 and L17 beyond 6.5.
+- Scored: orders by row (H 29, C/N 47, S 59, Zn 53, the bonding order kept to the end of the grid
+  for rows 3 and 4) gives about -3e-6 raw at 0.96 of Treutler-Ahlrichs `high`'s points, against
+  -9e-5 for Treutler-Ahlrichs `high` itself.
+
+**A decision for Dylan, not taken overnight.** The adaptive scheme has one bonding order for every
+atom other than hydrogen, and no outer zone for rows 3+. A COSX grid good on Zn and S needs orders
+by row and an outer zone that does not drop for heavy atoms -- new `BECKE_GRID` components (a
+`types.foo` edit), user-facing keywords, and a choice between extending `adaptive` (which XC can
+select too) and a separate `cosx` scheme; calibrated so far on one molecule with Zn and S.
+
+**Unpruned final grids on the zinc finger** (`pruning_scheme= none`, H at L29, 55 radial,
+iterations `low`): def2-SVP -1.8e-6 at L59 (1 301 310 points) and -2.2e-6 at L71 (1 774 458);
+def2-TZVP +2.7e-6 and +1.7e-6. So enough angular order does reach the target on Zn and S.
+
+**Register, same night (Dylan).** *Make each build type a named intent* and *A portable definition
+of the reference platform* are one superitem, *Reproducible builds*: "reference" needs both the
+flags (stage 1, the build intents, first) and the toolchain (stage 2, a pinned image, only when a
+re-bless must happen away from achari2 and the CI runner). Their entries below stand.
+
+**macOS CI badges added to the README, on `master` (`850f3306`, Dylan).** There had never been
+live macOS badges: the table carried *"not running yet"* placeholders until `e727f72d`
+(2026-08-27) removed them, because the macOS workflows only reached `master` -- where GitHub fires
+`schedule:` -- with the merge. Since then all three have run weekly: debug and MPI green three
+weeks running; release red on 09-15 and 09-22 (`urea_ccsd_pob-TZVP_Salvador_properties` at 4.48%,
+the LAPACK-thread row), green on the 09-24 dispatch. Dylan's word: show release too; a red badge
+is what the table is for. `docs/TONTO_CONTINUOUS_INTEGRATION.md` still says "badge: not yet" in
+its macOS rows.
+
+## 2026-09-25 (night): the BN `-O2` pin is guarded, and there was only ever one pin
+
+**The register's RGBI row asked for "a test guarding the `-O2` pin on BN's Roby populations".
+Closed.** Two findings and one change:
+
+- **There is one arm64 pin, not two.** `CMakeLists.txt` pins `shell1quartet.F90` to
+  `-O2 -fno-schedule-insns` on arm64 macOS (`a3ec1b07`), and `cmake/SetFortranFlags.cmake`
+  adds `-fno-schedule-insns` build-wide for the same fault. The "second pin at
+  `CMakeLists.txt:883` for rgbi/BN's Roby populations" that the macOS-in-CI entry, the RGBI
+  defects entry, `ci-macos.yml`'s header and `docs/TONTO_CONTINUOUS_INTEGRATION.md` all
+  repeated was the *same* pin: at `add3adef`, which wrote the note, line 883 is the line of
+  the pin's own comment that mentions BN. `git log -S"Roby populations"` over the CMake files
+  finds `a3ec1b07` and nothing else. All four places now say so.
+- **The pin was already guarded, but not by BN.** `spherical_vs_cartesian` (label `short`)
+  is an invariant that fails on the miscompiled build, and `ci-macos.yml` asserts the pin
+  in `flags.make`. What no macOS job ran was the `rgbi` suite, so BN itself -- the test whose
+  numbers first showed the fault, and the one the row named -- never ran on Apple silicon.
+- **Change: `ci-macos.yml` now runs `short hart rgbi`.** Measured here first, on this M2
+  (gfortran-14 release, today's `release/` tree): `ctest -L rgbi` is 14/14 including BN and
+  `ylid`, 64 s wall, and `spherical_vs_cartesian` passes. `suite_report.py` already accepts
+  `rgbi`. `ci-full-suite-macos.yml` keeps `short long hart`, matching the Linux definition
+  of "full suite" (106 tests).
+
+**Not done, and known:** nothing re-demonstrates that BN *fails* without the pin on today's
+compiler; the evidence is the historical 82/124 -> 118/124 and rgbi 1/13 -> 12/13 at
+`a3ec1b07`, and the gfortran-16 `TONTO_SKIP_ARM64_WORKAROUNDS=ON` build that reproduced the
+invariant failure. A rebuild without the pin is a 20-minute job on this Mac and was not run.
+The workflow is still scheduled-and-manual, unbadged; dispatch `macOS-release` once to see
+the rgbi section in the summary.
+
+### `ylid` on macOS: investigated, both questions answered, closing is Dylan's call
+
+The register row *"`ylid` vdW contact indices differ on macOS"* asked why the indices differ and
+where the 46 s goes. Both answered by running ylid with vdW on and off on this Mac and on achari2
+with the same Roby source and comparing line by line; full record at the top of the `ylid` entry
+under *Test suite and numerics*. In short: the committed test differs across platforms by 1 ulp
+on 5 lines; with vdW on, only the two `% Cov` percentage columns move, because they are ratios of
+indices that are 0.00-0.05 for a vdW pair; and "off" is *slower* than "on" because `ROBY:do_pair`
+computes bonded **or** vdW pairs when the flag is off and then prints only the bonded ones, 70
+unprinted pairs at 0.7 s each. **Dylan chose bonded-only** (`5e45a925`): rebuilt and rerun on both
+machines, all 13 rgbi outputs identical before and after, ylid 62 -> 26 s (Mac) and 78 -> 31 s
+(Linux). Row closed. Left for the next re-bless: `NF`, `karrikinolide_g09` and `ylid` are 1-ulp
+off their references on the bless platform, from before this change.
+
+## 2026-09-25 (evening): the reduced multiplication scheme is archived and deleted
+
+**The register's quick item "Archive the reduced multiplication scheme, then delete it" is
+done.** `develop` at `69da3dcc` carries the annotated tag `archive/rms-esfs` (`git tag -n99 -l
+archive/rms-esfs` says what the scheme was, why it went, and which files to look in), and the
+next commit removes it. Gone: `form_esfs_rms2`, `use_RMS` and `set_use_RMS` from `SHELL1QUARTET`,
+with the commented-out RMS versions of `form_esfs`, `form_esss` and `form_ssfs` that sat beside
+them (689 lines in that file alone); `make_rms2_indices` and `rms2_indices` from `GAUSSIAN_DATA`;
+`use_rms_esfs=` from `SCF_DATA`; `RMS2_INDICES`, `MAT{RMS2_INDICES}`, `MAT4{RMS2_INDICES}` and the
+never-referenced `*_form_3dints_yz_rms_indices` components from `types.foo`; the three modules
+`rms2_indices.foo`, `mat{rms2_indices}.foo` and `mat4{rms2_indices}.foo` from the tree and
+`CMakeLists.txt`. **Kept, deliberately:** the shell-pair `RMS_INDICES` tables, which `SHELL2`'s
+Fourier-transform integrals still read. Verification is in the archive entry *DONE (2026-09-25):
+the reduced multiplication scheme, archived and deleted*. The row is off the register.
+`docs/images/module_structure.svg` still draws an `RMS2_INDICES` node: it is the `callgraphs`
+target's output, regenerated when that next runs, not edited by hand.
+
+## 2026-09-25 (afternoon): in-loop pruning cuts the form factor files too; the register's quick item is closed
+
+**Pushed to `develop`:** the residue the overnight entry left,
+"the in-loop pruning under `max_prune_iterations` would want the same treatment". It has it. Every
+prune of a list that already has form factors on disk -- the three pre-refinement prunes in
+`MOLECULE.HAR` and the in-loop one in `CRYSTAL:LS_structure_fit` -- now goes through a new
+`CRYSTAL:prune_xray_data`, which is `update_xray_data`'s shape: copy the list, prune, and if it
+shrank call `prune_disk_SFs` with the copy. Measured on quartz L1 with `max_prune_iterations= 2`
+and `f_z_cutoff= 4.0`, first refinement only: unfixed, the pre-loop prune took 1009 to 802, the
+first fit cycle read the 1009-sized files and started at GoF 150.7, R 0.63, and the in-loop prune
+then cut 802 to 20 to 19 to 1 and "converged" on one reflection with NaN shifts. Fixed, the same
+job starts at GoF 1.93, prunes 802 to 794 to 791 inside the loop with the files cut each time, and
+converges at GoF 1.44, R(F) 0.0070 in three refinement iterations. Job and both outputs are in the
+session scratchpad, not the tree.
+
+**Also fixed:** `DIFFRACTION_DATA.INQ:is_F_calc_prunable` ended with `res = .ref_iteration <=
+.max_prune_iterations`, which threw away the cutoff test above it; it is `res AND` now. With the
+default `-1` both forms are always false, so the default path is byte-for-byte what it was: the
+quartz L1 test on this Mac fails against the Linux reference by exactly the known 0.847% and 759 ulp.
+
+**Found and left, noted in the code:** `DIFFRACTION_DATA.SET:prune_reflections` adds
+`F_sigma_noise` on every call, so with `f_sigma_noise=` set (default zero, off; nothing in the tree
+sets it) a repeated `xray_data=` block, a pre-refinement prune or an in-loop prune adds fresh noise
+and inflates every F_sigma again. It should be added once, when the data are read -- Dylan's call
+on 2026-09-25. A `BUG:` comment sits at the add site. Not on the register.
+
+## 2026-09-25 (overnight): repeated `xray_data=` blocks re-prune; the pruning item is closed
+
+**Pushed to `develop`: `0bbe7a1e` (the fix) and `25dd95d0` (the re-blessed quartz L1 reference).**
+Dylan chose the design: a repeated block re-prunes in place, compounding accepted, and the form
+factors on disk are cut to the survivors rather than recomputed. The full account, with the
+measured mechanism, is the archived entry *Pruning compounds across repeated `update` calls*.
+Two things it found on the way are fixed in the same commit: the BFGS iteration cap in
+`VEC{REAL}:min_BFGS` and `minimize_BFGS` tested the wrong variable and never fired, which is what
+turned a bad start into an hour-long spin; and two debug-only `ENSURE`s forbade zero cutoffs and a
+second refinement in one job. Neither is reached in CI.
+
+**Verified.** macOS release: short suite 69/70, the failure being the RIJCOSX drift above; quartz
+L0 passes; quartz L1 runs to the end in release (27 s) and debug (49 s). achari2, `reference`
+profile: quartz L1 exact against the new reference. CI on the two pushes was in progress at
+hand-off: `WSL-release` green on both, `Linux-debug` green on the first; check `Linux-release`,
+`Linux-debug` and `Linux-MPI` before merging to `master`.
+
+**Known and unchanged:** quartz L0 and L1 still fail on macOS only, in first-pass per-shell
+ratios (0.847%, 759 ulp against the new reference), the documented cross-platform category; see
+*Test suite and numerics*. **Owed, unchanged:** `develop` -> `master`, Dylan's call.
+
+## 2026-09-24 (evening): the re-bless is DONE; one push is owed
+
+**Everything below is pushed to `develop`. The re-bless is complete** and the full suite is
+**153 tests, 0 failures, 3 skips** on the `reference` profile on Linux (Ubuntu 24.04, gfortran
+14.2.0, netlib LAPACK 3.12.0). 13 references were re-blessed in `09d5fb99`, each matched to a cause
+first by building the parent commit `e50673c8` in a second worktree and comparing failure lists.
+
+**The one thing owed: `develop` -> `master`, Dylan's call.** CI will run the `reference` profile for
+the first time on that push, so the `Linux-release` badge is the real test of whether blessing on the
+Linux box and gating on a pinned `ubuntu-24.04` runner agree. The failure sets matched all evening,
+so green is expected -- but it is a prediction, not a measurement.
+
+### What this pass changed
+
+The Becke grid inheritance fix, so fragments honour the parent's settings -- which is why
+`--grid-accuracy` had silently done nothing on every fragHAR job. `gly_ala_fragHAR` on the `low`
+grid, 66 -> 33 s. SCF option reporting plus the `guess_convergence` echo. The `yq28` unreachable
+convergence tolerance deleted, which made two of those three jobs converge for the first time and cut
+them 37-46%. Architecture tuning made opt-in, a `reference` build type added, the Linux CI runners
+pinned to `ubuntu-24.04`, and CI switched to the `reference` profile so what it checks is what was
+blessed. `docs/TONTO_BLESSING_TESTS.md`, `docs/TONTO_RI_FITTING_PLAN.md`,
+`docs/TONTO_CRYSTAL_HOIST_PLAN.md`. The rgbi selftest skip guard.
+
+### Deliberately left failing, and why
+
+`tests/long/quartz_NN_HAR_L1_rhf_def2-SVP`. Its diff looks like a 100% deviation and is nothing of
+the kind: rows 854 and 855 swap because two reflections tied to 0.007 in `F_z` cross over, so a
+row-by-row comparison reads different reflections against each other while the same reflection agrees
+to 0.13%. **That reference is correct** and blessing it would only bake one machine's ordering in. It
+fails at the parent commit too, and it is a `long` test, so the routine CI gate is unaffected.
+**Closed later the same day**, see the entry above: a tie-break on `(h,k,l)` would not have done it,
+because the pair was not tied.
+
+### Three claims made during this pass that were WRONG
+
+Recorded because the method was at fault, not the conclusion. (1) The `cos`/`sin` accumulator revert
+`dace267a` blamed `quartz_NN_HAR_L1`; that job fails at the parent commit, so the stated reason is
+false -- the revert stands on its own merit, being measured performance-neutral. (2) The three
+`urea_hart` failures were called pre-existing on the strength of an isolation experiment that
+neutralised one of two changes. They are the `guess_convergence` line. (3) `quartz_NN_HAR_L1`'s diff
+was twice described as "one ulp becoming 1.3% in a derived ratio" -- once from the wrong build, once
+from zipping diff hunks positionally, which manufactures large differences exactly as the harness's
+own misalignment does. **Only a line-indexed comparison of whole files is trustworthy.**
+
+## Superseded handover, 2026-09-18 (evening): the COSX grid -- plan drafted, decisions owed
+
+> Nothing was built or run in the planning session. The plan below is what was drafted from the
+> handover, the code and the stage-4 runs; three decisions are Dylan's before any code.
+>
+> **A finding that changes the plan.** The paragraph further down says `high` separates from
+> `medium` because the bonding-region angular order is 59 against 29. That setting,
+> `l_bonding_angular_grid`, is read only by `pruning_scheme= adaptive`; the default is
+> `treutler_ahlrichs` (`types.foo`, `BECKE_GRID.pruning_scheme`), and neither the COSX code nor
+> any stage-4 input (`~/tonto_runs/cosx_2026-09-17/stage4/*/stdin`) changes it. So every COSX grid
+> number so far used Treutler-Ahlrichs pruning and the 59 never took effect. From `medium` to
+> `high` only three things changed: heavy-atom angular 29 -> 35, hydrogen angular 23 -> 29,
+> radial 30 -> 35. For those small steps the karrikinolide error went +1.5e-5, +2.9e-5, -1.5e-5,
+> +2.0e-6: more like an error changing sign than one converging, and `high` may be good partly by
+> luck. The same claim was in `docs/TONTO_SCF_SPEED_UP.md` 5b ("the error falls with the angular
+> order in the bonding region"); **both corrected on 2026-09-25**, after checking in
+> `becke_grid.foo` that `apply_pruning_scheme_adaptive` is the only reader of
+> `l_bonding_angular_grid` and that `types.foo` defaults `pruning_scheme` to `treutler_ahlrichs`.
+>
+> **The plan.**
+>
+> 1. **Measure before designing; no `types.foo` change.** A diagnostic like
+>    `MOLECULE.RHO:put_grid_shell_errors` (which calibrated the adaptive XC pruning, stage B): for
+>    a converged density, per atom and per radial shell, the shell's contribution to the exchange
+>    energy at Lebedev orders 5, 11, 17, 23, 29 against 59. A keyword run after `scf`, so one
+>    karrikinolide def2-SVP job gives the whole angular table and no SCF per grid is needed. Run it
+>    at 35 and at 65 radial points; the difference of the L59 totals is the radial error on its
+>    own. The exchange integrand has the potentials of tight core pairs of neighbouring atoms in
+>    it, so the angular demand is expected further in than for XC -- a guess until measured.
+> 2. **The input blocks, one `types.foo` edit.** `cosx_grid= { ... }` and `cosx_final_grid= { ... }`
+>    read with `BECKE_GRID:read_keywords`; `very_low` and `high` become their defaults. Proposed:
+>    hold the two grids in `SCF_DATA` next to the COSX switches, read inside `scfdata=`, so there is
+>    no ordering question against `becke_grid=`; drop the two `cosx_*_grid_accuracy=` names (merged
+>    today, one test uses them at the defaults). `initialize_COSX` takes the grid as an argument
+>    instead of swapping the accuracy string. Any component a COSX-specific pruning rule needs (its
+>    own zone table or a `cosx` pruning scheme) goes in the same edit, so the 25-minute rebuild is
+>    paid once. `put_options` echoes the COSX settings, which is owed anyway.
+> 3. **Calibrate and confirm.** Score candidate zone rules offline against the stage-1 tables, as
+>    `~/tonto_runs/grid_shell_errors_2026-09-13/rules.py` did for XC; build only the winners.
+>    Target for the final grid: ORCA's 2e-6 on karrikinolide def2-SVP for two to three times the
+>    iteration grid's points (seven today). Check whether the iteration grid can lose points under
+>    a zoned cut (the 15-radial/50-angular failure was a uniform cut). Confirm on karrikinolide
+>    def2-TZVP and the zinc finger, whose Zn and S also cover the second-row gap the adaptive XC
+>    scheme still has. Timing in triplicate, candidates side by side.
+>    `h2o_rhf_def2-SVP_RIJCOSX` will move if the defaults change; show the numbers, the re-bless
+>    is Dylan's call. Reference for karrikinolide def2-SVP spherical: RI-J with exact K,
+>    -530.576397753870; one SCF at `high` is about 100 s.
+>
+> **Decisions owed by Dylan.**
+>
+> 1. Start with the stage-1 diagnostic rather than a brute-force scan of the four knobs
+>    (`l_angular_grid`, `l_H_angular_grid`, `l_bonding_angular_grid`, `n_radial_pts`) at about
+>    100 s per SCF? Recommended: the diagnostic; a scan would chase the sign-changing error.
+> 2. Grid blocks inside `scfdata=`, the two accuracy names dropped? Recommended: yes.
+> 3. Stage 1 needs a release build of `master` and a few 100 s karrikinolide jobs: permission to
+>    build with `make -j`, and which tree.
+
 
 ## DONE 2026-09-27: `test.py --program` renamed `--build-dir`
 
