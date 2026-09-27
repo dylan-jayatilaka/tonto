@@ -4342,6 +4342,12 @@ the default Treutler-Ahlrichs pruning (degree-5 spheres near the nucleus) wrecks
 those shells are left out, which the code now does. Method, measurements and open questions:
 `docs/TONTO_RI_FITTING_PLAN.md`. **Open: stage (b)** -- use in refinement, with a test for
 `oc-ri` (blessed on achari2) and a job with many reflections, where the saving should be largest.
+**Owed before (b) is believed (Dylan, 2026-09-27): the neutron benchmark.** The ten X-ray +
+neutron structures of Chodkiewicz & Woźniak, IUCrJ 12, 74 (2025); refine with `oc-hirshfeld` and
+`oc-ri` at L = 4-7 against neutron X-H lengths and H ADPs. So far L = 7 is only *consistent* with
+Chodkiewicz et al. (2024), from urea and gly_ala in STO-3G. Data sources and settings:
+`docs/TONTO_RI_FITTING_PLAN.md`, *What is still to be found out*. The IUCr supporting information
+must be fetched in a browser (the site returns 403 to scripts).
 
 **Dylan's proposal.** Expand the Hirshfeld atomic densities with the RI machinery already in the
 tree, rather than writing a fresh multipole/Bessel transform. It must be a **density** fit, not

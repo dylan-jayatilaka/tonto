@@ -321,6 +321,20 @@ out.
 
 ### What is still to be found out
 
+- **The benchmark to run:** the ten structures of Chodkiewicz & Woźniak, *IUCrJ* 12, 74–87
+  (2025), [doi:10.1107/S2052252524011242](https://doi.org/10.1107/S2052252524011242), each with
+  X-ray and neutron data. Refine each with `oc-hirshfeld` and `oc-ri` at $L$ = 4, 5, 6, 7, and
+  compare X–H bond lengths and H ADPs with neutron. That both repeats the $L$ study of Chodkiewicz
+  et al. (2024), which so far is only consistent with ours (urea and gly_ala, STO-3G, $L = 7$ only),
+  and measures accuracy against experiment. The structures, with the sources of their data:
+  carbamazepine III (Sovago et al. 2016), Gly-L-Ala (Capelli et al. 2014), ice VI (Chodkiewicz et
+  al. 2022; Kuhs et al. 1989), L-alanine (Destro et al. 1988; Malaspina et al. 2019), oxalic acid
+  dihydrate (Kamiński et al. 2014), BIPa (Fugel et al. 2018; Jørgensen et al. 2014), NAC·H₂O
+  (Lübben et al. 2014), 8HQ HM (Malaspina et al. 2017, 2020), urea (Birkedal et al. 2004;
+  Swaminathan et al. 1984), xylitol (Madsen et al. 2003, 2004). Their refined structures are CCDC
+  2407692–2407802. Their supporting information is on the IUCr site, which refuses scripted
+  downloads: fetch it in a browser. Their own settings: B3LYP and MP2/cc-pVTZ, HF/cc-pVDZ and
+  cc-pVTZ; cluster dipoles within 8 Å. Compare with `compare_adps` (DiSCaMB) for the ADPs.
 - The effect on refined parameters and their esds, which is what matters in the end. The
   published expansion needed $L = 7$ to keep bonds to hydrogen within 1 mÅ of unexpanded HAR.
 - A job with many reflections, where the saving should be largest; and a profile of the fit
