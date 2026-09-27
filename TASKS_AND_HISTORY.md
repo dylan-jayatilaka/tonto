@@ -78,67 +78,53 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## START HERE, 2026-09-27: the Mac drift is diagnosed -- branch `mac-drift`, one bug fixed
+## START HERE, 2026-09-27: the Mac drift -- both causes fixed on branch `mac-drift`; re-bless under way
 
-**Branch `mac-drift` (`21b5e386`, pushed; based on `develop` `ec55d9eb`). Do not merge until
-`short/h2o_rhf_def2-SVP_RIJCOSX` is re-blessed on achari2** -- its guess lines change.
+**Branch `mac-drift`** (pushed; based on `develop` `ec55d9eb`). Four commits:
+`21b5e386` spherical rotation matrices, `0a2c9fbe` averaging over all rotations, `0538d70c` quartz
+reflection, plus TASKS. **Not to be merged until the suite is re-blessed on achari2** -- the
+averaging change moves every test that prints a promolecule guess or uses the ANO atoms.
 
-**The RIJCOSX drift is not COSX, not RI-J and not compiler settings.** Measured on the Mac:
-`-Ofast` (`release/`) and `-O2 -fno-fast-math` (`refbuild/`) give identical output; switching RI-J
-and COSX off leaves the same gap (exact J/K: iteration 0 -75.92076402 on the Mac, -75.92110254 on
-achari2); every final energy agrees to all printed digits. Only the **promolecule guess** differs,
-and the printed V_eN, V_ee, T of the failing line are the *guess* density's. OpenBLAS threads do
-not matter; the OpenBLAS kernel does: `OPENBLAS_CORETYPE=ARMV8` (what `test.py` sets on arm64)
-gives -75.92124967, the default kernel -75.92076402. That is why ctest and a bare run disagreed.
+**The RIJCOSX drift was the promolecule guess, not COSX.** Measured on the Mac: `-Ofast` and
+`-O2 -fno-fast-math` give identical output; with RI-J and COSX off the gap stays (exact J/K,
+iteration 0: -75.92076402 Mac, -75.92110254 achari2); all final energies agree to every printed
+digit. The failing V_eN is the guess density's. OpenBLAS threads do not matter; the OpenBLAS
+kernel does (`OPENBLAS_CORETYPE=ARMV8`, which `test.py` sets on arm64, gave -75.92124967; the
+default kernel -75.92076402).
 
-**Cause: two faults in `MOLECULE.SCF:make_ANOs_for_atom`**, which averages each open-shell atom's
-UHF density over the cube group (`pointgroup "oh"`) to make it spherical. The UHF atom (O triplet)
-is correct and identical on both machines; only the direction of its p hole depends on rounding.
-1. **FIXED on `mac-drift`: the spherical-basis rotation matrices were wrong.**
-   `GAUSSIAN_DATA:{d,f,g}_xyz_rep_matrices_for` used U^T D U, which is a rotation only if
-   U^T U = 1; it is now (U^T U)^-1 U^T D U (`to_spherical_rep_mx`). Before, the "average" did not
-   conserve the d population: O def2-SVP d trace 0.000859 became 0.00365 or 0.00697 depending on
-   the hole direction. After: conserved, and the two Mac kernels give -75.92035465 and
-   -75.92035543. Cartesian shells were never affected (cube operations only permute and negate
-   x, y, z). Checked on the Mac: the other four spherical-basis tests and `spherical_vs_cartesian`
-   unchanged.
-2. **OPEN: a cube average cannot make a d shell spherical.** It leaves the two cubic d
-   sub-shells (eg, t2g) with different populations, set by the hole direction: 0.00030/0.00008
-   with one kernel, 0.00006/0.00025 with the other. This is the ~8e-7 Eh left between the kernels,
-   still enough to fail the 8-decimal RIJCOSX test on the Mac -- **not yet checked against
-   achari2**. It applies to cartesian bases too. The fix is a true spherical average of each
-   one-centre block: in a spherical basis, for each pair of shells with the same l, replace the
-   block by (its trace)/(2l+1) times the unit matrix (after checking the functions of a shell
-   have equal norms); in a cartesian basis, the same after separating each shell's pure and
-   contaminant parts (the s part of a cartesian d, the p part of a cartesian f). It will change
-   every test that prints a promolecule guess or uses ANO atoms (Hirshfeld partitioning), so it
-   needs a full re-bless. Alternative worth weighing: fractionally occupied atomic SCF, which is
-   spherical from the start.
+The guess sums spherically averaged atoms. Each open-shell atom's UHF density was averaged over
+the cube group (`pointgroup "oh"`). The UHF atom is identical on both machines; only the direction
+of its p hole depends on rounding. Two faults let that direction through:
+1. **Spherical-basis rotation matrices were wrong** (`21b5e386`). `GAUSSIAN_DATA:{d,f,g}_xyz_rep_matrices_for`
+   used U^T D U, a rotation only if U^T U = 1; now (U^T U)^-1 U^T D U (`to_spherical_rep_mx`).
+   The averaging did not conserve the d population (O def2-SVP: 0.000859 became 0.00365 or 0.00697).
+   Cartesian shells were unaffected. **This was also the zinc spherical-guess defect** (entry of
+   2026-09-17): ZnS 3.9 bohr, 6-31G(d), spherical, iteration 0 -1328.601459 before, -2174.886630
+   after (cartesian -2174.890908); converges in 8 iterations instead of 14, to the same energy.
+2. **A cube average cannot make d shells spherical** (`0a2c9fbe`). A shell-pair block (la, lb)
+   holds angular components up to L = la + lb. The group average is spherical only if the group
+   has no invariant with 1 <= L <= la+lb: "oh" has one at L = 4 (so s, p, s-d, p-d are fine, d-d
+   is not); "ih" at L = 6 (d-d, d-f fine, f-f not); no finite group goes further. So
+   `ATOM:spherically_average` averages over z-y-z Euler angles, exact up to L = 2 l_max
+   (L+1 alpha and gamma, L/2+1 Gauss-Legendre in cos beta; 405 rotations for g), using the new
+   `MAT{REAL}:to_euler_rotation_mx`. It replaces the cube average at all four sites: the two ANO
+   builders and Roby's `use_spherical_averaging`. Checked on the Mac: water's iteration 0 is now
+   identical under the two kernels, def2-SVP and cc-pVTZ, spherical and cartesian
+   (def2-SVP -75.92035506 sph, -75.92146764 cart; cc-pVTZ -76.01739587, -76.01788263).
 
-**Bonus: fault 1 is the zinc spherical-guess defect** (entry *The promolecule guess is wrong in a
-spherical basis with zinc*, 2026-09-17). ZnS 3.9 bohr, 6-31G(d), spherical, promolecule guess:
-iteration 0 **-1328.601459 before, -2174.886630 after** (cartesian -2174.890908); it converges in
-8 iterations instead of 14, to the same -2174.954484. Zinc's full 3d shell is why the error there
-was hundreds of hartree. Not yet re-run: the zinc finger and the Zn(SCH3)2 reproducer (their
-inputs are no longer in `~/tonto_runs` on either machine).
+**Quartz L1 was a fragile statistic** (`0538d70c`). In *Fit statistics vs. angle* the F_exp/F_pred
+column is a per-shell mean of ratios; reflection (0 5 8) has F_pred ~0.0003 against F_exp 0.24(4),
+ratio ~800, so it alone set shell 13 to 13.92 and a last-digit change moved it by 0.5%. At Dylan's
+word it is commented out in `HKLdata.quartz`, with the reason; 1008 reflections, shell 13 now
+1.0067. (0 4 5), ratio 21 in shell 9, is not fragile and stays.
 
-**Quartz L1 is a different thing: a fragile statistic, not drift.** The failing number is column
-"F_exp/F_pred" of *Fit statistics vs. angle*, which is the per-shell **mean of per-reflection
-ratios** (`DIFFRACTION_DATA:put_GOF_vs_STL_table`, via `REFLECTION:F_ratio`; `put_GOF_vs_F_exp_table`
-does the same). Shell 13 reads 13.92 where its neighbours read ~1.0, so one reflection there
-has F_exp/F_pred ~830: its F_pred is nearly zero, and a last-digit change in it moves the mean by
-0.5%. Shell 9 (1.68) is the same. Every other number in the quartz output agrees with Linux to the
-last digit. Options, Dylan's call: report sum(F_exp)/sum(F_pred) per shell (robust; changes every
-HAR reference that prints this table), or leave the statistic and exempt that column from the
-comparison. Not changed.
-
-**Loose ends from this session:** `achari2:~/github/tonto-rebless` was switched to a detached
-`origin/mac-drift` and its `reference/` tree is rebuilding (log `~/tonto_runs/mac_drift_make.log`);
-**put it back with `git checkout develop`** after the re-bless. `build-drift/` on the Mac is a
-release tree of `mac-drift`, safe to delete. Next, in order: (a) on achari2, run the RIJCOSX test
-with the fix and compare its iteration 0 with the Mac's -75.92035465 -- if they agree to 2e-8,
-re-bless and the Mac passes; if not, fault 2 must be fixed first; (b) the full suite on achari2
-with the fix (only RIJCOSX should move); (c) plan fault 2.
+**In progress:** `achari2:~/github/tonto-rebless` is detached at `origin/mac-drift` and its
+`reference/` tree is building (log `~/tonto_runs/mac_drift_make2.log`). Then: the full suite
+unblessed; match every failure to the guess or the ANO atoms; bless; commit the references on
+`mac-drift`; **`git checkout develop` in that worktree afterwards**. Then the macOS check: the RIJCOSX
+and quartz tests should pass on this Mac. Still open from the zinc entry: re-run the zinc finger
+and Zn(SCH3)2 (their inputs are gone) and the silent unconverged SCF result.
+`build-drift/` on the Mac is a scratch release tree of `mac-drift`, safe to delete.
 
 ## 2026-09-26 (night): labels merged; one branch waiting
 
