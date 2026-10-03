@@ -17,6 +17,40 @@ is only trusted when it is repeated, with the two binaries run at the same time.
 
 ---
 
+## 0. Status and the order of work (2026-10-03)
+
+**Merged, all off by default:** the primitive pair list for J (§5), RI-J (§5a) and COSX (§5b). The
+exact J/K engine is the default and is what every reference was blessed with. RI-J and COSX together
+are what ORCA calls RIJCOSX; each moves an energy by about 1e-4 Eh.
+
+**Before any of them becomes a default**, in the order they are worth doing:
+
+1. **The COSX grid**: adopt the published element-dependent grids (register row), so the grid error
+   is known to sit well below the method's own 1e-4 Eh.
+2. **An auxiliary basis for every orbital basis.** Only `def2-universal-jfit` exists; most of the
+   suite (pob-TZVP) has none, so RI-J cannot run there.
+3. **The unexplained 6e-6 Eh** in the one exact J/K build after a COSX SCF (branch
+   `exact-final-energy`); a COSX default needs that final build to be trusted.
+4. **RI-J and COSX under MPI.**
+5. **A size threshold**, because for small molecules the exact build is faster than grid plus fit.
+
+Then: RI-J as the default for pure DFT first (no K is needed at all, and it is where ORCA's DFT
+speed comes from), then RIJCOSX for HF and hybrids above the threshold. Each default change is a
+full re-bless on achari2, which is the easy part.
+
+**Not worth doing, by the measurements:** vectorising the 3- to 5-root Rys fits (the build is not
+bound by root arithmetic, §6); McMurchie–Davidson for exact J (free beside K) or for K (no early
+contraction) -- it would pay only for RI-J's three-centre integrals, and only if a profile of a large
+RIJCOSX job ever shows them above the 4% seen so far.
+
+**Cheap and unmeasured:** the K engine's per-quartet set-up and allocation, 14% of an RHF build at
+both bases (§3.5, and the profile in the report); `batch_max` = 256 in the pair-list kernel, never
+scanned; two dispatch inefficiencies in `MOLECULE.FOCK` (unrestricted J built per spin where one on
+the total density would do; pure UKS without RI-J building a K it discards) -- see
+`TASKS_AND_HISTORY.md`, *RI-J for pure DFT*.
+
+---
+
 ## 1. Where the time goes
 
 An SCF iteration builds a Fock matrix. Three parts cost anything:
@@ -180,7 +214,7 @@ section 5, and it is also the shape a GPU needs.
 
 ---
 
-## 5. The primitive pair list and the batched J kernel (in progress)
+## 5. The primitive pair list and the batched J kernel (J merged, off by default; K not started)
 
 Behind `scfdata= { use_gaussian_pair_J= TRUE }`, off by default. J only.
 
@@ -243,7 +277,6 @@ faster at triple zeta and slower at 6-31G(d), where the count-scaled cutoff beco
 - **Shared exponents.** Basis sets that share exponents across shells (6-31G's sp shells, cc-pVTZ's
   general contraction) halve the 6-31G(d) pair list if the tiles are shared; not yet exploited.
 - **MPI over class blocks.**
-- `short` and `long` before merging.
 
 ---
 
@@ -361,6 +394,11 @@ others' defaults differ by up to 1e-6 Eh):
 At triple zeta Tonto is close; at double zeta g09 is several times faster. ORCA's default BLYP
 uses density fitting (RI-J), which is where its large DFT speed comes from; it moves the energy by
 about 8e-4 Eh.
+
+The table is the exact build against the other codes' defaults. With RI-J and COSX on, Tonto's
+own approximate route is timed against ORCA's RIJCOSX and RIJK in `docs/SCF_SPEED_REPORT.md` (the
+zinc finger, 2026-09-17; thiotepa, 2026-09-26) and in `TASKS_AND_HISTORY.md`, *Finish a COSX SCF
+with one exact J/K build*.
 
 ---
 
