@@ -78,7 +78,20 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## START HERE, 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
+## START HERE, 2026-10-03: exact least-squares constraints merged; next is TLS plan step 1
+
+**Merged to `develop` today (`a1553350`): step 0 of `docs/TONTO_TLS_MODE_REFINEMENT.md`.** The
+refinement refines p with X = J p (`DIFFRACTION_DATA.X_jacobian`, built by
+`CRYSTAL:make_refinement_jacobian`): isotropic hydrogens are one parameter each and special
+positions keep only their site-symmetric subspace, as exact constraints in the normal matrix.
+`MAT{REAL}:solve_restrained_linear_equations` is in place, unused, for the later steps (ctest
+`lsq_restraints`). Eleven references re-blessed on achari2 (`41a2f442`); the Mac passes all 158.
+Details in the entry *ADPs as rigid-body motion plus soft modes* under *Science and features*.
+**Next:** step 1 of that plan (ORCA Hessian reader, Eckart projection, `make_internal_ADPs`), then
+TLS against F. New science entry the same day: *Spherical atoms by the right ensemble*. Open from
+before: zinc finger spherical re-run; an unconverged SCF should say so; `oc-ri` stage (b).
+
+## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
 
 **Done: branch `mac-drift` merged to `develop`.** Full suite on achari2 (reference build) at
 `0538d70c`: 157 tests, 2 failures, 2 skips (the usual two). The two failures were exactly the
