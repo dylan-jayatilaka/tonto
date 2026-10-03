@@ -3928,6 +3928,26 @@ chunks completed it. Old session scratch (1.1 GB) was moved out of the RAM-backe
 
 ## RI-J for pure DFT; COSX and RI-K not pursued yet (Dylan, 2026-09-17)
 
+> **Small things found reading the dispatch on 2026-10-03, none worth a register row; measure before
+> acting on any of them.** (1) `MOLECULE.FOCK:make_u_JK` with COSX builds J for each spin
+> separately (two RI fits or two engine passes) although only J.a + J.b is used; the pure-UKS RI-J
+> branch already fits the total density once -- do the same here. (2) Pure UKS *without* RI-J goes
+> through `make_u_JK`, which builds K and discards it; the restricted path calls `make_r_J_engine`
+> (J only). Reads as a factor of about two on the two-electron part of open-shell pure DFT; confirm by
+> timing before fixing. (3) `GAUSSIAN_PAIR_LIST:add_to_J`'s `batch_max` = 256 was never scanned.
+> (4) The K engine's per-quartet set-up and allocation (`set_cd_new`, `set_reusing_storage`,
+> `malloc`) is 14% of an RHF build at both bases (`docs/SCF_SPEED_UP` §7 profile): plumbing, and the
+> cheapest remaining exact-K lever. (5) McMurchie-Davidson would pay only for RI-J's three-centre
+> integrals, and only if a profile of a large RIJCOSX job ever shows them (4% in the one profile that
+> lists them); not for exact J (free beside K) nor for K (no early contraction).
+>
+> **On defaults (Dylan's question, 2026-10-03).** RI-J, COSX and the pair-list J are all off. Before
+> any becomes the default: an auxiliary basis for every orbital basis (only `def2-universal-jfit`
+> exists); the COSX grid item (published element-dependent grids); the unexplained 6e-6 Eh in
+> `exact-final-energy`; RI-J/COSX under MPI; and a size threshold, since the exact build is faster
+> for small molecules. Each default change moves every energy by ~1e-4 Eh and is a full re-bless on
+> achari2 -- the easy part.
+
 **Decision (Dylan): RI-J first. COSX and RI-K are not to be pursued yet. A big job, to be planned
 separately, not inside the J/K speed-up session that raised it.**
 
