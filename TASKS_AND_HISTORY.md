@@ -3540,11 +3540,20 @@ In one line: each atom's ADP becomes U_i = U_i^high + B_i Σ B_iᵀ, with the si
 motion in U_i^high fixed, and Σ refined directly against the structure factors. Fewer parameters
 than free U, hydrogen ADPs that mean something, and a refinement optimal for everything at once.
 
-**Step 0 stands alone and comes first:** a restraint term in the normal equations
-(`MAT{REAL}` solver, `DIFFRACTION_DATA.SET:solve_normal_equations`), which is the proper form of the
-eigenvalue filter and is also the proposed cure for the quartz Si esd (special positions by a
-symmetry restraint instead of symmetrising the shift after the solve). With the weights at zero the
-suite must not move.
+**Step 0 is built, branch `ls-jacobian` (`36f2a0eb`, 2026-10-03), re-bless on achari2 pending.**
+The refinement now refines p with X = J p: `DIFFRACTION_DATA.X_jacobian`, built by
+`CRYSTAL:make_refinement_jacobian`, has unit columns for free components, one summed column for an
+isotropic U, and a basis of the site-symmetric subspace on a special position (a constraint, exact;
+not a restraint). `MAT{REAL}:solve_restrained_linear_equations` solves (A+W)δ = b + W(p₀−p) with
+the effective parameter count tr[(A+W)⁻¹A]; nothing sets W yet; `run_lsq_restraint` checks it
+(ctest `lsq_restraints`). Measured on the Mac: urea isotropic-H fit 16 → 4 iterations, same U_iso and
+esd, component esds now consistent; quartz L1 Si position esds 0.009–0.018 → 0.00003–0.00008, the
+fixed coordinate exactly 0, N_p 19/20 → 15/16 because the filter had missed the four forbidden Si
+directions; quartz L0's Si, nearly undetermined before (esd 0.10), now determined. Suites: 158 tests,
+the 11 expected failures (urea_hart x3, quartz L0/L1, yq28 x3, L_alanine, L_cysteine, YLID): esds,
+N_p, GoF², iteration counts, last digits. Likely also closes the parked *column-width difference*:
+symmetry-zero components now have exactly zero variance and print `0.000000(0)` on every machine --
+check on achari2.
 
 **Found and measured 2026-10-03: isotropic hydrogens refine at one third speed.** They are three
 identical derivative columns plus three zero ones in the 9-parameter block; the filter drops the five
