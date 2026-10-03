@@ -3546,6 +3546,14 @@ eigenvalue filter and is also the proposed cure for the quartz Si esd (special p
 symmetry restraint instead of symmetrising the shift after the solve). With the weights at zero the
 suite must not move.
 
+**Found and measured 2026-10-03: isotropic hydrogens refine at one third speed.** They are three
+identical derivative columns plus three zero ones in the 9-parameter block; the filter drops the five
+null directions and the pseudo-inverse gives each diagonal component a third of the U_iso step. Urea
+STO-3G HAR: 16 least-squares iterations in the first fit against 3 with anisotropic H, and
+(2/3)^16 matches the shift/esd ratio exactly. Final value and esd are right (the esd by the deliberate
+`sum` of three component esds in `ATOM:set_pADP_errors_to`); the printed component esds are a third
+of the truth. Cured by the Jacobian of step 0b in the plan: one parameter, one column.
+
 Found on the way: `multi_t_adp.foo` (2800 lines, 2008/2021) fits mode shapes and frequencies to
 multi-temperature ADPs; it is not in the build and would not compile (`PUIRE` :2116, `PUREj` :2737).
 Leave it; salvage its rigid-body mode construction and amplitude formula. `normal_mode_analysis` does

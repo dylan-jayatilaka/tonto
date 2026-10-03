@@ -368,6 +368,24 @@ reference: `initialize_translations`, `initialize_librations` (the rigid-body fi
 `VEC{ATOM}:initialize_local_H_modes` (still live, in `vec{atom}.foo:778`), `amplitude` (eq. 3),
 and the `MULTI_T_ADP` type's layout. Leave the module dead.
 
+**Isotropic hydrogens** (`refine_h_u_iso= YES`) are done inside the same 9-parameter block
+(`crystal.foo:6231`): the three diagonal U columns of the derivative matrix are set *identical*, each
+to the full dF/dU_iso, and the three off-diagonal columns to zero. So every isotropic hydrogen puts
+five exact null directions into the normal matrix (urea STO-3G HAR: 25 near-zero eigenvalues with
+two isotropic H against 19 with anisotropic), the filter drops them, and the pseudo-inverse spreads
+the U_iso shift equally over the three diagonal components. Each therefore moves by **one third** of
+the Gauss–Newton step, and since `ATOM:set_isotropic_ADP` then takes the mean of the trace, U_iso
+moves by one third per iteration and converges geometrically with ratio 2/3. **Measured 2026-10-03**
+on `long/urea_rhf_STO-3G_HAR`: the first fit needs 16 least-squares iterations with isotropic H
+against 3 with anisotropic H, the limiting parameter being H1's U every time, and
+(2/3)^16 = 0.0015 is exactly the ratio of the first to the converged shift/esd (6.49 → 0.01). The
+final U_iso is right; only the cost is wrong. The esd is right too, by a compensating trick:
+`ATOM:set_pADP_errors_to` takes the U_iso esd as the *sum* of the three component esds ("this is
+correct believe it or not"), and it is, because each component's variance is one ninth of the true
+one. The component esds printed in the ADP table are one third of the truth. All of this disappears
+when an isotropic hydrogen is one parameter with one column, which is the Jacobian J of §3.4 with a
+9 → 4 block per such atom; so J is built in step 0 (below) with this as its first use.
+
 **Geometry helpers on `VEC{ATOM}`:** `center_of_mass`, `move_origin_to_center_of_mass`,
 `make_inertia_tensor`, `make_inertial_axes`, `displacement_mass_vector`, `make_connection_table`.
 `MAT{REAL}:schmidt_orthonormalize`, `solve_symmetric_eigenproblem`, `diagonalize_Jacobi`.
@@ -414,6 +432,12 @@ use it. The TLS algebra needs only positions, so it is not a `CRYSTAL` method.
    plumbing in `DIFFRACTION_DATA.SET`, p_eff. Check: with W = 0 the full suite is unchanged;
    with the special-position restraint, quartz L1 gives the same Si position and a finite, sensible
    Si esd (the IO note says what to expect), and no other number moves beyond tolerance.
+   **0b. The Jacobian J**, dF · J, with isotropic hydrogens as its first use: one U_iso parameter per
+   such atom instead of three identical columns and three zero ones. Checks: the urea HAR above
+   converges in about 3 iterations instead of 16, to the same U_iso and the same U_iso esd (now a
+   plain square root of a variance, the sum trick retired), and the component esds in the ADP table
+   become consistent with it. The 25 near-zero eigenvalues drop to 19. Tests with isotropic H need a
+   re-bless if any printed digit moves.
 1. **Hessian in, modes out.** ORCA reader; Eckart projection; six zero frequencies as the check;
    `make_internal_ADPs`. Check against the literature: urea's hydrogen U^high about 0.01–0.02 Å²
    (SHADE's values); heavy atoms 0.001–0.003 Å².
