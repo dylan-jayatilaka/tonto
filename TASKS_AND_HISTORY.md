@@ -88,8 +88,10 @@ positions keep only their site-symmetric subspace, as exact constraints in the n
 `lsq_restraints`). Eleven references re-blessed on achari2 (`41a2f442`); the Mac passes all 158.
 Details in the entry *ADPs as rigid-body motion plus soft modes* under *Science and features*.
 **Next:** step 1 of that plan (ORCA Hessian reader, Eckart projection, `make_internal_ADPs`), then
-TLS against F. New science entry the same day: *Spherical atoms by the right ensemble*. Open from
-before: zinc finger spherical re-run; an unconverged SCF should say so; `oc-ri` stage (b).
+TLS against F. New science entry the same day: *Spherical atoms by the right ensemble*. Closed
+2026-10-04: the zinc spherical-guess defect (verified on the finger and Zn(SCH3)2) and the silent
+unconverged SCF (`stop_if_SCF_not_converged`, `die_if_not_converged=`). Open from before: `oc-ri`
+stage (b).
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
 
@@ -1563,100 +1565,6 @@ dead keyword line from `develop` and leave the work on its two tags, as was done
 `datafile.foo`. That is a decision for Dylan, not a default.
 
 # Correctness — open bugs that give wrong answers
-
-## An unconverged SCF reports its energy silently (2026-09-17; the zinc spherical-guess half closed 2026-10-03)
-
-> **2026-10-03: defect (1) is closed, verified on the molecules that showed it.** Inputs rebuilt
-> from the versioned coordinates (below, under the zinc-finger benchmark), RHF/6-31G(d), promolecule
-> guess, `develop` after the averaging fix, on the Mac:
->
-> | job | iteration 0 | converged | iterations | time |
-> |---|---|---|---|---|
-> | Zn(SCH3)2 spherical, exact | -2651.682857 (was -1709.64) | -2651.749614 | 13 (was unconverged at 75) | 23 s |
-> | Zn(SCH3)2 cartesian, exact | -2651.688550 | -2651.756404 | 13 | 23 s |
-> | zinc finger spherical, RIJCOSX | -3101.241287 (was -1943.3) | -3101.464209 | 15 (was unconverged after 24 min) | 4 min 18 s |
-> | zinc finger cartesian, RIJCOSX | -3101.250625 | -3101.475984 | 15 | 4 min 19 s |
->
-> ORCA exact, spherical: -3101.464459; g09 exact, cartesian: -3101.474630. The spherical-minus-
-> cartesian gap of 7-12 mEh is the basis (the cartesian d carries an extra s function), as between
-> g09 and ORCA. So the "spherical Hamiltonian is wrong" reading below was the bad start alone, and
-> pFON is not needed. **What remains is defect (2):** an SCF that stops unconverged prints its
-> results with no `not converged` line. Register row renamed accordingly. Inputs in
-> `~/.claude/jobs/9b038530/tmp/zn/` on the Mac (scratch; the coordinates are versioned below).
->
-> **2026-09-27: defect (1) found and fixed on branch `mac-drift`** -- the spherical d/f/g rotation
-> matrices used to average each atom's guess density were not rotations (see the handover at the
-> top). ZnS spherical iteration 0: -1328.60 before, -2174.887 after (cartesian -2174.891). Still
-> open: re-run the zinc finger and Zn(SCH3)2 with the fix (the "spherical Hamiltonian is wrong"
-> reading below may have been the bad start alone), and defect (2), the silent unconverged result.
-
-> **Dylan (2026-09-17): a separate problem from the integral work, not to be fixed on that
-> branch or conflated with it.** His hypothesis: low-lying excited states, which may need a
-> fractional-occupation method. A skeleton exists and is marked untested:
-> `MOLECULE.BASE:make_SCF_density_mx` (`molecule.base.foo:330-379`), `SCF_data.apply_pFON`,
-> `temperature_for_pFON`, `using_FON`. The spherical-vs-cartesian contrast below is still
-> unexplained under that hypothesis and worth keeping in view.
->
-> **Dylan's refinement, to investigate:** the two may be one story. The cartesian basis carries
-> the s-type contaminant of each d shell (x²+y²+z²) and the p-type contaminants of each f shell;
-> the spherical basis removes them. If those extra functions stabilise the near-degenerate
-> states, removing them could tip the SCF into oscillation. Cheap tests on the 11-atom
-> Zn(SCH3)2 reproducer: the HOMO-LUMO gap of the converged cartesian run (small supports the
-> low-lying-states picture); a spherical run started from the converged cartesian orbitals
-> projected into the spherical basis (if it holds, the problem is reaching the state, not the
-> state); and the same molecule with the diffuse or polarisation functions trimmed.
-
-Found by the zinc-finger benchmark ([Zn(SCH3)2(imidazole)2], hand-built geometry, RHF/6-31G(d),
-`develop` `7d2c236a`). Runs in `~/tonto_runs/zn_sph_bug_2026-09-17/` and
-`~/tonto_runs/vs_g09_orca_znfinger_2026-09-17/tonto_rhf_6-31G(d)_sph/stdout.promolecule_unconverged`.
-
-- **Two defects.** (1) With `use_spherical_basis= TRUE` and `initial_density= promolecule` the
-  first energy is far off: the zinc finger starts at −1943.3 (the answer is −3101.4645) and
-  the SCF wanders between −2500 and −2730 for 24 minutes. (2) **It then prints `SCF results`
-  with E = −2538.512935, virial 1.863, and no warning that it never converged.**
-- The cartesian run from the same guess converges normally (−3101.474629556, 2.2e-6 from g09's
-  6D 10F energy). ZnS at 3.9 bohr, spherical: iteration 0 at −1328.6 against −2174.9
-  cartesian, and it does recover (−2174.9544835, 15 iterations). The zinc atom alone is fine
-  both ways. So the spherical promolecule density is wrong for at least one of Zn or S; a
-  molecule can recover from it or not.
-- **`initial_density= core` in the spherical basis converges** (−3101.464456 at iteration 18,
-  heading for ORCA's −3101.464459). The suite's spherical Tonto rows were switched to the core
-  guess; the cartesian rows keep promolecule.
-- **Narrowed (iteration-0 energies, promolecule guess):** S atom alone −397.239 cartesian,
-  −397.387 spherical; Zn atom alone −1730.93 and −1737.82 -- both sane. ZnS −2174.89 cartesian,
-  **−1328.60 spherical**, and identical to every digit with the atom order reversed. So each atom's
-  guess is sane alone, the fault appears only when two atoms (at least Zn with S) are combined in
-  the spherical basis, and it is not an atom-order offset. Karrikinolide (C, H, O; d and f at
-  cc-pVTZ) did not show it.
-- **The core guess is not a general cure.** Zinc finger BLYP/6-31G(d) spherical with
-  `initial_density= core` (pair-list J) also ended unconverged and silent: E −2697.133733556
-  after 28 minutes. The pair-list J is not the cause -- water BLYP/cc-pVDZ spherical agrees with
-  the engine to 1.8e-10. So the zinc-finger SCF in the spherical 6-31G(d) basis is unstable,
-  not merely badly started; RHF with the core guess happened to converge.
-- **It is not basis-specific.** RHF/def2-SVP spherical, core guess: −2036.299600237 after 23
-  minutes, silent, against g09 −3100.927836570 and ORCA −3100.927836555. **Every spherical Tonto
-  row for the zinc finger is unusable**, so the remaining ones were withdrawn from the suite
-  and cartesian def2 rows (engine and pair list) added; those compare Tonto with itself, not
-  with the spherical g09/ORCA def2 rows. Suspects to check first: the spherical path of the
-  J/K engine, new since 2026-09-16 (`rys-sph`: P expanded to cartesian, built, contracted back),
-  validated on C/H/O/F/Cl molecules only; and anything spherical specific to Zn's shells.
-  ZnS alone converges spherically, so a small reproducer may need more atoms.
-- **Small reproducer: Zn(SCH3)2, 11 atoms, RHF/6-31G(d)**, `~/tonto_runs/zn_sph_bug_2026-09-17/
-  znsme2_sph{FALSE,TRUE}/stdin` (the first 11 atoms of the zinc finger), ~2 s per iteration.
-  Cartesian: iteration 0 −2651.6886, converged −2651.7564036355 in 10 iterations. Spherical:
-  iteration 0 −1709.64, then thrashes around −2346 to −2349 with gradient ~15 to iteration 75.
-  **Identical at `eri_accuracy= high`**, so not screening. An energy 300 Eh above the cartesian
-  one with a gradient that never falls says the spherical Hamiltonian itself is wrong for this
-  molecule, not just the start. The overlap eigenvalue histogram also differs oddly (spherical:
-  47 of 110 eigenvalues above 1; cartesian: 27 of 119). ZnS and single atoms are sane, and so
-  were karrikinolide (C/H/O, d and f) and CHFCl cc-pVQZ -- whose d shells are uncontracted.
-  **First hypothesis: the spherical transformation or normalisation of a contracted d shell**
-  (Zn's `D 3` in 6-31G(d), contracted d in def2-SVP) -- but then why is ZnS sane? Check the
-  spherical overlap diagonal first.
-- **Not yet done:** where the combined spherical promolecule density goes wrong (S alone,
-  then the spherical transformation of the atomic density), and why an unconverged SCF prints
-  its result without a `not converged` line. The second matters more -- it passes a nonsense
-  energy downstream silently.
 
 ## Dispersion: what is still open after the 2026-09-05 fix
 
@@ -6074,6 +5982,112 @@ different question and the one that matters.
 # Done, resolved and closed (archive)
 
 *(The next seven entries were closed session logs filed above the themed sections; moved here unchanged on 2026-09-27.)*
+
+## CLOSED 2026-10-04: an unconverged SCF stops the job; the zinc spherical-guess defect (2026-09-17)
+
+**Closed.** Both halves are done. (1) The spherical promolecule guess: fixed by the exact spherical
+average of the ANO atoms (`8a189453`), verified on Zn(SCH3)2 and the zinc finger on 2026-10-03 (table
+below). (2) The silent result: `MOLECULE.SCF:stop_if_SCF_not_converged` now runs after the results are
+printed and archived, in `usual_SCF` and `constrained_SCF`, and `DIE`s with the iteration count, energy
+and DIIS error unless `scfdata= { die_if_not_converged= FALSE }`, which prints a WARNING instead and
+goes on. The converged state is taken at the end of the loop, because the COSX final-grid energy
+changes the energy difference afterwards. The atomic SCF caller, `make_ANOs`, already stopped. No
+stored test output has an unconverged SCF; all 158 tests pass on the Mac unchanged.
+
+*The entry as it stood:*
+
+
+> **2026-10-03: defect (1) is closed, verified on the molecules that showed it.** Inputs rebuilt
+> from the versioned coordinates (below, under the zinc-finger benchmark), RHF/6-31G(d), promolecule
+> guess, `develop` after the averaging fix, on the Mac:
+>
+> | job | iteration 0 | converged | iterations | time |
+> |---|---|---|---|---|
+> | Zn(SCH3)2 spherical, exact | -2651.682857 (was -1709.64) | -2651.749614 | 13 (was unconverged at 75) | 23 s |
+> | Zn(SCH3)2 cartesian, exact | -2651.688550 | -2651.756404 | 13 | 23 s |
+> | zinc finger spherical, RIJCOSX | -3101.241287 (was -1943.3) | -3101.464209 | 15 (was unconverged after 24 min) | 4 min 18 s |
+> | zinc finger cartesian, RIJCOSX | -3101.250625 | -3101.475984 | 15 | 4 min 19 s |
+>
+> ORCA exact, spherical: -3101.464459; g09 exact, cartesian: -3101.474630. The spherical-minus-
+> cartesian gap of 7-12 mEh is the basis (the cartesian d carries an extra s function), as between
+> g09 and ORCA. So the "spherical Hamiltonian is wrong" reading below was the bad start alone, and
+> pFON is not needed. **What remains is defect (2):** an SCF that stops unconverged prints its
+> results with no `not converged` line. Register row renamed accordingly. Inputs in
+> `~/.claude/jobs/9b038530/tmp/zn/` on the Mac (scratch; the coordinates are versioned below).
+>
+> **2026-09-27: defect (1) found and fixed on branch `mac-drift`** -- the spherical d/f/g rotation
+> matrices used to average each atom's guess density were not rotations (see the handover at the
+> top). ZnS spherical iteration 0: -1328.60 before, -2174.887 after (cartesian -2174.891). Still
+> open: re-run the zinc finger and Zn(SCH3)2 with the fix (the "spherical Hamiltonian is wrong"
+> reading below may have been the bad start alone), and defect (2), the silent unconverged result.
+
+> **Dylan (2026-09-17): a separate problem from the integral work, not to be fixed on that
+> branch or conflated with it.** His hypothesis: low-lying excited states, which may need a
+> fractional-occupation method. A skeleton exists and is marked untested:
+> `MOLECULE.BASE:make_SCF_density_mx` (`molecule.base.foo:330-379`), `SCF_data.apply_pFON`,
+> `temperature_for_pFON`, `using_FON`. The spherical-vs-cartesian contrast below is still
+> unexplained under that hypothesis and worth keeping in view.
+>
+> **Dylan's refinement, to investigate:** the two may be one story. The cartesian basis carries
+> the s-type contaminant of each d shell (x²+y²+z²) and the p-type contaminants of each f shell;
+> the spherical basis removes them. If those extra functions stabilise the near-degenerate
+> states, removing them could tip the SCF into oscillation. Cheap tests on the 11-atom
+> Zn(SCH3)2 reproducer: the HOMO-LUMO gap of the converged cartesian run (small supports the
+> low-lying-states picture); a spherical run started from the converged cartesian orbitals
+> projected into the spherical basis (if it holds, the problem is reaching the state, not the
+> state); and the same molecule with the diffuse or polarisation functions trimmed.
+
+Found by the zinc-finger benchmark ([Zn(SCH3)2(imidazole)2], hand-built geometry, RHF/6-31G(d),
+`develop` `7d2c236a`). Runs in `~/tonto_runs/zn_sph_bug_2026-09-17/` and
+`~/tonto_runs/vs_g09_orca_znfinger_2026-09-17/tonto_rhf_6-31G(d)_sph/stdout.promolecule_unconverged`.
+
+- **Two defects.** (1) With `use_spherical_basis= TRUE` and `initial_density= promolecule` the
+  first energy is far off: the zinc finger starts at −1943.3 (the answer is −3101.4645) and
+  the SCF wanders between −2500 and −2730 for 24 minutes. (2) **It then prints `SCF results`
+  with E = −2538.512935, virial 1.863, and no warning that it never converged.**
+- The cartesian run from the same guess converges normally (−3101.474629556, 2.2e-6 from g09's
+  6D 10F energy). ZnS at 3.9 bohr, spherical: iteration 0 at −1328.6 against −2174.9
+  cartesian, and it does recover (−2174.9544835, 15 iterations). The zinc atom alone is fine
+  both ways. So the spherical promolecule density is wrong for at least one of Zn or S; a
+  molecule can recover from it or not.
+- **`initial_density= core` in the spherical basis converges** (−3101.464456 at iteration 18,
+  heading for ORCA's −3101.464459). The suite's spherical Tonto rows were switched to the core
+  guess; the cartesian rows keep promolecule.
+- **Narrowed (iteration-0 energies, promolecule guess):** S atom alone −397.239 cartesian,
+  −397.387 spherical; Zn atom alone −1730.93 and −1737.82 -- both sane. ZnS −2174.89 cartesian,
+  **−1328.60 spherical**, and identical to every digit with the atom order reversed. So each atom's
+  guess is sane alone, the fault appears only when two atoms (at least Zn with S) are combined in
+  the spherical basis, and it is not an atom-order offset. Karrikinolide (C, H, O; d and f at
+  cc-pVTZ) did not show it.
+- **The core guess is not a general cure.** Zinc finger BLYP/6-31G(d) spherical with
+  `initial_density= core` (pair-list J) also ended unconverged and silent: E −2697.133733556
+  after 28 minutes. The pair-list J is not the cause -- water BLYP/cc-pVDZ spherical agrees with
+  the engine to 1.8e-10. So the zinc-finger SCF in the spherical 6-31G(d) basis is unstable,
+  not merely badly started; RHF with the core guess happened to converge.
+- **It is not basis-specific.** RHF/def2-SVP spherical, core guess: −2036.299600237 after 23
+  minutes, silent, against g09 −3100.927836570 and ORCA −3100.927836555. **Every spherical Tonto
+  row for the zinc finger is unusable**, so the remaining ones were withdrawn from the suite
+  and cartesian def2 rows (engine and pair list) added; those compare Tonto with itself, not
+  with the spherical g09/ORCA def2 rows. Suspects to check first: the spherical path of the
+  J/K engine, new since 2026-09-16 (`rys-sph`: P expanded to cartesian, built, contracted back),
+  validated on C/H/O/F/Cl molecules only; and anything spherical specific to Zn's shells.
+  ZnS alone converges spherically, so a small reproducer may need more atoms.
+- **Small reproducer: Zn(SCH3)2, 11 atoms, RHF/6-31G(d)**, `~/tonto_runs/zn_sph_bug_2026-09-17/
+  znsme2_sph{FALSE,TRUE}/stdin` (the first 11 atoms of the zinc finger), ~2 s per iteration.
+  Cartesian: iteration 0 −2651.6886, converged −2651.7564036355 in 10 iterations. Spherical:
+  iteration 0 −1709.64, then thrashes around −2346 to −2349 with gradient ~15 to iteration 75.
+  **Identical at `eri_accuracy= high`**, so not screening. An energy 300 Eh above the cartesian
+  one with a gradient that never falls says the spherical Hamiltonian itself is wrong for this
+  molecule, not just the start. The overlap eigenvalue histogram also differs oddly (spherical:
+  47 of 110 eigenvalues above 1; cartesian: 27 of 119). ZnS and single atoms are sane, and so
+  were karrikinolide (C/H/O, d and f) and CHFCl cc-pVQZ -- whose d shells are uncontracted.
+  **First hypothesis: the spherical transformation or normalisation of a contracted d shell**
+  (Zn's `D 3` in 6-31G(d), contracted d in def2-SVP) -- but then why is ZnS sane? Check the
+  spherical overlap diagonal first.
+- **Not yet done:** where the combined spherical promolecule density goes wrong (S alone,
+  then the spherical transformation of the atomic density), and why an unconverged SCF prints
+  its result without a `not converged` line. The second matters more -- it passes a nonsense
+  energy downstream silently.
 
 ## CLOSED 2026-09-26: the COSX grid -- retired in favour of adopting published element-dependent grids
 
