@@ -177,6 +177,14 @@ add_test(NAME "quadrature_rules"
     COMMAND ${PROJECT_BINARY_DIR}/run_quadrature)
 set_tests_properties("quadrature_rules" PROPERTIES LABELS "short")
 
+# The restrained normal-equation solver behind the structure refinement,
+# against a 3 x 3 problem with a known answer: no weight, one hard weight,
+# and a ridge. Instant.
+add_test(NAME "lsq_restraints"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND ${PROJECT_BINARY_DIR}/run_lsq_restraint)
+set_tests_properties("lsq_restraints" PROPERTIES LABELS "short")
+
 # Invariant test -- no reference output involved.
 #
 # A Foo procedure that takes arguments is a library routine: it can be called

@@ -670,6 +670,7 @@ set(RUN_SRC
     ${RUNFILE_DIR}/run_mpi_pi.foo
     ${RUNFILE_DIR}/run_qr.foo
     ${RUNFILE_DIR}/run_quadrature.foo
+    ${RUNFILE_DIR}/run_lsq_restraint.foo
     ${RUNFILE_DIR}/run_shell2.foo
     ${RUNFILE_DIR}/run_real.foo
     ${RUNFILE_DIR}/run_rys.foo
@@ -1097,6 +1098,10 @@ add_executable(run_qr            EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/ru
 # moments and exits non-zero on a wrong one; the `quadrature_rules` ctest.
 # Not EXCLUDE_FROM_ALL for the same reason as run_system_commands.
 add_executable(run_quadrature    ${CMAKE_CURRENT_BINARY_DIR}/run_quadrature.F90)
+# run_lsq_restraint checks the restrained normal-equation solver the structure
+# refinement uses; the `lsq_restraints` ctest. Not EXCLUDE_FROM_ALL for the
+# same reason.
+add_executable(run_lsq_restraint ${CMAKE_CURRENT_BINARY_DIR}/run_lsq_restraint.F90)
 add_executable(run_real          EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_real.F90)
 add_executable(run_rys           EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_rys.F90)
 add_executable(run_rgbi          ${CMAKE_CURRENT_BINARY_DIR}/run_rgbi.F90)
@@ -1145,6 +1150,7 @@ target_link_libraries(run_least_squares tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBR
 target_link_libraries(run_textfile      tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_system_commands tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_quadrature    tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_lsq_restraint tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 if(WITH_MPI)
     target_link_libraries(run_mpi_test          tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
     target_link_libraries(run_mpi_test_complete tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
