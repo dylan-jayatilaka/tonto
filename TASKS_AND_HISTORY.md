@@ -90,8 +90,10 @@ Details in the entry *ADPs as rigid-body motion plus soft modes* under *Science 
 **Next:** step 1 of that plan (ORCA Hessian reader, Eckart projection, `make_internal_ADPs`), then
 TLS against F. New science entry the same day: *Spherical atoms by the right ensemble*. Closed
 2026-10-04: the zinc spherical-guess defect (verified on the finger and Zn(SCH3)2) and the silent
-unconverged SCF (`stop_if_SCF_not_converged`, `die_if_not_converged=`). Open from before: `oc-ri`
-stage (b).
+unconverged SCF (`stop_if_SCF_not_converged`, `die_if_not_converged=`). **Fixed and merged 2026-10-04:** the
+B3LYP 2e-4 and unrestricted BLYP 1e-4 discrepancies, two potential-side formula errors
+(`docs/DFT_STANDARDISATION.md` 5b); one test re-blessed and one added, both on achari2. Open from before:
+`oc-ri` stage (b).
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
 
@@ -1676,32 +1678,6 @@ varied a grid, and every test spelled its functional correctly. `scripts/check_d
 (ctest `dft_invariants`, label `short`, 20 STO-3G jobs, about two seconds) tests
 properties rather than blessed numbers, so none of them can be blessed away. Check 4
 is the bogus name: `blyp` as an exchange functional must exit non-zero.
-
-## B3LYP is 2e-4 Eh from g09 and ORCA; unrestricted BLYP 1e-4 (found 2026-09-17)
-
-Found while checking RI-J with exact exchange (`~/tonto_runs/cosx_2026-09-17/stage1/`). Water,
-def2-SVP, `eri_accuracy= high`, grid at its default:
-
-| job | Tonto | reference | difference |
-|---|---|---|---|
-| RHF, spherical | -75.9568186308 | ORCA -75.9568186299 | 1e-9 |
-| UHF H2O+, spherical | -75.5627274358 | ORCA -75.5627274356 | 2e-10 |
-| BLYP, spherical | -76.3369284357 | g09 -76.3369252175 | 3e-6 (the grids) |
-| B3LYP (`b3lypgx`/`b3lypgc`), spherical | -76.3569949374 | g09 -76.3572084520, ORCA `B3LYP/G` -76.3572081004 | **+2.13e-4** |
-| B3LYP, cartesian | -76.3585000471 | g09 `6D 10F` -76.3588047292 | **+3.05e-4** |
-| B3LYP VWN5 form (`b3lypx`/`b3lypc`), spherical | -76.3198775077 | ORCA `B3LYP` -76.3200906619 | **+2.13e-4** |
-| UKS BLYP H2O+, spherical | -75.8895525262 | ORCA -75.8896636512 | **+1.1e-4** |
-
-The same 2.13e-4 with VWN3 and VWN5 says the VWN part is not the cause; exact exchange is right
-(RHF agrees) and B88 and LYP are right in BLYP. What is left is how the pieces are combined in the
-B3LYP routines, or the 0.08 Slater term. The unrestricted BLYP row is a separate question (the
-closed-shell BLYP agrees). Neither is diagnosed. No B3LYP row was in the g09 comparisons of
-`docs/DFT_STANDARDISATION.md`; `short/h2o_rks_B3LYPG_cc-pVDZ` compares Tonto with itself.
-
-**Fixed on the way (`b149adff`), and kept (Dylan, 2026-09-18):**
-`make_u_KS_Fock_mx` added -(f/2)(K.a + K.b) to both spins, right only for a closed shell. UKS
-B3LYP H2O+: -75.862337375 before, -75.905210814 after, ORCA -75.905414918 -- from 4.3e-2 away to
-the same 2.0e-4 as the closed shell. No test uses an unrestricted hybrid.
 
 ## DFT grid: what is still open after the 2026-09-10 fix
 
@@ -5982,6 +5958,43 @@ different question and the one that matters.
 # Done, resolved and closed (archive)
 
 *(The next seven entries were closed session logs filed above the themed sections; moved here unchanged on 2026-09-27.)*
+
+## FIXED 2026-10-04: B3LYP was 2e-4 Eh from g09 and ORCA, unrestricted BLYP 1e-4 (found 2026-09-17)
+
+**Fixed on branch `b3lyp-potential` (`841ac59c`)**, two defects in the potential, neither in the energy:
+the six B3LYP potential routines passed the gradient-potential vectors straight into the B88 and LYP
+routines and scaled only V0, so the Fock matrix carried the GGA gradient terms at weight 1 instead of
+0.72 and 0.81; and `new_u_Becke88_x_potential` used the alpha-spin `ka2` for the beta-spin `kb2`.
+Dylan's guess was right: a formula error. After the fix every row of the table below is within
+2-3e-6 of ORCA or g09, the grid residual of the control. Account and table in
+`docs/DFT_STANDARDISATION.md` section 5b. New test `short/h2o+_uks_B3LYPG_def2-SVP`.
+
+*The entry as it stood:*
+
+
+Found while checking RI-J with exact exchange (`~/tonto_runs/cosx_2026-09-17/stage1/`). Water,
+def2-SVP, `eri_accuracy= high`, grid at its default:
+
+| job | Tonto | reference | difference |
+|---|---|---|---|
+| RHF, spherical | -75.9568186308 | ORCA -75.9568186299 | 1e-9 |
+| UHF H2O+, spherical | -75.5627274358 | ORCA -75.5627274356 | 2e-10 |
+| BLYP, spherical | -76.3369284357 | g09 -76.3369252175 | 3e-6 (the grids) |
+| B3LYP (`b3lypgx`/`b3lypgc`), spherical | -76.3569949374 | g09 -76.3572084520, ORCA `B3LYP/G` -76.3572081004 | **+2.13e-4** |
+| B3LYP, cartesian | -76.3585000471 | g09 `6D 10F` -76.3588047292 | **+3.05e-4** |
+| B3LYP VWN5 form (`b3lypx`/`b3lypc`), spherical | -76.3198775077 | ORCA `B3LYP` -76.3200906619 | **+2.13e-4** |
+| UKS BLYP H2O+, spherical | -75.8895525262 | ORCA -75.8896636512 | **+1.1e-4** |
+
+The same 2.13e-4 with VWN3 and VWN5 says the VWN part is not the cause; exact exchange is right
+(RHF agrees) and B88 and LYP are right in BLYP. What is left is how the pieces are combined in the
+B3LYP routines, or the 0.08 Slater term. The unrestricted BLYP row is a separate question (the
+closed-shell BLYP agrees). Neither is diagnosed. No B3LYP row was in the g09 comparisons of
+`docs/DFT_STANDARDISATION.md`; `short/h2o_rks_B3LYPG_cc-pVDZ` compares Tonto with itself.
+
+**Fixed on the way (`b149adff`), and kept (Dylan, 2026-09-18):**
+`make_u_KS_Fock_mx` added -(f/2)(K.a + K.b) to both spins, right only for a closed shell. UKS
+B3LYP H2O+: -75.862337375 before, -75.905210814 after, ORCA -75.905414918 -- from 4.3e-2 away to
+the same 2.0e-4 as the closed shell. No test uses an unrestricted hybrid.
 
 ## CLOSED 2026-10-04: an unconverged SCF stops the job; the zinc spherical-guess defect (2026-09-17)
 
