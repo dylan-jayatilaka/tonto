@@ -388,6 +388,45 @@ Measured on STO-3G water at `accuracy= high`:
 `b3lypx` — only `b3lypgx` — so the fix reblesses nothing, which is also why the
 reference suite could never have found it.
 
+## 5b. FIXED 2026-10-04: the B3LYP potentials carried the GGA gradient terms unscaled, and the beta-spin B88 potential used the alpha factor
+
+Found from the 2026-09-17 comparison: closed-shell B3LYP was 2.1e-4 Eh above g09 and ORCA in
+both its VWN3 and VWN5 forms (3.1e-4 in a cartesian basis), unrestricted B3LYP on H2O+ 2.0e-4, and
+unrestricted BLYP 1.1e-4, while RHF, UHF and closed-shell BLYP agreed to 1e-9, 2e-10 and 3e-6. The
+B3LYP coefficients and every energy density were right. Both defects were in the potential.
+
+**1. The six B3LYP potential routines** (`new_r_B3LYP_x_potential`, `_c_`, `G_c_` and the `u`
+versions) passed the caller's gradient-potential vectors `Vx, Vy, Vz` straight into
+`new_r_Becke88_x_potential` and `new_r_LYP_c_potential`, which accumulate into them, and scaled
+only `V0` by 0.72 and 0.81. The Fock matrix therefore carried B88's and LYP's gradient terms at
+weight 1. The energy was right, so the SCF converged to the wrong density and the right
+functional was evaluated there: an energy above the true minimum, second order in the potential
+error, which is why it was small and why it changed with the basis. The gradient terms now go into
+work vectors and are scaled like `V_GGA`.
+
+**2. `new_u_Becke88_x_potential`** formed the beta-spin gradient factor as
+`nlb = beta*(zb-ONE-kb)*ka2/rhob_43`, with the alpha-spin `ka2` for `kb2`. Exact for a closed shell,
+wrong for an open one: the unrestricted BLYP discrepancy.
+
+Water, def2-SVP, `eri_accuracy= high`, default grid:
+
+| job | before | after | reference |
+|---|---|---|---|
+| B3LYP/G, spherical, RKS | +2.13e-4 | −2.7e-6 | ORCA −76.3572081004 |
+| B3LYP VWN5 form, spherical, RKS | +2.13e-4 | −2.7e-6 | ORCA −76.3200906619 |
+| B3LYP/G, cartesian, RKS | +3.05e-4 | −2.2e-6 | g09 −76.3588047292 |
+| B3LYP/G H2O+, UKS | +2.0e-4 | −2.3e-6 | ORCA −75.9054149180 |
+| BLYP H2O+, UKS | +1.1e-4 | −3.1e-6 | ORCA −75.8896636512 |
+| BLYP, RKS (control) | −3.2e-6 | −3.2e-6 | g09 −76.3369252175 |
+
+The residual is the default grid, the same as the control. New test:
+`short/h2o+_uks_B3LYPG_def2-SVP`, the first unrestricted hybrid in the suite.
+
+**The lesson for the functional interface** (section 9): a routine that *accumulates* into the
+caller's potential vectors cannot be composed with a coefficient unless every one of its outputs
+is captured and scaled. The libxc-style interface, which returns `vrho` and `vsigma` for one
+functional and leaves the combination to the caller, has no such trap.
+
 ## 6. Defect 5 — the XC energy is never reported
 
 `V_ee` in the results block lumps Coulomb and XC together (37.3425 = J + E_xc for
