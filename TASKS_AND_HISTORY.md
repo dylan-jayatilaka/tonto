@@ -90,9 +90,9 @@ Details in the entry *ADPs as rigid-body motion plus soft modes* under *Science 
 **Next:** step 1 of that plan (ORCA Hessian reader, Eckart projection, `make_internal_ADPs`), then
 TLS against F. New science entry the same day: *Spherical atoms by the right ensemble*. Closed
 2026-10-04: the zinc spherical-guess defect (verified on the finger and Zn(SCH3)2) and the silent
-unconverged SCF (`stop_if_SCF_not_converged`, `die_if_not_converged=`). **Fixed 2026-10-04 on branch
-`b3lyp-potential`:** the B3LYP 2e-4 and unrestricted BLYP 1e-4 discrepancies, two potential-side
-formula errors (`docs/DFT_STANDARDISATION.md` 5b); merge after the achari2 bless. Open from before:
+unconverged SCF (`stop_if_SCF_not_converged`, `die_if_not_converged=`). **Fixed and merged 2026-10-04:** the
+B3LYP 2e-4 and unrestricted BLYP 1e-4 discrepancies, two potential-side formula errors
+(`docs/DFT_STANDARDISATION.md` 5b); one test re-blessed and one added, both on achari2. Open from before:
 `oc-ri` stage (b).
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
