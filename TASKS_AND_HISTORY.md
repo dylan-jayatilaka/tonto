@@ -1564,8 +1564,26 @@ dead keyword line from `develop` and leave the work on its two tags, as was done
 
 # Correctness — open bugs that give wrong answers
 
-## The promolecule guess is wrong in a spherical basis with zinc, and the SCF reports an unconverged energy silently (2026-09-17)
+## An unconverged SCF reports its energy silently (2026-09-17; the zinc spherical-guess half closed 2026-10-03)
 
+> **2026-10-03: defect (1) is closed, verified on the molecules that showed it.** Inputs rebuilt
+> from the versioned coordinates (below, under the zinc-finger benchmark), RHF/6-31G(d), promolecule
+> guess, `develop` after the averaging fix, on the Mac:
+>
+> | job | iteration 0 | converged | iterations | time |
+> |---|---|---|---|---|
+> | Zn(SCH3)2 spherical, exact | -2651.682857 (was -1709.64) | -2651.749614 | 13 (was unconverged at 75) | 23 s |
+> | Zn(SCH3)2 cartesian, exact | -2651.688550 | -2651.756404 | 13 | 23 s |
+> | zinc finger spherical, RIJCOSX | -3101.241287 (was -1943.3) | -3101.464209 | 15 (was unconverged after 24 min) | 4 min 18 s |
+> | zinc finger cartesian, RIJCOSX | -3101.250625 | -3101.475984 | 15 | 4 min 19 s |
+>
+> ORCA exact, spherical: -3101.464459; g09 exact, cartesian: -3101.474630. The spherical-minus-
+> cartesian gap of 7-12 mEh is the basis (the cartesian d carries an extra s function), as between
+> g09 and ORCA. So the "spherical Hamiltonian is wrong" reading below was the bad start alone, and
+> pFON is not needed. **What remains is defect (2):** an SCF that stops unconverged prints its
+> results with no `not converged` line. Register row renamed accordingly. Inputs in
+> `~/.claude/jobs/9b038530/tmp/zn/` on the Mac (scratch; the coordinates are versioned below).
+>
 > **2026-09-27: defect (1) found and fixed on branch `mac-drift`** -- the spherical d/f/g rotation
 > matrices used to average each atom's guess density were not rotations (see the handover at the
 > top). ZnS spherical iteration 0: -1328.60 before, -2174.887 after (cartesian -2174.891). Still
