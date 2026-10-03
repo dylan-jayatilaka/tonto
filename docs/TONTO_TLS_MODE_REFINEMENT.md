@@ -4,9 +4,21 @@
 into the user-facing pages. Live status is the entry in `TASKS_AND_HISTORY.md`, *ADPs as rigid-body
 motion plus soft modes, refined against F*.
 
-**Status 2026-10-03: plan only; nothing built.** Written from a discussion between Dylan and Claude
-on 2026-10-02/03, recorded in §8. The first part, a restraint term in the least squares (§3.7, §5
-step 0), stands on its own and also bears on the quartz Si esd defect.
+**Status 2026-10-03: step 0 is built, on branch `ls-jacobian`** (`36f2a0eb`): the restrained solver
+(0a) and the Jacobian (0b), with isotropic hydrogens and special positions as its first uses. Mac
+suites: 158 tests, the 11 expected failures (esds, N_p, GoF², iteration counts), re-bless on achari2
+pending. Quartz L1's Si position esds went from 0.009–0.018 to 0.00003–0.00008; urea's isotropic-H
+fit from 16 iterations to 4. Written from a discussion between Dylan and Claude on 2026-10-02/03,
+recorded in §8.
+
+**A design decision taken in step 0, which the plan below predates:** site symmetry is imposed as a
+*constraint* through J, not as a restraint with a large weight. The condition is linear and
+homogeneous (R δ = δ, R U Rᵀ = U for every stabiliser operation), so the symmetric subspace is a
+linear space and the stabiliser average is a projector onto it; a basis of that subspace as J's
+columns is exact, needs no weight, and gives zero variance to the fixed directions because they
+have none. A restraint is for a preference, not a symmetry (§3.8 table still lists the restraint
+form, which remains available). Also found: today's filter did not catch quartz's four forbidden
+Si directions, so N_p was 19 and 20 where it is now 15 and 16.
 
 
 ## 1. What this is for
@@ -428,7 +440,7 @@ use it. The TLS algebra needs only positions, so it is not a `CRYSTAL` method.
 
 ### Steps, each with its check
 
-0. **Restraints in the solver** (independent of everything else). `MAT{REAL}` solver, the W and p₀
+0. **DONE on `ls-jacobian`. Restraints in the solver** (independent of everything else). `MAT{REAL}` solver, the W and p₀
    plumbing in `DIFFRACTION_DATA.SET`, p_eff. Check: with W = 0 the full suite is unchanged;
    with the special-position restraint, quartz L1 gives the same Si position and a finite, sensible
    Si esd (the IO note says what to expect), and no other number moves beyond tolerance.

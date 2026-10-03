@@ -96,6 +96,10 @@ contains
       .near_0_IPR.destroy
       .param_labels.destroy
 
+      .X_jacobian.destroy
+      .restraint_W.destroy
+      .restraint_shift.destroy
+
    end
 
    destroy_refinement_data :: leaky, PURE
@@ -246,6 +250,10 @@ contains
 
       .n_data_sets = val
 
+   end
+
+   set_n_param_structure(val) :: get_from(OBJECT:set, VAL_TYPE?=>INT, ARG?=>.n_param_structure), pure
+   ! Set the number of refined structural (pADP) parameters
    end
 
    set_n_param(val) :: PURE
@@ -2476,15 +2484,30 @@ contains
    ENSURE(sig.dim1==.reflections.dim, "wrong size, sig")
    ENSURE(del.dim1==.reflections.dim, "wrong size, del")
 
-      A    :: MAT{REAL}@
-      rhs  :: VEC{REAL}@
+      A,dFp,C,JC :: MAT{REAL}@
+      rhs,dp :: VEC{REAL}@
       eval :: VEC{REAL}@
-      n_refl,n_p, i,j :: INT
-      fac :: REAL
+      n_refl,n_X,n_p, i,j :: INT
+      fac,small :: REAL
+      use_J :: BIN
 
       ! Constants
       n_refl = .reflections.dim
-      n_p    = dF.dim2
+      n_X    = dF.dim2
+
+      ! Derivatives with respect to the refined parameters, dF J.
+      ! Without a Jacobian every pADP component is a parameter.
+      use_J = .X_jacobian.allocated
+      if (use_J) then
+         ENSURE(.X_jacobian.dim1==n_X,"wrong dim1, X_jacobian")
+         n_p = .X_jacobian.dim2
+         dFp.create(n_refl,n_p)
+         dFp.to_product_of(dF,.X_jacobian)
+      else
+         n_p = n_X
+         dFp.create(n_refl,n_p)
+         dFp = dF
+      end
 
       ! Arrays
       A.create(n_p,n_p)
@@ -2493,7 +2516,7 @@ contains
       ! Make the LSQ (normal) matrix
       do i = 1,n_p
       do j = 1,n_p
-         A(i,j) = sum(sig*dF(:,i)*dF(:,j))
+         A(i,j) = sum(sig*dFp(:,i)*dFp(:,j))
       end
       end
 
@@ -2502,23 +2525,53 @@ contains
 
       ! Make the rhs
       do i = 1,n_p
-         rhs(i) = sum(del*dF(:,i))
+         rhs(i) = sum(del*dFp(:,i))
       end
+      dFp.destroy
 
-      ! Solve for the shifts .dX (leaky)
-      A.solve_ill_linear_equations_v1( &
-         rhs            &
-        ,.dX            &
-        ,.near_0_tol    &
-        ,.near_0        &
-        ,.near_0_evals  &
-        ,.near_0_evecs  &
-        , eval          &
-        ,.covariance_mx &
-        ,.correlation_mx)
-
+      ! Solve for the parameter shifts, restrained if weights are set (leaky)
+      dp.create(n_p)
+      if (.restraint_W.allocated) then
+         ENSURE(.restraint_W.dim1==n_p,"wrong size, restraint_W")
+         ENSURE(.restraint_shift.allocated,"no restraint_shift")
+         ENSURE(.restraint_shift.dim==n_p,"wrong size, restraint_shift")
+         A.solve_restrained_linear_equations(rhs,.restraint_W,.restraint_shift,dp, &
+            .near_0_tol,.near_0,.near_0_evals,.near_0_evecs,eval,C,.n_param_eff)
+      else
+         A.solve_ill_linear_equations_v1(rhs,dp,.near_0_tol,.near_0,.near_0_evals,.near_0_evecs,eval,C)
+         .n_param_eff = n_p - .n_0 - .near_0
+      end
       rhs.destroy
       A.destroy
+
+      ! Back to pADP components: dX = J dp, covariance J C J^T
+      .covariance_mx.destroy
+      if (use_J) then
+         .dX.to_product_of(.X_jacobian,dp)
+         JC.create(n_X,n_p)
+         JC.to_product_of(.X_jacobian,C)
+         .covariance_mx.create(n_X,n_X)
+         .covariance_mx.to_product_of(JC,.X_jacobian,transpose_b=TRUE)
+         JC.destroy
+         C.destroy
+      else
+         .dX = dp
+         call move_alloc(C,.covariance_mx)
+      end
+      dp.destroy
+
+      ! Correlation matrix; zero where a parameter has no variance
+      .correlation_mx.destroy
+      .correlation_mx.create(n_X,n_X)
+      small = tiny(ONE)
+      do i = 1,n_X
+      do j = 1,n_X
+         if      (.covariance_mx(i,i).equals(ZERO,small)) then; .correlation_mx(i,j) = ZERO
+         else if (.covariance_mx(j,j).equals(ZERO,small)) then; .correlation_mx(i,j) = ZERO
+         else; .correlation_mx(i,j) = .covariance_mx(i,j)/sqrt(.covariance_mx(i,i)*.covariance_mx(j,j))
+         end
+      end
+      end
 
       ! How many parameters does each near-zero direction actually involve?
       .update_near_0_IPRs
