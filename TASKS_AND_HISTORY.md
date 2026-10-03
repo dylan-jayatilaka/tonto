@@ -3529,6 +3529,28 @@ Multithreaded OpenBLAS would also oversubscribe cores in MPI builds: ranks x thr
 
 # Science and features
 
+## ADPs as rigid-body motion plus soft modes, refined against F (Dylan, 2026-10-03)
+
+**Register row:** *ADPs as rigid-body motion plus soft modes*. Plan: `docs/TONTO_TLS_MODE_REFINEMENT.md`
+(theory, the restraint generalisation of the eigenvalue filter, where the code goes, which procedures
+change, the steps and their checks, and the record of the discussion). Nothing built.
+
+In one line: each atom's ADP becomes U_i = U_i^high + B_i Σ B_iᵀ, with the six rigid-body fields
+(T, L, S) and a few soft internal modes from an imported Hessian in B, the stiff modes' zero-point
+motion in U_i^high fixed, and Σ refined directly against the structure factors. Fewer parameters
+than free U, hydrogen ADPs that mean something, and a refinement optimal for everything at once.
+
+**Step 0 stands alone and comes first:** a restraint term in the normal equations
+(`MAT{REAL}` solver, `DIFFRACTION_DATA.SET:solve_normal_equations`), which is the proper form of the
+eigenvalue filter and is also the proposed cure for the quartz Si esd (special positions by a
+symmetry restraint instead of symmetrising the shift after the solve). With the weights at zero the
+suite must not move.
+
+Found on the way: `multi_t_adp.foo` (2800 lines, 2008/2021) fits mode shapes and frequencies to
+multi-temperature ADPs; it is not in the build and would not compile (`PUIRE` :2116, `PUREj` :2737).
+Leave it; salvage its rigid-body mode construction and amplitude formula. `normal_mode_analysis` does
+not project out the rigid-body motions; that is part of step 1.
+
 ## Callers still on the direct J/K builders (2026-09-16)
 
 `rys-sph` moved the **SCF Fock build** onto the cartesian J/K engine for a spherical basis
