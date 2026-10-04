@@ -83,6 +83,8 @@ python3 ../scripts/test.py --bless \
 
 Drop `--bless` to see the agreement line without touching anything. A `hart` or `rgbi` test takes
 the same `--build-dir`: its `IO` manifest names the program, which is run from that directory.
+A new test has no reference yet: it fails with `NO REFERENCE` and leaves `stdout.bad`, and the
+same command with `--bless` adopts the output as its first reference.
 
 Four rules:
 

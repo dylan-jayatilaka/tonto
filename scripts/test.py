@@ -663,6 +663,16 @@ def run_test(args, test_dir, io_files):
 
             for path in io_files['output']:
                 canonical = abspath(join(test_dir, path))
+                if not os.path.exists(canonical):
+                    # A new test has no reference yet. Fail it plainly, leave
+                    # the output as <path>.bad, and let --bless adopt it.
+                    sys.stdout.write(
+                        'NO REFERENCE %s\n'
+                        '    the test cannot pass until one exists; run test.py\n'
+                        '    on this directory with --bless to adopt this output\n'
+                        % canonical)
+                    files_equivalent.append(False)
+                    continue
                 log.debug('Comparing %s to %s', path, canonical)
                 d = compare_outputs(canonical, path, args)
                 log.debug('Same file: %s', d)
