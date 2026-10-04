@@ -95,7 +95,10 @@ B3LYP 2e-4 and unrestricted BLYP 1e-4 discrepancies, two potential-side formula 
 (`docs/DFT_STANDARDISATION.md` 5b); one test re-blessed and one added, both on achari2. **Also
 2026-10-04:** the XC energy is reported -- `J`, `a_0*E_x` and `E_xc` under `V_ee` for DFT, the
 energy-block labels aligned, 54 references re-blessed (text only) on achari2; the last open
-*Correctness* row, so that register section is gone. Open from before:
+*Correctness* row, so that register section is gone. **2026-10-05:** the three RGBI quick items --
+the dial survey page is a flow of fixed-width boxes, `n_dial_columns=` wide (default 4), all dials
+at one scale; the pruning label has its dots; the four oversized comments are trimmed. No reference
+moved (159/159 on the Mac); two eyeball PDFs regenerated. Open from before:
 `oc-ri` stage (b).
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
@@ -213,7 +216,7 @@ achari2, at `ctest -j6`.** Two notes:
 - **The `samuel` tests are not registered with ctest and cannot run**: the energy breakdown they test
   is switched off, and the first stops for a missing input file. Their references keep the old
   labels. Dylan: they will be revived eventually; low priority.
-- **A label lost its dots:** quartz now prints `Form factors on disk cut to kept reflections, from  1009`,
+- **A label lost its dots (fixed 2026-10-05, branch `rgbi-s-items`):** quartz printed `Form factors on disk cut to kept reflections, from  1009`,
   and `to  1008` under it, lined up with nothing. A small fix, not started.
 
 **The other branch waiting: `exact-final-energy` (`76d1d87f`) -- WIP, an unexplained error.** `scfdata= {
@@ -1495,28 +1498,6 @@ build has. One file, everything else identical, executable relinked each time.
 ---
 
 # Housekeeping
-
-## Trim the oversized source comments once the debugging settles (Dylan, 2026-08-18)
-
-**Status: open, deliberately deferred.** Several routines now carry long explanatory
-comments written during debugging — how a defect was found, which compiler disagreed,
-what the symptom looked like. `CLAUDE.md` §7a is the rule going forward: source comments
-stay brief and explain the *code*, while the investigation belongs in a markdown file.
-The existing slabs are **worth keeping for now**, because we are in the thick of the work
-they describe and the context is still live.
-
-When this settles, sweep them: keep the sentence that stops the bug being reintroduced,
-move the rest into `TASKS_AND_HISTORY.md` or the relevant `docs/` report, and leave a pointer.
-Known offenders, all recent:
-
-- `crystal.foo`, `CRYSTAL:put_asymmetric_FF_symmetrization_rss` — the noise-floor comment
-  (the compiler-to-compiler numbers belong in a document).
-- `spacegroup.foo`, `SPACEGROUP:symmetrize_unique_SFs` — the double-root explanation.
-- `real.foo`, `REAL:get_dp_de_le` — three stacked notes on negative, NaN and tiny esds.
-- `molecule.har.foo` and `crystal.foo` around the fragHAR and disk-FF repairs.
-
-A useful check while sweeping: a comment longer than the code it describes is a candidate,
-and a comment that names a compiler version, a date or a test name almost certainly is.
 
 ## The energy breakdown is inert on `develop` — present, switched off, driver missing (2026-08-18)
 
@@ -4298,12 +4279,6 @@ the XC evaluation, not the point count. Tables in `docs/SCF_SPEED_REPORT.md`.
 
 # Test suite and numerics
 
-## A `show` label that lost its dots (found 2026-09-26)
-
-The form-factor pruning report now prints `Form factors on disk cut to kept reflections, from  1009`
-with `to  1008` under it, lined up with nothing (`long/quartz_NN_HAR_L1_rhf_def2-SVP`). Give it
-`=` labels or make it one sentence, and re-bless the tests that print it.
-
 ## Six registered ctests run in no workflow (found 2026-09-25)
 
 CI runs `scripts/suite_report.py`, never `ctest`, so a check registered only in
@@ -5347,7 +5322,14 @@ than as a plan:
    question 3: it sets the bar any replacement layout has to clear. Render every
    `tests/rgbi/` case and look.
 
-### Smaller, and self-contained: the dial grid's column count is hard-coded
+### DONE 2026-10-05: the dial grid's column count is hard-coded
+
+**Done** on branch `rgbi-s-items`, as proposed below: the survey page is a flow of fixed-width
+`\dialbox`es, `rgbi-dial-header.tex` makes the page exactly `n_dial_columns=` (default 4) boxes
+wide, and LaTeX breaks the rows; `ROBY:put_dial_table_*` no longer count rows or columns. The page
+is one page, tall; `pdfcrop` crops it. All dials keep tikz scale 2, so they share one scale.
+
+*As proposed:*
 
 `ROBY:put_dial_table_do_H` / `_no_H` (`foofiles/roby.foo:7090`, `7143`) hard-code
 **four columns** in three places each — `ceiling(0.25d0*n_bonds)`, `min(l+4,...)`
@@ -5398,12 +5380,8 @@ were cleared of developer material. None is fixed.
 
 **In the pictures**
 
-- **The dial grid's column count is hard-coded to four**, in three places per
-  routine (`ROBY:put_dial_table_do_H`, `foofiles/roby.foo:7090`). Four dials
-  need ~520 pt and `article`'s default `\textwidth` is ~345 pt, so the fourth
-  column fell off the page and `pdfcrop` cut it — visible in the committed
-  reference PDFs. Worked around in `rgbi-dial-header.tex` by giving the page a
-  large canvas.
+- ~~The dial grid's column count is hard-coded to four~~ -- fixed 2026-10-05: the page is a flow
+  of fixed-width boxes, `n_dial_columns=` wide (default 4); see the DONE subsection above.
 - Nothing compares the reference PDFs automatically; they are eyeball targets.
 
 **Reference material not in the repository**
@@ -5961,6 +5939,51 @@ different question and the one that matters.
 # Done, resolved and closed (archive)
 
 *(The next seven entries were closed session logs filed above the themed sections; moved here unchanged on 2026-09-27.)*
+
+## FIXED 2026-10-05: a `show` label that lost its dots (found 2026-09-26)
+
+**Fixed** on branch `rgbi-s-items`: the two lines are now `Form factors on disk, reflections =` and
+`Cut to the kept reflections =`, with dots. No stored test output prints them any more (the quartz
+L1 reference was re-blessed since), so nothing re-blesses.
+
+*The entry as it stood:*
+
+
+The form-factor pruning report now prints `Form factors on disk cut to kept reflections, from  1009`
+with `to  1008` under it, lined up with nothing (`long/quartz_NN_HAR_L1_rhf_def2-SVP`). Give it
+`=` labels or make it one sentence, and re-bless the tests that print it.
+
+## DONE 2026-10-05: trim the oversized source comments (Dylan, 2026-08-18)
+
+**Done** on branch `rgbi-s-items`, for the four offenders named below: the noise-floor and one-digit
+comments in `CRYSTAL:put_asymmetric_FF_symmetrization_rss` (15 and 4 lines to 4 and 2, pointing
+at this file); the two esd notes in `REAL:get_dp_de_le` (11 and 9 lines to 3 and 2); Kang's
+algorithm note on `SPACEGROUP:symmetrize_unique_SFs` (31 lines to 6, keeping the algorithm). The
+"fragHAR and disk-FF repairs" entry named no routine; a search of `molecule.har.foo` and
+`crystal.foo` for comments carrying dates or compiler versions found only the two above.
+
+*The entry as it stood:*
+
+
+**Status: open, deliberately deferred.** Several routines now carry long explanatory
+comments written during debugging — how a defect was found, which compiler disagreed,
+what the symptom looked like. `CLAUDE.md` §7a is the rule going forward: source comments
+stay brief and explain the *code*, while the investigation belongs in a markdown file.
+The existing slabs are **worth keeping for now**, because we are in the thick of the work
+they describe and the context is still live.
+
+When this settles, sweep them: keep the sentence that stops the bug being reintroduced,
+move the rest into `TASKS_AND_HISTORY.md` or the relevant `docs/` report, and leave a pointer.
+Known offenders, all recent:
+
+- `crystal.foo`, `CRYSTAL:put_asymmetric_FF_symmetrization_rss` — the noise-floor comment
+  (the compiler-to-compiler numbers belong in a document).
+- `spacegroup.foo`, `SPACEGROUP:symmetrize_unique_SFs` — the double-root explanation.
+- `real.foo`, `REAL:get_dp_de_le` — three stacked notes on negative, NaN and tiny esds.
+- `molecule.har.foo` and `crystal.foo` around the fragHAR and disk-FF repairs.
+
+A useful check while sweeping: a comment longer than the code it describes is a candidate,
+and a comment that names a compiler version, a date or a test name almost certainly is.
 
 ## FIXED 2026-10-04: B3LYP was 2e-4 Eh from g09 and ORCA, unrestricted BLYP 1e-4 (found 2026-09-17)
 
