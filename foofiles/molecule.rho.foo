@@ -1575,6 +1575,8 @@ contains
    ! shells of batch "b", shell(first_shell(b):last_shell(b)): those whose
    ! "cutoff" sphere reaches the bounding box of the batch's points,
    ! so a shell is kept whenever any point of the batch would keep it.
+   ! The shells are counted first and then listed, so "shell" holds only
+   ! the kept ones: a list sized batches x shells grows as N^2 in memory.
       self :: IN
       pts :: MAT{REAL}, IN
       cutoff :: REAL, IN
@@ -1584,11 +1586,10 @@ contains
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(pts.dim2==3,"pts: need 3 columns")
 
-      cen :: MAT{REAL}@
+      cen,lo,hi :: MAT{REAL}@
       r2m :: VEC{REAL}@
-      lo,hi :: VEC{REAL}(3)
       dd,d2 :: REAL
-      s,b,q,p,j,n,n_b :: INT
+      s,b,q,p,j,n,n_b,pass :: INT
 
       n_b = first.dim
 
@@ -1599,40 +1600,49 @@ contains
          cen(:,s) = .atom(.atom_for_shell(s)).position
       end
 
-      shell.create(n_b*.n_shell)
-      first_shell.create(n_b)
-      last_shell.create(n_b)
-      n = 0
-
+      ! The bounding box of each batch
+      lo.create(3,n_b)
+      hi.create(3,n_b)
+      lo =  huge(ONE)
+      hi = -huge(ONE)
       do b = 1,n_b
-
-         lo =  huge(ONE)
-         hi = -huge(ONE)
          do q = first(b),last(b)
             p = perm(q)
             do j = 1,3
-               lo(j) = min(lo(j),pts(p,j))
-               hi(j) = max(hi(j),pts(p,j))
+               lo(j,b) = min(lo(j,b),pts(p,j))
+               hi(j,b) = max(hi(j,b),pts(p,j))
             end
          end
+      end
 
-         first_shell(b) = n + 1
-         do s = 1,.n_shell
-            d2 = ZERO
-            do j = 1,3
-               dd = max(ZERO,lo(j)-cen(j,s),cen(j,s)-hi(j))
-               d2 = d2 + dd*dd
+      first_shell.create(n_b)
+      last_shell.create(n_b)
+
+      ! Pass 1 counts the kept shells; pass 2 lists them
+      do pass = 1,2
+
+         if (pass==2) shell.create(n)
+         n = 0
+
+         do b = 1,n_b
+            first_shell(b) = n + 1
+            do s = 1,.n_shell
+               d2 = ZERO
+               do j = 1,3
+                  dd = max(ZERO,lo(j,b)-cen(j,s),cen(j,s)-hi(j,b))
+                  d2 = d2 + dd*dd
+               end
+               if (d2>r2m(s)) cycle
+               n = n + 1
+               if (pass==2) shell(n) = s
             end
-            if (d2>r2m(s)) cycle
-            n = n + 1
-            shell(n) = s
+            last_shell(b) = n
          end
-         last_shell(b) = n
 
       end
 
-      shell.shrink(n)
-
+      hi.destroy
+      lo.destroy
       r2m.destroy
       cen.destroy
 
