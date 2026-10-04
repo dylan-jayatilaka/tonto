@@ -272,6 +272,8 @@ contains
          .delta_E_converged = FALSE
          .damping_on        = FALSE
          .damping_off       = FALSE
+         .pFON_on           = FALSE
+         .pFON_off          = FALSE
          .level_shift_on    = FALSE
          .level_shift_off   = FALSE
          .DIIS_converged    = FALSE
@@ -310,6 +312,17 @@ contains
          .damping_off = TRUE
       end
 
+      if (.using_pFON) then
+         if (.apply_pFON AND NOT .pFON_on) then
+            n = n + 1
+            .table_info(1)[n] = " *pFON occupations on"
+            .pFON_on = TRUE
+         else if (NOT .apply_pFON AND .pFON_on AND NOT .pFON_off) then
+            n = n + 1
+            .table_info(1)[n] = " *pFON occupations was off"
+            .pFON_off = TRUE
+         end
+      end
       if (.apply_level_shifting AND NOT .level_shift_on) then
          n = n + 1
          .table_info(1)[n] = " *Levelshift on"
@@ -1370,6 +1383,18 @@ contains
    ! Generic set
    end
 
+   set_pFON_start_temperature(val) :: get_from(OBJECT:set, VAL_TYPE?=>REAL, ARG?=>.pFON_start_temperature), pure
+   ! Generic set
+   end
+
+   set_pFON_cooling_rate(val) :: get_from(OBJECT:set, VAL_TYPE?=>REAL, ARG?=>.pFON_cooling_rate), pure
+   ! Generic set
+   end
+
+   set_pFON_finish(val) :: get_from(OBJECT:set, VAL_TYPE?=>INT, ARG?=>.pFON_finish), pure
+   ! Generic set
+   end
+
    set_using_qq_cluster_charges(val) :: get_from(OBJECT:set, VAL_TYPE?=>BIN, ARG?=>.using_qq_cluster_charges), pure
    ! Generic set
    end
@@ -1570,6 +1595,10 @@ contains
       case ("use_ppzpp=                   "); .read_using_ppzpp_method
       case ("die_if_not_converged=        "); .read_die_if_not_converged
       case ("use_pfon_damping=            "); .read_using_pFON_damping
+      case ("use_pfon=                    "); .read_using_pFON_damping
+      case ("pfon_start_temperature=      "); .read_pFON_start_temperature
+      case ("pfon_cooling_rate=           "); .read_pFON_cooling_rate
+      case ("pfon_finish=                 "); .read_pFON_finish
       case ("use_qq_cluster_charges=      "); .read_using_qq_cluster_charges
       case ("use_sc_cluster_charges=      "); .read_using_SC_cluster_charges
       case ("use_sc_lorentz_fields=       "); .read_using_SC_Lorentz_fields
@@ -2100,6 +2129,18 @@ contains
    ! Read whether an unconverged SCF stops the job
    end
 
+   read_pFON_start_temperature :: get_from(OBJECT:read_and_set, VAL_TYPE?=>REAL, SET?=>.set_pFON_start_temperature), private
+   ! Generic read and set
+   end
+
+   read_pFON_cooling_rate :: get_from(OBJECT:read_and_set, VAL_TYPE?=>REAL, SET?=>.set_pFON_cooling_rate), private
+   ! Generic read and set
+   end
+
+   read_pFON_finish :: get_from(OBJECT:read_and_set, VAL_TYPE?=>INT, SET?=>.set_pFON_finish), private
+   ! Generic read and set
+   end
+
    read_using_pFON_damping :: get_from(OBJECT:read_and_set, VAL_TYPE?=>BIN, SET?=>.set_using_pFON_damping), private
    ! Generic read and set
    end
@@ -2548,30 +2589,30 @@ contains
    end
 
    temperature_for_pFON result (res) :: PURE
-   ! Return the temperature (in Kelvin) to use in the pFON method.
-   ! The temperature applies from iteration 0 i.e. theinitial guess
+   ! Return the temperature (in Kelvin) to use in the pFON method: the
+   ! start temperature cooled by the cooling rate per iteration, from
+   ! iteration 0 (the initial guess), and zero once pFON is off.
    ! NOTE: To see whether to apply pFON use .apply_pFON
       self :: IN
       res :: REAL
 
-      if (.using_pFON) then
-         if      (.DIIS_error<.DIIS_error_temp_cutoff) then; res = ZERO
-         else if (.iteration<20) then;                       res = 1000d0 - 50*.iteration
-         else;                                               res = ZERO
-         end
-      else
-                                                            res = ZERO
+      res = ZERO
+      if (.apply_pFON) then
+         res = max(ZERO, .pFON_start_temperature - .pFON_cooling_rate*.iteration)
       end
 
    end
 
    apply_pFON result (res) :: pure
-   ! Return TRUE if pFON is to be applied this iteration.
+   ! Return TRUE if pFON is to be applied this iteration: it is wanted,
+   ! the DIIS error is still above DIIS_error_temp_cutoff, the iteration
+   ! is before pFON_finish, and the schedule has not cooled to zero.
       self :: IN
       res :: BIN
       if      (NOT .using_pFON) then;                     res = FALSE
       else if (.DIIS_error<.DIIS_error_temp_cutoff) then; res = FALSE
-      else;                                               res = .iteration<20
+      else if (.iteration>=.pFON_finish) then;            res = FALSE
+      else;  res = .pFON_start_temperature - .pFON_cooling_rate*.iteration > ZERO
       end
    end
 
@@ -2964,6 +3005,14 @@ contains
       if (.using_damping) then
       stdout.show("Damping factor                 =", .damp_factor)
       stdout.show("Damping quits at               =", .damp_finish)
+      end
+
+      if (.using_pFON) then
+      stdout.show("Using pFON occupations         =", .using_pFON)
+      stdout.show("pFON start temperature /K      =", .pFON_start_temperature)
+      stdout.show("pFON cooling rate /K per iter  =", .pFON_cooling_rate)
+      stdout.show("pFON quits at                  =", .pFON_finish)
+      stdout.show("pFON quits at DIIS error       =", .DIIS_error_temp_cutoff)
       end
 
       if (.using_MO_gradient_update OR .using_exponential_update) then
