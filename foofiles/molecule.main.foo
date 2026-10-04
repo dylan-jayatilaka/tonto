@@ -426,6 +426,7 @@ contains
       case ("put_hirshfeld_moments         "); .put_HA_moments
       case ("put_hirshfeld_test            "); .put_Hirshfeld_test
       case ("put_ri_ff_check               "); .put_RI_FF_check
+      case ("fit_sph_atom_ffs              "); .fit_sph_atom_FFs
    ! case ("put_interpolator_list         "); .put_interpolator_list
    ! case ("put_km_1e_properties          "); .put_1e_properties_with_KM
       case ("put_mayer_bond_indices        "); .put_Mayer_bond_indices
@@ -1614,6 +1615,129 @@ contains
    end
 
 !  P
+
+   fit_sph_atom_FFs :: leaky
+   ! For every unique fragment atom, fit its spherical form factor (the
+   ! sph- partition model in force) to FF_fit_n_gaussians Gaussians and a
+   ! constant on [0,FF_fit_s_max] through gnuplot (GAUSSIAN_FF_FIT), from
+   ! the International Tables coefficients of its element; print the
+   ! coefficients, the electron count and the fit deviations; and write
+   ! them to <name>.sph_ff.<FF_fit_format>, one atom per entry, headed by
+   ! its label. The fit files of atom X are <name>.X.sph_ff.*.
+      self :: INOUT
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.crystal.allocated,"no crystal")
+   ENSURE(.crystal.xray_data.allocated,"no x-ray data")
+
+      f,s,a,b,ae,be,Cs :: VEC{REAL}@
+      A_all,B_all :: MAT{REAL}@
+      labels :: VEC{STR}@
+      label,stem,out,fmt,comment :: STR
+      c0,ce,s_max,rms,max_dev,n_e :: REAL
+      n_g,n_u,u,c,i,Z :: INT
+      ok :: BIN
+
+      n_g   = .crystal.xray_data.FF_fit_n_gaussians
+      s_max = .crystal.xray_data.FF_fit_s_max
+      fmt   = .crystal.xray_data.FF_fit_format
+      DIE_IF(n_g/=4,"only 4 Gaussians so far: the start comes from the International Tables")
+
+      .make_atom_partition_info
+      .make_r_density_mx
+
+      out = trim(.name)//".sph_ff."//trim(fmt)
+      n_u = .crystal.n_unique_frag_atoms
+
+      stdout.flush
+      stdout.text("=======================================")
+      stdout.text("Spherical form factors fitted to Gaussians")
+      stdout.text("=======================================")
+      stdout.flush
+      stdout.show("Partition model           =",.crystal.xray_data.partition_model)
+      stdout.show("Fit range, s_max          =",s_max)
+      stdout.show("No. of Gaussians          =",n_g)
+      stdout.show("No. of s points           =",.crystal.xray_data.FF_fit_n_points)
+      stdout.show("Coefficients written to   =",out)
+      stdout.flush
+
+      a.create(n_g); b.create(n_g); ae.create(n_g); be.create(n_g)
+      A_all.create(n_u,n_g); B_all.create(n_u,n_g); Cs.create(n_u); labels.create(n_u)
+
+      do u = 1,n_u
+
+         c = .crystal.unique_frag_atom(u)
+         label = .atom(c).label
+         Z = .atom(c).atomic_number
+         stem = trim(.name)//"."//trim(label)//".sph_ff"
+
+         ! The curve, and its electron count
+         .make_sph_atom_FF_curve(f,s,c)
+         n_e = f(1)
+
+         ! Start: the International Tables coefficients of the element
+         ATOM:IT_form_factor_coeffs(Z,a,b,c0)
+
+         GAUSSIAN_FF_FIT:fit(s,f,a,b,c0,s_max,stem,ok,ae,be,ce)
+         DIE_IF(NOT ok,"the fit could not be run: is gnuplot installed?")
+         GAUSSIAN_FF_FIT:deviations(s,f,a,b,c0,s_max,rms,max_dev)
+
+         stdout.flush
+         stdout.text("Atom "//trim(label))
+         stdout.show("Electrons, f(0)           =",n_e)
+         stdout.show("Fitted f(0) = sum a + c   =",sum(a)+c0)
+         stdout.show("rms deviation             =",rms)
+         stdout.show("largest deviation         =",max_dev)
+         stdout.flush
+         stdout.text("     i            a_i          esd(a_i)              b_i          esd(b_i)")
+         do i = 1,n_g
+            stdout.put(i,width=6)
+            stdout.put(a(i))
+            stdout.put(ae(i))
+            stdout.put(b(i))
+            stdout.put(be(i))
+            stdout.flush
+         end
+         stdout.put("     c",width=6)
+         stdout.put(c0)
+         stdout.put(ce)
+         stdout.flush
+         WARN_IF(max_dev>0.005d0,"fit of "//trim(label)//" is off by more than 0.005 e")
+         WARN_IF(any(a<ZERO) OR any(b<ZERO),"fit of "//trim(label)//" has a negative coefficient")
+
+         A_all(u,:) = a
+         B_all(u,:) = b
+         Cs(u) = c0
+         labels(u) = label
+
+         s.destroy
+         f.destroy
+
+      end
+
+      ! The output file, one entry per atom
+      stdout.redirect(out)
+      if (fmt=="table") stdout.text("# label n  a_1..a_n  b_1..b_n  c")
+      do u = 1,n_u
+         a = A_all(u,:)
+         b = B_all(u,:)
+         c = .crystal.unique_frag_atom(u)
+         comment = trim(labels(u))//" Z="//trim(.atom(c).atomic_number.to_str)//" " &
+                   //trim(.crystal.xray_data.partition_model) &
+                   //" fit to s_max="//trim(adjustl(s_max.to_str("f6.3")))//" from "//trim(.name)
+         select case (fmt)
+         case("shelx"); GAUSSIAN_FF_FIT:put_SHELX_SFAC(labels(u),a,b,Cs(u),comment)
+         case("table"); GAUSSIAN_FF_FIT:put_table_line(labels(u),a,b,Cs(u))
+         end
+      end
+      stdout.revert
+
+      labels.destroy; Cs.destroy
+      B_all.destroy;  A_all.destroy
+      be.destroy; ae.destroy
+      b.destroy;  a.destroy
+
+   end
 
    put_RI_FF_check :: leaky
    ! For each unique fragment atom, compare the Hirshfeld atom form factors
