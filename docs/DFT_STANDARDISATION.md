@@ -427,7 +427,7 @@ caller's potential vectors cannot be composed with a coefficient unless every on
 is captured and scaled. The libxc-style interface, which returns `vrho` and `vsigma` for one
 functional and leaves the combination to the caller, has no such trap.
 
-## 6. Defect 5 — the XC energy is never reported
+## 6. FIXED 2026-10-04: the XC energy is never reported
 
 `V_ee` in the results block lumps Coulomb and XC together (37.3425 = J + E_xc for
 the BLYP test), so the XC energy never appears. The only routine that would print
@@ -441,6 +441,26 @@ for pure LDA exchange is `E_x/3`.
 Reporting the XC energy properly would have made every row of the defect-2 table
 obvious at a glance. That is the argument for fixing it: it is not cosmetic, it is
 the missing instrument.
+
+**Fixed.** The XC routines (`add_XC_mx_batched`, `add_GGA_XC_mx`, `add_LDA_XC_mx`, restricted
+and unrestricted) always formed E_xc = Σ w ε_xc ρ and then overwrote it with E_xc − ½ Tr(P·V_xc),
+the correction the energy formula needs. They now hand both back, and `SCF_DATA.XC_energy` keeps
+E_xc. For a hybrid, the scaled exact exchange a₀E_x is one trace at the Fock build, where K is in
+hand: ½ Tr(P·K_scaled) for RKS, −(a₀/2) Σ_σ Tr(P_σ K_σ) for UKS, kept in `exact_exchange_energy`.
+The results block then prints, for a DFT calculation, under the unchanged `V_ee` line:
+
+```
+Electron repulsion energy V_ee    =   (J + a_0 E_x + E_xc, as before)
+Coulomb energy            J       =
+Scaled exact exchange     a_0*E_x =   (hybrids only)
+XC energy                 E_xc    =
+```
+
+so V, −V/T and the total are untouched and the breakdown sits where it belongs. The energy itself
+is not recomputed from the pieces: the stationarity of the Kohn–Sham energy is what makes
+½ Tr P(h+F) plus the correction exact, and the pieces are stored, not re-derived. `put_SCF_energy`
+is deleted. The block's labels were widened so the symbols and `=` signs align, which re-blesses
+every test that prints it (text only).
 
 ## 6a. RESOLVED: the open-shell discrepancy was three separate things
 

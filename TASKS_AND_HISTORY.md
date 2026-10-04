@@ -92,7 +92,10 @@ TLS against F. New science entry the same day: *Spherical atoms by the right ens
 2026-10-04: the zinc spherical-guess defect (verified on the finger and Zn(SCH3)2) and the silent
 unconverged SCF (`stop_if_SCF_not_converged`, `die_if_not_converged=`). **Fixed and merged 2026-10-04:** the
 B3LYP 2e-4 and unrestricted BLYP 1e-4 discrepancies, two potential-side formula errors
-(`docs/DFT_STANDARDISATION.md` 5b); one test re-blessed and one added, both on achari2. Open from before:
+(`docs/DFT_STANDARDISATION.md` 5b); one test re-blessed and one added, both on achari2. **Also
+2026-10-04:** the XC energy is reported -- `J`, `a_0*E_x` and `E_xc` under `V_ee` for DFT, the
+energy-block labels aligned, 54 references re-blessed (text only) on achari2; the last open
+*Correctness* row, so that register section is gone. Open from before:
 `oc-ri` stage (b).
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
@@ -1667,7 +1670,7 @@ only so this register stays complete:
 | An unrecognised functional name silently contributes nothing | `blyp` gave −67.7092 instead of −76.4002, exit 0. **Validation lives at the setter, not the dispatcher**, and that is forced, not a preference: the four dispatchers and both `is_*_functional` queries are `PURE`, and `UNKNOWN` is a `DIE` that expands to an `allocate` — illegal in a pure procedure, and `DIE` is live in release, so no amount of `PURE` helps. `SCF_DATA:set_exchange_functional` and `set_correlation_functional` now carry the live `case default; UNKNOWN(...)`; the six dispatcher defaults stay commented, each with a note saying why. A blank name is admitted explicitly beside `"none"`, because `MOLECULE.FOCK` guards only on `/= "none"`. **Limit:** it catches names arriving through input or `set_*`, which is every real path; it does *not* catch a name injected straight into a dispatcher by new code — the accepted-against-implemented lint of `docs/DFT_STANDARDISATION.md` §12 is what closes that | **FIXED** 2026-08-13 |
 | `gill96` blessed in three places, implemented nowhere | Removed from all three — `scf_data.foo` and `is_GGA_functional` / `is_LDA_functional` — because no Gill96 routine exists anywhere in `foofiles/`. With validation live, leaving it would have made it an accepted name that dies, which is worse than not offering it | **FIXED** 2026-08-13 |
 | **`b3lypx` omitted the exact exchange, silently** (found and FIXED 2026-09-08) | `b3lypx` and `b3lypgx` select the *same* exchange routines, and `new_r_B3LYP_x_energy_density` deliberately computes only `0.08*E_LDA + 0.72*E_GGA` — the `0.2*E_HF` third of B3LYP comes from the Fock matrix, gated on `.using_hybrid_exchange`. `SCF_DATA:set_exchange_functional` sets that flag for `b3lypgx` and **not** for `b3lypx`, so a `b3lypx` job silently drops the exact exchange. Measured (STO-3G water, `accuracy= high`): `b3lypx`/`none` −73.0728 against `b3lypgx`/`none` −74.8819, **1.81 Hartree**, exit 0. No test uses `b3lypx` — only `b3lypgx` — so fixing it reblesses nothing. The name-agreement lint cannot catch this: `b3lypx` has a case in every block; what was missing is one flag assignment | **FIXED** 2026-09-08 — `set_exchange_functional` now sets `.using_hybrid_exchange` for `b3lypx` as it already did for `b3lypgx` |
-| `MOLECULE.SCF:put_SCF_energy` has no callers and mislabels its output | the XC energy is never reported, so none of the above is visible | OPEN |
+| `MOLECULE.SCF:put_SCF_energy` has no callers and mislabels its output | the XC energy is never reported, so none of the above is visible | **FIXED** 2026-10-04 (branch `xc-energy`): the XC routines now hand back E_xc as well as the energy correction, kept in `SCF_DATA.XC_energy`; a hybrid's a_0 E_x is one trace at the Fock build, kept in `exact_exchange_energy`; the results block prints `J`, `a_0*E_x` (hybrids) and `E_xc` under `V_ee` for DFT, and its labels were widened to align. `put_SCF_energy` deleted. See `docs/DFT_STANDARDISATION.md` section 6 |
 
 **One consequence that will surface elsewhere.** Every checked-in DFT reference
 was produced with the default grid rather than the one its own input requests, so
