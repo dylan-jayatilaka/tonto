@@ -153,6 +153,8 @@ results identical (branch `salvador-speed`). Archive entry *a cell list for the 
 stiff-mode ADPs (`make_internal_adps`), and a finite-difference Hessian from Tonto's own SCF
 (`make_fd_hessian`, `fd_hessian_step=`); urea's hydrogen U^high 0.007-0.012 A^2 at 123 K. Details and
 what step 2 must decide in `docs/TONTO_TLS_MODE_REFINEMENT.md` step 1.
+**Held for the next re-bless:** branch `normal-modes-10` (`put_normal_modes` ten modes to a table; changes the
+water and urea normal-mode tests). Merge it when references are next re-blessed on achari2.
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
 
