@@ -3989,36 +3989,6 @@ coupling coefficients.
    promolecule guess line).
 4. Decide whether the averaged-determinant atoms stay available (as the cheap fallback) or go.
 
-## Analytic Hirshfeld-atom partitioning from Mayer-Salvador radii, and an N^2 cell function (Dylan, 2026-09-25)
-
-Two related pieces, both science, neither started.
-
-1. **Cut the Salvador/Becke cell function to N^2.** `BECKE_GRID:make_Salvador_cell_fn` (and
-   `make_Becke_atom_grid`, the same three loops) forms each atom's cell function as a product over
-   *every* other atom `j`, for every point of every atom `i`, with no neighbour condition: N^2 per
-   atom grid, N^3 for the molecule. The Salvador neighbour table (`VEC{ATOM}:make_Salvador_neighbours`)
-   is used only to choose which radii to compute, not to shorten the product. A distance cutoff on
-   `j` -- large enough that the switching function is 1 to working precision beyond it -- makes the
-   weights N^2 like Hirshfeld's; the cutoff can be generous and still pay on anything fragHAR-sized.
-   Check the paper's condition on `j` first, if there is one, and make the cutoff a grid setting
-   so the test suite can show it changes nothing.
-2. **Analytic HAR partitioning: Mayer-Salvador radii from the promolecule density.** Detect the
-   Mayer-Salvador radii on the *promolecule* density (the free-atom sum Hirshfeld already builds)
-   instead of the molecular one, then partition with the analytic Salvador cell function in place of
-   the Hirshfeld stockholder weight. Motivation, measured twice on 2026-09-25: the Salvador moments
-   from the same density and grid are byte-identical where the Hirshfeld moments move by 3-4e-4
-   between BLAS kernels and between release and debug builds, and the parked Hirshfeld-moments item
-   puts the cause in the free-atom densities. An analytic weight that needs the promolecule only for
-   the radii, a one-dimensional search per bonded pair, would be immune to most of that noise. What
-   *2026-10-05:* with the exact spherical average of the ANO atoms, the Hirshfeld, Salvador, `tfvp`
-   and `tfvh` charges and moments of urea all agree to four decimals across two OpenBLAS kernels;
-   the motivation above no longer applies, the models stand on their HAR results. What
-   to establish: that the radii found on the promolecule are close to those found on the molecule;
-   what the partition does to HAR's R factors and ADPs against the Hirshfeld one on urea and
-   gly_ala; and cost, which is item 1. Needs a `partition_model=` value, and its structure factors
-   through the same form-factor path as `oc-salvador` already takes.
-
-
 ## Aspherical form factors by RI density fitting (Dylan, 2026-09-24)
 
 **Status 2026-09-27: stage (a) done, merged to `develop`** (branch `oc-ri`, merge `bd821d23`). `partition_model= oc-ri` fits
@@ -5964,6 +5934,43 @@ different question and the one that matters.
 ---
 
 # Done, resolved and closed (archive)
+
+## CLOSED (2026-10-05): Analytic Hirshfeld-atom partitioning from Mayer-Salvador radii, and an N^2 cell function (Dylan, 2026-09-25)
+
+Both pieces done: the N^2 cell function (2026-09-27), and the analytic Salvador cell with radii
+from the free atoms -- `tfvp` (promolecule minimum, 2026-09-27) and `tfvh` (equal-density point,
+2026-10-05), plus their spherical forms. The results are in `docs/RESEARCH_ON_SALVADOR_MODELS.md`,
+whose residue goes to the keyword help when that document closes. The stability motivation lapsed:
+every partition's moments are kernel-stable since the exact spherical average. Original entry:
+
+Two related pieces, both science, neither started.
+
+1. **Cut the Salvador/Becke cell function to N^2.** `BECKE_GRID:make_Salvador_cell_fn` (and
+   `make_Becke_atom_grid`, the same three loops) forms each atom's cell function as a product over
+   *every* other atom `j`, for every point of every atom `i`, with no neighbour condition: N^2 per
+   atom grid, N^3 for the molecule. The Salvador neighbour table (`VEC{ATOM}:make_Salvador_neighbours`)
+   is used only to choose which radii to compute, not to shorten the product. A distance cutoff on
+   `j` -- large enough that the switching function is 1 to working precision beyond it -- makes the
+   weights N^2 like Hirshfeld's; the cutoff can be generous and still pay on anything fragHAR-sized.
+   Check the paper's condition on `j` first, if there is one, and make the cutoff a grid setting
+   so the test suite can show it changes nothing.
+2. **Analytic HAR partitioning: Mayer-Salvador radii from the promolecule density.** Detect the
+   Mayer-Salvador radii on the *promolecule* density (the free-atom sum Hirshfeld already builds)
+   instead of the molecular one, then partition with the analytic Salvador cell function in place of
+   the Hirshfeld stockholder weight. Motivation, measured twice on 2026-09-25: the Salvador moments
+   from the same density and grid are byte-identical where the Hirshfeld moments move by 3-4e-4
+   between BLAS kernels and between release and debug builds, and the parked Hirshfeld-moments item
+   puts the cause in the free-atom densities. An analytic weight that needs the promolecule only for
+   the radii, a one-dimensional search per bonded pair, would be immune to most of that noise. What
+   *2026-10-05:* with the exact spherical average of the ANO atoms, the Hirshfeld, Salvador, `tfvp`
+   and `tfvh` charges and moments of urea all agree to four decimals across two OpenBLAS kernels;
+   the motivation above no longer applies, the models stand on their HAR results. What
+   to establish: that the radii found on the promolecule are close to those found on the molecule;
+   what the partition does to HAR's R factors and ADPs against the Hirshfeld one on urea and
+   gly_ala; and cost, which is item 1. Needs a `partition_model=` value, and its structure factors
+   through the same form-factor path as `oc-salvador` already takes.
+
+
 
 *(The next seven entries were closed session logs filed above the themed sections; moved here unchanged on 2026-09-27.)*
 
