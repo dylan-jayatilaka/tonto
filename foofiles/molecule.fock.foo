@@ -56,6 +56,8 @@ contains
       .SCF_data.DFT_energy_correction       = ZERO ! Set these to zero since
       .SCF_data.DFT_alpha_energy_correction = ZERO ! they may be calculated
       .SCF_data.DFT_beta_energy_correction  = ZERO
+      .SCF_data.XC_energy             = ZERO
+      .SCF_data.exact_exchange_energy = ZERO
 
       select case (.SCF_data.SCF_kind)
 
@@ -192,6 +194,8 @@ contains
                K.create(.n_bf, .n_bf)
                .make_r_JK(F.r,K,P.r)
                K = K * (-HALF) * .SCF_data.hybrid_exchange_factor
+               ! a_0 E_x: K already carries -a_0/2, and the exchange energy is half the trace
+               .SCF_data.exact_exchange_energy = HALF*P.r.trace_product_with(K)
                F.r = F.r + K
                K.destroy
             else
@@ -203,6 +207,8 @@ contains
                   K.create(.n_bf, .n_bf)
                   .make_r_JK_disk(F.r,K,P.r)
                   K = K * (-HALF) * .SCF_data.hybrid_exchange_factor
+                  ! a_0 E_x: K already carries -a_0/2, and the exchange energy is half the trace
+                  .SCF_data.exact_exchange_energy = HALF*P.r.trace_product_with(K)
                   F.r = F.r + K
                   K.destroy
                else
@@ -331,6 +337,9 @@ contains
             ! Each spin takes its own exchange, as in .make_u_Fock_mx
             F.a = F.a - .SCF_data.hybrid_exchange_factor*K.a
             F.b = F.b - .SCF_data.hybrid_exchange_factor*K.b
+            ! a_0 E_x, with E_x = -(1/2) sum over spins of tr(P K)
+            .SCF_data.exact_exchange_energy = -HALF*.SCF_data.hybrid_exchange_factor &
+               * (P.a.trace_product_with(K.a) + P.b.trace_product_with(K.b))
          end
 
          if (add_xc) .add_XC_mx(F)
@@ -5785,17 +5794,18 @@ contains
    ENSURE(.SCF_data.allocated,"no SCF_data")
    ENSURE(.SCF_data.is_DFT_calculation,"this is not a DFT calculation")
 
-      E :: REAL
+      E,E_xc :: REAL
 
       if (.SCF_data.using_batched_XC) then
-         .add_XC_mx_batched(K,E)
+         .add_XC_mx_batched(K,E,E_xc)
       else if (.SCF_data.using_GGA_functional) then
-         .add_GGA_XC_mx(K,E)
+         .add_GGA_XC_mx(K,E,E_xc)
       else
-         .add_LDA_XC_mx(K,E)
+         .add_LDA_XC_mx(K,E,E_xc)
       end
 
       .SCF_data.DFT_energy_correction = E
+      .SCF_data.XC_energy = E_xc
 
    end
 
@@ -5804,32 +5814,32 @@ contains
       self  :: INOUT
       Ka,Kb :: MAT{REAL}, INOUT
 
-      E,Ea,Eb :: REAL
+      E,Ea,Eb,E_xc :: REAL
 
       if (.SCF_data.using_batched_XC) then
-            .add_XC_mx_batched(Ka,Kb,E,Ea,Eb)
+            .add_XC_mx_batched(Ka,Kb,E,Ea,Eb,E_xc)
       else if (NOT .SCF_data.using_GGA_functional) then
-      !    .add_LDA_XC_mx_old(Ka,Kb,E,Ea,Eb) ! Old
-            .add_LDA_XC_mx(Ka,Kb,E,Ea,Eb)
+            .add_LDA_XC_mx(Ka,Kb,E,Ea,Eb,E_xc)
       else
-      !    .add_GGA_XC_mx_old(Ka,Kb,E,Ea,Eb) ! Old
-            .add_GGA_XC_mx(Ka,Kb,E,Ea,Eb)
+            .add_GGA_XC_mx(Ka,Kb,E,Ea,Eb,E_xc)
       end
 
       .SCF_data.DFT_energy_correction       = E
       .SCF_data.DFT_alpha_energy_correction = Ea
       .SCF_data.DFT_beta_energy_correction  = Eb
+      .SCF_data.XC_energy = E_xc
 
    end
 
 ! LDA
 
-   add_LDA_XC_mx(K,E) :: leaky
+   add_LDA_XC_mx(K,E,E_xc) :: leaky
    ! Add the exchange and correlation matrices to K. This routine supports
    ! local functional only, either exchange or correlation.
       self :: INOUT
       K :: MAT{REAL}, INOUT
       E :: REAL, OUT
+      E_xc :: REAL, OUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.allocated,  "no atom list")
@@ -5886,6 +5896,7 @@ contains
 
       ! Get DFT energy correction
       V.symmetric_reflect
+      E_xc = E  ! the XC energy itself, before it becomes the energy correction
       E = E - HALF*V.trace_product_with(.density_mx.r)
 
       ! Clean
@@ -6069,12 +6080,13 @@ contains
 
 ! GGA
 
-   add_GGA_XC_mx(K,E) :: leaky
+   add_GGA_XC_mx(K,E,E_xc) :: leaky
    ! Add the exchange and correlation matrices to K. This routine
    ! supports non-local functionals, either exchange or correlation.
       self :: INOUT
       K :: MAT{REAL}, INOUT
       E :: REAL, OUT
+      E_xc :: REAL, OUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.allocated,  "no atom list")
@@ -6156,6 +6168,7 @@ contains
 
       ! Get DFT energy correction
       V.symmetric_reflect
+      E_xc = E  ! the XC energy itself, before it becomes the energy correction
       E = E - HALF*V.trace_product_with(.density_mx.r)
       
       ! Clean
@@ -6303,7 +6316,7 @@ contains
 
    end
 
-   add_XC_mx_batched(K,E) :: leaky
+   add_XC_mx_batched(K,E,E_xc) :: leaky
    ! Add the restricted XC matrix to "K" and return the energy correction
    ! "E", as add_GGA_XC_mx(K,E) and add_LDA_XC_mx(K,E) do, batch by batch
    ! over the molecular grid (MOLECULE.RHO:make_XC_batches). Per batch, with
@@ -6314,6 +6327,7 @@ contains
       self :: INOUT
       K :: MAT{REAL}, INOUT
       E :: REAL, OUT
+      E_xc :: REAL, OUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.allocated,  "no atom list")
@@ -6498,19 +6512,21 @@ contains
       K.symmetric_reflect
 
       ! Get DFT energy correction
+      E_xc = E  ! the XC energy itself, before it becomes the energy correction
       E = E - HALF*V.trace_product_with(.density_mx.r)
 
       V.destroy
 
    end
 
-   add_XC_mx_batched(Ka,Kb,E,Ea,Eb) :: leaky
+   add_XC_mx_batched(Ka,Kb,E,Ea,Eb,E_xc) :: leaky
    ! As add_XC_mx_batched(K,E), for the open-shell case: one density and
    ! one XC block per spin, as add_GGA_XC_mx(Ka,Kb,E,Ea,Eb) and
    ! add_LDA_XC_mx(Ka,Kb,E,Ea,Eb) do.
       self    :: INOUT
       Ka,Kb   :: MAT{REAL}, INOUT
       E,Ea,Eb :: REAL, OUT
+      E_xc :: REAL, OUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.allocated,  "no atom list")
@@ -6741,6 +6757,7 @@ contains
       Kb.symmetric_reflect
 
       ! Get DFT energy correction
+      E_xc = Ea + Eb  ! the XC energy itself, before the energy corrections
       Ea = Ea - HALF*Va.trace_product_with(.density_mx.a)
       Eb = Eb - HALF*Vb.trace_product_with(.density_mx.b)
       E  = Ea + Eb
@@ -6830,7 +6847,7 @@ contains
 
 ! LDA
 
-   add_LDA_XC_mx(Ka,Kb,E,Ea,Eb) :: leaky
+   add_LDA_XC_mx(Ka,Kb,E,Ea,Eb,E_xc) :: leaky
    ! Add the exchange and correlation matrices to "Ka", "Kb". Return
    ! the DFT energy corrections "Ea", "Eb" and the total "E". This
    ! routine supports local functional only, either exchange or
@@ -6838,6 +6855,7 @@ contains
       self :: INOUT
       Ka,Kb :: MAT{REAL}, INOUT
       E,Ea,Eb :: REAL, OUT
+      E_xc :: REAL, OUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.allocated,  "no atom list")
@@ -6906,6 +6924,7 @@ contains
       ! Get DFT energy correction
       Va.symmetric_reflect
       Vb.symmetric_reflect
+      E_xc = Ea + Eb  ! the XC energy itself, before the energy corrections
       Ea = Ea - HALF*Va.trace_product_with(.density_mx.a)
       Eb = Eb - HALF*Vb.trace_product_with(.density_mx.b)
       E  = Ea + Eb
@@ -7108,13 +7127,14 @@ contains
 
 ! GGA
 
-   add_GGA_XC_mx(Ka,Kb,E,Ea,Eb) :: leaky
+   add_GGA_XC_mx(Ka,Kb,E,Ea,Eb,E_xc) :: leaky
    ! Add the exchange and correlation matrices to "Ka", "Kb". Return
    ! the DFT energy coorections "Ea", "Eb" and total "E". This routine
    ! supports non-local functionals, either exchange or correlation.
       self    :: INOUT
       Ka,Kb   :: MAT{REAL}, INOUT
       E,Ea,Eb :: REAL, OUT
+      E_xc :: REAL, OUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.allocated,  "no atom list")
@@ -7216,6 +7236,7 @@ contains
       ! Get DFT energy correction
       Va.symmetric_reflect
       Vb.symmetric_reflect
+      E_xc = Ea + Eb  ! the XC energy itself, before the energy corrections
       Ea = Ea - HALF*Va.trace_product_with(.density_mx.a)
       Eb = Eb - HALF*Vb.trace_product_with(.density_mx.b)
       E  = Ea + Eb
