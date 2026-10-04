@@ -463,4 +463,37 @@ What the table says:
   for both position and U_iso, and U_iso values about 15% smaller. The heavy atoms are
   identical.
 
-def2-TZVP: running at the time of writing; to be added.
+### def2-TZVP
+
+| | Hirshfeld | Salvador | `tfvp` | `tfvh` |
+|---|---|---|---|---|
+| R(F) | 0.0228 | 0.0229 | 0.0229 | 0.0229 |
+| GoF | 7.185 | 7.232 | 7.230 | 7.226 |
+| cycles | 4 | 7 | 6 | 6 |
+| time /min | 36 | 51 | 47 | 45 |
+| S1–C8 /Å | 1.7102(15) | 1.7104(15) | 1.7104(15) | 1.7104(15) |
+| O1–C1 /Å | 1.2298(17) | 1.2284(16) | 1.2287(16) | 1.2295(16) |
+| C4–H5 (arom.) | 1.09(2) | 1.088(15) | 1.093(15) | 1.094(15) |
+| C5–H7 (arom.) | 1.11(2) | 1.109(15) | 1.116(15) | 1.117(16) |
+| C6–H4 (arom.) | 1.08(2) | 1.078(14) | 1.087(15) | 1.090(15) |
+| C11–H9 (arom.) | 1.09(2) | 1.092(13) | 1.101(13) | 1.103(14) |
+| C9–H1 (methyl) | 1.08(2) | 1.071(15) | 1.073(16) | 1.074(16) |
+| C9–H3 | 1.08(2) | 1.087(15) | 1.097(16) | 1.100(16) |
+| C9–H10 | 1.09(2) | 1.089(14) | 1.095(15) | 1.097(15) |
+| C10–H2 | 1.08(2) | 1.072(14) | 1.078(15) | 1.079(15) |
+| C10–H6 | 1.10(3) | 1.098(17) | 1.104(18) | 1.107(18) |
+| C10–H8 | 1.11(2) | 1.103(13) | 1.108(14) | 1.109(14) |
+| mean C–H /Å | 1.091 | 1.089 | 1.095 | 1.097 |
+| mean H esd /Å | 0.021 | 0.015 | 0.015 | 0.015 |
+| U_iso H, range /Å² | 0.040–0.057 | 0.035–0.050 | 0.035–0.050 | 0.036–0.051 |
+| mean U_iso H esd /Å² | 0.006 | 0.004 | 0.004 | 0.004 |
+
+The larger basis changes nothing in the comparison: the four models agree with each other
+as they did at def2-SVP, the Salvador mean C–H moves 0.003 Å toward Hirshfeld's, and
+R(F) falls by 0.0003 for all four.
+
+The times are for plain RHF with exact integrals (no RI-J, no COSX), eight jobs sharing one
+Mac, and OpenBLAS left free to use several threads; they compare with each other and not
+with anything else. About 12 of the minutes of every def2-TZVP job went on making the
+ANO data for sulfur, before the SCF began -- the ANO atomic SCF for a third-row atom in a
+triple-zeta basis is slow and worth a look.

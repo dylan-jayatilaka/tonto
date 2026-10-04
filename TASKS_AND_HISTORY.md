@@ -113,7 +113,11 @@ partitions' moments are kernel-stable: on the Mac, `short/urea_ccsd_pob-TZVP_Sal
 under the `neoversen1` and `armv8` OpenBLAS kernels gives the same four printed decimals for every
 charge and moment of all four partitions, Hirshfeld included -- the Hirshfeld movement of 3-4e-4
 went with the exact spherical average (2026-09-27); not re-measured release against debug. Charges by
-partition are in the research document §5. Open from before: `oc-ri` stage (b).
+partition are in the research document §5. **YLID** (C-H bonds only, research document §6): the four
+models agree on every C-H bond within one esd at def2-SVP and def2-TZVP, so the urea N-H
+disagreement belongs to the hydrogen-bonded N-H and not to the partitions. Noticed on the way: the
+sulfur ANO step of a def2-TZVP job takes about 12 min before the SCF starts. Open from before:
+`oc-ri` stage (b).
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
 
