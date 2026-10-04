@@ -1,0 +1,380 @@
+!---------------------------------------------------------------------------
+!
+! GAUSSIAN_FF_FIT: fit a spherical form factor to a few Gaussians.
+!
+! Plain procedures belonging to no object. They fit a form factor f(s),
+! given on points s = sin(theta)/lambda in 1/Angstrom, to the form every
+! crystallographic program reads, the International Tables one,
+!
+!    f(s) = sum_{i=1..n} a_i exp(-b_i s^2) + c,
+!
+! and write the result in the format of a refinement program.
+!
+! The minimiser is gnuplot's "fit" (Levenberg-Marquardt), run through the
+! SYSTEM_COMMAND part of "tonto": the data and a script go to disk, gnuplot
+! runs, and the coefficients come back from a file the script prints. The
+! same script draws f(s) - fit(s). gnuplot absent is not fatal: "ok" comes
+! back FALSE, the start values are returned, and the files are left so the
+! fit can be run by hand.
+!
+! Copyright (C) Dylan Jayatilaka, 2026
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+!---------------------------------------------------------------------------
+
+module GAUSSIAN_FF_FIT
+
+   implicit none
+
+contains
+
+!  ==========
+!  Evaluation
+!  ==========
+
+   gaussian_sum(s,a,b,c) result (res) :: selfless, pure
+   ! The fitted form, sum_i a(i) exp(-b(i) s^2) + c, at every point of "s".
+      s   :: VEC{REAL}, IN
+      a,b :: VEC{REAL}, IN
+      c   :: REAL, IN
+      res :: VEC{REAL}(s.dim)
+
+      i :: INT
+
+      res = c
+      do i = 1,a.dim
+         res = res + a(i)*exp(-b(i)*s*s)
+      end
+
+   end
+
+   deviations(s,f,a,b,c,s_max,rms,max_dev) :: selfless, pure
+   ! The rms and the largest absolute deviation of the fit from "f" over
+   ! the points of "s" within [0,s_max].
+      s,f :: VEC{REAL}, IN
+      a,b :: VEC{REAL}, IN
+      c   :: REAL, IN
+      s_max :: REAL, IN
+      rms,max_dev :: REAL, OUT
+
+      g :: VEC{REAL}(s.dim)
+      d :: REAL
+      i,n :: INT
+
+      g = GAUSSIAN_FF_FIT:gaussian_sum(s,a,b,c)
+
+      rms = ZERO; max_dev = ZERO; n = 0
+      do i = 1,s.dim
+         if (s(i)>s_max) cycle
+         d = abs(f(i)-g(i))
+         rms = rms + d*d
+         max_dev = max(max_dev,d)
+         n = n + 1
+      end
+      if (n>0) rms = sqrt(rms/n)
+
+   end
+
+!  =======
+!  The fit
+!  =======
+
+   fit(s,f,a,b,c,s_max,stem,ok,a_err,b_err,c_err) :: selfless, leaky
+   ! Fit f(s), given at the points "s" (1/Angstrom), on [0,s_max] to
+   ! sum_i a(i) exp(-b(i) s^2) + c. On entry a, b and c are the starting
+   ! values; on exit they are the fit, with their esds in a_err, b_err and
+   ! c_err if wanted. Files written, all headed by "stem":
+   !    <stem>.dat      s and f(s)
+   !    <stem>.gnuplot  the script: the fit, then the difference plot
+   !    <stem>.fit.log  gnuplot's own record of the fit
+   !    <stem>.coeffs   the coefficients and esds, read back here
+   !    <stem>.png      f(s) - fit(s)
+   ! "ok" is FALSE if gnuplot could not be run or its result could not be
+   ! read; a, b and c are then the starting values still.
+   ! MPI: the master rank writes and runs; every rank reads the result.
+      s,f :: VEC{REAL}, IN
+      a,b :: VEC{REAL}, INOUT
+      c   :: REAL, INOUT
+      s_max :: REAL, IN
+      stem  :: STR, IN
+      ok    :: BIN, OUT
+      a_err,b_err :: VEC{REAL}, optional, OUT
+      c_err :: REAL, optional, OUT
+
+      in :: TEXTFILE*
+      ae,be :: VEC{REAL}@
+      data,script,coeffs :: STR
+      ce,wssr :: REAL
+      ndf,i :: INT
+
+   ENSURE(s.dim==f.dim,"s and f differ in length")
+   ENSURE(a.dim==b.dim,"a and b differ in length")
+   ENSURE(a.dim>0,"no Gaussians to fit")
+   ENSURE(s_max>ZERO,"s_max must be positive")
+
+      data   = trim(stem)//".dat"
+      script = trim(stem)//".gnuplot"
+      coeffs = trim(stem)//".coeffs"
+
+      ok = FALSE
+
+      if (tonto.is_master_processor) then
+         GAUSSIAN_FF_FIT:put_data_file(data,s,f,s_max)
+         GAUSSIAN_FF_FIT:put_script(script,stem,a,b,c,s_max)
+         tonto.execute("rm -f '"//trim(coeffs)//"'")
+         tonto.execute("gnuplot '"//trim(script)//"' > /dev/null 2>&1")
+         ok = NOT tonto.command_failed
+         if (ok) ok = stdout.exists(coeffs)
+         if (NOT ok) then
+            stdout.flush
+            stdout.text("WARNING: could not run gnuplot for the form factor fit.")
+            stdout.text("The data and script were written; run it yourself with")
+            stdout.text("   gnuplot '"//trim(script)//"'")
+            stdout.flush
+         end
+      end
+
+      PARALLEL_BARRIER
+      PARALLEL_BROADCAST(ok,tonto.master_processor)
+
+      if (NOT ok) return
+
+      ! Read back: a_i a_i_err b_i b_i_err ... c c_err WSSR NDF
+      ae.create(a.dim)
+      be.create(b.dim)
+      in.create(coeffs)
+      in.open_for("read")
+      do i = 1,a.dim
+         in.read(a(i)); in.read(ae(i))
+         in.read(b(i)); in.read(be(i))
+      end
+      in.read(c); in.read(ce)
+      in.read(wssr); in.read(ndf)
+      in.close
+      in.destroy
+
+      if (present(a_err)) a_err = ae
+      if (present(b_err)) b_err = be
+      if (present(c_err)) c_err = ce
+
+      be.destroy
+      ae.destroy
+
+   end
+
+   put_data_file(data,s,f,s_max) :: selfless, private
+   ! Write "data": two columns, s and f(s), for s within [0,s_max].
+      data :: STR, IN
+      s,f  :: VEC{REAL}, IN
+      s_max :: REAL, IN
+
+      w,p,i :: INT
+
+      w = stdout.real_width
+      p = stdout.real_precision
+      stdout.redirect(data)
+      stdout.set_real_width(22)
+      stdout.set_real_precision(12)
+      stdout.text("# Spherical atom form factor to be fitted")
+      stdout.text("# 1st column: sin(theta)/lambda, 1/Angstrom")
+      stdout.text("# 2nd column: f(s), electrons")
+      do i = 1,s.dim
+         if (s(i)>s_max) cycle
+         stdout.put(s(i))
+         stdout.put(f(i))
+         stdout.flush
+      end
+      stdout.set_real_width(w)
+      stdout.set_real_precision(p)
+      stdout.revert
+
+   end
+
+   put_script(script,stem,a,b,c,s_max) :: selfless, private
+   ! Write the gnuplot "script": the model with its start values, the
+   ! fit on [0,s_max], the print of the coefficients, and the plot of
+   ! the difference.
+      script,stem :: STR, IN
+      a,b :: VEC{REAL}, IN
+      c   :: REAL, IN
+      s_max :: REAL, IN
+
+      fn,via,prt,si,sm :: STR
+      i :: INT
+
+      ! f(x) = a1*exp(-b1*x**2) + ... + c, and the lists for "via" and "print"
+      fn  = "f(x) = c"
+      via = "c"
+      prt = "c, c_err, FIT_WSSR, FIT_NDF"
+      do i = a.dim,1,-1
+         si  = trim(adjustl(i.to_str))
+         fn  = "f(x) = a"//trim(si)//"*exp(-b"//trim(si)//"*x**2) + "//fn(8:)
+         via = "a"//trim(si)//",b"//trim(si)//","//via
+         prt = "a"//trim(si)//", a"//trim(si)//"_err, b"//trim(si)//", b"//trim(si)//"_err, "//prt
+      end
+      sm = trim(adjustl(s_max.to_str("f10.4")))
+
+      stdout.redirect(script)
+      stdout.text("# Fit of a spherical atom form factor to Gaussians, written by Tonto.")
+      stdout.text("# Run with:  gnuplot '"//trim(script)//"'")
+      stdout.text(trim(fn))
+      do i = 1,a.dim
+         si = trim(adjustl(i.to_str))
+         stdout.text("a"//trim(si)//" = "//trim(adjustl(a(i).to_str("es22.14"))))
+         stdout.text("b"//trim(si)//" = "//trim(adjustl(b(i).to_str("es22.14"))))
+      end
+      stdout.text("c = "//trim(adjustl(c.to_str("es22.14"))))
+      stdout.text("set fit quiet")
+      stdout.text("set fit errorvariables")
+      stdout.text("set fit limit 1e-10")
+      stdout.text("set fit maxiter 2000")
+      stdout.text("set fit logfile '"//trim(stem)//".fit.log'")
+      stdout.text("fit [0:"//trim(sm)//"] f(x) '"//trim(stem)//".dat' using 1:2 via "//trim(via))
+      stdout.text("set print '"//trim(stem)//".coeffs'")
+      stdout.text("print "//trim(prt))
+      stdout.text("set terminal pngcairo size 900,600")
+      stdout.text("set output '"//trim(stem)//".png'")
+      stdout.text("set xlabel 'sin(theta)/lambda / 1/Angstrom'")
+      stdout.text("set ylabel 'f(s) - fit(s) / electrons'")
+      stdout.text("set grid")
+      stdout.text("plot '"//trim(stem)//".dat' using 1:($2-f($1)) with lines title 'f(s) - fit'")
+      stdout.revert
+
+   end
+
+!  ======
+!  Output
+!  ======
+
+   put_SHELX_SFAC(label,a,b,c,comment) :: selfless
+   ! Write one SHELX SFAC instruction for a fitted atom type, as
+   !    SFAC label a1 b1 a2 b2 a3 b3 a4 b4 c f' f" mu r wt
+   ! to the current stdout. The fit must have four Gaussians, which is
+   ! what SHELX reads; f', f", mu, r and wt are written as 0, to be
+   ! filled in by the user. "comment" goes before it as a REM line.
+      label :: STR, IN
+      a,b   :: VEC{REAL}, IN
+      c     :: REAL, IN
+      comment :: STR, optional, IN
+
+      w,p,i :: INT
+
+   ENSURE(a.dim==4,"SHELX SFAC takes exactly four Gaussians")
+
+      w = stdout.real_width
+      p = stdout.real_precision
+      if (present(comment)) stdout.text("REM "//trim(comment))
+      stdout.set_real_width(12)
+      stdout.set_real_precision(5)
+      stdout.put("SFAC "//trim(label)//" ",width=10)
+      do i = 1,4
+         stdout.put(a(i))
+         stdout.put(b(i))
+      end
+      stdout.put(c)
+      stdout.text(" =")
+      stdout.put("      ",width=10)
+      stdout.put(ZERO)
+      stdout.put(ZERO)
+      stdout.put(ZERO)
+      stdout.put(ZERO)
+      stdout.put(ZERO)
+      stdout.flush
+      stdout.set_real_width(w)
+      stdout.set_real_precision(p)
+
+   end
+
+   put_table_line(label,a,b,c) :: selfless
+   ! Write one line of the plain table: label, n, a_1..a_n, b_1..b_n, c.
+      label :: STR, IN
+      a,b   :: VEC{REAL}, IN
+      c     :: REAL, IN
+
+      w,p,i :: INT
+
+      w = stdout.real_width
+      p = stdout.real_precision
+      stdout.set_real_width(14)
+      stdout.set_real_precision(6)
+      stdout.put(trim(label),width=8)
+      stdout.put(a.dim,width=4)
+      do i = 1,a.dim
+         stdout.put(a(i))
+      end
+      do i = 1,a.dim
+         stdout.put(b(i))
+      end
+      stdout.put(c)
+      stdout.flush
+      stdout.set_real_width(w)
+      stdout.set_real_precision(p)
+
+   end
+
+!  =====
+!  Check
+!  =====
+
+   check_round_trip result (n_failed) :: selfless, leaky
+   ! Fit the International Tables curve of carbon, made from its own
+   ! coefficients on an even s grid to 2/Angstrom, starting from
+   ! those coefficients perturbed by 10%, and count how many of the
+   ! nine come back further than 1e-4 from where they started.
+   ! Returns -1 if gnuplot could not be run.
+      n_failed :: INT
+
+      s,f,a,b,a0,b0 :: VEC{REAL}@
+      c,c0,rms,max_dev :: REAL
+      i,n :: INT
+      ok :: BIN
+
+      n = 201
+      s.create(n)
+      do i = 1,n
+         s(i) = TWO*(i-1)/(n-1)
+      end
+
+      ! Carbon, International Tables Vol. C, Table 6.1.1.4
+      a0 = [2.31000d0, 1.02000d0, 1.58860d0, 0.865000d0]
+      b0 = [20.8439d0, 10.2075d0, 0.568700d0, 51.6512d0]
+      c0 = 0.215600d0
+      f = GAUSSIAN_FF_FIT:gaussian_sum(s,a0,b0,c0)
+
+      a = 1.1d0*a0; b = 0.9d0*b0; c = 1.1d0*c0
+      GAUSSIAN_FF_FIT:fit(s,f,a,b,c,TWO,"carbon_IT_check",ok)
+
+      if (NOT ok) then
+         n_failed = -1
+      else
+         n_failed = count(abs(a-a0)>1.0d-4) + count(abs(b-b0)>1.0d-4)
+         if (abs(c-c0)>1.0d-4) n_failed = n_failed + 1
+         GAUSSIAN_FF_FIT:deviations(s,f,a,b,c,TWO,rms,max_dev)
+         stdout.flush
+         stdout.text("Round-trip fit of the carbon International Tables curve:")
+         stdout.show("rms deviation         =",rms)
+         stdout.show("largest deviation     =",max_dev)
+         stdout.show("coefficients off      =",n_failed)
+         stdout.flush
+      end
+
+      b.destroy; a.destroy
+      f.destroy; s.destroy
+
+   end
+
+end

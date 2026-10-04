@@ -123,7 +123,13 @@ O=C 1.2570(7) against neutron 1.006/1.000/1.257 (research document §7). No test
 `docs/TONTO_SPHERICAL_FF_FIT_PLAN.md` -- fit the `sph-*` form factors to n Gaussians + constant in
 reciprocal space (default s = 0-2 1/A) through gnuplot's fit, module `GAUSSIAN_FF_FIT`, output in
 the target program's format (BUSTER: format still needed from Dylan/GPhL). Open from before:
-`oc-ri` stage (b).
+`oc-ri` stage (b). **Branch `exphar` (2026-10-05):** the exponential Hirshfeld partition of
+Chodkiewicz & Woźniak (IUCrJ 12, 74, 2025) -- `partition_model= exphar` / `sph-exphar`,
+`exphar_power=` (default 2, their recommendation; the power is a REAL applied inside
+`make_stockholder_atom_weight`). On urea it does what the paper says: N-H3 lengthens with n and at
+n = 2 both N-H are within 0.021/0.007 Å of neutron; `sph-exphar` beats the IAM on R(F) (research
+document §8). Two tests added, to be blessed. Also on the branch: `GAUSSIAN_FF_FIT` (the plan's
+step 2) with its round-trip ctest `gaussian_ff_fit` (skipped where gnuplot is absent).
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
 

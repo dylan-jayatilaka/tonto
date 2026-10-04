@@ -5,7 +5,9 @@ spherically averaged Salvador atom; `tfvp`, the Salvador atom with its radii tak
 from the promolecule; `sph-tfvp`, both at once; and `tfvh`, the Salvador atom with
 each boundary where the two atoms' spherical densities are equal; and `sph-tfvh`, the
 spherical atom with those radii. Sections 1–5 are urea; section 6 is YLID, a crystal with
-C–H bonds only; section 7 is `sph-tfvh`.
+C–H bonds only; section 7 is `sph-tfvh`; section 8 is the exponential Hirshfeld partition
+of Chodkiewicz & Woźniak (`exphar`, `sph-exphar`), which is not a Salvador model but is
+compared on the same jobs.
 
 # 1. Spherically averaged Salvador atoms (`sph-tfva`)
 
@@ -232,17 +234,21 @@ only 0.006 Å, so the comparison does not depend on it.
 | **neutron, 123 K** | | **1.006** | **1.000** | **1.257** | | |
 | IAM (International Tables; SDS H) | -- | 0.905(10) | 0.888(12) | 1.2583(8) | 0.0284 | 6.50 |
 | Hirshfeld | def2-TZVP | 1.025(4) | 0.989(5) | 1.2560(4) | 0.0167 | 2.94 |
+| `exphar` n=2 | def2-TZVP | 1.027(3) | 1.007(4) | 1.2559(4) | 0.0167 | 2.99 |
 | Salvador | def2-TZVP | 1.033(4) | 1.017(4) | 1.2560(4) | 0.0170 | 3.10 |
 | `tfvp` | def2-TZVP | 1.032(4) | 1.017(4) | 1.2558(4) | 0.0170 | 3.07 |
 | `tfvh` | def2-TZVP | 1.029(3) | 1.013(3) | 1.2559(4) | 0.0169 | 3.06 |
 | `sph-tfvh` | def2-TZVP | 1.022(8) | 0.993(9) | 1.2570(7) | 0.0294 | 5.65 |
+| `sph-exphar` n=2 | def2-TZVP | 1.010(7) | 0.981(8) | 1.2581(7) | 0.0282 | 5.38 |
 | `sph-tfvp` | def2-TZVP | 1.045(10) | 0.977(12) | 1.2553(9) | 0.0316 | 7.06 |
 | `sph-tfva` | def2-TZVP | 1.11(2) | 0.954(19) | 1.2518(14) | 0.0422 | 11.0 (no convergence) |
 | Hirshfeld | def2-SVP | 1.028(5) | 0.986(6) | 1.2558(4) | 0.0181 | 3.30 |
+| `exphar` n=2 | def2-SVP | 1.032(4) | 1.010(4) | 1.2557(4) | 0.0183 | 3.37 |
 | Salvador | def2-SVP | 1.038(5) | 1.026(5) | 1.2557(4) | 0.0190 | 3.54 |
 | `tfvp` | def2-SVP | 1.036(4) | 1.023(4) | 1.2555(4) | 0.0188 | 3.48 |
 | `tfvh` | def2-SVP | 1.034(4) | 1.018(4) | 1.2556(4) | 0.0186 | 3.46 |
 | `sph-tfvh` | def2-SVP | 1.033(9) | 1.001(10) | 1.2570(7) | 0.0297 | 5.87 |
+| `sph-exphar` n=2 | def2-SVP | 1.020(8) | 0.989(8) | 1.2582(7) | 0.0283 | 5.55 |
 | `sph-tfvp` | def2-SVP | 1.069(12) | 0.981(15) | 1.2545(10) | 0.0341 | 8.16 |
 | `sph-tfvh` | STO-3G | 1.050(12) | 0.994(13) | 1.2571(11) | 0.0447 | 8.52 |
 | `sph-tfvp` | STO-3G | 1.048(15) | 0.944(15) | 1.2542(13) | 0.0455 | 10.5 |
@@ -255,12 +261,16 @@ Differences from the neutron values, N–H1 / N–H3, in Å:
 |---|---|---|
 | IAM | −0.101 | −0.112 |
 | Hirshfeld, def2-TZVP | +0.019 | −0.011 |
+| `exphar` n=2, def2-TZVP | +0.021 | +0.007 |
+| `sph-exphar` n=2, def2-TZVP | +0.004 | −0.019 |
 | Salvador, def2-TZVP | +0.027 | +0.017 |
 | `tfvp`, def2-TZVP | +0.026 | +0.017 |
 | `tfvh`, def2-TZVP | +0.023 | +0.013 |
 | `sph-tfvh`, def2-TZVP | +0.016 | −0.007 |
 | `sph-tfvp`, def2-TZVP | +0.039 | −0.023 |
 | Hirshfeld, def2-SVP | +0.022 | −0.014 |
+| `exphar` n=2, def2-SVP | +0.026 | +0.010 |
+| `sph-exphar` n=2, def2-SVP | +0.014 | −0.011 |
 | Salvador, def2-SVP | +0.032 | +0.026 |
 | `tfvp`, def2-SVP | +0.030 | +0.023 |
 | `tfvh`, def2-SVP | +0.028 | +0.018 |
@@ -560,3 +570,70 @@ What the numbers say:
 - YLID and a larger molecule with `sph-tfvh`.
 - Whether hydrogen should stay aspherical (§1 found spherical H harmless) — not needed now
   that the all-spherical model converges.
+
+# 8. The exponential Hirshfeld partition (`exphar`, `sph-exphar`)
+
+### The model
+
+Chodkiewicz & Woźniak, IUCrJ 12, 74 (2025): the Hirshfeld weight with every free-atom
+density raised to a power n,
+
+    w_A(r) = ρ⁰_A(r)ⁿ / Σ_B ρ⁰_B(r)ⁿ,
+
+so n = 1 is Hirshfeld and a larger n makes the atoms overlap less (their Table 2: the
+X–H overlap integral falls by more than half from n = 1 to 2). They tested n = 1, 1.25,
+1.5, 2, 3, 4 on ten crystals with neutron references and recommend **n = 2** (expHAR(2)):
+X–H bonds improved for 9 of 10 structures with B3LYP, 8 of 9 with MP2, with R factors
+up to 0.02 % worse. The polar X–H bonds lengthen with n; C–H bonds hardly move.
+
+Code: `partition_model= exphar` (`oc-exphar`) and `sph-exphar` (`oc-sph-exphar`, the
+spherical average of the exphar atom), with `exphar_power= n` (default 2) in
+`xray_data=`. The power is applied inside `MOLECULE.RHO:make_stockholder_atom_weight`
+(`stockholder_exponent`), so every Hirshfeld path — form factors, moments, the spherical
+average — sees it. Branch `exphar`; tests `long/urea_rhf_STO-3G_expHAR` and
+`long/urea_rhf_STO-3G_sph-expHAR`.
+
+### Urea
+
+The urea job of §1–§5 and §7, RHF, no cluster charges.
+
+| urea | n | R(F) | GoF | cycles | N–H1 /Å | N–H3 /Å | O=C /Å | U_iso H1, H3 /Å² |
+|---|---|---|---|---|---|---|---|---|
+| def2-SVP, Hirshfeld | 1 | 0.0181 | 3.30 | 5 | 1.028(5) | 0.986(6) | 1.2558(4) | 0.054(4), 0.048(3) |
+| def2-SVP, `exphar` | 1.5 | 0.0182 | 3.35 | 5 | 1.031(4) | 1.004(5) | 1.2557(4) | 0.050(4), 0.044(2) |
+| def2-SVP, `exphar` | 2 | 0.0183 | 3.37 | 6 | 1.032(4) | 1.010(4) | 1.2557(4) | 0.049(3), 0.043(2) |
+| def2-SVP, `exphar` | 3 | 0.0185 | 3.40 | 8 | 1.034(4) | 1.015(4) | 1.2556(4) | 0.048(3), 0.042(2) |
+| def2-SVP, `sph-exphar` | 2 | 0.0283 | 5.55 | 4 | 1.020(8) | 0.989(8) | 1.2582(7) | 0.044(5), 0.046(4) |
+| def2-TZVP, Hirshfeld | 1 | 0.0167 | 2.94 | 5 | 1.025(4) | 0.989(5) | 1.2560(4) | 0.054(3), 0.046(2) |
+| def2-TZVP, `exphar` | 1.5 | 0.0167 | 2.97 | 5 | 1.026(4) | 1.003(4) | 1.2559(4) | 0.050(3), 0.042(2) |
+| def2-TZVP, `exphar` | 2 | 0.0167 | 2.99 | 6 | 1.027(3) | 1.007(4) | 1.2559(4) | 0.049(3), 0.041(2) |
+| def2-TZVP, `exphar` | 3 | 0.0168 | 3.01 | 8 | 1.029(3) | 1.011(3) | 1.2559(4) | 0.048(3), 0.040(2) |
+| def2-TZVP, `sph-exphar` | 2 | 0.0282 | 5.38 | 4 | 1.010(7) | 0.981(8) | 1.2581(7) | 0.045(5), 0.045(4) |
+| neutron | | | | | 1.006 | 1.000 | 1.257 | |
+
+What the table says:
+
+- **expHAR behaves on urea as the paper says.** N–H3 lengthens steadily with n (def2-TZVP:
+  0.989 → 1.003 → 1.007 → 1.011 Å for n = 1, 1.5, 2, 3), crossing the neutron value
+  between n = 1.5 and 2; N–H1 moves by only 0.004 Å; R(F) is essentially unchanged and
+  GoF rises by 0.05; the hydrogen esds shrink from 0.004–0.005 to 0.003 Å; the hydrogen
+  U_iso fall by 10 %. At n = 2 both N–H are within 0.021 and 0.007 Å of neutron: better
+  than Hirshfeld on N–H3 (−0.011) and marginally worse on N–H1 (+0.019 → +0.021). Each
+  step in n costs a cycle or two (5 → 6 → 8).
+- `exphar` and the Salvador family move the hydrogens the same way — the atom's share of
+  the bond density grows — and `exphar` n = 2 lands between Hirshfeld and `tfvh` on every
+  hydrogen quantity (N–H3: 0.989, **1.007**, 1.013, 1.017 Å for Hirshfeld, exphar, tfvh,
+  Salvador at def2-TZVP). It is the cheapest of the family to run: the same Hirshfeld
+  code, 1.1× the time.
+- **`sph-exphar` n = 2 is the best spherical model on R(F)** — 0.0282 against the IAM's
+  0.0284 and `sph-tfvh`'s 0.0294 — and the best of any model on N–H1 (+0.004 Å), but
+  its N–H3 is 0.019 Å short and its O=C 0.001 Å long (`sph-tfvh`: +0.016, −0.007, 0.000).
+  The two spherical models err in opposite directions on N–H3; both are usable for the
+  Gaussian form-factor fit.
+- Not yet done: a lower n for the spherical model (the paper's logic is about overlap,
+  and the spherical average may want less sharpening), YLID with `exphar`, and the moments.
+
+### Open
+
+- Bless the two tests on achari2.
+- `sph-exphar` at n = 1 (a spherical Hirshfeld atom) and 1.5, for the fit work.

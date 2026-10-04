@@ -436,6 +436,7 @@ set(FOO_SRC
     ${FOO_DIR}/crystal.foo
     ${FOO_DIR}/crystal23.foo
     ${FOO_DIR}/fourier_sums.foo
+    ${FOO_DIR}/gaussian_ff_fit.foo
     ${FOO_DIR}/spherical_harmonic.foo
     ${FOO_DIR}/t_tensor.foo
     ${FOO_DIR}/table_column.foo
@@ -509,6 +510,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/crystal.F90
     ${CMAKE_CURRENT_BINARY_DIR}/crystal23.F90
     ${CMAKE_CURRENT_BINARY_DIR}/fourier_sums.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/gaussian_ff_fit.F90
 #   ${CMAKE_CURRENT_BINARY_DIR}/datafile.F90
     ${CMAKE_CURRENT_BINARY_DIR}/dft_functional.F90
     ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.inq.F90
@@ -671,6 +673,7 @@ set(RUN_SRC
     ${RUNFILE_DIR}/run_qr.foo
     ${RUNFILE_DIR}/run_quadrature.foo
     ${RUNFILE_DIR}/run_lsq_restraint.foo
+    ${RUNFILE_DIR}/run_gaussian_ff_fit.foo
     ${RUNFILE_DIR}/run_shell2.foo
     ${RUNFILE_DIR}/run_real.foo
     ${RUNFILE_DIR}/run_rys.foo
@@ -1102,6 +1105,9 @@ add_executable(run_quadrature    ${CMAKE_CURRENT_BINARY_DIR}/run_quadrature.F90)
 # refinement uses; the `lsq_restraints` ctest. Not EXCLUDE_FROM_ALL for the
 # same reason.
 add_executable(run_lsq_restraint ${CMAKE_CURRENT_BINARY_DIR}/run_lsq_restraint.F90)
+# run_gaussian_ff_fit checks the form-factor fit through gnuplot by a round trip;
+# the `gaussian_ff_fit` ctest, skipped where gnuplot is absent.
+add_executable(run_gaussian_ff_fit ${CMAKE_CURRENT_BINARY_DIR}/run_gaussian_ff_fit.F90)
 add_executable(run_real          EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_real.F90)
 add_executable(run_rys           EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_rys.F90)
 add_executable(run_rgbi          ${CMAKE_CURRENT_BINARY_DIR}/run_rgbi.F90)
@@ -1151,6 +1157,7 @@ target_link_libraries(run_textfile      tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBR
 target_link_libraries(run_system_commands tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_quadrature    tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_lsq_restraint tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_gaussian_ff_fit tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 if(WITH_MPI)
     target_link_libraries(run_mpi_test          tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
     target_link_libraries(run_mpi_test_complete tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
