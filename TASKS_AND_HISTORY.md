@@ -145,7 +145,7 @@ effective Fock on the existing J/K builders) and `fon` (KS with held fractional 
 default (`average`). Atom energies pass the Slater-splitting checks; on urea the HAR moves by nothing
 visible (GoF +0.002), so the default stays. Plan, theory and tables:
 `docs/TONTO_SPHERICAL_ATOM_SCF_PLAN.md`. The one-atom molecule in `make_ANOs_for_atom` stays; the
-Fock split goes with re-engineering. Three tests to bless on achari2, then merge.
+Fock split goes with re-engineering. Three tests blessed on achari2 (full suite 169/169); merged as `d7ef83cd`.
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
 
