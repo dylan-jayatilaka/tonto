@@ -3,7 +3,8 @@
 Variants of the Salvador (TFVA) partition, measured on urea: `sph-tfva`, the
 spherically averaged Salvador atom; `tfvp`, the Salvador atom with its radii taken
 from the promolecule; `sph-tfvp`, both at once; and `tfvh`, the Salvador atom with
-each boundary where the two atoms' spherical densities are equal.
+each boundary where the two atoms' spherical densities are equal. Sections 1–5 are urea;
+section 6 is YLID, a crystal with C–H bonds only.
 
 # 1. Spherically averaged Salvador atoms (`sph-tfva`)
 
@@ -404,3 +405,62 @@ any more.
   C–N boundaries back toward C.
 - Blessing `long/urea_rhf_STO-3G_TFVH_HAR` and the two `Salvador_properties` tests
   (new column) on the Linux reference host.
+
+# 6. YLID: the four models on a crystal with no hydrogen-bond donors
+
+The question from §5: is the N–H disagreement between Hirshfeld and the Salvador family a
+partition effect, or does it come from the hydrogen-bonded environment? YLID
+(2-dimethylsulfuranylidene-1,3-indanedione, C₁₁H₁₀O₂S, 24 atoms) has ten C–H bonds — six
+methyl, four aromatic — and no N–H or O–H.
+
+The job is `long/YLID_IAM_plus_anomalous_residual_density` made into a HAR: the same CIF,
+Cu Kα F² data, `f_sigma_cutoff= 4`, `refine_H_U_iso= YES` (hydrogen isotropic), no
+dispersion correction and no anharmonic sulfur, with the `scfdata=` block and
+`HAR_refinement` of the urea job and only `partition_model=` varied. RHF, no cluster
+charges. The IAM on the same data gives R(F) 0.0275, GoF 8.54.
+
+### def2-SVP
+
+| | Hirshfeld | Salvador | `tfvp` | `tfvh` |
+|---|---|---|---|---|
+| R(F) | 0.0231 | 0.0232 | 0.0233 | 0.0233 |
+| GoF | 7.250 | 7.284 | 7.287 | 7.284 |
+| cycles | 4 | 6 | 6 | 6 |
+| time /min | 7.4 | 11.9 | 12.4 | 12.1 |
+| S1–C8 /Å | 1.7096(15) | 1.7098(15) | 1.7098(15) | 1.7098(15) |
+| O1–C1 /Å | 1.2293(17) | 1.2279(16) | 1.2281(16) | 1.2290(17) |
+| C4–H5 (arom.) | 1.09(2) | 1.088(14) | 1.095(15) | 1.097(16) |
+| C5–H7 (arom.) | 1.11(2) | 1.102(15) | 1.113(15) | 1.117(16) |
+| C6–H4 (arom.) | 1.08(2) | 1.071(14) | 1.083(15) | 1.088(15) |
+| C11–H9 (arom.) | 1.09(2) | 1.086(12) | 1.101(13) | 1.105(14) |
+| C9–H1 (methyl) | 1.08(2) | 1.072(15) | 1.074(16) | 1.075(16) |
+| C9–H3 | 1.08(2) | 1.083(15) | 1.097(16) | 1.102(16) |
+| C9–H10 | 1.09(2) | 1.085(14) | 1.094(15) | 1.097(15) |
+| C10–H2 | 1.08(2) | 1.069(14) | 1.078(15) | 1.081(15) |
+| C10–H6 | 1.10(3) | 1.096(17) | 1.103(17) | 1.108(18) |
+| C10–H8 | 1.11(2) | 1.106(13) | 1.112(14) | 1.113(14) |
+| mean C–H /Å | 1.091 | 1.086 | 1.095 | 1.098 |
+| mean H esd /Å | 0.021 | 0.014 | 0.015 | 0.016 |
+| U_iso H, range /Å² | 0.037–0.056 | 0.033–0.049 | 0.033–0.049 | 0.034–0.050 |
+| mean U_iso H esd /Å² | 0.006 | 0.004 | 0.004 | 0.004 |
+
+Neutron averages for comparison (Allen & Bruno, Acta Cryst. B66, 380, 2010; quoted from memory, check): aromatic C–H
+1.083, methyl C–H 1.077 Å.
+
+What the table says:
+
+- **The N–H effect does not appear in C–H.** In urea every Salvador variant gave N–H
+  0.01–0.04 Å *longer* than Hirshfeld. Here the Salvador mean C–H is 0.005 Å *shorter* than
+  Hirshfeld's, `tfvh` is 0.007 Å longer, and every bond agrees between the models within one
+  esd. So the urea disagreement belongs to the polar, hydrogen-bonded N–H, not to the
+  partitions as such.
+- All four models are 0.01–0.02 Å long against the neutron means, with esds of 0.015–0.02 Å:
+  Cu Kα data to sin θ/λ ≈ 0.6 Å⁻¹ do not place these hydrogens well, and the models cannot be
+  ranked on them.
+- The fits are indistinguishable: R(F) within 0.0002, GoF within 0.04. Hirshfeld converges in
+  4 cycles against 6, and in 60% of the time.
+- As in urea, the Salvador family gives hydrogen esds about 30% smaller than Hirshfeld's,
+  for both position and U_iso, and U_iso values about 15% smaller. The heavy atoms are
+  identical.
+
+def2-TZVP: running at the time of writing; to be added.
