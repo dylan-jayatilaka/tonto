@@ -3,8 +3,9 @@
 Variants of the Salvador (TFVA) partition, measured on urea: `sph-tfva`, the
 spherically averaged Salvador atom; `tfvp`, the Salvador atom with its radii taken
 from the promolecule; `sph-tfvp`, both at once; and `tfvh`, the Salvador atom with
-each boundary where the two atoms' spherical densities are equal. Sections 1–5 are urea;
-section 6 is YLID, a crystal with C–H bonds only.
+each boundary where the two atoms' spherical densities are equal; and `sph-tfvh`, the
+spherical atom with those radii. Sections 1–5 are urea; section 6 is YLID, a crystal with
+C–H bonds only; section 7 is `sph-tfvh`.
 
 # 1. Spherically averaged Salvador atoms (`sph-tfva`)
 
@@ -234,13 +235,16 @@ only 0.006 Å, so the comparison does not depend on it.
 | Salvador | def2-TZVP | 1.033(4) | 1.017(4) | 1.2560(4) | 0.0170 | 3.10 |
 | `tfvp` | def2-TZVP | 1.032(4) | 1.017(4) | 1.2558(4) | 0.0170 | 3.07 |
 | `tfvh` | def2-TZVP | 1.029(3) | 1.013(3) | 1.2559(4) | 0.0169 | 3.06 |
+| `sph-tfvh` | def2-TZVP | 1.022(8) | 0.993(9) | 1.2570(7) | 0.0294 | 5.65 |
 | `sph-tfvp` | def2-TZVP | 1.045(10) | 0.977(12) | 1.2553(9) | 0.0316 | 7.06 |
 | `sph-tfva` | def2-TZVP | 1.11(2) | 0.954(19) | 1.2518(14) | 0.0422 | 11.0 (no convergence) |
 | Hirshfeld | def2-SVP | 1.028(5) | 0.986(6) | 1.2558(4) | 0.0181 | 3.30 |
 | Salvador | def2-SVP | 1.038(5) | 1.026(5) | 1.2557(4) | 0.0190 | 3.54 |
 | `tfvp` | def2-SVP | 1.036(4) | 1.023(4) | 1.2555(4) | 0.0188 | 3.48 |
 | `tfvh` | def2-SVP | 1.034(4) | 1.018(4) | 1.2556(4) | 0.0186 | 3.46 |
+| `sph-tfvh` | def2-SVP | 1.033(9) | 1.001(10) | 1.2570(7) | 0.0297 | 5.87 |
 | `sph-tfvp` | def2-SVP | 1.069(12) | 0.981(15) | 1.2545(10) | 0.0341 | 8.16 |
+| `sph-tfvh` | STO-3G | 1.050(12) | 0.994(13) | 1.2571(11) | 0.0447 | 8.52 |
 | `sph-tfvp` | STO-3G | 1.048(15) | 0.944(15) | 1.2542(13) | 0.0455 | 10.5 |
 | `sph-tfva` | def2-SVP | does not converge (flip-flops) | | | 0.044 | 11.6 |
 | `sph-tfva` | STO-3G | does not converge (H1 runs away) | | | 1.0 | -- |
@@ -254,11 +258,13 @@ Differences from the neutron values, N–H1 / N–H3, in Å:
 | Salvador, def2-TZVP | +0.027 | +0.017 |
 | `tfvp`, def2-TZVP | +0.026 | +0.017 |
 | `tfvh`, def2-TZVP | +0.023 | +0.013 |
+| `sph-tfvh`, def2-TZVP | +0.016 | −0.007 |
 | `sph-tfvp`, def2-TZVP | +0.039 | −0.023 |
 | Hirshfeld, def2-SVP | +0.022 | −0.014 |
 | Salvador, def2-SVP | +0.032 | +0.026 |
 | `tfvp`, def2-SVP | +0.030 | +0.023 |
 | `tfvh`, def2-SVP | +0.028 | +0.018 |
+| `sph-tfvh`, def2-SVP | +0.027 | +0.001 |
 | `sph-tfvp`, def2-SVP | +0.063 | −0.019 |
 
 - Hirshfeld is closest (def2-TZVP within 0.019 Å); the Salvador variants are 0.02–0.03 Å
@@ -268,6 +274,10 @@ Differences from the neutron values, N–H1 / N–H3, in Å:
   cycles, 9.6 min against about 1 min for the others).
 - O=C is close in every model but not within the X-ray esds: against 1.257 Å, Hirshfeld
   1.2558(4) is 3 esds short, `sph-tfvp` 1.2545(10) 2.5 short, IAM 1.2583(8) 1.6 long.
+  `sph-tfvh` gives 1.2570(7) at both bases, the one model on the neutron value.
+- **`sph-tfvh` is the spherical model that works** (§7): closest of all models to the
+  neutron N–H3 at def2-TZVP, within 0.016 Å on N–H1, R(F) 0.0294 against the IAM's 0.0284,
+  where `sph-tfvp` and `sph-tfva` are far worse or do not converge.
 - **The neutron values are quoted without esds** (Wall 2016 gives none), and it is not known
   here whether they are the raw values or those corrected for thermal motion, which the
   original paper also gives. Both are in Swaminathan, Craven & McMullan (1984), not
@@ -497,3 +507,56 @@ Mac, and OpenBLAS left free to use several threads; they compare with each other
 with anything else. About 12 of the minutes of every def2-TZVP job went on making the
 ANO data for sulfur, before the SCF began -- the ANO atomic SCF for a third-row atom in a
 triple-zeta basis is slow and worth a look.
+
+# 7. Spherically averaged, with equal-density radii (`sph-tfvh`)
+
+### The model
+
+`sph-tfvh` is the spherical average of the `tfvh` atom (§5): the Salvador cell function
+with each pair boundary where the two atoms' spherical densities are equal, then averaged
+over angles as in `sph-tfva` (§1). `partition_model= sph-tfvh` (or `oc-sph-tfvh`); branch
+`sph-tfvh`, one dispatch case at each site that has `oc-sph-tfvp`.
+
+### Urea
+
+The same job as §1–§5 (`tests/long/urea_rhf_STO-3G_HAR`, basis and `partition_model=`
+changed). Every run converges, in 4–5 cycles.
+
+| urea | STO-3G | def2-SVP | def2-TZVP |
+|---|---|---|---|
+| R(F) | 0.0447 | 0.0297 | 0.0294 |
+| GoF | 8.52 | 5.87 | 5.65 |
+| cycles | 4 | 5 | 4 |
+| O=C /Å | 1.2571(11) | 1.2570(7) | 1.2570(7) |
+| N–H1 /Å | 1.050(12) | 1.033(9) | 1.022(8) |
+| N–H3 /Å | 0.994(13) | 1.001(10) | 0.993(9) |
+| U_iso H1 /Å² | 0.063(9) | 0.046(5) | 0.047(5) |
+| U_iso H3 /Å² | 0.064(7) | 0.050(5) | 0.050(4) |
+| time /s | 1.5 | 7 | 50 |
+
+Against the other spherical models at def2-SVP: `sph-tfva` never converges (R 0.044,
+GoF 11.6), `sph-tfvp` R 0.0341, GoF 8.16, N–H1 1.069(12), N–H3 0.981(15). Against the
+neutron values (1.006, 1.000, 1.257): `sph-tfvh` at def2-TZVP is +0.016, −0.007 and 0.000 Å.
+
+What the numbers say:
+
+- The spherical atom fails (§1, §3) because C, N and O lose their bonding density and
+  the fit rebuilds it by moving the hydrogens. `sph-tfvh` fails least because its carbon
+  and hydrogens are the largest of the family (§5): more of the bond density is inside
+  the atom that is being averaged, so less is lost in the averaging. The sequence
+  `sph-tfva` → `sph-tfvp` → `sph-tfvh` is the sequence of growing C and H atoms, and GoF
+  falls 11.6 → 8.2 → 5.9.
+- It is still a spherical model: R(F) 0.0294 against 0.0169 for the aspherical `tfvh`,
+  and GoF 5.65 against 3.06, and the hydrogen esds are twice as large. The IAM gives
+  R 0.0284, GoF 6.50 with N–H 0.1 Å short: `sph-tfvh` fits as well as the IAM and puts
+  the hydrogens where the neutrons do.
+- This is the model whose form factors the Gaussian fit of
+  `docs/TONTO_SPHERICAL_FF_FIT_PLAN.md` is for.
+
+### Open
+
+- A test: `long/urea_rhf_STO-3G_sph-TFVH_HAR`, to be blessed on achari2, once the model is
+  judged worth keeping (it is the first spherical model that is).
+- YLID and a larger molecule with `sph-tfvh`.
+- Whether hydrogen should stay aspherical (§1 found spherical H harmless) — not needed now
+  that the all-spherical model converges.
