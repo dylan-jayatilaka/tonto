@@ -2,7 +2,8 @@
 
 Variants of the Salvador (TFVA) partition, measured on urea: `sph-tfva`, the
 spherically averaged Salvador atom; `tfvp`, the Salvador atom with its radii taken
-from the promolecule; and `sph-tfvp`, both at once.
+from the promolecule; `sph-tfvp`, both at once; and `tfvh`, the Salvador atom with
+each boundary where the two atoms' spherical densities are equal.
 
 # 1. Spherically averaged Salvador atoms (`sph-tfva`)
 
@@ -231,11 +232,13 @@ only 0.006 Å, so the comparison does not depend on it.
 | Hirshfeld | def2-TZVP | 1.025(4) | 0.989(5) | 1.2560(4) | 0.0167 | 2.94 |
 | Salvador | def2-TZVP | 1.033(4) | 1.017(4) | 1.2560(4) | 0.0170 | 3.10 |
 | `tfvp` | def2-TZVP | 1.032(4) | 1.017(4) | 1.2558(4) | 0.0170 | 3.07 |
+| `tfvh` | def2-TZVP | 1.029(3) | 1.013(3) | 1.2559(4) | 0.0169 | 3.06 |
 | `sph-tfvp` | def2-TZVP | 1.045(10) | 0.977(12) | 1.2553(9) | 0.0316 | 7.06 |
 | `sph-tfva` | def2-TZVP | 1.11(2) | 0.954(19) | 1.2518(14) | 0.0422 | 11.0 (no convergence) |
 | Hirshfeld | def2-SVP | 1.028(5) | 0.986(6) | 1.2558(4) | 0.0181 | 3.30 |
 | Salvador | def2-SVP | 1.038(5) | 1.026(5) | 1.2557(4) | 0.0190 | 3.54 |
 | `tfvp` | def2-SVP | 1.036(4) | 1.023(4) | 1.2555(4) | 0.0188 | 3.48 |
+| `tfvh` | def2-SVP | 1.034(4) | 1.018(4) | 1.2556(4) | 0.0186 | 3.46 |
 | `sph-tfvp` | def2-SVP | 1.069(12) | 0.981(15) | 1.2545(10) | 0.0341 | 8.16 |
 | `sph-tfvp` | STO-3G | 1.048(15) | 0.944(15) | 1.2542(13) | 0.0455 | 10.5 |
 | `sph-tfva` | def2-SVP | does not converge (flip-flops) | | | 0.044 | 11.6 |
@@ -249,14 +252,16 @@ Differences from the neutron values, N–H1 / N–H3, in Å:
 | Hirshfeld, def2-TZVP | +0.019 | −0.011 |
 | Salvador, def2-TZVP | +0.027 | +0.017 |
 | `tfvp`, def2-TZVP | +0.026 | +0.017 |
+| `tfvh`, def2-TZVP | +0.023 | +0.013 |
 | `sph-tfvp`, def2-TZVP | +0.039 | −0.023 |
 | Hirshfeld, def2-SVP | +0.022 | −0.014 |
 | Salvador, def2-SVP | +0.032 | +0.026 |
 | `tfvp`, def2-SVP | +0.030 | +0.023 |
+| `tfvh`, def2-SVP | +0.028 | +0.018 |
 | `sph-tfvp`, def2-SVP | +0.063 | −0.019 |
 
 - Hirshfeld is closest (def2-TZVP within 0.019 Å); the Salvador variants are 0.02–0.03 Å
-  long; `sph-tfvp` is within 0.04–0.06 Å but uneven; IAM is 0.1 Å short.
+  long, `tfvh` the least so of them (0.023 and 0.013 Å); `sph-tfvp` is within 0.04–0.06 Å but uneven; IAM is 0.1 Å short.
 - def2-SVP -> def2-TZVP moves every aspherical model a few mÅ toward the neutron values and
   lowers R by about 0.002. `sph-tfva` still does not converge in def2-TZVP (stopped after 100
   cycles, 9.6 min against about 1 min for the others).
@@ -269,3 +274,109 @@ Differences from the neutron values, N–H1 / N–H3, in Å:
 - These are small basis sets and an isolated-molecule wavefunction with cluster charges;
   published HAR on these data reaches a few mÅ with larger bases. The comparison between
   models at the same basis is the point here, not the absolute values.
+
+# 5. Salvador atoms with equal-density radii (`tfvh`)
+
+### The model
+
+`tfvh` (topological fuzzy Voronoi Hirshfeld) is the Salvador model with a different
+rule for the boundary on each bonded pair A–B. Instead of the density minimum, the
+boundary is the point on the A–B line where the two atoms' spherical ANO densities are
+equal, ρ_A(r) = ρ_B(r). At that point the **pairwise** Hirshfeld weight
+ρ_A/(ρ_A + ρ_B) is exactly ½, so the Salvador cell function and the pair's Hirshfeld
+weight agree on where the two atoms meet. As in `tfvp`, the radii depend only on the
+geometry and the free atoms, not on the wavefunction; the atom is still the molecular
+density times the cell function.
+
+Only the pair form makes sense. The point where the *full-promolecule* Hirshfeld weight
+of A reaches ½ exists only on bonds where no third atom contributes; on most bonds the
+half-weight surfaces of A and B do not touch, so there is no boundary to find. The
+pair form always has exactly one root, because ρ_A falls and ρ_B rises monotonically
+along the line.
+
+Code: `MOLECULE.RHO:make_Salvador_radii_hirshfeld` and `Hirshfeld_half_radius_for`
+(a bisection on the A–B line, 40 steps); the radii table in a `Salvador_properties`
+job gains an `R(A.B) eq-dens` column. Keyword `partition_model= tfvh` (or `oc-tfvh`);
+branch `tfvh`; test `long/urea_rhf_STO-3G_TFVH_HAR`.
+
+### Where the equal-density point falls
+
+Urea, from `short/urea_ccsd_pob-TZVP_Salvador_properties` (CCSD density, pob-TZVP,
+the CIF geometry). R(A.B) is the distance from A to the boundary with B.
+
+| bond | R(A–B) /Å | R(A.B) molecule /Å | R(A.B) promolecule /Å | R(A.B) equal density /Å |
+|---|---|---|---|---|
+| C–O, from C | 1.2537 | 0.4375 | 0.4616 | 0.5674 |
+| C–N, from C | 1.3400 | 0.4985 | 0.5679 | 0.6346 |
+| N–H1, from N | 1.0077 | 0.8576 | 0.8268 | 0.7398 |
+| N–H2, from N | 0.9930 | 0.8421 | 0.8193 | 0.7340 |
+
+The equal-density point sits well away from the density minimum, and in a consistent
+direction: toward the more electronegative atom for C–O and C–N (the C atom grows by
+0.13 and 0.14 Å), and toward N for N–H (the H atom grows from 0.15 Å of the bond at
+the minimum to 0.27 Å). So `tfvh` hydrogens are the largest of the three Salvador
+variants, and `tfvh` carbon the largest carbon.
+
+### Urea HAR, def2-SVP and def2-TZVP
+
+Same jobs as §2 (`tests/long/urea_rhf_STO-3G_HAR` with the basis changed and only
+`partition_model=` varied). All converge.
+
+| | Hirshfeld | Salvador | `tfvp` | `tfvh` |
+|---|---|---|---|---|
+| **def2-SVP** | | | | |
+| R(F) | 0.0181 | 0.0190 | 0.0188 | 0.0186 |
+| GoF | 3.30 | 3.54 | 3.48 | 3.46 |
+| cycles | 5 | 8 | 7 | 7 |
+| O=C /Å | 1.2558(4) | 1.2557(4) | 1.2555(4) | 1.2556(4) |
+| N–C /Å | 1.3413(3) | 1.3406(3) | 1.3408(3) | 1.3410(3) |
+| N–H1 /Å | 1.028(5) | 1.038(5) | 1.036(4) | 1.034(4) |
+| N–H3 /Å | 0.986(6) | 1.026(5) | 1.023(4) | 1.018(4) |
+| U_iso O /Å² | 0.01512(7) | 0.01517(8) | 0.01516(8) | 0.01515(7) |
+| U_iso N /Å² | 0.02218(8) | 0.02214(9) | 0.02212(9) | 0.02211(9) |
+| U_iso C /Å² | 0.01213(7) | 0.01219(8) | 0.01217(8) | 0.01216(8) |
+| U_iso H1 /Å² | 0.054(4) | 0.050(4) | 0.048(3) | 0.046(3) |
+| U_iso H3 /Å² | 0.048(3) | 0.042(2) | 0.041(2) | 0.040(2) |
+| **def2-TZVP** | | | | |
+| R(F) | 0.0167 | 0.0170 | 0.0170 | 0.0169 |
+| GoF | 2.94 | 3.10 | 3.07 | 3.06 |
+| cycles | 5 | 8 | 7 | 8 |
+| O=C /Å | 1.2560(4) | 1.2560(4) | 1.2558(4) | 1.2559(4) |
+| N–C /Å | 1.3413(3) | 1.3405(3) | 1.3408(3) | 1.3409(3) |
+| N–H1 /Å | 1.025(4) | 1.033(4) | 1.032(4) | 1.029(3) |
+| N–H3 /Å | 0.989(5) | 1.017(4) | 1.017(4) | 1.013(3) |
+| U_iso O /Å² | 0.01513(6) | 0.01516(7) | 0.01516(7) | 0.01515(7) |
+| U_iso N /Å² | 0.02227(7) | 0.02224(8) | 0.02222(8) | 0.02221(8) |
+| U_iso C /Å² | 0.01210(7) | 0.01215(7) | 0.01213(7) | 0.01212(7) |
+| U_iso H1 /Å² | 0.054(3) | 0.049(3) | 0.048(3) | 0.046(3) |
+| U_iso H3 /Å² | 0.046(2) | 0.0402(19) | 0.0400(19) | 0.0392(18) |
+| time /s | 53 | 77 | 73 | 77 |
+
+What the table says:
+
+- The three Salvador variants form a sequence, Salvador → `tfvp` → `tfvh`, in which the
+  N–H bonds shorten (def2-TZVP: N–H3 1.017 → 1.017 → 1.013 Å) and the fit improves a
+  little (GoF 3.10 → 3.07 → 3.06), and every step moves toward Hirshfeld. `tfvh` is the
+  closest of the three to the neutron bonds (+0.023 and +0.013 Å at def2-TZVP, §4) and
+  has the smallest hydrogen esds (0.003 Å).
+- Hirshfeld still fits best (GoF 2.94) and is still closest to neutron for N–H1, but its
+  N–H3 is 0.011 Å *short* where every Salvador variant is long. Averaged over the two
+  bonds, `tfvh` (+0.018) and Hirshfeld (|0.015|) are about equally far from neutron.
+- The heavy-atom bonds and ADPs barely depend on the model: within 0.0008 Å and one or
+  two esds across the four columns.
+- The hydrogen U_iso falls along the same sequence, 0.054 → 0.050 → 0.048 → 0.046 Å² for
+  H1 at def2-SVP: a larger hydrogen atom in the partition means less of the bond density
+  is modelled as hydrogen motion.
+- The cost is that of a Salvador refinement (about 1.5 times Hirshfeld on this job);
+  the bisection for the radii is negligible.
+
+### Open
+
+- The same comparison on a molecule without hydrogen-bond donors, where the N–H
+  disagreement between Hirshfeld and the Salvador family should disappear if it is a
+  partition effect and not a model-of-the-crystal effect.
+- Whether the equal-density boundary should use the *pair* of spherical atoms, as here,
+  or the pair after the promolecule's charge transfer -- which would move the C–O and
+  C–N boundaries back toward C.
+- Blessing `long/urea_rhf_STO-3G_TFVH_HAR` and the two `Salvador_properties` tests
+  (new column) on the Linux reference host.

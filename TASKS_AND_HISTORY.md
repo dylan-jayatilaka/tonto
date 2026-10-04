@@ -78,7 +78,7 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## START HERE, 2026-10-03: exact least-squares constraints merged; next is TLS plan step 1
+## START HERE, 2026-10-05: tfvh built, awaiting its blessing; next is TLS plan step 1
 
 **Merged to `develop` today (`a1553350`): step 0 of `docs/TONTO_TLS_MODE_REFINEMENT.md`.** The
 refinement refines p with X = J p (`DIFFRACTION_DATA.X_jacobian`, built by
@@ -98,8 +98,16 @@ energy-block labels aligned, 54 references re-blessed (text only) on achari2; th
 *Correctness* row, so that register section is gone. **2026-10-05:** the three RGBI quick items --
 the dial survey page is a flow of fixed-width boxes, `n_dial_columns=` wide (default 4), all dials
 at one scale; the pruning label has its dots; the four oversized comments are trimmed. No reference
-moved (159/159 on the Mac); two eyeball PDFs regenerated. Open from before:
-`oc-ri` stage (b).
+moved (159/159 on the Mac); two eyeball PDFs regenerated. **2026-10-05, branch `tfvh`:** a fourth
+Salvador variant, `partition_model= tfvh` -- the cell-function boundary on each bonded pair is where
+the two atoms' spherical ANO densities are equal (the pairwise Hirshfeld weight is 1/2) instead of
+at the density minimum. Only the pair form makes sense: the full-promolecule half-weight surfaces
+of two atoms do not touch. Urea results and the radii are §5 of
+`docs/RESEARCH_ON_SALVADOR_MODELS.md`: `tfvh` is the Salvador variant closest to the neutron N-H
+bonds (+0.023/+0.013 Å at def2-TZVP, Hirshfeld +0.019/-0.011), with the smallest hydrogen esds; the
+sequence Salvador -> tfvp -> tfvh moves every hydrogen quantity toward Hirshfeld. New test
+`long/urea_rhf_STO-3G_TFVH_HAR`; the two `Salvador_properties` tests gain an `R(A.B) eq-dens`
+column. All three to be blessed on achari2, then merge. Open from before: `oc-ri` stage (b).
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
 
