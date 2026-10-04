@@ -185,6 +185,15 @@ add_test(NAME "lsq_restraints"
     COMMAND ${PROJECT_BINARY_DIR}/run_lsq_restraint)
 set_tests_properties("lsq_restraints" PROPERTIES LABELS "short")
 
+# The fit of a spherical form factor to four Gaussians and a constant through
+# gnuplot, by a round trip on the carbon International Tables curve: the
+# coefficients must come back to 1e-4. Skipped (exit 77) where gnuplot is
+# not installed. A second or two.
+add_test(NAME "gaussian_ff_fit"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND ${PROJECT_BINARY_DIR}/run_gaussian_ff_fit)
+set_tests_properties("gaussian_ff_fit" PROPERTIES LABELS "short" SKIP_RETURN_CODE 77)
+
 # Invariant test -- no reference output involved.
 #
 # A Foo procedure that takes arguments is a library routine: it can be called
