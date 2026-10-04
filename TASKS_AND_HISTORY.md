@@ -78,7 +78,7 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## START HERE, 2026-10-05: tfvh built, awaiting its blessing; next is TLS plan step 1
+## START HERE, 2026-10-05: tfvh merged; next is TLS plan step 1
 
 **Merged to `develop` today (`a1553350`): step 0 of `docs/TONTO_TLS_MODE_REFINEMENT.md`.** The
 refinement refines p with X = J p (`DIFFRACTION_DATA.X_jacobian`, built by
@@ -107,7 +107,8 @@ of two atoms do not touch. Urea results and the radii are §5 of
 bonds (+0.023/+0.013 Å at def2-TZVP, Hirshfeld +0.019/-0.011), with the smallest hydrogen esds; the
 sequence Salvador -> tfvp -> tfvh moves every hydrogen quantity toward Hirshfeld. New test
 `long/urea_rhf_STO-3G_TFVH_HAR`; the two `Salvador_properties` tests gain an `R(A.B) eq-dens`
-column. All three to be blessed on achari2, then merge. Open from before: `oc-ri` stage (b).
+column. All three blessed on achari2, where the full suite at `401eee07` passed 160/160 (two usual
+skips); merged to `develop` as `be29dcbf`, branch deleted. Open from before: `oc-ri` stage (b).
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
 
