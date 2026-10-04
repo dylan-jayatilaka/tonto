@@ -116,7 +116,13 @@ went with the exact spherical average (2026-09-27); not re-measured release agai
 partition are in the research document §5. **YLID** (C-H bonds only, research document §6): the four
 models agree on every C-H bond within one esd at def2-SVP and def2-TZVP, so the urea N-H
 disagreement belongs to the hydrogen-bonded N-H and not to the partitions. Noticed on the way: the
-sulfur ANO step of a def2-TZVP job takes about 12 min before the SCF starts. Open from before:
+sulfur ANO step of a def2-TZVP job takes about 12 min before the SCF starts. **`sph-tfvh`**
+(branch `sph-tfvh`, merged): the spherical `tfvh` atom, one dispatch case per site; the first
+spherical model that works -- urea def2-TZVP R 0.0294, GoF 5.65, N-H1 1.022(8), N-H3 0.993(9),
+O=C 1.2570(7) against neutron 1.006/1.000/1.257 (research document §7). No test yet. **Next:**
+`docs/TONTO_SPHERICAL_FF_FIT_PLAN.md` -- fit the `sph-*` form factors to n Gaussians + constant in
+reciprocal space (default s = 0-2 1/A) through gnuplot's fit, module `GAUSSIAN_FF_FIT`, output in
+the target program's format (BUSTER: format still needed from Dylan/GPhL). Open from before:
 `oc-ri` stage (b).
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
