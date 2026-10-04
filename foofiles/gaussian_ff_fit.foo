@@ -106,8 +106,10 @@ contains
    !    <stem>.fit.log  gnuplot's own record of the fit
    !    <stem>.coeffs   the coefficients and esds, read back here
    !    <stem>.png      f(s) - fit(s)
-   ! "ok" is FALSE if gnuplot could not be run or its result could not be
-   ! read; a, b and c are then the starting values still.
+   ! "ok" is FALSE if gnuplot could not be run or every fit failed; a, b
+   ! and c are then the starting values still. A fit that fails (gnuplot
+   ! stops on a singular matrix when two Gaussians fall together) is
+   ! retried from the same a and c with b scaled by 0.7, 1.4, 0.5 and 2.
    ! MPI: the master rank writes and runs; every rank reads the result.
       s,f :: VEC{REAL}, IN
       a,b :: VEC{REAL}, INOUT
@@ -119,10 +121,11 @@ contains
       c_err :: REAL, optional, OUT
 
       cf :: TEXTFILE@
-      ae,be :: VEC{REAL}@
+      ae,be,b0 :: VEC{REAL}@
       data,script,coeffs :: STR
+      scale :: VEC{REAL}(5)
       ce,wssr :: REAL
-      ndf,i :: INT
+      ndf,i,try :: INT
 
    ENSURE(s.dim==f.dim,"s and f differ in length")
    ENSURE(a.dim==b.dim,"a and b differ in length")
@@ -137,18 +140,26 @@ contains
 
       if (tonto.is_master_processor) then
          GAUSSIAN_FF_FIT:put_data_file(data,s,f,s_max)
-         GAUSSIAN_FF_FIT:put_script(script,stem,a,b,c,s_max)
-         tonto.execute("rm -f '"//trim(coeffs)//"'")
-         tonto.execute("gnuplot '"//trim(script)//"' > /dev/null 2>&1")
-         ok = NOT tonto.command_failed
-         if (ok) ok = stdout.exists(coeffs)
+         b0 = b
+         scale = [ONE,0.7d0,1.4d0,HALF,TWO]
+         do try = 1,scale.dim
+            b = scale(try)*b0
+            GAUSSIAN_FF_FIT:put_script(script,stem,a,b,c,s_max)
+            tonto.execute("rm -f '"//trim(coeffs)//"'")
+            tonto.execute("gnuplot '"//trim(script)//"' > /dev/null 2>&1")
+            ok = NOT tonto.command_failed
+            if (ok) ok = stdout.exists(coeffs)
+            if (ok) exit
+         end
          if (NOT ok) then
+            b = b0
             stdout.flush
-            stdout.text("WARNING: could not run gnuplot for the form factor fit.")
-            stdout.text("The data and script were written; run it yourself with")
+            stdout.text("WARNING: the form factor fit "//trim(stem)//" failed from every start.")
+            stdout.text("The data and the last script were written; see")
             stdout.text("   gnuplot '"//trim(script)//"'")
             stdout.flush
          end
+         b0.destroy
       end
 
       PARALLEL_BARRIER
