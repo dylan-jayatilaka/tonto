@@ -138,7 +138,14 @@ Gaussian sum follows; exp(polynomial) is far worse. Four tests blessed on achari
 merged to `develop`. **Next on this item:** the BUSTER format (needs a sample file from Dylan), then
 the two-stage non-negative fit if 0.02 e matters. **Later on 2026-10-05:** procedure-name case
 normalised (65 call sites and headers in 16 files; `scripts/check_procedure_case.py`, ctest
-`procedure_case`); the entry is archived.
+`procedure_case`); the entry is archived. pFON checked (two defects fixed, schedule settable, measured
+on twelve molecules: never saves an iteration; stays off; branch `pfon` merged). **Branch `atom-scf`:**
+*Spherical atoms by the right ensemble* -- `ano_kind= aoc` (HF average of configuration, Roothaan's
+effective Fock on the existing J/K builders) and `fon` (KS with held fractional occupations), off by
+default (`average`). Atom energies pass the Slater-splitting checks; on urea the HAR moves by nothing
+visible (GoF +0.002), so the default stays. Plan, theory and tables:
+`docs/TONTO_SPHERICAL_ATOM_SCF_PLAN.md`. The one-atom molecule in `make_ANOs_for_atom` stays; the
+Fock split goes with re-engineering. Three tests to bless on achari2, then merge.
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
 

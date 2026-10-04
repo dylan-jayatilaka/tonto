@@ -107,6 +107,50 @@ two open shells and fall back to the post-facto average, with a note.
   table as the research document's: this is the test of the implications Dylan asked for
   before any default changes.
 
+## 4a. What was measured (2026-10-05, branch `atom-scf`)
+
+Atoms in cc-pVDZ, the atomic SCF behind the ANOs (`make_anos`, `guess_output= TRUE`):
+
+| atom | `average` (UHF, then averaged) | `aoc` | difference | expected |
+|---|---|---|---|---|
+| H | −0.499278 | −0.499278 | 0 | a = 0: the UHF 1s exactly |
+| C | −37.686669 | −37.653277 | +0.033 | 3F₂ of p², ≈ 0.03 with HF-sized F₂ |
+| N | −54.391354 | −54.282559 | +0.109 | 9F₂ of p³, ≈ 0.11 |
+| O | −74.792301 | −74.745756 | +0.047 | 3F₂ of p⁴, ≈ 0.047 |
+| F | −99.375328 | −99.371151 | +0.004 | p⁵ has one term: UHF's spin contamination |
+
+(The Slater relations: for p² and p⁴ the configuration average lies 3F₂ above the ³P
+term, for p³ 9F₂ above ⁴S, with F₂ the Slater integral F²/25; the experimental ¹D–³P and
+²D–⁴S splittings give F₂, and HF overestimates them by about 30 %.) So the average of
+configuration is implemented right. `fon` with BLYP: C −37.789, O −74.990, converged in
+6 and 10 iterations.
+
+Urea HAR (`tests/long/urea_rhf_STO-3G_HAR` with the basis changed), the test Dylan asked
+for before any default moves:
+
+| | R(F) | GoF | cycles | O=C /Å | N–H1 /Å | N–H3 /Å | U_iso H1, H3 /Å² |
+|---|---|---|---|---|---|---|---|
+| RHF def2-SVP, `average` | 0.0181 | 3.3041 | 5 | 1.2558(4) | 1.028(5) | 0.986(6) | 0.054(4), 0.048(3) |
+| RHF def2-SVP, `aoc` | 0.0181 | 3.3069 | 5 | 1.2558(4) | 1.028(5) | 0.986(6) | 0.054(4), 0.048(3) |
+| RHF def2-TZVP, `average` | 0.0167 | 2.9352 | 5 | 1.2560(4) | 1.025(4) | 0.989(5) | 0.054(3), 0.046(2) |
+| RHF def2-TZVP, `aoc` | 0.0167 | 2.9370 | 5 | 1.2560(4) | 1.025(4) | 0.988(5) | 0.054(3), 0.046(2) |
+| BLYP def2-SVP, `average` | 0.0159 | 2.6734 | 22 | 1.2561(3) | 1.013(4) | 0.990(5) | 0.046(3), 0.044(2) |
+| BLYP def2-SVP, `fon` | 0.0159 | 2.6643 | 100, not converged | 1.2561(3) | 1.013(4) | 0.991(5) | 0.047(3), 0.045(2) |
+
+- **The ensemble atom changes the HAR by nothing visible**: GoF by 0.002–0.003, no bond
+  or ADP by a printed digit. The Hirshfeld weight is a ratio of free-atom densities, and
+  the spherical average of the UHF atom and the average-of-configuration atom differ
+  too little in that ratio to matter. In STO-3G they do not differ at all (one radial
+  function per shell), so `long/urea_rhf_STO-3G_HAR_ANO_aoc` reproduces the Hirshfeld
+  test's R and GoF exactly and checks only that the path runs.
+- The BLYP refinement with `fon` atoms did not converge in 100 cycles where `average`
+  took 22; the parameters it circles are the `average` ones within one esd. A BLYP HAR
+  on this job is slow to settle either way (22 cycles against 5 for RHF), which is a
+  separate thing to look at.
+- Conclusion for the default: there is no numerical reason to change it, and no harm
+  in leaving `aoc` available. The scientific point stands — the ensemble atom is the
+  stationary object — but on urea it is not a different answer.
+
 ## 5. Later
 
 - Two open shells (Cr, Cu, and excited configurations): Roothaan's general coupling.
