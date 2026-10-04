@@ -31,7 +31,9 @@ Decisions taken (Dylan, 2026-10-05):
   already in Tonto (`ATOM:HF_n0_form_factor_coeff`, with the SDS and HF hydrogen sets).
 - The minimiser is **gnuplot's `fit`** (Levenberg–Marquardt), run from Tonto through
   `SYSTEM_COMMAND`, which also draws the difference plot f(s) − fit(s).
-- The output format is an **option**; a plain table of a, b, c is the default.
+- The output format is an **option**. SHELX `SFAC` first (Dylan, 2026-10-05: BUSTER's
+  format is not public; SHELX is easy to change later), one entry per atom with the atom's
+  label, since every atom gets its own form factor — there is no per-element averaging.
 
 ## 2. The pieces, and where they go
 
@@ -157,7 +159,30 @@ from Global Phasing. Until it arrives the writer is a stub that `DIE`s with that
 
 ## 6. Order of work
 
-1. `sph-tfvh` wired in (branch `sph-tfvh`, 2026-10-05) and checked on urea.
-2. `GAUSSIAN_FF_FIT` with the free-atom round-trip test.
-3. `make_sph_atom_FF_curve` and the driver keyword; urea test; the `table` writer.
+1. `sph-tfvh` wired in (branch `sph-tfvh`, 2026-10-05) and checked on urea. Done.
+2. `GAUSSIAN_FF_FIT` with the free-atom round-trip test (`gaussian_ff_fit` ctest). Done,
+   branch `exphar`.
+3. `make_sph_atom_FF_curve`, the `fit_sph_atom_ffs` keyword with its `FF_fit_*` settings,
+   the `shelx` and `table` writers, test `long/urea_rhf_STO-3G_sph-TFVH_FF_fit`. Done,
+   branch `exphar`.
 4. The BUSTER writer, when the format is in hand.
+
+## 7. What the first fits showed (urea, `sph-tfvh`, STO-3G, 2026-10-05)
+
+- gnuplot's fit is exact where the model is: the carbon International Tables curve comes
+  back to 1e-13 in every coefficient from a 10 % perturbed start.
+- On the molecular curves the plain fit went to **negative coefficients** (C a₄ = −3.4,
+  H3 a₁ = −5.9) and **degenerate pairs** (two Gaussians with the same b and esds of 1e9).
+  The fit is now done in square roots, A² exp(−B² s²), which keeps every coefficient
+  positive; the degenerate pairs remain (O: b₁ = b₂ = 9.527; C: three Gaussians at
+  b = 12.78; H: pairs at 3.95), which says four Gaussians are more than these curves need
+  over 0–2 Å⁻¹. They are harmless for use — the pair sums to one Gaussian — but their
+  esds mean nothing, and the deviations are the measure of the fit.
+- Deviations: H 0.001 e largest; O 0.005; C and N 0.02 e (0.3 % of f). The International
+  Tables fits reach 0.001–0.005 on free atoms. Whether 0.02 e matters for a protein
+  refinement is to be judged against the data; if it does, the options are a different
+  start (a free-atom fit of the *molecular* curve's own first Gaussians), weights that
+  favour low s, or a fifth Gaussian where the format allows one.
+- The reference of the fit test carries gnuplot's result, so a degenerate pair may split
+  differently on another platform. If the test proves flaky across machines, print the
+  coefficients to the file only and keep f(0) and the deviations in the stdout.
