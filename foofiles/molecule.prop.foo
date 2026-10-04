@@ -44,15 +44,168 @@ contains
 
    end
 
+   make_FD_hessian :: leaky
+   ! Make .force_constants, the Cartesian Hessian, by central differences
+   ! of SCF energies with step .FD_hessian_step (bohr):
+   !    H_ii = (E(+i) + E(-i) - 2 E0)/h^2
+   !    H_ij = (E(+i+j) - E(+i-j) - E(-i+j) + E(-i-j))/(4 h^2)
+   ! The SCF must have been done at the reference geometry; its options
+   ! are used for every displaced SCF, each starting from the density of
+   ! the one before. Translational invariance -- each atom's block row of
+   ! H sums to zero over the atoms -- gives the last atom's rows, unless
+   ! cluster charges or an applied field break it. The gradient comes from
+   ! the same energies and is printed: away from a stationary point the
+   ! rotational sum rule does not hold, and the Eckart projection in
+   ! normal_mode_analysis is then an approximation.
+      self :: INOUT
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.SCF_data.allocated,"no SCF data: do an SCF first")
+   ENSURE(.FD_hessian_step>ZERO,"fd_hessian_step= must be positive")
+
+      geom0,Ep,Em,grad :: VEC{REAL}@
+      FC :: MAT{REAL}@
+      E0,h,epp,epm,emp,emm :: REAL
+      n3n,n,i,j,a,b,n_scf :: INT
+      invariant,out :: BIN
+
+      n3n = 3*.atom.dim
+      h   = .FD_hessian_step
+      E0  = .SCF_data.energy
+
+      ! Coordinates differenced: all, or all but the last atom's
+      invariant = NOT .SCF_data.using_cluster_charges AND all(.E_field==ZERO)
+      n = n3n
+      if (invariant AND .atom.dim>1) n = n3n - 3
+
+      geom0.create(n3n)
+      .atom.put_coordinate_vector_to(geom0)
+      out = .SCF_data.output
+      .SCF_data.set_output(FALSE)
+
+      ! Single displacements: the diagonal and the gradient
+      Ep.create(n)
+      Em.create(n)
+      grad.create(n)
+      FC.create(n3n,n3n)
+      FC = ZERO
+      do i = 1,n
+         Ep(i) = .FD_hessian_energy(geom0,i,1,0,0)
+         Em(i) = .FD_hessian_energy(geom0,i,-1,0,0)
+         FC(i,i)  = (Ep(i) + Em(i) - TWO*E0)/(h*h)
+         grad(i) = (Ep(i) - Em(i))/(TWO*h)
+      end
+      n_scf = 2*n
+
+      ! Double displacements: the off-diagonal elements
+      do i = 1,n
+      do j = i+1,n
+         epp = .FD_hessian_energy(geom0,i, 1,j, 1)
+         epm = .FD_hessian_energy(geom0,i, 1,j,-1)
+         emp = .FD_hessian_energy(geom0,i,-1,j, 1)
+         emm = .FD_hessian_energy(geom0,i,-1,j,-1)
+         FC(i,j) = (epp - epm - emp + emm)/(FOUR*h*h)
+         FC(j,i) = FC(i,j)
+      end
+      end
+      n_scf = n_scf + 4*n*(n-1)/2
+
+      ! The last atom, by translational invariance
+      if (n<n3n) then
+         do i = 1,n
+            do b = 1,3
+               FC(i,n+b) = -sum(FC(i,b:n:3))
+               FC(n+b,i) = FC(i,n+b)
+            end
+         end
+         do a = 1,3
+         do b = 1,3
+            FC(n+a,n+b) = -sum(FC(n+a,b:n:3))
+         end
+         end
+      end
+
+      ! Back to the reference geometry and its SCF
+      .FD_hessian_move_to(geom0)
+      .SCF
+      .SCF_data.set_output(out)
+
+      .force_constants.destroy
+      .force_constants = FC
+
+      stdout.flush
+      stdout.text("=======================================")
+      stdout.text("Cartesian Hessian by finite differences")
+      stdout.text("=======================================")
+      stdout.flush
+      stdout.show("Step /bohr                      =",h)
+      stdout.show("No. of SCFs                     =",n_scf)
+      stdout.show("Translational invariance used?  =",n<n3n)
+      stdout.show("Largest gradient /(Eh/bohr)     =",maxval(abs(grad)))
+      stdout.show("RMS gradient /(Eh/bohr)         =",sqrt(sum(grad*grad)/n))
+      if (maxval(abs(grad))>TOL(3)) then
+         stdout.text("The geometry is not a stationary point: the rotational modes")
+         stdout.text("are not exact zero modes, and their projection is approximate.")
+      end
+      stdout.flush
+
+      FC.destroy
+      grad.destroy
+      Em.destroy
+      Ep.destroy
+      geom0.destroy
+
+   end
+
+   FD_hessian_energy(geom0,i,si,j,sj) result (res) :: leaky, private
+   ! The SCF energy with coordinate "i" displaced by "si" steps of
+   ! .FD_hessian_step from "geom0", and coordinate "j" by "sj" (none if
+   ! j is 0).
+      self :: INOUT
+      geom0 :: VEC{REAL}, IN
+      i,si,j,sj :: INT, IN
+      res :: REAL
+
+      g :: VEC{REAL}@
+
+      g = geom0
+      g(i) = g(i) + si*.FD_hessian_step
+      if (j>0) g(j) = g(j) + sj*.FD_hessian_step
+      .FD_hessian_move_to(g)
+      .SCF
+      res = .SCF_data.energy
+      g.destroy
+
+   end
+
+   FD_hessian_move_to(g) :: leaky, private
+   ! Put the atoms at "g" and clear what depends on the geometry, as a
+   ! HAR cycle does; the next SCF starts from the current density.
+      self :: INOUT
+      g :: VEC{REAL}, IN
+
+      .atom.set_positions_from_vector(g)
+      if (.MOs.allocated) .symmetrically_orthonormalize(.MOs)
+      .delete_SCF_archives(keep_DM=TRUE)
+      .destroy_SCF_results(keep_MOs=TRUE)
+      .destroy_SCF_integrals
+      .partition_info_made = FALSE
+      .SCF_data.set_initial_density(.SCF_data.spinorbital_genre)
+
+   end
+
    normal_mode_analysis :: leaky
-   ! Make the normal modes
+   ! Make the normal modes: the eigenvectors of the mass-weighted force
+   ! constants, with the rigid-body motions projected out first (the
+   ! Eckart-Sayvetz conditions), so the translations and rotations are
+   ! exactly zero modes and the internal modes are free of them.
       self :: INOUT
 
    ENSURE(.force_constants.allocated,"no force constants")
    ENSURE(.atom.allocated,"no atoms")
 
-      n3n,i,j :: INT
-      fc :: MAT{REAL}@
+      n3n,i,j,n_rb :: INT
+      fc,B :: MAT{REAL}@
       rm :: VEC{REAL}@
       rmi,rmj :: REAL
 
@@ -82,12 +235,168 @@ contains
          end
       end
 
+      ! Project out the rigid-body motions
+      B.create(n3n,6)
+      .atom.make_rigid_body_modes(B,n_rb)
+      fc.project_out_vectors(B(:,1:n_rb))
+      B.destroy
+
       ! Get modes
       fc.solve_symmetric_eigenproblem(.normal_mode_eigenvalues,.normal_mode_eigenvectors)
 
       ! Clean
       rm.destroy
       fc.destroy
+
+   end
+
+   make_internal_ADPs :: leaky
+   ! Make .stiff_mode_ADPs, the part of each atom's ADP from the stiff
+   ! internal modes: those above .soft_mode_cutoff (cm^-1). Mode k with
+   ! mass-weighted vector l_k and frequency w_k adds to atom a
+   !    U_a += l_ak l_ak^T <Q_k^2> / m_a,  <Q_k^2> = coth(w_k/2kT) / (2 w_k)
+   ! in atomic units, at temperature .internal_ADP_temperature (zero-point
+   ! motion only at T = 0). The rigid-body modes are recognised by their
+   ! overlap with make_rigid_body_modes and left out, and so are modes
+   ! with a zero or negative eigenvalue, which a Hessian away from a
+   ! minimum gives. See docs/TONTO_TLS_MODE_REFINEMENT.md section 3.2.
+      self :: INOUT
+
+   ENSURE(.atom.allocated,"no atoms")
+
+      B,l :: MAT{REAL}@
+      la :: VEC{REAL}(3)
+      w,kT,Q2,ma,rb :: REAL
+      n3n,n_rb,k,a,i,j :: INT
+
+      if (.normal_mode_eigenvectors.deallocated) .normal_mode_analysis
+
+      n3n = 3*.atom.dim
+      kT = .internal_ADP_temperature/KELVIN_PER_HARTREE
+
+      B.create(n3n,6)
+      .atom.make_rigid_body_modes(B,n_rb)
+      l = .normal_mode_eigenvectors
+
+      .stiff_mode_ADPs.destroy
+      .stiff_mode_ADPs.create(3,3,.atom.dim)
+      .stiff_mode_ADPs = ZERO
+
+      do k = 1,n3n
+
+         ! Rigid-body, non-positive and soft modes are not stiff modes
+         rb = ZERO
+         do j = 1,n_rb
+            rb = rb + dot_product(B(:,j),l(:,k))**2
+         end
+         if (rb>HALF) cycle
+         if (.normal_mode_eigenvalues(k)<=ZERO) cycle
+         w = sqrt(.normal_mode_eigenvalues(k))
+         if (w*WAVENUMBER_PER_HARTREE<=.soft_mode_cutoff) cycle
+
+         ! Mean-square amplitude of the mode
+         Q2 = HALF/w
+         if (kT>ZERO) Q2 = Q2/tanh(HALF*w/kT)
+
+         do a = 1,.atom.dim
+            ma = .atom(a).mass*MASS_OF_ELECTRON_PER_AMU
+            la = l(3*a-2:3*a,k)
+            do i = 1,3
+            do j = 1,3
+               .stiff_mode_ADPs(i,j,a) = .stiff_mode_ADPs(i,j,a) + la(i)*la(j)*Q2/ma
+            end
+            end
+         end
+
+      end
+
+      l.destroy
+      B.destroy
+
+   end
+
+   put_internal_ADPs
+   ! Put the stiff-mode ADPs of make_internal_ADPs, in Angstrom^2, and the
+   ! internal modes sorted into soft and stiff.
+      self :: IN
+
+   ENSURE(.stiff_mode_ADPs.allocated,"no stiff-mode ADPs: use make_internal_ADPs")
+
+      B :: MAT{REAL}@
+      U :: MAT{REAL}(3,3)
+      w,rb :: REAL
+      n3n,n_rb,n_soft,n_stiff,n_bad,k,j,a :: INT
+
+      n3n = 3*.atom.dim
+      B.create(n3n,6)
+      .atom.make_rigid_body_modes(B,n_rb)
+
+      ! Sort the modes as make_internal_ADPs does
+      n_soft = 0; n_stiff = 0; n_bad = 0
+      do k = 1,n3n
+         rb = ZERO
+         do j = 1,n_rb
+            rb = rb + dot_product(B(:,j),.normal_mode_eigenvectors(:,k))**2
+         end
+         if (rb>HALF) cycle
+         if (.normal_mode_eigenvalues(k)<=ZERO) then
+            n_bad = n_bad + 1
+            cycle
+         end
+         w = sqrt(.normal_mode_eigenvalues(k))*WAVENUMBER_PER_HARTREE
+         if (w<=.soft_mode_cutoff) then; n_soft  = n_soft + 1
+         else;                           n_stiff = n_stiff + 1
+         end
+      end
+      B.destroy
+
+      stdout.flush
+      stdout.text("==================================")
+      stdout.text("ADPs from the stiff internal modes")
+      stdout.text("==================================")
+      stdout.flush
+      stdout.text(". U_high of each atom, from the internal normal modes above the")
+      stdout.text("  soft-mode cutoff; the soft modes and the rigid-body motion are")
+      stdout.text("  left for the refinement.")
+      stdout.flush
+      stdout.show("Temperature /K                  =",.internal_ADP_temperature)
+      stdout.show("Soft-mode cutoff /cm^-1         =",.soft_mode_cutoff)
+      stdout.show("No. of rigid-body modes         =",n_rb)
+      stdout.show("No. of soft internal modes      =",n_soft)
+      stdout.show("No. of stiff internal modes     =",n_stiff)
+      stdout.show("No. of non-positive modes       =",n_bad)
+      stdout.flush
+
+      stdout.dash(int_fields=1,real_fields=7,width=4)
+      stdout.put("#",int_width=TRUE)
+      stdout.put("ID",width=4)
+      stdout.put("U_xx")
+      stdout.put("U_yy")
+      stdout.put("U_zz")
+      stdout.put("U_xy")
+      stdout.put("U_xz")
+      stdout.put("U_yz")
+      stdout.put("U_iso")
+      stdout.flush
+      stdout.put(" ",int_width=TRUE)
+      stdout.put(" ",width=4)
+      stdout.put("/A^2")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=7,width=4)
+      do a = 1,.atom.dim
+         U = .stiff_mode_ADPs(:,:,a)*ANGSTROM_PER_BOHR*ANGSTROM_PER_BOHR
+         stdout.put(a)
+         stdout.put(trim(.atom(a).label),width=4)
+         stdout.put(U(1,1))
+         stdout.put(U(2,2))
+         stdout.put(U(3,3))
+         stdout.put(U(1,2))
+         stdout.put(U(1,3))
+         stdout.put(U(2,3))
+         stdout.put(THIRD*(U(1,1)+U(2,2)+U(3,3)))
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=7,width=4)
 
    end
 
@@ -101,7 +410,7 @@ contains
       table :: VEC{TABLE_COLUMN}@
       eval :: VEC{REAL}@
       ewav :: VEC{STR}@
-      n3n,i :: INT
+      n3n,i,f,l :: INT
 
 
       stdout.flush
@@ -143,18 +452,17 @@ contains
                         ,stdout.style.real_precision)
       eval.destroy
 
-      ! Set table data
-      table.create(n3n)
-      do i = 1,n3n
-         table(i).set_heading(trim(ewav(i)))
-         table(i).set_values(.normal_mode_eigenvectors(:,i))
+      ! The table, eight modes at a time to stay within the line length
+      do f = 1,n3n,8
+         l = min(f+7,n3n)
+         table.create(l-f+1)
+         do i = f,l
+            table(i-f+1).set_heading(trim(ewav(i)))
+            table(i-f+1).set_values(.normal_mode_eigenvectors(:,i))
+         end
+         table.put
+         table.destroy
       end
-
-      ! Make the table
-      table.put
-
-      ! Clean
-      table.destroy
       ewav.destroy
 
    end

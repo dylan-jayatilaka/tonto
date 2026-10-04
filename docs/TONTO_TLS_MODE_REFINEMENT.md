@@ -450,9 +450,25 @@ use it. The TLS algebra needs only positions, so it is not a `CRYSTAL` method.
    plain square root of a variance, the sum trick retired), and the component esds in the ADP table
    become consistent with it. The 25 near-zero eigenvalues drop to 19. Tests with isotropic H need a
    re-bless if any printed digit moves.
-1. **Hessian in, modes out.** ORCA reader; Eckart projection; six zero frequencies as the check;
-   `make_internal_ADPs`. Check against the literature: urea's hydrogen U^high about 0.01–0.02 Å²
-   (SHADE's values); heavy atoms 0.001–0.003 Å².
+1. **DONE on `tls-step1` (2026-10-05). Hessian in, modes out.** Eckart projection in
+   `normal_mode_analysis` (`MAT{REAL}:project_out_vectors`, `VEC{ATOM}:make_rigid_body_modes`);
+   `make_internal_ADPs` / `put_internal_ADPs` (`soft_mode_cutoff=`, `internal_adp_temperature=`);
+   and, since neither g09 nor ORCA is on the build machines, `make_FD_hessian`: central differences
+   of Tonto's own SCF energies (`fd_hessian_step=`, 0.01 bohr), the last atom by translational
+   invariance, the gradient reported. The ORCA reader is deferred until there is an ORCA file to
+   test it on; Gaussian's checkpoint and Tonto's `force_constants=` are the routes in.
+   Results: water 6-31G(d) gives six zero modes (they were 0–15 cm⁻¹ and mixed); urea
+   RHF/6-31G(d) at the HAR geometry, 123 K: hydrogen U^high 0.0117 Å² (H1, H2) and 0.0067 Å²
+   (H3, H4), heavy atoms 0.0005–0.0010 Å². The hydrogens are in or just under the expected range;
+   the heavy atoms are lower than 0.001–0.003 because two modes are excluded: the crystal geometry
+   is planar and urea's NH₂ groups are pyramidal in the gas phase, so the NH₂ wags are imaginary
+   (432i, 208i cm⁻¹) there, and the gradient is 0.093 Eh/bohr. Without the projection two
+   rotations sit at 117 and 187 cm⁻¹ and would pass for soft modes. RHF frequencies are about
+   10 % high, so these U^high are about 10 % low. **For step 2:** take the Hessian at a geometry
+   where the molecule is stationary (or project the gradient's effect properly), decide how the
+   imaginary modes enter (they are soft modes the data must determine), and whether to apply a
+   frequency scale factor. `make_FD_hessian` costs 36 min serial for urea in 6-31G(d); its loop is
+   embarrassingly parallel.
 2. **TLS only, against F.** `MODE_ADP` with the six rigid-body columns; J; refine positions and
    T, L, S with U^high fixed. Checks: on a rigid molecule (urea), compare T, L, S with a PLATON/THMA
    fit to the free-refinement ADPs after subtracting U^high: same to within the esds; wR and GoF²
