@@ -146,6 +146,9 @@ default (`average`). Atom energies pass the Slater-splitting checks; on urea the
 visible (GoF +0.002), so the default stays. Plan, theory and tables:
 `docs/TONTO_SPHERICAL_ATOM_SCF_PLAN.md`. The one-atom molecule in `make_ANOs_for_atom` stays; the
 Fock split goes with re-engineering. Three tests blessed on achari2 (full suite 169/169); merged as `d7ef83cd`.
+**Also 2026-10-05 (late):** the cell-list row closed by measurement -- the shell search is 0.02 % of a
+182-atom job; its N^2 memory fixed; the Salvador cell function's inner loop made contiguous, 30 % faster,
+results identical (branch `salvador-speed`). Archive entry *a cell list for the shell search*.
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
 
@@ -5933,6 +5936,37 @@ different question and the one that matters.
 ---
 
 # Done, resolved and closed (archive)
+
+## CLOSED (2026-10-05): a cell list for the shell search, and where the time on large molecules goes
+
+**The premise did not survive measurement.** The register row proposed a cell list for
+`MOLECULE.RHO:make_batch_shells`, which tests every shell against every batch of grid points.
+Profiled with macOS `sample` on two large jobs (develop at `b7b3d533`):
+
+| job | total | `make_batch_shells` | batched density | `make_Salvador_cell_fn` | SCF Fock builds |
+|---|---|---|---|---|---|
+| 182-atom alkane, STO-3G, 1 SCF iteration + `make_SA_info` | 54 s | 0.013 s | 0.19 s | 13.0 s | 11.0 s |
+| 92-atom alkane, STO-3G BLYP SCF to convergence | 26 s | < 0.01 s | -- | -- | 11.1 s (XC 3.0 s) |
+
+The shell test is three subtractions per (batch, shell) pair: at 182 atoms it is 0.02 % of the
+job, and a cell list would save nothing measurable. What it did have was a memory trap: the
+list was allocated batches x shells up front, N^2 in memory (about 200 MB at 1000 atoms) although
+only a few shells per batch are kept. Fixed: it counts first, then lists.
+
+**The real cost is the Salvador cell function**, 13 s of 54. Two things were tried:
+- *Skipping far atoms' factors where they are exactly 1 in double precision.* With stiffness 4,
+  1 - s < 3e-19 once 1 + nu' < 0.05, which the triangle inequality guarantees for D_i <
+  R_ij c/(2+c), c = 0.05 chi. That needs the atom about 40 times further from i than the
+  point is; it almost never holds for the points kept for i (mostly in other atoms' grids),
+  and sorting the points by D_i cost 11 s. Rejected: 54 -> 69 s.
+- *A contiguous inner loop.* The product over j read `D(idx(q),j)` through the kept-point index,
+  which stops vectorisation (no gather on the M2). The kept points' distances are now copied once
+  per atom i into a block. Same arithmetic, same order: 13.0 -> 9.1 s, job 54 -> 50 s.
+
+Both changes leave every result unchanged: the short, long and hart suites (123 tests) give
+agreement lines identical to the baseline build's, line for line. Linear scaling of the cell
+function itself still needs a step that is exactly 0 or 1 beyond a distance
+(Stratmann-Scuseria-Frisch), which changes the model; that remains a model question.
 
 ## CLOSED (2026-10-05): normalise procedure-name CASE across definition and call sites
 
