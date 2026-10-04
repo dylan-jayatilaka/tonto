@@ -565,8 +565,6 @@ What the numbers say:
 
 ### Open
 
-- A test: `long/urea_rhf_STO-3G_sph-TFVH_HAR`, to be blessed on achari2, once the model is
-  judged worth keeping (it is the first spherical model that is).
 - YLID and a larger molecule with `sph-tfvh`.
 - Whether hydrogen should stay aspherical (§1 found spherical H harmless) — not needed now
   that the all-spherical model converges.
@@ -635,5 +633,6 @@ What the table says:
 
 ### Open
 
-- Bless the two tests on achari2.
-- `sph-exphar` at n = 1 (a spherical Hirshfeld atom) and 1.5, for the fit work.
+- `sph-exphar` at n = 1 (a spherical Hirshfeld atom) and 1.5, for the fit work: the
+  form-factor fit (`docs/TONTO_SPHERICAL_FF_FIT_PLAN.md` §8) shows the hard Salvador edge
+  rippling the transform, and a softer atom fits better.

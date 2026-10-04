@@ -128,8 +128,15 @@ Chodkiewicz & Woźniak (IUCrJ 12, 74, 2025) -- `partition_model= exphar` / `sph-
 `exphar_power=` (default 2, their recommendation; the power is a REAL applied inside
 `make_stockholder_atom_weight`). On urea it does what the paper says: N-H3 lengthens with n and at
 n = 2 both N-H are within 0.021/0.007 Å of neutron; `sph-exphar` beats the IAM on R(F) (research
-document §8). Two tests added, to be blessed. Also on the branch: `GAUSSIAN_FF_FIT` (the plan's
-step 2) with its round-trip ctest `gaussian_ff_fit` (skipped where gnuplot is absent).
+document §8). Also: the spherical form-factor fit, steps 1-3 of
+`docs/TONTO_SPHERICAL_FF_FIT_PLAN.md` -- module `GAUSSIAN_FF_FIT` (gnuplot's fit in square roots,
+retried from rescaled starts; ctest `gaussian_ff_fit`), `fit_sph_atom_ffs` with the `FF_fit_*`
+settings in `xray_data=`, SHELX `SFAC` output one atom per entry with the atom's label (no per-element
+averaging: Dylan). Found and recorded in the plan's §8: four Gaussians degenerate because the curve has
+two exponent regimes; the 0.02 e residual on C and N is the ringing of the hard Salvador edge, which no
+Gaussian sum follows; exp(polynomial) is far worse. Four tests blessed on achari2, full suite 165/165,
+merged to `develop`. **Next on this item:** the BUSTER format (needs a sample file from Dylan), then
+the two-stage non-negative fit if 0.02 e matters.
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
 

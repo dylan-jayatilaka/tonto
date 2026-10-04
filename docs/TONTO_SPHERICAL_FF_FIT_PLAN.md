@@ -166,6 +166,7 @@ from Global Phasing. Until it arrives the writer is a stub that `DIE`s with that
    the `shelx` and `table` writers, test `long/urea_rhf_STO-3G_sph-TFVH_FF_fit`. Done,
    branch `exphar`.
 4. The BUSTER writer, when the format is in hand.
+5. The two-stage fit (§8), if the 0.02 e residual on C and N matters for the data.
 
 ## 7. What the first fits showed (urea, `sph-tfvh`, STO-3G, 2026-10-05)
 
@@ -183,6 +184,44 @@ from Global Phasing. Until it arrives the writer is a stub that `DIE`s with that
   refinement is to be judged against the data; if it does, the options are a different
   start (a free-atom fit of the *molecular* curve's own first Gaussians), weights that
   favour low s, or a fifth Gaussian where the format allows one.
-- The reference of the fit test carries gnuplot's result, so a degenerate pair may split
-  differently on another platform. If the test proves flaky across machines, print the
-  coefficients to the file only and keep f(0) and the deviations in the stdout.
+- Under the test harness one hydrogen fit stopped on a singular matrix (the curve differs
+  in its last digits from a hand run, and the degenerate valley took a different path), so
+  a failed fit is now retried from b scaled by 0.7, 1.4, 0.5 and 2, a fit that still fails
+  keeps the International Tables coefficients and says so, and the stdout carries only
+  f(0), the success flag and the deviations per atom; the coefficients and esds go to the
+  output file. With that the Mac and achari2 give identical stdout, and the test is blessed.
+
+## 8. Why four Gaussians degenerate, and what the residual is (2026-10-05)
+
+Dylan asked whether the curve has bumps, whether the exponents can be chosen better from
+a log plot, and whether a single exp(polynomial) would do. Measured on the urea
+`sph-tfvh` curves (STO-3G) with a Python script on the `.dat` files:
+
+- **log f against s² has two straight regimes**: slope −8.6 (C), −10.9 (N), −9.0 (O) up to
+  s ≈ 0.4, then −0.3 to −0.6 from s ≈ 0.6 on — the valence and the core — with a knee
+  between. So the curve wants two distinct exponents and a constant, and four free
+  Gaussians have two spare: that is the degeneracy, not a defect of the data.
+- **exp(polynomial in s²) cannot follow the knee**: degree 2 to 6 leave 1.1, 0.8, 0.7,
+  0.28, 0.25 e on carbon. The idea is dropped.
+- **A non-negative fit over 40 fixed exponents** (0.03–200, log-spaced; Lawson–Hanson) gets
+  no further than the free fit — C 0.023 e, N 0.021, O 0.006, H 0.0007 — and uses 5–7
+  terms. So 0.02 e on C and N is not a fitting failure.
+- **The residual is a slow oscillation along s**, period about 0.8 Å⁻¹ (carbon: +0.010 at
+  s = 0.3, −0.023 at 0.5, +0.021 at 0.9, −0.011 at 1.4, +0.009 at 2.0): the ringing of the
+  Salvador cell edge at ~0.6 Å. These are the "bumps", and they are in the transform of a
+  hard-edged atom, which no sum of positive Gaussians reproduces. The `sph-exphar` atom,
+  whose edge is soft, fits to C 0.017, O 0.008, H 0.001 e — better but still rippled,
+  since the exponent 2 sharpens it too.
+
+What follows:
+
+- The exponents: a two-stage fit — non-negative over a log grid, then polish the few
+  survivors by Levenberg–Marquardt — gives the number of Gaussians the curve needs and
+  starts the nonlinear fit where it cannot wander. Worth doing when more than hydrogen
+  has to reach 0.005 e; Lawson–Hanson is a hundred lines of Foo.
+- The input: a smoother atom edge (a softer cell function, or `sph-exphar` at a lower
+  power) removes the ripple at its source; this is a model question to settle with the
+  HAR results of research document §7–§8, not a fitting one.
+- Cost is not the reason for Gaussians: a refinement's time goes on the phase sum over
+  atoms, not on the form factor; the Gaussian form is kept because SHELX and BUSTER read
+  it, and a table in s would otherwise be cheaper and exact.
