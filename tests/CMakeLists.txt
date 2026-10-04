@@ -306,6 +306,14 @@ add_test(NAME "show_labels"
             ${PROJECT_SOURCE_DIR}/foofiles ${PROJECT_SOURCE_DIR}/runfiles)
 set_tests_properties("show_labels" PROPERTIES LABELS "short")
 
+# Source-level and instant: every procedure name has one spelling across its
+# definition and its call sites, so case-sensitive tooling sees one name.
+add_test(NAME "procedure_case"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_procedure_case.py
+            ${PROJECT_SOURCE_DIR}/foofiles ${PROJECT_SOURCE_DIR}/runfiles)
+set_tests_properties("procedure_case" PROPERTIES LABELS "short")
+
 # Invariant test -- no reference output involved.
 #
 # The Lebedev angular grids are stored as orbit generators, so one wrong

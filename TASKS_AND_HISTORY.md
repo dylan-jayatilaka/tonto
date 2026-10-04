@@ -136,7 +136,9 @@ averaging: Dylan). Found and recorded in the plan's §8: four Gaussians degenera
 two exponent regimes; the 0.02 e residual on C and N is the ringing of the hard Salvador edge, which no
 Gaussian sum follows; exp(polynomial) is far worse. Four tests blessed on achari2, full suite 165/165,
 merged to `develop`. **Next on this item:** the BUSTER format (needs a sample file from Dylan), then
-the two-stage non-negative fit if 0.02 e matters.
+the two-stage non-negative fit if 0.02 e matters. **Later on 2026-10-05:** procedure-name case
+normalised (65 call sites and headers in 16 files; `scripts/check_procedure_case.py`, ctest
+`procedure_case`); the entry is archived.
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
 
@@ -5130,29 +5132,6 @@ the job — not the other way round.
 
 # Translator and the Foo language
 
-## Cleanup: normalise procedure-name CASE across definition and call sites
-
-**Goal (Dylan):** find every procedure whose **definition case differs from its call-site
-case** (or where call sites disagree among themselves) and make them consistent. Foo/Fortran
-are case-insensitive so these compile and run fine, but the inconsistency is annoying and
-trips case-sensitive tooling.
-
-**Why it matters (concrete):** discovered during phase B (dead-code elimination). `textfile.foo`
-defines `reset_IO_status` (upper `IO`) but `vec{basis}.foo` calls it as `stdin.reset_io_status`
-(lower). The dead-code analysis keyed its call-graph nodes case-sensitively, so the call didn't
-match the definition and the procedure was wrongly pruned — a latent, silent trap. (Worked
-around in the translator by lower-casing the method part of every graph node via `node()`;
-this cleanup would remove the underlying inconsistency in the *sources*.)
-
-**How to tackle (parse-tree driven, reuse phase-B infra):** the translator already walks every
-`ProcDef` (definitions) and every `PostfixContext` (calls). Add a `--case-report` mode that
-records, per lower-cased procedure name, the **set of distinct spellings** seen across its
-definition header and all call sites; flag any name with >1 spelling, listing file:line of each
-variant. Then normalise — the definition's spelling is the natural canonical form — and rewrite
-the call sites (a targeted, parse-tree-driven edit like `--add-self-intent`, NOT a blind sed,
-so commented-out and string-literal occurrences are left alone). **Decided (Dylan, 2026-09-25):** the canonical spelling is the definition's, or for a type-bound name the one in `types.foo`. Expected to be few. Churn is the real cost (conflicts with `develop-gfortran-16` and any branch in flight); a build-free check is that the lower-cased translator output is byte-identical before and after. First step: the report mode alone, to count them. Related: [[submodule-call-autoresolution-done]]
-already hit a case bug in the submodule registry (commit 627db872); this is the same family.
-
 ## Future task: introduce Fortran-2008 `submodule` constructs
 
 **Goal (Dylan):** use real Fortran-2008 `submodule` where appropriate. **Concept clash to note
@@ -5947,6 +5926,42 @@ different question and the one that matters.
 ---
 
 # Done, resolved and closed (archive)
+
+## CLOSED (2026-10-05): normalise procedure-name CASE across definition and call sites
+
+Done on branch `proc-case` with a script, not the translator: `scripts/check_procedure_case.py`
+collects every procedure header's spelling and every `.name` / `:name` / `::name` spelling outside
+comments and strings, and lists the names with more than one. It found 37 of 5652: 19 call sites
+spelt differently from their definition (mostly keyword-dispatch lines in `molecule.main.foo`),
+8 names defined in two modules with different case, and 10 false positives (the ENSURE/DIE/WARN
+macros beside lower-case SYSTEM procedures, template placeholders). Rule applied (Dylan): the
+definition's spelling, with abbreviations and proper names capitalised (UC, SCF, DFT, FT, MO, ANO,
+SMILES, pADPs; Coulomb, Roby, Grimme, Schmidt, Miller), and the majority where neither applies
+(`set_l`, 7 modules to 1). 65 replacements in 16 files by a comment- and string-aware rewrite of
+the exact names; `delta`/`Delta` left as two unrelated procedures. The check is the `short` ctest
+`procedure_case`, so the count stays at zero. Original entry:
+
+**Goal (Dylan):** find every procedure whose **definition case differs from its call-site
+case** (or where call sites disagree among themselves) and make them consistent. Foo/Fortran
+are case-insensitive so these compile and run fine, but the inconsistency is annoying and
+trips case-sensitive tooling.
+
+**Why it matters (concrete):** discovered during phase B (dead-code elimination). `textfile.foo`
+defines `reset_IO_status` (upper `IO`) but `vec{basis}.foo` calls it as `stdin.reset_io_status`
+(lower). The dead-code analysis keyed its call-graph nodes case-sensitively, so the call didn't
+match the definition and the procedure was wrongly pruned — a latent, silent trap. (Worked
+around in the translator by lower-casing the method part of every graph node via `node()`;
+this cleanup would remove the underlying inconsistency in the *sources*.)
+
+**How to tackle (parse-tree driven, reuse phase-B infra):** the translator already walks every
+`ProcDef` (definitions) and every `PostfixContext` (calls). Add a `--case-report` mode that
+records, per lower-cased procedure name, the **set of distinct spellings** seen across its
+definition header and all call sites; flag any name with >1 spelling, listing file:line of each
+variant. Then normalise — the definition's spelling is the natural canonical form — and rewrite
+the call sites (a targeted, parse-tree-driven edit like `--add-self-intent`, NOT a blind sed,
+so commented-out and string-literal occurrences are left alone). **Decided (Dylan, 2026-09-25):** the canonical spelling is the definition's, or for a type-bound name the one in `types.foo`. Expected to be few. Churn is the real cost (conflicts with `develop-gfortran-16` and any branch in flight); a build-free check is that the lower-cased translator output is byte-identical before and after. First step: the report mode alone, to count them. Related: [[submodule-call-autoresolution-done]]
+already hit a case bug in the submodule registry (commit 627db872); this is the same family.
+
 
 ## CLOSED (2026-10-05): Analytic Hirshfeld-atom partitioning from Mayer-Salvador radii, and an N^2 cell function (Dylan, 2026-09-25)
 
