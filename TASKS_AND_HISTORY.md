@@ -149,6 +149,10 @@ Fock split goes with re-engineering. Three tests blessed on achari2 (full suite 
 **Also 2026-10-05 (late):** the cell-list row closed by measurement -- the shell search is 0.02 % of a
 182-atom job; its N^2 memory fixed; the Salvador cell function's inner loop made contiguous, 30 % faster,
 results identical (branch `salvador-speed`). Archive entry *a cell list for the shell search*.
+**2026-10-05, branch `tls-step1`:** step 1 of the TLS plan -- Eckart projection in the normal modes,
+stiff-mode ADPs (`make_internal_adps`), and a finite-difference Hessian from Tonto's own SCF
+(`make_fd_hessian`, `fd_hessian_step=`); urea's hydrogen U^high 0.007-0.012 A^2 at 123 K. Details and
+what step 2 must decide in `docs/TONTO_TLS_MODE_REFINEMENT.md` step 1.
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
 
