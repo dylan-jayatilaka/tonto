@@ -370,6 +370,30 @@ What the table says:
 - The cost is that of a Salvador refinement (about 1.5 times Hirshfeld on this job);
   the bisection for the radii is negligible.
 
+### Charges by partition, and their stability
+
+Urea, the CCSD/pob-TZVP density of `short/urea_ccsd_pob-TZVP_Salvador_properties`, with the
+partition model set by `crystal= { xray_data= { partition_model= ... } }` (no data needed).
+Charges include the nucleus.
+
+| atom | Hirshfeld | Salvador | `tfvp` | `tfvh` |
+|---|---|---|---|---|
+| C | +0.198 | +2.167 | +1.695 | +0.908 |
+| O | −0.396 | −1.189 | −1.118 | −0.740 |
+| N | −0.137 | −1.804 | −1.469 | −0.801 |
+| H1 (cis) | +0.127 | +0.672 | +0.596 | +0.364 |
+| H2 | +0.109 | +0.643 | +0.585 | +0.353 |
+
+The Salvador atoms carry charges of the size the QTAIM atoms do (the density minimum is close to
+the zero-flux surface along the bond), and `tfvh` sits about half-way between Salvador and
+Hirshfeld, which is what its larger C and H atoms imply.
+
+Every number in the table, and every dipole and quadrupole of all four partitions, is the same
+to the four printed decimals under the `neoversen1` and `armv8` OpenBLAS kernels on the Mac.
+The Hirshfeld moments used to move by 3–4e-4 between kernels; that went with the exact
+spherical average of the ANO atoms, so none of the partitions is more stable than another
+any more.
+
 ### Open
 
 - The same comparison on a molecule without hydrogen-bond donors, where the N–H

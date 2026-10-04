@@ -108,7 +108,12 @@ bonds (+0.023/+0.013 Å at def2-TZVP, Hirshfeld +0.019/-0.011), with the smalles
 sequence Salvador -> tfvp -> tfvh moves every hydrogen quantity toward Hirshfeld. New test
 `long/urea_rhf_STO-3G_TFVH_HAR`; the two `Salvador_properties` tests gain an `R(A.B) eq-dens`
 column. All three blessed on achari2, where the full suite at `401eee07` passed 160/160 (two usual
-skips); merged to `develop` as `be29dcbf`, branch deleted. Open from before: `oc-ri` stage (b).
+skips); merged to `develop` as `be29dcbf`, branch deleted. Dylan asked whether the analytic
+partitions' moments are kernel-stable: on the Mac, `short/urea_ccsd_pob-TZVP_Salvador_properties`
+under the `neoversen1` and `armv8` OpenBLAS kernels gives the same four printed decimals for every
+charge and moment of all four partitions, Hirshfeld included -- the Hirshfeld movement of 3-4e-4
+went with the exact spherical average (2026-09-27); not re-measured release against debug. Charges by
+partition are in the research document §5. Open from before: `oc-ri` stage (b).
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
 
@@ -3995,6 +4000,9 @@ Two related pieces, both science, neither started.
    between BLAS kernels and between release and debug builds, and the parked Hirshfeld-moments item
    puts the cause in the free-atom densities. An analytic weight that needs the promolecule only for
    the radii, a one-dimensional search per bonded pair, would be immune to most of that noise. What
+   *2026-10-05:* with the exact spherical average of the ANO atoms, the Hirshfeld, Salvador, `tfvp`
+   and `tfvh` charges and moments of urea all agree to four decimals across two OpenBLAS kernels;
+   the motivation above no longer applies, the models stand on their HAR results. What
    to establish: that the radii found on the promolecule are close to those found on the molecule;
    what the partition does to HAR's R factors and ADPs against the Hirshfeld one on urea and
    gly_ala; and cost, which is item 1. Needs a `partition_model=` value, and its structure factors
