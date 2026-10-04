@@ -92,7 +92,10 @@ TLS against F. New science entry the same day: *Spherical atoms by the right ens
 2026-10-04: the zinc spherical-guess defect (verified on the finger and Zn(SCH3)2) and the silent
 unconverged SCF (`stop_if_SCF_not_converged`, `die_if_not_converged=`). **Fixed and merged 2026-10-04:** the
 B3LYP 2e-4 and unrestricted BLYP 1e-4 discrepancies, two potential-side formula errors
-(`docs/DFT_STANDARDISATION.md` 5b); one test re-blessed and one added, both on achari2. Open from before:
+(`docs/DFT_STANDARDISATION.md` 5b); one test re-blessed and one added, both on achari2. **Also
+2026-10-04:** the XC energy is reported -- `J`, `a_0*E_x` and `E_xc` under `V_ee` for DFT, the
+energy-block labels aligned, 54 references re-blessed (text only) on achari2; the last open
+*Correctness* row, so that register section is gone. Open from before:
 `oc-ri` stage (b).
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
