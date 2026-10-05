@@ -385,6 +385,78 @@ contains
          stdout.flush
       end
 
+      ! The soft modes, if any are to be refined
+      if (.crystal.xray_data.n_soft_modes>0) .set_crystal_soft_modes
+
+   end
+
+   set_crystal_soft_modes
+   ! Give the crystal the .crystal.xray_data.n_soft_modes softest internal
+   ! modes -- imaginary ones first, then by increasing frequency -- as the
+   ! displacement of each atom per unit normal coordinate, l/sqrt(m), with
+   ! each mode's harmonic <Q^2> (eq. (6) of docs/TONTO_MODE_FITTING_RESEARCH.md,
+   ! frequencies scaled as for U_high; negative for an imaginary mode) and
+   ! its frequency in cm^-1 (negative for imaginary).
+      self :: INOUT
+   ENSURE(.crystal.allocated,"no crystal")
+   DIE_IF(.normal_mode_eigenvectors.deallocated,"soft modes need the normal modes: normal_mode_analysis")
+
+      B,V :: MAT{REAL}@
+      a0,freq :: VEC{REAL}@
+      soft :: VEC{INT}@
+      w,kT,scale,rb,ma :: REAL
+      n3n,n_rb,n_s,n,k,j,a :: INT
+
+      n3n = 3*.atom.dim
+      DIE_IF(.crystal.fragment_atom.dim/=.atom.dim,"soft modes: molecule and fragment atoms differ")
+      B.create(n3n,6)
+      .atom.make_rigid_body_modes(B,n_rb)
+      scale = .harmonic_frequency_scale
+      kT = .internal_ADP_temperature/KELVIN_PER_HARTREE
+
+      ! The soft modes, in eigenvalue order (imaginary ones come first)
+      soft.create(n3n)
+      n_s = 0
+      do k = 1,n3n
+         rb = ZERO
+         do j = 1,n_rb
+            rb = rb + dot_product(B(:,j),.normal_mode_eigenvectors(:,k))**2
+         end
+         if (rb>HALF) cycle
+         if (.normal_mode_eigenvalues(k)>ZERO) then
+            w = scale*sqrt(.normal_mode_eigenvalues(k))
+            if (w*WAVENUMBER_PER_HARTREE>.soft_mode_cutoff) cycle
+         end
+         n_s = n_s + 1
+         soft(n_s) = k
+      end
+      n = min(n_s,.crystal.xray_data.n_soft_modes)
+      DIE_IF(n<.crystal.xray_data.n_soft_modes,"fewer soft modes than n_soft_modes=: raise soft_mode_cutoff=")
+
+      V.create(n3n,n)
+      a0.create(n)
+      freq.create(n)
+      do j = 1,n
+         k = soft(j)
+         do a = 1,.atom.dim
+            ma = .atom(a).mass*MASS_OF_ELECTRON_PER_AMU
+            V(3*a-2:3*a,j) = .normal_mode_eigenvectors(3*a-2:3*a,k)/sqrt(ma)
+         end
+         if (.normal_mode_eigenvalues(k)>ZERO) then
+            w = scale*sqrt(.normal_mode_eigenvalues(k))
+            a0(j) = HALF/w
+            if (kT>ZERO) a0(j) = a0(j)/tanh(HALF*w/kT)
+            freq(j) = w*WAVENUMBER_PER_HARTREE
+         else
+            a0(j) = -ONE
+            freq(j) = -scale*sqrt(-.normal_mode_eigenvalues(k))*WAVENUMBER_PER_HARTREE
+         end
+      end
+
+      .crystal.set_soft_modes(V,a0,freq,.internal_ADP_temperature)
+
+      freq.destroy; a0.destroy; V.destroy; soft.destroy; B.destroy
+
    end
 
    put_internal_ADPs

@@ -4798,15 +4798,56 @@ contains
 
    end
 
+   set_soft_modes(V,a0,freq,temperature) :: leaky, PURE
+   ! Set the soft modes whose amplitudes a TLS model refines: "V" the
+   ! displacement of each fragment atom per unit normal coordinate,
+   ! (3 x n_fragment_atoms, n_soft); "a0" their harmonic <Q^2>, negative for
+   ! an imaginary mode; "freq" their frequencies, cm^-1, negative for
+   ! imaginary; and the "temperature" (K) a0 is for.
+      self :: INOUT
+      V :: MAT{REAL}, IN
+      a0,freq :: VEC{REAL}, IN
+      temperature :: REAL, IN
+   ENSURE(V.dim1==3*.fragment_atom.dim,"V: one row per fragment atom coordinate")
+   ENSURE(a0.dim==V.dim2 AND freq.dim==V.dim2,"one a0 and frequency per mode")
+
+      .soft_mode_vectors.destroy
+      .soft_mode_harmonic.destroy
+      .soft_mode_frequency.destroy
+      .soft_mode_vectors = V
+      .soft_mode_harmonic = a0
+      .soft_mode_frequency = freq
+      .soft_mode_temperature = temperature
+
+   end
+
+   n_soft_modes result (res) :: pure
+   ! The number of soft modes in the TLS model.
+      self :: IN
+      res :: INT
+      res = 0
+      if (.soft_mode_vectors.allocated) res = .soft_mode_vectors.dim2
+   end
+
+   n_TLS_sigma result (res) :: pure
+   ! The number of elements of the model's covariance: the 21 of Sigma
+   ! for (t, lambda), then one amplitude <Q^2> per soft mode.
+      self :: IN
+      res :: INT
+      res = 21 + .n_soft_modes
+   end
+
    TLS_response(g) result (res) :: PURE
-   ! d U_g / d sigma for fragment atom "g": column k is the change in
-   ! (U_xx,U_yy,U_zz,U_xy,U_xz,U_yz) per unit of the k-th upper-triangle
+   ! d U_g / d sigma for fragment atom "g". Columns 1-21: the change in
+   ! (U_xx,U_yy,U_zz,U_xy,U_xz,U_yz) per unit of each upper-triangle
    ! element sigma_pq of Sigma = <v v^T>, v = (t, lambda), with
    ! U_g = B_g Sigma B_g^T and B_g = [1 | A_g], A_g lambda = lambda x r_g,
-   ! r_g from .TLS_origin.
+   ! r_g from .TLS_origin. Then one column per soft mode j: the change per
+   ! unit amplitude <Q_j^2>, d_gj d_gj^T, d_gj atom g's displacement per
+   ! unit normal coordinate.
       self :: IN
       g :: INT, IN
-      res :: MAT{REAL}(6,21)
+      res :: MAT{REAL}(6,.n_TLS_sigma)
 
       d :: VEC{REAL}(3)
       Bm :: MAT{REAL}(3,6)
@@ -4836,10 +4877,22 @@ contains
       end
       end
 
+      ! The soft modes
+      do k = 1,.n_soft_modes
+         d = .soft_mode_vectors(3*g-2:3*g,k)
+         do i = 1,3
+         do j = 1,3
+            M(i,j) = d(i)*d(j)
+         end
+         end
+         res(:,21+k) = [M(1,1),M(2,2),M(3,3),M(1,2),M(1,3),M(2,3)]
+      end
+
    end
 
    make_TLS_jacobian_columns(Jt) :: leaky
-   ! Make "Jt", the columns of the refinement Jacobian for a TLS model:
+   ! Make "Jt", the columns of the refinement Jacobian for a TLS model, with
+   ! its soft-mode amplitudes if any:
    ! d X / d p for the TLS parameters p, nonzero on the ADP rows of the
    ! unique fragment atoms. Sigma = [[T,S^T],[S,L]] is restricted to the
    ! values for which every fragment atom's U obeys the crystal symmetry:
@@ -4853,14 +4906,15 @@ contains
 
       seitz :: MAT3{REAL}@
       Rall,C,Cg,CtC,Z,MZ,GZ,evec,Q :: MAT{REAL}@
-      eval :: VEC{REAL}@
+      eval,colnorm :: VEC{REAL}@
       stab :: VEC{INT}@
       W :: MAT{REAL}(6,6)
       R :: MAT{REAL}(3,3)
       mass,big,fac :: REAL
-      n_f,n_u,n_c,k,g,u,v,fu,fg,a,ag,t,i,j,ub,n_stab :: INT
+      n_f,n_u,n_c,k,g,u,v,fu,fg,a,ag,t,i,j,ub,n_stab,n_sig :: INT
 
       n_f = .n_fragment_atoms
+      n_sig = .n_TLS_sigma
       n_u = .n_unique_frag_atoms
       seitz = .xyz_seitz_matrices
 
@@ -4873,10 +4927,19 @@ contains
       end
       .TLS_origin = .TLS_origin/mass
 
-      ! d U / d sigma for every fragment atom
-      Rall.create(6*n_f,21)
+      ! d U / d sigma for every fragment atom. Each column is scaled to unit
+      ! length, so the tests for null directions below treat a soft-mode
+      ! amplitude (whose response carries 1/m, m in electron masses) on the
+      ! same footing as Sigma; the scaling is undone in Q at the end.
+      Rall.create(6*n_f,n_sig)
       do g = 1,n_f
          Rall(6*g-5:6*g,:) = .TLS_response(g)
+      end
+      colnorm.create(n_sig)
+      do i = 1,n_sig
+         colnorm(i) = norm2(Rall(:,i))
+         if (colnorm(i)<=ZERO) colnorm(i) = ONE
+         Rall(:,i) = Rall(:,i)/colnorm(i)
       end
 
       ! Symmetry conditions on sigma, as rows of C sigma = 0
@@ -4885,7 +4948,7 @@ contains
          a = .asym_atom_for_frag_atom(.unique_frag_atom(u))
          n_stab = n_stab + .asym_atom_stabilizer(a).element.dim
       end
-      C.create(6*(n_f+n_stab),21)
+      C.create(6*(n_f+n_stab),n_sig)
       C = ZERO
       n_c = 0
       do g = 1,n_f
@@ -4918,28 +4981,28 @@ contains
       end
 
       ! The site-symmetric sigma: the null space of C
-      CtC.create(21,21)
+      CtC.create(n_sig,n_sig)
       CtC.to_product_of(C(1:n_c,:),C(1:n_c,:),transpose_a=TRUE)
-      eval.create(21)
-      evec.create(21,21)
+      eval.create(n_sig)
+      evec.create(n_sig,n_sig)
       CtC.solve_symmetric_eigenproblem(eval,evec)
       big = max(maxval(abs(eval)),ONE)
-      k = count(abs(eval)<=TOL(10)*big)
-      Z.create(21,k)
+      k = count(abs(eval)<=TOL(8)*big)
+      Z.create(n_sig,k)
       j = 0
-      do i = 1,21
-         if (abs(eval(i))>TOL(10)*big) cycle
+      do i = 1,n_sig
+         if (abs(eval(i))>TOL(8)*big) cycle
          j = j + 1
          Z(:,j) = evec(:,i)
       end
       if (n_c==0) then
          Z.destroy
-         Z.create(21,21)
+         Z.create(n_sig,n_sig)
          Z = ZERO
-         do i = 1,21
+         do i = 1,n_sig
             Z(i,i) = ONE
          end
-         k = 21
+         k = n_sig
       end
 
       ! Drop what no U sees (tr S): keep the range of Rall within Z
@@ -4953,7 +5016,7 @@ contains
       GZ.solve_symmetric_eigenproblem(eval,evec)
       big = maxval(abs(eval))
       j = count(eval>TOL(10)*big)
-      Q.create(21,j)
+      Q.create(n_sig,j)
       t = 0
       do i = 1,k
          if (eval(i)<=TOL(10)*big) cycle
@@ -4961,6 +5024,13 @@ contains
          Q(:,t) = matmul(Z,evec(:,i))
       end
       k = j
+
+      ! Back to unscaled sigma: Rall Q is unchanged
+      do i = 1,n_sig
+         Q(i,:) = Q(i,:)/colnorm(i)
+         Rall(:,i) = Rall(:,i)*colnorm(i)
+      end
+      colnorm.destroy
 
       ! The Jacobian columns: d U_u / d p on each unique atom's ADP rows
       .TLS_unique_response.destroy
@@ -5070,6 +5140,98 @@ contains
 
    end
 
+   set_soft_mode_restraints :: leaky
+   ! Restrain each soft-mode amplitude <Q_j^2> toward its harmonic value
+   ! a0_j with sigma_j = soft_mode_restraint x a0_j, by setting the
+   ! restraint weights W and shift of .xray_data.ls for the current
+   ! parameters. The amplitudes are linear in the TLS parameters,
+   ! a = Q_a p (Q_a the soft-mode rows of .TLS_basis), so
+   ! W = Q_a^T w Q_a and the shift d solves Q_a d = a0 - a. An imaginary
+   ! mode has no harmonic value and is not restrained.
+      self :: INOUT
+   ENSURE(.xray_data.ls.allocated,"no least-squares data")
+
+      X,p,a,t,sig :: VEC{REAL}@
+      Qa,QR,QQ :: MAT{REAL}@
+      rows :: VEC{INT}@
+      n_s,k,first,n_p,n_r,j :: INT
+
+      n_s = .n_soft_modes
+      if (n_s==0) return
+      k = .TLS_basis.dim2
+      first = .TLS_first_param
+      n_p = .xray_data.ls.n_param
+
+      ! The current amplitudes
+      .make_unique_frag_X(X)
+      .xray_data.ls.make_param_from_X(X,p)
+      Qa = .TLS_basis(22:21+n_s,:)
+      a.create(n_s)
+      a.to_product_of(Qa,p(first:first+k-1))
+
+      ! The restrained modes
+      rows.create(n_s)
+      n_r = 0
+      do j = 1,n_s
+         if (.soft_mode_harmonic(j)<=ZERO) cycle
+         n_r = n_r + 1
+         rows(n_r) = j
+      end
+
+      .xray_data.ls.restraint_W.destroy
+      .xray_data.ls.restraint_shift.destroy
+      .xray_data.ls.restraint_W.create(n_p,n_p)
+      .xray_data.ls.restraint_shift.create(n_p)
+      .xray_data.ls.restraint_W = ZERO
+      .xray_data.ls.restraint_shift = ZERO
+
+      if (n_r>0) then
+         QR = Qa(rows(1:n_r),:)
+         sig.create(n_r)
+         t.create(n_r)
+         do j = 1,n_r
+            sig(j) = .xray_data.soft_mode_restraint*.soft_mode_harmonic(rows(j))
+            t(j) = .soft_mode_harmonic(rows(j)) - a(rows(j))
+            QR(j,:) = QR(j,:)/sig(j)
+            t(j) = t(j)/sig(j)
+         end
+         ! W = QR^T QR, with QR's rows scaled by 1/sigma; d = QR^T (QR QR^T)^-1 t
+         .xray_data.ls.restraint_W(first:first+k-1,first:first+k-1) = matmul(transpose(QR),QR)
+         QQ = matmul(QR,transpose(QR))
+         sig.destroy
+         sig.create(n_r)
+         QQ.solve_linear_equation(t,sig)
+         .xray_data.ls.restraint_shift(first:first+k-1) = matmul(transpose(QR),sig)
+         QQ.destroy; t.destroy; sig.destroy; QR.destroy
+      end
+
+      rows.destroy; a.destroy; Qa.destroy; p.destroy; X.destroy
+
+   end
+
+   make_unique_frag_X(X) :: leaky, PURE
+   ! Make "X", the unique fragment atoms' pADP vectors end to end, in the
+   ! order of the refinement Jacobian.
+      self :: IN
+      X :: VEC{REAL}@, OUT
+
+      u,f,n,ub,n_X :: INT
+
+      n_X = 0
+      do u = 1,.n_unique_frag_atoms
+         n_X = n_X + .fragment_atom(.unique_frag_atom(u)).no_of_pADPs
+      end
+      X.create(n_X)
+      ub = 0
+      do u = 1,.n_unique_frag_atoms
+         f = .unique_frag_atom(u)
+         n = .fragment_atom(f).no_of_pADPs
+         X(ub+1:ub+n) = .fragment_atom(f).pADP_vector
+         ub = ub + n
+      end
+
+   end
+
    put_TLS_results
    ! Put T, L and S of a TLS refinement, about the fragment's centre of
    ! mass, with esds. They are fitted to the unique fragment atoms' ADPs
@@ -5108,15 +5270,15 @@ contains
       MtM.solve_linear_equation(rhs,p)
 
       ! Sigma and its esds; the 21 upper-triangle elements
-      sv.create(21)
+      sv.create(.n_TLS_sigma)
       sv.to_product_of(.TLS_basis,p)
-      var.create(21)
+      var.create(.n_TLS_sigma)
       var = ZERO
       if (.xray_data.ls.param_covariance.allocated) then
          Cp = .xray_data.ls.param_covariance(first:first+k-1,first:first+k-1)
-         CS.create(21,k)
+         CS.create(.n_TLS_sigma,k)
          CS.to_product_of(.TLS_basis,Cp)
-         do i = 1,21
+         do i = 1,.n_TLS_sigma
             var(i) = .xray_data.GoF2*dot_product(CS(i,:),.TLS_basis(i,:))
          end
          CS.destroy
@@ -5174,8 +5336,119 @@ contains
       stdout.show("rms libration /deg              =",sqrt(max(ZERO,sum(L_evals)/THREE)))
       stdout.flush
 
+      ! Soft modes
+      if (.n_soft_modes>0) .put_soft_mode_results(sv(22:),var(22:))
+
+      ! Model selection
+      .put_model_selection
+
       Esd.destroy; Sm.destroy; var.destroy; sv.destroy
       p.destroy; rhs.destroy; MtM.destroy; Mt.destroy; y.destroy
+
+   end
+
+   put_soft_mode_results(a,var)
+   ! Put the refined soft-mode amplitudes "a" (<Q^2>, atomic units) with
+   ! the variances "var", against their harmonic values, and the frequency
+   ! each refined amplitude implies at the data's temperature.
+      self :: IN
+      a,var :: VEC{REAL}, IN
+
+      w,kT :: REAL
+      j :: INT
+
+      kT = .soft_mode_temperature/KELVIN_PER_HARTREE
+
+      stdout.flush
+      stdout.text("Soft internal modes, amplitude <Q^2> in atomic units (m_e^1/2 bohr)^2.")
+      stdout.text("Harmonic: from the Hessian. Implied: the frequency that gives the refined")
+      stdout.text("amplitude at the same temperature. A negative frequency is imaginary.")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=5)
+      stdout.put("#",int_width=TRUE)
+      stdout.put("Freq /cm^-1")
+      stdout.put("Harmonic")
+      stdout.put("Refined")
+      stdout.put("esd")
+      stdout.put("Implied /cm^-1")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=5)
+      do j = 1,.n_soft_modes
+         stdout.put(j)
+         stdout.put(.soft_mode_frequency(j))
+         if (.soft_mode_harmonic(j)>ZERO) then; stdout.put(.soft_mode_harmonic(j))
+         else;                                  stdout.put("--")
+         end
+         stdout.put(a(j))
+         stdout.put(sqrt(max(ZERO,var(j))))
+         if (a(j)>ZERO) then
+            w = ::frequency_for_amplitude(a(j),kT)
+            stdout.put(w*WAVENUMBER_PER_HARTREE)
+         else
+            stdout.put("--")
+         end
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=5)
+
+   end
+
+   frequency_for_amplitude(a,kT) result (res) :: selfless, PURE
+   ! The frequency w (atomic units) for which a harmonic oscillator at
+   ! temperature kT (hartree) has mean-square amplitude <Q^2> = "a":
+   ! coth(w/2kT)/(2w) = a, which falls monotonically with w. At kT = 0,
+   ! w = 1/(2a). Found by bisection in log w.
+      a,kT :: REAL, IN
+      res :: REAL
+
+      lo,hi,w,f :: REAL
+      i :: INT
+
+      if (kT<=ZERO) then
+         res = HALF/a
+         return
+      end
+      lo = log(TOL(10))
+      hi = log(TEN)
+      do i = 1,200
+         w = exp(HALF*(lo+hi))
+         f = HALF/(w*tanh(HALF*w/kT))
+         if (f>a) then; lo = log(w)
+         else;          hi = log(w)
+         end
+      end
+      res = exp(HALF*(lo+hi))
+
+   end
+
+   put_model_selection
+   ! Put the numbers for comparing refinements of the same data with
+   ! different models: chi^2, the effective number of parameters p_eff
+   ! (tr[(A+W)^-1 A] for the structural ones, plus scale and extinction),
+   ! GoF, and the criteria AIC = chi^2 + 2 p_eff and BIC = chi^2 + p_eff ln n.
+   ! Smaller AIC or BIC is the better model.
+      self :: IN
+   ENSURE(.xray_data.allocated,"no data")
+
+      chi2,p_eff,n :: REAL
+
+      n = .xray_data.reflections.dim
+      chi2 = .xray_data.GoF2*(n - .xray_data.n_param)
+      p_eff = .xray_data.n_param
+      if (.xray_data.ls.allocated) then
+         p_eff = .xray_data.n_param - .xray_data.n_param_structure + .xray_data.ls.n_param_eff
+      end
+
+      stdout.flush
+      stdout.text("Model selection:")
+      stdout.flush
+      stdout.show("No. of reflections n            =",n)
+      stdout.show("Effective no. of parameters     =",p_eff)
+      stdout.show("chi^2                           =",chi2)
+      stdout.show("GoF                             =",sqrt(.xray_data.GoF2))
+      stdout.show("AIC = chi^2 + 2 p_eff           =",chi2 + TWO*p_eff)
+      stdout.show("BIC = chi^2 + p_eff ln n        =",chi2 + p_eff*log(n))
+      stdout.flush
 
    end
 
@@ -5483,6 +5756,7 @@ contains
       dFc.destroy
 
       ! Get the unique atom shifts, dX (leaky)
+      if (.xray_data.ADP_model=="tls") .set_soft_mode_restraints
       .xray_data.SET:solve_normal_equations(dFa)
 
       dFa.destroy
@@ -5517,6 +5791,7 @@ contains
       dFc.destroy
 
       ! Get the unique atom shifts, dX (leaky)
+      if (.xray_data.ADP_model=="tls") .set_soft_mode_restraints
       .xray_data.SET:solve_normal_equations(dFa)
 
       dFa.destroy
