@@ -4786,12 +4786,12 @@ contains
    end
 
    set_fragment_U_high(U_high) :: leaky, PURE
-   ! Set .fragment_U_high, the stiff-mode U of each fragment atom (3,3,n),
-   ! bohr^2: the fixed part of a TLS model.
+   ! Set .fragment_U_high, the stiff-mode U of each atom of the TLS body
+   ! (3,3,n), bohr^2: the fixed part of a TLS model.
       self :: INOUT
       U_high :: MAT3{REAL}, IN
    ENSURE(.fragment_atom.allocated,"no fragment atoms")
-   ENSURE(U_high.dim3==.fragment_atom.dim,"one U_high per fragment atom")
+   ENSURE(U_high.dim3==.n_TLS_atoms,"one U_high per TLS body atom")
 
       .fragment_U_high.destroy
       .fragment_U_high = U_high
@@ -4800,15 +4800,15 @@ contains
 
    set_soft_modes(V,a0,freq,temperature) :: leaky, PURE
    ! Set the soft modes whose amplitudes a TLS model refines: "V" the
-   ! displacement of each fragment atom per unit normal coordinate,
-   ! (3 x n_fragment_atoms, n_soft); "a0" their harmonic <Q^2>, negative for
+   ! displacement of each TLS body atom per unit normal coordinate,
+   ! (3 x n_TLS_atoms, n_soft); "a0" their harmonic <Q^2>, negative for
    ! an imaginary mode; "freq" their frequencies, cm^-1, negative for
    ! imaginary; and the "temperature" (K) a0 is for.
       self :: INOUT
       V :: MAT{REAL}, IN
       a0,freq :: VEC{REAL}, IN
       temperature :: REAL, IN
-   ENSURE(V.dim1==3*.fragment_atom.dim,"V: one row per fragment atom coordinate")
+   ENSURE(V.dim1==3*.n_TLS_atoms,"V: one row per TLS body atom coordinate")
    ENSURE(a0.dim==V.dim2 AND freq.dim==V.dim2,"one a0 and frequency per mode")
 
       .soft_mode_vectors.destroy
@@ -4821,6 +4821,25 @@ contains
 
    end
 
+   n_TLS_atoms result (res) :: pure
+   ! The number of atoms in the TLS body: the leading fragment atoms in the
+   ! group of the first one. For a molecule that is every fragment atom; for
+   ! a cluster made by create_cluster it is the central molecule.
+      self :: IN
+      res :: INT
+
+      g,n_f :: INT
+
+      n_f = .fragment_atom.dim
+      res = n_f
+      g = .fragment_atom(1).group
+      do res = 1,n_f
+         if (.fragment_atom(res).group/=g) exit
+      end
+      res = res - 1
+
+   end
+
    n_soft_modes result (res) :: pure
    ! The number of soft modes in the TLS model.
       self :: IN
@@ -4830,43 +4849,98 @@ contains
    end
 
    n_TLS_sigma result (res) :: pure
-   ! The number of elements of the model's covariance: the 21 of Sigma
-   ! for (t, lambda), then one amplitude <Q^2> per soft mode.
+   ! The number of elements of the model's covariance Sigma = <v v^T>,
+   ! v = (t, lambda, Q_1 ... Q_K): the 21 of the rigid body, then one
+   ! amplitude <Q_j^2> per soft mode, then, with use_soft_mode_correlations=,
+   ! every cross term of a soft mode. See TLS_sigma_pairs for the order.
       self :: IN
       res :: INT
+
+      n_v :: INT
+
+      n_v = 6 + .n_soft_modes
       res = 21 + .n_soft_modes
+      if (.xray_data.allocated) then
+      if (.xray_data.use_soft_mode_correlations) res = n_v*(n_v+1)/2
+      end
+
+   end
+
+   TLS_sigma_pairs(pr) :: PURE
+   ! "pr(:,i)" is the pair of coordinates (p,q), p <= q, of element i of
+   ! Sigma, coordinates 1-3 t, 4-6 lambda, 6+j soft mode j. The order: the
+   ! 21 rigid-body elements row by row; the amplitudes (6+j,6+j); then the
+   ! cross terms, each mode's six with the rigid body and then those
+   ! between soft modes.
+      self :: IN
+      pr :: MAT{INT}@, OUT
+
+      n_s,i,j,p,q :: INT
+
+      n_s = .n_soft_modes
+      pr.create(2,.n_TLS_sigma)
+      i = 0
+      do p = 1,6
+      do q = p,6
+         i = i + 1
+         pr(:,i) = [p,q]
+      end
+      end
+      do j = 1,n_s
+         i = i + 1
+         pr(:,i) = [6+j,6+j]
+      end
+      if (i==pr.dim2) return
+      do j = 1,n_s
+      do p = 1,6
+         i = i + 1
+         pr(:,i) = [p,6+j]
+      end
+      end
+      do j = 1,n_s
+      do q = j+1,n_s
+         i = i + 1
+         pr(:,i) = [6+j,6+q]
+      end
+      end
+
    end
 
    TLS_response(g) result (res) :: PURE
-   ! d U_g / d sigma for fragment atom "g". Columns 1-21: the change in
-   ! (U_xx,U_yy,U_zz,U_xy,U_xz,U_yz) per unit of each upper-triangle
-   ! element sigma_pq of Sigma = <v v^T>, v = (t, lambda), with
-   ! U_g = B_g Sigma B_g^T and B_g = [1 | A_g], A_g lambda = lambda x r_g,
-   ! r_g from .TLS_origin. Then one column per soft mode j: the change per
-   ! unit amplitude <Q_j^2>, d_gj d_gj^T, d_gj atom g's displacement per
-   ! unit normal coordinate.
+   ! d U_g / d sigma for TLS body atom "g": the change in
+   ! (U_xx,U_yy,U_zz,U_xy,U_xz,U_yz) per unit of each element sigma_pq of
+   ! Sigma = <v v^T>, in the order of TLS_sigma_pairs. U_g = B_g Sigma B_g^T
+   ! with B_g = [1 | A_g | d_g1 ... d_gK]: A_g lambda = lambda x r_g, r_g
+   ! from .TLS_origin, and d_gj atom g's displacement per unit normal
+   ! coordinate of soft mode j.
       self :: IN
       g :: INT, IN
       res :: MAT{REAL}(6,.n_TLS_sigma)
 
       d :: VEC{REAL}(3)
-      Bm :: MAT{REAL}(3,6)
+      Bm :: MAT{REAL}@
       M :: MAT{REAL}(3,3)
-      p,q,k,i,j :: INT
+      pr :: MAT{INT}@
+      p,q,k,i,j,n_v :: INT
 
-      d = .fragment_atom(g).position - .TLS_origin
+      n_v = 6 + .n_soft_modes
+      Bm.create(3,n_v)
       Bm = ZERO
+      d = .fragment_atom(g).position - .TLS_origin
       do i = 1,3
          Bm(i,i) = ONE
       end
       Bm(1,5) =  d(3); Bm(1,6) = -d(2)
       Bm(2,4) = -d(3); Bm(2,6) =  d(1)
       Bm(3,4) =  d(2); Bm(3,5) = -d(1)
+      do k = 1,.n_soft_modes
+         Bm(:,6+k) = .soft_mode_vectors(3*g-2:3*g,k)
+      end
 
-      k = 0
-      do p = 1,6
-      do q = p,6
-         k = k + 1
+      .TLS_sigma_pairs(pr)
+      do k = 1,.n_TLS_sigma
+         p = pr(1,k)
+         q = pr(2,k)
          do i = 1,3
          do j = 1,3
             M(i,j) = Bm(i,p)*Bm(j,q)
@@ -4875,18 +4949,9 @@ contains
          if (p/=q) M = M + transpose(M)
          res(:,k) = [M(1,1),M(2,2),M(3,3),M(1,2),M(1,3),M(2,3)]
       end
-      end
 
-      ! The soft modes
-      do k = 1,.n_soft_modes
-         d = .soft_mode_vectors(3*g-2:3*g,k)
-         do i = 1,3
-         do j = 1,3
-            M(i,j) = d(i)*d(j)
-         end
-         end
-         res(:,21+k) = [M(1,1),M(2,2),M(3,3),M(1,2),M(1,3),M(2,3)]
-      end
+      pr.destroy
+      Bm.destroy
 
    end
 
@@ -4895,7 +4960,7 @@ contains
    ! its soft-mode amplitudes if any:
    ! d X / d p for the TLS parameters p, nonzero on the ADP rows of the
    ! unique fragment atoms. Sigma = [[T,S^T],[S,L]] is restricted to the
-   ! values for which every fragment atom's U obeys the crystal symmetry:
+   ! values for which every TLS body atom's U obeys the crystal symmetry:
    ! images of one asymmetric unit atom agree, and an atom on a special
    ! position keeps its site symmetry. Directions no U sees (tr S) are
    ! dropped. Sets .TLS_origin, .TLS_basis (Sigma for each parameter) and
@@ -4913,12 +4978,14 @@ contains
       mass,big,fac :: REAL
       n_f,n_u,n_c,k,g,u,v,fu,fg,a,ag,t,i,j,ub,n_stab,n_sig :: INT
 
-      n_f = .n_fragment_atoms
+      ! The TLS body: the first n_f fragment atoms, holding the unique ones
+      n_f = .n_TLS_atoms
       n_sig = .n_TLS_sigma
       n_u = .n_unique_frag_atoms
+      DIE_IF(maxval(.unique_frag_atom(1:n_u))>n_f,"TLS: a unique fragment atom lies outside the TLS body")
       seitz = .xyz_seitz_matrices
 
-      ! Origin: the fragment's centre of mass
+      ! Origin: the TLS body's centre of mass
       .TLS_origin = ZERO
       mass = ZERO
       do g = 1,n_f
@@ -4927,7 +4994,7 @@ contains
       end
       .TLS_origin = .TLS_origin/mass
 
-      ! d U / d sigma for every fragment atom. Each column is scaled to unit
+      ! d U / d sigma for every TLS body atom. Each column is scaled to unit
       ! length, so the tests for null directions below treat a soft-mode
       ! amplitude (whose response carries 1/m, m in electron masses) on the
       ! same footing as Sigma; the scaling is undone in Q at the end.
@@ -5140,72 +5207,164 @@ contains
 
    end
 
-   set_soft_mode_restraints :: leaky
-   ! Restrain each soft-mode amplitude <Q_j^2> toward its harmonic value
-   ! a0_j with sigma_j = soft_mode_restraint x a0_j, by setting the
-   ! restraint weights W and shift of .xray_data.ls for the current
-   ! parameters. The amplitudes are linear in the TLS parameters,
-   ! a = Q_a p (Q_a the soft-mode rows of .TLS_basis), so
-   ! W = Q_a^T w Q_a and the shift d solves Q_a d = a0 - a. An imaginary
-   ! mode has no harmonic value and is not restrained.
+   set_TLS_restraints :: leaky
+   ! Set the restraint weights W and shift of .xray_data.ls for the current
+   ! parameters of a TLS model. Each restraint holds a linear function
+   ! r . sigma of the elements sigma of Sigma toward a target, with a
+   ! sigma s:
+   ! . a soft-mode amplitude toward its harmonic value a0, s =
+   !   soft_mode_restraint x a0; an imaginary mode has none and is free;
+   ! . with use_soft_mode_correlations=, a cross term toward zero, s =
+   !   correlation_restraint x sqrt(scale_p scale_q): its correlation
+   !   coefficient toward zero;
+   ! . with use_positive_TLS_sigma=, v^T Sigma v toward zero for each eigenvector
+   !   v of Sigma with a negative eigenvalue, s = 1/100 of its scale: the
+   !   inequality Sigma >= 0, held while the data push against it.
+   ! The scale of a coordinate is its Sigma diagonal (at least 1/1000 of
+   ! the largest of T or L), or for a soft mode the harmonic amplitude at
+   ! |frequency|. sigma = Q p, Q = .TLS_basis, so row r acts on p as r Q.
+   ! With R the rows r Q / s and t = (target - r . sigma)/s, W = R^T R and
+   ! the shift d = R^T y with (R R^T) y = t, so that W d = R^T t.
       self :: INOUT
    ENSURE(.xray_data.ls.allocated,"no least-squares data")
 
-      X,p,a,t,sig :: VEC{REAL}@
-      Qa,QR,QQ :: MAT{REAL}@
-      rows :: VEC{INT}@
-      n_s,k,first,n_p,n_r,j :: INT
+      X,p,sv,scl,tg,sgm,t,y,ev,e2 :: VEC{REAL}@
+      pr :: MAT{INT}@
+      rw,RQ,RR,Smat,evec,V2 :: MAT{REAL}@
+      w,kT,big,fac :: REAL
+      n_s,n_sig,n_v,k,first,n_p,n_r,i,j,a,ip,iq :: INT
 
-      n_s = .n_soft_modes
-      if (n_s==0) return
-      k = .TLS_basis.dim2
+      n_s   = .n_soft_modes
+      n_sig = .n_TLS_sigma
+      n_v   = 6 + n_s
+      k     = .TLS_basis.dim2
       first = .TLS_first_param
-      n_p = .xray_data.ls.n_param
+      n_p   = .xray_data.ls.n_param
+      .TLS_sigma_pairs(pr)
 
-      ! The current amplitudes
+      ! The current Sigma
       .make_unique_frag_X(X)
       .xray_data.ls.make_param_from_X(X,p)
-      Qa = .TLS_basis(22:21+n_s,:)
-      a.create(n_s)
-      a.to_product_of(Qa,p(first:first+k-1))
+      sv.create(n_sig)
+      sv.to_product_of(.TLS_basis,p(first:first+k-1))
+      Smat.create(n_v,n_v)
+      Smat = ZERO
+      do i = 1,n_sig
+         Smat(pr(1,i),pr(2,i)) = sv(i)
+         Smat(pr(2,i),pr(1,i)) = sv(i)
+      end
 
-      ! The restrained modes
-      rows.create(n_s)
+      ! The scale of each coordinate
+      scl.create(n_v)
+      do i = 1,6
+         scl(i) = Smat(i,i)
+      end
+      big = max(maxval(scl(1:3)),TOL(10))
+      do i = 1,3
+         scl(i) = max(scl(i),TOL(3)*big)
+      end
+      big = max(maxval(scl(4:6)),TOL(10))
+      do i = 4,6
+         scl(i) = max(scl(i),TOL(3)*big)
+      end
+      kT = .soft_mode_temperature/KELVIN_PER_HARTREE
+      do j = 1,n_s
+         w = abs(.soft_mode_frequency(j))/WAVENUMBER_PER_HARTREE
+         scl(6+j) = HALF/w
+         if (kT>ZERO) scl(6+j) = scl(6+j)/tanh(HALF*w/kT)
+      end
+
+      ! The restraints, as rows on sigma
+      rw.create(n_sig+n_v,n_sig)
+      tg.create(n_sig+n_v)
+      sgm.create(n_sig+n_v)
+      rw = ZERO
       n_r = 0
       do j = 1,n_s
          if (.soft_mode_harmonic(j)<=ZERO) cycle
          n_r = n_r + 1
-         rows(n_r) = j
+         rw(n_r,21+j) = ONE
+         tg(n_r) = .soft_mode_harmonic(j)
+         sgm(n_r) = .xray_data.soft_mode_restraint*.soft_mode_harmonic(j)
+      end
+      if (.xray_data.use_soft_mode_correlations) then
+         do i = 22+n_s,n_sig
+            ip = pr(1,i)
+            iq = pr(2,i)
+            n_r = n_r + 1
+            rw(n_r,i) = ONE
+            tg(n_r) = ZERO
+            sgm(n_r) = .xray_data.correlation_restraint*sqrt(scl(ip)*scl(iq))
+         end
+      end
+      .n_TLS_held_at_zero = 0
+      if (.xray_data.use_positive_TLS_sigma) then
+         ev.create(n_v)
+         evec.create(n_v,n_v)
+         RR = Smat
+         RR.solve_symmetric_eigenproblem(ev,evec)
+         big = maxval(abs(ev))
+         do a = 1,n_v
+            if (ev(a)>=-TOL(8)*big) cycle
+            n_r = n_r + 1
+            do i = 1,n_sig
+               ip = pr(1,i)
+               iq = pr(2,i)
+               fac = evec(ip,a)*evec(iq,a)
+               if (ip/=iq) fac = TWO*fac
+               rw(n_r,i) = fac
+            end
+            tg(n_r) = ZERO
+            sgm(n_r) = sum(evec(:,a)**2*scl)/HUNDRED
+            .n_TLS_held_at_zero = .n_TLS_held_at_zero + 1
+         end
+         RR.destroy; evec.destroy; ev.destroy
       end
 
       .xray_data.ls.restraint_W.destroy
       .xray_data.ls.restraint_shift.destroy
+
+      ! None: leave the solve unrestrained, as without soft modes
+      if (n_r==0 AND n_s==0) then
+         Smat.destroy; scl.destroy; sgm.destroy; tg.destroy; rw.destroy
+         sv.destroy; p.destroy; X.destroy; pr.destroy
+         return
+      end
+
       .xray_data.ls.restraint_W.create(n_p,n_p)
       .xray_data.ls.restraint_shift.create(n_p)
       .xray_data.ls.restraint_W = ZERO
       .xray_data.ls.restraint_shift = ZERO
 
       if (n_r>0) then
-         QR = Qa(rows(1:n_r),:)
-         sig.create(n_r)
+         RQ.create(n_r,k)
+         RQ.to_product_of(rw(1:n_r,:),.TLS_basis)
          t.create(n_r)
-         do j = 1,n_r
-            sig(j) = .xray_data.soft_mode_restraint*.soft_mode_harmonic(rows(j))
-            t(j) = .soft_mode_harmonic(rows(j)) - a(rows(j))
-            QR(j,:) = QR(j,:)/sig(j)
-            t(j) = t(j)/sig(j)
+         t.to_product_of(rw(1:n_r,:),sv)
+         do i = 1,n_r
+            t(i) = (tg(i) - t(i))/sgm(i)
+            RQ(i,:) = RQ(i,:)/sgm(i)
          end
-         ! W = QR^T QR, with QR's rows scaled by 1/sigma; d = QR^T (QR QR^T)^-1 t
-         .xray_data.ls.restraint_W(first:first+k-1,first:first+k-1) = matmul(transpose(QR),QR)
-         QQ = matmul(QR,transpose(QR))
-         sig.destroy
-         sig.create(n_r)
-         QQ.solve_linear_equation(t,sig)
-         .xray_data.ls.restraint_shift(first:first+k-1) = matmul(transpose(QR),sig)
-         QQ.destroy; t.destroy; sig.destroy; QR.destroy
+         .xray_data.ls.restraint_W(first:first+k-1,first:first+k-1) = matmul(transpose(RQ),RQ)
+         ! y = (R R^T)^+ t, dropping directions no parameter reaches
+         RR.create(n_r,n_r)
+         RR.to_product_of(RQ,RQ,transpose_b=TRUE)
+         e2.create(n_r)
+         V2.create(n_r,n_r)
+         RR.solve_symmetric_eigenproblem(e2,V2)
+         big = max(maxval(abs(e2)),TOL(20))
+         y.create(n_r)
+         y = ZERO
+         do i = 1,n_r
+            if (e2(i)<=TOL(10)*big) cycle
+            y = y + V2(:,i)*dot_product(V2(:,i),t)/e2(i)
+         end
+         .xray_data.ls.restraint_shift(first:first+k-1) = matmul(transpose(RQ),y)
+         y.destroy; V2.destroy; e2.destroy; RR.destroy; t.destroy; RQ.destroy
       end
 
-      rows.destroy; a.destroy; Qa.destroy; p.destroy; X.destroy
+      Smat.destroy; scl.destroy; sgm.destroy; tg.destroy; rw.destroy
+      sv.destroy; p.destroy; X.destroy; pr.destroy
 
    end
 
@@ -5336,8 +5495,13 @@ contains
       stdout.show("rms libration /deg              =",sqrt(max(ZERO,sum(L_evals)/THREE)))
       stdout.flush
 
-      ! Soft modes
+      ! Soft modes, and their correlations
       if (.n_soft_modes>0) .put_soft_mode_results(sv(22:),var(22:))
+      if (.n_soft_modes>0 AND .xray_data.use_soft_mode_correlations) .put_soft_mode_correlations(sv,var)
+      if (.xray_data.use_positive_TLS_sigma) then
+         stdout.show("Directions of Sigma held at 0   =",.n_TLS_held_at_zero)
+         stdout.flush
+      end
 
       ! Model selection
       .put_model_selection
@@ -5390,6 +5554,77 @@ contains
          stdout.flush
       end
       stdout.dash(int_fields=1,real_fields=5)
+
+   end
+
+   put_soft_mode_correlations(sv,var)
+   ! Put the correlation coefficient of each soft mode with the rigid-body
+   ! coordinates and the other soft modes, Sigma_pq/sqrt(Sigma_pp Sigma_qq),
+   ! from the elements "sv" of Sigma and their variances "var", with esds.
+   ! A coefficient whose diagonal elements are not positive is not shown.
+      self :: IN
+      sv,var :: VEC{REAL}, IN
+
+      pr :: MAT{INT}@
+      Smat,Vmat :: MAT{REAL}@
+      lab :: VEC{STR}@
+      den :: REAL
+      n_s,n_v,i,j,q :: INT
+
+      n_s = .n_soft_modes
+      n_v = 6 + n_s
+      .TLS_sigma_pairs(pr)
+      Smat.create(n_v,n_v); Smat = ZERO
+      Vmat.create(n_v,n_v); Vmat = ZERO
+      do i = 1,.n_TLS_sigma
+         Smat(pr(1,i),pr(2,i)) = sv(i); Smat(pr(2,i),pr(1,i)) = sv(i)
+         Vmat(pr(1,i),pr(2,i)) = var(i); Vmat(pr(2,i),pr(1,i)) = var(i)
+      end
+      lab.create(n_v)
+      lab(1:6) = ["t_x     ","t_y     ","t_z     ","lambda_x","lambda_y","lambda_z"]
+      do j = 1,n_s
+         lab(6+j) = "Q_"//trim(j.to_str)
+      end
+
+      stdout.flush
+      stdout.text("Soft-mode correlation coefficients Sigma_pq/sqrt(Sigma_pp Sigma_qq),")
+      stdout.text("one row per soft mode; esds in brackets.")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=n_v)
+      stdout.put("#",int_width=TRUE)
+      do q = 1,n_v
+         stdout.put(trim(lab(q)))
+      end
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=n_v)
+      do j = 1,n_s
+         stdout.put(j)
+         do q = 1,n_v
+            den = Smat(6+j,6+j)*Smat(q,q)
+            if (q==6+j OR den<=ZERO) then
+               stdout.put("--")
+            else
+               den = sqrt(den)
+               stdout.put(trim(.TLS_element_str_1(Smat(6+j,q)/den,sqrt(max(ZERO,Vmat(6+j,q)))/den)))
+            end
+         end
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=n_v)
+
+      lab.destroy; Vmat.destroy; Smat.destroy; pr.destroy
+
+   end
+
+   TLS_element_str_1(val,esd) result (res) :: PURE
+   ! "val" with its "esd" in brackets, as a short string.
+      self :: IN
+      val,esd :: REAL, IN
+      res :: STR
+
+      if (esd>TOL(10)) then; res = trim(adjustl(val.to_str(esd,12,4)))
+      else;                  res = trim(adjustl(val.to_str("f12.4")))
+      end
 
    end
 
@@ -5756,7 +5991,7 @@ contains
       dFc.destroy
 
       ! Get the unique atom shifts, dX (leaky)
-      if (.xray_data.ADP_model=="tls") .set_soft_mode_restraints
+      if (.xray_data.ADP_model=="tls") .set_TLS_restraints
       .xray_data.SET:solve_normal_equations(dFa)
 
       dFa.destroy
@@ -5791,7 +6026,7 @@ contains
       dFc.destroy
 
       ! Get the unique atom shifts, dX (leaky)
-      if (.xray_data.ADP_model=="tls") .set_soft_mode_restraints
+      if (.xray_data.ADP_model=="tls") .set_TLS_restraints
       .xray_data.SET:solve_normal_equations(dFa)
 
       dFa.destroy

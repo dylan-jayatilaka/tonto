@@ -171,6 +171,34 @@ sequence with cluster charges, to test whether the soft modes compensate for the
 density; (2) the plan's check on a molecule with a methyl torsion (gly_ala); (3) print a note when a
 mode below `soft_mode_cutoff=` is not among the K refined (today it silently drops out of the model);
 (4) T, L, S at the centre of reaction; (5) step 4, the full Sigma.
+**2026-10-05, branch `tls-step4`:** (a) the cluster-charge test of the soft modes, and the explicit
+7-molecule urea cluster (`create_cluster`, `within_radius` 2.5 A: the central molecule and the six
+it hydrogen-bonds to; 3.0-3.8 A gives 11 molecules, the extra four in van der Waals contact only);
+(b) TLS on a cluster -- the TLS body is the central molecule (`CRYSTAL:n_TLS_atoms`), its modes come
+from `.saved`; `create_cluster` now keeps `auxiliary_basis_name=` (RI-J on a cluster stopped at the
+first SCF); (c) step 4, the full Sigma (`use_soft_mode_correlations=`), cross terms restrained as
+correlation coefficients, and Sigma held positive (`use_positive_tls_sigma=`, on) by a restraint on each
+negative eigen-direction. Results in the research document §5. Why positivity is on: with cluster
+charges the wag amplitudes refine negative (-177(83) for B3LYP, one mode).
+**Profiles of a 56-atom def2-SVP cluster SCF** (macOS `sample`, 20 s, during the HAR; idle OpenBLAS
+threads excluded). Exact J/K: integral engine and quartet set-up ~45 %, **malloc/free ~22 %** --
+allocation inside the quartet loop (`SHELL1:set_reusing_storage`, `ERI_SCRATCH:grow_to`, the
+`xzm_*` calls) -- worth removing. RIJCOSX: COSX grid potentials (`make_point_potentials` + Rys
+weights) ~40 %, `make_r_K_COSX_on` 11 %, RI-J 10 %, the Becke partition 9 % (recomputed each SCF;
+cacheable). RIJCOSX was about twice as slow as exact here (1922 s against 978 s for the free-ADP HAR,
+different machine load) and changed GoF by 1e-4. Samples kept in the job directory only.
+**Results (def2-SVP, Hirshfeld; research document §5):** with cluster charges or the explicit cluster
+the NH2 wags refine to zero (held by positivity), so their isolated-molecule amplitudes were making
+up for the density -- the hypothesis from step 3, now confirmed. B3LYP + cluster charges + three
+soft modes with correlations: GoF 2.574 (20 parameters) against free 2.551 (27), Hamilton 1.0134 vs
+1.0129 -- free only just better -- with the best hydrogen ADPs of any refinement (S12 0.33-0.45) and
+N-H 1.007(4)/1.001(4) A against neutron 1.006/1.000. The correlation-restraint width f_rho from 0.25
+to 10 changes nothing on urea. RIJCOSX cluster refinements agree with exact to 4e-4 in GoF at ~2.4x
+the time. Not run: B3LYP on the explicit cluster; def2-TZVP for these tables; a methyl torsion case.
+**Docs naming (Dylan, 2026-10-05):** plans/logs become `TASK_*` (the TLS plan `TASK_ON_MODE_FITTING`,
+paired with `REPORT_ON_MODE_FITTING`), findings for people `REPORT_ON_*`; a `check_docs.py` ctest
+flags dates, hashes, status notes and GitHub-unsafe LaTeX in everything else. Applied after the
+tls-step4 merge.
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
 

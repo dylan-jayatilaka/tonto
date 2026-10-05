@@ -18,9 +18,11 @@ the story of how the build and translator came to be is in `docs/PROJECT_HISTORY
 3. **Compare refinement models by GoF, not R.** GoF counts the parameters and is the more
    sensitive measure; R alone can hide a worse fit. Quote GoF first; for nested models use the
    Hamilton test.
-4. **Write equations in LaTeX** in every document: `$…$` inline and numbered `$$…\tag{n}$$`
-   display blocks, which GitHub, VS Code, Obsidian and pandoc render. Define every symbol where it
-   first appears, so a page can be read from first principles without another source.
+4. **Write equations in LaTeX** in every document, in GitHub's safe forms: inline as $`…`$, and
+   display as a ```` ```math ```` block numbered with `\qquad (n)`. Plain `$…$` and `$$…$$` lose
+   `\,`, `\\` and underscores to GitHub's markdown, and `\tag` draws as a column of symbols in
+   Chrome and Brave. Define every symbol where it first appears, so a page can be read from first
+   principles without another source. Check a page with `gh api -X POST /markdown` before pushing.
 
 ## 1. How to write for this project
 
