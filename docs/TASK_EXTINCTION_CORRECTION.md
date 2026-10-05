@@ -16,7 +16,7 @@ memory, and a parameter count that stops updating part way through an XWR run.
 form of the correction, the whole intensity path, and an esd for the extinction
 parameter on `origin/Lolo_CP2K` on 2026-08-17. See §2.
 
-**Names in this document are the pre-rename ones.** `docs/GOF_NOT_CHI2.md` landed on
+**Names in this document are the pre-rename ones.** `docs/TASK_GOF2_NOT_CHI2.md` landed on
 2026-09-06 and every `chi2` identifier below is now spelled `GoF2` — `chi2F` is `GoF2F`,
 `d_chi2I_d_ext` is `d_GoF2I_d_ext`, `update_n_param_and_chi2` is `update_n_param_and_GoF2`,
 and `DIFFRACTION_DATA`'s `.chi2*` members are `.GoF2*`. The text is left as it was written,
@@ -24,7 +24,7 @@ because it is a record of what was found; only the spelling moved. Quotations ke
 their author wrote.
 
 A related but separate task was agreed at the same time and is written up on its own, in
-`docs/GOF_NOT_CHI2.md`: the quantity the code calls `chi2` is a GoF², and the refinement
+`docs/TASK_GOF2_NOT_CHI2.md`: the quantity the code calls `chi2` is a GoF², and the refinement
 tables should report GoF rather than its square. It is kept apart from this work
 deliberately — the rename is broad and reaches files that have nothing to do with
 diffraction. Only its table change needs references reblessed, and that can share this
@@ -128,7 +128,7 @@ component's initialiser and must come across with it.
 
 ## 3. Defect register
 
-The "Loud?" column follows the convention of `docs/TONTO_AND_MPI.md`. The silent rows
+The "Loud?" column follows the convention of `docs/TASK_MPI.md`. The silent rows
 are the dangerous ones.
 
 | # | Site | Defect | Loud? |
@@ -220,7 +220,7 @@ becomes two parameters.
 Tonto's `A = (1+cos²2θ)/(1+cos2θ·sin2θ)` has no `lambda^3` and no `1/sin 2θ`, so it does
 not grow at low angle, where extinction is strongest. Its denominator is
 `1 + (1/2) sin 4θ`, which matches no published form that could be identified, and the
-code cannot settle the question: `docs/CCTBX_INTO_TONTO.md:461` names Tonto's model
+code cannot settle the question: `docs/TASK_CCTBX_INTO_TONTO.md:461` names Tonto's model
 "Larson-type" without giving it, and Jayatilaka & Dittrich (2008), *Acta Cryst.* **A64**,
 383–393 writes only `F_j^c = s X_j(eps,|F_j|) |F_j|` with `X_j` attributed to Larson
 (1970). **Resolving this needs the primary source: Larson, A. C., in *Crystallographic
@@ -229,7 +229,7 @@ Computing*, ed. F. R. Ahmed (Copenhagen: Munksgaard, 1970), pp. 291–294.**
 The alternative, already implemented on `Lolo_CP2K`, is the SHELXL empirical correction,
 equation (62) of Bourhis, Dolomanov, Gildea, Howard & Puschmann (2015), *Acta Cryst.*
 **A71**, 59–75 — the olex2.refine specification paper, whose equation numbering
-`docs/CCTBX_INTO_TONTO.md` follows throughout:
+`docs/TASK_CCTBX_INTO_TONTO.md` follows throughout:
 
 ```
 F_c' = F_c [1 + 0.001 x F_c^2 lambda^3 / sin 2theta] ^ (-1/4)
@@ -239,7 +239,7 @@ F_c' = F_c [1 + 0.001 x F_c^2 lambda^3 / sin 2theta] ^ (-1/4)
 correction SHELXL uses, and that per the SHELXL documentation it is "close to the work
 of Becker & Coppens (1974) but not identical".
 
-Adopting it removes the obstacle recorded at `docs/CCTBX_INTO_TONTO.md:461` — that
+Adopting it removes the obstacle recorded at `docs/TASK_CCTBX_INTO_TONTO.md:461` — that
 Tonto and olex2.refine use different functions, so no external comparison is meaningful
 until one of them is ported. The cost is that `eps` changes meaning, and any historical
 value (such as the 0.0001 above) becomes uninterpretable. Adopting it also introduces
@@ -368,7 +368,7 @@ and `tests/hart/urea_hart_STO-3G_extinction`.
    the naming work below. It is related to the parameter count of §4a — an information
    criterion needs a count of parameters, and the whole difficulty is that the effective
    number contributed by the wavefunction is not known at intermediate `lambda`.
-7. `docs/GOF_NOT_CHI2.md` is independent. If it lands in the same window, its table
+7. `docs/TASK_GOF2_NOT_CHI2.md` is independent. If it lands in the same window, its table
    change can share step 5's reblessing pass; nothing requires it to.
 
 ---
@@ -495,7 +495,7 @@ which is the true chi-squared, equal to `(N_refl - N_p)` times the GoF-squared. 
 
 The first term falls as lambda rises. The second rises. The minimum is the chosen lambda.
 Note that this is one of the few places where the genuine chi-squared, not the GoF-squared,
-is the quantity wanted — see `docs/GOF_NOT_CHI2.md`.
+is the quantity wanted — see `docs/TASK_GOF2_NOT_CHI2.md`.
 
 Everything turns on `k_eff`, and it cannot be a count of wavefunction parameters. There are
 more of those than there are reflections, and at lambda = 0 the data influences none of

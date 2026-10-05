@@ -1319,7 +1319,7 @@ Carried forward deliberately. None blocks the others.
 |---|---|
 | **Re-do the §4 gap analysis against recovered branch material** | The scope may shrink. See the banner at the top. |
 | **Review the §6 staging against the real consumers** | `crystal.foo` and `molecule.har.foo` assume `pADP_vector`'s layout in ways worth a second opinion from whoever knows that code best. The staging is designed so five of eight stages must be bit-identical, but that only holds if Stage A's descriptor genuinely reproduces the current offsets everywhere. |
-| **Land or park the nearest-neighbour fragHAR work** | Overlaps three of the four files this port touches. See [NN HAR report](NN_HAR_REPORT.md). |
+| **Land or park the nearest-neighbour fragHAR work** | Overlaps three of the four files this port touches. See [NN HAR report](TASK_NN_HAR_REACTIVATION.md). |
 
 ### Independent, doable at any time
 

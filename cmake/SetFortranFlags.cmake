@@ -111,14 +111,14 @@ elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU")
     # false "outside of expected range" report. Release builds are unaffected --
     # they carry no -fcheck. Drop the flag on 16 and up; gfortran 14 is correct
     # and keeps it. Re-enable with -DTONTO_FORCE_FCHECK_BOUNDS=ON.
-    # Cause, reproducer and evidence: docs/GFORTRAN16_DEBUG_CRASH.md.
+    # Cause, reproducer and evidence: docs/TASK_GFORTRAN16_PORT.md.
     set(BOUNDS_CHECK_FLAG "-fcheck=bounds")
     if(CMAKE_Fortran_COMPILER_VERSION VERSION_GREATER_EQUAL 16
        AND NOT TONTO_FORCE_FCHECK_BOUNDS)
         set(BOUNDS_CHECK_FLAG "")
         message(STATUS "gfortran ${CMAKE_Fortran_COMPILER_VERSION}: omitting "
                        "-fcheck=bounds from DEBUG (compiler bug -- see "
-                       "docs/GFORTRAN16_DEBUG_CRASH.md)")
+                       "docs/TASK_GFORTRAN16_PORT.md)")
     endif()
     # -Wall's uninitialised-variable warnings are deliberately NOT suppressed
     # here. They are the class that named the 2026-09-03 defect (a logical read

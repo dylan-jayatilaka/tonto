@@ -25,7 +25,7 @@ g09 reference, `BLYP/6-31G(d) 6D SCF=(Tight,Conver=10) Int(Grid=199974)`: **−5
 relative to `low`: 1.5×, 2.2×, 15×. Dylan's decision 2026-09-11: `medium` stays the default;
 adaptive pruning is to reduce cost before `high` is reconsidered.
 
-For comparison the water ladder (3 atoms, cc-pVDZ) is in `DFT_STANDARDISATION.md` §6b: there
+For comparison the water ladder (3 atoms, cc-pVDZ) is in `TASK_DFT_STANDARDISATION.md` §6b: there
 the grid dominates and Becke is faster; here the SCF dominates and SS's screening is worth
 about 15%.
 
@@ -54,7 +54,7 @@ noise. Water (cc-pVDZ, `medium`) shows the same split: XC 64%, guess 28%, J and 
 The XC phase is `MOLECULE.FOCK:add_GGA_XC_mx` and what it calls: the atom grids
 (`make_rho_becke_atom_grid`: basis functions and their gradients on the grid, the density and
 its gradient), the functional evaluated twice per batch (energy density and potential
-separately, `DFT_STANDARDISATION.md` §9), and the matrix contraction over shell pairs and
+separately, `TASK_DFT_STANDARDISATION.md` §9), and the matrix contraction over shell pairs and
 points. Which of those dominates is the next measurement (gprof).
 
 ## gprof flat profile of the same job, 2026-09-11
@@ -260,7 +260,7 @@ atomic SCFs at SCF start only for DFT jobs without a promolecule guess.
 
 ## Stage D, 2026-09-14: `pruning_scheme= adaptive`, the angular order by radius
 
-The rule, its calibration and the energies against g09 are in `DFT_STANDARDISATION.md` §6c.
+The rule, its calibration and the energies against g09 are in `TASK_DFT_STANDARDISATION.md` §6c.
 Karrikinolide, BLYP/6-31G(d), Becke, one core, CPU seconds from `show_timings`:
 
 | grid | points | XC s | J/K s | guess s | wall |
@@ -859,7 +859,7 @@ consistently*) has the hazards: threads must be pinned to one, and it forces a f
 
 Branch `cosx` (off `ri-j`). `scfdata= { use_COSX= TRUE }`, with `use_RI_J= TRUE` and an auxiliary
 basis for the J half. Plan: `~/.claude/plans/glittery-whistling-fiddle.md`; method:
-`TONTO_SCF_SPEED_UP.md` 5b. Runs in `~/tonto_runs/cosx_2026-09-17/`, one core, reference BLAS
+`TASK_SCF_SPEEDUP.md` 5b. Runs in `~/tonto_runs/cosx_2026-09-17/`, one core, reference BLAS
 unless said. ORCA is 6.1.1 with `def2/J`; its COSX error is `RIJCOSX` − `RIJONX`, its RI-J error
 `RIJONX` − `NoRI`.
 

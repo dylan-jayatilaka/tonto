@@ -209,7 +209,7 @@ least-squares likelihood (−2 ln L = χ² + constant, when the σ_h are known):
 Procedure: add the next lowest mode, refine, compute the criterion, stop when it stops improving.
 Nested models only (each model contains the one before). With restraints (§3.7) p must be the
 *effective* number of parameters, tr[A(A+W)⁻¹], not the count. Tonto's GoF² is χ²/(n − p) and should
-use the same p; see `docs/GOF_NOT_CHI2.md`.
+use the same p; see `docs/TASK_GOF2_NOT_CHI2.md`.
 
 A later refinement of this: make all 3N−6 modes candidates, fix every amplitude at its harmonic
 value, and refine only the *excess* amplitudes with an L1 penalty (basis pursuit). Sparsity in the
@@ -496,7 +496,7 @@ use it. The TLS algebra needs only positions, so it is not a `CRYSTAL` method.
    Not yet: T, L, S at the centre of reaction; AIC/BIC/Hamilton printed (step 3). Checks: on a rigid molecule (urea), compare T, L, S with a PLATON/THMA
    fit to the free-refinement ADPs after subtracting U^high: same to within the esds; wR and GoF²
    against the free refinement by Hamilton. Hydrogen ADPs against neutron where there are neutron
-   data (the ten structures listed in `docs/TONTO_RI_FITTING_PLAN.md`).
+   data (the ten structures listed in `docs/TASK_RI_FITTING.md`).
 3. **DONE on `tls-step3` (2026-10-05). Soft modes, one at a time.** `n_soft_modes=` K and
    `soft_mode_restraint=` s (0.5) in `xray_data=`. The K softest non-rigid modes (imaginary first)
    become extra Jacobian columns d_ik d_ik^T with d_ik = l_ik/sqrt(m_i); only the amplitudes are
@@ -513,7 +513,7 @@ use it. The TLS algebra needs only positions, so it is not a `CRYSTAL` method.
    refinement -- noted in the research document; a printed warning would be better (open).
 
    **Urea results** (def2-SVP and TZVP, Hirshfeld, K = 0…4, full tables in
-   `docs/TONTO_MODE_FITTING_RESEARCH.md` §5): the first wag (432i) and the antisymmetric in-plane
+   `docs/REPORT_ON_MODE_FITTING.md` §5): the first wag (432i) and the antisymmetric in-plane
    rock (645 cm⁻¹, refined to ~4x its harmonic amplitude, implied ~200 cm⁻¹) are significant by
    Hamilton at alpha = 0.005; the symmetric rock (559) is not. AIC and BIC never rise. Free ADPs
    remain significantly better than K = 4 (ratio 1.042 / 1.036 against 1.013). **But every soft

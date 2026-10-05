@@ -121,11 +121,11 @@ BF_CUTOFF_MAX = 1.0e-8
 # 3.2e-5 between stratmann_scuseria and becke at accuracy= low.
 PARTITION_MIN_RESPONSE = 1.0e-8
 # prune_rho_cutoff at its default (1e-12) against 1e-16 must agree. Calibrated
-# 2026-09-14; see docs/SCF_SPEED_REPORT.md.
+# 2026-09-14; see docs/TASK_SCF_SPEEDUP_DATA.md.
 PRUNE_MAX = 1.0e-8
 # pruning_scheme= adaptive at medium against the unpruned grid, and against
 # treutler_ahlrichs (must differ). Observed 2026-09-14: 7.5e-7 and 4.2e-7. See
-# docs/DFT_STANDARDISATION.md section 6c.
+# docs/TASK_DFT_STANDARDISATION.md section 6c.
 ADAPTIVE_MAX = 3.0e-6
 ADAPTIVE_MIN_RESPONSE = 1.0e-12
 

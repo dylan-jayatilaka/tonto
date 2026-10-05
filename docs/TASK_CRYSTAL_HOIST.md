@@ -29,7 +29,7 @@ it is currently made inside a `MOLECULE` method that is simultaneously "do an SC
 SCFs on my children" -- which is why `fragment_SCF_para` carries `per_rank_IO_allowed` toggling,
 per-fragment archives and a work scheduler.
 
-Full reasoning in `TASKS_AND_HISTORY.md`; MPI consequences in `docs/TONTO_AND_MPI.md`.
+Full reasoning in `TASKS_AND_HISTORY.md`; MPI consequences in `docs/TASK_MPI.md`.
 
 
 ## 2. Requirements found 2026-09-24, while fixing the Becke grid bug
@@ -101,7 +101,7 @@ The risk is silent numerical change, not compile failure, so the order matters.
    from three routines to one.
 4. **Then move `fragment_SCF` to `CRYSTAL`**, and only then remove the depth counting and the
    `subfrag_SCF` clone, each as a separate commit with the suite run between.
-5. **MPI last**, and re-read `docs/TONTO_AND_MPI.md` first: `fragment_SCF_para` has known open
+5. **MPI last**, and re-read `docs/TASK_MPI.md` first: `fragment_SCF_para` has known open
    defects (the RMA work queue indexing past `p_loop_list`, and the master reading its own window
    buffer outside an access epoch) which should be fixed *before* the code moves, not during, so
    that a failure afterwards is attributable.

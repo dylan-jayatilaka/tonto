@@ -93,9 +93,8 @@ about the few that fail anyway, and how to bless a reference yourself.
 > **Do not use `gfortran-16` for debug builds.** It has two separate defects
 > there: it miscompiles `-fcheck=bounds` (so the build drops the flag and you get
 > no array bounds checking), and its debug build fails 34 of 71 short tests where
-> gfortran-14 passes exactly. A migration to 16 was made and reverted on
-> 2026-08-27 for that reason. Release builds on 16 are fine. See
-> [`GFORTRAN16_DEBUG_CRASH.md`](GFORTRAN16_DEBUG_CRASH.md).
+> gfortran-14 passes exactly. Release builds on 16 are fine. See
+> [`TASK_GFORTRAN16_PORT.md`](TASK_GFORTRAN16_PORT.md).
 
 ## One macOS-specific oddity: one file compiled differently on Apple silicon
 
@@ -138,7 +137,7 @@ requirement: if MPI is not found, configure fails rather than silently
 producing a serial binary.
 
 **Validate parallel results before trusting them.**
-[`TONTO_AND_MPI.md`](TONTO_AND_MPI.md) records what a parallel run does and does
+[`TASK_MPI.md`](TASK_MPI.md) records what a parallel run does and does
 not reproduce.
 
 **Untested on macOS.** A Homebrew Open MPI built against a different gcc will
@@ -152,7 +151,7 @@ not work, so expect to check `mpifort --version` against `gfortran-14`.
 |---|---|
 | Running Tonto | [`RUNNING_TONTO.md`](RUNNING_TONTO.md) |
 | The `hart` program | [`RUNNING_HART.md`](RUNNING_HART.md) |
-| What a parallel build does and does not reproduce | [`TONTO_AND_MPI.md`](TONTO_AND_MPI.md) |
+| What a parallel build does and does not reproduce | [`TASK_MPI.md`](TASK_MPI.md) |
 | Source and executable layout | [`TONTO_LIBRARY_STRUCTURE.md`](TONTO_LIBRARY_STRUCTURE.md) |
 
 > **Options are GNU long options.** Every Tonto program takes `--name` only —

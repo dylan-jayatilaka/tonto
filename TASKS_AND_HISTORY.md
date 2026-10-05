@@ -80,7 +80,7 @@ because by then it held far more than deferred items.)*
 
 ## START HERE, 2026-10-05: TLS plan step 3 done; next is the soft modes with cluster charges
 
-**Merged to `develop` today (`a1553350`): step 0 of `docs/TONTO_TLS_MODE_REFINEMENT.md`.** The
+**Merged to `develop` today (`a1553350`): step 0 of `docs/TASK_ON_MODE_FITTING.md`.** The
 refinement refines p with X = J p (`DIFFRACTION_DATA.X_jacobian`, built by
 `CRYSTAL:make_refinement_jacobian`): isotropic hydrogens are one parameter each and special
 positions keep only their site-symmetric subspace, as exact constraints in the normal matrix.
@@ -92,7 +92,7 @@ TLS against F. New science entry the same day: *Spherical atoms by the right ens
 2026-10-04: the zinc spherical-guess defect (verified on the finger and Zn(SCH3)2) and the silent
 unconverged SCF (`stop_if_SCF_not_converged`, `die_if_not_converged=`). **Fixed and merged 2026-10-04:** the
 B3LYP 2e-4 and unrestricted BLYP 1e-4 discrepancies, two potential-side formula errors
-(`docs/DFT_STANDARDISATION.md` 5b); one test re-blessed and one added, both on achari2. **Also
+(`docs/TASK_DFT_STANDARDISATION.md` 5b); one test re-blessed and one added, both on achari2. **Also
 2026-10-04:** the XC energy is reported -- `J`, `a_0*E_x` and `E_xc` under `V_ee` for DFT, the
 energy-block labels aligned, 54 references re-blessed (text only) on achari2; the last open
 *Correctness* row, so that register section is gone. **2026-10-05:** the three RGBI quick items --
@@ -103,7 +103,7 @@ Salvador variant, `partition_model= tfvh` -- the cell-function boundary on each 
 the two atoms' spherical ANO densities are equal (the pairwise Hirshfeld weight is 1/2) instead of
 at the density minimum. Only the pair form makes sense: the full-promolecule half-weight surfaces
 of two atoms do not touch. Urea results and the radii are §5 of
-`docs/RESEARCH_ON_SALVADOR_MODELS.md`: `tfvh` is the Salvador variant closest to the neutron N-H
+`docs/REPORT_ON_SALVADOR_MODELS.md`: `tfvh` is the Salvador variant closest to the neutron N-H
 bonds (+0.023/+0.013 Å at def2-TZVP, Hirshfeld +0.019/-0.011), with the smallest hydrogen esds; the
 sequence Salvador -> tfvp -> tfvh moves every hydrogen quantity toward Hirshfeld. New test
 `long/urea_rhf_STO-3G_TFVH_HAR`; the two `Salvador_properties` tests gain an `R(A.B) eq-dens`
@@ -120,7 +120,7 @@ sulfur ANO step of a def2-TZVP job takes about 12 min before the SCF starts. **`
 (branch `sph-tfvh`, merged): the spherical `tfvh` atom, one dispatch case per site; the first
 spherical model that works -- urea def2-TZVP R 0.0294, GoF 5.65, N-H1 1.022(8), N-H3 0.993(9),
 O=C 1.2570(7) against neutron 1.006/1.000/1.257 (research document §7). No test yet. **Next:**
-`docs/TONTO_SPHERICAL_FF_FIT_PLAN.md` -- fit the `sph-*` form factors to n Gaussians + constant in
+`docs/TASK_SPHERICAL_FF_FIT.md` -- fit the `sph-*` form factors to n Gaussians + constant in
 reciprocal space (default s = 0-2 1/A) through gnuplot's fit, module `GAUSSIAN_FF_FIT`, output in
 the target program's format (BUSTER: format still needed from Dylan/GPhL). Open from before:
 `oc-ri` stage (b). **Branch `exphar` (2026-10-05):** the exponential Hirshfeld partition of
@@ -129,7 +129,7 @@ Chodkiewicz & Woźniak (IUCrJ 12, 74, 2025) -- `partition_model= exphar` / `sph-
 `make_stockholder_atom_weight`). On urea it does what the paper says: N-H3 lengthens with n and at
 n = 2 both N-H are within 0.021/0.007 Å of neutron; `sph-exphar` beats the IAM on R(F) (research
 document §8). Also: the spherical form-factor fit, steps 1-3 of
-`docs/TONTO_SPHERICAL_FF_FIT_PLAN.md` -- module `GAUSSIAN_FF_FIT` (gnuplot's fit in square roots,
+`docs/TASK_SPHERICAL_FF_FIT.md` -- module `GAUSSIAN_FF_FIT` (gnuplot's fit in square roots,
 retried from rescaled starts; ctest `gaussian_ff_fit`), `fit_sph_atom_ffs` with the `FF_fit_*`
 settings in `xray_data=`, SHELX `SFAC` output one atom per entry with the atom's label (no per-element
 averaging: Dylan). Found and recorded in the plan's §8: four Gaussians degenerate because the curve has
@@ -144,7 +144,7 @@ on twelve molecules: never saves an iteration; stays off; branch `pfon` merged).
 effective Fock on the existing J/K builders) and `fon` (KS with held fractional occupations), off by
 default (`average`). Atom energies pass the Slater-splitting checks; on urea the HAR moves by nothing
 visible (GoF +0.002), so the default stays. Plan, theory and tables:
-`docs/TONTO_SPHERICAL_ATOM_SCF_PLAN.md`. The one-atom molecule in `make_ANOs_for_atom` stays; the
+`docs/TASK_SPHERICAL_ATOM_SCF.md`. The one-atom molecule in `make_ANOs_for_atom` stays; the
 Fock split goes with re-engineering. Three tests blessed on achari2 (full suite 169/169); merged as `d7ef83cd`.
 **Also 2026-10-05 (late):** the cell-list row closed by measurement -- the shell search is 0.02 % of a
 182-atom job; its N^2 memory fixed; the Salvador cell function's inner loop made contiguous, 30 % faster,
@@ -152,7 +152,7 @@ results identical (branch `salvador-speed`). Archive entry *a cell list for the 
 **2026-10-05, branch `tls-step1`:** step 1 of the TLS plan -- Eckart projection in the normal modes,
 stiff-mode ADPs (`make_internal_adps`), and a finite-difference Hessian from Tonto's own SCF
 (`make_fd_hessian`, `fd_hessian_step=`); urea's hydrogen U^high 0.007-0.012 A^2 at 123 K. Details and
-what step 2 must decide in `docs/TONTO_TLS_MODE_REFINEMENT.md` step 1.
+what step 2 must decide in `docs/TASK_ON_MODE_FITTING.md` step 1.
 **Held for the next re-bless:** branch `normal-modes-10` (`put_normal_modes` ten modes to a table; changes the
 water and urea normal-mode tests). Merge it when references are next re-blessed on achari2.
 **2026-10-05, branch `tls-step2`:** TLS plan step 2 -- a new `LEAST_SQUARES` type with explicit refined
@@ -163,7 +163,7 @@ asymmetric-unit/fragment frame machinery can be simplified around LEAST_SQUARES 
 **2026-10-05, branch `tls-step3`:** TLS plan step 3 -- the K softest modes' amplitudes refined
 (`n_soft_modes=`, `soft_mode_restraint=`), restrained to the harmonic values, imaginary ones free; n,
 p_eff, chi^2, GoF, AIC and BIC printed. Results and the step-2 comparison across def2-SVP/TZVP and
-Hirshfeld/TFVA are in `docs/TONTO_MODE_FITTING_RESEARCH.md` §5 (user-facing) and the plan's step 3.
+Hirshfeld/TFVA are in `docs/REPORT_ON_MODE_FITTING.md` §5 (user-facing) and the plan's step 3.
 Headline: the soft modes improve the fit significantly but move the hydrogen ADPs *away* from
 neutron; free ADPs still fit best. New test `long/urea_rhf_STO-3G_HAR_TLS_soft_modes`; the TLS test
 re-blessed for the new model-selection block. **Next on this item, in order:** (1) the K = 0…4
@@ -259,11 +259,11 @@ word it is commented out in `HKLdata.quartz`, with the reason; 1008 reflections,
 `partition_model= oc-ri`. HARs match Hirshfeld to under 0.1 esd and run faster (urea 3.3 -> 2.0 s,
 gly_ala fragHAR 15.2 -> 11.4 s). Checked on the Mac only (`short`, `long`, `hart`: the known macOS
 failures only); **run the full suite on achari2 next**. Stage (b) is the open item; see the entry
-*Aspherical form factors by RI density fitting* and `docs/TONTO_RI_FITTING_PLAN.md`. Also merged
+*Aspherical form factors by RI density fitting* and `docs/TASK_RI_FITTING.md`. Also merged
 the same day: the WSL numpy fix (`d5d52000`), confirmed by a full WSL run.
 
 **Merged to `develop` on 2026-09-27: branches `fourier-sums` and `tfvp`.** The research results
-are in `docs/RESEARCH_ON_SALVADOR_MODELS.md`. What went in:
+are in `docs/REPORT_ON_SALVADOR_MODELS.md`. What went in:
 - `FOURIER_SUMS` (`foofiles/fourier_sums.foo`): the form-factor sums in one module, loops swapped,
   a vectorising sin/cos with the file's own compiler flags (reasons and A-F timings in its header;
   `scripts/ff_loop_bench.f90` tracked). Full suite on achari2 at `63075d7e`: 156/156, no re-bless
@@ -650,7 +650,7 @@ above.
 ### The bonding-region claim, corrected (2026-09-25)
 
 The register's *Correct the bonding-region claim in the speed-up documents* row is closed: the
-sentence in `docs/TONTO_SCF_SPEED_UP.md` 5b now gives the three settings that actually change
+sentence in `docs/TASK_SCF_SPEEDUP.md` 5b now gives the three settings that actually change
 from `medium` to `high`, and the two passages in the COSX handover below carry a bracketed
 correction rather than a silent rewrite, since they are the record of what was believed when the
 stage-4 numbers were taken.
@@ -714,7 +714,7 @@ stand; they are simply not in the open count.
 > `urea_ccsd_pob-TZVP_Salvador_properties` at 4.48%, the LAPACK-thread row; the suite is 55/56.
 >
 > **The method, the loop-order explanation and the failed attempts are now summarised for a fresh
-> reader in `docs/TONTO_SCF_SPEED_UP.md`** (Dylan, 2026-09-17); this file stays the task register.
+> reader in `docs/TASK_SCF_SPEEDUP.md`** (Dylan, 2026-09-17); this file stays the task register.
 >
 > **MERGED 2026-09-18 (Dylan): `esfs-order`, `ri-j` and `cosx` are in `develop` and `master`, by
 > fast-forward. Before the merge, on the release build of `cosx`: `short` 68/68, `long` and `hart`
@@ -722,7 +722,7 @@ stand; they are simply not in the open count.
 > by default. The three feature branches were then deleted, local and remote (Dylan).**
 >
 > **NEXT (Dylan, 2026-09-18): a grid made for COSX. Plan it first, in a fresh session.** What is
-> known, so the plan can start from it (numbers: `docs/SCF_SPEED_REPORT.md`, *COSX*):
+> known, so the plan can start from it (numbers: `docs/TASK_SCF_SPEEDUP_DATA.md`, *COSX*):
 > - The COSX error does not fall steadily along the named XC levels. Karrikinolide def2-SVP, with
 >   overlap fitting, SCF and energy on one grid: `very_low` +1.5e-5, `low` +2.9e-5, `medium` -1.5e-5,
 >   `high` +2.0e-6. *(Corrected 2026-09-25: under the default Treutler-Ahlrichs pruning what
@@ -752,7 +752,7 @@ stand; they are simply not in the open count.
 >
 > **START HERE -- 2026-09-17 (night). COSX works for closed-shell HF and hybrids: branch `cosx`
 > (off `ri-j`, pushed, not merged), `scfdata= { use_COSX= TRUE }`, with `use_RI_J= TRUE` for the J
-> half. Method: `docs/TONTO_SCF_SPEED_UP.md` 5b; every number: `docs/SCF_SPEED_REPORT.md`, *COSX*;
+> half. Method: `docs/TASK_SCF_SPEEDUP.md` 5b; every number: `docs/TASK_SCF_SPEEDUP_DATA.md`, *COSX*;
 > plan: `~/.claude/plans/glittery-whistling-fiddle.md`; runs: `~/tonto_runs/cosx_2026-09-17/`.
 > The exact J and K routes are untouched (Dylan: they stay as the fall-back); `short` is 67/67.**
 >
@@ -790,7 +790,7 @@ stand; they are simply not in the open count.
 > Start with a planning session, as for RI-J; no code before the plan.** The 2026-09-17 decision
 > "COSX and RI-K not pursued yet" is superseded for COSX; RI-K stays parked. Background: the entry
 > *RI-J for pure DFT; COSX and RI-K not pursued yet* (outline of COSX, what Tonto has), and
-> `docs/SCF_SPEED_REPORT.md`, *ORCA's approximate exchange on the zinc finger* -- the row to beat
+> `docs/TASK_SCF_SPEEDUP_DATA.md`, *ORCA's approximate exchange on the zinc finger* -- the row to beat
 > and to validate against: ORCA `RIJCOSX` RHF/def2-TZVP -3102.026644041, error -7.0e-4 Eh, 499 s
 > against 1566 s exact. RI-J, the J half, is done (below).
 >
@@ -813,7 +813,7 @@ stand; they are simply not in the open count.
 > code: 58% of the zinc finger RI-J job is `dgemm_` in the netlib reference BLAS, the two matrix
 > products per batch; the basis function values are 1%. With OpenBLAS (one thread, unpacked from
 > the package, nothing installed or rebuilt) XC goes 214.9 -> 32.9 s and the job 339 -> 139 s, for
-> 1.1e-10 Eh. Table: `docs/SCF_SPEED_REPORT.md`, *Where the XC time goes*. So the batch code needs
+> 1.1e-10 Eh. Table: `docs/TASK_SCF_SPEEDUP_DATA.md`, *Where the XC time goes*. So the batch code needs
 > no rework before COSX is built on it, and COSX's own contractions should be `dgemm`-shaped. It
 > raises the parked OpenBLAS item (*adopt OpenBLAS consistently*; forces a re-bless) -- Dylan to
 > decide. **Dylan, same evening: the exact J and K routes stay, as the fall-back for
@@ -822,7 +822,7 @@ stand; they are simply not in the open count.
 > **START HERE -- 2026-09-17 (afternoon). RI-J works: on branch `ri-j` (off `esfs-order`,
 > pushed), validated against ORCA to 1e-8 Eh in the fitting error, and J is 6-40 times faster
 > (zinc finger BLYP/def2-TZVP 1207 -> 69 s; whole job 337 s, of which XC is 215 s -- the next
-> bottleneck, ORCA's whole job being 85 s). Tables: `docs/SCF_SPEED_REPORT.md`, *RI-J*.
+> bottleneck, ORCA's whole job being 85 s). Tables: `docs/TASK_SCF_SPEEDUP_DATA.md`, *RI-J*.
 > Next, for Dylan to order: `short`/`long` and a merge route for `esfs-order` + `ri-j`; a `short`
 > test for RI-J (water BLYP/def2-SVP, numbers above, blessing is Dylan's call); the XC
 > quadrature; automatic auxiliary bases; K from the pair list (condition met).** Plan:
@@ -866,7 +866,7 @@ stand; they are simply not in the open count.
 >    `K.a + K.b` to both `F.a` and `F.b` for hybrids; right for a closed shell, apparently wrong
 >    for an open one. To be checked against g09 UB3LYP before anything is changed.
 > 6. **The detached queue** of the midday handover: the ORCA `RIJCOSX`/`RIJK` rows and the
->    6-31G(d) profile split are in `docs/SCF_SPEED_REPORT.md` (generation and set-up are three
+>    6-31G(d) profile split are in `docs/TASK_SCF_SPEEDUP_DATA.md` (generation and set-up are three
 >    quarters of the RHF build, digestion one seventh, so K from the pair list meets its
 >    condition at 6-31G(d) and at cc-pVTZ, where generation is 62% and digestion 16% -- Dylan
 >    to decide). cc-pVTZ `high`, switch off: -531.169262524774; at `low` the engine is 3.9e-6
@@ -880,7 +880,7 @@ stand; they are simply not in the open count.
 >    `make_r_JK_engine` take J from the list and run the quartet loop for K only -- measurement
 >    code, off by default. Karrikinolide RHF, three concurrent pairs: J/K 55.5 -> 95.7 s at
 >    6-31G(d), 1083 -> 1569 s at cc-pVTZ. The combined engine gets J almost free from K's
->    integrals, so only a faster K helps. Table: `docs/SCF_SPEED_REPORT.md`, *The K share*.
+>    integrals, so only a faster K helps. Table: `docs/TASK_SCF_SPEEDUP_DATA.md`, *The K share*.
 > 2. **Exact HF is close to the established codes**: zinc finger RHF/def2-TZVP, Tonto 1527 s J/K
 >    (cartesian, more functions), g09 1365 s, ORCA 1566 s. The big gap is pure DFT: BLYP
 >    def2-TZVP, Tonto pair-list J 1207 s against ORCA RI-J 85 s.
@@ -904,7 +904,7 @@ stand; they are simply not in the open count.
 > **First job next session:** read `queue.log`; `perf report -i perf_*/perf.data` and split the RHF
 > build into integral generation (`make_esfs*`, `RYS:*`), transfer (`transfer_*`) and K digestion
 > (`make_r_JK_engine_k`); add the ORCA RI rows (energy error and time) and the profile split to
-> `docs/SCF_SPEED_REPORT.md`; then decide with Dylan whether K from the pair list is worth it,
+> `docs/TASK_SCF_SPEEDUP_DATA.md`; then decide with Dylan whether K from the pair list is worth it,
 > and schedule the RI-J planning session.
 >
 > **START HERE -- 2026-09-17 (morning). Overnight on branch `esfs-order` (pushed, not merged):
@@ -934,7 +934,7 @@ stand; they are simply not in the open count.
 >    core guess did converge (2.6e-6 from ORCA, 2.1x ORCA's time). **Pair list on the zinc
 >    finger, BLYP/6-31G(d) cartesian: at `low` 6.6e-8 from `high` against the engine's 2.3e-6,
 >    and 11.6% faster; at `high` identical and 18% slower.** g09/ORCA references and Tonto rows
->    in `docs/SCF_SPEED_REPORT.md`, *The zinc-finger benchmark*. Spherical Tonto rows withdrawn;
+>    in `docs/TASK_SCF_SPEEDUP_DATA.md`, *The zinc-finger benchmark*. Spherical Tonto rows withdrawn;
 >    cartesian def2 rows added. **Zinc-finger suite** (`~/tonto_runs/vs_g09_orca_znfinger_2026-09-17/`,
 >    `suite.log`, then `rerun.log`, `rerun2.log`, `cart.log`; `collect.py` tabulates): hand-built
 >    geometry, RHF and BLYP at 6-31G(d) (Tonto cartesian vs g09 6D 10F; Tonto spherical vs ORCA)
@@ -945,14 +945,14 @@ stand; they are simply not in the open count.
 >    (g09/ORCA capped at 2 GB). Old session scratch moved off `/tmp` to
 >    `~/tonto_runs/old_session_scratch_2026-09-17/`.
 >
-> *(Done 2026-09-17 midday: the def2-TZVP cartesian rows are in `docs/SCF_SPEED_REPORT.md`.)*
+> *(Done 2026-09-17 midday: the def2-TZVP cartesian rows are in `docs/TASK_SCF_SPEEDUP_DATA.md`.)*
 >
 > **Zinc-finger spherical failure is out of scope for the integral work** (Dylan): see its
 > Correctness entry, possibly low-lying states needing pFON.
 >
 > *(Superseded at midday -- see the START HERE above.)* **NEXT (Dylan, 2026-09-17): the K terms from the pair list.** Start by deciding the shape --
 > feeding the existing quartet digestion from the list's batches, or a primitive-level K -- with
-> `docs/TONTO_SCF_SPEED_UP.md` §3.2 and §5.4 as the background.
+> `docs/TASK_SCF_SPEEDUP.md` §3.2 and §5.4 as the background.
 >
 > **Open decisions for Dylan:** tune the count-scaled cutoff (it costs the 10% gain the unscaled
 > list had at 6-31G(d)); K (the harder index pattern) -- shell-quartet digestion fed from the
@@ -968,7 +968,7 @@ stand; they are simply not in the open count.
 > (`ERI_primitive_pair_cutoff` 1e-6 -> 1e-9, Dylan's decision): `short` 56/56 loose, `long` 32/32;
 > six references shift by one unit in the last printed digit and none was re-blessed, because
 > `test.py --bless` adopts only what fails the loose gate -- loose is the gate. Table in
-> `docs/SCF_SPEED_REPORT.md`, *The ERI default moved to `low`*. Nothing is in flight.**
+> `docs/TASK_SCF_SPEEDUP_DATA.md`, *The ERI default moved to `low`*. Nothing is in flight.**
 >
 > Housekeeping done the same evening: worktrees `tonto-1c`, `-rms`, `-sph`, `-step2`, `-prof` and
 > branches `rys-1c`, `rys-rms`, `rys-sph`, `rys-step2`, `rys-vec` removed, local and origin --
@@ -985,7 +985,7 @@ stand; they are simply not in the open count.
 > `develop`; the kernels agree to 4.4e-16 and are 3-4x faster per X on a same-range batch.
 > **Whole job, karrikinolide RHF/6-31G(d): no change** -- three binaries, three repeats, means
 > 62.4 / 62.4 / 63.1 J/K CPU s for `develop`, min/max-only and grouping. cc-pVTZ one pair,
-> −1.5%. Tables and the reasoning in `docs/SCF_SPEED_REPORT.md`, *Rys step 3*.
+> −1.5%. Tables and the reasoning in `docs/TASK_SCF_SPEEDUP_DATA.md`, *Rys step 3*.
 >
 > **Two lessons that outlast the item.** (1) **A single side-by-side pair resolves nothing under
 > about 3%**: the same baseline binary gave 51.3 to 53.6 s across four pairings that evening,
@@ -1019,7 +1019,7 @@ stand; they are simply not in the open count.
 > runs the damped iterations at `very_low`. Karrikinolide RHF/6-31G(d) reproduces the
 > one-at-a-time scan to every printed digit -- 2.4e-6, 3.1e-8, 1.8e-9, 1.8e-9 from g09 at 42.0,
 > 47.4, 57.9 and 64.9 s -- and escalation gives `medium` for 53.3 s, 8e-12 from the unescalated
-> energy. Table in `docs/SCF_SPEED_REPORT.md`.
+> energy. Table in `docs/TASK_SCF_SPEEDUP_DATA.md`.
 >
 > **The XCW floor. Settled (Dylan, 2026-09-16): it applies only when a level has been asked for.**
 > `medium` is a floor in the code, in `SCF_DATA:effective_ERI_accuracy`, but it bites only once
@@ -1051,7 +1051,7 @@ stand; they are simply not in the open count.
 > **NEXT: item 3, vectorising the Rys quadrature over shell-quartet classes.** Two profiles were
 > taken, and they disagree in a way that decides the plan. `perf` on karrikinolide RHF cartesian,
 > `develop` after the merges; both kept with their `perf.data` in
-> `~/tonto_runs/scf_profiles_2026-09-16/`, table in `docs/SCF_SPEED_REPORT.md`.
+> `~/tonto_runs/scf_profiles_2026-09-16/`, table in `docs/TASK_SCF_SPEEDUP_DATA.md`.
 >
 > | symbol | 6-31G(d), d functions | cc-pVTZ, f throughout |
 > |---|---|---|
@@ -1097,7 +1097,7 @@ stand; they are simply not in the open count.
 >
 > **START HERE -- 2026-09-16.** Step (1) of yesterday's list is **done**: Tonto timed against
 > g09 and ORCA on karrikinolide, RHF and BLYP, 6-31G(d), cc-pVTZ, def2-SVP and def2-TZVP, one
-> core each, run solo. Tables in `docs/SCF_SPEED_REPORT.md`; runs in
+> core each, run solo. Tables in `docs/TASK_SCF_SPEEDUP_DATA.md`; runs in
 > `~/tonto_runs/vs_g09_orca_2026-09-16/`. **Three findings.** (a) At triple zeta Tonto is level
 > with g09 on cartesian RHF and 1.15x on def2-TZVP; the weak case is **DFT on a spherical
 > basis**, 2.1x g09 and 2.1x ORCA, because the spherical path cannot reach the J engine.
@@ -1118,7 +1118,7 @@ stand; they are simply not in the open count.
 > −531.166917812066 against −531.166917814557 (**2.5e-12**, the residual being screening now taken
 > on cartesian Schwarz bounds), wall **868 s against 1231 s, −30%**. The spherical run now costs
 > what the cartesian one does (857 s), as the algebra predicts, and goes from 1.48x to 1.11x
-> ORCA's exact spherical run. Tables in `docs/SCF_SPEED_REPORT.md`.
+> ORCA's exact spherical run. Tables in `docs/TASK_SCF_SPEEDUP_DATA.md`.
 >
 > **Unrestricted done too** (second commit on the branch): `make_u_JK_engine_sph` transforms the
 > alpha and beta densities up, calls `make_u_JK_engine`, brings `J.a/J.b/K.a/K.b` back down, and
@@ -1163,7 +1163,7 @@ stand; they are simply not in the open count.
 > i.e. the very switch a cutoff schedule would hang off.
 >
 > **The scan that sizes those levels is done** (RHF/6-31G(d) cartesian, `rys-1c`, runs in
-> `~/tonto_runs/vs_g09_orca_2026-09-16/probe_scan_*`; table in `docs/SCF_SPEED_REPORT.md`):
+> `~/tonto_runs/vs_g09_orca_2026-09-16/probe_scan_*`; table in `docs/TASK_SCF_SPEEDUP_DATA.md`):
 > **`ERI_primitive_pair_cutoff` alone is 99% of the error and is cheap.** Moving it from its
 > `TOL(6)` default to 1e-9 takes the gap to g09 from 2.4e-6 to **3.1e-8 for +7% in time**;
 > tightening it further alone buys nothing. The residual 3e-8 is the Schwarz and J/K density
@@ -1177,7 +1177,7 @@ stand; they are simply not in the open count.
 > against the previous binary (energies identical; J/K -6 to -7%, spherical -15%), plus the
 > `JBcd => JB(cd)` fix. The full handoff, with timings and the ordered next steps, is under
 > **"HANDOFF 2026-09-15"** in *Vectorise the Rys quadrature* (search for it); tables in
-> `docs/SCF_SPEED_REPORT.md`. **Next, in order:** (1) time Tonto against g09 and ORCA on
+> `docs/TASK_SCF_SPEEDUP_DATA.md`. **Next, in order:** (1) time Tonto against g09 and ORCA on
 > karrikinolide, RHF and BLYP with 6-31G(d) and cc-pVTZ -- ORCA only against Tonto's
 > spherical basis; (2) run `short` on `rys-1c` and merge it to `develop` (Dylan's go-ahead on
 > any reference change); (3) the `transfer_l_*` work arrays onto `ERI_SCRATCH`; (4) measure
@@ -1248,7 +1248,7 @@ re-bless), and a batch-size scan (256 vs 512). Commits `f832aded` (pushed)
 > `perf_event_paranoid=1`) showed a fifth of the karrikinolide run in `memmove`/`malloc`/`free`,
 > from allocatable copies inside the shell-pair loops of the restricted GGA
 > `make_rho_becke_atom_grid` and `add_GGA_XC_mx`. Reading the ragged grids in place: bit-identical
-> energy, XC 92.9 -> 75.0 CPU s, wall 139 -> 123 s (`SCF_SPEED_REPORT.md`). The open-shell and LDA
+> energy, XC 92.9 -> 75.0 CPU s, wall 139 -> 123 s (`TASK_SCF_SPEEDUP_DATA.md`). The open-shell and LDA
 > twins still copy; not worth fixing if stage E replaces them. Tonto vs g09 per SCF iteration:
 > about 5x (was 6-7x before stage D); whole job 2.5x.
 > **Stage E, decisions so far (Dylan):** (1) replace the ragged per-shell `bf_grd0`/`bf_skip`
@@ -1270,7 +1270,7 @@ re-bless), and a batch-size scan (256 vs 512). Commits `f832aded` (pushed)
 > default; `dft_invariants` check 11 guards it. **Open:** (1) calibrated on water and the
 > near-planar karrikinolide only -- run a compact 3D molecule and a second-row atom before any
 > default change (listed in `docs/TONTO_KNOWN_ISSUES.md`); (2) the `high` residual; (3) stage E.
-> Detail in `docs/DFT_STANDARDISATION.md` §6c and `docs/SCF_SPEED_REPORT.md`; scoring scripts
+> Detail in `docs/TASK_DFT_STANDARDISATION.md` §6c and `docs/TASK_SCF_SPEEDUP_DATA.md`; scoring scripts
 > `rules.py`, `zones.py` in `~/tonto_runs/grid_shell_errors_2026-09-13/`. The Rys vectorisation
 > plan drafted the same day is parked under its item in *Science and features*.
 >
@@ -1282,7 +1282,7 @@ re-bless), and a batch-size scan (256 vs 512). Commits `f832aded` (pushed)
 > SCF** -- cycles 1-10 at integral accuracy 1e-5 ("Integral accuracy reduced to 1.0D-05 until
 > final iterations"), then full accuracy after "Initial convergence to 1.0D-05 achieved"; (b)
 > **incremental Fock builds** from the density change, with Schwarz screening scaled by it (our
-> delta build is off, `SCF_SPEED_REPORT.md` step 3, for want of that scaling); (c) presumably
+> delta build is off, `TASK_SCF_SPEEDUP_DATA.md` step 3, for want of that scaling); (c) presumably
 > batched XC with per-batch significant functions (stage E). The FineGrid log was not kept.
 > **Next measurement, before any more coding:** rerun g09 FineGrid on karrikinolide with `#p`
 > and whatever per-link timing g09 offers (to be looked up) to split its 2.1 s into XC and J/K, and try the two-pass trick in Tonto (a looser Schwarz and grid until ΔE
@@ -1297,14 +1297,14 @@ re-bless), and a batch-size scan (256 vs 512). Commits `f832aded` (pushed)
 > grid. **Dylan's decision: on by default at 1e-12.** `dft_invariants` check 10 guards it.
 > Stage B's "8% of points" estimate counted shells whose contribution is below 1e-8, a much
 > looser test than the density. **Next is stage D**, the angular zones, which is where the
-> points are. Tables in `docs/SCF_SPEED_REPORT.md`.
+> points are. Tables in `docs/TASK_SCF_SPEEDUP_DATA.md`.
 >
 > **HANDOFF 2026-09-13, adaptive pruning in progress (Dylan's session quota near its cap).**
 > The plan is `~/.claude/plans/we-are-now-going-validated-island.md` (stages A-E). Done and
 > pushed on `develop`: **stage A** (`1cc51a89`, the molecular XC grid built once per SCF,
 > `MOLECULE.RHO:make_XC_grid`, bit-identical energies) and **stage B** (`93ad9629`, the
 > `put_grid_shell_errors` keyword, tables in `~/tonto_runs/grid_shell_errors_2026-09-13/`
-> with `shell_summary.py`, reading in `docs/SCF_SPEED_REPORT.md`). A karrikinolide table was
+> with `shell_summary.py`, reading in `docs/TASK_SCF_SPEEDUP_DATA.md`). A karrikinolide table was
 > running at hand-off (`/tmp/.../scratchpad/shell_karr/stdout` if it survived; otherwise rerun:
 > the `stdin` is the karrikinolide `medium` job plus `put_grid_shell_errors` after `scf`).
 > **Next, stage C**: in `make_XC_grid`, after the partition, drop points whose promolecule
@@ -1322,7 +1322,7 @@ re-bless), and a batch-size scan (256 vs 512). Commits `f832aded` (pushed)
 > where `medium` gives L29 -- and that zone is where all of `medium`'s 1.6e-5 residual lives.
 > The oracle: 1e-7 per shell with 114% of `medium`'s points, i.e. today's `high` accuracy at
 > about `medium` cost. Measured with the water/karrikinolide ladder against g09
-> (`docs/DFT_STANDARDISATION.md` §6b). The oracle numbers to beat: `medium`'s per-shell
+> (`docs/TASK_DFT_STANDARDISATION.md` §6b). The oracle numbers to beat: `medium`'s per-shell
 > error with 54% of its points; `best`'s with 9%. Gates for every stage: `dft_reference`,
 > `dft_invariants`, `short`, the DFT/HAR/constrained `long` jobs, karrikinolide `medium`
 > energy −533.954503625952 (A and B are bit-identical; C and D are measured, not identical).
@@ -1352,7 +1352,7 @@ re-bless), and a batch-size scan (256 vs 512). Commits `f832aded` (pushed)
 > Nothing else is in flight; the ordering below stands.
 
 **Nothing is in flight.** Two Science items closed on 2026-09-06: **milestone 11 (extinction)**
-and **`docs/GOF_NOT_CHI2.md`** (the `GoF2` rename, and GoF in the tables). Both are archived
+and **`docs/TASK_GOF2_NOT_CHI2.md`** (the `GoF2` rename, and GoF in the tables). Both are archived
 below with their evidence. Dylan reordered the rename ahead of **milestone 12**, which is the
 natural next item and stays open — its free-set calls are still commented out at
 `molecule.scf.foo:2141`, checked.
@@ -1363,7 +1363,7 @@ natural next item and stays open — its free-set calls are still commented out 
    archived below. It invalidated a published urea result: `89dbacef` records urea finding
    "nothing at 1.3 sigma", which reproduces only at a wavelength this dataset cannot have. At its
    own 0.3173 A urea shows extinction at **6.3 sigma**. The repair was kept clear of the
-   extinction model's angular factor, which `EXTINCTION_REPORT.md` §5 still records as unsettled.
+   extinction model's angular factor, which `TASK_EXTINCTION_CORRECTION.md` §5 still records as unsettled.
 2. **Two `hart` references moved from macOS to Linux**, filed live under *Test suite and
    numerics*. `urea_hart_STO-3G_disk_ffs` now passes because its reference migrated, not because
    its 0%-difference column alignment was explained — so the long-standing 143/144 is now 144/144
@@ -1568,13 +1568,13 @@ build has. One file, everything else identical, executable relinked each time.
    GCC 16.1.0, so the claim became checkable on macOS. A gfortran-16.1.0 **debug** build SIGSEGVs
    on `tests/short/h2o_rhf_cc-pVDZ`, which gfortran-14 debug runs clean on the same machine -- and
    it does so with `-fcheck=bounds` **already omitted**, which is what the build does on 16 today.
-   By the criterion in `docs/GFORTRAN16_DEBUG_CRASH.md` (correct without the flag, failing with it)
+   By the criterion in `docs/TASK_GFORTRAN16_PORT.md` (correct without the flag, failing with it)
    that means **this is not the bounds bug, and dropping the flag does not make a 16 debug build
    usable.** So waiting for an Ubuntu 16.1.0 package is necessary and **not sufficient**; the
    release half is unaffected, carrying no `-fcheck`. The crash site is not established -- `atos`
    misattributes on that binary -- and x86_64 is untested, the Linux box having only the pre-fix
    `16.0.1` PPA snapshot. Wanted: an `lldb` session, and an x86_64 machine at 16.1.0. Full record
-   and two method traps in `docs/GFORTRAN16_DEBUG_CRASH.md`.
+   and two method traps in `docs/TASK_GFORTRAN16_PORT.md`.
 5. Longer-standing, unchanged: NaN and negative ESDs from the least-squares variance-covariance
    matrix, and the MPI items behind milestones 6 and 7.
 
@@ -1655,7 +1655,7 @@ dead keyword line from `develop` and leave the work on its two tags, as was done
 
 The flag defect is **fixed and verified** — see the archive entry *Dispersion: the conventions,
 the void evidence, and the fix*. The working document is
-`docs/TONTO_DISPERSION_CORRECTIONS.md`. **Dylan's ruling stands and is not to be reopened:**
+`docs/TASK_DISPERSION_CORRECTIONS.md`. **Dylan's ruling stands and is not to be reopened:**
 always add known or modellable effects into `F_calc` and match `F_exp`; removal from `F_exp`
 is a rarely-used alternative and neither flag becomes a default.
 
@@ -1733,24 +1733,24 @@ The cheaper interim, if it is ever switched on before the proper fix: comment ou
 **Do not switch `do_minmax_atoms` on in a test until this is done** — it would make those
 references flap.
 
-## DFT: three silent defects — see `docs/DFT_STANDARDISATION.md`
+## DFT: three silent defects — see `docs/TASK_DFT_STANDARDISATION.md`
 
 Found 2026-08-12 by measurement on `tests/short/h2o_blyp_cc-pVDZ`. The full
 record, with the evidence, the fix, and the plan, is
-**`docs/DFT_STANDARDISATION.md`** (milestone 10 in `CLAUDE.md`). Summarised here
+**`docs/TASK_DFT_STANDARDISATION.md`** (milestone 10 in `CLAUDE.md`). Summarised here
 only so this register stays complete:
 
 | Defect | Effect | Status |
 |---|---|---|
 | `MOLECULE.SET:initialize_DFT_grids` destroyed and recreated the `BECKE_GRID` | **every** user grid setting discarded; all DFT ran at default `accuracy= "low"` while `put_basics` echoed the requested settings back | **FIXED** 2026-08-12 |
 | `rho_cutoff` defaults to 10⁻⁶ | **the long-standing systematic error against g09.** Cross-validation isolated it: HF agrees to 1.2e-10 and Slater to 4.6e-7, but B88 differs by 9.9e-6 — because `x = \|∇ρ\|/ρ^(4/3)` *grows* in the tail the cutoff truncates. Lowering it to 10⁻¹⁰ collapses the full-BLYP gap **300-fold**, from 1.03e-5 to 3.5e-8, and is **free** — timed, no trend at any accuracy. Each derivative order costs another ρ^(-1/3), so meta-GGAs would be far worse | **FIXED** 2026-08-13 (`d38824da`). `BECKE_GRID.rho_cutoff` now defaults to `TOL(10)`; `types.foo` carries the measurement beside the default. Note the two cutoffs are distinct: `DFT_FUNCTIONAL.rho_cutoff` was always `TOL(30)` and was never the problem — `MOLECULE.FOCK` copies the grid's value over it, so it is the grid's that acts |
-| **RESOLVED 2026-08-14: three causes** (was: "open-shell DFT off by 1.5e-5, cause unknown") | (1) `pruning_scheme= jayatilaka2`, a confound introduced during the investigation -- removed for ROBUSTNESS, not average accuracy: it was actually better closed-shell (3.5e-8) but -1.5e-5 on an open-shell case where every alternative was within 1.6e-6. (2) the VWN5 potential grouped the chain rule wrongly. (3) the VWN3 potential evaluated `VWN_G`/`VWN_dG` at **ZERO instead of zeta**, so it had NO SPIN DEPENDENCE AT ALL. After all three: slater +1.44e-6, +vwn5 +1.455e-6, +vwn3 +1.511e-6 against g09 -- correlation now adds nothing of its own. Tonto's default grid sits ~1.5e-6 from g09; use 5e-6 for any external-reference test. See `docs/DFT_STANDARDISATION.md` section 6a | **FIXED** |
-| **The grid needs far too many points for its accuracy** | At `accuracy= best` every DFT case was ~1.5e-6 from g09. **Not the quadrature**: the Lebedev tables, the three radial mappings and both partition schemes were verified against the papers and are correct. The cause was `BECKE_GRID:prune_grid` discarding every grid point whose *weight* fell below `basis_fn_cutoff` (1e-10) -- a volume element compared with a basis-function threshold. The three innermost oxygen shells (weights 7e-15 to 5e-11) were thrown away, and a finer grid threw away more: `pruning_scheme= none` was 80x worse. Now 4.1e-7 to 5.9e-7 across the nine cases, the same rate g09 converges at (its FineGrid is 5.1e-7 from converged -- the "5e-10" in the earlier text was an arithmetic slip); a 100-radial unpruned grid reaches 1e-8. Also found and fixed on the way: `partition_scheme=` inert for DFT; the Treutler-Ahlrichs ξ table multiplied by 1.89 (2.2e-4 error); three broken unused Gauss rules in `QUADRATURE`. Guards: `lebedev_rules`, `quadrature_rules`, `dft_invariants` 7-9, a Becke-partition row in `dft_reference`. See `docs/DFT_STANDARDISATION.md` section 6b | **FIXED** 2026-09-10 |
+| **RESOLVED 2026-08-14: three causes** (was: "open-shell DFT off by 1.5e-5, cause unknown") | (1) `pruning_scheme= jayatilaka2`, a confound introduced during the investigation -- removed for ROBUSTNESS, not average accuracy: it was actually better closed-shell (3.5e-8) but -1.5e-5 on an open-shell case where every alternative was within 1.6e-6. (2) the VWN5 potential grouped the chain rule wrongly. (3) the VWN3 potential evaluated `VWN_G`/`VWN_dG` at **ZERO instead of zeta**, so it had NO SPIN DEPENDENCE AT ALL. After all three: slater +1.44e-6, +vwn5 +1.455e-6, +vwn3 +1.511e-6 against g09 -- correlation now adds nothing of its own. Tonto's default grid sits ~1.5e-6 from g09; use 5e-6 for any external-reference test. See `docs/TASK_DFT_STANDARDISATION.md` section 6a | **FIXED** |
+| **The grid needs far too many points for its accuracy** | At `accuracy= best` every DFT case was ~1.5e-6 from g09. **Not the quadrature**: the Lebedev tables, the three radial mappings and both partition schemes were verified against the papers and are correct. The cause was `BECKE_GRID:prune_grid` discarding every grid point whose *weight* fell below `basis_fn_cutoff` (1e-10) -- a volume element compared with a basis-function threshold. The three innermost oxygen shells (weights 7e-15 to 5e-11) were thrown away, and a finer grid threw away more: `pruning_scheme= none` was 80x worse. Now 4.1e-7 to 5.9e-7 across the nine cases, the same rate g09 converges at (its FineGrid is 5.1e-7 from converged -- the "5e-10" in the earlier text was an arithmetic slip); a 100-radial unpruned grid reaches 1e-8. Also found and fixed on the way: `partition_scheme=` inert for DFT; the Treutler-Ahlrichs ξ table multiplied by 1.89 (2.2e-4 error); three broken unused Gauss rules in `QUADRATURE`. Guards: `lebedev_rules`, `quadrature_rules`, `dft_invariants` 7-9, a Becke-partition row in `dft_reference`. See `docs/TASK_DFT_STANDARDISATION.md` section 6b | **FIXED** 2026-09-10 |
 | `use_spherical_basis=` after the `atoms=` block | silently ignored — 25 basis functions instead of 24, 1.6e-3 Hartree, exit 0, no diagnostic | **FIXED** 2026-08-13 (`e72a3ac9`). `MOLECULE.MAIN:read_use_spherical_basis` now carries `DIE_IF(.atom.allocated,...)`. Refusing it was chosen over applying it late: silently re-resolving a basis under a job that has already used it invites a different bug. Guarded by `dft_invariants` check 5 |
-| An unrecognised functional name silently contributes nothing | `blyp` gave −67.7092 instead of −76.4002, exit 0. **Validation lives at the setter, not the dispatcher**, and that is forced, not a preference: the four dispatchers and both `is_*_functional` queries are `PURE`, and `UNKNOWN` is a `DIE` that expands to an `allocate` — illegal in a pure procedure, and `DIE` is live in release, so no amount of `PURE` helps. `SCF_DATA:set_exchange_functional` and `set_correlation_functional` now carry the live `case default; UNKNOWN(...)`; the six dispatcher defaults stay commented, each with a note saying why. A blank name is admitted explicitly beside `"none"`, because `MOLECULE.FOCK` guards only on `/= "none"`. **Limit:** it catches names arriving through input or `set_*`, which is every real path; it does *not* catch a name injected straight into a dispatcher by new code — the accepted-against-implemented lint of `docs/DFT_STANDARDISATION.md` §12 is what closes that | **FIXED** 2026-08-13 |
+| An unrecognised functional name silently contributes nothing | `blyp` gave −67.7092 instead of −76.4002, exit 0. **Validation lives at the setter, not the dispatcher**, and that is forced, not a preference: the four dispatchers and both `is_*_functional` queries are `PURE`, and `UNKNOWN` is a `DIE` that expands to an `allocate` — illegal in a pure procedure, and `DIE` is live in release, so no amount of `PURE` helps. `SCF_DATA:set_exchange_functional` and `set_correlation_functional` now carry the live `case default; UNKNOWN(...)`; the six dispatcher defaults stay commented, each with a note saying why. A blank name is admitted explicitly beside `"none"`, because `MOLECULE.FOCK` guards only on `/= "none"`. **Limit:** it catches names arriving through input or `set_*`, which is every real path; it does *not* catch a name injected straight into a dispatcher by new code — the accepted-against-implemented lint of `docs/TASK_DFT_STANDARDISATION.md` §12 is what closes that | **FIXED** 2026-08-13 |
 | `gill96` blessed in three places, implemented nowhere | Removed from all three — `scf_data.foo` and `is_GGA_functional` / `is_LDA_functional` — because no Gill96 routine exists anywhere in `foofiles/`. With validation live, leaving it would have made it an accepted name that dies, which is worse than not offering it | **FIXED** 2026-08-13 |
 | **`b3lypx` omitted the exact exchange, silently** (found and FIXED 2026-09-08) | `b3lypx` and `b3lypgx` select the *same* exchange routines, and `new_r_B3LYP_x_energy_density` deliberately computes only `0.08*E_LDA + 0.72*E_GGA` — the `0.2*E_HF` third of B3LYP comes from the Fock matrix, gated on `.using_hybrid_exchange`. `SCF_DATA:set_exchange_functional` sets that flag for `b3lypgx` and **not** for `b3lypx`, so a `b3lypx` job silently drops the exact exchange. Measured (STO-3G water, `accuracy= high`): `b3lypx`/`none` −73.0728 against `b3lypgx`/`none` −74.8819, **1.81 Hartree**, exit 0. No test uses `b3lypx` — only `b3lypgx` — so fixing it reblesses nothing. The name-agreement lint cannot catch this: `b3lypx` has a case in every block; what was missing is one flag assignment | **FIXED** 2026-09-08 — `set_exchange_functional` now sets `.using_hybrid_exchange` for `b3lypx` as it already did for `b3lypgx` |
-| `MOLECULE.SCF:put_SCF_energy` has no callers and mislabels its output | the XC energy is never reported, so none of the above is visible | **FIXED** 2026-10-04 (branch `xc-energy`): the XC routines now hand back E_xc as well as the energy correction, kept in `SCF_DATA.XC_energy`; a hybrid's a_0 E_x is one trace at the Fock build, kept in `exact_exchange_energy`; the results block prints `J`, `a_0*E_x` (hybrids) and `E_xc` under `V_ee` for DFT, and its labels were widened to align. `put_SCF_energy` deleted. See `docs/DFT_STANDARDISATION.md` section 6 |
+| `MOLECULE.SCF:put_SCF_energy` has no callers and mislabels its output | the XC energy is never reported, so none of the above is visible | **FIXED** 2026-10-04 (branch `xc-energy`): the XC routines now hand back E_xc as well as the energy correction, kept in `SCF_DATA.XC_energy`; a hybrid's a_0 E_x is one trace at the Fock build, kept in `exact_exchange_energy`; the results block prints `J`, `a_0*E_x` (hybrids) and `E_xc` under `V_ee` for DFT, and its labels were widened to align. `put_SCF_energy` deleted. See `docs/TASK_DFT_STANDARDISATION.md` section 6 |
 
 **One consequence that will surface elsewhere.** Every checked-in DFT reference
 was produced with the default grid rather than the one its own input requests, so
@@ -1765,11 +1765,11 @@ is the bogus name: `blyp` as an exchange functional must exit non-zero.
 ## DFT grid: what is still open after the 2026-09-10 fix
 
 The weight-threshold defect is closed (see the table above and
-`docs/DFT_STANDARDISATION.md` §6b). Three things came out of the measurement that are
+`docs/TASK_DFT_STANDARDISATION.md` §6b). Three things came out of the measurement that are
 decisions or investigations rather than fixes, plus some tidying not done:
 
 1. **Decided 2026-09-11: the defaults are Becke partition (Becke size adjustment) and
-   `accuracy= medium`.** The full ladder is in `docs/DFT_STANDARDISATION.md` §6b: Becke at
+   `accuracy= medium`.** The full ladder is in `docs/TASK_DFT_STANDARDISATION.md` §6b: Becke at
    `medium` is −4.6e-8 from g09 in 0.8 s where SS at `best` was +5.9e-7 in 13 s. What
    remains open is the large-molecule cost comparison, where SS's screening is supposed to
    pay: karrikinolide BLYP/6-31G(d) at `low` took 121 s under SS and 120 s under Becke, and
@@ -1777,7 +1777,7 @@ decisions or investigations rather than fixes, plus some tidying not done:
    −1.5e-6 and Becke −1.4e-4 / +1.6e-5 / +4.5e-6 / −9.4e-7 for low / medium / high / best,
    at 1.0× / 1.5× / 2.2× / 15× the cost of `low`. **Dylan, 2026-09-11: `medium` stays the
    default; `high` costs too much, and adaptive pruning (item 3) is to bring the cost down
-   before the default is reconsidered.** Full table in `docs/DFT_STANDARDISATION.md` §6b.
+   before the default is reconsidered.** Full table in `docs/TASK_DFT_STANDARDISATION.md` §6b.
 2. **Delley partition: removed 2026-09-11.** −1.03e-5 from g09 at `best` and −1.05e-5 with
    100 radial points unpruned, so not a grid-size effect; nothing used it, so it went rather
    than being checked against CPL 241 p469. `git log -S partition_D` finds it.
@@ -1911,7 +1911,7 @@ is now `MAT3{EVEC{INT}}`.
 
 **Before writing any of it, get a reference.** There is no Bader test of any kind —
 serial or parallel — so there is nothing to compare a parallel result against. The
-serial path needs a blessed reference first; see `docs/BADER_REPORT.md`.
+serial path needs a blessed reference first; see `docs/TASK_BADER_BASIN_PORT.md`.
 
 ## MPI: defects found during milestone 4 (2026-08-01)
 
@@ -2187,7 +2187,7 @@ Linux or in CI, suspect this before suspecting a real regression.
   ```
 
   "BCAST interferes with a different kind leading to str and Int" is *exactly* the failure
-  diagnosed in `docs/TONTO_AND_MPI.md` Finding 6: a 256-character STR broadcast pairing with a 1-integer
+  diagnosed in `docs/TASK_MPI.md` Finding 6: a 256-character STR broadcast pairing with a 1-integer
   INT broadcast, giving `MPI_ERR_TRUNCATE`. This is independent evidence that the desynchronisation
   **predates all of the milestone 4 work**.
 
@@ -2352,7 +2352,7 @@ Linux or in CI, suspect this before suspecting a real regression.
   all, the escape hatch in `SYSTEM:IO_is_allowed` was unreachable dead code, and all ~10 call
   sites in `molecule.scf.foo` were silent no-ops that toggled an unrelated flag. Longstanding —
   `set_parallel_IO_allowed` had the identical body before the rename. Fixed, and the mechanism
-  now works: see `docs/RUNNING_HART.md` (milestone H1) and `docs/TONTO_AND_MPI.md` §5. This also means every
+  now works: see `docs/RUNNING_HART.md` (milestone H1) and `docs/TASK_MPI.md` §5. This also means every
   earlier statement in this file of the form "per-rank I/O is enabled here" described an
   intention, not a behaviour.
 
@@ -2778,7 +2778,7 @@ Any of these rewrites the reference, so re-bless deliberately and read the resul
   writers; each rank opens the *same filename* with its own `newunit`, so silent corruption
   rather than a crash). The durable fix is a **translator lint** for `write(`/`read(` on any
   `*.unit` outside `file.foo`/`textfile.foo`/`buffer.foo` -- static, cheap, and it would have
-  found every one of these without running anything. Added to milestone 6. See `docs/TONTO_AND_MPI.md`.
+  found every one of these without running anything. Added to milestone 6. See `docs/TASK_MPI.md`.
 - **`parallel_sum` clobbers `val` even when the optional `sum` is supplied**
   (`foofiles/parallel.foo:458`): an unconditional `val = tmp` after the `if (present(sum))`
   branch, violating the "give me the sum, leave `val` alone" contract.
@@ -2804,11 +2804,11 @@ Any of these rewrites the reference, so re-bless deliberately and read the resul
 
 # Build system and toolchain
 
-## libxc as the DFT functional engine — see `docs/DFT_STANDARDISATION.md`
+## libxc as the DFT functional engine — see `docs/TASK_DFT_STANDARDISATION.md`
 
 Superseded by milestone 10. The decision, the verified API facts, the compiler
 constraint, and the seven-point list of what a real implementation must cover are
-all in **`docs/DFT_STANDARDISATION.md` §8**, alongside the interface analysis
+all in **`docs/TASK_DFT_STANDARDISATION.md` §8**, alongside the interface analysis
 (§7) that determines how much work it is.
 
 The one thing worth repeating here, because it is the most likely thing for a
@@ -2914,7 +2914,7 @@ a `select case` needs to switch on; and three divergences between the capping an
 paths that the hoist should settle deliberately rather than inherit.
 
 **None of it is worth refactoring first** -- the hoist rewrites this dispatch anyway. Detail,
-sequencing and the traps: `docs/TONTO_CRYSTAL_HOIST_PLAN.md`.
+sequencing and the traps: `docs/TASK_CRYSTAL_HOIST.md`.
 
 ## Design (2026-08-03): let MPI keep `PURE`, so the compiler forbids I/O in parallel regions
 
@@ -3529,7 +3529,7 @@ Multithreaded OpenBLAS would also oversubscribe cores in MPI builds: ranks x thr
 
 ## ADPs as rigid-body motion plus soft modes, refined against F (Dylan, 2026-10-03)
 
-**Register row:** *ADPs as rigid-body motion plus soft modes*. Plan: `docs/TONTO_TLS_MODE_REFINEMENT.md`
+**Register row:** *ADPs as rigid-body motion plus soft modes*. Plan: `docs/TASK_ON_MODE_FITTING.md`
 (theory, the restraint generalisation of the eigenvalue filter, where the code goes, which procedures
 change, the steps and their checks, and the record of the discussion). Nothing built.
 
@@ -3673,7 +3673,7 @@ reduction over nodes (GPU nodes eventually).
 
 **Settled points.**
 - **No disk.** The surviving primitive quartets number ~4e8 per Fock build on karrikinolide at
-  6-31G(d) (counted, `docs/SCF_SPEED_REPORT.md` *Rys step 3*), tens of GB stored and growing ~N²;
+  6-31G(d) (counted, `docs/TASK_SCF_SPEEDUP_DATA.md` *Rys step 3*), tens of GB stored and growing ~N²;
   and reading 64 bytes from an NVMe (~20 ns) is slower than recomputing X (~2 ns) and a
   vectorised root (~8 ns). The 1982 direct-SCF argument, stronger now.
 - **What is stored is the pair list**, ~1e5 entries: for each class (l_a,l_b) the primitive pairs
@@ -3940,7 +3940,7 @@ separately, not inside the J/K speed-up session that raised it.**
 with exact exchange (`RIJONX`), validated against ORCA to 1e-8.**
 
 **Status 2026-09-17: built and validated on branch `ri-j`; see the handover at the top and
-`docs/SCF_SPEED_REPORT.md`, *RI-J*.** Shape chosen (Dylan): three-centre integrals from the pair-list
+`docs/TASK_SCF_SPEEDUP_DATA.md`, *RI-J*.** Shape chosen (Dylan): three-centre integrals from the pair-list
 kernel with an auxiliary primitive as a one-centre (L,0) pair; direct, two passes, nothing stored;
 auxiliary functions always spherical; closed-shell and unrestricted pure DFT; serial;
 `def2-universal-jfit` only. **Still owed:** automatic auxiliary bases (pob-TZVP has none, so HAR
@@ -3951,7 +3951,7 @@ keywords when it merges; a stored variant only if a profile asks for it (J is no
 
 **Why.** For exact HF the J/K build is close to its limit: zinc finger RHF/def2-TZVP, Tonto 1527 s
 J/K (cartesian, so more functions) against g09 1365 s and ORCA 1566 s wall, *The zinc-finger
-benchmark* in `docs/SCF_SPEED_REPORT.md`. And for HF and hybrids a separate J gains nothing,
+benchmark* in `docs/TASK_SCF_SPEEDUP_DATA.md`. And for HF and hybrids a separate J gains nothing,
 because the combined engine gets J almost free from K's integrals: karrikinolide RHF/6-31G(d),
 pair-list J plus engine K 95.7 s against the combined engine's 55.5 s (three repeats; cc-pVTZ
 1569 against 1083 s, `~/tonto_runs/k_share_2026-09-17/`). The large gap is in pure DFT: BLYP/def2-TZVP, Tonto
@@ -3999,7 +3999,7 @@ tiles -- a full `n_k x n_pt` is 180 MB at gly_ala size, so it must be tiled, not
 it becomes one DGEMM, a vectorised `cos`/`sin` over the tile, then one DGEMV against `rho`.
 
 **Why it is worth a session.** That loop is **81.6% of a fragHAR job**, measured: first profile of
-`tests/long/gly_ala_fragHAR_rhf_STO-3G`, 2026-09-24, in `docs/TONTO_RI_FITTING_PLAN.md` section 1.
+`tests/long/gly_ala_fragHAR_rhf_STO-3G`, 2026-09-24, in `docs/TASK_RI_FITTING.md` section 1.
 The other items in that pass took the wasted `exp(0)` and cut the number of passes; the remaining
 bulk is the `n_k x n_pt` transcendentals themselves, and only a restructure touches those.
 
@@ -4012,7 +4012,7 @@ the `n_k x n_pt` work entirely rather than making it faster -- but not exclusive
 restructure is a bounded change to existing code and the RI route is a research project, so doing
 this first costs nothing if RI later supersedes it.
 
-**Detail**: `docs/TONTO_RI_FITTING_PLAN.md` section 7, item 2.
+**Detail**: `docs/TASK_RI_FITTING.md` section 7, item 2.
 
 ## Spherical atoms by the right ensemble: average of configuration for HF, fractional occupation for DFT (Dylan, 2026-10-03)
 
@@ -4073,13 +4073,13 @@ grid sums to 0.02-0.06% for C, N, O and 0.2% for H on a converged grid. HARs rep
 to under 0.1 esd: urea 3.3 -> 2.0 s, gly_ala fragHAR 15.2 -> 11.4 s. One trap found and fixed:
 the default Treutler-Ahlrichs pruning (degree-5 spheres near the nucleus) wrecks l >= 6 unless
 those shells are left out, which the code now does. Method, measurements and open questions:
-`docs/TONTO_RI_FITTING_PLAN.md`. **Open: stage (b)** -- use in refinement, with a test for
+`docs/TASK_RI_FITTING.md`. **Open: stage (b)** -- use in refinement, with a test for
 `oc-ri` (blessed on achari2) and a job with many reflections, where the saving should be largest.
 **Owed before (b) is believed (Dylan, 2026-09-27): the neutron benchmark.** The ten X-ray +
 neutron structures of Chodkiewicz & Woźniak, IUCrJ 12, 74 (2025); refine with `oc-hirshfeld` and
 `oc-ri` at L = 4-7 against neutron X-H lengths and H ADPs. So far L = 7 is only *consistent* with
 Chodkiewicz et al. (2024), from urea and gly_ala in STO-3G. Data sources and settings:
-`docs/TONTO_RI_FITTING_PLAN.md`, *What is still to be found out*. The IUCr supporting information
+`docs/TASK_RI_FITTING.md`, *What is still to be found out*. The IUCr supporting information
 must be fetched in a browser (the site returns 403 to scripts).
 
 **Dylan's proposal.** Expand the Hirshfeld atomic densities with the RI machinery already in the
@@ -4299,7 +4299,7 @@ water it cost time; so SS stays as an option and its keyword should say so. Agai
 SS is not (+4.6e-7 at `low` by cancellation, then −2.5e-5, −5.1e-5, −1.5e-6); the default
 stays Becke/`medium`, see the DFT grid item under Correctness. The raw inputs,
 outputs and timings are in `~/tonto_runs/karrikinolide_grid_ladder_2026-09-11/` and the
-summary in `docs/SCF_SPEED_REPORT.md`.
+summary in `docs/TASK_SCF_SPEEDUP_DATA.md`.
 
 **Two findings from reading the code (2026-09-11), before any profiling.** The Schwarz bound
 array `.max_I` is rebuilt and destroyed inside every Fock build (`molecule.fock.foo:1396,
@@ -4317,7 +4317,7 @@ quadrature is **67%** of the SCF, J and K **28%**, the initial guess 5%, everyth
 under 1%. gprof splits the XC half and half between evaluating the basis functions and
 gradients on the grid (`make_rho_becke_atom_grid`) and the shell-pair × point contraction
 (`add_GGA_XC_mx`), both proportional to the point count; the Rys roots are 6.6% of the run
-and the whole ERI machinery 22%. Tables in `docs/SCF_SPEED_REPORT.md`.
+and the whole ERI machinery 22%. Tables in `docs/TASK_SCF_SPEEDUP_DATA.md`.
 
 **Plan, reordered by that profile** (`~/.claude/plans/`): (2) done 2026-09-11 for `.max_I`
 (kept across Fock builds; it was already kept inside an SCF, so the gain is one (ab|ab)
@@ -4347,7 +4347,7 @@ as a full build. **Dylan's decision: `use_delta_build` defaults to FALSE**, opt-
 ΔP-scaled (Ahmadi-Almlöf) screening is the version that would pay; after pruning. Also
 measured: g09 on its FineGrid does the same job in 49 s and 23 cycles at matched accuracy,
 against Tonto's 177 s and 14 -- 6× per iteration, and that gap is mostly the per-point cost of
-the XC evaluation, not the point count. Tables in `docs/SCF_SPEED_REPORT.md`.
+the XC evaluation, not the point count. Tables in `docs/TASK_SCF_SPEEDUP_DATA.md`.
 
 # Test suite and numerics
 
@@ -4606,7 +4606,7 @@ runner/CPU (BLAS / eigensolver ordering, FP reassociation) flips the verdict —
 Recorded because it changes what a red badge on a Mac would *mean*, and because it retires
 an observation point for the column-width item in the handover.
 
-The GoF table change (`docs/GOF_NOT_CHI2.md` part B) forced six references to be reblessed.
+The GoF table change (`docs/TASK_GOF2_NOT_CHI2.md` part B) forced six references to be reblessed.
 Two of them had been blessed on macOS, and **Dylan's decision was to bless all six on
 Linux** rather than hand-edit the two:
 
@@ -5174,7 +5174,7 @@ harness writes `stdout.bad` on a fail). The five listed above are all that remai
 
 ## No XCW job runs with the extinction correction on (2026-09-06)
 
-Step 4 of the plan in `docs/EXTINCTION_REPORT.md` asks for two test jobs. The `hart` one
+Step 4 of the plan in `docs/TASK_EXTINCTION_CORRECTION.md` asks for two test jobs. The `hart` one
 is now `tests/hart/urea_hart_STO-3G_extinction`. The second is still owed: an
 X-ray-constrained-wavefunction job with extinction on, so that the XCW constraint gradient's
 extinction term — added during milestone 11, and the reason a wrong gradient would converge
@@ -5538,7 +5538,7 @@ in CI, on any platform, builds `-DMPI=1 -DCMAKE_BUILD_TYPE=debug`. That is the g
 entry closes.
 
 **Why, with the evidence that prompted it.** Chasing the deterministic
-`urea_read_and_process_CIF` desync (Finding 7 in `docs/TONTO_AND_MPI.md`), the release MPI
+`urea_read_and_process_CIF` desync (Finding 7 in `docs/TASK_MPI.md`), the release MPI
 build reported:
 
 ```
@@ -5574,7 +5574,7 @@ debug MPI would be slow and would inherit the `-O0` failures already in `TASKS_A
   never would. Expect to triage that before the job is green, and do not read a debug-only
   failure as proof of a release bug.
 - **On gfortran-16 the debug build omits `-fcheck=bounds`** (the compiler bug in
-  `docs/GFORTRAN16_DEBUG_CRASH.md`), so it checks less than a gfortran-14 debug build. Pin the
+  `docs/TASK_GFORTRAN16_PORT.md`), so it checks less than a gfortran-14 debug build. Pin the
   job to gfortran-14 if bounds checking is the point; use 16 if matching the MPI toolchain is.
 - **Do not badge it until it has been green once.** `ci-wsl-debug.yml` has a badge and has
   never had a green run.
@@ -6058,7 +6058,7 @@ already hit a case bug in the submodule registry (commit 627db872); this is the 
 
 Both pieces done: the N^2 cell function (2026-09-27), and the analytic Salvador cell with radii
 from the free atoms -- `tfvp` (promolecule minimum, 2026-09-27) and `tfvh` (equal-density point,
-2026-10-05), plus their spherical forms. The results are in `docs/RESEARCH_ON_SALVADOR_MODELS.md`,
+2026-10-05), plus their spherical forms. The results are in `docs/REPORT_ON_SALVADOR_MODELS.md`,
 whose residue goes to the keyword help when that document closes. The stability motivation lapsed:
 every partition's moments are kernel-stable since the exact spherical average. Original entry:
 
@@ -6146,7 +6146,7 @@ routines and scaled only V0, so the Fock matrix carried the GGA gradient terms a
 0.72 and 0.81; and `new_u_Becke88_x_potential` used the alpha-spin `ka2` for the beta-spin `kb2`.
 Dylan's guess was right: a formula error. After the fix every row of the table below is within
 2-3e-6 of ORCA or g09, the grid residual of the control. Account and table in
-`docs/DFT_STANDARDISATION.md` section 5b. New test `short/h2o+_uks_B3LYPG_def2-SVP`.
+`docs/TASK_DFT_STANDARDISATION.md` section 5b. New test `short/h2o+_uks_B3LYPG_def2-SVP`.
 
 *The entry as it stood:*
 
@@ -6168,7 +6168,7 @@ The same 2.13e-4 with VWN3 and VWN5 says the VWN part is not the cause; exact ex
 (RHF agrees) and B88 and LYP are right in BLYP. What is left is how the pieces are combined in the
 B3LYP routines, or the 0.08 Slater term. The unrestricted BLYP row is a separate question (the
 closed-shell BLYP agrees). Neither is diagnosed. No B3LYP row was in the g09 comparisons of
-`docs/DFT_STANDARDISATION.md`; `short/h2o_rks_B3LYPG_cc-pVDZ` compares Tonto with itself.
+`docs/TASK_DFT_STANDARDISATION.md`; `short/h2o_rks_B3LYPG_cc-pVDZ` compares Tonto with itself.
 
 **Fixed on the way (`b149adff`), and kept (Dylan, 2026-09-18):**
 `make_u_KS_Fock_mx` added -(f/2)(K.a + K.b) to both spins, right only for a closed shell. UKS
@@ -6617,8 +6617,8 @@ grid, 66 -> 33 s. SCF option reporting plus the `guess_convergence` echo. The `y
 convergence tolerance deleted, which made two of those three jobs converge for the first time and cut
 them 37-46%. Architecture tuning made opt-in, a `reference` build type added, the Linux CI runners
 pinned to `ubuntu-24.04`, and CI switched to the `reference` profile so what it checks is what was
-blessed. `docs/TONTO_BLESSING_TESTS.md`, `docs/TONTO_RI_FITTING_PLAN.md`,
-`docs/TONTO_CRYSTAL_HOIST_PLAN.md`. The rgbi selftest skip guard.
+blessed. `docs/TONTO_BLESSING_TESTS.md`, `docs/TASK_RI_FITTING.md`,
+`docs/TASK_CRYSTAL_HOIST.md`. The rgbi selftest skip guard.
 
 ### Deliberately left failing, and why
 
@@ -6655,7 +6655,7 @@ own misalignment does. **Only a line-indexed comparison of whole files is trustw
 > `high` only three things changed: heavy-atom angular 29 -> 35, hydrogen angular 23 -> 29,
 > radial 30 -> 35. For those small steps the karrikinolide error went +1.5e-5, +2.9e-5, -1.5e-5,
 > +2.0e-6: more like an error changing sign than one converging, and `high` may be good partly by
-> luck. The same claim was in `docs/TONTO_SCF_SPEED_UP.md` 5b ("the error falls with the angular
+> luck. The same claim was in `docs/TASK_SCF_SPEEDUP.md` 5b ("the error falls with the angular
 > order in the bonding region"); **both corrected on 2026-09-25**, after checking in
 > `becke_grid.foo` that `apply_pruning_scheme_adaptive` is the only reader of
 > `l_bonding_angular_grid` and that `types.foo` defaults `pruning_scheme` to `treutler_ahlrichs`.
@@ -6706,7 +6706,7 @@ the build directory, and the named program is run from there. So `ctest` hands e
 `tonto`, which confuses anyone reading it. Make the option `--build-dir`: run `tonto` from it by
 default, or the program `IO` names. Do the same in `suite_report.py`. Seventeen files pass
 `--program`: the two scripts, `tests/CMakeLists.txt`, 11 workflows and 3 docs
-(`TONTO_BLESSING_TESTS.md`, `TONTO_AND_MPI.md`, `RUNNING_HART.md`). Check how `--mpi` and
+(`TONTO_BLESSING_TESTS.md`, `TASK_MPI.md`, `RUNNING_HART.md`). Check how `--mpi` and
 `--compare-program` use it first.
 
 Done in `08c93a6b`: both `test.py` and `suite_report.py` take `--build-dir DIR` (`-d`); the old
@@ -6727,7 +6727,7 @@ SourceForge era (the `GAUSSIAN_DATA` header says 2006; the files arrived with to
 2026-09-15 when the scheme was revived on the `rys-rms` branch, off by default.
 
 **Why it went.** Measured on karrikinolide RHF, same binary, off and on side by side
-(`docs/SCF_SPEED_REPORT.md`, *Reduced multiplication scheme*): energies identical to 12
+(`docs/TASK_SCF_SPEEDUP_DATA.md`, *Reduced multiplication scheme*): energies identical to 12
 decimals at both bases; J/K CPU 51.01 → 51.72 s at 6-31G(d) (+1.4%) and 1196.07 → 1256.32 s
 at cc-pVTZ (+5.0%), the contraction's share of the run rising from 25.9% to 29.5% at cc-pVTZ.
 It saves one multiply per shared `Ix*Iy` column but keeps every n_sum-long dot product, and adds
@@ -6828,7 +6828,7 @@ live half, which keeps the kernels and the pair-list idea and drops the per-quar
 
 **Step 3 done and flat, 2026-09-16 (branch `rys-vec`, merged `5baf58e6`).** Per-quartet vectorisation of the
 1 and 2 root fits: kernels 3-4x per X, whole job unchanged within ±1.5% on karrikinolide at both
-bases. Numbers and reasoning in `docs/SCF_SPEED_REPORT.md`, *Rys step 3*; the handover above has
+bases. Numbers and reasoning in `docs/TASK_SCF_SPEEDUP_DATA.md`, *Rys step 3*; the handover above has
 the two lessons. What remains of this item is step 2, the class-batched traversal, and it now
 carries a different justification: the profile share of the roots is not the wall clock, and the
 2-D integral buffer traffic is the thing to attack.
@@ -6864,7 +6864,7 @@ item from the DFT-grid work, to be started in its own session.
   reorder the basis.** Group classes with an index vector over shell pairs instead; the Fock
   loop already goes through `set_shell2_indices_from` / `set_shell1q_*_from`.
 
-**What the profile says** (gprof, karrikinolide BLYP/6-31G(d) `medium`, `docs/SCF_SPEED_REPORT.md`):
+**What the profile says** (gprof, karrikinolide BLYP/6-31G(d) `medium`, `docs/TASK_SCF_SPEEDUP_DATA.md`):
 `RYS:get_weights` 6.6% of the run, `form_esfs` 5.8%, the `make_esfs` dispatcher 4.5%,
 `set_cd_new` 2.3%, the `make_esfs_*` specialisations about 5%, and `RYS`/`MAT{REAL}`
 allocation churn about 2%: the two-electron integrals are about 22% of that DFT job. **For an
@@ -6957,7 +6957,7 @@ the gprof tree at `~/github/tonto-prof/prof/` and `scfdata= { show_timings= TRUE
 **Gate:** integrals against the scalar path quartet by quartet (`runfiles/run_shell1quartet.foo`
 exists and is unbuilt), agreeing to 1e-14 or bitwise; HF energies bit-identical or to 1e-12;
 `short` and the HF/correlated `long` jobs; timings before and after in
-`docs/SCF_SPEED_REPORT.md`.
+`docs/TASK_SCF_SPEEDUP_DATA.md`.
 
 **Detailed plan for step 3 (drafted 2026-09-14, parked in favour of pruning stage D).** Call it
 "Rys step 3", not "stage D", which is the grid-pruning item.
@@ -6990,7 +6990,7 @@ exists and is unbuilt), agreeing to 1e-14 or bitwise; HF energies bit-identical 
    gather `xx`/`rho` over all `(k,j)`, one Rys call, then the existing 2-D integral loop.
    Otherwise do the class traversal first and return.
 4. **Gate:** `run_shell1quartet` old vs new; HF energies to 1e-12; `short` and HF `long` jobs;
-   timings in `docs/SCF_SPEED_REPORT.md`. Run the no-grid karrikinolide RHF profile alongside
+   timings in `docs/TASK_SCF_SPEEDUP_DATA.md`. Run the no-grid karrikinolide RHF profile alongside
    step 1.
 
 ## DONE (2026-09-25): the worst-reflections table is order-stable, and the harness pairs reordered rows
@@ -7267,7 +7267,7 @@ assumption the suite had never tested. None was wrong.
 `VEC{REFLECTION}:set_d_and_theta` stays (it is correct for rounding at the limiting sphere, and
 the new test is `> ONE + tol`, not `> ONE`), and the `max(s,TOL(6))` floor in
 `extinction_angle_part` is untouched — it belongs to the extinction model, whose angular factor
-`docs/EXTINCTION_REPORT.md` §5 still records as unsettled.
+`docs/TASK_EXTINCTION_CORRECTION.md` §5 still records as unsettled.
 
 **One new item came out of the verification**, filed live under *Correctness*:
 `tonto.io_file` is a dangling pointer and every `DIE` dereferences it, so the new message is
@@ -7373,7 +7373,7 @@ tolerance separates the two regimes; size the constant from that gap, as
 
 **Explicitly NOT part of this task: the `max(s,TOL(6))` floor.** It is part of the extinction
 model, not of the wavelength check. Changing it moves numbers wherever extinction is on,
-including the quartz reference, and §5 of `docs/EXTINCTION_REPORT.md` records that the angular
+including the quartz reference, and §5 of `docs/TASK_EXTINCTION_CORRECTION.md` records that the angular
 factor is itself still unsettled — resolving it needs Larson (1970). Keep the two apart.
 
 ## DECIDED (2026-09-10): 256 characters is the input-line limit, and it stays
@@ -7921,7 +7921,7 @@ constraint looks identical to too many parameters.
 **What the failure is worth.** It pins down what a correct diagnosis needs: the
 **site-symmetry-allowed subspace**, so one can ask whether an undetermined direction lies inside it
 (expected) or outside it (a real defect). That is precisely what explicit constraints would supply,
-which makes this concrete evidence for the cctbx work in `docs/CCTBX_INTO_TONTO.md` §6 rather than
+which makes this concrete evidence for the cctbx work in `docs/TASK_CCTBX_INTO_TONTO.md` §6 rather than
 one more argument for it.
 
 ## FIXED (2026-09-08): `M_ani_error` was missing a square root, and it hid itself
@@ -8103,7 +8103,7 @@ test.
 An implementation was written and **reverted**, for a reason worth recording:
 
 > **`ENSURE` does not enforce anything in a release build.** The recommendation
-> in `docs/CCTBX_INTO_TONTO.md` §10 says destroying the errors is safe because
+> in `docs/TASK_CCTBX_INTO_TONTO.md` §10 says destroying the errors is safe because
 > *"the existing ENSUREs then catch any consumer that needs them, loudly and at
 > the point of use"*. `ENSURE` is gated on `USE_PRECONDITIONS`, which is off in
 > every optimised build, so those guards compile to nothing. Destroying
@@ -8162,7 +8162,7 @@ with `VEC{ATOM}:put_CIF_no_esd_note` saying why.
 cases in play work out -- a CIF read gives crystal-frame esds, a refinement gives cartesian
 ones passed explicitly as `esd` from `make_CIF_esds` -- but reading a cartesian `.cif2`
 would hit the mirror image of the bug just fixed. Recording the frame alongside the esds
-belongs with the parameter-descriptor migration in `docs/CCTBX_INTO_TONTO.md` §6.
+belongs with the parameter-descriptor migration in `docs/TASK_CCTBX_INTO_TONTO.md` §6.
 
 Related and unchanged: the stdout ADP table prints whatever frame the esds are in beside
 values in the table's frame. For an orthogonal cell those agree; for a non-orthogonal one
@@ -8182,13 +8182,13 @@ they do not. Pre-existing, not introduced here.
 4. Better: consider splitting `pADP_errors`, or giving it a validity flag, so
    only the ADP block goes absent and the coordinate writers are untouched.
    This belongs with the parameter-descriptor migration in
-   `docs/CCTBX_INTO_TONTO.md` §6 rather than as a separate change.
+   `docs/TASK_CCTBX_INTO_TONTO.md` §6 rather than as a separate change.
 
 Related, and not fixed either: `molecule.har.foo:1300` implements `U_iso` by
 writing three identical derivative columns (`sf_d(k,4) = sf_d(k,5) =
 sf_d(k,6) = -sf2`), making the normal matrix singular by construction and
 letting the pseudo-inverse absorb it. Verified present. It did **not** affect
-the quartz results in `docs/NN_HAR_REPORT.md`, which refined anisotropically
+the quartz results in `docs/TASK_NN_HAR_REACTIVATION.md`, which refined anisotropically
 and never entered that branch, but it would bite any isotropic refinement.
 
 ## CLOSED, WON'T DO (Dylan, 2026-09-08): `make report` cannot be run in parallel
@@ -8302,7 +8302,7 @@ Commit `612c76a7`. `CLAUDE.md` §7 moved to **91** tests (55 + 32 + 4) for `shor
 
 ## DONE (2026-09-06): GoF², not chi2 — the rename, and GoF in the tables
 
-`docs/GOF_NOT_CHI2.md` carries the analysis and is now a record rather than a plan. Dylan
+`docs/TASK_GOF2_NOT_CHI2.md` carries the analysis and is now a record rather than a plan. Dylan
 reordered this **ahead of milestone 12**, which stays open.
 
 **The stored member is `GoF2`, not `GoF`** — Dylan's decision, and the right way round: the XCW
@@ -8547,7 +8547,7 @@ Two lines out of 688. Worth making an invariant check so the signal is not lost 
 ## FIXED (2026-09-05): dispersion — the conventions, the void evidence, and the fix
 
 Three days, two wrong diagnoses, one small fix. The full record is
-`docs/TONTO_DISPERSION_CORRECTIONS.md`; what remains open is under *Correctness*.
+`docs/TASK_DISPERSION_CORRECTIONS.md`; what remains open is under *Correctness*.
 
 **Dylan's ruling (2026-09-04), which settled the science question:** *"in Tonto we should not
 (often) remove anomalous from F_exp. The idea is to always correct F_calc to include the
@@ -8620,7 +8620,7 @@ answer could differ, run three ways at ten decimals.
 ## CLOSED INTO THE CCTBX WORK (Dylan, 2026-09-08): the pseudo-inverse silently CONSTRAINS what you asked to refine
 
 **Dylan's call: this is understood, and it is part of the cctbx constraint work rather than an
-item of its own.** `docs/CCTBX_INTO_TONTO.md` §7 step 6 already carries the gate that closes it —
+item of its own.** `docs/TASK_CCTBX_INTO_TONTO.md` §7 step 6 already carries the gate that closes it —
 constrained values satisfying `Rx = x`, with `near_0` falling to zero. The analysis is kept here
 because that step needs it.
 
@@ -8660,7 +8660,7 @@ eigenvectors would turn a silent constraint into a stated one. Reporting those e
 rather than zero would be better still — "infinity" is not assignable and is not what is wanted;
 absent is the right representation, and `VEC{ATOM}:put_CIF_no_esd_note` is already the mechanism.
 
-**The proper answer is the cctbx constraint work** (`docs/CCTBX_INTO_TONTO.md` §6). With
+**The proper answer is the cctbx constraint work** (`docs/TASK_CCTBX_INTO_TONTO.md` §6). With
 constraints explicit, the free parameter set is genuinely free, `near_0` should be **zero**, and
 any non-zero value becomes a detectable defect rather than something absorbed in silence.
 
@@ -8744,7 +8744,7 @@ same four suites today hold 131.
 **What actually went wrong is that neither score said what it counted**, so for a day in August
 a full-suite result could not be called a pass or a regression — which blocked reading the
 `textfile.foo` verification run. The fix is a habit, not a number: `CLAUDE.md` §5 now states the
-composition beside every score, and `docs/TONTO_AND_MPI.md` records the reconciliation where
+composition beside every score, and `docs/TASK_MPI.md` records the reconciliation where
 the confusion happened.
 
 **And the run it was blocking passes.** 88/89 loose, 77 exact, all four invariant checks green;
@@ -9194,7 +9194,7 @@ CI.
 ## DONE (2026-08-01/02): test the MPI parallel build
 
 **Milestone 4 complete.** First MPI build ever configured for this project; full characterisation
-in `docs/TONTO_AND_MPI.md`, defects in the MPI section above. Headline: MPI at 1 rank reproduces serial
+in `docs/TASK_MPI.md`, defects in the MPI section above. Headline: MPI at 1 rank reproduces serial
 exactly on two platforms, rank-count drift is confined to one already-known-marginal test, and
 `-ffast-math` moves the numbers more than MPI does.
 
@@ -9991,7 +9991,7 @@ and lets the master write alone, restoring the caller's mode afterwards.
 **The general rule this establishes:** *after* a per-rank region, the ranks' object graphs are
 deliberately different. Any later shared-mode code that branches on allocation status, array
 extent, or convergence flags of that per-rank data will desync. Either resynchronise the state,
-or keep the code non-collective. Recorded in `docs/TONTO_DEVELOPER_INFO.md` §1a and `docs/TONTO_AND_MPI.md`.
+or keep the code non-collective. Recorded in `docs/TONTO_DEVELOPER_INFO.md` §1a and `docs/TASK_MPI.md`.
 
 **How it was found.** By tracing, not by reading -- three consecutive readings of the code
 pointed at the wrong routine. A `write` at the single `MPI_BCAST` choke point in
@@ -10267,7 +10267,7 @@ What was searched, all on 2026-08-18:
 | every branch and tag (15 archive tags, 5 branches, all remotes) | `git grep -l -i ccsd` over `foofiles/*` and `runfiles/*` | nothing |
 | commit messages, all refs | `git log --all -i --grep=ccsd --grep='coupled cluster'` | three hits, all about *structure factors* — see below |
 | 131 dangling commits | `git fsck --no-reflogs`, then `git grep -i` over all of them for `ccsd`/`coupled.cluster` and for CC procedure headers | nothing |
-| added filenames, all history | `git log --all --diff-filter=A --name-only` filtered for `cc`/`cluster`/`corr` | only `docs/CCTBX_INTO_TONTO.md`, which is cctbx, unrelated |
+| added filenames, all history | `git log --all --diff-filter=A --name-only` filtered for `cc`/`cluster`/`corr` | only `docs/TASK_CCTBX_INTO_TONTO.md`, which is cctbx, unrelated |
 
 Every `ccsd` string in the tree is one of three innocent things: a **Gaussian**
 CCSD density matrix read from an fchk file (`tests/{short,long}/urea_ccsd_pob-TZVP_*`,
@@ -10568,7 +10568,7 @@ package produces a page of failures at 0% numeric deviation and 0 ulp — indist
 glance from a real defect.
 
 `ci-mpi.yml` had the same hole while running the full short suite, so its suite table carried
-these failures too; see `docs/TONTO_AND_MPI.md`. Both are fixed. `ci-wsl-debug.yml` and
+these failures too; see `docs/TASK_MPI.md`. Both are fixed. `ci-wsl-debug.yml` and
 `release.yml` do not need it — two plain SCF jobs and no tests respectively.
 
 **The general rule:** when adding a workflow that runs the suite, copy the package list from
@@ -10593,7 +10593,7 @@ one compiler:
 **So the flag causes the behaviour, and gfortran-16 does not.** The 34 failures are a consequence
 of *our own workaround* — dropping `-fcheck=bounds` on 16 because 16 miscompiles it — and
 gfortran-14 reproduces them exactly when the flag is removed. **No second GCC bug report is
-owed.** The `-fcheck=bounds` miscompilation (`docs/GFORTRAN16_DEBUG_CRASH.md`) remains real and
+owed.** The `-fcheck=bounds` miscompilation (`docs/TASK_GFORTRAN16_PORT.md`) remains real and
 remains the one gfortran-16 defect we have.
 
 **What this leaves, and it is not nothing.** Tonto has a **latent defect of its own**, invisible
@@ -10719,8 +10719,8 @@ The extra line means a code path *ran* under 16 that did not run under 14 — in
 constructed rather than found already present. That the numbers came out identical anyway is
 luck or redundancy, not evidence that the divergence is harmless.
 
-**Related but separate:** the `-fcheck=bounds` miscompilation, `docs/GFORTRAN16_DEBUG_CRASH.md`,
-reported upstream as **GCC PR 127197** on 2026-09-03, `docs/GFORTRAN16_GCC_BUG.md`. A second
+**Related but separate:** the `-fcheck=bounds` miscompilation, `docs/TASK_GFORTRAN16_PORT.md`,
+reported upstream as **GCC PR 127197** on 2026-09-03, `docs/TASK_GFORTRAN16_GCC_BUG.md`. A second
 GCC report may be owed here once (1) is done.
 
 ## VERIFIED 2026-09-03: the `textfile.foo` MPI fix, serial suite 88/89 (opened 2026-08-26)
@@ -10738,7 +10738,7 @@ the fixed binary; the three non-passes are the two known macOS-only `quartz_NN_H
 (references correct) and the pHAR test blocked by its missing 167 MB asset. Run on
 macOS/arm64 with the MPI build at `-n 1`, **not** Linux serial gfortran-14, so it is strong
 evidence rather than the owed run — the compiler, platform and macro configuration all differ
-from the Linux baseline. Detail in `docs/TONTO_AND_MPI.md` Finding 7.
+from the Linux baseline. Detail in `docs/TASK_MPI.md` Finding 7.
 
 **How to run it without a machine (added 2026-08-26, as Dylan left).**
 `.github/workflows/ci-full-suite.yml` is a **dispatch-only** workflow that builds release
@@ -10759,7 +10759,7 @@ once both are settled. If it turns out to be wrong, deleting the file costs noth
 
 
 **Do this before the `textfile.foo` change goes anywhere near `master`.** Full detail, the
-exact commands and the baseline: `docs/TONTO_AND_MPI.md` Finding 7, "VERIFICATION STILL OWED".
+exact commands and the baseline: `docs/TASK_MPI.md` Finding 7, "VERIFICATION STILL OWED".
 
 `move_to_record_external` and the two record movers were changed to position the file on the
 I/O rank and broadcast the result. `foofiles/textfile.foo` is on the path of **every file read
@@ -10782,9 +10782,9 @@ no-op in a serial build; **that expectation is the thing to test, not to assert.
 
 ## DIAGNOSED (2026-08-25): gfortran-**16** DEBUG builds SEGFAULT — BOTH platforms
 
-> **Authoritative page: [`docs/GFORTRAN16_DEBUG_CRASH.md`](docs/GFORTRAN16_DEBUG_CRASH.md)**
+> **Authoritative page: [`docs/TASK_GFORTRAN16_PORT.md`](docs/TASK_GFORTRAN16_PORT.md)**
 > — cause, machine-level evidence, reproducer, workaround, and what is still owed.
-> Draft upstream report: [`docs/GFORTRAN16_GCC_BUG.md`](docs/GFORTRAN16_GCC_BUG.md).
+> Draft upstream report: [`docs/TASK_GFORTRAN16_GCC_BUG.md`](docs/TASK_GFORTRAN16_GCC_BUG.md).
 
 **RESOLVED 2026-08-25 — it is a gfortran 16 compiler bug in `-fcheck=bounds`, not a
 Tonto defect and not memory corruption.** For a bounds-checked subscript reached
@@ -10823,7 +10823,7 @@ macOS compiles clean, runs `h2o_rhf_STO-3G` to **exit 0** (139 before) with
 `Total energy -74.9658`, and takes `ctest -L short` **62/62**.
 
 **Filed 2026-09-03 as GCC PR 127197**, with a five-version bisection (12, 13, 14 and 15
-correct; 16.0.1 segfaults). Record and duplicate search: `docs/GFORTRAN16_GCC_BUG.md`.
+correct; 16.0.1 segfaults). Record and duplicate search: `docs/TASK_GFORTRAN16_GCC_BUG.md`.
 
 **A side observation from that run, not chased.** The two `short` tests that fail in
 the gfortran-14 **release** build on this Mac — `urea_ccsd_pob-TZVP_Salvador_properties`

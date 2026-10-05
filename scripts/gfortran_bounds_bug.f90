@@ -17,7 +17,7 @@
 ! the descriptor is written to -0x100(%rbp) and read from -0xc0(%rbp).
 !
 ! Run scripts/check_gfortran_bounds_bug.py to test a compiler.
-! Background: docs/GFORTRAN16_DEBUG_CRASH.md.
+! Background: docs/TASK_GFORTRAN16_PORT.md.
 !
 ! Reduced from POINTGROUP:make_character_table.
 

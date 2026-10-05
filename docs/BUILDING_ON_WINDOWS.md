@@ -227,7 +227,7 @@ cmake -B ~/tonto-build/mpi -S ~/tonto -DCMAKE_Fortran_COMPILER=mpifort \
 The MPI must have been built with the same Fortran compiler as Tonto — Tonto
 does `USE mpi`, and `.mod` files are compiler-version specific. Configure checks
 this. MS-MPI interop from Windows is not tested and not guarded.
-[`TONTO_AND_MPI.md`](TONTO_AND_MPI.md) records what a parallel run does and does
+[`TASK_MPI.md`](TASK_MPI.md) records what a parallel run does and does
 not reproduce.
 
 ## What this page does not cover

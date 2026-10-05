@@ -1,7 +1,7 @@
 # GoF², not chi2: a naming and reporting correction
 
 **Agreed with Dylan, 2026-08-22.** Two separate points, deliberately kept clear of the
-extinction reactivation (`docs/EXTINCTION_REPORT.md`), because the rename is broad and
+extinction reactivation (`docs/TASK_EXTINCTION_CORRECTION.md`), because the rename is broad and
 touches files that have nothing to do with diffraction.
 
 1. The quantity the code calls `chi2` is a **GoF²**. Nothing in Tonto is a chi-squared
@@ -13,7 +13,7 @@ The three parts below are independent of each other and can be done in any order
 part B changes numbers.
 
 **Sequencing.** This was to have followed two other things: the extinction reactivation of
-`docs/EXTINCTION_REPORT.md`, and choosing the XCW Lagrange multiplier, recorded as step 6
+`docs/TASK_EXTINCTION_CORRECTION.md`, and choosing the XCW Lagrange multiplier, recorded as step 6
 of that document's plan. Extinction closed on 2026-09-06; Dylan then reordered the
 remaining two, so this went ahead of the multiplier work, which is milestone 12 and stays
 open. Nothing here depends on it.
