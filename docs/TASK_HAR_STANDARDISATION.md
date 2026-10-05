@@ -72,6 +72,15 @@ Hirshfeld moments are identical under two BLAS kernels. Left to check:
   x2c-…all sets, the same family as def2). They are made for a scalar-relativistic Hamiltonian;
   Tonto has IOTC and DKH (`relativity_kind=`). To be tested: x2c-TZVP with IOTC against def2-TZVP
   on light atoms, where the two should agree, and on one 4d or 5d compound.
+- **All-electron families in the literature that cover the table** (from memory; check ranges
+  against the Basis Set Exchange before use): x2c-SVPall/TZVPall/TZVPPall/QZVPall (H to Rn, the
+  def2 design, segmented); SARC with relativistically recontracted def2 (ORCA's route for 5d,
+  lanthanides, actinides); Sapporo-DKH3; Jorge DZP/TZP-DKH (in Tonto's library, DZP to Lr);
+  ANO-RCC (H to Cm, generally contracted, costly in a segmented code); cc-pVnZ-DK and
+  cc-pwCVnZ-DK (not complete for the f block; core-valence versions have flexible cores);
+  Dyall and UGBS (uncontracted); pcseg-n to Kr and pcX-n (core-flexible, Li to Ar).
+  **The partner of def2 across the table is the x2c family**; the uncontracted and
+  core-flexible families are ready-made tests of the core question below.
 - Auxiliary sets for RI-J: `def2-universal-jfit` covers H to Rn; whether it suits the x2c
   orbital sets needs checking.
 - **The core.** A contracted core cannot follow the contraction of the core density on bonding.
