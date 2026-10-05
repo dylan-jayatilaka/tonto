@@ -920,15 +920,51 @@ $`L`$ has eigenvalues 7.6, 32 and 44 deg², the largest about the C=O axis; the 
 $`S`$ has zero trace.
 
 
-## 6. What is not done yet
+## 6. What is not done yet, and directions
 
-- Restraining the NH₂ wags toward the crystal's harmonic amplitudes, from INS frequencies or a
-  periodic Hessian, in place of leaving them free.
 - B3LYP on the 7-molecule cluster, and the def2-TZVP basis for the crystal-environment tables.
 - A molecule with a methyl torsion, where the first soft mode should be the torsion.
 - T, L and S reported at the centre of reaction as well as at the centre of mass.
 - An ORCA Hessian reader.
 - One TLS group per fragment only; no segmented (attached-group) TLS.
+
+**Anharmonic motion.** In a crystal the soft modes are anharmonic, and this matters most for
+their amplitudes. Where the potential flattens away from the minimum, a mode's amplitude is
+larger than the harmonic value (6) at the curvature. In urea a harmonic periodic calculation
+places the NH₂ band near 480 cm⁻¹ too high, and displacements of 0.08 Å in the force calculation
+bring it onto the measured band (Johnson et al., 2003). Anharmonic motion also makes the
+displacement distribution non-Gaussian, the hydrogens moving on arcs; a U tensor takes this up
+as an effective value. The directions:
+
+- **Target the anharmonic amplitude.** Scan the energy along each soft mode, out to two or three
+  times its zero-point spread, and solve the one-dimensional Schrödinger equation on that curve.
+  The thermal average at the data's temperature gives $`\langle Q_k^2\rangle`$ directly, anharmonic and
+  quantum, with no frequency needed; it is finite for a double well, where the harmonic
+  frequency is imaginary. A few SCFs per mode, far fewer than a Hessian.
+- **Scan in the crystal environment,** with cluster charges, or with the central molecule moved
+  inside the cluster and its neighbours held fixed. The hydrogen bonds should then make the NH₂
+  wags single-well, as the INS shows, and give crystal-like restraint targets in place of the
+  gas-phase ones and of no restraint for the imaginary modes.
+- **Scan wags and torsions in their angle,** not along the straight-line normal coordinate,
+  which at large amplitude stretches the N–H bonds and makes the mode look stiffer. The same holds
+  for a finite-difference Hessian with large Cartesian steps: a step $`h`$ measures the curvature
+  averaged over $`\pm h`$, an effective force constant $`k + \gamma h^2/12`$ for a quartic term
+  $`\gamma x^4/24`$, which is useful only if the steps follow the arcs the atoms move on.
+- Two nearly degenerate soft modes, such as the two wags, may need a two-dimensional scan.
+
+**Static disorder.** Defects, dislocations, strain and misoriented domains displace atoms
+without motion, and add to what is measured: $`U_{\rm obs} = U_{\rm thermal} + U_{\rm static}`$. At one
+temperature the two cannot be told apart. Static disorder mostly displaces or tilts whole
+molecules, so in this model it goes into T and L, not into the internal modes. The X-ray and
+neutron data come from different crystals, and their static parts can differ; scaling the
+neutron ADPs to the X-ray data removes an overall difference only. Thermal diffuse scattering in
+the X-ray data, which biases ADPs low, and extinction or absorption in the neutron data are
+further experimental errors to keep in mind (Jayatilaka and Dittrich, 2008). The direction:
+
+- **Separate them by temperature.** The static part does not change with temperature; the
+  thermal part follows (6) for each mode. Refining the model against data at several
+  temperatures gives both, and whatever remains at $`\Theta \to 0`$ beyond zero-point motion is
+  static.
 
 
 ## References
