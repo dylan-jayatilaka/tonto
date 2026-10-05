@@ -199,6 +199,14 @@ the time. Not run: B3LYP on the explicit cluster; def2-TZVP for these tables; a 
 paired with `REPORT_ON_MODE_FITTING`), findings for people `REPORT_ON_*`; a `check_docs.py` ctest
 flags dates, hashes, status notes and GitHub-unsafe LaTeX in everything else. Applied after the
 tls-step4 merge.
+**In progress, 2026-10-05 15:11 (Dylan's request): def2-TZVP on the 7-molecule urea cluster with RI-J/COSX,
+RHF and B3LYP, each free / TLS + U^high / three soft modes with correlations** (six jobs, three at a
+time, `OPENBLAS_NUM_THREADS=4`, binary = clean `develop` build `b462a2dc`). Runs in the Claude job folder
+`~/.claude/jobs/9b038530/tmp/tls/cc/jobs/tz_clus_rijcosx_*`, log `.../cc/batch6.log` (ends `ALL DONE`).
+To finish: copy the run folder to `~/tonto-runs/2026-10-05_mode_fitting` (`rsync` as its README says,
+inputs and outputs only), tabulate (GoF, parameters, N-H, hydrogen U_iso ratio and S12 against neutron;
+`cc/md_tables.py` there shows how), and add a def2-TZVP block to *Urea: the crystal environment* in
+`docs/REPORT_ON_MODE_FITTING.md`. All earlier runs are already in `~/tonto-runs/2026-10-05_mode_fitting`.
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
 
