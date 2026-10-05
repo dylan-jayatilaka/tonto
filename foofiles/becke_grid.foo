@@ -352,16 +352,18 @@ contains
       self :: INOUT
       kind :: STR, IN
 
-   ENSURE(kind.is_one_of(["becke            ","treutler_ahlrichs","mura_knowles     "]),"unknown grid kind")
+   ENSURE(kind.is_one_of(["becke            ","treutler_ahlrichs","mura_knowles     ","sg-2             ","sg-3             "]),"unknown grid kind")
 
       .kind = kind
 
       .kind.to_lower_case
 
-      select case (.kind)
-      case ("becke                    ")
-      case ("treutler_ahlrichs        ")
-      case ("mura_knowles             ")
+      ! SG-2 and SG-3 are whole recipes: their own radial grid and pruning
+      ! for each element, and no atomic scale factor.
+      if (.is_SG_kind) then
+         .pruning_scheme = .kind
+         .scale_atomic_grids = FALSE
+         .reduce_H_angular_grid = FALSE
       end
 
       .set_zeta ! leaky here
@@ -469,7 +471,7 @@ contains
    ! manually changed ...
       self :: INOUT
 
-   ENSURE(.kind.is_one_of(["becke            ","treutler_ahlrichs","mura_knowles     "]),"unknown grid kind")
+   ENSURE(.kind.is_one_of(["becke            ","treutler_ahlrichs","mura_knowles     ","sg-2             ","sg-3             "]),"unknown grid kind")
 
       fac :: REAL
 
@@ -1062,11 +1064,15 @@ contains
 
    ENSURE(.kind/=" ","no grid kind set")
 
-      p :: INT
+      p,n :: INT
 
-      .radial_grid.create(7)
+      ! One per row, or per element up to Cl for the SG kinds
+      n = 7
+      if (.is_SG_kind) n = 17
 
-      do p = 1,7
+      .radial_grid.create(n)
+
+      do p = 1,n
          .set_radial_grid(.radial_grid(p),p)
       end
 
@@ -1093,17 +1099,31 @@ contains
       case ("becke            "); BECKE_GRID::set_B_radial_grid(radial,nr)
       case ("treutler_ahlrichs"); BECKE_GRID::set_TA_radial_grid(radial,nr)
       case ("mura_knowles     "); BECKE_GRID::set_MK_radial_grid(radial,nr) ! default
+      case ("sg-2","sg-3")
+         ! "p" is the atomic number; elements without SG data get no grid
+         if (BECKE_GRID::SG_alpha(.kind,p)>ZERO) BECKE_GRID::set_DE2_radial_grid(radial,nr,BECKE_GRID::SG_alpha(.kind,p),BECKE_GRID::SG_radius(p))
    ! case default;               UNKNOWN(.kind)
       end
 
    end
 
    period_of(a) result (res) :: PURE
-   ! The periodic-table row of atom "a", which selects its radial grid.
+   ! The index of atom "a"'s radial grid in .radial_grid: its
+   ! periodic-table row, or its atomic number for the SG kinds, which
+   ! have one radial grid per element.
       self :: IN
       a   :: INT, IN
       res :: INT
-      res = period(.atom(a).atomic_number)
+      if (.is_SG_kind) then; res = .atom(a).atomic_number
+      else;                  res = period(.atom(a).atomic_number)
+      end
+   end
+
+   is_SG_kind result (res) :: pure
+   ! Whether the grid is SG-2 or SG-3 (Dasgupta and Herbert 2017).
+      self :: IN
+      res :: BIN
+      res = .kind=="sg-2" OR .kind=="sg-3"
    end
 
    n_radial_pts_for_atom(a) result (res) :: PURE
@@ -1160,7 +1180,10 @@ contains
       self :: IN
       p   :: INT, IN
       res :: INT
-      res = .n_radial_pts + .n_extra_pts_per_shell*(p-1)
+      if      (.kind=="sg-2") then; res = 75
+      else if (.kind=="sg-3") then; res = 99
+      else;                         res = .n_radial_pts + .n_extra_pts_per_shell*(p-1)
+      end
    end
 
    set_B_radial_grid(radial_grid,nr) :: selfless, private, leaky, PURE
@@ -1315,9 +1338,9 @@ contains
       r :: INT
 
       .n_pts_for_row.destroy
-      .n_pts_for_row.create(7)
+      .n_pts_for_row.create(.radial_grid.dim)
 
-      do r = 1,7 ! Set no. of points for each row
+      do r = 1,.radial_grid.dim ! Set no. of points for each row
          .n_pts_for_row(r) = .no_of_pts_for_row(r)
       end
 
@@ -1330,11 +1353,19 @@ contains
    ENSURE(.atom.allocated,"no atom array")
 
       an :: VEC{INT}@
+      u :: INT
 
       an = .atom(:).atomic_number
       an.make_unique_element_maps(.unique_atom,.unique_atom_for)
 
       .n_unique_atoms = .unique_atom.dim
+
+      ! The SG kinds are tabulated for some elements only
+      if (.is_SG_kind) then
+         do u = 1,.n_unique_atoms
+            DIE_IF(BECKE_GRID::SG_alpha(.kind,an(.unique_atom(u)))<=ZERO,"the SG grids have no data for atomic number "//trim(an(.unique_atom(u)).to_str))
+         end
+      end
 
    end
 
@@ -1598,7 +1629,7 @@ contains
       s :: REAL
 
       ! Period for atom "a"
-      p = period(.atom(a).atomic_number)
+      p = .period_of(a)
 
       res = .radial_grid(p)
 
@@ -1627,7 +1658,7 @@ contains
       r,w :: REAL
 
       ! Period for atom "a"
-      p  = period(.atom(a).atomic_number)
+      p  = .period_of(a)
       nr = .radial_grid(p).n_pts
 
       ! Get grid
@@ -1648,8 +1679,8 @@ contains
       p   :: INT, IN
       res :: INT
 
-   ENSURE(p>=1 AND p<=7,"p out of range")
    ENSURE(.radial_grid.allocated,"no radial_grid")
+   ENSURE(p>=1 AND p<=.radial_grid.dim,"p out of range")
    ENSURE(.lebedev_grid.allocated,"no lebedev_grid")
 
       lebedev_grid :: LEBEDEV@
@@ -1699,7 +1730,7 @@ contains
       r_max = .r_max_for_atom(a)
 
       ! Radial grid and no of radial points
-      p  = period(.atom(a).atomic_number)
+      p  = .period_of(a)
       nr = .radial_grid(p).n_pts
 
       ! Scale factor
@@ -1746,7 +1777,7 @@ contains
       lebedev_grid = .lebedev_grid
 
       ! Reset lebedev grid for H atoms
-      if (.reduce_H_angular_grid AND p==1) lebedev_grid = .lebedev_H_grid
+      if (.reduce_H_angular_grid AND p==1 AND NOT .is_SG_kind) lebedev_grid = .lebedev_H_grid
 
       select case (pruning_scheme)
       case ("none             ")
@@ -1759,7 +1790,163 @@ contains
       ! landed within ~1.6e-06. See docs/TASK_DFT_STANDARDISATION.md section 6a.
       case ("treutler_ahlrichs"); .apply_pruning_scheme_TA(lebedev_grid,i,nr)
       case ("adaptive         "); .apply_pruning_scheme_adaptive(lebedev_grid,p,r)
+      case ("sg-2","sg-3");       .apply_pruning_scheme_SG(lebedev_grid,p,i)
       end
+
+   end
+
+   apply_pruning_scheme_SG(lebedev_grid,Z,i) :: private, leaky, PURE
+   ! Set "lebedev_grid" for radial shell "i", counted from the nucleus,
+   ! of the element with atomic number "Z", from the SG-2 or SG-3
+   ! partition of Dasgupta and Herbert, J. Comput. Chem. 38, 869 (2017),
+   ! Table 1.
+      self :: IN
+      lebedev_grid :: LEBEDEV@, INOUT
+      Z,i :: INT, IN
+
+      n_ang,n_shell :: VEC{INT}@
+      k,last :: INT
+
+      BECKE_GRID::SG_partition(.kind,Z,n_ang,n_shell)
+   DIE_IF(n_ang.deallocated,"the SG grids have no data for atomic number "//trim(Z.to_str))
+
+      last = 0
+      do k = 1,n_ang.dim
+         last = last + n_shell(k)
+         if (i<=last) exit
+      end
+   DIE_IF(k>n_ang.dim,"radial shell beyond the SG partition")
+      lebedev_grid.set_n_pts(n_ang(k))
+
+      n_shell.destroy; n_ang.destroy
+
+   end
+
+   SG_alpha(kind,Z) result (res) :: selfless, private, PURE
+   ! The DE2 radial scaling factor of element "Z" in the SG-2 or SG-3
+   ! grid "kind" (Dasgupta and Herbert 2017, Table 1); zero where the
+   ! grids have no data. Mg and Si are left out: their printed partitions
+   ! and point totals disagree. See docs/TASK_COSX_GRIDS.md.
+      kind :: STR, IN
+      Z :: INT, IN
+      res :: REAL
+
+      a2,a3 :: VEC{REAL}(17)
+
+      !        H     He    Li    Be    B     C     N     O     F     Ne    Na    Mg    Al    Si    P     S     Cl
+      a2 = [ 2.6d0,ZERO,3.2d0,2.4d0,2.4d0,2.2d0,2.2d0,2.2d0,2.2d0,ZERO,3.2d0,ZERO,2.5d0,ZERO,2.5d0,2.5d0,2.5d0 ]
+      a3 = [ 2.7d0,ZERO,3.0d0,2.4d0,2.4d0,2.4d0,2.4d0,2.6d0,2.1d0,ZERO,3.2d0,ZERO,2.6d0,ZERO,2.4d0,2.4d0,2.6d0 ]
+
+      res = ZERO
+      if (Z<1 OR Z>17) return
+      if (kind=="sg-2") res = a2(Z)
+      if (kind=="sg-3") res = a3(Z)
+
+   end
+
+   SG_radius(Z) result (res) :: selfless, private, PURE
+   ! The radius R (bohr) that sets the outer limit 10 R of the DE2 radial
+   ! grid of element "Z": the Hartree-Fock mean radius of its outermost
+   ! valence orbital (Mitani, Theor. Chem. Acc. 130, 645 (2011)).
+      Z :: INT, IN
+      res :: REAL
+
+      R :: VEC{REAL}(17)
+
+      !       H        He       Li         Be       B        C        N        O        F
+      R = [ 1.5d0, 0.927272d0, 3.873661d0, 2.6494d0, 2.2048d0, 1.7145d0, 1.4096d0, 1.2322d0, 1.084786d0, &
+      !       Ne          Na          Mg        Al        Si        P         S         Cl
+            0.965273d0, 4.208762d0, 3.2529d0, 3.4339d0, 2.7521d0, 2.3225d0, 2.0607d0, 1.842024d0 ]
+
+      res = ZERO
+      if (Z>=1 AND Z<=17) res = R(Z)
+
+   end
+
+   SG_partition(kind,Z,n_ang,n_shell) :: selfless, private, leaky, PURE
+   ! The SG-2 or SG-3 ("kind") Lebedev partition of element "Z": "n_ang(k)"
+   ! angular points on each of the next "n_shell(k)" radial shells, from
+   ! the nucleus outward (Dasgupta and Herbert 2017, Table 1). Left
+   ! unallocated where the grids have no data.
+      kind :: STR, IN
+      Z :: INT, IN
+      n_ang,n_shell :: VEC{INT}@, OUT
+
+      if (kind=="sg-2") then
+         select case (Z)
+         case (1);     n_ang = [6,110,302,86,26];   n_shell = [35,12,16,7,5]
+         case (3,4,11); n_ang = [6,110,302,86,50];  n_shell = [35,12,17,7,4]
+         case (5,6);   n_ang = [6,110,302,146,26];  n_shell = [35,12,17,7,4]
+         case (7);     n_ang = [6,110,302,86,26];   n_shell = [35,12,17,7,4]
+         case (8);     n_ang = [6,110,302,146,50];  n_shell = [30,14,18,8,5]
+         case (9,17);  n_ang = [6,110,302,110,50];  n_shell = [26,16,19,8,6]
+         case (13);    n_ang = [6,110,302,146,86];  n_shell = [32,15,17,7,4]
+         case (15,16); n_ang = [6,110,302,146,38];  n_shell = [30,14,17,7,7]
+         end
+      else if (kind=="sg-3") then
+         select case (Z)
+         case (1);     n_ang = [6,110,590,194,50];                  n_shell = [45,16,21,10,7]
+         case (3,11);  n_ang = [6,110,590,146,50];                  n_shell = [46,16,22,9,6]
+         case (4,13);  n_ang = [6,86,110,590,194,146,50];           n_shell = [42,6,14,22,3,6,6]
+         case (5);     n_ang = [6,86,110,590,194,50];               n_shell = [42,6,14,22,9,6]
+         case (6);     n_ang = [6,146,590,302,194,146,86];          n_shell = [46,16,22,1,2,6,6]
+         case (7);     n_ang = [6,110,590,146,50];                  n_shell = [40,18,24,11,6]
+         case (8);     n_ang = [6,110,194,302,590,302,194,146,50];  n_shell = [40,14,2,2,24,1,1,8,7]
+         case (9,17);  n_ang = [6,110,194,590,194,110,50];          n_shell = [35,17,4,25,2,8,8]
+         case (15,16); n_ang = [6,86,110,194,590,194,146,50];       n_shell = [35,1,18,4,25,2,8,6]
+         end
+      end
+
+   end
+
+   set_DE2_radial_grid(radial_grid,nr,alpha,R) :: selfless, private, leaky, PURE
+   ! Set "radial_grid" to the "nr"-point double-exponential DE2 grid of
+   ! Mitani, Theor. Chem. Acc. 130, 645 (2011), with scaling factor "alpha":
+   !    r_i = exp(alpha x_i - exp(-x_i)),   x_i equally spaced,
+   ! from r = 1e-7 to r = 10 R bohr. The weight is for an integral over r,
+   ! dr/dx times the spacing; 4 pi r^2 is applied when the atom grid is made.
+      radial_grid :: QUADRATURE, INOUT
+      nr :: INT, IN
+      alpha,R :: REAL, IN
+
+      x_lo,x_hi,h,x,e :: REAL
+      i :: INT
+
+      x_lo = BECKE_GRID::DE2_x_for(log(TOL(7)),alpha)
+      x_hi = BECKE_GRID::DE2_x_for(log(TEN*R),alpha)
+      h = (x_hi - x_lo)/(nr-1)
+
+      radial_grid.set_n_pts(nr)
+      radial_grid.set_kind("open_extended_trapezoid")
+      radial_grid.set_quadrature_points ! leaky here: allocates pts and wts
+
+      do i = 1,nr
+         x = x_lo + (i-1)*h
+         e = exp(-x)
+         radial_grid.pts(i) = exp(alpha*x - e)
+         radial_grid.wts(i) = h*(alpha + e)*radial_grid.pts(i)
+      end
+
+   end
+
+   DE2_x_for(ln_r,alpha) result (res) :: selfless, private, PURE
+   ! The x for which alpha x - exp(-x) = "ln_r", by bisection; the left
+   ! side rises steadily with x.
+      ln_r,alpha :: REAL, IN
+      res :: REAL
+
+      lo,hi,mid :: REAL
+      i :: INT
+
+      lo = -TEN
+      hi = 50d0
+      do i = 1,200
+         mid = HALF*(lo+hi)
+         if (alpha*mid - exp(-mid)<ln_r) then; lo = mid
+         else;                                 hi = mid
+         end
+      end
+      res = HALF*(lo+hi)
 
    end
 
@@ -2016,7 +2203,7 @@ contains
       r_max_SS = .r_max_SS_for_atom(a)
 
       ! Radial grid and no of radial points
-      p  = period(.atom(a).atomic_number)
+      p  = .period_of(a)
       nr = .radial_grid(p).n_pts
 
       ! Scale factor
@@ -4902,7 +5089,7 @@ contains
          np = .no_of_pts_for_atom(i)
          stdout.put(.atom(i).minimum_basis_exponent)
          stdout.put(np)
-         stdout.put(.n_pts_for_row(period(Z)))
+         stdout.put(.n_pts_for_row(.period_of(i)))
          stdout.flush
       end
 
@@ -4979,7 +5166,7 @@ contains
       do u = 1,.n_unique_atoms
          a = .unique_atom(u)
          np = .atom_wts(u).element.dim
-         p = period(.atom(a).atomic_number)
+         p = .period_of(a)
          stdout.flush
          stdout.show("Unique atom number        =",u)
          stdout.show("Atom number               =",a)
