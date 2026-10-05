@@ -207,6 +207,14 @@ To finish: copy the run folder to `~/tonto-runs/2026-10-05_mode_fitting` (`rsync
 inputs and outputs only), tabulate (GoF, parameters, N-H, hydrogen U_iso ratio and S12 against neutron;
 `cc/md_tables.py` there shows how), and add a def2-TZVP block to *Urea: the crystal environment* in
 `docs/REPORT_ON_MODE_FITTING.md`. All earlier runs are already in `~/tonto-runs/2026-10-05_mode_fitting`.
+**Crystal vibrations (2026-10-05, Johnson et al. Chem. Phys. 291, 53 (2003), in Dropbox/manuscripts):**
+INS NH2 bands near 480 and 670 cm-1, lattice modes to ~160-200, no internal mode below ~416. The
+isolated-molecule wag amplitudes (implied 456-843 cm-1) match the crystal's NH2 modes, so the earlier
+reading "the wags were making up for the density" was withdrawn from the report; why the cluster-charge
+refinements put the wags at zero is open. The C=O bend's refined amplitude (implied ~200 cm-1) is not
+that bend's vibration. Also corrected: modes 3 and 4 are skeletal in-plane bends (65 % and 83 %
+heavy-atom), not NH2 rocks. Idea recorded in the report's §6: restrain the wags toward the crystal's
+harmonic amplitudes (INS frequency or a periodic Hessian) instead of leaving imaginary modes free.
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
 

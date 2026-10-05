@@ -764,7 +764,8 @@ harmonic amplitude.
   0.97–1.75.
 
 So the refined soft modes, like free ADPs, lower GoF by making the hydrogens larger, not by
-making them more like neutron. The next section shows that this is the density model at work.
+making them more like neutron. The next two sections test the soft modes against the crystal
+environment and against the crystal's own vibrations.
 
 ### Urea: the crystal environment
 
@@ -821,8 +822,9 @@ positive (§2.4). Each entry is GoF, with $`p_{\rm eff}`$ in brackets.
 - **In the crystal environment the NH₂ wags are not wanted.** With cluster charges their refined
   amplitudes are zero or would be negative. The positivity restraint holds them at zero, and
   $`p_{\rm eff}`$ stays at 17. Hamilton's test finds no improvement from $`K = 0`$ to $`K = 2`$.
-- So the wag amplitudes refined for the isolated molecule were making up for its density. That
-  is also why they moved the hydrogen ADPs away from neutron.
+- This does not mean the wags are still in the crystal. The crystal's own NH₂ modes have the
+  amplitudes the isolated-molecule refinements found (next section but one). Why the refinements
+  with cluster charges do not use the wags is open.
 - **An in-plane bend is still wanted:** mode 4 with RHF, mode 3 with B3LYP. Each improves the fit
   significantly by Hamilton's test at $`\alpha = 0.005`$.
 
@@ -856,6 +858,31 @@ The same refinements with the soft modes' correlations refined as well (§1.8).
   $`f_\rho = 0.25, 0.5, 1, 2`$ and 10 give the same GoF to 0.0001 and the same correlations
   to the printed digit. The data determine every correlation to an esd of 0.03–0.11.
 
+### Urea: the crystal's own vibrations
+
+The vibrations of crystalline urea were measured by inelastic neutron scattering (INS) and
+calculated by periodic DFT by Johnson, Parlinski, Natkaniec and Hudson (2003). In the crystal:
+
+- the lattice modes, the motion of whole molecules, reach 159 cm⁻¹ measured and about
+  200 cm⁻¹ calculated; above them there are only internal modes;
+- the NH₂ torsions, wags and rocks lie in two broad INS bands near 480 and 670 cm⁻¹, pushed up
+  by the hydrogen bonds; for the planar isolated molecule the wags are imaginary;
+- no internal mode lies below about 416 cm⁻¹.
+
+The harmonic amplitude (6) at 123 K is 230 at 480 cm⁻¹ and 164 at 670 cm⁻¹, in atomic units.
+
+| mode | isolated molecule, RHF/6-31G(d) /cm⁻¹ | crystal /cm⁻¹ | refined amplitude, isolated molecule, $`K = 4`$ (implied /cm⁻¹) |
+|---|---|---|---|
+| NH₂ wags, 1 and 2 | 432i, 164i | NH₂ bands near 480 and 670 | def2-SVP: 157(54) and 243(76) (700, 456); def2-TZVP: 130(47) and 218(65) (843, 506) |
+| C=O bend, 4 | 645 | all internal modes above 416 | def2-SVP: 737(135) (187); def2-TZVP: 657(118) (202) |
+
+- **The wag amplitudes refined for the isolated molecule are those of the crystal's NH₂ modes.**
+  Their implied frequencies, 456–843 cm⁻¹, bracket the two INS bands.
+- **The large C=O-bend amplitude is not that bend's vibration.** It implies about 200 cm⁻¹, where
+  the crystal has lattice modes only. It stands for motion the model otherwise lacks.
+- **A better restraint target for the wags** is the crystal's harmonic amplitude, from an INS
+  frequency or a periodic Hessian, instead of no restraint at all (§6).
+
 ### Urea: the rigid-body tensors
 
 The rigid-body motion from def2-SVP, Hirshfeld, TLS + U^high, about the centre of mass (8
@@ -876,6 +903,8 @@ $`S`$ has zero trace.
 
 ## 6. What is not done yet
 
+- Restraining the NH₂ wags toward the crystal's harmonic amplitudes, from INS frequencies or a
+  periodic Hessian, in place of leaving them free.
 - B3LYP on the 7-molecule cluster, and the def2-TZVP basis for the crystal-environment tables.
 - A molecule with a methyl torsion, where the first soft mode should be the torsion.
 - T, L and S reported at the centre of reaction as well as at the centre of mass.
@@ -892,3 +921,5 @@ $`S`$ has zero trace.
 - D. Jayatilaka and B. Dittrich, *Acta Cryst.* A64, 383 (2008): Hirshfeld atom refinement;
   Table 6 gives the urea neutron ADPs used here.
 - A. E. Whitten and M. A. Spackman, *Acta Cryst.* B62, 875 (2006): the S12 similarity index.
+- M. R. Johnson, K. Parlinski, I. Natkaniec and B. S. Hudson, *Chem. Phys.* 291, 53 (2003): INS and
+  periodic DFT of crystalline urea.
