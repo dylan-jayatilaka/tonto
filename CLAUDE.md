@@ -4,7 +4,7 @@ Durable, project-wide context for Claude Code, read at the start of every sessio
 **Stable facts only** — build, test, layout, conventions. Live work is in `TASKS_AND_HISTORY.md`;
 the story of how the build and translator came to be is in `docs/PROJECT_HISTORY.md`.
 
-## 0. Three rules that are broken most often
+## 0. Four rules that are broken most often
 
 1. **Fortran ignores case. Never give two names in one procedure the same letters in different
    case** — `h` and `H`, `g` and `G`, `u` and `U`, `sig` and `Sig`, `j` and `J`. Foo keeps your
@@ -18,6 +18,9 @@ the story of how the build and translator came to be is in `docs/PROJECT_HISTORY
 3. **Compare refinement models by GoF, not R.** GoF counts the parameters and is the more
    sensitive measure; R alone can hide a worse fit. Quote GoF first; for nested models use the
    Hamilton test.
+4. **Write equations in LaTeX** in every document: `$…$` inline and numbered `$$…\tag{n}$$`
+   display blocks, which GitHub, VS Code, Obsidian and pandoc render. Define every symbol where it
+   first appears, so a page can be read from first principles without another source.
 
 ## 1. How to write for this project
 
