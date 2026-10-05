@@ -20,152 +20,182 @@ transpose; ⟨ ⟩ is the thermal average, the average over the motion of the at
 
 ### 1.1 What an ADP is
 
-Atom $i$ vibrates about its mean position. Its displacement $\mathbf{u}_i$ is the vector from the mean
+Atom $`i`$ vibrates about its mean position. Its displacement $`\mathbf{u}_i`$ is the vector from the mean
 position to where it is at a given moment. The **anisotropic displacement parameter (ADP)** of
 the atom is the 3 × 3 matrix of mean-square displacements
 
-$$U_i = \langle \mathbf{u}_i \mathbf{u}_i^{\mathsf T} \rangle . \tag{1}$$
+```math
+U_i = \langle \mathbf{u}_i \mathbf{u}_i^{\mathsf T} \rangle . \qquad (1)
+```
 
 Its diagonal elements are the mean-square displacements along x, y and z; the off-diagonal ones
 say how the motion along one axis correlates with another. U_i is symmetric, so it has six
-independent elements. $U_{\rm iso} = (U_{xx} + U_{yy} + U_{zz})/3$ is its isotropic average.
+independent elements. $`U_{\rm iso} = (U_{xx} + U_{yy} + U_{zz})/3`$ is its isotropic average.
 
-The diffraction experiment sees $U_i$ through the structure factor. For a reflection with
-scattering vector $\mathbf{k}$ ($|\mathbf{k}| = 4\pi \sin\theta / \lambda_X$, $\lambda_X$ the X-ray wavelength),
-atom $i$ at mean position $\mathbf{r}_i$ scatters with its form factor $f_i(\mathbf{k})$ times the
+The diffraction experiment sees $`U_i`$ through the structure factor. For a reflection with
+scattering vector $`\mathbf{k}`$ ($`|\mathbf{k}| = 4\pi \sin\theta / \lambda_X`$, $`\lambda_X`$ the X-ray wavelength),
+atom $`i`$ at mean position $`\mathbf{r}_i`$ scatters with its form factor $`f_i(\mathbf{k})`$ times the
 **Debye–Waller factor**:
 
-$$F(\mathbf{k}) = \sum_i f_i(\mathbf{k})\, e^{i\mathbf{k}\cdot\mathbf{r}_i}\, e^{-\frac12 \mathbf{k}^{\mathsf T} U_i \mathbf{k}} . \tag{2}$$
+```math
+F(\mathbf{k}) = \sum_i f_i(\mathbf{k})\, e^{i\mathbf{k}\cdot\mathbf{r}_i}\, e^{-\frac12 \mathbf{k}^{\mathsf T} U_i \mathbf{k}} . \qquad (2)
+```
 
 This holds when the displacement has a Gaussian distribution, true for harmonic motion.
 
 ### 1.2 Correlated motion
 
 In a molecule the atoms do not move independently. Suppose that, at any moment, every
-displacement is a linear function of a few **generalised coordinates** $\mathbf{v} = (v_1, \dots, v_m)$:
+displacement is a linear function of a few **generalised coordinates** $`\mathbf{v} = (v_1, \dots, v_m)`$:
 
-$$\mathbf{u}_i = B_i \mathbf{v}, \qquad B_i \text{ a } 3\times m \text{ matrix fixed by the geometry.}$$
+```math
+\mathbf{u}_i = B_i \mathbf{v}, \qquad B_i \text{ a } 3\times m \text{ matrix fixed by the geometry.}
+```
 
 Putting this in (1) gives
 
-$$U_i = B_i \langle \mathbf{v}\mathbf{v}^{\mathsf T}\rangle B_i^{\mathsf T} = B_i\, \Sigma\, B_i^{\mathsf T}, \qquad \Sigma = \langle \mathbf{v}\mathbf{v}^{\mathsf T}\rangle . \tag{3}$$
+```math
+U_i = B_i \langle \mathbf{v}\mathbf{v}^{\mathsf T}\rangle B_i^{\mathsf T} = B_i\, \Sigma\, B_i^{\mathsf T}, \qquad \Sigma = \langle \mathbf{v}\mathbf{v}^{\mathsf T}\rangle . \qquad (3)
+```
 
-So the ADPs of all $N$ atoms ($6N$ numbers) follow from $\Sigma$, the $m\times m$ covariance of the
-generalised coordinates ($m(m+1)/2$ numbers). This is the whole idea: refine $\Sigma$ instead of the $U_i$.
+So the ADPs of all $`N`$ atoms ($`6N`$ numbers) follow from $`\Sigma`$, the $`m\times m`$ covariance of the
+generalised coordinates ($`m(m+1)/2`$ numbers). This is the whole idea: refine $`\Sigma`$ instead of the $`U_i`$.
 
-### 1.3 Rigid-body motion: $\mathbf{t}$ and $\boldsymbol{\lambda}$
+### 1.3 Rigid-body motion: $`\mathbf{t}`$ and $`\boldsymbol{\lambda}`$
 
 The simplest correlated motion is the molecule moving as a rigid body, by a translation and a
 rotation.
 
-- **The translation** $\mathbf{t}$ is a vector: every atom moves by the same $\mathbf{t}$.
-- **The rotation** is a rotation by a small angle $\varphi$ (in radians) about an axis through a fixed
-  **origin**, with unit vector $\mathbf{n}$ along the axis. An atom at position $\mathbf{r}_i$ from the
-  origin moves to $R\,\mathbf{r}_i$, where $R$ is the rotation matrix. For small $\varphi$, to first order,
+- **The translation** $`\mathbf{t}`$ is a vector: every atom moves by the same $`\mathbf{t}`$.
+- **The rotation** is a rotation by a small angle $`\varphi`$ (in radians) about an axis through a fixed
+  **origin**, with unit vector $`\mathbf{n}`$ along the axis. An atom at position $`\mathbf{r}_i`$ from the
+  origin moves to $`R\,\mathbf{r}_i`$, where $`R`$ is the rotation matrix. For small $`\varphi`$, to first order,
 
-  $$R\,\mathbf{r}_i = \mathbf{r}_i + \varphi\, \mathbf{n} \times \mathbf{r}_i ,$$
+  ```math
+  R\,\mathbf{r}_i = \mathbf{r}_i + \varphi\, \mathbf{n} \times \mathbf{r}_i ,
+  ```
 
-  so the displacement is $\varphi\,\mathbf{n}\times\mathbf{r}_i$. Define the **rotation vector** (or
+  so the displacement is $`\varphi\,\mathbf{n}\times\mathbf{r}_i`$. Define the **rotation vector** (or
   libration vector)
 
-  $$\boldsymbol{\lambda} = \varphi\, \mathbf{n} :$$
+  ```math
+  \boldsymbol{\lambda} = \varphi\, \mathbf{n} :
+  ```
 
   its direction is the rotation axis, its length the angle in radians. The displacement from the
-  rotation is then $\boldsymbol{\lambda}\times\mathbf{r}_i$, linear in $\boldsymbol{\lambda}$.
+  rotation is then $`\boldsymbol{\lambda}\times\mathbf{r}_i`$, linear in $`\boldsymbol{\lambda}`$.
 
-Together, the rigid-body displacement of atom $i$ is
+Together, the rigid-body displacement of atom $`i`$ is
 
-$$\mathbf{u}_i = \mathbf{t} + \boldsymbol{\lambda} \times \mathbf{r}_i . \tag{4}$$
+```math
+\mathbf{u}_i = \mathbf{t} + \boldsymbol{\lambda} \times \mathbf{r}_i . \qquad (4)
+```
 
-The cross product is a matrix acting on $\boldsymbol{\lambda}$: $\boldsymbol{\lambda}\times\mathbf{r}_i = A_i \boldsymbol{\lambda}$ with
+The cross product is a matrix acting on $`\boldsymbol{\lambda}`$: $`\boldsymbol{\lambda}\times\mathbf{r}_i = A_i \boldsymbol{\lambda}`$ with
 
-$$A_i = \begin{pmatrix} 0 & z_i & -y_i \\ -z_i & 0 & x_i \\ y_i & -x_i & 0 \end{pmatrix}, \qquad \mathbf{r}_i = (x_i, y_i, z_i) \text{ from the origin.}$$
+```math
+A_i = \begin{pmatrix} 0 & z_i & -y_i \\ -z_i & 0 & x_i \\ y_i & -x_i & 0 \end{pmatrix}, \qquad \mathbf{r}_i = (x_i, y_i, z_i) \text{ from the origin.}
+```
 
-So (4) is of the form of §1.2 with six generalised coordinates $\mathbf{v} = (\mathbf{t}, \boldsymbol{\lambda})$ and
-$B_i = [\,1 \mid A_i\,]$, a $3\times 6$ matrix ($1$ is the $3\times 3$ unit matrix).
+So (4) is of the form of §1.2 with six generalised coordinates $`\mathbf{v} = (\mathbf{t}, \boldsymbol{\lambda})`$ and
+$`B_i = [\,1 \mid A_i\,]`$, a $`3\times 6`$ matrix ($`1`$ is the $`3\times 3`$ unit matrix).
 
-The first-order step drops terms of order $\varphi^2$. These bend the paths of the atoms into arcs and
+The first-order step drops terms of order $`\varphi^2`$. These bend the paths of the atoms into arcs and
 make bond lengths from a refinement appear slightly short (the libration correction); that
 correction is not applied here.
 
 ### 1.4 T, L and S
 
-The covariance $\Sigma = \langle \mathbf{v}\mathbf{v}^{\mathsf T}\rangle$ of $\mathbf{v} = (\mathbf{t}, \boldsymbol{\lambda})$ is $6\times 6$. Its $3\times 3$ blocks are the
+The covariance $`\Sigma = \langle \mathbf{v}\mathbf{v}^{\mathsf T}\rangle`$ of $`\mathbf{v} = (\mathbf{t}, \boldsymbol{\lambda})`$ is $`6\times 6`$. Its $`3\times 3`$ blocks are the
 conventional rigid-body tensors:
 
-$$\Sigma = \begin{pmatrix} T & S^{\mathsf T} \\ S & L \end{pmatrix}, \qquad
+```math
+\Sigma = \begin{pmatrix} T & S^{\mathsf T} \\ S & L \end{pmatrix}, \qquad
 T = \langle \mathbf{t}\mathbf{t}^{\mathsf T}\rangle, \quad
 L = \langle \boldsymbol{\lambda}\boldsymbol{\lambda}^{\mathsf T}\rangle, \quad
-S = \langle \boldsymbol{\lambda}\mathbf{t}^{\mathsf T}\rangle ,$$
+S = \langle \boldsymbol{\lambda}\mathbf{t}^{\mathsf T}\rangle ,
+```
 
 the translation (Å²), the libration (rad², printed in deg²), and the correlation of rotation with
-translation (Å rad). Putting $B_i = [\,1 \mid A_i\,]$ into (3) and multiplying out the blocks gives
+translation (Å rad). Putting $`B_i = [\,1 \mid A_i\,]`$ into (3) and multiplying out the blocks gives
 the **Schomaker–Trueblood** formula
 
-$$U_i^{\rm TLS} = T + A_i L A_i^{\mathsf T} + A_i S + S^{\mathsf T} A_i^{\mathsf T} . \tag{5}$$
+```math
+U_i^{\rm TLS} = T + A_i L A_i^{\mathsf T} + A_i S + S^{\mathsf T} A_i^{\mathsf T} . \qquad (5)
+```
 
-- **The origin** is the fragment's centre of mass. $T$ and $S$ depend on where it is; $L$ does not.
-- **$\operatorname{tr} S$ is not determined.** Adding the same number $c$ to the three diagonal elements of
-  $S$ adds $c\,(A_i + A_i^{\mathsf T})$ to every $U_i$, and that is zero because $A_i$ is antisymmetric. No
-  measurement can fix it. Tonto removes that direction, which makes $\operatorname{tr} S = 0$. $\Sigma$ has
+- **The origin** is the fragment's centre of mass. $`T`$ and $`S`$ depend on where it is; $`L`$ does not.
+- **$`\operatorname{tr} S`$ is not determined.** Adding the same number $`c`$ to the three diagonal elements of
+  $`S`$ adds $`c\,(A_i + A_i^{\mathsf T})`$ to every $`U_i`$, and that is zero because $`A_i`$ is antisymmetric. No
+  measurement can fix it. Tonto removes that direction, which makes $`\operatorname{tr} S = 0`$. $`\Sigma`$ has
   21 independent elements, so 20 remain.
-- **Site symmetry.** If the molecule sits on a special position, $\Sigma$ must carry the site symmetry.
+- **Site symmetry.** If the molecule sits on a special position, $`\Sigma`$ must carry the site symmetry.
   Tonto imposes it through the atoms:
   - each atom that is a symmetry image of another must get the symmetry-transformed U;
   - each atom on a special position must have a U unchanged by its site-symmetry operations.
 
-  These are linear conditions on $\Sigma$, and the allowed $\Sigma$ are their solutions. Urea on its mm2 site
+  These are linear conditions on $`\Sigma`$, and the allowed $`\Sigma`$ are their solutions. Urea on its mm2 site
   keeps 8 of the 20.
 
 ### 1.5 Internal motion: normal modes
 
-The molecule also vibrates internally. Let $\mathbf{x}$ be the $3N$ Cartesian displacements of all the
-atoms from their equilibrium positions. Near a minimum of the energy $E$ the potential is
+The molecule also vibrates internally. Let $`\mathbf{x}`$ be the $`3N`$ Cartesian displacements of all the
+atoms from their equilibrium positions. Near a minimum of the energy $`E`$ the potential is
 harmonic,
 
-$$E = E_0 + \tfrac12\, \mathbf{x}^{\mathsf T} H\, \mathbf{x}, \qquad H_{ab} = \frac{\partial^2 E}{\partial x_a\, \partial x_b},$$
+```math
+E = E_0 + \tfrac12\, \mathbf{x}^{\mathsf T} H\, \mathbf{x}, \qquad H_{ab} = \frac{\partial^2 E}{\partial x_a\, \partial x_b},
+```
 
-where $H$ is the **Hessian**, the $3N\times 3N$ matrix of force constants (hartree/bohr²).
+where $`H`$ is the **Hessian**, the $`3N\times 3N`$ matrix of force constants (hartree/bohr²).
 
-Let $m_i$ be the mass of atom $i$, and $M$ the $3N\times 3N$ diagonal matrix holding each atom's mass
-three times. In **mass-weighted coordinates** $\mathbf{q} = M^{1/2}\mathbf{x}$ the kinetic energy is
-$\tfrac12 |\dot{\mathbf{q}}|^2$, and the motion separates into independent oscillators, the **normal modes**:
+Let $`m_i`$ be the mass of atom $`i`$, and $`M`$ the $`3N\times 3N`$ diagonal matrix holding each atom's mass
+three times. In **mass-weighted coordinates** $`\mathbf{q} = M^{1/2}\mathbf{x}`$ the kinetic energy is
+$`\tfrac12 |\dot{\mathbf{q}}|^2`$, and the motion separates into independent oscillators, the **normal modes**:
 
-1. **Mass-weight the Hessian:** $H' = M^{-1/2} H M^{-1/2}$.
+1. **Mass-weight the Hessian:** $`H' = M^{-1/2} H M^{-1/2}`$.
 2. **Remove the rigid-body motion.** For an isolated molecule the three translations and three
    rotations cost no energy; they are not vibrations. Build the six mass-weighted rigid-body
-   displacement vectors ($\sqrt{m_i}\,\mathbf{e}$ for a translation along unit vector $\mathbf{e}$,
-   $\sqrt{m_i}\,\mathbf{e}\times\mathbf{r}_i$ for a rotation about it), orthonormalise them, and project them out:
-   $H'' = P H' P$ with $P = 1 - \sum_{\mathbf{v}} \mathbf{v}\mathbf{v}^{\mathsf T}$ over those six vectors $\mathbf{v}$. This imposes the
+   displacement vectors ($`\sqrt{m_i}\,\mathbf{e}`$ for a translation along unit vector $`\mathbf{e}`$,
+   $`\sqrt{m_i}\,\mathbf{e}\times\mathbf{r}_i`$ for a rotation about it), orthonormalise them, and project them out:
+   $`H'' = P H' P`$ with $`P = 1 - \sum_{\mathbf{v}} \mathbf{v}\mathbf{v}^{\mathsf T}`$ over those six vectors $`\mathbf{v}`$. This imposes the
    **Eckart–Sayvetz conditions**: the remaining modes carry no net linear or angular momentum,
    so they are purely internal. The six become exact zero modes (five for a linear molecule).
-3. **Diagonalise $H''$.** Each eigenvector $\mathbf{l}_k$ (a $3N$-vector) is a mode's shape; its
-   eigenvalue is $\omega_k^2$, with $\omega_k$ the mode's angular frequency. $\mathbf{l}_{ik}$ denotes the
-   three components of $\mathbf{l}_k$ on atom $i$.
+3. **Diagonalise $`H''`$.** Each eigenvector $`\mathbf{l}_k`$ (a $`3N`$-vector) is a mode's shape; its
+   eigenvalue is $`\omega_k^2`$, with $`\omega_k`$ the mode's angular frequency. $`\mathbf{l}_{ik}`$ denotes the
+   three components of $`\mathbf{l}_k`$ on atom $`i`$.
 
-In terms of the mode amplitudes $Q_k$ (the **normal coordinates**), atom $i$ moves by
+In terms of the mode amplitudes $`Q_k`$ (the **normal coordinates**), atom $`i`$ moves by
 
-$$\mathbf{u}_i = \sum_k \mathbf{l}_{ik}\, Q_k / \sqrt{m_i},$$
+```math
+\mathbf{u}_i = \sum_k \mathbf{l}_{ik}\, Q_k / \sqrt{m_i},
+```
 
 which is again of the form of §1.2. Each mode is a harmonic oscillator. In quantum mechanics its
-mean-square amplitude at temperature $\Theta$ is ($\hbar = 1$; $k_B$ Boltzmann's constant)
+mean-square amplitude at temperature $`\Theta`$ is ($`\hbar = 1`$; $`k_B`$ Boltzmann's constant)
 
-$$\langle Q_k^2\rangle = \frac{1}{2\omega_k} \coth\!\left(\frac{\omega_k}{2 k_B \Theta}\right) . \tag{6}$$
+```math
+\langle Q_k^2\rangle = \frac{1}{2\omega_k} \coth\!\left(\frac{\omega_k}{2 k_B \Theta}\right) . \qquad (6)
+```
 
-At $\Theta = 0$ this is $1/(2\omega_k)$, the zero-point motion; at high $\Theta$ it tends to
-$k_B\Theta/\omega_k^2$, the classical value. Different modes are uncorrelated, so (1) gives
+At $`\Theta = 0`$ this is $`1/(2\omega_k)`$, the zero-point motion; at high $`\Theta`$ it tends to
+$`k_B\Theta/\omega_k^2`$, the classical value. Different modes are uncorrelated, so (1) gives
 
-$$U_i^{\rm modes} = \sum_k \mathbf{l}_{ik} \mathbf{l}_{ik}^{\mathsf T}\, \langle Q_k^2\rangle / m_i . \tag{7}$$
+```math
+U_i^{\rm modes} = \sum_k \mathbf{l}_{ik} \mathbf{l}_{ik}^{\mathsf T}\, \langle Q_k^2\rangle / m_i . \qquad (7)
+```
 
 **Stiff and soft modes.** A stiff mode (high ω, bond stretches and bends) is hardly affected by
 the crystal, and (6) from a calculated Hessian is good. A soft mode (low ω, torsions and wags)
 is sensitive to the crystal environment and to anharmonicity, and its amplitude should come from
-the data. Tonto splits the modes at a cutoff $\omega_c$ (200 cm⁻¹ by default). $U_i^{\rm high}$ is (7)
+the data. Tonto splits the modes at a cutoff $`\omega_c`$ (200 cm⁻¹ by default). $`U_i^{\rm high}`$ is (7)
 summed over the stiff modes only:
 
-$$U_i^{\rm high} = \sum_{\omega_k > \omega_c} \mathbf{l}_{ik} \mathbf{l}_{ik}^{\mathsf T}\, \langle Q_k^2\rangle / m_i . \tag{8}$$
+```math
+U_i^{\rm high} = \sum_{\omega_k > \omega_c} \mathbf{l}_{ik} \mathbf{l}_{ik}^{\mathsf T}\, \langle Q_k^2\rangle / m_i . \qquad (8)
+```
 
-A mode with $\omega_k^2 \le 0$ (an imaginary frequency) counts as soft. A Hessian taken at the crystal
+A mode with $`\omega_k^2 \le 0`$ (an imaginary frequency) counts as soft. A Hessian taken at the crystal
 geometry, which is not an energy minimum, can have such modes.
 
 ### 1.6 The full model
@@ -173,36 +203,40 @@ geometry, which is not an energy minimum, can have such modes.
 Adding the rigid-body motion (4) and the stiff internal modes, taken as uncorrelated, gives the
 ADP of atom *i* as
 
-$$U_i = U_i^{\rm high} + B_i\, \Sigma\, B_i^{\mathsf T} , \tag{9}$$
+```math
+U_i = U_i^{\rm high} + B_i\, \Sigma\, B_i^{\mathsf T} , \qquad (9)
+```
 
-with $\Sigma$ refined and $U_i^{\rm high}$ fixed by the Hessian.
+with $`\Sigma`$ refined and $`U_i^{\rm high}`$ fixed by the Hessian.
 
 ### 1.7 Soft modes
 
-The soft modes left out of (8) can be put back with refined amplitudes. Take the $K$ softest
-modes, imaginary ones first. Write $\mathbf{d}_{ik} = \mathbf{l}_{ik}/\sqrt{m_i}$ for the displacement of atom $i$
-in mode $k$ per unit $Q_k$, and $a_k = \langle Q_k^2\rangle$ for the mode's mean-square amplitude. Each soft
-mode adds one generalised coordinate $Q_k$ to $\mathbf{v}$ and one column $\mathbf{d}_{ik}$ to $B_i$. The modes
+The soft modes left out of (8) can be put back with refined amplitudes. Take the $`K`$ softest
+modes, imaginary ones first. Write $`\mathbf{d}_{ik} = \mathbf{l}_{ik}/\sqrt{m_i}`$ for the displacement of atom $`i`$
+in mode $`k`$ per unit $`Q_k`$, and $`a_k = \langle Q_k^2\rangle`$ for the mode's mean-square amplitude. Each soft
+mode adds one generalised coordinate $`Q_k`$ to $`\mathbf{v}`$ and one column $`\mathbf{d}_{ik}`$ to $`B_i`$. The modes
 are taken as uncorrelated with each other and with the rigid-body motion, so only the amplitudes
 enter, and (9) becomes
 
-$$U_i = U_i^{\rm high} + B_i\, \Sigma\, B_i^{\mathsf T} + \sum_{k=1}^{K} a_k\, \mathbf{d}_{ik}\mathbf{d}_{ik}^{\mathsf T} , \tag{10}$$
+```math
+U_i = U_i^{\rm high} + B_i\, \Sigma\, B_i^{\mathsf T} + \sum_{k=1}^{K} a_k\, \mathbf{d}_{ik}\mathbf{d}_{ik}^{\mathsf T} , \qquad (10)
+```
 
-with $\Sigma$ the rigid-body covariance of §1.4 and $a_1 \dots a_K$ refined. A soft mode must have
-$\omega_k$ below the cutoff $\omega_c$ of (8), or it would be counted twice; raising the cutoff moves
-more modes from $U^{\rm high}$ into the refinement. The cutoff is compared with the scaled frequency
-(§1.9). Set it between the $K$-th and the next mode: a mode below the cutoff that is not among
-the $K$ refined is in neither term of (10).
+with $`\Sigma`$ the rigid-body covariance of §1.4 and $`a_1 \dots a_K`$ refined. A soft mode must have
+$`\omega_k`$ below the cutoff $`\omega_c`$ of (8), or it would be counted twice; raising the cutoff moves
+more modes from $`U^{\rm high}`$ into the refinement. The cutoff is compared with the scaled frequency
+(§1.9). Set it between the $`K`$-th and the next mode: a mode below the cutoff that is not among
+the $`K`$ refined is in neither term of (10).
 
-**The harmonic amplitude** $a_k^0$ is (6) at the mode's frequency. An imaginary mode has none.
+**The harmonic amplitude** $`a_k^0`$ is (6) at the mode's frequency. An imaginary mode has none.
 
-**The implied frequency** of a refined $a_k$ is the $\omega$ for which (6) gives $a_k$. It says what
+**The implied frequency** of a refined $`a_k`$ is the $`\omega`$ for which (6) gives $`a_k`$. It says what
 frequency the refined amplitude corresponds to, and is printed beside it.
 
-**A soft mode can repeat the rigid-body motion.** Only the pattern $\mathbf{d}_{ik}\mathbf{d}_{ik}^{\mathsf T}$ over the
+**A soft mode can repeat the rigid-body motion.** Only the pattern $`\mathbf{d}_{ik}\mathbf{d}_{ik}^{\mathsf T}`$ over the
 atoms reaches the data. If that pattern is a combination of the rigid-body patterns and the
 other soft modes, the data cannot tell them apart, and the mode adds no parameter. Tonto finds
-such modes as it finds $\operatorname{tr} S$ (§1.4), and drops them. In urea, a planar molecule, the
+such modes as it finds $`\operatorname{tr} S`$ (§1.4), and drops them. In urea, a planar molecule, the
 second out-of-plane NH₂ wag is a combination of the first wag and the libration about the
 in-plane axes, so two soft modes refine as one.
 
@@ -211,31 +245,30 @@ in-plane axes, so two soft modes refine as one.
 Equation (10) takes each soft mode as independent of the rigid-body motion and of the other soft
 modes. They need not be: a torsion can move with the libration about the same axis, and the data
 can correct the Hessian's mode shapes by mixing two nearly degenerate soft modes. Both are put in
-by making the soft-mode amplitudes $Q_k$ generalised coordinates in their own right, as in §1.2:
+by making the soft-mode amplitudes $`Q_k`$ generalised coordinates in their own right, as in §1.2:
 
-$$\mathbf{v} = (\mathbf{t}, oldsymbol{\lambda}, Q_1, \dots, Q_K), \qquad
+```math
+\mathbf{v} = (\mathbf{t}, \boldsymbol{\lambda}, Q_1, \dots, Q_K), \qquad
 B_i = [\,1 \mid A_i \mid \mathbf{d}_{i1} \cdots \mathbf{d}_{iK}\,], \qquad
-U_i = U_i^{
-m high} + B_i\, \Sigma\, B_i^{\mathsf T} , 	ag{11}$$
+U_i = U_i^{\rm high} + B_i\, \Sigma\, B_i^{\mathsf T} , \qquad (11)
+```
 
-with $\Sigma = \langle \mathbf{v}\mathbf{v}^{\mathsf T}
-angle$ now $(6+K)	imes(6+K)$:
+with $`\Sigma = \langle \mathbf{v}\mathbf{v}^{\mathsf T}\rangle`$ now $`(6+K)\times(6+K)`$:
 
-$$\Sigma = egin{pmatrix} T & S^{\mathsf T} & C_t^{\mathsf T} \ S & L & C_\lambda^{\mathsf T} \ C_t & C_\lambda & \Sigma_Q \end{pmatrix} .$$
+```math
+\Sigma = \begin{pmatrix} T & S^{\mathsf T} & C_t^{\mathsf T} \\ S & L & C_\lambda^{\mathsf T} \\ C_t & C_\lambda & \Sigma_Q \end{pmatrix} .
+```
 
-$C_t$ and $C_\lambda$ ($K	imes 3$) are the correlations of each mode with the translation and the
-libration. $\Sigma_Q$ ($K	imes K$) has the amplitudes $a_k = \langle Q_k^2
-angle$ on its diagonal and the
-mixing of the modes off it. With $C_t$, $C_\lambda$ and the off-diagonal $\Sigma_Q$ zero, (11) is (10).
+$`C_t`$ and $`C_\lambda`$ ($`K\times 3`$) are the correlations of each mode with the translation and the
+libration. $`\Sigma_Q`$ ($`K\times K`$) has the amplitudes $`a_k = \langle Q_k^2\rangle`$ on its diagonal and the
+mixing of the modes off it. With $`C_t`$, $`C_\lambda`$ and the off-diagonal $`\Sigma_Q`$ zero, (11) is (10).
 
-**The correlation coefficient** of coordinates $p$ and $q$ is
-$
-ho_{pq} = \Sigma_{pq} / (\Sigma_{pp}\Sigma_{qq})^{1/2}$, between −1 and 1. The cross terms are
+**The correlation coefficient** of coordinates $`p`$ and $`q`$ is
+$`\rho_{pq} = \Sigma_{pq} / (\Sigma_{pp}\Sigma_{qq})^{1/2}`$, between −1 and 1. The cross terms are
 restrained toward zero through it (§2.4).
 
-**Σ must be positive semidefinite**: $\mathbf{w}^{\mathsf T}\Sigma\,\mathbf{w} \ge 0$ for every vector $\mathbf{w}$, since
-$\mathbf{w}^{\mathsf T}\Sigma\,\mathbf{w} = \langle (\mathbf{w}\cdot\mathbf{v})^2
-angle$ is a mean-square displacement. A negative soft-mode
+**Σ must be positive semidefinite**: $`\mathbf{w}^{\mathsf T}\Sigma\,\mathbf{w} \ge 0`$ for every vector $`\mathbf{w}`$, since
+$`\mathbf{w}^{\mathsf T}\Sigma\,\mathbf{w} = \langle (\mathbf{w}\cdot\mathbf{v})^2\rangle`$ is a mean-square displacement. A negative soft-mode
 amplitude breaks it. So does any negative eigenvalue of Σ. §2.4 says how this is kept.
 
 ### 1.9 Frequency scaling
@@ -257,18 +290,20 @@ in from a file, the method is unknown and the default is 1.
 ### 1.10 A Hessian by finite differences
 
 Without an external program, Tonto makes the Hessian from its own SCF energies by central
-differences with step $h$ (0.01 bohr by default). Writing $E(+a)$ for the energy with coordinate $a$
-moved by $+h$, and so on:
+differences with step $`h`$ (0.01 bohr by default). Writing $`E(+a)`$ for the energy with coordinate $`a`$
+moved by $`+h`$, and so on:
 
-$$H_{aa} = \frac{E(+a) + E(-a) - 2E_0}{h^2}, \qquad
-H_{ab} = \frac{E(+a,+b) - E(+a,-b) - E(-a,+b) + E(-a,-b)}{4h^2} .$$
+```math
+H_{aa} = \frac{E(+a) + E(-a) - 2E_0}{h^2}, \qquad
+H_{ab} = \frac{E(+a,+b) - E(+a,-b) - E(-a,+b) + E(-a,-b)}{4h^2} .
+```
 
 **Translational invariance.** Moving the whole molecule does not change E, so each atom's block
 row of H sums to zero over the atoms. Tonto uses this to get the last atom's rows, so N atoms
-need $2n + 2n(n-1)$ SCFs with $n = 3(N-1)$. It holds at any geometry, but not with cluster charges
+need $`2n + 2n(n-1)`$ SCFs with $`n = 3(N-1)`$. It holds at any geometry, but not with cluster charges
 or an applied field; then every coordinate is differenced.
 
-The **gradient** $\partial E/\partial x_a$ comes from the same energies, $[E(+a) - E(-a)]/2h$, and is printed.
+The **gradient** $`\partial E/\partial x_a`$ comes from the same energies, $`[E(+a) - E(-a)]/2h`$, and is printed.
 Rotational invariance gives a similar sum rule only where the gradient is zero. At a geometry
 that is not stationary, such as a crystal geometry, the rotations are not exact zero modes of H,
 and the projection in §1.5 step 2 is an approximation.
@@ -279,110 +314,163 @@ and the projection in §1.5 step 2 is an approximation.
 ### 2.1 What is minimised
 
 For each measured reflection the refinement compares the observed structure factor amplitude
-$F_{\rm obs}$ with the calculated one, $F_{\rm calc}$ from (2), with weight $w = 1/\sigma^2$, $\sigma$ the
-measurement's standard uncertainty. With $\Delta F = F_{\rm obs} - F_{\rm calc}$, it minimises
+$`F_{\rm obs}`$ with the calculated one, $`F_{\rm calc}`$ from (2), with weight $`w = 1/\sigma^2`$, $`\sigma`$ the
+measurement's standard uncertainty. With $`\Delta F = F_{\rm obs} - F_{\rm calc}`$, it minimises
 
-$$\chi^2 = \sum_{\rm reflections} w\, \Delta F^2 .$$
+```math
+\chi^2 = \sum_{\rm reflections} w\, \Delta F^2 .
+```
 
 Two numbers summarise the fit. **GoF** (goodness of fit) counts the parameters:
 
-$$\mathrm{GoF} = \left( \frac{\chi^2}{N_{\rm refl} - N_{\rm param}} \right)^{1/2},$$
+```math
+\mathrm{GoF} = \left( \frac{\chi^2}{N_{\rm refl} - N_{\rm param}} \right)^{1/2},
+```
 
 and is 1 for a model that fits to within the measurement errors.
-$R(F) = \sum|\Delta F| \,/\, \sum|F_{\rm obs}|$ does
+$`R(F) = \sum|\Delta F| \,/\, \sum|F_{\rm obs}|`$ does
 not count the parameters or use the weights. **Compare models by GoF, not R**: R can hide a
 worse fit. Whether a model with more parameters is significantly better is decided by
 Hamilton's test.
 
 ### 2.2 Parameters and the Jacobian
 
-The refinement's parameters $\mathbf{p}$ are kept explicitly. The model vector $\mathbf{X}$, the positions and
+The refinement's parameters $`\mathbf{p}`$ are kept explicitly. The model vector $`\mathbf{X}`$, the positions and
 ADPs of all the atoms, is made from them by
 
-$$\mathbf{X} = \mathbf{X}_0 + J\,\mathbf{p}, \qquad J = \partial\mathbf{X}/\partial\mathbf{p} \text{ (the Jacobian).} \tag{13}$$
+```math
+\mathbf{X} = \mathbf{X}_0 + J\,\mathbf{p}, \qquad J = \partial\mathbf{X}/\partial\mathbf{p} \text{ (the Jacobian).} \qquad (13)
+```
 
 - **Free ADPs:** J has one unit column per refined component of X.
 - **TLS model:** each atom keeps its three position columns. Its six ADP columns are replaced
-  by columns shared by all the atoms, one per allowed $\Sigma$ parameter: by (9),
-  $\partial U_i/\partial\Sigma = \partial(B_i\Sigma B_i^{\mathsf T})/\partial\Sigma$. $\mathbf{X}_0$ holds $U^{\rm high}$ on the ADP rows.
-- **Soft modes:** one more shared column per mode, $\partial U_i/\partial a_k = \mathbf{d}_{ik}\mathbf{d}_{ik}^{\mathsf T}$ by (10).
+  by columns shared by all the atoms, one per allowed $`\Sigma`$ parameter: by (9),
+  $`\partial U_i/\partial\Sigma = \partial(B_i\Sigma B_i^{\mathsf T})/\partial\Sigma`$. $`\mathbf{X}_0`$ holds $`U^{\rm high}`$ on the ADP rows.
+- **Soft modes:** one more shared column per mode, $`\partial U_i/\partial a_k = \mathbf{d}_{ik}\mathbf{d}_{ik}^{\mathsf T}`$ by (10).
   With the correlations, one column per element of the larger Σ of (11).
 
 ### 2.3 Solving
 
-From the derivatives $\partial F_{\rm calc}/\partial\mathbf{X}$, the change in $\mathbf{p}$ that best lowers $\chi^2$ to first
+From the derivatives $`\partial F_{\rm calc}/\partial\mathbf{X}`$, the change in $`\mathbf{p}`$ that best lowers $`\chi^2`$ to first
 order solves the **normal equations**:
 
-$$D = \frac{\partial F_{\rm calc}}{\partial \mathbf{X}}\, J, \qquad A = D^{\mathsf T} W D, \qquad \mathbf{b} = D^{\mathsf T} W\, \Delta\mathbf{F}, \qquad A\, \Delta\mathbf{p} = \mathbf{b},$$
+```math
+D = \frac{\partial F_{\rm calc}}{\partial \mathbf{X}}\, J, \qquad A = D^{\mathsf T} W D, \qquad \mathbf{b} = D^{\mathsf T} W\, \Delta\mathbf{F}, \qquad A\, \Delta\mathbf{p} = \mathbf{b},
+```
 
-with $W$ the diagonal matrix of the weights. Eigenvalues of $A$ near zero (directions the data do
-not determine) are filtered out. The covariance of $\mathbf{p}$ is $C = A^{-1}$ scaled by GoF², and the esd of
-each parameter is the square root of its diagonal element. The covariance of $\mathbf{X}$ follows as
-$J C J^{\mathsf T}$, which gives every atomic $U$ an esd even though only $\Sigma$ and the $a_k$ are refined. Each
-refinement cycle starts by putting the ADPs on the model: $\Sigma$ is fitted to the current
-$U - U^{\rm high}$, and $U$ is set to $U^{\rm high} + B\,\Sigma\,B^{\mathsf T}$.
+with $`W`$ the diagonal matrix of the weights. Eigenvalues of $`A`$ near zero (directions the data do
+not determine) are filtered out. The covariance of $`\mathbf{p}`$ is $`C = A^{-1}`$ scaled by GoF², and the esd of
+each parameter is the square root of its diagonal element. The covariance of $`\mathbf{X}`$ follows as
+$`J C J^{\mathsf T}`$, which gives every atomic $`U`$ an esd even though only $`\Sigma`$ and the $`a_k`$ are refined. Each
+refinement cycle starts by putting the ADPs on the model: $`\Sigma`$ is fitted to the current
+$`U - U^{\rm high}`$, and $`U`$ is set to $`U^{\rm high} + B\,\Sigma\,B^{\mathsf T}`$.
 
 ### 2.4 Restraints
 
 Some parameters are held toward a target instead of being left free. Each restraint is a linear
-function $g_j$ of the elements of Σ, held toward a target $g_j^0$ with an uncertainty $\sigma_j$. The
+function $`g_j`$ of the elements of Σ, held toward a target $`g_j^0`$ with an uncertainty $`\sigma_j`$. The
 refinement minimises
 
-$$\chi^2 + \sum_j \frac{(g_j - g_j^0)^2}{\sigma_j^2} . \tag{14}$$
+```math
+\chi^2 + \sum_j \frac{(g_j - g_j^0)^2}{\sigma_j^2} . \qquad (14)
+```
 
-There are three kinds. Each uses a **scale** $c_p$ for coordinate $p$ of $\mathbf{v}$: its diagonal element
-$\Sigma_{pp}$ for a translation or libration (at least 1/1000 of the largest diagonal element of
-$T$ or $L$), and for a soft mode the harmonic amplitude (6) at its $|\omega_k|$.
+There are three kinds. Each uses a **scale** $`c_p`$ for coordinate $`p`$ of $`\mathbf{v}`$: its diagonal element
+$`\Sigma_{pp}`$ for a translation or libration (at least 1/1000 of the largest diagonal element of
+$`T`$ or $`L`$), and for a soft mode the harmonic amplitude (6) at its $`|\omega_k|`$.
 
-- **Soft-mode amplitudes**, $g = a_k$, held toward the harmonic value $a_k^0$ with
-  $\sigma = f_a\, a_k^0$; $f_a$ is `soft_mode_restraint=`, 0.5 by default. An imaginary mode has no
-  $a_k^0$ and is not restrained.
-- **Cross terms** (§1.8), $g = \Sigma_{pq}$, held toward 0 with
-  $\sigma = f_\rho\, (c_p c_q)^{1/2}$; $f_\rho$ is `correlation_restraint=`, 0.5 by default. This holds the
-  correlation coefficient $\rho_{pq}$ toward 0 with uncertainty about $f_\rho$.
+- **Soft-mode amplitudes**, $`g = a_k`$, held toward the harmonic value $`a_k^0`$ with
+  $`\sigma = f_a\, a_k^0`$; $`f_a`$ is `soft_mode_restraint=`, 0.5 by default. An imaginary mode has no
+  $`a_k^0`$ and is not restrained.
+- **Cross terms** (§1.8), $`g = \Sigma_{pq}`$, held toward 0 with
+  $`\sigma = f_\rho\, (c_p c_q)^{1/2}`$; $`f_\rho`$ is `correlation_restraint=`, 0.5 by default. Since
+  $`(c_p c_q)^{1/2}`$ is the largest value $`|\Sigma_{pq}|`$ can have, this is the same as holding the
+  correlation coefficient $`\rho_{pq}`$ toward 0 with uncertainty $`f_\rho`$.
 - **Positivity.** At the start of each refinement cycle Σ is diagonalised. For each eigenvector
-  $\mathbf{w}$ with a negative eigenvalue, $g = \mathbf{w}^{\mathsf T}\Sigma\,\mathbf{w}$ is held toward 0 with
-  $\sigma = \sum_p w_p^2 c_p / 100$. This holds Σ on the boundary $\Sigma \ge 0$ while the data push
+  $`\mathbf{w}`$ with a negative eigenvalue, $`g = \mathbf{w}^{\mathsf T}\Sigma\,\mathbf{w}`$ is held toward 0 with
+  $`\sigma = \sum_p w_p^2 c_p / 100`$. This holds Σ on the boundary $`\Sigma \ge 0`$ while the data push
   against it. When they stop pushing, the eigenvalue comes out positive and the restraint is
   dropped at the next cycle. `positive_tls_sigma=` switches it, on by default.
 
-In matrix form: the elements of Σ are a linear function of the parameters, $\mathbf{s} = Q\,\mathbf{p}$,
-because the parameters are the combinations of them that survive §1.4 and §1.7. Each $g_j$ is
-$\mathbf{r}_j\cdot\mathbf{s}$ for a fixed row $\mathbf{r}_j$. Stack the rows $\mathbf{r}_j Q/\sigma_j$ into a matrix $G$. Then the
-added term has matrix $R = G^{\mathsf T} G$ in the parameters, and the normal equations of §2.3 become
+**What a restraint means.** A restraint is an extra observation, the same as a bond-length
+restraint in a conventional refinement: alongside the reflections, the fit is told "this
+quantity is $`g^0`$, give or take $`\sigma`$". If the reflections determine the quantity much better than
+$`\sigma`$, they win and the restraint hardly matters. If they hardly determine it, the restraint
+decides it, and the quantity stays near $`g^0`$ instead of drifting to wherever the noise takes it.
 
-$$(A + R)\, \Delta\mathbf{p} = \mathbf{b} + G^{\mathsf T} \mathbf{e}, \qquad e_j = (g_j^0 - g_j)/\sigma_j ,$$
+For the cross terms the target is 0: the model of (10), with the motions independent, is the
+starting assumption, and the data must show a correlation before the refinement accepts one.
+Each cross term adds $`(\rho_{pq}/f_\rho)^2`$ to $`\chi^2`$. With $`f_\rho = 0.5`$ that is 1 at $`\rho = 0.5`$ and 4 at
+$`\rho = 1`$. It pulls smoothly toward 0, more strongly the larger $`\rho`$; there is no threshold. The
+term is small, which is what "weak" means. Whether it matters depends on how well the data fix
+$`\rho`$. If they give $`\rho`$ with an esd of 0.06, moving it 0.1 away from the data's value costs
+$`(0.1/0.06)^2 \approx 2.8`$ in $`\chi^2`$, against about 0.2 gained in the restraint, so the data decide.
+Only a correlation the data barely determine is held near 0. The value 0.5 is a choice; §5 shows
+how the results depend on it.
 
-and the covariance is $(A + R)^{-1}$. A restrained parameter is only partly fitted to the data. The
+**How the restraints stay linear.** The restraint is on $`\Sigma_{pq}`$, which is linear in the parameters,
+not on $`\rho_{pq}`$, which is not. Its $`\sigma`$ uses the scales $`c_p`$ and $`c_q`$ of the current Σ, and these are
+fixed for the cycle and updated before the next. So within a cycle every restraint is an exact
+linear observation and nothing is linearised. At convergence it holds $`\rho_{pq}`$ toward 0 with
+uncertainty $`f_\rho`$; the change of the scales with the parameters is not differentiated, which
+for a weak restraint makes no practical difference. The positivity restraint works the same way:
+the eigenvector $`\mathbf{w}`$ is fixed for the cycle, and $`\mathbf{w}^{\mathsf T}\Sigma\,\mathbf{w}`$ is linear in Σ.
+
+**Why positivity is a restraint and not Σ = C Cᵀ.** Writing Σ as $`C C^{\mathsf T}`$ with $`C`$ lower triangular
+(its Cholesky factor) and refining $`C`$ makes Σ positive semidefinite by construction. Tonto does
+not do this, for three reasons.
+- **Site symmetry.** The symmetry conditions of §1.4 are linear in Σ, so the allowed Σ are found
+  as the null space of a matrix. In $`C`$ they are quadratic, and there is no such simple answer.
+- **The boundary.** With no correlations Σ_Q is diagonal and the Cholesky form is $`a_k = c_k^2`$.
+  Then $`\partial a_k/\partial c_k = 2c_k`$ is zero at $`c_k = 0`$, so the normal matrix is singular exactly
+  where the data push an amplitude to zero, and the esd there is infinite. The restraint keeps the
+  parameter linear and gives a finite esd on the boundary.
+- **Linearity.** Σ linear in the parameters keeps the Jacobian of §2.2 constant, and the
+  restraints and esds of this section unchanged.
+
+In matrix form: the elements of Σ are a linear function of the parameters, $`\mathbf{s} = Q\,\mathbf{p}`$,
+because the parameters are the combinations of them that survive §1.4 and §1.7. Each $`g_j`$ is
+$`\mathbf{r}_j\cdot\mathbf{s}`$ for a fixed row $`\mathbf{r}_j`$. Stack the rows $`\mathbf{r}_j Q/\sigma_j`$ into a matrix $`G`$. Then the
+added term has matrix $`R = G^{\mathsf T} G`$ in the parameters, and the normal equations of §2.3 become
+
+```math
+(A + R)\, \Delta\mathbf{p} = \mathbf{b} + G^{\mathsf T} \mathbf{e}, \qquad e_j = (g_j^0 - g_j)/\sigma_j ,
+```
+
+and the covariance is $`(A + R)^{-1}`$. A restrained parameter is only partly fitted to the data. The
 **effective number of parameters** counts how much:
 
-$$p_{\rm eff} = \operatorname{tr}\!\left[(A + R)^{-1} A\right] ,$$
+```math
+p_{\rm eff} = \operatorname{tr}\!\left[(A + R)^{-1} A\right] ,
+```
 
-which is the number of parameters when $R = 0$, and less than it when the restraints bind. A
+which is the number of parameters when $`R = 0`$, and less than it when the restraints bind. A
 direction held at zero by the positivity restraint counts as almost no parameter.
 
 ### 2.5 How many parameters the data support
 
 A model with more parameters always fits at least as well. Three measures say whether the
-improvement is worth the parameters. Let $n$ be the number of reflections and $p$ the
-number of parameters ($p_{\rm eff}$ for a restrained fit).
+improvement is worth the parameters. Let $`n`$ be the number of reflections and $`p`$ the
+number of parameters ($`p_{\rm eff}`$ for a restrained fit).
 
-- **Akaike's information criterion**, $\mathrm{AIC} = \chi^2 + 2p$.
-- **The Bayesian information criterion**, $\mathrm{BIC} = \chi^2 + p \ln n$. It charges more per
-  parameter than AIC once $n > 7$.
+- **Akaike's information criterion**, $`\mathrm{AIC} = \chi^2 + 2p`$.
+- **The Bayesian information criterion**, $`\mathrm{BIC} = \chi^2 + p \ln n`$. It charges more per
+  parameter than AIC once $`n > 7`$.
 
   For both, the model with the smaller value is preferred.
-- **Hamilton's test.** Model $a$ has $p_a$ parameters and model $b$ adds $k$, so $p_b = p_a + k$.
-  The ratio of their weighted R factors is $\mathcal R = (\chi^2_a / \chi^2_b)^{1/2}$. Model $b$ is
-  significantly better, at significance level $\alpha$, when
+- **Hamilton's test.** Model $`a`$ has $`p_a`$ parameters and model $`b`$ adds $`k`$, so $`p_b = p_a + k`$.
+  The ratio of their weighted R factors is $`\mathcal R = (\chi^2_a / \chi^2_b)^{1/2}`$. Model $`b`$ is
+  significantly better, at significance level $`\alpha`$, when
 
-  $$\mathcal R > \left[ 1 + \frac{k}{n - p_b}\, F_{k,\, n-p_b,\, \alpha} \right]^{1/2} , \tag{15}$$
+  ```math
+  \mathcal R > \left[ 1 + \frac{k}{n - p_b}\, F_{k,\, n-p_b,\, \alpha} \right]^{1/2} , \qquad (15)
+  ```
 
-  with $F_{k,\,n-p_b,\,\alpha}$ the point of the F distribution exceeded with probability $\alpha$.
-  This page uses $\alpha = 0.005$.
+  with $`F_{k,\,n-p_b,\,\alpha}`$ the point of the F distribution exceeded with probability $`\alpha`$.
+  This page uses $`\alpha = 0.005`$.
 
-Tonto prints $n$, $p_{\rm eff}$, $\chi^2$, GoF, AIC and BIC after a TLS refinement; the Hamilton
-ratio is formed from the $\chi^2$ of two runs.
+Tonto prints $`n`$, $`p_{\rm eff}`$, $`\chi^2`$, GoF, AIC and BIC after a TLS refinement; the Hamilton
+ratio is formed from the $`\chi^2`$ of two runs.
 
 
 ## 3. Keywords
@@ -408,10 +496,10 @@ In `xray_data=`:
 | keyword | default | meaning |
 |---|---|---|
 | `adp_model=` | `free` | `free`: refine each atom's ADP; `tls`: the model (10), HAR only |
-| `n_soft_modes=` | 0 | $K$ in (10): how many of the softest modes have refined amplitudes |
-| `soft_mode_restraint=` | 0.5 | $f_a$ in §2.4: the amplitude restraint's $\sigma$ as a fraction of the harmonic amplitude |
+| `n_soft_modes=` | 0 | $`K`$ in (10): how many of the softest modes have refined amplitudes |
+| `soft_mode_restraint=` | 0.5 | $`f_a`$ in §2.4: the amplitude restraint's $`\sigma`$ as a fraction of the harmonic amplitude |
 | `soft_mode_correlations=` | `FALSE` | `TRUE` refines the cross terms of (11) |
-| `correlation_restraint=` | 0.5 | $f_\rho$ in §2.4: the uncertainty of a correlation coefficient held toward 0 |
+| `correlation_restraint=` | 0.5 | $`f_\rho`$ in §2.4: the uncertainty of a correlation coefficient held toward 0 |
 | `positive_tls_sigma=` | `TRUE` | holds Σ positive semidefinite (§2.4) |
 
 A TLS Hirshfeld atom refinement with U^high from a Hessian, and the four softest modes refined:
@@ -475,15 +563,15 @@ complete examples.
 | U^high handed to the refinement | `MOLECULE.PROP:set_crystal_U_high`, `CRYSTAL:set_fragment_U_high` |
 | ∂U_i/∂Σ for one atom | `CRYSTAL:TLS_response` |
 | the elements of Σ, in order | `CRYSTAL:TLS_sigma_pairs` |
-| allowed Σ and $a_k$, J columns, tr S, origin | `CRYSTAL:make_TLS_jacobian_columns` |
+| allowed Σ and $`a_k`$, J columns, tr S, origin | `CRYSTAL:make_TLS_jacobian_columns` |
 | p and X₀; ADPs put on the model | `CRYSTAL:set_refinement_parameters` |
-| soft modes chosen, $\mathbf{d}_{ik}$ and $a_k^0$ | `MOLECULE.PROP:make_soft_modes`, `CRYSTAL:set_soft_modes` |
+| soft modes chosen, $`\mathbf{d}_{ik}`$ and $`a_k^0`$ | `MOLECULE.PROP:make_soft_modes`, `CRYSTAL:set_soft_modes` |
 | restraints (14) | `CRYSTAL:set_TLS_restraints`, `MAT{REAL}:solve_restrained_linear_equations` |
 | T, L, S with esds | `CRYSTAL:put_TLS_results` |
 | refined amplitudes, implied frequencies | `CRYSTAL:put_soft_mode_results`, `CRYSTAL:frequency_for_amplitude` |
 | correlation coefficients | `CRYSTAL:put_soft_mode_correlations` |
 | the TLS body: the central molecule of a cluster | `CRYSTAL:n_TLS_atoms`, `MOLECULE.PROP:set_crystal_U_high` |
-| $p_{\rm eff}$, AIC, BIC | `LEAST_SQUARES:solve_normal_equations`, `CRYSTAL:put_model_selection` |
+| $`p_{\rm eff}`$, AIC, BIC | `LEAST_SQUARES:solve_normal_equations`, `CRYSTAL:put_model_selection` |
 | explicit parameters, eq. (13); the solve | `LEAST_SQUARES` (`least_squares.foo`) |
 
 
@@ -520,8 +608,8 @@ densities in the def2-SVP and def2-TZVP basis sets. There are two partitions of 
 into atoms: Hirshfeld (`oc-hirshfeld`) and the topological fuzzy Voronoi atoms of Salvador,
 TFVA (`oc-salvador`). There are three ADP models:
 - free: six parameters per atom;
-- TLS with $U^{\rm high} = 0$: the rigid-body model (5) alone;
-- TLS + U^high: the model (9), with $U^{\rm high}$ as above.
+- TLS with $`U^{\rm high} = 0`$: the rigid-body model (5) alone;
+- TLS + U^high: the model (9), with $`U^{\rm high}`$ as above.
 
 Every refinement also has the positions and a scale factor. The neutron bond lengths are from
 Swaminathan, Craven and McMullan (1984).
@@ -549,7 +637,7 @@ Swaminathan, Craven and McMullan (1984).
   basis and partition pairs.
 - **Free ADPs fit significantly better than TLS + U^high** in all four. The Hamilton ratios (15)
   for the ten extra parameters are 1.068, 1.035, 1.061 and 1.029, against 1.016 needed at
-  $\alpha = 0.005$.
+  $`\alpha = 0.005`$.
 - **N–H bond lengths depend on the partition, not the ADP model.** TFVA makes them 0.01–0.04 Å
   longer than Hirshfeld does, and further from neutron. The ADP model moves no N–H bond by more
   than 0.01 Å.
@@ -565,7 +653,9 @@ measures per atom:
 - the ratio of U_iso to the neutron U_iso, for the size;
 - the similarity index of Whitten and Spackman (2006),
 
-  $$S_{12} = 100 \left[ 1 - \frac{2^{3/2}\, \det(U_1^{-1} U_2^{-1})^{1/4}}{\det(U_1^{-1} + U_2^{-1})^{1/2}} \right],$$
+  ```math
+  S_{12} = 100 \left[ 1 - \frac{2^{3/2}\, \det(U_1^{-1} U_2^{-1})^{1/4}}{\det(U_1^{-1} + U_2^{-1})^{1/2}} \right],
+  ```
 
   which is 0 for identical displacement ellipsoids and grows as their shapes and orientations
   part.
@@ -608,11 +698,11 @@ molecular plane the mirror plane normal to (1, −1, 0):
 | 3 | 559 | NH₂ rock in the plane, the two groups together |
 | 4 | 645 | NH₂ rock in the plane, the two groups opposite |
 
-Hirshfeld partition, the model (10) with the $K$ softest modes refined, `soft_mode_restraint=`
-0.5. The cutoff is 200 cm⁻¹ for $K \le 2$, 600 for $K = 3$ and 700 for $K = 4$, so modes 3 and 4
-move from $U^{\rm high}$ into the refinement. $K = 0$ is TLS + U^high above.
+Hirshfeld partition, the model (10) with the $`K`$ softest modes refined, `soft_mode_restraint=`
+0.5. The cutoff is 200 cm⁻¹ for $`K \le 2`$, 600 for $`K = 3`$ and 700 for $`K = 4`$, so modes 3 and 4
+move from $`U^{\rm high}`$ into the refinement. $`K = 0`$ is TLS + U^high above.
 
-| basis | $K$ | parameters | $p_{\rm eff}$ | GoF | $\chi^2$ | AIC | BIC | H1: U_iso ratio, S12 | H3: U_iso ratio, S12 |
+| basis | $`K`$ | parameters | $`p_{\rm eff}`$ | GoF | $`\chi^2`$ | AIC | BIC | H1: U_iso ratio, S12 | H3: U_iso ratio, S12 |
 |---|---|---|---|---|---|---|---|---|---|
 | def2-SVP | 0 | 17 | 17.00 | 3.508 | 9843 | 9877 | 9957 | 1.22, 0.77 | 1.20, 0.50 |
 | def2-SVP | 1 | 18 | 18.00 | 3.481 | 9680 | 9716 | 9801 | 1.39, 1.54 | 1.31, 1.10 |
@@ -627,9 +717,9 @@ move from $U^{\rm high}$ into the refinement. $K = 0$ is TLS + U^high above.
 | def2-TZVP | 4 | 20 | 19.71 | 3.028 | 7308 | 7347 | 7440 | 1.39, 1.75 | 1.30, 0.97 |
 | def2-TZVP | free | 27 | 27 | 2.935 | 6806 | 6860 | 6987 | 1.48, 6.13 | 1.37, 4.74 |
 
-Hamilton's test (15) at $\alpha = 0.005$, each model against the one before it:
+Hamilton's test (15) at $`\alpha = 0.005`$, each model against the one before it:
 
-| basis | from | to | added parameters | ratio $\mathcal R$ | needed | significant |
+| basis | from | to | added parameters | ratio $`\mathcal R`$ | needed | significant |
 |---|---|---|---|---|---|---|
 | def2-SVP | K = 0 | K = 1 | 1 | 1.0084 | 1.0049 | yes |
 | def2-SVP | K = 2 | K = 3 | 1 | 1.0034 | 1.0050 | no |
@@ -640,10 +730,10 @@ Hamilton's test (15) at $\alpha = 0.005$, each model against the one before it:
 | def2-TZVP | K = 3 | K = 4 | 1 | 1.0128 | 1.0050 | yes |
 | def2-TZVP | K = 4 | free | 7 | 1.0362 | 1.0129 | yes |
 
-The refined amplitudes at $K = 4$, in atomic units ($m_e^{1/2}$ bohr)². An imaginary mode has no
+The refined amplitudes at $`K = 4`$, in atomic units ($`m_e^{1/2}`$ bohr)². An imaginary mode has no
 harmonic amplitude.
 
-| basis | mode | ω /cm⁻¹ | harmonic $a_k^0$ | refined $a_k$ | implied ω /cm⁻¹ |
+| basis | mode | ω /cm⁻¹ | harmonic $`a_k^0`$ | refined $`a_k`$ | implied ω /cm⁻¹ |
 |---|---|---|---|---|---|
 | def2-SVP | 1 | 432i | | 157(54) | 700 |
 | def2-SVP | 2 | 164i | | 243(76) | 456 |
@@ -654,16 +744,16 @@ harmonic amplitude.
 | def2-TZVP | 3 | 559 | 197 | 231(84) | 478 |
 | def2-TZVP | 4 | 645 | 170 | 657(118) | 202 |
 
-- **Two wags refine as one.** $K = 2$ gives the same fit and parameter count as $K = 1$: the
+- **Two wags refine as one.** $`K = 2`$ gives the same fit and parameter count as $`K = 1`$: the
   second wag is a combination of the first and the in-plane libration (§1.7). Both amplitudes
   are printed, but only one combination of them is determined.
 - **The wags are needed.** The first wag improves the fit significantly in both basis sets.
 - **The in-plane rocks differ.** Mode 3 is not determined by the data: it refines to 10(84)
-  at $K = 3$ and 207(96) at $K = 4$ (def2-SVP), against a harmonic 197, and does not improve the
+  at $`K = 3`$ and 207(96) at $`K = 4`$ (def2-SVP), against a harmonic 197, and does not improve the
   fit. Mode 4 refines to about four times its harmonic amplitude, an implied frequency near
   200 cm⁻¹ instead of 645, and improves the fit significantly.
 - **AIC and BIC agree with Hamilton's test.** Neither rises as modes are added. Both are lowest for free
-  ADPs, which are still significantly better than $K = 4$.
+  ADPs, which are still significantly better than $`K = 4`$.
 - **The better fit gives worse hydrogen ADPs.** Each soft mode added moves the hydrogens further
   from neutron. The U_iso ratios rise from 1.18–1.25 to 1.29–1.41, and S12 from 0.45–0.87 to
   0.97–1.75.
@@ -679,15 +769,19 @@ compensating for the density.
 ### Urea: the rigid-body tensors
 
 The rigid-body motion from def2-SVP, Hirshfeld, TLS + U^high, about the centre of mass (8
-parameters on the mm2 site). Rows of $S$ are components of $\boldsymbol{\lambda}$, columns of $\mathbf{t}$.
+parameters on the mm2 site). Rows of $`S`$ are components of $`\boldsymbol{\lambda}`$, columns of $`\mathbf{t}`$.
 
-$$T = \begin{pmatrix} 0.01402(7) & -0.00045(9) & 0 \\ -0.00045(9) & 0.01402(7) & 0 \\ 0 & 0 & 0.00591(4) \end{pmatrix} \text{Å}^2, \qquad
-L = \begin{pmatrix} 19.8(17) & 12.2(17) & 0 \\ 12.2(17) & 19.8(17) & 0 \\ 0 & 0 & 44(4) \end{pmatrix} \text{deg}^2,$$
+```math
+T = \begin{pmatrix} 0.01402(7) & -0.00045(9) & 0 \\ -0.00045(9) & 0.01402(7) & 0 \\ 0 & 0 & 0.00591(4) \end{pmatrix} \text{Å}^2, \qquad
+L = \begin{pmatrix} 19.8(17) & 12.2(17) & 0 \\ 12.2(17) & 19.8(17) & 0 \\ 0 & 0 & 44(4) \end{pmatrix} \text{deg}^2,
+```
 
-$$S = \begin{pmatrix} -0.18(2) & 0.12(2) & 0 \\ -0.12(2) & 0.18(2) & 0 \\ 0 & 0 & 0 \end{pmatrix} \text{Å deg}.$$
+```math
+S = \begin{pmatrix} -0.18(2) & 0.12(2) & 0 \\ -0.12(2) & 0.18(2) & 0 \\ 0 & 0 & 0 \end{pmatrix} \text{Å deg}.
+```
 
-$L$ has eigenvalues 7.6, 32 and 44 deg², the largest about the C=O axis; the rms libration is 5.3°.
-$S$ has zero trace.
+$`L`$ has eigenvalues 7.6, 32 and 44 deg², the largest about the C=O axis; the rms libration is 5.3°.
+$`S`$ has zero trace.
 
 
 ## 6. What is not done yet
