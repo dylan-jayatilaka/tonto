@@ -422,7 +422,7 @@ the eigenvector $`\mathbf{w}`$ is fixed for the cycle, and $`\mathbf{w}^{\mathsf
 not do this, for three reasons.
 - **Site symmetry.** The symmetry conditions of §1.4 are linear in Σ, so the allowed Σ are found
   as the null space of a matrix. In $`C`$ they are quadratic, and there is no such simple answer.
-- **The boundary.** With no correlations Σ_Q is diagonal and the Cholesky form is $`a_k = c_k^2`$.
+- **The boundary at $`C = 0`$.** With no correlations Σ_Q is diagonal and the Cholesky form is $`a_k = c_k^2`$.
   Then $`\partial a_k/\partial c_k = 2c_k`$ is zero at $`c_k = 0`$, so the normal matrix is singular exactly
   where the data push an amplitude to zero, and the esd there is infinite. The restraint keeps the
   parameter linear and gives a finite esd on the boundary.
