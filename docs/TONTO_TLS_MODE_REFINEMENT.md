@@ -462,7 +462,7 @@ use it. The TLS algebra needs only positions, so it is not a `CRYSTAL` method.
    (H3, H4), heavy atoms 0.0005–0.0010 Å². The hydrogens are in or just under the expected range;
    the heavy atoms are lower than 0.001–0.003 because two modes are excluded: the crystal geometry
    is planar and urea's NH₂ groups are pyramidal in the gas phase, so the NH₂ wags are imaginary
-   (432i, 208i cm⁻¹) there, and the gradient is 0.093 Eh/bohr. Without the projection two
+   (432i, 208i cm⁻¹ before the projection; 432i, 164i after) there, and the gradient is 0.093 Eh/bohr. Without the projection two
    rotations sit at 117 and 187 cm⁻¹ and would pass for soft modes. RHF frequencies are about
    10 % high, so these U^high are about 10 % low. **For step 2:** take the Hessian at a geometry
    where the molecule is stationary (or project the gradient's effect properly), decide how the
@@ -508,10 +508,35 @@ use it. The TLS algebra needs only positions, so it is not a `CRYSTAL` method.
    fit to the free-refinement ADPs after subtracting U^high: same to within the esds; wR and GoF²
    against the free refinement by Hamilton. Hydrogen ADPs against neutron where there are neutron
    data (the ten structures listed in `docs/TONTO_RI_FITTING_PLAN.md`).
-3. **Soft modes, one at a time.** Amplitudes only (Σ_int diagonal, no cross terms), restrained to
-   the harmonic value; AIC/BIC/Hamilton printed each step. Check on a molecule with a torsion
-   (gly_ala, or any HAR test with a methyl): the first mode added should be the torsion, and its
-   amplitude should exceed the harmonic one.
+3. **DONE on `tls-step3` (2026-10-05). Soft modes, one at a time.** `n_soft_modes=` K and
+   `soft_mode_restraint=` s (0.5) in `xray_data=`. The K softest non-rigid modes (imaginary first)
+   become extra Jacobian columns d_ik d_ik^T with d_ik = l_ik/sqrt(m_i); only the amplitudes are
+   refined, each restrained to its harmonic value with sigma = s a0, imaginary ones unrestrained
+   (`set_crystal_soft_modes`, `CRYSTAL:set_soft_mode_restraints`). `put_TLS_results` prints the
+   amplitudes with an implied frequency, and n, p_eff, chi^2, GoF, AIC, BIC; Hamilton is formed
+   from two runs' chi^2. Two traps found: (i) the soft columns carry 1/m in electron masses, about
+   1e-5 of the TLS columns, so the null-space test dropped them -- the response columns are now
+   normalised before the null-space and range tests and the scaling undone after; (ii) for planar
+   urea K = 2 adds no parameter over K = 1 -- not a bug: the modes transform exactly (±1) under the
+   site symmetry and the Hessian is symmetric to 5e-8; the second wag's pattern is in the span of
+   the first wag and the libration. Pitfall left in the code: a mode below `soft_mode_cutoff=`
+   (compared with the *scaled* frequency) but beyond the K refined is in neither U^high nor the
+   refinement -- noted in the research document; a printed warning would be better (open).
+
+   **Urea results** (def2-SVP and TZVP, Hirshfeld, K = 0…4, full tables in
+   `docs/TONTO_MODE_FITTING_RESEARCH.md` §5): the first wag (432i) and the antisymmetric in-plane
+   rock (645 cm⁻¹, refined to ~4x its harmonic amplitude, implied ~200 cm⁻¹) are significant by
+   Hamilton at alpha = 0.005; the symmetric rock (559) is not. AIC and BIC never rise. Free ADPs
+   remain significantly better than K = 4 (ratio 1.042 / 1.036 against 1.013). **But every soft
+   mode moves the hydrogen ADPs away from neutron**: U_iso ratio 1.18–1.25 -> 1.29–1.41, S12
+   0.45–0.87 -> 0.97–1.75. Working hypothesis: the extra freedom absorbs density-model error (an
+   isolated-molecule density). Next test: the same sequence with cluster charges. The planned
+   check on a molecule with a methyl torsion (gly_ala) is not yet run.
+
+   Step-2 comparison done at the same time (def2-SVP/TZVP x Hirshfeld/TFVA x free/TLS/TLS+U^high,
+   research document §5): TZVP lowers GoF by 0.37–0.47 everywhere; Hirshfeld beats TFVA by GoF;
+   free beats TLS+U^high significantly in all four; TLS+U^high gives the best hydrogen shapes
+   (S12 0.4–1.0); TFVA lengthens N–H by 0.01–0.04 Å, away from neutron.
 4. **Full Σ.** Cross terms and mixing; PSD projection; the restraint table of §3.8.
 5. **Later, not in this plan's first pass:** L1 by reweighting; multi-temperature data (frequency
    against amplitude; Grüneisen, where `MULTI_T_ADP` is the reference); segmented TLS by bond
