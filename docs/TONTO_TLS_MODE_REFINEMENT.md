@@ -496,9 +496,11 @@ use it. The TLS algebra needs only positions, so it is not a `CRYSTAL` method.
    | TLS, U^high = 0 | 17 | 0.0184 | 3.84 | 0.0334(15) / 0.0329(13) | 1.025(5) / 0.994(5) |
    | TLS + U^high | 17 | 0.0180 | 3.51 | 0.0447(15) / 0.0399(13) | 1.028(5) / 0.994(5) |
 
-   The site symmetry (mm2) leaves 8 TLS parameters. TLS + U^high fits as well as free ADPs with
-   17 parameters against 27 (R 0.0180 against 0.0181; GoF higher only because it counts the
-   residual against fewer parameters), and the hydrogen esds are a third of the free ones. T: 0.0140
+   The site symmetry (mm2) leaves 8 TLS parameters. **By GoF, TLS + U^high fits worse than free
+   ADPs: 3.51 against 3.30** (17 parameters against 27); R, 0.0180 against 0.0181, hides this.
+   Whether the difference is significant is the Hamilton test's question (step 3 prints it). The
+   hydrogen esds are a third of the free ones. N–H against neutron (1.006, 1.000 Å): free
+   1.028(5), 0.986(6); TLS + U^high 1.028(5), 0.994(5) -- N–H3 moves 0.008 Å toward neutron. T: 0.0140
    Å² in plane, 0.0059 along C=O; L: 44(4) deg² about the C=O axis, eigenvalues 7.6, 32, 44 deg²,
    rms 5.3°. STO-3G shows the same ordering (R 0.0379, 0.0391, 0.0387). The two imaginary NH₂
    wags are left for step 3; they are where the missing hydrogen U (0.054 against 0.045) belongs.

@@ -4,6 +4,21 @@ Durable, project-wide context for Claude Code, read at the start of every sessio
 **Stable facts only** — build, test, layout, conventions. Live work is in `TASKS_AND_HISTORY.md`;
 the story of how the build and translator came to be is in `docs/PROJECT_HISTORY.md`.
 
+## 0. Three rules that are broken most often
+
+1. **Fortran ignores case. Never give two names in one procedure the same letters in different
+   case** — `h` and `H`, `g` and `G`, `u` and `U`, `sig` and `Sig`, `j` and `J`. Foo keeps your
+   spelling; the compiler then sees one name and fails with "already has basic type". Before
+   declaring a local, check it against every other local and argument of the procedure.
+2. **One process per build tree and per remote worktree.** Before starting a build or a script
+   that writes a tree, check nothing else is writing it (`pgrep -fl "make|ctest|tonto"`). Run
+   long work as **one detached script** that does build, bless and test in order and writes one
+   log, then poll that log. Never `pkill -f` a pattern that also matches your own command line.
+   A timed-out remote session does not stop what it started.
+3. **Compare refinement models by GoF, not R.** GoF counts the parameters and is the more
+   sensitive measure; R alone can hide a worse fit. Quote GoF first; for nested models use the
+   Hamilton test.
+
 ## 1. How to write for this project
 
 Read this first. It is the rule most often broken, and breaking it is expensive: a slab

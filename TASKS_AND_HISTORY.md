@@ -157,8 +157,8 @@ what step 2 must decide in `docs/TONTO_TLS_MODE_REFINEMENT.md` step 1.
 water and urea normal-mode tests). Merge it when references are next re-blessed on achari2.
 **2026-10-05, branch `tls-step2`:** TLS plan step 2 -- a new `LEAST_SQUARES` type with explicit refined
 parameters (values, esds, covariance, J, offset; the structure solve goes through it, results unchanged),
-and `adp_model= tls`: site-symmetric T, L, S plus U^high, refined against F. On urea def2-SVP it fits as
-well as free ADPs with 17 parameters against 27. Details in the plan, step 2. Later: the pADP and
+and `adp_model= tls`: site-symmetric T, L, S plus U^high, refined against F. On urea def2-SVP its GoF is
+3.51 against 3.30 for free ADPs (17 parameters against 27): worse, significance to be tested. Details in the plan, step 2. Later: the pADP and
 asymmetric-unit/fragment frame machinery can be simplified around LEAST_SQUARES with the CRYSTAL hoist.
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
