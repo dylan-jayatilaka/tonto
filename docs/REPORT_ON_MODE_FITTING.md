@@ -824,6 +824,36 @@ the hydrogen ADPs against neutron (U_iso ratio, then S12).
 - **RI-J with COSX** reproduces the exact 7-molecule refinements to 0.0004 in GoF and every
   bond to 0.001 Å; on this cluster it is slower than the exact method.
 
+**The 7-molecule cluster in def2-TZVP,** with RI-J and COSX. For each method: free ADPs, TLS +
+U^high, and three soft modes with their correlations; the number of parameters, the fit, the
+bond lengths, and the hydrogen ADPs against neutron (U_iso ratio, then S12).
+
+| method | ADP model | parameters | $`p_{\rm eff}`$ | GoF | N–H1 /Å | N–H3 /Å | C=O /Å | H1: U_iso ratio, S12 | H3: U_iso ratio, S12 |
+|---|---|---|---|---|---|---|---|---|---|
+| RHF | free | 27 | 27.0 | 2.716 | 1.017(4) | 0.998(4) | 1.2554(3) | 1.27, 3.70 | 1.24, 2.62 |
+| RHF | TLS + U^high | 17 | 17.0 | 2.775 | 1.014(4) | 1.002(4) | 1.2553(3) | 1.24, 0.83 | 1.20, 0.51 |
+| RHF | K = 3, correlations | 20 | 19.6 | 2.763 | 1.014(4) | 1.002(4) | 1.2552(3) | 1.25, 1.03 | 1.19, 0.53 |
+| B3LYP | free | 27 | 27.0 | 2.080 | 1.001(3) | 0.994(4) | 1.2556(3) | 1.16, 1.10 | 1.18, 2.76 |
+| B3LYP | TLS + U^high | 17 | 17.0 | 2.139 | 1.000(3) | 0.996(3) | 1.2555(3) | 1.27, 0.91 | 1.18, 0.47 |
+| B3LYP | K = 3, correlations | 20 | 19.7 | 2.126 | 1.000(3) | 0.995(3) | 1.2555(3) | 1.18, 0.50 | 1.13, 0.33 |
+| neutron | | | | | 1.006 | 1.000 | | 1, 0 | 1, 0 |
+
+- **B3LYP on the def2-TZVP cluster fits best of every refinement here,** GoF 2.080 with free ADPs,
+  against 2.551 for B3LYP with cluster charges in def2-SVP. Its N–H bonds are within 2 esd of
+  neutron in every ADP model.
+- **The basis matters as much as the environment:** for RHF on the cluster, def2-TZVP lowers GoF
+  from 3.217 to 2.716 with free ADPs.
+- **Free ADPs are still significantly better.** The Hamilton ratio of three correlated soft
+  modes against free ADPs is 1.0219 (RHF) and 1.0268 (B3LYP), against 1.0129 needed. The
+  correlated soft modes improve on TLS + U^high only at the margin: 1.0061 (RHF) and 1.0080
+  (B3LYP), against 1.0081 needed.
+- **With B3LYP the hydrogen ADPs are best with the correlated soft modes,** S12 0.50 and 0.33.
+  With RHF, TLS + U^high and the correlated soft modes are alike, S12 0.51–1.03. Free ADPs give
+  1.1–3.7.
+- **The wags are determined here and are not zero.** With correlations, the two wags refine to
+  113(22) and 169(19) with RHF and to 120(17) and 175(14) with B3LYP, implying 627–973 cm⁻¹,
+  in the region of the crystal's NH₂ bands (next section but one).
+
 **The soft modes in the crystal environment.** The same sequence of $`K`$ soft modes, with Σ held
 positive (§2.4). Each entry is GoF, with $`p_{\rm eff}`$ in brackets.
 
@@ -838,9 +868,9 @@ positive (§2.4). Each entry is GoF, with $`p_{\rm eff}`$ in brackets.
 - **In the crystal environment the NH₂ wags are not wanted.** With cluster charges their refined
   amplitudes are zero or would be negative. The positivity restraint holds them at zero, and
   $`p_{\rm eff}`$ stays at 17. Hamilton's test finds no improvement from $`K = 0`$ to $`K = 2`$.
-- This does not mean the wags are still in the crystal. The crystal's own NH₂ modes have the
-  amplitudes the isolated-molecule refinements found (next section but one). Why the refinements
-  with cluster charges do not use the wags is open.
+- This does not mean the crystal has no wag motion. The crystal's own NH₂ modes have the
+  amplitudes the isolated-molecule refinements found (next section but one). Why the def2-SVP
+  refinements with cluster charges do not use the wags is open; on the def2-TZVP cluster they do.
 - **An in-plane bend is still wanted:** mode 4 with RHF, mode 3 with B3LYP. Each improves the fit
   significantly by Hamilton's test at $`\alpha = 0.005`$.
 
@@ -922,7 +952,8 @@ $`S`$ has zero trace.
 
 ## 6. What is not done yet, and directions
 
-- B3LYP on the 7-molecule cluster, and the def2-TZVP basis for the crystal-environment tables.
+- B3LYP on the 7-molecule cluster in def2-SVP, and def2-TZVP for the isolated molecule and with
+  cluster charges, to complete the crystal-environment tables.
 - A molecule with a methyl torsion, where the first soft mode should be the torsion.
 - T, L and S reported at the centre of reaction as well as at the centre of mass.
 - An ORCA Hessian reader.

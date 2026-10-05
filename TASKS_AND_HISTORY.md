@@ -199,14 +199,11 @@ the time. Not run: B3LYP on the explicit cluster; def2-TZVP for these tables; a 
 paired with `REPORT_ON_MODE_FITTING`), findings for people `REPORT_ON_*`; a `check_docs.py` ctest
 flags dates, hashes, status notes and GitHub-unsafe LaTeX in everything else. Applied after the
 tls-step4 merge.
-**In progress, 2026-10-05 15:11 (Dylan's request): def2-TZVP on the 7-molecule urea cluster with RI-J/COSX,
-RHF and B3LYP, each free / TLS + U^high / three soft modes with correlations** (six jobs, three at a
-time, `OPENBLAS_NUM_THREADS=4`, binary = clean `develop` build `b462a2dc`). Runs in the Claude job folder
-`~/.claude/jobs/9b038530/tmp/tls/cc/jobs/tz_clus_rijcosx_*`, log `.../cc/batch6.log` (ends `ALL DONE`).
-To finish: copy the run folder to `~/tonto-runs/2026-10-05_mode_fitting` (`rsync` as its README says,
-inputs and outputs only), tabulate (GoF, parameters, N-H, hydrogen U_iso ratio and S12 against neutron;
-`cc/md_tables.py` there shows how), and add a def2-TZVP block to *Urea: the crystal environment* in
-`docs/REPORT_ON_MODE_FITTING.md`. All earlier runs are already in `~/tonto-runs/2026-10-05_mode_fitting`.
+**Done 2026-10-05 18:50: def2-TZVP on the 7-molecule urea cluster with RI-J/COSX,** RHF and B3LYP,
+free / TLS + U^high / three correlated soft modes (each ~1.7-2 h, three at a time). In the report,
+*Urea: the crystal environment*. B3LYP free GoF 2.080, the best of all; N-H within 2 esd of neutron;
+free still significantly better than correlated soft modes (1.0268 vs 1.0129); the wags are determined
+and nonzero on this cluster (113-175, implied 627-973 cm-1). Runs in `~/tonto-runs/2026-10-05_mode_fitting`.
 **Crystal vibrations (2026-10-05, Johnson et al. Chem. Phys. 291, 53 (2003), in Dropbox/manuscripts):**
 INS NH2 bands near 480 and 670 cm-1, lattice modes to ~160-200, no internal mode below ~416. The
 isolated-molecule wag amplitudes (implied 456-843 cm-1) match the crystal's NH2 modes, so the earlier
