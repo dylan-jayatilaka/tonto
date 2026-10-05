@@ -176,8 +176,8 @@ mode below `soft_mode_cutoff=` is not among the K refined (today it silently dro
 it hydrogen-bonds to; 3.0-3.8 A gives 11 molecules, the extra four in van der Waals contact only);
 (b) TLS on a cluster -- the TLS body is the central molecule (`CRYSTAL:n_TLS_atoms`), its modes come
 from `.saved`; `create_cluster` now keeps `auxiliary_basis_name=` (RI-J on a cluster stopped at the
-first SCF); (c) step 4, the full Sigma (`soft_mode_correlations=`), cross terms restrained as
-correlation coefficients, and Sigma held positive (`positive_tls_sigma=`, on) by a restraint on each
+first SCF); (c) step 4, the full Sigma (`use_soft_mode_correlations=`), cross terms restrained as
+correlation coefficients, and Sigma held positive (`use_positive_tls_sigma=`, on) by a restraint on each
 negative eigen-direction. Results in the research document §5. Why positivity is on: with cluster
 charges the wag amplitudes refine negative (-177(83) for B3LYP, one mode).
 **Profiles of a 56-atom def2-SVP cluster SCF** (macOS `sample`, 20 s, during the HAR; idle OpenBLAS

@@ -390,7 +390,7 @@ $`T`$ or $`L`$), and for a soft mode the harmonic amplitude (6) at its $`|\omega
   $`\mathbf{w}`$ with a negative eigenvalue, $`g = \mathbf{w}^{\mathsf T}\Sigma\,\mathbf{w}`$ is held toward 0 with
   $`\sigma = \sum_p w_p^2 c_p / 100`$. This holds Σ on the boundary $`\Sigma \ge 0`$ while the data push
   against it. When they stop pushing, the eigenvalue comes out positive and the restraint is
-  dropped at the next cycle. `positive_tls_sigma=` switches it, on by default.
+  dropped at the next cycle. `use_positive_tls_sigma=` switches it, on by default.
 
 **What a restraint means.** A restraint is an extra observation, the same as a bond-length
 restraint in a conventional refinement: alongside the reflections, the fit is told "this
@@ -498,9 +498,9 @@ In `xray_data=`:
 | `adp_model=` | `free` | `free`: refine each atom's ADP; `tls`: the model (10), HAR only |
 | `n_soft_modes=` | 0 | $`K`$ in (10): how many of the softest modes have refined amplitudes |
 | `soft_mode_restraint=` | 0.5 | $`f_a`$ in §2.4: the amplitude restraint's $`\sigma`$ as a fraction of the harmonic amplitude |
-| `soft_mode_correlations=` | `FALSE` | `TRUE` refines the cross terms of (11) |
+| `use_soft_mode_correlations=` | `FALSE` | `TRUE` refines the cross terms of (11) |
 | `correlation_restraint=` | 0.5 | $`f_\rho`$ in §2.4: the uncertainty of a correlation coefficient held toward 0 |
-| `positive_tls_sigma=` | `TRUE` | holds Σ positive semidefinite (§2.4) |
+| `use_positive_tls_sigma=` | `TRUE` | holds Σ positive semidefinite (§2.4) |
 
 A TLS Hirshfeld atom refinement with U^high from a Hessian, and the four softest modes refined:
 
