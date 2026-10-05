@@ -759,12 +759,97 @@ harmonic amplitude.
   0.97–1.75.
 
 So the refined soft modes, like free ADPs, lower GoF by making the hydrogens larger, not by
-making them more like neutron. One explanation is that the extra freedom absorbs an error in
-the density model rather than describing motion: the density here is that of an isolated
-molecule, and the hydrogens are the atoms most affected by the crystal around them. The test is
-to repeat the sequence with cluster charges, which polarise the density as the crystal does.
-If the soft-mode amplitudes then fall back toward their harmonic values, the soft modes were
-compensating for the density.
+making them more like neutron. The next section shows that this is the density model at work.
+
+### Urea: the crystal environment
+
+The density so far is that of an isolated molecule. The crystal around a molecule polarises its
+density, most of all at the hydrogens, which make the hydrogen bonds. Two ways to include it:
+
+- **cluster charges:** point charges and dipoles at the atoms of the surrounding molecules
+  within 8 Å, made self-consistently from the molecule's own density (`use_SC_cluster_charges=`);
+- **an explicit cluster:** the central molecule and the six it hydrogen-bonds to, all computed
+  quantum mechanically (`create_cluster` with `radius= 2.5 Angstrom`). The Hirshfeld atoms of the
+  central molecule are taken from the density of the whole cluster.
+
+All refinements here use def2-SVP and the Hirshfeld partition. B3LYP is the Gaussian form of the
+functional (`b3lypgx`, `b3lypgc`).
+
+| method | environment | ADP model | parameters | GoF | N–H1 /Å | N–H3 /Å | H1: U_iso ratio, S12 | H3: U_iso ratio, S12 |
+|---|---|---|---|---|---|---|---|---|
+| RHF | isolated | free | 27 | 3.304 | 1.028(5) | 0.986(6) | 1.47, 8.05 | 1.44, 7.06 |
+| RHF | isolated | TLS + U^high | 17 | 3.508 | 1.028(5) | 0.994(5) | 1.22, 0.77 | 1.20, 0.50 |
+| RHF | cluster charges | free | 27 | 3.307 | 1.017(5) | 0.999(5) | 1.29, 4.48 | 1.26, 3.37 |
+| RHF | cluster charges | TLS + U^high | 17 | 3.383 | 1.014(5) | 1.005(5) | 1.24, 0.75 | 1.19, 0.48 |
+| RHF | 7-molecule cluster | free | 27 | 3.217 | 1.023(5) | 0.997(5) | 1.29, 3.06 | 1.25, 3.88 |
+| RHF | 7-molecule cluster | TLS + U^high | 17 | 3.284 | 1.020(5) | 1.004(5) | 1.24, 0.83 | 1.18, 0.45 |
+| B3LYP | isolated | free | 27 | 2.709 | 1.018(4) | 0.992(5) | 1.30, 3.81 | 1.33, 4.53 |
+| B3LYP | isolated | TLS + U^high | 17 | 2.833 | 1.020(4) | 0.995(4) | 1.23, 0.78 | 1.19, 0.48 |
+| B3LYP | cluster charges | free | 27 | 2.551 | 1.007(4) | 1.001(4) | 1.15, 1.96 | 1.18, 1.68 |
+| B3LYP | cluster charges | TLS + U^high | 17 | 2.596 | 1.006(4) | 1.005(4) | 1.24, 0.78 | 1.19, 0.50 |
+| neutron | | | | | 1.006 | 1.000 | 1, 0 | 1, 0 |
+
+- **The environment brings the N–H bonds to neutron.** B3LYP with cluster charges gives N–H1
+  1.007(4) and N–H3 1.001(4) Å against neutron 1.006 and 1.000 Å.
+- **B3LYP fits better than RHF**, by 0.6–0.8 in GoF, isolated and with cluster charges.
+- **The environment brings the free hydrogen ADPs toward neutron.** S12 falls from 3.8–8.1 for the
+  isolated molecule to 1.7–2.0 with B3LYP and cluster charges.
+- **TLS + U^high gives nearly the same hydrogen ADPs in every case**: U_iso ratios 1.18–1.24,
+  S12 0.45–0.83. They depend on the motion model, not on the density.
+- **The gap between free and TLS + U^high narrows.** The Hamilton ratio (15) for the ten extra
+  parameters falls from 1.068 (RHF, isolated) to 1.024 (B3LYP, cluster charges), against 1.016
+  needed. Free ADPs are still significantly better.
+- **RI-J with COSX** reproduces the exact 7-molecule refinements to 0.0004 in GoF and every
+  bond to 0.001 Å; on this cluster it is slower than the exact method.
+
+**The soft modes in the crystal environment.** The same sequence of $`K`$ soft modes, with Σ held
+positive (§2.4). Each entry is GoF, with $`p_{\rm eff}`$ in brackets.
+
+| method | environment | K = 0 | K = 1 | K = 2 | K = 3 | K = 4 | free |
+|---|---|---|---|---|---|---|---|
+| RHF | isolated | 3.508 (17.0) | 3.481 (18.0) | 3.481 (18.0) | 3.471 (18.9) | 3.428 (19.7) | 3.304 (27) |
+| RHF | cluster charges | 3.383 (17.0) | 3.385 (17.0) | 3.385 (17.0) | 3.382 (18.0) | 3.358 (18.7) | 3.307 (27) |
+| RHF | 7-molecule cluster | 3.284 (17.0) | 3.286 (18.0) | 3.286 (17.0) | 3.287 (18.9) | 3.264 (18.7) | 3.217 (27) |
+| B3LYP | isolated | 2.833 (17.0) | 2.828 (18.0) | 2.828 (18.0) | 2.802 (18.0) | 2.795 (18.8) | 2.709 (27) |
+| B3LYP | cluster charges | 2.596 (17.0) | 2.598 (17.0) | 2.599 (17.0) | 2.577 (17.0) | 2.578 (17.9) | 2.551 (27) |
+
+- **In the crystal environment the NH₂ wags are not wanted.** With cluster charges their refined
+  amplitudes are zero or would be negative. The positivity restraint holds them at zero, and
+  $`p_{\rm eff}`$ stays at 17. Hamilton's test finds no improvement from $`K = 0`$ to $`K = 2`$.
+- So the wag amplitudes refined for the isolated molecule were making up for its density. That
+  is also why they moved the hydrogen ADPs away from neutron.
+- **An in-plane rock is still wanted:** mode 4 with RHF, mode 3 with B3LYP. Each improves the fit
+  significantly by Hamilton's test at $`\alpha = 0.005`$.
+
+### Urea: correlations
+
+The same refinements with the soft modes' correlations refined as well (§1.8).
+
+| method | environment | K | parameters | $`p_{\rm eff}`$ | GoF | H1: U_iso ratio, S12 | H3: U_iso ratio, S12 |
+|---|---|---|---|---|---|---|---|
+| RHF | isolated | 3 | 20 | 19.6 | 3.412 | 1.39, 2.10 | 1.32, 1.24 |
+| RHF | cluster charges | 3 | 20 | 19.6 | 3.359 | 1.24, 1.17 | 1.19, 0.56 |
+| RHF | 7-molecule cluster | 3 | 20 | 19.6 | 3.267 | 1.26, 1.25 | 1.19, 0.56 |
+| B3LYP | isolated | 3 | 20 | 19.6 | 2.790 | 1.29, 1.12 | 1.25, 0.76 |
+| B3LYP | cluster charges | 1 | 18 | 18.0 | 2.591 | 1.18, 0.50 | 1.14, 0.31 |
+| B3LYP | cluster charges | 3 | 20 | 19.6 | 2.574 | 1.16, 0.45 | 1.14, 0.33 |
+| B3LYP | cluster charges | 4 | 23 | 21.2 | 2.578 | 1.17, 0.42 | 1.14, 0.37 |
+
+- **Three soft modes with their correlations are the best motion model.** In every environment
+  $`K = 3`$ with correlations is significantly better than $`K = 2`$; $`K = 4`$ is not better
+  than $`K = 3`$.
+- **B3LYP with cluster charges and $`K = 3`$ with correlations comes closest to free ADPs:** GoF
+  2.574 with 20 parameters against 2.551 with 27. The Hamilton ratio is 1.0134 against 1.0129
+  needed, so free ADPs are only just significantly better. Its hydrogen ADPs are the best of any
+  refinement here: U_iso ratios 1.14–1.16, S12 0.33–0.45.
+- **What the correlations say.** With one soft mode, the first NH₂ wag, B3LYP with cluster
+  charges refines the wag to a positive amplitude, 95(28), correlated with libration about the
+  C=O axis by $`\rho = -0.49(15)`$. The same ADPs without the correlation need a negative
+  amplitude. The hydrogens move out of the plane less than libration alone would carry them,
+  as expected when they are held by hydrogen bonds.
+- **The correlation restraint does not matter here.** With $`K = 3`$, widths
+  $`f_\rho = 0.25, 0.5, 1, 2`$ and 10 give the same GoF to 0.0001 and the same correlations
+  to the printed digit. The data determine every correlation to an esd of 0.03–0.11.
 
 ### Urea: the rigid-body tensors
 
@@ -786,10 +871,8 @@ $`S`$ has zero trace.
 
 ## 6. What is not done yet
 
-- **Cluster charges** with the soft-mode sequence, to test whether the soft modes compensate for
-  the density (§5, soft modes).
-- **Correlation between the soft modes and the rigid-body motion.** The model (10) takes them as
-  independent.
+- B3LYP on the 7-molecule cluster, and the def2-TZVP basis for the crystal-environment tables.
+- A molecule with a methyl torsion, where the first soft mode should be the torsion.
 - T, L and S reported at the centre of reaction as well as at the centre of mass.
 - An ORCA Hessian reader.
 - One TLS group per fragment only; no segmented (attached-group) TLS.
