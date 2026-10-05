@@ -4752,6 +4752,9 @@ contains
       ! The map from refined parameters to pADPs (leaky)
       .make_refinement_jacobian
 
+      ! The parameters themselves; a TLS model puts the atoms on it
+      .set_refinement_parameters
+
    end
 
    initialize_refinement_data :: leaky
@@ -4779,6 +4782,417 @@ contains
 
       ! The map from refined parameters to pADPs (leaky)
       .make_refinement_jacobian
+
+   end
+
+   set_fragment_U_high(U_high) :: leaky, PURE
+   ! Set .fragment_U_high, the stiff-mode U of each fragment atom (3,3,n),
+   ! bohr^2: the fixed part of a TLS model.
+      self :: INOUT
+      U_high :: MAT3{REAL}, IN
+   ENSURE(.fragment_atom.allocated,"no fragment atoms")
+   ENSURE(U_high.dim3==.fragment_atom.dim,"one U_high per fragment atom")
+
+      .fragment_U_high.destroy
+      .fragment_U_high = U_high
+
+   end
+
+   TLS_response(g) result (res) :: PURE
+   ! d U_g / d sigma for fragment atom "g": column k is the change in
+   ! (U_xx,U_yy,U_zz,U_xy,U_xz,U_yz) per unit of the k-th upper-triangle
+   ! element sigma_pq of Sigma = <v v^T>, v = (t, lambda), with
+   ! U_g = B_g Sigma B_g^T and B_g = [1 | A_g], A_g lambda = lambda x r_g,
+   ! r_g from .TLS_origin.
+      self :: IN
+      g :: INT, IN
+      res :: MAT{REAL}(6,21)
+
+      d :: VEC{REAL}(3)
+      Bm :: MAT{REAL}(3,6)
+      M :: MAT{REAL}(3,3)
+      p,q,k,i,j :: INT
+
+      d = .fragment_atom(g).position - .TLS_origin
+      Bm = ZERO
+      do i = 1,3
+         Bm(i,i) = ONE
+      end
+      Bm(1,5) =  d(3); Bm(1,6) = -d(2)
+      Bm(2,4) = -d(3); Bm(2,6) =  d(1)
+      Bm(3,4) =  d(2); Bm(3,5) = -d(1)
+
+      k = 0
+      do p = 1,6
+      do q = p,6
+         k = k + 1
+         do i = 1,3
+         do j = 1,3
+            M(i,j) = Bm(i,p)*Bm(j,q)
+         end
+         end
+         if (p/=q) M = M + transpose(M)
+         res(:,k) = [M(1,1),M(2,2),M(3,3),M(1,2),M(1,3),M(2,3)]
+      end
+      end
+
+   end
+
+   make_TLS_jacobian_columns(Jt) :: leaky
+   ! Make "Jt", the columns of the refinement Jacobian for a TLS model:
+   ! d X / d p for the TLS parameters p, nonzero on the ADP rows of the
+   ! unique fragment atoms. Sigma = [[T,S^T],[S,L]] is restricted to the
+   ! values for which every fragment atom's U obeys the crystal symmetry:
+   ! images of one asymmetric unit atom agree, and an atom on a special
+   ! position keeps its site symmetry. Directions no U sees (tr S) are
+   ! dropped. Sets .TLS_origin, .TLS_basis (Sigma for each parameter) and
+   ! .TLS_unique_response. Each column is scaled so its largest entry is one.
+      self :: INOUT
+      Jt :: MAT{REAL}@, OUT
+   ENSURE(.fragment_info_made,"no fragment info")
+
+      seitz :: MAT3{REAL}@
+      Rall,C,Cg,CtC,Z,MZ,GZ,evec,Q :: MAT{REAL}@
+      eval :: VEC{REAL}@
+      stab :: VEC{INT}@
+      W :: MAT{REAL}(6,6)
+      R :: MAT{REAL}(3,3)
+      mass,big,fac :: REAL
+      n_f,n_u,n_c,k,g,u,v,fu,fg,a,ag,t,i,j,ub,n_stab :: INT
+
+      n_f = .n_fragment_atoms
+      n_u = .n_unique_frag_atoms
+      seitz = .xyz_seitz_matrices
+
+      ! Origin: the fragment's centre of mass
+      .TLS_origin = ZERO
+      mass = ZERO
+      do g = 1,n_f
+         .TLS_origin = .TLS_origin + .fragment_atom(g).mass*.fragment_atom(g).position
+         mass = mass + .fragment_atom(g).mass
+      end
+      .TLS_origin = .TLS_origin/mass
+
+      ! d U / d sigma for every fragment atom
+      Rall.create(6*n_f,21)
+      do g = 1,n_f
+         Rall(6*g-5:6*g,:) = .TLS_response(g)
+      end
+
+      ! Symmetry conditions on sigma, as rows of C sigma = 0
+      n_stab = 0
+      do u = 1,n_u
+         a = .asym_atom_for_frag_atom(.unique_frag_atom(u))
+         n_stab = n_stab + .asym_atom_stabilizer(a).element.dim
+      end
+      C.create(6*(n_f+n_stab),21)
+      C = ZERO
+      n_c = 0
+      do g = 1,n_f
+         ! The unique atom imaging the same asymmetric unit atom
+         ag = .asym_atom_for_frag_atom(g)
+         fu = 0
+         do v = 1,n_u
+            if (.asym_atom_for_frag_atom(.unique_frag_atom(v))/=ag) cycle
+            fu = .unique_frag_atom(v)
+         end
+         if (fu==0 OR fu==g) cycle
+         R = matmul(seitz(:,:,.asym_symop_for_frag_atom(g)), &
+                    transpose(seitz(:,:,.asym_symop_for_frag_atom(fu))))
+         GAUSSIAN_DATA:symmetric_tensor_2_product_mx(W,R)
+         C(n_c+1:n_c+6,:) = Rall(6*g-5:6*g,:) - matmul(W,Rall(6*fu-5:6*fu,:))
+         n_c = n_c + 6
+      end
+      do u = 1,n_u
+         fu = .unique_frag_atom(u)
+         a  = .asym_atom_for_frag_atom(fu)
+         stab = .asym_atom_stabilizer(a).element
+         do t = 1,stab.dim
+            R = matmul(seitz(:,:,.asym_symop_for_frag_atom(fu)), &
+                matmul(seitz(:,:,stab(t)),transpose(seitz(:,:,.asym_symop_for_frag_atom(fu)))))
+            GAUSSIAN_DATA:symmetric_tensor_2_product_mx(W,R)
+            C(n_c+1:n_c+6,:) = matmul(W,Rall(6*fu-5:6*fu,:)) - Rall(6*fu-5:6*fu,:)
+            n_c = n_c + 6
+         end
+         stab.destroy
+      end
+
+      ! The site-symmetric sigma: the null space of C
+      CtC.create(21,21)
+      CtC.to_product_of(C(1:n_c,:),C(1:n_c,:),transpose_a=TRUE)
+      eval.create(21)
+      evec.create(21,21)
+      CtC.solve_symmetric_eigenproblem(eval,evec)
+      big = max(maxval(abs(eval)),ONE)
+      k = count(abs(eval)<=TOL(10)*big)
+      Z.create(21,k)
+      j = 0
+      do i = 1,21
+         if (abs(eval(i))>TOL(10)*big) cycle
+         j = j + 1
+         Z(:,j) = evec(:,i)
+      end
+      if (n_c==0) then
+         Z.destroy
+         Z.create(21,21)
+         Z = ZERO
+         do i = 1,21
+            Z(i,i) = ONE
+         end
+         k = 21
+      end
+
+      ! Drop what no U sees (tr S): keep the range of Rall within Z
+      MZ.create(6*n_f,k)
+      MZ.to_product_of(Rall,Z)
+      GZ.create(k,k)
+      GZ.to_product_of(MZ,MZ,transpose_a=TRUE)
+      eval.destroy; evec.destroy
+      eval.create(k)
+      evec.create(k,k)
+      GZ.solve_symmetric_eigenproblem(eval,evec)
+      big = maxval(abs(eval))
+      j = count(eval>TOL(10)*big)
+      Q.create(21,j)
+      t = 0
+      do i = 1,k
+         if (eval(i)<=TOL(10)*big) cycle
+         t = t + 1
+         Q(:,t) = matmul(Z,evec(:,i))
+      end
+      k = j
+
+      ! The Jacobian columns: d U_u / d p on each unique atom's ADP rows
+      .TLS_unique_response.destroy
+      .TLS_unique_response.create(6*n_u,k)
+      Jt.create(.asymmetric_unit_atom.no_of_pADPs,k)
+      Jt = ZERO
+      ub = 0
+      do u = 1,n_u
+         fu = .unique_frag_atom(u)
+         Cg.create(6,k)
+         Cg.to_product_of(Rall(6*fu-5:6*fu,:),Q)
+         Jt(ub+4:ub+9,:) = Cg
+         .TLS_unique_response(6*u-5:6*u,:) = Cg
+         Cg.destroy
+         ub = ub + .fragment_atom(fu).no_of_pADPs
+      end
+      do j = 1,k
+         fac = maxval(abs(Jt(:,j)))
+         if (fac<=ZERO) cycle
+         Jt(:,j) = Jt(:,j)/fac
+         Q(:,j) = Q(:,j)/fac
+         .TLS_unique_response(:,j) = .TLS_unique_response(:,j)/fac
+      end
+
+      .TLS_basis.destroy
+      .TLS_basis = Q
+
+      Q.destroy; GZ.destroy; MZ.destroy; Z.destroy
+      evec.destroy; eval.destroy; CtC.destroy; C.destroy; Rall.destroy
+      seitz.destroy
+
+   end
+
+   set_refinement_parameters :: leaky
+   ! Make the refined parameters p in .xray_data.ls for the unique fragment
+   ! atoms' pADPs X. For a TLS model the ADP rows are put on the model,
+   ! U = U_high + (TLS part fitted to U - U_high), and the atoms -- unique
+   ! fragment and asymmetric unit -- are given those ADPs.
+      self :: INOUT
+   ENSURE(.xray_data.allocated,"no data")
+   ENSURE(.xray_data.ls.allocated,"no least-squares data")
+
+      X,X_fixed,v :: VEC{REAL}@
+      fixed :: VEC{BIN}@
+      seitz_T :: MAT3{REAL}@
+      X_atom :: ATOM
+      n_X,u,f,a,s,n,ub :: INT
+      tls :: BIN
+
+      if (.xray_data.ls.jacobian.deallocated) return
+      tls = .xray_data.ADP_model=="tls"
+
+      ! X, and its fixed part
+      n_X = .xray_data.ls.n_X
+      X.create(n_X)
+      X_fixed.create(n_X)
+      fixed.create(n_X)
+      X_fixed = ZERO
+      fixed = FALSE
+      ub = 0
+      do u = 1,.n_unique_frag_atoms
+         f = .unique_frag_atom(u)
+         n = .fragment_atom(f).no_of_pADPs
+         X(ub+1:ub+n) = .fragment_atom(f).pADP_vector
+         if (tls) then
+            fixed(ub+4:ub+9) = TRUE
+            if (.fragment_U_high.allocated) then
+               X_fixed(ub+4) = .fragment_U_high(1,1,f)
+               X_fixed(ub+5) = .fragment_U_high(2,2,f)
+               X_fixed(ub+6) = .fragment_U_high(3,3,f)
+               X_fixed(ub+7) = .fragment_U_high(1,2,f)
+               X_fixed(ub+8) = .fragment_U_high(1,3,f)
+               X_fixed(ub+9) = .fragment_U_high(2,3,f)
+            end
+         end
+         ub = ub + n
+      end
+
+      .xray_data.ls.set_parameters_from(X,X_fixed,fixed)
+
+      ! A TLS model: give the atoms the model's ADPs
+      if (tls) then
+         seitz_T = .transposed_xyz_seitz_matrices
+         ub = 0
+         do u = 1,.n_unique_frag_atoms
+            f = .unique_frag_atom(u)
+            a = .asym_atom_for_frag_atom(f)
+            s = .asym_symop_for_frag_atom(f)
+            n = .fragment_atom(f).no_of_pADPs
+            v = X(ub+1:ub+n)
+            .fragment_atom(f).set_pADP_vector_to(v)
+            X_atom.pADP_vector.create(n)
+            X_atom.set_pADP_vector_to(v)
+            X_atom.transform_pADP_vector_with(seitz_T(:,:,s))
+            .asymmetric_unit_atom(a).set_pADP_vector_to(X_atom.pADP_vector)
+            X_atom.destroy_ptr_part
+            v.destroy
+            ub = ub + n
+         end
+         seitz_T.destroy
+         .set_frag_from_asym_pADPs
+      end
+
+      fixed.destroy
+      X_fixed.destroy
+      X.destroy
+
+   end
+
+   put_TLS_results
+   ! Put T, L and S of a TLS refinement, about the fragment's centre of
+   ! mass, with esds. They are fitted to the unique fragment atoms' ADPs
+   ! minus U_high, which lie on the model, and their esds come from the
+   ! covariance of the TLS parameters scaled by GoF^2.
+      self :: IN
+   ENSURE(.TLS_basis.allocated,"no TLS model")
+   ENSURE(.TLS_unique_response.allocated,"no TLS model")
+
+      Mt,MtM,Cp,CS,Sm,Esd :: MAT{REAL}@
+      y,p,rhs,sv,var :: VEC{REAL}@
+      Um :: MAT{REAL}(3,3)
+      L_evals :: VEC{REAL}(3)
+      L_evecs :: MAT{REAL}(3,3)
+      ang,deg2,adeg :: REAL
+      n_u,k,u,f,i,j,pp,qq,m,first :: INT
+
+      n_u = .n_unique_frag_atoms
+      k   = .TLS_basis.dim2
+      first = .TLS_first_param
+
+      ! The TLS part of each unique atom's ADP, and the fit to it
+      y.create(6*n_u)
+      do u = 1,n_u
+         f = .unique_frag_atom(u)
+         Um = .fragment_atom(f).ADP_tensor
+         if (.fragment_U_high.allocated) Um = Um - .fragment_U_high(:,:,f)
+         y(6*u-5:6*u) = [Um(1,1),Um(2,2),Um(3,3),Um(1,2),Um(1,3),Um(2,3)]
+      end
+      Mt = .TLS_unique_response
+      MtM.create(k,k)
+      MtM.to_product_of(Mt,Mt,transpose_a=TRUE)
+      rhs.create(k)
+      rhs.to_product_of(Mt,y,transpose_a=TRUE)
+      p.create(k)
+      MtM.solve_linear_equation(rhs,p)
+
+      ! Sigma and its esds; the 21 upper-triangle elements
+      sv.create(21)
+      sv.to_product_of(.TLS_basis,p)
+      var.create(21)
+      var = ZERO
+      if (.xray_data.ls.param_covariance.allocated) then
+         Cp = .xray_data.ls.param_covariance(first:first+k-1,first:first+k-1)
+         CS.create(21,k)
+         CS.to_product_of(.TLS_basis,Cp)
+         do i = 1,21
+            var(i) = .xray_data.GoF2*dot_product(CS(i,:),.TLS_basis(i,:))
+         end
+         CS.destroy
+         Cp.destroy
+      end
+      Sm.create(6,6)
+      Esd.create(6,6)
+      m = 0
+      do pp = 1,6
+      do qq = pp,6
+         m = m + 1
+         Sm(pp,qq) = sv(m); Sm(qq,pp) = sv(m)
+         Esd(pp,qq) = sqrt(max(ZERO,var(m))); Esd(qq,pp) = Esd(pp,qq)
+      end
+      end
+
+      ang  = ANGSTROM_PER_BOHR
+      deg2 = (180d0/PI)**2
+      adeg = ANGSTROM_PER_BOHR*180d0/PI
+
+      stdout.flush
+      stdout.text("===========================")
+      stdout.text("Rigid-body (TLS) parameters")
+      stdout.text("===========================")
+      stdout.flush
+      stdout.text(". U_i = U_i^high + T + A_i L A_i^T + A_i S + S^T A_i^T, about the")
+      stdout.text("  fragment's centre of mass; tr S = 0. Esds in brackets.")
+      stdout.flush
+      stdout.show("No. of TLS parameters           =",k)
+      stdout.show("U_high from stiff modes used?   =",.fragment_U_high.allocated)
+      stdout.show("Origin x /A                     =",.TLS_origin(1)*ang)
+      stdout.show("Origin y /A                     =",.TLS_origin(2)*ang)
+      stdout.show("Origin z /A                     =",.TLS_origin(3)*ang)
+      stdout.flush
+      stdout.text("T /A^2:")
+      do i = 1,3
+         stdout.text("   "//trim(.TLS_element_str(Sm(i,1:3)*ang*ang,Esd(i,1:3)*ang*ang)))
+      end
+      stdout.flush
+      stdout.text("L /deg^2:")
+      do i = 4,6
+         stdout.text("   "//trim(.TLS_element_str(Sm(i,4:6)*deg2,Esd(i,4:6)*deg2)))
+      end
+      stdout.flush
+      stdout.text("S /(A deg), rows lambda, columns t:")
+      do i = 4,6
+         stdout.text("   "//trim(.TLS_element_str(Sm(i,1:3)*adeg,Esd(i,1:3)*adeg)))
+      end
+      stdout.flush
+      Um = Sm(4:6,4:6)*deg2
+      Um.solve_symmetric_eigenproblem(L_evals,L_evecs)
+      stdout.show("L eigenvalues /deg^2, smallest  =",L_evals(1))
+      stdout.show("L eigenvalues /deg^2, middle    =",L_evals(2))
+      stdout.show("L eigenvalues /deg^2, largest   =",L_evals(3))
+      stdout.show("rms libration /deg              =",sqrt(max(ZERO,sum(L_evals)/THREE)))
+      stdout.flush
+
+      Esd.destroy; Sm.destroy; var.destroy; sv.destroy
+      p.destroy; rhs.destroy; MtM.destroy; Mt.destroy; y.destroy
+
+   end
+
+   TLS_element_str(val,esd) result (res) :: PURE
+   ! Three matrix elements "val" with their "esd"s in brackets, as a string.
+      self :: IN
+      val,esd :: VEC{REAL}(3), IN
+      res :: STR
+
+      i :: INT
+
+      res = " "
+      do i = 1,3
+         if (esd(i)>TOL(10)) then; res = trim(res)//"  "//trim(adjustl(val(i).to_str(esd(i),12,6)))
+         else;                     res = trim(res)//"  "//trim(adjustl(val(i).to_str("f12.6")))
+         end
+      end
 
    end
 
@@ -4856,9 +5270,9 @@ contains
       seitz_T = .transposed_xyz_seitz_matrices
 
       n_X = .asymmetric_unit_atom.no_of_pADPs
-      Jac.create(n_X,n_X)
+      Jac.create(n_X,n_X+21)
       Jac = ZERO
-      labels.create(n_X)
+      labels.create(n_X+21)
       n_p = 0
       ub  = 0
 
@@ -4870,6 +5284,9 @@ contains
          n = .fragment_atom(f).no_of_pADPs
 
          .refinement_flags_for_frag_atom(f,refine_positions,refine_ADPs,refine_Uiso)
+
+         ! A TLS model makes every atom's ADP; its columns come below
+         if (.xray_data.ADP_model=="tls") refine_ADPs = FALSE
 
          ! Candidate columns: the refined components
          Cols.create(n,n)
@@ -4973,13 +5390,21 @@ contains
 
       end
 
+      ! The TLS model's columns, after the positions
+      if (.xray_data.ADP_model=="tls") then
+         .make_TLS_jacobian_columns(Cols)
+         .TLS_first_param = n_p + 1
+         do j = 1,Cols.dim2
+            n_p = n_p + 1
+            Jac(:,n_p) = Cols(:,j)
+            labels(n_p) = "TLS "//trim(j.to_str)
+         end
+         Cols.destroy
+      end
+
       ! Keep the Jacobian, the labels and the parameter count
-      .xray_data.X_jacobian.destroy
-      .xray_data.X_jacobian.create(n_X,n_p)
-      .xray_data.X_jacobian = Jac(:,1:n_p)
-      .xray_data.param_labels.destroy
-      .xray_data.param_labels.create(n_p)
-      .xray_data.param_labels = labels(1:n_p)
+      if (.xray_data.ls.deallocated) .xray_data.ls.create
+      .xray_data.ls.set_jacobian(Jac(:,1:n_p),labels(1:n_p))
       .xray_data.SET:set_n_param_structure(n_p)
       .xray_data.SET:update_n_param
 
@@ -7441,6 +7866,7 @@ contains
       if (.xray_data.covariance_mx.allocated) then; .put_parameters(.xray_data.covariance_mx)
       else;                                         .put_parameters
       end
+      if (.xray_data.ADP_model=="tls") .put_TLS_results
 
       ! Form factor asymmetry, as put_refinement_results does. A single
       ! rigid-atom fit (ha_fit, which is how pHAR runs) ends here rather
@@ -7470,6 +7896,7 @@ contains
       else
          .put_parameters
       end
+      if (.xray_data.ADP_model=="tls") .put_TLS_results
 
       if (.asymmetric_FF_symmetrization_rss.allocated) then
          .put_asymmetric_FF_symmetrization_rss

@@ -93,12 +93,8 @@ contains
       .covariance_mx.destroy
       .esd.destroy
 
-      .near_0_IPR.destroy
-      .param_labels.destroy
+      .ls.destroy
 
-      .X_jacobian.destroy
-      .restraint_W.destroy
-      .restraint_shift.destroy
 
    end
 
@@ -150,9 +146,6 @@ contains
       .GoF2_increased          = std.GoF2_increased
       .too_many_fit_iterations = std.too_many_fit_iterations
 
-      ! Near zero eigenvalues in the least-squares
-      .n_0                     = std.n_0
-      .near_0                  = std.near_0
 
    end
 
@@ -425,6 +418,18 @@ contains
 
    set_refine_H_U_iso(val) :: get_from(OBJECT:set, VAL_TYPE?=>BIN, ARG?=>.refine_H_U_iso), pure
    ! Generic set
+   end
+
+   set_ADP_model(val) :: PURE
+   ! Set the ADP model: "free" or "tls".
+      self :: INOUT
+      val  :: STR, IN
+
+      .ADP_model = val
+      .ADP_model.to_lower_case
+
+   ENSURE(.ADP_model.is_one_of(["free","tls "]),"adp_model= must be free or tls, not "//trim(val))
+
    end
 
    set_refine_4th_order(val) :: leaky, PURE
@@ -1500,7 +1505,8 @@ contains
       .set_fit_data
 
       ! Keep the labels, so a near-zero direction can be named
-      .param_labels = labels
+      if (.ls.deallocated) .ls.create
+      .ls.set_param_labels(labels)
 
       ! Set fitting
       if (NOT .refine_structure) .set_fit_structure(TRUE)
@@ -1579,7 +1585,8 @@ contains
       .set_refinement_data
 
       ! Keep the labels, so a near-zero direction can be named
-      .param_labels = labels
+      if (.ls.deallocated) .ls.create
+      .ls.set_param_labels(labels)
 
       ! Initially GoF^2 is as big as you can get
       .GoF2_ref0 = huge(ONE)
@@ -2475,39 +2482,6 @@ contains
 !
 !   end
 
-   update_near_0_IPRs :: leaky, PURE
-   ! Set ".near_0_IPR", the inverse participation ratio of each near-zero
-   ! eigenvector of the normal matrix:
-   !
-   !    IPR = 1 / sum_i v_i^4
-   !
-   ! which counts how many parameters that direction actually involves --
-   ! 1 if it lies on a single parameter, n if spread evenly over n. See
-   ! the comment on ".near_0_IPR" in types.foo for why this, and not the
-   ! eigenvalue, is what separates a symmetry-fixed direction from an
-   ! over-parameterised one.
-      self :: INOUT
-
-      j :: INT
-      v :: REAL
-
-      .near_0_IPR.destroy
-
-      if (.near_0_evecs.deallocated) return
-      if (.near_0<=0) return
-
-      .near_0_IPR.create(.near_0)
-
-      do j = 1,.near_0
-         ! The eigenvectors are orthonormal, so no normalisation is needed
-         v = sum(.near_0_evecs(:,j)**4)
-         if (v>ZERO) then; .near_0_IPR(j) = ONE/v
-         else;             .near_0_IPR(j) = ZERO
-         end
-      end
-
-   end
-
    solve_normal_equations(dF,sig,del) :: leaky
    ! Get the ".dX" in some parameter vector by solving the F-normal
    ! equations, given "dF", the derivatives of the absolute structure
@@ -2522,9 +2496,8 @@ contains
    ENSURE(sig.dim1==.reflections.dim, "wrong size, sig")
    ENSURE(del.dim1==.reflections.dim, "wrong size, del")
 
-      A,dFp,C,JC :: MAT{REAL}@
+      A,dFp :: MAT{REAL}@
       rhs,dp :: VEC{REAL}@
-      eval :: VEC{REAL}@
       n_refl,n_X,n_p, i,j :: INT
       fac,small :: REAL
       use_J :: BIN
@@ -2535,12 +2508,13 @@ contains
 
       ! Derivatives with respect to the refined parameters, dF J.
       ! Without a Jacobian every pADP component is a parameter.
-      use_J = .X_jacobian.allocated
+      if (.ls.deallocated) .ls.create
+      use_J = .ls.jacobian.allocated
       if (use_J) then
-         ENSURE(.X_jacobian.dim1==n_X,"wrong dim1, X_jacobian")
-         n_p = .X_jacobian.dim2
+         ENSURE(.ls.jacobian.dim1==n_X,"wrong dim1, ls.jacobian")
+         n_p = .ls.jacobian.dim2
          dFp.create(n_refl,n_p)
-         dFp.to_product_of(dF,.X_jacobian)
+         dFp.to_product_of(dF,.ls.jacobian)
       else
          n_p = n_X
          dFp.create(n_refl,n_p)
@@ -2569,34 +2543,15 @@ contains
 
       ! Solve for the parameter shifts, restrained if weights are set (leaky)
       dp.create(n_p)
-      if (.restraint_W.allocated) then
-         ENSURE(.restraint_W.dim1==n_p,"wrong size, restraint_W")
-         ENSURE(.restraint_shift.allocated,"no restraint_shift")
-         ENSURE(.restraint_shift.dim==n_p,"wrong size, restraint_shift")
-         A.solve_restrained_linear_equations(rhs,.restraint_W,.restraint_shift,dp, &
-            .near_0_tol,.near_0,.near_0_evals,.near_0_evecs,eval,C,.n_param_eff)
-      else
-         A.solve_ill_linear_equations_v1(rhs,dp,.near_0_tol,.near_0,.near_0_evals,.near_0_evecs,eval,C)
-         .n_param_eff = n_p - .n_0 - .near_0
-      end
+      .ls.solve_normal_equations(A,rhs,.near_0_tol,dp)
       rhs.destroy
       A.destroy
+      dp.destroy
 
       ! Back to pADP components: dX = J dp, covariance J C J^T
+      .ls.make_X_shift(.dX)
       .covariance_mx.destroy
-      if (use_J) then
-         .dX.to_product_of(.X_jacobian,dp)
-         JC.create(n_X,n_p)
-         JC.to_product_of(.X_jacobian,C)
-         .covariance_mx.create(n_X,n_X)
-         .covariance_mx.to_product_of(JC,.X_jacobian,transpose_b=TRUE)
-         JC.destroy
-         C.destroy
-      else
-         .dX = dp
-         call move_alloc(C,.covariance_mx)
-      end
-      dp.destroy
+      .ls.make_X_covariance(.covariance_mx)
 
       ! Correlation matrix; zero where a parameter has no variance
       .correlation_mx.destroy
@@ -2611,9 +2566,6 @@ contains
       end
       end
 
-      ! How many parameters does each near-zero direction actually involve?
-      .update_near_0_IPRs
-
       if (.show_near_0_eigenvectors) then
          stdout.text("shifts:")
          stdout.put(.dX)
@@ -2621,7 +2573,7 @@ contains
 !        stdout.show("Normal equations check =",maxval(abs(matmul(A,.dX)-rhs)))
 !        stdout.show("Smallest eigenvalue    =",minval(abs(.near_0_evals)))
          stdout.show("near_0_tol             =",.near_0_tol)
-         stdout.show("near_0                 =",.near_0)
+         stdout.show("near_0                 =",.ls.near_0)
          stdout.flush
          stdout.set_real_fortran_fmt("f")
          stdout.text("Distribution of values:")
@@ -2629,15 +2581,15 @@ contains
          stdout.set_real_fortran_fmt("e")
          stdout.flush
          stdout.text("All eigenvalues:")
-         stdout.put(eval,by_column=TRUE)
-         if (.near_0>0) then
+         stdout.put(.ls.eigenvalues,by_column=TRUE)
+         if (.ls.near_0>0) then
          stdout.flush
          stdout.text("Near_0 eigenvalues:")
-         stdout.put(.near_0_evals,by_column=TRUE)
+         stdout.put(.ls.near_0_evals,by_column=TRUE)
          stdout.set_real_fortran_fmt("f")
          stdout.flush
          stdout.text("Near_0 eigenvectors:")
-         stdout.put(.near_0_evecs)
+         stdout.put(.ls.near_0_evecs)
          end
       end 
 
@@ -2649,7 +2601,7 @@ contains
       .max_shift = maxval(abs(.dX))
 
       ! Set the number of parameters
-      .n_param_structure = n_p - .n_0 - .near_0
+      .n_param_structure = n_p - .ls.n_0 - .ls.near_0
       .n_param = .n_param_structure
 
       ! Update GoF2
