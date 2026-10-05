@@ -372,6 +372,41 @@ Hirshfeld atom refinement, def2-SVP, 123 K data, U^high as above:
 - **The ADP model hardly moves the hydrogen positions:** N–H3 shifts 0.008 Å toward neutron,
   N–H1 not at all.
 
+### Urea: ADPs against neutron
+
+The neutron ADPs of urea at 123 K (Swaminathan, Craven and McMullan, 1984), scaled to the X-ray
+data, are tabulated by Jayatilaka and Dittrich (2008, Table 6). The cell is tetragonal, so its
+axes and Tonto's Cartesian axes coincide and the tensors compare component by component. Two
+measures per atom:
+- the ratio of U_iso to the neutron U_iso, for the size;
+- the similarity index of Whitten and Spackman (2006),
+
+      S12 = 100 [ 1 − 2^(3/2) det(U₁⁻¹ U₂⁻¹)^(1/4) / det(U₁⁻¹ + U₂⁻¹)^(1/2) ],
+
+  which is 0 for identical displacement ellipsoids and grows as their shapes and orientations
+  part.
+
+| ADP model | GoF | H1: U_iso ratio | H1: S12 | H3: U_iso ratio | H3: S12 |
+|---|---|---|---|---|---|
+| free | 3.30 | 1.47 | 8.05 | 1.44 | 7.06 |
+| TLS, U^high = 0 | 3.84 | 0.91 | 1.85 | 0.99 | 2.86 |
+| TLS + U^high | 3.51 | 1.22 | 0.77 | 1.20 | 0.50 |
+
+O, N and C agree with neutron in every model: U_iso ratios 0.99–1.01, S12 at most 0.03.
+
+- **Free HAR hydrogens are about 45 % too large and the wrong shape**, as found before for HAR
+  of urea with an isolated-molecule density.
+- **TLS + U^high gives the best hydrogen shapes by far**, S12 ten times smaller than free, but
+  sizes about 20 % too large.
+- **TLS alone** gets the hydrogen size about right, but the shape is worse.
+
+That TLS + U^high hydrogens are too large is not yet understood. The missing soft modes would
+make them larger still, and unscaled RHF frequencies make U^high smaller, not larger. Possible
+causes are the scaling of the neutron data to the X-ray data, and correlation between the
+rigid-body and the internal motion, which the model takes as independent.
+
+### Urea: the rigid-body tensors
+
 The rigid-body motion, about the centre of mass (8 parameters on the mm2 site):
 
     T /Å²:      0.01402(7)   -0.00045(9)   0                L /deg²:   19.8(17)   12.2(17)   0
@@ -399,3 +434,7 @@ S has zero trace.
 - V. Schomaker and K. N. Trueblood, *Acta Cryst.* B24, 63 (1968): rigid-body motion, T, L, S.
 - A. P. Scott and L. Radom, *J. Phys. Chem.* 100, 16502 (1996): harmonic frequency scale factors.
 - W. C. Hamilton, *Acta Cryst.* 18, 502 (1965): significance tests on the crystallographic R factor.
+- S. Swaminathan, B. M. Craven and R. K. McMullan, *Acta Cryst.* B40, 300 (1984): urea, neutron, 123 K.
+- D. Jayatilaka and B. Dittrich, *Acta Cryst.* A64, 383 (2008): Hirshfeld atom refinement;
+  Table 6 gives the urea neutron ADPs used here.
+- A. E. Whitten and M. A. Spackman, *Acta Cryst.* B62, 875 (2006): the S12 similarity index.
