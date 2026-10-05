@@ -513,9 +513,10 @@ use it. The TLS algebra needs only positions, so it is not a `CRYSTAL` method.
    refinement -- noted in the research document; a printed warning would be better (open).
 
    **Urea results** (def2-SVP and TZVP, Hirshfeld, K = 0…4, full tables in
-   `docs/REPORT_ON_MODE_FITTING.md` §5): the first wag (432i) and the antisymmetric in-plane
-   rock (645 cm⁻¹, refined to ~4x its harmonic amplitude, implied ~200 cm⁻¹) are significant by
-   Hamilton at alpha = 0.005; the symmetric rock (559) is not. AIC and BIC never rise. Free ADPs
+   `docs/REPORT_ON_MODE_FITTING.md` §5): the first wag (432i) and the in-plane C=O bend
+   (645 cm⁻¹, refined to ~4x its harmonic amplitude, implied ~200 cm⁻¹) are significant by
+   Hamilton at alpha = 0.005; the N-C-N bend (559) is not. (Modes 3 and 4 were first labelled NH2
+   rocks from their displacements; their mass-weighted motion is 65 % and 83 % heavy-atom.) AIC and BIC never rise. Free ADPs
    remain significantly better than K = 4 (ratio 1.042 / 1.036 against 1.013). **But every soft
    mode moves the hydrogen ADPs away from neutron**: U_iso ratio 1.18–1.25 -> 1.29–1.41, S12
    0.45–0.87 -> 0.97–1.75. Working hypothesis: the extra freedom absorbs density-model error (an

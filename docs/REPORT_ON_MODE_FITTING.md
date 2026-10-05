@@ -692,12 +692,16 @@ So the model that fits the data best, free ADPs, gives the worst hydrogen ADPs.
 The modes of the RHF/6-31G(d) Hessian at the crystal geometry, softest first, with the
 molecular plane the mirror plane normal to (1, −1, 0):
 
-| mode | ω /cm⁻¹ | motion |
-|---|---|---|
-| 1 | 432i | NH₂ wag out of the plane, the two groups opposite |
-| 2 | 164i | NH₂ wag out of the plane, the two groups together |
-| 3 | 559 | NH₂ rock in the plane, the two groups together |
-| 4 | 645 | NH₂ rock in the plane, the two groups opposite |
+| mode | ω /cm⁻¹ | motion | share of the motion in C, N and O |
+|---|---|---|---|
+| 1 | 432i | NH₂ wag out of the plane, the two groups opposite | 0.12 |
+| 2 | 164i | NH₂ wag out of the plane, the two groups together | 0.08 |
+| 3 | 559 | in-plane N–C–N bend | 0.65 |
+| 4 | 645 | in-plane C=O bend | 0.83 |
+
+The share is the fraction of the mode's mass-weighted motion $`\sum_i |\mathbf{l}_{ik}|^2`$ carried by
+the heavy atoms. The hydrogens move furthest in every mode, being lightest, so the share, not the
+size of the displacements, says what kind of motion a mode is.
 
 Hirshfeld partition, the model (10) with the $`K`$ softest modes refined, `soft_mode_restraint=`
 0.5. The cutoff is 200 cm⁻¹ for $`K \le 2`$, 600 for $`K = 3`$ and 700 for $`K = 4`$, so modes 3 and 4
@@ -749,7 +753,7 @@ harmonic amplitude.
   second wag is a combination of the first and the in-plane libration (§1.7). Both amplitudes
   are printed, but only one combination of them is determined.
 - **The wags are needed.** The first wag improves the fit significantly in both basis sets.
-- **The in-plane rocks differ.** Mode 3 is not determined by the data: it refines to 10(84)
+- **The in-plane bends differ.** Mode 3 is not determined by the data: it refines to 10(84)
   at $`K = 3`$ and 207(96) at $`K = 4`$ (def2-SVP), against a harmonic 197, and does not improve the
   fit. Mode 4 refines to about four times its harmonic amplitude, an implied frequency near
   200 cm⁻¹ instead of 645, and improves the fit significantly.
@@ -819,7 +823,7 @@ positive (§2.4). Each entry is GoF, with $`p_{\rm eff}`$ in brackets.
   $`p_{\rm eff}`$ stays at 17. Hamilton's test finds no improvement from $`K = 0`$ to $`K = 2`$.
 - So the wag amplitudes refined for the isolated molecule were making up for its density. That
   is also why they moved the hydrogen ADPs away from neutron.
-- **An in-plane rock is still wanted:** mode 4 with RHF, mode 3 with B3LYP. Each improves the fit
+- **An in-plane bend is still wanted:** mode 4 with RHF, mode 3 with B3LYP. Each improves the fit
   significantly by Hamilton's test at $`\alpha = 0.005`$.
 
 ### Urea: correlations
