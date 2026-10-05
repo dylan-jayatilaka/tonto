@@ -160,36 +160,100 @@ points each and the next 12 have 110.
 | Cl | 6×26 110×16 302×19 110×8 50×6 | 2.5 | 8834 | 6×35 110×17 194×4 590×25 194×2 110×8 50×8 | 2.6 | 19274 |
 
 The table was transcribed by script from the paper's Table 1. Every row's shells add to 75
-(SG-2) or 99 (SG-3), and the point totals here are computed from the partitions.
+(SG-2) or 99 (SG-3), and the point totals here are computed from the partitions. **Two totals
+differ from the paper's:** Mg SG-3 is 15210 here against 16532 printed, and Si SG-2 is 8198 against
+8342 printed, which is the Al value. The Q-Chem manual lists no per-element numbers and the OSTI
+copy of the paper has the same table, so this could not be settled; the partitions are used, since
+their shells add up.
 
-**Other elements** (the rare gases, and everything beyond Cl) use an unpruned (75, 302) or
-(99, 590) Euler–Maclaurin–Lebedev grid in the paper.
+**Other elements** (the rare gases, and everything beyond Cl) use an unpruned 75 × 302 or
+99 × 590 Euler–Maclaurin grid, as the paper says, with the SG-1 radius of §2.1.
 
-## 3. Open points
+**The radial range is an assumption.** The paper gives eq. (3) but not where the sum starts and
+stops. Tonto uses Mitani's range, $`10^{-7}`$ to $`10R`$ bohr, with $`R`$ the Hartree–Fock mean
+radius of the outermost valence orbital: H 1.5, Li 3.873661, Be 2.6494, B 2.2048, C 1.7145,
+N 1.4096, O 1.2322, F 1.084786, Na 4.208762, Mg 3.2529, Al 3.4339, Si 2.7521, P 2.3225, S 2.0607,
+Cl 1.842024.
+Mitani quotes the H, Li, Na, F and Cl values; the rest are the Roothaan–Hartree–Fock values as
+remembered, not checked against a table. The shells of a partition are counted from the nucleus,
+so a different range would put every angular zone at different radii.
 
-- **Two rows disagree with the paper's printed totals.** Mg SG-3 gives 15210 points against
-  16532 printed, and Si SG-2 gives 8198 against 8342 (the Al value). One of partition or total is
-  misprinted in each. Until settled against Q-Chem, Mg and Si use the unpruned grid.
-- **The radial range.** The SG paper does not say how Q-Chem truncates the DE2 sum; the
-  $`10^{-7}`$ to $`10R`$ range above is Mitani's, and is assumed.
-- **R for C, N, O and the rest.** Not listed in the papers. To be computed as the Hartree–Fock
-  mean radius of the outermost valence orbital, checked against the quoted F and Cl values.
-- **Elements beyond Cl:** the Euler–Maclaurin radial scheme and its radii need checking against
-  what Tonto has before zinc can be run on these grids.
+## 3. What was checked
 
-## 4. Plan
+Runs: `achari2:~/tonto_runs/sg_grids_2026-10-05/` (inputs, outputs, `table.py`, `md.py`), with
+the release build of branch `sg-grids` in `achari2:~/github/tonto-sg`.
 
-1. `BECKE_GRID`: a `de2` radial scheme (`set_DE2_radial_grid`) and `sg-2` / `sg-3` pruning
-   schemes keyed on the atomic number, beside `mura_knowles` and `treutler_ahlrichs`. Nothing
-   changes by default.
-2. Checks, in order: each atom's point count equals the table's; the density of H, C, N, O
-   atoms and of water integrates to the electron count; water def2-SVP RI-J/COSX against the
-   exact energy and ORCA's value (`short/h2o_rhf_def2-SVP_RIJCOSX`); karrikinolide def2-TZVP
-   against exact, with `put_cosx_shell_errors`.
-3. Compare cost and error with Tonto's present COSX grids on the same molecules, and on the
-   7-molecule urea cluster in def2-TZVP, where COSX takes 40 % of its time in the grid potentials.
-4. Then XC: the same grids for the DFT quadrature, against Tonto's `high`.
+- **Point counts.** For H to Cl, K, Zn and Br, and He, Ne, Ar, every atom's point count on each of
+  the four grids equals the reference table made independently in Python from the published
+  tables (`hyd/`). The SG-0 counts equal Psi4's and the SG-1 counts Q-Chem's.
+- **Radial grids.** He, Ne and Ar atoms integrate to their electron number to $`10^{-7}`$ or better
+  on every grid. The MultiExp rules reproduce the paper's table.
+- **Electron counts of the hydrides** (RHF/def2-SVP; the error in electrons). SG-0: up to
+  $`1.2\times10^{-3}`$ (SiH4). SG-1: mostly a few $`10^{-5}`$, up to $`9\times10^{-4}`$ (NaH).
+  SG-2: up to $`1.3\times10^{-4}`$ (HCl). SG-3: mostly under $`10^{-5}`$, up to $`6\times10^{-5}`$
+  (KH). For water Tonto's `high` grid, with fewer points than SG-2, gives $`10^{-7}`$.
+- **The pruning, not the radial grid, sets the SG-3 error.** Water: $`1.0\times10^{-5}`$ with the
+  published partition, $`7\times10^{-7}`$ with 590 points on every shell.
+- **Tests.** `short/hcl_rhf_def2-SVP_SG_grids`, `short/hbr_rhf_def2-SVP_SG_grids` and
+  `short/h2o_rhf_def2-SVP_RIJCOSX_SG-0`, blessed on achari2 with the reference build. The whole
+  suite passes there, 179 of 179 with the two usual skips.
 
-## 5. Log
+## 4. The COSX error of the SG grids
 
-Nothing built yet.
+RHF with RI-J (def2-universal-jfit). The error is the energy with COSX minus the energy of the same
+job with exact exchange, so the RI-J error cancels. Each job names two grids: the one used in the
+SCF iterations and the one used for the final energy. Karrikinolide is C8H8O3, thiotepa C6H12N3PS,
+the zinc finger a Zn(SCH3)2(imidazole)2 model in a Cartesian basis; the others use spherical
+functions.
+
+**Error in µEh** (the target is 100):
+
+ERRTABLE
+
+"No size adjustment" is `partition_scaling_scheme= none` on the final grid: Becke's partition
+without his correction for atoms of different size, which Tonto otherwise applies.
+
+**Grid points:**
+
+PTSTABLE
+
+What the numbers say:
+
+1. **The final-energy grid sets the error.** Changing only the iteration grid moves the energy by
+   under 2 µEh, except on the zinc finger (point 3).
+2. **The SG grids are poor final-energy grids for COSX.** SG-1, SG-2 and SG-3 miss the target on
+   CFCl3 and on the zinc finger, and where they meet it they are 2 to 20 times worse than `high`,
+   which has as many points as SG-2. More points do not help: SG-3 is no better than SG-2. On
+   CFCl3 def2-SVP the unpruned 99 × 590 grid gives −1.7 µEh against +810 for SG-3, so it is the
+   published pruning that fails; it was made for the density, and the COSX integrand is rougher.
+   Dropping the size adjustment changes the errors but does not make them reliably small.
+3. **SG-0 is a good iteration grid.** With `high` for the final energy it matches the default
+   everywhere, and on the zinc finger it cuts the error from 26 to 5 µEh: `very_low` leaves a
+   poorer converged density there. It has from 20 % fewer to 22 % more points than `very_low`.
+4. **SG-1 as the iteration grid** costs twice the points of SG-0 for no gain.
+
+**Clean timings** (one job at a time on achari2):
+
+TIMETABLE
+
+## 5. Where this leaves the item
+
+- The four grids are in `BECKE_GRID`, off by default, tested, for any element.
+- **For COSX the present defaults stay.** The one candidate change is `cosx_grid= { kind= sg-0 }`
+  for the iterations: Dylan's decision, and by his rule nothing becomes a default without full
+  testing of its effect on HAR.
+- **XC is the natural use of these grids** and is not done: the same four kinds for the DFT
+  quadrature, against Tonto's `high`, on the molecules above.
+- **Not settled:** the DE2 radial range (§2.3); the Mg and Si totals; whether Q-Chem applies an
+  atomic size adjustment to its Becke weights. All three are questions for John Herbert. The
+  ORCA COSX grid parameters are still to be asked of the authors.
+- **Small loose ends.** The CIF items `_QCr_Becke_grid_n_pts_for_row_1` to `_3` print the counts
+  of H, He and Li for an SG kind. A job with 21 separate molecules 15 Å apart hung in
+  *Making gaussian ANO data* (`hydrides_all/`); not looked into.
+
+## 6. Log
+
+- 2026-10-05. SG-2 and SG-3 transcribed and coded on `sg-grids`; not built.
+- 2026-10-05/06. SG-0 and SG-1 added; every element covered; built in debug, release and
+  reference on achari2. The first release build failed on `DIE_IF` inside `PURE` routines, which
+  debug accepts; they became `ENSURE`. Checks and COSX measurements as above.
