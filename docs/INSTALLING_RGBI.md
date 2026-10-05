@@ -99,8 +99,7 @@ specific to the pictures:
 
 ## macOS
 
-Run through by hand on Apple silicon (macOS 26.5, BasicTeX 2026) on 2026-08-24,
-and probed weekly by `.github/workflows/ci-rgbi-macos.yml`. `rgbi_doctor.sh` runs
+Checked by hand on Apple silicon (macOS 26.5, BasicTeX 2026), and probed weekly by `.github/workflows/ci-rgbi-macos.yml`. `rgbi_doctor.sh` runs
 on macOS — believe it over this page.
 
 ```bash
@@ -166,7 +165,6 @@ succeeded — which is exactly what kept the macOS CI badge red for three weeks.
 - **Homebrew pulls in a lot**, including ghostscript. Expect a long download.
 - **Indigo wheels have had trouble on Apple silicon.** If
   `pipx install mol2chemfigPy3` fails to build, an x86_64 Python under Rosetta is
-  the usual workaround. It did not arise on the 2026-08-24 run: the
-  `macosx_11_0_arm64` wheel installed without compiling.
+  the usual workaround. The `macosx_11_0_arm64` wheel installs without compiling.
 
 Corrections to this section are welcome.

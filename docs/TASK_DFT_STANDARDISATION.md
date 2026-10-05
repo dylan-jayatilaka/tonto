@@ -762,7 +762,7 @@ in the radial list (`BECKE_GRID:apply_pruning_scheme_adaptive`):
 from `very_low` to `best`); `L_H` is `l_H_angular_grid`. Every zone is capped at the peak. Only
 `medium` and `high` are calibrated.
 
-**Calibration.** The zones were read off `put_grid_shell_errors` (stage B, `SCF_SPEED_REPORT.md`):
+**Calibration.** The zones were read off `put_grid_shell_errors` (stage B, `TASK_SCF_SPEEDUP_DATA.md`):
 per shell, the lowest order within 1e-7 of L59, on water and karrikinolide at `medium`. The
 inner edges are the same for every atom; the carbons' L59 zone reaches 4.3 bohr in karrikinolide.
 Candidate rules were scored offline against those tables before building

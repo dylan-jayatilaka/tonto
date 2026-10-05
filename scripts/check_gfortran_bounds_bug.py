@@ -14,7 +14,7 @@ A clean result is evidence, not proof. What the bad code does depends on what
 happens to be on the stack, and the reduced case only provokes the faulty
 temporary on x86_64 -- gfortran 16 on arm64 compiles it correctly while still
 crashing Tonto elsewhere. Trust a failure here; do not trust a pass to clear a
-compiler that is failing debug builds. docs/GFORTRAN16_DEBUG_CRASH.md has the
+compiler that is failing debug builds. docs/TASK_GFORTRAN16_PORT.md has the
 machine-level signature to look for by hand.
 
 Exit status: 0 if the compiler passed, 1 if the bug is present, 2 if the check
@@ -80,7 +80,7 @@ def main():
     if checked != 0:
         print("\n=> AFFECTED: correct without -fcheck=bounds, fails with it.")
         print("   Do not use -fcheck=bounds with this compiler; see "
-              "docs/GFORTRAN16_DEBUG_CRASH.md.")
+              "docs/TASK_GFORTRAN16_PORT.md.")
         return 1
 
     print("\n=> passed (see the note in this script: a pass is evidence, not proof).")

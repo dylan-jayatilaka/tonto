@@ -11,10 +11,6 @@ compared on the same jobs.
 
 # 1. Spherically averaged Salvador atoms (`sph-tfva`)
 
-A working document (see `CLAUDE.md` §1). It records what was measured about these
-models, and is deleted when the item closes; its lasting residue goes into the keyword
-help and the user pages.
-
 ### The model
 
 A Salvador atom (a topological fuzzy Voronoi atom, TFVA) is the molecular density times
@@ -561,7 +557,7 @@ What the numbers say:
   R 0.0284, GoF 6.50 with N–H 0.1 Å short: `sph-tfvh` fits as well as the IAM and puts
   the hydrogens where the neutrons do.
 - This is the model whose form factors the Gaussian fit of
-  `docs/TONTO_SPHERICAL_FF_FIT_PLAN.md` is for.
+  `docs/TASK_SPHERICAL_FF_FIT.md` is for.
 
 ### Open
 
@@ -634,5 +630,5 @@ What the table says:
 ### Open
 
 - `sph-exphar` at n = 1 (a spherical Hirshfeld atom) and 1.5, for the fit work: the
-  form-factor fit (`docs/TONTO_SPHERICAL_FF_FIT_PLAN.md` §8) shows the hard Salvador edge
+  form-factor fit (`docs/TASK_SPHERICAL_FF_FIT.md` §8) shows the hard Salvador edge
   rippling the transform, and a softer atom fits better.

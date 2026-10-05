@@ -1,7 +1,6 @@
 # The MP2 teaching lab
 
-**Ported 2026-08-18 from tag `archive/Teaching`** (Max Davidson 5 commits, Dylan
-Jayatilaka 3, June–October 2019). Two programs, neither built by default:
+**From the tag `archive/Teaching`**, by Max Davidson and Dylan Jayatilaka. Two programs, neither built by default:
 
 | Program | Build with | What it is |
 |---|---|---|

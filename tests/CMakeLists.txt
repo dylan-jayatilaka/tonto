@@ -157,7 +157,7 @@ set_tests_properties("rgbi_options" PROPERTIES LABELS "rgbi")
 # reported as failing. Registered because shell execution is the classic silent
 # failure -- a broken implementation returns "0, no error" and simply does
 # nothing, which is precisely how the eight MPI reductions and the per-rank-IO
-# flag hid for years (docs/TONTO_AND_MPI.md). The binary self-checks and exits non-zero,
+# flag hid for years (docs/TASK_MPI.md). The binary self-checks and exits non-zero,
 # so no reference file can be blessed to make it pass. Runs in well under a
 # second.
 add_test(NAME "system_commands"
@@ -313,6 +313,11 @@ add_test(NAME "procedure_case"
     COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_procedure_case.py
             ${PROJECT_SOURCE_DIR}/foofiles ${PROJECT_SOURCE_DIR}/runfiles)
 set_tests_properties("procedure_case" PROPERTIES LABELS "short")
+
+# User-facing documents: no dates, hashes or status notes, and math GitHub draws.
+add_test(NAME "check_docs"
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_docs.py ${PROJECT_SOURCE_DIR})
+set_tests_properties("check_docs" PROPERTIES LABELS "short")
 
 # Invariant test -- no reference output involved.
 #

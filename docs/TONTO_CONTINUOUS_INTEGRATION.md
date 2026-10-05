@@ -42,7 +42,7 @@ parallel *debug* build.
   (listed in `TASKS_AND_HISTORY.md`).
 - **MPI workflows** pass if π comes out the same on 1, 2 and 4 processes
   (`scripts/check_mpi_pi.sh`). They run the test suite too, but only for information: the
-  parallel build still has known faults (`docs/TONTO_AND_MPI.md`). Read the π line, not the
+  parallel build still has known faults (`docs/TASK_MPI.md`). Read the π line, not the
   suite total.
 - **The full suite** runs the `short`, `long` and `hart` tests. It is the only workflow that
   runs `long`.

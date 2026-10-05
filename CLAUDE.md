@@ -4,7 +4,7 @@ Durable, project-wide context for Claude Code, read at the start of every sessio
 **Stable facts only** — build, test, layout, conventions. Live work is in `TASKS_AND_HISTORY.md`;
 the story of how the build and translator came to be is in `docs/PROJECT_HISTORY.md`.
 
-## 0. Four rules that are broken most often
+## 0. Five rules that are broken most often
 
 1. **Fortran ignores case. Never give two names in one procedure the same letters in different
    case** — `h` and `H`, `g` and `G`, `u` and `U`, `sig` and `Sig`, `j` and `J`. Foo keeps your
@@ -23,6 +23,9 @@ the story of how the build and translator came to be is in `docs/PROJECT_HISTORY
    `\,`, `\\` and underscores to GitHub's markdown, and `\tag` draws as a column of symbols in
    Chrome and Brave. Define every symbol where it first appears, so a page can be read from first
    principles without another source. Check a page with `gh api -X POST /markdown` before pushing.
+5. **A user-facing page states what is.** Status, dates, commit hashes and how a thing was found
+   go only in `docs/TASK_*.md` and `TASKS_AND_HISTORY.md`. `scripts/check_docs.py` (ctest
+   `check_docs`) fails on them, and on math GitHub draws wrongly, in every other page.
 
 ## 1. How to write for this project
 
@@ -50,20 +53,21 @@ One idea per sentence. If a sentence has to be read twice, rewrite it.
 |---|---|---|
 | **Source** — `foofiles/*.foo`, `scripts/`, CMake | whoever edits the line | Say what the code does, and why if it is not obvious. Nothing else. |
 | **`docs/` and `README.md`** | a person, once | Brief. Facts to know, never how they were found. |
-| **Working documents** — `TASKS_AND_HISTORY.md`, `docs/PROJECT_HISTORY.md`, `docs/TONTO_AND_MPI.md`, `docs/TONTO_DEVELOPER_INFO.md`, and the per-item reports and plans | the next session | Free to be long. What was measured, what was ruled out, what was decided and why. |
+| **Working documents** — `TASKS_AND_HISTORY.md`, `docs/TASK_*.md`, `docs/PROJECT_HISTORY.md`, `docs/TONTO_DEVELOPER_INFO.md`, `docs/TONTO_REPOSITORY_BRANCHES.md` | the next session | Free to be long. What was measured, what was ruled out, what was decided and why. |
 
-**Which `docs/` files are working documents?** Only those covering an item still in flight —
-today `TONTO_AND_MPI.md`, `TONTO_DEVELOPER_INFO.md`, `PROJECT_HISTORY.md`, `DFT_STANDARDISATION.md`,
-`EXTINCTION_REPORT.md`, `GFORTRAN16_*.md`, `TONTO_SCF_SPEED_UP.md`, `CCTBX_INTO_TONTO.md`, `GOF_NOT_CHI2.md`,
-`TONTO_DISPERSION_CORRECTIONS.md`, `TONTO_RI_FITTING_PLAN.md`, `TONTO_TLS_MODE_REFINEMENT.md`, and the
-`*_REPORT.md`, `*_PLAN.md` and `RESEARCH_ON_*.md` files. **They are deleted when their item closes**, and their durable residue
-moves into the user-facing pages. Everything else in `docs/` is user-facing.
+**The file name says which kind a document is.**
 
-**Specific rules for user-facing pages** (`README.md`, `docs/BUILDING_*`, `docs/RUNNING_*`,
-`docs/INSTALLING_*`, `docs/DOCUMENTATION.md`, `docs/FOO_*`, `docs/TONTO_BLESSING_TESTS.md`,
-`docs/TONTO_LIBRARY_STRUCTURE.md`,
-`docs/TONTO_CALL_GRAPHS.md`, `docs/TONTO_EDITING_WITH_VIM.md`, `docs/TONTO_CONTINUOUS_INTEGRATION.md`,
-`docs/TONTO_MODE_FITTING_RESEARCH.md`):
+| prefix | what it is |
+|---|---|
+| `TASK_*` | a working document for one item: its plan and its log, deleted when the item closes, its durable residue moved into a user-facing page |
+| `REPORT_ON_*` | findings written for a person; user-facing. A task and its report share a subject: `TASK_ON_MODE_FITTING`, `REPORT_ON_MODE_FITTING` |
+| `TONTO_*`, `BUILDING_*`, `RUNNING_*`, `INSTALLING_*`, `FOO_*` | reference and how-to; user-facing |
+
+The working documents outside `TASK_*` are `PROJECT_HISTORY.md`, `TONTO_DEVELOPER_INFO.md` and
+`TONTO_REPOSITORY_BRANCHES.md`. Everything else in `docs/` is user-facing.
+
+**Specific rules for user-facing pages** (`README.md` and every page in `docs/` that is not a
+working document):
 
 - **No dates, no commit hashes, no run numbers.** If a sentence needs one, it is history.
 - **No "measured, not assumed", no "this was tried and rejected", no symptom stories.**
@@ -212,7 +216,7 @@ make -j
 **The project standard compiler is `gfortran-14`.** Do not move to 16 yet. An Ubuntu
 `gfortran-16` package at 16.1.0 or later is **necessary but not sufficient** — macOS has
 16.1.0 and its *debug* build still segfaults with `-fcheck=bounds` already omitted, so the
-blocker is not only the bounds bug; see `docs/GFORTRAN16_DEBUG_CRASH.md`. The
+blocker is not only the bounds bug; see `docs/TASK_GFORTRAN16_PORT.md`. The
 `-fcheck=bounds` miscompilation
 ([GCC PR 127197](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=127197), a duplicate of
 PR 124661) is fixed upstream but the shipped `16-20260322` snapshot predates the fix.
@@ -220,7 +224,7 @@ Everything on Tonto's side is done and is preserved on `develop-gfortran-16`; me
 branch and flip `FC_VERSION` rather than redoing it.
 A 16 release build is numerically free on Linux and macOS; a 16 debug build works but has
 no array bounds checking, which is the reason to wait. Detail:
-`docs/GFORTRAN16_GCC_BUG.md`, `docs/GFORTRAN16_DEBUG_CRASH.md`.
+`docs/TASK_GFORTRAN16_GCC_BUG.md`, `docs/TASK_GFORTRAN16_PORT.md`.
 
 **No toolchain PPA in the build or in CI.** `ppa:ubuntu-toolchain-r/test` is used only where a
 compiler newer than the distribution's is genuinely required — today `ci-mpi.yml` alone — and
@@ -234,7 +238,7 @@ Other build types: `debug`, `release-static`, and MPI (`-DCMAKE_Fortran_COMPILER
 -DMPI=1`). **The MPI must be built with the same Fortran compiler** — Tonto does `USE mpi` and
 `.mod` files are compiler-version specific; configure checks this and stops. `-DMPI=1` is a hard
 requirement: if MPI is not found, configure fails rather than silently producing a serial
-binary. See `docs/TONTO_AND_MPI.md`.
+binary. See `docs/TASK_MPI.md`.
 
 **WSL is a supported build host.** `cmake/WSL.cmake` (a no-op elsewhere) strips `/mnt/*` off
 `PATH` before any tool search, so `find_package(Java)` cannot resolve to a Windows `java.exe`,
@@ -296,7 +300,7 @@ page per platform (`docs/BUILDING_ON_{LINUX,MACOS,WINDOWS}.md`); `docs/RUNNING_T
 `docs/TONTO_DEVELOPER_INFO.md` for the developer reference (§1a MPI pitfalls, §1b build and
 test traps, §1c profiling and timing); `docs/FOO_GRAMMAR_DOCUMENTATION.md` for the language.
 `TASKS_AND_HISTORY.md` is the live work and `docs/PROJECT_HISTORY.md` the background — both working
-documents (§1). The `*_REPORT.md` and per-item pages in `docs/` are working documents too.
+documents (§1), as are the `docs/TASK_*.md` pages.
 
 ## 11. Working agreement
 

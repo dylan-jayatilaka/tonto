@@ -8,7 +8,7 @@ Three documents cover this work, and they do different jobs:
 | document | what it holds |
 |---|---|
 | **this page** | the method as it stands, and the lessons -- read first |
-| `docs/SCF_SPEED_REPORT.md` | the measurements: every table, in the order they were taken |
+| `docs/TASK_SCF_SPEEDUP_DATA.md` | the measurements: every table, in the order they were taken |
 | `TASKS_AND_HISTORY.md`, *Speed up the SCF*, *Primitive-batched J and K* | the task register: decisions, open items, next steps |
 
 All timings below are one core, karrikinolide (C8H6O3, 17 atoms) unless the zinc finger
@@ -85,7 +85,7 @@ What Tonto does now, in order of the pipeline:
    `high` it costs more than it gains.
 
 The per-shell error measurements that the adaptive scheme is calibrated from are in
-`SCF_SPEED_REPORT.md`, *Stage B*; the grid standardisation itself in `DFT_STANDARDISATION.md`.
+`TASK_SCF_SPEEDUP_DATA.md`, *Stage B*; the grid standardisation itself in `TASK_DFT_STANDARDISATION.md`.
 
 ---
 
@@ -343,7 +343,7 @@ route for work that must not be approximate.
   499 s; in triplicate, side by side, the whole job is 1.65 times faster than exact, 1.96 times
   with OpenBLAS. **At def2-SVP it loses** (zinc finger 285 s against 151 s), as it does in ORCA: the exact
   K is cheap in a small basis, and COSX costs points times shell pairs whatever the basis.
-  Numbers: `SCF_SPEED_REPORT.md`, *COSX*.
+  Numbers: `TASK_SCF_SPEEDUP_DATA.md`, *COSX*.
 - **Where the time goes** (karrikinolide def2-TZVP): the point-potential kernel 26%, the transfer
   and the contraction with F 20%, `dgemm` with the reference BLAS 18%, the Rys roots 17%. The
   final build on `high` is a quarter to a third of the whole, having seven times the points.
@@ -359,7 +359,7 @@ Then hybrids on something larger than water; MPI; HAR; `long` before merging.
 
 ## 6. What was tried and did not pay
 
-Each is one line here; the numbers are in `SCF_SPEED_REPORT.md` under the heading named.
+Each is one line here; the numbers are in `TASK_SCF_SPEEDUP_DATA.md` under the heading named.
 
 | attempt | outcome | section in the report |
 |---|---|---|
@@ -396,7 +396,7 @@ uses density fitting (RI-J), which is where its large DFT speed comes from; it m
 about 8e-4 Eh.
 
 The table is the exact build against the other codes' defaults. With RI-J and COSX on, Tonto's
-own approximate route is timed against ORCA's RIJCOSX and RIJK in `docs/SCF_SPEED_REPORT.md` (the
+own approximate route is timed against ORCA's RIJCOSX and RIJK in `docs/TASK_SCF_SPEEDUP_DATA.md` (the
 zinc finger, 2026-09-17; thiotepa, 2026-09-26) and in `TASKS_AND_HISTORY.md`, *Finish a COSX SCF
 with one exact J/K build*.
 

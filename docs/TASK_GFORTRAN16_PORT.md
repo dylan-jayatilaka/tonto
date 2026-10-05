@@ -163,7 +163,7 @@ establishes nothing.
 ## Still open
 
 - **Reported to GCC as PR 127197** on 2026-09-03, with a five-version bisection (12, 13, 14
-  and 15 all correct; 16.0.1 segfaults) — see `docs/GFORTRAN16_GCC_BUG.md`. Awaiting a
+  and 15 all correct; 16.0.1 segfaults) — see `docs/TASK_GFORTRAN16_GCC_BUG.md`. Awaiting a
   maintainer. The duplicate search over *resolved* bugs and `16 Regression` remains
   outstanding and has to be done by hand: sourceware blocks scripted access.
 - **gfortran 15 is untested** — neither machine has it. The gate is therefore on

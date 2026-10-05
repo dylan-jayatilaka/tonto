@@ -20,12 +20,11 @@ sudo apt install make cmake default-jdk gfortran-14 libblas-dev liblapack-dev \
   specific — what any MPI you use must also have been built with. Version 13
   will generally compile, but do not report a numeric difference against the
   references without first checking on 14.
-- **Do not use gfortran-16 yet.** A migration to it was made and reverted on
-  2026-08-27: its *debug* build fails 34 of 71 short tests where 14 passes
-  exactly, and separately it miscompiles `-fcheck=bounds`. Release builds are
+- **Do not use gfortran-16 yet.** Its *debug* build fails 34 of 71 short tests
+  where 14 passes exactly, and separately it miscompiles `-fcheck=bounds`. Release builds are
   fine, so 16 is usable if you only ever build `release` — but it is not the
   standard, and the references were not blessed on it. See
-  [`GFORTRAN16_DEBUG_CRASH.md`](GFORTRAN16_DEBUG_CRASH.md).
+  [`TASK_GFORTRAN16_PORT.md`](TASK_GFORTRAN16_PORT.md).
 - `default-jdk` provides `java`/`javac` for the ANTLR4 `foo`→Fortran translator.
   The ANTLR jar itself is downloaded automatically on the first `cmake` run
   (internet needed for that one configure).
@@ -122,7 +121,7 @@ requirement: if MPI is not found, configure fails rather than silently
 producing a serial binary.
 
 **Validate parallel results before trusting them.**
-[`TONTO_AND_MPI.md`](TONTO_AND_MPI.md) records what a parallel run does and does
+[`TASK_MPI.md`](TASK_MPI.md) records what a parallel run does and does
 not reproduce.
 
 Install it with `sudo apt install openmpi-bin libopenmpi-dev`. Ubuntu's package
@@ -151,7 +150,7 @@ the compiler, the build type and `-DMPI=1`.
 |---|---|
 | Running Tonto | [`RUNNING_TONTO.md`](RUNNING_TONTO.md) |
 | The `hart` program | [`RUNNING_HART.md`](RUNNING_HART.md) |
-| What a parallel build does and does not reproduce | [`TONTO_AND_MPI.md`](TONTO_AND_MPI.md) |
+| What a parallel build does and does not reproduce | [`TASK_MPI.md`](TASK_MPI.md) |
 | Source and executable layout | [`TONTO_LIBRARY_STRUCTURE.md`](TONTO_LIBRARY_STRUCTURE.md) |
 
 > **Options are GNU long options.** Every Tonto program takes `--name` only —

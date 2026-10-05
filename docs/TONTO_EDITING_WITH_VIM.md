@@ -1,7 +1,5 @@
 # Editing Tonto with vim
 
-Migrated from the project wiki (2026-08-05).
-
 Your text editor is a personal choice. If you use `vim`
 you might want to install
 

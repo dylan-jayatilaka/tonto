@@ -2,7 +2,7 @@
 """Invariant test: every DFT functional name Tonto accepts must be implemented.
 
 This is the accepted-name against implemented-name cross-check of
-docs/DFT_STANDARDISATION.md section 12, and it closes the stated limit of the
+docs/TASK_DFT_STANDARDISATION.md section 12, and it closes the stated limit of the
 section 5 fix.
 
 WHAT SECTION 5 FIXED, AND WHAT IT DID NOT. An unrecognised functional name used
@@ -17,7 +17,7 @@ that, because from the setter's point of view the name is perfectly good.
 The six dispatcher `case default` lines cannot be enabled to catch it either --
 they are PURE, and UNKNOWN is a DIE that expands to an allocate, which a pure
 procedure may not do. That is why this check is a source scan and not a runtime
-guard. See docs/DFT_STANDARDISATION.md section 5.
+guard. See docs/TASK_DFT_STANDARDISATION.md section 5.
 
 THE INVARIANT. Six `select case` blocks name functionals, and they must agree
 exactly:
@@ -164,7 +164,7 @@ def main():
         print('FAIL: %d functional name(s) disagree across the six blocks' % len(bad))
         print('      A name a setter accepts but a dispatcher does not implement')
         print('      computes NOTHING, silently, at exit 0 -- that was gill96.')
-        print('      See docs/DFT_STANDARDISATION.md sections 5 and 12.')
+        print('      See docs/TASK_DFT_STANDARDISATION.md sections 5 and 12.')
         for name, where, _role, why in bad:
             print('  %-10s %-45s %s' % ('"%s"' % name, where, why))
         return 1
