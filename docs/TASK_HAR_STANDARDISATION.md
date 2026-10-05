@@ -68,9 +68,10 @@ Hirshfeld moments are identical under two BLAS kernels. Left to check:
 - **def2-SVP, def2-TZVP, def2-TZVPP: H to Kr** in `basis_sets/`. Beyond Kr the published def2
   sets replace the core by an effective core potential, which is no use here: X-rays scatter
   from the core.
-- **x2c-SVP, x2c-TZVP, x2c-TZVPP: H to Rn**, all-electron, in `basis_sets/` (Pollak and Weigend's
-  x2c-…all sets, the same family as def2). They are made for a scalar-relativistic Hamiltonian;
-  Tonto has IOTC and DKH (`relativity_kind=`). To be tested: x2c-TZVP with IOTC against def2-TZVP
+- **x2c-SVPall, x2c-TZVPall, x2c-TZVPPall: H to Rn**, all-electron, in `basis_sets/` (Pollak and
+  Weigend, *J. Chem. Theory Comput.* 13, 3696, 2017; the same family as def2). All 86 elements
+  agree with the Basis Set Exchange copies in every exponent and coefficient. They are made for a scalar-relativistic Hamiltonian;
+  Tonto has IOTC and DKH (`relativity_kind=`). To be tested: x2c-TZVPall with IOTC against def2-TZVP
   on light atoms, where the two should agree, and on one 4d or 5d compound.
 - **All-electron families that cover the table**, from the Basis Set Exchange metadata
   (2026-10-05; sets with no core potential on any element, and how far from H they are complete):
@@ -88,8 +89,8 @@ Hirshfeld moments are identical under two BLAS kernels. Left to check:
   | Sapporo DZP/TZP/QZP and -2012 | Xe | segmented |
   | pcseg-n, pc-n | Kr | segmented |
 
-  **The partner of def2 beyond Kr is the x2c family** (Tonto's `x2c-SVP`, `x2c-TZVP`, `x2c-TZVPP`
-  are taken to be the "all" sets; to be confirmed exponent by exponent). Beyond Rn only the jorge
+  **The partner of def2 beyond Kr is the x2c family** (in Tonto's library under the
+  literature names since 2026-10-05; they were `x2c-SVP`, `x2c-TZVP`, `x2c-TZVPP`). Beyond Rn only the jorge
   sets (segmented) and Dyall or HGBS (uncontracted) remain. The uncontracted families are the
   systematic way to carry an uncontracted-core protocol across the table, at a cost in size.
 - Auxiliary sets for RI-J: `def2-universal-jfit` covers H to Rn; whether it suits the x2c
@@ -136,5 +137,8 @@ it does not change results.
 
 ## 8. Log
 
+- 2026-10-05: the x2c sets renamed to their literature names (`x2c-SVPall`, `x2c-TZVPall`,
+  `x2c-TZVPPall`), after checking all 86 elements of each against the Basis Set Exchange; headers
+  rewritten with the reference. Water RHF with `x2c-SVPall`, spherical: -75.955014.
 - 2026-10-05: document written. Running: the spherical-function reruns of every urea refinement
   (74 jobs) after a four-SCF timing test, see the handover in `TASKS_AND_HISTORY.md`.
