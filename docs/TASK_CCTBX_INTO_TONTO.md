@@ -1048,7 +1048,7 @@ theorem the structure is unchanged.
 **The covariance contribution** then follows, and for a derived quantity `f(x)` which — in a
 Cartesian parameterisation — has no explicit cell dependence:
 
-$$\operatorname{Var}_{\text{cell}}(\hat{x}) = S\,V_c\,S^{T}, \qquad \sigma^2(f) = \left(\frac{\partial f}{\partial x}\right)^{T}\left[\operatorname{Var}_{\text{fit}}(\hat{x}) + S V_c S^{T}\right]\frac{\partial f}{\partial x}$$
+$$\mathrm{Var}\,_{\text{cell}}(\hat{x}) = S\,V_c\,S^{T}, \qquad \sigma^2(f) = \left(\frac{\partial f}{\partial x}\right)^{T}\left[\mathrm{Var}\,_{\text{fit}}(\hat{x}) + S V_c S^{T}\right]\frac{\partial f}{\partial x}$$
 
 **Obtaining `∂Y_c/∂c`.** By the chain rule through `k`. Since the phase is `k·x`, for
 `F = Σ_j f_j exp(i k·x_j)`:
@@ -1174,7 +1174,7 @@ convention while Tonto refines Cartesian tensors. Its own docstring says:
 The conversion is a congruence, `U' = M U Mᵀ`, so **each `U'_ij` is a linear combination of
 all six `U_kl`**. Its variance therefore needs the full 6×6 covariance:
 
-$$\sigma^2(U'_{ij}) = \sum_{kl}\sum_{mn}\frac{\partial U'_{ij}}{\partial U_{kl}}\frac{\partial U'_{ij}}{\partial U_{mn}}\operatorname{cov}(U_{kl},U_{mn})$$
+$$\sigma^2(U'_{ij}) = \sum_{kl}\sum_{mn}\frac{\partial U'_{ij}}{\partial U_{kl}}\frac{\partial U'_{ij}}{\partial U_{mn}}\mathrm{cov}\,(U_{kl},U_{mn})$$
 
 Transforming the σ's element-wise discards every off-diagonal term. That can be wrong in
 either direction and by a substantial factor — and it affects **every anisotropic ADP ESD

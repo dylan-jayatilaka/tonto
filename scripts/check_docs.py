@@ -15,9 +15,12 @@ CHECKS = [
     (r"(?i)working document", "a working-document note"),
     (r"(?i)\b(was tried|we tried|measured, not assumed|turned out|it was found)\b", "an investigation story"),
     (r"\\tag\{", "\\tag (draws as a column in Chrome and Brave; use \\qquad (n))"),
+    (r"\\operatorname", "\\operatorname (GitHub does not render it; use \\mathrm{...}\\,)"),
     (r"(?<![`$])\$\$", "$$ display math (use a ```math block)"),
     (r"(?<![`$\\])\$(?![`$])[^$\n]+?(?<!`)\$(?![$])", "$...$ inline math (use $`...`$)"),
 ]
+
+MATH_CHECKS = [c for c in CHECKS if c[0] in (r"\\tag\{", r"\\operatorname")]
 
 def user_facing():
     yield ROOT / "README.md"
@@ -33,14 +36,22 @@ def strip_code(line):
 bad = 0
 for path in user_facing():
     fence = False
+    math = False
     for n, line in enumerate(path.read_text().splitlines(), 1):
         if line.strip().startswith("```"):
             if not fence and line.startswith(" ") and line.strip().startswith("```math"):
                 print(f"{path.relative_to(ROOT)}:{n}: an indented ```math block (GitHub shows it as code; take it out of the list)")
                 bad += 1
+            math = not fence and line.strip().startswith("```math")
             fence = not fence
             continue
         if fence:
+            # In a math block, only the LaTeX GitHub cannot draw
+            if math:
+                for pattern, what in MATH_CHECKS:
+                    if re.search(pattern, line):
+                        print(f"{path.relative_to(ROOT)}:{n}: {what}: {line.strip()[:100]}")
+                        bad += 1
             continue
         text = strip_code(line)
         for pattern, what in CHECKS:

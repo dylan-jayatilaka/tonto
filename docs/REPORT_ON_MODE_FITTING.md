@@ -126,9 +126,9 @@ U_i^{\rm TLS} = T + A_i L A_i^{\mathsf T} + A_i S + S^{\mathsf T} A_i^{\mathsf T
 ```
 
 - **The origin** is the fragment's centre of mass. $`T`$ and $`S`$ depend on where it is; $`L`$ does not.
-- **$`\operatorname{tr} S`$ is not determined.** Adding the same number $`c`$ to the three diagonal elements of
+- **$`\mathrm{tr}\, S`$ is not determined.** Adding the same number $`c`$ to the three diagonal elements of
   $`S`$ adds $`c\,(A_i + A_i^{\mathsf T})`$ to every $`U_i`$, and that is zero because $`A_i`$ is antisymmetric. No
-  measurement can fix it. Tonto removes that direction, which makes $`\operatorname{tr} S = 0`$. $`\Sigma`$ has
+  measurement can fix it. Tonto removes that direction, which makes $`\mathrm{tr}\, S = 0`$. $`\Sigma`$ has
   21 independent elements, so 20 remain.
 - **Site symmetry.** If the molecule sits on a special position, $`\Sigma`$ must carry the site symmetry.
   Tonto imposes it through the atoms:
@@ -237,7 +237,7 @@ frequency the refined amplitude corresponds to, and is printed beside it.
 **A soft mode can repeat the rigid-body motion.** Only the pattern $`\mathbf{d}_{ik}\mathbf{d}_{ik}^{\mathsf T}`$ over the
 atoms reaches the data. If that pattern is a combination of the rigid-body patterns and the
 other soft modes, the data cannot tell them apart, and the mode adds no parameter. Tonto finds
-such modes as it finds $`\operatorname{tr} S`$ (§1.4), and drops them. In urea, a planar molecule, the
+such modes as it finds $`\mathrm{tr}\, S`$ (§1.4), and drops them. In urea, a planar molecule, the
 second out-of-plane NH₂ wag is a combination of the first wag and the libration about the
 in-plane axes, so two soft modes refine as one.
 
@@ -442,7 +442,7 @@ and the covariance is $`(A + R)^{-1}`$. A restrained parameter is only partly fi
 **effective number of parameters** counts how much:
 
 ```math
-p_{\rm eff} = \operatorname{tr}\!\left[(A + R)^{-1} A\right] ,
+p_{\rm eff} = \mathrm{tr}\left[(A + R)^{-1} A\right] ,
 ```
 
 which is the number of parameters when $`R = 0`$, and less than it when the restraints bind. A
