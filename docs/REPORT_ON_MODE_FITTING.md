@@ -380,16 +380,18 @@ There are three kinds. Each uses a **scale** $`c_p`$ for coordinate $`p`$ of $`\
 $`\Sigma_{pp}`$ for a translation or libration (at least 1/1000 of the largest diagonal element of
 $`T`$ or $`L`$), and for a soft mode the harmonic amplitude (6) at its $`|\omega_k|`$.
 
-- **Soft-mode amplitudes**, $`g = a_k`$, held toward the harmonic value $`a_k^0`$ with
-  $`\sigma = f_a\, a_k^0`$; $`f_a`$ is `soft_mode_restraint=`, 0.5 by default. An imaginary mode has no
-  $`a_k^0`$ and is not restrained.
-- **Cross terms** (§1.8), $`g = \Sigma_{pq}`$, held toward 0 with
-  $`\sigma = f_\rho\, (c_p c_q)^{1/2}`$; $`f_\rho`$ is `correlation_restraint=`, 0.5 by default. Since
-  $`(c_p c_q)^{1/2}`$ is the largest value $`|\Sigma_{pq}|`$ can have, this is the same as holding the
-  correlation coefficient $`\rho_{pq}`$ toward 0 with uncertainty $`f_\rho`$.
+- **Soft-mode amplitudes**, $`g = a_k`$, held toward the harmonic amplitude $`a_k^0`$ with uncertainty
+  $`\sigma_k = f_a\, a_k^0`$. Here $`a_k^0`$ is (6) evaluated at the mode's harmonic frequency $`\omega_k`$: the
+  restraint is on the amplitude, the quantity the ADPs are linear in, and $`\omega_k`$ fixes its target.
+  $`f_a`$ is `soft_mode_restraint=`, 0.5 by default, one number for all modes. An imaginary mode
+  has no $`a_k^0`$ and is not restrained.
+- **Cross terms** (§1.8), $`g = \Sigma_{pq}`$, held toward 0 with uncertainty
+  $`\sigma_{pq} = f_\rho\, (c_p c_q)^{1/2}`$. $`f_\rho`$ is `correlation_restraint=`, 0.5 by default, one number
+  for all pairs. Since $`(c_p c_q)^{1/2}`$ is the largest value $`|\Sigma_{pq}|`$ can have, this is the same as
+  holding the correlation coefficient $`\rho_{pq}`$ toward 0 with uncertainty $`f_\rho`$.
 - **Positivity.** At the start of each refinement cycle Σ is diagonalised. For each eigenvector
-  $`\mathbf{w}`$ with a negative eigenvalue, $`g = \mathbf{w}^{\mathsf T}\Sigma\,\mathbf{w}`$ is held toward 0 with
-  $`\sigma = \sum_p w_p^2 c_p / 100`$. This holds Σ on the boundary $`\Sigma \ge 0`$ while the data push
+  $`\mathbf{w}`$ with a negative eigenvalue, $`g = \mathbf{w}^{\mathsf T}\Sigma\,\mathbf{w}`$ is held toward 0 with uncertainty
+  $`\sigma_w = \sum_p w_p^2 c_p / 100`$. This holds Σ on the boundary $`\Sigma \ge 0`$ while the data push
   against it. When they stop pushing, the eigenvalue comes out positive and the restraint is
   dropped at the next cycle. `use_positive_tls_sigma=` switches it, on by default.
 
@@ -401,7 +403,7 @@ decides it, and the quantity stays near $`g^0`$ instead of drifting to wherever 
 
 For the cross terms the target is 0: the model of (10), with the motions independent, is the
 starting assumption, and the data must show a correlation before the refinement accepts one.
-Each cross term adds $`(\rho_{pq}/f_\rho)^2`$ to $`\chi^2`$. With $`f_\rho = 0.5`$ that is 1 at $`\rho = 0.5`$ and 4 at
+Each cross term adds $`(\Sigma_{pq}/\sigma_{pq})^2 = (\rho_{pq}/f_\rho)^2`$ to $`\chi^2`$. With $`f_\rho = 0.5`$ that is 1 at $`\rho = 0.5`$ and 4 at
 $`\rho = 1`$. It pulls smoothly toward 0, more strongly the larger $`\rho`$; there is no threshold. The
 term is small, which is what "weak" means. Whether it matters depends on how well the data fix
 $`\rho`$. If they give $`\rho`$ with an esd of 0.06, moving it 0.1 away from the data's value costs
@@ -410,7 +412,7 @@ Only a correlation the data barely determine is held near 0. The value 0.5 is a 
 how the results depend on it.
 
 **How the restraints stay linear.** The restraint is on $`\Sigma_{pq}`$, which is linear in the parameters,
-not on $`\rho_{pq}`$, which is not. Its $`\sigma`$ uses the scales $`c_p`$ and $`c_q`$ of the current Σ, and these are
+not on $`\rho_{pq}`$, which is not. Its uncertainty $`\sigma_{pq}`$ uses the scales $`c_p`$ and $`c_q`$ of the current Σ, and these are
 fixed for the cycle and updated before the next. So within a cycle every restraint is an exact
 linear observation and nothing is linearised. At convergence it holds $`\rho_{pq}`$ toward 0 with
 uncertainty $`f_\rho`$; the change of the scales with the parameters is not differentiated, which
@@ -555,6 +557,8 @@ complete examples.
 
 ## 4. Where it is implemented
 
+Each piece of the model, and the Tonto procedure that does it.
+
 | piece | procedure |
 |---|---|
 | rigid-body vectors, mass-weighted, orthonormal | `VEC{ATOM}:make_rigid_body_modes` |
@@ -617,6 +621,9 @@ TFVA (`oc-salvador`). There are three ADP models:
 Every refinement also has the positions and a scale factor. The neutron bond lengths are from
 Swaminathan, Craven and McMullan (1984).
 
+For each refinement: the number of parameters, the fit, the N–H and C=O bond lengths, and the
+hydrogens' U_iso.
+
 | basis | partition | ADP model | parameters | GoF | R(F) | N–H1 /Å | N–H3 /Å | C=O /Å | U_iso H1 / H3 /Å² |
 |---|---|---|---|---|---|---|---|---|---|
 | def2-SVP | Hirshfeld | free | 27 | 3.304 | 0.0181 | 1.028(5) | 0.986(6) | 1.2558(4) | 0.054(4) / 0.048(3) |
@@ -660,6 +667,9 @@ S_{12} = 100 \left[ 1 - \frac{2^{3/2}\, \det(U_1^{-1} U_2^{-1})^{1/4}}{\det(U_1^
 ```
 
 which is 0 for identical displacement ellipsoids and grows as their shapes and orientations part.
+
+For each refinement of the table above, its GoF and both measures for the two independent
+hydrogens, H1 and H3.
 
 | basis | partition | ADP model | GoF | H1: U_iso ratio | H1: S12 | H3: U_iso ratio | H3: S12 |
 |---|---|---|---|---|---|---|---|
@@ -706,6 +716,9 @@ size of the displacements, says what kind of motion a mode is.
 Hirshfeld partition, the model (10) with the $`K`$ softest modes refined, `soft_mode_restraint=`
 0.5. The cutoff is 200 cm⁻¹ for $`K \le 2`$, 600 for $`K = 3`$ and 700 for $`K = 4`$, so modes 3 and 4
 move from $`U^{\rm high}`$ into the refinement. $`K = 0`$ is TLS + U^high above.
+
+For each $`K`$: the parameter count, the effective count, the fit, AIC and BIC, and the
+hydrogen ADPs against neutron (U_iso ratio, then S12).
 
 | basis | $`K`$ | parameters | $`p_{\rm eff}`$ | GoF | $`\chi^2`$ | AIC | BIC | H1: U_iso ratio, S12 | H3: U_iso ratio, S12 |
 |---|---|---|---|---|---|---|---|---|---|
@@ -780,6 +793,9 @@ density, most of all at the hydrogens, which make the hydrogen bonds. Two ways t
 
 All refinements here use def2-SVP and the Hirshfeld partition. B3LYP is the Gaussian form of the
 functional (`b3lypgx`, `b3lypgc`).
+
+For each method and environment, free ADPs and TLS + U^high: the fit, the N–H bond lengths, and
+the hydrogen ADPs against neutron (U_iso ratio, then S12).
 
 | method | environment | ADP model | parameters | GoF | N–H1 /Å | N–H3 /Å | H1: U_iso ratio, S12 | H3: U_iso ratio, S12 |
 |---|---|---|---|---|---|---|---|---|
@@ -870,6 +886,9 @@ calculated by periodic DFT by Johnson, Parlinski, Natkaniec and Hudson (2003). I
 - no internal mode lies below about 416 cm⁻¹.
 
 The harmonic amplitude (6) at 123 K is 230 at 480 cm⁻¹ and 164 at 670 cm⁻¹, in atomic units.
+
+For the wags and the C=O bend: the frequency in the isolated molecule, where the crystal has its
+modes, and the amplitude refined for the isolated molecule with the frequency it implies.
 
 | mode | isolated molecule, RHF/6-31G(d) /cm⁻¹ | crystal /cm⁻¹ | refined amplitude, isolated molecule, $`K = 4`$ (implied /cm⁻¹) |
 |---|---|---|---|
