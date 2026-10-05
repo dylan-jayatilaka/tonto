@@ -8,8 +8,8 @@ stretches and bends) are well described by a calculated Hessian and need no refi
 soft modes (torsions, wags) are where the crystal matters.
 
 Tonto refines the rigid-body motion directly against the structure factors, with the stiff
-internal modes added from a Hessian. This page gives the equations, the keywords, where the
-code is, and what it gives on urea. The soft modes are not yet refined; see the last section.
+internal modes added from a Hessian and the amplitudes of the softest modes refined. This page
+gives the equations, the keywords, where the code is, and what it gives on urea.
 
 Units: Tonto works in atomic units (bohr, bohr², electron masses, hartree, ħ = 1) and prints
 ADPs in Å², librations in degrees², and frequencies in cm⁻¹. Vectors are columns; ᵀ is the
@@ -175,10 +175,38 @@ ADP of atom *i* as
 
 $$U_i = U_i^{\rm high} + B_i\, \Sigma\, B_i^{\mathsf T} , \tag{9}$$
 
-with $\Sigma$ refined and $U_i^{\rm high}$ fixed by the Hessian. The soft modes are not yet
-in the model (§6).
+with $\Sigma$ refined and $U_i^{\rm high}$ fixed by the Hessian.
 
-### 1.7 Frequency scaling
+### 1.7 Soft modes
+
+The soft modes left out of (8) can be put back with refined amplitudes. Take the $K$ softest
+modes, imaginary ones first. Write $\mathbf{d}_{ik} = \mathbf{l}_{ik}/\sqrt{m_i}$ for the displacement of atom $i$
+in mode $k$ per unit $Q_k$, and $a_k = \langle Q_k^2\rangle$ for the mode's mean-square amplitude. Each soft
+mode adds one generalised coordinate $Q_k$ to $\mathbf{v}$ and one column $\mathbf{d}_{ik}$ to $B_i$. The modes
+are taken as uncorrelated with each other and with the rigid-body motion, so only the amplitudes
+enter, and (9) becomes
+
+$$U_i = U_i^{\rm high} + B_i\, \Sigma\, B_i^{\mathsf T} + \sum_{k=1}^{K} a_k\, \mathbf{d}_{ik}\mathbf{d}_{ik}^{\mathsf T} , \tag{10}$$
+
+with $\Sigma$ the rigid-body covariance of §1.4 and $a_1 \dots a_K$ refined. A soft mode must have
+$\omega_k$ below the cutoff $\omega_c$ of (8), or it would be counted twice; raising the cutoff moves
+more modes from $U^{\rm high}$ into the refinement. The cutoff is compared with the scaled frequency
+(§1.8). Set it between the $K$-th and the next mode: a mode below the cutoff that is not among
+the $K$ refined is in neither term of (10).
+
+**The harmonic amplitude** $a_k^0$ is (6) at the mode's frequency. An imaginary mode has none.
+
+**The implied frequency** of a refined $a_k$ is the $\omega$ for which (6) gives $a_k$. It says what
+frequency the refined amplitude corresponds to, and is printed beside it.
+
+**A soft mode can repeat the rigid-body motion.** Only the pattern $\mathbf{d}_{ik}\mathbf{d}_{ik}^{\mathsf T}$ over the
+atoms reaches the data. If that pattern is a combination of the rigid-body patterns and the
+other soft modes, the data cannot tell them apart, and the mode adds no parameter. Tonto finds
+such modes as it finds $\operatorname{tr} S$ (§1.4), and drops them. In urea, a planar molecule, the
+second out-of-plane NH₂ wag is a combination of the first wag and the libration about the
+in-plane axes, so two soft modes refine as one.
+
+### 1.8 Frequency scaling
 
 Calculated harmonic frequencies are too high, so (8) is too small. The frequencies can be
 multiplied by a scale factor before (6) is used. The default is the value of Scott and Radom
@@ -194,7 +222,7 @@ multiplied by a scale factor before (6) is used. The default is the value of Sco
 They were fitted for the 6-31G(d) basis and are applied whatever the basis. For a Hessian read
 in from a file, the method is unknown and the default is 1.
 
-### 1.8 A Hessian by finite differences
+### 1.9 A Hessian by finite differences
 
 Without an external program, Tonto makes the Hessian from its own SCF energies by central
 differences with step $h$ (0.01 bohr by default). Writing $E(+a)$ for the energy with coordinate $a$
@@ -239,12 +267,13 @@ Hamilton's test.
 The refinement's parameters $\mathbf{p}$ are kept explicitly. The model vector $\mathbf{X}$, the positions and
 ADPs of all the atoms, is made from them by
 
-$$\mathbf{X} = \mathbf{X}_0 + J\,\mathbf{p}, \qquad J = \partial\mathbf{X}/\partial\mathbf{p} \text{ (the Jacobian).} \tag{10}$$
+$$\mathbf{X} = \mathbf{X}_0 + J\,\mathbf{p}, \qquad J = \partial\mathbf{X}/\partial\mathbf{p} \text{ (the Jacobian).} \tag{11}$$
 
 - **Free ADPs:** J has one unit column per refined component of X.
 - **TLS model:** each atom keeps its three position columns. Its six ADP columns are replaced
   by columns shared by all the atoms, one per allowed $\Sigma$ parameter: by (9),
   $\partial U_i/\partial\Sigma = \partial(B_i\Sigma B_i^{\mathsf T})/\partial\Sigma$. $\mathbf{X}_0$ holds $U^{\rm high}$ on the ADP rows.
+- **Soft modes:** one more shared column per mode, $\partial U_i/\partial a_k = \mathbf{d}_{ik}\mathbf{d}_{ik}^{\mathsf T}$ by (10).
 
 ### 2.3 Solving
 
@@ -256,9 +285,56 @@ $$D = \frac{\partial F_{\rm calc}}{\partial \mathbf{X}}\, J, \qquad A = D^{\math
 with $W$ the diagonal matrix of the weights. Eigenvalues of $A$ near zero (directions the data do
 not determine) are filtered out. The covariance of $\mathbf{p}$ is $C = A^{-1}$ scaled by GoF², and the esd of
 each parameter is the square root of its diagonal element. The covariance of $\mathbf{X}$ follows as
-$J C J^{\mathsf T}$, which gives every atomic $U$ an esd even though only $\Sigma$ is refined. Each
+$J C J^{\mathsf T}$, which gives every atomic $U$ an esd even though only $\Sigma$ and the $a_k$ are refined. Each
 refinement cycle starts by putting the ADPs on the model: $\Sigma$ is fitted to the current
 $U - U^{\rm high}$, and $U$ is set to $U^{\rm high} + B\,\Sigma\,B^{\mathsf T}$.
+
+### 2.4 Restraining the soft modes
+
+Each soft-mode amplitude is held toward its harmonic value. The refinement minimises
+
+$$\chi^2 + \sum_k \frac{(a_k - a_k^0)^2}{\sigma_k^2}, \qquad \sigma_k = s\, a_k^0 , \tag{12}$$
+
+with $s$ given by `soft_mode_restraint=` (0.5 by default). An imaginary mode has no $a_k^0$ and is
+not restrained.
+
+In matrix form: the amplitudes are a linear function of the parameters, $\mathbf{a} = Q\,\mathbf{p}$, because
+the parameters are the combinations of $\Sigma$ and the $a_k$ that survive §1.4 and §1.7. Let $w$ be
+diagonal with $1/\sigma_k^2$ for a restrained mode and 0 for an imaginary one. The added term is
+$(\mathbf{a}-\mathbf{a}^0)^{\mathsf T} w\, (\mathbf{a}-\mathbf{a}^0)$, its matrix in the parameters is $R = Q^{\mathsf T} w\, Q$, and the normal
+equations of §2.3 become
+
+$$(A + R)\, \Delta\mathbf{p} = \mathbf{b} + Q^{\mathsf T} w\,(\mathbf{a}^0 - \mathbf{a}) ,$$
+
+and the covariance is $(A + R)^{-1}$. A restrained parameter is only partly fitted to the data. The
+**effective number of parameters** counts how much:
+
+$$p_{\rm eff} = \operatorname{tr}\!\left[(A + R)^{-1} A\right] ,$$
+
+which is the number of parameters when $R = 0$, and less than it when the restraints bind.
+
+### 2.5 How many parameters the data support
+
+A model with more parameters always fits at least as well. Three measures say whether the
+improvement is worth the parameters. Let $n$ be the number of reflections and $p$ the
+number of parameters ($p_{\rm eff}$ for a restrained fit).
+
+- **Akaike's information criterion**, $\mathrm{AIC} = \chi^2 + 2p$.
+- **The Bayesian information criterion**, $\mathrm{BIC} = \chi^2 + p \ln n$. It charges more per
+  parameter than AIC once $n > 7$.
+
+  For both, the model with the smaller value is preferred.
+- **Hamilton's test.** Model $a$ has $p_a$ parameters and model $b$ adds $k$, so $p_b = p_a + k$.
+  The ratio of their weighted R factors is $\mathcal R = (\chi^2_a / \chi^2_b)^{1/2}$. Model $b$ is
+  significantly better, at significance level $\alpha$, when
+
+  $$\mathcal R > \left[ 1 + \frac{k}{n - p_b}\, F_{k,\, n-p_b,\, \alpha} \right]^{1/2} , \tag{13}$$
+
+  with $F_{k,\,n-p_b,\,\alpha}$ the point of the F distribution exceeded with probability $\alpha$.
+  This page uses $\alpha = 0.005$.
+
+Tonto prints $n$, $p_{\rm eff}$, $\chi^2$, GoF, AIC and BIC after a TLS refinement; the Hamilton
+ratio is formed from the $\chi^2$ of two runs.
 
 
 ## 3. Keywords
@@ -275,17 +351,19 @@ On the molecule (top level):
 | `put_normal_modes` | | prints the Hessian and the modes |
 | `internal_adp_temperature=` | 0 | the temperature Θ in (6), Kelvin; 0 gives zero-point motion |
 | `soft_mode_cutoff=` | 200 | modes below this, cm⁻¹, are soft |
-| `frequency_scale_factor=` | see §1.7 | scales the frequencies in (6) |
-| `make_internal_adps` | | makes U^high, eq. (8) |
+| `frequency_scale_factor=` | see §1.8 | scales the frequencies in (6) |
+| `make_internal_adps` | | makes U^high, eq. (8), and the soft modes of (10) |
 | `put_internal_adps` | | prints U^high and how many modes are soft, imaginary and stiff |
 
 In `xray_data=`:
 
 | keyword | default | meaning |
 |---|---|---|
-| `adp_model=` | `free` | `free`: refine each atom's ADP; `tls`: the model (9), HAR only |
+| `adp_model=` | `free` | `free`: refine each atom's ADP; `tls`: the model (10), HAR only |
+| `n_soft_modes=` | 0 | $K$ in (10): how many of the softest modes have refined amplitudes |
+| `soft_mode_restraint=` | 0.5 | $s$ in (12): the restraint $\sigma$ as a fraction of the harmonic amplitude |
 
-A TLS Hirshfeld atom refinement with U^high from a Hessian:
+A TLS Hirshfeld atom refinement with U^high from a Hessian, and the four softest modes refined:
 
 ```
    CIF= { file_name= urea.cif }
@@ -295,6 +373,7 @@ A TLS Hirshfeld atom refinement with U^high from a Hessian:
    normal_mode_analysis
    internal_adp_temperature= 123
    frequency_scale_factor= 0.8953    ! RHF/6-31G(d) Hessian
+   soft_mode_cutoff= 600             ! the four softest modes, after scaling
    make_internal_adps
    put_internal_adps
 
@@ -302,6 +381,7 @@ A TLS Hirshfeld atom refinement with U^high from a Hessian:
       xray_data= {
          partition_model= oc-hirshfeld
          adp_model= tls
+         n_soft_modes= 4
          ...
       }
    }
@@ -310,7 +390,8 @@ A TLS Hirshfeld atom refinement with U^high from a Hessian:
    HAR_refinement
 ```
 
-The test `tests/long/urea_rhf_STO-3G_HAR_TLS` is a complete example.
+The tests `tests/long/urea_rhf_STO-3G_HAR_TLS` and `tests/long/urea_rhf_STO-3G_HAR_TLS_soft_modes`
+are complete examples, without and with soft modes.
 
 
 ## 4. Where it is implemented
@@ -325,9 +406,13 @@ The test `tests/long/urea_rhf_STO-3G_HAR_TLS` is a complete example.
 | frequency scale factor | `MOLECULE.PROP:harmonic_frequency_scale` |
 | U^high handed to the refinement | `MOLECULE.PROP:set_crystal_U_high`, `CRYSTAL:set_fragment_U_high` |
 | ∂U_i/∂Σ for one atom | `CRYSTAL:TLS_response` |
-| allowed Σ, J columns, tr S, origin | `CRYSTAL:make_TLS_jacobian_columns` |
+| allowed Σ and $a_k$, J columns, tr S, origin | `CRYSTAL:make_TLS_jacobian_columns` |
 | p and X₀; ADPs put on the model | `CRYSTAL:set_refinement_parameters` |
+| soft modes chosen, $\mathbf{d}_{ik}$ and $a_k^0$ | `MOLECULE.PROP:set_crystal_soft_modes`, `CRYSTAL:set_soft_modes` |
+| restraints (12) | `CRYSTAL:set_soft_mode_restraints`, `MAT{REAL}:solve_restrained_linear_equations` |
 | T, L, S with esds | `CRYSTAL:put_TLS_results` |
+| refined amplitudes, implied frequencies | `CRYSTAL:put_soft_mode_results`, `CRYSTAL:frequency_for_amplitude` |
+| $p_{\rm eff}$, AIC, BIC | `LEAST_SQUARES:solve_normal_equations`, `CRYSTAL:put_model_selection` |
 | explicit parameters, eq. (10); the solve | `LEAST_SQUARES` (`least_squares.foo`) |
 
 
@@ -354,27 +439,51 @@ RHF/6-31G(d) Hessian by finite differences at the HAR geometry, 123 K, frequenci
 | H3, H4 | 0.0067 |
 
 The crystal geometry is planar, while gas-phase urea has pyramidal NH₂ groups. So the two NH₂
-wags are imaginary (432i and 208i cm⁻¹) and are left out of U^high as soft modes. The gradient
+wags are imaginary (432i and 164i cm⁻¹) and are left out of U^high as soft modes. The gradient
 there is 0.093 Eh/bohr. RHF frequencies are about 10 % high, so these U^high are about 10 % low.
 
-### Urea: TLS refinement
+### Urea: the refinements compared
 
-Hirshfeld atom refinement, def2-SVP, 123 K data, U^high as above:
+Hirshfeld atom refinement against the 123 K X-ray data (817 reflections), with RHF
+densities in the def2-SVP and def2-TZVP basis sets. There are two partitions of the density
+into atoms: Hirshfeld (`oc-hirshfeld`) and the topological fuzzy Voronoi atoms of Salvador,
+TFVA (`oc-salvador`). There are three ADP models:
+- free: six parameters per atom;
+- TLS with $U^{\rm high} = 0$: the rigid-body model (5) alone;
+- TLS + U^high: the model (9), with $U^{\rm high}$ as above.
 
-| ADP model | parameters | GoF | R(F) | N–H1 /Å | N–H3 /Å | U_iso H1 / H3 /Å² |
-|---|---|---|---|---|---|---|
-| free | 27 | 3.30 | 0.0181 | 1.028(5) | 0.986(6) | 0.054(4) / 0.048(3) |
-| TLS, U^high = 0 | 17 | 3.84 | 0.0184 | 1.025(5) | 0.994(5) | 0.0334(15) / 0.0329(13) |
-| TLS + U^high | 17 | 3.51 | 0.0180 | 1.028(5) | 0.994(5) | 0.0447(15) / 0.0399(13) |
-| neutron | | | | 1.006 | 1.000 | |
+Every refinement also has the positions and a scale factor. The neutron bond lengths are from
+Swaminathan, Craven and McMullan (1984).
 
-- **The stiff modes matter:** adding U^high lowers GoF from 3.84 to 3.51.
-- **TLS + U^high still fits worse than free ADPs:** GoF 3.51 against 3.30. Whether that
-  difference is significant is for a Hamilton test; it is not yet printed.
-- **The hydrogen ADPs are short of the free ones** by about 0.01 Å². That is where the two NH₂
-  wags belong, the soft modes this model does not yet refine.
-- **The ADP model hardly moves the hydrogen positions:** N–H3 shifts 0.008 Å toward neutron,
-  N–H1 not at all.
+| basis | partition | ADP model | parameters | GoF | R(F) | N–H1 /Å | N–H3 /Å | C=O /Å | U_iso H1 / H3 /Å² |
+|---|---|---|---|---|---|---|---|---|---|
+| def2-SVP | Hirshfeld | free | 27 | 3.304 | 0.0181 | 1.028(5) | 0.986(6) | 1.2558(4) | 0.054(4) / 0.048(3) |
+| def2-SVP | Hirshfeld | TLS, U^high = 0 | 17 | 3.837 | 0.0184 | 1.025(5) | 0.994(5) | 1.2562(5) | 0.0334(15) / 0.0329(13) |
+| def2-SVP | Hirshfeld | TLS + U^high | 17 | 3.508 | 0.0180 | 1.028(5) | 0.994(5) | 1.2559(4) | 0.0447(15) / 0.0399(13) |
+| def2-SVP | TFVA | free | 27 | 3.541 | 0.0190 | 1.038(5) | 1.026(5) | 1.2557(4) | 0.050(4) / 0.042(2) |
+| def2-SVP | TFVA | TLS, U^high = 0 | 17 | 3.883 | 0.0184 | 1.034(5) | 1.036(4) | 1.2564(5) | 0.0337(14) / 0.0332(12) |
+| def2-SVP | TFVA | TLS + U^high | 17 | 3.641 | 0.0187 | 1.039(5) | 1.029(4) | 1.2560(4) | 0.0455(14) / 0.0398(13) |
+| def2-TZVP | Hirshfeld | free | 27 | 2.935 | 0.0167 | 1.025(4) | 0.989(5) | 1.2560(4) | 0.054(3) / 0.046(2) |
+| def2-TZVP | Hirshfeld | TLS, U^high = 0 | 17 | 3.462 | 0.0169 | 1.022(4) | 0.993(5) | 1.2564(4) | 0.0343(13) / 0.0326(11) |
+| def2-TZVP | Hirshfeld | TLS + U^high | 17 | 3.095 | 0.0164 | 1.025(4) | 0.993(5) | 1.2561(4) | 0.0457(13) / 0.0395(11) |
+| def2-TZVP | TFVA | free | 27 | 3.099 | 0.0170 | 1.033(4) | 1.017(4) | 1.2560(4) | 0.049(3) / 0.0402(19) |
+| def2-TZVP | TFVA | TLS, U^high = 0 | 17 | 3.446 | 0.0166 | 1.028(4) | 1.025(4) | 1.2567(4) | 0.0347(12) / 0.0326(10) |
+| def2-TZVP | TFVA | TLS + U^high | 17 | 3.169 | 0.0168 | 1.033(4) | 1.020(4) | 1.2563(4) | 0.0466(12) / 0.0391(10) |
+| neutron | | | | | | 1.006 | 1.000 | | |
+
+- **def2-TZVP fits better than def2-SVP** in every partition and ADP model, by 0.37–0.47 in GoF.
+- **Hirshfeld fits better than TFVA** with free ADPs and with TLS + U^high. With TLS alone the
+  two are about equal.
+- **The stiff modes always help:** TLS + U^high has a lower GoF than TLS alone in all four
+  basis and partition pairs.
+- **Free ADPs fit significantly better than TLS + U^high** in all four. The Hamilton ratios (13)
+  for the ten extra parameters are 1.068, 1.035, 1.061 and 1.029, against 1.016 needed at
+  $\alpha = 0.005$.
+- **N–H bond lengths depend on the partition, not the ADP model.** TFVA makes them 0.01–0.04 Å
+  longer than Hirshfeld does, and further from neutron. The ADP model moves no N–H bond by more
+  than 0.01 Å.
+- **R(F) would mislead.** It ranks TLS + U^high level with free ADPs (0.0180 against 0.0181 for
+  def2-SVP, Hirshfeld), where GoF and Hamilton's test say free is significantly better.
 
 ### Urea: ADPs against neutron
 
@@ -390,44 +499,132 @@ measures per atom:
   which is 0 for identical displacement ellipsoids and grows as their shapes and orientations
   part.
 
-| ADP model | GoF | H1: U_iso ratio | H1: S12 | H3: U_iso ratio | H3: S12 |
+| basis | partition | ADP model | GoF | H1: U_iso ratio | H1: S12 | H3: U_iso ratio | H3: S12 |
+|---|---|---|---|---|---|---|---|
+| def2-SVP | Hirshfeld | free | 3.304 | 1.47 | 8.05 | 1.44 | 7.06 |
+| def2-SVP | Hirshfeld | TLS, U^high = 0 | 3.837 | 0.91 | 1.85 | 0.99 | 2.86 |
+| def2-SVP | Hirshfeld | TLS + U^high | 3.508 | 1.22 | 0.77 | 1.20 | 0.50 |
+| def2-SVP | TFVA | free | 3.541 | 1.37 | 4.23 | 1.26 | 0.97 |
+| def2-SVP | TFVA | TLS, U^high = 0 | 3.883 | 0.92 | 1.68 | 1.00 | 2.76 |
+| def2-SVP | TFVA | TLS + U^high | 3.641 | 1.24 | 0.88 | 1.20 | 0.48 |
+| def2-TZVP | Hirshfeld | free | 2.935 | 1.48 | 6.13 | 1.37 | 4.74 |
+| def2-TZVP | Hirshfeld | TLS, U^high = 0 | 3.462 | 0.94 | 1.84 | 0.98 | 2.88 |
+| def2-TZVP | Hirshfeld | TLS + U^high | 3.095 | 1.25 | 0.87 | 1.18 | 0.45 |
+| def2-TZVP | TFVA | free | 3.099 | 1.35 | 2.84 | 1.21 | 0.70 |
+| def2-TZVP | TFVA | TLS, U^high = 0 | 3.446 | 0.95 | 1.81 | 0.98 | 2.86 |
+| def2-TZVP | TFVA | TLS + U^high | 3.169 | 1.28 | 1.00 | 1.17 | 0.40 |
+
+O, N and C agree with neutron in every refinement: U_iso ratios 0.99–1.01, S12 at most 0.03.
+
+- **The ADP model decides the hydrogen ADPs**; the basis and partition matter much less.
+- **Free hydrogens are 21–48 % too large.** Their shapes are poor with Hirshfeld (S12 4.7–8.1)
+  and better with TFVA (S12 0.7–4.2).
+- **TLS + U^high gives the best hydrogen shapes**, S12 0.4–1.0 in every case, with sizes 17–28 %
+  too large.
+- **TLS alone** gets the hydrogen sizes within 9 %, but the shapes are worse (S12 1.7–2.9).
+
+So the model that fits the data best, free ADPs, gives the worst hydrogen ADPs.
+
+### Urea: soft modes
+
+The modes of the RHF/6-31G(d) Hessian at the crystal geometry, softest first, with the
+molecular plane the mirror plane normal to (1, −1, 0):
+
+| mode | ω /cm⁻¹ | motion |
+|---|---|---|
+| 1 | 432i | NH₂ wag out of the plane, the two groups opposite |
+| 2 | 164i | NH₂ wag out of the plane, the two groups together |
+| 3 | 559 | NH₂ rock in the plane, the two groups together |
+| 4 | 645 | NH₂ rock in the plane, the two groups opposite |
+
+Hirshfeld partition, the model (10) with the $K$ softest modes refined, `soft_mode_restraint=`
+0.5. The cutoff is 200 cm⁻¹ for $K \le 2$, 600 for $K = 3$ and 700 for $K = 4$, so modes 3 and 4
+move from $U^{\rm high}$ into the refinement. $K = 0$ is TLS + U^high above.
+
+| basis | $K$ | parameters | $p_{\rm eff}$ | GoF | $\chi^2$ | AIC | BIC | H1: U_iso ratio, S12 | H3: U_iso ratio, S12 |
+|---|---|---|---|---|---|---|---|---|---|
+| def2-SVP | 0 | 17 | 17.00 | 3.508 | 9843 | 9877 | 9957 | 1.22, 0.77 | 1.20, 0.50 |
+| def2-SVP | 1 | 18 | 18.00 | 3.481 | 9680 | 9716 | 9801 | 1.39, 1.54 | 1.31, 1.10 |
+| def2-SVP | 2 | 18 | 18.00 | 3.481 | 9680 | 9716 | 9801 | 1.39, 1.54 | 1.31, 1.10 |
+| def2-SVP | 3 | 19 | 18.94 | 3.471 | 9615 | 9652 | 9742 | 1.37, 1.41 | 1.32, 1.18 |
+| def2-SVP | 4 | 20 | 19.71 | 3.428 | 9367 | 9407 | 9499 | 1.38, 1.61 | 1.32, 1.09 |
+| def2-SVP | free | 27 | 27 | 3.304 | 8624 | 8678 | 8806 | 1.47, 8.05 | 1.44, 7.06 |
+| def2-TZVP | 0 | 17 | 17.00 | 3.095 | 7664 | 7698 | 7778 | 1.25, 0.87 | 1.18, 0.45 |
+| def2-TZVP | 1 | 18 | 18.00 | 3.069 | 7527 | 7563 | 7648 | 1.41, 1.64 | 1.29, 0.97 |
+| def2-TZVP | 2 | 18 | 18.00 | 3.069 | 7527 | 7563 | 7648 | 1.41, 1.64 | 1.29, 0.97 |
+| def2-TZVP | 3 | 19 | 18.94 | 3.065 | 7496 | 7534 | 7623 | 1.39, 1.55 | 1.29, 1.02 |
+| def2-TZVP | 4 | 20 | 19.71 | 3.028 | 7308 | 7347 | 7440 | 1.39, 1.75 | 1.30, 0.97 |
+| def2-TZVP | free | 27 | 27 | 2.935 | 6806 | 6860 | 6987 | 1.48, 6.13 | 1.37, 4.74 |
+
+Hamilton's test (13) at $\alpha = 0.005$, each model against the one before it:
+
+| basis | from | to | added parameters | ratio $\mathcal R$ | needed | significant |
+|---|---|---|---|---|---|---|
+| def2-SVP | K = 0 | K = 1 | 1 | 1.0084 | 1.0049 | yes |
+| def2-SVP | K = 2 | K = 3 | 1 | 1.0034 | 1.0050 | no |
+| def2-SVP | K = 3 | K = 4 | 1 | 1.0131 | 1.0050 | yes |
+| def2-SVP | K = 4 | free | 7 | 1.0422 | 1.0129 | yes |
+| def2-TZVP | K = 0 | K = 1 | 1 | 1.0090 | 1.0049 | yes |
+| def2-TZVP | K = 2 | K = 3 | 1 | 1.0021 | 1.0050 | no |
+| def2-TZVP | K = 3 | K = 4 | 1 | 1.0128 | 1.0050 | yes |
+| def2-TZVP | K = 4 | free | 7 | 1.0362 | 1.0129 | yes |
+
+The refined amplitudes at $K = 4$, in atomic units ($m_e^{1/2}$ bohr)². An imaginary mode has no
+harmonic amplitude.
+
+| basis | mode | ω /cm⁻¹ | harmonic $a_k^0$ | refined $a_k$ | implied ω /cm⁻¹ |
 |---|---|---|---|---|---|
-| free | 3.30 | 1.47 | 8.05 | 1.44 | 7.06 |
-| TLS, U^high = 0 | 3.84 | 0.91 | 1.85 | 0.99 | 2.86 |
-| TLS + U^high | 3.51 | 1.22 | 0.77 | 1.20 | 0.50 |
+| def2-SVP | 1 | 432i | | 157(54) | 700 |
+| def2-SVP | 2 | 164i | | 243(76) | 456 |
+| def2-SVP | 3 | 559 | 197 | 207(96) | 532 |
+| def2-SVP | 4 | 645 | 170 | 737(135) | 187 |
+| def2-TZVP | 1 | 432i | | 130(47) | 843 |
+| def2-TZVP | 2 | 164i | | 218(65) | 506 |
+| def2-TZVP | 3 | 559 | 197 | 231(84) | 478 |
+| def2-TZVP | 4 | 645 | 170 | 657(118) | 202 |
 
-O, N and C agree with neutron in every model: U_iso ratios 0.99–1.01, S12 at most 0.03.
+- **Two wags refine as one.** $K = 2$ gives the same fit and parameter count as $K = 1$: the
+  second wag is a combination of the first and the in-plane libration (§1.7). Both amplitudes
+  are printed, but only one combination of them is determined.
+- **The wags are needed.** The first wag improves the fit significantly in both basis sets.
+- **The in-plane rocks differ.** Mode 3 is not determined by the data: it refines to 10(84)
+  at $K = 3$ and 207(96) at $K = 4$ (def2-SVP), against a harmonic 197, and does not improve the
+  fit. Mode 4 refines to about four times its harmonic amplitude, an implied frequency near
+  200 cm⁻¹ instead of 645, and improves the fit significantly.
+- **AIC and BIC agree with Hamilton's test.** Neither rises as modes are added. Both are lowest for free
+  ADPs, which are still significantly better than $K = 4$.
+- **The better fit gives worse hydrogen ADPs.** Each soft mode added moves the hydrogens further
+  from neutron. The U_iso ratios rise from 1.18–1.25 to 1.29–1.41, and S12 from 0.45–0.87 to
+  0.97–1.75.
 
-- **Free HAR hydrogens are about 45 % too large and the wrong shape**, as found before for HAR
-  of urea with an isolated-molecule density.
-- **TLS + U^high gives the best hydrogen shapes by far**, S12 ten times smaller than free, but
-  sizes about 20 % too large.
-- **TLS alone** gets the hydrogen size about right, but the shape is worse.
-
-That TLS + U^high hydrogens are too large is not yet understood. The missing soft modes would
-make them larger still, and unscaled RHF frequencies make U^high smaller, not larger. Possible
-causes are the scaling of the neutron data to the X-ray data, and correlation between the
-rigid-body and the internal motion, which the model takes as independent.
+So the refined soft modes, like free ADPs, lower GoF by making the hydrogens larger, not by
+making them more like neutron. One explanation is that the extra freedom absorbs an error in
+the density model rather than describing motion: the density here is that of an isolated
+molecule, and the hydrogens are the atoms most affected by the crystal around them. The test is
+to repeat the sequence with cluster charges, which polarise the density as the crystal does.
+If the soft-mode amplitudes then fall back toward their harmonic values, the soft modes were
+compensating for the density.
 
 ### Urea: the rigid-body tensors
 
-The rigid-body motion, about the centre of mass (8 parameters on the mm2 site):
+The rigid-body motion from def2-SVP, Hirshfeld, TLS + U^high, about the centre of mass (8
+parameters on the mm2 site). Rows of $S$ are components of $\boldsymbol{\lambda}$, columns of $\mathbf{t}$.
 
-    T /Å²:      0.01402(7)   -0.00045(9)   0                L /deg²:   19.8(17)   12.2(17)   0
-               -0.00045(9)    0.01402(7)   0                           12.2(17)   19.8(17)   0
-                0             0            0.00591(4)                   0          0         44(4)
+$$T = \begin{pmatrix} 0.01402(7) & -0.00045(9) & 0 \\ -0.00045(9) & 0.01402(7) & 0 \\ 0 & 0 & 0.00591(4) \end{pmatrix} \text{Å}^2, \qquad
+L = \begin{pmatrix} 19.8(17) & 12.2(17) & 0 \\ 12.2(17) & 19.8(17) & 0 \\ 0 & 0 & 44(4) \end{pmatrix} \text{deg}^2,$$
 
-    S /(Å deg): -0.18(2)  0.12(2)  0;   -0.12(2)  0.18(2)  0;   0  0  0      (rows λ, columns t)
+$$S = \begin{pmatrix} -0.18(2) & 0.12(2) & 0 \\ -0.12(2) & 0.18(2) & 0 \\ 0 & 0 & 0 \end{pmatrix} \text{Å deg}.$$
 
-L has eigenvalues 7.6, 32 and 44 deg², the largest about the C=O axis; the rms libration is 5.3°.
-S has zero trace.
+$L$ has eigenvalues 7.6, 32 and 44 deg², the largest about the C=O axis; the rms libration is 5.3°.
+$S$ has zero trace.
 
 
 ## 6. What is not done yet
 
-- **Soft modes.** Refining the amplitudes of the softest internal modes (including any
-  imaginary ones) one at a time, held toward their harmonic values, with AIC, BIC and the
-  Hamilton test printed at each step to say how many the data support.
+- **Cluster charges** with the soft-mode sequence, to test whether the soft modes compensate for
+  the density (§5, soft modes).
+- **Correlation between the soft modes and the rigid-body motion.** The model (10) takes them as
+  independent.
 - T, L and S reported at the centre of reaction as well as at the centre of mass.
 - An ORCA Hessian reader.
 - One TLS group per fragment only; no segmented (attached-group) TLS.

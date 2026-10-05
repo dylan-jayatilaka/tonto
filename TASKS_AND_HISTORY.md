@@ -78,7 +78,7 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## START HERE, 2026-10-05: tfvh merged; next is TLS plan step 1
+## START HERE, 2026-10-05: TLS plan step 3 done; next is the soft modes with cluster charges
 
 **Merged to `develop` today (`a1553350`): step 0 of `docs/TONTO_TLS_MODE_REFINEMENT.md`.** The
 refinement refines p with X = J p (`DIFFRACTION_DATA.X_jacobian`, built by
@@ -160,6 +160,17 @@ parameters (values, esds, covariance, J, offset; the structure solve goes throug
 and `adp_model= tls`: site-symmetric T, L, S plus U^high, refined against F. On urea def2-SVP its GoF is
 3.51 against 3.30 for free ADPs (17 parameters against 27): worse, significance to be tested. Details in the plan, step 2. Later: the pADP and
 asymmetric-unit/fragment frame machinery can be simplified around LEAST_SQUARES with the CRYSTAL hoist.
+**2026-10-05, branch `tls-step3`:** TLS plan step 3 -- the K softest modes' amplitudes refined
+(`n_soft_modes=`, `soft_mode_restraint=`), restrained to the harmonic values, imaginary ones free; n,
+p_eff, chi^2, GoF, AIC and BIC printed. Results and the step-2 comparison across def2-SVP/TZVP and
+Hirshfeld/TFVA are in `docs/TONTO_MODE_FITTING_RESEARCH.md` §5 (user-facing) and the plan's step 3.
+Headline: the soft modes improve the fit significantly but move the hydrogen ADPs *away* from
+neutron; free ADPs still fit best. New test `long/urea_rhf_STO-3G_HAR_TLS_soft_modes`; the TLS test
+re-blessed for the new model-selection block. **Next on this item, in order:** (1) the K = 0…4
+sequence with cluster charges, to test whether the soft modes compensate for the isolated-molecule
+density; (2) the plan's check on a molecule with a methyl torsion (gly_ala); (3) print a note when a
+mode below `soft_mode_cutoff=` is not among the K refined (today it silently drops out of the model);
+(4) T, L, S at the centre of reaction; (5) step 4, the full Sigma.
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
 
