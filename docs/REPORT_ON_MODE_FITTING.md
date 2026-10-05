@@ -66,24 +66,25 @@ generalised coordinates ($`m(m+1)/2`$ numbers). This is the whole idea: refine $
 The simplest correlated motion is the molecule moving as a rigid body, by a translation and a
 rotation.
 
-- **The translation** $`\mathbf{t}`$ is a vector: every atom moves by the same $`\mathbf{t}`$.
-- **The rotation** is a rotation by a small angle $`\varphi`$ (in radians) about an axis through a fixed
-  **origin**, with unit vector $`\mathbf{n}`$ along the axis. An atom at position $`\mathbf{r}_i`$ from the
-  origin moves to $`R\,\mathbf{r}_i`$, where $`R`$ is the rotation matrix. For small $`\varphi`$, to first order,
+**The translation** $`\mathbf{t}`$ is a vector: every atom moves by the same $`\mathbf{t}`$.
 
-  ```math
-  R\,\mathbf{r}_i = \mathbf{r}_i + \varphi\, \mathbf{n} \times \mathbf{r}_i ,
-  ```
+**The rotation** is a rotation by a small angle $`\varphi`$ (in radians) about an axis through a fixed
+**origin**, with unit vector $`\mathbf{n}`$ along the axis. An atom at position $`\mathbf{r}_i`$ from the
+origin moves to $`R\,\mathbf{r}_i`$, where $`R`$ is the rotation matrix. For small $`\varphi`$, to first order,
 
-  so the displacement is $`\varphi\,\mathbf{n}\times\mathbf{r}_i`$. Define the **rotation vector** (or
-  libration vector)
+```math
+R\,\mathbf{r}_i = \mathbf{r}_i + \varphi\, \mathbf{n} \times \mathbf{r}_i ,
+```
 
-  ```math
-  \boldsymbol{\lambda} = \varphi\, \mathbf{n} :
-  ```
+so the displacement is $`\varphi\,\mathbf{n}\times\mathbf{r}_i`$. Define the **rotation vector** (or
+libration vector)
 
-  its direction is the rotation axis, its length the angle in radians. The displacement from the
-  rotation is then $`\boldsymbol{\lambda}\times\mathbf{r}_i`$, linear in $`\boldsymbol{\lambda}`$.
+```math
+\boldsymbol{\lambda} = \varphi\, \mathbf{n} :
+```
+
+its direction is the rotation axis, its length the angle in radians. The displacement from the
+rotation is then $`\boldsymbol{\lambda}\times\mathbf{r}_i`$, linear in $`\boldsymbol{\lambda}`$.
 
 Together, the rigid-body displacement of atom $`i`$ is
 
@@ -458,16 +459,18 @@ number of parameters ($`p_{\rm eff}`$ for a restrained fit).
   parameter than AIC once $`n > 7`$.
 
   For both, the model with the smaller value is preferred.
-- **Hamilton's test.** Model $`a`$ has $`p_a`$ parameters and model $`b`$ adds $`k`$, so $`p_b = p_a + k`$.
-  The ratio of their weighted R factors is $`\mathcal R = (\chi^2_a / \chi^2_b)^{1/2}`$. Model $`b`$ is
-  significantly better, at significance level $`\alpha`$, when
+- **Hamilton's test**, below.
 
-  ```math
-  \mathcal R > \left[ 1 + \frac{k}{n - p_b}\, F_{k,\, n-p_b,\, \alpha} \right]^{1/2} , \qquad (15)
-  ```
+**Hamilton's test.** Model $`a`$ has $`p_a`$ parameters and model $`b`$ adds $`k`$, so $`p_b = p_a + k`$.
+The ratio of their weighted R factors is $`\mathcal R = (\chi^2_a / \chi^2_b)^{1/2}`$. Model $`b`$ is
+significantly better, at significance level $`\alpha`$, when
 
-  with $`F_{k,\,n-p_b,\,\alpha}`$ the point of the F distribution exceeded with probability $`\alpha`$.
-  This page uses $`\alpha = 0.005`$.
+```math
+\mathcal R > \left[ 1 + \frac{k}{n - p_b}\, F_{k,\, n-p_b,\, \alpha} \right]^{1/2} , \qquad (15)
+```
+
+with $`F_{k,\,n-p_b,\,\alpha}`$ the point of the F distribution exceeded with probability $`\alpha`$.
+This page uses $`\alpha = 0.005`$.
 
 Tonto prints $`n`$, $`p_{\rm eff}`$, $`\chi^2`$, GoF, AIC and BIC after a TLS refinement; the Hamilton
 ratio is formed from the $`\chi^2`$ of two runs.
@@ -649,16 +652,14 @@ Swaminathan, Craven and McMullan (1984).
 The neutron ADPs of urea at 123 K (Swaminathan, Craven and McMullan, 1984), scaled to the X-ray
 data, are tabulated by Jayatilaka and Dittrich (2008, Table 6). The cell is tetragonal, so its
 axes and Tonto's Cartesian axes coincide and the tensors compare component by component. Two
-measures per atom:
-- the ratio of U_iso to the neutron U_iso, for the size;
-- the similarity index of Whitten and Spackman (2006),
+measures per atom. The first is the ratio of U_iso to the neutron U_iso, for the size. The second
+is the similarity index of Whitten and Spackman (2006),
 
-  ```math
-  S_{12} = 100 \left[ 1 - \frac{2^{3/2}\, \det(U_1^{-1} U_2^{-1})^{1/4}}{\det(U_1^{-1} + U_2^{-1})^{1/2}} \right],
-  ```
+```math
+S_{12} = 100 \left[ 1 - \frac{2^{3/2}\, \det(U_1^{-1} U_2^{-1})^{1/4}}{\det(U_1^{-1} + U_2^{-1})^{1/2}} \right],
+```
 
-  which is 0 for identical displacement ellipsoids and grows as their shapes and orientations
-  part.
+which is 0 for identical displacement ellipsoids and grows as their shapes and orientations part.
 
 | basis | partition | ADP model | GoF | H1: U_iso ratio | H1: S12 | H3: U_iso ratio | H3: S12 |
 |---|---|---|---|---|---|---|---|

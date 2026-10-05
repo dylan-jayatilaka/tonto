@@ -35,6 +35,9 @@ for path in user_facing():
     fence = False
     for n, line in enumerate(path.read_text().splitlines(), 1):
         if line.strip().startswith("```"):
+            if not fence and line.startswith(" ") and line.strip().startswith("```math"):
+                print(f"{path.relative_to(ROOT)}:{n}: an indented ```math block (GitHub shows it as code; take it out of the list)")
+                bad += 1
             fence = not fence
             continue
         if fence:

@@ -19,7 +19,8 @@ the story of how the build and translator came to be is in `docs/PROJECT_HISTORY
    sensitive measure; R alone can hide a worse fit. Quote GoF first; for nested models use the
    Hamilton test.
 4. **Write equations in LaTeX** in every document, in GitHub's safe forms: inline as $`…`$, and
-   display as a ```` ```math ```` block numbered with `\qquad (n)`. Plain `$…$` and `$$…$$` lose
+   display as a ```` ```math ```` block numbered with `\qquad (n)`, never inside a list item (GitHub then
+   shows it as code). Plain `$…$` and `$$…$$` lose
    `\,`, `\\` and underscores to GitHub's markdown, and `\tag` draws as a column of symbols in
    Chrome and Brave. Define every symbol where it first appears, so a page can be read from first
    principles without another source. Check a page with `gh api -X POST /markdown` before pushing.
