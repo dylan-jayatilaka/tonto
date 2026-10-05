@@ -3489,6 +3489,67 @@ module TYPES
 
    end
 
+   type LEAST_SQUARES
+     ! The refined parameters p of a least-squares fit and how they make the
+     ! model vector X = X_offset + jacobian p. See least_squares.foo.
+
+     n_X :: INT, readonly   DEFAULT(0)
+     ! Length of the model vector X
+
+     n_param :: INT, readonly   DEFAULT(0)
+     ! Number of refined parameters p
+
+     jacobian :: MAT{REAL}@
+     ! J = dX/dp, n_X x n_param; absent means p is X itself
+
+     X_offset :: VEC{REAL}@
+     ! The part of X the parameters do not move
+
+     param :: VEC{REAL}@
+     ! The refined parameters p
+
+     param_label :: VEC{STR}@
+     ! Their labels
+
+     param_esd :: VEC{REAL}@
+     ! Their esds, from the diagonal of param_covariance
+
+     param_covariance :: MAT{REAL}@
+     ! Their covariance C = (A+W)^-1, before scaling by GoF^2
+
+     dp :: VEC{REAL}@
+     ! The last shift in p
+
+     restraint_W :: MAT{REAL}@
+     ! Restraint weights W in chi^2 + (p - p0)^T W (p - p0); absent: none
+
+     restraint_shift :: VEC{REAL}@
+     ! The restraint targets p0 minus p
+
+     n_param_eff :: REAL, readonly   DEFAULT(ZERO)
+     ! Effective number of parameters, tr[(A+W)^-1 A]
+
+     n_0 :: INT, readonly   DEFAULT(0)
+     ! Number of zero eigenvalues of the normal matrix
+
+     near_0 :: INT, readonly   DEFAULT(0)
+     ! Number of near-zero eigenvalues filtered out
+
+     near_0_evals :: VEC{REAL}@
+     ! Those eigenvalues
+
+     near_0_evecs :: MAT{REAL}@
+     ! Their eigenvectors, as columns over p
+
+     near_0_IPR :: VEC{REAL}@
+     ! Inverse participation ratio of each, 1/sum v_i^4: how many
+     ! parameters the direction involves. See DIFFRACTION_DATA.near_0_tol.
+
+     eigenvalues :: VEC{REAL}@
+     ! All eigenvalues of the last normal matrix
+
+   end
+
    type DIFFRACTION_DATA
 
      data_kind :: STR, readonly   DEFAULT("x-ray")
@@ -3782,6 +3843,9 @@ module TYPES
      ! just the isotropic displacement parameter.
 
      refine_H_U_iso :: BIN, readonly   DEFAULT(FALSE)
+
+     ADP_model :: STR, readonly   DEFAULT("free")
+     ! "free": each atom's ADP refined; "tls": a rigid-body T, L, S model
      ! Set TRUE if you want to refine U_iso for *all* H atoms
 
      refine_U_iso_for_atom :: VEC{STR}@
@@ -4046,69 +4110,13 @@ module TYPES
      ! Near zero eigenvalues in the least-squares
      ! ==========================================
 
-     n_0 :: INT, readonly   DEFAULT(0)
-     ! The number of zero eigenvalues detected when solving the
-     ! normal equations
-
-     near_0 :: INT, readonly   DEFAULT(0)
-     ! The number near zero eigenvalues detected when solving the
-     ! normal equations
-
      near_0_tol :: REAL, readonly   DEFAULT(TOL(3))
      ! The tolerance used to detect near zero eigenvalues in the
      ! normal equations
 
-     near_0_evals :: VEC{REAL}@
-     ! The near zero eigenvalues obtained when solving the normal
-     ! equations. Useful to see parameter correlations.
-
-     near_0_evecs :: MAT{REAL}@
-     ! The columns of eigenvectors with near zero eigenvalue obtained
-     ! when solving the normal equations. Useful to see parameter
-     ! correlations.
-
-     near_0_IPR :: VEC{REAL}@
-     ! The inverse participation ratio of each near-zero eigenvector,
-     !
-     !    IPR = 1 / sum_i v_i^4     for a normalised eigenvector v
-     !
-     ! It counts how many parameters a direction actually involves: IPR is
-     ! 1 when v lies entirely on one parameter, and n when v is spread
-     ! evenly over n of them.
-     ! It says how many parameters the data fails to separate in that
-     ! direction, which is worth reporting. It does NOT say whether that is
-     ! harmless: a site-symmetry constraint mixes parameters exactly as an
-     ! over-parameterised model does, whenever the symmetry axis does not
-     ! lie along a cartesian axis. NH3 on a 3-fold axis along (1,1,1) gives
-     ! IPR 2.0 on its nitrogen position, and nothing is wrong with it.
-     ! Telling the two apart needs the site-symmetry-allowed subspace, i.e.
-     ! explicit constraints. Note the eigenVALUE cannot make the
-     ! distinction either: an exactly degenerate pair of parameters puts its
-     ! null eigenvalue at round-off, where a symmetry zero also sits.
-     ! See Bell and Dean (1970) Discuss. Faraday Soc. 50 p.55-61, and
-     ! Wegner (1980) Z. Phys. B 36 p.209-214.
-
-     param_labels :: VEC{STR}@
-     ! The labels of the refined parameters, in normal-equation order.
-     ! Kept so a near-zero direction can be reported by name.
-
-     X_jacobian :: MAT{REAL}@
-     ! Maps the refined parameters p onto the pADP vector, X = X_jacobian p,
-     ! one column per parameter, in unique-fragment-atom order: a unit
-     ! column for a free component, one column summing U_xx, U_yy, U_zz for
-     ! an isotropic ADP, and a basis of the site-symmetric subspace on a
-     ! special position. Absent means every pADP component is refined.
-
-     restraint_W :: MAT{REAL}@
-     ! Restraint weights W on the refined parameters, in
-     ! chi^2 + (p - p0)^T W (p - p0). Absent means no restraints.
-
-     restraint_shift :: VEC{REAL}@
-     ! The restraint targets p0 minus the current parameters
-
-     n_param_eff :: REAL, readonly   DEFAULT(ZERO)
-     ! The effective number of refined structural parameters,
-     ! tr[(A+W)^-1 A]. The kept-eigenvalue count without restraints.
+     ls :: LEAST_SQUARES@
+     ! The refined parameters, their Jacobian onto X_fit, restraints,
+     ! covariance, and what the eigenvalue filter found
 
      ! ==========================================
      ! Errors and covariances in parameter values
@@ -4243,6 +4251,23 @@ module TYPES
      fragment_atom :: VEC{ATOM}@ 
      ! The set of fragment atoms. NOTE: this is normally pointer
      ! copied, except when a cluster object makes a new list.
+
+     fragment_U_high :: MAT3{REAL}@
+     ! U of each fragment atom from its stiff internal modes, (3,3,n), bohr^2;
+     ! the fixed part of a TLS model. Absent means zero.
+
+     TLS_basis :: MAT{REAL}@
+     ! Columns: the site-symmetric 6x6 Sigma = [[T,S^T],[S,L]] of each TLS
+     ! parameter, as its 21 upper-triangle elements
+
+     TLS_first_param :: INT  DEFAULT(0)
+     ! Index of the first TLS parameter in .xray_data.ls
+
+     TLS_origin :: VEC{REAL}(3)  DEFAULT(ZERO)
+     ! Origin of the TLS model, the fragment's centre of mass (bohr)
+
+     TLS_unique_response :: MAT{REAL}@
+     ! d U / d TLS parameter for the unique fragment atoms, (6 x n_unique, k)
      ! See below.
 
      destroy_fragment_atom :: BIN  DEFAULT(TRUE)
@@ -7985,6 +8010,12 @@ module TYPES
 
      internal_ADP_temperature :: REAL  DEFAULT(ZERO)
      ! Temperature (Kelvin) for make_internal_ADPs
+
+     frequency_scale_factor :: REAL  DEFAULT(-ONE)
+     ! Harmonic frequency scale factor; negative means the default
+
+     FD_hessian_scale :: REAL  DEFAULT(-ONE)
+     ! Literature scale factor for the method make_FD_hessian used; negative: none
 
      soft_mode_cutoff :: REAL  DEFAULT(200d0)
      ! Modes below this (cm^-1) are soft, left out of the stiff-mode ADPs

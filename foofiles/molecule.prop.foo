@@ -132,6 +132,7 @@ contains
 
       .force_constants.destroy
       .force_constants = FC
+      .FD_hessian_scale = .SCF_frequency_scale
 
       stdout.flush
       stdout.text("=======================================")
@@ -141,6 +142,7 @@ contains
       stdout.show("Step /bohr                      =",h)
       stdout.show("No. of SCFs                     =",n_scf)
       stdout.show("Translational invariance used?  =",n<n3n)
+      stdout.show("Literature frequency scale      =",.FD_hessian_scale)
       stdout.show("Largest gradient /(Eh/bohr)     =",maxval(abs(grad)))
       stdout.show("RMS gradient /(Eh/bohr)         =",sqrt(sum(grad*grad)/n))
       if (maxval(abs(grad))>TOL(3)) then
@@ -239,10 +241,22 @@ contains
       B.create(n3n,6)
       .atom.make_rigid_body_modes(B,n_rb)
       fc.project_out_vectors(B(:,1:n_rb))
-      B.destroy
 
       ! Get modes
       fc.solve_symmetric_eigenproblem(.normal_mode_eigenvalues,.normal_mode_eigenvectors)
+
+      ! The rigid-body modes are degenerate at zero, so the eigensolver
+      ! returns any rotation of them, differing between platforms. Put the
+      ! rigid-body vectors themselves in their place, with eigenvalue zero.
+      j = 0
+      do i = 1,n3n
+         if (sum(matmul(transpose(B(:,1:n_rb)),.normal_mode_eigenvectors(:,i))**2)<=HALF) cycle
+         j = j + 1
+         if (j>n_rb) exit
+         .normal_mode_eigenvectors(:,i) = B(:,j)
+         .normal_mode_eigenvalues(i) = ZERO
+      end
+      B.destroy
 
       ! Clean
       rm.destroy
@@ -250,29 +264,70 @@ contains
 
    end
 
+   harmonic_frequency_scale result (res) :: PURE
+   ! The factor the harmonic frequencies are scaled by in the internal-mode
+   ! ADPs: .frequency_scale_factor if it was set (it is negative when not);
+   ! else, for a Hessian made by make_FD_hessian, the literature value for
+   ! its method (.FD_hessian_scale); else 1, since the method behind a
+   ! Hessian that was read in is not known.
+      self :: IN
+      res :: REAL
+
+      res = .frequency_scale_factor
+      if (res>ZERO) return
+      res = .FD_hessian_scale
+      if (res>ZERO) return
+      res = ONE
+
+   end
+
+   SCF_frequency_scale result (res) :: PURE
+   ! The harmonic frequency scale factor for the SCF method, from Scott and
+   ! Radom, J. Phys. Chem. 100, 16502 (1996), for the 6-31G(d) basis: HF
+   ! 0.8953, B3LYP 0.9614, BLYP 0.9945; 1 for anything else.
+      self :: IN
+      res :: REAL
+
+      res = ONE
+      if (.SCF_data.deallocated) return
+      select case (.SCF_data.SCF_kind)
+      case ("rhf ","uhf ","rohf")
+         res = 0.8953d0
+      case ("rks ","uks ")
+         if      (.SCF_data.DFT_exchange_functional(1:5)=="b3lyp") then; res = 0.9614d0
+         else if (.SCF_data.DFT_exchange_functional=="becke88" AND &
+                  .SCF_data.DFT_correlation_functional=="lyp") then;     res = 0.9945d0
+         end
+      end
+
+   end
+
    make_internal_ADPs :: leaky
    ! Make .stiff_mode_ADPs, the part of each atom's ADP from the stiff
-   ! internal modes: those above .soft_mode_cutoff (cm^-1). Mode k with
+   ! internal modes: those above .soft_mode_cutoff (cm^-1). The harmonic
+   ! frequencies are first scaled by harmonic_frequency_scale. Mode k with
    ! mass-weighted vector l_k and frequency w_k adds to atom a
    !    U_a += l_ak l_ak^T <Q_k^2> / m_a,  <Q_k^2> = coth(w_k/2kT) / (2 w_k)
    ! in atomic units, at temperature .internal_ADP_temperature (zero-point
    ! motion only at T = 0). The rigid-body modes are recognised by their
-   ! overlap with make_rigid_body_modes and left out, and so are modes
-   ! with a zero or negative eigenvalue, which a Hessian away from a
-   ! minimum gives. See docs/TONTO_TLS_MODE_REFINEMENT.md section 3.2.
+   ! overlap with make_rigid_body_modes and left out. A mode with a zero or
+   ! negative eigenvalue, which a Hessian away from a minimum gives, is a
+   ! soft mode: the refinement must find its amplitude. See
+   ! docs/TONTO_TLS_MODE_REFINEMENT.md section 3.2.
       self :: INOUT
 
    ENSURE(.atom.allocated,"no atoms")
 
       B,l :: MAT{REAL}@
       la :: VEC{REAL}(3)
-      w,kT,Q2,ma,rb :: REAL
+      w,kT,Q2,ma,rb,scale :: REAL
       n3n,n_rb,k,a,i,j :: INT
 
       if (.normal_mode_eigenvectors.deallocated) .normal_mode_analysis
 
       n3n = 3*.atom.dim
       kT = .internal_ADP_temperature/KELVIN_PER_HARTREE
+      scale = .harmonic_frequency_scale
 
       B.create(n3n,6)
       .atom.make_rigid_body_modes(B,n_rb)
@@ -291,7 +346,7 @@ contains
          end
          if (rb>HALF) cycle
          if (.normal_mode_eigenvalues(k)<=ZERO) cycle
-         w = sqrt(.normal_mode_eigenvalues(k))
+         w = scale*sqrt(.normal_mode_eigenvalues(k))
          if (w*WAVENUMBER_PER_HARTREE<=.soft_mode_cutoff) cycle
 
          ! Mean-square amplitude of the mode
@@ -315,6 +370,23 @@ contains
 
    end
 
+   set_crystal_U_high
+   ! Give the crystal the stiff-mode ADPs of the fragment atoms, the fixed
+   ! part of a TLS refinement; without them it is zero, and says so.
+      self :: INOUT
+   ENSURE(.crystal.allocated,"no crystal")
+
+      if (.stiff_mode_ADPs.allocated) then
+         DIE_IF(.stiff_mode_ADPs.dim3/=.crystal.fragment_atom.dim,"stiff_mode_ADPs and fragment atoms differ in number")
+         .crystal.set_fragment_U_high(.stiff_mode_ADPs)
+      else
+         stdout.flush
+         stdout.text("TLS: no stiff-mode ADPs (make_internal_adps), so U_high is zero")
+         stdout.flush
+      end
+
+   end
+
    put_internal_ADPs
    ! Put the stiff-mode ADPs of make_internal_ADPs, in Angstrom^2, and the
    ! internal modes sorted into soft and stiff.
@@ -324,15 +396,16 @@ contains
 
       B :: MAT{REAL}@
       U :: MAT{REAL}(3,3)
-      w,rb :: REAL
-      n3n,n_rb,n_soft,n_stiff,n_bad,k,j,a :: INT
+      w,rb,scale :: REAL
+      n3n,n_rb,n_soft,n_stiff,n_imag,k,j,a :: INT
 
       n3n = 3*.atom.dim
       B.create(n3n,6)
       .atom.make_rigid_body_modes(B,n_rb)
 
       ! Sort the modes as make_internal_ADPs does
-      n_soft = 0; n_stiff = 0; n_bad = 0
+      scale = .harmonic_frequency_scale
+      n_soft = 0; n_stiff = 0; n_imag = 0
       do k = 1,n3n
          rb = ZERO
          do j = 1,n_rb
@@ -340,10 +413,11 @@ contains
          end
          if (rb>HALF) cycle
          if (.normal_mode_eigenvalues(k)<=ZERO) then
-            n_bad = n_bad + 1
+            n_imag = n_imag + 1
+            n_soft = n_soft + 1
             cycle
          end
-         w = sqrt(.normal_mode_eigenvalues(k))*WAVENUMBER_PER_HARTREE
+         w = scale*sqrt(.normal_mode_eigenvalues(k))*WAVENUMBER_PER_HARTREE
          if (w<=.soft_mode_cutoff) then; n_soft  = n_soft + 1
          else;                           n_stiff = n_stiff + 1
          end
@@ -356,15 +430,16 @@ contains
       stdout.text("==================================")
       stdout.flush
       stdout.text(". U_high of each atom, from the internal normal modes above the")
-      stdout.text("  soft-mode cutoff; the soft modes and the rigid-body motion are")
-      stdout.text("  left for the refinement.")
+      stdout.text("  soft-mode cutoff; the soft modes, including any imaginary ones,")
+      stdout.text("  and the rigid-body motion are left for the refinement.")
       stdout.flush
       stdout.show("Temperature /K                  =",.internal_ADP_temperature)
       stdout.show("Soft-mode cutoff /cm^-1         =",.soft_mode_cutoff)
+      stdout.show("Frequency scale factor          =",scale)
       stdout.show("No. of rigid-body modes         =",n_rb)
       stdout.show("No. of soft internal modes      =",n_soft)
+      stdout.show("   of which imaginary           =",n_imag)
       stdout.show("No. of stiff internal modes     =",n_stiff)
-      stdout.show("No. of non-positive modes       =",n_bad)
       stdout.flush
 
       stdout.dash(int_fields=1,real_fields=7,width=4)

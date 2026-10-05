@@ -394,6 +394,7 @@ set(FOO_SRC
     ${FOO_DIR}/coppensorbital.foo
     ${FOO_DIR}/csf_to_sd.foo
     ${FOO_DIR}/dft_functional.foo
+    ${FOO_DIR}/least_squares.foo
     ${FOO_DIR}/diffraction_data.inq.foo
     ${FOO_DIR}/diffraction_data.set.foo
     ${FOO_DIR}/diffraction_data.read.foo
@@ -513,6 +514,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/gaussian_ff_fit.F90
 #   ${CMAKE_CURRENT_BINARY_DIR}/datafile.F90
     ${CMAKE_CURRENT_BINARY_DIR}/dft_functional.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/least_squares.F90
     ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.inq.F90
     ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.set.F90
     ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.read.F90

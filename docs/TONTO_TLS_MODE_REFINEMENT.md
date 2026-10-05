@@ -469,8 +469,40 @@ use it. The TLS algebra needs only positions, so it is not a `CRYSTAL` method.
    imaginary modes enter (they are soft modes the data must determine), and whether to apply a
    frequency scale factor. `make_FD_hessian` costs 36 min serial for urea in 6-31G(d); its loop is
    embarrassingly parallel.
-2. **TLS only, against F.** `MODE_ADP` with the six rigid-body columns; J; refine positions and
-   T, L, S with U^high fixed. Checks: on a rigid molecule (urea), compare T, L, S with a PLATON/THMA
+2. **DONE on `tls-step2` (2026-10-05). TLS only, against F.** Built differently from the plan
+   above, after Dylan asked how least-squares codes keep track of their variables: no `MODE_ADP`
+   type yet; instead a new `LEAST_SQUARES` type (`least_squares.foo`, in the cctbx style) holds
+   the refined parameters p explicitly -- values, labels, esds, covariance -- with the Jacobian
+   J = dX/dp and an offset, X = X_offset + J p, the restraints and the eigenvalue filter's results.
+   DIFFRACTION_DATA's solve goes through it (every existing test unchanged). `adp_model= tls` in
+   `xray_data=`: each atom keeps its position columns; its free-U columns are replaced by shared
+   columns for Sigma = [[T,S^T],[S,L]] about the fragment's centre of mass
+   (`CRYSTAL:make_TLS_jacobian_columns`), restricted to the values that keep every fragment atom's
+   U consistent with the crystal symmetry (images agree; special positions keep their site
+   symmetry), with tr S dropped. Each fit starts by putting the ADPs on the model,
+   U = U^high + B Sigma B^T (`set_refinement_parameters`); U^high comes from the molecule's
+   `make_internal_adps` (`set_crystal_U_high`), zero if absent. `put_TLS_results` prints T, L, S
+   with esds from the parameter covariance. Decisions (Dylan): Hessian at the crystal geometry;
+   imaginary modes counted as soft; `frequency_scale_factor=` with the Scott-Radom value as the
+   default when Tonto made the Hessian (`make_fd_hessian`), 1 for a Hessian read in. The six
+   zero modes are now the rigid-body vectors themselves, so mode tables are the same on every
+   platform.
+
+   **Urea, 123 K data, Hirshfeld partition** (U^high from the RHF/6-31G(d) Hessian, unscaled):
+
+   | def2-SVP | parameters | R(F) | GoF | U_iso H1 / H3 /Å² | N–H1 / N–H3 /Å |
+   |---|---|---|---|---|---|
+   | free ADPs | 27 | 0.0181 | 3.30 | 0.054(4) / 0.048(3) | 1.028(5) / 0.986(6) |
+   | TLS, U^high = 0 | 17 | 0.0184 | 3.84 | 0.0334(15) / 0.0329(13) | 1.025(5) / 0.994(5) |
+   | TLS + U^high | 17 | 0.0180 | 3.51 | 0.0447(15) / 0.0399(13) | 1.028(5) / 0.994(5) |
+
+   The site symmetry (mm2) leaves 8 TLS parameters. TLS + U^high fits as well as free ADPs with
+   17 parameters against 27 (R 0.0180 against 0.0181; GoF higher only because it counts the
+   residual against fewer parameters), and the hydrogen esds are a third of the free ones. T: 0.0140
+   Å² in plane, 0.0059 along C=O; L: 44(4) deg² about the C=O axis, eigenvalues 7.6, 32, 44 deg²,
+   rms 5.3°. STO-3G shows the same ordering (R 0.0379, 0.0391, 0.0387). The two imaginary NH₂
+   wags are left for step 3; they are where the missing hydrogen U (0.054 against 0.045) belongs.
+   Not yet: T, L, S at the centre of reaction; AIC/BIC/Hamilton printed (step 3). Checks: on a rigid molecule (urea), compare T, L, S with a PLATON/THMA
    fit to the free-refinement ADPs after subtracting U^high: same to within the esds; wR and GoF²
    against the free refinement by Hamilton. Hydrogen ADPs against neutron where there are neutron
    data (the ten structures listed in `docs/TONTO_RI_FITTING_PLAN.md`).
