@@ -65,8 +65,9 @@ The counts agree with Psi4's, which were set to match Q-Chem. One shell of H and
 a boundary ($`i = 17`$, $`r/R = 0.25`$); it belongs to the outer zone, as Q-Chem has it.
 
 **Beyond Ar** the paper gives nothing. Tonto uses the unpruned 50 × 194 grid, with $`R`$ from
-Slater's rules and the subshells filled in Madelung order (no exceptions for Cr, Cu and the like),
-to Rn. This is our choice, not a published one.
+Slater's rules and the subshells filled in Madelung order (no exceptions for Cr, Cu and the like).
+Slater gave no effective quantum number for the seventh shell; the sixth shell's 4.2 is used. This
+is our choice, not a published one.
 
 ### 2.2 SG-0
 
