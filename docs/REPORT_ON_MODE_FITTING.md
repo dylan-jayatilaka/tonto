@@ -905,7 +905,7 @@ modes, and the amplitude refined for the isolated molecule with the frequency it
 ### Urea: the rigid-body tensors
 
 The rigid-body motion from def2-SVP, Hirshfeld, TLS + U^high, about the centre of mass (8
-parameters on the mm2 site). Rows of $`S`$ are components of $`\boldsymbol{\lambda}`$, columns of $`\mathbf{t}`$.
+parameters on the mm2 site). The element in row $`a`$ and column $`b`$ of $`S`$ is $`S_{ab} = \langle \lambda_a t_b \rangle`$: rows go with the components of the rotation vector, columns with those of the translation.
 
 ```math
 T = \begin{pmatrix} 0.01402(7) & -0.00045(9) & 0 \\ -0.00045(9) & 0.01402(7) & 0 \\ 0 & 0 & 0.00591(4) \end{pmatrix} \text{Å}^2, \qquad
