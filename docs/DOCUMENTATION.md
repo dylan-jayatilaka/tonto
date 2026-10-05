@@ -23,6 +23,12 @@ parallel (MPI) builds for that platform.
 | [**Installing the RGBI picture tools**](INSTALLING_RGBI.md) | LaTeX, Open Babel, mol2chemfig |
 | [**Known issues and limits**](TONTO_KNOWN_ISSUES.md) | what Tonto does not do, or does wrongly, that you may meet in ordinary use |
 
+## Methods
+
+| | |
+|---|---|
+| [**ADPs from rigid-body motion and internal modes**](TONTO_MODE_FITTING_RESEARCH.md) | TLS refinement against F, stiff-mode ADPs from a Hessian, and results on urea |
+
 ## Learning
 
 | | |

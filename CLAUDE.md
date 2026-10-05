@@ -57,7 +57,8 @@ moves into the user-facing pages. Everything else in `docs/` is user-facing.
 **Specific rules for user-facing pages** (`README.md`, `docs/BUILDING_*`, `docs/RUNNING_*`,
 `docs/INSTALLING_*`, `docs/DOCUMENTATION.md`, `docs/FOO_*`, `docs/TONTO_BLESSING_TESTS.md`,
 `docs/TONTO_LIBRARY_STRUCTURE.md`,
-`docs/TONTO_CALL_GRAPHS.md`, `docs/TONTO_EDITING_WITH_VIM.md`, `docs/TONTO_CONTINUOUS_INTEGRATION.md`):
+`docs/TONTO_CALL_GRAPHS.md`, `docs/TONTO_EDITING_WITH_VIM.md`, `docs/TONTO_CONTINUOUS_INTEGRATION.md`,
+`docs/TONTO_MODE_FITTING_RESEARCH.md`):
 
 - **No dates, no commit hashes, no run numbers.** If a sentence needs one, it is history.
 - **No "measured, not assumed", no "this was tried and rejected", no symptom stories.**
