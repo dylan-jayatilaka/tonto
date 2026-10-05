@@ -204,6 +204,22 @@ free / TLS + U^high / three correlated soft modes (each ~1.7-2 h, three at a tim
 *Urea: the crystal environment*. B3LYP free GoF 2.080, the best of all; N-H within 2 esd of neutron;
 free still significantly better than correlated soft modes (1.0268 vs 1.0129); the wags are determined
 and nonzero on this cluster (113-175, implied 627-973 cm-1). Runs in `~/tonto-runs/2026-10-05_mode_fitting`.
+**RUNNING since 2026-10-05 19:31 (Dylan: repeat everything with spherical functions, the def2 standard):**
+`~/.claude/jobs/9b038530/tmp/tls/cc/chain_sph.sh` -- (1) `timing/`: one RHF SCF of the 7-molecule urea
+cluster, def2-TZVP, exact/RI-J+COSX x Cartesian/spherical, one at a time (`timing/timing.log`); (2)
+`sph/`, 74 refinements four at a time (`batch_sph.log`, ends `ALL DONE`): every urea refinement of the
+report again with `use_spherical_basis= TRUE`, plus B3LYP on the def2-SVP cluster and RHF/B3LYP def2-TZVP
+with cluster charges. Binary: `develop` + branch `cluster-spherical`. **When it lands:** copy to
+`~/tonto-runs/2026-10-05_mode_fitting/cc/sph`, rebuild the report's §5 tables from the spherical runs
+(the Cartesian tables go; they stay in git history), add the timing table to
+`docs/TASK_SCF_SPEEDUP.md`, push. The RHF/6-31G(d) Hessian stays Cartesian (Pople bases are).
+**Branch `cluster-spherical` (`a4a72796`, unmerged):** `create_cluster` keeps `use_spherical_basis=`;
+merge once the timing run shows 1036 functions for the spherical cluster (1176 Cartesian).
+**Branch `sg-grids` (unbuilt code):** `kind= sg-2 | sg-3` in `becke_grid=`, the published grids of
+Dasgupta and Herbert (2017), for COSX first; recipe, open points and checks in
+`docs/TASK_COSX_GRIDS.md` on that branch. ORCA's 2021 COSX grid parameters are not published (paper
+and supplement checked): ask the authors. Build and test after the timing run (not during: it would
+disturb the timings).
 **Crystal vibrations (2026-10-05, Johnson et al. Chem. Phys. 291, 53 (2003), in Dropbox/manuscripts):**
 INS NH2 bands near 480 and 670 cm-1, lattice modes to ~160-200, no internal mode below ~416. The
 isolated-molecule wag amplitudes (implied 456-843 cm-1) match the crystal's NH2 modes, so the earlier
