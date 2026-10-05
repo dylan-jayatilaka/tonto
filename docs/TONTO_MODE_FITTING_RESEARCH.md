@@ -191,7 +191,7 @@ $$U_i = U_i^{\rm high} + B_i\, \Sigma\, B_i^{\mathsf T} + \sum_{k=1}^{K} a_k\, \
 with $\Sigma$ the rigid-body covariance of §1.4 and $a_1 \dots a_K$ refined. A soft mode must have
 $\omega_k$ below the cutoff $\omega_c$ of (8), or it would be counted twice; raising the cutoff moves
 more modes from $U^{\rm high}$ into the refinement. The cutoff is compared with the scaled frequency
-(§1.8). Set it between the $K$-th and the next mode: a mode below the cutoff that is not among
+(§1.9). Set it between the $K$-th and the next mode: a mode below the cutoff that is not among
 the $K$ refined is in neither term of (10).
 
 **The harmonic amplitude** $a_k^0$ is (6) at the mode's frequency. An imaginary mode has none.
@@ -206,7 +206,39 @@ such modes as it finds $\operatorname{tr} S$ (§1.4), and drops them. In urea, a
 second out-of-plane NH₂ wag is a combination of the first wag and the libration about the
 in-plane axes, so two soft modes refine as one.
 
-### 1.8 Frequency scaling
+### 1.8 Correlations, and keeping Σ positive
+
+Equation (10) takes each soft mode as independent of the rigid-body motion and of the other soft
+modes. They need not be: a torsion can move with the libration about the same axis, and the data
+can correct the Hessian's mode shapes by mixing two nearly degenerate soft modes. Both are put in
+by making the soft-mode amplitudes $Q_k$ generalised coordinates in their own right, as in §1.2:
+
+$$\mathbf{v} = (\mathbf{t}, oldsymbol{\lambda}, Q_1, \dots, Q_K), \qquad
+B_i = [\,1 \mid A_i \mid \mathbf{d}_{i1} \cdots \mathbf{d}_{iK}\,], \qquad
+U_i = U_i^{
+m high} + B_i\, \Sigma\, B_i^{\mathsf T} , 	ag{11}$$
+
+with $\Sigma = \langle \mathbf{v}\mathbf{v}^{\mathsf T}
+angle$ now $(6+K)	imes(6+K)$:
+
+$$\Sigma = egin{pmatrix} T & S^{\mathsf T} & C_t^{\mathsf T} \ S & L & C_\lambda^{\mathsf T} \ C_t & C_\lambda & \Sigma_Q \end{pmatrix} .$$
+
+$C_t$ and $C_\lambda$ ($K	imes 3$) are the correlations of each mode with the translation and the
+libration. $\Sigma_Q$ ($K	imes K$) has the amplitudes $a_k = \langle Q_k^2
+angle$ on its diagonal and the
+mixing of the modes off it. With $C_t$, $C_\lambda$ and the off-diagonal $\Sigma_Q$ zero, (11) is (10).
+
+**The correlation coefficient** of coordinates $p$ and $q$ is
+$
+ho_{pq} = \Sigma_{pq} / (\Sigma_{pp}\Sigma_{qq})^{1/2}$, between −1 and 1. The cross terms are
+restrained toward zero through it (§2.4).
+
+**Σ must be positive semidefinite**: $\mathbf{w}^{\mathsf T}\Sigma\,\mathbf{w} \ge 0$ for every vector $\mathbf{w}$, since
+$\mathbf{w}^{\mathsf T}\Sigma\,\mathbf{w} = \langle (\mathbf{w}\cdot\mathbf{v})^2
+angle$ is a mean-square displacement. A negative soft-mode
+amplitude breaks it. So does any negative eigenvalue of Σ. §2.4 says how this is kept.
+
+### 1.9 Frequency scaling
 
 Calculated harmonic frequencies are too high, so (8) is too small. The frequencies can be
 multiplied by a scale factor before (6) is used. The default is the value of Scott and Radom
@@ -222,7 +254,7 @@ multiplied by a scale factor before (6) is used. The default is the value of Sco
 They were fitted for the 6-31G(d) basis and are applied whatever the basis. For a Hessian read
 in from a file, the method is unknown and the default is 1.
 
-### 1.9 A Hessian by finite differences
+### 1.10 A Hessian by finite differences
 
 Without an external program, Tonto makes the Hessian from its own SCF energies by central
 differences with step $h$ (0.01 bohr by default). Writing $E(+a)$ for the energy with coordinate $a$
@@ -267,13 +299,14 @@ Hamilton's test.
 The refinement's parameters $\mathbf{p}$ are kept explicitly. The model vector $\mathbf{X}$, the positions and
 ADPs of all the atoms, is made from them by
 
-$$\mathbf{X} = \mathbf{X}_0 + J\,\mathbf{p}, \qquad J = \partial\mathbf{X}/\partial\mathbf{p} \text{ (the Jacobian).} \tag{11}$$
+$$\mathbf{X} = \mathbf{X}_0 + J\,\mathbf{p}, \qquad J = \partial\mathbf{X}/\partial\mathbf{p} \text{ (the Jacobian).} \tag{13}$$
 
 - **Free ADPs:** J has one unit column per refined component of X.
 - **TLS model:** each atom keeps its three position columns. Its six ADP columns are replaced
   by columns shared by all the atoms, one per allowed $\Sigma$ parameter: by (9),
   $\partial U_i/\partial\Sigma = \partial(B_i\Sigma B_i^{\mathsf T})/\partial\Sigma$. $\mathbf{X}_0$ holds $U^{\rm high}$ on the ADP rows.
 - **Soft modes:** one more shared column per mode, $\partial U_i/\partial a_k = \mathbf{d}_{ik}\mathbf{d}_{ik}^{\mathsf T}$ by (10).
+  With the correlations, one column per element of the larger Σ of (11).
 
 ### 2.3 Solving
 
@@ -289,29 +322,44 @@ $J C J^{\mathsf T}$, which gives every atomic $U$ an esd even though only $\Sigm
 refinement cycle starts by putting the ADPs on the model: $\Sigma$ is fitted to the current
 $U - U^{\rm high}$, and $U$ is set to $U^{\rm high} + B\,\Sigma\,B^{\mathsf T}$.
 
-### 2.4 Restraining the soft modes
+### 2.4 Restraints
 
-Each soft-mode amplitude is held toward its harmonic value. The refinement minimises
+Some parameters are held toward a target instead of being left free. Each restraint is a linear
+function $g_j$ of the elements of Σ, held toward a target $g_j^0$ with an uncertainty $\sigma_j$. The
+refinement minimises
 
-$$\chi^2 + \sum_k \frac{(a_k - a_k^0)^2}{\sigma_k^2}, \qquad \sigma_k = s\, a_k^0 , \tag{12}$$
+$$\chi^2 + \sum_j \frac{(g_j - g_j^0)^2}{\sigma_j^2} . \tag{14}$$
 
-with $s$ given by `soft_mode_restraint=` (0.5 by default). An imaginary mode has no $a_k^0$ and is
-not restrained.
+There are three kinds. Each uses a **scale** $c_p$ for coordinate $p$ of $\mathbf{v}$: its diagonal element
+$\Sigma_{pp}$ for a translation or libration (at least 1/1000 of the largest diagonal element of
+$T$ or $L$), and for a soft mode the harmonic amplitude (6) at its $|\omega_k|$.
 
-In matrix form: the amplitudes are a linear function of the parameters, $\mathbf{a} = Q\,\mathbf{p}$, because
-the parameters are the combinations of $\Sigma$ and the $a_k$ that survive §1.4 and §1.7. Let $w$ be
-diagonal with $1/\sigma_k^2$ for a restrained mode and 0 for an imaginary one. The added term is
-$(\mathbf{a}-\mathbf{a}^0)^{\mathsf T} w\, (\mathbf{a}-\mathbf{a}^0)$, its matrix in the parameters is $R = Q^{\mathsf T} w\, Q$, and the normal
-equations of §2.3 become
+- **Soft-mode amplitudes**, $g = a_k$, held toward the harmonic value $a_k^0$ with
+  $\sigma = f_a\, a_k^0$; $f_a$ is `soft_mode_restraint=`, 0.5 by default. An imaginary mode has no
+  $a_k^0$ and is not restrained.
+- **Cross terms** (§1.8), $g = \Sigma_{pq}$, held toward 0 with
+  $\sigma = f_\rho\, (c_p c_q)^{1/2}$; $f_\rho$ is `correlation_restraint=`, 0.5 by default. This holds the
+  correlation coefficient $\rho_{pq}$ toward 0 with uncertainty about $f_\rho$.
+- **Positivity.** At the start of each refinement cycle Σ is diagonalised. For each eigenvector
+  $\mathbf{w}$ with a negative eigenvalue, $g = \mathbf{w}^{\mathsf T}\Sigma\,\mathbf{w}$ is held toward 0 with
+  $\sigma = \sum_p w_p^2 c_p / 100$. This holds Σ on the boundary $\Sigma \ge 0$ while the data push
+  against it. When they stop pushing, the eigenvalue comes out positive and the restraint is
+  dropped at the next cycle. `positive_tls_sigma=` switches it, on by default.
 
-$$(A + R)\, \Delta\mathbf{p} = \mathbf{b} + Q^{\mathsf T} w\,(\mathbf{a}^0 - \mathbf{a}) ,$$
+In matrix form: the elements of Σ are a linear function of the parameters, $\mathbf{s} = Q\,\mathbf{p}$,
+because the parameters are the combinations of them that survive §1.4 and §1.7. Each $g_j$ is
+$\mathbf{r}_j\cdot\mathbf{s}$ for a fixed row $\mathbf{r}_j$. Stack the rows $\mathbf{r}_j Q/\sigma_j$ into a matrix $G$. Then the
+added term has matrix $R = G^{\mathsf T} G$ in the parameters, and the normal equations of §2.3 become
+
+$$(A + R)\, \Delta\mathbf{p} = \mathbf{b} + G^{\mathsf T} \mathbf{e}, \qquad e_j = (g_j^0 - g_j)/\sigma_j ,$$
 
 and the covariance is $(A + R)^{-1}$. A restrained parameter is only partly fitted to the data. The
 **effective number of parameters** counts how much:
 
 $$p_{\rm eff} = \operatorname{tr}\!\left[(A + R)^{-1} A\right] ,$$
 
-which is the number of parameters when $R = 0$, and less than it when the restraints bind.
+which is the number of parameters when $R = 0$, and less than it when the restraints bind. A
+direction held at zero by the positivity restraint counts as almost no parameter.
 
 ### 2.5 How many parameters the data support
 
@@ -328,7 +376,7 @@ number of parameters ($p_{\rm eff}$ for a restrained fit).
   The ratio of their weighted R factors is $\mathcal R = (\chi^2_a / \chi^2_b)^{1/2}$. Model $b$ is
   significantly better, at significance level $\alpha$, when
 
-  $$\mathcal R > \left[ 1 + \frac{k}{n - p_b}\, F_{k,\, n-p_b,\, \alpha} \right]^{1/2} , \tag{13}$$
+  $$\mathcal R > \left[ 1 + \frac{k}{n - p_b}\, F_{k,\, n-p_b,\, \alpha} \right]^{1/2} , \tag{15}$$
 
   with $F_{k,\,n-p_b,\,\alpha}$ the point of the F distribution exceeded with probability $\alpha$.
   This page uses $\alpha = 0.005$.
@@ -351,7 +399,7 @@ On the molecule (top level):
 | `put_normal_modes` | | prints the Hessian and the modes |
 | `internal_adp_temperature=` | 0 | the temperature Θ in (6), Kelvin; 0 gives zero-point motion |
 | `soft_mode_cutoff=` | 200 | modes below this, cm⁻¹, are soft |
-| `frequency_scale_factor=` | see §1.8 | scales the frequencies in (6) |
+| `frequency_scale_factor=` | see §1.9 | scales the frequencies in (6) |
 | `make_internal_adps` | | makes U^high, eq. (8), and the soft modes of (10) |
 | `put_internal_adps` | | prints U^high and how many modes are soft, imaginary and stiff |
 
@@ -361,7 +409,10 @@ In `xray_data=`:
 |---|---|---|
 | `adp_model=` | `free` | `free`: refine each atom's ADP; `tls`: the model (10), HAR only |
 | `n_soft_modes=` | 0 | $K$ in (10): how many of the softest modes have refined amplitudes |
-| `soft_mode_restraint=` | 0.5 | $s$ in (12): the restraint $\sigma$ as a fraction of the harmonic amplitude |
+| `soft_mode_restraint=` | 0.5 | $f_a$ in §2.4: the amplitude restraint's $\sigma$ as a fraction of the harmonic amplitude |
+| `soft_mode_correlations=` | `FALSE` | `TRUE` refines the cross terms of (11) |
+| `correlation_restraint=` | 0.5 | $f_\rho$ in §2.4: the uncertainty of a correlation coefficient held toward 0 |
+| `positive_tls_sigma=` | `TRUE` | holds Σ positive semidefinite (§2.4) |
 
 A TLS Hirshfeld atom refinement with U^high from a Hessian, and the four softest modes refined:
 
@@ -390,8 +441,25 @@ A TLS Hirshfeld atom refinement with U^high from a Hessian, and the four softest
    HAR_refinement
 ```
 
-The tests `tests/long/urea_rhf_STO-3G_HAR_TLS` and `tests/long/urea_rhf_STO-3G_HAR_TLS_soft_modes`
-are complete examples, without and with soft modes.
+**On an explicit cluster.** The density can come from a cluster of whole molecules around the
+central one, made by `create_cluster`. The TLS body is then the central molecule. Its stiff-mode
+ADPs and soft modes are made from its own Hessian, so `make_internal_adps` goes before the
+cluster is made; the other molecules' ADPs follow by symmetry:
+
+```
+   make_internal_adps
+   cluster= {
+      generation_method= within_radius
+      radius= 2.5 Angstrom              ! urea: the six hydrogen-bonded neighbours
+      defragment= true
+      make_info
+   }
+   create_cluster
+```
+
+The tests `tests/long/urea_rhf_STO-3G_HAR_TLS`, `urea_rhf_STO-3G_HAR_TLS_soft_modes`,
+`urea_rhf_STO-3G_HAR_TLS_soft_mode_correlations` and `urea_rhf_STO-3G_HAR_TLS_cluster` are
+complete examples.
 
 
 ## 4. Where it is implemented
@@ -406,14 +474,17 @@ are complete examples, without and with soft modes.
 | frequency scale factor | `MOLECULE.PROP:harmonic_frequency_scale` |
 | U^high handed to the refinement | `MOLECULE.PROP:set_crystal_U_high`, `CRYSTAL:set_fragment_U_high` |
 | ∂U_i/∂Σ for one atom | `CRYSTAL:TLS_response` |
+| the elements of Σ, in order | `CRYSTAL:TLS_sigma_pairs` |
 | allowed Σ and $a_k$, J columns, tr S, origin | `CRYSTAL:make_TLS_jacobian_columns` |
 | p and X₀; ADPs put on the model | `CRYSTAL:set_refinement_parameters` |
-| soft modes chosen, $\mathbf{d}_{ik}$ and $a_k^0$ | `MOLECULE.PROP:set_crystal_soft_modes`, `CRYSTAL:set_soft_modes` |
-| restraints (12) | `CRYSTAL:set_soft_mode_restraints`, `MAT{REAL}:solve_restrained_linear_equations` |
+| soft modes chosen, $\mathbf{d}_{ik}$ and $a_k^0$ | `MOLECULE.PROP:make_soft_modes`, `CRYSTAL:set_soft_modes` |
+| restraints (14) | `CRYSTAL:set_TLS_restraints`, `MAT{REAL}:solve_restrained_linear_equations` |
 | T, L, S with esds | `CRYSTAL:put_TLS_results` |
 | refined amplitudes, implied frequencies | `CRYSTAL:put_soft_mode_results`, `CRYSTAL:frequency_for_amplitude` |
+| correlation coefficients | `CRYSTAL:put_soft_mode_correlations` |
+| the TLS body: the central molecule of a cluster | `CRYSTAL:n_TLS_atoms`, `MOLECULE.PROP:set_crystal_U_high` |
 | $p_{\rm eff}$, AIC, BIC | `LEAST_SQUARES:solve_normal_equations`, `CRYSTAL:put_model_selection` |
-| explicit parameters, eq. (10); the solve | `LEAST_SQUARES` (`least_squares.foo`) |
+| explicit parameters, eq. (13); the solve | `LEAST_SQUARES` (`least_squares.foo`) |
 
 
 ## 5. Results
@@ -476,7 +547,7 @@ Swaminathan, Craven and McMullan (1984).
   two are about equal.
 - **The stiff modes always help:** TLS + U^high has a lower GoF than TLS alone in all four
   basis and partition pairs.
-- **Free ADPs fit significantly better than TLS + U^high** in all four. The Hamilton ratios (13)
+- **Free ADPs fit significantly better than TLS + U^high** in all four. The Hamilton ratios (15)
   for the ten extra parameters are 1.068, 1.035, 1.061 and 1.029, against 1.016 needed at
   $\alpha = 0.005$.
 - **N–H bond lengths depend on the partition, not the ADP model.** TFVA makes them 0.01–0.04 Å
@@ -556,7 +627,7 @@ move from $U^{\rm high}$ into the refinement. $K = 0$ is TLS + U^high above.
 | def2-TZVP | 4 | 20 | 19.71 | 3.028 | 7308 | 7347 | 7440 | 1.39, 1.75 | 1.30, 0.97 |
 | def2-TZVP | free | 27 | 27 | 2.935 | 6806 | 6860 | 6987 | 1.48, 6.13 | 1.37, 4.74 |
 
-Hamilton's test (13) at $\alpha = 0.005$, each model against the one before it:
+Hamilton's test (15) at $\alpha = 0.005$, each model against the one before it:
 
 | basis | from | to | added parameters | ratio $\mathcal R$ | needed | significant |
 |---|---|---|---|---|---|---|
