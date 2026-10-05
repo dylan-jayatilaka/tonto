@@ -187,6 +187,18 @@ allocation inside the quartet loop (`SHELL1:set_reusing_storage`, `ERI_SCRATCH:g
 weights) ~40 %, `make_r_K_COSX_on` 11 %, RI-J 10 %, the Becke partition 9 % (recomputed each SCF;
 cacheable). RIJCOSX was about twice as slow as exact here (1922 s against 978 s for the free-ADP HAR,
 different machine load) and changed GoF by 1e-4. Samples kept in the job directory only.
+**Results (def2-SVP, Hirshfeld; research document §5):** with cluster charges or the explicit cluster
+the NH2 wags refine to zero (held by positivity), so their isolated-molecule amplitudes were making
+up for the density -- the hypothesis from step 3, now confirmed. B3LYP + cluster charges + three
+soft modes with correlations: GoF 2.574 (20 parameters) against free 2.551 (27), Hamilton 1.0134 vs
+1.0129 -- free only just better -- with the best hydrogen ADPs of any refinement (S12 0.33-0.45) and
+N-H 1.007(4)/1.001(4) A against neutron 1.006/1.000. The correlation-restraint width f_rho from 0.25
+to 10 changes nothing on urea. RIJCOSX cluster refinements agree with exact to 4e-4 in GoF at ~2.4x
+the time. Not run: B3LYP on the explicit cluster; def2-TZVP for these tables; a methyl torsion case.
+**Docs naming (Dylan, 2026-10-05):** plans/logs become `TASK_*` (the TLS plan `TASK_ON_MODE_FITTING`,
+paired with `REPORT_ON_MODE_FITTING`), findings for people `REPORT_ON_*`; a `check_docs.py` ctest
+flags dates, hashes, status notes and GitHub-unsafe LaTeX in everything else. Applied after the
+tls-step4 merge.
 
 ## 2026-09-27: the Mac drift is fixed and merged; the Mac passes the whole suite
 
