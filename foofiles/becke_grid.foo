@@ -352,13 +352,13 @@ contains
       self :: INOUT
       kind :: STR, IN
 
-   ENSURE(kind.is_one_of(["becke            ","treutler_ahlrichs","mura_knowles     ","sg-2             ","sg-3             "]),"unknown grid kind")
+   ENSURE(kind.is_one_of(["becke            ","treutler_ahlrichs","mura_knowles     ","sg-0             ","sg-1             ","sg-2             ","sg-3             "]),"unknown grid kind")
 
       .kind = kind
 
       .kind.to_lower_case
 
-      ! SG-2 and SG-3 are whole recipes: their own radial grid and pruning
+      ! The SG kinds are whole recipes: their own radial grid and pruning
       ! for each element, and no atomic scale factor.
       if (.is_SG_kind) then
          .pruning_scheme = .kind
@@ -471,7 +471,7 @@ contains
    ! manually changed ...
       self :: INOUT
 
-   ENSURE(.kind.is_one_of(["becke            ","treutler_ahlrichs","mura_knowles     ","sg-2             ","sg-3             "]),"unknown grid kind")
+   ENSURE(.kind.is_one_of(["becke            ","treutler_ahlrichs","mura_knowles     ","sg-0             ","sg-1             ","sg-2             ","sg-3             "]),"unknown grid kind")
 
       fac :: REAL
 
@@ -1066,9 +1066,9 @@ contains
 
       p,n :: INT
 
-      ! One per row, or per element up to Cl for the SG kinds
+      ! One per row, or one per element for the SG kinds
       n = 7
-      if (.is_SG_kind) n = 17
+      if (.is_SG_kind) n = 86
 
       .radial_grid.create(n)
 
@@ -1092,6 +1092,8 @@ contains
    ENSURE(.kind/=" ","no grid kind set")
 
       nr :: INT
+      scheme :: STR
+      length :: REAL
 
       nr = .no_of_radial_pts(p)
 
@@ -1099,9 +1101,14 @@ contains
       case ("becke            "); BECKE_GRID::set_B_radial_grid(radial,nr)
       case ("treutler_ahlrichs"); BECKE_GRID::set_TA_radial_grid(radial,nr)
       case ("mura_knowles     "); BECKE_GRID::set_MK_radial_grid(radial,nr) ! default
-      case ("sg-2","sg-3")
-         ! "p" is the atomic number; elements without SG data get no grid
-         if (BECKE_GRID::SG_alpha(.kind,p)>ZERO) BECKE_GRID::set_DE2_radial_grid(radial,nr,BECKE_GRID::SG_alpha(.kind,p),BECKE_GRID::SG_radius(p))
+      case ("sg-0","sg-1","sg-2","sg-3")
+         ! "p" is the atomic number
+         BECKE_GRID::SG_radial_scheme(.kind,p,scheme,nr,length)
+         select case (scheme)
+         case ("multiexp       "); BECKE_GRID::set_MultiExp_radial_grid(radial,nr,length)
+         case ("euler_maclaurin"); BECKE_GRID::set_EM_radial_grid(radial,nr,length)
+         case ("de2            "); BECKE_GRID::set_DE2_radial_grid(radial,nr,length,BECKE_GRID::SG_radius(p))
+         end
    ! case default;               UNKNOWN(.kind)
       end
 
@@ -1120,10 +1127,11 @@ contains
    end
 
    is_SG_kind result (res) :: pure
-   ! Whether the grid is SG-2 or SG-3 (Dasgupta and Herbert 2017).
+   ! Whether the grid is one of the published standard grids, SG-0 to
+   ! SG-3. See docs/TASK_COSX_GRIDS.md.
       self :: IN
       res :: BIN
-      res = .kind=="sg-2" OR .kind=="sg-3"
+      res = .kind=="sg-0" OR .kind=="sg-1" OR .kind=="sg-2" OR .kind=="sg-3"
    end
 
    n_radial_pts_for_atom(a) result (res) :: PURE
@@ -1180,9 +1188,10 @@ contains
       self :: IN
       p   :: INT, IN
       res :: INT
-      if      (.kind=="sg-2") then; res = 75
-      else if (.kind=="sg-3") then; res = 99
-      else;                         res = .n_radial_pts + .n_extra_pts_per_shell*(p-1)
+      scheme :: STR
+      length :: REAL
+      if (.is_SG_kind) then; BECKE_GRID::SG_radial_scheme(.kind,p,scheme,res,length) ! "p" is the atomic number
+      else;                  res = .n_radial_pts + .n_extra_pts_per_shell*(p-1)
       end
    end
 
@@ -1360,10 +1369,10 @@ contains
 
       .n_unique_atoms = .unique_atom.dim
 
-      ! The SG kinds are tabulated for some elements only
+      ! The SG kinds have a radial grid for each element up to Rn
       if (.is_SG_kind) then
          do u = 1,.n_unique_atoms
-            DIE_IF(BECKE_GRID::SG_alpha(.kind,an(.unique_atom(u)))<=ZERO,"the SG grids have no data for atomic number "//trim(an(.unique_atom(u)).to_str))
+            DIE_IF(an(.unique_atom(u))>86,"the SG grids stop at Rn; no grid for atomic number "//trim(an(.unique_atom(u)).to_str))
          end
       end
 
@@ -1790,43 +1799,196 @@ contains
       ! landed within ~1.6e-06. See docs/TASK_DFT_STANDARDISATION.md section 6a.
       case ("treutler_ahlrichs"); .apply_pruning_scheme_TA(lebedev_grid,i,nr)
       case ("adaptive         "); .apply_pruning_scheme_adaptive(lebedev_grid,p,r)
-      case ("sg-2","sg-3");       .apply_pruning_scheme_SG(lebedev_grid,p,i)
+      case ("sg-0","sg-1","sg-2","sg-3"); .apply_pruning_scheme_SG(lebedev_grid,p,i)
       end
 
    end
 
    apply_pruning_scheme_SG(lebedev_grid,Z,i) :: private, leaky, PURE
    ! Set "lebedev_grid" for radial shell "i", counted from the nucleus,
-   ! of the element with atomic number "Z", from the SG-2 or SG-3
-   ! partition of Dasgupta and Herbert, J. Comput. Chem. 38, 869 (2017),
-   ! Table 1.
+   ! of the element with atomic number "Z" in the standard grid .kind.
+   ! An element with a published partition uses it. Otherwise: SG-0
+   ! falls back to SG-1; SG-1 uses the five zones of Gill, Johnson and
+   ! Pople to Ar and 194 points on every shell beyond; SG-2 and SG-3
+   ! use 302 and 590 points on every shell.
       self :: IN
       lebedev_grid :: LEBEDEV@, INOUT
       Z,i :: INT, IN
 
       n_ang,n_shell :: VEC{INT}@
-      k,last :: INT
+      k,last,n,nr :: INT
+      scheme :: STR
+      length,t :: REAL
+      zone :: VEC{REAL}(4)
 
       BECKE_GRID::SG_partition(.kind,Z,n_ang,n_shell)
-   DIE_IF(n_ang.deallocated,"the SG grids have no data for atomic number "//trim(Z.to_str))
 
-      last = 0
-      do k = 1,n_ang.dim
-         last = last + n_shell(k)
-         if (i<=last) exit
-      end
+      if (n_ang.allocated) then
+
+         last = 0
+         do k = 1,n_ang.dim
+            last = last + n_shell(k)
+            if (i<=last) exit
+         end
    DIE_IF(k>n_ang.dim,"radial shell beyond the SG partition")
-      lebedev_grid.set_n_pts(n_ang(k))
+         n = n_ang(k)
+         n_shell.destroy; n_ang.destroy
 
-      n_shell.destroy; n_ang.destroy
+      else if (.kind=="sg-2") then
+         n = 302
+
+      else if (.kind=="sg-3") then
+         n = 590
+
+      else if (Z>18) then
+         n = 194
+
+      else
+
+         ! SG-1: the zone boundaries are multiples of the atomic radius,
+         ! so r/R = (i/(nr+1-i))^2 places the shell
+         if      (Z<=2)  then; zone = [0.25d0,  0.5d0,1.0d0,4.5d0]
+         else if (Z<=10) then; zone = [0.1667d0,0.5d0,0.9d0,3.5d0]
+         else;                 zone = [0.1d0,   0.4d0,0.8d0,2.5d0]
+         end
+         BECKE_GRID::SG_radial_scheme(.kind,Z,scheme,nr,length)
+         t = i
+         t = t/(nr+1-i)
+         t = t*t + TOL(10) ! a shell on a boundary belongs to the outer zone
+         if      (t<zone(1)) then; n = 6
+         else if (t<zone(2)) then; n = 38
+         else if (t<zone(3)) then; n = 86
+         else if (t<zone(4)) then; n = 194
+         else;                     n = 86
+         end
+
+      end
+
+      ! The 18-point rule of SG-0 is not a Lebedev grid
+      if (n==18) then; lebedev_grid.as0018
+      else;            lebedev_grid.set_n_pts(n)
+      end
+
+   end
+
+   SG_radial_scheme(kind,Z,scheme,nr,length) :: selfless, private, PURE
+   ! The radial quadrature of element "Z" in the standard grid "kind":
+   ! its "scheme" (multiexp, euler_maclaurin or de2), its number of
+   ! points "nr", and its "length" parameter -- the atomic radius in
+   ! bohr, or for de2 the scaling factor alpha.
+   ! . SG-0 (Chien and Gill, J. Comput. Chem. 27, 730 (2006)): MultiExp
+   !   for H to Cl without the rare gases; SG-1 for the rest.
+   ! . SG-1 (Gill, Johnson and Pople, Chem. Phys. Lett. 209, 506
+   !   (1993)): 50-point Euler-Maclaurin.
+   ! . SG-2, SG-3 (Dasgupta and Herbert, J. Comput. Chem. 38, 869
+   !   (2017)): 75- and 99-point DE2 for the same elements as SG-0;
+   !   Euler-Maclaurin with as many points for the rest.
+      kind :: STR, IN
+      Z :: INT, IN
+      scheme :: STR, OUT
+      nr :: INT, OUT
+      length :: REAL, OUT
+
+      scheme = "euler_maclaurin"
+      nr     = 50
+      length = BECKE_GRID::Slater_radius(Z)
+
+      select case (kind)
+
+      case ("sg-0")
+         if (BECKE_GRID::SG0_radius(Z)>ZERO) then
+            scheme = "multiexp"
+            nr     = 23
+            if (Z>10) nr = 26
+            length = BECKE_GRID::SG0_radius(Z)
+         end
+
+      case ("sg-2","sg-3")
+         nr = 75
+         if (kind=="sg-3") nr = 99
+         if (BECKE_GRID::SG_alpha(kind,Z)>ZERO) then
+            scheme = "de2"
+            length = BECKE_GRID::SG_alpha(kind,Z)
+         end
+
+      end
+
+   end
+
+   SG0_radius(Z) result (res) :: selfless, private, PURE
+   ! The MultiExp radius (bohr) of element "Z" in the SG-0 grid (Chien
+   ! and Gill 2006, Table 1); zero where SG-0 has no data.
+      Z :: INT, IN
+      res :: REAL
+
+      rad :: VEC{REAL}(18)
+
+      rad = [ 1.30d0, ZERO, 1.95d0, 2.20d0, 1.45d0, 1.20d0, 1.10d0, 1.10d0, 1.20d0, &
+              ZERO, 2.30d0, 2.20d0, 2.10d0, 1.30d0, 1.30d0, 1.10d0, 1.45d0, ZERO ]
+
+      res = ZERO
+      if (Z>=1 AND Z<=18) res = rad(Z)
+
+   end
+
+   Slater_radius(Z) result (res) :: selfless, private, PURE
+   ! The atomic radius (bohr) of element "Z" of the SG-1 grid: where the
+   ! radial density of the outermost s or p orbital peaks by Slater's
+   ! rules, n*^2/Z_eff. To Ar these are the values of Gill, Johnson and
+   ! Pople, Table 1; beyond, the same rule with the subshells filled in
+   ! Madelung order, to Rn.
+      Z :: INT, IN
+      res :: REAL
+
+      gill :: VEC{REAL}(18)
+      pqn,cap :: VEC{INT}(15)
+      n_sp,n_all :: VEC{INT}(6)
+      n_star :: VEC{REAL}(6)
+      left,k,e,v :: INT
+      sigma :: REAL
+
+      gill = [ 1.0000d0, 0.5882d0, 3.0769d0, 2.0513d0, 1.5385d0, 1.2308d0, 1.0256d0, 0.8791d0, 0.7692d0, &
+               0.6838d0, 4.0909d0, 3.1579d0, 2.5714d0, 2.1687d0, 1.8750d0, 1.6514d0, 1.4754d0, 1.3333d0 ]
+
+      res = ZERO
+      if (Z<1 OR Z>86) return
+
+      if (Z<=18) then
+         res = gill(Z)
+         return
+      end
+
+      ! The subshells in filling order: principal number and capacity
+      pqn   = [1,2,2,3,3,4, 3,4,5, 4,5,6, 4, 5,6]
+      cap   = [2,2,6,2,6,2,10,6,2,10,6,2,14,10,6]
+      n_star = [ONE,TWO,THREE,3.7d0,FOUR,4.2d0]
+
+      ! Electrons in s and p subshells, and in all subshells, by shell
+      n_sp  = 0
+      n_all = 0
+      left = Z
+      do k = 1,15
+         e = min(left,cap(k))
+         left = left - e
+         n_all(pqn(k)) = n_all(pqn(k)) + e
+         if (cap(k)<=6) n_sp(pqn(k)) = n_sp(pqn(k)) + e
+      end
+
+      ! The valence shell "v", and the screening of one of its electrons
+      v = 1
+      do k = 1,6
+         if (n_sp(k)>0) v = k
+      end
+      sigma = 0.35d0*(n_sp(v)-1) + 0.85d0*n_all(v-1) + sum(n_all(1:v-2))
+
+      res = n_star(v)*n_star(v)/(Z - sigma)
 
    end
 
    SG_alpha(kind,Z) result (res) :: selfless, private, PURE
    ! The DE2 radial scaling factor of element "Z" in the SG-2 or SG-3
    ! grid "kind" (Dasgupta and Herbert 2017, Table 1); zero where the
-   ! grids have no data. Mg and Si are left out: their printed partitions
-   ! and point totals disagree. See docs/TASK_COSX_GRIDS.md.
+   ! grids have no data.
       kind :: STR, IN
       Z :: INT, IN
       res :: REAL
@@ -1834,8 +1996,8 @@ contains
       a2,a3 :: VEC{REAL}(17)
 
       !        H     He    Li    Be    B     C     N     O     F     Ne    Na    Mg    Al    Si    P     S     Cl
-      a2 = [ 2.6d0,ZERO,3.2d0,2.4d0,2.4d0,2.2d0,2.2d0,2.2d0,2.2d0,ZERO,3.2d0,ZERO,2.5d0,ZERO,2.5d0,2.5d0,2.5d0 ]
-      a3 = [ 2.7d0,ZERO,3.0d0,2.4d0,2.4d0,2.4d0,2.4d0,2.6d0,2.1d0,ZERO,3.2d0,ZERO,2.6d0,ZERO,2.4d0,2.4d0,2.6d0 ]
+      a2 = [ 2.6d0,ZERO,3.2d0,2.4d0,2.4d0,2.2d0,2.2d0,2.2d0,2.2d0,ZERO,3.2d0,2.4d0,2.5d0,2.3d0,2.5d0,2.5d0,2.5d0 ]
+      a3 = [ 2.7d0,ZERO,3.0d0,2.4d0,2.4d0,2.4d0,2.4d0,2.6d0,2.1d0,ZERO,3.2d0,2.6d0,2.6d0,2.8d0,2.4d0,2.4d0,2.6d0 ]
 
       res = ZERO
       if (Z<1 OR Z>17) return
@@ -1845,56 +2007,239 @@ contains
    end
 
    SG_radius(Z) result (res) :: selfless, private, PURE
-   ! The radius R (bohr) that sets the outer limit 10 R of the DE2 radial
-   ! grid of element "Z": the Hartree-Fock mean radius of its outermost
-   ! valence orbital (Mitani, Theor. Chem. Acc. 130, 645 (2011)).
+   ! The radius (bohr) that sets the outer limit, ten times it, of the
+   ! DE2 radial grid of element "Z": the Hartree-Fock mean radius of its
+   ! outermost valence orbital (Mitani, Theor. Chem. Acc. 130, 645 (2011)).
       Z :: INT, IN
       res :: REAL
 
-      R :: VEC{REAL}(17)
+      rad :: VEC{REAL}(17)
 
-      !       H        He       Li         Be       B        C        N        O        F
-      R = [ 1.5d0, 0.927272d0, 3.873661d0, 2.6494d0, 2.2048d0, 1.7145d0, 1.4096d0, 1.2322d0, 1.084786d0, &
-      !       Ne          Na          Mg        Al        Si        P         S         Cl
-            0.965273d0, 4.208762d0, 3.2529d0, 3.4339d0, 2.7521d0, 2.3225d0, 2.0607d0, 1.842024d0 ]
+      !         H        He       Li         Be       B        C        N        O        F
+      rad = [ 1.5d0, 0.927272d0, 3.873661d0, 2.6494d0, 2.2048d0, 1.7145d0, 1.4096d0, 1.2322d0, 1.084786d0, &
+      !         Ne          Na          Mg        Al        Si        P         S         Cl
+              0.965273d0, 4.208762d0, 3.2529d0, 3.4339d0, 2.7521d0, 2.3225d0, 2.0607d0, 1.842024d0 ]
 
       res = ZERO
-      if (Z>=1 AND Z<=17) res = R(Z)
+      if (Z>=1 AND Z<=17) res = rad(Z)
 
    end
 
    SG_partition(kind,Z,n_ang,n_shell) :: selfless, private, leaky, PURE
-   ! The SG-2 or SG-3 ("kind") Lebedev partition of element "Z": "n_ang(k)"
-   ! angular points on each of the next "n_shell(k)" radial shells, from
-   ! the nucleus outward (Dasgupta and Herbert 2017, Table 1). Left
-   ! unallocated where the grids have no data.
+   ! The published angular partition of element "Z" in the standard grid
+   ! "kind": "n_ang(k)" angular points on each of the next "n_shell(k)"
+   ! radial shells, from the nucleus outward. From Chien and Gill 2006,
+   ! Table 1, for SG-0 and Dasgupta and Herbert 2017, Table 1, for SG-2
+   ! and SG-3. Left unallocated where there is none, as for all of SG-1.
       kind :: STR, IN
       Z :: INT, IN
       n_ang,n_shell :: VEC{INT}@, OUT
 
-      if (kind=="sg-2") then
+      if (kind=="sg-0") then
          select case (Z)
-         case (1);     n_ang = [6,110,302,86,26];   n_shell = [35,12,16,7,5]
-         case (3,4,11); n_ang = [6,110,302,86,50];  n_shell = [35,12,17,7,4]
-         case (5,6);   n_ang = [6,110,302,146,26];  n_shell = [35,12,17,7,4]
-         case (7);     n_ang = [6,110,302,86,26];   n_shell = [35,12,17,7,4]
-         case (8);     n_ang = [6,110,302,146,50];  n_shell = [30,14,18,8,5]
-         case (9,17);  n_ang = [6,110,302,110,50];  n_shell = [26,16,19,8,6]
-         case (13);    n_ang = [6,110,302,146,86];  n_shell = [32,15,17,7,4]
-         case (15,16); n_ang = [6,110,302,146,38];  n_shell = [30,14,17,7,7]
+         case (1,3)
+            n_ang   = [6,18,26,38,74,110,146,86,50,38,18]
+            n_shell = [6,3,1,1,1,1,6,1,1,1,1]
+         case (4)
+            n_ang   = [6,18,26,38,74,86,110,146,50,38,18,6]
+            n_shell = [4,2,1,2,1,1,2,5,1,1,1,2]
+         case (5)
+            n_ang   = [6,26,38,86,146,38,6]
+            n_shell = [4,4,3,3,6,1,2]
+         case (6)
+            n_ang   = [6,18,26,38,50,86,110,146,170,146,86,38,18]
+            n_shell = [6,2,1,2,2,1,1,1,2,2,1,1,1]
+         case (7)
+            n_ang   = [6,18,26,38,74,110,170,146,86,50]
+            n_shell = [6,3,1,2,2,1,2,3,1,2]
+         case (8)
+            n_ang   = [6,18,26,38,50,86,110,86,50,38,6]
+            n_shell = [5,1,2,1,4,1,5,1,1,1,1]
+         case (9)
+            n_ang   = [6,38,50,74,110,146,110,86,50,6]
+            n_shell = [4,2,4,2,2,2,2,3,1,1]
+         case (11)
+            n_ang   = [6,18,26,38,50,110,74,6]
+            n_shell = [6,2,3,1,2,8,2,2]
+         case (12)
+            n_ang   = [6,18,26,38,50,74,110,146,110,86,38,18,6]
+            n_shell = [5,2,2,2,2,1,2,4,1,1,2,1,1]
+         case (13)
+            n_ang   = [6,18,26,38,50,74,86,146,170,110,86,74,26,18,6]
+            n_shell = [6,2,1,2,2,1,1,2,2,2,1,1,1,1,1]
+         case (14,15)
+            n_ang   = [6,18,38,50,74,110,146,170,86,50,6]
+            n_shell = [5,4,4,3,1,2,1,3,1,1,1]
+         case (16)
+            n_ang   = [6,18,26,38,50,74,110,170,146,110,50,6]
+            n_shell = [4,1,8,2,1,2,1,3,1,1,1,1]
+         case (17)
+            n_ang   = [6,18,26,38,50,74,110,170,146,110,86,6]
+            n_shell = [4,7,2,2,1,1,2,3,1,1,1,1]
+         end
+      else if (kind=="sg-2") then
+         select case (Z)
+         case (1)
+            n_ang   = [6,110,302,86,26]
+            n_shell = [35,12,16,7,5]
+         case (3,4,11,12)
+            n_ang   = [6,110,302,86,50]
+            n_shell = [35,12,17,7,4]
+         case (5,6)
+            n_ang   = [6,110,302,146,26]
+            n_shell = [35,12,17,7,4]
+         case (7)
+            n_ang   = [6,110,302,86,26]
+            n_shell = [35,12,17,7,4]
+         case (8)
+            n_ang   = [6,110,302,146,50]
+            n_shell = [30,14,18,8,5]
+         case (9,17)
+            n_ang   = [6,110,302,110,50]
+            n_shell = [26,16,19,8,6]
+         case (13)
+            n_ang   = [6,110,302,146,86]
+            n_shell = [32,15,17,7,4]
+         case (14)
+            n_ang   = [6,110,302,146,50]
+            n_shell = [32,15,17,7,4]
+         case (15,16)
+            n_ang   = [6,110,302,146,38]
+            n_shell = [30,14,17,7,7]
          end
       else if (kind=="sg-3") then
          select case (Z)
-         case (1);     n_ang = [6,110,590,194,50];                  n_shell = [45,16,21,10,7]
-         case (3,11);  n_ang = [6,110,590,146,50];                  n_shell = [46,16,22,9,6]
-         case (4,13);  n_ang = [6,86,110,590,194,146,50];           n_shell = [42,6,14,22,3,6,6]
-         case (5);     n_ang = [6,86,110,590,194,50];               n_shell = [42,6,14,22,9,6]
-         case (6);     n_ang = [6,146,590,302,194,146,86];          n_shell = [46,16,22,1,2,6,6]
-         case (7);     n_ang = [6,110,590,146,50];                  n_shell = [40,18,24,11,6]
-         case (8);     n_ang = [6,110,194,302,590,302,194,146,50];  n_shell = [40,14,2,2,24,1,1,8,7]
-         case (9,17);  n_ang = [6,110,194,590,194,110,50];          n_shell = [35,17,4,25,2,8,8]
-         case (15,16); n_ang = [6,86,110,194,590,194,146,50];       n_shell = [35,1,18,4,25,2,8,6]
+         case (1)
+            n_ang   = [6,110,590,194,50]
+            n_shell = [45,16,21,10,7]
+         case (3,11)
+            n_ang   = [6,110,590,146,50]
+            n_shell = [46,16,22,9,6]
+         case (4,13)
+            n_ang   = [6,86,110,590,194,146,50]
+            n_shell = [42,6,14,22,3,6,6]
+         case (5,14)
+            n_ang   = [6,86,110,590,194,50]
+            n_shell = [42,6,14,22,9,6]
+         case (6)
+            n_ang   = [6,146,590,302,194,146,86]
+            n_shell = [46,16,22,1,2,6,6]
+         case (7)
+            n_ang   = [6,110,590,146,50]
+            n_shell = [40,18,24,11,6]
+         case (8)
+            n_ang   = [6,110,194,302,590,302,194,146,50]
+            n_shell = [40,14,2,2,24,1,1,8,7]
+         case (9,17)
+            n_ang   = [6,110,194,590,194,110,50]
+            n_shell = [35,17,4,25,2,8,8]
+         case (12)
+            n_ang   = [6,110,590,146,50]
+            n_shell = [48,15,20,7,9]
+         case (15,16)
+            n_ang   = [6,86,110,194,590,194,146,50]
+            n_shell = [35,1,18,4,25,2,8,6]
          end
+      end
+
+   end
+
+   set_EM_radial_grid(radial_grid,nr,rad) :: selfless, private, leaky, PURE
+   ! Set "radial_grid" to the "nr"-point Euler-Maclaurin grid of Murray,
+   ! Handy and Laming, Mol. Phys. 78, 997 (1993), with atomic radius "rad":
+   !    r_i = rad i^2/(nr+1-i)^2 .
+   ! The weight is for an integral over r; 4 pi r^2 is applied when the
+   ! atom grid is made.
+      radial_grid :: QUADRATURE, INOUT
+      nr :: INT, IN
+      rad :: REAL, IN
+
+      i :: INT
+      t,u :: REAL
+
+      radial_grid.set_n_pts(nr)
+      radial_grid.set_kind("open_extended_trapezoid")
+      radial_grid.set_quadrature_points ! leaky here: allocates pts and wts
+
+      do i = 1,nr
+         t = i
+         u = nr + 1 - i
+         radial_grid.pts(i) = rad*t*t/(u*u)
+         radial_grid.wts(i) = TWO*rad*(nr+1)*t/(u*u*u)
+      end
+
+   end
+
+   set_MultiExp_radial_grid(radial_grid,nr,rad) :: selfless, private, leaky, PURE
+   ! Set "radial_grid" to the "nr"-point MultiExp grid of Gill and Chien,
+   ! J. Comput. Chem. 24, 732 (2003), with atomic radius "rad":
+   !    r_i = -rad ln x_i ,
+   ! with x_i the points of the Gaussian quadrature on [0,1] for the
+   ! weight function ln^2 x. Only the 23- and 26-point rules of SG-0 are
+   ! stored. The weight is for an integral over r; 4 pi r^2 is applied
+   ! when the atom grid is made.
+      radial_grid :: QUADRATURE, INOUT
+      nr :: INT, IN
+      rad :: REAL, IN
+
+   DIE_IF(nr/=23 AND nr/=26,"only the 23- and 26-point MultiExp grids are stored")
+
+      x,a :: VEC{REAL}(26)
+      i,k :: INT
+      lx :: REAL
+
+      if (nr==23) then
+         x(1:23) = [ &
+              0.0015058924745840717d0, 0.0099491128468611853d0, 0.026212787562513862d0, &
+              0.050215014094683999d0, 0.081660512821455929d0, 0.12009269427713703d0, &
+              0.1649157971660048d0, 0.21541139722601381d0, 0.27075407329850232d0, &
+              0.33002759271630692d0, 0.39224199352412352d0, 0.45635157223202704d0, &
+              0.52127362052638902d0, 0.58590767062942112d0, 0.6491549639117992d0, &
+              0.7099378339431055d0, 0.7672186862847633d0, 0.82001826057974256d0, &
+              0.86743287798275914d0, 0.90865042304171716d0, 0.94296495577173701d0, &
+              0.96979055758591744d0, 0.98868121412417917d0 ]
+         a(1:23) = [ &
+              0.19397997519811811d0, 0.2623639636596476d0, 0.26742812676397013d0, &
+              0.24866202472840894d0, 0.21982849560935217d0, 0.18749582392684797d0, &
+              0.15523427291530433d0, 0.12506617470764026d0, 0.098100418872550932d0, &
+              0.074860364849398577d0, 0.055477247414684803d0, 0.039817159733692048d0, &
+              0.027571576765107484d0, 0.018325604666401505d0, 0.011611019656801442d0, &
+              0.0069477499303844705d0, 0.0038757714610574311d0, 0.001978563506849731d0, &
+              0.00089889253062980984d0, 0.0003475578897577002d0, 0.00010572868056731378d0, &
+              2.15659539392613d-5, 1.9205788879728201d-6 ]
+      else
+         x(1:26) = [ &
+              0.0012118959531442052d0, 0.0079508350834211655d0, 0.020911970701014455d0, &
+              0.040062890303615981d0, 0.065227756094948038d0, 0.096124873966380717d0, &
+              0.13238114512422221d0, 0.17354177117918734d0, 0.21907886291165968d0, &
+              0.2684000493196846d0, 0.32085745807052075d0, 0.37575717144832967d0, &
+              0.43236914470191774d0, 0.48993751506621983d0, 0.547691197495453d0, &
+              0.60485464446878273d0, 0.66065863649024736d0, 0.71435096447486728d0, &
+              0.76520686385149628d0, 0.81253906250257684d0, 0.85570731112497829d0, &
+              0.8941272781391899d0, 0.9272787239389384d0, 0.9547129784471566d0, &
+              0.97606029628496512d0, 0.99104255389177476d0 ]
+         a(1:26) = [ &
+              0.16590959790074127d0, 0.2299690509487479d0, 0.24044079379163951d0, &
+              0.22975862025927898d0, 0.20930163443099709d0, 0.18456387321242483d0, &
+              0.15860582735470473d0, 0.13324603342450455d0, 0.10957766175447101d0, &
+              0.088230076743000778d0, 0.069518256800206744d0, 0.053537150852983894d0, &
+              0.040226455838504916d0, 0.029418139625084388d0, 0.020873023457481862d0, &
+              0.014309796296644065d0, 0.0094283196275203881d0, 0.005928277523598967d0, &
+              0.0035237959667716519d0, 0.0019544295871422983d0, 0.00099280471150256854d0, &
+              0.00044916603235275513d0, 0.00017307202304493877d0, 5.25042596156813d-5, &
+              1.0687185195322948d-5, 9.503918389326711d-7 ]
+      end
+
+      radial_grid.set_n_pts(nr)
+      radial_grid.set_kind("open_extended_trapezoid")
+      radial_grid.set_quadrature_points ! leaky here: allocates pts and wts
+
+      ! The largest x is nearest the nucleus
+      do i = 1,nr
+         k = nr + 1 - i
+         lx = log(x(k))
+         radial_grid.pts(i) = -rad*lx
+         radial_grid.wts(i) = rad*a(k)/(x(k)*lx*lx)
       end
 
    end
