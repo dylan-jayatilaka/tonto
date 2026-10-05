@@ -137,7 +137,7 @@ foofiles/vec{reflection}.foo:3206        stdout.QQ_plot_with_hkl
 foofiles/vec{reflection}.foo:3236        stdout.QQ_plot.gunplot
 ```
 
-`DEFERRED.md` already records these as a known defect: the names are hard-coded
+`TASKS_AND_HISTORY.md` already records these as a known defect: the names are hard-coded
 and ignore the job name, so two runs in one directory overwrite each other's
 plots; and `.gunplot` is a typo for `.gnuplot` (the file's own header says
 "Gnuplot input file").

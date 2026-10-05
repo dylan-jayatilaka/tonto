@@ -1584,7 +1584,7 @@ contains
       ! itself gave units of U^3 where an esd of U^2 must have units U^2,
       ! and a number ~4e5 too small, which always printed as "(0)" and so
       ! looked exactly like the "no covariance available" case. See
-      ! DEFERRED.md.
+      ! TASKS_AND_HISTORY.md.
       ! NOTE: M_ani is a square root, so this expression is singular at
       ! M_ani = 0 -- which is the case whenever the ADP tensor is exactly
       ! isotropic or absent, as it is for an atom read from a CIF with no
@@ -2188,7 +2188,7 @@ contains
       ! Clamp to zero so the esd is visibly meaningless instead, and say so.
       ! NOTE this only makes the SYMPTOM safe. A negative variance means the
       ! v-cov matrix is wrong and that root cause is still open -- see
-      ! DEFERRED.md.
+      ! TASKS_AND_HISTORY.md.
       WARN_IF(any(dX<ZERO),"negative variance on the covariance diagonal: the variance-covariance matrix is not positive definite. The affected esd is set to zero and is NOT meaningful")
 
       dX = sqrt(max(dX,ZERO))
@@ -2197,11 +2197,11 @@ contains
       .set_pADP_errors_to(dX)
       dX.destroy
       
-      ! Set U_iso error
+      ! Set U_iso error. An isotropic U is one refined parameter whose
+      ! variance every diagonal component carries, so the mean is its esd.
       if (.atomic_number==1 AND H_U_iso) then
-         ! NOTE: this is the U_iso error
-         val = sum(.pADP_errors(4:6))
-         .set_U_iso_error(val) ! This is correct believe it or not
+         val = THIRD*sum(.pADP_errors(4:6))
+         .set_U_iso_error(val)
       else
          .set_U_iso_error_from_pADP(.pADP_errors) ! This is what you expect, normally
          .set_M_ani_error_from_pADP
@@ -2288,7 +2288,7 @@ contains
       ! to_tensor_change_basis_of builds exactly that map, in the
       ! crystallographic 11,22,33,12,13,23 order, so there is no transpose
       ! left to get backwards -- which is how the sibling defect in
-      ! CRYSTAL:make_CIF_esds arose. See DEFERRED.md.
+      ! CRYSTAL:make_CIF_esds arose. See TASKS_AND_HISTORY.md.
       T6.to_tensor_change_basis_of(cell.direct_U_mx,reorder=TRUE)
 
       D6 = ZERO
@@ -2307,7 +2307,7 @@ contains
       ! transform is MAT3/MAT4:back_transform_to(new,direct_mx), and
       ! symmetric_tensor_3/4_product_mx(res,R) is exactly the induced map
       ! for that -- verified numerically to 1e-15 against the tensor
-      ! contraction, R and NOT its transpose. See DEFERRED.md.
+      ! contraction, R and NOT its transpose. See TASKS_AND_HISTORY.md.
       if (n>=19) then
          GAUSSIAN_DATA:symmetric_tensor_3_product_mx(T10,cell.direct_mx)
          D10 = ZERO
@@ -3865,7 +3865,7 @@ contains
    ! congruence over the sigmas instead forms signed combinations of
    ! standard deviations, which understates them, can overstate them, and
    ! can even come out negative. The ESDs stay in the frame they were made
-   ! in; a writer emits them only into that frame. See DEFERRED.md.
+   ! in; a writer emits them only into that frame. See TASKS_AND_HISTORY.md.
       self :: INOUT
       axis_system :: STR, IN
       cell :: UNIT_CELL, IN
@@ -5008,6 +5008,62 @@ contains
          res = res + a*exp(-b*stl)
       end
 
+   end
+
+   ground_state_open_shell(Z,l,n) :: selfless, PURE
+   ! The Aufbau open shell of the neutral atom of atomic number "Z": its
+   ! angular momentum "l" and its electron count "n", 0 for a closed
+   ! shell. "l" is -1 when the rule does not give one open shell: Z above
+   ! 36, and Cr and Cu, whose ground states are 3d5 4s1 and 3d10 4s1.
+      Z   :: INT, IN
+      l,n :: INT, OUT
+
+      shell_l :: VEC{INT}(8)
+      left,i,cap :: INT
+
+      l = -1
+      n = 0
+      if (Z<1 OR Z>36 OR Z==24 OR Z==29) return
+
+      shell_l = [0,0,1,0,1,0,2,1]   ! 1s 2s 2p 3s 3p 4s 3d 4p
+      left = Z
+      do i = 1,8
+         cap = 2*(2*shell_l(i)+1)
+         if (left<=cap) then
+            l = shell_l(i)
+            if (left<cap) n = left
+            return
+         end
+         left = left - cap
+      end
+
+   end
+
+   AOC_coupling(n_orbitals,n_electrons) result (res) :: selfless, pure
+   ! Roothaan's coupling constant a (= b) for the average of configuration
+   ! of "n_electrons" in an open shell of "n_orbitals": 1 for a closed
+   ! shell, 0 for one electron.
+      n_orbitals,n_electrons :: INT, IN
+      res :: REAL
+
+      res = TWO*n_orbitals*(n_electrons-ONE)/(n_electrons*(TWO*n_orbitals-ONE))
+
+   end
+
+   IT_form_factor_coeffs(Z,a,b,c) :: selfless, PURE
+   ! The International Tables (Vol. C, Table 6.1.1.4) form factor
+   ! coefficients of the neutral atom of atomic number "Z":
+   ! f(s) = sum_i a(i) exp(-b(i) s^2) + c, s = sin(theta)/lambda in 1/A.
+      Z   :: INT, IN
+      a,b :: VEC{REAL}(4), OUT
+      c   :: REAL, OUT
+   ENSURE(Z.is_in_range([1,98]),"Z out of range, Z = "//trim(Z.to_str))
+      i :: INT
+      do i = 1,4
+         a(i) = HF_n0_form_factor_coeff(1,i,Z)
+         b(i) = HF_n0_form_factor_coeff(2,i,Z)
+      end
+      c = HF_n0_form_factor_coeff(1,0,Z)
    end
 
    HF_n0_form_factor(k) result (res) :: PURE
@@ -6172,6 +6228,123 @@ contains
 
    symmetrize(mat,pointgroup) :: get_from(symmetrize, TYPE?=>REAL), PURE
    ! Symmetrize a matrix "mat" using "pointgroup"
+   end
+
+   spherically_average(mat,is_spherical) :: leaky
+   ! Replace "mat", a density-like matrix over this atom's basis, by its
+   ! average over all rotations, so that it is spherical. Set "is_spherical"
+   ! if the basis is spherical. A point group cannot do this beyond p: "oh"
+   ! leaves d-d blocks cubic, and "ih" fails from f-f on. So the average is
+   ! over a grid of z-y-z Euler angles, exact for the angular components up
+   ! to L = 2 l_max that products of the shells contain: L+1 equally spaced
+   ! alpha and gamma, and L/2+1 Gauss-Legendre points in cos(beta).
+      self :: IN
+      mat :: MAT{REAL}, INOUT
+      is_spherical :: BIN, IN
+
+   ENSURE(mat.is_square,"non-square matrix")
+   ENSURE(mat.dim1==.basis.n_bf,"incorrectly dimensioned matrix")
+
+      first,last,momentum :: VEC{INT}@
+      q :: QUADRATURE@
+      R,dtr,ftr,gtr :: MAT3{REAL}@
+      wt :: VEC{REAL}@
+      sym,W,tra,trb :: MAT{REAL}@
+      l_max,L,n_ag,n_b,n_rot,i,j,k,n,a,b,na,nb,fa,fb,la,lb :: INT
+      alpha,beta,gamma :: REAL
+
+      .set_shell_limits(first,last,momentum)
+      l_max = maxval(momentum)
+      DIE_IF(l_max>4,"h functions or higher are not done")
+
+      ! The rotations and their weights
+      L     = 2*l_max
+      n_ag  = L + 1
+      n_b   = L/2 + 1
+      n_rot = n_ag*n_b*n_ag
+      q.create
+      q.set_kind("gauss_legendre")
+      q.set_n_pts(n_b)
+      q.set_quadrature_points
+      R.create(3,3,n_rot)
+      wt.create(n_rot)
+      n = 0
+      do i = 1,n_ag
+         alpha = TWO*PI*(i-1)/n_ag
+         do j = 1,n_b
+            beta = acos(q.pts(j))
+            do k = 1,n_ag
+               gamma = TWO*PI*(k-1)/n_ag
+               n = n + 1
+               R(:,:,n).to_euler_rotation_mx(alpha,beta,gamma)
+               wt(n) = q.wts(j)/(TWO*n_ag*n_ag)
+            end
+         end
+      end
+      q.destroy
+
+      ! Representation matrices for d, f and g shells
+      if (l_max>=2) dtr = GAUSSIAN_DATA:d_xyz_rep_matrices_for(R,is_spherical)
+      if (l_max>=3) ftr = GAUSSIAN_DATA:f_xyz_rep_matrices_for(R,is_spherical)
+      if (l_max>=4) gtr = GAUSSIAN_DATA:g_xyz_rep_matrices_for(R,is_spherical)
+
+      ! Average
+      sym.create(.basis.n_bf,.basis.n_bf)
+      sym = ZERO
+      do n = 1,n_rot
+      do a = 1,.basis.n_shell
+
+         select case (momentum(a))
+         case (0); tra.create(1,1); tra = ONE
+         case (1); tra = R(:,:,n)
+         case (2); tra = dtr(:,:,n)
+         case (3); tra = ftr(:,:,n)
+         case (4); tra = gtr(:,:,n)
+         end
+         fa = first(a)
+         la =  last(a)
+         na = la - fa + 1
+
+         do b = 1,.basis.n_shell
+
+            select case (momentum(b))
+            case (0); trb.create(1,1); trb = ONE
+            case (1); trb = R(:,:,n)
+            case (2); trb = dtr(:,:,n)
+            case (3); trb = ftr(:,:,n)
+            case (4); trb = gtr(:,:,n)
+            end
+            fb = first(b)
+            lb =  last(b)
+            nb = lb - fb + 1
+
+            W.create(na,nb)
+            W.to_product_of(tra,mat(fa:la,fb:lb))
+            W = wt(n)*W
+            sym(fa:la,fb:lb).plus_product_of(W,trb,transpose_b=TRUE)
+            W.destroy
+            trb.destroy
+
+         end
+
+         tra.destroy
+
+      end
+      end
+
+      mat = sym
+
+      ! Clean up
+      sym.destroy
+      wt.destroy
+      gtr.destroy
+      ftr.destroy
+      dtr.destroy
+      R.destroy
+      momentum.destroy
+      last.destroy
+      first.destroy
+
    end
 
    symmetrize(mat,pointgroup) :: get_from(symmetrize, TYPE?=>CPX), PURE
@@ -8965,7 +9138,7 @@ contains
 !  DFT potential
 !  =============
 
-   make_dft_xc_pot_grid(V,pt,exchange,correlation) :: PURE
+   make_DFT_xc_pot_grid(V,pt,exchange,correlation) :: PURE
    ! Work out the DFT exchange-correlation potential "V" at a series of points
    ! "pt".
       self :: IN
@@ -8986,7 +9159,7 @@ contains
 
    end
 
-   make_dft_eff_pot_grid(V,pt,exchange,correlation) :: PURE
+   make_DFT_eff_pot_grid(V,pt,exchange,correlation) :: PURE
    ! Work out the DFT effective potential "V" (i.e. the DFT potential plus the
    ! classical electric potential) on a grid of points "pt".
       self :: IN
@@ -9007,7 +9180,7 @@ contains
 
    end
 
-   make_dft_energy_grid(V,pt,exchange,correlation) :: PURE
+   make_DFT_energy_grid(V,pt,exchange,correlation) :: PURE
    ! Work out the Slater DFT energy "V" (i.e. the Slater potential times the
    ! density plus the classical electric energy) on a grid of points "pt".
       self :: IN
@@ -9038,7 +9211,7 @@ contains
 
    end
 
-   make_H_dft_energy_grid(H_grid,pt,exchange,correlation) :: PURE
+   make_H_DFT_energy_grid(H_grid,pt,exchange,correlation) :: PURE
    ! Work out the H DFT energy density "H_grid" on a set ofpoints "pt"
       self :: IN
       H_grid :: VEC{REAL}, OUT
@@ -9050,7 +9223,7 @@ contains
 
       G_grid.create(H_grid.dim)
       .make_G_kinetic_energy_grid(G_grid,pt)
-      .make_dft_energy_grid(H_grid,pt,exchange,correlation)
+      .make_DFT_energy_grid(H_grid,pt,exchange,correlation)
       H_grid = H_grid + G_grid
       G_grid.destroy
 

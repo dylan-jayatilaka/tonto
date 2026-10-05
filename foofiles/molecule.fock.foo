@@ -56,6 +56,8 @@ contains
       .SCF_data.DFT_energy_correction       = ZERO ! Set these to zero since
       .SCF_data.DFT_alpha_energy_correction = ZERO ! they may be calculated
       .SCF_data.DFT_beta_energy_correction  = ZERO
+      .SCF_data.XC_energy             = ZERO
+      .SCF_data.exact_exchange_energy = ZERO
 
       select case (.SCF_data.SCF_kind)
 
@@ -192,10 +194,10 @@ contains
                K.create(.n_bf, .n_bf)
                .make_r_JK(F.r,K,P.r)
                K = K * (-HALF) * .SCF_data.hybrid_exchange_factor
+               ! a_0 E_x: K already carries -a_0/2, and the exchange energy is half the trace
+               .SCF_data.exact_exchange_energy = HALF*P.r.trace_product_with(K)
                F.r = F.r + K
                K.destroy
-            else if (.use_spherical_basis) then
-               .make_r_J_engine_sph(F.r,P.r)
             else
                .make_r_J_engine(F.r,P.r)
             end
@@ -205,6 +207,8 @@ contains
                   K.create(.n_bf, .n_bf)
                   .make_r_JK_disk(F.r,K,P.r)
                   K = K * (-HALF) * .SCF_data.hybrid_exchange_factor
+                  ! a_0 E_x: K already carries -a_0/2, and the exchange energy is half the trace
+                  .SCF_data.exact_exchange_energy = HALF*P.r.trace_product_with(K)
                   F.r = F.r + K
                   K.destroy
                else
@@ -320,9 +324,7 @@ contains
          if (.SCF_data.using_RI_J AND .RI_metric_factor.allocated AND NOT .SCF_data.using_hybrid_exchange) then
             ! No exact exchange: one fit of the total density serves both
             J.b = P.a + P.b
-            if (.use_spherical_basis) then; .make_r_J_engine_sph(J.a,J.b)
-            else;                           .make_r_J_engine(J.a,J.b)
-            end
+            .make_r_J_engine(J.a,J.b)
             J.b = ZERO
          else
             .make_u_JK(J,K,P)
@@ -335,6 +337,9 @@ contains
             ! Each spin takes its own exchange, as in .make_u_Fock_mx
             F.a = F.a - .SCF_data.hybrid_exchange_factor*K.a
             F.b = F.b - .SCF_data.hybrid_exchange_factor*K.b
+            ! a_0 E_x, with E_x = -(1/2) sum over spins of tr(P K)
+            .SCF_data.exact_exchange_energy = -HALF*.SCF_data.hybrid_exchange_factor &
+               * (P.a.trace_product_with(K.a) + P.b.trace_product_with(K.b))
          end
 
          if (add_xc) .add_XC_mx(F)
@@ -392,6 +397,80 @@ contains
       W = F.a
       W.to_product_of(.MOs.r,.overlap_mx,transpose_a=TRUE)
       F.r.change_basis_using(W)
+
+   end
+
+   make_AOC_effective_Fock_mx :: leaky
+   ! For an atomic SCF run as the average of configuration (an open
+   ! shell of n_open_orbitals holding n_open_electrons at equal
+   ! occupation; docs/TASK_SPHERICAL_ATOM_SCF.md section 2):
+   ! .fock_mx holds F_c = h + G(D) for the ensemble density. Replace it
+   ! by the effective Fock matrix of Roothaan's open-shell theory, whose
+   ! off-diagonal MO blocks vanish when the energy is stationary, and set
+   ! .SCF_data.ensemble_energy_correction so that 1/2 tr[D(h+F)] plus it
+   ! is the average-of-configuration energy.
+      self :: INOUT
+   ENSURE(.SCF_data.allocated,"no SCF_data")
+   ENSURE(.SCF_data.using_open_shell_ensemble,"no open-shell ensemble")
+   ENSURE(.MOs.is_allocated_with_genre("r "),"no MO's")
+   ENSURE(.fock_mx.has_genre("r "),"no restricted Fock matrix")
+   ENSURE(.density_mx.has_genre("r "),"no restricted density matrix")
+   ENSURE(.overlap_mx.allocated,"no overlap matrix")
+
+      Po,Go :: OPMATRIX@
+      Fc,Fo,Fe,W :: MAT{REAL}@
+      a,f :: REAL
+      n_c,n_o,o1,o2,n :: INT
+
+      n_o = .SCF_data.n_open_orbitals
+      n_c = (.n_e - .SCF_data.n_open_electrons)/2
+      f   = .SCF_data.n_open_electrons/(TWO*n_o)
+      a   = .SCF_data.AOC_coupling
+      o1  = n_c + 1
+      o2  = n_c + n_o
+      n   = .n_bf
+
+      ! The open-shell density D_o, and G(D_o) from a two-electron build
+      Po.create(n)
+      Po.create("r ")
+      Po.r.to_scaled_product_of(.MOs.r(:,o1:o2),.MOs.r(:,o1:o2),fac=TWO*f,transpose_b=TRUE)
+      Go.create(n)
+      .make_Fock_mx(Go,Po,core=FALSE,xc=FALSE)
+
+      ! F_c and F~_o = F_c - (1-a) G(D_o), to the MO basis
+      Fc = .fock_mx.r
+      Fo = Fc - (ONE-a)*Go.r
+      Fc.change_basis_using(.MOs.r)
+      Fo.change_basis_using(.MOs.r)
+
+      ! The effective Fock matrix: F_c except the open-shell rows and
+      ! columns, which take F~_o, and the closed-open block (F_c - f F~_o)/(1-f)
+      Fe = Fc
+      Fe(o1:o2,o1:o2) = Fo(o1:o2,o1:o2)
+      if (o2<n) then
+         Fe(o1:o2,o2+1:n) = Fo(o1:o2,o2+1:n)
+         Fe(o2+1:n,o1:o2) = Fo(o2+1:n,o1:o2)
+      end
+      if (n_c>0) then
+         Fe(1:n_c,o1:o2) = (Fc(1:n_c,o1:o2) - f*Fo(1:n_c,o1:o2))/(ONE-f)
+         Fe(o1:o2,1:n_c) = (Fc(o1:o2,1:n_c) - f*Fo(o1:o2,1:n_c))/(ONE-f)
+      end
+
+      ! Back to the AO basis, F = S C Fe C^T S
+      W.create(n,n)
+      W.to_product_of(.MOs.r,.overlap_mx,transpose_a=TRUE)
+      Fe.change_basis_using(W)
+
+      ! The energy correction: E_AOC - 1/2 tr[D(h+Fe)]
+      .SCF_data.ensemble_energy_correction = &
+           HALF*.density_mx.r.trace_product_with(.fock_mx.r - Fe) &
+         - (ONE-a)*HALF*Po.r.trace_product_with(Go.r)
+
+      .fock_mx.r = Fe
+
+      W.destroy
+      Fe.destroy; Fo.destroy; Fc.destroy
+      Go.destroy; Po.destroy
 
    end
 
@@ -1312,12 +1391,38 @@ contains
 
    end
 
-   make_r_JK_engine_sph(J,K,P) :: leaky, PURE
-   ! Make "J" and "K" for a spherical basis using the cartesian J/K
-   ! engine. J and K are linear in P, so expanding P into the cartesian
-   ! basis, building there, and contracting back is exact. This buys a
-   ! spherical basis the J engine, the separate J and K screening, and
-   ! the ERI_SCRATCH work arrays, none of which the direct builder has.
+   set_cartesian_shell_limits(first,last) :: leaky, PURE
+   ! Put the cartesian shell limits in place of the spherical ones, so a
+   ! builder that works only in a cartesian basis can be run. The limits
+   ! it replaces are kept in "first" and "last" for .reset_shell_limits.
+      self :: INOUT
+      first,last :: VEC{INT}@, OUT
+
+      first.create(.n_shell); first = .first_basis_fn_for_shell
+      last.create(.n_shell);  last  = .last_basis_fn_for_shell
+
+      .first_basis_fn_for_shell = .first_cartesian_bf_for_shell
+      .last_basis_fn_for_shell  = .last_cartesian_bf_for_shell
+
+   end
+
+   reset_shell_limits(first,last) :: leaky, PURE
+   ! Put back the shell limits kept by .set_cartesian_shell_limits.
+      self :: INOUT
+      first,last :: VEC{INT}@, INOUT
+
+      .first_basis_fn_for_shell = first
+      .last_basis_fn_for_shell  = last
+
+      first.destroy; last.destroy
+
+   end
+
+   make_r_JK_engine(J,K,P) :: leaky, PURE
+   ! Make "J" and "K" from a symmetric density matrix "P" with the J/K
+   ! engine, .make_r_JK_engine_c. A spherical basis is built in the
+   ! cartesian one: J and K are linear in P, so expanding P, building,
+   ! and contracting back is exact.
       self :: INOUT
       J,K :: MAT{REAL}, OUT
       P   :: MAT{REAL}, IN
@@ -1326,28 +1431,18 @@ contains
       first,last :: VEC{INT}@
       n :: INT
 
-      n = .n_bf_cartesian
+      if (NOT .use_spherical_basis) then
+         .make_r_JK_engine_c(J,K,P)
+         return
+      end
 
-      Pc.create(n,n)
-      Jc.create(n,n)
-      Kc.create(n,n)
+      n = .n_bf_cartesian
+      Pc.create(n,n); Jc.create(n,n); Kc.create(n,n)
 
       .make_cartesian_density(P,Pc)
-
-      ! Drive the engine with cartesian shell limits, then put back
-      first.create(.n_shell); first = .first_basis_fn_for_shell
-      last.create(.n_shell);  last  = .last_basis_fn_for_shell
-
-      .first_basis_fn_for_shell = .first_cartesian_bf_for_shell
-      .last_basis_fn_for_shell  = .last_cartesian_bf_for_shell
-
-      .make_r_JK_engine(Jc,Kc,Pc)
-
-      .first_basis_fn_for_shell = first
-      .last_basis_fn_for_shell  = last
-
-      first.destroy; last.destroy
-
+      .set_cartesian_shell_limits(first,last)
+      .make_r_JK_engine_c(Jc,Kc,Pc)
+      .reset_shell_limits(first,last)
       .make_spherical_matrix(Jc,J)
       .make_spherical_matrix(Kc,K)
 
@@ -1355,9 +1450,9 @@ contains
 
    end
 
-   make_r_J_engine_sph(J,P) :: leaky, PURE
-   ! Make "J" for a spherical basis using the cartesian J engine, as in
-   ! .make_r_JK_engine_sph. This is the path every pure DFT job takes.
+   make_r_J_engine(J,P) :: leaky, PURE
+   ! Make "J" from a symmetric density matrix "P" with the J engine,
+   ! .make_r_J_engine_c, a spherical basis as in .make_r_JK_engine.
       self :: INOUT
       J :: MAT{REAL}, OUT
       P :: MAT{REAL}, IN
@@ -1366,37 +1461,27 @@ contains
       first,last :: VEC{INT}@
       n :: INT
 
-      n = .n_bf_cartesian
+      if (NOT .use_spherical_basis) then
+         .make_r_J_engine_c(J,P)
+         return
+      end
 
-      Pc.create(n,n)
-      Jc.create(n,n)
+      n = .n_bf_cartesian
+      Pc.create(n,n); Jc.create(n,n)
 
       .make_cartesian_density(P,Pc)
-
-      first.create(.n_shell); first = .first_basis_fn_for_shell
-      last.create(.n_shell);  last  = .last_basis_fn_for_shell
-
-      .first_basis_fn_for_shell = .first_cartesian_bf_for_shell
-      .last_basis_fn_for_shell  = .last_cartesian_bf_for_shell
-
-      .make_r_J_engine(Jc,Pc)
-
-      .first_basis_fn_for_shell = first
-      .last_basis_fn_for_shell  = last
-
-      first.destroy; last.destroy
-
+      .set_cartesian_shell_limits(first,last)
+      .make_r_J_engine_c(Jc,Pc)
+      .reset_shell_limits(first,last)
       .make_spherical_matrix(Jc,J)
 
       Jc.destroy; Pc.destroy
 
    end
 
-   make_u_JK_engine_sph(J,K,P) :: leaky, PURE
-   ! Make unrestricted "J" and "K" for a spherical basis using the
-   ! cartesian J/K engine, as in .make_r_JK_engine_sph. This also gives
-   ! unrestricted spherical runs the parallel do that .make_u_JK_direct
-   ! does not have.
+   make_u_JK_engine(J,K,P) :: leaky, PURE
+   ! Make unrestricted "J" and "K" from "P" with the J/K engine,
+   ! .make_u_JK_engine_c, a spherical basis as in .make_r_JK_engine.
       self :: INOUT
       J,K :: OPMATRIX, INOUT
       P   :: OPMATRIX, IN
@@ -1409,28 +1494,19 @@ contains
       first,last :: VEC{INT}@
       n :: INT
 
-      n = .n_bf_cartesian
+      if (NOT .use_spherical_basis) then
+         .make_u_JK_engine_c(J,K,P)
+         return
+      end
 
-      Pc.create(n,"u ")
-      Jc.create(n,"u ")
-      Kc.create(n,"u ")
+      n = .n_bf_cartesian
+      Pc.create(n,"u "); Jc.create(n,"u "); Kc.create(n,"u ")
 
       .make_cartesian_density(P.a,Pc.a)
       .make_cartesian_density(P.b,Pc.b)
-
-      first.create(.n_shell); first = .first_basis_fn_for_shell
-      last.create(.n_shell);  last  = .last_basis_fn_for_shell
-
-      .first_basis_fn_for_shell = .first_cartesian_bf_for_shell
-      .last_basis_fn_for_shell  = .last_cartesian_bf_for_shell
-
-      .make_u_JK_engine(Jc,Kc,Pc)
-
-      .first_basis_fn_for_shell = first
-      .last_basis_fn_for_shell  = last
-
-      first.destroy; last.destroy
-
+      .set_cartesian_shell_limits(first,last)
+      .make_u_JK_engine_c(Jc,Kc,Pc)
+      .reset_shell_limits(first,last)
       .make_spherical_matrix(Jc.a,J.a)
       .make_spherical_matrix(Jc.b,J.b)
       .make_spherical_matrix(Kc.a,K.a)
@@ -1566,7 +1642,7 @@ contains
 
    end
 
-   make_r_JK_engine(J,K,P) :: PURE
+   make_r_JK_engine_c(J,K,P) :: PURE
    ! Make the restricted real coulomb matrix "J" from a symmetric
    ! density matrix "P" directly. This uses the J matrix engine, but
    ! it can be easily disabled.
@@ -1574,8 +1650,7 @@ contains
       J,K  :: MAT{REAL}, OUT
       P    :: MAT{REAL}, IN
 
-      ! A spherical basis reaches this through .make_r_JK_engine_sph,
-      ! which hands it cartesian J, K, P and cartesian shell limits.
+      ! Cartesian only: a spherical basis comes through .make_r_JK_engine.
 
       PP, JJ  :: VEC{EVEC{REAL}}@, target
       max_P   :: VEC{REAL}@
@@ -1595,7 +1670,7 @@ contains
       if (.SCF_data.using_RI_J AND .RI_metric_factor.allocated) list_J = TRUE
       if (list_J) then
          J_list.create(J.dim1,J.dim2)
-         .make_r_J_engine(J_list,P)
+         .make_r_J_engine_c(J_list,P)
       end
 
       ! Prepare for J-matrix engine
@@ -1855,7 +1930,7 @@ contains
       .make_r_J_engine(J.b, P.b)
    end
 
-   make_r_J_engine(J,P) :: PURE
+   make_r_J_engine_c(J,P) :: PURE
    ! Make the real coulomb matrix "J" from a symmetric density matrix
    ! "P" directly. This uses the J matrix engine, but it can be easily
    ! disabled.
@@ -1863,8 +1938,7 @@ contains
       J :: MAT{REAL}, OUT
       P :: MAT{REAL}, IN
 
-      ! A spherical basis reaches this through .make_r_J_engine_sph,
-      ! which hands it cartesian J, P and cartesian shell limits.
+      ! Cartesian only: a spherical basis comes through .make_r_J_engine.
 
       PP,JJ :: VEC{EVEC{REAL}}@, target
       max_P :: VEC{REAL}@
@@ -2117,48 +2191,149 @@ contains
    ! between the spherical auxiliary functions, for this geometry.
       self :: INOUT
 
-      Vc,X,W,U :: MAT{REAL}@
+      .make_RI_metric(.RI_metric_factor)
+      .RI_metric_factor.to_cholesky_factor
+
+   end
+
+   make_RI_metric(V,times,n_shell,n_cart) :: leaky
+   ! Make "V", the coulomb metric (P|1/r12|Q) between the spherical
+   ! auxiliary functions, for this geometry, reading the auxiliary basis
+   ! sets if need be. It is made in the cartesian functions by the Rys
+   ! kernel on the auxiliary pair list, then transformed a shell pair at
+   ! a time (.make_spherical_metric). If present, "times" returns the CPU
+   ! seconds of those two steps, and "n_shell" and "n_cart" the numbers
+   ! of auxiliary shells and cartesian auxiliary functions.
+      self :: INOUT
+      V :: MAT{REAL}@, OUT
+      times :: VEC{REAL}(2), optional, OUT
+      n_shell,n_cart :: INT, optional, OUT
+
+      Vc :: MAT{REAL}@
       shell_l,first_cart,first_sph :: VEC{INT}@
       aux :: GAUSSIAN_PAIR_LIST
-      s,l,k,fc,fs,n_shell,n_cart,n_sph :: INT
+      t0,t1 :: REAL
+      ns,nc,n_sph :: INT
 
       .resolve_auxiliary_bases
       .make_auxiliary_pair_list(aux,shell_l,first_cart,first_sph)
 
-      n_shell = shell_l.dim
-      n_cart = first_cart(n_shell) + GAUSSIAN_DATA:n_comp(shell_l(n_shell)) - 1
-      n_sph  = first_sph(n_shell) + 2*shell_l(n_shell)
+      ns = shell_l.dim
+      nc = first_cart(ns) + GAUSSIAN_DATA:n_comp(shell_l(ns)) - 1
+      n_sph = first_sph(ns) + 2*shell_l(ns)
 
-      Vc.create(n_cart,n_cart)
+      Vc.create(nc,nc)
+      t0 = TIME::current_cpu_time()
       aux.make_coulomb_metric(Vc,first_cart)
+      t1 = TIME::current_cpu_time()
 
-      ! Cartesian to spherical
-      X.create(n_cart,n_sph)
-      X = ZERO
-      do s = 1,n_shell
-         l  = shell_l(s)
-         fc = first_cart(s)
-         fs = first_sph(s)
-         if (l<2) then
-            do k = 0,2*l
-               X(fc+k,fs+k) = ONE
+      V.create(n_sph,n_sph)
+      .make_spherical_metric(V,Vc,shell_l,first_cart,first_sph)
+      Vc.destroy
+
+      if (present(times)) times = [t1-t0, TIME::current_cpu_time()-t1]
+      if (present(n_shell)) n_shell = ns
+      if (present(n_cart))  n_cart  = nc
+
+   end
+
+   make_spherical_metric(V,Vc,shell_l,first_cart,first_sph) :: leaky, PURE
+   ! Make "V", the metric between the spherical auxiliary functions,
+   ! from "Vc", that between the cartesian ones, a block per pair of
+   ! shells: V(s,t) = U_s^T Vc(s,t) U_t, where U_l is the cartesian to
+   ! spherical matrix of angular momentum l, the identity below l = 2.
+   ! "shell_l", "first_cart" and "first_sph" are as from
+   ! .make_auxiliary_pair_list.
+      self :: IN
+      V :: MAT{REAL}, OUT
+      Vc :: MAT{REAL}, IN
+      shell_l,first_cart,first_sph :: VEC{INT}, IN
+
+      U :: VEC{EMAT{REAL}}@
+      s,t,ls,lt,cs,ct,ss,st,ncs,nct,nss,nst,l :: INT
+
+      U.create(maxval(shell_l)+1)
+      do l = 2,maxval(shell_l)
+         U(l+1).element = GAUSSIAN_DATA::spherical_harmonics_for(l).element
+      end
+
+      do t = 1,shell_l.dim
+         lt  = shell_l(t)
+         ct  = first_cart(t); nct = GAUSSIAN_DATA:n_comp(lt)
+         st  = first_sph(t);  nst = 2*lt + 1
+         do s = 1,shell_l.dim
+            ls  = shell_l(s)
+            cs  = first_cart(s); ncs = GAUSSIAN_DATA:n_comp(ls)
+            ss  = first_sph(s);  nss = 2*ls + 1
+            if (ls<2 AND lt<2) then
+               V(ss:ss+nss-1,st:st+nst-1) = Vc(cs:cs+ncs-1,ct:ct+nct-1)
+            else if (ls<2) then
+               V(ss:ss+nss-1,st:st+nst-1) = matmul(Vc(cs:cs+ncs-1,ct:ct+nct-1),U(lt+1).element)
+            else if (lt<2) then
+               V(ss:ss+nss-1,st:st+nst-1) = matmul(transpose(U(ls+1).element),Vc(cs:cs+ncs-1,ct:ct+nct-1))
+            else
+               V(ss:ss+nss-1,st:st+nst-1) = matmul(transpose(U(ls+1).element), &
+                                            matmul(Vc(cs:cs+ncs-1,ct:ct+nct-1),U(lt+1).element))
             end
-         else
-            U = GAUSSIAN_DATA::spherical_harmonics_for(l).element
-            X(fc:fc+GAUSSIAN_DATA:n_comp(l)-1,fs:fs+2*l) = U
          end
       end
 
-      W.create(n_cart,n_sph)
-      W.to_product_of(Vc,X)
-      .RI_metric_factor.destroy
-      .RI_metric_factor.create(n_sph,n_sph)
-      .RI_metric_factor.to_product_of(X,W,transpose_a=TRUE)
-      .RI_metric_factor.to_cholesky_factor
+      U.destroy
 
-      W.destroy
-      X.destroy
-      Vc.destroy
+   end
+
+   put_RI_metric_timings :: leaky
+   ! Time the three steps of .initialize_RI_J for this geometry and
+   ! auxiliary basis: the cartesian coulomb metric (the Rys kernel on
+   ! the auxiliary pair list) and its transformation to the spherical
+   ! functions, both by .make_RI_metric, and the Cholesky factor. Each
+   ! step is timed three times and the least CPU time is put, on lines
+   ! that begin "CPU time" so the
+   ! test harness ignores them; log det V, from the Cholesky factor, is
+   ! the check on the integrals. Needs only the atoms and
+   ! auxiliary_basis_name=. For comparison with published timings of
+   ! two-center integrals (TASKS_AND_HISTORY.md).
+      self :: INOUT
+
+      V :: MAT{REAL}@
+      t :: VEC{REAL}(3)
+      tt :: VEC{REAL}(2)
+      t0,t1,log_det :: REAL
+      k,n_shell,n_cart,n_sph,rep :: INT
+
+      t = huge(ONE)
+
+      do rep = 1,3
+         .make_RI_metric(V,tt,n_shell,n_cart)
+         t(1) = min(t(1),tt(1))
+         t(2) = min(t(2),tt(2))
+         t0 = TIME::current_cpu_time()
+         V.to_cholesky_factor
+         t1 = TIME::current_cpu_time(); t(3) = min(t(3),t1-t0)
+      end
+      n_sph = V.dim1
+
+      stdout.flush
+      stdout.text("=====================================")
+      stdout.text("Coulomb metric of the auxiliary basis")
+      stdout.text("=====================================")
+      stdout.flush
+      stdout.show("Auxiliary basis                =",.auxiliary_basis_name)
+      stdout.show("Auxiliary shells               =",n_shell)
+      stdout.show("Spherical functions            =",n_sph)
+      stdout.show("Cartesian functions            =",n_cart)
+      log_det = ZERO
+      do k = 1,n_sph
+         log_det = log_det + TWO*log(V(k,k))
+      end
+      stdout.show("log det V                      =",log_det)
+      stdout.flush
+      stdout.show("CPU time, Rys integrals        =",t(1))
+      stdout.show("CPU time, to spherical         =",t(2))
+      stdout.show("CPU time, Cholesky factor      =",t(3))
+      stdout.show("CPU time, total                =",sum(t))
+
+      V.destroy
 
    end
 
@@ -2346,14 +2521,10 @@ contains
       P   :: MAT{REAL}, IN
 
       if (.SCF_data.using_COSX AND .COSX_pts.allocated) then
-         if (.use_spherical_basis) then; .make_r_J_engine_sph(J,P)
-         else;                          .make_r_J_engine(J,P)
-         end
+         .make_r_J_engine(J,P)
          .make_r_K_COSX(K,P)
       else
-         if (.use_spherical_basis) then; .make_r_JK_engine_sph(J,K,P)
-         else;                          .make_r_JK_engine(J,K,P)
-         end
+         .make_r_JK_engine(J,K,P)
       end
 
    end
@@ -2365,19 +2536,12 @@ contains
       P   :: OPMATRIX, IN
 
       if (.SCF_data.using_COSX AND .COSX_pts.allocated) then
-         if (.use_spherical_basis) then
-            .make_r_J_engine_sph(J.a,P.a)
-            .make_r_J_engine_sph(J.b,P.b)
-         else
-            .make_r_J_engine(J.a,P.a)
-            .make_r_J_engine(J.b,P.b)
-         end
+         .make_r_J_engine(J.a,P.a)
+         .make_r_J_engine(J.b,P.b)
          .make_r_K_COSX(K.a,P.a)
          .make_r_K_COSX(K.b,P.b)
       else
-         if (.use_spherical_basis) then; .make_u_JK_engine_sph(J,K,P)
-         else;                          .make_u_JK_engine(J,K,P)
-         end
+         .make_u_JK_engine(J,K,P)
       end
 
    end
@@ -2386,7 +2550,7 @@ contains
    ! Make the exchange matrix "K" from the symmetric density "P" by the
    ! chain-of-spheres method on the grid of .initialize_COSX. A spherical
    ! basis is taken through the cartesian functions, as
-   ! .make_r_JK_engine_sph. The quadrature index of K is then multiplied
+   ! .make_r_JK_engine. The quadrature index of K is then multiplied
    ! by .COSX_fit, if it exists (overlap fitting), and K is made symmetric.
       self :: INOUT
       K :: MAT{REAL}, OUT
@@ -2410,17 +2574,10 @@ contains
          Kc.create(n,n)
          .make_cartesian_density(P,Pc)
 
-         first.create(.n_shell); first = .first_basis_fn_for_shell
-         last.create(.n_shell);  last  = .last_basis_fn_for_shell
-         .first_basis_fn_for_shell = .first_cartesian_bf_for_shell
-         .last_basis_fn_for_shell  = .last_cartesian_bf_for_shell
-
+         .set_cartesian_shell_limits(first,last)
          .make_r_K_COSX_on(Kc,Pc,.COSX_pts,.COSX_wts,.COSX_batch_pt,.COSX_batch_first,.COSX_batch_last, &
                            .COSX_batch_shell,.COSX_batch_first_shell,.COSX_batch_last_shell)
-
-         .first_basis_fn_for_shell = first
-         .last_basis_fn_for_shell  = last
-         first.destroy; last.destroy
+         .reset_shell_limits(first,last)
 
          .make_spherical_matrix(Kc,K)
          Kc.destroy; Pc.destroy
@@ -2438,16 +2595,17 @@ contains
 
    end
 
-   initialize_COSX :: leaky
-   ! Make the grid for the chain-of-spheres exchange, a BECKE_GRID of
-   ! accuracy .SCF_data.COSX_grid_accuracy, and its batches, for this
-   ! geometry. They are made by the XC grid routines with .COSX_grid
-   ! standing in for .becke_grid; the XC grid is put back untouched.
+   initialize_COSX(grid) :: leaky
+   ! Make .COSX_grid, the grid for the chain-of-spheres exchange, from
+   ! "grid", and its batches, for this geometry. They are made by the XC
+   ! grid routines with .COSX_grid standing in for .becke_grid; the XC
+   ! grid is put back untouched.
       self :: INOUT
+      grid :: BECKE_GRID, IN
 
    ENSURE(.SCF_data.allocated,"no SCF_data")
 
-      grid :: BECKE_GRID@
+      xc_grid :: BECKE_GRID@
       pts :: MAT{REAL}@
       wts :: VEC{REAL}@
       index,first_pt,last_pt,b_pt,b_first,b_last,b_shell,b_first_shell,b_last_shell :: VEC{INT}@
@@ -2456,10 +2614,10 @@ contains
 
       .destroy_COSX_grid
       .COSX_grid.create
-      .COSX_grid.set_accuracy(.SCF_data.COSX_grid_accuracy)
+      .COSX_grid = grid
 
       ! Put the XC grid aside
-      call move_alloc(.becke_grid,grid)
+      call move_alloc(.becke_grid,xc_grid)
       call move_alloc(.XC_pts,pts)
       call move_alloc(.XC_wts,wts)
       call move_alloc(.XC_index,index)
@@ -2493,7 +2651,7 @@ contains
       call move_alloc(.becke_grid,.COSX_grid)
 
       ! Put the XC grid back
-      call move_alloc(grid,.becke_grid)
+      call move_alloc(xc_grid,.becke_grid)
       call move_alloc(pts,.XC_pts)
       call move_alloc(wts,.XC_wts)
       call move_alloc(index,.XC_index)
@@ -2509,6 +2667,9 @@ contains
       .XC_n_unpruned = n_unpruned
 
       if (.SCF_data.using_COSX_overlap_fitting) .make_COSX_fit
+
+      if (.SCF_data.show_timings) &
+      stdout.show("COSX grid points               =",.COSX_pts.dim1)
 
    end
 
@@ -2845,6 +3006,193 @@ contains
       wr.destroy; rt.destroy; xv.destroy
       T.destroy
       sp_last.destroy; sp_first.destroy; sp_class.destroy
+
+   end
+
+   put_COSX_shell_errors :: leaky
+   ! For every atom and every radial shell of its DFT grid: the shell's
+   ! contribution to the chain-of-spheres exchange energy -(1/4) tr(P K)
+   ! at the angular order the pruning scheme assigns, and the error of that
+   ! and of L = 5, 11, ... 59 against L = 89 on the same shell.
+   ! Becke-partitioned like the real grid, with no overlap fitting. The
+   ! molecular totals are compared with the exact exchange energy. Run on
+   ! a converged restricted density. A diagnostic for the COSX grid
+   ! (TASKS_AND_HISTORY.md); the analogue of MOLECULE.RHO:put_grid_shell_errors.
+      self :: INOUT
+
+   ENSURE(.becke_grid.allocated,"no becke_grid")
+   ENSURE(.becke_grid.finalized,"no finalized becke_grid")
+   ENSURE(.density_mx.is_allocated_with_genre("r "),"needs a restricted density")
+
+      Ls :: VEC{INT}(11)
+      P,J,Kx :: MAT{REAL}@
+      first,last :: VEC{INT}@
+      overlapping_atom :: VEC{INT}@
+      X,X_mol :: VEC{REAL}(11)
+      a,i,k,nr,nL,L_used,n,n_used,n_atom_pts :: INT
+      r,wr,X_used,X_used_mol,atom_err,atom_X,X_exact :: REAL
+      head :: STR
+
+      ! The last order is the reference
+      Ls = [5,11,17,23,29,35,41,47,53,59,89]
+      nL = size(Ls)
+
+      if (.overlapping_atoms_for_atom.deallocated) .set_overlapping_atoms_for_atom
+
+      ! The exact exchange energy, for the molecular totals
+      J.create(.n_bf,.n_bf)
+      Kx.create(.n_bf,.n_bf)
+      .make_r_JK_engine(J,Kx,.density_mx.r)
+      X_exact = -0.25d0*sum(.density_mx.r*Kx)
+      Kx.destroy; J.destroy
+
+      ! The quadrature works in the cartesian functions; tr(P K) is the same
+      if (.use_spherical_basis) then
+         P.create(.n_bf_cartesian,.n_bf_cartesian)
+         .make_cartesian_density(.density_mx.r,P)
+         .set_cartesian_shell_limits(first,last)
+      else
+         P.create(.n_bf,.n_bf)
+         P = .density_mx.r
+      end
+
+      stdout.flush
+      stdout.text("==================================================")
+      stdout.text("COSX grid: angular error per radial shell, by atom")
+      stdout.text("==================================================")
+      stdout.flush
+      stdout.text("X     = shell contribution to the COSX exchange energy, -(1/4) tr(P K)")
+      stdout.text("dX(L) = X at Lebedev order L minus X at L = "//trim(Ls(nL).to_str)// &
+                  "; 'used' is the order the pruning scheme assigns")
+      stdout.flush
+
+      head = "  shell   r/bohr   L used  n_pts         X used        dX used"
+      do k = 1,nL-1
+         head = trim(head)//"   dX("//trim(Ls(k).to_str)//")"
+      end
+
+      X_mol = ZERO
+      X_used_mol = ZERO
+
+      do a = 1,.n_atom
+
+         overlapping_atom = .overlapping_atoms_for_atom(a).element
+         nr = .becke_grid.n_radial_pts_for_atom(a)
+         atom_err = ZERO
+         atom_X   = ZERO
+         n_atom_pts = 0
+
+         stdout.flush
+         stdout.text("Atom "//trim(a.to_str)//"  "//trim(.atom(a).label))
+         stdout.flush
+         stdout.text(trim(head))
+
+         do i = 1,nr
+
+            .becke_grid.radial_shell_for_atom(a,i,r,wr)
+            L_used = .becke_grid.angular_order_for_shell(a,i)
+
+            do k = 1,nL
+               .COSX_shell_energy(X(k),n,P,a,r,wr,Ls(k),overlapping_atom)
+               if (Ls(k)==L_used) then
+                  X_used = X(k); n_used = n
+               end
+            end
+            if (all(Ls/=L_used)) &
+               .COSX_shell_energy(X_used,n_used,P,a,r,wr,L_used,overlapping_atom)
+
+            X_mol = X_mol + X
+            X_used_mol = X_used_mol + X_used
+            atom_err = atom_err + abs(X_used-X(nL))
+            atom_X   = atom_X + X_used
+            n_atom_pts = n_atom_pts + n_used
+
+            stdout.put(i,width=7)
+            stdout.put(r,width=9,precision=4,fmt="f")
+            stdout.put(L_used,width=7)
+            stdout.put(n_used,width=7)
+            stdout.put(X_used,width=15,precision=8,fmt="f")
+            stdout.put(X_used-X(nL),width=11,precision=2,fmt="e")
+            do k = 1,nL-1
+               stdout.put(X(k)-X(nL),width=11,precision=2,fmt="e")
+            end
+            stdout.flush
+
+         end
+
+         stdout.flush
+         stdout.show("  points on this atom's grid          =",n_atom_pts)
+         stdout.show("  X of this atom's grid               =",atom_X)
+         stdout.show("  sum over shells of |dX used|        =",atom_err)
+
+      end
+
+      if (.use_spherical_basis) .reset_shell_limits(first,last)
+      P.destroy
+
+      stdout.flush
+      stdout.show("Exact exchange energy                 =",X_exact)
+      stdout.show("COSX exchange energy, orders used     =",X_used_mol)
+      stdout.flush
+      stdout.text("      L        X_COSX - X_exact")
+      do k = 1,nL
+         stdout.put(Ls(k),width=7)
+         stdout.put(X_mol(k)-X_exact,width=24,precision=4,fmt="e")
+         stdout.flush
+      end
+
+   end
+
+   COSX_shell_energy(X,n,P,a,r,wr,L,overlapping_atom) :: leaky, private
+   ! The chain-of-spheres exchange energy "X" = -(1/4) tr(P K) of the
+   ! Lebedev shell of order "L", radius "r" and radial weight "wr" about
+   ! atom "a", Becke-partitioned with "overlapping_atom", and its number
+   ! of points "n". "P" is in the basis the shell limits describe.
+      self :: INOUT
+      X :: REAL, OUT
+      n :: INT, OUT
+      P :: MAT{REAL}, IN
+      a,L :: INT, IN
+      r,wr :: REAL, IN
+      overlapping_atom :: VEC{INT}, IN
+
+      leb :: LEBEDEV@
+      pt,K :: MAT{REAL}@
+      wt :: VEC{REAL}@
+      b_pt,b_shell :: VEC{INT}@
+      i :: INT
+
+      leb.create
+      leb.set_l(L)
+      n = leb.n_pts
+      pt.create(n,3)
+      wt.create(n)
+      pt(:,1) = .atom(a).position(1) + r*leb.pts(:,1)
+      pt(:,2) = .atom(a).position(2) + r*leb.pts(:,2)
+      pt(:,3) = .atom(a).position(3) + r*leb.pts(:,3)
+      wt = wr*leb.wts
+      leb.destroy
+      .becke_grid.apply_partition(pt,wt,a,overlapping_atom)
+
+      ! One batch holding every point and every shell
+      b_pt.create(n)
+      do i = 1,n
+         b_pt(i) = i
+      end
+      b_shell.create(.n_shell)
+      do i = 1,.n_shell
+         b_shell(i) = i
+      end
+
+      K.create(P.dim1,P.dim2)
+      .make_r_K_COSX_on(K,P,pt,wt,b_pt,[1],[n],b_shell,[1],[.n_shell])
+      X = -0.25d0*sum(P*K)
+
+      K.destroy
+      b_shell.destroy
+      b_pt.destroy
+      wt.destroy
+      pt.destroy
 
    end
 
@@ -3579,9 +3927,9 @@ contains
 
    end
 
-   make_JK_engine(J,K,P) :: PURE
-   ! Make the real coulomb matrix "J" from a symmetric density matrix "P"
-   ! directly. This uses the J matrix engine, but it can be easily disabled.
+   make_JK_engine(J,K,P) :: leaky, PURE
+   ! Make "J" and "K" from a symmetric density matrix "P" with the J/K
+   ! engine, in either basis.
       self :: INOUT
       J,K  :: OPMATRIX, INOUT
       P    :: OPMATRIX, IN
@@ -3590,9 +3938,9 @@ contains
    ENSURE(J.genre == P.genre, "J and P have different spinorbital kinds")
 
       if (J.has_genre("u ")) then
-         .make_u_JK_engine(J, K, P)
+         .make_u_JK_engine(J,K,P)
       else
-         .make_r_JK_engine(J.r, K.r, P.r)
+         .make_r_JK_engine(J.r,K.r,P.r)
       end
 
    end
@@ -3631,7 +3979,7 @@ contains
 
    end
 
-   make_u_JK_engine(J,K,P) :: PURE
+   make_u_JK_engine_c(J,K,P) :: PURE
    ! Make the real coulomb matrix "J" from a symmetric density matrix "P"
    ! directly. This uses the J matrix engine, but it can be easily disabled.
       self :: INOUT
@@ -3660,8 +4008,8 @@ contains
       if (list_J) then
          Ja_list.create(J.a.dim1,J.a.dim2)
          Jb_list.create(J.b.dim1,J.b.dim2)
-         .make_r_J_engine(Ja_list,P.a)
-         .make_r_J_engine(Jb_list,P.b)
+         .make_r_J_engine_c(Ja_list,P.a)
+         .make_r_J_engine_c(Jb_list,P.b)
       end
 
       ! Prepare for J-matrix engine
@@ -5520,17 +5868,18 @@ contains
    ENSURE(.SCF_data.allocated,"no SCF_data")
    ENSURE(.SCF_data.is_DFT_calculation,"this is not a DFT calculation")
 
-      E :: REAL
+      E,E_xc :: REAL
 
       if (.SCF_data.using_batched_XC) then
-         .add_XC_mx_batched(K,E)
+         .add_XC_mx_batched(K,E,E_xc)
       else if (.SCF_data.using_GGA_functional) then
-         .add_GGA_XC_mx(K,E)
+         .add_GGA_XC_mx(K,E,E_xc)
       else
-         .add_LDA_XC_mx(K,E)
+         .add_LDA_XC_mx(K,E,E_xc)
       end
 
       .SCF_data.DFT_energy_correction = E
+      .SCF_data.XC_energy = E_xc
 
    end
 
@@ -5539,32 +5888,32 @@ contains
       self  :: INOUT
       Ka,Kb :: MAT{REAL}, INOUT
 
-      E,Ea,Eb :: REAL
+      E,Ea,Eb,E_xc :: REAL
 
       if (.SCF_data.using_batched_XC) then
-            .add_XC_mx_batched(Ka,Kb,E,Ea,Eb)
+            .add_XC_mx_batched(Ka,Kb,E,Ea,Eb,E_xc)
       else if (NOT .SCF_data.using_GGA_functional) then
-      !    .add_LDA_XC_mx_old(Ka,Kb,E,Ea,Eb) ! Old
-            .add_LDA_XC_mx(Ka,Kb,E,Ea,Eb)
+            .add_LDA_XC_mx(Ka,Kb,E,Ea,Eb,E_xc)
       else
-      !    .add_GGA_XC_mx_old(Ka,Kb,E,Ea,Eb) ! Old
-            .add_GGA_XC_mx(Ka,Kb,E,Ea,Eb)
+            .add_GGA_XC_mx(Ka,Kb,E,Ea,Eb,E_xc)
       end
 
       .SCF_data.DFT_energy_correction       = E
       .SCF_data.DFT_alpha_energy_correction = Ea
       .SCF_data.DFT_beta_energy_correction  = Eb
+      .SCF_data.XC_energy = E_xc
 
    end
 
 ! LDA
 
-   add_LDA_XC_mx(K,E) :: leaky
+   add_LDA_XC_mx(K,E,E_xc) :: leaky
    ! Add the exchange and correlation matrices to K. This routine supports
    ! local functional only, either exchange or correlation.
       self :: INOUT
       K :: MAT{REAL}, INOUT
       E :: REAL, OUT
+      E_xc :: REAL, OUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.allocated,  "no atom list")
@@ -5621,6 +5970,7 @@ contains
 
       ! Get DFT energy correction
       V.symmetric_reflect
+      E_xc = E  ! the XC energy itself, before it becomes the energy correction
       E = E - HALF*V.trace_product_with(.density_mx.r)
 
       ! Clean
@@ -5804,12 +6154,13 @@ contains
 
 ! GGA
 
-   add_GGA_XC_mx(K,E) :: leaky
+   add_GGA_XC_mx(K,E,E_xc) :: leaky
    ! Add the exchange and correlation matrices to K. This routine
    ! supports non-local functionals, either exchange or correlation.
       self :: INOUT
       K :: MAT{REAL}, INOUT
       E :: REAL, OUT
+      E_xc :: REAL, OUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.allocated,  "no atom list")
@@ -5891,6 +6242,7 @@ contains
 
       ! Get DFT energy correction
       V.symmetric_reflect
+      E_xc = E  ! the XC energy itself, before it becomes the energy correction
       E = E - HALF*V.trace_product_with(.density_mx.r)
       
       ! Clean
@@ -6038,7 +6390,7 @@ contains
 
    end
 
-   add_XC_mx_batched(K,E) :: leaky
+   add_XC_mx_batched(K,E,E_xc) :: leaky
    ! Add the restricted XC matrix to "K" and return the energy correction
    ! "E", as add_GGA_XC_mx(K,E) and add_LDA_XC_mx(K,E) do, batch by batch
    ! over the molecular grid (MOLECULE.RHO:make_XC_batches). Per batch, with
@@ -6049,6 +6401,7 @@ contains
       self :: INOUT
       K :: MAT{REAL}, INOUT
       E :: REAL, OUT
+      E_xc :: REAL, OUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.allocated,  "no atom list")
@@ -6233,19 +6586,21 @@ contains
       K.symmetric_reflect
 
       ! Get DFT energy correction
+      E_xc = E  ! the XC energy itself, before it becomes the energy correction
       E = E - HALF*V.trace_product_with(.density_mx.r)
 
       V.destroy
 
    end
 
-   add_XC_mx_batched(Ka,Kb,E,Ea,Eb) :: leaky
+   add_XC_mx_batched(Ka,Kb,E,Ea,Eb,E_xc) :: leaky
    ! As add_XC_mx_batched(K,E), for the open-shell case: one density and
    ! one XC block per spin, as add_GGA_XC_mx(Ka,Kb,E,Ea,Eb) and
    ! add_LDA_XC_mx(Ka,Kb,E,Ea,Eb) do.
       self    :: INOUT
       Ka,Kb   :: MAT{REAL}, INOUT
       E,Ea,Eb :: REAL, OUT
+      E_xc :: REAL, OUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.allocated,  "no atom list")
@@ -6476,6 +6831,7 @@ contains
       Kb.symmetric_reflect
 
       ! Get DFT energy correction
+      E_xc = Ea + Eb  ! the XC energy itself, before the energy corrections
       Ea = Ea - HALF*Va.trace_product_with(.density_mx.a)
       Eb = Eb - HALF*Vb.trace_product_with(.density_mx.b)
       E  = Ea + Eb
@@ -6565,7 +6921,7 @@ contains
 
 ! LDA
 
-   add_LDA_XC_mx(Ka,Kb,E,Ea,Eb) :: leaky
+   add_LDA_XC_mx(Ka,Kb,E,Ea,Eb,E_xc) :: leaky
    ! Add the exchange and correlation matrices to "Ka", "Kb". Return
    ! the DFT energy corrections "Ea", "Eb" and the total "E". This
    ! routine supports local functional only, either exchange or
@@ -6573,6 +6929,7 @@ contains
       self :: INOUT
       Ka,Kb :: MAT{REAL}, INOUT
       E,Ea,Eb :: REAL, OUT
+      E_xc :: REAL, OUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.allocated,  "no atom list")
@@ -6641,6 +6998,7 @@ contains
       ! Get DFT energy correction
       Va.symmetric_reflect
       Vb.symmetric_reflect
+      E_xc = Ea + Eb  ! the XC energy itself, before the energy corrections
       Ea = Ea - HALF*Va.trace_product_with(.density_mx.a)
       Eb = Eb - HALF*Vb.trace_product_with(.density_mx.b)
       E  = Ea + Eb
@@ -6843,13 +7201,14 @@ contains
 
 ! GGA
 
-   add_GGA_XC_mx(Ka,Kb,E,Ea,Eb) :: leaky
+   add_GGA_XC_mx(Ka,Kb,E,Ea,Eb,E_xc) :: leaky
    ! Add the exchange and correlation matrices to "Ka", "Kb". Return
    ! the DFT energy coorections "Ea", "Eb" and total "E". This routine
    ! supports non-local functionals, either exchange or correlation.
       self    :: INOUT
       Ka,Kb   :: MAT{REAL}, INOUT
       E,Ea,Eb :: REAL, OUT
+      E_xc :: REAL, OUT
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.allocated,  "no atom list")
@@ -6951,6 +7310,7 @@ contains
       ! Get DFT energy correction
       Va.symmetric_reflect
       Vb.symmetric_reflect
+      E_xc = Ea + Eb  ! the XC energy itself, before the energy corrections
       Ea = Ea - HALF*Va.trace_product_with(.density_mx.a)
       Eb = Eb - HALF*Vb.trace_product_with(.density_mx.b)
       E  = Ea + Eb
@@ -7411,7 +7771,7 @@ contains
       if (.SCF_data.output) then
 
          stdout.set_real_fortran_fmt("e")
-         stdout.show("Skipping electron repulsion integrals less than ",.SCF_data.ERI_disk_cutoff)
+         stdout.show("Skipping electron repulsion integrals less than =",.SCF_data.ERI_disk_cutoff)
          stdout.set_real_fortran_fmt("f")
 
       end

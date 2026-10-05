@@ -272,6 +272,8 @@ contains
          .delta_E_converged = FALSE
          .damping_on        = FALSE
          .damping_off       = FALSE
+         .pFON_on           = FALSE
+         .pFON_off          = FALSE
          .level_shift_on    = FALSE
          .level_shift_off   = FALSE
          .DIIS_converged    = FALSE
@@ -310,6 +312,17 @@ contains
          .damping_off = TRUE
       end
 
+      if (.using_pFON) then
+         if (.apply_pFON AND NOT .pFON_on) then
+            n = n + 1
+            .table_info(1)[n] = " *pFON occupations on"
+            .pFON_on = TRUE
+         else if (NOT .apply_pFON AND .pFON_on AND NOT .pFON_off) then
+            n = n + 1
+            .table_info(1)[n] = " *pFON occupations was off"
+            .pFON_off = TRUE
+         end
+      end
       if (.apply_level_shifting AND NOT .level_shift_on) then
          n = n + 1
          .table_info(1)[n] = " *Levelshift on"
@@ -661,7 +674,7 @@ contains
       ! b3lypx and b3lypgx share the SAME exchange routine, which computes only
       ! 0.08*E_LDA + 0.72*E_GGA. B3LYP's remaining 0.2*E_HF comes from the Fock
       ! matrix, gated on .using_hybrid_exchange -- so both names must set it, or
-      ! the exact exchange is silently dropped. See DEFERRED.md.
+      ! the exact exchange is silently dropped. See TASKS_AND_HISTORY.md.
       case("b3lypx "); .using_GGA_exchange = TRUE
                        .using_hybrid_exchange = TRUE
       case("b3lypgx"); .using_GGA_exchange = TRUE
@@ -835,19 +848,6 @@ contains
       if (NOT .ERI_accuracy_given) return
 
       .apply_ERI_accuracy(.effective_ERI_accuracy)
-
-   end
-
-   set_using_RMS_ESFS(val)
-   ! Set whether the generic ERI routines contract by the reduced
-   ! multiplication scheme. Held in SHELL1QUARTET, not here.
-      self :: INOUT
-      val :: BIN
-
-      sh4 :: SHELL1QUARTET
-
-      if (FALSE) self = self
-      sh4.set_use_RMS(val)
 
    end
 
@@ -1270,12 +1270,26 @@ contains
    ! Set .using_COSX
    end
 
-   set_COSX_grid_accuracy(val) :: get_from(OBJECT:set, VAL_TYPE?=>STR, ARG?=>.COSX_grid_accuracy), pure
-   ! Set .COSX_grid_accuracy, a BECKE_GRID accuracy
+   set_using_COSX_final_grid(val) :: get_from(OBJECT:set, VAL_TYPE?=>BIN, ARG?=>.using_COSX_final_grid), pure
+   ! Set .using_COSX_final_grid
    end
 
-   set_COSX_final_grid_accuracy(val) :: get_from(OBJECT:set, VAL_TYPE?=>STR, ARG?=>.COSX_final_grid_accuracy), pure
-   ! Set .COSX_final_grid_accuracy, a BECKE_GRID accuracy or "none"
+   make_COSX_grids :: leaky
+   ! Make whichever of .COSX_grid and .COSX_final_grid was not read,
+   ! with its default: accuracy very_low for the iterations, high for
+   ! the energy of the converged SCF.
+      self :: INOUT
+
+      if (.COSX_grid.deallocated) then
+         .COSX_grid.create
+         .COSX_grid.set_accuracy("very_low")
+      end
+
+      if (.COSX_final_grid.deallocated) then
+         .COSX_final_grid.create
+         .COSX_final_grid.set_accuracy("high")
+      end
+
    end
 
    set_using_COSX_overlap_fitting(val) :: get_from(OBJECT:set, VAL_TYPE?=>BIN, ARG?=>.using_COSX_overlap_fitting), pure
@@ -1357,8 +1371,56 @@ contains
    ! Generic set
    end
 
+   set_die_if_not_converged(val) :: get_from(OBJECT:set, VAL_TYPE?=>BIN, ARG?=>.die_if_not_converged), pure
+   ! Generic set
+   end
+
+   set_converged(val) :: get_from(OBJECT:set, VAL_TYPE?=>BIN, ARG?=>.converged), pure
+   ! Record whether the SCF loop ended converged
+   end
+
    set_using_pFON_damping(val) :: get_from(OBJECT:set, VAL_TYPE?=>BIN, ARG?=>.using_pFON), pure
    ! Generic set
+   end
+
+   set_pFON_start_temperature(val) :: get_from(OBJECT:set, VAL_TYPE?=>REAL, ARG?=>.pFON_start_temperature), pure
+   ! Generic set
+   end
+
+   set_pFON_cooling_rate(val) :: get_from(OBJECT:set, VAL_TYPE?=>REAL, ARG?=>.pFON_cooling_rate), pure
+   ! Generic set
+   end
+
+   set_pFON_finish(val) :: get_from(OBJECT:set, VAL_TYPE?=>INT, ARG?=>.pFON_finish), pure
+   ! Generic set
+   end
+
+   set_ANO_kind(val) :: PURE
+   ! Set how an open-shell ANO atom is made spherical: average, aoc or fon.
+      self :: INOUT
+      val  :: STR, IN
+
+      .ANO_kind = val
+      .ANO_kind.to_lower_case
+
+   ENSURE(.ANO_kind.is_one_of(["average","aoc    ","fon    "]),"ano_kind= must be average, aoc or fon, not "//trim(val))
+
+   end
+
+   set_open_shell_ensemble(n_orbitals,n_electrons,coupling) :: pure
+   ! Make this SCF an open-shell ensemble: "n_electrons" held at equal
+   ! fractional occupation in "n_orbitals", with the average-of-
+   ! configuration "coupling" a.
+      self :: INOUT
+      n_orbitals,n_electrons :: INT, IN
+      coupling :: REAL, IN
+
+      .using_open_shell_ensemble = TRUE
+      .n_open_orbitals  = n_orbitals
+      .n_open_electrons = n_electrons
+      .AOC_coupling     = coupling
+      .ensemble_energy_correction = ZERO
+
    end
 
    set_using_qq_cluster_charges(val) :: get_from(OBJECT:set, VAL_TYPE?=>BIN, ARG?=>.using_qq_cluster_charges), pure
@@ -1442,8 +1504,8 @@ contains
       case ("convergence=                 "); .read_convergence
       case ("converge=                    "); .read_convergence
       case ("guess_convergence=           "); .read_guess_convergence
-      case ("cosx_final_grid_accuracy=    "); .read_COSX_final_grid_accuracy
-      case ("cosx_grid_accuracy=          "); .read_COSX_grid_accuracy
+      case ("cosx_final_grid=             "); .read_COSX_final_grid
+      case ("cosx_grid=                   "); .read_COSX_grid
 
       case ("damp_factor=                 "); .read_damp_factor
       case ("damp_finish=                 "); .read_damp_finish
@@ -1531,9 +1593,9 @@ contains
       case ("use_batched_xc=              "); .read_using_batched_XC
       case ("use_gaussian_pair_j=         "); .read_using_gaussian_pair_J
       case ("use_cosx=                    "); .read_using_COSX
+      case ("use_cosx_final_grid=         "); .read_using_COSX_final_grid
       case ("use_cosx_overlap_fitting=    "); .read_using_COSX_overlap_fitting
       case ("use_ri_j=                    "); .read_using_RI_J
-      case ("use_rms_esfs=                "); .read_using_RMS_ESFS
       case ("delta_build_period=          "); .read_delta_build_period
       case ("use_direct_scf=              "); .read_using_direct_SCF
       case ("use_diis=                    "); .read_using_DIIS
@@ -1559,7 +1621,13 @@ contains
       case ("use_pce_corr=                "); .read_using_PCE_correction
       case ("use_pie=                     "); .read_using_PIE
       case ("use_ppzpp=                   "); .read_using_ppzpp_method
+      case ("die_if_not_converged=        "); .read_die_if_not_converged
       case ("use_pfon_damping=            "); .read_using_pFON_damping
+      case ("use_pfon=                    "); .read_using_pFON_damping
+      case ("ano_kind=                    "); .read_ANO_kind
+      case ("pfon_start_temperature=      "); .read_pFON_start_temperature
+      case ("pfon_cooling_rate=           "); .read_pFON_cooling_rate
+      case ("pfon_finish=                 "); .read_pFON_finish
       case ("use_qq_cluster_charges=      "); .read_using_qq_cluster_charges
       case ("use_sc_cluster_charges=      "); .read_using_SC_cluster_charges
       case ("use_sc_lorentz_fields=       "); .read_using_SC_Lorentz_fields
@@ -1984,19 +2052,33 @@ contains
    ! Generic read and set
    end
 
-   read_COSX_grid_accuracy :: get_from(OBJECT:read_and_set, VAL_TYPE?=>STR, SET?=>.set_COSX_grid_accuracy), private
-   ! Generic read and set
+   read_COSX_grid :: leaky, private
+   ! Read .COSX_grid as a becke_grid= block; what it does not set keeps
+   ! the default of .make_COSX_grids.
+      self :: INOUT
+
+      .COSX_grid.destroy
+      .make_COSX_grids
+      .COSX_grid.read_keywords
+
    end
 
-   read_COSX_final_grid_accuracy :: get_from(OBJECT:read_and_set, VAL_TYPE?=>STR, SET?=>.set_COSX_final_grid_accuracy), private
+   read_COSX_final_grid :: leaky, private
+   ! Read .COSX_final_grid as a becke_grid= block; what it does not set
+   ! keeps the default of .make_COSX_grids.
+      self :: INOUT
+
+      .COSX_final_grid.destroy
+      .make_COSX_grids
+      .COSX_final_grid.read_keywords
+
+   end
+
+   read_using_COSX_final_grid :: get_from(OBJECT:read_and_set, VAL_TYPE?=>BIN, SET?=>.set_using_COSX_final_grid), private
    ! Generic read and set
    end
 
    read_using_COSX_overlap_fitting :: get_from(OBJECT:read_and_set, VAL_TYPE?=>BIN, SET?=>.set_using_COSX_overlap_fitting), private
-   ! Generic read and set
-   end
-
-   read_using_RMS_ESFS :: get_from(OBJECT:read_and_set, VAL_TYPE?=>BIN, SET?=>.set_using_RMS_ESFS), private
    ! Generic read and set
    end
 
@@ -2069,6 +2151,26 @@ contains
    end
 
    read_using_ppzpp_method :: get_from(OBJECT:read_and_set, VAL_TYPE?=>BIN, SET?=>.set_using_ppzpp_method), private
+   ! Generic read and set
+   end
+
+   read_die_if_not_converged :: get_from(OBJECT:read_and_set, VAL_TYPE?=>BIN, SET?=>.set_die_if_not_converged), private
+   ! Read whether an unconverged SCF stops the job
+   end
+
+   read_ANO_kind :: get_from(OBJECT:read_and_set, VAL_TYPE?=>STR, SET?=>.set_ANO_kind), private
+   ! Generic read and set
+   end
+
+   read_pFON_start_temperature :: get_from(OBJECT:read_and_set, VAL_TYPE?=>REAL, SET?=>.set_pFON_start_temperature), private
+   ! Generic read and set
+   end
+
+   read_pFON_cooling_rate :: get_from(OBJECT:read_and_set, VAL_TYPE?=>REAL, SET?=>.set_pFON_cooling_rate), private
+   ! Generic read and set
+   end
+
+   read_pFON_finish :: get_from(OBJECT:read_and_set, VAL_TYPE?=>INT, SET?=>.set_pFON_finish), private
    ! Generic read and set
    end
 
@@ -2520,30 +2622,30 @@ contains
    end
 
    temperature_for_pFON result (res) :: PURE
-   ! Return the temperature (in Kelvin) to use in the pFON method.
-   ! The temperature applies from iteration 0 i.e. theinitial guess
+   ! Return the temperature (in Kelvin) to use in the pFON method: the
+   ! start temperature cooled by the cooling rate per iteration, from
+   ! iteration 0 (the initial guess), and zero once pFON is off.
    ! NOTE: To see whether to apply pFON use .apply_pFON
       self :: IN
       res :: REAL
 
-      if (.using_pFON) then
-         if      (.DIIS_error<.DIIS_error_temp_cutoff) then; res = ZERO
-         else if (.iteration<20) then;                       res = 1000d0 - 50*.iteration
-         else;                                               res = ZERO
-         end
-      else
-                                                            res = ZERO
+      res = ZERO
+      if (.apply_pFON) then
+         res = max(ZERO, .pFON_start_temperature - .pFON_cooling_rate*.iteration)
       end
 
    end
 
    apply_pFON result (res) :: pure
-   ! Return TRUE if pFON is to be applied this iteration.
+   ! Return TRUE if pFON is to be applied this iteration: it is wanted,
+   ! the DIIS error is still above DIIS_error_temp_cutoff, the iteration
+   ! is before pFON_finish, and the schedule has not cooled to zero.
       self :: IN
       res :: BIN
       if      (NOT .using_pFON) then;                     res = FALSE
       else if (.DIIS_error<.DIIS_error_temp_cutoff) then; res = FALSE
-      else;                                               res = .iteration<20
+      else if (.iteration>=.pFON_finish) then;            res = FALSE
+      else;  res = .pFON_start_temperature - .pFON_cooling_rate*.iteration > ZERO
       end
    end
 
@@ -2557,11 +2659,14 @@ contains
    ! requested minimum number of times ...
       self :: IN
       res :: BIN
-      res = (.converged OR .exceeded_max_it) AND .exceeded_min_it
+      res = (.is_converged OR .exceeded_max_it) AND .exceeded_min_it
    end
 
-   converged result (res) :: pure
-   ! Return TRUE if the SCF_DATA appears to be converged
+   is_converged result (res) :: pure
+   ! Return TRUE if the SCF appears converged *now*: the energy change and
+   ! the DIIS error are both below their tolerances. Recomputed on every
+   ! call, so it changes if the energy is remade after the loop; the state
+   ! at the end of the loop is kept in .converged.
       self :: IN
       res :: BIN
       res = .delta_converged AND .SCF_DIIS.is_converged
@@ -2723,6 +2828,30 @@ contains
 
    end
 
+   put_COSX_grid(label,grid) :: private
+   ! Put the settings of the COSX grid "grid" under "label".
+      self :: IN
+      label :: STR, IN
+      grid :: BECKE_GRID@, IN
+
+      tag :: STR
+
+      tag = label
+      tag(32:32) = "="
+      if (grid.deallocated) then
+         stdout.text(tag(1:32)//" default")
+         return
+      end
+      stdout.show(tag(1:32),grid.accuracy)
+      stdout.show("  radial points                =",grid.n_radial_pts)
+      stdout.show("  angular order, heavy atoms   =",grid.l_angular_grid)
+      stdout.show("  angular order, H             =",grid.l_H_angular_grid)
+      if (grid.pruning_scheme=="adaptive") &
+      stdout.show("  angular order, bonding       =",grid.l_bonding_angular_grid)
+      stdout.show("  pruning scheme               =",grid.pruning_scheme)
+
+   end
+
    put_options(crystal)
    ! Prints out a summary of what options being used.
       self :: IN
@@ -2778,7 +2907,7 @@ contains
 
       ! How J and K are built. Every one of these changes the numbers, so it is
       ! reported whenever it is not the default -- the Becke grid inheritance bug
-      ! (DEFERRED.md) stayed hidden precisely because nothing echoed what was
+      ! (TASKS_AND_HISTORY.md) stayed hidden precisely because nothing echoed what was
       ! actually in force.
       if (.using_gaussian_pair_J OR .using_RI_J OR .using_COSX &
           OR NOT .using_batched_XC) then
@@ -2791,8 +2920,9 @@ contains
       stdout.show("J by RI density fitting?       =", .using_RI_J)
       if (.using_COSX) then
       stdout.show("K by COSX quadrature?          =", .using_COSX)
-      stdout.show("COSX grid accuracy             =", .COSX_grid_accuracy)
-      stdout.show("COSX final grid accuracy       =", .COSX_final_grid_accuracy)
+      .put_COSX_grid("COSX grid",.COSX_grid)
+      if (.using_COSX_final_grid) &
+      .put_COSX_grid("COSX final grid",.COSX_final_grid)
       stdout.show("COSX overlap fitting?          =", .using_COSX_overlap_fitting)
       end
       if (NOT .using_batched_XC) &
@@ -2910,6 +3040,24 @@ contains
       stdout.show("Damping quits at               =", .damp_finish)
       end
 
+      if (.ANO_kind/="average") then
+      stdout.show("ANO atoms made spherical by    =", .ANO_kind)
+      end
+
+      if (.using_open_shell_ensemble) then
+      stdout.show("Open-shell ensemble orbitals   =", .n_open_orbitals)
+      stdout.show("Open-shell ensemble electrons  =", .n_open_electrons)
+      stdout.show("Ensemble coupling constant a   =", .AOC_coupling)
+      end
+
+      if (.using_pFON) then
+      stdout.show("Using pFON occupations         =", .using_pFON)
+      stdout.show("pFON start temperature /K      =", .pFON_start_temperature)
+      stdout.show("pFON cooling rate /K per iter  =", .pFON_cooling_rate)
+      stdout.show("pFON quits at                  =", .pFON_finish)
+      stdout.show("pFON quits at DIIS error       =", .DIIS_error_temp_cutoff)
+      end
+
       if (.using_MO_gradient_update OR .using_exponential_update) then
       stdout.show("Using MO gradient update       =", .using_MO_gradient_update)
       stdout.show("Using exponential update       =", .using_exponential_update)
@@ -3019,7 +3167,7 @@ contains
          .table.put_footer
 
          stdout.flush
-         if (.converged) then; stdout.text("* * * SCF has converged * * *")
+         if (.is_converged) then; stdout.text("* * * SCF has converged * * *")
          else;                 stdout.text("* * * SCF has not converged * * *")
          end
 
@@ -3080,8 +3228,8 @@ contains
 
       if (.XC_grid_points>0) then
          stdout.flush
-         stdout.show("DFT grid points used ...........",.XC_grid_points)
-         stdout.show("DFT grid points before pruning .",.XC_grid_points_unpruned)
+         stdout.show("DFT grid points used           =",.XC_grid_points)
+         stdout.show("DFT grid points before pruning =",.XC_grid_points_unpruned)
       end
 
    end
@@ -3135,21 +3283,29 @@ contains
 
       ! Print
       stdout.flush
-      stdout.show("Total energy (E_e+V_NN)   E    =",.energy,wid)
-      stdout.show("Total electronic energy   E_e  =",.energy-.nuclear_repulsion_energy,wid)
-      stdout.show("Nuclear repulsion energy  V_NN =",.nuclear_repulsion_energy,wid)
-      stdout.show("Electron repulsion energy V_ee =",.electron_repulsion_energy,wid)
-      stdout.show("Nuclear attraction energy V_eN =",.nuclear_attraction_energy,wid)
-      if (.using_cluster_charges) then
-      stdout.show("Charge attraction energy  V_cN =",.charge_attraction_energy,wid)
+      stdout.show("Total energy (E_e+V_NN)   E       =",.energy,wid)
+      stdout.show("Total electronic energy   E_e     =",.energy-.nuclear_repulsion_energy,wid)
+      stdout.show("Nuclear repulsion energy  V_NN    =",.nuclear_repulsion_energy,wid)
+      stdout.show("Electron repulsion energy V_ee    =",.electron_repulsion_energy,wid)
+      if (.is_DFT_calculation) then
+      ! V_ee = J + a_0 E_x + E_xc; the pieces follow it
+      stdout.show("Coulomb energy            J       =",.electron_repulsion_energy-.exact_exchange_energy-.XC_energy,wid)
+      if (.using_hybrid_exchange) then
+      stdout.show("Scaled exact exchange     a_0*E_x =",.exact_exchange_energy,wid)
       end
-      stdout.show("Total potential energy    V    =",.energy-.kinetic_energy,wid)
-      stdout.show("Kinetic energy            T    =",.kinetic_energy,wid)
-      stdout.show("Virial ratio             -V/T  =",(.kinetic_energy-.energy)/.kinetic_energy,wid)
+      stdout.show("XC energy                 E_xc    =",.XC_energy,wid)
+      end
+      stdout.show("Nuclear attraction energy V_eN    =",.nuclear_attraction_energy,wid)
+      if (.using_cluster_charges) then
+      stdout.show("Charge attraction energy  V_cN    =",.charge_attraction_energy,wid)
+      end
+      stdout.show("Total potential energy    V       =",.energy-.kinetic_energy,wid)
+      stdout.show("Kinetic energy            T       =",.kinetic_energy,wid)
+      stdout.show("Virial ratio             -V/T     =",(.kinetic_energy-.energy)/.kinetic_energy,wid)
 
       if (.using_FON) then
       stdout.flush
-      stdout.show("Fermi energy                   =",.E_Fermi,wid)
+      stdout.show("Fermi energy                      =",.E_Fermi,wid)
       end
 
    end
@@ -3319,7 +3475,7 @@ contains
          .table.put_footer
         
          stdout.flush
-         if (.converged) then; stdout.text("Converged")
+         if (.is_converged) then; stdout.text("Converged")
          else;                 stdout.text("NOT Converged")
          end
         

@@ -88,7 +88,7 @@ PARTITION_CASES = {
 # accuracy= best. With the Becke partition (the default since 2026-09-11) the
 # nine cases sit 1.5e-08 to 6.7e-08 from g09; this is 4x the worst of them.
 # Before the weight-threshold defect in BECKE_GRID:prune_grid was removed they
-# were 1.4e-06 to 1.6e-06. See docs/DFT_STANDARDISATION.md section 6b.
+# were 1.4e-06 to 1.6e-06. See docs/TASK_DFT_STANDARDISATION.md section 6b.
 TOL_DFT = 3.0e-7
 # The Stratmann-Scuseria row is a coarser partition on the same grid: 5.9e-07
 # measured, the same distance g09's own FineGrid sits from its converged value.

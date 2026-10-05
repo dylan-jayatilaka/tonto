@@ -32,7 +32,7 @@ bit becomes a percentage:
 | refinement iteration counts | decided by parameter shifts of a few percent of an esd, which is noise |
 
 Check whether a failure is one of these before investigating it. Measured cases are in
-`DEFERRED.md`.
+`TASKS_AND_HISTORY.md`.
 
 ## What changes the last bits
 
@@ -75,15 +75,16 @@ One test at a time, from the build tree:
 
 ```bash
 python3 ../scripts/test.py --bless \
-        --program        ./tonto \
+        --build-dir      . \
         --test-directory ../tests/long/gly_ala_fragHAR_rhf_STO-3G \
         --basis-sets     ../basis_sets \
         --log-level=WARNING
 ```
 
-Drop `--bless` to see the agreement line without touching anything. For a `hart` or `rgbi` test,
-`--program` still points at `tonto`: the test's `IO` manifest names the real program, resolved as a
-sibling.
+Drop `--bless` to see the agreement line without touching anything. A `hart` or `rgbi` test takes
+the same `--build-dir`: its `IO` manifest names the program, which is run from that directory.
+A new test has no reference yet: it fails with `NO REFERENCE` and leaves `stdout.bad`, and the
+same command with `--bless` adopts the output as its first reference.
 
 Four rules:
 

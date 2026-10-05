@@ -3,7 +3,7 @@
 What Tonto does not do, or does wrongly, that you may meet in ordinary use. One or two
 lines each, with a pointer to the document that carries the detail.
 
-**This is not a bug tracker.** `DEFERRED.md` is the live register of work, and it holds
+**This is not a bug tracker.** `TASKS_AND_HISTORY.md` is the live register of work, and it holds
 the reasoning, the measurements and the plans. This page answers a narrower question:
 *I hit something odd — is it known?*
 
@@ -35,7 +35,7 @@ the ones worth reading.
   `diff` will show the drift and it is not a failure.
 - **gfortran 16 is not the supported compiler.** A release build is fine, but a debug
   build has no array bounds checking, because `-fcheck=bounds` is miscompiled. Use
-  gfortran 14. See `GFORTRAN16_GCC_BUG.md`.
+  gfortran 14. See `TASK_GFORTRAN16_GCC_BUG.md`.
 - **Debug (`-O0`) builds have longstanding floating-point boundary failures** in the test
   suite. They are not translator bugs.
 
@@ -48,38 +48,38 @@ the ones worth reading.
   roughly half of a centrosymmetric dataset; and an *intensity* refinement with extinction
   reads uninitialised memory yet runs to completion and reports a converged answer. The
   optimiser is also unconstrained, so a negative extinction parameter can produce NaN.
-  Full register in `EXTINCTION_REPORT.md` §3.
+  Full register in `TASK_EXTINCTION_CORRECTION.md` §3.
 - **A CIF saying `_refine_ls_extinction_method none` does not turn extinction off.** The
   code tests the wrong CIF item. **Silent.**
 - **Residual density is overestimated when unmerged Bijvoet pairs are present**, because
   every shared Fourier component is counted twice. The refinement itself is largely
-  unaffected. See `TONTO_DISPERSION_CORRECTIONS.md`.
+  unaffected. See `TASK_DISPERSION_CORRECTIONS.md`.
 - **The quantity named `chi2` throughout the output is a goodness-of-fit squared**, not a
-  chi-squared. See `GOF_NOT_CHI2.md`.
+  chi-squared. See `TASK_GOF2_NOT_CHI2.md`.
 
 ## DFT
 
 - **DFT energies at the default grid (Becke partition, `accuracy= medium`) sit about
   5×10⁻⁸ from an independent reference.** `partition_scheme= stratmann_scuseria` is ten
   times further off on the same grid and its accuracy is not monotonic in `accuracy=`.
-  See `DFT_STANDARDISATION.md` §6b.
+  See `TASK_DFT_STANDARDISATION.md` §6b.
 - **`pruning_scheme= adaptive` is calibrated on two small first-row molecules only**, water
   and the near-planar karrikinolide. Compact three-dimensional molecules and heavier atoms
-  are untested. See `DFT_STANDARDISATION.md` §6c.
+  are untested. See `TASK_DFT_STANDARDISATION.md` §6c.
 - **The exchange–correlation energy is never reported separately.** `V_ee` lumps it in
-  with the Coulomb term. See `DFT_STANDARDISATION.md`.
+  with the Coulomb term. See `TASK_DFT_STANDARDISATION.md`.
 
 ## Bader and QTAIM
 
 - **The basin search is grid-dependent to the point of being unusable.** On water it
   gives 1 basin on a tight grid and 13942 on a wide one, where the answer is 3. Nothing
-  in the code checks for or reports this. See `BADER_REPORT.md`.
+  in the code checks for or reports this. See `TASK_BADER_BASIN_PORT.md`.
 - **Voxel volumes are summed per point but sized per interval.**
 - **The basin search is serial**, even in an MPI build.
 
 ## Parallel (MPI)
 
-- **A parallel run is not simply a faster serial run.** Read `TONTO_AND_MPI.md` before
+- **A parallel run is not simply a faster serial run.** Read `TASK_MPI.md` before
   trusting one, and its defect register for what is still open.
 - **`move_to_record` desynchronises the ranks** when a file is re-read, because the
   collective count is taken from a rank-local record number. It aborts rather than

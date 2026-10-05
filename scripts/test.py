@@ -56,7 +56,7 @@ test_categories = ['short', 'cx', 'long', 'geminal', 'relativistic']
 # command line still works and this can never silently tighten a run.
 #
 # A WORKAROUND, not a fix: the aim is to remove entries by understanding each
-# discrepancy. See DEFERRED.md, "The BLAS kernel is part of the reference".
+# discrepancy. See TASKS_AND_HISTORY.md, "The BLAS kernel is part of the reference".
 # Keys are the test-dir basename.
 KNOWN_MARGINAL = {
     'h2o_rhf_cc-pVDZ_tdhf': {'rel_tol': 5e-3},     # TDHF response, rel ~0.12% vs 0.2% gate
@@ -199,44 +199,136 @@ def token_agreement(a_str, b_str, rel_tol, abs_tol, last_digit_tol):
     }
 
 
+def diff_hunks(lines1, lines2):
+    """Split difflib.ndiff output into hunks, one (old_lines, new_lines) pair
+    per maximal run of changed lines. The '?' hint lines are dropped."""
+    hunks, old, new = [], [], []
+    for x in difflib.ndiff(lines1, lines2):
+        if x.startswith('- '):
+            old.append(x[2:])
+        elif x.startswith('+ '):
+            new.append(x[2:])
+        elif x.startswith('? '):
+            continue
+        elif old or new:
+            hunks.append((old, new))
+            old, new = [], []
+    if old or new:
+        hunks.append((old, new))
+    return hunks
+
+
+def line_agreement(l1, l2, rel_tol, abs_tol, last_digit_tol):
+    """Token-by-token agreement of one line pair: a list of (a, b, agreement)
+    for the numeric tokens, or None for a structural mismatch (differing
+    token counts, or a non-numeric token that differs)."""
+    t1, t2 = l1.split(), l2.split()
+    if len(t1) != len(t2):
+        return None
+    out = []
+    for a, b in zip(t1, t2):
+        ag = token_agreement(a, b, rel_tol, abs_tol, last_digit_tol)
+        if ag is None:                       # non-numeric tokens must match
+            if a != b:
+                return None
+            continue
+        out.append((a, b, ag))
+    return out
+
+
+def loose_ok(ag):
+    return ag is not None and all(t[2]['loose_ok'] for t in ag)
+
+
+def pair_lines(lines1, lines2, tols, max_repair=500):
+    """Pair the differing lines of two files. Within each ndiff hunk lines pair
+    by position first. An old line whose positional partner fails the loose
+    criterion is then matched against every still-unclaimed failing new line
+    in the file, so a sorted table whose rows changed order compares each row
+    against itself; ndiff reports a moved row as a deletion in one hunk and an
+    insertion in another, which is why the search is not confined to a hunk.
+    A new line that passed by position is never reused, so nothing that fails
+    positionally can pass by borrowing another line's partner. Unmatched lines
+    on either side stay unpaired and fail. With more than max_repair failing
+    lines the search is skipped, as the files differ wholesale anyway.
+    Returns (old, new, agreement, moved) per pair, old or new being None for
+    an unpaired line, agreement None for a structural mismatch, and moved
+    saying the pair is out of position."""
+    pairs = []
+    for old, new in diff_hunks(lines1, lines2):
+        for i in range(max(len(old), len(new))):
+            pairs.append((old[i] if i < len(old) else None,
+                          new[i] if i < len(new) else None))
+    ags = [line_agreement(o, w, *tols) if o is not None and w is not None else None
+           for o, w in pairs]
+    ok = [loose_ok(ag) for ag in ags]
+    free = [k for k, (o, w) in enumerate(pairs) if w is not None and not ok[k]]
+    repair = len(free) <= max_repair
+    out = []
+    for k, (o, w) in enumerate(pairs):
+        if ok[k]:
+            out.append((o, w, ags[k], False))
+            continue
+        if o is None:
+            continue                       # an unclaimed new line: see below
+        found = None
+        if repair:
+            for m in free:
+                if m == k:
+                    continue
+                ag = line_agreement(o, pairs[m][1], *tols)
+                if loose_ok(ag):
+                    found = (m, ag)
+                    break
+        if found is not None:
+            m, ag = found
+            free.remove(m)
+            out.append((o, pairs[m][1], ag, True))
+        elif k in free:
+            free.remove(k)
+            out.append((o, w, ags[k], False))
+        else:                              # its partner was claimed, or absent
+            out.append((o, None, None, False))
+    for m in free:
+        out.append((None, pairs[m][1], None, False))
+    return out
+
+
 def agreement_report(lines1, lines2, rel_tol, abs_tol, last_digit_tol):
     """Compare two filtered line lists across all three criteria at once.
-    Pairs +/- lines from difflib.ndiff, then compares them token-by-token.
-    Returns a result dict with per-criterion verdicts and worst-case metrics."""
-    diff = list(difflib.ndiff(lines1, lines2))
-    del1 = [x for x in diff if x.startswith('-')]
-    del2 = [x for x in diff if x.startswith('+')]
+    Pairs the differing lines (see pair_lines), then compares them
+    token-by-token. Returns a result dict with per-criterion verdicts and
+    worst-case metrics."""
     res = {
         'exact': True, 'rel_pass': True, 'ld_pass': True, 'loose_pass': True,
-        'n_num': 0, 'n_struct': 0,
+        'n_num': 0, 'n_struct': 0, 'n_moved': 0,
         'max_rel': 0.0, 'max_ulp': 0.0, 'worst_rel': None, 'worst_ulp': None,
-        'diff_text': ''.join(a + b for a, b in zip(del1, del2)),
+        'diff_text': '',
     }
-    for l1, l2 in zip_longest(del1, del2, fillvalue=''):
-        t1 = l1.strip('+- ').split()
-        t2 = l2.strip('+- ').split()
-        if len(t1) != len(t2):
-            # differing token counts: a structural/alignment mismatch, not a
-            # numeric-tolerance question. Fails every criterion.
+    pairs = pair_lines(lines1, lines2, (rel_tol, abs_tol, last_digit_tol))
+    res['diff_text'] = ''.join(('- ' + o if o else '') + ('+ ' + w if w else '')
+                               for o, w, _, _ in pairs)
+    for o, w, ag, moved in pairs:
+        if moved:
+            res['n_moved'] += 1
+            res['exact'] = False
+        if ag is None:
+            # differing token counts, or a non-numeric token that differs: a
+            # structural/alignment mismatch, not a numeric-tolerance question.
+            # Fails every criterion.
             res['exact'] = res['rel_pass'] = res['ld_pass'] = res['loose_pass'] = False
             res['n_struct'] += 1
             continue
-        for a, b in zip(t1, t2):
-            ag = token_agreement(a, b, rel_tol, abs_tol, last_digit_tol)
-            if ag is None:                       # non-numeric tokens must match
-                if a != b:
-                    res['exact'] = res['rel_pass'] = res['ld_pass'] = res['loose_pass'] = False
-                    res['n_struct'] += 1
-                continue
+        for a, b, t in ag:
             res['n_num'] += 1
-            if not ag['exact']:   res['exact'] = False
-            if not ag['rel_ok']:  res['rel_pass'] = False
-            if not ag['ld_ok']:   res['ld_pass'] = False
-            if not ag['loose_ok']: res['loose_pass'] = False
-            if ag['rel'] > res['max_rel']:
-                res['max_rel'], res['worst_rel'] = ag['rel'], (a, b)
-            if ag['ulp'] > res['max_ulp']:
-                res['max_ulp'], res['worst_ulp'] = ag['ulp'], (a, b)
+            if not t['exact']:   res['exact'] = False
+            if not t['rel_ok']:  res['rel_pass'] = False
+            if not t['ld_ok']:   res['ld_pass'] = False
+            if not t['loose_ok']: res['loose_pass'] = False
+            if t['rel'] > res['max_rel']:
+                res['max_rel'], res['worst_rel'] = t['rel'], (a, b)
+            if t['ulp'] > res['max_ulp']:
+                res['max_ulp'], res['worst_ulp'] = t['ulp'], (a, b)
     return res
 
 
@@ -260,6 +352,9 @@ def format_agreement(name, res, rel_tol, last_digit_tol):
     if res['n_struct']:
         notes += ('    %d structural/alignment mismatch(es) (non-numeric or token-count) '
                   '-- separate from numeric tolerance\n' % res['n_struct'])
+    if res.get('n_moved'):
+        notes += ('    %d line(s) matched out of position -- rows reordered, '
+                  'not changed\n' % res['n_moved'])
     return row, notes
 
 
@@ -370,8 +465,8 @@ def parse_IO_file(path):
       input:   extra file to copy into the run directory (repeatable)
       output:  file to compare against the reference     (repeatable)
       delete:  recorded but unused
-      program: executable to run instead of the default, resolved as a
-               sibling of --program e.g. "hart" -> <build>/hart
+      program: executable to run instead of tonto, found in --build-dir,
+               e.g. "hart" -> <build>/hart
       args:    command line for that program, split shell-style
 
     A job with no "program:" is a plain tonto job: it reads a file called
@@ -523,15 +618,9 @@ def run_test(args, test_dir, io_files):
         'universal_newlines': True,
         'env': env,
     }
-    # A test may name a different executable -- resolved as a sibling of
-    # --program, which main() has already made absolute, so that e.g.
-    # "program: hart" picks up <build>/hart from whichever build tree is
-    # under test.
-    if io_files['program']:
-        executable = join(os.path.dirname(abspath(args.program)),
-                          io_files['program'])
-    else:
-        executable = args.program
+    # The program is tonto, or the one the test's IO file names (e.g.
+    # "program: hart"), from the build tree under test.
+    executable = join(args.build_dir, io_files['program'] or 'tonto')
 
     if args.mpi:
         # Rank count is a knob, not a constant: MPI reduction order depends on it,
@@ -574,6 +663,16 @@ def run_test(args, test_dir, io_files):
 
             for path in io_files['output']:
                 canonical = abspath(join(test_dir, path))
+                if not os.path.exists(canonical):
+                    # A new test has no reference yet. Fail it plainly, leave
+                    # the output as <path>.bad, and let --bless adopt it.
+                    sys.stdout.write(
+                        'NO REFERENCE %s\n'
+                        '    the test cannot pass until one exists; run test.py\n'
+                        '    on this directory with --bless to adopt this output\n'
+                        % canonical)
+                    files_equivalent.append(False)
+                    continue
                 log.debug('Comparing %s to %s', path, canonical)
                 d = compare_outputs(canonical, path, args)
                 log.debug('Same file: %s', d)
@@ -649,8 +748,12 @@ def main():
     import argparse
     import os
     parser = argparse.ArgumentParser()
-    parser.add_argument('--program', '-p', default='./tonto',
-                        help='Program to use to run the test jobs i.e. tonto')
+    parser.add_argument('--build-dir', '-d', default='.',
+                        help='Build directory holding tonto, and hart and '
+                             'rgbi; a test runs tonto unless its IO file '
+                             'names another program (default: .)')
+    parser.add_argument('--program', '-p', default=None,
+                        help=argparse.SUPPRESS)
     parser.add_argument('--test-directory', '-t', default='.',
                         help='Directory in which tests are located')
     parser.add_argument('--compare-program', '-c', default=None,
@@ -693,6 +796,9 @@ def main():
                              'last printed decimal place (default 2). A number '
                              'passes loose if it is within rel-tol OR last-digit-tol.')
     args = parser.parse_args()
+    if args.program is not None:
+        parser.error('--program is now --build-dir DIR: the directory '
+                     'holding tonto (and hart, rgbi), not the program')
     # Resolve all paths to absolute up front: run_test() chdir's into a temp
     # directory before copying inputs / reading the basis sets, so a *relative*
     # --test-directory or --basis-sets would be resolved against the temp dir
@@ -700,14 +806,9 @@ def main():
     # invocation dir.
     args.test_directory = os.path.abspath(args.test_directory)
     args.basis_sets = os.path.abspath(args.basis_sets)
-    # --program too, and for the same reason: subprocess resolves it from inside
-    # the temp directory, so `--program build/tonto` died with a FileNotFoundError
-    # naming a binary that was sitting right there in the invocation directory.
-    # (Left out when the others were absolutised; it broke the debug CI job, and
-    # the default './tonto' has the same flaw.) A bare name with no separator is
-    # left alone so it can still be found on PATH.
-    if os.sep in args.program or os.path.exists(args.program):
-        args.program = os.path.abspath(args.program)
+    # --build-dir too, and for the same reason: the program is run from
+    # inside the temp directory.
+    args.build_dir = os.path.abspath(args.build_dir)
     logging.basicConfig(level=args.log_level)
 
     # Widen the gate for a known-marginal test (see KNOWN_MARGINAL above).

@@ -23,6 +23,12 @@ parallel (MPI) builds for that platform.
 | [**Installing the RGBI picture tools**](INSTALLING_RGBI.md) | LaTeX, Open Babel, mol2chemfig |
 | [**Known issues and limits**](TONTO_KNOWN_ISSUES.md) | what Tonto does not do, or does wrongly, that you may meet in ordinary use |
 
+## Methods
+
+| | |
+|---|---|
+| [**ADPs from rigid-body motion and internal modes**](REPORT_ON_MODE_FITTING.md) | TLS refinement against F, stiff-mode ADPs from a Hessian, and results on urea |
+
 ## Learning
 
 | | |
@@ -53,16 +59,16 @@ residue moving into the pages above.
 
 | | |
 |---|---|
-| [**Deferred issues**](../DEFERRED.md) | the live work: the handover, then every open issue by theme |
+| [**Tasks and history**](../TASKS_AND_HISTORY.md) | the live work: the handover, then every open issue by theme |
 | [**Developer reference**](TONTO_DEVELOPER_INFO.md) | writing parallel (MPI) code in Foo, and build and test traps |
-| [**Tonto and MPI**](TONTO_AND_MPI.md) | the parallel build, its numerics, and the defect register |
-| [**Dispersion corrections**](TONTO_DISPERSION_CORRECTIONS.md) | anomalous dispersion, Bijvoet pairs, and the residual density map |
-| [**DFT standardisation**](DFT_STANDARDISATION.md) | the DFT machinery, its silent defects, and the libxc plan |
-| [**Extinction correction**](EXTINCTION_REPORT.md) | why it has been dormant, its defect register, and the plan to bring it back |
-| [**GoF², not chi2**](GOF_NOT_CHI2.md) | the misnamed goodness of fit, and reporting GoF in place of its square |
-| [**Nearest-neighbour HAR**](NN_HAR_REPORT.md) | HAR on a covalent network solid, and where the sus go wrong |
-| [**Bader basin analysis**](BADER_REPORT.md) | the `archive/Bader` port, and the two defects found by running it |
+| [**Tonto and MPI**](TASK_MPI.md) | the parallel build, its numerics, and the defect register |
+| [**Dispersion corrections**](TASK_DISPERSION_CORRECTIONS.md) | anomalous dispersion, Bijvoet pairs, and the residual density map |
+| [**DFT standardisation**](TASK_DFT_STANDARDISATION.md) | the DFT machinery, its silent defects, and the libxc plan |
+| [**Extinction correction**](TASK_EXTINCTION_CORRECTION.md) | why it has been dormant, its defect register, and the plan to bring it back |
+| [**GoF², not chi2**](TASK_GOF2_NOT_CHI2.md) | the misnamed goodness of fit, and reporting GoF in place of its square |
+| [**Nearest-neighbour HAR**](TASK_NN_HAR_REACTIVATION.md) | HAR on a covalent network solid, and where the sus go wrong |
+| [**Bader basin analysis**](TASK_BADER_BASIN_PORT.md) | the `archive/Bader` port, and the two defects found by running it |
 | [**MP2 teaching lab**](TEACHING_MP2.md) | the two non-default MP2 programs, and how they were validated |
-| [**cctbx into Tonto**](CCTBX_INTO_TONTO.md) | the refinement capabilities Tonto lacks, and the plan to write them in Foo |
-| [**gfortran-16 debug builds**](GFORTRAN16_DEBUG_CRASH.md) | a compiler bug, and the build workaround |
+| [**cctbx into Tonto**](TASK_CCTBX_INTO_TONTO.md) | the refinement capabilities Tonto lacks, and the plan to write them in Foo |
+| [**gfortran-16 debug builds**](TASK_GFORTRAN16_PORT.md) | a compiler bug, and the build workaround |
 | [**Project history**](PROJECT_HISTORY.md) | why the ANTLR4 translator exists, and what the milestones found |

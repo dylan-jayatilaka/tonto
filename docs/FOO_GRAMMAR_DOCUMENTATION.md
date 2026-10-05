@@ -472,11 +472,11 @@ subroutines). A `selfless` procedure has no `self`.
 > a comment saying why, because the declaration then looks needlessly weak in a
 > release build.
 
-### The former `:::` separator, and reading pre-July-2026 Foo
+### The former `:::` separator, and reading older Foo
 
-The attribute separator above used to be `:::`, not `::`. Commit `3ca1e53d`
-(2026-07-09) replaced it across 184 files, the grammar and the translator
-included, for consistency with Fortran's own attribute separator:
+The attribute separator above used to be `:::`, not `::`. It was replaced across
+the sources, the grammar and the translator, for consistency with Fortran's own
+attribute separator; the tag `foo-old-syntax` marks the last commit in the old form:
 
 ```foo
 n_items result (res) ::: pure         ! before 3ca1e53d

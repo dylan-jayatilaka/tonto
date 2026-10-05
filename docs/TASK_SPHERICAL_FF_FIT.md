@@ -1,0 +1,227 @@
+# Plan: fitting spherical atomic form factors to a few Gaussians
+
+A working document (see `CLAUDE.md` §1). It plans the fit of Tonto's spherical atom form
+factors — `sph-tfva`, `sph-tfvp`, `sph-tfvh` — to the International Tables form, for use
+in protein refinement programs, and is deleted when the item closes.
+
+## 1. What is wanted
+
+A protein refinement needs a form factor for every atom type at millions of reflections.
+Tonto's spherically averaged Salvador atoms (`partition_model= oc-sph-tfva`, `oc-sph-tfvp`,
+`oc-sph-tfvh`) give such a form factor, f(s), as a sum over the atom's radial grid
+(`MOLECULE.RHO:make_sph_avgd_SA_ED_grid`, then `FOURIER_SUMS:sinc_kr_sums`). That is too
+slow to call per reflection, so f(s) is to be fitted once to the form every protein program
+already reads,
+
+    f(s) = sum_{i=1..n} a_i exp(-b_i s^2) + c,      s = sin(theta)/lambda in 1/Angstrom,
+
+with n = 4 by default (the International Tables Vol. C Table 6.1.1.4 form, nine numbers per
+atom type; f(0) = sum a_i + c is the electron count). The fitted a, b, c are written out in
+the format of the target program; the first target is BUSTER.
+
+Decisions taken (Dylan, 2026-10-05):
+
+- Fit in **reciprocal space**: the quantity that must be right is f(s), not the density.
+- The fit range is an input; the **default is s = 0 to 2 Å⁻¹**. (0.4 Å resolution is
+  s = 1.25 Å⁻¹; the IT tables themselves go to 2.0.)
+- The fit is **nonlinear** (a_i, b_i and c all free), because only a few Gaussians may be
+  used. The linear even-tempered fit of `oc-ri` uses 14–35 Gaussians per element and is not
+  the target, though it is a useful check (§5).
+- The **starting values** are the International Tables coefficients of the element,
+  already in Tonto (`ATOM:HF_n0_form_factor_coeff`, with the SDS and HF hydrogen sets).
+- The minimiser is **gnuplot's `fit`** (Levenberg–Marquardt), run from Tonto through
+  `SYSTEM_COMMAND`, which also draws the difference plot f(s) − fit(s).
+- The output format is an **option**. SHELX `SFAC` first (Dylan, 2026-10-05: BUSTER's
+  format is not public; SHELX is easy to change later), one entry per atom with the atom's
+  label, since every atom gets its own form factor — there is no per-element averaging.
+
+## 2. The pieces, and where they go
+
+Lowest module that can hold each piece, as the project prefers.
+
+### 2a. f(s) on an s grid — `MOLECULE.RHO`
+
+`make_sph_atom_FF_curve(f, s, c, s_max, n_s)`: for unique atom `c`, the spherically
+averaged Salvador density on the radial grid (`make_sph_avgd_SA_ED_grid`, already weighted
+by 4πr²dr), then `sinc_kr_sums` at k = 4π s (with s in Å⁻¹ converted to bohr⁻¹) for `n_s`
+evenly spaced s in [0, s_max]. Default `n_s` = 201, so a step of 0.01 Å⁻¹ at the default
+range. Any s costs one sinc sum, so the grid is free to choose; the Mura–Knowles radial
+points are only the quadrature behind it.
+
+Which radii are used follows `partition_model=` as it does now: `oc-sph-tfva` the molecular
+density minimum, `oc-sph-tfvp` the promolecule minimum, `oc-sph-tfvh` the equal-density
+point (`uses_promolecule_Salvador_radii`, `uses_Hirshfeld_Salvador_radii`).
+
+### 2b. The fit — a new small module `GAUSSIAN_FF_FIT` (selfless procedures)
+
+Takes `s(:)`, `f(:)`, the start `a0(0:n)`, `b0(0:n)` (index 0 is the constant), the range
+and a file stem; returns `a`, `b`, their esds, and the fit's rms and maximum deviation.
+Steps:
+
+1. Write `<stem>.dat`: two columns, s and f(s), for s within the range.
+2. Write `<stem>.gnuplot`:
+
+   ```
+   f(x) = a1*exp(-b1*x**2) + a2*exp(-b2*x**2) + a3*exp(-b3*x**2) + a4*exp(-b4*x**2) + c
+   a1 = ...; b1 = ...; ...; c = ...          # the International Tables start
+   set fit quiet; set fit errorvariables; set fit limit 1e-10; set fit maxiter 2000
+   set fit logfile '<stem>.fit.log'
+   fit [0:<s_max>] f(x) '<stem>.dat' via a1,b1,a2,b2,a3,b3,a4,b4,c
+   set print '<stem>.coeffs'
+   print a1, a1_err, b1, b1_err, ..., c, c_err, FIT_WSSR, FIT_NDF
+   set terminal pngcairo size 900,600; set output '<stem>.png'
+   plot '<stem>.dat' using 1:($2-f($1)) with lines title 'f(s) - fit'
+   ```
+
+3. Run `gnuplot '<stem>.gnuplot'` through `SYSTEM_COMMAND:execute`, synchronously, on the
+   master rank only, and treat a failure the way `plot_with_gnuplot` does: a missing gnuplot
+   is reported and the job goes on; the data and script are still on disk.
+4. Read `<stem>.coeffs` back with `TEXTFILE` into `a`, `b`, the esds, and the residual.
+5. Check: f(0) against the electron count (sum a_i + c); the maximum deviation against a
+   tolerance (§4); refuse a negative a_i or b_i with a `WARN` and a note in the output — IT
+   fits are all-positive and the protein programs may assume it.
+
+Why a module of its own: the fitter knows nothing about atoms or molecules, and the same
+code will serve any other curve Tonto wants in this form (an electron scattering factor,
+later). gnuplot's `fit` is used rather than writing a Levenberg–Marquardt in Foo because the
+problem is small, the plot comes with it, and the project already depends on gnuplot for its
+pictures.
+
+### 2c. The driver — `MOLECULE.RHO`, keyword in `MOLECULE.MAIN`
+
+`fit_sph_atom_FFs`: for each unique atom type (by element, or by atom if the user asks —
+in a crystal two carbons in different surroundings have different Salvador atoms; the
+protein use wants one curve per element, averaged over the atoms of that element in the
+molecule, so both are offered and the per-element average is the default), make the curve
+(2a), fit it (2b), print a table of a, b, c, their esds, f(0), rms and maximum deviation,
+and the start it came from, and write the chosen output format (2d).
+
+Keywords, in a block:
+
+```
+fit_sph_atom_FFs= {
+   s_max=            2.0        ! 1/Angstrom; the fit range is [0, s_max]
+   n_gaussians=      4
+   n_points=         201
+   per_atom=         NO         ! one curve per element (default) or per atom
+   output_format=    table      ! table | buster | ...
+   file_stem=        <name>.sph_ff
+}
+```
+
+`partition_model=` must be one of the three `sph-` models; anything else is a `DIE`
+with the list.
+
+### 2d. The output writers — `GAUSSIAN_FF_FIT`
+
+One procedure per format, chosen by `output_format=`. `table`: element, n, a_1 … a_n, b_1
+… b_n, c, one line per element, with a header saying the range and the model. `buster`:
+**format not yet known** — the public BUSTER manual's file-formats page and FAQ say nothing
+about scattering tables; it needs an example file from a BUSTER installation or the keyword
+from Global Phasing. Until it arrives the writer is a stub that `DIE`s with that message.
+
+## 3. The fit itself: what to expect
+
+- Four Gaussians plus a constant fit the IT free-atom curves to about 0.001 e over 0–2 Å⁻¹
+  (Table 6.1.1.4's own quoted accuracy). A Salvador atom in a molecule differs from the free
+  atom mostly at low s (charge transfer and the bonding density), so the IT start is close
+  and the fit should converge in tens of iterations.
+- The b_i are strongly correlated and the problem is ill-conditioned if two exponents
+  approach each other: gnuplot reports this as a singular matrix or by a huge esd. The
+  guard is the start: with IT values the exponents stay apart. If a fit does fail, retry
+  from the IT values of the neighbouring element, then with n − 1 Gaussians, and say so.
+- A charged atom (a Salvador atom is, by about ±0.5–2 e in urea: research document §5) has
+  f(0) ≠ Z; that is the point of the exercise and is carried by c and the a_i together.
+  Hydrogen's c is very small in the IT form; let it float.
+- Weighting: unweighted least squares on an even s grid. The protein data are concentrated
+  at low s, but the fit is good enough everywhere that weighting is not needed; revisit if
+  the maximum deviation sits at high s and matters.
+
+## 4. Checks and tests
+
+- **Free-atom check:** fit the IAM form factor of each element, generated from the IT
+  coefficients themselves on the same s grid, and recover the coefficients to 1e-4 — the
+  fitter and the file round trip are then known to work. A `short` ctest.
+- **Urea, `sph-tfvh`:** fit C, N, O, H; compare the curves and the fitted a, b, c with the
+  free-atom ones; the plot shows where the molecule differs from the free atom. A `long`
+  ctest, with the coefficient table in its reference.
+- Tolerance on the maximum deviation: 0.005 e over the range as a `WARN`, reported always.
+- gnuplot absent: the job must finish; the test suite skips the fit tests when
+  `gnuplot` is not on `PATH`, as `rgbi_doctor_selftest` skips today.
+
+## 5. Later
+
+- The linear even-tempered fit (`oc-ri` machinery, L = 0) as an independent check of the
+  curve at the level of 1e-4 e, and as the fallback when the nonlinear fit will not converge.
+- Electron scattering factors (Mott–Bethe from the same curve) for cryo-EM, same fitter.
+- The BUSTER writer, when the format is known; then phenix/REFMAC/SHELXL as asked for.
+- Averaging over atoms of an element across several molecules (a library of residues).
+
+## 6. Order of work
+
+1. `sph-tfvh` wired in (branch `sph-tfvh`, 2026-10-05) and checked on urea. Done.
+2. `GAUSSIAN_FF_FIT` with the free-atom round-trip test (`gaussian_ff_fit` ctest). Done,
+   branch `exphar`.
+3. `make_sph_atom_FF_curve`, the `fit_sph_atom_ffs` keyword with its `FF_fit_*` settings,
+   the `shelx` and `table` writers, test `long/urea_rhf_STO-3G_sph-TFVH_FF_fit`. Done,
+   branch `exphar`.
+4. The BUSTER writer, when the format is in hand.
+5. The two-stage fit (§8), if the 0.02 e residual on C and N matters for the data.
+
+## 7. What the first fits showed (urea, `sph-tfvh`, STO-3G, 2026-10-05)
+
+- gnuplot's fit is exact where the model is: the carbon International Tables curve comes
+  back to 1e-13 in every coefficient from a 10 % perturbed start.
+- On the molecular curves the plain fit went to **negative coefficients** (C a₄ = −3.4,
+  H3 a₁ = −5.9) and **degenerate pairs** (two Gaussians with the same b and esds of 1e9).
+  The fit is now done in square roots, A² exp(−B² s²), which keeps every coefficient
+  positive; the degenerate pairs remain (O: b₁ = b₂ = 9.527; C: three Gaussians at
+  b = 12.78; H: pairs at 3.95), which says four Gaussians are more than these curves need
+  over 0–2 Å⁻¹. They are harmless for use — the pair sums to one Gaussian — but their
+  esds mean nothing, and the deviations are the measure of the fit.
+- Deviations: H 0.001 e largest; O 0.005; C and N 0.02 e (0.3 % of f). The International
+  Tables fits reach 0.001–0.005 on free atoms. Whether 0.02 e matters for a protein
+  refinement is to be judged against the data; if it does, the options are a different
+  start (a free-atom fit of the *molecular* curve's own first Gaussians), weights that
+  favour low s, or a fifth Gaussian where the format allows one.
+- Under the test harness one hydrogen fit stopped on a singular matrix (the curve differs
+  in its last digits from a hand run, and the degenerate valley took a different path), so
+  a failed fit is now retried from b scaled by 0.7, 1.4, 0.5 and 2, a fit that still fails
+  keeps the International Tables coefficients and says so, and the stdout carries only
+  f(0), the success flag and the deviations per atom; the coefficients and esds go to the
+  output file. With that the Mac and achari2 give identical stdout, and the test is blessed.
+
+## 8. Why four Gaussians degenerate, and what the residual is (2026-10-05)
+
+Dylan asked whether the curve has bumps, whether the exponents can be chosen better from
+a log plot, and whether a single exp(polynomial) would do. Measured on the urea
+`sph-tfvh` curves (STO-3G) with a Python script on the `.dat` files:
+
+- **log f against s² has two straight regimes**: slope −8.6 (C), −10.9 (N), −9.0 (O) up to
+  s ≈ 0.4, then −0.3 to −0.6 from s ≈ 0.6 on — the valence and the core — with a knee
+  between. So the curve wants two distinct exponents and a constant, and four free
+  Gaussians have two spare: that is the degeneracy, not a defect of the data.
+- **exp(polynomial in s²) cannot follow the knee**: degree 2 to 6 leave 1.1, 0.8, 0.7,
+  0.28, 0.25 e on carbon. The idea is dropped.
+- **A non-negative fit over 40 fixed exponents** (0.03–200, log-spaced; Lawson–Hanson) gets
+  no further than the free fit — C 0.023 e, N 0.021, O 0.006, H 0.0007 — and uses 5–7
+  terms. So 0.02 e on C and N is not a fitting failure.
+- **The residual is a slow oscillation along s**, period about 0.8 Å⁻¹ (carbon: +0.010 at
+  s = 0.3, −0.023 at 0.5, +0.021 at 0.9, −0.011 at 1.4, +0.009 at 2.0): the ringing of the
+  Salvador cell edge at ~0.6 Å. These are the "bumps", and they are in the transform of a
+  hard-edged atom, which no sum of positive Gaussians reproduces. The `sph-exphar` atom,
+  whose edge is soft, fits to C 0.017, O 0.008, H 0.001 e — better but still rippled,
+  since the exponent 2 sharpens it too.
+
+What follows:
+
+- The exponents: a two-stage fit — non-negative over a log grid, then polish the few
+  survivors by Levenberg–Marquardt — gives the number of Gaussians the curve needs and
+  starts the nonlinear fit where it cannot wander. Worth doing when more than hydrogen
+  has to reach 0.005 e; Lawson–Hanson is a hundred lines of Foo.
+- The input: a smoother atom edge (a softer cell function, or `sph-exphar` at a lower
+  power) removes the ripple at its source; this is a model question to settle with the
+  HAR results of research document §7–§8, not a fitting one.
+- Cost is not the reason for Gaussians: a refinement's time goes on the phase sum over
+  atoms, not on the form factor; the Gaussian form is kept because SHELX and BUSTER read
+  it, and a table in s would otherwise be cheaper and exact.

@@ -22,14 +22,20 @@ several compared output files is scored on its worst file.
 
 Usage
 -----
-    python3 scripts/suite_report.py --program build/tonto
-    python3 scripts/suite_report.py -p build-rel/tonto --suites short rgbi
+    python3 scripts/suite_report.py --build-dir build
+    python3 scripts/suite_report.py -d build-rel --suites short rgbi
     python3 scripts/suite_report.py --rel-tol 1e-3 --last-digit-tol 1
 
 Tolerances (mirror scripts/test.py):
     --rel-tol         loose RELATIVE tolerance   (fraction; default 2e-3 = 0.2%)
     --last-digit-tol  loose LAST-DIGIT tolerance  (units of last place; default 2)
     --abs-tol         absolute near-zero floor    (default 1e-7)
+
+After the suites it runs the INVARIANT CHECKS, which compare the program (or
+the sources) against themselves and need no reference output. A test or check
+that cannot run exits 77 and is reported as SKIP, outside the totals; in CI
+pass --skips-are-errors so that a skip fails the run unless it is named by
+--allow-skip, because a silent skip is how a check stops being checked.
 """
 
 import argparse
@@ -46,7 +52,7 @@ SUITES = ['short', 'hart', 'rgbi', 'long', 'cx']
 # eigensolver ordering, FP reassociation) can flip the verdict. Give just these a
 # documented wider loose bound so CI does not flicker; the strict gate stays for
 # every other test. This is a WORKAROUND, not a fix -- the aim is to remove entries
-# by understanding each discrepancy. See DEFERRED.md "small numerical
+# by understanding each discrepancy. See TASKS_AND_HISTORY.md "small numerical
 # differences". Keys are the test-dir basename.
 # Single source of truth: the table lives in test.py, because ctest reaches the
 # comparison through test.py with the DEFAULT tolerances and never through this
@@ -127,7 +133,7 @@ def score_test(test_py, test_dir, args):
     cmd = ['python3', test_py,
            '--test-directory', test_dir,
            '--basis-sets', args.basis_sets,
-           '--program', args.program,
+           '--build-dir', args.build_dir,
            '--log-level=ERROR',
            '--rel-tol', repr(rel_tol),
            '--last-digit-tol', repr(ld_tol),
@@ -186,8 +192,10 @@ def main():
     root = os.path.dirname(here)
     ap = argparse.ArgumentParser(
         description='Per-suite agreement report for the Tonto test jobs.')
-    ap.add_argument('--program', '-p', default=os.path.join(root, 'build', 'tonto'),
-                    help='tonto executable to test (default: build/tonto)')
+    ap.add_argument('--build-dir', '-d', default=os.path.join(root, 'build'),
+                    help='build directory holding tonto, hart and rgbi '
+                         '(default: build/)')
+    ap.add_argument('--program', '-p', default=None, help=argparse.SUPPRESS)
     ap.add_argument('--tests-dir', '-t', default=os.path.join(root, 'tests'),
                     help='root tests directory (default: tests/)')
     ap.add_argument('--basis-sets', '-b', default=os.path.join(root, 'basis_sets'),
@@ -222,6 +230,14 @@ def main():
                          'file, so without this its cause is recorded nowhere.')
     ap.add_argument('--no-invariant-checks', action='store_true',
                     help='skip the self-validating invariant checks run after the suites')
+    ap.add_argument('--skips-are-errors', action='store_true',
+                    help='a test or invariant check that declines to run (exit 77) '
+                         'fails the run unless named by --allow-skip. For CI: on a '
+                         'runner everything declared should run.')
+    ap.add_argument('--allow-skip', action='append', default=[], metavar='NAME',
+                    help='a test directory, or an invariant check script without its '
+                         'extension, whose skip is expected (repeatable), e.g. '
+                         'ammonium_borane_pHAR_C23 when its 167 MB asset is not fetched')
     args = ap.parse_args()
 
     # Resolve every path to an absolute one *before* anything runs. The
@@ -232,7 +248,11 @@ def main():
     # moment they started running from this driver, while local runs and the
     # CMake `report` target -- both of which pass absolute paths -- stayed green.
     # test.py guards the same way for the same reason.
-    args.program = os.path.abspath(args.program)
+    if args.program is not None:
+        ap.error('--program is now --build-dir DIR: the directory holding '
+                 'tonto (and hart, rgbi), not the program')
+    args.build_dir = os.path.abspath(args.build_dir)
+    args.program = os.path.join(args.build_dir, 'tonto')
     args.basis_sets = os.path.abspath(args.basis_sets)
     args.tests_dir = os.path.abspath(args.tests_dir)
     # Absolutised for the same reason as the others: the invariant checks chdir
@@ -377,9 +397,16 @@ def main():
               'above:')
         for t, why in skipped:
             print('  * %-48s %s' % (t, why))
+    skips_ok = True
+    if args.skips_are_errors:
+        unexpected = [t for t, _ in skipped if t not in args.allow_skip]
+        if unexpected:
+            skips_ok = False
+            print('\nERROR: %d skipped test(s) not named by --allow-skip: %s'
+                  % (len(unexpected), ', '.join(unexpected)))
     if widened:
         print('\nNote: relaxed loose bound applied to known runner-sensitive tests '
-              '(workaround; see DEFERRED.md "small numerical differences"):')
+              '(workaround; see TASKS_AND_HISTORY.md "small numerical differences"):')
         for t in widened:
             print('  * %-48s %s' % (t, ', '.join('%s=%g' % kv
                                     for kv in KNOWN_MARGINAL[t].items())))
@@ -390,7 +417,7 @@ def main():
     # reference, so they need no reference output and cannot be silently
     # blessed by regenerating references on a broken build. They also need
     # only one machine, which is what makes them useful for platform-specific
-    # miscompilations -- see DEFERRED.md, "verify the macOS build".
+    # miscompilations -- see TASKS_AND_HISTORY.md, "verify the macOS build".
     # ------------------------------------------------------------------
     invariants_ok = True
     if not args.no_invariant_checks:
@@ -400,12 +427,19 @@ def main():
         # hart's --help text is its only interface documentation, so it must
         # agree with the option case labels in run_har.foo. Only meaningful if
         # hart was built -- it lives beside tonto in the same build tree.
-        hart = os.path.join(os.path.dirname(args.program), 'hart')
+        hart = os.path.join(args.build_dir, 'hart')
         run_har = os.path.join(os.path.dirname(here), 'runfiles', 'run_har.foo')
         if os.path.exists(hart):
             checks.append(('hart options vs its --help text',
                            os.path.join(here, 'check_hart_options.sh'),
                            [hart, run_har, args.basis_sets]))
+        # And rgbi's, on the same footing.
+        rgbi = os.path.join(args.build_dir, 'rgbi')
+        run_rgbi = os.path.join(os.path.dirname(here), 'runfiles', 'run_rgbi.foo')
+        if os.path.exists(rgbi):
+            checks.append(('rgbi options vs its --help text',
+                           os.path.join(here, 'check_rgbi_options.sh'),
+                           [rgbi, run_rgbi]))
         # Source-level, no binary needed: a procedure taking arguments is a
         # library routine and must not touch stdin, or it breaks every
         # argv-driven program. Runs from python3, not sh -- see below.
@@ -418,6 +452,19 @@ def main():
         checks.append(('MPI: no interior collectives, no raw .unit I/O',
                        os.path.join(here, 'check_parallel_lint.py'),
                        [os.path.join(os.path.dirname(here), 'foofiles')]))
+        # Also source-level: printed labels end in "=" so their dots line up,
+        # and heading rules match their headings.
+        checks.append(('printed labels and headings line up',
+                       os.path.join(here, 'check_show_labels.py'),
+                       [os.path.join(os.path.dirname(here), 'foofiles'),
+                        os.path.join(os.path.dirname(here), 'runfiles')]))
+        # The Lebedev grids are stored as orbit generators, so one wrong literal
+        # shifts every DFT energy with nothing else noticing. Needs numpy, a
+        # declared test dependency (docs/BUILDING_ON_*); without it the script
+        # exits 77 and the check is reported as SKIP.
+        checks.append(('Lebedev grids integrate exactly to their order',
+                       os.path.join(here, 'check_lebedev_rules.py'),
+                       [os.path.join(os.path.dirname(here), 'foofiles', 'lebedev.foo')]))
         print('')
         print('INVARIANT CHECKS (no reference output involved)')
         print('')
@@ -433,6 +480,17 @@ def main():
                                   stdout=subprocess.PIPE,
                                   stderr=subprocess.STDOUT,
                                   universal_newlines=True)
+            if proc.returncode == SKIP_EXIT_CODE:
+                reason = next((l for l in proc.stdout.splitlines()
+                               if l.startswith('SKIPPED:')), '')
+                why = reason.partition('--')[2].strip() or reason
+                print('%-*s  %s' % (CHKW, name, 'SKIP' + (' -- ' + why if why else '')))
+                key = os.path.splitext(os.path.basename(script))[0]
+                if args.skips_are_errors and key not in args.allow_skip:
+                    invariants_ok = False
+                    print('    ERROR: a check that cannot run is an error under '
+                          '--skips-are-errors (allow it with --allow-skip %s)' % key)
+                continue
             ok = (proc.returncode == 0)
             print('%-*s  %s' % (CHKW, name, yn(ok)))
             if not ok:
@@ -444,9 +502,9 @@ def main():
         print('\n(report written to %s)' % os.path.abspath(args.log))
         sys.stdout = sys.__stdout__
         logf.close()
-    # Exit non-zero if any test failed the loose (pass-deciding) criterion, or
-    # if an invariant check failed.
-    sys.exit(0 if (grand['loose'] == grand['n'] and invariants_ok) else 1)
+    # Exit non-zero if any test failed the loose (pass-deciding) criterion, if
+    # an invariant check failed, or if a skip was an error.
+    sys.exit(0 if (grand['loose'] == grand['n'] and invariants_ok and skips_ok) else 1)
 
 
 if __name__ == '__main__':

@@ -6,7 +6,7 @@ each one found. It is kept because the reasoning explains why the code looks as 
 
 **It is a *mechanics and history* document** in the sense of `CLAUDE.md` §1 — written for
 the next session as much as for a person, and free to be long. Live work is in
-`DEFERRED.md`; stable facts about how the project is built and tested are in `CLAUDE.md`.
+`TASKS_AND_HISTORY.md`; stable facts about how the project is built and tested are in `CLAUDE.md`.
 
 ---
 
@@ -60,7 +60,7 @@ The substantive gains, in rough order of value:
   project. Eight reductions were silently returning `1/n_ranks` of the answer. A per-rank I/O
   flag's setter assigned the wrong member, so the whole mechanism was dead code that looked live.
   Collectives were gated on rank-local state, so different ranks entered different collectives.
-  See `docs/TONTO_AND_MPI.md`, which carries a defect register with a **"Loud?"** column — the *silent* rows
+  See `docs/TASK_MPI.md`, which carries a defect register with a **"Loud?"** column — the *silent* rows
   are the dangerous ones.
 - **Whole classes closed, not just instances.** `data` statements were parsed and silently
   discarded; now they are emitted, and any construct that parses but emits nothing is a **build
@@ -98,7 +98,7 @@ shared stream; count events between markers; and confirm a code path executes be
    loose locally on that date — `short long cx rgbi`, see §5 for why that number is not
    comparable with today's. Residual: the debug (`-O0`)
    build has 4 longstanding FP-boundary/structural failures (#47/#64/#87/#91) that are not
-   translator bugs and are documented in `DEFERRED.md`; CI runs the short release suite.
+   translator bugs and are documented in `TASKS_AND_HISTORY.md`; CI runs the short release suite.
 
 **Milestones 4 and 5 — the remaining work on this project** (agreed 2026-07-31). These two are
 independent and can run in parallel; milestone 5 is the more important, and should be **planned
@@ -111,12 +111,12 @@ before any code is written**, most likely in its own conversation (`/clear`).
    crashed at ≥2 ranks on a negative-unit I/O error, **now fixed** (raw unguarded writes in
    `put_NBO_file_47`), so the short suite is 50/51 under MPI, the same as serial. MPI is still
    unaudited for `plot_grid`/`archive` raw I/O and for HAR's `parallel_write`. Eight MPI wrong-answer bugs were found and fixed on the way (see milestone 6).
-   Full report: `docs/TONTO_AND_MPI.md`. Build with
+   Full report: `docs/TASK_MPI.md`. Build with
    `-DCMAKE_Fortran_COMPILER=mpifort -DCMAKE_C_COMPILER=mpicc -DMPI=1` and compare against the
    serial references with the usual loose gate. (`-DCMAKE_CXX_COMPILER=mpicxx` was in this
    recipe but is **ignored** — `project()` enables `Fortran C` only; `-DNO_ERROR_MANAGEMENT` was
    a **no-op**. Both removed.) **The MPI must be built with the same Fortran compiler**, since
-   Tonto does `USE mpi`. Details, and the list of MPI defects found, in `docs/TONTO_AND_MPI.md`. **Expect numeric drift**: reduction order varies with rank count, and
+   Tonto does `USE mpi`. Details, and the list of MPI defects found, in `docs/TASK_MPI.md`. **Expect numeric drift**: reduction order varies with rank count, and
    some of it is genuine UB — per Dylan, "numerics might go off — no worries, we'll check". The
    deliverable is a *characterisation* (which tests drift, by how much, and whether the drift is
    rank-count dependent), not necessarily a green suite. Untested since before the ANTLR4 work.
@@ -195,9 +195,9 @@ before any code is written**, most likely in its own conversation (`/clear`).
      reduction is correct). `shell1quartet.foo` alone has 17 such loops and the check aborted
      every debug MPI run. It cannot be a `WARN` either — those sites fire per shell-quartet. The
      **lint** is the right enforcement: the real bug is *lexical* containment, which it detects
-     precisely. Full reasoning in `DEFERRED.md`.
+     precisely. Full reasoning in `TASKS_AND_HISTORY.md`.
    - ⬜ **Fix the parallel-do lock — three defects, one mechanism** (design agreed 2026-08-03,
-     full write-up in `DEFERRED.md`): (a) recursion clears an outer lock — depth-count it;
+     full write-up in `TASKS_AND_HISTORY.md`): (a) recursion clears an outer lock — depth-count it;
      (b) it assumes routine names are unique, which overloads break in principle (currently
      holds, since the translator suffixes them); (c) `LOCK_PARALLEL_DO` is emitted inside the
      loop body. **Correction: this is only worth fixing if lock-gated behaviour is wanted**, and
@@ -221,7 +221,7 @@ before any code is written**, most likely in its own conversation (`/clear`).
      through a **call** from inside one.
 
    Sequenced *after* milestone 4's characterisation, because changing the lowering mid-flight
-   would confound the numbers. Full design in `DEFERRED.md`, "MPI: defects found during
+   would confound the numbers. Full design in `TASKS_AND_HISTORY.md`, "MPI: defects found during
    milestone 4".
 
 7. 🔶 **ROOT CAUSE FOUND (2026-08-26), fix not yet written.** `TEXTFILE:move_to_record_external`
@@ -232,7 +232,7 @@ before any code is written**, most likely in its own conversation (`/clear`).
    later broadcast binds the wrong variable — rank 1 receives a record counter into
    `.IO_status`, sees `114 /= 0`, and dies. Reproduced 5/5 on macOS/arm64 GCC 16.1.0 at
    `-Ofast` **and** on Linux CI, `-n 1` exact — so neither platform- nor optimisation-specific.
-   Fix direction, evidence, rank 1's stack and three method lessons: `docs/TONTO_AND_MPI.md`
+   Fix direction, evidence, rank 1's stack and three method lessons: `docs/TASK_MPI.md`
    Finding 7. **Do not "fix" it with a barrier** — that masks the shift.
 
    🔶 **RE-OPENED (2026-08-26) — `-Ofast` is not clean, and the suite that said so is not
@@ -245,7 +245,7 @@ before any code is written**, most likely in its own conversation (`/clear`).
    in this file. One failure is *not* flaky: `urea_read_and_process_CIF` dies on rank 1 in every
    run, in `TEXTFILE:move_to_next_record`, and its diagnostic ("error opening new file") names an
    operation that routine never performs. Full evidence, the two candidate mechanisms and the
-   discriminator: `docs/TONTO_AND_MPI.md` Finding 7. Why it stayed invisible: the report was
+   discriminator: `docs/TASK_MPI.md` Finding 7. Why it stayed invisible: the report was
    truncated to its last 30 lines and `suite_report.py` captured each failure's output only to
    discard it, so eleven errors carried **no recorded cause**. Both fixed (`--failure-dir`, no
    `tail`). Earlier status follows, and remains accurate for the `-O2` work.
@@ -275,7 +275,7 @@ before any code is written**, most likely in its own conversation (`/clear`).
    **rejected** (it matches on both ranks). Workaround ready but uncommitted (pin the file, as
    `types.F90` and `shell1quartet.F90` already are). Open: which `-O2` pass (bisect left running
    on achari2, `/tmp/m7bisect.log`), whether `-Ofast` is safe or merely lucky, and a minimal
-   reproducer before blaming gcc. Full detail in `docs/TONTO_AND_MPI.md` Finding 6. Four CIF-reading tests (`c9o9h8_read_cif_IT_group_9`,
+   reproducer before blaming gcc. Full detail in `docs/TASK_MPI.md` Finding 6. Four CIF-reading tests (`c9o9h8_read_cif_IT_group_9`,
    `maleate_read_CIF_H_double_bond_{new,old}_BLs`, `urea_lamaGOET_grown_CIF`) aborted at ≥2 ranks
    with a mismatched `MPI_Bcast` in `-O2 -fno-fast-math` while passing at `-Ofast`.
    **It was never undefined behaviour** — that was inferred from the symptom and is wrong.
@@ -292,7 +292,7 @@ before any code is written**, most likely in its own conversation (`/clear`).
    `macros.in` directly (verified to fail against the pre-fix definition) and runs in CI.
    **Verification gap, still open:** `e3ef5906` verified *three* of the four tests on achari2
    (Linux) at `-O2`, `-n 2`. The fourth, and a re-run of all four against current `master`, are
-   outstanding — see `docs/TONTO_AND_MPI.md` Finding 6.
+   outstanding — see `docs/TASK_MPI.md` Finding 6.
 
 8. ✅ **DONE (2026-08-04) — Translator: `data` statements at program scope were silently
    dropped.** Root cause was one line in `emitBodyList`: `if (b.localDecl() == null &&
@@ -337,7 +337,7 @@ before any code is written**, most likely in its own conversation (`/clear`).
    results of *each* lambda should be reported has not been confirmed.
 
 10. 🔶 **IN PROGRESS (opened 2026-08-12) — DFT standardisation and improvement.** Authoritative
-   document: **`docs/DFT_STANDARDISATION.md`**. Three defects were found in one afternoon, all
+   document: **`docs/TASK_DFT_STANDARDISATION.md`**. Three defects were found in one afternoon, all
    by *measurement* on `tests/short/h2o_blyp_cc-pVDZ`, and all three are silent.
    - ✅ **DONE — every user-specified Becke grid setting was discarded.** This is the cause of
      the long-standing difficulty reproducing DFT energies to a required precision.
@@ -381,7 +381,7 @@ before any code is written**, most likely in its own conversation (`/clear`).
      procedures. Take this with the libxc wrap, not as a separate migration.
 
 11. ✅ **DONE (2026-08-22 to 2026-09-06) — reactivate the extinction correction.**
-   Authoritative document: **`docs/EXTINCTION_REPORT.md`**. Dormant since 2016-10-02 and
+   Authoritative document: **`docs/TASK_EXTINCTION_CORRECTION.md`**. Dormant since 2016-10-02 and
    reached by no test, so the eight defects found in it were all silent. Decisions taken:
    adopt the SHELXL form, eq (62) of Bourhis *et al.* (2015); hold `N_p` at the refinement
    count and add nothing for the XCW Lagrange multiplier, so a `lambda = 0` XCW reproduces
@@ -398,11 +398,11 @@ before any code is written**, most likely in its own conversation (`/clear`).
    `_diffrn_radiation_wavelength`, and at Mo Kα the maximum sin(θ)/λ of 1.438944 Å⁻¹ implies
    sin θ = 1.0227. At the dataset's own 0.3173 Å urea shows extinction at **6.3 σ** —
    0.462406(73078) — with GoF² 49.556 → 47.256 and R(F) 0.038003 → 0.036585. See the
-   *inconsistent wavelength* entry in `DEFERRED.md` for why the wrong wavelength produced a
+   *inconsistent wavelength* entry in `TASKS_AND_HISTORY.md` for why the wrong wavelength produced a
    plausible-looking null rather than a diagnostic.
 
 12. ⬜ **NOT STARTED — choose the XCW Lagrange multiplier by cross-validation.**
-   Design and reasoning: **Appendix A of `docs/EXTINCTION_REPORT.md`**, which records the
+   Design and reasoning: **Appendix A of `docs/TASK_EXTINCTION_CORRECTION.md`**, which records the
    whole discussion with Dylan of 2026-08-22/23 in question-and-answer form. The short
    version: cross-validation has been tried and the free-set statistic was too noisy to use,
    for reasons now understood. The statistic on `m` free reflections has relative standard
@@ -418,7 +418,7 @@ before any code is written**, most likely in its own conversation (`/clear`).
    when the GoF is 3 or 7 and nobody believes the true value is 1. The Akaike criterion is
    kept as a cross-check, with the effective parameter count
    `trace[(A + lambda B)^-1 lambda B]` and its Monte Carlo estimator both derived in the
-   appendix. This was to have come before `docs/GOF_NOT_CHI2.md`; Dylan reordered the two on
+   appendix. This was to have come before `docs/TASK_GOF2_NOT_CHI2.md`; Dylan reordered the two on
    2026-09-06, so the naming work goes first and this stays open. Nothing in it depends on
    the rename.
 

@@ -85,7 +85,7 @@ reads.
 | `--scf` | `rhf`/`rks` | `rhf` | The SCF wavefunction. |
 | `--shelx-f`, `--shelx-f2` | file | — | Reflections in SHELX fixed format `(I4,I4,I4,8F,8F)`. |
 | `--std-f`, `--std-f2` | file | — | Reflections in free, whitespace-separated format. |
-| `--wavelength` | Å | from the CIF | X-ray wavelength. Needed only when the CIF has no `_diffrn_radiation_wavelength`; it defines each reflection's Bragg angle. **Give the right one**: a wavelength too long for the data is not rejected, it is silently absorbed — see the *inconsistent wavelength* entry in `DEFERRED.md`. |
+| `--wavelength` | Å | from the CIF | X-ray wavelength. Needed only when the CIF has no `_diffrn_radiation_wavelength`; it defines each reflection's Bragg angle. **Give the right one**: a wavelength too long for the data is not rejected, it is silently absorbed — see the *inconsistent wavelength* entry in `TASKS_AND_HISTORY.md`. |
 | `--version` | — | — | Print the version and exit 0. |
 
 **Restrictions**, all enforced with a message: zero overall charge; an even
@@ -123,7 +123,7 @@ output:  urea.out
 output:  urea.archive.cif
 ```
 
-`program:` is resolved as a sibling of `--program`, so `hart` is found in
+`program:` is run from `test.py`'s `--build-dir`, so `hart` comes from
 whichever build tree is under test. `args:` is split shell-style and appended.
 The reference that matters is `urea.archive.cif`: it carries the refined
 coordinates and ADPs as `0.02071(18)`, which `test.py` compares with its
@@ -165,4 +165,4 @@ Issues shared with `tonto` are in
 [**Known issues and limits**](TONTO_KNOWN_ISSUES.md).
 
 Development history — what was wrong with `hart` before it worked, the fragHAR
-milestones and the MPI work — is in [`../DEFERRED.md`](../DEFERRED.md).
+milestones and the MPI work — is in [`../TASKS_AND_HISTORY.md`](../TASKS_AND_HISTORY.md).

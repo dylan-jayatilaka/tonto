@@ -943,7 +943,7 @@ contains
 
    ENSURE(dX.dim1==.dim,"wrong size, dX")
    ENSURE(dX.dim2==3   ,"wrong size, dX")
-   ENSURE(esd.dim==.no_of_pADPS,"wrong size, esd")
+   ENSURE(esd.dim==.no_of_pADPs,"wrong size, esd")
 
       a,k :: INT
 
@@ -1044,7 +1044,7 @@ contains
 
    ENSURE(dU.dim1==list.dim,"wrong dim1, dU")
    ENSURE(dU.dim2==6       ,"wrong dim2, dU")
-   ENSURE(esd.dim==.no_of_pADPS,"wrong size, esd")
+   ENSURE(esd.dim==.no_of_pADPs,"wrong size, esd")
 
       i,a,k :: INT
 
@@ -1869,7 +1869,7 @@ contains
       case("put_coordinates               "); .put_coordinates
       case("put_coordinates_and_charges   "); .put_coordinates_and_charges
       case("put_invariom_labels           "); .put_invariom_labels
-      case("put_smiles_invariom_labels    "); .put_smiles_invariom_labels
+      case("put_smiles_invariom_labels    "); .put_SMILES_invariom_labels
    ! case("put_mm_info                   "); .put_mm_info
       case("put_torsion_angle_table       "); .put_torsion_angle_table
    ! case("put_protein_sequence          "); .put_protein_sequence
@@ -4120,6 +4120,58 @@ contains
 
    end
 
+   make_rigid_body_modes(B,n_rb) :: PURE
+   ! Make "B", the rigid-body displacements of the atoms in the mass-
+   ! weighted coordinates sqrt(m_a) x_a, ordered as in
+   ! displacement_mass_vector: three translations sqrt(m_a) e_i and three
+   ! rotations sqrt(m_a) e_i x (r_a - r_com) about the centre of mass,
+   ! orthonormalised. A linear molecule has five; "n_rb" is how many,
+   ! and B(:,n_rb+1:6) is zero.
+      self :: IN
+      B    :: MAT{REAL}, OUT
+      n_rb :: INT, OUT
+   ENSURE(B.dim1==3*.dim,"B must have 3 x no. of atoms rows")
+   ENSURE(B.dim2==6,"B must have 6 columns")
+
+      rc,d,e,v :: VEC{REAL}(3)
+      sm,nrm :: REAL
+      a,i,j,c :: INT
+
+      rc = .center_of_mass
+
+      B = ZERO
+      do a = 1,.dim
+         sm = sqrt(self(a).mass)
+         d  = self(a).position - rc
+         do i = 1,3
+            B(3*(a-1)+i,i) = sm
+            e = ZERO; e(i) = ONE
+            v(1) = e(2)*d(3) - e(3)*d(2)
+            v(2) = e(3)*d(1) - e(1)*d(3)
+            v(3) = e(1)*d(2) - e(2)*d(1)
+            B(3*(a-1)+1:3*a,3+i) = sm*v
+         end
+      end
+
+      ! Gram-Schmidt, dropping a column with nothing left after projection
+      ! (the rotation about the axis of a linear molecule)
+      n_rb = 0
+      do c = 1,6
+         do j = 1,n_rb
+            B(:,c) = B(:,c) - dot_product(B(:,j),B(:,c))*B(:,j)
+         end
+         nrm = norm2(B(:,c))
+         if (nrm<TOL(6)*sqrt(sum(self(:).mass))) then
+            B(:,c) = ZERO
+            cycle
+         end
+         n_rb = n_rb + 1
+         B(:,n_rb) = B(:,c)/nrm
+         if (n_rb<c) B(:,c) = ZERO
+      end
+
+   end
+
    mass result (res) :: pure
    ! Return the mass of the molecule
       self :: IN
@@ -5698,11 +5750,11 @@ contains
 
    add_nuclear_E_field_at_points_to(res,pt) :: PURE
    ! Add the nuclear contribution to the electric field from "self" at
-   ! the positions "pos" to (3 x .dim) array "res" 
-   ! NOTE: "pos" should not be a nuclear position!
+   ! the points "pt" (n_pt x 3) to the (n_pt x 3) array "res"
+   ! NOTE: a point should not be a nuclear position!
       self :: IN
       pt   :: MAT{REAL}, IN
-      res  :: MAT{REAL}(3,pt.dim1), INOUT
+      res  :: MAT{REAL}(pt.dim1,3), INOUT
 
       Z,r :: REAL
       a,b :: INT
@@ -5713,7 +5765,7 @@ contains
          Z  = self(b).nuclear_charge
          ab = pt(a,:) - self(b).position
          r  = ab.norm
-         res(:,a) = res(:,a) + Z*ab/(r*r*r)
+         res(a,:) = res(a,:) + Z*ab/(r*r*r)
       end
       end
 
@@ -6225,7 +6277,7 @@ contains
    ! Get the shell function limit vectors "first" and "last" as above,
    ! but always counting cartesian components, whatever the basis is
    ! set to. A spherical basis uses these to drive the cartesian J/K
-   ! engine; see MOLECULE.FOCK:make_r_JK_engine_sph.
+   ! engine; see MOLECULE.FOCK:make_r_JK_engine.
       self :: IN
       first,last :: VEC{INT}@, OUT
 
@@ -6775,7 +6827,7 @@ contains
       a :: INT
 
       do a = 1,.dim
-         stdout.show("label for atom "//trim(a.to_str)//" = ",.invariom_label_of(a))
+         stdout.show("label for atom ="//trim(a.to_str)//" = ",.invariom_label_of(a))
       end
 
    end
@@ -7013,14 +7065,14 @@ contains
 
    end
 
-   put_smiles_invariom_labels
+   put_SMILES_invariom_labels
    ! Print out the invariom labels
       self :: IN
 
       a :: INT
 
       do a = 1,.dim
-         stdout.show("label for atom "//trim(a.to_str)//" = ",.smiles_invariom_label_of(a))
+         stdout.show("label for atom ="//trim(a.to_str)//" = ",.smiles_invariom_label_of(a))
       end
 
    end
@@ -14574,6 +14626,204 @@ contains
 
    end
 
+   put_Salvador_radii_table(bonds_for,radii_for,radii_pro,radii_hir)
+   ! Output the Salvador bond length table.
+   ! This version compares with the promolecule radii and with the radii
+   ! where the two atoms' spherical densities are equal (tfvh).
+      self      :: IN
+      bonds_for :: VEC{EVEC{INT}}, IN
+      radii_for :: VEC{EVEC{REAL}}, IN
+      radii_pro :: VEC{EVEC{REAL}}, IN
+      radii_hir :: VEC{EVEC{REAL}}, IN
+
+      table     :: VEC{TABLE_COLUMN}@
+      strA,labA :: VEC{STR}@
+      strB,labB :: VEC{STR}@
+      dash      :: VEC{STR}@
+      dist,radi :: VEC{REAL}@
+      rpro,rtio :: VEC{REAL}@
+      rchi,rhir :: VEC{REAL}@
+      n_bonds,a,n,b :: INT
+      has_unique_labels :: BIN
+
+      ! Anything to do?
+      if (.dim<2) return
+
+      n_bonds = .no_of_bonds(bonds_for)
+      if (n_bonds<1) return
+
+      ! Has unique labels?
+      has_unique_labels = .has_unique_labels
+
+      ! Title
+      stdout.flush
+      stdout.text("====================")
+      stdout.text("Mayer-Salvador radii")
+      stdout.text("====================")
+      stdout.flush
+      stdout.text(". R(A.B) = distance from A to a minimum in the ED between")
+      stdout.text("           a pair of 'neighbour' atoms, A and B.")
+      stdout.flush
+      stdout.text("  The . in R(A.B) isn't a bond critical point, but nearly.")
+      stdout.text("  Since it is a minimum in only 1 dimension, not all three.")
+      stdout.text("  A -ve R(A.B) means no minimum in the ED was found -- bad.")
+      stdout.flush
+      stdout.text(". Also reported are R(A.B) for the promolecular density, and")
+      stdout.text("  R(A.B) where the two atoms' spherical densities are equal (tfvh).")
+      stdout.flush
+      stdout.text(". Two atoms are neighbours if their midpoint is *not* closer")
+      stdout.text("  to any third atom. See Salvador & Ramos-Cordoba (2013)")
+      stdout.text("  JCP 139 p. 071103 p3 paragraph 3.")
+      stdout.flush
+      stdout.text(". The radii are used to define Topological Fuzzy Voronoi Atoms")
+      stdout.text("  (TFVAs) i.e. 'Salvador atoms'.")
+      stdout.flush
+      stdout.flush
+      if (NOT has_unique_labels) then
+      stdout.flush
+      stdout.text(". Unique atom labels were not set for each atom.")
+      stdout.text("  Therefore, unique symbol-number tags are used.")
+      end
+      stdout.flush
+      stdout.show("Total no. of neighbours =",n_bonds)
+
+      if (n_bonds>VEC_ATOM_MAX_BONDS_IN_TABLE) then
+      stdout.flush
+      stdout.text("There are too many bonds to display in a table.")
+      return
+      end
+      stdout.flush
+
+      ! Create table
+      table.create(11)
+
+      table(1).set_heading("#A")
+      table(1).set_width(3)
+
+      table(2).set_heading("#B")
+      table(2).set_width(3)
+
+      table(3).set_heading("A")
+      table(3).set_width_from(self(:).tag)
+
+      table(4).set_column_spacing(0)
+      table(4).set_heading("--")
+      table(4).set_width(2)
+
+      table(5).set_heading("B")
+      table(5).set_width(table(3).width)
+      table(5).set_left_justify(TRUE)
+
+      table(6).set_heading("R(A-B)")
+      table(6).set_subhead("/A")
+      table(6).set_real_precision(4)
+      table(6).set_width_from(ONE)
+
+      table(7).set_heading("R(A.B)")
+      table(7).set_subhead("/A")
+      table(7).set_real_precision(4)
+      table(7).set_width_from(ONE)
+
+      table(8).set_heading("Becke")
+      table(8).set_subhead("chi")
+      table(8).set_real_precision(4)
+      table(8).set_width_from(ONE)
+
+      table(9).set_heading("R(A.B)")
+      table(9).set_subhead("promol")
+      table(9).set_real_precision(4)
+      table(9).set_width_from(ONE)
+
+      table(10).set_heading("R(A.B)/")
+      table(10).set_subhead("promol")
+      table(10).set_real_precision(4)
+      table(10).set_width_from(ONE)
+
+      table(11).set_heading("R(A.B)")
+      table(11).set_subhead("eq-dens")
+      table(11).set_real_precision(4)
+      table(11).set_width_from(ONE)
+
+      ! Put out the headings
+      table.put_headings(label_rows=FALSE,no_flush=TRUE)
+
+      do a = 1,.dim
+
+         ! Get the info
+         n_bonds = bonds_for(a).element.dim
+         strA.create(n_bonds)
+         strB.create(n_bonds)
+         labA.create(n_bonds)
+         labB.create(n_bonds)
+         dash.create(n_bonds)
+         dist.create(n_bonds)
+         radi.create(n_bonds)
+         rchi.create(n_bonds)
+         rpro.create(n_bonds)
+         rtio.create(n_bonds)
+         rhir.create(n_bonds)
+         strA = " "
+         dash = "--"
+         do n = 1,n_bonds
+            b = bonds_for(a)[n]
+            if (n==1) &
+            strA(n) = a.to_str
+            strB(n) = b.to_str
+            labA(n) = self(a).tag
+            labB(n) = self(b).tag
+            dist(n) = norm2(self(b).position-self(a).position)
+            radi(n) = radii_for(a)[n]
+            rchi(n) = radi(n)/(dist(n)-radi(n))
+            rpro(n) = radii_pro(a)[n]
+            rtio(n) = radi(n)/rpro(n)
+            rhir(n) = radii_hir(a)[n]
+         end
+         dist = dist*ANGSTROM_PER_BOHR
+         radi = radi*ANGSTROM_PER_BOHR
+         rpro = rpro*ANGSTROM_PER_BOHR
+         rhir = rhir*ANGSTROM_PER_BOHR
+        
+         ! Set table data
+         table(1).set_values(strA)
+         table(2).set_values(strB)
+         table(3).set_values(labA)
+         table(4).set_values(dash)
+         table(5).set_values(labB)
+         table(6).set_values(dist)
+         table(7).set_values(radi)
+         table(8).set_values(rchi) ! chi
+         table(9).set_values(rpro)
+         table(10).set_values(rtio)
+         table(11).set_values(rhir)
+
+         ! Put body
+         stdout.flush
+         table.put_body(label_rows=FALSE)
+
+         ! Clean
+         table.clear_columns
+         rhir.destroy
+         rtio.destroy
+         rpro.destroy
+         rchi.destroy
+         radi.destroy
+         dist.destroy
+         dash.destroy
+         labB.destroy
+         labA.destroy
+         strB.destroy
+         strA.destroy
+
+      end
+
+      ! Table footer
+      table.put_footer(label_rows=FALSE)
+
+      ! Clean
+      table.destroy
+
+   end
+
    no_of_bonds(bonds_for) result (res) :: pure
    ! Return the number of bonded atoms
       self :: IN
@@ -17024,7 +17274,7 @@ contains
       refine_H_U_iso :: BIN, IN
       esd :: VEC{REAL}, IN
 
-   ENSURE(esd.dim==.no_of_pADPS,"wrong size, esd")
+   ENSURE(esd.dim==.no_of_pADPs,"wrong size, esd")
    ENSURE(self(1).pos_axis_system=="cartesian","not cartesian axis system!")
 
       blnk,ADP_type :: VEC{STR}@
@@ -17199,7 +17449,7 @@ contains
       refine_H_U_iso :: BIN, IN
       esd :: VEC{REAL}, IN
 
-   ENSURE(esd.dim==.no_of_pADPS,"wrong size, esd")
+   ENSURE(esd.dim==.no_of_pADPs,"wrong size, esd")
    ENSURE(self(1).pos_axis_system=="crystal","not crystal axis system!")
 
       blnk,ADP_type :: VEC{STR}@
@@ -17799,7 +18049,7 @@ contains
       cif :: CIF, IN
       esd :: VEC{REAL}, IN
 
-   ENSURE(esd.dim==.no_of_pADPS,"wrong sizem esd")
+   ENSURE(esd.dim==.no_of_pADPs,"wrong sizem esd")
 
       ADP :: VEC{REAL}(15)
       err :: VEC{REAL}(15)
@@ -18251,7 +18501,7 @@ contains
       cif :: CIF, IN
       esd :: VEC{REAL}, IN
 
-   ENSURE(esd.dim==.no_of_pADPS,"wrong sizem esd")
+   ENSURE(esd.dim==.no_of_pADPs,"wrong sizem esd")
 
       ADP :: VEC{REAL}(15)
       err :: VEC{REAL}(15)
@@ -19094,7 +19344,7 @@ contains
       refine_H_U_iso :: BIN, IN
       esd :: VEC{REAL}, IN
 
-   ENSURE(esd.dim==.no_of_pADPS,"wrong size, esd")
+   ENSURE(esd.dim==.no_of_pADPs,"wrong size, esd")
    ENSURE(self(1).pos_axis_system=="cartesian","not cartesian axis system!")
 
       blnk,ADP_type :: VEC{STR}@
@@ -19552,7 +19802,7 @@ contains
       esd :: VEC{REAL}, IN
       GC3_scale_factor :: REAL, IN
 
-   ENSURE(esd.dim==.no_of_pADPS,"wrong sizem esd")
+   ENSURE(esd.dim==.no_of_pADPs,"wrong sizem esd")
 
       ADP :: VEC{REAL}(15)
       err :: VEC{REAL}(15)
@@ -19891,7 +20141,7 @@ contains
       esd :: VEC{REAL}, IN
       GC4_scale_factor :: REAL, IN
 
-   ENSURE(esd.dim==.no_of_pADPS,"wrong sizem esd")
+   ENSURE(esd.dim==.no_of_pADPs,"wrong sizem esd")
 
       ADP :: VEC{REAL}(15)
       err :: VEC{REAL}(15)
@@ -20721,7 +20971,7 @@ contains
       min_dist :: REAL
 
       .:get_minimum_interatomic_distance(atom, distance, factor, best_i, best_j, min_dist)
-      stdout.show("Minimum distance (between " // trim(best_i) // " and " // trim(best_j) // ")", min_dist)
+      stdout.show("Minimum distance (between =" // trim(best_i) // " and " // trim(best_j) // ")", min_dist)
    end
 
    get_minimum_interatomic_distance(atom, distance, factor, best_i, best_j, min_dist) :: PURE

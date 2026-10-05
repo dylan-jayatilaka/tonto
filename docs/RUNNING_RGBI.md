@@ -150,6 +150,10 @@ default input. `--molden` and `--fchk` remain for existing habits.
 meanings. It asks the doctor with `--dials-only`, so a missing Open Babel or
 mol2chemfig will not stop it.
 
+The page holds four dials to a row by default; `robydata= { n_dial_columns= 6 }`
+in the Tonto job changes that. Every dial is drawn at the same scale, with the
+bond's own index normalising its radius to one.
+
 ### Where the templates come from
 
 `scripts/rgbi_doctor.sh --print-template-dir` is the single implementation of
@@ -198,4 +202,4 @@ turn off.
 doctor itself is not a ctest: CI has none of the arcane software. The install
 list is covered by `scripts/docker/rgbi.Dockerfile` and `.github/workflows/ci-rgbi.yml`.
 
-Known defects and rough edges are in [`../DEFERRED.md`](../DEFERRED.md).
+Known defects and rough edges are in [`../TASKS_AND_HISTORY.md`](../TASKS_AND_HISTORY.md).

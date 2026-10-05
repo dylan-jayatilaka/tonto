@@ -5,11 +5,11 @@ cmake_policy(VERSION 3.20)
 # Allow arbitrary characters in test names
 cmake_policy(SET CMP0110 NEW)
 
-# Tonto version info and build date
+# Tonto version, for the project and packaging. What Tonto prints -- version,
+# git commit and build date -- is the build stamp below, remade on every build.
 string(TIMESTAMP VERSION_MAJOR "%y")
 string(TIMESTAMP VERSION_MINOR "%m")
 string(TIMESTAMP VERSION_MINOR_MINOR "%d")
-string(TIMESTAMP TONTO_BUILD_DATE "%Y.%m.%d %H:%M")
 
 # Tonto
 set(TONTO_VERSION "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_MINOR_MINOR}")
@@ -80,17 +80,21 @@ if(NOT ANTLR4_JAR)
 endif()
 message(STATUS "Using ANTLR4 jar: ${ANTLR4_JAR}")
 
-# Git
-find_package(Git)
-if(${GIT_FOUND})
-    execute_process(COMMAND
-        "${GIT_EXECUTABLE}" log "-n 1" "--pretty=%h"
-        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-        OUTPUT_VARIABLE TONTO_GIT_REVISION
-        OUTPUT_STRIP_TRAILING_WHITESPACE)
-else()
-    set(TONTO_GIT_REVISION "Unknown git revision")
-endif()
+# Build stamp: the version, git commit (marked -dirty- when there are uncommitted
+# changes) and build date that Tonto prints in its output and CIF files. It is
+# remade on every build, not only when CMake configures, so it always names the
+# code that was built. Only molecule.main, molecule.put and the programs in
+# runfiles/ include it, so a new stamp recompiles those alone. See
+# cmake/BuildStamp.cmake.
+set(BUILD_STAMP ${PROJECT_BINARY_DIR}/build_stamp)
+set(BUILD_STAMP_COMMAND ${CMAKE_COMMAND}
+    -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR} -DOUTPUT=${BUILD_STAMP}
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildStamp.cmake)
+execute_process(COMMAND ${BUILD_STAMP_COMMAND})
+add_custom_target(build_stamp ALL
+    COMMAND ${BUILD_STAMP_COMMAND}
+    BYPRODUCTS ${BUILD_STAMP}
+    COMMENT "Updating the build stamp")
 
 # Testing?
 enable_testing()
@@ -220,7 +224,7 @@ if(MPI)
        # MPI_Fortran_COMPILE_OPTIONS), so this assigns "" -- and it is an
        # assignment, not an append, so it also wipes any user -DCMAKE_Fortran_FLAGS.
        # Survivable only because SetFortranFlags rebuilds the flags afterwards.
-       # See DEFERRED.md.
+       # See TASKS_AND_HISTORY.md.
        set(CMAKE_Fortran_FLAGS "${MPI_Fortran_FLAGS}")
        set(WITH_MPI ON CACHE STRING "" FORCE)
        include_directories(${MPI_Fortran_INCLUDE_PATH})
@@ -260,7 +264,7 @@ if(MPI)
              "Tonto does `USE mpi`, and Fortran .mod files are compiler-version "
              "specific. Rebuild MPI against this compiler (e.g. configure Open MPI "
              "with FC=${CMAKE_Fortran_COMPILER}), or point CMAKE_Fortran_COMPILER "
-             "at the wrapper whose MPI modules match. See docs/TONTO_AND_MPI.md.")
+             "at the wrapper whose MPI modules match. See docs/TASK_MPI.md.")
        endif()
     endif()
 endif()
@@ -390,6 +394,7 @@ set(FOO_SRC
     ${FOO_DIR}/coppensorbital.foo
     ${FOO_DIR}/csf_to_sd.foo
     ${FOO_DIR}/dft_functional.foo
+    ${FOO_DIR}/least_squares.foo
     ${FOO_DIR}/diffraction_data.inq.foo
     ${FOO_DIR}/diffraction_data.set.foo
     ${FOO_DIR}/diffraction_data.read.foo
@@ -397,10 +402,7 @@ set(FOO_SRC
     ${FOO_DIR}/diis.foo
     ${FOO_DIR}/rys.foo
     ${FOO_DIR}/rms_indices.foo
-    ${FOO_DIR}/rms2_indices.foo
     ${FOO_DIR}/mat{rms_indices}.foo
-    ${FOO_DIR}/mat{rms2_indices}.foo
-    ${FOO_DIR}/mat4{rms2_indices}.foo
     ${FOO_DIR}/gaussian_data.foo
     ${FOO_DIR}/gaussian.foo
     ${FOO_DIR}/gaussian2.foo
@@ -434,6 +436,8 @@ set(FOO_SRC
     ${FOO_DIR}/reflection.foo
     ${FOO_DIR}/crystal.foo
     ${FOO_DIR}/crystal23.foo
+    ${FOO_DIR}/fourier_sums.foo
+    ${FOO_DIR}/gaussian_ff_fit.foo
     ${FOO_DIR}/spherical_harmonic.foo
     ${FOO_DIR}/t_tensor.foo
     ${FOO_DIR}/table_column.foo
@@ -450,7 +454,6 @@ set(FOO_SRC
    #${FOO_DIR}/vec{gsd_tree}.foo
     ${FOO_DIR}/vec{interpolator}.foo
     ${FOO_DIR}/vec{irrep}.foo
-    ${FOO_DIR}/vec{pair_energy}.foo
     ${FOO_DIR}/vec{quadrature}.foo
    #${FOO_DIR}/vec{rys}.foo
     ${FOO_DIR}/vec{reflection}.foo
@@ -462,7 +465,6 @@ set(FOO_SRC
     ${FOO_DIR}/opmatrix.foo
     ${FOO_DIR}/opvector.foo
     ${FOO_DIR}/mo_localiser.foo
-    ${FOO_DIR}/pair_energy.foo
     ${FOO_DIR}/molecule.inq.foo
     ${FOO_DIR}/molecule.set.foo
     ${FOO_DIR}/molecule.read.foo
@@ -508,8 +510,11 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/cpx.F90
     ${CMAKE_CURRENT_BINARY_DIR}/crystal.F90
     ${CMAKE_CURRENT_BINARY_DIR}/crystal23.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/fourier_sums.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/gaussian_ff_fit.F90
 #   ${CMAKE_CURRENT_BINARY_DIR}/datafile.F90
     ${CMAKE_CURRENT_BINARY_DIR}/dft_functional.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/least_squares.F90
     ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.inq.F90
     ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.set.F90
     ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.read.F90
@@ -547,7 +552,6 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/mat_evec_int.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_evec_real.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_emat_real.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/mat_rms2_indices.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_rms_indices.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_shell1pair.F90
     ${CMAKE_CURRENT_BINARY_DIR}/mat_str.F90
@@ -577,12 +581,10 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/opmatrix.F90
     ${CMAKE_CURRENT_BINARY_DIR}/opvector.F90
     ${CMAKE_CURRENT_BINARY_DIR}/plot_grid.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/pair_energy.F90
     ${CMAKE_CURRENT_BINARY_DIR}/pointgroup.F90
     ${CMAKE_CURRENT_BINARY_DIR}/quadrature.F90
     ${CMAKE_CURRENT_BINARY_DIR}/real.F90
     ${CMAKE_CURRENT_BINARY_DIR}/reflection.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/rms2_indices.F90
     ${CMAKE_CURRENT_BINARY_DIR}/rms_indices.F90
     ${CMAKE_CURRENT_BINARY_DIR}/roby.F90
     ${CMAKE_CURRENT_BINARY_DIR}/rys.F90
@@ -621,7 +623,6 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/vec_emat_int.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_emat_real.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_emat3_real.F90
-    ${CMAKE_CURRENT_BINARY_DIR}/vec_pair_energy.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_quadrature.F90
     ${CMAKE_CURRENT_BINARY_DIR}/vec_real.F90
     #${CMAKE_CURRENT_BINARY_DIR}/vec_rys.F90
@@ -673,6 +674,8 @@ set(RUN_SRC
     ${RUNFILE_DIR}/run_mpi_pi.foo
     ${RUNFILE_DIR}/run_qr.foo
     ${RUNFILE_DIR}/run_quadrature.foo
+    ${RUNFILE_DIR}/run_lsq_restraint.foo
+    ${RUNFILE_DIR}/run_gaussian_ff_fit.foo
     ${RUNFILE_DIR}/run_shell2.foo
     ${RUNFILE_DIR}/run_real.foo
     ${RUNFILE_DIR}/run_rys.foo
@@ -949,6 +952,7 @@ add_library(tonto_lib
    ${MACROS}
 )
 set_target_properties(tonto_lib PROPERTIES OUTPUT_NAME tonto)
+add_dependencies(tonto_lib build_stamp)
 
 # types.F90 contains no executable code of its own -- only the ~90 derived-type
 # definitions. But those types have ~585 allocatable/pointer components, so
@@ -966,7 +970,7 @@ set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/types.F90
 #
 # At -O2 exactly, gfortran 14.2 on x86_64 Linux miscompiles this file badly
 # enough to desynchronise MPI: four CIF-reading tests abort at >=2 ranks with
-# MPI_ERR_TRUNCATE in MPI_Bcast (CLAUDE.md milestone 7, docs/TONTO_AND_MPI.md Finding 6).
+# MPI_ERR_TRUNCATE in MPI_Bcast (CLAUDE.md milestone 7, docs/TASK_MPI.md Finding 6).
 # The ranks agree for 8481 broadcasts and then rank 0 issues one surplus
 # integer broadcast, offsetting the streams until a 1-integer receive meets a
 # 256-character send.
@@ -980,7 +984,7 @@ set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/types.F90
 # It is an interaction, not a lone bad pass: -O1 plus ALL 45 flags (sibling
 # calls included) passes, and so do -O3 and -Ofast, which are supersets of -O2.
 # So the SHIPPED release build (-Ofast) is not affected -- but the
-# -O2 -fno-fast-math control build is, and that is the build docs/TONTO_AND_MPI.md uses to
+# -O2 -fno-fast-math control build is, and that is the build docs/TASK_MPI.md uses to
 # separate floating-point reassociation from genuine MPI defects, so it has to
 # work. Whether the underlying fault is a gcc bug or latent UB in the Foo
 # sources that only tail calls expose is NOT yet established; see Finding 6.
@@ -1005,7 +1009,7 @@ set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/textfile.F90
 #
 # NOT yet established whether this is a GCC backend bug or latent undefined
 # behaviour in the emitted code that optimisation exposes -- see
-# DEFERRED.md. If it is UB, this only masks it.
+# TASKS_AND_HISTORY.md. If it is UB, this only masks it.
 # Set -DTONTO_SKIP_ARM64_WORKAROUNDS=ON to build WITHOUT this (and the matching
 # flag in cmake/SetFortranFlags.cmake), so a newer gfortran can be tested for the
 # miscompilation: configure with it ON, build, then run
@@ -1021,6 +1025,15 @@ if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64"
         PROPERTIES COMPILE_OPTIONS "-O2;-fno-schedule-insns")
     message(STATUS "arm64 macOS: pinning shell1quartet.F90 to -O2 "
                    "(gfortran miscompilation workaround)")
+endif()
+
+# fourier_sums.F90 computes its own sin and cos, which -ffast-math breaks, so it
+# is compiled without fast math in every optimised build; the reasons and the
+# timings are at the top of foofiles/fourier_sums.foo. The last -O wins, so -O3
+# here also undoes a release build's -Ofast. Debug builds keep their own flags.
+if("${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU" AND NOT BT STREQUAL "DEBUG")
+    set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/fourier_sums.F90
+        PROPERTIES COMPILE_OPTIONS "-O3;-fno-fast-math;-fno-math-errno;-fno-trapping-math")
 endif()
 
 # Generate ALL Foo->Fortran output (every .F90 and its co-generated .int/.use)
@@ -1090,6 +1103,13 @@ add_executable(run_qr            EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/ru
 # moments and exits non-zero on a wrong one; the `quadrature_rules` ctest.
 # Not EXCLUDE_FROM_ALL for the same reason as run_system_commands.
 add_executable(run_quadrature    ${CMAKE_CURRENT_BINARY_DIR}/run_quadrature.F90)
+# run_lsq_restraint checks the restrained normal-equation solver the structure
+# refinement uses; the `lsq_restraints` ctest. Not EXCLUDE_FROM_ALL for the
+# same reason.
+add_executable(run_lsq_restraint ${CMAKE_CURRENT_BINARY_DIR}/run_lsq_restraint.F90)
+# run_gaussian_ff_fit checks the form-factor fit through gnuplot by a round trip;
+# the `gaussian_ff_fit` ctest, skipped where gnuplot is absent.
+add_executable(run_gaussian_ff_fit ${CMAKE_CURRENT_BINARY_DIR}/run_gaussian_ff_fit.F90)
 add_executable(run_real          EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_real.F90)
 add_executable(run_rys           EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_rys.F90)
 add_executable(run_rgbi          ${CMAKE_CURRENT_BINARY_DIR}/run_rgbi.F90)
@@ -1138,6 +1158,8 @@ target_link_libraries(run_least_squares tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBR
 target_link_libraries(run_textfile      tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_system_commands tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_quadrature    tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_lsq_restraint tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_gaussian_ff_fit tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 if(WITH_MPI)
     target_link_libraries(run_mpi_test          tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
     target_link_libraries(run_mpi_test_complete tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})

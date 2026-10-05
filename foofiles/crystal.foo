@@ -738,6 +738,27 @@ contains
 
    end
 
+   prune_xray_data :: leaky
+   ! Prune .xray_data.reflections by the set cutoffs, and cut the form
+   ! factors on disk down to match. Every prune of a list that already
+   ! has form factors on disk must come through here, not through
+   ! DIFFRACTION_DATA.SET:prune_reflections directly.
+      self :: INOUT
+
+   ENSURE(.xray_data.allocated,"no diffraction data")
+   ENSURE(.xray_data.reflections.allocated,"no reflection data")
+
+      old :: VEC{REFLECTION}@
+
+      old = .xray_data.reflections
+
+      .xray_data.SET:prune_reflections ! NOT PURE
+
+      if (.xray_data.reflections.dim<old.dim) .prune_disk_SFs(old)
+      old.destroy
+
+   end
+
    prune_disk_SFs(old) :: leaky, private
    ! Cut each unique fragment atom's "<tag>-SFs" file, written for the
    ! reflection list "old", down to the reflections now in .xray_data,
@@ -783,8 +804,8 @@ contains
       ff_new.create(n_sym*n_new)
 
       stdout.flush
-      stdout.show("Form factors on disk cut to kept reflections, from ",n_old)
-      stdout.show("                                               to ",n_new)
+      stdout.show("Form factors on disk, reflections  =",n_old)
+      stdout.show("Cut to the kept reflections        =",n_new)
 
       ! Loop over unique *frag* atoms
       do u = 1,.n_unique_frag_atoms
@@ -3297,7 +3318,8 @@ contains
    ! Currently only "hirshfeld" is supported for this.
       self :: IN
       res :: BIN
-      res = .partition_model=="oc-hirshfeld"
+      res = .partition_model=="oc-hirshfeld" OR .partition_model=="oc-ri" OR &
+            .partition_model=="oc-exphar"
    end
 
    uses_oc_atom_partition result (res) :: pure
@@ -3313,7 +3335,8 @@ contains
    ! Returns TRUE if numerical integration of the electron density is
       self :: IN
       res :: BIN
-      res = .partition_model=="oc-hirshfeld"
+      res = .partition_model=="oc-hirshfeld" OR .partition_model=="oc-ri" OR &
+            .partition_model=="oc-exphar"
    end
 
    uses_Tanaka_atoms result (res) :: pure
@@ -4324,7 +4347,7 @@ contains
    ! factors. 
    ! NOTE: this routine sets no F_calc, scale factor or F_pred, so neither
    ! dispersion convention can be applied here -- hence the DIE. Nothing
-   ! calls it today. See DEFERRED.md.
+   ! calls it today. See TASKS_AND_HISTORY.md.
       self :: INOUT
       a :: INT, IN
       dFc :: MAT{CPX}, OUT
@@ -4513,9 +4536,10 @@ contains
          .xray_data.SET:update_fit_info
          if (.xray_data.fit_finished) exit
 
-         ! Prune?
+         ! Prune? The next cycle's shift_update_ff reads the files, so
+         ! they must be cut down with the list.
          if (.xray_data.INQ:is_F_calc_prunable) then
-            .xray_data.SET:prune_reflections
+            .prune_xray_data
          end
 
       end
@@ -4725,6 +4749,12 @@ contains
       labels = .asymmetric_unit_atom.tag_pADP_labels
       .xray_data.SET:initialize_fit_data(n_p,n_f,labels)
 
+      ! The map from refined parameters to pADPs (leaky)
+      .make_refinement_jacobian
+
+      ! The parameters themselves; a TLS model puts the atoms on it
+      .set_refinement_parameters
+
    end
 
    initialize_refinement_data :: leaky
@@ -4749,6 +4779,1147 @@ contains
       ! Create refinement arrays & initialize (leaky)
       labels = .asymmetric_unit_atom.tag_pADP_labels
       .xray_data.SET:initialize_refinement_data(n_p,labels)
+
+      ! The map from refined parameters to pADPs (leaky)
+      .make_refinement_jacobian
+
+   end
+
+   set_fragment_U_high(U_high) :: leaky, PURE
+   ! Set .fragment_U_high, the stiff-mode U of each atom of the TLS body
+   ! (3,3,n), bohr^2: the fixed part of a TLS model.
+      self :: INOUT
+      U_high :: MAT3{REAL}, IN
+   ENSURE(.fragment_atom.allocated,"no fragment atoms")
+   ENSURE(U_high.dim3==.n_TLS_atoms,"one U_high per TLS body atom")
+
+      .fragment_U_high.destroy
+      .fragment_U_high = U_high
+
+   end
+
+   set_soft_modes(V,a0,freq,temperature) :: leaky, PURE
+   ! Set the soft modes whose amplitudes a TLS model refines: "V" the
+   ! displacement of each TLS body atom per unit normal coordinate,
+   ! (3 x n_TLS_atoms, n_soft); "a0" their harmonic <Q^2>, negative for
+   ! an imaginary mode; "freq" their frequencies, cm^-1, negative for
+   ! imaginary; and the "temperature" (K) a0 is for.
+      self :: INOUT
+      V :: MAT{REAL}, IN
+      a0,freq :: VEC{REAL}, IN
+      temperature :: REAL, IN
+   ENSURE(V.dim1==3*.n_TLS_atoms,"V: one row per TLS body atom coordinate")
+   ENSURE(a0.dim==V.dim2 AND freq.dim==V.dim2,"one a0 and frequency per mode")
+
+      .soft_mode_vectors.destroy
+      .soft_mode_harmonic.destroy
+      .soft_mode_frequency.destroy
+      .soft_mode_vectors = V
+      .soft_mode_harmonic = a0
+      .soft_mode_frequency = freq
+      .soft_mode_temperature = temperature
+
+   end
+
+   n_TLS_atoms result (res) :: pure
+   ! The number of atoms in the TLS body: the leading fragment atoms in the
+   ! group of the first one. For a molecule that is every fragment atom; for
+   ! a cluster made by create_cluster it is the central molecule.
+      self :: IN
+      res :: INT
+
+      g,n_f :: INT
+
+      n_f = .fragment_atom.dim
+      res = n_f
+      g = .fragment_atom(1).group
+      do res = 1,n_f
+         if (.fragment_atom(res).group/=g) exit
+      end
+      res = res - 1
+
+   end
+
+   n_soft_modes result (res) :: pure
+   ! The number of soft modes in the TLS model.
+      self :: IN
+      res :: INT
+      res = 0
+      if (.soft_mode_vectors.allocated) res = .soft_mode_vectors.dim2
+   end
+
+   n_TLS_sigma result (res) :: pure
+   ! The number of elements of the model's covariance Sigma = <v v^T>,
+   ! v = (t, lambda, Q_1 ... Q_K): the 21 of the rigid body, then one
+   ! amplitude <Q_j^2> per soft mode, then, with use_soft_mode_correlations=,
+   ! every cross term of a soft mode. See TLS_sigma_pairs for the order.
+      self :: IN
+      res :: INT
+
+      n_v :: INT
+
+      n_v = 6 + .n_soft_modes
+      res = 21 + .n_soft_modes
+      if (.xray_data.allocated) then
+      if (.xray_data.use_soft_mode_correlations) res = n_v*(n_v+1)/2
+      end
+
+   end
+
+   TLS_sigma_pairs(pr) :: PURE
+   ! "pr(:,i)" is the pair of coordinates (p,q), p <= q, of element i of
+   ! Sigma, coordinates 1-3 t, 4-6 lambda, 6+j soft mode j. The order: the
+   ! 21 rigid-body elements row by row; the amplitudes (6+j,6+j); then the
+   ! cross terms, each mode's six with the rigid body and then those
+   ! between soft modes.
+      self :: IN
+      pr :: MAT{INT}@, OUT
+
+      n_s,i,j,p,q :: INT
+
+      n_s = .n_soft_modes
+      pr.create(2,.n_TLS_sigma)
+      i = 0
+      do p = 1,6
+      do q = p,6
+         i = i + 1
+         pr(:,i) = [p,q]
+      end
+      end
+      do j = 1,n_s
+         i = i + 1
+         pr(:,i) = [6+j,6+j]
+      end
+      if (i==pr.dim2) return
+      do j = 1,n_s
+      do p = 1,6
+         i = i + 1
+         pr(:,i) = [p,6+j]
+      end
+      end
+      do j = 1,n_s
+      do q = j+1,n_s
+         i = i + 1
+         pr(:,i) = [6+j,6+q]
+      end
+      end
+
+   end
+
+   TLS_response(g) result (res) :: PURE
+   ! d U_g / d sigma for TLS body atom "g": the change in
+   ! (U_xx,U_yy,U_zz,U_xy,U_xz,U_yz) per unit of each element sigma_pq of
+   ! Sigma = <v v^T>, in the order of TLS_sigma_pairs. U_g = B_g Sigma B_g^T
+   ! with B_g = [1 | A_g | d_g1 ... d_gK]: A_g lambda = lambda x r_g, r_g
+   ! from .TLS_origin, and d_gj atom g's displacement per unit normal
+   ! coordinate of soft mode j.
+      self :: IN
+      g :: INT, IN
+      res :: MAT{REAL}(6,.n_TLS_sigma)
+
+      d :: VEC{REAL}(3)
+      Bm :: MAT{REAL}@
+      M :: MAT{REAL}(3,3)
+      pr :: MAT{INT}@
+      p,q,k,i,j,n_v :: INT
+
+      n_v = 6 + .n_soft_modes
+      Bm.create(3,n_v)
+      Bm = ZERO
+      d = .fragment_atom(g).position - .TLS_origin
+      do i = 1,3
+         Bm(i,i) = ONE
+      end
+      Bm(1,5) =  d(3); Bm(1,6) = -d(2)
+      Bm(2,4) = -d(3); Bm(2,6) =  d(1)
+      Bm(3,4) =  d(2); Bm(3,5) = -d(1)
+      do k = 1,.n_soft_modes
+         Bm(:,6+k) = .soft_mode_vectors(3*g-2:3*g,k)
+      end
+
+      .TLS_sigma_pairs(pr)
+      do k = 1,.n_TLS_sigma
+         p = pr(1,k)
+         q = pr(2,k)
+         do i = 1,3
+         do j = 1,3
+            M(i,j) = Bm(i,p)*Bm(j,q)
+         end
+         end
+         if (p/=q) M = M + transpose(M)
+         res(:,k) = [M(1,1),M(2,2),M(3,3),M(1,2),M(1,3),M(2,3)]
+      end
+
+      pr.destroy
+      Bm.destroy
+
+   end
+
+   make_TLS_jacobian_columns(Jt) :: leaky
+   ! Make "Jt", the columns of the refinement Jacobian for a TLS model, with
+   ! its soft-mode amplitudes if any:
+   ! d X / d p for the TLS parameters p, nonzero on the ADP rows of the
+   ! unique fragment atoms. Sigma = [[T,S^T],[S,L]] is restricted to the
+   ! values for which every TLS body atom's U obeys the crystal symmetry:
+   ! images of one asymmetric unit atom agree, and an atom on a special
+   ! position keeps its site symmetry. Directions no U sees (tr S) are
+   ! dropped. Sets .TLS_origin, .TLS_basis (Sigma for each parameter) and
+   ! .TLS_unique_response. Each column is scaled so its largest entry is one.
+      self :: INOUT
+      Jt :: MAT{REAL}@, OUT
+   ENSURE(.fragment_info_made,"no fragment info")
+
+      seitz :: MAT3{REAL}@
+      Rall,C,Cg,CtC,Z,MZ,GZ,evec,Q :: MAT{REAL}@
+      eval,colnorm :: VEC{REAL}@
+      stab :: VEC{INT}@
+      W :: MAT{REAL}(6,6)
+      R :: MAT{REAL}(3,3)
+      mass,big,fac :: REAL
+      n_f,n_u,n_c,k,g,u,v,fu,fg,a,ag,t,i,j,ub,n_stab,n_sig :: INT
+
+      ! The TLS body: the first n_f fragment atoms, holding the unique ones
+      n_f = .n_TLS_atoms
+      n_sig = .n_TLS_sigma
+      n_u = .n_unique_frag_atoms
+      DIE_IF(maxval(.unique_frag_atom(1:n_u))>n_f,"TLS: a unique fragment atom lies outside the TLS body")
+      seitz = .xyz_seitz_matrices
+
+      ! Origin: the TLS body's centre of mass
+      .TLS_origin = ZERO
+      mass = ZERO
+      do g = 1,n_f
+         .TLS_origin = .TLS_origin + .fragment_atom(g).mass*.fragment_atom(g).position
+         mass = mass + .fragment_atom(g).mass
+      end
+      .TLS_origin = .TLS_origin/mass
+
+      ! d U / d sigma for every TLS body atom. Each column is scaled to unit
+      ! length, so the tests for null directions below treat a soft-mode
+      ! amplitude (whose response carries 1/m, m in electron masses) on the
+      ! same footing as Sigma; the scaling is undone in Q at the end.
+      Rall.create(6*n_f,n_sig)
+      do g = 1,n_f
+         Rall(6*g-5:6*g,:) = .TLS_response(g)
+      end
+      colnorm.create(n_sig)
+      do i = 1,n_sig
+         colnorm(i) = norm2(Rall(:,i))
+         if (colnorm(i)<=ZERO) colnorm(i) = ONE
+         Rall(:,i) = Rall(:,i)/colnorm(i)
+      end
+
+      ! Symmetry conditions on sigma, as rows of C sigma = 0
+      n_stab = 0
+      do u = 1,n_u
+         a = .asym_atom_for_frag_atom(.unique_frag_atom(u))
+         n_stab = n_stab + .asym_atom_stabilizer(a).element.dim
+      end
+      C.create(6*(n_f+n_stab),n_sig)
+      C = ZERO
+      n_c = 0
+      do g = 1,n_f
+         ! The unique atom imaging the same asymmetric unit atom
+         ag = .asym_atom_for_frag_atom(g)
+         fu = 0
+         do v = 1,n_u
+            if (.asym_atom_for_frag_atom(.unique_frag_atom(v))/=ag) cycle
+            fu = .unique_frag_atom(v)
+         end
+         if (fu==0 OR fu==g) cycle
+         R = matmul(seitz(:,:,.asym_symop_for_frag_atom(g)), &
+                    transpose(seitz(:,:,.asym_symop_for_frag_atom(fu))))
+         GAUSSIAN_DATA:symmetric_tensor_2_product_mx(W,R)
+         C(n_c+1:n_c+6,:) = Rall(6*g-5:6*g,:) - matmul(W,Rall(6*fu-5:6*fu,:))
+         n_c = n_c + 6
+      end
+      do u = 1,n_u
+         fu = .unique_frag_atom(u)
+         a  = .asym_atom_for_frag_atom(fu)
+         stab = .asym_atom_stabilizer(a).element
+         do t = 1,stab.dim
+            R = matmul(seitz(:,:,.asym_symop_for_frag_atom(fu)), &
+                matmul(seitz(:,:,stab(t)),transpose(seitz(:,:,.asym_symop_for_frag_atom(fu)))))
+            GAUSSIAN_DATA:symmetric_tensor_2_product_mx(W,R)
+            C(n_c+1:n_c+6,:) = matmul(W,Rall(6*fu-5:6*fu,:)) - Rall(6*fu-5:6*fu,:)
+            n_c = n_c + 6
+         end
+         stab.destroy
+      end
+
+      ! The site-symmetric sigma: the null space of C
+      CtC.create(n_sig,n_sig)
+      CtC.to_product_of(C(1:n_c,:),C(1:n_c,:),transpose_a=TRUE)
+      eval.create(n_sig)
+      evec.create(n_sig,n_sig)
+      CtC.solve_symmetric_eigenproblem(eval,evec)
+      big = max(maxval(abs(eval)),ONE)
+      k = count(abs(eval)<=TOL(8)*big)
+      Z.create(n_sig,k)
+      j = 0
+      do i = 1,n_sig
+         if (abs(eval(i))>TOL(8)*big) cycle
+         j = j + 1
+         Z(:,j) = evec(:,i)
+      end
+      if (n_c==0) then
+         Z.destroy
+         Z.create(n_sig,n_sig)
+         Z = ZERO
+         do i = 1,n_sig
+            Z(i,i) = ONE
+         end
+         k = n_sig
+      end
+
+      ! Drop what no U sees (tr S): keep the range of Rall within Z
+      MZ.create(6*n_f,k)
+      MZ.to_product_of(Rall,Z)
+      GZ.create(k,k)
+      GZ.to_product_of(MZ,MZ,transpose_a=TRUE)
+      eval.destroy; evec.destroy
+      eval.create(k)
+      evec.create(k,k)
+      GZ.solve_symmetric_eigenproblem(eval,evec)
+      big = maxval(abs(eval))
+      j = count(eval>TOL(10)*big)
+      Q.create(n_sig,j)
+      t = 0
+      do i = 1,k
+         if (eval(i)<=TOL(10)*big) cycle
+         t = t + 1
+         Q(:,t) = matmul(Z,evec(:,i))
+      end
+      k = j
+
+      ! Back to unscaled sigma: Rall Q is unchanged
+      do i = 1,n_sig
+         Q(i,:) = Q(i,:)/colnorm(i)
+         Rall(:,i) = Rall(:,i)*colnorm(i)
+      end
+      colnorm.destroy
+
+      ! The Jacobian columns: d U_u / d p on each unique atom's ADP rows
+      .TLS_unique_response.destroy
+      .TLS_unique_response.create(6*n_u,k)
+      Jt.create(.asymmetric_unit_atom.no_of_pADPs,k)
+      Jt = ZERO
+      ub = 0
+      do u = 1,n_u
+         fu = .unique_frag_atom(u)
+         Cg.create(6,k)
+         Cg.to_product_of(Rall(6*fu-5:6*fu,:),Q)
+         Jt(ub+4:ub+9,:) = Cg
+         .TLS_unique_response(6*u-5:6*u,:) = Cg
+         Cg.destroy
+         ub = ub + .fragment_atom(fu).no_of_pADPs
+      end
+      do j = 1,k
+         fac = maxval(abs(Jt(:,j)))
+         if (fac<=ZERO) cycle
+         Jt(:,j) = Jt(:,j)/fac
+         Q(:,j) = Q(:,j)/fac
+         .TLS_unique_response(:,j) = .TLS_unique_response(:,j)/fac
+      end
+
+      .TLS_basis.destroy
+      .TLS_basis = Q
+
+      Q.destroy; GZ.destroy; MZ.destroy; Z.destroy
+      evec.destroy; eval.destroy; CtC.destroy; C.destroy; Rall.destroy
+      seitz.destroy
+
+   end
+
+   set_refinement_parameters :: leaky
+   ! Make the refined parameters p in .xray_data.ls for the unique fragment
+   ! atoms' pADPs X. For a TLS model the ADP rows are put on the model,
+   ! U = U_high + (TLS part fitted to U - U_high), and the atoms -- unique
+   ! fragment and asymmetric unit -- are given those ADPs.
+      self :: INOUT
+   ENSURE(.xray_data.allocated,"no data")
+   ENSURE(.xray_data.ls.allocated,"no least-squares data")
+
+      X,X_fixed,v :: VEC{REAL}@
+      fixed :: VEC{BIN}@
+      seitz_T :: MAT3{REAL}@
+      X_atom :: ATOM
+      n_X,u,f,a,s,n,ub :: INT
+      tls :: BIN
+
+      if (.xray_data.ls.jacobian.deallocated) return
+      tls = .xray_data.ADP_model=="tls"
+
+      ! X, and its fixed part
+      n_X = .xray_data.ls.n_X
+      X.create(n_X)
+      X_fixed.create(n_X)
+      fixed.create(n_X)
+      X_fixed = ZERO
+      fixed = FALSE
+      ub = 0
+      do u = 1,.n_unique_frag_atoms
+         f = .unique_frag_atom(u)
+         n = .fragment_atom(f).no_of_pADPs
+         X(ub+1:ub+n) = .fragment_atom(f).pADP_vector
+         if (tls) then
+            fixed(ub+4:ub+9) = TRUE
+            if (.fragment_U_high.allocated) then
+               X_fixed(ub+4) = .fragment_U_high(1,1,f)
+               X_fixed(ub+5) = .fragment_U_high(2,2,f)
+               X_fixed(ub+6) = .fragment_U_high(3,3,f)
+               X_fixed(ub+7) = .fragment_U_high(1,2,f)
+               X_fixed(ub+8) = .fragment_U_high(1,3,f)
+               X_fixed(ub+9) = .fragment_U_high(2,3,f)
+            end
+         end
+         ub = ub + n
+      end
+
+      .xray_data.ls.set_parameters_from(X,X_fixed,fixed)
+
+      ! A TLS model: give the atoms the model's ADPs
+      if (tls) then
+         seitz_T = .transposed_xyz_seitz_matrices
+         ub = 0
+         do u = 1,.n_unique_frag_atoms
+            f = .unique_frag_atom(u)
+            a = .asym_atom_for_frag_atom(f)
+            s = .asym_symop_for_frag_atom(f)
+            n = .fragment_atom(f).no_of_pADPs
+            v = X(ub+1:ub+n)
+            .fragment_atom(f).set_pADP_vector_to(v)
+            X_atom.pADP_vector.create(n)
+            X_atom.set_pADP_vector_to(v)
+            X_atom.transform_pADP_vector_with(seitz_T(:,:,s))
+            .asymmetric_unit_atom(a).set_pADP_vector_to(X_atom.pADP_vector)
+            X_atom.destroy_ptr_part
+            v.destroy
+            ub = ub + n
+         end
+         seitz_T.destroy
+         .set_frag_from_asym_pADPs
+      end
+
+      fixed.destroy
+      X_fixed.destroy
+      X.destroy
+
+   end
+
+   set_TLS_restraints :: leaky
+   ! Set the restraint weights W and shift of .xray_data.ls for the current
+   ! parameters of a TLS model. Each restraint holds a linear function
+   ! r . sigma of the elements sigma of Sigma toward a target, with a
+   ! sigma s:
+   ! . a soft-mode amplitude toward its harmonic value a0, s =
+   !   soft_mode_restraint x a0; an imaginary mode has none and is free;
+   ! . with use_soft_mode_correlations=, a cross term toward zero, s =
+   !   correlation_restraint x sqrt(scale_p scale_q): its correlation
+   !   coefficient toward zero;
+   ! . with use_positive_TLS_sigma=, v^T Sigma v toward zero for each eigenvector
+   !   v of Sigma with a negative eigenvalue, s = 1/100 of its scale: the
+   !   inequality Sigma >= 0, held while the data push against it.
+   ! The scale of a coordinate is its Sigma diagonal (at least 1/1000 of
+   ! the largest of T or L), or for a soft mode the harmonic amplitude at
+   ! |frequency|. sigma = Q p, Q = .TLS_basis, so row r acts on p as r Q.
+   ! With R the rows r Q / s and t = (target - r . sigma)/s, W = R^T R and
+   ! the shift d = R^T y with (R R^T) y = t, so that W d = R^T t.
+      self :: INOUT
+   ENSURE(.xray_data.ls.allocated,"no least-squares data")
+
+      X,p,sv,scl,tg,sgm,t,y,ev,e2 :: VEC{REAL}@
+      pr :: MAT{INT}@
+      rw,RQ,RR,Smat,evec,V2 :: MAT{REAL}@
+      w,kT,big,fac :: REAL
+      n_s,n_sig,n_v,k,first,n_p,n_r,i,j,a,ip,iq :: INT
+
+      n_s   = .n_soft_modes
+      n_sig = .n_TLS_sigma
+      n_v   = 6 + n_s
+      k     = .TLS_basis.dim2
+      first = .TLS_first_param
+      n_p   = .xray_data.ls.n_param
+      .TLS_sigma_pairs(pr)
+
+      ! The current Sigma
+      .make_unique_frag_X(X)
+      .xray_data.ls.make_param_from_X(X,p)
+      sv.create(n_sig)
+      sv.to_product_of(.TLS_basis,p(first:first+k-1))
+      Smat.create(n_v,n_v)
+      Smat = ZERO
+      do i = 1,n_sig
+         Smat(pr(1,i),pr(2,i)) = sv(i)
+         Smat(pr(2,i),pr(1,i)) = sv(i)
+      end
+
+      ! The scale of each coordinate
+      scl.create(n_v)
+      do i = 1,6
+         scl(i) = Smat(i,i)
+      end
+      big = max(maxval(scl(1:3)),TOL(10))
+      do i = 1,3
+         scl(i) = max(scl(i),TOL(3)*big)
+      end
+      big = max(maxval(scl(4:6)),TOL(10))
+      do i = 4,6
+         scl(i) = max(scl(i),TOL(3)*big)
+      end
+      kT = .soft_mode_temperature/KELVIN_PER_HARTREE
+      do j = 1,n_s
+         w = abs(.soft_mode_frequency(j))/WAVENUMBER_PER_HARTREE
+         scl(6+j) = HALF/w
+         if (kT>ZERO) scl(6+j) = scl(6+j)/tanh(HALF*w/kT)
+      end
+
+      ! The restraints, as rows on sigma
+      rw.create(n_sig+n_v,n_sig)
+      tg.create(n_sig+n_v)
+      sgm.create(n_sig+n_v)
+      rw = ZERO
+      n_r = 0
+      do j = 1,n_s
+         if (.soft_mode_harmonic(j)<=ZERO) cycle
+         n_r = n_r + 1
+         rw(n_r,21+j) = ONE
+         tg(n_r) = .soft_mode_harmonic(j)
+         sgm(n_r) = .xray_data.soft_mode_restraint*.soft_mode_harmonic(j)
+      end
+      if (.xray_data.use_soft_mode_correlations) then
+         do i = 22+n_s,n_sig
+            ip = pr(1,i)
+            iq = pr(2,i)
+            n_r = n_r + 1
+            rw(n_r,i) = ONE
+            tg(n_r) = ZERO
+            sgm(n_r) = .xray_data.correlation_restraint*sqrt(scl(ip)*scl(iq))
+         end
+      end
+      .n_TLS_held_at_zero = 0
+      if (.xray_data.use_positive_TLS_sigma) then
+         ev.create(n_v)
+         evec.create(n_v,n_v)
+         RR = Smat
+         RR.solve_symmetric_eigenproblem(ev,evec)
+         big = maxval(abs(ev))
+         do a = 1,n_v
+            if (ev(a)>=-TOL(8)*big) cycle
+            n_r = n_r + 1
+            do i = 1,n_sig
+               ip = pr(1,i)
+               iq = pr(2,i)
+               fac = evec(ip,a)*evec(iq,a)
+               if (ip/=iq) fac = TWO*fac
+               rw(n_r,i) = fac
+            end
+            tg(n_r) = ZERO
+            sgm(n_r) = sum(evec(:,a)**2*scl)/HUNDRED
+            .n_TLS_held_at_zero = .n_TLS_held_at_zero + 1
+         end
+         RR.destroy; evec.destroy; ev.destroy
+      end
+
+      .xray_data.ls.restraint_W.destroy
+      .xray_data.ls.restraint_shift.destroy
+
+      ! None: leave the solve unrestrained, as without soft modes
+      if (n_r==0 AND n_s==0) then
+         Smat.destroy; scl.destroy; sgm.destroy; tg.destroy; rw.destroy
+         sv.destroy; p.destroy; X.destroy; pr.destroy
+         return
+      end
+
+      .xray_data.ls.restraint_W.create(n_p,n_p)
+      .xray_data.ls.restraint_shift.create(n_p)
+      .xray_data.ls.restraint_W = ZERO
+      .xray_data.ls.restraint_shift = ZERO
+
+      if (n_r>0) then
+         RQ.create(n_r,k)
+         RQ.to_product_of(rw(1:n_r,:),.TLS_basis)
+         t.create(n_r)
+         t.to_product_of(rw(1:n_r,:),sv)
+         do i = 1,n_r
+            t(i) = (tg(i) - t(i))/sgm(i)
+            RQ(i,:) = RQ(i,:)/sgm(i)
+         end
+         .xray_data.ls.restraint_W(first:first+k-1,first:first+k-1) = matmul(transpose(RQ),RQ)
+         ! y = (R R^T)^+ t, dropping directions no parameter reaches
+         RR.create(n_r,n_r)
+         RR.to_product_of(RQ,RQ,transpose_b=TRUE)
+         e2.create(n_r)
+         V2.create(n_r,n_r)
+         RR.solve_symmetric_eigenproblem(e2,V2)
+         big = max(maxval(abs(e2)),TOL(20))
+         y.create(n_r)
+         y = ZERO
+         do i = 1,n_r
+            if (e2(i)<=TOL(10)*big) cycle
+            y = y + V2(:,i)*dot_product(V2(:,i),t)/e2(i)
+         end
+         .xray_data.ls.restraint_shift(first:first+k-1) = matmul(transpose(RQ),y)
+         y.destroy; V2.destroy; e2.destroy; RR.destroy; t.destroy; RQ.destroy
+      end
+
+      Smat.destroy; scl.destroy; sgm.destroy; tg.destroy; rw.destroy
+      sv.destroy; p.destroy; X.destroy; pr.destroy
+
+   end
+
+   make_unique_frag_X(X) :: leaky, PURE
+   ! Make "X", the unique fragment atoms' pADP vectors end to end, in the
+   ! order of the refinement Jacobian.
+      self :: IN
+      X :: VEC{REAL}@, OUT
+
+      u,f,n,ub,n_X :: INT
+
+      n_X = 0
+      do u = 1,.n_unique_frag_atoms
+         n_X = n_X + .fragment_atom(.unique_frag_atom(u)).no_of_pADPs
+      end
+      X.create(n_X)
+      ub = 0
+      do u = 1,.n_unique_frag_atoms
+         f = .unique_frag_atom(u)
+         n = .fragment_atom(f).no_of_pADPs
+         X(ub+1:ub+n) = .fragment_atom(f).pADP_vector
+         ub = ub + n
+      end
+
+   end
+
+   put_TLS_results
+   ! Put T, L and S of a TLS refinement, about the fragment's centre of
+   ! mass, with esds. They are fitted to the unique fragment atoms' ADPs
+   ! minus U_high, which lie on the model, and their esds come from the
+   ! covariance of the TLS parameters scaled by GoF^2.
+      self :: IN
+   ENSURE(.TLS_basis.allocated,"no TLS model")
+   ENSURE(.TLS_unique_response.allocated,"no TLS model")
+
+      Mt,MtM,Cp,CS,Sm,Esd :: MAT{REAL}@
+      y,p,rhs,sv,var :: VEC{REAL}@
+      Um :: MAT{REAL}(3,3)
+      L_evals :: VEC{REAL}(3)
+      L_evecs :: MAT{REAL}(3,3)
+      ang,deg2,adeg :: REAL
+      n_u,k,u,f,i,j,pp,qq,m,first :: INT
+
+      n_u = .n_unique_frag_atoms
+      k   = .TLS_basis.dim2
+      first = .TLS_first_param
+
+      ! The TLS part of each unique atom's ADP, and the fit to it
+      y.create(6*n_u)
+      do u = 1,n_u
+         f = .unique_frag_atom(u)
+         Um = .fragment_atom(f).ADP_tensor
+         if (.fragment_U_high.allocated) Um = Um - .fragment_U_high(:,:,f)
+         y(6*u-5:6*u) = [Um(1,1),Um(2,2),Um(3,3),Um(1,2),Um(1,3),Um(2,3)]
+      end
+      Mt = .TLS_unique_response
+      MtM.create(k,k)
+      MtM.to_product_of(Mt,Mt,transpose_a=TRUE)
+      rhs.create(k)
+      rhs.to_product_of(Mt,y,transpose_a=TRUE)
+      p.create(k)
+      MtM.solve_linear_equation(rhs,p)
+
+      ! Sigma and its esds; the 21 upper-triangle elements
+      sv.create(.n_TLS_sigma)
+      sv.to_product_of(.TLS_basis,p)
+      var.create(.n_TLS_sigma)
+      var = ZERO
+      if (.xray_data.ls.param_covariance.allocated) then
+         Cp = .xray_data.ls.param_covariance(first:first+k-1,first:first+k-1)
+         CS.create(.n_TLS_sigma,k)
+         CS.to_product_of(.TLS_basis,Cp)
+         do i = 1,.n_TLS_sigma
+            var(i) = .xray_data.GoF2*dot_product(CS(i,:),.TLS_basis(i,:))
+         end
+         CS.destroy
+         Cp.destroy
+      end
+      Sm.create(6,6)
+      Esd.create(6,6)
+      m = 0
+      do pp = 1,6
+      do qq = pp,6
+         m = m + 1
+         Sm(pp,qq) = sv(m); Sm(qq,pp) = sv(m)
+         Esd(pp,qq) = sqrt(max(ZERO,var(m))); Esd(qq,pp) = Esd(pp,qq)
+      end
+      end
+
+      ang  = ANGSTROM_PER_BOHR
+      deg2 = (180d0/PI)**2
+      adeg = ANGSTROM_PER_BOHR*180d0/PI
+
+      stdout.flush
+      stdout.text("===========================")
+      stdout.text("Rigid-body (TLS) parameters")
+      stdout.text("===========================")
+      stdout.flush
+      stdout.text(". U_i = U_i^high + T + A_i L A_i^T + A_i S + S^T A_i^T, about the")
+      stdout.text("  fragment's centre of mass; tr S = 0. Esds in brackets.")
+      stdout.flush
+      stdout.show("No. of TLS parameters           =",k)
+      stdout.show("U_high from stiff modes used?   =",.fragment_U_high.allocated)
+      stdout.show("Origin x /A                     =",.TLS_origin(1)*ang)
+      stdout.show("Origin y /A                     =",.TLS_origin(2)*ang)
+      stdout.show("Origin z /A                     =",.TLS_origin(3)*ang)
+      stdout.flush
+      stdout.text("T /A^2:")
+      do i = 1,3
+         stdout.text("   "//trim(.TLS_element_str(Sm(i,1:3)*ang*ang,Esd(i,1:3)*ang*ang)))
+      end
+      stdout.flush
+      stdout.text("L /deg^2:")
+      do i = 4,6
+         stdout.text("   "//trim(.TLS_element_str(Sm(i,4:6)*deg2,Esd(i,4:6)*deg2)))
+      end
+      stdout.flush
+      stdout.text("S /(A deg), rows lambda, columns t:")
+      do i = 4,6
+         stdout.text("   "//trim(.TLS_element_str(Sm(i,1:3)*adeg,Esd(i,1:3)*adeg)))
+      end
+      stdout.flush
+      Um = Sm(4:6,4:6)*deg2
+      Um.solve_symmetric_eigenproblem(L_evals,L_evecs)
+      stdout.show("L eigenvalues /deg^2, smallest  =",L_evals(1))
+      stdout.show("L eigenvalues /deg^2, middle    =",L_evals(2))
+      stdout.show("L eigenvalues /deg^2, largest   =",L_evals(3))
+      stdout.show("rms libration /deg              =",sqrt(max(ZERO,sum(L_evals)/THREE)))
+      stdout.flush
+
+      ! Soft modes, and their correlations
+      if (.n_soft_modes>0) .put_soft_mode_results(sv(22:),var(22:))
+      if (.n_soft_modes>0 AND .xray_data.use_soft_mode_correlations) .put_soft_mode_correlations(sv,var)
+      if (.xray_data.use_positive_TLS_sigma) then
+         stdout.show("Directions of Sigma held at 0   =",.n_TLS_held_at_zero)
+         stdout.flush
+      end
+
+      ! Model selection
+      .put_model_selection
+
+      Esd.destroy; Sm.destroy; var.destroy; sv.destroy
+      p.destroy; rhs.destroy; MtM.destroy; Mt.destroy; y.destroy
+
+   end
+
+   put_soft_mode_results(a,var)
+   ! Put the refined soft-mode amplitudes "a" (<Q^2>, atomic units) with
+   ! the variances "var", against their harmonic values, and the frequency
+   ! each refined amplitude implies at the data's temperature.
+      self :: IN
+      a,var :: VEC{REAL}, IN
+
+      w,kT :: REAL
+      j :: INT
+
+      kT = .soft_mode_temperature/KELVIN_PER_HARTREE
+
+      stdout.flush
+      stdout.text("Soft internal modes, amplitude <Q^2> in atomic units (m_e^1/2 bohr)^2.")
+      stdout.text("Harmonic: from the Hessian. Implied: the frequency that gives the refined")
+      stdout.text("amplitude at the same temperature. A negative frequency is imaginary.")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=5)
+      stdout.put("#",int_width=TRUE)
+      stdout.put("Freq /cm^-1")
+      stdout.put("Harmonic")
+      stdout.put("Refined")
+      stdout.put("esd")
+      stdout.put("Implied /cm^-1")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=5)
+      do j = 1,.n_soft_modes
+         stdout.put(j)
+         stdout.put(.soft_mode_frequency(j))
+         if (.soft_mode_harmonic(j)>ZERO) then; stdout.put(.soft_mode_harmonic(j))
+         else;                                  stdout.put("--")
+         end
+         stdout.put(a(j))
+         stdout.put(sqrt(max(ZERO,var(j))))
+         if (a(j)>ZERO) then
+            w = ::frequency_for_amplitude(a(j),kT)
+            stdout.put(w*WAVENUMBER_PER_HARTREE)
+         else
+            stdout.put("--")
+         end
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=5)
+
+   end
+
+   put_soft_mode_correlations(sv,var)
+   ! Put the correlation coefficient of each soft mode with the rigid-body
+   ! coordinates and the other soft modes, Sigma_pq/sqrt(Sigma_pp Sigma_qq),
+   ! from the elements "sv" of Sigma and their variances "var", with esds.
+   ! A coefficient whose diagonal elements are not positive is not shown.
+      self :: IN
+      sv,var :: VEC{REAL}, IN
+
+      pr :: MAT{INT}@
+      Smat,Vmat :: MAT{REAL}@
+      lab :: VEC{STR}@
+      den :: REAL
+      n_s,n_v,i,j,q :: INT
+
+      n_s = .n_soft_modes
+      n_v = 6 + n_s
+      .TLS_sigma_pairs(pr)
+      Smat.create(n_v,n_v); Smat = ZERO
+      Vmat.create(n_v,n_v); Vmat = ZERO
+      do i = 1,.n_TLS_sigma
+         Smat(pr(1,i),pr(2,i)) = sv(i); Smat(pr(2,i),pr(1,i)) = sv(i)
+         Vmat(pr(1,i),pr(2,i)) = var(i); Vmat(pr(2,i),pr(1,i)) = var(i)
+      end
+      lab.create(n_v)
+      lab(1:6) = ["t_x     ","t_y     ","t_z     ","lambda_x","lambda_y","lambda_z"]
+      do j = 1,n_s
+         lab(6+j) = "Q_"//trim(j.to_str)
+      end
+
+      stdout.flush
+      stdout.text("Soft-mode correlation coefficients Sigma_pq/sqrt(Sigma_pp Sigma_qq),")
+      stdout.text("one row per soft mode; esds in brackets.")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=n_v)
+      stdout.put("#",int_width=TRUE)
+      do q = 1,n_v
+         stdout.put(trim(lab(q)))
+      end
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=n_v)
+      do j = 1,n_s
+         stdout.put(j)
+         do q = 1,n_v
+            den = Smat(6+j,6+j)*Smat(q,q)
+            if (q==6+j OR den<=ZERO) then
+               stdout.put("--")
+            else
+               den = sqrt(den)
+               stdout.put(trim(.TLS_element_str_1(Smat(6+j,q)/den,sqrt(max(ZERO,Vmat(6+j,q)))/den)))
+            end
+         end
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=n_v)
+
+      lab.destroy; Vmat.destroy; Smat.destroy; pr.destroy
+
+   end
+
+   TLS_element_str_1(val,esd) result (res) :: PURE
+   ! "val" with its "esd" in brackets, as a short string.
+      self :: IN
+      val,esd :: REAL, IN
+      res :: STR
+
+      if (esd>TOL(10)) then; res = trim(adjustl(val.to_str(esd,12,4)))
+      else;                  res = trim(adjustl(val.to_str("f12.4")))
+      end
+
+   end
+
+   frequency_for_amplitude(a,kT) result (res) :: selfless, PURE
+   ! The frequency w (atomic units) for which a harmonic oscillator at
+   ! temperature kT (hartree) has mean-square amplitude <Q^2> = "a":
+   ! coth(w/2kT)/(2w) = a, which falls monotonically with w. At kT = 0,
+   ! w = 1/(2a). Found by bisection in log w.
+      a,kT :: REAL, IN
+      res :: REAL
+
+      lo,hi,w,f :: REAL
+      i :: INT
+
+      if (kT<=ZERO) then
+         res = HALF/a
+         return
+      end
+      lo = log(TOL(10))
+      hi = log(TEN)
+      do i = 1,200
+         w = exp(HALF*(lo+hi))
+         f = HALF/(w*tanh(HALF*w/kT))
+         if (f>a) then; lo = log(w)
+         else;          hi = log(w)
+         end
+      end
+      res = exp(HALF*(lo+hi))
+
+   end
+
+   put_model_selection
+   ! Put the numbers for comparing refinements of the same data with
+   ! different models: chi^2, the effective number of parameters p_eff
+   ! (tr[(A+W)^-1 A] for the structural ones, plus scale and extinction),
+   ! GoF, and the criteria AIC = chi^2 + 2 p_eff and BIC = chi^2 + p_eff ln n.
+   ! Smaller AIC or BIC is the better model.
+      self :: IN
+   ENSURE(.xray_data.allocated,"no data")
+
+      chi2,p_eff,n :: REAL
+
+      n = .xray_data.reflections.dim
+      chi2 = .xray_data.GoF2*(n - .xray_data.n_param)
+      p_eff = .xray_data.n_param
+      if (.xray_data.ls.allocated) then
+         p_eff = .xray_data.n_param - .xray_data.n_param_structure + .xray_data.ls.n_param_eff
+      end
+
+      stdout.flush
+      stdout.text("Model selection:")
+      stdout.flush
+      stdout.show("No. of reflections n            =",n)
+      stdout.show("Effective no. of parameters     =",p_eff)
+      stdout.show("chi^2                           =",chi2)
+      stdout.show("GoF                             =",sqrt(.xray_data.GoF2))
+      stdout.show("AIC = chi^2 + 2 p_eff           =",chi2 + TWO*p_eff)
+      stdout.show("BIC = chi^2 + p_eff ln n        =",chi2 + p_eff*log(n))
+      stdout.flush
+
+   end
+
+   TLS_element_str(val,esd) result (res) :: PURE
+   ! Three matrix elements "val" with their "esd"s in brackets, as a string.
+      self :: IN
+      val,esd :: VEC{REAL}(3), IN
+      res :: STR
+
+      i :: INT
+
+      res = " "
+      do i = 1,3
+         if (esd(i)>TOL(10)) then; res = trim(res)//"  "//trim(adjustl(val(i).to_str(esd(i),12,6)))
+         else;                     res = trim(res)//"  "//trim(adjustl(val(i).to_str("f12.6")))
+         end
+      end
+
+   end
+
+   refinement_flags_for_frag_atom(f,refine_positions,refine_ADPs,refine_Uiso) :: PURE
+   ! Which of fragment atom "f"'s parameters are refined: its positions, its
+   ! ADPs, and whether the ADP is the single U_iso. Hydrogens follow
+   ! refine_H_positions, refine_H_ADPs and refine_H_U_iso; atoms named in
+   ! refine_nothing_for_atom refine nothing; those in refine_U_iso_for_atom
+   ! refine U_iso. The derivative routines and make_refinement_jacobian both
+   ! use this, so they cannot disagree.
+      self :: IN
+      f :: INT, IN
+      refine_positions,refine_ADPs,refine_Uiso :: BIN, OUT
+
+   ENSURE(.xray_data.allocated,"no data")
+   ENSURE(.fragment_atom.allocated,"no fragment_atom")
+
+      tag :: STR
+
+      tag = .fragment_atom(f).tag
+
+      refine_positions = NOT .xray_data.refine_ADPs_only
+      refine_ADPs      = NOT .xray_data.refine_positions_only
+      refine_Uiso      = FALSE
+
+      if (.fragment_atom(f).atomic_number==1) then
+         refine_positions = .xray_data.refine_H_positions
+         refine_ADPs      = .xray_data.refine_H_ADPs
+         refine_Uiso      = .xray_data.refine_H_U_iso
+      end
+
+      if (.xray_data.refine_U_iso_for_atom.allocated) then
+      if (any(.xray_data.refine_U_iso_for_atom==tag)) then
+         refine_Uiso = TRUE
+      end
+      end
+
+      if (.xray_data.refine_nothing_for_atom.allocated) then
+      if (any(.xray_data.refine_nothing_for_atom==tag)) then
+         refine_positions = FALSE
+         refine_ADPs      = FALSE
+      end
+      end
+
+      ENSURE(NOT (refine_Uiso AND .fragment_atom(f).has_only_ADP4s_and_errors),"can't refine isotropic ADPs & ADP4s for "//trim(tag))
+      ENSURE(NOT (refine_Uiso AND .fragment_atom(f).has_only_ADP3s_and_errors),"can't refine isotropic ADPs & ADP3s for "//trim(tag))
+
+   end
+
+   make_refinement_jacobian :: leaky
+   ! Make .xray_data.X_jacobian, which maps the refined parameters onto the
+   ! pADP vector of the unique fragment atoms, and the labels of those
+   ! parameters. For each atom: a unit column for every refined component;
+   ! one column summing U_xx, U_yy and U_zz for an isotropic ADP; and on a
+   ! special position, a basis of the site-symmetric part of those columns,
+   ! so the symmetry is built into the least squares instead of being
+   ! filtered out of it. Each column is scaled so its largest entry is one.
+      self :: INOUT
+
+   ENSURE(.fragment_info_made,"no fragment info")
+   ENSURE(.xray_data.allocated,"no data")
+   ENSURE(.asym_atom_stabilizer.allocated,"no asym_atom_stabilizer")
+
+      u,f,a,s,t,n,m,i,j,k,ub,n_X,n_p,n_stab,nz,imax :: INT
+      refine_positions,refine_ADPs,refine_Uiso :: BIN
+      Cols,Proj,Jac :: MAT{REAL}@
+      v,w :: VEC{REAL}@
+      labels :: VEC{STR}@
+      stabilizer :: VEC{INT}@
+      seitz,seitz_T :: MAT3{REAL}@
+      X_atom :: ATOM
+      nrm :: REAL
+
+      seitz   = .xyz_seitz_matrices
+      seitz_T = .transposed_xyz_seitz_matrices
+
+      n_X = .asymmetric_unit_atom.no_of_pADPs
+      Jac.create(n_X,n_X+21)
+      Jac = ZERO
+      labels.create(n_X+21)
+      n_p = 0
+      ub  = 0
+
+      do u = 1,.n_unique_frag_atoms
+
+         f = .unique_frag_atom(u)
+         a = .asym_atom_for_frag_atom(f)
+         s = .asym_symop_for_frag_atom(f)
+         n = .fragment_atom(f).no_of_pADPs
+
+         .refinement_flags_for_frag_atom(f,refine_positions,refine_ADPs,refine_Uiso)
+
+         ! A TLS model makes every atom's ADP; its columns come below
+         if (.xray_data.ADP_model=="tls") refine_ADPs = FALSE
+
+         ! Candidate columns: the refined components
+         Cols.create(n,n)
+         Cols = ZERO
+         m = 0
+         if (refine_positions) then
+            do i = 1,3
+               m = m + 1
+               Cols(i,m) = ONE
+            end
+         end
+         if (refine_ADPs) then
+            if (refine_Uiso) then
+               m = m + 1
+               Cols(4:6,m) = ONE
+            else
+               do i = 4,n
+                  m = m + 1
+                  Cols(i,m) = ONE
+               end
+            end
+         end
+
+         ! On a special position, project the columns onto the site-symmetric
+         ! subspace, then orthonormalise them and drop what vanishes. P is the
+         ! stabiliser average, taken in the asymmetric unit frame and moved to
+         ! this fragment atom's frame with its symop.
+         stabilizer = .asym_atom_stabilizer(a).element
+         n_stab = stabilizer.dim
+         if (n_stab>1 AND m>0) then
+
+            Proj.create(n,n)
+            v.create(n)
+            w.create(n)
+            X_atom.pADP_vector.create(n)
+            do j = 1,n
+               v = ZERO
+               v(j) = ONE
+               X_atom.set_pADP_vector_to(v)
+               X_atom.transform_pADP_vector_with(seitz_T(:,:,s))
+               v = X_atom.pADP_vector
+               w = ZERO
+               do t = 1,n_stab
+                  X_atom.set_pADP_vector_to(v)
+                  X_atom.transform_pADP_vector_with(seitz(:,:,stabilizer(t)))
+                  w = w + X_atom.pADP_vector
+               end
+               w = w/REALIFY(n_stab)
+               X_atom.set_pADP_vector_to(w)
+               X_atom.transform_pADP_vector_with(seitz(:,:,s))
+               Proj(:,j) = X_atom.pADP_vector
+            end
+            X_atom.destroy_ptr_part
+
+            Cols(:,1:m) = matmul(Proj,Cols(:,1:m))
+
+            ! Gram-Schmidt on the columns; drop dependent ones
+            k = 0
+            do j = 1,m
+               v = Cols(:,j)
+               do i = 1,k
+                  v = v - dot_product(Cols(:,i),v)*Cols(:,i)
+               end
+               nrm = sqrt(dot_product(v,v))
+               if (nrm<TOL(8)) cycle
+               k = k + 1
+               Cols(:,k) = v/nrm
+            end
+            m = k
+
+            ! Largest entry of each column to one; a unit column stays a unit column
+            do j = 1,m
+               imax = maxloc(abs(Cols(:,j)),dim=1)
+               Cols(:,j) = Cols(:,j)/Cols(imax,j)
+            end
+
+            w.destroy
+            v.destroy
+            Proj.destroy
+
+         end
+
+         ! Copy in, and label each parameter
+         do j = 1,m
+            n_p = n_p + 1
+            Jac(ub+1:ub+n,n_p) = Cols(:,j)
+            nz = count(abs(Cols(:,j))>TOL(10))
+            if (nz==1) then
+               i = maxloc(abs(Cols(:,j)),dim=1)
+               labels(n_p) = .asymmetric_unit_atom(a).tag_pADP_label(i)
+            else if (nz==3 AND abs(Cols(4,j)-ONE)<TOL(10) AND abs(Cols(5,j)-ONE)<TOL(10) AND abs(Cols(6,j)-ONE)<TOL(10)) then
+               labels(n_p) = trim(.asymmetric_unit_atom(a).tag)//" Uiso"
+            else
+               labels(n_p) = trim(.asymmetric_unit_atom(a).tag)//" sym"//trim(j.to_str)
+            end
+         end
+
+         Cols.destroy
+         stabilizer.destroy
+         ub = ub + n
+
+      end
+
+      ! The TLS model's columns, after the positions
+      if (.xray_data.ADP_model=="tls") then
+         .make_TLS_jacobian_columns(Cols)
+         .TLS_first_param = n_p + 1
+         do j = 1,Cols.dim2
+            n_p = n_p + 1
+            Jac(:,n_p) = Cols(:,j)
+            labels(n_p) = "TLS "//trim(j.to_str)
+         end
+         Cols.destroy
+      end
+
+      ! Keep the Jacobian, the labels and the parameter count
+      if (.xray_data.ls.deallocated) .xray_data.ls.create
+      .xray_data.ls.set_jacobian(Jac(:,1:n_p),labels(1:n_p))
+      .xray_data.SET:set_n_param_structure(n_p)
+      .xray_data.SET:update_n_param
+
+      labels.destroy
+      Jac.destroy
+      seitz_T.destroy
+      seitz.destroy
 
    end
 
@@ -4820,6 +5991,7 @@ contains
       dFc.destroy
 
       ! Get the unique atom shifts, dX (leaky)
+      if (.xray_data.ADP_model=="tls") .set_TLS_restraints
       .xray_data.SET:solve_normal_equations(dFa)
 
       dFa.destroy
@@ -4854,6 +6026,7 @@ contains
       dFc.destroy
 
       ! Get the unique atom shifts, dX (leaky)
+      if (.xray_data.ADP_model=="tls") .set_TLS_restraints
       .xray_data.SET:solve_normal_equations(dFa)
 
       dFa.destroy
@@ -5168,7 +6341,7 @@ contains
          ! independent, and the commented-out `parallel_read` above shows it was
          ! the intent) but it is a rewrite, and not obviously a win -- N ranks
          ! each opening, writing and closing a small file at the same instant
-         ! contends on the filesystem, badly over NFS/Lustre. See DEFERRED.md.
+         ! contends on the filesystem, badly over NFS/Lustre. See TASKS_AND_HISTORY.md.
          arch.create(trim(.fragment_atom(f).tag)//"-SFs")
          if (.xray_data.use_text_SFs) arch.set_format("ascii")
          arch.write(ff)
@@ -5967,57 +7140,16 @@ contains
          !base = .fragment_atom(.unique_frag_atom).no_of_pADPs_up_to_atom(u)
          base = .fragment_atom.no_of_pADPs_up_to_atom(u,.unique_frag_atom)
 
-         refine_ADPs_only      = .xray_data.refine_ADPs_only
-         refine_positions_only = .xray_data.refine_positions_only
-
-         ! Defaults per atom
-         if (NOT refine_ADPs_only) then 
-            refine_positions = TRUE 
-         else
-            refine_positions = FALSE
-         end
-
-         if (NOT refine_positions_only) then 
-            refine_ADPs      = TRUE
-         else
-            refine_ADPs      = FALSE
-         end
-         refine_Uiso      = FALSE
-         refine_ADP4s     = .fragment_atom(f).has_only_ADP4s_and_errors
-         refine_ADP3s     = .fragment_atom(f).has_only_ADP3s_and_errors
-
-         ! Special cases for H atom
-         is_H_atom = .fragment_atom(f).atomic_number==1
-         if (is_H_atom) then
-            refine_positions = .xray_data.refine_H_positions
-            refine_ADPs      = .xray_data.refine_H_ADPs
-            refine_Uiso      = .xray_data.refine_H_U_iso
-         end
-
-         ! Final check to do U_iso this atom?
-         if (NOT refine_Uiso) then
-         if (has_Uiso) then
-         if (any(.xray_data.refine_U_iso_for_atom==tag)) then
-            refine_Uiso = TRUE
-         end
-         end
-         end
-
-         ! Skip derivatives for this atom?
-         if (has_skip) then
-         if (any(.xray_data.refine_nothing_for_atom==tag)) then
-            refine_positions = FALSE
-            refine_ADPs      = FALSE
-         end
-         end
+         ! Which of this atom's parameters are refined
+         .refinement_flags_for_frag_atom(f,refine_positions,refine_ADPs,refine_Uiso)
+         refine_ADP4s = .fragment_atom(f).has_only_ADP4s_and_errors
+         refine_ADP3s = .fragment_atom(f).has_only_ADP3s_and_errors
 
          ! Get ADP2s
          .fragment_atom(f).put_ADP2_vector_to(adp2)
 
 
          ! Sanity check
-         ENSURE(NOT (refine_Uiso AND refine_ADP4s),"can't refine isotropic ADPs & ADP4s for "//trim(tag))
-         ENSURE(NOT (refine_Uiso AND refine_ADP3s),"can't refine isotropic ADPs & ADP3s for "//trim(tag))
          ENSURE(adp2.equals(.fragment_atom(f).ADP_tensor),"ADP2 not equal to ADP_tensor")
 
          ! ADP4's !!!!!!!!!!!!!
@@ -6206,121 +7338,61 @@ contains
          else ! NO anharmonicity
          !!!!!!!!!!!!!!!!!!!!!!!
 
-            ! This is for isotropic refinement
-            if (refine_Uiso) then ! For U_iso 
 
-               do k = 1,n_k
-   
-                  ! Scattering vector
-                  k1 = k_pt(k,1)
-                  k2 = k_pt(k,2)
-                  k3 = k_pt(k,3)
-                  kv = [k1,k2,k3]
-   
-                  ! Component products
-                  k1_k1 = k1*k1
-                  k2_k2 = k2*k2
-                  k3_k3 = k3*k3
-                  k1_k2 = k1*k2
-                  k1_k3 = k1*k3
-                  k2_k3 = k2*k3
-   
-                  ! U tensor contracted with k vector
-                  c2 = adp2.contract_with(kv)*HALF
-   
-                  ! Static structure factor x TF
-                  ! i.e. dynamic structure factor,
-                  ! in the harmonic approximation
-                  sfh = sf_u(k) * exp(-c2)
-   
-                  ! Multiples *harmonic* structure factor
-                  sf1 = sfh
-                  sf2 = sf1 * HALF * (k1_k1+k2_k2+k3_k3)
-   
-                  ! SF contribution (harmonic)
-                  sf_e(k) = sf_e(k) + sf1
-   
-                  if (refine_positions) then
-   
-                     ! Pos derivatives
-                     sf_d(k,base+ 1) =  II*k1*sf1
-                     sf_d(k,base+ 2) =  II*k2*sf1
-                     sf_d(k,base+ 3) =  II*k3*sf1
-   
-                  end
-   
-                  if (refine_ADPs) then
-   
-                     ! U_iso derivatives
-                     sf_d(k,base+ 4) = -sf2
-                     sf_d(k,base+ 5) = -sf2
-                     sf_d(k,base+ 6) = -sf2
-                     sf_d(k,base+ 7) = ZERO
-                     sf_d(k,base+ 8) = ZERO
-                     sf_d(k,base+ 9) = ZERO
-   
-                  end
-   
+            do k = 1,n_k
+
+               ! Scattering vector
+               k1 = k_pt(k,1)
+               k2 = k_pt(k,2)
+               k3 = k_pt(k,3)
+               kv = [k1,k2,k3]
+
+               ! Component products
+               k1_k1 = k1*k1
+               k2_k2 = k2*k2
+               k3_k3 = k3*k3
+               k1_k2 = k1*k2
+               k1_k3 = k1*k3
+               k2_k3 = k2*k3
+
+               ! U tensor contracted with k vector
+               c2 = adp2.contract_with(kv)*HALF
+
+               ! Static structure factor x TF
+               ! i.e. dynamic structure factor,
+               ! in the harmonic approximation
+               sfh = sf_u(k) * exp(-c2)
+
+               ! Multiples *harmonic* structure factor
+               sf1 = sfh
+               sf2 = sf1 * HALF
+
+               ! SF contribution (harmonic)
+               sf_e(k) = sf_e(k) + sf1
+
+               if (refine_positions) then
+
+                  ! Pos derivatives
+                  sf_d(k,base+ 1) =  II*k1*sf1
+                  sf_d(k,base+ 2) =  II*k2*sf1
+                  sf_d(k,base+ 3) =  II*k3*sf1
+
                end
 
-            ! This is *AN*isotropic refinement
-            else ! For ADP2s !!!!!!!!!!!!!!!!!
+               if (refine_ADPs) then
 
-               do k = 1,n_k
-   
-                  ! Scattering vector
-                  k1 = k_pt(k,1)
-                  k2 = k_pt(k,2)
-                  k3 = k_pt(k,3)
-                  kv = [k1,k2,k3]
-   
-                  ! Component products
-                  k1_k1 = k1*k1
-                  k2_k2 = k2*k2
-                  k3_k3 = k3*k3
-                  k1_k2 = k1*k2
-                  k1_k3 = k1*k3
-                  k2_k3 = k2*k3
-   
-                  ! U tensor contracted with k vector
-                  c2 = adp2.contract_with(kv)*HALF
-   
-                  ! Static structure factor x TF
-                  ! i.e. dynamic structure factor,
-                  ! in the harmonic approximation
-                  sfh = sf_u(k) * exp(-c2)
-   
-                  ! Multiples *harmonic* structure factor
-                  sf1 = sfh
-                  sf2 = sf1 * HALF
-   
-                  ! SF contribution (harmonic)
-                  sf_e(k) = sf_e(k) + sf1
-   
-                  if (refine_positions) then
-   
-                     ! Pos derivatives
-                     sf_d(k,base+ 1) =  II*k1*sf1
-                     sf_d(k,base+ 2) =  II*k2*sf1
-                     sf_d(k,base+ 3) =  II*k3*sf1
-   
-                  end
-   
-                  if (refine_ADPs) then
-   
-                     ! U2 derivatives
-                     sf_d(k,base+ 4) = -k1_k1*sf2
-                     sf_d(k,base+ 5) = -k2_k2*sf2
-                     sf_d(k,base+ 6) = -k3_k3*sf2
-                     sf_d(k,base+ 7) = -k1_k2*sf1
-                     sf_d(k,base+ 8) = -k1_k3*sf1
-                     sf_d(k,base+ 9) = -k2_k3*sf1
-   
-                  end
-   
+                  ! U2 derivatives
+                  sf_d(k,base+ 4) = -k1_k1*sf2
+                  sf_d(k,base+ 5) = -k2_k2*sf2
+                  sf_d(k,base+ 6) = -k3_k3*sf2
+                  sf_d(k,base+ 7) = -k1_k2*sf1
+                  sf_d(k,base+ 8) = -k1_k3*sf1
+                  sf_d(k,base+ 9) = -k2_k3*sf1
+
                end
 
             end
+
 
          end
 
@@ -6430,56 +7502,15 @@ contains
       ! base = .fragment_atom(.unique_frag_atom).no_of_pADPs_up_to_atom(u)
          base = .fragment_atom.no_of_pADPs_up_to_atom(u,.unique_frag_atom)
 
-         refine_ADPs_only      = .xray_data.refine_ADPs_only
-         refine_positions_only = .xray_data.refine_positions_only
-
-         ! Defaults per atom
-         if (NOT refine_ADPs_only) then 
-            refine_positions = TRUE 
-         else
-            refine_positions = FALSE
-         end
-
-         if (NOT refine_positions_only) then 
-            refine_ADPs      = TRUE
-         else
-            refine_ADPs      = FALSE
-         end
-         refine_Uiso      = FALSE
-         refine_ADP4s     = .fragment_atom(f).has_only_ADP4s_and_errors
-         refine_ADP3s     = .fragment_atom(f).has_only_ADP3s_and_errors
-
-         ! Special cases for H atom
-         is_H_atom = .fragment_atom(f).atomic_number==1
-         if (is_H_atom) then
-            refine_positions = .xray_data.refine_H_positions
-            refine_ADPs      = .xray_data.refine_H_ADPs
-            refine_Uiso      = .xray_data.refine_H_U_iso
-         end
-
-         ! Final check to do U_iso this atom?
-         if (NOT refine_Uiso) then
-         if (has_Uiso) then
-         if (any(.xray_data.refine_U_iso_for_atom==tag)) then
-            refine_Uiso = TRUE
-         end
-         end
-         end
-
-         ! Skip derivatives for this atom?
-         if (has_skip) then
-         if (any(.xray_data.refine_nothing_for_atom==tag)) then
-            refine_positions = FALSE
-            refine_ADPs      = FALSE
-         end
-         end
+         ! Which of this atom's parameters are refined
+         .refinement_flags_for_frag_atom(f,refine_positions,refine_ADPs,refine_Uiso)
+         refine_ADP4s = .fragment_atom(f).has_only_ADP4s_and_errors
+         refine_ADP3s = .fragment_atom(f).has_only_ADP3s_and_errors
 
          ! Get ADP2s
          .fragment_atom(f).put_ADP2_vector_to(adp2)
 
          ! Sanity check
-         ENSURE(NOT (refine_Uiso AND refine_ADP4s),"can't refine isotropic ADPs & ADP4s for "//trim(tag))
-         ENSURE(NOT (refine_Uiso AND refine_ADP3s),"can't refine isotropic ADPs & ADP3s for "//trim(tag))
          ENSURE(adp2.equals(.fragment_atom(f).ADP_tensor),"ADP2 not equal to ADP_tensor")
 
          ! ADP4's !!!!!!!!!!!!!
@@ -6668,121 +7699,61 @@ contains
          else ! NO anharmonicity
          !!!!!!!!!!!!!!!!!!!!!!!
 
-            ! This is for isotropic refinement
-            if (refine_Uiso) then ! For U_iso 
 
-               do k = 1,n_k
-   
-                  ! Scattering vector
-                  k1 = k_pt(k,1)
-                  k2 = k_pt(k,2)
-                  k3 = k_pt(k,3)
-                  kv = [k1,k2,k3]
-   
-                  ! Component products
-                  k1_k1 = k1*k1
-                  k2_k2 = k2*k2
-                  k3_k3 = k3*k3
-                  k1_k2 = k1*k2
-                  k1_k3 = k1*k3
-                  k2_k3 = k2*k3
-   
-                  ! U tensor contracted with k vector
-                  c2 = adp2.contract_with(kv)*HALF
-   
-                  ! Static structure factor x TF
-                  ! i.e. dynamic structure factor,
-                  ! in the harmonic approximation
-                  sfh = sf_u(k) * exp(-c2)
-   
-                  ! Multiples *harmonic* structure factor
-                  sf1 = sfh
-                  sf2 = sf1 * HALF * (k1_k1+k2_k2+k3_k3)
-   
-                  ! SF contribution (harmonic)
-                  sf_e(k) = sf_e(k) + sf1
-   
-                  if (refine_positions) then
-   
-                     ! Pos derivatives
-                     sf_d(k,base+ 1) =  II*k1*sf1
-                     sf_d(k,base+ 2) =  II*k2*sf1
-                     sf_d(k,base+ 3) =  II*k3*sf1
-   
-                  end
-   
-                  if (refine_ADPs) then
-   
-                     ! U_iso derivatives
-                     sf_d(k,base+ 4) = -sf2
-                     sf_d(k,base+ 5) = -sf2
-                     sf_d(k,base+ 6) = -sf2
-                     sf_d(k,base+ 7) = ZERO
-                     sf_d(k,base+ 8) = ZERO
-                     sf_d(k,base+ 9) = ZERO
-   
-                  end
-   
+            do k = 1,n_k
+
+               ! Scattering vector
+               k1 = k_pt(k,1)
+               k2 = k_pt(k,2)
+               k3 = k_pt(k,3)
+               kv = [k1,k2,k3]
+
+               ! Component products
+               k1_k1 = k1*k1
+               k2_k2 = k2*k2
+               k3_k3 = k3*k3
+               k1_k2 = k1*k2
+               k1_k3 = k1*k3
+               k2_k3 = k2*k3
+
+               ! U tensor contracted with k vector
+               c2 = adp2.contract_with(kv)*HALF
+
+               ! Static structure factor x TF
+               ! i.e. dynamic structure factor,
+               ! in the harmonic approximation
+               sfh = sf_u(k) * exp(-c2)
+
+               ! Multiples *harmonic* structure factor
+               sf1 = sfh
+               sf2 = sf1 * HALF
+
+               ! SF contribution (harmonic)
+               sf_e(k) = sf_e(k) + sf1
+
+               if (refine_positions) then
+
+                  ! Pos derivatives
+                  sf_d(k,base+ 1) =  II*k1*sf1
+                  sf_d(k,base+ 2) =  II*k2*sf1
+                  sf_d(k,base+ 3) =  II*k3*sf1
+
                end
 
-            ! This is *AN*isotropic refinement
-            else ! For ADP2s !!!!!!!!!!!!!!!!!
+               if (refine_ADPs) then
 
-               do k = 1,n_k
-   
-                  ! Scattering vector
-                  k1 = k_pt(k,1)
-                  k2 = k_pt(k,2)
-                  k3 = k_pt(k,3)
-                  kv = [k1,k2,k3]
-   
-                  ! Component products
-                  k1_k1 = k1*k1
-                  k2_k2 = k2*k2
-                  k3_k3 = k3*k3
-                  k1_k2 = k1*k2
-                  k1_k3 = k1*k3
-                  k2_k3 = k2*k3
-   
-                  ! U tensor contracted with k vector
-                  c2 = adp2.contract_with(kv)*HALF
-   
-                  ! Static structure factor x TF
-                  ! i.e. dynamic structure factor,
-                  ! in the harmonic approximation
-                  sfh = sf_u(k) * exp(-c2)
-   
-                  ! Multiples *harmonic* structure factor
-                  sf1 = sfh
-                  sf2 = sf1 * HALF
-   
-                  ! SF contribution (harmonic)
-                  sf_e(k) = sf_e(k) + sf1
-   
-                  if (refine_positions) then
-   
-                     ! Pos derivatives
-                     sf_d(k,base+ 1) =  II*k1*sf1
-                     sf_d(k,base+ 2) =  II*k2*sf1
-                     sf_d(k,base+ 3) =  II*k3*sf1
-   
-                  end
-   
-                  if (refine_ADPs) then
-   
-                     ! U2 derivatives
-                     sf_d(k,base+ 4) = -k1_k1*sf2
-                     sf_d(k,base+ 5) = -k2_k2*sf2
-                     sf_d(k,base+ 6) = -k3_k3*sf2
-                     sf_d(k,base+ 7) = -k1_k2*sf1
-                     sf_d(k,base+ 8) = -k1_k3*sf1
-                     sf_d(k,base+ 9) = -k2_k3*sf1
-   
-                  end
-   
+                  ! U2 derivatives
+                  sf_d(k,base+ 4) = -k1_k1*sf2
+                  sf_d(k,base+ 5) = -k2_k2*sf2
+                  sf_d(k,base+ 6) = -k3_k3*sf2
+                  sf_d(k,base+ 7) = -k1_k2*sf1
+                  sf_d(k,base+ 8) = -k1_k3*sf1
+                  sf_d(k,base+ 9) = -k2_k3*sf1
+
                end
 
             end
+
 
          end
 
@@ -7405,6 +8376,7 @@ contains
       if (.xray_data.covariance_mx.allocated) then; .put_parameters(.xray_data.covariance_mx)
       else;                                         .put_parameters
       end
+      if (.xray_data.ADP_model=="tls") .put_TLS_results
 
       ! Form factor asymmetry, as put_refinement_results does. A single
       ! rigid-atom fit (ha_fit, which is how pHAR runs) ends here rather
@@ -7434,6 +8406,7 @@ contains
       else
          .put_parameters
       end
+      if (.xray_data.ADP_model=="tls") .put_TLS_results
 
       if (.asymmetric_FF_symmetrization_rss.allocated) then
          .put_asymmetric_FF_symmetrization_rss
@@ -7873,21 +8846,10 @@ contains
       n_refl = .xray_data.reflections.dim
       n_atom = .asymmetric_FF_symmetrization_rss.dim
 
-      ! Floor the numerical noise before reporting.
-      !
-      ! For a well-behaved molecular HAR the asymmetry is at the level of
-      ! floating-point rounding -- around 1e-15 -- and at that level neither the
-      ! value NOR the reflection at which the maximum occurs is reproducible:
-      ! the same urea job gives 0.818E-15 at (0,5,2) under gfortran 14.3.0 and
-      ! 0.843E-15 at (-1,-1,-3) under 14.2.0, because the argmax of noise is
-      ! arbitrary. Reporting that verbatim puts unreproducible numbers into every
-      ! blessed reference, which is what reddened CI on 2026-08-18.
-      !
-      ! Anything below the tolerance is numerically zero, so print it as an exact
-      ! zero and drop its meaningless hkl. Real asymmetry survives untouched: the
-      ! pHAR case runs 1e-9 to 5e-8, three orders above this, and the whole point
-      ! of the table is to show that a periodic density is measurably less
-      ! symmetric than a molecular one.
+      ! Below the tolerance the asymmetry is rounding noise, whose size and
+      ! argmax hkl differ between compilers: print an exact zero and no hkl.
+      ! Real asymmetry (pHAR, 1e-9 to 5e-8) is three orders above it. The
+      ! measurements are in TASKS_AND_HISTORY.md (the CI red of 2026-08-18).
       rms.create(n_atom)
       rmx.create(n_atom)
       hkl.create(n_atom,3)
@@ -7926,10 +8888,8 @@ contains
       table(1).set_heading("ID");
       table(1).set_values(.asymmetric_unit_atom(:).tag)
 
-      ! One significant digit, deliberately. This is a diagnostic: what matters
-      ! is the ORDER OF MAGNITUDE of the symmetry breaking, and 0.1E-04 against
-      ! 0.8E-04 separates two atoms perfectly well. More digits would only
-      ! report bits that differ between compilers (Dylan, 2026-08-18).
+      ! One significant digit: the order of magnitude is the diagnostic, and
+      ! more digits would only report bits that differ between compilers.
       table(2).set_heading("RMS");
       table(2).set_subhead("asymmetry")
       table(2).set_width(9)
@@ -8573,7 +9533,7 @@ contains
    ! whole-structure covariance and reusing make_CIF_esds. That matrix is
    ! passed on to put_CIF_bond_info_tables, which genuinely needs the
    ! inter-atom off-diagonal blocks; zeros there would report bond esds
-   ! computed as though atomic positions were uncorrelated. See DEFERRED.md.
+   ! computed as though atomic positions were uncorrelated. See TASKS_AND_HISTORY.md.
       self :: IN
       atom :: VEC{ATOM}, IN
       esd :: VEC{REAL}, OUT
@@ -8623,7 +9583,7 @@ contains
    ! B^T is what goes in. Passing B is silent whenever B is symmetric --
    ! i.e. for every orthogonal cell, which is every CIF-writing test in the
    ! suite -- and wrong by up to 37% on a hexagonal one. This is the one
-   ! place that transpose is written down; see DEFERRED.md.
+   ! place that transpose is written down; see TASKS_AND_HISTORY.md.
       self :: IN
       atom :: VEC{ATOM}, IN
       T :: MAT{REAL}, INOUT
@@ -12894,7 +13854,7 @@ contains
 !  Add tensors
 !  ===========
 
-   add_uc_tensors(tensor) :: template, PURE
+   add_UC_tensors(tensor) :: template, PURE
    ! For a unit cell, add up a "tensor" property for one molecule, assumed to be
    ! the fragment_geometry.
       self :: IN
@@ -12955,12 +13915,12 @@ contains
 
    end
 
-   add_uc_tensors(tensor) :: get_from(CRYSTAL, TENSOR_TYPE?=>MAT{REAL}(3,3)), PURE
+   add_UC_tensors(tensor) :: get_from(CRYSTAL, TENSOR_TYPE?=>MAT{REAL}(3,3)), PURE
    ! For a unit cell, add up a "tensor" property for one molecule, assumed to be
    ! the fragment_geometry.
    end
 
-   add_uc_tensors(tensor) :: get_from(CRYSTAL, TENSOR_TYPE?=>MAT3{REAL}(3,3,3)), PURE
+   add_UC_tensors(tensor) :: get_from(CRYSTAL, TENSOR_TYPE?=>MAT3{REAL}(3,3,3)), PURE
    ! For a unit cell, add up a "tensor" property for one molecule, assumed to be
    ! the fragment_geometry.
    end

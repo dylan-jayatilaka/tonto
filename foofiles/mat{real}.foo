@@ -539,6 +539,35 @@ contains
    end
 
 
+
+   to_euler_rotation_mx(alpha,beta,gamma) :: PURE
+   ! Set "self" to the rotation matrix for the z-y-z Euler angles "alpha",
+   ! "beta" and "gamma" (in radians): rotate by "gamma" about z, then by
+   ! "beta" about y, then by "alpha" about z, i.e. Rz(alpha) Ry(beta) Rz(gamma).
+   ! Each rotation is anticlockwise looking down the axis towards the origin.
+      self :: OUT
+      alpha,beta,gamma :: REAL, IN
+
+   ENSURE(.is_square,"non-square matrix")
+   ENSURE(.dim1==3,"must be 3x3 matrix")
+
+      ca,sa,cb,sb,cg,sg :: REAL
+
+      ca = cos(alpha); sa = sin(alpha)
+      cb = cos(beta);  sb = sin(beta)
+      cg = cos(gamma); sg = sin(gamma)
+
+      self(1,1) =  ca*cb*cg - sa*sg
+      self(1,2) = -ca*cb*sg - sa*cg
+      self(1,3) =  ca*sb
+      self(2,1) =  sa*cb*cg + ca*sg
+      self(2,2) = -sa*cb*sg + ca*cg
+      self(2,3) =  sa*sb
+      self(3,1) = -sb*cg
+      self(3,2) =  sb*sg
+      self(3,3) =  cb
+
+   end
    to_unit_mx :: get_from(MAT{INTRINSIC}), pure
    ! Set "self" to the unit matrix
    end
@@ -2486,6 +2515,39 @@ contains
 
    end
 
+   project_out_vectors(V) :: PURE
+   ! Replace the symmetric matrix "self" by P self P, P = 1 - V V^T, where
+   ! the columns of "V" are orthonormal: self then has no component
+   ! along them, and each is an eigenvector with eigenvalue zero.
+      self :: INOUT
+      V    :: MAT{REAL}, IN
+   ENSURE(.is_square,"self must be square")
+   ENSURE(V.dim1==.dim1,"V and self differ in length")
+
+      W,X,G :: MAT{REAL}@
+      n,k :: INT
+
+      n = .dim1
+      k = V.dim2
+      if (k==0) return
+
+      ! W = self V and G = V^T self V; then with X = W - V G/2,
+      ! P self P = self - V X^T - X V^T
+      W.create(n,k)
+      W.to_product_of(self,V)
+      G.create(k,k)
+      G.to_product_of(V,W,transpose_a=TRUE)
+      X = W
+      X.plus_scaled_product_of(V,G,fac=-HALF)
+      self.plus_scaled_product_of(V,X,fac=-ONE,transpose_b=TRUE)
+      self.plus_scaled_product_of(X,V,fac=-ONE,transpose_b=TRUE)
+
+      G.destroy
+      X.destroy
+      W.destroy
+
+   end
+
    solve_symmetric_eigenproblem(eigenvalues,eigenvectors)
    ! Solve the symmetric eigenproblem for "self", yeilding a vector of
    ! "eigenvalues" and a matrix of "eigenvectors"
@@ -2527,15 +2589,29 @@ contains
 
    end
 
-   to_product_of_BLAS(a,b,transpose_a,transpose_b)
+   to_product_of_BLAS(a,b,transpose_a,transpose_b) :: PURE
    ! Set "self" to the matrix product of "a" and "b", by BLAS dgemm. If
    ! present, "transpose_a" and "transpose_b" can be set to TRUE if "a" and "b"
    ! need to be transposed. "self" may be larger than the product; only its
-   ! leading block is set. Not PURE: use to_product_of where purity is needed.
+   ! leading block is set.
+   ! NOTE: dgemm is declared pure below, which the compiler cannot check. It
+   ! is true: dgemm changes only its last matrix argument, and has no saved
+   ! state and no I/O, except when called with bad arguments (xerbla stops).
       self :: INOUT
       a,b  :: MAT{REAL}, IN
       transpose_a :: BIN, optional, IN
       transpose_b :: BIN, optional, IN
+
+      interface
+         dgemm(transa,transb,m,n,k,alpha,a,lda,b,ldb,beta,c,ldc) :: pure
+            transa,transb :: STR(len=1), IN
+            m,n,k,lda,ldb,ldc :: INT, IN
+            alpha,beta :: REAL, IN
+            a :: MAT{REAL}(lda,*), IN
+            b :: MAT{REAL}(ldb,*), IN
+            c :: MAT{REAL}(ldc,*), INOUT
+         end
+      end
 
       ta,tb :: STR(len=1)
       m,n,k :: INT
@@ -3355,6 +3431,118 @@ contains
       if (present(ps_inv)) then
          call move_alloc(inv,ps_inv)
       end
+
+   end
+
+   solve_restrained_linear_equations(rhs,W,prior_shift,ans,n0_tol,n0,n0_eval,n0_evec,eval,ps_inv,n_eff) :: leaky, PURE
+   ! Solve the restrained normal equations
+   !    (self + W) ans = rhs + W prior_shift
+   ! where "self" is the normal matrix A, "W" the restraint weight matrix
+   ! and "prior_shift" the prior values minus the current ones. Then "ans"
+   ! minimises  chi^2 + (p - p0)^T W (p - p0)  to first order. The
+   ! eigenvalue filter of solve_ill_linear_equations_v1 still removes exact
+   ! null directions. Also returns "ps_inv", the covariance (A+W)^-1, and
+   ! "n_eff" = tr[(A+W)^-1 A], the effective number of parameters, which
+   ! equals the number of kept eigenvalues when W is zero.
+      self        :: IN
+      rhs         :: VEC{REAL}, IN
+      W           :: MAT{REAL}, IN
+      prior_shift :: VEC{REAL}, IN
+      ans         :: VEC{REAL}, OUT
+      n0_tol      :: REAL, IN
+      n0          :: INT, OUT
+      n0_eval     :: VEC{REAL}@, OUT
+      n0_evec     :: MAT{REAL}@, OUT
+      eval        :: VEC{REAL}@, OUT
+      ps_inv      :: MAT{REAL}@, OUT
+      n_eff       :: REAL, OUT
+
+   ENSURE(.is_square,"not square")
+   ENSURE(W.is_same_shape_as(self),"wrong shape, W")
+   ENSURE(rhs.dim==.dim1,"wrong size, rhs")
+   ENSURE(prior_shift.dim==.dim1,"wrong size, prior_shift")
+
+      AW :: MAT{REAL}@
+      b  :: VEC{REAL}@
+
+      AW.create(.dim1,.dim1)
+      AW = self + W
+      b.create(.dim1)
+      b.to_product_of(W,prior_shift)
+      b = rhs + b
+
+      AW.solve_ill_linear_equations_v1(b,ans,n0_tol,n0,n0_eval,n0_evec,eval,ps_inv)
+
+      n_eff = ps_inv.trace_product_with(self)
+
+      b.destroy
+      AW.destroy
+
+   end
+
+   check_restrained_solve result (n_failed) :: selfless, leaky
+   ! Check solve_restrained_linear_equations on a small problem and return
+   ! the number of failed checks: zero weight gives the plain solution;
+   ! a large weight on one parameter holds it at its prior and lowers the
+   ! effective number of parameters by one; a ridge on every parameter
+   ! gives n_eff between those two.
+      n_failed :: INT
+
+      A,W,inv,n0_evec :: MAT{REAL}@
+      rhs,p0,x,y,n0_eval,eval :: VEC{REAL}@
+      n_eff,n_eff_0,err,tol :: REAL
+      n0,i,j :: INT
+
+      n_failed = 0
+      tol = TOL(8)
+
+      ! A well-conditioned 3 x 3 normal matrix and right-hand side
+      A.create(3,3)
+      A(1,:) = [ 4.0d0, 1.0d0, 0.5d0]
+      A(2,:) = [ 1.0d0, 3.0d0, 0.2d0]
+      A(3,:) = [ 0.5d0, 0.2d0, 2.0d0]
+      rhs.create(3); rhs = [1.0d0, -2.0d0, 0.5d0]
+      p0.create(3);  p0  = ZERO
+      W.create(3,3)
+      x.create(3)
+      y.create(3)
+
+      ! 1. No restraint: the plain solution, n_eff = 3
+      W = ZERO
+      A.solve_restrained_linear_equations(rhs,W,p0,x,tol,n0,n0_eval,n0_evec,eval,inv,n_eff)
+      y.to_product_of(A,x)
+      err = maxval(abs(y-rhs))
+      if (err>tol OR abs(n_eff-THREE)>tol) n_failed = n_failed + 1
+      n0_eval.destroy; n0_evec.destroy; eval.destroy; inv.destroy
+
+      ! 2. A huge weight on parameter 2 with prior 0.7: it stays there,
+      !    the others solve the reduced 2 x 2 problem, n_eff = 2
+      W = ZERO; W(2,2) = TEN**12
+      p0 = ZERO; p0(2) = 0.7d0
+      A.solve_restrained_linear_equations(rhs,W,p0,x,tol,n0,n0_eval,n0_evec,eval,inv,n_eff)
+      if (abs(x(2)-0.7d0)>TOL(6)) n_failed = n_failed + 1
+      y.to_product_of(A,x)
+      err = max(abs(y(1)-rhs(1)),abs(y(3)-rhs(3)))
+      if (err>TOL(6) OR abs(n_eff-TWO)>TOL(6)) n_failed = n_failed + 1
+      n0_eval.destroy; n0_evec.destroy; eval.destroy; inv.destroy
+
+      ! 3. A ridge on everything: 0 < n_eff < 3
+      W = ZERO
+      do i = 1,3
+         W(i,i) = ONE
+      end
+      p0 = ZERO
+      A.solve_restrained_linear_equations(rhs,W,p0,x,tol,n0,n0_eval,n0_evec,eval,inv,n_eff)
+      n_eff_0 = ZERO
+      do i = 1,3
+      do j = 1,3
+         n_eff_0 = n_eff_0 + inv(i,j)*A(j,i)
+      end
+      end
+      if (n_eff<=ZERO OR n_eff>=THREE OR abs(n_eff-n_eff_0)>tol) n_failed = n_failed + 1
+      n0_eval.destroy; n0_evec.destroy; eval.destroy; inv.destroy
+
+      y.destroy; x.destroy; W.destroy; p0.destroy; rhs.destroy; A.destroy
 
    end
 

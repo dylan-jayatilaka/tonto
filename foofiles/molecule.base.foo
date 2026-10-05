@@ -340,7 +340,7 @@ contains
 
       T :: REAL
       damping,do_delta_density :: BIN
-      use_pFON,use_FON :: BIN
+      use_pFON,use_FON,ensemble :: BIN
       scf_method,genre :: STR
 
       ! Determine (or guess) the kind of SCF method to be used.
@@ -378,6 +378,10 @@ contains
       use_FON = FALSE
       if (.SCF_data.allocated) use_FON = .SCF_data.using_FON
 
+      ! An open-shell ensemble atom: held fractional occupations
+      ensemble = FALSE
+      if (.SCF_data.allocated) ensemble = .SCF_data.using_open_shell_ensemble
+
       ! Save the old density, for damping and for the delta density. This
       ! must come BEFORE the density matrix is destroyed and re-created
       ! below: it used to come after, so the "old" density was whatever
@@ -411,6 +415,16 @@ contains
 
       case ("rhf","rks","xray_rks","xray_rhf","noninteracting-group-rhf")
          ENSURE(.MOs.is_allocated_with_genre("r "),"no MO's")
+
+         if (ensemble) then
+
+            ::make_ensemble_r_density_mx(.density_mx.r,.MOs.r &
+                                        ,(.n_e-.SCF_data.n_open_electrons)/2 &
+                                        ,.SCF_data.n_open_orbitals &
+                                        ,.SCF_data.n_open_electrons/(TWO*.SCF_data.n_open_orbitals))
+
+         else
+
          ENSURE(.spin_multiplicity==1,"Not a singlet state: "//trim(.atom.chemical_formula)//", mult="//trim(.spin_multiplicity.to_str))
 
          if (use_pFON) then
@@ -435,6 +449,8 @@ contains
             .density_mx.r.to_scaled_product_of(.MOs.r(:,1:.n_a) &
                                                            ,.MOs.r(:,1:.n_a) &
                                                            ,fac=TWO,transpose_b=TRUE)
+
+         end
 
          end
 
@@ -554,7 +570,7 @@ contains
       W :: MAT{REAL}@
       occ :: VEC{REAL}@
       ind :: VEC{INT}@
-      beta,e_homo,e_lumo,e_fermi,homo_lumo_gap :: REAL
+      beta,e_homo,e_lumo,e_fermi,homo_lumo_gap,fac :: REAL
       n_orb,i,j,n_frac :: INT
 
       n_orb = F.dim1
@@ -581,17 +597,32 @@ contains
          occ(i) = ONE/(ONE+exp(beta*(occ(i)-e_fermi)))
       end
 
-      ! The number of fractional orbitals
+      ! The number of fractional orbitals on each side of the Fermi level,
+      ! never more than there are orbitals
       if      (homo_lumo_gap>0.135e0) then; n_frac = 5
       else if (homo_lumo_gap<0.090e0) then; n_frac = 3
       else;                                 n_frac = 4
       end
+      n_frac = min(n_frac,n_e,n_orb-n_e)
 
       ! Reset the fractional occupancies
       do j = 1,n_orb
          i = ind(j)
          if      (j<=n_e-n_frac) then; occ(i) = ONE
          else if (j >n_e+n_frac) then; occ(i) = ZERO
+         end
+      end
+
+      ! Renormalise the fractional occupations so that the window holds
+      ! its n_frac electrons and the total stays n_e (Rabuck & Scuseria)
+      fac = ZERO
+      do j = n_e-n_frac+1,n_e+n_frac
+         fac = fac + occ(ind(j))
+      end
+      if (fac>ZERO) then
+         fac = n_frac/fac
+         do j = n_e-n_frac+1,n_e+n_frac
+            occ(ind(j)) = fac*occ(ind(j))
          end
       end
 
@@ -604,6 +635,27 @@ contains
 
       ind.destroy
       occ.destroy
+
+   end
+
+   make_ensemble_r_density_mx(D,MO,n_closed,n_open,f) :: selfless, PURE
+   ! Make the restricted density "D" of an open-shell ensemble from the
+   ! orbitals "MO": the first "n_closed" with occupation 2, the next
+   ! "n_open" with occupation 2f.
+      D  :: MAT{REAL}, OUT
+      MO :: MAT{REAL}, IN
+      n_closed,n_open :: INT, IN
+      f  :: REAL, IN
+   ENSURE(D.is_square,"D must be square")
+   ENSURE(n_closed+n_open<=MO.dim2,"fewer MO's than shells")
+
+      D = ZERO
+      if (n_closed>0) then
+         D.plus_scaled_product_of(MO(:,1:n_closed),MO(:,1:n_closed),fac=TWO,transpose_b=TRUE)
+      end
+      if (n_open>0) then
+         D.plus_scaled_product_of(MO(:,n_closed+1:n_closed+n_open),MO(:,n_closed+1:n_closed+n_open),fac=TWO*f,transpose_b=TRUE)
+      end
 
    end
 
@@ -1298,8 +1350,7 @@ contains
       mol.density_mx.r = D(f:l,f:l)
 
       ! Spherically average the AO density
-      mol.pointgroup.create("oh",.use_spherical_basis)
-      mol.symmetrize(mol.density_mx)
+      mol.atom(1).spherically_average(mol.density_mx.r,.use_spherical_basis)
 
       ! Make the natural orbitals
       mol.make_NOs
@@ -1485,6 +1536,7 @@ contains
       .basis_name        = .saved.basis_name
       .slaterbasis_name  = .saved.slaterbasis_name
       .coppensbasis_name = .saved.coppensbasis_name
+      .auxiliary_basis_name = .saved.auxiliary_basis_name
 
       ! Finalize atom info
       if (.atom.allocated) .atom.destroy_bases

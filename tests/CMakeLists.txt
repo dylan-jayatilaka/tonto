@@ -5,10 +5,11 @@ set(TEST_SCRIPT "${PROJECT_SOURCE_DIR}/scripts/test.py"
 set(TONTO_EXE "${PROJECT_BINARY_DIR}/tonto"
     CACHE FILEPATH "Test executable")
 
-# The hart tests still pass TONTO_EXE as --program: test.py resolves a test's
-# "program:" key as a sibling of it, so both binaries must live side by side
-# (they do -- the tonto and run_har targets both land in PROJECT_BINARY_DIR).
-# HART_EXE is only for the hand-registered invariant check below.
+# test.py and suite_report.py take the directory holding TONTO_EXE, and run
+# tonto -- or the program a test's IO file names, such as hart -- from it, so
+# the binaries must live side by side (the tonto and run_har targets both land
+# in PROJECT_BINARY_DIR). HART_EXE is only for the invariant check below.
+get_filename_component(TONTO_BUILD_DIR "${TONTO_EXE}" DIRECTORY)
 set(HART_EXE "${PROJECT_BINARY_DIR}/hart"
     CACHE FILEPATH "Hirshfeld atom refinement executable")
 
@@ -54,7 +55,7 @@ function(add_all_tests)
             COMMAND python3  ${TEST_SCRIPT}
             --test-directory "${CMAKE_CURRENT_SOURCE_DIR}/${D}"
             --basis-sets     "${BASIS_SETS}"
-            --program        "${TONTO_EXE}"
+            --build-dir      "${TONTO_BUILD_DIR}"
             # WARNING (not DEBUG): keeps test.py's captured output to just the
             # one-line AGREEMENT row (+ worst-offender notes), which test.py prints
             # regardless of log level. So `ctest --output-on-failure` / `ctest -V`
@@ -141,6 +142,14 @@ add_test(NAME "hart_options"
             ${HART_EXE} ${PROJECT_SOURCE_DIR}/runfiles/run_har.foo ${BASIS_SETS})
 set_tests_properties("hart_options" PROPERTIES LABELS "hart")
 
+# The same check for rgbi, whose --help had named the CMake target run_rgbi
+# and a misspelled scripts folder for as long as it existed.
+add_test(NAME "rgbi_options"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND sh ${PROJECT_SOURCE_DIR}/scripts/check_rgbi_options.sh
+            ${PROJECT_BINARY_DIR}/rgbi ${PROJECT_SOURCE_DIR}/runfiles/run_rgbi.foo)
+set_tests_properties("rgbi_options" PROPERTIES LABELS "rgbi")
+
 # Invariant test -- no reference output involved.
 #
 # The SYSTEM_COMMAND exerciser. It shells out for real: it writes a file with
@@ -148,7 +157,7 @@ set_tests_properties("hart_options" PROPERTIES LABELS "hart")
 # reported as failing. Registered because shell execution is the classic silent
 # failure -- a broken implementation returns "0, no error" and simply does
 # nothing, which is precisely how the eight MPI reductions and the per-rank-IO
-# flag hid for years (docs/TONTO_AND_MPI.md). The binary self-checks and exits non-zero,
+# flag hid for years (docs/TASK_MPI.md). The binary self-checks and exits non-zero,
 # so no reference file can be blessed to make it pass. Runs in well under a
 # second.
 add_test(NAME "system_commands"
@@ -167,6 +176,23 @@ add_test(NAME "quadrature_rules"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND ${PROJECT_BINARY_DIR}/run_quadrature)
 set_tests_properties("quadrature_rules" PROPERTIES LABELS "short")
+
+# The restrained normal-equation solver behind the structure refinement,
+# against a 3 x 3 problem with a known answer: no weight, one hard weight,
+# and a ridge. Instant.
+add_test(NAME "lsq_restraints"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND ${PROJECT_BINARY_DIR}/run_lsq_restraint)
+set_tests_properties("lsq_restraints" PROPERTIES LABELS "short")
+
+# The fit of a spherical form factor to four Gaussians and a constant through
+# gnuplot, by a round trip on the carbon International Tables curve: the
+# coefficients must come back to 1e-4. Skipped (exit 77) where gnuplot is
+# not installed. A second or two.
+add_test(NAME "gaussian_ff_fit"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND ${PROJECT_BINARY_DIR}/run_gaussian_ff_fit)
+set_tests_properties("gaussian_ff_fit" PROPERTIES LABELS "short" SKIP_RETURN_CODE 77)
 
 # Invariant test -- no reference output involved.
 #
@@ -272,6 +298,27 @@ add_test(NAME "parallel_lint"
             ${PROJECT_SOURCE_DIR}/foofiles)
 set_tests_properties("parallel_lint" PROPERTIES LABELS "short")
 
+# Source-level and instant: every stdout.show label ends in "=" (or says
+# dots=FALSE), so the dots line up, and heading rules match their headings.
+add_test(NAME "show_labels"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_show_labels.py
+            ${PROJECT_SOURCE_DIR}/foofiles ${PROJECT_SOURCE_DIR}/runfiles)
+set_tests_properties("show_labels" PROPERTIES LABELS "short")
+
+# Source-level and instant: every procedure name has one spelling across its
+# definition and its call sites, so case-sensitive tooling sees one name.
+add_test(NAME "procedure_case"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_procedure_case.py
+            ${PROJECT_SOURCE_DIR}/foofiles ${PROJECT_SOURCE_DIR}/runfiles)
+set_tests_properties("procedure_case" PROPERTIES LABELS "short")
+
+# User-facing documents: no dates, hashes or status notes, and math GitHub draws.
+add_test(NAME "check_docs"
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_docs.py ${PROJECT_SOURCE_DIR})
+set_tests_properties("check_docs" PROPERTIES LABELS "short")
+
 # Invariant test -- no reference output involved.
 #
 # The Lebedev angular grids are stored as orbit generators, so one wrong
@@ -282,8 +329,9 @@ add_test(NAME "lebedev_rules"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_lebedev_rules.py
             ${PROJECT_SOURCE_DIR}/foofiles/lebedev.foo)
-# SKIP_RETURN_CODE: the script needs numpy, which is not a Tonto dependency
-# and is not installed by any workflow -- see the import guard in the script.
+# SKIP_RETURN_CODE: the script needs numpy, a declared test dependency
+# (docs/BUILDING_ON_*). Without it the check reports itself skipped here; CI
+# runs it through scripts/suite_report.py, where a skip is an error.
 set_tests_properties("lebedev_rules" PROPERTIES LABELS "short"
                                                 SKIP_RETURN_CODE 77)
 
@@ -358,7 +406,7 @@ add_custom_target(report
     # (a tty is line-buffered, a pipe is 8 KB-buffered -- which is the whole
     # report, so it would all appear only at the end and look like a hang).
     COMMAND python3 -u ${PROJECT_SOURCE_DIR}/scripts/suite_report.py
-            --program    ${TONTO_EXE}
+            --build-dir  ${TONTO_BUILD_DIR}
             --tests-dir  ${CMAKE_CURRENT_SOURCE_DIR}
             --basis-sets ${BASIS_SETS}
             --log        ${PROJECT_BINARY_DIR}/tests.log

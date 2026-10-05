@@ -15,7 +15,7 @@ Merging the two roles is what broke `hart`. `MOLECULE.READ:read_archive(name,
 genre)` took arguments *and* peeked at `stdin` for a trailing `normalise`
 qualifier, so it dereferenced an unallocated TEXTFILE in a program that never
 created one -- and in `tonto` it read whatever line the job file happened to be
-on. See DEFERRED.md, "Keyword parsing must not leak into library routines".
+on. See TASKS_AND_HISTORY.md, "Keyword parsing must not leak into library routines".
 
 That was the only instance, so this check starts green. Its job is to keep the
 rule true: any *new* procedure that takes arguments and mentions `stdin` fails.
@@ -45,11 +45,11 @@ ALLOWED = {
 
     # Known dual-role readers: an optional name argument, falling back to
     # stdin when it is absent. Safe *only* because every driver passes the
-    # name (run_rgbi.foo:202-203 does). Fragile -- see DEFERRED.md.
+    # name (run_rgbi.foo:202-203 does). Fragile -- see TASKS_AND_HISTORY.md.
     'molecule.read.foo:read_molden_file':      'present(file_name) guard; drivers pass it',
     'molecule.read.foo:read_tonto_FChk_file':  'present(name) guard; drivers pass it',
     'molecule.read.foo:read_g09_FChk_file':    'present(name) guard; drivers pass it',
-    'molecule.put.foo:put_florian_wfn_file':   'UNGUARDED stdin read; see DEFERRED.md',
+    'molecule.put.foo:put_florian_wfn_file':   'UNGUARDED stdin read; see TASKS_AND_HISTORY.md',
 }
 
 # Keyword dispatchers. These take the keyword as an argument and read its
@@ -146,7 +146,7 @@ def main():
     if violations:
         print('FAIL: procedures that take arguments must not touch stdin')
         print('      (they are called by argv-driven programs, which have no')
-        print('       job file -- see DEFERRED.md). Move the parsing into a')
+        print('       job file -- see TASKS_AND_HISTORY.md). Move the parsing into a')
         print('       keyword handler and pass the result as an argument.')
         print('')
         for f, lineno, proc, text in violations:

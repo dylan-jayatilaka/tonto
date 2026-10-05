@@ -1,0 +1,339 @@
+!---------------------------------------------------------------------------
+!
+! LEAST_SQUARES: the refined parameters of a least-squares fit.
+!
+! A fit refines parameters p. The model vector X -- for a structure
+! refinement, the positions and ADPs of the atoms -- is made from them by
+!
+!    X = X_offset + J p,
+!
+! where J = dX/dp is the Jacobian and X_offset the part of X the
+! parameters do not move. One parameter per free component is J = 1. An
+! isotropic ADP, a site-symmetric atom, or a rigid-body (TLS) model is a
+! different J; the solver does not care which. The fit solves the normal
+! equations in p, keeps p, its esds and covariance, and gives the shift
+! and covariance of X through J.
+!
+! The normal matrix A and right-hand side b are made by the caller from
+! its own derivatives dF/dX as (dF J)^T w (dF J) and (dF J)^T w r. They may
+! be restrained, chi^2 + (p - p0)^T W (p - p0), and near-zero directions
+! of A are filtered out; see MAT{REAL}:solve_restrained_linear_equations.
+!
+! Copyright (C) Dylan Jayatilaka, 2026
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+!---------------------------------------------------------------------------
+
+module LEAST_SQUARES
+
+   implicit none
+
+contains
+
+!  =================
+!  Memory allocation
+!  =================
+
+   create :: get_from(OBJECT), leaky, PURE
+   ! Allocate an object
+   end
+
+   destroy :: get_from(OBJECT), leaky, PURE
+   ! Deallocate "self"
+   end
+
+!  ===========
+!  Set methods
+!  ===========
+
+   set_param_labels(labels) :: leaky, PURE
+   ! Set the parameter labels.
+      self :: INOUT
+      labels :: VEC{STR}, IN
+
+      .param_label = labels
+
+   end
+
+   set_jacobian(J,labels) :: leaky, PURE
+   ! Set the Jacobian J = dX/dp and the parameter labels. The parameter
+   ! values, offset and covariance are cleared: set_parameters_from makes
+   ! them for the X in hand.
+      self :: INOUT
+      J :: MAT{REAL}, IN
+      labels :: VEC{STR}, IN
+   ENSURE(labels.dim==J.dim2,"one label per column of J")
+
+      .n_X     = J.dim1
+      .n_param = J.dim2
+      .jacobian = J
+      .param_label = labels
+
+      .param.destroy
+      .X_offset.destroy
+      .param_esd.destroy
+      .param_covariance.destroy
+      .dp.destroy
+
+   end
+
+   set_parameters_from(X,X_fixed,fixed) :: leaky
+   ! Make the parameters p and the offset X_offset for the model vector
+   ! "X": p is the least-squares fit of X - X_fixed by J p, and then
+   !    X_offset = X_fixed     where "fixed" is TRUE,
+   !    X_offset = X - J p     elsewhere,
+   ! so the rows not "fixed" reproduce X exactly (a free component, or one
+   ! the parameters do not move), and the "fixed" rows are put on the
+   ! model: X_fixed is their part that no parameter moves, such as the
+   ! stiff-mode U of a TLS model. On return "X" is X_offset + J p.
+      self :: INOUT
+      X :: VEC{REAL}, INOUT
+      X_fixed :: VEC{REAL}, IN
+      fixed :: VEC{BIN}, IN
+   ENSURE(.jacobian.allocated,"no Jacobian")
+   ENSURE(X.dim==.n_X,"wrong size, X")
+   ENSURE(X_fixed.dim==.n_X,"wrong size, X_fixed")
+   ENSURE(fixed.dim==.n_X,"wrong size, fixed")
+
+      JTJ :: MAT{REAL}@
+      rhs :: VEC{REAL}@
+      i :: INT
+
+      ! Normal equations of the fit, J^T J p = J^T (X - X_fixed)
+      JTJ.create(.n_param,.n_param)
+      JTJ.to_product_of(.jacobian,.jacobian,transpose_a=TRUE)
+      rhs.create(.n_param)
+      rhs.to_product_of(.jacobian,X-X_fixed,transpose_a=TRUE)
+      .param.destroy
+      .param.create(.n_param)
+      JTJ.solve_linear_equation(rhs,.param)
+
+      ! The offset, then X on the model
+      .X_offset.destroy
+      .X_offset.create(.n_X)
+      .X_offset.to_product_of(.jacobian,.param)
+      do i = 1,.n_X
+         if (fixed(i)) then; .X_offset(i) = X_fixed(i)
+         else;               .X_offset(i) = X(i) - .X_offset(i)
+         end
+      end
+      X.to_product_of(.jacobian,.param)
+      X = X + .X_offset
+
+      rhs.destroy
+      JTJ.destroy
+
+   end
+
+   make_param_from_X(X,p) :: leaky
+   ! Make "p", the parameters for which X_offset + J p is nearest "X" in
+   ! the least-squares sense; exact when X is on the model.
+      self :: IN
+      X :: VEC{REAL}, IN
+      p :: VEC{REAL}@, OUT
+   ENSURE(.jacobian.allocated,"no Jacobian")
+   ENSURE(.X_offset.allocated,"no offset: set_parameters_from first")
+   ENSURE(X.dim==.n_X,"wrong size, X")
+
+      JTJ :: MAT{REAL}@
+      rhs :: VEC{REAL}@
+
+      JTJ.create(.n_param,.n_param)
+      JTJ.to_product_of(.jacobian,.jacobian,transpose_a=TRUE)
+      rhs.create(.n_param)
+      rhs.to_product_of(.jacobian,X-.X_offset,transpose_a=TRUE)
+      p.create(.n_param)
+      JTJ.solve_linear_equation(rhs,p)
+      rhs.destroy
+      JTJ.destroy
+
+   end
+
+!  =======
+!  Solving
+!  =======
+
+   solve_normal_equations(A,rhs,near_0_tol,dp) :: leaky
+   ! Solve the normal equations "A" dp = "rhs" for the parameter shift
+   ! "dp", filtering out eigenvalues of A below "near_0_tol" and applying
+   ! the restraints if .restraint_W is set. Keeps the shift in .dp, the
+   ! covariance (A+W)^-1 in .param_covariance, the effective parameter
+   ! count, and what the filter found.
+      self :: INOUT
+      A :: MAT{REAL}, INOUT
+      rhs :: VEC{REAL}, IN
+      near_0_tol :: REAL, IN
+      dp :: VEC{REAL}, OUT
+   ENSURE(A.is_square,"A must be square")
+   ENSURE(rhs.dim==A.dim1,"wrong size, rhs")
+   ENSURE(dp.dim==A.dim1,"wrong size, dp")
+
+      C :: MAT{REAL}@
+      n_p :: INT
+
+      n_p = A.dim1
+
+      if (.restraint_W.allocated) then
+         ENSURE(.restraint_W.dim1==n_p,"wrong size, restraint_W")
+         ENSURE(.restraint_shift.allocated,"no restraint_shift")
+         ENSURE(.restraint_shift.dim==n_p,"wrong size, restraint_shift")
+         A.solve_restrained_linear_equations(rhs,.restraint_W,.restraint_shift,dp, &
+            near_0_tol,.near_0,.near_0_evals,.near_0_evecs,.eigenvalues,C,.n_param_eff)
+      else
+         A.solve_ill_linear_equations_v1(rhs,dp,near_0_tol,.near_0,.near_0_evals,.near_0_evecs,.eigenvalues,C)
+         .n_param_eff = n_p - .n_0 - .near_0
+      end
+
+      .dp = dp
+      .param_covariance.destroy
+      call move_alloc(C,.param_covariance)
+
+      .update_near_0_IPRs
+   end
+
+   update_near_0_IPRs :: leaky, PURE
+   ! Make .near_0_IPR, the inverse participation ratio 1/sum_i v_i^4 of
+   ! each near-zero eigenvector v: 1 when v lies on one parameter, n when
+   ! it is spread evenly over n. It says how many parameters the data fail
+   ! to separate in that direction, not whether that is harmless: a site
+   ! symmetry mixes parameters as an over-parameterised model does. See
+   ! Bell and Dean (1970) Discuss. Faraday Soc. 50 p.55-61.
+      self :: INOUT
+
+      j :: INT
+      v :: REAL
+
+      .near_0_IPR.destroy
+      if (.near_0_evecs.deallocated) return
+      if (.near_0<=0) return
+
+      .near_0_IPR.create(.near_0)
+      do j = 1,.near_0
+         ! The eigenvectors are orthonormal, so no normalisation is needed
+         v = sum(.near_0_evecs(:,j)**4)
+         if (v>ZERO) then; .near_0_IPR(j) = ONE/v
+         else;             .near_0_IPR(j) = ZERO
+         end
+      end
+
+   end
+
+   update_parameters(scale) :: PURE
+   ! Add the last shift to the parameters, and make their esds from the
+   ! covariance scaled by "scale" (GoF^2 for a weighted fit).
+      self :: INOUT
+      scale :: REAL, IN
+
+      i :: INT
+
+      if (.param.allocated AND .dp.allocated) then
+         .param = .param + .dp
+      end
+      if (.param_covariance.allocated) then
+         .param_esd.destroy
+         .param_esd.create(.param_covariance.dim1)
+         do i = 1,.param_covariance.dim1
+            .param_esd(i) = sqrt(max(ZERO,scale*.param_covariance(i,i)))
+         end
+      end
+
+   end
+
+!  ==========================
+!  From parameters to X space
+!  ==========================
+
+   make_X_shift(dX) :: PURE
+   ! The shift in X from the last shift in p, dX = J dp.
+      self :: IN
+      dX :: VEC{REAL}, OUT
+   ENSURE(.dp.allocated,"no shift")
+
+      if (.jacobian.allocated) then
+         dX.to_product_of(.jacobian,.dp)
+      else
+         dX = .dp
+      end
+
+   end
+
+   make_X_covariance(CX) :: leaky, PURE
+   ! The covariance of X from that of p, CX = J C J^T.
+      self :: IN
+      CX :: MAT{REAL}@, OUT
+   ENSURE(.param_covariance.allocated,"no covariance")
+
+      JC :: MAT{REAL}@
+
+      if (.jacobian.allocated) then
+         JC.create(.n_X,.n_param)
+         JC.to_product_of(.jacobian,.param_covariance)
+         CX.create(.n_X,.n_X)
+         CX.to_product_of(JC,.jacobian,transpose_b=TRUE)
+         JC.destroy
+      else
+         CX = .param_covariance
+      end
+
+   end
+
+   n_X_constraints result (res) :: pure
+   ! The number of X components the Jacobian removes.
+      self :: IN
+      res :: INT
+
+      res = 0
+      if (.jacobian.allocated) res = .jacobian.dim1 - .jacobian.dim2
+
+   end
+
+!  ======
+!  Output
+!  ======
+
+   put_parameters(first,last)
+   ! Put a table of the parameters "first" to "last", with their esds.
+      self :: IN
+      first,last :: INT, IN
+   ENSURE(.param.allocated,"no parameters")
+   ENSURE(first>=1 AND last<=.param.dim,"parameter range out of bounds")
+
+      i :: INT
+
+      stdout.dash(int_fields=1,real_fields=2,width=20)
+      stdout.put("#",int_width=TRUE)
+      stdout.put("Parameter",width=20)
+      stdout.put("Value")
+      stdout.put("esd")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=2,width=20)
+      do i = first,last
+         stdout.put(i)
+         if (.param_label.allocated) then; stdout.put(trim(.param_label(i)),width=20)
+         else;                             stdout.put(" ",width=20)
+         end
+         stdout.put(.param(i))
+         if (.param_esd.allocated) then; stdout.put(.param_esd(i))
+         else;                           stdout.put(" ")
+         end
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=2,width=20)
+
+   end
+
+end
