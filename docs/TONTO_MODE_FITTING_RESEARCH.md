@@ -11,74 +11,175 @@ Tonto refines the rigid-body motion directly against the structure factors, with
 internal modes added from a Hessian. This page gives the equations, the keywords, where the
 code is, and what it gives on urea. The soft modes are not yet refined; see the last section.
 
-Units: Tonto works in atomic units (bohr, bohr², electron masses, hartree) and prints ADPs in
-Å², librations in degrees², and frequencies in cm⁻¹.
+Units: Tonto works in atomic units (bohr, bohr², electron masses, hartree, ħ = 1) and prints
+ADPs in Å², librations in degrees², and frequencies in cm⁻¹. Vectors are columns; ᵀ is the
+transpose; ⟨ ⟩ is the thermal average, the average over the motion of the atoms in the crystal.
 
 
-## 1. The model
+## 1. The model, from the start
 
-The ADP of atom *i* is the sum of a rigid-body part and a stiff-internal-mode part:
+### 1.1 What an ADP is
 
-    U_i = U_i^high + B_i Σ B_iᵀ                                                    (1)
+Atom *i* vibrates about its mean position. Its displacement **u**_i is the vector from the mean
+position to where it is at a given moment. The **anisotropic displacement parameter (ADP)** of
+the atom is the 3 × 3 matrix of mean-square displacements
 
-### Rigid-body motion
+    U_i = ⟨ u_i u_iᵀ ⟩.                                                          (1)
 
-A rigid body moves atom *i* by a translation **t** and a small rotation **λ** about an origin:
+Its diagonal elements are the mean-square displacements along x, y and z; the off-diagonal ones
+say how the motion along one axis correlates with another. U_i is symmetric, so it has six
+independent elements. U_iso = (U_xx + U_yy + U_zz)/3 is its isotropic average.
 
-    u_i = t + λ × r_i = B_i v,     B_i = [ 1 | A_i ],     v = (t, λ),
+The diffraction experiment sees U_i through the structure factor. For a reflection with
+scattering vector **k** (|**k**| = 4π sin θ / λ_X, λ_X the X-ray wavelength), the atom
+scatters with its form factor f_i(**k**) times the **Debye–Waller factor**:
 
-    A_i = [[ 0,  z_i, −y_i ],
+    F(k) = Σ_i f_i(k) exp(i k·r_i) exp(−½ kᵀ U_i k).                            (2)
+
+This holds when the displacement has a Gaussian distribution, true for harmonic motion.
+
+### 1.2 Correlated motion
+
+In a molecule the atoms do not move independently. Suppose that, at any moment, every
+displacement is a linear function of a few **generalised coordinates** v = (v₁, …, v_m):
+
+    u_i = B_i v,            B_i a 3 × m matrix fixed by the geometry.
+
+Putting this in (1) gives
+
+    U_i = B_i ⟨ v vᵀ ⟩ B_iᵀ = B_i Σ B_iᵀ,        Σ = ⟨ v vᵀ ⟩.                    (3)
+
+So the ADPs of all N atoms (6N numbers) follow from Σ, the m × m covariance of the
+generalised coordinates (m(m+1)/2 numbers). This is the whole idea: refine Σ instead of the U_i.
+
+### 1.3 Rigid-body motion: t and λ
+
+The simplest correlated motion is the molecule moving as a rigid body, by a translation and a
+rotation.
+
+- **The translation t** is a vector: every atom moves by the same **t**.
+- **The rotation** is a rotation by a small angle φ (in radians) about an axis through a fixed
+  **origin**, with unit vector **n** along the axis. An atom at position **r**_i from the origin
+  moves to R **r**_i, where R is the rotation matrix. For small φ, to first order,
+
+      R r_i = r_i + φ n × r_i,
+
+  so the displacement is φ **n** × **r**_i. Define the **rotation vector** (or libration vector)
+
+      λ = φ n :   its direction is the rotation axis, its length the angle in radians.
+
+  The displacement from the rotation is then **λ** × **r**_i, linear in **λ**.
+
+Together, the rigid-body displacement of atom *i* is
+
+    u_i = t + λ × r_i.                                                           (4)
+
+The cross product is a matrix acting on **λ**: **λ** × **r**_i = A_i **λ** with
+
+    A_i = [[ 0,  z_i, −y_i ],        r_i = (x_i, y_i, z_i) from the origin.
            [−z_i,  0,   x_i ],
-           [ y_i, −x_i,  0  ]],
+           [ y_i, −x_i,  0  ]]
 
-with **r**_i = (x_i, y_i, z_i) measured from the origin. Σ = ⟨v vᵀ⟩ is the 6 × 6 covariance of
-the rigid-body motion, and its blocks are the familiar T, L and S:
+So (4) is of the form of §1.2 with six generalised coordinates v = (**t**, **λ**) and
+B_i = [ 1 | A_i ], a 3 × 6 matrix (1 is the 3 × 3 unit matrix).
 
-    Σ = [[ T, Sᵀ ],        T = ⟨t tᵀ⟩  (Å²),   L = ⟨λ λᵀ⟩  (rad²),   S = ⟨λ tᵀ⟩  (Å rad).
-         [ S, L  ]]
+The first-order step drops terms of order φ². These bend the paths of the atoms into arcs and
+make bond lengths from a refinement appear slightly short (the libration correction); that
+correction is not applied here.
 
-Writing out B_i Σ B_iᵀ gives the Schomaker–Trueblood formula
+### 1.4 T, L and S
 
-    U_i^TLS = T + A_i L A_iᵀ + A_i S + Sᵀ A_iᵀ.                                    (2)
+The covariance Σ = ⟨ v vᵀ ⟩ of v = (**t**, **λ**) is 6 × 6. Its 3 × 3 blocks are the
+conventional rigid-body tensors:
 
-- **The origin** is the fragment's centre of mass. T and S depend on it; L does not.
-- **tr S is not determined.** Adding the same amount to the three diagonal elements of S adds
-  nothing to any U_i, since A_i is antisymmetric. Tonto drops that direction, which makes
-  tr S = 0. Σ has 21 independent elements, so 20 remain.
-- **Site symmetry.** If the molecule sits on a special position, Σ must carry the site
-  symmetry. Tonto imposes it through the atoms:
-  - Each atom that is a symmetry image of another must get the symmetry-transformed U.
-  - Each atom on a special position must have a U unchanged by its site-symmetry operations.
+    Σ = [[ T, Sᵀ ],        T = ⟨ t tᵀ ⟩  translation, Å²
+         [ S, L  ]]        L = ⟨ λ λᵀ ⟩  libration, rad² (printed in deg²)
+                           S = ⟨ λ tᵀ ⟩  correlation of rotation with translation, Å rad
 
-  These are linear conditions on Σ, and the allowed Σ are the solutions. Urea on its mm2 site
+Putting B_i = [ 1 | A_i ] into (3) and multiplying out the blocks gives the
+**Schomaker–Trueblood** formula
+
+    U_i^TLS = T + A_i L A_iᵀ + A_i S + Sᵀ A_iᵀ.                                   (5)
+
+- **The origin** is the fragment's centre of mass. T and S depend on where it is; L does not.
+- **tr S is not determined.** Adding the same number c to the three diagonal elements of S adds
+  c (A_i + A_iᵀ) to every U_i, and that is zero because A_i is antisymmetric. No measurement can
+  fix it. Tonto removes that direction, which makes tr S = 0. Σ has 21 independent elements,
+  so 20 remain.
+- **Site symmetry.** If the molecule sits on a special position, Σ must carry the site symmetry.
+  Tonto imposes it through the atoms:
+  - each atom that is a symmetry image of another must get the symmetry-transformed U;
+  - each atom on a special position must have a U unchanged by its site-symmetry operations.
+
+  These are linear conditions on Σ, and the allowed Σ are their solutions. Urea on its mm2 site
   keeps 8 of the 20.
 
-### Stiff internal modes
+### 1.5 Internal motion: normal modes
 
-From the Cartesian Hessian H at the molecule's geometry:
+The molecule also vibrates internally. Let **x** be the 3N Cartesian displacements of all the
+atoms from their equilibrium positions. Near a minimum of the energy E the potential is
+harmonic,
 
-1. **Mass-weight:** H' = M^(−1/2) H M^(−1/2).
-2. **Project out the rigid-body motion** (the Eckart–Sayvetz conditions): H'' = P H' P, with
-   P = 1 − Σ_v v vᵀ over the six mass-weighted translations and rotations, orthonormalised.
-   These six become exact zero modes, five for a linear molecule.
-3. **Diagonalise:** the eigenvalues are ω_k², the eigenvectors **l**_k.
+    E = E₀ + ½ xᵀ H x,        H_ab = ∂²E / ∂x_a ∂x_b,
 
-Mode k at temperature T has mean-square amplitude
+where H is the **Hessian**, the 3N × 3N matrix of force constants (hartree/bohr²).
 
-    ⟨Q_k²⟩ = coth(ω_k / 2 k_B T) / (2 ω_k)      (atomic units; 1/(2ω_k) at T = 0),     (3)
+Let m_i be the mass of atom *i*, and M the 3N × 3N diagonal matrix holding each atom's mass
+three times. In **mass-weighted coordinates** **q** = M^(1/2) **x** the kinetic energy is ½ |**q̇**|²,
+and the motion separates into independent oscillators, the **normal modes**:
 
-and adds **l**_ik **l**_ikᵀ ⟨Q_k²⟩ / m_i to the U of atom *i*. U_i^high in (1) is the sum over
-the **stiff** modes, those above a cutoff frequency (200 cm⁻¹ by default):
+1. **Mass-weight the Hessian:** H' = M^(−1/2) H M^(−1/2).
+2. **Remove the rigid-body motion.** For an isolated molecule the three translations and three
+   rotations cost no energy; they are not vibrations. Build the six mass-weighted rigid-body
+   displacement vectors (√m_i **e** for a translation along unit vector **e**, √m_i **e** × **r**_i for
+   a rotation about it), orthonormalise them, and project them out:
+   H'' = P H' P with P = 1 − Σ_v v vᵀ over those six vectors **v**. This imposes the
+   **Eckart–Sayvetz conditions**: the remaining modes carry no net linear or angular momentum,
+   so they are purely internal. The six become exact zero modes (five for a linear molecule).
+3. **Diagonalise H''.** Each eigenvector **l**_k (a 3N-vector) is a mode's shape; its eigenvalue is
+   ω_k², with ω_k the mode's angular frequency. **l**_ik denotes the three components of **l**_k on
+   atom *i*.
 
-    U_i^high = Σ_{ω_k > ω_c} l_ik l_ikᵀ ⟨Q_k²⟩ / m_i.                              (4)
+In terms of the mode amplitudes Q_k (the **normal coordinates**), atom *i* moves by
 
-The soft modes are left out of U^high. A mode with an imaginary frequency counts as soft,
-because a Hessian taken at the crystal geometry, which is not a minimum, can have such modes.
-In the full model the data must determine their amplitudes.
+    u_i = Σ_k l_ik Q_k / √m_i,
 
-**Frequency scaling.** Calculated harmonic frequencies are too high, so U^high is too low. The
-frequencies in (4) can be multiplied by a scale factor. The default is the value of Scott and
-Radom (1996) for the method, when Tonto made the Hessian itself:
+which is again of the form of §1.2. Each mode is a harmonic oscillator. In quantum mechanics its
+mean-square amplitude at temperature Θ is
+
+    ⟨ Q_k² ⟩ = coth(ω_k / 2 k_B Θ) / (2 ω_k)     (ħ = 1; k_B Boltzmann's constant).        (6)
+
+At Θ = 0 this is 1/(2ω_k), the zero-point motion; at high Θ it tends to k_B Θ / ω_k², the
+classical value. Different modes are uncorrelated, so (1) gives
+
+    U_i^modes = Σ_k l_ik l_ikᵀ ⟨ Q_k² ⟩ / m_i.                                    (7)
+
+**Stiff and soft modes.** A stiff mode (high ω, bond stretches and bends) is hardly affected by
+the crystal, and (6) from a calculated Hessian is good. A soft mode (low ω, torsions and wags)
+is sensitive to the crystal environment and to anharmonicity, and its amplitude should come from
+the data. Tonto splits the modes at a cutoff ω_c (200 cm⁻¹ by default). U_i^high is (7) summed
+over the stiff modes only:
+
+    U_i^high = Σ_{ω_k > ω_c} l_ik l_ikᵀ ⟨ Q_k² ⟩ / m_i.                            (8)
+
+A mode with ω_k² ≤ 0 (an imaginary frequency) counts as soft. A Hessian taken at the crystal
+geometry, which is not an energy minimum, can have such modes.
+
+### 1.6 The full model
+
+Adding the rigid-body motion (4) and the stiff internal modes, taken as uncorrelated, gives the
+ADP of atom *i* as
+
+    U_i = U_i^high + B_i Σ B_iᵀ,                                                  (9)
+
+with Σ = [[T, Sᵀ], [S, L]] refined and U_i^high fixed by the Hessian. The soft modes are not yet
+in the model (§6).
+
+### 1.7 Frequency scaling
+
+Calculated harmonic frequencies are too high, so (8) is too small. The frequencies can be
+multiplied by a scale factor before (6) is used. The default is the value of Scott and Radom
+(1996) for the method, when Tonto made the Hessian itself:
 
 | method | scale factor |
 |---|---|
@@ -90,47 +191,70 @@ Radom (1996) for the method, when Tonto made the Hessian itself:
 They were fitted for the 6-31G(d) basis and are applied whatever the basis. For a Hessian read
 in from a file, the method is unknown and the default is 1.
 
-### A Hessian by finite differences
+### 1.8 A Hessian by finite differences
 
 Without an external program, Tonto makes the Hessian from its own SCF energies by central
-differences with step h (0.01 bohr by default):
+differences with step h (0.01 bohr by default). Writing E(+a) for the energy with coordinate a
+moved by +h, and so on:
 
-    H_ii = [E(+i) + E(−i) − 2 E₀] / h²
-    H_ij = [E(+i,+j) − E(+i,−j) − E(−i,+j) + E(−i,−j)] / (4 h²)
+    H_aa = [E(+a) + E(−a) − 2 E₀] / h²
+    H_ab = [E(+a,+b) − E(+a,−b) − E(−a,+b) + E(−a,−b)] / (4 h²)
 
-**Translational invariance** says each atom's block row of H sums to zero over the atoms. Tonto
-uses it to get the last atom's rows, so the Hessian of N atoms needs 2n + 2n(n−1) SCFs with
-n = 3(N−1). This holds at any geometry, but not with cluster charges or an applied field; then
-every coordinate is differenced.
+**Translational invariance.** Moving the whole molecule does not change E, so each atom's block
+row of H sums to zero over the atoms. Tonto uses this to get the last atom's rows, so N atoms
+need 2n + 2n(n−1) SCFs with n = 3(N−1). It holds at any geometry, but not with cluster charges
+or an applied field; then every coordinate is differenced.
 
-The **gradient** comes free from the same energies and is printed. At a geometry that is not
-stationary, such as a crystal geometry, the rotations are not exact zero modes of H. The
-projection in step 2 is then an approximation.
+The **gradient** ∂E/∂x_a comes from the same energies, (E(+a) − E(−a))/2h, and is printed.
+Rotational invariance gives a similar sum rule only where the gradient is zero. At a geometry
+that is not stationary, such as a crystal geometry, the rotations are not exact zero modes of H,
+and the projection in §1.5 step 2 is an approximation.
 
 
 ## 2. Refining against the structure factors
 
-The refinement's parameters p are kept explicitly. The model vector X (every atom's position
-and ADP) is made from them by
+### 2.1 What is minimised
 
-    X = X₀ + J p,        J = ∂X/∂p.                                                (5)
+For each measured reflection the refinement compares the observed structure factor amplitude
+F_obs with the calculated one, F_calc from (2), with weight w = 1/σ², σ the measurement's
+standard uncertainty. With ΔF = F_obs − F_calc, it minimises
 
-- **Free ADPs:** J has one unit column per refined component.
+    χ² = Σ_reflections w ΔF².
+
+Two numbers summarise the fit. **GoF** (goodness of fit) counts the parameters:
+
+    GoF = [ χ² / (N_refl − N_param) ]^(1/2),
+
+and is 1 for a model that fits to within the measurement errors. **R(F)** = Σ|ΔF| / Σ|F_obs| does
+not count the parameters or use the weights. **Compare models by GoF, not R**: R can hide a
+worse fit. Whether a model with more parameters is significantly better is decided by
+Hamilton's test.
+
+### 2.2 Parameters and the Jacobian
+
+The refinement's parameters p are kept explicitly. The model vector X, the positions and ADPs
+of all the atoms, is made from them by
+
+    X = X₀ + J p,        J = ∂X/∂p, the Jacobian.                                  (10)
+
+- **Free ADPs:** J has one unit column per refined component of X.
 - **TLS model:** each atom keeps its three position columns. Its six ADP columns are replaced
-  by columns shared by all atoms, one per allowed Σ parameter. The fixed part X₀ holds
-  U^high on the ADP rows.
+  by columns shared by all the atoms, one per allowed Σ parameter: by (9), ∂U_i/∂Σ = ∂(B_i Σ B_iᵀ)/∂Σ.
+  X₀ holds U^high on the ADP rows.
 
-From the derivatives of the structure factors with respect to X, the normal equations are
-formed for p:
+### 2.3 Solving
 
-    A = (∂F/∂X J)ᵀ w (∂F/∂X J),     b = (∂F/∂X J)ᵀ w ΔF,     A Δp = b.
+From the derivatives ∂F_calc/∂X, the change in p that best lowers χ² to first order solves the
+**normal equations**:
 
-Near-zero eigenvalues of A are filtered out as for any refinement. The covariance of p is
-C = A⁻¹ scaled by GoF². That of the atoms follows as J C Jᵀ, which gives every atomic U an esd
-even though only Σ is refined. Each refinement cycle starts by putting the ADPs on the model:
-Σ is fitted to the current U − U^high, and U is set to U^high + B Σ Bᵀ.
+    D = (∂F_calc/∂X) J,     A = Dᵀ W D,     b = Dᵀ W ΔF,     A Δp = b,
 
-**Compare models by GoF, not R.** GoF counts the parameters; R can hide a worse fit.
+with W the diagonal matrix of the weights. Eigenvalues of A near zero (directions the data do
+not determine) are filtered out. The covariance of p is C = A⁻¹ scaled by GoF², and the esd of
+each parameter is the square root of its diagonal element. The covariance of X follows as
+J C Jᵀ, which gives every atomic U an esd even though only Σ is refined. Each refinement cycle
+starts by putting the ADPs on the model: Σ is fitted to the current U − U^high, and U is set to
+U^high + B Σ Bᵀ.
 
 
 ## 3. Keywords
@@ -145,17 +269,17 @@ On the molecule (top level):
 | `make_fd_hessian` | | the Hessian by finite differences of SCF energies (after `scf`) |
 | `normal_mode_analysis` | | the normal modes, rigid-body motion projected out |
 | `put_normal_modes` | | prints the Hessian and the modes |
-| `internal_adp_temperature=` | 0 | temperature for (3), Kelvin; 0 gives zero-point motion |
+| `internal_adp_temperature=` | 0 | the temperature Θ in (6), Kelvin; 0 gives zero-point motion |
 | `soft_mode_cutoff=` | 200 | modes below this, cm⁻¹, are soft |
-| `frequency_scale_factor=` | see above | scales the frequencies in (4) |
-| `make_internal_adps` | | makes U^high, eq. (4) |
+| `frequency_scale_factor=` | see §1.7 | scales the frequencies in (6) |
+| `make_internal_adps` | | makes U^high, eq. (8) |
 | `put_internal_adps` | | prints U^high and how many modes are soft, imaginary and stiff |
 
 In `xray_data=`:
 
 | keyword | default | meaning |
 |---|---|---|
-| `adp_model=` | `free` | `free`: refine each atom's ADP; `tls`: the model (1), HAR only |
+| `adp_model=` | `free` | `free`: refine each atom's ADP; `tls`: the model (9), HAR only |
 
 A TLS Hirshfeld atom refinement with U^high from a Hessian:
 
@@ -193,14 +317,14 @@ The test `tests/long/urea_rhf_STO-3G_HAR_TLS` is a complete example.
 | P M P, projecting vectors out of a matrix | `MAT{REAL}:project_out_vectors` |
 | normal modes with the projection | `MOLECULE.PROP:normal_mode_analysis` |
 | Hessian by finite differences | `MOLECULE.PROP:make_FD_hessian` |
-| U^high, eq. (4); its printout | `MOLECULE.PROP:make_internal_ADPs`, `put_internal_ADPs` |
+| U^high, eq. (8); its printout | `MOLECULE.PROP:make_internal_ADPs`, `put_internal_ADPs` |
 | frequency scale factor | `MOLECULE.PROP:harmonic_frequency_scale` |
 | U^high handed to the refinement | `MOLECULE.PROP:set_crystal_U_high`, `CRYSTAL:set_fragment_U_high` |
 | ∂U_i/∂Σ for one atom | `CRYSTAL:TLS_response` |
 | allowed Σ, J columns, tr S, origin | `CRYSTAL:make_TLS_jacobian_columns` |
 | p and X₀; ADPs put on the model | `CRYSTAL:set_refinement_parameters` |
 | T, L, S with esds | `CRYSTAL:put_TLS_results` |
-| explicit parameters, eq. (5); the solve | `LEAST_SQUARES` (`least_squares.foo`) |
+| explicit parameters, eq. (10); the solve | `LEAST_SQUARES` (`least_squares.foo`) |
 
 
 ## 5. Results
