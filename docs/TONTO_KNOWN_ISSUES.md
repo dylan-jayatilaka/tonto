@@ -79,8 +79,9 @@ the ones worth reading.
 
 ## Parallel (MPI)
 
-- **A parallel run is not simply a faster serial run.** Read `TASK_MPI.md` before
-  trusting one, and its defect register for what is still open.
+- **A parallel run is not simply a faster serial run.** Check one against a serial run before
+  relying on it ([`BUILDING_WITH_MPI.md`](BUILDING_WITH_MPI.md), section 5). The test suite under
+  MPI does not give the same count from run to run; the working record is `TASK_MPI.md`.
 - **`move_to_record` desynchronises the ranks** when a file is re-read, because the
   collective count is taken from a rank-local record number. It aborts rather than
   producing a wrong number, but only at two ranks or more.

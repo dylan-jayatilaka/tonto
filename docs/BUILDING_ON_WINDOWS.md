@@ -216,8 +216,8 @@ cmake --build ~/tonto-build/debug -- -j4
 
 ## Parallel (MPI) builds
 
-**Untested under WSL.** WSL is Ubuntu, so `sudo apt install openmpi-bin
-libopenmpi-dev` and the ordinary recipe should apply:
+WSL is Ubuntu, so `sudo apt install openmpi-bin libopenmpi-dev` and the ordinary
+recipe apply; the *WSL-MPI* workflow builds and checks it:
 
 ```bash
 cmake -B ~/tonto-build/mpi -S ~/tonto -DCMAKE_Fortran_COMPILER=mpifort \
@@ -227,7 +227,7 @@ cmake -B ~/tonto-build/mpi -S ~/tonto -DCMAKE_Fortran_COMPILER=mpifort \
 The MPI must have been built with the same Fortran compiler as Tonto — Tonto
 does `USE mpi`, and `.mod` files are compiler-version specific. Configure checks
 this. MS-MPI interop from Windows is not tested and not guarded.
-[`TASK_MPI.md`](TASK_MPI.md) records what a parallel run does and does
+[`BUILDING_WITH_MPI.md`](BUILDING_WITH_MPI.md) has the full recipe and what a parallel run does and does
 not reproduce.
 
 ## What this page does not cover

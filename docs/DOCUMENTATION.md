@@ -9,6 +9,7 @@ Everything lives in this repository, versioned with the code it describes.
 | [**Linux**](BUILDING_ON_LINUX.md) | Ubuntu/Debian, the best-supported platform |
 | [**macOS**](BUILDING_ON_MACOS.md) | via Homebrew |
 | [**Windows**](BUILDING_ON_WINDOWS.md) | via WSL2, and the four traps it adds |
+| [**With MPI**](BUILDING_WITH_MPI.md) | a parallel build on any platform: the matching MPI, the build, the checks, running |
 
 Each page is self-contained: prerequisites, build, tests, other build types and
 parallel (MPI) builds for that platform.
@@ -62,7 +63,7 @@ residue moving into the pages above.
 |---|---|
 | [**Tasks and history**](../TASKS_AND_HISTORY.md) | the live work: the handover, then every open issue by theme |
 | [**Developer reference**](TONTO_DEVELOPER_INFO.md) | writing parallel (MPI) code in Foo, and build and test traps |
-| [**Tonto and MPI**](TASK_MPI.md) | the parallel build, its numerics, and the defect register |
+| [**Tonto and MPI**](TASK_MPI.md) | the parallel build's numerics and its defect register |
 | [**Dispersion corrections**](TASK_DISPERSION_CORRECTIONS.md) | anomalous dispersion, Bijvoet pairs, and the residual density map |
 | [**DFT standardisation**](TASK_DFT_STANDARDISATION.md) | the DFT machinery, its silent defects, and the libxc plan |
 | [**Extinction correction**](TASK_EXTINCTION_CORRECTION.md) | why it has been dormant, its defect register, and the plan to bring it back |

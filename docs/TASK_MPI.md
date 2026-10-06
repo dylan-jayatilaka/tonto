@@ -7,98 +7,24 @@ and the numeric characterisation against a serial build.
 Before this, **no MPI build had ever been configured** — not in CI, not in `install-all.sh`, and
 not in any local build tree. Everything below is first-contact knowledge.
 
-## 1. The toolchain trap: your MPI must match your Fortran compiler
+## 1-3. Building, checking and running: moved
 
-`foofiles/parallel.foo` does `USE mpi`, and `include/macros.in` needs `MPI_ADDRESS_KIND` from
-that same module. Fortran `.mod` files are **compiler-version specific**, so an MPI package built
-against a different gcc simply cannot be used:
+How to build an MPI that matches the compiler, configure and build Tonto with it, run the pi check
+and the suite under the launcher, and run a job is user-facing and now lives in
+[`BUILDING_WITH_MPI.md`](BUILDING_WITH_MPI.md) (moved 2026-10-06). What stays here is the record.
 
-```
-Fatal Error: Cannot read module file '/opt/homebrew/.../mpi.mod' opened at (1),
-because it was created by a different version of GNU Fortran
-```
+Notes from first contact that are history, not instructions:
 
-This is not fixable with `OMPI_FC`: that changes which compiler the *wrapper* invokes, not the
-compiler that built the shipped modules.
-
-Configure now detects this and stops immediately with an actionable message, rather than failing
-hundreds of files into the build:
-
-```
--- Performing Test TONTO_MPI_MODULE_USABLE - Failed
-CMake Error: The MPI installation provides Fortran modules this compiler cannot read.
-    Fortran compiler : GNU 14.3.0
-    MPI Fortran      : /opt/homebrew/bin/mpif90
-```
-
-**If your packaged MPI does not match, build one that does.** It coexists happily with the
-system copy; select it with `PATH`:
-
-```sh
-curl -O https://download.open-mpi.org/release/open-mpi/v5.0/openmpi-5.0.9.tar.bz2
-tar xf openmpi-5.0.9.tar.bz2 && cd openmpi-5.0.9
-./configure --prefix=$HOME/opt/openmpi-gf14 \
-            FC=gfortran-14 CC=clang CXX=clang++ --disable-mpi-cxx \
-            --with-libevent=$(brew --prefix libevent) \
-            --with-hwloc=$(brew --prefix hwloc) --with-pmix=internal
-make -j10 && make install
-```
-
-On macOS/Homebrew the three `--with-*` options are required: the stock configure fails in PRRTE
-with *"Either libevent or libev support is required, but neither was found"*.
-
-## 2. Building
-
-```sh
-OMPI=$HOME/opt/openmpi-gf14
-cmake -S . -B build-mpi \
-      -DCMAKE_Fortran_COMPILER=$OMPI/bin/mpifort \
-      -DCMAKE_C_COMPILER=$OMPI/bin/mpicc \
-      -DMPI=1 -DCMAKE_BUILD_TYPE=release
-cmake --build build-mpi -- -j5
-```
-
-Confirm you actually got an MPI binary — the run banner's `Compiler:` line must show the
-expected gfortran, and:
-
-```sh
-otool -L build-mpi/tonto | grep mpi     # ldd on Linux
-```
-
-Notes on the recipe:
-
-- **`-DMPI=1` is now a hard requirement.** It used to report a miss as a `STATUS` line and build
-  a *serial* binary that looked like it had honoured the flag.
-- `-DCMAKE_CXX_COMPILER=mpicxx` was in the old README recipe and is **ignored** — `project()`
-  enables `Fortran C` only.
-- `-DNO_ERROR_MANAGEMENT` was documented but is a **no-op**; the symbol exists nowhere in the
-  build system. Removed from the docs rather than implemented.
-- Use `-DCMAKE_BUILD_TYPE=release` for any comparison against the reference outputs: they were
-  blessed at `release`, whereas `fast` adds `-faggressive-loop-optimizations -fstrict-aliasing`.
-
-## 3. Testing
-
-```sh
-# rank-invariance smoke test -- run this FIRST, before believing any suite numbers
-ctest --test-dir build-mpi -L mpi
-sh scripts/check_mpi_pi.sh build-mpi/run_mpi_pi $OMPI/bin/mpirun 1 2 4
-
-# the reference suite, under the launcher
-python3 scripts/suite_report.py --build-dir build-mpi --suites short \
-        --mpi --mpi-ranks 4 --mpi-launcher $OMPI/bin/mpirun
-```
-
-`scripts/test.py` and `scripts/suite_report.py` both gained `--mpi-ranks` and `--mpi-launcher`.
-Previously the rank count was hard-coded to 4 in `test.py` and `suite_report.py` had no `--mpi`
-option at all, so `make report` against an MPI build silently ran everything single-rank.
-
-**`scripts/check_mpi_pi.sh`** is the invariant test: `run_mpi_pi` integrates π with one
-`parallel do` and one `PARALLEL_SUM`, so it exercises the whole macro surface every parallel
-routine depends on, against an answer known in advance that must not change with the rank count.
-Unlike the reference suite it needs no stored output, so it cannot be silently blessed. It also
-separates the two failure modes the reference suite cannot: wrong at *every* rank count means the
-reduction or the integration is broken; right at `-n 1` but wrong at `-n 2`/`-n 4` means partial
-sums are not being combined.
+- `-DMPI=1` used to report a missing MPI as a `STATUS` line and build a *serial* binary that looked
+  as if it had honoured the flag. It is a hard requirement now.
+- `-DCMAKE_CXX_COMPILER=mpicxx` was in the old README recipe and is ignored: `project()` enables
+  `Fortran C` only. `-DNO_ERROR_MANAGEMENT` was documented and is a no-op; removed from the docs.
+- `scripts/test.py` and `scripts/suite_report.py` gained `--mpi-ranks` and `--mpi-launcher`.
+  Before, the rank count was hard-coded to 4 in `test.py` and `suite_report.py` had no `--mpi`
+  option, so `make report` against an MPI build ran everything on one rank without saying so.
+- `scripts/check_mpi_pi.sh` is the invariant test: `run_mpi_pi` integrates pi with one `parallel do`
+  and one `PARALLEL_SUM`, so it exercises the whole macro surface every parallel routine depends
+  on. Needing no stored output, it cannot be silently blessed.
 
 ## 3a. CI
 

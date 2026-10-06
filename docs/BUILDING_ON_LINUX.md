@@ -120,9 +120,8 @@ Configure checks this and stops if they differ. `-DMPI=1` is a hard
 requirement: if MPI is not found, configure fails rather than silently
 producing a serial binary.
 
-**Validate parallel results before trusting them.**
-[`TASK_MPI.md`](TASK_MPI.md) records what a parallel run does and does
-not reproduce.
+**The full recipe is in [`BUILDING_WITH_MPI.md`](BUILDING_WITH_MPI.md):** building an MPI
+that matches, checking the build, running, and what to expect of the results.
 
 Install it with `sudo apt install openmpi-bin libopenmpi-dev`. Ubuntu's package
 is built against a different gcc than `gfortran-14`, so if configure rejects it,
@@ -150,7 +149,7 @@ the compiler, the build type and `-DMPI=1`.
 |---|---|
 | Running Tonto | [`RUNNING_TONTO.md`](RUNNING_TONTO.md) |
 | The `hart` program | [`RUNNING_HART.md`](RUNNING_HART.md) |
-| What a parallel build does and does not reproduce | [`TASK_MPI.md`](TASK_MPI.md) |
+| Building and running with MPI | [`BUILDING_WITH_MPI.md`](BUILDING_WITH_MPI.md) |
 | Source and executable layout | [`TONTO_LIBRARY_STRUCTURE.md`](TONTO_LIBRARY_STRUCTURE.md) |
 
 > **Options are GNU long options.** Every Tonto program takes `--name` only —
