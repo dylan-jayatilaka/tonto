@@ -11037,7 +11037,7 @@ contains
    ! conjugate half. Testing only for -h itself doubles every such pair.
    !
    ! A reflection mapped onto -h by one of its own symops is NOT set to 1
-   ! here: make_symop_generated_dF_a_v2 already divides that case by its site
+   ! here: make_symop_generated_coefficients already divides that case by its site
    ! symmetry factor.
       self :: IN
       mult :: VEC{INT}, OUT
@@ -11144,208 +11144,119 @@ contains
 
    end
 
-   make_residual_density_grid(grid,pts) :: PURE
-   ! Make the crystal residual error "map" in the unit cell with
-   ! the supplied points "pts" in a cartesian system.
-   ! NOTE: the pts is (n_pts x 3)
-   ! NOTE: SLOWER - USE ROUTINE ABOVE FOR RECTILINEAR PTS.
+   make_cell_map(map) :: leaky, PURE
+   ! Fill "map" with the Fourier coefficients of the density of the unit
+   ! cell of its kind: "residual", the difference density F_exp - F_calc
+   ! with the model's phases; "f_exp", the observed density; "f_calc", the
+   ! model's. The coefficients are on absolute scale and expanded over the
+   ! whole sphere of reciprocal space with the Friedel multiplicities.
+   ! For the two total densities the term F(000), the number of electrons
+   ! in the cell, is added, so that those maps integrate to the electron
+   ! count; the cell is taken as neutral, F(000) being the sum of the
+   ! atomic numbers of the unit cell atoms times their site occupancies.
+      self :: IN
+      map  :: CELL_MAP, INOUT
+
+   ENSURE(.xray_data.allocated, "no diffraction data")
+   ENSURE(.xray_data.reflections.allocated, "no structure factors")
+   ENSURE(.xray_data.INQ:have_F_calc, "no calculated structure factors")
+   ENSURE(.xray_data.INQ:have_F_pred, "no predicted structure factors")
+   ENSURE(.xray_data.INQ:have_F_exp, "no experimental structure factors")
+   ENSURE(map.kind_is_known, "unknown kind of cell map: "//trim(map.kind))
+
+      g1,g2,g3,mult :: VEC{INT}@
+      f,coeff :: VEC{CPX}@
+      n_refl,n_sym,n_all,a :: INT
+      f000 :: REAL
+      total :: BIN
+
+      n_refl = .xray_data.reflections.dim
+      n_sym  = n_refl*.spacegroup.n_seitz
+      total  = map.kind/="residual"
+      n_all  = n_sym
+      if (total) n_all = n_all + 1
+
+      ! Multiplicity factor for the conjugate half of reciprocal space.
+      ! For a centrosymmetric group every reflection's own symops generate -h,
+      ! so the site symmetry factor handles it and 2 is right throughout.
+      mult.create(n_refl)
+      if (.spacegroup.centrosymmetric) then
+         mult = 2
+      else
+         .set_Fourier_multiplicities(mult)
+      end
+
+      ! The coefficient of each unique reflection, then of every symmetry
+      ! generated one
+      f.create(n_refl)
+      .xray_data.SET:make_Fourier_coefficients(f,map.kind)
+      coeff.create(n_all)
+      g1.create(n_all)
+      g2.create(n_all)
+      g3.create(n_all)
+      .xray_data.SET:make_symop_generated_coefficients(coeff(1:n_sym),g1(1:n_sym),g2(1:n_sym),g3(1:n_sym),.spacegroup,mult,f)
+
+      ! F(000) for a total density
+      if (total) then
+         ENSURE(.unit_cell_atom.allocated, "no unit cell atoms")
+         f000 = ZERO
+         do a = 1,.n_unit_cell_atoms
+            f000 = f000 + .unit_cell_atom(a).atomic_number*.unit_cell_atom(a).site_occupancy
+         end
+         g1(n_all) = 0
+         g2(n_all) = 0
+         g3(n_all) = 0
+         coeff(n_all) = f000
+      end
+
+      map.set_cell(.unit_cell)
+      map.set_coefficients(g1,g2,g3,coeff)
+
+      g3.destroy
+      g2.destroy
+      g1.destroy
+      coeff.destroy
+      f.destroy
+      mult.destroy
+
+   end
+
+   make_residual_density_grid(grid,pts) :: leaky, PURE
+   ! Make the residual density "grid" at the cartesian points "pts", one
+   ! row per point. For a grid of points over the cell
+   ! make_residual_density_cell is faster.
       self :: IN
       grid :: VEC{REAL}, OUT
       pts  :: MAT{REAL}, IN
 
    ENSURE(grid.dim==pts.dim1,"wrong dim, grid")
    ENSURE(pts.dim2==3,       "wrong dim2, pts")
-   ENSURE(.xray_data.allocated, "no diffraction data")
-   ENSURE(.xray_data.reflections.allocated, "no structure factors")
-   ENSURE(.xray_data.INQ:have_F_calc, "no calculated structure factors")
-   ENSURE(.xray_data.INQ:have_F_pred, "no predicted structure factors")
-   ENSURE(.xray_data.INQ:have_F_exp, "no experimental structure factors")
 
-      n_pts,n_refl, r,p :: INT
-      gx,gy,gz,mult :: VEC{INT}@
-      dF   :: VEC{CPX}@
-      frac :: MAT{REAL}@
-      xi,yi,zi,den :: REAL
-      ci,val :: CPX
+      map :: CELL_MAP@
 
-      ! Constants
-      n_pts  = pts.dim1
-      n_refl = .xray_data.reflections.dim*.spacegroup.n_seitz
-      ci     = -2*PI * IMAGIFY(ONE)
-
-      ! Multiplicity factor for the conjugate half of reciprocal space.
-      ! For a centrosymmetric group every reflection's own symops generate -h,
-      ! so the site symmetry factor handles it and 2 is right throughout.
-      mult.create(.xray_data.reflections.dim)
-      if (.spacegroup.centrosymmetric) then
-         mult = 2
-      else
-         .set_Fourier_multiplicities(mult)
-      end
-
-      ! Get phased structure factor differences, absolute scale
-      ! And the symmetry generated Miller indices, the g's.
-      dF.create(n_refl)
-      gx.create(n_refl)
-      gy.create(n_refl)
-      gz.create(n_refl)
-      .xray_data.SET:make_symop_generated_dF_a_v2(dF,gx,gy,gz,.spacegroup,mult)
-      mult.destroy
-
-      ! Volume factor
-      dF  = dF/.unit_cell.volume
-
-      ! Get the fractional coordinates. Hard coded !
-      frac = matmul(pts,.unit_cell.reciprocal_mx)
-
-      ! Make the phases x del F
-      do p = 1,n_pts
-
-         xi = frac(p,1)
-         yi = frac(p,2)
-         zi = frac(p,3)
-
-         den = ZERO
-         do r = 1,n_refl
-            val = ci*(gx(r)*xi + gy(r)*yi + gz(r)*zi)
-            den = den + REALIFY(exp(val)*dF(r)) ! <--
-         end
-
-         ! Assign value
-         grid(p) = den
-
-      end
-
-      ! Clean
-      gz.destroy
-      gy.destroy
-      gx.destroy
-      dF.destroy
+      map.create
+      map.set_kind("residual")
+      .make_cell_map(map)
+      map.make_values_at(grid,pts)
+      map.destroy
 
    end
 
-   make_residual_density_cell(map,nx,ny,nz) :: PURE
-   ! Make the crystal residual error "map" in the unit cell with
-   ! "nx", "ny" and "nz" points per cell axis. These must be odd.
-   ! The "map" array increments first on the x axis, then y, then z
-   ! i.e. it must be compatible with PLOT_GRID:make_points.
-   ! This routine takes advantage of the grid structure for speed.
-   ! This version need to gather the 1D phases over miller indices.
+   make_residual_density_cell(map,nx,ny,nz) :: leaky, PURE
+   ! Make the residual density "map" on a grid of "nx", "ny", "nz" points
+   ! along the cell axes, both ends included, incrementing first on x,
+   ! then y, then z, as PLOT_GRID:make_points does.
       self :: IN
       map :: VEC{REAL}, OUT
       nx,ny,nz :: INT, IN
 
-      ! This version seems fastest
-      .make_residual_density_cell_n(map,nx,ny,nz)
+      cell_map :: CELL_MAP@
 
-   end
-
-   make_residual_density_cell_n(map,nx,ny,nz) :: PURE
-   ! Make the crystal residual error "map" in the unit cell with
-   ! "nx", "ny" and "nz" points per cell axis. These must be odd.
-   ! The "map" array increments first on the x axis, then y, then z
-   ! i.e. it must be compatible with PLOT_GRID:make_points.
-   ! This routine takes advantage of the grid structure for speed.
-   ! This version uses more memory for the 1D phase arrays.
-      self :: IN
-      map  :: VEC{REAL}, OUT
-      nx,ny,nz :: INT, IN
-
-   ENSURE(.xray_data.allocated, "no diffraction data")
-   ENSURE(.xray_data.reflections.allocated, "no structure factors")
-   ENSURE(.xray_data.INQ:have_F_calc, "no calculated structure factors")
-   ENSURE(.xray_data.INQ:have_F_pred, "no predicted structure factors")
-   ENSURE(.xray_data.INQ:have_F_exp, "no experimental structure factors")
-
-      ix,iy,iz, n_refl,r,p :: INT
-      xi,yi,zi, del :: REAL
-      gx,gy,gz,mult :: VEC{INT}@
-      phx,phy,phz :: MAT{CPX}@
-      dF :: VEC{CPX}@
-      ci :: CPX
-
-      ! Constants
-      n_refl = .xray_data.reflections.dim*.spacegroup.n_seitz
-      ci     = -2*PI * IMAGIFY(ONE)
-
-      ! Multiplicity factor for the conjugate half of reciprocal space.
-      ! For a centrosymmetric group every reflection's own symops generate -h,
-      ! so the site symmetry factor handles it and 2 is right throughout.
-      mult.create(.xray_data.reflections.dim)
-      if (.spacegroup.centrosymmetric) then
-         mult = 2
-      else
-         .set_Fourier_multiplicities(mult)
-      end
-
-      ! Get phased structure factor differences, absolute scale
-      ! And P1 expanded symmetry generated h's -> g's .
-      dF.create(n_refl)
-      gx.create(n_refl)
-      gy.create(n_refl)
-      gz.create(n_refl)
-      .xray_data.SET:make_symop_generated_dF_a_v2(dF,gx,gy,gz,.spacegroup,mult)
-      mult.destroy
-
-      ! Volume factor
-      dF = dF/.unit_cell.volume
-
-      ! Make the 1D x phases
-      phx.create(n_refl,nx)
-      del = ONE/(nx-1)
-      xi = ZERO
-      do ix = 1,nx
-         do r = 1,n_refl
-            phx(r,ix) = exp(ci*gx(r)*xi)
-         end
-         xi = xi + del
-      end
-
-      ! Make the 1D y phases
-      phy.create(n_refl,ny)
-      del = ONE/(ny-1)
-      yi = ZERO
-      do iy = 1,ny
-         do r = 1,n_refl
-            phy(r,iy) = exp(ci*gy(r)*yi)
-         end
-         yi = yi + del
-      end
-
-      ! Make the 1D z phases
-      ! Include SF part in z term
-      phz.create(n_refl,nz)
-      del = ONE/(nz-1)
-      zi = ZERO
-      do iz = 1,nz
-         zi = (iz-1) * del
-         do r = 1,n_refl
-            phz(r,iz) = exp(ci*gz(r)*zi) * dF(r) ! <--
-         end
-         zi = zi + del
-      end
-
-      ! Grid point
-      p = 0
-
-      ! Make the residual map
-      do iz = 1,nz
-      do iy = 1,ny
-      do ix = 1,nx
-         p = p + 1
-         map(p) = sum( REALIFY(phx(:,ix)*phy(:,iy)*phz(:,iz)) )
-      end
-      end
-      end
-
-      ! Clean
-      phz.destroy
-      phy.destroy
-      phx.destroy
-      gz.destroy
-      gy.destroy
-      gx.destroy
-      dF.destroy
+      cell_map.create
+      cell_map.set_kind("residual")
+      .make_cell_map(cell_map)
+      cell_map.make_values_on_cell(map,nx,ny,nz)
+      cell_map.destroy
 
    end
 

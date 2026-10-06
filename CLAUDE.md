@@ -78,10 +78,22 @@ working document):
 - **Adding to a page? Check whether something can come out.** These pages should not grow
   monotonically.
 
-**In the source, three further specifics:**
+**In the source, four further specifics:**
 
-- **Procedure header documentation** may be longer, and is the right place for an
-  explanation a caller genuinely needs. Use that latitude sparingly.
+- **Write in the Tonto house style of the file you are in.** A procedure is laid out as: the
+  signature line; directly under it the comment block that documents it; then `self ::` and the
+  argument declarations; then the `ENSURE`s; then the locals; then the body in short stages,
+  each opened by a one-line comment and separated by a blank line, with every `create` undone
+  by a `destroy` in reverse order. Three-space indent, lower-case `case("...")` keywords padded
+  to the column the table uses, abbreviations in capitals in routine names (`ED`, `ADP`, `HA`).
+  Copy the shape of a neighbouring routine before writing a new one.
+- **The comment block under the signature is the documentation**, and is the right place for
+  what a caller needs: what the routine returns, naming the arguments in double quotes
+  (`"res"`, `"pts"`), the units and conventions it assumes, and a formula or a reference
+  where the body would be hard to follow without one. A paragraph is fine; a page is not.
+- **Comments inside the body are for the person reading the code**, one or two lines at a
+  stage boundary. They say what the stage does. They are not a log of what was tried, not a
+  derivation, and not a note to a model — those go in a working document.
 - **Type component descriptions** (`types.foo`) stay **very brief** — a line, ideally.
 - A **pitfall** that would cause the next person to reintroduce the bug may be noted, in
   one or two lines, pointing at the document that carries the detail.

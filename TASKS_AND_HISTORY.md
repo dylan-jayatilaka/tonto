@@ -84,9 +84,12 @@ because by then it held far more than deferred items.)*
 it rests on, `~/Dropbox/tex/conference_talks/2026_ED_angular_decomp/angular_decomp.pdf` (written
 and checked numerically on 2026-10-06; `check_formulas.py` beside it). **The order is settled
 (Dylan): the field maps `local_moment` first, then `angular_hirshfeld`, then the square-root
-version `hirshfeld_amplitude`.** Start at the plan's step 1: the new
+version `hirshfeld_amplitude`.** Step 1 is done and merged (2026-10-06, evening): the new
 type `CELL_MAP`, the residual map moved onto it with no number changing, the fast Fourier-series
-routine and a total Fourier map. Write
+routine and the total maps `f_exp` and `f_calc`; checks in the plan's log. Next is step 2, the
+`local_moment` maps, then the urea test Dylan asked for: a HAR at B3LYP/def2-TZVP on the data in
+`tests/long/urea_rhf_STO-3G_HAR`, the decomposition from F_exp (model phases) against F_calc,
+cubes at 0.2 bohr, looked at in VESTA. Write
 in the Tonto style, procedures well commented (Dylan). achari2 has a clean worktree of `develop`
 with debug, release and reference trees: `~/github/tonto-sg`.
 

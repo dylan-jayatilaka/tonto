@@ -278,7 +278,7 @@ is about, and makes it the kind of flat record the re-engineering wants.
 
 | procedure | does |
 |---|---|
-| `set_coefficients(h,k,l,coeff,cell)` | takes the expanded coefficients |
+| `set_coefficients(h1,h2,h3,coeff,cell)` | takes the expanded coefficients |
 | `apply_blur(width)`, `apply_l_moment(l,m,width)` | multiply the coefficients by the factor of equation (2) |
 | `make_values_at(values,pts)` | equation (1) at any points, through `FOURIER_SUMS` |
 | `make_values_on_cell(values,nx,ny,nz)` | the whole cell, with one-dimensional phase tables |
@@ -320,6 +320,30 @@ same at both levels, so nothing a user types changes:
 two residual-map tests as the check that nothing moved. The new maps are then additions to a
 type that is already tested.
 
+**Wiring a new type in** (found on checking the plan against the code):
+
+- A plain procedure of `FOURIER_SUMS` is called `FOURIER_SUMS:name(...)` from another module, with
+  one colon; `::` is the within-module form and fails to link.
+- `CMakeLists.txt` lists every module twice by name, the `.foo` in `FOO_SRC` and the generated `.F90`
+  in the library's sources; `cell_map` goes into both, beside `fourier_sums`. Miss the second and the
+  build fails with "Cannot open module file 'cell_map_module.mod'".
+- `types.foo`: `type CELL_MAP` before `type CRYSTAL`, and `cell_map :: CELL_MAP@` in `MOLECULE`
+  beside `plot_grid`. `MOLECULE.SET:destroy_ptr_part` destroys it.
+- The residual routines have **five** callers, all of which must give the same numbers after the
+  move: the plot kind in `MOLECULE.GRID`; `MOLECULE.RHO:make_residual_density_grid` (which
+  converts to electrons per Å³) and `get_minmax_residual_density_p`; `MOLECULE.PUT:make_residual_density_cell`
+  and `put_ED_refinement_plots`, which writes the `*.residual_density_map,cell.cube` that
+  `long/YLID_IAM_plus_anomalous_residual_density` compares.
+- `make_symop_generated_dF_a_v2` is two things in one: the per-reflection coefficient
+  (the residual's $`(|F_o| - |F_c|) e^{i\alpha_c}`$ on absolute scale) and the expansion of any
+  coefficient over the symmetry-generated reflections with the Friedel and site-symmetry factors.
+  Split it: `make_symop_generated_coefficients(coeff_out,g1,g2,g3,spacegroup,mult,coeff_in)` keeps
+  the expansion, and each map kind supplies its own `coeff_in`. The arithmetic is the same, so no
+  number changes; the `f_exp` and `f_calc` maps then need no second copy of the expansion.
+- `get_minmax_residual_density_p` stays in `MOLECULE.RHO`: it drives `.plot_grid` and prints.
+  Only the statistics of a whole-cell map (minimum, maximum and rms without double-counting the
+  cell faces) move into `CELL_MAP`.
+
 **Cautions.** A new type means an edit to `types.foo`, which every module depends on: a full
 rebuild. Check each component name against Fortran's case rule and against the macro names in
 `include/macros.in`. `k` and `l` as Miller-index names clash with nothing here, but `l` the Miller
@@ -332,9 +356,12 @@ index and `l` the angular momentum must not meet in one routine: call the indice
   routine's locals before compiling.
 - **`PURE` and `DIE`:** a check that must fire in release cannot sit in a `PURE` routine
   (it cost a release build on the SG grids). Use `ENSURE` inside, and a `DIE` in a non-`PURE` caller.
-- **The order of $`m`$** in `make_solid_harmonics` is `GAUSSIAN_DATA`'s, not necessarily
-  $`-l \ldots l`$. Print the $`l = 1`$ harmonics at $`(1,0,0)`$, $`(0,1,0)`$, $`(0,0,1)`$ once and write
-  the answer in the routine header.
+- **The order of $`m`$** in `make_solid_harmonics` is `GAUSSIAN_DATA`'s. By
+  `GAUSSIAN_DATA:into_std_S_order` that order is $`m = -l \ldots l`$, with $`m<0`$ the sine-like and
+  $`m>0`$ the cosine-like harmonic, so $`l = 1`$ is $`y, z, x`$: the document's order. The *signs* are
+  not fixed by `make_normalised_harmonics`, which only scales. Print the $`l = 1`$ harmonics at
+  $`(1,0,0)`$, $`(0,1,0)`$, $`(0,0,1)`$ once and write the answer in the routine header. The norm
+  over $`m`$ depends on neither order nor sign, which is one more reason to code it first.
 - **The sign of the exponent.** Equation (1) has $`e^{-i\mathbf q\cdot\mathbf r}`$ and the factor
   $`(-i)^l`$ goes with it. `CRYSTAL:make_residual_density_grid` uses `exp(-2 pi i h.x)`, the same
   sign; `exp_ikr_sums` computes $`e^{+i\mathbf k\cdot\mathbf r}`$. Get the $`l = 1`$ gradient check of
@@ -366,3 +393,17 @@ index and `l` the angular momentum must not meet in one routine: call the indice
   the Fourier maps in a new type `CELL_MAP` (Dylan). Found on the way:
   the earlier derivation's components depend on the cell origin; the any-points residual map uses a
   complex exponential in its inner loop.
+- 2026-10-06, later. Plan checked against the code before coding: every routine it names exists.
+  Added the wiring list in section 5 (CMake list, `MOLECULE` component, five callers, the split of
+  `make_symop_generated_dF_a_v2`), and the $`m`$ order from `into_std_S_order` to section 6.
+- 2026-10-06, evening. **Step 1 done** on the Mac, debug and release. The residual map now goes
+  through `CELL_MAP`; `long/L_alanine_minmax_residual_density_map` and
+  `long/YLID_IAM_plus_anomalous_residual_density` pass unchanged, and the alanine Max/Min/RMS agree
+  to every printed digit in the debug build too. The total maps `f_calc` and `f_exp` (keyword
+  `cell_map= { kind= }`, plot kind `cell_map`) on L-alanine integrate to 192.00 electrons on a
+  17 x 29 x 17 grid, the residual to 0.0001, and `f_exp - f_calc - residual` is within the cubes'
+  four printed decimals. On the test's 15 x 27 x 15 grid the integral was 187.3: a grid of N
+  points including both faces is periodic on N-1, and the k = +-26 reflections fold into the sum.
+  The timing of the any-points residual map before and after was not measured. Two more wiring
+  facts went into section 5 (the second CMake list; `FOURIER_SUMS:name` with one colon from
+  another module).

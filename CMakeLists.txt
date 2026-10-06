@@ -437,6 +437,7 @@ set(FOO_SRC
     ${FOO_DIR}/crystal.foo
     ${FOO_DIR}/crystal23.foo
     ${FOO_DIR}/fourier_sums.foo
+    ${FOO_DIR}/cell_map.foo
     ${FOO_DIR}/gaussian_ff_fit.foo
     ${FOO_DIR}/spherical_harmonic.foo
     ${FOO_DIR}/t_tensor.foo
@@ -511,6 +512,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/crystal.F90
     ${CMAKE_CURRENT_BINARY_DIR}/crystal23.F90
     ${CMAKE_CURRENT_BINARY_DIR}/fourier_sums.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/cell_map.F90
     ${CMAKE_CURRENT_BINARY_DIR}/gaussian_ff_fit.F90
 #   ${CMAKE_CURRENT_BINARY_DIR}/datafile.F90
     ${CMAKE_CURRENT_BINARY_DIR}/dft_functional.F90

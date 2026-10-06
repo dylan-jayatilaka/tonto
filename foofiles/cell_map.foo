@@ -1,0 +1,395 @@
+!---------------------------------------------------------------------------
+!
+! CELL_MAP: a density of the unit cell held as its Fourier coefficients,
+! and the maps made from it.
+!
+! The coefficients are structure factors already expanded over the whole
+! sphere of reciprocal space, on absolute scale and divided by the cell
+! volume, so that the density at a point r is the real part of
+!
+!    rho(r) = sum_n coeff(n) exp(-i q_n.r),   q_n = 2 pi B h_n,
+!
+! with B the reciprocal cell matrix and h_n the Miller indices of
+! reflection n. CRYSTAL:make_cell_map fills the object from diffraction
+! data; this module only holds the coefficients and sums the series.
+! It holds no crystal, atoms or plot grid: those are passed in.
+!
+! Copyright (C) Dylan Jayatilaka, 2026
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+!---------------------------------------------------------------------------
+
+module CELL_MAP
+
+   implicit none
+
+contains
+
+!  ==========
+!  Allocation
+!  ==========
+
+   create :: get_from(OBJECT), leaky, PURE
+   ! Allocate an object and set defaults
+   end
+
+   destroy :: get_from(OBJECT), leaky, PURE
+   ! Deallocate "self"
+   end
+
+   destroy_ptr_part :: leaky, PURE
+   ! Destroy the pointer parts
+      self :: INOUT
+
+      .h1.destroy
+      .h2.destroy
+      .h3.destroy
+      .coeff.destroy
+
+   end
+
+!  ===
+!  Set
+!  ===
+
+   set_defaults :: PURE
+   ! Set the defaults: a residual map, no angular filter
+      self :: INOUT
+
+      .kind         = "residual"
+      .l_value      = -1
+      .m_value      = -99
+      .window_width = 0.5*BOHR_PER_ANGSTROM
+      .volume       = ZERO
+      .reciprocal_mx = ZERO
+
+   end
+
+   set_kind(kind) :: PURE
+   ! Set the "kind" of density the coefficients describe
+      self :: INOUT
+      kind :: STR, IN
+
+      .kind = kind
+      .kind.to_lower_case
+
+   ENSURE(.kind_is_known, "unknown kind: "//trim(.kind))
+
+   end
+
+   kind_is_known result (res) :: pure
+   ! Return TRUE if ".kind" is one CRYSTAL:make_cell_map can make
+      self :: IN
+      res :: BIN
+
+      select case (.kind)
+      case ("residual","f_exp","f_calc"); res = TRUE
+      case default;                       res = FALSE
+      end
+
+   end
+
+   set_cell(unit_cell) :: PURE
+   ! Take the reciprocal cell matrix and the volume from "unit_cell"
+      self :: INOUT
+      unit_cell :: UNIT_CELL, IN
+
+   ENSURE(unit_cell.volume>ZERO, "unit cell has no volume")
+
+      .reciprocal_mx = unit_cell.reciprocal_mx
+      .volume        = unit_cell.volume
+
+   end
+
+   set_coefficients(h1,h2,h3,coeff) :: leaky, PURE
+   ! Take the Miller indices "h1", "h2", "h3" and the coefficients "coeff",
+   ! one per reflection over the whole sphere and on absolute scale. The
+   ! coefficients are divided by the cell volume here, so set_cell must
+   ! have been called first.
+      self :: INOUT
+      h1,h2,h3 :: VEC{INT}, IN
+      coeff    :: VEC{CPX}, IN
+
+   ENSURE(.volume>ZERO, "set the cell first")
+   ENSURE(h1.dim==coeff.dim, "h1: wrong dim")
+   ENSURE(h2.dim==coeff.dim, "h2: wrong dim")
+   ENSURE(h3.dim==coeff.dim, "h3: wrong dim")
+
+      n :: INT
+
+      n = coeff.dim
+
+      .destroy_ptr_part
+      .h1.create(n); .h1 = h1
+      .h2.create(n); .h2 = h2
+      .h3.create(n); .h3 = h3
+      .coeff.create(n)
+      .coeff = coeff/.volume
+
+   end
+
+!  =======
+!  Inquiry
+!  =======
+
+   n_reflections result (res) :: pure
+   ! The number of reflections held, over the whole sphere
+      self :: IN
+      res :: INT
+
+      if (.coeff.allocated) then; res = .coeff.dim
+      else;                       res = 0
+      end
+
+   end
+
+   electron_count result (res) :: PURE
+   ! The integral of the density over the cell: the real part of the
+   ! coefficient of (0,0,0) times the volume. Zero for a map with no
+   ! (0,0,0) term, such as a residual map.
+      self :: IN
+      res :: REAL
+
+   ENSURE(.coeff.allocated, "no coefficients")
+
+      n :: INT
+
+      res = ZERO
+      do n = 1,.coeff.dim
+         if (.h1(n)/=0 OR .h2(n)/=0 OR .h3(n)/=0) cycle
+         res = res + REALIFY(.coeff(n))*.volume
+      end
+
+   end
+
+!  ====
+!  Maps
+!  ====
+
+   make_scattering_vectors(q) :: PURE
+   ! Set row n of "q" to the scattering vector 2 pi B h_n of reflection n,
+   ! in cartesian coordinates, with B the reciprocal cell matrix.
+      self :: IN
+      q :: MAT{REAL}, OUT
+
+   ENSURE(.coeff.allocated, "no coefficients")
+   ENSURE(q.dim1==.coeff.dim, "q: wrong dim1")
+   ENSURE(q.dim2==3, "q: wrong dim2")
+
+      h :: VEC{REAL}(3)
+      n :: INT
+
+      do n = 1,.coeff.dim
+         h = [.h1(n),.h2(n),.h3(n)]
+         q(n,:) = 2*PI*matmul(.reciprocal_mx,h)
+      end
+
+   end
+
+   make_values_at(values,pts) :: PURE
+   ! Set "values" to the density at the cartesian points "pts", one row
+   ! per point, by summing the Fourier series at each point.
+      self :: IN
+      values :: VEC{REAL}, OUT
+      pts    :: MAT{REAL}, IN
+
+   ENSURE(.coeff.allocated, "no coefficients")
+   ENSURE(values.dim==pts.dim1, "values: wrong dim")
+   ENSURE(pts.dim2==3, "pts: wrong dim2")
+
+      q :: MAT{REAL}@
+
+      q.create(.coeff.dim,3)
+      .make_scattering_vectors(q)
+
+      FOURIER_SUMS:fourier_series_at(values,q,.coeff,pts)
+
+      q.destroy
+
+   end
+
+   make_values_on_cell(values,nx,ny,nz) :: PURE
+   ! Set "values" to the density on a grid of "nx", "ny", "nz" points
+   ! along the cell axes, both ends of each axis included, incrementing
+   ! first on x, then y, then z, as PLOT_GRID:make_points does. The phase
+   ! of each reflection separates into one factor per axis, so the three
+   ! one-dimensional tables of phases are made once and the sum at a
+   ! point is a product of three table entries.
+      self :: IN
+      values   :: VEC{REAL}, OUT
+      nx,ny,nz :: INT, IN
+
+   ENSURE(.coeff.allocated, "no coefficients")
+   ENSURE(values.dim==nx*ny*nz, "values: wrong dim")
+   ENSURE(nx>1 AND ny>1 AND nz>1, "need at least two points on each axis")
+
+      phx,phy,phz :: MAT{CPX}@
+      ix,iy,iz,n,p,n_refl :: INT
+      xi,yi,zi,del :: REAL
+      ci :: CPX
+
+      n_refl = .coeff.dim
+      ci     = -2*PI*IMAGIFY(ONE)
+
+      ! The x phases
+      phx.create(n_refl,nx)
+      del = ONE/(nx-1)
+      xi  = ZERO
+      do ix = 1,nx
+         do n = 1,n_refl
+            phx(n,ix) = exp(ci*.h1(n)*xi)
+         end
+         xi = xi + del
+      end
+
+      ! The y phases
+      phy.create(n_refl,ny)
+      del = ONE/(ny-1)
+      yi  = ZERO
+      do iy = 1,ny
+         do n = 1,n_refl
+            phy(n,iy) = exp(ci*.h2(n)*yi)
+         end
+         yi = yi + del
+      end
+
+      ! The z phases, carrying the coefficient
+      phz.create(n_refl,nz)
+      del = ONE/(nz-1)
+      do iz = 1,nz
+         zi = (iz-1)*del
+         do n = 1,n_refl
+            phz(n,iz) = exp(ci*.h3(n)*zi)*.coeff(n)
+         end
+      end
+
+      ! The map
+      p = 0
+      do iz = 1,nz
+      do iy = 1,ny
+      do ix = 1,nx
+         p = p + 1
+         values(p) = sum(REALIFY(phx(:,ix)*phy(:,iy)*phz(:,iz)))
+      end
+      end
+      end
+
+      phz.destroy
+      phy.destroy
+      phx.destroy
+
+   end
+
+!  =====
+!  Input
+!  =====
+
+   read_keywords :: get_from(OBJECT), leaky
+   ! Read data from "stdin" using keyword style input.
+   end
+
+   process_keyword(keyword) :: leaky
+   ! Process command "keyword". Any required data needed by the "keyword" is
+   ! inputted from "stdin".
+      self :: INOUT
+      keyword :: STR, IN
+
+      word :: STR
+
+      word = keyword
+      word.to_lower_case
+
+      select case (word)
+      case ("}                  ")  ! exit case
+      case ("kind=              "); .read_kind
+      case ("l_value=           "); .read_l_value
+      case ("m_value=           "); .read_m_value
+      case ("window_width=      "); .read_window_width
+      case default; UNKNOWN(word)
+      end
+
+   end
+
+   read_kind
+   ! Read which density of the cell to make
+      self :: INOUT
+
+      kind :: STR
+
+      stdin.read(kind)
+      .set_kind(kind)
+
+   end
+
+   read_l_value
+   ! Read the angular momentum of a local-moment map
+      self :: INOUT
+
+      stdin.read(.l_value)
+
+   ENSURE(.l_value>=0, "l_value must not be negative")
+
+   end
+
+   read_m_value
+   ! Read one component m of a local-moment map; without it the map is
+   ! the norm over m
+      self :: INOUT
+
+      stdin.read(.m_value)
+
+   ENSURE(abs(.m_value)<=.l_value, "m_value must lie between -l_value and l_value")
+
+   end
+
+   read_window_width
+   ! Read the width of the Gaussian window of a local-moment map, a length
+      self :: INOUT
+
+      stdin.read_quantity(.window_width)
+
+   ENSURE(.window_width>ZERO, "window_width must be positive")
+
+   end
+
+!  ======
+!  Output
+!  ======
+
+   put
+   ! Put the settings and the size of the map
+      self :: IN
+
+      stdout.flush
+      stdout.text("=============")
+      stdout.text("Cell map data")
+      stdout.text("=============")
+      stdout.flush
+      stdout.show("Kind                    =",.kind)
+      stdout.show("No. of reflections      =",.n_reflections)
+      stdout.show("Cell volume             =",.volume)
+      stdout.show("Electron count          =",.electron_count)
+      if (.l_value>=0) then
+      stdout.show("l_value                 =",.l_value)
+      if (.m_value/=-99) &
+      stdout.show("m_value                 =",.m_value)
+      stdout.show("Window width            =",.window_width)
+      end
+
+   end
+
+end
