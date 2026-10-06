@@ -497,3 +497,20 @@ index and `l` the angular momentum must not meet in one routine: call the indice
   functions to a file for plotting; the Lebedev order is fixed, not raised near bonds.
   **Also in this commit:** `CIF`'s loop reader stops at a `;` text field (the data-set CIFs end
   their reflection loop with one), and `read_cell_map` sets the cell before reading the block.
+- 2026-10-06, night. **Glycyl-L-alanine** (Dylan: for the morning, with the TVFA standardisation
+  set), `~/Dropbox/tonto_data/xray_neutron_set/gly_L_ala_150K_xray_Capelli2014.cif`, the first of
+  that set read by Tonto: a working CIF is block 1's header and atoms plus block 2's merged
+  reflection loop, LF line endings (the memory note on the set has the three things to know). HAR
+  at B3LYP/def2-TZVP, 20 atoms, 2532 reflections: 29 min on the Mac, GoF 1.34, residual -0.19 to
+  +0.16 e/Å³, rms 0.045. Maps at 0.2 bohr (71 x 91 x 93), window 0.25 Å: both total maps
+  integrate to 312.000 electrons; F_exp (model phases) against F_calc: $`l = 1`$ norm maxima
+  1.980 and 1.989, rms difference 0.0060, correlation 0.99987; $`l = 2`$ norm 3.191 and 3.193,
+  rms 0.0043, correlation 0.99996; the residual's $`l = 1, 2`$ parts reach 0.020 and 0.024 (rms
+  0.009), five times urea's through the narrower window. The cubes, the output and the working
+  CIF are in `~/Dropbox/tonto_data/cell_maps/gly_L_ala/`, urea's in `.../urea/`. The Hirshfeld-atom
+  populations of gly-L-ala (a second job, 19 min, output `gly_L_ala_hirshfeld_atoms.stdout`
+  beside the cubes) say the same as urea's: $`n_0`$ carries all but 0.1-0.3% of every atom --
+  O 8.43, 8.41, 8.28; N 7.04, 6.91; C 5.85-6.07; the ammonium H 0.80, the amide H 0.88, C-H
+  0.93-0.99 -- and the only $`n_1`$ above 0.01 e are the N-H hydrogens' (0.011-0.018), the C-H
+  at 0.005-0.009 and the carbonyl O at 0.008-0.009; $`n_2`$ is below 0.003 except the carbonyl
+  C's 0.01.

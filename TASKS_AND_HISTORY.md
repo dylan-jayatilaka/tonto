@@ -78,7 +78,7 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## START HERE, 2026-10-06: the angular decomposition of density maps -- plan written, nothing coded
+## START HERE, 2026-10-06: the angular decomposition of density maps -- steps 1 to 4 merged
 
 **The task handed over:** implement `docs/TASK_L_DECOMPOSITION_MAPS.md`. Read it, then the theory
 it rests on, `~/Dropbox/tex/conference_talks/2026_ED_angular_decomp/angular_decomp.pdf` (written
