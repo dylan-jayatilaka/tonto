@@ -222,6 +222,107 @@ contains
 
    end
 
+   make_map_at(values,pts) :: leaky, PURE
+   ! Set "values" to the map these settings describe, at the cartesian
+   ! points "pts", one row per point: the density itself when l_value is
+   ! negative, otherwise the local moment of angular momentum l_value.
+      self :: IN
+      values :: VEC{REAL}, OUT
+      pts    :: MAT{REAL}, IN
+
+      if (.l_value<0) then
+         .make_values_at(values,pts)
+      else
+         .make_moment_at(values,pts)
+      end
+
+   end
+
+   make_moment_at(values,pts) :: leaky, PURE
+   ! Set "values" to the local moment of the density of angular momentum
+   ! l = l_value, scaled to the units of a density, at the cartesian
+   ! points "pts". The moment is the Fourier series with coefficient n
+   ! multiplied by
+   !
+   !    (-i)^l sigma^l q^l Y_lm(q^) exp(-sigma^2 q^2/2),
+   !
+   ! with q the scattering vector of reflection n, sigma the window width
+   ! and Y_lm the real harmonic normalised to 1 over the sphere: it is the
+   ! moment of the density seen through a Gaussian window of width sigma
+   ! centred at the point, divided by sigma^l. With m_value set it is that
+   ! one component, in the frame of the cartesian axes; otherwise it is the
+   ! norm over m, which does not depend on the axes. l = 0 has one
+   ! component and keeps its sign.
+   ! m is the usual real-harmonic index, m > 0 cosine-like and m < 0
+   ! sine-like: for l = 1, m = -1, 0, 1 are y, z, x, and the three maps are
+   ! sqrt(3/4 pi) sigma times the gradient of the blurred density. The
+   ! columns of make_solid_harmonics are in Molden order 0, 1, -1, 2, -2,
+   ! ..., which "col" below allows for.
+      self :: IN
+      values :: VEC{REAL}, OUT
+      pts    :: MAT{REAL}, IN
+
+   ENSURE(.coeff.allocated, "no coefficients")
+   ENSURE(values.dim==pts.dim1, "values: wrong dim")
+   ENSURE(pts.dim2==3, "pts: wrong dim2")
+   ENSURE(.l_value>=0, "l_value not set")
+   ENSURE(.m_value==-99 OR abs(.m_value)<=.l_value, "m_value out of range")
+   ENSURE(.window_width>ZERO, "window_width not set")
+
+      q,Y :: MAT{REAL}@
+      c   :: VEC{CPX}@
+      comp :: VEC{REAL}@
+      q2,sig :: REAL
+      fac :: CPX
+      n_refl,n,lv,m,m_lo,m_hi,col :: INT
+
+      n_refl = .coeff.dim
+      lv  = .l_value
+      sig = .window_width
+      fac = (-IMAGIFY(ONE))**lv * sig**lv
+
+      ! The scattering vectors, and the solid harmonics q^l Y_lm(q^) at them
+      q.create(n_refl,3)
+      .make_scattering_vectors(q)
+      Y.create(n_refl,(lv+1)*(lv+1))
+      FOURIER_SUMS:make_solid_harmonics(Y,q,lv)
+
+      ! Which components
+      if (.m_value==-99) then
+         m_lo = -lv; m_hi = lv
+      else
+         m_lo = .m_value; m_hi = .m_value
+      end
+
+      ! Each component's series, squared and added
+      c.create(n_refl)
+      comp.create(values.dim)
+      values = ZERO
+      do m = m_lo,m_hi
+         if (m>0) then;      col = lv*lv + 2*m
+         else if (m<0) then; col = lv*lv + 2*abs(m) + 1
+         else;               col = lv*lv + 1
+         end
+         do n = 1,n_refl
+            q2   = q(n,1)*q(n,1) + q(n,2)*q(n,2) + q(n,3)*q(n,3)
+            c(n) = .coeff(n)*fac*Y(n,col)*exp(-sig*sig*q2/2)
+         end
+         FOURIER_SUMS:fourier_series_at(comp,q,c,pts)
+         if (m_lo==m_hi) then
+            values = comp
+         else
+            values = values + comp*comp
+         end
+      end
+      if (m_lo/=m_hi) values = sqrt(values)
+
+      comp.destroy
+      c.destroy
+      Y.destroy
+      q.destroy
+
+   end
+
    make_values_on_cell(values,nx,ny,nz) :: PURE
    ! Set "values" to the density on a grid of "nx", "ny", "nz" points
    ! along the cell axes, both ends of each axis included, incrementing
@@ -335,24 +436,30 @@ contains
 
    end
 
-   read_l_value
-   ! Read the angular momentum of a local-moment map
+   read_l_value :: leaky
+   ! Read the angular momentum of a local-moment map, and make sure the
+   ! harmonics up to it are available. A negative value asks for the plain
+   ! density. Setting l resets m_value, so the map is the norm over m
+   ! until m_value= is given again.
       self :: INOUT
 
       stdin.read(.l_value)
 
-   ENSURE(.l_value>=0, "l_value must not be negative")
+      .m_value = -99
+
+      if (.l_value>=0) GAUSSIAN_DATA:set_indices(.l_value)
 
    end
 
    read_m_value
    ! Read one component m of a local-moment map; without it the map is
-   ! the norm over m
+   ! the norm over m. l_value must come first.
       self :: INOUT
 
       stdin.read(.m_value)
 
-   ENSURE(abs(.m_value)<=.l_value, "m_value must lie between -l_value and l_value")
+   DIE_IF(.l_value<0, "set l_value before m_value")
+   DIE_IF(abs(.m_value)>.l_value, "m_value must lie between -l_value and l_value")
 
    end
 
@@ -362,7 +469,7 @@ contains
 
       stdin.read_quantity(.window_width)
 
-   ENSURE(.window_width>ZERO, "window_width must be positive")
+   DIE_IF(.window_width<=ZERO, "window_width must be positive")
 
    end
 

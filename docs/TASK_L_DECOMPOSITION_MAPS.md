@@ -298,9 +298,15 @@ multiplicities, $`F_{000}`$, scale), because that needs the space group and the 
 | new plot kinds | the three tables in `MOLECULE.GRID`, and `MOLECULE.PLOT:set_up_for_plot` |
 | `l_max=`, `density_source=` for pieces C and D, and `put_ha_populations` | `MOLECULE.MAIN` keywords |
 
-**Keywords.** A `cell_map= { }` block in `MOLECULE.MAIN`, read by `CELL_MAP:read_keywords`:
-`kind=`, `l_value=`, `m_value=`, `window_width=`. `plot_grid= { kind= cell_map }` then plots
-whatever the block describes; `residual_density` stays as a plot kind, for existing inputs.
+**Keywords, as coded.** A `cell_map= { }` block in `MOLECULE.MAIN`, read by
+`CELL_MAP:read_keywords`: `kind= residual | f_exp | f_calc` is the density; `l_value=` turns the
+map into the local moment of that $`l`$ (the norm over $`m`$, or one signed component with
+`m_value=`), with `window_width=` a length (default 0.5 Å); `l_value=` resets `m_value`, and a negative `l_value` gives the plain density again. `plot_grid= { kind= cell_map }` then
+plots whatever the block describes; `put_cell_map` prints the settings, the reflection count and
+the electron count; `residual_density` stays as a plot kind, for existing inputs. The block keeps
+its settings between plots, so a sequence of maps changes one keyword at a time. The $`l = 0`$
+map keeps its sign (a residual is signed); the plan's name `local_moment` is the map's name in
+prose, not a keyword.
 
 **Which plot kinds go into `CELL_MAP`, and how it is called.** Only the maps that are Fourier
 sums of structure factors: `residual`, `f_exp`, `f_calc`, and `local_moment` made from any of
@@ -356,12 +362,14 @@ index and `l` the angular momentum must not meet in one routine: call the indice
   routine's locals before compiling.
 - **`PURE` and `DIE`:** a check that must fire in release cannot sit in a `PURE` routine
   (it cost a release build on the SG grids). Use `ENSURE` inside, and a `DIE` in a non-`PURE` caller.
-- **The order of $`m`$** in `make_solid_harmonics` is `GAUSSIAN_DATA`'s. By
-  `GAUSSIAN_DATA:into_std_S_order` that order is $`m = -l \ldots l`$, with $`m<0`$ the sine-like and
-  $`m>0`$ the cosine-like harmonic, so $`l = 1`$ is $`y, z, x`$: the document's order. The *signs* are
-  not fixed by `make_normalised_harmonics`, which only scales. Print the $`l = 1`$ harmonics at
-  $`(1,0,0)`$, $`(0,1,0)`$, $`(0,0,1)`$ once and write the answer in the routine header. The norm
-  over $`m`$ depends on neither order nor sign, which is one more reason to code it first.
+- **The order of $`m`$** in `make_solid_harmonics` is Molden's, $`0, +1, -1, +2, -2, \ldots`$ within
+  each $`l`$, with $`m>0`$ cosine-like and $`m<0`$ sine-like: for $`l = 1`$ the columns are $`z, x, y`$.
+  (The first draft of this note read `into_std_S_order` as saying the opposite; it was settled by
+  the parity of the three $`l = 1`$ maps under a screw axis of L-alanine, then by their correlation
+  of +0.999 with the finite-difference gradient along the matching axis, both signs positive.)
+  `CELL_MAP:make_moment_at` maps the usual $`m = -l \ldots l`$ onto those columns, so `m_value=`
+  means what the document means, $`-1, 0, 1 \to y, z, x`$. The norm over $`m`$ depends on neither
+  order nor sign, which is one more reason to code it first.
 - **The sign of the exponent.** Equation (1) has $`e^{-i\mathbf q\cdot\mathbf r}`$ and the factor
   $`(-i)^l`$ goes with it. `CRYSTAL:make_residual_density_grid` uses `exp(-2 pi i h.x)`, the same
   sign; `exp_ikr_sums` computes $`e^{+i\mathbf k\cdot\mathbf r}`$. Get the $`l = 1`$ gradient check of
@@ -407,3 +415,10 @@ index and `l` the angular momentum must not meet in one routine: call the indice
   The timing of the any-points residual map before and after was not measured. Two more wiring
   facts went into section 5 (the second CMake list; `FOURIER_SUMS:name` with one colon from
   another module).
+- 2026-10-06, night. **Step 2 coded** (`make_moment_at`; `l_value=` resets `m_value`, a negative
+  `l_value` is the plain density; `put_cell_map`). Checks on L-alanine, f_calc, window 0.5 Å,
+  0.5-bohr grid, debug build: the $`l = 0`$ map times $`\sqrt{4\pi}`$ integrates to 192.000; the
+  $`l = 1`$ norm is the root sum of squares of the three components to 1e-5; each component
+  correlates +0.999 with $`\sqrt{3/4\pi}\,\sigma`$ times the central-difference gradient of the
+  blurred density along its axis, ratio 1.05 (the grid, not the map: see the 0.25-bohr run). The
+  $`m`$ order was wrong in the first version of section 6 and is corrected there.
