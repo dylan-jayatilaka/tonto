@@ -14,14 +14,14 @@ cluster (`docs/REPORT_ON_MODE_FITTING.md`). Measured effect of each choice on a 
 
 | choice | effect on GoF | effect on N–H |
 |---|---|---|
-| basis, def2-SVP to def2-TZVP | 0.4–0.5 | up to 0.006 Å |
-| method, RHF to B3LYP | 0.6–0.8 | about 0.01 Å |
+| basis, def2-SVP to def2-TZVP | 0.25–0.40 | up to 0.006 Å |
+| method, RHF to B3LYP | 0.5–0.7 | about 0.01 Å |
 | crystal environment: none, cluster charges, 7-molecule cluster | 0.1–0.2 | 0.01–0.02 Å |
 | partition, Hirshfeld or TFVA | about 0.2 | 0.01–0.04 Å |
 | ADP model: free, TLS, soft modes | 0.05–0.2 | under 0.01 Å |
 | spherical-atom model: rotational average or ensemble | 0.002–0.003 | no printed digit |
 | exact exchange or RI-J with COSX | 0.0004 | under 0.001 Å |
-| Cartesian or spherical functions | being measured (the spherical reruns of 2026-10-05) | |
+| Cartesian or spherical functions | 0.07–0.13 in def2-SVP, at most 0.01 in def2-TZVP; spherical the lower | up to 0.004 Å, under one esd |
 | contracted or uncontracted core | not measured; Dylan is testing it | |
 
 ## 2. Decisions taken
@@ -140,5 +140,13 @@ it does not change results.
 - 2026-10-05: the x2c sets renamed to their literature names (`x2c-SVPall`, `x2c-TZVPall`,
   `x2c-TZVPPall`), after checking all 86 elements of each against the Basis Set Exchange; headers
   rewritten with the reference. Water RHF with `x2c-SVPall`, spherical: -75.955014.
+- 2026-10-06: the spherical reruns are in (74 refinements, all converged). Cartesian against
+  spherical, urea RHF, isolated molecule: the def2-SVP GoF falls by 0.07–0.13 with spherical
+  functions (free ADPs, Hirshfeld: 3.304 to 3.179), def2-TZVP by at most 0.010 (2.935 to 2.925);
+  no bond moves by more than one esd. The table of section 1 now quotes the spherical numbers,
+  and every urea table of `docs/REPORT_ON_MODE_FITTING.md` is rebuilt from them. New there: B3LYP
+  on the def2-SVP 7-molecule cluster (GoF 2.381 free) and def2-TZVP with cluster charges (RHF
+  2.620, B3LYP 2.038 -- the best fit so far, a little better than the def2-TZVP cluster's 2.079).
+  Runs: `~/tonto-runs/2026-10-05_mode_fitting/cc/sph`, tables by `cc/sph_tables.py`.
 - 2026-10-05: document written. Running: the spherical-function reruns of every urea refinement
   (74 jobs) after a four-SCF timing test, see the handover in `TASKS_AND_HISTORY.md`.

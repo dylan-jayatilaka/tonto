@@ -129,6 +129,21 @@ A spherical basis builds J and K with the **cartesian engine**: the density is e
 cartesian basis (P_cart = U P Uᵀ), J and K are built, and contracted back (Uᵀ J U). This is exact
 and removes the per-quartet rotation: karrikinolide RHF/cc-pVTZ spherical 1231 → 868 s.
 
+**Spherical functions do not speed up exact exchange, and barely speed up COSX** (2026-10-05, the
+Mac, OpenBLAS with four threads, one job at a time). One RHF SCF of the 7-molecule urea cluster in
+def2-TZVP, nine iterations each; 1176 Cartesian functions, 1036 spherical:
+
+| integrals | functions | wall time /s | energy /Eh |
+|---|---|---:|---:|
+| exact | Cartesian | 2534 | -1568.576911 |
+| exact | spherical | 2552 | -1568.568271 |
+| RI-J + COSX | Cartesian | 1550 | -1568.578609 |
+| RI-J + COSX | spherical | 1509 | -1568.569951 |
+
+The integrals are made in Cartesian functions either way, so only the linear algebra shrinks.
+RI-J with COSX is 1.6–1.7 times faster than exact here. Runs:
+`~/tonto-runs/2026-10-05_mode_fitting/cc/timing`.
+
 ### 3.4 Screening
 
 Four cutoffs decide what is computed:

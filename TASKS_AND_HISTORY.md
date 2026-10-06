@@ -204,24 +204,21 @@ free / TLS + U^high / three correlated soft modes (each ~1.7-2 h, three at a tim
 *Urea: the crystal environment*. B3LYP free GoF 2.080, the best of all; N-H within 2 esd of neutron;
 free still significantly better than correlated soft modes (1.0268 vs 1.0129); the wags are determined
 and nonzero on this cluster (113-175, implied 627-973 cm-1). Runs in `~/tonto-runs/2026-10-05_mode_fitting`.
-**RUNNING since 2026-10-05 19:31 -- on the register's watch list** (Dylan: repeat everything with
-spherical functions). One script, `~/.claude/jobs/9b038530/tmp/tls/cc/chain_sph.sh`, binary
-`tonto_sph` there (= `develop` with `create_cluster` keeping the spherical setting):
-1. `timing/` -- one RHF SCF of the 7-molecule urea cluster, def2-TZVP, four threads, one at a time;
-   results in `timing/timing.log`. So far: exact Cartesian 2534 s, exact spherical 2552 s (9
-   iterations each; -1568.576911 and -1568.568271); RI-J/COSX Cartesian running at about 2.5 min an
-   iteration against 4.7 for exact; RI-J/COSX spherical to follow. **Spherical functions do not
-   speed up exact exchange** (integrals are made Cartesian and transformed).
-2. `sph/` -- 74 refinements, four at a time, log `batch_sph.log`, ends `ALL DONE`: every urea
-   refinement of the report with `use_spherical_basis= TRUE`, plus B3LYP on the def2-SVP cluster and
-   RHF/B3LYP def2-TZVP with cluster charges. Expect several hours (def2-TZVP clusters ~2 h each).
-**When it lands:** (a) copy `timing/` and `sph/` (stdin, stdout, logs) to
-`~/tonto-runs/2026-10-05_mode_fitting/cc/`; (b) put the timing table in `docs/TASK_SCF_SPEEDUP.md`;
-(c) rebuild the tables of `docs/REPORT_ON_MODE_FITTING.md` §5 from the spherical runs (table scripts
-`cc/md_tables.py`, `cc/tab_cc.py`; job names in `sph/` are the old ones, `cmp_*` and `step3_*` for the
-first two sets), the Cartesian tables going (git history keeps them), and put the Cartesian-against-
-spherical effect into `docs/TASK_HAR_STANDARDISATION.md` §1; (d) push. Do not delete the Claude job
-9b038530 before (a). The RHF/6-31G(d) Hessian stays as it is.
+**Done 2026-10-06: the spherical-function reruns** (Dylan: repeat everything with spherical
+functions). 74 urea refinements, all converged, and a four-SCF timing test. Copied to
+`~/tonto-runs/2026-10-05_mode_fitting/cc/` (`sph/`, `timing/`; tables by `cc/sph_tables.py`). Every
+urea table of `docs/REPORT_ON_MODE_FITTING.md` section 5 is rebuilt from them (the Cartesian tables are
+in git history); the timing table is in `docs/TASK_SCF_SPEEDUP.md` section 3.3; the Cartesian-against-
+spherical effect is in `docs/TASK_HAR_STANDARDISATION.md` sections 1 and 8. Headlines: spherical lowers
+the def2-SVP GoF by 0.07-0.13 and the def2-TZVP GoF by at most 0.01; B3LYP/def2-TZVP with cluster
+charges is the best fit so far (GoF 2.038 free), a little better than the def2-TZVP 7-molecule
+cluster (2.079); spherical functions do not speed up exact exchange (2552 against 2534 s). Not
+rerun with spherical functions: the restraint-width check and the def2-SVP RI-J/COSX-against-exact
+check. The Claude job 9b038530 may now be deleted as far as these runs go.
+**Closed 2026-10-06:** an XCW test with extinction on
+(`tests/long/nh3_x-ray-constrained-rhf_cc-pVTZ_extinction`), and the XCW `Penalty in F` drift
+(explained: `N_p` acts on the constraint; verified by scaling `lambda`). Entries under *Test suite
+and numerics*.
 **Merged 2026-10-06 (`sg-grids`): the published standard grids,** `becke_grid= { kind= sg-0 | sg-1 |
 sg-2 | sg-3 }`, also in `cosx_grid= { }` and `cosx_final_grid= { }`; off by default; every element
 (unpruned beyond the published tables). achari2: debug, release and reference builds, suite 179/179,

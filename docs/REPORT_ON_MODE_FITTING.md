@@ -611,9 +611,10 @@ there is 0.093 Eh/bohr. RHF frequencies are about 10 % high, so these U^high are
 ### Urea: the refinements compared
 
 Hirshfeld atom refinement against the 123 K X-ray data (817 reflections), with RHF
-densities in the def2-SVP and def2-TZVP basis sets. There are two partitions of the density
-into atoms: Hirshfeld (`oc-hirshfeld`) and the topological fuzzy Voronoi atoms of Salvador,
-TFVA (`oc-salvador`). There are three ADP models:
+densities in the def2-SVP and def2-TZVP basis sets. Every urea refinement on this page uses
+spherical basis functions (`use_spherical_basis= TRUE`), the form the def2 sets were made for.
+There are two partitions of the density into atoms: Hirshfeld (`oc-hirshfeld`) and the
+topological fuzzy Voronoi atoms of Salvador, TFVA (`oc-salvador`). There are three ADP models:
 - free: six parameters per atom;
 - TLS with $`U^{\rm high} = 0`$: the rigid-body model (5) alone;
 - TLS + U^high: the model (9), with $`U^{\rm high}`$ as above.
@@ -626,33 +627,36 @@ hydrogens' U_iso.
 
 | basis | partition | ADP model | parameters | GoF | R(F) | N–H1 /Å | N–H3 /Å | C=O /Å | U_iso H1 / H3 /Å² |
 |---|---|---|---|---|---|---|---|---|---|
-| def2-SVP | Hirshfeld | free | 27 | 3.304 | 0.0181 | 1.028(5) | 0.986(6) | 1.2558(4) | 0.054(4) / 0.048(3) |
-| def2-SVP | Hirshfeld | TLS, U^high = 0 | 17 | 3.837 | 0.0184 | 1.025(5) | 0.994(5) | 1.2562(5) | 0.0334(15) / 0.0329(13) |
-| def2-SVP | Hirshfeld | TLS + U^high | 17 | 3.508 | 0.0180 | 1.028(5) | 0.994(5) | 1.2559(4) | 0.0447(15) / 0.0399(13) |
-| def2-SVP | TFVA | free | 27 | 3.541 | 0.0190 | 1.038(5) | 1.026(5) | 1.2557(4) | 0.050(4) / 0.042(2) |
-| def2-SVP | TFVA | TLS, U^high = 0 | 17 | 3.883 | 0.0184 | 1.034(5) | 1.036(4) | 1.2564(5) | 0.0337(14) / 0.0332(12) |
-| def2-SVP | TFVA | TLS + U^high | 17 | 3.641 | 0.0187 | 1.039(5) | 1.029(4) | 1.2560(4) | 0.0455(14) / 0.0398(13) |
-| def2-TZVP | Hirshfeld | free | 27 | 2.935 | 0.0167 | 1.025(4) | 0.989(5) | 1.2560(4) | 0.054(3) / 0.046(2) |
-| def2-TZVP | Hirshfeld | TLS, U^high = 0 | 17 | 3.462 | 0.0169 | 1.022(4) | 0.993(5) | 1.2564(4) | 0.0343(13) / 0.0326(11) |
-| def2-TZVP | Hirshfeld | TLS + U^high | 17 | 3.095 | 0.0164 | 1.025(4) | 0.993(5) | 1.2561(4) | 0.0457(13) / 0.0395(11) |
-| def2-TZVP | TFVA | free | 27 | 3.099 | 0.0170 | 1.033(4) | 1.017(4) | 1.2560(4) | 0.049(3) / 0.0402(19) |
-| def2-TZVP | TFVA | TLS, U^high = 0 | 17 | 3.446 | 0.0166 | 1.028(4) | 1.025(4) | 1.2567(4) | 0.0347(12) / 0.0326(10) |
-| def2-TZVP | TFVA | TLS + U^high | 17 | 3.169 | 0.0168 | 1.033(4) | 1.020(4) | 1.2563(4) | 0.0466(12) / 0.0391(10) |
+| def2-SVP | Hirshfeld | free | 27 | 3.179 | 0.0177 | 1.024(5) | 0.983(6) | 1.2558(4) | 0.054(4) / 0.048(3) |
+| def2-SVP | Hirshfeld | TLS, U^high = 0 | 17 | 3.750 | 0.0181 | 1.022(5) | 0.991(5) | 1.2562(5) | 0.0336(14) / 0.0328(12) |
+| def2-SVP | Hirshfeld | TLS + U^high | 17 | 3.408 | 0.0177 | 1.025(5) | 0.991(5) | 1.2559(4) | 0.0449(14) / 0.0398(12) |
+| def2-SVP | TFVA | free | 27 | 3.461 | 0.0188 | 1.036(5) | 1.025(5) | 1.2556(4) | 0.049(4) / 0.042(2) |
+| def2-SVP | TFVA | TLS, U^high = 0 | 17 | 3.815 | 0.0182 | 1.032(5) | 1.035(4) | 1.2564(5) | 0.0340(13) / 0.0331(12) |
+| def2-SVP | TFVA | TLS + U^high | 17 | 3.565 | 0.0185 | 1.037(5) | 1.028(4) | 1.2560(4) | 0.0458(14) / 0.0397(12) |
+| def2-TZVP | Hirshfeld | free | 27 | 2.925 | 0.0166 | 1.024(4) | 0.988(5) | 1.2560(4) | 0.054(3) / 0.046(2) |
+| def2-TZVP | Hirshfeld | TLS, U^high = 0 | 17 | 3.460 | 0.0168 | 1.021(4) | 0.992(5) | 1.2564(4) | 0.0344(13) / 0.0325(11) |
+| def2-TZVP | Hirshfeld | TLS + U^high | 17 | 3.092 | 0.0163 | 1.024(4) | 0.992(4) | 1.2561(4) | 0.0459(13) / 0.0393(11) |
+| def2-TZVP | TFVA | free | 27 | 3.098 | 0.0170 | 1.032(4) | 1.017(4) | 1.2560(4) | 0.049(3) / 0.0399(19) |
+| def2-TZVP | TFVA | TLS, U^high = 0 | 17 | 3.446 | 0.0166 | 1.027(4) | 1.024(4) | 1.2566(4) | 0.0348(12) / 0.0325(10) |
+| def2-TZVP | TFVA | TLS + U^high | 17 | 3.165 | 0.0168 | 1.033(4) | 1.019(3) | 1.2562(4) | 0.0468(12) / 0.0390(10) |
 | neutron | | | | | | 1.006 | 1.000 | | |
 
-- **def2-TZVP fits better than def2-SVP** in every partition and ADP model, by 0.37–0.47 in GoF.
+- **def2-TZVP fits better than def2-SVP** in every partition and ADP model, by 0.25–0.40 in GoF.
 - **Hirshfeld fits better than TFVA** with free ADPs and with TLS + U^high. With TLS alone the
-  two are about equal.
+  two differ by less than 0.07.
 - **The stiff modes always help:** TLS + U^high has a lower GoF than TLS alone in all four
   basis and partition pairs.
 - **Free ADPs fit significantly better than TLS + U^high** in all four. The Hamilton ratios (15)
-  for the ten extra parameters are 1.068, 1.035, 1.061 and 1.029, against 1.016 needed at
+  for the ten extra parameters are 1.079, 1.036, 1.064 and 1.028, against 1.016 needed at
   $`\alpha = 0.005`$.
 - **N–H bond lengths depend on the partition, not the ADP model.** TFVA makes them 0.01–0.04 Å
   longer than Hirshfeld does, and further from neutron. The ADP model moves no N–H bond by more
   than 0.01 Å.
-- **R(F) would mislead.** It ranks TLS + U^high level with free ADPs (0.0180 against 0.0181 for
+- **R(F) would mislead.** It ranks TLS + U^high level with free ADPs (0.0177 for both with
   def2-SVP, Hirshfeld), where GoF and Hamilton's test say free is significantly better.
+- **Cartesian functions fit worse in def2-SVP.** With six d functions in place of five the GoF
+  of the def2-SVP refinements is higher by 0.07–0.13; in def2-TZVP the two differ by at most 0.01.
+  No bond length moves by more than one esd.
 
 ### Urea: ADPs against neutron
 
@@ -673,27 +677,27 @@ hydrogens, H1 and H3.
 
 | basis | partition | ADP model | GoF | H1: U_iso ratio | H1: S12 | H3: U_iso ratio | H3: S12 |
 |---|---|---|---|---|---|---|---|
-| def2-SVP | Hirshfeld | free | 3.304 | 1.47 | 8.05 | 1.44 | 7.06 |
-| def2-SVP | Hirshfeld | TLS, U^high = 0 | 3.837 | 0.91 | 1.85 | 0.99 | 2.86 |
-| def2-SVP | Hirshfeld | TLS + U^high | 3.508 | 1.22 | 0.77 | 1.20 | 0.50 |
-| def2-SVP | TFVA | free | 3.541 | 1.37 | 4.23 | 1.26 | 0.97 |
-| def2-SVP | TFVA | TLS, U^high = 0 | 3.883 | 0.92 | 1.68 | 1.00 | 2.76 |
-| def2-SVP | TFVA | TLS + U^high | 3.641 | 1.24 | 0.88 | 1.20 | 0.48 |
-| def2-TZVP | Hirshfeld | free | 2.935 | 1.48 | 6.13 | 1.37 | 4.74 |
-| def2-TZVP | Hirshfeld | TLS, U^high = 0 | 3.462 | 0.94 | 1.84 | 0.98 | 2.88 |
-| def2-TZVP | Hirshfeld | TLS + U^high | 3.095 | 1.25 | 0.87 | 1.18 | 0.45 |
-| def2-TZVP | TFVA | free | 3.099 | 1.35 | 2.84 | 1.21 | 0.70 |
-| def2-TZVP | TFVA | TLS, U^high = 0 | 3.446 | 0.95 | 1.81 | 0.98 | 2.86 |
-| def2-TZVP | TFVA | TLS + U^high | 3.169 | 1.28 | 1.00 | 1.17 | 0.40 |
+| def2-SVP | Hirshfeld | free | 3.179 | 1.48 | 6.69 | 1.45 | 8.09 |
+| def2-SVP | Hirshfeld | TLS, U^high = 0 | 3.750 | 0.93 | 1.54 | 0.98 | 2.81 |
+| def2-SVP | Hirshfeld | TLS + U^high | 3.408 | 1.22 | 0.77 | 1.19 | 0.49 |
+| def2-SVP | TFVA | free | 3.461 | 1.36 | 3.42 | 1.26 | 1.18 |
+| def2-SVP | TFVA | TLS, U^high = 0 | 3.815 | 0.93 | 1.69 | 0.99 | 2.74 |
+| def2-SVP | TFVA | TLS + U^high | 3.565 | 1.26 | 0.88 | 1.19 | 0.46 |
+| def2-TZVP | Hirshfeld | free | 2.925 | 1.47 | 5.11 | 1.38 | 5.15 |
+| def2-TZVP | Hirshfeld | TLS, U^high = 0 | 3.460 | 0.94 | 1.85 | 0.97 | 2.91 |
+| def2-TZVP | Hirshfeld | TLS + U^high | 3.092 | 1.25 | 0.88 | 1.18 | 0.43 |
+| def2-TZVP | TFVA | free | 3.098 | 1.34 | 2.28 | 1.20 | 0.66 |
+| def2-TZVP | TFVA | TLS, U^high = 0 | 3.446 | 0.95 | 1.81 | 0.98 | 2.82 |
+| def2-TZVP | TFVA | TLS + U^high | 3.165 | 1.28 | 1.02 | 1.17 | 0.38 |
 
-O, N and C agree with neutron in every refinement: U_iso ratios 0.99–1.01, S12 at most 0.03.
+O, N and C agree with neutron in every refinement: U_iso ratios 0.99–1.02, S12 at most 0.03.
 
 - **The ADP model decides the hydrogen ADPs**; the basis and partition matter much less.
-- **Free hydrogens are 21–48 % too large.** Their shapes are poor with Hirshfeld (S12 4.7–8.1)
-  and better with TFVA (S12 0.7–4.2).
+- **Free hydrogens are 20–48 % too large.** Their shapes are poor with Hirshfeld (S12 5.1–8.1)
+  and better with TFVA (S12 0.7–3.4).
 - **TLS + U^high gives the best hydrogen shapes**, S12 0.4–1.0 in every case, with sizes 17–28 %
   too large.
-- **TLS alone** gets the hydrogen sizes within 9 %, but the shapes are worse (S12 1.7–2.9).
+- **TLS alone** gets the hydrogen sizes within 7 %, but the shapes are worse (S12 1.5–2.9).
 
 So the model that fits the data best, free ADPs, gives the worst hydrogen ADPs.
 
@@ -722,59 +726,59 @@ hydrogen ADPs against neutron (U_iso ratio, then S12).
 
 | basis | $`K`$ | parameters | $`p_{\rm eff}`$ | GoF | $`\chi^2`$ | AIC | BIC | H1: U_iso ratio, S12 | H3: U_iso ratio, S12 |
 |---|---|---|---|---|---|---|---|---|---|
-| def2-SVP | 0 | 17 | 17.00 | 3.508 | 9843 | 9877 | 9957 | 1.22, 0.77 | 1.20, 0.50 |
-| def2-SVP | 1 | 18 | 18.00 | 3.481 | 9680 | 9716 | 9801 | 1.39, 1.54 | 1.31, 1.10 |
-| def2-SVP | 2 | 18 | 18.00 | 3.481 | 9680 | 9716 | 9801 | 1.39, 1.54 | 1.31, 1.10 |
-| def2-SVP | 3 | 19 | 18.94 | 3.471 | 9615 | 9652 | 9742 | 1.37, 1.41 | 1.32, 1.18 |
-| def2-SVP | 4 | 20 | 19.71 | 3.428 | 9367 | 9407 | 9499 | 1.38, 1.61 | 1.32, 1.09 |
-| def2-SVP | free | 27 | 27 | 3.304 | 8624 | 8678 | 8806 | 1.47, 8.05 | 1.44, 7.06 |
-| def2-TZVP | 0 | 17 | 17.00 | 3.095 | 7664 | 7698 | 7778 | 1.25, 0.87 | 1.18, 0.45 |
-| def2-TZVP | 1 | 18 | 18.00 | 3.069 | 7527 | 7563 | 7648 | 1.41, 1.64 | 1.29, 0.97 |
-| def2-TZVP | 2 | 18 | 18.00 | 3.069 | 7527 | 7563 | 7648 | 1.41, 1.64 | 1.29, 0.97 |
-| def2-TZVP | 3 | 19 | 18.94 | 3.065 | 7496 | 7534 | 7623 | 1.39, 1.55 | 1.29, 1.02 |
-| def2-TZVP | 4 | 20 | 19.71 | 3.028 | 7308 | 7347 | 7440 | 1.39, 1.75 | 1.30, 0.97 |
-| def2-TZVP | free | 27 | 27 | 2.935 | 6806 | 6860 | 6987 | 1.48, 6.13 | 1.37, 4.74 |
+| def2-SVP | 0 | 17 | 17.00 | 3.408 | 9289 | 9323 | 9403 | 1.22, 0.77 | 1.19, 0.49 |
+| def2-SVP | 1 | 18 | 18.00 | 3.383 | 9143 | 9179 | 9264 | 1.39, 1.54 | 1.31, 1.08 |
+| def2-SVP | 2 | 18 | 18.00 | 3.383 | 9143 | 9179 | 9264 | 1.39, 1.54 | 1.31, 1.08 |
+| def2-SVP | 3 | 19 | 18.94 | 3.373 | 9079 | 9117 | 9206 | 1.37, 1.41 | 1.32, 1.18 |
+| def2-SVP | 4 | 20 | 19.71 | 3.326 | 8816 | 8855 | 8948 | 1.38, 1.64 | 1.32, 1.08 |
+| def2-SVP | free | 27 | 27.00 | 3.179 | 7985 | 8039 | 8166 | 1.48, 6.69 | 1.45, 8.09 |
+| def2-TZVP | 0 | 17 | 17.00 | 3.092 | 7648 | 7682 | 7762 | 1.25, 0.88 | 1.18, 0.43 |
+| def2-TZVP | 1 | 18 | 18.00 | 3.068 | 7521 | 7557 | 7641 | 1.40, 1.64 | 1.27, 0.88 |
+| def2-TZVP | 2 | 18 | 18.00 | 3.068 | 7521 | 7557 | 7641 | 1.40, 1.64 | 1.27, 0.88 |
+| def2-TZVP | 3 | 19 | 18.94 | 3.064 | 7490 | 7528 | 7617 | 1.39, 1.55 | 1.27, 0.96 |
+| def2-TZVP | 4 | 20 | 19.71 | 3.026 | 7297 | 7337 | 7429 | 1.39, 1.76 | 1.28, 0.88 |
+| def2-TZVP | free | 27 | 27.00 | 2.925 | 6758 | 6812 | 6939 | 1.47, 5.11 | 1.38, 5.15 |
 
 Hamilton's test (15) at $`\alpha = 0.005`$, each model against the one before it:
 
 | basis | from | to | added parameters | ratio $`\mathcal R`$ | needed | significant |
 |---|---|---|---|---|---|---|
-| def2-SVP | K = 0 | K = 1 | 1 | 1.0084 | 1.0049 | yes |
-| def2-SVP | K = 2 | K = 3 | 1 | 1.0034 | 1.0050 | no |
-| def2-SVP | K = 3 | K = 4 | 1 | 1.0131 | 1.0050 | yes |
-| def2-SVP | K = 4 | free | 7 | 1.0422 | 1.0129 | yes |
-| def2-TZVP | K = 0 | K = 1 | 1 | 1.0090 | 1.0049 | yes |
+| def2-SVP | K = 0 | K = 1 | 1 | 1.0080 | 1.0049 | yes |
+| def2-SVP | K = 2 | K = 3 | 1 | 1.0035 | 1.0050 | no |
+| def2-SVP | K = 3 | K = 4 | 1 | 1.0148 | 1.0050 | yes |
+| def2-SVP | K = 4 | free | 7 | 1.0507 | 1.0129 | yes |
+| def2-TZVP | K = 0 | K = 1 | 1 | 1.0084 | 1.0049 | yes |
 | def2-TZVP | K = 2 | K = 3 | 1 | 1.0021 | 1.0050 | no |
-| def2-TZVP | K = 3 | K = 4 | 1 | 1.0128 | 1.0050 | yes |
-| def2-TZVP | K = 4 | free | 7 | 1.0362 | 1.0129 | yes |
+| def2-TZVP | K = 3 | K = 4 | 1 | 1.0131 | 1.0050 | yes |
+| def2-TZVP | K = 4 | free | 7 | 1.0392 | 1.0129 | yes |
 
 The refined amplitudes at $`K = 4`$, in atomic units ($`m_e^{1/2}`$ bohr)². An imaginary mode has no
 harmonic amplitude.
 
 | basis | mode | ω /cm⁻¹ | harmonic $`a_k^0`$ | refined $`a_k`$ | implied ω /cm⁻¹ |
 |---|---|---|---|---|---|
-| def2-SVP | 1 | 432i | | 157(54) | 700 |
-| def2-SVP | 2 | 164i | | 243(76) | 456 |
-| def2-SVP | 3 | 559 | 197 | 207(96) | 532 |
-| def2-SVP | 4 | 645 | 170 | 737(135) | 187 |
-| def2-TZVP | 1 | 432i | | 130(47) | 843 |
-| def2-TZVP | 2 | 164i | | 218(65) | 506 |
-| def2-TZVP | 3 | 559 | 197 | 231(84) | 478 |
-| def2-TZVP | 4 | 645 | 170 | 657(118) | 202 |
+| def2-SVP | 1 | 432i | | 143(52) | 769 |
+| def2-SVP | 2 | 164i | | 226(73) | 489 |
+| def2-SVP | 3 | 559 | 197 | 216(93) | 512 |
+| def2-SVP | 4 | 645 | 170 | 754(131) | 184 |
+| def2-TZVP | 1 | 432i | | 123(47) | 894 |
+| def2-TZVP | 2 | 164i | | 209(65) | 527 |
+| def2-TZVP | 3 | 559 | 197 | 234(84) | 472 |
+| def2-TZVP | 4 | 645 | 170 | 664(118) | 200 |
 
 - **Two wags refine as one.** $`K = 2`$ gives the same fit and parameter count as $`K = 1`$: the
   second wag is a combination of the first and the in-plane libration (§1.7). Both amplitudes
   are printed, but only one combination of them is determined.
 - **The wags are needed.** The first wag improves the fit significantly in both basis sets.
-- **The in-plane bends differ.** Mode 3 is not determined by the data: it refines to 10(84)
-  at $`K = 3`$ and 207(96) at $`K = 4`$ (def2-SVP), against a harmonic 197, and does not improve the
+- **The in-plane bends differ.** Mode 3 is not determined by the data: it refines to 13(82)
+  at $`K = 3`$ and 216(93) at $`K = 4`$ (def2-SVP), against a harmonic 197, and does not improve the
   fit. Mode 4 refines to about four times its harmonic amplitude, an implied frequency near
   200 cm⁻¹ instead of 645, and improves the fit significantly.
 - **AIC and BIC agree with Hamilton's test.** Neither rises as modes are added. Both are lowest for free
   ADPs, which are still significantly better than $`K = 4`$.
 - **The better fit gives worse hydrogen ADPs.** Each soft mode added moves the hydrogens further
-  from neutron. The U_iso ratios rise from 1.18–1.25 to 1.29–1.41, and S12 from 0.45–0.87 to
-  0.97–1.75.
+  from neutron. The U_iso ratios rise from 1.18–1.25 to 1.27–1.40, and S12 from 0.43–0.88 to
+  0.88–1.76.
 
 So the refined soft modes, like free ADPs, lower GoF by making the hydrogens larger, not by
 making them more like neutron. The next two sections test the soft modes against the crystal
@@ -791,7 +795,7 @@ density, most of all at the hydrogens, which make the hydrogen bonds. Two ways t
   quantum mechanically (`create_cluster` with `radius= 2.5 Angstrom`). The Hirshfeld atoms of the
   central molecule are taken from the density of the whole cluster.
 
-All refinements here use def2-SVP and the Hirshfeld partition. B3LYP is the Gaussian form of the
+The first table uses def2-SVP and the Hirshfeld partition. B3LYP is the Gaussian form of the
 functional (`b3lypgx`, `b3lypgc`).
 
 For each method and environment, free ADPs and TLS + U^high: the fit, the N–H bond lengths, and
@@ -799,78 +803,101 @@ the hydrogen ADPs against neutron (U_iso ratio, then S12).
 
 | method | environment | ADP model | parameters | GoF | N–H1 /Å | N–H3 /Å | H1: U_iso ratio, S12 | H3: U_iso ratio, S12 |
 |---|---|---|---|---|---|---|---|---|
-| RHF | isolated | free | 27 | 3.304 | 1.028(5) | 0.986(6) | 1.47, 8.05 | 1.44, 7.06 |
-| RHF | isolated | TLS + U^high | 17 | 3.508 | 1.028(5) | 0.994(5) | 1.22, 0.77 | 1.20, 0.50 |
-| RHF | cluster charges | free | 27 | 3.307 | 1.017(5) | 0.999(5) | 1.29, 4.48 | 1.26, 3.37 |
-| RHF | cluster charges | TLS + U^high | 17 | 3.383 | 1.014(5) | 1.005(5) | 1.24, 0.75 | 1.19, 0.48 |
-| RHF | 7-molecule cluster | free | 27 | 3.217 | 1.023(5) | 0.997(5) | 1.29, 3.06 | 1.25, 3.88 |
-| RHF | 7-molecule cluster | TLS + U^high | 17 | 3.284 | 1.020(5) | 1.004(5) | 1.24, 0.83 | 1.18, 0.45 |
-| B3LYP | isolated | free | 27 | 2.709 | 1.018(4) | 0.992(5) | 1.30, 3.81 | 1.33, 4.53 |
-| B3LYP | isolated | TLS + U^high | 17 | 2.833 | 1.020(4) | 0.995(4) | 1.23, 0.78 | 1.19, 0.48 |
-| B3LYP | cluster charges | free | 27 | 2.551 | 1.007(4) | 1.001(4) | 1.15, 1.96 | 1.18, 1.68 |
-| B3LYP | cluster charges | TLS + U^high | 17 | 2.596 | 1.006(4) | 1.005(4) | 1.24, 0.78 | 1.19, 0.50 |
+| RHF | isolated | free | 27 | 3.179 | 1.024(5) | 0.983(6) | 1.48, 6.69 | 1.45, 8.09 |
+| RHF | isolated | TLS + U^high | 17 | 3.408 | 1.025(5) | 0.991(5) | 1.22, 0.77 | 1.19, 0.49 |
+| RHF | cluster charges | free | 27 | 3.157 | 1.013(5) | 0.996(5) | 1.30, 3.45 | 1.27, 4.14 |
+| RHF | cluster charges | TLS + U^high | 17 | 3.245 | 1.011(5) | 1.002(5) | 1.24, 0.83 | 1.19, 0.47 |
+| RHF | 7-molecule cluster | free | 27 | 3.077 | 1.019(5) | 0.994(5) | 1.30, 2.29 | 1.26, 4.72 |
+| RHF | 7-molecule cluster | TLS + U^high | 17 | 3.160 | 1.016(5) | 1.001(5) | 1.25, 0.87 | 1.18, 0.43 |
+| B3LYP | isolated | free | 27 | 2.662 | 1.016(4) | 0.989(5) | 1.29, 3.81 | 1.34, 5.38 |
+| B3LYP | isolated | TLS + U^high | 17 | 2.805 | 1.018(4) | 0.993(4) | 1.24, 0.79 | 1.19, 0.48 |
+| B3LYP | cluster charges | free | 27 | 2.485 | 1.004(4) | 0.999(4) | 1.14, 1.70 | 1.18, 1.85 |
+| B3LYP | cluster charges | TLS + U^high | 17 | 2.537 | 1.004(4) | 1.003(4) | 1.24, 0.79 | 1.19, 0.50 |
+| B3LYP | 7-molecule cluster | free | 27 | 2.381 | 1.010(3) | 0.997(4) | 1.18, 1.99 | 1.19, 2.80 |
+| B3LYP | 7-molecule cluster | TLS + U^high | 17 | 2.437 | 1.009(4) | 1.001(4) | 1.27, 0.93 | 1.17, 0.41 |
 | neutron | | | | | 1.006 | 1.000 | 1, 0 | 1, 0 |
 
 - **The environment brings the N–H bonds to neutron.** B3LYP with cluster charges gives N–H1
-  1.007(4) and N–H3 1.001(4) Å against neutron 1.006 and 1.000 Å.
-- **B3LYP fits better than RHF**, by 0.6–0.8 in GoF, isolated and with cluster charges.
+  1.004(4) and N–H3 0.999(4) Å against neutron 1.006 and 1.000 Å.
+- **B3LYP fits better than RHF**, by 0.5–0.7 in GoF, in every environment.
+- **The explicit cluster fits better than cluster charges,** by about 0.1 in GoF with both
+  methods.
 - **The environment brings the free hydrogen ADPs toward neutron.** S12 falls from 3.8–8.1 for the
-  isolated molecule to 1.7–2.0 with B3LYP and cluster charges.
-- **TLS + U^high gives nearly the same hydrogen ADPs in every case**: U_iso ratios 1.18–1.24,
-  S12 0.45–0.83. They depend on the motion model, not on the density.
+  isolated molecule to 1.7–1.9 with B3LYP and cluster charges.
+- **TLS + U^high gives nearly the same hydrogen ADPs in every case**: U_iso ratios 1.17–1.27,
+  S12 0.41–0.93. They depend on the motion model, not on the density.
 - **The gap between free and TLS + U^high narrows.** The Hamilton ratio (15) for the ten extra
-  parameters falls from 1.068 (RHF, isolated) to 1.024 (B3LYP, cluster charges), against 1.016
+  parameters falls from 1.079 (RHF, isolated) to 1.027 (B3LYP, cluster charges), against 1.016
   needed. Free ADPs are still significantly better.
-- **RI-J with COSX** reproduces the exact 7-molecule refinements to 0.0004 in GoF and every
-  bond to 0.001 Å; on this cluster it is slower than the exact method.
+- **RI-J with COSX** reproduces the exact 7-molecule RHF refinements to 0.0004 in GoF and every
+  bond to 0.001 Å (checked with Cartesian functions).
 
-**The 7-molecule cluster in def2-TZVP,** with RI-J and COSX. For each method: free ADPs, TLS +
-U^high, and three soft modes with their correlations; the number of parameters, the fit, the
-bond lengths, and the hydrogen ADPs against neutron (U_iso ratio, then S12).
+**def2-TZVP in the crystal environment.** With cluster charges the integrals are exact; the
+7-molecule cluster uses RI-J and COSX. For each method: free ADPs, TLS + U^high, and three soft
+modes with their correlations; the number of parameters, the fit, the bond lengths, and the
+hydrogen ADPs against neutron (U_iso ratio, then S12).
+
+With cluster charges:
 
 | method | ADP model | parameters | $`p_{\rm eff}`$ | GoF | N–H1 /Å | N–H3 /Å | C=O /Å | H1: U_iso ratio, S12 | H3: U_iso ratio, S12 |
 |---|---|---|---|---|---|---|---|---|---|
-| RHF | free | 27 | 27.0 | 2.716 | 1.017(4) | 0.998(4) | 1.2554(3) | 1.27, 3.70 | 1.24, 2.62 |
-| RHF | TLS + U^high | 17 | 17.0 | 2.775 | 1.014(4) | 1.002(4) | 1.2553(3) | 1.24, 0.83 | 1.20, 0.51 |
-| RHF | K = 3, correlations | 20 | 19.6 | 2.763 | 1.014(4) | 1.002(4) | 1.2552(3) | 1.25, 1.03 | 1.19, 0.53 |
-| B3LYP | free | 27 | 27.0 | 2.080 | 1.001(3) | 0.994(4) | 1.2556(3) | 1.16, 1.10 | 1.18, 2.76 |
-| B3LYP | TLS + U^high | 17 | 17.0 | 2.139 | 1.000(3) | 0.996(3) | 1.2555(3) | 1.27, 0.91 | 1.18, 0.47 |
-| B3LYP | K = 3, correlations | 20 | 19.7 | 2.126 | 1.000(3) | 0.995(3) | 1.2555(3) | 1.18, 0.50 | 1.13, 0.33 |
+| RHF | free | 27 | 27.0 | 2.620 | 1.013(4) | 1.000(4) | 1.2557(3) | 1.30, 3.36 | 1.19, 2.19 |
+| RHF | TLS + U^high | 17 | 17.0 | 2.681 | 1.010(4) | 1.004(4) | 1.2557(3) | 1.27, 0.98 | 1.17, 0.39 |
+| RHF | K = 3, correlations | 20 | 19.6 | 2.665 | 1.010(4) | 1.004(4) | 1.2556(3) | 1.25, 1.12 | 1.16, 0.41 |
+| B3LYP | free | 27 | 27.0 | 2.038 | 0.998(3) | 0.996(3) | 1.2559(3) | 1.16, 0.91 | 1.14, 2.29 |
+| B3LYP | TLS + U^high | 17 | 17.0 | 2.103 | 0.998(3) | 0.998(3) | 1.2558(3) | 1.29, 1.02 | 1.16, 0.38 |
+| B3LYP | K = 3, correlations | 20 | 19.7 | 2.077 | 0.997(3) | 0.997(3) | 1.2558(3) | 1.18, 0.48 | 1.09, 0.20 |
 | neutron | | | | | 1.006 | 1.000 | | 1, 0 | 1, 0 |
 
-- **B3LYP on the def2-TZVP cluster fits best of every refinement here,** GoF 2.080 with free ADPs,
-  against 2.551 for B3LYP with cluster charges in def2-SVP. Its N–H bonds are within 2 esd of
-  neutron in every ADP model.
-- **The basis matters as much as the environment:** for RHF on the cluster, def2-TZVP lowers GoF
-  from 3.217 to 2.716 with free ADPs.
-- **Free ADPs are still significantly better.** The Hamilton ratio of three correlated soft
-  modes against free ADPs is 1.0219 (RHF) and 1.0268 (B3LYP), against 1.0129 needed. The
-  correlated soft modes improve on TLS + U^high only at the margin: 1.0061 (RHF) and 1.0080
-  (B3LYP), against 1.0081 needed.
-- **With B3LYP the hydrogen ADPs are best with the correlated soft modes,** S12 0.50 and 0.33.
-  With RHF, TLS + U^high and the correlated soft modes are alike, S12 0.51–1.03. Free ADPs give
-  1.1–3.7.
-- **The wags are determined here and are not zero.** With correlations, the two wags refine to
-  113(22) and 169(19) with RHF and to 120(17) and 175(14) with B3LYP, implying 627–973 cm⁻¹,
-  in the region of the crystal's NH₂ bands (next section but one).
+On the 7-molecule cluster:
 
-**The soft modes in the crystal environment.** The same sequence of $`K`$ soft modes, with Σ held
-positive (§2.4). Each entry is GoF, with $`p_{\rm eff}`$ in brackets.
+| method | ADP model | parameters | $`p_{\rm eff}`$ | GoF | N–H1 /Å | N–H3 /Å | C=O /Å | H1: U_iso ratio, S12 | H3: U_iso ratio, S12 |
+|---|---|---|---|---|---|---|---|---|---|
+| RHF | free | 27 | 27.0 | 2.695 | 1.016(4) | 0.997(4) | 1.2554(3) | 1.29, 2.62 | 1.23, 2.75 |
+| RHF | TLS + U^high | 17 | 17.0 | 2.756 | 1.013(4) | 1.001(4) | 1.2553(3) | 1.25, 0.85 | 1.19, 0.49 |
+| RHF | K = 3, correlations | 20 | 19.6 | 2.744 | 1.013(4) | 1.001(4) | 1.2552(3) | 1.25, 1.03 | 1.19, 0.52 |
+| B3LYP | free | 27 | 27.0 | 2.079 | 1.000(3) | 0.993(4) | 1.2556(3) | 1.16, 1.11 | 1.18, 2.99 |
+| B3LYP | TLS + U^high | 17 | 17.0 | 2.147 | 1.000(3) | 0.995(3) | 1.2555(3) | 1.27, 0.93 | 1.18, 0.46 |
+| B3LYP | K = 3, correlations | 20 | 19.7 | 2.132 | 0.999(3) | 0.994(3) | 1.2555(3) | 1.18, 0.50 | 1.12, 0.30 |
+| neutron | | | | | 1.006 | 1.000 | | 1, 0 | 1, 0 |
+
+- **B3LYP in def2-TZVP fits best of every refinement here:** GoF 2.038 with cluster charges and
+  2.079 on the 7-molecule cluster, with free ADPs, against 2.485 and 2.381 in def2-SVP. Its N–H
+  bonds are within 3 esd of neutron in every ADP model.
+- **In def2-TZVP cluster charges fit a little better than the explicit cluster:** 2.620 against
+  2.695 with RHF, 2.038 against 2.079 with B3LYP. In def2-SVP it is the other way round.
+- **The basis matters as much as the environment:** for RHF on the cluster, def2-TZVP lowers GoF
+  from 3.077 to 2.695 with free ADPs.
+- **Free ADPs are still significantly better.** The Hamilton ratio of three correlated soft
+  modes against free ADPs is 1.022–1.030 in the four cases, against 1.0129 needed. The
+  correlated soft modes improve significantly on TLS + U^high with B3LYP (1.0142 with cluster
+  charges, 1.0087 on the cluster, against 1.0081 needed) and not with RHF (1.0078 and 1.0065).
+- **With B3LYP the hydrogen ADPs are best with the correlated soft modes,** S12 0.48 and 0.20
+  with cluster charges, 0.50 and 0.30 on the cluster. With RHF, TLS + U^high and the correlated
+  soft modes are alike, S12 0.4–1.1. Free ADPs give 0.9–3.4.
+- **The wags are determined here and are not zero.** With correlations, the two wags refine to
+  111(22) and 167(19) with RHF and to 119(17) and 174(14) with B3LYP on the cluster, and to
+  94(21), 152(18) and 109(16), 163(14) with cluster charges. These imply 630–1170 cm⁻¹, at
+  and above the crystal's NH₂ bands (next section but one).
+
+**The soft modes in the crystal environment,** in def2-SVP. The same sequence of $`K`$ soft modes,
+with Σ held positive (§2.4). Each entry is GoF, with $`p_{\rm eff}`$ in brackets.
 
 | method | environment | K = 0 | K = 1 | K = 2 | K = 3 | K = 4 | free |
 |---|---|---|---|---|---|---|---|
-| RHF | isolated | 3.508 (17.0) | 3.481 (18.0) | 3.481 (18.0) | 3.471 (18.9) | 3.428 (19.7) | 3.304 (27) |
-| RHF | cluster charges | 3.383 (17.0) | 3.385 (17.0) | 3.385 (17.0) | 3.382 (18.0) | 3.358 (18.7) | 3.307 (27) |
-| RHF | 7-molecule cluster | 3.284 (17.0) | 3.286 (18.0) | 3.286 (17.0) | 3.287 (18.9) | 3.264 (18.7) | 3.217 (27) |
-| B3LYP | isolated | 2.833 (17.0) | 2.828 (18.0) | 2.828 (18.0) | 2.802 (18.0) | 2.795 (18.8) | 2.709 (27) |
-| B3LYP | cluster charges | 2.596 (17.0) | 2.598 (17.0) | 2.599 (17.0) | 2.577 (17.0) | 2.578 (17.9) | 2.551 (27) |
+| RHF | isolated | 3.408 (17.0) | 3.383 (18.0) | 3.383 (18.0) | 3.373 (18.9) | 3.326 (19.7) | 3.179 (27) |
+| RHF | cluster charges | 3.245 (17.0) | 3.247 (17.0) | 3.247 (17.0) | 3.244 (18.0) | 3.217 (18.7) | 3.157 (27) |
+| RHF | 7-molecule cluster | 3.160 (17.0) | 3.162 (18.0) | 3.162 (17.0) | 3.163 (18.0) | 3.137 (18.7) | 3.077 (27) |
+| B3LYP | isolated | 2.805 (17.0) | 2.802 (18.0) | 2.802 (18.0) | 2.775 (18.0) | 2.767 (18.8) | 2.662 (27) |
+| B3LYP | cluster charges | 2.537 (17.0) | 2.539 (17.0) | 2.541 (17.0) | 2.516 (17.0) | 2.517 (17.9) | 2.485 (27) |
 
-- **In the crystal environment the NH₂ wags are not wanted.** With cluster charges their refined
-  amplitudes are zero or would be negative. The positivity restraint holds them at zero, and
-  $`p_{\rm eff}`$ stays at 17. Hamilton's test finds no improvement from $`K = 0`$ to $`K = 2`$.
+- **In def2-SVP with a crystal environment the NH₂ wags are not wanted.** With cluster charges
+  their refined amplitudes are zero or would be negative. The positivity restraint holds them at
+  zero, and $`p_{\rm eff}`$ stays at 17. Hamilton's test finds no improvement from $`K = 0`$ to
+  $`K = 2`$.
 - This does not mean the crystal has no wag motion. The crystal's own NH₂ modes have the
   amplitudes the isolated-molecule refinements found (next section but one). Why the def2-SVP
-  refinements with cluster charges do not use the wags is open; on the def2-TZVP cluster they do.
+  refinements in a crystal environment do not use the wags is open; in def2-TZVP they do.
 - **An in-plane bend is still wanted:** mode 4 with RHF, mode 3 with B3LYP. Each improves the fit
   significantly by Hamilton's test at $`\alpha = 0.005`$.
 
@@ -880,24 +907,25 @@ The same refinements with the soft modes' correlations refined as well (§1.8).
 
 | method | environment | K | parameters | $`p_{\rm eff}`$ | GoF | H1: U_iso ratio, S12 | H3: U_iso ratio, S12 |
 |---|---|---|---|---|---|---|---|
-| RHF | isolated | 3 | 20 | 19.6 | 3.412 | 1.39, 2.10 | 1.32, 1.24 |
-| RHF | cluster charges | 3 | 20 | 19.6 | 3.359 | 1.24, 1.17 | 1.19, 0.56 |
-| RHF | 7-molecule cluster | 3 | 20 | 19.6 | 3.267 | 1.26, 1.25 | 1.19, 0.56 |
-| B3LYP | isolated | 3 | 20 | 19.6 | 2.790 | 1.29, 1.12 | 1.25, 0.76 |
-| B3LYP | cluster charges | 1 | 18 | 18.0 | 2.591 | 1.18, 0.50 | 1.14, 0.31 |
-| B3LYP | cluster charges | 3 | 20 | 19.6 | 2.574 | 1.16, 0.45 | 1.14, 0.33 |
-| B3LYP | cluster charges | 4 | 23 | 21.2 | 2.578 | 1.17, 0.42 | 1.14, 0.37 |
+| RHF | isolated | 3 | 20 | 19.6 | 3.308 | 1.40, 2.13 | 1.32, 1.28 |
+| RHF | cluster charges | 3 | 20 | 19.6 | 3.217 | 1.24, 1.20 | 1.19, 0.60 |
+| RHF | 7-molecule cluster | 3 | 20 | 19.6 | 3.139 | 1.26, 1.28 | 1.19, 0.60 |
+| B3LYP | isolated | 3 | 20 | 19.6 | 2.760 | 1.29, 1.15 | 1.23, 0.68 |
+| B3LYP | cluster charges | 1 | 18 | 18.0 | 2.531 | 1.18, 0.50 | 1.14, 0.30 |
+| B3LYP | cluster charges | 3 | 20 | 19.6 | 2.511 | 1.16, 0.46 | 1.14, 0.32 |
+| B3LYP | cluster charges | 4 | 23 | 21.2 | 2.515 | 1.15, 0.44 | 1.14, 0.32 |
+| B3LYP | 7-molecule cluster | 3 | 20 | 19.6 | 2.428 | 1.21, 0.68 | 1.13, 0.28 |
 
 - **Three soft modes with their correlations are the best motion model.** In every environment
   $`K = 3`$ with correlations is significantly better than $`K = 2`$; $`K = 4`$ is not better
   than $`K = 3`$.
 - **B3LYP with cluster charges and $`K = 3`$ with correlations comes closest to free ADPs:** GoF
-  2.574 with 20 parameters against 2.551 with 27. The Hamilton ratio is 1.0134 against 1.0129
-  needed, so free ADPs are only just significantly better. Its hydrogen ADPs are the best of any
-  refinement here: U_iso ratios 1.14–1.16, S12 0.33–0.45.
+  2.511 with 20 parameters against 2.485 with 27. The Hamilton ratio is 1.0151 against 1.0129
+  needed, so free ADPs are still significantly better. Its hydrogen ADPs are among the best of
+  any def2-SVP refinement here: U_iso ratios 1.14–1.16, S12 0.32–0.46.
 - **What the correlations say.** With one soft mode, the first NH₂ wag, B3LYP with cluster
-  charges refines the wag to a positive amplitude, 95(28), correlated with libration about the
-  C=O axis by $`\rho = -0.49(15)`$. The same ADPs without the correlation need a negative
+  charges refines the wag to a positive amplitude, 92(28), correlated with libration about the
+  C=O axis by $`\rho = -0.51(14)`$. The same ADPs without the correlation need a negative
   amplitude. The hydrogens move out of the plane less than libration alone would carry them,
   as expected when they are held by hydrogen bonds.
 - **The correlation restraint does not matter here.** With $`K = 3`$, widths
@@ -922,11 +950,11 @@ modes, and the amplitude refined for the isolated molecule with the frequency it
 
 | mode | isolated molecule, RHF/6-31G(d) /cm⁻¹ | crystal /cm⁻¹ | refined amplitude, isolated molecule, $`K = 4`$ (implied /cm⁻¹) |
 |---|---|---|---|
-| NH₂ wags, 1 and 2 | 432i, 164i | NH₂ bands near 480 and 670 | def2-SVP: 157(54) and 243(76) (700, 456); def2-TZVP: 130(47) and 218(65) (843, 506) |
-| C=O bend, 4 | 645 | all internal modes above 416 | def2-SVP: 737(135) (187); def2-TZVP: 657(118) (202) |
+| NH₂ wags, 1 and 2 | 432i, 164i | NH₂ bands near 480 and 670 | def2-SVP: 143(52) and 226(73) (769, 489); def2-TZVP: 123(47) and 209(65) (894, 527) |
+| C=O bend, 4 | 645 | all internal modes above 416 | def2-SVP: 754(131) (184); def2-TZVP: 664(118) (200) |
 
 - **The wag amplitudes refined for the isolated molecule are those of the crystal's NH₂ modes.**
-  Their implied frequencies, 456–843 cm⁻¹, bracket the two INS bands.
+  Their implied frequencies, 489–894 cm⁻¹, bracket the two INS bands.
 - **The large C=O-bend amplitude is not that bend's vibration.** It implies about 200 cm⁻¹, where
   the crystal has lattice modes only. It stands for motion the model otherwise lacks.
 - **A better restraint target for the wags** is the crystal's harmonic amplitude, from an INS
@@ -938,22 +966,22 @@ The rigid-body motion from def2-SVP, Hirshfeld, TLS + U^high, about the centre o
 parameters on the mm2 site). The element in row $`a`$ and column $`b`$ of $`S`$ is $`S_{ab} = \langle \lambda_a t_b \rangle`$: rows go with the components of the rotation vector, columns with those of the translation.
 
 ```math
-T = \begin{pmatrix} 0.01402(7) & -0.00045(9) & 0 \\ -0.00045(9) & 0.01402(7) & 0 \\ 0 & 0 & 0.00591(4) \end{pmatrix} \text{Å}^2, \qquad
-L = \begin{pmatrix} 19.8(17) & 12.2(17) & 0 \\ 12.2(17) & 19.8(17) & 0 \\ 0 & 0 & 44(4) \end{pmatrix} \text{deg}^2,
+T = \begin{pmatrix} 0.01402(7) & -0.00042(9) & 0 \\ -0.00042(9) & 0.01402(7) & 0 \\ 0 & 0 & 0.00591(4) \end{pmatrix} \text{Å}^2, \qquad
+L = \begin{pmatrix} 19.6(16) & 12.0(16) & 0 \\ 12.0(16) & 19.6(16) & 0 \\ 0 & 0 & 45(3) \end{pmatrix} \text{deg}^2,
 ```
 
 ```math
-S = \begin{pmatrix} -0.18(2) & 0.12(2) & 0 \\ -0.12(2) & 0.18(2) & 0 \\ 0 & 0 & 0 \end{pmatrix} \text{Å deg}.
+S = \begin{pmatrix} -0.17(2) & 0.115(19) & 0 \\ -0.115(19) & 0.17(2) & 0 \\ 0 & 0 & 0 \end{pmatrix} \text{Å deg}.
 ```
 
-$`L`$ has eigenvalues 7.6, 32 and 44 deg², the largest about the C=O axis; the rms libration is 5.3°.
+$`L`$ has eigenvalues 7.6, 32 and 45 deg², the largest about the C=O axis; the rms libration is 5.3°.
 $`S`$ has zero trace.
 
 
 ## 6. What is not done yet, and directions
 
-- B3LYP on the 7-molecule cluster in def2-SVP, and def2-TZVP for the isolated molecule and with
-  cluster charges, to complete the crystal-environment tables.
+- The restraint-width check and the RI-J/COSX check of the correlations section, repeated with
+  spherical functions.
 - A molecule with a methyl torsion, where the first soft mode should be the torsion.
 - T, L and S reported at the centre of reaction as well as at the centre of mass.
 - An ORCA Hessian reader.
