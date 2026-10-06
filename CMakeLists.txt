@@ -656,13 +656,7 @@ endif()
 set(RUNFILE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/runfiles)
 set(RUN_SRC 
     ${RUNFILE_DIR}/run_molecule.foo
-    ${RUNFILE_DIR}/run_buffer.foo
-    ${RUNFILE_DIR}/run_dc.foo
-    ${RUNFILE_DIR}/run_dc_derivs.foo
-    ${RUNFILE_DIR}/run_sf.foo
-    ${RUNFILE_DIR}/run_sf_derivs.foo
     ${RUNFILE_DIR}/run_compare_cifs.foo
-    ${RUNFILE_DIR}/run_dispersion.foo
     ${RUNFILE_DIR}/run_gaussian_data.foo
     ${RUNFILE_DIR}/run_har.foo
     ${RUNFILE_DIR}/run_himz.foo
@@ -676,12 +670,10 @@ set(RUN_SRC
     ${RUNFILE_DIR}/run_quadrature.foo
     ${RUNFILE_DIR}/run_lsq_restraint.foo
     ${RUNFILE_DIR}/run_gaussian_ff_fit.foo
-    ${RUNFILE_DIR}/run_shell2.foo
     ${RUNFILE_DIR}/run_real.foo
     ${RUNFILE_DIR}/run_rys.foo
     ${RUNFILE_DIR}/run_rgbi.foo
     ${RUNFILE_DIR}/run_least_squares.foo
-    ${RUNFILE_DIR}/run_textfile.foo
     ${RUNFILE_DIR}/run_mpi_test.foo
     ${RUNFILE_DIR}/run_mpi_test_complete.foo
     ${RUNFILE_DIR}/run_system_commands.foo
@@ -1066,17 +1058,12 @@ target_include_directories(tonto_lib PUBLIC ${PROJECT_BINARY_DIR} ${CMAKE_CURREN
 
 # Standard executables
 add_executable(tonto             ${CMAKE_CURRENT_BINARY_DIR}/run_molecule.F90)
-add_executable(run_buffer        EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_buffer.F90)
-add_executable(run_dc            EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_dc.F90)
-add_executable(run_dc_derivs     EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_dc_derivs.F90)
-add_executable(run_sf            EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_sf.F90)
-add_executable(run_sf_derivs     EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_sf_derivs.F90)
-add_executable(run_compare_cifs  EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_compare_cifs.F90)
-add_executable(run_dispersion    EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_dispersion.F90)
+# compare_cifs: positions and ADPs of one CIF against a reference CIF, atom by
+# atom, with the S12 similarity of the ADPs. Built by an ordinary make.
+add_executable(run_compare_cifs  ${CMAKE_CURRENT_BINARY_DIR}/run_compare_cifs.F90)
 add_executable(run_gaussian_data EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_gaussian_data.F90)
 add_executable(run_har           ${CMAKE_CURRENT_BINARY_DIR}/run_har.F90)
 add_executable(run_himz          EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_himz.F90)
-add_executable(run_shell2        EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_shell2.F90)
 add_executable(run_mat_real      EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mat_real.F90)
 add_executable(run_mat_cpx       EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mat_cpx.F90)
 # The MP2 teaching lab, ported from archive/Teaching (2026-08-18). run_mp2 is the
@@ -1115,7 +1102,6 @@ add_executable(run_rys           EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/ru
 add_executable(run_rgbi          ${CMAKE_CURRENT_BINARY_DIR}/run_rgbi.F90)
 add_executable(run_vec_str       EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_vec_str.F90)
 add_executable(run_least_squares EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_least_squares.F90)
-add_executable(run_textfile      EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_textfile.F90)
 # run_system_commands exercises the SYSTEM_COMMAND virtual module (shell
 # execution, used to render plots with gnuplot at the end of a job). Not
 # EXCLUDE_FROM_ALL: it is registered as the `system_commands` ctest, and shelling
@@ -1129,25 +1115,15 @@ if(WITH_MPI)
     add_executable(run_mpi_test_complete EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_test_complete.F90)
 endif()
 
-# The runfiles an ordinary make leaves out and that build: `make runfiles` builds
-# them all, so that a change which breaks one is noticed (ci-full-suite.yml runs
-# it). Left out of this list because they call routines that no longer exist:
-# run_buffer, run_dc, run_dc_derivs, run_sf, run_sf_derivs, run_compare_cifs,
-# run_dispersion, run_himz, run_shell2, run_textfile. Add a runfile here when it
-# is repaired.
+# The runfiles an ordinary make leaves out: `make runfiles` builds them all, so
+# that a change which breaks one is noticed (ci-full-suite.yml runs it).
 add_custom_target(runfiles DEPENDS
     run_mat_real run_mat_cpx run_mp2 run_mp2_exercise run_qr run_real run_rys
-    run_least_squares run_vec_str run_gaussian_data)
+    run_least_squares run_vec_str run_gaussian_data run_himz)
 
 # Link exectables
 target_link_libraries(tonto             tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_buffer        tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_dc            tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_dc_derivs     tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_sf            tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_sf_derivs     tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_compare_cifs  tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_dispersion    tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_gaussian_data tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_har           tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_himz          tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
@@ -1165,7 +1141,6 @@ target_link_libraries(run_rys           tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBR
 target_link_libraries(run_rgbi          tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_vec_str       tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_least_squares tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
-target_link_libraries(run_textfile      tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_system_commands tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_quadrature    tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_lsq_restraint tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
@@ -1174,7 +1149,6 @@ if(WITH_MPI)
     target_link_libraries(run_mpi_test          tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
     target_link_libraries(run_mpi_test_complete tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 endif()
-target_link_libraries(run_shell2        tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 
 
 # `make tonto` builds the PROGRAM tonto; the library is tonto_lib and comes along
@@ -1193,6 +1167,7 @@ add_dependencies(tonto run_har)
 # Make non-standard-named executables
 set_target_properties(run_har      PROPERTIES OUTPUT_NAME hart)
 set_target_properties(run_rgbi     PROPERTIES OUTPUT_NAME rgbi)
+set_target_properties(run_compare_cifs PROPERTIES OUTPUT_NAME compare_cifs)
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
