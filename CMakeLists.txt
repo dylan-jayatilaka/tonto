@@ -1129,6 +1129,16 @@ if(WITH_MPI)
     add_executable(run_mpi_test_complete EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_test_complete.F90)
 endif()
 
+# The runfiles an ordinary make leaves out and that build: `make runfiles` builds
+# them all, so that a change which breaks one is noticed (ci-full-suite.yml runs
+# it). Left out of this list because they call routines that no longer exist:
+# run_buffer, run_dc, run_dc_derivs, run_sf, run_sf_derivs, run_compare_cifs,
+# run_dispersion, run_himz, run_shell2, run_textfile. Add a runfile here when it
+# is repaired.
+add_custom_target(runfiles DEPENDS
+    run_mat_real run_mat_cpx run_mp2 run_mp2_exercise run_qr run_real run_rys
+    run_least_squares run_vec_str run_gaussian_data)
+
 # Link exectables
 target_link_libraries(tonto             tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_buffer        tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
