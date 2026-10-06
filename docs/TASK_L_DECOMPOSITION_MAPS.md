@@ -206,7 +206,7 @@ numbers; `tests/long/urea_rhf_STO-3G_HAR` (4 s) is the working job.
   density); with `l_value=` it is one $`l`$ alone, summed over $`m`$ and atoms. Radial functions
   are interpolated between shells (`INTERPOLATOR`).
 - **Checks:** (i) $`l = 0`$ reproduces the spherical Hirshfeld atom (`sph-exphar` with
-  `exphar_power= 1`) and its charge; (ii) `l_filtered_density` tends to `electron_density` as
+  `exphar_power= 1`) and its charge; (ii) `angular_hirshfeld` with `l_max=` tends to `electron_density` as
   `l_max` rises, and the remainder at `l_max= 4` is tabulated; (iii) with the weight set to one and
   the Fourier density, it reproduces step 3.
 
