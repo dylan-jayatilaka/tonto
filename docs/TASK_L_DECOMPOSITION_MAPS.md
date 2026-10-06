@@ -20,12 +20,10 @@ exact reference that C is tested against.
 | A | section 4, "Version 2" | the field of local moments $`M_{lm}(\mathbf r)`$: maps over the cell | `local_moment` |
 | B | section 3.1 | the expansion about one chosen centre (the Bessel formula) | none: a test reference |
 | C | section 3.2 | Hirshfeld atoms expanded about their nuclei; the true decomposition | `angular_hirshfeld` |
-| D | section 3.3 | the same for the square root of each atom; populations $`n^A_l`$ | `angular_amplitude` (suggested; Dylan to confirm) |
+| D | section 3.3 | the same for the square root of each atom; populations $`n^A_l`$ | `hirshfeld_amplitude` |
 
-`local_moment` and `angular_hirshfeld` are Dylan's names. For D he had none. `angular_amplitude`
-is the suggestion: it pairs with `angular_hirshfeld`, and "amplitude" is what the document calls
-the square root of an atom. Its table of populations would be `put_angular_populations`. Other
-candidates, if he prefers: `hirshfeld_amplitude`, `angular_root_density`.
+All three names are Dylan's. The table of populations for D is `put_hirshfeld_amplitude_populations`
+(name to agree).
 
 ## 1. What exists, and where the new work attaches
 
@@ -210,11 +208,11 @@ numbers; `tests/long/urea_rhf_STO-3G_HAR` (4 s) is the working job.
   `l_max` rises, and the remainder at `l_max= 4` is tabulated; (iii) with the weight set to one and
   the Fourier density, it reproduces step 3.
 
-**Step 5 (piece D). The amplitude: `angular_amplitude`.**
+**Step 5 (piece D). The amplitude: `hirshfeld_amplitude`.**
 
 - The same routine with a switch that takes the square root of $`w_A\rho`$ at each point before the
   angular sum. Populations $`n^A_l`$ by the radial quadrature.
-- Keyword `put_angular_populations`: a table of $`n^A_l`$, $`l = 0 \ldots l_{\max}`$, for
+- Keyword `put_hirshfeld_amplitude_populations`: a table of $`n^A_l`$, $`l = 0 \ldots l_{\max}`$, for
   each atom, the sum, and $`N_A`$ beside it.
 - **Checks:** $`\sum_l n^A_l = N_A`$ to the quadrature's accuracy; a single N atom and a Ne atom
   give $`n_1 = 0`$; urea: do the O lone pairs and the planar skeleton show in $`n_1`$ and $`n_2`$, and
@@ -277,11 +275,25 @@ multiplicities, $`F_{000}`$, scale), because that needs the space group and the 
 | the series kernel, public `make_solid_harmonics`, spherical Bessel functions | `FOURIER_SUMS` (plain procedures, no object) |
 | per-atom radial functions and populations (pieces C and D): they need atoms and weights | `MOLECULE.RHO`, beside `make_sph_avgd_SA_ED_grid`; for a Fourier density they ask a `CELL_MAP` for values at their quadrature points |
 | new plot kinds | the three tables in `MOLECULE.GRID`, and `MOLECULE.PLOT:set_up_for_plot` |
-| `l_max=`, `density_source=` for pieces C and D, and `put_angular_populations` | `MOLECULE.MAIN` keywords |
+| `l_max=`, `density_source=` for pieces C and D, and `put_hirshfeld_amplitude_populations` | `MOLECULE.MAIN` keywords |
 
 **Keywords.** A `cell_map= { }` block in `MOLECULE.MAIN`, read by `CELL_MAP:read_keywords`:
 `kind=`, `l_value=`, `m_value=`, `window_width=`. `plot_grid= { kind= cell_map }` then plots
 whatever the block describes; `residual_density` stays as a plot kind, for existing inputs.
+
+**Which plot kinds go into `CELL_MAP`, and how it is called.** Only the maps that are Fourier
+sums of structure factors: `residual`, `f_exp`, `f_calc`, and `local_moment` made from any of
+them. The hundred or so other kinds in `MOLECULE.GRID` (orbitals, the electron density of the
+wavefunction, ELF, potentials) are evaluated from basis functions at points and stay where they
+are; so do `angular_hirshfeld` and `hirshfeld_amplitude`, which need atoms. The names are the
+same at both levels, so nothing a user types changes:
+
+- *by keyword:* `MOLECULE.GRID`'s tables keep a one-line case for each Fourier kind
+  (`residual_density` as now, and the new ones), which fills the `CELL_MAP` and calls it; inside,
+  `CELL_MAP` branches on its own `kind` with a `select case`;
+- *by direct call:* after `CRYSTAL` has filled it, any routine may call `apply_blur`,
+  `apply_l_moment`, `make_values_at` and the rest directly, as `get_minmax_residual_density`
+  will.
 
 **Order of work.** Make the type and move the residual map onto it *first*, as step 1, with the
 two residual-map tests as the check that nothing moved. The new maps are then additions to a
@@ -318,9 +330,9 @@ index and `l` the angular momentum must not meet in one routine: call the indice
 
 ## 7. Decisions for Dylan
 
-1. The name for piece D: `angular_amplitude`, or another (section 0).
+1. The name for piece D: `hirshfeld_amplitude`, or another (section 0).
 2. The remaining keyword names: the block `cell_map= { kind= l_value= m_value= window_width= }`
-   with `kind= local_moment` for piece A, and `put_angular_populations`, `l_max=`,
+   with `kind= local_moment` for piece A, and `put_hirshfeld_amplitude_populations`, `l_max=`,
    `density_source=`.
 3. Whether C and D start on the wavefunction density, as recommended in section 3.
 4. The default `l_max` (suggest 4) and window width (suggest 0.5 Å).

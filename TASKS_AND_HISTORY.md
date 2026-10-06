@@ -84,7 +84,7 @@ because by then it held far more than deferred items.)*
 it rests on, `~/Dropbox/tex/conference_talks/2026_ED_angular_decomp/angular_decomp.pdf` (written
 and checked numerically on 2026-10-06; `check_formulas.py` beside it). **The order is settled
 (Dylan): the field maps `local_moment` first, then `angular_hirshfeld`, then the square-root
-version, provisionally `angular_amplitude` (his to confirm).** Start at the plan's step 1: the new
+version `hirshfeld_amplitude`.** Start at the plan's step 1: the new
 type `CELL_MAP`, the residual map moved onto it with no number changing, the fast Fourier-series
 routine and a total Fourier map. Write
 in the Tonto style, procedures well commented (Dylan). achari2 has a clean worktree of `develop`
