@@ -22,8 +22,9 @@ exact reference that C is tested against.
 | C | section 3.2 | Hirshfeld atoms expanded about their nuclei; the true decomposition | `angular_hirshfeld` |
 | D | section 3.3 | the same for the square root of each atom; populations $`n^A_l`$ | `hirshfeld_amplitude` |
 
-All three names are Dylan's. The table of populations for D is `put_hirshfeld_amplitude_populations`
-(name to agree).
+All three names are Dylan's. The table of populations for D is printed by the keyword
+`put_ha_populations`, routine `put_HA_populations`: keywords are lower case, and in routine names
+the abbreviation HA (Hirshfeld amplitude) is written in capitals, as `ADP` and `ED` are.
 
 **Output (Dylan).** Every map is written as a Gaussian cube file, as Tonto's other maps are, to be
 viewed in VESTA. So each of the three is a plot kind that fills the points of a `PLOT_GRID` and
@@ -219,7 +220,7 @@ numbers; `tests/long/urea_rhf_STO-3G_HAR` (4 s) is the working job.
 
 - The same routine with a switch that takes the square root of $`w_A\rho`$ at each point before the
   angular sum. Populations $`n^A_l`$ by the radial quadrature.
-- Keyword `put_hirshfeld_amplitude_populations`: a table of $`n^A_l`$, $`l = 0 \ldots l_{\max}`$, for
+- Keyword `put_ha_populations`: a table of $`n^A_l`$, $`l = 0 \ldots l_{\max}`$, for
   each atom, the sum, and $`N_A`$ beside it.
 - **Checks:** $`\sum_l n^A_l = N_A`$ to the quadrature's accuracy; a single N atom and a Ne atom
   give $`n_1 = 0`$; urea: do the O lone pairs and the planar skeleton show in $`n_1`$ and $`n_2`$, and
@@ -282,7 +283,7 @@ multiplicities, $`F_{000}`$, scale), because that needs the space group and the 
 | the series kernel, public `make_solid_harmonics`, spherical Bessel functions | `FOURIER_SUMS` (plain procedures, no object) |
 | per-atom radial functions and populations (pieces C and D): they need atoms and weights | `MOLECULE.RHO`, beside `make_sph_avgd_SA_ED_grid`; for a Fourier density they ask a `CELL_MAP` for values at their quadrature points |
 | new plot kinds | the three tables in `MOLECULE.GRID`, and `MOLECULE.PLOT:set_up_for_plot` |
-| `l_max=`, `density_source=` for pieces C and D, and `put_hirshfeld_amplitude_populations` | `MOLECULE.MAIN` keywords |
+| `l_max=`, `density_source=` for pieces C and D, and `put_ha_populations` | `MOLECULE.MAIN` keywords |
 
 **Keywords.** A `cell_map= { }` block in `MOLECULE.MAIN`, read by `CELL_MAP:read_keywords`:
 `kind=`, `l_value=`, `m_value=`, `window_width=`. `plot_grid= { kind= cell_map }` then plots
@@ -339,7 +340,7 @@ index and `l` the angular momentum must not meet in one routine: call the indice
 
 1. The name for piece D: `hirshfeld_amplitude`, or another (section 0).
 2. The remaining keyword names: the block `cell_map= { kind= l_value= m_value= window_width= }`
-   with `kind= local_moment` for piece A, and `put_hirshfeld_amplitude_populations`, `l_max=`,
+   with `kind= local_moment` for piece A, and `put_ha_populations`, `l_max=`,
    `density_source=`.
 3. Whether C and D start on the wavefunction density, as recommended in section 3.
 4. The default `l_max` (suggest 4) and window width (suggest 0.5 Å).
