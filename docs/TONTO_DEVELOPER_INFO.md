@@ -71,7 +71,7 @@ The option takes the run-file **stem**, `run_molecule`; the build target is `ton
 This computes reachability from the `run_molecule` (=`tonto`) entry point and drops
 every procedure not reachable from it (~1/3 of the ~7600 procedures), producing a
 smaller binary that passes the identical test suite. The purge is **per executable**
-— code dead for `run_molecule` may be live for `run_dc`/`run_sf`/etc. — so always
+— code dead for `run_molecule` may be live for `run_har`/`run_rgbi`/etc. — so always
 use a dedicated build tree and never share it with the normal build. The normal
 build (no `-DPURGE_DEAD_CODE`) is unaffected.
 
