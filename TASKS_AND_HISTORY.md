@@ -4311,7 +4311,29 @@ harness strips from the comparison; `ctest` and `scripts/suite_report.py` show w
 A CPU column in `suite_report.py` (parsed from the job's own line) would make suite timings
 comparable across machine load. Small; Dylan's question 2026-09-16.
 
-## Unbuilt runfiles rot: `run_real.foo` boilerplate no longer compiles (2026-09-16)
+## Ten left-out runfiles call routines that no longer exist (2026-10-06)
+
+All twenty `EXCLUDE_FROM_ALL` runfiles were built on achari2: three compiled. After the mechanical
+repairs (the `TEXTFILE::create_stdout` start-up calls, `@` for arrays that are created, three program
+names with braces, one renamed keyword routine) **ten build**: `run_mat_real`, `run_mat_cpx`,
+`run_mp2`, `run_mp2_exercise`, `run_qr`, `run_real`, `run_rys`, `run_least_squares`, `run_vec_str`,
+`run_gaussian_data`. `make runfiles` builds them and `ci-full-suite.yml` runs it, so they cannot rot
+unseen again. **Ten do not, and need Dylan's decision, repair or delete:**
+
+| runfile | what it calls that is gone |
+|---|---|
+| `run_buffer` | `BUFFER:previous_item` |
+| `run_dc`, `run_dc_derivs` | `CRYSTAL:data`, `MOLECULE.BASE:put`, a `setup`; `make_fragment_data` |
+| `run_sf`, `run_sf_derivs` | the `DIFFRACTION_DATA` module by that name, `assign_xray`, `finalize` |
+| `run_compare_cifs` | `save`, `unsave`, and array `create`/`destroy` forms |
+| `run_dispersion` | the `SASAKI_FORM_FACTORS` module |
+| `run_himz` | pointer assignment to arrays that are no longer pointers |
+| `run_shell2` | `thermal_smearing_correction`, `make_partition_factors` |
+| `run_textfile` | `set_real_style`, `save`, `real_width`, `real_precision` |
+
+Build logs: `achari2:~/github/tonto-sg/release/runfiles_logs/`. The entry as filed follows.
+
+### As filed (2026-09-16)
 
 `runfiles/run_real.foo` (EXCLUDE_FROM_ALL) opens with `std_err.create_std_err` and
 `coeff :: VEC{REAL}*` followed by `coeff.create`; `create_std_err` is `selfless` now and
