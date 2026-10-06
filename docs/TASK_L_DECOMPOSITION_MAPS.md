@@ -380,6 +380,16 @@ index and `l` the angular momentum must not meet in one routine: call the indice
   (`set_Fourier_multiplicities`) to cover the half of reciprocal space not stored. Equation (2)
   for odd $`l`$ changes sign between $`\mathbf q`$ and $`-\mathbf q`$, so the factor must be applied to
   each generated reflection with its own direction, before any doubling.
+- **No module cycles.** The submodules of `MOLECULE` are separate Fortran modules, and `use` must
+  not form a cycle: `MOLECULE.SCF` uses `MOLECULE.RHO`, so a routine in `MOLECULE.RHO` cannot call
+  `MOLECULE.SCF:make_atom_partition_info`. Make prints `Circular ... dependency dropped`, compiles
+  against a stale module, and fails with "Mismatch in components of derived type"; the message
+  names the wrong thing. Drivers that need set-up go in `MOLECULE.MAIN`.
+- **No fast Bessel code is needed** (Dylan asked, 2026-10-06). The one-centre sum costs one
+  $`j_l`$ per reflection per radius, $`4\times10^5`$ evaluations for urea and a few milliseconds;
+  it is the exact reference and a small-job tool, and the atoms of step 4 go by quadrature, with
+  no Bessel function at all. `FOURIER_SUMS:spherical_bessel` sits beside `sin_cos`, which is where
+  a vectorised version would go if a use ever needed one.
 - **Thermal smearing.** The Fourier density is smeared by the ADPs and the wavefunction density is
   not. Their $`l`$ components differ for that reason alone; do not compare them as if they should
   agree.
@@ -441,3 +451,49 @@ index and `l` the angular momentum must not meet in one routine: call the indice
   $`l = 0, 1, 2`$ parts have rms 0.0013, 0.0023 and 0.0035 -- a smooth, mostly negative
   background with a positive band across the N-H region. The window is wide for residual
   features; a narrower one (0.25 Å) is the thing to try when the residual is the object.
+- 2026-10-06, late. **Window default is 0.25 Å (Dylan).** **Step 3 done and verified.**
+  `CELL_MAP:make_radial_functions` (equation 3; `FOURIER_SUMS:spherical_bessel`, upward recurrence
+  above $`l_{\max}`$, Miller's downward recurrence below) and the keyword
+  `put_cell_map_radial_functions`, with `l_max=`, `centre=` (a length), `centre_fractional=`,
+  `n_radii=`, `radius_max=` in the `cell_map=` block. Checked on urea's refined model about O and
+  C against an independent Python sum over the whole sphere built from the `.fcf` ($`A, B`$ per
+  unique reflection) and the `.fco` symmetry operations (`check_radial.py` in the job directory),
+  which itself agrees with an angular quadrature of the series to five decimals: every
+  $`\rho_{lm}(s)`$, $`l \le 2`$, $`s = 0.1`$ to 2 Å, agrees to about 1e-4 relative, the level of
+  the four figures the `.fcf` prints. A first comparison showed the $`l = 1`$ component about O
+  off by 0.7% at 0.1 Å: the centre had been typed rounded to 2.7878 Å (exact 2.78784), and that
+  column is the gradient at the nucleus, where the curvature is ~5e3 e/Å⁵; with the same centre
+  the two agree. `centre_fractional=` avoids that; it needs the cell, so `read_cell_map` sets it
+  from the crystal before reading the block.
+- 2026-10-06, late. **Step 4 (and the populations of step 5) coded and checked.**
+  `MOLECULE.RHO:make_atom_lm_radial_functions(f,radii,a,l_max,l_lebedev,amplitude,weighted,use_cell_map)`
+  is the angular quadrature about a nucleus on a Lebedev grid of explicit order (`max(2 l_max+2, 29)`,
+  never a pruned grid); the driver `MOLECULE.MAIN:put_angular_Hirshfeld_atoms` prints, for each
+  unique fragment atom on its Becke radial shells, the radial functions, the power
+  $`P_l = \sum_m \int f_{lm}^2 s^2 ds`$ and the electron count; keywords
+  `put_angular_hirshfeld_atoms` and `put_ha_populations` (the amplitude, $`\sqrt{w_A\rho}`$), with
+  `l_max=`, `density_source= wavefunction | cell_map` and `atom_weight= hirshfeld | none` in the
+  `cell_map=` block. The driver had to live in `MOLECULE.MAIN`: see the module-cycle trap in
+  section 6.
+  *Check (iii)*, urea, the Fourier density of the model with no weight, quadrature against the exact
+  Bessel sums at the same Becke radii (`check_step4.py`): within 1.5 Å of every nucleus the largest
+  difference is 0.004 to 0.009 e/Å³ on values up to 177 (5e-5 relative, the `.fcf`'s four figures);
+  beyond that the sphere runs through neighbouring nuclei and the 302-point grid cannot integrate a
+  50 e/Å³ spike -- the quadrature's limit, irrelevant once the Hirshfeld weight is on. Two earlier
+  false alarms were the check's: the Python $`j_2`$ lost its digits at $`x < 0.05`$ (now a series),
+  and radii were being read from three printed decimals (now five).
+  *The populations*, urea Hirshfeld atoms of the B3LYP/def2-TZVP wavefunction, $`l \le 2`$:
+  O 8.363, 0.0064, 0.0023 (sum 8.372, electron count 8.376); N 7.125, 0.0015, 0.0044 (7.131; 7.143);
+  C 5.817, 0.0010, 0.0079 (5.826; 5.842); H 0.848, 0.0155, 0.0012 (0.865; 0.866) and 0.866, 0.0135,
+  0.0014 (0.881; 0.882). The sums approach the counts from below, the remainder being $`l > 2`$.
+  So the answer to the question of section 4: **the amplitude of a Hirshfeld atom is spherical to
+  better than 0.2% of its electrons** -- the O lone pairs and the planar skeleton do not show in
+  $`n_1, n_2`$ at any size; the only visible non-sphericity is the hydrogens' $`n_1`$ of 0.014-0.016
+  e, the bond polarisation. Whether that makes the measure useless or a clean statement is for
+  Dylan. The *density's* power $`P_l`$ for the unweighted cell density about an atom is large for
+  $`l = 1, 2`$ (neighbours), as it should be.
+  **Not done:** the plot kinds `angular_hirshfeld` and `hirshfeld_amplitude` (the rebuilt density
+  on a grid from interpolated radial functions, section 4 output 2) and the per-atom radial
+  functions to a file for plotting; the Lebedev order is fixed, not raised near bonds.
+  **Also in this commit:** `CIF`'s loop reader stops at a `;` text field (the data-set CIFs end
+  their reflection loop with one), and `read_cell_map` sets the cell before reading the block.

@@ -73,9 +73,16 @@ contains
       .kind         = "residual"
       .l_value      = -1
       .m_value      = -99
-      .window_width = 0.5*BOHR_PER_ANGSTROM
+      .window_width = 0.25*BOHR_PER_ANGSTROM
+      .l_max        = 2
+      .centre       = ZERO
+      .n_radii      = 40
+      .radius_max   = 2*BOHR_PER_ANGSTROM
       .volume       = ZERO
       .reciprocal_mx = ZERO
+      .direct_mx    = ZERO
+      .density_source = "wavefunction"
+      .atom_weight    = "hirshfeld"
 
    end
 
@@ -111,6 +118,7 @@ contains
    ENSURE(unit_cell.volume>ZERO, "unit cell has no volume")
 
       .reciprocal_mx = unit_cell.reciprocal_mx
+      .direct_mx     = unit_cell.direct_mx
       .volume        = unit_cell.volume
 
    end
@@ -323,6 +331,93 @@ contains
 
    end
 
+   make_radial_functions(f,radii) :: leaky, PURE
+   ! Set "f(i,lm)" to the radial functions rho_lm(s) of the density about
+   ! ".centre" at the radii "radii(i)", for l = 0 to ".l_max" and m = -l
+   ! to l, column lm = l^2 + l + m + 1:
+   !
+   !    rho_lm(s) = 4 pi (-i)^l sum_n coeff(n) exp(-i q_n.c) Y_lm(q^_n) j_l(q_n s),
+   !
+   ! the expansion of the density on each sphere about the centre c in
+   ! real harmonics, so that rho(c + s s^) = sum_lm rho_lm(s) Y_lm(s^).
+   ! It is exact for the Fourier series, and is the reference that an
+   ! angular quadrature about an atom is tested against. The factor of
+   ! each reflection is real once the phase about the centre and (-i)^l
+   ! are taken together, so the sum over radii is real arithmetic.
+      self :: IN
+      f     :: MAT{REAL}, OUT
+      radii :: VEC{REAL}, IN
+
+   ENSURE(.coeff.allocated, "no coefficients")
+   ENSURE(.l_max>=0, "l_max must not be negative")
+   ENSURE(f.dim1==radii.dim, "f: wrong dim1")
+   ENSURE(f.dim2==(.l_max+1)*(.l_max+1), "f: wrong dim2")
+
+      q,Y,A :: MAT{REAL}@
+      qn,j  :: VEC{REAL}@
+      ph,fac :: CPX
+      n_refl,n,i,lv,m,col,lm :: INT
+
+      n_refl = .coeff.dim
+
+      ! The scattering vectors, their lengths, and the solid harmonics
+      q.create(n_refl,3)
+      .make_scattering_vectors(q)
+      qn.create(n_refl)
+      do n = 1,n_refl
+         qn(n) = sqrt(q(n,1)*q(n,1) + q(n,2)*q(n,2) + q(n,3)*q(n,3))
+      end
+      Y.create(n_refl,(.l_max+1)*(.l_max+1))
+      FOURIER_SUMS:make_solid_harmonics(Y,q,.l_max)
+
+      ! A(n,lm) = Re[4 pi (-i)^l coeff(n) exp(-i q.c) Y_lm(q^)], the columns in
+      ! the order l^2 + l + m + 1; Y_lm(q^) is the solid harmonic over q^l,
+      ! and at q = 0 only l = 0 survives
+      A.create(n_refl,(.l_max+1)*(.l_max+1))
+      do n = 1,n_refl
+         ph = .coeff(n)*exp(-IMAGIFY(ONE)*(q(n,1)*.centre(1) + q(n,2)*.centre(2) + q(n,3)*.centre(3)))
+         do lv = 0,.l_max
+            fac = 4*PI*(-IMAGIFY(ONE))**lv*ph
+            do m = -lv,lv
+               lm = lv*lv + lv + m + 1
+               if (m>0) then;      col = lv*lv + 2*m
+               else if (m<0) then; col = lv*lv + 2*abs(m) + 1
+               else;               col = lv*lv + 1
+               end
+               if (qn(n)>1.0d-12) then
+                  A(n,lm) = REALIFY(fac)*Y(n,col)/qn(n)**lv
+               else if (lv==0) then
+                  A(n,lm) = REALIFY(fac)*Y(n,col)
+               else
+                  A(n,lm) = ZERO
+               end
+            end
+         end
+      end
+
+      ! The sum over reflections at each radius
+      j.create(.l_max+1)
+      f = ZERO
+      do i = 1,radii.dim
+         do n = 1,n_refl
+            FOURIER_SUMS:spherical_bessel(j,qn(n)*radii(i),.l_max)
+            do lv = 0,.l_max
+               do m = -lv,lv
+                  lm = lv*lv + lv + m + 1
+                  f(i,lm) = f(i,lm) + A(n,lm)*j(lv+1)
+               end
+            end
+         end
+      end
+
+      j.destroy
+      A.destroy
+      Y.destroy
+      qn.destroy
+      q.destroy
+
+   end
+
    make_values_on_cell(values,nx,ny,nz) :: PURE
    ! Set "values" to the density on a grid of "nx", "ny", "nz" points
    ! along the cell axes, both ends of each axis included, incrementing
@@ -420,6 +515,15 @@ contains
       case ("l_value=           "); .read_l_value
       case ("m_value=           "); .read_m_value
       case ("window_width=      "); .read_window_width
+      case ("l_max=             "); .read_l_max
+      case ("centre=            "); .read_centre
+      case ("center=            "); .read_centre
+      case ("centre_fractional= "); .read_centre_fractional
+      case ("center_fractional= "); .read_centre_fractional
+      case ("n_radii=           "); .read_n_radii
+      case ("radius_max=        "); .read_radius_max
+      case ("density_source=    "); .read_density_source
+      case ("atom_weight=       "); .read_atom_weight
       case default; UNKNOWN(word)
       end
 
@@ -473,9 +577,157 @@ contains
 
    end
 
+   read_l_max :: leaky
+   ! Read the highest l of the radial functions about a centre
+      self :: INOUT
+
+      stdin.read(.l_max)
+
+   DIE_IF(.l_max<0, "l_max must not be negative")
+
+      GAUSSIAN_DATA:set_indices(.l_max)
+
+   end
+
+   read_centre
+   ! Read the centre of the radial functions, cartesian, with units
+      self :: INOUT
+
+      stdin.read_quantity(.centre)
+
+   end
+
+   read_centre_fractional
+   ! Read the centre of the radial functions in fractional coordinates.
+   ! The cell must be known: give crystal= first.
+      self :: INOUT
+
+      frac :: VEC{REAL}(3)
+
+      stdin.read(frac)
+
+   DIE_IF(.volume<=ZERO, "the cell is not set: give crystal= first")
+
+      .centre = matmul(.direct_mx,frac)
+
+   end
+
+   read_n_radii
+   ! Read the number of radii of the radial functions
+      self :: INOUT
+
+      stdin.read(.n_radii)
+
+   DIE_IF(.n_radii<1, "n_radii must be positive")
+
+   end
+
+   read_radius_max
+   ! Read the largest radius of the radial functions, a length
+      self :: INOUT
+
+      stdin.read_quantity(.radius_max)
+
+   DIE_IF(.radius_max<=ZERO, "radius_max must be positive")
+
+   end
+
+   read_density_source
+   ! Read which density the Hirshfeld-atom decomposition expands: the
+   ! wavefunction's, or the Fourier density of this cell map
+      self :: INOUT
+
+      stdin.read(.density_source)
+      .density_source.to_lower_case
+
+   DIE_IF(.density_source/="wavefunction" AND .density_source/="cell_map", "density_source must be wavefunction or cell_map")
+
+   end
+
+   read_atom_weight
+   ! Read whether the Hirshfeld weight is applied in the atom decomposition
+      self :: INOUT
+
+      stdin.read(.atom_weight)
+      .atom_weight.to_lower_case
+
+   DIE_IF(.atom_weight/="hirshfeld" AND .atom_weight/="none", "atom_weight must be hirshfeld or none")
+
+   end
+
 !  ======
 !  Output
 !  ======
+
+   put_radial_functions :: leaky
+   ! Put the radial functions rho_lm(s) of the density about ".centre",
+   ! l = 0 to ".l_max", at ".n_radii" radii up to ".radius_max", in
+   ! electrons per cubic Angstrom; then the power of each l, the sum of
+   ! the squares over m, which does not depend on the axes.
+      self :: IN
+
+      f :: MAT{REAL}@
+      radii :: VEC{REAL}@
+      power :: REAL
+      fac,fac3 :: REAL
+      i,lv,m,lm,n_lm :: INT
+
+      n_lm = (.l_max+1)*(.l_max+1)
+      radii.create(.n_radii)
+      do i = 1,.n_radii
+         radii(i) = i*.radius_max/.n_radii
+      end
+      f.create(.n_radii,n_lm)
+      .make_radial_functions(f,radii)
+
+      fac  = ANGSTROM_PER_BOHR
+      fac3 = BOHR_PER_ANGSTROM**3
+
+      stdout.flush
+      stdout.text("=====================================")
+      stdout.text("Radial functions of the cell density")
+      stdout.text("=====================================")
+      stdout.flush
+      stdout.show("Kind                    =",.kind)
+      stdout.show("Centre (Angstrom)       =",.centre*fac)
+      stdout.show("l_max                   =",.l_max)
+      stdout.text(". rho_lm(s) in e/Angstrom^3, s in Angstrom; the density on the sphere")
+      stdout.text("  of radius s is the sum over l, m of rho_lm(s) Y_lm, with Y_lm real")
+      stdout.text("  harmonics of unit integral; m = -1, 0, 1 are y, z, x")
+      stdout.flush
+
+      ! The table of rho_lm(s)
+      stdout.text("rho_lm(s), columns (l,m):")
+      stdout.flush
+      do i = 1,.n_radii
+         stdout.put(radii(i)*fac,width=10,precision=5)
+         do lm = 1,n_lm
+            stdout.put(f(i,lm)*fac3,width=12,precision=5)
+         end
+         stdout.flush
+      end
+
+      ! The power of each l
+      stdout.flush
+      stdout.text("Power P_l(s) = sum over m of rho_lm(s)^2, columns l = 0 to l_max:")
+      stdout.flush
+      do i = 1,.n_radii
+         stdout.put(radii(i)*fac,width=10,precision=5)
+         do lv = 0,.l_max
+            power = ZERO
+            do m = -lv,lv
+               lm = lv*lv + lv + m + 1
+               power = power + (f(i,lm)*fac3)**2
+            end
+            stdout.put(power,width=12,precision=5)
+         end
+         stdout.flush
+      end
+
+      f.destroy
+      radii.destroy
+
+   end
 
    put
    ! Put the settings and the size of the map
@@ -496,6 +748,10 @@ contains
       stdout.show("m_value                 =",.m_value)
       stdout.show("Window width            =",.window_width)
       end
+      stdout.show("l_max                   =",.l_max)
+      stdout.show("Centre                  =",.centre)
+      stdout.show("No. of radii            =",.n_radii)
+      stdout.show("Largest radius          =",.radius_max)
 
    end
 

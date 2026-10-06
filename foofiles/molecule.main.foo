@@ -438,6 +438,9 @@ contains
    ! case ("put_km_1e_properties          "); .put_1e_properties_with_KM
       case ("put_mayer_bond_indices        "); .put_Mayer_bond_indices
       case ("put_cell_map                  "); .put_cell_map
+      case ("put_cell_map_radial_functions"); .put_cell_map_radial_functions
+      case ("put_angular_hirshfeld_atoms   "); .put_angular_Hirshfeld_atoms(amplitude=FALSE)
+      case ("put_ha_populations            "); .put_angular_Hirshfeld_atoms(amplitude=TRUE)
       case ("put_minmax_residual_density   "); .get_minmax_residual_density(output=TRUE)
       case ("put_molecular_orbitals        "); .put_MOs
       case ("put_mo_energies               "); .put_MO_energies
@@ -1070,6 +1073,9 @@ contains
 
       if (.cell_map.deallocated) .cell_map.create
 
+      ! The cell first, so that centre_fractional= can be converted
+      if (.crystal.allocated) .cell_map.set_cell(.crystal.unit_cell)
+
       .cell_map.read_keywords
 
    end
@@ -1085,6 +1091,164 @@ contains
 
       .crystal.make_cell_map(.cell_map)
       .cell_map.put
+
+   end
+
+   put_angular_Hirshfeld_atoms(amplitude) :: leaky
+   ! For each unique fragment atom, put the radial functions of its
+   ! Hirshfeld atom on its Becke radial shells, l = 0 to the cell_map
+   ! block's l_max, and the power of each l integrated over s, which does
+   ! not depend on the axes: for the density that is the l-resolved
+   ! electron count of the atom, zero for l > 0; with "amplitude" TRUE
+   ! the square root of the atom is expanded and the integrals are the
+   ! populations n^A_l, which sum to the atom's electron count. The cell_map
+   ! block's density_source= and atom_weight= say which density and
+   ! whether the Hirshfeld weight is applied.
+      self :: INOUT
+      amplitude :: BIN, IN
+
+   ENSURE(.atom.allocated, "no atoms")
+   ENSURE(.density_mx.allocated, "no density matrix")
+
+      f :: MAT{REAL}@
+      radii,wts,power :: VEC{REAL}@
+      rgrid :: QUADRATURE@
+      total :: REAL
+      fac,fac3 :: REAL
+      n_u,u,a,n_rad,i,lv,m,lm,n_lm,l_max,l_leb :: INT
+      weighted,use_cell_map :: BIN
+
+      if (.cell_map.deallocated) .cell_map.create
+      l_max = .cell_map.l_max
+      GAUSSIAN_DATA:set_indices(l_max)
+      weighted     = .cell_map.atom_weight=="hirshfeld"
+      use_cell_map = .cell_map.density_source=="cell_map"
+      if (use_cell_map) then
+         DIE_IF(.crystal.deallocated, "density_source= cell_map needs a crystal")
+         .crystal.make_cell_map(.cell_map)
+      end
+
+      ! Hirshfeld weights, interpolators and the Becke grid
+      .make_atom_partition_info
+
+      ! The Lebedev order: enough for Y_lm times a density of like angular
+      ! content, and never a pruned grid
+      l_leb = max(2*l_max+2, 29)
+
+      fac  = ANGSTROM_PER_BOHR
+      fac3 = BOHR_PER_ANGSTROM**3
+      n_lm = (l_max+1)*(l_max+1)
+
+      stdout.flush
+      if (amplitude) then
+      stdout.text("==========================================")
+      stdout.text("Angular decomposition of the Hirshfeld amplitudes")
+      stdout.text("==========================================")
+      else
+      stdout.text("=======================================")
+      stdout.text("Angular decomposition of the Hirshfeld atoms")
+      stdout.text("=======================================")
+      end
+      stdout.flush
+      stdout.show("l_max                   =",l_max)
+      stdout.show("Lebedev order           =",l_leb)
+      stdout.show("Density source          =",.cell_map.density_source)
+      stdout.show("Atom weight             =",.cell_map.atom_weight)
+      stdout.text(". f_lm(s) in e/Angstrom^3 (its square root for the amplitude), s in Angstrom;")
+      stdout.text("  the atom on the sphere of radius s is the sum over l, m of f_lm(s) Y_lm,")
+      stdout.text("  with Y_lm real harmonics of unit integral; m = -1, 0, 1 are y, z, x.")
+      stdout.text(". P_l = sum over m of the integral of f_lm(s)^2 s^2 ds: for the density")
+      stdout.text("  its l = 0 value is 1/(4 pi) times (electron count)^2 only if the atom is")
+      stdout.text("  spherical, so P_l are compared between atoms, not with a count; for the")
+      stdout.text("  amplitude P_l = n_l, the electrons of angular character l, summing to")
+      stdout.text("  the atom's electron count. A free atom in a closed shell has n_l = 0 for")
+      stdout.text("  l > 0 whatever its orbitals; n_l are not orbital occupations.")
+
+      n_u = .n_atom
+      if (.crystal.allocated) then
+         if (.crystal.fragment_info_made) n_u = .crystal.n_unique_frag_atoms
+      end
+
+      do u = 1,n_u
+
+         a = u
+         if (.crystal.allocated) then
+            if (.crystal.fragment_info_made) a = .crystal.unique_frag_atom(u)
+         end
+
+         ! The atom's radial shells, and their weights 4 pi s^2 ds
+         rgrid = .becke_grid.radial_grid_for_atom(a)
+         n_rad = rgrid.n_pts
+         rgrid.destroy
+         radii.create(n_rad)
+         wts.create(n_rad)
+         do i = 1,n_rad
+            .becke_grid.radial_shell_for_atom(a,i,radii(i),wts(i))
+         end
+
+         f.create(n_rad,n_lm)
+         .make_atom_lm_radial_functions(f,radii,a,l_max,l_leb,amplitude,weighted,use_cell_map)
+
+         stdout.flush
+         stdout.text("Atom "//trim(.atom(a).label)//", f_lm(s), columns (l,m):")
+         stdout.flush
+         do i = 1,n_rad
+            stdout.put(radii(i)*fac,width=10,precision=5)
+            do lm = 1,n_lm
+               stdout.put(f(i,lm)*fac3,width=12,precision=5)
+            end
+            stdout.flush
+         end
+
+         ! The power of each l over s; wts carry 4 pi s^2 ds
+         power.create(l_max+1)
+         power = ZERO
+         do lv = 0,l_max
+            do m = -lv,lv
+               lm = lv*lv + lv + m + 1
+               power(lv+1) = power(lv+1) + sum(wts*f(:,lm)**2)/(4*PI)
+            end
+         end
+         total = sum(power)
+         stdout.flush
+         if (amplitude) then
+         stdout.text("Atom "//trim(.atom(a).label)//", populations n_l, l = 0 to l_max, and their sum:")
+         else
+         stdout.text("Atom "//trim(.atom(a).label)//", power P_l, l = 0 to l_max, and the sum:")
+         end
+         do lv = 0,l_max
+            stdout.put(power(lv+1),width=12,precision=5)
+         end
+         stdout.put(total,width=12,precision=5)
+         stdout.flush
+
+         ! The electron count, for the density: sqrt(4 pi) times the integral
+         ! of f_00 s^2 ds, which the populations of the amplitude add up to
+         if (NOT amplitude) then
+            total = sqrt(4*PI)*sum(wts*f(:,1))/(4*PI)
+            stdout.show("Electron count          =",total)
+         end
+
+         power.destroy
+         f.destroy
+         wts.destroy
+         radii.destroy
+
+      end
+
+   end
+
+   put_cell_map_radial_functions :: leaky
+   ! Fill the cell map from the diffraction data and put the radial
+   ! functions of its density about the centre in the cell_map= block
+      self :: INOUT
+
+   DIE_IF(.crystal.deallocated, "no crystal")
+
+      if (.cell_map.deallocated) .cell_map.create
+
+      .crystal.make_cell_map(.cell_map)
+      .cell_map.put_radial_functions
 
    end
 
