@@ -4408,6 +4408,77 @@ workflows directly.) Three of the six are the "three debug failures nothing is t
 built runfile (`system_commands`, `quadrature_rules`) must be built by the workflow's `make`.
 
 
+## The Salvador-model variants: the investigation record (moved out of the report, 2026-10-06)
+
+`docs/REPORT_ON_SALVADOR_MODELS.md` was rewritten as findings: the models, the tables and what
+they say. What it held of the investigation is kept here. Its numbers are from Cartesian-basis
+runs made before the spherical reruns; the report says so.
+
+**Where the code is.** `sph-tfva`: `MOLECULE.RHO:make_sph_TFVA_atom_FFs`,
+`make_sph_avgd_SA_ED_grid`, `make_sph_avgd_SA_ED_v1`; the transform is
+`FOURIER_SUMS:sinc_kr_sums`. `tfvp`: `MOLECULE.RHO:make_Salvador_radii_promolecule`, chosen in
+`make_Salvador_radii`. `tfvh`: `make_Salvador_radii_hirshfeld` and `Hirshfeld_half_radius_for` (a
+bisection on the bond, 40 steps); a `Salvador_properties` job's radii table has an
+`R(A.B) eq-dens` column. `exphar`: the power is applied inside
+`MOLECULE.RHO:make_stockholder_atom_weight` (`stockholder_exponent`), so every Hirshfeld path
+sees it. Tests: `long/urea_rhf_STO-3G_TFVP_HAR`, `_TFVH_HAR`, `_expHAR`, `_sph-expHAR`.
+
+**Bugs found in `sph-tfva`, all fixed.** The option had never been run. Three bugs, all fixed on branch `fourier-sums`:
+
+1. The sin(kr)/kr sum was computed and never used; the form factors were the position
+   phase alone.
+2. The averaged density was weighted by the bare radial weights from
+   `BECKE_GRID:radial_grid_for_atom`, missing 4πr² (and s³ for scaled atomic grids).
+   The radii and weights now come from `radial_shell_for_atom`.
+3. The average used a fixed 25 × 50 Gauss–Legendre grid on every shell. It now uses each
+   shell's Lebedev grid from `BECKE_GRID`; `make_sph_avgd_SA_ED_v1`, written for this
+   and never called, placed its points at radius r² and was rewritten.
+
+Found on the way, not specific to this model: `BECKE_GRID:make_Salvador_cell_fn` checked
+`pts.dim1` where it means `pts.dim2`. The check exists only in debug builds, so every
+debug run using Salvador atoms stopped there.
+
+**Checks that `sph-tfva` is computed correctly.** Urea, STO-3G (`tests/long/urea_rhf_STO-3G_HAR` with `partition_model=` changed).
+
+- Electron counts Σ 4πr²w ρ̄: 9.1497, 8.2163, 3.4540, 0.6985, 0.7832 -- the Salvador
+  populations to four decimals, with both the old and the Lebedev average.
+- Form factors against the full Salvador ones, computed in the same run: largest
+  difference 0.05–0.31 per atom, against values up to 8. At the smallest |k| 8.19
+  against 8.15; at the largest (≈ 1.4 Å⁻¹) 1.036 against 1.042. The difference is the
+  aspherical part the average removes.
+- The first least-squares fit starts at R = 0.054, against 0.039 for Salvador.
+
+**The first explanation was wrong.** The non-convergence of `sph-tfva` was first put down to the
+hydrogens; the runs with the model mixed by element decided it (spherical H harmless, spherical
+C, N, O not). Those runs used a temporary build: the model choice by element is not in the code.
+A run with the reverse mix (aspherical H, spherical C/N/O) moved H1 by 0.79 bohr in its first
+cycle and then crashed; the crash may be the temporary code and was not checked. Why the
+promolecule radii stabilise the spherical model was a guess (the C-N boundary moves 0.1 A toward
+N, giving the spherical C more of the bond density) until `sph-tfvh` made the same point with
+larger atoms still.
+
+**Stability of the charges and moments.** Every number in the table, and every dipole and quadrupole of all four partitions, is the same
+to the four printed decimals under the `neoversen1` and `armv8` OpenBLAS kernels on the Mac.
+The Hirshfeld moments used to move by 3–4e-4 between kernels; that went with the exact
+spherical average of the ANO atoms, so none of the partitions is more stable than another
+any more.
+
+**Still open, from the investigation:**
+
+- The second "Structure refinement results" block prints a higher R than the first for every
+  model (Salvador 0.038 -> 0.042, `sph-tfva` 0.053 -> 0.084): find what it is.
+- `MOLECULE.HAR:make_LS_mx` builds Hirshfeld form factors whatever the partition model.
+- About 12 minutes of every YLID def2-TZVP job went on making the ANO data for sulfur before the
+  SCF began: the ANO atomic SCF for a third-row atom in a triple-zeta basis is slow.
+- Whether H1 in our urea files is the neutron paper's H1 has not been checked; the two neutron
+  N-H values differ by 0.006 A. The neutron values are from Wall (2016), Table 4, without esds, and
+  it is not known whether they are raw or corrected for thermal motion; Swaminathan, Craven and
+  McMullan (1984) gives both and was not consulted.
+- Whether the equal-density boundary should use the pair of free atoms, as now, or the pair after
+  the promolecule's charge transfer, which would move the C-O and C-N boundaries back toward C.
+- The YLID times were eight jobs sharing the Mac with OpenBLAS free to thread; they compare with
+  each other only.
+
 ## CLOSED 2026-10-06: the XCW `Penalty in F` drift is the parameter count acting on the constraint
 
 Explained and checked. The XCW minimises the energy plus `lambda` times `GoF^2 = chi^2/(N_r - N_p)`,
