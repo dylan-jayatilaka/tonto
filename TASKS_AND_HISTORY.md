@@ -222,9 +222,20 @@ spherical functions). One script, `~/.claude/jobs/9b038530/tmp/tls/cc/chain_sph.
 first two sets), the Cartesian tables going (git history keeps them), and put the Cartesian-against-
 spherical effect into `docs/TASK_HAR_STANDARDISATION.md` §1; (d) push. Do not delete the Claude job
 9b038530 before (a). The RHF/6-31G(d) Hessian stays as it is.
-**Branch `sg-grids` (code written, never built):** `kind= sg-2 | sg-3` in `becke_grid=`; recipe, open
-points and checks in `docs/TASK_COSX_GRIDS.md` on that branch. Build and test it after the timing run.
-ORCA's 2021 COSX grid parameters are not published (paper and supplement checked): ask the authors.
+**Merged 2026-10-06 (`sg-grids`): the published standard grids,** `becke_grid= { kind= sg-0 | sg-1 |
+sg-2 | sg-3 }`, also in `cosx_grid= { }` and `cosx_final_grid= { }`; off by default; every element
+(unpruned beyond the published tables). achari2: debug, release and reference builds, suite 179/179,
+three new short tests. Everything is in `docs/TASK_COSX_GRIDS.md`. **Result for COSX: the defaults
+stay.** As the final-energy grid SG-1/2/3 give errors up to 0.8 mEh (CFCl3, zinc finger) where `high`
+gives under 0.03 on all nine jobs; the published pruning is what fails. SG-0 for the iterations
+matches `very_low` in error and time. **Left on the item:** the same grids for the XC quadrature
+(not started); three questions for John Herbert (the DE2 radial range, which is assumed; the Mg and
+Si totals in the paper's table, which could not be settled from Q-Chem's manual; whether Q-Chem's
+Becke weights use a size adjustment); ask the ORCA authors for their COSX grid parameters. SG-0's
+table came from Psi4's source: the Chien and Gill paper (J. Comput. Chem. 27, 730 (2006)) is not in
+`~/Dropbox/manuscripts`. Runs: `achari2:~/tonto_runs/sg_grids_2026-10-05/`; worktree
+`achari2:~/github/tonto-sg`. **A job is still running there, to be stopped by hand:**
+`hydrides_all` (21 molecules 15 A apart) hangs in *Making gaussian ANO data* -- worth a look as a bug.
 **First priority after that: `docs/TASK_HAR_STANDARDISATION.md`** -- the spherical-atom study.
 **Crystal vibrations (2026-10-05, Johnson et al. Chem. Phys. 291, 53 (2003), in Dropbox/manuscripts):**
 INS NH2 bands near 480 and 670 cm-1, lattice modes to ~160-200, no internal mode below ~416. The
