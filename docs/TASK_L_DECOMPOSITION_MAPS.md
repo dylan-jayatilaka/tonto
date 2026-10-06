@@ -33,6 +33,19 @@ cell); no new file format. For `local_moment` that is one cube file for each $`l
 For `angular_hirshfeld` and `hirshfeld_amplitude` the cube holds the density rebuilt from the
 atoms' radial functions up to `l_max=`, or one $`l`$ alone, on the plot's points.
 
+**The norm over m comes first (Dylan: "most important").** Nobody should have to look at every
+$`m`$ component to begin with. For each $`l`$ the default output is the one quantity that does not
+depend on the axes, and a single $`m`$ component is made only when `m_value=` asks for it:
+
+| map | default for each $`l`$ | with `m_value=` |
+|---|---|---|
+| `local_moment` | the norm $`\big(\sum_m M_{lm}(\mathbf r)^2\big)^{1/2}/\sigma^l`$: one cube file per $`l`$ | the signed component $`M_{lm}/\sigma^l`$ |
+| `angular_hirshfeld` | the density of that $`l`$, $`\sum_A\sum_m \rho^A_{lm}\,Y_{lm}`$, which is already independent of the axes | one $`m`$ alone, in the frame given |
+| `hirshfeld_amplitude` | the populations $`n^A_l`$, which are sums over $`m`$ | the share of one $`m`$ |
+
+So the first thing to code and to look at, in every step, is the default column. The $`m`$
+components need a choice of axes (a local frame on each atom, or the crystal's), which can wait.
+
 ## 1. What exists, and where the new work attaches
 
 **Maps Tonto makes now** (`plot_grid= { kind= ... }`, then `plot`):
@@ -183,9 +196,9 @@ numbers; `tests/long/urea_rhf_STO-3G_HAR` (4 s) is the working job.
 
 - Multiply the coefficients of step 1 by the factor in equation (2); `make_solid_harmonics` gives
   $`q^l Y_{lm}`$ for all reflections at once. Then the series routine.
-- Keywords in the `cell_map=` block: `l_value=`, `m_value=` and `window_width=` (a length), and
-  `m_value= all` for $`(\sum_m M_{lm}^2)^{1/2}/\sigma^l`$, which does not depend on the axes and
-  is the map to look at first.
+- Keywords in the `cell_map=` block: `l_value=` and `window_width=` (a length). With no `m_value=`
+  the map is the norm over $`m`$ (section 0); `m_value=` gives one signed component. Code the norm
+  first: it needs the $`2l+1`$ component maps internally, squared and added point by point.
 - **Check:** $`l = 0`$ equals the density map made with coefficients blurred by $`\sigma`$; the three
   $`l = 1`$ maps equal a finite-difference gradient of it times $`\sqrt{3/4\pi}\,\sigma^2`$; moving the
   cell origin (a second job with all atoms shifted) moves the map and does not change it.
