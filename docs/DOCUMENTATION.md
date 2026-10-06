@@ -28,6 +28,7 @@ parallel (MPI) builds for that platform.
 | | |
 |---|---|
 | [**ADPs from rigid-body motion and internal modes**](REPORT_ON_MODE_FITTING.md) | TLS refinement against F, stiff-mode ADPs from a Hessian, and results on urea |
+| [**A sum of Gaussians for 1/r: where it wins**](REPORT_ON_GAUSSIAN_1_ON_R_FIT.md) | What a Gaussian expansion of the Coulomb kernel buys and costs: analytic integrals, grids, tensor hypercontraction, COSX, periodic systems |
 
 ## Learning
 
