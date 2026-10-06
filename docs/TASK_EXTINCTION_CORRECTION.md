@@ -334,7 +334,9 @@ diffraction-data setting into a namespace where it does not belong.)*
 **Both done.** `min_BFGS`'s non-convergence guard is live at `vec{real}.foo:2164-2166` — as
 an `ENSURE`, not the `DIE_IF` planned, because the routine is `pure` and a `DIE` there would
 not compile in release. The tests of step 4 are `tests/long/quartz_NN_HAR_L1_rhf_def2-SVP`
-and `tests/hart/urea_hart_STO-3G_extinction`.
+and `tests/hart/urea_hart_STO-3G_extinction`. The XCW job of step 4 was added on 2026-10-06:
+`tests/long/nh3_x-ray-constrained-rhf_cc-pVTZ_extinction` (extinction factor 0.638(575), two fitted
+parameters; identical output on repeated runs).
 
 **Expected reference changes, beyond any job that switches extinction on.**
 

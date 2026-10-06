@@ -4411,7 +4411,18 @@ workflows directly.) Three of the six are the "three debug failures nothing is t
 built runfile (`system_commands`, `quadrature_rules`) must be built by the workflow's `make`.
 
 
-## The XCW `Penalty in F` drift: 0.28% unexplained, and the formula is assumed (2026-08-26)
+## CLOSED 2026-10-06: the XCW `Penalty in F` drift is the parameter count acting on the constraint
+
+Explained and checked. The XCW minimises the energy plus `lambda` times `GoF^2 = chi^2/(N_r - N_p)`,
+so `N_p` 2 -> 1 with `N_r` = 88 weakens the constraint by 86/87. The wavefunction relaxes a little
+and `chi^2` itself rises: 7.557 x 86 = 649.90 before, 7.491 x 87 = 651.72 after, which is the 0.28 %.
+**The check:** the present code with `lambda_step=` and `lambda_max=` multiplied by 87/86 must give
+back the old `chi^2`, so `Penalty in F` = 649.90/87 = 7.470. It prints 7.470
+(`achari2:~/tonto_runs/xcw_ext_2026-10-06/scaled`). Nothing to fix: the formula is as assumed, and a
+change of `N_p` changes the converged wavefunction of an XCW, as `docs/TASK_EXTINCTION_CORRECTION.md`
+section 4 says. The entry as filed follows.
+
+### As filed (2026-08-26)
 
 **Filed here at Dylan's direction**, alongside the other small numerical differences:
 they look alike and may well have *unrelated* causes, but one register is the place to
@@ -5218,7 +5229,15 @@ harness writes `stdout.bad` on a fail). The five listed above are all that remai
 
 ---
 
-## No XCW job runs with the extinction correction on (2026-09-06)
+## CLOSED 2026-10-06: an XCW job runs with the extinction correction on
+
+`tests/long/nh3_x-ray-constrained-rhf_cc-pVTZ_extinction`: the ammonia XCW with
+`optimise_extinction= TRUE`. Two fitted parameters (scale and extinction), extinction factor
+0.638(575), `Penalty in F` 7.440 against 7.491 without. Run twice in the reference build on achari2
+with identical output, and once in release with the same numbers, so the wandering feared for this
+job did not show; blessed there. The entry as filed follows.
+
+### As filed (2026-09-06)
 
 Step 4 of the plan in `docs/TASK_EXTINCTION_CORRECTION.md` asks for two test jobs. The `hart` one
 is now `tests/hart/urea_hart_STO-3G_extinction`. The second is still owed: an
