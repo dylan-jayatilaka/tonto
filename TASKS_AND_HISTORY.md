@@ -78,7 +78,28 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## START HERE, 2026-10-05: TLS plan step 3 done; next is the soft modes with cluster charges
+## START HERE, 2026-10-06: the angular decomposition of density maps -- plan written, nothing coded
+
+**The task handed over:** implement `docs/TASK_L_DECOMPOSITION_MAPS.md`. Read it, then the theory
+it rests on, `~/Dropbox/tex/conference_talks/2026_ED_angular_decomp/angular_decomp.pdf` (written
+and checked numerically on 2026-10-06; `check_formulas.py` beside it). **Ask Dylan first what he
+meant by "version 3"** in his order of work (section 0 of the plan); the plan's step 1, the fast
+Fourier-series routine and a total Fourier map, is wanted whichever it is, so start there. Write
+in the Tonto style, procedures well commented (Dylan). achari2 has a clean worktree of `develop`
+with debug, release and reference trees: `~/github/tonto-sg`.
+
+**Also done on 2026-10-06** (all on `develop`, pushed; register at 32 open items): SG-0..SG-3
+grids merged, COSX defaults unchanged (`docs/TASK_COSX_GRIDS.md`); the spherical reruns in and the
+urea tables rebuilt from them; an XCW test with extinction; the `Penalty in F` drift explained; a
+Rys-root hang at large X fixed; `docs/BUILDING_WITH_MPI.md`; `REPORT_ON_SALVADOR_MODELS` rewritten;
+`REPORT_ON_GAUSSIAN_1_ON_R_FIT`; the Julia benchmark; `compare_cifs` repaired (fractional
+coordinates) and built by default, eight dead runfiles deleted, `make runfiles` in CI. Each has its
+own entry below. **Still to do by hand:** stop the job `hydrides_all` on achari2. **Emails owed:**
+Helmich-Paris for ORCA's COSX grid parameters; Herbert for three SG questions
+(`docs/TASK_COSX_GRIDS.md` section 5). On the Mac, Homebrew's unversioned gcc is now 16.2.0 (a
+side effect of installing Julia): repeat the gfortran-16 debug test with it.
+
+## 2026-10-05: TLS plan step 3 done; next is the soft modes with cluster charges
 
 **Merged to `develop` today (`a1553350`): step 0 of `docs/TASK_ON_MODE_FITTING.md`.** The
 refinement refines p with X = J p (`DIFFRACTION_DATA.X_jacobian`, built by

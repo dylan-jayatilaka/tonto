@@ -63,6 +63,7 @@ residue moving into the pages above.
 |---|---|
 | [**Tasks and history**](../TASKS_AND_HISTORY.md) | the live work: the handover, then every open issue by theme |
 | [**Developer reference**](TONTO_DEVELOPER_INFO.md) | writing parallel (MPI) code in Foo, and build and test traps |
+| [**Angular decomposition of density maps**](TASK_L_DECOMPOSITION_MAPS.md) | the plan: local-moment maps, atoms resolved by angular character, and their populations |
 | [**Tonto and MPI**](TASK_MPI.md) | the parallel build's numerics and its defect register |
 | [**Dispersion corrections**](TASK_DISPERSION_CORRECTIONS.md) | anomalous dispersion, Bijvoet pairs, and the residual density map |
 | [**DFT standardisation**](TASK_DFT_STANDARDISATION.md) | the DFT machinery, its silent defects, and the libxc plan |
