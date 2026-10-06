@@ -84,12 +84,16 @@ because by then it held far more than deferred items.)*
 it rests on, `~/Dropbox/tex/conference_talks/2026_ED_angular_decomp/angular_decomp.pdf` (written
 and checked numerically on 2026-10-06; `check_formulas.py` beside it). **The order is settled
 (Dylan): the field maps `local_moment` first, then `angular_hirshfeld`, then the square-root
-version `hirshfeld_amplitude`.** Step 1 is done and merged (2026-10-06, evening): the new
-type `CELL_MAP`, the residual map moved onto it with no number changing, the fast Fourier-series
-routine and the total maps `f_exp` and `f_calc`; checks in the plan's log. Next is step 2, the
-`local_moment` maps, then the urea test Dylan asked for: a HAR at B3LYP/def2-TZVP on the data in
-`tests/long/urea_rhf_STO-3G_HAR`, the decomposition from F_exp (model phases) against F_calc,
-cubes at 0.2 bohr, looked at in VESTA. Write
+version `hirshfeld_amplitude`.** Steps 1 and 2 are done and merged (2026-10-06, evening,
+`f025460c`, `1a38d81d`): the new type `CELL_MAP`, the residual map moved onto it with no number
+changing, the fast Fourier-series routine, the total maps `f_exp` and `f_calc`, and the
+local-moment maps (`l_value=`, the norm over m by default). The urea test Dylan asked for is in:
+`long/urea_rks_B3LYP_def2-TZVP_HAR_cell_maps`, a HAR at B3LYP/def2-TZVP (1.5 min on the Mac, 3
+min on achari2) then the maps, blessed on achari2; the decomposition from F_exp (model phases)
+agrees with F_calc to 0.2% rms of the map maxima for l = 1, 2. All checks are in the plan's log.
+**Next is step 3**, the one-centre Bessel reference (needed to test step 4), then step 4, the
+Hirshfeld atoms. One open choice for Dylan: the window width for residual maps (0.5 Å blurs
+them away; 0.25 Å is the thing to try). Write
 in the Tonto style, procedures well commented (Dylan). achari2 has a clean worktree of `develop`
 with debug, release and reference trees: `~/github/tonto-sg`.
 

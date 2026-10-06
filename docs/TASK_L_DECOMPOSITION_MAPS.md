@@ -420,5 +420,24 @@ index and `l` the angular momentum must not meet in one routine: call the indice
   0.5-bohr grid, debug build: the $`l = 0`$ map times $`\sqrt{4\pi}`$ integrates to 192.000; the
   $`l = 1`$ norm is the root sum of squares of the three components to 1e-5; each component
   correlates +0.999 with $`\sqrt{3/4\pi}\,\sigma`$ times the central-difference gradient of the
-  blurred density along its axis, ratio 1.05 (the grid, not the map: see the 0.25-bohr run). The
-  $`m`$ order was wrong in the first version of section 6 and is corrected there.
+  blurred density along its axis, ratio 1.05 from the coarse grid: on a 0.25-bohr grid in release
+  the correlation is +0.99996 and the largest difference 2% of the map's maximum, as central
+  differences allow. The $`m`$ order was wrong in the first version of section 6 and is corrected
+  there. Step 2 merged as `1a38d81d`.
+- 2026-10-06, night. **Urea, the test Dylan asked for.** HAR at B3LYP/def2-TZVP on the data of
+  `tests/long/urea_rhf_STO-3G_HAR` converges in 1.5 min on the Mac (GoF 2.55), then maps of the
+  cell at 0.2 bohr (53 x 53 x 45): both total maps integrate to 64.000 electrons. The local
+  moments from F_exp (model phases) against F_calc, window 0.5 Å, on the whole cell: $`l = 1`$
+  norm maxima 0.641 and 0.642 e/Å³, rms difference 0.0013, correlation 0.99998; $`l = 2`$ norm
+  maxima 1.310 and 1.306, rms difference 0.0015, correlation 0.99998; the density itself 49.29
+  and 49.34 at the heavy nuclei, rms difference 0.022, correlation 0.99991. On the molecular
+  plane $`y = x + 1/2`$ the $`l = 1`$ norm is zero on each nucleus and rings it; the $`l = 2`$
+  norm peaks on the nuclei and along C=O. The pictures are gnuplot slices
+  (`slice_plane.py`, in the job directory); VESTA has no command-line rendering, so cubes are
+  opened in it by hand. The test `long/urea_rks_B3LYP_def2-TZVP_HAR_cell_maps` runs the same job
+  at 0.4 bohr and compares `stdout` and the two $`l = 1`$ cubes; blessed on achari2. The same
+  moments of the `residual` map (`kind= residual`, the $`l`$-resolved residual) were also made:
+  the raw residual is -0.23 to +0.14 e/Å³ with rms 0.022, and through the 0.5 Å window its
+  $`l = 0, 1, 2`$ parts have rms 0.0013, 0.0023 and 0.0035 -- a smooth, mostly negative
+  background with a positive band across the N-H region. The window is wide for residual
+  features; a narrower one (0.25 Å) is the thing to try when the residual is the object.
