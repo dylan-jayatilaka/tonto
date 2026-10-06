@@ -208,14 +208,33 @@ functions.
 
 **Error in µEh** (the target is 100):
 
-ERRTABLE
+| iterations / final energy | water SVP | CFCl3 SVP | CFCl3 TZVP | thiotepa SVP | thiotepa TZVP | karrikinolide SVP | karrikinolide TZVP | zinc finger SVP | zinc finger TZVP |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| very_low / high (default) | -0.0 | 8.9 | 8.7 | -7.2 | 4.9 | 3.8 | -1.6 | 26.3 | 6.2 |
+| SG-0 / high | -0.1 | 8.1 | 8.5 | -7.7 | 5.0 | 3.5 | -1.6 | 4.6 | -5.2 |
+| SG-1 / high | -0.1 | 8.2 | 8.4 | -9.5 | 4.2 | 2.9 | -1.8 | 3.2 |  |
+| SG-0 / SG-0 | 59.1 | 2604.7 | 3268.0 | -3147.7 | -1600.9 | -3.2 | -45.5 | -2199.3 |  |
+| SG-0 / SG-1 | -2.8 | 321.1 | 90.3 | 16.6 | -68.5 | 52.2 | -14.7 | -154.0 | -436.3 |
+| SG-0 / SG-2 | 7.8 | 767.9 | -186.5 | 6.0 | -34.4 | -2.8 | 3.2 | -170.6 |  |
+| SG-1 / SG-2 | 7.8 | 768.0 | -186.8 | 4.2 | -35.1 | -3.5 | 3.0 | -171.9 | 98.8 |
+| SG-1 / SG-3 | 4.3 | 809.6 | -175.9 | 14.5 | 21.3 | 11.4 | -0.5 | -51.4 |  |
+| SG-0 / SG-1, no size adjustment | -6.3 | -285.3 | 135.0 | -65.5 | 66.4 | 12.0 | 1.4 | -415.7 |  |
+| SG-0 / SG-2, no size adjustment | -3.8 | -16.5 | 46.8 | -69.7 | 24.4 | -19.3 | 6.1 | 63.9 |  |
+| SG-0 / SG-3, no size adjustment | -0.8 | -71.3 | 82.2 | 14.3 | -8.7 | 12.0 | -5.2 | 176.2 |  |
 
 "No size adjustment" is `partition_scaling_scheme= none` on the final grid: Becke's partition
 without his correction for atoms of different size, which Tonto otherwise applies.
 
 **Grid points:**
 
-PTSTABLE
+| grid | water SVP | CFCl3 SVP | CFCl3 TZVP | thiotepa SVP | thiotepa TZVP | karrikinolide SVP | karrikinolide TZVP | zinc finger SVP | zinc finger TZVP |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| very_low | 3181 | 9123 | 9450 | 28725 | 29045 | 23476 | 23801 | 37800 | 38236 |
+| SG-0 | 3951 | 7290 | 7290 | 32344 | 32344 | 22977 | 22977 | 46190 |  |
+| SG-1 | 8379 | 13435 | 13854 | 63682 | 65374 | 47301 | 48704 | 84636 |  |
+| high | 19014 | 45209 | 46713 | 165299 | 167562 | 127029 | 130219 | 214566 | 216932 |
+| SG-2 | 22350 | 41597 | 42070 | 167733 | 168254 | 128163 | 128926 | 220096 |  |
+| SG-3 | 51616 | 92645 | 93215 | 394496 | 395600 | 293153 | 294194 | 520608 |  |
 
 What the numbers say:
 
@@ -227,21 +246,34 @@ What the numbers say:
    CFCl3 def2-SVP the unpruned 99 × 590 grid gives −1.7 µEh against +810 for SG-3, so it is the
    published pruning that fails; it was made for the density, and the COSX integrand is rougher.
    Dropping the size adjustment changes the errors but does not make them reliably small.
-3. **SG-0 is a good iteration grid.** With `high` for the final energy it matches the default
-   everywhere, and on the zinc finger it cuts the error from 26 to 5 µEh: `very_low` leaves a
-   poorer converged density there. It has from 20 % fewer to 22 % more points than `very_low`.
+3. **SG-0 is a sound iteration grid, but no better than `very_low`.** With `high` for the final
+   energy it matches the default everywhere. On the zinc finger in def2-SVP it cuts the error from
+   26 to 5 µEh, but in def2-TZVP the two are the same size (6 and −5). It has from 20 % fewer to
+   22 % more points than `very_low`, and the time per iteration follows the points (below).
 4. **SG-1 as the iteration grid** costs twice the points of SG-0 for no gain.
+5. **SG-0 for the final energy is useless** (errors of mEh), as expected of so small a grid.
 
-**Clean timings** (one job at a time on achari2):
+**Clean timings** (one job at a time on achari2; the other runs shared the machine, so their
+times are not quoted):
 
-TIMETABLE
+| job | grids | iterations | seconds per iteration | wall time |
+|---|---|---:|---:|---:|
+| karrikinolide SVP | very_low / high | 22 | 6.2 | 2:52.25 |
+| karrikinolide SVP | SG-0 / high | 22 | 6.1 | 2:50.14 |
+| thiotepa SVP | very_low / high | 18 | 10.2 | 4:07.95 |
+| thiotepa SVP | SG-0 / high | 18 | 11.6 | 4:35.13 |
+| zinc finger SVP | very_low / high | 20 | 18.4 | 7:58.81 |
+| zinc finger SVP | SG-0 / high | 20 | 21.9 | 9:12.63 |
+| karrikinolide TZVP | very_low / high | 23 | 23.6 | 11:20.35 |
+| karrikinolide TZVP | SG-0 / high | 23 | 23.4 | 11:14.62 |
 
 ## 5. Where this leaves the item
 
 - The four grids are in `BECKE_GRID`, off by default, tested, for any element.
-- **For COSX the present defaults stay.** The one candidate change is `cosx_grid= { kind= sg-0 }`
-  for the iterations: Dylan's decision, and by his rule nothing becomes a default without full
-  testing of its effect on HAR.
+- **For COSX the present defaults stay**, and no change is proposed: no SG grid is more accurate
+  than `high` for the final energy, and SG-0 is neither faster nor reliably more accurate than
+  `very_low` for the iterations. `cosx_grid= { kind= sg-0 }` is there for anyone who wants a
+  published iteration grid.
 - **XC is the natural use of these grids** and is not done: the same four kinds for the DFT
   quadrature, against Tonto's `high`, on the molecules above.
 - **Not settled:** the DE2 radial range (§2.3); the Mg and Si totals; whether Q-Chem applies an
