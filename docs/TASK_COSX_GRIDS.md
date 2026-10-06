@@ -269,24 +269,28 @@ times are not quoted):
 
 ## 5. Where this leaves the item
 
-- The four grids are in `BECKE_GRID`, off by default, tested, for any element.
-- **For COSX the present defaults stay**, and no change is proposed: no SG grid is more accurate
-  than `high` for the final energy, and SG-0 is neither faster nor reliably more accurate than
-  `very_low` for the iterations. `cosx_grid= { kind= sg-0 }` is there for anyone who wants a
-  published iteration grid.
-- **XC is the natural use of these grids** and is not done: the same four kinds for the DFT
-  quadrature, against Tonto's `high`, on the molecules above.
-- **Not settled:** the DE2 radial range (§2.3); the Mg and Si totals; whether Q-Chem applies an
-  atomic size adjustment to its Becke weights. All three are questions for John Herbert. The
-  ORCA COSX grid parameters were asked of Benjamin Helmich-Paris by email on 2026-10-06; when they
-  come they go in as further named grid kinds and are measured on the jobs of section 4.
+**The SG grids are not being taken further (Dylan, 2026-10-06).** The code stays: the four kinds
+are in `BECKE_GRID`, off by default, tested, for any element, and cost nothing where they are.
+
+- **For COSX the present defaults stay.** No SG grid is more accurate than `high` for the final
+  energy, and SG-0 is neither faster nor reliably more accurate than `very_low` for the
+  iterations.
+- **Dropped:** trying the SG grids for the DFT quadrature, and with it the three questions for
+  John Herbert. They are kept here in case the grids are ever revisited: the DE2 radial range
+  (§2.3), which is assumed; the Mg and Si point totals, which disagree with the printed
+  partitions; and whether Q-Chem applies an atomic size adjustment to its Becke weights.
+- **Still live: ORCA's COSX grids.** Their parameters were asked of Benjamin Helmich-Paris by
+  email on 2026-10-06 (the register's watch list). When they come they go in as further named
+  grid kinds, by the route the SG kinds took, and are measured on the jobs of section 4. This
+  document is kept until then for that section.
 - **Small loose ends.** The CIF items `_QCr_Becke_grid_n_pts_for_row_1` to `_3` print the counts
-  of H, He and Li for an SG kind. A job with 21 separate molecules 15 Å apart hung in
-  *Making gaussian ANO data* (`hydrides_all/`); not looked into.
+  of H, He and Li for an SG kind. The 21-molecule job that hung was a Rys-root bug, since fixed
+  (`TASKS_AND_HISTORY.md`).
 
 ## 6. Log
 
 - 2026-10-05. SG-2 and SG-3 transcribed and coded on `sg-grids`; not built.
+- 2026-10-06. Dylan: no further work on the SG grids; XC trial and the Herbert questions dropped.
 - 2026-10-05/06. SG-0 and SG-1 added; every element covered; built in debug, release and
   reference on achari2. The first release build failed on `DIE_IF` inside `PURE` routines, which
   debug accepts; they became `ENSURE`. Checks and COSX measurements as above.
