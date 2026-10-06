@@ -82,7 +82,7 @@ def orbit(code, a, b, w):
 def parse(path):
     """Yield (name, n_pts_claimed, L, points, weights) for each ldNNNN/taNNNN."""
     src = open(path).read()
-    for name, body in re.findall(r'\n   ((?:ld|ta)\d{4}) ::.*?\n(.*?)\n   end\n',
+    for name, body in re.findall(r'\n   ((?:ld|ta|as)\d{4}) ::.*?\n(.*?)\n   end\n',
                                  src, re.S):
         n_claimed = int(re.search(r'\.set\((\d+),(\d+)\)', body).group(1))
         L = int(re.search(r'\.l = (\d+)', body).group(1))
