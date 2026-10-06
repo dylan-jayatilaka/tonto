@@ -151,7 +151,9 @@ A keyword chooses: `density_source= wavefunction | f_exp | f_calc` (names to agr
 Each step ends with something that can be checked. Debug build for the code, release for
 numbers; `tests/long/urea_rhf_STO-3G_HAR` (4 s) is the working job.
 
-**Step 1. The series routine, and the total Fourier map.** *(serves A, B, C)*
+**Step 1. `CELL_MAP`, the series routine, and the total Fourier map.** *(serves A, B, C)*
+
+- Make the type `CELL_MAP` of section 5 and move the residual map onto it, changing no number.
 
 - `FOURIER_SUMS`: a routine for equation (1) at a list of points with complex coefficients,
   `res(p) = Re sum_n coeff(n) exp(-i q_n . r_p)`, built on the same inner loop as `exp_ikr_sums`
@@ -165,18 +167,19 @@ numbers; `tests/long/urea_rhf_STO-3G_HAR` (4 s) is the working job.
   `DIFFRACTION_DATA.SET:make_symop_generated_dF_a_v2` which makes it for the residual: $`F_{\rm exp}`$
   (scale and extinction removed, as the residual does) or $`F_{\rm calc}`$ with the model phase,
   expanded by symmetry, plus $`F_{000}`$ = the electrons in the cell.
-- Plot kinds `fourier_density` and `fourier_calc_density` (names to agree).
+- `cell_map= { kind= f_exp }` and `kind= f_calc`, plotted by `plot_grid= { kind= cell_map }`
+  (names to agree).
   **Check:** the map integrates to the electrons in the cell; near an atom at rest it resembles
-  `electron_density` blurred by the ADPs; `fourier_density` minus `fourier_calc_density` equals
+  `electron_density` blurred by the ADPs; the `f_exp` map minus the `f_calc` map equals
   `residual_density`.
 
 **Step 2 (piece A). The field maps.**
 
 - Multiply the coefficients of step 1 by the factor in equation (2); `make_solid_harmonics` gives
   $`q^l Y_{lm}`$ for all reflections at once. Then the series routine.
-- Keywords in `plot_grid=`: `kind= l_moment` with `l_value=`, `m_value=`, and `window_width=`
-  (a length); `kind= l_moment_norm` for $`(\sum_m M_{lm}^2)^{1/2}/\sigma^l`$, which does not
-  depend on the axes and is the map to look at first.
+- Keywords in the `cell_map=` block: `l_value=`, `m_value=` and `window_width=` (a length), and
+  `m_value= all` for $`(\sum_m M_{lm}^2)^{1/2}/\sigma^l`$, which does not depend on the axes and
+  is the map to look at first.
 - **Check:** $`l = 0`$ equals the density map made with coefficients blurred by $`\sigma`$; the three
   $`l = 1`$ maps equal a finite-difference gradient of it times $`\sqrt{3/4\pi}\,\sigma^2`$; moving the
   cell origin (a second job with all atoms shifted) moves the map and does not change it.
@@ -222,19 +225,72 @@ numbers; `tests/long/urea_rhf_STO-3G_HAR` (4 s) is the working job.
 achari2 with the reference build. Then `docs/` gets a user-facing page (what the maps are, the
 keywords, the pitfalls), and this file is deleted.
 
-## 5. Where the code goes
+## 5. Where the code goes: a new type, `CELL_MAP`
+
+**Dylan's proposal (2026-10-06), adopted:** a new type `CELL_MAP` holds a density of the cell as
+its Fourier coefficients, with the settings of the maps made from it, and the Fourier-synthesis
+procedures now scattered over three modules move into it.
+
+**Why.** In the first draft of this plan the new settings (`l_value=`, `m_value=`, `l_max=`,
+`window_width=`, `density_source=`) became components of `PLOT_GRID`. That type already has 72
+components and is about the *geometry* of a plot: where the points are. What is being added is
+about the *function* plotted. And the residual map's machinery is spread out today:
+
+| routine | where it is now |
+|---|---|
+| `make_residual_density_grid`, `make_residual_density_cell`, `make_residual_density_cell_n` | `CRYSTAL` |
+| `set_Fourier_multiplicities` | `CRYSTAL` |
+| `make_symop_generated_dF_a_v2` (the symmetry expansion and the coefficient) | `DIFFRACTION_DATA.SET` |
+| `get_minmax_residual_density`, `_p` (which drive a `PLOT_GRID` to get a minimum and maximum) | `MOLECULE.RHO` |
+
+**What `CELL_MAP` holds** (a plain record; component descriptions in `types.foo` one line each):
+
+- the coefficients: Miller indices (three `VEC{INT}`) and a `VEC{CPX}` of coefficients, already
+  expanded over the whole sphere, on the absolute scale, divided by the cell volume;
+- the reciprocal cell matrix, to turn indices into scattering vectors, and the cell volume;
+- `kind`: which coefficients (`f_exp`, `f_calc`, `residual`);
+- the filter settings: `l_value`, `m_value`, `window_width`.
+
+**What it does not hold:** a `CRYSTAL`, a `MOLECULE`, atoms or a `PLOT_GRID`. It is given what it
+needs as arguments. That keeps it out of the containment tangle that `docs/TASK_CRYSTAL_HOIST.md`
+is about, and makes it the kind of flat record the re-engineering wants.
+
+**Its procedures:**
+
+| procedure | does |
+|---|---|
+| `set_coefficients(h,k,l,coeff,cell)` | takes the expanded coefficients |
+| `apply_blur(width)`, `apply_l_moment(l,m,width)` | multiply the coefficients by the factor of equation (2) |
+| `make_values_at(values,pts)` | equation (1) at any points, through `FOURIER_SUMS` |
+| `make_values_on_cell(values,nx,ny,nz)` | the whole cell, with one-dimensional phase tables |
+| `make_lm_radial_functions(f,centre,radii,l_max)` | equation (3), the one-centre reference |
+| `put_minmax(...)`, `integral` | the minimum, maximum and rms now made in `MOLECULE.RHO`, and the electron count |
+
+`CRYSTAL` keeps one routine that fills a `CELL_MAP` from its reflections (the symmetry expansion,
+multiplicities, $`F_{000}`$, scale), because that needs the space group and the data.
+`make_residual_density_grid` and its fellows become three-line callers of it, then go.
+
+**What stays outside `CELL_MAP`:**
 
 | what | module |
 |---|---|
-| the series routine, public `make_solid_harmonics`, spherical Bessel functions | `FOURIER_SUMS` |
-| total-map coefficients, $`F_{000}`$, the factor of equation (2), equation (3) | `CRYSTAL` (beside the residual map), with the reflection expansion in `DIFFRACTION_DATA.SET` |
-| per-atom radial functions and populations (steps 4, 5) | `MOLECULE.RHO`, beside `make_sph_avgd_SA_ED_grid` |
+| the series kernel, public `make_solid_harmonics`, spherical Bessel functions | `FOURIER_SUMS` (plain procedures, no object) |
+| per-atom radial functions and populations (pieces C and D): they need atoms and weights | `MOLECULE.RHO`, beside `make_sph_avgd_SA_ED_grid`; for a Fourier density they ask a `CELL_MAP` for values at their quadrature points |
 | new plot kinds | the three tables in `MOLECULE.GRID`, and `MOLECULE.PLOT:set_up_for_plot` |
-| `l_value=`, `m_value=`, `l_max=`, `window_width=`, `density_source=` | `PLOT_GRID` keywords (`plot_grid.foo`, near line 1588), components in `types.foo`, one line each |
-| `put_atom_l_populations` and the per-atom table | `MOLECULE.MAIN` keyword, routine in `MOLECULE.RHO` |
+| `l_max=`, `density_source=` for pieces C and D, and `put_atom_l_populations` | `MOLECULE.MAIN` keywords |
 
-No new derived type is needed at first: the radial functions are local arrays, `MAT{REAL}` of
-(shells, $`(l_{\max}+1)^2`$) per atom.
+**Keywords.** A `cell_map= { }` block in `MOLECULE.MAIN`, read by `CELL_MAP:read_keywords`:
+`kind=`, `l_value=`, `m_value=`, `window_width=`. `plot_grid= { kind= cell_map }` then plots
+whatever the block describes; `residual_density` stays as a plot kind, for existing inputs.
+
+**Order of work.** Make the type and move the residual map onto it *first*, as step 1, with the
+two residual-map tests as the check that nothing moved. The new maps are then additions to a
+type that is already tested.
+
+**Cautions.** A new type means an edit to `types.foo`, which every module depends on: a full
+rebuild. Check each component name against Fortran's case rule and against the macro names in
+`include/macros.in`. `k` and `l` as Miller-index names clash with nothing here, but `l` the Miller
+index and `l` the angular momentum must not meet in one routine: call the indices `h1,h2,h3`.
 
 ## 6. Traps
 
@@ -263,15 +319,16 @@ No new derived type is needed at first: the radial functions are local arrays, `
 ## 7. Decisions for Dylan
 
 1. What "version 3" is (section 0).
-2. The keyword names: `fourier_density`, `l_moment`, `l_moment_norm`, `l_filtered_density`,
-   `l_component_density`, `put_atom_l_populations`, `l_value=`, `m_value=`, `l_max=`,
-   `window_width=`, `density_source=`.
+2. The keyword names: the block `cell_map= { kind= l_value= m_value= window_width= }`, and
+   `l_filtered_density`, `l_component_density`, `put_atom_l_populations`, `l_max=`,
+   `density_source=`.
 3. Whether C and D start on the wavefunction density, as recommended in section 3.
 4. The default `l_max` (suggest 4) and window width (suggest 0.5 Å).
 5. Whether the radial functions are wanted as gnuplot files, as the fit plots are.
 
 ## 8. Log
 
-- 2026-10-06. Theory written and checked (`angular_decomp.pdf`). Plan written. Found on the way:
+- 2026-10-06. Theory written and checked (`angular_decomp.pdf`). Plan written; then revised to put
+  the Fourier maps in a new type `CELL_MAP` (Dylan). Found on the way:
   the earlier derivation's components depend on the cell origin; the any-points residual map uses a
   complex exponential in its inner loop.
