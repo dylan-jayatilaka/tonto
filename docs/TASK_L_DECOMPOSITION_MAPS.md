@@ -10,22 +10,22 @@ Opened 2026-10-06 (Dylan, with Santosh Panjikar). Nothing is coded yet.
 `check_formulas.py` in the same folder. Read that first. The formulas needed for coding are
 collected in section 2 below, in its notation.
 
-## 0. One thing to settle with Dylan before starting
+## 0. The order of work, and the names (Dylan, 2026-10-06)
 
-Dylan gave the order of work as *"version 3, then Version 1 - Hirshfeld, and finally the orbital
-version"*. The document has four pieces, and "version 3" could mean two of them:
+The document has four pieces. Dylan's order is **A, then C, then D**; B is not a product, only the
+exact reference that C is tested against.
 
-| piece | where in the document | what it is |
-|---|---|---|
-| A | section 4, "Version 2" | the field of local moments $`M_{lm}(\mathbf r)`$: maps over the cell |
-| B | section 3.1 | the expansion about one chosen centre (the Bessel formula) |
-| C | section 3.2, "Version 1 - Hirshfeld" | Hirshfeld atoms expanded about their nuclei; the true decomposition |
-| D | section 3.3, "the orbital version" | the same for the square root of each atom; populations $`n^A_l`$ |
+| piece | where in the document | what it is | name of the map |
+|---|---|---|---|
+| A | section 4, "Version 2" | the field of local moments $`M_{lm}(\mathbf r)`$: maps over the cell | `local_moment` |
+| B | section 3.1 | the expansion about one chosen centre (the Bessel formula) | none: a test reference |
+| C | section 3.2 | Hirshfeld atoms expanded about their nuclei; the true decomposition | `angular_hirshfeld` |
+| D | section 3.3 | the same for the square root of each atom; populations $`n^A_l`$ | `angular_amplitude` (suggested; Dylan to confirm) |
 
-C and D are unambiguous and come second and third. "Version 3" is either **A** (a slip for
-"version 2") or **B** (section **3**.1, which makes the order simply 3.1, 3.2, 3.3). **Ask.** The
-plan below is written so that either works: step 1 (shared machinery) serves all four, B is the
-exact reference that C is tested against in any case, and A is independent of the rest.
+`local_moment` and `angular_hirshfeld` are Dylan's names. For D he had none. `angular_amplitude`
+is the suggestion: it pairs with `angular_hirshfeld`, and "amplitude" is what the document calls
+the square root of an atom. Its table of populations would be `put_angular_populations`. Other
+candidates, if he prefers: `hirshfeld_amplitude`, `angular_root_density`.
 
 ## 1. What exists, and where the new work attaches
 
@@ -173,7 +173,7 @@ numbers; `tests/long/urea_rhf_STO-3G_HAR` (4 s) is the working job.
   `electron_density` blurred by the ADPs; the `f_exp` map minus the `f_calc` map equals
   `residual_density`.
 
-**Step 2 (piece A). The field maps.**
+**Step 2 (piece A). The field maps: `local_moment`.**
 
 - Multiply the coefficients of step 1 by the factor in equation (2); `make_solid_harmonics` gives
   $`q^l Y_{lm}`$ for all reflections at once. Then the series routine.
@@ -184,7 +184,7 @@ numbers; `tests/long/urea_rhf_STO-3G_HAR` (4 s) is the working job.
   $`l = 1`$ maps equal a finite-difference gradient of it times $`\sqrt{3/4\pi}\,\sigma^2`$; moving the
   cell origin (a second job with all atoms shifted) moves the map and does not change it.
 
-**Step 3 (piece B). The one-centre reference.**
+**Step 3 (piece B). The one-centre reference** (no keyword; needed to test step 4).
 
 - A routine for equation (3): radial functions about a point for $`l \le L`$ on a list of radii.
   Spherical Bessel functions by upward recurrence from $`j_0`$, $`j_1`$ (fine for $`l \le 6`$ at the
@@ -192,7 +192,7 @@ numbers; `tests/long/urea_rhf_STO-3G_HAR` (4 s) is the working job.
   for step 4.
 - **Check:** against `check_formulas.py` on its synthetic density, to the digits it prints.
 
-**Step 4 (piece C). Hirshfeld atoms.**
+**Step 4 (piece C). Hirshfeld atoms: `angular_hirshfeld`.**
 
 - `MOLECULE.RHO`: `make_atom_lm_radial_functions(a,l_max,r,f)`, the loop of
   `make_sph_avgd_SA_ED_grid` with $`Y_{lm}`$ in the angular sum, giving `f(shell, lm)` on the atom's
@@ -202,19 +202,19 @@ numbers; `tests/long/urea_rhf_STO-3G_HAR` (4 s) is the working job.
 - Output 1, a table per atom: the charge in each $`l`$ shell is zero for $`l > 0`$, so print
   $`\int |\rho^A_{lm}| s^2 ds`$ or the power $`\sum_m \int (\rho^A_{lm})^2 s^2 ds`$, and the radial
   functions to a file for plotting.
-- Output 2, plot kinds: `l_filtered_density` with `l_max=` (equation 4 truncated) and
-  `l_component_density` with `l_value=` (one $`l`$, summed over $`m`$ and atoms). Radial functions
+- Output 2, plot kind `angular_hirshfeld`: with `l_max=` it is equation 4 truncated (the filtered
+  density); with `l_value=` it is one $`l`$ alone, summed over $`m`$ and atoms. Radial functions
   are interpolated between shells (`INTERPOLATOR`).
 - **Checks:** (i) $`l = 0`$ reproduces the spherical Hirshfeld atom (`sph-exphar` with
   `exphar_power= 1`) and its charge; (ii) `l_filtered_density` tends to `electron_density` as
   `l_max` rises, and the remainder at `l_max= 4` is tabulated; (iii) with the weight set to one and
   the Fourier density, it reproduces step 3.
 
-**Step 5 (piece D). The amplitude.**
+**Step 5 (piece D). The amplitude: `angular_amplitude`.**
 
 - The same routine with a switch that takes the square root of $`w_A\rho`$ at each point before the
   angular sum. Populations $`n^A_l`$ by the radial quadrature.
-- Keyword `put_atom_l_populations` (name to agree): a table of $`n^A_l`$, $`l = 0 \ldots l_{\max}`$, for
+- Keyword `put_angular_populations`: a table of $`n^A_l`$, $`l = 0 \ldots l_{\max}`$, for
   each atom, the sum, and $`N_A`$ beside it.
 - **Checks:** $`\sum_l n^A_l = N_A`$ to the quadrature's accuracy; a single N atom and a Ne atom
   give $`n_1 = 0`$; urea: do the O lone pairs and the planar skeleton show in $`n_1`$ and $`n_2`$, and
@@ -277,7 +277,7 @@ multiplicities, $`F_{000}`$, scale), because that needs the space group and the 
 | the series kernel, public `make_solid_harmonics`, spherical Bessel functions | `FOURIER_SUMS` (plain procedures, no object) |
 | per-atom radial functions and populations (pieces C and D): they need atoms and weights | `MOLECULE.RHO`, beside `make_sph_avgd_SA_ED_grid`; for a Fourier density they ask a `CELL_MAP` for values at their quadrature points |
 | new plot kinds | the three tables in `MOLECULE.GRID`, and `MOLECULE.PLOT:set_up_for_plot` |
-| `l_max=`, `density_source=` for pieces C and D, and `put_atom_l_populations` | `MOLECULE.MAIN` keywords |
+| `l_max=`, `density_source=` for pieces C and D, and `put_angular_populations` | `MOLECULE.MAIN` keywords |
 
 **Keywords.** A `cell_map= { }` block in `MOLECULE.MAIN`, read by `CELL_MAP:read_keywords`:
 `kind=`, `l_value=`, `m_value=`, `window_width=`. `plot_grid= { kind= cell_map }` then plots
@@ -318,9 +318,9 @@ index and `l` the angular momentum must not meet in one routine: call the indice
 
 ## 7. Decisions for Dylan
 
-1. What "version 3" is (section 0).
-2. The keyword names: the block `cell_map= { kind= l_value= m_value= window_width= }`, and
-   `l_filtered_density`, `l_component_density`, `put_atom_l_populations`, `l_max=`,
+1. The name for piece D: `angular_amplitude`, or another (section 0).
+2. The remaining keyword names: the block `cell_map= { kind= l_value= m_value= window_width= }`
+   with `kind= local_moment` for piece A, and `put_angular_populations`, `l_max=`,
    `density_source=`.
 3. Whether C and D start on the wavefunction density, as recommended in section 3.
 4. The default `l_max` (suggest 4) and window width (suggest 0.5 Å).
