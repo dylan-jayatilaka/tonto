@@ -278,7 +278,8 @@ times are not quoted):
   quadrature, against Tonto's `high`, on the molecules above.
 - **Not settled:** the DE2 radial range (§2.3); the Mg and Si totals; whether Q-Chem applies an
   atomic size adjustment to its Becke weights. All three are questions for John Herbert. The
-  ORCA COSX grid parameters are still to be asked of the authors.
+  ORCA COSX grid parameters were asked of Benjamin Helmich-Paris by email on 2026-10-06; when they
+  come they go in as further named grid kinds and are measured on the jobs of section 4.
 - **Small loose ends.** The CIF items `_QCr_Becke_grid_n_pts_for_row_1` to `_3` print the counts
   of H, He and Li for an SG kind. A job with 21 separate molecules 15 Å apart hung in
   *Making gaussian ANO data* (`hydrides_all/`); not looked into.

@@ -96,8 +96,9 @@ urea tables rebuilt from them; an XCW test with extinction; the `Penalty in F` d
 Rys-root hang at large X fixed; `docs/BUILDING_WITH_MPI.md`; `REPORT_ON_SALVADOR_MODELS` rewritten;
 `REPORT_ON_GAUSSIAN_1_ON_R_FIT`; the Julia benchmark; `compare_cifs` repaired (fractional
 coordinates) and built by default, eight dead runfiles deleted, `make runfiles` in CI. Each has its
-own entry below. **Still to do by hand:** stop the job `hydrides_all` on achari2. **Emails owed:**
-Helmich-Paris for ORCA's COSX grid parameters; Herbert for three SG questions
+own entry below. The hung job `hydrides_all` on achari2 was stopped by Dylan. **Email sent 2026-10-06** to
+Helmich-Paris for ORCA's COSX grid parameters (on the register's watch list; draft in
+`~/email_helmich_paris.txt`). **Email still owed:** Herbert, three SG questions
 (`docs/TASK_COSX_GRIDS.md` section 5). On the Mac, Homebrew's unversioned gcc is now 16.2.0 (a
 side effect of installing Julia): repeat the gfortran-16 debug test with it.
 
@@ -4479,8 +4480,7 @@ min(X, 100) and scales. Nothing changes below 100.
 **Checked on achari2.** The six-molecule job: 9 s. The 21-molecule job: 160 s. ZnH2, HBr and KH:
 output identical to before, line for line. Suite 180/180 in the reference build.
 
-**Left.** The original hung job (`hydrides_all`, started 2026-10-05 20:07) is still running on
-achari2 and needs stopping by hand. An unconverged or NaN Rys root should stop the program in a
+**Left.** (The original hung job was stopped by Dylan on 2026-10-06.) An unconverged or NaN Rys root should stop the program in a
 release build too; today only `ENSURE`s guard it.
 
 ## CLOSED 2026-10-06: the form-factor benchmark in Julia
