@@ -4326,9 +4326,11 @@ All twenty `EXCLUDE_FROM_ALL` runfiles were built on achari2: three compiled. Ou
   the compared CIF, heavy atoms and hydrogens apart: each coordinate with its esd, reference
   beside compared, and each atom's U_iso, anisotropy and S12 similarity index. Its four output
   files had been nested redirects of stdout, which crashed; each is now closed before the next.
-  Checked on two urea refinements (`achari2:~/tonto_runs/compare_cifs_2026-10-06`). Left as they
-  were: the summary statistics and the gnuplot script are still commented out; the `.fcoords`
-  files hold Cartesian coordinates in bohr, not fractional ones; a stray `fort.7` is written.
+  Checked on two urea refinements (`achari2:~/tonto_runs/compare_cifs_2026-10-06`). The `.fcoords`
+  files hold fractional coordinates, their esds taken through the inverse cell matrix from each
+  atom's cartesian covariance (for urea they are the CIF's own, digit for digit); errors go to the
+  screen, where they used to leave a `fort.7`. Still commented out: the summary statistics and the
+  gnuplot script.
 - **Deleted (Dylan):** `run_buffer`, `run_dc`, `run_dc_derivs`, `run_sf`, `run_sf_derivs`,
   `run_dispersion`, `run_shell2`, `run_textfile`, which called routines and modules that are gone.
 
