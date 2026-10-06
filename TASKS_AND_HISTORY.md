@@ -4408,6 +4408,42 @@ workflows directly.) Three of the six are the "three debug failures nothing is t
 built runfile (`system_commands`, `quadrature_rules`) must be built by the workflow's `make`.
 
 
+## CLOSED 2026-10-06: the form-factor benchmark in Julia
+
+`scripts/ff_loop_bench.jl` is the port of `scripts/ff_loop_bench.f90` (f(k) = sum of w exp(i k.r),
+8000 k by 6000 points), a first measurement for the Julia move. Nanoseconds per term; gfortran-14
+with the flags Tonto compiles `fourier_sums` with (`-O3 -fno-fast-math -fno-math-errno
+-fno-trapping-math`), Julia 1.13.1 with `-O3`:
+
+| version | Mac M2, gfortran | Mac M2, Julia | x86-64 generic, gfortran | x86-64 generic, Julia | x86-64 native, gfortran | x86-64 native, Julia |
+|---|---:|---:|---:|---:|---:|---:|
+| A: k outside, complex exponential | 18.9 | 19.9 | 34.6 | 28.5 | 34.7 | 22.4 |
+| D: loops swapped, library sin and cos | 19.6 | 27.6 | 12.4 | 39.5 | 3.9 | 30.0 |
+| D with `@simd` | | 27.9 | | 40.1 | | 30.2 |
+| D with `sincos` | | 20.7 | | 29.1 | | 23.4 |
+| E: own sin/cos, integer rounding | 2.1 | 4.2 | 18.9 | 10.1 | 2.4 | 4.4 |
+| F: own sin/cos, real arithmetic (what Tonto uses) | 3.4 | 4.8 | 9.6 | 9.1 | 3.0 | 4.3 |
+| D under LoopVectorization's `@turbo` | | 3.7 | | not run | | not run |
+
+(x86-64 is achari2, a Skylake with AVX-512; "generic" is Julia's `-C x86-64`. Julia on the Mac was
+installed with Homebrew, which also took the unversioned `gcc` from 16.1.0 to 16.2.0; on achari2 it
+is a tarball in `~/opt/julia-1.13.1`. LoopVectorization was tried in a throwaway environment on the
+Mac only.)
+
+What it says:
+
+- **Julia does not vectorise its own `sin` and `cos`,** with or without `@simd`: 20-40 ns per term
+  everywhere, where gfortran on Linux calls glibc's vector versions and reaches 3.9 ns native.
+- **With the hand-written kernel Julia vectorises**, as gfortran does: equal to gfortran on generic
+  x86-64 (9.1 against 9.6), and 1.4 to 2 times slower on the Mac and on native x86-64.
+- **`@turbo` gives 3.7 ns on the Mac with no hand-written sin/cos,** about gfortran's F. That is the
+  package doing what `sin_cos` does by hand; it is not part of the language and its future is
+  uncertain, so a port should keep its own kernel.
+- The hand-written sin and cos are within half a unit in the last place of Julia's.
+
+So the port of this loop would be the same code at the same speed to within a factor of two; the
+compiler does not make `sin_cos` unnecessary.
+
 ## The Salvador-model variants: the investigation record (moved out of the report, 2026-10-06)
 
 `docs/REPORT_ON_SALVADOR_MODELS.md` was rewritten as findings: the models, the tables and what
