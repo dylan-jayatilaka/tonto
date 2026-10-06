@@ -109,6 +109,24 @@ Helmich-Paris for ORCA's COSX grid parameters (on the register's watch list; dra
 stays, off by default (`docs/TASK_COSX_GRIDS.md` section 5). On the Mac, Homebrew's unversioned gcc is now 16.2.0 (a
 side effect of installing Julia): repeat the gfortran-16 debug test with it.
 
+## Spherical harmonics: one home, and polynomials instead of trig functions (Dylan, 2026-10-06)
+
+The real spherical harmonics live in two places. `GAUSSIAN_DATA:spherical_harmonics_for(l)` holds
+the Cartesian-to-harmonic transformation matrices (used by `SHELL1`, `SHELL2`, `SHELL1QUARTET`,
+`GAUSSIAN2`, `MOLECULE.FOCK` and now `FOURIER_SUMS:make_solid_harmonics`), in Molden order
+$`m = 0, +1, -1, +2, -2, \ldots`$ within each $`l`$, so for $`l = 1`$ the columns are $`z, x, y`$ --
+measured on 2026-10-06 by the parity of the $`l = 1`$ local-moment maps under a screw axis of
+L-alanine, and as the module's own comment says ($`m > 0`$ cosine-like). `SPHERICAL_HARMONIC`
+evaluates $`Y_{lm}`$ at points through trigonometric functions (233 calls of `sin`, `cos`, `acos`
+and `atan` in the file), which is slow where a polynomial in $`x, y, z`$ would do and is the same
+quantity the matrices give.
+
+**Task (not now):** move the transformation matrices into `SPHERICAL_HARMONIC`, so that there is
+one place to look for the order and the normalisation, and rewrite that module's point
+evaluation as polynomials from those matrices; `FOURIER_SUMS:make_solid_harmonics` and
+`make_normalised_harmonics` are the pattern. Every user of `spherical_harmonics_for` must give the
+same numbers afterwards: the full suite is the check.
+
 ## 2026-10-05: TLS plan step 3 done; next is the soft modes with cluster charges
 
 **Merged to `develop` today (`a1553350`): step 0 of `docs/TASK_ON_MODE_FITTING.md`.** The
