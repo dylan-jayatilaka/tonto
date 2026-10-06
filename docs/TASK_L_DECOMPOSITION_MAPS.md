@@ -25,6 +25,13 @@ exact reference that C is tested against.
 All three names are Dylan's. The table of populations for D is `put_hirshfeld_amplitude_populations`
 (name to agree).
 
+**Output (Dylan).** Every map is written as a Gaussian cube file, as Tonto's other maps are, to be
+viewed in VESTA. So each of the three is a plot kind that fills the points of a `PLOT_GRID` and
+goes out through the existing writer (`plot_format= gaussian.cube`, or `cell.cube` for a whole
+cell); no new file format. For `local_moment` that is one cube file for each $`l, m`$ asked for.
+For `angular_hirshfeld` and `hirshfeld_amplitude` the cube holds the density rebuilt from the
+atoms' radial functions up to `l_max=`, or one $`l`$ alone, on the plot's points.
+
 ## 1. What exists, and where the new work attaches
 
 **Maps Tonto makes now** (`plot_grid= { kind= ... }`, then `plot`):
@@ -336,7 +343,8 @@ index and `l` the angular momentum must not meet in one routine: call the indice
    `density_source=`.
 3. Whether C and D start on the wavefunction density, as recommended in section 3.
 4. The default `l_max` (suggest 4) and window width (suggest 0.5 Å).
-5. Whether the radial functions are wanted as gnuplot files, as the fit plots are.
+5. The maps go out as cube files (settled). Whether the atoms' radial functions are *also*
+   wanted as tables or gnuplot files.
 
 ## 8. Log
 
