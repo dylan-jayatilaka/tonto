@@ -232,7 +232,7 @@ Becke weights use a size adjustment); ask the ORCA authors for their COSX grid p
 table came from Psi4's source: the Chien and Gill paper (J. Comput. Chem. 27, 730 (2006)) is not in
 `~/Dropbox/manuscripts`. Runs: `achari2:~/tonto_runs/sg_grids_2026-10-05/`; worktree
 `achari2:~/github/tonto-sg`. **A job is still running there, to be stopped by hand:**
-`hydrides_all` (21 molecules 15 A apart) hangs in *Making gaussian ANO data* -- worth a look as a bug.
+`hydrides_all`. Its hang was a Rys-root bug, fixed 2026-10-06 (entry under *Test suite and numerics*).
 **First priority after that: `docs/TASK_HAR_STANDARDISATION.md`** -- the spherical-atom study.
 **Crystal vibrations (2026-10-05, Johnson et al. Chem. Phys. 291, 53 (2003), in Dropbox/manuscripts):**
 INS NH2 bands near 480 and 670 cm-1, lattice modes to ~160-200, no internal mode below ~416. The
@@ -4407,6 +4407,35 @@ workflows directly.) Three of the six are the "three debug failures nothing is t
 `tests/CMakeLists.txt`, or run `ctest -L short` in `ci.yml` beside the report. Whichever needs a
 built runfile (`system_commands`, `quadrature_rules`) must be built by the workflow's `make`.
 
+
+## CLOSED 2026-10-06: a job of many separate molecules hung -- Rys roots at large X
+
+**Symptom.** One job holding 21 small molecules 15 A apart (the hydrides of H to Cl, He, Ne, Ar, KH,
+ZnH2, HBr; RHF/def2-SVP) never finished. Its last printed line was *Making gaussian ANO data*, which
+misled: that line was simply the last one flushed.
+
+**Cause.** A stack trace of the running job (gdb) put it in `RYS:get_weights6`, under the first
+Fock build. In a debug build the same job stops with *RYS:ryssmt ... Tried to square root a negative
+number*. `get_weights6` (6 or more roots; here from the f function on Zn) makes the roots from the
+moments of the weight function by Schmidt orthogonalisation. At large X the moments fall as
+X^-(m+1/2) and span so many orders of magnitude that a pivot goes negative: from X = 24000 for 6
+roots, 7200 for 7, 3000 for 8, 1500 for 9, 900 for 10 (scanned in Python from a transcription of
+`rysfun` and `ryssmt`). The check is an `ENSURE`, so release takes the square root, gets NaN, and
+the bracketing loop of `rysnod` never ends. Far-apart molecules with tight functions reach such X;
+the six-molecule subset H2S, HCl, Ar, KH, ZnH2, HBr hangs, every smaller subset tried does not.
+For 11 or more roots the orthogonalisation fails at every X scanned, which is a separate limit
+nothing reaches today (it needs higher angular momentum than the library has).
+
+**Fix (`foofiles/rys.foo`, merged).** Above X = 100 the moments are pure powers of X to exp(-100),
+so t^2 scales as 1/X and the weights as 1/sqrt(X) exactly. `get_weights6` makes them at
+min(X, 100) and scales. Nothing changes below 100.
+
+**Checked on achari2.** The six-molecule job: 9 s. The 21-molecule job: 160 s. ZnH2, HBr and KH:
+output identical to before, line for line. Suite 180/180 in the reference build.
+
+**Left.** The original hung job (`hydrides_all`, started 2026-10-05 20:07) is still running on
+achari2 and needs stopping by hand. An unconverged or NaN Rys root should stop the program in a
+release build too; today only `ENSURE`s guard it.
 
 ## CLOSED 2026-10-06: the form-factor benchmark in Julia
 
