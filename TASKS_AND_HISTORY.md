@@ -2880,6 +2880,8 @@ Any of these rewrites the reference, so re-bless deliberately and read the resul
 
 ## libxc as the DFT functional engine — see `docs/TASK_DFT_STANDARDISATION.md`
 
+**LATER (Dylan, 2026-10-07): moved to the later list of the register; not counted as open.**
+
 Superseded by milestone 10. The decision, the verified API facts, the compiler
 constraint, and the seven-point list of what a real implementation must cover are
 all in **`docs/TASK_DFT_STANDARDISATION.md` §8**, alongside the interface analysis
