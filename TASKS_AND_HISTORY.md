@@ -78,53 +78,21 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## START HERE, 2026-10-06: the angular decomposition of density maps -- steps 1 to 4 merged
+## CLOSED 2026-10-07: the angular decomposition of density maps
 
-**The task handed over:** implement `docs/TASK_L_DECOMPOSITION_MAPS.md`. Read it, then the theory
-it rests on, `~/Dropbox/tex/conference_talks/2026_ED_angular_decomp/angular_decomp.pdf` (written
-and checked numerically on 2026-10-06; `check_formulas.py` beside it). **The order is settled
-(Dylan): the field maps `local_moment` first, then `angular_hirshfeld`, then the square-root
-version `hirshfeld_amplitude`.** Steps 1 and 2 are done and merged (2026-10-06, evening,
-`f025460c`, `1a38d81d`): the new type `CELL_MAP`, the residual map moved onto it with no number
-changing, the fast Fourier-series routine, the total maps `f_exp` and `f_calc`, and the
-local-moment maps (`l_value=`, the norm over m by default). The urea test Dylan asked for is in:
-`long/urea_rks_B3LYP_def2-TZVP_HAR_cell_maps`, a HAR at B3LYP/def2-TZVP (1.5 min on the Mac, 3
-min on achari2) then the maps, blessed on achari2; the decomposition from F_exp (model phases)
-agrees with F_calc to 0.2% rms of the map maxima for l = 1, 2. All checks are in the plan's log.
-**Steps 3 and 4 followed the same night** (`8089b561`): the exact one-centre radial functions
-(`put_cell_map_radial_functions`), the Hirshfeld atoms' radial functions and power
-(`put_angular_hirshfeld_atoms`) and the amplitude's populations (`put_ha_populations`), each
-checked against an independent Python reference on urea; the window default is 0.25 Å (Dylan).
-**The plot kinds `angular_hirshfeld` and `hirshfeld_amplitude` followed on 2026-10-07**
-(`932a3ba4`; `atoms= { ... }` selects atoms by index or tag). The findings: the amplitude of a
-Hirshfeld atom is spherical to better than 0.2% of its electrons, on urea and gly-L-ala alike,
-only the N-H hydrogens' $`n_1`$ (0.01-0.02 e) showing; and the density rebuilt from the atoms is
-within 0.33% rms of the electron density at $`L = 2`$ and 0.12% at $`L = 4`$, the method's floor.
-**The user page is written:** `docs/REPORT_ON_L_DECOMPOSITION_MAPS.md` (theory of the three
-maps, figures, the table of checks, code, keywords, the same idea in other fields). **Three
-refinements followed the same afternoon:** the deformation kinds `deformation_calc` and
-`deformation_exp` (the promolecule of the current method's spherical atoms subtracted; the
-experimental deformation density and its moments, urea's agreeing with the model's at 0.93 and
-0.97-0.98), `sharpen_u=` (a mean ADP divided out, safe while below the window squared) and the
-Hirshfeld multipole moments in the atom tables. **The cube files** for urea and gly-L-ala at
-0.2 bohr are in `~/Dropbox/tonto_data/cell_maps/`, for VESTA. Still to do from the plan: the
-radial functions to a file for plotting; a test of the new plot kinds; then the deletion of the
-task document once its log has nothing the report lacks. Two side-fixes landed with step 4:
-`CIF` ends a loop at a `;` text field, which the X-ray/neutron data-set CIFs need, and
-`read_cell_map` sets the cell before its block is read.
+**Closed by Dylan on 2026-10-07; the reasoning is in the archive entry *The angular
+decomposition of density maps* below, the user page is `docs/REPORT_ON_L_DECOMPOSITION_MAPS.md`,
+and the task document is deleted.** What was built, in one line: the type `CELL_MAP` with the
+Fourier maps of the cell (`residual`, `f_exp`, `f_calc`, `deformation_calc`, `deformation_exp`)
+and their local moments by angular character, with sharpening (exact or as a Taylor polynomial),
+Laplacians and a Wiener weight; the exact radial functions about a centre; the Hirshfeld atoms
+expanded about their nuclei, their power, multipoles and square-root populations; the density
+rebuilt from them on a grid. The cubes for urea and gly-L-ala are in
+`~/Dropbox/tonto_data/cell_maps/`. Small things left undone, for whoever wants them, are listed
+at the end of the archive entry. A science idea that grew out of it, deblurring with a
+benchmarked prior, is filed as *later*: `docs/TASK_DEBLURRING_WITH_A_PRIOR.md`.
 
-**Also done on 2026-10-06** (all on `develop`, pushed; register at 32 open items): SG-0..SG-3
-grids merged, COSX defaults unchanged (`docs/TASK_COSX_GRIDS.md`); the spherical reruns in and the
-urea tables rebuilt from them; an XCW test with extinction; the `Penalty in F` drift explained; a
-Rys-root hang at large X fixed; `docs/BUILDING_WITH_MPI.md`; `REPORT_ON_SALVADOR_MODELS` rewritten;
-`REPORT_ON_GAUSSIAN_1_ON_R_FIT`; the Julia benchmark; `compare_cifs` repaired (fractional
-coordinates) and built by default, eight dead runfiles deleted, `make runfiles` in CI. Each has its
-own entry below. The hung job `hydrides_all` on achari2 was stopped by Dylan. **Email sent 2026-10-06** to
-Helmich-Paris for ORCA's COSX grid parameters (on the register's watch list; draft in
-`~/email_helmich_paris.txt`). **The SG grids are not being taken further (Dylan):** no XC trial, no email to Herbert; the code
-stays, off by default (`docs/TASK_COSX_GRIDS.md` section 5). On the Mac, Homebrew's unversioned gcc is now 16.2.0 (a
-side effect of installing Julia): repeat the gfortran-16 debug test with it.
-
+**Next in the queue** is what the register says: the HAR standardisation study first.
 ## Spherical harmonics: one home, and polynomials instead of trig functions (Dylan, 2026-10-06)
 
 The real spherical harmonics live in two places. `GAUSSIAN_DATA:spherical_harmonics_for(l)` holds
@@ -2978,6 +2946,9 @@ depth-counting the parallel-do lock so a recursive inner return cannot release a
 (restoring the `ENSURE` at `parallel.foo:308`).
 
 ## Root cause behind several of these: `MOLECULE` contains `MOLECULE`s (Dylan, 2026-08-03)
+
+**LATER (Dylan, 2026-10-07): the hoist of `CRYSTAL` is moved to the later list of the register,
+with the re-engineering it is the first step of; neither is counted as open.**
 
 The fragment machinery is a **module/problem mapping** problem, and most of the parallel defects
 above are downstream of it.
@@ -6204,7 +6175,16 @@ with no hand-written script at all.
 
 ---
 
+## LATER (Dylan, 2026-10-07): deblurring density maps with a benchmarked prior
+
+A science idea from the angular-decomposition work, written up with its arguments, its relation
+to density modification, the protein case at 0.8 to 1.1 Å and the first test that would decide
+it, in `docs/TASK_DEBLURRING_WITH_A_PRIOR.md`. Not being pursued; not counted as open.
+
 # Re-engineering: flattening the object model, and first-class parallelism
+
+**LATER (Dylan, 2026-10-07): moved to the later list of the register, with the hoist of `CRYSTAL`;
+not counted as open.**
 
 **Dylan, 2026-09-10. Work begins December 2026 or early 2027. The detailed plan will be made
 then; this section records the strategy and why it exists, so the plan starts from something.**
@@ -6269,6 +6249,231 @@ different question and the one that matters.
 ---
 
 # Done, resolved and closed (archive)
+
+## The angular decomposition of density maps (2026-10-06 to 2026-10-07, closed by Dylan)
+
+The user page is `docs/REPORT_ON_L_DECOMPOSITION_MAPS.md`; the theory is
+`~/Dropbox/tex/conference_talks/2026_ED_angular_decomp/angular_decomp.tex`. This entry keeps
+what the task document held that the page does not: the wiring facts found on the way, the
+traps, and the log of what was measured and decided, in order. The commits, all on `develop`:
+`f025460c` (step 1, `CELL_MAP`), `1a38d81d` (step 2, local moments), `52a4d058` and `9ad1fe17`
+(the urea test), `8089b561` (steps 3 and 4), `932a3ba4` (the rebuilt-density plot kinds),
+`1311cacf` and later (the report), `535ca10a` (deformation kinds, sharpening, multipoles),
+`21485dc4` (the Taylor sharpening, Laplacians, Wiener weight).
+
+### Wiring a new type in
+
+- A plain procedure of `FOURIER_SUMS` is called `FOURIER_SUMS:name(...)` from another module, with
+  one colon; `::` is the within-module form and fails to link.
+- `CMakeLists.txt` lists every module twice by name, the `.foo` in `FOO_SRC` and the generated `.F90`
+  in the library's sources; `cell_map` goes into both, beside `fourier_sums`. Miss the second and the
+  build fails with "Cannot open module file 'cell_map_module.mod'".
+- `types.foo`: `type CELL_MAP` before `type CRYSTAL`, and `cell_map :: CELL_MAP@` in `MOLECULE`
+  beside `plot_grid`. `MOLECULE.SET:destroy_ptr_part` destroys it.
+- The residual routines have **five** callers, all of which must give the same numbers after the
+  move: the plot kind in `MOLECULE.GRID`; `MOLECULE.RHO:make_residual_density_grid` (which
+  converts to electrons per Å³) and `get_minmax_residual_density_p`; `MOLECULE.PUT:make_residual_density_cell`
+  and `put_ED_refinement_plots`, which writes the `*.residual_density_map,cell.cube` that
+  `long/YLID_IAM_plus_anomalous_residual_density` compares.
+- `make_symop_generated_dF_a_v2` is two things in one: the per-reflection coefficient
+  (the residual's $`(|F_o| - |F_c|) e^{i\alpha_c}`$ on absolute scale) and the expansion of any
+  coefficient over the symmetry-generated reflections with the Friedel and site-symmetry factors.
+  Split it: `make_symop_generated_coefficients(coeff_out,g1,g2,g3,spacegroup,mult,coeff_in)` keeps
+  the expansion, and each map kind supplies its own `coeff_in`. The arithmetic is the same, so no
+  number changes; the `f_exp` and `f_calc` maps then need no second copy of the expansion.
+- `get_minmax_residual_density_p` stays in `MOLECULE.RHO`: it drives `.plot_grid` and prints.
+  Only the statistics of a whole-cell map (minimum, maximum and rms without double-counting the
+  cell faces) move into `CELL_MAP`.
+
+### Traps
+
+- **Case-only name clashes** (CLAUDE.md rule 1) are everywhere in this subject: `l` and `L`, `m`
+  and `M`, `Y` and `y`, `r` and `R`, `s` and `S`. Use `lm`, `l_max`, `rad`, `Ylm`, and check each
+  routine's locals before compiling.
+- **`PURE` and `DIE`:** a check that must fire in release cannot sit in a `PURE` routine
+  (it cost a release build on the SG grids). Use `ENSURE` inside, and a `DIE` in a non-`PURE` caller.
+- **The order of $`m`$** in `make_solid_harmonics` is Molden's, $`0, +1, -1, +2, -2, \ldots`$ within
+  each $`l`$, with $`m>0`$ cosine-like and $`m<0`$ sine-like: for $`l = 1`$ the columns are $`z, x, y`$.
+  (The first draft of this note read `into_std_S_order` as saying the opposite; it was settled by
+  the parity of the three $`l = 1`$ maps under a screw axis of L-alanine, then by their correlation
+  of +0.999 with the finite-difference gradient along the matching axis, both signs positive.)
+  `CELL_MAP:make_moment_at` maps the usual $`m = -l \ldots l`$ onto those columns, so `m_value=`
+  means what the document means, $`-1, 0, 1 \to y, z, x`$. The norm over $`m`$ depends on neither
+  order nor sign, which is one more reason to code it first.
+- **The sign of the exponent.** Equation (1) has $`e^{-i\mathbf q\cdot\mathbf r}`$ and the factor
+  $`(-i)^l`$ goes with it. `CRYSTAL:make_residual_density_grid` uses `exp(-2 pi i h.x)`, the same
+  sign; `exp_ikr_sums` computes $`e^{+i\mathbf k\cdot\mathbf r}`$. Get the $`l = 1`$ gradient check of
+  step 2 to pass before anything else: it fixes the sign.
+- **$`F_{000}`$ and the scale.** A map without them is not a density, and the square root of step 5
+  has no meaning for it.
+- **Friedel mates.** The residual map uses multiplicity factors
+  (`set_Fourier_multiplicities`) to cover the half of reciprocal space not stored. Equation (2)
+  for odd $`l`$ changes sign between $`\mathbf q`$ and $`-\mathbf q`$, so the factor must be applied to
+  each generated reflection with its own direction, before any doubling.
+- **No module cycles.** The submodules of `MOLECULE` are separate Fortran modules, and `use` must
+  not form a cycle: `MOLECULE.SCF` uses `MOLECULE.RHO`, so a routine in `MOLECULE.RHO` cannot call
+  `MOLECULE.SCF:make_atom_partition_info`. Make prints `Circular ... dependency dropped`, compiles
+  against a stale module, and fails with "Mismatch in components of derived type"; the message
+  names the wrong thing. Drivers that need set-up go in `MOLECULE.MAIN`.
+- **No fast Bessel code is needed** (Dylan asked, 2026-10-06). The one-centre sum costs one
+  $`j_l`$ per reflection per radius, $`4\times10^5`$ evaluations for urea and a few milliseconds;
+  it is the exact reference and a small-job tool, and the atoms of step 4 go by quadrature, with
+  no Bessel function at all. `FOURIER_SUMS:spherical_bessel` sits beside `sin_cos`, which is where
+  a vectorised version would go if a use ever needed one.
+- **Thermal smearing.** The Fourier density is smeared by the ADPs and the wavefunction density is
+  not. Their $`l`$ components differ for that reason alone; do not compare them as if they should
+  agree.
+
+### Log
+
+- 2026-10-06. Theory written and checked (`angular_decomp.pdf`). Plan written; then revised to put
+  the Fourier maps in a new type `CELL_MAP` (Dylan). Found on the way:
+  the earlier derivation's components depend on the cell origin; the any-points residual map uses a
+  complex exponential in its inner loop.
+- 2026-10-06, later. Plan checked against the code before coding: every routine it names exists.
+  Added the wiring list in section 5 (CMake list, `MOLECULE` component, five callers, the split of
+  `make_symop_generated_dF_a_v2`), and the $`m`$ order from `into_std_S_order` to section 6.
+- 2026-10-06, evening. **Step 1 done** on the Mac, debug and release. The residual map now goes
+  through `CELL_MAP`; `long/L_alanine_minmax_residual_density_map` and
+  `long/YLID_IAM_plus_anomalous_residual_density` pass unchanged, and the alanine Max/Min/RMS agree
+  to every printed digit in the debug build too. The total maps `f_calc` and `f_exp` (keyword
+  `cell_map= { kind= }`, plot kind `cell_map`) on L-alanine integrate to 192.00 electrons on a
+  17 x 29 x 17 grid, the residual to 0.0001, and `f_exp - f_calc - residual` is within the cubes'
+  four printed decimals. On the test's 15 x 27 x 15 grid the integral was 187.3: a grid of N
+  points including both faces is periodic on N-1, and the k = +-26 reflections fold into the sum.
+  The timing of the any-points residual map before and after was not measured. Two more wiring
+  facts went into section 5 (the second CMake list; `FOURIER_SUMS:name` with one colon from
+  another module).
+- 2026-10-06, night. **Step 2 coded** (`make_moment_at`; `l_value=` resets `m_value`, a negative
+  `l_value` is the plain density; `put_cell_map`). Checks on L-alanine, f_calc, window 0.5 Å,
+  0.5-bohr grid, debug build: the $`l = 0`$ map times $`\sqrt{4\pi}`$ integrates to 192.000; the
+  $`l = 1`$ norm is the root sum of squares of the three components to 1e-5; each component
+  correlates +0.999 with $`\sqrt{3/4\pi}\,\sigma`$ times the central-difference gradient of the
+  blurred density along its axis, ratio 1.05 from the coarse grid: on a 0.25-bohr grid in release
+  the correlation is +0.99996 and the largest difference 2% of the map's maximum, as central
+  differences allow. The $`m`$ order was wrong in the first version of section 6 and is corrected
+  there. Step 2 merged as `1a38d81d`.
+- 2026-10-06, night. **Urea, the test Dylan asked for.** HAR at B3LYP/def2-TZVP on the data of
+  `tests/long/urea_rhf_STO-3G_HAR` converges in 1.5 min on the Mac (GoF 2.55), then maps of the
+  cell at 0.2 bohr (53 x 53 x 45): both total maps integrate to 64.000 electrons. The local
+  moments from F_exp (model phases) against F_calc, window 0.5 Å, on the whole cell: $`l = 1`$
+  norm maxima 0.641 and 0.642 e/Å³, rms difference 0.0013, correlation 0.99998; $`l = 2`$ norm
+  maxima 1.310 and 1.306, rms difference 0.0015, correlation 0.99998; the density itself 49.29
+  and 49.34 at the heavy nuclei, rms difference 0.022, correlation 0.99991. On the molecular
+  plane $`y = x + 1/2`$ the $`l = 1`$ norm is zero on each nucleus and rings it; the $`l = 2`$
+  norm peaks on the nuclei and along C=O. The pictures are gnuplot slices
+  (`slice_plane.py`, in the job directory); VESTA has no command-line rendering, so cubes are
+  opened in it by hand. The test `long/urea_rks_B3LYP_def2-TZVP_HAR_cell_maps` runs the same job
+  at 0.4 bohr and compares `stdout` and the two $`l = 1`$ cubes; blessed on achari2. The same
+  moments of the `residual` map (`kind= residual`, the $`l`$-resolved residual) were also made:
+  the raw residual is -0.23 to +0.14 e/Å³ with rms 0.022, and through the 0.5 Å window its
+  $`l = 0, 1, 2`$ parts have rms 0.0013, 0.0023 and 0.0035 -- a smooth, mostly negative
+  background with a positive band across the N-H region. The window is wide for residual
+  features; a narrower one (0.25 Å) is the thing to try when the residual is the object.
+- 2026-10-06, late. **Window default is 0.25 Å (Dylan).** **Step 3 done and verified.**
+  `CELL_MAP:make_radial_functions` (equation 3; `FOURIER_SUMS:spherical_bessel`, upward recurrence
+  above $`l_{\max}`$, Miller's downward recurrence below) and the keyword
+  `put_cell_map_radial_functions`, with `l_max=`, `centre=` (a length), `centre_fractional=`,
+  `n_radii=`, `radius_max=` in the `cell_map=` block. Checked on urea's refined model about O and
+  C against an independent Python sum over the whole sphere built from the `.fcf` ($`A, B`$ per
+  unique reflection) and the `.fco` symmetry operations (`check_radial.py` in the job directory),
+  which itself agrees with an angular quadrature of the series to five decimals: every
+  $`\rho_{lm}(s)`$, $`l \le 2`$, $`s = 0.1`$ to 2 Å, agrees to about 1e-4 relative, the level of
+  the four figures the `.fcf` prints. A first comparison showed the $`l = 1`$ component about O
+  off by 0.7% at 0.1 Å: the centre had been typed rounded to 2.7878 Å (exact 2.78784), and that
+  column is the gradient at the nucleus, where the curvature is ~5e3 e/Å⁵; with the same centre
+  the two agree. `centre_fractional=` avoids that; it needs the cell, so `read_cell_map` sets it
+  from the crystal before reading the block.
+- 2026-10-06, late. **Step 4 (and the populations of step 5) coded and checked.**
+  `MOLECULE.RHO:make_atom_lm_radial_functions(f,radii,a,l_max,l_lebedev,amplitude,weighted,use_cell_map)`
+  is the angular quadrature about a nucleus on a Lebedev grid of explicit order (`max(2 l_max+2, 29)`,
+  never a pruned grid); the driver `MOLECULE.MAIN:put_angular_Hirshfeld_atoms` prints, for each
+  unique fragment atom on its Becke radial shells, the radial functions, the power
+  $`P_l = \sum_m \int f_{lm}^2 s^2 ds`$ and the electron count; keywords
+  `put_angular_hirshfeld_atoms` and `put_ha_populations` (the amplitude, $`\sqrt{w_A\rho}`$), with
+  `l_max=`, `density_source= wavefunction | cell_map` and `atom_weight= hirshfeld | none` in the
+  `cell_map=` block. The driver had to live in `MOLECULE.MAIN`: see the module-cycle trap in
+  section 6.
+  *Check (iii)*, urea, the Fourier density of the model with no weight, quadrature against the exact
+  Bessel sums at the same Becke radii (`check_step4.py`): within 1.5 Å of every nucleus the largest
+  difference is 0.004 to 0.009 e/Å³ on values up to 177 (5e-5 relative, the `.fcf`'s four figures);
+  beyond that the sphere runs through neighbouring nuclei and the 302-point grid cannot integrate a
+  50 e/Å³ spike -- the quadrature's limit, irrelevant once the Hirshfeld weight is on. Two earlier
+  false alarms were the check's: the Python $`j_2`$ lost its digits at $`x < 0.05`$ (now a series),
+  and radii were being read from three printed decimals (now five).
+  *The populations*, urea Hirshfeld atoms of the B3LYP/def2-TZVP wavefunction, $`l \le 2`$:
+  O 8.363, 0.0064, 0.0023 (sum 8.372, electron count 8.376); N 7.125, 0.0015, 0.0044 (7.131; 7.143);
+  C 5.817, 0.0010, 0.0079 (5.826; 5.842); H 0.848, 0.0155, 0.0012 (0.865; 0.866) and 0.866, 0.0135,
+  0.0014 (0.881; 0.882). The sums approach the counts from below, the remainder being $`l > 2`$.
+  So the answer to the question of section 4: **the amplitude of a Hirshfeld atom is spherical to
+  better than 0.2% of its electrons** -- the O lone pairs and the planar skeleton do not show in
+  $`n_1, n_2`$ at any size; the only visible non-sphericity is the hydrogens' $`n_1`$ of 0.014-0.016
+  e, the bond polarisation. Whether that makes the measure useless or a clean statement is for
+  Dylan. The *density's* power $`P_l`$ for the unweighted cell density about an atom is large for
+  $`l = 1, 2`$ (neighbours), as it should be.
+  **Not done:** the plot kinds `angular_hirshfeld` and `hirshfeld_amplitude` (the rebuilt density
+  on a grid from interpolated radial functions, section 4 output 2) and the per-atom radial
+  functions to a file for plotting; the Lebedev order is fixed, not raised near bonds.
+  **Also in this commit:** `CIF`'s loop reader stops at a `;` text field (the data-set CIFs end
+  their reflection loop with one), and `read_cell_map` sets the cell before reading the block.
+- 2026-10-06, night. **Glycyl-L-alanine** (Dylan: for the morning, with the TVFA standardisation
+  set), `~/Dropbox/tonto_data/xray_neutron_set/gly_L_ala_150K_xray_Capelli2014.cif`, the first of
+  that set read by Tonto: a working CIF is block 1's header and atoms plus block 2's merged
+  reflection loop, LF line endings (the memory note on the set has the three things to know). HAR
+  at B3LYP/def2-TZVP, 20 atoms, 2532 reflections: 29 min on the Mac, GoF 1.34, residual -0.19 to
+  +0.16 e/Å³, rms 0.045. Maps at 0.2 bohr (71 x 91 x 93), window 0.25 Å: both total maps
+  integrate to 312.000 electrons; F_exp (model phases) against F_calc: $`l = 1`$ norm maxima
+  1.980 and 1.989, rms difference 0.0060, correlation 0.99987; $`l = 2`$ norm 3.191 and 3.193,
+  rms 0.0043, correlation 0.99996; the residual's $`l = 1, 2`$ parts reach 0.020 and 0.024 (rms
+  0.009), five times urea's through the narrower window. The cubes, the output and the working
+  CIF are in `~/Dropbox/tonto_data/cell_maps/gly_L_ala/`, urea's in `.../urea/`.
+- 2026-10-07, morning. **The plot kinds `angular_hirshfeld` and `hirshfeld_amplitude`** (section
+  4 output 2, step 5's amplitude map) and `atoms= { ... }`, merged as `932a3ba4`. *Check (ii)*
+  on urea (all atoms, cell at 0.3 bohr, against `electron_density` of the same wavefunction): rms
+  remainder 0.49, 0.43, 0.33, 0.12, 0.12 % of the density's rms at $`L = 0, 1, 2, 4, 6`$; the
+  largest point remainder 0.18 of 183 e/bohr³ on a nucleus at every $`L \ge 1`$, the
+  interpolation floor. The single-$`l`$ path agrees with $`L2 - L1`$ to 1e-5 everywhere but the
+  four nuclear grid points, where the cube's five printed figures of a 180 e/bohr³ value are 1e-3
+  coarse; and reading `l_max= 6` (which raises `GAUSSIAN_DATA`'s tables) leaves the $`l \le 2`$
+  maps unchanged to the last digit. `atoms=` is a brace-delimited list, as `TEXTFILE:read_all`
+  reads; an unbraced list swallowed the next keyword. Check (i), $`l = 0`$ against
+  `sph-exphar`, was not run: $`L = 0`$'s 0.49 % remainder is the same statement.
+  **The report** `docs/REPORT_ON_L_DECOMPOSITION_MAPS.md` is written (Dylan: theory of the three
+  maps from the TeX, figures in `docs/images/`, the table of checks, code, keywords).
+- 2026-10-07, afternoon. **Deformation kinds, sharpening, multipoles** (Dylan's three
+  refinements). `kind= deformation_calc | deformation_exp` subtract the promolecule, the
+  spherical atoms of the current method and basis (`use_IAM_ITC_FFs= FALSE`, the HAR's own
+  route) assembled by `CRYSTAL:make_F_calc` at the model's positions and ADPs, stored in the map
+  by `MOLECULE.MAIN:set_cell_map_promolecule` when the block is read (the only module above both
+  `HAR` and `RHO`). `sharpen_u=` divides a mean ADP out, allowed while below the window squared.
+  The atom tables print the multipole moments $`\int f_{lm} s^{l+2} ds`$. A latent bug found on
+  the way: `set_coefficients` called `destroy_ptr_part`, which would have wiped `atoms=` (and
+  the promolecule) on every map; it now drops only the coefficient arrays. Results on urea and
+  gly-L-ala are in the report's section 6 (urea: experiment against model for the deformation
+  density 0.93, its moments 0.97-0.98; gly-L-ala 0.70 and 0.51-0.92, its residual being twice
+  urea's); the cubes are beside the others in `~/Dropbox/tonto_data/cell_maps/`.
+- 2026-10-07, evening. **Scale-space deblurring** (Dylan, after reading Florack et al. 1996):
+  `sharpen_order=` (the Taylor polynomial of the sharpening factor, bounded for any U),
+  `laplacian_order=` and `wiener_weight=`; the report's new section 2.5 explains the diffusion
+  equation, the local jet, the two deblurrings and the Wiener weight, and section 7 the relation
+  to blurring diffusion models. Urea: order 4 reproduces the exact factor; the Wiener weight is
+  invisible on these data; U0 = 0.05 Å² at order 6 is the noise-amplifying regime (correlation
+  0.85 with the plain map). Checks in `tmp/urea8`. The Hirshfeld-atom
+  populations of gly-L-ala (a second job, 19 min, output `gly_L_ala_hirshfeld_atoms.stdout`
+  beside the cubes) say the same as urea's: $`n_0`$ carries all but 0.1-0.3% of every atom --
+  O 8.43, 8.41, 8.28; N 7.04, 6.91; C 5.85-6.07; the ammonium H 0.80, the amide H 0.88, C-H
+  0.93-0.99 -- and the only $`n_1`$ above 0.01 e are the N-H hydrogens' (0.011-0.018), the C-H
+  at 0.005-0.009 and the carbonyl O at 0.008-0.009; $`n_2`$ is below 0.003 except the carbonyl
+  C's 0.01.
+
+### Left undone, for whoever wants them
+
+- The atoms' radial functions written to a file for plotting.
+- Tests of the plot kinds `angular_hirshfeld` and `hirshfeld_amplitude` and of the deformation
+  kinds (the urea test covers the maps, the radial functions and the atom tables).
+- Check (i) of the plan's step 4, the $`l = 0`$ rebuilt density against `sph-exphar`; the
+  $`L = 0`$ remainder of 0.49% is the same statement.
+- A per-atom treatment of thermal smearing in the deformation maps.
 
 ## CLOSED (2026-10-05): a cell list for the shell search, and where the time on large molecules goes
 

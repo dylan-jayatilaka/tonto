@@ -1,5 +1,7 @@
 # Bringing cctbx's small-molecule refinement into Tonto
 
+**Later (Dylan, 2026-10-07): moved to the later list of the register; not counted as open.**
+
 **Status:** analysis and plan. No code written, and **not yet scheduled to start.**
 **Scope:** port the refinement capabilities Tonto lacks, natively in Foo.
 **Date of analysis:** August 2026.

@@ -386,6 +386,32 @@ grep -B3 -E '\[-W(maybe-)?uninitialized\]' build.log | grep 'Warning:' \
 The definite/maybe split is *not* the useful one here -- both classes are almost entirely
 descriptor noise. Descriptor-versus-variable is.
 
+### A new type needs two CMake entries, and a procedure of a plain module is called with one colon
+
+`CMakeLists.txt` lists every module twice by name: the `.foo` in `FOO_SRC` and the generated
+`.F90` in the library's sources. Miss the second and the build stops with "Cannot open module
+file 'x_module.mod'". A procedure of a plain module (one with no type, like `FOURIER_SUMS`) is
+called `FOURIER_SUMS:name(...)` from another module, with one colon; `::` is the within-module
+form and fails to link.
+
+### No cycles among the submodules of `MOLECULE`
+
+The submodules are separate Fortran modules and `use` must not form a cycle: `MOLECULE.SCF` uses
+`MOLECULE.RHO`, so a routine in `MOLECULE.RHO` cannot call `MOLECULE.SCF:make_atom_partition_info`.
+Make prints `Circular ... dependency dropped`, compiles against a stale module, and fails with
+"Mismatch in components of derived type", which names the wrong thing. Drivers that need set-up
+go in `MOLECULE.MAIN`.
+
+### Lists read by `TEXTFILE:read_all` are brace-delimited
+
+`stdin.read_all(list)` reads `{ a b c }`, across lines. A keyword that takes an unbraced list
+swallows the next keyword as an item.
+
+### No `setsid` on macOS
+
+A detached job is launched there with `nohup ... & disown`; a script that uses `setsid` fails
+silently with "command not found" in its log. Read the log once right after launching.
+
 ## 1c. Profiling and timing
 
 **Use `perf`, not gprof.** A `-pg` build attributes only about 60% of the samples under
