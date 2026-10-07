@@ -398,9 +398,16 @@ here:
 | materials, machine-learning potentials | *SOAP*, smooth overlap of atomic positions (Bartók) | the neighbour density about an atom as a sum of Gaussians, expanded in radial functions times $`Y_{lm}`$ and reduced to the rotationally invariant power spectrum $`\sum_m c_{nlm} c_{n'lm}`$ | the Hirshfeld-atom expansion of section 2.3 and its power $`P_l(s)`$, built on atoms placed as Gaussians instead of the electron density |
 
 So the field maps are the local jet and the structure tensor, and the atom-centred expansion
-with its $`m`$-summed invariants is $`Q_l`$ and SOAP's power spectrum. The decomposition (10),
-whose pieces add back to the density, and the populations (12) of the square root appear to
-have no twin. Two habits of the neighbours are worth borrowing: the vision literature answers
+with its $`m`$-summed invariants is $`Q_l`$ and SOAP's power spectrum. The route through the
+Fourier coefficients is known on both sides too: multiplying an image's transform by
+$`(i\omega)^n e^{-\sigma^2\omega^2/2}`$ is one of the standard ways of computing the local jet,
+and crystallographers blur a map by an artificial temperature factor (the $`l = 0`$ term) and
+have synthesised the Laplacian of the density from weighted structure factors (the trace of
+$`l = 2`$). What has no twin that we know of is the family taken whole: every $`l`$ and $`m`$ as
+one weighted sum each, the norm over $`m`$ as the rotational invariant at each point, the
+scaling to the units of a density, the comparison of $`F_{\rm exp}`$ with $`F_{\rm calc}`$ by
+angular character; and the decomposition (10), whose pieces add back to the density, with the
+populations (12) of the square root. Two habits of the neighbours are worth borrowing: the vision literature answers
 "which $`\sigma`$" by sweeping it and reading the structure across scales, and the experience
 with SOAP is that the power spectrum, $`P_l`$ here, carries the chemistry better than any single
 component.
@@ -413,7 +420,9 @@ References: [the Gaussian scale-space paradigm and the multiscale local jet](htt
 [multiscale vesselness filters](https://www.researchgate.net/publication/283558933_Beyond_Frangi_An_improved_multiscale_vesselness_filter);
 [Steinhardt parameters for structure identification](https://arxiv.org/pdf/1202.5005);
 [atom-density representations, SOAP](https://arxiv.org/pdf/1807.00408) and
-[DScribe](https://arxiv.org/pdf/1904.08875), which computes it.
+[DScribe](https://arxiv.org/pdf/1904.08875), which computes it;
+[scale-space implementation, including the Fourier route](https://en.wikipedia.org/wiki/Scale_space_implementation);
+[the Laplacian of the density by Fourier synthesis from weighted structure factors](https://journals.iucr.org/a/issues/2023/03/00/pl5022/index.html).
 
 ## 8. Pitfalls
 
