@@ -91,11 +91,22 @@ local-moment maps (`l_value=`, the norm over m by default). The urea test Dylan 
 `long/urea_rks_B3LYP_def2-TZVP_HAR_cell_maps`, a HAR at B3LYP/def2-TZVP (1.5 min on the Mac, 3
 min on achari2) then the maps, blessed on achari2; the decomposition from F_exp (model phases)
 agrees with F_calc to 0.2% rms of the map maxima for l = 1, 2. All checks are in the plan's log.
-**Next is step 3**, the one-centre Bessel reference (needed to test step 4), then step 4, the
-Hirshfeld atoms. One open choice for Dylan: the window width for residual maps (0.5 Å blurs
-them away; 0.25 Å is the thing to try). Write
-in the Tonto style, procedures well commented (Dylan). achari2 has a clean worktree of `develop`
-with debug, release and reference trees: `~/github/tonto-sg`.
+**Steps 3 and 4 followed the same night** (`8089b561`): the exact one-centre radial functions
+(`put_cell_map_radial_functions`), the Hirshfeld atoms' radial functions and power
+(`put_angular_hirshfeld_atoms`) and the amplitude's populations (`put_ha_populations`), each
+checked against an independent Python reference on urea; the window default is 0.25 Å (Dylan).
+**The plot kinds `angular_hirshfeld` and `hirshfeld_amplitude` followed on 2026-10-07**
+(`932a3ba4`; `atoms= { ... }` selects atoms by index or tag). The findings: the amplitude of a
+Hirshfeld atom is spherical to better than 0.2% of its electrons, on urea and gly-L-ala alike,
+only the N-H hydrogens' $`n_1`$ (0.01-0.02 e) showing; and the density rebuilt from the atoms is
+within 0.33% rms of the electron density at $`L = 2`$ and 0.12% at $`L = 4`$, the method's floor.
+**The user page is written:** `docs/REPORT_ON_L_DECOMPOSITION_MAPS.md` (theory of the three
+maps, figures, the table of checks, code, keywords). **The cube files** for urea and gly-L-ala at
+0.2 bohr are in `~/Dropbox/tonto_data/cell_maps/`, for VESTA. Still to do from the plan: the
+radial functions to a file for plotting; a test of the new plot kinds; then the deletion of the
+task document once its log has nothing the report lacks. Two side-fixes landed with step 4:
+`CIF` ends a loop at a `;` text field, which the X-ray/neutron data-set CIFs need, and
+`read_cell_map` sets the cell before its block is read.
 
 **Also done on 2026-10-06** (all on `develop`, pushed; register at 32 open items): SG-0..SG-3
 grids merged, COSX defaults unchanged (`docs/TASK_COSX_GRIDS.md`); the spherical reruns in and the

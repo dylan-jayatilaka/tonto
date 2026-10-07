@@ -507,7 +507,20 @@ index and `l` the angular momentum must not meet in one routine: call the indice
   1.980 and 1.989, rms difference 0.0060, correlation 0.99987; $`l = 2`$ norm 3.191 and 3.193,
   rms 0.0043, correlation 0.99996; the residual's $`l = 1, 2`$ parts reach 0.020 and 0.024 (rms
   0.009), five times urea's through the narrower window. The cubes, the output and the working
-  CIF are in `~/Dropbox/tonto_data/cell_maps/gly_L_ala/`, urea's in `.../urea/`. The Hirshfeld-atom
+  CIF are in `~/Dropbox/tonto_data/cell_maps/gly_L_ala/`, urea's in `.../urea/`.
+- 2026-10-07, morning. **The plot kinds `angular_hirshfeld` and `hirshfeld_amplitude`** (section
+  4 output 2, step 5's amplitude map) and `atoms= { ... }`, merged as `932a3ba4`. *Check (ii)*
+  on urea (all atoms, cell at 0.3 bohr, against `electron_density` of the same wavefunction): rms
+  remainder 0.49, 0.43, 0.33, 0.12, 0.12 % of the density's rms at $`L = 0, 1, 2, 4, 6`$; the
+  largest point remainder 0.18 of 183 e/bohr³ on a nucleus at every $`L \ge 1`$, the
+  interpolation floor. The single-$`l`$ path agrees with $`L2 - L1`$ to 1e-5 everywhere but the
+  four nuclear grid points, where the cube's five printed figures of a 180 e/bohr³ value are 1e-3
+  coarse; and reading `l_max= 6` (which raises `GAUSSIAN_DATA`'s tables) leaves the $`l \le 2`$
+  maps unchanged to the last digit. `atoms=` is a brace-delimited list, as `TEXTFILE:read_all`
+  reads; an unbraced list swallowed the next keyword. Check (i), $`l = 0`$ against
+  `sph-exphar`, was not run: $`L = 0`$'s 0.49 % remainder is the same statement.
+  **The report** `docs/REPORT_ON_L_DECOMPOSITION_MAPS.md` is written (Dylan: theory of the three
+  maps from the TeX, figures in `docs/images/`, the table of checks, code, keywords). The Hirshfeld-atom
   populations of gly-L-ala (a second job, 19 min, output `gly_L_ala_hirshfeld_atoms.stdout`
   beside the cubes) say the same as urea's: $`n_0`$ carries all but 0.1-0.3% of every atom --
   O 8.43, 8.41, 8.28; N 7.04, 6.91; C 5.85-6.07; the ammonium H 0.80, the amide H 0.88, C-H
