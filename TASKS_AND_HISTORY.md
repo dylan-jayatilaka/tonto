@@ -2207,6 +2207,14 @@ code, whereas a stale global table risks only a name-resolution detail.
 
 ### Known-flaky: x-ray-constrained SCF convergence wanders violently (long-standing)
 
+> **Diagnosed 2026-10-07, on branch `xcw-wandering`; plan and log in
+> `docs/TASK_XCW_CONVERGENCE.md`.** Two findings. Density damping has never been applied in any
+> SCF: the old density it needs was only kept when the incremental Fock build was on. And the
+> blow-up is a linear instability of the plain SCF step, whose size can be calculated from the
+> orbitals and the reflections: for the ammonia restart job the calculation says a step mixing in
+> more than 23.0% of the new density fails, and the measurement is 23% converges, 24% diverges.
+> Nothing is merged; the cure and whether to repair damping for every SCF are Dylan's to decide.
+
 Per Dylan this instability is **well known and has never been diagnosed**. Recorded here now that
 there is finally an executing test to observe it with:
 `tests/long/nh3_x-ray-constrained-rhf-cluster-charge_cc-pVTZ_restart` (which had never actually

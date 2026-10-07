@@ -2589,6 +2589,211 @@ contains
 
    end
 
+   put_constraint_stiffness
+   ! Print how strongly each reflection drives the plain SCF step of an
+   ! X-ray constrained restricted wavefunction. The constraint adds
+   ! lambda times d(GoF^2)/dD to the Fock matrix. A change in the density
+   ! changes each |F_calc|, hence that term, hence the next density: the
+   ! "gain" matrix printed here is that loop, in the space of reflections,
+   ! for lambda = 1, with the orbital response uncoupled (the two-electron
+   ! response is left out). If "g" is lambda times its largest eigenvalue,
+   ! a step that mixes in a fraction "x" of the new density converges only
+   ! if x < 2/(1+g). The diagonal of the matrix is each reflection's own
+   ! share. Theory: docs/TASK_XCW_CONVERGENCE.md.
+      self :: INOUT
+
+   ENSURE(.SCF_data.allocated,"no SCF_data")
+   ENSURE(.crystal.allocated, "no crystal info")
+   ENSURE(.crystal.xray_data.allocated, "no reflection data")
+   ENSURE(.MOs.allocated, "no molecular orbitals")
+   ENSURE(.MO_energies.allocated, "no orbital energies")
+
+      k_pts :: MAT{REAL}@
+      ft_ab,ft_ab_eq :: MAT3{CPX}@
+      dF :: MAT3{REAL}@
+      dF_ao,half,dF_ov,B_mx,gain,evec :: MAT{REAL}@
+      Fc :: VEC{CPX}@
+      Fm,Fexp,Fsig,alpha,d_alpha,wt,eval,diag,share,proj :: VEC{REAL}@
+      ind :: VEC{INT}@
+      fac,cutoff,g_max,lam,val :: REAL
+      q,fa,la,fb,lb,na,nb,atom_a,atom_b :: INT
+      i,j,k,m,ia,n_k,n_refl,n_par,n_occ,n_vir,n_show :: INT
+      sh :: SHELL2
+
+      n_k    = .crystal.n_unique_SF_k_pts
+      n_refl = .crystal.xray_data.reflections.dim
+      n_par  = .crystal.xray_data.n_param
+      n_occ  = .n_a
+      n_vir  = .n_bf - .n_a
+      fac    = TWO/max(n_refl - n_par,1)
+
+      ! The weight of each reflection: scale over sigma
+      Fc      = .crystal.xray_data.reflections.F_calc
+      alpha   = .crystal.xray_data.F_scale_and_extn_correction
+      d_alpha = .crystal.xray_data.d_F_pred_d_F_abs
+      Fexp    = .crystal.xray_data.reflections.F_exp
+      Fsig    = .crystal.xray_data.reflections.F_sigma
+      Fm.create(n_refl)
+      wt.create(n_refl)
+      Fm = max(abs(Fc),TOL(10))
+      wt = sqrt(abs(alpha*d_alpha))/Fsig
+
+      ! The derivative of each |F_calc| with the density matrix
+      k_pts.create(n_k,3)
+      .crystal.make_unique_X_SF_k_pts(k_pts)
+      cutoff = TOL(10) / .n_shell_pairs
+      dF.create(n_refl,.n_bf,.n_bf)
+      dF = ZERO
+
+      do q = 1, .n_shell_pairs
+
+         .set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
+
+         if (sh.skip_ft(cutoff)) then
+            sh.destroy_ptr_part
+            cycle
+         end
+
+         ft_ab.create([1,n_refl],[fa,la],[fb,lb])
+         ft_ab_eq.create(n_k,na,nb)
+         .make_FT_pair(ft_ab_eq,k_pts,sh,atom_a,atom_b)
+         .crystal.spacegroup.sum_unique_sf_ints(ft_ab,ft_ab_eq,.crystal.xray_data.reflections)
+         ft_ab_eq.destroy
+
+         do i = fa,la
+         do j = fb,min(lb,i)
+            dF(:,i,j) = (RE(ft_ab(:,i,j))*RE(Fc) + IM(ft_ab(:,i,j))*IM(Fc))/Fm
+            dF(:,j,i) = dF(:,i,j)
+         end
+         end
+
+         ft_ab.destroy
+         sh.destroy_ptr_part
+
+      end
+
+      k_pts.destroy
+
+      ! Its occupied-virtual block, weighted, over the root of the gap
+      dF_ao.create(.n_bf,.n_bf)
+      half.create(.n_bf,n_vir)
+      dF_ov.create(n_occ,n_vir)
+      B_mx.create(n_refl,n_occ*n_vir)
+
+      do k = 1,n_refl
+         dF_ao = dF(k,:,:)
+         half.to_product_of(dF_ao,.MOs.r(:,n_occ+1:.n_bf))
+         dF_ov.to_product_of(.MOs.r(:,1:n_occ),half,transpose_a=TRUE)
+         ia = 0
+         do j = 1,n_vir
+         do i = 1,n_occ
+            ia = ia + 1
+            val = .MO_energies.r(n_occ+j) - .MO_energies.r(i)
+            B_mx(k,ia) = TWO*wt(k)*dF_ov(i,j)/sqrt(val)
+         end
+         end
+      end
+
+      dF_ov.destroy
+      half.destroy
+      dF_ao.destroy
+      dF.destroy
+
+      ! The scale factor is refitted at every step, so a change in the
+      ! structure factors along F_calc itself costs nothing: remove it
+      share.create(n_refl)
+      proj.create(n_occ*n_vir)
+      share = wt*Fm
+      share = share/sqrt(sum(share*share))
+      proj.to_product_of(B_mx,share,transpose_a=TRUE)
+      do k = 1,n_refl
+         B_mx(k,:) = B_mx(k,:) - share(k)*proj
+      end
+      proj.destroy
+
+      ! The gain matrix for lambda = 1, its eigenvalues, its diagonal
+      gain.create(n_refl,n_refl)
+      evec.create(n_refl,n_refl)
+      eval.create(n_refl)
+      diag.create(n_refl)
+      ind.create(n_refl)
+
+      gain.to_product_of(B_mx,B_mx,transpose_b=TRUE)
+      gain = fac*gain
+      B_mx.destroy
+
+      do k = 1,n_refl
+         diag(k) = gain(k,k)
+      end
+
+      gain.solve_symmetric_eigenproblem(eval,evec)
+      g_max = eval(n_refl)
+      share = evec(:,n_refl)*evec(:,n_refl)
+
+      ! Output
+      lam = .SCF_data.lambda
+      stdout.flush
+      stdout.text("====================")
+      stdout.text("Constraint stiffness")
+      stdout.text("====================")
+      stdout.flush
+      stdout.show("No. of reflections               =",n_refl)
+      stdout.show("Lambda                           =",lam,precision=6)
+      stdout.show("Largest gain per unit lambda     =",g_max,precision=3)
+      val = sum(eval)
+      stdout.show("Sum of all gains per unit lambda =",val,precision=3)
+      val = lam*g_max
+      stdout.show("Largest gain at this lambda      =",val,precision=3)
+      val = TWO/(ONE+lam*g_max)
+      stdout.show("Largest stable new fraction      =",val,precision=3)
+      val = ONE/g_max
+      stdout.show("Lambda where undamped steps fail =",val,precision=6)
+      stdout.flush
+      stdout.text("The ten largest gains per unit lambda:")
+      do m = n_refl,max(n_refl-9,1),-1
+         stdout.put(eval(m),fmt="f",width=14,precision=3)
+      end
+      stdout.flush
+      stdout.flush
+      stdout.text("The reflections with the largest own gain per unit lambda.")
+      stdout.text("Columns: h k l, sin(theta)/lambda, F_exp, sigma, F_exp/sigma,")
+      stdout.text("(F_pred-F_exp)/sigma, own gain, share of the stiffest mode.")
+      stdout.flush
+
+      diag.quick_sort(ind,decreasing_order=TRUE)
+      n_show = min(n_refl,25)
+      do m = 1,n_show
+         k = ind(m)
+         stdout.put(.crystal.xray_data.reflections(k).h1,width=4)
+         stdout.put(.crystal.xray_data.reflections(k).h2,width=4)
+         stdout.put(.crystal.xray_data.reflections(k).h3,width=4)
+         stdout.put(.crystal.xray_data.reflections(k).stl,fmt="f",width=9,precision=4)
+         stdout.put(Fexp(k),fmt="f",width=10,precision=3)
+         stdout.put(Fsig(k),fmt="f",width=9,precision=4)
+         stdout.put(Fexp(k)/Fsig(k),fmt="f",width=9,precision=1)
+         stdout.put((alpha(k)*Fm(k)-Fexp(k))/Fsig(k),fmt="f",width=9,precision=2)
+         stdout.put(diag(k),fmt="f",width=12,precision=3)
+         stdout.put(share(k),fmt="f",width=9,precision=4)
+         stdout.flush
+      end
+
+      ! Clean up
+      ind.destroy
+      share.destroy
+      diag.destroy
+      eval.destroy
+      evec.destroy
+      gain.destroy
+      wt.destroy
+      Fm.destroy
+      Fsig.destroy
+      Fexp.destroy
+      d_alpha.destroy
+      alpha.destroy
+      Fc.destroy
+
+   end
+
    make_gc_constraint(C)
    ! Make the constraint matrix "C" for restricted wavefunction fitting.
       self :: INOUT
