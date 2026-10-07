@@ -115,10 +115,13 @@ default; one component is made on request.
 
 **Deformation moments.** Replacing $`F_n e^{i\alpha_n}`$ in (6) by $`F_n e^{i\alpha_n} - F_n^{\rm pro}`$,
 with $`F_n^{\rm pro}`$ the structure factors of the spherical atoms at the model's positions and
-ADPs, gives the local moments of the deformation density: the part that bonding adds to the
-atoms, which is what a chemist looks for. Two versions are made, from the model's structure
-factors and from the observed ones with the model's phases; the second is the local structure
-of the experimental deformation density, which no model supplies. The spherical atoms are those
+ADPs, gives the local moments of the *dynamic* deformation density: the part that bonding adds
+to the atoms, convolved with the thermal motion, which is what diffraction can give. Two
+versions are made. From the observed magnitudes with the model's phases it is the classical
+X-X map, the experimental deformation density, which no model supplies; from the model's
+structure factors it is the model's own dynamic deformation density, blurred by the same ADPs,
+and so the right thing to set beside the experimental one. The static deformation density of
+the wavefunction, with no thermal motion, is the plot kind `deformation_density`. The spherical atoms are those
 of the current method and basis (the International Tables form factors are used only if
 `use_IAM_ITC_FFs=` says so), because a sphericised atom depends on the level of theory as the
 molecule does. The subtraction also helps the arithmetic: the core electrons are spherical and
@@ -522,12 +525,12 @@ Stewart, *Isr. J. Chem.* **16**, 124 (1977), the pseudoatom formalism; Hansen an
 - The Fourier density is smeared by the ADPs; the wavefunction's is not. Their $`l`$
   components differ for that reason alone. The Hirshfeld-atom tables and populations are made
   from the wavefunction's density unless `density_source= cell_map` is given.
-- A deformation map depends on the model's ADPs twice over: they smear the observed density and
-  they are built into the promolecule that is subtracted. An atom whose ADP is wrong leaves a
-  spherical remnant of itself in the map -- too large a $`U`$ subtracts too flat an atom and
-  leaves a positive peak at the nucleus, too small the reverse -- and ADPs refined with spherical
-  atoms absorb part of the bonding density, which is why deformation maps were classically made
-  with high-order or neutron ADPs. The error analysis is Rees (1976), *Acta Cryst.* A32, 483,
+- The experimental deformation map is dynamic: the observed density carries the crystal's real
+  thermal motion, and the promolecule subtracted from it carries the model's ADPs. An atom whose
+  model ADP is wrong leaves a spherical remnant of itself in the map -- too large a $`U`$
+  subtracts too flat an atom and leaves a positive peak at the nucleus, too small the reverse --
+  and ADPs refined with spherical atoms absorb part of the bonding density, which is why
+  deformation maps were classically made with high-order or neutron ADPs. The error analysis is Rees (1976), *Acta Cryst.* A32, 483,
   and Stevens and Coppens (1976), *Acta Cryst.* A32, 915, who give a priori estimates of the
   errors in experimental densities; a HAR's ADPs, refined with aspherical atoms, are free of the
   second effect, and the first is the thermal smearing of section 2.1.
