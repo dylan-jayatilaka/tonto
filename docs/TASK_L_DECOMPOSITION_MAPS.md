@@ -520,7 +520,19 @@ index and `l` the angular momentum must not meet in one routine: call the indice
   reads; an unbraced list swallowed the next keyword. Check (i), $`l = 0`$ against
   `sph-exphar`, was not run: $`L = 0`$'s 0.49 % remainder is the same statement.
   **The report** `docs/REPORT_ON_L_DECOMPOSITION_MAPS.md` is written (Dylan: theory of the three
-  maps from the TeX, figures in `docs/images/`, the table of checks, code, keywords). The Hirshfeld-atom
+  maps from the TeX, figures in `docs/images/`, the table of checks, code, keywords).
+- 2026-10-07, afternoon. **Deformation kinds, sharpening, multipoles** (Dylan's three
+  refinements). `kind= deformation_calc | deformation_exp` subtract the promolecule, the
+  spherical atoms of the current method and basis (`use_IAM_ITC_FFs= FALSE`, the HAR's own
+  route) assembled by `CRYSTAL:make_F_calc` at the model's positions and ADPs, stored in the map
+  by `MOLECULE.MAIN:set_cell_map_promolecule` when the block is read (the only module above both
+  `HAR` and `RHO`). `sharpen_u=` divides a mean ADP out, allowed while below the window squared.
+  The atom tables print the multipole moments $`\int f_{lm} s^{l+2} ds`$. A latent bug found on
+  the way: `set_coefficients` called `destroy_ptr_part`, which would have wiped `atoms=` (and
+  the promolecule) on every map; it now drops only the coefficient arrays. Results on urea and
+  gly-L-ala are in the report's section 6 (urea: experiment against model for the deformation
+  density 0.93, its moments 0.97-0.98; gly-L-ala 0.70 and 0.51-0.92, its residual being twice
+  urea's); the cubes are beside the others in `~/Dropbox/tonto_data/cell_maps/`. The Hirshfeld-atom
   populations of gly-L-ala (a second job, 19 min, output `gly_L_ala_hirshfeld_atoms.stdout`
   beside the cubes) say the same as urea's: $`n_0`$ carries all but 0.1-0.3% of every atom --
   O 8.43, 8.41, 8.28; N 7.04, 6.91; C 5.85-6.07; the ammonium H 0.80, the amide H 0.88, C-H

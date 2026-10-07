@@ -1078,6 +1078,41 @@ contains
 
       .cell_map.read_keywords
 
+      ! The promolecule, for a deformation kind
+      if (.cell_map.is_deformation_kind) .set_cell_map_promolecule
+
+   end
+
+   set_cell_map_promolecule :: leaky
+   ! Give the cell map the promolecule structure factors: the spherical
+   ! atoms of the current method and basis (or the International Tables
+   ! form factors, if use_IAM_ITC_FFs= is set) at the model's positions
+   ! and ADPs, assembled as F_calc is, so that the deformation kinds
+   ! subtract them on the same footing. Made from the structure as it is
+   ! when the cell_map= block is read; read the block again after a
+   ! refinement.
+      self :: INOUT
+
+   DIE_IF(.crystal.deallocated, "no crystal")
+   DIE_IF(.crystal.xray_data.deallocated, "no diffraction data")
+   DIE_IF(NOT .crystal.fragment_info_made, "no crystal fragment info")
+
+      ff :: MAT{CPX}@
+      F  :: VEC{CPX}@
+
+      if (NOT .crystal.xray_data.use_IAM_ITC_FFs) then
+         .make_ANOs_and_interpolators
+         .atom.set_use_IAM_ITC_FFs(FALSE)
+      end
+
+      .make_unique_IAM_atom_FFs(ff)
+      F.create(.crystal.xray_data.reflections.dim)
+      .crystal.make_F_calc(F,ff)
+      .cell_map.set_promolecule_F(F)
+
+      F.destroy
+      ff.destroy
+
    end
 
    put_cell_map :: leaky
@@ -1089,6 +1124,7 @@ contains
 
       if (.cell_map.deallocated) .cell_map.create
 
+      if (.cell_map.is_deformation_kind) .set_cell_map_promolecule
       .crystal.make_cell_map(.cell_map)
       .cell_map.put
 
@@ -1223,10 +1259,20 @@ contains
          stdout.flush
 
          ! The electron count, for the density: sqrt(4 pi) times the integral
-         ! of f_00 s^2 ds, which the populations of the amplitude add up to
+         ! of f_00 s^2 ds, which the populations of the amplitude add up to;
+         ! and the multipole moments, the integrals of f_lm s^(l+2) ds, in
+         ! e Angstrom^l, the Hirshfeld atomic multipoles
          if (NOT amplitude) then
             total = sqrt(4*PI)*sum(wts*f(:,1))/(4*PI)
             stdout.show("Electron count          =",total)
+            stdout.text("Atom "//trim(.atom(a).label)//", multipole moments mu_lm = integral f_lm s^(l+2) ds, e Angstrom^l, columns (l,m):")
+            do lv = 0,l_max
+               do m = -lv,lv
+                  lm = lv*lv + lv + m + 1
+                  stdout.put(sum(wts*f(:,lm)*radii**lv)/(4*PI)*fac**lv,width=12,precision=5)
+               end
+            end
+            stdout.flush
          end
 
          power.destroy
@@ -1247,6 +1293,7 @@ contains
 
       if (.cell_map.deallocated) .cell_map.create
 
+      if (.cell_map.is_deformation_kind) .set_cell_map_promolecule
       .crystal.make_cell_map(.cell_map)
       .cell_map.put_radial_functions
 

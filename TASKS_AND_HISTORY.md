@@ -101,7 +101,12 @@ Hirshfeld atom is spherical to better than 0.2% of its electrons, on urea and gl
 only the N-H hydrogens' $`n_1`$ (0.01-0.02 e) showing; and the density rebuilt from the atoms is
 within 0.33% rms of the electron density at $`L = 2`$ and 0.12% at $`L = 4`$, the method's floor.
 **The user page is written:** `docs/REPORT_ON_L_DECOMPOSITION_MAPS.md` (theory of the three
-maps, figures, the table of checks, code, keywords). **The cube files** for urea and gly-L-ala at
+maps, figures, the table of checks, code, keywords, the same idea in other fields). **Three
+refinements followed the same afternoon:** the deformation kinds `deformation_calc` and
+`deformation_exp` (the promolecule of the current method's spherical atoms subtracted; the
+experimental deformation density and its moments, urea's agreeing with the model's at 0.93 and
+0.97-0.98), `sharpen_u=` (a mean ADP divided out, safe while below the window squared) and the
+Hirshfeld multipole moments in the atom tables. **The cube files** for urea and gly-L-ala at
 0.2 bohr are in `~/Dropbox/tonto_data/cell_maps/`, for VESTA. Still to do from the plan: the
 radial functions to a file for plotting; a test of the new plot kinds; then the deletion of the
 task document once its log has nothing the report lacks. Two side-fixes landed with step 4:

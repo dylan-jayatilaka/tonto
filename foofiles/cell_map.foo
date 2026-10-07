@@ -59,6 +59,7 @@ contains
       .h2.destroy
       .h3.destroy
       .coeff.destroy
+      .F_pro.destroy
       .atom_tags.destroy
 
    end
@@ -75,6 +76,7 @@ contains
       .l_value      = -1
       .m_value      = -99
       .window_width = 0.25*BOHR_PER_ANGSTROM
+      .sharpen_U    = ZERO
       .l_max        = 2
       .centre       = ZERO
       .n_radii      = 40
@@ -105,9 +107,32 @@ contains
       res :: BIN
 
       select case (.kind)
-      case ("residual","f_exp","f_calc"); res = TRUE
-      case default;                       res = FALSE
+      case ("residual","f_exp","f_calc","deformation_calc","deformation_exp"); res = TRUE
+      case default;                                                            res = FALSE
       end
+
+   end
+
+   is_deformation_kind result (res) :: pure
+   ! Return TRUE if ".kind" subtracts the promolecule, so that the
+   ! promolecule structure factors must be set first
+      self :: IN
+      res :: BIN
+
+      res = .kind=="deformation_calc" OR .kind=="deformation_exp"
+
+   end
+
+   set_promolecule_F(F) :: leaky, PURE
+   ! Take "F", the promolecule structure factors of the unique reflections,
+   ! in the model's conventions (the same positions, ADPs and phase
+   ! convention as F_calc), for the deformation kinds
+      self :: INOUT
+      F :: VEC{CPX}, IN
+
+      .F_pro.destroy
+      .F_pro.create(F.dim)
+      .F_pro = F
 
    end
 
@@ -142,7 +167,11 @@ contains
 
       n = coeff.dim
 
-      .destroy_ptr_part
+      ! Only the coefficient arrays: the settings and the promolecule stay
+      .h1.destroy
+      .h2.destroy
+      .h3.destroy
+      .coeff.destroy
       .h1.create(n); .h1 = h1
       .h2.create(n); .h2 = h2
       .h3.create(n); .h3 = h3
@@ -258,7 +287,10 @@ contains
    ! with q the scattering vector of reflection n, sigma the window width
    ! and Y_lm the real harmonic normalised to 1 over the sphere: it is the
    ! moment of the density seen through a Gaussian window of width sigma
-   ! centred at the point, divided by sigma^l. With m_value set it is that
+   ! centred at the point, divided by sigma^l. With sharpen_U set, a mean
+   ! ADP U is divided out of every reflection first, which is the same
+   ! formula with sigma^2 - U in the exponent; it is allowed only while
+   ! that is positive, so the series still converges. With m_value set it is that
    ! one component, in the frame of the cartesian axes; otherwise it is the
    ! norm over m, which does not depend on the axes. l = 0 has one
    ! component and keeps its sign.
@@ -276,11 +308,12 @@ contains
    ENSURE(.l_value>=0, "l_value not set")
    ENSURE(.m_value==-99 OR abs(.m_value)<=.l_value, "m_value out of range")
    ENSURE(.window_width>ZERO, "window_width not set")
+   ENSURE(.sharpen_U<.window_width**2, "sharpen_U must be below window_width^2")
 
       q,Y :: MAT{REAL}@
       c   :: VEC{CPX}@
       comp :: VEC{REAL}@
-      q2,sig :: REAL
+      q2,sig,net :: REAL
       fac :: CPX
       n_refl,n,lv,m,m_lo,m_hi,col :: INT
 
@@ -288,6 +321,9 @@ contains
       lv  = .l_value
       sig = .window_width
       fac = (-IMAGIFY(ONE))**lv * sig**lv
+
+      ! The net blur: the window less the mean ADP divided out
+      net = sig*sig - .sharpen_U
 
       ! The scattering vectors, and the solid harmonics q^l Y_lm(q^) at them
       q.create(n_refl,3)
@@ -310,7 +346,7 @@ contains
          col = FOURIER_SUMS:harmonic_column(lv,m)
          do n = 1,n_refl
             q2   = q(n,1)*q(n,1) + q(n,2)*q(n,2) + q(n,3)*q(n,3)
-            c(n) = .coeff(n)*fac*Y(n,col)*exp(-sig*sig*q2/2)
+            c(n) = .coeff(n)*fac*Y(n,col)*exp(-net*q2/2)
          end
          FOURIER_SUMS:fourier_series_at(comp,q,c,pts)
          if (m_lo==m_hi) then
@@ -509,6 +545,7 @@ contains
       case ("l_value=           "); .read_l_value
       case ("m_value=           "); .read_m_value
       case ("window_width=      "); .read_window_width
+      case ("sharpen_u=         "); .read_sharpen_U
       case ("l_max=             "); .read_l_max
       case ("centre=            "); .read_centre
       case ("center=            "); .read_centre
@@ -569,6 +606,18 @@ contains
       stdin.read_quantity(.window_width)
 
    DIE_IF(.window_width<=ZERO, "window_width must be positive")
+
+   end
+
+   read_sharpen_U
+   ! Read the mean ADP divided out of a local-moment map, an area with
+   ! units (angstrom^2); it must stay below the window width squared
+      self :: INOUT
+
+      stdin.read_quantity(.sharpen_U)
+
+   DIE_IF(.sharpen_U<ZERO, "sharpen_u must not be negative")
+   DIE_IF(.sharpen_U>=.window_width**2, "sharpen_u must be below window_width^2: blur more than you sharpen")
 
    end
 
@@ -751,6 +800,7 @@ contains
       if (.m_value/=-99) &
       stdout.show("m_value                 =",.m_value)
       stdout.show("Window width            =",.window_width)
+      stdout.show("Sharpening U            =",.sharpen_U)
       end
       stdout.show("l_max                   =",.l_max)
       stdout.show("Centre                  =",.centre)

@@ -107,6 +107,29 @@ $`\big(\sum_m M_{lm}^2\big)^{1/2}`$, does not: for $`l = 1`$ it is the magnitude
 gradient, for $`l = 2`$ the magnitude of its traceless curvature. That is the map made by
 default; one component is made on request.
 
+**Deformation moments.** Replacing $`F_n e^{i\alpha_n}`$ in (6) by $`F_n e^{i\alpha_n} - F_n^{\rm pro}`$,
+with $`F_n^{\rm pro}`$ the structure factors of the spherical atoms at the model's positions and
+ADPs, gives the local moments of the deformation density: the part that bonding adds to the
+atoms, which is what a chemist looks for. Two versions are made, from the model's structure
+factors and from the observed ones with the model's phases; the second is the local structure
+of the experimental deformation density, which no model supplies. The spherical atoms are those
+of the current method and basis (the International Tables form factors are used only if
+`use_IAM_ITC_FFs=` says so), because a sphericised atom depends on the level of theory as the
+molecule does. The subtraction also helps the arithmetic: the core electrons are spherical and
+cancel, so the coefficients are small at high $`q`$ where the total ones are largest and
+noisiest, $`F_{000}`$ cancels for a neutral cell, and the series converges faster.
+
+**Sharpening.** The factor $`e^{-\sigma^2 q^2/2}`$ is an isotropic displacement $`U = \sigma^2`$
+added to every atom, so dividing every reflection by a Debye-Waller factor $`e^{-U_0 q^2/2}`$,
+with $`U_0`$ a mean ADP, is the same formula with $`\sigma^2 - U_0`$ in the exponent: a map
+through a window of width $`\sigma`$ with a mean thermal motion taken out. It is allowed only
+while $`\sigma^2 > U_0`$, so that the net factor still decays and the noise at high $`q`$ is still
+damped; at equality the map is the thermally sharpened density with all its termination ripple,
+and beyond it the series diverges. The gain is modest for the usual values: at $`\sigma = 0.25`$ Å
+and $`U_0 = 0.02`$ Å² the effective width is 0.21 Å. Dividing atom by atom is not possible for the
+observed structure factors, which cannot be attributed to atoms; it is possible for the model,
+and there the static density is available anyway.
+
 **The window width.** The window merges features within about $`2\sigma`$, so $`\sigma`$ should
 be below the size of the atoms looked at: a first-row covalent radius is 0.6 to 0.8 Å, a
 second-row one 1.0 to 1.1 Å, hydrogen's 0.3 Å. The window also damps the series termination,
@@ -166,7 +189,20 @@ Because the weights add to one, the pieces add back to the density exactly:
 Truncating at $`l \le L`$ is the filter: $`L = 0`$ is a crystal of spherical atoms, each with
 the charge and radial shape it has in the crystal; $`L = 1`$ adds their dipolar deformations,
 and so on. The weight falls off quickly, so the series in $`l`$ converges much faster than the
-unweighted expansion (7). The product $`w_A\rho`$ is not periodic and has no structure factors,
+unweighted expansion (7). The moments of the radial functions,
+
+```math
+\mu^A_{lm} = \int_0^\infty \rho^A_{lm}(s)\, s^{l+2}\, ds , \qquad (10a)
+```
+
+are the atom's multipole moments about its nucleus: $`\sqrt{4\pi}\,\mu^A_{00}`$ its electron
+count, $`\mu^A_{1m}`$ its dipole, and so on. They are the Hirshfeld atomic multipoles, and are
+comparable with the moments of any other Hirshfeld-partitioned density, and, summed over the
+atoms, with the molecular dipole; they are not the pseudoatom populations $`P_{lm}`$ of a
+multipole model, which belong to a different partition. Applied to the deformation density
+instead of the density, the same expansion gives $`\sqrt{4\pi}\,\mu^{A,{\rm def}}_{00} = -q_A`$, the
+Hirshfeld charge, since the spherical pro-atoms integrate to $`Z_A`$ under the weight, and the
+radial function $`\rho^{A,{\rm def}}_{00}(s)`$ says at what radius the charge was gained or lost. The product $`w_A\rho`$ is not periodic and has no structure factors,
 so (9) is done by quadrature: for each atom and each radius, the integrand at the points of a
 Lebedev grid on the sphere, with the density from the wavefunction, or from the series (1) when
 the density is the measured one.
@@ -212,10 +248,11 @@ keyword at a time.
 
 | in `cell_map= { }` | default | meaning |
 |---|---|---|
-| `kind=` | `residual` | which structure factors the Fourier maps use: `residual` ($`F_{\rm exp} - F_{\rm calc}`$ with the model's phases), `f_exp` (observed magnitudes, model phases, $`F_{000}`$ added), `f_calc` |
+| `kind=` | `residual` | which structure factors the Fourier maps use: `residual` ($`F_{\rm exp} - F_{\rm calc}`$ with the model's phases), `f_exp` (observed magnitudes, model phases, $`F_{000}`$ added), `f_calc`, `deformation_calc` ($`F_{\rm calc} - F^{\rm pro}`$) and `deformation_exp` ($`F_{\rm exp} - F^{\rm pro}`$, model phases); the promolecule is made from the structure as it is when the block is read, so give the block after the refinement |
 | `l_value=` | $`-1`$ | for the Fourier maps: the plain density when negative, else the local moment of this $`l`$ (and this resets `m_value=`); for the rebuilt atoms: one $`l`$ alone |
 | `m_value=` | none | one component $`m`$ of the local moment, signed, in the frame of the Cartesian axes; without it the norm over $`m`$ |
 | `window_width=` | 0.25 Å | $`\sigma`$ of equation (6), a length with units |
+| `sharpen_u=` | 0 | a mean ADP divided out of a local-moment map, an area with units (`angstrom^2`); must stay below `window_width` squared |
 | `l_max=` | 2 | the highest $`l`$ of the radial functions and the rebuilt atoms |
 | `centre=` | the origin | the centre of the radial functions (7), Cartesian, with units; `center=` is accepted |
 | `centre_fractional=` | | the same in fractional coordinates (`crystal=` must come first) |
@@ -231,7 +268,7 @@ keyword at a time.
 | `plot_grid= { kind= hirshfeld_amplitude ... }` then `plot` | the same for the amplitudes, the sum over atoms of the expansion (11) |
 | `put_cell_map` | the block's settings, the number of reflections and the electron count of the map |
 | `put_cell_map_radial_functions` | the radial functions (7) about `centre=`, and the power of each $`l`$ |
-| `put_angular_hirshfeld_atoms` | for each unique atom, $`\rho^A_{lm}(s)`$ of (9) on its radial shells, the power $`\sum_m \int (\rho^A_{lm})^2 s^2 ds`$ for each $`l`$, and its electron count |
+| `put_angular_hirshfeld_atoms` | for each unique atom, $`\rho^A_{lm}(s)`$ of (9) on its radial shells, the power $`\sum_m \int (\rho^A_{lm})^2 s^2 ds`$ for each $`l`$, its electron count, and its multipole moments (10a) |
 | `put_ha_populations` | the same for the amplitude (11): $`\varphi^A_{lm}(s)`$ and the populations $`n^A_l`$ of (12) |
 
 The Fourier maps need structure factors, so a HAR or `make_structure_factors` comes first; the
@@ -262,7 +299,8 @@ VESTA or any cube viewer; `plot_grid= { plot_label= ... }` between plots keeps t
 | piece | procedure |
 |---|---|
 | the coefficients of a cell density, expanded over the whole sphere, divided by $`V`$ | the type `CELL_MAP` (`cell_map.foo`), filled by `CRYSTAL:make_cell_map` |
-| the coefficient of each reflection for `residual`, `f_exp`, `f_calc` | `DIFFRACTION_DATA.SET:make_Fourier_coefficients` |
+| the coefficient of each reflection for `residual`, `f_exp`, `f_calc` and the two deformation kinds | `DIFFRACTION_DATA.SET:make_Fourier_coefficients` |
+| the promolecule structure factors, the spherical atoms assembled as $`F_{\rm calc}`$ is | `MOLECULE.MAIN:set_cell_map_promolecule`, through `make_unique_IAM_atom_FFs` and `CRYSTAL:make_F_calc` |
 | the expansion over the symmetry-generated reflections, with the Friedel and site-symmetry factors | `DIFFRACTION_DATA.SET:make_symop_generated_coefficients`, `CRYSTAL:set_Fourier_multiplicities` |
 | the series (1) at any points, reflections outside and points inside so that the sines and cosines vectorise | `FOURIER_SUMS:fourier_series_at`, called by `CELL_MAP:make_values_at` |
 | the series on a grid over the cell, by one-dimensional phase tables | `CELL_MAP:make_values_on_cell` |
@@ -303,6 +341,7 @@ and itself tested against an angular quadrature of the series.
 | 6 | the quadrature (9) of the Fourier density with the weight left out, against the exact (7) at the same radii | urea, every atom, $`s \le 1.5`$ Å | relative difference | 5e-5 |
 | 7 | $`\sum_{l\le 2} n^A_l`$ of the amplitude, against the atom's electron count | urea, gly-L-ala, every atom | difference as a fraction of $`N_A`$ | 0.05 to 0.3 %, the remainder being $`l > 2`$ |
 | 8 | the rebuilt density (10) over all atoms, against the electron density on the same grid | urea, $`L = 0, 1, 2, 4, 6`$ | rms remainder as a fraction of the density's rms | see section 6 |
+| 9 | the model deformation map minus the experimental one, against the residual map; and the deformation maps' integrals | urea | rms over the cell; integral | 0.022, the residual's rms; zero |
 
 Beyond 1.5 Å from a nucleus check 6 fails, as it must: without the weight the sphere runs
 through neighbouring nuclei, and a 302-point Lebedev grid cannot integrate a 50 e/Å³ spike.
@@ -333,6 +372,27 @@ measure for the density itself is 0.022 against maxima of 49, the residual's rms
 of rms 0.0013, 0.0023 and 0.0035: a smooth, mostly negative background with a positive band
 across the N-H region. The window is wide for residual features; 0.25 Å, the default, keeps
 more of them.*
+
+![Urea: the deformation density and its local moments, from the model and from experiment](images/urea_deformation_moments.png)
+
+*The same plane: the deformation density $`\rho - \rho^{\rm pro}`$ through the 0.25 Å window and its
+$`l = 1`$ and $`l = 2`$ norms, from the model (top) and from the observed structure factors with
+the model's phases (bottom). Here the spherical atoms are gone and what is left is the bonding:
+the lone-pair and bond peaks of O, the N-H polarisation, and the ring of gradient around each
+feature.*
+
+The deformation maps are the real test of the data, since the spherical atoms no longer carry
+the agreement: the deformation density itself (extremes $`-0.19`$ to $`+0.38`$ e/Å³ from the
+model, $`-0.27`$ to $`+0.44`$ from experiment) agrees point by point with correlation 0.93 and an
+rms difference of 0.022, the residual's rms; its $`l = 0`$ moment with correlation 0.98 (maxima
+0.054 and 0.050), the $`l = 1`$ norm 0.98 (0.046 and 0.043) and the $`l = 2`$ norm 0.97 (0.078 and
+0.079). Both integrate to zero. Sharpening the experimental $`l = 1`$ map by a mean ADP of
+0.02 Å² raises its maximum from 0.043 to 0.062 and its rms by 17 %, with correlation 0.99 to the
+unsharpened map: the modest gain the arithmetic of section 2.1 predicts.
+
+The Hirshfeld multipole moments (10a) of the static atoms: dipoles of 0.054 e Å on O, along
+C=O, 0.025 on C, below 0.003 on N, and 0.050 and 0.049 on the two hydrogens, pointing along
+their N-H bonds; quadrupoles of 0.02 to 0.06 e Å².
 
 The populations of the Hirshfeld amplitudes, $`l \le 2`$, with each atom's electron count:
 
@@ -380,6 +440,16 @@ the narrower window. The populations say what urea's do: $`n_0`$ carries all but
 every atom (O 8.43, 8.41, 8.28; N 7.04, 6.91; C 5.85 to 6.07; the ammonium H 0.80, the amide H
 0.88, C-H 0.93 to 0.99), and the only $`n_1`$ above 0.01 e are the N-H hydrogens' (0.011 to
 0.018), with C-H at 0.005 to 0.009 and the carbonyl O at 0.008 to 0.009.
+
+The deformation maps of gly-L-ala agree less well between experiment and model than urea's,
+as its residual (rms 0.045 against 0.022) says they should: the deformation density itself
+(extremes $`-0.17`$ to $`+0.36`$ e/Å³ from the model, $`-0.26`$ to $`+0.31`$ from experiment) with
+correlation 0.70, its $`l = 0`$ moment 0.51, the $`l = 1`$ norm 0.80 and the $`l = 2`$ norm 0.92 --
+the finer the feature, the better the agreement, because the noise is largest at the window's
+scale. Sharpening by 0.02 Å² raises the experimental $`l = 1`$ map by 36 % at its maximum,
+with correlation 0.98 to the unsharpened one. The Hirshfeld dipoles of the static atoms are
+0.04 to 0.07 e Å on the oxygens, 0.005 to 0.015 on the nitrogens, 0.01 to 0.03 on the carbons
+and 0.03 to 0.05 on the hydrogens, the ammonium ones the largest.
 
 ## 7. The same idea in other fields
 
@@ -430,7 +500,17 @@ References: [the Gaussian scale-space paradigm and the multiscale local jet](htt
   $`F_{000}`$ and the model's phases; Tonto adds $`F_{000}`$ as the electrons of the unit cell,
   the cell taken as neutral.
 - The Fourier density is smeared by the ADPs; the wavefunction's is not. Their $`l`$
-  components differ for that reason alone.
+  components differ for that reason alone. The Hirshfeld-atom tables and populations are made
+  from the wavefunction's density unless `density_source= cell_map` is given.
+- A deformation map depends on the model's ADPs twice over: they smear the observed density and
+  they are built into the promolecule that is subtracted. An atom whose ADP is wrong leaves a
+  spherical remnant of itself in the map -- too large a $`U`$ subtracts too flat an atom and
+  leaves a positive peak at the nucleus, too small the reverse -- and ADPs refined with spherical
+  atoms absorb part of the bonding density, which is why deformation maps were classically made
+  with high-order or neutron ADPs. The error analysis is Rees (1976), *Acta Cryst.* A32, 483,
+  and Stevens and Coppens (1976), *Acta Cryst.* A32, 915, who give a priori estimates of the
+  errors in experimental densities; a HAR's ADPs, refined with aspherical atoms, are free of the
+  second effect, and the first is the thermal smearing of section 2.1.
 - The window must be at least $`2/q_{\max}`$ or the map carries termination ripple; the default
   0.25 Å is safe at a resolution of 1.0 Å⁻¹ and above.
 - The $`m`$ components depend on the axes; compare the norms, or the populations, between
