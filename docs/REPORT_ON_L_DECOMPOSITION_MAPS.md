@@ -82,7 +82,13 @@ M_{lm}(\mathbf r) = \int w(s)\; s^l\, Y_{lm}(\hat{\mathbf s})\; \rho(\mathbf r +
 
 $`M_{00}`$ is the average density near the point; the three $`M_{1m}`$ say in which direction,
 and how strongly, the density near the point rises; the five $`M_{2m}`$ say how it is elongated
-or flattened. Put equation (1) into (5), expand the plane wave by (4) and use (2): the integral
+or flattened.
+
+![The window of a local moment](images/local_moment_window.png)
+
+*The window. $`\mathbf r`$ is the point where the moment is wanted; $`\mathbf s`$ is measured from
+that point, not from the origin; the shading is the weight $`w(s)`$ given to the density at
+$`\mathbf r + \mathbf s`$, and $`\sigma`$ its width.* Put equation (1) into (5), expand the plane wave by (4) and use (2): the integral
 over directions picks out one harmonic, and the radial integral is a number for each
 reflection. With a Gaussian window, $`w(s) = (2\pi\sigma^2)^{-3/2} e^{-s^2/2\sigma^2}`$, that
 number is elementary and
