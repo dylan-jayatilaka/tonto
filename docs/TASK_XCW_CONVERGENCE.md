@@ -232,6 +232,44 @@ Three ways to build this in, cheapest first:
    SCF should then converge about as fast as an unconstrained one. This is the proper cure and a
    real piece of work.
 
+### The third cure in detail
+
+Split the error in the density into the part the reflections can see and the part they cannot.
+Along eigenvector $`j`$ of $`G`$, with eigenvalue $`\gamma_j`$, a plain step returns the error
+multiplied by $`-\lambda\gamma_j`$ (equation 5). So if the plain step changed the structure
+factors by $`s`$ (in units of sigma, scale direction removed), the error it started with was
+$`-(1+\lambda G)^{-1} s`$, and the step that lands on the answer is
+
+```math
+s^{\mathrm{right}} = (1+\lambda G)^{-1}\, s
+\qquad (7)
+```
+
+In words: each stiff direction is mixed in with its own fraction $`1/(1+\lambda\gamma_j)`$,
+which is exactly the fraction that cancels its overshoot, and everything the reflections do not
+see is taken in full. Uniform damping must use the fraction of the stiffest direction for all of
+them, which is why it is slow.
+
+One iteration would be:
+
+1. The plain step as now, giving the output density and its structure factors.
+2. $`s`$, from the structure factors of the output and input densities. No new integrals.
+3. Solve $`(1+\lambda G)\,t = \lambda G\,s`$ for $`t`$, the overshoot. $`G`$ is $`N \times N`$.
+4. Build the potential $`V = \frac{2}{N-p}\sum_k t_k\,\alpha A_k/\sigma_k`$, which is one more call
+   of the routine that builds the constraint matrix, with $`t`$ in place of the residuals.
+5. Take $`V`$ off the Fock matrix and diagonalise again; or apply the first-order orbital
+   response to $`V`$. Then DIIS as usual, which is left with only the ordinary two-electron part.
+
+Cost: one extra constraint build and one extra diagonalisation per iteration. $`G`$ is built once
+per lambda. For a large molecule, where storing every $`A_k`$ is too much, step 3 is solved by
+conjugate gradients instead, each product with $`G`$ being one constraint build and one
+structure-factor evaluation.
+
+Expected result: about as many iterations as an unconstrained SCF, at any lambda. Not yet
+tried. What could spoil it: the two-electron response left out of $`G`$ (1% here, larger for a
+small-gap system), and orbitals far from converged, where the linearisation is poor; a few
+damped steps first would cover the second.
+
 ## 7. Decisions for Dylan
 
 - **Repair damping everywhere, or only for constrained SCF?** The repair is two lines in
@@ -260,5 +298,13 @@ Three ways to build this in, cheapest first:
   `urea_rhf_STO-3G_HAR_TLS_cluster`, `urea_rhf_STO-3G_HAR_TLS_soft_modes`,
   `urea_rks_B3LYP_def2-TZVP_HAR_cell_maps`. Not looked at one by one. The five X-ray constrained
   jobs pass.
+- 2026-10-07, later. Dylan: repair damping for every SCF. Branch `damping-repair` (off `develop`,
+  the two-line repair only) is pushed. Looked at the twelve changed tests one by one in the Mac
+  release build: the seven short ones agree with their references in the final energy and
+  differ only in the iteration table; the five long ones move by 0.2 to 0.25% (2.7% in one small
+  number) in quantities that follow a loosely converged SCF. **Still to do: build
+  `damping-repair` in the reference build on achari2, run every suite, check each failure is of
+  those two kinds, bless, merge to `develop`.** The session could not reach achari2: the
+  permission system refused the ssh.
 - Not done: UHF and Hirshfeld-atom constraints in the stiffness routine; the urea job; a debug
   build; anything on achari2.
