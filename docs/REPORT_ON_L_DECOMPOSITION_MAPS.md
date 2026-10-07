@@ -381,7 +381,41 @@ every atom (O 8.43, 8.41, 8.28; N 7.04, 6.91; C 5.85 to 6.07; the ammonium H 0.8
 0.88, C-H 0.93 to 0.99), and the only $`n_1`$ above 0.01 e are the N-H hydrogens' (0.011 to
 0.018), with C-H at 0.005 to 0.009 and the carbonyl O at 0.008 to 0.009.
 
-## 7. Pitfalls
+## 7. The same idea in other fields
+
+Windowed moments of a field at every point are, by equation (6), derivatives of the blurred
+field, and that has been found wherever a scalar field on a grid is analysed. The atom-centred
+expansion with its invariants summed over $`m`$ has twins too. Each relative, and what it is
+here:
+
+| field | name | what it is | here |
+|---|---|---|---|
+| image analysis, vision | the *local jet* of scale-space theory (Koenderink; Florack, ter Haar Romeny, Viergever) | the image convolved with Gaussian derivatives of order 0, 1, 2, … at a scale $`\sigma`$, at every point, with the scale a free parameter | the local moments of section 2.1, one to one: $`M_{00}`$, $`M_{1m}`$, $`M_{2m}`$ are the derivatives of order 0, 1, 2 at scale $`\sigma`$ |
+| image analysis; seismic interpretation | the *structure tensor* (second-moment matrix; Förstner, Harris) | the outer product of the gradient, smoothed over a window; its eigenvectors give the local orientation of layering, its eigenvalues the anisotropy; used to pick reflector normals and channels in seismic volumes | a window over products of the $`l = 1`$ moments |
+| rock mechanics, granular materials, bone | the *fabric tensor* | the second-moment tensor of the orientations of grains, pores or interfaces in a window, linking the anisotropy of a microstructure to its elastic anisotropy | $`l = 2`$ moments of an orientation distribution rather than of a density |
+| medical imaging | *vesselness* (Sato, Lorenz, Frangi) | the eigenvalues of the Hessian of the Gaussian-smoothed image at several scales, combined into a score for "tubular here", the best scale kept | the $`l = 2`$ norm used as a detector, with the window width swept |
+| condensed matter, simulation | Steinhardt's *bond-orientational order parameters* $`Q_l`$ | about each atom, $`q_{lm} = \frac{1}{N}\sum_j Y_{lm}(\hat{\mathbf r}_{ij})`$ over its neighbours, then the rotational invariant $`Q_l = \big(\frac{4\pi}{2l+1}\sum_m |q_{lm}|^2\big)^{1/2}`$; $`Q_4`$ and $`Q_6`$ tell fcc from bcc from liquid | the norm over $`m`$, applied to neighbour directions instead of a density |
+| materials, machine-learning potentials | *SOAP*, smooth overlap of atomic positions (Bartók) | the neighbour density about an atom as a sum of Gaussians, expanded in radial functions times $`Y_{lm}`$ and reduced to the rotationally invariant power spectrum $`\sum_m c_{nlm} c_{n'lm}`$ | the Hirshfeld-atom expansion of section 2.3 and its power $`P_l(s)`$, built on atoms placed as Gaussians instead of the electron density |
+
+So the field maps are the local jet and the structure tensor, and the atom-centred expansion
+with its $`m`$-summed invariants is $`Q_l`$ and SOAP's power spectrum. The decomposition (10),
+whose pieces add back to the density, and the populations (12) of the square root appear to
+have no twin. Two habits of the neighbours are worth borrowing: the vision literature answers
+"which $`\sigma`$" by sweeping it and reading the structure across scales, and the experience
+with SOAP is that the power spectrum, $`P_l`$ here, carries the chemistry better than any single
+component.
+
+References: [the Gaussian scale-space paradigm and the multiscale local jet](https://link.springer.com/article/10.1007/BF00126140);
+[an introduction to scale-space theory](https://www.cs.jhu.edu/~misha/Fall07/Papers/intro-to-scalespace.pdf);
+[the structure tensor](https://en.wikipedia.org/wiki/Structure_tensor) and
+[its use on seismic data](https://academic.oup.com/gji/article/210/1/534/3805465);
+[the fabric tensor](https://arxiv.org/pdf/2604.08105);
+[multiscale vesselness filters](https://www.researchgate.net/publication/283558933_Beyond_Frangi_An_improved_multiscale_vesselness_filter);
+[Steinhardt parameters for structure identification](https://arxiv.org/pdf/1202.5005);
+[atom-density representations, SOAP](https://arxiv.org/pdf/1807.00408) and
+[DScribe](https://arxiv.org/pdf/1904.08875), which computes it.
+
+## 8. Pitfalls
 
 - A map from measured structure factors is a density only on the absolute scale with
   $`F_{000}`$ and the model's phases; Tonto adds $`F_{000}`$ as the electrons of the unit cell,
