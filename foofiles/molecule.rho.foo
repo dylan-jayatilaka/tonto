@@ -6883,10 +6883,7 @@ contains
          do lv = 0,l_max
             do m = -lv,lv
                lm = lv*lv + lv + m + 1
-               if (m>0) then;      col = lv*lv + 2*m
-               else if (m<0) then; col = lv*lv + 2*abs(m) + 1
-               else;               col = lv*lv + 1
-               end
+               col = FOURIER_SUMS:harmonic_column(lv,m)
                f(i,lm) = 4*PI*sum(lebedev.wts*Y(:,col)*rho)
             end
          end
@@ -6898,6 +6895,187 @@ contains
       shell.destroy
       Y.destroy
       lebedev.destroy
+
+   end
+
+   make_angular_Hirshfeld_grid(grid,pts) :: leaky, PURE
+   ! The plot kind angular_hirshfeld: the density rebuilt from the
+   ! Hirshfeld atoms' radial functions, see make_rebuilt_atoms_grid.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+
+      .make_rebuilt_atoms_grid(grid,pts,amplitude=FALSE)
+
+   end
+
+   make_Hirshfeld_amplitude_grid(grid,pts) :: leaky, PURE
+   ! The plot kind hirshfeld_amplitude: the square roots of the Hirshfeld
+   ! atoms rebuilt from their radial functions, see make_rebuilt_atoms_grid.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+
+      .make_rebuilt_atoms_grid(grid,pts,amplitude=TRUE)
+
+   end
+
+   make_rebuilt_atoms_grid(grid,pts,amplitude) :: leaky, PURE
+   ! Set "grid" at the cartesian points "pts" to the sum over the chosen
+   ! atoms A of their Hirshfeld atoms rebuilt from the radial functions:
+   !
+   !    sum_A sum_lm f^A_lm(|r - c_A|) Y_lm(r - c_A),
+   !
+   ! l from 0 to the cell_map block's l_max, or l_value alone when that is
+   ! set, so the map is the density filtered to those l; with every atom
+   ! and l_max large enough it tends to the electron density. "amplitude"
+   ! rebuilds sqrt(w_A rho) instead. The atoms are those of the block's
+   ! atoms= (indices or tags), or all of them. Each atom's radial functions
+   ! are made on a table of radii 0.05 bohr apart to 10 bohr and
+   ! interpolated cubically between them; beyond 10 bohr an atom adds
+   ! nothing. Values are in atomic units.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      pts  :: MAT{REAL}, IN
+      amplitude :: BIN, IN
+
+   ENSURE(.atom.allocated, "no atoms")
+   ENSURE(.cell_map.allocated, "no cell_map block")
+   ENSURE(grid.dim==pts.dim1, "grid: wrong dim")
+   ENSURE(pts.dim2==3, "pts: wrong dim2")
+
+      f,Y,d :: MAT{REAL}@
+      radii :: VEC{REAL}@
+      atoms :: VEC{INT}@
+      ca :: VEC{REAL}(3)
+      step,r_max,s,t,val,sl :: REAL
+      fm1,f0,f1,f2 :: REAL
+      n_rad,n_lm,n_pts,i,j,k,a,lv,m,lm,col,l_lo,l_hi,l_max,l_leb :: INT
+
+      ! Which l, which atoms
+      l_max = .cell_map.l_max
+      if (.cell_map.l_value>=0) then
+         l_lo = .cell_map.l_value; l_hi = .cell_map.l_value
+         l_max = max(l_max,l_hi)
+      else
+         l_lo = 0; l_hi = l_max
+      end
+      n_lm  = (l_max+1)*(l_max+1)
+      l_leb = max(2*l_max+2, 29)
+      .atoms_for_cell_map(atoms)
+
+      ! The table of radii
+      step  = 0.05d0
+      r_max = 10.0d0
+      n_rad = nint(r_max/step) + 1
+      radii.create(n_rad)
+      do i = 1,n_rad
+         radii(i) = (i-1)*step
+      end
+
+      n_pts = pts.dim1
+      grid = ZERO
+      f.create(n_rad,n_lm)
+      d.create(n_pts,3)
+      Y.create(n_pts,n_lm)
+
+      do k = 1,atoms.dim
+
+         a  = atoms(k)
+         ca = .atom(a).position
+         .make_atom_lm_radial_functions(f,radii,a,l_max,l_leb,amplitude,TRUE,FALSE)
+
+         ! The solid harmonics of the displacements from the nucleus
+         do i = 1,3
+            d(:,i) = pts(:,i) - ca(i)
+         end
+         FOURIER_SUMS:make_solid_harmonics(Y,d,l_max)
+
+         ! Each point: interpolate the radial functions at its distance from
+         ! the four table entries around it, and add the harmonics' sum
+         do i = 1,n_pts
+            s = sqrt(d(i,1)*d(i,1) + d(i,2)*d(i,2) + d(i,3)*d(i,3))
+            if (s>=r_max-2*step) cycle
+            j = int(s/step)                      ! the table interval
+            j = max(1,min(j,n_rad-3))
+            t = s/step - j                       ! 0 to 1 within it
+            val = ZERO
+            do lv = l_lo,l_hi
+               sl = s**lv
+               if (sl<1.0d-30) then
+                  if (lv>0) cycle
+                  sl = ONE
+               end
+               do m = -lv,lv
+                  lm  = lv*lv + lv + m + 1
+                  col = FOURIER_SUMS:harmonic_column(lv,m)
+                  fm1 = f(j,lm);   f0 = f(j+1,lm)
+                  f1  = f(j+2,lm); f2 = f(j+3,lm)
+                  val = val + Y(i,col)/sl * ( &
+                       -t*(t-1)*(t-2)/6*fm1 + (t+1)*(t-1)*(t-2)/2*f0 &
+                       -(t+1)*t*(t-2)/2*f1 + (t+1)*t*(t-1)/6*f2 )
+               end
+            end
+            grid(i) = grid(i) + val
+         end
+
+      end
+
+      Y.destroy
+      d.destroy
+      f.destroy
+      radii.destroy
+      atoms.destroy
+
+   end
+
+   atoms_for_cell_map(atoms) :: leaky, PURE
+   ! Set "atoms" to the indices of the atoms named in the cell_map block's
+   ! atoms=, each an index or a tag; all atoms when none were named.
+      self :: IN
+      atoms :: VEC{INT}@, OUT
+
+   ENSURE(.atom.allocated, "no atoms")
+
+      tag,word :: STR
+      i,a,n :: INT
+      found,all :: BIN
+
+      all = TRUE
+      if (.cell_map.allocated) then
+         if (.cell_map.atom_tags.allocated) all = FALSE
+      end
+
+      if (all) then
+         atoms.create(.n_atom)
+         do a = 1,.n_atom
+            atoms(a) = a
+         end
+         return
+      end
+
+      n = .cell_map.atom_tags.dim
+      atoms.create(n)
+
+      do i = 1,n
+         word = .cell_map.atom_tags(i)
+         if (word.is_int) then
+            atoms(i) = word.to_int
+            ENSURE(atoms(i)>=1 AND atoms(i)<=.n_atom, "atoms=: index out of range: "//trim(word))
+         else
+            word.to_lower_case
+            found = FALSE
+            do a = 1,.n_atom
+               tag = .atom(a).tag
+               tag.to_lower_case
+               if (tag/=word) cycle
+               atoms(i) = a
+               found = TRUE
+               exit
+            end
+            ENSURE(found, "atoms=: no atom with tag "//trim(word))
+         end
+      end
 
    end
 
