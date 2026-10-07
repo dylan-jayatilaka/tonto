@@ -532,7 +532,14 @@ index and `l` the angular momentum must not meet in one routine: call the indice
   the promolecule) on every map; it now drops only the coefficient arrays. Results on urea and
   gly-L-ala are in the report's section 6 (urea: experiment against model for the deformation
   density 0.93, its moments 0.97-0.98; gly-L-ala 0.70 and 0.51-0.92, its residual being twice
-  urea's); the cubes are beside the others in `~/Dropbox/tonto_data/cell_maps/`. The Hirshfeld-atom
+  urea's); the cubes are beside the others in `~/Dropbox/tonto_data/cell_maps/`.
+- 2026-10-07, evening. **Scale-space deblurring** (Dylan, after reading Florack et al. 1996):
+  `sharpen_order=` (the Taylor polynomial of the sharpening factor, bounded for any U),
+  `laplacian_order=` and `wiener_weight=`; the report's new section 2.5 explains the diffusion
+  equation, the local jet, the two deblurrings and the Wiener weight, and section 7 the relation
+  to blurring diffusion models. Urea: order 4 reproduces the exact factor; the Wiener weight is
+  invisible on these data; U0 = 0.05 Å² at order 6 is the noise-amplifying regime (correlation
+  0.85 with the plain map). Checks in `tmp/urea8`. The Hirshfeld-atom
   populations of gly-L-ala (a second job, 19 min, output `gly_L_ala_hirshfeld_atoms.stdout`
   beside the cubes) say the same as urea's: $`n_0`$ carries all but 0.1-0.3% of every atom --
   O 8.43, 8.41, 8.28; N 7.04, 6.91; C 5.85-6.07; the ammonium H 0.80, the amide H 0.88, C-H

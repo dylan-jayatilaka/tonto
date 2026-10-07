@@ -77,6 +77,9 @@ contains
       .m_value      = -99
       .window_width = 0.25*BOHR_PER_ANGSTROM
       .sharpen_U    = ZERO
+      .sharpen_order   = 0
+      .laplacian_order = 0
+      .wiener_weight   = FALSE
       .l_max        = 2
       .centre       = ZERO
       .n_radii      = 40
@@ -290,7 +293,11 @@ contains
    ! centred at the point, divided by sigma^l. With sharpen_U set, a mean
    ! ADP U is divided out of every reflection first, which is the same
    ! formula with sigma^2 - U in the exponent; it is allowed only while
-   ! that is positive, so the series still converges. With m_value set it is that
+   ! that is positive, so the series still converges. With sharpen_order
+   ! the exact factor exp(U q^2/2) is replaced by its Taylor polynomial of
+   ! that order, a sum of Laplacian powers, bounded by the window for any
+   ! U. With laplacian_order the map is multiplied by (-sigma^2 q^2)^k, its
+   ! k-th Laplacian scaled by sigma^2k. With m_value set it is that
    ! one component, in the frame of the cartesian axes; otherwise it is the
    ! norm over m, which does not depend on the axes. l = 0 has one
    ! component and keeps its sign.
@@ -308,7 +315,7 @@ contains
    ENSURE(.l_value>=0, "l_value not set")
    ENSURE(.m_value==-99 OR abs(.m_value)<=.l_value, "m_value out of range")
    ENSURE(.window_width>ZERO, "window_width not set")
-   ENSURE(.sharpen_U<.window_width**2, "sharpen_U must be below window_width^2")
+   ENSURE(.sharpen_order>0 OR .sharpen_U<.window_width**2, "sharpen_U must be below window_width^2")
 
       q,Y :: MAT{REAL}@
       c   :: VEC{CPX}@
@@ -322,8 +329,12 @@ contains
       sig = .window_width
       fac = (-IMAGIFY(ONE))**lv * sig**lv
 
-      ! The net blur: the window less the mean ADP divided out
-      net = sig*sig - .sharpen_U
+      ! The net blur: the window less the mean ADP divided out, when the
+      ! sharpening is exact; with a Taylor polynomial of order sharpen_order
+      ! the window stays whole and the polynomial in q^2 does the sharpening,
+      ! which is bounded whatever U
+      net = sig*sig
+      if (.sharpen_order==0) net = net - .sharpen_U
 
       ! The scattering vectors, and the solid harmonics q^l Y_lm(q^) at them
       q.create(n_refl,3)
@@ -347,6 +358,8 @@ contains
          do n = 1,n_refl
             q2   = q(n,1)*q(n,1) + q(n,2)*q(n,2) + q(n,3)*q(n,3)
             c(n) = .coeff(n)*fac*Y(n,col)*exp(-net*q2/2)
+            if (.sharpen_order>0)   c(n) = c(n)*.sharpening_polynomial(q2)
+            if (.laplacian_order>0) c(n) = c(n)*(-sig*sig*q2)**.laplacian_order
          end
          FOURIER_SUMS:fourier_series_at(comp,q,c,pts)
          if (m_lo==m_hi) then
@@ -448,6 +461,27 @@ contains
 
    end
 
+   sharpening_polynomial(q2) result (res) :: pure
+   ! The Taylor polynomial of order ".sharpen_order" of exp(U q^2/2), the
+   ! factor that divides a mean ADP U out of a reflection with q^2 = "q2":
+   ! the backward step in scale as a sum of Laplacian powers, which is
+   ! bounded by the window for any U
+      self :: IN
+      q2  :: REAL, IN
+      res :: REAL
+
+      term :: REAL
+      j :: INT
+
+      res  = ONE
+      term = ONE
+      do j = 1,.sharpen_order
+         term = term*(.sharpen_U*q2/2)/j
+         res  = res + term
+      end
+
+   end
+
    make_values_on_cell(values,nx,ny,nz) :: PURE
    ! Set "values" to the density on a grid of "nx", "ny", "nz" points
    ! along the cell axes, both ends of each axis included, incrementing
@@ -546,6 +580,9 @@ contains
       case ("m_value=           "); .read_m_value
       case ("window_width=      "); .read_window_width
       case ("sharpen_u=         "); .read_sharpen_U
+      case ("sharpen_order=     "); .read_sharpen_order
+      case ("laplacian_order=   "); .read_laplacian_order
+      case ("wiener_weight=     "); .read_wiener_weight
       case ("l_max=             "); .read_l_max
       case ("centre=            "); .read_centre
       case ("center=            "); .read_centre
@@ -617,7 +654,36 @@ contains
       stdin.read_quantity(.sharpen_U)
 
    DIE_IF(.sharpen_U<ZERO, "sharpen_u must not be negative")
-   DIE_IF(.sharpen_U>=.window_width**2, "sharpen_u must be below window_width^2: blur more than you sharpen")
+   DIE_IF(.sharpen_order==0 AND .sharpen_U>=.window_width**2, "sharpen_u must be below window_width^2: blur more than you sharpen, or set sharpen_order")
+
+   end
+
+   read_sharpen_order
+   ! Read the order of the Taylor polynomial that replaces the exact
+   ! sharpening factor; 0 keeps the exact factor
+      self :: INOUT
+
+      stdin.read(.sharpen_order)
+
+   DIE_IF(.sharpen_order<0, "sharpen_order must not be negative")
+
+   end
+
+   read_laplacian_order
+   ! Read how many Laplacians to apply to a local-moment map
+      self :: INOUT
+
+      stdin.read(.laplacian_order)
+
+   DIE_IF(.laplacian_order<0, "laplacian_order must not be negative")
+
+   end
+
+   read_wiener_weight
+   ! Read whether each observed coefficient is weighted by F^2/(F^2+sigma_F^2)
+      self :: INOUT
+
+      stdin.read(.wiener_weight)
 
    end
 
@@ -801,6 +867,9 @@ contains
       stdout.show("m_value                 =",.m_value)
       stdout.show("Window width            =",.window_width)
       stdout.show("Sharpening U            =",.sharpen_U)
+      stdout.show("Sharpening order        =",.sharpen_order)
+      stdout.show("Laplacian order         =",.laplacian_order)
+      stdout.show("Wiener weight?          =",.wiener_weight)
       end
       stdout.show("l_max                   =",.l_max)
       stdout.show("Centre                  =",.centre)

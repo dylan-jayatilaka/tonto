@@ -256,6 +256,71 @@ only how far bonding has pushed the atom off a sphere. And it needs a true densi
 root exists only where the density is not negative, so a measured map must be on the absolute
 scale with $`F_{000}`$, and free of ripple; the wavefunction's density is the natural choice.
 
+### 2.5 Scale, deblurring and noise
+
+The blurred density $`\rho_\sigma`$ of section 2.1 is one member of a family indexed by the
+window width, and the family obeys a differential equation. Writing $`t = \sigma^2/2`$, the
+factor $`e^{-tq^2}`$ in (6) gives
+
+```math
+\frac{\partial \rho_\sigma}{\partial t} = \nabla^2 \rho_\sigma , \qquad (13)
+```
+
+the diffusion equation: making the window wider is diffusion, with the scale as its time, and
+the Laplacian is what generates a change of scale, as the gradient generates a translation.
+This is the starting point of scale-space theory in image analysis (Koenderink; Florack and
+others, section 7). It has two consequences that carry over to the maps here.
+
+*Every scale derivative is a spatial derivative.* By (13), $`\partial^j\rho_\sigma/\partial t^j =
+\nabla^{2j}\rho_\sigma`$, so the density at any nearby scale is a Taylor series in $`t`$ whose
+coefficients are the Laplacians of the map at the scale one has. In the moments of section
+2.1 the Laplacian is the $`l = 0`$ moment with a radial factor $`q^2`$; it sits beside the
+traceless $`l = 2`$ moments, which carry the shape, as the part that carries the scale. The
+keyword `laplacian_order= k` multiplies a map by $`(-\sigma^2 q^2)^k`$, which is
+$`\sigma^{2k}\nabla^{2k}`$ of it, in the units of a density.
+
+*Deblurring is a backward step in that series.* Stepping back by $`\delta t`$ is multiplying
+every coefficient by $`e^{+\delta t\, q^2}`$, which is the sharpening of section 2.1 with
+$`\delta t = U_0/2`$. Florack and others do it with the Taylor polynomial of that factor,
+
+```math
+\rho_{\sigma}(t - \delta t) \approx \sum_{j=0}^{J} \frac{(-\delta t)^j}{j!}\, \nabla^{2j}\rho_\sigma ,
+\qquad (14)
+```
+
+with Gaussian derivatives up to order $`2J`$ (they used 12), and report that it works on images
+with as much noise as signal, provided the features wanted are larger than the noise's scale.
+The polynomial is what makes it safe: it grows only as $`q^{2J}`$, which the window's Gaussian
+always beats, so there is no limit on $`\delta t`$ -- only a trade-off, since the polynomial
+follows the exponential while $`\delta t\, q^2 \lesssim J`$ and falls short beyond. The exact
+factor, available here because the coefficients are known, is limited instead by
+$`\sigma^2 > U_0`$. `sharpen_order= J` chooses the polynomial of order $`J`$; 0, the default,
+keeps the exact factor. Either way, as they say, deblurring is not the inverse of blurring,
+which is a semigroup and has none: it sharpens what is already in the data, noise included,
+and creates nothing. For diffraction that means it cannot reach past the resolution sphere;
+it only undoes the window's attenuation of the coefficients inside it, and the termination
+ripple returns as the window goes.
+
+*Noise.* Images carry no error bars; reflections do. The weight $`F^2/(F^2 + \sigma_F^2)`$ on
+each observed coefficient is the simplest form of a Wiener filter: it leaves a reflection
+measured well alone and shrinks towards zero one whose error is of the size of its value, so
+that the sharpening amplifies the signal more than the noise. `wiener_weight= TRUE` applies it
+to the observed kinds (`residual`, `f_exp`, `deformation_exp`) and does nothing to the model's.
+
+On urea's experimental deformation $`l = 1`$ map (window 0.25 Å, $`U_0 = 0.02`$ Å²) the
+polynomial of order 2 gives 0.0614 against the exact factor's 0.0621 at the maximum, orders 4
+and 8 reproduce the exact factor to four figures (at $`q_{\max} = 15.7`$ Å⁻¹, $`U_0 q^2/2 = 2.5`$,
+so order 4 already covers the sphere), and the Wiener weight changes nothing in the fourth
+figure, urea's data being precise. Sharpening by $`U_0 = 0.05`$ Å², just under the window's
+0.0625, with order 6 raises the maximum threefold and drops the correlation with the plain map to
+0.85: the regime where the noise comes up with the signal. The Laplacian of the $`l = 0`$ map
+integrates to zero, as it must.
+
+One more limit is particular to crystals: the thermal blur is not one Gaussian but one per
+atom, so a single $`U_0`$ under-sharpens the hydrogens and over-sharpens the heavy atoms, and
+an atom sharpened past its own $`U`$ acquires a negative effective one, which shows as a ring
+around it.
+
 ## 3. Keywords
 
 All the settings live in one block, `cell_map= { ... }`, read at the top level of the molecule;
@@ -269,7 +334,10 @@ keyword at a time.
 | `l_value=` | $`-1`$ | for the Fourier maps: the plain density when negative, else the local moment of this $`l`$ (and this resets `m_value=`); for the rebuilt atoms: one $`l`$ alone |
 | `m_value=` | none | one component $`m`$ of the local moment, signed, in the frame of the Cartesian axes; without it the norm over $`m`$ |
 | `window_width=` | 0.25 Å | $`\sigma`$ of equation (6), a length with units |
-| `sharpen_u=` | 0 | a mean ADP divided out of a local-moment map, an area with units (`angstrom^2`); must stay below `window_width` squared |
+| `sharpen_u=` | 0 | a mean ADP divided out of a local-moment map, an area with units (`angstrom^2`); must stay below `window_width` squared unless `sharpen_order=` is set |
+| `sharpen_order=` | 0 | the order $`J`$ of the polynomial (14) in place of the exact sharpening factor; 0 is exact |
+| `laplacian_order=` | 0 | $`k`$ Laplacians applied to a local-moment map, scaled by $`\sigma^{2k}`$ |
+| `wiener_weight=` | `FALSE` | weight each observed coefficient by $`F^2/(F^2+\sigma_F^2)`$ |
 | `l_max=` | 2 | the highest $`l`$ of the radial functions and the rebuilt atoms |
 | `centre=` | the origin | the centre of the radial functions (7), Cartesian, with units; `center=` is accepted |
 | `centre_fractional=` | | the same in fractional coordinates (`crystal=` must come first) |
@@ -321,7 +389,8 @@ VESTA or any cube viewer; `plot_grid= { plot_label= ... }` between plots keeps t
 | the expansion over the symmetry-generated reflections, with the Friedel and site-symmetry factors | `DIFFRACTION_DATA.SET:make_symop_generated_coefficients`, `CRYSTAL:set_Fourier_multiplicities` |
 | the series (1) at any points, reflections outside and points inside so that the sines and cosines vectorise | `FOURIER_SUMS:fourier_series_at`, called by `CELL_MAP:make_values_at` |
 | the series on a grid over the cell, by one-dimensional phase tables | `CELL_MAP:make_values_on_cell` |
-| the local moments (6), one component or the norm over $`m`$ | `CELL_MAP:make_moment_at`, through `make_map_at` |
+| the local moments (6), one component or the norm over $`m`$; the sharpening, exact or by (14); the Laplacians | `CELL_MAP:make_moment_at`, `sharpening_polynomial`, through `make_map_at` |
+| the Wiener weight on the observed coefficients | `DIFFRACTION_DATA.SET:make_Fourier_coefficients` |
 | the solid harmonics $`q^l Y_{lm}(\hat{\mathbf q})`$ for all $`l \le l_{\max}`$ | `FOURIER_SUMS:make_solid_harmonics`, with `FOURIER_SUMS:harmonic_column` for the order of $`m`$ |
 | the radial functions (7); the spherical Bessel functions | `CELL_MAP:make_radial_functions`, `FOURIER_SUMS:spherical_bessel` |
 | the angular quadrature (9) and (11) about a nucleus | `MOLECULE.RHO:make_atom_lm_radial_functions` |
@@ -485,7 +554,8 @@ here:
 | materials, machine-learning potentials | *SOAP*, smooth overlap of atomic positions (Bartók) | the neighbour density about an atom as a sum of Gaussians, expanded in radial functions times $`Y_{lm}`$ and reduced to the rotationally invariant power spectrum $`\sum_m c_{nlm} c_{n'lm}`$ | the Hirshfeld-atom expansion of section 2.3 and its power $`P_l(s)`$, built on atoms placed as Gaussians instead of the electron density |
 
 So the field maps are the local jet and the structure tensor, and the atom-centred expansion
-with its $`m`$-summed invariants is $`Q_l`$ and SOAP's power spectrum. The route through the
+with its $`m`$-summed invariants is $`Q_l`$ and SOAP's power spectrum; the deblurring of
+section 2.5 is the local jet's own, equation (14). The route through the
 Fourier coefficients is known on both sides too: multiplying an image's transform by
 $`(i\omega)^n e^{-\sigma^2\omega^2/2}`$ is one of the standard ways of computing the local jet,
 and crystallographers blur a map by an artificial temperature factor (the $`l = 0`$ term) and
