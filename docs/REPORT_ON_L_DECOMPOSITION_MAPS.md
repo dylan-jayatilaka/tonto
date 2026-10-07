@@ -192,6 +192,12 @@ Because the weights add to one, the pieces add back to the density exactly:
 \rho^A_{lm}(|\mathbf r - \mathbf c_A|)\; Y_{lm}\big(\widehat{\mathbf r - \mathbf c_A}\big) . \qquad (10)
 ```
 
+This is Stewart's pseudoatom decomposition with the radial functions taken from the density
+itself: Koritsanszky and Volkov (*Chem. Phys. Lett.* **385**, 431, 2004) project stockholder
+atom densities onto nucleus-centred real harmonics in just this way, call the result the
+stockholder pseudoatom, and use its radial functions, which they take as the true ones, as the
+basis a multipole model should fit. The multipole model of Hansen and Coppens (*Acta Cryst.* A34,
+909, 1978) is the same expansion with fixed Slater radial functions and refined populations.
 Truncating at $`l \le L`$ is the filter: $`L = 0`$ is a crystal of spherical atoms, each with
 the charge and radial shape it has in the crystal; $`L = 1`$ adds their dipolar deformations,
 and so on. The weight falls off quickly, so the series in $`l`$ converges much faster than the
@@ -204,8 +210,10 @@ unweighted expansion (7). The moments of the radial functions,
 are the atom's multipole moments about its nucleus: $`\sqrt{4\pi}\,\mu^A_{00}`$ its electron
 count, $`\mu^A_{1m}`$ its dipole, and so on. They are the Hirshfeld atomic multipoles, and are
 comparable with the moments of any other Hirshfeld-partitioned density, and, summed over the
-atoms, with the molecular dipole; they are not the pseudoatom populations $`P_{lm}`$ of a
-multipole model, which belong to a different partition. Applied to the deformation density
+atoms, with the molecular dipole. Koritsanszky and Volkov's multipole populations are
+$`\int \rho^A_{lm}(s)\, s^2\, ds`$, without the $`s^l`$, the stockholder analogue of a multipole
+model's $`P_{lm}`$; a refined $`P_{lm}`$ belongs to that model's own radial functions and
+partition, and is comparable only through the moments. Applied to the deformation density
 instead of the density, the same expansion gives $`\sqrt{4\pi}\,\mu^{A,{\rm def}}_{00} = -q_A`$, the
 Hirshfeld charge, since the spherical pro-atoms integrate to $`Z_A`$ under the weight, and the
 radial function $`\rho^{A,{\rm def}}_{00}(s)`$ says at what radius the charge was gained or lost. The product $`w_A\rho`$ is not periodic and has no structure factors,
@@ -479,10 +487,13 @@ Fourier coefficients is known on both sides too: multiplying an image's transfor
 $`(i\omega)^n e^{-\sigma^2\omega^2/2}`$ is one of the standard ways of computing the local jet,
 and crystallographers blur a map by an artificial temperature factor (the $`l = 0`$ term) and
 have synthesised the Laplacian of the density from weighted structure factors (the trace of
-$`l = 2`$). What has no twin that we know of is the family taken whole: every $`l`$ and $`m`$ as
-one weighted sum each, the norm over $`m`$ as the rotational invariant at each point, the
-scaling to the units of a density, the comparison of $`F_{\rm exp}`$ with $`F_{\rm calc}`$ by
-angular character; and the decomposition (10), whose pieces add back to the density, with the
+$`l = 2`$). The decomposition (10) is the stockholder pseudoatom of
+Koritsanszky and Volkov (section 2.3), who derived it from Stewart's pseudoatom formalism and
+applied it to a theoretical density of water. What has no twin that we know of is the family
+taken whole: every $`l`$ and $`m`$ of the field as one weighted sum each, the norm over $`m`$ as
+the rotational invariant at each point, the scaling to the units of a density, the comparison
+of $`F_{\rm exp}`$ with $`F_{\rm calc}`$ by angular character, the deformation moments; the
+decomposition applied to a Fourier density and tested against the exact expansion (7); and the
 populations (12) of the square root. Two habits of the neighbours are worth borrowing: the vision literature answers
 "which $`\sigma`$" by sweeping it and reading the structure across scales, and the experience
 with SOAP is that the power spectrum, $`P_l`$ here, carries the chemistry better than any single
@@ -498,7 +509,10 @@ References: [the Gaussian scale-space paradigm and the multiscale local jet](htt
 [atom-density representations, SOAP](https://arxiv.org/pdf/1807.00408) and
 [DScribe](https://arxiv.org/pdf/1904.08875), which computes it;
 [scale-space implementation, including the Fourier route](https://en.wikipedia.org/wiki/Scale_space_implementation);
-[the Laplacian of the density by Fourier synthesis from weighted structure factors](https://journals.iucr.org/a/issues/2023/03/00/pl5022/index.html).
+[the Laplacian of the density by Fourier synthesis from weighted structure factors](https://journals.iucr.org/a/issues/2023/03/00/pl5022/index.html);
+Koritsanszky and Volkov, *Chem. Phys. Lett.* **385**, 431 (2004), the stockholder pseudoatom;
+Stewart, *Isr. J. Chem.* **16**, 124 (1977), the pseudoatom formalism; Hansen and Coppens,
+*Acta Cryst.* A**34**, 909 (1978), the multipole model.
 
 ## 8. Pitfalls
 
