@@ -364,7 +364,7 @@ public final class FooToFortran {
         "optional", "private", "public", "in", "out", "inout");
 
     static final Set<String> ASSERT_MACROS = Set.of(
-        "ENSURE", "DIE_IF", "WARN_IF", "DIE", "WARN");
+        "ENSURE", "DIE_IF", "WARN_IF", "DIE", "WARN", "STOP_IF");
 
     static String nameText(FooParser.NameContext n) {
         // strip only a TRAILING '?' (the placeholder marker); keep any embedded

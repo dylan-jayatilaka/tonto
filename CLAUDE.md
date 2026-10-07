@@ -336,7 +336,8 @@ documents (§1), as are the `docs/TASK_*.md` pages.
   subroutine for the generic `flush_`" rather than a purity error.
 - **activates `WARN` / `WARN_IF`**, which exist only when `USE_PRECONDITIONS` is defined and so
   compile to nothing in release. `DIE`/`DIE_IF` exist when `USE_ERROR_MANAGEMENT` is defined, and so *are* live in
-  release. A check that must fire in production has to be a `DIE`.
+  release. A check that must fire in production has to be a `DIE` — or, inside a `PURE`
+  routine, where a `DIE` does not compile in release, a `STOP_IF(cond,"...")`.
 - adds `-fcheck=bounds`.
 
 Keep the debug test job quick (`tests/long/urea_rhf_STO-3G_HAR` is ~4 s) so the edit-build-run

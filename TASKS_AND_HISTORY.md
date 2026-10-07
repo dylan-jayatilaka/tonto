@@ -4492,8 +4492,26 @@ min(X, 100) and scales. Nothing changes below 100.
 **Checked on achari2.** The six-molecule job: 9 s. The 21-molecule job: 160 s. ZnH2, HBr and KH:
 output identical to before, line for line. Suite 180/180 in the reference build.
 
-**Left.** (The original hung job was stopped by Dylan on 2026-10-06.) An unconverged or NaN Rys root should stop the program in a
-release build too; today only `ENSURE`s guard it.
+**The guard, added 2026-10-07.** (The original hung job was stopped by Dylan on 2026-10-06.) The
+two `ENSURE`s in `RYS:ryssmt` and `RYS:rysnod` are now `STOP_IF`s, and the root search counts its
+steps and stops at 10000 (a search that works needs at most about 3600: 13 halvings of the
+bracket, each with at most about 275 inner steps). `STOP_IF(cond,"msg")` is a new macro in
+`include/macros.in` that expands to `if (cond) error stop "msg"`. A Fortran `error stop` is allowed
+in a pure routine, so the routines stay `PURE` and no caller changes; a `DIE` there does not
+compile in release. The translator has no rule for a bare `error stop "msg"` and drops the
+message, which is why it is a macro; `STOP_IF` was added to the translator's list of assertion
+macros so the message gets its `MODULE:routine ...` prefix.
+
+**Checked on the Mac, release build.** A temporary loop in `runfiles/run_rys.foo` asked for 6 to
+16 roots at 101 values of X from 0.001 to 10^7. 6 to 11 roots ran through; 12 roots stopped with
+*ERROR STOP RYS:ryssmt ... negative pivot: the Rys roots cannot be made* and exit code 1. Short
+suite 81 of 82; the one failure is `show_labels`, on heading underlines in `cell_map.foo:806` and
+`molecule.main.foo:1180` that this change does not touch.
+
+**Seen on the way, not acted on.** The same loop compared the sum of the weights with F0(X). The
+worst relative error grows with the number of roots, always at small X: 1e-11 for 6 roots, 3e-10
+for 7, 1e-8 for 8, 4e-7 for 9 (X = 0.05), 2e-5 for 10 (X = 0.3), 6e-4 for 11. Nine roots is a
+(gg|gg) quartet. This is the Mac `-Ofast` build; not repeated in the reference build.
 
 ## CLOSED 2026-10-06: the form-factor benchmark in Julia
 

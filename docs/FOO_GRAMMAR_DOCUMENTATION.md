@@ -892,6 +892,9 @@ The C preprocessor (`include/macros.in`) provides, among others:
   procedure (before the first executable statement). These compile out unless
   `-DUSE_PRE_AND_POST_CONDITIONS` / `-DUSE_PRECONDITIONS` is set. **They must not
   appear in lowercase `pure`/`elemental` procedures** (see §7).
+- **`STOP_IF(cond,"msg")`** — stops the program with the message in **every** build, and is
+  allowed in a `PURE` routine, where a `DIE_IF` does not compile in release. It expands to a
+  Fortran `error stop`, so the message goes to the terminal, not to the output file.
 - **`UNKNOWN(word)`** — used in the `case default` of a keyword `select case`; it
   builds an "unknown keyword, known are: …" error from the enclosing
   `select case` labels.
