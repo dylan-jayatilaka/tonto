@@ -2218,8 +2218,13 @@ code, whereas a stale global table risks only a name-resolution detail.
 > gives the effective number of parameters, AIC, BIC, GCV and a leave-one-out cross-validation
 > from one converged run per lambda, checked against two real held-out refits (7 to 8% low);
 > `put_constraint_stiffness= TRUE` in `scfdata=` prints them. Section 7 of the task document.
-> On ammonia the leave-one-out minimum is near lambda 0.15, which the present SCF cannot reach,
-> so the SCF cure comes first.
+> **2026-10-08, later: the cure is implemented**, `use_stiffness_correction= TRUE`, the Newton
+> step with the constraint curvature, applied as a second constraint matrix in the space of
+> reflections. No damping, no DIIS, about ten iterations at every lambda from 0.012 to 4 on
+> ammonia; the converged wavefunction is unchanged. The lambda scan then runs out to 4: the
+> leave-one-out minimum is at 2.0 and GCV at 3.2, AIC at 0.08, BIC at 0.024. The task document
+> became `docs/REPORT_ON_XCW_CONVERGENCE.md`; `docs/TASK_XCW_CONVERGENCE.md` keeps the plan
+> (reuse of the gain matrix, then a matrix-free form), the decisions owed and the log.
 
 Per Dylan this instability is **well known and has never been diagnosed**. Recorded here now that
 there is finally an executing test to observe it with:

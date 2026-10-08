@@ -1957,6 +1957,11 @@ contains
 
       ! Add constraint to F?
       if (.SCF_data.is_constrained_SCF) .add_constraint_to_Fock_mx
+      if (.SCF_data.is_constrained_SCF AND .SCF_data.use_stiffness_correction) then
+      if (.MOs.allocated AND .MO_energies.allocated) then
+         .correct_constraint_overshoot
+      end
+      end
 
       ! Initialise DIIS error
       if (.SCF_data.using_DIIS) .update_SCF_data_error
@@ -2252,7 +2257,12 @@ contains
             .make_constraint_data
             .update_SCF_data
             .add_constraint_to_Fock_mx
+            if (.SCF_data.use_stiffness_correction) .correct_constraint_overshoot
             .update_SCF_data_error
+            if (.SCF_data.put_constraint_stiffness AND .SCF_data.SCF_done) then
+               .make_constraint_stiffness
+               .SCF_data.record_lambda_point(.crystal.xray_data.reflections.F_GoF2)
+            end
          ! .put_SCF_table_body(flush=TRUE)
             .SCF_data.put_table_body_and_footer(.crystal,flush=TRUE)
             if (.SCF_data.SCF_done) exit
@@ -2485,10 +2495,13 @@ contains
 
    end
 
-   make_r_constraint(C)
+   make_r_constraint(C,resid)
    ! Make the constraint matrix "C" for restricted wavefunction fitting.
+   ! If "resid" is present it is used as the standardised residuals
+   ! (F_pred - F_exp)/sigma in place of those of the current density.
       self :: INOUT
       C :: MAT{REAL}, INOUT
+      resid :: VEC{REAL}, optional, IN
 
       k_pts :: MAT{REAL}@
       ft_ab    :: MAT3{CPX}@
@@ -2524,7 +2537,11 @@ contains
       ! NOTE: "alpha" makes F_pred, "d_alpha" differentiates it. They differ
       ! only when extinction is on, since the extinction factor depends on
       ! |F_calc| and so on the density matrix.
-      fac_times_alpha = fac * d_alpha * (alpha * Fm - Fexp) / (Fsig * Fsig * Fm)
+      if (present(resid)) then
+         fac_times_alpha = fac * d_alpha * resid / (Fsig * Fm)
+      else
+         fac_times_alpha = fac * d_alpha * (alpha * Fm - Fexp) / (Fsig * Fsig * Fm)
+      end
  
       Fm.destroy
       Fsig.destroy
@@ -2592,23 +2609,22 @@ contains
 
    end
 
-   put_constraint_stiffness
-   ! Print, for an X-ray constrained restricted wavefunction at the
-   ! current lambda: how strongly the reflections drive the plain SCF
-   ! step, the effective number of fitted parameters, and the criteria
-   ! that choose lambda. The constraint adds lambda times d(GoF^2)/dD to
-   ! the Fock matrix. A change in the density changes each |F_calc|,
-   ! hence that term, hence the next density: the "gain" matrix G is that
-   ! loop, in the space of reflections, for lambda = 1, with the orbital
-   ! response uncoupled (the two-electron response is left out). If "g"
-   ! is lambda times its largest eigenvalue, a step that mixes in a
-   ! fraction "x" of the new density converges only if x < 2/(1+g).
-   ! The hat matrix H = lambda G (1 + lambda G)^-1 says how far each
-   ! prediction follows its own observation; its trace, plus the scale
-   ! and extinction parameters, is the effective number of parameters,
-   ! and its diagonal gives the leave-one-out residuals r/(1-h) without
-   ! refitting. Only for the two-centre partition models.
-   ! Theory: docs/TASK_XCW_CONVERGENCE.md.
+   make_constraint_stiffness :: leaky
+   ! Make, for an X-ray constrained restricted wavefunction at the
+   ! current lambda, the gain matrix G of the plain SCF step in the
+   ! space of reflections, and the fit statistics that follow from it.
+   ! The constraint adds lambda times d(GoF^2)/dD to the Fock matrix. A
+   ! change in the density changes each |F_calc|, hence that term, hence
+   ! the next density: G is that loop for lambda = 1, in units of each
+   ! reflection's sigma, with the orbital response uncoupled (the
+   ! two-electron response is left out) and the direction of the refitted
+   ! scale factor removed. The hat matrix H = lambda G (1 + lambda G)^-1
+   ! says how far each prediction follows its own observation; its trace,
+   ! plus the scale and extinction parameters, is the effective number of
+   ! parameters, and its diagonal gives the leave-one-out residuals
+   ! r/(1-h) without refitting. Everything is stored in .SCF_data. Only
+   ! for the two-centre partition models.
+   ! Theory: docs/REPORT_ON_XCW_CONVERGENCE.md.
       self :: INOUT
 
    ENSURE(.SCF_data.allocated,"no SCF_data")
@@ -2622,13 +2638,12 @@ contains
       k_pts :: MAT{REAL}@
       ft_ab,ft_ab_eq :: MAT3{CPX}@
       dF :: MAT3{REAL}@
-      dF_ao,half,dF_ov,B_mx,gain,evec :: MAT{REAL}@
+      dF_ao,half,dF_ov,B_mx,gain :: MAT{REAL}@
       Fc :: VEC{CPX}@
-      Fm,Fexp,Fsig,alpha,d_alpha,wt,eval,diag,share,proj,resid,hat :: VEC{REAL}@
-      ind :: VEC{INT}@
-      fac,cutoff,g_max,lam,val,k_eff,chi2,loo :: REAL
+      Fm,Fexp,Fsig,alpha,d_alpha,wt,share,proj :: VEC{REAL}@
+      fac,cutoff,lam,val,k_eff,chi2 :: REAL
       q,fa,la,fb,lb,na,nb,atom_a,atom_b :: INT
-      i,j,k,m,ia,n_k,n_refl,n_par,n_occ,n_vir,n_show :: INT
+      i,j,k,ia,n_k,n_refl,n_par,n_occ,n_vir :: INT
       sh :: SHELL2
 
       n_k    = .crystal.n_unique_SF_k_pts
@@ -2721,43 +2736,95 @@ contains
          B_mx(k,:) = B_mx(k,:) - share(k)*proj
       end
       proj.destroy
+      share.destroy
 
       ! The gain matrix for lambda = 1, its eigenvalues, its diagonal
       gain.create(n_refl,n_refl)
-      evec.create(n_refl,n_refl)
-      eval.create(n_refl)
-      diag.create(n_refl)
-      ind.create(n_refl)
-
       gain.to_product_of(B_mx,B_mx,transpose_b=TRUE)
       gain = fac*gain
+      .SCF_data.stiffness_B.destroy
+      .SCF_data.stiffness_B = B_mx
       B_mx.destroy
 
+      .SCF_data.stiffness_eval.destroy
+      .SCF_data.stiffness_evec.destroy
+      .SCF_data.stiffness_diag.destroy
+      .SCF_data.hat_diag.destroy
+      .SCF_data.fit_residual.destroy
+      .SCF_data.stiffness_eval.create(n_refl)
+      .SCF_data.stiffness_evec.create(n_refl,n_refl)
+      .SCF_data.stiffness_diag.create(n_refl)
+      .SCF_data.hat_diag.create(n_refl)
+      .SCF_data.fit_residual.create(n_refl)
+
       do k = 1,n_refl
-         diag(k) = gain(k,k)
+         .SCF_data.stiffness_diag(k) = gain(k,k)
       end
 
-      gain.solve_symmetric_eigenproblem(eval,evec)
-      g_max = eval(n_refl)
-      share = evec(:,n_refl)*evec(:,n_refl)
+      gain.solve_symmetric_eigenproblem(.SCF_data.stiffness_eval,.SCF_data.stiffness_evec)
+      gain.destroy
 
       ! The hat matrix diagonal, the effective number of parameters, the
       ! residuals, and the criteria for choosing lambda
       lam = .SCF_data.lambda
-      resid.create(n_refl)
-      hat.create(n_refl)
-      resid = (alpha*Fm - Fexp)/Fsig
-      hat   = ZERO
+      .SCF_data.fit_residual = (alpha*Fm - Fexp)/Fsig
+      .SCF_data.hat_diag = ZERO
       k_eff = n_par
       do j = 1,n_refl
-         val   = lam*eval(j)/(ONE + lam*eval(j))
+         val   = lam*.SCF_data.stiffness_eval(j)/(ONE + lam*.SCF_data.stiffness_eval(j))
          k_eff = k_eff + val
-         hat   = hat + val*evec(:,j)*evec(:,j)
+         .SCF_data.hat_diag = .SCF_data.hat_diag + val*.SCF_data.stiffness_evec(:,j)*.SCF_data.stiffness_evec(:,j)
       end
-      chi2 = sum(resid*resid)
-      loo  = sum((resid/(ONE-hat))**2)
+      chi2 = sum(.SCF_data.fit_residual*.SCF_data.fit_residual)
 
-      ! Output
+      .SCF_data.k_eff     = k_eff
+      .SCF_data.chi2_fit  = chi2
+      .SCF_data.AIC_sigma = n_refl*log(chi2/n_refl) + TWO*k_eff
+      .SCF_data.GCV       = n_refl*chi2/(n_refl-k_eff)**2
+      .SCF_data.LOO_sum   = sum((.SCF_data.fit_residual/(ONE-.SCF_data.hat_diag))**2)
+      .SCF_data.stiffness_made = TRUE
+      .SCF_data.stiffness_lambda_iteration = .SCF_data.lambda_iteration
+
+      ! Clean up
+      wt.destroy
+      Fm.destroy
+      Fsig.destroy
+      Fexp.destroy
+      d_alpha.destroy
+      alpha.destroy
+      Fc.destroy
+
+   end
+
+   put_constraint_stiffness
+   ! Print the constraint stiffness made by make_constraint_stiffness:
+   ! the largest gains per unit lambda, the stable fraction of new
+   ! density for a damped step, the fit statistics, and every
+   ! reflection's own gain, leverage and leave-one-out residual.
+      self :: INOUT
+
+   ENSURE(.SCF_data.allocated,"no SCF_data")
+   ENSURE(.SCF_data.stiffness_made,"no constraint stiffness")
+
+      Fc :: VEC{CPX}@
+      Fm,Fexp,Fsig,alpha,share :: VEC{REAL}@
+      ind :: VEC{INT}@
+      g_max,lam,val :: REAL
+      k,m,n_refl :: INT
+
+      n_refl = .crystal.xray_data.reflections.dim
+      lam    = .SCF_data.lambda
+      g_max  = .SCF_data.stiffness_eval(n_refl)
+
+      Fc    = .crystal.xray_data.reflections.F_calc
+      alpha = .crystal.xray_data.F_scale_and_extn_correction
+      Fexp  = .crystal.xray_data.reflections.F_exp
+      Fsig  = .crystal.xray_data.reflections.F_sigma
+      Fm.create(n_refl)
+      Fm = max(abs(Fc),TOL(10))
+      share.create(n_refl)
+      share = .SCF_data.stiffness_evec(:,n_refl)*.SCF_data.stiffness_evec(:,n_refl)
+
       stdout.flush
       stdout.text("====================")
       stdout.text("Constraint stiffness")
@@ -2766,7 +2833,7 @@ contains
       stdout.show("No. of reflections               =",n_refl)
       stdout.show("Lambda                           =",lam,precision=6)
       stdout.show("Largest gain per unit lambda     =",g_max,precision=3)
-      val = sum(eval)
+      val = sum(.SCF_data.stiffness_eval)
       stdout.show("Sum of all gains per unit lambda =",val,precision=3)
       val = lam*g_max
       stdout.show("Largest gain at this lambda      =",val,precision=3)
@@ -2775,33 +2842,31 @@ contains
       val = ONE/g_max
       stdout.show("Lambda where undamped steps fail =",val,precision=6)
       stdout.flush
-      stdout.show("Effective no. of parameters      =",k_eff,precision=3)
-      stdout.show("Chi^2, sum of (F_z)^2            =",chi2,precision=3)
-      val = chi2 + TWO*k_eff
+      stdout.show("Effective no. of parameters      =",.SCF_data.k_eff,precision=3)
+      stdout.show("Chi^2, sum of (F_z)^2            =",.SCF_data.chi2_fit,precision=3)
+      val = .SCF_data.chi2_fit + TWO*.SCF_data.k_eff
       stdout.show("AIC, chi^2 + 2 k_eff             =",val,precision=3)
-      val = chi2 + k_eff*log(real(n_refl,kind=REAL_KIND))
+      val = .SCF_data.chi2_fit + .SCF_data.k_eff*log(real(n_refl,kind=REAL_KIND))
       stdout.show("BIC, chi^2 + k_eff ln N          =",val,precision=3)
-      val = n_refl*log(chi2/n_refl) + TWO*k_eff
-      stdout.show("AIC, N ln(chi^2/N) + 2 k_eff     =",val,precision=3)
-      val = n_refl*chi2/(n_refl-k_eff)**2
-      stdout.show("GCV, N chi^2/(N-k_eff)^2         =",val,precision=6)
-      stdout.show("Leave-one-out sum of squares     =",loo,precision=3)
+      stdout.show("AIC, N ln(chi^2/N) + 2 k_eff     =",.SCF_data.AIC_sigma,precision=3)
+      stdout.show("GCV, N chi^2/(N-k_eff)^2         =",.SCF_data.GCV,precision=6)
+      stdout.show("Leave-one-out sum of squares     =",.SCF_data.LOO_sum,precision=3)
       stdout.flush
       stdout.text("The ten largest gains per unit lambda:")
       do m = n_refl,max(n_refl-9,1),-1
-         stdout.put(eval(m),fmt="f",width=14,precision=3)
+         stdout.put(.SCF_data.stiffness_eval(m),fmt="f",width=14,precision=3)
       end
       stdout.flush
       stdout.flush
       stdout.text("All reflections, by own gain per unit lambda.")
       stdout.text("Columns: h k l, sin(theta)/lambda, F_exp, sigma, F_exp/sigma,")
       stdout.text("(F_pred-F_exp)/sigma, own gain, share of the stiffest mode,")
-      stdout.text("self-influence h, leave-one-out residual.")
+      stdout.text("leverage h, leave-one-out residual.")
       stdout.flush
 
-      diag.quick_sort(ind,decreasing_order=TRUE)
-      n_show = n_refl
-      do m = 1,n_show
+      ind.create(n_refl)
+      .SCF_data.stiffness_diag.quick_sort(ind,decreasing_order=TRUE)
+      do m = 1,n_refl
          k = ind(m)
          stdout.put(.crystal.xray_data.reflections(k).h1,width=4)
          stdout.put(.crystal.xray_data.reflections(k).h2,width=4)
@@ -2811,29 +2876,106 @@ contains
          stdout.put(Fsig(k),fmt="f",width=9,precision=4)
          stdout.put(Fexp(k)/Fsig(k),fmt="f",width=9,precision=1)
          stdout.put((alpha(k)*Fm(k)-Fexp(k))/Fsig(k),fmt="f",width=11,precision=4)
-         stdout.put(diag(k),fmt="f",width=12,precision=3)
+         stdout.put(.SCF_data.stiffness_diag(k),fmt="f",width=12,precision=3)
          stdout.put(share(k),fmt="f",width=9,precision=4)
-         stdout.put(hat(k),fmt="f",width=9,precision=4)
-         stdout.put(resid(k)/(ONE-hat(k)),fmt="f",width=11,precision=4)
+         stdout.put(.SCF_data.hat_diag(k),fmt="f",width=9,precision=4)
+         stdout.put(.SCF_data.fit_residual(k)/(ONE-.SCF_data.hat_diag(k)),fmt="f",width=11,precision=4)
          stdout.flush
       end
 
       ! Clean up
-      hat.destroy
-      resid.destroy
       ind.destroy
       share.destroy
-      diag.destroy
-      eval.destroy
-      evec.destroy
-      gain.destroy
-      wt.destroy
       Fm.destroy
       Fsig.destroy
       Fexp.destroy
-      d_alpha.destroy
       alpha.destroy
       Fc.destroy
+
+   end
+
+   correct_constraint_overshoot :: private, leaky
+   ! Remove the overshoot of the plain constrained SCF step, in the
+   ! space of reflections. On entry the Fock matrix is F(D) + lambda C(r),
+   ! with "r" the standardised residuals of the current density, and its
+   ! occupied-virtual block "g" in the current orbitals is the gradient.
+   ! Diagonalising it rotates the orbitals by -g/(e_a - e_i) to first
+   ! order, which moves the residuals by
+   !    dr = -2 B (g/sqrt(e_a - e_i))
+   ! and the stiff directions of that move overshoot. The step with the
+   ! constraint curvature included, the uncoupled Newton step, moves them
+   ! by (1 + lambda G)^-1 dr instead. That step is what diagonalising
+   ! F(D) + lambda C(r + y) gives, with y = (1 + lambda G)^-1 dr, so the
+   ! constraint is rebuilt with residuals r + y. The gain matrix G and B
+   ! are remade here at every iteration, from the current orbitals. What
+   ! the reflections cannot see is left to DIIS. Only for restricted
+   ! wavefunctions. Theory: docs/REPORT_ON_XCW_CONVERGENCE.md.
+      self :: INOUT
+
+   ENSURE(.SCF_data.allocated,"no SCF_data")
+   ENSURE(.SCF_data.spinorbital_genre=="r","only for restricted wavefunctions")
+   ENSURE(.fock_mx.allocated,"no fock matrix")
+   ENSURE(.MOs.allocated, "no molecular orbitals")
+   ENSURE(.MO_energies.allocated, "no orbital energies")
+
+      C :: OPMATRIX@
+      half,g_ov :: MAT{REAL}@
+      gt,dr,p,y :: VEC{REAL}@
+      lam :: REAL
+      i,j,ia,n_refl,n_occ,n_vir :: INT
+
+      lam = .SCF_data.lambda
+      if (lam.is_zero) return
+
+      ! The gain matrix and B at the current orbitals
+      .make_constraint_stiffness
+
+      n_refl = .crystal.xray_data.reflections.dim
+      n_occ  = .n_a
+      n_vir  = .n_bf - .n_a
+
+      ! The scaled orbital gradient of the effective Fock matrix
+      half.create(.n_bf,n_vir)
+      g_ov.create(n_occ,n_vir)
+      half.to_product_of(.fock_mx.r,.MOs.r(:,n_occ+1:.n_bf))
+      g_ov.to_product_of(.MOs.r(:,1:n_occ),half,transpose_a=TRUE)
+      gt.create(n_occ*n_vir)
+      ia = 0
+      do j = 1,n_vir
+      do i = 1,n_occ
+         ia = ia + 1
+         gt(ia) = g_ov(i,j)/sqrt(.MO_energies.r(n_occ+j) - .MO_energies.r(i))
+      end
+      end
+      g_ov.destroy
+      half.destroy
+
+      ! The move of the residuals a plain step would make
+      dr.create(n_refl)
+      dr.to_product_of(.SCF_data.stiffness_B,gt)
+      dr = -TWO*dr
+      gt.destroy
+
+      ! The move with the constraint curvature included, in the
+      ! eigenbasis of G
+      p.create(n_refl)
+      p.to_product_of(.SCF_data.stiffness_evec,dr,transpose_a=TRUE)
+      do j = 1,n_refl
+         p(j) = p(j)/(ONE + lam*.SCF_data.stiffness_eval(j))
+      end
+      y.create(n_refl)
+      y.to_product_of(.SCF_data.stiffness_evec,p)
+
+      ! Rebuild the constraint with the shifted residuals and add it
+      C.create(.n_bf,.SCF_data.spinorbital_genre)
+      .make_r_constraint(C.r,resid=y)
+      .fock_mx.plus_scaled(C,lam)
+
+      ! Clean up
+      C.destroy
+      y.destroy
+      p.destroy
+      dr.destroy
 
    end
 

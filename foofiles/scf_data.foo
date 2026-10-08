@@ -1471,6 +1471,57 @@ contains
    ! Generic set
    end
 
+   set_use_stiffness_correction(val) :: get_from(OBJECT:set, VAL_TYPE?=>BIN, ARG?=>.use_stiffness_correction), pure
+   ! Generic set
+   end
+
+   record_lambda_point(GoF2) :: leaky
+   ! Record the converged "GoF2" at the current lambda, and fit the
+   ! last three points with lambda > 0 to the asymptotic form of
+   ! Davidson, Grabowsky and Jayatilaka (2022), Acta Cryst. B78, 397,
+   !    GoF^2(lambda) = D + E/lambda^2 + F/lambda^4
+   ! whose halting value is lambda_TIH = |F/D|^(1/4). Three points
+   ! determine D, E and F exactly.
+      self :: INOUT
+      GoF2 :: REAL, IN
+
+      A,Ai :: MAT{REAL}(3,3)
+      x,y,c :: VEC{REAL}(3)
+      i,n,m :: INT
+
+      .lambda_history.append(.lambda)
+      .GoF2_history.append(GoF2)
+
+      ! The last three points with lambda > 0
+      n = .lambda_history.dim
+      m = 0
+      do i = n,1,-1
+         if (.lambda_history(i)<=ZERO) cycle
+         m = m + 1
+         x(m) = ONE/.lambda_history(i)**2
+         y(m) = .GoF2_history(i)
+         if (m==3) exit
+      end
+      if (m<3) return
+
+      ! Solve for D, E, F
+      do i = 1,3
+         A(i,1) = ONE
+         A(i,2) = x(i)
+         A(i,3) = x(i)*x(i)
+      end
+      Ai.to_inverse_of(A)
+      c.to_product_of(Ai,y)
+
+      .TIH3_D = c(1)
+      .TIH3_E = c(2)
+      .TIH3_F = c(3)
+      .TIH3_made = TRUE
+      .lambda_TIH3 = ZERO
+      if (abs(c(1))>ZERO) .lambda_TIH3 = sqrt(sqrt(abs(c(3)/c(1))))
+
+   end
+
    set_zero_oo_constraint_block(val) :: get_from(OBJECT:set, VAL_TYPE?=>BIN, ARG?=>.zero_oo_constraint_block), pure
    ! Generic set
    end
@@ -1643,6 +1694,7 @@ contains
       case ("xc_atom_separation_cutoff=   "); .read_XC_atom_separation_cutoff
 
       case ("put_constraint_stiffness=    "); .read_put_constraint_stiffness
+      case ("use_stiffness_correction=    "); .read_use_stiffness_correction
 
       case ("zero_oo_constraint_block=    "); .read_zero_oo_constraint_block
 
@@ -2216,6 +2268,10 @@ contains
 
 
    read_put_constraint_stiffness :: get_from(OBJECT:read_and_set, VAL_TYPE?=>BIN, SET?=>.set_put_constraint_stiffness), private
+   ! Generic read and set
+   end
+
+   read_use_stiffness_correction :: get_from(OBJECT:read_and_set, VAL_TYPE?=>BIN, SET?=>.set_use_stiffness_correction), private
    ! Generic read and set
    end
 
@@ -3339,6 +3395,7 @@ contains
          crystal.xray_data.PUT:put_F_statistics
          if (crystal.r_free_percentage>0 AND crystal.xray_r_free_data.allocated) &
              crystal.xray_r_free_data.PUT:put_F_free_stats
+         .put_stiffness_statistics
       end
 
    ! if (.crystal.pnd_data.allocated AND .SCF_kind.includes("pnd")) then
@@ -3350,6 +3407,31 @@ contains
    !    if (.crystal.r_free_percentage>0 AND .crystal.pnd_r_free_data.allocated) &
     !       .crystal.pnd_r_free_data.put_F_free_stats
    ! end
+
+   end
+
+   put_stiffness_statistics
+   ! Print the statistics made by MOLECULE.SCF:make_constraint_stiffness,
+   ! in the style of the structure factor statistics above them.
+      self :: IN
+
+      if (NOT .stiffness_made) return
+
+      stdout.flush
+      stdout.text("Fit statistics from the constraint stiffness:")
+      stdout.flush
+      stdout.show("Effective no. of parameters    =", .k_eff)
+      stdout.show("Chi^2, sum of (F_z)^2          =", .chi2_fit)
+      stdout.show("AIC, sigma-free                =", .AIC_sigma)
+      stdout.show("GCV                            =", .GCV)
+      stdout.show("Leave-one-out sum of squares   =", .LOO_sum)
+
+      if (.TIH3_made) then
+      stdout.show("TIH 3-point lambda_opt         =", .lambda_TIH3)
+      stdout.show("TIH 3-point D (error term)     =", .TIH3_D)
+      stdout.show("TIH 3-point E                  =", .TIH3_E)
+      stdout.show("TIH 3-point F                  =", .TIH3_F)
+      end
 
    end
 
