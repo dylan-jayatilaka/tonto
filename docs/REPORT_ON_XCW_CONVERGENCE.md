@@ -514,17 +514,30 @@ with the $`B`$ of equation (5), since $`\partial|F_k|/\partial\kappa_{ia} = 4(A_
 closed shell. Equation (17) is the move the plain step makes in the space of reflections, and
 it is the overshoot of section 3 seen from the other side.
 
-**The Newton step.** In the scaled variables $`x_{ia} = \sqrt{\Delta_{ia}}\,\kappa_{ia}`$ the
-gradient of $`E + \lambda\,\mathrm{GoF}^2`$ is proportional to $`\tilde g`$ and the Hessian of
-the energy alone, in the uncoupled approximation, is the identity, so equation (16) is
-$`x = -\tilde g`$: a Newton step that knows the curvature of the energy and nothing of the
-fit term. The fit term's own curvature, in the Gauss-Newton form that keeps only the squares
-of first derivatives, is $`\mu B^{T}B`$ with $`\mu = 2\lambda/(N-p)`$, so the Newton step with
-both curvatures is
+**The Newton step.** Expand $`L = E + \lambda\,\mathrm{GoF}^2`$ to second order in the
+rotations. For a closed shell the energy's gradient is $`4g_{ia}`$ and its Hessian, in the
+uncoupled approximation that keeps only the orbital energy differences, is $`4\Delta_{ia}`$ on
+the diagonal. The fit term's Hessian follows from $`\mathrm{GoF}^2 = \frac{1}{N-p}\sum_k r_k^2`$
+by differentiating twice and keeping only the products of first derivatives, the Gauss-Newton
+form, since the term with the second derivative of $`r_k`$ is weighted by the residual and
+vanishes at a perfect fit:
+
+```math
+\frac{\partial^2 L}{\partial\kappa_{ia}\,\partial\kappa_{jb}}
+ = 4\Delta_{ia}\,\delta_{ia,jb}
+ + \lambda\,\frac{2}{N-p}\sum_k \frac{\partial r_k}{\partial\kappa_{ia}}\frac{\partial r_k}{\partial\kappa_{jb}}
+ = 4\sqrt{\Delta_{ia}}\left(1 + \mu B^{T}B\right)_{ia,jb}\sqrt{\Delta_{jb}}
+\qquad (18)
+```
+
+with $`\mu = 2\lambda/(N-p)`$, using $`\partial r_k/\partial\kappa_{ia} = 4(\alpha_k/\sigma_k)(A_k)_{ia}
+= 2\sqrt{\Delta_{ia}}\,B_{k,ia}`$ from the definition of $`B`$ in equation (5). The Newton step
+$`\kappa = -(\partial^2 L)^{-1}\,\partial L`$ is then, in the scaled variables
+$`x_{ia} = \sqrt{\Delta_{ia}}\,\kappa_{ia}`$,
 
 ```math
 x = -\left(1 + \mu B^{T}B\right)^{-1}\tilde g
-\qquad (18)
+\qquad (19)
 ```
 
 The matrix to invert has the size of the number of orbital rotations, but its second part has
@@ -533,7 +546,7 @@ Review* **23**, 53 (1981)),
 
 ```math
 \left(1 + \mu B^{T}B\right)^{-1} = 1 - \mu B^{T}\left(1 + \mu BB^{T}\right)^{-1}B
-\qquad (19)
+\qquad (20)
 ```
 
 moves the inverse into the space of reflections. Its special case
@@ -542,17 +555,17 @@ for equation (13). Since $`\mu BB^{T} = \lambda G`$,
 
 ```math
 x = -\tilde g + \mu\,B^{T}(1+\lambda G)^{-1}B\tilde g
-\qquad (20)
+\qquad (21)
 ```
 
 the plain step with its reflection-visible part reduced.
 
-**The matrix that is diagonalised.** Equation (20) is not applied as a rotation. Instead,
+**The matrix that is diagonalised.** Equation (21) is not applied as a rotation. Instead,
 consider diagonalising the effective Fock matrix with a second constraint term added,
 
 ```math
 F_{\mathrm{eff}}(D) + \lambda\,C(y) = F(D) + \lambda\,C(r + y)
-\qquad (21)
+\qquad (22)
 ```
 
 where $`y`$ is a vector in the space of reflections and $`C(y)`$ is equation (15) built from
@@ -563,15 +576,15 @@ gradient is $`g + \lambda\,C(y)_{ia}`$, and in scaled form the added part is
 \frac{\lambda\,C(y)_{ia}}{\sqrt{\Delta_{ia}}}
  = \frac{2\lambda}{N-p}\sum_k \frac{\alpha_k}{\sigma_k}\,\frac{(A_k)_{ia}}{\sqrt{\Delta_{ia}}}\,y_k
  = \frac{\mu}{2}\,(B^{T}y)_{ia}
-\qquad (22)
+\qquad (23)
 ```
 
-so by equation (16) the plain step of the matrix (21) is $`x = -\tilde g - \frac{\mu}{2}B^{T}y`$.
-This is the Newton step (20) when
+so by equation (16) the plain step of the matrix (22) is $`x = -\tilde g - \frac{\mu}{2}B^{T}y`$.
+This is the Newton step (21) when
 
 ```math
 y = -2\,(1+\lambda G)^{-1}B\tilde g = (1+\lambda G)^{-1}\,\delta r
-\qquad (23)
+\qquad (24)
 ```
 
 with $`\delta r`$ the plain-step move of equation (17). So $`y`$ is that move with each stiff
@@ -584,7 +597,7 @@ the converged wavefunction $`g = 0`$, so $`y = 0`$ and the fixed point is the or
 A probe step, that is a trial diagonalisation whose result is used to infer the fixed point,
 does not work: far from convergence at large lambda the plain step is so far outside the linear
 regime that its result carries no information, and the iteration settles on a wrong fixed point.
-Equation (23) uses the gradient, which is linear by construction.
+Equation (24) uses the gradient, which is linear by construction.
 
 **What the method is, in plain terms.** The plain SCF step is a Newton step on the energy
 alone: it knows the curvature of the energy, through the orbital energy gaps, and nothing of
@@ -599,7 +612,7 @@ constraint matrix built from the vector $`y`$.
 **The converged wavefunction is unchanged.** The constraint matrix is exactly linear in the
 residual vector it is built from, so the fixed points of the corrected iteration are the
 orbitals in which $`\tilde g - \mu B^{T}(1+\lambda G)^{-1}B\tilde g = 0`$, and
-by equation (19) that is $`(1 + \mu B^{T}B)^{-1}\tilde g = 0`$, which holds
+by equation (20) that is $`(1 + \mu B^{T}B)^{-1}\tilde g = 0`$, which holds
 only when $`\tilde g = 0`$: the ordinary XCW stationarity condition. The approximations in
 $`G`$, the uncoupled response and the neglected residual term, change the preconditioner and
 so the path, never the fixed point. Measured: the same energies and GoF as the plain SCF at
@@ -608,7 +621,7 @@ every lambda where the plain SCF converges.
 **Orthonormality.** The orbitals are still produced by diagonalising a symmetric matrix in the
 orthonormalised basis, as in every iteration of every SCF in the code: the correction only
 adds the symmetric matrix $`\lambda C(y)`$ to the Fock matrix before the diagonalisation. So
-the orbitals are orthonormal exactly, not to first order. The Newton step of equation (18)
+the orbitals are orthonormal exactly, not to first order. The Newton step of equation (19)
 is a description of what that diagonalisation does to first order, not a rotation that is
 applied.
 
@@ -616,7 +629,7 @@ applied.
 the move of the residuals is reduced direction by direction, by $`1/(1+\lambda\gamma_j)`$:
 a stiff direction is usually a combination of several strong low-angle reflections. If
 $`G`$ were diagonal in the reflections the step would be the one obtained with every sigma
-enlarged by $`\sqrt{1+\lambda\gamma_k}`$, for the update only. Either way the quantity being
+enlarged by the factor $`(1+\lambda\gamma_k)^{1/2}`$, for the update only. Either way the quantity being
 made stationary, and the sigmas in it, are untouched.
 
 **Not only for the XCW.** The structure is a penalty term that is a sum of squares over a
