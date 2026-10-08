@@ -200,10 +200,14 @@ list for ammonia, per unit lambda:
 - **The stiff ones are the low-angle reflections with small absolute sigma**, about 0.05 to 0.06,
   whatever their size. The own gain goes as $`1/\sigma_k^2`$ times how easily the valence density
   moves that structure factor.
-- **A reflection worth a second look has a large own gain and a large residual at once**: it
-  can move the wavefunction a long way and is asking to. Here that is (0 3 1), 2.58 sigma out,
-  and (3 0 -2), 1.94 out. The product of the two is the analogue of Cook's distance in ordinary
-  least squares. Not yet printed as a column.
+- **A reflection worth a second look has a large leverage and a large residual at once**: it
+  can move the wavefunction a long way and is asking to. The measure of that is Cook's
+  distance, $`D_k = r_k^2 H_{kk}/\big(k_{\mathrm{eff}}(1-H_{kk})^2\big)`$, with $`H_{kk}`$ the
+  leverage of section 7 and $`r_k`$ the standardised residual: how far the whole fit moves
+  when reflection $`k`$ is left out, in units of its own uncertainty. The usual threshold is
+  $`4/N`$. For ammonia at lambda 0.012, 10 of the 88 reflections are above it, led by (0 3 1)
+  at 0.68 and (3 0 -2) at 0.51 against a threshold of 0.045; 61 are below an eighth of it.
+  The report prints the ten largest and a histogram in multiples of $`4/N`$.
 - Since the result does not depend on the overall scale of the sigmas (section 3), this
   diagnostic can find a reflection whose sigma is too small *relative to the others*, not a set
   of sigmas that are all too small.
@@ -214,7 +218,7 @@ Measured on the two-lambda job:
 
 | Setting | Iterations at 0.012, 0.016 | Worst energy on the way |
 |---|---|---|
-| as blessed: mix 50% for 3 iterations, DIIS from 4 | 30, 20 | -29.6 |
+| in test: mix 50% for 3 iterations, DIIS from 4 | 30, 20 | -29.6 |
 | mix 15% for 3 iterations, DIIS saving from 1 | 18, 19 | -56.2013 |
 | mix 15% for 6 iterations, DIIS from 6 | 19, 20 | -56.2013 |
 | no damping, DIIS saving from 1 | 21, 21 | -56.03 |
@@ -413,8 +417,8 @@ sense of Hoerl and Kennard, and the ridge parameter is $`(N-p)/2\lambda`$. So:
   $`(B^{T}B+\mu)^{-1}`$, with the orbital rotations as parameters. They are not printed: a
   single rotation is not a quantity anyone asks about. The sensitivity of a density feature, a
   bond charge or an atomic charge, would be the useful form, and is one further contraction.
-- Cook's distance, which Merli and co-workers use to find outliers in refinement, is
-  $`r_k^2 H_{kk}/(1-H_{kk})^2`$ up to a constant, and is available from the printed columns.
+- Cook's distance, which Merli and co-workers use to find outliers in refinement, is the
+  $`D_k`$ of section 5, printed for every reflection, listed for the ten largest, and binned.
 
 **The halting methods of Davidson, Grabowsky and Jayatilaka**, *Acta Cryst.* **B78**, 397
 (2022), section 2, take the GoF against lambda curve as their only input, and halt the scan at
@@ -606,8 +610,9 @@ In the `scfdata=` block:
 
 - `put_constraint_stiffness= TRUE` prints, at every converged lambda, the largest gains, the
   stable damping fraction, the effective number of parameters, the four criteria of equations
-  (10) and (11), the leave-one-out sum and the three-point extrapolation of section 8, and for
-  every reflection its own gain, its leverage and its leave-one-out residual. The effective
+  (10) and (11), the leave-one-out sum and the three-point extrapolation of section 8, for
+  every reflection its own gain, its leverage, its leave-one-out residual and its Cook's
+  distance, the ten largest Cook's distances and a histogram of them. The effective
   number of parameters, the sigma-free AIC, the GCV, the leave-one-out sum and the three-point
   lambda are also printed with the structure factor statistics in the SCF results.
 - `use_stiffness_correction= TRUE` switches on the correction of section 9.

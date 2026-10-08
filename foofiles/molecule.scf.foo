@@ -2799,18 +2799,23 @@ contains
    put_constraint_stiffness
    ! Print the constraint stiffness made by make_constraint_stiffness:
    ! the largest gains per unit lambda, the stable fraction of new
-   ! density for a damped step, the fit statistics, and every
-   ! reflection's own gain, leverage and leave-one-out residual.
+   ! density for a damped step, the fit statistics, every reflection's
+   ! own gain, leverage, leave-one-out residual and Cook's distance
+   !    D = r^2 h / (k_eff (1-h)^2),
+   ! the reflections with the largest Cook's distance, and a histogram
+   ! of it. A reflection with D above 4/N moves the fit more than its
+   ! share and is worth a second look.
       self :: INOUT
 
    ENSURE(.SCF_data.allocated,"no SCF_data")
    ENSURE(.SCF_data.stiffness_made,"no constraint stiffness")
 
       Fc :: VEC{CPX}@
-      Fm,Fexp,Fsig,alpha,share :: VEC{REAL}@
+      Fm,Fexp,Fsig,alpha,share,cook :: VEC{REAL}@
       ind :: VEC{INT}@
-      g_max,lam,val :: REAL
-      k,m,n_refl :: INT
+      nbin :: VEC{INT}(8)
+      g_max,lam,val,h,r,edge :: REAL
+      b,k,m,n_refl :: INT
 
       n_refl = .crystal.xray_data.reflections.dim
       lam    = .SCF_data.lambda
@@ -2824,6 +2829,14 @@ contains
       Fm = max(abs(Fc),TOL(10))
       share.create(n_refl)
       share = .SCF_data.stiffness_evec(:,n_refl)*.SCF_data.stiffness_evec(:,n_refl)
+
+      ! Cook's distance of each reflection
+      cook.create(n_refl)
+      do k = 1,n_refl
+         h = .SCF_data.hat_diag(k)
+         r = .SCF_data.fit_residual(k)
+         cook(k) = r*r*h/(.SCF_data.k_eff*(ONE-h)**2)
+      end
 
       stdout.flush
       stdout.text("====================")
@@ -2861,7 +2874,7 @@ contains
       stdout.text("All reflections, by own gain per unit lambda.")
       stdout.text("Columns: h k l, sin(theta)/lambda, F_exp, sigma, F_exp/sigma,")
       stdout.text("(F_pred-F_exp)/sigma, own gain, share of the stiffest mode,")
-      stdout.text("leverage h, leave-one-out residual.")
+      stdout.text("leverage h, leave-one-out residual, Cook's distance.")
       stdout.flush
 
       ind.create(n_refl)
@@ -2880,10 +2893,61 @@ contains
          stdout.put(share(k),fmt="f",width=9,precision=4)
          stdout.put(.SCF_data.hat_diag(k),fmt="f",width=9,precision=4)
          stdout.put(.SCF_data.fit_residual(k)/(ONE-.SCF_data.hat_diag(k)),fmt="f",width=11,precision=4)
+         stdout.put(cook(k),fmt="f",width=10,precision=4)
          stdout.flush
       end
 
+      ! The reflections with the largest Cook's distance
+      stdout.flush
+      val = FOUR/n_refl
+      stdout.show("Cook's distance threshold 4/N    =",val,precision=4)
+      m = 0
+      do k = 1,n_refl
+         if (cook(k)>val) m = m + 1
+      end
+      stdout.show("Reflections above it             =",m)
+      stdout.flush
+      stdout.text("The ten reflections with the largest Cook's distance.")
+      stdout.text("Columns: h k l, sin(theta)/lambda, F_exp/sigma, (F_pred-F_exp)/sigma,")
+      stdout.text("leverage h, Cook's distance.")
+      stdout.flush
+      cook.quick_sort(ind,decreasing_order=TRUE)
+      do m = 1,min(n_refl,10)
+         k = ind(m)
+         stdout.put(.crystal.xray_data.reflections(k).h1,width=4)
+         stdout.put(.crystal.xray_data.reflections(k).h2,width=4)
+         stdout.put(.crystal.xray_data.reflections(k).h3,width=4)
+         stdout.put(.crystal.xray_data.reflections(k).stl,fmt="f",width=9,precision=4)
+         stdout.put(Fexp(k)/Fsig(k),fmt="f",width=9,precision=1)
+         stdout.put(.SCF_data.fit_residual(k),fmt="f",width=10,precision=3)
+         stdout.put(.SCF_data.hat_diag(k),fmt="f",width=9,precision=4)
+         stdout.put(cook(k),fmt="f",width=10,precision=4)
+         stdout.flush
+      end
+
+      ! A histogram of Cook's distance, in multiples of 4/N
+      nbin = 0
+      do k = 1,n_refl
+         r = cook(k)/val
+         b = 1
+         edge = 0.125d0
+         do while (r>=edge AND b<8)
+            b = b + 1
+            edge = TWO*edge
+         end
+         nbin(b) = nbin(b) + 1
+      end
+      stdout.flush
+      stdout.text("Histogram of Cook's distance, in multiples of 4/N:")
+      stdout.text("   below 1/8, 1/8 to 1/4, 1/4 to 1/2, 1/2 to 1, 1 to 2, 2 to 4, 4 to 8, 8 and above")
+      stdout.put(nbin(1),width=12)
+      do b = 2,8
+         stdout.put(nbin(b),width=11)
+      end
+      stdout.flush
+
       ! Clean up
+      cook.destroy
       ind.destroy
       share.destroy
       Fm.destroy
