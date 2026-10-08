@@ -880,11 +880,22 @@ first points and 6 or 7 thereafter, with none of the drift of the minimal basis;
 | 0.4 | 784 | 56.3 | 1.66 | 2359 | 2624 | 939 | 3.17 | 4617 | 7 |
 | 0.5 | 994 | 58.5 | 1.63 | 2284 | 2559 | 914 | 3.08 | 4557 | 7 |
 
-Every criterion is still falling at 0.5, with $`p_{\mathrm{eff}}`$ at 58 of 817, and the GoF is
-still well above 1, so in this basis the data have more to say than the fit has yet taken.
-The drift of the minimal basis is therefore a property of that basis, not of the solver: with
-residuals of eight sigma the terms the model Hessian leaves out are large, and with
-residuals of two they are not.
+Continued from 0.5 in steps of 0.05, the scan converges at 0.55 to 0.85 in 8 to 36
+iterations, the count rising with lambda; at 0.9, where $`\lambda\gamma_{\max}`$ is 1900, the
+iteration spends its 60 allowed iterations near a state with GoF 18.9 and does not converge;
+at 0.95 and 1.0, started from that state, it converges again, in 55 and then 9 iterations,
+to GoF 1.525 and 1.517, $`p_{\mathrm{eff}}`$ 66, GCV 2.72, the leave-one-out sum 4191. Steps of
+0.1 fail at 0.9 for good, and a jump from the promolecule straight to 0.8 fails where a jump to
+0.5 does not. Every criterion is still falling at lambda 1, and the GoF is still well above
+1, so in this basis the data have more to say than the fit has yet taken.
+
+So the corrected iteration is reliable on urea in def2-SVP up to $`\lambda\gamma_{\max}`$ of
+about 1700, and beyond that it can wander into a higher stationary point of the functional
+and sit there, as the minimal basis does from $`\lambda\gamma_{\max}`$ of 45. The difference
+between the two is the size of the residuals: eight sigma in the minimal basis, under two
+here, and the terms the model Hessian leaves out grow with them. What would stop the
+wandering is a line search on $`E + \lambda\,\mathrm{GoF}^2`$ along the corrected step, which
+no step of the present iteration checks.
 
 The level shift enters the gaps $`\Delta_{ia}`$ while it is applied, since it is added to the
 virtual orbital energies before the diagonalisation: the correction uses the shifted gaps,
