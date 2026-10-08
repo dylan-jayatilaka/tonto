@@ -2214,6 +2214,12 @@ code, whereas a stale global table risks only a name-resolution detail.
 > orbitals and the reflections: for the ammonia restart job the calculation says a step mixing in
 > more than 23.0% of the new density fails, and the measurement is 23% converges, 24% diverges.
 > Nothing is merged; the cure and whether to repair damping for every SCF are Dylan's to decide.
+> **2026-10-08, milestone 12 revised by the same work:** the hat matrix of the linearised fit
+> gives the effective number of parameters, AIC, BIC, GCV and a leave-one-out cross-validation
+> from one converged run per lambda, checked against two real held-out refits (7 to 8% low);
+> `put_constraint_stiffness= TRUE` in `scfdata=` prints them. Section 7 of the task document.
+> On ammonia the leave-one-out minimum is near lambda 0.15, which the present SCF cannot reach,
+> so the SCF cure comes first.
 
 Per Dylan this instability is **well known and has never been diagnosed**. Recorded here now that
 there is finally an executing test to observe it with:
