@@ -477,20 +477,54 @@ right. Three comments follow from the present work.
 
 ## 9. The cure: the Newton step with the constraint curvature
 
-Write $`g`$ for the occupied-virtual block of the effective Fock matrix $`F + \lambda C`$ in the
-current orbitals, the orbital gradient, and $`\Delta_{ia} = \varepsilon_a - \varepsilon_i`$.
-A change of the occupied orbitals is a rotation: new orbitals $`C\,e^{\kappa}`$ with $`\kappa`$
-antisymmetric, whose independent elements $`\kappa_{ia}`$ mix occupied orbital $`i`$ with virtual
-orbital $`a`$. Diagonalising the effective Fock matrix sets $`\kappa_{ia} = -g_{ia}/\Delta_{ia}`$
-to first order: the uncoupled Newton step with the energy's Hessian alone, whose diagonal in
-these variables is $`\Delta_{ia}`$. The fit term adds to the Hessian $`\lambda`$ times its own
-curvature, which in the scaled variables $`x_{ia} = \sqrt{\Delta_{ia}}\,\kappa_{ia}`$ is
-$`\frac{2}{N-p}B^{T}B`$, with the $`B`$ of equation (5). The Newton step with both is
+**The plain step.** Every iteration of the constrained SCF diagonalises the effective Fock
+matrix
 
 ```math
-x = -\left(1 + \lambda\,\tfrac{2}{N-p}B^{T}B\right)^{-1}\tilde g,
-\qquad \tilde g_{ia} = g_{ia}/\sqrt{\Delta_{ia}}
+F_{\mathrm{eff}}(D) = F(D) + \lambda\,C(r), \qquad
+C(r) = \frac{2}{N-p}\sum_k \frac{\alpha_k}{\sigma_k}\, r_k\, A_k
 \qquad (15)
+```
+
+where $`F(D)`$ is the ordinary Fock matrix, $`r_k = (\alpha|F_k| - F_k^{\mathrm{obs}})/\sigma_k`$
+are the standardised residuals of the density $`D`$, and $`C(r)`$ is equation (2) written in
+terms of them: a linear function of the vector $`r`$. Write $`g`$ for the occupied-virtual
+block of $`F_{\mathrm{eff}}(D)`$ in the current orbitals, the orbital gradient, and
+$`\Delta_{ia} = \varepsilon_a - \varepsilon_i`$ for the orbital energy differences. A change of the
+occupied orbitals is a rotation, new orbitals $`C\,e^{\kappa}`$ with $`\kappa`$ antisymmetric,
+whose independent elements $`\kappa_{ia}`$ mix occupied orbital $`i`$ with virtual orbital
+$`a`$. By first-order perturbation theory the diagonalisation rotates by
+
+```math
+\kappa_{ia} = -\frac{g_{ia}}{\Delta_{ia}}
+\qquad (16)
+```
+
+and moves each residual, to the same order, by
+
+```math
+\delta r_k = \sum_{ia}\frac{\partial r_k}{\partial\kappa_{ia}}\,\kappa_{ia}
+           = -\sum_{ia} 4\,\frac{\alpha_k}{\sigma_k}\,(A_k)_{ia}\,\frac{g_{ia}}{\Delta_{ia}}
+           = -2\,(B\tilde g)_k,
+\qquad \tilde g_{ia} = \frac{g_{ia}}{\sqrt{\Delta_{ia}}}
+\qquad (17)
+```
+
+with the $`B`$ of equation (5), since $`\partial|F_k|/\partial\kappa_{ia} = 4(A_k)_{ia}`$ for a
+closed shell. Equation (17) is the move the plain step makes in the space of reflections, and
+it is the overshoot of section 3 seen from the other side.
+
+**The Newton step.** In the scaled variables $`x_{ia} = \sqrt{\Delta_{ia}}\,\kappa_{ia}`$ the
+gradient of $`E + \lambda\,\mathrm{GoF}^2`$ is proportional to $`\tilde g`$ and the Hessian of
+the energy alone, in the uncoupled approximation, is the identity, so equation (16) is
+$`x = -\tilde g`$: a Newton step that knows the curvature of the energy and nothing of the
+fit term. The fit term's own curvature, in the Gauss-Newton form that keeps only the squares
+of first derivatives, is $`\mu B^{T}B`$ with $`\mu = 2\lambda/(N-p)`$, so the Newton step with
+both curvatures is
+
+```math
+x = -\left(1 + \mu B^{T}B\right)^{-1}\tilde g
+\qquad (18)
 ```
 
 The matrix to invert has the size of the number of orbital rotations, but its second part has
@@ -499,42 +533,58 @@ Review* **23**, 53 (1981)),
 
 ```math
 \left(1 + \mu B^{T}B\right)^{-1} = 1 - \mu B^{T}\left(1 + \mu BB^{T}\right)^{-1}B
-\qquad (16)
+\qquad (19)
 ```
 
 moves the inverse into the space of reflections. Its special case
 $`(1 + \mu B^{T}B)^{-1}B^{T} = B^{T}(1 + \mu BB^{T})^{-1}`$ is the push-through identity used
-for equation (13). With $`\mu = \lambda\frac{2}{N-p}`$, the Newton step becomes the plain step
-with its reflection-visible part reduced:
+for equation (13). Since $`\mu BB^{T} = \lambda G`$,
 
 ```math
-x = -\tilde g + \lambda\,\tfrac{2}{N-p}\,B^{T}(1+\lambda G)^{-1}B\tilde g
-\qquad (17)
+x = -\tilde g + \mu\,B^{T}(1+\lambda G)^{-1}B\tilde g
+\qquad (20)
 ```
 
-The first term is the plain step. The second is what a change of the Fock matrix by
-$`\lambda C(y)`$ does to the step, to first order, where $`C(y)`$ is the constraint matrix of
-equation (2) built with a vector $`y`$ in place of the residuals $`(\alpha|F_k| -
-F_k^{\mathrm{obs}})/\sigma_k`$, and
+the plain step with its reflection-visible part reduced.
+
+**The matrix that is diagonalised.** Equation (20) is not applied as a rotation. Instead,
+consider diagonalising the effective Fock matrix with a second constraint term added,
 
 ```math
-\delta r = -2\,B\tilde g, \qquad y = (1+\lambda G)^{-1}\,\delta r
-\qquad (18)
+F_{\mathrm{eff}}(D) + \lambda\,C(y) = F(D) + \lambda\,C(r + y)
+\qquad (21)
 ```
 
-Here $`\delta r`$ is the move of the residuals a plain step would make, to first order, and
-$`y`$ is that move with each stiff direction reduced by its own factor $`1/(1+\lambda\gamma_j)`$:
-the fraction that cancels its overshoot. So the Newton step of equation (15) is obtained by
-diagonalising $`F + \lambda C(r) + \lambda C(y)`$, the effective Fock matrix with its constraint
-built from the shifted residuals $`r + y`$. That is the cure: at every iteration, after the
-constraint matrix is added, compute $`y`$ and add $`\lambda C(y)`$. Nothing else in the SCF
-changes, and DIIS takes care of what the reflections cannot see. At the converged wavefunction
-$`g = 0`$, so $`y = 0`$ and the fixed point is the ordinary one.
+where $`y`$ is a vector in the space of reflections and $`C(y)`$ is equation (15) built from
+$`y`$ in place of $`r`$, which is allowed because $`C`$ is linear in its argument. Its orbital
+gradient is $`g + \lambda\,C(y)_{ia}`$, and in scaled form the added part is
+
+```math
+\frac{\lambda\,C(y)_{ia}}{\sqrt{\Delta_{ia}}}
+ = \frac{2\lambda}{N-p}\sum_k \frac{\alpha_k}{\sigma_k}\,\frac{(A_k)_{ia}}{\sqrt{\Delta_{ia}}}\,y_k
+ = \frac{\mu}{2}\,(B^{T}y)_{ia}
+\qquad (22)
+```
+
+so by equation (16) the plain step of the matrix (21) is $`x = -\tilde g - \frac{\mu}{2}B^{T}y`$.
+This is the Newton step (20) when
+
+```math
+y = -2\,(1+\lambda G)^{-1}B\tilde g = (1+\lambda G)^{-1}\,\delta r
+\qquad (23)
+```
+
+with $`\delta r`$ the plain-step move of equation (17). So $`y`$ is that move with each stiff
+direction reduced by its own factor $`1/(1+\lambda\gamma_j)`$, the fraction that cancels its
+overshoot, and the cure is: at every iteration, after the constraint matrix is added, compute
+$`y`$ from the gradient and add $`\lambda C(y)`$ to the Fock matrix before it is diagonalised.
+Nothing else in the SCF changes, and DIIS takes care of what the reflections cannot see. At
+the converged wavefunction $`g = 0`$, so $`y = 0`$ and the fixed point is the ordinary one.
 
 A probe step, that is a trial diagonalisation whose result is used to infer the fixed point,
 does not work: far from convergence at large lambda the plain step is so far outside the linear
 regime that its result carries no information, and the iteration settles on a wrong fixed point.
-Equation (18) uses the gradient, which is linear by construction.
+Equation (23) uses the gradient, which is linear by construction.
 
 **What the method is, in plain terms.** The plain SCF step is a Newton step on the energy
 alone: it knows the curvature of the energy, through the orbital energy gaps, and nothing of
@@ -543,13 +593,13 @@ plain step overshoots in every direction the data see. The corrected step is the
 with both curvatures. Because the fit term involves only $`N`$ reflections, its curvature has
 rank $`N`$, and the Woodbury identity turns the Newton step into the plain step plus a
 correction that lives entirely in the $`N`$-dimensional space of reflections. That is equation
-(16). Nothing about the orbitals or the integrals changes; the correction enters as a second
+(20). Nothing about the orbitals or the integrals changes; the correction enters as a second
 constraint matrix built from the vector $`y`$.
 
 **The converged wavefunction is unchanged.** The constraint matrix is exactly linear in the
 residual vector it is built from, so the fixed points of the corrected iteration are the
-orbitals in which $`\tilde g - \lambda\frac{2}{N-p}B^{T}(1+\lambda G)^{-1}B\tilde g = 0`$, and
-by the identity above that is $`(1 + \lambda\frac{2}{N-p}B^{T}B)^{-1}\tilde g = 0`$, which holds
+orbitals in which $`\tilde g - \mu B^{T}(1+\lambda G)^{-1}B\tilde g = 0`$, and
+by equation (19) that is $`(1 + \mu B^{T}B)^{-1}\tilde g = 0`$, which holds
 only when $`\tilde g = 0`$: the ordinary XCW stationarity condition. The approximations in
 $`G`$, the uncoupled response and the neglected residual term, change the preconditioner and
 so the path, never the fixed point. Measured: the same energies and GoF as the plain SCF at
@@ -558,7 +608,7 @@ every lambda where the plain SCF converges.
 **Orthonormality.** The orbitals are still produced by diagonalising a symmetric matrix in the
 orthonormalised basis, as in every iteration of every SCF in the code: the correction only
 adds the symmetric matrix $`\lambda C(y)`$ to the Fock matrix before the diagonalisation. So
-the orbitals are orthonormal exactly, not to first order. The Newton step of equation (15)
+the orbitals are orthonormal exactly, not to first order. The Newton step of equation (18)
 is a description of what that diagonalisation does to first order, not a rotation that is
 applied.
 
