@@ -21,7 +21,12 @@ which recorded the symptom and three leads.
    Measured: 23% converges, 24% diverges.
 4. **No single reflection is to blame** in ammonia (section 5). The stiffness is spread over the
    strong low-angle reflections, all of which have F/sigma above 100.
-5. **Nothing is merged and no default is changed.** The damping repair changes the path of every
+5. **The same matrix gives the effective number of fitted parameters, the AIC, BIC and
+   generalised cross-validation criteria for lambda, and a leave-one-out cross-validation from
+   one converged run** (section 7). Checked against two real held-out refits: 7 to 8% low. On
+   ammonia the leave-one-out minimum is near lambda 0.15, where the present SCF needs 250
+   iterations and fails soon after, so the cure of section 6 is needed before this can be used.
+6. **Nothing is merged and no default is changed.** The damping repair changes the path of every
    SCF that uses the default damping, so it is a decision (section 7).
 
 ## 2. What was seen
@@ -138,8 +143,8 @@ wavefunction's own resistance to change. It is a property of how hard the fit is
 
 ## 4. The check
 
-`MOLECULE.SCF:put_constraint_stiffness` (keyword `put_constraint_stiffness`, after `scf`)
-computes $`G`$ from equation (5) and prints its largest eigenvalues, the limit of equation (6),
+`MOLECULE.SCF:put_constraint_stiffness` (`put_constraint_stiffness= TRUE` in the `scfdata=`
+block) computes $`G`$ from equation (5) and prints its largest eigenvalues, the limit of equation (6),
 and the reflections with the largest diagonal elements. RHF only. For the ammonia job, from the
 orbitals converged at lambda = 0.012:
 
@@ -270,7 +275,174 @@ tried. What could spoil it: the two-electron response left out of $`G`$ (1% here
 small-gap system), and orbitals far from converged, where the linearisation is poor; a few
 damped steps first would cover the second.
 
-## 7. Decisions for Dylan
+## 7. The effective number of parameters, and the choice of lambda
+
+Dylan's question (2026-10-08): can the XCW, regarded as a restrained fit, be given an effective
+number of parameters, and can AIC or BIC then choose lambda?
+
+**The definition.** In a restrained least-squares fit the effective number of parameters is
+the trace of the hat matrix $`H`$, the matrix that maps the observations to the fitted values.
+Its diagonal element $`H_{kk}`$ says how far the prediction for reflection $`k`$ follows its own
+observation: all the way for a freely fitted point, not at all for a point the model cannot
+reach. It is the quantity that reduces to the ordinary parameter count for an unrestrained fit,
+and to zero at lambda = 0, as Davidson *et al.* (2022) require.
+
+**The hat matrix of the XCW.** Section 3 gave what one SCF step does to an error in the
+structure factors. The same linearisation gives what a change in the observations does to the
+converged structure factors. Move the observations by $`\delta o`$, in units of their sigmas,
+with the scale direction removed as before. The residuals in equation (2) change by
+$`e - \delta o`$, where $`e`$ is the change in the predictions, so the converged response
+satisfies $`e = -\lambda G\,(e - \delta o)`$, by equation (5), and
+
+```math
+e = H\,\delta o, \qquad H = \lambda G\,(1 + \lambda G)^{-1}
+\qquad (8)
+```
+
+$`H`$ has the eigenvectors of $`G`$ and eigenvalues $`\lambda\gamma_j/(1+\lambda\gamma_j)`$. The
+effective number of parameters is its trace, plus the $`p`$ parameters of the scale and
+extinction model, which were projected out of $`G`$:
+
+```math
+k_{\mathrm{eff}}(\lambda) = p + \sum_j \frac{\lambda\gamma_j}{1+\lambda\gamma_j}
+\qquad (9)
+```
+
+Each direction in reflection space contributes between 0 and 1, and is half fitted when
+$`\lambda\gamma_j = 1`$. So $`k_{\mathrm{eff}}`$ is $`p`$ at lambda = 0 and climbs as lambda
+switches directions on, stiffest first. The undamped SCF begins to fail at
+$`\lambda\gamma_{\max} = 1`$ (equation 6), which is where the first direction passes one half:
+the instability and the first fitted parameter are the same event.
+
+This is the trace formula of Appendix A of `docs/TASK_EXTINCTION_CORRECTION.md`, with the
+Hessian of the energy replaced by its uncoupled form, the orbital energy differences. That
+costs about 1% on the largest eigenvalue for ammonia (section 4), and it neglects a term
+proportional to the residuals, which matters only where the fit is poor.
+
+**The criteria.** Write $`r_k = (\alpha|F_k| - F_k^{\mathrm{obs}})/\sigma_k`$ for the
+standardised residuals, $`\chi^2 = \sum_k r_k^2`$, and $`N`$ for the number of reflections.
+Each criterion is a penalised misfit, to be minimised over lambda: $`\chi^2`$ falls as lambda
+rises and $`k_{\mathrm{eff}}`$ rises.
+
+```math
+\mathrm{AIC} = \chi^2 + 2\,k_{\mathrm{eff}}, \qquad
+\mathrm{BIC} = \chi^2 + k_{\mathrm{eff}}\ln N
+\qquad (10)
+```
+
+Both take the sigmas at their word: if every sigma is too small by a factor $`s`$,
+$`\chi^2`$ is too large by $`s^2`$ while the penalty is not, and both pick too large a lambda.
+With GoF values of 3 to 7 that is a real risk. Two forms do not depend on the overall scale of
+the sigmas, because the variance scale is treated as a fitted quantity:
+
+```math
+\mathrm{AIC}_{\sigma} = N\ln\frac{\chi^2}{N} + 2\,k_{\mathrm{eff}}, \qquad
+\mathrm{GCV} = \frac{N\chi^2}{(N-k_{\mathrm{eff}})^2}
+\qquad (11)
+```
+
+GCV is generalised cross-validation, Golub, Heath and Wahba (1979), *Technometrics* **21**,
+215. These two are the ones to use here. BIC penalises harder than AIC and picks a smaller
+lambda.
+
+**Leave-one-out without refitting.** For a linear smoother the residual of reflection $`k`$ when
+it is left out of the fit is
+
+```math
+r_k^{(-k)} = \frac{r_k}{1 - H_{kk}}
+\qquad (12)
+```
+
+exact for the linearised model, so a full leave-one-out cross-validation at each lambda comes
+from one converged run:
+
+```math
+\mathrm{LOO} = \sum_k \left(\frac{r_k}{1-H_{kk}}\right)^2
+\qquad (13)
+```
+
+This is complete cross-validation in Brunger's sense with every reflection its own test set,
+the limit the k-fold scheme of milestone 12 approaches, and it needs none of its machinery.
+It should still be checked once against a real held-out refit. A reflection with a large
+$`H_{kk}`$ and a large residual at once is the one worth a second look: it can move the
+wavefunction a long way and is asking to.
+
+**A lambda scan on ammonia.** The restart job, repaired damping at 15% for three iterations,
+DIIS from the first, three scans joined (step 0.0005 to 0.004, then 0.004 to 0.04, then 0.02
+to 0.2). $`N = 88`$, $`p = 1`$. GoF is $`\sqrt{\chi^2/(N-1)}`$.
+
+| lambda | $`\lambda\gamma_{\max}`$ | $`k_{\mathrm{eff}}`$ | $`\chi^2`$ | GoF | AIC | BIC | AIC$`_\sigma`$ | GCV | LOO | iterations |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | 0 | 1.0 | 851.9 | 3.13 | 853.9 | 856.4 | 201.8 | 9.90 | 851.9 | |
+| 0.001 | 0.64 | 2.9 | 407.1 | 2.16 | 413.0 | 420.3 | 140.7 | 4.95 | 483.7 | |
+| 0.002 | 1.28 | 4.3 | 256.5 | 1.72 | 265.0 | 275.5 | 102.7 | 3.22 | 338.4 | |
+| 0.004 | 2.57 | 6.1 | 145.1 | 1.29 | 157.2 | 172.2 | 56.1 | 1.90 | 215.4 | |
+| 0.008 | 5.14 | 8.4 | 82.1 | 0.97 | 98.9 | 119.6 | 10.6 | 1.14 | 134.7 | |
+| 0.012 | 7.71 | 9.9 | 61.9 | 0.84 | 81.7 | 106.3 | -11.1 | 0.893 | 106.3 | |
+| 0.016 | 10.3 | 11.1 | 52.3 | 0.78 | 74.4 | 101.9 | -23.7 | 0.777 | 92.6 | |
+| 0.020 | 12.8 | 12.0 | 46.6 | 0.73 | 70.7 | 100.5 | -31.9 | 0.711 | 84.9 | |
+| 0.024 | 15.4 | 12.8 | 42.8 | 0.70 | 68.5 | **100.3** | -37.7 | 0.667 | 80.1 | |
+| 0.028 | 18.0 | 13.5 | 40.1 | 0.68 | 67.1 | 100.6 | -42.2 | 0.636 | 76.9 | |
+| 0.040 | 25.7 | 15.2 | 34.9 | 0.63 | 65.2 | 102.7 | -51.1 | 0.578 | 71.7 | 49 |
+| 0.060 | 38.4 | 17.1 | 30.2 | 0.59 | 64.3 | 106.6 | -60.0 | 0.528 | 68.5 | 58 |
+| 0.080 | 51.2 | 18.4 | 27.4 | 0.56 | **64.25** | 109.9 | -65.9 | 0.498 | 67.2 | 77 |
+| 0.100 | 63.9 | 19.5 | 25.4 | 0.54 | 64.4 | 112.7 | -70.4 | 0.476 | 66.5 | 91 |
+| 0.120 | 76.6 | 20.4 | 23.9 | 0.52 | 64.6 | 115.1 | -74.1 | 0.459 | 66.0 | 128 |
+| 0.140 | 89.3 | 21.1 | 22.6 | 0.51 | 64.8 | 117.1 | -77.3 | 0.445 | **65.65** | 251 |
+| 0.160 | 101.9 | 21.8 | 21.8 | 0.50 | 65.3 | 119.2 | -79.4 | 0.436 | 65.66 | not converged in 300 |
+
+At 0.18 the SCF is still not converged after 300 iterations and at 0.2 it has blown up, so
+the row for 0.16 is the last one to trust and even it is not fully converged.
+
+What the scan says:
+
+- **Where the criteria put the minimum.** BIC at 0.024, AIC at 0.08, leave-one-out at about
+  0.15, GCV and AIC$`_\sigma`$ beyond 0.16. The two that trust the sigmas disagree with each
+  other by a factor of three, and with the sigma-free ones by more. This is the expected
+  behaviour of a penalty that is fixed against a misfit whose scale is uncertain, not a defect
+  in any of them. The leave-one-out sum is the one with a clear, if shallow, minimum.
+- **The sigmas of this data set look too large, not too small**: GoF falls below 1 at lambda
+  0.008, with only 8 effective parameters out of 88. That is the opposite of the GoF 3 to 7
+  worry in section 7, and it is why AIC and BIC come out so differently here.
+- **The fit keeps paying for its parameters a long way out.** Each extra effective parameter
+  is bought for less and less $`\chi^2`$, but $`\chi^2`$ per parameter stays above 1 until about
+  lambda 0.1. The effective parameter count climbs slowly: 22 of 88 at lambda 0.16, with
+  $`\lambda\gamma_{\max} = 102`$. The stiff directions saturate early and the rest are switched
+  on one by one.
+- **The current SCF cannot reach the region the sigma-free criteria point at.** Iterations
+  rise from 49 at lambda 0.04 to 251 at 0.14 and the SCF fails above that, with the stable
+  fraction of equation (6) down to 2%. DIIS is doing the work that the correction of section
+  6 would do exactly. So a lambda chosen by cross-validation needs that cure first; today a
+  scan this far is impractical for anything larger than ammonia.
+- **Milestone 12's plan, revised.** The leave-one-out sum from one converged run at each
+  lambda replaces the k-fold machinery, to the accuracy checked below. What remains of the
+  milestone is the stiffness routine for unrestricted and Hirshfeld-atom constraints, the
+  coupled response if the 8% matters, and the SCF cure that makes the scan reachable.
+
+**The leave-one-out formula checked against a real held-out refit.** Ammonia restart job,
+lambda = 0.012, repaired damping. One reflection at a time was held out by giving it a sigma of
+1.0 (weight 300 times smaller than its neighbours, so it still gets a predicted structure
+factor), the job was run again, and the prediction was compared with the observation using the
+original sigma.
+
+| Held out | residual in full fit | $`H_{kk}`$ | equation (12) | refit |
+|---|---|---|---|---|
+| (0 3 1) | 2.58 | 0.383 | 4.18 | 4.55 |
+| (3 0 -2) | -1.94 | 0.434 | -3.43 | -3.67 |
+
+The formula gives the right size and sign and is 7 to 8% low on both. Both errors have the
+same sign, which points at the uncoupled orbital response underestimating $`H_{kk}`$ rather
+than at noise; the full coupled response, or the residual term left out, would be the next
+refinement if the 8% matters. For choosing lambda it does not.
+
+**In the code.** `put_constraint_stiffness= TRUE` in the `scfdata=` block prints, at every
+converged lambda: $`k_{\mathrm{eff}}`$, $`\chi^2`$, the four criteria of equations (10) and
+(11), the leave-one-out sum, and per reflection $`H_{kk}`$ and the leave-one-out residual.
+Restricted wavefunctions and two-centre partition models only. The earlier molecule-level
+keyword was removed: after the lambda loop the SCF data holds the lambda one step past the last
+converged one, so a report there was labelled with the wrong lambda.
+
+## 8. Decisions for Dylan
 
 - **Repair damping everywhere, or only for constrained SCF?** The repair is two lines in
   `MOLECULE.BASE:make_SCF_density_mx`. With it, every SCF that leaves damping at its default
@@ -278,10 +450,9 @@ damped steps first would cover the second.
   iteration counts and anything printed per iteration change, so references move. What the short
   and long suites do with the repair is in section 8.
 - **Which cure from section 6.**
-- **Whether to keep `put_constraint_stiffness`** as a user keyword, and whether to add the
-  leverage-times-residual column.
+- **Whether to keep `put_constraint_stiffness=`** as a user keyword.
 
-## 8. Log
+## 9. Log
 
 - 2026-10-07. Reproduced on the Mac release build. Found damping dead (water, two damping
   factors, identical tables; then markers in `make_SCF_density_mx` showing the old density never
@@ -306,5 +477,10 @@ damped steps first would cover the second.
   `damping-repair` in the reference build on achari2, run every suite, check each failure is of
   those two kinds, bless, merge to `develop`.** The session could not reach achari2: the
   permission system refused the ssh.
-- Not done: UHF and Hirshfeld-atom constraints in the stiffness routine; the urea job; a debug
+- 2026-10-08. Dylan asked for the effective parameter count and AIC/BIC. Section 7 written;
+  `put_constraint_stiffness=` moved into the `scfdata=` block and called at each converged
+  lambda, printing $`k_{\mathrm{eff}}`$, the four criteria, the leave-one-out sum and per
+  reflection $`H_{kk}`$ and the leave-one-out residual. Three scans on ammonia to lambda 0.2
+  and two held-out refits, tables above. Branch `xcw-wandering`, Mac release build.
+ constraints in the stiffness routine; the urea job; a debug
   build; anything on achari2.

@@ -2263,6 +2263,9 @@ contains
 
          .archive_SCF_results
 
+         ! The stiffness report at this lambda
+         if (.SCF_data.put_constraint_stiffness) .put_constraint_stiffness
+
          ! Calculate the residuals ...
          ! Before exiting lambda loop
          if (.crystal.xray_data.do_residual_cube) then
@@ -2590,21 +2593,29 @@ contains
    end
 
    put_constraint_stiffness
-   ! Print how strongly each reflection drives the plain SCF step of an
-   ! X-ray constrained restricted wavefunction. The constraint adds
-   ! lambda times d(GoF^2)/dD to the Fock matrix. A change in the density
-   ! changes each |F_calc|, hence that term, hence the next density: the
-   ! "gain" matrix printed here is that loop, in the space of reflections,
-   ! for lambda = 1, with the orbital response uncoupled (the two-electron
-   ! response is left out). If "g" is lambda times its largest eigenvalue,
-   ! a step that mixes in a fraction "x" of the new density converges only
-   ! if x < 2/(1+g). The diagonal of the matrix is each reflection's own
-   ! share. Theory: docs/TASK_XCW_CONVERGENCE.md.
+   ! Print, for an X-ray constrained restricted wavefunction at the
+   ! current lambda: how strongly the reflections drive the plain SCF
+   ! step, the effective number of fitted parameters, and the criteria
+   ! that choose lambda. The constraint adds lambda times d(GoF^2)/dD to
+   ! the Fock matrix. A change in the density changes each |F_calc|,
+   ! hence that term, hence the next density: the "gain" matrix G is that
+   ! loop, in the space of reflections, for lambda = 1, with the orbital
+   ! response uncoupled (the two-electron response is left out). If "g"
+   ! is lambda times its largest eigenvalue, a step that mixes in a
+   ! fraction "x" of the new density converges only if x < 2/(1+g).
+   ! The hat matrix H = lambda G (1 + lambda G)^-1 says how far each
+   ! prediction follows its own observation; its trace, plus the scale
+   ! and extinction parameters, is the effective number of parameters,
+   ! and its diagonal gives the leave-one-out residuals r/(1-h) without
+   ! refitting. Only for the two-centre partition models.
+   ! Theory: docs/TASK_XCW_CONVERGENCE.md.
       self :: INOUT
 
    ENSURE(.SCF_data.allocated,"no SCF_data")
+   ENSURE(.SCF_data.spinorbital_genre=="r","only for restricted wavefunctions")
    ENSURE(.crystal.allocated, "no crystal info")
    ENSURE(.crystal.xray_data.allocated, "no reflection data")
+   ENSURE(NOT .crystal.uses_Hirshfeld_atoms, "only for two-centre partition models")
    ENSURE(.MOs.allocated, "no molecular orbitals")
    ENSURE(.MO_energies.allocated, "no orbital energies")
 
@@ -2613,9 +2624,9 @@ contains
       dF :: MAT3{REAL}@
       dF_ao,half,dF_ov,B_mx,gain,evec :: MAT{REAL}@
       Fc :: VEC{CPX}@
-      Fm,Fexp,Fsig,alpha,d_alpha,wt,eval,diag,share,proj :: VEC{REAL}@
+      Fm,Fexp,Fsig,alpha,d_alpha,wt,eval,diag,share,proj,resid,hat :: VEC{REAL}@
       ind :: VEC{INT}@
-      fac,cutoff,g_max,lam,val :: REAL
+      fac,cutoff,g_max,lam,val,k_eff,chi2,loo :: REAL
       q,fa,la,fb,lb,na,nb,atom_a,atom_b :: INT
       i,j,k,m,ia,n_k,n_refl,n_par,n_occ,n_vir,n_show :: INT
       sh :: SHELL2
@@ -2730,8 +2741,23 @@ contains
       g_max = eval(n_refl)
       share = evec(:,n_refl)*evec(:,n_refl)
 
-      ! Output
+      ! The hat matrix diagonal, the effective number of parameters, the
+      ! residuals, and the criteria for choosing lambda
       lam = .SCF_data.lambda
+      resid.create(n_refl)
+      hat.create(n_refl)
+      resid = (alpha*Fm - Fexp)/Fsig
+      hat   = ZERO
+      k_eff = n_par
+      do j = 1,n_refl
+         val   = lam*eval(j)/(ONE + lam*eval(j))
+         k_eff = k_eff + val
+         hat   = hat + val*evec(:,j)*evec(:,j)
+      end
+      chi2 = sum(resid*resid)
+      loo  = sum((resid/(ONE-hat))**2)
+
+      ! Output
       stdout.flush
       stdout.text("====================")
       stdout.text("Constraint stiffness")
@@ -2749,19 +2775,32 @@ contains
       val = ONE/g_max
       stdout.show("Lambda where undamped steps fail =",val,precision=6)
       stdout.flush
+      stdout.show("Effective no. of parameters      =",k_eff,precision=3)
+      stdout.show("Chi^2, sum of (F_z)^2            =",chi2,precision=3)
+      val = chi2 + TWO*k_eff
+      stdout.show("AIC, chi^2 + 2 k_eff             =",val,precision=3)
+      val = chi2 + k_eff*log(real(n_refl,kind=REAL_KIND))
+      stdout.show("BIC, chi^2 + k_eff ln N          =",val,precision=3)
+      val = n_refl*log(chi2/n_refl) + TWO*k_eff
+      stdout.show("AIC, N ln(chi^2/N) + 2 k_eff     =",val,precision=3)
+      val = n_refl*chi2/(n_refl-k_eff)**2
+      stdout.show("GCV, N chi^2/(N-k_eff)^2         =",val,precision=6)
+      stdout.show("Leave-one-out sum of squares     =",loo,precision=3)
+      stdout.flush
       stdout.text("The ten largest gains per unit lambda:")
       do m = n_refl,max(n_refl-9,1),-1
          stdout.put(eval(m),fmt="f",width=14,precision=3)
       end
       stdout.flush
       stdout.flush
-      stdout.text("The reflections with the largest own gain per unit lambda.")
+      stdout.text("All reflections, by own gain per unit lambda.")
       stdout.text("Columns: h k l, sin(theta)/lambda, F_exp, sigma, F_exp/sigma,")
-      stdout.text("(F_pred-F_exp)/sigma, own gain, share of the stiffest mode.")
+      stdout.text("(F_pred-F_exp)/sigma, own gain, share of the stiffest mode,")
+      stdout.text("self-influence h, leave-one-out residual.")
       stdout.flush
 
       diag.quick_sort(ind,decreasing_order=TRUE)
-      n_show = min(n_refl,25)
+      n_show = n_refl
       do m = 1,n_show
          k = ind(m)
          stdout.put(.crystal.xray_data.reflections(k).h1,width=4)
@@ -2771,13 +2810,17 @@ contains
          stdout.put(Fexp(k),fmt="f",width=10,precision=3)
          stdout.put(Fsig(k),fmt="f",width=9,precision=4)
          stdout.put(Fexp(k)/Fsig(k),fmt="f",width=9,precision=1)
-         stdout.put((alpha(k)*Fm(k)-Fexp(k))/Fsig(k),fmt="f",width=9,precision=2)
+         stdout.put((alpha(k)*Fm(k)-Fexp(k))/Fsig(k),fmt="f",width=11,precision=4)
          stdout.put(diag(k),fmt="f",width=12,precision=3)
          stdout.put(share(k),fmt="f",width=9,precision=4)
+         stdout.put(hat(k),fmt="f",width=9,precision=4)
+         stdout.put(resid(k)/(ONE-hat(k)),fmt="f",width=11,precision=4)
          stdout.flush
       end
 
       ! Clean up
+      hat.destroy
+      resid.destroy
       ind.destroy
       share.destroy
       diag.destroy
