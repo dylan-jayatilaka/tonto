@@ -202,7 +202,7 @@ list for ammonia, per unit lambda:
   moves that structure factor.
 - **A reflection worth a second look has a large leverage and a large residual at once**: it
   can move the wavefunction a long way and is asking to. The measure of that is Cook's
-  distance, $`D_k = r_k^2 H_{kk}/\big(k_{\mathrm{eff}}(1-H_{kk})^2\big)`$, with $`H_{kk}`$ the
+  distance, $`D_k = r_k^2 H_{kk}/\big(p_{\mathrm{eff}}(1-H_{kk})^2\big)`$, with $`H_{kk}`$ the
   leverage of section 7 and $`r_k`$ the standardised residual: how far the whole fit moves
   when reflection $`k`$ is left out, in units of its own uncertainty. The usual threshold is
   $`4/N`$. For ammonia at lambda 0.012, 10 of the 88 reflections are above it, led by (0 3 1)
@@ -247,7 +247,7 @@ satisfies $`e = -\lambda G\,(e - \delta o)`$, by equation (5), and
 
 ```math
 e = H\,\delta o, \qquad H = \lambda G\,(1 + \lambda G)^{-1}
-\qquad (8)
+\qquad (7)
 ```
 
 $`H`$ has the eigenvectors of $`G`$ and eigenvalues $`\lambda\gamma_j/(1+\lambda\gamma_j)`$. The
@@ -255,12 +255,12 @@ effective number of parameters is its trace, plus the $`p`$ parameters of the sc
 extinction model, which were projected out of $`G`$:
 
 ```math
-k_{\mathrm{eff}}(\lambda) = p + \sum_j \frac{\lambda\gamma_j}{1+\lambda\gamma_j}
-\qquad (9)
+p_{\mathrm{eff}}(\lambda) = p + \sum_j \frac{\lambda\gamma_j}{1+\lambda\gamma_j}
+\qquad (8)
 ```
 
 Each direction in reflection space contributes between 0 and 1, and is half fitted when
-$`\lambda\gamma_j = 1`$. So $`k_{\mathrm{eff}}`$ is $`p`$ at lambda = 0 and climbs as lambda
+$`\lambda\gamma_j = 1`$. So $`p_{\mathrm{eff}}`$ is $`p`$ at lambda = 0 and climbs as lambda
 switches directions on, stiffest first. The undamped SCF begins to fail at
 $`\lambda\gamma_{\max} = 1`$ (equation 6), which is where the first direction passes one half:
 the instability and the first fitted parameter are the same event.
@@ -273,55 +273,66 @@ proportional to the residuals, which matters only where the fit is poor.
 **The criteria.** Write $`r_k = (\alpha|F_k| - F_k^{\mathrm{obs}})/\sigma_k`$ for the
 standardised residuals, $`\chi^2 = \sum_k r_k^2`$, and $`N`$ for the number of reflections.
 Each criterion is a penalised misfit, to be minimised over lambda: $`\chi^2`$ falls as lambda
-rises and $`k_{\mathrm{eff}}`$ rises.
+rises and $`p_{\mathrm{eff}}`$ rises.
 
 ```math
-\mathrm{AIC} = \chi^2 + 2\,k_{\mathrm{eff}}, \qquad
-\mathrm{BIC} = \chi^2 + k_{\mathrm{eff}}\ln N
-\qquad (10)
+\mathrm{AIC} = \chi^2 + 2\,p_{\mathrm{eff}}, \qquad
+\mathrm{BIC} = \chi^2 + p_{\mathrm{eff}}\ln N
+\qquad (9)
 ```
 
-Both take the sigmas at their word: if every sigma is too small by a factor $`s`$,
+Both assume the sigmas are correct: if every sigma is too small by a factor $`s`$,
 $`\chi^2`$ is too large by $`s^2`$ while the penalty is not, and both pick too large a lambda.
 With GoF values of 3 to 7 that is a real risk. Two forms do not depend on the overall scale of
 the sigmas, because the variance scale is treated as a fitted quantity:
 
 ```math
-\mathrm{AIC}_{\sigma} = N\ln\frac{\chi^2}{N} + 2\,k_{\mathrm{eff}}, \qquad
-\mathrm{GCV} = \frac{N\chi^2}{(N-k_{\mathrm{eff}})^2}
-\qquad (11)
+\mathrm{AIC}_{\sigma} = N\ln\frac{\chi^2}{N} + 2\,p_{\mathrm{eff}}, \qquad
+\mathrm{GCV} = \frac{N\chi^2}{(N-p_{\mathrm{eff}})^2}
+\qquad (10)
 ```
 
 GCV is generalised cross-validation, Golub, Heath and Wahba (1979), *Technometrics* **21**,
 215. These two are the ones to use here. BIC penalises harder than AIC and picks a smaller
 lambda.
 
-**Leave-one-out without refitting.** For a linear smoother the residual of reflection $`k`$ when
-it is left out of the fit is
+**Leave-one-out without refitting.** A fit is called a linear smoother when its predictions are
+a fixed linear map of the observations, $`\hat o = H o`$, with $`H`$ not depending on $`o`$;
+ordinary and ridge least squares are, and so is the linearised XCW by equation (7). For such a
+fit the residual of reflection $`k`$ when it is left out is
 
 ```math
 r_k^{(-k)} = \frac{r_k}{1 - H_{kk}}
-\qquad (12)
+\qquad (11)
 ```
 
-exact for the linearised model, so a full leave-one-out cross-validation at each lambda comes
-from one converged run:
+This is the leaving-out-one lemma of Craven and Wahba, in the form given by Golub, Heath and
+Wahba, *Technometrics* **21**, 215 (1979), their equation (2.3). The derivation is short.
+Refit with reflection $`k`$ removed, and call its prediction $`\hat o_k^{(-k)}`$. If the
+observation $`o_k`$ is now replaced by $`\hat o_k^{(-k)}`$ and the fit redone with all $`N`$
+reflections, nothing changes: the extra point sits exactly on the fit and contributes no
+residual, so the minimiser is the same. The prediction for $`k`$ is therefore the same too.
+Linearity then gives $`\hat o_k^{(-k)} = \hat o_k + H_{kk}(\hat o_k^{(-k)} - o_k)`$, and
+rearranging, $`o_k - \hat o_k^{(-k)} = (o_k - \hat o_k)/(1-H_{kk})`$, which is equation (11)
+in units of sigma. It is exact for the linearised model, so a full leave-one-out
+cross-validation at each lambda comes from one converged run:
 
 ```math
 \mathrm{LOO} = \sum_k \left(\frac{r_k}{1-H_{kk}}\right)^2
-\qquad (13)
+\qquad (12)
 ```
 
-This is complete cross-validation in Brunger's sense with every reflection its own test set,
-the limit the k-fold scheme of milestone 12 approaches, and it needs none of its machinery.
-It should still be checked once against a real held-out refit. A reflection with a large
+This is the free R value of Brünger, *Nature* **355**, 472 (1992), taken to its limit: every
+reflection is its own test set, which is the complete cross-validation he recommends when the
+test set is small (*Methods in Enzymology* **277**, 366 (1997)), and it needs no partition
+of the data. It should still be checked once against a real held-out refit. A reflection with a large
 $`H_{kk}`$ and a large residual at once is the one worth a second look: it can move the
 wavefunction a long way and is asking to.
 
 **A lambda scan on ammonia.** The restart job, damping at 15% for three iterations, DIIS from
 the first, three scans joined (step 0.0005 to 0.004, then 0.004 to 0.04, then 0.02 to 0.2). $`N = 88`$, $`p = 1`$. GoF is $`\sqrt{\chi^2/(N-1)}`$.
 
-| lambda | $`\lambda\gamma_{\max}`$ | $`k_{\mathrm{eff}}`$ | $`\chi^2`$ | GoF | AIC | BIC | AIC$`_\sigma`$ | GCV | LOO | iterations |
+| lambda | $`\lambda\gamma_{\max}`$ | $`p_{\mathrm{eff}}`$ | $`\chi^2`$ | GoF | AIC | BIC | AIC$`_\sigma`$ | GCV | LOO | iterations |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 0 | 0 | 1.0 | 851.9 | 3.13 | 853.9 | 856.4 | 201.8 | 9.90 | 851.9 | |
 | 0.001 | 0.64 | 2.9 | 407.1 | 2.16 | 413.0 | 420.3 | 140.7 | 4.95 | 483.7 | |
@@ -371,7 +382,7 @@ lambda = 0.012. One reflection at a time was held out by giving it a sigma of
 factor), the job was run again, and the prediction was compared with the observation using the
 original sigma.
 
-| Held out | residual in full fit | $`H_{kk}`$ | equation (12) | refit |
+| Held out | residual in full fit | $`H_{kk}`$ | equation (11) | refit |
 |---|---|---|---|---|
 | (0 3 1) | 2.58 | 0.383 | 4.18 | 4.55 |
 | (3 0 -2) | -1.94 | 0.434 | -3.43 | -3.67 |
@@ -391,11 +402,11 @@ observed value, lies between 0 and 1, and sums to the number of parameters (Pars
 Presly, Wood and Cooper, *J. Appl. Cryst.* **45**, 417 (2012), after Prince). Restraints enter
 as extra rows of $`A`$ and get leverages of their own.
 
-The hat matrix of equation (8) is the same object for the XCW. Writing $`\mu = (N-p)/2\lambda`$,
+The hat matrix of equation (7) is the same object for the XCW. Writing $`\mu = (N-p)/2\lambda`$,
 
 ```math
 H = \lambda G\,(1+\lambda G)^{-1} = B\,(B^{T}B + \mu\,1)^{-1}B^{T}
-\qquad (14)
+\qquad (13)
 ```
 
 which is the projection matrix of a least-squares fit with design matrix $`B`$, whose rows are
@@ -407,7 +418,7 @@ sense of Hoerl and Kennard, and the ridge parameter is $`(N-p)/2\lambda`$. So:
 
 - $`H_{kk}`$ is the leverage of reflection $`k`$, and its trace is the number of parameters the
   data determine. The normalised leverage of Parsons *et al.* is $`H_{kk}`$ divided by
-  $`(k_{\mathrm{eff}}-p)/N`$.
+  $`(p_{\mathrm{eff}}-p)/N`$.
 - The reflections of high leverage in ammonia are the strong low-angle ones with small absolute
   sigma (section 5), where for the alanine refinement of Parsons *et al.* they are the
   moderately weak reflections. The difference is in what is being fitted: the XCW adjusts the
@@ -427,11 +438,17 @@ a lambda read off it. Three are given:
 1. A power function, $`\mathrm{GoF}^2 = A\lambda^{B}`$, fitted to the scan, halted at
    $`\lambda = 1`$, where $`\mathrm{GoF}^2 = A`$. The argument for 1 is that there the
    effective forces of the energy and of the fit are equal; the authors call it not very strong.
-2. The asymptotic form of Tozer, Ingamells and Handy, $`\mathrm{GoF}^2 = D + E\lambda^{-2}
-   + F\lambda^{-4}`$, fitted to the last three (TIH3) or six (TIH6) converged points, with
-   $`D`$ read as the error term and the halting value
-   $`\lambda_{\mathrm{TIH}} = |F/D|^{1/4}`$, where the two correction terms are equal.
+2. The asymptotic form of Tozer, Ingamells and Handy, equation (14) below, fitted to the
+   last three (TIH3) or six (TIH6) converged points, with $`D`$ read as the error term and
+   the halting value $`\lambda_{\mathrm{TIH}}`$ the lambda where the two correction terms are
+   equal.
 3. The smallest halting lambda over several data sets of the same crystal.
+
+```math
+\mathrm{GoF}^2 = D + E\lambda^{-2} + F\lambda^{-4}, \qquad
+\lambda_{\mathrm{TIH}} = |F/D|^{1/4}
+\qquad (14)
+```
 
 In every case the scan ends where convergence fails, and that point, $`\lambda_{\max}`$, is used
 both as the upper limit of the fit and, in the third method, as a halting value in its own
@@ -462,11 +479,13 @@ right. Three comments follow from the present work.
 
 Write $`g`$ for the occupied-virtual block of the effective Fock matrix $`F + \lambda C`$ in the
 current orbitals, the orbital gradient, and $`\Delta_{ia} = \varepsilon_a - \varepsilon_i`$.
-Diagonalising the effective Fock matrix rotates the orbitals by $`-g_{ia}/\Delta_{ia}`$ to
-first order: the uncoupled Newton step with the energy's Hessian alone. The fit term adds to
-the Hessian $`\lambda`$ times its own curvature, which in the scaled rotation variables
-$`x_{ia} = \sqrt{\Delta_{ia}}\,\kappa_{ia}`$ is $`\frac{2}{N-p}B^{T}B`$, with the $`B`$ of
-equation (5). The Newton step with both is
+A change of the occupied orbitals is a rotation: new orbitals $`C\,e^{\kappa}`$ with $`\kappa`$
+antisymmetric, whose independent elements $`\kappa_{ia}`$ mix occupied orbital $`i`$ with virtual
+orbital $`a`$. Diagonalising the effective Fock matrix sets $`\kappa_{ia} = -g_{ia}/\Delta_{ia}`$
+to first order: the uncoupled Newton step with the energy's Hessian alone, whose diagonal in
+these variables is $`\Delta_{ia}`$. The fit term adds to the Hessian $`\lambda`$ times its own
+curvature, which in the scaled variables $`x_{ia} = \sqrt{\Delta_{ia}}\,\kappa_{ia}`$ is
+$`\frac{2}{N-p}B^{T}B`$, with the $`B`$ of equation (5). The Newton step with both is
 
 ```math
 x = -\left(1 + \lambda\,\tfrac{2}{N-p}B^{T}B\right)^{-1}\tilde g,
@@ -474,33 +493,48 @@ x = -\left(1 + \lambda\,\tfrac{2}{N-p}B^{T}B\right)^{-1}\tilde g,
 \qquad (15)
 ```
 
-By the push-through identity this is the plain step with its reflection-visible part reduced:
+The matrix to invert has the size of the number of orbital rotations, but its second part has
+rank $`N`$, the number of reflections, so the Woodbury identity (Henderson and Searle, *SIAM
+Review* **23**, 53 (1981)),
 
 ```math
-x = -\tilde g + \lambda\,\tfrac{2}{N-p}\,B^{T}(1+\lambda G)^{-1}B\tilde g
+\left(1 + \mu B^{T}B\right)^{-1} = 1 - \mu B^{T}\left(1 + \mu BB^{T}\right)^{-1}B
 \qquad (16)
 ```
 
-and the second term is exactly what the constraint matrix built with shifted residuals
-$`r + y`$ adds to the plain step, with
+moves the inverse into the space of reflections. Its special case
+$`(1 + \mu B^{T}B)^{-1}B^{T} = B^{T}(1 + \mu BB^{T})^{-1}`$ is the push-through identity used
+for equation (13). With $`\mu = \lambda\frac{2}{N-p}`$, the Newton step becomes the plain step
+with its reflection-visible part reduced:
+
+```math
+x = -\tilde g + \lambda\,\tfrac{2}{N-p}\,B^{T}(1+\lambda G)^{-1}B\tilde g
+\qquad (17)
+```
+
+The first term is the plain step. The second is what a change of the Fock matrix by
+$`\lambda C(y)`$ does to the step, to first order, where $`C(y)`$ is the constraint matrix of
+equation (2) built with a vector $`y`$ in place of the residuals $`(\alpha|F_k| -
+F_k^{\mathrm{obs}})/\sigma_k`$, and
 
 ```math
 \delta r = -2\,B\tilde g, \qquad y = (1+\lambda G)^{-1}\,\delta r
-\qquad (17)
+\qquad (18)
 ```
 
 Here $`\delta r`$ is the move of the residuals a plain step would make, to first order, and
 $`y`$ is that move with each stiff direction reduced by its own factor $`1/(1+\lambda\gamma_j)`$:
-the fraction that cancels its overshoot. So the cure is: at every iteration, after the
-constraint matrix is added, compute $`y`$ and add $`\lambda C(y)`$, the constraint matrix built
-from $`y`$ in place of the residuals. Nothing else in the SCF changes, and DIIS takes care of
-what the reflections cannot see. At the converged wavefunction $`g = 0`$, so $`y = 0`$ and the
-fixed point is the ordinary one.
+the fraction that cancels its overshoot. So the Newton step of equation (15) is obtained by
+diagonalising $`F + \lambda C(r) + \lambda C(y)`$, the effective Fock matrix with its constraint
+built from the shifted residuals $`r + y`$. That is the cure: at every iteration, after the
+constraint matrix is added, compute $`y`$ and add $`\lambda C(y)`$. Nothing else in the SCF
+changes, and DIIS takes care of what the reflections cannot see. At the converged wavefunction
+$`g = 0`$, so $`y = 0`$ and the fixed point is the ordinary one.
 
 A probe step, that is a trial diagonalisation whose result is used to infer the fixed point,
 does not work: far from convergence at large lambda the plain step is so far outside the linear
 regime that its result carries no information, and the iteration settles on a wrong fixed point.
-Equation (17) uses the gradient, which is linear by construction.
+Equation (18) uses the gradient, which is linear by construction.
 
 **What the method is, in plain terms.** The plain SCF step is a Newton step on the energy
 alone: it knows the curvature of the energy, through the orbital energy gaps, and nothing of
@@ -578,7 +612,7 @@ the damping only slows it. The iteration count no longer depends on lambda.
 
 With the correction the lambda scan of section 7 continues past the old failure point:
 
-| lambda | $`\lambda\gamma_{\max}`$ | $`k_{\mathrm{eff}}`$ | $`\chi^2`$ | GoF | AIC | BIC | AIC$`_\sigma`$ | GCV | LOO | iterations |
+| lambda | $`\lambda\gamma_{\max}`$ | $`p_{\mathrm{eff}}`$ | $`\chi^2`$ | GoF | AIC | BIC | AIC$`_\sigma`$ | GCV | LOO | iterations |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 0.04 | 25.7 | 15.2 | 34.9 | 0.63 | 65.2 | 102.7 | -51.1 | 0.578 | 71.7 | 10 |
 | 0.08 | 51.2 | 18.4 | 27.4 | 0.56 | **64.25** | 109.9 | -65.9 | 0.498 | 67.2 | 10 |
@@ -610,7 +644,7 @@ In the `scfdata=` block:
 
 - `put_constraint_stiffness= TRUE` prints, at every converged lambda, the largest gains, the
   stable damping fraction, the effective number of parameters, the four criteria of equations
-  (10) and (11), the leave-one-out sum and the three-point extrapolation of section 8, for
+  (9) and (10), the leave-one-out sum and the three-point extrapolation of section 8, for
   every reflection its own gain, its leverage, its leave-one-out residual and its Cook's
   distance, the ten largest Cook's distances and a histogram of them. The effective
   number of parameters, the sigma-free AIC, the GCV, the leave-one-out sum and the three-point
