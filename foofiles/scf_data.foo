@@ -1475,22 +1475,66 @@ contains
    ! Generic set
    end
 
+
+   set_lambda_criterion(val) :: PURE
+   ! Set the criterion that chooses lambda, one of "gcv" (generalised
+   ! cross-validation, the default), "aic_sigma" (the AIC with the
+   ! variance scale fitted), "aic", "bic" or "loo" (the leave-one-out
+   ! sum). The first two do not depend on the scale of the sigmas.
+      self :: INOUT
+      val :: STR, IN
+
+   ENSURE(val.is_one_of(["gcv      ","aic_sigma","aic      ","bic      ","loo      "]),"unknown lambda criterion")
+
+      .lambda_criterion = val
+
+   end
+
+   criterion_value result (res) :: pure
+   ! The value of the chosen lambda criterion from the stiffness
+   ! statistics, which must have been made.
+      self :: IN
+      res :: REAL
+
+      select case (.lambda_criterion)
+         case ("gcv      "); res = .GCV
+         case ("aic_sigma"); res = .AIC_sigma
+         case ("aic      "); res = .chi2_fit + TWO*.p_eff
+         case ("bic      "); res = .chi2_fit + .p_eff*log(real(.stiffness_eval.dim,kind=REAL_KIND))
+         case ("loo      "); res = .LOO_sum
+         case default;       res = .GCV
+      end
+
+   end
+
    record_lambda_point(GoF2) :: leaky
    ! Record the converged "GoF2" at the current lambda, and fit the
    ! last three points with lambda > 0 to the asymptotic form of
    ! Davidson, Grabowsky and Jayatilaka (2022), Acta Cryst. B78, 397,
    !    GoF^2(lambda) = D + E/lambda^2 + F/lambda^4
    ! whose halting value is lambda_TIH = |F/D|^(1/4). Three points
-   ! determine D, E and F exactly.
+   ! determine D, E and F exactly. Also record the chosen lambda
+   ! criterion and keep the lambda where it is smallest.
       self :: INOUT
       GoF2 :: REAL, IN
 
       A,Ai :: MAT{REAL}(3,3)
       x,y,c :: VEC{REAL}(3)
+      val :: REAL
       i,n,m :: INT
 
       .lambda_history.append(.lambda)
       .GoF2_history.append(GoF2)
+
+      ! The chosen criterion, and its minimum so far
+      if (.stiffness_made) then
+         val = .criterion_value
+         .criterion_history.append(val)
+         if (.criterion_history.dim==1 OR val<.criterion_min) then
+            .criterion_min = val
+            .lambda_opt    = .lambda
+         end
+      end
 
       ! The last three points with lambda > 0
       n = .lambda_history.dim
@@ -1693,6 +1737,7 @@ contains
 
       case ("xc_atom_separation_cutoff=   "); .read_XC_atom_separation_cutoff
 
+      case ("lambda_criterion=            "); .read_lambda_criterion
       case ("put_constraint_stiffness=    "); .read_put_constraint_stiffness
       case ("use_stiffness_correction=    "); .read_use_stiffness_correction
 
@@ -2266,6 +2311,10 @@ contains
    ! Generic read and set a quantity with units
    end
 
+
+   read_lambda_criterion :: get_from(OBJECT:read_and_set, VAL_TYPE?=>STR, SET?=>.set_lambda_criterion), private
+   ! Generic read and set
+   end
 
    read_put_constraint_stiffness :: get_from(OBJECT:read_and_set, VAL_TYPE?=>BIN, SET?=>.set_put_constraint_stiffness), private
    ! Generic read and set
@@ -3431,6 +3480,13 @@ contains
       stdout.show("TIH 3-point D (error term)     =", .TIH3_D)
       stdout.show("TIH 3-point E                  =", .TIH3_E)
       stdout.show("TIH 3-point F                  =", .TIH3_F)
+      end
+
+      stdout.show("Lambda criterion               =", trim(.lambda_criterion))
+      stdout.show("Criterion at this lambda       =", .criterion_value)
+      if (.criterion_history.allocated) then
+      stdout.show("Smallest criterion so far      =", .criterion_min)
+      stdout.show("Optimum lambda so far          =", .lambda_opt)
       end
 
    end

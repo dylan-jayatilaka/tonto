@@ -293,8 +293,11 @@ the sigmas, because the variance scale is treated as a fitted quantity:
 ```
 
 GCV is generalised cross-validation, Golub, Heath and Wahba (1979), *Technometrics* **21**,
-215. These two are the ones to use here. BIC penalises harder than AIC and picks a smaller
-lambda.
+215. These two are the ones to use: the sigmas of a diffraction experiment are unreliable in
+scale but useful in their relative values, and both criteria use only the relative values.
+GCV is the default, for its crystallographic heritage, and the keyword `lambda_criterion=`
+switches to the sigma-free AIC; the other three are kept for comparison. BIC penalises harder
+than AIC and picks a smaller lambda.
 
 **Leave-one-out without refitting.** A fit is called a linear smoother when its predictions are
 a fixed linear map of the observations, $`\hat{\mathbf{o}} = \mathbf{H} \mathbf{o}`$, with $`\mathbf{H}`$ not depending on $`\mathbf{o}`$;
@@ -715,7 +718,8 @@ AIC still falling at 4. The two that trust the sigmas stop two orders of magnitu
 than the two that do not, which is what section 7 predicts for a data set whose sigmas are
 too large: GoF is below 1 from lambda 0.008 on. At the leave-one-out minimum 34 of the 88
 reflections' worth of parameters are in use and the GoF is 0.34. A data set with believable
-sigmas is needed before one of these is made the rule.
+sigmas is needed before a rule about where to stop is set; which criterion to read is
+decided: GCV, or the sigma-free AIC.
 
 ## 10. Keywords
 
@@ -729,5 +733,8 @@ In the `scfdata=` block:
   number of parameters, the sigma-free AIC, the GCV, the leave-one-out sum and the three-point
   lambda are also printed with the structure factor statistics in the SCF results.
 - `use_stiffness_correction= TRUE` switches on the correction of section 9.
+- `lambda_criterion= gcv` chooses the criterion whose value and running minimum over the
+  lambda scan are printed with the statistics: `gcv` (the default), `aic_sigma`, `aic`,
+  `bic` or `loo`. The lambda with the smallest value so far is the optimum lambda.
 
 Both are for restricted wavefunctions and the two-centre partition models.

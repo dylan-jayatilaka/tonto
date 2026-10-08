@@ -29,10 +29,18 @@ The cure as implemented is the first of three stages.
    constraint matrix is built. For ammonia that is cheap. For a molecule with hundreds of
    basis functions and thousands of reflections the derivative array is the problem: it is
    reflections times occupied times virtual reals, and the transformation dominates.
-2. **Next: reuse across iterations.** The gain matrix changes slowly once the orbitals settle.
-   Build it at the first iteration of each lambda and again only when the DIIS error has
-   fallen by a factor of ten, or every fifth iteration. The gradient contraction each
-   iteration then costs reflections times occupied times virtual, which is small.
+2. **Withdrawn: reuse across iterations.** Tried on 2026-10-08 as a rebuild period of 5, 10
+   and 100 iterations, at lambda 0.4 on ammonia, where remaking every iteration converges in
+   10: all three diverge. A stored $`\mathbf{B}`$ refers to the orbitals it was made in, and
+   contracting it with the gradient in the current orbitals mismatches the occupied-virtual
+   indices. Taking the gradient in the stored orbitals instead also diverges: in that basis
+   the off-diagonal block of the current Fock matrix measures the rotation already made since
+   the matrix was stored, not the error left, so the correction is large and wrong after the
+   first big step. Transforming $`\mathbf{B}`$ to the current orbitals needs the occupied-occupied
+   and virtual-virtual blocks of every derivative, which were never stored and would cost more
+   than $`\mathbf{B}`$ itself. So the derivatives are remade every iteration, and the scaling
+   route is stage 3. What can be reused is a reflection-space object: the leading eigenvectors
+   of $`\mathbf{G}`$ change slowly, and can deflate the conjugate gradient solve below.
 3. **Later: matrix-free** (Dylan, 2026-10-08: the diagonalisation of $`\mathbf{G}`$ is the
    problem for anything large; the update only ever contracts $`\mathbf{G}`$ with $`\mathbf{B}`$ on
    either side, so it need not exist). The design:
@@ -82,10 +90,11 @@ Also left:
 
 ## 3. Decisions owed
 
-- **Which criterion chooses lambda.** See the report, section 9, for where each criterion puts
-  its minimum on ammonia. The sigmas of that data set look too large, which is why the
-  criteria that trust them disagree with the sigma-free ones. A data set with believable sigmas
-  is needed before a rule is set.
+- **Which criterion chooses lambda: decided** (Dylan, 2026-10-08). The sigmas are unreliable in
+  scale but useful relatively, so GCV or the sigma-free AIC; GCV is the default for its
+  crystallographic heritage, `lambda_criterion=` switches. Still open: whether the scan should
+  stop itself at the criterion's minimum, and a data set with believable sigmas to see the
+  two agree.
 - **Whether `use_stiffness_correction` becomes the default** for constrained SCF.
 
 ## 4. Log
@@ -122,6 +131,10 @@ Also left:
   points at 0.14 and 0.16 and was wrong; the scan results are in the report. A scan started
   at lambda 4 straight from the lambda 0.012 density diverged: the step is a linearisation,
   and lambda has to be stepped up.
+- 2026-10-08. Stage 2 tried and withdrawn, see the plan. The keyword, the stored orbitals and
+  the period logic were removed again.
+- 2026-10-08. `lambda_criterion=` keyword, GCV default; the chosen criterion's value and the
+  lambda of its smallest value so far are printed with the statistics.
 - 2026-10-08. Third run on achari2 after the blessing, every suite: 181 of 181.
 - 2026-10-08. References on achari2. The first run of the suites there, with the damping
   repair as first written, failed 22 of 181 tests, among them the formamide interaction
