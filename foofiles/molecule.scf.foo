@@ -2973,45 +2973,183 @@ contains
 
    end
 
+   make_stiffness_preconditioner :: private, leaky
+   ! Make the exact diagonal of the gain matrix, G_kk = (2/(N-p)) times
+   ! the squared norm of row k of B, without storing B: the derivatives
+   ! are built for a batch of reflections at a time, transformed to the
+   ! occupied-virtual block and squared, and the batch is dropped. Each
+   ! batch costs one pass over the shell pairs. Kept in .SCF_data with
+   ! the lambda iteration it was made at. Used only when
+   ! .SCF_data.stiffness_preconditioner is "diagonal": on ammonia it
+   ! doubles the conjugate gradient count, the gain matrix being far
+   ! from diagonal (docs/TASK_XCW_CONVERGENCE.md).
+      self :: INOUT
+
+      k_pts :: MAT{REAL}@
+      ft_ab,ft_ab_eq :: MAT3{CPX}@
+      dF :: MAT3{REAL}@
+      dF_ao,half,dF_ov :: MAT{REAL}@
+      Fc :: VEC{CPX}@
+      Fm,alpha,d_alpha,Fsig,wt,u,row :: VEC{REAL}@
+      fac,cutoff,val :: REAL
+      q,fa,la,fb,lb,na,nb,atom_a,atom_b :: INT
+      i,j,k,kb,k1,k2,n_batch,n_k,n_refl,n_par,n_occ,n_vir :: INT
+      sh :: SHELL2
+
+      n_k    = .crystal.n_unique_SF_k_pts
+      n_refl = .crystal.xray_data.reflections.dim
+      n_par  = .crystal.xray_data.n_param
+      n_occ  = .n_a
+      n_vir  = .n_bf - .n_a
+      fac    = TWO/max(n_refl - n_par,1)
+
+      ! Batches of reflections, about 160 MB of derivatives each
+      n_batch = max(1,min(n_refl,20000000/(.n_bf*.n_bf)))
+
+      Fc      = .crystal.xray_data.reflections.F_calc
+      alpha   = .crystal.xray_data.F_scale_and_extn_correction
+      d_alpha = .crystal.xray_data.d_F_pred_d_F_abs
+      Fsig    = .crystal.xray_data.reflections.F_sigma
+      Fm.create(n_refl)
+      wt.create(n_refl)
+      Fm = max(abs(Fc),TOL(10))
+      wt = sqrt(abs(alpha*d_alpha))/Fsig
+
+      k_pts.create(n_k,3)
+      .crystal.make_unique_X_SF_k_pts(k_pts)
+      cutoff = TOL(10) / .n_shell_pairs
+
+      .SCF_data.stiffness_precond.destroy
+      .SCF_data.stiffness_precond.create(n_refl)
+      .SCF_data.stiffness_precond = ZERO
+
+      dF_ao.create(.n_bf,.n_bf)
+      half.create(.n_bf,n_vir)
+      dF_ov.create(n_occ,n_vir)
+      row.create(n_occ*n_vir)
+
+      k1 = 1
+      do
+         if (k1>n_refl) exit
+         k2 = min(k1+n_batch-1,n_refl)
+
+         ! The derivatives of |F_calc| for this batch
+         dF.create([k1,k2],[1,.n_bf],[1,.n_bf])
+         dF = ZERO
+         do q = 1, .n_shell_pairs
+            .set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
+            if (sh.skip_ft(cutoff)) then
+               sh.destroy_ptr_part
+               cycle
+            end
+            ft_ab.create([1,n_refl],[fa,la],[fb,lb])
+            ft_ab_eq.create(n_k,na,nb)
+            .make_FT_pair(ft_ab_eq,k_pts,sh,atom_a,atom_b)
+            .crystal.spacegroup.sum_unique_sf_ints(ft_ab,ft_ab_eq,.crystal.xray_data.reflections)
+            ft_ab_eq.destroy
+            do i = fa,la
+            do j = fb,min(lb,i)
+               dF(k1:k2,i,j) = (RE(ft_ab(k1:k2,i,j))*RE(Fc(k1:k2)) + IM(ft_ab(k1:k2,i,j))*IM(Fc(k1:k2)))/Fm(k1:k2)
+               dF(k1:k2,j,i) = dF(k1:k2,i,j)
+            end
+            end
+            ft_ab.destroy
+            sh.destroy_ptr_part
+         end
+
+         ! Each row of B, squared and summed
+         do k = k1,k2
+            dF_ao = dF(k,:,:)
+            half.to_product_of(dF_ao,.MOs.r(:,n_occ+1:.n_bf))
+            dF_ov.to_product_of(.MOs.r(:,1:n_occ),half,transpose_a=TRUE)
+            val = ZERO
+            do j = 1,n_vir
+            do i = 1,n_occ
+               val = val + dF_ov(i,j)**2/(.MO_energies.r(n_occ+j) - .MO_energies.r(i))
+            end
+            end
+            .SCF_data.stiffness_precond(k) = fac*FOUR*wt(k)*wt(k)*val
+         end
+         dF.destroy
+
+         k1 = k2 + 1
+      end
+
+      ! This is the diagonal before the scale direction is removed from
+      ! B, an upper bound on the projected one, which would need the
+      ! whole matrix.
+      .SCF_data.stiffness_precond_lambda_iteration = .SCF_data.lambda_iteration
+
+      ! Clean up
+      row.destroy
+      dF_ov.destroy
+      half.destroy
+      dF_ao.destroy
+      k_pts.destroy
+      wt.destroy
+      Fm.destroy
+      Fsig.destroy
+      d_alpha.destroy
+      alpha.destroy
+      Fc.destroy
+
+   end
+
    solve_stiffness_system(rhs,y,lam) :: private, leaky
    ! Solve (1 + lam G) y = rhs by conjugate gradients, to the relative
    ! residual .SCF_data.stiffness_cg_tolerance, with G applied through
-   ! the products above. The iteration count is kept in .SCF_data.
+   ! the products above, preconditioned by 1 + lam times the estimated
+   ! diagonal of G when that has been made for this lambda. The
+   ! iteration count is kept in .SCF_data.
       self :: INOUT
       rhs :: VEC{REAL}, IN
       y :: VEC{REAL}, OUT
       lam :: REAL, IN
 
-      r,p,Ap :: VEC{REAL}@
-      rr,rr_new,pAp,alpha_cg,beta_cg,tol :: REAL
+      r,z,p,Ap,Minv :: VEC{REAL}@
+      rz,rz_new,pAp,alpha_cg,beta_cg,tol :: REAL
       it,n_refl,max_it :: INT
 
       n_refl = rhs.dim
       max_it = min(n_refl,200)
       tol    = .SCF_data.stiffness_cg_tolerance*sqrt(sum(rhs*rhs))
 
+      ! The preconditioner, the identity unless the diagonal was asked for
+      Minv.create(n_refl)
+      Minv = ONE
+      if (.SCF_data.stiffness_preconditioner=="diagonal") then
+      if (.SCF_data.stiffness_precond.allocated) then
+      if (.SCF_data.stiffness_precond_lambda_iteration==.SCF_data.lambda_iteration) then
+         Minv = ONE/(ONE + lam*.SCF_data.stiffness_precond)
+      end
+      end
+      end
+
       r.create(n_refl)
+      z.create(n_refl)
       p.create(n_refl)
       Ap.create(n_refl)
 
       y  = ZERO
       r  = rhs
-      p  = r
-      rr = sum(r*r)
+      z  = Minv*r
+      p  = z
+      rz = sum(r*z)
       it = 0
 
       do
-         if (sqrt(rr)<=tol OR it>=max_it) exit
+         if (sqrt(sum(r*r))<=tol OR it>=max_it) exit
          .apply_stiffness_operator(p,Ap,lam)
          pAp = sum(p*Ap)
          if (pAp<=ZERO) exit
-         alpha_cg = rr/pAp
+         alpha_cg = rz/pAp
          y = y + alpha_cg*p
          r = r - alpha_cg*Ap
-         rr_new  = sum(r*r)
-         beta_cg = rr_new/rr
-         rr = rr_new
-         p  = r + beta_cg*p
+         z = Minv*r
+         rz_new  = sum(r*z)
+         beta_cg = rz_new/rz
+         rz = rz_new
+         p  = z + beta_cg*p
          it = it + 1
       end
 
@@ -3019,7 +3157,9 @@ contains
 
       Ap.destroy
       p.destroy
+      z.destroy
       r.destroy
+      Minv.destroy
 
    end
 
@@ -3384,10 +3524,15 @@ contains
       gt.destroy
 
       ! The move with the constraint curvature included: by conjugate
-      ! gradients, or in the eigenbasis of G
+      ! gradients, with a preconditioner made once per lambda, or in the
+      ! eigenbasis of G
       y.create(n_refl)
       p.create(n_refl)
       if (.SCF_data.use_matrix_free_stiffness) then
+         if (.SCF_data.stiffness_preconditioner=="diagonal" &
+             AND .SCF_data.stiffness_precond_lambda_iteration/=.SCF_data.lambda_iteration) then
+            .make_stiffness_preconditioner
+         end
          .solve_stiffness_system(dr,y,lam)
       else
          p.to_product_of(.SCF_data.stiffness_evec,dr,transpose_a=TRUE)

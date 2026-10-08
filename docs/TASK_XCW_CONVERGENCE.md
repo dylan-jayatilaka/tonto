@@ -52,7 +52,11 @@ The cure as implemented is the first of three stages.
    the leverages are too rough from 20 samples, so the leave-one-out sum and Cook's distances
    are not usable in this form yet; 10 to 28 conjugate gradient iterations per SCF iteration;
    twenty times the CPU of the explicit route on a molecule this small. **Left in this stage:**
-   a preconditioner or deflation for the conjugate gradients; a usable leverage estimator
+   deflation of the conjugate gradients by the leading eigenvectors of $`\mathbf{G}`$, since a
+   diagonal preconditioner was tried on 2026-10-08 and doubles the count (an estimated
+   diagonal from four sign vectors: 10 to 14 and 28 to 80; the exact diagonal, built in
+   batches: 10 to 12 and 28 to 52), the matrix being far from diagonal; it is kept as
+   `stiffness_preconditioner= diagonal`, off by default; a usable leverage estimator
    (more samples, or probing by colouring); an automatic choice between the two forms by the
    size of $`\mathbf{B}`$; a timing on a real case where $`\mathbf{B}`$ does not fit. The design
    as planned:

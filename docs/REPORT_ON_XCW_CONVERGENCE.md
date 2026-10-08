@@ -696,9 +696,12 @@ route is twenty times cheaper, since one pass over the shell pairs makes every d
 once while each conjugate gradient iteration costs a structure factor evaluation and a
 constraint build; the matrix-free form is for the case where the derivatives cannot be stored.
 Its cost per SCF iteration is the conjugate gradient count times those two, and the count
-grows with $`\lambda\gamma_{\max}`$: a preconditioner, or deflation by the leading
-eigenvectors of $`\mathbf{G}`$ carried from one iteration to the next, would bring it down. The
-plan is in `docs/TASK_XCW_CONVERGENCE.md`.
+grows with $`\lambda\gamma_{\max}`$. A diagonal preconditioner does not bring it down: with the
+exact diagonal of $`\mathbf{G}`$ the count on ammonia goes from 10 to 12 at lambda 0.012 and
+from 28 to 52 at 0.4, because the stiff directions of $`\mathbf{G}`$ are combinations of many
+strong reflections and the matrix is nowhere near diagonal. What fits this matrix is
+deflation by its leading eigenvectors, carried from one iteration to the next; that is the
+open item in `docs/TASK_XCW_CONVERGENCE.md`.
 
 **A limit.** The step is a linearisation about the current orbitals. From the converged
 lambda 0.012 density the correction takes a jump to lambda 0.4, where $`\lambda\gamma_{\max}`$
@@ -764,8 +767,9 @@ In the `scfdata=` block:
 - `use_stiffness_correction= TRUE` switches on the correction of section 9.
 - `use_matrix_free_stiffness= TRUE` uses the matrix-free form of section 9 for the correction
   and the statistics; `stiffness_cg_tolerance= 1e-4` is its conjugate gradient stopping
-  residual, relative, and `stiffness_samples= 20` the number of sign vectors in the trace
-  estimator. The own gains, the share of the stiffest mode and the eigenvalues are not made in
+  residual, relative, `stiffness_samples= 20` the number of sign vectors in the trace
+  estimator, and `stiffness_preconditioner= none` or `diagonal` the preconditioner, the
+  diagonal being made exactly in batches once per lambda and slower on ammonia. The own gains, the share of the stiffest mode and the eigenvalues are not made in
   this form, and the leverages are estimates.
 - `lambda_criterion= gcv` chooses the criterion whose value and running minimum over the
   lambda scan are printed with the statistics: `gcv` (the default), `aic_sigma`, `aic`,
