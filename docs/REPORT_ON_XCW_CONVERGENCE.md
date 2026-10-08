@@ -123,9 +123,10 @@ matrix, and its largest eigenvalue $`\gamma`$. The minus sign is the overshoot: 
 back reversed and $`\lambda\gamma`$ times larger.
 
 **The refitted scale.** Because $`\alpha`$ is refitted each step, an error in the structure
-factors that is proportional to the structure factors themselves costs nothing. So the direction
-$`u_k \propto \alpha |F_k|/\sigma_k`$ is projected out of $`B`$ before $`G`$ is formed. This
-lowers $`\gamma`$ for ammonia from 1071 to 642.
+factors that is proportional to the structure factors themselves costs nothing. That error is
+the vector $`u`$ in the space of reflections whose $`k`$-th component is $`\alpha|F_k|/\sigma_k`$,
+normalised to unit length; it is projected out of $`B`$, row by row, before $`G`$ is formed.
+This lowers $`\gamma`$ for ammonia from 1071 to 642.
 
 **The condition for convergence.** A step that mixes a fraction $`x`$ of the new density with
 $`1-x`$ of the old multiplies the error along the stiffest direction by
