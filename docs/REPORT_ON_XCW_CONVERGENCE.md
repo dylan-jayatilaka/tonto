@@ -51,8 +51,10 @@ density only damped when an old density already existed, and only kept one when 
 already on. Damping now mixes with the density it is given on entry, and every SCF with the
 default settings takes a different path to the same answer.
 
-The three test jobs with lambda up to 0.0003 (`nh3_x-ray-constrained-rhf_cc-pVTZ`, its
-`_extinction` twin, and the urea UHF job at 0.001) show nothing of the kind.
+The other three constrained test jobs show no such excursion: their GoF and energy move
+smoothly to convergence at every lambda. They use much smaller multipliers, at most 0.0003
+for `nh3_x-ray-constrained-rhf_cc-pVTZ` and its `_extinction` twin and 0.001 for the urea UHF
+job, and at those values the overshoot of section 3 is far too small to matter.
 
 ## 3. Theory
 
