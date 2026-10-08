@@ -2646,6 +2646,11 @@ contains
       i,j,k,ia,n_k,n_refl,n_par,n_occ,n_vir :: INT
       sh :: SHELL2
 
+      if (.SCF_data.use_matrix_free_stiffness) then
+         .make_constraint_stiffness_estimates
+         return
+      end
+
       n_k    = .crystal.n_unique_SF_k_pts
       n_refl = .crystal.xray_data.reflections.dim
       n_par  = .crystal.xray_data.n_param
@@ -2763,6 +2768,7 @@ contains
 
       gain.solve_symmetric_eigenproblem(.SCF_data.stiffness_eval,.SCF_data.stiffness_evec)
       gain.destroy
+      .SCF_data.gamma_max = .SCF_data.stiffness_eval(n_refl)
 
       ! The hat matrix diagonal, the effective number of parameters, the
       ! residuals, and the criteria for choosing lambda
@@ -2796,6 +2802,333 @@ contains
 
    end
 
+   make_B_times(v,res) :: private, leaky
+   ! Return "res" = B v for an occupied-virtual vector "v" (virtual index
+   ! outer, occupied inner), with the B of make_constraint_stiffness, but
+   ! without forming B: "res" is the set of structure factors of the
+   ! symmetrised transition density c_occ V c_vir^T, V = v/sqrt(gap),
+   ! projected on the phase of F_calc and scaled by 2 sqrt(alpha d_alpha)
+   ! over sigma, with the direction of the refitted scale factor removed.
+   ! One structure factor evaluation.
+      self :: INOUT
+      v :: VEC{REAL}, IN
+      res :: VEC{REAL}, OUT
+
+      k_pts,vmat,half,pmat :: MAT{REAL}@
+      sf_eq,FP,Fc :: VEC{CPX}@
+      Fm,Fsig,alpha,d_alpha,wt,u :: VEC{REAL}@
+      i,j,ia,n_k,n_refl,n_occ,n_vir :: INT
+
+      n_k    = .crystal.n_unique_SF_k_pts
+      n_refl = .crystal.xray_data.reflections.dim
+      n_occ  = .n_a
+      n_vir  = .n_bf - .n_a
+
+      ! The symmetrised transition density
+      vmat.create(n_occ,n_vir)
+      ia = 0
+      do j = 1,n_vir
+      do i = 1,n_occ
+         ia = ia + 1
+         vmat(i,j) = v(ia)/sqrt(.MO_energies.r(n_occ+j) - .MO_energies.r(i))
+      end
+      end
+      half.create(.n_bf,n_vir)
+      half.to_product_of(.MOs.r(:,1:n_occ),vmat)
+      pmat.create(.n_bf,.n_bf)
+      pmat.to_product_of(half,.MOs.r(:,n_occ+1:.n_bf),transpose_b=TRUE)
+      pmat.symmetrize
+      half.destroy
+      vmat.destroy
+
+      ! Its structure factors
+      k_pts.create(n_k,3)
+      .crystal.make_unique_X_SF_k_pts(k_pts)
+      sf_eq.create(n_k)
+      .make_FT(sf_eq,pmat,k_pts)
+      FP.create(n_refl)
+      .crystal.spacegroup.sum_unique_sf(FP,sf_eq,.crystal.xray_data.reflections)
+      sf_eq.destroy
+      k_pts.destroy
+      pmat.destroy
+
+      ! Projected on the phase of F_calc, weighted, scale direction removed
+      Fc      = .crystal.xray_data.reflections.F_calc
+      alpha   = .crystal.xray_data.F_scale_and_extn_correction
+      d_alpha = .crystal.xray_data.d_F_pred_d_F_abs
+      Fsig    = .crystal.xray_data.reflections.F_sigma
+      Fm.create(n_refl)
+      wt.create(n_refl)
+      u.create(n_refl)
+      Fm  = max(abs(Fc),TOL(10))
+      wt  = sqrt(abs(alpha*d_alpha))/Fsig
+      res = TWO*wt*(RE(Fc)*RE(FP) + IM(Fc)*IM(FP))/Fm
+      u   = wt*Fm
+      u   = u/sqrt(sum(u*u))
+      res = res - u*sum(u*res)
+
+      ! Clean up
+      u.destroy
+      wt.destroy
+      Fm.destroy
+      Fsig.destroy
+      d_alpha.destroy
+      alpha.destroy
+      Fc.destroy
+      FP.destroy
+
+   end
+
+   make_BT_times(w,res) :: private, leaky
+   ! Return "res" = B^T w for a reflection vector "w", with the B of
+   ! make_constraint_stiffness, but without forming B: "res" is the
+   ! occupied-virtual block, over sqrt(gap), of the constraint matrix
+   ! built from the residual vector 2 sqrt(alpha/d_alpha) w (N-p)/2,
+   ! with the direction of the refitted scale factor removed from "w"
+   ! first. One constraint build.
+      self :: INOUT
+      w :: VEC{REAL}, IN
+      res :: VEC{REAL}, OUT
+
+      half,g_ov :: MAT{REAL}@
+      C :: MAT{REAL}@
+      Fc :: VEC{CPX}@
+      Fm,Fsig,alpha,d_alpha,wt,u,resid :: VEC{REAL}@
+      fac :: REAL
+      i,j,ia,n_refl,n_par,n_occ,n_vir :: INT
+
+      n_refl = .crystal.xray_data.reflections.dim
+      n_par  = .crystal.xray_data.n_param
+      n_occ  = .n_a
+      n_vir  = .n_bf - .n_a
+      fac    = TWO/max(n_refl - n_par,1)
+
+      ! The residual vector that makes the constraint 2 sum_k w_k w'_k A_k
+      Fc      = .crystal.xray_data.reflections.F_calc
+      alpha   = .crystal.xray_data.F_scale_and_extn_correction
+      d_alpha = .crystal.xray_data.d_F_pred_d_F_abs
+      Fsig    = .crystal.xray_data.reflections.F_sigma
+      Fm.create(n_refl)
+      wt.create(n_refl)
+      u.create(n_refl)
+      resid.create(n_refl)
+      Fm    = max(abs(Fc),TOL(10))
+      wt    = sqrt(abs(alpha*d_alpha))/Fsig
+      u     = wt*Fm
+      u     = u/sqrt(sum(u*u))
+      resid = w - u*sum(u*w)
+      resid = TWO*sqrt(abs(alpha/d_alpha))*resid/fac
+
+      ! The constraint matrix and its scaled occupied-virtual block
+      C.create(.n_bf,.n_bf)
+      .make_r_constraint(C,resid=resid)
+      half.create(.n_bf,n_vir)
+      g_ov.create(n_occ,n_vir)
+      half.to_product_of(C,.MOs.r(:,n_occ+1:.n_bf))
+      g_ov.to_product_of(.MOs.r(:,1:n_occ),half,transpose_a=TRUE)
+      ia = 0
+      do j = 1,n_vir
+      do i = 1,n_occ
+         ia = ia + 1
+         res(ia) = g_ov(i,j)/sqrt(.MO_energies.r(n_occ+j) - .MO_energies.r(i))
+      end
+      end
+
+      ! Clean up
+      g_ov.destroy
+      half.destroy
+      C.destroy
+      resid.destroy
+      u.destroy
+      wt.destroy
+      Fm.destroy
+      Fsig.destroy
+      d_alpha.destroy
+      alpha.destroy
+      Fc.destroy
+
+   end
+
+   apply_stiffness_operator(x,res,lam) :: private, leaky
+   ! Return "res" = (1 + lam G) x for a reflection vector "x", with
+   ! G = (2/(N-p)) B B^T applied through make_BT_times and make_B_times.
+      self :: INOUT
+      x :: VEC{REAL}, IN
+      res :: VEC{REAL}, OUT
+      lam :: REAL, IN
+
+      t :: VEC{REAL}@
+      fac :: REAL
+      n_refl,n_par :: INT
+
+      n_refl = .crystal.xray_data.reflections.dim
+      n_par  = .crystal.xray_data.n_param
+      fac    = TWO/max(n_refl - n_par,1)
+
+      t.create(.n_a*(.n_bf-.n_a))
+      .make_BT_times(x,t)
+      .make_B_times(t,res)
+      res = x + lam*fac*res
+      t.destroy
+
+   end
+
+   solve_stiffness_system(rhs,y,lam) :: private, leaky
+   ! Solve (1 + lam G) y = rhs by conjugate gradients, to the relative
+   ! residual .SCF_data.stiffness_cg_tolerance, with G applied through
+   ! the products above. The iteration count is kept in .SCF_data.
+      self :: INOUT
+      rhs :: VEC{REAL}, IN
+      y :: VEC{REAL}, OUT
+      lam :: REAL, IN
+
+      r,p,Ap :: VEC{REAL}@
+      rr,rr_new,pAp,alpha_cg,beta_cg,tol :: REAL
+      it,n_refl,max_it :: INT
+
+      n_refl = rhs.dim
+      max_it = min(n_refl,200)
+      tol    = .SCF_data.stiffness_cg_tolerance*sqrt(sum(rhs*rhs))
+
+      r.create(n_refl)
+      p.create(n_refl)
+      Ap.create(n_refl)
+
+      y  = ZERO
+      r  = rhs
+      p  = r
+      rr = sum(r*r)
+      it = 0
+
+      do
+         if (sqrt(rr)<=tol OR it>=max_it) exit
+         .apply_stiffness_operator(p,Ap,lam)
+         pAp = sum(p*Ap)
+         if (pAp<=ZERO) exit
+         alpha_cg = rr/pAp
+         y = y + alpha_cg*p
+         r = r - alpha_cg*Ap
+         rr_new  = sum(r*r)
+         beta_cg = rr_new/rr
+         rr = rr_new
+         p  = r + beta_cg*p
+         it = it + 1
+      end
+
+      .SCF_data.stiffness_cg_iterations = it
+
+      Ap.destroy
+      p.destroy
+      r.destroy
+
+   end
+
+   make_constraint_stiffness_estimates :: private, leaky
+   ! The fit statistics of make_constraint_stiffness without forming the
+   ! gain matrix: p_eff = p + tr H by Hutchinson's estimator, the average
+   ! of z^T H z over .SCF_data.stiffness_samples sign vectors z, with
+   ! H z = z - (1 + lam G)^-1 z from one conjugate gradient solve each,
+   ! and the leverages from the same solves component by component; the
+   ! largest gain by power iteration. The eigenvalues, the own gains and
+   ! the share of the stiffest mode are not made.
+      self :: INOUT
+
+      Fc :: VEC{CPX}@
+      Fm,Fexp,Fsig,alpha,z,Hz,x,res :: VEC{REAL}@
+      lam,val,p_eff,chi2,norm :: REAL
+      seed :: INT
+      j,k,m,n_refl,n_par :: INT
+
+      n_refl = .crystal.xray_data.reflections.dim
+      n_par  = .crystal.xray_data.n_param
+      lam    = .SCF_data.lambda
+
+      ! The residuals
+      Fc    = .crystal.xray_data.reflections.F_calc
+      alpha = .crystal.xray_data.F_scale_and_extn_correction
+      Fexp  = .crystal.xray_data.reflections.F_exp
+      Fsig  = .crystal.xray_data.reflections.F_sigma
+      Fm.create(n_refl)
+      Fm = max(abs(Fc),TOL(10))
+      .SCF_data.fit_residual.destroy
+      .SCF_data.hat_diag.destroy
+      .SCF_data.stiffness_eval.destroy
+      .SCF_data.stiffness_evec.destroy
+      .SCF_data.stiffness_diag.destroy
+      .SCF_data.stiffness_B.destroy
+      .SCF_data.fit_residual.create(n_refl)
+      .SCF_data.hat_diag.create(n_refl)
+      .SCF_data.fit_residual = (alpha*Fm - Fexp)/Fsig
+      .SCF_data.hat_diag = ZERO
+
+      ! The trace and the diagonal of H from sign vectors. The signs come
+      ! from a fixed linear congruential sequence (Lehmer's, modulus 65537),
+      ! the same on every rank.
+      z.create(n_refl)
+      Hz.create(n_refl)
+      x.create(n_refl)
+      p_eff = ZERO
+      seed  = 12345
+      m = .SCF_data.stiffness_samples
+      if (lam>ZERO) then
+      do j = 1,m
+         do k = 1,n_refl
+            seed = mod(75*seed + 74, 65537)
+            if (mod(seed/256,2)==0) then; z(k) = ONE
+            else;                           z(k) = -ONE
+            end
+         end
+         .solve_stiffness_system(z,x,lam)
+         Hz = z - x
+         p_eff = p_eff + sum(z*Hz)
+         .SCF_data.hat_diag = .SCF_data.hat_diag + z*Hz
+      end
+      p_eff = p_eff/m
+      .SCF_data.hat_diag = .SCF_data.hat_diag/m
+      end
+      p_eff = p_eff + n_par
+      x.destroy
+      Hz.destroy
+      z.destroy
+
+      ! The largest gain by power iteration
+      x.create(n_refl)
+      res.create(n_refl)
+      x = ONE
+      x = x/sqrt(sum(x*x))
+      val = ZERO
+      do j = 1,30
+         .apply_stiffness_operator(x,res,ONE)
+         res  = res - x
+         norm = sqrt(sum(res*res))
+         if (norm<=ZERO) exit
+         if (abs(norm-val)<=TOL(6)*norm) then; val = norm; exit; end
+         val = norm
+         x = res/norm
+      end
+      .SCF_data.gamma_max = val
+      res.destroy
+      x.destroy
+
+      ! The statistics
+      chi2 = sum(.SCF_data.fit_residual*.SCF_data.fit_residual)
+      .SCF_data.p_eff     = p_eff
+      .SCF_data.chi2_fit  = chi2
+      .SCF_data.AIC_sigma = n_refl*log(chi2/n_refl) + TWO*p_eff
+      .SCF_data.GCV       = n_refl*chi2/(n_refl-p_eff)**2
+      .SCF_data.LOO_sum   = sum((.SCF_data.fit_residual/(ONE-.SCF_data.hat_diag))**2)
+      .SCF_data.stiffness_made = TRUE
+      .SCF_data.stiffness_lambda_iteration = .SCF_data.lambda_iteration
+
+      ! Clean up
+      Fm.destroy
+      Fsig.destroy
+      Fexp.destroy
+      alpha.destroy
+      Fc.destroy
+
+   end
+
    put_constraint_stiffness
    ! Print the constraint stiffness made by make_constraint_stiffness:
    ! the largest gains per unit lambda, the stable fraction of new
@@ -2819,7 +3152,7 @@ contains
 
       n_refl = .crystal.xray_data.reflections.dim
       lam    = .SCF_data.lambda
-      g_max  = .SCF_data.stiffness_eval(n_refl)
+      g_max  = .SCF_data.gamma_max
 
       Fc    = .crystal.xray_data.reflections.F_calc
       alpha = .crystal.xray_data.F_scale_and_extn_correction
@@ -2828,7 +3161,10 @@ contains
       Fm.create(n_refl)
       Fm = max(abs(Fc),TOL(10))
       share.create(n_refl)
-      share = .SCF_data.stiffness_evec(:,n_refl)*.SCF_data.stiffness_evec(:,n_refl)
+      share = ZERO
+      if (.SCF_data.stiffness_evec.allocated) then
+         share = .SCF_data.stiffness_evec(:,n_refl)*.SCF_data.stiffness_evec(:,n_refl)
+      end
 
       ! Cook's distance of each reflection
       cook.create(n_refl)
@@ -2846,8 +3182,10 @@ contains
       stdout.show("No. of reflections               =",n_refl)
       stdout.show("Lambda                           =",lam,precision=6)
       stdout.show("Largest gain per unit lambda     =",g_max,precision=3)
+      if (.SCF_data.stiffness_eval.allocated) then
       val = sum(.SCF_data.stiffness_eval)
       stdout.show("Sum of all gains per unit lambda =",val,precision=3)
+      end
       val = lam*g_max
       stdout.show("Largest gain at this lambda      =",val,precision=3)
       val = TWO/(ONE+lam*g_max)
@@ -2865,12 +3203,19 @@ contains
       stdout.show("GCV, N chi^2/(N-p_eff)^2         =",.SCF_data.GCV,precision=6)
       stdout.show("Leave-one-out sum of squares     =",.SCF_data.LOO_sum,precision=3)
       stdout.flush
+      if (.SCF_data.use_matrix_free_stiffness) then
+      stdout.text("Matrix-free: p_eff and the leverages are estimates from")
+      stdout.show("sign vectors, number            =",.SCF_data.stiffness_samples)
+      stdout.flush
+      end
+      if (.SCF_data.stiffness_eval.allocated) then
       stdout.text("The ten largest gains per unit lambda:")
       do m = n_refl,max(n_refl-9,1),-1
          stdout.put(.SCF_data.stiffness_eval(m),fmt="f",width=14,precision=3)
       end
       stdout.flush
       stdout.flush
+      end
       stdout.text("All reflections, by own gain per unit lambda.")
       stdout.text("Columns: h k l, sin(theta)/lambda, F_exp, sigma, F_exp/sigma,")
       stdout.text("(F_pred-F_exp)/sigma, own gain, share of the stiffest mode,")
@@ -2878,7 +3223,13 @@ contains
       stdout.flush
 
       ind.create(n_refl)
-      .SCF_data.stiffness_diag.quick_sort(ind,decreasing_order=TRUE)
+      if (.SCF_data.stiffness_diag.allocated) then
+         .SCF_data.stiffness_diag.quick_sort(ind,decreasing_order=TRUE)
+      else
+         .SCF_data.stiffness_diag.create(n_refl)
+         .SCF_data.stiffness_diag = ZERO
+         cook.quick_sort(ind,decreasing_order=TRUE)
+      end
       do m = 1,n_refl
          k = ind(m)
          stdout.put(.crystal.xray_data.reflections(k).h1,width=4)
@@ -2994,8 +3345,13 @@ contains
       lam = .SCF_data.lambda
       if (lam.is_zero) return
 
-      ! The gain matrix and B at the current orbitals
-      .make_constraint_stiffness
+      ! The gain matrix and B at the current orbitals, unless matrix-free.
+      ! The statistics made with them belong to this iterate, not to a
+      ! converged one, so they are not left for the footer to print.
+      if (NOT .SCF_data.use_matrix_free_stiffness) then
+         .make_constraint_stiffness
+         .SCF_data.stiffness_made = FALSE
+      end
 
       n_refl = .crystal.xray_data.reflections.dim
       n_occ  = .n_a
@@ -3019,19 +3375,27 @@ contains
 
       ! The move of the residuals a plain step would make
       dr.create(n_refl)
-      dr.to_product_of(.SCF_data.stiffness_B,gt)
+      if (.SCF_data.use_matrix_free_stiffness) then
+         .make_B_times(gt,dr)
+      else
+         dr.to_product_of(.SCF_data.stiffness_B,gt)
+      end
       dr = -TWO*dr
       gt.destroy
 
-      ! The move with the constraint curvature included, in the
-      ! eigenbasis of G
-      p.create(n_refl)
-      p.to_product_of(.SCF_data.stiffness_evec,dr,transpose_a=TRUE)
-      do j = 1,n_refl
-         p(j) = p(j)/(ONE + lam*.SCF_data.stiffness_eval(j))
-      end
+      ! The move with the constraint curvature included: by conjugate
+      ! gradients, or in the eigenbasis of G
       y.create(n_refl)
-      y.to_product_of(.SCF_data.stiffness_evec,p)
+      p.create(n_refl)
+      if (.SCF_data.use_matrix_free_stiffness) then
+         .solve_stiffness_system(dr,y,lam)
+      else
+         p.to_product_of(.SCF_data.stiffness_evec,dr,transpose_a=TRUE)
+         do j = 1,n_refl
+            p(j) = p(j)/(ONE + lam*.SCF_data.stiffness_eval(j))
+         end
+         y.to_product_of(.SCF_data.stiffness_evec,p)
+      end
 
       ! Rebuild the constraint with the shifted residuals and add it
       C.create(.n_bf,.SCF_data.spinorbital_genre)

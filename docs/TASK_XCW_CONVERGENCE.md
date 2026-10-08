@@ -41,9 +41,21 @@ The cure as implemented is the first of three stages.
    than $`\mathbf{B}`$ itself. So the derivatives are remade every iteration, and the scaling
    route is stage 3. What can be reused is a reflection-space object: the leading eigenvectors
    of $`\mathbf{G}`$ change slowly, and can deflate the conjugate gradient solve below.
-3. **Later: matrix-free** (Dylan, 2026-10-08: the diagonalisation of $`\mathbf{G}`$ is the
-   problem for anything large; the update only ever contracts $`\mathbf{G}`$ with $`\mathbf{B}`$ on
-   either side, so it need not exist). The design:
+3. **Done, first form: matrix-free** (Dylan, 2026-10-08: the diagonalisation of $`\mathbf{G}`$
+   is the problem for anything large; the update only ever contracts $`\mathbf{G}`$ with
+   $`\mathbf{B}`$ on either side, so it need not exist). Implemented as `make_B_times`,
+   `make_BT_times`, `apply_stiffness_operator`, `solve_stiffness_system` (plain conjugate
+   gradients) and `make_constraint_stiffness_estimates` (Hutchinson for $`p_{\mathrm{eff}}`$
+   and the leverages, power iteration for the largest gain), switched by
+   `use_matrix_free_stiffness=`. Checked against the explicit route on ammonia, report
+   section 9: same iterations, energies, largest gain, $`p_{\mathrm{eff}}`$ to 0.3% and GCV;
+   the leverages are too rough from 20 samples, so the leave-one-out sum and Cook's distances
+   are not usable in this form yet; 10 to 28 conjugate gradient iterations per SCF iteration;
+   twenty times the CPU of the explicit route on a molecule this small. **Left in this stage:**
+   a preconditioner or deflation for the conjugate gradients; a usable leverage estimator
+   (more samples, or probing by colouring); an automatic choice between the two forms by the
+   size of $`\mathbf{B}`$; a timing on a real case where $`\mathbf{B}`$ does not fit. The design
+   as planned:
    - Never store the derivative array. $`\mathbf{B}\mathbf{v}`$ for an occupied-virtual vector
      $`\mathbf{v}`$ is the vector of structure factors of the symmetrised transition density
      $`\mathbf{c}_{\mathrm{occ}}\,\mathbf{v}\,\mathbf{c}_{\mathrm{vir}}^{T}`$, scaled per
@@ -131,6 +143,10 @@ Also left:
   points at 0.14 and 0.16 and was wrong; the scan results are in the report. A scan started
   at lambda 4 straight from the lambda 0.012 density diverged: the step is a linearisation,
   and lambda has to be stepped up.
+- 2026-10-08. Stage 3, the matrix-free form, implemented and checked against the explicit
+  route on ammonia at lambda 0.012 and 0.4; numbers in the report. A first build failed on an
+  integer constant too large for the default kind in the sign generator; Lehmer's generator
+  with modulus 65537 instead.
 - 2026-10-08. Stage 2 tried and withdrawn, see the plan. The keyword, the stored orbitals and
   the period logic were removed again.
 - 2026-10-08. `lambda_criterion=` keyword, GCV default; the chosen criterion's value and the

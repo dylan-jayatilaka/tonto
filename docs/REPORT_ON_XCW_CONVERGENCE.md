@@ -668,8 +668,37 @@ $`\mathbf{z}^{T}\mathbf{H}\mathbf{z}`$ over random sign vectors $`\mathbf{z}`$, 
 quadrature of Golub and Meurant, which gives $`\sum_j f(\gamma_j)`$ for any $`f`$ from the
 same matrix-vector products; the leverages $`H_{kk}`$ come the same way, a diagonal estimator in
 place of the trace. The eigenvalue problem is only needed for the full stiffness report, and
-only for a few thousand reflections, where it is cheap. The plan for this form is in
-`docs/TASK_XCW_CONVERGENCE.md`.
+only for a few thousand reflections, where it is cheap.
+
+**The matrix-free form, as implemented** (`use_matrix_free_stiffness= TRUE`): the two products
+are a structure factor evaluation of a symmetrised transition density and a constraint build
+from a reflection vector; the solve is conjugate gradients without a preconditioner, stopped at
+a relative residual of $`10^{-4}`$; $`p_{\mathrm{eff}}`$ and the leverages come from 20 sign
+vectors; the largest gain from power iteration. Against the explicit route on ammonia:
+
+| | explicit | matrix-free |
+|---|---|---|
+| iterations at lambda 0.012, 0.4 | 9, 10 | 9, 10 |
+| energy and GoF | same | same |
+| largest gain per unit lambda at 0.4 | 633.631 | 633.630 |
+| $`p_{\mathrm{eff}}`$ at 0.4 | 26.13 | 26.05 |
+| GCV at 0.4 | 0.3576 | 0.3568 |
+| leave-one-out sum at 0.4 | 60.9 | 88.5 |
+| conjugate gradient iterations per SCF iteration at 0.012, 0.4 | | 10, 28 |
+| CPU time of the job at 0.4 | 4 s | 86 s |
+
+The correction, $`p_{\mathrm{eff}}`$, GCV and the sigma-free AIC come out the same. The
+leverages do not: 20 sign vectors give each $`H_{kk}`$ only to about a tenth, and the
+leave-one-out residual $`r_k/(1-H_{kk})`$ magnifies that where $`H_{kk}`$ is near 1, so the
+leave-one-out sum and Cook's distances from the matrix-free route need many more samples or a
+better estimator and should not be read as they stand. On a molecule this small the explicit
+route is twenty times cheaper, since one pass over the shell pairs makes every derivative at
+once while each conjugate gradient iteration costs a structure factor evaluation and a
+constraint build; the matrix-free form is for the case where the derivatives cannot be stored.
+Its cost per SCF iteration is the conjugate gradient count times those two, and the count
+grows with $`\lambda\gamma_{\max}`$: a preconditioner, or deflation by the leading
+eigenvectors of $`\mathbf{G}`$ carried from one iteration to the next, would bring it down. The
+plan is in `docs/TASK_XCW_CONVERGENCE.md`.
 
 **A limit.** The step is a linearisation about the current orbitals. From the converged
 lambda 0.012 density the correction takes a jump to lambda 0.4, where $`\lambda\gamma_{\max}`$
@@ -733,6 +762,11 @@ In the `scfdata=` block:
   number of parameters, the sigma-free AIC, the GCV, the leave-one-out sum and the three-point
   lambda are also printed with the structure factor statistics in the SCF results.
 - `use_stiffness_correction= TRUE` switches on the correction of section 9.
+- `use_matrix_free_stiffness= TRUE` uses the matrix-free form of section 9 for the correction
+  and the statistics; `stiffness_cg_tolerance= 1e-4` is its conjugate gradient stopping
+  residual, relative, and `stiffness_samples= 20` the number of sign vectors in the trace
+  estimator. The own gains, the share of the stiffest mode and the eigenvalues are not made in
+  this form, and the leverages are estimates.
 - `lambda_criterion= gcv` chooses the criterion whose value and running minimum over the
   lambda scan are printed with the statistics: `gcv` (the default), `aic_sigma`, `aic`,
   `bic` or `loo`. The lambda with the smallest value so far is the optimum lambda.
