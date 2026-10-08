@@ -491,7 +491,8 @@ are the standardised residuals of the density $`D`$, and $`C(r)`$ is equation (2
 terms of them: a linear function of the vector $`r`$. Write $`g`$ for the occupied-virtual
 block of $`F_{\mathrm{eff}}(D)`$ in the current orbitals, the orbital gradient, and
 $`\Delta_{ia} = \varepsilon_a - \varepsilon_i`$ for the orbital energy differences. A change of the
-occupied orbitals is a rotation, new orbitals $`C\,e^{\kappa}`$ with $`\kappa`$ antisymmetric,
+occupied orbitals is a rotation, new orbital coefficients $`c\,e^{\kappa}`$ from the old $`c`$,
+with $`\kappa`$ antisymmetric,
 whose independent elements $`\kappa_{ia}`$ mix occupied orbital $`i`$ with virtual orbital
 $`a`$. By first-order perturbation theory the diagonalisation rotates by
 
