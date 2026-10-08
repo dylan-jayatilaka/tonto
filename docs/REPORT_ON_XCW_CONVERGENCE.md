@@ -699,9 +699,20 @@ Its cost per SCF iteration is the conjugate gradient count times those two, and 
 grows with $`\lambda\gamma_{\max}`$. A diagonal preconditioner does not bring it down: with the
 exact diagonal of $`\mathbf{G}`$ the count on ammonia goes from 10 to 12 at lambda 0.012 and
 from 28 to 52 at 0.4, because the stiff directions of $`\mathbf{G}`$ are combinations of many
-strong reflections and the matrix is nowhere near diagonal. What fits this matrix is
-deflation by its leading eigenvectors, carried from one iteration to the next; that is the
-open item in `docs/TASK_XCW_CONVERGENCE.md`.
+strong reflections and the matrix is nowhere near diagonal. What fits this matrix is deflation
+by its leading eigenvectors: $`m`$ of them, with their eigenvalues $`\theta_j`$, come from
+Lanczos on the operator once per lambda, $`2m+2`$ products started from the first right-hand
+side, and the preconditioner $`\mathbf{1} + \mathbf{W}[(\mathbf{1}+\lambda\Theta)^{-1}-\mathbf{1}]\mathbf{W}^{T}`$
+maps the deflated eigenvalues of $`\mathbf{1}+\lambda\mathbf{G}`$ to one. On ammonia:
+
+| deflation vectors | conjugate gradient iterations at 0.012, 0.4 | CPU at 0.012, 0.4 |
+|---|---|---|
+| none | 10, 28 | 34 s, 86 s |
+| 10 | 5, 19 | 21 s, 63 s |
+| 20 | 3, 10 | 18 s, 38 s |
+
+The job time includes the Lanczos run, and the Lanczos eigenvalues give the largest gain to
+six figures, so the power iteration is not needed when deflation is on.
 
 **A limit.** The step is a linearisation about the current orbitals. From the converged
 lambda 0.012 density the correction takes a jump to lambda 0.4, where $`\lambda\gamma_{\max}`$
@@ -769,7 +780,10 @@ In the `scfdata=` block:
   and the statistics; `stiffness_cg_tolerance= 1e-4` is its conjugate gradient stopping
   residual, relative, `stiffness_samples= 20` the number of sign vectors in the trace
   estimator, and `stiffness_preconditioner= none` or `diagonal` the preconditioner, the
-  diagonal being made exactly in batches once per lambda and slower on ammonia. The own gains, the share of the stiffest mode and the eigenvalues are not made in
+  diagonal being made exactly in batches once per lambda and slower on ammonia;
+  `stiffness_deflation= 20` deflates the conjugate gradients by that many leading eigenvectors
+  of the gain matrix from Lanczos, once per lambda, which is what makes the matrix-free form
+  fast. The own gains, the share of the stiffest mode and the eigenvalues are not made in
   this form, and the leverages are estimates.
 - `lambda_criterion= gcv` chooses the criterion whose value and running minimum over the
   lambda scan are printed with the statistics: `gcv` (the default), `aic_sigma`, `aic`,

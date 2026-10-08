@@ -3095,6 +3095,103 @@ contains
 
    end
 
+   make_stiffness_deflation(start) :: private, leaky
+   ! Make the .SCF_data.stiffness_deflation leading eigenvectors of the
+   ! gain matrix G and their eigenvalues, by Lanczos with full
+   ! reorthogonalisation, started from "start" and run for twice as many
+   ! steps as vectors wanted plus two, with G applied through the
+   ! products above. The largest eigenvalue is kept as the largest gain.
+   ! Kept in .SCF_data with the lambda iteration they were made at.
+      self :: INOUT
+      start :: VEC{REAL}, IN
+
+      vlan,tmat,smat :: MAT{REAL}@
+      vcur,vprev,w,alpha_l,beta_l,theta,coef :: VEC{REAL}@
+      norm :: REAL
+      j,k,m,m_l,n_refl :: INT
+
+      n_refl = .crystal.xray_data.reflections.dim
+      m   = min(.SCF_data.stiffness_deflation,n_refl)
+      m_l = min(2*m+2,n_refl)
+
+      vlan.create(n_refl,m_l)
+      vcur.create(n_refl)
+      vprev.create(n_refl)
+      w.create(n_refl)
+      alpha_l.create(m_l)
+      beta_l.create(m_l)
+      alpha_l = ZERO
+      beta_l  = ZERO
+
+      ! Lanczos
+      vprev = ZERO
+      vcur  = start
+      norm  = sqrt(sum(vcur*vcur))
+      if (norm<=ZERO) then; vcur = ONE; norm = sqrt(sum(vcur*vcur)); end
+      vcur = vcur/norm
+      k = 0
+      do j = 1,m_l
+         vlan(:,j) = vcur
+         k = j
+         .apply_stiffness_operator(vcur,w,ONE)
+         w = w - vcur
+         alpha_l(j) = sum(vcur*w)
+         w = w - alpha_l(j)*vcur
+         if (j>1) w = w - beta_l(j-1)*vprev
+         ! Full reorthogonalisation, twice
+         coef.create(j)
+         coef.to_product_of(vlan(:,1:j),w,transpose_a=TRUE)
+         w = w - matmul(vlan(:,1:j),coef)
+         coef.to_product_of(vlan(:,1:j),w,transpose_a=TRUE)
+         w = w - matmul(vlan(:,1:j),coef)
+         coef.destroy
+         norm = sqrt(sum(w*w))
+         if (j==m_l OR norm<=TOL(10)) exit
+         beta_l(j) = norm
+         vprev = vcur
+         vcur  = w/norm
+      end
+
+      ! The tridiagonal matrix and its eigenpairs, ascending
+      tmat.create(k,k)
+      smat.create(k,k)
+      theta.create(k)
+      tmat = ZERO
+      do j = 1,k
+         tmat(j,j) = alpha_l(j)
+         if (j<k) then
+            tmat(j,j+1) = beta_l(j)
+            tmat(j+1,j) = beta_l(j)
+         end
+      end
+      tmat.solve_symmetric_eigenproblem(theta,smat)
+
+      ! The leading Ritz vectors
+      m = min(m,k)
+      .SCF_data.deflation_W.destroy
+      .SCF_data.deflation_theta.destroy
+      .SCF_data.deflation_W.create(n_refl,m)
+      .SCF_data.deflation_theta.create(m)
+      do j = 1,m
+         .SCF_data.deflation_theta(j) = max(theta(k-m+j),ZERO)
+         .SCF_data.deflation_W(:,j) = matmul(vlan(:,1:k),smat(:,k-m+j))
+      end
+      .SCF_data.gamma_max = .SCF_data.deflation_theta(m)
+      .SCF_data.deflation_lambda_iteration = .SCF_data.lambda_iteration
+
+      ! Clean up
+      theta.destroy
+      smat.destroy
+      tmat.destroy
+      beta_l.destroy
+      alpha_l.destroy
+      w.destroy
+      vprev.destroy
+      vcur.destroy
+      vlan.destroy
+
+   end
+
    solve_stiffness_system(rhs,y,lam) :: private, leaky
    ! Solve (1 + lam G) y = rhs by conjugate gradients, to the relative
    ! residual .SCF_data.stiffness_cg_tolerance, with G applied through
@@ -3106,13 +3203,25 @@ contains
       y :: VEC{REAL}, OUT
       lam :: REAL, IN
 
-      r,z,p,Ap,Minv :: VEC{REAL}@
+      r,z,p,Ap,Minv,coef :: VEC{REAL}@
       rz,rz_new,pAp,alpha_cg,beta_cg,tol :: REAL
-      it,n_refl,max_it :: INT
+      it,j,m,n_refl,max_it :: INT
+      deflate :: BIN
 
       n_refl = rhs.dim
       max_it = min(n_refl,200)
       tol    = .SCF_data.stiffness_cg_tolerance*sqrt(sum(rhs*rhs))
+
+      ! Deflation: the leading eigenvectors of G, if made for this lambda
+      deflate = FALSE
+      m = 0
+      if (.SCF_data.deflation_W.allocated) then
+      if (.SCF_data.deflation_lambda_iteration==.SCF_data.lambda_iteration) then
+         deflate = TRUE
+         m = .SCF_data.deflation_theta.dim
+         coef.create(m)
+      end
+      end
 
       ! The preconditioner, the identity unless the diagonal was asked for
       Minv.create(n_refl)
@@ -3133,6 +3242,7 @@ contains
       y  = ZERO
       r  = rhs
       z  = Minv*r
+      if (deflate) .apply_stiffness_deflation(r,z,lam,coef)
       p  = z
       rz = sum(r*z)
       it = 0
@@ -3146,6 +3256,7 @@ contains
          y = y + alpha_cg*p
          r = r - alpha_cg*Ap
          z = Minv*r
+         if (deflate) .apply_stiffness_deflation(r,z,lam,coef)
          rz_new  = sum(r*z)
          beta_cg = rz_new/rz
          rz = rz_new
@@ -3155,11 +3266,32 @@ contains
 
       .SCF_data.stiffness_cg_iterations = it
 
+      if (deflate) coef.destroy
       Ap.destroy
       p.destroy
       z.destroy
       r.destroy
       Minv.destroy
+
+   end
+
+   apply_stiffness_deflation(r,z,lam,coef) :: private, PURE
+   ! Add to "z" the spectral correction W [(1 + lam theta)^-1 - 1] W^T r,
+   ! which maps the deflated eigenvalues of 1 + lam G to one. "coef" is
+   ! work space of the number of deflation vectors.
+      self :: IN
+      r :: VEC{REAL}, IN
+      z :: VEC{REAL}, INOUT
+      lam :: REAL, IN
+      coef :: VEC{REAL}, INOUT
+
+      j :: INT
+
+      coef.to_product_of(.SCF_data.deflation_W,r,transpose_a=TRUE)
+      do j = 1,coef.dim
+         coef(j) = coef(j)*(ONE/(ONE + lam*.SCF_data.deflation_theta(j)) - ONE)
+      end
+      z = z + matmul(.SCF_data.deflation_W,coef)
 
    end
 
@@ -3355,6 +3487,14 @@ contains
       end
       stdout.flush
       stdout.flush
+      else if (.SCF_data.deflation_theta.allocated) then
+      stdout.text("The largest gains per unit lambda, from Lanczos (deflation vectors):")
+      k = .SCF_data.deflation_theta.dim
+      do m = k,max(k-9,1),-1
+         stdout.put(.SCF_data.deflation_theta(m),fmt="f",width=14,precision=3)
+      end
+      stdout.flush
+      stdout.flush
       end
       stdout.text("All reflections, by own gain per unit lambda.")
       stdout.text("Columns: h k l, sin(theta)/lambda, F_exp, sigma, F_exp/sigma,")
@@ -3532,6 +3672,10 @@ contains
          if (.SCF_data.stiffness_preconditioner=="diagonal" &
              AND .SCF_data.stiffness_precond_lambda_iteration/=.SCF_data.lambda_iteration) then
             .make_stiffness_preconditioner
+         end
+         if (.SCF_data.stiffness_deflation>0 &
+             AND .SCF_data.deflation_lambda_iteration/=.SCF_data.lambda_iteration) then
+            .make_stiffness_deflation(dr)
          end
          .solve_stiffness_system(dr,y,lam)
       else

@@ -51,12 +51,14 @@ The cure as implemented is the first of three stages.
    section 9: same iterations, energies, largest gain, $`p_{\mathrm{eff}}`$ to 0.3% and GCV;
    the leverages are too rough from 20 samples, so the leave-one-out sum and Cook's distances
    are not usable in this form yet; 10 to 28 conjugate gradient iterations per SCF iteration;
-   twenty times the CPU of the explicit route on a molecule this small. **Left in this stage:**
-   deflation of the conjugate gradients by the leading eigenvectors of $`\mathbf{G}`$, since a
-   diagonal preconditioner was tried on 2026-10-08 and doubles the count (an estimated
-   diagonal from four sign vectors: 10 to 14 and 28 to 80; the exact diagonal, built in
-   batches: 10 to 12 and 28 to 52), the matrix being far from diagonal; it is kept as
-   `stiffness_preconditioner= diagonal`, off by default; a usable leverage estimator
+   twenty times the CPU of the explicit route on a molecule this small. **Done in this stage:**
+   deflation of the conjugate gradients by the leading eigenvectors of $`\mathbf{G}`$ from
+   Lanczos (`stiffness_deflation=`), which on ammonia cuts the count from 10 and 28 to 3 and
+   10 with 20 vectors; a diagonal preconditioner was tried first and doubles the count (an
+   estimated diagonal from four sign vectors: 10 to 14 and 28 to 80; the exact diagonal, built
+   in batches: 10 to 12 and 28 to 52), the matrix being far from diagonal; it is kept as
+   `stiffness_preconditioner= diagonal`, off by default. **Left:** whether the Lanczos vectors
+   can be carried from one lambda to the next as a start, and deflation on by default; a usable leverage estimator
    (more samples, or probing by colouring); an automatic choice between the two forms by the
    size of $`\mathbf{B}`$; a timing on a real case where $`\mathbf{B}`$ does not fit. The design
    as planned:
@@ -147,6 +149,8 @@ Also left:
   points at 0.14 and 0.16 and was wrong; the scan results are in the report. A scan started
   at lambda 4 straight from the lambda 0.012 density diverged: the step is a linearisation,
   and lambda has to be stepped up.
+- 2026-10-08. Deflation by Lanczos vectors, numbers in the report; the diagonal preconditioner
+  before it, both tried on the matrix-free ammonia jobs at lambda 0.012 and 0.4.
 - 2026-10-08. Stage 3, the matrix-free form, implemented and checked against the explicit
   route on ammonia at lambda 0.012 and 0.4; numbers in the report. A first build failed on an
   integer constant too large for the default kind in the sign generator; Lehmer's generator
