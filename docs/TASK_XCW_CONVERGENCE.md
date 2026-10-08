@@ -9,8 +9,9 @@ Done on the branch, all in the Mac release build on the ammonia restart job
 (`tests/long/nh3_x-ray-constrained-rhf-cluster-charge_cc-pVTZ_restart`):
 
 - The instability explained and its size calculated (report sections 3 and 4).
-- Density damping made real. Its own branch, `damping-repair`, off `develop`, is pushed;
-  the references still have to be redone on achari2 (section 3 below).
+- Density damping made real, in the two SCF loops only, and the fifteen references it moves
+  redone on achari2 in the reference build. Branch `damping-repair` is superseded by
+  `develop` and can be deleted.
 - The effective number of parameters, the criteria for lambda, the leave-one-out sum and the
   three-point TIH extrapolation, printed per lambda and in the SCF results.
 - The cure: the Newton step with the constraint curvature, `use_stiffness_correction= TRUE`.
@@ -51,11 +52,6 @@ Also left:
 
 ## 3. Decisions owed
 
-- **Redo the references for the damping repair on achari2** (Dylan decided 2026-10-07: repair
-  damping for every SCF). Seven short tests differ only in their iteration tables and agree in
-  the final energy; five long tests move by 0.2 to 0.25% in quantities that follow a loosely
-  converged SCF. The session of 2026-10-07 could not reach achari2 (ssh refused by the
-  permission system), so this is still open.
 - **Which criterion chooses lambda.** See the report, section 9, for where each criterion puts
   its minimum on ammonia. The sigmas of that data set look too large, which is why the
   criteria that trust them disagree with the sigma-free ones. A data set with believable sigmas
@@ -91,6 +87,17 @@ Also left:
 
   With damping at 15% for three iterations and DIIS on top, 15 to 17: the damping only slows
   it. Same converged energies and GoF as the plain SCF where that converges.
-- 2026-10-08. Lambda scans with the correction to 0.4, then to 4, then to 40, every point
-  converged. The earlier statement that the leave-one-out minimum is near 0.15 came from the
-  unconverged points at 0.14 and 0.16 and was wrong; the scan results are in the report.
+- 2026-10-08. Lambda scans with the correction to 0.4, then to 4, every point converged. The
+  earlier statement that the leave-one-out minimum is near 0.15 came from the unconverged
+  points at 0.14 and 0.16 and was wrong; the scan results are in the report. A scan started
+  at lambda 4 straight from the lambda 0.012 density diverged: the step is a linearisation,
+  and lambda has to be stepped up.
+- 2026-10-08. References on achari2. The first run of the suites there, with the damping
+  repair as first written, failed 22 of 181 tests, among them the formamide interaction
+  energies: the repair had damped every density made while the iteration count was small,
+  including the orthogonalised promolecule of the energy decomposition, which was mixed with
+  the density in memory. Damping is now applied only where the two SCF loops ask for it, and
+  the iteration-0 density is no longer damped. Second run: 15 failures, all iteration tables
+  or esd-level HAR and hart numbers (up to 0.6%), blessed. The show_labels failure was three
+  heading underlines of the wrong length, fixed. Cook's distance added to the stiffness
+  report at Dylan's request. Third run launched to confirm 181 of 181.
