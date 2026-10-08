@@ -105,6 +105,14 @@ Also left:
 - Whether the correction should be the default for constrained SCF. It changes no converged
   result, only the path, so it moves every constrained reference.
 - A debug build, MPI, and anything on achari2.
+- **Urea beyond lambda 0.03** (found 2026-10-08, report section 9): more than one stationary
+  point of $`E + \lambda\,\mathrm{GoF}^2`$, the first reached not the minimum, and no scheme
+  converging. Needs the landscape understood, not more solver changes: the omitted residual
+  term of the Hessian is of the order of the kept one when the GoF is 8, and the two-electron
+  response is not small in a minimal basis. First step: the same scan with def2-SVP, where
+  the GoF before fitting is near 3 and the residual term smaller.
+- Whether the correction and `stiffness_deflation=` should be on by default for constrained
+  SCF; the correction is restricted wavefunctions and two-centre partition models only.
 
 ## 3. Decisions owed
 
@@ -149,6 +157,12 @@ Also left:
   points at 0.14 and 0.16 and was wrong; the scan results are in the report. A scan started
   at lambda 4 straight from the lambda 0.012 density diverged: the step is a linearisation,
   and lambda has to be stepped up.
+- 2026-10-08. Urea, STO-3G, 817 reflections, at Dylan's request: scans in steps of 0.01 and
+  0.005, segments from 0.030, with the level shift off, on throughout, at 1, 3 and 10, with
+  DIIS off, and with damping of 50% and 70% throughout; the plain SCF as control. Results in
+  the report. On the way: the level shift sits in the virtual orbital energies, so the
+  statistics used shifted gaps while it was on; `orbital_gap` now takes it off for the
+  statistics at convergence and keeps it for the correction.
 - 2026-10-08. Deflation by Lanczos vectors, numbers in the report; the diagonal preconditioner
   before it, both tried on the matrix-free ammonia jobs at lambda 0.012 and 0.4.
 - 2026-10-08. Stage 3, the matrix-free form, implemented and checked against the explicit

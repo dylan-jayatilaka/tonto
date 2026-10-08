@@ -764,6 +764,34 @@ reflections' worth of parameters are in use and the GoF is 0.34. A data set with
 sigmas is needed before a rule about where to stop is set; which criterion to read is
 decided: GCV, or the sigma-free AIC.
 
+**Urea.** The urea job of the test suite, `tests/long/urea_x-ray-constrained-uhf_STO-3G_plus_ELF_plot`,
+is a harder case: 817 reflections, a minimal basis, and a GoF of 9.9 before fitting, so the
+residuals are eight sigma and the fit term is far from its minimum. Its largest gain per unit
+lambda is 1246, so an undamped plain step fails from lambda 0.0008. With the correction, no
+damping, DIIS, and the default level shift for the first three iterations, a scan in steps of
+0.005 converges in 8 to 11 iterations at every lambda up to 0.030, where $`\lambda\gamma_{\max}`$
+is 45 and the GoF has fallen to 7.7. Beyond that the problem changes character rather than the
+solver failing. At lambda 0.035 the iteration reaches a solution with GoF 7.61 and energy
+-220.691 within five iterations and then drifts away from it over the next fifty, slowly, into
+a state with GoF 26 and a higher value of $`E + \lambda\,\mathrm{GoF}^2`$; the level shift kept
+on, or made three or ten times larger, only slows the drift; the plain SCF with damping and
+DIIS diverges from the first step. With the correction and a constant damping of 50% the
+iteration instead moves, slowly, towards a state with GoF 7.19 and energy -220.553, whose
+$`E + \lambda\,\mathrm{GoF}^2`$ is lower than that of the GoF 7.61 solution. So at that lambda
+the functional has more than one stationary point and the one first reached is not its
+minimum. No scheme tried converged to the SCF tolerance there within 150 iterations.
+
+The criteria over the converged range are of no use on this job: the GoF is still 7.7 at
+lambda 0.03, every criterion is still falling, and $`p_{\mathrm{eff}}`$ is 12 of 817. A minimal
+basis cannot fit urea's data to within their sigmas, so the sigmas are small relative to the
+model error, and the question of where to stop does not arise before the question of the
+basis. The job is a convergence test, not a fitting test.
+
+The level shift enters the gaps $`\Delta_{ia}`$ while it is applied, since it is added to the
+virtual orbital energies before the diagonalisation: the correction uses the shifted gaps,
+because that is the operator it corrects, and the statistics at convergence use the physical
+ones.
+
 ## 10. Keywords
 
 In the `scfdata=` block:
