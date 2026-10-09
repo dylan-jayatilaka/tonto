@@ -10,19 +10,23 @@
    energies, and the reflections with their sigmas (section 3). For the ammonia restart job at
    lambda = 0.012 it predicts that a step mixing in more than 23.0% of the new density diverges.
    Measured: 23% converges, 24% diverges.
-3. **No single reflection is to blame** in ammonia (section 5). The stiffness is spread over the
+3. **No single reflection is to blame** in ammonia (section 7.2). The stiffness is spread over the
    strong low-angle reflections, all of which have F/sigma above 100.
 4. **The same matrix gives the effective number of fitted parameters, the AIC, BIC and
    generalised cross-validation criteria for lambda, and a leave-one-out cross-validation from
-   one converged run** (section 7). Checked against two real held-out refits: 7 to 8% low.
-   Its diagonal is the leverage of crystallographic least squares (section 8).
-5. **The cure is the Newton step with the constraint curvature included** (section 9). It
+   one converged run** (section 4). Checked against two real held-out refits: 7 to 8% low.
+   Its diagonal is the leverage of crystallographic least squares (section 5).
+5. **The cure is the Newton step with the constraint curvature included** (section 6). It
    needs no damping, converges in about ten iterations at every lambda from 0.012 to 4 on
    ammonia, and leaves the converged wavefunction unchanged: it alters only the path.
 6. **With the cure the lambda scan runs out to where the criteria turn.** On ammonia the
    leave-one-out sum has its minimum at lambda 2.0 and generalised cross-validation at 3.2,
    where 34 to 36 of the 88 reflections' worth of parameters are in use; AIC with the sigmas
    trusted puts it at 0.08 and BIC at 0.024.
+7. **On urea only the leave-one-out sum turns** (section 8): at lambda 2.4 in def2-SVP, with 76
+   of 817 reflections' worth of parameters in use and GoF 1.40. GCV and the sigma-free AIC are
+   still falling, because they average over the reflections, while the leave-one-out sum is
+   dominated by the few with the largest leverage.
 
 ## 2. The instability
 
@@ -56,7 +60,7 @@ smoothly to convergence at every lambda. They use much smaller multipliers, at m
 for `nh3_x-ray-constrained-rhf_cc-pVTZ` and its `_extinction` twin and 0.001 for the urea UHF
 job, and at those values the overshoot of section 3 is far too small to matter.
 
-## 3. Theory
+## 3. Theory: the gain matrix
 
 All symbols are defined here. Matrices and vectors are bold; their elements are not.
 
@@ -175,9 +179,9 @@ Furthmüller, *Phys. Rev. B* **54**, 11169 (1996), section IV. Here $`\boldsymbo
 is that dielectric matrix with the fit term in the role of the Coulomb interaction. The other
 half, the penalised fit whose hat matrix counts the parameters the data determine, is ridge
 regression, Hoerl and Kennard, *Technometrics* **12**, 55 (1970), with the influence matrix of
-Golub, Heath and Wahba (1979) in section 7. What is new is only the combination: because the
+Golub, Heath and Wahba (1979) in section 4. What is new is only the combination: because the
 fit term involves $`N_{\mathrm{refl}}`$ quantities linear in the density, the Jacobian is of low
-rank, and the stiffness, the hat matrix and the correction of section 9 all live in the space
+rank, and the stiffness, the hat matrix and the correction of section 6 all live in the space
 of reflections.
 
 **It does not depend on the scale of the sigmas.** If every sigma is multiplied by $`s`$, the
@@ -185,91 +189,7 @@ lambda that gives the same wavefunction is multiplied by $`s^2`$ and $`\gamma`$ 
 $`s^2`$. The product $`\lambda\gamma`$ measures how many times stiffer the data term is than the
 wavefunction's own resistance to change. It is a property of how hard the fit is pushed.
 
-## 4. The check against measurement
-
-The stiffness report (section 11) computes $`\boldsymbol{G}`$ from equation (5) and prints its largest eigenvalues, the limit of equation (6),
-and the reflections with the largest diagonal elements. RHF only. For the ammonia job, from the
-orbitals converged at lambda = 0.012:
-
-| | |
-|---|---|
-| Largest gain per unit lambda, $`\gamma`$ | 642.5 |
-| Sum of all gains per unit lambda | 2524 |
-| Lambda where an undamped step fails, $`1/\gamma`$ | 0.00156 |
-| Gain at lambda = 0.012 | 7.71 |
-| Largest stable fraction of new density at 0.012 | 0.230 |
-
-Measured with density damping only, DIIS switched off, and lambda = 0.012 throughout:
-
-| Fraction of new density | Result |
-|---|---|
-| 0.50 | diverges, energy to -36 |
-| 0.30 | diverges |
-| 0.26 | diverges |
-| 0.24 | diverges |
-| 0.23 | converges, error falls by 1.3% per iteration |
-| 0.22 | converges in about 90 iterations |
-| 0.20 | converges |
-| 0.15, 0.10, 0.05 | converge, more slowly |
-
-At 0.23 the measured decay of 0.987 per iteration gives $`\lambda\gamma = 7.64`$ from
-$`1 - x(1+\lambda\gamma)`$; the calculation gives 7.71. So leaving out the two-electron response
-costs about 1% here.
-
-The three quiet test jobs have lambda at most 0.0003, a gain of 0.2, far inside the limit.
-
-## 5. Which reflections make it stiff
-
-The diagonal element $`G_{kk}`$ is the gain reflection $`k`$ would give alone. The top of the
-list for ammonia, per unit lambda:
-
-| h k l | sin(theta)/lambda | F_exp | sigma | F/sigma | (F_pred - F_exp)/sigma | own gain | share of stiffest direction |
-|---|---|---|---|---|---|---|---|
-| 0 4 0 | 0.206 | 9.40 | 0.061 | 154 | -1.24 | 182 | 0.14 |
-| 3 0 -2 | 0.186 | 6.12 | 0.056 | 109 | -1.94 | 169 | 0.01 |
-| 0 -3 2 | 0.186 | 6.49 | 0.052 | 125 | 0.45 | 169 | 0.08 |
-| -1 2 -1 | 0.126 | 8.40 | 0.057 | 147 | -1.26 | 144 | 0.04 |
-| 0 3 1 | 0.163 | 7.89 | 0.057 | 138 | 2.58 | 126 | 0.00 |
-| -2 0 -4 | 0.231 | 6.42 | 0.051 | 126 | -1.05 | 105 | 0.12 |
-| -1 -3 3 | 0.225 | 8.11 | 0.055 | 147 | 0.16 | 87 | 0.09 |
-| 1 0 2 | 0.115 | 20.94 | 0.119 | 176 | -1.03 | 87 | 0.04 |
-| 1 2 0 | 0.115 | 2.86 | 0.084 | 34 | 1.59 | 77 | 0.01 |
-
-- **No one reflection dominates.** The largest own gain is 182 against a total of 2524, and no
-  reflection has more than 14% of the stiffest direction.
-- **The stiff ones are the low-angle reflections with small absolute sigma**, about 0.05 to 0.06,
-  whatever their size. The own gain goes as $`1/\sigma_k^2`$ times how easily the valence density
-  moves that structure factor.
-- **A reflection worth a second look has a large leverage and a large residual at once**: it
-  can move the wavefunction a long way and is asking to. The measure of that is Cook's
-  distance, $`D_k = r_k^2 H_{kk}/\big(p_{\mathrm{eff}}(1-H_{kk})^2\big)`$, with $`H_{kk}`$ the
-  leverage of section 7 and $`r_k`$ the standardised residual: how far the whole fit moves
-  when reflection $`k`$ is left out, in units of its own uncertainty. The usual threshold is
-  $`4/N_{\mathrm{refl}}`$. For ammonia at lambda 0.012, 10 of the 88 reflections are above it, led by (0 3 1)
-  at 0.68 and (3 0 -2) at 0.51 against a threshold of 0.045; 61 are below an eighth of it.
-  The report prints the ten largest and a histogram in multiples of $`4/N_{\mathrm{refl}}`$.
-- Since the result does not depend on the overall scale of the sigmas (section 3), this
-  diagnostic can find a reflection whose sigma is too small *relative to the others*, not a set
-  of sigmas that are all too small.
-
-## 6. Damping and DIIS
-
-Measured on the two-lambda job:
-
-| Setting | Iterations at 0.012, 0.016 | Worst energy on the way |
-|---|---|---|
-| in test: mix 50% for 3 iterations, DIIS from 4 | 30, 20 | -29.6 |
-| mix 15% for 3 iterations, DIIS saving from 1 | 18, 19 | -56.2013 |
-| mix 15% for 6 iterations, DIIS from 6 | 19, 20 | -56.2013 |
-| no damping, DIIS saving from 1 | 21, 21 | -56.03 |
-| mix 15% throughout, with DIIS | 61, 54 | -56.2013 |
-
-All reach GoF 0.78 and -56.2023. So strong damping for the first few steps, then DIIS, removes
-the excursion. Damping kept on under DIIS only slows it.
-
-The exact cure, which needs no damping at all, is in section 9.
-
-## 7. The effective number of parameters, and the choice of lambda
+## 4. The effective number of parameters, and the choice of lambda
 
 **The definition.** In a restrained least-squares fit the effective number of parameters is
 the trace of the hat matrix $`\boldsymbol{H}`$, the matrix that maps the observations to the fitted values.
@@ -320,7 +240,7 @@ the instability and the first fitted parameter are the same event.
 
 This is the trace formula (A5) of the appendix, with the
 Hessian of the energy replaced by its uncoupled form, the orbital energy differences. That
-costs about 1% on the largest eigenvalue for ammonia (section 4), and it neglects a term
+costs about 1% on the largest eigenvalue for ammonia (section 7.1), and it neglects a term
 proportional to the residuals, which matters only where the fit is poor.
 
 **The criteria.** Write $`r_k = (\alpha|F_k| - F_k^{\mathrm{obs}})/\sigma_k`$ for the
@@ -387,71 +307,7 @@ of the data. It should still be checked once against a real held-out refit. A re
 $`H_{kk}`$ and a large residual at once is the one worth a second look: it can move the
 wavefunction a long way and is asking to.
 
-**A lambda scan on ammonia.** The restart job, damping at 15% for three iterations, DIIS from
-the first, three scans joined (step 0.0005 to 0.004, then 0.004 to 0.04, then 0.02 to 0.2). $`N_{\mathrm{refl}} = 88`$, $`p = 1`$. GoF is $`\sqrt{\chi^2/(N_{\mathrm{refl}}-1)}`$.
-
-| lambda | $`\lambda\gamma_{\max}`$ | $`p_{\mathrm{eff}}`$ | $`\chi^2`$ | GoF | AIC | BIC | AIC$`_\sigma`$ | GCV | LOO | iterations |
-|---|---|---|---|---|---|---|---|---|---|---|
-| 0 | 0 | 1.0 | 851.9 | 3.13 | 853.9 | 856.4 | 201.8 | 9.90 | 851.9 | |
-| 0.001 | 0.64 | 2.9 | 407.1 | 2.16 | 413.0 | 420.3 | 140.7 | 4.95 | 483.7 | |
-| 0.002 | 1.28 | 4.3 | 256.5 | 1.72 | 265.0 | 275.5 | 102.7 | 3.22 | 338.4 | |
-| 0.004 | 2.57 | 6.1 | 145.1 | 1.29 | 157.2 | 172.2 | 56.1 | 1.90 | 215.4 | |
-| 0.008 | 5.14 | 8.4 | 82.1 | 0.97 | 98.9 | 119.6 | 10.6 | 1.14 | 134.7 | |
-| 0.012 | 7.71 | 9.9 | 61.9 | 0.84 | 81.7 | 106.3 | -11.1 | 0.893 | 106.3 | |
-| 0.016 | 10.3 | 11.1 | 52.3 | 0.78 | 74.4 | 101.9 | -23.7 | 0.777 | 92.6 | |
-| 0.020 | 12.8 | 12.0 | 46.6 | 0.73 | 70.7 | 100.5 | -31.9 | 0.711 | 84.9 | |
-| 0.024 | 15.4 | 12.8 | 42.8 | 0.70 | 68.5 | **100.3** | -37.7 | 0.667 | 80.1 | |
-| 0.028 | 18.0 | 13.5 | 40.1 | 0.68 | 67.1 | 100.6 | -42.2 | 0.636 | 76.9 | |
-| 0.040 | 25.7 | 15.2 | 34.9 | 0.63 | 65.2 | 102.7 | -51.1 | 0.578 | 71.7 | 49 |
-| 0.060 | 38.4 | 17.1 | 30.2 | 0.59 | 64.3 | 106.6 | -60.0 | 0.528 | 68.5 | 58 |
-| 0.080 | 51.2 | 18.4 | 27.4 | 0.56 | **64.25** | 109.9 | -65.9 | 0.498 | 67.2 | 77 |
-| 0.100 | 63.9 | 19.5 | 25.4 | 0.54 | 64.4 | 112.7 | -70.4 | 0.476 | 66.5 | 91 |
-| 0.120 | 76.6 | 20.4 | 23.9 | 0.52 | 64.6 | 115.1 | -74.1 | 0.459 | 66.0 | 128 |
-| 0.140 | 89.3 | 21.1 | 22.6 | 0.51 | 64.8 | 117.1 | -77.3 | 0.445 | **65.65** | 251 |
-| 0.160 | 101.9 | 21.8 | 21.8 | 0.50 | 65.3 | 119.2 | -79.4 | 0.436 | 65.66 | not converged in 300 |
-
-At 0.18 the SCF is still not converged after 300 iterations and at 0.2 it has blown up, so
-the row for 0.16 is the last one to trust and even it is not fully converged.
-
-What the scan says:
-
-- **Where the criteria put the minimum.** BIC at 0.024, AIC at 0.08, leave-one-out at about
-  0.15, GCV and AIC$`_\sigma`$ beyond 0.16. The two that trust the sigmas disagree with each
-  other by a factor of three, and with the sigma-free ones by more. This is the expected
-  behaviour of a penalty that is fixed against a misfit whose scale is uncertain, not a defect
-  in any of them. The leave-one-out sum is the one with a clear, if shallow, minimum.
-- **The sigmas of this data set look too large, not too small**: GoF falls below 1 at lambda
-  0.008, with only 8 effective parameters out of 88. That is the opposite of the GoF 3 to 7
-  worry in section 7, and it is why AIC and BIC come out so differently here.
-- **The fit keeps paying for its parameters a long way out.** Each extra effective parameter
-  is bought for less and less $`\chi^2`$, but $`\chi^2`$ per parameter stays above 1 until about
-  lambda 0.1. The effective parameter count climbs slowly: 22 of 88 at lambda 0.16, with
-  $`\lambda\gamma_{\max} = 102`$. The stiff directions saturate early and the rest are switched
-  on one by one.
-- **The plain SCF with damping and DIIS cannot reach the region the sigma-free criteria point
-  at.** Iterations rise from 49 at lambda 0.04 to 251 at 0.14 and the SCF fails above that,
-  with the stable fraction of equation (6) down to 2%. The cure of section 9 removes this limit.
-- **The leave-one-out sum from one converged run at each lambda** replaces a k-fold
-  cross-validation, to the accuracy checked next.
-
-**The leave-one-out formula checked against a real held-out refit.** Ammonia restart job,
-lambda = 0.012. One reflection at a time was held out by giving it a sigma of
-1.0 (weight 300 times smaller than its neighbours, so it still gets a predicted structure
-factor), the job was run again, and the prediction was compared with the observation using the
-original sigma.
-
-| Held out | residual in full fit | $`H_{kk}`$ | equation (11) | refit |
-|---|---|---|---|---|
-| (0 3 1) | 2.58 | 0.383 | 4.18 | 4.55 |
-| (3 0 -2) | -1.94 | 0.434 | -3.43 | -3.67 |
-
-The formula gives the right size and sign and is 7 to 8% low on both. Both errors have the
-same sign, which points at the uncoupled orbital response underestimating $`H_{kk}`$ rather
-than at noise; the full coupled response, or the residual term left out, would be the next
-refinement if the 8% matters. For choosing lambda it does not.
-
-
-## 8. Leverage, and the halting methods of Davidson, Grabowsky and Jayatilaka
+## 5. Leverage, and the halting methods of Davidson, Grabowsky and Jayatilaka
 
 **Leverage.** In crystallographic least squares the leverage of an observation is the diagonal
 element of the projection matrix $`\boldsymbol{P} = \boldsymbol{A}(\boldsymbol{A}^{T}\boldsymbol{W}\boldsymbol{A})^{-1}\boldsymbol{A}^{T}\boldsymbol{W}`$, with $`\boldsymbol{A}`$ the design matrix
@@ -478,7 +334,7 @@ sense of Hoerl and Kennard, and the ridge parameter is $`(N_{\mathrm{refl}}-p)/2
   data determine. The normalised leverage of Parsons *et al.* is $`H_{kk}`$ divided by
   $`(p_{\mathrm{eff}}-p)/N_{\mathrm{refl}}`$.
 - The reflections of high leverage in ammonia are the strong low-angle ones with small absolute
-  sigma (section 5), where for the alanine refinement of Parsons *et al.* they are the
+  sigma (section 7.2), where for the alanine refinement of Parsons *et al.* they are the
   moderately weak reflections. The difference is in what is being fitted: the XCW adjusts the
   valence density, which moves the low-angle structure factors most.
 - Leverages are also a guide to measurement: the influence of each reflection on any chosen
@@ -491,7 +347,7 @@ sense of Hoerl and Kennard, and the ridge parameter is $`(N_{\mathrm{refl}}-p)/2
   single rotation is not a quantity anyone asks about. The sensitivity of a density feature, a
   bond charge or an atomic charge, would be the useful form, and is one further contraction.
 - Cook's distance, which Merli and co-workers use to find outliers in refinement, is the
-  $`D_k`$ of section 5, printed for every reflection, listed for the ten largest, and binned.
+  $`D_k`$ of section 7.2, printed for every reflection, listed for the ten largest, and binned.
 
 **The halting methods of Davidson, Grabowsky and Jayatilaka**, *Acta Cryst.* **B78**, 397
 (2022), section 2, take the GoF against lambda curve as their only input, and halt the scan at
@@ -521,7 +377,7 @@ right. Three comments follow from the present work.
   about 100 for damping plus DIIS, equation 6), and $`\gamma_{\max}`$ scales as one over sigma
   squared. That is exactly the behaviour of Table 2 of the paper, where scaling two sigmas by
   $`\eta`$ moves $`\lambda_{\max}`$: the two reflections are the stiffest ones. With the cure
-  of section 9 there is no $`\lambda_{\max}`$, and the third method, and the choice of fitting
+  of section 6 there is no $`\lambda_{\max}`$, and the third method, and the choice of fitting
   range in the other two, lose their anchor.
 - **The three-point formula is a local extrapolation, and its answer moves with the points it
   is given.** For ammonia the three points at lambda 0.032, 0.036 and 0.040 give
@@ -532,12 +388,12 @@ right. Three comments follow from the present work.
   their TIH3 fits. The leave-one-out minimum is at 2.0 and the AIC minimum at 0.08 (section
   9). The formula is printed beside the other statistics so the two can be compared on every
   job.
-- **The criteria of section 7 answer a different question.** The halting methods ask where the
+- **The criteria of section 4 answer a different question.** The halting methods ask where the
   fit stops improving on its own curve. AIC, GCV and the leave-one-out sum ask where it stops
   improving *prediction* of reflections it has not seen, with the number of parameters counted.
   Only the second kind can say that a lambda is too large.
 
-## 9. The cure: the Newton step with the constraint curvature
+## 6. The cure: the Newton step with the constraint curvature
 
 **The plain step.** Every iteration of the constrained SCF diagonalises the effective Fock
 matrix
@@ -719,8 +575,8 @@ has: $`\boldsymbol{B}\boldsymbol{v}`$ is the set of structure factors of the tra
 from an occupied-virtual vector $`\boldsymbol{v}`$, scaled by $`2\alpha_k/\sigma_k`$, and $`\boldsymbol{B}^{T}\boldsymbol{w}`$
 is the occupied-virtual block of the constraint matrix built from a reflection vector
 $`\boldsymbol{w}`$. Conjugate gradients on equation (24) then needs one of each per iteration and
-converges in a few tens of iterations, with the diagonal $`1+\lambda G_{kk}`$ as
-preconditioner. A power series in $`\lambda\boldsymbol{G}`$ would not do, since it diverges exactly
+converges in a few tens of iterations, and in a few once the stiff directions are deflated, as
+described below. A power series in $`\lambda\boldsymbol{G}`$ would not do, since it diverges exactly
 where the cure is needed, $`\lambda\gamma_{\max} > 1`$. The effective number of parameters is
 the trace of $`\boldsymbol{H}`$, which the same solves give by Hutchinson's estimator, the average of
 $`\boldsymbol{z}^{T}\boldsymbol{H}\boldsymbol{z}`$ over random sign vectors $`\boldsymbol{z}`$, or by the Lanczos
@@ -731,34 +587,10 @@ only for a few thousand reflections, where it is cheap.
 
 **The matrix-free form, as implemented** (`use_matrix_free_stiffness= TRUE`): the two products
 are a structure factor evaluation of a symmetrised transition density and a constraint build
-from a reflection vector; the solve is conjugate gradients without a preconditioner, stopped at
-a relative residual of $`10^{-4}`$; $`p_{\mathrm{eff}}`$ and the leverages come from 20 sign
-vectors; the largest gain from power iteration. Against the explicit route on ammonia:
-
-| | explicit | matrix-free |
-|---|---|---|
-| iterations at lambda 0.012, 0.4 | 9, 10 | 9, 10 |
-| energy and GoF | same | same |
-| largest gain per unit lambda at 0.4 | 633.631 | 633.630 |
-| $`p_{\mathrm{eff}}`$ at 0.4 | 26.13 | 26.05 |
-| GCV at 0.4 | 0.3576 | 0.3568 |
-| leave-one-out sum at 0.4 | 60.9 | 88.5 |
-| conjugate gradient iterations per SCF iteration at 0.012, 0.4 | | 10, 28 |
-| CPU time of the job at 0.4 | 4 s | 86 s |
-
-The correction, $`p_{\mathrm{eff}}`$, GCV and the sigma-free AIC come out the same. The
-leverages do not: 20 sign vectors give each $`H_{kk}`$ only to about a tenth, and the
-leave-one-out residual $`r_k/(1-H_{kk})`$ magnifies that where $`H_{kk}`$ is near 1, so the
-leave-one-out sum and Cook's distances from the matrix-free route need many more samples or a
-better estimator and should not be read as they stand. On a molecule this small the explicit
-route is twenty times cheaper, since one pass over the shell pairs makes every derivative at
-once while each conjugate gradient iteration costs a structure factor evaluation and a
-constraint build; the matrix-free form is for the case where the derivatives cannot be stored.
-Its cost per SCF iteration is the conjugate gradient count times those two, and the count
-grows with $`\lambda\gamma_{\max}`$. A diagonal preconditioner does not bring it down: with the
-exact diagonal of $`\boldsymbol{G}`$ the count on ammonia goes from 10 to 12 at lambda 0.012 and
-from 28 to 52 at 0.4, because the stiff directions of $`\boldsymbol{G}`$ are combinations of many
-strong reflections and the matrix is nowhere near diagonal.
+from a reflection vector; the solve is conjugate gradients, stopped at a relative residual of
+$`10^{-4}`$ and deflated as described next; $`p_{\mathrm{eff}}`$ and the leverages come from
+random sign vectors, as described after that; without deflation the largest gain comes from
+power iteration. Section 7.6 compares it with the explicit route.
 
 **Deflation.** What fits this matrix is to take its few stiff directions out of the solve.
 Conjugate gradients on $`(\boldsymbol{1}+\lambda\boldsymbol{G})\boldsymbol{y} = \delta\boldsymbol{r}`$ converges in about as
@@ -800,16 +632,8 @@ exactly what deflation needs. Each step is one application of $`\boldsymbol{G}`$
 is orthogonalised against all the previous ones twice, since in finite precision the
 three-term recurrence loses orthogonality. The run is repeated at each new lambda, since the
 orbitals and with them $`\boldsymbol{G}`$ have changed. The largest Ritz value is the largest gain of
-section 3, so with deflation on, the power iteration is not needed. On ammonia:
-
-| deflation vectors | conjugate gradient iterations at 0.012, 0.4 | CPU at 0.012, 0.4 |
-|---|---|---|
-| none | 10, 28 | 34 s, 86 s |
-| 10 | 5, 19 | 21 s, 63 s |
-| 20 | 3, 10 | 18 s, 38 s |
-
-The job time includes the Lanczos run, and the Lanczos eigenvalues give the largest gain to
-six figures.
+section 3, so with deflation on, the power iteration is not needed. Section 7.6 gives the
+conjugate gradient counts on ammonia.
 
 **The statistics in the matrix-free form.** The same Ritz pairs give the stiff part of
 $`p_{\mathrm{eff}}`$ and of the leverages directly, $`\sum_j h(\theta_j)`$ and
@@ -820,24 +644,176 @@ the Ritz vectors instead is biased unless they span an invariant subspace: on am
 settled at a leave-one-out sum of 51.5 against 60.9. The leave-one-out sum magnifies the noise
 of any leverage near 1 through $`1/(1-h_k)^2`$, so every reflection whose estimate exceeds
 one half, up to twenty, gets its leverage from its own solve,
-$`h_k = 1 - [(\boldsymbol{1}+\lambda\boldsymbol{G})^{-1}]_{kk}`$. Ammonia at lambda 0.4:
+$`h_k = 1 - [(\boldsymbol{1}+\lambda\boldsymbol{G})^{-1}]_{kk}`$. Sixteen sign vectors are the default;
+section 7.6 shows why.
 
-| sign vectors | $`p_{\mathrm{eff}}`$ | leave-one-out sum | CPU |
-|---|---|---|---|
-| explicit route | 26.13 | 60.94 | 4 s |
-| 4 | 26.79 | 57.44 | 34 s |
-| 16 | 26.39 | 60.60 | 47 s |
-| 64 | 25.91 | 60.31 | 98 s |
+**A limit.** The step is a linearisation about the current orbitals, so a jump in lambda that
+is too large can still fail, and a scan should step lambda up from one converged point to the
+next (sections 7.5 and 8).
 
-The two largest leverages come out at the explicit values exactly. Sixteen is the default.
+The level shift enters the gaps $`\Delta_{ia}`$ while it is applied, since it is added to the
+virtual orbital energies before the diagonalisation: the correction uses the shifted gaps,
+because that is the operator it corrects, and the statistics at convergence use the physical
+ones.
 
-**A limit.** The step is a linearisation about the current orbitals. From the converged
-lambda 0.012 density the correction takes a jump to lambda 0.4, where $`\lambda\gamma_{\max}`$
-is 253, in ten iterations; a jump straight to lambda 4, where it is 2500, diverges. Stepping
-lambda up from 0.4 to 4 in steps of 0.4 converges at every point in about ten iterations.
+## 7. Results: ammonia
 
-**Results.** The ammonia restart job, no damping, no DIIS, the correction alone, against the
-plain SCF with its best damping and DIIS settings (section 6):
+Every ammonia result is for the restart job of section 2: RHF/cc-pVTZ, 80 basis functions,
+88 reflections.
+
+### 7.1 The check against measurement
+
+The stiffness report (section 10) computes $`\boldsymbol{G}`$ from equation (5) and prints its largest eigenvalues, the limit of equation (6),
+and the reflections with the largest diagonal elements. RHF only. For the ammonia job, from the
+orbitals converged at lambda = 0.012:
+
+| | |
+|---|---|
+| Largest gain per unit lambda, $`\gamma`$ | 642.5 |
+| Sum of all gains per unit lambda | 2524 |
+| Lambda where an undamped step fails, $`1/\gamma`$ | 0.00156 |
+| Gain at lambda = 0.012 | 7.71 |
+| Largest stable fraction of new density at 0.012 | 0.230 |
+
+Measured with density damping only, DIIS switched off, and lambda = 0.012 throughout:
+
+| Fraction of new density | Result |
+|---|---|
+| 0.50 | diverges, energy to -36 |
+| 0.30 | diverges |
+| 0.26 | diverges |
+| 0.24 | diverges |
+| 0.23 | converges, error falls by 1.3% per iteration |
+| 0.22 | converges in about 90 iterations |
+| 0.20 | converges |
+| 0.15, 0.10, 0.05 | converge, more slowly |
+
+At 0.23 the measured decay of 0.987 per iteration gives $`\lambda\gamma = 7.64`$ from
+$`1 - x(1+\lambda\gamma)`$; the calculation gives 7.71. So leaving out the two-electron response
+costs about 1% here.
+
+The three quiet test jobs have lambda at most 0.0003, a gain of 0.2, far inside the limit.
+
+### 7.2 Which reflections make it stiff
+
+The diagonal element $`G_{kk}`$ is the gain reflection $`k`$ would give alone. The top of the
+list for ammonia, per unit lambda:
+
+| h k l | sin(theta)/lambda | F_exp | sigma | F/sigma | (F_pred - F_exp)/sigma | own gain | share of stiffest direction |
+|---|---|---|---|---|---|---|---|
+| 0 4 0 | 0.206 | 9.40 | 0.061 | 154 | -1.24 | 182 | 0.14 |
+| 3 0 -2 | 0.186 | 6.12 | 0.056 | 109 | -1.94 | 169 | 0.01 |
+| 0 -3 2 | 0.186 | 6.49 | 0.052 | 125 | 0.45 | 169 | 0.08 |
+| -1 2 -1 | 0.126 | 8.40 | 0.057 | 147 | -1.26 | 144 | 0.04 |
+| 0 3 1 | 0.163 | 7.89 | 0.057 | 138 | 2.58 | 126 | 0.00 |
+| -2 0 -4 | 0.231 | 6.42 | 0.051 | 126 | -1.05 | 105 | 0.12 |
+| -1 -3 3 | 0.225 | 8.11 | 0.055 | 147 | 0.16 | 87 | 0.09 |
+| 1 0 2 | 0.115 | 20.94 | 0.119 | 176 | -1.03 | 87 | 0.04 |
+| 1 2 0 | 0.115 | 2.86 | 0.084 | 34 | 1.59 | 77 | 0.01 |
+
+- **No one reflection dominates.** The largest own gain is 182 against a total of 2524, and no
+  reflection has more than 14% of the stiffest direction.
+- **The stiff ones are the low-angle reflections with small absolute sigma**, about 0.05 to 0.06,
+  whatever their size. The own gain goes as $`1/\sigma_k^2`$ times how easily the valence density
+  moves that structure factor.
+- **A reflection worth a second look has a large leverage and a large residual at once**: it
+  can move the wavefunction a long way and is asking to. The measure of that is Cook's
+  distance, $`D_k = r_k^2 H_{kk}/\big(p_{\mathrm{eff}}(1-H_{kk})^2\big)`$, with $`H_{kk}`$ the
+  leverage of section 4 and $`r_k`$ the standardised residual: how far the whole fit moves
+  when reflection $`k`$ is left out, in units of its own uncertainty. The usual threshold is
+  $`4/N_{\mathrm{refl}}`$. For ammonia at lambda 0.012, 10 of the 88 reflections are above it, led by (0 3 1)
+  at 0.68 and (3 0 -2) at 0.51 against a threshold of 0.045; 61 are below an eighth of it.
+  The report prints the ten largest and a histogram in multiples of $`4/N_{\mathrm{refl}}`$.
+- Since the result does not depend on the overall scale of the sigmas (section 3), this
+  diagnostic can find a reflection whose sigma is too small *relative to the others*, not a set
+  of sigmas that are all too small.
+
+### 7.3 Damping and DIIS
+
+Measured on the two-lambda job:
+
+| Setting | Iterations at 0.012, 0.016 | Worst energy on the way |
+|---|---|---|
+| in test: mix 50% for 3 iterations, DIIS from 4 | 30, 20 | -29.6 |
+| mix 15% for 3 iterations, DIIS saving from 1 | 18, 19 | -56.2013 |
+| mix 15% for 6 iterations, DIIS from 6 | 19, 20 | -56.2013 |
+| no damping, DIIS saving from 1 | 21, 21 | -56.03 |
+| mix 15% throughout, with DIIS | 61, 54 | -56.2013 |
+
+All reach GoF 0.78 and -56.2023. So strong damping for the first few steps, then DIIS, removes
+the excursion. Damping kept on under DIIS only slows it.
+
+The cure of section 6 needs no damping at all; section 7.5.
+
+### 7.4 The lambda scan with the plain SCF
+
+**A lambda scan on ammonia.** The restart job, damping at 15% for three iterations, DIIS from
+the first, three scans joined (step 0.0005 to 0.004, then 0.004 to 0.04, then 0.02 to 0.2). $`N_{\mathrm{refl}} = 88`$, $`p = 1`$. GoF is $`\sqrt{\chi^2/(N_{\mathrm{refl}}-1)}`$.
+
+| lambda | $`\lambda\gamma_{\max}`$ | $`p_{\mathrm{eff}}`$ | $`\chi^2`$ | GoF | AIC | BIC | AIC$`_\sigma`$ | GCV | LOO | iterations |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | 0 | 1.0 | 851.9 | 3.13 | 853.9 | 856.4 | 201.8 | 9.90 | 851.9 | |
+| 0.001 | 0.64 | 2.9 | 407.1 | 2.16 | 413.0 | 420.3 | 140.7 | 4.95 | 483.7 | |
+| 0.002 | 1.28 | 4.3 | 256.5 | 1.72 | 265.0 | 275.5 | 102.7 | 3.22 | 338.4 | |
+| 0.004 | 2.57 | 6.1 | 145.1 | 1.29 | 157.2 | 172.2 | 56.1 | 1.90 | 215.4 | |
+| 0.008 | 5.14 | 8.4 | 82.1 | 0.97 | 98.9 | 119.6 | 10.6 | 1.14 | 134.7 | |
+| 0.012 | 7.71 | 9.9 | 61.9 | 0.84 | 81.7 | 106.3 | -11.1 | 0.893 | 106.3 | |
+| 0.016 | 10.3 | 11.1 | 52.3 | 0.78 | 74.4 | 101.9 | -23.7 | 0.777 | 92.6 | |
+| 0.020 | 12.8 | 12.0 | 46.6 | 0.73 | 70.7 | 100.5 | -31.9 | 0.711 | 84.9 | |
+| 0.024 | 15.4 | 12.8 | 42.8 | 0.70 | 68.5 | **100.3** | -37.7 | 0.667 | 80.1 | |
+| 0.028 | 18.0 | 13.5 | 40.1 | 0.68 | 67.1 | 100.6 | -42.2 | 0.636 | 76.9 | |
+| 0.040 | 25.7 | 15.2 | 34.9 | 0.63 | 65.2 | 102.7 | -51.1 | 0.578 | 71.7 | 49 |
+| 0.060 | 38.4 | 17.1 | 30.2 | 0.59 | 64.3 | 106.6 | -60.0 | 0.528 | 68.5 | 58 |
+| 0.080 | 51.2 | 18.4 | 27.4 | 0.56 | **64.25** | 109.9 | -65.9 | 0.498 | 67.2 | 77 |
+| 0.100 | 63.9 | 19.5 | 25.4 | 0.54 | 64.4 | 112.7 | -70.4 | 0.476 | 66.5 | 91 |
+| 0.120 | 76.6 | 20.4 | 23.9 | 0.52 | 64.6 | 115.1 | -74.1 | 0.459 | 66.0 | 128 |
+| 0.140 | 89.3 | 21.1 | 22.6 | 0.51 | 64.8 | 117.1 | -77.3 | 0.445 | **65.65** | 251 |
+| 0.160 | 101.9 | 21.8 | 21.8 | 0.50 | 65.3 | 119.2 | -79.4 | 0.436 | 65.66 | not converged in 300 |
+
+At 0.18 the SCF is still not converged after 300 iterations and at 0.2 it has blown up, so
+the row for 0.16 is the last one to trust and even it is not fully converged.
+
+What the scan says:
+
+- **Where the criteria put the minimum.** BIC at 0.024, AIC at 0.08, leave-one-out at about
+  0.15, GCV and AIC$`_\sigma`$ beyond 0.16. The two that trust the sigmas disagree with each
+  other by a factor of three, and with the sigma-free ones by more. This is the expected
+  behaviour of a penalty that is fixed against a misfit whose scale is uncertain, not a defect
+  in any of them. The leave-one-out sum is the one with a clear, if shallow, minimum.
+- **The sigmas of this data set look too large, not too small**: GoF falls below 1 at lambda
+  0.008, with only 8 effective parameters out of 88. That is the opposite of the GoF 3 to 7
+  worry in section 4, and it is why AIC and BIC come out so differently here.
+- **The fit keeps paying for its parameters a long way out.** Each extra effective parameter
+  is bought for less and less $`\chi^2`$, but $`\chi^2`$ per parameter stays above 1 until about
+  lambda 0.1. The effective parameter count climbs slowly: 22 of 88 at lambda 0.16, with
+  $`\lambda\gamma_{\max} = 102`$. The stiff directions saturate early and the rest are switched
+  on one by one.
+- **The plain SCF with damping and DIIS cannot reach the region the sigma-free criteria point
+  at.** Iterations rise from 49 at lambda 0.04 to 251 at 0.14 and the SCF fails above that,
+  with the stable fraction of equation (6) down to 2%. The cure of section 6 removes this limit.
+- **The leave-one-out sum from one converged run at each lambda** replaces a k-fold
+  cross-validation, to the accuracy checked next.
+
+**The leave-one-out formula checked against a real held-out refit.** Ammonia restart job,
+lambda = 0.012. One reflection at a time was held out by giving it a sigma of
+1.0 (weight 300 times smaller than its neighbours, so it still gets a predicted structure
+factor), the job was run again, and the prediction was compared with the observation using the
+original sigma.
+
+| Held out | residual in full fit | $`H_{kk}`$ | equation (11) | refit |
+|---|---|---|---|---|
+| (0 3 1) | 2.58 | 0.383 | 4.18 | 4.55 |
+| (3 0 -2) | -1.94 | 0.434 | -3.43 | -3.67 |
+
+The formula gives the right size and sign and is 7 to 8% low on both. Both errors have the
+same sign, which points at the uncoupled orbital response underestimating $`H_{kk}`$ rather
+than at noise; the full coupled response, or the residual term left out, would be the next
+refinement if the 8% matters. For choosing lambda it does not.
+
+### 7.5 The cure
+
+The ammonia restart job, no damping, no DIIS, the correction alone, against the
+plain SCF with its best damping and DIIS settings (section 7.3):
 
 | lambda | lambda times largest gain | iterations with the correction | plain SCF with damping and DIIS |
 |---|---|---|---|
@@ -852,7 +828,7 @@ iteration, where the plain step took it to 52.8 and the overlap with the startin
 0.0035. Adding damping at 15% for three iterations and DIIS on top gives 15 to 17 iterations:
 the damping only slows it. The iteration count no longer depends on lambda.
 
-With the correction the lambda scan of section 7 continues past the old failure point:
+With the correction the lambda scan of section 7.4 continues past the old failure point:
 
 | lambda | $`\lambda\gamma_{\max}`$ | $`p_{\mathrm{eff}}`$ | $`\chi^2`$ | GoF | AIC | BIC | AIC$`_\sigma`$ | GCV | LOO | iterations |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -875,14 +851,76 @@ With the correction the lambda scan of section 7 continues past the old failure 
 Every point converged. Where the criteria put the minimum on ammonia: BIC at 0.024, AIC at
 0.08, the leave-one-out sum at 2.0, generalised cross-validation at 3.2, and the sigma-free
 AIC still falling at 4. The two that trust the sigmas stop two orders of magnitude earlier
-than the two that do not, which is what section 7 predicts for a data set whose sigmas are
+than the two that do not, which is what section 4 predicts for a data set whose sigmas are
 too large: GoF is below 1 from lambda 0.008 on. At the leave-one-out minimum 34 of the 88
-reflections' worth of parameters are in use and the GoF is 0.34. A data set with believable
-sigmas is needed before a rule about where to stop is set; which criterion to read is
-decided: GCV, or the sigma-free AIC.
+reflections' worth of parameters are in use and the GoF is 0.34. The criterion that chooses
+lambda is the leave-one-out sum, with GCV as the alternative: neither depends on the overall
+scale of the sigmas, only on their relative sizes, so neither is misled by ammonia's sigmas.
 
-**Urea.** The urea job of the test suite, `tests/long/urea_x-ray-constrained-uhf_STO-3G_plus_ELF_plot`,
-is a harder case: 817 reflections, a minimal basis, and a GoF of 9.9 before fitting, so the
+**A limit.** The step is a linearisation about the current orbitals. From the converged
+lambda 0.012 density the correction takes a jump to lambda 0.4, where $`\lambda\gamma_{\max}`$
+is 253, in ten iterations; a jump straight to lambda 4, where it is 2500, diverges. Stepping
+lambda up from 0.4 to 4 in steps of 0.4 converges at every point in about ten iterations.
+
+### 7.6 The matrix-free form
+
+The matrix-free route of section 6 against the explicit route, without deflation:
+
+| | explicit | matrix-free |
+|---|---|---|
+| iterations at lambda 0.012, 0.4 | 9, 10 | 9, 10 |
+| energy and GoF | same | same |
+| largest gain per unit lambda at 0.4 | 633.631 | 633.630 |
+| $`p_{\mathrm{eff}}`$ at 0.4 | 26.13 | 26.05 |
+| GCV at 0.4 | 0.3576 | 0.3568 |
+| conjugate gradient iterations per SCF iteration at 0.012, 0.4 | | 10, 28 |
+| CPU time of the job at 0.4 | 4 s | 86 s |
+
+The correction, $`p_{\mathrm{eff}}`$, GCV and the sigma-free AIC come out the same. The
+leave-one-out sum needs the better leverages of the last table below. On a molecule this small the explicit
+route is twenty times cheaper, since one pass over the shell pairs makes every derivative at
+once while each conjugate gradient iteration costs a structure factor evaluation and a
+constraint build; the matrix-free form is for the case where the derivatives cannot be stored.
+Its cost per SCF iteration is the conjugate gradient count times those two, and the count
+grows with $`\lambda\gamma_{\max}`$. A diagonal preconditioner does not bring it down: with the
+exact diagonal of $`\boldsymbol{G}`$ the count on ammonia goes from 10 to 12 at lambda 0.012 and
+from 28 to 52 at 0.4, because the stiff directions of $`\boldsymbol{G}`$ are combinations of many
+strong reflections and the matrix is nowhere near diagonal.
+
+With deflation by the leading Ritz vectors:
+
+| deflation vectors | conjugate gradient iterations at 0.012, 0.4 | CPU at 0.012, 0.4 |
+|---|---|---|
+| none | 10, 28 | 34 s, 86 s |
+| 10 | 5, 19 | 21 s, 63 s |
+| 20 | 3, 10 | 18 s, 38 s |
+
+The job time includes the Lanczos run, and the Lanczos eigenvalues give the largest gain to
+six figures.
+
+The statistics, with the control variate and exact large leverages, at lambda 0.4:
+
+| sign vectors | $`p_{\mathrm{eff}}`$ | leave-one-out sum | CPU |
+|---|---|---|---|
+| explicit route | 26.13 | 60.94 | 4 s |
+| 4 | 26.79 | 57.44 | 34 s |
+| 16 | 26.39 | 60.60 | 47 s |
+| 64 | 25.91 | 60.31 | 98 s |
+
+The two largest leverages come out at the explicit values exactly. Sixteen is the default.
+
+## 8. Results: urea
+
+The crystal and data are those of the test job
+`tests/long/urea_x-ray-constrained-uhf_STO-3G_plus_ELF_plot`: 817 reflections and the
+two-centre Stewart partition, `partition_model= tc-stewart`, unless stated. Every result is
+RHF with the correction on, no damping, DIIS and the default level shift for the first three
+iterations, and each lambda starts from the orbitals converged at the one before. The GoF is
+$`\sqrt{\chi^2/(N_{\mathrm{refl}}-1)}`$.
+
+### 8.1 STO-3G
+
+The minimal basis is a harder case than ammonia: 817 reflections, a minimal basis, and a GoF of 9.9 before fitting, so the
 residuals are eight sigma and the fit term is far from its minimum. Its largest gain per unit
 lambda is 1246, so an undamped plain step fails from lambda 0.0008. With the correction, no
 damping, DIIS, and the default level shift for the first three iterations, a scan in steps of
@@ -898,13 +936,16 @@ $`E + \lambda\,\mathrm{GoF}^2`$ is lower than that of the GoF 7.61 solution. So 
 the functional has more than one stationary point and the one first reached is not its
 minimum. No scheme tried converged to the SCF tolerance there within 150 iterations.
 
-The criteria over the converged range are of no use on this job: the GoF is still 7.7 at
-lambda 0.03, every criterion is still falling, and $`p_{\mathrm{eff}}`$ is 12 of 817. A minimal
-basis cannot fit urea's data to within their sigmas, so the sigmas are small relative to the
-model error, and the question of where to stop does not arise before the question of the
-basis. The job is a convergence test, not a fitting test.
+Over the converged range the leave-one-out sum has its minimum at the first step, lambda
+0.005, where the GoF is 8.64 and $`p_{\mathrm{eff}}`$ is 7 of 817; the other criteria are still
+falling at 0.03, where $`p_{\mathrm{eff}}`$ is 12. A minimal basis cannot fit urea's data to
+within their sigmas, so the sigmas are small relative to the model error, and the question of
+where to stop does not arise before the question of the basis. The job is a convergence test,
+not a fitting test.
 
-**Urea with def2-SVP** is the same crystal and data in a basis that can fit them: 80 basis
+### 8.2 def2-SVP
+
+def2-SVP is a basis that can fit the data: 80 basis
 functions, GoF 4.43 before fitting, largest gain per unit lambda 1730. With the correction and
 nothing else, the scan converges at every lambda from 0 to 0.5, in 5 to 9 iterations for the
 first points and 6 or 7 thereafter, with none of the drift of the minimal basis; at lambda
@@ -939,6 +980,111 @@ here, and the terms the model Hessian leaves out grow with them. What would stop
 wandering is a line search on $`E + \lambda\,\mathrm{GoF}^2`$ along the corrected step, which
 no step of the present iteration checks.
 
+Continued from lambda 1 in steps of 0.1, every point converges, in 9 to 14 iterations, and
+the leave-one-out sum turns:
+
+| lambda | $`\lambda\gamma_{\max}`$ | $`p_{\mathrm{eff}}`$ | GoF | AIC | BIC | AIC$`_\sigma`$ | GCV | LOO | iterations |
+|---|---|---|---|---|---|---|---|---|---|
+| 1.0 | 2090 | 66.2 | 1.517 | 2011 | 2323 | 813 | 2.723 | 4191.0 | |
+| 1.5 | 3259 | 71.0 | 1.461 | 1883 | 2217 | 760 | 2.556 | 4012.8 | 9 |
+| 2.0 | 4559 | 74.3 | 1.423 | 1802 | 2151 | 724 | 2.448 | 3940.2 | 9 |
+| 2.2 | 5116 | 75.3 | 1.412 | 1778 | 2132 | 713 | 2.416 | 3930.7 | 9 |
+| 2.3 | 5403 | 75.9 | 1.407 | 1767 | 2124 | 708 | 2.402 | 3928.6 | 10 |
+| 2.4 | 5697 | 76.3 | 1.402 | 1757 | 2116 | 704 | 2.389 | **3927.7** | 10 |
+| 2.5 | 5998 | 76.8 | 1.397 | 1747 | 2108 | 699 | 2.376 | 3927.9 | 13 |
+| 2.6 | 6308 | 77.3 | 1.393 | 1738 | 2101 | 695 | 2.364 | 3928.8 | 13 |
+| 2.8 | 6952 | 78.2 | 1.384 | 1720 | 2088 | 687 | 2.341 | 3931.9 | 14 |
+
+- **The leave-one-out minimum is at lambda 2.4**, where 76 of 817 reflections' worth of
+  parameters are in use and the GoF is 1.40. The minimum is shallow: the sum changes by less
+  than 0.1% between 2.2 and 2.6.
+- **GCV and the sigma-free AIC are still falling at 2.9**, and AIC and BIC with the sigmas
+  trusted have no minimum either, since the GoF is above 1 throughout. On ammonia, whose GoF
+  goes below 1, they stopped first; here they do not stop at all.
+- **The leave-one-out sum turns because a few reflections dominate it.** At lambda 2.9, 48
+  reflections have a leverage above 0.5 and 7 above 0.9; those 48 give 58% of the
+  leave-one-out sum and 8% of $`\chi^2`$, and ten of them give half the sum. GCV is the
+  leave-one-out sum with every leverage replaced by the mean, $`p_{\mathrm{eff}}/N_{\mathrm{refl}}
+  = 0.095`$, so it cannot see them.
+
+Where each scale-free criterion has its minimum, over the range scanned:
+
+| system | leave-one-out sum | GCV | AIC$`_\sigma`$ |
+|---|---|---|---|
+| ammonia | 2.0 | 3.2 | none up to 4 |
+| urea, STO-3G | 0.005 | none up to 0.03 | none up to 0.03 |
+| urea, def2-SVP | 2.4 | none up to 2.9 | none up to 2.9 |
+| urea, def2-TZVP | none up to 1.3 | none up to 1.3 | none up to 1.3 |
+
+The leave-one-out sum is the only criterion with a minimum on every data set so far. It
+stops where the fit begins to chase the reflections that can each move the wavefunction
+most; GCV and AIC$`_\sigma`$ measure the average reflection and go on rewarding the fit.
+- **The energy has risen by 1.06 hartree** at the minimum, from -223.825 to -222.763: the fit
+  buys a GoF of 1.40 from 4.43 with a wavefunction far from the variational one.
+- **No wandering** beyond the visit near 0.9: at $`\lambda\gamma_{\max}`$ up to 7300 the
+  iteration count rises slowly with lambda and every point converges.
+
+### 8.3 def2-TZVP
+
+def2-TZVP, 168 basis functions, GoF 4.11 before fitting. Steps of 0.05 from lambda 0 fail at
+the first step; steps of 0.005 converge at every point to 0.06, in 5 to 10 iterations. From
+there, continued in steps of 0.05, every point converges in 6 iterations, with the overlap
+with the starting orbitals above 0.99:
+
+| lambda | $`\lambda\gamma_{\max}`$ | $`p_{\mathrm{eff}}`$ | GoF | AIC | BIC | AIC$`_\sigma`$ | GCV | LOO |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 0 | 1.0 | 4.114 | 13813 | 13818 | 2312 | 16.946 | 13811.2 |
+| 0.06 | 155 | 53.9 | 1.535 | 2031 | 2284 | 807 | 2.698 | 3787.5 |
+| 0.5 | 1080 | 85.2 | 1.291 | 1530 | 1931 | 586 | 2.074 | 3458.6 |
+| 0.8 | 1602 | 92.3 | 1.246 | 1451 | 1885 | 542 | 1.969 | 3328.4 |
+| 1.1 | 2168 | 97.1 | 1.216 | 1401 | 1858 | 513 | 1.903 | 3197.2 |
+| 1.3 | 2561 | 99.7 | 1.202 | 1377 | 1846 | 498 | 1.871 | 3111.3 |
+
+At every lambda the larger basis fits better than def2-SVP with more effective parameters:
+at lambda 1, GoF 1.22 against 1.52, and 96 parameters against 66. The leave-one-out sum is
+still falling at 1.3, by a near-constant 21 per step of 0.05.
+### 8.4 The Hirshfeld partitions
+
+The correction on the Hirshfeld-atom partitions, def2-SVP, lambda 0 to 0.01 in steps of
+0.005, against the two-centre partition with the matrix-free correction:
+
+| partition model | iterations at 0, 0.005, 0.01 | GoF at 0, 0.005, 0.01 | energy at 0.01 | CPU |
+|---|---|---|---|---|
+| `tc-stewart`, matrix-free | 9, 8, 7 | 4.43, 2.82, 2.51 | -223.799 | 323 s |
+| `oc-hirshfeld` | 9, 8, 7 | 4.27, 2.76, 2.48 | -223.802 | 2008 s |
+| `oc-ri` | 9, 8, 7 | 4.28, 2.75, 2.47 | -223.802 | 1858 s |
+
+The three partitions converge in the same number of iterations, and the two Hirshfeld routes
+agree with each other to 0.01 in the GoF. Continued on `oc-ri` to lambda 0.06, every point
+converges in 6 or 7 iterations, to GoF 1.95, in 1283 s for the thirteen lambdas. Each
+Hirshfeld iteration costs several grid passes, so these routes are six times slower than the
+two-centre route at this size.
+
+### 8.5 Deformation densities at the leave-one-out minimum
+
+The deformation density is the density of the fitted wavefunction minus the promolecule of
+spherical atoms. The difference due to fitting is the density at the leave-one-out minimum
+minus the density at lambda 0, in the same basis; the promolecule cancels in it. Both are in
+the molecular plane, 6 Å square, centred on the carbon atom, with the C=O bond pointing right.
+Red contours are positive and blue negative, on a logarithmic scale: the deformation densities
+from $`10^{-3}`$ to 1 $`e\,a_0^{-3}`$, the differences from $`10^{-4}`$ to $`10^{-1}`$
+$`e\,a_0^{-3}`$, each in steps of a factor $`\sqrt{10}`$; the dotted line is zero.
+
+| STO-3G | def2-SVP |
+|---|---|
+| ![Urea deformation density, STO-3G, at the leave-one-out minimum](images/xcw_urea_sto3g_deformation.png) | ![Urea deformation density, def2-SVP, at the leave-one-out minimum](images/xcw_urea_svp_deformation.png) |
+| $`\lambda = 0.005`$, $`\mathrm{GoF}^2 = 74.6`$ | $`\lambda = 2.4`$, $`\mathrm{GoF}^2 = 1.97`$ |
+| ![Urea, STO-3G: fitted minus unfitted density](images/xcw_urea_sto3g_difference.png) | ![Urea, def2-SVP: fitted minus unfitted density](images/xcw_urea_svp_difference.png) |
+| fitted minus unfitted; unfitted $`\mathrm{GoF}^2 = 98.5`$ | fitted minus unfitted; unfitted $`\mathrm{GoF}^2 = 19.6`$ |
+
+In the minimal basis the fit at its leave-one-out minimum changes the density by up to
+$`10^{-1}`$ $`e\,a_0^{-3}`$ near the nuclei and by $`10^{-3}`$ to $`10^{-2}`$ over the
+molecule. In def2-SVP, where the fit goes much further, the change takes density from the
+hydrogen atoms and from the outer region of the molecule and adds it to the bonds and the
+atomic cores.
+
+### 8.6 Cost
+
 **Cost of the explicit route, measured.** On one core of the Mac, one SCF iteration with the
 correction costs 0.4 s for ammonia, 80 basis functions and 88 reflections, and 5 s for urea in
 def2-SVP, 80 basis functions and 817 reflections; a lambda takes 5 to 12 iterations, so the
@@ -948,10 +1094,9 @@ shell pairs that makes the derivatives, which costs what a structure factor eval
 the transformation of the derivatives to the occupied-virtual block, reflections times basis
 size squared times virtuals; the gain matrix, reflections squared times occupied-virtual
 pairs; its eigenproblem, reflections cubed; one extra constraint build; and the ordinary Fock
-build, basis size to the fourth. From def2-SVP to def2-TZVP on urea, about 190 functions, the
-transformation grows some ten times and the Fock build some twenty, while the eigenproblem,
-which is a third of a second, does not change, so an iteration should take of the order of a
-minute and a scan of twenty lambdas a few hours. A molecule of thirty atoms in def2-TZVP, some
+build, basis size to the fourth. In def2-TZVP, 168 functions, an iteration on urea takes
+12 s, and the scan from 0 to 0.06 in 13 steps with its 102 iterations took 21 minutes: the
+grow-with-size parts are still small beside the fixed cost of the structure factors. A molecule of thirty atoms in def2-TZVP, some
 600 functions and 5000 reflections, is a few hundred seconds per iteration on one core by the
 same scaling, and the structure factor loops are parallel over shell pairs.
 
@@ -968,14 +1113,10 @@ the two products exist on that route. With the fitted Hirshfeld atoms, `partitio
 oc-ri`, where every structure factor is a sum over auxiliary functions of analytic
 transforms, the reflection count drops out of the grid term altogether: a product is one
 grid pass plus reflections times auxiliary functions. The matrix-free correction with
-deflation on that route is therefore the form for large systems; it is planned, not written.
+deflation on that route is therefore the form for large systems. It is implemented
+(section 8.4), and has not yet been run at that size.
 
-The level shift enters the gaps $`\Delta_{ia}`$ while it is applied, since it is added to the
-virtual orbital energies before the diagonalisation: the correction uses the shifted gaps,
-because that is the operator it corrects, and the statistics at convergence use the physical
-ones.
-
-## 10. Where it is implemented
+## 9. Where it is implemented
 
 Each piece, and the Tonto procedure that does it.
 
@@ -997,16 +1138,16 @@ Each piece, and the Tonto procedure that does it.
 | which form is used | `MOLECULE.SCF:stiffness_is_matrix_free` |
 | density damping in the SCF loops | `MOLECULE.BASE:make_SCF_density_mx` |
 
-## 11. Keywords
+## 10. Keywords
 
 All in the `scfdata=` block. None is on by default: an XCW without them runs as before.
 
 | keyword | default | meaning |
 |---|---|---|
-| `use_stiffness_correction=` | `FALSE` | `TRUE` switches on the correction of section 9; no damping is needed with it |
-| `put_constraint_stiffness=` | `FALSE` | `TRUE` prints a summary at every converged lambda (gains, stable damping fraction, $`p_{\mathrm{eff}}`$, the criteria of equations (9) and (10), leave-one-out, the three-point extrapolation of section 8), adds the main numbers to the SCF results, and at the end of the run prints the table of every reflection: leverage, residual left out, Cook's distance, own gain |
+| `use_stiffness_correction=` | `FALSE` | `TRUE` switches on the correction of section 6; no damping is needed with it |
+| `put_constraint_stiffness=` | `FALSE` | `TRUE` prints a summary at every converged lambda (gains, stable damping fraction, $`p_{\mathrm{eff}}`$, the criteria of equations (9) and (10), leave-one-out, the three-point extrapolation of section 5), adds the main numbers to the SCF results, and at the end of the run prints the table of every reflection: leverage, residual left out, Cook's distance, own gain |
 | `lambda_criterion=` | `loo` | the criterion whose value and running minimum over the scan are printed: `loo`, `gcv`, `aic_sigma`, `aic` or `bic`; the lambda with the smallest value so far is the optimum |
-| `use_matrix_free_stiffness=` | `FALSE` | `TRUE` uses the matrix-free form of section 9; always used for the Hirshfeld-atom partitions |
+| `use_matrix_free_stiffness=` | `FALSE` | `TRUE` uses the matrix-free form of section 6; always used for the Hirshfeld-atom partitions |
 | `stiffness_deflation=` | 20 | leading eigenvectors of $`\boldsymbol{G}`$ from Lanczos, matrix-free form: they deflate the conjugate gradients and give the stiff part of $`p_{\mathrm{eff}}`$ and the leverages exactly; 0 turns it off |
 | `stiffness_samples=` | 16 | sign vectors in the trace estimator for what the deflation vectors miss, matrix-free form |
 | `stiffness_cg_tolerance=` | $`10^{-4}`$ | relative residual at which the conjugate gradient solve stops |
@@ -1051,7 +1192,7 @@ the ammonia restart job at lambda 0.012 and 0.016 with the correction and the st
 
 ## Appendix. Choosing lambda: cross-validation, information criteria and the sigmas
 
-This appendix collects the background to section 7: why a single free set cannot locate
+This appendix collects the background to section 4: why a single free set cannot locate
 lambda, what complete cross-validation is, how the Akaike criterion is set up for a fit with
 an effective number of parameters, two independent ways of computing that number, and how
 each method responds to sigmas that are wrong.
@@ -1156,7 +1297,7 @@ and $`-2\ln L = \chi^2 + \mathrm{constant}`$, so
 \qquad (A4)
 ```
 
-which is equation (9) of section 7. The penalty cannot be a count of wavefunction
+which is equation (9) of section 4. The penalty cannot be a count of wavefunction
 parameters: there are more of those than reflections, and at lambda zero the data influence
 none of them. It is the effective number, the summed sensitivity of each prediction to its
 own observation, which is zero at lambda zero as Davidson *et al.* (2022) require. If
@@ -1175,9 +1316,9 @@ p_{\mathrm{eff}} = \mathrm{tr}\left[(\boldsymbol{A} + \lambda\boldsymbol{K})^{-1
 
 with $`\boldsymbol{A}`$ the Hessian of the energy and $`\boldsymbol{K}`$ that of the fit term. Solving
 with the full Hessian is a coupled-perturbed Hartree-Fock calculation for each reflection.
-Section 7 takes $`\boldsymbol{A}`$ in its uncoupled form, the orbital energy differences, after
+Section 4 takes $`\boldsymbol{A}`$ in its uncoupled form, the orbital energy differences, after
 which the trace moves into the space of reflections and becomes equation (8). The check of
-section 7 against two held-out refits measures the cost of that approximation: 7 to 8% on the
+section 7.4 against two held-out refits measures the cost of that approximation: 7 to 8% on the
 leave-one-out residuals.
 
 **The Monte Carlo route, which needs no Hessian.** By Stein's lemma the effective number of
@@ -1225,7 +1366,7 @@ minimised at $`s^2 = \chi^2/N_{\mathrm{refl}}`$, and substituting back,
 \qquad (A8)
 ```
 
-which is equation (10) of section 7 up to a constant and the one extra parameter, the
+which is equation (10) of section 4 up to a constant and the one extra parameter, the
 estimated scale. After rescaling, the $`\chi^2`$ of every model is $`N_{\mathrm{refl}}`$ by
 construction, so the comparison is not of fits but of *how small an error level each model
 needs to explain the data*: the fit term is the logarithm of the residual. Two checks: if the

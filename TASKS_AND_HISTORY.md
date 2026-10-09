@@ -238,8 +238,10 @@ search after):
   scale but useful relatively, so a criterion whose minimum does not move with their scale.
   First GCV, for its crystallographic heritage; then (2026-10-09) the leave-one-out sum, as
   complete cross-validation in Brünger's sense. `lambda_criterion=` switches. Still open: whether the scan should
-  stop itself at the criterion's minimum, and a data set with believable sigmas to see the
-  two agree.
+  stop itself at the criterion's minimum. A data set whose sigmas have the right overall
+  scale would be a check, not a need: there AIC, which trusts that scale, should agree with
+  the leave-one-out sum. Neither ammonia (GoF below 1) nor urea (GoF above 1 at every
+  minimum, which may be model error rather than sigmas) can show it.
 - **Whether `use_stiffness_correction` and deflation become the defaults** for constrained
   SCF. Not blocking; best decided once the fitted-atom form exists, since that is the form
   people will use. It changes no converged result, only the path, but moves every
@@ -2564,8 +2566,9 @@ has the findings. Open, in order:
    independent check of the uncoupled approximation, using `F_sigma_noise=`.
 7. **From milestone 12**, which this work closes: lambda is chosen by complete
    cross-validation from one run per lambda, with the leave-one-out sum the default criterion.
-   Left: whether a scan should stop itself at the criterion's minimum, and a data set with
-   believable sigmas, to see the criteria agree.
+   Left: whether a scan should stop itself at the criterion's minimum. A data set whose sigmas
+   have the right overall scale would check that AIC, which trusts that scale, agrees with
+   the leave-one-out sum; the choice of criterion does not depend on it.
 
 To continue a lambda scan from a stored lambda, copy that lambda's `MOs` and `MO_energies`
 files to `<name>.MOs,r` and `<name>.MO_energies,r` and use `initial_mos= r`, not
