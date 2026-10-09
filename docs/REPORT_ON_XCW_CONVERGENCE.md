@@ -1014,7 +1014,7 @@ Where each scale-free criterion has its minimum, over the range scanned:
 | ammonia | 2.0 | 3.2 | none up to 4 |
 | urea, STO-3G | 0.005 | none up to 0.03 | none up to 0.03 |
 | urea, def2-SVP | 2.4 | none up to 2.9 | none up to 2.9 |
-| urea, def2-TZVP | none up to 1.3 | none up to 1.3 | none up to 1.3 |
+| urea, def2-TZVP | none up to 2.7 | none up to 2.7 | none up to 2.7 |
 
 The leave-one-out sum is the only criterion with a minimum on every data set so far. It
 stops where the fit begins to chase the reflections that can each move the wavefunction
@@ -1042,7 +1042,7 @@ with the starting orbitals above 0.99:
 
 At every lambda the larger basis fits better than def2-SVP with more effective parameters:
 at lambda 1, GoF 1.22 against 1.52, and 96 parameters against 66. The leave-one-out sum is
-still falling at 1.3, by a near-constant 21 per step of 0.05.
+still falling at 2.7, where it is 2642 and the GoF is 1.14.
 ### 8.4 The Hirshfeld partitions
 
 The correction on the Hirshfeld-atom partitions, def2-SVP, lambda 0 to 0.01 in steps of
@@ -1060,28 +1060,42 @@ converges in 6 or 7 iterations, to GoF 1.95, in 1283 s for the thirteen lambdas.
 Hirshfeld iteration costs several grid passes, so these routes are six times slower than the
 two-centre route at this size.
 
-### 8.5 Deformation densities at the leave-one-out minimum
+### 8.5 Deformation densities as lambda grows
 
 The deformation density is the density of the fitted wavefunction minus the promolecule of
-spherical atoms. The difference due to fitting is the density at the leave-one-out minimum
-minus the density at lambda 0, in the same basis; the promolecule cancels in it. Both are in
-the molecular plane, 6 Å square, centred on the carbon atom, with the C=O bond pointing right.
-Red contours are positive and blue negative, on a logarithmic scale: the deformation densities
-from $`10^{-3}`$ to 1 $`e\,a_0^{-3}`$, the differences from $`10^{-4}`$ to $`10^{-1}`$
-$`e\,a_0^{-3}`$, each in steps of a factor $`\sqrt{10}`$; the dotted line is zero.
+spherical atoms, in the molecular plane, 6 Å square, centred on the carbon atom with the C=O
+bond pointing right. Blue contours are positive and red negative, on a logarithmic scale from
+$`10^{-3}`$ to 1 $`e\,a_0^{-3}`$ in steps of a factor $`\sqrt{10}`$; the dotted line is zero.
+Under each map are lambda, the GoF squared, $`\chi^2/(N_{\mathrm{refl}}-1)`$, and the rise
+$`\Delta E`$ of the energy above the unconstrained energy at lambda 0.
 
-| STO-3G | def2-SVP |
-|---|---|
-| ![Urea deformation density, STO-3G, at the leave-one-out minimum](images/xcw_urea_sto3g_deformation.png) | ![Urea deformation density, def2-SVP, at the leave-one-out minimum](images/xcw_urea_svp_deformation.png) |
-| $`\lambda = 0.005`$, $`\mathrm{GoF}^2 = 74.6`$ | $`\lambda = 2.4`$, $`\mathrm{GoF}^2 = 1.97`$ |
-| ![Urea, STO-3G: fitted minus unfitted density](images/xcw_urea_sto3g_difference.png) | ![Urea, def2-SVP: fitted minus unfitted density](images/xcw_urea_svp_difference.png) |
-| fitted minus unfitted; unfitted $`\mathrm{GoF}^2 = 98.5`$ | fitted minus unfitted; unfitted $`\mathrm{GoF}^2 = 19.6`$ |
+**def2-SVP**
 
-In the minimal basis the fit at its leave-one-out minimum changes the density by up to
-$`10^{-1}`$ $`e\,a_0^{-3}`$ near the nuclei and by $`10^{-3}`$ to $`10^{-2}`$ over the
-molecule. In def2-SVP, where the fit goes much further, the change takes density from the
-hydrogen atoms and from the outer region of the molecule and adds it to the bonds and the
-atomic cores.
+| | | |
+|---|---|---|
+| ![Urea deformation density, def2-SVP, lambda 0](images/xcw_urea_svp_l0.00.png) | ![Urea deformation density, def2-SVP, lambda 0.01](images/xcw_urea_svp_l0.01.png) | ![Urea deformation density, def2-SVP, lambda 0.02](images/xcw_urea_svp_l0.02.png) |
+| $`\lambda = 0`$, $`\mathrm{GoF}^2 = 19.62`$, $`\Delta E = 0`$ m$`E_\mathrm{h}`$ | $`\lambda = 0.01`$, $`\mathrm{GoF}^2 = 6.28`$, $`\Delta E = 26`$ m$`E_\mathrm{h}`$ | $`\lambda = 0.02`$, $`\mathrm{GoF}^2 = 4.97`$, $`\Delta E = 44`$ m$`E_\mathrm{h}`$ |
+| ![Urea deformation density, def2-SVP, lambda 0.03](images/xcw_urea_svp_l0.03.png) | ![Urea deformation density, def2-SVP, lambda 0.04](images/xcw_urea_svp_l0.04.png) | ![Urea deformation density, def2-SVP, lambda 0.05](images/xcw_urea_svp_l0.05.png) |
+| $`\lambda = 0.03`$, $`\mathrm{GoF}^2 = 4.40`$, $`\Delta E = 58`$ m$`E_\mathrm{h}`$ | $`\lambda = 0.04`$, $`\mathrm{GoF}^2 = 4.07`$, $`\Delta E = 70`$ m$`E_\mathrm{h}`$ | $`\lambda = 0.05`$, $`\mathrm{GoF}^2 = 3.86`$, $`\Delta E = 79`$ m$`E_\mathrm{h}`$ |
+
+**def2-TZVP**
+
+| | | |
+|---|---|---|
+| ![Urea deformation density, def2-TZVP, lambda 0](images/xcw_urea_tzvp_l0.00.png) | ![Urea deformation density, def2-TZVP, lambda 0.01](images/xcw_urea_tzvp_l0.01.png) | ![Urea deformation density, def2-TZVP, lambda 0.02](images/xcw_urea_tzvp_l0.02.png) |
+| $`\lambda = 0`$, $`\mathrm{GoF}^2 = 16.93`$, $`\Delta E = 0`$ m$`E_\mathrm{h}`$ | $`\lambda = 0.01`$, $`\mathrm{GoF}^2 = 3.72`$, $`\Delta E = 21`$ m$`E_\mathrm{h}`$ | $`\lambda = 0.02`$, $`\mathrm{GoF}^2 = 3.02`$, $`\Delta E = 31`$ m$`E_\mathrm{h}`$ |
+| ![Urea deformation density, def2-TZVP, lambda 0.03](images/xcw_urea_tzvp_l0.03.png) | ![Urea deformation density, def2-TZVP, lambda 0.04](images/xcw_urea_tzvp_l0.04.png) | ![Urea deformation density, def2-TZVP, lambda 0.05](images/xcw_urea_tzvp_l0.05.png) |
+| $`\lambda = 0.03`$, $`\mathrm{GoF}^2 = 2.73`$, $`\Delta E = 38`$ m$`E_\mathrm{h}`$ | $`\lambda = 0.04`$, $`\mathrm{GoF}^2 = 2.56`$, $`\Delta E = 44`$ m$`E_\mathrm{h}`$ | $`\lambda = 0.05`$, $`\mathrm{GoF}^2 = 2.44`$, $`\Delta E = 49`$ m$`E_\mathrm{h}`$ |
+
+- **In both bases the fit moves density from the hydrogen atoms into the N–H bonds**, and
+  spreads the density between the three heavy atoms. By lambda 0.05 the two bases give
+  similar maps.
+- **Most of the fit comes first and cheaply.** Lambda 0.05 takes $`\mathrm{GoF}^2`$ from
+  19.6 to 3.9 in def2-SVP for 79 m$`E_\mathrm{h}`$, and from 16.9 to 2.4 in def2-TZVP for
+  49 m$`E_\mathrm{h}`$.
+- **The rest is expensive.** At the def2-SVP leave-one-out minimum, lambda 2.4,
+  $`\mathrm{GoF}^2`$ is 1.97 and $`\Delta E`$ is 1062 m$`E_\mathrm{h}`$, and the deformation
+  density has sharp features at the nuclei, where the fit changes the density most.
 
 ### 8.6 Cost
 
