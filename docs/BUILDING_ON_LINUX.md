@@ -91,15 +91,28 @@ and how to bless a reference yourself.
 
 ## Other build types
 
-The build type is the one real choice. Configure a separate directory for each
-type you keep.
+The build type says what the build is for. It sets the optimisation, the
+processor tuning and the BLAS library together, so it is the one choice to make.
+Configure a separate directory for each type you keep.
 
-| Type | For |
-|---|---|
-| `release` | Optimised and tested; what CI runs and what the reference outputs were blessed with. Use this unless you have a reason not to. |
-| `debug` | `-O0`, runtime checks, error messages. For diagnosing a crash. |
-| `fast` | Aggressive optimisation. Faster, may perturb the last printed digits. |
-| `release-static` | A self-contained binary for redistribution. Larger. |
+| Type | For | What it sets |
+|---|---|---|
+| `release` | everyday work; the default | `-O3`, no processor tuning, the BLAS the system provides |
+| `fast` | the most speed on this machine | `-Ofast`, tuned for this processor, OpenBLAS (required). The last printed digits differ from `release`. |
+| `reference` | results that match the stored test outputs; what CI builds | `-O3 -fno-fast-math`, no processor tuning, the netlib BLAS and LAPACK (required) |
+| `debug` | finding a bug or a crash | no optimisation, array bounds checks, Tonto's internal checks |
+| `release-static` | a self-contained binary to give to others | `release`, linked statically against the bundled LAPACK |
+
+- **MPI goes with any of them:** add `-DMPI=1` (below).
+- **Your own settings win.** `-DTONTO_ARCH_FLAG=...` (processor tuning) and
+  `-DBLA_VENDOR=...` (BLAS) replace the type's choice, except in `reference`,
+  which stops rather than build something that is not reproducible.
+- Configure prints one line, `Build type ...`, saying what it chose.
+- `fast` needs `sudo apt install libopenblas-dev`. Installing it makes OpenBLAS
+  the system's default BLAS, for every program, so a `reference` build then
+  stops until netlib is selected again with
+  `sudo update-alternatives --config libblas.so.3-x86_64-linux-gnu` and
+  `sudo update-alternatives --config liblapack.so.3-x86_64-linux-gnu`.
 
 ```bash
 mkdir debug && cd debug

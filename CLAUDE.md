@@ -247,8 +247,15 @@ newer *minor* release of gfortran-14 than the Ubuntu archive, which is enough to
 reference build red. `ci.yml` records the exact package builds of `gfortran`, `libblas-dev`
 and `liblapack-dev` on every run.
 
-Other build types: `debug`, `release-static`, and MPI (`-DCMAKE_Fortran_COMPILER=mpifort
--DMPI=1`). **The MPI must be built with the same Fortran compiler** — Tonto does `USE mpi` and
+**The build type is an intent** and sets the optimisation, the processor tuning and the BLAS
+together: `release` (default; `-O3`, no tuning, system BLAS), `fast` (`-Ofast`, native, OpenBLAS
+required), `reference` (`-O3 -fno-fast-math`, no tuning, netlib required — what CI builds and what
+references are blessed with), `debug`, and `release-static`. `release` and `reference` compile
+identical code; they differ only in the BLAS. CMake's own `CMAKE_Fortran_FLAGS_<CONFIG>` is cleared,
+so the named flags are the real ones. Table in `docs/BUILDING_ON_LINUX.md`; plan in
+`docs/TASK_BUILD_INTENTS.md`.
+
+MPI is added to any build type (`-DCMAKE_Fortran_COMPILER=mpifort -DMPI=1`). **The MPI must be built with the same Fortran compiler** — Tonto does `USE mpi` and
 `.mod` files are compiler-version specific; configure checks this and stops. `-DMPI=1` is a hard
 requirement: if MPI is not found, configure fails rather than silently producing a serial
 binary. See `docs/TASK_MPI.md`.

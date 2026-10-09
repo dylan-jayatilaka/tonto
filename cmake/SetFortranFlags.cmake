@@ -22,13 +22,22 @@ SET(GNUGENERIC "-mtune=generic")
 #   -DTONTO_ARCH_FLAG=auto                     tune for the build host
 #   -DTONTO_ARCH_FLAG="-march=znver3"          explicit flags for the target CPU
 #
-# The default is "none" deliberately: native tuning makes the numbers depend on
-# the build host, so two machines with the same compiler still differ in the last
-# bits. Reference-comparable by default, opt in to the speed with "auto". See
-# docs/TONTO_BLESSING_TESTS.md.
+# The default is "none", except for a fast build, which tunes for the build host.
+# Native tuning makes the numbers depend on the build host, so two machines with
+# the same compiler still differ in the last bits; a reference build therefore
+# refuses any tuning. See docs/TONTO_BLESSING_TESTS.md.
 #
-set(TONTO_ARCH_FLAG "none" CACHE STRING
-    "Architecture tuning: 'none' (default, reproducible), 'auto' (tune for build host), or explicit flags")
+if(TONTO_INTENT STREQUAL "FAST")
+    set(_tonto_arch_default "auto")
+else()
+    set(_tonto_arch_default "none")
+endif()
+set(TONTO_ARCH_FLAG "${_tonto_arch_default}" CACHE STRING
+    "Architecture tuning: 'none' (reproducible), 'auto' (tune for build host), or explicit flags")
+if(TONTO_INTENT STREQUAL "REFERENCE" AND NOT TONTO_ARCH_FLAG STREQUAL "none")
+    message(FATAL_ERROR "A reference build has no architecture tuning, so it cannot use "
+        "TONTO_ARCH_FLAG=${TONTO_ARCH_FLAG}. Use a release or fast build for that.")
+endif()
 
 set(TONTO_ARCH_EXPLICIT "")
 set(TONTO_ARCH_NATIVE OFF)
@@ -125,8 +134,10 @@ elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU")
     # before assignment in MOLECULE.RHO:make_ANO_interpolators), and debug is the
     # only build where they fire.
     set(DEBUG_FLAGS   "-Wall -g -fbacktrace ${BOUNDS_CHECK_FLAG} -DUSE_PRECONDITIONS -DDEBUG=1")
-    set(RELEASE_FLAGS "-Ofast ${ARCH_FLAG} -DUSE_ERROR_MANAGEMENT")
-    set(REFERENCE_FLAGS "-O2 -fno-fast-math ${ARCH_FLAG} -DUSE_ERROR_MANAGEMENT")
+    # release and reference compile the same code; they differ in how strictly
+    # the BLAS and the architecture are chosen. Only fast uses fast-math.
+    set(RELEASE_FLAGS "-O3 ${ARCH_FLAG} -DUSE_ERROR_MANAGEMENT")
+    set(REFERENCE_FLAGS "-O3 -fno-fast-math ${ARCH_FLAG} -DUSE_ERROR_MANAGEMENT")
     set(FAST_FLAGS    "-Ofast -faggressive-loop-optimizations -fstrict-aliasing ${ARCH_FLAG} -DUSE_ERROR_MANAGEMENT")
   # set(FAST_FLAGS    "-Ofast -faggressive-loop-optimizations ${ARCH_FLAG}")
 elseif("${CMAKE_Fortran_COMPILER_ID}" MATCHES "NAG")
@@ -149,52 +160,20 @@ if(NOT DEFINED REFERENCE_FLAGS)
     set(REFERENCE_FLAGS "${RELEASE_FLAGS}")
 endif()
 
-# Make sure the build type is uppercase
-string(TOUPPER "${CMAKE_BUILD_TYPE}" BT)
-
-if(BT STREQUAL "RELEASE")
-    set(CMAKE_BUILD_TYPE RELEASE CACHE STRING
-      "Choose the type of build, options are DEBUG, RELEASE, or TESTING."
-      FORCE)
-    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${RELEASE_FLAGS}")
-elseif(BT STREQUAL "REFERENCE")
-    # The profile references are blessed with: -O2 with IEEE semantics rather
-    # than -Ofast, whose -ffast-math reassociation differs between compiler
-    # releases. Slower than RELEASE and not what users build.
-    # See docs/TONTO_BLESSING_TESTS.md.
-    set(CMAKE_BUILD_TYPE RELEASE CACHE STRING
-      "Choose the type of build, options are DEBUG, RELEASE, REFERENCE, or TESTING."
-      FORCE)
-    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${REFERENCE_FLAGS}")
-elseif(BT STREQUAL "RELEASE-STATIC")
-    set(CMAKE_BUILD_TYPE RELEASE CACHE STRING
-      "Choose the type of build, options are DEBUG, RELEASE, or TESTING."
-      FORCE)
-    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${RELEASE_FLAGS} -static")
-elseif(BT STREQUAL "DEBUG")
-    set (CMAKE_BUILD_TYPE DEBUG CACHE STRING
-      "Choose the type of build, options are DEBUG, RELEASE, or TESTING."
-      FORCE)
-    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${DEBUG_FLAGS}")
-ELSEIF(BT STREQUAL "TESTING")
-    SET (CMAKE_BUILD_TYPE TESTING CACHE STRING
-      "Choose the type of build, options are DEBUG, RELEASE, or TESTING."
-      FORCE)
-    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${DEBUG_FLAGS}")
-ELSEIF(BT STREQUAL "FAST")
-    SET (CMAKE_BUILD_TYPE TESTING CACHE STRING
-        "Choose the type of build, options are DEBUG, RELEASE, FAST, or TESTING."
-      FORCE)
-    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${FAST_FLAGS}")
-ELSEIF(NOT BT)
-    SET(CMAKE_BUILD_TYPE RELEASE CACHE STRING
-      "Choose the type of build, options are DEBUG, RELEASE, or TESTING."
-      FORCE)
-    MESSAGE(STATUS "CMAKE_BUILD_TYPE not provided, default: RELEASE")
-    set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${RELEASE_FLAGS}")
-ELSE()
-    MESSAGE(FATAL_ERROR "CMAKE_BUILD_TYPE not valid, choices are DEBUG, RELEASE, REFERENCE, RELEASE-STATIC, FAST or TESTING")
-ENDIF(BT STREQUAL "RELEASE")
+# The flags of the build intent (TONTO_INTENT, set in CMakeLists.txt). The cache
+# keeps CMAKE_BUILD_TYPE as typed, so a reconfigure rebuilds the same intent.
+if(TONTO_INTENT STREQUAL "RELEASE")
+    set(TONTO_INTENT_FLAGS "${RELEASE_FLAGS}")
+elseif(TONTO_INTENT STREQUAL "REFERENCE")
+    set(TONTO_INTENT_FLAGS "${REFERENCE_FLAGS}")
+elseif(TONTO_INTENT STREQUAL "RELEASE-STATIC")
+    set(TONTO_INTENT_FLAGS "${RELEASE_FLAGS} -static")
+elseif(TONTO_INTENT STREQUAL "DEBUG")
+    set(TONTO_INTENT_FLAGS "${DEBUG_FLAGS}")
+elseif(TONTO_INTENT STREQUAL "FAST")
+    set(TONTO_INTENT_FLAGS "${FAST_FLAGS}")
+endif()
+set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${TONTO_INTENT_FLAGS}")
 
 # Set default macros
 # These are the default kinds from the current build, should be a better way
@@ -205,11 +184,9 @@ if(WITH_MPI)
     set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -DMPI=1")
 endif()
 
-# Codegen workarounds must come AFTER every -O flag: gcc applies options left to
-# right, so a -fno-X placed before -O2 is simply re-enabled by it. CMake appends
-# CMAKE_Fortran_FLAGS_<CONFIG> after CMAKE_Fortran_FLAGS, so append there.
-if(WORKAROUND_FLAGS)
-    foreach(_cfg RELEASE DEBUG TESTING FAST RELWITHDEBINFO MINSIZEREL)
-        set(CMAKE_Fortran_FLAGS_${_cfg} "${CMAKE_Fortran_FLAGS_${_cfg}} ${WORKAROUND_FLAGS}")
-    endforeach()
-endif()
+# CMake appends its own CMAKE_Fortran_FLAGS_<CONFIG> after CMAKE_Fortran_FLAGS:
+# "-O3" for RELEASE, which overrode -O2 and cancelled -Ofast's fast-math. Clear it,
+# so the flags above are the ones used. Codegen workarounds go there instead,
+# because they must come AFTER every -O flag: gcc applies options left to right,
+# so a -fno-X placed before -O2 is simply re-enabled by it.
+set(CMAKE_Fortran_FLAGS_${TONTO_INTENT} "${WORKAROUND_FLAGS}")

@@ -66,7 +66,7 @@ cmake --build build-mpi -- -j4
 - **`-DMPI=1` is a hard requirement.** If MPI is not found, configure fails; it does not build
   a serial program instead.
 - **MPI goes with any build type.** `-DMPI=1` with `-DCMAKE_BUILD_TYPE=debug` gives a parallel
-  debug build. Use `release` to compare against the stored test outputs.
+  debug build. Use `reference` to compare against the stored test outputs.
 - A C++ compiler is not needed and `-DCMAKE_CXX_COMPILER` is ignored.
 
 Confirm the program is parallel:

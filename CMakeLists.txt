@@ -99,19 +99,70 @@ add_custom_target(build_stamp ALL
 # Testing?
 enable_testing()
 
-# BLAS
-#set(BLA_VENDOR NVPL)
-#set(BLA_VENDOR OpenBLAS)
+# The build type is an intent: it chooses the optimisation, the architecture
+# tuning and the BLAS together. debug finds bugs; release (the default) is
+# portable; fast is all-out speed on this machine; reference is reproducible,
+# for blessing and CI. release-static is release, linked statically. The table
+# is in docs/BUILDING_ON_LINUX.md. Read once here, because the BLAS is chosen
+# before cmake/SetFortranFlags.cmake sets the flags.
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE release CACHE STRING
+        "Build intent: debug, release, fast, reference or release-static" FORCE)
+    message(STATUS "CMAKE_BUILD_TYPE not provided, default: release")
+endif()
+string(TOUPPER "${CMAKE_BUILD_TYPE}" TONTO_INTENT)
+if(NOT TONTO_INTENT MATCHES "^(DEBUG|RELEASE|FAST|REFERENCE|RELEASE-STATIC)$")
+    message(FATAL_ERROR "CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} is not a build type. "
+        "Choose debug, release, fast, reference or release-static.")
+endif()
 
+# BLAS
 # On macOS, find_package(LAPACK) picks Apple's Accelerate framework, whose
 # Fortran entry points (dsyev_ etc.) are frozen at LAPACK 3.2.1 (2009) for ABI
 # compatibility -- Apple's newer LAPACK is only reachable via $NEWLAPACK-suffixed
 # symbols, which is not usable from Fortran. That 2009 dsyev differs materially
-# from a modern one (verified 2026-07-28 on M2/Tahoe: it alone flipped
-# short/h2o_rhf_6-31G(d)_normal_mode_analysis). So prefer Homebrew's OpenBLAS
-# (LAPACK 3.12.x) when it is installed; fall back to whatever find_package finds.
-# Override by configuring with an explicit -DBLA_VENDOR=... (e.g. Accelerate).
-if(APPLE AND NOT DEFINED BLA_VENDOR)
+# from a modern one (it alone flipped short/h2o_rhf_6-31G(d)_normal_mode_analysis).
+# So every build type avoids it on macOS:
+#   reference  netlib, required: Homebrew's keg-only lapack, searched first.
+#   fast       OpenBLAS, required.
+#   otherwise  Homebrew's OpenBLAS if installed, else whatever is found.
+# An explicit -DBLA_VENDOR=... is used as given, except by reference, which
+# accepts only netlib.
+set(_tonto_blas_by_user OFF)
+if(DEFINED BLA_VENDOR)
+    set(_tonto_blas_by_user ON)
+endif()
+if(TONTO_INTENT STREQUAL "REFERENCE")
+    if(_tonto_blas_by_user AND NOT BLA_VENDOR STREQUAL "Generic")
+        message(FATAL_ERROR "A reference build links the netlib BLAS and LAPACK, so it "
+            "cannot use BLA_VENDOR=${BLA_VENDOR}. Use a release or fast build for that.")
+    endif()
+    set(BLA_VENDOR Generic)
+    if(APPLE)
+        set(_tonto_netlib "")
+        foreach(_brew_prefix /opt/homebrew/opt/lapack /usr/local/opt/lapack)
+            if(EXISTS ${_brew_prefix})
+                set(_tonto_netlib ${_brew_prefix})
+                list(PREPEND CMAKE_PREFIX_PATH ${_brew_prefix})
+                break()
+            endif()
+        endforeach()
+        if(NOT _tonto_netlib)
+            message(FATAL_ERROR "A reference build needs the netlib LAPACK, which macOS "
+                "does not provide. Install it with:  brew install lapack")
+        endif()
+    endif()
+elseif(TONTO_INTENT STREQUAL "FAST" AND NOT _tonto_blas_by_user)
+    set(BLA_VENDOR OpenBLAS)
+    if(APPLE)
+        foreach(_brew_prefix /opt/homebrew/opt/openblas /usr/local/opt/openblas)
+            if(EXISTS ${_brew_prefix})
+                list(APPEND CMAKE_PREFIX_PATH ${_brew_prefix})
+                break()
+            endif()
+        endforeach()
+    endif()
+elseif(APPLE AND NOT _tonto_blas_by_user)
     foreach(_brew_prefix /opt/homebrew/opt/openblas /usr/local/opt/openblas)
         if(EXISTS ${_brew_prefix})
             set(BLA_VENDOR OpenBLAS)
@@ -134,8 +185,7 @@ endif()
 # such old subprojects without editing the pinned submodule.
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "min policy for old subprojects" FORCE)
 set(ENV{CMAKE_POLICY_VERSION_MINIMUM} 3.5)
-string(TOUPPER "${CMAKE_BUILD_TYPE}" TEMP)
-if(TEMP STREQUAL "RELEASE-STATIC")
+if(TONTO_INTENT STREQUAL "RELEASE-STATIC")
   set(COMPILE_LAPACK "ON")
 endif()
 if(COMPILE_LAPACK)
@@ -148,6 +198,10 @@ if(COMPILE_LAPACK)
 else()
   find_package(LAPACK)
   if(${LAPACK_FOUND})
+  elseif(TONTO_INTENT STREQUAL "FAST" AND NOT _tonto_blas_by_user)
+    message(FATAL_ERROR "A fast build links OpenBLAS, which was not found. Install it "
+        "(Ubuntu: libopenblas-dev; macOS: brew install openblas), or build fast with "
+        "another BLAS by adding -DBLA_VENDOR=Generic.")
   else()
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/lapack-release)
     set(LAPACK_LIBRARIES
@@ -192,6 +246,24 @@ if(NOT COMPILE_LAPACK AND NOT CMAKE_CROSSCOMPILING)
     else()
         message(STATUS "LAPACK version in use: unknown (ILAVER probe did not run)")
     endif()
+endif()
+
+# A reference build must link netlib. Follow symbolic links: Debian's libblas.so
+# is an "alternative" that may point at OpenBLAS.
+if(TONTO_INTENT STREQUAL "REFERENCE" AND NOT COMPILE_LAPACK)
+    foreach(_lib ${LAPACK_LIBRARIES})
+        set(_real "${_lib}")
+        if(EXISTS "${_lib}")
+            get_filename_component(_real "${_lib}" REALPATH)
+        endif()
+        string(TOLOWER "${_real}" _real_lc)
+        if(_real_lc MATCHES "openblas|accelerate|veclib|mkl|blis|atlas|flexiblas|nvpl|armpl")
+            message(FATAL_ERROR "A reference build must link the netlib BLAS and LAPACK, "
+                "but found ${_real}. On Ubuntu, point the libblas.so.3 and liblapack.so.3 "
+                "alternatives at netlib (update-alternatives --config); on macOS, "
+                "brew install lapack.")
+        endif()
+    endforeach()
 endif()
 
 # MPI
@@ -296,6 +368,23 @@ else()
     set(TONTO_LAPACK "unknown")
 endif()
 message(STATUS "Provenance: compiler ${TONTO_COMPILER}, LAPACK ${TONTO_LAPACK}")
+
+# One line saying what this build type chose, and which choices were the user's.
+if(TONTO_ARCH_FLAG STREQUAL _tonto_arch_default)
+    set(_tonto_arch_note "")
+else()
+    set(_tonto_arch_note " (set by you)")
+endif()
+if(_tonto_blas_by_user)
+    set(_tonto_blas_note " (set by you)")
+else()
+    set(_tonto_blas_note "")
+endif()
+string(STRIP "${TONTO_INTENT_FLAGS}" _tonto_flags)
+string(TOLOWER "${TONTO_INTENT}" _tonto_intent_lc)
+message(STATUS "Build type ${_tonto_intent_lc}: ${_tonto_flags}; architecture tuning "
+    "${TONTO_ARCH_FLAG}${_tonto_arch_note}; LAPACK ${TONTO_LAPACK}${_tonto_blas_note}, "
+    "linked from ${LAPACK_LIBRARIES}")
 
 # Macros
 set(MACROS ${PROJECT_BINARY_DIR}/macros)
@@ -977,7 +1066,7 @@ set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/types.F90
 #
 # It is an interaction, not a lone bad pass: -O1 plus ALL 45 flags (sibling
 # calls included) passes, and so do -O3 and -Ofast, which are supersets of -O2.
-# So the SHIPPED release build (-Ofast) is not affected -- but the
+# So the release and reference builds (-O3) are not affected -- but an
 # -O2 -fno-fast-math control build is, and that is the build docs/TASK_MPI.md uses to
 # separate floating-point reassociation from genuine MPI defects, so it has to
 # work. Whether the underlying fault is a gcc bug or latent UB in the Foo
@@ -1024,8 +1113,8 @@ endif()
 # fourier_sums.F90 computes its own sin and cos, which -ffast-math breaks, so it
 # is compiled without fast math in every optimised build; the reasons and the
 # timings are at the top of foofiles/fourier_sums.foo. The last -O wins, so -O3
-# here also undoes a release build's -Ofast. Debug builds keep their own flags.
-if("${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU" AND NOT BT STREQUAL "DEBUG")
+# here also undoes a fast build's -Ofast. Debug builds keep their own flags.
+if("${CMAKE_Fortran_COMPILER_ID}" MATCHES "GNU" AND NOT TONTO_INTENT STREQUAL "DEBUG")
     set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/fourier_sums.F90
         PROPERTIES COMPILE_OPTIONS "-O3;-fno-fast-math;-fno-math-errno;-fno-trapping-math")
 endif()

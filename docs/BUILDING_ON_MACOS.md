@@ -18,7 +18,7 @@ xcode-select --install
 Then the rest:
 
 ```bash
-brew install gcc cmake openjdk python3 numpy gnuplot
+brew install gcc cmake openjdk python3 numpy gnuplot openblas lapack
 ```
 
 - `gcc` provides **`gfortran`**. This project standardises on **`gfortran-14`**.
@@ -30,8 +30,10 @@ brew install gcc cmake openjdk python3 numpy gnuplot
   ```bash
   echo 'export PATH="/opt/homebrew/opt/openjdk/bin:$PATH"' >> ~/.zshrc
   ```
-- **No BLAS or LAPACK to install** — macOS provides them through
-  `Accelerate.framework`.
+- `openblas` is the BLAS and LAPACK a `release` build uses. Without it the build
+  falls back to Apple's Accelerate, whose LAPACK dates from 2009 and gives
+  noticeably different eigenvectors. `lapack` is the netlib library a
+  `reference` build needs, to compare with the stored test outputs.
 - **`gnuplot` is needed at *run* time, not build time**, to render the
   diagnostic plots a refinement writes. Without it the job still completes and
   the data files and gnuplot scripts are still written; you get a warning and
@@ -107,15 +109,24 @@ build log is not a mystery.
 
 ## Other build types
 
-The build type is the one real choice. Configure a separate directory for each
-type you keep.
+The build type says what the build is for. It sets the optimisation, the
+processor tuning and the BLAS library together, so it is the one choice to make.
+Configure a separate directory for each type you keep.
 
-| Type | For |
-|---|---|
-| `release` | Optimised and tested; what CI runs and what the reference outputs were blessed with. Use this unless you have a reason not to. |
-| `debug` | `-O0`, runtime checks, error messages. For diagnosing a crash. |
-| `fast` | Aggressive optimisation. Faster, may perturb the last printed digits. |
-| `release-static` | A self-contained binary for redistribution. Larger. |
+| Type | For | What it sets |
+|---|---|---|
+| `release` | everyday work; the default | `-O3`, no processor tuning, the BLAS the system provides: Homebrew's OpenBLAS if installed, otherwise Accelerate |
+| `fast` | the most speed on this machine | `-Ofast`, tuned for this processor, OpenBLAS (required). The last printed digits differ from `release`. |
+| `reference` | results that match the stored test outputs; what CI builds | `-O3 -fno-fast-math`, no processor tuning, the netlib BLAS and LAPACK (required) |
+| `debug` | finding a bug or a crash | no optimisation, array bounds checks, Tonto's internal checks |
+| `release-static` | a self-contained binary to give to others | `release`, linked statically against the bundled LAPACK |
+
+- **MPI goes with any of them:** add `-DMPI=1` (below).
+- **Your own settings win.** `-DTONTO_ARCH_FLAG=...` (processor tuning) and
+  `-DBLA_VENDOR=...` (BLAS) replace the type's choice, except in `reference`,
+  which stops rather than build something that is not reproducible.
+- Configure prints one line, `Build type ...`, saying what it chose.
+- `reference` needs `brew install lapack`, and `fast` needs `brew install openblas`.
 
 ```bash
 mkdir debug && cd debug

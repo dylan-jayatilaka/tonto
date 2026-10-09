@@ -39,6 +39,18 @@ then follow the page for your platform. Each is self-contained.
 | [**macOS**](docs/BUILDING_ON_MACOS.md) | via Homebrew |
 | [**Windows**](docs/BUILDING_ON_WINDOWS.md) | via WSL2 |
 
+The build type, `-DCMAKE_BUILD_TYPE=`, says what the build is for:
+
+| | |
+|---|---|
+| `release` | everyday work; the default |
+| `fast` | the most speed on this machine; the last digits differ |
+| `reference` | results that match the stored test outputs |
+| `debug` | finding a bug |
+
+Add `-DMPI=1` to any of them for a parallel build. Each platform page says what
+each type sets.
+
 ## Learn it
 
 The [**workshop**](workshop/WORKSHOP.md) is four worked exercises: a Hirshfeld

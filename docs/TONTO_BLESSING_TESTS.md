@@ -37,17 +37,18 @@ Check whether a failure is one of these before investigating it. Measured cases 
 ## What changes the last bits
 
 1. **Architecture tuning.** `-march=native` / `-mtune=native` bake the build host's instruction set
-   into the binary, so two machines with the same compiler and BLAS still differ. Tonto therefore
-   defaults to **no** tuning. Opt in for speed:
+   into the binary, so two machines with the same compiler and BLAS still differ. Only a `fast`
+   build tunes by default; any other type can opt in:
 
    ```bash
    cmake .. -DTONTO_ARCH_FLAG=auto                # tune for this machine
    cmake .. -DTONTO_ARCH_FLAG="-march=znver3"     # or a named target
    ```
 
-2. **Fast-math.** `release` uses `-Ofast`, which lets the compiler change the order of
+2. **Fast-math.** `fast` uses `-Ofast`, which lets the compiler change the order of
    floating-point operations. Different compiler versions choose different orders, so the last
-   digits change between compiler versions, even on the same machine.
+   digits change between compiler versions, even on the same machine. `release` and `reference`
+   do not use it.
 
 3. **The BLAS.** The reference (netlib) BLAS and LAPACK run the same code on every processor,
    so they give the same results everywhere. OpenBLAS chooses different code for different
@@ -62,12 +63,15 @@ Check whether a failure is one of these before investigating it. Measured cases 
 cmake .. -DCMAKE_Fortran_COMPILER=gfortran-14 -DCMAKE_BUILD_TYPE=reference
 ```
 
-`-O2 -fno-fast-math`, no architecture tuning. Slower than `release`, and not what users build. With
-netlib BLAS the only remaining input is the compiler version.
+`-O3 -fno-fast-math`, no architecture tuning, and the netlib BLAS and LAPACK. The only remaining
+input is the compiler version. Configure stops if it would get anything else: a tuning flag,
+another BLAS, or a system `libblas.so` that points at OpenBLAS. On macOS, `brew install lapack`
+first.
 
 **Bless with this, and note CI builds it too** — every workflow that compares against references
-uses `reference`, so what CI checks and what you blessed are the same thing. `release` remains the
-build for actual work, and `release-static` is what the published binaries use.
+uses `reference`, so what CI checks and what you blessed are the same thing. It compiles the same
+code as `release`; the two differ only in the BLAS. `release` remains the build for actual work,
+and `release-static` is what the published binaries use.
 
 ## Blessing, by hand
 
