@@ -147,7 +147,10 @@ search after):
   crystallographic heritage, `lambda_criterion=` switches. Still open: whether the scan should
   stop itself at the criterion's minimum, and a data set with believable sigmas to see the
   two agree.
-- **Whether `use_stiffness_correction` becomes the default** for constrained SCF.
+- **Whether `use_stiffness_correction` and deflation become the defaults** for constrained
+  SCF. Not blocking; best decided once the fitted-atom form exists, since that is the form
+  people will use. It changes no converged result, only the path, but moves every
+  constrained reference.
 
 ## 4. Where the runs are
 
