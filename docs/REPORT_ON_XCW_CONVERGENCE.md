@@ -924,9 +924,23 @@ the transformation of the derivatives to the occupied-virtual block, reflections
 size squared times virtuals; the gain matrix, reflections squared times occupied-virtual
 pairs; its eigenproblem, reflections cubed; one extra constraint build; and the ordinary Fock
 build, basis size to the fourth. From def2-SVP to def2-TZVP on urea, about 190 functions, the
-transformation grows some fifteen times and the Fock build some thirty, while the eigenproblem,
+transformation grows some ten times and the Fock build some twenty, while the eigenproblem,
 which is a third of a second, does not change, so an iteration should take of the order of a
-minute and a scan of twenty lambdas a few hours.
+minute and a scan of twenty lambdas a few hours. A molecule of thirty atoms in def2-TZVP, some
+600 functions and 5000 reflections, is a few hundred seconds per iteration on one core by the
+same scaling, and the structure factor loops are parallel over shell pairs.
+
+**Beyond that, the structure factors are the wall, not the correction.** The explicit route
+stops where the derivatives no longer fit: reflections times basis size squared, 800 GB at
+$`10^5`$ reflections and 1000 functions. The matrix-free route never forms them, and its only
+large operations are the two products, a structure factor evaluation of a transition density
+and a constraint build, which the plain XCW does once each per iteration anyway. With the
+two-centre partition models each costs shell pairs times unique scattering vectors, hours per
+product at that size on one core, so the plain XCW is already out of reach there whatever the
+solver. The Hirshfeld-atom partition puts the density on a grid once per iteration and makes
+atom-centred transforms with no pair sum, which is how HAR handles $`10^5`$ reflections, and
+the two products exist on that route. The matrix-free correction with deflation on the
+Hirshfeld-atom route is therefore the form for large systems; it is planned, not written.
 
 The level shift enters the gaps $`\Delta_{ia}`$ while it is applied, since it is added to the
 virtual orbital energies before the diagonalisation: the correction uses the shifted gaps,

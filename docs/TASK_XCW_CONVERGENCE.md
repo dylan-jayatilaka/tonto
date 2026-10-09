@@ -94,6 +94,19 @@ The cure as implemented is the first of three stages.
      where $`\lambda\gamma_{\max} > 1`$, which is exactly where the cure is needed.
    This is the form for large molecules and for MPI, where the two products parallelise as
    the structure factors and the constraint build already do.
+4. **Next: the products on the Hirshfeld-atom route** (Dylan, 2026-10-09: cases with
+   $`10^5`$ reflections). With the two-centre partition one structure factor evaluation costs
+   shell pairs times unique scattering vectors, which at $`10^5`$ reflections and 1000 functions
+   is hours per product on one core; the plain XCW needs two per iteration and the correction
+   ten to twenty more, so that partition is out at that size whatever the solver. The
+   Hirshfeld-atom partition puts the density on a grid once, grid points times basis size
+   squared, and makes atom-centred transforms, reflections times atoms times the atomic grid,
+   with no pair sum; HAR already runs it at $`10^5`$ reflections. The two products exist on
+   that route: $`\mathbf{B}\mathbf{v}`$ is the Hirshfeld-atom structure factors of a transition
+   density, and $`\mathbf{B}^{T}\mathbf{w}`$ the occupied-virtual block of
+   `make_H_r_constraint` built from a reflection vector. With them the matrix-free correction,
+   Lanczos deflation and the trace estimator carry over unchanged. Also the HA-XCW of
+   Davidson, Grabowsky and Jayatilaka (2022), so the version that matters.
 
 Also left:
 
@@ -166,6 +179,9 @@ a single-lambda rerun with a plot block, which is quick.
   points at 0.14 and 0.16 and was wrong; the scan results are in the report. A scan started
   at lambda 4 straight from the lambda 0.012 density diverged: the step is a linearisation,
   and lambda has to be stepped up.
+- 2026-10-09. Scaling to $`10^5`$ reflections thought through at Dylan's request: the
+  structure factor evaluation of the two-centre partition is the wall, not the gain matrix;
+  stage 4 above.
 - 2026-10-09. The def2-TZVP urea scan, 0 to 1 in steps of 0.05, launched in the runs folder.
 - 2026-10-09. Urea with def2-SVP, 80 basis functions, GoF 4.43 before fitting, largest gain
   1730: every lambda from 0 to 0.8 converges with the correction alone, 5 to 12 iterations,
