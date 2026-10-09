@@ -1087,6 +1087,17 @@ $`\Delta E`$ of the energy above the unconstrained energy at lambda 0.
 | ![Urea deformation density, def2-TZVP, lambda 0.03](images/xcw_urea_tzvp_l0.03.png) | ![Urea deformation density, def2-TZVP, lambda 0.04](images/xcw_urea_tzvp_l0.04.png) | ![Urea deformation density, def2-TZVP, lambda 0.05](images/xcw_urea_tzvp_l0.05.png) |
 | $`\lambda = 0.03`$, $`\mathrm{GoF}^2 = 2.73`$, $`\Delta E = 38`$ m$`E_\mathrm{h}`$ | $`\lambda = 0.04`$, $`\mathrm{GoF}^2 = 2.56`$, $`\Delta E = 44`$ m$`E_\mathrm{h}`$ | $`\lambda = 0.05`$, $`\mathrm{GoF}^2 = 2.44`$, $`\Delta E = 49`$ m$`E_\mathrm{h}`$ |
 
+**At the leave-one-out minimum.** Top, the deformation density, on the scale above. Bottom,
+the density at the minimum minus the density at lambda 0 in the same basis, the change made by
+fitting, on a logarithmic scale from $`10^{-4}`$ to $`10^{-1}`$ $`e\,a_0^{-3}`$.
+
+| def2-SVP |
+|---|
+| ![Urea deformation density, def2-SVP, at the leave-one-out minimum](images/xcw_urea_svp_loo_min.png) |
+| $`\lambda = 2.4`$, $`\mathrm{GoF}^2 = 1.97`$, $`\Delta E = 1062`$ m$`E_\mathrm{h}`$ |
+| ![Urea, def2-SVP: density at the leave-one-out minimum minus density at lambda 0](images/xcw_urea_svp_loo_diff.png) |
+| fitted minus unfitted; unfitted $`\mathrm{GoF}^2 = 19.62`$ |
+
 - **In both bases the fit moves density from the hydrogen atoms into the N–H bonds**, and
   spreads the density between the three heavy atoms. By lambda 0.05 the two bases give
   similar maps.
@@ -1094,8 +1105,10 @@ $`\Delta E`$ of the energy above the unconstrained energy at lambda 0.
   19.6 to 3.9 in def2-SVP for 79 m$`E_\mathrm{h}`$, and from 16.9 to 2.4 in def2-TZVP for
   49 m$`E_\mathrm{h}`$.
 - **The rest is expensive.** At the def2-SVP leave-one-out minimum, lambda 2.4,
-  $`\mathrm{GoF}^2`$ is 1.97 and $`\Delta E`$ is 1062 m$`E_\mathrm{h}`$, and the deformation
-  density has sharp features at the nuclei, where the fit changes the density most.
+  $`\mathrm{GoF}^2`$ is 1.97 and $`\Delta E`$ is 1062 m$`E_\mathrm{h}`$. The fit has taken
+  density from the hydrogen atoms and the outer region of the molecule and put it on and
+  between the heavy atoms, with the largest changes, up to $`10^{-1}`$ $`e\,a_0^{-3}`$, at the
+  nuclei.
 
 ### 8.6 Cost
 
