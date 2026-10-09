@@ -348,8 +348,10 @@ the sigmas, because the variance scale is treated as a fitted quantity:
 GCV is generalised cross-validation, Golub, Heath and Wahba (1979), *Technometrics* **21**,
 215. These two are the ones to use: the sigmas of a diffraction experiment are unreliable in
 scale but useful in their relative values, and both criteria use only the relative values.
-GCV is the default, for its crystallographic heritage, and the keyword `lambda_criterion=`
-switches to the sigma-free AIC; the other three are kept for comparison. BIC penalises harder
+The leave-one-out sum of equation (12) is the default: it is complete cross-validation in
+Brünger's sense, and its minimum, like that of GCV, does not move with a common error in the
+sigmas. The keyword `lambda_criterion=` switches to GCV or the sigma-free AIC; AIC and BIC
+are kept for comparison. BIC penalises harder
 than AIC and picks a smaller lambda.
 
 **Leave-one-out without refitting.** A fit is called a linear smoother when its predictions are
@@ -809,6 +811,26 @@ section 3, so with deflation on, the power iteration is not needed. On ammonia:
 The job time includes the Lanczos run, and the Lanczos eigenvalues give the largest gain to
 six figures.
 
+**The statistics in the matrix-free form.** The same Ritz pairs give the stiff part of
+$`p_{\mathrm{eff}}`$ and of the leverages directly, $`\sum_j h(\theta_j)`$ and
+$`\sum_j h(\theta_j) W_{kj}^2`$ with $`h(\theta) = \lambda\theta/(1+\lambda\theta)`$, and the
+rest is estimated by sign vectors applied to $`\boldsymbol{H}`$ minus that part, a control variate
+that is unbiased however well the Ritz vectors have converged. Projecting the sign vectors off
+the Ritz vectors instead is biased unless they span an invariant subspace: on ammonia it
+settled at a leave-one-out sum of 51.5 against 60.9. The leave-one-out sum magnifies the noise
+of any leverage near 1 through $`1/(1-h_k)^2`$, so every reflection whose estimate exceeds
+one half, up to twenty, gets its leverage from its own solve,
+$`h_k = 1 - [(\boldsymbol{1}+\lambda\boldsymbol{G})^{-1}]_{kk}`$. Ammonia at lambda 0.4:
+
+| sign vectors | $`p_{\mathrm{eff}}`$ | leave-one-out sum | CPU |
+|---|---|---|---|
+| explicit route | 26.13 | 60.94 | 4 s |
+| 4 | 26.79 | 57.44 | 34 s |
+| 16 | 26.39 | 60.60 | 47 s |
+| 64 | 25.91 | 60.31 | 98 s |
+
+The two largest leverages come out at the explicit values exactly. Sixteen is the default.
+
 **A limit.** The step is a linearisation about the current orbitals. From the converged
 lambda 0.012 density the correction takes a jump to lambda 0.4, where $`\lambda\gamma_{\max}`$
 is 253, in ten iterations; a jump straight to lambda 4, where it is 2500, diverges. Stepping
@@ -989,16 +1011,17 @@ In the `scfdata=` block:
 - `use_stiffness_correction= TRUE` switches on the correction of section 9.
 - `use_matrix_free_stiffness= TRUE` uses the matrix-free form of section 9 for the correction
   and the statistics; `stiffness_cg_tolerance= 1e-4` is its conjugate gradient stopping
-  residual, relative, `stiffness_samples= 20` the number of sign vectors in the trace
-  estimator, and `stiffness_preconditioner= none` or `diagonal` the preconditioner, the
+  residual, relative, `stiffness_samples= 16` the number of sign vectors in the trace
+  estimator for what the deflation vectors miss, and `stiffness_preconditioner= none` or `diagonal` the preconditioner, the
   diagonal being made exactly in batches once per lambda and slower on ammonia;
-  `stiffness_deflation= 20` deflates the conjugate gradients by that many leading eigenvectors
-  of the gain matrix from Lanczos, once per lambda, which is what makes the matrix-free form
-  fast. The own gains, the share of the stiffest mode and the eigenvalues are not made in
+  `stiffness_deflation= 20`, the default, deflates the conjugate gradients by that many
+  leading eigenvectors of the gain matrix from Lanczos, once per lambda, and takes the stiff
+  part of $`p_{\mathrm{eff}}`$ and the leverages from them exactly; this is what makes the
+  matrix-free form fast. 0 turns it off. The own gains, the share of the stiffest mode and the eigenvalues are not made in
   this form, and the leverages are estimates.
-- `lambda_criterion= gcv` chooses the criterion whose value and running minimum over the
-  lambda scan are printed with the statistics: `gcv` (the default), `aic_sigma`, `aic`,
-  `bic` or `loo`. The lambda with the smallest value so far is the optimum lambda.
+- `lambda_criterion= loo` chooses the criterion whose value and running minimum over the
+  lambda scan are printed with the statistics: `loo` (the default), `gcv`, `aic_sigma`, `aic`
+  or `bic`. The lambda with the smallest value so far is the optimum lambda.
 
 Both are for restricted wavefunctions and the two-centre partition models.
 

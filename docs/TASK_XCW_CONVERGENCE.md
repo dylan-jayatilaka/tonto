@@ -143,8 +143,9 @@ search after):
 ## 3. Decisions owed
 
 - **Which criterion chooses lambda: decided** (Dylan, 2026-10-08). The sigmas are unreliable in
-  scale but useful relatively, so GCV or the sigma-free AIC; GCV is the default for its
-  crystallographic heritage, `lambda_criterion=` switches. Still open: whether the scan should
+  scale but useful relatively, so a criterion whose minimum does not move with their scale.
+  First GCV, for its crystallographic heritage; then (2026-10-09) the leave-one-out sum, as
+  complete cross-validation in Brünger's sense. `lambda_criterion=` switches. Still open: whether the scan should
   stop itself at the criterion's minimum, and a data set with believable sigmas to see the
   two agree.
 - **Whether `use_stiffness_correction` and deflation become the defaults** for constrained

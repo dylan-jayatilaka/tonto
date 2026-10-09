@@ -2299,6 +2299,7 @@ contains
       end
 
       .put_SCF_results
+      if (.SCF_data.put_constraint_stiffness AND .SCF_data.stiffness_made) .put_reflection_influence
       .stop_if_SCF_not_converged
       .cleanup_scf
 
@@ -3392,19 +3393,27 @@ contains
 
    make_constraint_stiffness_estimates :: private, leaky
    ! The fit statistics of make_constraint_stiffness without forming the
-   ! gain matrix: p_eff = p + tr H by Hutchinson's estimator, the average
-   ! of z^T H z over .SCF_data.stiffness_samples sign vectors z, with
-   ! H z = z - (1 + lam G)^-1 z from one conjugate gradient solve each,
-   ! and the leverages from the same solves component by component; the
-   ! largest gain by power iteration. The eigenvalues, the own gains and
-   ! the share of the stiffest mode are not made.
+   ! gain matrix. The m leading eigenpairs (theta_j, w_j) of G from Lanczos,
+   ! .SCF_data.stiffness_deflation of them, give the stiff part exactly:
+   !    tr H = sum_j lam theta_j/(1 + lam theta_j) + tr[H (1 - W W^T)],
+   !    H_kk = sum_j lam theta_j/(1 + lam theta_j) W_kj^2 + remainder,
+   ! and the remainder, H minus that part, comes from Hutchinson's
+   ! estimator with .SCF_data.stiffness_samples sign vectors, each needing
+   ! one conjugate gradient solve, itself deflated. The Ritz part is used
+   ! as a control variate: unbiased however well the Ritz vectors have
+   ! converged, and small in variance when they have. Without
+   ! deflation vectors the whole trace is estimated that way and the
+   ! largest gain comes from power iteration. The eigenvalues, the own
+   ! gains and the share of the stiffest mode are not made.
       self :: INOUT
 
       Fc :: VEC{CPX}@
-      Fm,Fexp,Fsig,alpha,z,Hz,x,res :: VEC{REAL}@
-      lam,val,p_eff,chi2,norm :: REAL
+      Fm,Fexp,Fsig,alpha,z,Hz,x,res,wz :: VEC{REAL}@
+      ind :: VEC{INT}@
+      lam,val,p_eff,chi2,norm,h :: REAL
       seed :: INT
-      j,k,m,n_refl,n_par :: INT
+      j,k,m,n_refl,n_par,n_w :: INT
+      deflated :: BIN
 
       n_refl = .crystal.xray_data.reflections.dim
       n_par  = .crystal.xray_data.n_param
@@ -3428,16 +3437,44 @@ contains
       .SCF_data.fit_residual = (alpha*Fm - Fexp)/Fsig
       .SCF_data.hat_diag = ZERO
 
-      ! The trace and the diagonal of H from sign vectors. The signs come
-      ! from a fixed linear congruential sequence (Lehmer's, modulus 65537),
-      ! the same on every rank.
+      ! The deflation vectors for this lambda, started from the residuals
+      if (lam>ZERO AND .SCF_data.stiffness_deflation>0) then
+      if (.SCF_data.deflation_lambda_iteration/=.SCF_data.lambda_iteration) then
+         .make_stiffness_deflation(.SCF_data.fit_residual)
+      end
+      end
+      deflated = FALSE
+      n_w = 0
+      if (.SCF_data.deflation_W.allocated) then
+      if (.SCF_data.deflation_lambda_iteration==.SCF_data.lambda_iteration) then
+         deflated = TRUE
+         n_w = .SCF_data.deflation_theta.dim
+      end
+      end
+
+      ! The stiff part exactly
+      p_eff = ZERO
+      if (deflated AND lam>ZERO) then
+         do j = 1,n_w
+            h = lam*.SCF_data.deflation_theta(j)/(ONE + lam*.SCF_data.deflation_theta(j))
+            p_eff = p_eff + h
+            .SCF_data.hat_diag = .SCF_data.hat_diag + h*.SCF_data.deflation_W(:,j)**2
+         end
+      end
+
+      ! The rest from sign vectors, projected off the deflation vectors.
+      ! The signs come from a fixed linear congruential sequence (Lehmer's,
+      ! modulus 65537), the same on every rank.
       z.create(n_refl)
       Hz.create(n_refl)
       x.create(n_refl)
-      p_eff = ZERO
+      if (deflated) wz.create(n_w)
       seed  = 12345
       m = .SCF_data.stiffness_samples
-      if (lam>ZERO) then
+      if (lam>ZERO AND m>0) then
+      val = ZERO
+      res.create(n_refl)
+      res = ZERO
       do j = 1,m
          do k = 1,n_refl
             seed = mod(75*seed + 74, 65537)
@@ -3447,18 +3484,49 @@ contains
          end
          .solve_stiffness_system(z,x,lam)
          Hz = z - x
-         p_eff = p_eff + sum(z*Hz)
-         .SCF_data.hat_diag = .SCF_data.hat_diag + z*Hz
+         if (deflated) then
+            wz.to_product_of(.SCF_data.deflation_W,z,transpose_a=TRUE)
+            do k = 1,n_w
+               wz(k) = wz(k)*lam*.SCF_data.deflation_theta(k)/(ONE + lam*.SCF_data.deflation_theta(k))
+            end
+            Hz = Hz - matmul(.SCF_data.deflation_W,wz)
+         end
+         val = val + sum(z*Hz)
+         res = res + z*Hz
       end
-      p_eff = p_eff/m
-      .SCF_data.hat_diag = .SCF_data.hat_diag/m
+      p_eff = p_eff + val/m
+      .SCF_data.hat_diag = .SCF_data.hat_diag + res/m
+      res.destroy
       end
+
+      ! The large leverages exactly, one solve each: they dominate the
+      ! leave-one-out sum through 1/(1-h)^2, which magnifies their noise.
+      ! h_k = 1 - [(1 + lam G)^-1]_kk, for up to 20 with an estimate
+      ! above 1/2; the rest kept within [0,1).
+      if (lam>ZERO AND m>0) then
+         ind.create(n_refl)
+         .SCF_data.hat_diag.quick_sort(ind,decreasing_order=TRUE)
+         do j = 1,min(20,n_refl)
+            k = ind(j)
+            if (.SCF_data.hat_diag(k)<=HALF) exit
+            z = ZERO
+            z(k) = ONE
+            .solve_stiffness_system(z,x,lam)
+            .SCF_data.hat_diag(k) = ONE - x(k)
+         end
+         ind.destroy
+      end
+      .SCF_data.hat_diag = max(ZERO,min(.SCF_data.hat_diag,0.999d0))
       p_eff = p_eff + n_par
+      if (deflated) wz.destroy
       x.destroy
       Hz.destroy
       z.destroy
 
-      ! The largest gain by power iteration
+      ! The largest gain: from Lanczos if made, else by power iteration
+      if (deflated) then
+         .SCF_data.gamma_max = .SCF_data.deflation_theta(n_w)
+      else
       x.create(n_refl)
       res.create(n_refl)
       x = ONE
@@ -3476,6 +3544,7 @@ contains
       .SCF_data.gamma_max = val
       res.destroy
       x.destroy
+      end
 
       ! The statistics
       chi2 = sum(.SCF_data.fit_residual*.SCF_data.fit_residual)
@@ -3497,54 +3566,35 @@ contains
    end
 
    put_constraint_stiffness
-   ! Print the constraint stiffness made by make_constraint_stiffness:
-   ! the largest gains per unit lambda, the stable fraction of new
-   ! density for a damped step, the fit statistics, every reflection's
-   ! own gain, leverage, leave-one-out residual and Cook's distance
-   !    D = r^2 h / (p_eff (1-h)^2),
-   ! the reflections with the largest Cook's distance, and a histogram
-   ! of it. A reflection with D above 4/N moves the fit more than its
-   ! share and is worth a second look.
+   ! Print, at a converged lambda, the summary made by
+   ! make_constraint_stiffness: the largest gains per unit lambda, the
+   ! stable fraction of new density for a damped step, and the fit
+   ! statistics. The table of reflections is printed once, at the end of
+   ! the run, by put_reflection_influence.
       self :: INOUT
 
    ENSURE(.SCF_data.allocated,"no SCF_data")
    ENSURE(.SCF_data.stiffness_made,"no constraint stiffness")
 
-      Fc :: VEC{CPX}@
-      Fm,Fexp,Fsig,alpha,share,cook :: VEC{REAL}@
-      ind :: VEC{INT}@
-      nbin :: VEC{INT}(8)
-      g_max,lam,val,h,r,edge :: REAL
-      b,k,m,n_refl :: INT
+      g_max,lam,val :: REAL
+      k,m,n_refl :: INT
 
       n_refl = .crystal.xray_data.reflections.dim
       lam    = .SCF_data.lambda
       g_max  = .SCF_data.gamma_max
 
-      Fc    = .crystal.xray_data.reflections.F_calc
-      alpha = .crystal.xray_data.F_scale_and_extn_correction
-      Fexp  = .crystal.xray_data.reflections.F_exp
-      Fsig  = .crystal.xray_data.reflections.F_sigma
-      Fm.create(n_refl)
-      Fm = max(abs(Fc),TOL(10))
-      share.create(n_refl)
-      share = ZERO
-      if (.SCF_data.stiffness_evec.allocated) then
-         share = .SCF_data.stiffness_evec(:,n_refl)*.SCF_data.stiffness_evec(:,n_refl)
-      end
-
-      ! Cook's distance of each reflection
-      cook.create(n_refl)
-      do k = 1,n_refl
-         h = .SCF_data.hat_diag(k)
-         r = .SCF_data.fit_residual(k)
-         cook(k) = r*r*h/(.SCF_data.p_eff*(ONE-h)**2)
-      end
-
       stdout.flush
       stdout.text("====================")
       stdout.text("Constraint stiffness")
       stdout.text("====================")
+      stdout.flush
+      stdout.text(". The gain is how much a plain SCF step amplifies an error in")
+      stdout.text("  the structure factors; a step mixing in a fraction x of the new")
+      stdout.text("  density converges only if x < 2/(1 + lambda times the gain).")
+      stdout.text(". The effective number of parameters is the summed sensitivity")
+      stdout.text("  of each prediction to its own observation.")
+      stdout.text(". The criteria choose lambda: the smallest is best. Leave-one-out")
+      stdout.text("  and GCV do not move with a common error in the sigmas.")
       stdout.flush
       stdout.show("No. of reflections               =",n_refl)
       stdout.show("Lambda                           =",lam,precision=6)
@@ -3569,92 +3619,138 @@ contains
       stdout.show("AIC, N ln(chi^2/N) + 2 p_eff     =",.SCF_data.AIC_sigma,precision=3)
       stdout.show("GCV, N chi^2/(N-p_eff)^2         =",.SCF_data.GCV,precision=6)
       stdout.show("Leave-one-out sum of squares     =",.SCF_data.LOO_sum,precision=3)
-      stdout.flush
       if (.stiffness_is_matrix_free) then
-      stdout.text("Matrix-free: p_eff and the leverages are estimates from")
-      stdout.show("sign vectors, number            =",.SCF_data.stiffness_samples)
-      stdout.flush
+      stdout.show("Sign vectors for p_eff           =",.SCF_data.stiffness_samples)
       end
+      stdout.flush
       if (.SCF_data.stiffness_eval.allocated) then
-      stdout.text("The ten largest gains per unit lambda:")
-      do m = n_refl,max(n_refl-9,1),-1
-         stdout.put(.SCF_data.stiffness_eval(m),fmt="f",width=14,precision=3)
-      end
-      stdout.flush
-      stdout.flush
+         stdout.text("The ten largest gains per unit lambda:")
+         do m = n_refl,max(n_refl-9,1),-1
+            stdout.put(.SCF_data.stiffness_eval(m),fmt="f",width=12,precision=3)
+         end
+         stdout.flush
       else if (.SCF_data.deflation_theta.allocated) then
-      stdout.text("The largest gains per unit lambda, from Lanczos (deflation vectors):")
-      k = .SCF_data.deflation_theta.dim
-      do m = k,max(k-9,1),-1
-         stdout.put(.SCF_data.deflation_theta(m),fmt="f",width=14,precision=3)
-      end
-      stdout.flush
-      stdout.flush
-      end
-      stdout.text("All reflections, by own gain per unit lambda.")
-      stdout.text("Columns: h k l, sin(theta)/lambda, F_exp, sigma, F_exp/sigma,")
-      stdout.text("(F_pred-F_exp)/sigma, own gain, share of the stiffest mode,")
-      stdout.text("leverage h, leave-one-out residual, Cook's distance.")
-      stdout.flush
-
-      ind.create(n_refl)
-      if (.SCF_data.stiffness_diag.allocated) then
-         .SCF_data.stiffness_diag.quick_sort(ind,decreasing_order=TRUE)
-      else
-         .SCF_data.stiffness_diag.create(n_refl)
-         .SCF_data.stiffness_diag = ZERO
-         cook.quick_sort(ind,decreasing_order=TRUE)
-      end
-      do m = 1,n_refl
-         k = ind(m)
-         stdout.put(.crystal.xray_data.reflections(k).h1,width=4)
-         stdout.put(.crystal.xray_data.reflections(k).h2,width=4)
-         stdout.put(.crystal.xray_data.reflections(k).h3,width=4)
-         stdout.put(.crystal.xray_data.reflections(k).stl,fmt="f",width=9,precision=4)
-         stdout.put(Fexp(k),fmt="f",width=10,precision=3)
-         stdout.put(Fsig(k),fmt="f",width=9,precision=4)
-         stdout.put(Fexp(k)/Fsig(k),fmt="f",width=9,precision=1)
-         stdout.put((alpha(k)*Fm(k)-Fexp(k))/Fsig(k),fmt="f",width=11,precision=4)
-         stdout.put(.SCF_data.stiffness_diag(k),fmt="f",width=12,precision=3)
-         stdout.put(share(k),fmt="f",width=9,precision=4)
-         stdout.put(.SCF_data.hat_diag(k),fmt="f",width=9,precision=4)
-         stdout.put(.SCF_data.fit_residual(k)/(ONE-.SCF_data.hat_diag(k)),fmt="f",width=11,precision=4)
-         stdout.put(cook(k),fmt="f",width=10,precision=4)
+         stdout.text("The largest gains per unit lambda, from Lanczos:")
+         k = .SCF_data.deflation_theta.dim
+         do m = k,max(k-9,1),-1
+            stdout.put(.SCF_data.deflation_theta(m),fmt="f",width=12,precision=3)
+         end
          stdout.flush
       end
 
-      ! The reflections with the largest Cook's distance
+   end
+
+   put_reflection_influence
+   ! Print, for the last converged lambda, how much each reflection
+   ! influences the fit: its leverage, its residual, its residual when left
+   ! out, and its Cook's distance
+   !    D = r^2 h / (p_eff (1-h)^2),
+   ! with r the standardised residual and h the leverage, in a table
+   ! sorted by D, then a histogram of D in multiples of the usual
+   ! threshold 4/N.
+      self :: INOUT
+
+   ENSURE(.SCF_data.allocated,"no SCF_data")
+   ENSURE(.SCF_data.stiffness_made,"no constraint stiffness")
+
+      table :: VEC{TABLE_COLUMN}@
+      Fexp,Fsig,cook,col,stl :: VEC{REAL}@
+      ind,hh :: VEC{INT}@
+      nbin :: VEC{INT}(8)
+      thresh,r,h,edge :: REAL
+      b,k,m,n_refl,n_col :: INT
+      have_gain :: BIN
+
+      n_refl = .crystal.xray_data.reflections.dim
+      Fexp   = .crystal.xray_data.reflections.F_exp
+      Fsig   = .crystal.xray_data.reflections.F_sigma
+      thresh = FOUR/n_refl
+
+      ! Cook's distance, and the order of the table
+      cook.create(n_refl)
+      do k = 1,n_refl
+         h = .SCF_data.hat_diag(k)
+         r = .SCF_data.fit_residual(k)
+         cook(k) = r*r*h/(.SCF_data.p_eff*(ONE-h)**2)
+      end
+      ind.create(n_refl)
+      cook.quick_sort(ind,decreasing_order=TRUE)
+
       stdout.flush
-      val = FOUR/n_refl
-      stdout.show("Cook's distance threshold 4/N    =",val,precision=4)
+      stdout.text("============================")
+      stdout.text("Influence of each reflection")
+      stdout.text("============================")
+      stdout.flush
+      stdout.text(". For the last converged lambda, sorted by Cook's distance.")
+      stdout.text(". stl is sin(theta)/lambda in 1/Angstrom; F/sigma is the observed")
+      stdout.text("  magnitude over its sigma.")
+      stdout.text(". The residual is (F_pred - F_exp)/sigma; left out, it is the same")
+      stdout.text("  residual had the reflection been left out of the fit, r/(1-h).")
+      stdout.text(". The leverage h is how far the prediction follows its own")
+      stdout.text("  observation: 0 not at all, 1 all the way.")
+      stdout.text(". The own gain is the reflection's share of the stiffness of the")
+      stdout.text("  plain SCF step, per unit lambda (explicit form only).")
+      stdout.text(". Cook's distance is how far the whole fit would move without the")
+      stdout.text("  reflection; above 4/N it is worth a second look.")
+      stdout.flush
+      stdout.show("Lambda                           =",.SCF_data.lambda_history(.SCF_data.lambda_history.dim),precision=6)
+      stdout.show("Cook's distance threshold, 4/N   =",thresh,precision=4)
       m = 0
       do k = 1,n_refl
-         if (cook(k)>val) m = m + 1
+         if (cook(k)>thresh) m = m + 1
       end
       stdout.show("Reflections above it             =",m)
       stdout.flush
-      stdout.text("The ten reflections with the largest Cook's distance.")
-      stdout.text("Columns: h k l, sin(theta)/lambda, F_exp/sigma, (F_pred-F_exp)/sigma,")
-      stdout.text("leverage h, Cook's distance.")
-      stdout.flush
-      cook.quick_sort(ind,decreasing_order=TRUE)
-      do m = 1,min(n_refl,10)
-         k = ind(m)
-         stdout.put(.crystal.xray_data.reflections(k).h1,width=4)
-         stdout.put(.crystal.xray_data.reflections(k).h2,width=4)
-         stdout.put(.crystal.xray_data.reflections(k).h3,width=4)
-         stdout.put(.crystal.xray_data.reflections(k).stl,fmt="f",width=9,precision=4)
-         stdout.put(Fexp(k)/Fsig(k),fmt="f",width=9,precision=1)
-         stdout.put(.SCF_data.fit_residual(k),fmt="f",width=10,precision=3)
-         stdout.put(.SCF_data.hat_diag(k),fmt="f",width=9,precision=4)
-         stdout.put(cook(k),fmt="f",width=10,precision=4)
-         stdout.flush
+
+      ! The table
+      have_gain = .SCF_data.stiffness_diag.allocated
+      n_col = 10
+      if (have_gain) n_col = 11
+      table.create(n_col)
+      hh.create(n_refl)
+      col.create(n_refl)
+      stl.create(n_refl)
+      do m = 1,n_refl
+         hh(m) = .crystal.xray_data.reflections(ind(m)).h1
       end
+      table(1).set_heading("h");  table(1).set_values(hh)
+      do m = 1,n_refl
+         hh(m) = .crystal.xray_data.reflections(ind(m)).h2
+      end
+      table(2).set_heading("k");  table(2).set_values(hh)
+      do m = 1,n_refl
+         hh(m) = .crystal.xray_data.reflections(ind(m)).h3
+      end
+      table(3).set_heading("l");  table(3).set_values(hh)
+      do m = 1,n_refl
+         stl(m) = .crystal.xray_data.reflections(ind(m)).stl
+      end
+      table(4).set_heading("stl"); table(4).set_values(stl)
+      table(5).set_heading("F/sigma"); table(5).set_values(Fexp(ind)/Fsig(ind))
+      col = .SCF_data.fit_residual(ind)
+      table(6).set_heading("Residual"); table(6).set_values(col)
+      col = .SCF_data.hat_diag(ind)
+      table(7).set_heading("Leverage"); table(7).set_subhead("h"); table(7).set_values(col)
+      col = .SCF_data.fit_residual(ind)/(ONE-.SCF_data.hat_diag(ind))
+      table(8).set_heading("Residual"); table(8).set_subhead("left out"); table(8).set_values(col)
+      col = cook(ind)
+      table(9).set_heading("Cook's"); table(9).set_subhead("distance"); table(9).set_values(col)
+      col = cook(ind)/thresh
+      table(10).set_heading("Cook's"); table(10).set_subhead("/ (4/N)"); table(10).set_values(col)
+      if (have_gain) then
+         col = .SCF_data.stiffness_diag(ind)
+         table(11).set_heading("Own"); table(11).set_subhead("gain"); table(11).set_values(col)
+      end
+      table.put
+      table.destroy
+      stl.destroy
+      col.destroy
+      hh.destroy
 
       ! A histogram of Cook's distance, in multiples of 4/N
       nbin = 0
       do k = 1,n_refl
-         r = cook(k)/val
+         r = cook(k)/thresh
          b = 1
          edge = 0.125d0
          do while (r>=edge AND b<8)
@@ -3664,23 +3760,18 @@ contains
          nbin(b) = nbin(b) + 1
       end
       stdout.flush
-      stdout.text("Histogram of Cook's distance, in multiples of 4/N:")
-      stdout.text("   below 1/8, 1/8 to 1/4, 1/4 to 1/2, 1/2 to 1, 1 to 2, 2 to 4, 4 to 8, 8 and above")
-      stdout.put(nbin(1),width=12)
-      do b = 2,8
-         stdout.put(nbin(b),width=11)
+      stdout.text("Number of reflections by Cook's distance, in multiples of 4/N:")
+      stdout.flush
+      stdout.text("  below 1/8   1/8-1/4   1/4-1/2   1/2-1       1-2       2-4       4-8  8 and up")
+      do b = 1,8
+         stdout.put(nbin(b),width=10)
       end
       stdout.flush
 
-      ! Clean up
-      cook.destroy
       ind.destroy
-      share.destroy
-      Fm.destroy
+      cook.destroy
       Fsig.destroy
       Fexp.destroy
-      alpha.destroy
-      Fc.destroy
 
    end
 
