@@ -31,7 +31,7 @@ prefixes_to_ignore = [
     # molecule.main.foo). Deliberately ignored: it legitimately differs between
     # machines, and the whole point is that it be visible in stdout without
     # breaking reference comparisons.
-    'Compiler', 'LAPACK',
+    'Compiler', 'LAPACK', 'Build-type',
     'Warning', 'https', 'www', 'Peter', 'Daniel', 'Dylan',
     'WARNINGS', 'Look above', 'time taken for',
     '_audit_creation_date', 

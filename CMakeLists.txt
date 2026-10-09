@@ -360,6 +360,7 @@ message(STATUS "C Compiler Flags: ${CMAKE_C_FLAGS}")
 # output. NOTE: scripts/test.py must ignore these lines (prefixes_to_ignore) or
 # every reference comparison breaks.
 set(TONTO_COMPILER "${CMAKE_Fortran_COMPILER_ID} ${CMAKE_Fortran_COMPILER_VERSION}")
+string(TOLOWER "${TONTO_INTENT}" TONTO_BUILD_TYPE)
 if(DEFINED LAPACK_VERSION)
     set(TONTO_LAPACK "${LAPACK_VERSION}")
 elseif(COMPILE_LAPACK)
