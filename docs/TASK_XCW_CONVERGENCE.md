@@ -156,9 +156,14 @@ search after):
 
 `~/tonto_runs/xcw_2026-10-09/`, with a README: the ammonia scans and single-lambda jobs, the
 held-out refits, the urea scans in STO-3G, def2-SVP and def2-TZVP, and the urea controls.
-Each directory has its `stdin` and `stdout` and the per-lambda `urea,lambda=*.ffn` files. The
-wavefunctions at each lambda were not archived; a deformation density at a chosen lambda needs
-a single-lambda rerun with a plot block, which is quick.
+Each directory has its `stdin` and `stdout`, the per-lambda `urea,lambda=*.ffn` files, and
+the wavefunction at every lambda: `urea.MOs,lambda=*,r`, `urea.MO_energies,lambda=*,r` and
+`urea.density_mx,lambda=*,r`. Deformation densities can be made from these without reruns.
+
+To continue a scan from a stored lambda, copy that lambda's `MOs` and `MO_energies` files to
+`urea.MOs,r` and `urea.MO_energies,r` and use `initial_mos= r`. Not `initial_density= r`: that
+reads the density and then diagonalises the Fock matrix built from it without the constraint,
+which undoes most of the fit (def2-TZVP, lambda 0.06: GoF back to 4.26 instead of 1.54).
 
 ## 5. Log
 
@@ -194,6 +199,19 @@ a single-lambda rerun with a plot block, which is quick.
   points at 0.14 and 0.16 and was wrong; the scan results are in the report. A scan started
   at lambda 4 straight from the lambda 0.012 density diverged: the step is a linearisation,
   and lambda has to be stepped up.
+- 2026-10-09. The def2-TZVP scan: steps of 0.05 from lambda 0 fail from the first step
+  (kept as `urea_tzvp_step0.05_failed`); steps of 0.005 converge at every point to 0.06, 5 to
+  10 iterations, GoF 4.11 to 1.54, 18 minutes. The continuation to 0.5 first started from the
+  promolecule, then from `initial_density= r`, both wrong (kept as
+  `urea_tzvp2_from_promolecule_failed`); now from `initial_mos= r`, starting at GoF 1.54 with
+  zero gradient. The def2-SVP continuations from 0.06 and 0.5 had also started from the
+  promolecule.
+- 2026-10-09. Stage 4 begun: the matrix-free products on the Hirshfeld route, checked by
+  w.(B v) = (B^T w).v, exact on oc-hirshfeld for vectors with the crystal's site symmetry,
+  0.02 to 2% off on oc-ri because the existing XCW builds its constraint from unfitted grid
+  sums. The correction then overshot because its extra constraint matrix was always built by
+  the two-centre routine; fixed, after which oc-hirshfeld and oc-ri follow the two-centre
+  route iteration by iteration. Each Hirshfeld iteration costs several grid passes: slow.
 - 2026-10-09. Scaling to $`10^5`$ reflections thought through at Dylan's request: the
   structure factor evaluation of the two-centre partition is the wall, not the gain matrix;
   stage 4 above.
