@@ -60,7 +60,7 @@ job, and at those values the overshoot of section 3 is far too small to matter.
 
 All symbols are defined here. Matrices and vectors are bold; their elements are not.
 
-- $`\mathbf{D}`$ is the density matrix and $`E(\mathbf{D})`$ the Hartree-Fock energy.
+- $`\boldsymbol{D}`$ is the density matrix and $`E(\boldsymbol{D})`$ the Hartree-Fock energy.
 - $`F_k`$ is the calculated structure factor of reflection $`k`$, $`F_k^{\mathrm{obs}}`$ the
   observed magnitude and $`\sigma_k`$ its standard uncertainty.
 - $`\alpha`$ is the scale factor, refitted at every iteration.
@@ -76,80 +76,80 @@ r_k = \frac{\alpha |F_k| - F_k^{\mathrm{obs}}}{\sigma_k}, \qquad
 \qquad (1)
 ```
 
-The vector $`\mathbf{r}`$ of these standardised residuals is the only form in which the data
-enter from here on; a change in it, from any cause, is written $`\mathbf{e}`$, dimensionless,
+The vector $`\boldsymbol{r}`$ of these standardised residuals is the only form in which the data
+enter from here on; a change in it, from any cause, is written $`\boldsymbol{e}`$, dimensionless,
 one number per reflection. The constrained SCF makes stationary
-$`E(\mathbf{D}) + \lambda\,\mathrm{GoF}^2(\mathbf{D})`$, so the matrix that is diagonalised is the Fock
-matrix plus $`\lambda\mathbf{C}`$, with, by the chain rule through equation (1),
+$`E(\boldsymbol{D}) + \lambda\,\mathrm{GoF}^2(\boldsymbol{D})`$, so the matrix that is diagonalised is the Fock
+matrix plus $`\lambda\boldsymbol{C}`$, with, by the chain rule through equation (1),
 
 ```math
-\mathbf{C} = \frac{\partial\,\mathrm{GoF}^2}{\partial\mathbf{D}}
-  = \frac{2}{N_{\mathrm{refl}}-p}\sum_k \frac{\alpha}{\sigma_k}\, r_k\, \mathbf{A}_k ,
-\qquad \mathbf{A}_k = \frac{\partial |F_k|}{\partial\mathbf{D}}
+\boldsymbol{C} = \frac{\partial\,\mathrm{GoF}^2}{\partial\boldsymbol{D}}
+  = \frac{2}{N_{\mathrm{refl}}-p}\sum_k \frac{\alpha}{\sigma_k}\, r_k\, \boldsymbol{A}_k ,
+\qquad \boldsymbol{A}_k = \frac{\partial |F_k|}{\partial\boldsymbol{D}}
 \qquad (2)
 ```
 
 One $`\alpha`$ sits inside $`r_k`$ and one comes from differentiating $`\alpha|F_k|`$. This is
-what `MOLECULE.SCF:make_r_constraint` builds; $`\mathbf{A}_k`$ is the Fourier transform of a pair
+what `MOLECULE.SCF:make_r_constraint` builds; $`\boldsymbol{A}_k`$ is the Fourier transform of a pair
 of basis functions at the scattering vector of reflection $`k`$, projected on the phase of
-$`F_k`$, so that $`\mathrm{tr}\,(\mathbf{A}_k\,\delta\mathbf{D})`$ is the change of $`|F_k|`$ for a
-change $`\delta\mathbf{D}`$ of the density. Note that $`\mathbf{C}`$ is linear in $`\mathbf{r}`$: a
-change $`\mathbf{e}`$ of the residuals changes it by the same formula with $`\mathbf{e}`$ in place
-of $`\mathbf{r}`$.
+$`F_k`$, so that $`\mathrm{tr}\,(\boldsymbol{A}_k\,\delta\boldsymbol{D})`$ is the change of $`|F_k|`$ for a
+change $`\delta\boldsymbol{D}`$ of the density. Note that $`\boldsymbol{C}`$ is linear in $`\boldsymbol{r}`$: a
+change $`\boldsymbol{e}`$ of the residuals changes it by the same formula with $`\boldsymbol{e}`$ in place
+of $`\boldsymbol{r}`$.
 
 **One SCF step, linearised, in four steps.** Suppose the input density is off the converged one
-by $`\delta\mathbf{D}`$. First, the residuals are off, in units of sigma, by
+by $`\delta\boldsymbol{D}`$. First, the residuals are off, in units of sigma, by
 
 ```math
-e_k^{\mathrm{in}} = \frac{\alpha}{\sigma_k}\,\mathrm{tr}\,(\mathbf{A}_k\,\delta\mathbf{D}),
+e_k^{\mathrm{in}} = \frac{\alpha}{\sigma_k}\,\mathrm{tr}\,(\boldsymbol{A}_k\,\delta\boldsymbol{D}),
 \qquad\text{and so the operator is off by}\qquad
-\mathbf{V} = \lambda\,\delta\mathbf{C}
- = \lambda\,\frac{2}{N_{\mathrm{refl}}-p}\sum_k \frac{\alpha}{\sigma_k}\, e_k^{\mathrm{in}}\,\mathbf{A}_k
+\boldsymbol{V} = \lambda\,\delta\boldsymbol{C}
+ = \lambda\,\frac{2}{N_{\mathrm{refl}}-p}\sum_k \frac{\alpha}{\sigma_k}\, e_k^{\mathrm{in}}\,\boldsymbol{A}_k
 \qquad (3)
 ```
 
-Second, diagonalising the Fock matrix with this extra piece $`\mathbf{V}`$ gives, to first order in
-$`\mathbf{V}`$ and leaving out the change of the two-electron part of the Fock matrix, the
+Second, diagonalising the Fock matrix with this extra piece $`\boldsymbol{V}`$ gives, to first order in
+$`\boldsymbol{V}`$ and leaving out the change of the two-electron part of the Fock matrix, the
 orbitals of ordinary perturbation theory: occupied orbital $`i`$ acquires a part of each virtual
 orbital $`a`$,
 
 ```math
-\mathbf{c}_i \to \mathbf{c}_i - \sum_a \mathbf{c}_a\,\frac{V_{ai}}{\varepsilon_a-\varepsilon_i},
-\qquad V_{ai} = \mathbf{c}_a^{T}\,\mathbf{V}\,\mathbf{c}_i
+\boldsymbol{c}_i \to \boldsymbol{c}_i - \sum_a \boldsymbol{c}_a\,\frac{V_{ai}}{\varepsilon_a-\varepsilon_i},
+\qquad V_{ai} = \boldsymbol{c}_a^{T}\,\boldsymbol{V}\,\boldsymbol{c}_i
 \qquad (4)
 ```
 
 where $`\varepsilon`$ are the orbital energies. Third, the closed-shell density
-$`\mathbf{D} = 2\sum_i \mathbf{c}_i\mathbf{c}_i^{T}`$ therefore changes by
-$`\delta\mathbf{D}^{\mathrm{out}} = -2\sum_{ia}\frac{V_{ia}}{\varepsilon_a-\varepsilon_i}
-\left(\mathbf{c}_a\mathbf{c}_i^{T} + \mathbf{c}_i\mathbf{c}_a^{T}\right)`$, and reflection $`l`$ by
-$`\mathrm{tr}\,(\mathbf{A}_l\,\delta\mathbf{D}^{\mathrm{out}}) = -4\sum_{ia} (\mathbf{A}_l)_{ia}\,V_{ia}/(\varepsilon_a-\varepsilon_i)`$,
-with $`(\mathbf{A}_l)_{ia} = \mathbf{c}_i^{T}\mathbf{A}_l\mathbf{c}_a`$ and the 4 from the 2 electrons
+$`\boldsymbol{D} = 2\sum_i \boldsymbol{c}_i\boldsymbol{c}_i^{T}`$ therefore changes by
+$`\delta\boldsymbol{D}^{\mathrm{out}} = -2\sum_{ia}\frac{V_{ia}}{\varepsilon_a-\varepsilon_i}
+\left(\boldsymbol{c}_a\boldsymbol{c}_i^{T} + \boldsymbol{c}_i\boldsymbol{c}_a^{T}\right)`$, and reflection $`l`$ by
+$`\mathrm{tr}\,(\boldsymbol{A}_l\,\delta\boldsymbol{D}^{\mathrm{out}}) = -4\sum_{ia} (\boldsymbol{A}_l)_{ia}\,V_{ia}/(\varepsilon_a-\varepsilon_i)`$,
+with $`(\boldsymbol{A}_l)_{ia} = \boldsymbol{c}_i^{T}\boldsymbol{A}_l\boldsymbol{c}_a`$ and the 4 from the 2 electrons
 and the 2 terms of the transpose. Fourth, put $`V_{ia}`$ from equation (3) into that, and
 write the result in units of sigma, $`e_l^{\mathrm{out}} = (\alpha/\sigma_l)\,
-\mathrm{tr}\,(\mathbf{A}_l\,\delta\mathbf{D}^{\mathrm{out}})`$:
+\mathrm{tr}\,(\boldsymbol{A}_l\,\delta\boldsymbol{D}^{\mathrm{out}})`$:
 
 ```math
-\mathbf{e}^{\mathrm{out}} = -\lambda\,\mathbf{G}\,\mathbf{e}^{\mathrm{in}}, \qquad
-\mathbf{G} = \frac{2}{N_{\mathrm{refl}}-p}\,\mathbf{B}\mathbf{B}^{T}, \qquad
-B_{k,ia} = \frac{2\alpha\,(\mathbf{A}_k)_{ia}}{\sigma_k\sqrt{\varepsilon_a-\varepsilon_i}}
+\boldsymbol{e}^{\mathrm{out}} = -\lambda\,\boldsymbol{G}\,\boldsymbol{e}^{\mathrm{in}}, \qquad
+\boldsymbol{G} = \frac{2}{N_{\mathrm{refl}}-p}\,\boldsymbol{B}\boldsymbol{B}^{T}, \qquad
+B_{k,ia} = \frac{2\alpha\,(\boldsymbol{A}_k)_{ia}}{\sigma_k\sqrt{\varepsilon_a-\varepsilon_i}}
 \qquad (5)
 ```
 
 The factor 4 and the one energy denominator have been split between the two factors of
-$`\mathbf{B}`$, which is why each row of $`\mathbf{B}`$ carries a 2 and a square root. So
-$`\mathbf{G}`$ is an $`N_{\mathrm{refl}} \times N_{\mathrm{refl}}`$ symmetric matrix with no negative eigenvalues,
+$`\boldsymbol{B}`$, which is why each row of $`\boldsymbol{B}`$ carries a 2 and a square root. So
+$`\boldsymbol{G}`$ is an $`N_{\mathrm{refl}} \times N_{\mathrm{refl}}`$ symmetric matrix with no negative eigenvalues,
 built only from the sigmas, the structure factor derivatives and the orbital energy gaps, and it
 says how an error in the residuals comes back after one plain step. Call it the gain matrix,
 and its largest eigenvalue $`\gamma`$. The minus sign is the overshoot: an error comes back
 reversed and $`\lambda\gamma`$ times larger. With extinction on, the $`\alpha`$ in the operator
 of equation (3) is the derivative of the predicted magnitude rather than the scale, and the
-code puts the geometric mean of the two into each row of $`\mathbf{B}`$.
+code puts the geometric mean of the two into each row of $`\boldsymbol{B}`$.
 
 **The refitted scale.** Because $`\alpha`$ is refitted each step, an error in the structure
 factors that is proportional to the structure factors themselves costs nothing. That error is
-the vector $`\mathbf{u}`$ in the space of reflections whose $`k`$-th component is $`\alpha|F_k|/\sigma_k`$,
-normalised to unit length; it is projected out of $`\mathbf{B}`$, row by row, before $`\mathbf{G}`$ is formed.
+the vector $`\boldsymbol{u}`$ in the space of reflections whose $`k`$-th component is $`\alpha|F_k|/\sigma_k`$,
+normalised to unit length; it is projected out of $`\boldsymbol{B}`$, row by row, before $`\boldsymbol{G}`$ is formed.
 This lowers $`\gamma`$ for ammonia from 1071 to 642.
 
 **The condition for convergence.** A step that mixes a fraction $`x`$ of the new density with
@@ -171,7 +171,7 @@ Hillier, *Int. J. Quantum Chem.* **7**, 699 (1973), is the remedy derived from i
 density-mixing SCF of solids the same matrix is the dielectric response, the overshoot is
 called charge sloshing, and the cure is a preconditioner on the response: Kerker, *Phys. Rev.
 B* **23**, 3082 (1981); Dederichs and Zeller, *Phys. Rev. B* **28**, 5462 (1983); Kresse and
-Furthmüller, *Phys. Rev. B* **54**, 11169 (1996), section IV. Here $`\mathbf{1}+\lambda\mathbf{G}`$
+Furthmüller, *Phys. Rev. B* **54**, 11169 (1996), section IV. Here $`\boldsymbol{1}+\lambda\boldsymbol{G}`$
 is that dielectric matrix with the fit term in the role of the Coulomb interaction. The other
 half, the penalised fit whose hat matrix counts the parameters the data determine, is ridge
 regression, Hoerl and Kennard, *Technometrics* **12**, 55 (1970), with the influence matrix of
@@ -188,7 +188,7 @@ wavefunction's own resistance to change. It is a property of how hard the fit is
 ## 4. The check against measurement
 
 `MOLECULE.SCF:put_constraint_stiffness` (`put_constraint_stiffness= TRUE` in the `scfdata=`
-block) computes $`\mathbf{G}`$ from equation (5) and prints its largest eigenvalues, the limit of equation (6),
+block) computes $`\boldsymbol{G}`$ from equation (5) and prints its largest eigenvalues, the limit of equation (6),
 and the reflections with the largest diagonal elements. RHF only. For the ammonia job, from the
 orbitals converged at lambda = 0.012:
 
@@ -273,40 +273,40 @@ The exact cure, which needs no damping at all, is in section 9.
 ## 7. The effective number of parameters, and the choice of lambda
 
 **The definition.** In a restrained least-squares fit the effective number of parameters is
-the trace of the hat matrix $`\mathbf{H}`$, the matrix that maps the observations to the fitted values.
+the trace of the hat matrix $`\boldsymbol{H}`$, the matrix that maps the observations to the fitted values.
 Its diagonal element $`H_{kk}`$ says how far the prediction for reflection $`k`$ follows its own
 observation: all the way for a freely fitted point, not at all for a point the model cannot
 reach. It is the quantity that reduces to the ordinary parameter count for an unrestrained fit,
 and to zero at lambda = 0, as Davidson *et al.* (2022) require.
 
 **The hat matrix of the XCW.** Section 3 gave what one SCF step does to an error
-$`\mathbf{e}`$ in the residuals. The same linearisation gives what a change in the observations
+$`\boldsymbol{e}`$ in the residuals. The same linearisation gives what a change in the observations
 does to the converged predictions. Move the observations by $`\delta o_k`$, in units of their
 sigmas, $`\delta o_k = \delta F_k^{\mathrm{obs}}/\sigma_k`$, with the scale direction removed as
 before, and let the wavefunction reconverge. Call the change of the predictions, in the same
 units, $`e_k = (\alpha/\sigma_k)\,\delta|F_k|`$: it is the quantity to be found. The residuals of
-equation (1) are predictions minus observations, so they change by $`\mathbf{e} - \delta\mathbf{o}`$,
-and by equation (2) the operator changes as in equation (3) with $`\mathbf{e} - \delta\mathbf{o}`$ in
-place of $`\mathbf{e}^{\mathrm{in}}`$. By equation (5) the predictions respond to that change of
-the operator by $`-\lambda\mathbf{G}\,(\mathbf{e} - \delta\mathbf{o})`$. But $`\mathbf{e}`$ is that
+equation (1) are predictions minus observations, so they change by $`\boldsymbol{e} - \delta\boldsymbol{o}`$,
+and by equation (2) the operator changes as in equation (3) with $`\boldsymbol{e} - \delta\boldsymbol{o}`$ in
+place of $`\boldsymbol{e}^{\mathrm{in}}`$. By equation (5) the predictions respond to that change of
+the operator by $`-\lambda\boldsymbol{G}\,(\boldsymbol{e} - \delta\boldsymbol{o})`$. But $`\boldsymbol{e}`$ is that
 response: at the reconverged wavefunction the change of the predictions must be the one the
-changed operator produces. That is why $`\mathbf{e}`$ stands on both sides of
+changed operator produces. That is why $`\boldsymbol{e}`$ stands on both sides of
 
 ```math
-\mathbf{e} = -\lambda\,\mathbf{G}\,(\mathbf{e} - \delta\mathbf{o})
+\boldsymbol{e} = -\lambda\,\boldsymbol{G}\,(\boldsymbol{e} - \delta\boldsymbol{o})
 \qquad\Longrightarrow\qquad
-\mathbf{e} = \mathbf{H}\,\delta\mathbf{o}, \qquad \mathbf{H} = \lambda \mathbf{G}\,(\mathbf{1}+\lambda \mathbf{G})^{-1}
+\boldsymbol{e} = \boldsymbol{H}\,\delta\boldsymbol{o}, \qquad \boldsymbol{H} = \lambda \boldsymbol{G}\,(\boldsymbol{1}+\lambda \boldsymbol{G})^{-1}
 \qquad (7)
 ```
 
 The left-hand form is a fixed-point condition: the predictions move, which moves the residuals,
 which moves the operator, which moves the predictions, until the two agree. Collecting
-$`\mathbf{e}`$ on the left gives $`(\mathbf{1}+\lambda\mathbf{G})\,\mathbf{e} = \lambda\mathbf{G}\,\delta\mathbf{o}`$,
+$`\boldsymbol{e}`$ on the left gives $`(\boldsymbol{1}+\lambda\boldsymbol{G})\,\boldsymbol{e} = \lambda\boldsymbol{G}\,\delta\boldsymbol{o}`$,
 which is the right-hand form.
 
-$`\mathbf{H}`$ has the eigenvectors of $`\mathbf{G}`$ and eigenvalues $`\lambda\gamma_j/(1+\lambda\gamma_j)`$. The
+$`\boldsymbol{H}`$ has the eigenvectors of $`\boldsymbol{G}`$ and eigenvalues $`\lambda\gamma_j/(1+\lambda\gamma_j)`$. The
 effective number of parameters is its trace, plus the $`p`$ parameters of the scale and
-extinction model, which were projected out of $`\mathbf{G}`$:
+extinction model, which were projected out of $`\boldsymbol{G}`$:
 
 ```math
 p_{\mathrm{eff}}(\lambda) = p + \sum_j \frac{\lambda\gamma_j}{1+\lambda\gamma_j}
@@ -354,7 +354,7 @@ switches to the sigma-free AIC; the other three are kept for comparison. BIC pen
 than AIC and picks a smaller lambda.
 
 **Leave-one-out without refitting.** A fit is called a linear smoother when its predictions are
-a fixed linear map of the observations, $`\hat{\mathbf{o}} = \mathbf{H} \mathbf{o}`$, with $`\mathbf{H}`$ not depending on $`\mathbf{o}`$;
+a fixed linear map of the observations, $`\hat{\boldsymbol{o}} = \boldsymbol{H} \boldsymbol{o}`$, with $`\boldsymbol{H}`$ not depending on $`\boldsymbol{o}`$;
 ordinary and ridge least squares are, and so is the linearised XCW by equation (7). For such a
 fit the residual of reflection $`k`$ when it is left out is
 
@@ -453,20 +453,20 @@ refinement if the 8% matters. For choosing lambda it does not.
 ## 8. Leverage, and the halting methods of Davidson, Grabowsky and Jayatilaka
 
 **Leverage.** In crystallographic least squares the leverage of an observation is the diagonal
-element of the projection matrix $`\mathbf{P} = \mathbf{A}(\mathbf{A}^{T}\mathbf{W}\mathbf{A})^{-1}\mathbf{A}^{T}\mathbf{W}`$, with $`\mathbf{A}`$ the design matrix
-and $`\mathbf{W}`$ the weights: it says how far the calculated value of that observation follows its
+element of the projection matrix $`\boldsymbol{P} = \boldsymbol{A}(\boldsymbol{A}^{T}\boldsymbol{W}\boldsymbol{A})^{-1}\boldsymbol{A}^{T}\boldsymbol{W}`$, with $`\boldsymbol{A}`$ the design matrix
+and $`\boldsymbol{W}`$ the weights: it says how far the calculated value of that observation follows its
 observed value, lies between 0 and 1, and sums to the number of parameters (Parsons, Wagner,
 Presly, Wood and Cooper, *J. Appl. Cryst.* **45**, 417 (2012), after Prince). Restraints enter
-as extra rows of $`\mathbf{A}`$ and get leverages of their own.
+as extra rows of $`\boldsymbol{A}`$ and get leverages of their own.
 
 The hat matrix of equation (7) is the same object for the XCW. Writing $`\mu = (N_{\mathrm{refl}}-p)/2\lambda`$,
 
 ```math
-\mathbf{H} = \lambda \mathbf{G}\,(\mathbf{1}+\lambda \mathbf{G})^{-1} = \mathbf{B}\,(\mathbf{B}^{T}\mathbf{B} + \mu\,\mathbf{1})^{-1}\mathbf{B}^{T}
+\boldsymbol{H} = \lambda \boldsymbol{G}\,(\boldsymbol{1}+\lambda \boldsymbol{G})^{-1} = \boldsymbol{B}\,(\boldsymbol{B}^{T}\boldsymbol{B} + \mu\,\boldsymbol{1})^{-1}\boldsymbol{B}^{T}
 \qquad (13)
 ```
 
-which is the projection matrix of a least-squares fit with design matrix $`\mathbf{B}`$, whose rows are
+which is the projection matrix of a least-squares fit with design matrix $`\boldsymbol{B}`$, whose rows are
 the reflections in units of their sigmas and whose columns are the occupied-virtual orbital
 rotations scaled by the inverse root of their orbital energy gap, restrained by a ridge of
 strength $`\mu`$. The energy is the restraint: its uncoupled Hessian, the orbital energy
@@ -481,8 +481,8 @@ sense of Hoerl and Kennard, and the ridge parameter is $`(N_{\mathrm{refl}}-p)/2
   moderately weak reflections. The difference is in what is being fitted: the XCW adjusts the
   valence density, which moves the low-angle structure factors most.
 - The parameter-wise sensitivities $`T_{ij}`$ of Parsons *et al.*, the influence of observation
-  $`i`$ on parameter $`j`$, are here row $`i`$ of $`\mathbf{B}`$ times column $`j`$ of
-  $`(\mathbf{B}^{T}\mathbf{B}+\mu)^{-1}`$, with the orbital rotations as parameters. They are not printed: a
+  $`i`$ on parameter $`j`$, are here row $`i`$ of $`\boldsymbol{B}`$ times column $`j`$ of
+  $`(\boldsymbol{B}^{T}\boldsymbol{B}+\mu)^{-1}`$, with the orbital rotations as parameters. They are not printed: a
   single rotation is not a quantity anyone asks about. The sensitivity of a density feature, a
   bond charge or an atomic charge, would be the useful form, and is one further contraction.
 - Cook's distance, which Merli and co-workers use to find outliers in refinement, is the
@@ -492,8 +492,8 @@ sense of Hoerl and Kennard, and the ridge parameter is $`(N_{\mathrm{refl}}-p)/2
 (2022), section 2, take the GoF against lambda curve as their only input, and halt the scan at
 a lambda read off it. Three are given:
 
-1. A power function, $`\mathrm{GoF}^2 = \mathbf{A}\lambda^{\mathbf{B}}`$, fitted to the scan, halted at
-   $`\lambda = 1`$, where $`\mathrm{GoF}^2 = \mathbf{A}`$. The argument for 1 is that there the
+1. A power function, $`\mathrm{GoF}^2 = \boldsymbol{A}\lambda^{\boldsymbol{B}}`$, fitted to the scan, halted at
+   $`\lambda = 1`$, where $`\mathrm{GoF}^2 = \boldsymbol{A}`$. The argument for 1 is that there the
    effective forces of the energy and of the fit are equal; the authors call it not very strong.
 2. The asymptotic form of Tozer, Ingamells and Handy, equation (14) below, fitted to the
    last three (TIH3) or six (TIH6) converged points, with $`D`$ read as the error term and
@@ -538,17 +538,17 @@ right. Three comments follow from the present work.
 matrix
 
 ```math
-\mathbf{F}_{\mathrm{eff}}(\mathbf{D}) = \mathbf{F}(\mathbf{D}) + \lambda\,\mathbf{C}(\mathbf{r}), \qquad
-\mathbf{C}(\mathbf{r}) = \frac{2}{N_{\mathrm{refl}}-p}\sum_k \frac{\alpha_k}{\sigma_k}\, r_k\, \mathbf{A}_k
+\boldsymbol{F}_{\mathrm{eff}}(\boldsymbol{D}) = \boldsymbol{F}(\boldsymbol{D}) + \lambda\,\boldsymbol{C}(\boldsymbol{r}), \qquad
+\boldsymbol{C}(\boldsymbol{r}) = \frac{2}{N_{\mathrm{refl}}-p}\sum_k \frac{\alpha_k}{\sigma_k}\, r_k\, \boldsymbol{A}_k
 \qquad (15)
 ```
 
-where $`\mathbf{F}(\mathbf{D})`$ is the ordinary Fock matrix, $`r_k = (\alpha|F_k| - F_k^{\mathrm{obs}})/\sigma_k`$
-are the standardised residuals of the density $`D`$, and $`\mathbf{C}(\mathbf{r})`$ is equation (2) written in
-terms of them: a linear function of the vector $`\mathbf{r}`$. Write $`\mathbf{g}`$ for the occupied-virtual
-block of $`\mathbf{F}_{\mathrm{eff}}(\mathbf{D})`$ in the current orbitals, the orbital gradient, and
+where $`\boldsymbol{F}(\boldsymbol{D})`$ is the ordinary Fock matrix, $`r_k = (\alpha|F_k| - F_k^{\mathrm{obs}})/\sigma_k`$
+are the standardised residuals of the density $`D`$, and $`\boldsymbol{C}(\boldsymbol{r})`$ is equation (2) written in
+terms of them: a linear function of the vector $`\boldsymbol{r}`$. Write $`\boldsymbol{g}`$ for the occupied-virtual
+block of $`\boldsymbol{F}_{\mathrm{eff}}(\boldsymbol{D})`$ in the current orbitals, the orbital gradient, and
 $`\Delta_{ia} = \varepsilon_a - \varepsilon_i`$ for the orbital energy differences. A change of the
-occupied orbitals is a rotation, new orbital coefficients $`\mathbf{c}\,e^{\boldsymbol{\boldsymbol{\kappa}}}`$ from the old $`c`$,
+occupied orbitals is a rotation, new orbital coefficients $`\boldsymbol{c}\,e^{\boldsymbol{\boldsymbol{\kappa}}}`$ from the old $`c`$,
 with $`\boldsymbol{\kappa}`$ antisymmetric,
 whose independent elements $`\kappa_{ia}`$ mix occupied orbital $`i`$ with virtual orbital
 $`a`$. By first-order perturbation theory the diagonalisation rotates by
@@ -562,13 +562,13 @@ and moves each residual, to the same order, by
 
 ```math
 \delta r_k = \sum_{ia}\frac{\partial r_k}{\partial\kappa_{ia}}\,\kappa_{ia}
-           = -\sum_{ia} 4\,\frac{\alpha_k}{\sigma_k}\,(\mathbf{A}_k)_{ia}\,\frac{g_{ia}}{\Delta_{ia}}
-           = -2\,(\mathbf{B}\tilde{\mathbf{g}})_k,
+           = -\sum_{ia} 4\,\frac{\alpha_k}{\sigma_k}\,(\boldsymbol{A}_k)_{ia}\,\frac{g_{ia}}{\Delta_{ia}}
+           = -2\,(\boldsymbol{B}\tilde{\boldsymbol{g}})_k,
 \qquad \tilde g_{ia} = \frac{g_{ia}}{\sqrt{\Delta_{ia}}}
 \qquad (17)
 ```
 
-with the $`\mathbf{B}`$ of equation (5), since $`\partial|F_k|/\partial\kappa_{ia} = 4(\mathbf{A}_k)_{ia}`$ for a
+with the $`\boldsymbol{B}`$ of equation (5), since $`\partial|F_k|/\partial\kappa_{ia} = 4(\boldsymbol{A}_k)_{ia}`$ for a
 closed shell. Equation (17) is the move the plain step makes in the space of reflections, and
 it is the overshoot of section 3 seen from the other side.
 
@@ -584,17 +584,17 @@ vanishes at a perfect fit:
 \frac{\partial^2 L}{\partial\kappa_{ia}\,\partial\kappa_{jb}}
  = 4\Delta_{ia}\,\delta_{ia,jb}
  + \lambda\,\frac{2}{N_{\mathrm{refl}}-p}\sum_k \frac{\partial r_k}{\partial\kappa_{ia}}\frac{\partial r_k}{\partial\kappa_{jb}}
- = 4\sqrt{\Delta_{ia}}\left(\mathbf{1} + \mu \mathbf{B}^{T}\mathbf{B}\right)_{ia,jb}\sqrt{\Delta_{jb}}
+ = 4\sqrt{\Delta_{ia}}\left(\boldsymbol{1} + \mu \boldsymbol{B}^{T}\boldsymbol{B}\right)_{ia,jb}\sqrt{\Delta_{jb}}
 \qquad (18)
 ```
 
-with $`\mu = 2\lambda/(N_{\mathrm{refl}}-p)`$, using $`\partial r_k/\partial\kappa_{ia} = 4(\alpha_k/\sigma_k)(\mathbf{A}_k)_{ia}
-= 2\sqrt{\Delta_{ia}}\,B_{k,ia}`$ from the definition of $`\mathbf{B}`$ in equation (5). The Newton step
+with $`\mu = 2\lambda/(N_{\mathrm{refl}}-p)`$, using $`\partial r_k/\partial\kappa_{ia} = 4(\alpha_k/\sigma_k)(\boldsymbol{A}_k)_{ia}
+= 2\sqrt{\Delta_{ia}}\,B_{k,ia}`$ from the definition of $`\boldsymbol{B}`$ in equation (5). The Newton step
 $`\boldsymbol{\kappa} = -(\partial^2 L)^{-1}\,\partial L`$ is then, in the scaled variables
 $`x_{ia} = \sqrt{\Delta_{ia}}\,\kappa_{ia}`$,
 
 ```math
-\mathbf{x} = -\left(\mathbf{1} + \mu \mathbf{B}^{T}\mathbf{B}\right)^{-1}\tilde{\mathbf{g}}
+\boldsymbol{x} = -\left(\boldsymbol{1} + \mu \boldsymbol{B}^{T}\boldsymbol{B}\right)^{-1}\tilde{\boldsymbol{g}}
 \qquad (19)
 ```
 
@@ -603,16 +603,16 @@ rank $`N_{\mathrm{refl}}`$, the number of reflections, so the Woodbury identity 
 Review* **23**, 53 (1981)),
 
 ```math
-\left(\mathbf{1} + \mu \mathbf{B}^{T}\mathbf{B}\right)^{-1} = \mathbf{1} - \mu \mathbf{B}^{T}\left(\mathbf{1} + \mu \mathbf{B}\mathbf{B}^{T}\right)^{-1}\mathbf{B}
+\left(\boldsymbol{1} + \mu \boldsymbol{B}^{T}\boldsymbol{B}\right)^{-1} = \boldsymbol{1} - \mu \boldsymbol{B}^{T}\left(\boldsymbol{1} + \mu \boldsymbol{B}\boldsymbol{B}^{T}\right)^{-1}\boldsymbol{B}
 \qquad (20)
 ```
 
 moves the inverse into the space of reflections. Its special case
-$`(\mathbf{1} + \mu \mathbf{B}^{T}\mathbf{B})^{-1}\mathbf{B}^{T} = \mathbf{B}^{T}(\mathbf{1} + \mu \mathbf{B}\mathbf{B}^{T})^{-1}`$ is the push-through identity used
-for equation (13). Since $`\mu \mathbf{B}\mathbf{B}^{T} = \lambda \mathbf{G}`$,
+$`(\boldsymbol{1} + \mu \boldsymbol{B}^{T}\boldsymbol{B})^{-1}\boldsymbol{B}^{T} = \boldsymbol{B}^{T}(\boldsymbol{1} + \mu \boldsymbol{B}\boldsymbol{B}^{T})^{-1}`$ is the push-through identity used
+for equation (13). Since $`\mu \boldsymbol{B}\boldsymbol{B}^{T} = \lambda \boldsymbol{G}`$,
 
 ```math
-\mathbf{x} = -\tilde{\mathbf{g}} + \mu\,\mathbf{B}^{T}(\mathbf{1}+\lambda \mathbf{G})^{-1}\mathbf{B}\tilde{\mathbf{g}}
+\boldsymbol{x} = -\tilde{\boldsymbol{g}} + \mu\,\boldsymbol{B}^{T}(\boldsymbol{1}+\lambda \boldsymbol{G})^{-1}\boldsymbol{B}\tilde{\boldsymbol{g}}
 \qquad (21)
 ```
 
@@ -622,35 +622,35 @@ the plain step with its reflection-visible part reduced.
 consider diagonalising the effective Fock matrix with a second constraint term added,
 
 ```math
-\mathbf{F}_{\mathrm{eff}}(\mathbf{D}) + \lambda\,\mathbf{C}(\mathbf{y}) = \mathbf{F}(\mathbf{D}) + \lambda\,\mathbf{C}(\mathbf{r} + \mathbf{y})
+\boldsymbol{F}_{\mathrm{eff}}(\boldsymbol{D}) + \lambda\,\boldsymbol{C}(\boldsymbol{y}) = \boldsymbol{F}(\boldsymbol{D}) + \lambda\,\boldsymbol{C}(\boldsymbol{r} + \boldsymbol{y})
 \qquad (22)
 ```
 
-where $`\mathbf{y}`$ is a vector in the space of reflections and $`\mathbf{C}(\mathbf{y})`$ is equation (15) built from
-$`\mathbf{y}`$ in place of $`\mathbf{r}`$, which is allowed because $`C`$ is linear in its argument. Its orbital
-gradient is $`\mathbf{g} + \lambda\,\mathbf{C}(\mathbf{y})_{ia}`$, and in scaled form the added part is
+where $`\boldsymbol{y}`$ is a vector in the space of reflections and $`\boldsymbol{C}(\boldsymbol{y})`$ is equation (15) built from
+$`\boldsymbol{y}`$ in place of $`\boldsymbol{r}`$, which is allowed because $`C`$ is linear in its argument. Its orbital
+gradient is $`\boldsymbol{g} + \lambda\,\boldsymbol{C}(\boldsymbol{y})_{ia}`$, and in scaled form the added part is
 
 ```math
-\frac{\lambda\,\mathbf{C}(\mathbf{y})_{ia}}{\sqrt{\Delta_{ia}}}
- = \frac{2\lambda}{N_{\mathrm{refl}}-p}\sum_k \frac{\alpha_k}{\sigma_k}\,\frac{(\mathbf{A}_k)_{ia}}{\sqrt{\Delta_{ia}}}\,y_k
- = \frac{\mu}{2}\,(\mathbf{B}^{T}\mathbf{y})_{ia}
+\frac{\lambda\,\boldsymbol{C}(\boldsymbol{y})_{ia}}{\sqrt{\Delta_{ia}}}
+ = \frac{2\lambda}{N_{\mathrm{refl}}-p}\sum_k \frac{\alpha_k}{\sigma_k}\,\frac{(\boldsymbol{A}_k)_{ia}}{\sqrt{\Delta_{ia}}}\,y_k
+ = \frac{\mu}{2}\,(\boldsymbol{B}^{T}\boldsymbol{y})_{ia}
 \qquad (23)
 ```
 
-so by equation (16) the plain step of the matrix (22) is $`\mathbf{x} = -\tilde{\mathbf{g}} - \frac{\mu}{2}\mathbf{B}^{T}\mathbf{y}`$.
+so by equation (16) the plain step of the matrix (22) is $`\boldsymbol{x} = -\tilde{\boldsymbol{g}} - \frac{\mu}{2}\boldsymbol{B}^{T}\boldsymbol{y}`$.
 This is the Newton step (21) when
 
 ```math
-\mathbf{y} = -2\,(\mathbf{1}+\lambda \mathbf{G})^{-1}\mathbf{B}\tilde{\mathbf{g}} = (\mathbf{1}+\lambda \mathbf{G})^{-1}\,\delta\mathbf{r}
+\boldsymbol{y} = -2\,(\boldsymbol{1}+\lambda \boldsymbol{G})^{-1}\boldsymbol{B}\tilde{\boldsymbol{g}} = (\boldsymbol{1}+\lambda \boldsymbol{G})^{-1}\,\delta\boldsymbol{r}
 \qquad (24)
 ```
 
-with $`\delta\mathbf{r}`$ the plain-step move of equation (17). So $`\mathbf{y}`$ is that move with each stiff
-direction reduced by its own factor $`1/(\mathbf{1}+\lambda\gamma_j)`$, the fraction that cancels its
+with $`\delta\boldsymbol{r}`$ the plain-step move of equation (17). So $`\boldsymbol{y}`$ is that move with each stiff
+direction reduced by its own factor $`1/(\boldsymbol{1}+\lambda\gamma_j)`$, the fraction that cancels its
 overshoot, and the cure is: at every iteration, after the constraint matrix is added, compute
-$`\mathbf{y}`$ from the gradient and add $`\lambda \mathbf{C}(\mathbf{y})`$ to the Fock matrix before it is diagonalised.
+$`\boldsymbol{y}`$ from the gradient and add $`\lambda \boldsymbol{C}(\boldsymbol{y})`$ to the Fock matrix before it is diagonalised.
 Nothing else in the SCF changes, and DIIS takes care of what the reflections cannot see. At
-the converged wavefunction $`\mathbf{g} = 0`$, so $`\mathbf{y} = 0`$ and the fixed point is the ordinary one.
+the converged wavefunction $`\boldsymbol{g} = 0`$, so $`\boldsymbol{y} = 0`$ and the fixed point is the ordinary one.
 
 A probe step, that is a trial diagonalisation whose result is used to infer the fixed point,
 does not work: far from convergence at large lambda the plain step is so far outside the linear
@@ -665,35 +665,35 @@ with both curvatures. Because the fit term involves only $`N_{\mathrm{refl}}`$ r
 rank $`N_{\mathrm{refl}}`$, and the Woodbury identity turns the Newton step into the plain step plus a
 correction that lives entirely in the $`N_{\mathrm{refl}}`$-dimensional space of reflections. That is equation
 (20). Nothing about the orbitals or the integrals changes; the correction enters as a second
-constraint matrix built from the vector $`\mathbf{y}`$.
+constraint matrix built from the vector $`\boldsymbol{y}`$.
 
 **The converged wavefunction is unchanged.** The constraint matrix is exactly linear in the
 residual vector it is built from, so the fixed points of the corrected iteration are the
-orbitals in which $`\tilde{\mathbf{g}} - \mu \mathbf{B}^{T}(\mathbf{1}+\lambda \mathbf{G})^{-1}\mathbf{B}\tilde{\mathbf{g}} = 0`$, and
-by equation (20) that is $`(\mathbf{1} + \mu \mathbf{B}^{T}\mathbf{B})^{-1}\tilde{\mathbf{g}} = 0`$, which holds
-only when $`\tilde{\mathbf{g}} = 0`$: the ordinary XCW stationarity condition. The approximations in
-$`\mathbf{G}`$, the uncoupled response and the neglected residual term, change the preconditioner and
+orbitals in which $`\tilde{\boldsymbol{g}} - \mu \boldsymbol{B}^{T}(\boldsymbol{1}+\lambda \boldsymbol{G})^{-1}\boldsymbol{B}\tilde{\boldsymbol{g}} = 0`$, and
+by equation (20) that is $`(\boldsymbol{1} + \mu \boldsymbol{B}^{T}\boldsymbol{B})^{-1}\tilde{\boldsymbol{g}} = 0`$, which holds
+only when $`\tilde{\boldsymbol{g}} = 0`$: the ordinary XCW stationarity condition. The approximations in
+$`\boldsymbol{G}`$, the uncoupled response and the neglected residual term, change the preconditioner and
 so the path, never the fixed point. Measured: the same energies and GoF as the plain SCF at
 every lambda where the plain SCF converges.
 
 **Orthonormality.** The orbitals are still produced by diagonalising a symmetric matrix in the
 orthonormalised basis, as in every iteration of every SCF in the code: the correction only
-adds the symmetric matrix $`\lambda \mathbf{C}(\mathbf{y})`$ to the Fock matrix before the diagonalisation. So
+adds the symmetric matrix $`\lambda \boldsymbol{C}(\boldsymbol{y})`$ to the Fock matrix before the diagonalisation. So
 the orbitals are orthonormal exactly, not to first order. The Newton step of equation (19)
 is a description of what that diagonalisation does to first order, not a rotation that is
 applied.
 
-**Is it a change of the sigmas?** Not of individual reflections. In the eigenbasis of $`\mathbf{G}`$
-the move of the residuals is reduced direction by direction, by $`1/(\mathbf{1}+\lambda\gamma_j)`$:
+**Is it a change of the sigmas?** Not of individual reflections. In the eigenbasis of $`\boldsymbol{G}`$
+the move of the residuals is reduced direction by direction, by $`1/(\boldsymbol{1}+\lambda\gamma_j)`$:
 a stiff direction is usually a combination of several strong low-angle reflections. If
-$`\mathbf{G}`$ were diagonal in the reflections the step would be the one obtained with every sigma
-enlarged by the factor $`(\mathbf{1}+\lambda\gamma_k)^{1/2}`$, for the update only. Either way the quantity being
+$`\boldsymbol{G}`$ were diagonal in the reflections the step would be the one obtained with every sigma
+enlarged by the factor $`(\boldsymbol{1}+\lambda\gamma_k)^{1/2}`$, for the update only. Either way the quantity being
 made stationary, and the sigmas in it, are untouched.
 
 **Not only for the XCW.** The structure is a penalty term that is a sum of squares over a
 small number of quantities linear in the density: a few hundred or thousand reflections against
 tens of thousands of orbital rotations. Any such term has a low-rank curvature and the same
-cure, with its own $`\mathbf{B}`$: a wavefunction fitted to magnetic structure factors or to Compton
+cure, with its own $`\boldsymbol{B}`$: a wavefunction fitted to magnetic structure factors or to Compton
 profiles, a density fitted to a reference density on a grid, an SCF with several density
 constraints. The ordinary two-electron part of the SCF Hessian is not low rank, which is why
 it is handled by DIIS and level shifts and not by this.
@@ -707,18 +707,18 @@ constraint matrix. For ammonia, 88 reflections and 80 basis functions, the whole
 correction and no damping takes less CPU time than the plain SCF with damping and DIIS,
 because it needs half the iterations. For a molecule with hundreds of basis functions and
 thousands of reflections the derivative array and the eigenproblem would dominate an
-iteration, and neither is needed. The correction only ever uses $`\mathbf{G}`$ in the solve
-$`(\mathbf{1}+\lambda\mathbf{G})\mathbf{y} = \delta\mathbf{r}`$ of equation (24), and
-$`\mathbf{G} = \mu\mathbf{B}\mathbf{B}^{T}`$ acts on a vector through two products the code already
-has: $`\mathbf{B}\mathbf{v}`$ is the set of structure factors of the transition density made
-from an occupied-virtual vector $`\mathbf{v}`$, scaled by $`2\alpha_k/\sigma_k`$, and $`\mathbf{B}^{T}\mathbf{w}`$
+iteration, and neither is needed. The correction only ever uses $`\boldsymbol{G}`$ in the solve
+$`(\boldsymbol{1}+\lambda\boldsymbol{G})\boldsymbol{y} = \delta\boldsymbol{r}`$ of equation (24), and
+$`\boldsymbol{G} = \mu\boldsymbol{B}\boldsymbol{B}^{T}`$ acts on a vector through two products the code already
+has: $`\boldsymbol{B}\boldsymbol{v}`$ is the set of structure factors of the transition density made
+from an occupied-virtual vector $`\boldsymbol{v}`$, scaled by $`2\alpha_k/\sigma_k`$, and $`\boldsymbol{B}^{T}\boldsymbol{w}`$
 is the occupied-virtual block of the constraint matrix built from a reflection vector
-$`\mathbf{w}`$. Conjugate gradients on equation (24) then needs one of each per iteration and
+$`\boldsymbol{w}`$. Conjugate gradients on equation (24) then needs one of each per iteration and
 converges in a few tens of iterations, with the diagonal $`1+\lambda G_{kk}`$ as
-preconditioner. A power series in $`\lambda\mathbf{G}`$ would not do, since it diverges exactly
+preconditioner. A power series in $`\lambda\boldsymbol{G}`$ would not do, since it diverges exactly
 where the cure is needed, $`\lambda\gamma_{\max} > 1`$. The effective number of parameters is
-the trace of $`\mathbf{H}`$, which the same solves give by Hutchinson's estimator, the average of
-$`\mathbf{z}^{T}\mathbf{H}\mathbf{z}`$ over random sign vectors $`\mathbf{z}`$, or by the Lanczos
+the trace of $`\boldsymbol{H}`$, which the same solves give by Hutchinson's estimator, the average of
+$`\boldsymbol{z}^{T}\boldsymbol{H}\boldsymbol{z}`$ over random sign vectors $`\boldsymbol{z}`$, or by the Lanczos
 quadrature of Golub and Meurant, which gives $`\sum_j f(\gamma_j)`$ for any $`f`$ from the
 same matrix-vector products; the leverages $`H_{kk}`$ come the same way, a diagonal estimator in
 place of the trace. The eigenvalue problem is only needed for the full stiffness report, and
@@ -751,50 +751,50 @@ once while each conjugate gradient iteration costs a structure factor evaluation
 constraint build; the matrix-free form is for the case where the derivatives cannot be stored.
 Its cost per SCF iteration is the conjugate gradient count times those two, and the count
 grows with $`\lambda\gamma_{\max}`$. A diagonal preconditioner does not bring it down: with the
-exact diagonal of $`\mathbf{G}`$ the count on ammonia goes from 10 to 12 at lambda 0.012 and
-from 28 to 52 at 0.4, because the stiff directions of $`\mathbf{G}`$ are combinations of many
+exact diagonal of $`\boldsymbol{G}`$ the count on ammonia goes from 10 to 12 at lambda 0.012 and
+from 28 to 52 at 0.4, because the stiff directions of $`\boldsymbol{G}`$ are combinations of many
 strong reflections and the matrix is nowhere near diagonal.
 
 **Deflation.** What fits this matrix is to take its few stiff directions out of the solve.
-Conjugate gradients on $`(\mathbf{1}+\lambda\mathbf{G})\mathbf{y} = \delta\mathbf{r}`$ converges in about as
+Conjugate gradients on $`(\boldsymbol{1}+\lambda\boldsymbol{G})\boldsymbol{y} = \delta\boldsymbol{r}`$ converges in about as
 many iterations as the matrix has distinct eigenvalues well above one, and those are the
 $`\lambda\gamma_j`$ of the stiff directions, a few tens at most, with the rest clustered near one.
-Suppose the $`m`$ largest eigenpairs are known, $`\mathbf{G}\mathbf{w}_j \approx \theta_j\mathbf{w}_j`$, the
-$`\mathbf{w}_j`$ orthonormal as the columns of $`\mathbf{W}`$ and the $`\theta_j`$ on the diagonal of
+Suppose the $`m`$ largest eigenpairs are known, $`\boldsymbol{G}\boldsymbol{w}_j \approx \theta_j\boldsymbol{w}_j`$, the
+$`\boldsymbol{w}_j`$ orthonormal as the columns of $`\boldsymbol{W}`$ and the $`\theta_j`$ on the diagonal of
 $`\Theta`$. Then
 
 ```math
-\mathbf{M}^{-1} = \mathbf{1} + \mathbf{W}\left[(\mathbf{1}+\lambda\Theta)^{-1} - \mathbf{1}\right]\mathbf{W}^{T}
+\boldsymbol{M}^{-1} = \boldsymbol{1} + \boldsymbol{W}\left[(\boldsymbol{1}+\lambda\Theta)^{-1} - \boldsymbol{1}\right]\boldsymbol{W}^{T}
 \qquad (25)
 ```
 
-is the inverse of $`\mathbf{1}+\lambda\mathbf{G}`$ on the span of $`\mathbf{W}`$ and the identity on its
-complement, so $`\mathbf{M}^{-1}(\mathbf{1}+\lambda\mathbf{G})`$ has eigenvalue 1 along every $`\mathbf{w}_j`$ and
+is the inverse of $`\boldsymbol{1}+\lambda\boldsymbol{G}`$ on the span of $`\boldsymbol{W}`$ and the identity on its
+complement, so $`\boldsymbol{M}^{-1}(\boldsymbol{1}+\lambda\boldsymbol{G})`$ has eigenvalue 1 along every $`\boldsymbol{w}_j`$ and
 the original eigenvalues $`1+\lambda\gamma_j \le 1+\lambda\gamma_{m+1}`$ on the rest: the $`m`$
 stiff eigenvalues are replaced by 1, the spectrum is compressed from $`[1, 1+\lambda\gamma_{\max}]`$
-to $`[1, 1+\lambda\gamma_{m+1}]`$, and $`\mathbf{M}^{-1}`$ is symmetric positive definite, so
+to $`[1, 1+\lambda\gamma_{m+1}]`$, and $`\boldsymbol{M}^{-1}`$ is symmetric positive definite, so
 preconditioned conjugate gradients applies as it stands. Each application costs two products
-with $`\mathbf{W}`$, $`2mN_{\mathrm{refl}}`$ operations, nothing compared with the operator. If the
+with $`\boldsymbol{W}`$, $`2mN_{\mathrm{refl}}`$ operations, nothing compared with the operator. If the
 eigenpairs are only approximate the preconditioner is only less effective, never wrong.
 
-The eigenpairs come from Lanczos on $`\mathbf{G}`$ through the same products: starting from the
-first right-hand side $`\delta\mathbf{r}`$, which is rich in the stiff directions, $`k = 2m+2`$ steps
-build an orthonormal basis $`\mathbf{v}_1, \ldots, \mathbf{v}_k`$ of the Krylov space in which
-$`\mathbf{G}`$ is tridiagonal,
+The eigenpairs come from Lanczos on $`\boldsymbol{G}`$ through the same products: starting from the
+first right-hand side $`\delta\boldsymbol{r}`$, which is rich in the stiff directions, $`k = 2m+2`$ steps
+build an orthonormal basis $`\boldsymbol{v}_1, \ldots, \boldsymbol{v}_k`$ of the Krylov space in which
+$`\boldsymbol{G}`$ is tridiagonal,
 
 ```math
-\mathbf{G}\mathbf{v}_j = \beta_{j-1}\mathbf{v}_{j-1} + \alpha_j\mathbf{v}_j + \beta_j\mathbf{v}_{j+1},
-\qquad \mathbf{T} = \mathrm{tridiag}(\beta, \alpha, \beta)
+\boldsymbol{G}\boldsymbol{v}_j = \beta_{j-1}\boldsymbol{v}_{j-1} + \alpha_j\boldsymbol{v}_j + \beta_j\boldsymbol{v}_{j+1},
+\qquad \boldsymbol{T} = \mathrm{tridiag}(\beta, \alpha, \beta)
 \qquad (26)
 ```
 
-and the eigenpairs of the small matrix $`\mathbf{T}`$, $`\mathbf{T}\mathbf{s}_j = \theta_j\mathbf{s}_j`$,
-give the Ritz pairs $`\theta_j`$ and $`\mathbf{w}_j = \sum_i s_{ij}\mathbf{v}_i`$, of which the $`m`$
+and the eigenpairs of the small matrix $`\boldsymbol{T}`$, $`\boldsymbol{T}\boldsymbol{s}_j = \theta_j\boldsymbol{s}_j`$,
+give the Ritz pairs $`\theta_j`$ and $`\boldsymbol{w}_j = \sum_i s_{ij}\boldsymbol{v}_i`$, of which the $`m`$
 largest are kept. Lanczos finds the extreme eigenvalues first and most accurately, which is
-exactly what deflation needs. Each step is one application of $`\mathbf{G}`$, and every new vector
+exactly what deflation needs. Each step is one application of $`\boldsymbol{G}`$, and every new vector
 is orthogonalised against all the previous ones twice, since in finite precision the
 three-term recurrence loses orthogonality. The run is repeated at each new lambda, since the
-orbitals and with them $`\mathbf{G}`$ have changed. The largest Ritz value is the largest gain of
+orbitals and with them $`\boldsymbol{G}`$ have changed. The largest Ritz value is the largest gain of
 section 3, so with deflation on, the power iteration is not needed. On ammonia:
 
 | deflation vectors | conjugate gradient iterations at 0.012, 0.4 | CPU at 0.012, 0.4 |
@@ -976,3 +976,149 @@ In the `scfdata=` block:
   `bic` or `loo`. The lambda with the smallest value so far is the optimum lambda.
 
 Both are for restricted wavefunctions and the two-centre partition models.
+
+## Appendix. Choosing lambda: cross-validation, information criteria and the sigmas
+
+This appendix collects the background to section 7: why a single free set cannot locate
+lambda, what complete cross-validation is, how the Akaike criterion is set up for a fit with
+an effective number of parameters, two independent ways of computing that number, and how
+each method responds to sigmas that are wrong.
+
+**A single free set is too noisy.** If the model is right, the free-set statistic on $`m`$
+reflections is a sum of $`m`$ squared standardised residuals, distributed as $`\chi^2`$ on about
+$`m`$ degrees of freedom, with mean $`m`$ and variance $`2m`$. Its relative standard error is
+
+```math
+\frac{\sqrt{2m}}{m} = \sqrt{\frac{2}{m}}
+\qquad (A1)
+```
+
+For urea, five percent of 817 reflections is 41, giving 22%; telling apart two values of
+lambda whose free residual differs by 2% would need about five thousand free reflections. A
+uniform random draw of the free set adds two further faults: its size varies from draw to
+draw by about $`\sqrt{m}`$, and its balance across resolution and intensity is left to chance,
+so whether a few strong low-angle reflections land in it changes the statistic substantially.
+Because the same free set is used at every lambda, the curve against lambda is smooth even
+when imprecise; what moves from split to split is where its minimum lies.
+
+**Complete cross-validation.** Partition the reflections into $`t`$ disjoint test sets of
+equal size, refit with each omitted in turn, and add the held-out residuals. Every reflection
+is then predicted once by a model that did not see it, and the relative standard error falls
+from $`\sqrt{2/m}`$ to about $`\sqrt{2/N_{\mathrm{refl}}}`$, from 22% to 5% for urea. This is Brünger's
+complete cross-validation, *Methods in Enzymology* **277**, 366 (1997), equations (13) and
+(14), which he says must be applied when the test set is small. The leave-one-out sum of
+equation (12) is its limit $`t = N_{\mathrm{refl}}`$, obtained from one converged run.
+
+**Why it works for proteins.** Brünger gives the standard deviation of the free R value as
+about $`R_{\mathrm{free}}/\sqrt{n}`$ for a test set of $`n`$ reflections, the same inverse square
+root as equation (A1). With a five percent test set:
+
+| case | reflections | test set | relative s.e. of $`\chi^2`$ | of $`R_{\mathrm{free}}`$ |
+|---|---|---|---|---|
+| urea | 817 | 41 | 22% | 16% |
+| small-molecule charge density | 6000 | 300 | 8% | 6% |
+| protein at 2.0 Å | 25000 | 1250 | 4.0% | 2.8% |
+| protein at 1.5 Å | 60000 | 3000 | 2.6% | 1.8% |
+
+A factor of five or six in precision, not a difference in kind. There is also a difference in
+signal: a protein refinement has few observations per parameter, so overfitting is large and
+easy to see, while an ordinary small-molecule refinement has little to detect. The XCW lies
+between, since its wavefunction has many parameters.
+
+**The Akaike criterion.** With measured sigmas the errors are Gaussian with known variances,
+and $`-2\ln L = \chi^2 + \mathrm{constant}`$, so
+
+```math
+\mathrm{AIC} = \chi^2 + 2\,p_{\mathrm{eff}} + \mathrm{constant}
+\qquad (A2)
+```
+
+which is equation (9) of section 7. The penalty cannot be a count of wavefunction
+parameters: there are more of those than reflections, and at lambda zero the data influence
+none of them. It is the effective number, the summed sensitivity of each prediction to its
+own observation, which is zero at lambda zero as Davidson *et al.* (2022) require. If
+$`p_{\mathrm{eff}}`$ becomes an appreciable fraction of $`N_{\mathrm{refl}}`$, the corrected form
+$`\mathrm{AIC}_c = \mathrm{AIC} + 2p_{\mathrm{eff}}(p_{\mathrm{eff}}+1)/(N_{\mathrm{refl}}-p_{\mathrm{eff}}-1)`$ applies.
+
+**The analytic route to $`p_{\mathrm{eff}}`$.** Differentiate the stationarity condition of
+$`E + \lambda\,\mathrm{GoF}^2`$ with respect to one observation. The response of the orbitals is
+the inverse of the full orbital Hessian, energy plus fit term, applied to the derivative of the
+fit gradient, and summing the self-sensitivities over reflections gives
+
+```math
+p_{\mathrm{eff}} = \mathrm{tr}\left[(\boldsymbol{A} + \lambda\boldsymbol{K})^{-1}\lambda\boldsymbol{K}\right]
+\qquad (A3)
+```
+
+with $`\boldsymbol{A}`$ the Hessian of the energy and $`\boldsymbol{K}`$ that of the fit term. Solving
+with the full Hessian is a coupled-perturbed Hartree-Fock calculation for each reflection.
+Section 7 takes $`\boldsymbol{A}`$ in its uncoupled form, the orbital energy differences, after
+which the trace moves into the space of reflections and becomes equation (8). The check of
+section 7 against two held-out refits measures the cost of that approximation: 7 to 8% on the
+leave-one-out residuals.
+
+**The Monte Carlo route, which needs no Hessian.** By Stein's lemma the effective number of
+parameters equals the summed covariance of each prediction with its observation,
+$`p_{\mathrm{eff}} = \sum_k \mathrm{cov}(F_k^{\mathrm{pred}},F_k^{\mathrm{obs}})/\sigma_k^2`$, for any fitting rule
+that is deterministic and differentiable. So perturb the data by
+$`F_k^{\mathrm{obs}} \to F_k^{\mathrm{obs}} + \epsilon\,\sigma_k z_k`$ with $`z_k`$ independent standard
+normal numbers, rerun the XCW at the same lambda from the converged wavefunction, and form
+
+```math
+\hat p = \frac{1}{\epsilon}\sum_k z_k\,\frac{F_k^{\mathrm{pred}}(\epsilon) - F_k^{\mathrm{pred}}(0)}{\sigma_k}
+\qquad (A4)
+```
+
+whose expectation is the trace of the sensitivity matrix, since the expectation of
+$`z_k z_l`$ is one when $`k = l`$ and zero otherwise. Twenty to fifty draws give a usable figure.
+The step trades bias, which grows with $`\epsilon`$, against numerical noise, which grows as
+$`1/\epsilon`$; a perturbation of about one sigma, checked by halving and doubling, is the usual
+start, and every perturbed run must start from the unperturbed wavefunction with the same
+tolerance so that the common error cancels. This treats the whole XCW as a black box,
+two-electron response included, and is therefore an independent check of equation (8).
+The keyword `F_sigma_noise=` adds noise to `F_exp` in units of `F_sigma`; whether it also
+perturbs `F_sigma`, which this estimator must not do, needs checking before use.
+
+**Wrong sigmas.** The estimate of $`p_{\mathrm{eff}}`$ is immune to them: in equation (A4) the
+perturbation and the normalisation use the same sigma, so only the diagonal survives with a
+sigma ratio of exactly one, and scaling every sigma changes the variance of the estimate, not
+its mean. AIC as a whole is not immune. If the true errors are $`s`$ times the stated ones,
+$`\chi^2`$ is inflated by $`s^2`$ while the penalty is not, so minimising AIC is minimising the
+true residual with the penalty divided by $`s^2`$. With a GoF of 7 the penalty would be fifty
+times too weak and AIC would choose the largest lambda offered without warning.
+
+**The repair, and why it still discriminates.** Treat the error scale as unknown. With errors
+distributed as $`N(0, s^2\sigma_k^2)`$,
+
+```math
+-2\ln L = N_{\mathrm{refl}}\ln(2\pi s^2) + 2\sum_k \ln\sigma_k + \frac{\chi^2}{s^2}
+\qquad (A5)
+```
+
+minimised at $`s^2 = \chi^2/N_{\mathrm{refl}}`$, and substituting back,
+
+```math
+\mathrm{AIC}_\sigma = N_{\mathrm{refl}}\ln\chi^2 + 2\,(p_{\mathrm{eff}} + 1) + \mathrm{constant}
+\qquad (A6)
+```
+
+which is equation (10) of section 7 up to a constant and the one extra parameter, the
+estimated scale. After rescaling, the $`\chi^2`$ of every model is $`N_{\mathrm{refl}}`$ by
+construction, so the comparison is not of fits but of *how small an error level each model
+needs to explain the data*: the fit term is the logarithm of the residual. Two checks: if the
+residual falls by a fraction $`f`$, the gain is $`N_{\mathrm{refl}}\ln\frac{1}{1-f} \approx N_{\mathrm{refl}}f`$
+against $`f\chi^2`$ in equation (A2), so the two agree when the sigmas are right,
+$`\chi^2 \approx N_{\mathrm{refl}}`$, and differ by the factor $`\chi^2/N_{\mathrm{refl}}`$, the GoF
+squared, otherwise; and with the scale estimated one can no longer say a model fits well, only
+that it fits better than another, which is honest when the noise level is unknown. This form
+is immune to a common error in the sigmas, not to errors that vary with resolution or
+intensity.
+
+**Cross-validation is invariant without repair.** Multiplying every sigma by a constant moves
+the held-out residual curve bodily and leaves its turning point where it was, and the free R
+value, Brünger's equation (15), uses no sigmas at all. Its weakness here is that held-out
+reflections are not independent of the rest: in the XCW one wavefunction ties every
+reflection to every other, so a reflection set aside is partly predictable from those kept and
+the held-out residual is optimistic. For choosing lambda that bias largely cancels, since it
+varies slowly with lambda, but the free residual should not be quoted as an honest estimate of
+prediction error.

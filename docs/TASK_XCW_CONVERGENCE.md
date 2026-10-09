@@ -251,3 +251,72 @@ which undoes most of the fit (def2-TZVP, lambda 0.06: GoF back to 4.26 instead o
   or esd-level HAR and hart numbers (up to 0.6%), blessed. The show_labels failure was three
   heading underlines of the wrong length, fixed. Cook's distance added to the stiffness
   report at Dylan's request. Third run launched to confirm 181 of 181.
+
+## 6. From the extinction work: the exchange that started the lambda question
+
+Moved here on 2026-10-09 from Appendix A of `docs/TASK_EXTINCTION_CORRECTION.md`, whose
+analysis is now the appendix of the report. Section references are to that old appendix.
+
+
+Dylan's questions, kept close to verbatim because they drove the analysis, each with the
+short form of the answer and a pointer to where it is worked out.
+
+**"I don't fully understand how it determines the number of parameters. Would it require
+differentiating the effective Fock matrix again, to produce a hessian?"**
+
+Yes for the analytic route, and it is exactly a coupled-perturbed Hartree-Fock problem —
+differentiate the stationarity condition, and the Hessian of the constrained functional
+appears as the matrix to invert. But the sum over reflections collapses to
+`trace[(A + lambda B)^-1 lambda B]`, and only the trace is needed, which a handful of
+random probe vectors will estimate. There is also a Monte Carlo route that needs no
+Hessian at all. Sections A4 and A5.
+
+**"We did try cross validation, and the chi2_free values were very spotty - perhaps because
+we did not have enough reflections or because we did not select evenly across resolution or
+intensity? Wouldn't cross validation still require multiple sets of reserved reflections to
+be sure?"**
+
+Both suggested causes are real, and the third point is decisive. The free statistic on `m`
+reflections has relative standard error `sqrt(2/m)`, which is 22% for a five percent split
+of urea's 817 reflections. The selection is an unstratified uniform draw, so the test set
+is neither of fixed size nor balanced. And yes, several reserved sets are needed — that is
+Brunger's own position, which he calls complete cross-validation and says is *required*
+when the test set is small. Sections A1 and A2.
+
+**"I was told that, in macromolecular crystallography, cross validation works because there
+were so many reflections."**
+
+Correct, and Brunger quantifies it: the standard deviation of the free R value is about
+`R_free/sqrt(n)`. Five percent of a protein dataset is one to three thousand reflections
+against urea's forty, so the precision improves by a factor of five or six. A difference of
+degree, not of kind. Section A2a.
+
+**"I could never understand Brungers argument. Or others."**
+
+Worth knowing that the 1992 paper does not derive the test-set size; the precision estimate
+`R_free/sqrt(n)` is stated empirically in the 1997 chapter, and the ten percent
+recommendation came from model calculations. The argument is heuristic, and the one part
+that is not — that a single small test set fluctuates too much to be significant — is the
+part that recommends complete cross-validation.
+
+**"I see that the monte carlo method involves sigmas. Does it also suffer from the same
+issue, that AIC does, regarding underestimated sigmas? In that case cross validation may be
+the best? Since one only looks for the point where the chi2_free starts to diverge or
+increase, on average ... right?"**
+
+The Monte Carlo estimate of `k_eff` does not suffer: the perturbation and the normalisation
+use the same sigma, so it cancels exactly. AIC as a whole does suffer, by a factor of the
+GoF-squared. And yes to the last point: a common sigma error moves the cross-validation
+curve bodily and leaves the turning point where it was, so looking for where the held-out
+residual starts to rise is the robust procedure. Two refinements — a single split shows the
+right shape but not the right location, and a flat minimum is located only to within the
+noise divided by the curvature. Section A6.
+
+**"You mentioned scaling the sigmas by a certain factor: but how does this make sense, since
+in normal least squares the chi2 would then become equal to one. Why does it make sense in
+AIC?"**
+
+Because the criterion is then `N ln(RSS)`, not `RSS`. The rescaled chi-squared is indeed one
+for every model; what differs between models is the error level each one needs to explain
+the data. Section A7.
+
