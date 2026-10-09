@@ -999,31 +999,55 @@ Each piece, and the Tonto procedure that does it.
 
 ## 11. Keywords
 
-In the `scfdata=` block:
+All in the `scfdata=` block. None is on by default: an XCW without them runs as before.
 
-- `put_constraint_stiffness= TRUE` prints, at every converged lambda, the largest gains, the
-  stable damping fraction, the effective number of parameters, the four criteria of equations
-  (9) and (10), the leave-one-out sum and the three-point extrapolation of section 8, for
-  every reflection its own gain, its leverage, its leave-one-out residual and its Cook's
-  distance, the ten largest Cook's distances and a histogram of them. The effective
-  number of parameters, the sigma-free AIC, the GCV, the leave-one-out sum and the three-point
-  lambda are also printed with the structure factor statistics in the SCF results.
-- `use_stiffness_correction= TRUE` switches on the correction of section 9.
-- `use_matrix_free_stiffness= TRUE` uses the matrix-free form of section 9 for the correction
-  and the statistics; `stiffness_cg_tolerance= 1e-4` is its conjugate gradient stopping
-  residual, relative, `stiffness_samples= 16` the number of sign vectors in the trace
-  estimator for what the deflation vectors miss, and `stiffness_preconditioner= none` or `diagonal` the preconditioner, the
-  diagonal being made exactly in batches once per lambda and slower on ammonia;
-  `stiffness_deflation= 20`, the default, deflates the conjugate gradients by that many
-  leading eigenvectors of the gain matrix from Lanczos, once per lambda, and takes the stiff
-  part of $`p_{\mathrm{eff}}`$ and the leverages from them exactly; this is what makes the
-  matrix-free form fast. 0 turns it off. The own gains, the share of the stiffest mode and the eigenvalues are not made in
-  this form, and the leverages are estimates.
-- `lambda_criterion= loo` chooses the criterion whose value and running minimum over the
-  lambda scan are printed with the statistics: `loo` (the default), `gcv`, `aic_sigma`, `aic`
-  or `bic`. The lambda with the smallest value so far is the optimum lambda.
+| keyword | default | meaning |
+|---|---|---|
+| `use_stiffness_correction=` | `FALSE` | `TRUE` switches on the correction of section 9; no damping is needed with it |
+| `put_constraint_stiffness=` | `FALSE` | `TRUE` prints a summary at every converged lambda (gains, stable damping fraction, $`p_{\mathrm{eff}}`$, the criteria of equations (9) and (10), leave-one-out, the three-point extrapolation of section 8), adds the main numbers to the SCF results, and at the end of the run prints the table of every reflection: leverage, residual left out, Cook's distance, own gain |
+| `lambda_criterion=` | `loo` | the criterion whose value and running minimum over the scan are printed: `loo`, `gcv`, `aic_sigma`, `aic` or `bic`; the lambda with the smallest value so far is the optimum |
+| `use_matrix_free_stiffness=` | `FALSE` | `TRUE` uses the matrix-free form of section 9; always used for the Hirshfeld-atom partitions |
+| `stiffness_deflation=` | 20 | leading eigenvectors of $`\boldsymbol{G}`$ from Lanczos, matrix-free form: they deflate the conjugate gradients and give the stiff part of $`p_{\mathrm{eff}}`$ and the leverages exactly; 0 turns it off |
+| `stiffness_samples=` | 16 | sign vectors in the trace estimator for what the deflation vectors miss, matrix-free form |
+| `stiffness_cg_tolerance=` | $`10^{-4}`$ | relative residual at which the conjugate gradient solve stops |
+| `stiffness_preconditioner=` | `none` | `diagonal` uses the exact diagonal of $`\boldsymbol{G}`$, made in batches once per lambda; slower on ammonia |
 
-Both are for restricted wavefunctions and the two-centre partition models.
+In the matrix-free form the own gains, the share of the stiffest mode and the full list of
+eigenvalues are not made, and the leverages below one half are estimates. All of this is for
+restricted wavefunctions.
+
+An X-ray constrained Hartree-Fock scan with the correction and the statistics, lambda in steps
+of 0.005 from 0 to 0.06. Lambda has to be stepped, not jumped: each lambda starts from the
+converged wavefunction of the one before.
+
+```
+   scfdata= {
+      kind=            xray_rhf
+      initial_density= promolecule
+      initial_lambda=  0.000
+      lambda_step=     0.005
+      lambda_max=      0.060
+      use_damping=     NO
+      use_stiffness_correction= TRUE
+      put_constraint_stiffness= TRUE
+      lambda_criterion= loo
+      convergence= 0.00001
+      diis= { convergence_tolerance= 0.00001 }
+      max_iterations= 60
+      output= YES
+      output_results= YES
+   }
+   scf
+```
+
+To continue a scan from a stored lambda, copy that lambda's files `<name>.MOs,lambda=...,r`
+and `<name>.MO_energies,lambda=...,r` to `<name>.MOs,r` and `<name>.MO_energies,r`, and start
+with `initial_mos= r` and `initial_lambda=` set to that lambda. Not `initial_density= r`:
+that rebuilds the orbitals from the Fock matrix without the constraint and undoes most of the
+fit.
+
+The test job `tests/long/nh3_x-ray-constrained-rhf_stiffness_correction` is a complete input:
+the ammonia restart job at lambda 0.012 and 0.016 with the correction and the statistics.
 
 ## Appendix. Choosing lambda: cross-validation, information criteria and the sigmas
 
