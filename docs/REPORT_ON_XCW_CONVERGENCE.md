@@ -163,6 +163,23 @@ x < \frac{2}{1+\lambda\gamma}
 
 With no damping, $`x = 1`$, the step fails once $`\lambda > 1/\gamma`$.
 
+**Antecedents.** The gain matrix is the Jacobian of the SCF fixed-point map, restricted to
+the space of reflections, and each half of that is old. That the convergence of an SCF is
+decided by the largest eigenvalue of its linearised step, built from the orbital Hessian, is
+Stanton's analysis, *J. Chem. Phys.* **75**, 3426 (1981), and the level shift of Saunders and
+Hillier, *Int. J. Quantum Chem.* **7**, 699 (1973), is the remedy derived from it. In the
+density-mixing SCF of solids the same matrix is the dielectric response, the overshoot is
+called charge sloshing, and the cure is a preconditioner on the response: Kerker, *Phys. Rev.
+B* **23**, 3082 (1981); Dederichs and Zeller, *Phys. Rev. B* **28**, 5462 (1983); Kresse and
+Furthmüller, *Phys. Rev. B* **54**, 11169 (1996), section IV. Here $`\mathbf{1}+\lambda\mathbf{G}`$
+is that dielectric matrix with the fit term in the role of the Coulomb interaction. The other
+half, the penalised fit whose hat matrix counts the parameters the data determine, is ridge
+regression, Hoerl and Kennard, *Technometrics* **12**, 55 (1970), with the influence matrix of
+Golub, Heath and Wahba (1979) in section 7. What is new is only the combination: because the
+fit term involves $`N_{\mathrm{refl}}`$ quantities linear in the density, the Jacobian is of low
+rank, and the stiffness, the hat matrix and the correction of section 9 all live in the space
+of reflections.
+
 **It does not depend on the scale of the sigmas.** If every sigma is multiplied by $`s`$, the
 lambda that gives the same wavefunction is multiplied by $`s^2`$ and $`\gamma`$ is divided by
 $`s^2`$. The product $`\lambda\gamma`$ measures how many times stiffer the data term is than the
