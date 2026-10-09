@@ -31,9 +31,10 @@ Tolerances (mirror scripts/test.py):
     --last-digit-tol  loose LAST-DIGIT tolerance  (units of last place; default 2)
     --abs-tol         absolute near-zero floor    (default 1e-7)
 
-After the suites it runs the INVARIANT CHECKS, which compare the program (or
-the sources) against themselves and need no reference output. A test or check
-that cannot run exits 77 and is reported as SKIP, outside the totals; in CI
+After the suites it runs the SELF-CHECKS: every ctest labelled "selfcheck" in
+tests/CMakeLists.txt. They pass or fail on their own, against a known answer or
+a rule, and need no stored output. A test or check that cannot run exits 77 and
+is reported as SKIP, outside the totals; in CI
 pass --skips-are-errors so that a skip fails the run unless it is named by
 --allow-skip, because a silent skip is how a check stops being checked.
 """
@@ -187,6 +188,31 @@ def yn(ok):
     return 'PASS' if ok else 'FAIL'
 
 
+_CTEST_NAME = re.compile(r'Test\s+#\d+: (\S+)')
+
+
+def selfcheck_names(build_dir):
+    """The ctests labelled selfcheck in "build_dir", in registration order."""
+    p = subprocess.run(['ctest', '-N', '-L', 'selfcheck'], cwd=build_dir,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       universal_newlines=True)
+    return [m.group(1) for m in map(_CTEST_NAME.search, p.stdout.splitlines()) if m]
+
+
+def run_selfcheck(build_dir, name):
+    """Run one ctest by its exact "name"; return ('PASS'|'FAIL'|'SKIP', output
+    lines). ctest -V prefixes each line of the test's own output with "N: "."""
+    p = subprocess.run(['ctest', '-V', '-R', '^%s$' % re.escape(name)], cwd=build_dir,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       universal_newlines=True)
+    lines = [re.sub(r'^\d+: ', '', l) for l in p.stdout.splitlines()]
+    if any('***Skipped' in l for l in lines):
+        return 'SKIP', lines
+    if p.returncode == 0 and not any('No tests were found' in l for l in lines):
+        return 'PASS', lines
+    return 'FAIL', lines
+
+
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
     root = os.path.dirname(here)
@@ -228,23 +254,24 @@ def main():
                     help='write one log per ERRORing test here (command, exit '
                          'status, stdout, stderr). A crashed job produces no .bad '
                          'file, so without this its cause is recorded nowhere.')
-    ap.add_argument('--no-invariant-checks', action='store_true',
-                    help='skip the self-validating invariant checks run after the suites')
+    ap.add_argument('--no-selfchecks', action='store_true',
+                    help='do not run the self-checks (the ctests labelled selfcheck) '
+                         'after the suites')
     ap.add_argument('--skips-are-errors', action='store_true',
-                    help='a test or invariant check that declines to run (exit 77) '
+                    help='a test or self-check that declines to run (exit 77) '
                          'fails the run unless named by --allow-skip. For CI: on a '
                          'runner everything declared should run.')
     ap.add_argument('--allow-skip', action='append', default=[], metavar='NAME',
-                    help='a test directory, or an invariant check script without its '
-                         'extension, whose skip is expected (repeatable), e.g. '
+                    help='a test directory or a self-check name whose skip is '
+                         'expected (repeatable), e.g. '
                          'ammonium_borane_pHAR_C23 when its 167 MB asset is not fetched')
     args = ap.parse_args()
 
     # Resolve every path to an absolute one *before* anything runs. The
-    # invariant scripts chdir into a scratch work directory, so a relative
+    # test scripts chdir into a scratch work directory, so a relative
     # --basis-sets would be resolved against that directory and silently fail
     # ("could not read the energies"). This is not hypothetical: CI passes
-    # `--basis-sets basis_sets` relative, which broke every invariant check the
+    # `--basis-sets basis_sets` relative, which broke every check the
     # moment they started running from this driver, while local runs and the
     # CMake `report` target -- both of which pass absolute paths -- stayed green.
     # test.py guards the same way for the same reason.
@@ -255,7 +282,7 @@ def main():
     args.program = os.path.join(args.build_dir, 'tonto')
     args.basis_sets = os.path.abspath(args.basis_sets)
     args.tests_dir = os.path.abspath(args.tests_dir)
-    # Absolutised for the same reason as the others: the invariant checks chdir
+    # Absolutised for the same reason as the others: the checks chdir
     # into a scratch directory, so a relative --failure-dir would scatter logs
     # into it and the artefact upload would find nothing.
     if args.failure_dir:
@@ -411,91 +438,37 @@ def main():
             print('  * %-48s %s' % (t, ', '.join('%s=%g' % kv
                                     for kv in KNOWN_MARGINAL[t].items())))
     # ------------------------------------------------------------------
-    # Invariant checks.
-    #
-    # These compare the program against ITSELF rather than against a stored
-    # reference, so they need no reference output and cannot be silently
-    # blessed by regenerating references on a broken build. They also need
-    # only one machine, which is what makes them useful for platform-specific
-    # miscompilations -- see TASKS_AND_HISTORY.md, "verify the macOS build".
+    # Self-checks: every ctest labelled "selfcheck" in tests/CMakeLists.txt,
+    # which is their one list. They pass or fail on their own, against a known
+    # answer or a rule, so no stored output is involved and a broken build
+    # cannot be blessed into passing them. They run whatever --suites says.
     # ------------------------------------------------------------------
-    invariants_ok = True
-    if not args.no_invariant_checks:
-        checks = [('spherical vs cartesian (s/p-only bases)',
-                   os.path.join(here, 'check_spherical_cartesian.sh'),
-                   [args.program, args.basis_sets])]
-        # hart's --help text is its only interface documentation, so it must
-        # agree with the option case labels in run_har.foo. Only meaningful if
-        # hart was built -- it lives beside tonto in the same build tree.
-        hart = os.path.join(args.build_dir, 'hart')
-        run_har = os.path.join(os.path.dirname(here), 'runfiles', 'run_har.foo')
-        if os.path.exists(hart):
-            checks.append(('hart options vs its --help text',
-                           os.path.join(here, 'check_hart_options.sh'),
-                           [hart, run_har, args.basis_sets]))
-        # And rgbi's, on the same footing.
-        rgbi = os.path.join(args.build_dir, 'rgbi')
-        run_rgbi = os.path.join(os.path.dirname(here), 'runfiles', 'run_rgbi.foo')
-        if os.path.exists(rgbi):
-            checks.append(('rgbi options vs its --help text',
-                           os.path.join(here, 'check_rgbi_options.sh'),
-                           [rgbi, run_rgbi]))
-        # Source-level, no binary needed: a procedure taking arguments is a
-        # library routine and must not touch stdin, or it breaks every
-        # argv-driven program. Runs from python3, not sh -- see below.
-        checks.append(('library routines must not touch stdin',
-                       os.path.join(here, 'check_library_stdin.py'),
-                       [os.path.join(os.path.dirname(here), 'foofiles')]))
-        # Also source-level: no collective inside a `parallel do` body, and no
-        # raw .unit I/O reaching around the IO_IS_ALLOWED guard. Both are
-        # invisible in a serial run, which is why a lint and not a test.
-        checks.append(('MPI: no interior collectives, no raw .unit I/O',
-                       os.path.join(here, 'check_parallel_lint.py'),
-                       [os.path.join(os.path.dirname(here), 'foofiles')]))
-        # Also source-level: printed labels end in "=" so their dots line up,
-        # and heading rules match their headings.
-        checks.append(('printed labels and headings line up',
-                       os.path.join(here, 'check_show_labels.py'),
-                       [os.path.join(os.path.dirname(here), 'foofiles'),
-                        os.path.join(os.path.dirname(here), 'runfiles')]))
-        # The Lebedev grids are stored as orbit generators, so one wrong literal
-        # shifts every DFT energy with nothing else noticing. Needs numpy, a
-        # declared test dependency (docs/BUILDING_ON_*); without it the script
-        # exits 77 and the check is reported as SKIP.
-        checks.append(('Lebedev grids integrate exactly to their order',
-                       os.path.join(here, 'check_lebedev_rules.py'),
-                       [os.path.join(os.path.dirname(here), 'foofiles', 'lebedev.foo')]))
+    checks_ok = True
+    if not args.no_selfchecks:
         print('')
-        print('INVARIANT CHECKS (no reference output involved)')
+        print('SELF-CHECKS (pass or fail on their own; no stored output)')
         print('')
-        # Their own width: these labels are sentences, not test directory
-        # names, so the table column above does not fit them.
-        CHKW = max(len(n) for n, _, _ in checks)
-        for name, script, cmd_args in checks:
-            if not os.path.exists(script):
-                print('%-*s  %s' % (CHKW, name, 'SKIP (script not found)'))
-                continue
-            runner = 'python3' if script.endswith('.py') else 'sh'
-            proc = subprocess.run([runner, script] + cmd_args,
-                                  stdout=subprocess.PIPE,
-                                  stderr=subprocess.STDOUT,
-                                  universal_newlines=True)
-            if proc.returncode == SKIP_EXIT_CODE:
-                reason = next((l for l in proc.stdout.splitlines()
-                               if l.startswith('SKIPPED:')), '')
-                why = reason.partition('--')[2].strip() or reason
+        names = selfcheck_names(args.build_dir)
+        if not names:
+            checks_ok = False
+            print('ERROR: no ctest labelled selfcheck in %s' % args.build_dir)
+        CHKW = max((len(n) for n in names), default=0)
+        for name in names:
+            status, output = run_selfcheck(args.build_dir, name)
+            if status == 'SKIP':
+                why = next((l.split(':', 1)[1].strip() for l in output
+                            if l.startswith(('SKIPPED:', 'SKIP:'))), '')
                 print('%-*s  %s' % (CHKW, name, 'SKIP' + (' -- ' + why if why else '')))
-                key = os.path.splitext(os.path.basename(script))[0]
-                if args.skips_are_errors and key not in args.allow_skip:
-                    invariants_ok = False
+                if args.skips_are_errors and name not in args.allow_skip:
+                    checks_ok = False
                     print('    ERROR: a check that cannot run is an error under '
-                          '--skips-are-errors (allow it with --allow-skip %s)' % key)
+                          '--skips-are-errors (allow it with --allow-skip %s)' % name)
                 continue
-            ok = (proc.returncode == 0)
+            ok = (status == 'PASS')
             print('%-*s  %s' % (CHKW, name, yn(ok)))
             if not ok:
-                invariants_ok = False
-                for line in proc.stdout.strip().splitlines():
+                checks_ok = False
+                for line in output[-40:]:
                     print('    %s' % line)
 
     if logf:
@@ -503,8 +476,8 @@ def main():
         sys.stdout = sys.__stdout__
         logf.close()
     # Exit non-zero if any test failed the loose (pass-deciding) criterion, if
-    # an invariant check failed, or if a skip was an error.
-    sys.exit(0 if (grand['loose'] == grand['n'] and invariants_ok and skips_ok) else 1)
+    # a self-check failed, or if a skip was an error.
+    sys.exit(0 if (grand['loose'] == grand['n'] and checks_ok and skips_ok) else 1)
 
 
 if __name__ == '__main__':

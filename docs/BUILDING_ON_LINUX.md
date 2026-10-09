@@ -35,7 +35,7 @@ sudo apt install make cmake default-jdk gfortran-14 libblas-dev liblapack-dev \
   still written; you get a warning naming the command to run by hand, and no
   pictures.
 - `python3` runs the test harness, and `python3-numpy` the Lebedev grid check among
-  the invariant checks. Without numpy that check reports itself skipped.
+  the self-checks. Without numpy that check reports itself skipped.
 - Optional: `graphviz` for the developer call-graphs;
   `openmpi-bin libopenmpi-dev` for a parallel build.
 

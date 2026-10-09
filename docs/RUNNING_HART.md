@@ -130,8 +130,8 @@ coordinates and ADPs as `0.02071(18)`, which `test.py` compares with its
 `value(esd)` comparator, so the test checks the scientific result rather than
 log text.
 
-**The invariant check** (`scripts/check_hart_options.sh`, ctest name
-`hart_options`, label `hart`) compares the option headings in the live
+**The self-check** (`scripts/check_hart_options.sh`, ctest name
+`hart_help_matches_its_options`) compares the option headings in the live
 `hart --help` output with the `case ("…")` labels in `runfiles/run_har.foo`.
 Any name in one and not the other fails the test, which is what keeps this
 page's option table honest.

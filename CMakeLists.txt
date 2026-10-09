@@ -1168,26 +1168,26 @@ add_executable(run_mp2_exercise  EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/ru
 #add_executable(run_mpi_matmul    EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_matmul.F90)
 # run_mpi_pi is the MPI smoke test: one `parallel do` + one PARALLEL_SUM, with a
 # known answer that must not depend on the rank count. Registered as the
-# `mpi_pi_rank_invariant` ctest (scripts/check_mpi_pi.sh). Not EXCLUDE_FROM_ALL,
+# `mpi_pi_same_for_any_rank_count` ctest (scripts/check_mpi_pi.sh). Not EXCLUDE_FROM_ALL,
 # so an MPI build always produces something that can be checked.
 # ... and only in an MPI build: the comment above says "an MPI build always
 # produces something that can be checked", but nothing restricted it, so a
-# serial tree built it too. The mpi_pi_rank_invariant ctest is already
+# serial tree built it too. The mpi_pi_same_for_any_rank_count ctest is already
 # if(WITH_MPI)-guarded, so this cannot orphan it.
 if(WITH_MPI)
     add_executable(run_mpi_pi     ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_pi.F90)
 endif()
 add_executable(run_qr            EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_qr.F90)
 # run_quadrature self-checks every 1-D rule in QUADRATURE against closed-form
-# moments and exits non-zero on a wrong one; the `quadrature_rules` ctest.
+# moments and exits non-zero on a wrong one; the `quadrature_rules_integrate_exactly` ctest.
 # Not EXCLUDE_FROM_ALL for the same reason as run_system_commands.
 add_executable(run_quadrature    ${CMAKE_CURRENT_BINARY_DIR}/run_quadrature.F90)
 # run_lsq_restraint checks the restrained normal-equation solver the structure
-# refinement uses; the `lsq_restraints` ctest. Not EXCLUDE_FROM_ALL for the
+# refinement uses; the `restrained_least_squares_known_answer` ctest. Not EXCLUDE_FROM_ALL for the
 # same reason.
 add_executable(run_lsq_restraint ${CMAKE_CURRENT_BINARY_DIR}/run_lsq_restraint.F90)
 # run_gaussian_ff_fit checks the form-factor fit through gnuplot by a round trip;
-# the `gaussian_ff_fit` ctest, skipped where gnuplot is absent.
+# the `form_factor_gaussian_fit_round_trip` ctest, skipped where gnuplot is absent.
 add_executable(run_gaussian_ff_fit ${CMAKE_CURRENT_BINARY_DIR}/run_gaussian_ff_fit.F90)
 add_executable(run_real          EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_real.F90)
 add_executable(run_rys           EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_rys.F90)
@@ -1196,7 +1196,7 @@ add_executable(run_vec_str       EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/ru
 add_executable(run_least_squares EXCLUDE_FROM_ALL ${CMAKE_CURRENT_BINARY_DIR}/run_least_squares.F90)
 # run_system_commands exercises the SYSTEM_COMMAND virtual module (shell
 # execution, used to render plots with gnuplot at the end of a job). Not
-# EXCLUDE_FROM_ALL: it is registered as the `system_commands` ctest, and shelling
+# EXCLUDE_FROM_ALL: it is registered as the `shell_commands_run_and_report_failure` ctest, and shelling
 # out is exactly the kind of thing that silently does nothing if it breaks.
 add_executable(run_system_commands ${CMAKE_CURRENT_BINARY_DIR}/run_system_commands.F90)
 # Both are MPI test programs that nothing in the repo references -- no test, no

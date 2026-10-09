@@ -39,7 +39,7 @@ brew install gcc cmake openjdk python3 numpy gnuplot openblas lapack
   the data files and gnuplot scripts are still written; you get a warning and
   no pictures.
 - `python3` runs the test harness, and `numpy` the Lebedev grid check among the
-  invariant checks. Without numpy that check reports itself skipped.
+  self-checks. Without numpy that check reports itself skipped.
 - Optional parallel build: `brew install open-mpi` — see the compiler-matching
   rule below.
 
