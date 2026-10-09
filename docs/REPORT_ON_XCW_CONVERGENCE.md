@@ -318,7 +318,7 @@ switches directions on, stiffest first. The undamped SCF begins to fail at
 $`\lambda\gamma_{\max} = 1`$ (equation 6), which is where the first direction passes one half:
 the instability and the first fitted parameter are the same event.
 
-This is the trace formula of Appendix A of `docs/TASK_EXTINCTION_CORRECTION.md`, with the
+This is the trace formula (A5) of the appendix, with the
 Hessian of the energy replaced by its uncoupled form, the orbital energy differences. That
 costs about 1% on the largest eigenvalue for ammonia (section 4), and it neglects a term
 proportional to the residuals, which matters only where the fit is poor.

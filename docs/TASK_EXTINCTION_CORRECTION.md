@@ -382,4 +382,4 @@ is now the appendix of `docs/REPORT_ON_XCW_CONVERGENCE.md`, rewritten as a state
 is known, with its equations in LaTeX. Its recommendation, to try k-fold cross-validation
 first, is superseded there: the leave-one-out sum comes from one converged run, and GCV is the
 default criterion. The exchange with Dylan that produced it is kept in
-`docs/TASK_XCW_CONVERGENCE.md`.
+`TASKS_AND_HISTORY.md`, in the entry *CLOSED 2026-10-09: the X-ray constrained SCF wandered*.
