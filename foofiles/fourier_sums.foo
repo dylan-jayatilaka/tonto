@@ -468,6 +468,188 @@ contains
 
    end
 
+   fitted_exp_ikr_transpose(X,k_pts,coef,pt,centre,alpha,l_max) :: selfless, leaky, PURE
+   ! Set "X(i)" to Re sum_k coef(k) K(k,r_i), where K is the kernel of
+   ! fitted_exp_ikr_sums: that routine returns res(k) = sum_i w(i) K(k,r_i)
+   ! for weights "w" at the points "pt", so this is its transpose, and
+   ! sum_k Re[coef(k) res(k)] = sum_i w(i) X(i) exactly. It replaces the
+   ! point-by-point sum of exp(i k.r_i) when the form factors come from the
+   ! fit. Cost: the k points times the fitting functions, then the points
+   ! times the fitting functions; the k and the points never meet. The
+   ! shells, the Lebedev degree masks and the metric are made exactly as
+   ! there. See docs/REPORT_ON_XCW_CONVERGENCE.md.
+      X      :: VEC{REAL}, OUT
+      k_pts  :: MAT{REAL}, IN
+      coef   :: VEC{CPX}, IN
+      pt     :: MAT{REAL}, IN
+      centre :: VEC{REAL}(3), IN
+      alpha  :: VEC{REAL}, IN
+      l_max  :: INT, IN
+
+   ENSURE(coef.dim==k_pts.dim1,"coef and k_pts: different number of k")
+   ENSURE(k_pts.dim2==3,"k_pts: need 3 columns")
+   ENSURE(pt.dim2==3,"pt: need 3 columns")
+   ENSURE(X.dim==pt.dim1,"X and pt: different number of points")
+   ENSURE(l_max>=0,"l_max is negative")
+   ENSURE(all(alpha>ZERO),"exponents must be positive")
+
+      r,Y,Yk,G,Dr,Di,Zr,Zi,Z,U,N,T,S,Lc,E,Q :: MAT{REAL}@
+      dr_,di_,bv,cv,rad :: VEC{REAL}@
+      ind,first,shell_of,mask_from :: VEC{INT}@
+      gam,kr,sn,cs :: REAL
+      n_pt,n_k,n_a,n_lm,n_s,l,l1,m,f,i,j,k,ip,ish,D :: INT
+
+      n_pt = pt.dim1
+      n_k  = k_pts.dim1
+      n_a  = alpha.dim
+      n_lm = (l_max+1)*(l_max+1)
+
+      ! Normalisation N and transform factor T, as in fitted_exp_ikr_sums
+      N.create(n_a,l_max+1)
+      T.create(n_a,l_max+1)
+      do l = 0,l_max
+         l1 = l + 1
+         gam = l1.double_factorial*sqrt(PI)/TWO**l1
+         N(:,l1) = sqrt(TWO*(TWO*alpha)**(l+1.5d0)/gam)
+         T(:,l1) = N(:,l1)*(PI/alpha)**1.5d0/(TWO*alpha)**l
+      end
+
+      ! d(k) = coef(k) exp(i k.centre), split into real and imaginary parts
+      dr_.create(n_k)
+      di_.create(n_k)
+      do k = 1,n_k
+         kr = k_pts(k,1)*centre(1)+k_pts(k,2)*centre(2)+k_pts(k,3)*centre(3)
+         FOURIER_SUMS::sin_cos(kr,sn,cs)
+         dr_(k) = real(coef(k))*cs - aimag(coef(k))*sn
+         di_(k) = real(coef(k))*sn + aimag(coef(k))*cs
+      end
+
+      ! Z(n,lm) = Re[ i^l sum_k d(k) k^l Y_lm(k) exp(-k^2/4a_n) ]
+      Yk.create(n_k,n_lm)
+      FOURIER_SUMS::make_solid_harmonics(Yk,k_pts,l_max)
+      G.create(n_k,n_a)
+      do j = 1,n_a
+         G(:,j) = exp(-(k_pts(:,1)**2+k_pts(:,2)**2+k_pts(:,3)**2)/(FOUR*alpha(j)))
+      end
+      Dr.create(n_k,n_lm)
+      Di.create(n_k,n_lm)
+      do j = 1,n_lm
+         Dr(:,j) = dr_*Yk(:,j)
+         Di(:,j) = di_*Yk(:,j)
+      end
+      Zr.create(n_a,n_lm)
+      Zi.create(n_a,n_lm)
+      Zr.to_product_of_BLAS(G,Dr,transpose_a=TRUE)
+      Zi.to_product_of_BLAS(G,Di,transpose_a=TRUE)
+      Z.create(n_a,n_lm)
+      do l = 0,l_max
+         f = l*l
+         do m = 1,2*l+1
+            select case (mod(l,4))
+            case (0); Z(:,f+m) =  Zr(:,f+m)
+            case (1); Z(:,f+m) = -Zi(:,f+m)
+            case (2); Z(:,f+m) = -Zr(:,f+m)
+            case (3); Z(:,f+m) =  Zi(:,f+m)
+            end
+         end
+      end
+      Zi.destroy
+      Zr.destroy
+      Di.destroy
+      Dr.destroy
+      G.destroy
+      Yk.destroy
+      di_.destroy
+      dr_.destroy
+
+      ! U(:,lm) = N o S_l^-1 (T o Z(:,lm)), the same metric blocks
+      U.create(n_a,n_lm)
+      S.create(n_a,n_a)
+      Lc.create(n_a,n_a)
+      bv.create(n_a)
+      cv.create(n_a)
+      do l = 0,l_max
+         l1 = l + 1
+         do j = 1,n_a
+         do i = 1,n_a
+            S(i,j) = (TWO*sqrt(alpha(i)*alpha(j))/(alpha(i)+alpha(j)))**(l+1.5d0)
+         end
+         end
+         Lc = ONE
+         S.Cholesky_decomposition(Lc)
+         f = l*l
+         do m = 1,2*l+1
+            bv = T(:,l1)*Z(:,f+m)
+            Lc.solve_cholesky_equation(bv,cv)
+            U(:,f+m) = N(:,l1)*cv
+         end
+      end
+      cv.destroy
+      bv.destroy
+      Lc.destroy
+      S.destroy
+      Z.destroy
+      T.destroy
+      N.destroy
+
+      ! The points: relative to the centre, solid harmonics, and the
+      ! shells by radius with their Lebedev degree masks
+      r.create(n_pt,3)
+      do i = 1,3
+         r(:,i) = pt(:,i) - centre(i)
+      end
+      Y.create(n_pt,n_lm)
+      FOURIER_SUMS::make_solid_harmonics(Y,r,l_max)
+      rad.create(n_pt)
+      rad = sqrt(r(:,1)**2+r(:,2)**2+r(:,3)**2)
+      r.destroy
+      ind.create(n_pt)
+      rad.quick_sort(ind)
+      first.create(n_pt+1)
+      n_s = 1
+      first(1) = 1
+      do ip = 2,n_pt
+         if (rad(ind(ip))-rad(ind(first(n_s)))>1.0d-9) then
+            n_s = n_s + 1
+            first(n_s) = ip
+         end
+      end
+      first(n_s+1) = n_pt + 1
+
+      ! Q(s,lm) = sum_n exp(-a_n R_s^2) U(n,lm), and the mask per shell
+      E.create(n_s,n_a)
+      mask_from.create(n_s)
+      do ish = 1,n_s
+         E(ish,:) = exp(-alpha*rad(ind(first(ish)))**2)
+         D = FOURIER_SUMS::lebedev_degree(first(ish+1)-first(ish))
+         D = max(D-4,0)
+         mask_from(ish) = n_lm + 1
+         if (D<l_max) mask_from(ish) = (D+1)**2 + 1
+      end
+      Q.create(n_s,n_lm)
+      Q.to_product_of_BLAS(E,U)
+      E.destroy
+      U.destroy
+
+      ! X(i) = sum over unmasked lm of Y(i,lm) Q(s_i,lm)
+      X = ZERO
+      do ish = 1,n_s
+         f = mask_from(ish) - 1
+         do ip = first(ish),first(ish+1)-1
+            i = ind(ip)
+            X(i) = sum(Y(i,1:f)*Q(ish,1:f))
+         end
+      end
+
+      Q.destroy
+      mask_from.destroy
+      first.destroy
+      ind.destroy
+      rad.destroy
+      Y.destroy
+
+   end
+
    lebedev_degree(n) result (res) :: selfless, pure, private
    ! Return the degree of the largest Lebedev grid with at most "n" points:
    ! the highest l of the spherical harmonics it integrates exactly. A shell
