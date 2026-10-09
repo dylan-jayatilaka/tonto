@@ -207,3 +207,9 @@ In CI:
   for `testing`. On achari2 (worktree `~/github/tonto-intents`): `reference` and `release` link
   `/usr/lib/x86_64-linux-gnu/lib{lapack,blas}.so` (netlib, 3.12.0); `fast` stops, no OpenBLAS there.
   Not yet done: a build and test run on the Mac's new netlib `reference`; CI on the branch.
+- 2026-10-09 (night): stage 1 done and on `develop`. CI on it: Linux `reference` passes the netlib
+  check (the runner's `libblas.so` is netlib); dispatched `macOS-release` links
+  `/opt/homebrew/opt/lapack` 3.12.0. Mac `ctest -L 'short|long|hart'`, 136 tests: netlib
+  `reference` 134/136, OpenBLAS `release` 135/136 once the `disk_ffs` tie was fixed; the common
+  failure, `carbon_atom_uhf_cc-pVDZ_ANO_aoc`, is 3 ulp with netlib and 5 with OpenBLAS, so it is
+  Mac against Linux, not the library. Stage 2 (a pinned image) waits for its trigger.

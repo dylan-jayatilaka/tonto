@@ -78,6 +78,55 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## 2026-10-09 (night): reproducible builds, stage 1 done; the `disk_ffs` flake fixed; `master` moved
+
+**Stage 1 of *Reproducible builds* is on `develop`** (`13e2d90f`, banner `09baf45e`). The build
+type is an intent: `release` (`-O3`, no tuning, system BLAS), `fast` (`-Ofast`, native, OpenBLAS
+required), `reference` (`-O3 -fno-fast-math`, no tuning, netlib required), `debug`,
+`release-static`; MPI is added to any of them; `testing` is gone. Configure prints one
+`Build type ...` line, and every output a `Build-type:` line (ignored by `test.py`). Plan, the
+fourteen findings and the log: `docs/TASK_BUILD_INTENTS.md`. Decisions (Dylan): system netlib,
+not the bundled 3.8.0; `fast` stops without OpenBLAS; `reference` and `release` are both `-O3`,
+which is what they had in effect always been.
+
+Three faults found on the way, all fixed there:
+- CMake appended its own `CMAKE_Fortran_FLAGS_RELEASE` (`-O3`, plus `-DNDEBUG -O3` on Linux)
+  after our flags, so `release` was never `-Ofast` and `reference` never `-O2`: both were `-O3`
+  with fast-math off. Only `fast` (cached as `TESTING`, which has no CMake default) was `-Ofast`.
+- A reconfigure turned a `reference` tree into `release` (the cache was forced to `RELEASE`).
+  achari2's bless tree has base flags `-Ofast` for this reason; cancelled by the trailing `-O3`.
+- The macOS CI `reference` builds linked Accelerate's LAPACK 3.2.1. They now install Homebrew
+  `lapack`, and the dispatched `macOS-release` run links `/opt/homebrew/opt/lapack` (3.12.0).
+
+**No reference moved.** The generated assembly is identical, old flag line against new, for five
+files on the Mac and five on achari2 (the bless tree's line, the CI line, new `reference`, new
+`release`). Linux CI on the change: the runner's `libblas.so` is netlib and passes the new check.
+
+**`urea_hart_STO-3G_disk_ffs` failed about seven Linux CI runs in ten on `develop` since about
+2026-10-06, and on the Mac.** Not numerical: the refinement table names the parameter with the
+largest shift/esd between refinements, N1's px and py tie to the last bits, and
+`DIFFRACTION_DATA:update_refinement_ESDs` kept a strict running maximum. It now takes the
+lowest-indexed parameter within `DIFFRACTION_DATA_SHIFT_TIE_TOL`, as `update_fit_ESDs` already
+did (`b9ff371b`). achari2, reference build at `aa4df224` plus the fix: `short long hart` 135/136,
+the one failure this test with only the label changed (`N1 py` to `N1 px`); re-blessed there.
+Linux CI green on `develop` with it.
+
+**`master` moved to `b9ff371b`** at Dylan's request: the previous `develop` (`aa4df224`) plus that
+fix, without the build-intents change, which stays on `develop` only for now.
+
+**Open, small:**
+- `carbon_atom_uhf_cc-pVDZ_ANO_aoc` fails on the Mac and on macOS CI: 3 ulp on a value of 5e-5
+  (0.000389 against 0.000392) with netlib, 5 ulp with OpenBLAS, the same code. So it is
+  Mac-against-Linux, not the library; it passed macOS CI on 2026-10-06 against its earlier
+  reference, which was re-blessed on 2026-10-08 (*density damping became real*). Either a
+  per-test tolerance like `urea_ccsd_pob-TZVP_Salvador_properties`, or find which printed value is
+  so close to zero.
+- Mac scores at `09baf45e`, `ctest -L 'short|long|hart'` (136 tests, including invariant checks):
+  netlib `reference` 134/136 before the tie fix, OpenBLAS `release` 135/136 after it; the remaining
+  failure in both is the carbon test.
+- achari2's bless tree `~/github/tonto-rebless/reference` predates the change: reconfigure it
+  with `-DCMAKE_BUILD_TYPE=reference` before the next bless and read its `Build type` line.
+
 ## CLOSED 2026-10-09: the X-ray constrained SCF wandered and blew up -- cured, explained, and the choice of lambda with it
 
 **What it was.** The constrained SCF overshot above a lambda that can be calculated, and
