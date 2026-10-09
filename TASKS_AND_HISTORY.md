@@ -212,6 +212,19 @@ The cure as implemented is the first of three stages.
    the fitted model. This is the form to write: the two products on the `oc-ri` route,
    checked on urea against the two-centre results.
 
+**Watch: the urea def2-TZVP leave-one-out minimum.** The scan
+`~/tonto_runs/xcw_2026-10-09/urea_tzvp4` runs lambda 2 to 6 in steps of 0.1, unattended (Mac,
+started 2026-10-09 20:14, about 1.5 min per point). At 3.2 the leave-one-out sum, GCV and the
+sigma-free AIC are all still falling. When the sum turns: plot the deformation density and the
+fitted-minus-unfitted difference at the minimum, blue positive, as the third row of the
+def2-TZVP grid in report section 8.5 (the def2-SVP grid shows the layout), and fill the
+def2-TZVP row of the criteria table and section 8.3. Every command is in
+`urea_tzvp4/RESUME.md`. Findings so far, 2026-10-09: on urea only the leave-one-out sum has a
+minimum (STO-3G 0.005, def2-SVP 2.4); def2-TZVP falls nearly linearly because chi^2 flattens
+while the left-out excess falls faster, its high-leverage reflections being fitted to 0.86
+sigma rms against 1.57 in def2-SVP; the def2-SVP minimum costs 1.06 hartree for GoF^2 1.97,
+against 79 mEh for GoF^2 3.86 at lambda 0.05.
+
 Also left, in this order (Dylan, 2026-10-09: the fitted Hirshfeld atoms first, the line
 search after):
 

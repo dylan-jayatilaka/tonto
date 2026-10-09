@@ -1014,7 +1014,7 @@ Where each scale-free criterion has its minimum, over the range scanned:
 | ammonia | 2.0 | 3.2 | none up to 4 |
 | urea, STO-3G | 0.005 | none up to 0.03 | none up to 0.03 |
 | urea, def2-SVP | 2.4 | none up to 2.9 | none up to 2.9 |
-| urea, def2-TZVP | none up to 2.7 | none up to 2.7 | none up to 2.7 |
+| urea, def2-TZVP | none up to 3.2 | none up to 3.2 | none up to 3.2 |
 
 The leave-one-out sum is the only criterion with a minimum on every data set so far. It
 stops where the fit begins to chase the reflections that can each move the wavefunction
@@ -1042,7 +1042,8 @@ with the starting orbitals above 0.99:
 
 At every lambda the larger basis fits better than def2-SVP with more effective parameters:
 at lambda 1, GoF 1.22 against 1.52, and 96 parameters against 66. The leave-one-out sum is
-still falling at 2.7, where it is 2642 and the GoF is 1.14.
+still falling at 3.2, where it is 2532 and the GoF is 1.13; GCV and AIC$`_\sigma`$ are
+falling too.
 ### 8.4 The Hirshfeld partitions
 
 The correction on the Hirshfeld-atom partitions, def2-SVP, lambda 0 to 0.01 in steps of
@@ -1067,7 +1068,9 @@ spherical atoms, in the molecular plane, 6 Å square, centred on the carbon atom
 bond pointing right. Blue contours are positive and red negative, on a logarithmic scale from
 $`10^{-3}`$ to 1 $`e\,a_0^{-3}`$ in steps of a factor $`\sqrt{10}`$; the dotted line is zero.
 Under each map are lambda, the GoF squared, $`\chi^2/(N_{\mathrm{refl}}-1)`$, and the rise
-$`\Delta E`$ of the energy above the unconstrained energy at lambda 0.
+$`\Delta E`$ of the energy above the unconstrained energy at lambda 0. The last row of each
+grid is the leave-one-out minimum: its deformation density, and the change made by fitting,
+the density there minus the density at lambda 0, on a scale ten times finer.
 
 **def2-SVP**
 
@@ -1077,6 +1080,8 @@ $`\Delta E`$ of the energy above the unconstrained energy at lambda 0.
 | $`\lambda = 0`$, $`\mathrm{GoF}^2 = 19.62`$, $`\Delta E = 0`$ m$`E_\mathrm{h}`$ | $`\lambda = 0.01`$, $`\mathrm{GoF}^2 = 6.28`$, $`\Delta E = 26`$ m$`E_\mathrm{h}`$ | $`\lambda = 0.02`$, $`\mathrm{GoF}^2 = 4.97`$, $`\Delta E = 44`$ m$`E_\mathrm{h}`$ |
 | ![Urea deformation density, def2-SVP, lambda 0.03](images/xcw_urea_svp_l0.03.png) | ![Urea deformation density, def2-SVP, lambda 0.04](images/xcw_urea_svp_l0.04.png) | ![Urea deformation density, def2-SVP, lambda 0.05](images/xcw_urea_svp_l0.05.png) |
 | $`\lambda = 0.03`$, $`\mathrm{GoF}^2 = 4.40`$, $`\Delta E = 58`$ m$`E_\mathrm{h}`$ | $`\lambda = 0.04`$, $`\mathrm{GoF}^2 = 4.07`$, $`\Delta E = 70`$ m$`E_\mathrm{h}`$ | $`\lambda = 0.05`$, $`\mathrm{GoF}^2 = 3.86`$, $`\Delta E = 79`$ m$`E_\mathrm{h}`$ |
+| ![Urea deformation density, def2-SVP, at the leave-one-out minimum](images/xcw_urea_svp_loo_min.png) | ![Urea, def2-SVP: density at the leave-one-out minimum minus density at lambda 0](images/xcw_urea_svp_loo_diff.png) | |
+| $`\lambda = 2.4`$, the leave-one-out minimum, $`\mathrm{GoF}^2 = 1.97`$, $`\Delta E = 1062`$ m$`E_\mathrm{h}`$ | the density at $`\lambda = 2.4`$ minus the density at $`\lambda = 0`$; contours from $`10^{-4}`$ to $`10^{-1}`$ $`e\,a_0^{-3}`$ | |
 
 **def2-TZVP**
 
@@ -1086,17 +1091,6 @@ $`\Delta E`$ of the energy above the unconstrained energy at lambda 0.
 | $`\lambda = 0`$, $`\mathrm{GoF}^2 = 16.93`$, $`\Delta E = 0`$ m$`E_\mathrm{h}`$ | $`\lambda = 0.01`$, $`\mathrm{GoF}^2 = 3.72`$, $`\Delta E = 21`$ m$`E_\mathrm{h}`$ | $`\lambda = 0.02`$, $`\mathrm{GoF}^2 = 3.02`$, $`\Delta E = 31`$ m$`E_\mathrm{h}`$ |
 | ![Urea deformation density, def2-TZVP, lambda 0.03](images/xcw_urea_tzvp_l0.03.png) | ![Urea deformation density, def2-TZVP, lambda 0.04](images/xcw_urea_tzvp_l0.04.png) | ![Urea deformation density, def2-TZVP, lambda 0.05](images/xcw_urea_tzvp_l0.05.png) |
 | $`\lambda = 0.03`$, $`\mathrm{GoF}^2 = 2.73`$, $`\Delta E = 38`$ m$`E_\mathrm{h}`$ | $`\lambda = 0.04`$, $`\mathrm{GoF}^2 = 2.56`$, $`\Delta E = 44`$ m$`E_\mathrm{h}`$ | $`\lambda = 0.05`$, $`\mathrm{GoF}^2 = 2.44`$, $`\Delta E = 49`$ m$`E_\mathrm{h}`$ |
-
-**At the leave-one-out minimum.** Top, the deformation density, on the scale above. Bottom,
-the density at the minimum minus the density at lambda 0 in the same basis, the change made by
-fitting, on a logarithmic scale from $`10^{-4}`$ to $`10^{-1}`$ $`e\,a_0^{-3}`$.
-
-| def2-SVP |
-|---|
-| ![Urea deformation density, def2-SVP, at the leave-one-out minimum](images/xcw_urea_svp_loo_min.png) |
-| $`\lambda = 2.4`$, $`\mathrm{GoF}^2 = 1.97`$, $`\Delta E = 1062`$ m$`E_\mathrm{h}`$ |
-| ![Urea, def2-SVP: density at the leave-one-out minimum minus density at lambda 0](images/xcw_urea_svp_loo_diff.png) |
-| fitted minus unfitted; unfitted $`\mathrm{GoF}^2 = 19.62`$ |
 
 - **In both bases the fit moves density from the hydrogen atoms into the N–H bonds**, and
   spreads the density between the three heavy atoms. By lambda 0.05 the two bases give
