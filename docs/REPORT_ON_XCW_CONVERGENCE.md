@@ -89,8 +89,8 @@ matrix plus $`\lambda\boldsymbol{C}`$, with, by the chain rule through equation 
 \qquad (2)
 ```
 
-One $`\alpha`$ sits inside $`r_k`$ and one comes from differentiating $`\alpha|F_k|`$. This is
-what `MOLECULE.SCF:make_r_constraint` builds; $`\boldsymbol{A}_k`$ is the Fourier transform of a pair
+One $`\alpha`$ sits inside $`r_k`$ and one comes from differentiating $`\alpha|F_k|`$.
+$`\boldsymbol{A}_k`$ is the Fourier transform of a pair
 of basis functions at the scattering vector of reflection $`k`$, projected on the phase of
 $`F_k`$, so that $`\mathrm{tr}\,(\boldsymbol{A}_k\,\delta\boldsymbol{D})`$ is the change of $`|F_k|`$ for a
 change $`\delta\boldsymbol{D}`$ of the density. Note that $`\boldsymbol{C}`$ is linear in $`\boldsymbol{r}`$: a
@@ -187,8 +187,7 @@ wavefunction's own resistance to change. It is a property of how hard the fit is
 
 ## 4. The check against measurement
 
-`MOLECULE.SCF:put_constraint_stiffness` (`put_constraint_stiffness= TRUE` in the `scfdata=`
-block) computes $`\boldsymbol{G}`$ from equation (5) and prints its largest eigenvalues, the limit of equation (6),
+The stiffness report (section 11) computes $`\boldsymbol{G}`$ from equation (5) and prints its largest eigenvalues, the limit of equation (6),
 and the reflections with the largest diagonal elements. RHF only. For the ammonia job, from the
 orbitals converged at lambda = 0.012:
 
@@ -480,6 +479,10 @@ sense of Hoerl and Kennard, and the ridge parameter is $`(N_{\mathrm{refl}}-p)/2
   sigma (section 5), where for the alanine refinement of Parsons *et al.* they are the
   moderately weak reflections. The difference is in what is being fitted: the XCW adjusts the
   valence density, which moves the low-angle structure factors most.
+- Leverages are also a guide to measurement: the influence of each reflection on any chosen
+  density property follows from the same rows of $`\boldsymbol{B}`$, which says which
+  reflections to measure longer or again to determine that property best, as Parsons *et al.*
+  did for the Flack parameter; see the appendix.
 - The parameter-wise sensitivities $`T_{ij}`$ of Parsons *et al.*, the influence of observation
   $`i`$ on parameter $`j`$, are here row $`i`$ of $`\boldsymbol{B}`$ times column $`j`$ of
   $`(\boldsymbol{B}^{T}\boldsymbol{B}+\mu)^{-1}`$, with the orbital rotations as parameters. They are not printed: a
@@ -950,7 +953,29 @@ virtual orbital energies before the diagonalisation: the correction uses the shi
 because that is the operator it corrects, and the statistics at convergence use the physical
 ones.
 
-## 10. Keywords
+## 10. Where it is implemented
+
+Each piece, and the Tonto procedure that does it.
+
+| piece | procedure |
+|---|---|
+| the constraint matrix, eq. (2); from a given residual vector | `MOLECULE.SCF:make_r_constraint`, `make_H_r_constraint` |
+| the Hirshfeld-atom constraint from the transpose of the fit (`oc-ri`) | `FOURIER_SUMS:fitted_exp_ikr_transpose`, `SPACEGROUP:make_unique_sf_coefficients` |
+| $`\boldsymbol{B}`$ and the gain matrix $`\boldsymbol{G}`$, eq. (5), explicit | `MOLECULE.SCF:make_constraint_stiffness` |
+| the scale direction removed, the orbital gaps without the level shift | `MOLECULE.SCF:make_constraint_stiffness`, `orbital_gap` |
+| the hat matrix, $`p_{\mathrm{eff}}`$, AIC, BIC, GCV, leave-one-out, eqs. (7) to (12) | `MOLECULE.SCF:make_constraint_stiffness` |
+| the stiffness report: gains, leverages, Cook's distance, histogram | `MOLECULE.SCF:put_constraint_stiffness` |
+| the statistics with the SCF results | `SCF_DATA:put_stiffness_statistics` |
+| the chosen criterion and its running minimum; the TIH three-point fit, eq. (14) | `SCF_DATA:criterion_value`, `record_lambda_point` |
+| the correction, eqs. (15) to (24) | `MOLECULE.SCF:correct_constraint_overshoot` |
+| $`\boldsymbol{B}\boldsymbol{v}`$ and $`\boldsymbol{B}^{T}\boldsymbol{w}`$ without $`\boldsymbol{B}`$ | `MOLECULE.SCF:make_B_times`, `make_BT_times`, `make_Hirshfeld_FFs_of` |
+| $`(\boldsymbol{1}+\lambda\boldsymbol{G})\boldsymbol{x}`$, the conjugate gradient solve, its preconditioners | `MOLECULE.SCF:apply_stiffness_operator`, `solve_stiffness_system`, `make_stiffness_preconditioner` |
+| deflation, eqs. (25) and (26) | `MOLECULE.SCF:make_stiffness_deflation`, `apply_stiffness_deflation` |
+| matrix-free $`p_{\mathrm{eff}}`$, leverages and largest gain | `MOLECULE.SCF:make_constraint_stiffness_estimates` |
+| which form is used | `MOLECULE.SCF:stiffness_is_matrix_free` |
+| density damping in the SCF loops | `MOLECULE.BASE:make_SCF_density_mx` |
+
+## 11. Keywords
 
 In the `scfdata=` block:
 
@@ -1025,12 +1050,63 @@ signal: a protein refinement has few observations per parameter, so overfitting 
 easy to see, while an ordinary small-molecule refinement has little to detect. The XCW lies
 between, since its wavefunction has many parameters.
 
+**What $`p_{\mathrm{eff}}`$ measures.** Nudge one observation and see how far its own
+prediction follows: all the way for a reflection the model fits freely, not at all for one it
+cannot reach. Summed over reflections, that is the effective number of parameters. In symbols,
+with predictions and observations in units of sigma, $`\hat{\boldsymbol{o}}`$ and $`\boldsymbol{o}`$,
+
+```math
+p_{\mathrm{eff}} = \sum_k \frac{\partial \hat o_k}{\partial o_k}
+ = \mathrm{tr}\,\boldsymbol{H}
+ = \sum_k \frac{\mathrm{cov}(\hat o_k, o_k)}{\mathrm{var}(o_k)}
+\qquad (A2)
+```
+
+The middle form holds when the predictions are linear in the observations,
+$`\hat{\boldsymbol{o}} = \boldsymbol{H}\boldsymbol{o}`$. The last holds for any fitting rule, and it
+follows in one line from the linear case: $`\mathrm{cov}(\hat{\boldsymbol{o}}, \boldsymbol{o}) =
+\boldsymbol{H}\,\mathrm{cov}(\boldsymbol{o}) = \boldsymbol{H}`$ when the observations have unit variance in
+these units, so the trace of the cross-covariance of predictions with observations is the trace
+of $`\boldsymbol{H}`$. Note that it is the covariance of predictions *with* observations, not the
+covariance matrix of the parameters. For ordinary least squares with design matrix
+$`\boldsymbol{X}`$ and weights $`\boldsymbol{W}`$, $`\boldsymbol{H} = \boldsymbol{X}(\boldsymbol{X}^{T}\boldsymbol{W}\boldsymbol{X})^{-1}\boldsymbol{X}^{T}\boldsymbol{W}`$
+and $`\mathrm{tr}\,\boldsymbol{H} = \mathrm{tr}[(\boldsymbol{X}^{T}\boldsymbol{W}\boldsymbol{X})^{-1}\boldsymbol{X}^{T}\boldsymbol{W}\boldsymbol{X}] = p`$: the
+parameter covariance times the normal matrix, whose trace counts the parameters exactly.
+With a restraint the normal matrix gains a term the data do not supply, and the trace falls
+below the parameter count, which is the XCW case. See Efron, *J. Am. Stat. Assoc.* **99**, 619
+(2004), and Hastie, Tibshirani and Friedman, *The Elements of Statistical Learning*, 2nd ed.
+(2009), sections 7.4 to 7.6.
+
+**Why it decides overfitting.** The same covariance measures how optimistic the fit is about
+itself. The expected residual of the fitted data is smaller than the expected error of
+predicting fresh data from the same experiment by exactly
+
+```math
+\mathrm{E}\!\left[\sum_k (o_k^{\mathrm{new}} - \hat o_k)^2\right]
+ - \mathrm{E}\!\left[\sum_k (o_k - \hat o_k)^2\right]
+ = 2\sum_k \mathrm{cov}(\hat o_k, o_k) = 2\,p_{\mathrm{eff}}
+\qquad (A3)
+```
+
+(Efron 2004, equation 2.8). So a lower residual is evidence of a better model only when it
+falls by more than twice the parameters it costs, which is the AIC penalty below, and a fit
+that keeps lowering its residual while $`p_{\mathrm{eff}}`$ climbs faster than half that fall is
+fitting the noise.
+
+**Leverages point to the measurements that matter.** The diagonal $`H_{kk}`$ says how much
+reflection $`k`$ alone determines the fit, and the same machinery says how much it determines
+any chosen quantity: contracting a row of $`\boldsymbol{B}`$ with the derivative of a density
+property, an atomic charge, a bond critical point density or a Laplacian, gives each
+reflection's influence on that property. That is the basis for deciding which reflections to
+measure longer or again in order to pin down the quantity wanted, as Parsons *et al.* (2012) did
+for the Flack parameter, and it is open here.
+
 **The Akaike criterion.** With measured sigmas the errors are Gaussian with known variances,
 and $`-2\ln L = \chi^2 + \mathrm{constant}`$, so
 
 ```math
 \mathrm{AIC} = \chi^2 + 2\,p_{\mathrm{eff}} + \mathrm{constant}
-\qquad (A2)
+\qquad (A4)
 ```
 
 which is equation (9) of section 7. The penalty cannot be a count of wavefunction
@@ -1047,7 +1123,7 @@ fit gradient, and summing the self-sensitivities over reflections gives
 
 ```math
 p_{\mathrm{eff}} = \mathrm{tr}\left[(\boldsymbol{A} + \lambda\boldsymbol{K})^{-1}\lambda\boldsymbol{K}\right]
-\qquad (A3)
+\qquad (A5)
 ```
 
 with $`\boldsymbol{A}`$ the Hessian of the energy and $`\boldsymbol{K}`$ that of the fit term. Solving
@@ -1066,7 +1142,7 @@ normal numbers, rerun the XCW at the same lambda from the converged wavefunction
 
 ```math
 \hat p = \frac{1}{\epsilon}\sum_k z_k\,\frac{F_k^{\mathrm{pred}}(\epsilon) - F_k^{\mathrm{pred}}(0)}{\sigma_k}
-\qquad (A4)
+\qquad (A6)
 ```
 
 whose expectation is the trace of the sensitivity matrix, since the expectation of
@@ -1079,7 +1155,7 @@ two-electron response included, and is therefore an independent check of equatio
 The keyword `F_sigma_noise=` adds noise to `F_exp` in units of `F_sigma`; whether it also
 perturbs `F_sigma`, which this estimator must not do, needs checking before use.
 
-**Wrong sigmas.** The estimate of $`p_{\mathrm{eff}}`$ is immune to them: in equation (A4) the
+**Wrong sigmas.** The estimate of $`p_{\mathrm{eff}}`$ is immune to them: in equation (A6) the
 perturbation and the normalisation use the same sigma, so only the diagonal survives with a
 sigma ratio of exactly one, and scaling every sigma changes the variance of the estimate, not
 its mean. AIC as a whole is not immune. If the true errors are $`s`$ times the stated ones,
@@ -1092,14 +1168,14 @@ distributed as $`N(0, s^2\sigma_k^2)`$,
 
 ```math
 -2\ln L = N_{\mathrm{refl}}\ln(2\pi s^2) + 2\sum_k \ln\sigma_k + \frac{\chi^2}{s^2}
-\qquad (A5)
+\qquad (A7)
 ```
 
 minimised at $`s^2 = \chi^2/N_{\mathrm{refl}}`$, and substituting back,
 
 ```math
 \mathrm{AIC}_\sigma = N_{\mathrm{refl}}\ln\chi^2 + 2\,(p_{\mathrm{eff}} + 1) + \mathrm{constant}
-\qquad (A6)
+\qquad (A8)
 ```
 
 which is equation (10) of section 7 up to a constant and the one extra parameter, the
@@ -1107,7 +1183,7 @@ estimated scale. After rescaling, the $`\chi^2`$ of every model is $`N_{\mathrm{
 construction, so the comparison is not of fits but of *how small an error level each model
 needs to explain the data*: the fit term is the logarithm of the residual. Two checks: if the
 residual falls by a fraction $`f`$, the gain is $`N_{\mathrm{refl}}\ln\frac{1}{1-f} \approx N_{\mathrm{refl}}f`$
-against $`f\chi^2`$ in equation (A2), so the two agree when the sigmas are right,
+against $`f\chi^2`$ in equation (A4), so the two agree when the sigmas are right,
 $`\chi^2 \approx N_{\mathrm{refl}}`$, and differ by the factor $`\chi^2/N_{\mathrm{refl}}`$, the GoF
 squared, otherwise; and with the scale estimated one can no longer say a model fits well, only
 that it fits better than another, which is honest when the noise level is unknown. This form
