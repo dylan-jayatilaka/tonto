@@ -2218,6 +2218,14 @@ code, whereas a stale global table risks only a name-resolution detail.
 > gives the effective number of parameters, AIC, BIC, GCV and a leave-one-out cross-validation
 > from one converged run per lambda, checked against two real held-out refits (7 to 8% low);
 > `put_constraint_stiffness= TRUE` in `scfdata=` prints them. Section 7 of the task document.
+> **2026-10-09, summary of the branch so far.** Done: damping made real and the references
+> redone (181 of 181 on achari2); the stiffness report with p_eff, AIC, BIC, GCV, leave-one-out,
+> Cook's distance and the TIH three-point formula; `lambda_criterion=` with GCV the default;
+> the correction, explicit and matrix-free, with Lanczos deflation; urea in STO-3G, def2-SVP
+> and def2-TZVP (running). Next, in order: the matrix-free products on the fitted Hirshfeld
+> atoms, `oc-ri`, which makes $`10^5`$ reflections routine; then a safeguard against the drift
+> into a higher stationary point at large lambda. `docs/REPORT_ON_XCW_CONVERGENCE.md` has the
+> findings, `docs/TASK_XCW_CONVERGENCE.md` the plan; runs in `~/tonto_runs/xcw_2026-10-09/`.
 > **2026-10-08, later: the cure is implemented**, `use_stiffness_correction= TRUE`, the Newton
 > step with the constraint curvature, applied as a second constraint matrix in the space of
 > reflections. No damping, no DIIS, about ten iterations at every lambda from 0.012 to 4 on

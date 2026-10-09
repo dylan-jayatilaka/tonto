@@ -120,23 +120,23 @@ The cure as implemented is the first of three stages.
    the fitted model. This is the form to write: the two products on the `oc-ri` route,
    checked on urea against the two-centre results.
 
-Also left:
+Also left, in this order (Dylan, 2026-10-09: the fitted Hirshfeld atoms first, the line
+search after):
 
-- Unrestricted wavefunctions and the Hirshfeld-atom partition models, in both the stiffness
-  routine and the correction. The Hirshfeld-atom constraint has its own derivative routine.
+- **Stage 4 above**, the products on the `oc-ri` route; with it the Hirshfeld-atom partition
+  models generally. Unrestricted wavefunctions after that.
 - A test job with the correction on, blessed on achari2, once the damping references are redone.
 - The coupled orbital response in the gain matrix, if the 8% error on the leave-one-out
   residuals matters for anything.
 - Whether the correction should be the default for constrained SCF. It changes no converged
   result, only the path, so it moves every constrained reference.
 - A debug build, MPI, and anything on achari2.
-- **Urea beyond lambda 0.03 in STO-3G, and beyond about 0.85 in def2-SVP** (report section
-  9): more than one stationary point of $`E + \lambda\,\mathrm{GoF}^2`$, the first reached not
-  the minimum, and no scheme converging. In def2-SVP the limit sits at lambda times the
-  largest gain of about 2000, where ammonia also needs lambda stepped rather than jumped.
-  Needs the landscape understood, not more solver changes: the omitted residual term of the
-  Hessian and the two-electron response. A line search on $`E + \lambda\,\mathrm{GoF}^2`$ along
-  the corrected step would at least stop the drift to a higher stationary point.
+- **The drift at large lambda** (report section 9): on urea the iteration can visit a higher
+  stationary point of $`E + \lambda\,\mathrm{GoF}^2`$ and sit there, in STO-3G from lambda
+  0.035 and in def2-SVP near 0.9, where lambda times the largest gain is about 2000 and the
+  count of iterations has already grown. A line search on the functional along the corrected
+  step is the candidate safeguard; it comes after stage 4, since it does not change where
+  the method can be used, only how safely.
 - Whether the correction and `stiffness_deflation=` should be on by default for constrained
   SCF; the correction is restricted wavefunctions and two-centre partition models only.
 
