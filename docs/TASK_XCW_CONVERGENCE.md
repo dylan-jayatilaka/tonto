@@ -107,6 +107,18 @@ The cure as implemented is the first of three stages.
    `make_H_r_constraint` built from a reflection vector. With them the matrix-free correction,
    Lanczos deflation and the trace estimator carry over unchanged. Also the HA-XCW of
    Davidson, Grabowsky and Jayatilaka (2022), so the version that matters.
+   **Better still, the fitted Hirshfeld atoms, `partition_model= oc-ri`** (Dylan, 2026-10-09).
+   The fit is linear in the density with a fixed metric, so every structure factor is a sum
+   over auxiliary functions of analytic transforms, and the reflection count drops out of the
+   grid term: $`\mathbf{B}\mathbf{v}`$ is one grid pass to partition and fit the transition
+   density, then reflections times auxiliary functions; $`\mathbf{B}^{T}\mathbf{w}`$ contracts the
+   reflection vector into the auxiliary space first, reflections times auxiliary functions,
+   then one grid pass that builds the constraint matrix like an exchange-correlation matrix.
+   At $`10^5`$ reflections and 5000 auxiliary functions that is $`5 \times 10^{8}`$ against
+   $`10^{11}`$ per atom for the numerical transforms. The fitting error is irrelevant to the
+   correction, a preconditioner, and consistent for the statistics when the XCW itself uses
+   the fitted model. This is the form to write: the two products on the `oc-ri` route,
+   checked on urea against the two-centre results.
 
 Also left:
 

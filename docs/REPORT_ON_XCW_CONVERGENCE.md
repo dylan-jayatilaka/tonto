@@ -939,8 +939,11 @@ two-centre partition models each costs shell pairs times unique scattering vecto
 product at that size on one core, so the plain XCW is already out of reach there whatever the
 solver. The Hirshfeld-atom partition puts the density on a grid once per iteration and makes
 atom-centred transforms with no pair sum, which is how HAR handles $`10^5`$ reflections, and
-the two products exist on that route. The matrix-free correction with deflation on the
-Hirshfeld-atom route is therefore the form for large systems; it is planned, not written.
+the two products exist on that route. With the fitted Hirshfeld atoms, `partition_model=
+oc-ri`, where every structure factor is a sum over auxiliary functions of analytic
+transforms, the reflection count drops out of the grid term altogether: a product is one
+grid pass plus reflections times auxiliary functions. The matrix-free correction with
+deflation on that route is therefore the form for large systems; it is planned, not written.
 
 The level shift enters the gaps $`\Delta_{ia}`$ while it is applied, since it is added to the
 virtual orbital energies before the diagonalisation: the correction uses the shifted gaps,
