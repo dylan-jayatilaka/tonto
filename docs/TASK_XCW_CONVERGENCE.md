@@ -124,7 +124,15 @@ Also left:
   two agree.
 - **Whether `use_stiffness_correction` becomes the default** for constrained SCF.
 
-## 4. Log
+## 4. Where the runs are
+
+`~/tonto_runs/xcw_2026-10-09/`, with a README: the ammonia scans and single-lambda jobs, the
+held-out refits, the urea scans in STO-3G, def2-SVP and def2-TZVP, and the urea controls.
+Each directory has its `stdin` and `stdout` and the per-lambda `urea,lambda=*.ffn` files. The
+wavefunctions at each lambda were not archived; a deformation density at a chosen lambda needs
+a single-lambda rerun with a plot block, which is quick.
+
+## 5. Log
 
 - 2026-10-07. Reproduced on the Mac release build. Found damping dead (water, two damping
   factors, identical tables; then markers in `MOLECULE.BASE:make_SCF_density_mx` showing the
@@ -158,6 +166,7 @@ Also left:
   points at 0.14 and 0.16 and was wrong; the scan results are in the report. A scan started
   at lambda 4 straight from the lambda 0.012 density diverged: the step is a linearisation,
   and lambda has to be stepped up.
+- 2026-10-09. The def2-TZVP urea scan, 0 to 1 in steps of 0.05, launched in the runs folder.
 - 2026-10-09. Urea with def2-SVP, 80 basis functions, GoF 4.43 before fitting, largest gain
   1730: every lambda from 0 to 0.8 converges with the correction alone, 5 to 12 iterations,
   GoF down to 1.56, p_eff 63 of 817, every criterion still falling. At 0.9 it fails as the

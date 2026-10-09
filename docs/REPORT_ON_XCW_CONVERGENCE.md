@@ -897,6 +897,20 @@ here, and the terms the model Hessian leaves out grow with them. What would stop
 wandering is a line search on $`E + \lambda\,\mathrm{GoF}^2`$ along the corrected step, which
 no step of the present iteration checks.
 
+**Cost of the explicit route, measured.** On one core of the Mac, one SCF iteration with the
+correction costs 0.4 s for ammonia, 80 basis functions and 88 reflections, and 5 s for urea in
+def2-SVP, 80 basis functions and 817 reflections; a lambda takes 5 to 12 iterations, so the
+urea scan from 0 to 0.06 in 13 steps took 340 s and the chained scan from 0.5 to 1 with its
+231 iterations 1214 s. The parts that grow with the problem, per iteration: the pass over the
+shell pairs that makes the derivatives, which costs what a structure factor evaluation costs;
+the transformation of the derivatives to the occupied-virtual block, reflections times basis
+size squared times virtuals; the gain matrix, reflections squared times occupied-virtual
+pairs; its eigenproblem, reflections cubed; one extra constraint build; and the ordinary Fock
+build, basis size to the fourth. From def2-SVP to def2-TZVP on urea, about 190 functions, the
+transformation grows some fifteen times and the Fock build some thirty, while the eigenproblem,
+which is a third of a second, does not change, so an iteration should take of the order of a
+minute and a scan of twenty lambdas a few hours.
+
 The level shift enters the gaps $`\Delta_{ia}`$ while it is applied, since it is added to the
 virtual orbital energies before the diagonalisation: the correction uses the shifted gaps,
 because that is the operator it corrects, and the statistics at convergence use the physical
