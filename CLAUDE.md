@@ -252,8 +252,8 @@ together: `release` (default; `-O3`, no tuning, system BLAS), `fast` (`-Ofast`, 
 required), `reference` (`-O3 -fno-fast-math`, no tuning, netlib required — what CI builds and what
 references are blessed with), `debug`, and `release-static`. `release` and `reference` compile
 identical code; they differ only in the BLAS. CMake's own `CMAKE_Fortran_FLAGS_<CONFIG>` is cleared,
-so the named flags are the real ones. Table in `docs/BUILDING_ON_LINUX.md`; plan in
-`docs/TASK_BUILD_INTENTS.md`.
+so the named flags are the real ones. Table in `docs/BUILDING_ON_LINUX.md`; the findings
+behind it are in `TASKS_AND_HISTORY.md`, *CLOSED 2026-10-10: reproducible builds*.
 
 MPI is added to any build type (`-DCMAKE_Fortran_COMPILER=mpifort -DMPI=1`). **The MPI must be built with the same Fortran compiler** — Tonto does `USE mpi` and
 `.mod` files are compiler-version specific; configure checks this and stops. `-DMPI=1` is a hard
