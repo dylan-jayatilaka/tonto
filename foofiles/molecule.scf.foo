@@ -2633,7 +2633,6 @@ contains
    ENSURE(.SCF_data.spinorbital_genre=="r","only for restricted wavefunctions")
    ENSURE(.crystal.allocated, "no crystal info")
    ENSURE(.crystal.xray_data.allocated, "no reflection data")
-   ENSURE(NOT .crystal.uses_Hirshfeld_atoms, "only for two-centre partition models")
    ENSURE(.MOs.allocated, "no molecular orbitals")
    ENSURE(.MO_energies.allocated, "no orbital energies")
 
@@ -2648,7 +2647,7 @@ contains
       i,j,k,ia,n_k,n_refl,n_par,n_occ,n_vir :: INT
       sh :: SHELL2
 
-      if (.SCF_data.use_matrix_free_stiffness) then
+      if (.stiffness_is_matrix_free) then
          .make_constraint_stiffness_estimates
          return
       end
@@ -2821,6 +2820,60 @@ contains
 
    end
 
+   stiffness_is_matrix_free result (res) :: private, pure
+   ! TRUE if the stiffness is to be made without the derivative array:
+   ! when asked for, and always for the Hirshfeld-atom partition models,
+   ! which have no explicit derivative route.
+      self :: IN
+      res :: BIN
+
+      res = .SCF_data.use_matrix_free_stiffness
+      if (.crystal.allocated) res = res OR .crystal.uses_Hirshfeld_atoms
+
+   end
+
+   make_Hirshfeld_FFs_of(ff,dens) :: private, leaky
+   ! Return "ff", the static Hirshfeld atom form factors of the density
+   ! described by the AO matrix "dens", which need not be the SCF
+   ! density, for the symmetry related k points and every unique
+   ! fragment atom; for partition_model= oc-ri from the fit. The same
+   ! loop as make_Hirshfeld_atom_FFs, without rebuilding the density.
+      self :: INOUT
+      ff   :: MAT{CPX}@, OUT
+      dens :: MAT{REAL}, IN
+
+      rho :: VEC{REAL}@
+      pt,k_pts :: MAT{REAL}@
+      s2 :: REAL
+      n_atom,n_k,u,c :: INT
+
+      n_atom = .crystal.asymmetric_unit_atom.dim
+      n_k    = .crystal.n_unique_SF_k_pts
+      ff.create(n_k,n_atom)
+      ff = ZERO
+      k_pts.create(n_k,3)
+      .crystal.make_unique_X_SF_k_pts(k_pts)
+
+      parallel do u = 1,.crystal.n_unique_frag_atoms
+         c  = .crystal.unique_frag_atom(u)
+         s2 = .crystal.frag_atom_sym_factor(c)
+         if (s2.is_zero) cycle
+         s2 = ONE/s2
+         .make_Hirshfeld_atom_ED_grid(rho,pt,c,dens)
+         .make_atom_FFs_on_grid(ff(:,u),k_pts,pt,rho,c)
+         ff(:,u) = ff(:,u) * s2 * .atom(c).site_occupancy
+         rho.destroy
+         pt.destroy
+      end
+
+      if (WORK_IS_SHARED) then
+         PARALLEL_SUM(ff)
+      end
+
+      k_pts.destroy
+
+   end
+
    make_B_times(v,res) :: private, leaky
    ! Return "res" = B v for an occupied-virtual vector "v" (virtual index
    ! outer, occupied inner), with the B of make_constraint_stiffness, but
@@ -2834,7 +2887,8 @@ contains
       res :: VEC{REAL}, OUT
 
       k_pts,vmat,half,pmat :: MAT{REAL}@
-      sf_eq,FP,Fc :: VEC{CPX}@
+      ff :: MAT{CPX}@
+      sf_eq,FP,F0,Fc :: VEC{CPX}@
       Fm,Fsig,alpha,d_alpha,wt,u :: VEC{REAL}@
       i,j,ia,n_k,n_refl,n_occ,n_vir :: INT
 
@@ -2860,15 +2914,35 @@ contains
       half.destroy
       vmat.destroy
 
-      ! Its structure factors
-      k_pts.create(n_k,3)
-      .crystal.make_unique_X_SF_k_pts(k_pts)
-      sf_eq.create(n_k)
-      .make_FT(sf_eq,pmat,k_pts)
+      ! Its structure factors: through the Hirshfeld atoms, less the
+      ! part that does not depend on the density (dispersion), or by
+      ! the two-centre transform
       FP.create(n_refl)
-      .crystal.spacegroup.sum_unique_sf(FP,sf_eq,.crystal.xray_data.reflections)
-      sf_eq.destroy
-      k_pts.destroy
+      if (.crystal.uses_Hirshfeld_atoms) then
+         ! CRYSTAL:make_F_calc also stores what it makes as F_calc, so the
+         ! F_calc of the SCF density is kept and put back
+         Fc = .crystal.xray_data.reflections.F_calc
+         .make_Hirshfeld_FFs_of(ff,pmat)
+         .crystal.make_F_calc(FP,ff)
+         if (.crystal.xray_data.INQ:correct_dispersion) then
+            F0.create(n_refl)
+            ff = ZERO
+            .crystal.make_F_calc(F0,ff)
+            FP = FP - F0
+            F0.destroy
+         end
+         .crystal.xray_data.reflections.set_F_calc(Fc)
+         Fc.destroy
+         ff.destroy
+      else
+         k_pts.create(n_k,3)
+         .crystal.make_unique_X_SF_k_pts(k_pts)
+         sf_eq.create(n_k)
+         .make_FT(sf_eq,pmat,k_pts)
+         .crystal.spacegroup.sum_unique_sf(FP,sf_eq,.crystal.xray_data.reflections)
+         sf_eq.destroy
+         k_pts.destroy
+      end
       pmat.destroy
 
       ! Projected on the phase of F_calc, weighted, scale direction removed
@@ -2940,7 +3014,9 @@ contains
 
       ! The constraint matrix and its scaled occupied-virtual block
       C.create(.n_bf,.n_bf)
-      .make_r_constraint(C,resid=resid)
+      if (.crystal.uses_Hirshfeld_atoms) then; .make_H_r_constraint(C,resid=resid)
+      else;                                    .make_r_constraint(C,resid=resid)
+      end
       half.create(.n_bf,n_vir)
       g_ov.create(n_occ,n_vir)
       half.to_product_of(C,.MOs.r(:,n_occ+1:.n_bf))
@@ -3494,7 +3570,7 @@ contains
       stdout.show("GCV, N chi^2/(N-p_eff)^2         =",.SCF_data.GCV,precision=6)
       stdout.show("Leave-one-out sum of squares     =",.SCF_data.LOO_sum,precision=3)
       stdout.flush
-      if (.SCF_data.use_matrix_free_stiffness) then
+      if (.stiffness_is_matrix_free) then
       stdout.text("Matrix-free: p_eff and the leverages are estimates from")
       stdout.show("sign vectors, number            =",.SCF_data.stiffness_samples)
       stdout.flush
@@ -3647,7 +3723,7 @@ contains
       ! The gain matrix and B at the current orbitals, unless matrix-free.
       ! The statistics made with them belong to this iterate, not to a
       ! converged one, so they are not left for the footer to print.
-      if (NOT .SCF_data.use_matrix_free_stiffness) then
+      if (NOT .stiffness_is_matrix_free) then
          .make_constraint_stiffness
          .SCF_data.stiffness_made = FALSE
       end
@@ -3674,7 +3750,7 @@ contains
 
       ! The move of the residuals a plain step would make
       dr.create(n_refl)
-      if (.SCF_data.use_matrix_free_stiffness) then
+      if (.stiffness_is_matrix_free) then
          .make_B_times(gt,dr)
       else
          dr.to_product_of(.SCF_data.stiffness_B,gt)
@@ -3687,7 +3763,7 @@ contains
       ! eigenbasis of G
       y.create(n_refl)
       p.create(n_refl)
-      if (.SCF_data.use_matrix_free_stiffness) then
+      if (.stiffness_is_matrix_free) then
          if (.SCF_data.stiffness_preconditioner=="diagonal" &
              AND .SCF_data.stiffness_precond_lambda_iteration/=.SCF_data.lambda_iteration) then
             .make_stiffness_preconditioner
@@ -3830,11 +3906,14 @@ contains
 
    end
 
-   make_H_r_constraint(constraint)
+   make_H_r_constraint(constraint,resid)
    ! Make the "constraint" matrix for restricted X-ray wavefunction
-   ! fitting ...using Hirshfeld atoms to do thermal smearing
+   ! fitting ...using Hirshfeld atoms to do thermal smearing. If "resid"
+   ! is present it is used as the standardised residuals
+   ! (F_pred - F_exp)/sigma in place of those of the current density.
       self :: INOUT
       constraint :: MAT{REAL}, target
+      resid :: VEC{REAL}, optional, IN
 
    ENSURE(.has_Hirshfeld_inputs,"no becke_grid/ANOs! make_HA_info?")
    ENSURE(.density_mx.allocated,"no density matrix")
@@ -3900,7 +3979,11 @@ contains
 
       ! See the note in .make_r_constraint: "alpha" makes F_pred, "d_alpha"
       ! differentiates it, and they differ only when extinction is on.
-      fac_times_alpha = fac * d_alpha * (alpha * Fm - Fexp) / (Fsig * Fsig * Fm)
+      if (present(resid)) then
+         fac_times_alpha = fac * d_alpha * resid / (Fsig * Fm)
+      else
+         fac_times_alpha = fac * d_alpha * (alpha * Fm - Fexp) / (Fsig * Fsig * Fm)
+      end
 
       Fm.destroy
       Fsig.destroy
