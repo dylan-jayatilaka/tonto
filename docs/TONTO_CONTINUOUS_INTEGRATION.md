@@ -3,7 +3,8 @@
 GitHub builds and tests Tonto automatically. Each set of checks is a *workflow*, described
 by a file in `.github/workflows/`. GitHub runs them free of charge because the repository is
 public. Some take over an hour, so only the quick ones run every time a change is pushed; the
-rest run weekly or monthly.
+rest run weekly or monthly. Every workflow builds with gfortran-14, the project's compiler; a
+move to a newer compiler is made on every platform at once.
 
 ## What runs
 
@@ -12,18 +13,22 @@ rest run weekly or monthly.
 | Linux-release | `ci.yml` | yes | every push to `master` or `develop` |
 | Linux-debug | `ci-debug.yml` | yes | every push to `master` or `develop` |
 | Linux-MPI | `ci-mpi.yml` | yes | Mondays, on request, and when MPI code changes |
+| Linux-MPI-debug | `ci-mpi-debug.yml` | yes | Tuesdays, on request |
 | WSL-release | `ci-wsl.yml` | yes | a one-minute check every push; the full Windows build on Mondays, on request, and when the WSL build files change |
 | WSL-debug | `ci-wsl-debug.yml` | yes | Tuesdays, on request |
-| WSL-MPI | `ci-wsl-mpi.yml` | no | Fridays, on request |
-| macOS-release | `ci-macos.yml` | yes | Tuesdays, on request; with gfortran-14 and gfortran-16 |
+| WSL-MPI | `ci-wsl-mpi.yml` | yes | Fridays, on request |
+| WSL-MPI-debug | `ci-wsl-mpi-debug.yml` | yes | Saturdays, on request |
+| macOS-release | `ci-macos.yml` | yes | Tuesdays, on request |
 | macOS-debug | `ci-macos-debug.yml` | yes | Thursdays, on request |
-| macOS-MPI | `ci-macos-mpi.yml` | yes | Wednesdays, on request; gfortran-16 with Homebrew's Open MPI |
+| macOS-MPI | `ci-macos-mpi.yml` | yes | Wednesdays, on request |
+| macOS-MPI-debug | `ci-macos-mpi-debug.yml` | yes | Thursdays, on request |
 | Full suite | `ci-full-suite.yml`, `ci-full-suite-macos.yml` | no | on the 1st and 2nd of each month, on request |
 | RGBI tools | `ci-rgbi.yml`, `ci-rgbi-macos.yml` | no | weekly, and when `rgbi-scripts/` changes |
 | Release | `release.yml` | — | when a version tag `v*` is pushed: builds the Linux and Windows downloads |
 
-The badges on the README show the latest result on `master`. No platform yet tests a
-parallel *debug* build.
+The badges on the README show the latest result on `master`. The three parallel workflows on
+each platform share their steps: `mpi-linux.yml`, `mpi-wsl.yml` and `mpi-macos.yml`, each
+called with the build type, `reference` or `debug`.
 
 ## What each one checks
 
@@ -43,10 +48,15 @@ parallel *debug* build.
 - **Debug workflows** build the debug version and run two quick jobs, to show that it builds
   and runs. They do not run the test suite, because the debug build has some known failures
   (listed in `TASKS_AND_HISTORY.md`).
-- **MPI workflows** pass if π comes out the same on 1, 2 and 4 processes
-  (`scripts/check_mpi_pi.sh`). They run the test suite too, but only for information: the
-  parallel build still has known faults (`docs/TASK_MPI.md`). Read the π line, not the
-  suite total.
+- **MPI workflows** build Open MPI with gfortran-14, because the MPI must be built with the
+  same compiler as Tonto, and keep it for later runs. They pass if π comes out the same on 1,
+  2 and 4 processes (`scripts/check_mpi_pi.sh`). They run the `short` tests too, but only for
+  information: the parallel build still has known faults (`docs/TASK_MPI.md`). Read the π
+  line, not the suite total.
+- **Parallel debug workflows** build the debug version against the same Open MPI, so array
+  bounds checks and Tonto's internal checks run inside the parallel code. They pass if π
+  comes out the same on 1, 2 and 4 processes and two quick jobs run on 2 processes and agree
+  with their references.
 - **The full suite** runs the `short`, `long` and `hart` tests. It is the only workflow that
   runs `long`.
 
@@ -77,9 +87,10 @@ Each run shows its table of test results on the run's **Summary** page. The full
 
 ## Changing a workflow
 
-- **The compiler for Linux-MPI** is set by `FC_VERSION` in `ci-mpi.yml`. The MPI library must be
-  built with the same compiler as Tonto, so the Linux workflow builds Open MPI itself and keeps
-  it for later runs; changing `FC_VERSION` makes it rebuild. macOS can use Homebrew's Open MPI.
+- **The compiler** is `FC_VERSION` in the Linux and WSL workflow files, `gcc` in the macOS
+  ones, and `FC_VERSION` in the three shared MPI files. Change it everywhere at once. The
+  Open MPI each MPI workflow keeps is labelled with the compiler, so a change makes it
+  rebuild.
 - **Weekly runs stop** if the repository has no activity for 60 days. Turn them back on in the
   Actions tab.
 - **To switch off a workflow that has a badge,** comment out its `push` and `pull_request`

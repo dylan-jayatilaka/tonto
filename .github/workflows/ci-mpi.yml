@@ -1,36 +1,13 @@
 name: Linux-MPI
 
-# First CI coverage of the MPI build. Before milestone 4 (2026-08-01) no MPI build
-# had ever been configured -- not in CI, not in install-all.sh, not in any local
-# build tree -- and eight reductions were silently returning wrong answers because
-# nothing executed them. See docs/TASK_MPI.md.
+# The parallel build on Linux, built `reference` with gfortran-14 against an
+# Open MPI built with the same compiler. Passes or fails on the pi check; the
+# short suite under MPI is shown but does not decide. The steps are in
+# mpi-linux.yml, shared with ci-mpi-debug.yml.
 #
-# WHY THIS IS NOT ON EVERY PUSH. Tonto does `USE mpi`, and Fortran .mod files are
-# compiler-version specific, so the MPI must be built by the SAME compiler as Tonto.
-# Ubuntu's packaged Open MPI is built against the distro default (gcc-13 on 24.04)
-# and therefore cannot be used at all (configure stops with a clear message rather
-# than failing deep in the build). So this workflow builds Open MPI from source,
-# which is why it is cached and why it runs on a schedule / on demand / on
-# MPI-relevant changes rather than every push. Same pattern as ci-wsl.yml's
-# expensive wsl-build job.
-#
-# WHICH COMPILER. gfortran-16 since 2026-08-26; gfortran-14 before that. The
-# compiler is a parameter, not an inherited constraint -- FC_VERSION below is the
-# single place it is set, and the cache key carries it, so a switch invalidates the
-# cache correctly on its own. TASKS_AND_HISTORY.md records gfortran-16 RELEASE as
-# numerically free on both platforms; that verdict does NOT extend to debug, where
-# 16 segfaults in -fcheck=bounds (docs/TASK_GFORTRAN16_PORT.md). This job builds
-# release only, so it sits in the verified column. The pi gate below is what proves
-# the switch.
-#
-# WHICH 16, EXACTLY. Ubuntu 24.04 stops at gcc-14, so 16 comes from
-# ppa:ubuntu-toolchain-r/test, whose newest noble build is the snapshot
-# 16-20260315-1ubuntu1~24~ppa1 -- i.e. "16.0.1 20260315 (experimental) [trunk
-# r16-8100]". That is the SAME compiler already characterised on achari2 (see
-# docs/TASK_GFORTRAN16_GCC_BUG.md), so this switch runs on a measured compiler, not an
-# unknown one. It is NOT the macOS compiler: ci-macos-mpi.yml gets GCC 16.1.0 from
-# Homebrew. Both are 16; they are not the same 16, so do not read a Linux/macOS
-# numeric difference as a platform difference without checking the point version.
+# Not on every push: the Open MPI build is cached but the job is still long, so
+# it runs weekly, by hand, and when MPI-relevant files change.
+
 on:
   workflow_dispatch:          # the button: Actions -> CI (Linux-MPI) -> Run workflow
   schedule:
@@ -77,6 +54,7 @@ on:
       - 'scripts/test.py'
       - 'scripts/suite_report.py'
       - '.github/workflows/ci-mpi.yml'
+      - '.github/workflows/mpi-linux.yml'
       #
       # NOTE: this list is a heuristic and cannot be complete -- what actually
       # matters is whether a change touches a PARALLEL_* macro, a per_rank_write
@@ -84,200 +62,8 @@ on:
       # schedule and the manual dispatch are the backstop. The translator lint
       # proposed in milestone 6 would be the real answer.
 
-env:
-  OMPI_VERSION: 5.0.9
-  OMPI_PREFIX: /home/runner/opt/openmpi-gf16
-  FC_VERSION: 16
-  # Bump when the Open MPI build recipe changes (configure flags, patches) without
-  # OMPI_VERSION or FC_VERSION moving. The cache key covers WHAT we build; this
-  # covers HOW. Without it a bad tree can be restored forever under a key that
-  # still looks correct.
-  OMPI_BUILD_REV: 2
-
 jobs:
   mpi:
-    runs-on: ubuntu-24.04     # pinned, not -latest: the reference platform must not move on its own
-    timeout-minutes: 90
-
-    steps:
-      - name: Check out (with submodules)
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      # Ubuntu 24.04's own repositories top out at gcc-14, so gfortran-16 comes
-      # from the toolchain PPA. Assert it landed: if the PPA ever stops carrying 16
-      # for the runner's release, this step must fail HERE with a message. Falling
-      # through would leave gfortran-14 in place and build a 14 MPI labelled 16 --
-      # the silent-wrong-answer class this project keeps finding the hard way.
-      - name: Install toolchain (gfortran-${{ env.FC_VERSION }})
-        run: |
-          set -euo pipefail
-          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            gfortran-${FC_VERSION} gcc-${FC_VERSION} g++-${FC_VERSION} \
-            libblas-dev liblapack-dev default-jdk python3 python3-numpy perl gnuplot make cmake
-          command -v gfortran-${FC_VERSION} > /dev/null || {
-            echo "::error::gfortran-${FC_VERSION} did not install -- ppa:ubuntu-toolchain-r/test may not carry it for $(lsb_release -cs). Do NOT fall back to 14 silently; fix the source or change FC_VERSION deliberately."
-            exit 1
-          }
-          gfortran-${FC_VERSION} --version | head -1
-
-      # Keyed on (Open MPI version, gfortran version) because THAT PAIR is exactly
-      # what the .mod compatibility depends on. A cold cache costs ~8-10 min; a warm
-      # one, seconds.
-      - name: Cache Open MPI (built with gfortran-${{ env.FC_VERSION }})
-        id: ompi-cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.OMPI_PREFIX }}
-          key: ompi-${{ env.OMPI_VERSION }}-gfortran${{ env.FC_VERSION }}-r${{ env.OMPI_BUILD_REV }}-${{ runner.os }}
-
-      - name: Build Open MPI with gfortran-${{ env.FC_VERSION }}
-        if: steps.ompi-cache.outputs.cache-hit != 'true'
-        run: |
-          set -euo pipefail
-          curl -fsSL -O https://download.open-mpi.org/release/open-mpi/v5.0/openmpi-${OMPI_VERSION}.tar.bz2
-          tar xf openmpi-${OMPI_VERSION}.tar.bz2
-          cd openmpi-${OMPI_VERSION}
-          # Open MPI 5.0.x does not compile with gcc-16:
-          #   part_persist.h:484: error: inlining failed in call to 'always_inline'
-          #   'mca_part_persist_start': --param max-inline-insns-single limit reached
-          # The function is __opal_attribute_always_inline__ while inlining into
-          # itself, and 16 reaches the size limit where 14 did not. Upstream fixed it
-          # by dropping the attribute -- aa024ac73, "fixes #13721" -- but that is NOT
-          # in 5.0.10; only 5.0.11rc1 and main have it, and an rc has no place in CI.
-          # So apply upstream's own one-line patch to the stable release. It changes
-          # `always_inline static inline` to plain `static inline`: the compiler may
-          # still inline it, nothing about the semantics changes.
-          #
-          # NOT --enable-mca-no-build=part-persist, which was tried and is WRONG:
-          # `persist` is the only component in the `part` framework in 5.0.x, so
-          # excluding it leaves the framework empty and every MPI_Init aborts with
-          # "No components were able to be opened in the part framework".
-          #
-          # DELETE THIS PATCH when OMPI_VERSION reaches 5.0.11 -- the assertion below
-          # will fail and tell you to.
-          pp=ompi/mca/part/persist/part_persist.h
-          before=$(grep -c '__opal_attribute_always_inline__' "$pp")
-          perl -0pi -e 's/__opal_attribute_always_inline__ (static inline int\nmca_part_persist_start\()/$1/' "$pp"
-          after=$(grep -c '__opal_attribute_always_inline__' "$pp")
-          if [ "$after" -ne "$((before - 1))" ]; then
-            echo "::error::the part_persist always_inline patch did not apply (attributes before=$before after=$after). If OMPI_VERSION is now >= 5.0.11 the fix is upstream and this whole patch block should be deleted; otherwise the header changed shape."
-            exit 1
-          fi
-          echo "applied upstream aa024ac73 to $pp ($before -> $after always_inline attributes)"
-          ./configure --prefix="$OMPI_PREFIX" \
-                      FC=gfortran-${FC_VERSION} F77=gfortran-${FC_VERSION} \
-                      CC=gcc-${FC_VERSION} CXX=g++-${FC_VERSION} \
-                      --disable-mpi-cxx > configure.log 2>&1 || { tail -30 configure.log; exit 1; }
-          make -j"$(nproc)" > make.log 2>&1 || { tail -30 make.log; exit 1; }
-          make install > install.log 2>&1
-
-      # ARTEFACT check, not a process check. Every verification in this workflow
-      # asserts on something on disk, because a whole day of milestone-4 debugging
-      # was lost to checks that could not see what they were checking (a stale
-      # binary reported as fresh, a pgrep matching its own shell).
-      - name: Verify the MPI toolchain matches the compiler
-        run: |
-          set -euo pipefail
-          "$OMPI_PREFIX/bin/mpifort" --version | head -1
-          # Compare the version we got against the version we asked for, rather
-          # than grepping a literal -- the two can only drift apart in one place.
-          # -dumpfullversion, NOT the tail of --version: the PPA compiler is a trunk
-          # snapshot whose --version line ends in "[trunk r16-8100-g3aca3bae8ee]",
-          # so parsing the last field yields a git hash. A release build ends in the
-          # version and would have hidden this.
-          mpi_fc_ver=$("$OMPI_PREFIX/bin/mpifort" -dumpfullversion)
-          case "$mpi_fc_ver" in
-            ${FC_VERSION}.*) echo "mpifort wraps GNU Fortran $mpi_fc_ver" ;;
-            *) echo "::error::mpifort wraps $mpi_fc_ver, not gfortran-${FC_VERSION} -- a stale cache under a reused key, or the PPA moved"
-               exit 1 ;;
-          esac
-          printf 'program t\n  use mpi\n  implicit none\n  integer :: e\n  call MPI_Init(e)\n  call MPI_Finalize(e)\nend program t\n' > t.f90
-          "$OMPI_PREFIX/bin/mpifort" t.f90 -o t
-          "$OMPI_PREFIX/bin/mpirun" -n 2 --oversubscribe ./t
-          echo "use mpi compiles and runs under the matching launcher"
-
-      - name: Configure and build (MPI)
-        run: |
-          set -euo pipefail
-          cmake -B build-mpi \
-                -DCMAKE_Fortran_COMPILER="$OMPI_PREFIX/bin/mpifort" \
-                -DCMAKE_C_COMPILER="$OMPI_PREFIX/bin/mpicc" \
-                -DMPI=1 -DCMAKE_BUILD_TYPE=reference
-          cmake --build build-mpi -- -j2
-
-      # -DMPI=1 used to be able to produce a SERIAL binary silently (FindMPI miss was
-      # only a STATUS line). It is fatal now, but assert the artefact anyway.
-      - name: Assert the binary really is MPI-linked
-        run: |
-          set -euo pipefail
-          test -x build-mpi/tonto
-          ldd build-mpi/tonto | grep -q "libmpi" \
-            || { echo "::error::build-mpi/tonto is not linked against libmpi"; exit 1; }
-          ldd build-mpi/tonto | grep libmpi | head -3
-          grep -q "DMPI=1" build-mpi/CMakeFiles/tonto_lib.dir/flags.make \
-            || echo "::warning::-DMPI=1 not found in flags.make (check the build, and that the library target is still tonto_lib)"
-
-      # THE GATE. Rank-count invariance of pi: one `parallel do`, one PARALLEL_SUM --
-      # the whole macro surface every parallel routine depends on, against an answer
-      # known in advance that must not change with the rank count. Needs no stored
-      # reference, so unlike the suite it cannot be silently blessed. The four dead
-      # reductions found in milestone 4 would all have failed it.
-      - name: MPI invariant — pi is rank-count independent (GATING)
-        run: |
-          set -euo pipefail
-          sh scripts/check_mpi_pi.sh build-mpi/run_mpi_pi \
-             "$OMPI_PREFIX/bin/mpirun" 1 2 4 | tee mpi_pi.log
-
-      # INFORMATIONAL until the register in docs/TASK_MPI.md is clear. Three known rows
-      # remain (HAR parallel_write writing the same file from every rank, the
-      # SYSTEM:initialize broadcast-in-a-master-guard deadlock, the commented-out
-      # MPI_ABORT), so a gating suite would be permanently red -- the same reasoning
-      # ci-debug.yml uses for the four longstanding -O0 failures.
-      # -n 2, not 4: the runner has 4 vCPUs and the launcher would oversubscribe.
-      - name: numpy must import -- a declared test dependency (the Lebedev grid check)
-        run: python3 -c 'import numpy; print("numpy", numpy.__version__)'
-
-      - name: Short suite under MPI at 2 ranks (informational)
-        continue-on-error: true
-        run: |
-          set -o pipefail
-          {
-            echo '## MPI short suite — 2 ranks (informational)'
-            echo ''
-            echo 'Gate for this workflow is the pi rank-invariance check, not this table.'
-            echo 'See docs/TASK_MPI.md for the defect register and what is still open.'
-            echo ''
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          # NO `| tail -30`. It kept the log tidy and cost the run its evidence: only
-          # the last 10 of 55 test rows reached the log, the full table existed only
-          # in the step summary, and the summary is not reachable through the API.
-          # So "which tests changed between these two runs?" -- the first question
-          # asked after the gfortran-16 switch -- could not be answered from the logs
-          # of either run. 55 rows is nothing; keep them.
-          # --failure-dir: on 2026-08-26 eleven tests ERRORed here and the cause was
-          # recorded NOWHERE -- an ERROR row prints "ERROR ERROR ERROR - -", a
-          # crashed job writes no .bad, and suite_report.py captured the streams
-          # only to discard them. The failure then had to be attributed by test
-          # NAME, which is guessing. Never again: one log per ERROR, uploaded.
-          python3 -u scripts/suite_report.py \
-            --build-dir build-mpi --tests-dir tests --basis-sets basis_sets \
-            --suites short --no-log --failure-dir mpi-test-failures \
-            --mpi --mpi-ranks 2 --mpi-launcher "$OMPI_PREFIX/bin/mpirun" \
-            2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload logs and any .bad outputs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: mpi-diagnostics
-          path: |
-            mpi_pi.log
-            tests/**/*.bad
-            mpi-test-failures/**
-          if-no-files-found: warn
+    uses: ./.github/workflows/mpi-linux.yml
+    with:
+      build_type: reference
