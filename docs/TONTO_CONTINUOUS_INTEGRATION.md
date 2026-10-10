@@ -27,15 +27,18 @@ parallel *debug* build.
 
 ## What each one checks
 
-- **Release workflows** build Tonto with the same compiler settings used to make the stored
-  reference outputs (`-DCMAKE_BUILD_TYPE=reference`). So when a test fails, Tonto's results
-  have changed; it is not because the compiler settings differ. They run the `short` tests,
+- **Release workflows** build Tonto as the stored reference outputs were made:
+  `-DCMAKE_BUILD_TYPE=reference`, which uses the netlib BLAS and LAPACK and no processor
+  tuning (the macOS workflows install Homebrew's `lapack` for it). So when a test fails,
+  Tonto's results have changed; it is not because the build differs. They run the `short` tests,
   and the `hart` tests except under WSL. A test passes if every number in its output agrees
   with the reference to within 0.2%, or to within 2 in the last printed digit.
-- **Release workflows also run self-consistency checks**, which need no stored reference: a
-  spherical and a cartesian basis must give the same answer where they should, `hart --help`
-  must list exactly the options `hart` accepts, and each Lebedev grid must integrate exactly to
-  its stated order. On a Mac, `ci-macos.yml` also checks that `shell1quartet.F90` is still
+- **Release workflows also run the self-checks**: every test labelled `selfcheck` in
+  `tests/CMakeLists.txt`. Each passes or fails on its own, against a known answer or a rule,
+  with no stored output. For example, a spherical and a cartesian basis must give the same
+  energy where they should, `hart --help` must list exactly the options `hart` accepts, each
+  Lebedev grid must integrate exactly to its stated order, and the user-facing pages must
+  follow the documentation rules. On a Mac, `ci-macos.yml` also checks that `shell1quartet.F90` is still
   compiled at `-O2`, which Apple silicon needs.
 - **Debug workflows** build the debug version and run two quick jobs, to show that it builds
   and runs. They do not run the test suite, because the debug build has some known failures
@@ -48,8 +51,11 @@ parallel *debug* build.
   runs `long`.
 
 A test that does not run at all — for example because `numpy` is missing — counts as a
-failure. The workflows run the tests with `scripts/suite_report.py`, not `ctest`, so a check
-added only to `tests/CMakeLists.txt` is not tested on GitHub.
+failure. The workflows run the tests with `scripts/suite_report.py`: the test directories,
+then every self-check. To add a check to the workflows, register it in `tests/CMakeLists.txt`
+with the label `selfcheck` and `SKIP_RETURN_CODE 77`. Two checks are not labelled, because
+they need a particular machine and their own workflows run them: the MPI π check and the
+RGBI doctor's self-test.
 
 ## Running a workflow by hand
 

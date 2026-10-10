@@ -89,7 +89,7 @@ machine. `docs/TONTO_BLESSING_TESTS.md` says what to do when a test fails anyway
 and how to bless a reference yourself.
 
 
-## Other build types
+## Build types
 
 The build type says what the build is for. It sets the optimisation, the
 processor tuning and the BLAS library together, so it is the one choice to make.

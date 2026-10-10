@@ -107,7 +107,7 @@ setting is made. There is nothing to do; it is mentioned so the unusual setting 
 build log is not a mystery.
 
 
-## Other build types
+## Build types
 
 The build type says what the build is for. It sets the optimisation, the
 processor tuning and the BLAS library together, so it is the one choice to make.

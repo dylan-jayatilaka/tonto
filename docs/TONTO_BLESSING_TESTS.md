@@ -13,6 +13,7 @@ Two different questions:
 ```bash
 export CTEST_OUTPUT_ON_FAILURE=1   # so a failure says why, not just that it failed
 ctest -L short                     # about a minute
+ctest -L selfcheck                 # the checks that need no stored output
 ctest                              # everything
 make report                        # every test, pass or fail, tabulated into tests.log
 ```

@@ -197,7 +197,7 @@ CMake Error at CMakeLists.txt:16 (project):
 Most Ubuntu installations already have `gcc`; a fresh WSL Ubuntu does not.
 `scripts/wsl_doctor.sh` checks for it.
 
-## Other build types
+## Build types
 
 The presets cover `release`. The build type says what the build is for. It sets the optimisation, the
 processor tuning and the BLAS library together, so it is the one choice to make.

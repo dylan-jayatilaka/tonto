@@ -11,7 +11,7 @@ Everything lives in this repository, versioned with the code it describes.
 | [**Windows**](BUILDING_ON_WINDOWS.md) | via WSL2, and the four traps it adds |
 | [**With MPI**](BUILDING_WITH_MPI.md) | a parallel build on any platform: the matching MPI, the build, the checks, running |
 
-Each page is self-contained: prerequisites, build, tests, other build types and
+Each page is self-contained: prerequisites, build, tests, the build types and
 parallel (MPI) builds for that platform.
 
 ## Running the programs
