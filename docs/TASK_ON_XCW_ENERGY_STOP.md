@@ -134,7 +134,12 @@ The ammonia scans already start from an embedded wavefunction (`use_SC_cluster_c
    against the embedded-minus-free density. If they look alike, the rule is picking out the
    crystal's effect. If not, the fit at that lambda is already absorbing something else.
 6. **Ammonia** with a free lambda = 0 reference, so it can join the table.
-7. **If it holds**: a `lambda_criterion= deformation_energy` with the target as input or
+7. **Literature check.** The identity is textbook (Stone 2013, eq. 2.3.22; the Hylleraas
+   functional). Using it as a target for an XCW's energy rise was not found in Jayatilaka 2001,
+   Grimwood 2001, Dos Santos 2014, Ernst 2017 and 2020, the Genoni 2018 review or Krawczuk 2014,
+   but that was a keyword search. Read the Genoni and Macchi crystal-field papers before
+   calling it new.
+8. **If it holds**: a `lambda_criterion= deformation_energy` with the target as input or
    computed, beside the statistical criteria.
 
 ## 5. Where things are

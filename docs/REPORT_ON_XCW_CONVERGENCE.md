@@ -1197,7 +1197,12 @@ the first-order wavefunction is $`\Psi = \Psi_0 - \sum_n \psi_n V_{n0}/(E_n - E_
 
 while the interaction changes by twice the polarisation energy. For a uniform field $`F`$ and
 polarisability $`\alpha`$ this is the familiar $`+\tfrac12\alpha F^2`$ spent on distortion,
-$`-\alpha F^2`$ gained in interaction, $`-\tfrac12\alpha F^2`$ net. So if the fit recovered
+$`-\alpha F^2`$ gained in interaction, $`-\tfrac12\alpha F^2`$ net. It is standard in the
+theory of induction: Stone, *The Theory of Intermolecular Forces*, 2nd ed. (2013), section 2.3,
+equation (2.3.22), where the factor $`\tfrac12`$ in the energy of an arbitrary perturbing
+potential arises because the distortion of the charge density costs energy, which partly
+cancels the gain in interaction. Equation (29) is the first term of the Hylleraas functional
+for the second-order energy. So if the fit recovered
 the wavefunction of the molecule in the crystal, its $`\Delta E`$ would be the deformation
 energy, close to $`-E_{\mathrm{pol}}`$: a target for $`\Delta E`$ that owes nothing to the
 statistics of the data. Two effects outside a point-charge $`V`$ add to it: the compression
