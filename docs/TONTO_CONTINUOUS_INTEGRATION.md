@@ -22,7 +22,7 @@ move to a newer compiler is made on every platform at once.
 | macOS-debug | `ci-macos-debug.yml` | yes | Thursdays, on request |
 | macOS-MPI | `ci-macos-mpi.yml` | yes | Wednesdays, on request |
 | macOS-MPI-debug | `ci-macos-mpi-debug.yml` | yes | Thursdays, on request |
-| Full suite | `ci-full-suite.yml`, `ci-full-suite-macos.yml` | no | on the 1st and 2nd of each month, on request |
+| Full suite | `ci-full-suite.yml`, `ci-full-suite-macos.yml` | yes | on the 1st and 2nd of each month, on request |
 | RGBI tools | `ci-rgbi.yml`, `ci-rgbi-macos.yml` | no | weekly, and when `rgbi-scripts/` changes |
 | Release | `release.yml` | — | when a version tag `v*` is pushed: builds the Linux and Windows downloads |
 
