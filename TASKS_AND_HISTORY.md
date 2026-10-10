@@ -78,6 +78,71 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## 2026-10-10: MPI -- the CIF desync closed; output makes no broadcasts; `PURE` under MPI waits on a decision
+
+Branch `mpi-broadcasts-and-pure`, not pushed. Three register rows were taken together.
+
+**1. Milestone 7, the CIF desync: closed** (`bdd56bce`). `urea_read_and_process_CIF` died on 2
+processes in every run, on every platform. Two separate causes, neither in the file-positioning
+code that had been suspected since August:
+
+- `MOLECULE.CE:put_CX_data` returned at once on every process but the master, and the master then
+  wrote the `.cxc` file through the ordinary output routines: 47 broadcasts nobody else entered.
+  The return is gone.
+- `VEC{ATOM}:read_smCIF_atoms_xtal` tested a flag (`fc`) that is set only when the search for
+  `_atom_site_label` fails. When the label was found, whether the file was then searched for
+  `_atom_site_type_symbol` depended on leftover memory, different on each process: about one run
+  in three died earlier, at the CIF read. Serial runs had the same undefined test and could not
+  show it, because the symbols are ignored when labels were found. The flags are initialised.
+- Found by reading, same fault as the first: `GAUSSIAN_FF_FIT:fit` redirected output inside a
+  master-only block. Rewritten so every process makes the output calls and the master broadcasts
+  whether gnuplot worked.
+
+How: a new build option, `-DTONTO_TRACE_COLLECTIVES=ON`, makes every process log the source file
+and line of each collective it enters to `fort.<900+rank>`; `cmp` of two of those names the first
+call one process made and the other did not. The first cause fell out of one run. The second came
+and went, and vanished when a print was added; it was found by logging every `ENSURE` reached and
+comparing process 1 in a failing run with process 1 in a good one. Method written up in
+`docs/TONTO_DEVELOPER_INFO.md` section 1a, with two new pitfalls (4, 4a).
+
+**2. Output costs two collectives per token: closed** (`6f64975a`). `BUFFER:put_str` no longer
+has a master-only guard or a broadcast: every process fills its own buffer. `TEXTFILE:flush`
+writes on the I/O process alone and every process counts the record. A line read sends its
+status, length and too-long flag as one integer vector and then the text: two broadcasts for
+four. Putting text and flushing can no longer put the processes out of step; opening, closing,
+redirecting and reading still can.
+
+**Checked, on the Mac, gfortran-14.** Serial `release`: `ctest -L 'short|long|hart'` 136 of 136,
+two skipped (`ammonium_borane_pHAR_C23`, `rgbi_doctor_catches_missing_tools`). Parallel debug
+build (`build-mpi-trace14`, Open MPI 5.0.9), 2 processes: `urea_read_and_process_CIF` 40 runs of
+40 after step 1 and 20 of 20 after step 2, with identical traces and an identical `urea.cxc`; its
+collectives fell from 10009 to 5049, all of the remainder in reading; `c9o9h8_read_cif_IT_group_9`,
+`maleate_read_CIF_H_double_bond_new_BLs`, `quartz_read_CIF_put_CIF`, `urea_lamaGOET_grown_CIF`,
+`h2o_rhf_STO-3G`, `h2o_rhf_cc-pVDZ` and `urea_rhf_STO-3G_HAR` exact;
+`urea_rhf_STO-3G_sph-TFVH_FF_fit` passes the loose bound (0.28%, a gnuplot fit).
+
+**Not yet checked:** Linux; `hart` and fragHAR on 2 processes; 4 processes; a parallel `release`
+build; the MPI short suite as a whole.
+
+**3. Let MPI keep `PURE`: not started, a decision is owed.** What was established:
+
+- 59 `PURE` routines contain a `parallel do` or a reduction. 17 of them are the integral kernels
+  `SHELL1QUARTET:make_esfs_*`, each with a `parallel do` over primitive pairs and a
+  `PARALLEL_SUM`. Through their callers about 40 more routine names would lose `PURE` (an upper
+  bound from the call graph, which does not tell overloads apart).
+- Dylan's route, declare the impure calls pure in an interface as `MAT{REAL}:to_product_of_BLAS`
+  does for `dgemm`, was tried on small files with gfortran-14. Declaring `MPI_ALLREDUCE` pure in
+  a local interface compiles, also with two different argument types in one file. The lock is
+  harder: a pure routine may not pass the global `tonto` where it can be changed, and writing
+  through a pointer held in `tonto` is rejected ("cannot appear in a variable definition
+  context"). An external routine declared pure in an interface, which itself uses `tonto`,
+  compiles and is not removed at `-O3`; but Tonto has no hand-written Fortran file to put it in.
+- The reductions would also need `self :: IN` (so `tonto` can be passed from pure code), with
+  `.mpi_error` made a local.
+- An alternative for the 17 kernels: make their loops plain `do`. A reduction per shell quartet
+  can never pay, and with no outer parallel loop every process would compute the whole integral
+  itself, which is still correct.
+
 ## CLOSED 2026-10-10: reproducible builds -- the build types as intents; the `disk_ffs` flake fixed
 
 **Stage 1 of *Reproducible builds* is on `develop`** (`13e2d90f`, banner `09baf45e`). The build
@@ -3661,6 +3726,8 @@ sequencing and the traps: `docs/TASK_CRYSTAL_HOIST.md`.
 
 ## Design (2026-08-03): let MPI keep `PURE`, so the compiler forbids I/O in parallel regions
 
+*2026-10-10: option 1 below (output non-collective) is done. What was established about keeping `PURE`, and the decision owed, are in the handover entry of that date.*
+
 Dylan's proposal, and it is a good one: if output inside a parallel region desynchronises the
 ranks, then routines reachable from one should be `pure` — and the *compiler* should enforce it,
 rather than the programmer remembering.
@@ -3909,6 +3976,8 @@ it is the buffer update and the `ENSURE` — so the collective is fine and the *
 reaching it is not.
 
 ### Separately, and arguably worse: output costs two collectives per token
+
+*Closed 2026-10-10: putting text and flushing make no broadcasts. See the handover entry of that date.*
 
 `BUFFER:put_str` broadcasts a **256-byte string plus an integer on every call** — i.e. every
 token written to any output buffer is two MPI collectives. That is why printing a banner

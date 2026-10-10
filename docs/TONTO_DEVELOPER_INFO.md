@@ -148,28 +148,43 @@ there is nothing to combine. This is "MPI on the outside", and it is pervasive �
 implemented and **withdrawn** because it fires on all of them. Only *lexical* containment is a
 bug, which is why the enforcement is a static lint.
 
-### Pitfall 4 — file I/O is collective, all of it, not just writing
+### Pitfall 4 — opening, closing and reading a file are collective; writing text is not
 
-`FILE`/`TEXTFILE` keep every rank's state consistent by broadcasting. **`open_for` broadcasts
+`FILE`/`TEXTFILE` keep every rank's file state the same by broadcasting. **`open_for` broadcasts
 `.unit` and `.io_status`; `close` broadcasts `.io_status`; `exists` and `is_open` broadcast their
-result; `BUFFER:put_str` broadcasts the 256-byte buffer and the cursor on every token written.**
+result; reading a line broadcasts its status and its text (two collectives); moving to a record
+broadcasts two.** So does `redirect`, which opens a file.
 
-Consequences:
+**Putting text and flushing make no collectives** (since 2026-10-10). Every rank fills its own
+buffer in `BUFFER:put_str`, and `TEXTFILE:flush` writes on the I/O rank alone. A rank may
+therefore print something the others do not, and stay in step. Before that change every token
+written cost two broadcasts and every line two more, and "print a bit more on one rank" was a
+desync.
 
-- **Writing output costs two collectives per token.** A `hart` run performs ~142,000 broadcasts
-  before its first fragment SCF, purely producing text.
-- **Any I/O inside a `parallel do` desynchronises the ranks**, because they are doing different
-  work and therefore different amounts of I/O. This is what blocks parallel fragHAR: at 2 ranks
-  the two ranks are in exact lockstep (141,907 broadcasts each) until they take *different
-  fragments*, and diverge immediately after.
-- **Switching binary/ascii does not help.** Measured inside the fragment loop: 96% of the
-  collectives are *scalars* — `unit`, `io_status`, `record` — i.e. open/close/inquire
-  bookkeeping, which binary archives perform too. Only ~4% is text.
+Consequences that remain:
 
-`FILE:per_rank_write` exists as an attempt at this: it is the ordinary write with the guard
-removed. It does not solve the problem, because the surrounding `open`/`close` still broadcast —
-which is why its precondition ("every rank writes its OWN file") was never satisfiable, and why
-it was found misused in serial loops.
+- **Opening, closing, inquiring or reading inside a `parallel do` desynchronises the ranks**,
+  because they are doing different work and therefore different amounts of it. Measured inside
+  the fragHAR fragment loop before the change: 96% of the collectives were scalars — `unit`,
+  `io_status`, `record` — and of those the open/close/inquire ones are still there.
+- **A master-only block must contain no open, close, `exists`, `is_open`, `redirect` or read.**
+  `MOLECULE.CE:put_CX_data` returned early on every rank but the master, and
+  `GAUSSIAN_FF_FIT:fit` redirected output inside `if (tonto.is_master_processor)`; both put the
+  ranks out of step.
+
+`FILE:per_rank_write` exists as an attempt at per-rank files: it is the ordinary write with the
+guard removed. It does not solve the problem, because the surrounding `open`/`close` still
+broadcast — which is why its precondition ("every rank writes its OWN file") was never
+satisfiable, and why it was found misused in serial loops.
+
+### Pitfall 4a — a value set on one branch only
+
+A local that is assigned on one path and tested on another holds whatever was in memory, and
+each rank has its own leftovers. In serial that is one arbitrary choice; under MPI it is two
+that can disagree, and if the test decides whether a file is searched the ranks part.
+`VEC{ATOM}:read_smCIF_atoms_xtal` tested a "found" flag that was set only when an earlier
+search had failed: about one run in three died on 2 ranks, and adding a print made it vanish.
+Initialise every flag that a later `if` reads.
 
 ### Pitfall 5 — the parallel-do lock does two jobs
 
@@ -193,9 +208,8 @@ is therefore incompatible with the current lowering.
 
 ### Pitfall 6 — the error path must not use collectives
 
-A rank that is dying is, by definition, out of step with its peers. `TEXTFILE:flush` contains
-broadcasts, so flushing the error file from the dying rank while the others run on is a collective
-entered by one rank — a hang, replacing a diagnosable failure with an undiagnosable one.
+A rank that is dying is, by definition, out of step with its peers. A collective entered by that
+rank alone is a hang, replacing a diagnosable failure with an undiagnosable one.
 
 `SYSTEM:die` writes its message straight to Fortran's preconnected **stderr (unit 0)**, tagged
 with the rank, and then calls `MPI_ABORT`. Unit 0 because it exists on every rank, whereas the
@@ -231,8 +245,9 @@ usually innocent-looking output:
 if (.becke_grid.allocated) .put_becke_grid   ! master: 42 broadcasts. Rank 1: zero.
 ```
 
-Because TEXTFILE bookkeeping is collective, "print a bit more on one rank" *is* a collective
-mismatch. It does not fail where it happens: the ranks stay superficially in step until some
+When this was found, putting text was collective, so "print a bit more on one rank" *was* a
+collective mismatch; it no longer is (pitfall 4), but a branch that opens, closes or reads a file
+still is. It does not fail where it happens: the ranks stay superficially in step until some
 later collective pairs with the wrong partner. In the observed case rank 1 died in
 `TEXTFILE:close` with *"not an existing file!"* — its `.exists` broadcast had received another
 rank's payload. The message named a file, a routine and a rank, and all three were innocent.
@@ -253,32 +268,26 @@ use would have found it immediately; three careful readings of the call sites di
 
 ### How to debug a collective desync
 
-Inspection does not work; measurement does. This found the `TEXTFILE:flush` bug in an afternoon
-after two failed attempts at reasoning it out:
+Inspection does not work; measurement does.
 
-1. **Trace every broadcast** from the `PARALLEL:broadcast` *template* — a single edit covers
-   all 25 type instantiations, because they are all `get_from` of one body. Log the **datatype
-   as well as the count**; the type alone often identifies the caller (`t=MPI_CHARACTER n=256`
-   is a TEXTFILE string buffer, `n=1` integers are `.record`/`.IO_status` bookkeeping).
-2. **Write each rank's trace to its own file**, by letting Fortran auto-connect the unit:
-   ```foo
-         write(70+.processor_rank,'(a,i0,a,i0)') "t=",MPI_TYPE?," n=",LEN?
-         flush(70+.processor_rank)
-   ```
-   giving `fort.70`, `fort.71`, … **Do not** merge the ranks onto stderr and split afterwards.
-   Two ranks writing the same stream interleave *mid-line* despite flushing — an observed trace
-   contained the line `BCTRACt=7 n=1` — and the corruption lands exactly where you are looking.
-3. **Diff the two streams.** `MPI_ERR_TRUNCATE` *is* a length mismatch, so the first differing
-   index is the divergence. `cmp` reports the line number directly.
-4. **Add positional `TAG` markers** into the same per-rank stream, via a macro so a marker is
-   one short line at the call site:
-   ```
-   #    define TAG(S)  write(70+tonto%processor_rank,'(a)') "TAG "//S ; flush(70+tonto%processor_rank)
-   ```
-   Then **count broadcasts between consecutive tags and compare the counts per rank**. The first
-   segment whose counts differ names the routine — this is what turned "somewhere in a 2.4
-   million call stream" into "`.put_becke_grid`, 42 versus 0" in one run. Bisect by adding tags.
-5. **Then trace arguments** of whatever routine the interval implicates.
+1. **Build with `-DTONTO_TRACE_COLLECTIVES=ON`** (an MPI build, debug for preference). Every
+   rank then writes the source file and line of each broadcast, reduction and barrier it enters
+   to its own file, `fort.900`, `fort.901`, … in the run directory. The line is that of the
+   generated `.F90` in the build tree, which is where to look it up.
+2. **Run on 2 ranks and compare:** `cmp fort.900 fort.901`. The first line that differs is the
+   collective one rank entered and the other did not. Read back a few lines in both files to see
+   which routine each was in.
+3. **Trace call sites, never payloads.** A rank's *n*-th receive *is* the master's *n*-th send, so
+   a log of lengths, types or values is identical on both ranks however far out of step they are.
+4. **If the failure comes and goes between runs**, suspect a value that was never set (pitfall
+   4a). Compare a failing rank's trace with the same rank's trace from a good run: the first
+   difference is where that rank took a different branch. A probe that prints can make such a
+   failure vanish; a log of every `ENSURE` reached (redefine `ENSURE0` in `include/macros.in` to
+   write `__FILE__` and `__LINE__` to the same unit first) disturbs less and shows the path.
+5. **Then trace arguments** of whatever routine that implicates.
+
+Keep each rank's trace in its own file. Two ranks writing one stream interleave mid-line despite
+flushing, and the corruption lands exactly where you are looking.
 
 Two dead ends, so nobody repeats them: gfortran's `backtrace()` **cannot symbolise on macOS**
 (*"executable file is not an executable"*), and a debug build alone does **not** localise a

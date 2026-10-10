@@ -915,6 +915,32 @@ trace recipe in `TONTO_DEVELOPER_INFO.md` §1a, not by reading the code: three w
 same area are already on record. Two cheap first steps: correct the diagnostic text so it names
 what actually failed, and print the rank and `iostat` value with it.
 
+### Finding 8 — the CIF desync was two faults outside the file code (2026-10-10)
+
+`urea_read_and_process_CIF` on 2 ranks, the deterministic failure of Finding 7. The origin was
+not upstream in `CIF:find_end_of_data_block`, as Finding 7 guessed from rank 1's stack. Found
+with a call-site trace, as Finding 7 recommended, but from the macro and not a PMPI shim:
+`-DTONTO_TRACE_COLLECTIVES=ON` makes `PARALLEL_BROADCAST` and the other collective macros write
+`__FILE__` and `__LINE__` to `fort.<900+rank>` (`include/macros.in`).
+
+1. **`MOLECULE.CE:put_CX_data` began with `if (NOT tonto.is_master_processor) return`**, and then
+   wrote the `.cxc` file through `stdout.text`/`show`/`flush`. First difference between the rank
+   traces: collective 9160, the master in `BUFFER:put_str` and `TEXTFILE:flush`, 47 extra in all.
+   Rank 1 was by then back in the CIF code, which is why its stack pointed there.
+2. **With that removed, one run in three failed earlier**, at collective 1596, rank 1 dying at
+   `ENSURE(.file.is_open)`. The collective traces were identical up to the failure, and a `write`
+   added to `TEXTFILE:look_for_item` made it vanish (33 runs of 33). A log of every `ENSURE`
+   reached, compared between rank 1 of a failing run and rank 1 of a good one, showed rank 1
+   creating the atom list where it should have searched for `_atom_site_type_symbol`:
+   `VEC{ATOM}:read_smCIF_atoms_xtal` did `if (NOT fc)` with `fc` assigned only when
+   `_atom_site_label` was missing. In the failing run the *master* searched and rank 1 did not.
+
+Both fixed in `bdd56bce`; 40 runs of 40 afterwards. The same commit fixes
+`GAUSSIAN_FF_FIT:fit`, which redirected output inside a master-only block.
+
+Then `6f64975a` removed the broadcasts from `BUFFER:put_str` and `TEXTFILE:flush` altogether, so
+fault 1 can no longer be made by printing: the job's collectives fell from 10009 to 5049.
+
 ### Defect register
 
 Every MPI defect found, and whether it announces itself. **"Silent" is the dangerous column** —
@@ -932,14 +958,18 @@ those produce wrong numbers or corrupt files with no error at all.
 | 7b | `crystal.foo:4961` `shift_update_ff` | same, and a read-modify-write of the shared file | Loud | **Fixed** |
 | 7c | `get_Hirshfeld_atom_FFs_disk` | no barrier between the scattered writes and the collective reads | Race | **Fixed** |
 | 8 | `system.foo:260` | Seeds not cloned; two broadcasts inside a master-only guard | Silent now, **deadlock** if naively "fixed" | Open |
-| 10 | `textfile.foo:1263` `move_to_record_external` | Loop count -- and so the number of collectives -- computed from rank-local `.record`; `.record` is resynchronised only in the *write* path (`:3550`), never on read. Ranks shift by one and every later collective binds the wrong variable | Loud (abort), but only at >=2 ranks | **Open** (root cause found 2026-08-26) |
-| 10a | `textfile.foo:1316` `move_to_next_record` | `urea_read_and_process_CIF` dies on rank 1 at 2 ranks, deterministically. Mechanism not yet distinguished (real EOF vs desync) — see Finding 7 | Loud (abort) | **Open** |
+| 10 | `textfile.foo:1263` `move_to_record_external` | Loop count -- and so the number of collectives -- computed from rank-local `.record`; `.record` is resynchronised only in the *write* path (`:3550`), never on read. Ranks shift by one and every later collective binds the wrong variable | Loud (abort), but only at >=2 ranks | **Fixed** 2026-08-26; an amplifier, not the origin |
+| 10a | `textfile.foo:1316` `move_to_next_record` | `urea_read_and_process_CIF` dies on rank 1 at 2 ranks, deterministically. Mechanism not yet distinguished (real EOF vs desync) — see Finding 7 | Loud (abort) | **Fixed** 2026-10-10, rows 16 and 17 |
 | 10b | same | Diagnostic says "error opening new file" for a routine that only *reads a record*, and prints neither the rank nor `iostat` | Misleading | **Open** |
 | 11 | `ci-mpi.yml`, `suite_report.py` | ERROR cause captured then discarded; suite table truncated to the last 30 lines → failures with no recorded reason | **Silent** | **Fixed** |
 | 9 | `system.foo:564` | `MPI_ABORT` commented out → one rank dying hangs the whole job | Hang | **Fixed** |
 | 12 | `textfile.foo` `flush` | `.clear_and_put_margin` called **twice on master**, once elsewhere; it broadcasts, so the ranks desynchronise | Loud (`MPI_ERR_TRUNCATE`) | **Fixed** |
 | 13 | `system.foo` `die` ×3 | error message written only under `IO_is_allowed`, so a dying **non-master** rank said nothing at all | **Silent failure** | **Fixed** |
 | 14 | `run_har.foo` `--fos 0` | `set_F_sigma_cutoff(0)` violates its own `ENSURE`; worked in release only because the check compiles away | Loud in debug only | **Fixed** |
+| 16 | `molecule.ce.foo` `put_CX_data` | returns early off the master, then the master alone writes through the collective output routines | Loud (abort) | **Fixed** |
+| 17 | `vec{atom}.foo` `read_smCIF_atoms_xtal` | tests a flag set on one branch only; each rank reads its own leftover memory, so one searches the file and another does not | Loud, one run in three | **Fixed** |
+| 18 | `gaussian_ff_fit.foo` `fit` | `redirect` and output inside a master-only block | Loud | **Fixed** |
+| 19 | `buffer.foo` `put_str`, `textfile.foo` `flush` | two broadcasts per token and two per line, so any rank-dependent printing was a desync | Loud | **Fixed**: output makes no broadcasts |
 | 15 | fragment path | a **second** `MPI_ERR_TRUNCATE`, at *"Making F_pred"*, only under fragHAR | Loud | Open |
 | 10 | `parallel.foo:6452` | `fragment_SCF_para` RMA: out-of-bounds read on the terminating fetch, every run | **Silent** | Open |
 | 11 | `molecule.prop.foo:6118` | QTAIM: out-of-bounds at `nprocs==1`, sends to a non-existent rank, `MPI_FINALIZE` mid-run | Loud | Open |
