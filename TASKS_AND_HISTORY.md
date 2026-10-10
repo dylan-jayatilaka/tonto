@@ -484,18 +484,13 @@ The cure as implemented is the first of three stages.
    the fitted model. This is the form to write: the two products on the `oc-ri` route,
    checked on urea against the two-centre results.
 
-**Watch: the urea def2-TZVP leave-one-out minimum.** The scan
-`~/tonto_runs/xcw_2026-10-09/urea_tzvp4` runs lambda 2 to 6 in steps of 0.1, unattended (Mac,
-started 2026-10-09 20:14, about 1.5 min per point). At 3.2 the leave-one-out sum, GCV and the
-sigma-free AIC are all still falling. When the sum turns: plot the deformation density and the
-fitted-minus-unfitted difference at the minimum, blue positive, as the third row of the
-def2-TZVP grid in report section 8.5 (the def2-SVP grid shows the layout), and fill the
-def2-TZVP row of the criteria table and section 8.3. Every command is in
-`urea_tzvp4/RESUME.md`. Findings so far, 2026-10-09: on urea only the leave-one-out sum has a
-minimum (STO-3G 0.005, def2-SVP 2.4); def2-TZVP falls nearly linearly because chi^2 flattens
-while the left-out excess falls faster, its high-leverage reflections being fitted to 0.86
-sigma rms against 1.57 in def2-SVP; the def2-SVP minimum costs 1.06 hartree for GoF^2 1.97,
-against 79 mEh for GoF^2 3.86 at lambda 0.05.
+**Watch closed 2026-10-10: the urea def2-TZVP scan to lambda 6 has no leave-one-out minimum.**
+`~/tonto_runs/xcw_2026-10-09/urea_tzvp4` finished cleanly. The sum is 2236 at 6, GoF 1.083,
+falling about 7 per step; extrapolated minimum near 11 to 12 at GoF about 1.05 and about 2
+hartree. BIC turns at 4.0 (GoF 1.115, 838 mE_h) and BIC_sigma at 2.3. Dylan chose the BIC
+minimum for the third def2-TZVP row of report section 8.5 (plotted, `plots/tzvp_4.0`). The
+energy comparison led to a new science task, *Stop the X-ray constrained fit where its energy
+rise matches the crystal's deformation energy*, under Science and features.
 
 Also left, in this order (Dylan, 2026-10-09: the fitted Hirshfeld atoms first, the line
 search after):
@@ -2347,6 +2342,17 @@ dead keyword line from `develop` and leave the work on its two tags, as was done
 `datafile.foo`. That is a decision for Dylan, not a default.
 
 # Correctness — open bugs that give wrong answers
+
+## Cluster charges are silently zero under `partition_model= tc-stewart` (2026-10-10)
+
+`use_SC_cluster_charges= TRUE` takes its charges and dipoles from the Hirshfeld moments, which
+`MOLECULE.SCF:make_atom_partition_info` makes only for the `oc-*` partition models. Under
+`tc-stewart` the cluster is built, every charge is zero, `V_cN` prints 0, and the job returns
+the free-molecule energy with exit 0. Found while computing the urea deformation energy
+(`docs/TASK_ON_XCW_ENERGY_STOP.md` section 3). Fix: `DIE` in `make_cluster_charges` and
+`make_cluster_charge_mx` when the partition model makes no moments, or make Hirshfeld moments
+for the cluster whatever the X-ray partition. Not yet checked: whether a promolecule start with
+an `oc-*` model also skips the charges.
 
 ## Dispersion: what is still open after the 2026-09-05 fix
 
@@ -4263,6 +4269,21 @@ Multithreaded OpenBLAS would also oversubscribe cores in MPI builds: ranks x thr
 ---
 
 # Science and features
+
+## Stop the X-ray constrained fit where its energy rise matches the crystal's deformation energy (Dylan, 2026-10-10)
+
+**Register row:** *Stop the XCW where its energy rise matches the deformation energy*. **To be
+planned.** Working document: `docs/TASK_ON_XCW_ENERGY_STOP.md`, with the discussion that led to it
+and Dylan's questions. Facts and derivation: `docs/REPORT_ON_XCW_CONVERGENCE.md` section 8.6.
+
+In one line: the XCW energy rise, measured with the free-molecule Hamiltonian, is a deformation
+energy, and to second order the deformation energy of a molecule in a crystal is minus its
+polarisation energy. So estimate that energy before fitting, from the self-consistent cluster
+charges or from atomic polarisabilities (Dylan's proposal: assumed or computed polarisabilities,
+or XDM), plus a correlation term, and stop where the XCW reaches it. Cluster charges give 14.2
+mE_h (def2-SVP) and 17.9 mE_h (def2-TZVP) for urea. The XCW reaches those at lambda 0.005 to
+0.008, GoF^2 4 to 8. Every statistical minimum costs 14 to 30 times urea's lattice energy of
+39 mE_h.
 
 ## ADPs as rigid-body motion plus soft modes, refined against F (Dylan, 2026-10-03)
 

@@ -23,10 +23,17 @@
    leave-one-out sum has its minimum at lambda 2.0 and generalised cross-validation at 3.2,
    where 34 to 36 of the 88 reflections' worth of parameters are in use; AIC with the sigmas
    trusted puts it at 0.08 and BIC at 0.024.
-7. **On urea only the leave-one-out sum turns** (section 8): at lambda 2.4 in def2-SVP, with 76
+7. **On urea in def2-SVP only the leave-one-out sum turns** (section 8): at lambda 2.4, with 76
    of 817 reflections' worth of parameters in use and GoF 1.40. GCV and the sigma-free AIC are
    still falling, because they average over the reflections, while the leave-one-out sum is
-   dominated by the few with the largest leverage.
+   dominated by the few with the largest leverage. In def2-TZVP not even the leave-one-out
+   sum turns up to lambda 6; only BIC turns, at 4.0, and its sigma-free form at 2.3.
+8. **Every one of these minima costs far more energy than the crystal can account for**
+   (section 8.6). The energy of the fitted wavefunction rises by 0.56 to 1.06 hartree, 14 to 27
+   times urea's lattice energy of 39 m$`E_\mathrm{h}`$. The molecule's own deformation energy
+   in the crystal, which is what that rise should be if the fit found the wavefunction of the
+   molecule in the crystal, is 14 to 18 m$`E_\mathrm{h}`$ by a cluster-charge calculation, and
+   the fit reaches it at lambda 0.005 to 0.008.
 
 ## 2. The instability
 
@@ -268,6 +275,10 @@ the sigmas, because the variance scale is treated as a fitted quantity:
 GCV is generalised cross-validation, Golub, Heath and Wahba (1979), *Technometrics* **21**,
 215. These two are the ones to use: the sigmas of a diffraction experiment are unreliable in
 scale but useful in their relative values, and both criteria use only the relative values.
+The same treatment of BIC gives
+$`\mathrm{BIC}_{\sigma} = N_{\mathrm{refl}}\ln(\chi^2/N_{\mathrm{refl}}) + p_{\mathrm{eff}}\ln N_{\mathrm{refl}}`$,
+which penalises harder than AIC$`_\sigma`$ and so stops at a smaller lambda; Tonto does not
+print it, but it follows from the printed $`\chi^2`$ and $`p_{\mathrm{eff}}`$.
 The leave-one-out sum of equation (12) is the default: it is complete cross-validation in
 Brünger's sense, and its minimum, like that of GCV, does not move with a common error in the
 sigmas. The keyword `lambda_criterion=` switches to GCV or the sigma-free AIC; AIC and BIC
@@ -1007,20 +1018,24 @@ the leave-one-out sum turns:
   leave-one-out sum with every leverage replaced by the mean, $`p_{\mathrm{eff}}/N_{\mathrm{refl}}
   = 0.095`$, so it cannot see them.
 
-Where each scale-free criterion has its minimum, over the range scanned:
+Where each criterion has its minimum, over the range scanned. The first four do not depend
+on the overall scale of the sigmas; BIC, in the last column, trusts them:
 
-| system | leave-one-out sum | GCV | AIC$`_\sigma`$ |
-|---|---|---|---|
-| ammonia | 2.0 | 3.2 | none up to 4 |
-| urea, STO-3G | 0.005 | none up to 0.03 | none up to 0.03 |
-| urea, def2-SVP | 2.4 | none up to 2.9 | none up to 2.9 |
-| urea, def2-TZVP | none up to 3.2 | none up to 3.2 | none up to 3.2 |
+| system | leave-one-out sum | GCV | AIC$`_\sigma`$ | BIC$`_\sigma`$ | BIC |
+|---|---|---|---|---|---|
+| ammonia | 2.0 | 3.2 | none up to 4 | 1.2 to 1.6 | 0.024 |
+| urea, STO-3G | 0.005 | none up to 0.03 | none up to 0.03 | none up to 0.03 | none up to 0.03 |
+| urea, def2-SVP | 2.4 | none up to 2.9 | none up to 2.9 | none up to 2.9 | none up to 2.9 |
+| urea, def2-TZVP | none up to 6 | none up to 6 | none up to 6 | 2.3 | 4.0 |
 
-The leave-one-out sum is the only criterion with a minimum on every data set so far. It
-stops where the fit begins to chase the reflections that can each move the wavefunction
-most; GCV and AIC$`_\sigma`$ measure the average reflection and go on rewarding the fit.
-- **The energy has risen by 1.06 hartree** at the minimum, from -223.825 to -222.763: the fit
-  buys a GoF of 1.40 from 4.43 with a wavefunction far from the variational one.
+No criterion has a minimum on every data set. The leave-one-out sum turns on three of the
+four: it stops where the fit begins to chase the reflections that can each move the
+wavefunction most, while GCV and AIC$`_\sigma`$ measure the average reflection and go on
+rewarding the fit. In def2-TZVP only the BIC forms, with their heavier penalty, turn. Section 8.6 compares
+the energy each of these minima costs with the energy that holds the crystal together.
+- **The energy has risen by 1.06 hartree** at the def2-SVP leave-one-out minimum, from
+  -223.825 to -222.763: the fit buys a GoF of 1.40 from 4.43 with a wavefunction far from the
+  variational one.
 - **No wandering** beyond the visit near 0.9: at $`\lambda\gamma_{\max}`$ up to 7300 the
   iteration count rises slowly with lambda and every point converges.
 
@@ -1039,11 +1054,29 @@ with the starting orbitals above 0.99:
 | 0.8 | 1602 | 92.3 | 1.246 | 1451 | 1885 | 542 | 1.969 | 3328.4 |
 | 1.1 | 2168 | 97.1 | 1.216 | 1401 | 1858 | 513 | 1.903 | 3197.2 |
 | 1.3 | 2561 | 99.7 | 1.202 | 1377 | 1846 | 498 | 1.871 | 3111.3 |
+| 2.0 | 3957 | 106.4 | 1.166 | 1322 | 1823 | 463 | 1.795 | 2843.6 |
+| 3.0 | 6017 | 113.0 | 1.135 | 1278 | 1810 | 432 | 1.734 | 2573.1 |
+| 4.0 | 8400 | 118.1 | 1.115 | 1250 | **1805** | 412 | 1.695 | 2399.1 |
+| 5.0 | 10487 | 123.2 | 1.097 | 1229 | 1809 | 397 | 1.668 | 2311.7 |
+| 6.0 | 12960 | 127.5 | 1.083 | 1213 | 1812 | 385 | 1.646 | 2235.7 |
 
-At every lambda the larger basis fits better than def2-SVP with more effective parameters:
-at lambda 1, GoF 1.22 against 1.52, and 96 parameters against 66. The leave-one-out sum is
-still falling at 3.2, where it is 2532 and the GoF is 1.13; GCV and AIC$`_\sigma`$ are
-falling too.
+From 2 to 6, in steps of 0.1, every point converges in 9 to 23 iterations except 4.1, which
+takes 60 and lands on a slightly different solution: the overlap with the starting orbitals
+drops by 0.007 there against 0.001 per step elsewhere, and its leave-one-out sum is 4% off
+the curve. From 4.2 on the curve is smooth again.
+
+- **At every lambda the larger basis fits better than def2-SVP with more effective
+  parameters**: at lambda 1, GoF 1.22 against 1.52, and 96 parameters against 66.
+- **The leave-one-out sum has no minimum up to 6.** It is 2236 there, with GoF 1.083, and
+  falling by 7 per step of 0.1. The fall shrinks by about 0.13 per step, which puts a
+  minimum near lambda 11 or 12, at a GoF of about 1.05 and an energy about 2 hartree above
+  lambda 0. GCV and AIC$`_\sigma`$ are falling too.
+- **BIC with the sigmas trusted has its minimum at 4.0**, GoF 1.115, the first time it turns
+  on urea; it is flat to within 2 from 3.5 to 4.8, so the position is loosely fixed.
+  BIC$`_\sigma`$ has its minimum at 2.3, flatter still.
+- **The energy rises by 16.8 m$`E_\mathrm{h}`$ per step of 0.1 throughout**, with no sign of
+  slowing: 0.50 hartree at lambda 2, 0.84 at 4, 1.17 at 6.
+
 ### 8.4 The Hirshfeld partitions
 
 The correction on the Hirshfeld-atom partitions, def2-SVP, lambda 0 to 0.01 in steps of
@@ -1069,8 +1102,9 @@ bond pointing right. Blue contours are positive and red negative, on a logarithm
 $`10^{-3}`$ to 1 $`e\,a_0^{-3}`$ in steps of a factor $`\sqrt{10}`$; the dotted line is zero.
 Under each map are lambda, the GoF squared, $`\chi^2/(N_{\mathrm{refl}}-1)`$, and the rise
 $`\Delta E`$ of the energy above the unconstrained energy at lambda 0. The last row of each
-grid is the leave-one-out minimum: its deformation density, and the change made by fitting,
-the density there minus the density at lambda 0, on a scale ten times finer.
+grid is a criterion's minimum, the leave-one-out minimum in def2-SVP and the BIC minimum in
+def2-TZVP, where the leave-one-out sum has none: its deformation density, and the change made
+by fitting, the density there minus the density at lambda 0, on a scale ten times finer.
 
 **def2-SVP**
 
@@ -1091,6 +1125,8 @@ the density there minus the density at lambda 0, on a scale ten times finer.
 | $`\lambda = 0`$, $`\mathrm{GoF}^2 = 16.93`$, $`\Delta E = 0`$ m$`E_\mathrm{h}`$ | $`\lambda = 0.01`$, $`\mathrm{GoF}^2 = 3.72`$, $`\Delta E = 21`$ m$`E_\mathrm{h}`$ | $`\lambda = 0.02`$, $`\mathrm{GoF}^2 = 3.02`$, $`\Delta E = 31`$ m$`E_\mathrm{h}`$ |
 | ![Urea deformation density, def2-TZVP, lambda 0.03](images/xcw_urea_tzvp_l0.03.png) | ![Urea deformation density, def2-TZVP, lambda 0.04](images/xcw_urea_tzvp_l0.04.png) | ![Urea deformation density, def2-TZVP, lambda 0.05](images/xcw_urea_tzvp_l0.05.png) |
 | $`\lambda = 0.03`$, $`\mathrm{GoF}^2 = 2.73`$, $`\Delta E = 38`$ m$`E_\mathrm{h}`$ | $`\lambda = 0.04`$, $`\mathrm{GoF}^2 = 2.56`$, $`\Delta E = 44`$ m$`E_\mathrm{h}`$ | $`\lambda = 0.05`$, $`\mathrm{GoF}^2 = 2.44`$, $`\Delta E = 49`$ m$`E_\mathrm{h}`$ |
+| ![Urea deformation density, def2-TZVP, at the BIC minimum](images/xcw_urea_tzvp_bic_min.png) | ![Urea, def2-TZVP: density at the BIC minimum minus density at lambda 0](images/xcw_urea_tzvp_bic_diff.png) | |
+| $`\lambda = 4.0`$, the BIC minimum, $`\mathrm{GoF}^2 = 1.24`$, $`\Delta E = 838`$ m$`E_\mathrm{h}`$ | the density at $`\lambda = 4.0`$ minus the density at $`\lambda = 0`$; contours from $`10^{-4}`$ to $`10^{-1}`$ $`e\,a_0^{-3}`$ | |
 
 - **In both bases the fit moves density from the hydrogen atoms into the N–H bonds**, and
   spreads the density between the three heavy atoms. By lambda 0.05 the two bases give
@@ -1103,8 +1139,101 @@ the density there minus the density at lambda 0, on a scale ten times finer.
   density from the hydrogen atoms and the outer region of the molecule and put it on and
   between the heavy atoms, with the largest changes, up to $`10^{-1}`$ $`e\,a_0^{-3}`$, at the
   nuclei.
+- **def2-TZVP at its BIC minimum shows the same pattern**, lambda 4.0, $`\mathrm{GoF}^2`$
+  1.24, $`\Delta E`$ 838 m$`E_\mathrm{h}`$: density leaves the hydrogen atoms and the outer
+  region and gathers around the nitrogen atoms and in a band beyond the oxygen atom, with
+  alternating shells at the carbon and oxygen nuclei.
 
-### 8.6 Cost
+### 8.6 The energy against the crystal's binding energy
+
+$`\Delta E`$ is the energy of the fitted wavefunction, evaluated with the Hamiltonian of the
+free molecule, above that Hamiltonian's minimum. A natural scale for it is the energy that
+holds the crystal together. The sublimation enthalpy of urea at 298 K is 93.8 kJ/mol, the
+average of the measurements; with the vibrational contributions removed, the lattice energy
+is 102.5 kJ/mol, or 39.0 m$`E_\mathrm{h}`$ per molecule (Reilly and Tkatchenko,
+*J. Chem. Phys.* **139**, 024705 (2013), Table IV; Otero-de-la-Roza and Johnson,
+*J. Chem. Phys.* **137**, 054103 (2012), give 99.4 kJ/mol). For ammonia the lattice energy is
+37.2 kJ/mol, 14.2 m$`E_\mathrm{h}`$. The criteria's minima cost many times the urea figure:
+
+| basis, criterion | lambda | $`\mathrm{GoF}^2`$ | $`\Delta E`$ (m$`E_\mathrm{h}`$) | $`\Delta E`$ / lattice energy |
+|---|---|---|---|---|
+| def2-SVP, leave-one-out | 2.4 | 1.97 | 1062 | 27 |
+| def2-TZVP, BIC$`_\sigma`$ | 2.3 | 1.33 | 557 | 14 |
+| def2-TZVP, BIC | 4.0 | 1.24 | 838 | 21 |
+| def2-TZVP, end of scan | 6.0 | 1.17 | 1173 | 30 |
+| def2-TZVP, leave-one-out, extrapolated | 11 to 12 | about 1.10 | about 2000 to 2200 | about 55 |
+
+**What $`\Delta E`$ should be.** Write the Hamiltonian of a molecule in the crystal as
+$`H_0 + V`$, where $`H_0`$ is the Hamiltonian of the free molecule and $`V`$ the potential of
+its neighbours. Let $`\Psi_0`$ be the ground state of $`H_0`$, with energy $`E_0`$, and $`\Psi`$
+the ground state of $`H_0 + V`$. The deformation energy is the free-molecule energy of the
+molecule as it is in the crystal:
+
+```math
+\Delta E_{\mathrm{def}} = \langle\Psi|H_0|\Psi\rangle - E_0 \;\ge\; 0
+\qquad (27)
+```
+
+It cannot be negative, because $`E_0`$ is the minimum of $`H_0`$. The polarisation energy is
+the energy gained by letting the molecule respond to $`V`$:
+
+```math
+E_{\mathrm{pol}} = \langle\Psi|H_0+V|\Psi\rangle - \langle\Psi_0|H_0+V|\Psi_0\rangle
+ = \Delta E_{\mathrm{def}} + \langle\Psi|V|\Psi\rangle - \langle\Psi_0|V|\Psi_0\rangle \;\le\; 0
+\qquad (28)
+```
+
+It cannot be positive, because $`\Psi`$ is the minimum of $`H_0+V`$. So the deformation
+energy is a rise, the polarisation energy a fall, and the rise is bounded by what the
+interaction gains, $`0 \le \Delta E_{\mathrm{def}} \le \langle\Psi_0|V|\Psi_0\rangle -
+\langle\Psi|V|\Psi\rangle`$. To second order in $`V`$ the two are tied exactly. With
+$`\psi_n`$ and $`E_n`$ the excited states of $`H_0`$ and $`V_{n0} = \langle\psi_n|V|\Psi_0\rangle`$,
+the first-order wavefunction is $`\Psi = \Psi_0 - \sum_n \psi_n V_{n0}/(E_n - E_0)`$, and
+
+```math
+\Delta E_{\mathrm{def}} = \sum_{n} \frac{|V_{n0}|^2}{E_n - E_0} = -E_{\mathrm{pol}}
+\qquad (29)
+```
+
+while the interaction changes by twice the polarisation energy. For a uniform field $`F`$ and
+polarisability $`\alpha`$ this is the familiar $`+\tfrac12\alpha F^2`$ spent on distortion,
+$`-\alpha F^2`$ gained in interaction, $`-\tfrac12\alpha F^2`$ net. So if the fit recovered
+the wavefunction of the molecule in the crystal, its $`\Delta E`$ would be the deformation
+energy, close to $`-E_{\mathrm{pol}}`$: a target for $`\Delta E`$ that owes nothing to the
+statistics of the data. Two effects outside a point-charge $`V`$ add to it: the compression
+of the density by the exchange repulsion of the neighbours, and electron correlation, since
+the data come from a correlated density and the Hartree-Fock energy of a correlated density
+lies above $`E_0`$.
+
+**The deformation energy computed.** Tonto's self-consistent cluster charges place the
+Hirshfeld charges and dipoles of every neighbour within 8 Å around the molecule and
+iterate them with its density; $`\langle\Psi|H_0|\Psi\rangle`$ is the total energy minus the
+printed charge attraction energy $`V_{cN}`$. The charges need a Hirshfeld partition model,
+`partition_model= oc-hirshfeld`; under `tc-stewart` they are all zero. Hartree-Fock, the
+urea crystal of section 8:
+
+| basis | $`E_0`$ | energy in the field | $`V_{cN}`$ | $`\Delta E_{\mathrm{def}}`$ (m$`E_\mathrm{h}`$) | lambda at which the fit's $`\Delta E`$ equals it | $`\mathrm{GoF}^2`$ there | $`p_{\mathrm{eff}}`$ there |
+|---|---|---|---|---|---|---|---|
+| def2-SVP | -223.825356 | -224.470684 | -0.659557 | 14.2 | 0.005 | 7.9 | 16 |
+| def2-TZVP | -224.082702 | -224.757236 | -0.692443 | 17.9 | about 0.008 | about 4.1 | about 27 |
+
+The deformation energy is 37 to 47 kJ/mol, a third to a half of the lattice energy; point
+charges at hydrogen-bond distances, without damping, may overstate it. The total-energy
+difference is not $`E_{\mathrm{pol}}`$ here, because the charges follow the density and so
+$`V`$ is not fixed.
+
+- **A fit whose $`\Delta E`$ matches the deformation energy stops very early**, at lambda
+  0.005 to 0.008, with $`\mathrm{GoF}^2`$ still 4 to 8.
+- **Every statistical minimum costs 14 to 30 times as much.** By this measure most of what
+  those criteria fit is not the polarisation of the molecule by the crystal, but other
+  things the model lacks: errors in the thermal motion model and in the data, and the limits
+  of the basis and of Hartree-Fock.
+- **A stopping rule follows**: stop where $`\Delta E`$ reaches the deformation energy,
+  estimated from the cluster-charge calculation above or from atomic polarisabilities in the
+  field of the neighbours, plus the correlation term. It uses no sigmas, and since
+  $`\Delta E`$ rises steadily with lambda it picks one lambda.
+
+### 8.7 Cost
 
 **Cost of the explicit route, measured.** On one core of the Mac, one SCF iteration with the
 correction costs 0.4 s for ammonia, 80 basis functions and 88 reflections, and 5 s for urea in
