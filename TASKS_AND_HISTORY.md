@@ -5072,18 +5072,41 @@ the XC evaluation, not the point count. Tables in `docs/TASK_SCF_SPEEDUP_DATA.md
 
 # Test suite and numerics
 
-## Six registered ctests run in no workflow (found 2026-09-25)
+## CLOSED 2026-10-10: registered checks that ran in no workflow -- one list, the self-checks
 
-CI runs `scripts/suite_report.py`, never `ctest`, so a check registered only in
-`tests/CMakeLists.txt` is not in CI: `quadrature_rules`, `dft_invariants`, `dft_reference`,
-`single_atom_scf`, `system_commands` and `functional_names`. (`lebedev_rules` was the seventh
-until `56634f2c`; `spherical_vs_cartesian`, `hart_options`, `library_stdin` and `parallel_lint`
-are run by `suite_report.py`; `mpi_pi_rank_invariant` and `rgbi_doctor_selftest` by their
-workflows directly.) Three of the six are the "three debug failures nothing is tracking".
+**What it was.** CI runs `scripts/suite_report.py`, never `ctest`, and the script carried its own
+list of seven checks, so a check registered only in `tests/CMakeLists.txt` ran in no workflow. Six
+when found on 2026-09-25, eleven by the time it was fixed.
 
-**Fix:** either have `suite_report.py` take its invariant checks from one list shared with
-`tests/CMakeLists.txt`, or run `ctest -L short` in `ci.yml` beside the report. Whichever needs a
-built runfile (`system_commands`, `quadrature_rules`) must be built by the workflow's `make`.
+**What was done** (PR #45, merged to `develop` as `8f8bab4e`). Every check that passes or fails on
+its own, with no stored output, carries the ctest label `selfcheck`, and `suite_report.py` runs every
+test with that label through `ctest` (`ctest -N -L selfcheck`, then one `ctest -V -R` each), keeping
+its table, its skip rule and its exit code. `tests/CMakeLists.txt` is now the one list; each
+self-check has `SKIP_RETURN_CODE 77`. Two checks stay with their own workflows: the MPI pi check
+and the RGBI doctor's self-test, which skips without the picture tools. `--no-invariant-checks`
+became `--no-selfchecks`, and `--allow-skip` takes a check's name. No build change was needed:
+the four `run_*` programs are in the default `make`.
+
+**Renamed** (Dylan) so each name says what must hold; the history above and below keeps the old ones:
+`mpi_pi_rank_invariant` -> `mpi_pi_same_for_any_rank_count`, `hart_options` ->
+`hart_help_matches_its_options`, `rgbi_options` -> `rgbi_help_matches_its_options`,
+`system_commands` -> `shell_commands_run_and_report_failure`, `quadrature_rules` ->
+`quadrature_rules_integrate_exactly`, `lsq_restraints` -> `restrained_least_squares_known_answer`,
+`gaussian_ff_fit` -> `form_factor_gaussian_fit_round_trip`, `library_stdin` ->
+`library_routines_never_read_stdin`, `single_atom_scf` -> `single_atoms_converge_from_any_guess`,
+`dft_invariants` -> `dft_consistency_properties`, `dft_reference` -> `dft_energies_match_g09`,
+`parallel_lint` -> `mpi_lint_collectives_and_unit_io`, `show_labels` -> `printed_labels_line_up`,
+`procedure_case` -> `procedure_names_have_one_spelling`, `check_docs` ->
+`user_docs_follow_house_rules`, `lebedev_rules` -> `lebedev_grids_integrate_exactly`,
+`functional_names` -> `dft_functional_names_all_implemented`, `foofiles_clean` ->
+`foofiles_holds_only_sources`, `rgbi_doctor_selftest` -> `rgbi_doctor_catches_missing_tools`;
+`spherical_vs_cartesian` kept.
+
+**Checked.** Mac: all 18 pass through `suite_report.py`; a skip reports its reason, a planted dated
+page fails `user_docs_follow_house_rules` naming the line, an unmatched name counts as a failure.
+CI on the branch: all 18 pass on Linux-MPI and on macOS-release (both compilers); Linux-release,
+Linux-debug, WSL-release and WSL-MPI green; macOS-release red only on the known
+`carbon_atom_uhf_cc-pVDZ_ANO_aoc`.
 
 
 ## CLOSED 2026-10-06: a job of many separate molecules hung -- Rys roots at large X
