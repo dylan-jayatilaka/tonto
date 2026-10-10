@@ -26,7 +26,7 @@ the story of how the build and translator came to be is in `docs/PROJECT_HISTORY
    principles without another source. Check a page with `gh api -X POST /markdown` before pushing.
 5. **A user-facing page states what is.** Status, dates, commit hashes and how a thing was found
    go only in `docs/TASK_*.md` and `TASKS_AND_HISTORY.md`. `scripts/check_docs.py` (ctest
-   `check_docs`) fails on them, and on math GitHub draws wrongly, in every other page.
+   `user_docs_follow_house_rules`) fails on them, and on math GitHub draws wrongly, in every other page.
 
 ## 1. How to write for this project
 
@@ -299,7 +299,7 @@ bugs.
 
 `rgbi-scripts/` is **installed** — `make-rgbi-pic` and `make-rgbi-dials` into `bin`, the
 `.tex`/`.sty` templates into `share/tonto/rgbi-scripts`. `scripts/` is **not**: test harness,
-invariant checks, lints, doctors, and `scripts/docker/`. That is the boundary — installed
+self-checks, lints, doctors, and `scripts/docker/`. That is the boundary — installed
 versus not, rather than subject matter.
 
 The drivers in `rgbi-scripts/` deliberately have **no `.sh` extension**: they are commands

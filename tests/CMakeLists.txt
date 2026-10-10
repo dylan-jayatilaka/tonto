@@ -8,7 +8,7 @@ set(TONTO_EXE "${PROJECT_BINARY_DIR}/tonto"
 # test.py and suite_report.py take the directory holding TONTO_EXE, and run
 # tonto -- or the program a test's IO file names, such as hart -- from it, so
 # the binaries must live side by side (the tonto and run_har targets both land
-# in PROJECT_BINARY_DIR). HART_EXE is only for the invariant check below.
+# in PROJECT_BINARY_DIR). HART_EXE is only for the self-check below.
 get_filename_component(TONTO_BUILD_DIR "${TONTO_EXE}" DIRECTORY)
 set(HART_EXE "${PROJECT_BINARY_DIR}/hart"
     CACHE FILEPATH "Hirshfeld atom refinement executable")
@@ -88,6 +88,16 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/rgbi)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/long)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/cx)
 
+# Self-checks. The label "selfcheck" marks a check that passes or fails on its
+# own, against a known answer or a rule, with no stored output to compare with.
+# scripts/suite_report.py, which every CI workflow runs, runs every test with
+# this label, so this file is their one list: a check registered here with the
+# label runs in CI. Give each SKIP_RETURN_CODE 77, so a check that cannot run
+# on a machine says so rather than passing. Two such checks do not carry the
+# label, because they need a particular machine and their own workflows run
+# them: mpi_pi_same_for_any_rank_count (the MPI launcher) and
+# rgbi_doctor_catches_missing_tools (the RGBI picture tools).
+
 # Invariant test -- no reference output involved.
 #
 # Below d functions the spherical and cartesian basis sets are mathematically
@@ -104,7 +114,7 @@ add_test(NAME "spherical_vs_cartesian"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND sh ${PROJECT_SOURCE_DIR}/scripts/check_spherical_cartesian.sh
             ${TONTO_EXE} ${BASIS_SETS})
-set_tests_properties("spherical_vs_cartesian" PROPERTIES LABELS "short")
+set_tests_properties("spherical_vs_cartesian" PROPERTIES LABELS "short;selfcheck" SKIP_RETURN_CODE 77)
 
 # MPI invariant test -- no reference output involved.
 #
@@ -121,11 +131,11 @@ set_tests_properties("spherical_vs_cartesian" PROPERTIES LABELS "short")
 # Only meaningful in an MPI build; in a serial build the rank sweep is
 # degenerate, so register it only when WITH_MPI.
 if(WITH_MPI)
-    add_test(NAME "mpi_pi_rank_invariant"
+    add_test(NAME "mpi_pi_same_for_any_rank_count"
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMAND sh ${PROJECT_SOURCE_DIR}/scripts/check_mpi_pi.sh
                 ${PROJECT_BINARY_DIR}/run_mpi_pi ${MPIEXEC_EXECUTABLE} 1 2 4)
-    set_tests_properties("mpi_pi_rank_invariant" PROPERTIES LABELS "mpi")
+    set_tests_properties("mpi_pi_same_for_any_rank_count" PROPERTIES LABELS "mpi")
 endif()
 
 # Invariant test -- no reference output involved.
@@ -136,19 +146,19 @@ endif()
 # documented while its case label was commented out, so the documented option
 # killed the run. This compares the two sets directly, and also asserts that
 # hart's documented failure modes exit non-zero. Runs in a couple of seconds.
-add_test(NAME "hart_options"
+add_test(NAME "hart_help_matches_its_options"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND sh ${PROJECT_SOURCE_DIR}/scripts/check_hart_options.sh
             ${HART_EXE} ${PROJECT_SOURCE_DIR}/runfiles/run_har.foo ${BASIS_SETS})
-set_tests_properties("hart_options" PROPERTIES LABELS "hart")
+set_tests_properties("hart_help_matches_its_options" PROPERTIES LABELS "hart;selfcheck" SKIP_RETURN_CODE 77)
 
 # The same check for rgbi, whose --help had named the CMake target run_rgbi
 # and a misspelled scripts folder for as long as it existed.
-add_test(NAME "rgbi_options"
+add_test(NAME "rgbi_help_matches_its_options"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND sh ${PROJECT_SOURCE_DIR}/scripts/check_rgbi_options.sh
             ${PROJECT_BINARY_DIR}/rgbi ${PROJECT_SOURCE_DIR}/runfiles/run_rgbi.foo)
-set_tests_properties("rgbi_options" PROPERTIES LABELS "rgbi")
+set_tests_properties("rgbi_help_matches_its_options" PROPERTIES LABELS "rgbi;selfcheck" SKIP_RETURN_CODE 77)
 
 # Invariant test -- no reference output involved.
 #
@@ -160,10 +170,10 @@ set_tests_properties("rgbi_options" PROPERTIES LABELS "rgbi")
 # flag hid for years (docs/TASK_MPI.md). The binary self-checks and exits non-zero,
 # so no reference file can be blessed to make it pass. Runs in well under a
 # second.
-add_test(NAME "system_commands"
+add_test(NAME "shell_commands_run_and_report_failure"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND ${PROJECT_BINARY_DIR}/run_system_commands)
-set_tests_properties("system_commands" PROPERTIES LABELS "short")
+set_tests_properties("shell_commands_run_and_report_failure" PROPERTIES LABELS "short;selfcheck" SKIP_RETURN_CODE 77)
 
 # Invariant test -- no reference output involved.
 #
@@ -172,27 +182,27 @@ set_tests_properties("system_commands" PROPERTIES LABELS "short")
 # Numerical Recipes for twenty years and nothing noticed, because the DFT grid
 # uses only the Chebyshev and trapezoid rules. The binary self-checks and exits
 # non-zero. Instant.
-add_test(NAME "quadrature_rules"
+add_test(NAME "quadrature_rules_integrate_exactly"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND ${PROJECT_BINARY_DIR}/run_quadrature)
-set_tests_properties("quadrature_rules" PROPERTIES LABELS "short")
+set_tests_properties("quadrature_rules_integrate_exactly" PROPERTIES LABELS "short;selfcheck" SKIP_RETURN_CODE 77)
 
 # The restrained normal-equation solver behind the structure refinement,
 # against a 3 x 3 problem with a known answer: no weight, one hard weight,
 # and a ridge. Instant.
-add_test(NAME "lsq_restraints"
+add_test(NAME "restrained_least_squares_known_answer"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND ${PROJECT_BINARY_DIR}/run_lsq_restraint)
-set_tests_properties("lsq_restraints" PROPERTIES LABELS "short")
+set_tests_properties("restrained_least_squares_known_answer" PROPERTIES LABELS "short;selfcheck" SKIP_RETURN_CODE 77)
 
 # The fit of a spherical form factor to four Gaussians and a constant through
 # gnuplot, by a round trip on the carbon International Tables curve: the
 # coefficients must come back to 1e-4. Skipped (exit 77) where gnuplot is
 # not installed. A second or two.
-add_test(NAME "gaussian_ff_fit"
+add_test(NAME "form_factor_gaussian_fit_round_trip"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND ${PROJECT_BINARY_DIR}/run_gaussian_ff_fit)
-set_tests_properties("gaussian_ff_fit" PROPERTIES LABELS "short" SKIP_RETURN_CODE 77)
+set_tests_properties("form_factor_gaussian_fit_round_trip" PROPERTIES LABELS "short;selfcheck" SKIP_RETURN_CODE 77)
 
 # Invariant test -- no reference output involved.
 #
@@ -202,11 +212,11 @@ set_tests_properties("gaussian_ff_fit" PROPERTIES LABELS "short" SKIP_RETURN_COD
 # dispatcher reaches it. Merging the two roles is what segfaulted hart on its
 # second refinement cycle -- MOLECULE.READ:read_archive took arguments and
 # still peeked at stdin for a trailing qualifier. Instant; no build needed.
-add_test(NAME "library_stdin"
+add_test(NAME "library_routines_never_read_stdin"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_library_stdin.py
             ${PROJECT_SOURCE_DIR}/foofiles)
-set_tests_properties("library_stdin" PROPERTIES LABELS "short")
+set_tests_properties("library_routines_never_read_stdin" PROPERTIES LABELS "short;selfcheck" SKIP_RETURN_CODE 77)
 
 # Smoke matrix -- no reference output involved, so it cannot be blessed away.
 #
@@ -224,11 +234,11 @@ set_tests_properties("library_stdin" PROPERTIES LABELS "short")
 # -- plus that the initial GUESS does not move the CONVERGED energy, since a
 # guess is a starting point and two guesses disagreeing means one of them is
 # not converged. STO-3G and a coarse grid: about a second for the lot.
-add_test(NAME "single_atom_scf"
+add_test(NAME "single_atoms_converge_from_any_guess"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_single_atom_scf.py
             ${TONTO_EXE} ${BASIS_SETS})
-set_tests_properties("single_atom_scf" PROPERTIES LABELS "short")
+set_tests_properties("single_atoms_converge_from_any_guess" PROPERTIES LABELS "short;selfcheck" SKIP_RETURN_CODE 77)
 
 # Invariant tests -- properties, not blessed numbers, so they cannot be blessed
 # away. Each was written by working BACKWARDS from a defect found on
@@ -253,11 +263,11 @@ set_tests_properties("single_atom_scf" PROPERTIES LABELS "short")
 # 20 jobs, STO-3G, about 2 seconds for the lot. The reference suite could not
 # have found any of these: several because both sides of a comparison were
 # consistently wrong, and the grid one because no test varies a grid.
-add_test(NAME "dft_invariants"
+add_test(NAME "dft_consistency_properties"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_dft_invariants.py
             ${TONTO_EXE} ${BASIS_SETS})
-set_tests_properties("dft_invariants" PROPERTIES LABELS "short")
+set_tests_properties("dft_consistency_properties" PROPERTIES LABELS "short;selfcheck" SKIP_RETURN_CODE 77)
 
 # ABSOLUTE accuracy against g09 -- typed-in constants, NOT blessed Tonto output.
 # Every other test compares Tonto against Tonto and so can only answer "did
@@ -271,11 +281,11 @@ set_tests_properties("dft_invariants" PROPERTIES LABELS "short")
 # LABEL long, not short: it needs accuracy= best (~10 s per DFT case, ~31 s
 # total). At `high` the deviations already exceed the 5e-6 tolerance -- see the
 # measurements in the script header -- so running it cheap would defeat it.
-add_test(NAME "dft_reference"
+add_test(NAME "dft_energies_match_g09"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_dft_reference.py
             ${TONTO_EXE} ${BASIS_SETS})
-set_tests_properties("dft_reference" PROPERTIES LABELS "long")
+set_tests_properties("dft_energies_match_g09" PROPERTIES LABELS "long;selfcheck" SKIP_RETURN_CODE 77)
 
 # Invariant test -- no reference output involved.
 #
@@ -292,32 +302,32 @@ set_tests_properties("dft_reference" PROPERTIES LABELS "long")
 #     every rank via preconnected unit 6.
 # Source-level and instant; no build and no MPI needed, which is the point --
 # these are invisible in the serial runs everyone actually does.
-add_test(NAME "parallel_lint"
+add_test(NAME "mpi_lint_collectives_and_unit_io"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_parallel_lint.py
             ${PROJECT_SOURCE_DIR}/foofiles)
-set_tests_properties("parallel_lint" PROPERTIES LABELS "short")
+set_tests_properties("mpi_lint_collectives_and_unit_io" PROPERTIES LABELS "short;selfcheck" SKIP_RETURN_CODE 77)
 
 # Source-level and instant: every stdout.show label ends in "=" (or says
 # dots=FALSE), so the dots line up, and heading rules match their headings.
-add_test(NAME "show_labels"
+add_test(NAME "printed_labels_line_up"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_show_labels.py
             ${PROJECT_SOURCE_DIR}/foofiles ${PROJECT_SOURCE_DIR}/runfiles)
-set_tests_properties("show_labels" PROPERTIES LABELS "short")
+set_tests_properties("printed_labels_line_up" PROPERTIES LABELS "short;selfcheck" SKIP_RETURN_CODE 77)
 
 # Source-level and instant: every procedure name has one spelling across its
 # definition and its call sites, so case-sensitive tooling sees one name.
-add_test(NAME "procedure_case"
+add_test(NAME "procedure_names_have_one_spelling"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_procedure_case.py
             ${PROJECT_SOURCE_DIR}/foofiles ${PROJECT_SOURCE_DIR}/runfiles)
-set_tests_properties("procedure_case" PROPERTIES LABELS "short")
+set_tests_properties("procedure_names_have_one_spelling" PROPERTIES LABELS "short;selfcheck" SKIP_RETURN_CODE 77)
 
 # User-facing documents: no dates, hashes or status notes, and math GitHub draws.
-add_test(NAME "check_docs"
+add_test(NAME "user_docs_follow_house_rules"
     COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_docs.py ${PROJECT_SOURCE_DIR})
-set_tests_properties("check_docs" PROPERTIES LABELS "short")
+set_tests_properties("user_docs_follow_house_rules" PROPERTIES LABELS "short;selfcheck" SKIP_RETURN_CODE 77)
 
 # Invariant test -- no reference output involved.
 #
@@ -325,14 +335,14 @@ set_tests_properties("check_docs" PROPERTIES LABELS "short")
 # literal would shift every DFT energy without any other test noticing. This
 # replays the generators and asserts each grid integrates every monomial up to
 # its claimed order exactly. About two seconds, no build needed.
-add_test(NAME "lebedev_rules"
+add_test(NAME "lebedev_grids_integrate_exactly"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_lebedev_rules.py
             ${PROJECT_SOURCE_DIR}/foofiles/lebedev.foo)
 # SKIP_RETURN_CODE: the script needs numpy, a declared test dependency
 # (docs/BUILDING_ON_*). Without it the check reports itself skipped here; CI
 # runs it through scripts/suite_report.py, where a skip is an error.
-set_tests_properties("lebedev_rules" PROPERTIES LABELS "short"
+set_tests_properties("lebedev_grids_integrate_exactly" PROPERTIES LABELS "short;selfcheck"
                                                 SKIP_RETURN_CODE 77)
 
 # The accepted-name against implemented-name cross-check for DFT functionals.
@@ -344,11 +354,11 @@ set_tests_properties("lebedev_rules" PROPERTIES LABELS "short"
 # The dispatcher `case default` lines cannot catch it either, being PURE.
 # So it is a source scan: the six select-case blocks that name functionals must
 # agree, and this fails if they drift apart. Instant, and needs no build.
-add_test(NAME "functional_names"
+add_test(NAME "dft_functional_names_all_implemented"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_functional_names.py
             ${PROJECT_SOURCE_DIR}/foofiles)
-set_tests_properties("functional_names" PROPERTIES LABELS "short")
+set_tests_properties("dft_functional_names_all_implemented" PROPERTIES LABELS "short;selfcheck" SKIP_RETURN_CODE 77)
 
 # Invariant test -- no reference output involved, and no build needed.
 #
@@ -358,11 +368,11 @@ set_tests_properties("functional_names" PROPERTIES LABELS "short")
 # but an ignore rule is defeated by `git add -f` and broken by renaming a
 # target -- which is how it happened, the old rules naming the CMake targets
 # rather than the OUTPUT_NAMEs. This asserts the end state instead.
-add_test(NAME "foofiles_clean"
+add_test(NAME "foofiles_holds_only_sources"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND sh ${PROJECT_SOURCE_DIR}/scripts/check_foofiles_clean.sh
             ${PROJECT_SOURCE_DIR})
-set_tests_properties("foofiles_clean" PROPERTIES LABELS "short")
+set_tests_properties("foofiles_holds_only_sources" PROPERTIES LABELS "short;selfcheck" SKIP_RETURN_CODE 77)
 
 # Invariant test -- no reference output involved.
 #
@@ -381,10 +391,10 @@ set_tests_properties("foofiles_clean" PROPERTIES LABELS "short")
 # machine had a mol2chemfig that `command -v` found happily and whose pipx
 # virtualenv pointed at a python the OS had removed. The pipeline's only
 # symptom was a picture that silently did not appear. Runs in a second or two.
-add_test(NAME "rgbi_doctor_selftest"
+add_test(NAME "rgbi_doctor_catches_missing_tools"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND bash ${PROJECT_SOURCE_DIR}/scripts/rgbi_selftest.sh)
-set_tests_properties("rgbi_doctor_selftest" PROPERTIES
+set_tests_properties("rgbi_doctor_catches_missing_tools" PROPERTIES
     LABELS "short"
     SKIP_RETURN_CODE 77)
 

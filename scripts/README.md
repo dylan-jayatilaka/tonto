@@ -1,7 +1,7 @@
 # `scripts/` — developer and CI scripts
 
 **Nothing here is installed.** These are run from the repository, by hand or by
-a workflow: the test harness, the invariant checks, the translator helper, the
+a workflow: the test harness, the self-checks, the translator helper, the
 lints, the doctors and their self-tests, and `docker/`, which proves the RGBI
 install list in `docs/INSTALLING_RGBI.md` is sufficient by building it from a
 bare `ubuntu:24.04`.

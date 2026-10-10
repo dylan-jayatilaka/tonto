@@ -21,7 +21,7 @@ Other small test/run programs are built alongside.
 | `<build dir>/` | translator output (`*.F90` / `*.int` / `*.use`), objects, executables |
 | `tests/` | test jobs, one folder per job, grouped into suites: `short`, `hart`, `rgbi`, `long`, `cx` |
 | `basis_sets/` | basis-set data |
-| `scripts/` | test harness, invariant checks, developer tools |
+| `scripts/` | test harness, self-checks, developer tools |
 | `docs/` | these documents |
 
 The `.foo` modules translate fairly directly to the `.F90` files of the same name
