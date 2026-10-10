@@ -112,9 +112,7 @@ in a directory holding `stdin`, as for a serial run ([`RUNNING_TONTO.md`](RUNNIN
 ## 5. What to expect of the results
 
 - **A parallel build differs from a serial one even on one process.** Sums over a parallel loop
-  are added in a different order, and the build turns off the `PURE` and `ELEMENTAL` attributes
-  throughout, which changes how the compiler optimises. Expect differences in the last printed
-  digits.
+  are added in a different order. Expect differences in the last printed digits.
 - **Results depend on the number of processes** in those last digits, for the same reason: each
   process takes every $`P`$-th pass of a loop, for $`P`$ processes, and the partial sums are added
   at the end.

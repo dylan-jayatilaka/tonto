@@ -6256,6 +6256,24 @@ the job — not the other way round.
 
 # Translator and the Foo language
 
+## The translator prints parse complaints during an ordinary build and carries on (2026-10-10)
+
+Seen while building for the MPI work; not looked into. A full build prints nine ANTLR messages,
+*no viable alternative at input ...* or *extraneous input ...*, at three positions: `2013:92`,
+`3226:69` and `3540:65`. Each one dumps several kilobytes of Foo source into the build log, and
+the build goes on to succeed.
+
+- `2013:92` is `foofiles/becke_grid.foo`, in `SG_radius`: an array constructor continued with
+  `&`, with a comment line between the two continued lines. The generated `becke_grid.F90` has
+  the statement right, all 17 values on one line. So here the parser recovers and nothing is lost.
+- The files for `3226:69` and `3540:65` were not identified; the message does not name the file.
+  They are printed near `molecule.main` and `test_parallel` in a parallel build's log.
+
+To do: (1) make the message name the file, and say it once, without the source dump; (2) find
+the other two sites; (3) either accept a comment line inside a continued statement in the
+grammar, or make a parse complaint stop the build, so that a recovery that does lose text cannot
+pass unnoticed. Until (3), check the generated Fortran for the other two sites by eye.
+
 ## Future task: introduce Fortran-2008 `submodule` constructs
 
 **Goal (Dylan):** use real Fortran-2008 `submodule` where appropriate. **Concept clash to note
