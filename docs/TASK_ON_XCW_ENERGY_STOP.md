@@ -1,7 +1,7 @@
 # Stopping the X-ray constrained fit where its energy matches the crystal
 
 A science task, **to be planned** (Dylan, 2026-10-10). The facts and the derivation are in
-`docs/REPORT_ON_XCW_CONVERGENCE.md`, section 8.6. This page records the discussion that led to
+`docs/REPORT_ON_XCW_CONVERGENCE.md`, sections 8.6 to 8.9. This page records the discussion that led to
 it, with Dylan's questions, what was computed on the way, and the steps a plan would have to
 cover.
 
@@ -12,7 +12,7 @@ either do not turn on urea or turn where the fitted wavefunction's energy has ri
 1 hartree, 14 to 27 times the lattice energy. A physical stopping rule instead: the energy rise
 $`\Delta E`$ of the XCW, evaluated with the free-molecule Hamiltonian, should equal the
 molecule's own deformation energy in the crystal, which to second order equals minus its
-polarisation energy (report equations 27 to 29). Estimate that energy independently, before
+polarisation energy (report equations 27 to 31, sections 8.7 and 8.8). Estimate that energy independently, before
 fitting, and stop the scan where $`\Delta E`$ reaches it. The rule uses no sigmas, and since
 $`\Delta E`$ rises steadily with lambda it gives one lambda.
 
@@ -54,7 +54,7 @@ is no bound. What bounds the rise is the polarisation, which is part of the bind
 > decrease *-- how to relate the two? Except as a defined heuristic?*
 
 They are two parts of the same energy, and the relation is exact to second order, not a
-heuristic. Report equations 27 to 29: the deformation energy
+heuristic. Report equations 27 to 31: the deformation energy
 $`\Delta E_\mathrm{def} = \langle\Psi|H_0|\Psi\rangle - E_0 \ge 0`$ is a rise, by the variational
 principle for $`H_0`$. The polarisation energy $`E_\mathrm{pol} \le 0`$ is a fall, by the
 variational principle for $`H_0+V`$. To second order in $`V`$, $`\Delta E_\mathrm{def} =

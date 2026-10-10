@@ -29,7 +29,7 @@
    dominated by the few with the largest leverage. In def2-TZVP not even the leave-one-out
    sum turns up to lambda 6; only BIC turns, at 4.0, and its sigma-free form at 2.3.
 8. **Every one of these minima costs far more energy than the crystal can account for**
-   (section 8.6). The energy of the fitted wavefunction rises by 0.56 to 1.06 hartree, 14 to 27
+   (sections 8.6 to 8.9). The energy of the fitted wavefunction rises by 0.56 to 1.06 hartree, 14 to 27
    times urea's lattice energy of 39 m$`E_\mathrm{h}`$. The molecule's own deformation energy
    in the crystal, which is what that rise should be if the fit found the wavefunction of the
    molecule in the crystal, is 14 to 18 m$`E_\mathrm{h}`$ by a cluster-charge calculation, and
@@ -1163,7 +1163,9 @@ is 102.5 kJ/mol, or 39.0 m$`E_\mathrm{h}`$ per molecule (Reilly and Tkatchenko,
 | def2-TZVP, end of scan | 6.0 | 1.17 | 1173 | 30 |
 | def2-TZVP, leave-one-out, extrapolated | 11 to 12 | about 1.10 | about 2000 to 2200 | about 55 |
 
-**What $`\Delta E`$ should be.** Write the Hamiltonian of a molecule in the crystal as
+### 8.7 What the energy rise should be: deformation and polarisation
+
+Write the Hamiltonian of a molecule in the crystal as
 $`H_0 + V`$, where $`H_0`$ is the Hamiltonian of the free molecule and $`V`$ the potential of
 its neighbours. Let $`\Psi_0`$ be the ground state of $`H_0`$, with energy $`E_0`$, and $`\Psi`$
 the ground state of $`H_0 + V`$. The deformation energy is the free-molecule energy of the
@@ -1201,8 +1203,7 @@ $`-\alpha F^2`$ gained in interaction, $`-\tfrac12\alpha F^2`$ net. It is standa
 theory of induction: Stone, *The Theory of Intermolecular Forces*, 2nd ed. (2013), section 2.3,
 equation (2.3.22), where the factor $`\tfrac12`$ in the energy of an arbitrary perturbing
 potential arises because the distortion of the charge density costs energy, which partly
-cancels the gain in interaction. Equation (29) is the first term of the Hylleraas functional
-for the second-order energy. So if the fit recovered
+cancels the gain in interaction. So if the fit recovered
 the wavefunction of the molecule in the crystal, its $`\Delta E`$ would be the deformation
 energy, close to $`-E_{\mathrm{pol}}`$: a target for $`\Delta E`$ that owes nothing to the
 statistics of the data. Two effects outside a point-charge $`V`$ add to it: the compression
@@ -1210,7 +1211,51 @@ of the density by the exchange repulsion of the neighbours, and electron correla
 the data come from a correlated density and the Hartree-Fock energy of a correlated density
 lies above $`E_0`$.
 
-**The deformation energy computed.** Tonto's self-consistent cluster charges place the
+### 8.8 Hylleraas's variational principle
+
+The identity of equation (29) was stated, in effect, by Hylleraas in 1930, as part of a
+variational principle for the second-order energy (E. A. Hylleraas, *Z. Phys.* **65**, 209
+(1930)). For a trial function $`\phi`$ orthogonal to $`\Psi_0`$, his functional is
+
+```math
+J[\phi] = \langle\phi|H_0 - E_0|\phi\rangle + 2\,\mathrm{Re}\,\langle\phi|V - E^{(1)}|\Psi_0\rangle
+\qquad (30)
+```
+
+where $`E^{(1)} = \langle\Psi_0|V|\Psi_0\rangle`$ is the first-order energy. For a ground state
+$`H_0 - E_0`$ has no negative eigenvalues, so $`J`$ is bounded below. Its minimum is at the
+first-order wavefunction $`\Psi^{(1)}`$, the solution of
+$`(H_0 - E_0)\Psi^{(1)} = -(V - E^{(1)})\Psi_0`$, and the value there is the second-order energy
+$`E^{(2)}`$. Every other trial function gives a value above it. Putting that equation into the
+second term shows that, at the minimum, the second term is minus twice the first:
+
+```math
+E^{(2)} = J[\Psi^{(1)}] = -\langle\Psi^{(1)}|H_0 - E_0|\Psi^{(1)}\rangle
+ = \mathrm{Re}\,\langle\Psi^{(1)}|V|\Psi_0\rangle
+\qquad (31)
+```
+
+The two terms of the functional are the two parts of section 8.7. The first is the deformation
+energy: with $`\Psi = \Psi_0 + \Psi^{(1)}`$ and $`\Psi^{(1)}`$ orthogonal to $`\Psi_0`$,
+$`\langle\Psi|H_0|\Psi\rangle - E_0 = \langle\Psi^{(1)}|H_0 - E_0|\Psi^{(1)}\rangle`$ to second order.
+The second is the change in the interaction with $`V`$. So the polarisation energy is the minimum
+of the deformation energy plus the interaction gain, and at that minimum the gain is twice the
+deformation energy. The result in this form is Epstein, *The Variation Method in Quantum
+Chemistry* (1974), section 30, equation (14); the functional and its minimum property are in
+Helgaker, Jørgensen and Olsen, *Molecular Electronic-Structure Theory* (2000), section 14.1.3.
+
+The XCW has the same shape: it minimises the energy, the cost of deforming the wavefunction,
+plus $`\lambda\,\mathrm{GoF}^2`$, the gain from the data. The one-to-two ratio does not carry over
+to those two terms, because $`\mathrm{GoF}^2`$ is strongly curved in the density rather than
+linear like $`V`$. In def2-TZVP at lambda 0.005, $`\Delta E`$ is 13 m$`E_\mathrm{h}`$ while
+$`\lambda\,\Delta\mathrm{GoF}^2`$ is $`-61`$ m$`E_\mathrm{h}`$, a ratio of about 0.2 rather than 0.5.
+What carries over is the target. If the fitted wavefunction is the molecule's wavefunction in
+the crystal, its $`\Delta E`$ is the deformation energy that Hylleraas's principle ties to the
+polarisation energy.
+
+### 8.9 The deformation energy computed
+
+Tonto's self-consistent cluster charges place the
 Hirshfeld charges and dipoles of every neighbour within 8 Å around the molecule and
 iterate them with its density; $`\langle\Psi|H_0|\Psi\rangle`$ is the total energy minus the
 printed charge attraction energy $`V_{cN}`$. The charges need a Hirshfeld partition model,
@@ -1238,7 +1283,7 @@ $`V`$ is not fixed.
   field of the neighbours, plus the correlation term. It uses no sigmas, and since
   $`\Delta E`$ rises steadily with lambda it picks one lambda.
 
-### 8.7 Cost
+### 8.10 Cost
 
 **Cost of the explicit route, measured.** On one core of the Mac, one SCF iteration with the
 correction costs 0.4 s for ammonia, 80 basis functions and 88 reflections, and 5 s for urea in
