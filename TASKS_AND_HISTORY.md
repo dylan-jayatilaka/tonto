@@ -5072,6 +5072,25 @@ the XC evaluation, not the point count. Tables in `docs/TASK_SCF_SPEEDUP_DATA.md
 
 # Test suite and numerics
 
+## LATER (Dylan, 2026-10-10): two tests pass only on a widened last-digit bound
+
+Two tests carry `last_digit_tol: 6` in `scripts/test.py`'s `KNOWN_MARGINAL` instead of the
+standard 2, so that the macOS workflows can be green. Each hides a difference that should be
+understood, and the entry removed:
+
+- **`carbon_atom_uhf_cc-pVDZ_ANO_aoc`** (added 2026-10-10). On macOS one printed value near 5e-5
+  is 0.000389 against the reference's 0.000392: 3 units in the last place with netlib, 5 with
+  OpenBLAS, the same code; Linux passes exactly. It passed macOS CI on 2026-10-06 against its
+  earlier reference, re-blessed on 2026-10-08 when density damping became real. First step: find
+  which quantity it is, and whether it should be printed at all to that many places.
+- **`urea_ccsd_pob-TZVP_Salvador_properties`**. Hirshfeld atomic moments differ by a uniform
+  1-4 units in the last place between OpenBLAS kernels, not reduced by a finer grid, while the
+  Salvador moments in the same job are bit-identical (the comment in `scripts/test.py`).
+
+Both are the same kind of thing as the near-zero quantities in `docs/TONTO_BLESSING_TESTS.md`'s
+table: a value whose last digit is set by rounding. The fix in each case is either to print it to
+the precision it has, or to compare it on an absolute scale.
+
 ## CLOSED 2026-10-10: registered checks that ran in no workflow -- one list, the self-checks
 
 **What it was.** CI runs `scripts/suite_report.py`, never `ctest`, and the script carried its own
