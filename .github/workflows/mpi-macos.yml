@@ -1,0 +1,172 @@
+name: MPI on macOS (shared steps)
+
+# The steps of the two macOS MPI workflows, ci-macos-mpi.yml (reference) and
+# ci-macos-mpi-debug.yml (debug). They differ only in the build type and in what
+# decides pass or fail, so the steps live here once.
+#
+# THE COMPILER. Tonto does `use mpi`, and Fortran .mod files are
+# compiler-version specific, so the MPI must be built by the same compiler as
+# Tonto. Homebrew's open-mpi is built with Homebrew's current GCC, not with
+# gfortran-14, the project's compiler on every platform. So this builds Open MPI
+# from source and caches it: gfortran-14 for Fortran, Apple's clang for C (only
+# the Fortran side has to match), Homebrew's libevent and hwloc.
+#
+# PASS OR FAIL, as in mpi-linux.yml: pi must come out the same on 1, 2 and 4
+# processes; a reference build shows the short suite at 2 processes without it
+# deciding; a debug build must run two short jobs at 2 processes and agree.
+
+on:
+  workflow_call:
+    inputs:
+      build_type:
+        description: 'reference or debug'
+        required: true
+        type: string
+
+env:
+  OMPI_VERSION: 5.0.9
+  FC_VERSION: 14
+  OMPI_PREFIX: /Users/runner/opt/openmpi-gf14
+  # Bump when the Open MPI build recipe changes without OMPI_VERSION or
+  # FC_VERSION moving. The cache key covers what is built; this covers how.
+  OMPI_BUILD_REV: 1
+
+jobs:
+  mpi:
+    name: macOS MPI, ${{ inputs.build_type }}, gfortran-14
+    runs-on: macos-14          # Apple silicon
+    timeout-minutes: 150
+
+    steps:
+      - name: The build type must be reference or debug
+        run: |
+          case "${{ inputs.build_type }}" in
+            reference|debug) echo "build type ${{ inputs.build_type }}" ;;
+            *) echo "::error::build_type must be reference or debug, not '${{ inputs.build_type }}'"; exit 1 ;;
+          esac
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install the toolchain
+        run: |
+          set -x
+          # gnuplot: two nh3 jobs in the short suite plot, and without it they
+          # fail on the extra warning lines. lapack: netlib, which a reference
+          # build requires. libevent and hwloc: Open MPI's build uses them.
+          brew install gcc@${FC_VERSION} cmake openjdk gnuplot lapack libevent hwloc
+          echo "$(brew --prefix openjdk)/bin" >> "$GITHUB_PATH"
+          gfortran-${FC_VERSION} --version | head -1
+
+      # Keyed on (Open MPI version, gfortran version) because that pair is what
+      # .mod compatibility depends on. Cold, about 20 minutes; warm, seconds.
+      - name: Cache Open MPI (built with gfortran-${{ env.FC_VERSION }})
+        id: ompi-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.OMPI_PREFIX }}
+          key: ompi-${{ env.OMPI_VERSION }}-gfortran${{ env.FC_VERSION }}-r${{ env.OMPI_BUILD_REV }}-macos14-arm64
+
+      - name: Build Open MPI with gfortran-${{ env.FC_VERSION }}
+        if: steps.ompi-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          curl -fsSL -O https://download.open-mpi.org/release/open-mpi/v5.0/openmpi-${OMPI_VERSION}.tar.bz2
+          tar xf openmpi-${OMPI_VERSION}.tar.bz2
+          cd openmpi-${OMPI_VERSION}
+          ./configure --prefix="$OMPI_PREFIX" \
+                      FC=gfortran-${FC_VERSION} F77=gfortran-${FC_VERSION} \
+                      CC=clang CXX=clang++ --disable-mpi-cxx \
+                      --with-libevent="$(brew --prefix libevent)" \
+                      --with-hwloc="$(brew --prefix hwloc)" \
+                      --with-pmix=internal > configure.log 2>&1 || { tail -30 configure.log; exit 1; }
+          make -j"$(sysctl -n hw.ncpu)" > make.log 2>&1 || { tail -30 make.log; exit 1; }
+          make install > install.log 2>&1
+
+      # Checks what is on disk, not what a process reports: a stale cache under
+      # a reused key would otherwise pass unnoticed.
+      - name: The MPI toolchain must match the compiler
+        run: |
+          set -euo pipefail
+          mpi_fc_ver=$("$OMPI_PREFIX/bin/mpifort" -dumpfullversion)
+          case "$mpi_fc_ver" in
+            ${FC_VERSION}.*) echo "mpifort wraps GNU Fortran $mpi_fc_ver" ;;
+            *) echo "::error::mpifort wraps $mpi_fc_ver, not gfortran-${FC_VERSION} -- a stale cache under a reused key?"
+               exit 1 ;;
+          esac
+          printf 'program t\n  use mpi\n  implicit none\n  integer :: e\n  call MPI_Init(e)\n  call MPI_Finalize(e)\nend program t\n' > t.f90
+          "$OMPI_PREFIX/bin/mpifort" t.f90 -o t
+          "$OMPI_PREFIX/bin/mpirun" -n 2 --oversubscribe ./t
+          echo "use mpi compiles and runs under the matching launcher"
+
+      - name: Configure and build (MPI, ${{ inputs.build_type }})
+        run: |
+          set -euo pipefail
+          cmake -B build-mpi \
+                -DCMAKE_Fortran_COMPILER="$OMPI_PREFIX/bin/mpifort" \
+                -DCMAKE_C_COMPILER="$OMPI_PREFIX/bin/mpicc" \
+                -DMPI=1 -DCMAKE_BUILD_TYPE=${{ inputs.build_type }}
+          cmake --build build-mpi -- -j3
+
+      - name: The binary must be MPI-linked, and built as asked
+        run: |
+          set -euo pipefail
+          test -x build-mpi/tonto
+          otool -L build-mpi/tonto | grep -q "libmpi" \
+            || { echo "::error::build-mpi/tonto is not linked against libmpi"; exit 1; }
+          flags=build-mpi/CMakeFiles/tonto_lib.dir/flags.make
+          grep -q "DMPI=1" "$flags" || { echo "::error::-DMPI=1 not in $flags"; exit 1; }
+          if [ "${{ inputs.build_type }}" = debug ]; then
+            grep -q -- "-fcheck=bounds" "$flags" \
+              || { echo "::error::a debug build without -fcheck=bounds checks nothing"; exit 1; }
+            echo "debug: bounds checks on"
+          fi
+
+      - name: GATE — pi is independent of the number of processes
+        run: |
+          set -euo pipefail
+          sh scripts/check_mpi_pi.sh build-mpi/run_mpi_pi \
+             "$OMPI_PREFIX/bin/mpirun" 1 2 4 | tee mpi_pi.log
+
+      - name: numpy must import -- a declared test dependency (the Lebedev grid check)
+        # For whichever python3 the test steps run, which need not be Homebrew's.
+        run: |
+          python3 -c 'import numpy' 2>/dev/null \
+            || python3 -m pip install --user --break-system-packages numpy
+          python3 -c 'import numpy; print("numpy", numpy.__version__)'
+
+      - name: GATE (debug) — two short jobs run and agree at 2 processes
+        if: inputs.build_type == 'debug'
+        run: |
+          set -euo pipefail
+          for t in h2o_rhf_STO-3G h2o_rhf_cc-pVDZ; do
+            echo "== $t =="
+            python3 scripts/test.py \
+              --test-directory "tests/short/$t" --basis-sets basis_sets \
+              --build-dir build-mpi --log-level=ERROR \
+              --mpi --mpi-ranks 2 --mpi-launcher "$OMPI_PREFIX/bin/mpirun"
+          done
+
+      - name: Short suite under MPI at 2 processes (shown, does not decide)
+        if: inputs.build_type == 'reference'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python3 scripts/suite_report.py \
+            --build-dir build-mpi --tests-dir tests --basis-sets basis_sets \
+            --suites short --failure-dir mpi-test-failures \
+            --mpi --mpi-ranks 2 --mpi-launcher "$OMPI_PREFIX/bin/mpirun" \
+            --log tests-macos-mpi.log | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mpi-macos-${{ inputs.build_type }}-diagnostics
+          path: |
+            mpi_pi.log
+            tests-macos-mpi.log
+            tests/**/*.bad
+            mpi-test-failures/**
+          if-no-files-found: ignore

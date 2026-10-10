@@ -11,15 +11,10 @@ name: macOS-debug
 # worked around -- it was a compiler bug in -fcheck=bounds, not a Tonto defect.
 # See docs/TASK_GFORTRAN16_PORT.md.
 #
-# Both compilers, for different reasons:
-#   14  the real check. It keeps -fcheck=bounds, so it is the one that can catch
-#       an out-of-bounds access.
-#   16  guards the workaround. If GCC fixes the bug, or if our version gate stops
-#       matching, this job is what notices.
-#
-# The bounds-flag assertion below is the point of running 16 at all. It is an
-# invariant check in the same spirit as ci-macos.yml's arm64 pin assertion: the
-# gate's effect is invisible at runtime, so assert it rather than trust it.
+# gfortran-14 only, the project's compiler on every platform; the compiler is a
+# one-entry matrix so that a move to a newer one is one edit. The assertion
+# below checks that the debug build keeps -fcheck=bounds: CMake drops it on
+# gfortran 16 and up, which miscompiles it (docs/TASK_GFORTRAN16_PORT.md).
 #
 # Scheduled and manual only, and NOT badged until it has run green once --
 # ci-macos.yml has never run at all, and a badge on a workflow that has never
@@ -38,9 +33,8 @@ jobs:
     runs-on: macos-14          # Apple silicon
     timeout-minutes: 90
     strategy:
-      fail-fast: false         # 14 and 16 are independent questions
       matrix:
-        gcc: [14, 16]
+        gcc: [14]
 
     steps:
       - uses: actions/checkout@v4
@@ -50,7 +44,7 @@ jobs:
       - name: Install the toolchain
         run: |
           set -x
-          brew install gcc cmake openjdk
+          brew install gcc@${{ matrix.gcc }} cmake openjdk
           echo "$(brew --prefix openjdk)/bin" >> "$GITHUB_PATH"
 
       - name: Which compiler is this, actually
@@ -66,27 +60,14 @@ jobs:
                 -DCMAKE_Fortran_COMPILER=gfortran-${{ matrix.gcc }} \
                 -DCMAKE_BUILD_TYPE=debug
 
-      - name: Assert the -fcheck=bounds gate did the right thing
-        # gfortran 16 miscompiles -fcheck=bounds, so the build drops it on 16 and
-        # up and keeps it on 14. Both halves matter: losing it on 14 would remove
-        # real checking, and keeping it on 16 would resurrect the segfault.
+      - name: Assert the debug build has bounds checks
         run: |
-          # See ci-debug.yml: the library target is tonto_lib, and a missing
-          # flags file must say so rather than be read as a missing flag. On the
-          # 16 branch that failure mode was worse than a false alarm -- grep
-          # finding nothing in a nonexistent file printed "correctly omitted"
-          # and PASSED.
+          # A missing flags file must say so rather than be read as a missing flag.
           FLAGS=build-debug/CMakeFiles/tonto_lib.dir/flags.make
           test -f "$FLAGS" || { echo "::error::$FLAGS not found -- has the library target been renamed?"; ls build-debug/CMakeFiles/; exit 1; }
-          if [ "${{ matrix.gcc }}" = "16" ]; then
-            grep -q 'fcheck=bounds' "$FLAGS" \
-              && { echo "::error::gfortran-16 debug still has -fcheck=bounds; see docs/TASK_GFORTRAN16_PORT.md"; exit 1; }
-            echo "ok: -fcheck=bounds correctly omitted on gfortran-16"
-          else
-            grep -q 'fcheck=bounds' "$FLAGS" \
-              || { echo "::error::gfortran-14 debug lost -fcheck=bounds; the version gate is too broad"; exit 1; }
-            echo "ok: -fcheck=bounds correctly kept on gfortran-14"
-          fi
+          grep -q 'fcheck=bounds' "$FLAGS" \
+            || { echo "::error::gfortran-${{ matrix.gcc }} debug lost -fcheck=bounds; the version gate in cmake/SetFortranFlags.cmake is too broad"; exit 1; }
+          echo "ok: -fcheck=bounds kept on gfortran-${{ matrix.gcc }}"
 
       - name: Build (debug)
         run: cmake --build build-debug -- -j3

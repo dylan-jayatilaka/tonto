@@ -1,0 +1,191 @@
+name: MPI on Linux (shared steps)
+
+# The steps of the two Linux MPI workflows, ci-mpi.yml (reference) and
+# ci-mpi-debug.yml (debug). They differ only in the build type and in what
+# decides pass or fail, so the steps live here once.
+#
+# THE COMPILER. Tonto does `use mpi`, and Fortran .mod files are
+# compiler-version specific, so the MPI must be built by the same compiler as
+# Tonto. Ubuntu's own Open MPI is built with the distribution's default gfortran
+# (13 on 24.04), so this builds Open MPI from source with gfortran-14, the
+# project's compiler on every platform, and caches it. gfortran-14 is in the
+# Ubuntu archive, so no extra package source is needed.
+#
+# PASS OR FAIL.
+#   Both        pi must come out the same on 1, 2 and 4 processes
+#               (scripts/check_mpi_pi.sh): one `parallel do` and one
+#               PARALLEL_SUM against an answer known in advance, so it cannot
+#               be blessed away.
+#   reference   The short suite at 2 processes is shown but does not decide:
+#               docs/TASK_MPI.md still has open defects, so it would be
+#               permanently red.
+#   debug       Two short jobs at 2 processes must run to completion and agree
+#               with their references, with array bounds checks and Tonto's
+#               internal checks live in the parallel code. The suite is not
+#               run, because the serial debug build has known failures.
+
+on:
+  workflow_call:
+    inputs:
+      build_type:
+        description: 'reference or debug'
+        required: true
+        type: string
+
+env:
+  OMPI_VERSION: 5.0.9
+  FC_VERSION: 14
+  OMPI_PREFIX: /home/runner/opt/openmpi-gf14
+  # Bump when the Open MPI build recipe changes without OMPI_VERSION or
+  # FC_VERSION moving. The cache key covers what is built; this covers how.
+  OMPI_BUILD_REV: 1
+
+jobs:
+  mpi:
+    name: Linux MPI, ${{ inputs.build_type }}, gfortran-14
+    runs-on: ubuntu-24.04     # pinned, not -latest: the reference platform must not move on its own
+    timeout-minutes: 120
+
+    steps:
+      - name: The build type must be reference or debug
+        run: |
+          case "${{ inputs.build_type }}" in
+            reference|debug) echo "build type ${{ inputs.build_type }}" ;;
+            *) echo "::error::build_type must be reference or debug, not '${{ inputs.build_type }}'"; exit 1 ;;
+          esac
+
+      - name: Check out (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install toolchain (gfortran-${{ env.FC_VERSION }})
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gfortran-${FC_VERSION} gcc-${FC_VERSION} g++-${FC_VERSION} \
+            libblas-dev liblapack-dev default-jdk python3 python3-numpy perl gnuplot make cmake
+          command -v gfortran-${FC_VERSION} > /dev/null || {
+            echo "::error::gfortran-${FC_VERSION} did not install -- it is not in the Ubuntu archive for $(lsb_release -cs)."
+            exit 1
+          }
+          gfortran-${FC_VERSION} --version | head -1
+
+      # Keyed on (Open MPI version, gfortran version) because that pair is what
+      # .mod compatibility depends on. Cold, about 10 minutes; warm, seconds.
+      - name: Cache Open MPI (built with gfortran-${{ env.FC_VERSION }})
+        id: ompi-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.OMPI_PREFIX }}
+          key: ompi-${{ env.OMPI_VERSION }}-gfortran${{ env.FC_VERSION }}-r${{ env.OMPI_BUILD_REV }}-${{ runner.os }}
+
+      - name: Build Open MPI with gfortran-${{ env.FC_VERSION }}
+        if: steps.ompi-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          curl -fsSL -O https://download.open-mpi.org/release/open-mpi/v5.0/openmpi-${OMPI_VERSION}.tar.bz2
+          tar xf openmpi-${OMPI_VERSION}.tar.bz2
+          cd openmpi-${OMPI_VERSION}
+          ./configure --prefix="$OMPI_PREFIX" \
+                      FC=gfortran-${FC_VERSION} F77=gfortran-${FC_VERSION} \
+                      CC=gcc-${FC_VERSION} CXX=g++-${FC_VERSION} \
+                      --disable-mpi-cxx > configure.log 2>&1 || { tail -30 configure.log; exit 1; }
+          make -j"$(nproc)" > make.log 2>&1 || { tail -30 make.log; exit 1; }
+          make install > install.log 2>&1
+
+      # Checks what is on disk, not what a process reports: a stale cache under
+      # a reused key would otherwise pass unnoticed.
+      - name: The MPI toolchain must match the compiler
+        run: |
+          set -euo pipefail
+          mpi_fc_ver=$("$OMPI_PREFIX/bin/mpifort" -dumpfullversion)
+          case "$mpi_fc_ver" in
+            ${FC_VERSION}.*) echo "mpifort wraps GNU Fortran $mpi_fc_ver" ;;
+            *) echo "::error::mpifort wraps $mpi_fc_ver, not gfortran-${FC_VERSION} -- a stale cache under a reused key?"
+               exit 1 ;;
+          esac
+          printf 'program t\n  use mpi\n  implicit none\n  integer :: e\n  call MPI_Init(e)\n  call MPI_Finalize(e)\nend program t\n' > t.f90
+          "$OMPI_PREFIX/bin/mpifort" t.f90 -o t
+          "$OMPI_PREFIX/bin/mpirun" -n 2 --oversubscribe ./t
+          echo "use mpi compiles and runs under the matching launcher"
+
+      - name: Configure and build (MPI, ${{ inputs.build_type }})
+        run: |
+          set -euo pipefail
+          cmake -B build-mpi \
+                -DCMAKE_Fortran_COMPILER="$OMPI_PREFIX/bin/mpifort" \
+                -DCMAKE_C_COMPILER="$OMPI_PREFIX/bin/mpicc" \
+                -DMPI=1 -DCMAKE_BUILD_TYPE=${{ inputs.build_type }}
+          cmake --build build-mpi -- -j2
+
+      - name: The binary must be MPI-linked, and built as asked
+        run: |
+          set -euo pipefail
+          test -x build-mpi/tonto
+          ldd build-mpi/tonto | grep -q "libmpi" \
+            || { echo "::error::build-mpi/tonto is not linked against libmpi"; exit 1; }
+          flags=build-mpi/CMakeFiles/tonto_lib.dir/flags.make
+          grep -q "DMPI=1" "$flags" || { echo "::error::-DMPI=1 not in $flags"; exit 1; }
+          if [ "${{ inputs.build_type }}" = debug ]; then
+            grep -q -- "-fcheck=bounds" "$flags" \
+              || { echo "::error::a debug build without -fcheck=bounds checks nothing"; exit 1; }
+            echo "debug: bounds checks on"
+          fi
+
+      - name: GATE — pi is independent of the number of processes
+        run: |
+          set -euo pipefail
+          sh scripts/check_mpi_pi.sh build-mpi/run_mpi_pi \
+             "$OMPI_PREFIX/bin/mpirun" 1 2 4 | tee mpi_pi.log
+
+      - name: GATE (debug) — two short jobs run and agree at 2 processes
+        if: inputs.build_type == 'debug'
+        run: |
+          set -euo pipefail
+          for t in h2o_rhf_STO-3G h2o_rhf_cc-pVDZ; do
+            echo "== $t =="
+            python3 scripts/test.py \
+              --test-directory "tests/short/$t" --basis-sets basis_sets \
+              --build-dir build-mpi --log-level=ERROR \
+              --mpi --mpi-ranks 2 --mpi-launcher "$OMPI_PREFIX/bin/mpirun"
+          done
+
+      - name: numpy must import -- a declared test dependency (the Lebedev grid check)
+        if: inputs.build_type == 'reference'
+        run: python3 -c 'import numpy; print("numpy", numpy.__version__)'
+
+      # -n 2, not 4: the runner has 4 vCPUs and the launcher would oversubscribe.
+      # --failure-dir: a crashed job writes no .bad, so without one log per
+      # failure its cause is recorded nowhere.
+      - name: Short suite under MPI at 2 processes (shown, does not decide)
+        if: inputs.build_type == 'reference'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          {
+            echo '## MPI short suite — 2 processes (shown, does not decide)'
+            echo ''
+            echo 'What decides this workflow is the pi check, not this table.'
+            echo 'docs/TASK_MPI.md lists what is still open.'
+            echo ''
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          python3 -u scripts/suite_report.py \
+            --build-dir build-mpi --tests-dir tests --basis-sets basis_sets \
+            --suites short --no-log --failure-dir mpi-test-failures \
+            --mpi --mpi-ranks 2 --mpi-launcher "$OMPI_PREFIX/bin/mpirun" \
+            2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload logs and any .bad outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mpi-linux-${{ inputs.build_type }}-diagnostics
+          path: |
+            mpi_pi.log
+            tests/**/*.bad
+            mpi-test-failures/**
+          if-no-files-found: warn

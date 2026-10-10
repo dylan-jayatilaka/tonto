@@ -239,9 +239,9 @@ A 16 release build is numerically free on Linux and macOS; a 16 debug build work
 no array bounds checking, which is the reason to wait. Detail:
 `docs/TASK_GFORTRAN16_GCC_BUG.md`, `docs/TASK_GFORTRAN16_PORT.md`.
 
-**No toolchain PPA in the build or in CI.** `ppa:ubuntu-toolchain-r/test` is used only where a
-compiler newer than the distribution's is genuinely required — today `ci-mpi.yml` alone — and
-goes as soon as that compiler reaches the archive. A build whose output is compared against
+**No toolchain PPA in the build or in CI.** No workflow adds `ppa:ubuntu-toolchain-r/test`;
+every one builds with gfortran-14 from the Ubuntu archive or Homebrew's `gcc@14`, and a move
+to a newer compiler is made on every platform at once. A build whose output is compared against
 stored references must not silently change where its packages come from: the PPA carries a
 newer *minor* release of gfortran-14 than the Ubuntu archive, which is enough to turn the
 reference build red. `ci.yml` records the exact package builds of `gfortran`, `libblas-dev`

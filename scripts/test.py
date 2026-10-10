@@ -71,6 +71,10 @@ KNOWN_MARGINAL = {
     # of the last place, which is what the disagreement actually is. Swept:
     # tol 5 fails, 6 passes, on the kernel this laptop auto-detects.
     'urea_ccsd_pob-TZVP_Salvador_properties': {'last_digit_tol': 6},
+    # One value near 5e-5 differs between macOS and Linux by 3 units in the last
+    # printed place with netlib and 5 with OpenBLAS, the same code; Linux passes
+    # exactly. Mac against Linux, not the library.
+    'carbon_atom_uhf_cc-pVDZ_ANO_aoc': {'last_digit_tol': 6},
 }
 
 def is_junk(line):
