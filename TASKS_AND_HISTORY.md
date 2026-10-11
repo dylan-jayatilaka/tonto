@@ -116,8 +116,9 @@ ADPs: GoF 2.606 with PBE, 2.511 with r2SCAN. Runs: `~/tonto-runs/2026-10-11_r2sc
 
 **Found on the way.** Two translator build targets could regenerate and read the parser
 sources at once in a parallel build (fixed, `8af777df`). In a debug build every job that stops
-with an error then crashes with "Attempt to DEALLOCATE unallocated 'tonto_bug'" (not fixed, not
-in the register). libxc's build files refuse Tonto's build type names (fixed).
+with an error then ends with "Attempt to DEALLOCATE unallocated 'tonto_bug'": deliberate, but
+misleading (register row; entry under *Build system and toolchain*). libxc's build files refuse
+Tonto's build type names (fixed).
 
 **Open from this work:** the ORCA check (*Test suite and numerics*); libxc in the MPI and WSL
 workflows; whether `-DLIBXC=ON` becomes the default.
@@ -3672,6 +3673,23 @@ Any of these rewrites the reference, so re-bless deliberately and read the resul
 ---
 
 # Build system and toolchain
+
+## A debug build ends every error with a crash that reads like a bug (2026-10-11)
+
+**Register row** of the same name. After a `DIE` prints its message, a debug build stops with
+
+    Fortran runtime error: Attempt to DEALLOCATE unallocated 'tonto_bug'
+
+This is deliberate. `SYSTEM` has a module variable `tonto_bug` that is never allocated, and
+deallocates it under `#ifdef DEBUG` in three places in `foofiles/system.foo` (after the message,
+in each of the die routines), so that gfortran, built with `-fbacktrace`, prints a traceback to
+the call that failed. It works, but the line reads as a second fault, and in a terminal it is the
+last thing seen, below the real message. I took it for a bug on 2026-10-11 and reported it as one.
+
+To do: get the traceback without the false error. gfortran has a `backtrace` routine (an
+extension) that prints one and returns; follow it with the ordinary stop. Check that the exit
+code is still non-zero, that the MPI error path, which must not use collectives, is unchanged,
+and what other compilers need.
 
 ## Milestone 6, partial: the suppressed-reduction abort and the parallel lint (2026-08-02)
 
