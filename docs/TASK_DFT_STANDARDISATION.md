@@ -1190,6 +1190,26 @@ What is done, and where (branch `libxc`; one row per piece, added as it lands):
 | 1 | The build switch `-DLIBXC=ON`: builds libxc's C library (energy and potential only, `-O2`), the glue, defines `LIBXC` for the Foo code | `CMakeLists.txt`, the *libxc* block | a configure without the switch is unchanged |
 | 1 | Test program: Slater exchange for one and two spin channels against the closed form; PBE0 and r2SCAN as libxc reports them | `runfiles/run_libxc.foo` | ctest `libxc_gives_slater_exchange` (`tests/CMakeLists.txt`): passes in the `debug` tree, Mac, gfortran-14 |
 
+| 2 | The two bundle types: densities in, energy and potentials out, laid out `(n_pt,n_spin)` and `(n_pt,3,n_spin)` | `foofiles/types.foo`; new modules `xc_density.foo`, `xc_potential.foo` | the comparison below |
+| 2 | One entry point for a functional, `add_energy_and_potential(name,den,pot)`; it picks one or two spin channels from `den` and passes the gradient only to a functional that uses it | `foofiles/dft_functional.foo` | |
+| 2 | `set_XC_energy_and_potential(pot,den)` replaces the four `new_set_*_XC_*` routines | `foofiles/molecule.fock.foo` | |
+| 2 | The six matrix builders (`add_LDA_XC_mx`, `add_GGA_XC_mx`, `add_XC_mx_batched`, restricted and unrestricted) and their four inner routines take `pot` | `foofiles/molecule.fock.foo` | |
+| 2 | The four `make_rho_becke_atom_grid` routines return `den` | `foofiles/molecule.rho.foo` | |
+
+Stage 2 (2026-10-11) changes no number. Checked on the Mac, gfortran-14: six small jobs
+(restricted and unrestricted; Slater-type, mixed and gradient functionals), each with the per-atom
+and the batched builders, give output identical at 12 printed digits to the commit before, both in
+debug builds; no test input switches the batched builders on, so this is their only check. The 21
+DFT tests pass in `debug` and in `release`, so the new routines are pure where they claim to be.
+The argument counts: the unrestricted gradient call went from 17 arguments to 3, the unrestricted
+grid density from 18 to 11, its matrix builder from 21 to 13.
+
+Left as they were in stage 2: the four old dispatchers and the forty hand-written routines, now
+reached only through the entry point (and directly by the potential plots in `molecule.grid.foo`
+and `atom.foo`); the layout is `(n_pt,n_spin)` and not libxc's `(n_spin,n_pt)`, because the
+hand-written routines and the matrix builders read whole columns, so libxc's arrays are copied in
+its adapter.
+
 Stage 1 is done in a debug build only (2026-10-11). Not yet done for it: a `release` build, Linux,
 the Windows cross-build. Foo took the interface to the glue as written, with a string of any
 length spelled `STR(*)`. The seven existing DFT tests still pass in that tree.
