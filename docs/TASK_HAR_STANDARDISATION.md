@@ -62,6 +62,11 @@ Hirshfeld moments are identical under two BLAS kernels. Left to check:
    (which kept Cartesian functions until branch `cluster-spherical`, 2026-10-05).
 4. The DFT ensemble atoms (`fon`) did not converge a BLYP refinement in 100 cycles: note only,
    since the option stays off.
+5. After scalar X2C (§6a): one heavy atom, to see whether the rotational average and the ensemble
+   atoms (`ano_kind= aoc`, `fon`) still give the same refinement. This is the only place the
+   question of the default atoms stays open; the register row *Spherical atoms by the right
+   ensemble* was closed on 2026-10-11 and folded in here. The ensemble options handle one open
+   shell and stop at Kr, so they would need extending first.
 
 ## 4. Basis sets across the periodic table
 

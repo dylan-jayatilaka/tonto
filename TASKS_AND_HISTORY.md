@@ -4907,56 +4907,6 @@ this first costs nothing if RI later supersedes it.
 
 **Detail**: `docs/TASK_RI_FITTING.md` section 7, item 2.
 
-## Spherical atoms by the right ensemble: average of configuration for HF, fractional occupation for DFT (Dylan, 2026-10-03)
-
-**Register row:** *Spherical atoms by the right ensemble*. Not started. Grew out of the Mac-drift fix
-and the pFON discussion of 2026-10-03.
-
-**What the atoms are now.** `ATOM:spherically_average` takes the converged single-determinant atomic
-density (UHF or UKS, whatever the molecule's method is) and averages it over all rotations. For a
-p^4 shell that equals the average over the three hole positions, so it is the ensemble average of
-*frozen-orbital* determinants. What it lacks is the relaxation of the orbitals in the averaged
-field. It is used for the promolecule guess and for every Hirshfeld-type partition.
-
-**What they should be, by method** (Dylan's decision 2026-10-03):
-
-- **HF: Slater's average of configuration.** HF is a wavefunction theory; the spherical open-shell
-  atom is an equal-weight ensemble of its degenerate determinants, with pair weights
-  q(q-1)/[g(g-1)] for q electrons in a shell of g spin-orbitals. In Fock-matrix form it is
-  Roothaan's open-shell method with the coupling coefficients for the average of configuration,
-  which depend only on q and g. The shell's orbitals come out exactly degenerate and the density
-  spherical by construction, self-consistently.
-- **DFT: fractional occupation**, n_i = q/g held fixed on each partly filled shell (Janak 1978; Gross,
-  Oliveira and Kohn 1988: for a degenerate ground state the exact functional at the ensemble
-  density gives the ensemble energy). This is what the atomic DFT codes do (Herman-Skillman, Perdew
-  and Zunger 1981, Becke's atomic code for XDM, FHI-aims' free atoms, HORTON's pro-atoms); check the
-  documentation before citing any of them.
-- **Not this:** the fractional-density HF functional (pFON held at fractional occupation), whose pair
-  weights n_i n_j carry a self-interaction-like error of order n(1-n) -- e.g. one beta electron over
-  three p orbitals gets (1/9)(J_ij - K_ij) per pair that the true ensemble does not have. In pFON
-  proper the fractions are annealed away, so this never shows; held, it would.
-
-**What Tonto has.** `MOLECULE.BASE:make_finite_T_density_mx` and `make_finite_T_DM_r` build fractional-
-occupation densities (Fermi-Dirac over a window; per spin in UHF); `SCF_energy` is the ordinary
-functional of whatever density it is given, with no entropy term; `apply_pFON` switches the
-fractions off after 20 iterations or when the DIIS error is small. ROHF exists (`make_SCF_density_mx`
-case "rohf"). Nothing holds fractional occupations, and nothing does average-of-configuration
-coupling coefficients.
-
-**Plan.**
-1. DFT first: hold n = q/g on the open shell(s) of the atomic UKS calculation to convergence (a
-   `held_FON` option beside pFON), spin-averaged so the density is also spin-spherical; then
-   `spherically_average` is a no-op check (the density should already be spherical to rounding).
-2. HF: the average-of-configuration Fock operator for one open shell (Roothaan 1960, Slater 1960);
-   check against published AOC atomic energies.
-3. Measure before believing: the promolecule iteration-0 energy and, more to the point, a HAR
-   (urea, then gly_ala) with Hirshfeld atoms from the new spherical atoms against the present ones.
-   Expected: differences well below the esds, since only orbital relaxation changes and the
-   Hirshfeld weights are ratios; the DFT case may move more because today's DFT atoms are averaged
-   Kohn-Sham determinants, which is the wrong object. Whatever moves needs a full re-bless (every
-   promolecule guess line).
-4. Decide whether the averaged-determinant atoms stay available (as the cheap fallback) or go.
-
 ## Aspherical form factors by RI density fitting (Dylan, 2026-09-24)
 
 **Status 2026-09-27: stage (a) done, merged to `develop`** (branch `oc-ri`, merge `bd821d23`). `partition_model= oc-ri` fits
@@ -7168,6 +7118,75 @@ different question and the one that matters.
 ---
 
 # Done, resolved and closed (archive)
+
+## CLOSED (2026-10-11): spherical atoms by the right ensemble -- the default stays
+
+**Closed by Dylan's decision** (2026-10-05, repeated 2026-10-11): the atoms behind the promolecule
+guess and every Hirshfeld-type partition stay as they are, an unrestricted SCF on the ground state
+followed by the average over rotations. `ano_kind= aoc` and `fon` exist, are tested, and stay off.
+On urea they change the GoF by 0.002 to 0.003 and nothing else by a printed digit.
+
+Not open any more: whether `aoc` becomes the default (no). What may bring the question back is a
+heavy atom after the X2C work, and that belongs to *Standardise the density behind HAR*
+(`docs/TASK_HAR_STANDARDISATION.md` section 3). Atoms with two open shells (Cr, Cu, and beyond
+Kr) matter only to `aoc` and `fon`. The split of the Fock code from `MOLECULE` belongs with
+re-engineering.
+
+`docs/TASK_SPHERICAL_ATOM_SCF.md` is kept for now although the item is closed: it holds the
+theory that a comment in `MOLECULE.FOCK:make_AOC_effective_Fock_mx` points to, and the measured
+tables. It should go when that theory has a home in a user-facing page.
+
+The entry as it stood while open:
+
+
+**Register row:** *Spherical atoms by the right ensemble*. Not started. Grew out of the Mac-drift fix
+and the pFON discussion of 2026-10-03.
+
+**What the atoms are now.** `ATOM:spherically_average` takes the converged single-determinant atomic
+density (UHF or UKS, whatever the molecule's method is) and averages it over all rotations. For a
+p^4 shell that equals the average over the three hole positions, so it is the ensemble average of
+*frozen-orbital* determinants. What it lacks is the relaxation of the orbitals in the averaged
+field. It is used for the promolecule guess and for every Hirshfeld-type partition.
+
+**What they should be, by method** (Dylan's decision 2026-10-03):
+
+- **HF: Slater's average of configuration.** HF is a wavefunction theory; the spherical open-shell
+  atom is an equal-weight ensemble of its degenerate determinants, with pair weights
+  q(q-1)/[g(g-1)] for q electrons in a shell of g spin-orbitals. In Fock-matrix form it is
+  Roothaan's open-shell method with the coupling coefficients for the average of configuration,
+  which depend only on q and g. The shell's orbitals come out exactly degenerate and the density
+  spherical by construction, self-consistently.
+- **DFT: fractional occupation**, n_i = q/g held fixed on each partly filled shell (Janak 1978; Gross,
+  Oliveira and Kohn 1988: for a degenerate ground state the exact functional at the ensemble
+  density gives the ensemble energy). This is what the atomic DFT codes do (Herman-Skillman, Perdew
+  and Zunger 1981, Becke's atomic code for XDM, FHI-aims' free atoms, HORTON's pro-atoms); check the
+  documentation before citing any of them.
+- **Not this:** the fractional-density HF functional (pFON held at fractional occupation), whose pair
+  weights n_i n_j carry a self-interaction-like error of order n(1-n) -- e.g. one beta electron over
+  three p orbitals gets (1/9)(J_ij - K_ij) per pair that the true ensemble does not have. In pFON
+  proper the fractions are annealed away, so this never shows; held, it would.
+
+**What Tonto has.** `MOLECULE.BASE:make_finite_T_density_mx` and `make_finite_T_DM_r` build fractional-
+occupation densities (Fermi-Dirac over a window; per spin in UHF); `SCF_energy` is the ordinary
+functional of whatever density it is given, with no entropy term; `apply_pFON` switches the
+fractions off after 20 iterations or when the DIIS error is small. ROHF exists (`make_SCF_density_mx`
+case "rohf"). Nothing holds fractional occupations, and nothing does average-of-configuration
+coupling coefficients.
+
+**Plan.**
+1. DFT first: hold n = q/g on the open shell(s) of the atomic UKS calculation to convergence (a
+   `held_FON` option beside pFON), spin-averaged so the density is also spin-spherical; then
+   `spherically_average` is a no-op check (the density should already be spherical to rounding).
+2. HF: the average-of-configuration Fock operator for one open shell (Roothaan 1960, Slater 1960);
+   check against published AOC atomic energies.
+3. Measure before believing: the promolecule iteration-0 energy and, more to the point, a HAR
+   (urea, then gly_ala) with Hirshfeld atoms from the new spherical atoms against the present ones.
+   Expected: differences well below the esds, since only orbital relaxation changes and the
+   Hirshfeld weights are ratios; the DFT case may move more because today's DFT atoms are averaged
+   Kohn-Sham determinants, which is the wrong object. Whatever moves needs a full re-bless (every
+   promolecule guess line).
+4. Decide whether the averaged-determinant atoms stay available (as the cheap fallback) or go.
+
 
 ## CLOSED (2026-10-11): libxc as the DFT functional engine; PBE, PBE0, r2SCAN
 
