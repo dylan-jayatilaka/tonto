@@ -78,6 +78,82 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## CLOSED 2026-10-11: MPI -- the CIF desync; output makes no broadcasts; MPI keeps `PURE`
+
+Branch `mpi-broadcasts-and-pure`, not pushed. Three register rows were taken together.
+
+**1. Milestone 7, the CIF desync: closed** (`bdd56bce`). `urea_read_and_process_CIF` died on 2
+processes in every run, on every platform. Two separate causes, neither in the file-positioning
+code that had been suspected since August:
+
+- `MOLECULE.CE:put_CX_data` returned at once on every process but the master, and the master then
+  wrote the `.cxc` file through the ordinary output routines: 47 broadcasts nobody else entered.
+  The return is gone.
+- `VEC{ATOM}:read_smCIF_atoms_xtal` tested a flag (`fc`) that is set only when the search for
+  `_atom_site_label` fails. When the label was found, whether the file was then searched for
+  `_atom_site_type_symbol` depended on leftover memory, different on each process: about one run
+  in three died earlier, at the CIF read. Serial runs had the same undefined test and could not
+  show it, because the symbols are ignored when labels were found. The flags are initialised.
+- Found by reading, same fault as the first: `GAUSSIAN_FF_FIT:fit` redirected output inside a
+  master-only block. Rewritten so every process makes the output calls and the master broadcasts
+  whether gnuplot worked.
+
+How: a new build option, `-DTONTO_TRACE_COLLECTIVES=ON`, makes every process log the source file
+and line of each collective it enters to `fort.<900+rank>`; `cmp` of two of those names the first
+call one process made and the other did not. The first cause fell out of one run. The second came
+and went, and vanished when a print was added; it was found by logging every `ENSURE` reached and
+comparing process 1 in a failing run with process 1 in a good one. Method written up in
+`docs/TONTO_DEVELOPER_INFO.md` section 1a, with two new pitfalls (4, 4a).
+
+**2. Output costs two collectives per token: closed** (`6f64975a`). `BUFFER:put_str` no longer
+has a master-only guard or a broadcast: every process fills its own buffer. `TEXTFILE:flush`
+writes on the I/O process alone and every process counts the record. A line read sends its
+status, length and too-long flag as one integer vector and then the text: two broadcasts for
+four. Putting text and flushing can no longer put the processes out of step; opening, closing,
+redirecting and reading still can.
+
+**Checked, on the Mac, gfortran-14.** Serial `release`: `ctest -L 'short|long|hart'` 136 of 136,
+two skipped (`ammonium_borane_pHAR_C23`, `rgbi_doctor_catches_missing_tools`). Parallel debug
+build (`build-mpi-trace14`, Open MPI 5.0.9), 2 processes: `urea_read_and_process_CIF` 40 runs of
+40 after step 1 and 20 of 20 after step 2, with identical traces and an identical `urea.cxc`; its
+collectives fell from 10009 to 5049, all of the remainder in reading; `c9o9h8_read_cif_IT_group_9`,
+`maleate_read_CIF_H_double_bond_new_BLs`, `quartz_read_CIF_put_CIF`, `urea_lamaGOET_grown_CIF`,
+`h2o_rhf_STO-3G`, `h2o_rhf_cc-pVDZ` and `urea_rhf_STO-3G_HAR` exact;
+`urea_rhf_STO-3G_sph-TFVH_FF_fit` passes the loose bound (0.28%, a gnuplot fit).
+
+**3. Let MPI keep `PURE`: done** (Dylan chose the honest route, 2026-10-10). The MPI block of
+`include/macros.in` no longer switches `PURE` and `ELEMENTAL` off, so a parallel release build
+checks purity everywhere. A third macro, `NON_MPI_PURE`, is `pure` in a serial optimised build
+and nothing under MPI or in debug; the translator passes it through like `PURE`.
+
+- 128 routine headers carry it: the 45 that contain a `parallel do` or a reduction, the two
+  symmetric reductions in `PARALLEL`, and their `PURE` callers, found by building a parallel
+  release tree until it compiled (most are the property grids of `molecule.grid.foo`; also the
+  J/K builders, the one-electron matrices, three SCF energies, the dispersion corrections in
+  `crystal.foo`, and the procedure argument of `MOLECULE.TD:eigensolve_Davidson`).
+- The 17 integral kernels `SHELL1QUARTET:make_esfs_*` lost their `parallel do` over primitive
+  pairs and their `PARALLEL_SUM`, and stay `PURE` in every build. A reduction per shell quartet
+  could never pay; with no outer parallel loop each process now computes the whole integral.
+- The earlier estimate of about 40 callers was low: the call graph is by name and many callers
+  were not in it.
+- Trap met on the way: gfortran's line number for *"Subroutine call to ... is not PURE"* can be
+  a few lines late, and so name the next routine.
+- The `dgemm`-style route (declare the lock and the MPI calls pure in an interface) was tried on
+  small files and works, but needs an external routine and so a hand-written Fortran file; not
+  taken.
+
+**Checked, on the Mac, gfortran-14, with all three steps.** Serial `release`:
+`ctest -L 'short|long|hart'` 136 of 136, two skipped. Parallel `release`
+(`build-mpi-release14`), 4 processes, `ctest -L 'short|hart'`: 85 of 87. The two:
+`carbon_atom_uhf_cc-pVDZ_ANO_aoc`, 8 units in the last digit against the 6 allowed (the *Later*
+entry on the widened bound); and `gly_ala_hart_STO-3G`, the fragment HAR job, which hangs. The
+build of 2026-09-22 (`mpi/`, before this work) does not finish that job on 4 processes either
+(stopped at 300 s; 115 s on one), so it is the open fragHAR item, register row 15 of
+`docs/TASK_MPI.md`, and not new. **A hung MPI test holds ctest for ever: give the MPI tests a
+`TIMEOUT`.**
+
+**Not checked on the Mac:** a debug build with the new macro; Linux. CI covers both.
+
 ## CLOSED 2026-10-10: reproducible builds -- the build types as intents; the `disk_ffs` flake fixed
 
 **Stage 1 of *Reproducible builds* is on `develop`** (`13e2d90f`, banner `09baf45e`). The build
@@ -3661,6 +3737,8 @@ sequencing and the traps: `docs/TASK_CRYSTAL_HOIST.md`.
 
 ## Design (2026-08-03): let MPI keep `PURE`, so the compiler forbids I/O in parallel regions
 
+*Closed 2026-10-11: output is non-collective (option 1 below) and an MPI build keeps `PURE`, with `NON_MPI_PURE` for the routines that are not pure under MPI. See the handover entry of that date.*
+
 Dylan's proposal, and it is a good one: if output inside a parallel region desynchronises the
 ranks, then routines reachable from one should be `pure` — and the *compiler* should enforce it,
 rather than the programmer remembering.
@@ -3909,6 +3987,8 @@ it is the buffer update and the `ENSURE` — so the collective is fine and the *
 reaching it is not.
 
 ### Separately, and arguably worse: output costs two collectives per token
+
+*Closed 2026-10-10: putting text and flushing make no broadcasts. See the handover entry of that date.*
 
 `BUFFER:put_str` broadcasts a **256-byte string plus an integer on every call** — i.e. every
 token written to any output buffer is two MPI collectives. That is why printing a banner
@@ -6186,6 +6266,24 @@ reference would bake in a new one. Decide first whether to diagnose the wanderin
 the job — not the other way round.
 
 # Translator and the Foo language
+
+## The translator prints parse complaints during an ordinary build and carries on (2026-10-10)
+
+Seen while building for the MPI work; not looked into. A full build prints nine ANTLR messages,
+*no viable alternative at input ...* or *extraneous input ...*, at three positions: `2013:92`,
+`3226:69` and `3540:65`. Each one dumps several kilobytes of Foo source into the build log, and
+the build goes on to succeed.
+
+- `2013:92` is `foofiles/becke_grid.foo`, in `SG_radius`: an array constructor continued with
+  `&`, with a comment line between the two continued lines. The generated `becke_grid.F90` has
+  the statement right, all 17 values on one line. So here the parser recovers and nothing is lost.
+- The files for `3226:69` and `3540:65` were not identified; the message does not name the file.
+  They are printed near `molecule.main` and `test_parallel` in a parallel build's log.
+
+To do: (1) make the message name the file, and say it once, without the source dump; (2) find
+the other two sites; (3) either accept a comment line inside a continued statement in the
+grammar, or make a parse complaint stop the build, so that a recovery that does lose text cannot
+pass unnoticed. Until (3), check the generated Fortran for the other two sites by eye.
 
 ## Future task: introduce Fortran-2008 `submodule` constructs
 

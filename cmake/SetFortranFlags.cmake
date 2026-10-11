@@ -182,6 +182,13 @@ set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -DINT_KIND=4 -DBIN_KIND=4 \
 
 if(WITH_MPI)
     set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -DMPI=1")
+    # Diagnostic: every process writes the source file and line of each
+    # broadcast, reduction and barrier it enters to fort.<900+rank>.
+    # See docs/TONTO_DEVELOPER_INFO.md section 1a.
+    option(TONTO_TRACE_COLLECTIVES "Log the call site of every MPI collective, per process" OFF)
+    if(TONTO_TRACE_COLLECTIVES)
+        set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -DTRACE_COLLECTIVES")
+    endif()
 endif()
 
 # CMake appends its own CMAKE_Fortran_FLAGS_<CONFIG> after CMAKE_Fortran_FLAGS:

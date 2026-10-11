@@ -1031,6 +1031,7 @@ contains
 
       string,tail :: STR(len=BSTR_SIZE)
       length,n :: INT
+      info :: VEC{INT}(3)
       too_long :: BIN
 
       ! Update
@@ -1081,10 +1082,14 @@ contains
 
       ! Broadcast. Unconditional, and outside the guard above, so that every
       ! rank enters the same collectives.
-      PARALLEL_BROADCAST_IO(.IO_status,tonto.master_processor)
+      ! The status, the length and the too-long flag go as one message.
+      info = [.IO_status,length,0]
+      if (too_long) info(3) = 1
+      PARALLEL_BROADCAST_IO(info,tonto.master_processor)
       PARALLEL_BROADCAST_IO(string,tonto.master_processor)
-      PARALLEL_BROADCAST_IO(length,tonto.master_processor)
-      PARALLEL_BROADCAST_IO(too_long,tonto.master_processor)
+      .IO_status = info(1)
+      length     = info(2)
+      too_long   = info(3)==1
 
       ! An over-long line is an error, not something to trim quietly
       if (too_long) .read_line_too_long(length)
@@ -3657,7 +3662,12 @@ contains
 !  This important routine actually writes to the file
 
    flush
-   ! Flush the buffer to the output file
+   ! Flush the buffer to the output file.
+   !
+   ! In a parallel job only the I/O process writes, and nothing is broadcast:
+   ! every process clears its own buffer and counts the record itself. So
+   ! putting text and flushing make no collective calls (opening, closing and
+   ! redirecting a file still do). See docs/TONTO_DEVELOPER_INFO.md section 1a.
       self :: INOUT
 
    ENSURE(.action=="write","file does not have write action!")
@@ -3669,30 +3679,8 @@ contains
          write(unit=.unit,iostat=.IO_status,fmt="(a)") trim(.buffer.string)
          DIE_IF(.IO_status>0,"flush error")
          TONTO_FLUSH_BUFFER(.unit)
-         ! NO .clear_and_put_margin here -- see the one after the broadcasts.
-         !
-         ! It used to be called HERE AS WELL, i.e. twice on the master and once
-         ! on every other rank. That is a COLLECTIVE imbalance, because
-         ! clear_and_put_margin ends in `.buffer.put(...)` -> BUFFER:put_str,
-         ! which broadcasts .string (256 bytes) and .item_end. So the master
-         ! entered one extra pair of broadcasts per flush and the ranks fell out
-         ! of step, giving MPI_ERR_TRUNCATE on the next collective.
-         !
-         ! It hid for years because clear_and_put_margin RETURNS EARLY when
-         ! .style.margin_width==0, doing no collective at all -- which is the
-         ! normal case. It only bites once someone sets a margin, which is why
-         ! `hart` died precisely in COMMAND_LINE:put_command_optarg (it does
-         ! set_margin_width(2)) and why `tonto` was unaffected.
-         .record = .record + 1
       end
-
-      ! Failure?
-      PARALLEL_BROADCAST_IO(.IO_status,tonto.master_processor)
-      PARALLEL_BROADCAST_IO(.record,tonto.master_processor)
-      DIE_IF(.IO_status>0,"flush error")
-
-      ! Flush - seems to cause problems with MPI
-   !  TONTO_FLUSH_BUFFER(.unit)
+      .record = .record + 1
 
       ! Write margin
       .clear_and_put_margin
