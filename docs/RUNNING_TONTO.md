@@ -82,6 +82,71 @@ with `dft_functional=`.
   are compared. A structure refinement does not need it: on urea the grid
   changes the goodness of fit by 0.004 and no bond length by a printed digit.
 
+## Relativity
+
+Beyond krypton the inner electrons move fast enough that a non-relativistic
+calculation gives the wrong core density. `relativity_kind= x2c` in
+`scfdata= { }` replaces the kinetic energy and nuclear attraction by the
+scalar-relativistic X2C (exact two-component) one-electron Hamiltonian. Nothing
+else in the job changes, and it works with every restricted and unrestricted
+`kind=`, Hartree–Fock or DFT.
+
+```
+basis_name= x2c-TZVPall
+scfdata= {
+   kind= rks
+   dft_functional= pbe
+   relativity_kind= x2c
+}
+```
+
+- **Use a basis set made for it.** `x2c-SVPall`, `x2c-TZVPall` and
+  `x2c-TZVPPall` cover H to Rn with all electrons. A basis set contracted for a
+  non-relativistic calculation, such as def2 or cc-pVXZ, is too stiff in the
+  core for a heavy atom.
+- **The atoms use it too.** The atomic calculations behind the promolecule and
+  the Hirshfeld atoms are made with the same Hamiltonian as the molecule.
+- **What it leaves out:** spin–orbit coupling; the relativistic correction to
+  the electron repulsion; and the picture-change correction of the density,
+  which matters only very near a heavy nucleus.
+- **The nuclei are points** unless `nucleus_model= gaussian` is given, outside
+  `scfdata= { }`. Each nucleus is then a Gaussian charge of the size tabulated
+  by Visscher and Dyall, *At. Data Nucl. Data Tables* **67**, 207 (1997). It
+  raises the energy of a mercury atom by 3.5 hartree, and is available only
+  with X2C.
+- **The printed energies** give the one-electron energy as one number, because
+  the kinetic and nuclear attraction energies are not separate under X2C.
+- **The cost** is one matrix diagonalisation of twice the number of primitive
+  Gaussians, made once before the SCF.
+
+The method is that of Iliaš and Saue, *J. Chem. Phys.* **126**, 064102 (2007).
+With $`S`$, $`T`$ and $`V`$ the overlap, kinetic energy and nuclear attraction
+matrices between the primitive Gaussians, $`W`$ the matrix of
+$`\mathbf{p}\cdot V\mathbf{p}`$ ($`\mathbf{p}`$ the momentum), and $`c`$ the
+speed of light, the one-electron Dirac equation without spin–orbit coupling is
+
+```math
+\begin{pmatrix} V & T \\ T & W/4c^2 - T \end{pmatrix}
+\begin{pmatrix} C_L \\ C_S \end{pmatrix} =
+\begin{pmatrix} S & 0 \\ 0 & T/2c^2 \end{pmatrix}
+\begin{pmatrix} C_L \\ C_S \end{pmatrix} E \qquad (1)
+```
+
+where the columns of $`C_L`$ and $`C_S`$ are the large and small components
+of the solutions with positive energies $`E`$. From them
+
+```math
+X = C_S C_L^{-1}, \quad \tilde S = S + X^\dagger T X/2c^2, \quad
+R = S^{-1/2}\,(S^{-1/2}\tilde S S^{-1/2})^{-1/2}\,S^{1/2} \qquad (2)
+```
+
+```math
+h_+ = R^\dagger\,[\,V + TX + X^\dagger T + X^\dagger (W/4c^2 - T) X\,]\,R \qquad (3)
+```
+
+and $`h_+`$, contracted to the basis functions, is used in place of $`T+V`$.
+Its eigenvalues are exactly the positive energies of equation (1).
+
 ## The programs
 
 | Path | Program |
