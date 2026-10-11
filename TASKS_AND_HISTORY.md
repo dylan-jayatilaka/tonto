@@ -78,6 +78,51 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## CLOSED 2026-10-11: libxc, PBE0 and r2SCAN are on `develop`; next is scalar X2C
+
+**Next action: scalar X2C**, `docs/TASK_HAR_STANDARDISATION.md` section 6a. No relativistic
+Hamiltonian runs in Tonto today (see *Correctness*, the `relativity_kind=` entry). Decisions
+(Dylan, 2026-10-11): scalar only; no picture-change correction; no spin-orbit coupling; the
+atoms unchanged. Step 1 is to stop the silent fall-through; step 2 to rescue the
+p.Vp integrals from `git show fcbd5a8a^:foofiles/molecule.rel.foo`; step 3 to write the
+core matrix from the three equations there and check it against one-electron Dirac energies and
+PySCF's `x2c` (PySCF is in no permanent place: `pip install pyscf` in a virtual environment).
+
+**What landed** (pull request 46, merge `266b7bc5`; nine commits). Detail and a table of what is
+where: `docs/TASK_DFT_STANDARDISATION.md` section 11.
+
+- libxc 7.1.2 as a second submodule, `external/libxc`, built by Tonto's CMake when
+  `-DLIBXC=ON` (off by default; CI builds with it on, except the MPI and WSL workflows). Tonto
+  reaches it through one C file, `csrc/tonto_libxc.c`; the translator needed no change.
+- `XC_DENSITY` and `XC_POTENTIAL` carry a functional's inputs and outputs for a batch of grid
+  points; one entry point, `DFT_FUNCTIONAL:add_energy_and_potential(name,pot,den)`. The
+  unrestricted gradient call went from 17 arguments to 3. The forty hand-written routines are
+  unchanged and are the check on libxc.
+- A name spelled as libxc spells it is evaluated by libxc. `dft_functional=` names the whole
+  functional: `lda`, `xalpha`, `blyp`, `b3lyp-gaussian` (also `b3lyp`), `b3lyp-orca`, `pbe`,
+  `pbe0`, `r2scan`, or a libxc name. Meta-GGAs work in the batched XC builders only (the default).
+- User page: `docs/RUNNING_TONTO.md`, *Density functionals*.
+
+**Checked.** Hand-written against libxc, point by point: 5e-14 or better. Against PySCF, water
+and its cation: PBE 7e-10, PBE0 4e-9 (RKS); 3e-7 to 8e-7 (UKS); r2SCAN 1e-6 at `accuracy= best`
+and 2e-8 with 150 radial points. Full suite with libxc: Mac release 138 of 138, achari2
+reference 138 of 138, CI (Linux full suite, Linux and macOS release and debug, WSL, Linux static
+and the Windows cross-build) all pass. The rewrite of the Fock build changed no number.
+
+**r2SCAN and the grid.** Its energy error is 100 to 1000 times PBE's at every grid setting
+(2.3e-4 hartree for water at the default). A refinement does not feel it: on urea the grid moves
+the GoF by 0.003 to 0.004 with r2SCAN and 0.005 to 0.007 with PBE. Isolated urea, def2-TZVP, free
+ADPs: GoF 2.606 with PBE, 2.511 with r2SCAN. Runs: `~/tonto-runs/2026-10-11_r2scan_grid`.
+
+**Found on the way.** Two translator build targets could regenerate and read the parser
+sources at once in a parallel build (fixed, `8af777df`). In a debug build every job that stops
+with an error then crashes with "Attempt to DEALLOCATE unallocated 'tonto_bug'" (not fixed, not
+in the register). libxc's build files refuse Tonto's build type names (fixed).
+
+**Open from this work:** the ORCA check (*Test suite and numerics*); libxc in the MPI and WSL
+workflows; whether `-DLIBXC=ON` becomes the default.
+
+
 ## CLOSED 2026-10-11: MPI -- the CIF desync; output makes no broadcasts; MPI keeps `PURE`
 
 Branch `mpi-broadcasts-and-pure`, not pushed. Three register rows were taken together.
@@ -2419,6 +2464,16 @@ dead keyword line from `develop` and leave the work on its two tags, as was done
 
 # Correctness — open bugs that give wrong answers
 
+## `relativity_kind=` silently gives the non-relativistic result (2026-10-11)
+
+**Register row** of the same name. `iotc`, `dkh` and `dkh-2` are accepted by
+`SCF_DATA`, but `molecule.rel.foo` was removed in `fcbd5a8a` and the calls to it in
+`molecule.scf.foo` are commented out, so the `select case` on `relativity_kind` falls to its
+default and builds the non-relativistic core matrix, exit 0, no message. Make any value but none
+stop with a message. This is step 1 of the scalar X2C work, `docs/TASK_HAR_STANDARDISATION.md`
+section 6a, which replaces the old code.
+
+
 ## Cluster charges are silently zero under `partition_model= tc-stewart` (2026-10-10)
 
 `use_SC_cluster_charges= TRUE` takes its charges and dipoles from the Hirshfeld moments, which
@@ -3617,24 +3672,6 @@ Any of these rewrites the reference, so re-bless deliberately and read the resul
 ---
 
 # Build system and toolchain
-
-## libxc as the DFT functional engine — see `docs/TASK_DFT_STANDARDISATION.md`
-
-**LATER (Dylan, 2026-10-07): moved to the later list of the register; not counted as open.**
-
-Superseded by milestone 10. The decision, the verified API facts, the compiler
-constraint, and the seven-point list of what a real implementation must cover are
-all in **`docs/TASK_DFT_STANDARDISATION.md` §8**, alongside the interface analysis
-(§7) that determines how much work it is.
-
-The one thing worth repeating here, because it is the most likely thing for a
-reimplementation to get wrong: **Tonto's `E` is the functional divided by the
-density** — energy per particle, exactly what libxc's `_exc` entry points return.
-Read `new_r_LDA_x_energy_density`, which computes `-(3/4)(3/pi)^(1/3) rho^(1/3)`.
-Assuming `E` is an energy density is wrong by a factor of rho.
-
-`archive/libxc` (Peter Spackman, 2017) is a prototype and **must not be merged**;
-it is assessed in `docs/TONTO_REPOSITORY_BRANCHES.md`.
 
 ## Milestone 6, partial: the suppressed-reduction abort and the parallel lint (2026-08-02)
 
@@ -5211,6 +5248,31 @@ against Tonto's 177 s and 14 -- 6× per iteration, and that gap is mostly the pe
 the XC evaluation, not the point count. Tables in `docs/TASK_SCF_SPEEDUP_DATA.md`.
 
 # Test suite and numerics
+
+## Check the libxc energies against ORCA (Dylan, 2026-10-11)
+
+**Register row:** *Check the libxc energies against ORCA*. Not started; waits for ORCA on the Mac.
+
+PBE, PBE0, r2SCAN and TPSS agree with PySCF 2.14 (`docs/TASK_DFT_STANDARDISATION.md` section 11),
+but PySCF evaluates them with libxc as Tonto does, so the comparison checks Tonto's grid, SCF,
+exact exchange and kinetic-energy-density term, and not the functionals themselves. A program
+with its own functional code is wanted, and ORCA is the one to hand.
+
+- **Jobs:** water and its cation, cc-pVDZ with Cartesian d functions, the geometry in
+  `scripts/check_libxc_reference.py`, ORCA's finest grid, tight SCF. PBE, PBE0, r2SCAN, TPSS;
+  and `B3LYP/G` and `B3LYP`, which check the names `b3lyp-gaussian` and `b3lyp-orca`.
+- **Tonto's numbers to compare with** (`accuracy= best`): RKS PBE -76.3350289923, PBE0
+  -76.3398118260, r2SCAN -76.3823990198 (-76.3823979644 with 150 radial points), TPSS
+  -76.4243255855; UKS cation PBE -75.8832032735, PBE0 -75.8912793980, r2SCAN -75.9341794724,
+  TPSS -75.9780284678.
+- **A question it should settle:** the unrestricted PBE and PBE0 energies are 3e-7 from PySCF
+  where the restricted ones are 1e-9 to 4e-9. ORCA says which program is off.
+- If ORCA agrees, add its numbers beside PySCF's in `scripts/check_libxc_reference.py`.
+
+Not in the register, noted here: r2SCAN took four to five times as long as PBE in the urea
+refinements (four jobs at once, so rough); and `dft_energy` plots with a gradient functional
+have never worked, because the plot routine passes no gradient.
+
 
 ## LATER (Dylan, 2026-10-10): two tests pass only on a widened last-digit bound
 
@@ -7088,6 +7150,16 @@ different question and the one that matters.
 ---
 
 # Done, resolved and closed (archive)
+
+## CLOSED (2026-10-11): libxc as the DFT functional engine; PBE, PBE0, r2SCAN
+
+Merged to `develop` by pull request 46. The plan, the numbers, and a table of what is where are
+in `docs/TASK_DFT_STANDARDISATION.md` section 11; the handover block at the top of this file has
+the summary. Kept from the old live entry, because it is the thing a reimplementation is most
+likely to get wrong: **Tonto's `E` is the functional divided by the density**, energy per
+particle, which is what libxc's `_exc` routines return. `archive/libxc` (Peter Spackman, 2017)
+is a prototype and must not be merged; it is assessed in `docs/TONTO_REPOSITORY_BRANCHES.md`.
+
 
 ## The angular decomposition of density maps (2026-10-06 to 2026-10-07, closed by Dylan)
 

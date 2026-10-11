@@ -107,11 +107,11 @@ purpose, and verbose is right there.
 ## 2. Current focus
 
 The ordered list of next actions, and the reasoning behind each, is the **handover section
-at the top of `TASKS_AND_HISTORY.md`** — read it before starting work. In outline: the SCF speed-up —
-the primitive pair list for J, density-fitted J (RI-J) and COSX for the exchange of HF and
-hybrids are merged, all three options off by default; next is a grid made for COSX, to be
-planned first. The CI platform table, the three untracked debug failures and the open MPI and
-DFT items are parked behind that.
+at the top of `TASKS_AND_HISTORY.md`** — read it before starting work. In outline: the density
+behind Hirshfeld atom refinement is being standardised (`docs/TASK_HAR_STANDARDISATION.md`).
+libxc, PBE0 and r2SCAN are merged; next is a scalar X2C Hamiltonian, which Tonto lacks, for
+elements beyond Kr. The SCF speed-up options (pair list for J, RI-J, COSX) are merged and off by
+default; the open MPI and DFT items are parked behind the standardisation.
 
 **Do not move `TASKS_AND_HISTORY.md`'s contents into this file.** This file answers *how does the
 project work*; `TASKS_AND_HISTORY.md` answers *what are we doing now*. Merging them loses both.
