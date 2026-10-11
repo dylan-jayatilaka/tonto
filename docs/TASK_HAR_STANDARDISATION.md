@@ -66,7 +66,12 @@ Hirshfeld moments are identical under two BLAS kernels. Left to check:
    atoms (`ano_kind= aoc`, `fon`) still give the same refinement. This is the only place the
    question of the default atoms stays open; the register row *Spherical atoms by the right
    ensemble* was closed on 2026-10-11 and folded in here. The ensemble options handle one open
-   shell and stop at Kr, so they would need extending first.
+   shell and stop at Kr, so they would need extending first: Roothaan's coupling constants for
+   two open shells (Cr, Cu, the 4d and 5d rows, the lanthanides), and the Aufbau table beyond Kr.
+   The theory for one open shell is in the comment under
+   `MOLECULE.FOCK:make_AOC_effective_Fock_mx`. **Owed with this step: a user-facing page on how
+   Tonto makes its atoms** (the default average, `ano_kind=`, what each handles), which does not
+   exist; until then the keyword help and that comment are the only description.
 
 ## 4. Basis sets across the periodic table
 
