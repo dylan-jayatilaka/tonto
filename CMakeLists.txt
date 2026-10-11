@@ -1168,6 +1168,10 @@ endif()
 # (where system.F90 precedes types.F90 and type(SYSTEM_TYPE) is undefined).
 add_dependencies(tonto_lib antlr4-fortran)
 
+# DFT_FUNCTIONAL calls the libxc glue, so every program that links Tonto needs it.
+if(LIBXC)
+    target_link_libraries(tonto_lib tonto_libxc)
+endif()
 if(COMPILE_LAPACK)
 	target_link_libraries(tonto_lib lapack blas ${MPI_Fortran_LIBRARIES})
 else()
@@ -1227,7 +1231,7 @@ add_executable(run_lsq_restraint ${CMAKE_CURRENT_BINARY_DIR}/run_lsq_restraint.F
 # `libxc_gives_slater_exchange` ctest. Built only with -DLIBXC=ON.
 if(LIBXC)
     add_executable(run_libxc     ${CMAKE_CURRENT_BINARY_DIR}/run_libxc.F90)
-    target_link_libraries(run_libxc tonto_lib tonto_libxc ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+    target_link_libraries(run_libxc tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 endif()
 # run_gaussian_ff_fit checks the form-factor fit through gnuplot by a round trip;
 # the `form_factor_gaussian_fit_round_trip` ctest, skipped where gnuplot is absent.

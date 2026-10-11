@@ -1196,6 +1196,14 @@ What is done, and where (branch `libxc`; one row per piece, added as it lands):
 | 2 | The six matrix builders (`add_LDA_XC_mx`, `add_GGA_XC_mx`, `add_XC_mx_batched`, restricted and unrestricted) and their four inner routines take `pot` | `foofiles/molecule.fock.foo` | |
 | 2 | The four `make_rho_becke_atom_grid` routines return `den` | `foofiles/molecule.rho.foo` | |
 
+| 3 | The glue keeps each functional it has set up for the life of the program, found again by name and number of spin channels; a range-separated hybrid or one with non-local correlation is reported as not usable | `csrc/tonto_libxc.c` | |
+| 3 | A name spelled as libxc spells it (`lda_`, `gga_`, `mgga_`, `hyb_` first) is evaluated by libxc: `add_libxc_energy_and_potential`, called from the entry point. One and two spin channels, density and gradient functionals | `foofiles/dft_functional.foo` | `check_libxc` below |
+| 3 | `DFT_FUNCTIONAL:check_libxc`: seven hand-written functionals against their libxc counterparts, point by point, one and two spin channels | `foofiles/dft_functional.foo`, run by `runfiles/run_libxc.foo` | ctest `libxc_gives_slater_exchange` |
+| 3 | Every program links the glue when `-DLIBXC=ON` | `CMakeLists.txt` | |
+| 4 | `dft_exchange_functional=` and `dft_correlation_functional=` accept libxc names; the gradient flag and the fraction of exact exchange come from libxc | `foofiles/scf_data.foo`: `set_exchange_functional`, `set_correlation_functional`, `set_libxc_functional`; `DFT_FUNCTIONAL:get_libxc_info` | ctest `libxc_energies_match_pyscf` |
+| 4 | The keyword `dft_functional=`: `lda`, `xalpha`, `blyp`, `b3lyp`, `b3lyp5`, `pbe`, `pbe0`, or any libxc name. Refused together with either old keyword | `foofiles/scf_data.foo`: `set_functional`, `read_functional`, and the two old read routines; two members in `types.foo` | the same test |
+| 4 | The test of libxc in a whole SCF: PBE and PBE0 against PySCF, libxc against hand-written, one keyword against two, refused inputs | `scripts/check_libxc_reference.py`, `tests/CMakeLists.txt` | |
+
 Stage 2 (2026-10-11) changes no number. Checked on the Mac, gfortran-14: six small jobs
 (restricted and unrestricted; Slater-type, mixed and gradient functionals), each with the per-atom
 and the batched builders, give output identical at 12 printed digits to the commit before, both in
@@ -1213,6 +1221,65 @@ its adapter.
 Stage 1 is done in a debug build only (2026-10-11). Not yet done for it: a `release` build, Linux,
 the Windows cross-build. Foo took the interface to the glue as written, with a string of any
 length spelled `STR(*)`. The seven existing DFT tests still pass in that tree.
+
+Stage 3 (2026-10-11), debug build on the Mac; the release build gives a pass too. Largest relative difference between hand-written and
+libxc, over energy per particle, potentials and gradient parts, at six densities from 0.001 to 30:
+
+| hand-written | libxc | one spin channel | two |
+|---|---|---|---|
+| `slater` | `lda_x` | 0 | 0 |
+| `vwn5` | `lda_c_vwn` | 0 | 0 |
+| `vwn3` | `lda_c_vwn_rpa` | 1e-14 | 1e-14 |
+| `becke88` | `gga_x_b88` | 0 | 0 |
+| `lyp` | `gga_c_lyp` | 0 | 5e-14 |
+| `b3lypx` + `b3lypc` | `hyb_gga_xc_b3lyp5` | 0 | 0 |
+| `b3lypgx` + `b3lypgc` | `hyb_gga_xc_b3lyp` | 0 | 0 |
+
+(0 means below 5e-15.) So the gradient term $`V_n = 2\,v_\sigma \nabla\rho`$ (one channel) and
+$`V_{n\alpha} = 2\,v_{\sigma,\alpha\alpha}\nabla\rho_\alpha + v_{\sigma,\alpha\beta}\nabla\rho_\beta`$ (two) is right,
+where $`v_\sigma`$ is libxc's derivative of the functional with respect to
+$`\sigma = \nabla\rho\cdot\nabla\rho`$. Tonto's `vwn3` is libxc's `lda_c_vwn_rpa`, not `lda_c_vwn_3`.
+
+Stage 4 (2026-10-11), debug build on the Mac. Water and its cation, cc-pVDZ, the geometry of
+`tests/short/h2o_rks_B3LYPG_cc-pVDZ`, against PySCF 2.14 (grid level 9, no pruning):
+
+| | Tonto, `accuracy= high` | Tonto, `accuracy= best` | PySCF | difference at `best` |
+|---|---|---|---|---|
+| RKS PBE | -76.3350279362 | -76.3350289923 | -76.335028993 | 7e-10 |
+| RKS PBE0 | -76.3398107051 | -76.3398118260 | -76.339811822 | 4e-9 |
+| UKS PBE, cation | -75.8832028076 | -75.8832032735 | -75.883203639 | 3.7e-7 |
+| UKS PBE0, cation | -75.8912787554 | -75.8912793980 | -75.891279686 | 2.9e-7 |
+| RKS BLYP | -76.3998565082 | -76.3998561750 | -76.399856196 | 2e-8 |
+
+BLYP and B3LYP through libxc give the hand-written energies to all 10 printed digits (RKS) and
+to 5e-10 (UKS, where the two differ in how they treat points of very low density). The batched
+builders give the same PBE0 energies as the per-atom ones. The unrestricted gap of 3e-7 at the
+finest grid is not explained; the restricted one is 100 times smaller.
+
+How the plan changed in the doing:
+
+- **No new record type.** The exchange and correlation names, the two gradient flags, the hybrid
+  flag and `hybrid_exchange_factor` in `SCF_DATA` already are the record. `dft_functional=` fills
+  them through the two existing setters. A whole libxc functional goes in the exchange slot with
+  correlation `none`.
+- **No scale factors.** libxc has every composite wanted (PBE0, B3LYP) as one functional.
+- **`b3lyp` means the form with VWN functional III (RPA), as in Gaussian and libxc**; `b3lyp5`
+  the form with functional V, which is ORCA's `B3LYP`. Dylan to confirm.
+- **libxc's density cutoff is not used.** The adapter drops points whose total density is below
+  Tonto's `rho_cutoff`, so the adapter stays pure.
+- **The functional's handle is looked up by name on every batch** and not stored: the glue keeps
+  a table, and a lookup is cheap beside a batch.
+
+Checked for stages 3 and 4 together, on the Mac, gfortran-14: `release` with `-DLIBXC=ON`,
+`ctest -L 'short|long|hart'` 138 of 138 with two skipped (`ammonium_borane_pHAR_C23`,
+`rgbi_doctor_catches_missing_tools`), the two libxc tests among them; `release` without the
+switch builds, its 13 DFT tests pass, and a libxc name is refused with a message. Not checked:
+Linux, MPI, the Windows cross-build.
+
+Not done yet: a meta-GGA is refused with a message (stage 5). The six plot routines in
+`molecule.grid.foo` and `atom.foo` still call the old dispatchers, so they stop on a libxc name
+(in a debug build; in release they would add nothing). No user page describes the keyword or
+`-DLIBXC=ON` yet; that waits for stage 6, when it builds on every platform.
 
 ## 12. Static analysis worth adding
 

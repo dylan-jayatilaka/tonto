@@ -8,8 +8,10 @@
    has to be held on the Fortran side.
 
    The evaluation routines change only their output arrays, which is why the
-   Foo interface may declare them pure. Setting up and ending a functional
-   changes the table, and must be done outside any parallel loop. */
+   Foo interface may declare them pure. Asking for a handle adds to the table
+   the first time a functional is named and changes nothing after that; the
+   Foo interface declares it pure as well, which is safe because Tonto runs
+   one thread per process. */
 
 #include <stddef.h>
 #include <string.h>
@@ -18,6 +20,8 @@
 #define TONTO_XC_MAX_FUNC 64
 
 static xc_func_type *func[TONTO_XC_MAX_FUNC];
+static int func_id[TONTO_XC_MAX_FUNC];
+static int func_nspin[TONTO_XC_MAX_FUNC];
 
 /* The functional for "handle", or NULL if the handle is not in use. */
 static xc_func_type *lookup(const int *handle)
@@ -26,46 +30,34 @@ static xc_func_type *lookup(const int *handle)
    return func[*handle - 1];
 }
 
-/* Set "id" to libxc's number for the functional called "name", e.g.
-   "gga_x_pbe", or to -1 if libxc has none of that name. */
-void tonto_xc_number_(const char *name, int *id, size_t len)
+/* Set "handle" for the functional called "name", e.g. "gga_x_pbe", with
+   "nspin" spin channels (1 or 2), or to 0 if libxc has none of that name. A
+   functional is set up the first time it is asked for and kept for the life of
+   the program, so the same name and "nspin" always give the same handle. */
+void tonto_xc_handle_(int *handle, const char *name, const int *nspin, size_t len)
 {
    char buf[256];
+   int i, id;
+   *handle = 0;
    while (len > 0 && name[len - 1] == ' ') len--;
-   if (len >= sizeof buf) { *id = -1; return; }
+   if (len == 0 || len >= sizeof buf) return;
    memcpy(buf, name, len);
    buf[len] = '\0';
-   *id = xc_functional_get_number(buf);
-}
-
-/* Set up functional number "id" for "nspin" spin channels (1 or 2) and
-   return its "handle", or 0 if that could not be done. */
-void tonto_xc_init_(int *handle, const int *id, const int *nspin)
-{
-   int i;
-   *handle = 0;
-   for (i = 0; i < TONTO_XC_MAX_FUNC; i++) if (func[i] == NULL) break;
+   id = xc_functional_get_number(buf);
+   if (id < 0) return;
+   for (i = 0; i < TONTO_XC_MAX_FUNC && func[i] != NULL; i++)
+      if (func_id[i] == id && func_nspin[i] == *nspin) { *handle = i + 1; return; }
    if (i == TONTO_XC_MAX_FUNC) return;
    func[i] = xc_func_alloc();
    if (func[i] == NULL) return;
-   if (xc_func_init(func[i], *id, *nspin == 2 ? XC_POLARIZED : XC_UNPOLARIZED) != 0) {
+   if (xc_func_init(func[i], id, *nspin == 2 ? XC_POLARIZED : XC_UNPOLARIZED) != 0) {
       xc_func_free(func[i]);
       func[i] = NULL;
       return;
    }
+   func_id[i] = id;
+   func_nspin[i] = *nspin;
    *handle = i + 1;
-}
-
-/* End the functional "handle" and set the handle to 0. */
-void tonto_xc_end_(int *handle)
-{
-   xc_func_type *p = lookup(handle);
-   if (p != NULL) {
-      xc_func_end(p);
-      xc_func_free(p);
-      func[*handle - 1] = NULL;
-   }
-   *handle = 0;
 }
 
 /* Set "rung" to what the functional needs as input: 1 the density, 2 also
@@ -83,23 +75,20 @@ void tonto_xc_rung_(const int *handle, int *rung)
 }
 
 /* Set "a0" to the fraction of exact exchange in the functional; zero for
-   one that is not a hybrid. */
+   one that is not a hybrid. Set it to -1 for a functional that needs what
+   Tonto does not have: a range-separated hybrid, or one with non-local
+   (VV10) correlation. */
 void tonto_xc_exact_exchange_(const int *handle, double *a0)
 {
    const xc_func_type *p = lookup(handle);
    *a0 = 0.0;
    if (p == NULL) return;
+   if (p->info->flags & XC_FLAGS_VV10) { *a0 = -1.0; return; }
    switch (p->info->family) {
       case XC_FAMILY_HYB_LDA: case XC_FAMILY_HYB_GGA: case XC_FAMILY_HYB_MGGA:
+         if (p->cam_omega != 0.0 || p->cam_beta != 0.0) { *a0 = -1.0; return; }
          *a0 = xc_hyb_exx_coef(p);
    }
-}
-
-/* Set the density below which the functional returns zero. */
-void tonto_xc_set_rho_cutoff_(const int *handle, const double *cutoff)
-{
-   xc_func_type *p = lookup(handle);
-   if (p != NULL) xc_func_set_dens_threshold(p, *cutoff);
 }
 
 /* The evaluation routines. "np" is the number of points. With two spin

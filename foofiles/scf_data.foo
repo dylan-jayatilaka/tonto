@@ -634,13 +634,81 @@ contains
    ! Generic set
    end
 
-   set_correlation_functional(val)
-   ! Set the DFT correlation functional
+   set_functional(val)
+   ! Set the whole DFT functional by one name "val". The name is either one
+   ! of the common names below, or any name as libxc spells it, such as
+   ! "hyb_gga_xc_pbeh". It is stored as an exchange and a correlation
+   ! functional, exactly as if the two had been set; a libxc functional
+   ! that is exchange and correlation together is stored as the exchange,
+   ! with no correlation. "b3lyp" is the form with the VWN functional III
+   ! (the RPA fit), as in Gaussian and in libxc; "b3lyp5" has functional V.
       self :: INOUT
       val :: STR, IN
 
+      name,exch,corr :: STR
+
+      name = val
+      name.to_lower_case
+
+      select case (name)
+      case("lda   "); exch = "slater";          corr = "vwn5"
+      case("xalpha"); exch = "xalpha";          corr = "none"
+      case("blyp  "); exch = "becke88";         corr = "lyp"
+      case("b3lyp "); exch = "b3lypgx";         corr = "b3lypgc"
+      case("b3lyp5"); exch = "b3lypx";          corr = "b3lypc"
+      case("pbe   "); exch = "gga_x_pbe";       corr = "gga_c_pbe"
+      case("pbe0  "); exch = "hyb_gga_xc_pbeh"; corr = "none"
+      case default
+         DIE_IF(NOT DFT_FUNCTIONAL:is_libxc_functional(name),"unknown DFT functional: "//trim(name))
+         exch = name
+         corr = "none"
+      end
+
+      .set_exchange_functional(exch)
+      .set_correlation_functional(corr)
+      .DFT_functional = name
+
+   end
+
+   set_libxc_functional(name,uses_gradient,a0) :: private
+   ! Check that libxc can evaluate the functional "name" for Tonto, and stop
+   ! with a message if not. Return whether it uses the density gradient, and
+   ! its fraction "a0" of exact exchange.
+      self :: IN
+      name :: STR, IN
+      uses_gradient :: BIN, OUT
+      a0 :: REAL, OUT
+
+      found :: BIN
+      rung :: INT
+
+      DFT_FUNCTIONAL:get_libxc_info(name,found,rung,a0)
+
+      DIE_IF(NOT found,"libxc has no functional called "//trim(name)//", or this Tonto was built without libxc")
+      DIE_IF(rung>2,"the functional "//trim(name)//" needs the kinetic energy density, which Tonto does not yet make")
+      DIE_IF(a0<ZERO,"the functional "//trim(name)//" needs range separation or non-local correlation, which Tonto does not have")
+
+      uses_gradient = rung==2
+
+   end
+
+   set_correlation_functional(val)
+   ! Set the DFT correlation functional. A name as libxc spells it, such as
+   ! "gga_c_pbe", is evaluated by libxc.
+      self :: INOUT
+      val :: STR, IN
+
+      a0 :: REAL
+
       .DFT_correlation_functional = val
       .DFT_correlation_functional.to_lower_case
+      .DFT_functional = " "
+
+      if (DFT_FUNCTIONAL:is_libxc_functional(.DFT_correlation_functional)) then
+         .set_libxc_functional(.DFT_correlation_functional,.using_GGA_correlation,a0)
+         DIE_IF(a0>ZERO,"give a hybrid functional as the exchange functional, or by dft_functional=")
+         return
+      end
 
       select case (.DFT_correlation_functional)
       case("       "); .using_GGA_correlation = FALSE
@@ -656,14 +724,28 @@ contains
    end
 
    set_exchange_functional(val)
-   ! Set the DFT exchange functional
+   ! Set the DFT exchange functional. A name as libxc spells it, such as
+   ! "gga_x_pbe", is evaluated by libxc, and may be a hybrid, or exchange
+   ! and correlation together; its fraction of exact exchange is libxc's.
       self :: INOUT
       val :: STR, IN
 
+      a0 :: REAL
+
       .DFT_exchange_functional = val
       .DFT_exchange_functional.to_lower_case
+      .DFT_functional = " "
 
       .using_hybrid_exchange = FALSE
+
+      if (DFT_FUNCTIONAL:is_libxc_functional(.DFT_exchange_functional)) then
+         .set_libxc_functional(.DFT_exchange_functional,.using_GGA_exchange,a0)
+         if (a0>ZERO) then
+            .using_hybrid_exchange  = TRUE
+            .hybrid_exchange_factor = a0
+         end
+         return
+      end
 
       select case (.DFT_exchange_functional)
       case("       "); .using_GGA_exchange = FALSE
@@ -677,8 +759,10 @@ contains
       ! the exact exchange is silently dropped. See TASKS_AND_HISTORY.md.
       case("b3lypx "); .using_GGA_exchange = TRUE
                        .using_hybrid_exchange = TRUE
+                       .hybrid_exchange_factor = 0.2d0
       case("b3lypgx"); .using_GGA_exchange = TRUE
                        .using_hybrid_exchange = TRUE
+                       .hybrid_exchange_factor = 0.2d0
       case default;    UNKNOWN(.DFT_exchange_functional)
       end
 
@@ -1668,6 +1752,7 @@ contains
       case ("delete_scf_archives=         "); .read_delete_SCF_archives
       case ("dft_correlation_functional=  "); .read_correlation_functional
       case ("dft_exchange_functional=     "); .read_exchange_functional
+      case ("dft_functional=              "); .read_functional
       case ("diis=                        "); .read_DIIS
       case ("diis_error_temp_cutoff=      "); .read_DIIS_error_temp_cutoff
       case ("direct=                      "); .read_using_direct_SCF ! deprecated
@@ -1871,8 +1956,32 @@ contains
    ! Read the guess-SCF energy convergence criterion.
    end
 
-   read_correlation_functional :: get_from(OBJECT:read_and_set, VAL_TYPE?=>STR, SET?=>.set_correlation_functional), private
-   ! Generic read and set
+   read_correlation_functional :: private
+   ! Read the DFT correlation functional. It may not be given together
+   ! with dft_functional=, which names the whole functional.
+      self :: INOUT
+
+      val :: STR
+
+      stdin.read(val)
+      DIE_IF(.DFT_functional/=" ","dft_functional= was given: do not also give dft_correlation_functional=")
+      .set_correlation_functional(val)
+      .DFT_parts_given = TRUE
+
+   end
+
+   read_functional :: private
+   ! Read the whole DFT functional by one name; see set_functional. It may
+   ! not be given together with dft_exchange_functional= or
+   ! dft_correlation_functional=.
+      self :: INOUT
+
+      val :: STR
+
+      stdin.read(val)
+      DIE_IF(.DFT_parts_given,"dft_exchange_functional= or dft_correlation_functional= was given: do not also give dft_functional=")
+      .set_functional(val)
+
    end
 
 
@@ -1974,8 +2083,18 @@ contains
    ! Generic read and set a quantity with units
    end
 
-   read_exchange_functional :: get_from(OBJECT:read_and_set, VAL_TYPE?=>STR, SET?=>.set_exchange_functional), private
-   ! Generic read and set
+   read_exchange_functional :: private
+   ! Read the DFT exchange functional. It may not be given together with
+   ! dft_functional=, which names the whole functional.
+      self :: INOUT
+
+      val :: STR
+
+      stdin.read(val)
+      DIE_IF(.DFT_functional/=" ","dft_functional= was given: do not also give dft_exchange_functional=")
+      .set_exchange_functional(val)
+      .DFT_parts_given = TRUE
+
    end
 
 
@@ -2801,7 +2920,9 @@ contains
 
    ENSURE(.is_DFT_calculation,"must be a DFT calculation")
 
-      res = " "
+      res = .DFT_functional
+      if (res/=" ") return
+
       if (.DFT_exchange_functional/=" " AND .DFT_exchange_functional/="none") then
          res = .DFT_exchange_functional
       end
@@ -3077,6 +3198,12 @@ contains
       stdout.show("Kind of initial MO's           =", .initial_MOs)
 
       if (.is_DFT_calculation) then
+      if (.DFT_functional/=" ") then
+      stdout.show("DFT functional                 =", .DFT_functional)
+      if (.using_hybrid_exchange) then
+      stdout.show("Fraction of exact exchange     =", .hybrid_exchange_factor)
+      end
+      end
       stdout.show("DFT Exchange functional        =", .DFT_exchange_functional)
       stdout.show("DFT Correlation functional     =", .DFT_correlation_functional)
       end

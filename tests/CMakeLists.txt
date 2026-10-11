@@ -195,6 +195,16 @@ if(LIBXC)
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMAND ${PROJECT_BINARY_DIR}/run_libxc)
     set_tests_properties("libxc_gives_slater_exchange" PROPERTIES LABELS "short;selfcheck")
+
+    # libxc functionals in a whole SCF: PBE and PBE0 energies of water and its
+    # cation against PySCF; a libxc functional against the same one hand-written;
+    # the keyword dft_functional= against the two keywords it stands for; and
+    # the inputs that must be refused. No reference file is involved.
+    add_test(NAME "libxc_energies_match_pyscf"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/check_libxc_reference.py
+                ${TONTO_EXE} ${BASIS_SETS})
+    set_tests_properties("libxc_energies_match_pyscf" PROPERTIES LABELS "long;selfcheck" SKIP_RETURN_CODE 77)
 endif()
 
 # The restrained normal-equation solver behind the structure refinement,
