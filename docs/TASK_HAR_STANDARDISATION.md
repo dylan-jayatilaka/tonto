@@ -208,8 +208,11 @@ it does not change results.
 - 2026-10-11: libxc, PBE0, r2SCAN and the keyword `dft_functional=` are on branch `libxc`
   (`docs/TASK_DFT_STANDARDISATION.md` §11), in a build with `-DLIBXC=ON`. r2SCAN's energy needs a
   much finer grid than PBE's: at the default `accuracy= medium` its error is 2.3e-4 hartree for
-  water against 3e-6 for PBE. The effect on the density and on a refinement is to be measured
-  before r2SCAN is used in the protocol assessment. Found that no relativistic Hamiltonian runs (§6a);
+  water against 3e-6 for PBE. **A refinement does not feel it:** on urea the grid moves the GoF by
+  0.003 to 0.004 with r2SCAN and 0.005 to 0.007 with PBE, and no bond or U_iso by more than a
+  quarter of an esd. The default grid stands. Isolated urea, def2-TZVP, free ADPs: GoF 2.606 with
+  PBE and 2.511 with r2SCAN; def2-SVP: 2.672 and 2.700 (B3LYP 2.662). Merged to `develop` by
+  pull request 46. Found that no relativistic Hamiltonian runs (§6a);
   decision to go to X2C.
 
 - 2026-10-05: the x2c sets renamed to their literature names (`x2c-SVPall`, `x2c-TZVPall`,

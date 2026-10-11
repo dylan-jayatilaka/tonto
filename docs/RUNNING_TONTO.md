@@ -76,9 +76,11 @@ with `dft_functional=`.
   be built with `-DLIBXC=ON`; otherwise the name is refused.
 - **Not available:** range-separated hybrids, functionals with non-local
   correlation, and functionals that need the Laplacian of the density.
-- **r2SCAN needs a finer grid than the default.** Its energy error for water at
-  the default `accuracy= medium` is 2e-4 hartree, against 3e-6 for PBE. Use
-  `becke_grid= { set_defaults accuracy= very_high }` or finer.
+- **r2SCAN energies need a finer grid than the default.** The energy error for
+  water at the default `accuracy= medium` is 2e-4 hartree, against 3e-6 for PBE;
+  use `becke_grid= { set_defaults accuracy= very_high }` or finer when energies
+  are compared. A structure refinement does not need it: on urea the grid
+  changes the goodness of fit by 0.004 and no bond length by a printed digit.
 
 ## The programs
 

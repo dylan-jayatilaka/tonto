@@ -1334,9 +1334,35 @@ Release build with `-DLIBXC=ON` on the Mac after stage 5: `ctest -L 'short|long|
 138, two skipped. CI on the branch as pushed before stage 5 (no libxc in those builds):
 Linux-debug and Linux-MPI pass.
 
-So at any setting r2SCAN's energy error is 100 to 1000 times PBE's. What that does to the density,
-which is what a refinement uses, has not been measured. It should be, before r2SCAN is used at the
-default grid in a refinement study.
+So at any setting r2SCAN's energy error is 100 to 1000 times PBE's.
+
+**It does not carry over to a refinement** (measured 2026-10-11). Urea HAR, isolated molecule,
+spherical functions, free ADPs, Hirshfeld partition, 817 reflections, 27 parameters; the same job
+at four grid settings. GoF, and its difference from `accuracy= best`:
+
+| | `medium` | `high` | `very_high` | `best` |
+|---|---|---|---|---|
+| PBE, def2-SVP | 2.6775 (+0.0054) | 2.6734 (+0.0013) | 2.6720 (-0.0001) | 2.6721 |
+| r2SCAN, def2-SVP | 2.7029 (+0.0034) | 2.6997 (+0.0002) | 2.6999 (+0.0004) | 2.6995 |
+| PBE, def2-TZVP | 2.6128 (+0.0069) | 2.6076 (+0.0017) | 2.6057 (-0.0002) | 2.6059 |
+| r2SCAN, def2-TZVP | 2.5156 (+0.0042) | 2.5122 (+0.0008) | 2.5116 (+0.0002) | 2.5114 |
+
+- The grid moves r2SCAN's GoF no more than PBE's: by 0.003 to 0.004 at the default `medium`,
+  against 0.005 to 0.007 for PBE. The GoF at the starting geometry, before any parameter moves,
+  shifts by the same amounts, so this is the density and not the refinement path.
+- No bond length or hydrogen U_iso changes with the grid by more than its last printed digit
+  (a quarter of an esd, N–H1 with r2SCAN at `medium`); R(F) is the same to 0.0001.
+- So the default grid is good enough for a refinement with r2SCAN, as it is with PBE. A finer
+  grid is needed only where r2SCAN energies are compared.
+- By functional, at `best`: def2-SVP PBE 2.672, r2SCAN 2.700 (B3LYP 2.662 from the runs of
+  2026-10-06); def2-TZVP PBE 2.606, r2SCAN 2.511. N–H1 is 1.011(4) Å with PBE and 1.016(4) Å
+  with r2SCAN in def2-TZVP; N–H3 is 0.991 Å with both.
+- r2SCAN took about four to five times as long as PBE at the same grid (73 s against 14 s in
+  def2-SVP, 552 s against 134 s in def2-TZVP, at `medium`, four jobs running at once). Not
+  looked into.
+
+Runs and scripts: `~/tonto-runs/2026-10-11_r2scan_grid` (`make_jobs.py`, `run_all.sh`,
+`tables.py`), with the release build of `8af777df`.
 
 House style, put right on 2026-10-11 after Dylan asked about `set_up`:
 
