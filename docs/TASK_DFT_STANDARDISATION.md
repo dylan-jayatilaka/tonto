@@ -1133,6 +1133,231 @@ added. The full assessment is in `docs/TONTO_REPOSITORY_BRANCHES.md`.
    link line while still reporting the package found. The f03 interface does not
    need `xcf90` at all.
 
+### Decisions and plan (Dylan, 2026-10-11)
+
+Decisions:
+
+1. **libxc is a pinned source, a second git submodule in `external/`,** built by Tonto's CMake
+   as a static C library with the same compiler family. No system package: its Fortran module
+   file is compiler-specific (point 6 above), and reference numbers must not depend on which
+   libxc a machine has. Switched on by `-DLIBXC=ON` while the hand-written routines are the
+   check; required once validated.
+2. **Tonto calls the C library through its own short interface,** not libxc's Fortran module.
+   About ten routines. The evaluation routines are declared `pure` in that interface, as `dgemm`
+   is in `mat{real}.foo`, because the dispatchers and `new_set_*_XC_*` are `PURE`. This replaces
+   points 5 and 6 above. The interface is a small C file, `csrc/tonto_libxc.c`, whose routines
+   have Fortran-callable names and know a functional by a small integer, so Foo needs no C
+   pointer and the translator no change.
+3. **The existing names stay on the hand-written code** until the agreement test passes, so no
+   reference moves.
+4. **One keyword, `dft_functional=`,** names a whole functional (`pbe0`, `b3lyp`, `blyp`,
+   `r2scan`). The two old keywords stay.
+
+How the one keyword and the two old ones live together. All three fill the same record, and
+nothing below the setters knows which keyword was used:
+
+- the record is a short list of parts, each a name, a scale factor and which engine evaluates
+  it (hand-written or libxc), plus the fraction of exact exchange and the highest kind of input
+  any part needs (density only, gradient, kinetic energy density);
+- `dft_exchange_functional=` and `dft_correlation_functional=` each set one part, as now;
+- `dft_functional=` sets all parts and the exact-exchange fraction from one table. For a libxc
+  name the fraction is asked of libxc;
+- giving `dft_functional=` together with either old keyword stops the job with a message;
+- `using_GGA_exchange`, `using_GGA_correlation` and the hybrid flag are derived from the record
+  instead of being set case by case.
+
+So the setters in `scf_data.foo` and the four dispatchers are rewritten; the forty hand-written
+functional routines are not.
+
+Stages. Each is done in a debug tree with second-long jobs (`short/h2o_rks_*`, `short/h2o+_uks_*`),
+then built once in `release`, because a purity fault shows only there.
+
+| | Stage | Passes when |
+|---|---|---|
+| 1 | A ten-line Foo file that calls libxc's C routines through a C pointer; the submodule; the CMake build | Slater exchange from libxc at five densities equals the closed form |
+| 2 | `XC_DENSITY` and `XC_POTENTIAL` (§10, step 3); dispatchers and call sites moved to them; energy and potential from one call; spin as a dimension. No libxc yet | every DFT test exact against its reference |
+| 3 | The libxc branch in the dispatchers, restricted and unrestricted, density and gradient functionals | `slater`, `vwn5`, `becke88`, `lyp` agree with the hand-written code point by point; the gradient-term factor of two checked against `new_r_Becke88_x_potential` |
+| 4 | `dft_functional=`, the record, the exact-exchange fraction from libxc, PBE0 | water and H2O+ PBE0 energies against ORCA within 5e-6 |
+| 5 | r2SCAN: kinetic energy density on the grid, its Fock term, restricted and unrestricted | water r2SCAN against ORCA; grid convergence ladder |
+| 6 | CI on every platform, the Windows cross-build, new tests blessed on achari2, the names lint | all workflows green |
+
+What is done, and where (branch `libxc`; one row per piece, added as it lands):
+
+| Stage | What | Where | Checked by |
+|---|---|---|---|
+| 1 | libxc 7.1.2 source, pinned | submodule `external/libxc` (`.gitmodules`) | builds on the Mac with Apple's C compiler, 8 minutes at `-j8` |
+| 1 | The glue: look up a name, set up and end a functional, kind of input, exact-exchange fraction, density cutoff, the three evaluations | `csrc/tonto_libxc.c` | the test program below |
+| 1 | The build switch `-DLIBXC=ON`: builds libxc's C library (energy and potential only, `-O2`), the glue, defines `LIBXC` for the Foo code | `CMakeLists.txt`, the *libxc* block | a configure without the switch is unchanged |
+| 1 | Test program: Slater exchange for one and two spin channels against the closed form; PBE0 and r2SCAN as libxc reports them | `runfiles/run_libxc.foo` | ctest `libxc_gives_slater_exchange` (`tests/CMakeLists.txt`): passes in the `debug` tree, Mac, gfortran-14 |
+
+| 2 | The two bundle types: densities in, energy and potentials out, laid out `(n_pt,n_spin)` and `(n_pt,3,n_spin)` | `foofiles/types.foo`; new modules `xc_density.foo`, `xc_potential.foo` | the comparison below |
+| 2 | One entry point for a functional, `add_energy_and_potential(name,pot,den)`; it picks one or two spin channels from `den` and passes the gradient only to a functional that uses it | `foofiles/dft_functional.foo` | |
+| 2 | `set_XC_energy_and_potential(pot,den)` replaces the four `new_set_*_XC_*` routines | `foofiles/molecule.fock.foo` | |
+| 2 | The six matrix builders (`add_LDA_XC_mx`, `add_GGA_XC_mx`, `add_XC_mx_batched`, restricted and unrestricted) and their four inner routines take `pot` | `foofiles/molecule.fock.foo` | |
+| 2 | The four `make_rho_becke_atom_grid` routines return `den` | `foofiles/molecule.rho.foo` | |
+
+| 3 | The glue keeps each functional it has set up for the life of the program, found again by name and number of spin channels; a range-separated hybrid or one with non-local correlation is reported as not usable | `csrc/tonto_libxc.c` | |
+| 3 | A name spelled as libxc spells it (`lda_`, `gga_`, `mgga_`, `hyb_` first) is evaluated by libxc: `add_libxc_energy_and_potential`, called from the entry point. One and two spin channels, density and gradient functionals | `foofiles/dft_functional.foo` | `check_libxc` below |
+| 3 | `DFT_FUNCTIONAL:check_libxc`: seven hand-written functionals against their libxc counterparts, point by point, one and two spin channels | `foofiles/dft_functional.foo`, run by `runfiles/run_libxc.foo` | ctest `libxc_gives_slater_exchange` |
+| 3 | Every program links the glue when `-DLIBXC=ON` | `CMakeLists.txt` | |
+| 4 | `dft_exchange_functional=` and `dft_correlation_functional=` accept libxc names; the gradient flag and the fraction of exact exchange come from libxc | `foofiles/scf_data.foo`: `set_exchange_functional`, `set_correlation_functional`, `get_libxc_functional_info`; `DFT_FUNCTIONAL:get_libxc_info` | ctest `libxc_energies_match_pyscf` |
+| 4 | The keyword `dft_functional=`: `lda`, `xalpha`, `blyp`, `b3lyp`, `b3lyp-gaussian`, `b3lyp-orca`, `pbe`, `pbe0`, or any libxc name. Refused together with either old keyword | `foofiles/scf_data.foo`: `set_functional`, `read_functional`, and the two old read routines; two members in `types.foo` | the same test |
+| 4 | The test of libxc in a whole SCF: PBE and PBE0 against PySCF, libxc against hand-written, one keyword against two, refused inputs | `scripts/check_libxc_reference.py`, `tests/CMakeLists.txt` | |
+
+| 5 | The kinetic energy density `tau` in the density bundle and `v_tau` in the potential bundle | `types.foo`, `xc_density.foo`, `xc_potential.foo` | |
+| 5 | libxc's meta-GGA call in the adapter; a functional that needs the Laplacian of the density is refused | `dft_functional.foo`: `add_libxc_energy_and_potential`; `csrc/tonto_libxc.c` | |
+| 5 | `tau` on the grid and its term in the XC matrix, restricted and unrestricted, in the batched builders only; two small helpers shared by both | `molecule.fock.foo`: `add_XC_mx_batched`, `add_density_of_grid_fns`, `add_product_of_grid_fns` | ctest `libxc_energies_match_pyscf` |
+| 5 | The meta-GGA flags, the name `r2scan` for `dft_functional=`, and the stop if `use_batched_xc= FALSE` is given with a meta-GGA | `scf_data.foo`, `types.foo`, `molecule.fock.foo` | the same test |
+
+| 6 | libxc's build files see a build type they know (`Release`); Tonto's `reference`, `fast` and `release-static` stopped them | `CMakeLists.txt`, the *libxc* block | all four build types configure |
+| 6 | The six plot routines for the XC potential and energy go through the entry point, by one helper, `make_r_energy_and_potential` | `dft_functional.foo`, `molecule.grid.foo`, `atom.foo` | five plot jobs give byte-identical cube files before and after; a PBE potential plot now runs |
+| 6 | `-DLIBXC=ON` in CI: Linux-release, Linux-debug, macOS-release, macOS-debug, the full suite, and both release-binary builds (Linux static, Windows cross-build). Not in the MPI and WSL workflows | `.github/workflows/` | the runs themselves |
+| 6 | User pages: the functional keywords and names; the build switch | `docs/RUNNING_TONTO.md` *Density functionals*; the three `docs/BUILDING_ON_*.md`; `CLAUDE.md` §8 | `scripts/check_docs.py` |
+
+Stage 2 (2026-10-11) changes no number. Checked on the Mac, gfortran-14: six small jobs
+(restricted and unrestricted; Slater-type, mixed and gradient functionals), each with the per-atom
+and the batched builders, give output identical at 12 printed digits to the commit before, both in
+debug builds. The batched builders are the default (`use_batched_xc` is TRUE unless set), so it
+is the per-atom builders that no test input reaches, and this is their only check. The 21
+DFT tests pass in `debug` and in `release`, so the new routines are pure where they claim to be.
+The argument counts: the unrestricted gradient call went from 17 arguments to 3, the unrestricted
+grid density from 18 to 11, its matrix builder from 21 to 13.
+
+Left as they were in stage 2: the four old dispatchers and the forty hand-written routines, now
+reached only through the entry point (and directly by the potential plots in `molecule.grid.foo`
+and `atom.foo`); the layout is `(n_pt,n_spin)` and not libxc's `(n_spin,n_pt)`, because the
+hand-written routines and the matrix builders read whole columns, so libxc's arrays are copied in
+its adapter.
+
+Stage 1 is done in a debug build only (2026-10-11). Not yet done for it: a `release` build, Linux,
+the Windows cross-build. Foo took the interface to the glue as written, with a string of any
+length spelled `STR(*)`. The seven existing DFT tests still pass in that tree.
+
+Stage 3 (2026-10-11), debug build on the Mac; the release build gives a pass too. Largest relative difference between hand-written and
+libxc, over energy per particle, potentials and gradient parts, at six densities from 0.001 to 30:
+
+| hand-written | libxc | one spin channel | two |
+|---|---|---|---|
+| `slater` | `lda_x` | 0 | 0 |
+| `vwn5` | `lda_c_vwn` | 0 | 0 |
+| `vwn3` | `lda_c_vwn_rpa` | 1e-14 | 1e-14 |
+| `becke88` | `gga_x_b88` | 0 | 0 |
+| `lyp` | `gga_c_lyp` | 0 | 5e-14 |
+| `b3lypx` + `b3lypc` | `hyb_gga_xc_b3lyp5` | 0 | 0 |
+| `b3lypgx` + `b3lypgc` | `hyb_gga_xc_b3lyp` | 0 | 0 |
+
+(0 means below 5e-15.) So the gradient term $`V_n = 2\,v_\sigma \nabla\rho`$ (one channel) and
+$`V_{n\alpha} = 2\,v_{\sigma,\alpha\alpha}\nabla\rho_\alpha + v_{\sigma,\alpha\beta}\nabla\rho_\beta`$ (two) is right,
+where $`v_\sigma`$ is libxc's derivative of the functional with respect to
+$`\sigma = \nabla\rho\cdot\nabla\rho`$. Tonto's `vwn3` is libxc's `lda_c_vwn_rpa`, not `lda_c_vwn_3`.
+
+Stage 4 (2026-10-11), debug build on the Mac. Water and its cation, cc-pVDZ, the geometry of
+`tests/short/h2o_rks_B3LYPG_cc-pVDZ`, against PySCF 2.14 (grid level 9, no pruning):
+
+| | Tonto, `accuracy= high` | Tonto, `accuracy= best` | PySCF | difference at `best` |
+|---|---|---|---|---|
+| RKS PBE | -76.3350279362 | -76.3350289923 | -76.335028993 | 7e-10 |
+| RKS PBE0 | -76.3398107051 | -76.3398118260 | -76.339811822 | 4e-9 |
+| UKS PBE, cation | -75.8832028076 | -75.8832032735 | -75.883203639 | 3.7e-7 |
+| UKS PBE0, cation | -75.8912787554 | -75.8912793980 | -75.891279686 | 2.9e-7 |
+| RKS BLYP | -76.3998565082 | -76.3998561750 | -76.399856196 | 2e-8 |
+
+BLYP and B3LYP through libxc give the hand-written energies to all 10 printed digits (RKS) and
+to 5e-10 (UKS, where the two differ in how they treat points of very low density). The batched
+builders give the same PBE0 energies as the per-atom ones. The unrestricted gap of 3e-7 at the
+finest grid is not explained; the restricted one is 100 times smaller.
+
+How the plan changed in the doing:
+
+- **No new record type.** The exchange and correlation names, the two gradient flags, the hybrid
+  flag and `hybrid_exchange_factor` in `SCF_DATA` already are the record. `dft_functional=` fills
+  them through the two existing setters. A whole libxc functional goes in the exchange slot with
+  correlation `none`.
+- **No scale factors.** libxc has every composite wanted (PBE0, B3LYP) as one functional.
+- **B3LYP names (Dylan, 2026-10-11): `b3lyp-gaussian` and `b3lyp-orca`; `b3lyp` means the
+  first.** `b3lyp-gaussian` has the VWN fit to the RPA energy (functional III): B3LYP in
+  Gaussian, NWChem and Psi4, B3LYP/G in ORCA, `hyb_gga_xc_b3lyp` in libxc. `b3lyp-orca` has the
+  fit to the Ceperley–Alder energy (functional V): B3LYP in ORCA, Turbomole and GAMESS,
+  `hyb_gga_xc_b3lyp5` in libxc. The two differ by 37 millihartree for water (PySCF: -76.421747
+  and -76.384599). A third, `hyb_gga_xc_b3lyp3`, is reachable by its libxc name. The comment under
+  `SCF_DATA:set_functional` says this.
+- **libxc's density cutoff is not used.** The adapter drops points whose total density is below
+  Tonto's `rho_cutoff`, so the adapter stays pure.
+- **The functional's handle is looked up by name on every batch** and not stored: the glue keeps
+  a table, and a lookup is cheap beside a batch.
+
+Checked for stages 3 and 4 together, on the Mac, gfortran-14: `release` with `-DLIBXC=ON`,
+`ctest -L 'short|long|hart'` 138 of 138 with two skipped (`ammonium_borane_pHAR_C23`,
+`rgbi_doctor_catches_missing_tools`), the two libxc tests among them; `release` without the
+switch builds, its 13 DFT tests pass, and a libxc name is refused with a message. Not checked:
+Linux, MPI, the Windows cross-build.
+
+Stage 5 (2026-10-11): r2SCAN and other meta-GGAs. With $`D`$ the density matrix, $`\chi_a`$ the
+basis functions and $`w`$ the quadrature weights, the kinetic energy density of one spin channel is
+
+```math
+\tau = \tfrac12 \sum_{ab} D_{ab}\, \nabla\chi_a\cdot\nabla\chi_b \qquad (4)
+```
+
+and the functional's derivative $`v_\tau`$ with respect to it adds to the XC matrix
+
+```math
+V_{ab} \mathrel{+}= \tfrac12 \sum_{\text{points}} w\, v_\tau\, \nabla\chi_a\cdot\nabla\chi_b \qquad (5)
+```
+
+Only the batched builders make these. The per-atom builders stop with a message on a meta-GGA.
+
+Checked in a debug build on the Mac. Water and its cation, cc-pVDZ, against PySCF 2.14:
+
+| | Tonto, `accuracy= best` | PySCF | difference |
+|---|---|---|---|
+| RKS r2SCAN | -76.3823990198 | -76.382397984 | 1.0e-6 |
+| UKS r2SCAN, cation | -75.9341794724 | -75.934178684 | 7.9e-7 |
+| RKS TPSS (`mgga_x_tpss`, `mgga_c_tpss`) | -76.4243255855 | -76.424325339 | 2.5e-7 |
+| UKS TPSS, cation | -75.9780284678 | -75.978030267 | 1.8e-6 |
+| RKS r2SCAN0 (`hyb_mgga_xc_r2scan0`) | -76.3729256890 | -76.372924975 | 7e-7 |
+
+**The remaining difference is Tonto's radial grid, and r2SCAN needs a much finer grid than PBE.**
+On unpruned grids with 100 and 150 radial points r2SCAN gives -76.3823976179 and -76.3823979644,
+the second 2e-8 from PySCF; PBE gives -76.3350289944 on both. Error against those, by setting:
+
+| `accuracy=` | r2SCAN | PBE |
+|---|---|---|
+| `low` | 1.9e-4 | -4.1e-5 |
+| `medium` (the default) | -2.3e-4 | -3.0e-6 |
+| `high` | -6.1e-5 | 1.1e-6 |
+| `very_high` | -2.0e-5 | -2.0e-8 |
+| `extreme` | -9.6e-6 | 5.3e-9 |
+| `best` | -1.1e-6 | 2.0e-9 |
+
+Release build with `-DLIBXC=ON` on the Mac after stage 5: `ctest -L 'short|long|hart'` 138 of
+138, two skipped. CI on the branch as pushed before stage 5 (no libxc in those builds):
+Linux-debug and Linux-MPI pass.
+
+So at any setting r2SCAN's energy error is 100 to 1000 times PBE's. What that does to the density,
+which is what a refinement uses, has not been measured. It should be, before r2SCAN is used at the
+default grid in a refinement study.
+
+House style, put right on 2026-10-11 after Dylan asked about `set_up`:
+
+- `set_up` is not a Tonto name. The two new modules now have the standard layout: `create` and
+  `destroy`, `destroy_ptr_part`, `set_defaults` (no arguments, default values, no arrays), and
+  `create_grids`, which allocates the arrays to a size, in the `create_` vocabulary.
+- Outputs come before inputs: `add_energy_and_potential(name,pot,den)`.
+- A routine that sets nothing is not called `set_`: `get_libxc_functional_info`.
+- Named constants (`THREE`, `FOURTHIRD`, `THREEQUARTERS`, `QUARTER`, `SIX`) in place of bare
+  numbers.
+- Still outside the usual layout, and for Dylan to judge: the new top-level directory `csrc/`
+  for the one C file; and the interface blocks for the C routines, written inside the routines
+  that call them, as `mat{real}.foo` does for `dgemm`.
+
+Stage 6 (2026-10-11). No test needed a blessed reference: the two libxc tests check themselves.
+libxc's C library compiles in 21 seconds at `-j8` on achari2 (energy and potential only), so it
+adds little to a build. On Linux the C compiler is the system `cc` (gcc 13 on Ubuntu 24.04) and
+the Fortran compiler gfortran-14; only the C calling convention is shared, so they need not
+match. Found on the way: `dft_energy` plots with a gradient functional have never worked (the
+routine passes no gradient, and stops in a debug build); left as it is.
+
 ## 12. Static analysis worth adding
 
 All three defects above are mechanically detectable. These follow the pattern of

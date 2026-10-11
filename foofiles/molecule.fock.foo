@@ -5870,6 +5870,8 @@ contains
 
       E,E_xc :: REAL
 
+      DIE_IF(.SCF_data.using_meta_GGA_functional AND NOT .SCF_data.using_batched_XC,"a meta-GGA functional needs use_batched_xc= TRUE")
+
       if (.SCF_data.using_batched_XC) then
          .add_XC_mx_batched(K,E,E_xc)
       else if (.SCF_data.using_GGA_functional) then
@@ -5889,6 +5891,8 @@ contains
       Ka,Kb :: MAT{REAL}, INOUT
 
       E,Ea,Eb,E_xc :: REAL
+
+      DIE_IF(.SCF_data.using_meta_GGA_functional AND NOT .SCF_data.using_batched_XC,"a meta-GGA functional needs use_batched_xc= TRUE")
 
       if (.SCF_data.using_batched_XC) then
             .add_XC_mx_batched(Ka,Kb,E,Ea,Eb,E_xc)
@@ -5921,10 +5925,12 @@ contains
    ENSURE(.density_mx.r.allocated,"no restricted density matrix")
 
       V, pt :: MAT{REAL}@
-      wt, N0,V0,E0 :: VEC{REAL}@
+      wt :: VEC{REAL}@
+      den :: XC_DENSITY
+      pot :: XC_POTENTIAL
       bf_skip  :: VEC{EVEC{BIN}}@
       bf_grid0 :: VEC{EMAT{REAL}}@
-      n_pt, c  :: INT
+      c :: INT
 
       ! Main temporaries
       E = ZERO
@@ -5934,31 +5940,25 @@ contains
       do c = 1,.n_atom
 
          ! Make electron density on the Becke-grid for atom "c"
-         .make_rho_becke_atom_grid(N0,pt,wt,bf_skip,bf_grid0,c,.density_mx.r)
+         .make_rho_becke_atom_grid(den,pt,wt,bf_skip,bf_grid0,c,.density_mx.r)
 
-         ! Make XC potential, energy grids: V0, E0
+         ! Make the XC energy per particle and potential on the grid
          pt.destroy
-         n_pt = wt.dim
-         E0.create(n_pt) ! The energy density
-         V0.create(n_pt) ! local potential grids
-         .new_set_r_XC_potentials(V0,N0)
-         .new_set_r_XC_energy_density(E0,N0)
+         .set_XC_energy_and_potential(pot,den)
 
          ! Incorporate grid & partition weights
-         E0 = wt*E0
-         V0 = wt*V0
+         pot.multiply_by(wt)
 
          ! Clean
-         N0.destroy
+         den.destroy_ptr_part
          wt.destroy
 
          ! Add the XC matrix elements into V, energy to E
          ! for atom "c" Becke-grid
-         .add_LDA_XC_mx(V,E,V0,E0,bf_skip,bf_grid0,c,.density_mx.r)
+         .add_LDA_XC_mx(V,E,pot,bf_skip,bf_grid0,c,.density_mx.r)
 
          ! Clean up
-         V0.destroy
-         E0.destroy
+         pot.destroy_ptr_part
          bf_grid0.destroy
          bf_skip.destroy
 
@@ -5978,17 +5978,17 @@ contains
 
    end
 
-   add_LDA_XC_mx(V,E,V0,E0,bf_skip,bf_grid0,c,D)
+   add_LDA_XC_mx(V,E,pot,bf_skip,bf_grid0,c,D)
    ! Add XC potential matrix elements to "V", the XC energy to "E".
-   ! "V0" is XC potential density on the becke grid for atom "c",
-   ! weighted by the partition function for that atom. Likewise, "E0"
-   ! is the (partition-weighted) XC energy density of the grid.
+   ! "pot" holds the XC potential and the XC energy per particle on the
+   ! becke grid for atom "c", both weighted by the partition function
+   ! for that atom.
    ! "bf_skip" and "bf_grid0 are basis function grids.  "D" is the
    ! density matrix.  This routine supports local functional only.
       self :: INOUT
       V :: MAT{REAL}, target, INOUT
       E :: REAL, INOUT
-      V0,E0    :: VEC{REAL}, IN
+      pot :: XC_POTENTIAL, IN
       bf_skip  :: VEC{EVEC{BIN}}, IN
       bf_grid0 :: VEC{EMAT{REAL}}, IN
       c :: INT, IN
@@ -6010,7 +6010,7 @@ contains
       sa,fa,la,na, sb,fb,lb,nb, a,b,p,i,j,n :: INT
 
       ! Skip array for ab shell
-      n_pt = V0.dim
+      n_pt = pot.energy.dim
       skipab.create(n_pt)
 
       ! Overlapping atoms
@@ -6085,8 +6085,8 @@ contains
                         ga  = ga0(i)
                         gb  = gb0(j)
                         gab = ga*gb
-                        val = val + V0(n)*gab
-                        wal = wal + E0(n)*gab
+                        val = val + pot.v_rho(n,1)*gab
+                        wal = wal + pot.energy(n)*gab
                      end
                      VV(1,1) = VV(1,1) + val
                      E       = E       + wal*Dab
@@ -6127,8 +6127,8 @@ contains
                               ga  = ga0(i)
                               gb  = gb0(j)
                               gab = ga*gb
-                              val = val + V0(n)*gab
-                              wal = wal + E0(n)*gab
+                              val = val + pot.v_rho(n,1)*gab
+                              wal = wal + pot.energy(n)*gab
                            end
                            VV(a,b) = VV(a,b) + val
                            E       = E       + wal*Dab
@@ -6167,14 +6167,14 @@ contains
    ENSURE(.density_mx.allocated,"no density matrix")
    ENSURE(.density_mx.r.allocated,"no restricted density matrix")
 
-      wt, E0      :: VEC{REAL}@
-      N0,Nx,Ny,Nz :: VEC{REAL}@
-      V0,Vx,Vy,Vz :: VEC{REAL}@
+      wt :: VEC{REAL}@
+      den :: XC_DENSITY
+      pot :: XC_POTENTIAL
       V,pt :: MAT{REAL}@
       bf_skip  :: VEC{EVEC{BIN}}@
       bf_grid0 :: VEC{EMAT{REAL}}@
       bf_gridx,bf_gridy,bf_gridz :: VEC{EMAT{REAL}}@
-      n_pt, c  :: INT
+      c :: INT
 
       ! Main temporaries
       E = ZERO
@@ -6185,49 +6185,27 @@ contains
 
          ! Make electron density on the Becke-grid for atom "c"
          .make_rho_becke_atom_grid( &
-            N0,Nx,Ny,Nz, &
-            pt,wt, &
+            den,pt,wt, &
             bf_skip,bf_grid0,bf_gridx,bf_gridy,bf_gridz, &
             c,.density_mx.r)
 
-         ! Make XC potential, energy grids: V0, E0
+         ! Make the XC energy per particle and potentials on the grid
          pt.destroy
-
-         ! The energy density &
-         ! local potential grids
-         n_pt = wt.dim
-         E0.create(n_pt)
-         V0.create(n_pt)
-         Vx.create(n_pt)
-         Vy.create(n_pt)
-         Vz.create(n_pt)
-         .new_set_r_XC_potentials(V0,N0,Vx,Vy,Vz,Nx,Ny,Nz)
-         .new_set_r_XC_energy_density(E0,N0,Nx,Ny,Nz)
+         .set_XC_energy_and_potential(pot,den)
 
          ! Incorporate grid & partition weights
-         E0 = wt*E0
-         V0 = wt*V0
-         Vx = wt*Vx
-         Vy = wt*Vy
-         Vz = wt*Vz
+         pot.multiply_by(wt)
 
          ! Clean
-         Nz.destroy
-         Ny.destroy
-         Nx.destroy
-         N0.destroy
+         den.destroy_ptr_part
          wt.destroy
 
          ! Add the XC matrix elements into V, energy to E
          ! for atom "c" Becke-grid
-         .add_GGA_XC_mx(V,E,V0,Vx,Vy,Vz,E0,bf_skip,bf_grid0,bf_gridx,bf_gridy,bf_gridz,c,.density_mx.r)
+         .add_GGA_XC_mx(V,E,pot,bf_skip,bf_grid0,bf_gridx,bf_gridy,bf_gridz,c,.density_mx.r)
 
          ! Clean up
-         Vz.destroy
-         Vy.destroy
-         Vx.destroy
-         V0.destroy
-         E0.destroy
+         pot.destroy_ptr_part
          bf_gridz.destroy
          bf_gridy.destroy
          bf_gridx.destroy
@@ -6250,19 +6228,18 @@ contains
 
    end
 
-   add_GGA_XC_mx(V,E,V0,Vx,Vy,Vz,E0,bf_skip,bf_grd0,bf_grdx,bf_grdy,bf_grdz,c,D)
+   add_GGA_XC_mx(V,E,pot,bf_skip,bf_grd0,bf_grdx,bf_grdy,bf_grdz,c,D)
    ! Add XC potential matrix elements to "V", the XC energy to "E".
-   ! "V0" is XC potential density on the becke grid for atom "c",
-   ! weighted by the partition function for that atom. "Vx", "Vy",
-   ! "Vz" are XC potential gradients. Likewise, "E0" is the
-   ! (partition-weighted) XC energy density of the grid.  "bf_skip",
+   ! "pot" holds the XC potential, its gradient part, and the XC energy
+   ! per particle on the becke grid for atom "c", all weighted by the
+   ! partition function for that atom.  "bf_skip",
    ! "bf_grd0", "bf_grdx", "bf_grdy", "bf_grdz" are basis function
    ! grids and their derivatives.  "D" is the density matrix.  This
    ! routine supports non-local functionals.
       self :: INOUT
       V :: MAT{REAL}, target, INOUT
       E :: REAL, OUT
-      V0,Vx,Vy,Vz,E0 :: VEC{REAL}, IN
+      pot :: XC_POTENTIAL, IN
       bf_skip :: VEC{EVEC{BIN}}, IN
       bf_grd0 :: VEC{EMAT{REAL}}, IN
       bf_grdx,bf_grdy,bf_grdz :: VEC{EMAT{REAL}}, IN
@@ -6285,7 +6262,7 @@ contains
       sa,fa,la,na, sb,fb,lb,nb, a,b,p,i,j,n :: INT
 
       ! Skip array and common-point maps for the ab shell pair
-      n_pt = V0.dim
+      n_pt = pot.energy.dim
       skipab.create(n_pt)
       pi.create(n_pt)
       pj.create(n_pt)
@@ -6366,11 +6343,11 @@ contains
                            ga  = bf_grd0(sa)[i,a]
                            gb  = bf_grd0(sb)[j,b]
                            gab = ga*gb
-                           val = val + V0(n)* gab                                      &
-                                     + Vx(n)*(bf_grdx(sa)[i,a]*gb+ga*bf_grdx(sb)[j,b]) &
-                                     + Vy(n)*(bf_grdy(sa)[i,a]*gb+ga*bf_grdy(sb)[j,b]) &
-                                     + Vz(n)*(bf_grdz(sa)[i,a]*gb+ga*bf_grdz(sb)[j,b])
-                           wal = wal + E0(n)*gab
+                           val = val + pot.v_rho(n,1)* gab                                         &
+                                     + pot.v_grad(n,1,1)*(bf_grdx(sa)[i,a]*gb+ga*bf_grdx(sb)[j,b]) &
+                                     + pot.v_grad(n,2,1)*(bf_grdy(sa)[i,a]*gb+ga*bf_grdy(sb)[j,b]) &
+                                     + pot.v_grad(n,3,1)*(bf_grdz(sa)[i,a]*gb+ga*bf_grdz(sb)[j,b])
+                           wal = wal + pot.energy(n)*gab
                         end
                         VV(a,b) = VV(a,b) + val
                         E       = E       + wal*Dab
@@ -6396,8 +6373,13 @@ contains
    ! over the molecular grid (MOLECULE.RHO:make_XC_batches). Per batch, with
    ! G0 the significant basis functions on the batch points, Gx,Gy,Gz their
    ! gradients (GGA only), and Ds the matching block of D: X = G0 Ds,
-   ! rho = sum G0*X, grad rho = 2 sum G*X; Z = (w V0/2) G0 + w Vx Gx +
-   ! w Vy Gy + w Vz Gz, and the XC matrix block is G0^T Z + Z^T G0.
+   ! rho = sum G0*X, grad rho = 2 sum G*X; with V0 the XC potential and
+   ! Vx,Vy,Vz its gradient part, Z = (w V0/2) G0 + w Vx Gx + w Vy Gy +
+   ! w Vz Gz, and the XC matrix block is G0^T Z + Z^T G0. A meta-GGA also
+   ! needs the kinetic energy density tau = (1/2) sum over x,y,z of
+   ! sum G*(G Ds), and adds the block (1/2) sum over x,y,z of
+   ! G^T (w Vtau) G, with Vtau the derivative of the functional with
+   ! respect to tau.
       self :: INOUT
       K :: MAT{REAL}, INOUT
       E :: REAL, OUT
@@ -6412,16 +6394,18 @@ contains
 
       V,Ds,X,Z,Vs :: MAT{REAL}@
       G0,Gx,Gy,Gz :: MAT{REAL}@
-      N0,Nx,Ny,Nz :: VEC{REAL}@
-      V0,Vx,Vy,Vz,E0,wt :: VEC{REAL}@
+      wt :: VEC{REAL}@
+      den :: XC_DENSITY
+      pot :: XC_POTENTIAL
       xs,ys,zs,r2 :: VEC{REAL}@
       bf :: VEC{INT}@
       pos :: VEC{REAL}(3)
       sh :: SHELL1
-      gga :: BIN
-      b,f,np,ns,q,p,j,s,fs,ls,fa,na,off :: INT
+      gga,mgga :: BIN
+      b,f,np,ns,q,p,j,ix,s,fs,ls,fa,na,off :: INT
 
-      gga = .SCF_data.using_GGA_functional
+      gga  = .SCF_data.using_GGA_functional
+      mgga = .SCF_data.using_meta_GGA_functional
 
       if (.XC_pts.deallocated) .make_XC_grid
       if (.XC_batch_first.deallocated) .make_XC_batches
@@ -6502,80 +6486,73 @@ contains
          Ds = .density_mx.r(bf,bf)
          X.create(np,ns)
          X.to_product_of_BLAS(G0,Ds)
-         Ds.destroy
-         N0.create(np)
-         N0 = ZERO
+         den.create_grids(np,1,gga,mgga)
          do j = 1,ns
-            N0 = N0 + G0(:,j)*X(:,j)
+            den.rho(:,1) = den.rho(:,1) + G0(:,j)*X(:,j)
          end
          if (gga) then
-            Nx.create(np); Nx = ZERO
-            Ny.create(np); Ny = ZERO
-            Nz.create(np); Nz = ZERO
             do j = 1,ns
-               Nx = Nx + Gx(:,j)*X(:,j)
-               Ny = Ny + Gy(:,j)*X(:,j)
-               Nz = Nz + Gz(:,j)*X(:,j)
+               den.grad(:,1,1) = den.grad(:,1,1) + Gx(:,j)*X(:,j)
+               den.grad(:,2,1) = den.grad(:,2,1) + Gy(:,j)*X(:,j)
+               den.grad(:,3,1) = den.grad(:,3,1) + Gz(:,j)*X(:,j)
             end
-            Nx = TWO*Nx
-            Ny = TWO*Ny
-            Nz = TWO*Nz
+            den.grad = TWO*den.grad
          end
          X.destroy
+         if (mgga) then
+            .add_density_of_grid_fns(den.tau(:,1),Gx,Ds)
+            .add_density_of_grid_fns(den.tau(:,1),Gy,Ds)
+            .add_density_of_grid_fns(den.tau(:,1),Gz,Ds)
+            den.tau = HALF*den.tau
+         end
+         Ds.destroy
 
          ! Functional
          wt.create(np)
          do q = 1,np
             wt(q) = .XC_wts(.XC_batch_pt(f+q-1))
          end
-         E0.create(np)
-         V0.create(np)
+         .set_XC_energy_and_potential(pot,den)
+         E = E + sum(wt*pot.energy*den.rho(:,1))
+         pot.v_rho(:,1) = HALF*wt*pot.v_rho(:,1)
          if (gga) then
-            Vx.create(np)
-            Vy.create(np)
-            Vz.create(np)
-            .new_set_r_XC_potentials(V0,N0,Vx,Vy,Vz,Nx,Ny,Nz)
-            .new_set_r_XC_energy_density(E0,N0,Nx,Ny,Nz)
-            Vx = wt*Vx
-            Vy = wt*Vy
-            Vz = wt*Vz
-            Nz.destroy
-            Ny.destroy
-            Nx.destroy
-         else
-            .new_set_r_XC_potentials(V0,N0)
-            .new_set_r_XC_energy_density(E0,N0)
+            do ix = 1,3
+               pot.v_grad(:,ix,1) = wt*pot.v_grad(:,ix,1)
+            end
          end
-         E = E + sum(wt*E0*N0)
-         V0 = HALF*wt*V0
-         N0.destroy
-         E0.destroy
+         if (mgga) pot.v_tau(:,1) = QUARTER*wt*pot.v_tau(:,1)
+         den.destroy_ptr_part
          wt.destroy
 
          ! XC matrix block
          Z.create(np,ns)
          if (gga) then
             do j = 1,ns
-               Z(:,j) = V0*G0(:,j) + Vx*Gx(:,j) + Vy*Gy(:,j) + Vz*Gz(:,j)
+               Z(:,j) = pot.v_rho(:,1)*G0(:,j) + pot.v_grad(:,1,1)*Gx(:,j) &
+                      + pot.v_grad(:,2,1)*Gy(:,j) + pot.v_grad(:,3,1)*Gz(:,j)
             end
-            Vz.destroy
-            Vy.destroy
-            Vx.destroy
-            Gz.destroy
-            Gy.destroy
-            Gx.destroy
          else
             do j = 1,ns
-               Z(:,j) = V0*G0(:,j)
+               Z(:,j) = pot.v_rho(:,1)*G0(:,j)
             end
          end
          Vs.create(ns,ns)
          Vs.to_product_of_BLAS(G0,Z,transpose_a=TRUE)
+         if (mgga) then
+            .add_product_of_grid_fns(Vs,Gx,pot.v_tau(:,1))
+            .add_product_of_grid_fns(Vs,Gy,pot.v_tau(:,1))
+            .add_product_of_grid_fns(Vs,Gz,pot.v_tau(:,1))
+         end
          V(bf,bf) = V(bf,bf) + Vs + transpose(Vs)
 
          Vs.destroy
          Z.destroy
-         V0.destroy
+         if (gga) then
+            Gz.destroy
+            Gy.destroy
+            Gx.destroy
+         end
+         pot.destroy_ptr_part
          G0.destroy
          bf.destroy
 
@@ -6612,17 +6589,18 @@ contains
 
       Va,Vb,Ds,X,Z,Vs :: MAT{REAL}@
       G0,Gx,Gy,Gz :: MAT{REAL}@
-      N0a,Nxa,Nya,Nza, V0a,Vxa,Vya,Vza :: VEC{REAL}@
-      N0b,Nxb,Nyb,Nzb, V0b,Vxb,Vyb,Vzb :: VEC{REAL}@
-      E0,wt :: VEC{REAL}@
+      wt :: VEC{REAL}@
+      den :: XC_DENSITY
+      pot :: XC_POTENTIAL
       xs,ys,zs,r2 :: VEC{REAL}@
       bf :: VEC{INT}@
       pos :: VEC{REAL}(3)
       sh :: SHELL1
-      gga :: BIN
-      b,f,np,ns,q,p,j,s,fs,ls,fa,na,off :: INT
+      gga,mgga :: BIN
+      b,f,np,ns,q,p,j,ix,s,fs,ls,fa,na,off :: INT
 
-      gga = .SCF_data.using_GGA_functional
+      gga  = .SCF_data.using_GGA_functional
+      mgga = .SCF_data.using_meta_GGA_functional
 
       if (.XC_pts.deallocated) .make_XC_grid
       if (.XC_batch_first.deallocated) .make_XC_batches
@@ -6702,44 +6680,47 @@ contains
          ! Alpha and beta densities, and their gradients for a GGA
          Ds.create(ns,ns)
          X.create(np,ns)
-         N0a.create(np)
-         N0b.create(np)
-         if (gga) then
-            Nxa.create(np); Nya.create(np); Nza.create(np)
-            Nxb.create(np); Nyb.create(np); Nzb.create(np)
-         end
+         den.create_grids(np,2,gga,mgga)
 
          Ds = .density_mx.a(bf,bf)
          X.to_product_of_BLAS(G0,Ds)
-         N0a = ZERO
          do j = 1,ns
-            N0a = N0a + G0(:,j)*X(:,j)
+            den.rho(:,1) = den.rho(:,1) + G0(:,j)*X(:,j)
          end
          if (gga) then
-            Nxa = ZERO; Nya = ZERO; Nza = ZERO
             do j = 1,ns
-               Nxa = Nxa + Gx(:,j)*X(:,j)
-               Nya = Nya + Gy(:,j)*X(:,j)
-               Nza = Nza + Gz(:,j)*X(:,j)
+               den.grad(:,1,1) = den.grad(:,1,1) + Gx(:,j)*X(:,j)
+               den.grad(:,2,1) = den.grad(:,2,1) + Gy(:,j)*X(:,j)
+               den.grad(:,3,1) = den.grad(:,3,1) + Gz(:,j)*X(:,j)
             end
-            Nxa = TWO*Nxa; Nya = TWO*Nya; Nza = TWO*Nza
+            den.grad(:,:,1) = TWO*den.grad(:,:,1)
+         end
+         if (mgga) then
+            .add_density_of_grid_fns(den.tau(:,1),Gx,Ds)
+            .add_density_of_grid_fns(den.tau(:,1),Gy,Ds)
+            .add_density_of_grid_fns(den.tau(:,1),Gz,Ds)
          end
 
          Ds = .density_mx.b(bf,bf)
          X.to_product_of_BLAS(G0,Ds)
-         N0b = ZERO
          do j = 1,ns
-            N0b = N0b + G0(:,j)*X(:,j)
+            den.rho(:,2) = den.rho(:,2) + G0(:,j)*X(:,j)
          end
          if (gga) then
-            Nxb = ZERO; Nyb = ZERO; Nzb = ZERO
             do j = 1,ns
-               Nxb = Nxb + Gx(:,j)*X(:,j)
-               Nyb = Nyb + Gy(:,j)*X(:,j)
-               Nzb = Nzb + Gz(:,j)*X(:,j)
+               den.grad(:,1,2) = den.grad(:,1,2) + Gx(:,j)*X(:,j)
+               den.grad(:,2,2) = den.grad(:,2,2) + Gy(:,j)*X(:,j)
+               den.grad(:,3,2) = den.grad(:,3,2) + Gz(:,j)*X(:,j)
             end
-            Nxb = TWO*Nxb; Nyb = TWO*Nyb; Nzb = TWO*Nzb
+            den.grad(:,:,2) = TWO*den.grad(:,:,2)
          end
+         if (mgga) then
+            .add_density_of_grid_fns(den.tau(:,2),Gx,Ds)
+            .add_density_of_grid_fns(den.tau(:,2),Gy,Ds)
+            .add_density_of_grid_fns(den.tau(:,2),Gz,Ds)
+         end
+
+         if (mgga) den.tau = HALF*den.tau
 
          X.destroy
          Ds.destroy
@@ -6749,35 +6730,21 @@ contains
          do q = 1,np
             wt(q) = .XC_wts(.XC_batch_pt(f+q-1))
          end
-         E0.create(np)
-         V0a.create(np)
-         V0b.create(np)
-         if (gga) then
-            Vxa.create(np); Vya.create(np); Vza.create(np)
-            Vxb.create(np); Vyb.create(np); Vzb.create(np)
-            .new_set_u_XC_potentials( &
-               V0a,V0b, &
-               N0a,N0b, &
-               Vxa,Vya,Vza,Vxb,Vyb,Vzb, &
-               Nxa,Nya,Nza,Nxb,Nyb,Nzb)
-            .new_set_u_XC_energy_density(E0, &
-               N0a,N0b, &
-               Nxa,Nya,Nza,Nxb,Nyb,Nzb)
-            Vxa = wt*Vxa; Vya = wt*Vya; Vza = wt*Vza
-            Vxb = wt*Vxb; Vyb = wt*Vyb; Vzb = wt*Vzb
-            Nzb.destroy; Nyb.destroy; Nxb.destroy
-            Nza.destroy; Nya.destroy; Nxa.destroy
-         else
-            .new_set_u_XC_potentials(V0a,V0b,N0a,N0b)
-            .new_set_u_XC_energy_density(E0,N0a,N0b)
+         .set_XC_energy_and_potential(pot,den)
+         Ea = Ea + sum(wt*pot.energy*den.rho(:,1))
+         Eb = Eb + sum(wt*pot.energy*den.rho(:,2))
+         do s = 1,2
+            pot.v_rho(:,s) = HALF*wt*pot.v_rho(:,s)
+            if (NOT gga) cycle
+            do ix = 1,3
+               pot.v_grad(:,ix,s) = wt*pot.v_grad(:,ix,s)
+            end
          end
-         Ea = Ea + sum(wt*E0*N0a)
-         Eb = Eb + sum(wt*E0*N0b)
-         V0a = HALF*wt*V0a
-         V0b = HALF*wt*V0b
-         N0b.destroy
-         N0a.destroy
-         E0.destroy
+         if (mgga) then
+            pot.v_tau(:,1) = QUARTER*wt*pot.v_tau(:,1)
+            pot.v_tau(:,2) = QUARTER*wt*pot.v_tau(:,2)
+         end
+         den.destroy_ptr_part
          wt.destroy
 
          ! Alpha and beta XC matrix blocks
@@ -6786,39 +6753,48 @@ contains
 
          if (gga) then
             do j = 1,ns
-               Z(:,j) = V0a*G0(:,j) + Vxa*Gx(:,j) + Vya*Gy(:,j) + Vza*Gz(:,j)
+               Z(:,j) = pot.v_rho(:,1)*G0(:,j) + pot.v_grad(:,1,1)*Gx(:,j) &
+                      + pot.v_grad(:,2,1)*Gy(:,j) + pot.v_grad(:,3,1)*Gz(:,j)
             end
          else
             do j = 1,ns
-               Z(:,j) = V0a*G0(:,j)
+               Z(:,j) = pot.v_rho(:,1)*G0(:,j)
             end
          end
          Vs.to_product_of_BLAS(G0,Z,transpose_a=TRUE)
+         if (mgga) then
+            .add_product_of_grid_fns(Vs,Gx,pot.v_tau(:,1))
+            .add_product_of_grid_fns(Vs,Gy,pot.v_tau(:,1))
+            .add_product_of_grid_fns(Vs,Gz,pot.v_tau(:,1))
+         end
          Va(bf,bf) = Va(bf,bf) + Vs + transpose(Vs)
 
          if (gga) then
             do j = 1,ns
-               Z(:,j) = V0b*G0(:,j) + Vxb*Gx(:,j) + Vyb*Gy(:,j) + Vzb*Gz(:,j)
+               Z(:,j) = pot.v_rho(:,2)*G0(:,j) + pot.v_grad(:,1,2)*Gx(:,j) &
+                      + pot.v_grad(:,2,2)*Gy(:,j) + pot.v_grad(:,3,2)*Gz(:,j)
             end
          else
             do j = 1,ns
-               Z(:,j) = V0b*G0(:,j)
+               Z(:,j) = pot.v_rho(:,2)*G0(:,j)
             end
          end
          Vs.to_product_of_BLAS(G0,Z,transpose_a=TRUE)
+         if (mgga) then
+            .add_product_of_grid_fns(Vs,Gx,pot.v_tau(:,2))
+            .add_product_of_grid_fns(Vs,Gy,pot.v_tau(:,2))
+            .add_product_of_grid_fns(Vs,Gz,pot.v_tau(:,2))
+         end
          Vb(bf,bf) = Vb(bf,bf) + Vs + transpose(Vs)
 
          Vs.destroy
          Z.destroy
          if (gga) then
-            Vzb.destroy; Vyb.destroy; Vxb.destroy
-            Vza.destroy; Vya.destroy; Vxa.destroy
             Gz.destroy
             Gy.destroy
             Gx.destroy
          end
-         V0b.destroy
-         V0a.destroy
+         pot.destroy_ptr_part
          G0.destroy
          bf.destroy
 
@@ -6843,55 +6819,67 @@ contains
 
 ! Set functional
 
-   new_set_r_XC_energy_density(E,N0,Nx,Ny,Nz) :: PURE
-   ! Set the *restricted* exchange correlation energy density "E", for
-   ! given densities "N0" and gradient densities "Nn".
-      self :: INOUT
-      E  :: VEC{REAL}, OUT
-      N0 :: VEC{REAL}, IN
-      Nx,Ny,Nz :: VEC{REAL}, optional, IN
+   add_density_of_grid_fns(res,G,D) :: leaky, PURE
+   ! Add to "res", at each grid point, the sum over functions a and b of
+   ! G(point,a) D(a,b) G(point,b), where "G" holds the values of the
+   ! functions on the grid points and "D" is a density matrix block.
+      self :: IN
+      res :: VEC{REAL}, INOUT
+      G,D :: MAT{REAL}, IN
 
-   ENSURE(.SCF_data.allocated,"no SCF_data")
-   ENSURE(.becke_grid.allocated,"no becke_grid")
+      X :: MAT{REAL}@
+      j :: INT
 
-      exch,corr :: STR
-      add :: DFT_FUNCTIONAL
-
-      ! Return?
-      if (NOT .SCF_data.is_DFT_calculation) then
-         return
+      X.create(G.dim1,G.dim2)
+      X.to_product_of_BLAS(G,D)
+      do j = 1,G.dim2
+         res = res + G(:,j)*X(:,j)
       end
-
-      add.set_defaults
-      add.set_rho_cutoff(.becke_grid.rho_cutoff)
-
-      exch = .SCF_data.DFT_exchange_functional
-      corr = .SCF_data.DFT_correlation_functional
-
-      ! Set to zero
-      E = ZERO
-
-      if (exch/="none") add.new_r_energy_density(exch,E,N0,Nx,Ny,Nz)
-      if (corr/="none") add.new_r_energy_density(corr,E,N0,Nx,Ny,Nz)
+      X.destroy
 
    end
 
-   new_set_r_XC_potentials(V0,N0,Vx,Vy,Vz,Nx,Ny,Nz) :: PURE
-   ! For given densities "N0" and gradient densities "Nn", return
-   ! "V0" and "Vn", the local and non_local terms necessary to
-   ! calculate the matrix elements of the *restricted* exchange
-   ! correlation potential.
+   add_product_of_grid_fns(V,G,w) :: leaky, PURE
+   ! Add to "V" the matrix with elements, for functions a and b, the sum
+   ! over grid points of G(point,a) w(point) G(point,b), where "G" holds
+   ! the values of the functions on the grid points.
+      self :: IN
+      V :: MAT{REAL}, INOUT
+      G :: MAT{REAL}, IN
+      w :: VEC{REAL}, IN
+
+      Z,P :: MAT{REAL}@
+      j :: INT
+
+      Z.create(G.dim1,G.dim2)
+      do j = 1,G.dim2
+         Z(:,j) = w*G(:,j)
+      end
+      P.create(G.dim2,G.dim2)
+      P.to_product_of_BLAS(G,Z,transpose_a=TRUE)
+      V = V + P
+      P.destroy
+      Z.destroy
+
+   end
+
+   set_XC_energy_and_potential(pot,den) :: leaky, PURE
+   ! Set "pot", the exchange correlation energy per particle and the
+   ! potentials needed for the matrix elements of the exchange correlation
+   ! potential, on the grid points whose densities are in "den". "pot" is
+   ! set up here, for one or for two spin channels as "den" has.
       self :: INOUT
-      V0 :: VEC{REAL}, INOUT
-      N0 :: VEC{REAL}, IN
-      Vx,Vy,Vz :: VEC{REAL}, optional, OUT
-      Nx,Ny,Nz :: VEC{REAL}, optional, IN
+      pot :: XC_POTENTIAL, INOUT
+      den :: XC_DENSITY, IN
 
    ENSURE(.SCF_data.allocated,"no SCF_data")
    ENSURE(.becke_grid.allocated,"no becke_grid")
 
       exch,corr :: STR
       add :: DFT_FUNCTIONAL
+
+      ! Set to zero
+      pot.create_grids(den)
 
       ! Return?
       if (NOT .SCF_data.is_DFT_calculation) then
@@ -6904,14 +6892,8 @@ contains
       exch = .SCF_data.DFT_exchange_functional
       corr = .SCF_data.DFT_correlation_functional
 
-      ! Set to zero
-      V0 = ZERO
-      if (present(Vx)) then
-         Vx = ZERO; Vy = ZERO; Vz = ZERO
-      end
-
-      if (exch/="none") add.new_r_potential(exch,V0,N0,Vx,Vy,Vz,Nx,Ny,Nz)
-      if (corr/="none") add.new_r_potential(corr,V0,N0,Vx,Vy,Vz,Nx,Ny,Nz)
+      if (exch/="none") add.add_energy_and_potential(exch,pot,den)
+      if (corr/="none") add.add_energy_and_potential(corr,pot,den)
 
    end
 
@@ -6937,11 +6919,13 @@ contains
    ENSURE(.density_mx.a.allocated,"no alpha density matrix")
    ENSURE(.density_mx.b.allocated,"no alpha density matrix")
 
-      wt, N0a,N0b,V0a,V0b,E0 :: VEC{REAL}@
+      wt :: VEC{REAL}@
+      den :: XC_DENSITY
+      pot :: XC_POTENTIAL
       Va,Vb, pt  :: MAT{REAL}@
       bf_skip  :: VEC{EVEC{BIN}}@
       bf_grid0 :: VEC{EMAT{REAL}}@
-      n_pt, c  :: INT
+      c :: INT
 
       ! Main temporaries
       Ea = ZERO; Eb = ZERO
@@ -6952,38 +6936,25 @@ contains
       do c = 1,.n_atom
 
          ! Make electron density on the Becke-grid for atom "c"
-         .make_rho_becke_atom_grid(N0a,N0b,pt,wt,bf_skip,bf_grid0,c,.density_mx.a,.density_mx.b)
+         .make_rho_becke_atom_grid(den,pt,wt,bf_skip,bf_grid0,c,.density_mx.a,.density_mx.b)
 
-         ! Make XC potential, energy grids: V0, E0
+         ! Make the XC energy per particle and potentials on the grid
          pt.destroy
-         n_pt = wt.dim
-
-         ! The energy density &
-         ! local potential grid
-         E0.create(n_pt)
-         V0a.create(n_pt)
-         V0b.create(n_pt)
-         .new_set_u_XC_potentials(V0a,V0b,N0a,N0b)
-         .new_set_u_XC_energy_density(E0,N0a,N0b)
+         .set_XC_energy_and_potential(pot,den)
 
          ! Incorporate grid & partition weights
-         E0  = wt*E0
-         V0a = wt*V0a
-         V0b = wt*V0b
+         pot.multiply_by(wt)
 
          ! Clean
-         N0b.destroy
-         N0a.destroy
+         den.destroy_ptr_part
          wt.destroy
 
          ! Add the XC matrix elements into V, energy to E
          ! for atom "c" Becke-grid
-         .add_LDA_XC_mx(Va,Vb,Ea,Eb,V0a,V0b,E0,bf_skip,bf_grid0,c,.density_mx.a,.density_mx.b)
+         .add_LDA_XC_mx(Va,Vb,Ea,Eb,pot,bf_skip,bf_grid0,c,.density_mx.a,.density_mx.b)
 
          ! Clean up
-         V0b.destroy
-         V0a.destroy
-         E0.destroy
+         pot.destroy_ptr_part
          bf_grid0.destroy
          bf_skip.destroy
 
@@ -7009,18 +6980,18 @@ contains
 
    end
 
-   add_LDA_XC_mx(Va,Vb,Ea,Eb,V0a,V0b,E0,bf_skip,bf_grid0,c,Da,Db)
+   add_LDA_XC_mx(Va,Vb,Ea,Eb,pot,bf_skip,bf_grid0,c,Da,Db)
    ! Add XC potential matrix elements to "Va", "Vb", the XC energy
-   ! corrections to "Ea", "Eb". "V0a", "V0b" are the XC potential
-   ! densities on the becke grid for atom "c", weighted by the
-   ! partition function for that atom. Likewise, "E0" is the
-   ! (partition-weighted) XC energy density of the grid.  "bf_skip"
+   ! corrections to "Ea", "Eb". "pot" holds the alpha and beta XC
+   ! potentials and the XC energy per particle on the becke grid for
+   ! atom "c", all weighted by the partition function for that atom.
+   ! "bf_skip"
    ! and "bf_grid0 are basis function grids.  "Da", "Db" are the
    ! density matrices.  This routine supports local functional only.
       self :: INOUT
       Va,Vb :: MAT{REAL}, target, INOUT
       Ea,Eb :: REAL, INOUT
-      V0a,V0b,E0 :: VEC{REAL}, IN
+      pot :: XC_POTENTIAL, IN
       bf_skip :: VEC{EVEC{BIN}}, IN
       bf_grid0 :: VEC{EMAT{REAL}}, IN
       c :: INT, IN
@@ -7043,7 +7014,7 @@ contains
       sa,fa,la,na, sb,fb,lb,nb, a,b,p,i,j,n :: INT
 
       ! Skip array for ab shell
-      n_pt = V0a.dim
+      n_pt = pot.energy.dim
       skipab.create(n_pt)
 
       ! Overlapping atoms
@@ -7124,9 +7095,9 @@ contains
                         ga  = ga0(i)
                         gb  = gb0(j)
                         gab = ga*gb
-                        vala = vala + V0a(n)*gab
-                        valb = valb + V0b(n)*gab
-                        wal  = wal  + E0(n) *gab
+                        vala = vala + pot.v_rho(n,1)*gab
+                        valb = valb + pot.v_rho(n,2)*gab
+                        wal  = wal  + pot.energy(n) *gab
                      end
                      VVa(1,1) = VVa(1,1) + vala
                      VVb(1,1) = VVb(1,1) + valb
@@ -7171,9 +7142,9 @@ contains
                               ga  = ga0(i)
                               gb  = gb0(j)
                               gab = ga*gb
-                              vala = vala + V0a(n)*gab
-                              valb = valb + V0b(n)*gab
-                              wal  = wal  + E0(n)*gab
+                              vala = vala + pot.v_rho(n,1)*gab
+                              valb = valb + pot.v_rho(n,2)*gab
+                              wal  = wal  + pot.energy(n)*gab
                            end
                            VVa(a,b) = VVa(a,b) + vala
                            VVb(a,b) = VVb(a,b) + valb
@@ -7216,13 +7187,13 @@ contains
    ENSURE(.density_mx.a.allocated,"no alpha density matrix")
    ENSURE(.density_mx.b.allocated,"no alpha density matrix")
 
-      wt, E0 :: VEC{REAL}@
-      N0a,Nxa,Nya,Nza, V0a,Vxa,Vya,Vza :: VEC{REAL}@
-      N0b,Nxb,Nyb,Nzb, V0b,Vxb,Vyb,Vzb :: VEC{REAL}@
+      wt :: VEC{REAL}@
+      den :: XC_DENSITY
+      pot :: XC_POTENTIAL
       Va,Vb, pt  :: MAT{REAL}@
       bf_skip  :: VEC{EVEC{BIN}}@
       bf_grid0,bf_gridx,bf_gridy,bf_gridz :: VEC{EMAT{REAL}}@
-      n_pt, c  :: INT
+      c :: INT
 
       ! Main temporaries
       Ea = ZERO; Eb = ZERO
@@ -7234,42 +7205,18 @@ contains
 
          ! Make electron density on the Becke-grid for atom "c"
          .make_rho_becke_atom_grid( &
-            N0a,N0b,Nxa,Nya,Nza,Nxb,Nyb,Nzb, &
-            pt,wt,bf_skip,bf_grid0,bf_gridx,bf_gridy,bf_gridz, &
+            den,pt,wt,bf_skip,bf_grid0,bf_gridx,bf_gridy,bf_gridz, &
             c,.density_mx.a,.density_mx.b)
 
-         ! Make XC potential, energy grids: V0, E0
+         ! Make the XC energy per particle and potentials on the grid
          pt.destroy
-         n_pt = wt.dim
-
-         ! The energy density &
-         ! local potential grids
-         E0.create(n_pt)
-         V0a.create(n_pt); Vxa.create(n_pt); Vya.create(n_pt); Vza.create(n_pt)
-         V0b.create(n_pt); Vxb.create(n_pt); Vyb.create(n_pt); Vzb.create(n_pt)
-         .new_set_u_XC_potentials( &
-            V0a,V0b, &
-            N0a,N0b, &
-            Vxa,Vya,Vza,Vxb,Vyb,Vzb, &
-            Nxa,Nya,Nza,Nxb,Nyb,Nzb)
-         .new_set_u_XC_energy_density(E0, &
-            N0a,N0b, &
-            Nxa,Nya,Nza,Nxb,Nyb,Nzb)
+         .set_XC_energy_and_potential(pot,den)
 
          ! Incorporate grid & partition weights
-         E0  = wt*E0
-         V0a = wt*V0a; Vxa = wt*Vxa; Vya = wt*Vya; Vza = wt*Vza
-         V0b = wt*V0b; Vxb = wt*Vxb; Vyb = wt*Vyb; Vzb = wt*Vzb
+         pot.multiply_by(wt)
 
          ! Clean
-         Nzb.destroy
-         Nyb.destroy
-         Nxb.destroy
-         N0b.destroy
-         Nza.destroy
-         Nya.destroy
-         Nxa.destroy
-         N0a.destroy
+         den.destroy_ptr_part
          wt.destroy
 
          ! Add the XC matrix elements into V, energy to E
@@ -7277,22 +7224,11 @@ contains
          .add_GGA_XC_mx( &
             Va,Vb, &
             Ea,Eb, &
-            V0a,V0b, &
-            Vxa,Vya,Vza, &
-            Vxb,Vyb,Vzb, &
-            E0,bf_skip,bf_grid0,bf_gridx,bf_gridy,bf_gridz, &
+            pot,bf_skip,bf_grid0,bf_gridx,bf_gridy,bf_gridz, &
             c,.density_mx.a,.density_mx.b)
 
          ! Clean up
-         Vzb.destroy
-         Vyb.destroy
-         Vxb.destroy
-         V0b.destroy
-         Vza.destroy
-         Vya.destroy
-         Vxa.destroy
-         V0a.destroy
-         E0.destroy
+         pot.destroy_ptr_part
          bf_gridz.destroy
          bf_gridy.destroy
          bf_gridx.destroy
@@ -7321,22 +7257,19 @@ contains
 
    end
 
-   add_GGA_XC_mx(Va,Vb,Ea,Eb,V0a,V0b,Vxa,Vya,Vza,Vxb,Vyb,Vzb,E0,bf_skip,bf_gr0,bf_grx,bf_gry,bf_grz,c,Da,Db)
+   add_GGA_XC_mx(Va,Vb,Ea,Eb,pot,bf_skip,bf_gr0,bf_grx,bf_gry,bf_grz,c,Da,Db)
    ! Add XC potential matrix elements to "Va", "Vb", the XC energy
-   ! corrections to "Ea", "Eb". "V0a", "V0b", "Vxa" ... "Vzb" are the
-   ! XC potential densities and their derivatives on the becke grid
-   ! for atom "c", weighted by the
-   ! partition function for that atom. Likewise, "E0" is the
-   ! (partition-weighted) XC energy density of the grid.  "bf_skip"
+   ! corrections to "Ea", "Eb". "pot" holds the alpha and beta XC
+   ! potentials, their gradient parts, and the XC energy per particle
+   ! on the becke grid for atom "c", all weighted by the partition
+   ! function for that atom.  "bf_skip"
    ! and "bf_gr0" ... "bf_grz" are basis function (derivative)
    ! grids.  "Da", "Db" are the density matrices.  This routine
    ! supports non-local functionals.
       self  :: INOUT
       Va,Vb :: MAT{REAL}, target, INOUT
       Ea,Eb :: REAL, INOUT
-      V0a,V0b, E0 :: VEC{REAL}, IN
-      Vxa,Vya,Vza :: VEC{REAL}, IN
-      Vxb,Vyb,Vzb :: VEC{REAL}, IN
+      pot :: XC_POTENTIAL, IN
       bf_skip :: VEC{EVEC{BIN}}, IN
       bf_gr0,bf_grx,bf_gry,bf_grz :: VEC{EMAT{REAL}}, IN
       c :: INT, IN
@@ -7361,7 +7294,7 @@ contains
       sa,fa,la,na, sb,fb,lb,nb, a,b,p,i,j,n :: INT
 
       ! Skip array for ab shell
-      n_pt = V0a.dim
+      n_pt = pot.energy.dim
       skipab.create(n_pt)
 
       ! Overlapping atoms
@@ -7464,10 +7397,10 @@ contains
                         gy  = gay(i)*gb+ga*gby(j)
                         gz  = gaz(i)*gb+ga*gbz(j)
 
-                        vala = vala + V0a(n)*gab + Vxa(n)*gx + Vya(n)*gy + Vza(n)*gz
-                        valb = valb + V0b(n)*gab + Vxb(n)*gx + Vyb(n)*gy + Vzb(n)*gz
+                        vala = vala + pot.v_rho(n,1)*gab + pot.v_grad(n,1,1)*gx + pot.v_grad(n,2,1)*gy + pot.v_grad(n,3,1)*gz
+                        valb = valb + pot.v_rho(n,2)*gab + pot.v_grad(n,1,2)*gx + pot.v_grad(n,2,2)*gy + pot.v_grad(n,3,2)*gz
 
-                        wal  = wal  + E0(n) *gab
+                        wal  = wal  + pot.energy(n)*gab
 
                      end
 
@@ -7540,10 +7473,10 @@ contains
                               gy  = gay(i)*gb+ga*gby(j)
                               gz  = gaz(i)*gb+ga*gbz(j)
 
-                              vala = vala + V0a(n)*gab + Vxa(n)*gx + Vya(n)*gy + Vza(n)*gz
-                              valb = valb + V0b(n)*gab + Vxb(n)*gx + Vyb(n)*gy + Vzb(n)*gz
+                              vala = vala + pot.v_rho(n,1)*gab + pot.v_grad(n,1,1)*gx + pot.v_grad(n,2,1)*gy + pot.v_grad(n,3,1)*gz
+                              valb = valb + pot.v_rho(n,2)*gab + pot.v_grad(n,1,2)*gx + pot.v_grad(n,2,2)*gy + pot.v_grad(n,3,2)*gz
 
-                              wal  = wal  + E0(n) *gab
+                              wal  = wal  + pot.energy(n)*gab
 
                            end
 
@@ -7575,79 +7508,6 @@ contains
 
 ! Set functional
 
-   new_set_u_XC_energy_density(E,N0a,N0b,Nxa,Nya,Nza,Nxb,Nyb,Nzb) :: PURE
-   ! Return the *unrestricted* exchange correlation energy density "E", for
-   ! given alpha and beta densities "rho0a", "rho0b" and for the alpha and beta
-   ! gradient densities "rho1a", "rho1b".
-      self :: INOUT
-      E    :: VEC{REAL}, OUT
-      N0a,N0b     :: VEC{REAL}, IN
-      Nxa,Nya,Nza :: VEC{REAL}, optional, IN
-      Nxb,Nyb,Nzb :: VEC{REAL}, optional, IN
-
-   ENSURE(.SCF_data.allocated,"no SCF_data")
-
-      exch,corr :: STR
-      add :: DFT_FUNCTIONAL
-
-      ! Return?
-      if (NOT .SCF_data.is_DFT_calculation) then
-         return
-      end
-
-      add.set_defaults
-      add.set_rho_cutoff(.becke_grid.rho_cutoff)
-
-      exch = .SCF_data.DFT_exchange_functional
-      corr = .SCF_data.DFT_correlation_functional
-
-      ! Set to zero
-      E = ZERO
-
-      if (exch/="none") add.new_u_energy_density(exch,E,N0a,N0b,Nxa,Nya,Nza,Nxb,Nyb,Nzb)
-      if (corr/="none") add.new_u_energy_density(corr,E,N0a,N0b,Nxa,Nya,Nza,Nxb,Nyb,Nzb)
-
-   end
-
-   new_set_u_XC_potentials(V0a,V0b,N0a,N0b,Vxa,Vya,Vza,Vxb,Vyb,Vzb,Nxa,Nya,Nza,Nxb,Nyb,Nzb) :: PURE
-   ! For given alpha and beta densities "N0a", "N0b" and gradient
-   ! densities "Nxa", ..., "Nzb" return the alpha and beta local
-   ! potentials, "V0a" and "V0b", and the non local potentails "Vxa",
-   ! ... , "Vzb" needed to calculate the matrix elements of the
-   ! *unrestricted* exchange correlation potentials.
-      self    :: INOUT
-      V0a,V0b :: VEC{REAL}, INOUT
-      N0a,N0b :: VEC{REAL}, IN
-      Vxa,Vya,Vza,Vxb,Vyb,Vzb :: VEC{REAL}, optional, OUT
-      Nxa,Nya,Nza,Nxb,Nyb,Nzb :: VEC{REAL}, optional, IN
-
-   ENSURE(.SCF_data.allocated,"no SCF_data")
-
-      exch,corr :: STR
-      add :: DFT_FUNCTIONAL
-
-      ! Return?
-      if (NOT .SCF_data.is_DFT_calculation) then
-         return
-      end
-
-      add.set_defaults
-      add.set_rho_cutoff(.becke_grid.rho_cutoff)
-
-      exch = .SCF_data.DFT_exchange_functional
-      corr = .SCF_data.DFT_correlation_functional
-
-      ! Set to zero
-      V0a = ZERO; V0b = ZERO
-      if (present(Vxa)) then
-         Vxa = ZERO; Vya = ZERO; Vza = ZERO
-         Vxb = ZERO; Vyb = ZERO; Vzb = ZERO
-      end
-
-      if (exch/="none") add.new_u_potential(exch,V0a,V0b,N0a,N0b,Vxa,Vya,Vza,Vxb,Vyb,Vzb,Nxa,Nya,Nza,Nxb,Nyb,Nzb)
-      if (corr/="none") add.new_u_potential(corr,V0a,V0b,N0a,N0b,Vxa,Vya,Vza,Vxb,Vyb,Vzb,Nxa,Nya,Nza,Nxb,Nyb,Nzb)
-
-   end
 
 ! Numerical J matrix -- calculated two ways
 

@@ -296,8 +296,13 @@ bugs.
   Match a heading's `====` underline to its text.
 - During a normal build, generated Fortran lands in the build tree (e.g. `build/`, `release/`);
   do not hand-edit it — edit the `.foo` sources instead.
-- `external/lapack-release` is the **only** git submodule; clone with `--recursive`. ANTLR4 is
-  **not** a submodule — it is a release jar, `external/antlr-4.13.2-complete.jar`.
+- There are **two** git submodules, `external/lapack-release` and `external/libxc`; clone with
+  `--recursive`. ANTLR4 is **not** a submodule — it is a release jar,
+  `external/antlr-4.13.2-complete.jar`.
+- **libxc is off unless `-DLIBXC=ON`.** It is built from `external/libxc`, never from a system
+  package, and is reached through the one C file `csrc/tonto_libxc.c`. A functional named as libxc
+  names it (`gga_x_pbe`) is evaluated by libxc; Tonto's own names by `dft_functional.foo`. CI
+  builds with it on. See `docs/RUNNING_TONTO.md`, *Density functionals*.
 - Files can be translated independently **provided `types.foo`, which defines every derived
   type, is processed first**.
 

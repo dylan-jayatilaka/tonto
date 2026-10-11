@@ -35,6 +35,7 @@ set(BASIS_SETS ${CMAKE_CURRENT_SOURCE_DIR}/basis_sets
 
 option(MPI "Use MPI" OFF)
 option(COMPILE_LAPACK "Use the reference implementation of lapack provided" OFF)
+option(LIBXC "Build libxc (external/libxc) and use it for density functionals" OFF)
 
 # Java and ANTLR4
 find_package(Java REQUIRED COMPONENTS Runtime Development)
@@ -266,6 +267,41 @@ if(TONTO_INTENT STREQUAL "REFERENCE" AND NOT COMPILE_LAPACK)
     endforeach()
 endif()
 
+# libxc
+# Built from the pinned source in external/libxc, never taken from the system:
+# results must not depend on which libxc a machine has. Only its C library is
+# built; Tonto reaches it through csrc/tonto_libxc.c, so libxc's Fortran module
+# file, which only the compiler that wrote it can read, is not needed.
+#   MAXORDER=1  energy and potential only, which is all Tonto uses; the higher
+#               derivatives are most of libxc's compile time.
+#   -O2         in every build type. Tonto's build types are not CMake's, so
+#               without it the C code would be compiled with no optimisation.
+if(LIBXC)
+    if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/external/libxc/CMakeLists.txt)
+        message(FATAL_ERROR "-DLIBXC=ON needs the libxc source, which is a git "
+            "submodule. Fetch it with:  git submodule update --init external/libxc")
+    endif()
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "libxc is linked statically" FORCE)
+    set(MAXORDER 1 CACHE STRING "libxc: energy and potential only" FORCE)
+    # libxc's build files stop on a build type they do not know, and Tonto's
+    # (reference, fast, release-static) are not CMake's. They see Release; the
+    # optimisation is set below either way.
+    set(_tonto_build_type ${CMAKE_BUILD_TYPE})
+    set(CMAKE_BUILD_TYPE Release)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/libxc EXCLUDE_FROM_ALL)
+    set(CMAKE_BUILD_TYPE ${_tonto_build_type})
+    target_compile_options(xc PRIVATE -O2)
+    add_library(tonto_libxc STATIC ${CMAKE_CURRENT_SOURCE_DIR}/csrc/tonto_libxc.c)
+    target_compile_options(tonto_libxc PRIVATE -O2)
+    # xc.h is in the source; xc_version.h, which it includes, is made at configure.
+    target_include_directories(tonto_libxc PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/libxc/src
+        ${CMAKE_CURRENT_BINARY_DIR}/external/libxc)
+    target_link_libraries(tonto_libxc PUBLIC xc)
+    add_compile_definitions(LIBXC=1)
+    message(STATUS "libxc: building external/libxc with ${CMAKE_C_COMPILER}")
+endif()
+
 # MPI
 if(MPI)
     message(STATUS "Building with MPI enabled")
@@ -484,6 +520,8 @@ set(FOO_SRC
     ${FOO_DIR}/coppensorbital.foo
     ${FOO_DIR}/csf_to_sd.foo
     ${FOO_DIR}/dft_functional.foo
+    ${FOO_DIR}/xc_density.foo
+    ${FOO_DIR}/xc_potential.foo
     ${FOO_DIR}/least_squares.foo
     ${FOO_DIR}/diffraction_data.inq.foo
     ${FOO_DIR}/diffraction_data.set.foo
@@ -606,6 +644,8 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/gaussian_ff_fit.F90
 #   ${CMAKE_CURRENT_BINARY_DIR}/datafile.F90
     ${CMAKE_CURRENT_BINARY_DIR}/dft_functional.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/xc_density.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/xc_potential.F90
     ${CMAKE_CURRENT_BINARY_DIR}/least_squares.F90
     ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.inq.F90
     ${CMAKE_CURRENT_BINARY_DIR}/diffraction_data.set.F90
@@ -771,6 +811,9 @@ set(RUN_SRC
     ${RUNFILE_DIR}/run_system_commands.foo
     ${RUNFILE_DIR}/run_vec{str}.foo
 )
+if(LIBXC)
+    list(APPEND RUN_SRC ${RUNFILE_DIR}/run_libxc.foo)
+endif()
 
 
 # Processing foo into fortran source
@@ -850,6 +893,12 @@ add_custom_command(
 )
 
 add_custom_target(antlr4-translator DEPENDS ${ANTLR4_TRANSLATOR_STAMP})
+# Each target below carries the rules of the files it depends on, so two targets
+# that share a file can both run its rule, at the same time, in a parallel
+# build: the parser sources were then rewritten while javac was reading them
+# ("reached end of file while parsing"). Ordering the targets makes the later
+# one find the file already made.
+add_dependencies(antlr4-translator antlr4-grammar)
 
 # Pack the translator into an executable jar, so the 150 parallel invocations read
 # as `java -Xmx512m -jar foo-translator.jar ...` rather than carrying a 105-character
@@ -890,6 +939,7 @@ add_custom_command(
     VERBATIM
 )
 add_custom_target(antlr4-translator-jar DEPENDS ${FOO_TRANSLATOR_JAR})
+add_dependencies(antlr4-translator-jar antlr4-translator)
 
 # The per-file translator runs with WORKING_DIRECTORY set to the source root, so
 # these three are what actually appear on its command line. An out-of-tree build
@@ -991,6 +1041,7 @@ add_custom_target(antlr4-fortran
 
 add_dependencies(antlr4-fortran antlr4-grammar)
 add_dependencies(antlr4-fortran antlr4-translator)
+add_dependencies(antlr4-fortran antlr4-translator-jar)
 
 # On-demand documentation graphs: `make callgraphs` regenerates the Graphviz DOT
 # files (procedure call graph; module use graph with submodules collapsed to their
@@ -1131,6 +1182,10 @@ endif()
 # (where system.F90 precedes types.F90 and type(SYSTEM_TYPE) is undefined).
 add_dependencies(tonto_lib antlr4-fortran)
 
+# DFT_FUNCTIONAL calls the libxc glue, so every program that links Tonto needs it.
+if(LIBXC)
+    target_link_libraries(tonto_lib tonto_libxc)
+endif()
 if(COMPILE_LAPACK)
 	target_link_libraries(tonto_lib lapack blas ${MPI_Fortran_LIBRARIES})
 else()
@@ -1186,6 +1241,12 @@ add_executable(run_quadrature    ${CMAKE_CURRENT_BINARY_DIR}/run_quadrature.F90)
 # refinement uses; the `restrained_least_squares_known_answer` ctest. Not EXCLUDE_FROM_ALL for the
 # same reason.
 add_executable(run_lsq_restraint ${CMAKE_CURRENT_BINARY_DIR}/run_lsq_restraint.F90)
+# run_libxc checks that Tonto can call libxc, against closed forms; the
+# `libxc_gives_slater_exchange` ctest. Built only with -DLIBXC=ON.
+if(LIBXC)
+    add_executable(run_libxc     ${CMAKE_CURRENT_BINARY_DIR}/run_libxc.F90)
+    target_link_libraries(run_libxc tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+endif()
 # run_gaussian_ff_fit checks the form-factor fit through gnuplot by a round trip;
 # the `form_factor_gaussian_fit_round_trip` ctest, skipped where gnuplot is absent.
 add_executable(run_gaussian_ff_fit ${CMAKE_CURRENT_BINARY_DIR}/run_gaussian_ff_fit.F90)

@@ -147,6 +147,12 @@ contains
       kind = .name
       if (present(name)) kind = name
 
+      ! A libxc name says what the functional needs
+      if (DFT_FUNCTIONAL::is_libxc_functional(kind)) then
+         res = index(kind,"gga_")>0
+         return
+      end
+
       res = FALSE
       select case (kind)
       case("           "); res = FALSE
@@ -174,6 +180,61 @@ contains
 
    end
 
+   is_libxc_functional(name) result (res) :: selfless, PURE
+   ! Return TRUE if "name" is spelled as libxc spells its functionals, with
+   ! the kind of functional first: "lda_x", "gga_c_pbe", "mgga_x_r2scan",
+   ! "hyb_gga_xc_pbeh". Such a name is evaluated by libxc.
+      name :: STR, IN
+      res :: BIN
+
+      res = name(1:4)=="lda_" OR name(1:4)=="gga_" OR name(1:5)=="mgga_" OR name(1:4)=="hyb_"
+
+   end
+
+   get_libxc_info(name,found,rung,a0) :: selfless
+   ! For the functional libxc calls "name": "found" is TRUE if libxc has it;
+   ! "rung" says what it needs, 1 the density, 2 also its gradient, 3 also
+   ! the kinetic energy density, 4 also the Laplacian of the density; "a0"
+   ! is its fraction of exact exchange, or
+   ! is negative if the functional needs range separation or non-local
+   ! correlation, which Tonto does not have. "found" is FALSE in a Tonto
+   ! built without libxc.
+      name :: STR, IN
+      found :: BIN, OUT
+      rung :: INT, OUT
+      a0 :: REAL, OUT
+
+      interface
+         tonto_xc_handle(handle,name,nspin) :: pure
+            handle :: INT, OUT
+            name :: STR(*), IN
+            nspin :: INT, IN
+         end
+         tonto_xc_rung(handle,rung) :: pure
+            handle :: INT, IN
+            rung :: INT, OUT
+         end
+         tonto_xc_exact_exchange(handle,a0) :: pure
+            handle :: INT, IN
+            a0 :: REAL, OUT
+         end
+      end
+
+      handle :: INT
+
+      found = FALSE
+      rung  = 0
+      a0    = ZERO
+#ifdef LIBXC
+      call tonto_xc_handle(handle,trim(name),1)
+      found = handle/=0
+      if (NOT found) return
+      call tonto_xc_rung(handle,rung)
+      call tonto_xc_exact_exchange(handle,a0)
+#endif
+
+   end
+
    is_LDA_functional(name) result (res) :: PURE
    ! Return TRUE if the functional uses the LDA approximation.
       self :: IN
@@ -184,6 +245,12 @@ contains
 
       kind = .name
       if (present(name)) kind = name
+
+      ! A libxc name says what the functional needs
+      if (DFT_FUNCTIONAL::is_libxc_functional(kind)) then
+         res = index(kind,"gga_")==0
+         return
+      end
 
       res = FALSE
       select case (kind)
@@ -216,6 +283,393 @@ contains
 ! Functionals, energy densities, potentials
 ! =========================================
 
+   add_energy_and_potential(name,pot,den) :: PURE
+   ! For the functional called "name", ADD to "pot" its energy per particle
+   ! and its potentials on the grid points whose densities are in "den".
+   ! "pot" must have been made for "den" by create_grids. With one spin channel in "den"
+   ! the potentials are those defined in new_r_potential, with two those
+   ! defined in new_u_potential. The gradient is passed on only to a
+   ! functional that uses it. A name spelled as libxc spells it is evaluated
+   ! by libxc; every other name by the routines of this module.
+      self :: IN
+      name :: STR, IN
+      pot :: XC_POTENTIAL, INOUT
+      den :: XC_DENSITY, IN
+
+   ENSURE(den.has_gradient OR NOT .is_GGA_functional(name),"the density gradient is missing")
+
+      if (name==" " OR name=="none") return
+
+      if (DFT_FUNCTIONAL::is_libxc_functional(name)) then
+         .add_libxc_energy_and_potential(name,pot,den)
+         return
+      end
+
+      if (den.n_spin==1) then
+
+         if (.is_GGA_functional(name)) then
+            .new_r_energy_density(name,pot.energy,den.rho(:,1), &
+               den.grad(:,1,1),den.grad(:,2,1),den.grad(:,3,1))
+            .new_r_potential(name,pot.v_rho(:,1),den.rho(:,1), &
+               pot.v_grad(:,1,1),pot.v_grad(:,2,1),pot.v_grad(:,3,1), &
+               den.grad(:,1,1),den.grad(:,2,1),den.grad(:,3,1))
+         else
+            .new_r_energy_density(name,pot.energy,den.rho(:,1))
+            .new_r_potential(name,pot.v_rho(:,1),den.rho(:,1))
+         end
+
+      else
+
+         if (.is_GGA_functional(name)) then
+            .new_u_energy_density(name,pot.energy,den.rho(:,1),den.rho(:,2), &
+               den.grad(:,1,1),den.grad(:,2,1),den.grad(:,3,1), &
+               den.grad(:,1,2),den.grad(:,2,2),den.grad(:,3,2))
+            .new_u_potential(name,pot.v_rho(:,1),pot.v_rho(:,2),den.rho(:,1),den.rho(:,2), &
+               pot.v_grad(:,1,1),pot.v_grad(:,2,1),pot.v_grad(:,3,1), &
+               pot.v_grad(:,1,2),pot.v_grad(:,2,2),pot.v_grad(:,3,2), &
+               den.grad(:,1,1),den.grad(:,2,1),den.grad(:,3,1), &
+               den.grad(:,1,2),den.grad(:,2,2),den.grad(:,3,2))
+         else
+            .new_u_energy_density(name,pot.energy,den.rho(:,1),den.rho(:,2))
+            .new_u_potential(name,pot.v_rho(:,1),pot.v_rho(:,2),den.rho(:,1),den.rho(:,2))
+         end
+
+      end
+
+   end
+
+   make_r_energy_and_potential(pot,exch,corr,rho,grad_rho) :: leaky, PURE
+   ! Make "pot", the energy per particle and the potentials of the exchange
+   ! functional "exch" plus the correlation functional "corr", for the
+   ! restricted density "rho" on a set of points. "grad_rho", the density
+   ! gradient with one row for each point, must be present if either
+   ! functional uses it. A functional of the kinetic energy density cannot
+   ! be used here.
+      self :: IN
+      pot :: XC_POTENTIAL, INOUT
+      exch,corr :: STR, IN
+      rho :: VEC{REAL}, IN
+      grad_rho :: MAT{REAL}, optional, IN
+
+   ENSURE(present(grad_rho) OR NOT (.is_GGA_functional(exch) OR .is_GGA_functional(corr)),"the density gradient is missing")
+
+      den :: XC_DENSITY
+
+      STOP_IF(index(exch,"mgga_")>0 OR index(corr,"mgga_")>0,"a meta-GGA functional cannot be used here")
+
+      den.create_grids(rho.dim,1,present(grad_rho))
+      den.rho(:,1) = rho
+      if (present(grad_rho)) den.grad(:,:,1) = grad_rho
+
+      pot.create_grids(den)
+      .add_energy_and_potential(exch,pot,den)
+      .add_energy_and_potential(corr,pot,den)
+
+      den.destroy_ptr_part
+
+   end
+
+   add_libxc_energy_and_potential(name,pot,den) :: PURE
+   ! As add_energy_and_potential, for the functional libxc calls "name". libxc
+   ! takes sigma, the products of the density gradients, and returns vrho and
+   ! vsigma, the derivatives of the functional with respect to the densities
+   ! and to sigma. With one spin channel
+   !       V0 = vrho,   Vn = 2 vsigma nabla rho
+   ! and with two
+   !       V0a = vrho_a,   Vna = 2 vsigma_aa nabla rho_a + vsigma_ab nabla rho_b
+   ! and likewise for beta. For a functional of the kinetic energy density
+   ! tau, libxc also takes tau and returns vtau, the derivative with respect
+   ! to it, which is added to "pot.v_tau" unchanged. A functional that needs
+   ! the Laplacian of the density cannot be used. A point whose total density
+   ! is below ".rho_cutoff" adds nothing. The routines called are in
+   ! csrc/tonto_libxc.c.
+   ! NOTE: they are declared pure below, which the compiler cannot check. The
+   ! evaluations change only their output arrays. tonto_xc_handle sets a
+   ! functional up the first time it is named and after that only looks it up.
+      self :: IN
+      name :: STR, IN
+      pot :: XC_POTENTIAL, INOUT
+      den :: XC_DENSITY, IN
+
+      interface
+         tonto_xc_handle(handle,name,nspin) :: pure
+            handle :: INT, OUT
+            name :: STR(*), IN
+            nspin :: INT, IN
+         end
+         tonto_xc_rung(handle,rung) :: pure
+            handle :: INT, IN
+            rung :: INT, OUT
+         end
+         tonto_xc_lda_exc_vxc(handle,np,rho,exc,vrho) :: pure
+            handle,np :: INT, IN
+            rho :: VEC{REAL}(*), IN
+            exc,vrho :: VEC{REAL}(*), INOUT
+         end
+         tonto_xc_gga_exc_vxc(handle,np,rho,sigma,exc,vrho,vsigma) :: pure
+            handle,np :: INT, IN
+            rho,sigma :: VEC{REAL}(*), IN
+            exc,vrho,vsigma :: VEC{REAL}(*), INOUT
+         end
+         tonto_xc_mgga_exc_vxc(handle,np,rho,sigma,lapl,tau,exc,vrho,vsigma,vlapl,vtau) :: pure
+            handle,np :: INT, IN
+            rho,sigma,lapl,tau :: VEC{REAL}(*), IN
+            exc,vrho,vsigma,vlapl,vtau :: VEC{REAL}(*), INOUT
+         end
+      end
+
+      rho,sigma,exc,vrho,vsigma :: VEC{REAL}@
+      lapl,tau,vlapl,vtau :: VEC{REAL}@
+      ga,gb :: VEC{REAL}(3)
+      handle,rung,n_pt,n_spin,n :: INT
+
+#ifdef LIBXC
+      n_pt   = den.n_pt
+      n_spin = den.n_spin
+
+      ! The functional, and what it needs
+      call tonto_xc_handle(handle,trim(name),n_spin)
+      STOP_IF(handle==0,"libxc has no functional of this name")
+      call tonto_xc_rung(handle,rung)
+      STOP_IF(rung<1 OR rung>3,"this libxc functional needs what Tonto does not make")
+      STOP_IF(rung>=2 AND NOT den.has_gradient,"the density gradient is missing")
+      STOP_IF(rung==3 AND NOT den.has_tau,"the kinetic energy density is missing")
+
+      ! The densities, and sigma, with the spin channels of a point together
+      rho.create(n_spin*n_pt)
+      exc.create(n_pt)
+      vrho.create(n_spin*n_pt)
+      exc  = ZERO
+      vrho = ZERO
+      if (n_spin==1) then
+         rho = den.rho(:,1)
+      else
+         do n = 1,n_pt
+            rho(2*n-1) = den.rho(n,1)
+            rho(2*n  ) = den.rho(n,2)
+         end
+      end
+      if (rung>=2) then
+         sigma.create((2*n_spin-1)*n_pt)
+         vsigma.create((2*n_spin-1)*n_pt)
+         vsigma = ZERO
+         if (n_spin==1) then
+            do n = 1,n_pt
+               ga = den.grad(n,:,1)
+               sigma(n) = dot_product(ga,ga)
+            end
+         else
+            do n = 1,n_pt
+               ga = den.grad(n,:,1)
+               gb = den.grad(n,:,2)
+               sigma(3*n-2) = dot_product(ga,ga)
+               sigma(3*n-1) = dot_product(ga,gb)
+               sigma(3*n  ) = dot_product(gb,gb)
+            end
+         end
+      end
+
+      if (rung==3) then
+         ! The kinetic energy density; the Laplacian is not used, and is zero
+         tau.create(n_spin*n_pt)
+         vtau.create(n_spin*n_pt)
+         lapl.create(n_spin*n_pt)
+         vlapl.create(n_spin*n_pt)
+         lapl  = ZERO
+         vlapl = ZERO
+         vtau  = ZERO
+         if (n_spin==1) then
+            tau = den.tau(:,1)
+         else
+            do n = 1,n_pt
+               tau(2*n-1) = den.tau(n,1)
+               tau(2*n  ) = den.tau(n,2)
+            end
+         end
+      end
+
+      ! Evaluate
+      select case (rung)
+      case (1); call tonto_xc_lda_exc_vxc(handle,n_pt,rho,exc,vrho)
+      case (2); call tonto_xc_gga_exc_vxc(handle,n_pt,rho,sigma,exc,vrho,vsigma)
+      case (3); call tonto_xc_mgga_exc_vxc(handle,n_pt,rho,sigma,lapl,tau,exc,vrho,vsigma,vlapl,vtau)
+      end
+
+      ! Add the energy per particle and the potentials
+      if (n_spin==1) then
+         do n = 1,n_pt
+            if (den.rho(n,1)<.rho_cutoff) cycle
+            pot.energy(n)  = pot.energy(n)  + exc(n)
+            pot.v_rho(n,1) = pot.v_rho(n,1) + vrho(n)
+            if (rung==1) cycle
+            pot.v_grad(n,:,1) = pot.v_grad(n,:,1) + TWO*vsigma(n)*den.grad(n,:,1)
+            if (rung==2) cycle
+            pot.v_tau(n,1) = pot.v_tau(n,1) + vtau(n)
+         end
+      else
+         do n = 1,n_pt
+            if (den.rho(n,1)+den.rho(n,2)<.rho_cutoff) cycle
+            pot.energy(n)  = pot.energy(n)  + exc(n)
+            pot.v_rho(n,1) = pot.v_rho(n,1) + vrho(2*n-1)
+            pot.v_rho(n,2) = pot.v_rho(n,2) + vrho(2*n  )
+            if (rung==1) cycle
+            ga = den.grad(n,:,1)
+            gb = den.grad(n,:,2)
+            pot.v_grad(n,:,1) = pot.v_grad(n,:,1) + TWO*vsigma(3*n-2)*ga + vsigma(3*n-1)*gb
+            pot.v_grad(n,:,2) = pot.v_grad(n,:,2) + TWO*vsigma(3*n  )*gb + vsigma(3*n-1)*ga
+            if (rung==2) cycle
+            pot.v_tau(n,1) = pot.v_tau(n,1) + vtau(2*n-1)
+            pot.v_tau(n,2) = pot.v_tau(n,2) + vtau(2*n  )
+         end
+      end
+
+      ! Clean up
+      if (rung==3) then
+         vlapl.destroy
+         lapl.destroy
+         vtau.destroy
+         tau.destroy
+      end
+      if (rung>=2) then
+         vsigma.destroy
+         sigma.destroy
+      end
+      vrho.destroy
+      exc.destroy
+      rho.destroy
+#else
+      STOP_IF(TRUE,"this Tonto was built without libxc; configure with -DLIBXC=ON")
+#endif
+
+   end
+
+! ========================================
+! Checks of libxc against the hand-written
+! ========================================
+
+   check_libxc result (n_failed) :: selfless, public, leaky
+   ! Evaluate each hand-written functional and the libxc functional that
+   ! should equal it on the same test densities, for one and for two spin
+   ! channels; print one line for each, and return the number that disagree.
+   ! Driven by run_libxc (the `libxc_gives_slater_exchange` ctest).
+      n_failed :: INT
+
+      n_failed = 0
+
+      stdout.flush
+      stdout.text("Hand-written functionals against libxc (max relative difference)")
+      stdout.flush
+
+      DFT_FUNCTIONAL::check_against_libxc("slater ","none   ","lda_x            ",n_failed)
+      DFT_FUNCTIONAL::check_against_libxc("none   ","vwn5   ","lda_c_vwn        ",n_failed)
+      DFT_FUNCTIONAL::check_against_libxc("none   ","vwn3   ","lda_c_vwn_rpa    ",n_failed)
+      DFT_FUNCTIONAL::check_against_libxc("becke88","none   ","gga_x_b88        ",n_failed)
+      DFT_FUNCTIONAL::check_against_libxc("none   ","lyp    ","gga_c_lyp        ",n_failed)
+      DFT_FUNCTIONAL::check_against_libxc("b3lypx ","b3lypc ","hyb_gga_xc_b3lyp5",n_failed)
+      DFT_FUNCTIONAL::check_against_libxc("b3lypgx","b3lypgc","hyb_gga_xc_b3lyp ",n_failed)
+
+      stdout.flush
+      stdout.show("Functionals that disagree =",n_failed)
+
+   end
+
+   check_against_libxc(exch,corr,name,n_failed) :: selfless, private, leaky
+   ! Compare the hand-written exchange "exch" plus correlation "corr" with
+   ! the libxc functional "name" on the test densities, for one and for two
+   ! spin channels. The difference printed is the largest, over the points,
+   ! of the difference in the energy per particle, in each potential and in
+   ! the length of each gradient part, relative to the libxc value. Add one
+   ! to "n_failed" for each spin case where it exceeds 10^-8.
+      exch,corr,name :: STR(*), IN
+      n_failed :: INT, INOUT
+
+      dft :: DFT_FUNCTIONAL
+      den :: XC_DENSITY
+      hand,lib :: XC_POTENTIAL
+      label,kind :: STR
+      dv :: VEC{REAL}(3)
+      err :: REAL
+      n_spin,s,n :: INT
+
+      dft.set_defaults
+
+      do n_spin = 1,2
+
+         ! Both ways on the same densities
+         DFT_FUNCTIONAL::make_test_density(den,n_spin)
+         hand.create_grids(den)
+         lib.create_grids(den)
+         kind = exch
+         dft.add_energy_and_potential(kind,hand,den)
+         kind = corr
+         dft.add_energy_and_potential(kind,hand,den)
+         kind = name
+         dft.add_energy_and_potential(kind,lib,den)
+
+         ! The largest relative difference
+         err = maxval(abs(hand.energy-lib.energy)/abs(lib.energy))
+         do s = 1,n_spin
+            err = max(err,maxval(abs(hand.v_rho(:,s)-lib.v_rho(:,s))/abs(lib.v_rho(:,s))))
+            if (NOT dft.is_GGA_functional(kind)) cycle
+            do n = 1,den.n_pt
+               dv  = hand.v_grad(n,:,s) - lib.v_grad(n,:,s)
+               err = max(err,sqrt(dot_product(dv,dv)/dot_product(lib.v_grad(n,:,s),lib.v_grad(n,:,s))))
+            end
+         end
+
+         label = name
+         if (n_spin==1) label(19:) = "one spin channel  ="
+         if (n_spin==2) label(19:) = "two spin channels ="
+         stdout.show(trim(label),err,precision=14)
+         if (NOT err<TOL(8)) n_failed = n_failed + 1
+
+         lib.destroy_ptr_part
+         hand.destroy_ptr_part
+         den.destroy_ptr_part
+
+      end
+
+   end
+
+   make_test_density(den,n_spin) :: selfless, private, leaky
+   ! Set "den" to six test points for "n_spin" spin channels: total
+   ! densities from 0.001 to 30, with gradients of small to large size
+   ! for the density. With two channels the alpha share runs from a half
+   ! to nine tenths, and the alpha and beta gradients are not parallel.
+      den :: XC_DENSITY, INOUT
+      n_spin :: INT, IN
+
+      n_pt :: INT, parameter = 6
+
+      rho,red,share,grad :: VEC{REAL}(n_pt)
+      ua,ub :: VEC{REAL}(3)
+      n :: INT
+
+      rho   = [ 1.0d-3, 1.0d-2, 0.1d0, 0.5d0, 2.0d0, 30.0d0 ]
+      red   = [ 0.2d0, 0.5d0, 1.0d0, 1.5d0, 0.8d0, 0.1d0 ]
+      share = [ 0.5d0, 0.6d0, 0.7d0, 0.8d0, 0.9d0, 0.55d0 ]
+
+      ! The gradient size that gives the reduced gradient "red"
+      grad = red*TWO*(THREE*PI*PI)**THIRD*rho**FOURTHIRD
+
+      ua = [ 0.6d0, 0.0d0, 0.8d0 ]
+      ub = [ 0.0d0, 0.6d0, 0.8d0 ]
+
+      den.create_grids(n_pt,n_spin,TRUE)
+      do n = 1,n_pt
+         if (n_spin==1) then
+            den.rho(n,1)    = rho(n)
+            den.grad(n,:,1) = grad(n)*ua
+         else
+            den.rho(n,1)    = share(n)*rho(n)
+            den.rho(n,2)    = (ONE-share(n))*rho(n)
+            den.grad(n,:,1) = share(n)*grad(n)*ua
+            den.grad(n,:,2) = (ONE-share(n))*grad(n)*ub
+         end
+      end
+
+   end
+
 ! ==========
 ! Restricted
 ! ==========
@@ -232,6 +686,7 @@ contains
       Nx,Ny,Nz :: VEC{REAL}, optional, IN
 
    ENSURE(.is_LDA_functional(name) OR present(Nx),"Nx, Ny, Nz missing")
+   ENSURE(NOT DFT_FUNCTIONAL::is_libxc_functional(name),"a libxc functional is evaluated through add_energy_and_potential")
 
       select case (name)
       case ("       ")   ! blank: nothing requested
@@ -284,6 +739,7 @@ contains
 
    ENSURE(present(Nx) EQV present(Vx),            "Nx and Vx missing")
    ENSURE(.is_LDA_functional(name) OR present(Nx),"Nx missing")
+   ENSURE(NOT DFT_FUNCTIONAL::is_libxc_functional(name),"a libxc functional is evaluated through add_energy_and_potential")
 
       select case (name)
       case ("       ")   ! blank: nothing requested
@@ -329,6 +785,7 @@ contains
 
    ENSURE(.is_LDA_functional(name) OR present(Nxa),"Nxa missing")
    ENSURE(.is_LDA_functional(name) OR present(Nxb),"Nxb missing")
+   ENSURE(NOT DFT_FUNCTIONAL::is_libxc_functional(name),"a libxc functional is evaluated through add_energy_and_potential")
 
       select case (name)
       case ("       ")   ! blank: nothing requested
@@ -386,6 +843,7 @@ contains
    ENSURE(present(Nxb) EQV present(Vxb),"Nxb and Vxb missing")
    ENSURE(present(Nxa) EQV .is_GGA_functional(name),"Nxa missing")
    ENSURE(present(Nxb) EQV .is_GGA_functional(name),"Nxb missing")
+   ENSURE(NOT DFT_FUNCTIONAL::is_libxc_functional(name),"a libxc functional is evaluated through add_energy_and_potential")
 
       select case (name)
 
