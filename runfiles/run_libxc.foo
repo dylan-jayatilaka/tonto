@@ -1,0 +1,125 @@
+program run_LIBXC
+
+! Check that Tonto can call libxc: Slater exchange from libxc, for one and for
+! two spin channels, against its closed form; and that libxc reports PBE0 as a
+! gradient functional with a quarter of exact exchange and r2SCAN as one that
+! needs the kinetic energy density. Fails loudly if any is wrong. Registered
+! as the `libxc_gives_slater_exchange` ctest; no reference file is involved.
+! The routines called are in csrc/tonto_libxc.c.
+
+   implicit none
+
+   interface
+      tonto_xc_number(name,id)
+         name :: STR(*), IN
+         id :: INT, OUT
+      end
+      tonto_xc_init(handle,id,nspin)
+         handle :: INT, OUT
+         id,nspin :: INT, IN
+      end
+      tonto_xc_end(handle)
+         handle :: INT, INOUT
+      end
+      tonto_xc_rung(handle,rung)
+         handle :: INT, IN
+         rung :: INT, OUT
+      end
+      tonto_xc_exact_exchange(handle,a0)
+         handle :: INT, IN
+         a0 :: REAL, OUT
+      end
+      tonto_xc_lda_exc_vxc(handle,np,rho,exc,vrho) :: pure
+         handle,np :: INT, IN
+         rho :: VEC{REAL}(*), IN
+         exc,vrho :: VEC{REAL}(*), INOUT
+      end
+   end
+
+   n_pt :: INT, parameter = 5
+
+   rho,exc,vrho,ref :: VEC{REAL}(n_pt)
+   rho2,vrho2 :: VEC{REAL}(2*n_pt)
+   ra,rb,cx,a0,err :: REAL
+   handle,id,rung,i,n_failed :: INT
+
+   TONTO_CREATE
+   std_time.start_timing
+
+   TEXTFILE::create_std_err
+   std_err.open_for("write")
+   TEXTFILE::create_stdout
+
+   n_failed = 0
+   rho = [ 1.0d-6, 1.0d-3, 0.1d0, 1.0d0, 100.0d0 ]
+
+   stdout.flush
+   stdout.text("libxc against closed forms (max relative error)")
+   stdout.flush
+
+   ! Slater exchange, one spin channel: -(3/4)(3/pi)^(1/3) rho^(1/3) per particle
+   call tonto_xc_number("lda_x",id)
+   call tonto_xc_init(handle,id,1)
+   DIE_IF(handle==0,"libxc could not set up lda_x")
+   call tonto_xc_lda_exc_vxc(handle,n_pt,rho,exc,vrho)
+   call tonto_xc_end(handle)
+   cx  = -0.75d0*(3.0d0/PI)**THIRD
+   ref = cx*rho**THIRD
+   err = max(maxval(abs(exc/ref-ONE)),maxval(abs(vrho/(4.0d0*THIRD*ref)-ONE)))
+   stdout.show("Slater exchange, restricted    =",err)
+   if (err>TOL(12)) n_failed = n_failed + 1
+
+   ! The same for two spin channels, with three parts alpha to one part beta
+   do i = 1,n_pt
+      rho2(2*i-1) = 0.75d0*rho(i)
+      rho2(2*i  ) = 0.25d0*rho(i)
+   end
+   call tonto_xc_init(handle,id,2)
+   DIE_IF(handle==0,"libxc could not set up lda_x for two spin channels")
+   call tonto_xc_lda_exc_vxc(handle,n_pt,rho2,exc,vrho2)
+   call tonto_xc_end(handle)
+   cx  = -0.75d0*(6.0d0/PI)**THIRD
+   err = ZERO
+   do i = 1,n_pt
+      ra  = rho2(2*i-1)
+      rb  = rho2(2*i)
+      err = max(err,abs(exc(i)/(cx*(ra**(4.0d0*THIRD)+rb**(4.0d0*THIRD))/rho(i))-ONE))
+      err = max(err,abs(vrho2(2*i-1)/(4.0d0*THIRD*cx*ra**THIRD)-ONE))
+      err = max(err,abs(vrho2(2*i  )/(4.0d0*THIRD*cx*rb**THIRD)-ONE))
+   end
+   stdout.show("Slater exchange, unrestricted  =",err)
+   if (err>TOL(12)) n_failed = n_failed + 1
+
+   ! PBE0: a gradient functional with a quarter of exact exchange
+   call tonto_xc_number("hyb_gga_xc_pbeh",id)
+   call tonto_xc_init(handle,id,1)
+   DIE_IF(handle==0,"libxc could not set up hyb_gga_xc_pbeh")
+   call tonto_xc_rung(handle,rung)
+   call tonto_xc_exact_exchange(handle,a0)
+   call tonto_xc_end(handle)
+   stdout.show("PBE0 exact exchange fraction   =",a0)
+   if (rung/=2 OR abs(a0-0.25d0)>TOL(12)) n_failed = n_failed + 1
+
+   ! r2SCAN exchange needs the kinetic energy density
+   call tonto_xc_number("mgga_x_r2scan",id)
+   call tonto_xc_init(handle,id,1)
+   DIE_IF(handle==0,"libxc could not set up mgga_x_r2scan")
+   call tonto_xc_rung(handle,rung)
+   call tonto_xc_end(handle)
+   stdout.show("r2SCAN exchange, kind of input =",rung)
+   if (rung/=3) n_failed = n_failed + 1
+
+   ! A name libxc does not have
+   call tonto_xc_number("no_such_functional",id)
+   if (id>=0) n_failed = n_failed + 1
+
+   stdout.flush
+   stdout.show("Checks failed =",n_failed)
+
+   DIE_IF(n_failed>0,"libxc check failed")
+
+   TEXTFILE:destroy(std_err)
+   TEXTFILE:destroy(stdout)
+   TONTO_DESTROY
+
+end

@@ -187,6 +187,16 @@ add_test(NAME "quadrature_rules_integrate_exactly"
     COMMAND ${PROJECT_BINARY_DIR}/run_quadrature)
 set_tests_properties("quadrature_rules_integrate_exactly" PROPERTIES LABELS "short;selfcheck" SKIP_RETURN_CODE 77)
 
+# Tonto calling libxc: Slater exchange from libxc against its closed form, for
+# one and two spin channels, and what libxc reports about PBE0 and r2SCAN. The
+# binary self-checks and exits non-zero. Instant. Only in a -DLIBXC=ON build.
+if(LIBXC)
+    add_test(NAME "libxc_gives_slater_exchange"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        COMMAND ${PROJECT_BINARY_DIR}/run_libxc)
+    set_tests_properties("libxc_gives_slater_exchange" PROPERTIES LABELS "short;selfcheck")
+endif()
+
 # The restrained normal-equation solver behind the structure refinement,
 # against a 3 x 3 problem with a known answer: no weight, one hard weight,
 # and a ridge. Instant.

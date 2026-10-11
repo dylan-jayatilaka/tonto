@@ -35,6 +35,7 @@ set(BASIS_SETS ${CMAKE_CURRENT_SOURCE_DIR}/basis_sets
 
 option(MPI "Use MPI" OFF)
 option(COMPILE_LAPACK "Use the reference implementation of lapack provided" OFF)
+option(LIBXC "Build libxc (external/libxc) and use it for density functionals" OFF)
 
 # Java and ANTLR4
 find_package(Java REQUIRED COMPONENTS Runtime Development)
@@ -264,6 +265,35 @@ if(TONTO_INTENT STREQUAL "REFERENCE" AND NOT COMPILE_LAPACK)
                 "brew install lapack.")
         endif()
     endforeach()
+endif()
+
+# libxc
+# Built from the pinned source in external/libxc, never taken from the system:
+# results must not depend on which libxc a machine has. Only its C library is
+# built; Tonto reaches it through csrc/tonto_libxc.c, so libxc's Fortran module
+# file, which only the compiler that wrote it can read, is not needed.
+#   MAXORDER=1  energy and potential only, which is all Tonto uses; the higher
+#               derivatives are most of libxc's compile time.
+#   -O2         in every build type. Tonto's build types are not CMake's, so
+#               without it the C code would be compiled with no optimisation.
+if(LIBXC)
+    if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/external/libxc/CMakeLists.txt)
+        message(FATAL_ERROR "-DLIBXC=ON needs the libxc source, which is a git "
+            "submodule. Fetch it with:  git submodule update --init external/libxc")
+    endif()
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "libxc is linked statically" FORCE)
+    set(MAXORDER 1 CACHE STRING "libxc: energy and potential only" FORCE)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/libxc EXCLUDE_FROM_ALL)
+    target_compile_options(xc PRIVATE -O2)
+    add_library(tonto_libxc STATIC ${CMAKE_CURRENT_SOURCE_DIR}/csrc/tonto_libxc.c)
+    target_compile_options(tonto_libxc PRIVATE -O2)
+    # xc.h is in the source; xc_version.h, which it includes, is made at configure.
+    target_include_directories(tonto_libxc PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/external/libxc/src
+        ${CMAKE_CURRENT_BINARY_DIR}/external/libxc)
+    target_link_libraries(tonto_libxc PUBLIC xc)
+    add_compile_definitions(LIBXC=1)
+    message(STATUS "libxc: building external/libxc with ${CMAKE_C_COMPILER}")
 endif()
 
 # MPI
@@ -771,6 +801,9 @@ set(RUN_SRC
     ${RUNFILE_DIR}/run_system_commands.foo
     ${RUNFILE_DIR}/run_vec{str}.foo
 )
+if(LIBXC)
+    list(APPEND RUN_SRC ${RUNFILE_DIR}/run_libxc.foo)
+endif()
 
 
 # Processing foo into fortran source
@@ -1186,6 +1219,12 @@ add_executable(run_quadrature    ${CMAKE_CURRENT_BINARY_DIR}/run_quadrature.F90)
 # refinement uses; the `restrained_least_squares_known_answer` ctest. Not EXCLUDE_FROM_ALL for the
 # same reason.
 add_executable(run_lsq_restraint ${CMAKE_CURRENT_BINARY_DIR}/run_lsq_restraint.F90)
+# run_libxc checks that Tonto can call libxc, against closed forms; the
+# `libxc_gives_slater_exchange` ctest. Built only with -DLIBXC=ON.
+if(LIBXC)
+    add_executable(run_libxc     ${CMAKE_CURRENT_BINARY_DIR}/run_libxc.F90)
+    target_link_libraries(run_libxc tonto_lib tonto_libxc ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+endif()
 # run_gaussian_ff_fit checks the form-factor fit through gnuplot by a round trip;
 # the `form_factor_gaussian_fit_round_trip` ctest, skipped where gnuplot is absent.
 add_executable(run_gaussian_ff_fit ${CMAKE_CURRENT_BINARY_DIR}/run_gaussian_ff_fit.F90)

@@ -1133,6 +1133,67 @@ added. The full assessment is in `docs/TONTO_REPOSITORY_BRANCHES.md`.
    link line while still reporting the package found. The f03 interface does not
    need `xcf90` at all.
 
+### Decisions and plan (Dylan, 2026-10-11)
+
+Decisions:
+
+1. **libxc is a pinned source, a second git submodule in `external/`,** built by Tonto's CMake
+   as a static C library with the same compiler family. No system package: its Fortran module
+   file is compiler-specific (point 6 above), and reference numbers must not depend on which
+   libxc a machine has. Switched on by `-DLIBXC=ON` while the hand-written routines are the
+   check; required once validated.
+2. **Tonto calls the C library through its own short interface,** not libxc's Fortran module.
+   About ten routines. The evaluation routines are declared `pure` in that interface, as `dgemm`
+   is in `mat{real}.foo`, because the dispatchers and `new_set_*_XC_*` are `PURE`. This replaces
+   points 5 and 6 above. The interface is a small C file, `csrc/tonto_libxc.c`, whose routines
+   have Fortran-callable names and know a functional by a small integer, so Foo needs no C
+   pointer and the translator no change.
+3. **The existing names stay on the hand-written code** until the agreement test passes, so no
+   reference moves.
+4. **One keyword, `dft_functional=`,** names a whole functional (`pbe0`, `b3lyp`, `blyp`,
+   `r2scan`). The two old keywords stay.
+
+How the one keyword and the two old ones live together. All three fill the same record, and
+nothing below the setters knows which keyword was used:
+
+- the record is a short list of parts, each a name, a scale factor and which engine evaluates
+  it (hand-written or libxc), plus the fraction of exact exchange and the highest kind of input
+  any part needs (density only, gradient, kinetic energy density);
+- `dft_exchange_functional=` and `dft_correlation_functional=` each set one part, as now;
+- `dft_functional=` sets all parts and the exact-exchange fraction from one table. For a libxc
+  name the fraction is asked of libxc;
+- giving `dft_functional=` together with either old keyword stops the job with a message;
+- `using_GGA_exchange`, `using_GGA_correlation` and the hybrid flag are derived from the record
+  instead of being set case by case.
+
+So the setters in `scf_data.foo` and the four dispatchers are rewritten; the forty hand-written
+functional routines are not.
+
+Stages. Each is done in a debug tree with second-long jobs (`short/h2o_rks_*`, `short/h2o+_uks_*`),
+then built once in `release`, because a purity fault shows only there.
+
+| | Stage | Passes when |
+|---|---|---|
+| 1 | A ten-line Foo file that calls libxc's C routines through a C pointer; the submodule; the CMake build | Slater exchange from libxc at five densities equals the closed form |
+| 2 | `XC_DENSITY` and `XC_POTENTIAL` (§10, step 3); dispatchers and call sites moved to them; energy and potential from one call; spin as a dimension. No libxc yet | every DFT test exact against its reference |
+| 3 | The libxc branch in the dispatchers, restricted and unrestricted, density and gradient functionals | `slater`, `vwn5`, `becke88`, `lyp` agree with the hand-written code point by point; the gradient-term factor of two checked against `new_r_Becke88_x_potential` |
+| 4 | `dft_functional=`, the record, the exact-exchange fraction from libxc, PBE0 | water and H2O+ PBE0 energies against ORCA within 5e-6 |
+| 5 | r2SCAN: kinetic energy density on the grid, its Fock term, restricted and unrestricted | water r2SCAN against ORCA; grid convergence ladder |
+| 6 | CI on every platform, the Windows cross-build, new tests blessed on achari2, the names lint | all workflows green |
+
+What is done, and where (branch `libxc`; one row per piece, added as it lands):
+
+| Stage | What | Where | Checked by |
+|---|---|---|---|
+| 1 | libxc 7.1.2 source, pinned | submodule `external/libxc` (`.gitmodules`) | builds on the Mac with Apple's C compiler, 8 minutes at `-j8` |
+| 1 | The glue: look up a name, set up and end a functional, kind of input, exact-exchange fraction, density cutoff, the three evaluations | `csrc/tonto_libxc.c` | the test program below |
+| 1 | The build switch `-DLIBXC=ON`: builds libxc's C library (energy and potential only, `-O2`), the glue, defines `LIBXC` for the Foo code | `CMakeLists.txt`, the *libxc* block | a configure without the switch is unchanged |
+| 1 | Test program: Slater exchange for one and two spin channels against the closed form; PBE0 and r2SCAN as libxc reports them | `runfiles/run_libxc.foo` | ctest `libxc_gives_slater_exchange` (`tests/CMakeLists.txt`): passes in the `debug` tree, Mac, gfortran-14 |
+
+Stage 1 is done in a debug build only (2026-10-11). Not yet done for it: a `release` build, Linux,
+the Windows cross-build. Foo took the interface to the glue as written, with a string of any
+length spelled `STR(*)`. The seven existing DFT tests still pass in that tree.
+
 ## 12. Static analysis worth adding
 
 All three defects above are mechanically detectable. These follow the pattern of
