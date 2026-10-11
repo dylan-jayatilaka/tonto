@@ -893,6 +893,12 @@ add_custom_command(
 )
 
 add_custom_target(antlr4-translator DEPENDS ${ANTLR4_TRANSLATOR_STAMP})
+# Each target below carries the rules of the files it depends on, so two targets
+# that share a file can both run its rule, at the same time, in a parallel
+# build: the parser sources were then rewritten while javac was reading them
+# ("reached end of file while parsing"). Ordering the targets makes the later
+# one find the file already made.
+add_dependencies(antlr4-translator antlr4-grammar)
 
 # Pack the translator into an executable jar, so the 150 parallel invocations read
 # as `java -Xmx512m -jar foo-translator.jar ...` rather than carrying a 105-character
@@ -933,6 +939,7 @@ add_custom_command(
     VERBATIM
 )
 add_custom_target(antlr4-translator-jar DEPENDS ${FOO_TRANSLATOR_JAR})
+add_dependencies(antlr4-translator-jar antlr4-translator)
 
 # The per-file translator runs with WORKING_DIRECTORY set to the source root, so
 # these three are what actually appear on its command line. An out-of-tree build
@@ -1034,6 +1041,7 @@ add_custom_target(antlr4-fortran
 
 add_dependencies(antlr4-fortran antlr4-grammar)
 add_dependencies(antlr4-fortran antlr4-translator)
+add_dependencies(antlr4-fortran antlr4-translator-jar)
 
 # On-demand documentation graphs: `make callgraphs` regenerates the Graphviz DOT
 # files (procedure call graph; module use graph with submodules collapsed to their
