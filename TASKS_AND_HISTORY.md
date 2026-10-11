@@ -80,7 +80,7 @@ because by then it held far more than deferred items.)*
 
 ## 2026-10-11: scalar X2C is written and checked, on branch `x2c`
 
-**Next action: merge `x2c` to `develop`** (Dylan to say), then the first use of it: a heavy
+**Next action: merge pull request 47 (`x2c` to `develop`)** (Dylan to say), then the first use of it: a heavy
 atom for the default-atoms question and a first refinement beyond Kr
 (`docs/TASK_HAR_STANDARDISATION.md` section 6a, *Open after this*).
 
@@ -101,7 +101,9 @@ primitives (cc-pVDZ), x2c-TZVPall, and Gaussian nuclei. One-electron Ne⁹⁺ an
 40-digit solution of the same matrix problem to 1e-8. Three larger molecules agree to the
 cutoff on the two-electron integrals (1e-7 to 1e-6, the same with and without X2C). Full suite:
 on the Mac release build and on the achari2 reference build the 184 earlier tests all pass,
-and so do the three new ones once blessed on achari2; the three also pass in the Mac debug build. CI has not run on the branch. Runs and the
+and so do the three new ones once blessed on achari2; the three also pass in the Mac debug build. CI on pull request 47 passes (Linux release with
+the short suite, Linux debug, real WSL); the macOS, static, Windows and full-suite workflows run
+only after the merge. Runs and the
 PySCF environment: `~/tonto-runs/2026-10-11_x2c`.
 
 **Three silent wrong answers now stop with a message:** `relativity_kind= iotc`, `dkh` and
