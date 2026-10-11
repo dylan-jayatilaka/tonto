@@ -78,10 +78,46 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## CLOSED 2026-10-11: libxc, PBE0 and r2SCAN are on `develop`; next is scalar X2C
+## 2026-10-11: scalar X2C is written and checked, on branch `x2c`
 
-**Next action: scalar X2C**, `docs/TASK_HAR_STANDARDISATION.md` section 6a. No relativistic
-Hamiltonian runs in Tonto today (see *Correctness*, the `relativity_kind=` entry). Decisions
+**Next action: merge `x2c` to `develop`** (Dylan to say), then the first use of it: a heavy
+atom for the default-atoms question and a first refinement beyond Kr
+(`docs/TASK_HAR_STANDARDISATION.md` section 6a, *Open after this*).
+
+**What is on the branch.** `relativity_kind= x2c`: the scalar exact two-component one-electron
+Hamiltonian in place of the kinetic energy plus nuclear attraction, for every restricted and
+unrestricted SCF, Hartree–Fock or DFT; the atomic calculations inherit it. No picture-change
+correction, no spin–orbit coupling (Dylan's decisions). `nucleus_model= gaussian` gives Visscher
+and Dyall's Gaussian nuclei, under X2C only. New module `foofiles/molecule.rel.foo`; the
+p.Vp integrals in `GAUSSIAN2:make_pVp_ints`; three short tests (Kr, Kr with a Gaussian nucleus,
+HBr from the promolecule). `SPEED_OF_LIGHT_AU` is now 137.035999177. User page:
+`docs/RUNNING_TONTO.md`, *Relativity*. Detail, the table of numbers and the one numerical
+trap (do the algebra in Cholesky bases; diagonalising the kinetic matrix loses six figures with
+very large exponents): `docs/TASK_HAR_STANDARDISATION.md` section 6a.
+
+**Checked.** Against PySCF's spin-free X2C, same basis and speed of light, 17 systems to 1e-8
+hartree: Ne, Kr, Xe, Hg, Rn, HBr, HI, an unrestricted Br atom, Cartesian functions, repeated
+primitives (cc-pVDZ), x2c-TZVPall, and Gaussian nuclei. One-electron Ne⁹⁺ and Hg⁷⁹⁺ against a
+40-digit solution of the same matrix problem to 1e-8. Three larger molecules agree to the
+cutoff on the two-electron integrals (1e-7 to 1e-6, the same with and without X2C). Full suite:
+on the Mac release build and on the achari2 reference build the 184 earlier tests all pass,
+and so do the three new ones once blessed on achari2; the three also pass in the Mac debug build. CI has not run on the branch. Runs and the
+PySCF environment: `~/tonto-runs/2026-10-11_x2c`.
+
+**Three silent wrong answers now stop with a message:** `relativity_kind= iotc`, `dkh` and
+`dkh-2` (they ran non-relativistically); `nucleus_model= finite` (it gave a nuclear attraction
+matrix of zero); a Gaussian nucleus without X2C.
+
+**Open from this work:** the SCF stall when a basis function is filtered for linear dependence
+(new entry under *Correctness*; met on iodobenzene with x2c-TZVPall, cured there by
+`linear_dependence_tol= 1e-7`); `hart` has no relativity option and takes only seven basis-set names;
+X2C under MPI is untested; Tonto's default DFT grid costs 8e-4 hartree on a bromine atom
+(HBr, PBE, against PySCF; the same with and without X2C; 1e-5 at `accuracy= very_high`).
+
+## CLOSED 2026-10-11: libxc, PBE0 and r2SCAN are on `develop`
+
+**Then next was scalar X2C** (now done, block above), `docs/TASK_HAR_STANDARDISATION.md` section 6a. No relativistic
+Hamiltonian ran in Tonto then (archive, the `relativity_kind=` entry). Decisions
 (Dylan, 2026-10-11): scalar only; no picture-change correction; no spin-orbit coupling; the
 atoms unchanged. Step 1 is to stop the silent fall-through; step 2 to rescue the
 p.Vp integrals from `git show fcbd5a8a^:foofiles/molecule.rel.foo`; step 3 to write the
@@ -2465,15 +2501,16 @@ dead keyword line from `develop` and leave the work on its two tags, as was done
 
 # Correctness — open bugs that give wrong answers
 
-## `relativity_kind=` silently gives the non-relativistic result (2026-10-11)
+## The SCF never converges when a basis function is filtered for linear dependence (2026-10-11)
 
-**Register row** of the same name. `iotc`, `dkh` and `dkh-2` are accepted by
-`SCF_DATA`, but `molecule.rel.foo` was removed in `fcbd5a8a` and the calls to it in
-`molecule.scf.foo` are commented out, so the `select case` on `relativity_kind` falls to its
-default and builds the non-relativistic core matrix, exit 0, no message. Make any value but none
-stop with a message. This is step 1 of the scalar X2C work, `docs/TASK_HAR_STANDARDISATION.md`
-section 6a, which replaces the old code.
-
+When an overlap eigenvalue is under `linear_dependence_tol` (default 1e-5) the function is
+filtered out. The energy then converges, but the DIIS error stops at a non-zero value and the
+SCF runs to its iteration limit and reports no convergence. Met on iodobenzene with
+`x2c-TZVPall` (one eigenvalue of 9.1e-6): the error stalls at 6.9e-5 with X2C and at 7.3e-3
+without, the energy correct to 5e-6. With `linear_dependence_tol= 1e-7` nothing is filtered and
+it converges in 20 iterations. Not caused by X2C. To do: form the DIIS error in the filtered
+space, so it can go to zero; until then lower the tolerance. Runs:
+`~/tonto-runs/2026-10-11_x2c/PhI_*`. Not yet a register row.
 
 ## Cluster charges are silently zero under `partition_model= tc-stewart` (2026-10-10)
 
@@ -7118,6 +7155,17 @@ different question and the one that matters.
 ---
 
 # Done, resolved and closed (archive)
+
+## FIXED (2026-10-11): `relativity_kind=` silently gave the non-relativistic result
+
+`iotc`, `dkh` and `dkh-2` were accepted by `SCF_DATA`, but `molecule.rel.foo` had been removed in
+`fcbd5a8a` and the calls to it in `molecule.scf.foo` were commented out, so the `select case` on
+`relativity_kind` fell to its default and built the non-relativistic core matrix, exit 0, no
+message. Fixed on branch `x2c`: `SCF_DATA:set_relativity_kind` stops on any value but `none`,
+`x2c`, `pauli` and `zora`, and `x2c` is a working scalar-relativistic Hamiltonian
+(`docs/TASK_HAR_STANDARDISATION.md` section 6a). The same pattern was found and closed for
+`nucleus_model= finite`, whose only `select case` branch was `point`, so the nuclear attraction
+matrix came out zero.
 
 ## CLOSED (2026-10-11): spherical atoms by the right ensemble -- the default stays
 
