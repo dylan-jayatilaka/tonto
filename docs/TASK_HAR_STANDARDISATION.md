@@ -70,9 +70,10 @@ Hirshfeld moments are identical under two BLAS kernels. Left to check:
   from the core.
 - **x2c-SVPall, x2c-TZVPall, x2c-TZVPPall: H to Rn**, all-electron, in `basis_sets/` (Pollak and
   Weigend, *J. Chem. Theory Comput.* 13, 3696, 2017; the same family as def2). All 86 elements
-  agree with the Basis Set Exchange copies in every exponent and coefficient. They are made for a scalar-relativistic Hamiltonian;
-  Tonto has IOTC and DKH (`relativity_kind=`). To be tested: x2c-TZVPall with IOTC against def2-TZVP
-  on light atoms, where the two should agree, and on one 4d or 5d compound.
+  agree with the Basis Set Exchange copies in every exponent and coefficient. They are made for a scalar-relativistic Hamiltonian
+  (X2C). **Tonto has none that runs today** (§6a): `relativity_kind= iotc` and `dkh` are accepted
+  and silently give the non-relativistic result. To be tested once X2C is in: x2c-TZVPall with X2C
+  against def2-TZVP on light atoms, where the two should agree, and on one 4d or 5d compound.
 - **All-electron families that cover the table**, from the Basis Set Exchange metadata
   (2026-10-05; sets with no core potential on any element, and how far from H they are complete):
 
@@ -123,11 +124,73 @@ its gradient only. The three steps depend on each other:
 
 Range-separated hybrids need the attenuated Coulomb integrals in the exact and COSX code: later.
 
+## 6a. Relativity: scalar X2C (Dylan, 2026-10-11)
+
+**Decision: proceed with X2C. Rescue what can be rescued from the old IOTC code, rewrite the
+rest.**
+
+What was found on 2026-10-11. `molecule.rel.foo` was removed in commit `fcbd5a8a` ("Removed
+molecule.rel .nomo .misc for now"). The calls to it in `molecule.scf.foo` (`make_r_DKH1_core_mx`,
+`make_r_DKH2_core_mx`, `make_r_IOTC_core_mx`, `set_gc_IOTC_core_mx`) are commented out, and the
+`select case` on `relativity_kind` falls to its default, the non-relativistic core matrix, with no
+message. The picture-change-corrected structure factors (`make_FT_IOTC`, `make_IOTC_FT_PCE_off`,
+`build_da_IOTC_ft` in `molecule.xtal.foo`) are commented out too.
+
+X2C and IOTC decouple the same one-electron Dirac matrix exactly; X2C does it in one step of
+matrix algebra and is Dyall's normalised elimination of the small component plus a
+renormalisation (Iliaš and Saue, *J. Chem. Phys.* 126, 064102, 2007). With $`S`$, $`T`$, $`V`$
+the overlap, kinetic and nuclear attraction matrices, $`W`$ the matrix of
+$`\mathbf{p}\cdot V\mathbf{p}`$ and $`c`$ the speed of light, solve once, in the uncontracted
+basis,
+
+```math
+\begin{pmatrix} V & T \\ T & W/4c^2 - T \end{pmatrix}
+\begin{pmatrix} C_L \\ C_S \end{pmatrix} =
+\begin{pmatrix} S & 0 \\ 0 & T/2c^2 \end{pmatrix}
+\begin{pmatrix} C_L \\ C_S \end{pmatrix} E \qquad (1)
+```
+
+keep the positive-energy solutions (large and small parts $`C_L`$, $`C_S`$, energies $`E`$), and form
+
+```math
+X = C_S C_L^{-1}, \quad \tilde S = S + X^\dagger T X/2c^2, \quad
+R = S^{-1/2}\,(S^{-1/2}\tilde S S^{-1/2})^{-1/2}\,S^{1/2} \qquad (2)
+```
+
+```math
+h_+ = R^\dagger\,[\,V + TX + X^\dagger T + X^\dagger (W/4c^2 - T) X\,]\,R \qquad (3)
+```
+
+$`h_+`$ replaces $`T+V`$ as the core matrix, and is then contracted. Nothing else in a restricted
+or unrestricted SCF changes.
+
+Steps:
+
+1. **Stop the silent fall-through now**: `relativity_kind=` other than none stops with a message
+   until a relativistic core matrix exists.
+2. **Rescue** from the history (`git show fcbd5a8a^:foofiles/molecule.rel.foo`): the
+   $`\mathbf{p}\cdot V\mathbf{p}`$ integrals, the handling of the uncontracted basis, and a
+   finite-nucleus model if one is there. Read the old picture-change code before deciding
+   anything about it; its quality is not known.
+3. **Write** the scalar X2C core matrix from equations (1) to (3). Check: one-electron ions
+   against the Dirac energies; a heavy closed-shell atom against published X2C or Dirac–Fock
+   energies and against PySCF's `x2c`; light atoms against def2 results.
+4. **Scattering.** Measure the size of the picture-change error on the structure factors of one
+   heavy atom before writing any correction. Bučinský, Jayatilaka and Grabowsky (*J. Phys. Chem.
+   A* 120, 6650, 2016) found spin–orbit coupling and picture change negligible for the structure
+   factors of HgPh₂ and BiPh₃, and scalar relativity and electron correlation important at low
+   and medium angle.
+5. **Not planned: spin–orbit coupling.** It needs the spin-dependent part of $`W`$, complex
+   two-component orbitals (Tonto's `gchf` kind for Hartree–Fock; nothing yet for DFT), a
+   two-electron spin–orbit correction, and for open-shell atoms an average over the spinors of
+   the open shell. By the 2016 result it does not matter for scattering.
+
 ## 7. Order of work
 
 1. The spherical-atom study (§3).
 2. The core question (§4), and Cartesian against spherical from the reruns.
 3. libxc, PBE0, then r2SCAN (§6).
+3a. Scalar X2C (§6a), needed before any structure beyond Kr.
 4. On the nine structures against neutron: method, basis, environment and partition; choose the
    partition; freeze the protocol and name it.
 5. Then the ADP-model studies, rerun under the protocol.
@@ -136,6 +199,10 @@ Speed work (SG grids, COSX; `docs/TASK_COSX_GRIDS.md` on branch `sg-grids`) goes
 it does not change results.
 
 ## 8. Log
+
+- 2026-10-11: libxc, PBE0 and the keyword `dft_functional=` are on branch `libxc`
+  (`docs/TASK_DFT_STANDARDISATION.md` §11). Found that no relativistic Hamiltonian runs (§6a);
+  decision to go to X2C.
 
 - 2026-10-05: the x2c sets renamed to their literature names (`x2c-SVPall`, `x2c-TZVPall`,
   `x2c-TZVPPall`), after checking all 86 elements of each against the Basis Set Exchange; headers

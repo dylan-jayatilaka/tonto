@@ -1191,7 +1191,7 @@ What is done, and where (branch `libxc`; one row per piece, added as it lands):
 | 1 | Test program: Slater exchange for one and two spin channels against the closed form; PBE0 and r2SCAN as libxc reports them | `runfiles/run_libxc.foo` | ctest `libxc_gives_slater_exchange` (`tests/CMakeLists.txt`): passes in the `debug` tree, Mac, gfortran-14 |
 
 | 2 | The two bundle types: densities in, energy and potentials out, laid out `(n_pt,n_spin)` and `(n_pt,3,n_spin)` | `foofiles/types.foo`; new modules `xc_density.foo`, `xc_potential.foo` | the comparison below |
-| 2 | One entry point for a functional, `add_energy_and_potential(name,den,pot)`; it picks one or two spin channels from `den` and passes the gradient only to a functional that uses it | `foofiles/dft_functional.foo` | |
+| 2 | One entry point for a functional, `add_energy_and_potential(name,pot,den)`; it picks one or two spin channels from `den` and passes the gradient only to a functional that uses it | `foofiles/dft_functional.foo` | |
 | 2 | `set_XC_energy_and_potential(pot,den)` replaces the four `new_set_*_XC_*` routines | `foofiles/molecule.fock.foo` | |
 | 2 | The six matrix builders (`add_LDA_XC_mx`, `add_GGA_XC_mx`, `add_XC_mx_batched`, restricted and unrestricted) and their four inner routines take `pot` | `foofiles/molecule.fock.foo` | |
 | 2 | The four `make_rho_becke_atom_grid` routines return `den` | `foofiles/molecule.rho.foo` | |
@@ -1200,8 +1200,8 @@ What is done, and where (branch `libxc`; one row per piece, added as it lands):
 | 3 | A name spelled as libxc spells it (`lda_`, `gga_`, `mgga_`, `hyb_` first) is evaluated by libxc: `add_libxc_energy_and_potential`, called from the entry point. One and two spin channels, density and gradient functionals | `foofiles/dft_functional.foo` | `check_libxc` below |
 | 3 | `DFT_FUNCTIONAL:check_libxc`: seven hand-written functionals against their libxc counterparts, point by point, one and two spin channels | `foofiles/dft_functional.foo`, run by `runfiles/run_libxc.foo` | ctest `libxc_gives_slater_exchange` |
 | 3 | Every program links the glue when `-DLIBXC=ON` | `CMakeLists.txt` | |
-| 4 | `dft_exchange_functional=` and `dft_correlation_functional=` accept libxc names; the gradient flag and the fraction of exact exchange come from libxc | `foofiles/scf_data.foo`: `set_exchange_functional`, `set_correlation_functional`, `set_libxc_functional`; `DFT_FUNCTIONAL:get_libxc_info` | ctest `libxc_energies_match_pyscf` |
-| 4 | The keyword `dft_functional=`: `lda`, `xalpha`, `blyp`, `b3lyp`, `b3lyp5`, `pbe`, `pbe0`, or any libxc name. Refused together with either old keyword | `foofiles/scf_data.foo`: `set_functional`, `read_functional`, and the two old read routines; two members in `types.foo` | the same test |
+| 4 | `dft_exchange_functional=` and `dft_correlation_functional=` accept libxc names; the gradient flag and the fraction of exact exchange come from libxc | `foofiles/scf_data.foo`: `set_exchange_functional`, `set_correlation_functional`, `get_libxc_functional_info`; `DFT_FUNCTIONAL:get_libxc_info` | ctest `libxc_energies_match_pyscf` |
+| 4 | The keyword `dft_functional=`: `lda`, `xalpha`, `blyp`, `b3lyp`, `b3lyp-gaussian`, `b3lyp-orca`, `pbe`, `pbe0`, or any libxc name. Refused together with either old keyword | `foofiles/scf_data.foo`: `set_functional`, `read_functional`, and the two old read routines; two members in `types.foo` | the same test |
 | 4 | The test of libxc in a whole SCF: PBE and PBE0 against PySCF, libxc against hand-written, one keyword against two, refused inputs | `scripts/check_libxc_reference.py`, `tests/CMakeLists.txt` | |
 
 Stage 2 (2026-10-11) changes no number. Checked on the Mac, gfortran-14: six small jobs
@@ -1263,8 +1263,13 @@ How the plan changed in the doing:
   them through the two existing setters. A whole libxc functional goes in the exchange slot with
   correlation `none`.
 - **No scale factors.** libxc has every composite wanted (PBE0, B3LYP) as one functional.
-- **`b3lyp` means the form with VWN functional III (RPA), as in Gaussian and libxc**; `b3lyp5`
-  the form with functional V, which is ORCA's `B3LYP`. Dylan to confirm.
+- **B3LYP names (Dylan, 2026-10-11): `b3lyp-gaussian` and `b3lyp-orca`; `b3lyp` means the
+  first.** `b3lyp-gaussian` has the VWN fit to the RPA energy (functional III): B3LYP in
+  Gaussian, NWChem and Psi4, B3LYP/G in ORCA, `hyb_gga_xc_b3lyp` in libxc. `b3lyp-orca` has the
+  fit to the Ceperley–Alder energy (functional V): B3LYP in ORCA, Turbomole and GAMESS,
+  `hyb_gga_xc_b3lyp5` in libxc. The two differ by 37 millihartree for water (PySCF: -76.421747
+  and -76.384599). A third, `hyb_gga_xc_b3lyp3`, is reachable by its libxc name. The comment under
+  `SCF_DATA:set_functional` says this.
 - **libxc's density cutoff is not used.** The adapter drops points whose total density is below
   Tonto's `rho_cutoff`, so the adapter stays pure.
 - **The functional's handle is looked up by name on every batch** and not stored: the glue keeps
@@ -1275,6 +1280,19 @@ Checked for stages 3 and 4 together, on the Mac, gfortran-14: `release` with `-D
 `rgbi_doctor_catches_missing_tools`), the two libxc tests among them; `release` without the
 switch builds, its 13 DFT tests pass, and a libxc name is refused with a message. Not checked:
 Linux, MPI, the Windows cross-build.
+
+House style, put right on 2026-10-11 after Dylan asked about `set_up`:
+
+- `set_up` is not a Tonto name. The two new modules now have the standard layout: `create` and
+  `destroy`, `destroy_ptr_part`, `set_defaults` (no arguments, default values, no arrays), and
+  `create_grids`, which allocates the arrays to a size, in the `create_` vocabulary.
+- Outputs come before inputs: `add_energy_and_potential(name,pot,den)`.
+- A routine that sets nothing is not called `set_`: `get_libxc_functional_info`.
+- Named constants (`THREE`, `FOURTHIRD`, `THREEQUARTERS`, `QUARTER`, `SIX`) in place of bare
+  numbers.
+- Still outside the usual layout, and for Dylan to judge: the new top-level directory `csrc/`
+  for the one C file; and the interface blocks for the C routines, written inside the routines
+  that call them, as `mat{real}.foo` does for `dgemm`.
 
 Not done yet: a meta-GGA is refused with a message (stage 5). The six plot routines in
 `molecule.grid.foo` and `atom.foo` still call the old dispatchers, so they stop on a libxc name

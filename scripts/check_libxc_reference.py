@@ -43,8 +43,9 @@ SAME = [
     ((0, 1, "rks"), X % ("becke88", "lyp"),     F % "blyp"),
     ((0, 1, "rks"), X % ("b3lypgx", "b3lypgc"), F % "hyb_gga_xc_b3lyp"),
     ((0, 1, "rks"), X % ("b3lypgx", "b3lypgc"), F % "b3lyp"),
+    ((0, 1, "rks"), X % ("b3lypgx", "b3lypgc"), F % "b3lyp-gaussian"),
     ((1, 2, "uks"), X % ("b3lypgx", "b3lypgc"), F % "hyb_gga_xc_b3lyp"),
-    ((1, 2, "uks"), X % ("b3lypx", "b3lypc"),   F % "b3lyp5"),
+    ((1, 2, "uks"), X % ("b3lypx", "b3lypc"),   F % "b3lyp-orca"),
 ]
 TOL_SAME = 1.0e-8
 
