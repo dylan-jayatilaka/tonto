@@ -212,6 +212,11 @@ Configure a separate directory for each type you keep.
 | `release-static` | a self-contained binary to give to others | `release`, linked statically against the bundled LAPACK |
 
 - **MPI goes with any of them:** add `-DMPI=1` (below).
+- **libxc goes with any of them:** add `-DLIBXC=ON` to have PBE, PBE0, r2SCAN and
+  the other density functionals of [libxc](https://libxc.gitlab.io). It is built
+  from the copy in `external/libxc`, which `git clone --recursive` fetches, and
+  needs a C compiler. Without it Tonto has the LDA, BLYP and B3LYP functionals.
+  See [`RUNNING_TONTO.md`](RUNNING_TONTO.md).
 - **Your own settings win.** `-DTONTO_ARCH_FLAG=...` (processor tuning) and
   `-DBLA_VENDOR=...` (BLAS) replace the type's choice, except in `reference`,
   which stops rather than build something that is not reproducible.

@@ -1209,6 +1209,11 @@ What is done, and where (branch `libxc`; one row per piece, added as it lands):
 | 5 | `tau` on the grid and its term in the XC matrix, restricted and unrestricted, in the batched builders only; two small helpers shared by both | `molecule.fock.foo`: `add_XC_mx_batched`, `add_density_of_grid_fns`, `add_product_of_grid_fns` | ctest `libxc_energies_match_pyscf` |
 | 5 | The meta-GGA flags, the name `r2scan` for `dft_functional=`, and the stop if `use_batched_xc= FALSE` is given with a meta-GGA | `scf_data.foo`, `types.foo`, `molecule.fock.foo` | the same test |
 
+| 6 | libxc's build files see a build type they know (`Release`); Tonto's `reference`, `fast` and `release-static` stopped them | `CMakeLists.txt`, the *libxc* block | all four build types configure |
+| 6 | The six plot routines for the XC potential and energy go through the entry point, by one helper, `make_r_energy_and_potential` | `dft_functional.foo`, `molecule.grid.foo`, `atom.foo` | five plot jobs give byte-identical cube files before and after; a PBE potential plot now runs |
+| 6 | `-DLIBXC=ON` in CI: Linux-release, Linux-debug, macOS-release, macOS-debug, the full suite, and both release-binary builds (Linux static, Windows cross-build). Not in the MPI and WSL workflows | `.github/workflows/` | the runs themselves |
+| 6 | User pages: the functional keywords and names; the build switch | `docs/RUNNING_TONTO.md` *Density functionals*; the three `docs/BUILDING_ON_*.md`; `CLAUDE.md` §8 | `scripts/check_docs.py` |
+
 Stage 2 (2026-10-11) changes no number. Checked on the Mac, gfortran-14: six small jobs
 (restricted and unrestricted; Slater-type, mixed and gradient functionals), each with the per-atom
 and the batched builders, give output identical at 12 printed digits to the commit before, both in
@@ -1346,10 +1351,12 @@ House style, put right on 2026-10-11 after Dylan asked about `set_up`:
   for the one C file; and the interface blocks for the C routines, written inside the routines
   that call them, as `mat{real}.foo` does for `dgemm`.
 
-Not done yet. The six plot routines in
-`molecule.grid.foo` and `atom.foo` still call the old dispatchers, so they stop on a libxc name
-(in a debug build; in release they would add nothing). No user page describes the keyword or
-`-DLIBXC=ON` yet; that waits for stage 6, when it builds on every platform.
+Stage 6 (2026-10-11). No test needed a blessed reference: the two libxc tests check themselves.
+libxc's C library compiles in 21 seconds at `-j8` on achari2 (energy and potential only), so it
+adds little to a build. On Linux the C compiler is the system `cc` (gcc 13 on Ubuntu 24.04) and
+the Fortran compiler gfortran-14; only the C calling convention is shared, so they need not
+match. Found on the way: `dft_energy` plots with a gradient functional have never worked (the
+routine passes no gradient, and stops in a debug build); left as it is.
 
 ## 12. Static analysis worth adding
 

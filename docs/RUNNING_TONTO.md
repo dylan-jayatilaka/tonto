@@ -44,6 +44,42 @@ The executable can go anywhere. Two things help:
 - For long jobs, copy the executable to a descriptive name —
   `tonto.oxalic-acid` — so concurrent runs can be told apart in `ps`.
 
+## Density functionals
+
+A DFT job has `kind= rks` or `kind= uks` in `scfdata= { }`, and names its
+functional there in one of two ways.
+
+**One keyword for the whole functional**, `dft_functional=`:
+
+| Name | Functional | Needs libxc |
+|---|---|---|
+| `lda` | Slater exchange, VWN correlation (functional V) | no |
+| `xalpha` | Xα exchange | no |
+| `blyp` | Becke 88 exchange, LYP correlation | no |
+| `b3lyp-gaussian`, or `b3lyp` | B3LYP as in Gaussian, NWChem and Psi4 | no |
+| `b3lyp-orca` | B3LYP as in ORCA, Turbomole and GAMESS | no |
+| `pbe` | PBE | yes |
+| `pbe0` | PBE0, with 25 % exact exchange | yes |
+| `r2scan` | r2SCAN | yes |
+| any libxc name | e.g. `hyb_gga_xc_b3lyp`, `hyb_mgga_xc_r2scan0` | yes |
+
+**Two keywords**, `dft_exchange_functional=` and `dft_correlation_functional=`.
+Each takes one of Tonto's own names (`slater`, `xalpha`, `becke88`, `b3lypx`,
+`b3lypgx`; `vwn5`, `vwn3`, `lyp`, `b3lypc`, `b3lypgc`; `none`) or a libxc name
+such as `gga_x_pbe` and `gga_c_pbe`. The two keywords cannot be given together
+with `dft_functional=`.
+
+- **The two B3LYP forms differ** in their local correlation, by 37 millihartree
+  in the energy of a water molecule. Say which one was used.
+- **A libxc name** is the functional's name in the
+  [libxc list](https://libxc.gitlab.io/functionals/), in lower case. Tonto must
+  be built with `-DLIBXC=ON`; otherwise the name is refused.
+- **Not available:** range-separated hybrids, functionals with non-local
+  correlation, and functionals that need the Laplacian of the density.
+- **r2SCAN needs a finer grid than the default.** Its energy error for water at
+  the default `accuracy= medium` is 2e-4 hartree, against 3e-6 for PBE. Use
+  `becke_grid= { set_defaults accuracy= very_high }` or finer.
+
 ## The programs
 
 | Path | Program |
