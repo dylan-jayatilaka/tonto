@@ -3,7 +3,7 @@
 
 Three kinds of check, on water and its cation in cc-pVDZ:
 
-  1. PBE and PBE0 energies against PySCF. The numbers below are typed in from
+  1. PBE, PBE0 and r2SCAN energies against PySCF. The numbers below are typed in from
      PySCF 2.14, which shares no code with Tonto's grid, SCF or exact exchange.
      Tonto's finest grid is used; the tolerance is the one check_dft_reference.py
      uses against g09.
@@ -30,8 +30,10 @@ import tempfile
 PYSCF = {
     (0, 1, "rks", "pbe"):  -76.335028993,
     (0, 1, "rks", "pbe0"): -76.339811822,
+    (0, 1, "rks", "r2scan"): -76.382397984,
     (1, 2, "uks", "pbe"):  -75.883203639,
     (1, 2, "uks", "pbe0"): -75.891279686,
+    (1, 2, "uks", "r2scan"): -75.934178684,
 }
 TOL_PYSCF = 5.0e-6
 

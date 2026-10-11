@@ -126,8 +126,15 @@ Range-separated hybrids need the attenuated Coulomb integrals in the exact and C
 
 ## 6a. Relativity: scalar X2C (Dylan, 2026-10-11)
 
-**Decision: proceed with X2C. Rescue what can be rescued from the old IOTC code, rewrite the
-rest.**
+**Decisions (Dylan, 2026-10-11):**
+
+- Proceed with X2C. Rescue what can be rescued from the old IOTC code, rewrite the rest.
+- **Scalar X2C only, for now.**
+- **No picture-change correction for the density.** It is not required.
+- **Spin–orbit coupling is likely not required for the density either.** It is required for the
+  current density, which belongs to a project not yet recorded and too far ahead to plan now.
+- **The atoms stay as they are** with X2C: the unrestricted SCF on the ground state, then the
+  average over rotations (decision 2 of §2). No `aoc`, no `fon`.
 
 What was found on 2026-10-11. `molecule.rel.foo` was removed in commit `fcbd5a8a` ("Removed
 molecule.rel .nomo .misc for now"). The calls to it in `molecule.scf.foo` (`make_r_DKH1_core_mx`,
@@ -170,20 +177,18 @@ Steps:
    until a relativistic core matrix exists.
 2. **Rescue** from the history (`git show fcbd5a8a^:foofiles/molecule.rel.foo`): the
    $`\mathbf{p}\cdot V\mathbf{p}`$ integrals, the handling of the uncontracted basis, and a
-   finite-nucleus model if one is there. Read the old picture-change code before deciding
-   anything about it; its quality is not known.
+   finite-nucleus model if one is there.
 3. **Write** the scalar X2C core matrix from equations (1) to (3). Check: one-electron ions
    against the Dirac energies; a heavy closed-shell atom against published X2C or Dirac–Fock
    energies and against PySCF's `x2c`; light atoms against def2 results.
-4. **Scattering.** Measure the size of the picture-change error on the structure factors of one
-   heavy atom before writing any correction. Bučinský, Jayatilaka and Grabowsky (*J. Phys. Chem.
-   A* 120, 6650, 2016) found spin–orbit coupling and picture change negligible for the structure
-   factors of HgPh₂ and BiPh₃, and scalar relativity and electron correlation important at low
-   and medium angle.
-5. **Not planned: spin–orbit coupling.** It needs the spin-dependent part of $`W`$, complex
-   two-component orbitals (Tonto's `gchf` kind for Hartree–Fock; nothing yet for DFT), a
-   two-electron spin–orbit correction, and for open-shell atoms an average over the spinors of
-   the open shell. By the 2016 result it does not matter for scattering.
+4. **Not planned: a picture-change correction** (decision above). Bučinský, Jayatilaka and
+   Grabowsky (*J. Phys. Chem. A* 120, 6650, 2016) found picture change and spin–orbit coupling
+   negligible for the structure factors of HgPh₂ and BiPh₃, and scalar relativity and electron
+   correlation important at low and medium angle. The old picture-change code in
+   `molecule.xtal.foo` is left commented out.
+5. **Not planned: spin–orbit coupling** (decision above). For the record, it would need the
+   spin-dependent part of $`W`$, complex two-component orbitals (Tonto's `gchf` kind for
+   Hartree–Fock; nothing yet for DFT), and a two-electron spin–orbit correction.
 
 ## 7. Order of work
 
@@ -200,8 +205,11 @@ it does not change results.
 
 ## 8. Log
 
-- 2026-10-11: libxc, PBE0 and the keyword `dft_functional=` are on branch `libxc`
-  (`docs/TASK_DFT_STANDARDISATION.md` §11). Found that no relativistic Hamiltonian runs (§6a);
+- 2026-10-11: libxc, PBE0, r2SCAN and the keyword `dft_functional=` are on branch `libxc`
+  (`docs/TASK_DFT_STANDARDISATION.md` §11), in a build with `-DLIBXC=ON`. r2SCAN's energy needs a
+  much finer grid than PBE's: at the default `accuracy= medium` its error is 2.3e-4 hartree for
+  water against 3e-6 for PBE. The effect on the density and on a refinement is to be measured
+  before r2SCAN is used in the protocol assessment. Found that no relativistic Hamiltonian runs (§6a);
   decision to go to X2C.
 
 - 2026-10-05: the x2c sets renamed to their literature names (`x2c-SVPall`, `x2c-TZVPall`,

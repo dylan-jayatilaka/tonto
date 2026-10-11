@@ -1204,10 +1204,16 @@ What is done, and where (branch `libxc`; one row per piece, added as it lands):
 | 4 | The keyword `dft_functional=`: `lda`, `xalpha`, `blyp`, `b3lyp`, `b3lyp-gaussian`, `b3lyp-orca`, `pbe`, `pbe0`, or any libxc name. Refused together with either old keyword | `foofiles/scf_data.foo`: `set_functional`, `read_functional`, and the two old read routines; two members in `types.foo` | the same test |
 | 4 | The test of libxc in a whole SCF: PBE and PBE0 against PySCF, libxc against hand-written, one keyword against two, refused inputs | `scripts/check_libxc_reference.py`, `tests/CMakeLists.txt` | |
 
+| 5 | The kinetic energy density `tau` in the density bundle and `v_tau` in the potential bundle | `types.foo`, `xc_density.foo`, `xc_potential.foo` | |
+| 5 | libxc's meta-GGA call in the adapter; a functional that needs the Laplacian of the density is refused | `dft_functional.foo`: `add_libxc_energy_and_potential`; `csrc/tonto_libxc.c` | |
+| 5 | `tau` on the grid and its term in the XC matrix, restricted and unrestricted, in the batched builders only; two small helpers shared by both | `molecule.fock.foo`: `add_XC_mx_batched`, `add_density_of_grid_fns`, `add_product_of_grid_fns` | ctest `libxc_energies_match_pyscf` |
+| 5 | The meta-GGA flags, the name `r2scan` for `dft_functional=`, and the stop if `use_batched_xc= FALSE` is given with a meta-GGA | `scf_data.foo`, `types.foo`, `molecule.fock.foo` | the same test |
+
 Stage 2 (2026-10-11) changes no number. Checked on the Mac, gfortran-14: six small jobs
 (restricted and unrestricted; Slater-type, mixed and gradient functionals), each with the per-atom
 and the batched builders, give output identical at 12 printed digits to the commit before, both in
-debug builds; no test input switches the batched builders on, so this is their only check. The 21
+debug builds. The batched builders are the default (`use_batched_xc` is TRUE unless set), so it
+is the per-atom builders that no test input reaches, and this is their only check. The 21
 DFT tests pass in `debug` and in `release`, so the new routines are pure where they claim to be.
 The argument counts: the unrestricted gradient call went from 17 arguments to 3, the unrestricted
 grid density from 18 to 11, its matrix builder from 21 to 13.
@@ -1281,6 +1287,52 @@ Checked for stages 3 and 4 together, on the Mac, gfortran-14: `release` with `-D
 switch builds, its 13 DFT tests pass, and a libxc name is refused with a message. Not checked:
 Linux, MPI, the Windows cross-build.
 
+Stage 5 (2026-10-11): r2SCAN and other meta-GGAs. With $`D`$ the density matrix, $`\chi_a`$ the
+basis functions and $`w`$ the quadrature weights, the kinetic energy density of one spin channel is
+
+```math
+\tau = \tfrac12 \sum_{ab} D_{ab}\, \nabla\chi_a\cdot\nabla\chi_b \qquad (4)
+```
+
+and the functional's derivative $`v_\tau`$ with respect to it adds to the XC matrix
+
+```math
+V_{ab} \mathrel{+}= \tfrac12 \sum_{\text{points}} w\, v_\tau\, \nabla\chi_a\cdot\nabla\chi_b \qquad (5)
+```
+
+Only the batched builders make these. The per-atom builders stop with a message on a meta-GGA.
+
+Checked in a debug build on the Mac. Water and its cation, cc-pVDZ, against PySCF 2.14:
+
+| | Tonto, `accuracy= best` | PySCF | difference |
+|---|---|---|---|
+| RKS r2SCAN | -76.3823990198 | -76.382397984 | 1.0e-6 |
+| UKS r2SCAN, cation | -75.9341794724 | -75.934178684 | 7.9e-7 |
+| RKS TPSS (`mgga_x_tpss`, `mgga_c_tpss`) | -76.4243255855 | -76.424325339 | 2.5e-7 |
+| UKS TPSS, cation | -75.9780284678 | -75.978030267 | 1.8e-6 |
+| RKS r2SCAN0 (`hyb_mgga_xc_r2scan0`) | -76.3729256890 | -76.372924975 | 7e-7 |
+
+**The remaining difference is Tonto's radial grid, and r2SCAN needs a much finer grid than PBE.**
+On unpruned grids with 100 and 150 radial points r2SCAN gives -76.3823976179 and -76.3823979644,
+the second 2e-8 from PySCF; PBE gives -76.3350289944 on both. Error against those, by setting:
+
+| `accuracy=` | r2SCAN | PBE |
+|---|---|---|
+| `low` | 1.9e-4 | -4.1e-5 |
+| `medium` (the default) | -2.3e-4 | -3.0e-6 |
+| `high` | -6.1e-5 | 1.1e-6 |
+| `very_high` | -2.0e-5 | -2.0e-8 |
+| `extreme` | -9.6e-6 | 5.3e-9 |
+| `best` | -1.1e-6 | 2.0e-9 |
+
+Release build with `-DLIBXC=ON` on the Mac after stage 5: `ctest -L 'short|long|hart'` 138 of
+138, two skipped. CI on the branch as pushed before stage 5 (no libxc in those builds):
+Linux-debug and Linux-MPI pass.
+
+So at any setting r2SCAN's energy error is 100 to 1000 times PBE's. What that does to the density,
+which is what a refinement uses, has not been measured. It should be, before r2SCAN is used at the
+default grid in a refinement study.
+
 House style, put right on 2026-10-11 after Dylan asked about `set_up`:
 
 - `set_up` is not a Tonto name. The two new modules now have the standard layout: `create` and
@@ -1294,7 +1346,7 @@ House style, put right on 2026-10-11 after Dylan asked about `set_up`:
   for the one C file; and the interface blocks for the C routines, written inside the routines
   that call them, as `mat{real}.foo` does for `dgemm`.
 
-Not done yet: a meta-GGA is refused with a message (stage 5). The six plot routines in
+Not done yet. The six plot routines in
 `molecule.grid.foo` and `atom.foo` still call the old dispatchers, so they stop on a libxc name
 (in a debug build; in release they would add nothing). No user page describes the keyword or
 `-DLIBXC=ON` yet; that waits for stage 6, when it builds on every platform.

@@ -668,6 +668,7 @@ contains
       case("b3lyp-orca    "); exch = "b3lypx";          corr = "b3lypc"
       case("pbe           "); exch = "gga_x_pbe";       corr = "gga_c_pbe"
       case("pbe0          "); exch = "hyb_gga_xc_pbeh"; corr = "none"
+      case("r2scan        "); exch = "mgga_x_r2scan";   corr = "mgga_c_r2scan"
       case default
          DIE_IF(NOT DFT_FUNCTIONAL:is_libxc_functional(name),"unknown DFT functional: "//trim(name))
          exch = name
@@ -680,13 +681,14 @@ contains
 
    end
 
-   get_libxc_functional_info(name,uses_gradient,a0) :: private
+   get_libxc_functional_info(name,uses_gradient,uses_tau,a0) :: private
    ! Check that libxc can evaluate the functional "name" for Tonto, and stop
    ! with a message if not. Return "uses_gradient", whether it uses the
-   ! density gradient, and "a0", its fraction of exact exchange.
+   ! density gradient; "uses_tau", whether it uses the kinetic energy
+   ! density; and "a0", its fraction of exact exchange.
       self :: IN
       name :: STR, IN
-      uses_gradient :: BIN, OUT
+      uses_gradient,uses_tau :: BIN, OUT
       a0 :: REAL, OUT
 
       found :: BIN
@@ -695,10 +697,11 @@ contains
       DFT_FUNCTIONAL:get_libxc_info(name,found,rung,a0)
 
       DIE_IF(NOT found,"libxc has no functional called "//trim(name)//", or this Tonto was built without libxc")
-      DIE_IF(rung>2,"the functional "//trim(name)//" needs the kinetic energy density, which Tonto does not yet make")
+      DIE_IF(rung>3,"the functional "//trim(name)//" needs the Laplacian of the density, which Tonto does not make")
       DIE_IF(a0<ZERO,"the functional "//trim(name)//" needs range separation or non-local correlation, which Tonto does not have")
 
-      uses_gradient = rung==2
+      uses_gradient = rung>=2
+      uses_tau      = rung==3
 
    end
 
@@ -714,8 +717,10 @@ contains
       .DFT_correlation_functional.to_lower_case
       .DFT_functional = " "
 
+      .using_meta_GGA_correlation = FALSE
+
       if (DFT_FUNCTIONAL:is_libxc_functional(.DFT_correlation_functional)) then
-         .get_libxc_functional_info(.DFT_correlation_functional,.using_GGA_correlation,a0)
+         .get_libxc_functional_info(.DFT_correlation_functional,.using_GGA_correlation,.using_meta_GGA_correlation,a0)
          DIE_IF(a0>ZERO,"give a hybrid functional as the exchange functional, or by dft_functional=")
          return
       end
@@ -746,10 +751,11 @@ contains
       .DFT_exchange_functional.to_lower_case
       .DFT_functional = " "
 
-      .using_hybrid_exchange = FALSE
+      .using_hybrid_exchange   = FALSE
+      .using_meta_GGA_exchange = FALSE
 
       if (DFT_FUNCTIONAL:is_libxc_functional(.DFT_exchange_functional)) then
-         .get_libxc_functional_info(.DFT_exchange_functional,.using_GGA_exchange,a0)
+         .get_libxc_functional_info(.DFT_exchange_functional,.using_GGA_exchange,.using_meta_GGA_exchange,a0)
          if (a0>ZERO) then
             .using_hybrid_exchange  = TRUE
             .hybrid_exchange_factor = a0
@@ -3054,6 +3060,14 @@ contains
       res = .using_delta_build AND .iteration>0
       ! Every .delta_build_period iterations, rebuild from the full density
       if (res AND .delta_build_period>0) res = mod(.iteration,.delta_build_period)/=0
+   end
+
+   using_meta_GGA_functional result (res) :: pure
+   ! Return TRUE if a functional of the kinetic energy density (a meta-GGA)
+   ! is being used in the DFT calculation.
+      self :: IN
+      res :: BIN
+      res = .using_meta_GGA_exchange OR .using_meta_GGA_correlation
    end
 
    using_GGA_functional result (res) :: pure

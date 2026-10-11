@@ -61,7 +61,8 @@ void tonto_xc_handle_(int *handle, const char *name, const int *nspin, size_t le
 }
 
 /* Set "rung" to what the functional needs as input: 1 the density, 2 also
-   its gradient, 3 also the kinetic energy density; 0 for anything else. */
+   its gradient, 3 also the kinetic energy density, 4 also the Laplacian of
+   the density; 0 for anything else. */
 void tonto_xc_rung_(const int *handle, int *rung)
 {
    const xc_func_type *p = lookup(handle);
@@ -72,6 +73,7 @@ void tonto_xc_rung_(const int *handle, int *rung)
       case XC_FAMILY_GGA:  case XC_FAMILY_HYB_GGA:  *rung = 2; break;
       case XC_FAMILY_MGGA: case XC_FAMILY_HYB_MGGA: *rung = 3; break;
    }
+   if (*rung == 3 && (p->info->flags & XC_FLAGS_NEEDS_LAPLACIAN)) *rung = 4;
 }
 
 /* Set "a0" to the fraction of exact exchange in the functional; zero for

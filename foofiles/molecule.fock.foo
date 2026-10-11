@@ -5870,6 +5870,8 @@ contains
 
       E,E_xc :: REAL
 
+      DIE_IF(.SCF_data.using_meta_GGA_functional AND NOT .SCF_data.using_batched_XC,"a meta-GGA functional needs use_batched_xc= TRUE")
+
       if (.SCF_data.using_batched_XC) then
          .add_XC_mx_batched(K,E,E_xc)
       else if (.SCF_data.using_GGA_functional) then
@@ -5889,6 +5891,8 @@ contains
       Ka,Kb :: MAT{REAL}, INOUT
 
       E,Ea,Eb,E_xc :: REAL
+
+      DIE_IF(.SCF_data.using_meta_GGA_functional AND NOT .SCF_data.using_batched_XC,"a meta-GGA functional needs use_batched_xc= TRUE")
 
       if (.SCF_data.using_batched_XC) then
             .add_XC_mx_batched(Ka,Kb,E,Ea,Eb,E_xc)
@@ -6371,7 +6375,11 @@ contains
    ! gradients (GGA only), and Ds the matching block of D: X = G0 Ds,
    ! rho = sum G0*X, grad rho = 2 sum G*X; with V0 the XC potential and
    ! Vx,Vy,Vz its gradient part, Z = (w V0/2) G0 + w Vx Gx + w Vy Gy +
-   ! w Vz Gz, and the XC matrix block is G0^T Z + Z^T G0.
+   ! w Vz Gz, and the XC matrix block is G0^T Z + Z^T G0. A meta-GGA also
+   ! needs the kinetic energy density tau = (1/2) sum over x,y,z of
+   ! sum G*(G Ds), and adds the block (1/2) sum over x,y,z of
+   ! G^T (w Vtau) G, with Vtau the derivative of the functional with
+   ! respect to tau.
       self :: INOUT
       K :: MAT{REAL}, INOUT
       E :: REAL, OUT
@@ -6393,10 +6401,11 @@ contains
       bf :: VEC{INT}@
       pos :: VEC{REAL}(3)
       sh :: SHELL1
-      gga :: BIN
+      gga,mgga :: BIN
       b,f,np,ns,q,p,j,ix,s,fs,ls,fa,na,off :: INT
 
-      gga = .SCF_data.using_GGA_functional
+      gga  = .SCF_data.using_GGA_functional
+      mgga = .SCF_data.using_meta_GGA_functional
 
       if (.XC_pts.deallocated) .make_XC_grid
       if (.XC_batch_first.deallocated) .make_XC_batches
@@ -6477,8 +6486,7 @@ contains
          Ds = .density_mx.r(bf,bf)
          X.create(np,ns)
          X.to_product_of_BLAS(G0,Ds)
-         Ds.destroy
-         den.create_grids(np,1,gga)
+         den.create_grids(np,1,gga,mgga)
          do j = 1,ns
             den.rho(:,1) = den.rho(:,1) + G0(:,j)*X(:,j)
          end
@@ -6491,6 +6499,13 @@ contains
             den.grad = TWO*den.grad
          end
          X.destroy
+         if (mgga) then
+            .add_density_of_grid_fns(den.tau(:,1),Gx,Ds)
+            .add_density_of_grid_fns(den.tau(:,1),Gy,Ds)
+            .add_density_of_grid_fns(den.tau(:,1),Gz,Ds)
+            den.tau = HALF*den.tau
+         end
+         Ds.destroy
 
          ! Functional
          wt.create(np)
@@ -6505,6 +6520,7 @@ contains
                pot.v_grad(:,ix,1) = wt*pot.v_grad(:,ix,1)
             end
          end
+         if (mgga) pot.v_tau(:,1) = QUARTER*wt*pot.v_tau(:,1)
          den.destroy_ptr_part
          wt.destroy
 
@@ -6515,9 +6531,6 @@ contains
                Z(:,j) = pot.v_rho(:,1)*G0(:,j) + pot.v_grad(:,1,1)*Gx(:,j) &
                       + pot.v_grad(:,2,1)*Gy(:,j) + pot.v_grad(:,3,1)*Gz(:,j)
             end
-            Gz.destroy
-            Gy.destroy
-            Gx.destroy
          else
             do j = 1,ns
                Z(:,j) = pot.v_rho(:,1)*G0(:,j)
@@ -6525,10 +6538,20 @@ contains
          end
          Vs.create(ns,ns)
          Vs.to_product_of_BLAS(G0,Z,transpose_a=TRUE)
+         if (mgga) then
+            .add_product_of_grid_fns(Vs,Gx,pot.v_tau(:,1))
+            .add_product_of_grid_fns(Vs,Gy,pot.v_tau(:,1))
+            .add_product_of_grid_fns(Vs,Gz,pot.v_tau(:,1))
+         end
          V(bf,bf) = V(bf,bf) + Vs + transpose(Vs)
 
          Vs.destroy
          Z.destroy
+         if (gga) then
+            Gz.destroy
+            Gy.destroy
+            Gx.destroy
+         end
          pot.destroy_ptr_part
          G0.destroy
          bf.destroy
@@ -6573,10 +6596,11 @@ contains
       bf :: VEC{INT}@
       pos :: VEC{REAL}(3)
       sh :: SHELL1
-      gga :: BIN
+      gga,mgga :: BIN
       b,f,np,ns,q,p,j,ix,s,fs,ls,fa,na,off :: INT
 
-      gga = .SCF_data.using_GGA_functional
+      gga  = .SCF_data.using_GGA_functional
+      mgga = .SCF_data.using_meta_GGA_functional
 
       if (.XC_pts.deallocated) .make_XC_grid
       if (.XC_batch_first.deallocated) .make_XC_batches
@@ -6656,7 +6680,7 @@ contains
          ! Alpha and beta densities, and their gradients for a GGA
          Ds.create(ns,ns)
          X.create(np,ns)
-         den.create_grids(np,2,gga)
+         den.create_grids(np,2,gga,mgga)
 
          Ds = .density_mx.a(bf,bf)
          X.to_product_of_BLAS(G0,Ds)
@@ -6670,6 +6694,11 @@ contains
                den.grad(:,3,1) = den.grad(:,3,1) + Gz(:,j)*X(:,j)
             end
             den.grad(:,:,1) = TWO*den.grad(:,:,1)
+         end
+         if (mgga) then
+            .add_density_of_grid_fns(den.tau(:,1),Gx,Ds)
+            .add_density_of_grid_fns(den.tau(:,1),Gy,Ds)
+            .add_density_of_grid_fns(den.tau(:,1),Gz,Ds)
          end
 
          Ds = .density_mx.b(bf,bf)
@@ -6685,6 +6714,13 @@ contains
             end
             den.grad(:,:,2) = TWO*den.grad(:,:,2)
          end
+         if (mgga) then
+            .add_density_of_grid_fns(den.tau(:,2),Gx,Ds)
+            .add_density_of_grid_fns(den.tau(:,2),Gy,Ds)
+            .add_density_of_grid_fns(den.tau(:,2),Gz,Ds)
+         end
+
+         if (mgga) den.tau = HALF*den.tau
 
          X.destroy
          Ds.destroy
@@ -6704,6 +6740,10 @@ contains
                pot.v_grad(:,ix,s) = wt*pot.v_grad(:,ix,s)
             end
          end
+         if (mgga) then
+            pot.v_tau(:,1) = QUARTER*wt*pot.v_tau(:,1)
+            pot.v_tau(:,2) = QUARTER*wt*pot.v_tau(:,2)
+         end
          den.destroy_ptr_part
          wt.destroy
 
@@ -6722,6 +6762,11 @@ contains
             end
          end
          Vs.to_product_of_BLAS(G0,Z,transpose_a=TRUE)
+         if (mgga) then
+            .add_product_of_grid_fns(Vs,Gx,pot.v_tau(:,1))
+            .add_product_of_grid_fns(Vs,Gy,pot.v_tau(:,1))
+            .add_product_of_grid_fns(Vs,Gz,pot.v_tau(:,1))
+         end
          Va(bf,bf) = Va(bf,bf) + Vs + transpose(Vs)
 
          if (gga) then
@@ -6735,6 +6780,11 @@ contains
             end
          end
          Vs.to_product_of_BLAS(G0,Z,transpose_a=TRUE)
+         if (mgga) then
+            .add_product_of_grid_fns(Vs,Gx,pot.v_tau(:,2))
+            .add_product_of_grid_fns(Vs,Gy,pot.v_tau(:,2))
+            .add_product_of_grid_fns(Vs,Gz,pot.v_tau(:,2))
+         end
          Vb(bf,bf) = Vb(bf,bf) + Vs + transpose(Vs)
 
          Vs.destroy
@@ -6768,6 +6818,50 @@ contains
    end
 
 ! Set functional
+
+   add_density_of_grid_fns(res,G,D) :: leaky, PURE
+   ! Add to "res", at each grid point, the sum over functions a and b of
+   ! G(point,a) D(a,b) G(point,b), where "G" holds the values of the
+   ! functions on the grid points and "D" is a density matrix block.
+      self :: IN
+      res :: VEC{REAL}, INOUT
+      G,D :: MAT{REAL}, IN
+
+      X :: MAT{REAL}@
+      j :: INT
+
+      X.create(G.dim1,G.dim2)
+      X.to_product_of_BLAS(G,D)
+      do j = 1,G.dim2
+         res = res + G(:,j)*X(:,j)
+      end
+      X.destroy
+
+   end
+
+   add_product_of_grid_fns(V,G,w) :: leaky, PURE
+   ! Add to "V" the matrix with elements, for functions a and b, the sum
+   ! over grid points of G(point,a) w(point) G(point,b), where "G" holds
+   ! the values of the functions on the grid points.
+      self :: IN
+      V :: MAT{REAL}, INOUT
+      G :: MAT{REAL}, IN
+      w :: VEC{REAL}, IN
+
+      Z,P :: MAT{REAL}@
+      j :: INT
+
+      Z.create(G.dim1,G.dim2)
+      do j = 1,G.dim2
+         Z(:,j) = w*G(:,j)
+      end
+      P.create(G.dim2,G.dim2)
+      P.to_product_of_BLAS(G,Z,transpose_a=TRUE)
+      V = V + P
+      P.destroy
+      Z.destroy
+
+   end
 
    set_XC_energy_and_potential(pot,den) :: leaky, PURE
    ! Set "pot", the exchange correlation energy per particle and the

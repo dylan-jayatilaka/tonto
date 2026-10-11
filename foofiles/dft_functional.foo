@@ -194,7 +194,8 @@ contains
    get_libxc_info(name,found,rung,a0) :: selfless
    ! For the functional libxc calls "name": "found" is TRUE if libxc has it;
    ! "rung" says what it needs, 1 the density, 2 also its gradient, 3 also
-   ! the kinetic energy density; "a0" is its fraction of exact exchange, or
+   ! the kinetic energy density, 4 also the Laplacian of the density; "a0"
+   ! is its fraction of exact exchange, or
    ! is negative if the functional needs range separation or non-local
    ! correlation, which Tonto does not have. "found" is FALSE in a Tonto
    ! built without libxc.
@@ -345,8 +346,12 @@ contains
    !       V0 = vrho,   Vn = 2 vsigma nabla rho
    ! and with two
    !       V0a = vrho_a,   Vna = 2 vsigma_aa nabla rho_a + vsigma_ab nabla rho_b
-   ! and likewise for beta. A point whose total density is below ".rho_cutoff"
-   ! adds nothing. The routines called are in csrc/tonto_libxc.c.
+   ! and likewise for beta. For a functional of the kinetic energy density
+   ! tau, libxc also takes tau and returns vtau, the derivative with respect
+   ! to it, which is added to "pot.v_tau" unchanged. A functional that needs
+   ! the Laplacian of the density cannot be used. A point whose total density
+   ! is below ".rho_cutoff" adds nothing. The routines called are in
+   ! csrc/tonto_libxc.c.
    ! NOTE: they are declared pure below, which the compiler cannot check. The
    ! evaluations change only their output arrays. tonto_xc_handle sets a
    ! functional up the first time it is named and after that only looks it up.
@@ -375,9 +380,15 @@ contains
             rho,sigma :: VEC{REAL}(*), IN
             exc,vrho,vsigma :: VEC{REAL}(*), INOUT
          end
+         tonto_xc_mgga_exc_vxc(handle,np,rho,sigma,lapl,tau,exc,vrho,vsigma,vlapl,vtau) :: pure
+            handle,np :: INT, IN
+            rho,sigma,lapl,tau :: VEC{REAL}(*), IN
+            exc,vrho,vsigma,vlapl,vtau :: VEC{REAL}(*), INOUT
+         end
       end
 
       rho,sigma,exc,vrho,vsigma :: VEC{REAL}@
+      lapl,tau,vlapl,vtau :: VEC{REAL}@
       ga,gb :: VEC{REAL}(3)
       handle,rung,n_pt,n_spin,n :: INT
 
@@ -389,8 +400,9 @@ contains
       call tonto_xc_handle(handle,trim(name),n_spin)
       STOP_IF(handle==0,"libxc has no functional of this name")
       call tonto_xc_rung(handle,rung)
-      STOP_IF(rung<1 OR rung>2,"only density and gradient functionals of libxc can be used")
-      STOP_IF(rung==2 AND NOT den.has_gradient,"the density gradient is missing")
+      STOP_IF(rung<1 OR rung>3,"this libxc functional needs what Tonto does not make")
+      STOP_IF(rung>=2 AND NOT den.has_gradient,"the density gradient is missing")
+      STOP_IF(rung==3 AND NOT den.has_tau,"the kinetic energy density is missing")
 
       ! The densities, and sigma, with the spin channels of a point together
       rho.create(n_spin*n_pt)
@@ -406,7 +418,7 @@ contains
             rho(2*n  ) = den.rho(n,2)
          end
       end
-      if (rung==2) then
+      if (rung>=2) then
          sigma.create((2*n_spin-1)*n_pt)
          vsigma.create((2*n_spin-1)*n_pt)
          vsigma = ZERO
@@ -426,11 +438,30 @@ contains
          end
       end
 
+      if (rung==3) then
+         ! The kinetic energy density; the Laplacian is not used, and is zero
+         tau.create(n_spin*n_pt)
+         vtau.create(n_spin*n_pt)
+         lapl.create(n_spin*n_pt)
+         vlapl.create(n_spin*n_pt)
+         lapl  = ZERO
+         vlapl = ZERO
+         vtau  = ZERO
+         if (n_spin==1) then
+            tau = den.tau(:,1)
+         else
+            do n = 1,n_pt
+               tau(2*n-1) = den.tau(n,1)
+               tau(2*n  ) = den.tau(n,2)
+            end
+         end
+      end
+
       ! Evaluate
-      if (rung==1) then
-         call tonto_xc_lda_exc_vxc(handle,n_pt,rho,exc,vrho)
-      else
-         call tonto_xc_gga_exc_vxc(handle,n_pt,rho,sigma,exc,vrho,vsigma)
+      select case (rung)
+      case (1); call tonto_xc_lda_exc_vxc(handle,n_pt,rho,exc,vrho)
+      case (2); call tonto_xc_gga_exc_vxc(handle,n_pt,rho,sigma,exc,vrho,vsigma)
+      case (3); call tonto_xc_mgga_exc_vxc(handle,n_pt,rho,sigma,lapl,tau,exc,vrho,vsigma,vlapl,vtau)
       end
 
       ! Add the energy per particle and the potentials
@@ -441,6 +472,8 @@ contains
             pot.v_rho(n,1) = pot.v_rho(n,1) + vrho(n)
             if (rung==1) cycle
             pot.v_grad(n,:,1) = pot.v_grad(n,:,1) + TWO*vsigma(n)*den.grad(n,:,1)
+            if (rung==2) cycle
+            pot.v_tau(n,1) = pot.v_tau(n,1) + vtau(n)
          end
       else
          do n = 1,n_pt
@@ -453,11 +486,20 @@ contains
             gb = den.grad(n,:,2)
             pot.v_grad(n,:,1) = pot.v_grad(n,:,1) + TWO*vsigma(3*n-2)*ga + vsigma(3*n-1)*gb
             pot.v_grad(n,:,2) = pot.v_grad(n,:,2) + TWO*vsigma(3*n  )*gb + vsigma(3*n-1)*ga
+            if (rung==2) cycle
+            pot.v_tau(n,1) = pot.v_tau(n,1) + vtau(2*n-1)
+            pot.v_tau(n,2) = pot.v_tau(n,2) + vtau(2*n  )
          end
       end
 
       ! Clean up
-      if (rung==2) then
+      if (rung==3) then
+         vlapl.destroy
+         lapl.destroy
+         vtau.destroy
+         tau.destroy
+      end
+      if (rung>=2) then
          vsigma.destroy
          sigma.destroy
       end
