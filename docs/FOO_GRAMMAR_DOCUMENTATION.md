@@ -427,7 +427,8 @@ subroutines). A `selfless` procedure has no `self`.
 | Attribute | Meaning |
 |---|---|
 | `pure` / `elemental` | **Fortran** keywords — the procedure must be side-effect free (see the assertion note below) |
-| `PURE` / `ELEMENTAL` | **C macros** (uppercase) — expand at compile time; *not* subject to the Fortran purity constraint |
+| `PURE` / `ELEMENTAL` | **C macros** (uppercase) — `pure` and `pure elemental` in an optimised build, nothing in a debug build |
+| `NON_MPI_PURE` | **C macro** — `pure` in a serial optimised build, nothing in a parallel (MPI) or debug build |
 | `get_from(MODULE, …)` | inherit the body from a template (see §9) |
 | `selfless` | no implicit `self` argument |
 | `routinal` / `functional` | the first argument is a *procedure* (with an explicit interface), not a `self` variable |
@@ -464,6 +465,19 @@ subroutines). A `selfless` procedure has no `self`.
 > `PLOT_GRID:volume` in August 2026: declared `pure`, calling
 > `MAT{INTRINSIC}:determinant`, which is `PURE` because it contains `ENSURE`. It
 > broke every debug build, on every compiler, and sat red in CI for a day.
+>
+> **`NON_MPI_PURE`: pure, except in a parallel build.** A `parallel do` locks the
+> loop through the global `tonto`, and a `PARALLEL_SUM` calls MPI. Neither is
+> allowed in a pure procedure, and both vanish in a serial build. So a procedure
+> that contains one, and every `PURE` procedure that calls it, is declared
+> `NON_MPI_PURE`: the compiler checks its purity in a serial build and not in a
+> parallel one. Every other `PURE` procedure stays pure under MPI. Declaring such
+> a procedure `PURE` compiles in a serial build and fails only in a parallel
+> optimised one:
+>
+> ```
+> Error: Subroutine call to 'get_full_sd' at (1) is not PURE
+> ```
 >
 > **The rule, and which way to fix it.** Prefer making the *callee* lower-case
 > `pure`, so purity propagates as far as it honestly can. You can only do that if

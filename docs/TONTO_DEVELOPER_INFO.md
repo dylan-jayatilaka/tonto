@@ -136,15 +136,16 @@ The reduction never runs; each rank keeps 1/N of the answer, silently. Four such
 The mirror image, and the reason there is no runtime check for pitfall 2. This is fine:
 
 ```foo
-SHELL1QUARTET:make_esfs_ss_0000     ! called from inside an outer `parallel do`
+SPACEGROUP:get_full_sd              ! called from inside an outer `parallel do`
    parallel do k = 1,n              ! runs SERIALLY, full range, on every rank
    ...
-   PARALLEL_SUM(v11)                ! skipped -- and skipping is RIGHT
+   PARALLEL_SUM(sd)                 ! skipped -- and skipping is RIGHT
 ```
 
 With an outer lock held the inner loop is serial, so each rank already holds the whole answer and
-there is nothing to combine. This is "MPI on the outside", and it is pervasive —
-`shell1quartet.foo` alone has 17 such loops. A runtime "abort on suppressed reduction" was
+there is nothing to combine. This is "MPI on the outside", and it is common. (The 17 integral
+kernels `SHELL1QUARTET:make_esfs_*` had such loops over primitive pairs until 2026-10-10; they
+are plain `do` loops now, since a reduction per shell quartet could never pay.) A runtime "abort on suppressed reduction" was
 implemented and **withdrawn** because it fires on all of them. Only *lexical* containment is a
 bug, which is why the enforcement is a static lint.
 
@@ -222,13 +223,22 @@ two defects that had been invisible.
 ### Pitfall 7 — `PURE` versus `pure`
 
 Upper-case `PURE`/`ELEMENTAL` are **macros** (`include/macros.in`), `#undef`'d to nothing under
-`USE_PRECONDITIONS` and under `MPI`. Lower-case `pure` is passed straight through as the Fortran
-keyword and stays pure in every build.
+`USE_PRECONDITIONS`. Lower-case `pure` is passed straight through as the Fortran keyword and
+stays pure in every build.
 
 So a routine containing `ENSURE`, `DIE`, `WARN` — anything that writes `tonto` — must be declared
 **`PURE`**, never `pure`. Get it wrong and it compiles in release (where `ENSURE` vanishes) and
-fails only in debug or MPI, with gfortran's thoroughly misleading *"There is no specific
+fails only in debug, with gfortran's thoroughly misleading *"There is no specific
 subroutine for the generic `ensure_`"* rather than a purity error.
+
+**An MPI build keeps `PURE`** (since 2026-10-10; before that it switched it off everywhere). So
+in a parallel release build the compiler forbids I/O, and any other side effect, in every `PURE`
+routine. A routine with a `parallel do` or a `PARALLEL_*` reduction is not pure under MPI — the
+lock changes `tonto` and the reduction calls MPI — and is declared **`NON_MPI_PURE`**: `pure` in
+a serial optimised build, nothing under MPI or in debug. So is every `PURE` routine that calls
+one. Forgetting compiles in serial and fails only in a parallel *release* build, with
+*"Subroutine call to ... is not PURE"*; gfortran's line number for it can be a few lines late,
+so look for the call just above. Build a parallel release tree after touching such a routine.
 
 ### Pitfall 8 — after a per-rank region, the ranks' object state diverges
 

@@ -3820,7 +3820,7 @@ public final class FooToFortran {
     // ----------------------------------------------------- attribute parsing
 
     static final class Attrs {
-        boolean pure, PURE, elemental, ELEMENTAL, recursive, leaky, selfless, routinal, functional;
+        boolean pure, PURE, nonMpiPure, elemental, ELEMENTAL, recursive, leaky, selfless, routinal, functional;
         boolean privateAcc, publicAcc, template, inherited, inlinedByFoo;
         String getFromTarget, signatureComment;
         FooParser.AttrContext getFromAttr;
@@ -3838,6 +3838,7 @@ public final class FooToFortran {
                 String raw = at.getText();
                 switch (raw.toLowerCase(Locale.ROOT)) {
                     case "pure":      if (raw.equals("PURE")) a.PURE = true; else a.pure = true; break;
+                    case "non_mpi_pure": a.nonMpiPure = true; break;  // the macro NON_MPI_PURE: pure unless MPI or debug
                     case "elemental": if (raw.equals("ELEMENTAL")) a.ELEMENTAL = true; else a.elemental = true; break;
                     case "recursive": a.recursive = true; break;
                     case "leaky":     a.leaky = true; break;
@@ -3860,6 +3861,7 @@ public final class FooToFortran {
             else if (ELEMENTAL) p.append("ELEMENTAL");
             else if (pure) p.append("pure");
             else if (PURE) p.append("PURE");
+            else if (nonMpiPure) p.append("NON_MPI_PURE");
             if (recursive) { if (p.length() > 0) p.append(' '); p.append("recursive"); }
             return p.length() == 0 ? null : p.toString();
         }

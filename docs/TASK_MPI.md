@@ -89,6 +89,7 @@ as fresh, and a `pgrep` matching its own shell.
 
 Worth knowing before interpreting any numeric difference:
 
+- *No longer true since 2026-10-11: an MPI build keeps `PURE`; only routines marked `NON_MPI_PURE` lose it. What follows describes the builds measured below.*
 - **`PURE` and `ELEMENTAL` are `#undef`ed across the entire codebase** (`include/macros.in:256`).
   MPI calls are impure and some `PURE` routines contain `PARALLEL_SUM`, so the purity contract
   cannot hold. This is a large codegen change — it costs common-subexpression elimination,

@@ -78,7 +78,7 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## 2026-10-10: MPI -- the CIF desync closed; output makes no broadcasts; `PURE` under MPI waits on a decision
+## CLOSED 2026-10-11: MPI -- the CIF desync; output makes no broadcasts; MPI keeps `PURE`
 
 Branch `mpi-broadcasts-and-pure`, not pushed. Three register rows were taken together.
 
@@ -121,27 +121,38 @@ collectives fell from 10009 to 5049, all of the remainder in reading; `c9o9h8_re
 `h2o_rhf_STO-3G`, `h2o_rhf_cc-pVDZ` and `urea_rhf_STO-3G_HAR` exact;
 `urea_rhf_STO-3G_sph-TFVH_FF_fit` passes the loose bound (0.28%, a gnuplot fit).
 
-**Not yet checked:** Linux; `hart` and fragHAR on 2 processes; 4 processes; a parallel `release`
-build; the MPI short suite as a whole.
+**3. Let MPI keep `PURE`: done** (Dylan chose the honest route, 2026-10-10). The MPI block of
+`include/macros.in` no longer switches `PURE` and `ELEMENTAL` off, so a parallel release build
+checks purity everywhere. A third macro, `NON_MPI_PURE`, is `pure` in a serial optimised build
+and nothing under MPI or in debug; the translator passes it through like `PURE`.
 
-**3. Let MPI keep `PURE`: not started, a decision is owed.** What was established:
+- 128 routine headers carry it: the 45 that contain a `parallel do` or a reduction, the two
+  symmetric reductions in `PARALLEL`, and their `PURE` callers, found by building a parallel
+  release tree until it compiled (most are the property grids of `molecule.grid.foo`; also the
+  J/K builders, the one-electron matrices, three SCF energies, the dispersion corrections in
+  `crystal.foo`, and the procedure argument of `MOLECULE.TD:eigensolve_Davidson`).
+- The 17 integral kernels `SHELL1QUARTET:make_esfs_*` lost their `parallel do` over primitive
+  pairs and their `PARALLEL_SUM`, and stay `PURE` in every build. A reduction per shell quartet
+  could never pay; with no outer parallel loop each process now computes the whole integral.
+- The earlier estimate of about 40 callers was low: the call graph is by name and many callers
+  were not in it.
+- Trap met on the way: gfortran's line number for *"Subroutine call to ... is not PURE"* can be
+  a few lines late, and so name the next routine.
+- The `dgemm`-style route (declare the lock and the MPI calls pure in an interface) was tried on
+  small files and works, but needs an external routine and so a hand-written Fortran file; not
+  taken.
 
-- 59 `PURE` routines contain a `parallel do` or a reduction. 17 of them are the integral kernels
-  `SHELL1QUARTET:make_esfs_*`, each with a `parallel do` over primitive pairs and a
-  `PARALLEL_SUM`. Through their callers about 40 more routine names would lose `PURE` (an upper
-  bound from the call graph, which does not tell overloads apart).
-- Dylan's route, declare the impure calls pure in an interface as `MAT{REAL}:to_product_of_BLAS`
-  does for `dgemm`, was tried on small files with gfortran-14. Declaring `MPI_ALLREDUCE` pure in
-  a local interface compiles, also with two different argument types in one file. The lock is
-  harder: a pure routine may not pass the global `tonto` where it can be changed, and writing
-  through a pointer held in `tonto` is rejected ("cannot appear in a variable definition
-  context"). An external routine declared pure in an interface, which itself uses `tonto`,
-  compiles and is not removed at `-O3`; but Tonto has no hand-written Fortran file to put it in.
-- The reductions would also need `self :: IN` (so `tonto` can be passed from pure code), with
-  `.mpi_error` made a local.
-- An alternative for the 17 kernels: make their loops plain `do`. A reduction per shell quartet
-  can never pay, and with no outer parallel loop every process would compute the whole integral
-  itself, which is still correct.
+**Checked, on the Mac, gfortran-14, with all three steps.** Serial `release`:
+`ctest -L 'short|long|hart'` 136 of 136, two skipped. Parallel `release`
+(`build-mpi-release14`), 4 processes, `ctest -L 'short|hart'`: 85 of 87. The two:
+`carbon_atom_uhf_cc-pVDZ_ANO_aoc`, 8 units in the last digit against the 6 allowed (the *Later*
+entry on the widened bound); and `gly_ala_hart_STO-3G`, the fragment HAR job, which hangs. The
+build of 2026-09-22 (`mpi/`, before this work) does not finish that job on 4 processes either
+(stopped at 300 s; 115 s on one), so it is the open fragHAR item, register row 15 of
+`docs/TASK_MPI.md`, and not new. **A hung MPI test holds ctest for ever: give the MPI tests a
+`TIMEOUT`.**
+
+**Not checked on the Mac:** a debug build with the new macro; Linux. CI covers both.
 
 ## CLOSED 2026-10-10: reproducible builds -- the build types as intents; the `disk_ffs` flake fixed
 
@@ -3726,7 +3737,7 @@ sequencing and the traps: `docs/TASK_CRYSTAL_HOIST.md`.
 
 ## Design (2026-08-03): let MPI keep `PURE`, so the compiler forbids I/O in parallel regions
 
-*2026-10-10: option 1 below (output non-collective) is done. What was established about keeping `PURE`, and the decision owed, are in the handover entry of that date.*
+*Closed 2026-10-11: output is non-collective (option 1 below) and an MPI build keeps `PURE`, with `NON_MPI_PURE` for the routines that are not pure under MPI. See the handover entry of that date.*
 
 Dylan's proposal, and it is a good one: if output inside a parallel region desynchronises the
 ranks, then routines reachable from one should be `pure` — and the *compiler* should enforce it,
@@ -6255,6 +6266,24 @@ reference would bake in a new one. Decide first whether to diagnose the wanderin
 the job — not the other way round.
 
 # Translator and the Foo language
+
+## The translator prints parse complaints during an ordinary build and carries on (2026-10-10)
+
+Seen while building for the MPI work; not looked into. A full build prints nine ANTLR messages,
+*no viable alternative at input ...* or *extraneous input ...*, at three positions: `2013:92`,
+`3226:69` and `3540:65`. Each one dumps several kilobytes of Foo source into the build log, and
+the build goes on to succeed.
+
+- `2013:92` is `foofiles/becke_grid.foo`, in `SG_radius`: an array constructor continued with
+  `&`, with a comment line between the two continued lines. The generated `becke_grid.F90` has
+  the statement right, all 17 values on one line. So here the parser recovers and nothing is lost.
+- The files for `3226:69` and `3540:65` were not identified; the message does not name the file.
+  They are printed near `molecule.main` and `test_parallel` in a parallel build's log.
+
+To do: (1) make the message name the file, and say it once, without the source dump; (2) find
+the other two sites; (3) either accept a comment line inside a continued statement in the
+grammar, or make a parse complaint stop the build, so that a recovery that does lose text cannot
+pass unnoticed. Until (3), check the generated Fortran for the other two sites by eye.
 
 ## Future task: introduce Fortran-2008 `submodule` constructs
 

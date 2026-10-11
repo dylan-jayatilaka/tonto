@@ -177,12 +177,18 @@ Full details in `docs/FOO_GRAMMAR_DOCUMENTATION.md`.
   for porting archived work — merge an `archive/*` branch there, then replay the `:::`→`::`
   change. See `docs/TONTO_REPOSITORY_BRANCHES.md`.
 - **`PURE` vs `pure` — the case matters.** Upper-case `PURE`/`ELEMENTAL` are **macros**
-  (`include/macros.in`), `#undef`'d to nothing under `USE_PRECONDITIONS` and under `MPI`.
-  Lower-case `pure` is passed through as the **literal Fortran keyword** and stays pure in every
-  build. So a routine containing `ENSURE`, `DIE`, `WARN` or any other call that writes `tonto`
-  must be declared `PURE`, never `pure` — otherwise it compiles in release (where `ENSURE`
-  vanishes) and **fails only in a debug or MPI build**, with gfortran's misleading *"There is no
-  specific subroutine for the generic `ensure_`"* rather than a purity error. Cost the debug CI
+  (`include/macros.in`), `#undef`'d to nothing under `USE_PRECONDITIONS`. An MPI build keeps
+  them. Lower-case `pure` is passed through as the **literal Fortran keyword** and stays pure in
+  every build. So a routine containing `ENSURE`, `DIE`, `WARN` or any other call that writes
+  `tonto` must be declared `PURE`, never `pure` — otherwise it compiles in release (where
+  `ENSURE` vanishes) and **fails only in a debug build**, with gfortran's misleading *"There is
+  no specific subroutine for the generic `ensure_`"* rather than a purity error.
+- **`NON_MPI_PURE` is for a routine that is pure except under MPI.** A third macro: `pure` in a
+  serial optimised build, nothing under `MPI` or `USE_PRECONDITIONS`. Use it, not `PURE`, on a
+  routine that has a `parallel do` or a `PARALLEL_*` reduction (they change `tonto` and call
+  MPI), and on every `PURE` routine that calls one. If you forget, a serial build still
+  compiles and **only a parallel release build fails**, with *"Subroutine call to ... is not
+  PURE"*; the line number gfortran gives can be a few lines late. Cost the debug CI
   a red badge on 2026-08-02; see the note at `PARALLEL:reduction_is_allowed`.
 - **Never reach a `WARN`/`ENSURE` through a line continuation.** The sibling trap, and it
   fails the *other* way round — in **release**, not debug. Under an optimised build
@@ -338,7 +344,7 @@ documents (§1), as are the `docs/TASK_*.md` pages.
 
 `DEBUG_FLAGS` defines `USE_PRECONDITIONS`, which in `include/macros.in`:
 
-- **`#undef`s `PURE`**, so a probe can go inside a `PURE` routine. In release, `PURE` is real and
+- **`#undef`s `PURE`** (and `ELEMENTAL`, `NON_MPI_PURE`), so a probe can go inside a `PURE` routine. In release, `PURE` is real and
   a `stdout.show`/`flush` there fails to compile — usually with a misleading "no specific
   subroutine for the generic `flush_`" rather than a purity error.
 - **activates `WARN` / `WARN_IF`**, which exist only when `USE_PRECONDITIONS` is defined and so
