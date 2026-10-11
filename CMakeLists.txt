@@ -283,7 +283,13 @@ if(LIBXC)
     endif()
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "libxc is linked statically" FORCE)
     set(MAXORDER 1 CACHE STRING "libxc: energy and potential only" FORCE)
+    # libxc's build files stop on a build type they do not know, and Tonto's
+    # (reference, fast, release-static) are not CMake's. They see Release; the
+    # optimisation is set below either way.
+    set(_tonto_build_type ${CMAKE_BUILD_TYPE})
+    set(CMAKE_BUILD_TYPE Release)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/libxc EXCLUDE_FROM_ALL)
+    set(CMAKE_BUILD_TYPE ${_tonto_build_type})
     target_compile_options(xc PRIVATE -O2)
     add_library(tonto_libxc STATIC ${CMAKE_CURRENT_SOURCE_DIR}/csrc/tonto_libxc.c)
     target_compile_options(tonto_libxc PRIVATE -O2)
