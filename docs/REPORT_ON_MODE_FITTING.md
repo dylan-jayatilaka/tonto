@@ -1019,9 +1019,9 @@ U_{AB} = \langle \mathbf{u}_A \mathbf{u}_B^{\mathsf T} \rangle
 $`U_{AA}`$ is the ADP of atom $`A`$, (11). $`U_{AB}`$ is not symmetric, and $`U_{BA} = U_{AB}^{\mathsf T}`$. It needs no
 parameter beyond those already in the model.
 
-### 6.2 A product of two Gaussians under displacement
+### 6.2 Basis functions, primitives and their products
 
-The electron density is
+The electron density is a sum over pairs of basis functions,
 
 ```math
 \rho(\mathbf{r}) = \sum_{ab} D_{ab}\, \chi_a(\mathbf{r} - \mathbf{R}_A)\, \chi_b(\mathbf{r} - \mathbf{R}_B) , \qquad (18)
@@ -1029,75 +1029,149 @@ The electron density is
 
 where $`\chi_a`$ is a basis function on atom $`A`$ at position $`\mathbf{R}_A`$, $`\chi_b`$ one on atom $`B`$ at
 $`\mathbf{R}_B`$, and $`D`$ is the **density matrix** from the SCF: $`D_{ab}`$ says how much of the product
-$`\chi_a\chi_b`$ is in the density. Take one Gaussian from each function, with exponents $`\alpha`$ and
-$`\beta`$, and define
+$`\chi_a\chi_b`$ is in the density. Each basis function is a fixed sum (a contraction) of
+**primitive** Gaussians $`\chi_{a\alpha}`$, a polynomial times a Gaussian with exponent $`\zeta_{a\alpha}`$:
 
 ```math
-w_a = \frac{\alpha}{\alpha+\beta}, \qquad w_b = \frac{\beta}{\alpha+\beta}, \qquad
-\mathbf{P} = w_a \mathbf{R}_A + w_b \mathbf{R}_B, \qquad \mathbf{R} = \mathbf{R}_A - \mathbf{R}_B .
+\chi_a(\mathbf{r}) = \sum_\alpha c_{a\alpha}\, \chi_{a\alpha}(\mathbf{r}), \qquad
+\chi_{a\alpha}(\mathbf{r}) = x^{l} y^{m} z^{n}\, e^{-\zeta_{a\alpha} r^2}, \qquad \mathbf{r} = (x, y, z) , \qquad (19)
 ```
 
-The product of the two Gaussians is a Gaussian centred at $`\mathbf{P}`$, on the line between the atoms,
-with a size and shape that depend on $`\mathbf{R}`$. When the atoms are displaced by $`\mathbf{u}_A`$ and $`\mathbf{u}_B`$,
-the centre moves by
+with $`c_{a\alpha}`$ the contraction coefficients, which include the normalisation, and $`l, m, n`$ the
+powers that make the function s, p, d and so on. Write $`\chi_{a\alpha\,b\beta}`$ for the product of
+a primitive on $`A`$ with a primitive on $`B`$. Then (18) is a sum of such products:
 
 ```math
-\mathbf{u}_P = w_a \mathbf{u}_A + w_b \mathbf{u}_B , \qquad (19)
+\chi_{a\alpha\,b\beta}(\mathbf{r}) = \chi_{a\alpha}(\mathbf{r} - \mathbf{R}_A)\, \chi_{b\beta}(\mathbf{r} - \mathbf{R}_B), \qquad
+\rho(\mathbf{r}) = \sum_{ab} D_{ab} \sum_{\alpha\beta} c_{a\alpha} c_{b\beta}\; \chi_{a\alpha\,b\beta}(\mathbf{r}) . \qquad (20)
 ```
 
-and the size and shape change only through the relative displacement $`\mathbf{u}_A - \mathbf{u}_B`$. So the
-Fourier transform of the displaced product, at scattering vector $`\mathbf{k}`$, is
+Everything below is done for one product $`\chi_{a\alpha\,b\beta}`$ and then summed as in (20).
+
+**The product is a Gaussian about its own centre.** For the product $`\chi_{a\alpha\,b\beta}`$ define
 
 ```math
-e^{i\mathbf{k}\cdot\mathbf{P}}\; e^{i\mathbf{k}\cdot\mathbf{u}_P}\; \tilde\chi_{ab}(\mathbf{k};\, \mathbf{R} + \mathbf{u}_A - \mathbf{u}_B) , \qquad (20)
+\gamma = \zeta_{a\alpha} + \zeta_{b\beta}, \quad
+w_A = \frac{\zeta_{a\alpha}}{\gamma}, \quad w_B = \frac{\zeta_{b\beta}}{\gamma}, \quad
+\mu = \frac{\zeta_{a\alpha}\zeta_{b\beta}}{\gamma}, \quad
+\mathbf{R} = \mathbf{R}_A - \mathbf{R}_B, \quad \mathbf{P} = w_A \mathbf{R}_A + w_B \mathbf{R}_B . \qquad (21)
 ```
 
-where $`\tilde\chi_{ab}(\mathbf{k}; \mathbf{R})`$ is the transform of the product $`\chi_{ab} = \chi_a\chi_b`$ taken about
-its own centre.
+$`\gamma`$, $`w_A`$, $`w_B`$, $`\mu`$ and $`\mathbf{P}`$ belong to the pair of primitives $`a\alpha, b\beta`$; the indices
+are left off them to keep the formulas readable. $`w_A + w_B = 1`$, and $`\mathbf{P}`$ is a point on the
+line between the atoms. Completing the square in the two exponents gives the Gaussian product
+theorem,
+
+```math
+\zeta_{a\alpha} |\mathbf{r} - \mathbf{R}_A|^2 + \zeta_{b\beta} |\mathbf{r} - \mathbf{R}_B|^2
+   = \gamma\, |\mathbf{r} - \mathbf{P}|^2 + \mu\, |\mathbf{R}|^2 , \qquad (22)
+```
+
+and the two polynomials are functions of $`\mathbf{r} - \mathbf{R}_A = (\mathbf{r} - \mathbf{P}) - w_B \mathbf{R}`$ and
+$`\mathbf{r} - \mathbf{R}_B = (\mathbf{r} - \mathbf{P}) + w_A \mathbf{R}`$. So the product depends on $`\mathbf{r}`$ only through
+$`\mathbf{s} = \mathbf{r} - \mathbf{P}`$, the position measured from its centre. Call the product written that way
+$`\bar\chi_{a\alpha\,b\beta}`$:
+
+```math
+\chi_{a\alpha\,b\beta}(\mathbf{r}) = \bar\chi_{a\alpha\,b\beta}(\mathbf{r} - \mathbf{P};\, \mathbf{R}), \qquad
+\bar\chi_{a\alpha\,b\beta}(\mathbf{s}; \mathbf{R}) = \chi^{\rm poly}_{a\alpha}(\mathbf{s} - w_B \mathbf{R})\; \chi^{\rm poly}_{b\beta}(\mathbf{s} + w_A \mathbf{R})\; e^{-\mu |\mathbf{R}|^2}\, e^{-\gamma s^2} , \qquad (23)
+```
+
+where $`\chi^{\rm poly}`$ is the polynomial $`x^l y^m z^n`$ of (19). The centre $`\mathbf{P}`$ says where the
+product is; the vector $`\mathbf{R}`$ between the atoms sets its size, through $`e^{-\mu|\mathbf{R}|^2}`$, and
+its shape, through the polynomials.
+
+**Its Fourier transform.** At scattering vector $`\mathbf{k}`$, changing the variable of integration
+from $`\mathbf{r}`$ to $`\mathbf{s}`$,
+
+```math
+\int \chi_{a\alpha\,b\beta}(\mathbf{r})\, e^{i\mathbf{k}\cdot\mathbf{r}}\, d\mathbf{r}
+   = e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde\chi_{a\alpha\,b\beta}(\mathbf{k}; \mathbf{R}), \qquad
+\tilde\chi_{a\alpha\,b\beta}(\mathbf{k}; \mathbf{R}) = \int \bar\chi_{a\alpha\,b\beta}(\mathbf{s}; \mathbf{R})\, e^{i\mathbf{k}\cdot\mathbf{s}}\, d\mathbf{s} . \qquad (24)
+```
+
+For two s functions, for example,
+$`\tilde\chi_{a\alpha\,b\beta} = (\pi/\gamma)^{3/2}\, e^{-\mu|\mathbf{R}|^2}\, e^{-k^2/4\gamma}`$. With (20), the structure
+factor of the molecule at rest is
+$`\sum_{ab} D_{ab} \sum_{\alpha\beta} c_{a\alpha} c_{b\beta}\, e^{i\mathbf{k}\cdot\mathbf{P}}\, \tilde\chi_{a\alpha\,b\beta}(\mathbf{k}; \mathbf{R})`$.
+
+**Under displacement.** Move atom $`A`$ by $`\mathbf{u}_A`$ and atom $`B`$ by $`\mathbf{u}_B`$, the basis functions
+moving with their atoms. In (21), $`\mathbf{P}`$ becomes $`\mathbf{P} + \mathbf{u}_P`$ and $`\mathbf{R}`$ becomes
+$`\mathbf{R} + \mathbf{u}_A - \mathbf{u}_B`$, with
+
+```math
+\mathbf{u}_P = w_A \mathbf{u}_A + w_B \mathbf{u}_B . \qquad (25)
+```
+
+So, from (24), the Fourier transform of the displaced product is exactly
+
+```math
+e^{i\mathbf{k}\cdot\mathbf{P}}\; e^{i\mathbf{k}\cdot\mathbf{u}_P}\; \tilde\chi_{a\alpha\,b\beta}(\mathbf{k};\, \mathbf{R} + \mathbf{u}_A - \mathbf{u}_B) . \qquad (26)
+```
+
+The product moves bodily with $`\mathbf{u}_P`$, and changes size and shape only through the relative
+displacement $`\mathbf{u}_A - \mathbf{u}_B`$ of the two atoms.
 
 ### 6.3 The model
 
-**Each product is smeared by the motion of its centre.** In the thermal average of (20) the
-dependence on $`\mathbf{u}_P`$ is kept. The product's size and shape, and the density matrix, are held at
-their values at the mean geometry. This is the rigid-atom approximation of Hirshfeld atom
-refinement, made for each product instead of each atom. The structure factor is
+**Each product is smeared by the motion of its centre.** In the thermal average of (26) the
+factor $`e^{i\mathbf{k}\cdot\mathbf{u}_P}`$ is averaged. The product's size and shape, and the density matrix, are
+held at their values at the mean geometry: $`\tilde\chi_{a\alpha\,b\beta}(\mathbf{k}; \mathbf{R})`$ and $`D_{ab}`$ are
+taken out of the average. This is the rigid-atom approximation of Hirshfeld atom refinement,
+made for each product instead of each atom.
+
+The average is done as for an atom (§1.1). The displacements are Gaussian with zero mean, so
+$`x = \mathbf{k}\cdot\mathbf{u}_P`$ is a Gaussian variable with zero mean, and for such a variable
+$`\langle e^{ix}\rangle = e^{-\langle x^2\rangle/2}`$. Its mean square is
+$`\langle x^2\rangle = \mathbf{k}^{\mathsf T} \langle \mathbf{u}_P \mathbf{u}_P^{\mathsf T}\rangle\, \mathbf{k}`$, so
 
 ```math
-F(\mathbf{k}) = \sum_{ab} D_{ab} \sum_{\alpha\beta} c_\alpha c_\beta\;
-     e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde\chi_{ab}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{ab} \mathbf{k}} , \qquad (21)
+\langle e^{i\mathbf{k}\cdot\mathbf{u}_P} \rangle = e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{a\alpha\,b\beta}\, \mathbf{k}}, \qquad
+U^P_{a\alpha\,b\beta} = \langle \mathbf{u}_P \mathbf{u}_P^{\mathsf T} \rangle . \qquad (27)
 ```
 
-the inner sum over the Gaussians of the two basis functions, with contraction coefficients
-$`c_\alpha`$ and $`c_\beta`$, and
+Putting (25) into $`\langle \mathbf{u}_P \mathbf{u}_P^{\mathsf T}\rangle`$ and multiplying out, with $`U_A = \langle\mathbf{u}_A\mathbf{u}_A^{\mathsf T}\rangle`$
+and $`U_{AB} = \langle\mathbf{u}_A\mathbf{u}_B^{\mathsf T}\rangle`$ of (17),
 
 ```math
-U^P_{ab} = \langle \mathbf{u}_P \mathbf{u}_P^{\mathsf T} \rangle = w_a^2\, U_A + w_b^2\, U_B + w_a w_b\,(U_{AB} + U_{AB}^{\mathsf T}) . \qquad (22)
+U^P_{a\alpha\,b\beta} = w_A^2\, U_A + w_B^2\, U_B + w_A w_B\,(U_{AB} + U_{AB}^{\mathsf T}) . \qquad (28)
 ```
 
-No partition into atoms appears in (21).
-
-**The centre is a pseudo-atom.** Putting (16) into (19), and using $`w_a + w_b = 1`$,
+It depends on the pair of primitives through $`w_A`$ and $`w_B`$. The structure factor is then
 
 ```math
-U^P_{ab} = \bar B_P\, \bar\Sigma\, \bar B_P^{\mathsf T}, \qquad \bar B_P = w_a \bar B_A + w_b \bar B_B , \qquad (23)
+F(\mathbf{k}) = \sum_{ab} D_{ab} \sum_{\alpha\beta} c_{a\alpha} c_{b\beta}\;
+     e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde\chi_{a\alpha\,b\beta}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{a\alpha\,b\beta} \mathbf{k}} . \qquad (29)
 ```
 
-with $`\bar\Sigma`$ the covariance of $`\bar{\mathbf{v}}`$. This is (11) for a fictitious atom at $`\mathbf{P}`$. Its
+No partition into atoms appears in (29).
+
+**The centre is a pseudo-atom.** Putting (16) into (25), and using $`w_A + w_B = 1`$,
+
+```math
+\mathbf{u}_P = \bar B_P\, \bar{\mathbf{v}}, \qquad \bar B_P = w_A \bar B_A + w_B \bar B_B , \qquad
+U^P_{a\alpha\,b\beta} = \bar B_P\, \bar\Sigma\, \bar B_P^{\mathsf T} , \qquad (30)
+```
+
+with $`\bar\Sigma = \langle\bar{\mathbf{v}}\bar{\mathbf{v}}^{\mathsf T}\rangle`$. This is (11) for a fictitious atom at $`\mathbf{P}`$. Its
 rigid-body part is the Schomaker–Trueblood ADP (5) of the point $`\mathbf{P}`$, because $`A_i`$ is linear in
-the position. Its mode part uses each mode's displacement interpolated to $`\mathbf{P}`$,
-$`w_a \mathbf{d}_{Ak} + w_b \mathbf{d}_{Bk}`$, for the stiff modes with the amplitude (6) and for the soft modes
-with the refined one. Three things follow:
+the position, so $`w_A A_A + w_B A_B`$ is the matrix $`A`$ of the point $`\mathbf{P}`$. Its mode part uses
+each mode's displacement interpolated to $`\mathbf{P}`$, $`\mathbf{d}_{Pk} = w_A \mathbf{d}_{Ak} + w_B \mathbf{d}_{Bk}`$, for the
+stiff modes with the amplitude (6) and for the soft modes with the refined one. Three things
+follow:
 
 - The refined parameters are those of §1: $`\Sigma`$ and the positions. None is added.
-- For two functions on the same atom, $`\mathbf{P} = \mathbf{R}_A`$ and $`U^P_{ab} = U_A`$.
+- For two functions on the same atom, $`\mathbf{P} = \mathbf{R}_A`$ and $`U^P_{a\alpha\,b\beta} = U_A`$.
 - For functions on atoms of two different molecules the model gives no correlation, and
   $`U_{AB} = 0`$ is used.
 
-**Relation to earlier two-centre models.** Writing $`V_{AB} = U_A + U_B - U_{AB} - U_{AB}^{\mathsf T}`$ for the
-mean-square relative displacement of the two atoms, (22) is
+**Relation to earlier two-centre models.** Write
+$`V_{AB} = \langle (\mathbf{u}_A - \mathbf{u}_B)(\mathbf{u}_A - \mathbf{u}_B)^{\mathsf T}\rangle = U_A + U_B - U_{AB} - U_{AB}^{\mathsf T}`$ for the
+mean-square relative displacement of the two atoms. Since $`w_A^2 = w_A - w_A w_B`$ and
+$`w_B^2 = w_B - w_A w_B`$, (28) is
 
 ```math
-U^P_{ab} = w_a U_A + w_b U_B - w_a w_b\, V_{AB} . \qquad (24)
+U^P_{a\alpha\,b\beta} = w_A U_A + w_B U_B - w_A w_B\, V_{AB} . \qquad (31)
 ```
 
 The first two terms are Tanaka's model (`tc-tanaka`). It is exact when the atoms have no relative
@@ -1109,68 +1183,93 @@ comes from (17).
 
 ### 6.4 What the model leaves out
 
-The exact average of one term of the sum, with $`f`$ standing for $`D_{ab}\,\tilde\chi_{ab}`$ as a function
-of the displacements $`\mathbf{x}`$ of all the atoms, is
+Let $`\mathbf{x}`$ be the $`3N`$ displacements of all the atoms, and
+$`f(\mathbf{x}) = D_{ab}\, \tilde\chi_{a\alpha\,b\beta}(\mathbf{k};\, \mathbf{R} + \mathbf{u}_A - \mathbf{u}_B)`$ the part of one term of (20)
+that the model holds fixed, as a function of them; $`D_{ab}`$ depends on $`\mathbf{x}`$ too. The exact
+average of that term is
 
 ```math
 \langle f(\mathbf{x})\, e^{i\mathbf{k}\cdot\mathbf{u}_P} \rangle
-   = e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{ab} \mathbf{k}}\; \langle f(\mathbf{x} + i\,U\mathbf{c}) \rangle , \qquad (25)
+   = e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{a\alpha\,b\beta} \mathbf{k}}\; \langle f(\mathbf{x} + i\,U\mathbf{c}) \rangle , \qquad (32)
 ```
 
 where $`U`$ is the $`3N\times 3N`$ matrix with blocks $`U_{AB}`$, and $`\mathbf{c}`$ is the $`3N`$-vector holding
-$`w_a\mathbf{k}`$ on atom $`A`$, $`w_b\mathbf{k}`$ on atom $`B`$ and zero elsewhere. The model replaces the last factor
-by $`f`$ at the mean geometry. The terms left out are the change of the product's size and shape
-with the relative displacement, the change of the density matrix with geometry, and the turning
-of each product about its own centre under libration. The first two must be taken together:
-with the first alone the number of electrons is not conserved.
+$`w_A\mathbf{k}`$ on atom $`A`$, $`w_B\mathbf{k}`$ on atom $`B`$ and zero elsewhere, so that $`\mathbf{k}\cdot\mathbf{u}_P = \mathbf{c}\cdot\mathbf{x}`$.
+It follows from completing the square in the Gaussian average. The model replaces the last
+factor by $`f(0)`$. The terms left out are the change of the product's size and shape with the
+relative displacement, the change of the density matrix with geometry, and the turning of each
+product about its own centre under libration. The first two must be taken together: with the
+first alone the number of electrons is not conserved.
 
 The change of the density matrix can be estimated by first-order perturbation theory without
 solving coupled equations, the sum over orbitals used for the X-ray constrained SCF
 (`docs/REPORT_ON_XCW_CONVERGENCE.md`, equation (4)). There the perturbation is a change of the
 Fock matrix; for a moved atom it is the change of the Fock matrix and of the overlap matrix,
-because the basis functions move with the atom.
-
+because the basis functions move with the atom. Tonto instead does an SCF at each displaced
+geometry: for the position derivatives in §6.5, and for the stiff modes in §6.6.
 
 ### 6.5 Derivatives for the refinement
 
-The refined parameters are the positions and $`\Sigma`$ (§2.2). The temperature factor of (21)
-depends on $`\Sigma`$ through $`\mathbf{k}^{\mathsf T} U^P_{ab}\mathbf{k}`$, and by (23) that is a square:
+The refined parameters are the positions and $`\Sigma`$ (§2.2). Write one term of (29), for one
+pair of primitives, as
 
 ```math
-\mathbf{k}^{\mathsf T} U^P_{ab}\, \mathbf{k} = \mathbf{b}^{\mathsf T}\, \Sigma\, \mathbf{b} + (\text{stiff modes}), \qquad
-\mathbf{b} = w_a\, \mathbf{a}_A + w_b\, \mathbf{a}_B, \qquad \mathbf{a}_A = B_A^{\mathsf T} \mathbf{k} . \qquad (26)
+T_{a\alpha\,b\beta}(\mathbf{k}) = c_{a\alpha} c_{b\beta}\;
+     e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde\chi_{a\alpha\,b\beta}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{a\alpha\,b\beta} \mathbf{k}}, \qquad
+F(\mathbf{k}) = \sum_{ab} D_{ab} \sum_{\alpha\beta} T_{a\alpha\,b\beta}(\mathbf{k}) . \qquad (33)
 ```
 
-Since $`w_b = 1 - w_a`$, only three sums over the terms of (21) are needed for each pair of shells,
-each term weighted by a power of its own $`w_a`$:
+**With respect to $`\Sigma`$.** By (30), with $`\mathbf{a}_A = B_A^{\mathsf T}\mathbf{k}`$ a vector with one component for
+each generalised coordinate of (11),
 
 ```math
-s_n(\mathbf{k}) = \sum_{ab} D_{ab} \sum_{\alpha\beta} c_\alpha c_\beta\; w_a^{\,n}\;
-     e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde\chi_{ab}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{ab} \mathbf{k}} , \qquad n = 0, 1, 2 . \qquad (27)
+\mathbf{k}^{\mathsf T} U^P_{a\alpha\,b\beta}\, \mathbf{k} = \mathbf{b}^{\mathsf T}\, \Sigma\, \mathbf{b} + (\text{stiff modes}), \qquad
+\mathbf{b} = w_A\, \mathbf{a}_A + w_B\, \mathbf{a}_B . \qquad (34)
 ```
 
-$`s_0`$ is the pair's part of $`F`$. For the element $`\Sigma_{pq}`$, with $`A`$ and $`B`$ the atoms of the pair,
+$`\Sigma`$ is symmetric, and its element $`\Sigma_{pq}`$ with $`p \ne q`$ stands for the two equal elements
+$`\Sigma_{pq}`$ and $`\Sigma_{qp}`$. So
+$`\partial(\mathbf{b}^{\mathsf T}\Sigma\,\mathbf{b})/\partial\Sigma_{pq} = (2-\delta_{pq})\, b_p b_q`$, with $`\delta_{pq}`$ one if $`p = q`$ and
+zero otherwise, and
 
 ```math
-\frac{\partial F}{\partial \Sigma_{pq}} = -\frac{2-\delta_{pq}}{2} \sum_{\text{pairs}}
-   \Big[ s_2\, a_{A,p}\, a_{A,q} + (s_0 - 2 s_1 + s_2)\, a_{B,p}\, a_{B,q}
-       + (s_1 - s_2)\,( a_{A,p}\, a_{B,q} + a_{B,p}\, a_{A,q} ) \Big] . \qquad (28)
+\frac{\partial T_{a\alpha\,b\beta}}{\partial \Sigma_{pq}} = -\frac{2-\delta_{pq}}{2}\; b_p\, b_q\; T_{a\alpha\,b\beta} ,
+\qquad b_p b_q = w_A^2\, a_{A,p} a_{A,q} + w_B^2\, a_{B,p} a_{B,q} + w_A w_B\,( a_{A,p} a_{B,q} + a_{B,p} a_{A,q} ) . \qquad (35)
 ```
 
-The factor $`2-\delta_{pq}`$ is there because $`\Sigma`$ is symmetric and $`\Sigma_{pq}`$, $`p \ne q`$, stands
-for two of its elements. An atom outside the rigid body has $`\mathbf{a} = 0`$.
+The vectors $`\mathbf{a}_A`$ and $`\mathbf{a}_B`$ are the same for every primitive on the two atoms; only the
+weights differ. With $`w_B = 1 - w_A`$ the three weights are $`w_A^2`$, $`1 - 2w_A + w_A^2`$ and
+$`w_A - w_A^2`$, so three sums over the primitives are enough for each pair of basis functions:
 
-**The position of an atom** enters (21) in three ways, and Tonto offers three derivatives
+```math
+s^{ab}_n(\mathbf{k}) = D_{ab} \sum_{\alpha\beta} w_A^{\,n}\; T_{a\alpha\,b\beta}(\mathbf{k}), \qquad n = 0, 1, 2 ; \qquad
+F = \sum_{ab} s^{ab}_0 . \qquad (36)
+```
+
+Summing (35) over the primitives and the pairs,
+
+```math
+\frac{\partial F}{\partial \Sigma_{pq}} = -\frac{2-\delta_{pq}}{2} \sum_{ab}
+   \Big[ s^{ab}_2\, a_{A,p}\, a_{A,q} + (s^{ab}_0 - 2 s^{ab}_1 + s^{ab}_2)\, a_{B,p}\, a_{B,q}
+       + (s^{ab}_1 - s^{ab}_2)\,( a_{A,p}\, a_{B,q} + a_{B,p}\, a_{A,q} ) \Big] , \qquad (37)
+```
+
+where $`A`$ is the atom of $`a`$ and $`B`$ the atom of $`b`$. An atom outside the rigid body has
+$`\mathbf{a} = 0`$.
+
+**With respect to the position of an atom.** The position enters $`T_{a\alpha\,b\beta}`$ through $`\mathbf{P}`$,
+through $`\mathbf{R}`$ in $`\tilde\chi_{a\alpha\,b\beta}`$, and it enters $`D_{ab}`$. Tonto offers three derivatives
 (`tc_position_derivs=`):
 
-- `center`. Only the centre $`\mathbf{P}`$ of each product moves, by $`w_a`$ of the step of atom $`A`$:
+- `center`. Only $`\mathbf{P}`$ moves. By (21), $`\partial\mathbf{P}/\partial\mathbf{R}_A = w_A`$ and $`\partial\mathbf{P}/\partial\mathbf{R}_B = w_B = 1 - w_A`$,
+  so each term is multiplied by $`i\mathbf{k}\,w_A`$ or $`i\mathbf{k}\,(1-w_A)`$. For atom $`C`$,
 
 ```math
-\frac{\partial F}{\partial \mathbf{R}_A} = i\mathbf{k} \Big[ \sum_{\text{pairs with } A \text{ first}} s_1 + \sum_{\text{pairs with } A \text{ second}} (s_0 - s_1) \Big] . \qquad (29)
+\frac{\partial F}{\partial \mathbf{R}_C} = i\mathbf{k} \Big[ \sum_{ab,\ a \text{ on } C} s^{ab}_1 + \sum_{ab,\ b \text{ on } C} ( s^{ab}_0 - s^{ab}_1 ) \Big] . \qquad (38)
 ```
 
-- `fixed-dm`. The basis functions move with the atom, so each product also changes size and
-  shape; the density matrix is held. By central differences of (21), step 0.01 bohr.
+- `fixed-dm`. The basis functions move with the atom, so $`\mathbf{R}`$ changes too; the density matrix
+  is held. By central differences of (29), step 0.01 bohr.
 - `scf`. As `fixed-dm`, with an SCF at each displaced geometry, started from the undisplaced
   orbitals, so that the density matrix follows the atom.
 
@@ -1181,39 +1280,49 @@ derivatives of `fixed-dm` and `scf` are made once for each fit with a given dens
 
 The model of §6.3 holds each product's size and shape, and the density matrix, at the mean
 geometry (§6.4). Along a stiff mode this can be put right by doing the average numerically,
-one mode at a time (`tc_integrate_stiff_modes=`). Mode $`k`$ has a Gaussian distribution of its
-normal coordinate with mean-square amplitude $`\langle Q_k^2\rangle`$, (6). The three-point
-Gauss–Hermite rule for it uses the mean geometry with weight $`\tfrac23`$ and the two geometries
-displaced by $`\pm s_k`$ along the mode, each with weight $`\tfrac16`$:
+one mode at a time (`tc_integrate_stiff_modes=`).
+
+**The rule.** Mode $`k`$ has a Gaussian distribution of its normal coordinate $`Q_k`$ with zero
+mean and mean square $`\langle Q_k^2\rangle`$, (6). For any function $`g`$ of $`Q_k`$, the three-point
+Gauss–Hermite rule is
 
 ```math
-s_k = \sqrt{3\,\langle Q_k^2\rangle}, \qquad \text{atom } A \text{ displaced by } \pm s_k\, \mathbf{d}_{Ak} . \qquad (30)
+\langle g \rangle \approx \tfrac23\, g(0) + \tfrac16\, g(+s_k) + \tfrac16\, g(-s_k), \qquad
+s_k = \sqrt{3\,\langle Q_k^2\rangle} , \qquad (39)
 ```
 
-At each displaced geometry an SCF is done and the structure factors $`F_k^{+}`$, $`F_k^{-}`$ are
-made from (21). The model's value for the same two points keeps the undisplaced products and
-density matrix and moves their centres by $`\pm s_k\,\mathbf{d}_{Pk}`$, with $`\mathbf{d}_{Pk} = w_a\mathbf{d}_{Ak} + w_b\mathbf{d}_{Bk}`$;
-the two phases average to a cosine:
+exact when $`g`$ is a polynomial of degree five or less. At $`Q_k = \pm s_k`$ atom $`A`$ is displaced by
+$`\pm s_k\, \mathbf{d}_{Ak}`$.
+
+**The true value at the displaced points.** At each of the two displaced geometries an SCF is
+done, and the structure factors $`F_k^{+}`$ and $`F_k^{-}`$ are made from (29) with that geometry and
+that density matrix.
+
+**The model's value at the same points.** The model keeps the undisplaced products and density
+matrix and moves each centre by $`\pm s_k\,\mathbf{d}_{Pk}`$, which by (26) multiplies each term by
+$`e^{\pm i s_k \mathbf{k}\cdot\mathbf{d}_{Pk}}`$. The two add to twice a cosine, so
+$`\tfrac16(F^{+} + F^{-})`$ for the model is $`\tfrac13 F_k^{\cos}`$ with
 
 ```math
-F_k^{\cos} = \sum_{ab} D_{ab} \sum_{\alpha\beta} c_\alpha c_\beta\;
-     e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde\chi_{ab}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{ab} \mathbf{k}}\; \cos( s_k\, \mathbf{k}\cdot\mathbf{d}_{Pk} ) . \qquad (31)
+F_k^{\cos} = \sum_{ab} D_{ab} \sum_{\alpha\beta} T_{a\alpha\,b\beta}(\mathbf{k})\; \cos( s_k\, \mathbf{k}\cdot\mathbf{d}_{Pk} ), \qquad
+\mathbf{d}_{Pk} = w_A \mathbf{d}_{Ak} + w_B \mathbf{d}_{Bk} . \qquad (40)
 ```
 
-The correction added to the structure factor of (21) is the difference, summed over the stiff
-modes:
+**The correction.** The term $`\tfrac23 g(0)`$ of (39) is the same for both, so the true average
+minus the model's is
 
 ```math
-\Delta F = \sum_{\omega_k > \omega_c} \Big[ \tfrac16 \big( F_k^{+} + F_k^{-} \big) - \tfrac13\, F_k^{\cos} \Big] . \qquad (32)
+\Delta F = \sum_{\omega_k > \omega_c} \Big[ \tfrac16 \big( F_k^{+} + F_k^{-} \big) - \tfrac13\, F_k^{\cos} \Big] , \qquad (41)
 ```
 
-In the three structure factors of mode $`k`$ the temperature factor leaves out that mode's own
-term of (17), so that its smearing is not counted twice. Only the difference is integrated
-because it is small, and small terms from different modes add; the smearing itself, which is not
-small at high angle, stays in the analytic formula. $`\Delta F`$ is made once for each fit with a
-given density matrix, at two SCFs for each stiff mode, and is held fixed while the parameters
-shift. It is for a single molecule, with the harmonic amplitudes; the rigid-body motion and the
-refined soft modes are not integrated.
+summed over the stiff modes and added to (29). In the three structure factors of mode $`k`$ the
+temperature factor leaves out that mode's own term of (17): the mode's smearing is being done by
+the rule (39), and must not be counted again. Only the difference is integrated because it is
+small, and small terms from different modes add; the smearing itself, which is not small at high
+angle, stays in the analytic formula. $`\Delta F`$ is made once for each fit with a given density
+matrix, at two SCFs for each stiff mode, and is held fixed while the parameters shift. It is for
+a single molecule, with the harmonic amplitudes; the rigid-body motion and the refined soft modes
+are not integrated.
 
 ### 6.7 Keywords
 
@@ -1221,15 +1330,15 @@ In `xray_data=`:
 
 | keyword | default | meaning |
 |---|---|---|
-| `partition_model= tc-tls` | | the model (21); sets `adp_model= tls` |
-| `tc_position_derivs=` | `center` | the position derivative: `center` (29), `fixed-dm` or `scf` (§6.5) |
-| `tc_integrate_stiff_modes=` | `FALSE` | `TRUE` adds $`\Delta F`$ of (32) |
+| `partition_model= tc-tls` | | the model (29); sets `adp_model= tls` |
+| `tc_position_derivs=` | `center` | the position derivative: `center` (38), `fixed-dm` or `scf` (§6.5) |
+| `tc_integrate_stiff_modes=` | `FALSE` | `TRUE` adds $`\Delta F`$ of (41) |
 
 On the molecule:
 
 | keyword | meaning |
 |---|---|
-| `check_two_center_derivs` | compares (28) and (29) with central differences of (21) and prints the largest disagreement; for (29) that is the size of what `center` leaves out |
+| `check_two_center_derivs` | compares (37) and (38) with central differences of (29) and prints the largest disagreement; for (38) that is the size of what `center` leaves out |
 
 A Hessian from ORCA is turned into `force_constants=` by `scripts/orca_hessian_to_tonto.py`.
 
@@ -1242,16 +1351,16 @@ A Hessian from ORCA is turned into `force_constants=` by `scripts/orca_hessian_t
 | $`B_A`$ of (16) | `CRYSTAL:TLS_displacement_mx` |
 | $`\Sigma`$ from the atoms' ADPs | `CRYSTAL:make_TLS_sigma_vector` |
 | $`U_{AB}`$, (17), for every atom pair | `CRYSTAL:make_two_center_ADPs` |
-| the temperature factor of (21) with (22), per pair of primitives | `SHELL2:make_TLS_TFs` |
+| the temperature factor of (29) with (28), per pair of primitives | `SHELL2:make_TLS_TFs` |
 | the temperature factors of a shell pair, any two-centre model | `MOLECULE.XTAL:make_pair_TFs` |
-| $`s_0`$, $`s_1`$, $`s_2`$ of (27) for a shell pair | `MOLECULE.XTAL:make_FT_pair_moments` |
-| $`F`$ with (28) and the sums of (29) | `MOLECULE.XTAL:make_FT_and_TLS_derivs` |
+| $`s_0`$, $`s_1`$, $`s_2`$ of (36) for a shell pair | `MOLECULE.XTAL:make_FT_pair_moments` |
+| $`F`$ with (37) and the sums of (38) | `MOLECULE.XTAL:make_FT_and_TLS_derivs` |
 | the rotation between an atom and its image | `CRYSTAL:image_rotation` |
 | the shifts from those derivatives | `CRYSTAL:get_two_center_parameter_shifts` |
 | derivatives taken directly with respect to refined parameters | `DIFFRACTION_DATA.SET:solve_normal_equations` |
 | position derivatives by differences, `fixed-dm` and `scf` | `MOLECULE.HAR:make_two_center_position_derivs` |
-| the cosine factor of (31) | `SHELL2:scale_TFs_by_shift` |
-| $`\Delta F`$, (32) | `MOLECULE.HAR:make_stiff_mode_SF_correction` |
+| the cosine factor of (40) | `SHELL2:scale_TFs_by_shift` |
+| $`\Delta F`$, (41) | `MOLECULE.HAR:make_stiff_mode_SF_correction` |
 | the fit loop | `MOLECULE.HAR:LS_fit_two_center` |
 | the parts of a fit shared with Hirshfeld atom refinement | `CRYSTAL:start_structure_fit`, `apply_parameter_shifts`, `finish_fit_cycle`, `finish_structure_fit` |
 | an SCF made ready at a new geometry | `MOLECULE.HAR:prepare_SCF_at_new_geometry` |
