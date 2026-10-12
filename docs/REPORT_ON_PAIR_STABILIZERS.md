@@ -9,8 +9,9 @@ the atom in place. For a density written as products of basis functions on two a
 (`partition_model= tc-...`), it belongs to the **pair of atoms**. This page gives the weight,
 shows where it comes from, and says how Tonto finds it.
 
-Notation is that of `docs/REPORT_ON_TC_TLS.md`: basis functions $`\chi_\mu`$ on atom $`A`$
-and $`\chi_\nu`$ on atom $`B`$, density matrix $`D_{\mu\nu}`$, scattering vector $`\mathbf{k}`$.
+Notation is that of `docs/REPORT_ON_TC_TLS.md`: contracted Gaussian basis functions $`G_\mu`$ on
+atom $`A`$ and $`G_\nu`$ on atom $`B`$, the atoms at $`\mathbf{R}^A`$ and $`\mathbf{R}^B`$, density matrix $`D_{\mu\nu}`$,
+scattering vector $`\mathbf{k}`$.
 
 
 ## 1. The density as a sum over pairs of atoms
@@ -20,7 +21,7 @@ atoms the functions are on:
 
 ```math
 \rho(\mathbf{r}) = \sum_{(A,B)} \rho_{AB}(\mathbf{r}), \qquad
-\rho_{AB}(\mathbf{r}) = \sum_{\mu \text{ on } A}\ \sum_{\nu \text{ on } B} D_{\mu\nu}\, \chi_\mu(\mathbf{r} - \mathbf{R}_A)\, \chi_\nu(\mathbf{r} - \mathbf{R}_B) . \qquad (1)
+\rho_{AB}(\mathbf{r}) = \sum_{\mu \text{ on } A}\ \sum_{\nu \text{ on } B} D_{\mu\nu}\, G_\mu(\mathbf{r} - \mathbf{R}^A)\, G_\nu(\mathbf{r} - \mathbf{R}^B) . \qquad (1)
 ```
 
 The sum is over **ordered pairs** $`(A,B)`$ of atoms of the crystal, each atom at a definite
