@@ -4490,6 +4490,34 @@ loose; the real curvature of $`\ln\rho`$ is large only between shells. A lookup 
 logarithm for each point, where the present mapping in $`r^2`$ avoids even the square root; to be timed
 on a refinement.
 
+*Measured, 2026-10-12, outside Tonto* (`~/tonto-runs/2026-10-12_density_tables`: `acc.py`,
+`acc2.py`, `bench.f90`). Exact spherical densities of Kr, Xe and Rn (PySCF, x2c-TZVPall, scalar
+X2C), each kind of table tested at 400,000 distances from 1e-4 bohr out to where the density is
+1e-10. Lookup times are for a point given by its squared distance, gfortran-14 `-O3`, on the Mac.
+
+| table | points | worst relative error | time for one lookup |
+|---|---|---|---|
+| A, the present one: cubic spline of the density in $`x`$ | 10,000 | Kr 1.6, Xe 13, Rn 150; negative for Xe and Rn | 3.7 ns |
+| D, linear in the density, same $`x`$ | 60,000 | Kr 0.7, Xe 3.9, Rn 27 | 2.0 ns |
+| B, linear in $`\ln\rho`$ on a mesh even in $`\ln r`$ | 6,000 / 20,000 / 60,000 | 6e-5 / 6e-6 / 6e-7 | 22 ns |
+| C, linear in the density on the same mesh | 60,000 | 1e-5 | 5.8 ns |
+| G, linear in $`\ln\rho`$, mesh from the bits of $`r^2`$ | 20,000 / 60,000 | 2e-6 / 2e-7 | 15 ns |
+| H, linear in the density, mesh from the bits of $`r^2`$ | 60,000 / 200,000 / 600,000 | 1e-5 / 1e-6 / 1e-7 | 3.2 ns |
+
+- **The mapping is what is wrong, not only the spline.** In $`x`$ even 60,000 points and linear
+  interpolation are wrong by a factor near the nucleus; Kr is already wrong by 160% at 0.01 bohr.
+- **The estimate above holds:** 20,000 points for 1e-5 with table B.
+- **The logarithm and the exponential are the cost,** about 4 and 13 ns; the table size is not,
+  up to 600,000 points (4.8 MB).
+- **Table H needs neither.** Its mesh is even in $`r^2`$ inside each power of two of $`r^2`$, so
+  the cell is read from the exponent and the leading bits of the number (`exponent`,
+  `fraction`), and the density itself is interpolated. It is faster than the present spline and
+  reaches 1e-6 with 200,000 points (1.6 MB for each kind of atom); its worst error is in the far
+  tail, and inside 3 bohr it is twenty times smaller. It cannot overshoot or change sign.
+  **This is the candidate.**
+- Not measured: the time to fill a table in Tonto (one density evaluation for each point, once
+  for each kind of atom), and the effect on a Hirshfeld weight and a structure factor.
+
 *To do.* (1) Measure the present table against the density it was made from for Br, I and Hg,
 and its effect on a Hirshfeld weight and a structure factor. (2) Write the linear table of
 $`\ln\rho`$ on the logarithmic mesh, with the number of points set from a tolerance, and measure
