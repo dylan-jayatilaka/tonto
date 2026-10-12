@@ -9,7 +9,7 @@ the atom in place. For a density written as products of basis functions on two a
 (`partition_model= tc-...`), it belongs to the **pair of atoms**. This page gives the weight,
 shows where it comes from, and says how Tonto finds it.
 
-Notation is that of `docs/REPORT_ON_MODE_FITTING.md`, §6: basis functions $`\chi_\mu`$ on atom $`A`$
+Notation is that of `docs/REPORT_ON_TC_TLS.md`: basis functions $`\chi_\mu`$ on atom $`A`$
 and $`\chi_\nu`$ on atom $`B`$, density matrix $`D_{\mu\nu}`$, scattering vector $`\mathbf{k}`$.
 
 
@@ -189,7 +189,7 @@ $`w_A/n_s + w_B/n_s = 1/n_s`$, because $`w_A + w_B = 1`$.
 
 Urea is a whole molecule on a site of symmetry mm2, four operations, so by §7 the old and the new
 weights must agree, and the petite list must agree with all the pairs. A `tc-tls` refinement
-(RHF/def2-SVP, 817 reflections, 17 parameters; `docs/REPORT_ON_MODE_FITTING.md`, §6):
+(RHF/def2-SVP, 817 reflections, 17 parameters; `docs/REPORT_ON_TC_TLS.md`, §10):
 
 | weights | pairs with a weight | sum of the weights | GoF | R(F) |
 |---|---|---|---|---|

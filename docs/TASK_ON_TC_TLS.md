@@ -4,7 +4,9 @@ A working document. It develops the theory of a new model, `tc-tls`, before any 
 Notation follows `docs/REPORT_ON_MODE_FITTING.md` (called *the report* below), whose equations
 (1)–(11) are used without repeating them. Sources: Dylan's notes `~/Dropbox/tex/idea/atom_pair_pdf.tex`
 (the atom-pair distribution) and `adp5.tex` (ADPs from normal modes and the coth factor). The
-user-facing form of §2–§5 is §6 of the report.
+user-facing form is `docs/REPORT_ON_TC_TLS.md`; where the log below says "report §6.x" it is §x
+of that page, which was section 6 of the mode-fitting report until GitHub stopped rendering the
+math on so long a page.
 
 Units are atomic units throughout. Vectors are columns, ᵀ is the transpose, ⟨ ⟩ is the thermal
 average.
