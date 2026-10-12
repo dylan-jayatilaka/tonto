@@ -146,8 +146,12 @@ statement), since they are useful to the human reader.
 ## 3. Lexical conventions
 
 - **Comments**: `!` to end of line, standalone or trailing.
-- **Statement separation**: newline; `;` separates several statements on one line.
-- **Continuation**: a line ending in `&` continues on the next.
+- **Statement separation**: newline; `;` separates several statements on one line. A block
+  (`if ... then ... end`, `do ... end`) may not be closed on its opening line.
+- **Continuation**: a line ending in `&` continues on the next. A comment line may not come
+  between the two; put it above the statement.
+- **Syntax errors** stop the build. The translator prints `file:line:column: message` for each
+  and writes nothing for that file.
 - **Constants**: `TRUE`, `FALSE`, `ZERO`, `ONE`, `NULL`.
 - **Array constructors**: `[ ... ]` (square brackets), e.g. `["'",'"',"{"]`.
 

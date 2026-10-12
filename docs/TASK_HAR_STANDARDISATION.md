@@ -334,8 +334,9 @@ What is left, in this order. Each step changes numbers the later ones rest on.
 2. **The atomic density tables.** No spline; a table that resolves the core of a heavy atom
    (`TASKS_AND_HISTORY.md`, *The atomic density tables*). Only then are the promolecule densities
    and Hirshfeld weights right beyond Kr. A re-bless of the refinement tests.
-3. **`hart` to spherical functions** (`TASKS_AND_HISTORY.md`, *hart*). A re-bless of the `hart`
-   tests. Steps 1 to 3 can share one re-bless if they land together.
+3. **`hart` to spherical functions.** Done 2026-10-12, ahead of steps 1 and 2
+   (`TASKS_AND_HISTORY.md`, archive, *four small tasks of the register*). Steps 1 and 2 will
+   re-bless the `hart` tests again.
 4. **What is left of the spherical-atom audit** (§3, steps 1 to 3): ground terms, release against
    debug, the Mac against achari2, spherical d and f in a cluster, now to Rn with X2C.
 5. **The core question** (§4): contracted against uncontracted core.
@@ -350,6 +351,8 @@ does not change results; and the picture-change correction, a science option
 
 ## 8. Log
 
+- 2026-10-12 (small tasks): `hart` uses spherical functions; its five tests re-blessed on
+  achari2. Urea with `x2c-SVPall` has 76 functions, was 80.
 - 2026-10-12 (evening): `docs/REPORT_ON_RELATIVITY.md` written (equations, Dyall, keywords,
   routines, checks). Order of work replanned (§7): grid levels, then the atomic density tables
   (Dylan: no spline interpolation), then `hart` to spherical. New science tasks entered: the
