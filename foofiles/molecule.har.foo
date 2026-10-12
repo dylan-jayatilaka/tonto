@@ -605,36 +605,92 @@ contains
    ! Make "dsf", a correction to the tc-tls structure factors at the
    ! "k_pts" for what that model leaves out along the stiff internal
    ! modes: the change in size and shape of each product of basis
-   ! functions, and the change of the density matrix. Each stiff mode is
-   ! averaged by itself with the three-point Gauss-Hermite rule: its
-   ! displaced points are at +s and -s along the mode, s = sqrt(3 <Q^2>),
-   ! each with weight 1/6. At each an SCF is done from the undisplaced
-   ! MOs and the structure factors are made, F(+s) and F(-s). The model's
-   ! own value for the same two points keeps the undisplaced products and
-   ! density matrix and moves their centres, which multiplies each by
-   ! cos(k.d); call it F_cos. The mode adds
-   !    [F(+s) + F(-s)]/6 - F_cos/3
-   ! to "dsf", all three made without this mode's own smearing. The modes
-   ! are those of make_stiff_modes, with the harmonic <Q^2>. The atoms,
-   ! MOs and density matrix are put back. See docs/TASK_ON_TC_TLS.md.
+   ! functions, and the change of the density matrix. The modes are
+   ! those of make_stiff_modes, with the harmonic <Q^2>; each is
+   ! averaged by make_mode_SF_correction.
       self :: INOUT
       dsf :: VEC{CPX}, OUT
       k_pts :: MAT{REAL}, IN
 
-   ENSURE(dsf.dim==k_pts.dim1, "dsf and k_pts, incompatible")
    DIE_IF(.normal_mode_eigenvectors.deallocated,"tc_integrate_stiff_modes= needs the normal modes of this molecule")
    DIE_IF(.crystal.n_TLS_atoms/=.atom.dim,"tc_integrate_stiff_modes= is for a molecule, not a cluster")
 
-      sp,sm,sc :: VEC{CPX}@
-      V,pos0,D0 :: MAT{REAL}@
-      U0 :: MAT4{REAL}@
+      V :: MAT{REAL}@
       a0 :: VEC{REAL}@
+
+      .make_stiff_modes(V,a0)
+      .make_mode_SF_correction(dsf,k_pts,V,a0)
+      a0.destroy
+      V.destroy
+
+   end
+
+   make_rigid_body_SF_correction(dsf,k_pts) :: leaky
+   ! Make "dsf", a correction to the tc-tls structure factors at the
+   ! "k_pts" for what that model leaves out in the rigid-body motion and
+   ! the refined soft modes: when the molecule turns, a product of basis
+   ! functions turns about its own centre as well as moving with it, and
+   ! the centre moves on an arc. The motion is taken along the principal
+   ! coordinates of the refined covariance Sigma, which are uncorrelated;
+   ! each is averaged by make_mode_SF_correction, the molecule being
+   ! turned exactly by the rotation part of the coordinate.
+      self :: INOUT
+      dsf :: VEC{CPX}, OUT
+      k_pts :: MAT{REAL}, IN
+
+   DIE_IF(.crystal.n_TLS_atoms/=.atom.dim,"tc_integrate_rigid_body= is for a molecule, not a cluster")
+
+      V,W :: MAT{REAL}@
+      a0 :: VEC{REAL}@
+
+      .crystal.make_TLS_principal_motions(V,a0,W)
+      .make_mode_SF_correction(dsf,k_pts,V,a0,W,.crystal.TLS_origin)
+      a0.destroy
+      W.destroy
+      V.destroy
+
+   end
+
+   make_mode_SF_correction(dsf,k_pts,V,a0,W,origin) :: leaky
+   ! Make "dsf", a correction to the tc-tls structure factors at the
+   ! "k_pts" for what that model leaves out along some uncorrelated
+   ! coordinates of the motion. Coordinate j displaces atom a by
+   ! V(3a-2:3a,j) per unit, to first order, and has mean square a0(j).
+   ! Each is averaged by itself with the three-point Gauss-Hermite rule:
+   ! its displaced points are at +s and -s, s = sqrt(3 a0(j)), each with
+   ! weight 1/6. At each an SCF is done from the undisplaced MOs and the
+   ! structure factors are made, F(+s) and F(-s). The model's own value
+   ! for the same two points keeps the undisplaced products and density
+   ! matrix and moves their centres by +s V and -s V, which multiplies
+   ! each by cos(k.d); call it F_cos. The coordinate adds
+   !    [F(+s) + F(-s)]/6 - F_cos/3
+   ! to "dsf", all three made without this coordinate's own smearing.
+   ! If "W" is present, W(:,j) is the rotation vector per unit of
+   ! coordinate j, about "origin", already counted in "V" to first order
+   ! as W x r: the displaced atoms are then turned exactly by s W, and
+   ! the rest of V is added as it is. The atoms, MOs and density matrix
+   ! are put back. See docs/REPORT_ON_MODE_FITTING.md section 6.6.
+      self :: INOUT
+      dsf :: VEC{CPX}, OUT
+      k_pts :: MAT{REAL}, IN
+      V :: MAT{REAL}, IN
+      a0 :: VEC{REAL}, IN
+      W :: MAT{REAL}, optional, IN
+      origin :: VEC{REAL}(3), optional, IN
+
+   ENSURE(dsf.dim==k_pts.dim1, "dsf and k_pts, incompatible")
+   ENSURE(V.dim1==3*.atom.dim, "V: three rows per atom")
+   ENSURE(a0.dim==V.dim2, "one a0 per coordinate")
+
+      sp,sm,sc :: VEC{CPX}@
+      pos0,D0 :: MAT{REAL}@
+      U0 :: MAT4{REAL}@
       MOs0 :: OPMATRIX@
-      s :: REAL
+      r,rot,ax,cr,disp :: VEC{REAL}(3)
+      s,sgn,ang :: REAL
       n_a,j,a,b,i,side :: INT
 
       n_a = .atom.dim
-      .make_stiff_modes(V,a0)
 
       ! Keep the undisplaced atoms, MOs, density matrix and two-center ADPs
       pos0.create(3,n_a)
@@ -652,9 +708,10 @@ contains
 
       do j = 1,V.dim2
 
+         if (a0(j)<=ZERO) cycle
          s = sqrt(THREE*a0(j))
 
-         ! The two-center ADPs without this mode
+         ! The two-center ADPs without this coordinate
          do a = 1,n_a
          do b = 1,n_a
             do i = 1,3
@@ -674,10 +731,23 @@ contains
 
          ! The displaced points, each with its own SCF
          do side = 1,2
+            sgn = ONE
+            if (side==2) sgn = -ONE
             do a = 1,n_a
-               if (side==1) then; .atom(a).set_position(pos0(:,a) + s*V(3*a-2:3*a,j))
-               else;              .atom(a).set_position(pos0(:,a) - s*V(3*a-2:3*a,j))
+               disp = sgn*s*V(3*a-2:3*a,j)
+               if (present(W)) then
+                  ! Turn exactly by the rotation vector "rot", in place of
+                  ! its first-order displacement rot x r
+                  rot = sgn*s*W(:,j)
+                  r = pos0(:,a) - origin
+                  cr = [rot(2)*r(3)-rot(3)*r(2), rot(3)*r(1)-rot(1)*r(3), rot(1)*r(2)-rot(2)*r(1)]
+                  ang = norm2(rot)
+                  if (ang>TOL(12)) then
+                     ax = rot/ang
+                     disp = disp - cr + (cos(ang)-ONE)*r + sin(ang)*cr/ang + (ONE-cos(ang))*dot_product(ax,r)*ax
+                  end
                end
+               .atom(a).set_position(pos0(:,a) + disp)
             end
             .MOs = MOs0
             .prepare_SCF_at_new_geometry
@@ -688,7 +758,7 @@ contains
             end
          end
 
-         ! Put the atoms back for the next mode
+         ! Put the atoms back for the next coordinate
          do a = 1,n_a
             .atom(a).set_position(pos0(:,a))
          end
@@ -711,8 +781,6 @@ contains
       D0.destroy
       MOs0.destroy
       pos0.destroy
-      a0.destroy
-      V.destroy
 
    end
 
@@ -825,7 +893,7 @@ contains
    DIE_IF(NOT .crystal.allocated, "no crystal")
    DIE_IF(NOT .SCF_data.spinorbital_genre=="r ", "tc-tls refinement is for restricted wavefunctions")
 
-      sf_e,dsf :: VEC{CPX}@
+      sf_e,dsf,dsf_rb :: VEC{CPX}@
       sf_pos,sf_sig,sf_dpos :: MAT{CPX}@
       k_pts,dF :: MAT{REAL}@
       fitout,fitres :: BIN
@@ -851,6 +919,19 @@ contains
          .crystal.make_two_center_ADPs
          dsf.create(n_k)
          .make_stiff_mode_SF_correction(dsf,k_pts)
+      end
+
+      ! The rigid-body motion averaged numerically, once for this fit
+      if (.crystal.xray_data.tc_integrate_rigid_body) then
+         .crystal.make_two_center_ADPs
+         dsf_rb.create(n_k)
+         .make_rigid_body_SF_correction(dsf_rb,k_pts)
+         if (dsf.allocated) then
+            dsf = dsf + dsf_rb
+         else
+            dsf = dsf_rb
+         end
+         dsf_rb.destroy
       end
 
       ! Position derivatives by differences, once for this fit
