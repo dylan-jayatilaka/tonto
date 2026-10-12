@@ -1131,9 +1131,137 @@ Fock matrix; for a moved atom it is the change of the Fock matrix and of the ove
 because the basis functions move with the atom.
 
 
+### 6.5 Derivatives for the refinement
+
+The refined parameters are the positions and $`\Sigma`$ (§2.2). The temperature factor of (21)
+depends on $`\Sigma`$ through $`\mathbf{k}^{\mathsf T} U^P_{ab}\mathbf{k}`$, and by (23) that is a square:
+
+```math
+\mathbf{k}^{\mathsf T} U^P_{ab}\, \mathbf{k} = \mathbf{b}^{\mathsf T}\, \Sigma\, \mathbf{b} + (\text{stiff modes}), \qquad
+\mathbf{b} = w_a\, \mathbf{a}_A + w_b\, \mathbf{a}_B, \qquad \mathbf{a}_A = B_A^{\mathsf T} \mathbf{k} . \qquad (26)
+```
+
+Since $`w_b = 1 - w_a`$, only three sums over the terms of (21) are needed for each pair of shells,
+each term weighted by a power of its own $`w_a`$:
+
+```math
+s_n(\mathbf{k}) = \sum_{ab} D_{ab} \sum_{\alpha\beta} c_\alpha c_\beta\; w_a^{\,n}\;
+     e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde\chi_{ab}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{ab} \mathbf{k}} , \qquad n = 0, 1, 2 . \qquad (27)
+```
+
+$`s_0`$ is the pair's part of $`F`$. For the element $`\Sigma_{pq}`$, with $`A`$ and $`B`$ the atoms of the pair,
+
+```math
+\frac{\partial F}{\partial \Sigma_{pq}} = -\frac{2-\delta_{pq}}{2} \sum_{\text{pairs}}
+   \Big[ s_2\, a_{A,p}\, a_{A,q} + (s_0 - 2 s_1 + s_2)\, a_{B,p}\, a_{B,q}
+       + (s_1 - s_2)\,( a_{A,p}\, a_{B,q} + a_{B,p}\, a_{A,q} ) \Big] . \qquad (28)
+```
+
+The factor $`2-\delta_{pq}`$ is there because $`\Sigma`$ is symmetric and $`\Sigma_{pq}`$, $`p \ne q`$, stands
+for two of its elements. An atom outside the rigid body has $`\mathbf{a} = 0`$.
+
+**The position of an atom** enters (21) in three ways, and Tonto offers three derivatives
+(`tc_position_derivs=`):
+
+- `center`. Only the centre $`\mathbf{P}`$ of each product moves, by $`w_a`$ of the step of atom $`A`$:
+
+```math
+\frac{\partial F}{\partial \mathbf{R}_A} = i\mathbf{k} \Big[ \sum_{\text{pairs with } A \text{ first}} s_1 + \sum_{\text{pairs with } A \text{ second}} (s_0 - s_1) \Big] . \qquad (29)
+```
+
+- `fixed-dm`. The basis functions move with the atom, so each product also changes size and
+  shape; the density matrix is held. By central differences of (21), step 0.01 bohr.
+- `scf`. As `fixed-dm`, with an SCF at each displaced geometry, started from the undisplaced
+  orbitals, so that the density matrix follows the atom.
+
+In all three a unique atom moves together with its symmetry images in the molecule. The
+derivatives of `fixed-dm` and `scf` are made once for each fit with a given density matrix.
+
+### 6.6 The stiff modes averaged numerically
+
+The model of §6.3 holds each product's size and shape, and the density matrix, at the mean
+geometry (§6.4). Along a stiff mode this can be put right by doing the average numerically,
+one mode at a time (`tc_integrate_stiff_modes=`). Mode $`k`$ has a Gaussian distribution of its
+normal coordinate with mean-square amplitude $`\langle Q_k^2\rangle`$, (6). The three-point
+Gauss–Hermite rule for it uses the mean geometry with weight $`\tfrac23`$ and the two geometries
+displaced by $`\pm s_k`$ along the mode, each with weight $`\tfrac16`$:
+
+```math
+s_k = \sqrt{3\,\langle Q_k^2\rangle}, \qquad \text{atom } A \text{ displaced by } \pm s_k\, \mathbf{d}_{Ak} . \qquad (30)
+```
+
+At each displaced geometry an SCF is done and the structure factors $`F_k^{+}`$, $`F_k^{-}`$ are
+made from (21). The model's value for the same two points keeps the undisplaced products and
+density matrix and moves their centres by $`\pm s_k\,\mathbf{d}_{Pk}`$, with $`\mathbf{d}_{Pk} = w_a\mathbf{d}_{Ak} + w_b\mathbf{d}_{Bk}`$;
+the two phases average to a cosine:
+
+```math
+F_k^{\cos} = \sum_{ab} D_{ab} \sum_{\alpha\beta} c_\alpha c_\beta\;
+     e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde\chi_{ab}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{ab} \mathbf{k}}\; \cos( s_k\, \mathbf{k}\cdot\mathbf{d}_{Pk} ) . \qquad (31)
+```
+
+The correction added to the structure factor of (21) is the difference, summed over the stiff
+modes:
+
+```math
+\Delta F = \sum_{\omega_k > \omega_c} \Big[ \tfrac16 \big( F_k^{+} + F_k^{-} \big) - \tfrac13\, F_k^{\cos} \Big] . \qquad (32)
+```
+
+In the three structure factors of mode $`k`$ the temperature factor leaves out that mode's own
+term of (17), so that its smearing is not counted twice. Only the difference is integrated
+because it is small, and small terms from different modes add; the smearing itself, which is not
+small at high angle, stays in the analytic formula. $`\Delta F`$ is made once for each fit with a
+given density matrix, at two SCFs for each stiff mode, and is held fixed while the parameters
+shift. It is for a single molecule, with the harmonic amplitudes; the rigid-body motion and the
+refined soft modes are not integrated.
+
+### 6.7 Keywords
+
+In `xray_data=`:
+
+| keyword | default | meaning |
+|---|---|---|
+| `partition_model= tc-tls` | | the model (21); sets `adp_model= tls` |
+| `tc_position_derivs=` | `center` | the position derivative: `center` (29), `fixed-dm` or `scf` (§6.5) |
+| `tc_integrate_stiff_modes=` | `FALSE` | `TRUE` adds $`\Delta F`$ of (32) |
+
+On the molecule:
+
+| keyword | meaning |
+|---|---|
+| `check_two_center_derivs` | compares (28) and (29) with central differences of (21) and prints the largest disagreement; for (29) that is the size of what `center` leaves out |
+
+A Hessian from ORCA is turned into `force_constants=` by `scripts/orca_hessian_to_tonto.py`.
+
+### 6.8 Where it is implemented
+
+| piece | procedure |
+|---|---|
+| the stiff modes, $`\mathbf{d}_{Ak}`$ and $`\langle Q_k^2\rangle`$ | `MOLECULE.PROP:make_stiff_modes` |
+| the stiff-mode part of (17) for every atom pair | `MOLECULE.PROP:make_internal_ADPs`, `CRYSTAL:set_fragment_U_high_pair` |
+| $`B_A`$ of (16) | `CRYSTAL:TLS_displacement_mx` |
+| $`\Sigma`$ from the atoms' ADPs | `CRYSTAL:make_TLS_sigma_vector` |
+| $`U_{AB}`$, (17), for every atom pair | `CRYSTAL:make_two_center_ADPs` |
+| the temperature factor of (21) with (22), per pair of primitives | `SHELL2:make_TLS_TFs` |
+| the temperature factors of a shell pair, any two-centre model | `MOLECULE.XTAL:make_pair_TFs` |
+| $`s_0`$, $`s_1`$, $`s_2`$ of (27) for a shell pair | `MOLECULE.XTAL:make_FT_pair_moments` |
+| $`F`$ with (28) and the sums of (29) | `MOLECULE.XTAL:make_FT_and_TLS_derivs` |
+| the rotation between an atom and its image | `CRYSTAL:image_rotation` |
+| the shifts from those derivatives | `CRYSTAL:get_two_center_parameter_shifts` |
+| derivatives taken directly with respect to refined parameters | `DIFFRACTION_DATA.SET:solve_normal_equations` |
+| position derivatives by differences, `fixed-dm` and `scf` | `MOLECULE.HAR:make_two_center_position_derivs` |
+| the cosine factor of (31) | `SHELL2:scale_TFs_by_shift` |
+| $`\Delta F`$, (32) | `MOLECULE.HAR:make_stiff_mode_SF_correction` |
+| the fit loop | `MOLECULE.HAR:LS_fit_two_center` |
+| the parts of a fit shared with Hirshfeld atom refinement | `CRYSTAL:start_structure_fit`, `apply_parameter_shifts`, `finish_fit_cycle`, `finish_structure_fit` |
+| an SCF made ready at a new geometry | `MOLECULE.HAR:prepare_SCF_at_new_geometry` |
+| the check of the derivatives | `MOLECULE.HAR:check_two_center_derivs` |
+
+
 ## 7. What is not done yet, and directions
 
-- The two-centre smearing of §6 (`partition_model= tc-tls`).
+- For `tc-tls`: the numerical average of §6.6 for the soft modes and for a molecule in a cluster;
+  the SCFs at the displaced geometries run in parallel; unrestricted wavefunctions.
 - The restraint-width check and the RI-J/COSX check of the correlations section, repeated with
   spherical functions.
 - A molecule with a methyl torsion, where the first soft mode should be the torsion.
