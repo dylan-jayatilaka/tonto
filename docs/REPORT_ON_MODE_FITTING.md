@@ -1242,68 +1242,61 @@ The refinement changes $`\Sigma`$ and the atom positions (§2.2), so it needs th
 structure factor (29) with respect to each element $`\Sigma_{pq}`$ and each position $`\mathbf{R}_C`$. Both are
 found by differentiating (29) term by term.
 
-**With respect to $`\Sigma`$.** In (29), $`\Sigma`$ appears only in the exponent of the temperature
-factor, inside $`U^P_{\mu a\,\nu b}`$. By (30), $`U^P_{\mu a\,\nu b} = \bar B_P\, \bar\Sigma\, \bar B_P^{\mathsf T}`$, and both factors
-are made of two blocks (§6.1): one for the rigid-body motion and the refined soft modes, and one
-for the stiff modes,
+**With respect to $`\Sigma`$.** Two facts are used. First, by (30) and the blocks of §6.1,
 
 ```math
-\bar B_P = [\, B_P \mid \mathbf{d}_{P,\rm stiff} \,], \qquad
-\bar\Sigma = \begin{pmatrix} \Sigma & 0 \\ 0 & \mathrm{diag}\,\langle Q_k^2\rangle \end{pmatrix}, \qquad
-B_P = w_A B_A + w_B B_B .
+U^P_{\mu a\,\nu b} = \bar B_P\, \bar\Sigma\, \bar B_P^{\mathsf T}
+   = B_P\, \Sigma\, B_P^{\mathsf T} + \sum_{\omega_k > \omega_c} \langle Q_k^2\rangle\, \mathbf{d}_{Pk} \mathbf{d}_{Pk}^{\mathsf T}, \qquad
+B_P = w_A B_A + w_B B_B , \qquad (33)
 ```
 
-Multiplying the blocks, the first block of $`\bar B_P`$ meets $`\Sigma`$ and the second meets the stiff
-amplitudes:
+of which only the first term contains $`\Sigma`$. Second, $`\Sigma`$ is symmetric, and its element
+$`\Sigma_{pq}`$ with $`p \ne q`$ stands for the two equal elements $`\Sigma_{pq}`$ and $`\Sigma_{qp}`$; so for any
+vector $`\mathbf{h}`$, $`\partial(\mathbf{h}^{\mathsf T}\Sigma\,\mathbf{h})/\partial\Sigma_{pq} = (2-\delta_{pq})\, h_p h_q`$, with $`\delta_{pq}`$ one if $`p = q`$ and
+zero otherwise. Then, differentiating (29),
 
 ```math
-U^P_{\mu a\,\nu b} = B_P\, \Sigma\, B_P^{\mathsf T} + \sum_{\omega_k > \omega_c} \langle Q_k^2\rangle\, \mathbf{d}_{Pk} \mathbf{d}_{Pk}^{\mathsf T} . \qquad (33)
+\begin{aligned}
+\frac{\partial F}{\partial \Sigma_{pq}}
+ &= \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} c_{\mu a} c_{\nu b}\; e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde\chi_{\mu a\,\nu b}(\mathbf{k}; \mathbf{R})\;
+    \frac{\partial}{\partial \Sigma_{pq}} \Big( e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{\mu a\,\nu b} \mathbf{k}} \Big) \\
+ &= \sum_{\mu\nu} D_{\mu\nu} \sum_{ab}
+    \underbrace{ c_{\mu a} c_{\nu b}\; e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde\chi_{\mu a\,\nu b}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{\mu a\,\nu b} \mathbf{k}} }_{t_{\mu a\,\nu b},\ \text{the term of (29)}}
+    \Big( -\tfrac12\, \frac{\partial}{\partial \Sigma_{pq}} \big( \mathbf{k}^{\mathsf T} U^P_{\mu a\,\nu b}\, \mathbf{k} \big) \Big) \\
+ &= \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} t_{\mu a\,\nu b}
+    \Big( -\tfrac12\, \frac{\partial}{\partial \Sigma_{pq}} \big( \mathbf{k}^{\mathsf T} B_P\, \Sigma\, B_P^{\mathsf T} \mathbf{k} \big) \Big)
+    && \text{by (33)} \\
+ &= \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} t_{\mu a\,\nu b}
+    \Big( -\tfrac12\, \frac{\partial}{\partial \Sigma_{pq}} \big( \mathbf{h}_P^{\mathsf T}\, \Sigma\, \mathbf{h}_P \big) \Big)
+    && \text{with } \mathbf{h}_P = B_P^{\mathsf T}\mathbf{k} \\
+ &= -\frac{2-\delta_{pq}}{2} \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} t_{\mu a\,\nu b}\; h_{P,p}\, h_{P,q} \\
+ &= -\frac{2-\delta_{pq}}{2} \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} t_{\mu a\,\nu b}\;
+    ( w_A h_{A,p} + w_B h_{B,p} )( w_A h_{A,q} + w_B h_{B,q} )
+    && \text{with } \mathbf{h}_P = w_A \mathbf{h}_A + w_B \mathbf{h}_B,\ \ \mathbf{h}_A = B_A^{\mathsf T}\mathbf{k} \\
+ &= -\frac{2-\delta_{pq}}{2} \sum_{\mu\nu} \Big[\,
+      h_{A,p} h_{A,q} \Big( D_{\mu\nu} \sum_{ab} w_A^2\; t_{\mu a\,\nu b} \Big)
+    + h_{B,p} h_{B,q} \Big( D_{\mu\nu} \sum_{ab} (1-w_A)^2\; t_{\mu a\,\nu b} \Big) \\
+ &\qquad\qquad\qquad\quad
+    + ( h_{A,p} h_{B,q} + h_{B,p} h_{A,q} ) \Big( D_{\mu\nu} \sum_{ab} w_A (1-w_A)\; t_{\mu a\,\nu b} \Big) \Big] .
+\end{aligned}
+\qquad (34)
 ```
 
-Only the first term contains $`\Sigma`$. In the exponent of (29) it is
+The last step uses two things: $`\mathbf{h}_A`$ and $`\mathbf{h}_B`$ belong to the atoms and are the same for every
+primitive, so they come outside the sum over $`a, b`$; and $`w_B = 1 - w_A`$. The three sums in round
+brackets are all made of
 
 ```math
-\mathbf{k}^{\mathsf T} B_P\, \Sigma\, B_P^{\mathsf T} \mathbf{k} = \mathbf{h}_P^{\mathsf T}\, \Sigma\, \mathbf{h}_P, \qquad
-\mathbf{h}_P = B_P^{\mathsf T}\mathbf{k} = w_A\, \mathbf{h}_A + w_B\, \mathbf{h}_B, \qquad \mathbf{h}_A = B_A^{\mathsf T} \mathbf{k} .
+s^{\mu\nu}_n(\mathbf{k}) = D_{\mu\nu} \sum_{ab} w_A^{\,n}\; t_{\mu a\,\nu b}, \qquad n = 0, 1, 2 , \qquad (35)
 ```
 
-$`\mathbf{h}_A`$ is a vector with one component for each generalised coordinate of (11). $`\Sigma`$ is
-symmetric, and its element $`\Sigma_{pq}`$ with $`p \ne q`$ stands for the two equal elements $`\Sigma_{pq}`$ and
-$`\Sigma_{qp}`$, so $`\partial(\mathbf{h}_P^{\mathsf T}\Sigma\,\mathbf{h}_P)/\partial\Sigma_{pq} = (2-\delta_{pq})\, h_{P,p}\, h_{P,q}`$, with $`\delta_{pq}`$ one if
-$`p = q`$ and zero otherwise. Differentiating the exponential in (29) therefore multiplies each
-term by $`-\tfrac12 (2-\delta_{pq})\, h_{P,p}\, h_{P,q}`$:
-
-```math
-\frac{\partial F}{\partial \Sigma_{pq}} = -\frac{2-\delta_{pq}}{2} \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} h_{P,p}\, h_{P,q}\;\, c_{\mu a} c_{\nu b}\;
-     e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde\chi_{\mu a\,\nu b}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{\mu a\,\nu b} \mathbf{k}} . \qquad (34)
-```
-
-This is the derivative. The rest is to put it in a form that is cheap to compute. In (34) the
-factor $`h_{P,p} h_{P,q}`$ is inside the sum over the primitives $`a, b`$, because $`w_A`$ and $`w_B`$ are
-different for each pair of primitives. But $`\mathbf{h}_A`$ and $`\mathbf{h}_B`$ are the same for every primitive on
-the two atoms. Multiplying out,
-
-```math
-h_{P,p}\, h_{P,q} = w_A^2\, h_{A,p} h_{A,q} + w_B^2\, h_{B,p} h_{B,q} + w_A w_B\,( h_{A,p} h_{B,q} + h_{B,p} h_{A,q} ) , \qquad (35)
-```
-
-so the $`h_A`$ and $`h_B`$ factors can be taken outside the sum over primitives, leaving inside it
-the terms of (29) weighted by $`w_A^2`$, by $`w_B^2`$ and by $`w_A w_B`$. Since $`w_B = 1 - w_A`$, those
-weights are $`w_A^2`$, $`1 - 2w_A + w_A^2`$ and $`w_A - w_A^2`$: combinations of $`1`$, $`w_A`$ and $`w_A^2`$.
-So only three sums over the primitives are needed for each pair of basis functions. Name them:
-
-```math
-s^{\mu\nu}_n(\mathbf{k}) = D_{\mu\nu} \sum_{ab} w_A^{\,n}\;\, c_{\mu a} c_{\nu b}\;
-     e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde\chi_{\mu a\,\nu b}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{\mu a\,\nu b} \mathbf{k}}, \qquad n = 0, 1, 2 . \qquad (36)
-```
-
-$`s^{\mu\nu}_0`$ is the contribution of the pair $`\mu\nu`$ to $`F`$ itself: $`F = \sum_{\mu\nu} s^{\mu\nu}_0`$. Putting (35)
-into (34),
+since $`(1-w_A)^2 = 1 - 2w_A + w_A^2`$ and $`w_A(1-w_A) = w_A - w_A^2`$. $`s^{\mu\nu}_0`$ is the contribution of
+the pair $`\mu\nu`$ to $`F`$ itself, $`F = \sum_{\mu\nu} s^{\mu\nu}_0`$. So
 
 ```math
 \frac{\partial F}{\partial \Sigma_{pq}} = -\frac{2-\delta_{pq}}{2} \sum_{\mu\nu}
    \Big[ s^{\mu\nu}_2\, h_{A,p}\, h_{A,q} + (s^{\mu\nu}_0 - 2 s^{\mu\nu}_1 + s^{\mu\nu}_2)\, h_{B,p}\, h_{B,q}
-       + (s^{\mu\nu}_1 - s^{\mu\nu}_2)\,( h_{A,p}\, h_{B,q} + h_{B,p}\, h_{A,q} ) \Big] , \qquad (37)
+       + (s^{\mu\nu}_1 - s^{\mu\nu}_2)\,( h_{A,p}\, h_{B,q} + h_{B,p}\, h_{A,q} ) \Big] , \qquad (36)
 ```
 
 where $`A`$ is the atom of $`\mu`$ and $`B`$ the atom of $`\nu`$. An atom outside the rigid body does not
@@ -1314,12 +1307,20 @@ the centre $`\mathbf{P}`$, the vector $`\mathbf{R}`$ in $`\tilde\chi_{\mu a\,\nu
 Tonto offers three derivatives, which keep one, two or all three of these
 (`tc_position_derivs=`):
 
-- `center`. Only $`\mathbf{P}`$ is moved. By (21), $`\partial\mathbf{P}/\partial\mathbf{R}_A = w_A`$ and $`\partial\mathbf{P}/\partial\mathbf{R}_B = w_B = 1 - w_A`$, so
-  differentiating $`e^{i\mathbf{k}\cdot\mathbf{P}}`$ multiplies a term by $`i\mathbf{k}\,w_A`$ for the atom of $`\mu`$ and by
-  $`i\mathbf{k}\,(1-w_A)`$ for the atom of $`\nu`$. The weighted sums are again those of (36), and for atom $`C`$
+- `center`. Only $`\mathbf{P}`$ is moved. By (21), $`\partial\mathbf{P}/\partial\mathbf{R}_A = w_A`$ and $`\partial\mathbf{P}/\partial\mathbf{R}_B = w_B = 1 - w_A`$.
+  For atom $`C`$, a term depends on $`\mathbf{R}_C`$ if $`\mu`$ is on $`C`$, or $`\nu`$ is, or both:
 
 ```math
-\frac{\partial F}{\partial \mathbf{R}_C} = i\mathbf{k} \Big[ \sum_{\mu\nu,\ \mu \text{ on } C} s^{\mu\nu}_1 + \sum_{\mu\nu,\ \nu \text{ on } C} ( s^{\mu\nu}_0 - s^{\mu\nu}_1 ) \Big] . \qquad (38)
+\begin{aligned}
+\frac{\partial F}{\partial \mathbf{R}_C}
+ &= \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} c_{\mu a} c_{\nu b}\; \tilde\chi_{\mu a\,\nu b}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{\mu a\,\nu b} \mathbf{k}}\;
+    \frac{\partial}{\partial \mathbf{R}_C} \Big( e^{i\mathbf{k}\cdot\mathbf{P}} \Big) \\
+ &= \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} t_{\mu a\,\nu b}\;\, i\mathbf{k}\, \frac{\partial \mathbf{P}}{\partial \mathbf{R}_C} \\
+ &= i\mathbf{k} \Big[ \sum_{\mu\nu,\ \mu \text{ on } C} D_{\mu\nu} \sum_{ab} w_A\; t_{\mu a\,\nu b}
+              + \sum_{\mu\nu,\ \nu \text{ on } C} D_{\mu\nu} \sum_{ab} (1 - w_A)\; t_{\mu a\,\nu b} \Big] \\
+ &= i\mathbf{k} \Big[ \sum_{\mu\nu,\ \mu \text{ on } C} s^{\mu\nu}_1 + \sum_{\mu\nu,\ \nu \text{ on } C} ( s^{\mu\nu}_0 - s^{\mu\nu}_1 ) \Big] .
+\end{aligned}
+\qquad (37)
 ```
 
 - `fixed-dm`. $`\mathbf{P}`$ and $`\mathbf{R}`$ are moved: the basis functions move with the atom, and the density
@@ -1344,10 +1345,10 @@ By (26), with $`\mathbf{u}_A = Q\,\mathbf{d}_{Ak}`$ and $`\mathbf{u}_B = Q\,\mat
 D_{\mu\nu}(Q)\; c_{\mu a} c_{\nu b}\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
    e^{iQ\,\mathbf{k}\cdot\mathbf{d}_{Pk}}\;
    \tilde\chi_{\mu a\,\nu b}\big(\mathbf{k};\, \mathbf{R} + Q(\mathbf{d}_{Ak} - \mathbf{d}_{Bk})\big), \qquad
-\mathbf{d}_{Pk} = w_A \mathbf{d}_{Ak} + w_B \mathbf{d}_{Bk} . \qquad (39)
+\mathbf{d}_{Pk} = w_A \mathbf{d}_{Ak} + w_B \mathbf{d}_{Bk} . \qquad (38)
 ```
 
-Three things in (39) depend on $`Q`$:
+Three things in (38) depend on $`Q`$:
 
 1. the phase $`e^{iQ\,\mathbf{k}\cdot\mathbf{d}_{Pk}}`$, because the centre of the product moves by $`Q\,\mathbf{d}_{Pk}`$;
 2. the transform $`\tilde\chi_{\mu a\,\nu b}`$, because the vector between the two atoms changes from $`\mathbf{R}`$
@@ -1358,13 +1359,13 @@ Three things in (39) depend on $`Q`$:
 
 **Two structure factors as functions of $`Q`$.** Let $`W^{(k)}_{\mu a\,\nu b}`$ be the temperature factor
 of the product from all the motion except mode $`k`$: that of (29) with mode $`k`$'s term left out
-of (17). Keeping all three dependences of (39) gives the exact structure factor with mode $`k`$ at
+of (17). Keeping all three dependences of (38) gives the exact structure factor with mode $`k`$ at
 $`Q`$,
 
 ```math
 F^{\rm exact}_k(Q) = \sum_{\mu\nu} D_{\mu\nu}(Q) \sum_{ab} c_{\mu a} c_{\nu b}\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
    e^{iQ\,\mathbf{k}\cdot\mathbf{d}_{Pk}}\;
-   \tilde\chi_{\mu a\,\nu b}\big(\mathbf{k};\, \mathbf{R} + Q(\mathbf{d}_{Ak} - \mathbf{d}_{Bk})\big)\; W^{(k)}_{\mu a\,\nu b} . \qquad (40)
+   \tilde\chi_{\mu a\,\nu b}\big(\mathbf{k};\, \mathbf{R} + Q(\mathbf{d}_{Ak} - \mathbf{d}_{Bk})\big)\; W^{(k)}_{\mu a\,\nu b} . \qquad (39)
 ```
 
 Keeping only the first, as §6.3 does, gives
@@ -1372,25 +1373,25 @@ Keeping only the first, as §6.3 does, gives
 ```math
 F^{\rm approx}_k(Q) = \sum_{\mu\nu} D_{\mu\nu}(0) \sum_{ab} c_{\mu a} c_{\nu b}\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
    e^{iQ\,\mathbf{k}\cdot\mathbf{d}_{Pk}}\;
-   \tilde\chi_{\mu a\,\nu b}(\mathbf{k};\, \mathbf{R})\; W^{(k)}_{\mu a\,\nu b} . \qquad (41)
+   \tilde\chi_{\mu a\,\nu b}(\mathbf{k};\, \mathbf{R})\; W^{(k)}_{\mu a\,\nu b} . \qquad (40)
 ```
 
 The two are equal at $`Q = 0`$.
 
 **Their thermal averages.** $`Q`$ has a Gaussian distribution with zero mean and mean square
-$`\langle Q_k^2\rangle`$, (6). In (41) only the phase depends on $`Q`$, and its average is
+$`\langle Q_k^2\rangle`$, (6). In (40) only the phase depends on $`Q`$, and its average is
 $`e^{-\frac12 \langle Q_k^2\rangle (\mathbf{k}\cdot\mathbf{d}_{Pk})^2}`$, as in (27). That is exactly the term of mode $`k`$
-that was left out of $`W^{(k)}`$, so the average of (41) is the structure factor of §6.3:
+that was left out of $`W^{(k)}`$, so the average of (40) is the structure factor of §6.3:
 
 ```math
-\langle F^{\rm approx}_k \rangle = F \text{ of (29)} . \qquad (42)
+\langle F^{\rm approx}_k \rangle = F \text{ of (29)} . \qquad (41)
 ```
 
-The average of (40) cannot be done by formula, because $`D_{\mu\nu}(Q)`$ is known only by doing an
+The average of (39) cannot be done by formula, because $`D_{\mu\nu}(Q)`$ is known only by doing an
 SCF at each $`Q`$. What is wanted is the error that §6.3 makes for mode $`k`$,
 
 ```math
-\Delta_k = \langle F^{\rm exact}_k \rangle - \langle F^{\rm approx}_k \rangle = \langle\, F^{\rm exact}_k(Q) - F^{\rm approx}_k(Q) \,\rangle . \qquad (43)
+\Delta_k = \langle F^{\rm exact}_k \rangle - \langle F^{\rm approx}_k \rangle = \langle\, F^{\rm exact}_k(Q) - F^{\rm approx}_k(Q) \,\rangle . \qquad (42)
 ```
 
 **The average by three points.** For any function $`g(Q)`$ of a Gaussian variable with zero mean
@@ -1398,15 +1399,15 @@ and mean square $`\langle Q_k^2\rangle`$, the three-point Gauss–Hermite rule i
 
 ```math
 \langle g \rangle \approx \tfrac23\, g(0) + \tfrac16\, g(+s_k) + \tfrac16\, g(-s_k), \qquad
-s_k = \sqrt{3\,\langle Q_k^2\rangle} , \qquad (44)
+s_k = \sqrt{3\,\langle Q_k^2\rangle} , \qquad (43)
 ```
 
-exact when $`g`$ is a polynomial of degree five or less. Apply it to (43), that is to
+exact when $`g`$ is a polynomial of degree five or less. Apply it to (42), that is to
 $`g(Q) = F^{\rm exact}_k(Q) - F^{\rm approx}_k(Q)`$. Since $`g(0) = 0`$,
 
 ```math
 \Delta_k \approx \tfrac16 \big[ F^{\rm exact}_k(s_k) + F^{\rm exact}_k(-s_k) \big]
-               - \tfrac16 \big[ F^{\rm approx}_k(s_k) + F^{\rm approx}_k(-s_k) \big] . \qquad (45)
+               - \tfrac16 \big[ F^{\rm approx}_k(s_k) + F^{\rm approx}_k(-s_k) \big] . \qquad (44)
 ```
 
 **The two brackets.**
@@ -1416,31 +1417,31 @@ $`g(Q) = F^{\rm exact}_k(Q) - F^{\rm approx}_k(Q)`$. Since $`g(0) = 0`$,
   temperature factor. That is $`F^{\rm exact}_k(s_k)`$: moving the atoms with their basis functions
   puts in the phase and the change of $`\tilde\chi_{\mu a\,\nu b}`$, and the SCF puts in $`D_{\mu\nu}(s_k)`$. The
   same with $`-s_k`$ gives $`F^{\rm exact}_k(-s_k)`$. Call them $`F_k^{+}`$ and $`F_k^{-}`$.
-- *The approximate one.* In (41) the two values of $`Q`$ differ only in the phase, and
+- *The approximate one.* In (40) the two values of $`Q`$ differ only in the phase, and
   $`e^{i s_k \theta} + e^{-i s_k \theta} = 2\cos(s_k\theta)`$ with $`\theta = \mathbf{k}\cdot\mathbf{d}_{Pk}`$. So
 
 ```math
 F^{\rm approx}_k(s_k) + F^{\rm approx}_k(-s_k) = 2 F_k^{\cos}, \qquad
 F_k^{\cos} = \sum_{\mu\nu} D_{\mu\nu}(0) \sum_{ab} c_{\mu a} c_{\nu b}\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
-   \tilde\chi_{\mu a\,\nu b}(\mathbf{k}; \mathbf{R})\; W^{(k)}_{\mu a\,\nu b}\; \cos( s_k\, \mathbf{k}\cdot\mathbf{d}_{Pk} ) , \qquad (46)
+   \tilde\chi_{\mu a\,\nu b}(\mathbf{k}; \mathbf{R})\; W^{(k)}_{\mu a\,\nu b}\; \cos( s_k\, \mathbf{k}\cdot\mathbf{d}_{Pk} ) , \qquad (45)
 ```
 
   which is made at the mean geometry with the density matrix of the mean geometry: the
   structure factor (29) with $`W^{(k)}`$ for the temperature factor and each product of primitives
   multiplied by its cosine.
 
-**The correction.** Putting the two brackets into (45), and adding the stiff modes,
+**The correction.** Putting the two brackets into (44), and adding the stiff modes,
 
 ```math
 \Delta F = \sum_{\omega_k > \omega_c} \Delta_k, \qquad
-\Delta_k = \tfrac16 \big( F_k^{+} + F_k^{-} \big) - \tfrac13\, F_k^{\cos} , \qquad (47)
+\Delta_k = \tfrac16 \big( F_k^{+} + F_k^{-} \big) - \tfrac13\, F_k^{\cos} , \qquad (46)
 ```
 
 and the structure factor used in the refinement is (29) plus $`\Delta F`$.
 
-- **Why the difference is integrated, not $`F^{\rm exact}_k`$ itself.** The phase in (40) varies
-  quickly with $`Q`$ at high angle, where three points are too few; (42) does that part exactly.
-  The difference (43) is small and varies slowly, which is what the rule (44) is good for.
+- **Why the difference is integrated, not $`F^{\rm exact}_k`$ itself.** The phase in (39) varies
+  quickly with $`Q`$ at high angle, where three points are too few; (41) does that part exactly.
+  The difference (42) is small and varies slowly, which is what the rule (43) is good for.
 - **Why the modes are added.** Each $`\Delta_k`$ is small, so the effect of one on another is small
   twice over and is left out.
 - **Cost and limits.** Two SCFs for each stiff mode. $`\Delta F`$ is made once for each fit with a
@@ -1455,14 +1456,14 @@ In `xray_data=`:
 | keyword | default | meaning |
 |---|---|---|
 | `partition_model= tc-tls` | | the model (29); sets `adp_model= tls` |
-| `tc_position_derivs=` | `center` | the position derivative: `center` (38), `fixed-dm` or `scf` (§6.5) |
-| `tc_integrate_stiff_modes=` | `FALSE` | `TRUE` adds $`\Delta F`$ of (47) |
+| `tc_position_derivs=` | `center` | the position derivative: `center` (37), `fixed-dm` or `scf` (§6.5) |
+| `tc_integrate_stiff_modes=` | `FALSE` | `TRUE` adds $`\Delta F`$ of (46) |
 
 On the molecule:
 
 | keyword | meaning |
 |---|---|
-| `check_two_center_derivs` | compares (37) and (38) with central differences of (29) and prints the largest disagreement; for (38) that is the size of what `center` leaves out |
+| `check_two_center_derivs` | compares (36) and (37) with central differences of (29) and prints the largest disagreement; for (37) that is the size of what `center` leaves out |
 
 A Hessian from ORCA is turned into `force_constants=` by `scripts/orca_hessian_to_tonto.py`.
 
@@ -1477,14 +1478,14 @@ A Hessian from ORCA is turned into `force_constants=` by `scripts/orca_hessian_t
 | $`U_{AB}`$, (17), for every atom pair | `CRYSTAL:make_two_center_ADPs` |
 | the temperature factor of (29) with (28), per pair of primitives | `SHELL2:make_TLS_TFs` |
 | the temperature factors of a shell pair, any two-centre model | `MOLECULE.XTAL:make_pair_TFs` |
-| $`s_0`$, $`s_1`$, $`s_2`$ of (36) for a shell pair | `MOLECULE.XTAL:make_FT_pair_moments` |
-| $`F`$ with (37) and the sums of (38) | `MOLECULE.XTAL:make_FT_and_TLS_derivs` |
+| $`s_0`$, $`s_1`$, $`s_2`$ of (35) for a shell pair | `MOLECULE.XTAL:make_FT_pair_moments` |
+| $`F`$ with (36) and the sums of (37) | `MOLECULE.XTAL:make_FT_and_TLS_derivs` |
 | the rotation between an atom and its image | `CRYSTAL:image_rotation` |
 | the shifts from those derivatives | `CRYSTAL:get_two_center_parameter_shifts` |
 | derivatives taken directly with respect to refined parameters | `DIFFRACTION_DATA.SET:solve_normal_equations` |
 | position derivatives by differences, `fixed-dm` and `scf` | `MOLECULE.HAR:make_two_center_position_derivs` |
-| the cosine factor of (46) | `SHELL2:scale_TFs_by_shift` |
-| $`\Delta F`$, (47) | `MOLECULE.HAR:make_stiff_mode_SF_correction` |
+| the cosine factor of (45) | `SHELL2:scale_TFs_by_shift` |
+| $`\Delta F`$, (46) | `MOLECULE.HAR:make_stiff_mode_SF_correction` |
 | the fit loop | `MOLECULE.HAR:LS_fit_two_center` |
 | the parts of a fit shared with Hirshfeld atom refinement | `CRYSTAL:start_structure_fit`, `apply_parameter_shifts`, `finish_fit_cycle`, `finish_structure_fit` |
 | an SCF made ready at a new geometry | `MOLECULE.HAR:prepare_SCF_at_new_geometry` |
