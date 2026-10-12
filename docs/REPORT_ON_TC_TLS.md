@@ -625,18 +625,30 @@ A Hessian from ORCA is turned into `force_constants=` by `scripts/orca_hessian_t
 the ADPs. RHF/def2-SVP on the isolated molecule; 817 reflections at 123 K; 17 parameters; stiff
 modes from an RHF/def2-SVP Hessian, frequencies scaled by 0.8953; no soft modes refined.
 
-| refinement | GoF | R(F) | N–H1 /Å | N–H3 /Å |
-|---|---|---|---|---|
-| Hirshfeld atoms | 3.4854 | 0.0181 | 1.028 | 0.994 |
-| `tc-tls`, position derivative `center` | 3.6577 | 0.0186 | 1.024 | 0.977 |
-| `tc-tls`, position derivative `fixed-dm` | 3.6681 | 0.0183 | 1.023 | 1.013 |
-| `tc-tls`, position derivative `scf` | 3.6292 | 0.0183 | 1.023 | 0.994 |
-| `tc-tls`, `center`, stiff modes averaged (§6) | 3.6349 | 0.0186 | 1.024 | 0.980 |
-| `tc-tls`, `scf`, stiff modes averaged (§6) | 3.6115 | 0.0183 | 1.023 | 0.995 |
+| refinement | GoF | R(F) | N–H1 /Å | N–H3 /Å | C=O /Å | C–N /Å |
+|---|---|---|---|---|---|---|
+| Hirshfeld atoms | 3.4854 | 0.0181 | 1.028 | 0.994 | 1.2559 | 1.3411 |
+| `tc-tls`, position derivative `center` | 3.6577 | 0.0186 | 1.024 | 0.977 | 1.2560 | 1.3412 |
+| `tc-tls`, position derivative `fixed-dm` | 3.6681 | 0.0183 | 1.023 | 1.013 | 1.2561 | 1.3413 |
+| `tc-tls`, position derivative `scf` | 3.6292 | 0.0183 | 1.023 | 0.994 | 1.2562 | 1.3413 |
+| `tc-tls`, `center`, stiff modes averaged (§6) | 3.6349 | 0.0186 | 1.024 | 0.980 | 1.2559 | 1.3412 |
+| `tc-tls`, `scf`, stiff modes averaged (§6) | 3.6115 | 0.0183 | 1.023 | 0.995 | 1.2562 | 1.3413 |
+| `tc-tls`, `center`, rigid-body motion averaged (§7) | 3.4876 | 0.0183 | 1.031 | 0.991 | 1.2620 | 1.3495 |
+| `tc-tls`, `center`, rigid-body motion and stiff modes averaged | 3.4606 | 0.0183 | 1.032 | 0.993 | 1.2619 | 1.3495 |
 
-The three with `scf` or the averaging have the SCF converged to 1e-7, the others to 1e-4.
+The rows with `scf` or an averaging have the SCF converged to 1e-7, the others to 1e-4.
 
-- **Hirshfeld atoms fit best.** The best `tc-tls` refinement is 0.126 higher in GoF.
+- **With the rigid-body motion averaged, `tc-tls` fits as well as Hirshfeld atoms, and with the
+  stiff modes averaged too it fits better**: GoF 3.4606 against 3.4854. Without the rigid-body
+  average it is 0.13 to 0.18 worse.
+- **The rigid-body average is the large effect: 0.17 in GoF.** Urea librates by about 8° root
+  mean square about one axis. A product of basis functions with lobes must turn with the
+  molecule, and without §7 it does not. Hirshfeld atoms do better there because density near a
+  hydrogen is given to the hydrogen, with its large ADP.
+- **It lengthens the bonds between the heavy atoms**: C=O by 0.006 Å and C–N by 0.008 Å. In §7 the
+  atoms move on arcs, so the refined positions are those of the turning molecule itself; a
+  refinement that moves atoms in straight lines places them closer together. This is the libration
+  correction to a bond length, here part of the model.
 - **The position derivative matters, and only `scf` is right.** With `tc-tls` and the TLS
   parameters alone refined at the Hirshfeld geometry the GoF is 3.6377. `center` and `fixed-dm` end
   above that, `scf` below. `fixed-dm`, which moves the basis functions and holds the density
@@ -650,8 +662,8 @@ The three with `scf` or the averaging have the SCF converged to 1e-7, the others
 - **The check of the derivatives** (`check_two_center_derivs`): those with respect to $`\Sigma`$
   agree with central differences to 2 parts in 10⁸; what `center` leaves out of the position
   derivatives is 13 % of the largest.
-- **Time**, one core: 1 minute for `center`, 9 for `scf`, 10 for the averaging with `center`, 19
-  with `scf`.
+- **Time**, one core: 1 minute for `center`, 9 for `scf`; with `center`, 10 for the stiff-mode
+  average, 6 for the rigid-body average, and 18 for both.
 
 
 ## References

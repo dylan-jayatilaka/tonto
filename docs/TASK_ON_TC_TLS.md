@@ -319,6 +319,30 @@ Hirshfeld one, and with `tc-tanaka` using the same ADPs. By (14) the difference 
 two is the relative motion alone.
 
 
+**2026-10-13, why `tc-tls` fitted worse: libration.** Ruled out first: the two-centre code (the
+same isotropic U on every atom gives GoF 32.368 by Hirshfeld and 32.364 by `tc-tanaka`); the pair
+weights (§10: old, new and petite list all 3.6577). Then tested: products with lobes must turn
+with the molecule. `tc_integrate_rigid_body=` (report §7): the principal coordinates of the
+refined Sigma, the molecule turned exactly at +-sqrt(3 lambda), an SCF there, the same three-point
+difference as for the stiff modes (`make_mode_SF_correction` now does both). Urea def2-SVP,
+`center` derivatives, SCF 1e-7:
+
+| | GoF | C=O /A | C-N /A | N-H1 | N-H3 |
+|---|---|---|---|---|---|
+| Hirshfeld | 3.4854 | 1.2559 | 1.3411 | 1.028 | 0.994 |
+| `tc-tls` | 3.6577 | 1.2560 | 1.3412 | 1.024 | 0.977 |
+| + rigid body averaged | 3.4876 | 1.2620 | 1.3495 | 1.031 | 0.991 |
+| + stiff modes too | 3.4606 | 1.2619 | 1.3495 | 1.032 | 0.993 |
+
+So libration was the gap, 0.17 in GoF, and with both averages `tc-tls` is below Hirshfeld. The
+heavy-atom bonds lengthen by 0.006-0.008 A: the atoms move on arcs, i.e. the libration correction
+is in the model. To do before quoting: a finer rule than three points (the largest libration puts
+the points at about +-14 deg); the same with `scf` derivatives; whether the outer loop settles
+smoothly with a correction that depends on Sigma; debug build; test suite; TZVP. Also the
+mode-fitting report hit GitHub's limit on math per page (about 370 expressions; later ones show
+"Unable to render expression"), so the two-centre material moved to `docs/REPORT_ON_TC_TLS.md`.
+Runs in `~/tonto-runs/2026-10-12_tc_tls/{equal_U,pair_weights,rigid}`.
+
 ## 10. Symmetry: the stabiliser of an atom pair
 
 Dylan, 2026-10-13: the repetition factors are very old code, from Jayatilaka and Grimwood (2001);
