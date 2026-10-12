@@ -427,3 +427,21 @@ already refined with a one-centre partition; `make_two_center_ADPs` stops otherw
 check (c) is `~/tonto-runs/2026-10-12_tc_tls/step1/stdin`: the urea STO-3G TLS test, then
 `make_structure_factors` with `oc-hirshfeld`, `tc-tanaka` and `tc-tls` in turn. Not yet known:
 whether re-reading `partition_model=` inside `crystal=` keeps the refined TLS model.
+
+**2026-10-12, step 1 built and run.** Debug and release both compile; the debug run (bounds
+checking on) goes through all three models without a stop. Re-reading `partition_model=` inside
+`crystal= { xray_data= { } }` keeps the refined TLS model. Urea, RHF/STO-3G, 817 reflections,
+parameters from the converged `adp_model= tls` Hirshfeld refinement, the scale factor re-fitted
+for each model (release build; `put_structure_factor_stats` after each `make_structure_factors`):
+
+| smearing | GoF | R(F) | Rw(F) | scale |
+|---|---|---|---|---|
+| `oc-hirshfeld` | 7.1801 | 0.0387 | 0.0299 | 0.9812 |
+| `tc-tanaka` | 7.2709 | 0.0389 | 0.0303 | 0.9814 |
+| `tc-tls` | 7.2552 | 0.0388 | 0.0302 | 0.9811 |
+
+The Hirshfeld row reproduces the refinement's own GoF. The positions and $`\Sigma`$ were refined
+for Hirshfeld, so the two-centre rows are at a disadvantage until step 2 refines them. `tc-tls`
+is below `tc-tanaka`, the direction (14) predicts, but by little, and STO-3G is too poor a basis
+to say more. Checks (a) and (b) of step 1 not done. Runs in
+`~/tonto-runs/2026-10-12_tc_tls/step1/{debug,release}`.
