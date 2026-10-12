@@ -111,12 +111,13 @@ PySCF environment: `~/tonto-runs/2026-10-11_x2c`.
 `dkh-2` (they ran non-relativistically); `nucleus_model= finite` (it gave a nuclear attraction
 matrix of zero); a Gaussian nucleus without X2C.
 
-**The four tasks this left are closed** (2026-10-12, branch `heavy-atom-fixes`; archive, *the four
+**The four tasks this left are closed** (2026-10-12, pull request 48, merged; archive, *the four
 tasks left by the X2C work*): `hart` takes X2C and atoms to Rn; X2C passes under MPI; the SCF
 converges with a filtered basis function; the default DFT grid is good to about 1e-5 hartree up
 to Rn. **Open from that:** the atomic density tables go negative near a heavy nucleus
-(*Correctness*; to settle before a heavy atom is refined); a data set with an atom beyond Kr is
-needed.
+(*Correctness*; to settle before a heavy atom is refined); the DFT grid levels are to be tuned
+(*Science and features*); `hart` is to use spherical functions (*hart*); a data set with an atom
+beyond Kr is needed. **Dropped for now (Dylan):** the aoc/fon test on a heavy atom.
 
 ## CLOSED 2026-10-11: libxc, PBE0 and r2SCAN are on `develop`
 
@@ -4451,6 +4452,33 @@ Multithreaded OpenBLAS would also oversubscribe cores in MPI builds: ranks x thr
 
 # Science and features
 
+## Tune the DFT grid levels to 1e-3, 1e-4 and 1e-5 hartree (Dylan, 2026-10-12)
+
+**Register row** of the same name. The targets for a GGA energy are 1e-3 hartree at
+`accuracy= very_low`, 1e-4 at `low` and 1e-5 at `medium`, the default, for every element to Rn.
+The levels are not there. PBE against PySCF on very fine grids, `x2c-SVPall`, X2C beyond Kr, after
+the heavy-atom changes of 2026-10-12 (runs: `~/tonto-runs/2026-10-12_heavy_grid/newdef`):
+
+| | HF | HCl | HBr | HI | Xe | Hg | Rn |
+|---|---|---|---|---|---|---|---|
+| `very_low` | 8.7e-5 | 1.1e-4 | 6.7e-6 | 8.6e-5 | 1.7e-5 | 2.2e-5 | 1.7e-5 |
+| `low` | 4.4e-6 | 1.4e-4 | 1.4e-5 | 1.8e-5 | 1.3e-5 | 1.9e-5 | 3.3e-5 |
+| `medium` | 1.5e-6 | 2.6e-5 | 7.5e-6 | 1.5e-6 | 3.1e-6 | 7.8e-6 | 2.3e-5 |
+| `high` | 3.0e-8 | 1.1e-5 | 3.9e-6 | 6.4e-6 | 8.4e-6 | 1.5e-5 | 1.3e-5 |
+
+What it shows. `very_low` is ten times better than it need be, so it is spending points. `low`
+misses 1e-4 on HCl. `medium` misses 1e-5 on HCl and Rn. For the heavy atoms the four levels
+hardly differ, and `high` is no better than `medium`: the extra radial points of periods 4 to 6
+are 9, 20 and 32 times `n_extra_pts_per_shell`, which is 5 at every level, so the levels change
+only the 20 to 35 points of the hydrogen rule and the angular orders. Period 3 (HCl) still has the
+old rule and is the worst at three levels.
+
+To do: make the radial points of each period depend on the level, period 3 included, and the
+angular orders with them, and calibrate the three levels on a set that covers each period and
+real bonding (the seven above are atoms and hydrides), with timings, since the point of the lower
+levels is speed. Then say what `high` to `best` are for. Changing period 3 or the angular orders
+moves most DFT references: a re-bless.
+
 ## Stop the X-ray constrained fit where its energy rise matches the crystal's deformation energy (Dylan, 2026-10-10)
 
 **Register row:** *Stop the XCW where its energy rise matches the deformation energy*. **To be
@@ -6375,6 +6403,15 @@ submodules simplifies the emitted module graph and compile-time dependencies. To
 
 # hart
 
+## hart should use spherical functions (Dylan, 2026-10-12)
+
+**Register row** of the same name. `hart` runs with Cartesian d and f functions; the protocol is
+spherical always (`docs/TASK_HAR_STANDARDISATION.md` section 2), and the x2c basis sets are defined
+with spherical functions. Set `use_spherical_basis` in `runfiles/run_har.foo` before the basis is
+resolved; check the fragment and cluster paths keep it. Every `hart` reference with d functions
+changes, so the `hart` tests need a re-bless on achari2 (the STO-3G ones should not move).
+Decided the same day: `hart` keeps the 4d and 5d metals.
+
 ## hart — deferred items
 
 The `hart` work (milestone 5) left these alone deliberately. `docs/RUNNING_HART.md` is
@@ -7170,10 +7207,12 @@ different question and the one that matters.
 **hart beyond Kr.** `--relativity none|x2c` (default: `x2c` if the basis name begins with `x2c-`,
 else `none`), `--nucleus point|gaussian`, and `--basis` takes any basis set with a file in the
 basis directory. Atoms beyond Kr are accepted with X2C, none beyond Rn; the first-row transition
-metals stay excluded, and **the 4d and 5d metals are not excluded, which nobody decided**. Urea
+metals stay excluded, and the 4d and 5d metals are accepted (**Dylan, 2026-10-12: hart keeps
+those atoms**). Urea
 with `x2c-SVPall` and X2C: GoF 3.330 against 3.340 with def2-SVP, 11 s; test
 `urea_hart_x2c-SVPall_X2C`. No data set with an atom beyond Kr was at hand: a heavy atom has not
-been refined yet. `hart` still uses Cartesian functions, against the protocol's "spherical always".
+been refined yet. `hart` still uses Cartesian functions, against the protocol's "spherical always": now an entry
+under *hart*.
 
 **X2C under MPI.** The three `*_X2C` tests pass in CI's Linux MPI build on 2 processes (run
 38187731651, the first after the merge). Dividing the primitive integral loop is left until a real

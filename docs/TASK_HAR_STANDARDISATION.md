@@ -62,9 +62,12 @@ Hirshfeld moments are identical under two BLAS kernels. Left to check:
    (which kept Cartesian functions until branch `cluster-spherical`, 2026-10-05).
 4. The DFT ensemble atoms (`fon`) did not converge a BLYP refinement in 100 cycles: note only,
    since the option stays off.
-5. After scalar X2C (§6a): one heavy atom, to see whether the rotational average and the ensemble
-   atoms (`ano_kind= aoc`, `fon`) still give the same refinement. This is the only place the
-   question of the default atoms stays open; the register row *Spherical atoms by the right
+5. **Dropped for now (Dylan, 2026-10-12).** It was: after scalar X2C (§6a), one heavy atom, to see
+   whether the rotational average and the ensemble atoms (`ano_kind= aoc`, `fon`) still give the
+   same refinement. It would be expensive, because the ensemble options need extending first (next
+   sentences), and decision 3 of §2 already says the missing relaxation is not a defect to repair.
+   The default atoms stand for heavy atoms too. This was the only place the
+   question of the default atoms stayed open; the register row *Spherical atoms by the right
    ensemble* was closed on 2026-10-11 and folded in here. The ensemble options handle one open
    shell and stop at Kr, so they would need extending first: Roothaan's coupling constants for
    two open shells (Cr, Cu, the 4d and 5d rows, the lanthanides), and the Aufbau table beyond Kr.
@@ -137,8 +140,8 @@ Range-separated hybrids need the attenuated Coulomb integrals in the exact and C
 
 **Status, 2026-10-12: done, on `develop`** (pull request 47) (steps 1 to 3 below; what was done and measured
 is at the end of this section). `relativity_kind= x2c`; user page `docs/RUNNING_TONTO.md`,
-*Relativity*. Still open: the heavy-atom test of the default atoms (§3, step 5), a first
-refinement beyond Kr, and an X2C option for `hart`.
+*Relativity*. Still open: a first refinement beyond Kr (the heavy-atom test of the default atoms,
+§3 step 5, was dropped on 2026-10-12).
 
 **Decisions (Dylan, 2026-10-11):**
 
@@ -307,7 +310,7 @@ Steps:
 
 **Open after this.**
 
-1. The heavy-atom test of the default atoms (§3, step 5).
+1. ~~The heavy-atom test of the default atoms~~ dropped for now, 2026-10-12 (§3, step 5).
 2. A first refinement beyond Kr with `x2c-TZVPall` and X2C, and its cost: the transformation is
    one eigenproblem of twice the number of primitives, and the primitive integrals are a serial
    loop over shell pairs and nuclei. If a real structure is slow, do the transformation atom by
@@ -330,6 +333,10 @@ it does not change results.
 
 ## 8. Log
 
+- 2026-10-12 (later): pull request 48 merged. Decisions (Dylan): the aoc/fon heavy-atom test is
+  dropped for now (§3 step 5); `hart` keeps the 4d and 5d metals and is to move to spherical
+  functions (a task, with a re-bless); the DFT grid levels are to be tuned to 1e-3, 1e-4 and 1e-5
+  hartree for `very_low`, `low` and `medium` (a science task; they are not there now).
 - 2026-10-12: X2C merged (pull request 47). The four tasks it left are done on branch
   `heavy-atom-fixes` (`TASKS_AND_HISTORY.md`, archive, *the four tasks left by the X2C work*):
   `hart --relativity x2c` with the x2c basis sets and atoms to Rn; the SCF converges when a basis
