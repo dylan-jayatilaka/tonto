@@ -123,33 +123,8 @@ scfdata= {
 - **The cost** is one matrix diagonalisation of twice the number of primitive
   Gaussians, made once before the SCF.
 
-The method is that of Iliaš and Saue, *J. Chem. Phys.* **126**, 064102 (2007).
-With $`S`$, $`T`$ and $`V`$ the overlap, kinetic energy and nuclear attraction
-matrices between the primitive Gaussians, $`W`$ the matrix of
-$`\mathbf{p}\cdot V\mathbf{p}`$ ($`\mathbf{p}`$ the momentum), and $`c`$ the
-speed of light, the one-electron Dirac equation without spin–orbit coupling is
-
-```math
-\begin{pmatrix} V & T \\ T & W/4c^2 - T \end{pmatrix}
-\begin{pmatrix} C_L \\ C_S \end{pmatrix} =
-\begin{pmatrix} S & 0 \\ 0 & T/2c^2 \end{pmatrix}
-\begin{pmatrix} C_L \\ C_S \end{pmatrix} E \qquad (1)
-```
-
-where the columns of $`C_L`$ and $`C_S`$ are the large and small components
-of the solutions with positive energies $`E`$. From them
-
-```math
-X = C_S C_L^{-1}, \quad \tilde S = S + X^\dagger T X/2c^2, \quad
-R = S^{-1/2}\,(S^{-1/2}\tilde S S^{-1/2})^{-1/2}\,S^{1/2} \qquad (2)
-```
-
-```math
-h_+ = R^\dagger\,[\,V + TX + X^\dagger T + X^\dagger (W/4c^2 - T) X\,]\,R \qquad (3)
-```
-
-and $`h_+`$, contracted to the basis functions, is used in place of $`T+V`$.
-Its eigenvalues are exactly the positive energies of equation (1).
+The equations, how they relate to Dyall's elimination of the small component, the
+routines and the checks are in [`REPORT_ON_RELATIVITY.md`](REPORT_ON_RELATIVITY.md).
 
 ## The programs
 

@@ -110,7 +110,8 @@ The ordered list of next actions, and the reasoning behind each, is the **handov
 at the top of `TASKS_AND_HISTORY.md`** — read it before starting work. In outline: the density
 behind Hirshfeld atom refinement is being standardised (`docs/TASK_HAR_STANDARDISATION.md`).
 libxc, PBE0 and r2SCAN are merged; a scalar X2C Hamiltonian for elements beyond Kr
-(`relativity_kind= x2c`, `foofiles/molecule.rel.foo`) is written. The SCF speed-up options (pair list for J, RI-J, COSX) are merged and off by
+(`relativity_kind= x2c`, `foofiles/molecule.rel.foo`, `docs/REPORT_ON_RELATIVITY.md`) is merged;
+next the DFT grid levels are reset, then the atomic density tables. The SCF speed-up options (pair list for J, RI-J, COSX) are merged and off by
 default; the open MPI and DFT items are parked behind the standardisation.
 
 **Do not move `TASKS_AND_HISTORY.md`'s contents into this file.** This file answers *how does the

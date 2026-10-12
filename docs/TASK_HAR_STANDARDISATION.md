@@ -318,21 +318,42 @@ Steps:
 3. Done 2026-10-12: `hart --relativity x2c`, and the X2C tests pass under MPI on 2 processes.
 4. The atomic density tables near a heavy nucleus (`TASKS_AND_HISTORY.md`, *Correctness*).
 
-## 7. Order of work
+## 7. Order of work (replanned, Dylan, 2026-10-12)
 
-1. The spherical-atom study (§3).
-2. The core question (§4), and Cartesian against spherical from the reruns.
-3. libxc, PBE0, then r2SCAN (§6).
-3a. Scalar X2C (§6a), needed before any structure beyond Kr.
-4. On the nine structures against neutron: method, basis, environment and partition; choose the
-   partition; freeze the protocol and name it.
-5. Then the ADP-model studies, rerun under the protocol.
+Done: the default atoms (§2, §3; the aoc/fon test on a heavy atom is dropped for now); libxc,
+PBE0 and r2SCAN (§6); scalar X2C, with `hart`, and a DFT grid good to about 1e-5 hartree up to Rn
+at the default level (§6a; `docs/REPORT_ON_RELATIVITY.md`).
 
-Speed work (SG grids, COSX; `docs/TASK_COSX_GRIDS.md` on branch `sg-grids`) goes on beside this:
-it does not change results.
+What is left, in this order. Each step changes numbers the later ones rest on.
+
+1. **Reset the grid levels.** A GGA energy to 1e-3 hartree at `very_low`, 1e-4 at `low`, 1e-5 at
+   `medium`, a factor of ten for each level, for every element to Rn; and by the same rule 1e-6
+   at `high` and 1e-7 at `very_high`, if Dylan confirms those two. The levels are not there now:
+   `TASKS_AND_HISTORY.md`, *Tune the DFT grid levels*. First, because the atoms under DFT, the
+   Hirshfeld integration and every reference after it depend on the grid. A re-bless.
+2. **The atomic density tables.** No spline; a table that resolves the core of a heavy atom
+   (`TASKS_AND_HISTORY.md`, *The atomic density tables*). Only then are the promolecule densities
+   and Hirshfeld weights right beyond Kr. A re-bless of the refinement tests.
+3. **`hart` to spherical functions** (`TASKS_AND_HISTORY.md`, *hart*). A re-bless of the `hart`
+   tests. Steps 1 to 3 can share one re-bless if they land together.
+4. **What is left of the spherical-atom audit** (§3, steps 1 to 3): ground terms, release against
+   debug, the Mac against achari2, spherical d and f in a cluster, now to Rn with X2C.
+5. **The core question** (§4): contracted against uncontracted core.
+6. **A data set with an atom beyond Kr**, and a first refinement with `x2c-TZVPall` and X2C.
+7. **On the nine structures against neutron:** method, basis, environment and partition; choose
+   the partition; freeze the protocol and name it.
+8. Then the ADP-model studies, rerun under the protocol.
+
+Beside these, not in the order: speed work (SG grids, COSX; `docs/TASK_COSX_GRIDS.md`), which
+does not change results; and the picture-change correction, a science option
+(`TASKS_AND_HISTORY.md`, *Picture-change correction of the density*).
 
 ## 8. Log
 
+- 2026-10-12 (evening): `docs/REPORT_ON_RELATIVITY.md` written (equations, Dyall, keywords,
+  routines, checks). Order of work replanned (§7): grid levels, then the atomic density tables
+  (Dylan: no spline interpolation), then `hart` to spherical. New science tasks entered: the
+  tables, and the picture-change code of Bučinský.
 - 2026-10-12 (later): pull request 48 merged. Decisions (Dylan): the aoc/fon heavy-atom test is
   dropped for now (§3 step 5); `hart` keeps the 4d and 5d metals and is to move to spherical
   functions (a task, with a re-bless); the DFT grid levels are to be tuned to 1e-3, 1e-4 and 1e-5

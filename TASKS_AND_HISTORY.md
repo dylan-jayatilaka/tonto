@@ -80,10 +80,10 @@ because by then it held far more than deferred items.)*
 
 ## CLOSED 2026-10-12: scalar X2C is on `develop`
 
-**Merged by pull request 47** (Dylan, 2026-10-12). **Next action:** the first use of it, a heavy
-atom for the default-atoms question and a first refinement beyond Kr
-(`docs/TASK_HAR_STANDARDISATION.md` section 6a, *Open after this*). For a structure through
-`hart`, the hart entry below comes first.
+**Merged by pull request 47** (Dylan, 2026-10-12). Report: `docs/REPORT_ON_RELATIVITY.md`.
+**Next action:** the replanned order of work, `docs/TASK_HAR_STANDARDISATION.md` section 7:
+reset the grid levels, then the atomic density tables, then `hart` to spherical functions.
+Dylan means to take the small tasks of the register first.
 
 **What landed.** `relativity_kind= x2c`: the scalar exact two-component one-electron
 Hamiltonian in place of the kinetic energy plus nuclear attraction, for every restricted and
@@ -115,7 +115,7 @@ matrix of zero); a Gaussian nucleus without X2C.
 tasks left by the X2C work*): `hart` takes X2C and atoms to Rn; X2C passes under MPI; the SCF
 converges with a filtered basis function; the default DFT grid is good to about 1e-5 hartree up
 to Rn. **Open from that:** the atomic density tables go negative near a heavy nucleus
-(*Correctness*; to settle before a heavy atom is refined); the DFT grid levels are to be tuned
+(*Science and features*; to settle before a heavy atom is refined); the DFT grid levels are to be tuned
 (*Science and features*); `hart` is to use spherical functions (*hart*); a data set with an atom
 beyond Kr is needed. **Dropped for now (Dylan):** the aoc/fon test on a heavy atom.
 
@@ -2506,22 +2506,6 @@ dead keyword line from `develop` and leave the work on its two tags, as was done
 
 # Correctness — open bugs that give wrong answers
 
-## The atomic density tables go negative near a heavy nucleus (2026-10-12)
-
-**Register row** of the same name. Each atom's spherical density is tabulated for interpolation
-(`MOLECULE.RHO:make_interpolator_sqrt_x1x`): a cubic spline of the density itself in
-$`x = r^2/(s^2+r^2)`$, $`s`$ the Bragg–Slater radius, with knots 1e-4 apart in $`x`$. The first
-knots are then at $`r`$ = 0, 0.027, 0.037 bohr for iodine, while its 1s density falls by a factor
-of 16 over the first interval. The spline overshoots: at the DFT grid points of HI it reaches
--8300. Bromine stays positive. The DFT grid thinning no longer trips on it (archive, *the four
-tasks left by the X2C work*), but everything else that reads the tables does: the promolecule
-density, deformation densities, and the Hirshfeld weights. Near a nucleus the weight is the
-atom's own density over a sum dominated by it, so it should stay close to 1 whatever the sign,
-**but that was not measured.** To do before a heavy atom is refined: measure the table against
-the density it was made from for Br, I and Hg; then either interpolate the logarithm of the
-density, or choose knots that resolve $`1/Z`$. Either changes every Hirshfeld weight a little,
-so it is a re-bless of the refinement tests.
-
 ## Cluster charges are silently zero under `partition_model= tc-stewart` (2026-10-10)
 
 `use_SC_cluster_charges= TRUE` takes its charges and dipoles from the Hirshfeld moments, which
@@ -4452,9 +4436,85 @@ Multithreaded OpenBLAS would also oversubscribe cores in MPI builds: ranks x thr
 
 # Science and features
 
+## The atomic density tables: no spline, and a mesh that resolves the core (Dylan, 2026-10-12)
+
+**Register row** of the same name. **Second in the order of work** of
+`docs/TASK_HAR_STANDARDISATION.md` section 7: no promolecule density beyond Kr is right until
+this is done.
+
+*What is wrong.* At the start of a job each kind of atom gets an SCF, its density is
+spherically averaged, and the result is tabulated against distance so that it need not be
+re-evaluated from the basis functions at every point
+(`MOLECULE.RHO:make_interpolator_sqrt_x1x`, `ATOM:make_interpolator`). The table is a cubic
+spline of the density itself in $`x = r^2/(s^2+r^2)`$, $`s`$ the Bragg–Slater radius, with knots
+1e-4 apart in $`x`$, at most 10,000 of them. The first knots are then at $`r`$ = 0, 0.027 and
+0.037 bohr for iodine, while its 1s density falls by a factor of 16 over the first interval. The
+spline overshoots: at the DFT grid points of HI it reaches -8300. Bromine stays positive. The
+tables feed the promolecule density, deformation densities, the Hirshfeld weights and the
+thinning of the DFT grid (which no longer trips on it: archive, *the four tasks left by the X2C
+work*). Not a picture-change effect: the density being tabulated is right, only its
+interpolation is wrong. Not tested without X2C, but the 1s peak is as steep there.
+
+*Decision (Dylan, 2026-10-12): avoid spline interpolation.* A spline can overshoot and change
+sign between knots; linear interpolation cannot leave the range of its two knots.
+
+*Is linear interpolation affordable? An estimate, to be measured.* Interpolate $`\ln\rho`$, which
+is close to piecewise linear in $`r`$ (a sum of exponentials), on a mesh even in $`\ln r`$ with
+ratio $`1+\delta`$ between neighbours. The error of linear interpolation over a step $`h = \delta r`$
+is $`h^2 f''/8`$, and for $`f = \ln\rho`$ this is the relative error of $`\rho`$. Where shell $`n`$
+dominates, the slope is about $`2Z/n`$ at $`r \approx n^2/Z`$, so $`r^2 f''`$ is at most about
+$`(2n)^2 \le 144`$ and the relative error at most about $`18\,\delta^2`$. From 1e-5 to 30 bohr is
+15 units of $`\ln r`$:
+
+| relative error of $`\rho`$ | $`\delta`$ | points |
+|---|---|---|
+| 1e-4 | 2.4e-3 | 6,000 |
+| 1e-5 | 7.5e-4 | 20,000 |
+| 1e-6 | 2.4e-4 | 60,000 |
+
+So tens of thousands of points for each kind of atom, against 10,000 at most now: about half a
+megabyte and that many density evaluations for each kind of atom, once in a job. Not too many. The bound is
+loose; the real curvature of $`\ln\rho`$ is large only between shells. A lookup then costs one
+logarithm for each point, where the present mapping in $`r^2`$ avoids even the square root; to be timed
+on a refinement.
+
+*To do.* (1) Measure the present table against the density it was made from for Br, I and Hg,
+and its effect on a Hirshfeld weight and a structure factor. (2) Write the linear table of
+$`\ln\rho`$ on the logarithmic mesh, with the number of points set from a tolerance, and measure
+the same. (3) Time it. (4) Make it the default; every Hirshfeld weight moves a little, so the
+refinement tests are re-blessed. The same change serves the Slater and Coppens tables, which
+have their own interpolators.
+
+## Picture-change correction of the density: recover or rewrite Bučinský's code (Dylan, 2026-10-12)
+
+**Register row** of the same name. Not needed for the standard protocol (decision of
+2026-10-11, `docs/TASK_HAR_STANDARDISATION.md` section 6a), wanted as a science option: the
+density from X2C orbitals differs from the true density very near a heavy nucleus, and so do
+the structure factors at high angle.
+
+What exists. Lukáš Bučinský's code for the IOTC and DKH Hamiltonians is commented out in
+`foofiles/molecule.xtal.foo` (`make_FT_DKH`, `make_PCE_off`, `make_FT_IOTC`,
+`make_IOTC_FT_PCE_off`, `build_da_IOTC_ft`), with the Fourier-transform integrals it needs in
+`foofiles/gaussian2.foo` (`make_dkh_ft_*`). It called `molecule.rel.foo` as it was before
+commit `fcbd5a8a`; that file is recovered by `git show fcbd5a8a^:foofiles/molecule.rel.foo` and
+is in the old `:::` dialect. Bučinský, Jayatilaka and Grabowsky, *J. Phys. Chem. A* **120**, 6650
+(2016), found the effect negligible for the structure factors of HgPh₂ and BiPh₃.
+
+What X2C needs. A property operator $`O`$ is transformed as the Hamiltonian was. With
+$`O_{LL}`$ its matrix between the primitives and $`O_{SS}`$ the matrix of
+$`(\boldsymbol\sigma\cdot\mathbf{p})\,O\,(\boldsymbol\sigma\cdot\mathbf{p})`$, the corrected matrix is
+$`R^\dagger\,[\,O_{LL} + X^\dagger O_{SS} X/4c^2\,]\,R`$, with $`X`$ and $`R`$ of
+`docs/REPORT_ON_RELATIVITY.md`. For a structure factor $`O = e^{i\mathbf{k}\cdot\mathbf{r}}`$:
+the $`O_{SS}`$ integrals are the ones in the commented-out `make_dkh_ft_*` routines, and $`X`$
+and $`R`$ must be kept by `MOLECULE.REL:make_r_X2C_core_mx`, which discards them now. So the
+integrals can be recovered and the algebra rewritten, which is short; the IOTC algebra need not
+be. Check against the 2016 paper's numbers, and against PySCF, which has picture-change
+corrected properties for X2C.
+
 ## Tune the DFT grid levels to 1e-3, 1e-4 and 1e-5 hartree (Dylan, 2026-10-12)
 
-**Register row** of the same name. The targets for a GGA energy are 1e-3 hartree at
+**Register row** of the same name. **First in the order of work** of
+`docs/TASK_HAR_STANDARDISATION.md` section 7. The targets for a GGA energy are 1e-3 hartree at
 `accuracy= very_low`, 1e-4 at `low` and 1e-5 at `medium`, the default, for every element to Rn.
 The levels are not there. PBE against PySCF on very fine grids, `x2c-SVPall`, X2C beyond Kr, after
 the heavy-atom changes of 2026-10-12 (runs: `~/tonto-runs/2026-10-12_heavy_grid/newdef`):
