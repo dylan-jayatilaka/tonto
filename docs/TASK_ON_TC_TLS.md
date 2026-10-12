@@ -317,8 +317,133 @@ Hirshfeld one, and with `tc-tanaka` using the same ADPs. By (14) the difference 
 two is the relative motion alone.
 
 
+## 10. Symmetry: the stabiliser of an atom pair
+
+Dylan, 2026-10-13: the repetition factors are very old code, from Jayatilaka and Grimwood (2001);
+the two-centre terms should use the stabiliser of the atom pair, as the Hirshfeld path uses the
+stabiliser of the atom; the theory needs redoing. This section redoes it. Not coded.
+
+Notation as the report, §6: basis functions $`\mu`$ on atom $`A`$, $`\nu`$ on atom $`B`$; the term
+$`t_{\mu a\,\nu b}(\mathbf{k})`$ of one pair of primitives (report eq. (29)).
+
+### 10.1 What is there now
+
+Jayatilaka and Grimwood (2001), §4.3. The fragment may be larger than the smallest repeating
+unit ("oversampled"). Each atom $`A`$ of the fragment gets a repetition factor $`n_A`$: the number of
+pairs (fragment atom, space-group operation) that land on $`A`$, lattice translations ignored
+(`CRYSTAL:make_repetition_factors`). The product of a function on $`A`$ with a function on $`B`$ is
+then given the weight (their eq. (21), `SHELL2:make_Tanaka_partition`)
+
+```math
+f_{\mu a\,\nu b} = \frac{w_A}{n_A} + \frac{w_B}{n_B} , \qquad (21)
+```
+
+and the fragment's structure factor, with these weights, is summed over every space-group
+operation. For one atom this is right: a function pair on $`A`$ alone gets $`1/n_A`$. For two atoms
+it is a rule for sharing, not a count: (21) is right when $`n_A = n_B`$ equals the number of times
+the *pair* is repeated, and nothing guarantees that.
+
+### 10.2 The count that is wanted
+
+The crystal's density is the sum of the terms of the report's (20) over every pair of basis
+functions in the crystal. Group them by the atoms they are on: an **ordered atom pair** $`(A,B)`$,
+two atoms of the crystal at definite positions, carries
+
+```math
+F_{AB}(\mathbf{k}) = \sum_{\mu \text{ on } A}\ \sum_{\nu \text{ on } B} D_{\mu\nu} \sum_{ab} t_{\mu a\,\nu b}(\mathbf{k}) , \qquad (22)
+```
+
+and the one-centre terms are the pairs $`(A,A)`$. A space-group operation $`g = \{R_g \mid \mathbf{t}_g\}`$
+(rotation $`R_g`$, translation $`\mathbf{t}_g`$) takes the pair $`(A,B)`$ to the pair $`(gA, gB)`$: *the same
+operation, with the same translation, acts on both atoms*. If the wavefunction and the motion
+have the crystal's symmetry, the image carries the same density, moved:
+
+```math
+F_{gA\,gB}(\mathbf{k}) = e^{i\mathbf{k}\cdot\mathbf{t}_g}\, F_{AB}(R_g^{\mathsf T}\mathbf{k}) . \qquad (23)
+```
+
+The pairs of the crystal fall into **orbits**: the sets of pairs that are images of one another.
+The structure factor of the unit cell is the sum over the orbits, and within each orbit over its
+members in one cell, each counted once.
+
+**The stabiliser.** Let $`G`$ be the space group and $`T`$ its lattice translations; $`G/T`$ is the
+list of $`N_G`$ operations per cell that Tonto holds. The **stabiliser of the pair** is the set of
+operations of the space group that leave both atoms where they are,
+
+```math
+S_{AB} = \{\, g \in G : gA = A \text{ and } gB = B \,\} = S_A \cap S_B , \qquad (24)
+```
+
+the operations common to the site-symmetry groups $`S_A`$ and $`S_B`$ of the two atoms. For $`A = B`$
+it is the atom's own stabiliser $`S_A`$. As $`g`$ runs over the $`N_G`$ operations of $`G/T`$, the image
+$`(gA,gB)`$ runs over the members of the orbit in one cell, each $`|S_{AB}|`$ times, $`|S_{AB}|`$ being
+the number of operations in the stabiliser. So with one representative pair from each orbit,
+
+```math
+F(\mathbf{k}) = \sum_{g \in G/T} e^{i\mathbf{k}\cdot\mathbf{t}_g} \sum_{\text{orbits}} \frac{1}{|S_{AB}|}\; F_{AB}(R_g^{\mathsf T}\mathbf{k}) . \qquad (25)
+```
+
+For $`A = B`$ this is the Hirshfeld path's formula for atoms, with the atom's site-symmetry factor.
+
+**If the fragment holds more than one member of an orbit.** A fragment with $`m_{AB}`$ ordered pairs
+in the orbit of $`(A,B)`$ may use them all, each with weight
+
+```math
+f_{AB} = \frac{1}{m_{AB}\, |S_{AB}|} , \qquad (26)
+```
+
+and $`m_{AB}\,|S_{AB}|`$ is the number of (fragment pair, operation) that land on $`(A,B)`$ with both
+atoms in place: the repetition factor of the pair, counted as (21) counts for an atom but for
+the two atoms together. A pair and its reverse $`(B,A)`$ are different ordered pairs; an operation
+that exchanges $`A`$ and $`B`$ is not in $`S_{AB}`$, and puts $`(B,A)`$ in the orbit of $`(A,B)`$.
+
+**The sum symmetrises.** The operations of $`S_{AB}`$ are among those summed in (25), and with the
+factor $`1/|S_{AB}|`$ they average $`F_{AB}`$ over its stabiliser. So $`F_{AB}`$ need not be made
+symmetric first, as the Hirshfeld form factors of an atom on a special position are.
+
+### 10.3 When (21) and (26) agree, and when not
+
+**One whole molecule: they agree.** Let the fragment be one molecule whose site-symmetry group
+$`S_{\rm mol}`$ has $`n_s`$ operations. An operation that takes a pair of the molecule's atoms to
+another pair of the molecule's atoms takes the molecule to itself, so it is in $`S_{\rm mol}`$; each
+of the $`n_s`$ operations lands every pair on a pair of the fragment. So $`m_{AB}|S_{AB}| = n_s`$ for
+every pair, and likewise $`n_A = n_s`$ for every atom, and (21) gives $`w_A/n_s + w_B/n_s = 1/n_s`$.
+Urea: site mm2, $`n_s = 4`$; the output lists repetition factor 4 for all eight atoms and four
+stabiliser operations for the fragment. **So the urea results of §9 do not depend on this, and the
+0.13 in GoF between `tc-tls` and Hirshfeld is not a symmetry error.** Argued, and checked against
+the printed factors; not checked by a run with (26) coded.
+
+**A cluster, or a fragment that is not a whole number of molecules: they differ.**
+
+- A product between two molecules of a cluster belongs to an orbit of its own, whose size has
+  nothing to do with the $`n_A`$ of its atoms. (21) then gives the wrong weight. This is the case
+  the 2001 paper introduced the factors for.
+- The molecules at the edge of a cluster have a different wavefunction from the central one,
+  yet (21) and (26) with $`m_{AB} > 1`$ average them in. The Hirshfeld path does not: it takes each
+  unique atom once, from the central molecule. The pair form of that is (25): **one
+  representative of each orbit**, chosen nearest the centre of the cluster.
+- For a pair between two molecules the same translation must act on both atoms. Counting each
+  atom modulo the lattice, as `make_repetition_factors` does, loses that.
+
+### 10.4 What it would take
+
+1. The orbits of ordered atom pairs of the fragment under $`G`$, with a representative and
+   $`|S_{AB}|`$ for each: `CRYSTAL` already has the stabiliser of each asymmetric-unit atom
+   (`asym_atom_stabilizer`) and the operation that makes each fragment atom from it
+   (`asym_symop_for_frag_atom`, `asym_shift_for_frag_atom`).
+2. In the shell-pair loop, the weight (26), or zero for a pair that is not the representative,
+   in place of `make_partition_factors`. With one representative per orbit the loop is shorter
+   by about the order of the site group: for urea 64 ordered atom pairs fall into about 20 orbits.
+3. The position derivative of a unique atom still collects its images (report §6.5), now over the
+   representative pairs and the operations of (25).
+4. Checks: a whole molecule gives the same F as now, to rounding; a cluster of two urea molecules
+   gives the same intramolecular F as one molecule when the intermolecular density-matrix blocks
+   are zeroed.
+
 ## References
 
+- D. Jayatilaka and D. J. Grimwood, *Acta Cryst.* A57, 76 (2001), §4.3: oversampled fragments and
+  the repetition factors (`~/Dropbox/manuscripts/Jayatilaka_2001_Acta_Cryst_A57_p76.pdf`).
 - J. R. Michael and T. Koritsanszky, *J. Math. Chem.* 53, 250 (2015), "Validation of convolution
   approximation to the thermal-average electron density"
   (`~/Dropbox/manuscripts/Michael_2015_J_Math_Chem_53_p250-9.pdf`). Found 2026-10-12 after the
