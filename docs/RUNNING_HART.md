@@ -61,7 +61,7 @@ reads.
 
 | Option | Value | Default | Effect |
 |---|---|---|---|
-| `--basis` | basis-set name | `def2-SVP` | Any basis set with a file of that name in the basis directory. Recommended: `def2-SVP`, `def2-TZVP`, `def2-TZVPP` (H to Kr), and `x2c-SVPall`, `x2c-TZVPall`, `x2c-TZVPPall` (H to Rn, with X2C) for structures with atoms beyond Kr. |
+| `--basis` | basis-set name | `def2-SVP` | Any basis set with a file of that name in the basis directory. Recommended: `def2-SVP`, `def2-TZVP`, `def2-TZVPP` (H to Kr), and `x2c-SVPall`, `x2c-TZVPall`, `x2c-TZVPPall` (H to Rn, with X2C) for structures with atoms beyond Kr. The d and f functions are always spherical harmonics. |
 | `--basis-dir` | directory | `$TONTO_BASIS_SET_DIRECTORY`, else `./basis_sets` | Where the basis-set library lives. |
 | `--cluster-radius` | Å | 0 | Model the potential of whole molecules within this radius by Hirshfeld charges and dipoles. Maximum 10. |
 | `--defragment` | `t`/`f` | `t` | Apply the crystal symmetry to grow each fragment in the CIF into whole molecules, before anything is refined. A CIF holds the asymmetric unit — a quarter of a molecule for urea — and HAR runs a quantum calculation on whatever fragment it is handed, so refining an incomplete molecule converges to a meaningless answer. **Set `f` for a network solid** (diamond, silica, a coordination polymer): there is no whole molecule to complete, the growth has no stopping point, and the run will not terminate. Since the default is `t`, a network solid *must* turn it off. |
