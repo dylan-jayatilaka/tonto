@@ -739,13 +739,16 @@ contains
       .core_mx.create(.n_bf)
       .core_mx.create("r ")
 
+      DIE_IF(.nucleus_model/="point" AND .SCF_data.relativity_kind/="x2c","nucleus_model= gaussian needs relativity_kind= x2c")
+
       ! Make the core matrix here (relativistic vs non-rel)
       select case (.SCF_data.relativity_kind)
-   ! case ("douglas-kroll-hess","dkh");     .REL:make_r_DKH1_core_mx(.core_mx.r)
-   ! case ("douglas-kroll-hess-2","dkh-2"); .REL:make_r_DKH2_core_mx(.core_mx.r)
-   ! case ("iotc");                         .REL:make_r_IOTC_core_mx(.core_mx.r)
-      case default;                          .make_r_NREL_core_mx(.core_mx.r)
+      case ("x2c");   .REL:make_r_X2C_core_mx(.core_mx.r)
+      case default;   .make_r_NREL_core_mx(.core_mx.r)
       end
+
+      ! Finite-electric-field contribution
+      if (NOT .E_field.is_zero) .add_E_field_term_to(.core_mx.r)
 
       ! No cluster charges for SCF guess
       if (.SCF_data.is_guess)  return
@@ -783,8 +786,6 @@ contains
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.allocated,  "no atom list")
 
-      Dx,Dy,Dz :: MAT{REAL}@
-
       ! Get kinetic matrix (leaky)
       .make_kinetic_energy_mx
       .kinetic_energy_mx.uncompress
@@ -796,25 +797,35 @@ contains
       ! Make core matrix
       H = .kinetic_energy_mx.r  &
         + .nuclear_attraction_mx.r
-      
-      if (NOT .E_field.is_zero) then
-         ! Finite-electric-field contribution
-         Dx.create(.n_bf,.n_bf)
-         Dy.create(.n_bf,.n_bf)
-         Dz.create(.n_bf,.n_bf)
-         .make_dipole_matrices(Dx,Dy,Dz)
-         H = H &
-           + Dx*.E_field(1) &
-           + Dy*.E_field(2) &
-           + Dz*.E_field(3)
-         Dz.destroy
-         Dy.destroy
-         Dx.destroy
-      end
 
       ! Compress (leaky)
       .kinetic_energy_mx.compress
       .nuclear_attraction_mx.compress
+
+   end
+
+   add_E_field_term_to(H) :: NON_MPI_PURE
+   ! Add to the core matrix "H" the energy of the electrons in the
+   ! applied electric field.
+      self :: IN
+      H :: MAT{REAL}, INOUT
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.allocated,  "no atom list")
+
+      Dx,Dy,Dz :: MAT{REAL}@
+
+      Dx.create(.n_bf,.n_bf)
+      Dy.create(.n_bf,.n_bf)
+      Dz.create(.n_bf,.n_bf)
+      .make_dipole_matrices(Dx,Dy,Dz)
+      H = H &
+        + Dx*.E_field(1) &
+        + Dy*.E_field(2) &
+        + Dz*.E_field(3)
+      Dz.destroy
+      Dy.destroy
+      Dx.destroy
 
    end
 
@@ -2040,10 +2051,19 @@ contains
 
       ! Energies
       .SCF_data.nuclear_repulsion_energy  = .atom.nuclear_repulsion_energy
+      if (.SCF_data.relativity_kind/="x2c") &
       .SCF_data.nuclear_attraction_energy = .nuclear_attraction_energy
       if (.SCF_data.using_cluster_charges) &
       .SCF_data.charge_attraction_energy  = .charge_attraction_energy
       .SCF_data.kinetic_energy            = .kinetic_energy
+
+      ! Under X2C only the sum of the kinetic and nuclear attraction
+      ! energies is defined; it is kept in the kinetic energy
+      if (.SCF_data.relativity_kind=="x2c") then
+         .SCF_data.nuclear_attraction_energy = ZERO
+         .SCF_data.kinetic_energy = .density_mx.expectation(.core_mx.r) &
+                                  - .SCF_data.charge_attraction_energy
+      end
 
       ! Total SCF energy [including V(nuc) repulsion] and penalty
       e = .SCF_energy
@@ -2097,7 +2117,7 @@ contains
 
       ! SCF banner and options
       .SCF_data.put_banner
-      .SCF_data.put_options(.crystal)
+      .SCF_data.put_options(.crystal,.nucleus_model)
 
       ! Diffraction data-treatment options
       if (.SCF_data.output) then

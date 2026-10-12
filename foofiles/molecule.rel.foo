@@ -1,0 +1,457 @@
+!==================================================================
+!
+! MOLECULE.REL: An object representation of a molecule.
+! The scalar-relativistic (X2C) one-electron hamiltonian.
+!
+! Copyright (C) Dylan Jayatilaka, Daniel Grimwood, 1996
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!==================================================================
+
+module MOLECULE.REL
+
+   implicit none
+
+contains
+
+!  ===================
+!  Primitive integrals
+!  ===================
+
+   make_primitive_shells(frst,last,at,lmom,ex,shell_for) :: leaky
+   ! Make the list of the different primitive shells in the molecular
+   ! basis set: for each, its first and last function "frst" and "last",
+   ! its atom "at", its angular momentum "lmom" and its exponent "ex". A
+   ! primitive which appears in several shells of an atom, with the same
+   ! angular momentum and exponent, is listed once, so the functions are
+   ! linearly independent. "shell_for" gives, for every primitive of every
+   ! shell in the order of VEC{ATOM}:make_primitive_limits (by atom, by
+   ! shell, then by primitive), its place in the list.
+      self :: IN
+      frst,last,at,lmom,shell_for :: VEC{INT}@, OUT
+      ex :: VEC{REAL}@, OUT
+
+   ENSURE(.atom.allocated,  "no atom list")
+   ENSURE(.basis_info_made, "no basis info")
+
+      f_all,l_all,at_all,lmom_all :: VEC{INT}@
+      ex_all :: VEC{REAL}@
+      nps,n_u,a,b,n :: INT
+
+      ! Every primitive of every shell
+      .atom.make_primitive_limits(f_all,l_all,at_all,lmom_all,ex_all)
+      nps = f_all.dim
+
+      ! Give each one the place of the first one like it
+      shell_for.create(nps)
+      n_u = 0
+      do a = 1,nps
+         shell_for(a) = 0
+         do b = 1,a-1
+            if (at_all(b)/=at_all(a))     cycle
+            if (lmom_all(b)/=lmom_all(a)) cycle
+            if (abs(ex_all(b)-ex_all(a))>TOL(12)*ex_all(a)) cycle
+            shell_for(a) = shell_for(b)
+            exit
+         end
+         if (shell_for(a)>0) cycle
+         n_u = n_u + 1
+         shell_for(a) = n_u
+      end
+
+      ! The list of different ones
+      frst.create(n_u)
+      last.create(n_u)
+      at.create(n_u)
+      lmom.create(n_u)
+      ex.create(n_u)
+      n = 0
+      n_u = 0
+      do a = 1,nps
+         if (shell_for(a)<=n_u) cycle
+         n_u = n_u + 1
+         frst(n_u) = n + 1
+         n = n + l_all(a) - f_all(a) + 1
+         last(n_u) = n
+         at(n_u)   = at_all(a)
+         lmom(n_u) = lmom_all(a)
+         ex(n_u)   = ex_all(a)
+      end
+
+      ex_all.destroy
+      lmom_all.destroy
+      at_all.destroy
+      l_all.destroy
+      f_all.destroy
+
+   end
+
+   no_of_primitive_functions result (res) :: leaky
+   ! Return the number of different primitive functions in the molecular
+   ! basis set, cartesian or spherical as the basis is. See
+   ! "make_primitive_shells".
+      self :: IN
+      res :: INT
+
+      frst,last,at,lmom,shell_for :: VEC{INT}@
+      ex :: VEC{REAL}@
+
+      .:make_primitive_shells(frst,last,at,lmom,ex,shell_for)
+      res = last(last.dim)
+
+      shell_for.destroy
+      ex.destroy
+      lmom.destroy
+      at.destroy
+      last.destroy
+      frst.destroy
+
+   end
+
+   make_primitive_X2C_ints(S,T,V,W) :: leaky
+   ! Make the four one-electron matrices of the X2C hamiltonian between
+   ! the normalised primitive functions of "make_primitive_shells": the
+   ! overlap "S", the kinetic energy "T", the nuclear attraction "V" from
+   ! all the nuclei, and "W", the matrix of p.Vp where p is the momentum.
+   ! The nuclei are points or gaussian charges, as ".nucleus_model" says.
+      self :: IN
+      S,T,V,W :: MAT{REAL}, OUT
+
+   ENSURE(.atom.allocated,  "no atom list")
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(S.is_square, "S must be square")
+   ENSURE(T.is_same_shape_as(S),"wrong shape, T")
+   ENSURE(V.is_same_shape_as(S),"wrong shape, V")
+   ENSURE(W.is_same_shape_as(S),"wrong shape, W")
+   DIE_IF(.nucleus_model/="point" AND .nucleus_model/="gaussian","unknown nucleus model")
+
+      frst,last,at,lmom,shell_for :: VEC{INT}@
+      ex :: VEC{REAL}@
+      Vc,Wc :: MAT{REAL}@
+      nps,a,b,c,fa,la,na,fb,lb,nb,z_c :: INT
+      charge,eta :: REAL
+      finite :: BIN
+      G :: GAUSSIAN2
+
+      finite = .nucleus_model=="gaussian"
+
+      ! Where each primitive shell is, and its functions
+      .:make_primitive_shells(frst,last,at,lmom,ex,shell_for)
+      nps = frst.dim
+      ENSURE(S.dim1==last(nps), "wrong size, S")
+
+      S = ZERO
+      T = ZERO
+      V = ZERO
+      W = ZERO
+
+      ! Lower triangle of primitive shell pairs
+      do a = 1,nps
+
+         G.a.set_l(lmom(a))
+         G.a.set_position(.atom(at(a)).position)
+         G.a.set_exponent(ex(a))
+         fa = frst(a)
+         la = last(a)
+         na = la - fa + 1
+
+         do b = 1,a
+
+            G.b.set_l(lmom(b))
+            G.b.set_position(.atom(at(b)).position)
+            G.b.set_exponent(ex(b))
+            fb = frst(b)
+            lb = last(b)
+            nb = lb - fb + 1
+
+            G.make_normalized_overlap_ints(S(fa:la,fb:lb),.use_spherical_basis)
+            G.make_normalized_kinetic_ints(T(fa:la,fb:lb),.use_spherical_basis)
+
+            ! Sum over the nuclei
+            Vc.create(na,nb)
+            Wc.create(na,nb)
+            do c = 1,.n_atom
+               charge = .atom(c).nuclear_charge
+               z_c    = .atom(c).atomic_number
+               if (finite AND z_c>0) then
+                  eta = GAUSSIAN2:nucleus_eta(z_c)
+                  G.make_normalized_NA_ints(Vc,.atom(c).position,.use_spherical_basis,eta)
+                  G.make_normalized_pVp_ints(Wc,.atom(c).position,.use_spherical_basis,eta)
+               else
+                  G.make_normalized_NA_ints(Vc,.atom(c).position,.use_spherical_basis)
+                  G.make_normalized_pVp_ints(Wc,.atom(c).position,.use_spherical_basis)
+               end
+               V(fa:la,fb:lb) = V(fa:la,fb:lb) - charge*Vc
+               W(fa:la,fb:lb) = W(fa:la,fb:lb) - charge*Wc
+            end
+            Wc.destroy
+            Vc.destroy
+
+         end
+
+      end
+
+      ! Fill in the upper triangle
+      S.symmetric_reflect
+      T.symmetric_reflect
+      V.symmetric_reflect
+      W.symmetric_reflect
+
+      shell_for.destroy
+      ex.destroy
+      lmom.destroy
+      at.destroy
+      last.destroy
+      frst.destroy
+
+   end
+
+   make_primitive_contraction_mx(cc,S) :: leaky
+   ! Make "cc", the matrix which turns a matrix between the normalised
+   ! primitive functions into the matrix between the basis functions:
+   ! column "i" holds the contraction coefficients of basis function "i".
+   ! "S" is the primitive overlap matrix from "make_primitive_X2C_ints".
+   ! Each column is scaled so that the basis function has the norm the
+   ! rest of the program gives it, whatever the convention for the
+   ! cartesian components; it is an error if the overlap matrix that "cc"
+   ! gives is then not the overlap matrix of the molecule.
+      self :: IN
+      cc :: MAT{REAL}, OUT
+      S :: MAT{REAL}, IN
+
+   ENSURE(.atom.allocated,  "no atom list")
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(S.is_square, "S must be square")
+   ENSURE(cc.dim1==S.dim1, "wrong 1st dimension, cc")
+   ENSURE(cc.dim2==.n_bf,  "wrong 2nd dimension, cc")
+
+      frst,last,at,lmom,shell_for :: VEC{INT}@
+      ex :: VEC{REAL}@
+      Sb,Sc :: MAT{REAL}@
+      a,q,i,k,n,p,row,col,l_q :: INT
+      coeff,err :: REAL
+
+      .:make_primitive_shells(frst,last,at,lmom,ex,shell_for)
+
+      ! Coefficients with respect to normalised primitives. The stored
+      ! ones are with respect to unnormalised primitives.
+      cc  = ZERO
+      p   = 0
+      col = 0
+      do a = 1,.n_atom
+      do q = 1,.atom(a).basis.shell.dim
+
+         n   = .atom(a).basis.shell(q).n_bf
+         l_q = .atom(a).basis.shell(q).l
+
+         do i = 1,.atom(a).basis.shell(q).n_cc
+            p   = p + 1
+            row = frst(shell_for(p)) - 1
+            coeff = .atom(a).basis.shell(q).contraction(i) &
+                  / (FOUR*.atom(a).basis.shell(q).exponent(i))**(HALF*l_q+HALF+QUARTER)
+            do k = 1,n
+               cc(row+k,col+k) = cc(row+k,col+k) + coeff
+            end
+         end
+
+         col = col + n
+
+      end
+      end
+
+      ! Scale the columns to the norms of the basis functions
+      Sb.create(.n_bf,.n_bf)
+      Sc.create(.n_bf,.n_bf)
+      .INTS:make_r_overlap_mx(Sb)
+      S.change_basis_to(Sc,cc)
+      do i = 1,.n_bf
+         cc(:,i) = cc(:,i)*sqrt(Sb(i,i)/Sc(i,i))
+      end
+
+      ! The contracted primitives must be the basis functions
+      S.change_basis_to(Sc,cc)
+      err = maxval(abs(Sc-Sb))
+      DIE_IF(err>TOL(8),"the primitive functions do not contract to the basis functions")
+
+      Sc.destroy
+      Sb.destroy
+      shell_for.destroy
+      ex.destroy
+      lmom.destroy
+      at.destroy
+      last.destroy
+      frst.destroy
+
+   end
+
+!  ===============
+!  X2C core matrix
+!  ===============
+
+   make_r_X2C_core_mx(H) :: leaky
+   ! Make "H", the scalar-relativistic one-electron (core) matrix by
+   ! exact two-component decoupling, X2C. It replaces the kinetic energy
+   ! plus nuclear attraction matrix; nothing else in an SCF changes.
+   !
+   ! In the primitive basis, with S, T and V the overlap, kinetic and
+   ! nuclear attraction matrices, W the matrix of p.Vp and c the speed of
+   ! light, the one-electron Dirac equation without spin-orbit coupling is
+   !
+   !    ( V        T       ) (C_L)   ( S    0     ) (C_L)
+   !    ( T   W/4c^2 - T   ) (C_S) = ( 0  T/2c^2  ) (C_S) E .
+   !
+   ! From its positive-energy solutions,
+   !
+   !    X = C_S C_L^-1 ,   S' = S + X^t T X/2c^2 ,
+   !    R = S^-1/2 (S^-1/2 S' S^-1/2)^-1/2 S^1/2 ,
+   !    H = R^t [ V + T X + X^t T + X^t (W/4c^2 - T) X ] R ,
+   !
+   ! and H is then contracted. The eigenvalues of H are exactly the
+   ! positive energies E. The work is done in the orthonormal bases given
+   ! by the Cholesky factors of S, for the large component, and of
+   ! T/2c^2, for the small; there the right side above is the unit
+   ! matrix, S' = 1 + X^t X and R = S'^-1/2.
+   !
+   ! Reference: Ilias and Saue, J. Chem. Phys. 126, 064102 (2007).
+   ! No correction is made to other operators (no "picture change").
+      self :: IN
+      H :: MAT{REAL}, OUT
+
+   ENSURE(.atom.allocated,  "no atom list")
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(H.is_square, "H must be square")
+   ENSURE(H.dim1==.n_bf, "wrong size, H")
+   DIE_IF(.SCF_data.spinorbital_genre=="gc","X2C is not available for general complex orbitals")
+
+      S,T,V,W,cc,evec,dirac,CL,XX,RR,Ho,HR,proj :: MAT{REAL}@
+      eval,eig :: VEC{REAL}@
+      n,i :: INT
+      c_light,c2,err :: REAL
+      fail :: BIN
+
+      c_light = SPEED_OF_LIGHT_AU
+      c2      = c_light*c_light
+
+      ! Integrals between primitives, and the contraction matrix
+      n = .:no_of_primitive_functions
+      S.create(n,n)
+      T.create(n,n)
+      V.create(n,n)
+      W.create(n,n)
+      cc.create(n,.n_bf)
+      .:make_primitive_X2C_ints(S,T,V,W)
+      .:make_primitive_contraction_mx(cc,S)
+
+      ! Cholesky factors: S = L_S L_S^t and T = L_T L_T^t
+      S.to_cholesky_factor(fail)
+      DIE_IF(fail,"the primitive functions are linearly dependent")
+      T.to_cholesky_factor(fail)
+      DIE_IF(fail,"the primitive kinetic energy matrix is not positive definite")
+
+      ! The contraction from the orthonormal large-component basis
+      proj.create(n,.n_bf)
+      proj.to_product_of(S,cc,transpose_a=TRUE)
+      cc.destroy
+
+      ! V = L_S^-1 V L_S^-t and W = L_T^-1 W L_T^-t
+      S.solve_lower_triangular_equations(V)
+      V = transpose(V)
+      S.solve_lower_triangular_equations(V)
+      T.solve_lower_triangular_equations(W)
+      W = transpose(W)
+      T.solve_lower_triangular_equations(W)
+
+      ! T = L_S^-1 L_T: the kinetic energy between the two bases, over c sqrt(2)
+      S.solve_lower_triangular_equations(T)
+
+      ! The Dirac matrix
+      dirac.create(2*n,2*n)
+      dirac(  1:n  ,  1:n  ) = HALF*(V + transpose(V))
+      dirac(  1:n  ,n+1:2*n) = sqrt(TWO)*c_light*T
+      dirac(n+1:2*n,  1:n  ) = sqrt(TWO)*c_light*transpose(T)
+      dirac(n+1:2*n,n+1:2*n) = QUARTER*(W + transpose(W))
+      do i = n+1,2*n
+         dirac(i,i) = dirac(i,i) - TWO*c2
+      end
+      W.destroy
+      V.destroy
+      T.destroy
+      S.destroy
+
+      ! Its solutions; the upper half are the positive-energy ones
+      eval.create(2*n)
+      evec.create(2*n,2*n)
+      dirac.solve_symmetric_eigenproblem(eval,evec)
+      DIE_IF(eval(n)>-c2 OR eval(n+1)<-c2,"cannot tell positive from negative energy solutions")
+
+      ! XX = C_S C_L^-1
+      CL.create(n,n)
+      XX.create(n,n)
+      CL.to_inverse_of(evec(1:n,n+1:2*n))
+      XX.to_product_of(evec(n+1:2*n,n+1:2*n),CL)
+      CL.destroy
+      evec.destroy
+
+      ! Ho = h_LL + h_LS X + X^t h_SL + X^t h_SS X, not yet renormalised
+      Ho.create(n,n)
+      HR.create(n,n)
+      RR.create(n,n)
+      Ho = dirac(1:n,1:n)
+      HR.to_product_of(dirac(1:n,n+1:2*n),XX)
+      Ho = Ho + HR + transpose(HR)
+      RR = dirac(n+1:2*n,n+1:2*n)
+      RR.change_basis_to(HR,XX)
+      Ho = Ho + HR
+      dirac.destroy
+
+      ! RR = (1 + X^t X)^-1/2
+      evec.create(n,n)
+      eig.create(n)
+      HR.to_product_of(XX,XX,transpose_a=TRUE)
+      do i = 1,n
+         HR(i,i) = HR(i,i) + ONE
+      end
+      HR.solve_symmetric_eigenproblem(eig,evec)
+      do i = 1,n
+         HR(:,i) = evec(:,i)/sqrt(sqrt(eig(i)))
+      end
+      RR.to_product_of(HR,HR,transpose_b=TRUE)
+      XX.destroy
+
+      ! Renormalise: Ho = R Ho R
+      Ho.change_basis_to(HR,RR)
+      Ho = HALF*(HR + transpose(HR))
+      RR.destroy
+
+      ! The decoupling is exact: Ho must have the positive energies
+      Ho.solve_symmetric_eigenproblem(eig,evec)
+      err = maxval(abs(eig-eval(n+1:2*n))/(ONE+abs(eig)))
+      DIE_IF(err>TOL(8),"the X2C hamiltonian does not reproduce the Dirac energies")
+      eig.destroy
+      evec.destroy
+      eval.destroy
+
+      ! Contract
+      Ho.change_basis_to(H,proj)
+      H = HALF*(H + transpose(H))
+
+      proj.destroy
+      HR.destroy
+      Ho.destroy
+
+   end
+
+end

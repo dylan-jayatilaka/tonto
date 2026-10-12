@@ -2144,12 +2144,15 @@ contains
    end
 
 
-   make_normalized_NA_ints(NA,c,spherical) :: PURE
-   ! Calculate T, a cartesian or spherical block of integrals.
+   make_normalized_NA_ints(NA,c,spherical,eta) :: PURE
+   ! Calculate "NA", a cartesian or spherical block of nuclear attraction
+   ! integrals for a nucleus at position "c". If "eta" is present the
+   ! nucleus is a gaussian charge of that exponent.
       self :: IN
       NA :: MAT{REAL}, OUT
       c :: VEC{REAL}(3), IN
       spherical :: BIN, optional, IN
+      eta :: REAL, optional, IN
 
       W :: MAT{REAL}@
       is_spherical :: BIN
@@ -2158,12 +2161,12 @@ contains
       if (present(spherical)) is_spherical = spherical
 
       if (NOT is_spherical)then
-         .make_nuclear_attraction_ints(NA,c)
+         .make_nuclear_attraction_ints(NA,c,eta)
       elseif (.a.l<2 AND .b.l<2) then
-         .make_nuclear_attraction_ints(NA,c)
+         .make_nuclear_attraction_ints(NA,c,eta)
       else
          W.create(.a.n_comp,.b.n_comp)
-         .make_nuclear_attraction_ints(W,c)
+         .make_nuclear_attraction_ints(W,c,eta)
          .change_to_spherical(W,NA)
          W.destroy
       end
@@ -2172,18 +2175,20 @@ contains
 
    end
 
-   make_nuclear_attraction_ints(NA,c) :: PURE
+   make_nuclear_attraction_ints(NA,c,eta) :: PURE
    ! Make the nuclear attraction integral matrix "NA" for a nucleus at
    ! position "c". Uses Rys decomposition of 1/r_c and Gauss-Hermite
-   ! quadrature.
+   ! quadrature. If "eta" is present the nucleus is the gaussian charge
+   ! (eta/pi)^3/2 exp(-eta r_c^2); see "make_pVp_ints".
       self :: IN
       NA :: MAT{REAL}, OUT
       c :: VEC{REAL}(3), IN
+      eta :: REAL, optional, IN
 
       NAx,NAy,NAz :: MAT{REAL}@
       ax,ay,az,bx,by,bz :: VEC{INT}@
       rpc,rab :: VEC{REAL}(3)
-      p,xx,uu,wt,prefac :: REAL
+      p,xx,uu,wt,prefac,fac,t2 :: REAL
       n_roots,k,fa,la,fb,lb :: INT
       rys :: RYS@
 
@@ -2198,6 +2203,10 @@ contains
       rpc = (.a.exponent*.a.position + .b.exponent*.b.position)/p - c
       rys.create(n_roots)
       xx = p*rpc.dot(rpc)
+      if (present(eta)) then
+         fac = eta/(p+eta)
+         xx  = fac*xx
+      end
       rys.get_weights_and_u_roots(xx)
 
       NAx.create(.a.l+1,.b.l+1)
@@ -2209,6 +2218,11 @@ contains
 
          uu = p*rys.root(k)
          wt =   rys.weight(k)
+
+         if (present(eta)) then
+            t2 = rys.root(k)/(ONE+rys.root(k))
+            uu = p*fac*t2/(ONE-fac*t2)
+         end
 
          .make_nuclear_attraction_ints(NAx,1,uu,c(1))
          .make_nuclear_attraction_ints(NAy,2,uu,c(2))
@@ -2225,6 +2239,7 @@ contains
 
       rab = .a.position - .b.position
       prefac = exp(-.a.exponent*.b.exponent*rab.dot(rab)/p)*pi212/p
+      if (present(eta)) prefac = prefac*sqrt(fac)
       NA = prefac*NA
 
    end
@@ -2352,6 +2367,127 @@ contains
 
    end
 
+
+   make_normalized_pVp_ints(W,c,spherical,eta) :: PURE
+   ! Calculate "W", a cartesian or spherical block of the integrals of
+   ! p.(1/r_c)p for a nucleus at position "c", where p is the momentum.
+   ! If "eta" is present the nucleus is a gaussian charge of that exponent.
+   ! See "make_pVp_ints".
+      self :: IN
+      W :: MAT{REAL}, OUT
+      c :: VEC{REAL}(3), IN
+      spherical :: BIN, optional, IN
+      eta :: REAL, optional, IN
+
+      Wc :: MAT{REAL}@
+      is_spherical :: BIN
+
+      is_spherical = FALSE
+      if (present(spherical)) is_spherical = spherical
+
+      if (NOT is_spherical)then
+         .make_pVp_ints(W,c,eta)
+      elseif (.a.l<2 AND .b.l<2) then
+         .make_pVp_ints(W,c,eta)
+      else
+         Wc.create(.a.n_comp,.b.n_comp)
+         .make_pVp_ints(Wc,c,eta)
+         .change_to_spherical(Wc,W)
+         Wc.destroy
+      end
+
+      W = W * .normalisation_factor
+
+   end
+
+   make_pVp_ints(W,c,eta) :: PURE
+   ! Make the integral matrix "W" of p.(1/r_c)p for a nucleus at position
+   ! "c", where p = -i grad is the momentum:
+   !    W_ab = <grad a| 1/r_c |grad b> ,
+   ! the sum over x, y and z of the nuclear attraction integral between
+   ! the derivatives of the two gaussians. This is the scalar part of
+   ! (sigma.p)(1/r_c)(sigma.p), the only integral a scalar-relativistic
+   ! hamiltonian needs beyond the non-relativistic ones. Uses Rys
+   ! decomposition of 1/r_c and Gauss-Hermite quadrature.
+   !
+   ! If "eta" is present the nucleus is not a point but the unit charge
+   ! (eta/pi)^3/2 exp(-eta r_c^2), whose potential is erf(sqrt(eta) r_c)/r_c.
+   ! That is the same integral over gaussians exp(-u^2 r_c^2), stopped at
+   ! u^2 = eta: with p the sum of the exponents and f = eta/(p+eta), the
+   ! Rys argument is scaled by f, a root t^2 gives u^2 = p f t^2/(1-f t^2),
+   ! and the result is scaled by sqrt(f).
+      self :: IN
+      W :: MAT{REAL}, OUT
+      c :: VEC{REAL}(3), IN
+      eta :: REAL, optional, IN
+
+      NAx,NAy,NAz,DAx,DAy,DAz,DDx,DDy,DDz :: MAT{REAL}@
+      ax,ay,az,bx,by,bz :: VEC{INT}@
+      rpc,rab :: VEC{REAL}(3)
+      p,xx,uu,wt,prefac,fac,t2 :: REAL
+      n_roots,k,fa,la,fb,lb :: INT
+      rys :: RYS@
+
+      ! Cartesian powers of the components
+      fa = .a.first_gaussian; la = .a.last_gaussian
+      fb = .b.first_gaussian; lb = .b.last_gaussian
+
+      ax = GAUSSIAN_DATA::nx(fa:la); ay = GAUSSIAN_DATA::ny(fa:la); az = GAUSSIAN_DATA::nz(fa:la)
+      bx = GAUSSIAN_DATA::nx(fb:lb); by = GAUSSIAN_DATA::ny(fb:lb); bz = GAUSSIAN_DATA::nz(fb:lb)
+
+      ! Rys roots and weights; one power more on each side than for 1/r_c
+      n_roots = (.a.l+.b.l+4)/2
+      p = .a.exponent + .b.exponent
+      rpc = (.a.exponent*.a.position + .b.exponent*.b.position)/p - c
+      fac = ONE
+      if (present(eta)) fac = eta/(p+eta)
+      rys.create(n_roots)
+      xx = fac*p*rpc.dot(rpc)
+      rys.get_weights_and_u_roots(xx)
+
+      ! 1-D integrals, their left derivatives, and left-and-right derivatives
+      NAx.create(.a.l+2,.b.l+2); NAy.create(.a.l+2,.b.l+2); NAz.create(.a.l+2,.b.l+2)
+      DAx.create(.a.l+1,.b.l+2); DAy.create(.a.l+1,.b.l+2); DAz.create(.a.l+1,.b.l+2)
+      DDx.create(.a.l+1,.b.l+1); DDy.create(.a.l+1,.b.l+1); DDz.create(.a.l+1,.b.l+1)
+
+      W = ZERO
+      do k = 1,n_roots
+
+         t2 = rys.root(k)/(ONE+rys.root(k))
+         uu = p*fac*t2/(ONE-fac*t2)
+         wt = rys.weight(k)
+
+         .make_nuclear_attraction_ints(NAx,1,uu,c(1),.a.l+1,.b.l+1)
+         .make_nuclear_attraction_ints(NAy,2,uu,c(2),.a.l+1,.b.l+1)
+         .make_nuclear_attraction_ints(NAz,3,uu,c(3),.a.l+1,.b.l+1)
+
+         .differentiate(NAx,"left ",DAx)
+         .differentiate(NAy,"left ",DAy)
+         .differentiate(NAz,"left ",DAz)
+
+         .differentiate(DAx,"right",DDx)
+         .differentiate(DAy,"right",DDy)
+         .differentiate(DAz,"right",DDz)
+
+         NAz = NAz*wt
+         DDz = DDz*wt
+
+         W = W + DDx(ax,bx)*NAy(ay,by)*NAz(az,bz) &
+               + NAx(ax,bx)*DDy(ay,by)*NAz(az,bz) &
+               + NAx(ax,bx)*NAy(ay,by)*DDz(az,bz)
+
+      end
+
+      rys.destroy
+      DDz.destroy; DDy.destroy; DDx.destroy
+      DAz.destroy; DAy.destroy; DAx.destroy
+      NAz.destroy; NAy.destroy; NAx.destroy
+
+      rab = .a.position - .b.position
+      prefac = exp(-.a.exponent*.b.exponent*rab.dot(rab)/p)*pi212/p
+      W = prefac*sqrt(fac)*W
+
+   end
 
 !   make_normalized_DKH_ints(T,SOx,SOy,SOz,c,spherical) :: PURE
 !   ! Calculate T, a cartesian or spherical block of integrals.
@@ -4091,113 +4227,6 @@ contains
       c :: INT, IN
       eta :: REAL
       eta  = gaussian_nucleus_eta(c)
-   end
-
-   make_normalized_finite_NA_ints(NA,c,nc,n,spherical) :: PURE
-   ! Calculate finite gaussian NA integrals.
-      self :: IN
-      NA :: MAT{REAL}, OUT
-      c :: VEC{REAL}(3), IN
-      nc, n :: INT, IN
-      spherical :: BIN, optional, IN
-
-      W :: MAT{REAL}@
-      is_spherical :: BIN
-
-      is_spherical = FALSE
-      if (present(spherical)) is_spherical = spherical
-
-      if (NOT is_spherical)then
-         .make_finite_nuclear_attraction_ints(NA,c,nc,n)
-      elseif (.a.l<2 AND .b.l<2) then
-         .make_finite_nuclear_attraction_ints(NA,c,nc,n)
-      else
-         W.create(.a.n_comp,.b.n_comp)
-         .make_finite_nuclear_attraction_ints(W,c,nc,n)
-         .change_to_spherical(W,NA)
-         W.destroy
-      end
-
-      NA = NA * .normalisation_factor
-
-   end
-
-   make_finite_nuclear_attraction_ints(I,npos,nc,n) :: PURE
-   ! Make ERI matrix "I" using Rys decomposition of 1/r_{12}.
-      self :: IN
-      I :: MAT{REAL}, OUT
-      npos :: VEC{REAL}(3), IN
-      nc, n :: INT, IN
-
-      Ix,Iy,Iz :: MAT3{REAL}@
-      ax,ay,az,bx,by,bz :: VEC{INT}@
-      rys :: RYS@
-
-      AB,CD,P,Q,PA,QP :: VEC{REAL}(3)
-      zeta,zinv,eta,einv,zeinv,rho,xx,AB2,fac,h,r212 :: REAL
-      l_e,l_f,n_roots,fa,la,fb,lb :: INT
-
-      ! Angular momenta and # of roots
-      l_e = .a.l + .b.l
-      l_f = 0
-!     n_roots = (l_e+l_f)/2 + 2 ! orig LBxxx
-      n_roots = (l_e + l_f + 2 )/2  ! orig LBxxx
-      h=5.0000000000000000000d-7  ! this is in Knecht
-
-      ! Allocate 2D integrals
-      Ix.create(n_roots,l_e+1,.b.l+1)
-      Iy.create(n_roots,l_e+1,.b.l+1)
-      Iz.create(n_roots,l_e+1,.b.l+1)
-
-      ! Gaussian index arrays
-      fa = .a.first_gaussian; la = .a.last_gaussian
-      fb = .b.first_gaussian; lb = .b.last_gaussian
-
-      ax = GAUSSIAN_DATA::nx(fa:la); ay = GAUSSIAN_DATA::ny(fa:la); az = GAUSSIAN_DATA::nz(fa:la)
-      bx = GAUSSIAN_DATA::nx(fb:lb); by = GAUSSIAN_DATA::ny(fb:lb); bz = GAUSSIAN_DATA::nz(fb:lb)
-
-      ! Exponents
-      zeta = .a.exponent + .b.exponent
-      eta  = gaussian_nucleus_eta(nc)
-      r212=sqrt(THREE/TWO/eta)
-      r212=r212+real(n)*h
-      eta  = THREE/TWO/r212**2
-      zinv = ONE/zeta
-      einv = ONE/eta
-      zeinv = ONE/(zeta+eta)
-      rho  = zeta*eta*zeinv
-
-      ! Positions
-      AB  = .a.position - .b.position
-      CD  = ZERO !.a.pos - .a.pos
-      P   = (.a.exponent*.a.position + .b.exponent*.b.position)*zinv
-      Q   = npos
-      PA  = P - .a.position
-   !   QC  = ZERO !Q - .a.pos
-      QP  = Q - P
-
-      ! Rys roots
-      xx = rho*(QP(1)*QP(1)+QP(2)*QP(2)+QP(3)*QP(3))
-      rys.create(n_roots)
-      rys.get_weights(xx)
-
-      ! Form the 2D integrals
-      .form_2d_ints(Ix(:,:,1),Iy(:,:,1),Iz(:,:,1),rys.root,rys.weight,rho,zinv,PA,QP)
-      .transfer_2d_ints(Ix,Iy,Iz,AB)
-
-      ! Form the integrals
-      I = sum(Ix(:,ax,bx)*Iy(:,ay,by)*Iz(:,az,bz),dim=1)
-
-      ! Cleanup
-      rys.destroy
-      Iz.destroy; Iy.destroy; Ix.destroy
-
-      ! Prefactor
-      AB2 = AB(1)*AB(1)+AB(2)*AB(2)+AB(3)*AB(3)
-      fac = TWOPI5ON2*sqrt(zeinv)*zinv*einv*exp(-.a.exponent*.b.exponent*AB2*zinv)
-      fac = fac * sqrt(eta/PI)**3
-      I = fac*I
-
    end
 
 !  ========

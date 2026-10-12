@@ -81,8 +81,7 @@ Hirshfeld moments are identical under two BLAS kernels. Left to check:
 - **x2c-SVPall, x2c-TZVPall, x2c-TZVPPall: H to Rn**, all-electron, in `basis_sets/` (Pollak and
   Weigend, *J. Chem. Theory Comput.* 13, 3696, 2017; the same family as def2). All 86 elements
   agree with the Basis Set Exchange copies in every exponent and coefficient. They are made for a scalar-relativistic Hamiltonian
-  (X2C). **Tonto has none that runs today** (§6a): `relativity_kind= iotc` and `dkh` are accepted
-  and silently give the non-relativistic result. To be tested once X2C is in: x2c-TZVPall with X2C
+  (X2C), which Tonto has as `relativity_kind= x2c` (§6a). To be tested: x2c-TZVPall with X2C
   against def2-TZVP on light atoms, where the two should agree, and on one 4d or 5d compound.
 - **All-electron families that cover the table**, from the Basis Set Exchange metadata
   (2026-10-05; sets with no core potential on any element, and how far from H they are complete):
@@ -135,6 +134,11 @@ its gradient only. The three steps depend on each other:
 Range-separated hybrids need the attenuated Coulomb integrals in the exact and COSX code: later.
 
 ## 6a. Relativity: scalar X2C (Dylan, 2026-10-11)
+
+**Status, 2026-10-12: done, on `develop`** (pull request 47) (steps 1 to 3 below; what was done and measured
+is at the end of this section). `relativity_kind= x2c`; user page `docs/RUNNING_TONTO.md`,
+*Relativity*. Still open: the heavy-atom test of the default atoms (§3, step 5), a first
+refinement beyond Kr, and an X2C option for `hart`.
 
 **Decisions (Dylan, 2026-10-11):**
 
@@ -200,6 +204,117 @@ Steps:
    spin-dependent part of $`W`$, complex two-component orbitals (Tonto's `gchf` kind for
    Hartree–Fock; nothing yet for DFT), and a two-electron spin–orbit correction.
 
+**What was done (2026-10-11, branch `x2c`).**
+
+- `foofiles/molecule.rel.foo` is new and small: the four primitive matrices, the contraction
+  matrix, and `make_r_X2C_core_mx`. It is one case in `MOLECULE.SCF:make_r_core_mx`. Rescued
+  from the old file: the loop over primitive shell pairs, and the $`\mathbf{p}\cdot V\mathbf{p}`$
+  integrals (`GAUSSIAN2:make_pVp_ints`, from the commented-out `make_DKH_ints` without its
+  spin–orbit parts). The old IOTC algebra and its bookkeeping for repeated exponents were not used.
+- **Repeated primitives.** A primitive that appears in several shells of an atom (same angular
+  momentum, same exponent) is used once (`make_primitive_shells`). The contraction matrix is
+  built from the stored coefficients and each column scaled to the norm the program gives that
+  basis function; the routine stops if the contracted primitive overlap is not the molecule's
+  overlap matrix to 1e-8. That check covers Cartesian component norms and the order of spherical
+  components without the routine having to know either.
+- **The algebra is done in Cholesky bases, and that matters.** The first version orthonormalised
+  with the eigenvectors of $`S`$ and then diagonalised $`T`$. It agreed with PySCF to 1e-8 hartree
+  on every library basis, but was wrong by 6e-7 (Ne⁹⁺) and 1.1e-6 hartree (Hg⁷⁹⁺) in an
+  even-tempered s set with exponents from 0.016 to 1.7e10: the eigenvalues of $`T`$ span 13
+  orders of magnitude, and an eigenvector routine gives the small ones an absolute error set by
+  the largest. With $`S = L_S L_S^\dagger`$ and $`T = L_T L_T^\dagger`$ (Cholesky), the Dirac
+  matrix is $`L_S^{-1} V L_S^{-\dagger}`$, $`\sqrt2\,c\,L_S^{-1}L_T`$ and
+  $`\tfrac12 L_T^{-1} W L_T^{-\dagger} - 2c^2`$, the metric is the unit matrix, and the error
+  is 1e-11. The prototype that found this is `~/tonto-runs/2026-10-11_x2c/proto.py`.
+- **Self-check in every run:** $`h_+`$ must reproduce the positive Dirac energies to 1e-8
+  relative, or the job stops.
+- **Nuclei.** Points by default. `nucleus_model= gaussian` gives the Gaussian charges of Visscher
+  and Dyall (the table `gaussian_nucleus_eta` in `gaussian2.foo`, identical to PySCF's exponents
+  for H, Br, Kr, Hg and Rn). The attraction and $`\mathbf{p}\cdot V\mathbf{p}`$ integrals take
+  the nuclear exponent $`\eta`$ as an optional argument: with $`p`$ the sum of the two Gaussian
+  exponents and $`f = \eta/(p+\eta)`$, the Rys argument is scaled by $`f`$, a root $`t^2`$ gives
+  the Gaussian exponent $`p f t^2/(1 - f t^2)`$, and the integral is scaled by $`\sqrt f`$. The old
+  finite-nucleus routine (`make_finite_nuclear_attraction_ints`) failed an array bounds check and
+  was removed; before this work `nucleus_model= finite` gave a nuclear attraction matrix of zero,
+  with no message. A Gaussian nucleus is available only under X2C, because the contracted
+  attraction matrix (`SHELL2:get_nuc`) knows only points.
+- **Stops instead of silent wrong answers:** `relativity_kind=` other than `none`, `x2c`, `pauli`,
+  `zora`; a nucleus model other than point without X2C; X2C with general complex orbitals.
+- **Speed of light:** `SPEED_OF_LIGHT_AU` was 137.03599 and is 137.035999177 (CODATA 2022).
+- **Output:** under X2C the energy summary prints one number, the one-electron energy, in place
+  of the nuclear attraction energy, the kinetic energy and the virial ratio.
+- **Not needed:** no energy-gradient job is reachable from the input (`optimise_geometry` is
+  commented out), so there is nothing to guard. Cluster charges and an electric field are added
+  to the core matrix after the transformation, untransformed.
+
+**What was measured** (PySCF 2.14, spin-free X2C, same basis, $`c`$ = 137.035999177, spherical
+`x2c-SVPall` unless said; hartree; Hartree–Fock; runs in `~/tonto-runs/2026-10-11_x2c`, PySCF in `venv` there).
+
+| System | Tonto | PySCF |
+|---|---|---|
+| Ne | -128.51206173 | -128.512061727 |
+| Kr | -2787.70616450 | -2787.706164503 |
+| Xe | -7442.86712300 | -7442.867122998 |
+| Hg | -19622.39695888 | -19622.396958891 |
+| Rn | -23560.96241364 | -23560.962413653 |
+| HBr, 1.414 Å | -2604.57465099 | -2604.574650994 |
+| HI, 1.609 Å | -7112.65502747 | -7112.655027467 |
+| Hg⁷⁹⁺ (UHF) | -3531.26744210 | -3531.267442103 |
+| Br atom (UHF) | -2603.97313216 | -2603.973132161 |
+| Kr, Cartesian | -2787.71086791 | -2787.710867914 |
+| HBr, Cartesian | -2604.57855931 | -2604.578559312 |
+| H₂O, cc-pVDZ (repeated primitives) | -76.07156215 | -76.071562149 |
+| Hg, x2c-TZVPall | -19623.42960918 | -19623.429609193 |
+| Kr, Gaussian nucleus | -2787.68716175 | -2787.687161752 |
+| Hg, Gaussian nucleus | -19618.92472122 | -19618.924721233 |
+| Rn, Gaussian nucleus | -23554.62526761 | -23554.625267627 |
+| HBr, Gaussian nuclei | -2604.55856114 | -2604.558561141 |
+| H₂O, x2c-TZVPPall (f on O, d on H) | -76.10943979 | -76.10943979 |
+| CHFClBr, x2c-TZVPall (five centres, no symmetry) | -3203.40084166 | -3203.40084179 |
+| iodobenzene, x2c-TZVPall (276 functions) | -7343.14802981 | -7343.14803111 |
+
+- Without X2C the same eight systems of the first block agree with PySCF to 1e-8 as well, so the
+  basis sets are the same in the two programs. The X2C correction is -0.14 (Ne), -53 (Kr),
+  -428 (Xe), -3702 (Hg) and -5151 hartree (Rn) in this basis.
+- **One-electron ions,** 41 even-tempered s functions (exponents $`2^{34}`$ to $`2^{-6}`$), point
+  nucleus. Tonto: Ne⁹⁺ -50.06674181, Hg⁷⁹⁺ -3532.19050050. The same matrix problem solved in
+  40-digit arithmetic (`ref_mpmath.py`): -50.066741806 and -3532.190500498. The analytic Dirac
+  energies $`c^2(\sqrt{1-(Z/c)^2}-1)`$ are -50.066742017 and -3532.192092935; the remainder is the
+  basis.
+- **DFT.** PBE on HBr differs from PySCF by 7.7e-4 hartree with X2C and by the same 7.7e-4
+  without it, at Tonto's default grid; at `accuracy= very_high` both differences are 1.0e-5.
+  X2C is right with DFT; **the default grid costs 8e-4 hartree on a bromine atom**, to be kept in
+  mind when energies of heavy atoms are compared (a refinement was not tested).
+- The gaussian nucleus raises the energy by 0.019 (Kr), 3.47 (Hg) and 6.34 hartree (Rn).
+- **The last two rows differ by more than 1e-8, and not because of X2C.** Without X2C, CHFClBr
+  differs from PySCF by 1.4e-7 and with it by 1.3e-7; iodobenzene by 7.9e-7 and 1.3e-6. That is
+  the cutoff on the two-electron integrals in a direct SCF (Tonto at its default, PySCF at 1e-15
+  for CHFClBr and its default for iodobenzene).
+- **Cost.** Iodobenzene with X2C, release build, one core: 5 min 56 s for the whole job, 20
+  iterations; PySCF took 7 min. The transformation itself is not noticeable at this size.
+- **A stall that is not X2C's.** Iodobenzene with x2c-TZVPall has one overlap eigenvalue of
+  9.1e-6, just under the default `linear_dependence_tol` of 1e-5. The function is then filtered
+  out, the energy converges, but the DIIS error stays at 6.9e-5 (7.3e-3 without X2C) and the SCF
+  runs to its iteration limit. With `linear_dependence_tol= 1e-7` it converges in 20 iterations.
+  The convergence test does not allow for the filtered functions; an existing defect, entered in
+  `TASKS_AND_HISTORY.md` under *Correctness*.
+- **The tests print no iteration table** (`output= NO`). With the `core` guess, which is also what
+  `promolecule` gives for a single atom, krypton's guess orbitals come from a nearly degenerate
+  shell: the starting energy differs between builds by up to 5e-4 hartree and the last digits of
+  the converged gradient with it, though the final energy agrees to 1e-8. The Mac debug build
+  failed the two Kr tests against the achari2 reference for that reason until the table was
+  left out.
+
+**Open after this.**
+
+1. The heavy-atom test of the default atoms (§3, step 5).
+2. A first refinement beyond Kr with `x2c-TZVPall` and X2C, and its cost: the transformation is
+   one eigenproblem of twice the number of primitives, and the primitive integrals are a serial
+   loop over shell pairs and nuclei. If a real structure is slow, do the transformation atom by
+   atom (the "DLU" approximation of Peng and Reiher) and run the integral loop in parallel.
+3. `hart` has no relativity option and accepts only seven basis-set names (`docs/RUNNING_HART.md`).
+4. Under MPI the routine runs whole on every process; not tested there.
+
 ## 7. Order of work
 
 1. The spherical-atom study (§3).
@@ -215,6 +330,10 @@ it does not change results.
 
 ## 8. Log
 
+- 2026-10-11 (evening): scalar X2C written and checked, branch `x2c` (§6a): 17 systems against
+  PySCF to 1e-8 hartree, one-electron ions against a 40-digit solution, Gaussian nuclei. Suite,
+  Mac release and achari2 reference: the 184 earlier tests pass and the three new X2C tests
+  pass (blessed on achari2); those three also pass in the Mac debug build. The three silent fall-throughs (`relativity_kind= iotc/dkh`, `nucleus_model= finite`) now stop.
 - 2026-10-11: libxc, PBE0, r2SCAN and the keyword `dft_functional=` are on branch `libxc`
   (`docs/TASK_DFT_STANDARDISATION.md` §11), in a build with `-DLIBXC=ON`. r2SCAN's energy needs a
   much finer grid than PBE's: at the default `accuracy= medium` its error is 2.3e-4 hartree for

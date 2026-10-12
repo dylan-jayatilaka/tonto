@@ -78,10 +78,49 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## CLOSED 2026-10-11: libxc, PBE0 and r2SCAN are on `develop`; next is scalar X2C
+## CLOSED 2026-10-12: scalar X2C is on `develop`
 
-**Next action: scalar X2C**, `docs/TASK_HAR_STANDARDISATION.md` section 6a. No relativistic
-Hamiltonian runs in Tonto today (see *Correctness*, the `relativity_kind=` entry). Decisions
+**Merged by pull request 47** (Dylan, 2026-10-12). **Next action:** the first use of it, a heavy
+atom for the default-atoms question and a first refinement beyond Kr
+(`docs/TASK_HAR_STANDARDISATION.md` section 6a, *Open after this*). For a structure through
+`hart`, the hart entry below comes first.
+
+**What landed.** `relativity_kind= x2c`: the scalar exact two-component one-electron
+Hamiltonian in place of the kinetic energy plus nuclear attraction, for every restricted and
+unrestricted SCF, Hartree–Fock or DFT; the atomic calculations inherit it. No picture-change
+correction, no spin–orbit coupling (Dylan's decisions). `nucleus_model= gaussian` gives Visscher
+and Dyall's Gaussian nuclei, under X2C only. New module `foofiles/molecule.rel.foo`; the
+p.Vp integrals in `GAUSSIAN2:make_pVp_ints`; three short tests (Kr, Kr with a Gaussian nucleus,
+HBr from the promolecule). `SPEED_OF_LIGHT_AU` is now 137.035999177. User page:
+`docs/RUNNING_TONTO.md`, *Relativity*. Detail, the table of numbers and the one numerical
+trap (do the algebra in Cholesky bases; diagonalising the kinetic matrix loses six figures with
+very large exponents): `docs/TASK_HAR_STANDARDISATION.md` section 6a.
+
+**Checked.** Against PySCF's spin-free X2C, same basis and speed of light, 17 systems to 1e-8
+hartree: Ne, Kr, Xe, Hg, Rn, HBr, HI, an unrestricted Br atom, Cartesian functions, repeated
+primitives (cc-pVDZ), x2c-TZVPall, and Gaussian nuclei. One-electron Ne⁹⁺ and Hg⁷⁹⁺ against a
+40-digit solution of the same matrix problem to 1e-8. Three larger molecules agree to the
+cutoff on the two-electron integrals (1e-7 to 1e-6, the same with and without X2C). Full suite:
+on the Mac release build and on the achari2 reference build the 184 earlier tests all pass,
+and so do the three new ones once blessed on achari2; the three also pass in the Mac debug build. CI on pull request 47 passes (Linux release with
+the short suite, Linux debug, real WSL); the macOS, static, Windows and full-suite workflows run
+only after the merge. Runs and the
+PySCF environment: `~/tonto-runs/2026-10-11_x2c`.
+
+**Three silent wrong answers now stop with a message:** `relativity_kind= iotc`, `dkh` and
+`dkh-2` (they ran non-relativistically); `nucleus_model= finite` (it gave a nuclear attraction
+matrix of zero); a Gaussian nucleus without X2C.
+
+**Open from this work, each with an entry and a register row:** the SCF stall when a basis
+function is filtered for linear dependence (*Correctness*; met on iodobenzene with x2c-TZVPall,
+cured there by `linear_dependence_tol= 1e-7`); the default DFT grid and the integral cutoff on
+heavy atoms (*Test suite and numerics*); X2C under MPI (*MPI*); X2C and the x2c basis sets in
+`hart` (*hart*).
+
+## CLOSED 2026-10-11: libxc, PBE0 and r2SCAN are on `develop`
+
+**Then next was scalar X2C** (now done, block above), `docs/TASK_HAR_STANDARDISATION.md` section 6a. No relativistic
+Hamiltonian ran in Tonto then (archive, the `relativity_kind=` entry). Decisions
 (Dylan, 2026-10-11): scalar only; no picture-change correction; no spin-orbit coupling; the
 atoms unchanged. Step 1 is to stop the silent fall-through; step 2 to rescue the
 p.Vp integrals from `git show fcbd5a8a^:foofiles/molecule.rel.foo`; step 3 to write the
@@ -2465,15 +2504,16 @@ dead keyword line from `develop` and leave the work on its two tags, as was done
 
 # Correctness — open bugs that give wrong answers
 
-## `relativity_kind=` silently gives the non-relativistic result (2026-10-11)
+## The SCF never converges when a basis function is filtered for linear dependence (2026-10-11)
 
-**Register row** of the same name. `iotc`, `dkh` and `dkh-2` are accepted by
-`SCF_DATA`, but `molecule.rel.foo` was removed in `fcbd5a8a` and the calls to it in
-`molecule.scf.foo` are commented out, so the `select case` on `relativity_kind` falls to its
-default and builds the non-relativistic core matrix, exit 0, no message. Make any value but none
-stop with a message. This is step 1 of the scalar X2C work, `docs/TASK_HAR_STANDARDISATION.md`
-section 6a, which replaces the old code.
-
+When an overlap eigenvalue is under `linear_dependence_tol` (default 1e-5) the function is
+filtered out. The energy then converges, but the DIIS error stops at a non-zero value and the
+SCF runs to its iteration limit and reports no convergence. Met on iodobenzene with
+`x2c-TZVPall` (one eigenvalue of 9.1e-6): the error stalls at 6.9e-5 with X2C and at 7.3e-3
+without, the energy correct to 5e-6. With `linear_dependence_tol= 1e-7` nothing is filtered and
+it converges in 20 iterations. Not caused by X2C. To do: form the DIIS error in the filtered
+space, so it can go to zero; until then lower the tolerance. Runs:
+`~/tonto-runs/2026-10-11_x2c/PhI_*`. **Register row** of the same name.
 
 ## Cluster charges are silently zero under `partition_model= tc-stewart` (2026-10-10)
 
@@ -2695,6 +2735,16 @@ Contained: `time.foo` and its callers.
 ---
 
 # MPI
+
+## X2C under MPI is untested (Dylan, 2026-10-12)
+
+**Register row:** *Test X2C under MPI*. `MOLECULE.REL:make_r_X2C_core_mx` has no `parallel do`:
+every process builds the whole primitive matrices and does the whole transformation, which is
+correct by construction but was never run. It calls `MOLECULE.INTS:make_r_overlap_mx`, which
+does divide its work. To do: run the three `*_X2C` tests with `mpirun -n 1`, `2` and `4` in an
+MPI build and compare with the serial energies; add them to the MPI suite if they are not
+picked up already; then, if a real structure is slow, divide the loop over primitive shell
+pairs in `make_primitive_X2C_ints`.
 
 ## CLOSED 2026-10-10: a parallel debug build in CI on every platform; gfortran-14 everywhere
 
@@ -5217,6 +5267,26 @@ the XC evaluation, not the point count. Tables in `docs/TASK_SCF_SPEEDUP_DATA.md
 
 # Test suite and numerics
 
+## Heavy atoms: the default DFT grid, and the two-electron integral cutoff (Dylan, 2026-10-12)
+
+**Register row:** *Heavy atoms: DFT grid and integral cutoff*. To investigate; found during the
+X2C checks (`docs/TASK_HAR_STANDARDISATION.md` section 6a), neither caused by X2C.
+
+1. **The default grid.** PBE on HBr with `x2c-SVPall` differs from PySCF (grid level 5 and 9
+   agree to 1e-7) by 7.7e-4 hartree at Tonto's default `accuracy= medium`, with and without X2C,
+   and by 1.0e-5 at `very_high`. For water the default costs 3e-6. To find out: which part of
+   the grid it is (radial points near the Br nucleus, most likely, since the core density is
+   steep); how it grows down the table (Kr, I, Xe, Hg); and whether a refinement feels it, as
+   was tested for r2SCAN on urea. If it does, the grid defaults should depend on the element.
+2. **The integral cutoff.** Hartree–Fock on iodobenzene with `x2c-TZVPall` (276 functions)
+   differs from PySCF by 7.9e-7 hartree without X2C and 1.3e-6 with it; CHFClBr by 1.4e-7 and
+   1.3e-7; atoms and diatomics by 1e-8. Put down to the cutoff on the two-electron integrals in
+   the direct SCF, but **not tested**: rerun with `eri_accuracy= high` and with PySCF's
+   `direct_scf_tol` tightened, and see whether both differences go, and why the X2C one is
+   larger on iodobenzene.
+
+Runs and scripts: `~/tonto-runs/2026-10-11_x2c` (`HBr_*_pbe*`, `PhI_*`, `CHFClBr_*`).
+
 ## Check the libxc energies against ORCA (Dylan, 2026-10-11)
 
 **Register row:** *Check the libxc energies against ORCA*. Not started; waits for ORCA on the Mac.
@@ -6329,6 +6399,15 @@ submodules simplifies the emitted module graph and compile-time dependencies. To
 
 # hart
 
+## hart cannot run a structure beyond Kr (Dylan, 2026-10-12)
+
+**Register row:** *hart: X2C and the x2c basis sets*. `hart` has no relativity option, and
+`--basis` accepts only `STO-3G`, `def2-SVP`, `def2-TZVP`, `def2-TZVPP`, `cc-pVDZ`, `cc-pVTZ`
+and `cc-pVQZ`. To do: `--relativity none|x2c` (default `none`), passed to
+`SCF_DATA:set_relativity_kind`; accept `x2c-SVPall`, `x2c-TZVPall` and `x2c-TZVPPall`, or any
+name with a file in the basis directory; perhaps `--nucleus point|gaussian`; a short `hart`
+test on a structure with a heavy atom; `docs/RUNNING_HART.md` and `hart --help`.
+
 ## hart — deferred items
 
 The `hart` work (milestone 5) left these alone deliberately. `docs/RUNNING_HART.md` is
@@ -7118,6 +7197,17 @@ different question and the one that matters.
 ---
 
 # Done, resolved and closed (archive)
+
+## FIXED (2026-10-11): `relativity_kind=` silently gave the non-relativistic result
+
+`iotc`, `dkh` and `dkh-2` were accepted by `SCF_DATA`, but `molecule.rel.foo` had been removed in
+`fcbd5a8a` and the calls to it in `molecule.scf.foo` were commented out, so the `select case` on
+`relativity_kind` fell to its default and built the non-relativistic core matrix, exit 0, no
+message. Fixed on branch `x2c`: `SCF_DATA:set_relativity_kind` stops on any value but `none`,
+`x2c`, `pauli` and `zora`, and `x2c` is a working scalar-relativistic Hamiltonian
+(`docs/TASK_HAR_STANDARDISATION.md` section 6a). The same pattern was found and closed for
+`nucleus_model= finite`, whose only `select case` branch was `point`, so the nuclear attraction
+matrix came out zero.
 
 ## CLOSED (2026-10-11): spherical atoms by the right ensemble -- the default stays
 
