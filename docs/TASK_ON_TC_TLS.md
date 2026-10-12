@@ -324,3 +324,96 @@ two is the relative motion alone.
 - R. F. Stewart, *J. Chem. Phys.* 51, 4569 (1969); P. Coppens, T. V. Willoughby and L. N. Csonka,
   *Acta Cryst.* A27, 248 (1971); K. Tanaka, *Acta Cryst.* A44, 1002 (1988): the earlier two-centre models.
 - V. Schomaker and K. N. Trueblood, *Acta Cryst.* B24, 63 (1968): T, L and S.
+
+
+## 9. Plan for the code
+
+### What exists (read 2026-10-12, nothing built)
+
+- **The two-centre path makes F only.** `MOLECULE.SCF:make_X_SFs_RF` → `MOLECULE.XTAL:make_FT` loops
+  over the shell pairs of the fragment's atoms and calls `make_FT_pair`, which gets a partition
+  factor and a temperature factor per pair of primitives (`make_partition_factors`,
+  `SHELL2:make_temperature_factors`) and hands both to `SHELL2:make_FT`. Symmetry is applied by
+  rotating the k points, one block per unique symmetry operation, and summing with
+  `SPACEGROUP:sum_unique_sf`. Atoms shared between images are divided by their repetition factor.
+  It is tested for F and for the X-ray constrained SCF; no test refines a structure with it.
+- **The refinement sees per-atom derivatives only.** `CRYSTAL:make_unique_sf_derivs` makes
+  $`\partial F/\partial X`$ for the nine position and ADP numbers of each atom, and
+  `DIFFRACTION_DATA.SET:solve_normal_equations` multiplies by the Jacobian `.xray_data.ls.jacobian`
+  to reach the TLS parameters. Nothing makes $`U_{AB}`$ for two different atoms.
+- **$`\Sigma`$ is not stored.** `put_TLS_results` and `set_TLS_restraints` each rebuild it as
+  `TLS_basis` times the parameters.
+- **The stiff modes reach the crystal only as the summed `fragment_U_high`.** The mode vectors stay
+  on the molecule (`normal_mode_eigenvectors`).
+- **Three `select case` blocks have no default** and would do nothing, silently, for a new model:
+  `make_X_SFs` (`molecule.scf.foo`), `make_partition_factors` (`molecule.xtal.foo`),
+  `SHELL2:make_temperature_factors`. `HAR_refinement` stops unless the model is one-centre.
+- `MOLECULE.XTAL:make_FT_deriv_U` is an old two-centre ADP derivative with no caller, hardwired to
+  Stewart and inconsistent between its two versions. It is not used here; delete it in step 2.
+
+### The one formula the derivatives need
+
+Because the temperature factor of (11) is $`\exp(-\tfrac12 \mathbf{k}^{\mathsf T} U^P_{ab}\mathbf{k})`$ with $`U^P_{ab}`$ of (8),
+every derivative with respect to an element of $`U_A`$, $`U_B`$ or $`U_{AB}`$ is $`k_i k_j`$ times a
+scalar. For the atom pair $`(A,B)`$ define three sums over the terms of (11) whose functions are on
+those two atoms, each term weighted per pair of primitives:
+
+```math
+S^{AA}_{AB}(\mathbf{k}) = \sum w_a^2\,(\text{term}), \qquad
+S^{BB}_{AB}(\mathbf{k}) = \sum w_b^2\,(\text{term}), \qquad
+S^{AB}_{AB}(\mathbf{k}) = \sum w_a w_b\,(\text{term}) . \qquad (19)
+```
+
+With $`\mathbf{a} = B_A^{\mathsf T}\mathbf{k}`$ and $`\mathbf{b} = B_B^{\mathsf T}\mathbf{k}`$ (vectors over the generalised coordinates), the
+derivative with respect to $`\Sigma_{pq}`$ is
+
+```math
+\frac{\partial F}{\partial \Sigma_{pq}} = -\tfrac12 \sum_{A \le B}
+   \big[ S^{AA}_{AB}\, a_p a_q + S^{BB}_{AB}\, b_p b_q + S^{AB}_{AB}\,(a_p b_q + b_p a_q) \big] , \qquad (20)
+```
+
+and the position derivative (15) needs one more sum per atom, with weight $`w_a`$. A weight per pair
+of primitives is exactly what the `partition` argument of `SHELL2:make_FT` already carries, so no
+new integral code is needed: the same routine is called with different weights.
+
+### Steps, each with its check
+
+**Step 1. F from (11), no refinement.**
+
+1. `MOLECULE.PROP`: make the two-centre stiff-mode ADPs $`U^{\rm high}_{AB}`$ of (3), a
+   `MAT4{REAL}(3,3,n,n)`, in the routine that makes `stiff_mode_ADPs` now (one loop, the diagonal is
+   the existing array). Hand it to the crystal with `set_crystal_U_high`.
+2. `CRYSTAL`: one routine that returns $`\Sigma`$ (factored out of `put_TLS_results` and
+   `set_TLS_restraints`), one that returns the $`3\times(6+K)`$ matrix $`B_A`$ (factored out of
+   `TLS_response`), and `two_center_ADP(a,b)` giving (3); zero if either atom is outside the TLS
+   body.
+3. `SHELL2:make_TLS_TFs(TF,k_pts,Ua,Ub,Uab)`: (8) per pair of primitives, laid out as
+   `make_Tanaka_TFs`. The partition factor is Tanaka's, which shares each product between its two
+   atoms in the ratio of the exponents, as (15) does.
+4. `tc-tls` added to the options, to the three `select case` blocks (each given a `case default`
+   that stops), and to the keyword's documentation; reading it sets `adp_model= tls`.
+
+Checks: (a) with $`U_{AB}`$ set so that $`V_{AB} = 0`$, F equals `tc-tanaka`'s; (b) a one-atom
+"molecule" gives the one-centre F; (c) **the urea comparison**: at a converged `adp_model= tls`
+Hirshfeld refinement, F by `oc-hirshfeld`, `tc-tanaka` and `tc-tls` with the same parameters; GoF
+first.
+
+**Step 2. Derivatives and refinement.**
+
+1. `MOLECULE.XTAL:make_FT_and_derivs`: the shell-pair loop of `make_FT`, also accumulating the
+   sums (19) per atom pair and the position sum per atom.
+2. `CRYSTAL`: from those sums, $`\partial F/\partial X`$ for the positions (the ADP rows zero) and (20) contracted
+   with `TLS_basis` for the TLS parameters; `solve_normal_equations` takes the second as columns
+   added after the Jacobian product.
+3. `MOLECULE.HAR`: a fit loop for two-centre models. Each cycle recomputes F and the derivatives
+   through the shell pairs, because there are no static atomic form factors to shift. The stop in
+   `HAR_refinement` allows `tc-tls`.
+
+Checks: (a) every derivative column against a finite difference of F, on urea STO-3G; this is
+where the sharing between symmetry-equivalent atoms of the fragment and the repetition factors
+will show if wrong; (b) the refinement converges and its GoF, bond lengths and hydrogen ADPs go in
+the report beside the Hirshfeld ones; (c) new test `long/urea_rhf_STO-3G_TC_TLS`.
+
+**Not in the first version:** soft-mode correlations beyond what $`\Sigma`$ already holds need
+nothing extra; unrestricted and complex density matrices; a TLS body inside a cluster; the terms
+of §7.
