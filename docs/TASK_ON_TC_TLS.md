@@ -445,3 +445,15 @@ for Hirshfeld, so the two-centre rows are at a disadvantage until step 2 refines
 is below `tc-tanaka`, the direction (14) predicts, but by little, and STO-3G is too poor a basis
 to say more. Checks (a) and (b) of step 1 not done. Runs in
 `~/tonto-runs/2026-10-12_tc_tls/step1/{debug,release}`.
+
+**2026-10-12, the same at def2-SVP** (Dylan: STO-3G is too poor). Same input with the basis
+changed, so the Hessian is the one in the STO-3G test input; release build, 11 s.
+
+| smearing | GoF | R(F) | Rw(F) | scale |
+|---|---|---|---|---|
+| `oc-hirshfeld` | 3.4866 | 0.0180 | 0.0145 | 1.0002 |
+| `tc-tanaka` | 3.6561 | 0.0184 | 0.0152 | 1.0007 |
+| `tc-tls` | 3.6461 | 0.0183 | 0.0152 | 1.0002 |
+
+The same order as STO-3G, and the same caution: only the Hirshfeld row is refined. Run in
+`~/tonto-runs/2026-10-12_tc_tls/step1_svp`.
