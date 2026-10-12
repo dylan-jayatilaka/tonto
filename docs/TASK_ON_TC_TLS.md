@@ -457,3 +457,37 @@ changed, so the Hessian is the one in the STO-3G test input; release build, 11 s
 
 The same order as STO-3G, and the same caution: only the Hirshfeld row is refined. Run in
 `~/tonto-runs/2026-10-12_tc_tls/step1_svp`.
+
+**2026-10-12, step 2 built and run** (branch `tc-tls`). Written: `SHELL2`-level moments
+(`MOLECULE.XTAL:make_FT_pair_moments`, `make_FT_and_TLS_derivs`),
+`CRYSTAL:get_two_center_parameter_shifts`, the fit loop `MOLECULE.HAR:LS_fit_two_center` (the
+crystal's `LS_structure_fit` split into `start_structure_fit`, `apply_parameter_shifts`,
+`finish_fit_cycle`, `finish_structure_fit`, used by both), direct parameter derivatives in
+`solve_normal_equations`, the keyword `check_two_center_derivs`, and `make_FT_deriv_U` deleted.
+Only $`s_0`$, $`s_1`$, $`s_2`$ are needed per shell pair (weights 1, $`w_a`$, $`w_a^2`$), since
+$`w_b = 1 - w_a`$. Debug and release build; the refinement runs and converges.
+
+*The derivative check* (urea, def2-SVP): the $`\Sigma`$ derivatives agree with central differences
+to 1.9e-8 of the largest. The position number is 13 % (9 % at STO-3G): the finite difference
+moves each atom with its basis functions, which changes the size and shape of every product at
+fixed $`D`$; the analytic derivative moves only the centres. So 13 % is the size of the term the
+refinement leaves out.
+
+*That term matters.* Urea, RHF/def2-SVP, 817 reflections, Hessian RHF/def2-SVP from ORCA at the
+Hirshfeld-refined geometry (`scripts/orca_hessian_to_tonto.py`), frequencies scaled by 0.8953:
+
+| what | GoF (17 parameters) | R(F) |
+|---|---|---|
+| `oc-hirshfeld`, refined | 3.4854 | 0.0181 |
+| `tc-tls` at the Hirshfeld parameters | 3.6451 | 0.0183 |
+| `tc-tls`, only the TLS parameters refined from there | 3.6377 | 0.0185 |
+| `tc-tls`, everything refined from the starting CIF | 3.6577 | 0.0186 |
+
+The third row is printed as 3.6197 with 9 parameters; 3.6377 is the same chi^2 counted with 17.
+Refining only $`\Sigma`$ lowers the GoF steadily, as exact derivatives must. Refining the positions
+too ends *higher* than the Hirshfeld geometry gives. With hydrogen positions refined and the heavy
+atoms held, the first shift is in H3 z and the GoF rises at once, so it is mostly the hydrogens.
+The fit ends where $`J^{\mathsf T} W r = 0`$ for the approximate $`J`$, which is not the minimum of
+the GoF. Open: what the position derivative should be (§10, to be decided). With the earlier
+RHF/6-31G(d) Hessian the four numbers are 3.4866, 3.6461, 3.6388, 3.6591: the Hessian hardly
+matters here. Runs in `~/tonto-runs/2026-10-12_tc_tls/{step2,diag_adps_only,svp_orca,orca_hess}`.
