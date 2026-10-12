@@ -474,7 +474,9 @@ contains
       case ("unit_cell=                    "); .read_unit_cell
       case ("unit_cell_tol=                "); .read_unit_cell_tol
       case ("units=                        "); .read_units
+      case ("put_fragment_pair_weights     "); .put_fragment_pair_weights
       case ("use_manual_repetition_factors="); .read_use_manual_rep_factors
+      case ("use_pair_petite_list=         "); .read_use_pair_petite_list
       case ("xray_data=                    "); .read_xray_data
 
       case ("! Cluster keywords            ")
@@ -610,6 +612,17 @@ contains
 !      .pnd_data.update(.unit_cell,.spacegroup)
 !
 !   end
+
+   read_use_pair_petite_list :: leaky, private
+   ! Read whether a two-center structure factor uses one pair of fragment
+   ! atoms from each set of symmetry-equivalent pairs, or all of them.
+   ! The weights are remade if they exist.
+      self :: INOUT
+
+      stdin.read(.use_pair_petite_list)
+      if (.fragment_pair_weight.allocated) .make_fragment_pair_weights
+
+   end
 
    read_use_manual_rep_factors :: leaky, private
    ! Read whether to use manually entered repetition factors.
@@ -1154,6 +1167,7 @@ contains
 
       ! Z factors and zep. factors for SF calculations
       .make_repetition_factors
+      .make_fragment_pair_weights
       .make_asym_atom_sym_factors
       .make_frag_atom_sym_factors
       .Z = .z_factor
@@ -2129,6 +2143,127 @@ contains
          .asym_atom_sym_factor(a) = n_same
 
       end
+
+   end
+
+   make_fragment_pair_weights :: leaky, private, PURE
+   ! Make .fragment_pair_weight(a,b), the weight of the density between
+   ! fragment atoms "a" and "b" in a structure factor made from the
+   ! fragment and summed over every spacegroup symop, so that each pair
+   ! of atoms of the crystal is counted once. A symop takes the pair
+   ! (c,d) to the pair of their images: one operation, with one lattice
+   ! translation, acts on both atoms. The fragment's pairs which are
+   ! images of one another are one set. If "m" pairs of the fragment are
+   ! in the set of (a,b), and "n_image" pairs of (symop, fragment pair)
+   ! land on (a,b), then n_image/m is the order of the stabiliser of the
+   ! pair: the symops which leave both atoms in place, or exchange them.
+   ! - Without .use_pair_petite_list every pair has weight 1/n_image.
+   ! - With it, one pair of each set, the first in the fragment, has
+   !   weight m/n_image, one over the order of its stabiliser, and the
+   !   others have zero: the petite list of Dupuis & King (1977).
+   ! See docs/REPORT_ON_PAIR_STABILIZERS.md.
+      self :: INOUT
+
+   ENSURE(.fragment_geometry.allocated, "no fragment_geometry!")
+
+      n_image,first,n_member :: MAT{INT}@
+      p :: MAT{REAL}@
+      shift,q :: VEC{REAL}(3)
+      tol :: REAL
+      n_f,n,a,b,c,d,key :: INT
+
+      n_f = .n_fragment_atoms
+      tol = .same_atom_tol
+
+      n_image.create(n_f,n_f)
+      first.create(n_f,n_f)
+      n_member.create(n_f,n_f)
+      p.create(3,n_f)
+      n_image = 0
+      first = huge(1)
+
+      ! Count the pairs (symop, fragment pair) which land on each pair,
+      ! and find the first fragment pair of its set
+      do n = 1,.spacegroup.n_seitz
+
+         ! The image of every fragment atom
+         do c = 1,n_f
+            p(:,c) = .fragment_geometry(:,c)
+            .transform_position(p(:,c),n)
+         end
+
+         do c = 1,n_f
+         do a = 1,n_f
+
+            ! Does this symop, with a lattice translation, take c to a?
+            shift = .fragment_geometry(:,a) - p(:,c)
+            if (any(abs(shift-nint(shift))>tol)) cycle
+            shift = nint(shift)
+
+            ! Then where does it take every d?
+            do d = 1,n_f
+               q = p(:,d) + shift
+               do b = 1,n_f
+                  if (any(abs(q-.fragment_geometry(:,b))>tol)) cycle
+                  n_image(a,b) = n_image(a,b) + 1
+                  key = max(c,d)*(n_f+1) + min(c,d)
+                  first(a,b) = min(first(a,b),key)
+                  exit
+               end
+            end
+
+         end
+         end
+
+      end
+
+      ! The number of fragment pairs in each set, kept at its first pair
+      n_member = 0
+      do a = 1,n_f
+      do b = 1,a
+         c = first(a,b)/(n_f+1)
+         d = first(a,b) - c*(n_f+1)
+         n_member(c,d) = n_member(c,d) + 1
+      end
+      end
+
+      ! The weights
+      .fragment_pair_weight.destroy
+      .fragment_pair_weight.create(n_f,n_f)
+      .fragment_pair_weight = ZERO
+      do a = 1,n_f
+      do b = 1,n_f
+         if (NOT .use_pair_petite_list) then
+            .fragment_pair_weight(a,b) = ONE/n_image(a,b)
+         else if (first(a,b)==max(a,b)*(n_f+1)+min(a,b)) then
+            .fragment_pair_weight(a,b) = REALIFY(n_member(max(a,b),min(a,b)))/n_image(a,b)
+         end
+      end
+      end
+
+      p.destroy
+      n_member.destroy
+      first.destroy
+      n_image.destroy
+
+   end
+
+   put_fragment_pair_weights
+   ! Put the weight of each pair of fragment atoms in a two-center
+   ! structure factor, and their sum, which is the number of pairs of
+   ! atoms counted per spacegroup symop.
+      self :: IN
+
+   ENSURE(.fragment_pair_weight.allocated, "no fragment pair weights")
+
+      stdout.flush
+      stdout.text("Fragment atom-pair weights")
+      stdout.flush
+      stdout.show("Use the petite list of pairs?  =",.use_pair_petite_list)
+      stdout.show("No. of pairs with a weight     =",count(.fragment_pair_weight>ZERO))
+      stdout.show("Sum of the weights             =",sum(.fragment_pair_weight))
+      stdout.flush
+      stdout.put(.fragment_pair_weight)
 
    end
 
