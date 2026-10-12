@@ -135,7 +135,7 @@ Range-separated hybrids need the attenuated Coulomb integrals in the exact and C
 
 ## 6a. Relativity: scalar X2C (Dylan, 2026-10-11)
 
-**Status, 2026-10-11: done, on branch `x2c`** (steps 1 to 3 below; what was done and measured
+**Status, 2026-10-12: done, on `develop`** (pull request 47) (steps 1 to 3 below; what was done and measured
 is at the end of this section). `relativity_kind= x2c`; user page `docs/RUNNING_TONTO.md`,
 *Relativity*. Still open: the heavy-atom test of the default atoms (§3, step 5), a first
 refinement beyond Kr, and an X2C option for `hart`.
