@@ -189,7 +189,7 @@ Other checks:
 | one-electron Ne⁹⁺ and Hg⁷⁹⁺, 41 even-tempered s functions, against equation (2) solved in 40-digit arithmetic | -50.06674181 and -3532.19050050; agree to 1e-8 |
 | the same against the analytic Dirac energy $`c^2(\sqrt{1-(Z/c)^2}-1)`$ | 2e-7 and 1.6e-3 above it, which is the basis set |
 | PBE on HBr and HI, X2C, against PySCF on a very fine grid | 7.5e-6 and 1.5e-6 at the default grid |
-| `hart` on urea, `x2c-SVPall` with X2C against def2-SVP | GoF 3.330 against 3.340 |
+| `hart` on urea, `x2c-SVPall` with X2C against def2-SVP | GoF 3.209 against 3.217 |
 
 The X2C correction to the Hartree–Fock energy in `x2c-SVPall` is -0.14 hartree for Ne, -53 for
 Kr, -428 for Xe, -3702 for Hg and -5151 for Rn. A Gaussian nucleus raises the energy by 0.019

@@ -82,8 +82,10 @@ because by then it held far more than deferred items.)*
 
 **Merged by pull request 47** (Dylan, 2026-10-12). Report: `docs/REPORT_ON_RELATIVITY.md`.
 **Next action:** the replanned order of work, `docs/TASK_HAR_STANDARDISATION.md` section 7:
-reset the grid levels, then the atomic density tables, then `hart` to spherical functions.
-Dylan means to take the small tasks of the register first.
+reset the grid levels, then the atomic density tables. `hart` to spherical functions is done.
+**The small tasks of the register are done** (2026-10-12, branch `small-tasks`; archive, *four
+small tasks of the register*), all but the ORCA check of the libxc energies, which waits for
+ORCA to be installed on the Mac.
 
 **What landed.** `relativity_kind= x2c`: the scalar exact two-component one-electron
 Hamiltonian in place of the kinetic energy plus nuclear attraction, for every restricted and
@@ -158,7 +160,7 @@ ADPs: GoF 2.606 with PBE, 2.511 with r2SCAN. Runs: `~/tonto-runs/2026-10-11_r2sc
 **Found on the way.** Two translator build targets could regenerate and read the parser
 sources at once in a parallel build (fixed, `8af777df`). In a debug build every job that stops
 with an error then ends with "Attempt to DEALLOCATE unallocated 'tonto_bug'": deliberate, but
-misleading (register row; entry under *Build system and toolchain*). libxc's build files refuse
+misleading (fixed 2026-10-12; archive, *four small tasks of the register*). libxc's build files refuse
 Tonto's build type names (fixed).
 
 **Open from this work:** the ORCA check (*Test suite and numerics*); libxc in the MPI and WSL
@@ -2506,17 +2508,6 @@ dead keyword line from `develop` and leave the work on its two tags, as was done
 
 # Correctness — open bugs that give wrong answers
 
-## Cluster charges are silently zero under `partition_model= tc-stewart` (2026-10-10)
-
-`use_SC_cluster_charges= TRUE` takes its charges and dipoles from the Hirshfeld moments, which
-`MOLECULE.SCF:make_atom_partition_info` makes only for the `oc-*` partition models. Under
-`tc-stewart` the cluster is built, every charge is zero, `V_cN` prints 0, and the job returns
-the free-molecule energy with exit 0. Found while computing the urea deformation energy
-(`docs/TASK_ON_XCW_ENERGY_STOP.md` section 3). Fix: `DIE` in `make_cluster_charges` and
-`make_cluster_charge_mx` when the partition model makes no moments, or make Hirshfeld moments
-for the cluster whatever the X-ray partition. Not yet checked: whether a promolecule start with
-an `oc-*` model also skips the charges.
-
 ## Dispersion: what is still open after the 2026-09-05 fix
 
 The flag defect is **fixed and verified** — see the archive entry *Dispersion: the conventions,
@@ -3704,23 +3695,6 @@ Any of these rewrites the reference, so re-bless deliberately and read the resul
 ---
 
 # Build system and toolchain
-
-## A debug build ends every error with a crash that reads like a bug (2026-10-11)
-
-**Register row** of the same name. After a `DIE` prints its message, a debug build stops with
-
-    Fortran runtime error: Attempt to DEALLOCATE unallocated 'tonto_bug'
-
-This is deliberate. `SYSTEM` has a module variable `tonto_bug` that is never allocated, and
-deallocates it under `#ifdef DEBUG` in three places in `foofiles/system.foo` (after the message,
-in each of the die routines), so that gfortran, built with `-fbacktrace`, prints a traceback to
-the call that failed. It works, but the line reads as a second fault, and in a terminal it is the
-last thing seen, below the real message. I took it for a bug on 2026-10-11 and reported it as one.
-
-To do: get the traceback without the false error. gfortran has a `backtrace` routine (an
-extension) that prints one and returns; follow it with the ordinary stop. Check that the exit
-code is still non-zero, that the MPI error path, which must not use collectives, is unchanged,
-and what other compilers need.
 
 ## Milestone 6, partial: the suppressed-reduction abort and the parallel lint (2026-08-02)
 
@@ -6431,24 +6405,6 @@ the job — not the other way round.
 
 # Translator and the Foo language
 
-## The translator prints parse complaints during an ordinary build and carries on (2026-10-10)
-
-Seen while building for the MPI work; not looked into. A full build prints nine ANTLR messages,
-*no viable alternative at input ...* or *extraneous input ...*, at three positions: `2013:92`,
-`3226:69` and `3540:65`. Each one dumps several kilobytes of Foo source into the build log, and
-the build goes on to succeed.
-
-- `2013:92` is `foofiles/becke_grid.foo`, in `SG_radius`: an array constructor continued with
-  `&`, with a comment line between the two continued lines. The generated `becke_grid.F90` has
-  the statement right, all 17 values on one line. So here the parser recovers and nothing is lost.
-- The files for `3226:69` and `3540:65` were not identified; the message does not name the file.
-  They are printed near `molecule.main` and `test_parallel` in a parallel build's log.
-
-To do: (1) make the message name the file, and say it once, without the source dump; (2) find
-the other two sites; (3) either accept a comment line inside a continued statement in the
-grammar, or make a parse complaint stop the build, so that a recovery that does lose text cannot
-pass unnoticed. Until (3), check the generated Fortran for the other two sites by eye.
-
 ## Future task: introduce Fortran-2008 `submodule` constructs
 
 **Goal (Dylan):** use real Fortran-2008 `submodule` where appropriate. **Concept clash to note
@@ -6462,15 +6418,6 @@ submodules simplifies the emitted module graph and compile-time dependencies. To
 `emit()`/`buildUseFile()`/`buildInterfaceFile()` and the module-naming scheme.
 
 # hart
-
-## hart should use spherical functions (Dylan, 2026-10-12)
-
-**Register row** of the same name. `hart` runs with Cartesian d and f functions; the protocol is
-spherical always (`docs/TASK_HAR_STANDARDISATION.md` section 2), and the x2c basis sets are defined
-with spherical functions. Set `use_spherical_basis` in `runfiles/run_har.foo` before the basis is
-resolved; check the fragment and cluster paths keep it. Every `hart` reference with d functions
-changes, so the `hart` tests need a re-bless on achari2 (the STO-3G ones should not move).
-Decided the same day: `hart` keeps the 4d and 5d metals.
 
 ## hart — deferred items
 
@@ -7262,6 +7209,78 @@ different question and the one that matters.
 
 # Done, resolved and closed (archive)
 
+## CLOSED (2026-10-12): four small tasks of the register
+
+Branch `small-tasks`, five commits (`29935093` to `239869bb`). The fifth small task, the ORCA
+check of the libxc energies, stays open: ORCA is not on the Mac.
+
+**1. Cluster charges were silently zero under a `tc-*` partition** (`3d958766`).
+`use_cluster_charges=` and `use_SC_cluster_charges=` take charges and dipoles from the Hirshfeld
+atom moments. `MOLECULE.SCF:make_atom_partition_info` made those only for the `oc-*` models; for
+any other model its `select case` did nothing and it still set `.partition_info_made`. Every
+charge was zero, `V_cN` printed 0, exit 0. The `ENSURE` on `.partition_info_made` in the two
+cluster-charge routines could not catch it, and does not exist in a release build anyway.
+
+- The register offered a `DIE` or making the moments. **A `DIE` alone would have stopped two
+  shipped tests**, `nh3_x-ray-constrained-rhf_stiffness_correction` and
+  `nh3_x-ray-constrained-rhf-cluster-charge_cc-pVTZ_restart`: both ask for cluster charges with
+  `partition_model= tc-tanaka`, and both references had `V_cN = 0.0000`. So the moments are now
+  made: a `case default` in `make_atom_partition_info` calls `make_HA_info` when cluster charges
+  or Lorentz fields are in use.
+- Second line of defence: `make_cluster_charges` and `make_cluster_charge_mx` stop (`DIE_IF`)
+  when there are charges and every one is zero.
+- The two tests now have `V_cN = -0.1638` (the `oc-hirshfeld` twin has -0.166). In the stiffness
+  test chi^2 at the first lambda goes from 61.914 to 63.848. Re-blessed on achari2.
+- The open question, a promolecule start with an `oc-*` model: the charges are made. nh3, DZP,
+  `initial_density= promolecule`: `V_cN` -0.1708 with fixed charges, -0.1600 self-consistent.
+- Not looked at: whether Hirshfeld charges are the right charges for a `tc-*` fit, and the
+  Lorentz-field path, which takes the same route and has no test.
+
+**2. The debug build's false second error** (`5d2368ce`). The three `deallocate(tonto_bug)` in
+`foofiles/system.foo` are now `call backtrace` (under `DEBUG` and `__GFORTRAN__`), followed by
+the ordinary `stop 1`; the variable is gone. Checked on the Mac debug build with an unknown
+keyword: the message, then the traceback, then `STOP 1`. **The exit status of a failed debug job
+is now 1, as in release; it was 2.** On the Mac the traceback is bare addresses, as it was
+before. Other compilers print none. The MPI path is unchanged by construction (`MPI_ABORT`
+comes first) and was not rerun.
+
+**3. The translator's parse complaints** (`29935093`). `FooToFortran.parseFile` now uses its own
+listener: one short line, `file:line:column: message`, once for each position; and a file with
+any complaint is not translated, the translator exits 1 and the build stops (Dylan's choice:
+fix the sources and stop, rather than widen the grammar). Sites, found by parsing every file in
+`foofiles/` and `runfiles/`:
+
+- `becke_grid.foo`, `SG0_radius`: a comment line inside a continued array constructor.
+- `molecule.scf.foo`, two places (they were the unidentified `3226:69` and `3540:65`): a
+  one-line `if (..) then; a; b; end`.
+- `runfiles/run_file.foo` (not built): `(/2,85/)` constructors.
+- `runfiles/run_mpi_test_complete.foo`: `end program NAME`.
+
+The generated Fortran was right at all three built sites, so nothing had been lost. All files
+now parse clean; a full build prints no complaint. Checked that the old `becke_grid.foo` now
+stops the translator with one line per position and status 1. The two rules are in
+`docs/FOO_GRAMMAR_DOCUMENTATION.md` section 3.
+
+**4. `hart` uses spherical functions** (`8cf3c701`). `m.use_spherical_basis = TRUE` in
+`runfiles/run_har.foo` before the atoms are read. The atoms, the fragments (`gly_ala`) and a
+cluster-charge run keep it: urea with def2-SVP or `x2c-SVPall` has 76 functions, was 80. All
+five `hart` references re-blessed on achari2: the STO-3G ones gain the "Spherical harmonics? T"
+lines, three with every number the same, `gly_ala` moving in the seventh figure;
+`urea_hart_x2c-SVPall_X2C` changes in its numbers. This was third in the order of work of
+`docs/TASK_HAR_STANDARDISATION.md` section 7 and was taken early: the grid levels and the
+atomic density tables will re-bless the `hart` tests again.
+
+- **The fit is better with spherical functions, and it is not explained.** `hart` on urea at the
+  default grid, Mac release build: GoF 3.209 with `x2c-SVPall` and X2C, 3.217 with def2-SVP;
+  with Cartesian functions these were 3.330 and 3.340 (pull request 48). The test, at the low
+  grid on achari2, goes from GoF(N_p=1) 14.559 to 13.937. Four fewer functions and a GoF lower
+  by 4%: worth a look when the spherical-atom audit reaches "spherical d and f".
+  `docs/REPORT_ON_RELATIVITY.md` now quotes the spherical numbers.
+
+**Checked.** Mac release build, full suite: 180 pass, 2 skip as always, and the 7 expected
+failures. achari2 reference build: the same 7 fail of 189 before the bless, and pass after it.
+Mac debug build: builds. Runs: `~/tonto-runs/2026-10-12_small_tasks`.
+
 ## CLOSED (2026-10-12): the four tasks left by the X2C work
 
 **hart beyond Kr.** `--relativity none|x2c` (default: `x2c` if the basis name begins with `x2c-`,
@@ -7271,8 +7290,8 @@ metals stay excluded, and the 4d and 5d metals are accepted (**Dylan, 2026-10-12
 those atoms**). Urea
 with `x2c-SVPall` and X2C: GoF 3.330 against 3.340 with def2-SVP, 11 s; test
 `urea_hart_x2c-SVPall_X2C`. No data set with an atom beyond Kr was at hand: a heavy atom has not
-been refined yet. `hart` still uses Cartesian functions, against the protocol's "spherical always": now an entry
-under *hart*.
+been refined yet. `hart` used Cartesian functions then, against the protocol's "spherical always"; it uses
+spherical ones since 2026-10-12 (*four small tasks of the register*).
 
 **X2C under MPI.** The three `*_X2C` tests pass in CI's Linux MPI build on 2 processes (run
 38187731651, the first after the merge). Dividing the primitive integral loop is left until a real
