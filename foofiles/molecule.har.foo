@@ -656,14 +656,18 @@ contains
    ! "k_pts" for what that model leaves out along some uncorrelated
    ! coordinates of the motion. Coordinate j displaces atom a by
    ! V(3a-2:3a,j) per unit, to first order, and has mean square a0(j).
-   ! Each is averaged by itself with the three-point Gauss-Hermite rule:
-   ! its displaced points are at +s and -s, s = sqrt(3 a0(j)), each with
-   ! weight 1/6. At each an SCF is done from the undisplaced MOs and the
-   ! structure factors are made, F(+s) and F(-s). The model's own value
-   ! for the same two points keeps the undisplaced products and density
-   ! matrix and moves their centres by +s V and -s V, which multiplies
-   ! each by cos(k.d); call it F_cos. The coordinate adds
-   !    [F(+s) + F(-s)]/6 - F_cos/3
+   ! Each is averaged by itself with a Gauss-Hermite rule of
+   ! .crystal.xray_data.tc_quadrature_points points, three or five. The
+   ! rule has the undisplaced point and pairs of displaced points at +s
+   ! and -s, each pair with its own weight w: for three points
+   ! s = sqrt(3 a0(j)), w = 1/6; for five s = sqrt((5 -+ sqrt(10)) a0(j)),
+   ! w = (7 +- 2 sqrt(10))/60. At each displaced point an SCF is done
+   ! from the undisplaced MOs and the structure factors are made, F(+s)
+   ! and F(-s). The model's own value for the same two points keeps the
+   ! undisplaced products and density matrix and moves their centres by
+   ! +s V and -s V, which multiplies each by cos(k.d); call it F_cos.
+   ! Each pair of points adds
+   !    w [F(+s) + F(-s) - 2 F_cos]
    ! to "dsf", all three made without this coordinate's own smearing.
    ! If "W" is present, W(:,j) is the rotation vector per unit of
    ! coordinate j, about "origin", already counted in "V" to first order
@@ -687,10 +691,24 @@ contains
       U0 :: MAT4{REAL}@
       MOs0 :: OPMATRIX@
       r,rot,ax,cr,disp :: VEC{REAL}(3)
+      node,weight :: VEC{REAL}@
       s,sgn,ang :: REAL
-      n_a,j,a,b,i,side :: INT
+      n_a,j,a,b,i,side,pt :: INT
 
       n_a = .atom.dim
+
+      ! The displaced points of the rule, in units of the root mean
+      ! square, and the weight of each pair
+      select case (.crystal.xray_data.tc_quadrature_points)
+      case (3)
+         node   = [sqrt(THREE)]
+         weight = [ONE/SIX]
+      case (5)
+         node   = [sqrt(FIVE-sqrt(TEN)), sqrt(FIVE+sqrt(TEN))]
+         weight = [(SEVEN+TWO*sqrt(TEN))/60d0, (SEVEN-TWO*sqrt(TEN))/60d0]
+      case default
+         DIE("tc_quadrature_points= must be 3 or 5")
+      end
 
       ! Keep the undisplaced atoms, MOs, density matrix and two-center ADPs
       pos0.create(3,n_a)
@@ -707,9 +725,10 @@ contains
       dsf = ZERO
 
       do j = 1,V.dim2
+      do pt = 1,node.dim
 
          if (a0(j)<=ZERO) cycle
-         s = sqrt(THREE*a0(j))
+         s = node(pt)*sqrt(a0(j))
 
          ! The two-center ADPs without this coordinate
          do a = 1,n_a
@@ -763,8 +782,9 @@ contains
             .atom(a).set_position(pos0(:,a))
          end
 
-         dsf = dsf + (sp + sm)/SIX - sc/THREE
+         dsf = dsf + weight(pt)*(sp + sm - TWO*sc)
 
+      end
       end
 
       ! Put everything else back
@@ -781,6 +801,8 @@ contains
       D0.destroy
       MOs0.destroy
       pos0.destroy
+      weight.destroy
+      node.destroy
 
    end
 
