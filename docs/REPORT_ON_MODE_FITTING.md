@@ -235,11 +235,19 @@ the $`K`$ refined is in neither term of (10).
 frequency the refined amplitude corresponds to, and is printed beside it.
 
 **A soft mode can repeat the rigid-body motion.** Only the pattern $`\mathbf{d}_{ik}\mathbf{d}_{ik}^{\mathsf T}`$ over the
-atoms reaches the data. If that pattern is a combination of the rigid-body patterns and the
-other soft modes, the data cannot tell them apart, and the mode adds no parameter. Tonto finds
-such modes as it finds $`\mathrm{tr}\, S`$ (§1.4), and drops them. In urea, a planar molecule, the
-second out-of-plane NH₂ wag is a combination of the first wag and the libration about the
-in-plane axes, so two soft modes refine as one.
+atoms reaches the data. The pattern is a square, so it has the full symmetry of the molecule
+whatever the symmetry of the mode: two modes of different symmetry are different motions, but
+their patterns can still be linearly dependent. If a mode's pattern is a combination of the
+rigid-body patterns and those of the other soft modes, the data cannot tell them apart, and the
+mode adds no parameter. Tonto finds such a direction as it finds $`\mathrm{tr}\, S`$ (§1.4), and
+drops it.
+
+Urea, a planar molecule, shows this. An out-of-plane motion moves every atom along the normal to
+the plane, so it changes one number for each atom, the out-of-plane element of $`U_i`$. Urea has
+five unique atoms, so there are five such numbers. Six patterns act on them: the out-of-plane
+translation, the libration about each of the two in-plane axes, the coupling of that translation
+with the libration of its symmetry, and the two NH₂ wags. Six patterns in five numbers are
+linearly dependent, so the two wags add one parameter between them, not two.
 
 ### 1.8 Correlations, and keeping Σ positive
 
