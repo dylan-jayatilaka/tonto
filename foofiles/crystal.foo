@@ -5143,7 +5143,25 @@ contains
 
    end
 
-   get_two_center_parameter_shifts(sf_e,sf_pos,sf_sig) :: leaky
+   image_rotation(f,g) result (res) :: PURE
+   ! The rotation which takes a displacement of fragment atom "f" to the
+   ! displacement of fragment atom "g", an image of the same asymmetric
+   ! unit atom, when both follow that atom.
+      self :: IN
+      f,g :: INT, IN
+      res :: MAT{REAL}(3,3)
+
+   ENSURE(.asym_atom_for_frag_atom(f)==.asym_atom_for_frag_atom(g),"not images of one atom")
+
+      Sf,Sg :: MAT{REAL}(3,3)
+
+      Sf = matmul(.unit_cell.direct_mx,matmul(.spacegroup.seitz(1:3,1:3,.asym_symop_for_frag_atom(f)),.unit_cell.inverse_mx))
+      Sg = matmul(.unit_cell.direct_mx,matmul(.spacegroup.seitz(1:3,1:3,.asym_symop_for_frag_atom(g)),.unit_cell.inverse_mx))
+      res = matmul(Sg,transpose(Sf))
+
+   end
+
+   get_two_center_parameter_shifts(sf_e,sf_pos,sf_sig,sf_dpos) :: leaky
    ! Get the shifts ".xray_data.dX" for partition_model= tc-tls by solving
    ! the normal equations. "sf_e" are the structure factors at the unique
    ! k points. "sf_pos(k,f)" times i k is their derivative with respect
@@ -5152,10 +5170,12 @@ contains
    ! the order of TLS_sigma_pairs. All three come from
    ! MOLECULE.XTAL:make_FT_and_TLS_derivs. The ADPs enter only through
    ! Sigma, so the ADP columns of the pADP derivatives hold nothing but
-   ! the dispersion correction.
+   ! the dispersion correction. If "sf_dpos" is present its columns are
+   ! the position derivatives, one per pADP, and "sf_pos" is not used.
       self :: INOUT
       sf_e :: VEC{CPX}, IN
       sf_pos,sf_sig :: MAT{CPX}, IN
+      sf_dpos :: MAT{CPX}, optional, IN
 
    ENSURE(.xray_data.allocated, "no data")
    ENSURE(.fragment_info_made, "no fragment info")
@@ -5166,7 +5186,6 @@ contains
 
       sf_d,sf_t,dFc,dFt :: MAT{CPX}@
       dFa,dFb,k_pts :: MAT{REAL}@
-      seitz :: MAT3{REAL}@
       M :: MAT{REAL}(3,3)
       kv :: VEC{REAL}(3)
       n_k,n_X,n_refl,n_t,u,fu,f,a,base,k :: INT
@@ -5182,9 +5201,11 @@ contains
       ! symmetry operation between them.
       k_pts.create(n_k,3)
       .make_unique_X_SF_k_pts(k_pts)
-      seitz = .xyz_seitz_matrices
       sf_d.create(n_k,n_X)
       sf_d = ZERO
+      if (present(sf_dpos)) then
+         sf_d = sf_dpos
+      else
       do u = 1,.n_unique_frag_atoms
          fu = .unique_frag_atom(u)
          .refinement_flags_for_frag_atom(fu,refine_positions,refine_ADPs,refine_Uiso)
@@ -5193,14 +5214,14 @@ contains
          a = .asym_atom_for_frag_atom(fu)
          do f = 1,.n_fragment_atoms
             if (.asym_atom_for_frag_atom(f)/=a) cycle
-            M = matmul(seitz(:,:,.asym_symop_for_frag_atom(fu)),transpose(seitz(:,:,.asym_symop_for_frag_atom(f))))
+            M = transpose(.image_rotation(fu,f))
             do k = 1,n_k
                kv = matmul(M,k_pts(k,:))
                sf_d(k,base+1:base+3) = sf_d(k,base+1:base+3) + IMAGIFY(kv)*sf_pos(k,f)
             end
          end
       end
-      seitz.destroy
+      end
       k_pts.destroy
 
       ! Set F_pred with scale & extinction
