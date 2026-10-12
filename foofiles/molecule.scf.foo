@@ -8284,11 +8284,21 @@ contains
    ENSURE(.density_mx.allocated,"no density matrix")
    ENSURE(.density_mx.has_any_genre,"no density matrix")
 
-      ! Get overlap matrix (leaky)
-      .make_overlap_mx
+      C :: OPMATRIX@
 
-      ! Get error length
-      length = ::DIIS_error_length(.fock_mx,.density_mx,.overlap_mx)
+      ! Make the commutator
+      C.create(.fock_mx.n_bf,.fock_mx.genre)
+      .make_SCF_DIIS_commutator(C)
+      C.compress
+
+      ! Its length
+      length = ZERO
+      select case (.fock_mx.genre)
+      case("r "); length = C.tri.norm
+      case("u "); length = C.tri.norm
+      case("gc"); length = C.sqr.norm
+      end
+      C.destroy
 
       ! Set the length
       .SCF_data.SCF_DIIS.set_error_length(length)
@@ -8316,15 +8326,12 @@ contains
 
       if (NOT .fock_mx.has_any_genre) return
 
-      ! Get overlap if not there (leaky)
-      .make_overlap_mx
-
       ! Spinorbital kind before compression
       spinorbital_genre = .fock_mx.genre
 
       ! Make commutator C
       C.create(.fock_mx.n_bf,spinorbital_genre)
-      .make_DIIS_commutator(C,.fock_mx,.density_mx,.overlap_mx)
+      .make_SCF_DIIS_commutator(C)
 
       ! Compress
       C.compress
@@ -8391,40 +8398,29 @@ contains
 !  Setting the DIIS error
 !  ======================
 
-   DIIS_error_length(F,D,S) result (res) :: selfless, PURE
-   ! Make the real DIIS commutator matrix, C = FDS - SDF and set the DIIS
-   ! .error_length to be sqrt(C-.C). The minus sign is because C is
-   ! antisymmetric.
-      F,D :: OPMATRIX,  IN
-      S   :: MAT{REAL}, IN
-      res :: REAL
+   make_SCF_DIIS_commutator(C) :: leaky
+   ! Make "C", the DIIS commutator FDS - SDF of the current Fock and
+   ! density matrices: the gradient of the SCF energy with respect to
+   ! orbital rotations, zero at convergence. The part of it that rotates
+   ! orbitals into combinations of basis functions removed for linear
+   ! dependence is taken out: the SCF never makes those rotations, so
+   ! that part does not go to zero.
+      self :: INOUT
+      C :: OPMATRIX, INOUT
 
-   ENSURE(F.has_any_genre,"no Fock matrix")
-   ENSURE(D.has_any_genre,"no density matrix")
+   ENSURE(.fock_mx.has_any_genre,"no Fock matrix")
+   ENSURE(.density_mx.has_any_genre,"no density matrix")
 
-      C :: OPMATRIX@
-      spinorbital_genre :: STR
+      ! Get overlap matrix and its eigenvectors (leaky)
+      .make_overlap_mx
 
-      ! Kind
-      spinorbital_genre = F.genre
+      .make_DIIS_commutator(C,.fock_mx,.density_mx,.overlap_mx)
 
-      ! Make commutator
-      C.create(F.n_bf,spinorbital_genre)
-
-      .make_DIIS_commutator(C,F,D,S)
-      C.compress
-
-      ! Set error length
-      res = ZERO
-      select case (spinorbital_genre)
-      case("r "); res = C.tri.norm
-      case("u "); res = C.tri.norm
-      case("gc"); res = C.sqr.norm
-   ! case default; UNKNOWN(spinorbital_genre)
+      ! Remove the linearly dependent part
+      select case (.fock_mx.genre)
+      case("r "); .remove_dependence_from_r(C.r)
+      case("u "); .remove_dependence_from_r(C.a)
       end
-
-      ! Clean
-      C.destroy
 
    end
 
