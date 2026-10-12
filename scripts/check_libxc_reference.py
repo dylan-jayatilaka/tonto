@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """Check Tonto's libxc functionals in a whole SCF, without a blessed reference.
 
-Three kinds of check, on water and its cation in cc-pVDZ:
+Four kinds of check, on water and its cation in cc-pVDZ:
 
   1. PBE, PBE0 and r2SCAN energies against PySCF. The numbers below are typed in from
      PySCF 2.14, which shares no code with Tonto's grid, SCF or exact exchange.
      Tonto's finest grid is used; the tolerance is the one check_dft_reference.py
      uses against g09.
-  2. A functional evaluated by libxc gives the same energy as the same
+  2. B3LYP in both its forms and TPSS against ORCA, whose own code evaluates
+     those functionals, so this checks the functionals and not only Tonto's
+     use of libxc. Spherical d functions, which is all ORCA has.
+  3. A functional evaluated by libxc gives the same energy as the same
      functional hand-written in Tonto, and the one keyword dft_functional=
      gives the same energy as the two keywords it stands for.
-  3. Inputs that must be refused are refused: the one keyword together with
+  4. Inputs that must be refused are refused: the one keyword together with
      either of the two, an unknown name, and a functional that needs what
      Tonto does not have.
 
@@ -36,6 +39,23 @@ PYSCF = {
     (1, 2, "uks", "r2scan"): -75.934178684,
 }
 TOL_PYSCF = 5.0e-6
+
+# ORCA 6.1.1, cc-pVDZ with spherical d functions, no RI and no COSX, IntAcc 9 with
+# the 770-point Lebedev grid, VeryTightSCF. ORCA's own PBE is not here: it rounds
+# two constants of the functional (mu to 0.21952, beta to 0.066725) and so is 1.4e-5
+# hartree from libxc's; with ORCA told to use libxc's PBE the two agree to 4e-9.
+# Keys: (charge, multiplicity, kind, functional lines).
+X_ = "      dft_exchange_functional= %s\n      dft_correlation_functional= %s\n"
+F_ = "      dft_functional= %s\n"
+ORCA = {
+    (0, 1, "rks", F_ % "b3lyp-orca"):     -76.3833881584,
+    (0, 1, "rks", F_ % "b3lyp-gaussian"): -76.4205383710,
+    (0, 1, "rks", X_ % ("mgga_x_tpss", "mgga_c_tpss")): -76.4234274163,
+    (1, 2, "uks", F_ % "b3lyp-orca"):     -75.9344976309,
+    (1, 2, "uks", F_ % "b3lyp-gaussian"): -75.9679127598,
+    (1, 2, "uks", X_ % ("mgga_x_tpss", "mgga_c_tpss")): -75.9776119383,
+}
+TOL_ORCA = 5.0e-6
 
 # The same functional two ways: ((charge, multiplicity, kind), lines, lines).
 X = "      dft_exchange_functional= %s\n      dft_correlation_functional= %s\n"
@@ -64,7 +84,7 @@ JOB = """{{
    name= ref
    output_style_options= {{ real_precision= 12 }}
    basis_name= cc-pVDZ
-   charge= {charge}
+{spherical}   charge= {charge}
    multiplicity= {mult}
    atoms= {{
       keys= {{ label= {{ units= angstrom }} pos= }}
@@ -89,14 +109,16 @@ JOB = """{{
 """
 
 
-def run(exe, basis, workdir, tag, charge, mult, kind, functional, grid):
+def run(exe, basis, workdir, tag, charge, mult, kind, functional, grid,
+        spherical=False):
     """Run one job; return the exit code and the total energy, or None."""
     d = os.path.join(workdir, tag)
     os.makedirs(d, exist_ok=True)
     inp = os.path.join(d, "stdin")
     with open(inp, "w") as f:
         f.write(JOB.format(charge=charge, mult=mult, kind=kind,
-                           functional=functional, grid=grid))
+                           functional=functional, grid=grid,
+                           spherical="   use_spherical_basis= TRUE\n" if spherical else ""))
     out = os.path.join(d, "stdout")
     rc = subprocess.call([exe, "--input", inp, "--output", out], cwd=d,
                          env=dict(os.environ, TONTO_BASIS_SET_DIRECTORY=basis),
@@ -145,6 +167,23 @@ def main():
                            % (kind, name, d, TOL_PYSCF))
 
         print()
+        print("%-6s %-5s %-34s %18s %16s %10s" %
+              ("CHARGE", "KIND", "FUNC", "TONTO", "ORCA", "|diff|"))
+        for i, ((charge, mult, kind, lines), ref) in enumerate(sorted(ORCA.items())):
+            rc, e = run(exe, basis, work, "orca%d" % i, charge, mult, kind, lines,
+                        "best", spherical=True)
+            label = " ".join(lines.replace("dft_", "").split())
+            if rc != 0 or e is None:
+                bad.append("%s %s: job failed" % (kind, label))
+                continue
+            d = abs(e - ref)
+            print("%-6d %-5s %-34s %18.10f %16.10f %10.1e" %
+                  (charge, kind, label[:34], e, ref, d))
+            if d > TOL_ORCA:
+                bad.append("%s %s: |Tonto - ORCA| = %.1e exceeds %.1e"
+                           % (kind, label, d, TOL_ORCA))
+
+        print()
         for i, ((charge, mult, kind), one, two) in enumerate(SAME):
             _, e1 = run(exe, basis, work, "same%da" % i, charge, mult, kind, one, "high")
             _, e2 = run(exe, basis, work, "same%db" % i, charge, mult, kind, two, "high")
@@ -171,8 +210,8 @@ def main():
         for b in bad:
             print("  " + b)
         return 1
-    print("OK -- libxc functionals agree with PySCF (< %.1e) and with the "
-          "hand-written ones (< %.1e)" % (TOL_PYSCF, TOL_SAME))
+    print("OK -- libxc functionals agree with PySCF (< %.1e), with ORCA (< %.1e) "
+          "and with the hand-written ones (< %.1e)" % (TOL_PYSCF, TOL_ORCA, TOL_SAME))
     return 0
 
 

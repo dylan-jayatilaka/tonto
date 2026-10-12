@@ -83,9 +83,8 @@ because by then it held far more than deferred items.)*
 **Merged by pull request 47** (Dylan, 2026-10-12). Report: `docs/REPORT_ON_RELATIVITY.md`.
 **Next action:** the replanned order of work, `docs/TASK_HAR_STANDARDISATION.md` section 7:
 reset the grid levels, then the atomic density tables. `hart` to spherical functions is done.
-**The small tasks of the register are done** (2026-10-12, branch `small-tasks`; archive, *four
-small tasks of the register*), all but the ORCA check of the libxc energies, which waits for
-ORCA to be installed on the Mac.
+**The small tasks of the register are all done** (2026-10-12; archive, *four small tasks of
+the register* and *the libxc energies checked against ORCA*).
 
 **What landed.** `relativity_kind= x2c`: the scalar exact two-component one-electron
 Hamiltonian in place of the kinetic energy plus nuclear attraction, for every restricted and
@@ -163,7 +162,8 @@ with an error then ends with "Attempt to DEALLOCATE unallocated 'tonto_bug'": de
 misleading (fixed 2026-10-12; archive, *four small tasks of the register*). libxc's build files refuse
 Tonto's build type names (fixed).
 
-**Open from this work:** the ORCA check (*Test suite and numerics*); libxc in the MPI and WSL
+**Open from this work:** the open-shell energies, 3e-7 from ORCA and PySCF (*Test suite and
+numerics*; the ORCA check itself is done, 2026-10-12); libxc in the MPI and WSL
 workflows; whether `-DLIBXC=ON` becomes the default.
 
 
@@ -5363,25 +5363,37 @@ the XC evaluation, not the point count. Tables in `docs/TASK_SCF_SPEEDUP_DATA.md
 
 # Test suite and numerics
 
-## Check the libxc energies against ORCA (Dylan, 2026-10-11)
+## Open-shell DFT energies are 3e-7 to 4e-7 hartree above ORCA and PySCF (2026-10-12)
 
-**Register row:** *Check the libxc energies against ORCA*. Not started; waits for ORCA on the Mac.
+**Register row** of the same name. Found by the ORCA check (archive, *the libxc energies
+checked against ORCA*). For the water cation, cc-pVDZ, unrestricted, Tonto's energy is higher
+than both other programs by nearly the same amount, whatever the functional:
 
-PBE, PBE0, r2SCAN and TPSS agree with PySCF 2.14 (`docs/TASK_DFT_STANDARDISATION.md` section 11),
-but PySCF evaluates them with libxc as Tonto does, so the comparison checks Tonto's grid, SCF,
-exact exchange and kinetic-energy-density term, and not the functionals themselves. A program
-with its own functional code is wanted, and ORCA is the one to hand.
+| functional | Tonto - ORCA | Tonto - PySCF |
+|---|---|---|
+| PBE (ORCA using libxc's PBE) | +4.1e-7 | +3.7e-7 |
+| PBE0 (the same) | +3.1e-7 | +2.9e-7 |
+| B3LYP, ORCA's form | +3.8e-7 | |
+| B3LYP, Gaussian's form | +3.9e-7 | |
 
-- **Jobs:** water and its cation, cc-pVDZ with Cartesian d functions, the geometry in
-  `scripts/check_libxc_reference.py`, ORCA's finest grid, tight SCF. PBE, PBE0, r2SCAN, TPSS;
-  and `B3LYP/G` and `B3LYP`, which check the names `b3lyp-gaussian` and `b3lyp-orca`.
-- **Tonto's numbers to compare with** (`accuracy= best`): RKS PBE -76.3350289923, PBE0
-  -76.3398118260, r2SCAN -76.3823990198 (-76.3823979644 with 150 radial points), TPSS
-  -76.4243255855; UKS cation PBE -75.8832032735, PBE0 -75.8912793980, r2SCAN -75.9341794724,
-  TPSS -75.9780284678.
-- **A question it should settle:** the unrestricted PBE and PBE0 energies are 3e-7 from PySCF
-  where the restricted ones are 1e-9 to 4e-9. ORCA says which program is off.
-- If ORCA agrees, add its numbers beside PySCF's in `scripts/check_libxc_reference.py`.
+Neutral water, restricted, agrees to 4e-9 (PBE), 8e-9 (PBE0) and 1.6e-8 (B3LYP). Two programs
+that share nothing agree with each other, so Tonto is the one that is off. Ruled out:
+
+- **not Hartree-Fock:** the UHF cation agrees with ORCA to 4e-10;
+- **not the unrestricted route as such:** neutral water run as `uks` equals `rks` to 1e-12 (PBE)
+  and 1e-9 (B3LYP);
+- **not SCF convergence:** 1e-9 and 1e-11 give the same twelve figures;
+- **not the grid level:** `very_high` to `best` moves the cation energy by 2e-8;
+- **not libxc against hand-written:** `b3lypgx`/`b3lypgc` equals `hyb_gga_xc_b3lyp` to 5e-10, `uks`;
+- **not the density cutoff:** it is 1e-30.
+
+So it is in what a spin-polarised density does that an unpolarised one does not: the mixed
+gradient term, the two potentials, or the unrestricted Fock build. Next: compare the XC energy
+alone, from one fixed density, with PySCF's (the venv is in `~/tonto-runs/2026-10-11_x2c`);
+then the potential. TPSS shifts by about 2e-6 between restricted and unrestricted and r2SCAN
+does not, which may be a second thing or the same. Small against any use so far (1e-6 hartree),
+but it is a real difference and the tolerance of `scripts/check_libxc_reference.py` (5e-6)
+hides it. Runs: `~/tonto-runs/2026-10-12_orca_check`.
 
 Not in the register, noted here: r2SCAN took four to five times as long as PBE in the urea
 refinements (four jobs at once, so rough); and `dft_energy` plots with a gradient functional
@@ -7246,6 +7258,54 @@ different question and the one that matters.
 ---
 
 # Done, resolved and closed (archive)
+
+## CLOSED (2026-10-12): the libxc energies checked against ORCA
+
+ORCA 6.1.1 on the Mac (`~/bin/orca_6_1_1/orca`). Water and its cation, the geometry of
+`scripts/check_libxc_reference.py`, cc-pVDZ. **Spherical d functions, not Cartesian as the entry
+asked: ORCA has only spherical**, so Tonto was rerun with `use_spherical_basis= TRUE` and the
+PySCF numbers in the script, which are Cartesian, are not comparable with ORCA's. ORCA: `NoRI
+NoCOSX VeryTightSCF`, `IntAcc 9`, `AngularGrid 7`. Tonto: `accuracy= best`.
+
+| | Tonto | ORCA | Tonto - ORCA |
+|---|---|---|---|
+| RHF | -76.0265246508 | -76.0265246504 | -4e-10 |
+| PBE, ORCA's own | -76.3337604790 | -76.3337745927 | +1.4e-5 |
+| PBE, ORCA with libxc | | -76.3337604752 | -4e-9 |
+| PBE0, ORCA's own | -76.3389534565 | -76.3389637895 | +1.0e-5 |
+| PBE0, ORCA with libxc | | -76.3389534488 | -8e-9 |
+| r2SCAN (ORCA uses libxc) | -76.3815466247 | -76.3815454627 | -1.2e-6 |
+| TPSS | -76.4234285707 | -76.4234274163 | -1.2e-6 |
+| B3LYP/G | -76.4205383546 | -76.4205383710 | +1.6e-8 |
+| B3LYP | -76.3833881419 | -76.3833881584 | +1.6e-8 |
+| UHF, cation | -75.6319440398 | -75.6319440402 | +4e-10 |
+| PBE, cation, ORCA's own | -75.8823141061 | -75.8823285006 | +1.4e-5 |
+| PBE, cation, ORCA with libxc | | -75.8823145147 | +4.1e-7 |
+| PBE0, cation, ORCA's own | -75.8906834782 | -75.8906940580 | +1.1e-5 |
+| PBE0, cation, ORCA with libxc | | -75.8906837899 | +3.1e-7 |
+| r2SCAN, cation | -75.9336623571 | -75.9336609127 | -1.4e-6 |
+| TPSS, cation | -75.9776109573 | -75.9776119383 | +9.8e-7 |
+| B3LYP/G, cation | -75.9679123709 | -75.9679127598 | +3.9e-7 |
+| B3LYP, cation | -75.9344972468 | -75.9344976309 | +3.8e-7 |
+
+- **The functionals are right.** B3LYP in both forms and TPSS come from ORCA's own code and
+  agree: 1.6e-8 for B3LYP restricted, about 1e-6 for TPSS, which is the grid. The names
+  `b3lyp-gaussian` and `b3lyp-orca` are the right way round.
+- **ORCA's own PBE is not libxc's PBE.** ORCA prints `XMuePBE 0.219520` and `CBetaPBE
+  0.066725`; the functional's values are 0.2195149727645171 and 0.06672455060314922. That is
+  the whole 1.4e-5 (and 1.0e-5 for PBE0, three quarters of it): with `! LIBXC(PBE)` ORCA agrees
+  with Tonto to 4e-9. So ORCA's own PBE is not an independent check of the PBE code to better
+  than 1e-5; PySCF, at 7e-10, checks Tonto's use of libxc.
+- **r2SCAN in ORCA is libxc** ("libXC variant has now been activated"), so it is no independent
+  check either.
+- **The question the entry asked, unrestricted against restricted: Tonto is the one that is
+  off**, by 3e-7 to 4e-7 hartree for the open-shell cation. New entry under *Test suite and
+  numerics*.
+- `scripts/check_libxc_reference.py` now has ORCA's numbers for B3LYP (both forms) and TPSS,
+  restricted and unrestricted, spherical, at the PySCF tolerance of 5e-6; the test takes 26 s,
+  was 13 s.
+
+Runs: `~/tonto-runs/2026-10-12_orca_check`.
 
 ## CLOSED (2026-10-12): four small tasks of the register
 
