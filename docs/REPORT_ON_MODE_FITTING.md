@@ -1007,8 +1007,15 @@ of (11), and the amplitudes $`Q_k`$ of the stiff modes. For atom $`A`$,
 ```
 
 with $`B_A`$ the matrix of (11) and one column $`\mathbf{d}_{Ak}`$ (§1.7) for each stiff mode. The covariance
-of $`\bar{\mathbf{v}}`$ is the refined $`\Sigma`$ of (11), and beside it a diagonal block holding the harmonic
-amplitude (6) of each stiff mode at the temperature of the data. The **two-centre ADP** of atoms
+of $`\bar{\mathbf{v}}`$ has two blocks: the refined $`\Sigma`$ of (11), and a diagonal block holding the harmonic
+amplitude (6) of each stiff mode at the temperature of the data,
+
+```math
+\bar\Sigma = \langle \bar{\mathbf{v}}\bar{\mathbf{v}}^{\mathsf T}\rangle = \begin{pmatrix} \Sigma & 0 \\ 0 & \mathrm{diag}\,\langle Q_k^2\rangle \end{pmatrix} .
+```
+
+The zeros say that the stiff modes are taken as uncorrelated with the rigid-body motion and the
+soft modes, and with each other. The **two-centre ADP** of atoms
 $`A`$ and $`B`$ is then
 
 ```math
@@ -1236,12 +1243,28 @@ structure factor (29) with respect to each element $`\Sigma_{pq}`$ and each posi
 found by differentiating (29) term by term.
 
 **With respect to $`\Sigma`$.** In (29), $`\Sigma`$ appears only in the exponent of the temperature
-factor. By (30), $`U^P_{\mu a\,\nu b} = \bar B_P \bar\Sigma \bar B_P^{\mathsf T}`$, and the part of $`\bar\Sigma`$ that is $`\Sigma`$
-goes with the part of $`\bar B_P`$ that is $`B_P = w_A B_A + w_B B_B`$. So
+factor, inside $`U^P_{\mu a\,\nu b}`$. By (30), $`U^P_{\mu a\,\nu b} = \bar B_P\, \bar\Sigma\, \bar B_P^{\mathsf T}`$, and both factors
+are made of two blocks (§6.1): one for the rigid-body motion and the refined soft modes, and one
+for the stiff modes,
 
 ```math
-\mathbf{k}^{\mathsf T} U^P_{\mu a\,\nu b}\, \mathbf{k} = \mathbf{h}_P^{\mathsf T}\, \Sigma\, \mathbf{h}_P + (\text{a part without } \Sigma), \qquad
-\mathbf{h}_P = B_P^{\mathsf T}\mathbf{k} = w_A\, \mathbf{h}_A + w_B\, \mathbf{h}_B, \qquad \mathbf{h}_A = B_A^{\mathsf T} \mathbf{k} . \qquad (33)
+\bar B_P = [\, B_P \mid \mathbf{d}_{P,\rm stiff} \,], \qquad
+\bar\Sigma = \begin{pmatrix} \Sigma & 0 \\ 0 & \mathrm{diag}\,\langle Q_k^2\rangle \end{pmatrix}, \qquad
+B_P = w_A B_A + w_B B_B .
+```
+
+Multiplying the blocks, the first block of $`\bar B_P`$ meets $`\Sigma`$ and the second meets the stiff
+amplitudes:
+
+```math
+U^P_{\mu a\,\nu b} = B_P\, \Sigma\, B_P^{\mathsf T} + \sum_{\omega_k > \omega_c} \langle Q_k^2\rangle\, \mathbf{d}_{Pk} \mathbf{d}_{Pk}^{\mathsf T} . \qquad (33)
+```
+
+Only the first term contains $`\Sigma`$. In the exponent of (29) it is
+
+```math
+\mathbf{k}^{\mathsf T} B_P\, \Sigma\, B_P^{\mathsf T} \mathbf{k} = \mathbf{h}_P^{\mathsf T}\, \Sigma\, \mathbf{h}_P, \qquad
+\mathbf{h}_P = B_P^{\mathsf T}\mathbf{k} = w_A\, \mathbf{h}_A + w_B\, \mathbf{h}_B, \qquad \mathbf{h}_A = B_A^{\mathsf T} \mathbf{k} .
 ```
 
 $`\mathbf{h}_A`$ is a vector with one component for each generalised coordinate of (11). $`\Sigma`$ is
