@@ -78,6 +78,43 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## START HERE (2026-10-12, evening): the atomic density tables are half done
+
+**In progress: branch `density-tables`** (pushed, one commit `be867d1d`, no pull request).
+The new table works and the suite passes; entry *The atomic density tables* under *Science and
+features* has the measurements, the design and what is left. **Next action: settle the memory
+question there** — the table is 1.5 MB and is copied to every atom. Dylan chose "share one table
+for each kind of atom" (2026-10-12). Note before starting: `ATOM` holds everything by value,
+its basis sets too (`basis :: BASIS@`), and the tables are copied by plain assignment in half a
+dozen places and then changed for one atom by the spherically averaged Hirshfeld atoms
+(`molecule.har.foo`), so sharing means a pointer or an index into a list the molecule owns, and
+is a change to how `ATOM` holds its data, not to the table. The alternative is 1024 cells: 0.4 MB
+an atom, error about 2e-5 in the far tail and 1e-6 inside 3 bohr. Put this to Dylan before
+writing it. After that: a debug build, achari2, a pull request; then the tidy of
+`interpolator.foo` listed in the entry.
+
+**Done today, all merged to `develop`** (archive entries of the same date):
+
+- pull request 49, four small tasks: cluster charges under a `tc-*` partition, the debug
+  traceback, the translator's syntax errors, `hart` to spherical functions;
+- pull request 50: cluster charges follow the partition model; an unknown `partition_model=`
+  stops;
+- pull request 51: the libxc energies checked against ORCA (ORCA 6.1.1 is at
+  `~/bin/orca_6_1_1/orca`);
+- pull request 52: `release` links OpenBLAS on every platform, `reference` netlib.
+
+**New open entries from today:** open-shell DFT energies 3e-7 to 4e-7 above ORCA and PySCF
+(*Test suite and numerics*); `hart`'s fit is 4% better in GoF with spherical functions,
+unexplained (in the archive entry *four small tasks*); a line plot writes 75 of its 401 points
+(in the density tables entry).
+
+**Left on disk:** `mac-reference/`, a netlib build tree on the Mac made for timing, untracked;
+on achari2 `~/openblas-unpacked` (OpenBLAS unpacked, not installed), and the worktree
+`~/github/tonto-libxc` with a `release-openblas/` tree and `/tmp/relob_*`.
+
+**Order of work after the tables** (`docs/TASK_HAR_STANDARDISATION.md` section 7): reset the
+grid levels.
+
 ## CLOSED 2026-10-12: scalar X2C is on `develop`
 
 **Merged by pull request 47** (Dylan, 2026-10-12). Report: `docs/REPORT_ON_RELATIVITY.md`.
