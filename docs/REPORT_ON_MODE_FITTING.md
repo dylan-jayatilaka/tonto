@@ -1258,8 +1258,8 @@ B_P = w_A B_A + w_B B_B , \qquad (33)
 ```
 
 of which only the first term contains $`\Sigma`$. Second, $`\Sigma`$ is symmetric, and its element
-$`\Sigma_{pq}`$ with $`p \ne q`$ stands for the two equal elements $`\Sigma_{pq}`$ and $`\Sigma_{qp}`$; $`\delta_{pq}`$ is one
-if $`p = q`$ and zero otherwise. Then, differentiating (29),
+$`\Sigma_{pq}`$ with $`p \ne q`$ stands for the two equal elements $`\Sigma_{pq}`$ and $`\Sigma_{qp}`$. Then,
+differentiating (29),
 
 ```math
 \begin{aligned}
@@ -1289,7 +1289,8 @@ if $`p = q`$ and zero otherwise. Then, differentiating (29),
 \qquad (34)
 ```
 
-The last step uses two things: $`\mathbf{h}_A`$ and $`\mathbf{h}_B`$ belong to the atoms and are the same for every
+Here $`\delta_{pq}`$ is the Kronecker delta, one if $`p = q`$ and zero otherwise. The last step uses
+two things: $`\mathbf{h}_A`$ and $`\mathbf{h}_B`$ belong to the atoms and are the same for every
 primitive, so they come outside the sum over $`a, b`$; and $`w_B = 1 - w_A`$. The three sums in round
 brackets are all made of
 
