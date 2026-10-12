@@ -27,7 +27,7 @@ Then, **inside** the Ubuntu shell:
 
 ```bash
 sudo apt update
-sudo apt install -y gcc gfortran-14 libblas-dev liblapack-dev default-jdk \
+sudo apt install -y gcc gfortran-14 libopenblas-dev libblas-dev liblapack-dev default-jdk \
                     python3 python3-numpy perl make cmake git gnuplot
 
 # Clone into your Linux home -- NOT into /mnt/c. See "Where to put the code".
@@ -205,7 +205,7 @@ Configure a separate directory for each type you keep.
 
 | Type | For | What it sets |
 |---|---|---|
-| `release` | everyday work; the default | `-O3`, no processor tuning, the BLAS the system provides |
+| `release` | everyday work; the default | `-O3`, no processor tuning, OpenBLAS (required) |
 | `fast` | the most speed on this machine | `-Ofast`, tuned for this processor, OpenBLAS (required). The last printed digits differ from `release`. |
 | `reference` | results that match the stored test outputs; what CI builds | `-O3 -fno-fast-math`, no processor tuning, the netlib BLAS and LAPACK (required) |
 | `debug` | finding a bug or a crash | no optimisation, array bounds checks, Tonto's internal checks |
@@ -217,12 +217,30 @@ Configure a separate directory for each type you keep.
   from the copy in `external/libxc`, which `git clone --recursive` fetches, and
   needs a C compiler. Without it Tonto has the LDA, BLYP and B3LYP functionals.
   See [`RUNNING_TONTO.md`](RUNNING_TONTO.md).
-- **Your own settings win.** `-DTONTO_ARCH_FLAG=...` (processor tuning) and
-  `-DBLA_VENDOR=...` (BLAS) replace the type's choice, except in `reference`,
-  which stops rather than build something that is not reproducible.
+- **`release` and `fast` link OpenBLAS and `reference` links netlib, on every
+  platform**, so a build type means the same library everywhere. OpenBLAS is
+  faster where it matters, in density functional jobs; netlib gives the same
+  numbers on every machine.
+- **Another BLAS.** `-DBLA_VENDOR=...` replaces the type's choice in `release`
+  and `fast`: `-DBLA_VENDOR=Generic` takes the BLAS the system provides, and the
+  other names are CMake's (`Intel10_64lp`, `Apple`, `FLAME`, ...).
+  `-DCOMPILE_LAPACK=ON` builds the netlib copy in `external/lapack-release`
+  instead of finding a library. `reference` accepts only netlib.
+- **Processor tuning.** `-DTONTO_ARCH_FLAG=auto` tunes for this machine,
+  `none` does not, and anything else is passed to the compiler as given
+  (`-DTONTO_ARCH_FLAG="-march=znver3"`). `reference` accepts only `none`.
+- **Compiler flags.** `-DCMAKE_Fortran_FLAGS="..."` adds flags to those of the
+  build type. The flags of each type, for each compiler, are set in
+  `cmake/SetFortranFlags.cmake`.
+- **The same numbers on two machines.** OpenBLAS chooses its routines for the
+  processor it finds, so the last printed digits can differ between machines.
+  To make two machines agree, run both with the environment variable
+  `OPENBLAS_CORETYPE` set to one processor name they both support (`HASWELL`
+  on most x86 machines, `ARMV8` on Arm) and `OPENBLAS_NUM_THREADS=1`; or use a
+  `reference` build.
 - Configure prints one line, `Build type ...`, saying what it chose.
-- `fast` needs `sudo apt install libopenblas-dev`; see the Linux page for what
-  that does to a `reference` build.
+- `release` and `fast` need `libopenblas-dev`; `reference` needs `libblas-dev`
+  and `liblapack-dev`. All three can be installed together.
 
 ```bash
 cmake -B ~/tonto-build/debug -S ~/tonto \

@@ -163,11 +163,11 @@ for tool in cmake make python3 perl; do
     fi
 done
 
-if ! ldconfig -p 2>/dev/null | grep -q liblapack; then
-    warn "no system LAPACK -- CMake will fall back to compiling the bundled reference LAPACK, which is slow to build and slower to run" \
-         "sudo apt install libblas-dev liblapack-dev"
+if ! ldconfig -p 2>/dev/null | grep -q libopenblas; then
+    warn "no OpenBLAS -- a release build links it and will stop at configure" \
+         "sudo apt install libopenblas-dev"
 else
-    ok "system BLAS/LAPACK present"
+    ok "OpenBLAS present"
 fi
 
 WINPATH=$(tr ':' '\n' <<<"$PATH" | grep -c '^/mnt/[a-zA-Z]/' || true)
