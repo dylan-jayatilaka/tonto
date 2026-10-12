@@ -507,8 +507,11 @@ use it. The TLS algebra needs only positions, so it is not a `CRYSTAL` method.
    1e-5 of the TLS columns, so the null-space test dropped them -- the response columns are now
    normalised before the null-space and range tests and the scaling undone after; (ii) for planar
    urea K = 2 adds no parameter over K = 1 -- not a bug: the modes transform exactly (±1) under the
-   site symmetry and the Hessian is symmetric to 5e-8; the second wag's pattern is in the span of
-   the first wag and the libration. Pitfall left in the code: a mode below `soft_mode_cutoff=`
+   site symmetry and the Hessian is symmetric to 5e-8; the second wag's ADP pattern
+   (d d^T on each atom, not the motion, which has a different symmetry from the first wag's) is in
+   the span of the first wag's and the rigid-body patterns. The count: five unique atoms give five
+   out-of-plane U elements, and six patterns act on them -- the out-of-plane translation, the two
+   in-plane librations, their coupling, and the two wags (report §1.7). Pitfall left in the code: a mode below `soft_mode_cutoff=`
    (compared with the *scaled* frequency) but beyond the K refined is in neither U^high nor the
    refinement -- noted in the research document; a printed warning would be better (open).
 
