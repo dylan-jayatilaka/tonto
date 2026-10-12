@@ -2488,10 +2488,11 @@ contains
 
    end
 
-   make_temperature_factors(TF,model,k_pts,ADP_a,ADP_b) :: PURE
+   make_temperature_factors(TF,model,k_pts,ADP_a,ADP_b,ADP_ab) :: PURE
    ! Makes the temperature factors "TF" for a given "model" over all
    ! pairs of gaussians, using ADPs "ADP_a" and ADP_b" for the atoms
-   ! on which the pair of gaussians is centred.
+   ! on which the pair of gaussians is centred. Model "tc-tls" also
+   ! needs "ADP_ab", the covariance <u_a u_b^T> of their displacements.
    ! See Jayatilaka & Grimwood (2001) Acta Cryst A 57 p76-86 sec 4.2.
       self  :: IN
       TF    :: MAT3{REAL}, OUT
@@ -2499,6 +2500,7 @@ contains
       k_pts :: MAT{REAL}, IN
       ADP_a :: MAT{REAL}(3,3), IN
       ADP_b :: MAT{REAL}(3,3), IN
+      ADP_ab :: MAT{REAL}(3,3), optional, IN
 
    ENSURE(TF.dim1==k_pts.dim1,"wrong dim2, TF")
    ENSURE(TF.dim2==.a.n_cc,"wrong dim2, TF")
@@ -2541,6 +2543,11 @@ contains
       case ("tc-tanaka ") 
          ! tf=exp[-HALF S (Ua*alpha + Ub*beta)/gamma S]
          .make_Tanaka_TFs(TF,k_pts,ADP_a,ADP_b)
+
+      case ("tc-tls    ")
+         ! tf=exp[-HALF S (Ua wa^2 + Ub wb^2 + (Uab+Uab^T) wa wb) S]
+         STOP_IF(NOT present(ADP_ab),"tc-tls needs ADP_ab")
+         .make_TLS_TFs(TF,k_pts,ADP_a,ADP_b,ADP_ab)
 
       end
 
@@ -4840,6 +4847,68 @@ contains
          end
 
       end ! -- select case
+
+   end
+
+   make_TLS_TFs(TF,k_pts,Ua,Ub,Uab) :: pure
+   ! Make the two-center temperature factors "TF" for each pair of
+   ! gaussian primitives when the atoms move together: "Ua" and "Ub" are
+   ! the ADPs on each center and "Uab" the covariance <u_a u_b^T> of
+   ! their displacements. The product of primitives with exponents ea and
+   ! eb is centred at wa*A + wb*B, wa = ea/(ea+eb), wb = eb/(ea+eb), and
+   ! is smeared by the mean-square displacement of that point,
+   !    U = wa^2 Ua + wb^2 Ub + wa wb (Uab + Uab^T).
+   ! See docs/REPORT_ON_MODE_FITTING.md section 6.
+      self  :: IN
+      TF    :: MAT3{REAL}, OUT
+      k_pts :: MAT{REAL}, IN
+      Ua,Ub,Uab :: MAT{REAL}, IN
+
+      U,Uc :: MAT{REAL}(3,3)
+      ea,eb,wa,wb :: REAL
+      U11,U22,U33 :: REAL
+      U21_12      :: REAL
+      U31_13      :: REAL
+      U32_23      :: REAL
+      S1, S2, S3  :: REAL
+      a,b,k,k_max :: INT
+
+      k_max = size(k_pts,1)
+      Uc = Uab + transpose(Uab)
+
+      do a = 1, .a.n_cc
+
+         ea = .a.exponent(a)
+
+         do b = 1, .b.n_cc
+
+            eb = .b.exponent(b)
+            wa = ea/(ea + eb)
+            wb = eb/(ea + eb)
+
+            U = - HALF * (wa*wa*Ua + wb*wb*Ub + wa*wb*Uc)
+
+            U11    = U(1,1)
+            U22    = U(2,2)
+            U33    = U(3,3)
+            U21_12 = U(2,1) + U(1,2)
+            U31_13 = U(3,1) + U(1,3)
+            U32_23 = U(3,2) + U(2,3)
+
+            do k = 1,k_max
+
+               S1 = k_pts(k,1)
+               S2 = k_pts(k,2)
+               S3 = k_pts(k,3)
+
+               ! S.U.S has been expanded to save multiplies and array accesses.
+               TF(k,a,b) = exp(S1*(S1*U11+S2*U21_12+S3*U31_13)+S2*(S2*U22+S3*U32_23)+S3*S3*U33)
+
+            end
+
+         end
+
+      end
 
    end
 

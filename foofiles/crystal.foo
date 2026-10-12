@@ -4798,6 +4798,20 @@ contains
 
    end
 
+   set_fragment_U_high_pair(U_high) :: leaky, PURE
+   ! Set .fragment_U_high_pair, the stiff-mode <u_a u_b^T> of each pair of
+   ! atoms of the TLS body (3,3,n,n), bohr^2.
+      self :: INOUT
+      U_high :: MAT4{REAL}, IN
+   ENSURE(.fragment_atom.allocated,"no fragment atoms")
+   ENSURE(U_high.dim3==.n_TLS_atoms,"one U_high per pair of TLS body atoms")
+   ENSURE(U_high.dim4==.n_TLS_atoms,"one U_high per pair of TLS body atoms")
+
+      .fragment_U_high_pair.destroy
+      .fragment_U_high_pair = U_high
+
+   end
+
    set_soft_modes(V,a0,freq,temperature) :: leaky, PURE
    ! Set the soft modes whose amplitudes a TLS model refines: "V" the
    ! displacement of each TLS body atom per unit normal coordinate,
@@ -4906,36 +4920,49 @@ contains
 
    end
 
+   TLS_displacement_mx(g) result (res) :: PURE
+   ! "B_g" for TLS body atom "g": its displacement per unit of each
+   ! coordinate of v = (t, lambda, Q_1 ... Q_K), so that u_g = B_g v.
+   ! B_g = [1 | A_g | d_g1 ... d_gK]: A_g lambda = lambda x r_g, r_g from
+   ! .TLS_origin, and d_gj atom g's displacement per unit normal
+   ! coordinate of soft mode j.
+      self :: IN
+      g :: INT, IN
+      res :: MAT{REAL}(3,6+.n_soft_modes)
+
+      d :: VEC{REAL}(3)
+      i,k :: INT
+
+      res = ZERO
+      d = .fragment_atom(g).position - .TLS_origin
+      do i = 1,3
+         res(i,i) = ONE
+      end
+      res(1,5) =  d(3); res(1,6) = -d(2)
+      res(2,4) = -d(3); res(2,6) =  d(1)
+      res(3,4) =  d(2); res(3,5) = -d(1)
+      do k = 1,.n_soft_modes
+         res(:,6+k) = .soft_mode_vectors(3*g-2:3*g,k)
+      end
+
+   end
+
    TLS_response(g) result (res) :: PURE
    ! d U_g / d sigma for TLS body atom "g": the change in
    ! (U_xx,U_yy,U_zz,U_xy,U_xz,U_yz) per unit of each element sigma_pq of
    ! Sigma = <v v^T>, in the order of TLS_sigma_pairs. U_g = B_g Sigma B_g^T
-   ! with B_g = [1 | A_g | d_g1 ... d_gK]: A_g lambda = lambda x r_g, r_g
-   ! from .TLS_origin, and d_gj atom g's displacement per unit normal
-   ! coordinate of soft mode j.
+   ! with B_g from TLS_displacement_mx.
       self :: IN
       g :: INT, IN
       res :: MAT{REAL}(6,.n_TLS_sigma)
 
-      d :: VEC{REAL}(3)
       Bm :: MAT{REAL}@
       M :: MAT{REAL}(3,3)
       pr :: MAT{INT}@
-      p,q,k,i,j,n_v :: INT
+      p,q,k,i,j :: INT
 
-      n_v = 6 + .n_soft_modes
-      Bm.create(3,n_v)
-      Bm = ZERO
-      d = .fragment_atom(g).position - .TLS_origin
-      do i = 1,3
-         Bm(i,i) = ONE
-      end
-      Bm(1,5) =  d(3); Bm(1,6) = -d(2)
-      Bm(2,4) = -d(3); Bm(2,6) =  d(1)
-      Bm(3,4) =  d(2); Bm(3,5) = -d(1)
-      do k = 1,.n_soft_modes
-         Bm(:,6+k) = .soft_mode_vectors(3*g-2:3*g,k)
-      end
+      Bm.create(3,6+.n_soft_modes)
+      Bm = .TLS_displacement_mx(g)
 
       .TLS_sigma_pairs(pr)
       do k = 1,.n_TLS_sigma
@@ -4952,6 +4979,112 @@ contains
 
       pr.destroy
       Bm.destroy
+
+   end
+
+   make_TLS_sigma_vector(sv) :: leaky
+   ! Make "sv", the elements of the TLS model's covariance Sigma in the
+   ! order of TLS_sigma_pairs. They are fitted to the unique fragment
+   ! atoms' ADPs minus U_high, which lie on the model.
+      self :: IN
+      sv :: VEC{REAL}@, OUT
+   ENSURE(.TLS_basis.allocated,"no TLS model")
+   ENSURE(.TLS_unique_response.allocated,"no TLS model")
+
+      Mt,MtM :: MAT{REAL}@
+      y,p,rhs :: VEC{REAL}@
+      Um :: MAT{REAL}(3,3)
+      n_u,k,u,f :: INT
+
+      n_u = .n_unique_frag_atoms
+      k   = .TLS_basis.dim2
+
+      ! The TLS part of each unique atom's ADP
+      y.create(6*n_u)
+      do u = 1,n_u
+         f = .unique_frag_atom(u)
+         Um = .fragment_atom(f).ADP_tensor
+         if (.fragment_U_high.allocated) Um = Um - .fragment_U_high(:,:,f)
+         y(6*u-5:6*u) = [Um(1,1),Um(2,2),Um(3,3),Um(1,2),Um(1,3),Um(2,3)]
+      end
+
+      ! The TLS parameters that fit it, and Sigma from them
+      Mt = .TLS_unique_response
+      MtM.create(k,k)
+      MtM.to_product_of(Mt,Mt,transpose_a=TRUE)
+      rhs.create(k)
+      rhs.to_product_of(Mt,y,transpose_a=TRUE)
+      p.create(k)
+      MtM.solve_linear_equation(rhs,p)
+      sv.create(.n_TLS_sigma)
+      sv.to_product_of(.TLS_basis,p)
+
+      p.destroy; rhs.destroy; MtM.destroy; Mt.destroy; y.destroy
+
+   end
+
+   make_two_center_ADPs :: leaky
+   ! Make .two_center_ADPs, the covariance <u_a u_b^T> of the displacements
+   ! of each pair of fragment atoms "a" and "b", from the TLS model:
+   !    U_ab = B_a Sigma B_b^T + U_high_ab
+   ! with B_a from TLS_displacement_mx and U_high_ab the stiff-mode part.
+   ! An atom outside the TLS body keeps its own ADP in block (a,a) and is
+   ! uncorrelated with every other atom. See docs/REPORT_ON_MODE_FITTING.md
+   ! section 6.
+      self :: INOUT
+   ENSURE(.fragment_atom.allocated,"no fragment atoms")
+   DIE_IF(.TLS_basis.deallocated,"tc-tls needs a TLS model: refine with adp_model= tls first")
+
+      Smat,Ba,Bb,W :: MAT{REAL}@
+      sv :: VEC{REAL}@
+      pr :: MAT{INT}@
+      n_f,n_b,n_v,a,b,i :: INT
+
+      n_f = .fragment_atom.dim
+      n_b = .n_TLS_atoms
+      n_v = 6 + .n_soft_modes
+
+      ! Sigma as a matrix
+      .make_TLS_sigma_vector(sv)
+      .TLS_sigma_pairs(pr)
+      Smat.create(n_v,n_v)
+      Smat = ZERO
+      do i = 1,pr.dim2
+         Smat(pr(1,i),pr(2,i)) = sv(i)
+         Smat(pr(2,i),pr(1,i)) = sv(i)
+      end
+
+      .two_center_ADPs.destroy
+      .two_center_ADPs.create(3,3,n_f,n_f)
+      .two_center_ADPs = ZERO
+
+      ! Pairs within the TLS body
+      Ba.create(3,n_v)
+      Bb.create(3,n_v)
+      W.create(3,n_v)
+      do a = 1,n_b
+         Ba = .TLS_displacement_mx(a)
+         W.to_product_of(Ba,Smat)
+         do b = 1,n_b
+            Bb = .TLS_displacement_mx(b)
+            .two_center_ADPs(:,:,a,b) = matmul(W,transpose(Bb))
+         end
+      end
+      if (.fragment_U_high_pair.allocated) then
+         .two_center_ADPs(:,:,1:n_b,1:n_b) = .two_center_ADPs(:,:,1:n_b,1:n_b) + .fragment_U_high_pair
+      end
+
+      ! Atoms outside it
+      do a = n_b+1,n_f
+         .two_center_ADPs(:,:,a,a) = .fragment_atom(a).ADP_tensor
+      end
+
+      W.destroy
+      Bb.destroy
+      Ba.destroy
+      Smat.destroy
+      pr.destroy
+      sv.destroy
 
    end
 
@@ -5400,37 +5533,19 @@ contains
    ENSURE(.TLS_basis.allocated,"no TLS model")
    ENSURE(.TLS_unique_response.allocated,"no TLS model")
 
-      Mt,MtM,Cp,CS,Sm,Esd :: MAT{REAL}@
-      y,p,rhs,sv,var :: VEC{REAL}@
+      Cp,CS,Sm,Esd :: MAT{REAL}@
+      sv,var :: VEC{REAL}@
       Um :: MAT{REAL}(3,3)
       L_evals :: VEC{REAL}(3)
       L_evecs :: MAT{REAL}(3,3)
       ang,deg2,adeg :: REAL
-      n_u,k,u,f,i,j,pp,qq,m,first :: INT
+      k,i,j,pp,qq,m,first :: INT
 
-      n_u = .n_unique_frag_atoms
       k   = .TLS_basis.dim2
       first = .TLS_first_param
 
-      ! The TLS part of each unique atom's ADP, and the fit to it
-      y.create(6*n_u)
-      do u = 1,n_u
-         f = .unique_frag_atom(u)
-         Um = .fragment_atom(f).ADP_tensor
-         if (.fragment_U_high.allocated) Um = Um - .fragment_U_high(:,:,f)
-         y(6*u-5:6*u) = [Um(1,1),Um(2,2),Um(3,3),Um(1,2),Um(1,3),Um(2,3)]
-      end
-      Mt = .TLS_unique_response
-      MtM.create(k,k)
-      MtM.to_product_of(Mt,Mt,transpose_a=TRUE)
-      rhs.create(k)
-      rhs.to_product_of(Mt,y,transpose_a=TRUE)
-      p.create(k)
-      MtM.solve_linear_equation(rhs,p)
-
       ! Sigma and its esds; the 21 upper-triangle elements
-      sv.create(.n_TLS_sigma)
-      sv.to_product_of(.TLS_basis,p)
+      .make_TLS_sigma_vector(sv)
       var.create(.n_TLS_sigma)
       var = ZERO
       if (.xray_data.ls.param_covariance.allocated) then
@@ -5507,7 +5622,6 @@ contains
       .put_model_selection
 
       Esd.destroy; Sm.destroy; var.destroy; sv.destroy
-      p.destroy; rhs.destroy; MtM.destroy; Mt.destroy; y.destroy
 
    end
 
