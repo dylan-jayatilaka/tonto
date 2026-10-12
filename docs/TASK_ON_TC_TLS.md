@@ -319,6 +319,20 @@ two is the relative motion alone.
 
 ## References
 
+- J. R. Michael and T. Koritsanszky, *J. Math. Chem.* 53, 250 (2015), "Validation of convolution
+  approximation to the thermal-average electron density"
+  (`~/Dropbox/manuscripts/Michael_2015_J_Math_Chem_53_p250-9.pdf`). Found 2026-10-12 after the
+  theory here was written (Dylan: "Michael has derived some of these equations"). Their eq. (10)
+  is our (8): the exact ADP of a product of two primitive GTOs, with the off-diagonal blocks
+  $`U_{AB}`$; implemented in their program Denprop. Their $`U`$ is from the internal normal modes of
+  an isolated molecule (coth amplitudes, their eq. (5)), not refined; they smear the density, not
+  structure factors, and do not refine. Formamide (B3LYP/6-311G**) and S8 (MP2/cc-pVTZ) at 23 K:
+  dropping $`U_{AB}`$ changes the smeared density by at most 0.015 e/A^3 (at N); the smeared density
+  agrees closely at the bond critical points with the mean of 5e5 static densities at sampled
+  geometries -- the average our stiff-mode correction estimates with two points per mode. They
+  say earlier work (Tanaka; Stewart; Coppens; Jayatilaka and Grimwood) approximated the product's
+  ADP "without providing the exact solution". What is new here is taking $`U_{AB}`$ from a TLS plus
+  soft-mode model refined against the data, the derivatives, and the refinement.
 - D. Jayatilaka and D. J. Grimwood, *Acta Cryst.* A57, 76 (2001), §4.2: the two-centre temperature
   factors in Tonto.
 - R. F. Stewart, *J. Chem. Phys.* 51, 4569 (1969); P. Coppens, T. V. Willoughby and L. N. Csonka,

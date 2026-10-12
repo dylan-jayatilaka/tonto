@@ -1139,7 +1139,12 @@ and $`U_{AB} = \langle\mathbf{u}_A\mathbf{u}_B^{\mathsf T}\rangle`$ of (17),
 U^P_{\mu a\,\nu b} = w_A^2\, U_A + w_B^2\, U_B + w_A w_B\,(U_{AB} + U_{AB}^{\mathsf T}) . \qquad (28)
 ```
 
-It depends on the pair of primitives through $`w_A`$ and $`w_B`$. The structure factor is then
+It depends on the pair of primitives through $`w_A`$ and $`w_B`$. Equation (28) is equation (10) of
+Michael and Koritsanszky (2015), who give it as the exact ADP of a product of two primitive
+Gaussians when the covariance of the nuclear displacements is known. They took that covariance
+from the internal normal modes of an isolated molecule, with the coth amplitudes (6), and
+smeared the density itself; here the covariance comes from (17), with the rigid-body motion and
+the soft modes refined against the data. The structure factor is then
 
 ```math
 F(\mathbf{k}) = \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} c_{\mu a} c_{\nu b}\;
@@ -1182,6 +1187,13 @@ opposite directions and leaves the density between them nearly still. Stewart's 
 (`tc-stewart`) puts every product at the midpoint, and its two cases are $`V_{AB} = 0`$ for bonded
 atoms and $`U_{AB} = 0`$ for the rest. Those models cannot give $`U_{AB}`$ from $`U_A`$ and $`U_B`$; here it
 comes from (17).
+
+**How much the correlation matters, and how good the model is.** Michael and Koritsanszky (2015)
+tested both on formamide at 23 K, internal modes only. Leaving out $`U_{AB}`$ changed the smeared
+density by at most 0.015 e/Å³, at the nitrogen nucleus. Against the average of 500 000 static
+densities, each calculated at a geometry drawn from the distribution of the normal modes, the
+smeared density (28) gave nearly the same values at the bond critical points. That average is
+the quantity §6.6 estimates with two geometries for each stiff mode.
 
 ### 6.4 What the model leaves out
 
@@ -1425,6 +1437,9 @@ further experimental errors to keep in mind (Jayatilaka and Dittrich, 2008). The
 - R. F. Stewart, *J. Chem. Phys.* 51, 4569 (1969), and K. Tanaka, *Acta Cryst.* A44, 1002 (1988):
   two-centre temperature factors.
 - D. Jayatilaka and D. J. Grimwood, *Acta Cryst.* A57, 76 (2001): the two-centre models in Tonto.
+- J. R. Michael and T. Koritsanszky, *J. Math. Chem.* 53, 250 (2015): the ADP of a product of two
+  Gaussians from the full covariance of the nuclear displacements, tested against an average
+  over static densities.
 - A. P. Scott and L. Radom, *J. Phys. Chem.* 100, 16502 (1996): harmonic frequency scale factors.
 - W. C. Hamilton, *Acta Cryst.* 18, 502 (1965): significance tests on the crystallographic R factor.
 - S. Swaminathan, B. M. Craven and R. K. McMullan, *Acta Cryst.* B40, 300 (1984): urea, neutron, 123 K.
