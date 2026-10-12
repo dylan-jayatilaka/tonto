@@ -331,11 +331,10 @@ What is left, in this order. Each step changes numbers the later ones rest on.
    at `high` and 1e-7 at `very_high`, if Dylan confirms those two. The levels are not there now:
    `TASKS_AND_HISTORY.md`, *Tune the DFT grid levels*. First, because the atoms under DFT, the
    Hirshfeld integration and every reference after it depend on the grid. A re-bless.
-2. **The atomic density tables.** No spline; a table that resolves the core of a heavy atom
-   (`TASKS_AND_HISTORY.md`, *The atomic density tables*). Only then are the promolecule densities
-   and Hirshfeld weights right beyond Kr. A re-bless of the refinement tests.
-3. **`hart` to spherical functions.** Done 2026-10-12, ahead of steps 1 and 2
-   (`TASKS_AND_HISTORY.md`, archive, *four small tasks of the register*). Steps 1 and 2 will
+2. **The atomic density tables.** Done 2026-10-12, ahead of step 1 (pull request 53;
+   `TASKS_AND_HISTORY.md`, archive, *the atomic density tables*). No reference changed.
+3. **`hart` to spherical functions.** Done 2026-10-12, ahead of step 1
+   (`TASKS_AND_HISTORY.md`, archive, *four small tasks of the register*). Step 1 will
    re-bless the `hart` tests again.
 4. **What is left of the spherical-atom audit** (§3, steps 1 to 3): ground terms, release against
    debug, the Mac against achari2, spherical d and f in a cluster, now to Rn with X2C.

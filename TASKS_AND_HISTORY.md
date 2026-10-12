@@ -78,18 +78,13 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## START HERE (2026-10-12, evening): the atomic density tables are half done
+## START HERE (2026-10-12, night): next is the reset of the grid levels
 
-**In progress: branch `density-tables`** (pushed; see its pull request). The new table works
-and the suite passes; entry *The atomic density tables* under *Science and features* has the
-measurements, the design and what is left. The memory question is settled (Dylan): 1024 cells
-now, 0.4 MB an atom; one table for each kind of atom later, with the lightening of the derived
-types, because `ATOM` holds everything by value and the tables are copied by plain assignment
-and then changed for one atom by the spherically averaged Hirshfeld atoms. **Next:** a debug
-build and achari2 if not yet done; the effect on a Hirshfeld weight and a structure factor of
-a heavy-atom structure; then the tidy of `interpolator.foo` listed in the entry.
+**Next action:** reset the DFT grid levels, first in the order of work of
+`docs/TASK_HAR_STANDARDISATION.md` section 7 (entry *Tune the DFT grid levels* under *Science
+and features*). The atomic density tables, second in that order, are done.
 
-**Done today, all merged to `develop`** (archive entries of the same date):
+**Done on 2026-10-12, all merged to `develop`** (archive entries of that date):
 
 - pull request 49, four small tasks: cluster charges under a `tc-*` partition, the debug
   traceback, the translator's syntax errors, `hart` to spherical functions;
@@ -97,12 +92,15 @@ a heavy-atom structure; then the tidy of `interpolator.foo` listed in the entry.
   stops;
 - pull request 51: the libxc energies checked against ORCA (ORCA 6.1.1 is at
   `~/bin/orca_6_1_1/orca`);
-- pull request 52: `release` links OpenBLAS on every platform, `reference` netlib.
+- pull request 52: `release` links OpenBLAS on every platform, `reference` netlib;
+- pull request 53: the atomic density tables, a new kind of `INTERPOLATOR` table that is right
+  at a heavy nucleus. 1024 cells, 0.4 MB an atom (Dylan); one table for each kind of atom is
+  left for the lightening of the derived types.
 
-**New open entries from today:** open-shell DFT energies 3e-7 to 4e-7 above ORCA and PySCF
-(*Test suite and numerics*); `hart`'s fit is 4% better in GoF with spherical functions,
-unexplained (in the archive entry *four small tasks*); a line plot writes 75 of its 401 points
-(in the density tables entry).
+**New open entries from that day:** open-shell DFT energies 3e-7 to 4e-7 above ORCA and PySCF
+(*Test suite and numerics*); what is left of the density tables (*Science and features*);
+`hart`'s fit is 4% better in GoF with spherical functions, unexplained (in the archive entry
+*four small tasks*).
 
 **For the lightening of the derived types** (Dylan, 2026-10-12: a good idea anyway, before Julia
 or whatever comes): one density table for each kind of atom, held once and pointed to.
@@ -110,9 +108,6 @@ or whatever comes): one density table for each kind of atom, held once and point
 **Left on disk:** `mac-reference/`, a netlib build tree on the Mac made for timing, untracked;
 on achari2 `~/openblas-unpacked` (OpenBLAS unpacked, not installed), and the worktree
 `~/github/tonto-libxc` with a `release-openblas/` tree and `/tmp/relob_*`.
-
-**Order of work after the tables** (`docs/TASK_HAR_STANDARDISATION.md` section 7): reset the
-grid levels.
 
 ## CLOSED 2026-10-12: scalar X2C is on `develop`
 
@@ -4346,122 +4341,25 @@ needs only an x86 branch.
 
 # Science and features
 
-## The atomic density tables: no spline, and a mesh that resolves the core (Dylan, 2026-10-12)
+## Density tables: what is left after the new table (2026-10-12)
 
-**Register row** of the same name. **Second in the order of work** of
-`docs/TASK_HAR_STANDARDISATION.md` section 7: no promolecule density beyond Kr is right until
-this is done.
+**Register row:** *Tidy `interpolator.foo`, and move the Slater and Coppens bases to the new
+table*. The new table is in and is the default for atoms with a Gaussian basis (archive, *the
+atomic density tables*). Left:
 
-*What is wrong.* At the start of a job each kind of atom gets an SCF, its density is
-spherically averaged, and the result is tabulated against distance so that it need not be
-re-evaluated from the basis functions at every point
-(`MOLECULE.RHO:make_interpolator_sqrt_x1x`, `ATOM:make_interpolator`). The table is a cubic
-spline of the density itself in $`x = r^2/(s^2+r^2)`$, $`s`$ the Bragg–Slater radius, with knots
-1e-4 apart in $`x`$, at most 10,000 of them. The first knots are then at $`r`$ = 0, 0.027 and
-0.037 bohr for iodine, while its 1s density falls by a factor of 16 over the first interval. The
-spline overshoots: at the DFT grid points of HI it reaches -8300. Bromine stays positive. The
-tables feed the promolecule density, deformation densities, the Hirshfeld weights and the
-thinning of the DFT grid (which no longer trips on it: archive, *the four tasks left by the X2C
-work*). Not a picture-change effect: the density being tabulated is right, only its
-interpolation is wrong. Not tested without X2C, but the 1s peak is as steep there.
-
-*Decision (Dylan, 2026-10-12): avoid spline interpolation.* A spline can overshoot and change
-sign between knots; linear interpolation cannot leave the range of its two knots.
-
-*Is linear interpolation affordable? An estimate, to be measured.* Interpolate $`\ln\rho`$, which
-is close to piecewise linear in $`r`$ (a sum of exponentials), on a mesh even in $`\ln r`$ with
-ratio $`1+\delta`$ between neighbours. The error of linear interpolation over a step $`h = \delta r`$
-is $`h^2 f''/8`$, and for $`f = \ln\rho`$ this is the relative error of $`\rho`$. Where shell $`n`$
-dominates, the slope is about $`2Z/n`$ at $`r \approx n^2/Z`$, so $`r^2 f''`$ is at most about
-$`(2n)^2 \le 144`$ and the relative error at most about $`18\,\delta^2`$. From 1e-5 to 30 bohr is
-15 units of $`\ln r`$:
-
-| relative error of $`\rho`$ | $`\delta`$ | points |
-|---|---|---|
-| 1e-4 | 2.4e-3 | 6,000 |
-| 1e-5 | 7.5e-4 | 20,000 |
-| 1e-6 | 2.4e-4 | 60,000 |
-
-So tens of thousands of points for each kind of atom, against 10,000 at most now: about half a
-megabyte and that many density evaluations for each kind of atom, once in a job. Not too many. The bound is
-loose; the real curvature of $`\ln\rho`$ is large only between shells. A lookup then costs one
-logarithm for each point, where the present mapping in $`r^2`$ avoids even the square root; to be timed
-on a refinement.
-
-*Measured, 2026-10-12, outside Tonto* (`~/tonto-runs/2026-10-12_density_tables`: `acc.py`,
-`acc2.py`, `bench.f90`). Exact spherical densities of Kr, Xe and Rn (PySCF, x2c-TZVPall, scalar
-X2C), each kind of table tested at 400,000 distances from 1e-4 bohr out to where the density is
-1e-10. Lookup times are for a point given by its squared distance, gfortran-14 `-O3`, on the Mac.
-
-| table | points | worst relative error | time for one lookup |
-|---|---|---|---|
-| A, the present one: cubic spline of the density in $`x`$ | 10,000 | Kr 1.6, Xe 13, Rn 150; negative for Xe and Rn | 3.7 ns |
-| D, linear in the density, same $`x`$ | 60,000 | Kr 0.7, Xe 3.9, Rn 27 | 2.0 ns |
-| B, linear in $`\ln\rho`$ on a mesh even in $`\ln r`$ | 6,000 / 20,000 / 60,000 | 6e-5 / 6e-6 / 6e-7 | 22 ns |
-| C, linear in the density on the same mesh | 60,000 | 1e-5 | 5.8 ns |
-| G, linear in $`\ln\rho`$, mesh from the bits of $`r^2`$ | 20,000 / 60,000 | 2e-6 / 2e-7 | 15 ns |
-| H, linear in the density, mesh from the bits of $`r^2`$ | 60,000 / 200,000 / 600,000 | 1e-5 / 1e-6 / 1e-7 | 3.2 ns |
-
-- **The mapping is what is wrong, not only the spline.** In $`x`$ even 60,000 points and linear
-  interpolation are wrong by a factor near the nucleus; Kr is already wrong by 160% at 0.01 bohr.
-- **The estimate above holds:** 20,000 points for 1e-5 with table B.
-- **The logarithm and the exponential are the cost,** about 4 and 13 ns; the table size is not,
-  up to 600,000 points (4.8 MB).
-- **Table H needs neither.** Its mesh is even in $`r^2`$ inside each power of two of $`r^2`$, so
-  the cell is read from the exponent and the leading bits of the number (`exponent`,
-  `fraction`), and the density itself is interpolated. It is faster than the present spline and
-  reaches 1e-6 with 200,000 points (1.6 MB for each kind of atom); its worst error is in the far
-  tail, and inside 3 bohr it is twenty times smaller. It cannot overshoot or change sign.
-  **This is the candidate.**
-- Not measured: the time to fill a table in Tonto (one density evaluation for each point, once
-  for each kind of atom), and the effect on a Hirshfeld weight and a structure factor.
-
-*In Tonto, 2026-10-12, branch `density-tables`.* Table H is in as a new kind of `INTERPOLATOR`,
-domain mapping `octaves`: 1024 cells to each power of two of $`r^2`$, from $`r`$ = 1e-6 bohr,
-ended where the density falls below the table's cutoff; about 48,000 points, 0.4 MB.
-`INTERPOLATOR:set_octave_points` makes the points, the caller evaluates the function at them
-and hands the values back (`set_data_values`, `finalize`), and one routine,
-`octave_values_for`, does every lookup. So no function is passed and `saved_self` is not used:
-`ATOM:make_octave_interpolator` evaluates the atom's density in batches.
-`MOLECULE.RHO:make_interpolator_octaves` replaces `make_interpolator_sqrt_x1x`, so every atom
-with a Gaussian basis gets the new table. The Slater and Coppens bases and the spherically
-averaged Hirshfeld atoms keep their old kinds.
-
-- **It is right at a heavy nucleus.** HI, x2c-SVPall, X2C, promolecule density out from the
-  iodine nucleus, against PySCF's iodine atom: the new table agrees to all six printed figures
-  at the twelve points compared (375140, 197207, 139326, ... 24442 at 0.0149 bohr); the old
-  table gives 372985 at the second point and 167779 at the last, wrong by up to a factor of 7.
-  At 1 bohr old and new agree to 7e-6.
-- **No test fails,** with 4096 cells or with 1024. Mac release build, full suite: 187 pass, 2
-  skip as always. So no re-bless
-  is forced; the references still hold the old tables' numbers within the tolerance.
-- **Time:** the suite takes the same (221 to 224 s against 217 to 219 s); filling the tables
-  adds about 0.2 s for each kind of atom (HI: 4.3 to 4.6 s).
-- **Memory and the number of cells (Dylan, 2026-10-12: 1024 cells now, sharing later).** The
-  table is copied to every atom (`MOLECULE.RHO:make_interpolators`), not kept once for each
-  kind. With 4096 cells that is 1.5 MB an atom against 0.24 MB before, 1.5 GB for a 1000-atom
-  cluster; with 1024 it is 0.4 MB. Measured against the exact Kr, Xe and Rn densities, 1024
-  cells: worst error 1.4e-5 to 2.6e-5, at 9 to 11 bohr where the density is 1e-10, and about
-  1e-6 inside 3 bohr; 4096 cells: 0.9e-6 to 1.6e-6, and 6e-8 to 8e-8 inside 3 bohr
-  (`acc3.py`). One table for each kind of atom belongs with the lightening of the derived
-  types (*Re-engineering*): `ATOM` holds everything by value, its basis sets too, so sharing
-  is a change to `ATOM`, not to the table. The number of cells is `INTERPOLATOR_OCTAVE_CELLS`.
-- **Left to tidy in `interpolator.foo`:** the sixteen pasted lookup loops (linear or spline,
-  logged or not, with a factor or not, set or add); the families of routines that take a
-  function argument (`_vs` for Slater shells, `_d_`, `_d2_`, `_general_`); every setting held
-  as a string and as a flag; the copy of the whole point array in each lookup; the commented
-  `ENSURE`s. To do once the Slater and Coppens bases are moved to the new kind.
-- **Found on the way:** a plot along a line (`y_width= 0`, `z_width= 0`, `n_x= 401`) reports 75
-  points and writes 75 values, then zeros and garbage, with the old binary too. Not looked into.
-- Not done: the effect on a Hirshfeld weight and a structure factor of a heavy-atom structure;
-  a debug build; achari2.
-
-*To do.* (1) Measure the present table against the density it was made from for Br, I and Hg,
-and its effect on a Hirshfeld weight and a structure factor. (2) Write the linear table of
-$`\ln\rho`$ on the logarithmic mesh, with the number of points set from a tolerance, and measure
-the same. (3) Time it. (4) Make it the default; every Hirshfeld weight moves a little, so the
-refinement tests are re-blessed. The same change serves the Slater and Coppens tables, which
-have their own interpolators.
+1. **A heavy-atom structure:** the effect on a Hirshfeld weight and a structure factor. Needs
+   a data set with an atom beyond Kr, which is also owed to the standardisation.
+2. **Move the Slater and Coppens bases, and the spherically averaged Hirshfeld atoms, to the
+   `octaves` kind,** then delete the kinds nothing uses.
+3. **Tidy `interpolator.foo`:** the sixteen pasted lookup loops (linear or spline, logged or
+   not, with a factor or not, set or add); the families of routines that take a function
+   argument (`_vs` for Slater shells, `_d_`, `_d2_`, `_general_`) and the `saved_self` device
+   that goes with them; every setting held as a string and as a flag; the copy of the whole
+   point array in each lookup; the commented `ENSURE`s.
+4. **One table for each kind of atom,** with the lightening of the derived types
+   (*Re-engineering*): today it is copied to every atom, 0.4 MB each.
+5. **A line plot writes 75 of its 401 points** (`y_width= 0`, `z_width= 0`, `n_x= 401`), then
+   zeros and garbage; in the old binary too. Not looked into.
 
 ## Picture-change correction of the density: recover or rewrite Bučinský's code (Dylan, 2026-10-12)
 
@@ -7224,6 +7122,128 @@ different question and the one that matters.
 ---
 
 # Done, resolved and closed (archive)
+
+## CLOSED (2026-10-12): the atomic density tables -- no spline, and a mesh that resolves the core
+
+**Merged by pull request 53.** What is left is the live entry *Density tables: what is left*.
+The entry as it stood, with the measurements:
+
+
+**Register row** of the same name. **Second in the order of work** of
+`docs/TASK_HAR_STANDARDISATION.md` section 7: no promolecule density beyond Kr is right until
+this is done.
+
+*What is wrong.* At the start of a job each kind of atom gets an SCF, its density is
+spherically averaged, and the result is tabulated against distance so that it need not be
+re-evaluated from the basis functions at every point
+(`MOLECULE.RHO:make_interpolator_sqrt_x1x`, `ATOM:make_interpolator`). The table is a cubic
+spline of the density itself in $`x = r^2/(s^2+r^2)`$, $`s`$ the Bragg–Slater radius, with knots
+1e-4 apart in $`x`$, at most 10,000 of them. The first knots are then at $`r`$ = 0, 0.027 and
+0.037 bohr for iodine, while its 1s density falls by a factor of 16 over the first interval. The
+spline overshoots: at the DFT grid points of HI it reaches -8300. Bromine stays positive. The
+tables feed the promolecule density, deformation densities, the Hirshfeld weights and the
+thinning of the DFT grid (which no longer trips on it: archive, *the four tasks left by the X2C
+work*). Not a picture-change effect: the density being tabulated is right, only its
+interpolation is wrong. Not tested without X2C, but the 1s peak is as steep there.
+
+*Decision (Dylan, 2026-10-12): avoid spline interpolation.* A spline can overshoot and change
+sign between knots; linear interpolation cannot leave the range of its two knots.
+
+*Is linear interpolation affordable? An estimate, to be measured.* Interpolate $`\ln\rho`$, which
+is close to piecewise linear in $`r`$ (a sum of exponentials), on a mesh even in $`\ln r`$ with
+ratio $`1+\delta`$ between neighbours. The error of linear interpolation over a step $`h = \delta r`$
+is $`h^2 f''/8`$, and for $`f = \ln\rho`$ this is the relative error of $`\rho`$. Where shell $`n`$
+dominates, the slope is about $`2Z/n`$ at $`r \approx n^2/Z`$, so $`r^2 f''`$ is at most about
+$`(2n)^2 \le 144`$ and the relative error at most about $`18\,\delta^2`$. From 1e-5 to 30 bohr is
+15 units of $`\ln r`$:
+
+| relative error of $`\rho`$ | $`\delta`$ | points |
+|---|---|---|
+| 1e-4 | 2.4e-3 | 6,000 |
+| 1e-5 | 7.5e-4 | 20,000 |
+| 1e-6 | 2.4e-4 | 60,000 |
+
+So tens of thousands of points for each kind of atom, against 10,000 at most now: about half a
+megabyte and that many density evaluations for each kind of atom, once in a job. Not too many. The bound is
+loose; the real curvature of $`\ln\rho`$ is large only between shells. A lookup then costs one
+logarithm for each point, where the present mapping in $`r^2`$ avoids even the square root; to be timed
+on a refinement.
+
+*Measured, 2026-10-12, outside Tonto* (`~/tonto-runs/2026-10-12_density_tables`: `acc.py`,
+`acc2.py`, `bench.f90`). Exact spherical densities of Kr, Xe and Rn (PySCF, x2c-TZVPall, scalar
+X2C), each kind of table tested at 400,000 distances from 1e-4 bohr out to where the density is
+1e-10. Lookup times are for a point given by its squared distance, gfortran-14 `-O3`, on the Mac.
+
+| table | points | worst relative error | time for one lookup |
+|---|---|---|---|
+| A, the present one: cubic spline of the density in $`x`$ | 10,000 | Kr 1.6, Xe 13, Rn 150; negative for Xe and Rn | 3.7 ns |
+| D, linear in the density, same $`x`$ | 60,000 | Kr 0.7, Xe 3.9, Rn 27 | 2.0 ns |
+| B, linear in $`\ln\rho`$ on a mesh even in $`\ln r`$ | 6,000 / 20,000 / 60,000 | 6e-5 / 6e-6 / 6e-7 | 22 ns |
+| C, linear in the density on the same mesh | 60,000 | 1e-5 | 5.8 ns |
+| G, linear in $`\ln\rho`$, mesh from the bits of $`r^2`$ | 20,000 / 60,000 | 2e-6 / 2e-7 | 15 ns |
+| H, linear in the density, mesh from the bits of $`r^2`$ | 60,000 / 200,000 / 600,000 | 1e-5 / 1e-6 / 1e-7 | 3.2 ns |
+
+- **The mapping is what is wrong, not only the spline.** In $`x`$ even 60,000 points and linear
+  interpolation are wrong by a factor near the nucleus; Kr is already wrong by 160% at 0.01 bohr.
+- **The estimate above holds:** 20,000 points for 1e-5 with table B.
+- **The logarithm and the exponential are the cost,** about 4 and 13 ns; the table size is not,
+  up to 600,000 points (4.8 MB).
+- **Table H needs neither.** Its mesh is even in $`r^2`$ inside each power of two of $`r^2`$, so
+  the cell is read from the exponent and the leading bits of the number (`exponent`,
+  `fraction`), and the density itself is interpolated. It is faster than the present spline and
+  reaches 1e-6 with 200,000 points (1.6 MB for each kind of atom); its worst error is in the far
+  tail, and inside 3 bohr it is twenty times smaller. It cannot overshoot or change sign.
+  **This is the candidate.**
+- Not measured: the time to fill a table in Tonto (one density evaluation for each point, once
+  for each kind of atom), and the effect on a Hirshfeld weight and a structure factor.
+
+*In Tonto, 2026-10-12, branch `density-tables`.* Table H is in as a new kind of `INTERPOLATOR`,
+domain mapping `octaves`: 1024 cells to each power of two of $`r^2`$, from $`r`$ = 1e-6 bohr,
+ended where the density falls below the table's cutoff; about 48,000 points, 0.4 MB.
+`INTERPOLATOR:set_octave_points` makes the points, the caller evaluates the function at them
+and hands the values back (`set_data_values`, `finalize`), and one routine,
+`octave_values_for`, does every lookup. So no function is passed and `saved_self` is not used:
+`ATOM:make_octave_interpolator` evaluates the atom's density in batches.
+`MOLECULE.RHO:make_interpolator_octaves` replaces `make_interpolator_sqrt_x1x`, so every atom
+with a Gaussian basis gets the new table. The Slater and Coppens bases and the spherically
+averaged Hirshfeld atoms keep their old kinds.
+
+- **It is right at a heavy nucleus.** HI, x2c-SVPall, X2C, promolecule density out from the
+  iodine nucleus, against PySCF's iodine atom: the new table agrees to all six printed figures
+  at the twelve points compared (375140, 197207, 139326, ... 24442 at 0.0149 bohr); the old
+  table gives 372985 at the second point and 167779 at the last, wrong by up to a factor of 7.
+  At 1 bohr old and new agree to 7e-6.
+- **No test fails,** with 4096 cells or with 1024. Mac release build, full suite: 187 pass, 2
+  skip as always. So no re-bless
+  is forced; the references still hold the old tables' numbers within the tolerance.
+- **Time:** the suite takes the same (221 to 224 s against 217 to 219 s); filling the tables
+  adds about 0.2 s for each kind of atom (HI: 4.3 to 4.6 s).
+- **Memory and the number of cells (Dylan, 2026-10-12: 1024 cells now, sharing later).** The
+  table is copied to every atom (`MOLECULE.RHO:make_interpolators`), not kept once for each
+  kind. With 4096 cells that is 1.5 MB an atom against 0.24 MB before, 1.5 GB for a 1000-atom
+  cluster; with 1024 it is 0.4 MB. Measured against the exact Kr, Xe and Rn densities, 1024
+  cells: worst error 1.4e-5 to 2.6e-5, at 9 to 11 bohr where the density is 1e-10, and about
+  1e-6 inside 3 bohr; 4096 cells: 0.9e-6 to 1.6e-6, and 6e-8 to 8e-8 inside 3 bohr
+  (`acc3.py`). One table for each kind of atom belongs with the lightening of the derived
+  types (*Re-engineering*): `ATOM` holds everything by value, its basis sets too, so sharing
+  is a change to `ATOM`, not to the table. The number of cells is `INTERPOLATOR_OCTAVE_CELLS`.
+- **Left to tidy in `interpolator.foo`:** the sixteen pasted lookup loops (linear or spline,
+  logged or not, with a factor or not, set or add); the families of routines that take a
+  function argument (`_vs` for Slater shells, `_d_`, `_d2_`, `_general_`); every setting held
+  as a string and as a flag; the copy of the whole point array in each lookup; the commented
+  `ENSURE`s. To do once the Slater and Coppens bases are moved to the new kind.
+- **Found on the way:** a plot along a line (`y_width= 0`, `z_width= 0`, `n_x= 401`) reports 75
+  points and writes 75 values, then zeros and garbage, with the old binary too. Not looked into.
+- Not done: the effect on a Hirshfeld weight and a structure factor of a heavy-atom structure;
+  a debug build; achari2.
+
+*To do.* (1) Measure the present table against the density it was made from for Br, I and Hg,
+and its effect on a Hirshfeld weight and a structure factor. (2) Write the linear table of
+$`\ln\rho`$ on the logarithmic mesh, with the number of points set from a tolerance, and measure
+the same. (3) Time it. (4) Make it the default; every Hirshfeld weight moves a little, so the
+refinement tests are re-blessed. The same change serves the Slater and Coppens tables, which
+have their own interpolators.
+
 
 ## CLOSED (2026-10-12): `release` links OpenBLAS on every platform
 
