@@ -102,8 +102,8 @@ enable_testing()
 
 # The build type is an intent: it chooses the optimisation, the architecture
 # tuning and the BLAS together. debug finds bugs; release (the default) is
-# portable; fast is all-out speed on this machine; reference is reproducible,
-# for blessing and CI. release-static is release, linked statically. The table
+# the same recipe on every machine; fast is all-out speed on this machine;
+# reference gives the same numbers on every machine, for blessing and CI. release-static is release, linked statically. The table
 # is in docs/BUILDING_ON_LINUX.md. Read once here, because the BLAS is chosen
 # before cmake/SetFortranFlags.cmake sets the flags.
 if(NOT CMAKE_BUILD_TYPE)
@@ -125,10 +125,13 @@ endif()
 # from a modern one (it alone flipped short/h2o_rhf_6-31G(d)_normal_mode_analysis).
 # So every build type avoids it on macOS:
 #   reference  netlib, required: Homebrew's keg-only lapack, searched first.
+#   release    OpenBLAS, required.
 #   fast       OpenBLAS, required.
 #   otherwise  Homebrew's OpenBLAS if installed, else whatever is found.
-# An explicit -DBLA_VENDOR=... is used as given, except by reference, which
-# accepts only netlib.
+# On every platform release and fast link OpenBLAS and reference links netlib,
+# so that a build type means the same library everywhere. An explicit
+# -DBLA_VENDOR=... is used as given, except by reference, which accepts only
+# netlib. -DCOMPILE_LAPACK=ON builds the bundled netlib instead of finding one.
 set(_tonto_blas_by_user OFF)
 if(DEFINED BLA_VENDOR)
     set(_tonto_blas_by_user ON)
@@ -152,8 +155,19 @@ if(TONTO_INTENT STREQUAL "REFERENCE")
             message(FATAL_ERROR "A reference build needs the netlib LAPACK, which macOS "
                 "does not provide. Install it with:  brew install lapack")
         endif()
+    elseif(CMAKE_LIBRARY_ARCHITECTURE)
+        # Debian and Ubuntu keep netlib in its own directories. Their
+        # libblas.so one level up is an "alternative" that follows OpenBLAS
+        # once that is installed, so look in the netlib directories first.
+        foreach(_netlib_dir /usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/blas
+                            /usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/lapack)
+            if(EXISTS ${_netlib_dir})
+                list(PREPEND CMAKE_LIBRARY_PATH ${_netlib_dir})
+            endif()
+        endforeach()
     endif()
-elseif(TONTO_INTENT STREQUAL "FAST" AND NOT _tonto_blas_by_user)
+elseif(TONTO_INTENT MATCHES "^(RELEASE|FAST)$" AND NOT _tonto_blas_by_user
+       AND NOT COMPILE_LAPACK)
     set(BLA_VENDOR OpenBLAS)
     if(APPLE)
         foreach(_brew_prefix /opt/homebrew/opt/openblas /usr/local/opt/openblas)
@@ -199,10 +213,11 @@ if(COMPILE_LAPACK)
 else()
   find_package(LAPACK)
   if(${LAPACK_FOUND})
-  elseif(TONTO_INTENT STREQUAL "FAST" AND NOT _tonto_blas_by_user)
-    message(FATAL_ERROR "A fast build links OpenBLAS, which was not found. Install it "
-        "(Ubuntu: libopenblas-dev; macOS: brew install openblas), or build fast with "
-        "another BLAS by adding -DBLA_VENDOR=Generic.")
+  elseif(TONTO_INTENT MATCHES "^(RELEASE|FAST)$" AND NOT _tonto_blas_by_user)
+    message(FATAL_ERROR "A ${CMAKE_BUILD_TYPE} build links OpenBLAS, which was not found. "
+        "Install it (Ubuntu: libopenblas-dev; macOS: brew install openblas). To build "
+        "with the BLAS the system has, add -DBLA_VENDOR=Generic; to build the bundled "
+        "netlib LAPACK, add -DCOMPILE_LAPACK=ON.")
   else()
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/lapack-release)
     set(LAPACK_LIBRARIES
@@ -260,9 +275,8 @@ if(TONTO_INTENT STREQUAL "REFERENCE" AND NOT COMPILE_LAPACK)
         string(TOLOWER "${_real}" _real_lc)
         if(_real_lc MATCHES "openblas|accelerate|veclib|mkl|blis|atlas|flexiblas|nvpl|armpl")
             message(FATAL_ERROR "A reference build must link the netlib BLAS and LAPACK, "
-                "but found ${_real}. On Ubuntu, point the libblas.so.3 and liblapack.so.3 "
-                "alternatives at netlib (update-alternatives --config); on macOS, "
-                "brew install lapack.")
+                "but found ${_real}. On Ubuntu, install libblas-dev and liblapack-dev; "
+                "on macOS, brew install lapack.")
         endif()
     endforeach()
 endif()

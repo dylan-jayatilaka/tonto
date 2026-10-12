@@ -67,7 +67,7 @@ because by then it held far more than deferred items.)*
 |-------|------------------|
 | [Correctness](#correctness--open-bugs-that-give-wrong-answers) | Open bugs that give wrong answers, including ones with no diagnostic |
 | [MPI](#mpi) | The milestone-4 defect register, the `parallel do` lock, the `MPI_Bcast` desync, architecture options |
-| [Build system and toolchain](#build-system-and-toolchain) | `get_from` dependency trap, OpenBLAS |
+| [Build system and toolchain](#build-system-and-toolchain) | `get_from` dependency trap |
 | [Test suite and numerics](#test-suite-and-numerics) | Small numerical differences, `-O0` failures, NaN/negative ESDs |
 | [Translator and the Foo language](#translator-and-the-foo-language) | Dropped `data` statements, name-case normalisation, F2008 submodules |
 | [hart](#hart) | Remaining hart items and un-migrated runfiles |
@@ -4306,144 +4306,6 @@ therefore **choose and pin an x86 coretype**, or the new references will be no m
 the old macOS ones were. The `PINNED_CORETYPE` hook in `scripts/test.py` is already there and
 needs only an x86 branch.
 
-## Deferred: adopt OpenBLAS consistently (single-threaded) on Linux and WSL
-
-**Where this stands, 2026-10-12.** The build types have since settled most of it: `fast`
-requires OpenBLAS everywhere, `reference` requires netlib everywhere, and only `release` differs
-by platform (Homebrew OpenBLAS on the Mac, the system BLAS on Linux and WSL, which is netlib on a
-plain Ubuntu). **Dylan's inclination: `release` links OpenBLAS on every platform**, for speed and
-because one then knows what one is getting; `reference` stays separate and is the answer to
-cross-machine agreement; a user may substitute another BLAS, which must be documented, with
-where the compiler flags are set. Not decided yet. Two measurements were made for it, at
-`239869bb` on achari2 and at `12f34f65` on the Mac:
-
-- **Linux passes with OpenBLAS.** achari2 (Xeon W-2123), the `reference` binary run against
-  Ubuntu's `libopenblas0-pthread` 0.3.26, unpacked into `~/openblas-unpacked` and put first with
-  `LD_LIBRARY_PATH`, nothing installed: 189 of 189 pass against the netlib-blessed references,
-  one thread, no kernel pinned. One machine only; a CI runner with another processor is not tested.
-- **Speed, netlib against OpenBLAS, same code.** Only DFT jobs differ. Whole suite: Mac 1385
-  against 1301 s of test time (6%), achari2 602 against 575 s wall. Median over the 41 Mac tests
-  longer than 5 s: 1%.
-
-| test | Mac OpenBLAS | Mac netlib | achari2 OpenBLAS | achari2 netlib |
-|---|---|---|---|---|
-| `urea_rks_B3LYP_def2-TZVP_HAR_cell_maps` | 72 s | 98 s | 129 s | 166 s |
-| `libxc_energies_match_pyscf` | 13 s | 30 s | 24 s | 45 s |
-| `dft_energies_match_g09` | 6 s | 13 s | 10 s | 21 s |
-| `cyclazine_rhf_cc-pVDZ_VMO_canonicalization` | 134 s | 133 s | 216 s | 216 s |
-
-  So netlib costs a factor of 1.3 to 2.2 on small DFT jobs and nothing elsewhere. The 6.5 times
-  on the XC step (zinc finger, RI-J, 2026-09-17) was a large molecule and has not been repeated.
-
-**If adopted, to do:** `release` takes `BLA_VENDOR=OpenBLAS` on every platform and stops with
-the package name if it is missing, as `fast` does; the building pages say so, say how to
-substitute another BLAS (`-DBLA_VENDOR=`, already there) and where the compiler flags are;
-`OPENBLAS_CORETYPE` documented for a user who needs two machines to agree, and an x86 value in
-`scripts/test.py`'s `PINNED_CORETYPE` if a CI runner needs it; `reference` must find netlib by
-its own path on an Ubuntu where `libopenblas-dev` is installed, since that package makes
-OpenBLAS the system default; CI: the `release` workflows install OpenBLAS, and whether they
-still pass on the runners' processors is the open risk.
-
-The older text below is kept for its reasoning.
-
-**CAVEAT added 2026-09-24, to be dealt with when this is implemented: OpenBLAS dispatches on the
-CPU, so adopting it costs cross-machine reproducibility.** It selects kernels from the detected
-microarchitecture, so two machines with identical compilers and identical flags would again produce
-different last bits -- which the suite's ill-conditioned derived quantities amplify past the gate
-(see *PARKED with the source identified: the macOS red on `gly_ala_fragHAR`*). Netlib reference
-BLAS has no dispatch, which is the only reason today's Linux references are stable between machines
-at all.
-
-A container does **not** solve it: a container shares the host kernel and CPU, and `CPUID` is not
-virtualised, so OpenBLAS inside the image still sees the real host CPU. `OPENBLAS_CORETYPE` does
-force a kernel, but only one already compiled into that build, and the accepted names shift between
-OpenBLAS releases.
-
-So if this is adopted, it needs `OPENBLAS_CORETYPE` pinned as well as one thread -- or, more
-simply, netlib kept for the `reference` build type while users get OpenBLAS. The two decisions look
-independent and are not. See `docs/TONTO_BLESSING_TESTS.md`.
-
-
-**Decision (2026-07-30): not now.** Do the Mac/Linux numerical comparison first. The intended
-end state is **OpenBLAS, pinned to one thread, on every platform** — matching what macOS already
-does — but getting there means **redoing the reference outputs completely**, so it must not be
-started in the middle of other work.
-
-### What is actually happening today
-
-Measured, not inferred — `ldd release/tonto` links `libblas.so.3` / `liblapack.so.3`, which on
-Debian/Ubuntu are `update-alternatives` symlinks. On the development box exactly one alternative
-is registered (priority 10, from `libblas3` 3.12.1): the **netlib reference BLAS**. OpenBLAS is
-not installed. The WSL CI runner resolves the same way (`Found BLAS:
-/usr/lib/x86_64-linux-gnu/libblas.so`, LAPACK 3.12.0).
-
-| Platform | Selection | Verdict |
-|----------|-----------|---------|
-| macOS | `CMakeLists.txt:110` explicitly prefers Homebrew OpenBLAS over Accelerate, and warns on fallback — because Accelerate's Fortran LAPACK is frozen at 3.2.1 (2009) and on its own flipped `short/h2o_rhf_6-31G(d)_normal_mode_analysis` | Handled |
-| Linux | No `BLA_VENDOR`; bare `find_package(LAPACK)` takes whatever the distro alternative points at. README installs `libblas-dev liblapack-dev` = reference | **Suboptimal** |
-| WSL | Same as Linux; `docs/BUILDING_ON_WINDOWS.md` installs the same reference packages | **Suboptimal** |
-
-So the platform that got careful attention is macOS, while the two reference platforms silently
-get the slowest BLAS. That is backwards.
-
-Note the two axes are independent: **LAPACK version** (3.12.x here — modern, so the `ILAVER`
-probe stays quiet) is a correctness/algorithms question; **BLAS implementation** (reference) is a
-speed one.
-
-### How much is actually on the table
-
-Less than it first appears, and the bigger lever is elsewhere. Tonto's LAPACK surface is narrow —
-`dsyev`, `zheev`, `zhpev`, `dgesv`, `dgetrf`/`dgetri`, **all in `mat{real}.foo` / `mat{cpx}.foo`**.
-There is **not one explicit `dgemm` call**. Matrix multiplication goes through the Fortran
-`matmul` intrinsic instead: **375 call sites across 35 files**. By default gfortran services
-`matmul` from libgfortran's own blocked routine, never touching BLAS.
-
-So swapping in OpenBLAS alone accelerates only the eigensolves and linear solves. The flag that
-would route `matmul` to `dgemm` is **`-fexternal-blas`** (with `-fblas-matmul-limit=<n>` as the
-size threshold); it is not set anywhere in `cmake/SetFortranFlags.cmake`. That is plausibly the
-larger win — and a larger numerical perturbation.
-
-Also unquantified: how much of a typical HAR/SCF run is linear algebra at all, versus Tonto's own
-two-electron integral code. Benchmark before believing any of this is worth it.
-
-### Why this forces a full re-bless
-
-Both changes alter summation order, so last digits move; the loose gate (rel ≤ 0.2 % OR
-last-digit ≤ 2) exists precisely for this, and the macOS case above shows a swap *can* flip a
-test outright.
-
-The sharper hazard is **threading**. Reference BLAS is single-threaded; OpenBLAS is not, and its
-results vary with thread *count*, because the blocking — and hence the reduction order — changes.
-Every stored reference in `tests/` was generated against single-threaded reference BLAS **on
-Linux and WSL. That was never true on macOS**, which has linked Homebrew's OpenBLAS since
-`CMakeLists.txt:110` -- a `USE_OPENMP` build, unpinned, with twelve threads available. The
-sentence stood here uncorrected until 2026-09-22, and anyone planning the re-bless from it would
-have planned the wrong thing.
-
-**Thread pinning is now done, ahead of this item, and cost nothing** (2026-09-22, `cbd72607`):
-`OPENBLAS_NUM_THREADS`, `OMP_NUM_THREADS`, `VECLIB_MAXIMUM_THREADS` and `MKL_NUM_THREADS`, all
-four because which one is authoritative depends on how the BLAS was built. Set in
-`scripts/test.py` (`ONE_THREAD_ENV`, which covers `suite_report.py` too, it driving `test.py`)
-and, for the dozen checker tests that bypass `test.py`, as a test property in
-`tests/CMakeLists.txt`. The short suite was unchanged either way, 68/70, and the same wall-clock
--- 43.25 s pinned against 43.71 s. **The speed of OpenBLAS is in its kernels, not its threads.**
-Multithreaded OpenBLAS would also oversubscribe cores in MPI builds: ranks x threads.
-
-### Suggested order when this is picked up
-
-1. Finish the Mac/Linux numerical comparison **first** — it is the baseline everything else is
-   measured against, and it must not be perturbed mid-flight.
-2. Benchmark `libopenblas-dev` alone (threads pinned to 1) on one representative HAR job. Record
-   before/after wall-clock **and** the agreement table.
-3. Separately benchmark `-fexternal-blas`, same job, same pinning.
-4. Only then decide whether the measured speedup justifies re-blessing every reference. If it
-   does, re-bless in one deliberate commit across all platforms at once, so Linux, macOS and WSL
-   share a single BLAS story.
-5. Update `README.md`, `docs/BUILDING_ON_WINDOWS.md` and `scripts/wsl_doctor.sh` together — they currently
-   tell users to install the reference packages.
-
----
-
 ---
 
 # Science and features
@@ -7286,6 +7148,188 @@ different question and the one that matters.
 ---
 
 # Done, resolved and closed (archive)
+
+## CLOSED (2026-10-12): `release` links OpenBLAS on every platform
+
+**Decision (Dylan, 2026-10-12):** `release` and `fast` link OpenBLAS and `reference` links
+netlib, on every platform, so a build type means the same library everywhere. `release` is not
+merged with `reference`: the first is for speed with a known recipe, the second for the same
+numbers on every machine. A user may substitute another BLAS.
+
+**What changed.** `CMakeLists.txt`: `release` takes `BLA_VENDOR=OpenBLAS` and stops with the
+package name if it is missing (`-DBLA_VENDOR=Generic` takes the system BLAS,
+`-DCOMPILE_LAPACK=ON` the bundled netlib; the Windows cross-build uses the second and is
+unchanged). On Debian and Ubuntu `reference` now looks for netlib in its own directories
+(`/usr/lib/<arch>/blas`, `/lapack`) before the system default, which follows OpenBLAS once
+`libopenblas-dev` is installed; so the three packages can be installed together. The three
+building pages say which library each type links, how to substitute a BLAS, how to set the
+processor tuning, where the compiler flags are (`-DCMAKE_Fortran_FLAGS=` adds;
+`cmake/SetFortranFlags.cmake` holds each type's), and how to make two machines agree
+(`OPENBLAS_CORETYPE`). `scripts/wsl_doctor.sh` checks for OpenBLAS; the one workflow step that
+configures a `release` build on Linux installs it.
+
+**Checked on achari2** (Xeon W-2123; OpenBLAS 0.3.26 unpacked in `~/openblas-unpacked`, not
+installed):
+
+- a `release` configure with no OpenBLAS stops with the message;
+- a `release` build linked against OpenBLAS: full suite 189 of 189 against the netlib-blessed
+  references, one thread, no kernel pinned;
+- `OPENBLAS_CORETYPE=HASWELL` is accepted (`Core: Haswell`; left alone, `SkylakeX`);
+- a fresh `reference` build finds `blas/libblas.so` and `lapack/liblapack.so`, and the binary
+  loads them from those directories (its run path names them), so the system default no longer
+  decides; the existing `reference` tree rebuilt and passed the short suite, 87 of 87.
+
+On the Mac both trees reconfigure to what they had: OpenBLAS for `release`, Homebrew's netlib
+for `reference`.
+
+**Not checked.** No CI workflow builds `release` with OpenBLAS (CI builds `reference` and
+`debug`), so other processors are untested; `scripts/test.py` pins the kernel on the Mac only
+(`PINNED_CORETYPE`), and an x86 value can be added there if a machine needs it. The real-WSL workflow now installs
+`libopenblas-dev` beside netlib and builds `reference` there, which is the case of both
+installed; its two configure steps with no build type (so `release`) were what failed first,
+for want of OpenBLAS.
+
+The measurements behind the decision, and the older reasoning, kept as they were written:
+
+**Where this stands, 2026-10-12.** The build types have since settled most of it: `fast`
+requires OpenBLAS everywhere, `reference` requires netlib everywhere, and only `release` differs
+by platform (Homebrew OpenBLAS on the Mac, the system BLAS on Linux and WSL, which is netlib on a
+plain Ubuntu). **Dylan's inclination: `release` links OpenBLAS on every platform**, for speed and
+because one then knows what one is getting; `reference` stays separate and is the answer to
+cross-machine agreement; a user may substitute another BLAS, which must be documented, with
+where the compiler flags are set. Not decided yet. Two measurements were made for it, at
+`239869bb` on achari2 and at `12f34f65` on the Mac:
+
+- **Linux passes with OpenBLAS.** achari2 (Xeon W-2123), the `reference` binary run against
+  Ubuntu's `libopenblas0-pthread` 0.3.26, unpacked into `~/openblas-unpacked` and put first with
+  `LD_LIBRARY_PATH`, nothing installed: 189 of 189 pass against the netlib-blessed references,
+  one thread, no kernel pinned. One machine only; a CI runner with another processor is not tested.
+- **Speed, netlib against OpenBLAS, same code.** Only DFT jobs differ. Whole suite: Mac 1385
+  against 1301 s of test time (6%), achari2 602 against 575 s wall. Median over the 41 Mac tests
+  longer than 5 s: 1%.
+
+| test | Mac OpenBLAS | Mac netlib | achari2 OpenBLAS | achari2 netlib |
+|---|---|---|---|---|
+| `urea_rks_B3LYP_def2-TZVP_HAR_cell_maps` | 72 s | 98 s | 129 s | 166 s |
+| `libxc_energies_match_pyscf` | 13 s | 30 s | 24 s | 45 s |
+| `dft_energies_match_g09` | 6 s | 13 s | 10 s | 21 s |
+| `cyclazine_rhf_cc-pVDZ_VMO_canonicalization` | 134 s | 133 s | 216 s | 216 s |
+
+  The achari2 columns are one binary with the library swapped, so they compare the BLAS alone.
+  The Mac columns do not quite: its `release` tree also had the processor tuning switched on
+  (`-mcpu=apple-m2`, set by hand long ago), which the netlib tree had not.
+
+  So netlib costs a factor of 1.3 to 2.2 on small DFT jobs and nothing elsewhere. The 6.5 times
+  on the XC step (zinc finger, RI-J, 2026-09-17) was a large molecule and has not been repeated.
+
+**If adopted, to do:** `release` takes `BLA_VENDOR=OpenBLAS` on every platform and stops with
+the package name if it is missing, as `fast` does; the building pages say so, say how to
+substitute another BLAS (`-DBLA_VENDOR=`, already there) and where the compiler flags are;
+`OPENBLAS_CORETYPE` documented for a user who needs two machines to agree, and an x86 value in
+`scripts/test.py`'s `PINNED_CORETYPE` if a CI runner needs it; `reference` must find netlib by
+its own path on an Ubuntu where `libopenblas-dev` is installed, since that package makes
+OpenBLAS the system default; CI: the `release` workflows install OpenBLAS, and whether they
+still pass on the runners' processors is the open risk.
+
+The older text below is kept for its reasoning.
+
+**CAVEAT added 2026-09-24, to be dealt with when this is implemented: OpenBLAS dispatches on the
+CPU, so adopting it costs cross-machine reproducibility.** It selects kernels from the detected
+microarchitecture, so two machines with identical compilers and identical flags would again produce
+different last bits -- which the suite's ill-conditioned derived quantities amplify past the gate
+(see *PARKED with the source identified: the macOS red on `gly_ala_fragHAR`*). Netlib reference
+BLAS has no dispatch, which is the only reason today's Linux references are stable between machines
+at all.
+
+A container does **not** solve it: a container shares the host kernel and CPU, and `CPUID` is not
+virtualised, so OpenBLAS inside the image still sees the real host CPU. `OPENBLAS_CORETYPE` does
+force a kernel, but only one already compiled into that build, and the accepted names shift between
+OpenBLAS releases.
+
+So if this is adopted, it needs `OPENBLAS_CORETYPE` pinned as well as one thread -- or, more
+simply, netlib kept for the `reference` build type while users get OpenBLAS. The two decisions look
+independent and are not. See `docs/TONTO_BLESSING_TESTS.md`.
+
+
+**Decision (2026-07-30): not now.** Do the Mac/Linux numerical comparison first. The intended
+end state is **OpenBLAS, pinned to one thread, on every platform** — matching what macOS already
+does — but getting there means **redoing the reference outputs completely**, so it must not be
+started in the middle of other work.
+
+#### What is actually happening today
+
+Measured, not inferred — `ldd release/tonto` links `libblas.so.3` / `liblapack.so.3`, which on
+Debian/Ubuntu are `update-alternatives` symlinks. On the development box exactly one alternative
+is registered (priority 10, from `libblas3` 3.12.1): the **netlib reference BLAS**. OpenBLAS is
+not installed. The WSL CI runner resolves the same way (`Found BLAS:
+/usr/lib/x86_64-linux-gnu/libblas.so`, LAPACK 3.12.0).
+
+| Platform | Selection | Verdict |
+|----------|-----------|---------|
+| macOS | `CMakeLists.txt:110` explicitly prefers Homebrew OpenBLAS over Accelerate, and warns on fallback — because Accelerate's Fortran LAPACK is frozen at 3.2.1 (2009) and on its own flipped `short/h2o_rhf_6-31G(d)_normal_mode_analysis` | Handled |
+| Linux | No `BLA_VENDOR`; bare `find_package(LAPACK)` takes whatever the distro alternative points at. README installs `libblas-dev liblapack-dev` = reference | **Suboptimal** |
+| WSL | Same as Linux; `docs/BUILDING_ON_WINDOWS.md` installs the same reference packages | **Suboptimal** |
+
+So the platform that got careful attention is macOS, while the two reference platforms silently
+get the slowest BLAS. That is backwards.
+
+Note the two axes are independent: **LAPACK version** (3.12.x here — modern, so the `ILAVER`
+probe stays quiet) is a correctness/algorithms question; **BLAS implementation** (reference) is a
+speed one.
+
+#### How much is actually on the table
+
+Less than it first appears, and the bigger lever is elsewhere. Tonto's LAPACK surface is narrow —
+`dsyev`, `zheev`, `zhpev`, `dgesv`, `dgetrf`/`dgetri`, **all in `mat{real}.foo` / `mat{cpx}.foo`**.
+There is **not one explicit `dgemm` call**. Matrix multiplication goes through the Fortran
+`matmul` intrinsic instead: **375 call sites across 35 files**. By default gfortran services
+`matmul` from libgfortran's own blocked routine, never touching BLAS.
+
+So swapping in OpenBLAS alone accelerates only the eigensolves and linear solves. The flag that
+would route `matmul` to `dgemm` is **`-fexternal-blas`** (with `-fblas-matmul-limit=<n>` as the
+size threshold); it is not set anywhere in `cmake/SetFortranFlags.cmake`. That is plausibly the
+larger win — and a larger numerical perturbation.
+
+Also unquantified: how much of a typical HAR/SCF run is linear algebra at all, versus Tonto's own
+two-electron integral code. Benchmark before believing any of this is worth it.
+
+#### Why this forces a full re-bless
+
+Both changes alter summation order, so last digits move; the loose gate (rel ≤ 0.2 % OR
+last-digit ≤ 2) exists precisely for this, and the macOS case above shows a swap *can* flip a
+test outright.
+
+The sharper hazard is **threading**. Reference BLAS is single-threaded; OpenBLAS is not, and its
+results vary with thread *count*, because the blocking — and hence the reduction order — changes.
+Every stored reference in `tests/` was generated against single-threaded reference BLAS **on
+Linux and WSL. That was never true on macOS**, which has linked Homebrew's OpenBLAS since
+`CMakeLists.txt:110` -- a `USE_OPENMP` build, unpinned, with twelve threads available. The
+sentence stood here uncorrected until 2026-09-22, and anyone planning the re-bless from it would
+have planned the wrong thing.
+
+**Thread pinning is now done, ahead of this item, and cost nothing** (2026-09-22, `cbd72607`):
+`OPENBLAS_NUM_THREADS`, `OMP_NUM_THREADS`, `VECLIB_MAXIMUM_THREADS` and `MKL_NUM_THREADS`, all
+four because which one is authoritative depends on how the BLAS was built. Set in
+`scripts/test.py` (`ONE_THREAD_ENV`, which covers `suite_report.py` too, it driving `test.py`)
+and, for the dozen checker tests that bypass `test.py`, as a test property in
+`tests/CMakeLists.txt`. The short suite was unchanged either way, 68/70, and the same wall-clock
+-- 43.25 s pinned against 43.71 s. **The speed of OpenBLAS is in its kernels, not its threads.**
+Multithreaded OpenBLAS would also oversubscribe cores in MPI builds: ranks x threads.
+
+#### Suggested order when this is picked up
+
+1. Finish the Mac/Linux numerical comparison **first** — it is the baseline everything else is
+   measured against, and it must not be perturbed mid-flight.
+2. Benchmark `libopenblas-dev` alone (threads pinned to 1) on one representative HAR job. Record
+   before/after wall-clock **and** the agreement table.
+3. Separately benchmark `-fexternal-blas`, same job, same pinning.
+4. Only then decide whether the measured speedup justifies re-blessing every reference. If it
+   does, re-bless in one deliberate commit across all platforms at once, so Linux, macOS and WSL
+   share a single BLAS story.
+5. Update `README.md`, `docs/BUILDING_ON_WINDOWS.md` and `scripts/wsl_doctor.sh` together — they currently
+   tell users to install the reference packages.
+
+---
 
 ## CLOSED (2026-10-12): the libxc energies checked against ORCA
 
