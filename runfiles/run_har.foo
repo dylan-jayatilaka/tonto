@@ -28,7 +28,6 @@ program run_HAR
    implicit none
 
    default_basis :: STR  DEFAULT("def2-SVP")
-   allowed_bases :: VEC{STR}(len=10,7)
 
    default_grid :: STR  DEFAULT("low")
    grid_levels  :: VEC{STR}(len=9,6)
@@ -42,6 +41,7 @@ program run_HAR
    basis,basnam,gracc :: STR
    basdir :: STR(len=PATH_SIZE)   ! a path: STR is only 256
    cif,guess,job,out,err,scf :: STR
+   relativity,nucleus :: STR
    tail :: STR
    std_f2,std_f,shx_f2,shx_f :: STR
    dtol,fos,fzcut     :: REAL
@@ -84,22 +84,11 @@ program run_HAR
    ! correctly. See TASKS_AND_HISTORY.md for the survey of who else could.
    TEXTFILE::create_stdin
 
-   ! Allowed values for --basis and --grid-accuracy.
+   ! Allowed values for --grid-accuracy.
    !
-   ! These are assigned here, NOT with a `data` statement in the declarations:
-   ! the ANTLR4 translator silently DROPS a `data` statement at `program` scope
-   ! (it keeps them at module scope). The arrays were left uninitialised, so
-   ! every basis name -- including the default -- failed `is_one_of` below with
-   ! "unknown basis". See TASKS_AND_HISTORY.md.
-   allowed_bases = [ &
-      "STO-3G    ", &
-      "def2-SVP  ", &
-      "def2-TZVP ", &
-      "def2-TZVPP", &
-      "cc-pVDZ   ", &
-      "cc-pVTZ   ", &
-      "cc-pVQZ   "  ]
-
+   ! Assigned here, NOT with a `data` statement in the declarations: the
+   ! ANTLR4 translator silently DROPS a `data` statement at `program` scope
+   ! (it keeps them at module scope). See TASKS_AND_HISTORY.md.
    grid_levels = [ &
       "very_low ", &
       "low      ", &
@@ -139,6 +128,8 @@ program run_HAR
    std_f2     = " "
    shx_f      = " "
    std_f      = " "
+   relativity = " "   ! i.e. not set: follows the basis set, see below
+   nucleus    = "point"
    scf        = "rhf"
    ten        = TEN*BOHR_PER_ANGSTROM
    wavelen    = -ONE   ! i.e. not set; see --wavelength
@@ -261,6 +252,8 @@ program run_HAR
          case ("std-f         ");  std_f      = value
          case ("std-f2        ");  std_f2     = value
          case ("scf           ");  scf        = value
+         case ("relativity    ");  relativity = value
+         case ("nucleus       ");  nucleus    = value
        ! case ("scf-guess     ");  guess      = value
        ! case ("wavelength    ");  wavelength = value.to_real
 
@@ -323,7 +316,8 @@ program run_HAR
             stdout.flush
             stdout.text("    . Disordered structures may not be refined")
             stdout.flush
-            stdout.text("    . Only elements up to Z=36 (Kr) are supported")
+            stdout.text("    . Elements beyond Z=36 (Kr), up to Z=86 (Rn), need --relativity x2c and an")
+            stdout.text("      x2c basis set")
             stdout.flush
             stdout.text("    . Transition metals (Z=21 to 30, Sc to Zn) are not supported")
             stdout.flush
@@ -364,8 +358,12 @@ program run_HAR
             stdout.text("                   cc-pVDZ      cc-pVTZ       cc-pVQZ    H--Kr (No K)")
             stdout.text("       ______________________________________________________________")
             stdout.flush                               
-            stdout.text("       Additional bases may be added into the <basis-dir> folder from the EMSL")
-            stdout.text("       basis-set library, if required. See examples in the <basis-dir> folder.")
+            stdout.text("       For structures with atoms beyond Kr, the all-electron sets made for the")
+            stdout.text("       scalar-relativistic X2C hamiltonian (see --relativity), H--Rn:")
+            stdout.flush
+            stdout.text("       x2c-SVPall    x2c-TZVPall    x2c-TZVPPall")
+            stdout.flush
+            stdout.text("       Any other basis set with a file in the <basis-dir> folder may be used.")
             stdout.flush    
             stdout.text("   --basis-dir <basis-dir>")
             stdout.flush    
@@ -548,6 +546,19 @@ program run_HAR
             stdout.text("       rks     restricted Kohn-Sham/BLYP")
             stdout.flush    
             stdout.text("       Default: rhf")
+            stdout.flush
+            stdout.text("   --relativity [none|x2c]")
+            stdout.flush
+            stdout.text("       The relativistic hamiltonian. x2c is the scalar exact two-component")
+            stdout.text("       one-electron hamiltonian, needed for atoms beyond Kr.")
+            stdout.flush
+            stdout.text("       Default: x2c if the <basis> name begins with x2c-, otherwise none")
+            stdout.flush
+            stdout.text("   --nucleus [point|gaussian]")
+            stdout.flush
+            stdout.text("       The model of the nuclear charge. gaussian needs --relativity x2c.")
+            stdout.flush
+            stdout.text("       Default: point")
           ! stdout.text("       uhf     unrestricted Hartree-Fock")
           ! stdout.text("       uks     unrestricted Kohn-Sham/BLYP")
           ! stdout.text("       gchf    general-complex (relativistic) Hartree-Fock")
@@ -781,7 +792,6 @@ program run_HAR
    ! No check on the directory itself: whether INQUIRE reports a directory as
    ! existing is compiler dependent. The basis file inside it is checked below,
    ! and that message names the full path anyway.
-   DIE_IF(NOT basis.is_one_of(allowed_bases), "unknown basis: "//trim(basis))
    DIE_IF(     dtol <TOL(5), "dtol is too small: "//trim(dtol.to_str))
    DIE_IF(     dtol >TOL(1), "dtol is too large: "//trim(dtol.to_str))
  ! DIE_IF(NOT ldtol <TOL(5), "ldtol is too small: "//trim(ldtol.to_str))
@@ -797,6 +807,15 @@ program run_HAR
    DIE_IF(NOT guess.is_one_of(["mos    ","density"]),"unknown initial guess: "//trim(guess))
    DIE_IF(NOT   scf.is_one_of(["rhf ","rks "]),"unknown scf: "//trim(scf))
 
+   ! The x2c basis sets are made for the X2C hamiltonian
+   if (relativity==" ") then
+      relativity = "none"
+      if (basis(1:4)=="x2c-") relativity = "x2c"
+   end
+   DIE_IF(NOT relativity.is_one_of(["none","x2c "]),"unknown relativity: "//trim(relativity))
+   DIE_IF(NOT nucleus.is_one_of(["point   ","gaussian"]),"unknown nucleus: "//trim(nucleus))
+   DIE_IF(nucleus=="gaussian" AND relativity/="x2c","--nucleus gaussian needs --relativity x2c")
+
    ! Basis exists?
    basnam = trim(basdir)//"/"//trim(basis)
    file.create(basnam)
@@ -810,6 +829,7 @@ program run_HAR
    m.SET:set_name(job)
    m.SET:set_basis_directory(basdir)
    m.SET:set_basis_name(basis)
+   m.nucleus_model = nucleus
    m.SET:set_charge(charge)
    m.SET:set_spin_multiplicity(mult)
 
@@ -837,7 +857,8 @@ program run_HAR
    DIE_IF(m.crystal.deallocated,          "no crystal information available!")
    DIE_IF(m.crystal.xray_data.deallocated,"no x-ray F structure factors supplied!")
    DIE_IF(m.atom.deallocated,             "no atoms specified")
-   DIE_IF(any(m.atom.atomic_number>36),  "hart is not routinely available for heavy atoms, Z>36")
+   DIE_IF(any(m.atom.atomic_number>36) AND relativity/="x2c", "atoms beyond Kr need --relativity x2c and an x2c basis set")
+   DIE_IF(any(m.atom.atomic_number>86),  "hart is not available for atoms beyond Rn, Z>86")
    tmetal = any(m.atom.atomic_number>=21 AND m.atom.atomic_number<=30)
    DIE_IF(tmetal, "hart is not routinely available for transition metals")
 
@@ -1018,6 +1039,7 @@ program run_HAR
    else
       m.SCF_data.set_SCF_kind(scf)
    end
+   m.SCF_data.set_relativity_kind(relativity)
    spinorbitals = m.SCF_data.spinorbital_genre
    m.SCF_data.set_initial_density("promolecule")
 
