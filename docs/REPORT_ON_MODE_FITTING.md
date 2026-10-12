@@ -1157,11 +1157,18 @@ smeared the density itself; here the covariance comes from (17), with the rigid-
 the soft modes refined against the data. The structure factor is then
 
 ```math
-F(\mathbf{k}) = \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} c_{\mu a} c_{\nu b}\;
-     e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde\chi_{\mu a\,\nu b}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{\mu a\,\nu b} \mathbf{k}} . \qquad (29)
+\begin{aligned}
+F(\mathbf{k}) &= \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} c_{\mu a} c_{\nu b}\;
+     e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde\chi_{\mu a\,\nu b}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{\mu a\,\nu b} \mathbf{k}} \\
+   &= \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} t_{\mu a\,\nu b}(\mathbf{k}), \qquad
+   t_{\mu a\,\nu b}(\mathbf{k}) = c_{\mu a} c_{\nu b}\;
+     e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde\chi_{\mu a\,\nu b}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{\mu a\,\nu b} \mathbf{k}} .
+\end{aligned}
+\qquad (29)
 ```
 
-No partition into atoms appears in (29).
+The second line names one term, $`t_{\mu a\,\nu b}`$, for use below. No partition into atoms appears
+in (29).
 
 **The centre is a pseudo-atom.** Putting (16) into (25), and using $`w_A + w_B = 1`$,
 
@@ -1251,9 +1258,8 @@ B_P = w_A B_A + w_B B_B , \qquad (33)
 ```
 
 of which only the first term contains $`\Sigma`$. Second, $`\Sigma`$ is symmetric, and its element
-$`\Sigma_{pq}`$ with $`p \ne q`$ stands for the two equal elements $`\Sigma_{pq}`$ and $`\Sigma_{qp}`$; so for any
-vector $`\mathbf{h}`$, $`\partial(\mathbf{h}^{\mathsf T}\Sigma\,\mathbf{h})/\partial\Sigma_{pq} = (2-\delta_{pq})\, h_p h_q`$, with $`\delta_{pq}`$ one if $`p = q`$ and
-zero otherwise. Then, differentiating (29),
+$`\Sigma_{pq}`$ with $`p \ne q`$ stands for the two equal elements $`\Sigma_{pq}`$ and $`\Sigma_{qp}`$; $`\delta_{pq}`$ is one
+if $`p = q`$ and zero otherwise. Then, differentiating (29),
 
 ```math
 \begin{aligned}
@@ -1261,7 +1267,7 @@ zero otherwise. Then, differentiating (29),
  &= \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} c_{\mu a} c_{\nu b}\; e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde\chi_{\mu a\,\nu b}(\mathbf{k}; \mathbf{R})\;
     \frac{\partial}{\partial \Sigma_{pq}} \Big( e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{\mu a\,\nu b} \mathbf{k}} \Big) \\
  &= \sum_{\mu\nu} D_{\mu\nu} \sum_{ab}
-    \underbrace{ c_{\mu a} c_{\nu b}\; e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde\chi_{\mu a\,\nu b}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{\mu a\,\nu b} \mathbf{k}} }_{t_{\mu a\,\nu b},\ \text{the term of (29)}}
+    \underbrace{ c_{\mu a} c_{\nu b}\; e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde\chi_{\mu a\,\nu b}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{\mu a\,\nu b} \mathbf{k}} }_{t_{\mu a\,\nu b}\ \text{of (29)}}
     \Big( -\tfrac12\, \frac{\partial}{\partial \Sigma_{pq}} \big( \mathbf{k}^{\mathsf T} U^P_{\mu a\,\nu b}\, \mathbf{k} \big) \Big) \\
  &= \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} t_{\mu a\,\nu b}
     \Big( -\tfrac12\, \frac{\partial}{\partial \Sigma_{pq}} \big( \mathbf{k}^{\mathsf T} B_P\, \Sigma\, B_P^{\mathsf T} \mathbf{k} \big) \Big)
@@ -1269,7 +1275,8 @@ zero otherwise. Then, differentiating (29),
  &= \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} t_{\mu a\,\nu b}
     \Big( -\tfrac12\, \frac{\partial}{\partial \Sigma_{pq}} \big( \mathbf{h}_P^{\mathsf T}\, \Sigma\, \mathbf{h}_P \big) \Big)
     && \text{with } \mathbf{h}_P = B_P^{\mathsf T}\mathbf{k} \\
- &= -\frac{2-\delta_{pq}}{2} \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} t_{\mu a\,\nu b}\; h_{P,p}\, h_{P,q} \\
+ &= -\frac{2-\delta_{pq}}{2} \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} t_{\mu a\,\nu b}\; h_{P,p}\, h_{P,q}
+    && \text{since } \frac{\partial ( \mathbf{h}^{\mathsf T} \Sigma\, \mathbf{h} )}{\partial \Sigma_{pq}} = (2-\delta_{pq})\, h_p h_q \\
  &= -\frac{2-\delta_{pq}}{2} \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} t_{\mu a\,\nu b}\;
     ( w_A h_{A,p} + w_B h_{B,p} )( w_A h_{A,q} + w_B h_{B,q} )
     && \text{with } \mathbf{h}_P = w_A \mathbf{h}_A + w_B \mathbf{h}_B,\ \ \mathbf{h}_A = B_A^{\mathsf T}\mathbf{k} \\
@@ -1357,91 +1364,112 @@ Three things in (38) depend on $`Q`$:
 3. the density matrix element $`D_{\mu\nu}(Q)`$, because the wavefunction at the displaced geometry is
    not the one at the mean geometry.
 
-**Two structure factors as functions of $`Q`$.** Let $`W^{(k)}_{\mu a\,\nu b}`$ be the temperature factor
-of the product from all the motion except mode $`k`$: that of (29) with mode $`k`$'s term left out
-of (17). Keeping all three dependences of (38) gives the exact structure factor with mode $`k`$ at
-$`Q`$,
+**Two structure factors as functions of $`Q`$.** The other motion smears each product as before.
+Let $`W^{(k)}_{\mu a\,\nu b}`$ be the temperature factor of (29) with the term of mode $`k`$ taken out of
+$`U^P_{\mu a\,\nu b}`$, (33). $`F^{\rm exact}_k(Q)`$ keeps all three dependences of (38); $`F^{\rm approx}_k(Q)`$
+keeps only the phase, as §6.3 does:
 
 ```math
-F^{\rm exact}_k(Q) = \sum_{\mu\nu} D_{\mu\nu}(Q) \sum_{ab} c_{\mu a} c_{\nu b}\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
+\begin{aligned}
+W^{(k)}_{\mu a\,\nu b} &= \exp\!\Big[ -\tfrac12\, \mathbf{k}^{\mathsf T} \big( U^P_{\mu a\,\nu b} - \langle Q_k^2\rangle\, \mathbf{d}_{Pk}\mathbf{d}_{Pk}^{\mathsf T} \big)\, \mathbf{k} \Big] , \\
+F^{\rm exact}_k(Q) &= \sum_{\mu\nu} D_{\mu\nu}(Q) \sum_{ab} c_{\mu a} c_{\nu b}\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
    e^{iQ\,\mathbf{k}\cdot\mathbf{d}_{Pk}}\;
-   \tilde\chi_{\mu a\,\nu b}\big(\mathbf{k};\, \mathbf{R} + Q(\mathbf{d}_{Ak} - \mathbf{d}_{Bk})\big)\; W^{(k)}_{\mu a\,\nu b} . \qquad (39)
-```
-
-Keeping only the first, as §6.3 does, gives
-
-```math
-F^{\rm approx}_k(Q) = \sum_{\mu\nu} D_{\mu\nu}(0) \sum_{ab} c_{\mu a} c_{\nu b}\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
+   \tilde\chi_{\mu a\,\nu b}\big(\mathbf{k};\, \mathbf{R} + Q(\mathbf{d}_{Ak} - \mathbf{d}_{Bk})\big)\; W^{(k)}_{\mu a\,\nu b} , \\
+F^{\rm approx}_k(Q) &= \sum_{\mu\nu} D_{\mu\nu}(0) \sum_{ab} c_{\mu a} c_{\nu b}\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
    e^{iQ\,\mathbf{k}\cdot\mathbf{d}_{Pk}}\;
-   \tilde\chi_{\mu a\,\nu b}(\mathbf{k};\, \mathbf{R})\; W^{(k)}_{\mu a\,\nu b} . \qquad (40)
+   \tilde\chi_{\mu a\,\nu b}(\mathbf{k};\, \mathbf{R})\; W^{(k)}_{\mu a\,\nu b} .
+\end{aligned}
+\qquad (39)
 ```
 
 The two are equal at $`Q = 0`$.
 
-**Their thermal averages.** $`Q`$ has a Gaussian distribution with zero mean and mean square
-$`\langle Q_k^2\rangle`$, (6). In (40) only the phase depends on $`Q`$, and its average is
-$`e^{-\frac12 \langle Q_k^2\rangle (\mathbf{k}\cdot\mathbf{d}_{Pk})^2}`$, as in (27). That is exactly the term of mode $`k`$
-that was left out of $`W^{(k)}`$, so the average of (40) is the structure factor of §6.3:
+**The average of the approximate one is the structure factor of §6.3.** $`Q`$ has a Gaussian
+distribution with zero mean and mean square $`\langle Q_k^2\rangle`$, (6), so
+$`\langle e^{iQ\theta}\rangle = e^{-\frac12 \langle Q_k^2\rangle \theta^2}`$ for any number $`\theta`$, as in (27). Averaging
+$`F^{\rm approx}_k`$ of (39) over $`Q`$:
 
 ```math
-\langle F^{\rm approx}_k \rangle = F \text{ of (29)} . \qquad (41)
+\begin{aligned}
+\langle F^{\rm approx}_k \rangle
+ &= \sum_{\mu\nu} D_{\mu\nu}(0) \sum_{ab} c_{\mu a} c_{\nu b}\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
+   \tilde\chi_{\mu a\,\nu b}(\mathbf{k};\, \mathbf{R})\; W^{(k)}_{\mu a\,\nu b}\; \big\langle e^{iQ\,\mathbf{k}\cdot\mathbf{d}_{Pk}} \big\rangle
+   && \text{only the phase depends on } Q \\
+ &= \sum_{\mu\nu} D_{\mu\nu}(0) \sum_{ab} c_{\mu a} c_{\nu b}\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
+   \tilde\chi_{\mu a\,\nu b}(\mathbf{k};\, \mathbf{R})\; W^{(k)}_{\mu a\,\nu b}\; e^{-\frac12 \langle Q_k^2\rangle (\mathbf{k}\cdot\mathbf{d}_{Pk})^2}
+   && \text{with } \theta = \mathbf{k}\cdot\mathbf{d}_{Pk} \\
+ &= \sum_{\mu\nu} D_{\mu\nu}(0) \sum_{ab} c_{\mu a} c_{\nu b}\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
+   \tilde\chi_{\mu a\,\nu b}(\mathbf{k};\, \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{\mu a\,\nu b} \mathbf{k}}
+   && \text{by the definition of } W^{(k)}_{\mu a\,\nu b} \\
+ &= F \text{ of (29)} .
+\end{aligned}
+\qquad (40)
 ```
 
-The average of (39) cannot be done by formula, because $`D_{\mu\nu}(Q)`$ is known only by doing an
-SCF at each $`Q`$. What is wanted is the error that §6.3 makes for mode $`k`$,
+The average of $`F^{\rm exact}_k`$ cannot be done by formula, because $`D_{\mu\nu}(Q)`$ is known only by
+doing an SCF at each $`Q`$. It is done by three points.
 
-```math
-\Delta_k = \langle F^{\rm exact}_k \rangle - \langle F^{\rm approx}_k \rangle = \langle\, F^{\rm exact}_k(Q) - F^{\rm approx}_k(Q) \,\rangle . \qquad (42)
-```
-
-**The average by three points.** For any function $`g(Q)`$ of a Gaussian variable with zero mean
-and mean square $`\langle Q_k^2\rangle`$, the three-point Gauss–Hermite rule is
+**The three-point rule.** For any function $`g(Q)`$ of a Gaussian variable with zero mean and mean
+square $`\langle Q_k^2\rangle`$, the three-point Gauss–Hermite rule is
 
 ```math
 \langle g \rangle \approx \tfrac23\, g(0) + \tfrac16\, g(+s_k) + \tfrac16\, g(-s_k), \qquad
-s_k = \sqrt{3\,\langle Q_k^2\rangle} , \qquad (43)
+s_k = \sqrt{3\,\langle Q_k^2\rangle} , \qquad (41)
 ```
 
-exact when $`g`$ is a polynomial of degree five or less. Apply it to (42), that is to
-$`g(Q) = F^{\rm exact}_k(Q) - F^{\rm approx}_k(Q)`$. Since $`g(0) = 0`$,
+exact when $`g`$ is a polynomial of degree five or less.
+
+**The error of §6.3 for mode $`k`$.** It is the difference of the two averages, $`\Delta_k`$. Applying
+the rule (41) to the difference $`g(Q) = F^{\rm exact}_k(Q) - F^{\rm approx}_k(Q)`$:
 
 ```math
-\Delta_k \approx \tfrac16 \big[ F^{\rm exact}_k(s_k) + F^{\rm exact}_k(-s_k) \big]
-               - \tfrac16 \big[ F^{\rm approx}_k(s_k) + F^{\rm approx}_k(-s_k) \big] . \qquad (44)
+\begin{aligned}
+\Delta_k &= \langle F^{\rm exact}_k \rangle - \langle F^{\rm approx}_k \rangle
+          = \big\langle\, F^{\rm exact}_k(Q) - F^{\rm approx}_k(Q) \,\big\rangle \\
+ &\approx \tfrac23 \big[ F^{\rm exact}_k(0) - F^{\rm approx}_k(0) \big]
+        + \tfrac16 \big[ F^{\rm exact}_k(s_k) - F^{\rm approx}_k(s_k) \big]
+        + \tfrac16 \big[ F^{\rm exact}_k(-s_k) - F^{\rm approx}_k(-s_k) \big]
+   && \text{by (41)} \\
+ &= \tfrac16 \big[ F^{\rm exact}_k(s_k) + F^{\rm exact}_k(-s_k) \big]
+  - \tfrac16 \big[ F^{\rm approx}_k(s_k) + F^{\rm approx}_k(-s_k) \big]
+   && \text{the two are equal at } Q = 0 \\
+ &= \tfrac16 \big[ F^{\rm exact}_k(s_k) + F^{\rm exact}_k(-s_k) \big]
+  - \tfrac16 \sum_{\mu\nu} D_{\mu\nu}(0) \sum_{ab} c_{\mu a} c_{\nu b}\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
+   \tilde\chi_{\mu a\,\nu b}(\mathbf{k}; \mathbf{R})\; W^{(k)}_{\mu a\,\nu b}\;
+   \big( e^{i s_k \mathbf{k}\cdot\mathbf{d}_{Pk}} + e^{-i s_k \mathbf{k}\cdot\mathbf{d}_{Pk}} \big)
+   && \text{by (39)} \\
+ &= \tfrac16 \big[ \underbrace{F^{\rm exact}_k(s_k)}_{F_k^{+}} + \underbrace{F^{\rm exact}_k(-s_k)}_{F_k^{-}} \big]
+  - \tfrac13 \underbrace{ \sum_{\mu\nu} D_{\mu\nu}(0) \sum_{ab} c_{\mu a} c_{\nu b}\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
+   \tilde\chi_{\mu a\,\nu b}(\mathbf{k}; \mathbf{R})\; W^{(k)}_{\mu a\,\nu b}\;
+   \cos( s_k\, \mathbf{k}\cdot\mathbf{d}_{Pk} ) }_{F_k^{\cos}}
+   && e^{i\phi} + e^{-i\phi} = 2\cos\phi \\
+ &= \tfrac16 \big( F_k^{+} + F_k^{-} \big) - \tfrac13\, F_k^{\cos} .
+\end{aligned}
+\qquad (42)
 ```
 
-**The two brackets.**
+**How the three are made.**
 
-- *The exact one.* Move every atom $`A`$ by $`+s_k\,\mathbf{d}_{Ak}`$, do an SCF there, and make the structure
-  factor from (29) with the new positions, the new density matrix, and $`W^{(k)}`$ as the
-  temperature factor. That is $`F^{\rm exact}_k(s_k)`$: moving the atoms with their basis functions
-  puts in the phase and the change of $`\tilde\chi_{\mu a\,\nu b}`$, and the SCF puts in $`D_{\mu\nu}(s_k)`$. The
-  same with $`-s_k`$ gives $`F^{\rm exact}_k(-s_k)`$. Call them $`F_k^{+}`$ and $`F_k^{-}`$.
-- *The approximate one.* In (40) the two values of $`Q`$ differ only in the phase, and
-  $`e^{i s_k \theta} + e^{-i s_k \theta} = 2\cos(s_k\theta)`$ with $`\theta = \mathbf{k}\cdot\mathbf{d}_{Pk}`$. So
+- $`F_k^{+}`$: move every atom $`A`$ by $`+s_k\,\mathbf{d}_{Ak}`$, do an SCF there, and make the structure factor
+  from (29) with the new positions, the new density matrix, and $`W^{(k)}`$ as the temperature
+  factor. Moving the atoms with their basis functions puts in the phase and the change of
+  $`\tilde\chi_{\mu a\,\nu b}`$; the SCF puts in $`D_{\mu\nu}(s_k)`$. That is $`F^{\rm exact}_k(s_k)`$ of (39).
+- $`F_k^{-}`$: the same with $`-s_k`$.
+- $`F_k^{\cos}`$: at the mean geometry with its own density matrix, the structure factor (29) with
+  $`W^{(k)}`$ as the temperature factor and each product of primitives multiplied by
+  $`\cos(s_k\,\mathbf{k}\cdot\mathbf{d}_{Pk})`$.
 
-```math
-F^{\rm approx}_k(s_k) + F^{\rm approx}_k(-s_k) = 2 F_k^{\cos}, \qquad
-F_k^{\cos} = \sum_{\mu\nu} D_{\mu\nu}(0) \sum_{ab} c_{\mu a} c_{\nu b}\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
-   \tilde\chi_{\mu a\,\nu b}(\mathbf{k}; \mathbf{R})\; W^{(k)}_{\mu a\,\nu b}\; \cos( s_k\, \mathbf{k}\cdot\mathbf{d}_{Pk} ) , \qquad (45)
-```
-
-  which is made at the mean geometry with the density matrix of the mean geometry: the
-  structure factor (29) with $`W^{(k)}`$ for the temperature factor and each product of primitives
-  multiplied by its cosine.
-
-**The correction.** Putting the two brackets into (44), and adding the stiff modes,
+**The correction.** Adding the stiff modes,
 
 ```math
-\Delta F = \sum_{\omega_k > \omega_c} \Delta_k, \qquad
-\Delta_k = \tfrac16 \big( F_k^{+} + F_k^{-} \big) - \tfrac13\, F_k^{\cos} , \qquad (46)
+\Delta F = \sum_{\omega_k > \omega_c} \Delta_k = \sum_{\omega_k > \omega_c} \Big[ \tfrac16 \big( F_k^{+} + F_k^{-} \big) - \tfrac13\, F_k^{\cos} \Big] , \qquad (43)
 ```
 
 and the structure factor used in the refinement is (29) plus $`\Delta F`$.
 
 - **Why the difference is integrated, not $`F^{\rm exact}_k`$ itself.** The phase in (39) varies
-  quickly with $`Q`$ at high angle, where three points are too few; (41) does that part exactly.
-  The difference (42) is small and varies slowly, which is what the rule (43) is good for.
+  quickly with $`Q`$ at high angle, where three points are too few; (40) does that part exactly.
+  The difference is small and varies slowly, which is what the rule (41) is good for.
 - **Why the modes are added.** Each $`\Delta_k`$ is small, so the effect of one on another is small
   twice over and is left out.
 - **Cost and limits.** Two SCFs for each stiff mode. $`\Delta F`$ is made once for each fit with a
@@ -1457,7 +1485,7 @@ In `xray_data=`:
 |---|---|---|
 | `partition_model= tc-tls` | | the model (29); sets `adp_model= tls` |
 | `tc_position_derivs=` | `center` | the position derivative: `center` (37), `fixed-dm` or `scf` (§6.5) |
-| `tc_integrate_stiff_modes=` | `FALSE` | `TRUE` adds $`\Delta F`$ of (46) |
+| `tc_integrate_stiff_modes=` | `FALSE` | `TRUE` adds $`\Delta F`$ of (43) |
 
 On the molecule:
 
@@ -1484,8 +1512,8 @@ A Hessian from ORCA is turned into `force_constants=` by `scripts/orca_hessian_t
 | the shifts from those derivatives | `CRYSTAL:get_two_center_parameter_shifts` |
 | derivatives taken directly with respect to refined parameters | `DIFFRACTION_DATA.SET:solve_normal_equations` |
 | position derivatives by differences, `fixed-dm` and `scf` | `MOLECULE.HAR:make_two_center_position_derivs` |
-| the cosine factor of (45) | `SHELL2:scale_TFs_by_shift` |
-| $`\Delta F`$, (46) | `MOLECULE.HAR:make_stiff_mode_SF_correction` |
+| the cosine factor in (42) | `SHELL2:scale_TFs_by_shift` |
+| $`\Delta F`$, (43) | `MOLECULE.HAR:make_stiff_mode_SF_correction` |
 | the fit loop | `MOLECULE.HAR:LS_fit_two_center` |
 | the parts of a fit shared with Hirshfeld atom refinement | `CRYSTAL:start_structure_fit`, `apply_parameter_shifts`, `finish_fit_cycle`, `finish_structure_fit` |
 | an SCF made ready at a new geometry | `MOLECULE.HAR:prepare_SCF_at_new_geometry` |
