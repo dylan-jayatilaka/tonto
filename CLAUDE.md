@@ -255,10 +255,10 @@ reference build red. `ci.yml` records the exact package builds of `gfortran`, `l
 and `liblapack-dev` on every run.
 
 **The build type is an intent** and sets the optimisation, the processor tuning and the BLAS
-together: `release` (default; `-O3`, no tuning, system BLAS), `fast` (`-Ofast`, native, OpenBLAS
+together: `release` (default; `-O3`, no tuning, OpenBLAS required), `fast` (`-Ofast`, native, OpenBLAS
 required), `reference` (`-O3 -fno-fast-math`, no tuning, netlib required — what CI builds and what
 references are blessed with), `debug`, and `release-static`. `release` and `reference` compile
-identical code; they differ only in the BLAS. CMake's own `CMAKE_Fortran_FLAGS_<CONFIG>` is cleared,
+identical code; they differ only in the BLAS: OpenBLAS for `release` and `fast`, netlib for `reference`, on every platform. CMake's own `CMAKE_Fortran_FLAGS_<CONFIG>` is cleared,
 so the named flags are the real ones. Table in `docs/BUILDING_ON_LINUX.md`; the findings
 behind it are in `TASKS_AND_HISTORY.md`, *CLOSED 2026-10-10: reproducible builds*.
 
