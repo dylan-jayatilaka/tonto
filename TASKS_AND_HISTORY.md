@@ -111,11 +111,12 @@ PySCF environment: `~/tonto-runs/2026-10-11_x2c`.
 `dkh-2` (they ran non-relativistically); `nucleus_model= finite` (it gave a nuclear attraction
 matrix of zero); a Gaussian nucleus without X2C.
 
-**Open from this work, each with an entry and a register row:** the SCF stall when a basis
-function is filtered for linear dependence (*Correctness*; met on iodobenzene with x2c-TZVPall,
-cured there by `linear_dependence_tol= 1e-7`); the default DFT grid and the integral cutoff on
-heavy atoms (*Test suite and numerics*); X2C under MPI (*MPI*); X2C and the x2c basis sets in
-`hart` (*hart*).
+**The four tasks this left are closed** (2026-10-12, branch `heavy-atom-fixes`; archive, *the four
+tasks left by the X2C work*): `hart` takes X2C and atoms to Rn; X2C passes under MPI; the SCF
+converges with a filtered basis function; the default DFT grid is good to about 1e-5 hartree up
+to Rn. **Open from that:** the atomic density tables go negative near a heavy nucleus
+(*Correctness*; to settle before a heavy atom is refined); a data set with an atom beyond Kr is
+needed.
 
 ## CLOSED 2026-10-11: libxc, PBE0 and r2SCAN are on `develop`
 
@@ -2504,16 +2505,21 @@ dead keyword line from `develop` and leave the work on its two tags, as was done
 
 # Correctness — open bugs that give wrong answers
 
-## The SCF never converges when a basis function is filtered for linear dependence (2026-10-11)
+## The atomic density tables go negative near a heavy nucleus (2026-10-12)
 
-When an overlap eigenvalue is under `linear_dependence_tol` (default 1e-5) the function is
-filtered out. The energy then converges, but the DIIS error stops at a non-zero value and the
-SCF runs to its iteration limit and reports no convergence. Met on iodobenzene with
-`x2c-TZVPall` (one eigenvalue of 9.1e-6): the error stalls at 6.9e-5 with X2C and at 7.3e-3
-without, the energy correct to 5e-6. With `linear_dependence_tol= 1e-7` nothing is filtered and
-it converges in 20 iterations. Not caused by X2C. To do: form the DIIS error in the filtered
-space, so it can go to zero; until then lower the tolerance. Runs:
-`~/tonto-runs/2026-10-11_x2c/PhI_*`. **Register row** of the same name.
+**Register row** of the same name. Each atom's spherical density is tabulated for interpolation
+(`MOLECULE.RHO:make_interpolator_sqrt_x1x`): a cubic spline of the density itself in
+$`x = r^2/(s^2+r^2)`$, $`s`$ the Bragg–Slater radius, with knots 1e-4 apart in $`x`$. The first
+knots are then at $`r`$ = 0, 0.027, 0.037 bohr for iodine, while its 1s density falls by a factor
+of 16 over the first interval. The spline overshoots: at the DFT grid points of HI it reaches
+-8300. Bromine stays positive. The DFT grid thinning no longer trips on it (archive, *the four
+tasks left by the X2C work*), but everything else that reads the tables does: the promolecule
+density, deformation densities, and the Hirshfeld weights. Near a nucleus the weight is the
+atom's own density over a sum dominated by it, so it should stay close to 1 whatever the sign,
+**but that was not measured.** To do before a heavy atom is refined: measure the table against
+the density it was made from for Br, I and Hg; then either interpolate the logarithm of the
+density, or choose knots that resolve $`1/Z`$. Either changes every Hirshfeld weight a little,
+so it is a re-bless of the refinement tests.
 
 ## Cluster charges are silently zero under `partition_model= tc-stewart` (2026-10-10)
 
@@ -2735,16 +2741,6 @@ Contained: `time.foo` and its callers.
 ---
 
 # MPI
-
-## X2C under MPI is untested (Dylan, 2026-10-12)
-
-**Register row:** *Test X2C under MPI*. `MOLECULE.REL:make_r_X2C_core_mx` has no `parallel do`:
-every process builds the whole primitive matrices and does the whole transformation, which is
-correct by construction but was never run. It calls `MOLECULE.INTS:make_r_overlap_mx`, which
-does divide its work. To do: run the three `*_X2C` tests with `mpirun -n 1`, `2` and `4` in an
-MPI build and compare with the serial energies; add them to the MPI suite if they are not
-picked up already; then, if a real structure is slow, divide the loop over primitive shell
-pairs in `make_primitive_X2C_ints`.
 
 ## CLOSED 2026-10-10: a parallel debug build in CI on every platform; gfortran-14 everywhere
 
@@ -5267,26 +5263,6 @@ the XC evaluation, not the point count. Tables in `docs/TASK_SCF_SPEEDUP_DATA.md
 
 # Test suite and numerics
 
-## Heavy atoms: the default DFT grid, and the two-electron integral cutoff (Dylan, 2026-10-12)
-
-**Register row:** *Heavy atoms: DFT grid and integral cutoff*. To investigate; found during the
-X2C checks (`docs/TASK_HAR_STANDARDISATION.md` section 6a), neither caused by X2C.
-
-1. **The default grid.** PBE on HBr with `x2c-SVPall` differs from PySCF (grid level 5 and 9
-   agree to 1e-7) by 7.7e-4 hartree at Tonto's default `accuracy= medium`, with and without X2C,
-   and by 1.0e-5 at `very_high`. For water the default costs 3e-6. To find out: which part of
-   the grid it is (radial points near the Br nucleus, most likely, since the core density is
-   steep); how it grows down the table (Kr, I, Xe, Hg); and whether a refinement feels it, as
-   was tested for r2SCAN on urea. If it does, the grid defaults should depend on the element.
-2. **The integral cutoff.** Hartree–Fock on iodobenzene with `x2c-TZVPall` (276 functions)
-   differs from PySCF by 7.9e-7 hartree without X2C and 1.3e-6 with it; CHFClBr by 1.4e-7 and
-   1.3e-7; atoms and diatomics by 1e-8. Put down to the cutoff on the two-electron integrals in
-   the direct SCF, but **not tested**: rerun with `eri_accuracy= high` and with PySCF's
-   `direct_scf_tol` tightened, and see whether both differences go, and why the X2C one is
-   larger on iodobenzene.
-
-Runs and scripts: `~/tonto-runs/2026-10-11_x2c` (`HBr_*_pbe*`, `PhI_*`, `CHFClBr_*`).
-
 ## Check the libxc energies against ORCA (Dylan, 2026-10-11)
 
 **Register row:** *Check the libxc energies against ORCA*. Not started; waits for ORCA on the Mac.
@@ -6399,15 +6375,6 @@ submodules simplifies the emitted module graph and compile-time dependencies. To
 
 # hart
 
-## hart cannot run a structure beyond Kr (Dylan, 2026-10-12)
-
-**Register row:** *hart: X2C and the x2c basis sets*. `hart` has no relativity option, and
-`--basis` accepts only `STO-3G`, `def2-SVP`, `def2-TZVP`, `def2-TZVPP`, `cc-pVDZ`, `cc-pVTZ`
-and `cc-pVQZ`. To do: `--relativity none|x2c` (default `none`), passed to
-`SCF_DATA:set_relativity_kind`; accept `x2c-SVPall`, `x2c-TZVPall` and `x2c-TZVPPall`, or any
-name with a file in the basis directory; perhaps `--nucleus point|gaussian`; a short `hart`
-test on a structure with a heavy atom; `docs/RUNNING_HART.md` and `hart --help`.
-
 ## hart — deferred items
 
 The `hart` work (milestone 5) left these alone deliberately. `docs/RUNNING_HART.md` is
@@ -7197,6 +7164,62 @@ different question and the one that matters.
 ---
 
 # Done, resolved and closed (archive)
+
+## CLOSED (2026-10-12): the four tasks left by the X2C work
+
+**hart beyond Kr.** `--relativity none|x2c` (default: `x2c` if the basis name begins with `x2c-`,
+else `none`), `--nucleus point|gaussian`, and `--basis` takes any basis set with a file in the
+basis directory. Atoms beyond Kr are accepted with X2C, none beyond Rn; the first-row transition
+metals stay excluded, and **the 4d and 5d metals are not excluded, which nobody decided**. Urea
+with `x2c-SVPall` and X2C: GoF 3.330 against 3.340 with def2-SVP, 11 s; test
+`urea_hart_x2c-SVPall_X2C`. No data set with an atom beyond Kr was at hand: a heavy atom has not
+been refined yet. `hart` still uses Cartesian functions, against the protocol's "spherical always".
+
+**X2C under MPI.** The three `*_X2C` tests pass in CI's Linux MPI build on 2 processes (run
+38187731651, the first after the merge). Dividing the primitive integral loop is left until a real
+structure is slow.
+
+**The SCF stall with a filtered basis function.** Cause: the DIIS commutator FDS - SDF held the
+gradient for rotations into the filtered function, which the SCF never makes, so it could not
+reach zero. `MOLECULE.SCF:make_SCF_DIIS_commutator` removes that part
+(`remove_dependence_from_r`); nothing changes when no function is filtered. Iodobenzene,
+`x2c-TZVPall`, at the default tolerance: 20 iterations, was stalled at 6.9e-5. Test
+`h2o_rhf_cc-pVDZ_linear_dependence`, which stops as not converged without the change. Found on
+the way: `MOLECULE.BASE:remove_dependence_from` (the `OPMATRIX` version) compares the spinorbital
+genre, "r " or "u ", with SCF kind names, so it does nothing; it has no caller.
+
+**The DFT grid on heavy atoms.** Three faults, found with PBE against PySCF on very fine grids
+(`x2c-SVPall`, X2C beyond Kr; runs in `~/tonto-runs/2026-10-12_heavy_grid`):
+
+| at `accuracy= medium` | HF | HCl | HBr | HI | Xe | Hg | Rn |
+|---|---|---|---|---|---|---|---|
+| before | 1.5e-6 | 2.6e-5 | 7.7e-4 | 9.0 | 4.9e-3 | 2.2e-2 | 0.13 |
+| after | 1.5e-6 | 2.6e-5 | 7.5e-6 | 1.5e-6 | 3.1e-6 | 7.8e-6 | 2.3e-5 |
+
+1. *Grid points dropped in the core* (HI: 9 hartree, with every functional and grid). The grid
+   is thinned where the promolecule density, from the atoms' interpolation tables, is under
+   `prune_rho_cutoff`. The tables are cubic splines in $`x = r^2/(s^2+r^2)`$ with knots 1e-4
+   apart, which is 0.03 bohr at the nucleus: for iodine the spline is negative, down to -8300,
+   at 14 grid points, and `rho<cutoff` dropped them. The test is now on the size of the
+   density. Bromine has no negative value. **The spline itself is unchanged: new entry under
+   *Correctness*.**
+2. *Radial points.* Finer angular grids change nothing. The rule of 5 more per period gave
+   45, 50 and 55 points in periods 4, 5 and 6; 1e-5 needs about 75, 130 and 190 with the
+   Mura–Knowles mapping (Treutler–Ahlrichs is no better). `BECKE_GRID:no_of_radial_pts` now adds
+   9, 20 and 32 times `n_extra_pts_per_shell` in periods 4, 5 and 6. H to Ar unchanged.
+3. *Angular thinning near the nucleus.* Treutler and Ahlrichs' scheme has Lebedev order 5 on the
+   inner third of the radial points, exact to degree 5; a product of two 4f functions has
+   degree 6. Hg and Rn stayed 6e-3 and 4e-2 off however many radial points, and 2e-5 off with
+   `pruning_scheme= none`. Order 7 from period 6 on does as well.
+
+Cost at medium, debug build, CPU seconds: HBr 3, HI 6, Xe 2, Hg 36, Rn 15. HCl's 2.6e-5 is now
+the largest of the main-group errors; it is the old rule, untouched.
+
+**The two-electron integral cutoff.** Hartree–Fock on iodobenzene with `x2c-TZVPall` was 7.9e-7
+hartree from PySCF without X2C and 1.3e-6 with it, where atoms and diatomics agree to 1e-8. It is
+the default `eri_accuracy= low`: with `eri_accuracy= high` both energies agree with PySCF to
+1e-8 (-6994.30984663 and -7343.14803111). So the default cutoff costs about 1e-6 hartree on a
+twelve-atom molecule with a heavy atom; nothing was changed.
 
 ## FIXED (2026-10-11): `relativity_kind=` silently gave the non-relativistic result
 

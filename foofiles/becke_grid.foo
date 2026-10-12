@@ -1184,14 +1184,27 @@ contains
 
    no_of_radial_pts(p) result (res) :: PURE
    ! Return the number of radial points in the grid for an atom in period "p" of
-   ! the periodic table.
+   ! the periodic table: .n_radial_pts for H and He, and for every further
+   ! period .n_extra_pts_per_shell more, up to Ar. From K on the core needs
+   ! many more than that rule gives: 9, 20 and 32 times .n_extra_pts_per_shell
+   ! are added in periods 4, 5 and 6, so that a DFT energy is good to about
+   ! 1e-5 hartree at the default accuracy, as it is for the lighter atoms.
       self :: IN
       p   :: INT, IN
       res :: INT
       scheme :: STR
       length :: REAL
-      if (.is_SG_kind) then; BECKE_GRID::SG_radial_scheme(.kind,p,scheme,res,length) ! "p" is the atomic number
-      else;                  res = .n_radial_pts + .n_extra_pts_per_shell*(p-1)
+      n_extra :: INT
+      if (.is_SG_kind) then
+         BECKE_GRID::SG_radial_scheme(.kind,p,scheme,res,length) ! "p" is the atomic number
+      else
+         select case (p)
+         case (:3);    n_extra = p - 1
+         case (4);     n_extra = 9
+         case (5);     n_extra = 20
+         case default; n_extra = 32
+         end
+         res = .n_radial_pts + .n_extra_pts_per_shell*n_extra
       end
    end
 
@@ -1789,7 +1802,11 @@ contains
       ! against g09 on H2O+ (cc-pVDZ, UKS slater, accuracy= best) it was
       ! -1.54e-05 where treutler_ahlrichs, jayatilaka0 and jayatilaka1 all
       ! landed within ~1.6e-06. See docs/TASK_DFT_STANDARDISATION.md section 6a.
-      case ("treutler_ahlrichs"); .apply_pruning_scheme_TA(lebedev_grid,i,nr)
+      case ("treutler_ahlrichs")
+         ! For the SG kinds "p" is the atomic number
+         if (.is_SG_kind) then; .apply_pruning_scheme_TA(lebedev_grid,period(p),i,nr)
+         else;                  .apply_pruning_scheme_TA(lebedev_grid,p,i,nr)
+         end
       case ("adaptive         "); .apply_pruning_scheme_adaptive(lebedev_grid,p,r)
       case ("sg-0","sg-1","sg-2","sg-3"); .apply_pruning_scheme_SG(lebedev_grid,p,i)
       end
@@ -2378,22 +2395,28 @@ contains
 
    end
 
-   apply_pruning_scheme_TA(lebedev_grid,i,nr) :: private, PURE
+   apply_pruning_scheme_TA(lebedev_grid,p,i,nr) :: private, PURE
    ! Set Truetler-Ahlrichs angular pruning scheme for "lebedev_grid"
    ! given a radial point "i" out of a set of "nr" radial points
-   ! arranged in increasing order.
+   ! arranged in increasing order, for an atom in period "p". From
+   ! period 6 on the innermost third has order 7, not 5: a product of
+   ! two f functions, of the filled 4f shell, has degree 6.
       self :: IN
       lebedev_grid :: LEBEDEV@, INOUT
 
-      i,nr :: INT, IN
+      p,i,nr :: INT, IN
 
       n3,n2 :: INT
 
       n3 = nr/3
       n2 = nr/2
 
-      if      (i <= n3) then;           lebedev_grid = .lebedev_L5_grid
-      else if (n3<i AND i<=n2) then;    lebedev_grid = .lebedev_L11_grid
+      if (i <= n3) then
+         if (p>=6) then; lebedev_grid = .lebedev_L7_grid
+         else;           lebedev_grid = .lebedev_L5_grid
+         end
+      else if (n3<i AND i<=n2) then
+         lebedev_grid = .lebedev_L11_grid
       end
 
    end

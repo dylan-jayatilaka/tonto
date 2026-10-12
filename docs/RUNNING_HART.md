@@ -61,7 +61,7 @@ reads.
 
 | Option | Value | Default | Effect |
 |---|---|---|---|
-| `--basis` | basis-set name | `def2-SVP` | One of `STO-3G`, `def2-SVP`, `def2-TZVP`, `def2-TZVPP`, `cc-pVDZ`, `cc-pVTZ`, `cc-pVQZ`. A file of that name must exist in the basis directory. |
+| `--basis` | basis-set name | `def2-SVP` | Any basis set with a file of that name in the basis directory. Recommended: `def2-SVP`, `def2-TZVP`, `def2-TZVPP` (H to Kr), and `x2c-SVPall`, `x2c-TZVPall`, `x2c-TZVPPall` (H to Rn, with X2C) for structures with atoms beyond Kr. |
 | `--basis-dir` | directory | `$TONTO_BASIS_SET_DIRECTORY`, else `./basis_sets` | Where the basis-set library lives. |
 | `--cluster-radius` | Å | 0 | Model the potential of whole molecules within this radius by Hirshfeld charges and dipoles. Maximum 10. |
 | `--defragment` | `t`/`f` | `t` | Apply the crystal symmetry to grow each fragment in the CIF into whole molecules, before anything is refined. A CIF holds the asymmetric unit — a quarter of a molecule for urea — and HAR runs a quantum calculation on whatever fragment it is handed, so refining an incomplete molecule converges to a meaningless answer. **Set `f` for a network solid** (diamond, silica, a coordination polymer): there is no whole molecule to complete, the growth has no stopping point, and the run will not terminate. Since the default is `t`, a network solid *must* turn it off. |
@@ -80,7 +80,9 @@ reads.
 | `--h-pos` | `t`/`f` | `t` | Refine H-atom positions. |
 | `--help` | — | — | Print the full documentation and exit 0. |
 | `--job` | name | head of the CIF name | Names the output file `<job>.out` and the other intermediates. |
+| `--nucleus` | `point`/`gaussian` | `point` | The model of the nuclear charge. `gaussian` needs `--relativity x2c`. |
 | `--mmcif` | `t`/`f` | `f` | Read the CIF as an mmCIF (`_atom_site.` names, residue labels). Residues are then Ryde-capped and refined by fragHAR. |
+| `--relativity` | `none`/`x2c` | `x2c` if the basis name begins with `x2c-`, else `none` | The relativistic Hamiltonian; see *Relativity* in [`RUNNING_TONTO.md`](RUNNING_TONTO.md). Needed for atoms beyond Kr. |
 | `--residual-cube` | `t`/`f` | `t` | Write a residual-density cube over the unit cell. By far the largest file a refinement produces (9 MB for a dipeptide). |
 | `--scf` | `rhf`/`rks` | `rhf` | The SCF wavefunction. |
 | `--shelx-f`, `--shelx-f2` | file | — | Reflections in SHELX fixed format `(I4,I4,I4,8F,8F)`. |
@@ -90,7 +92,8 @@ reads.
 
 **Restrictions**, all enforced with a message: zero overall charge; an even
 number of electrons; every symmetry-unique atom present in the fragment; no
-disorder; elements up to Z=36 only; no transition metals (Z=21–30).
+disorder; elements beyond Z=36 only with `--relativity x2c`, and none beyond Z=86;
+no transition metals of the first row (Z=21–30).
 
 **Exit status.** `--help` and `--version` exit 0. Every failure — a usage
 error, an unknown option, an unreadable basis, any `DIE` inside the library —
