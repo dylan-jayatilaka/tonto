@@ -601,6 +601,119 @@ contains
 
    end
 
+   make_stiff_mode_SF_correction(dsf,k_pts) :: leaky
+   ! Make "dsf", a correction to the tc-tls structure factors at the
+   ! "k_pts" for what that model leaves out along the stiff internal
+   ! modes: the change in size and shape of each product of basis
+   ! functions, and the change of the density matrix. Each stiff mode is
+   ! averaged by itself with the three-point Gauss-Hermite rule: its
+   ! displaced points are at +s and -s along the mode, s = sqrt(3 <Q^2>),
+   ! each with weight 1/6. At each an SCF is done from the undisplaced
+   ! MOs and the structure factors are made, F(+s) and F(-s). The model's
+   ! own value for the same two points keeps the undisplaced products and
+   ! density matrix and moves their centres, which multiplies each by
+   ! cos(k.d); call it F_cos. The mode adds
+   !    [F(+s) + F(-s)]/6 - F_cos/3
+   ! to "dsf", all three made without this mode's own smearing. The modes
+   ! are those of make_stiff_modes, with the harmonic <Q^2>. The atoms,
+   ! MOs and density matrix are put back. See docs/TASK_ON_TC_TLS.md.
+      self :: INOUT
+      dsf :: VEC{CPX}, OUT
+      k_pts :: MAT{REAL}, IN
+
+   ENSURE(dsf.dim==k_pts.dim1, "dsf and k_pts, incompatible")
+   DIE_IF(.normal_mode_eigenvectors.deallocated,"tc_integrate_stiff_modes= needs the normal modes of this molecule")
+   DIE_IF(.crystal.n_TLS_atoms/=.atom.dim,"tc_integrate_stiff_modes= is for a molecule, not a cluster")
+
+      sp,sm,sc :: VEC{CPX}@
+      V,pos0,D0 :: MAT{REAL}@
+      U0 :: MAT4{REAL}@
+      a0 :: VEC{REAL}@
+      MOs0 :: OPMATRIX@
+      s :: REAL
+      n_a,j,a,b,i,side :: INT
+
+      n_a = .atom.dim
+      .make_stiff_modes(V,a0)
+
+      ! Keep the undisplaced atoms, MOs, density matrix and two-center ADPs
+      pos0.create(3,n_a)
+      do a = 1,n_a
+         pos0(:,a) = .atom(a).position
+      end
+      MOs0 = .MOs
+      D0 = .density_mx.r
+      U0 = .crystal.two_center_ADPs
+
+      sp.create(k_pts.dim1)
+      sm.create(k_pts.dim1)
+      sc.create(k_pts.dim1)
+      dsf = ZERO
+
+      do j = 1,V.dim2
+
+         s = sqrt(THREE*a0(j))
+
+         ! The two-center ADPs without this mode
+         do a = 1,n_a
+         do b = 1,n_a
+            do i = 1,3
+               .crystal.two_center_ADPs(i,:,a,b) = U0(i,:,a,b) - a0(j)*V(3*a-3+i,j)*V(3*b-2:3*b,j)
+            end
+         end
+         end
+
+         ! The model's value: undisplaced products with their centres moved
+         .crystal.two_center_shift.destroy
+         .crystal.two_center_shift.create(3,n_a)
+         do a = 1,n_a
+            .crystal.two_center_shift(:,a) = s*V(3*a-2:3*a,j)
+         end
+         .make_FT(sc,D0,k_pts)
+         .crystal.two_center_shift.destroy
+
+         ! The displaced points, each with its own SCF
+         do side = 1,2
+            do a = 1,n_a
+               if (side==1) then; .atom(a).set_position(pos0(:,a) + s*V(3*a-2:3*a,j))
+               else;              .atom(a).set_position(pos0(:,a) - s*V(3*a-2:3*a,j))
+               end
+            end
+            .MOs = MOs0
+            .prepare_SCF_at_new_geometry
+            .SCF
+            .make_r_density_mx
+            if (side==1) then; .make_FT(sp,.density_mx.r,k_pts)
+            else;              .make_FT(sm,.density_mx.r,k_pts)
+            end
+         end
+
+         dsf = dsf + (sp + sm)/SIX - sc/THREE
+
+      end
+
+      ! Put everything back
+      do a = 1,n_a
+         .atom(a).set_position(pos0(:,a))
+      end
+      .crystal.two_center_ADPs = U0
+      .MOs = MOs0
+      .prepare_SCF_at_new_geometry
+      .SCF
+      .make_r_density_mx
+
+      sc.destroy
+      sm.destroy
+      sp.destroy
+      U0.destroy
+      D0.destroy
+      MOs0.destroy
+      pos0.destroy
+      a0.destroy
+      V.destroy
+
+   end
+
    make_two_center_position_derivs(sf_d,k_pts,redo_SCF) :: leaky
    ! Make "sf_d", the derivatives of the structure factors at the "k_pts"
    ! with respect to the positions of the unique fragment atoms, for
@@ -710,7 +823,7 @@ contains
    DIE_IF(NOT .crystal.allocated, "no crystal")
    DIE_IF(NOT .SCF_data.spinorbital_genre=="r ", "tc-tls refinement is for restricted wavefunctions")
 
-      sf_e :: VEC{CPX}@
+      sf_e,dsf :: VEC{CPX}@
       sf_pos,sf_sig,sf_dpos :: MAT{CPX}@
       k_pts,dF :: MAT{REAL}@
       fitout,fitres :: BIN
@@ -731,6 +844,13 @@ contains
       sf_pos.create(n_k,.atom.dim)
       sf_sig.create(n_k,.crystal.n_TLS_sigma)
 
+      ! The stiff modes averaged numerically, once for this fit
+      if (.crystal.xray_data.tc_integrate_stiff_modes) then
+         .crystal.make_two_center_ADPs
+         dsf.create(n_k)
+         .make_stiff_mode_SF_correction(dsf,k_pts)
+      end
+
       ! Position derivatives by differences, once for this fit
       if (.crystal.xray_data.tc_position_derivs/="center") then
          .crystal.make_two_center_ADPs
@@ -744,6 +864,7 @@ contains
          ! Structure factors and derivatives, and the shifts from them
          .crystal.make_two_center_ADPs
          .make_FT_and_TLS_derivs(sf_e,sf_pos,sf_sig,.density_mx.r,k_pts)
+         if (dsf.allocated) sf_e = sf_e + dsf
          if (sf_dpos.allocated) then
             .crystal.get_two_center_parameter_shifts(sf_e,sf_pos,sf_sig,sf_dpos)
          else
@@ -772,6 +893,7 @@ contains
       ! Put final CIF
       .put_CIFs
 
+      dsf.destroy
       sf_dpos.destroy
       sf_sig.destroy
       sf_pos.destroy

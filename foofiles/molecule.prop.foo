@@ -321,58 +321,30 @@ contains
 
    ENSURE(.atom.allocated,"no atoms")
 
-      B,l :: MAT{REAL}@
-      la,lb :: VEC{REAL}(3)
-      w,kT,Q2,ma,mb,rb,scale :: REAL
-      n3n,n_rb,k,a,c,i,j :: INT
+      V :: MAT{REAL}@
+      a0 :: VEC{REAL}@
+      k,a,c,i,j :: INT
 
       if (.normal_mode_eigenvectors.deallocated) .normal_mode_analysis
 
-      n3n = 3*.atom.dim
-      kT = .internal_ADP_temperature/KELVIN_PER_HARTREE
-      scale = .harmonic_frequency_scale
-
-      B.create(n3n,6)
-      .atom.make_rigid_body_modes(B,n_rb)
-      l = .normal_mode_eigenvectors
+      .make_stiff_modes(V,a0)
 
       .stiff_mode_ADPs.destroy
       .stiff_mode_ADPs.create(3,3,.atom.dim)
-      .stiff_mode_ADPs = ZERO
       .stiff_mode_pair_ADPs.destroy
       .stiff_mode_pair_ADPs.create(3,3,.atom.dim,.atom.dim)
       .stiff_mode_pair_ADPs = ZERO
 
-      do k = 1,n3n
-
-         ! Rigid-body, non-positive and soft modes are not stiff modes
-         rb = ZERO
-         do j = 1,n_rb
-            rb = rb + dot_product(B(:,j),l(:,k))**2
-         end
-         if (rb>HALF) cycle
-         if (.normal_mode_eigenvalues(k)<=ZERO) cycle
-         w = scale*sqrt(.normal_mode_eigenvalues(k))
-         if (w*WAVENUMBER_PER_HARTREE<=.soft_mode_cutoff) cycle
-
-         ! Mean-square amplitude of the mode
-         Q2 = HALF/w
-         if (kT>ZERO) Q2 = Q2/tanh(HALF*w/kT)
-
+      do k = 1,V.dim2
          do a = 1,.atom.dim
-            ma = .atom(a).mass*MASS_OF_ELECTRON_PER_AMU
-            la = l(3*a-2:3*a,k)
-            do c = 1,.atom.dim
-               mb = .atom(c).mass*MASS_OF_ELECTRON_PER_AMU
-               lb = l(3*c-2:3*c,k)
-               do i = 1,3
-               do j = 1,3
-                  .stiff_mode_pair_ADPs(i,j,a,c) = .stiff_mode_pair_ADPs(i,j,a,c) + la(i)*lb(j)*Q2/sqrt(ma*mb)
-               end
-               end
+         do c = 1,.atom.dim
+            do i = 1,3
+            do j = 1,3
+               .stiff_mode_pair_ADPs(i,j,a,c) = .stiff_mode_pair_ADPs(i,j,a,c) + a0(k)*V(3*a-3+i,k)*V(3*c-3+j,k)
+            end
             end
          end
-
+         end
       end
 
       ! Each atom's own block
@@ -380,7 +352,66 @@ contains
          .stiff_mode_ADPs(:,:,a) = .stiff_mode_pair_ADPs(:,:,a,a)
       end
 
-      l.destroy
+      a0.destroy
+      V.destroy
+
+   end
+
+   make_stiff_modes(V,a0) :: leaky
+   ! Make the stiff internal modes, those above .soft_mode_cutoff (cm^-1)
+   ! after the frequencies are scaled by harmonic_frequency_scale: "V",
+   ! the displacement of each atom per unit normal coordinate, l/sqrt(m),
+   ! and "a0", each mode's harmonic <Q^2> at .internal_ADP_temperature
+   ! (eq. (6) of docs/REPORT_ON_MODE_FITTING.md). The rigid-body modes
+   ! are recognised by their overlap with make_rigid_body_modes and left
+   ! out, as is a mode with a zero or negative eigenvalue.
+      self :: IN
+      V :: MAT{REAL}@, OUT
+      a0 :: VEC{REAL}@, OUT
+   DIE_IF(.normal_mode_eigenvectors.deallocated,"stiff modes need the normal modes: normal_mode_analysis")
+
+      B :: MAT{REAL}@
+      stiff :: VEC{INT}@
+      w,kT,scale,rb,ma :: REAL
+      n3n,n_rb,n_s,k,j,a :: INT
+
+      n3n = 3*.atom.dim
+      B.create(n3n,6)
+      .atom.make_rigid_body_modes(B,n_rb)
+      scale = .harmonic_frequency_scale
+      kT = .internal_ADP_temperature/KELVIN_PER_HARTREE
+
+      ! Rigid-body, non-positive and soft modes are not stiff modes
+      stiff.create(n3n)
+      n_s = 0
+      do k = 1,n3n
+         rb = ZERO
+         do j = 1,n_rb
+            rb = rb + dot_product(B(:,j),.normal_mode_eigenvectors(:,k))**2
+         end
+         if (rb>HALF) cycle
+         if (.normal_mode_eigenvalues(k)<=ZERO) cycle
+         w = scale*sqrt(.normal_mode_eigenvalues(k))
+         if (w*WAVENUMBER_PER_HARTREE<=.soft_mode_cutoff) cycle
+         n_s = n_s + 1
+         stiff(n_s) = k
+      end
+
+      ! Their displacements and mean-square amplitudes
+      V.create(n3n,n_s)
+      a0.create(n_s)
+      do j = 1,n_s
+         k = stiff(j)
+         do a = 1,.atom.dim
+            ma = .atom(a).mass*MASS_OF_ELECTRON_PER_AMU
+            V(3*a-2:3*a,j) = .normal_mode_eigenvectors(3*a-2:3*a,k)/sqrt(ma)
+         end
+         w = scale*sqrt(.normal_mode_eigenvalues(k))
+         a0(j) = HALF/w
+         if (kT>ZERO) a0(j) = a0(j)/tanh(HALF*w/kT)
+      end
+
+      stiff.destroy
       B.destroy
 
    end
