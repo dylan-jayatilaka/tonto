@@ -1168,7 +1168,8 @@ F(\mathbf{k}) &= \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} c_{\mu a} c_{\nu b}\;
 ```
 
 The second line names one term, $`t_{\mu a\,\nu b}`$, for use below. No partition into atoms appears
-in (29).
+in (29). When (29) is made from one molecule and summed over the space-group operations, each
+pair of atoms has a weight that counts it once; that is in `docs/REPORT_ON_PAIR_STABILIZERS.md`.
 
 **The centre is a pseudo-atom.** Putting (16) into (25), and using $`w_A + w_B = 1`$,
 
