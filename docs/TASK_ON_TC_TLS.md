@@ -99,19 +99,19 @@ $`\mathbf{u}_P`$ is the displacement of the product's centre; $`\mathbf{d}`$ is 
 the two atoms. The displaced product is, exactly,
 
 ```math
-\chi_a \chi_b\,(\mathbf{r}) = g_{ab}(\mathbf{r} - \mathbf{P} - \mathbf{u}_P \,;\, \mathbf{R} + \mathbf{d}) , \qquad (6)
+\chi_a \chi_b\,(\mathbf{r}) = \chi_{ab}(\mathbf{r} - \mathbf{P} - \mathbf{u}_P \,;\, \mathbf{R} + \mathbf{d}) , \qquad (6)
 ```
 
-where $`g_{ab}(\mathbf{s}; \mathbf{R})`$ is the product written about its own centre. So **the product moves
+where $`\chi_{ab}(\mathbf{s}; \mathbf{R})`$ is the product written about its own centre. So **the product moves
 bodily with $`\mathbf{u}_P`$, and changes size and shape only through $`\mathbf{d}`$.** Its Fourier transform at
 scattering vector $`\mathbf{k}`$ is
 
 ```math
 \int \chi_a \chi_b\, e^{i\mathbf{k}\cdot\mathbf{r}}\, d\mathbf{r}
-   = e^{i\mathbf{k}\cdot\mathbf{P}}\; e^{i\mathbf{k}\cdot\mathbf{u}_P}\; \tilde g_{ab}(\mathbf{k}; \mathbf{R} + \mathbf{d}) , \qquad (7)
+   = e^{i\mathbf{k}\cdot\mathbf{P}}\; e^{i\mathbf{k}\cdot\mathbf{u}_P}\; \tilde\chi_{ab}(\mathbf{k}; \mathbf{R} + \mathbf{d}) , \qquad (7)
 ```
 
-with $`\tilde g_{ab}`$ the transform of $`g_{ab}`$. The covariances of the two combinations follow
+with $`\tilde\chi_{ab}`$ the transform of $`\chi_{ab}`$. The covariances of the two combinations follow
 from (3):
 
 ```math
@@ -139,7 +139,7 @@ and the structure factor is
 
 ```math
 F(\mathbf{k}) = \sum_{ab} D_{ab} \sum_{\alpha\beta} c_\alpha c_\beta\;
-     e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde g_{ab}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{ab} \mathbf{k}} , \qquad (11)
+     e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde\chi_{ab}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{ab} \mathbf{k}} , \qquad (11)
 ```
 
 the inner sum over the primitives of the two contracted functions, with contraction coefficients
@@ -209,7 +209,7 @@ not determined by $`U_A`$ and $`U_B`$. In `tc-tls` it is, by (3).
 ## 6. Positions, symmetry, and pairs between molecules
 
 **Position derivatives.** In (11) the position of atom $`A`$ enters through the phase $`e^{i\mathbf{k}\cdot\mathbf{P}}`$,
-through $`\tilde g_{ab}(\mathbf{k}; \mathbf{R})`$, and through $`D`$. The first gives
+through $`\tilde\chi_{ab}(\mathbf{k}; \mathbf{R})`$, and through $`D`$. The first gives
 
 ```math
 \frac{\partial F}{\partial \mathbf{R}_A} \approx i\mathbf{k} \sum_{ab,\; a \in A} w_a\, (\text{term } ab \text{ of (11)}) \;+\; (\text{the same with } w_b \text{ for } b \in A). \qquad (15)
@@ -217,7 +217,7 @@ through $`\tilde g_{ab}(\mathbf{k}; \mathbf{R})`$, and through $`D`$. The first 
 
 This is the rigid-atom derivative $`i\mathbf{k} F_A`$ of Hirshfeld atom refinement with an effective
 atomic structure factor: each product is shared between its two atoms in the ratio of the
-exponents. The derivative of $`\tilde g_{ab}`$ with respect to $`\mathbf{R}`$ is analytic and can be added. The
+exponents. The derivative of $`\tilde\chi_{ab}`$ with respect to $`\mathbf{R}`$ is analytic and can be added. The
 derivative of $`D`$ is left to the repeated SCF, as in Hirshfeld atom refinement.
 
 **Symmetry.** A pair related to a pair in the asymmetric unit by a symmetry operation with rotation
@@ -243,7 +243,7 @@ $`\mathbf{k}\cdot\mathbf{u}_P = \mathbf{c}\cdot\mathbf{x}`$. Then for any functi
 
 The first factor is the temperature factor of (11), since $`\mathbf{c}^{\mathsf T} U \mathbf{c} = \mathbf{k}^{\mathsf T} U^P_{ab} \mathbf{k}`$. The
 second is the average of $`f`$ with every displacement shifted by an imaginary amount. With
-$`f = D_{ab}(\mathbf{x})\, \tilde g_{ab}(\mathbf{k}; \mathbf{R} + \mathbf{d})`$ this is the exact thermal average of one term. The model
+$`f = D_{ab}(\mathbf{x})\, \tilde\chi_{ab}(\mathbf{k}; \mathbf{R} + \mathbf{d})`$ this is the exact thermal average of one term. The model
 of §4 replaces the second factor by $`f(0)`$. Expanding it to second order,
 
 ```math
@@ -280,7 +280,13 @@ random displacements; they agree to the sampling error. Reading (18):
 $`D_{ab} S_{ab}`$ stays fixed, then for s functions $`f`$ is constant and (11) is exact. The model of §4
 lies between this limit and (18). The truth needs $`\partial D/\partial \mathbf{x}`$, one coupled-perturbed calculation
 or a finite difference along each mode; the finite-difference Hessian already visits those
-geometries.
+geometries. A cheaper estimate (Dylan, 2026-10-12) is the uncoupled sum-over-states formula of
+`docs/REPORT_ON_XCW_CONVERGENCE.md`, equation (4). For a moved atom the perturbation has two parts,
+because the basis moves: with $`F^x`$ and $`S^x`$ the derivatives of the Fock and overlap matrices in
+the molecular orbitals, occupied orbital $`i`$ gains
+$`-(F^x_{ai} - \varepsilon_i S^x_{ai})/(\varepsilon_a - \varepsilon_i)`$ of each virtual orbital $`a`$, and loses
+$`\tfrac12 S^x_{ji}`$ of each occupied orbital $`j`$ to stay orthonormal. Leaving out the change of
+the two-electron part of $`F^x`$ with the density is what makes it uncoupled.
 
 **Size.** For a valence pair, $`\mu \approx 0.25`$ bohr⁻² and $`|\mathbf{R}| \approx 2.5`$ bohr. A stretch at 123 K
 has $`V_{AB} \approx 0.002`$ Å² along the bond between heavy atoms and 0.006 Å² for a bond to hydrogen,
@@ -298,9 +304,10 @@ each atom. It is left out here too.
 
 1. *Decided (Dylan, 2026-10-12): yes, fixed D to begin with.* **Is §4 the model?** That is: product centres as pseudo-atoms, equations (11)–(13), shape and
    density matrix fixed at the mean geometry. The alternatives are to add the $`\mathbf{R}`$-dependence of
-   $`\tilde g`$ through (17), which without $`\partial D/\partial\mathbf{x}`$ breaks the electron count, or to do both.
+   $`\tilde\chi_{ab}`$ through (17), which without $`\partial D/\partial\mathbf{x}`$ breaks the electron count, or to do both.
 2. **Pairs between molecules:** $`U_{AB} = 0`$, as in §6. *Decided (Dylan, 2026-10-12): yes.*
-3. **Position derivatives:** the phase term (15) alone, or with the analytic derivative of $`\tilde g`$?
+3. **Position derivatives.** *Decided (Dylan, 2026-10-12): the phase term (15) alone; the
+   derivative of the product $`\chi_{ab}`$ is ignored.*
 4. **The name.** *Decided (Dylan, 2026-10-12):* `partition_model= tc-tls` implies `adp_model= tls`,
    for now.
 

@@ -1040,10 +1040,11 @@ and the size and shape change only through the relative displacement $`\mathbf{u
 Fourier transform of the displaced product, at scattering vector $`\mathbf{k}`$, is
 
 ```math
-e^{i\mathbf{k}\cdot\mathbf{P}}\; e^{i\mathbf{k}\cdot\mathbf{u}_P}\; \tilde g_{ab}(\mathbf{k};\, \mathbf{R} + \mathbf{u}_A - \mathbf{u}_B) , \qquad (20)
+e^{i\mathbf{k}\cdot\mathbf{P}}\; e^{i\mathbf{k}\cdot\mathbf{u}_P}\; \tilde\chi_{ab}(\mathbf{k};\, \mathbf{R} + \mathbf{u}_A - \mathbf{u}_B) , \qquad (20)
 ```
 
-where $`\tilde g_{ab}(\mathbf{k}; \mathbf{R})`$ is the transform of the product taken about its own centre.
+where $`\tilde\chi_{ab}(\mathbf{k}; \mathbf{R})`$ is the transform of the product $`\chi_{ab} = \chi_a\chi_b`$ taken about
+its own centre.
 
 ### 6.3 The model
 
@@ -1054,7 +1055,7 @@ refinement, made for each product instead of each atom. The structure factor is
 
 ```math
 F(\mathbf{k}) = \sum_{ab} D_{ab} \sum_{\alpha\beta} c_\alpha c_\beta\;
-     e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde g_{ab}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{ab} \mathbf{k}} , \qquad (21)
+     e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde\chi_{ab}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{ab} \mathbf{k}} , \qquad (21)
 ```
 
 the inner sum over the Gaussians of the two basis functions, with contraction coefficients
@@ -1099,7 +1100,7 @@ comes from (17).
 
 ### 6.4 What the model leaves out
 
-The exact average of one term of the sum, with $`f`$ standing for $`D_{ab}\,\tilde g_{ab}`$ as a function
+The exact average of one term of the sum, with $`f`$ standing for $`D_{ab}\,\tilde\chi_{ab}`$ as a function
 of the displacements $`\mathbf{x}`$ of all the atoms, is
 
 ```math
@@ -1113,6 +1114,12 @@ by $`f`$ at the mean geometry. The terms left out are the change of the product'
 with the relative displacement, the change of the density matrix with geometry, and the turning
 of each product about its own centre under libration. The first two must be taken together:
 with the first alone the number of electrons is not conserved.
+
+The change of the density matrix can be estimated by first-order perturbation theory without
+solving coupled equations, the sum over orbitals used for the X-ray constrained SCF
+(`docs/REPORT_ON_XCW_CONVERGENCE.md`, equation (4)). There the perturbation is a change of the
+Fock matrix; for a moved atom it is the change of the Fock matrix and of the overlap matrix,
+because the basis functions move with the atom.
 
 
 ## 7. What is not done yet, and directions
