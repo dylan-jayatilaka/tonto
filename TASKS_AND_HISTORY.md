@@ -80,18 +80,14 @@ because by then it held far more than deferred items.)*
 
 ## START HERE (2026-10-12, evening): the atomic density tables are half done
 
-**In progress: branch `density-tables`** (pushed, one commit `be867d1d`, no pull request).
-The new table works and the suite passes; entry *The atomic density tables* under *Science and
-features* has the measurements, the design and what is left. **Next action: settle the memory
-question there** — the table is 1.5 MB and is copied to every atom. Dylan chose "share one table
-for each kind of atom" (2026-10-12). Note before starting: `ATOM` holds everything by value,
-its basis sets too (`basis :: BASIS@`), and the tables are copied by plain assignment in half a
-dozen places and then changed for one atom by the spherically averaged Hirshfeld atoms
-(`molecule.har.foo`), so sharing means a pointer or an index into a list the molecule owns, and
-is a change to how `ATOM` holds its data, not to the table. The alternative is 1024 cells: 0.4 MB
-an atom, error about 2e-5 in the far tail and 1e-6 inside 3 bohr. Put this to Dylan before
-writing it. After that: a debug build, achari2, a pull request; then the tidy of
-`interpolator.foo` listed in the entry.
+**In progress: branch `density-tables`** (pushed; see its pull request). The new table works
+and the suite passes; entry *The atomic density tables* under *Science and features* has the
+measurements, the design and what is left. The memory question is settled (Dylan): 1024 cells
+now, 0.4 MB an atom; one table for each kind of atom later, with the lightening of the derived
+types, because `ATOM` holds everything by value and the tables are copied by plain assignment
+and then changed for one atom by the spherically averaged Hirshfeld atoms. **Next:** a debug
+build and achari2 if not yet done; the effect on a Hirshfeld weight and a structure factor of
+a heavy-atom structure; then the tidy of `interpolator.foo` listed in the entry.
 
 **Done today, all merged to `develop`** (archive entries of the same date):
 
@@ -107,6 +103,9 @@ writing it. After that: a debug build, achari2, a pull request; then the tidy of
 (*Test suite and numerics*); `hart`'s fit is 4% better in GoF with spherical functions,
 unexplained (in the archive entry *four small tasks*); a line plot writes 75 of its 401 points
 (in the density tables entry).
+
+**For the lightening of the derived types** (Dylan, 2026-10-12: a good idea anyway, before Julia
+or whatever comes): one density table for each kind of atom, held once and pointed to.
 
 **Left on disk:** `mac-reference/`, a netlib build tree on the Mac made for timing, untracked;
 on achari2 `~/openblas-unpacked` (OpenBLAS unpacked, not installed), and the worktree
@@ -4416,6 +4415,46 @@ X2C), each kind of table tested at 400,000 distances from 1e-4 bohr out to where
   **This is the candidate.**
 - Not measured: the time to fill a table in Tonto (one density evaluation for each point, once
   for each kind of atom), and the effect on a Hirshfeld weight and a structure factor.
+
+*In Tonto, 2026-10-12, branch `density-tables`.* Table H is in as a new kind of `INTERPOLATOR`,
+domain mapping `octaves`: 1024 cells to each power of two of $`r^2`$, from $`r`$ = 1e-6 bohr,
+ended where the density falls below the table's cutoff; about 48,000 points, 0.4 MB.
+`INTERPOLATOR:set_octave_points` makes the points, the caller evaluates the function at them
+and hands the values back (`set_data_values`, `finalize`), and one routine,
+`octave_values_for`, does every lookup. So no function is passed and `saved_self` is not used:
+`ATOM:make_octave_interpolator` evaluates the atom's density in batches.
+`MOLECULE.RHO:make_interpolator_octaves` replaces `make_interpolator_sqrt_x1x`, so every atom
+with a Gaussian basis gets the new table. The Slater and Coppens bases and the spherically
+averaged Hirshfeld atoms keep their old kinds.
+
+- **It is right at a heavy nucleus.** HI, x2c-SVPall, X2C, promolecule density out from the
+  iodine nucleus, against PySCF's iodine atom: the new table agrees to all six printed figures
+  at the twelve points compared (375140, 197207, 139326, ... 24442 at 0.0149 bohr); the old
+  table gives 372985 at the second point and 167779 at the last, wrong by up to a factor of 7.
+  At 1 bohr old and new agree to 7e-6.
+- **No test fails,** with 4096 cells or with 1024. Mac release build, full suite: 187 pass, 2
+  skip as always. So no re-bless
+  is forced; the references still hold the old tables' numbers within the tolerance.
+- **Time:** the suite takes the same (221 to 224 s against 217 to 219 s); filling the tables
+  adds about 0.2 s for each kind of atom (HI: 4.3 to 4.6 s).
+- **Memory and the number of cells (Dylan, 2026-10-12: 1024 cells now, sharing later).** The
+  table is copied to every atom (`MOLECULE.RHO:make_interpolators`), not kept once for each
+  kind. With 4096 cells that is 1.5 MB an atom against 0.24 MB before, 1.5 GB for a 1000-atom
+  cluster; with 1024 it is 0.4 MB. Measured against the exact Kr, Xe and Rn densities, 1024
+  cells: worst error 1.4e-5 to 2.6e-5, at 9 to 11 bohr where the density is 1e-10, and about
+  1e-6 inside 3 bohr; 4096 cells: 0.9e-6 to 1.6e-6, and 6e-8 to 8e-8 inside 3 bohr
+  (`acc3.py`). One table for each kind of atom belongs with the lightening of the derived
+  types (*Re-engineering*): `ATOM` holds everything by value, its basis sets too, so sharing
+  is a change to `ATOM`, not to the table. The number of cells is `INTERPOLATOR_OCTAVE_CELLS`.
+- **Left to tidy in `interpolator.foo`:** the sixteen pasted lookup loops (linear or spline,
+  logged or not, with a factor or not, set or add); the families of routines that take a
+  function argument (`_vs` for Slater shells, `_d_`, `_d2_`, `_general_`); every setting held
+  as a string and as a flag; the copy of the whole point array in each lookup; the commented
+  `ENSURE`s. To do once the Slater and Coppens bases are moved to the new kind.
+- **Found on the way:** a plot along a line (`y_width= 0`, `z_width= 0`, `n_x= 401`) reports 75
+  points and writes 75 values, then zeros and garbage, with the old binary too. Not looked into.
+- Not done: the effect on a Hirshfeld weight and a structure factor of a heavy-atom structure;
+  a debug build; achari2.
 
 *To do.* (1) Measure the present table against the density it was made from for Br, I and Hg,
 and its effect on a Hirshfeld weight and a structure factor. (2) Write the linear table of

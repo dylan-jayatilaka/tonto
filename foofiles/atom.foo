@@ -8240,12 +8240,56 @@ contains
       ! If no template, create a default interpolator
       if (.interpolator.deallocated) .interpolator.create
 
+      ! An octave table is filled from the density at its own points
+      if (.interpolator.domain_is_octaves) then
+         .make_octave_interpolator
+         return
+      end
+
       ! Set domain scale factor. May not be required.
       .interpolator.set_domain_scale_factor(.bragg_slater_radius*BOHR_PER_ANGSTROM)
 
       ! Set the interpolation table
       .set_saved_self ! Used by ATOM: function below
       .interpolator.set_even_spaced_data(ATOM::density_value_at_radius)
+
+   end
+
+   make_octave_interpolator :: leaky, private
+   ! Fill the octave table ".interpolator" with the atom's density,
+   ! which is taken to be spherical: it is evaluated along x.
+      self :: INOUT
+
+   ENSURE(.basis_kind=="gaussian","interpolation must be for a gaussian basis")
+   ENSURE(.interpolator.domain_is_octaves,"not an octave table")
+
+      rho :: VEC{REAL}@
+      pt  :: MAT{REAL}@
+      n_pt,batch,f,l,i :: INT
+
+      ! The table's points
+      .interpolator.set_octave_points
+      n_pt = .interpolator.n_data
+
+      ! The density there, a batch of points at a time
+      rho.create(n_pt)
+      batch = 4096
+      pt.create(batch,3)
+      do f = 1,n_pt,batch
+         l = min(f+batch-1,n_pt)
+         do i = f,l
+            pt(i-f+1,1) = .position(1) + sqrt(.interpolator.data_point(i))
+            pt(i-f+1,2) = .position(2)
+            pt(i-f+1,3) = .position(3)
+         end
+         .make_ED_grid_r(rho(f:l),pt(1:l-f+1,:))
+      end
+      pt.destroy
+
+      ! Store it
+      .interpolator.set_data_values(rho)
+      .interpolator.finalize
+      rho.destroy
 
    end
 
@@ -8276,7 +8320,7 @@ contains
    ENSURE(pt.dim2==3,"wrong dimension for points array")
    ENSURE(density.dim==pt.dim1,"inconsistent number of points")
    ENSURE(.interpolator.allocated,"no interpolator defined!")
-   ENSURE(.interpolator.domain_mapping(1:4)=="sqrt","must using sqrt-like mapping")
+   ENSURE(.interpolator.domain_mapping(1:4)=="sqrt" OR .interpolator.domain_is_octaves,"the table must be one looked up by squared distance")
 
       R2 :: VEC{REAL}@
       n_pt,n :: INT
@@ -8313,7 +8357,7 @@ contains
    ENSURE(pt.dim2==3,"wrong dimension for points array")
    ENSURE(density.dim==pt.dim1,"inconsistent number of points")
    ENSURE(.interpolator.allocated,"no interpolator defined!")
-   ENSURE(.interpolator.domain_mapping(1:4)=="sqrt","must using sqrt-like mapping")
+   ENSURE(.interpolator.domain_mapping(1:4)=="sqrt" OR .interpolator.domain_is_octaves,"the table must be one looked up by squared distance")
 
       R2 :: VEC{REAL}@
       n_pt,n :: INT
