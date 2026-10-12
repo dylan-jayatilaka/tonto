@@ -76,6 +76,10 @@ with `dft_functional=`.
   be built with `-DLIBXC=ON`; otherwise the name is refused.
 - **Not available:** range-separated hybrids, functionals with non-local
   correlation, and functionals that need the Laplacian of the density.
+- **The default grid,** `accuracy= medium`, gives a GGA energy to about 1e-5
+  hartree for molecules of any element up to Rn. From K on an atom has many
+  more radial points than a light one (75, 130 and 190 in periods 4, 5 and 6,
+  against 35 to 40), so a heavy atom costs several light ones.
 - **r2SCAN energies need a finer grid than the default.** The energy error for
   water at the default `accuracy= medium` is 2e-4 hartree, against 3e-6 for PBE;
   use `becke_grid= { set_defaults accuracy= very_high }` or finer when energies

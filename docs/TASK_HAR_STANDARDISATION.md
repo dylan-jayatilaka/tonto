@@ -312,8 +312,8 @@ Steps:
    one eigenproblem of twice the number of primitives, and the primitive integrals are a serial
    loop over shell pairs and nuclei. If a real structure is slow, do the transformation atom by
    atom (the "DLU" approximation of Peng and Reiher) and run the integral loop in parallel.
-3. `hart` has no relativity option and accepts only seven basis-set names (`docs/RUNNING_HART.md`).
-4. Under MPI the routine runs whole on every process; not tested there.
+3. Done 2026-10-12: `hart --relativity x2c`, and the X2C tests pass under MPI on 2 processes.
+4. The atomic density tables near a heavy nucleus (`TASKS_AND_HISTORY.md`, *Correctness*).
 
 ## 7. Order of work
 
@@ -330,6 +330,13 @@ it does not change results.
 
 ## 8. Log
 
+- 2026-10-12: X2C merged (pull request 47). The four tasks it left are done on branch
+  `heavy-atom-fixes` (`TASKS_AND_HISTORY.md`, archive, *the four tasks left by the X2C work*):
+  `hart --relativity x2c` with the x2c basis sets and atoms to Rn; the SCF converges when a basis
+  function is filtered for linear dependence; the default DFT grid is good to about 1e-5 hartree
+  up to Rn (it was 7.7e-4 for HBr, wrong by 9 hartree for HI, 2.2e-2 for Hg). **Before a heavy
+  atom is refined:** the atomic density tables go negative near a heavy nucleus (*Correctness*),
+  and a data set with an atom beyond Kr is needed.
 - 2026-10-11 (evening): scalar X2C written and checked, branch `x2c` (§6a): 17 systems against
   PySCF to 1e-8 hartree, one-electron ions against a 40-digit solution, Gaussian nuclei. Suite,
   Mac release and achari2 reference: the 184 earlier tests pass and the three new X2C tests
