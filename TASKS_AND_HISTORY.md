@@ -7159,17 +7159,19 @@ installed):
 - a `release` build linked against OpenBLAS: full suite 189 of 189 against the netlib-blessed
   references, one thread, no kernel pinned;
 - `OPENBLAS_CORETYPE=HASWELL` is accepted (`Core: Haswell`; left alone, `SkylakeX`);
-- a fresh `reference` configure finds `blas/libblas.so` and `lapack/liblapack.so`; the existing
-  `reference` tree rebuilt and passed the short suite, 87 of 87.
+- a fresh `reference` build finds `blas/libblas.so` and `lapack/liblapack.so`, and the binary
+  loads them from those directories (its run path names them), so the system default no longer
+  decides; the existing `reference` tree rebuilt and passed the short suite, 87 of 87.
 
 On the Mac both trees reconfigure to what they had: OpenBLAS for `release`, Homebrew's netlib
 for `reference`.
 
 **Not checked.** No CI workflow builds `release` with OpenBLAS (CI builds `reference` and
 `debug`), so other processors are untested; `scripts/test.py` pins the kernel on the Mac only
-(`PINNED_CORETYPE`), and an x86 value can be added there if a machine needs it. A `reference`
-build on a machine where `libopenblas-dev` is really installed has not been run: the mechanism
-was checked, not the case.
+(`PINNED_CORETYPE`), and an x86 value can be added there if a machine needs it. The real-WSL workflow now installs
+`libopenblas-dev` beside netlib and builds `reference` there, which is the case of both
+installed; its two configure steps with no build type (so `release`) were what failed first,
+for want of OpenBLAS.
 
 The measurements behind the decision, and the older reasoning, kept as they were written:
 
