@@ -14,9 +14,12 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 
+import org.antlr.v4.runtime.BaseErrorListener;
 import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CommonTokenStream;
 import org.antlr.v4.runtime.ParserRuleContext;
+import org.antlr.v4.runtime.RecognitionException;
+import org.antlr.v4.runtime.Recognizer;
 import org.antlr.v4.runtime.Token;
 import org.antlr.v4.runtime.tree.ParseTree;
 
@@ -54,7 +57,34 @@ public final class FooToFortran {
         FooLexer lexer = new FooLexer(CharStreams.fromPath(p));
         CommonTokenStream toks = new CommonTokenStream(lexer);
         FooParser parser = new FooParser(toks);
-        return new Parsed(parser.program(), toks);
+        SyntaxComplaints complaints = new SyntaxComplaints(p);
+        lexer.removeErrorListeners();  lexer.addErrorListener(complaints);
+        parser.removeErrorListeners(); parser.addErrorListener(complaints);
+        FooParser.ProgramContext tree = parser.program();
+        if (complaints.count > 0) {
+            System.err.println(p + ": " + complaints.count
+                + " syntax error(s); nothing was written. Fix the Foo source.");
+            System.exit(1);
+        }
+        return new Parsed(tree, toks);
+    }
+
+    /** Prints each syntax error as "file:line:column: message", on one short
+     *  line, once for each position, and counts them. A file with any is not translated: the parser's
+     *  recovery can drop text, and the Fortran would then be silently wrong. */
+    static final class SyntaxComplaints extends BaseErrorListener {
+        final Path file;
+        int count = 0;
+        final Set<String> seen = new LinkedHashSet<>();
+        SyntaxComplaints(Path f) { file = f; }
+        @Override public void syntaxError(Recognizer<?, ?> r, Object symbol, int line, int col,
+                                          String msg, RecognitionException e) {
+            if (!seen.add(line + ":" + col)) return;
+            count++;
+            String m = msg.replace("\n", "\\n");
+            if (m.length() > 100) m = m.substring(0, 100) + " ...";
+            System.err.println(file + ":" + line + ":" + col + ": " + m);
+        }
     }
 
     // -------------------------------------------------------------- type table
