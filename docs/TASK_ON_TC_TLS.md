@@ -390,8 +390,10 @@ new integral code is needed: the same routine is called with different weights.
 3. `SHELL2:make_TLS_TFs(TF,k_pts,Ua,Ub,Uab)`: (8) per pair of primitives, laid out as
    `make_Tanaka_TFs`. The partition factor is Tanaka's, which shares each product between its two
    atoms in the ratio of the exponents, as (15) does.
-4. `tc-tls` added to the options, to the three `select case` blocks (each given a `case default`
-   that stops), and to the keyword's documentation; reading it sets `adp_model= tls`.
+4. `tc-tls` added to the options, to the three `select case` blocks, and to the keyword's
+   documentation; reading it sets `adp_model= tls`. The blocks get no `case default`: a blank
+   `partition_model` reaches them today and does nothing, and stopping there could break a job
+   that works.
 
 Checks: (a) with $`U_{AB}`$ set so that $`V_{AB} = 0`$, F equals `tc-tanaka`'s; (b) a one-atom
 "molecule" gives the one-centre F; (c) **the urea comparison**: at a converged `adp_model= tls`
@@ -417,3 +419,11 @@ the report beside the Hirshfeld ones; (c) new test `long/urea_rhf_STO-3G_TC_TLS`
 **Not in the first version:** soft-mode correlations beyond what $`\Sigma`$ already holds need
 nothing extra; unrestricted and complex density matrices; a TLS body inside a cluster; the terms
 of §7.
+
+### Log
+
+**2026-10-12.** Step 1 written on branch `tc-tls` (`b43cb188`), not built. It needs a TLS model
+already refined with a one-centre partition; `make_two_center_ADPs` stops otherwise. The input for
+check (c) is `~/tonto-runs/2026-10-12_tc_tls/step1/stdin`: the urea STO-3G TLS test, then
+`make_structure_factors` with `oc-hirshfeld`, `tc-tanaka` and `tc-tls` in turn. Not yet known:
+whether re-reading `partition_model=` inside `crystal=` keeps the refined TLS model.
