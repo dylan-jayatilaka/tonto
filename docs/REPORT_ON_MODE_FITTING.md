@@ -1511,10 +1511,85 @@ and the structure factor used in the refinement is (29) plus $`\Delta F`$.
   twice over and is left out.
 - **Cost and limits.** Two SCFs for each stiff mode. $`\Delta F`$ is made once for each fit with a
   given density matrix, and held fixed while the parameters shift. It is for a single molecule,
-  with the harmonic amplitudes (6); the rigid-body motion and the refined soft modes are not
-  integrated.
+  with the harmonic amplitudes (6). The rigid-body motion and the refined soft modes are averaged
+  separately, in §6.7.
 
-### 6.7 Keywords
+### 6.7 The rigid-body motion averaged numerically
+
+The average of §6.6 can be applied to the rigid-body motion and the refined soft modes as well
+(`tc_integrate_rigid_body=`). The motion is first written in coordinates that are uncorrelated,
+as the stiff modes are; then each is averaged by (42).
+
+**Uncorrelated coordinates.** $`\Sigma`$ is symmetric, so it has orthonormal eigenvectors
+$`\mathbf{e}_j`$ with eigenvalues $`\lambda_j`$, $`\Sigma\,\mathbf{e}_j = \lambda_j \mathbf{e}_j`$. Write the generalised coordinates
+$`\mathbf{v}`$ of (11) in terms of them, $`\mathbf{v} = \sum_j c_j \mathbf{e}_j`$ with $`c_j = \mathbf{e}_j^{\mathsf T}\mathbf{v}`$. The $`c_j`$ are the
+**principal coordinates** of the motion:
+
+```math
+\begin{aligned}
+\langle c_i c_j \rangle &= \mathbf{e}_i^{\mathsf T}\, \langle \mathbf{v}\mathbf{v}^{\mathsf T} \rangle\, \mathbf{e}_j && \text{since } c_j = \mathbf{e}_j^{\mathsf T}\mathbf{v} \\
+ &= \mathbf{e}_i^{\mathsf T}\, \Sigma\, \mathbf{e}_j && \Sigma = \langle \mathbf{v}\mathbf{v}^{\mathsf T}\rangle \\
+ &= \lambda_j\, \mathbf{e}_i^{\mathsf T} \mathbf{e}_j && \Sigma\,\mathbf{e}_j = \lambda_j \mathbf{e}_j \\
+ &= \lambda_j\, \delta_{ij} && \text{the eigenvectors are orthonormal.}
+\end{aligned}
+\qquad (44)
+```
+
+So different principal coordinates are uncorrelated, and $`c_j`$ has mean square $`\lambda_j`$. The
+displacement of atom $`A`$, to first order, is
+
+```math
+\mathbf{u}_A = B_A \mathbf{v} = \sum_j c_j\, B_A \mathbf{e}_j = \sum_j c_j\, \mathbf{d}_{Aj}, \qquad \mathbf{d}_{Aj} = B_A \mathbf{e}_j , \qquad (45)
+```
+
+which has the form of the normal modes of §1.5: $`\mathbf{d}_{Aj}`$ is the displacement of atom $`A`$ per unit
+of $`c_j`$. In (17) the rigid-body term is then
+$`B_A \Sigma B_B^{\mathsf T} = \sum_j \lambda_j\, \mathbf{d}_{Aj}\mathbf{d}_{Bj}^{\mathsf T}`$, the same form as the stiff-mode term. So §6.6
+applies to each principal coordinate as it stands, with $`\mathbf{d}_{Aj}`$ for $`\mathbf{d}_{Ak}`$, $`\lambda_j`$ for
+$`\langle Q_k^2\rangle`$, and $`s_j = \sqrt{3\lambda_j}`$.
+
+**The displaced geometry is a true turn.** One thing is different. An eigenvector has a
+translation part, a rotation part and a soft-mode part,
+$`\mathbf{e}_j = (\boldsymbol{\tau}_j, \boldsymbol{\omega}_j, q_{j1} \dots q_{jK})`$. At the value $`c`$ of the coordinate the molecule has
+been turned through the angle $`|c\,\boldsymbol{\omega}_j|`$ about the axis along $`\boldsymbol{\omega}_j`$ through the origin $`\mathbf{O}`$
+of §1.4. (45) replaces that turn by its first-order displacement $`c\,\boldsymbol{\omega}_j \times (\mathbf{R}_A - \mathbf{O})`$,
+(4). For $`F^{\rm exact}_j`$ the atoms are put where the turn really takes them:
+
+```math
+\mathbf{R}_A(c) = \mathbf{O} + \mathsf{R}(c\,\boldsymbol{\omega}_j)\,(\mathbf{R}_A - \mathbf{O}) + c\,\boldsymbol{\tau}_j + c \sum_{k=1}^{K} q_{jk}\, \mathbf{d}_{Ak} , \qquad (46)
+```
+
+where $`\mathsf{R}(\boldsymbol{\theta})`$ is the rotation by the angle $`\theta = |\boldsymbol{\theta}|`$ about the unit vector
+$`\mathbf{n} = \boldsymbol{\theta}/\theta`$, which takes a vector $`\mathbf{r}`$ to
+$`\mathbf{r}\cos\theta + (\mathbf{n}\times\mathbf{r})\sin\theta + \mathbf{n}\,(\mathbf{n}\cdot\mathbf{r})(1-\cos\theta)`$. For a small angle (46) is
+$`\mathbf{R}_A + c\,\mathbf{d}_{Aj}`$.
+
+**The correction.** With the atoms at $`\mathbf{R}_A(\pm s_j)`$, an SCF there, and the structure factor
+made from (29) with $`W^{(j)}`$ of (39) as the temperature factor, $`F_j^{+}`$ and $`F_j^{-}`$ are found as
+in §6.6. $`F_j^{\cos}`$ is (42)'s, with $`\mathbf{d}_{Pj} = w_A \mathbf{d}_{Aj} + w_B \mathbf{d}_{Bj}`$: it moves each product's
+centre in a straight line and turns nothing. Then
+
+```math
+\Delta F^{\rm rb} = \sum_j \Big[ \tfrac16 \big( F_j^{+} + F_j^{-} \big) - \tfrac13\, F_j^{\cos} \Big] , \qquad (47)
+```
+
+summed over the principal coordinates, and the structure factor used in the refinement is (29)
+plus $`\Delta F`$ of (43) plus $`\Delta F^{\rm rb}`$.
+
+- **What the difference holds.** When the molecule turns, the wavefunction turns with it, so a
+  product of basis functions turns about its own centre, and its centre moves on an arc.
+  $`F_j^{\cos}`$ has neither. For a product that is a round Gaussian, turning about its centre
+  changes nothing; for one with lobes, such as a p function on nitrogen pointing at a hydrogen,
+  it carries the lobe through a larger arc than the centre.
+- **A pure translation gives nothing.** If $`\boldsymbol{\omega}_j = 0`$ and there are no soft modes, moving the
+  molecule changes only the phases, which $`F_j^{\cos}`$ has exactly; $`F_j^{+} + F_j^{-} = 2F_j^{\cos}`$.
+- **It follows the refinement.** $`\Sigma`$ is refined, so $`\Delta F^{\rm rb}`$ is made at the start of each
+  fit from the $`\Sigma`$ of that moment and held fixed during it. The stiff-mode $`\Delta F`$ does not
+  change in this way, because its amplitudes come from the Hessian.
+- **Cost.** Two SCFs for each principal coordinate, twelve for a rigid body without soft modes.
+  The SCF is done for convenience: turning a molecule turns its density matrix and no more.
+
+### 6.8 Keywords
 
 In `xray_data=`:
 
@@ -1523,6 +1598,7 @@ In `xray_data=`:
 | `partition_model= tc-tls` | | the model (29); sets `adp_model= tls` |
 | `tc_position_derivs=` | `center` | the position derivative: `center` (37), `fixed-dm` or `scf` (§6.5) |
 | `tc_integrate_stiff_modes=` | `FALSE` | `TRUE` adds $`\Delta F`$ of (43) |
+| `tc_integrate_rigid_body=` | `FALSE` | `TRUE` adds $`\Delta F^{\rm rb}`$ of (47) |
 
 On the molecule:
 
@@ -1532,7 +1608,7 @@ On the molecule:
 
 A Hessian from ORCA is turned into `force_constants=` by `scripts/orca_hessian_to_tonto.py`.
 
-### 6.8 Where it is implemented
+### 6.9 Where it is implemented
 
 | piece | procedure |
 |---|---|
@@ -1550,7 +1626,10 @@ A Hessian from ORCA is turned into `force_constants=` by `scripts/orca_hessian_t
 | derivatives taken directly with respect to refined parameters | `DIFFRACTION_DATA.SET:solve_normal_equations` |
 | position derivatives by differences, `fixed-dm` and `scf` | `MOLECULE.HAR:make_two_center_position_derivs` |
 | the cosine factor in (42) | `SHELL2:scale_TFs_by_shift` |
+| the average of one uncorrelated coordinate, (42) | `MOLECULE.HAR:make_mode_SF_correction` |
 | $`\Delta F`$, (43) | `MOLECULE.HAR:make_stiff_mode_SF_correction` |
+| the principal coordinates of $`\Sigma`$, (44) and (45) | `CRYSTAL:make_TLS_principal_motions` |
+| $`\Delta F^{\rm rb}`$, (47), with the turn (46) | `MOLECULE.HAR:make_rigid_body_SF_correction` |
 | the fit loop | `MOLECULE.HAR:LS_fit_two_center` |
 | the parts of a fit shared with Hirshfeld atom refinement | `CRYSTAL:start_structure_fit`, `apply_parameter_shifts`, `finish_fit_cycle`, `finish_structure_fit` |
 | an SCF made ready at a new geometry | `MOLECULE.HAR:prepare_SCF_at_new_geometry` |
@@ -1559,7 +1638,7 @@ A Hessian from ORCA is turned into `force_constants=` by `scripts/orca_hessian_t
 
 ## 7. What is not done yet, and directions
 
-- For `tc-tls`: the numerical average of §6.6 for the soft modes and for a molecule in a cluster;
+- For `tc-tls`: the numerical averages of §6.6 and §6.7 for a molecule in a cluster;
   the SCFs at the displaced geometries run in parallel; unrestricted wavefunctions.
 - The restraint-width check and the RI-J/COSX check of the correlations section, repeated with
   spherical functions.
