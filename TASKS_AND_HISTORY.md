@@ -4308,6 +4308,44 @@ needs only an x86 branch.
 
 ## Deferred: adopt OpenBLAS consistently (single-threaded) on Linux and WSL
 
+**Where this stands, 2026-10-12.** The build types have since settled most of it: `fast`
+requires OpenBLAS everywhere, `reference` requires netlib everywhere, and only `release` differs
+by platform (Homebrew OpenBLAS on the Mac, the system BLAS on Linux and WSL, which is netlib on a
+plain Ubuntu). **Dylan's inclination: `release` links OpenBLAS on every platform**, for speed and
+because one then knows what one is getting; `reference` stays separate and is the answer to
+cross-machine agreement; a user may substitute another BLAS, which must be documented, with
+where the compiler flags are set. Not decided yet. Two measurements were made for it, at
+`239869bb` on achari2 and at `12f34f65` on the Mac:
+
+- **Linux passes with OpenBLAS.** achari2 (Xeon W-2123), the `reference` binary run against
+  Ubuntu's `libopenblas0-pthread` 0.3.26, unpacked into `~/openblas-unpacked` and put first with
+  `LD_LIBRARY_PATH`, nothing installed: 189 of 189 pass against the netlib-blessed references,
+  one thread, no kernel pinned. One machine only; a CI runner with another processor is not tested.
+- **Speed, netlib against OpenBLAS, same code.** Only DFT jobs differ. Whole suite: Mac 1385
+  against 1301 s of test time (6%), achari2 602 against 575 s wall. Median over the 41 Mac tests
+  longer than 5 s: 1%.
+
+| test | Mac OpenBLAS | Mac netlib | achari2 OpenBLAS | achari2 netlib |
+|---|---|---|---|---|
+| `urea_rks_B3LYP_def2-TZVP_HAR_cell_maps` | 72 s | 98 s | 129 s | 166 s |
+| `libxc_energies_match_pyscf` | 13 s | 30 s | 24 s | 45 s |
+| `dft_energies_match_g09` | 6 s | 13 s | 10 s | 21 s |
+| `cyclazine_rhf_cc-pVDZ_VMO_canonicalization` | 134 s | 133 s | 216 s | 216 s |
+
+  So netlib costs a factor of 1.3 to 2.2 on small DFT jobs and nothing elsewhere. The 6.5 times
+  on the XC step (zinc finger, RI-J, 2026-09-17) was a large molecule and has not been repeated.
+
+**If adopted, to do:** `release` takes `BLA_VENDOR=OpenBLAS` on every platform and stops with
+the package name if it is missing, as `fast` does; the building pages say so, say how to
+substitute another BLAS (`-DBLA_VENDOR=`, already there) and where the compiler flags are;
+`OPENBLAS_CORETYPE` documented for a user who needs two machines to agree, and an x86 value in
+`scripts/test.py`'s `PINNED_CORETYPE` if a CI runner needs it; `reference` must find netlib by
+its own path on an Ubuntu where `libopenblas-dev` is installed, since that package makes
+OpenBLAS the system default; CI: the `release` workflows install OpenBLAS, and whether they
+still pass on the runners' processors is the open risk.
+
+The older text below is kept for its reasoning.
+
 **CAVEAT added 2026-09-24, to be dealt with when this is implemented: OpenBLAS dispatches on the
 CPU, so adopting it costs cross-machine reproducibility.** It selects kernels from the detected
 microarchitecture, so two machines with identical compilers and identical flags would again produce
