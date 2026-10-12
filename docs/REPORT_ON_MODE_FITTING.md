@@ -1231,43 +1231,51 @@ geometry: for the position derivatives in §6.5, and for the stiff modes in §6.
 
 ### 6.5 Derivatives for the refinement
 
-The refined parameters are the positions and $`\Sigma`$ (§2.2). Write one term of (29), for one
-pair of primitives, as
+The refinement changes $`\Sigma`$ and the atom positions (§2.2), so it needs the derivative of the
+structure factor (29) with respect to each element $`\Sigma_{pq}`$ and each position $`\mathbf{R}_C`$. Both are
+found by differentiating (29) term by term.
+
+**With respect to $`\Sigma`$.** In (29), $`\Sigma`$ appears only in the exponent of the temperature
+factor. By (30), $`U^P_{\mu a\,\nu b} = \bar B_P \bar\Sigma \bar B_P^{\mathsf T}`$, and the part of $`\bar\Sigma`$ that is $`\Sigma`$
+goes with the part of $`\bar B_P`$ that is $`B_P = w_A B_A + w_B B_B`$. So
 
 ```math
-T_{\mu a\,\nu b}(\mathbf{k}) = c_{\mu a} c_{\nu b}\;
-     e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde\chi_{\mu a\,\nu b}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{\mu a\,\nu b} \mathbf{k}}, \qquad
-F(\mathbf{k}) = \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} T_{\mu a\,\nu b}(\mathbf{k}) . \qquad (33)
+\mathbf{k}^{\mathsf T} U^P_{\mu a\,\nu b}\, \mathbf{k} = \mathbf{h}_P^{\mathsf T}\, \Sigma\, \mathbf{h}_P + (\text{a part without } \Sigma), \qquad
+\mathbf{h}_P = B_P^{\mathsf T}\mathbf{k} = w_A\, \mathbf{h}_A + w_B\, \mathbf{h}_B, \qquad \mathbf{h}_A = B_A^{\mathsf T} \mathbf{k} . \qquad (33)
 ```
 
-**With respect to $`\Sigma`$.** By (30), with $`\mathbf{h}_A = B_A^{\mathsf T}\mathbf{k}`$ a vector with one component for
-each generalised coordinate of (11),
+$`\mathbf{h}_A`$ is a vector with one component for each generalised coordinate of (11). $`\Sigma`$ is
+symmetric, and its element $`\Sigma_{pq}`$ with $`p \ne q`$ stands for the two equal elements $`\Sigma_{pq}`$ and
+$`\Sigma_{qp}`$, so $`\partial(\mathbf{h}_P^{\mathsf T}\Sigma\,\mathbf{h}_P)/\partial\Sigma_{pq} = (2-\delta_{pq})\, h_{P,p}\, h_{P,q}`$, with $`\delta_{pq}`$ one if
+$`p = q`$ and zero otherwise. Differentiating the exponential in (29) therefore multiplies each
+term by $`-\tfrac12 (2-\delta_{pq})\, h_{P,p}\, h_{P,q}`$:
 
 ```math
-\mathbf{k}^{\mathsf T} U^P_{\mu a\,\nu b}\, \mathbf{k} = \mathbf{h}_P^{\mathsf T}\, \Sigma\, \mathbf{h}_P + (\text{stiff modes}), \qquad
-\mathbf{h}_P = w_A\, \mathbf{h}_A + w_B\, \mathbf{h}_B . \qquad (34)
+\frac{\partial F}{\partial \Sigma_{pq}} = -\frac{2-\delta_{pq}}{2} \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} h_{P,p}\, h_{P,q}\;\, c_{\mu a} c_{\nu b}\;
+     e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde\chi_{\mu a\,\nu b}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{\mu a\,\nu b} \mathbf{k}} . \qquad (34)
 ```
 
-$`\Sigma`$ is symmetric, and its element $`\Sigma_{pq}`$ with $`p \ne q`$ stands for the two equal elements
-$`\Sigma_{pq}`$ and $`\Sigma_{qp}`$. So
-$`\partial(\mathbf{h}_P^{\mathsf T}\Sigma\,\mathbf{h}_P)/\partial\Sigma_{pq} = (2-\delta_{pq})\, h_{P,p} h_{P,q}`$, with $`\delta_{pq}`$ one if $`p = q`$ and
-zero otherwise, and
+This is the derivative. The rest is to put it in a form that is cheap to compute. In (34) the
+factor $`h_{P,p} h_{P,q}`$ is inside the sum over the primitives $`a, b`$, because $`w_A`$ and $`w_B`$ are
+different for each pair of primitives. But $`\mathbf{h}_A`$ and $`\mathbf{h}_B`$ are the same for every primitive on
+the two atoms. Multiplying out,
 
 ```math
-\frac{\partial T_{\mu a\,\nu b}}{\partial \Sigma_{pq}} = -\frac{2-\delta_{pq}}{2}\; h_{P,p}\, h_{P,q}\; T_{\mu a\,\nu b} ,
-\qquad h_{P,p} h_{P,q} = w_A^2\, h_{A,p} h_{A,q} + w_B^2\, h_{B,p} h_{B,q} + w_A w_B\,( h_{A,p} h_{B,q} + h_{B,p} h_{A,q} ) . \qquad (35)
+h_{P,p}\, h_{P,q} = w_A^2\, h_{A,p} h_{A,q} + w_B^2\, h_{B,p} h_{B,q} + w_A w_B\,( h_{A,p} h_{B,q} + h_{B,p} h_{A,q} ) , \qquad (35)
 ```
 
-The vectors $`\mathbf{h}_A`$ and $`\mathbf{h}_B`$ are the same for every primitive on the two atoms; only the
-weights differ. With $`w_B = 1 - w_A`$ the three weights are $`w_A^2`$, $`1 - 2w_A + w_A^2`$ and
-$`w_A - w_A^2`$, so three sums over the primitives are enough for each pair of basis functions:
+so the $`h_A`$ and $`h_B`$ factors can be taken outside the sum over primitives, leaving inside it
+the terms of (29) weighted by $`w_A^2`$, by $`w_B^2`$ and by $`w_A w_B`$. Since $`w_B = 1 - w_A`$, those
+weights are $`w_A^2`$, $`1 - 2w_A + w_A^2`$ and $`w_A - w_A^2`$: combinations of $`1`$, $`w_A`$ and $`w_A^2`$.
+So only three sums over the primitives are needed for each pair of basis functions. Name them:
 
 ```math
-s^{\mu\nu}_n(\mathbf{k}) = D_{\mu\nu} \sum_{ab} w_A^{\,n}\; T_{\mu a\,\nu b}(\mathbf{k}), \qquad n = 0, 1, 2 ; \qquad
-F = \sum_{\mu\nu} s^{\mu\nu}_0 . \qquad (36)
+s^{\mu\nu}_n(\mathbf{k}) = D_{\mu\nu} \sum_{ab} w_A^{\,n}\;\, c_{\mu a} c_{\nu b}\;
+     e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde\chi_{\mu a\,\nu b}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{\mu a\,\nu b} \mathbf{k}}, \qquad n = 0, 1, 2 . \qquad (36)
 ```
 
-Summing (35) over the primitives and the pairs,
+$`s^{\mu\nu}_0`$ is the contribution of the pair $`\mu\nu`$ to $`F`$ itself: $`F = \sum_{\mu\nu} s^{\mu\nu}_0`$. Putting (35)
+into (34),
 
 ```math
 \frac{\partial F}{\partial \Sigma_{pq}} = -\frac{2-\delta_{pq}}{2} \sum_{\mu\nu}
@@ -1275,24 +1283,26 @@ Summing (35) over the primitives and the pairs,
        + (s^{\mu\nu}_1 - s^{\mu\nu}_2)\,( h_{A,p}\, h_{B,q} + h_{B,p}\, h_{A,q} ) \Big] , \qquad (37)
 ```
 
-where $`A`$ is the atom of $`\mu`$ and $`B`$ the atom of $`\nu`$. An atom outside the rigid body has
-$`\mathbf{h} = 0`$.
+where $`A`$ is the atom of $`\mu`$ and $`B`$ the atom of $`\nu`$. An atom outside the rigid body does not
+move with $`\Sigma`$, and has $`\mathbf{h} = 0`$.
 
-**With respect to the position of an atom.** The position enters $`T_{\mu a\,\nu b}`$ through $`\mathbf{P}`$,
-through $`\mathbf{R}`$ in $`\tilde\chi_{\mu a\,\nu b}`$, and it enters $`D_{\mu\nu}`$. Tonto offers three derivatives
+**With respect to the position of an atom.** A position enters a term of (29) in three places:
+the centre $`\mathbf{P}`$, the vector $`\mathbf{R}`$ in $`\tilde\chi_{\mu a\,\nu b}`$, and the density matrix element $`D_{\mu\nu}`$.
+Tonto offers three derivatives, which keep one, two or all three of these
 (`tc_position_derivs=`):
 
-- `center`. Only $`\mathbf{P}`$ moves. By (21), $`\partial\mathbf{P}/\partial\mathbf{R}_A = w_A`$ and $`\partial\mathbf{P}/\partial\mathbf{R}_B = w_B = 1 - w_A`$,
-  so each term is multiplied by $`i\mathbf{k}\,w_A`$ or $`i\mathbf{k}\,(1-w_A)`$. For atom $`C`$,
+- `center`. Only $`\mathbf{P}`$ is moved. By (21), $`\partial\mathbf{P}/\partial\mathbf{R}_A = w_A`$ and $`\partial\mathbf{P}/\partial\mathbf{R}_B = w_B = 1 - w_A`$, so
+  differentiating $`e^{i\mathbf{k}\cdot\mathbf{P}}`$ multiplies a term by $`i\mathbf{k}\,w_A`$ for the atom of $`\mu`$ and by
+  $`i\mathbf{k}\,(1-w_A)`$ for the atom of $`\nu`$. The weighted sums are again those of (36), and for atom $`C`$
 
 ```math
 \frac{\partial F}{\partial \mathbf{R}_C} = i\mathbf{k} \Big[ \sum_{\mu\nu,\ \mu \text{ on } C} s^{\mu\nu}_1 + \sum_{\mu\nu,\ \nu \text{ on } C} ( s^{\mu\nu}_0 - s^{\mu\nu}_1 ) \Big] . \qquad (38)
 ```
 
-- `fixed-dm`. The basis functions move with the atom, so $`\mathbf{R}`$ changes too; the density matrix
-  is held. By central differences of (29), step 0.01 bohr.
-- `scf`. As `fixed-dm`, with an SCF at each displaced geometry, started from the undisplaced
-  orbitals, so that the density matrix follows the atom.
+- `fixed-dm`. $`\mathbf{P}`$ and $`\mathbf{R}`$ are moved: the basis functions move with the atom, and the density
+  matrix is held. By central differences of (29), step 0.01 bohr.
+- `scf`. All three: as `fixed-dm`, with an SCF at each displaced geometry, started from the
+  undisplaced orbitals, so that the density matrix follows the atom.
 
 In all three a unique atom moves together with its symmetry images in the molecule. The
 derivatives of `fixed-dm` and `scf` are made once for each fit with a given density matrix.
