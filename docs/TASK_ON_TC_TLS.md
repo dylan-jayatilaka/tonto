@@ -505,3 +505,35 @@ The fit ends where $`J^{\mathsf T} W r = 0`$ for the approximate $`J`$, which is
 the GoF. Open: what the position derivative should be (§10, to be decided). With the earlier
 RHF/6-31G(d) Hessian the four numbers are 3.4866, 3.6461, 3.6388, 3.6591: the Hessian hardly
 matters here. Runs in `~/tonto-runs/2026-10-12_tc_tls/{step2,diag_adps_only,svp_orca,orca_hess}`.
+
+**2026-10-12/13, position derivatives three ways, and the stiff-mode average.** Coded on
+`tc-tls`: `tc_position_derivs=` (`center`, `fixed-dm`, `scf`), each displaced SCF started from a
+saved copy of the undisplaced MOs (Dylan; `.M0s` exists but is the XCW reference, so a local copy
+is used); `tc_integrate_stiff_modes=`, the three-point average over each stiff mode (Dylan's
+suggestion, per mode instead of per atom pair; report §6.6). Urea, RHF/def2-SVP, ORCA def2-SVP
+Hessian, 17 parameters, release build:
+
+| refinement | GoF | R(F) | N–H1 /Å | N–H3 /Å |
+|---|---|---|---|---|
+| `oc-hirshfeld` | 3.4854 | 0.0181 | 1.028 | 0.994 |
+| `tc-tls`, `center` | 3.6577 | 0.0186 | 1.024 | 0.977 |
+| `tc-tls`, `fixed-dm` | 3.6681 | 0.0183 | 1.023 | 1.013 |
+| `tc-tls`, `scf` | 3.6292 | 0.0183 | 1.023 | 0.994 |
+| `tc-tls`, `center`, stiff modes averaged | 3.6349 | 0.0186 | 1.024 | 0.980 |
+| `tc-tls`, `scf`, stiff modes averaged | 3.6115 | 0.0183 | 1.023 | 0.995 |
+
+- `scf` is the only derivative that ends below the 3.6377 of "Hirshfeld geometry, TLS refined".
+  `fixed-dm` is the worst: the overlap change without the density matrix following is worse than
+  neither. N–H3 follows the derivative (0.977, 1.013, 0.994 Å); with `scf` it is the Hirshfeld value.
+- The stiff-mode average lowers the GoF by 0.023 (`center`) and 0.018 (`scf`): real but small.
+- The best `tc-tls` is still 0.126 above Hirshfeld.
+- The `scf` and the two averaged runs use SCF convergence 1e-7 (differences need it); the others
+  1e-4. The effect of that alone on the GoF was not measured.
+- A first pair of averaged runs gave GoF 4.29 and 4.10: a bug. The atoms were put back only after
+  the last mode, so $`F^{\cos}`$ of each later mode was made at the previous mode's displaced
+  geometry. Fixed; outputs kept in `C_int_*/bad`.
+- Times (release, one core): `scf` 9 min, averaged with `center` 10 min, averaged with `scf` 19 min,
+  against 1 min for `center`.
+
+Not done: a debug build since the difference code went in; the test suite; def2-TZVP; a test in
+`tests/`. Michael and Koritsanszky (2015) found under References.
