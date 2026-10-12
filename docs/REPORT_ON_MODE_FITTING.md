@@ -775,8 +775,9 @@ harmonic amplitude.
 | def2-TZVP | 4 | 645 | 170 | 664(118) | 200 |
 
 - **Two wags refine as one.** $`K = 2`$ gives the same fit and parameter count as $`K = 1`$: the
-  second wag is a combination of the first and the in-plane libration (§1.7). Both amplitudes
-  are printed, but only one combination of them is determined.
+  second wag's effect on the ADPs is a combination of the first wag's and the rigid-body
+  motion's, although the two wags are different motions of different symmetry (§1.7). Both
+  amplitudes are printed, but only one combination of them is determined.
 - **The wags are needed.** The first wag improves the fit significantly in both basis sets.
 - **The in-plane bends differ.** Mode 3 is not determined by the data: it refines to 13(82)
   at $`K = 3`$ and 216(93) at $`K = 4`$ (def2-SVP), against a harmonic 197, and does not improve the
