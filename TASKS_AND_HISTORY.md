@@ -4389,6 +4389,9 @@ corrected properties for X2C.
 
 ## Tune the DFT grid levels to 1e-3, 1e-4 and 1e-5 hartree (Dylan, 2026-10-12)
 
+**The plan is `docs/TASK_GRID_LEVELS.md`** (2026-10-12): five levels, 1e-3 to 1e-7, the test
+systems, the method, the time. Not started.
+
 **Register row** of the same name. **First in the order of work** of
 `docs/TASK_HAR_STANDARDISATION.md` section 7. The targets for a GGA energy are 1e-3 hartree at
 `accuracy= very_low`, 1e-4 at `low` and 1e-5 at `medium`, the default, for every element to Rn.
