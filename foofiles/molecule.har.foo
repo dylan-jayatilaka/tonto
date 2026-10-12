@@ -361,7 +361,7 @@ contains
    DIE_IF(NOT .crystal.allocated, "no crystal")
    DIE_IF(NOT .crystal.xray_data.allocated,"no crystal xray data")
    DIE_IF(NOT .crystal.xray_data.reflections.allocated,"no x-ray reflections")
-   DIE_IF(NOT .crystal.using_one_center_TF_model,"must use one-center temperature factor model")
+   DIE_IF(NOT (.crystal.using_one_center_TF_model OR .crystal.partition_model=="tc-tls"),"must use a one-center model or tc-tls")
 
       results :: BIN
       output  :: BIN
@@ -562,8 +562,9 @@ contains
    !   transformed back into asymmetric unit.
       self :: INOUT
 
-      if (.crystal.xray_data.use_disk_SFs) then; .LS_fit_HAs_disk
-      else;                                      .LS_fit_HAs_memory
+      if      (.crystal.partition_model=="tc-tls") then; .LS_fit_two_center
+      else if (.crystal.xray_data.use_disk_SFs)    then; .LS_fit_HAs_disk
+      else;                                              .LS_fit_HAs_memory
       end
 
       ! Finalise stuff at new geometry ...
@@ -588,6 +589,194 @@ contains
 
       ! New geometry, new moments
       .partition_info_made = FALSE
+
+   end
+
+   LS_fit_two_center :: leaky
+   ! LS fit the atom positions and the TLS model to the structure
+   ! factors for partition_model= tc-tls: one rigid fit with the current
+   ! density matrix. There are no atomic form factors to shift here, so
+   ! every cycle makes the structure factors and their derivatives
+   ! again from the shell pairs, with the atoms where the last cycle
+   ! put them.
+      self :: INOUT
+
+   DIE_IF(NOT .crystal.allocated, "no crystal")
+   DIE_IF(NOT .SCF_data.spinorbital_genre=="r ", "tc-tls refinement is for restricted wavefunctions")
+
+      sf_e :: VEC{CPX}@
+      sf_pos,sf_sig :: MAT{CPX}@
+      k_pts,dF :: MAT{REAL}@
+      fitout,fitres :: BIN
+      n_k,f :: INT
+
+      fitout = .crystal.xray_data.show_fit_output
+      fitres = .crystal.xray_data.show_fit_results
+
+      ! The k points and the density matrix
+      n_k = .crystal.n_unique_SF_k_pts
+      k_pts.create(n_k,3)
+      .crystal.make_unique_X_SF_k_pts(k_pts)
+      .make_r_density_mx
+
+      ! Initialise, and put the header
+      .crystal.start_structure_fit(fitout)
+      sf_e.create(n_k)
+      sf_pos.create(n_k,.atom.dim)
+      sf_sig.create(n_k,.crystal.n_TLS_sigma)
+
+      ! Rigid fit loop
+      do
+
+         ! Structure factors and derivatives, and the shifts from them
+         .crystal.make_two_center_ADPs
+         .make_FT_and_TLS_derivs(sf_e,sf_pos,sf_sig,.density_mx.r,k_pts)
+         .crystal.get_two_center_parameter_shifts(sf_e,sf_pos,sf_sig)
+
+         ! Apply them; the basis functions move with the atoms
+         dF.create(3,.crystal.n_fragment_atoms)
+         .crystal.apply_parameter_shifts(dF)
+         dF.destroy
+         do f = 1,.atom.dim
+            .atom(f).set_position(.crystal.fragment_atom(f).position)
+         end
+
+         ! Put the iteration results; finished?
+         .crystal.finish_fit_cycle(fitout)
+         if (.crystal.xray_data.fit_finished) exit
+
+      end
+
+      ! Results, and refresh the asymmetric unit
+      .crystal.finish_structure_fit(fitout,fitres)
+      .atom = .crystal.fragment_atom
+      .crystal.asymmetric_unit_source = "tonto-refinement"
+
+      ! Put final CIF
+      .put_CIFs
+
+      sf_sig.destroy
+      sf_pos.destroy
+      sf_e.destroy
+      k_pts.destroy
+
+   end
+
+   check_two_center_derivs :: leaky
+   ! Check the derivatives from make_FT_and_TLS_derivs against central
+   ! differences of make_FT, for partition_model= tc-tls, and put the
+   ! largest disagreement of each kind as a fraction of the largest
+   ! derivative. The positions are moved with the two-center ADPs held
+   ! fixed, which is what the derivative assumes. Needs a TLS model, so
+   ! use it after a refinement.
+      self :: INOUT
+
+   DIE_IF(NOT .crystal.allocated, "no crystal")
+   DIE_IF(NOT .crystal.partition_model=="tc-tls", "partition_model must be tc-tls")
+   DIE_IF(.crystal.TLS_basis.deallocated, "no TLS model: refine first")
+
+      sf_e,sp,sm :: VEC{CPX}@
+      sf_pos,sf_sig :: MAT{CPX}@
+      k_pts,Ba,Bb,E :: MAT{REAL}@
+      U0,dU :: MAT4{REAL}@
+      pr :: MAT{INT}@
+      pos :: VEC{REAL}(3)
+      step,err,big,err_pos,err_sig :: REAL
+      n_k,n_b,n_v,n_f,a,b,i :: INT
+
+      n_k = .crystal.n_unique_SF_k_pts
+      n_b = .crystal.n_TLS_atoms
+      n_v = 6 + .crystal.n_soft_modes
+      n_f = .atom.dim
+
+      k_pts.create(n_k,3)
+      .crystal.make_unique_X_SF_k_pts(k_pts)
+      .make_r_density_mx
+      .crystal.make_two_center_ADPs
+
+      ! The derivatives to be checked
+      sf_e.create(n_k)
+      sf_pos.create(n_k,n_f)
+      sf_sig.create(n_k,.crystal.n_TLS_sigma)
+      .make_FT_and_TLS_derivs(sf_e,sf_pos,sf_sig,.density_mx.r,k_pts)
+      sp.create(n_k)
+      sm.create(n_k)
+
+      ! Positions: move one atom along one axis
+      step = TOL(4)
+      err = ZERO
+      big = ZERO
+      do a = 1,n_f
+      do i = 1,3
+         pos = .atom(a).position
+         pos(i) = pos(i) + step
+         .atom(a).set_position(pos)
+         .make_FT(sp,.density_mx.r,k_pts)
+         pos(i) = pos(i) - TWO*step
+         .atom(a).set_position(pos)
+         .make_FT(sm,.density_mx.r,k_pts)
+         pos(i) = pos(i) + step
+         .atom(a).set_position(pos)
+         sp = (sp - sm)/(TWO*step)
+         sm = IMAGIFY(k_pts(:,i))*sf_pos(:,a)
+         err = max(err,maxval(abs(sp-sm)))
+         big = max(big,maxval(abs(sm)))
+      end
+      end
+      err_pos = err/big
+
+      ! Sigma: change one element, and with it every two-center ADP
+      .crystal.TLS_sigma_pairs(pr)
+      U0 = .crystal.two_center_ADPs
+      dU.create(3,3,n_f,n_f)
+      E.create(n_v,n_v)
+      Ba.create(3,n_v)
+      Bb.create(3,n_v)
+      err_sig = ZERO
+      do i = 1,pr.dim2
+         E = ZERO
+         E(pr(1,i),pr(2,i)) = ONE
+         E(pr(2,i),pr(1,i)) = ONE
+         dU = ZERO
+         do a = 1,n_b
+            Ba = .crystal.TLS_displacement_mx(a)
+            do b = 1,n_b
+               Bb = .crystal.TLS_displacement_mx(b)
+               dU(:,:,a,b) = matmul(Ba,matmul(E,transpose(Bb)))
+            end
+         end
+         step = TOL(5)/maxval(abs(dU))
+         .crystal.two_center_ADPs = U0 + step*dU
+         .make_FT(sp,.density_mx.r,k_pts)
+         .crystal.two_center_ADPs = U0 - step*dU
+         .make_FT(sm,.density_mx.r,k_pts)
+         sp = (sp - sm)/(TWO*step)
+         err = maxval(abs(sp-sf_sig(:,i)))
+         big = maxval(abs(sf_sig(:,i)))
+         err_sig = max(err_sig,err/big)
+      end
+      .crystal.two_center_ADPs = U0
+
+      stdout.flush
+      stdout.text("Two-center derivatives against central differences")
+      stdout.flush
+      stdout.set_real_fortran_fmt("e")
+      stdout.show("Largest error, positions  =",err_pos)
+      stdout.show("Largest error, Sigma      =",err_sig)
+      stdout.set_real_fortran_fmt("f")
+
+      Bb.destroy
+      Ba.destroy
+      E.destroy
+      dU.destroy
+      U0.destroy
+      pr.destroy
+      sm.destroy
+      sp.destroy
+      sf_sig.destroy
+      sf_pos.destroy
+      sf_e.destroy
+      k_pts.destroy
 
    end
 

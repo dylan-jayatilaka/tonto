@@ -4612,6 +4612,41 @@ contains
 
       dF :: MAT{REAL}@
 
+      ! Initialise, and put the header
+      .start_structure_fit(output)
+
+      ! Rigid-atom fit loop
+      do
+
+         ! Get unique *fragment* atom shifts in .xray_data.dX ...
+         .get_parameter_shifts(ff) ! .data
+
+         ! Apply them to the asymmetric unit and fragment atoms
+         dF.create(3,.n_fragment_atoms)
+         .apply_parameter_shifts(dF)
+
+         ! Update "ff", the unique (rigid) frag atom FF's.
+         ! Use the frag atom position shifts "dF".
+         .shift_update_ff(ff,dF)
+         dF.destroy
+
+         ! Put the iteration results; finished?
+         .finish_fit_cycle(output)
+         if (.xray_data.fit_finished) exit
+
+      end 
+
+      ! Results, and refresh the asymmetric unit
+      .finish_structure_fit(output,results)
+
+   end
+
+   start_structure_fit(output) :: leaky
+   ! Start a rigid-atom fit: create and initialise the fit data, keep a
+   ! copy of the starting parameters, and put the header if "output".
+      self   :: INOUT
+      output :: BIN, IN
+
       ! Create refinement arrays & initialize (leaky)
       ! - asymmetric atom and fragment atom pADPs are set.
       .initialize_fit_data
@@ -4630,54 +4665,62 @@ contains
          .put_fit_header_info
       end
 
-      ! Rigid-atom fit loop
-      do
+   end
 
-         ! Get unique *fragment* atom shifts in .xray_data.dX ...
-         .get_parameter_shifts(ff) ! .data
+   apply_parameter_shifts(dF) :: leaky
+   ! Apply the unique fragment atom shifts in .xray_data.dX to the
+   ! asymmetric unit atoms and then to every fragment atom. "dF" is
+   ! the shift in each fragment atom's position.
+      self :: INOUT
+      dF :: MAT{REAL}, OUT
 
-         ! Change/store unique frag atom -> asym atom shifts
-         ! Change/store the covariance matrix too.
-         .set_asym_from_ufrag_shifts ! .xray_data.dX now for asym atoms
-         .set_asym_from_ufrag_cov_mx
+      ! Change/store unique frag atom -> asym atom shifts
+      ! Change/store the covariance matrix too.
+      .set_asym_from_ufrag_shifts ! .xray_data.dX now for asym atoms
+      .set_asym_from_ufrag_cov_mx
 
-         ! Stop symmetry breaking
-         ! NOTE: we should apply this to the gradient *not*
-         ! the shift to make sure the shift maintains symmetry
-         .stabilize_asym_atom_shifts
+      ! Stop symmetry breaking
+      ! NOTE: we should apply this to the gradient *not*
+      ! the shift to make sure the shift maintains symmetry
+      .stabilize_asym_atom_shifts
 
-         ! Store old asym-atom parameter vector.
-         ! Add shift dA to get new .xray_data.X_fit
-         .xray_data.SET:update_fit_parameters
-         .asymmetric_unit_atom.set_pADP_vector_to(.xray_data.X_fit)
+      ! Store old asym-atom parameter vector.
+      ! Add shift dA to get new .xray_data.X_fit
+      .xray_data.SET:update_fit_parameters
+      .asymmetric_unit_atom.set_pADP_vector_to(.xray_data.X_fit)
 
-         ! Set the fit errors e.g. max(dX/esd)
-         ! Copy them to the asymmetric unit atoms.
-         .update_fit_esds
-         .asymmetric_unit_atom.set_pADP_errors_to(.xray_data.covariance_mx,.xray_data.refine_H_U_iso)
+      ! Set the fit errors e.g. max(dX/esd)
+      ! Copy them to the asymmetric unit atoms.
+      .update_fit_esds
+      .asymmetric_unit_atom.set_pADP_errors_to(.xray_data.covariance_mx,.xray_data.refine_H_U_iso)
 
-         ! Set ALL fragment_atom positions/ADPs from asym atoms HERE
-         ! >>> fragment_atom must be the same as molecule.atom 
-         ! >>> Except for the pHAR (Sorry Dylan. Kang). 
-         !     In pHAR, molecule.atom are from Crystal23 xml, and fixed
-         dF.create(3,.n_fragment_atoms)
-         .set_frag_from_asym_pADPs(dF)
+      ! Set ALL fragment_atom positions/ADPs from asym atoms HERE
+      ! >>> fragment_atom must be the same as molecule.atom 
+      ! >>> Except for the pHAR (Sorry Dylan. Kang). 
+      !     In pHAR, molecule.atom are from Crystal23 xml, and fixed
+      .set_frag_from_asym_pADPs(dF)
 
-         ! Update "ff", the unique (rigid) frag atom FF's.
-         ! Use the frag atom position shifts "dF".
-         .shift_update_ff(ff,dF)
-         dF.destroy
+   end
 
-         ! Put the iteration results
-         if (output) then
-            .xray_data.PUT:put_fit_table_body
-         end
+   finish_fit_cycle(output) :: leaky
+   ! End one cycle of a rigid-atom fit: put its line of the table if
+   ! "output", and set .xray_data.fit_finished.
+      self   :: INOUT
+      output :: BIN, IN
 
-         ! Finished?
-         .xray_data.SET:update_fit_info
-         if (.xray_data.fit_finished) exit
+      if (output) then
+         .xray_data.PUT:put_fit_table_body
+      end
+      .xray_data.SET:update_fit_info
 
-      end 
+   end
+
+   finish_structure_fit(output,results) :: leaky
+   ! Finish a rigid-atom fit: set the fragment esds, put the results,
+   ! and remake the asymmetric unit from the fragment atoms.
+      self    :: INOUT
+      output  :: BIN, IN
+      results :: BIN, IN
 
       ! Table footer
       if (output) then
@@ -5029,11 +5072,12 @@ contains
    !    U_ab = B_a Sigma B_b^T + U_high_ab
    ! with B_a from TLS_displacement_mx and U_high_ab the stiff-mode part.
    ! An atom outside the TLS body keeps its own ADP in block (a,a) and is
-   ! uncorrelated with every other atom. See docs/REPORT_ON_MODE_FITTING.md
+   ! uncorrelated with every other atom. So does every atom before a TLS
+   ! model exists, as for the first structure factors of a refinement,
+   ! which only prune reflections. See docs/REPORT_ON_MODE_FITTING.md
    ! section 6.
       self :: INOUT
    ENSURE(.fragment_atom.allocated,"no fragment atoms")
-   DIE_IF(.TLS_basis.deallocated,"tc-tls needs a TLS model: refine with adp_model= tls first")
 
       Smat,Ba,Bb,W :: MAT{REAL}@
       sv :: VEC{REAL}@
@@ -5043,6 +5087,17 @@ contains
       n_f = .fragment_atom.dim
       n_b = .n_TLS_atoms
       n_v = 6 + .n_soft_modes
+
+      ! No TLS model yet: uncorrelated atoms
+      if (.TLS_basis.deallocated OR .TLS_unique_response.deallocated) then
+         .two_center_ADPs.destroy
+         .two_center_ADPs.create(3,3,n_f,n_f)
+         .two_center_ADPs = ZERO
+         do a = 1,n_f
+            .two_center_ADPs(:,:,a,a) = .fragment_atom(a).ADP_tensor
+         end
+         return
+      end
 
       ! Sigma as a matrix
       .make_TLS_sigma_vector(sv)
@@ -5085,6 +5140,100 @@ contains
       Smat.destroy
       pr.destroy
       sv.destroy
+
+   end
+
+   get_two_center_parameter_shifts(sf_e,sf_pos,sf_sig) :: leaky
+   ! Get the shifts ".xray_data.dX" for partition_model= tc-tls by solving
+   ! the normal equations. "sf_e" are the structure factors at the unique
+   ! k points. "sf_pos(k,f)" times i k is their derivative with respect
+   ! to the position of fragment atom "f". "sf_sig(k,i)" is their
+   ! derivative with respect to element i of the TLS covariance Sigma, in
+   ! the order of TLS_sigma_pairs. All three come from
+   ! MOLECULE.XTAL:make_FT_and_TLS_derivs. The ADPs enter only through
+   ! Sigma, so the ADP columns of the pADP derivatives hold nothing but
+   ! the dispersion correction.
+      self :: INOUT
+      sf_e :: VEC{CPX}, IN
+      sf_pos,sf_sig :: MAT{CPX}, IN
+
+   ENSURE(.xray_data.allocated, "no data")
+   ENSURE(.fragment_info_made, "no fragment info")
+   ENSURE(.TLS_basis.allocated, "no TLS model")
+   ENSURE(sf_e.dim==.n_unique_SF_k_pts, "sf_e: wrong dim")
+   ENSURE(sf_pos.dim2==.n_fragment_atoms, "sf_pos: wrong dim2")
+   ENSURE(sf_sig.dim2==.n_TLS_sigma, "sf_sig: wrong dim2")
+
+      sf_d,sf_t,dFc,dFt :: MAT{CPX}@
+      dFa,dFb,k_pts :: MAT{REAL}@
+      seitz :: MAT3{REAL}@
+      M :: MAT{REAL}(3,3)
+      kv :: VEC{REAL}(3)
+      n_k,n_X,n_refl,n_t,u,fu,f,a,base,k :: INT
+      refine_positions,refine_ADPs,refine_Uiso :: BIN
+
+      n_k    = .n_unique_SF_k_pts
+      n_X    = .asymmetric_unit_atom.no_of_pADPs
+      n_refl = .xray_data.reflections.dim
+      n_t    = .TLS_basis.dim2
+
+      ! Position derivatives of each unique fragment atom. Every fragment
+      ! atom which is an image of it moves with it, turned by the
+      ! symmetry operation between them.
+      k_pts.create(n_k,3)
+      .make_unique_X_SF_k_pts(k_pts)
+      seitz = .xyz_seitz_matrices
+      sf_d.create(n_k,n_X)
+      sf_d = ZERO
+      do u = 1,.n_unique_frag_atoms
+         fu = .unique_frag_atom(u)
+         .refinement_flags_for_frag_atom(fu,refine_positions,refine_ADPs,refine_Uiso)
+         if (NOT refine_positions) cycle
+         base = .fragment_atom.no_of_pADPs_up_to_atom(u,.unique_frag_atom)
+         a = .asym_atom_for_frag_atom(fu)
+         do f = 1,.n_fragment_atoms
+            if (.asym_atom_for_frag_atom(f)/=a) cycle
+            M = matmul(seitz(:,:,.asym_symop_for_frag_atom(fu)),transpose(seitz(:,:,.asym_symop_for_frag_atom(f))))
+            do k = 1,n_k
+               kv = matmul(M,k_pts(k,:))
+               sf_d(k,base+1:base+3) = sf_d(k,base+1:base+3) + IMAGIFY(kv)*sf_pos(k,f)
+            end
+         end
+      end
+      seitz.destroy
+      k_pts.destroy
+
+      ! Set F_pred with scale & extinction
+      .xray_data.reflections.reset_F_corr_to_F_exp ! We fit to F_corr
+      .make_F_predicted_from(sf_e)
+
+      ! Sum over the symmetry operations; derivatives of |F_calc|
+      dFc.create(n_refl,n_X)
+      .spacegroup.sum_unique_sf_derivs(dFc,sf_d,.xray_data.reflections)
+      sf_d.destroy
+      if (.xray_data.add_dispersion_to_F_calc) then
+         .add_D_dispersion_correction(dFc)
+      end
+      dFa.create(n_refl,n_X)
+      .xray_data.INQ:d_F_abs_dX(dFa,dFc)
+      dFc.destroy
+
+      ! The same for the TLS parameters p, Sigma = .TLS_basis p
+      sf_t.create(n_k,n_t)
+      sf_t = matmul(sf_sig,.TLS_basis)
+      dFt.create(n_refl,n_t)
+      .spacegroup.sum_unique_sf_derivs(dFt,sf_t,.xray_data.reflections)
+      sf_t.destroy
+      dFb.create(n_refl,n_t)
+      .xray_data.INQ:d_F_abs_dX(dFb,dFt)
+      dFt.destroy
+
+      ! Get the unique atom shifts, dX (leaky)
+      .set_TLS_restraints
+      .xray_data.SET:solve_normal_equations(dFa,dFb,.TLS_first_param)
+
+      dFb.destroy
+      dFa.destroy
 
    end
 
