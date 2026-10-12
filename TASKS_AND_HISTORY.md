@@ -7233,8 +7233,17 @@ cluster-charge routines could not catch it, and does not exist in a release buil
   test chi^2 at the first lambda goes from 61.914 to 63.848. Re-blessed on achari2.
 - The open question, a promolecule start with an `oc-*` model: the charges are made. nh3, DZP,
   `initial_density= promolecule`: `V_cN` -0.1708 with fixed charges, -0.1600 self-consistent.
-- Not looked at: whether Hirshfeld charges are the right charges for a `tc-*` fit, and the
-  Lorentz-field path, which takes the same route and has no test.
+- **Which charges** (Dylan, 2026-10-12): the cluster charges follow the X-ray partition model,
+  and a two-centre `tc-*` model uses the standard Hirshfeld atoms, nothing more sensible being
+  known there. The SCF already did this for the one-centre models: nh3, DZP, self-consistent
+  charges, `V_cN` -0.160 with `oc-hirshfeld` and -0.097 with `oc-salvador` (N charge -0.319 and
+  -1.250). The exception was the `make_cluster_charges` keyword, which re-made the moments as
+  Hirshfeld whatever the model; it now goes through `make_atom_partition_info(need_moments=TRUE)`
+  and gives the SCF's charges. No reference changed.
+- Found while checking: **an unknown `partition_model=` name was accepted in a release build**
+  (the check was an `ENSURE`); `oc-tfva`, which is not a name (`tfva` and `oc-salvador` are),
+  ran as if no model were set. `DIFFRACTION_DATA:set_partition_model` now stops in every build.
+- Not looked at: the Lorentz-field path, which takes the same route and has no test.
 
 **2. The debug build's false second error** (`5d2368ce`). The three `deallocate(tonto_bug)` in
 `foofiles/system.foo` are now `call backtrace` (under `DEBUG` and `__GFORTRAN__`), followed by
