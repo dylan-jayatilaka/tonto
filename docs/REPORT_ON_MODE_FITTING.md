@@ -1111,15 +1111,18 @@ So, from (24), the Fourier transform of the displaced product is exactly
 e^{i\mathbf{k}\cdot\mathbf{P}}\; e^{i\mathbf{k}\cdot\mathbf{u}_P}\; \tilde\chi_{\mu a\,\nu b}(\mathbf{k};\, \mathbf{R} + \mathbf{u}_A - \mathbf{u}_B) . \qquad (26)
 ```
 
-The product moves bodily with $`\mathbf{u}_P`$, and changes size and shape only through the relative
-displacement $`\mathbf{u}_A - \mathbf{u}_B`$ of the two atoms.
+The displacement does two things. The centre of the product moves by $`\mathbf{u}_P`$, which gives the
+phase $`e^{i\mathbf{k}\cdot\mathbf{u}_P}`$. And the vector between the atoms changes by the relative displacement
+$`\mathbf{u}_A - \mathbf{u}_B`$, which changes $`\tilde\chi_{\mu a\,\nu b}`$: in (23) that vector sets how large the
+product is, through $`e^{-\xi|\mathbf{R}|^2}`$, and enters the two polynomials.
 
 ### 6.3 The model
 
 **Each product is smeared by the motion of its centre.** In the thermal average of (26) the
-factor $`e^{i\mathbf{k}\cdot\mathbf{u}_P}`$ is averaged. The product's size and shape, and the density matrix, are
-held at their values at the mean geometry: $`\tilde\chi_{\mu a\,\nu b}(\mathbf{k}; \mathbf{R})`$ and $`D_{\mu\nu}`$ are
-taken out of the average. This is the rigid-atom approximation of Hirshfeld atom refinement,
+factor $`e^{i\mathbf{k}\cdot\mathbf{u}_P}`$ is averaged. Two other things in a term of (20) change when the
+atoms move, and both are held at their values at the mean geometry and taken out of the average:
+the transform $`\tilde\chi_{\mu a\,\nu b}`$, whose argument $`\mathbf{R} + \mathbf{u}_A - \mathbf{u}_B`$ in (26) is replaced by
+$`\mathbf{R}`$, and the density matrix element $`D_{\mu\nu}`$. This is the rigid-atom approximation of Hirshfeld atom refinement,
 made for each product instead of each atom.
 
 The average is done as for an atom (§1.1). The displacements are Gaussian with zero mean, so
@@ -1209,11 +1212,15 @@ average of that term is
 
 where $`U`$ is the $`3N\times 3N`$ matrix with blocks $`U_{AB}`$, and $`\mathbf{c}`$ is the $`3N`$-vector holding
 $`w_A\mathbf{k}`$ on atom $`A`$, $`w_B\mathbf{k}`$ on atom $`B`$ and zero elsewhere, so that $`\mathbf{k}\cdot\mathbf{u}_P = \mathbf{c}\cdot\mathbf{x}`$.
-It follows from completing the square in the Gaussian average. The model replaces the last
-factor by $`f(0)`$. The terms left out are the change of the product's size and shape with the
-relative displacement, the change of the density matrix with geometry, and the turning of each
-product about its own centre under libration. The first two must be taken together: with the
-first alone the number of electrons is not conserved.
+It follows from completing the square in the Gaussian average. The approximation of §6.3
+replaces the last factor by $`f(0)`$. What that leaves out is:
+
+- the change of $`\tilde\chi_{\mu a\,\nu b}`$ with the relative displacement $`\mathbf{u}_A - \mathbf{u}_B`$;
+- the change of the density matrix with the geometry;
+- the turning of each product about its own centre when the molecule librates.
+
+The first two must be taken together: with the first alone the number of electrons is not
+conserved.
 
 The change of the density matrix can be estimated by first-order perturbation theory without
 solving coupled equations, the sum over orbitals used for the X-ray constrained SCF
@@ -1292,51 +1299,121 @@ derivatives of `fixed-dm` and `scf` are made once for each fit with a given dens
 
 ### 6.6 The stiff modes averaged numerically
 
-The model of §6.3 holds each product's size and shape, and the density matrix, at the mean
-geometry (§6.4). Along a stiff mode this can be put right by doing the average numerically,
-one mode at a time (`tc_integrate_stiff_modes=`).
+§6.3 made an approximation: two quantities that change when the atoms move were held at their
+values at the mean geometry. This section removes that approximation for the stiff modes, one
+mode at a time, by doing the average numerically (`tc_integrate_stiff_modes=`).
 
-**The rule.** Mode $`k`$ has a Gaussian distribution of its normal coordinate $`Q_k`$ with zero
-mean and mean square $`\langle Q_k^2\rangle`$, (6). For any function $`g`$ of $`Q_k`$, the three-point
-Gauss–Hermite rule is
+**What changes when one mode moves.** Take one stiff mode $`k`$ and give its normal coordinate the
+value $`Q`$, all other motion aside for the moment. Atom $`A`$ is displaced by $`Q\,\mathbf{d}_{Ak}`$ (§1.7).
+By (26), with $`\mathbf{u}_A = Q\,\mathbf{d}_{Ak}`$ and $`\mathbf{u}_B = Q\,\mathbf{d}_{Bk}`$, the product $`\chi_{\mu a\,\nu b}`$ contributes
+
+```math
+D_{\mu\nu}(Q)\; c_{\mu a} c_{\nu b}\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
+   e^{iQ\,\mathbf{k}\cdot\mathbf{d}_{Pk}}\;
+   \tilde\chi_{\mu a\,\nu b}\big(\mathbf{k};\, \mathbf{R} + Q(\mathbf{d}_{Ak} - \mathbf{d}_{Bk})\big), \qquad
+\mathbf{d}_{Pk} = w_A \mathbf{d}_{Ak} + w_B \mathbf{d}_{Bk} . \qquad (39)
+```
+
+Three things in (39) depend on $`Q`$:
+
+1. the phase $`e^{iQ\,\mathbf{k}\cdot\mathbf{d}_{Pk}}`$, because the centre of the product moves by $`Q\,\mathbf{d}_{Pk}`$;
+2. the transform $`\tilde\chi_{\mu a\,\nu b}`$, because the vector between the two atoms changes from $`\mathbf{R}`$
+   to $`\mathbf{R} + Q(\mathbf{d}_{Ak} - \mathbf{d}_{Bk})`$. In (23) that vector enters through the factor $`e^{-\xi|\mathbf{R}|^2}`$,
+   which sets how large the product is, and through the two polynomials;
+3. the density matrix element $`D_{\mu\nu}(Q)`$, because the wavefunction at the displaced geometry is
+   not the one at the mean geometry.
+
+**Two structure factors as functions of $`Q`$.** Let $`W^{(k)}_{\mu a\,\nu b}`$ be the temperature factor
+of the product from all the motion except mode $`k`$: that of (29) with mode $`k`$'s term left out
+of (17). Keeping all three dependences of (39) gives the exact structure factor with mode $`k`$ at
+$`Q`$,
+
+```math
+F^{\rm exact}_k(Q) = \sum_{\mu\nu} D_{\mu\nu}(Q) \sum_{ab} c_{\mu a} c_{\nu b}\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
+   e^{iQ\,\mathbf{k}\cdot\mathbf{d}_{Pk}}\;
+   \tilde\chi_{\mu a\,\nu b}\big(\mathbf{k};\, \mathbf{R} + Q(\mathbf{d}_{Ak} - \mathbf{d}_{Bk})\big)\; W^{(k)}_{\mu a\,\nu b} . \qquad (40)
+```
+
+Keeping only the first, as §6.3 does, gives
+
+```math
+F^{\rm approx}_k(Q) = \sum_{\mu\nu} D_{\mu\nu}(0) \sum_{ab} c_{\mu a} c_{\nu b}\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
+   e^{iQ\,\mathbf{k}\cdot\mathbf{d}_{Pk}}\;
+   \tilde\chi_{\mu a\,\nu b}(\mathbf{k};\, \mathbf{R})\; W^{(k)}_{\mu a\,\nu b} . \qquad (41)
+```
+
+The two are equal at $`Q = 0`$.
+
+**Their thermal averages.** $`Q`$ has a Gaussian distribution with zero mean and mean square
+$`\langle Q_k^2\rangle`$, (6). In (41) only the phase depends on $`Q`$, and its average is
+$`e^{-\frac12 \langle Q_k^2\rangle (\mathbf{k}\cdot\mathbf{d}_{Pk})^2}`$, as in (27). That is exactly the term of mode $`k`$
+that was left out of $`W^{(k)}`$, so the average of (41) is the structure factor of §6.3:
+
+```math
+\langle F^{\rm approx}_k \rangle = F \text{ of (29)} . \qquad (42)
+```
+
+The average of (40) cannot be done by formula, because $`D_{\mu\nu}(Q)`$ is known only by doing an
+SCF at each $`Q`$. What is wanted is the error that §6.3 makes for mode $`k`$,
+
+```math
+\Delta_k = \langle F^{\rm exact}_k \rangle - \langle F^{\rm approx}_k \rangle = \langle\, F^{\rm exact}_k(Q) - F^{\rm approx}_k(Q) \,\rangle . \qquad (43)
+```
+
+**The average by three points.** For any function $`g(Q)`$ of a Gaussian variable with zero mean
+and mean square $`\langle Q_k^2\rangle`$, the three-point Gauss–Hermite rule is
 
 ```math
 \langle g \rangle \approx \tfrac23\, g(0) + \tfrac16\, g(+s_k) + \tfrac16\, g(-s_k), \qquad
-s_k = \sqrt{3\,\langle Q_k^2\rangle} , \qquad (39)
+s_k = \sqrt{3\,\langle Q_k^2\rangle} , \qquad (44)
 ```
 
-exact when $`g`$ is a polynomial of degree five or less. At $`Q_k = \pm s_k`$ atom $`A`$ is displaced by
-$`\pm s_k\, \mathbf{d}_{Ak}`$.
-
-**The true value at the displaced points.** At each of the two displaced geometries an SCF is
-done, and the structure factors $`F_k^{+}`$ and $`F_k^{-}`$ are made from (29) with that geometry and
-that density matrix.
-
-**The model's value at the same points.** The model keeps the undisplaced products and density
-matrix and moves each centre by $`\pm s_k\,\mathbf{d}_{Pk}`$, which by (26) multiplies each term by
-$`e^{\pm i s_k \mathbf{k}\cdot\mathbf{d}_{Pk}}`$. The two add to twice a cosine, so
-$`\tfrac16(F^{+} + F^{-})`$ for the model is $`\tfrac13 F_k^{\cos}`$ with
+exact when $`g`$ is a polynomial of degree five or less. Apply it to (43), that is to
+$`g(Q) = F^{\rm exact}_k(Q) - F^{\rm approx}_k(Q)`$. Since $`g(0) = 0`$,
 
 ```math
-F_k^{\cos} = \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} T_{\mu a\,\nu b}(\mathbf{k})\; \cos( s_k\, \mathbf{k}\cdot\mathbf{d}_{Pk} ), \qquad
-\mathbf{d}_{Pk} = w_A \mathbf{d}_{Ak} + w_B \mathbf{d}_{Bk} . \qquad (40)
+\Delta_k \approx \tfrac16 \big[ F^{\rm exact}_k(s_k) + F^{\rm exact}_k(-s_k) \big]
+               - \tfrac16 \big[ F^{\rm approx}_k(s_k) + F^{\rm approx}_k(-s_k) \big] . \qquad (45)
 ```
 
-**The correction.** The term $`\tfrac23 g(0)`$ of (39) is the same for both, so the true average
-minus the model's is
+**The two brackets.**
+
+- *The exact one.* Move every atom $`A`$ by $`+s_k\,\mathbf{d}_{Ak}`$, do an SCF there, and make the structure
+  factor from (29) with the new positions, the new density matrix, and $`W^{(k)}`$ as the
+  temperature factor. That is $`F^{\rm exact}_k(s_k)`$: moving the atoms with their basis functions
+  puts in the phase and the change of $`\tilde\chi_{\mu a\,\nu b}`$, and the SCF puts in $`D_{\mu\nu}(s_k)`$. The
+  same with $`-s_k`$ gives $`F^{\rm exact}_k(-s_k)`$. Call them $`F_k^{+}`$ and $`F_k^{-}`$.
+- *The approximate one.* In (41) the two values of $`Q`$ differ only in the phase, and
+  $`e^{i s_k \theta} + e^{-i s_k \theta} = 2\cos(s_k\theta)`$ with $`\theta = \mathbf{k}\cdot\mathbf{d}_{Pk}`$. So
 
 ```math
-\Delta F = \sum_{\omega_k > \omega_c} \Big[ \tfrac16 \big( F_k^{+} + F_k^{-} \big) - \tfrac13\, F_k^{\cos} \Big] , \qquad (41)
+F^{\rm approx}_k(s_k) + F^{\rm approx}_k(-s_k) = 2 F_k^{\cos}, \qquad
+F_k^{\cos} = \sum_{\mu\nu} D_{\mu\nu}(0) \sum_{ab} c_{\mu a} c_{\nu b}\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
+   \tilde\chi_{\mu a\,\nu b}(\mathbf{k}; \mathbf{R})\; W^{(k)}_{\mu a\,\nu b}\; \cos( s_k\, \mathbf{k}\cdot\mathbf{d}_{Pk} ) , \qquad (46)
 ```
 
-summed over the stiff modes and added to (29). In the three structure factors of mode $`k`$ the
-temperature factor leaves out that mode's own term of (17): the mode's smearing is being done by
-the rule (39), and must not be counted again. Only the difference is integrated because it is
-small, and small terms from different modes add; the smearing itself, which is not small at high
-angle, stays in the analytic formula. $`\Delta F`$ is made once for each fit with a given density
-matrix, at two SCFs for each stiff mode, and is held fixed while the parameters shift. It is for
-a single molecule, with the harmonic amplitudes; the rigid-body motion and the refined soft modes
-are not integrated.
+  which is made at the mean geometry with the density matrix of the mean geometry: the
+  structure factor (29) with $`W^{(k)}`$ for the temperature factor and each product of primitives
+  multiplied by its cosine.
+
+**The correction.** Putting the two brackets into (45), and adding the stiff modes,
+
+```math
+\Delta F = \sum_{\omega_k > \omega_c} \Delta_k, \qquad
+\Delta_k = \tfrac16 \big( F_k^{+} + F_k^{-} \big) - \tfrac13\, F_k^{\cos} , \qquad (47)
+```
+
+and the structure factor used in the refinement is (29) plus $`\Delta F`$.
+
+- **Why the difference is integrated, not $`F^{\rm exact}_k`$ itself.** The phase in (40) varies
+  quickly with $`Q`$ at high angle, where three points are too few; (42) does that part exactly.
+  The difference (43) is small and varies slowly, which is what the rule (44) is good for.
+- **Why the modes are added.** Each $`\Delta_k`$ is small, so the effect of one on another is small
+  twice over and is left out.
+- **Cost and limits.** Two SCFs for each stiff mode. $`\Delta F`$ is made once for each fit with a
+  given density matrix, and held fixed while the parameters shift. It is for a single molecule,
+  with the harmonic amplitudes (6); the rigid-body motion and the refined soft modes are not
+  integrated.
 
 ### 6.7 Keywords
 
@@ -1346,7 +1423,7 @@ In `xray_data=`:
 |---|---|---|
 | `partition_model= tc-tls` | | the model (29); sets `adp_model= tls` |
 | `tc_position_derivs=` | `center` | the position derivative: `center` (38), `fixed-dm` or `scf` (§6.5) |
-| `tc_integrate_stiff_modes=` | `FALSE` | `TRUE` adds $`\Delta F`$ of (41) |
+| `tc_integrate_stiff_modes=` | `FALSE` | `TRUE` adds $`\Delta F`$ of (47) |
 
 On the molecule:
 
@@ -1373,8 +1450,8 @@ A Hessian from ORCA is turned into `force_constants=` by `scripts/orca_hessian_t
 | the shifts from those derivatives | `CRYSTAL:get_two_center_parameter_shifts` |
 | derivatives taken directly with respect to refined parameters | `DIFFRACTION_DATA.SET:solve_normal_equations` |
 | position derivatives by differences, `fixed-dm` and `scf` | `MOLECULE.HAR:make_two_center_position_derivs` |
-| the cosine factor of (40) | `SHELL2:scale_TFs_by_shift` |
-| $`\Delta F`$, (41) | `MOLECULE.HAR:make_stiff_mode_SF_correction` |
+| the cosine factor of (46) | `SHELL2:scale_TFs_by_shift` |
+| $`\Delta F`$, (47) | `MOLECULE.HAR:make_stiff_mode_SF_correction` |
 | the fit loop | `MOLECULE.HAR:LS_fit_two_center` |
 | the parts of a fit shared with Hirshfeld atom refinement | `CRYSTAL:start_structure_fit`, `apply_parameter_shifts`, `finish_fit_cycle`, `finish_structure_fit` |
 | an SCF made ready at a new geometry | `MOLECULE.HAR:prepare_SCF_at_new_geometry` |
