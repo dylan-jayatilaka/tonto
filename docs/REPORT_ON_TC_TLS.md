@@ -665,52 +665,92 @@ A Hessian from ORCA is turned into `force_constants=` by `scripts/orca_hessian_t
 | the check of the derivatives | `MOLECULE.HAR:check_two_center_derivs` |
 
 
-## 10. Results: urea
+## 10. Results
 
-`partition_model= tc-tls` against Hirshfeld atoms with the same TLS model for
-the ADPs. RHF/def2-SVP on the isolated molecule; 817 reflections at 123 K; 17 parameters; stiff
-modes from an RHF/def2-SVP Hessian, frequencies scaled by 0.8953; no soft modes refined.
+All refinements use the TLS model with the stiff modes from a Hessian and no soft modes refined,
+RHF wavefunctions of the isolated molecule, and the `center` position derivative unless it is
+named. The Hessian is RHF in the same basis set, from ORCA, at the geometry of the Hirshfeld
+atom refinement, with frequencies scaled by 0.8953. The def2-TZVP and gly-L-ala calculations
+use RI-J and COSX.
+
+### Urea
+
+817 reflections at 123 K; 17 parameters. Goodness of fit:
+
+| refinement | def2-SVP | def2-TZVP |
+|---|---|---|
+| Hirshfeld atoms | 3.4855 | 3.0570 |
+| `tc-tls` | 3.6578 | 3.2369 |
+| `tc-tls`, rigid-body motion averaged (§7), 3 points | 3.4876 | 3.2403 |
+| `tc-tls`, rigid-body motion averaged, 5 points | 3.4493 | 3.1201 |
+| `tc-tls`, rigid-body motion and stiff modes (§6) averaged, 3 points | 3.4606 | 3.2795 |
+| `tc-tls`, rigid-body motion and stiff modes averaged, 5 points | 3.4227 | 3.1353 |
+
+- **Without the averages `tc-tls` fits worse than Hirshfeld atoms, by 0.17 to 0.18 in GoF at both
+  basis sets.**
+- **Averaging the rigid-body motion moves the fit toward Hirshfeld atoms.** Urea librates by
+  about 7° root mean square about the C=O bond. A Gaussian product with lobes must turn with the
+  molecule, and without §7 it does not. Hirshfeld atoms do better there because density near a
+  hydrogen is given to the hydrogen, with its large ADP.
+- **The size of that effect is not established: it depends on the number of points.** At
+  def2-TZVP three points give nothing and five give 0.12; at def2-SVP three give 0.17 and five
+  0.21. The outer points of the rule are at 13° to 22°, where moving on an arc and moving on a
+  straight line differ by a phase of order one at high angle, so the difference being integrated
+  is not small. With five points `tc-tls` is below Hirshfeld atoms at def2-SVP and above at
+  def2-TZVP.
+- **Averaging the stiff modes helps at def2-SVP and hurts at def2-TZVP.** At def2-TZVP the stiff
+  modes include an out-of-plane NH₂ mode at 274 cm⁻¹ in which a hydrogen moves by 0.2 Å root
+  mean square; a straight-line displacement that large stretches the N–H bonds. At def2-SVP that
+  mode is below the cutoff and is not among the stiff modes.
+
+Position derivatives and bond lengths, def2-SVP, with the SCF converged to 1e-4 for the first
+four rows and to 1e-7 for the rest:
 
 | refinement | GoF | R(F) | N–H1 /Å | N–H3 /Å | C=O /Å | C–N /Å |
 |---|---|---|---|---|---|---|
 | Hirshfeld atoms | 3.4854 | 0.0181 | 1.028 | 0.994 | 1.2559 | 1.3411 |
-| `tc-tls`, position derivative `center` | 3.6577 | 0.0186 | 1.024 | 0.977 | 1.2560 | 1.3412 |
-| `tc-tls`, position derivative `fixed-dm` | 3.6681 | 0.0183 | 1.023 | 1.013 | 1.2561 | 1.3413 |
-| `tc-tls`, position derivative `scf` | 3.6292 | 0.0183 | 1.023 | 0.994 | 1.2562 | 1.3413 |
-| `tc-tls`, `center`, stiff modes averaged (§6) | 3.6349 | 0.0186 | 1.024 | 0.980 | 1.2559 | 1.3412 |
-| `tc-tls`, `scf`, stiff modes averaged (§6) | 3.6115 | 0.0183 | 1.023 | 0.995 | 1.2562 | 1.3413 |
-| `tc-tls`, `center`, rigid-body motion averaged (§7) | 3.4876 | 0.0183 | 1.031 | 0.991 | 1.2620 | 1.3495 |
-| `tc-tls`, `center`, rigid-body motion and stiff modes averaged | 3.4606 | 0.0183 | 1.032 | 0.993 | 1.2619 | 1.3495 |
+| `tc-tls`, `center` | 3.6577 | 0.0186 | 1.024 | 0.977 | 1.2560 | 1.3412 |
+| `tc-tls`, `fixed-dm` | 3.6681 | 0.0183 | 1.023 | 1.013 | 1.2561 | 1.3413 |
+| `tc-tls`, `scf` | 3.6292 | 0.0183 | 1.023 | 0.994 | 1.2562 | 1.3413 |
+| `tc-tls`, `center`, rigid body averaged, 3 points | 3.4876 | 0.0183 | 1.031 | 0.991 | 1.2620 | 1.3495 |
+| `tc-tls`, `center`, rigid body and stiff modes averaged, 3 points | 3.4606 | 0.0183 | 1.032 | 0.993 | 1.2619 | 1.3495 |
 
-The rows with `scf` or an averaging have the SCF converged to 1e-7, the others to 1e-4.
-
-- **With the rigid-body motion averaged, `tc-tls` fits as well as Hirshfeld atoms, and with the
-  stiff modes averaged too it fits better**: GoF 3.4606 against 3.4854. Without the rigid-body
-  average it is 0.13 to 0.18 worse.
-- **The rigid-body average is the large effect: 0.17 in GoF.** Urea librates by about 8° root
-  mean square about one axis. A product of basis functions with lobes must turn with the
-  molecule, and without §7 it does not. Hirshfeld atoms do better there because density near a
-  hydrogen is given to the hydrogen, with its large ADP.
-- **The rigid-body average lengthens the bonds between the heavy atoms**: C=O by 0.006 Å and C–N by 0.008 Å. In §7 the
-  atoms move on arcs, so the refined positions are those of the turning molecule itself; a
-  refinement that moves atoms in straight lines places them closer together. The lengthening is the
-  libration correction to a bond length, here part of the structure-factor model.
-- **The position derivative matters, and only `scf` is right.** With `tc-tls` and the TLS
-  parameters alone refined at the Hirshfeld geometry the GoF is 3.6377. `center` and `fixed-dm` end
-  above that, `scf` below. `fixed-dm`, which moves the basis functions and holds the density
-  matrix, is worse than `center`, which moves neither.
-- **N–H3 follows the position derivative**: 0.977, 1.013 and 0.994 Å. With `scf` it is the
-  Hirshfeld value. N–H1 is the same in all.
-- **Averaging the stiff modes numerically lowers the GoF by about 0.02**, with either derivative.
-- **The correlation between atoms is a small effect.** At the Hirshfeld parameters, and with the
-  RHF/6-31G(d) Hessian of the earlier sections, `tc-tls` gives GoF 3.6461 and `tc-tanaka`, which
-  leaves the correlation out, 3.6561.
+- **Only the `scf` position derivative is right.** With `tc-tls` and the TLS parameters alone
+  refined at the Hirshfeld geometry the GoF is 3.6377; `center` and `fixed-dm` end above that,
+  `scf` below. `fixed-dm`, which moves the basis functions and holds the density matrix, is worse
+  than `center`, which moves neither. N–H3 follows the derivative: 0.977, 1.013 and 0.994 Å.
+- **Averaging the rigid-body motion lengthens the bonds between the heavy atoms**: C=O by 0.006 Å
+  and C–N by 0.008 Å. In §7 the atoms move on arcs, so the refined positions are those of the
+  turning molecule itself; a refinement that moves atoms in straight lines places them closer
+  together. The lengthening is the libration correction to a bond length, here part of the
+  structure-factor model.
+- **The correlation between atoms is a small effect.** At the Hirshfeld parameters, and with an
+  RHF/6-31G(d) Hessian, `tc-tls` gives GoF 3.6461 and `tc-tanaka`, which leaves the correlation
+  out, 3.6561.
 - **The check of the derivatives** (`check_two_center_derivs`): those with respect to $`\Sigma`$
   agree with central differences to 2 parts in 10⁸; what `center` leaves out of the position
   derivatives is 13 % of the largest.
-- **Time**, one core: 1 minute for `center`, 9 for `scf`; with `center`, 10 for the stiff-mode
-  average, 6 for the rigid-body average, and 18 for both.
+- **Time**, def2-SVP, one core: 1 minute for `center`, 9 for `scf`; with `center`, 10 for the
+  stiff-mode average and 6 for the rigid-body average with three points.
 
+### Glycyl-L-alanine
+
+2531 reflections at 150 K (Capelli et al., 2014); 81 parameters, 20 of them for T, L and S. The
+molecule is treated as one rigid body. Five internal modes are below the cutoff of 200 cm⁻¹ at
+def2-SVP, at 77, 125, 130, 154 and 166 cm⁻¹ after scaling; the methyl torsion is spread over the
+last two. They are neither among the stiff modes nor refined.
+
+| refinement | def2-SVP GoF | def2-SVP R(F) | def2-TZVP GoF | def2-TZVP R(F) |
+|---|---|---|---|---|
+| Hirshfeld atoms | 3.5940 | 0.0353 | 3.5575 | 0.0344 |
+| `tc-tls` | 3.6131 | 0.0354 | 3.5750 | 0.0347 |
+| `tc-tls`, rigid-body motion averaged, 3 points | 3.6054 | 0.0354 | | |
+| `tc-tls`, rigid-body motion averaged, 5 points | 3.6039 | 0.0354 | | |
+
+- **The two smearings differ much less than in urea**: `tc-tls` is 0.02 above Hirshfeld atoms in
+  GoF at both basis sets, against 0.17.
+- **Averaging the rigid-body motion recovers about half of that**, and three and five points
+  agree to 0.002: a larger molecule librates less, and the rule is adequate.
 
 ## 11. Urea: against the multi-temperature analysis of Capelli, Förtsch and Bürgi
 
@@ -732,27 +772,30 @@ for the axes, so its size is given.
 | | Capelli et al., model w1 | Swaminathan et al. | def2-SVP, Hirshfeld atoms | def2-SVP, `tc-tls`, both averages | def2-TZVP, Hirshfeld atoms | def2-TZVP, `tc-tls`, both averages |
 |---|---|---|---|---|---|---|
 | in the plane | | | | | | |
-| $`L_{33}`$ | 0.0021(1) | 0.0019 | 0.0023 | 0.0023 | | |
-| $`T_{11}`$ | 0.0050(2) | 0.0067 | 0.0058 | 0.0058 | | |
-| $`T_{22}`$ | 0.0132(3) | 0.0148 | 0.0135 | 0.0134 | | |
-| $`\lvert S_{32}\rvert`$ | 0.0011(1) | 0.0011 | 0.0010 | 0.0010 | | |
+| $`L_{33}`$ | 0.0021(1) | 0.0019 | 0.00232(5) | 0.00233(5) | 0.00235(5) | 0.00237(5) |
+| $`T_{11}`$ | 0.0050(2) | 0.0067 | 0.00582(4) | 0.00581(4) | 0.00573(4) | 0.00571(4) |
+| $`T_{22}`$ | 0.0132(3) | 0.0148 | 0.01347(7) | 0.01342(7) | 0.01337(7) | 0.01329(7) |
+| $`\lvert S_{32}\rvert`$ | 0.0011(1) | 0.0011 | 0.00105(3) | 0.00103(3) | 0.00109(3) | 0.00108(3) |
 | out of the plane | | | | | | |
-| $`L_{11}`$ | 0.0149(3) | 0.0150 | 0.0134 | 0.0143 | | |
-| $`L_{22}`$ | 0.0038(3) | 0.0080 | 0.0098 | 0.0088 | | |
-| $`T_{33}`$ | 0.0136(4) | 0.0150 | 0.0143 | 0.0144 | | |
-| $`\lvert S_{23}\rvert`$ | 0.0016(2) | 0.0042 | 0.0052 | 0.0045 | | |
+| $`L_{11}`$ | 0.0149(3) | 0.0150 | 0.0134(12) | 0.0140(9) | 0.0177(9) | 0.0189(9) |
+| $`L_{22}`$ | 0.0038(3) | 0.0080 | 0.0097(9) | 0.0088(9) | 0.0055(9) | 0.0043(9) |
+| $`T_{33}`$ | 0.0136(4) | 0.0150 | 0.01435(15) | 0.01436(14) | 0.01411(13) | 0.01414(13) |
+| $`\lvert S_{23}\rvert`$ | 0.0016(2) | 0.0042 | 0.0052(7) | 0.0045(7) | 0.0023(7) | 0.0014(5) |
 
-The `tc-tls` column has the rigid-body motion and the stiff modes averaged with three points
-(§6, §7).
+The `tc-tls` columns have the rigid-body motion and the stiff modes averaged with five points
+(§6, §7). Esds are in brackets; the axes are the principal axes of inertia, in which Tonto prints
+these tensors.
 
-- **The in-plane motion agrees**: $`L_{33}`$, $`T_{22}`$ and $`S_{32}`$ are within 0.0002 of model w1, and
-  $`T_{11}`$ lies between model w1 and Swaminathan et al.
-- **The libration about the C=O bond, $`L_{11}`$, agrees better with `tc-tls`** (0.0143) than with
-  Hirshfeld atoms (0.0134); both analyses of the neutron data give 0.015.
-- **$`L_{22}`$ and $`S_{23}`$ agree with the rigid-body analysis of Swaminathan et al., not with model
-  w1.** Model w1 has the out-of-plane NH₂ coordinate, and its coupling to the libration takes
-  over part of what a rigid body puts into $`L_{22}`$ and $`S_{23}`$. The refinements here have no such
-  coordinate: the two softest out-of-plane modes are below the cutoff and are not refined.
+- **The in-plane motion agrees**: $`L_{33}`$, $`T_{22}`$ and $`S_{32}`$ are within 0.0003 of model w1 in
+  every column, and are determined as sharply from one X-ray data set as theirs from three
+  neutron temperatures. $`T_{11}`$ lies between model w1 and Swaminathan et al.
+- **The out-of-plane librations are less well determined**, with esds near 0.001, and they
+  depend on the basis set through the cutoff. At def2-SVP no out-of-plane NH₂ mode is in the
+  model, and $`L_{22}`$ and $`S_{23}`$ agree with the rigid-body analysis of Swaminathan et al. At
+  def2-TZVP one such mode, at 274 cm⁻¹, is among the stiff modes, and $`L_{22}`$ and $`S_{23}`$ move to
+  within two esds of model w1, which has an out-of-plane NH₂ coordinate; $`L_{11}`$ then comes out
+  larger than theirs, by three to four esds.
+- **Hirshfeld atoms and `tc-tls` give the same tensors within one or two esds.**
 
 **The temperature-independent part.** Their $`\varepsilon`$ tensors are refined, one for the hydrogens
 and one for the other atoms (their Table 5, model w1); their Table 7 gives values calculated
