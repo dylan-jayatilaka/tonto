@@ -11,7 +11,7 @@ shows where it comes from, and says how Tonto finds it.
 
 Notation is that of `docs/REPORT_ON_TC_TLS.md`: contracted Gaussian basis functions $`G_\mu`$ on
 atom $`A`$ and $`G_\nu`$ on atom $`B`$, the atoms at $`\mathbf{R}^A`$ and $`\mathbf{R}^B`$, density matrix $`D_{\mu\nu}`$,
-scattering vector $`\mathbf{k}`$.
+scattering vector $`\mathbf{k}`$, and † for the transpose.
 
 
 ## 1. The density as a sum over pairs of atoms
@@ -45,8 +45,8 @@ Fourier transform follows by changing the variable of integration to $`\mathbf{s
 \begin{aligned}
 F_{gA\,gB}(\mathbf{k}) &= \int \rho_{AB}(g^{-1}\mathbf{r})\, e^{i\mathbf{k}\cdot\mathbf{r}}\, d\mathbf{r} \\
  &= \int \rho_{AB}(\mathbf{s})\, e^{i\mathbf{k}\cdot(R_g\mathbf{s} + \mathbf{t}_g)}\, d\mathbf{s} && \text{with } \mathbf{r} = R_g\mathbf{s} + \mathbf{t}_g \\
- &= e^{i\mathbf{k}\cdot\mathbf{t}_g} \int \rho_{AB}(\mathbf{s})\, e^{i(R_g^{\mathsf T}\mathbf{k})\cdot\mathbf{s}}\, d\mathbf{s} && \text{since } \mathbf{k}\cdot R_g\mathbf{s} = (R_g^{\mathsf T}\mathbf{k})\cdot\mathbf{s} \\
- &= e^{i\mathbf{k}\cdot\mathbf{t}_g}\, F_{AB}(R_g^{\mathsf T}\mathbf{k}) .
+ &= e^{i\mathbf{k}\cdot\mathbf{t}_g} \int \rho_{AB}(\mathbf{s})\, e^{i(R_g^{\dagger}\mathbf{k})\cdot\mathbf{s}}\, d\mathbf{s} && \text{since } \mathbf{k}\cdot R_g\mathbf{s} = (R_g^{\dagger}\mathbf{k})\cdot\mathbf{s} \\
+ &= e^{i\mathbf{k}\cdot\mathbf{t}_g}\, F_{AB}(R_g^{\dagger}\mathbf{k}) .
 \end{aligned}
 \qquad (2)
 ```
@@ -88,8 +88,8 @@ the pairs orbit by orbit, with one **representative** pair $`(A,B)`$ chosen from
 \begin{aligned}
 F(\mathbf{k}) &= \sum_{\text{orbits}}\ \sum_{p \text{ in the orbit, in the cell}} F_p(\mathbf{k}) \\
  &= \sum_{\text{orbits}}\ \frac{1}{|S_{AB}|} \sum_{g \in G/T} F_{gA\,gB}(\mathbf{k}) && \text{each member is reached } |S_{AB}| \text{ times} \\
- &= \sum_{\text{orbits}}\ \frac{1}{|S_{AB}|} \sum_{g \in G/T} e^{i\mathbf{k}\cdot\mathbf{t}_g}\, F_{AB}(R_g^{\mathsf T}\mathbf{k}) && \text{by (2)} \\
- &= \sum_{g \in G/T} e^{i\mathbf{k}\cdot\mathbf{t}_g}\ \underbrace{\sum_{\text{orbits}} \frac{1}{|S_{AB}|}\, F_{AB}(R_g^{\mathsf T}\mathbf{k})}_{\text{made from the fragment}} .
+ &= \sum_{\text{orbits}}\ \frac{1}{|S_{AB}|} \sum_{g \in G/T} e^{i\mathbf{k}\cdot\mathbf{t}_g}\, F_{AB}(R_g^{\dagger}\mathbf{k}) && \text{by (2)} \\
+ &= \sum_{g \in G/T} e^{i\mathbf{k}\cdot\mathbf{t}_g}\ \underbrace{\sum_{\text{orbits}} \frac{1}{|S_{AB}|}\, F_{AB}(R_g^{\dagger}\mathbf{k})}_{\text{made from the fragment}} .
 \end{aligned}
 \qquad (4)
 ```

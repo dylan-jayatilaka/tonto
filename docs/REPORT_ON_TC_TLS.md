@@ -13,7 +13,8 @@ on, and sections of that report as §M1, §M1.4, and so on. One thing is written
 atom a vector or matrix belongs to is a superscript here, $`U^A`$ and $`\mathbf{u}^A`$ where that report
 writes $`U_i`$ and $`\mathbf{u}_i`$, so that subscripts are free for components and for the labels of modes
 and primitives. Units: atomic units; vectors
-are columns; ᵀ is the transpose; ⟨ ⟩ is the thermal average.
+are columns; † is the transpose (every vector and matrix here is real), where that report writes
+ᵀ; ⟨ ⟩ is the thermal average.
 
 
 ## 1. The covariance between two atoms
@@ -32,7 +33,7 @@ of $`\bar{\mathbf{v}}`$ has two blocks: the refined $`\Sigma`$ of (M11), and a d
 amplitude (M6) of each stiff mode at the temperature of the data,
 
 ```math
-\bar\Sigma = \langle \bar{\mathbf{v}}\bar{\mathbf{v}}^{\mathsf T}\rangle = \begin{pmatrix} \Sigma & 0 \\ 0 & \mathrm{diag}\,\langle Q_k^2\rangle \end{pmatrix} .
+\bar\Sigma = \langle \bar{\mathbf{v}}\bar{\mathbf{v}}^{\dagger}\rangle = \begin{pmatrix} \Sigma & 0 \\ 0 & \mathrm{diag}\,\langle Q_k^2\rangle \end{pmatrix} .
 ```
 
 The zeros say that the stiff modes are taken as uncorrelated with the rigid-body motion and the
@@ -40,12 +41,12 @@ soft modes, and with each other. The **two-centre ADP** of atoms
 $`A`$ and $`B`$ is then
 
 ```math
-U^{AB} = \langle \mathbf{u}^A \mathbf{u}^{B\mathsf T} \rangle
-       = B^A\, \Sigma\, B^{B\mathsf T} + \sum_{\omega_k > \omega_c} \langle Q_k^2\rangle\, \mathbf{d}^A_k \mathbf{d}^{B\mathsf T}_k . \qquad (2)
+U^{AB} = \langle \mathbf{u}^A \mathbf{u}^{B\dagger} \rangle
+       = B^A\, \Sigma\, B^{B\dagger} + \sum_{\omega_k > \omega_c} \langle Q_k^2\rangle\, \mathbf{d}^A_k \mathbf{d}^{B\dagger}_k . \qquad (2)
 ```
 
 The block $`U^{AA}`$ is the ADP of atom $`A`$, (M11), written $`U^A`$. The matrix $`U^{AB}`$ is not
-symmetric, and $`U^{BA} = U^{AB\mathsf T}`$. The two-centre ADPs need no parameter beyond those already
+symmetric, and $`U^{BA} = U^{AB\dagger}`$. The two-centre ADPs need no parameter beyond those already
 in the rigid-body and mode model.
 
 ## 2. Gaussian basis functions and products of two of them
@@ -183,18 +184,18 @@ The average of the phase is done as for an atom (§M1.1). The displacements of t
 Gaussian distribution with zero mean, so the number $`x = \mathbf{k}\cdot\mathbf{u}^P`$ is a Gaussian variable
 with zero mean, and for such a variable $`\langle e^{ix}\rangle = e^{-\langle x^2\rangle/2}`$. The mean square
 of $`x`$ is
-$`\langle x^2\rangle = \mathbf{k}^{\mathsf T} \langle \mathbf{u}^P \mathbf{u}^{P\mathsf T}\rangle\, \mathbf{k}`$, so
+$`\langle x^2\rangle = \mathbf{k}^{\dagger} \langle \mathbf{u}^P \mathbf{u}^{P\dagger}\rangle\, \mathbf{k}`$, so
 
 ```math
-\langle e^{i\mathbf{k}\cdot\mathbf{u}^P} \rangle = e^{-\frac12 \mathbf{k}^{\mathsf T} U^P\, \mathbf{k}}, \qquad
-U^P = \langle \mathbf{u}^P \mathbf{u}^{P\mathsf T} \rangle . \qquad (13)
+\langle e^{i\mathbf{k}\cdot\mathbf{u}^P} \rangle = e^{-\frac12 \mathbf{k}^{\dagger} U^P\, \mathbf{k}}, \qquad
+U^P = \langle \mathbf{u}^P \mathbf{u}^{P\dagger} \rangle . \qquad (13)
 ```
 
-Putting (11) into $`\langle \mathbf{u}^P \mathbf{u}^{P\mathsf T}\rangle`$ and multiplying out, with $`U^A = \langle\mathbf{u}^A\mathbf{u}^{A\mathsf T}\rangle`$
-and $`U^{AB} = \langle\mathbf{u}^A\mathbf{u}^{B\mathsf T}\rangle`$ of (2),
+Putting (11) into $`\langle \mathbf{u}^P \mathbf{u}^{P\dagger}\rangle`$ and multiplying out, with $`U^A = \langle\mathbf{u}^A\mathbf{u}^{A\dagger}\rangle`$
+and $`U^{AB} = \langle\mathbf{u}^A\mathbf{u}^{B\dagger}\rangle`$ of (2),
 
 ```math
-U^P = w_A^2\, U^A + w_B^2\, U^B + w_A w_B\,(U^{AB} + U^{AB\mathsf T}) . \qquad (14)
+U^P = w_A^2\, U^A + w_B^2\, U^B + w_A w_B\,(U^{AB} + U^{AB\dagger}) . \qquad (14)
 ```
 
 $`U^P`$ is the **ADP of the Gaussian product**: the mean-square displacement of its centre. $`U^P`$
@@ -209,10 +210,10 @@ the soft modes refined against the data. The structure factor is then
 ```math
 \begin{aligned}
 F(\mathbf{k}) &= \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} c^\mu_a c^\nu_b\;
-     e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde g^{\mu\nu}_{ab}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P \mathbf{k}} \\
+     e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde g^{\mu\nu}_{ab}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\dagger} U^P \mathbf{k}} \\
    &= \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} t^{\mu\nu}_{ab}(\mathbf{k}), \qquad
    t^{\mu\nu}_{ab}(\mathbf{k}) = c^\mu_a c^\nu_b\;
-     e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde g^{\mu\nu}_{ab}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P \mathbf{k}} .
+     e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde g^{\mu\nu}_{ab}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\dagger} U^P \mathbf{k}} .
 \end{aligned}
 \qquad (15)
 ```
@@ -225,10 +226,10 @@ pair of atoms has a weight that counts it once; that is in `docs/REPORT_ON_PAIR_
 
 ```math
 \mathbf{u}^P = \bar B^P\, \bar{\mathbf{v}}, \qquad \bar B^P = w_A \bar B^A + w_B \bar B^B , \qquad
-U^P = \bar B^P\, \bar\Sigma\, \bar B^{P\mathsf T} , \qquad (16)
+U^P = \bar B^P\, \bar\Sigma\, \bar B^{P\dagger} , \qquad (16)
 ```
 
-with $`\bar\Sigma = \langle\bar{\mathbf{v}}\bar{\mathbf{v}}^{\mathsf T}\rangle`$. Equation (16) is (M11) for a fictitious atom at
+with $`\bar\Sigma = \langle\bar{\mathbf{v}}\bar{\mathbf{v}}^{\dagger}\rangle`$. Equation (16) is (M11) for a fictitious atom at
 $`\mathbf{P}`$. The rigid-body part of $`U^P`$ is the Schomaker–Trueblood ADP (M5) of the point $`\mathbf{P}`$,
 because the matrix $`A_i`$ of (M4) is linear in the position, so $`w_A A^A + w_B A^B`$ is the matrix
 $`A`$ of the point $`\mathbf{P}`$. The mode part of $`U^P`$ uses each mode's displacement interpolated to
@@ -243,7 +244,7 @@ follow:
   $`U^{AB} = 0`$ is used.
 
 **Relation to earlier two-centre models.** Write
-$`V^{AB} = \langle (\mathbf{u}^A - \mathbf{u}^B)(\mathbf{u}^A - \mathbf{u}^B)^{\mathsf T}\rangle = U^A + U^B - U^{AB} - U^{AB\mathsf T}`$ for the
+$`V^{AB} = \langle (\mathbf{u}^A - \mathbf{u}^B)(\mathbf{u}^A - \mathbf{u}^B)^{\dagger}\rangle = U^A + U^B - U^{AB} - U^{AB\dagger}`$ for the
 mean-square relative displacement of the two atoms. Since $`w_A^2 = w_A - w_A w_B`$ and
 $`w_B^2 = w_B - w_A w_B`$, (14) is
 
@@ -274,7 +275,7 @@ average of that term is
 
 ```math
 \langle f(\mathbf{x})\, e^{i\mathbf{k}\cdot\mathbf{u}^P} \rangle
-   = e^{-\frac12 \mathbf{k}^{\mathsf T} U^P \mathbf{k}}\; \langle f(\mathbf{x} + i\,U\mathbf{c}) \rangle , \qquad (18)
+   = e^{-\frac12 \mathbf{k}^{\dagger} U^P \mathbf{k}}\; \langle f(\mathbf{x} + i\,U\mathbf{c}) \rangle , \qquad (18)
 ```
 
 where $`U`$ is the $`3N\times 3N`$ matrix with blocks $`U^{AB}`$, and $`\mathbf{c}`$ is the $`3N`$-vector holding
@@ -305,8 +306,8 @@ found by differentiating (15) term by term.
 **With respect to $`\Sigma`$.** Two facts are used. First, by (16) and the blocks of §1,
 
 ```math
-U^P = \bar B^P\, \bar\Sigma\, \bar B^{P\mathsf T}
-   = B^P\, \Sigma\, B^{P\mathsf T} + \sum_{\omega_k > \omega_c} \langle Q_k^2\rangle\, \mathbf{d}^P_k \mathbf{d}^{P\mathsf T}_k, \qquad
+U^P = \bar B^P\, \bar\Sigma\, \bar B^{P\dagger}
+   = B^P\, \Sigma\, B^{P\dagger} + \sum_{\omega_k > \omega_c} \langle Q_k^2\rangle\, \mathbf{d}^P_k \mathbf{d}^{P\dagger}_k, \qquad
 B^P = w_A B^A + w_B B^B , \qquad (19)
 ```
 
@@ -318,21 +319,21 @@ differentiating (15),
 \begin{aligned}
 \frac{\partial F}{\partial \Sigma_{pq}}
  &= \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} c^\mu_a c^\nu_b\; e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde g^{\mu\nu}_{ab}(\mathbf{k}; \mathbf{R})\;
-    \frac{\partial}{\partial \Sigma_{pq}} \Big( e^{-\frac12 \mathbf{k}^{\mathsf T} U^P \mathbf{k}} \Big) \\
+    \frac{\partial}{\partial \Sigma_{pq}} \Big( e^{-\frac12 \mathbf{k}^{\dagger} U^P \mathbf{k}} \Big) \\
  &= \sum_{\mu\nu} D_{\mu\nu} \sum_{ab}
-    \underbrace{ c^\mu_a c^\nu_b\; e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde g^{\mu\nu}_{ab}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P \mathbf{k}} }_{t^{\mu\nu}_{ab}\ \text{of (15)}}
-    \Big( -\tfrac12\, \frac{\partial}{\partial \Sigma_{pq}} \big( \mathbf{k}^{\mathsf T} U^P\, \mathbf{k} \big) \Big) \\
+    \underbrace{ c^\mu_a c^\nu_b\; e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde g^{\mu\nu}_{ab}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\dagger} U^P \mathbf{k}} }_{t^{\mu\nu}_{ab}\ \text{of (15)}}
+    \Big( -\tfrac12\, \frac{\partial}{\partial \Sigma_{pq}} \big( \mathbf{k}^{\dagger} U^P\, \mathbf{k} \big) \Big) \\
  &= \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} t^{\mu\nu}_{ab}
-    \Big( -\tfrac12\, \frac{\partial}{\partial \Sigma_{pq}} \big( \mathbf{k}^{\mathsf T} B^P\, \Sigma\, B^{P\mathsf T} \mathbf{k} \big) \Big)
+    \Big( -\tfrac12\, \frac{\partial}{\partial \Sigma_{pq}} \big( \mathbf{k}^{\dagger} B^P\, \Sigma\, B^{P\dagger} \mathbf{k} \big) \Big)
     && \text{by (19)} \\
  &= \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} t^{\mu\nu}_{ab}
-    \Big( -\tfrac12\, \frac{\partial}{\partial \Sigma_{pq}} \big( \mathbf{h}^{P\mathsf T}\, \Sigma\, \mathbf{h}^P \big) \Big)
-    && \text{with } \mathbf{h}^P = B^{P\mathsf T}\mathbf{k} \\
+    \Big( -\tfrac12\, \frac{\partial}{\partial \Sigma_{pq}} \big( \mathbf{h}^{P\dagger}\, \Sigma\, \mathbf{h}^P \big) \Big)
+    && \text{with } \mathbf{h}^P = B^{P\dagger}\mathbf{k} \\
  &= -\frac{2-\delta_{pq}}{2} \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} t^{\mu\nu}_{ab}\; h^P_p\, h^P_q
-    && \text{since } \frac{\partial ( \mathbf{h}^{\mathsf T} \Sigma\, \mathbf{h} )}{\partial \Sigma_{pq}} = (2-\delta_{pq})\, h_p h_q \\
+    && \text{since } \frac{\partial ( \mathbf{h}^{\dagger} \Sigma\, \mathbf{h} )}{\partial \Sigma_{pq}} = (2-\delta_{pq})\, h_p h_q \\
  &= -\frac{2-\delta_{pq}}{2} \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} t^{\mu\nu}_{ab}\;
     ( w_A h^A_p + w_B h^B_p )( w_A h^A_q + w_B h^B_q )
-    && \text{with } \mathbf{h}^P = w_A \mathbf{h}^A + w_B \mathbf{h}^B,\ \ \mathbf{h}^A = B^{A\mathsf T}\mathbf{k} \\
+    && \text{with } \mathbf{h}^P = w_A \mathbf{h}^A + w_B \mathbf{h}^B,\ \ \mathbf{h}^A = B^{A\dagger}\mathbf{k} \\
  &= -\frac{2-\delta_{pq}}{2} \sum_{\mu\nu} \Big[\,
       h^A_p h^A_q \Big( D_{\mu\nu} \sum_{ab} w_A^2\; t^{\mu\nu}_{ab} \Big)
     + h^B_p h^B_q \Big( D_{\mu\nu} \sum_{ab} (1-w_A)^2\; t^{\mu\nu}_{ab} \Big) \\
@@ -374,7 +375,7 @@ Tonto offers three derivatives, which keep one, two or all three of these
 ```math
 \begin{aligned}
 \frac{\partial F}{\partial \mathbf{R}^C}
- &= \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} c^\mu_a c^\nu_b\; \tilde g^{\mu\nu}_{ab}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P \mathbf{k}}\;
+ &= \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} c^\mu_a c^\nu_b\; \tilde g^{\mu\nu}_{ab}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\dagger} U^P \mathbf{k}}\;
     \frac{\partial}{\partial \mathbf{R}^C} \Big( e^{i\mathbf{k}\cdot\mathbf{P}} \Big) \\
  &= \sum_{\mu\nu} D_{\mu\nu} \sum_{ab} t^{\mu\nu}_{ab}\;\, i\mathbf{k}\, \frac{\partial \mathbf{P}}{\partial \mathbf{R}^C} \\
  &= i\mathbf{k} \Big[ \sum_{\mu\nu,\ \mu \text{ on } C} D_{\mu\nu} \sum_{ab} w_A\; t^{\mu\nu}_{ab}
@@ -425,7 +426,7 @@ keeps only the phase, as §3 does:
 
 ```math
 \begin{aligned}
-W^{P(k)} &= \exp\!\Big[ -\tfrac12\, \mathbf{k}^{\mathsf T} \big( U^P - \langle Q_k^2\rangle\, \mathbf{d}^P_k\mathbf{d}^{P\mathsf T}_k \big)\, \mathbf{k} \Big] , \\
+W^{P(k)} &= \exp\!\Big[ -\tfrac12\, \mathbf{k}^{\dagger} \big( U^P - \langle Q_k^2\rangle\, \mathbf{d}^P_k\mathbf{d}^{P\dagger}_k \big)\, \mathbf{k} \Big] , \\
 F^{\rm exact}_k(Q) &= \sum_{\mu\nu} D_{\mu\nu}(Q) \sum_{ab} c^\mu_a c^\nu_b\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
    e^{iQ\,\mathbf{k}\cdot\mathbf{d}^P_k}\;
    \tilde g^{\mu\nu}_{ab}\big(\mathbf{k};\, \mathbf{R} + Q(\mathbf{d}^A_k - \mathbf{d}^B_k)\big)\; W^{P(k)} , \\
@@ -453,7 +454,7 @@ $`F^{\rm approx}_k`$ of (25) over $`Q`$:
    \tilde g^{\mu\nu}_{ab}(\mathbf{k};\, \mathbf{R})\; W^{P(k)}\; e^{-\frac12 \langle Q_k^2\rangle (\mathbf{k}\cdot\mathbf{d}^P_k)^2}
    && \text{with } \theta = \mathbf{k}\cdot\mathbf{d}^P_k \\
  &= \sum_{\mu\nu} D_{\mu\nu}(0) \sum_{ab} c^\mu_a c^\nu_b\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
-   \tilde g^{\mu\nu}_{ab}(\mathbf{k};\, \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P \mathbf{k}}
+   \tilde g^{\mu\nu}_{ab}(\mathbf{k};\, \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\dagger} U^P \mathbf{k}}
    && \text{by the definition of } W^{P(k)} \\
  &= F \text{ of (15)} .
 \end{aligned}
@@ -539,14 +540,14 @@ as the stiff modes are; then each is averaged by (28).
 
 **Uncorrelated coordinates.** $`\Sigma`$ is symmetric, so it has orthonormal eigenvectors
 $`\mathbf{e}_j`$ with eigenvalues $`\lambda_j`$, $`\Sigma\,\mathbf{e}_j = \lambda_j \mathbf{e}_j`$. Write the generalised coordinates
-$`\mathbf{v}`$ of (M11) in terms of them, $`\mathbf{v} = \sum_j c_j \mathbf{e}_j`$ with $`c_j = \mathbf{e}_j^{\mathsf T}\mathbf{v}`$. The $`c_j`$ are the
+$`\mathbf{v}`$ of (M11) in terms of them, $`\mathbf{v} = \sum_j c_j \mathbf{e}_j`$ with $`c_j = \mathbf{e}_j^{\dagger}\mathbf{v}`$. The $`c_j`$ are the
 **principal coordinates** of the motion:
 
 ```math
 \begin{aligned}
-\langle c_i c_j \rangle &= \mathbf{e}_i^{\mathsf T}\, \langle \mathbf{v}\mathbf{v}^{\mathsf T} \rangle\, \mathbf{e}_j && \text{since } c_j = \mathbf{e}_j^{\mathsf T}\mathbf{v} \\
- &= \mathbf{e}_i^{\mathsf T}\, \Sigma\, \mathbf{e}_j && \Sigma = \langle \mathbf{v}\mathbf{v}^{\mathsf T}\rangle \\
- &= \lambda_j\, \mathbf{e}_i^{\mathsf T} \mathbf{e}_j && \Sigma\,\mathbf{e}_j = \lambda_j \mathbf{e}_j \\
+\langle c_i c_j \rangle &= \mathbf{e}_i^{\dagger}\, \langle \mathbf{v}\mathbf{v}^{\dagger} \rangle\, \mathbf{e}_j && \text{since } c_j = \mathbf{e}_j^{\dagger}\mathbf{v} \\
+ &= \mathbf{e}_i^{\dagger}\, \Sigma\, \mathbf{e}_j && \Sigma = \langle \mathbf{v}\mathbf{v}^{\dagger}\rangle \\
+ &= \lambda_j\, \mathbf{e}_i^{\dagger} \mathbf{e}_j && \Sigma\,\mathbf{e}_j = \lambda_j \mathbf{e}_j \\
  &= \lambda_j\, \delta_{ij} && \text{the eigenvectors are orthonormal.}
 \end{aligned}
 \qquad (30)
@@ -561,7 +562,7 @@ displacement of atom $`A`$, to first order, is
 
 which has the form of the normal modes of §M1.5: $`\mathbf{d}^A_j`$ is the displacement of atom $`A`$ per unit
 of $`c_j`$. In (2) the rigid-body term is then
-$`B^A \Sigma B^{B\mathsf T} = \sum_j \lambda_j\, \mathbf{d}^A_j\mathbf{d}^{B\mathsf T}_j`$, the same form as the stiff-mode term. So §6
+$`B^A \Sigma B^{B\dagger} = \sum_j \lambda_j\, \mathbf{d}^A_j\mathbf{d}^{B\dagger}_j`$, the same form as the stiff-mode term. So §6
 applies to each principal coordinate as it stands, with $`\mathbf{d}^A_j`$ for $`\mathbf{d}^A_k`$, $`\lambda_j`$ for
 $`\langle Q_k^2\rangle`$, and $`s_j = \sqrt{3\lambda_j}`$.
 
