@@ -158,7 +158,17 @@ To settle before writing it:
 Also in the reply, on the aspherical fitted atoms (30 to 60 radial Gaussians, L up to 7): he
 finds them expensive but possible given the faster structure-factor sum, and asks whether the
 angular parts are kept in local coordinate systems, as DiSCaMB does, or in one global frame.
-That question is Dylan's to answer.
+Dylan's answer (2026-10-13): one global frame.
+
+**The Cartesian frame.** `UNIT_CELL:make_direct_mx` puts a along x, b in the xy plane and c*
+along z (Giacovazzo). That is also the standard frame of a PDB file, so for the spherical form
+factors, where BUSTER is given a PDB file, no other frame is needed. The TNT manual page says
+that TNT's own `ATOMC` coordinates use a different frame from PDB files (x along an axis the
+page shows only as an image; from memory a*, with z along c, not checked). If BUSTER wants
+aspherical atoms in that frame, `UNIT_CELL` needs the second orthogonalisation matrix and the
+rotation between the two. Ask Claus which frame BUSTER expects for them. The same page gives
+the `FORMFACTOR` formula only as images, so the exponent convention is still to be confirmed
+with him.
 
 ## 3. The fit itself: what to expect
 
