@@ -471,6 +471,26 @@ the printed factors; not checked by a run with (26) coded.
 
 ## References
 
+- H. B. Burgi and S. C. Capelli, *Acta Cryst.* A56, 403 (2000), and S. C. Capelli, M. Fortsch and
+  H. B. Burgi, *Acta Cryst.* A56, 413 (2000): "Dynamics of molecules in crystals from
+  multi-temperature anisotropic displacement parameters", I theory and II benzene and urea
+  (`~/Dropbox/manuscripts/Burgi_2000_Acta_Cryst_A56_p403.pdf`, `Capelli_2000_Acta_Cryst_A56_p413.pdf`).
+  Read 2026-10-13 (abstracts, and the passages on the Einstein model and on electron density; not
+  cover to cover) after Dylan asked whether they had seen that TLS follows from a dynamical model.
+  They had, for the ADPs: paper I replaces Einstein's independent atoms by independent
+  *molecules*, each a set of oscillators in the mean field of the crystal ("molecular mean field
+  model", Burgi 1995), with low-frequency motions (librations, translations, soft deformations)
+  that carry the temperature dependence and a temperature-independent part from the stiff
+  internal modes. That is the split used here: Sigma refined, U_high fixed. Paper II, urea at
+  12-123 K: a ~64 cm^-1 high-amplitude mode that combines the out-of-plane NH2 deformation with
+  molecular libration, beyond a rigid-body analysis; and temperature-independent parts that agree
+  with calculation. Their abstract of I names "the effects of non-spherical electron-density
+  distributions on ADPs in X-ray data" as something the analysis detects, and II defers "the use of
+  approximate spherical atomic form factors" to later papers. What is not there, in what was
+  read: they analyse ADPs that came out of a conventional refinement; they do not smear the
+  electron density with the dynamical model, so the turning of bonding density with the libration
+  (report section 7) does not arise. To do: compare their urea frequencies and mode with the
+  refined Sigma here; read Burgi 1995 (Acta Cryst. B51, 571) and Burgi et al. 2002 (benzene).
 - D. Jayatilaka and D. J. Grimwood, *Acta Cryst.* A57, 76 (2001), §4.3: oversampled fragments and
   the repetition factors (`~/Dropbox/manuscripts/Jayatilaka_2001_Acta_Cryst_A57_p76.pdf`).
 - J. R. Michael and T. Koritsanszky, *J. Math. Chem.* 53, 250 (2015), "Validation of convolution
