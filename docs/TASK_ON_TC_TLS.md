@@ -346,6 +346,34 @@ mode-fitting report hit GitHub's limit on math per page (about 370 expressions; 
 "Unable to render expression"), so the two-centre material moved to `docs/REPORT_ON_TC_TLS.md`.
 Runs in `~/tonto-runs/2026-10-12_tc_tls/{equal_U,pair_weights,rigid}`.
 
+**2026-10-13, further runs started; output to be added; gly-L-ala modes.**
+- Five-point rule coded (`tc_quadrature_points=`). Urea def2-SVP, `center`, rigid body averaged:
+  3 points GoF 3.4876, 5 points 3.4493. So three points are too coarse for the largest libration,
+  and the finer rule fits better still.
+- Urea def2-TZVP (RI-J, COSX, SCF 1e-7; Hessian ORCA RHF/def2-TZVP at the Hirshfeld geometry):
+  Hirshfeld 3.0570, `tc-tls` `center` 3.2369; the four averaged runs are going
+  (`~/tonto-runs/2026-10-12_tc_tls/tzvp/{T1,T2,T3,T4}`). At def2-TZVP only one mode is soft (the
+  imaginary wag); the 306 cm^-1 mode (274 scaled) is stiff. At def2-SVP two are soft.
+- Gly-L-ala, 150 K set of Capelli 2014 from `~/Dropbox/tonto_data/xray_neutron_set`: the
+  reflections are in a second data block of the CIF that `process_CIF` does not read, so they
+  were written to `gly_ala_150K.hkl` (h k l i_exp i_sigma; 2531 reflections). Chains in
+  `~/tonto-runs/2026-10-12_tc_tls/glyala/chain.sh`: Hirshfeld TLS for the geometry, ORCA Hessian
+  there, then H, T0 (`tc-tls`), T1 (rigid body, 3 points), T3 (5 points), and at def2-SVP T2
+  (rigid body and stiff modes, 3 points). def2-SVP: 5 soft modes, none imaginary, 49 stiff.
+- Gly-L-ala low modes, RHF/def2-SVP, scaled by 0.8953 (cm^-1), with the share of the motion on
+  the methyl hydrogens: 77 (5 %), 125 (4 %), 130 (0 %), 154 (39 %), 166 (31 %), 205 (2 %; 29 % on
+  the CH2 hydrogens), 222 (16 %), 285 (10 %). So the methyl torsion is spread over the modes at
+  154 and 166, mixed with the skeleton, and both are below the 200 cm^-1 cutoff: soft, and in
+  the present runs neither fixed nor refined. Dylan (2026-10-13): the density may need averaging
+  over the methyl rotation. That needs the methyl as an attached rigid group turned exactly
+  about C-C (segmented TLS), with the same averaging routine. Not started.
+- Output (Dylan: these quantities should be printed): `put_TLS_results` now also prints the L
+  axes and the principal coordinates of Sigma (`put_TLS_principal_motions`), and
+  `put_internal_ADPs` a table of the internal modes. Committed, not built while runs use the
+  binary; the TLS tests' references will need blessing again on achari2.
+- Comparison with Capelli, Fortsch and Burgi (2000) for urea is in the report, section 11; made
+  with `~/tonto-runs/2026-10-12_tc_tls/compare/tls_table.py`.
+
 ## 10. Symmetry: the stabiliser of an atom pair
 
 Dylan, 2026-10-13: the repetition factors are very old code, from Jayatilaka and Grimwood (2001);
