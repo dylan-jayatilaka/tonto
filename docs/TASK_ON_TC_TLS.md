@@ -972,3 +972,14 @@ and equation numbers kept; the two pages now have 298 and 203 expressions and bo
 **Open.** Position derivatives with the formula are still `center` (13 % left out). Debug build
 and suite; tests; re-blessing (plan step 6). The matrix path `make_FT_TLS` (used by the complex
 density and X-ray constrained routines) is not timed and with the formula on is slow.
+
+### 2026-10-13: the position derivative defaults to `scf`
+
+Dylan: "change the default from center derivatives to the highest level". `tc_position_derivs=`
+now defaults to `scf` (`types.foo`); every input in `~/tonto-runs/2026-10-12_tc_tls/` written
+before this names `center`, so the numbers already quoted stand. Checked on urea def2-SVP with
+no keyword (`fast/def_first`, `fast/def_ana`): first order GoF 3.6292, N-H3 0.994 A, the same as
+the earlier `scf` run; with the formula GoF **3.3149** (`center` 3.3337), N-H3 1.001 A, C=O
+1.2637, C-N 1.3483. Time: 8 and 14 minutes, against 19 and 80 seconds for `center`. An input
+that names `center` still gives 3.6578. The task register has a row for this work (version 161)
+and `TASKS_AND_HISTORY.md` an entry and a line in the handover block.

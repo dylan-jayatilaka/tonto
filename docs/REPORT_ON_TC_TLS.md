@@ -402,6 +402,9 @@ Tonto offers three derivatives, which keep one, two or all three of these
 
 In all three a unique atom moves together with its symmetry images in the molecule. The
 derivatives of `fixed-dm` and `scf` are made once for each fit with a given density matrix.
+`scf` is the default: it is the only one of the three that is the whole derivative, and the
+only one with which a fit does not end above where it started (§11). It costs two SCFs for
+each refined coordinate.
 
 ## 6 to 8. The averages beyond first order
 
@@ -424,7 +427,7 @@ In `xray_data=`:
 | keyword | default | meaning |
 |---|---|---|
 | `partition_model= tc-tls` | | the structure factor (15); sets `adp_model= tls` |
-| `tc_position_derivs=` | `center` | the position derivative: `center` (23), `fixed-dm` or `scf` (§5) |
+| `tc_position_derivs=` | `scf` | the position derivative: `scf`, the whole derivative, or the cheaper `fixed-dm` or `center` (23), which leave part of it out (§5) |
 | `tc_integrate_stiff_modes=` | `FALSE` | `TRUE` adds $`\Delta F`$ of (29) |
 | `tc_integrate_rigid_body=` | `FALSE` | `TRUE` adds $`\Delta F^{\rm rb}`$ of (33) |
 | `tc_analytic_rigid_body=` | `FALSE` | `TRUE` averages the rigid-body motion by (43), for a whole molecule; not with `tc_integrate_rigid_body=` |
@@ -475,7 +478,7 @@ A Hessian from ORCA is turned into `force_constants=` by `scripts/orca_hessian_t
 ## 11. Results
 
 All refinements use the TLS model with the stiff modes from a Hessian and no soft modes refined,
-RHF wavefunctions of the isolated molecule, and the `center` position derivative unless it is
+RHF wavefunctions of the isolated molecule, and `tc_position_derivs= center` unless another is
 named. The Hessian is RHF in the same basis set, from ORCA, at the geometry of the Hirshfeld
 atom refinement, with frequencies scaled by 0.8953. The def2-TZVP and gly-L-ala calculations
 use RI-J and COSX.
@@ -540,6 +543,7 @@ four rows and to 1e-7 for the rest:
 | `tc-tls`, `center`, rigid body averaged, 3 points | 3.4876 | 0.0183 | 1.031 | 0.991 | 1.2620 | 1.3495 |
 | `tc-tls`, `center`, rigid body and stiff modes averaged, 3 points | 3.4606 | 0.0183 | 1.032 | 0.993 | 1.2619 | 1.3495 |
 | `tc-tls`, `center`, rigid body averaged by formula | 3.3337 | 0.0169 | 1.030 | 0.988 | 1.2635 | 1.3482 |
+| `tc-tls`, `scf`, rigid body averaged by formula | 3.3149 | 0.0167 | 1.030 | 1.001 | 1.2637 | 1.3483 |
 
 - **Only the `scf` position derivative is right.** With `tc-tls` and the TLS parameters alone
   refined at the Hirshfeld geometry the GoF is 3.6377; `center` and `fixed-dm` end above that,
@@ -559,8 +563,10 @@ four rows and to 1e-7 for the rest:
   what `center` leaves out of the position derivatives is 13 % of the largest. Without (45)
   the derivatives with respect to $`\Sigma`$ would be out by 34 % of the largest when the formula
   is on, and the refinement then stops at GoF 3.3586 instead of 3.3337.
-- **Time**, def2-SVP, one core, for the whole job with its SCFs: 19 seconds for `center`, and
-  80 seconds with the rigid-body average by formula. The numerical rigid-body average with
+- **With the formula too, `scf` fits better than `center`**, by 0.019 in GoF, and moves N–H3
+  from 0.988 to 1.001 Å; the other bonds change by 0.0002 Å or less.
+- **Time**, def2-SVP, one core, for the whole job with its SCFs: 19 seconds for `center` and
+  8 minutes for `scf`; with the rigid-body average by formula, 80 seconds and 14 minutes. The numerical rigid-body average with
   seven points takes 12 minutes.
 
 ### Glycyl-L-alanine
