@@ -885,3 +885,13 @@ Not done: a debug build since the difference code went in; the test suite; def2-
   3.5750 to first order and 3.5575 for Hirshfeld atoms. Added to the report. Still running: the
   five-point run at def2-TZVP (`T3_def2-TZVP`) and rigid body plus stiff modes at def2-SVP
   (`T2_def2-SVP`).
+
+### Studies put off until the methods are settled (Dylan, 2026-10-13)
+
+- **The stiff-mode cutoff.** Lowering `soft_mode_cutoff=` costs no parameters, since the soft
+  modes are left out in these runs (`n_soft_modes= 0`). Compare, on gly-L-ala at def2-SVP: the
+  cutoff at 100 cm^-1, against the cutoff at 200 with the five soft modes refined (5 parameters
+  on top of 81, 2531 reflections). Judge by GoF and the Hamilton test.
+- **The usual HAR with a free ADP on every atom**, for the GoF that the TLS restriction costs.
+  The count is 27 parameters for urea and 181 for gly-L-ala, against 17 and 81 with TLS; the 27
+  and 181 are counted by hand, not read from a run.
