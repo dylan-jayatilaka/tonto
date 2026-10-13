@@ -581,7 +581,7 @@ last two. They are neither among the stiff modes nor refined.
 | Hirshfeld atoms | 3.5940 | 0.0353 | 3.5575 | 0.0344 |
 | `tc-tls` | 3.6131 | 0.0354 | 3.5750 | 0.0347 |
 | `tc-tls`, rigid-body motion averaged, 3 points | 3.6054 | 0.0354 | 3.5689 | 0.0347 |
-| `tc-tls`, rigid-body motion averaged, 5 points | 3.6039 | 0.0354 | 3.5673 | 0.0347 |
+| `tc-tls`, rigid-body motion averaged, 5 points | 3.6039 | 0.0354 | 3.5673 | 0.0346 |
 | `tc-tls`, rigid-body motion averaged by formula | 3.6042 | 0.0354 | 3.5673 | 0.0347 |
 
 - **The two smearings differ much less than in urea**: `tc-tls` is 0.02 above Hirshfeld atoms in
