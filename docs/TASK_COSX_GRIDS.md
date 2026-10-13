@@ -279,10 +279,8 @@ are in `BECKE_GRID`, off by default, tested, for any element, and cost nothing w
   John Herbert. They are kept here in case the grids are ever revisited: the DE2 radial range
   (§2.3), which is assumed; the Mg and Si point totals, which disagree with the printed
   partitions; and whether Q-Chem applies an atomic size adjustment to its Becke weights.
-- **Still live: ORCA's COSX grids.** Their parameters were asked of Benjamin Helmich-Paris by
-  email on 2026-10-06 (the register's watch list). When they come they go in as further named
-  grid kinds, by the route the SG kinds took, and are measured on the jobs of section 4. This
-  document is kept until then for that section.
+- **ORCA's COSX grids are no longer waited for** (Dylan, 2026-10-13): no reply to the email of
+  2026-10-06. Our own are to be calibrated; section 5a.
 - **Small loose ends.** The CIF items `_QCr_Becke_grid_n_pts_for_row_1` to `_3` print the counts
   of H, He and Li for an SG kind. The 21-molecule job that hung was a Rys-root bug, since fixed
   (`TASKS_AND_HISTORY.md`).
@@ -305,8 +303,9 @@ the slides were read, not the sound. The grid part is three slides, from 21:10 t
   and cost are traded in one number, not accuracy at a fixed size.
 - The minimiser is differential evolution.
 - Training set: 351 atoms and molecules in different spin states, charges and bonding
-  situations, from G2, G3/99, G3/05 and S22, plus their own set of transition-metal atoms and
-  molecules.
+  situations, from G2, G3/99, G3/05 and S22, plus "a customized test set with transition metal
+  atoms/molecules", which the slide does not specify. So their training set cannot be
+  reproduced exactly from the talk.
 - Test: GMTKN55 and MOR41. The slide of results gives the total mean absolute deviation in
   kcal/mol for the old grids (default, GRIDX6, GRIDX8) and the new (NG1, NG2, NG3) with SVP,
   TZVP and their DKH forms, with a dashed line at 0.1 kcal/mol: NG2 and NG3 are under it in all
