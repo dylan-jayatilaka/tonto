@@ -479,7 +479,7 @@ square $`\langle Q_k^2\rangle`$, the three-point Gauss–Hermite rule is
 
 ```math
 \langle g \rangle \approx \tfrac23\, g(0) + \tfrac16\, g(+s_k) + \tfrac16\, g(-s_k), \qquad
-s_k = \sqrt{3\,\langle Q_k^2\rangle} , \qquad (27)
+s_k = \big( 3\,\langle Q_k^2\rangle \big)^{1/2} , \qquad (27)
 ```
 
 exact when $`g`$ is a polynomial of degree five or less.
@@ -574,7 +574,7 @@ which has the form of the normal modes of §M1.5: $`\mathbf{d}^A_j`$ is the disp
 of $`c_j`$. In (2) the rigid-body term is then
 $`B^A \Sigma B^{B\dagger} = \sum_j \lambda_j\, \mathbf{d}^A_j\mathbf{d}^{B\dagger}_j`$, the same form as the stiff-mode term. So §6
 applies to each principal coordinate as it stands, with $`\mathbf{d}^A_j`$ for $`\mathbf{d}^A_k`$, $`\lambda_j`$ for
-$`\langle Q_k^2\rangle`$, and $`s_j = \sqrt{3\lambda_j}`$.
+$`\langle Q_k^2\rangle`$, and $`s_j = (3\lambda_j)^{1/2}`$.
 
 **The displaced geometry is a true turn.** One thing is different. An eigenvector has a
 translation part, a rotation part and a soft-mode part,
