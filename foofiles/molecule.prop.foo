@@ -534,30 +534,54 @@ contains
 
       B :: MAT{REAL}@
       U :: MAT{REAL}(3,3)
-      w,rb,scale :: REAL
-      n3n,n_rb,n_soft,n_stiff,n_imag,k,j,a :: INT
+      freq,rms_max :: VEC{REAL}@
+      is_stiff,a_max :: VEC{INT}@
+      w,rb,scale,kT,Q2,ma,dis :: REAL
+      n3n,n_rb,n_soft,n_stiff,n_imag,n_int,k,j,a :: INT
 
       n3n = 3*.atom.dim
       B.create(n3n,6)
       .atom.make_rigid_body_modes(B,n_rb)
 
-      ! Sort the modes as make_internal_ADPs does
+      ! Sort the modes as make_stiff_modes does. For each internal mode
+      ! keep its scaled frequency (negative if imaginary), whether it is
+      ! stiff (1) or soft (0), and for a mode with a real frequency the
+      ! largest root-mean-square displacement of an atom and that atom.
       scale = .harmonic_frequency_scale
-      n_soft = 0; n_stiff = 0; n_imag = 0
+      kT = .internal_ADP_temperature/KELVIN_PER_HARTREE
+      freq.create(n3n); rms_max.create(n3n)
+      is_stiff.create(n3n); a_max.create(n3n)
+      n_soft = 0; n_stiff = 0; n_imag = 0; n_int = 0
       do k = 1,n3n
          rb = ZERO
          do j = 1,n_rb
             rb = rb + dot_product(B(:,j),.normal_mode_eigenvectors(:,k))**2
          end
          if (rb>HALF) cycle
+         n_int = n_int + 1
+         rms_max(n_int) = ZERO
+         a_max(n_int) = 0
          if (.normal_mode_eigenvalues(k)<=ZERO) then
             n_imag = n_imag + 1
             n_soft = n_soft + 1
+            freq(n_int) = -scale*sqrt(-.normal_mode_eigenvalues(k))*WAVENUMBER_PER_HARTREE
+            is_stiff(n_int) = 0
             cycle
          end
-         w = scale*sqrt(.normal_mode_eigenvalues(k))*WAVENUMBER_PER_HARTREE
-         if (w<=.soft_mode_cutoff) then; n_soft  = n_soft + 1
-         else;                           n_stiff = n_stiff + 1
+         w = scale*sqrt(.normal_mode_eigenvalues(k))
+         freq(n_int) = w*WAVENUMBER_PER_HARTREE
+         if (freq(n_int)<=.soft_mode_cutoff) then; n_soft  = n_soft + 1;  is_stiff(n_int) = 0
+         else;                                     n_stiff = n_stiff + 1; is_stiff(n_int) = 1
+         end
+         Q2 = HALF/w
+         if (kT>ZERO) Q2 = Q2/tanh(HALF*w/kT)
+         do a = 1,.atom.dim
+            ma = .atom(a).mass*MASS_OF_ELECTRON_PER_AMU
+            dis = sqrt(Q2*sum(.normal_mode_eigenvectors(3*a-2:3*a,k)**2)/ma)
+            if (dis>rms_max(n_int)) then
+               rms_max(n_int) = dis
+               a_max(n_int) = a
+            end
          end
       end
       B.destroy
@@ -610,6 +634,40 @@ contains
          stdout.flush
       end
       stdout.dash(int_fields=1,real_fields=7,width=4)
+
+      ! The internal modes one by one
+      stdout.flush
+      stdout.text("Internal modes: the scaled frequency, negative if imaginary; whether the")
+      stdout.text("mode is stiff or soft; and, at the temperature above, the largest")
+      stdout.text("root-mean-square displacement of an atom in the mode, and that atom.")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=2,width=12)
+      stdout.put("#",int_width=TRUE)
+      stdout.put("Freq /cm^-1")
+      stdout.put("kind",width=6)
+      stdout.put("rms max /A")
+      stdout.put("atom",width=6)
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=2,width=12)
+      do k = 1,n_int
+         stdout.put(k)
+         stdout.put(freq(k))
+         if (is_stiff(k)==1) then; stdout.put("stiff",width=6)
+         else;                 stdout.put("soft",width=6)
+         end
+         if (a_max(k)>0) then
+            stdout.put(rms_max(k)*ANGSTROM_PER_BOHR)
+            stdout.put(trim(.atom(a_max(k)).label),width=6)
+         else
+            stdout.put("--")
+            stdout.put("--",width=6)
+         end
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=2,width=12)
+
+      a_max.destroy; is_stiff.destroy
+      rms_max.destroy; freq.destroy
 
    end
 
