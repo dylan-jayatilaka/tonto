@@ -84,11 +84,13 @@ because by then it held far more than deferred items.)*
 `docs/TASK_HAR_STANDARDISATION.md` section 7 (entry *Tune the DFT grid levels* under *Science
 and features*). The atomic density tables, second in that order, are done.
 
-**On branch `tc-tls`, not merged (2026-10-13):** two-centre smearing with the motion model,
-with the rigid-body rotation averaged by formula. Entry *Two-centre smearing with the motion
-model* under *Science and features*. The full suite passes on achari2 and the six tests whose output
-changed are blessed there; what is left is new tests and the merge. This was taken up out of
-the order of work, at Dylan's request.
+**Merged to `develop` on 2026-10-13, pull request 54:** two-centre smearing with the motion model
+(`tc-tls`), with the rigid-body rotation averaged by formula, three new tests, and nine references
+blessed on achari2. Entry *Two-centre smearing with the motion model* under *Science and
+features* has what is left. Taken up out of the order of work, at Dylan's request. In the same
+merge: `refine_soft_modes=` in place of `n_soft_modes=`; the BUSTER form-factor format from Global
+Phasing (`docs/TASK_SPHERICAL_FF_FIT.md`); our own COSX grids in place of waiting for ORCA's
+(`docs/TASK_COSX_GRIDS.md` section 5a).
 
 **Done on 2026-10-12, all merged to `develop`** (archive entries of that date):
 
@@ -4445,13 +4447,12 @@ mE_h (def2-SVP) and 17.9 mE_h (def2-TZVP) for urea. The XCW reaches those at lam
 
 ## Two-centre smearing with the motion model, `tc-tls` (Dylan, 2026-10-12)
 
-**Register row:** *Two-centre smearing with the motion model (`tc-tls`): tests, bless, merge*, on
-the watch list.
+**Register row:** *Two-centre smearing with the motion model (`tc-tls`): what is left*.
 Plan and log: `docs/TASK_ON_TC_TLS.md`. Reports: `docs/REPORT_ON_TC_TLS.md`,
 `docs/REPORT_ON_TC_TLS_AVERAGES.md`, `docs/REPORT_ON_PAIR_STABILIZERS.md`. TeX notes:
 `~/Dropbox/tex/conference_talks/2026_gaussian_pair_FT/`. Runs: `~/tonto-runs/2026-10-12_tc_tls/`.
 
-**State, 2026-10-13.** On branch `tc-tls`, pushed, not merged. `partition_model= tc-tls` smears
+**State, 2026-10-13.** Merged to `develop` (pull request 54). `partition_model= tc-tls` smears
 each product of two basis functions by the motion of its own centre, from the TLS and mode
 model, with no cut into atoms. `tc_analytic_rigid_body=` averages each product over the
 rigid-body rotation to second order by formula, with exact derivatives with respect to Sigma.
@@ -4482,11 +4483,15 @@ same six failing; after the bless all 189 pass there, and the six pass on the Ma
 (`12f34f65`) gives the new numbers exactly, so the reference had drifted on `develop` within the
 loose bound.
 
-**Next, in this order:** (1) tests: a `tc-tls` refinement of urea STO-3G with and without the
-formula, and the pair weights with and without the petite list, blessed on achari2; (2) merge to
-`develop`.
+**Tests added and blessed on achari2, 2026-10-13:** `urea_rhf_STO-3G_HAR_tc-tls` (default position
+derivative), `..._tc-tls_formula` (rotation by formula, `center` derivative) and
+`..._tc-tls_petite_list`, which must give the same fit as the first and does (GoF 7.2494). On the
+way: the table of T, L and S in the axes of inertia printed zeros by symmetry differently on the
+Mac and on Linux, their esds being rounding noise; they are now set to zero before printing
+(`75336a48`). The pull request was merged while two of its three checks were still running on
+the last commit, which changed only two reference files; the checks on `develop` follow.
 
-**Then:** the derivative pass of `SHELL2:make_turn_factors` in scalars; the time of the path
+**Left:** the derivative pass of `SHELL2:make_turn_factors` in scalars; the time of the path
 the X-ray constrained fit uses, with the formula on; separate rigid bodies for methyl and NH3
 groups; more molecules. Put off until the methods are settled (Dylan): the stiff-mode cutoff
 against refined soft modes, and the comparison with a free ADP on every atom.
