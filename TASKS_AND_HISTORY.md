@@ -86,8 +86,8 @@ and features*). The atomic density tables, second in that order, are done.
 
 **On branch `tc-tls`, not merged (2026-10-13):** two-centre smearing with the motion model,
 with the rigid-body rotation averaged by formula. Entry *Two-centre smearing with the motion
-model* under *Science and features*. The full suite has been run on the Mac; what is left is on
-the watch list (Dylan), starting with a check and a bless on achari2. This was taken up out of
+model* under *Science and features*. The full suite passes on achari2 and the six tests whose output
+changed are blessed there; what is left is new tests and the merge. This was taken up out of
 the order of work, at Dylan's request.
 
 **Done on 2026-10-12, all merged to `develop`** (archive entries of that date):
@@ -4475,12 +4475,16 @@ that `soft_mode_cutoff=` alone says which modes are refined (Dylan; log in
 in place of 700, and their numbers change a little: a fifth mode that was in neither part of the
 model is now a stiff mode. Only the six TLS tests were rerun after it, not the whole suite.
 
-**Next, in this order:** (1) on achari2, check that `h2o_rhf_STO-3G_FD_hessian`,
-`urea_rhf_6-31G(d)_internal_ADPs` and `urea_rhf_STO-3G_HAR_TLS` differ from their references only
-by the new tables, the 0.12 % above included, and that the three soft-mode tests differ as
-described; (2) bless them there; (3) tests: a `tc-tls`
-refinement of urea STO-3G with and without the formula, and the pair weights with and without
-the petite list; (4) merge to `develop`.
+**Blessed on achari2, 2026-10-13** (`36315ee0`; worktree `~/github/tonto-libxc`, tree `reference`,
+gfortran-14, netlib BLAS, libxc on, at `d01fc1bb`). The whole suite there gave 183 of 189 with the
+same six failing; after the bless all 189 pass there, and the six pass on the Mac. The 0.12 % in
+`urea_rhf_STO-3G_HAR_TLS` was not from this branch: a build of `develop` from before the branch
+(`12f34f65`) gives the new numbers exactly, so the reference had drifted on `develop` within the
+loose bound.
+
+**Next, in this order:** (1) tests: a `tc-tls` refinement of urea STO-3G with and without the
+formula, and the pair weights with and without the petite list, blessed on achari2; (2) merge to
+`develop`.
 
 **Then:** the derivative pass of `SHELL2:make_turn_factors` in scalars; the time of the path
 the X-ray constrained fit uses, with the formula on; separate rigid bodies for methyl and NH3

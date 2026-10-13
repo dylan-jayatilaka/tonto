@@ -994,3 +994,17 @@ internal modes that `put_internal_ADPs` now prints and the TLS tables: `h2o_rhf_
 (0.0003 % or less). The 0.12 % and 0.15 % are not explained: the same tests have not been run
 on the Mac from `develop` for comparison. To settle on achari2 before blessing. Dylan put what
 is left on the watch list of the register.
+
+### 2026-10-13: blessed on achari2
+
+Worktree `~/github/tonto-libxc` there, tree `reference` (gfortran-14, netlib BLAS, libxc on), at
+`d01fc1bb`; scripts `tc_tls.sh` (build and suite), `cmp_tc.py` (line-by-line comparison) and
+`bless_tc.sh` in that worktree. The suite: 183 of 189, the same six failing as on the Mac.
+Compared with their references line by line: `h2o_rhf_STO-3G_FD_hessian` and
+`urea_rhf_6-31G(d)_internal_ADPs` have only new lines; `urea_rhf_STO-3G_HAR_TLS` has new lines
+and numbers moved in the fourth figure (L eigenvalues 7.0048, 16.7265, 52.4452 to 7.0046,
+16.7287, 52.4419), the same on the Mac and on achari2. That is not this branch: the Mac build
+`mac-reference/tonto`, which is `develop` at `12f34f65`, before the branch, gives the new values
+exactly. The three soft-mode tests change as expected from the new cutoff. All six blessed
+(`36315ee0`); they then pass on achari2 and on the Mac. The other 183 were not rerun after the
+bless.
