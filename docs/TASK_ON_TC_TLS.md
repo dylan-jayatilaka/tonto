@@ -983,3 +983,14 @@ the earlier `scf` run; with the formula GoF **3.3149** (`center` 3.3337), N-H3 1
 1.2637, C-N 1.3483. Time: 8 and 14 minutes, against 19 and 80 seconds for `center`. An input
 that names `center` still gives 3.6578. The task register has a row for this work (version 161)
 and `TASKS_AND_HISTORY.md` an entry and a line in the handover block.
+
+### 2026-10-13: the full suite on the Mac
+
+`build-tc/`, release, at `ff18b3fa`, `ctest -j6`, all 189 tests: 183 pass. The six that fail
+agree in every number to 0.2 % and fail only on lines that do not match, from the table of
+internal modes that `put_internal_ADPs` now prints and the TLS tables: `h2o_rhf_STO-3G_FD_hessian`
+(largest 0.0002 %), `urea_rhf_6-31G(d)_internal_ADPs` (0), `urea_rhf_STO-3G_HAR_TLS` (0.12 %),
+`_HAR_TLS_cluster` (0.15 %), `_HAR_TLS_soft_modes` and `_HAR_TLS_soft_mode_correlations`
+(0.0003 % or less). The 0.12 % and 0.15 % are not explained: the same tests have not been run
+on the Mac from `develop` for comparison. To settle on achari2 before blessing. Dylan put what
+is left on the watch list of the register.

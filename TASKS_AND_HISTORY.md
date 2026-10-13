@@ -86,8 +86,9 @@ and features*). The atomic density tables, second in that order, are done.
 
 **On branch `tc-tls`, not merged (2026-10-13):** two-centre smearing with the motion model,
 with the rigid-body rotation averaged by formula. Entry *Two-centre smearing with the motion
-model* under *Science and features*; its next action is the full suite on the Mac. This was
-taken up out of the order of work, at Dylan's request.
+model* under *Science and features*. The full suite has been run on the Mac; what is left is on
+the watch list (Dylan), starting with a check and a bless on achari2. This was taken up out of
+the order of work, at Dylan's request.
 
 **Done on 2026-10-12, all merged to `develop`** (archive entries of that date):
 
@@ -4440,7 +4441,8 @@ mE_h (def2-SVP) and 17.9 mE_h (def2-TZVP) for urea. The XCW reaches those at lam
 
 ## Two-centre smearing with the motion model, `tc-tls` (Dylan, 2026-10-12)
 
-**Register row:** *Two-centre smearing with the motion model (`tc-tls`): test, bless, merge*.
+**Register row:** *Two-centre smearing with the motion model (`tc-tls`): tests, bless, merge*, on
+the watch list.
 Plan and log: `docs/TASK_ON_TC_TLS.md`. Reports: `docs/REPORT_ON_TC_TLS.md`,
 `docs/REPORT_ON_TC_TLS_AVERAGES.md`, `docs/REPORT_ON_PAIR_STABILIZERS.md`. TeX notes:
 `~/Dropbox/tex/conference_talks/2026_gaussian_pair_FT/`. Runs: `~/tonto-runs/2026-10-12_tc_tls/`.
@@ -4454,10 +4456,19 @@ with the formula and the `center` position derivative: urea 3.4855 and 3.3337 (d
 and 2.9503 (def2-TZVP); gly-L-ala 3.5940 and 3.6042, 3.5575 and 3.5673. Release and debug
 builds run the urea jobs clean; the Sigma derivatives agree with central differences to 2e-8.
 
-**Next, in this order:** (1) the full suite on the Mac, asking first; (2) tests: a `tc-tls`
+**The full suite on the Mac, 2026-10-13** (`build-tc/`, release, gfortran-14, libxc on, at
+`ff18b3fa`; log `~/tonto-runs/2026-10-12_tc_tls/suite.log`): 183 of 189 pass. The six that fail
+agree with their references in every number to 0.2 % and fail only on lines that do not match,
+from the new printed tables: `h2o_rhf_STO-3G_FD_hessian`, `urea_rhf_6-31G(d)_internal_ADPs`,
+`urea_rhf_STO-3G_HAR_TLS`, `_HAR_TLS_cluster`, `_HAR_TLS_soft_modes` and
+`_HAR_TLS_soft_mode_correlations`. Largest number differences: 0.12 % in `HAR_TLS` and 0.15 % in
+`HAR_TLS_cluster`; whether those are the Mac against the Linux references, or a change made on
+this branch, is not established.
+
+**Next, in this order:** (1) on achari2, check that the six differ from their references only by
+the new tables, the two numbers above included; (2) bless them there; (3) tests: a `tc-tls`
 refinement of urea STO-3G with and without the formula, and the pair weights with and without
-the petite list; (3) bless again on achari2 the four TLS tests whose printed output has grown;
-(4) merge to `develop`.
+the petite list; (4) merge to `develop`.
 
 **Then:** the derivative pass of `SHELL2:make_turn_factors` in scalars; the time of the path
 the X-ray constrained fit uses, with the formula on; separate rigid bodies for methyl and NH3
