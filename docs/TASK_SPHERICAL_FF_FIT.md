@@ -160,15 +160,32 @@ finds them expensive but possible given the faster structure-factor sum, and ask
 angular parts are kept in local coordinate systems, as DiSCaMB does, or in one global frame.
 Dylan's answer (2026-10-13): one global frame.
 
-**The Cartesian frame.** `UNIT_CELL:make_direct_mx` puts a along x, b in the xy plane and c*
-along z (Giacovazzo). That is also the standard frame of a PDB file, so for the spherical form
-factors, where BUSTER is given a PDB file, no other frame is needed. The TNT manual page says
-that TNT's own `ATOMC` coordinates use a different frame from PDB files (x along an axis the
-page shows only as an image; from memory a*, with z along c, not checked). If BUSTER wants
-aspherical atoms in that frame, `UNIT_CELL` needs the second orthogonalisation matrix and the
-rotation between the two. Ask Claus which frame BUSTER expects for them. The same page gives
-the `FORMFACTOR` formula only as images, so the exponent convention is still to be confirmed
-with him.
+**The Cartesian frame** (Claus, second reply, 2026-10-13, kept in the same file). Tonto and PDB
+files: x along a, y along c* x a, z along c* (`UNIT_CELL:make_direct_mx`, Giacovazzo). BUSTER
+uses the TNT frame: **x along a\*, y along b, z along a\* x b**. With cos(beta\*) =
+(cos alpha cos gamma - cos beta)/(sin alpha sin gamma), the cell vectors a, b, c in that frame are
+the columns of
+
+```
+   a sin(gamma) sin(beta*)    0    0
+   a cos(gamma)               b    c cos(alpha)
+  -a sin(gamma) cos(beta*)    0    c sin(alpha)
+```
+
+(checked numerically: same lengths and angles as Tonto's matrix, a* along x, b along y; also in
+the TeX notes `gaussian_pair_ft.tex`, section 4). The two frames differ by the rotation
+Q = C_TNT C_PDB^-1.
+
+- For the spherical form factors nothing is needed: BUSTER is given a PDB file, whose
+  coordinates are in the PDB frame, and a spherical atom has no orientation.
+- For aspherical atoms in one global frame, `UNIT_CELL` needs this second matrix and Q, and the
+  angular parts are turned by Q before they are written. Not coded.
+
+**The `FORMFACTOR` formula**, read from the images of the TNT manual page: f(s) = A exp(-B s^2) +
+C exp(-D s^2) + ..., the pair with the largest exponent first. The image for s is hard to read
+(it looks like "1/2 sin(theta)/lambda"). The carbon line Claus gave has the International
+Tables values of b, so B multiplies (sin theta/lambda)^2; confirm with him if it matters. The
+manual describes three Gaussians; BUSTER takes four and a constant.
 
 ## 3. The fit itself: what to expect
 
