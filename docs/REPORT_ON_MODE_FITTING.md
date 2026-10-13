@@ -212,8 +212,9 @@ with $`\Sigma`$ refined and $`U_i^{\rm high}`$ fixed by the Hessian.
 
 ### 1.7 Soft modes
 
-The soft modes left out of (8) can be put back with refined amplitudes. Take the $`K`$ softest
-modes, imaginary ones first. Write $`\mathbf{d}_{ik} = \mathbf{l}_{ik}/\sqrt{m_i}`$ for the displacement of atom $`i`$
+The soft modes are left out of (8), and by default out of the model. They can be put back with
+refined amplitudes (`refine_soft_modes=`): all of them, the $`K`$ modes below the cutoff $`\omega_c`$,
+imaginary ones first. Write $`\mathbf{d}_{ik} = \mathbf{l}_{ik}/\sqrt{m_i}`$ for the displacement of atom $`i`$
 in mode $`k`$ per unit $`Q_k`$, and $`a_k = \langle Q_k^2\rangle`$ for the mode's mean-square amplitude. Each soft
 mode adds one generalised coordinate $`Q_k`$ to $`\mathbf{v}`$ and one column $`\mathbf{d}_{ik}`$ to $`B_i`$. The modes
 are taken as uncorrelated with each other and with the rigid-body motion, so only the amplitudes
@@ -223,11 +224,10 @@ enter, and (9) becomes
 U_i = U_i^{\rm high} + B_i\, \Sigma\, B_i^{\mathsf T} + \sum_{k=1}^{K} a_k\, \mathbf{d}_{ik}\mathbf{d}_{ik}^{\mathsf T} , \qquad (10)
 ```
 
-with $`\Sigma`$ the rigid-body covariance of §1.4 and $`a_1 \dots a_K`$ refined. A soft mode must have
-$`\omega_k`$ below the cutoff $`\omega_c`$ of (8), or it would be counted twice; raising the cutoff moves
-more modes from $`U^{\rm high}`$ into the refinement. The cutoff is compared with the scaled frequency
-(§1.9). Set it between the $`K`$-th and the next mode: a mode below the cutoff that is not among
-the $`K`$ refined is in neither term of (10).
+with $`\Sigma`$ the rigid-body covariance of §1.4 and $`a_1 \dots a_K`$ refined. The cutoff alone says
+which modes are refined: raising it moves more modes from $`U^{\rm high}`$ into the refinement, and
+no mode is in both terms of (10) or in neither. The cutoff is compared with the scaled frequency
+(§1.9). An imaginary mode is soft at any cutoff.
 
 **The harmonic amplitude** $`a_k^0`$ is (6) at the mode's frequency. An imaginary mode has none.
 
@@ -499,7 +499,7 @@ On the molecule (top level):
 | `normal_mode_analysis` | | the normal modes, rigid-body motion projected out |
 | `put_normal_modes` | | prints the Hessian and the modes |
 | `internal_adp_temperature=` | 0 | the temperature Θ in (6), Kelvin; 0 gives zero-point motion |
-| `soft_mode_cutoff=` | 200 | modes below this, cm⁻¹, are soft |
+| `soft_mode_cutoff=` | 200 | modes below this are soft; in cm⁻¹, or another unit if one follows the number |
 | `frequency_scale_factor=` | see §1.9 | scales the frequencies in (6) |
 | `make_internal_adps` | | makes U^high, eq. (8), and the soft modes of (10) |
 | `put_internal_adps` | | prints U^high and how many modes are soft, imaginary and stiff |
@@ -509,7 +509,7 @@ In `xray_data=`:
 | keyword | default | meaning |
 |---|---|---|
 | `adp_model=` | `free` | `free`: refine each atom's ADP; `tls`: the model (10), HAR only |
-| `n_soft_modes=` | 0 | $`K`$ in (10): how many of the softest modes have refined amplitudes |
+| `refine_soft_modes=` | `FALSE` | `TRUE` refines the amplitudes of all the soft modes, the $`K`$ of (10); otherwise they are left out |
 | `soft_mode_restraint=` | 0.5 | $`f_a`$ in §2.4: the amplitude restraint's $`\sigma`$ as a fraction of the harmonic amplitude |
 | `use_soft_mode_correlations=` | `FALSE` | `TRUE` refines the cross terms of (11) |
 | `correlation_restraint=` | 0.5 | $`f_\rho`$ in §2.4: the uncertainty of a correlation coefficient held toward 0 |
@@ -533,7 +533,7 @@ A TLS Hirshfeld atom refinement with U^high from a Hessian, and the four softest
       xray_data= {
          partition_model= oc-hirshfeld
          adp_model= tls
-         n_soft_modes= 4
+         refine_soft_modes= YES
          ...
       }
    }
@@ -726,7 +726,8 @@ the heavy atoms. The hydrogens move furthest in every mode, being lightest, so t
 size of the displacements, says what kind of motion a mode is.
 
 Hirshfeld partition, the model (10) with the $`K`$ softest modes refined, `soft_mode_restraint=`
-0.5. The cutoff is 200 cm⁻¹ for $`K \le 2`$, 600 for $`K = 3`$ and 700 for $`K = 4`$, so modes 3 and 4
+0.5. $`K = 1`$ takes the first of the two imaginary wags alone, which `refine_soft_modes=` cannot
+do: with it the two go in together. The cutoff is 200 cm⁻¹ for $`K \le 2`$, 600 for $`K = 3`$ and 700 for $`K = 4`$, so modes 3 and 4
 move from $`U^{\rm high}`$ into the refinement. $`K = 0`$ is TLS + U^high above.
 
 For each $`K`$: the parameter count, the effective count, the fit, AIC and BIC, and the
@@ -987,153 +988,23 @@ $`L`$ has eigenvalues 7.6, 32 and 45 deg², the largest about the C=O axis; the 
 $`S`$ has zero trace.
 
 
-## 6. Smearing the density between two atoms: `tc-tls`
+### Urea: two-centre smearing
 
-Hirshfeld atom refinement cuts the molecular density into atoms and smears each atom with its
-own ADP. The cut is an approximation. The density is a sum over pairs of basis functions, and a
-product of functions on two different atoms sits between them and moves with both. To smear it
-one must know how the two atoms move together, which independent ADPs do not say. The model of
-§1 does say it, so with that model no cut is needed. This section gives the equations.
+`partition_model= tc-tls`, which smears the density between two atoms by their joint motion from
+this model, is compared with Hirshfeld atoms on urea in `docs/REPORT_ON_TC_TLS.md`.
 
-### 6.1 The covariance between two atoms
 
-Collect every generalised coordinate in one vector: the rigid-body motion and refined soft modes
-of (11), and the amplitudes $`Q_k`$ of the stiff modes. For atom $`A`$,
+## 6. Smearing the density between two atoms
 
-```math
-\mathbf{u}_A = \bar B_A\, \bar{\mathbf{v}}, \qquad
-\bar{\mathbf{v}} = (\mathbf{t}, \boldsymbol{\lambda}, Q_1, \dots, Q_K, Q_{\rm stiff}), \qquad
-\bar B_A = [\,B_A \mid \mathbf{d}_{A,\rm stiff}\,] , \qquad (16)
-```
-
-with $`B_A`$ the matrix of (11) and one column $`\mathbf{d}_{Ak}`$ (§1.7) for each stiff mode. The covariance
-of $`\bar{\mathbf{v}}`$ is the refined $`\Sigma`$ of (11), and beside it a diagonal block holding the harmonic
-amplitude (6) of each stiff mode at the temperature of the data. The **two-centre ADP** of atoms
-$`A`$ and $`B`$ is then
-
-```math
-U_{AB} = \langle \mathbf{u}_A \mathbf{u}_B^{\mathsf T} \rangle
-       = B_A\, \Sigma\, B_B^{\mathsf T} + \sum_{\omega_k > \omega_c} \langle Q_k^2\rangle\, \mathbf{d}_{Ak} \mathbf{d}_{Bk}^{\mathsf T} . \qquad (17)
-```
-
-$`U_{AA}`$ is the ADP of atom $`A`$, (11). $`U_{AB}`$ is not symmetric, and $`U_{BA} = U_{AB}^{\mathsf T}`$. It needs no
-parameter beyond those already in the model.
-
-### 6.2 A product of two Gaussians under displacement
-
-The electron density is
-
-```math
-\rho(\mathbf{r}) = \sum_{ab} D_{ab}\, \chi_a(\mathbf{r} - \mathbf{R}_A)\, \chi_b(\mathbf{r} - \mathbf{R}_B) , \qquad (18)
-```
-
-where $`\chi_a`$ is a basis function on atom $`A`$ at position $`\mathbf{R}_A`$, $`\chi_b`$ one on atom $`B`$ at
-$`\mathbf{R}_B`$, and $`D`$ is the **density matrix** from the SCF: $`D_{ab}`$ says how much of the product
-$`\chi_a\chi_b`$ is in the density. Take one Gaussian from each function, with exponents $`\alpha`$ and
-$`\beta`$, and define
-
-```math
-w_a = \frac{\alpha}{\alpha+\beta}, \qquad w_b = \frac{\beta}{\alpha+\beta}, \qquad
-\mathbf{P} = w_a \mathbf{R}_A + w_b \mathbf{R}_B, \qquad \mathbf{R} = \mathbf{R}_A - \mathbf{R}_B .
-```
-
-The product of the two Gaussians is a Gaussian centred at $`\mathbf{P}`$, on the line between the atoms,
-with a size and shape that depend on $`\mathbf{R}`$. When the atoms are displaced by $`\mathbf{u}_A`$ and $`\mathbf{u}_B`$,
-the centre moves by
-
-```math
-\mathbf{u}_P = w_a \mathbf{u}_A + w_b \mathbf{u}_B , \qquad (19)
-```
-
-and the size and shape change only through the relative displacement $`\mathbf{u}_A - \mathbf{u}_B`$. So the
-Fourier transform of the displaced product, at scattering vector $`\mathbf{k}`$, is
-
-```math
-e^{i\mathbf{k}\cdot\mathbf{P}}\; e^{i\mathbf{k}\cdot\mathbf{u}_P}\; \tilde\chi_{ab}(\mathbf{k};\, \mathbf{R} + \mathbf{u}_A - \mathbf{u}_B) , \qquad (20)
-```
-
-where $`\tilde\chi_{ab}(\mathbf{k}; \mathbf{R})`$ is the transform of the product $`\chi_{ab} = \chi_a\chi_b`$ taken about
-its own centre.
-
-### 6.3 The model
-
-**Each product is smeared by the motion of its centre.** In the thermal average of (20) the
-dependence on $`\mathbf{u}_P`$ is kept. The product's size and shape, and the density matrix, are held at
-their values at the mean geometry. This is the rigid-atom approximation of Hirshfeld atom
-refinement, made for each product instead of each atom. The structure factor is
-
-```math
-F(\mathbf{k}) = \sum_{ab} D_{ab} \sum_{\alpha\beta} c_\alpha c_\beta\;
-     e^{i\mathbf{k}\cdot\mathbf{P}}\; \tilde\chi_{ab}(\mathbf{k}; \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{ab} \mathbf{k}} , \qquad (21)
-```
-
-the inner sum over the Gaussians of the two basis functions, with contraction coefficients
-$`c_\alpha`$ and $`c_\beta`$, and
-
-```math
-U^P_{ab} = \langle \mathbf{u}_P \mathbf{u}_P^{\mathsf T} \rangle = w_a^2\, U_A + w_b^2\, U_B + w_a w_b\,(U_{AB} + U_{AB}^{\mathsf T}) . \qquad (22)
-```
-
-No partition into atoms appears in (21).
-
-**The centre is a pseudo-atom.** Putting (16) into (19), and using $`w_a + w_b = 1`$,
-
-```math
-U^P_{ab} = \bar B_P\, \bar\Sigma\, \bar B_P^{\mathsf T}, \qquad \bar B_P = w_a \bar B_A + w_b \bar B_B , \qquad (23)
-```
-
-with $`\bar\Sigma`$ the covariance of $`\bar{\mathbf{v}}`$. This is (11) for a fictitious atom at $`\mathbf{P}`$. Its
-rigid-body part is the Schomaker–Trueblood ADP (5) of the point $`\mathbf{P}`$, because $`A_i`$ is linear in
-the position. Its mode part uses each mode's displacement interpolated to $`\mathbf{P}`$,
-$`w_a \mathbf{d}_{Ak} + w_b \mathbf{d}_{Bk}`$, for the stiff modes with the amplitude (6) and for the soft modes
-with the refined one. Three things follow:
-
-- The refined parameters are those of §1: $`\Sigma`$ and the positions. None is added.
-- For two functions on the same atom, $`\mathbf{P} = \mathbf{R}_A`$ and $`U^P_{ab} = U_A`$.
-- For functions on atoms of two different molecules the model gives no correlation, and
-  $`U_{AB} = 0`$ is used.
-
-**Relation to earlier two-centre models.** Writing $`V_{AB} = U_A + U_B - U_{AB} - U_{AB}^{\mathsf T}`$ for the
-mean-square relative displacement of the two atoms, (22) is
-
-```math
-U^P_{ab} = w_a U_A + w_b U_B - w_a w_b\, V_{AB} . \qquad (24)
-```
-
-The first two terms are Tanaka's model (`tc-tanaka`). It is exact when the atoms have no relative
-motion, and otherwise smears the product too much: a bond stretch moves the two atoms in
-opposite directions and leaves the density between them nearly still. Stewart's model
-(`tc-stewart`) puts every product at the midpoint, and its two cases are $`V_{AB} = 0`$ for bonded
-atoms and $`U_{AB} = 0`$ for the rest. Those models cannot give $`U_{AB}`$ from $`U_A`$ and $`U_B`$; here it
-comes from (17).
-
-### 6.4 What the model leaves out
-
-The exact average of one term of the sum, with $`f`$ standing for $`D_{ab}\,\tilde\chi_{ab}`$ as a function
-of the displacements $`\mathbf{x}`$ of all the atoms, is
-
-```math
-\langle f(\mathbf{x})\, e^{i\mathbf{k}\cdot\mathbf{u}_P} \rangle
-   = e^{-\frac12 \mathbf{k}^{\mathsf T} U^P_{ab} \mathbf{k}}\; \langle f(\mathbf{x} + i\,U\mathbf{c}) \rangle , \qquad (25)
-```
-
-where $`U`$ is the $`3N\times 3N`$ matrix with blocks $`U_{AB}`$, and $`\mathbf{c}`$ is the $`3N`$-vector holding
-$`w_a\mathbf{k}`$ on atom $`A`$, $`w_b\mathbf{k}`$ on atom $`B`$ and zero elsewhere. The model replaces the last factor
-by $`f`$ at the mean geometry. The terms left out are the change of the product's size and shape
-with the relative displacement, the change of the density matrix with geometry, and the turning
-of each product about its own centre under libration. The first two must be taken together:
-with the first alone the number of electrons is not conserved.
-
-The change of the density matrix can be estimated by first-order perturbation theory without
-solving coupled equations, the sum over orbitals used for the X-ray constrained SCF
-(`docs/REPORT_ON_XCW_CONVERGENCE.md`, equation (4)). There the perturbation is a change of the
-Fock matrix; for a moved atom it is the change of the Fock matrix and of the overlap matrix,
-because the basis functions move with the atom.
+The model of §1 gives the covariance of the displacements of any two atoms of the molecule, not
+only each atom's own ADP. `partition_model= tc-tls` uses it to smear each product of basis
+functions on two atoms by the motion of that product's own centre, with no partition of the
+density into atoms. The theory, keywords, procedures and results are in
+`docs/REPORT_ON_TC_TLS.md`.
 
 
 ## 7. What is not done yet, and directions
 
-- The two-centre smearing of §6 (`partition_model= tc-tls`).
 - The restraint-width check and the RI-J/COSX check of the correlations section, repeated with
   spherical functions.
 - A molecule with a methyl torsion, where the first soft mode should be the torsion.
@@ -1183,9 +1054,6 @@ further experimental errors to keep in mind (Jayatilaka and Dittrich, 2008). The
 ## References
 
 - V. Schomaker and K. N. Trueblood, *Acta Cryst.* B24, 63 (1968): rigid-body motion, T, L, S.
-- R. F. Stewart, *J. Chem. Phys.* 51, 4569 (1969), and K. Tanaka, *Acta Cryst.* A44, 1002 (1988):
-  two-centre temperature factors.
-- D. Jayatilaka and D. J. Grimwood, *Acta Cryst.* A57, 76 (2001): the two-centre models in Tonto.
 - A. P. Scott and L. Radom, *J. Phys. Chem.* 100, 16502 (1996): harmonic frequency scale factors.
 - W. C. Hamilton, *Acta Cryst.* 18, 502 (1965): significance tests on the crystallographic R factor.
 - S. Swaminathan, B. M. Craven and R. K. McMullan, *Acta Cryst.* B40, 300 (1984): urea, neutron, 123 K.

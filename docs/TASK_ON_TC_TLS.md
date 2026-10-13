@@ -4,7 +4,12 @@ A working document. It develops the theory of a new model, `tc-tls`, before any 
 Notation follows `docs/REPORT_ON_MODE_FITTING.md` (called *the report* below), whose equations
 (1)–(11) are used without repeating them. Sources: Dylan's notes `~/Dropbox/tex/idea/atom_pair_pdf.tex`
 (the atom-pair distribution) and `adp5.tex` (ADPs from normal modes and the coth factor). The
-user-facing form of §2–§5 is §6 of the report.
+user-facing form is `docs/REPORT_ON_TC_TLS.md`, which since 2026-10-13 writes contracted
+Gaussians as G, primitives as g with the basis function as superscript, the pair product as
+g^{mu nu}_{ab}, and atom labels as superscripts on vectors and matrices (U^A, not U_A); this
+document keeps the earlier chi and U_A in its own sections; where the log below says "report §6.x" it is §x
+of that page, which was section 6 of the mode-fitting report until GitHub stopped rendering the
+math on so long a page.
 
 Units are atomic units throughout. Vectors are columns, ᵀ is the transpose, ⟨ ⟩ is the thermal
 average.
@@ -317,8 +322,358 @@ Hirshfeld one, and with `tc-tanaka` using the same ADPs. By (14) the difference 
 two is the relative motion alone.
 
 
+**2026-10-13, why `tc-tls` fitted worse: libration.** Ruled out first: the two-centre code (the
+same isotropic U on every atom gives GoF 32.368 by Hirshfeld and 32.364 by `tc-tanaka`); the pair
+weights (§10: old, new and petite list all 3.6577). Then tested: products with lobes must turn
+with the molecule. `tc_integrate_rigid_body=` (report §7): the principal coordinates of the
+refined Sigma, the molecule turned exactly at +-sqrt(3 lambda), an SCF there, the same three-point
+difference as for the stiff modes (`make_mode_SF_correction` now does both). Urea def2-SVP,
+`center` derivatives, SCF 1e-7:
+
+| | GoF | C=O /A | C-N /A | N-H1 | N-H3 |
+|---|---|---|---|---|---|
+| Hirshfeld | 3.4854 | 1.2559 | 1.3411 | 1.028 | 0.994 |
+| `tc-tls` | 3.6577 | 1.2560 | 1.3412 | 1.024 | 0.977 |
+| + rigid body averaged | 3.4876 | 1.2620 | 1.3495 | 1.031 | 0.991 |
+| + stiff modes too | 3.4606 | 1.2619 | 1.3495 | 1.032 | 0.993 |
+
+So libration was the gap, 0.17 in GoF, and with both averages `tc-tls` is below Hirshfeld. The
+heavy-atom bonds lengthen by 0.006-0.008 A: the atoms move on arcs, i.e. the libration correction
+is in the model. To do before quoting: a finer rule than three points (the largest libration puts
+the points at about +-14 deg); the same with `scf` derivatives; whether the outer loop settles
+smoothly with a correction that depends on Sigma; debug build; test suite; TZVP. Also the
+mode-fitting report hit GitHub's limit on math per page (about 370 expressions; later ones show
+"Unable to render expression"), so the two-centre material moved to `docs/REPORT_ON_TC_TLS.md`.
+Runs in `~/tonto-runs/2026-10-12_tc_tls/{equal_U,pair_weights,rigid}`.
+
+**2026-10-13, further runs started; output to be added; gly-L-ala modes.**
+- Five-point rule coded (`tc_quadrature_points=`). Urea def2-SVP, `center`, rigid body averaged:
+  3 points GoF 3.4876, 5 points 3.4493. So three points are too coarse for the largest libration,
+  and the finer rule fits better still.
+- Urea def2-TZVP (RI-J, COSX, SCF 1e-7; Hessian ORCA RHF/def2-TZVP at the Hirshfeld geometry):
+  Hirshfeld 3.0570, `tc-tls` `center` 3.2369; the four averaged runs are going
+  (`~/tonto-runs/2026-10-12_tc_tls/tzvp/{T1,T2,T3,T4}`). At def2-TZVP only one mode is soft (the
+  imaginary wag); the 306 cm^-1 mode (274 scaled) is stiff. At def2-SVP two are soft.
+- Gly-L-ala, 150 K set of Capelli 2014 from `~/Dropbox/tonto_data/xray_neutron_set`: the
+  reflections are in a second data block of the CIF that `process_CIF` does not read, so they
+  were written to `gly_ala_150K.hkl` (h k l i_exp i_sigma; 2531 reflections). Chains in
+  `~/tonto-runs/2026-10-12_tc_tls/glyala/chain.sh`: Hirshfeld TLS for the geometry, ORCA Hessian
+  there, then H, T0 (`tc-tls`), T1 (rigid body, 3 points), T3 (5 points), and at def2-SVP T2
+  (rigid body and stiff modes, 3 points). def2-SVP: 5 soft modes, none imaginary, 49 stiff.
+- Gly-L-ala low modes, RHF/def2-SVP, scaled by 0.8953 (cm^-1), with the share of the motion on
+  the methyl hydrogens: 77 (5 %), 125 (4 %), 130 (0 %), 154 (39 %), 166 (31 %), 205 (2 %; 29 % on
+  the CH2 hydrogens), 222 (16 %), 285 (10 %). So the methyl torsion is spread over the modes at
+  154 and 166, mixed with the skeleton, and both are below the 200 cm^-1 cutoff: soft, and in
+  the present runs neither fixed nor refined. Dylan (2026-10-13): the density may need averaging
+  over the methyl rotation. That needs the methyl as an attached rigid group turned exactly
+  about C-C (segmented TLS), with the same averaging routine. Not started.
+- Output (Dylan: these quantities should be printed): `put_TLS_results` now also prints the L
+  axes and the principal coordinates of Sigma (`put_TLS_principal_motions`), and
+  `put_internal_ADPs` a table of the internal modes. Committed, not built while runs use the
+  binary; the TLS tests' references will need blessing again on achari2.
+- Comparison with Capelli, Fortsch and Burgi (2000) for urea is in the report, section 11; made
+  with `~/tonto-runs/2026-10-12_tc_tls/compare/tls_table.py`.
+
+**2026-10-13, results at def2-TZVP, gly-L-ala, and the quadrature converged.**
+- A mistake in running: nine parallel tonto jobs each let OpenBLAS use every core (load average
+  130). Killed, restarted with `OPENBLAS_NUM_THREADS=1` through `queue.sh` (ten at a time). Use
+  that variable for any parallel batch.
+- `tc_quadrature_points=` takes any odd number (Golub-Welsch nodes, `make_gauss_hermite_pairs`).
+  Built in a second tree, `build-tc/`, so that jobs running from `release/` were not disturbed.
+- Urea GoF, `center` derivatives, rigid body averaged with n points:
+
+  | n | def2-SVP | def2-TZVP |
+  |---|---|---|
+  | none | 3.6578 | 3.2369 |
+  | 3 | 3.4876 | 3.2403 |
+  | 5 | 3.4493 | 3.1201 |
+  | 7 | 3.4483 | 3.1150 |
+  | 9 | 3.4483 | 3.1148 |
+  | 11 | 3.4483 | 3.1148 |
+  | Hirshfeld | 3.4855 | 3.0570 |
+
+  Converged at 7. Stiff modes on top, 5 points: 3.4227 (SVP), 3.1353 (TZVP, worse than without:
+  the 274 cm^-1 NH2 mode is stiff there and moves H by 0.2 A in a straight line).
+- Gly-L-ala GoF: def2-SVP Hirshfeld 3.5940, `tc-tls` 3.6131, rigid body 3 points 3.6054, 5 points
+  3.6039; def2-TZVP Hirshfeld 3.5575, `tc-tls` 3.5750; the def2-TZVP averaged runs and the
+  def2-SVP run with stiff modes were still going when this was written.
+- TLS output now prints T, L, S with esds in the principal axes of inertia; the comparison with
+  Capelli et al. in the report uses it (`compare/tls_esd.py`).
+- Dylan asked whether the rigid-body average can be done analytically and without an SCF. No SCF
+  is needed (F of the turned molecule is F at the turned k with a phase). Exact rotation gives
+  Bessel-function series; to second order in the rotation vector the phase is quadratic and the
+  Gaussian average is closed: det(1 - i L M)^(-1/2) exp[-(1/2) a^T (1 - i L M)^(-1) L a], a = P x k,
+  M = (k P^T + P k^T)/2 - (k.P) 1. Written from memory, NOT yet checked numerically; the
+  polynomial parts need derivatives of it. The converged numbers above are what to check it
+  against. Not started.
+
+**2026-10-13, TeX notes extending the 1994 Letter.** `~/Dropbox/tex/conference_talks/2026_gaussian_pair_FT/`
+(`gaussian_pair_ft.tex`, 8 pages, and `check_formulas.py`), at Dylan's request. Contents: the
+formula of Jayatilaka, CPL 230, 228 (1994); a correction to its closing remark (the product of
+three terms is in the Cartesian components of k, so the grid saving holds only for a rectilinear
+grid; on oblique axes each factor depends on all of h, k, l) with the transform written as a
+polynomial in h, k, l; the two-centre ADP; and the rigid-body average to second order in the
+rotation vector in closed form, with the turning of the polynomial part. Checks: the
+McMurchie-Davidson transform against quadrature 2e-15; the oblique form 2e-16; the second-order
+rigid-body formula within 1 % of the average over exact rotations where the first-order (TLS)
+formula is out by 3-17 %, and the turning of the polynomial matters more than the arc. No SCF is
+needed for the rigid-body part. Not coded in Tonto; the converged numerical averages (urea GoF
+3.4483 at def2-SVP, 3.1148 at def2-TZVP) are what the coded formula must reproduce.
+
+**2026-10-13, where the two-centre transform spends its time** (Dylan: would tabulating by index,
+the tensor transformation, speed up the pair transform?). Profile of a gly-L-ala def2-SVP
+`tc-tls` refinement without averaging (macOS `sample`, 70 s, release build, SCF with RI-J/COSX in
+the same run; samples at the top of the stack, idle threads left out):
+
+| where | samples |
+|---|---|
+| `MOLECULE.XTAL:make_FT_and_TLS_derivs`, own loops | 5780 |
+| `SHELL2:make_ft_c` and `make_ft_component` | 4670 |
+| `cexp`, `sin`, `cos` (the phase and Gaussian of each primitive pair at each k) | 4806 |
+| `exp` (temperature factors; part of it is the SCF) | 3272 |
+| `matmul` (from `matmul(k_pts,TLS_displacement_mx)` per shell pair) | 1198 |
+
+Read: (1) The derivative routine written for step 2 costs more than the transform. It contracts
+the 21 elements of Sigma for every *shell* pair; s_0, s_1, s_2 should be summed over the shell
+pairs of each *atom* pair first and contracted once, and the matmul done once per atom. (2) In
+the transform itself the complex exponential is about half the time. On any cell, oblique or
+not, the phase is a product of three factors in the integer indices (after the symmetry
+operation the indices are still integers), so three small tables per primitive pair replace it.
+(3) The Gaussian exp(-k^2/4 gamma) depends only on gamma and k: one table per distinct gamma,
+shared by every shell pair with those exponents. (4) The temperature factor is one real exp per
+primitive pair per k and is not separable (U^P has cross terms and depends on the pair through
+w_A); it could be tabulated as three 1-D and three 2-D tables per primitive pair, which pays only
+when there are many more k points than about 3(2 h_max + 1)^2. (5) The polynomial part is cheap
+already as a product of three 1-D polynomials in the Cartesian components; the oblique monomial
+form has up to (l+1)(l+2)(l+3)/6 terms and is slower for d and f functions. For a cell with
+orthogonal axes along the Cartesian axes everything but the temperature factor is three 1-D
+tables. Not coded. The X-ray constrained SCF uses the same kernel for its constraint matrix, so it
+would gain the same.
+
+## 10. Symmetry: the stabiliser of an atom pair
+
+Dylan, 2026-10-13: the repetition factors are very old code, from Jayatilaka and Grimwood (2001);
+the two-centre terms should use the stabiliser of the atom pair, as the Hirshfeld path uses the
+stabiliser of the atom; the theory needs redoing. This section redoes it. Not coded.
+
+Notation as the report, §6: basis functions $`\mu`$ on atom $`A`$, $`\nu`$ on atom $`B`$; the term
+$`t_{\mu a\,\nu b}(\mathbf{k})`$ of one pair of primitives (report eq. (29)).
+
+### 10.1 What is there now
+
+Jayatilaka and Grimwood (2001), §4.3. The fragment may be larger than the smallest repeating
+unit ("oversampled"). Each atom $`A`$ of the fragment gets a repetition factor $`n_A`$: the number of
+pairs (fragment atom, space-group operation) that land on $`A`$, lattice translations ignored
+(`CRYSTAL:make_repetition_factors`). The product of a function on $`A`$ with a function on $`B`$ is
+then given the weight (their eq. (21), `SHELL2:make_Tanaka_partition`)
+
+```math
+f_{\mu a\,\nu b} = \frac{w_A}{n_A} + \frac{w_B}{n_B} , \qquad (21)
+```
+
+and the fragment's structure factor, with these weights, is summed over every space-group
+operation. For one atom this is right: a function pair on $`A`$ alone gets $`1/n_A`$. For two atoms
+it is a rule for sharing, not a count: (21) is right when $`n_A = n_B`$ equals the number of times
+the *pair* is repeated, and nothing guarantees that.
+
+### 10.2 The count that is wanted
+
+The crystal's density is the sum of the terms of the report's (20) over every pair of basis
+functions in the crystal. Group them by the atoms they are on: an **ordered atom pair** $`(A,B)`$,
+two atoms of the crystal at definite positions, carries
+
+```math
+F_{AB}(\mathbf{k}) = \sum_{\mu \text{ on } A}\ \sum_{\nu \text{ on } B} D_{\mu\nu} \sum_{ab} t_{\mu a\,\nu b}(\mathbf{k}) , \qquad (22)
+```
+
+and the one-centre terms are the pairs $`(A,A)`$. A space-group operation $`g = \{R_g \mid \mathbf{t}_g\}`$
+(rotation $`R_g`$, translation $`\mathbf{t}_g`$) takes the pair $`(A,B)`$ to the pair $`(gA, gB)`$: *the same
+operation, with the same translation, acts on both atoms*. If the wavefunction and the motion
+have the crystal's symmetry, the image carries the same density, moved:
+
+```math
+F_{gA\,gB}(\mathbf{k}) = e^{i\mathbf{k}\cdot\mathbf{t}_g}\, F_{AB}(R_g^{\mathsf T}\mathbf{k}) . \qquad (23)
+```
+
+The pairs of the crystal fall into **orbits**: the sets of pairs that are images of one another.
+The structure factor of the unit cell is the sum over the orbits, and within each orbit over its
+members in one cell, each counted once.
+
+**The stabiliser.** Let $`G`$ be the space group and $`T`$ its lattice translations; $`G/T`$ is the
+list of $`N_G`$ operations per cell that Tonto holds. The **stabiliser of the pair** is the set of
+operations of the space group that leave both atoms where they are,
+
+```math
+S_{AB} = \{\, g \in G : gA = A \text{ and } gB = B \,\} = S_A \cap S_B , \qquad (24)
+```
+
+the operations common to the site-symmetry groups $`S_A`$ and $`S_B`$ of the two atoms. For $`A = B`$
+it is the atom's own stabiliser $`S_A`$. As $`g`$ runs over the $`N_G`$ operations of $`G/T`$, the image
+$`(gA,gB)`$ runs over the members of the orbit in one cell, each $`|S_{AB}|`$ times, $`|S_{AB}|`$ being
+the number of operations in the stabiliser. So with one representative pair from each orbit,
+
+```math
+F(\mathbf{k}) = \sum_{g \in G/T} e^{i\mathbf{k}\cdot\mathbf{t}_g} \sum_{\text{orbits}} \frac{1}{|S_{AB}|}\; F_{AB}(R_g^{\mathsf T}\mathbf{k}) . \qquad (25)
+```
+
+For $`A = B`$ this is the Hirshfeld path's formula for atoms, with the atom's site-symmetry factor.
+
+**If the fragment holds more than one member of an orbit.** A fragment with $`m_{AB}`$ ordered pairs
+in the orbit of $`(A,B)`$ may use them all, each with weight
+
+```math
+f_{AB} = \frac{1}{m_{AB}\, |S_{AB}|} , \qquad (26)
+```
+
+and $`m_{AB}\,|S_{AB}|`$ is the number of (fragment pair, operation) that land on $`(A,B)`$ with both
+atoms in place: the repetition factor of the pair, counted as (21) counts for an atom but for
+the two atoms together. A pair and its reverse $`(B,A)`$ are different ordered pairs; an operation
+that exchanges $`A`$ and $`B`$ is not in $`S_{AB}`$, and puts $`(B,A)`$ in the orbit of $`(A,B)`$.
+
+**The sum symmetrises.** The operations of $`S_{AB}`$ are among those summed in (25), and with the
+factor $`1/|S_{AB}|`$ they average $`F_{AB}`$ over its stabiliser. So $`F_{AB}`$ need not be made
+symmetric first, as the Hirshfeld form factors of an atom on a special position are.
+
+### 10.3 When (21) and (26) agree, and when not
+
+**One whole molecule: they agree.** Let the fragment be one molecule whose site-symmetry group
+$`S_{\rm mol}`$ has $`n_s`$ operations. An operation that takes a pair of the molecule's atoms to
+another pair of the molecule's atoms takes the molecule to itself, so it is in $`S_{\rm mol}`$; each
+of the $`n_s`$ operations lands every pair on a pair of the fragment. So $`m_{AB}|S_{AB}| = n_s`$ for
+every pair, and likewise $`n_A = n_s`$ for every atom, and (21) gives $`w_A/n_s + w_B/n_s = 1/n_s`$.
+Urea: site mm2, $`n_s = 4`$; the output lists repetition factor 4 for all eight atoms and four
+stabiliser operations for the fragment. **So the urea results of §9 do not depend on this, and the
+0.13 in GoF between `tc-tls` and Hirshfeld is not a symmetry error.** Argued, and checked against
+the printed factors; not checked by a run with (26) coded.
+
+**A cluster, or a fragment that is not a whole number of molecules: they differ.**
+
+- A product between two molecules of a cluster belongs to an orbit of its own, whose size has
+  nothing to do with the $`n_A`$ of its atoms. (21) then gives the wrong weight. This is the case
+  the 2001 paper introduced the factors for.
+- The molecules at the edge of a cluster have a different wavefunction from the central one,
+  yet (21) and (26) with $`m_{AB} > 1`$ average them in. The Hirshfeld path does not: it takes each
+  unique atom once, from the central molecule. The pair form of that is (25): **one
+  representative of each orbit**, chosen nearest the centre of the cluster.
+- For a pair between two molecules the same translation must act on both atoms. Counting each
+  atom modulo the lattice, as `make_repetition_factors` does, loses that.
+
+### 10.4 What it would take
+
+1. The orbits of ordered atom pairs of the fragment under $`G`$, with a representative and
+   $`|S_{AB}|`$ for each: `CRYSTAL` already has the stabiliser of each asymmetric-unit atom
+   (`asym_atom_stabilizer`) and the operation that makes each fragment atom from it
+   (`asym_symop_for_frag_atom`, `asym_shift_for_frag_atom`).
+2. In the shell-pair loop, the weight (26), or zero for a pair that is not the representative,
+   in place of `make_partition_factors`. With one representative per orbit the loop is shorter
+   by about the order of the site group: for urea 64 ordered atom pairs fall into about 20 orbits.
+3. The position derivative of a unique atom still collects its images (report §6.5), now over the
+   representative pairs and the operations of (25).
+4. Checks: a whole molecule gives the same F as now, to rounding; a cluster of two urea molecules
+   gives the same intramolecular F as one molecule when the intermolecular density-matrix blocks
+   are zeroed.
+
+## 11. Plan: a faster pair transform, then the analytic rigid-body average
+
+Written 2026-10-13 after the profile in the log of §9. Each step has a check that must pass
+before the next; every step keeps F the same to rounding unless it says otherwise.
+
+**Status, 2026-10-13:** steps 1, 2, 4 and 5 are done and step 3 was not needed; what was done
+differs from the text below in places. See the log entry *the faster kernel, the rigid-body
+average by formula, and its exact derivatives*. Step 6 is open.
+
+**Step 1. The derivative routine** (`MOLECULE.XTAL:make_FT_and_TLS_derivs`). Sum $`s_0, s_1, s_2`$ over
+the shell pairs of each atom pair into three arrays (n_k, n_atom_pairs), and contract with Sigma
+once per atom pair after the loop; make $`B^{A\dagger}\mathbf{k}`$ once per atom. Memory n_k x 3 x
+n_atom_pairs complex: 10^4 x 3 x 210 for gly-L-ala, 100 MB; for a large molecule contract in
+blocks of atom pairs. *Check:* `check_two_center_derivs` still 2e-8; refinement GoF unchanged to
+the last figure; time of one call before and after, from a job that only does
+`make_structure_factors` and one fit.
+
+**Step 2. One real exponential and two complex multiplications per primitive pair and k.** In
+`SHELL2:make_ft_c` every branch forms `exp(cmplx(-k^2/4 gamma, k.P))` and multiplies by the
+temperature factor, itself an exponential made earlier in `make_TLS_TFs`. Replace by
+(a) the phase from three tables in the integer indices of k after the symmetry operation,
+$`e^{2\pi i h_j u_{P,j}}`$, any cell; (b) one real exponential of
+$`-|\mathbf{k}|^2/4\gamma - \tfrac12\mathbf{k}^\dagger U^P\mathbf{k}`$, the Gaussian and the temperature
+factor together. Needs the integer indices and the reciprocal matrix passed down beside the k
+points (`VEC{REFLECTION}:make_unique_SF_k_pts` has them), and the prefactor of a primitive pair
+made in one routine that every angular-momentum branch calls. *Check:* F equal to 1e-12 on urea
+(tetragonal) and on a triclinic test cell; time before and after.
+
+**Step 3. Tables for the polynomial part when the cell allows.** Only if step 2 leaves the
+polynomials as a visible cost: for a reciprocal matrix that is diagonal, or block diagonal, in
+the Cartesian frame of the basis functions, tabulate the 1-D polynomials along the separate
+indices. The oblique monomial form (TeX notes, section 2) is not faster for d and f functions and
+is not planned.
+
+**Step 4. The analytic rigid-body average** (TeX notes, section 4), replacing
+`tc_integrate_rigid_body=` by quadrature, its SCFs and its dependence on the number of points.
+Two forms, both checked in `check_formulas.py` on one p-p product with urea-like T, L, S, against
+exact rotations (first-order, that is the present `tc-tls`, is off by 3-17 % there):
+- the full second-order form, a complex 3 x 3 inverse and determinant per primitive pair and k
+  once the translation is integrated out: within 1 %;
+- a cheap form, the arc term kept to first order in the exponent and the weight's mean and
+  covariance at zeroth order, only dot products: within 2 %.
+Start with the cheap form. The kernel needs, for each pair of Cartesian components, the
+polynomial part and its first and second derivatives with respect to k; `make_ft_component`
+gives the 1-D polynomials and the same E coefficients give their derivatives. This goes in the
+general branch of the kernel, not the hand-written low-angular-momentum branches. *Check:* one
+primitive pair against the Python formula; then the urea refinements against the converged
+quadrature, GoF 3.4483 (def2-SVP) and 3.1148 (def2-TZVP), and gly-L-ala 3.6039.
+
+**Step 5. Derivatives of the averaged F with respect to Sigma.** Today the correction is held
+fixed while Sigma shifts, the same kind of approximation that went wrong for the positions
+(`center` against `scf`). With the analytic form the derivative can be exact: differentiate the
+exponent of the cheap form with respect to Sigma. *Check:* `check_two_center_derivs` extended to
+the averaged F; the fit must not end above its starting GoF.
+
+**Step 6. Before any merge.** Debug build; the full suite on the Mac; new tests (a `tc-tls`
+refinement of urea STO-3G; pair weights with and without the petite list; kernel equality from
+step 2); references blessed again on achari2 for the four TLS tests whose printed output has
+grown. Ask before the suite and before blessing.
+
+**Not in this plan:** the stiff-mode average (kept as it is, by quadrature); segmented rigid
+bodies for methyl and NH3 groups; unrestricted wavefunctions; MPI.
+
 ## References
 
+- H. B. Burgi and S. C. Capelli, *Acta Cryst.* A56, 403 (2000), and S. C. Capelli, M. Fortsch and
+  H. B. Burgi, *Acta Cryst.* A56, 413 (2000): "Dynamics of molecules in crystals from
+  multi-temperature anisotropic displacement parameters", I theory and II benzene and urea
+  (`~/Dropbox/manuscripts/Burgi_2000_Acta_Cryst_A56_p403.pdf`, `Capelli_2000_Acta_Cryst_A56_p413.pdf`).
+  Read 2026-10-13 (abstracts, and the passages on the Einstein model and on electron density; not
+  cover to cover) after Dylan asked whether they had seen that TLS follows from a dynamical model.
+  They had, for the ADPs: paper I replaces Einstein's independent atoms by independent
+  *molecules*, each a set of oscillators in the mean field of the crystal ("molecular mean field
+  model", Burgi 1995), with low-frequency motions (librations, translations, soft deformations)
+  that carry the temperature dependence and a temperature-independent part from the stiff
+  internal modes. That is the split used here: Sigma refined, U_high fixed. Paper II, urea at
+  12-123 K: a ~64 cm^-1 high-amplitude mode that combines the out-of-plane NH2 deformation with
+  molecular libration, beyond a rigid-body analysis; and temperature-independent parts that agree
+  with calculation. Their abstract of I names "the effects of non-spherical electron-density
+  distributions on ADPs in X-ray data" as something the analysis detects, and II defers "the use of
+  approximate spherical atomic form factors" to later papers. What is not there, in what was
+  read: they analyse ADPs that came out of a conventional refinement; they do not smear the
+  electron density with the dynamical model, so the turning of bonding density with the libration
+  (report section 7) does not arise. To do: compare their urea frequencies and mode with the
+  refined Sigma here; read Burgi 1995 (Acta Cryst. B51, 571) and Burgi et al. 2002 (benzene).
+- D. Jayatilaka and D. J. Grimwood, *Acta Cryst.* A57, 76 (2001), §4.3: oversampled fragments and
+  the repetition factors (`~/Dropbox/manuscripts/Jayatilaka_2001_Acta_Cryst_A57_p76.pdf`).
+- J. R. Michael and T. Koritsanszky, *J. Math. Chem.* 53, 250 (2015), "Validation of convolution
+  approximation to the thermal-average electron density"
+  (`~/Dropbox/manuscripts/Michael_2015_J_Math_Chem_53_p250-9.pdf`). Found 2026-10-12 after the
+  theory here was written (Dylan: "Michael has derived some of these equations"). Their eq. (10)
+  is our (8): the exact ADP of a product of two primitive GTOs, with the off-diagonal blocks
+  $`U_{AB}`$; implemented in their program Denprop. Their $`U`$ is from the internal normal modes of
+  an isolated molecule (coth amplitudes, their eq. (5)), not refined; they smear the density, not
+  structure factors, and do not refine. Formamide (B3LYP/6-311G**) and S8 (MP2/cc-pVTZ) at 23 K:
+  dropping $`U_{AB}`$ changes the smeared density by at most 0.015 e/A^3 (at N); the smeared density
+  agrees closely at the bond critical points with the mean of 5e5 static densities at sampled
+  geometries -- the average our stiff-mode correction estimates with two points per mode. They
+  say earlier work (Tanaka; Stewart; Coppens; Jayatilaka and Grimwood) approximated the product's
+  ADP "without providing the exact solution". What is new here is taking $`U_{AB}`$ from a TLS plus
+  soft-mode model refined against the data, the derivatives, and the refinement.
 - D. Jayatilaka and D. J. Grimwood, *Acta Cryst.* A57, 76 (2001), §4.2: the two-centre temperature
   factors in Tonto.
 - R. F. Stewart, *J. Chem. Phys.* 51, 4569 (1969); P. Coppens, T. V. Willoughby and L. N. Csonka,
@@ -390,8 +745,10 @@ new integral code is needed: the same routine is called with different weights.
 3. `SHELL2:make_TLS_TFs(TF,k_pts,Ua,Ub,Uab)`: (8) per pair of primitives, laid out as
    `make_Tanaka_TFs`. The partition factor is Tanaka's, which shares each product between its two
    atoms in the ratio of the exponents, as (15) does.
-4. `tc-tls` added to the options, to the three `select case` blocks (each given a `case default`
-   that stops), and to the keyword's documentation; reading it sets `adp_model= tls`.
+4. `tc-tls` added to the options, to the three `select case` blocks, and to the keyword's
+   documentation; reading it sets `adp_model= tls`. The blocks get no `case default`: a blank
+   `partition_model` reaches them today and does nothing, and stopping there could break a job
+   that works.
 
 Checks: (a) with $`U_{AB}`$ set so that $`V_{AB} = 0`$, F equals `tc-tanaka`'s; (b) a one-atom
 "molecule" gives the one-centre F; (c) **the urea comparison**: at a converged `adp_model= tls`
@@ -417,3 +774,237 @@ the report beside the Hirshfeld ones; (c) new test `long/urea_rhf_STO-3G_TC_TLS`
 **Not in the first version:** soft-mode correlations beyond what $`\Sigma`$ already holds need
 nothing extra; unrestricted and complex density matrices; a TLS body inside a cluster; the terms
 of §7.
+
+### Log
+
+**2026-10-12.** Step 1 written on branch `tc-tls` (`b43cb188`), not built. It needs a TLS model
+already refined with a one-centre partition; `make_two_center_ADPs` stops otherwise. The input for
+check (c) is `~/tonto-runs/2026-10-12_tc_tls/step1/stdin`: the urea STO-3G TLS test, then
+`make_structure_factors` with `oc-hirshfeld`, `tc-tanaka` and `tc-tls` in turn. Not yet known:
+whether re-reading `partition_model=` inside `crystal=` keeps the refined TLS model.
+
+**2026-10-12, step 1 built and run.** Debug and release both compile; the debug run (bounds
+checking on) goes through all three models without a stop. Re-reading `partition_model=` inside
+`crystal= { xray_data= { } }` keeps the refined TLS model. Urea, RHF/STO-3G, 817 reflections,
+parameters from the converged `adp_model= tls` Hirshfeld refinement, the scale factor re-fitted
+for each model (release build; `put_structure_factor_stats` after each `make_structure_factors`):
+
+| smearing | GoF | R(F) | Rw(F) | scale |
+|---|---|---|---|---|
+| `oc-hirshfeld` | 7.1801 | 0.0387 | 0.0299 | 0.9812 |
+| `tc-tanaka` | 7.2709 | 0.0389 | 0.0303 | 0.9814 |
+| `tc-tls` | 7.2552 | 0.0388 | 0.0302 | 0.9811 |
+
+The Hirshfeld row reproduces the refinement's own GoF. The positions and $`\Sigma`$ were refined
+for Hirshfeld, so the two-centre rows are at a disadvantage until step 2 refines them. `tc-tls`
+is below `tc-tanaka`, the direction (14) predicts, but by little, and STO-3G is too poor a basis
+to say more. Checks (a) and (b) of step 1 not done. Runs in
+`~/tonto-runs/2026-10-12_tc_tls/step1/{debug,release}`.
+
+**2026-10-12, the same at def2-SVP** (Dylan: STO-3G is too poor). Same input with the basis
+changed, so the Hessian is the one in the STO-3G test input; release build, 11 s.
+
+| smearing | GoF | R(F) | Rw(F) | scale |
+|---|---|---|---|---|
+| `oc-hirshfeld` | 3.4866 | 0.0180 | 0.0145 | 1.0002 |
+| `tc-tanaka` | 3.6561 | 0.0184 | 0.0152 | 1.0007 |
+| `tc-tls` | 3.6461 | 0.0183 | 0.0152 | 1.0002 |
+
+The same order as STO-3G, and the same caution: only the Hirshfeld row is refined. Run in
+`~/tonto-runs/2026-10-12_tc_tls/step1_svp`.
+
+**2026-10-12, step 2 built and run** (branch `tc-tls`). Written: `SHELL2`-level moments
+(`MOLECULE.XTAL:make_FT_pair_moments`, `make_FT_and_TLS_derivs`),
+`CRYSTAL:get_two_center_parameter_shifts`, the fit loop `MOLECULE.HAR:LS_fit_two_center` (the
+crystal's `LS_structure_fit` split into `start_structure_fit`, `apply_parameter_shifts`,
+`finish_fit_cycle`, `finish_structure_fit`, used by both), direct parameter derivatives in
+`solve_normal_equations`, the keyword `check_two_center_derivs`, and `make_FT_deriv_U` deleted.
+Only $`s_0`$, $`s_1`$, $`s_2`$ are needed per shell pair (weights 1, $`w_a`$, $`w_a^2`$), since
+$`w_b = 1 - w_a`$. Debug and release build; the refinement runs and converges.
+
+*The derivative check* (urea, def2-SVP): the $`\Sigma`$ derivatives agree with central differences
+to 1.9e-8 of the largest. The position number is 13 % (9 % at STO-3G): the finite difference
+moves each atom with its basis functions, which changes the size and shape of every product at
+fixed $`D`$; the analytic derivative moves only the centres. So 13 % is the size of the term the
+refinement leaves out.
+
+*That term matters.* Urea, RHF/def2-SVP, 817 reflections, Hessian RHF/def2-SVP from ORCA at the
+Hirshfeld-refined geometry (`scripts/orca_hessian_to_tonto.py`), frequencies scaled by 0.8953:
+
+| what | GoF (17 parameters) | R(F) |
+|---|---|---|
+| `oc-hirshfeld`, refined | 3.4854 | 0.0181 |
+| `tc-tls` at the Hirshfeld parameters | 3.6451 | 0.0183 |
+| `tc-tls`, only the TLS parameters refined from there | 3.6377 | 0.0185 |
+| `tc-tls`, everything refined from the starting CIF | 3.6577 | 0.0186 |
+
+The third row is printed as 3.6197 with 9 parameters; 3.6377 is the same chi^2 counted with 17.
+Refining only $`\Sigma`$ lowers the GoF steadily, as exact derivatives must. Refining the positions
+too ends *higher* than the Hirshfeld geometry gives. With hydrogen positions refined and the heavy
+atoms held, the first shift is in H3 z and the GoF rises at once, so it is mostly the hydrogens.
+The fit ends where $`J^{\mathsf T} W r = 0`$ for the approximate $`J`$, which is not the minimum of
+the GoF. Open: what the position derivative should be (§10, to be decided). With the earlier
+RHF/6-31G(d) Hessian the four numbers are 3.4866, 3.6461, 3.6388, 3.6591: the Hessian hardly
+matters here. Runs in `~/tonto-runs/2026-10-12_tc_tls/{step2,diag_adps_only,svp_orca,orca_hess}`.
+
+**2026-10-12/13, position derivatives three ways, and the stiff-mode average.** Coded on
+`tc-tls`: `tc_position_derivs=` (`center`, `fixed-dm`, `scf`), each displaced SCF started from a
+saved copy of the undisplaced MOs (Dylan; `.M0s` exists but is the XCW reference, so a local copy
+is used); `tc_integrate_stiff_modes=`, the three-point average over each stiff mode (Dylan's
+suggestion, per mode instead of per atom pair; report §6.6). Urea, RHF/def2-SVP, ORCA def2-SVP
+Hessian, 17 parameters, release build:
+
+| refinement | GoF | R(F) | N–H1 /Å | N–H3 /Å |
+|---|---|---|---|---|
+| `oc-hirshfeld` | 3.4854 | 0.0181 | 1.028 | 0.994 |
+| `tc-tls`, `center` | 3.6577 | 0.0186 | 1.024 | 0.977 |
+| `tc-tls`, `fixed-dm` | 3.6681 | 0.0183 | 1.023 | 1.013 |
+| `tc-tls`, `scf` | 3.6292 | 0.0183 | 1.023 | 0.994 |
+| `tc-tls`, `center`, stiff modes averaged | 3.6349 | 0.0186 | 1.024 | 0.980 |
+| `tc-tls`, `scf`, stiff modes averaged | 3.6115 | 0.0183 | 1.023 | 0.995 |
+
+- `scf` is the only derivative that ends below the 3.6377 of "Hirshfeld geometry, TLS refined".
+  `fixed-dm` is the worst: the overlap change without the density matrix following is worse than
+  neither. N–H3 follows the derivative (0.977, 1.013, 0.994 Å); with `scf` it is the Hirshfeld value.
+- The stiff-mode average lowers the GoF by 0.023 (`center`) and 0.018 (`scf`): real but small.
+- The best `tc-tls` is still 0.126 above Hirshfeld.
+- The `scf` and the two averaged runs use SCF convergence 1e-7 (differences need it); the others
+  1e-4. The effect of that alone on the GoF was not measured.
+- A first pair of averaged runs gave GoF 4.29 and 4.10: a bug. The atoms were put back only after
+  the last mode, so $`F^{\cos}`$ of each later mode was made at the previous mode's displaced
+  geometry. Fixed; outputs kept in `C_int_*/bad`.
+- Times (release, one core): `scf` 9 min, averaged with `center` 10 min, averaged with `scf` 19 min,
+  against 1 min for `center`.
+
+Not done: a debug build since the difference code went in; the test suite; def2-TZVP; a test in
+`tests/`. Michael and Koritsanszky (2015) found under References.
+
+### 2026-10-13: the TeX notes rewritten as one work; gly-L-ala def2-TZVP, three points
+
+- `~/Dropbox/tex/conference_talks/2026_gaussian_pair_FT/gaussian_pair_ft.tex` now carries the
+  whole theory of `REPORT_ON_TC_TLS` and `REPORT_ON_PAIR_STABILIZERS` in forward order, 28 pages,
+  every equation numbered and cited by number, with the references. The earlier nine pages are
+  kept as `gaussian_pair_ft_v1.tex`.
+- gly-L-ala def2-TZVP with the three-point rigid-body average: GoF 3.5689, R(F) 0.0347, against
+  3.5750 to first order and 3.5575 for Hirshfeld atoms. Added to the report. Still running: the
+  five-point run at def2-TZVP (`T3_def2-TZVP`) and rigid body plus stiff modes at def2-SVP
+  (`T2_def2-SVP`).
+
+### Studies put off until the methods are settled (Dylan, 2026-10-13)
+
+- **The stiff-mode cutoff.** Lowering `soft_mode_cutoff=` costs no parameters, since the soft
+  modes are left out in these runs (`n_soft_modes= 0`). Compare, on gly-L-ala at def2-SVP: the
+  cutoff at 100 cm^-1, against the cutoff at 200 with the five soft modes refined (5 parameters
+  on top of 81, 2531 reflections). Judge by GoF and the Hamilton test.
+- **The usual HAR with a free ADP on every atom**, for the GoF that the TLS restriction costs.
+  The count is 27 parameters for urea and 181 for gly-L-ala, against 17 and 81 with TLS; the 27
+  and 181 are counted by hand, not read from a run.
+
+### 2026-10-13: the faster kernel, the rigid-body average by formula, and its exact derivatives
+
+Dylan: "go ahead with the speedup plan and the analytical integration". What was done against
+the plan of §11, in `build-tc/`:
+
+**Steps 1 and 2, done differently from the plan.** A new kernel in `SHELL2`
+(`make_TLS_prefactors`, `make_FT_TLS`, `make_FT_TLS_moments`, `make_FT_TLS_c`,
+`make_ft_polynomials`) replaces the three calls of the old `make_ft` per shell pair:
+- one complex exponential per pair of primitives and k, holding the phase, the Gaussian and the
+  temperature factor together;
+- the powers of k made once per shell pair, the E coefficients once per pair of primitives;
+- the density matrix block traced inside the kernel, so `s_0`, `s_1`, `s_2` come out of one pass
+  (a spherical block is first turned into the block for Cartesian components);
+- the Sigma derivatives contracted once per atom pair (`MOLECULE.XTAL:add_TLS_sigma_derivs`),
+  with B^T k made once per atom.
+The whole urea def2-SVP `tc-tls` job (SCFs included) went from 33.2 s to 18.7 s with the same
+output (GoF 3.6578; only the printing of exact zeros differs). A first version that kept the
+matrix of every pair of components and added it three times was *slower* than the hand-written
+branches for s and p it replaced; tracing with the density matrix inside is what pays.
+Not done: the phase tables in the integer indices (plan step 2a). With the average by formula
+the phase gets a term that is not a product over the three indices, so a complex exponential is
+needed anyway. Tried and taken out again: sorting the k points by length so that a pair of
+diffuse primitives stops early (threshold e^-40) saved 1-4 % on urea, whose data reach
+9.6 bohr^-1.
+`make_TLS_TFs`, `scale_TFs_by_shift`, `make_pair_TFs` and `make_FT_pair_moments` are deleted.
+
+**Step 3, not needed.** The polynomials are not the cost.
+
+**Step 4, the average by formula** (`tc_analytic_rigid_body=`; `SHELL2:make_turn_factors`). Coded
+as the cheap form first, as planned: urea def2-SVP GoF 3.3633. The full second-order form
+reduces to 3x3 (TeX notes section 9.6; report equations (40) to (43)): GoF 3.3586 with the
+first-order Sigma derivatives. The cheap form is not kept.
+- **It does not reproduce the numerical target, and the target was wrong.** Plan: GoF 3.4483.
+  `check_two_center_average` (new keyword) compares the two corrections to F at the refined
+  Sigma: same RMS size, 0.0126, RMS difference 0.0028; below 2 bohr^-1, 0.0253 and 0.0013. The
+  numerical average takes the principal coordinates of Sigma one at a time, and that misses
+  second-order cross terms: with the complex weight the mean of each coordinate is not zero, so
+  the product of two different coordinates does not average to zero. Python, one p-p product
+  against the true three-dimensional average (`fast/` log; table in the TeX notes): one at a
+  time is within 1-4 % of the correction up to 2 bohr^-1 and out by up to 41 % at 4-6 bohr^-1;
+  the formula is within 2-4 %. So the numbers quoted earlier for the converged numerical
+  average (3.4483, 3.1148) carry this error.
+
+**Step 5, exact derivatives.** With the formula on, `check_two_center_derivs` (extended to
+change L and <lambda u^T> with Sigma) gave an error of 34 % of the largest Sigma derivative: the
+first-order derivative holds the rotation average fixed. Not small, as I had guessed. Done by
+reverse differentiation of the 3x3 algebra in `make_turn_factors` (prototype in Python checked
+against central differences to 1e-9; TeX notes section 9.7), giving for each term its
+derivative with respect to y (3) and L (6); these are summed per atom pair with weights 1 and
+w_A and contracted in `add_TLS_sigma_derivs` (report equations (44), (45)). Check: 1.9e-8, on
+the first build. The refinement then ends lower: urea def2-SVP 3.3586 -> **3.3337**.
+
+**Results** (GoF; Hirshfeld / first order / numerical 7 points / formula):
+- urea def2-SVP: 3.4855 / 3.6578 / 3.4483 / **3.3337**; C=O 1.2635, C-N 1.3482, N-H 1.030, 0.988 A.
+- urea def2-TZVP: 3.0570 / 3.2369 / 3.1148 / **2.9503**.
+- gly-L-ala def2-SVP: 3.5940 / 3.6131 / 3.6039 (5 points) / **3.6042**.
+- gly-L-ala def2-TZVP: 3.5575 / 3.5750 / 3.5689 (3 points) / **3.5673**.
+So with the formula `tc-tls` fits urea better than Hirshfeld atoms at both basis sets (by 0.15
+and 0.11), and gly-L-ala slightly worse (0.010 at both). Not shown: that this holds for other molecules.
+
+**Time**, urea def2-SVP whole job, one core: 19 s first order; 49 s formula with first-order
+derivatives; 80 s formula with exact derivatives. `make_turn_factors` is then 60 % of the samples
+(macOS `sample`); its reverse pass is written with small arrays, and writing it out in scalars as
+the forward pass is would be the next saving.
+
+**Documents.** `REPORT_ON_TC_TLS.md` was over GitHub's limit on math (396 expressions before
+today's additions). Sections 6 to 8 moved to `REPORT_ON_TC_TLS_AVERAGES.md` with their section
+and equation numbers kept; the two pages now have 298 and 203 expressions and both render.
+
+**Open.** Position derivatives with the formula are still `center` (13 % left out). Debug build
+and suite; tests; re-blessing (plan step 6). The matrix path `make_FT_TLS` (used by the complex
+density and X-ray constrained routines) is not timed and with the formula on is slow.
+
+### 2026-10-13: the position derivative defaults to `scf`
+
+Dylan: "change the default from center derivatives to the highest level". `tc_position_derivs=`
+now defaults to `scf` (`types.foo`); every input in `~/tonto-runs/2026-10-12_tc_tls/` written
+before this names `center`, so the numbers already quoted stand. Checked on urea def2-SVP with
+no keyword (`fast/def_first`, `fast/def_ana`): first order GoF 3.6292, N-H3 0.994 A, the same as
+the earlier `scf` run; with the formula GoF **3.3149** (`center` 3.3337), N-H3 1.001 A, C=O
+1.2637, C-N 1.3483. Time: 8 and 14 minutes, against 19 and 80 seconds for `center`. An input
+that names `center` still gives 3.6578. The task register has a row for this work (version 161)
+and `TASKS_AND_HISTORY.md` an entry and a line in the handover block.
+
+### 2026-10-13: the full suite on the Mac
+
+`build-tc/`, release, at `ff18b3fa`, `ctest -j6`, all 189 tests: 183 pass. The six that fail
+agree in every number to 0.2 % and fail only on lines that do not match, from the table of
+internal modes that `put_internal_ADPs` now prints and the TLS tables: `h2o_rhf_STO-3G_FD_hessian`
+(largest 0.0002 %), `urea_rhf_6-31G(d)_internal_ADPs` (0), `urea_rhf_STO-3G_HAR_TLS` (0.12 %),
+`_HAR_TLS_cluster` (0.15 %), `_HAR_TLS_soft_modes` and `_HAR_TLS_soft_mode_correlations`
+(0.0003 % or less). The 0.12 % and 0.15 % are not explained: the same tests have not been run
+on the Mac from `develop` for comparison. To settle on achari2 before blessing. Dylan put what
+is left on the watch list of the register.
+
+### 2026-10-13: blessed on achari2
+
+Worktree `~/github/tonto-libxc` there, tree `reference` (gfortran-14, netlib BLAS, libxc on), at
+`d01fc1bb`; scripts `tc_tls.sh` (build and suite), `cmp_tc.py` (line-by-line comparison) and
+`bless_tc.sh` in that worktree. The suite: 183 of 189, the same six failing as on the Mac.
+Compared with their references line by line: `h2o_rhf_STO-3G_FD_hessian` and
+`urea_rhf_6-31G(d)_internal_ADPs` have only new lines; `urea_rhf_STO-3G_HAR_TLS` has new lines
+and numbers moved in the fourth figure (L eigenvalues 7.0048, 16.7265, 52.4452 to 7.0046,
+16.7287, 52.4419), the same on the Mac and on achari2. That is not this branch: the Mac build
+`mac-reference/tonto`, which is `develop` at `12f34f65`, before the branch, gives the new values
+exactly. The three soft-mode tests change as expected from the new cutoff. All six blessed
+(`36315ee0`); they then pass on achari2 and on the Mac. The other 183 were not rerun after the
+bless.

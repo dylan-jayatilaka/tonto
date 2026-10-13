@@ -274,7 +274,9 @@ contains
    ! may be used for structure refinement. The "tc-" models are
    ! two-center, basis-function-based partitionings which use all parts
    ! of the fragment density matrix (with 'repetition factors'), and
-   ! may not be used for structure refinement.
+   ! may not be used for structure refinement. "tc-tls" takes the
+   ! motion of each pair of atoms from the TLS model, so it sets the
+   ! ADP model to "tls".
       self :: INOUT
       val  :: STR, IN
 
@@ -310,7 +312,8 @@ contains
                   "ri            ", &
                   "tc-coppens    ", &
                   "tc-stewart    ", &
-                  "tc-tanaka     "  ]
+                  "tc-tanaka     ", &
+                  "tc-tls        "  ]
                   
       .partition_model = val
       .partition_model.to_lower_case
@@ -333,6 +336,9 @@ contains
       case ("sph-exphar "); .partition_model = "oc-sph-exphar"
       case ("ri         "); .partition_model = "oc-ri"
       end
+
+      ! Two-center ADPs come from the TLS model
+      if (.partition_model=="tc-tls") .ADP_model = "tls"
 
       ! One-center partitions go with one-center TF models
       ! NOTE: for crystal23 density matrices it is assuned you are 
@@ -419,12 +425,8 @@ contains
    ! Generic set
    end
 
-   set_n_soft_modes(val) :: PURE
-   ! Set the number of soft modes a TLS model refines.
-      self :: INOUT
-      val  :: INT, IN
-   ENSURE(val>=0,"n_soft_modes= must not be negative")
-      .n_soft_modes = val
+   set_refine_soft_modes(val) :: get_from(OBJECT:set, VAL_TYPE?=>BIN, ARG?=>.refine_soft_modes), pure
+   ! Generic set
    end
 
    set_soft_mode_restraint(val) :: PURE
@@ -2409,11 +2411,15 @@ contains
 ! Normal equations
 ! ================ 
 
-   solve_normal_equations(dFdX) :: leaky
+   solve_normal_equations(dFdX,dFdp,first) :: leaky
    ! Get the ".dX" in some parameter vector by solving the normal
    ! equations, given "dFdX", the derivatives of the *absolute*
    ! *unscaled* *unextinction corrected* structure factors |F_calc|
    ! w.r.t. those parameters. 
+   ! If present, "dFdp" holds derivatives of |F_calc| taken directly
+   ! with respect to the refined parameters numbered from "first" on.
+   ! They are added to those which reach these parameters from "dFdX"
+   ! through the Jacobian.
    !    d |F_calc,i| d
    ! This procedure also sets:
    ! -  ".covariance_mx"
@@ -2425,8 +2431,10 @@ contains
    !                    LSM nearly equal to zero
       self :: INOUT
       dFdX :: MAT{REAL}, INOUT
+      dFdp :: MAT{REAL}, optional, IN
+      first :: INT, optional, IN
 
-      dF :: MAT{REAL}@
+      dF,dFt :: MAT{REAL}@
       sig, del :: VEC{REAL}@
       n_refl,n_p :: INT
 
@@ -2456,7 +2464,16 @@ contains
       end
 
       ! Solve the normal equations
-      .solve_normal_equations(dF,sig,del)
+      if (present(dFdp)) then
+         DIE_IF(NOT .refine_F,"direct parameter derivatives need refine_F")
+         DIE_IF(NOT present(first),"dFdp needs first")
+         dFt.create(n_refl,dFdp.dim2)
+         .d_F_pred_dX(dFt,sig,del,dFdp)
+         .solve_normal_equations(dF,sig,del,dFt,first)
+         dFt.destroy
+      else
+         .solve_normal_equations(dF,sig,del)
+      end
 
       dF.destroy
       sig.destroy
@@ -2582,14 +2599,18 @@ contains
 !
 !   end
 
-   solve_normal_equations(dF,sig,del) :: leaky
+   solve_normal_equations(dF,sig,del,dFt,first) :: leaky
    ! Get the ".dX" in some parameter vector by solving the F-normal
    ! equations, given "dF", the derivatives of the absolute structure
-   ! factors (or the same squared) w.r.t. those parameters.
+   ! factors (or the same squared) w.r.t. those parameters. If present,
+   ! "dFt" holds the same derivatives taken directly with respect to
+   ! the refined parameters numbered from "first" on, and is added.
       self :: INOUT
       dF   :: MAT{REAL}, IN
       sig  :: VEC{REAL}, IN
       del  :: VEC{REAL}, IN
+      dFt  :: MAT{REAL}, optional, IN
+      first :: INT, optional, IN
 
    ENSURE(dF.dim1 ==.reflections.dim, "wrong size, dFdX")
    ENSURE(dF.dim2 ==.dX.dim, "incompatible .dX and dFdX")
@@ -2619,6 +2640,13 @@ contains
          n_p = n_X
          dFp.create(n_refl,n_p)
          dFp = dF
+      end
+
+      ! Derivatives taken directly with respect to the parameters
+      if (present(dFt)) then
+         DIE_IF(NOT present(first),"dFt needs first")
+         DIE_IF(first+dFt.dim2-1>n_p,"dFt: too many parameters")
+         dFp(:,first:first+dFt.dim2-1) = dFp(:,first:first+dFt.dim2-1) + dFt
       end
 
       ! Arrays

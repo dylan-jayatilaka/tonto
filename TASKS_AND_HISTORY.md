@@ -84,6 +84,12 @@ because by then it held far more than deferred items.)*
 `docs/TASK_HAR_STANDARDISATION.md` section 7 (entry *Tune the DFT grid levels* under *Science
 and features*). The atomic density tables, second in that order, are done.
 
+**On branch `tc-tls`, not merged (2026-10-13):** two-centre smearing with the motion model,
+with the rigid-body rotation averaged by formula. Entry *Two-centre smearing with the motion
+model* under *Science and features*. The full suite passes on achari2 and the six tests whose output
+changed are blessed there; what is left is new tests and the merge. This was taken up out of
+the order of work, at Dylan's request.
+
 **Done on 2026-10-12, all merged to `develop`** (archive entries of that date):
 
 - pull request 49, four small tasks: cluster charges under a `tc-*` partition, the debug
@@ -1073,7 +1079,11 @@ three new short tests. Everything is in `docs/TASK_COSX_GRIDS.md`. **Result for 
 stay.** As the final-energy grid SG-1/2/3 give errors up to 0.8 mEh (CFCl3, zinc finger) where `high`
 gives under 0.03 on all nine jobs; the published pruning is what fails. SG-0 for the iterations
 matches `very_low` in error and time. **Dropped by Dylan the same day:** the XC trial of these grids and the questions for John Herbert.
-**Live:** ORCA's COSX grid parameters, asked of Helmich-Paris by email (register watch list). SG-0's
+**No longer waited for (Dylan, 2026-10-13):** ORCA's COSX grid parameters, asked of Helmich-Paris by
+email on 2026-10-06 with no reply; ORCA's licence rules out reading them from the program. In its
+place the register row *Calibrate our own COSX grids*: the recipe from the paper and from the
+recording of his talk that Dylan has, then our own fit against exact exchange, after the reset of
+the DFT grid levels and with its scanning scripts. SG-0's
 table came from Psi4's source: the Chien and Gill paper (J. Comput. Chem. 27, 730 (2006)) is not in
 `~/Dropbox/manuscripts`. Runs: `achari2:~/tonto_runs/sg_grids_2026-10-05/`; worktree
 `achari2:~/github/tonto-sg`. **A job is still running there, to be stopped by hand:**
@@ -4433,7 +4443,60 @@ mE_h (def2-SVP) and 17.9 mE_h (def2-TZVP) for urea. The XCW reaches those at lam
 0.008, GoF^2 4 to 8. Every statistical minimum costs 14 to 30 times urea's lattice energy of
 39 mE_h.
 
+## Two-centre smearing with the motion model, `tc-tls` (Dylan, 2026-10-12)
+
+**Register row:** *Two-centre smearing with the motion model (`tc-tls`): tests, bless, merge*, on
+the watch list.
+Plan and log: `docs/TASK_ON_TC_TLS.md`. Reports: `docs/REPORT_ON_TC_TLS.md`,
+`docs/REPORT_ON_TC_TLS_AVERAGES.md`, `docs/REPORT_ON_PAIR_STABILIZERS.md`. TeX notes:
+`~/Dropbox/tex/conference_talks/2026_gaussian_pair_FT/`. Runs: `~/tonto-runs/2026-10-12_tc_tls/`.
+
+**State, 2026-10-13.** On branch `tc-tls`, pushed, not merged. `partition_model= tc-tls` smears
+each product of two basis functions by the motion of its own centre, from the TLS and mode
+model, with no cut into atoms. `tc_analytic_rigid_body=` averages each product over the
+rigid-body rotation to second order by formula, with exact derivatives with respect to Sigma.
+The position derivative defaults to `scf`. Goodness of fit, Hirshfeld atoms against `tc-tls`
+with the formula and the `center` position derivative: urea 3.4855 and 3.3337 (def2-SVP), 3.0570
+and 2.9503 (def2-TZVP); gly-L-ala 3.5940 and 3.6042, 3.5575 and 3.5673. Release and debug
+builds run the urea jobs clean; the Sigma derivatives agree with central differences to 2e-8.
+
+**The full suite on the Mac, 2026-10-13** (`build-tc/`, release, gfortran-14, libxc on, at
+`ff18b3fa`; log `~/tonto-runs/2026-10-12_tc_tls/suite.log`): 183 of 189 pass. The six that fail
+agree with their references in every number to 0.2 % and fail only on lines that do not match,
+from the new printed tables: `h2o_rhf_STO-3G_FD_hessian`, `urea_rhf_6-31G(d)_internal_ADPs`,
+`urea_rhf_STO-3G_HAR_TLS`, `_HAR_TLS_cluster`, `_HAR_TLS_soft_modes` and
+`_HAR_TLS_soft_mode_correlations`. Largest number differences: 0.12 % in `HAR_TLS` and 0.15 % in
+`HAR_TLS_cluster`; whether those are the Mac against the Linux references, or a change made on
+this branch, is not established.
+
+**After that suite run:** `n_soft_modes=` was replaced by `refine_soft_modes=` (default NO), so
+that `soft_mode_cutoff=` alone says which modes are refined (Dylan; log in
+`docs/TASK_ON_MODE_FITTING.md`). The three tests that refine soft modes now have a cutoff of 600
+in place of 700, and their numbers change a little: a fifth mode that was in neither part of the
+model is now a stiff mode. Only the six TLS tests were rerun after it, not the whole suite.
+
+**Blessed on achari2, 2026-10-13** (`36315ee0`; worktree `~/github/tonto-libxc`, tree `reference`,
+gfortran-14, netlib BLAS, libxc on, at `d01fc1bb`). The whole suite there gave 183 of 189 with the
+same six failing; after the bless all 189 pass there, and the six pass on the Mac. The 0.12 % in
+`urea_rhf_STO-3G_HAR_TLS` was not from this branch: a build of `develop` from before the branch
+(`12f34f65`) gives the new numbers exactly, so the reference had drifted on `develop` within the
+loose bound.
+
+**Next, in this order:** (1) tests: a `tc-tls` refinement of urea STO-3G with and without the
+formula, and the pair weights with and without the petite list, blessed on achari2; (2) merge to
+`develop`.
+
+**Then:** the derivative pass of `SHELL2:make_turn_factors` in scalars; the time of the path
+the X-ray constrained fit uses, with the formula on; separate rigid bodies for methyl and NH3
+groups; more molecules. Put off until the methods are settled (Dylan): the stiff-mode cutoff
+against refined soft modes, and the comparison with a free ADP on every atom.
+
 ## ADPs as rigid-body motion plus soft modes, refined against F (Dylan, 2026-10-03)
+
+**2026-10-13, on branch `tc-tls`:** `soft_mode_cutoff=` alone now says which soft modes are
+refined, with `refine_soft_modes=` (default NO) in place of `n_soft_modes=`; the cutoff takes a
+unit, a bare number being cm^-1. Next on this item: refine the five soft modes of gly-L-ala; T, L
+and S printed at the centre of reaction. Log: `docs/TASK_ON_MODE_FITTING.md`, last entry.
 
 **Register row:** *ADPs as rigid-body motion plus soft modes*. Plan: `docs/TASK_ON_MODE_FITTING.md`
 (theory, the restraint generalisation of the eigenvalue filter, where the code goes, which procedures

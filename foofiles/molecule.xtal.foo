@@ -518,11 +518,14 @@ contains
 
       k_max,k,fa,fb,la,lb,na,nb,q,atom_a,atom_b :: INT
       FT_ab :: MAT3{CPX}@
-      cutoff :: REAL
+      s0,s1,s2 :: VEC{CPX}@
+      cutoff,fac :: REAL
       sh :: SHELL2
+      tc_tls :: BIN
 
       k_max = k_pts.dim1
       cutoff = TOL(10)/.n_shell_pairs
+      tc_tls = .crystal.partition_model=="tc-tls"
 
       res = ZERO
 
@@ -534,6 +537,19 @@ contains
          if (sh.skip_ft(cutoff)) then
 
             ! Too small
+            sh.destroy_ptr_part
+
+         else if (tc_tls) then
+
+            ! The atoms move together: the FT of the pair is traced
+            ! with the density matrix as it is made. Count
+            ! off-diagonals twice.
+            fac = ONE
+            if (fa/=fb) fac = TWO
+            s0.create(k_max); s1.create(k_max); s2.create(k_max)
+            .make_FT_pair_TLS_moments(s0,s1,s2,fac*dens(fa:la,fb:lb),k_pts,sh,atom_a,atom_b)
+            res = res + s0
+            s2.destroy; s1.destroy; s0.destroy
             sh.destroy_ptr_part
 
          else 
@@ -561,7 +577,6 @@ contains
          end
 
       end
-
 
    end
 
@@ -696,244 +711,6 @@ contains
    end
 
 
-   make_FT_deriv_U(res,dens,k_pts) :: PURE
-   ! Fourier transform of a density described by AO density matrix dens
-   ! evaluated at a series of reciprocal space points k_pts
-   ! Size of res is [k_max,n_atom*6]
-      self  :: IN
-      dens  :: MAT{REAL}, IN
-      k_pts :: MAT{REAL}, IN
-      res   :: MAT{CPX}, OUT
-
-   ENSURE(.basis_info_made, "no basis info")
-   ENSURE(.atom.allocated,  "no atom list")
-
-      FT_ab2,tmp1,tmp2,tmpa1,tmpa2,tmpa3,tmpa4,tmpa5,tmpa6 :: CPX
-      k_max,k,fa,fb,la,lb,na,nb,q,atom_a,atom_b,basea,baseb :: INT
-      delta,g,separation,x,y,z,z2 :: REAL
-      diff :: VEC{REAL}(3)
-      FT_ab :: MAT3{CPX}@
-      dens_ba :: MAT{REAL}@
-      cutoff :: REAL
-      sh :: SHELL2
-
-      k_max = size(k_pts,1)
-      cutoff = TOL(10) / .n_shell_pairs
-
-      res = ZERO
-
-      do q = 1,.n_shell_pairs
-
-         .set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
-         
-         if (sh.skip_ft(cutoff)) then
-            sh.destroy_ptr_part
-            cycle
-         end
-         
-         FT_ab.create(k_max,na,nb)
-         .make_FT_pair(FT_ab,k_pts,sh,atom_a,atom_b)
-         
-         dens_ba = dens(fb:lb,fa:la)
-         
-         ! Count off-diagonals twice.
-         if (fa/=fb) FT_ab = TWO * FT_ab 
-         
-
-         ! k_pts is 2pi * Bh so formula was divided by 4pi^2.
-         diff = .atom(atom_a).position - .atom(atom_b).position
-         separation = diff.norm
-         g = HALF
-         if (separation > 2.5d0) g=QUARTER
-         g = g * (-HALF) 
-         
-         basea = (atom_a-1) * 6
-         
-         if (atom_a==atom_b) then
-         
-            delta = TWO * g
-
-            do k = 1,k_max
-
-               FT_ab2 = FT_ab(k,:,:).trace_product_with(dens_ba) * delta
-
-               x = k_pts(k,1) ! SBh_x
-               y = k_pts(k,2) ! SBh_y
-               z = k_pts(k,3) ! SBh_z
-
-               tmp1 = FT_ab2 * x
-               tmp2 = FT_ab2 * y
-               z2   = TWO * z
-
-               res(basea+1,k) = res(basea+1,k) + tmp1 * x
-               res(basea+2,k) = res(basea+2,k) + tmp1 * y * TWO
-               res(basea+3,k) = res(basea+3,k) + tmp1 * z2
-               res(basea+4,k) = res(basea+4,k) + tmp2 * y
-               res(basea+5,k) = res(basea+5,k) + tmp2 * z2
-               res(basea+6,k) = res(basea+6,k) + FT_ab2 * z * z
-
-            end
-         
-         else
-         
-            baseb = (atom_b-1) * 6
-
-            do k = 1,k_max
-
-               FT_ab2 = FT_ab(k,:,:).trace_product_with(dens_ba) * g
-
-               x = k_pts(k,1)           ! SBh_x
-               y = k_pts(k,2)           ! SBh_y
-               z = k_pts(k,3)           ! SBh_z
-
-               tmp1 = FT_ab2 * x
-               tmp2 = FT_ab2 * y
-               z2   = TWO * z
-
-               tmpa1 = tmp1 * x
-               tmpa2 = tmp1 * y * TWO
-               tmpa3 = tmp1 * z2
-               tmpa4 = tmp2 * y
-               tmpa5 = tmp2 * z2
-               tmpa6 = FT_ab2 * z * z
-
-               res(basea+1,k) = res(basea+1,k) + tmpa1
-               res(basea+2,k) = res(basea+2,k) + tmpa2
-               res(basea+3,k) = res(basea+3,k) + tmpa3
-               res(basea+4,k) = res(basea+4,k) + tmpa4
-               res(basea+5,k) = res(basea+5,k) + tmpa5
-               res(basea+6,k) = res(basea+6,k) + tmpa6
-               res(baseb+1,k) = res(baseb+1,k) + tmpa1
-               res(baseb+2,k) = res(baseb+2,k) + tmpa2
-               res(baseb+3,k) = res(baseb+3,k) + tmpa3
-               res(baseb+4,k) = res(baseb+4,k) + tmpa4
-               res(baseb+5,k) = res(baseb+5,k) + tmpa5
-               res(baseb+6,k) = res(baseb+6,k) + tmpa6
-
-            end
-
-         end
-         
-         FT_ab.destroy
-         sh.destroy_ptr_part
-
-      end
-
-   end
-
-   make_FT_deriv_U(res,dens,k_pts) :: PURE
-   ! Fourier transform of a density described by AO density matrix dens
-   ! evaluated at a series of reciprocal space points k_pts
-   ! Size of res is [k_max,n_atom*6]
-      self  :: IN
-      dens  :: MAT{CPX}, IN
-      k_pts :: MAT{REAL}, IN
-      res   :: MAT{CPX}, OUT
-
-   ENSURE(.basis_info_made, "no basis info")
-   ENSURE(.atom.allocated,  "no atom list")
-
-      FT_ab2,tmp1,tmp2 :: CPX
-      k_max,k,fa,fb,la,lb,na,nb,q :: INT
-      atom_a,atom_b,basea,baseb   :: INT
-      delta,g,separation,x,y,z    :: REAL
-      diff    :: VEC{REAL}(3)
-      FT_ab   :: MAT3{CPX}@
-      dens_ba :: MAT{CPX}@
-      cutoff  :: REAL
-      sh :: SHELL2
-
-      k_max = size(k_pts,1)
-      cutoff = TOL(10) / .n_shell_pairs
-
-      res = ZERO
-
-      do q = 1, .n_shell_pairs
-
-         .set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
-         
-         if (sh.skip_ft(cutoff)) then
-            sh.destroy_ptr_part
-            cycle
-         end
-         
-         FT_ab.create(k_max,na,nb)
-         .make_FT_pair(FT_ab,k_pts,sh,atom_a,atom_b)
-         
-         dens_ba = dens(fb:lb,fa:la)
-
-         ! Count off-diagonals twice.
-         if (fa/=fb) FT_ab = TWO*FT_ab 
-         
-         ! k_pts is 2pi * Bh so formula was divided by 4pi^2.
-         diff = .atom(atom_a).position-.atom(atom_b).position
-         separation = diff.norm
-         g = HALF
-         if (separation > 2.5d0) g=QUARTER
-         g = g * (-HALF) 
-         
-         basea = (atom_a-1) * 6
-         if (atom_a==atom_b) then
-         
-            delta = TWO * g
-
-            do k = 1,k_max
-
-               FT_ab2 = FT_ab(k,:,:).trace_product_with(dens_ba) * delta
-
-               x = k_pts(k,1)           ! SBh_x
-               y = k_pts(k,2)           ! SBh_y
-               z = k_pts(k,3)           ! SBh_z
-               tmp1 = FT_ab2 * x
-               tmp2 = FT_ab2 * y
-
-               res(basea+1,k) = res(basea+1,k) + tmp1 * x
-               res(basea+2,k) = res(basea+2,k) + tmp1 * y
-               res(basea+3,k) = res(basea+3,k) + tmp1 * z
-               res(basea+4,k) = res(basea+4,k) + tmp2 * y
-               res(basea+5,k) = res(basea+5,k) + tmp2 * z
-               res(basea+6,k) = res(basea+6,k) + FT_ab2 * z * z
-
-            end
-         
-         else
-         
-            baseb = (atom_b-1) * 6
-            do k = 1,k_max
-
-               FT_ab2 = FT_ab(k,:,:).trace_product_with(dens_ba) * g
-
-               x = k_pts(k,1)           ! SBh_x
-               y = k_pts(k,2)           ! SBh_y
-               z = k_pts(k,3)           ! SBh_z
-
-               tmp1 = FT_ab2 * x
-               tmp2 = FT_ab2 * y
-
-               res(basea+1,k) = res(basea+1,k) + tmp1 * x
-               res(basea+2,k) = res(basea+2,k) + tmp1 * y
-               res(basea+3,k) = res(basea+3,k) + tmp1 * z
-               res(basea+4,k) = res(basea+4,k) + tmp2 * y
-               res(basea+5,k) = res(basea+5,k) + tmp2 * z
-               res(basea+6,k) = res(basea+6,k) + FT_ab2 * z * z
-               res(baseb+1,k) = res(baseb+1,k) + tmp1 * x
-               res(baseb+2,k) = res(baseb+2,k) + tmp1 * y
-               res(baseb+3,k) = res(baseb+3,k) + tmp1 * z
-               res(baseb+4,k) = res(baseb+4,k) + tmp2 * y
-               res(baseb+5,k) = res(baseb+5,k) + tmp2 * z
-               res(baseb+6,k) = res(baseb+6,k) + FT_ab2 * z * z
-
-            end
-         end
-         
-         FT_ab.destroy
-         sh.destroy_ptr_part
-
-      end
-
-   end
-
-
    make_FT_pair(FT_ab,k_pts,sh,atom_a,atom_b) :: PURE
    ! Make the FT for one gaussian shell pair "sh" of gaussians.
    ! Includes *partitioning* and *temperature factors*.
@@ -949,33 +726,374 @@ contains
       is_0  :: BIN
       TF    :: MAT3{REAL}@
       part  :: MAT{REAL}@
-      Ua,Ub :: MAT{REAL}@
-      model :: STR
 
       ! Partition factors
       part.create(sh.a.n_cc,sh.b.n_cc)
       .make_partition_factors(part,sh,atom_a,atom_b,is_0)
 
-      if (NOT is_0) then
+      if (is_0) then
+
+         FT_ab = ZERO
+
+      else if (.crystal.partition_model=="tc-tls") then
+
+         ! The atoms move together
+         .make_FT_pair_TLS(FT_ab,k_pts,sh,part,atom_a,atom_b)
+
+      else
 
          ! Get thermal factors "TF"
          TF.create(k_pts.dim1,sh.a.n_cc,sh.b.n_cc)
-         Ua = .atom(atom_a).ADP_tensor
-         Ub = .atom(atom_b).ADP_tensor
-         model = .crystal.partition_model
-         sh.make_temperature_factors(TF,model,k_pts,Ua,Ub)
+         sh.make_temperature_factors(TF,.crystal.partition_model,k_pts,.atom(atom_a).ADP_tensor,.atom(atom_b).ADP_tensor)
 
          ! Do thermal *and* partition factor
          sh.make_ft(FT_ab,k_pts,TF,part)
          TF.destroy
 
+      end
+
+      part.destroy
+
+   end
+
+   make_FT_pair_TLS(FT_ab,k_pts,sh,part,atom_a,atom_b) :: PURE
+   ! Make "FT_ab", the FT of the shell pair "sh" on "atom_a" and
+   ! "atom_b" at the "k_pts" for partition_model= tc-tls, with the
+   ! partition factors "part" and the two-center temperature factors of
+   ! atoms that move together. With tc_analytic_rigid_body= each product
+   ! of primitives is also averaged over the rigid-body rotation to
+   ! second order.
+      self   :: IN
+      FT_ab  :: MAT3{CPX}, OUT
+      k_pts  :: MAT{REAL}, IN
+      sh     :: SHELL2, IN
+      part   :: MAT{REAL}, IN
+      atom_a :: INT, IN
+      atom_b :: INT, IN
+
+      pre  :: MAT{CPX}@
+      wt   :: VEC{REAL}@
+      Ga,Gb,Lm :: MAT{REAL}(3,3)
+      origin :: VEC{REAL}(3)
+      turned :: BIN
+
+      pre.create(k_pts.dim1,sh.n_gaussian_pairs)
+      wt.create(sh.n_gaussian_pairs)
+      .make_pair_TLS_factors(pre,wt,turned,Ga,Gb,Lm,origin,k_pts,sh,part,atom_a,atom_b)
+      sh.make_FT_TLS(FT_ab,k_pts,pre,turned,Ga,Gb,Lm,origin)
+      wt.destroy
+      pre.destroy
+
+   end
+
+   make_FT_pair_TLS_moments(s0,s1,s2,dens,k_pts,sh,atom_a,atom_b,ry0,ry1,rL) :: PURE
+   ! As make_FT_pair for partition_model= tc-tls, traced with the block
+   ! "dens" of the density matrix for the shell pair "sh": "s0" is the
+   ! trace at each of the "k_pts", and "s1" and "s2" are the same with
+   ! each pair of primitives weighted by wa and wa^2. Here
+   ! wa = ea/(ea+eb), from the primitives' exponents: the product of the
+   ! two is centred at wa*A + (1-wa)*B. "s1" and "s2" are what the
+   ! derivatives with respect to the positions and the two-center ADPs
+   ! need; see make_FT_and_TLS_derivs. If present, "ry0", "ry1" and "rL"
+   ! are what the derivatives of the average over the rigid-body
+   ! rotation need; see SHELL2:make_FT_TLS_c.
+      self   :: IN
+      s0,s1,s2 :: VEC{CPX}, OUT
+      dens   :: MAT{REAL}, IN
+      k_pts  :: MAT{REAL}, IN
+      sh     :: SHELL2, IN
+      atom_a :: INT, IN
+      atom_b :: INT, IN
+      ry0,ry1,rL :: MAT{CPX}, optional, OUT
+
+   ENSURE(.crystal.allocated,"no crystal data")
+
+      pre  :: MAT{CPX}@
+      part :: MAT{REAL}@
+      wt   :: VEC{REAL}@
+      Ga,Gb,Lm :: MAT{REAL}(3,3)
+      origin :: VEC{REAL}(3)
+      is_0,turned :: BIN
+
+      part.create(sh.a.n_cc,sh.b.n_cc)
+      .make_partition_factors(part,sh,atom_a,atom_b,is_0)
+
+      if (is_0) then
+
+         s0 = ZERO
+         s1 = ZERO
+         s2 = ZERO
+         if (present(ry0)) ry0 = ZERO
+         if (present(ry1)) ry1 = ZERO
+         if (present(rL))  rL  = ZERO
+
       else
 
-         FT_ab = ZERO
+         pre.create(k_pts.dim1,sh.n_gaussian_pairs)
+         wt.create(sh.n_gaussian_pairs)
+         .make_pair_TLS_factors(pre,wt,turned,Ga,Gb,Lm,origin,k_pts,sh,part,atom_a,atom_b)
+         sh.make_FT_TLS_moments(s0,s1,s2,dens,k_pts,pre,wt,turned,Ga,Gb,Lm,origin,ry0,ry1,rL)
+         wt.destroy
+         pre.destroy
 
       end
 
       part.destroy
+
+   end
+
+   make_pair_TLS_factors(pre,wt,turned,Ga,Gb,Lm,origin,k_pts,sh,part,atom_a,atom_b) :: PURE
+   ! For the shell pair "sh" on "atom_a" and "atom_b" and
+   ! partition_model= tc-tls, make what SHELL2:make_FT_TLS needs:
+   ! "pre(k,i)", the scalar factors of each pair of primitives "i" at
+   ! the "k_pts", with the partition factors "part" and the two-center
+   ! temperature factors; and "wt(i)" = wa = ea/(ea+eb) from the
+   ! primitives' exponents, their product being centred at
+   ! wa*A + (1-wa)*B. "turned" is whether the rigid-body rotation is
+   ! averaged for this pair of atoms (tc_analytic_rigid_body=, both
+   ! atoms in the TLS body); if so "Ga" and "Gb" are the covariances of
+   ! the rotation vector with the displacements of the two atoms, "Lm"
+   ! its own covariance and "origin" the point the body turns about,
+   ! otherwise zero.
+      self   :: IN
+      pre    :: MAT{CPX}, OUT
+      wt     :: VEC{REAL}, OUT
+      turned :: BIN, OUT
+      Ga,Gb,Lm :: MAT{REAL}(3,3), OUT
+      origin :: VEC{REAL}(3), OUT
+      k_pts  :: MAT{REAL}, IN
+      sh     :: SHELL2, IN
+      part   :: MAT{REAL}, IN
+      atom_a :: INT, IN
+      atom_b :: INT, IN
+
+      Ua,Ub,Uab :: MAT{REAL}(3,3)
+
+      STOP_IF(.crystal.two_center_ADPs.deallocated,"no two-center ADPs")
+
+      ! Is the rigid-body rotation averaged for this pair of atoms?
+      turned = FALSE
+      if (.crystal.xray_data.allocated) turned = .crystal.xray_data.tc_analytic_rigid_body
+      if (.crystal.two_center_turn.deallocated) turned = FALSE
+      if (max(atom_a,atom_b)>.crystal.n_TLS_atoms) turned = FALSE
+      Ga = ZERO
+      Gb = ZERO
+      Lm = ZERO
+      origin = ZERO
+      if (turned) then
+         Ga = .crystal.two_center_turn(:,:,atom_a)
+         Gb = .crystal.two_center_turn(:,:,atom_b)
+         Lm = .crystal.two_center_L
+         origin = .crystal.TLS_origin
+      end
+
+      ! The scalar factors of each pair of primitives
+      Ua  = .crystal.two_center_ADPs(:,:,atom_a,atom_a)
+      Ub  = .crystal.two_center_ADPs(:,:,atom_b,atom_b)
+      Uab = .crystal.two_center_ADPs(:,:,atom_a,atom_b)
+      sh.make_TLS_prefactors(pre,wt,k_pts,part,Ua,Ub,Uab)
+      if (.crystal.two_center_shift.allocated) then
+         sh.scale_prefactors_by_shift(pre,k_pts,.crystal.two_center_shift(:,atom_a),.crystal.two_center_shift(:,atom_b))
+      end
+
+   end
+
+   make_FT_and_TLS_derivs(sf,sf_pos,sf_sig,dens,k_pts) :: leaky
+   ! As make_FT, with the derivatives a tc-tls refinement needs. "sf" is
+   ! the Fourier transform of the density with AO density matrix "dens"
+   ! at the "k_pts", with the temperature and partition factors. Each
+   ! product of two primitives is centred at wa*A + wb*B and is smeared
+   ! by exp(-k.U.k/2), U = wa^2 Ua + wb^2 Ub + wa wb (Uab + Uab^T); see
+   ! SHELL2:make_TLS_prefactors. Then:
+   ! - "sf_pos(k,a)" times i k is the derivative of "sf" with respect to
+   !   the position of atom a. The size and shape of each product, and
+   !   "dens", are held fixed: only its centre moves.
+   ! - "sf_sig(k,i)" is the derivative with respect to element i of the
+   !   TLS covariance Sigma, in the order of .crystal.TLS_sigma_pairs.
+   !   With b = wa B_a^T k + wb B_b^T k, B from
+   !   .crystal.TLS_displacement_mx, k.U.k = b^T Sigma b + a stiff part.
+   !   With tc_analytic_rigid_body= the average over the rotation also
+   !   depends on Sigma, and its derivative is included.
+   ! See docs/TASK_ON_TC_TLS.md section 9.
+      self  :: IN
+      sf    :: VEC{CPX}, OUT
+      sf_pos,sf_sig :: MAT{CPX}, OUT
+      dens  :: MAT{REAL}, IN
+      k_pts :: MAT{REAL}, IN
+
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.allocated,  "no atom list")
+   ENSURE(.crystal.allocated,  "no crystal")
+   ENSURE(sf.dim==k_pts.dim1,  "sf and k_pts, incompatible")
+   ENSURE(sf_pos.dim1==k_pts.dim1,  "sf_pos and k_pts, incompatible")
+   ENSURE(sf_pos.dim2==.atom.dim,  "sf_pos: one column per atom")
+   ENSURE(sf_sig.dim1==k_pts.dim1,  "sf_sig and k_pts, incompatible")
+   ENSURE(sf_sig.dim2==.crystal.n_TLS_sigma,  "sf_sig: one column per element of Sigma")
+
+      sm :: MAT3{CPX}@
+      hk :: MAT3{REAL}@
+      ry0,ry1,rL :: MAT{CPX}@
+      s0,s1,s2 :: VEC{CPX}@
+      pr :: MAT{INT}@
+      sh :: SHELL2
+      cutoff,fac :: REAL
+      k_max,n_v,n_b,n_a,fa,fb,la,lb,na,nb,q,atom_a,atom_b,a,cur :: INT
+
+      k_max  = k_pts.dim1
+      cutoff = TOL(10)/.n_shell_pairs
+      n_v    = 6 + .crystal.n_soft_modes
+      n_b    = .crystal.n_TLS_atoms
+      n_a    = .atom.dim
+      .crystal.TLS_sigma_pairs(pr)
+
+      s0.create(k_max); s1.create(k_max); s2.create(k_max)
+      ry0.create(k_max,3); ry1.create(k_max,3); rL.create(k_max,6)
+
+      ! B_a^T k for each atom; zero outside the TLS body, which does not
+      ! depend on Sigma
+      hk.create(k_max,n_v,n_a)
+      hk = ZERO
+      do a = 1,n_b
+         hk(:,:,a) = matmul(k_pts,.crystal.TLS_displacement_mx(a))
+      end
+
+      ! For the pairs of the current first atom with every second atom:
+      ! the three weighted sums, 1 to 3, and what the derivatives of the
+      ! average over the rotation need, ry0 in 4 to 6, ry1 in 7 to 9 and
+      ! rL in 10 to 15
+      sm.create(k_max,15,n_a)
+      sm  = ZERO
+      cur = 0
+
+      sf = ZERO
+      sf_pos = ZERO
+      sf_sig = ZERO
+
+      do q = 1,.n_shell_pairs
+
+         ! Get shell pairs
+         .set_shell2_from(q,sh,fa,la,na,fb,lb,nb,atom_a,atom_b)
+
+         if (sh.skip_ft(cutoff)) then
+            sh.destroy_ptr_part
+            cycle
+         end
+
+         ! A new first atom: contract what was summed for the last one
+         if (atom_a/=cur) then
+            if (cur>0) .add_TLS_sigma_derivs(sf_sig,sm,hk,pr,cur)
+            sm  = ZERO
+            cur = atom_a
+         end
+
+         ! The FT traced with the density matrix, and the same with
+         ! each pair of primitives weighted by wa and wa^2. Count
+         ! off-diagonals twice.
+         fac = ONE
+         if (fa/=fb) fac = TWO
+         .make_FT_pair_TLS_moments(s0,s1,s2,fac*dens(fa:la,fb:lb),k_pts,sh,atom_a,atom_b,ry0,ry1,rL)
+         sf = sf + s0
+
+         ! Positions: the centre moves by wa with atom_a, wb with atom_b
+         sf_pos(:,atom_a) = sf_pos(:,atom_a) + s1
+         sf_pos(:,atom_b) = sf_pos(:,atom_b) + s0 - s1
+
+         ! Sigma: keep the sums for this pair of atoms
+         sm(:,1,atom_b) = sm(:,1,atom_b) + s0
+         sm(:,2,atom_b) = sm(:,2,atom_b) + s1
+         sm(:,3,atom_b) = sm(:,3,atom_b) + s2
+         sm(:,4:6,atom_b)   = sm(:,4:6,atom_b)   + ry0
+         sm(:,7:9,atom_b)   = sm(:,7:9,atom_b)   + ry1
+         sm(:,10:15,atom_b) = sm(:,10:15,atom_b) + rL
+
+         ! Clean
+         sh.destroy_ptr_part
+
+      end
+      if (cur>0) .add_TLS_sigma_derivs(sf_sig,sm,hk,pr,cur)
+
+      sm.destroy
+      hk.destroy
+      rL.destroy; ry1.destroy; ry0.destroy
+      s2.destroy; s1.destroy; s0.destroy
+      pr.destroy
+
+   end
+
+   add_TLS_sigma_derivs(sf_sig,sm,hk,pr,atom_a) :: PURE
+   ! Add to "sf_sig" the derivatives with respect to the elements of the
+   ! TLS covariance Sigma which come from the pairs of "atom_a" with
+   ! every atom b. "sm(k,n,b)", n = 1,2,3, are the FT of the pair summed
+   ! over its products of primitives with weights 1, wa and wa^2;
+   ! "hk(k,:,b)" is B_b^T k, zero for an atom outside the TLS body; "pr"
+   ! lists the elements of Sigma. With wb = 1 - wa the weights wa^2,
+   ! wb^2 and wa*wb go with the products of B_a^T k and B_b^T k; see
+   ! make_FT_and_TLS_derivs.
+   ! "sm(k,4:15,b)" are for the average over the rigid-body rotation,
+   ! from SHELL2:make_FT_TLS_c: the derivatives with respect to
+   ! y = <lambda u^T> k, summed with weights 1 (4:6) and wa (7:9), and
+   ! with respect to L = <lambda lambda^T> (10:15, in the order xx, yy,
+   ! zz, xy, xz, yz). lambda is coordinates 4 to 6 of Sigma, so that
+   ! y_m = sum_q Sigma(3+m,q) [ wa B_a^T k + wb B_b^T k ]_q and
+   ! L_mn = Sigma(3+m,3+n).
+      self   :: IN
+      sf_sig :: MAT{CPX}, INOUT
+      sm     :: MAT3{CPX}, IN
+      hk     :: MAT3{REAL}, IN
+      pr     :: MAT{INT}, IN
+      atom_a :: INT, IN
+
+      saa,sbb,sab :: VEC{CPX}@
+      fac :: REAL
+      b,i,c1,c2,m,n :: INT
+      index_of :: MAT{INT}(3,3)
+
+      index_of(1,:) = [10,13,14]
+      index_of(2,:) = [13,11,15]
+      index_of(3,:) = [14,15,12]
+
+      saa.create(sm.dim1); sbb.create(sm.dim1); sab.create(sm.dim1)
+
+      do b = 1,sm.dim3
+
+         saa = sm(:,3,b)
+         sbb = sm(:,1,b) - TWO*sm(:,2,b) + sm(:,3,b)
+         sab = sm(:,2,b) - sm(:,3,b)
+
+         do i = 1,pr.dim2
+
+            c1 = pr(1,i)
+            c2 = pr(2,i)
+
+            ! Through the temperature factor
+            fac = -HALF
+            if (c1/=c2) fac = -ONE
+            sf_sig(:,i) = sf_sig(:,i) + fac*(saa*hk(:,c1,atom_a)*hk(:,c2,atom_a) + sbb*hk(:,c1,b)*hk(:,c2,b) &
+                                           + sab*(hk(:,c1,atom_a)*hk(:,c2,b) + hk(:,c1,b)*hk(:,c2,atom_a)))
+
+            ! Through y of the rotation average: row c1 of Sigma, and
+            ! row c2 if it is another
+            if (c1>=4 AND c1<=6) then
+               m = c1 - 3
+               sf_sig(:,i) = sf_sig(:,i) + sm(:,3+m,b)*hk(:,c2,b) + sm(:,6+m,b)*(hk(:,c2,atom_a) - hk(:,c2,b))
+            end
+            if (c2>=4 AND c2<=6 AND c2/=c1) then
+               m = c2 - 3
+               sf_sig(:,i) = sf_sig(:,i) + sm(:,3+m,b)*hk(:,c1,b) + sm(:,6+m,b)*(hk(:,c1,atom_a) - hk(:,c1,b))
+            end
+
+            ! Through L of the rotation average
+            if (c1>=4 AND c1<=6 AND c2>=4 AND c2<=6) then
+               m = c1 - 3
+               n = c2 - 3
+               sf_sig(:,i) = sf_sig(:,i) + sm(:,index_of(m,n),b)
+            end
+
+         end
+
+      end
+
+      sab.destroy; sbb.destroy; saa.destroy
 
    end
 
@@ -1029,6 +1147,18 @@ contains
 
       ra,rb,fa,fb :: REAL
 
+      ! Each pair of atoms of the crystal counted once: the weight of
+      ! this pair of fragment atoms. Manual repetition factors keep the
+      ! older sharing between the two atoms, below.
+      if (.crystal.fragment_pair_weight.allocated AND NOT .crystal.use_manual_repetition_factors) then
+      if (.crystal.xray_data.partition_model(1:3)=="tc-") then
+         fa = .crystal.fragment_pair_weight(atom_a,atom_b)
+         if (present(is_zero)) is_zero = fa<=ZERO
+         part = fa
+         return
+      end
+      end
+
       ! Get the rep. factors
       ! These are n_A and n_B in JG (2001) paper
       ra = .crystal.repetition_factor(atom_a)
@@ -1058,6 +1188,7 @@ contains
       case ("tc-coppens "); part = HALF * (fa + fb)
       case ("tc-stewart "); part = HALF * (fa + fb) ! Use Mulliken
       case ("tc-tanaka  "); sh.make_Tanaka_partition(part,fa,fb)
+      case ("tc-tls     "); sh.make_Tanaka_partition(part,fa,fb)
       end
 
    end

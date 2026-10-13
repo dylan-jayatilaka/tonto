@@ -361,7 +361,7 @@ contains
    DIE_IF(NOT .crystal.allocated, "no crystal")
    DIE_IF(NOT .crystal.xray_data.allocated,"no crystal xray data")
    DIE_IF(NOT .crystal.xray_data.reflections.allocated,"no x-ray reflections")
-   DIE_IF(NOT .crystal.using_one_center_TF_model,"must use one-center temperature factor model")
+   DIE_IF(NOT (.crystal.using_one_center_TF_model OR .crystal.partition_model=="tc-tls"),"must use a one-center model or tc-tls")
 
       results :: BIN
       output  :: BIN
@@ -562,11 +562,21 @@ contains
    !   transformed back into asymmetric unit.
       self :: INOUT
 
-      if (.crystal.xray_data.use_disk_SFs) then; .LS_fit_HAs_disk
-      else;                                      .LS_fit_HAs_memory
+      if      (.crystal.partition_model=="tc-tls") then; .LS_fit_two_center
+      else if (.crystal.xray_data.use_disk_SFs)    then; .LS_fit_HAs_disk
+      else;                                              .LS_fit_HAs_memory
       end
 
       ! Finalise stuff at new geometry ...
+
+      .prepare_SCF_at_new_geometry
+
+   end
+
+   prepare_SCF_at_new_geometry :: leaky
+   ! The atoms have moved: orthonormalise the MOs at the new geometry
+   ! and delete what was stored for the old one, ready for the next SCF.
+      self :: INOUT
 
       ! Orthonormalize MO's at new geometry
       if (.MOs.allocated) then
@@ -588,6 +598,681 @@ contains
 
       ! New geometry, new moments
       .partition_info_made = FALSE
+
+   end
+
+   make_stiff_mode_SF_correction(dsf,k_pts) :: leaky
+   ! Make "dsf", a correction to the tc-tls structure factors at the
+   ! "k_pts" for what that model leaves out along the stiff internal
+   ! modes: the change in size and shape of each product of basis
+   ! functions, and the change of the density matrix. The modes are
+   ! those of make_stiff_modes, with the harmonic <Q^2>; each is
+   ! averaged by make_mode_SF_correction.
+      self :: INOUT
+      dsf :: VEC{CPX}, OUT
+      k_pts :: MAT{REAL}, IN
+
+   DIE_IF(.normal_mode_eigenvectors.deallocated,"tc_integrate_stiff_modes= needs the normal modes of this molecule")
+   DIE_IF(.crystal.n_TLS_atoms/=.atom.dim,"tc_integrate_stiff_modes= is for a molecule, not a cluster")
+
+      V :: MAT{REAL}@
+      a0 :: VEC{REAL}@
+
+      .make_stiff_modes(V,a0)
+      .make_mode_SF_correction(dsf,k_pts,V,a0)
+      a0.destroy
+      V.destroy
+
+   end
+
+   make_rigid_body_SF_correction(dsf,k_pts) :: leaky
+   ! Make "dsf", a correction to the tc-tls structure factors at the
+   ! "k_pts" for what that model leaves out in the rigid-body motion and
+   ! the refined soft modes: when the molecule turns, a product of basis
+   ! functions turns about its own centre as well as moving with it, and
+   ! the centre moves on an arc. The motion is taken along the principal
+   ! coordinates of the refined covariance Sigma, which are uncorrelated;
+   ! each is averaged by make_mode_SF_correction, the molecule being
+   ! turned exactly by the rotation part of the coordinate.
+      self :: INOUT
+      dsf :: VEC{CPX}, OUT
+      k_pts :: MAT{REAL}, IN
+
+   DIE_IF(.crystal.n_TLS_atoms/=.atom.dim,"tc_integrate_rigid_body= is for a molecule, not a cluster")
+
+      V,W :: MAT{REAL}@
+      a0 :: VEC{REAL}@
+
+      .crystal.make_TLS_principal_motions(V,a0,W)
+      .make_mode_SF_correction(dsf,k_pts,V,a0,W,.crystal.TLS_origin)
+      a0.destroy
+      W.destroy
+      V.destroy
+
+   end
+
+   make_gauss_hermite_pairs(n,node,weight) :: leaky
+   ! Make the Gauss-Hermite rule of "n" points, n odd, for the average of
+   ! a function of a Gaussian variable with zero mean and unit mean
+   ! square: the average is w0 f(0) + sum_i weight(i) [f(node(i)) +
+   ! f(-node(i))]. Only the (n-1)/2 positive "node"s and their "weight"s
+   ! are returned. The points are the eigenvalues of the symmetric
+   ! tridiagonal matrix with zero diagonal and sqrt(i) beside it, and
+   ! each weight is the square of the first component of the eigenvector
+   ! (Golub and Welsch).
+      self :: IN
+      n :: INT, IN
+      node,weight :: VEC{REAL}@, OUT
+
+   DIE_IF(n<3 OR mod(n,2)==0,"the number of quadrature points must be odd, and at least 3")
+
+      Jm,evec :: MAT{REAL}@
+      eval :: VEC{REAL}@
+      i,m :: INT
+
+      Jm.create(n,n)
+      evec.create(n,n)
+      eval.create(n)
+      Jm = ZERO
+      do i = 1,n-1
+         Jm(i,i+1) = sqrt(REALIFY(i))
+         Jm(i+1,i) = Jm(i,i+1)
+      end
+      Jm.solve_symmetric_eigenproblem(eval,evec)
+
+      ! The eigenvalues come in increasing order: the last (n-1)/2 are positive
+      m = (n-1)/2
+      node.create(m)
+      weight.create(m)
+      do i = 1,m
+         node(i)   = eval(m+1+i)
+         weight(i) = evec(1,m+1+i)**2
+      end
+
+      eval.destroy
+      evec.destroy
+      Jm.destroy
+
+   end
+
+   make_mode_SF_correction(dsf,k_pts,V,a0,W,origin) :: leaky
+   ! Make "dsf", a correction to the tc-tls structure factors at the
+   ! "k_pts" for what that model leaves out along some uncorrelated
+   ! coordinates of the motion. Coordinate j displaces atom a by
+   ! V(3a-2:3a,j) per unit, to first order, and has mean square a0(j).
+   ! Each is averaged by itself with a Gauss-Hermite rule of
+   ! .crystal.xray_data.tc_quadrature_points points, an odd number. The
+   ! rule has the undisplaced point and pairs of displaced points at +s
+   ! and -s, each pair with its own weight w, from
+   ! make_gauss_hermite_pairs: for three points s = sqrt(3 a0(j)),
+   ! w = 1/6. At each displaced point an SCF is done
+   ! from the undisplaced MOs and the structure factors are made, F(+s)
+   ! and F(-s). The model's own value for the same two points keeps the
+   ! undisplaced products and density matrix and moves their centres by
+   ! +s V and -s V, which multiplies each by cos(k.d); call it F_cos.
+   ! Each pair of points adds
+   !    w [F(+s) + F(-s) - 2 F_cos]
+   ! to "dsf", all three made without this coordinate's own smearing.
+   ! If "W" is present, W(:,j) is the rotation vector per unit of
+   ! coordinate j, about "origin", already counted in "V" to first order
+   ! as W x r: the displaced atoms are then turned exactly by s W, and
+   ! the rest of V is added as it is. The atoms, MOs and density matrix
+   ! are put back. See docs/REPORT_ON_TC_TLS_AVERAGES.md section 6.
+      self :: INOUT
+      dsf :: VEC{CPX}, OUT
+      k_pts :: MAT{REAL}, IN
+      V :: MAT{REAL}, IN
+      a0 :: VEC{REAL}, IN
+      W :: MAT{REAL}, optional, IN
+      origin :: VEC{REAL}(3), optional, IN
+
+   ENSURE(dsf.dim==k_pts.dim1, "dsf and k_pts, incompatible")
+   ENSURE(V.dim1==3*.atom.dim, "V: three rows per atom")
+   ENSURE(a0.dim==V.dim2, "one a0 per coordinate")
+
+      sp,sm,sc :: VEC{CPX}@
+      pos0,D0 :: MAT{REAL}@
+      U0 :: MAT4{REAL}@
+      MOs0 :: OPMATRIX@
+      r,rot,ax,cr,disp :: VEC{REAL}(3)
+      node,weight :: VEC{REAL}@
+      s,sgn,ang :: REAL
+      n_a,j,a,b,i,side,pt :: INT
+
+      n_a = .atom.dim
+
+      ! The displaced points of the rule, in units of the root mean
+      ! square, and the weight of each pair
+      .make_gauss_hermite_pairs(.crystal.xray_data.tc_quadrature_points,node,weight)
+
+      ! Keep the undisplaced atoms, MOs, density matrix and two-center ADPs
+      pos0.create(3,n_a)
+      do a = 1,n_a
+         pos0(:,a) = .atom(a).position
+      end
+      MOs0 = .MOs
+      D0 = .density_mx.r
+      U0 = .crystal.two_center_ADPs
+
+      sp.create(k_pts.dim1)
+      sm.create(k_pts.dim1)
+      sc.create(k_pts.dim1)
+      dsf = ZERO
+
+      do j = 1,V.dim2
+      do pt = 1,node.dim
+
+         if (a0(j)<=ZERO) cycle
+         s = node(pt)*sqrt(a0(j))
+
+         ! The two-center ADPs without this coordinate
+         do a = 1,n_a
+         do b = 1,n_a
+            do i = 1,3
+               .crystal.two_center_ADPs(i,:,a,b) = U0(i,:,a,b) - a0(j)*V(3*a-3+i,j)*V(3*b-2:3*b,j)
+            end
+         end
+         end
+
+         ! The model's value: undisplaced products with their centres moved
+         .crystal.two_center_shift.destroy
+         .crystal.two_center_shift.create(3,n_a)
+         do a = 1,n_a
+            .crystal.two_center_shift(:,a) = s*V(3*a-2:3*a,j)
+         end
+         .make_FT(sc,D0,k_pts)
+         .crystal.two_center_shift.destroy
+
+         ! The displaced points, each with its own SCF
+         do side = 1,2
+            sgn = ONE
+            if (side==2) sgn = -ONE
+            do a = 1,n_a
+               disp = sgn*s*V(3*a-2:3*a,j)
+               if (present(W)) then
+                  ! Turn exactly by the rotation vector "rot", in place of
+                  ! its first-order displacement rot x r
+                  rot = sgn*s*W(:,j)
+                  r = pos0(:,a) - origin
+                  cr = [rot(2)*r(3)-rot(3)*r(2), rot(3)*r(1)-rot(1)*r(3), rot(1)*r(2)-rot(2)*r(1)]
+                  ang = norm2(rot)
+                  if (ang>TOL(12)) then
+                     ax = rot/ang
+                     disp = disp - cr + (cos(ang)-ONE)*r + sin(ang)*cr/ang + (ONE-cos(ang))*dot_product(ax,r)*ax
+                  end
+               end
+               .atom(a).set_position(pos0(:,a) + disp)
+            end
+            .MOs = MOs0
+            .prepare_SCF_at_new_geometry
+            .SCF
+            .make_r_density_mx
+            if (side==1) then; .make_FT(sp,.density_mx.r,k_pts)
+            else;              .make_FT(sm,.density_mx.r,k_pts)
+            end
+         end
+
+         ! Put the atoms back for the next coordinate
+         do a = 1,n_a
+            .atom(a).set_position(pos0(:,a))
+         end
+
+         dsf = dsf + weight(pt)*(sp + sm - TWO*sc)
+
+      end
+      end
+
+      ! Put everything else back
+      .crystal.two_center_ADPs = U0
+      .MOs = MOs0
+      .prepare_SCF_at_new_geometry
+      .SCF
+      .make_r_density_mx
+
+      sc.destroy
+      sm.destroy
+      sp.destroy
+      U0.destroy
+      D0.destroy
+      MOs0.destroy
+      pos0.destroy
+      weight.destroy
+      node.destroy
+
+   end
+
+   make_two_center_position_derivs(sf_d,k_pts,redo_SCF) :: leaky
+   ! Make "sf_d", the derivatives of the structure factors at the "k_pts"
+   ! with respect to the positions of the unique fragment atoms, for
+   ! partition_model= tc-tls, by central differences. Column base+i is
+   ! coordinate i of a unique atom, with base as the pADPs are stored;
+   ! the ADP columns are zero. Each unique atom is moved with its images
+   ! in the fragment, and its basis functions move with it. The
+   ! two-center ADPs are held. If "redo_SCF" an SCF is done at every
+   ! displaced geometry, so the density matrix follows the atoms, and
+   ! once more at the end to restore the wavefunction; otherwise the
+   ! density matrix is held. Every one of those SCFs starts from the
+   ! MOs of the undisplaced geometry.
+      self :: INOUT
+      sf_d :: MAT{CPX}, OUT
+      k_pts :: MAT{REAL}, IN
+      redo_SCF :: BIN, IN
+
+   ENSURE(sf_d.dim1==k_pts.dim1, "sf_d and k_pts, incompatible")
+   ENSURE(sf_d.dim2==.crystal.asymmetric_unit_atom.no_of_pADPs, "sf_d: wrong dim2")
+
+      sp,sm :: VEC{CPX}@
+      pos0 :: MAT{REAL}@
+      MOs0 :: OPMATRIX@
+      M :: MAT{REAL}(3,3)
+      step :: REAL
+      u,fu,f,a,base,i,side :: INT
+      refine_positions,refine_ADPs,refine_Uiso :: BIN
+
+      step = 0.01d0
+
+      sp.create(k_pts.dim1)
+      sm.create(k_pts.dim1)
+      pos0.create(3,.atom.dim)
+      do f = 1,.atom.dim
+         pos0(:,f) = .atom(f).position
+      end
+      if (redo_SCF) MOs0 = .MOs
+
+      sf_d = ZERO
+
+      do u = 1,.crystal.n_unique_frag_atoms
+
+         fu = .crystal.unique_frag_atom(u)
+         .crystal.refinement_flags_for_frag_atom(fu,refine_positions,refine_ADPs,refine_Uiso)
+         if (NOT refine_positions) cycle
+         base = .crystal.fragment_atom.no_of_pADPs_up_to_atom(u,.crystal.unique_frag_atom)
+         a = .crystal.asym_atom_for_frag_atom(fu)
+
+         do i = 1,3
+         do side = 1,2
+
+            ! Move the unique atom along axis i, and its images with it
+            do f = 1,.atom.dim
+               if (.crystal.asym_atom_for_frag_atom(f)/=a) cycle
+               M = .crystal.image_rotation(fu,f)
+               if (side==1) then; .atom(f).set_position(pos0(:,f) + step*M(:,i))
+               else;              .atom(f).set_position(pos0(:,f) - step*M(:,i))
+               end
+            end
+
+            ! The structure factors there
+            if (redo_SCF) then
+               .MOs = MOs0
+               .prepare_SCF_at_new_geometry
+               .SCF
+               .make_r_density_mx
+            end
+            if (side==1) then; .make_FT(sp,.density_mx.r,k_pts)
+            else;              .make_FT(sm,.density_mx.r,k_pts)
+            end
+
+            ! Put the atoms back
+            do f = 1,.atom.dim
+               .atom(f).set_position(pos0(:,f))
+            end
+
+         end
+         sf_d(:,base+i) = (sp - sm)/(TWO*step)
+         end
+
+      end
+
+      ! The wavefunction at the undisplaced geometry
+      if (redo_SCF) then
+         .MOs = MOs0
+         .prepare_SCF_at_new_geometry
+         .SCF
+         .make_r_density_mx
+         MOs0.destroy
+      end
+
+      pos0.destroy
+      sm.destroy
+      sp.destroy
+
+   end
+
+   LS_fit_two_center :: leaky
+   ! LS fit the atom positions and the TLS model to the structure
+   ! factors for partition_model= tc-tls: one rigid fit with the current
+   ! density matrix. There are no atomic form factors to shift here, so
+   ! every cycle makes the structure factors and their derivatives
+   ! again from the shell pairs, with the atoms where the last cycle
+   ! put them.
+      self :: INOUT
+
+   DIE_IF(NOT .crystal.allocated, "no crystal")
+   DIE_IF(NOT .SCF_data.spinorbital_genre=="r ", "tc-tls refinement is for restricted wavefunctions")
+   DIE_IF(.crystal.xray_data.tc_analytic_rigid_body AND .crystal.xray_data.tc_integrate_rigid_body, "use tc_analytic_rigid_body= or tc_integrate_rigid_body=, not both")
+   DIE_IF(.crystal.xray_data.tc_analytic_rigid_body AND .crystal.n_TLS_atoms/=.atom.dim, "tc_analytic_rigid_body= is for a molecule, not a cluster")
+
+      sf_e,dsf,dsf_rb :: VEC{CPX}@
+      sf_pos,sf_sig,sf_dpos :: MAT{CPX}@
+      k_pts,dF :: MAT{REAL}@
+      fitout,fitres :: BIN
+      n_k,f :: INT
+
+      fitout = .crystal.xray_data.show_fit_output
+      fitres = .crystal.xray_data.show_fit_results
+
+      ! The k points and the density matrix
+      n_k = .crystal.n_unique_SF_k_pts
+      k_pts.create(n_k,3)
+      .crystal.make_unique_X_SF_k_pts(k_pts)
+      .make_r_density_mx
+
+      ! Initialise, and put the header
+      .crystal.start_structure_fit(fitout)
+      sf_e.create(n_k)
+      sf_pos.create(n_k,.atom.dim)
+      sf_sig.create(n_k,.crystal.n_TLS_sigma)
+
+      ! The stiff modes averaged numerically, once for this fit
+      if (.crystal.xray_data.tc_integrate_stiff_modes) then
+         .crystal.make_two_center_ADPs
+         dsf.create(n_k)
+         .make_stiff_mode_SF_correction(dsf,k_pts)
+      end
+
+      ! The rigid-body motion averaged numerically, once for this fit
+      if (.crystal.xray_data.tc_integrate_rigid_body) then
+         .crystal.make_two_center_ADPs
+         dsf_rb.create(n_k)
+         .make_rigid_body_SF_correction(dsf_rb,k_pts)
+         if (dsf.allocated) then
+            dsf = dsf + dsf_rb
+         else
+            dsf = dsf_rb
+         end
+         dsf_rb.destroy
+      end
+
+      ! Position derivatives by differences, once for this fit
+      if (.crystal.xray_data.tc_position_derivs/="center") then
+         .crystal.make_two_center_ADPs
+         sf_dpos.create(n_k,.crystal.asymmetric_unit_atom.no_of_pADPs)
+         .make_two_center_position_derivs(sf_dpos,k_pts,.crystal.xray_data.tc_position_derivs=="scf")
+      end
+
+      ! Rigid fit loop
+      do
+
+         ! Structure factors and derivatives, and the shifts from them
+         .crystal.make_two_center_ADPs
+         .make_FT_and_TLS_derivs(sf_e,sf_pos,sf_sig,.density_mx.r,k_pts)
+         if (dsf.allocated) sf_e = sf_e + dsf
+         if (sf_dpos.allocated) then
+            .crystal.get_two_center_parameter_shifts(sf_e,sf_pos,sf_sig,sf_dpos)
+         else
+            .crystal.get_two_center_parameter_shifts(sf_e,sf_pos,sf_sig)
+         end
+
+         ! Apply them; the basis functions move with the atoms
+         dF.create(3,.crystal.n_fragment_atoms)
+         .crystal.apply_parameter_shifts(dF)
+         dF.destroy
+         do f = 1,.atom.dim
+            .atom(f).set_position(.crystal.fragment_atom(f).position)
+         end
+
+         ! Put the iteration results; finished?
+         .crystal.finish_fit_cycle(fitout)
+         if (.crystal.xray_data.fit_finished) exit
+
+      end
+
+      ! Results, and refresh the asymmetric unit
+      .crystal.finish_structure_fit(fitout,fitres)
+      .atom = .crystal.fragment_atom
+      .crystal.asymmetric_unit_source = "tonto-refinement"
+
+      ! Put final CIF
+      .put_CIFs
+
+      dsf.destroy
+      sf_dpos.destroy
+      sf_sig.destroy
+      sf_pos.destroy
+      sf_e.destroy
+      k_pts.destroy
+
+   end
+
+   check_two_center_average :: leaky
+   ! Check the average over the rigid-body motion made by formula
+   ! (tc_analytic_rigid_body=) against the numerical one
+   ! (make_rigid_body_SF_correction, with tc_quadrature_points= points)
+   ! at the current TLS model, for partition_model= tc-tls. Puts the
+   ! largest and the root-mean-square size, over the k points, of the
+   ! numerical correction to the structure factors, of the correction
+   ! by formula, and of the difference of the two; and the last three
+   ! again for the k points shorter than 2 bohr^-1. The numerical
+   ! average takes the principal coordinates of the motion one at a
+   ! time, which is good only at low angle, so that is where the two
+   ! should agree. Needs a TLS model, so use it after a refinement.
+      self :: INOUT
+
+   DIE_IF(NOT .crystal.allocated, "no crystal")
+   DIE_IF(NOT .crystal.partition_model=="tc-tls", "partition_model must be tc-tls")
+   DIE_IF(.crystal.TLS_basis.deallocated, "no TLS model: refine first")
+
+      sf_0,sf_1,dsf :: VEC{CPX}@
+      k_pts :: MAT{REAL}@
+      by_formula :: BIN
+      val,v_n,v_f,v_d :: REAL
+      n_k,n_q,n_low,k :: INT
+
+      n_k = .crystal.n_unique_SF_k_pts
+      k_pts.create(n_k,3)
+      .crystal.make_unique_X_SF_k_pts(k_pts)
+      .make_r_density_mx
+      sf_0.create(n_k)
+      sf_1.create(n_k)
+      dsf.create(n_k)
+      by_formula = .crystal.xray_data.tc_analytic_rigid_body
+
+      ! To first order, and the numerical correction to it
+      .crystal.xray_data.tc_analytic_rigid_body = FALSE
+      .crystal.make_two_center_ADPs
+      .make_FT(sf_0,.density_mx.r,k_pts)
+      .make_rigid_body_SF_correction(dsf,k_pts)
+
+      ! By formula
+      .crystal.xray_data.tc_analytic_rigid_body = TRUE
+      .crystal.make_two_center_ADPs
+      .make_FT(sf_1,.density_mx.r,k_pts)
+      sf_1 = sf_1 - sf_0
+      .crystal.xray_data.tc_analytic_rigid_body = by_formula
+
+      stdout.flush
+      stdout.text("Check of the rigid-body average of the tc-tls structure factors:")
+      stdout.flush
+      n_q = .crystal.xray_data.tc_quadrature_points
+      stdout.show("No. of quadrature points          =",n_q)
+      val = maxval(abs(sf_0))
+      stdout.show("Largest F, first order            =",val)
+      val = maxval(abs(dsf))
+      stdout.show("Largest numerical correction      =",val)
+      val = maxval(abs(sf_1))
+      stdout.show("Largest correction by formula     =",val)
+      val = maxval(abs(sf_1-dsf))
+      stdout.show("Largest difference of the two     =",val)
+      val = sqrt(sum(abs(dsf)**2)/n_k)
+      stdout.show("RMS numerical correction          =",val)
+      val = sqrt(sum(abs(sf_1)**2)/n_k)
+      stdout.show("RMS correction by formula         =",val)
+      val = sqrt(sum(abs(sf_1-dsf)**2)/n_k)
+      stdout.show("RMS difference of the two         =",val)
+
+      ! The same at low angle
+      n_low = 0
+      v_n = ZERO; v_f = ZERO; v_d = ZERO
+      do k = 1,n_k
+         if (sum(k_pts(k,:)**2)>=FOUR) cycle
+         n_low = n_low + 1
+         v_n = v_n + abs(dsf(k))**2
+         v_f = v_f + abs(sf_1(k))**2
+         v_d = v_d + abs(sf_1(k)-dsf(k))**2
+      end
+      stdout.show("No. of k points below 2 bohr^-1   =",n_low)
+      if (n_low>0) then
+         val = sqrt(v_n/n_low)
+         stdout.show("RMS numerical correction, those   =",val)
+         val = sqrt(v_f/n_low)
+         stdout.show("RMS correction by formula, those  =",val)
+         val = sqrt(v_d/n_low)
+         stdout.show("RMS difference of the two, those  =",val)
+      end
+
+      dsf.destroy
+      sf_1.destroy
+      sf_0.destroy
+      k_pts.destroy
+
+   end
+
+   check_two_center_derivs :: leaky
+   ! Check the derivatives from make_FT_and_TLS_derivs against central
+   ! differences of make_FT, for partition_model= tc-tls, and put the
+   ! largest disagreement of each kind as a fraction of the largest
+   ! derivative. For Sigma the two should agree. For the positions they
+   ! should not: the derivative moves only the centre of each product of
+   ! basis functions, and the difference also changes its size and
+   ! shape, which the refinement leaves to the next SCF. So that number
+   ! is the size of what is left out. With tc_analytic_rigid_body= the
+   ! average over the rotation depends on Sigma as well, so the check
+   ! changes what it is made from along with the two-center ADPs.
+   ! Needs a TLS model, so use it after a refinement.
+      self :: INOUT
+
+   DIE_IF(NOT .crystal.allocated, "no crystal")
+   DIE_IF(NOT .crystal.partition_model=="tc-tls", "partition_model must be tc-tls")
+   DIE_IF(.crystal.TLS_basis.deallocated, "no TLS model: refine first")
+
+      sf_e,sp,sm :: VEC{CPX}@
+      sf_pos,sf_sig :: MAT{CPX}@
+      k_pts,Ba,Bb,E :: MAT{REAL}@
+      U0,dU :: MAT4{REAL}@
+      G0,dG :: MAT3{REAL}@
+      L0 :: MAT{REAL}@
+      pr :: MAT{INT}@
+      pos :: VEC{REAL}(3)
+      step,err,big,err_pos,err_sig :: REAL
+      n_k,n_b,n_v,n_f,a,b,i :: INT
+
+      n_k = .crystal.n_unique_SF_k_pts
+      n_b = .crystal.n_TLS_atoms
+      n_v = 6 + .crystal.n_soft_modes
+      n_f = .atom.dim
+
+      k_pts.create(n_k,3)
+      .crystal.make_unique_X_SF_k_pts(k_pts)
+      .make_r_density_mx
+      .crystal.make_two_center_ADPs
+
+      ! The derivatives to be checked
+      sf_e.create(n_k)
+      sf_pos.create(n_k,n_f)
+      sf_sig.create(n_k,.crystal.n_TLS_sigma)
+      .make_FT_and_TLS_derivs(sf_e,sf_pos,sf_sig,.density_mx.r,k_pts)
+      sp.create(n_k)
+      sm.create(n_k)
+
+      ! Positions: move one atom along one axis
+      step = TOL(4)
+      err = ZERO
+      big = ZERO
+      do a = 1,n_f
+      do i = 1,3
+         pos = .atom(a).position
+         pos(i) = pos(i) + step
+         .atom(a).set_position(pos)
+         .make_FT(sp,.density_mx.r,k_pts)
+         pos(i) = pos(i) - TWO*step
+         .atom(a).set_position(pos)
+         .make_FT(sm,.density_mx.r,k_pts)
+         pos(i) = pos(i) + step
+         .atom(a).set_position(pos)
+         sp = (sp - sm)/(TWO*step)
+         sm = IMAGIFY(k_pts(:,i))*sf_pos(:,a)
+         err = max(err,maxval(abs(sp-sm)))
+         big = max(big,maxval(abs(sm)))
+      end
+      end
+      err_pos = err/big
+
+      ! Sigma: change one element, and with it every two-center ADP
+      .crystal.TLS_sigma_pairs(pr)
+      U0 = .crystal.two_center_ADPs
+      G0 = .crystal.two_center_turn
+      L0 = .crystal.two_center_L
+      dG.create(3,3,n_f)
+      dU.create(3,3,n_f,n_f)
+      E.create(n_v,n_v)
+      Ba.create(3,n_v)
+      Bb.create(3,n_v)
+      err_sig = ZERO
+      do i = 1,pr.dim2
+         E = ZERO
+         E(pr(1,i),pr(2,i)) = ONE
+         E(pr(2,i),pr(1,i)) = ONE
+         dU = ZERO
+         dG = ZERO
+         do a = 1,n_b
+            Ba = .crystal.TLS_displacement_mx(a)
+            dG(:,:,a) = matmul(E(4:6,:),transpose(Ba))
+            do b = 1,n_b
+               Bb = .crystal.TLS_displacement_mx(b)
+               dU(:,:,a,b) = matmul(Ba,matmul(E,transpose(Bb)))
+            end
+         end
+         step = TOL(5)/maxval(abs(dU))
+         .crystal.two_center_ADPs = U0 + step*dU
+         .crystal.two_center_turn = G0 + step*dG
+         .crystal.two_center_L    = L0 + step*E(4:6,4:6)
+         .make_FT(sp,.density_mx.r,k_pts)
+         .crystal.two_center_ADPs = U0 - step*dU
+         .crystal.two_center_turn = G0 - step*dG
+         .crystal.two_center_L    = L0 - step*E(4:6,4:6)
+         .make_FT(sm,.density_mx.r,k_pts)
+         sp = (sp - sm)/(TWO*step)
+         err = maxval(abs(sp-sf_sig(:,i)))
+         big = maxval(abs(sf_sig(:,i)))
+         err_sig = max(err_sig,err/big)
+      end
+      .crystal.two_center_ADPs = U0
+      .crystal.two_center_turn = G0
+      .crystal.two_center_L    = L0
+
+      stdout.flush
+      stdout.text("Two-center derivatives against central differences")
+      stdout.flush
+      stdout.set_real_fortran_fmt("e")
+      stdout.show("Largest error, Sigma              =",err_sig)
+      stdout.show("Left out of position derivatives  =",err_pos)
+      stdout.set_real_fortran_fmt("f")
+
+      Bb.destroy
+      Ba.destroy
+      E.destroy
+      dU.destroy
+      dG.destroy
+      L0.destroy
+      G0.destroy
+      U0.destroy
+      pr.destroy
+      sm.destroy
+      sp.destroy
+      sf_sig.destroy
+      sf_pos.destroy
+      sf_e.destroy
+      k_pts.destroy
 
    end
 

@@ -660,3 +660,23 @@ eigenvalue filter. §3.8 and §4 state what the code does.
 - E. B. Wilson, J. C. Decius and P. C. Cross, *Molecular Vibrations* (1955). Normal coordinates,
   Eckart conditions, the l and L matrices.
 - C. K. Johnson, in *Crystallographic Computing* (1970). Curvilinear (libration) corrections.
+
+### 2026-10-13: the cutoff alone says which soft modes are refined (Dylan)
+
+`n_soft_modes=` K is gone (it now stops with a message). `refine_soft_modes= YES` refines every
+mode below `soft_mode_cutoff=` and every imaginary one; the default, NO, leaves them out of the
+model, which is what every TLS and `tc-tls` result quoted so far did. So the case that used to
+drop out silently, a mode below the cutoff and not among the K, cannot arise. Lost: refining one
+of two imaginary modes alone, as K = 1 did for urea. Considered and turned down by Dylan: an
+imaginary mode given a fixed amplitude from a frequency in the input; it is better to start
+from a better Hessian, one without imaginary modes. `soft_mode_cutoff=` reads a unit after the number; a bare number
+is cm^-1. The unit `cm-1` was listed as known but had no conversion factor, so it was read as
+atomic units; `cm^-1` had a factor but was not listed. Both now work (`str.foo`). The three tests
+with `n_soft_modes= 4` had a cutoff of 700, below which urea STO-3G has *five* modes (386i, 147i,
+500, 578 and 668 cm^-1): the fifth was in neither part of the model, the very case that dropped
+out silently. They now have `refine_soft_modes= YES` and a cutoff of 600, so four modes are
+refined as before and the fifth is a stiff mode. Their numbers change a little for that reason
+(GoF 7.0909, 7.0895 and 7.1462 on the Mac, against 7.0909, 7.0902 and 7.1446 in the references),
+so their references are to be blessed again as a real change, not only for new printed tables.
+With no soft modes refined nothing changes: urea def2-SVP `tc-tls` GoF 3.6578, and the other
+three TLS tests give the numbers they gave before.

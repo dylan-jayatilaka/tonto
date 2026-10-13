@@ -474,7 +474,9 @@ contains
       case ("unit_cell=                    "); .read_unit_cell
       case ("unit_cell_tol=                "); .read_unit_cell_tol
       case ("units=                        "); .read_units
+      case ("put_fragment_pair_weights     "); .put_fragment_pair_weights
       case ("use_manual_repetition_factors="); .read_use_manual_rep_factors
+      case ("use_pair_petite_list=         "); .read_use_pair_petite_list
       case ("xray_data=                    "); .read_xray_data
 
       case ("! Cluster keywords            ")
@@ -610,6 +612,17 @@ contains
 !      .pnd_data.update(.unit_cell,.spacegroup)
 !
 !   end
+
+   read_use_pair_petite_list :: leaky, private
+   ! Read whether a two-center structure factor uses one pair of fragment
+   ! atoms from each set of symmetry-equivalent pairs, or all of them.
+   ! The weights are remade if they exist.
+      self :: INOUT
+
+      stdin.read(.use_pair_petite_list)
+      if (.fragment_pair_weight.allocated) .make_fragment_pair_weights
+
+   end
 
    read_use_manual_rep_factors :: leaky, private
    ! Read whether to use manually entered repetition factors.
@@ -1154,6 +1167,7 @@ contains
 
       ! Z factors and zep. factors for SF calculations
       .make_repetition_factors
+      .make_fragment_pair_weights
       .make_asym_atom_sym_factors
       .make_frag_atom_sym_factors
       .Z = .z_factor
@@ -2129,6 +2143,127 @@ contains
          .asym_atom_sym_factor(a) = n_same
 
       end
+
+   end
+
+   make_fragment_pair_weights :: leaky, private, PURE
+   ! Make .fragment_pair_weight(a,b), the weight of the density between
+   ! fragment atoms "a" and "b" in a structure factor made from the
+   ! fragment and summed over every spacegroup symop, so that each pair
+   ! of atoms of the crystal is counted once. A symop takes the pair
+   ! (c,d) to the pair of their images: one operation, with one lattice
+   ! translation, acts on both atoms. The fragment's pairs which are
+   ! images of one another are one set. If "m" pairs of the fragment are
+   ! in the set of (a,b), and "n_image" pairs of (symop, fragment pair)
+   ! land on (a,b), then n_image/m is the order of the stabiliser of the
+   ! pair: the symops which leave both atoms in place, or exchange them.
+   ! - Without .use_pair_petite_list every pair has weight 1/n_image.
+   ! - With it, one pair of each set, the first in the fragment, has
+   !   weight m/n_image, one over the order of its stabiliser, and the
+   !   others have zero: the petite list of Dupuis & King (1977).
+   ! See docs/REPORT_ON_PAIR_STABILIZERS.md.
+      self :: INOUT
+
+   ENSURE(.fragment_geometry.allocated, "no fragment_geometry!")
+
+      n_image,first,n_member :: MAT{INT}@
+      p :: MAT{REAL}@
+      shift,q :: VEC{REAL}(3)
+      tol :: REAL
+      n_f,n,a,b,c,d,key :: INT
+
+      n_f = .n_fragment_atoms
+      tol = .same_atom_tol
+
+      n_image.create(n_f,n_f)
+      first.create(n_f,n_f)
+      n_member.create(n_f,n_f)
+      p.create(3,n_f)
+      n_image = 0
+      first = huge(1)
+
+      ! Count the pairs (symop, fragment pair) which land on each pair,
+      ! and find the first fragment pair of its set
+      do n = 1,.spacegroup.n_seitz
+
+         ! The image of every fragment atom
+         do c = 1,n_f
+            p(:,c) = .fragment_geometry(:,c)
+            .transform_position(p(:,c),n)
+         end
+
+         do c = 1,n_f
+         do a = 1,n_f
+
+            ! Does this symop, with a lattice translation, take c to a?
+            shift = .fragment_geometry(:,a) - p(:,c)
+            if (any(abs(shift-nint(shift))>tol)) cycle
+            shift = nint(shift)
+
+            ! Then where does it take every d?
+            do d = 1,n_f
+               q = p(:,d) + shift
+               do b = 1,n_f
+                  if (any(abs(q-.fragment_geometry(:,b))>tol)) cycle
+                  n_image(a,b) = n_image(a,b) + 1
+                  key = max(c,d)*(n_f+1) + min(c,d)
+                  first(a,b) = min(first(a,b),key)
+                  exit
+               end
+            end
+
+         end
+         end
+
+      end
+
+      ! The number of fragment pairs in each set, kept at its first pair
+      n_member = 0
+      do a = 1,n_f
+      do b = 1,a
+         c = first(a,b)/(n_f+1)
+         d = first(a,b) - c*(n_f+1)
+         n_member(c,d) = n_member(c,d) + 1
+      end
+      end
+
+      ! The weights
+      .fragment_pair_weight.destroy
+      .fragment_pair_weight.create(n_f,n_f)
+      .fragment_pair_weight = ZERO
+      do a = 1,n_f
+      do b = 1,n_f
+         if (NOT .use_pair_petite_list) then
+            .fragment_pair_weight(a,b) = ONE/n_image(a,b)
+         else if (first(a,b)==max(a,b)*(n_f+1)+min(a,b)) then
+            .fragment_pair_weight(a,b) = REALIFY(n_member(max(a,b),min(a,b)))/n_image(a,b)
+         end
+      end
+      end
+
+      p.destroy
+      n_member.destroy
+      first.destroy
+      n_image.destroy
+
+   end
+
+   put_fragment_pair_weights
+   ! Put the weight of each pair of fragment atoms in a two-center
+   ! structure factor, and their sum, which is the number of pairs of
+   ! atoms counted per spacegroup symop.
+      self :: IN
+
+   ENSURE(.fragment_pair_weight.allocated, "no fragment pair weights")
+
+      stdout.flush
+      stdout.text("Fragment atom-pair weights")
+      stdout.flush
+      stdout.show("Use the petite list of pairs?  =",.use_pair_petite_list)
+      stdout.show("No. of pairs with a weight     =",count(.fragment_pair_weight>ZERO))
+      stdout.show("Sum of the weights             =",sum(.fragment_pair_weight))
+      stdout.flush
+      stdout.put(.fragment_pair_weight)
 
    end
 
@@ -4612,6 +4747,41 @@ contains
 
       dF :: MAT{REAL}@
 
+      ! Initialise, and put the header
+      .start_structure_fit(output)
+
+      ! Rigid-atom fit loop
+      do
+
+         ! Get unique *fragment* atom shifts in .xray_data.dX ...
+         .get_parameter_shifts(ff) ! .data
+
+         ! Apply them to the asymmetric unit and fragment atoms
+         dF.create(3,.n_fragment_atoms)
+         .apply_parameter_shifts(dF)
+
+         ! Update "ff", the unique (rigid) frag atom FF's.
+         ! Use the frag atom position shifts "dF".
+         .shift_update_ff(ff,dF)
+         dF.destroy
+
+         ! Put the iteration results; finished?
+         .finish_fit_cycle(output)
+         if (.xray_data.fit_finished) exit
+
+      end 
+
+      ! Results, and refresh the asymmetric unit
+      .finish_structure_fit(output,results)
+
+   end
+
+   start_structure_fit(output) :: leaky
+   ! Start a rigid-atom fit: create and initialise the fit data, keep a
+   ! copy of the starting parameters, and put the header if "output".
+      self   :: INOUT
+      output :: BIN, IN
+
       ! Create refinement arrays & initialize (leaky)
       ! - asymmetric atom and fragment atom pADPs are set.
       .initialize_fit_data
@@ -4630,54 +4800,62 @@ contains
          .put_fit_header_info
       end
 
-      ! Rigid-atom fit loop
-      do
+   end
 
-         ! Get unique *fragment* atom shifts in .xray_data.dX ...
-         .get_parameter_shifts(ff) ! .data
+   apply_parameter_shifts(dF) :: leaky
+   ! Apply the unique fragment atom shifts in .xray_data.dX to the
+   ! asymmetric unit atoms and then to every fragment atom. "dF" is
+   ! the shift in each fragment atom's position.
+      self :: INOUT
+      dF :: MAT{REAL}, OUT
 
-         ! Change/store unique frag atom -> asym atom shifts
-         ! Change/store the covariance matrix too.
-         .set_asym_from_ufrag_shifts ! .xray_data.dX now for asym atoms
-         .set_asym_from_ufrag_cov_mx
+      ! Change/store unique frag atom -> asym atom shifts
+      ! Change/store the covariance matrix too.
+      .set_asym_from_ufrag_shifts ! .xray_data.dX now for asym atoms
+      .set_asym_from_ufrag_cov_mx
 
-         ! Stop symmetry breaking
-         ! NOTE: we should apply this to the gradient *not*
-         ! the shift to make sure the shift maintains symmetry
-         .stabilize_asym_atom_shifts
+      ! Stop symmetry breaking
+      ! NOTE: we should apply this to the gradient *not*
+      ! the shift to make sure the shift maintains symmetry
+      .stabilize_asym_atom_shifts
 
-         ! Store old asym-atom parameter vector.
-         ! Add shift dA to get new .xray_data.X_fit
-         .xray_data.SET:update_fit_parameters
-         .asymmetric_unit_atom.set_pADP_vector_to(.xray_data.X_fit)
+      ! Store old asym-atom parameter vector.
+      ! Add shift dA to get new .xray_data.X_fit
+      .xray_data.SET:update_fit_parameters
+      .asymmetric_unit_atom.set_pADP_vector_to(.xray_data.X_fit)
 
-         ! Set the fit errors e.g. max(dX/esd)
-         ! Copy them to the asymmetric unit atoms.
-         .update_fit_esds
-         .asymmetric_unit_atom.set_pADP_errors_to(.xray_data.covariance_mx,.xray_data.refine_H_U_iso)
+      ! Set the fit errors e.g. max(dX/esd)
+      ! Copy them to the asymmetric unit atoms.
+      .update_fit_esds
+      .asymmetric_unit_atom.set_pADP_errors_to(.xray_data.covariance_mx,.xray_data.refine_H_U_iso)
 
-         ! Set ALL fragment_atom positions/ADPs from asym atoms HERE
-         ! >>> fragment_atom must be the same as molecule.atom 
-         ! >>> Except for the pHAR (Sorry Dylan. Kang). 
-         !     In pHAR, molecule.atom are from Crystal23 xml, and fixed
-         dF.create(3,.n_fragment_atoms)
-         .set_frag_from_asym_pADPs(dF)
+      ! Set ALL fragment_atom positions/ADPs from asym atoms HERE
+      ! >>> fragment_atom must be the same as molecule.atom 
+      ! >>> Except for the pHAR (Sorry Dylan. Kang). 
+      !     In pHAR, molecule.atom are from Crystal23 xml, and fixed
+      .set_frag_from_asym_pADPs(dF)
 
-         ! Update "ff", the unique (rigid) frag atom FF's.
-         ! Use the frag atom position shifts "dF".
-         .shift_update_ff(ff,dF)
-         dF.destroy
+   end
 
-         ! Put the iteration results
-         if (output) then
-            .xray_data.PUT:put_fit_table_body
-         end
+   finish_fit_cycle(output) :: leaky
+   ! End one cycle of a rigid-atom fit: put its line of the table if
+   ! "output", and set .xray_data.fit_finished.
+      self   :: INOUT
+      output :: BIN, IN
 
-         ! Finished?
-         .xray_data.SET:update_fit_info
-         if (.xray_data.fit_finished) exit
+      if (output) then
+         .xray_data.PUT:put_fit_table_body
+      end
+      .xray_data.SET:update_fit_info
 
-      end 
+   end
+
+   finish_structure_fit(output,results) :: leaky
+   ! Finish a rigid-atom fit: set the fragment esds, put the results,
+   ! and remake the asymmetric unit from the fragment atoms.
+      self    :: INOUT
+      output  :: BIN, IN
+      results :: BIN, IN
 
       ! Table footer
       if (output) then
@@ -4798,6 +4976,20 @@ contains
 
    end
 
+   set_fragment_U_high_pair(U_high) :: leaky, PURE
+   ! Set .fragment_U_high_pair, the stiff-mode <u_a u_b^T> of each pair of
+   ! atoms of the TLS body (3,3,n,n), bohr^2.
+      self :: INOUT
+      U_high :: MAT4{REAL}, IN
+   ENSURE(.fragment_atom.allocated,"no fragment atoms")
+   ENSURE(U_high.dim3==.n_TLS_atoms,"one U_high per pair of TLS body atoms")
+   ENSURE(U_high.dim4==.n_TLS_atoms,"one U_high per pair of TLS body atoms")
+
+      .fragment_U_high_pair.destroy
+      .fragment_U_high_pair = U_high
+
+   end
+
    set_soft_modes(V,a0,freq,temperature) :: leaky, PURE
    ! Set the soft modes whose amplitudes a TLS model refines: "V" the
    ! displacement of each TLS body atom per unit normal coordinate,
@@ -4906,36 +5098,49 @@ contains
 
    end
 
+   TLS_displacement_mx(g) result (res) :: PURE
+   ! "B_g" for TLS body atom "g": its displacement per unit of each
+   ! coordinate of v = (t, lambda, Q_1 ... Q_K), so that u_g = B_g v.
+   ! B_g = [1 | A_g | d_g1 ... d_gK]: A_g lambda = lambda x r_g, r_g from
+   ! .TLS_origin, and d_gj atom g's displacement per unit normal
+   ! coordinate of soft mode j.
+      self :: IN
+      g :: INT, IN
+      res :: MAT{REAL}(3,6+.n_soft_modes)
+
+      d :: VEC{REAL}(3)
+      i,k :: INT
+
+      res = ZERO
+      d = .fragment_atom(g).position - .TLS_origin
+      do i = 1,3
+         res(i,i) = ONE
+      end
+      res(1,5) =  d(3); res(1,6) = -d(2)
+      res(2,4) = -d(3); res(2,6) =  d(1)
+      res(3,4) =  d(2); res(3,5) = -d(1)
+      do k = 1,.n_soft_modes
+         res(:,6+k) = .soft_mode_vectors(3*g-2:3*g,k)
+      end
+
+   end
+
    TLS_response(g) result (res) :: PURE
    ! d U_g / d sigma for TLS body atom "g": the change in
    ! (U_xx,U_yy,U_zz,U_xy,U_xz,U_yz) per unit of each element sigma_pq of
    ! Sigma = <v v^T>, in the order of TLS_sigma_pairs. U_g = B_g Sigma B_g^T
-   ! with B_g = [1 | A_g | d_g1 ... d_gK]: A_g lambda = lambda x r_g, r_g
-   ! from .TLS_origin, and d_gj atom g's displacement per unit normal
-   ! coordinate of soft mode j.
+   ! with B_g from TLS_displacement_mx.
       self :: IN
       g :: INT, IN
       res :: MAT{REAL}(6,.n_TLS_sigma)
 
-      d :: VEC{REAL}(3)
       Bm :: MAT{REAL}@
       M :: MAT{REAL}(3,3)
       pr :: MAT{INT}@
-      p,q,k,i,j,n_v :: INT
+      p,q,k,i,j :: INT
 
-      n_v = 6 + .n_soft_modes
-      Bm.create(3,n_v)
-      Bm = ZERO
-      d = .fragment_atom(g).position - .TLS_origin
-      do i = 1,3
-         Bm(i,i) = ONE
-      end
-      Bm(1,5) =  d(3); Bm(1,6) = -d(2)
-      Bm(2,4) = -d(3); Bm(2,6) =  d(1)
-      Bm(3,4) =  d(2); Bm(3,5) = -d(1)
-      do k = 1,.n_soft_modes
-         Bm(:,6+k) = .soft_mode_vectors(3*g-2:3*g,k)
-      end
+      Bm.create(3,6+.n_soft_modes)
+      Bm = .TLS_displacement_mx(g)
 
       .TLS_sigma_pairs(pr)
       do k = 1,.n_TLS_sigma
@@ -4952,6 +5157,308 @@ contains
 
       pr.destroy
       Bm.destroy
+
+   end
+
+   make_TLS_sigma_vector(sv) :: leaky
+   ! Make "sv", the elements of the TLS model's covariance Sigma in the
+   ! order of TLS_sigma_pairs. They are fitted to the unique fragment
+   ! atoms' ADPs minus U_high, which lie on the model.
+      self :: IN
+      sv :: VEC{REAL}@, OUT
+   ENSURE(.TLS_basis.allocated,"no TLS model")
+   ENSURE(.TLS_unique_response.allocated,"no TLS model")
+
+      Mt,MtM :: MAT{REAL}@
+      y,p,rhs :: VEC{REAL}@
+      Um :: MAT{REAL}(3,3)
+      n_u,k,u,f :: INT
+
+      n_u = .n_unique_frag_atoms
+      k   = .TLS_basis.dim2
+
+      ! The TLS part of each unique atom's ADP
+      y.create(6*n_u)
+      do u = 1,n_u
+         f = .unique_frag_atom(u)
+         Um = .fragment_atom(f).ADP_tensor
+         if (.fragment_U_high.allocated) Um = Um - .fragment_U_high(:,:,f)
+         y(6*u-5:6*u) = [Um(1,1),Um(2,2),Um(3,3),Um(1,2),Um(1,3),Um(2,3)]
+      end
+
+      ! The TLS parameters that fit it, and Sigma from them
+      Mt = .TLS_unique_response
+      MtM.create(k,k)
+      MtM.to_product_of(Mt,Mt,transpose_a=TRUE)
+      rhs.create(k)
+      rhs.to_product_of(Mt,y,transpose_a=TRUE)
+      p.create(k)
+      MtM.solve_linear_equation(rhs,p)
+      sv.create(.n_TLS_sigma)
+      sv.to_product_of(.TLS_basis,p)
+
+      p.destroy; rhs.destroy; MtM.destroy; Mt.destroy; y.destroy
+
+   end
+
+   make_TLS_principal_motions(V,a0,W,evecs) :: leaky
+   ! Make the principal coordinates of the TLS model's covariance Sigma,
+   ! which are uncorrelated: "a0" their mean squares, the eigenvalues of
+   ! Sigma; "V" the displacement of each TLS body atom per unit of each,
+   ! to first order, (3 x n_TLS_atoms, n); and "W" the rotation vector
+   ! per unit of each, about .TLS_origin, (3,n). Sigma is over
+   ! v = (t, lambda, Q_1 ... Q_K), and V = B e for eigenvector e, with B
+   ! from TLS_displacement_mx. If present, "evecs" are the eigenvectors.
+      self :: IN
+      V,W :: MAT{REAL}@, OUT
+      a0 :: VEC{REAL}@, OUT
+      evecs :: MAT{REAL}@, optional, OUT
+
+   ENSURE(.TLS_basis.allocated,"no TLS model")
+
+      Smat,evec :: MAT{REAL}@
+      sv :: VEC{REAL}@
+      pr :: MAT{INT}@
+      n_b,n_v,a,i,j :: INT
+
+      n_b = .n_TLS_atoms
+      n_v = 6 + .n_soft_modes
+
+      ! Sigma as a matrix
+      .make_TLS_sigma_vector(sv)
+      .TLS_sigma_pairs(pr)
+      Smat.create(n_v,n_v)
+      Smat = ZERO
+      do i = 1,pr.dim2
+         Smat(pr(1,i),pr(2,i)) = sv(i)
+         Smat(pr(2,i),pr(1,i)) = sv(i)
+      end
+
+      ! Its principal coordinates
+      a0.create(n_v)
+      evec.create(n_v,n_v)
+      Smat.solve_symmetric_eigenproblem(a0,evec)
+
+      V.create(3*n_b,n_v)
+      W.create(3,n_v)
+      do j = 1,n_v
+         do a = 1,n_b
+            V(3*a-2:3*a,j) = matmul(.TLS_displacement_mx(a),evec(:,j))
+         end
+         W(:,j) = evec(4:6,j)
+      end
+      if (present(evecs)) evecs = evec
+
+      evec.destroy
+      Smat.destroy
+      pr.destroy
+      sv.destroy
+
+   end
+
+   make_two_center_ADPs :: leaky
+   ! Make .two_center_ADPs, the covariance <u_a u_b^T> of the displacements
+   ! of each pair of fragment atoms "a" and "b", from the TLS model:
+   !    U_ab = B_a Sigma B_b^T + U_high_ab
+   ! with B_a from TLS_displacement_mx and U_high_ab the stiff-mode part.
+   ! An atom outside the TLS body keeps its own ADP in block (a,a) and is
+   ! uncorrelated with every other atom. So does every atom before a TLS
+   ! model exists, as for the first structure factors of a refinement,
+   ! which only prune reflections. See docs/REPORT_ON_TC_TLS.md
+   ! section 1.
+      self :: INOUT
+   ENSURE(.fragment_atom.allocated,"no fragment atoms")
+
+      Smat,Ba,Bb,W :: MAT{REAL}@
+      sv :: VEC{REAL}@
+      pr :: MAT{INT}@
+      n_f,n_b,n_v,a,b,i :: INT
+
+      n_f = .fragment_atom.dim
+      n_b = .n_TLS_atoms
+      n_v = 6 + .n_soft_modes
+
+      ! No TLS model yet: uncorrelated atoms
+      if (.TLS_basis.deallocated OR .TLS_unique_response.deallocated) then
+         .two_center_ADPs.destroy
+         .two_center_ADPs.create(3,3,n_f,n_f)
+         .two_center_ADPs = ZERO
+         do a = 1,n_f
+            .two_center_ADPs(:,:,a,a) = .fragment_atom(a).ADP_tensor
+         end
+         .two_center_turn.destroy
+         .two_center_L.destroy
+         return
+      end
+
+      ! Sigma as a matrix
+      .make_TLS_sigma_vector(sv)
+      .TLS_sigma_pairs(pr)
+      Smat.create(n_v,n_v)
+      Smat = ZERO
+      do i = 1,pr.dim2
+         Smat(pr(1,i),pr(2,i)) = sv(i)
+         Smat(pr(2,i),pr(1,i)) = sv(i)
+      end
+
+      .two_center_ADPs.destroy
+      .two_center_ADPs.create(3,3,n_f,n_f)
+      .two_center_ADPs = ZERO
+
+      ! Pairs within the TLS body
+      Ba.create(3,n_v)
+      Bb.create(3,n_v)
+      W.create(3,n_v)
+      do a = 1,n_b
+         Ba = .TLS_displacement_mx(a)
+         W.to_product_of(Ba,Smat)
+         do b = 1,n_b
+            Bb = .TLS_displacement_mx(b)
+            .two_center_ADPs(:,:,a,b) = matmul(W,transpose(Bb))
+         end
+      end
+      if (.fragment_U_high_pair.allocated) then
+         .two_center_ADPs(:,:,1:n_b,1:n_b) = .two_center_ADPs(:,:,1:n_b,1:n_b) + .fragment_U_high_pair
+      end
+
+      ! Atoms outside it
+      do a = n_b+1,n_f
+         .two_center_ADPs(:,:,a,a) = .fragment_atom(a).ADP_tensor
+      end
+
+      ! The rotation vector: its covariance with each atom, and its own
+      .two_center_turn.destroy
+      .two_center_turn.create(3,3,n_f)
+      .two_center_turn = ZERO
+      do a = 1,n_b
+         Ba = .TLS_displacement_mx(a)
+         .two_center_turn(:,:,a) = matmul(Smat(4:6,:),transpose(Ba))
+      end
+      .two_center_L.destroy
+      .two_center_L.create(3,3)
+      .two_center_L = Smat(4:6,4:6)
+
+      W.destroy
+      Bb.destroy
+      Ba.destroy
+      Smat.destroy
+      pr.destroy
+      sv.destroy
+
+   end
+
+   image_rotation(f,g) result (res) :: PURE
+   ! The rotation which takes a displacement of fragment atom "f" to the
+   ! displacement of fragment atom "g", an image of the same asymmetric
+   ! unit atom, when both follow that atom.
+      self :: IN
+      f,g :: INT, IN
+      res :: MAT{REAL}(3,3)
+
+   ENSURE(.asym_atom_for_frag_atom(f)==.asym_atom_for_frag_atom(g),"not images of one atom")
+
+      Sf,Sg :: MAT{REAL}(3,3)
+
+      Sf = matmul(.unit_cell.direct_mx,matmul(.spacegroup.seitz(1:3,1:3,.asym_symop_for_frag_atom(f)),.unit_cell.inverse_mx))
+      Sg = matmul(.unit_cell.direct_mx,matmul(.spacegroup.seitz(1:3,1:3,.asym_symop_for_frag_atom(g)),.unit_cell.inverse_mx))
+      res = matmul(Sg,transpose(Sf))
+
+   end
+
+   get_two_center_parameter_shifts(sf_e,sf_pos,sf_sig,sf_dpos) :: leaky
+   ! Get the shifts ".xray_data.dX" for partition_model= tc-tls by solving
+   ! the normal equations. "sf_e" are the structure factors at the unique
+   ! k points. "sf_pos(k,f)" times i k is their derivative with respect
+   ! to the position of fragment atom "f". "sf_sig(k,i)" is their
+   ! derivative with respect to element i of the TLS covariance Sigma, in
+   ! the order of TLS_sigma_pairs. All three come from
+   ! MOLECULE.XTAL:make_FT_and_TLS_derivs. The ADPs enter only through
+   ! Sigma, so the ADP columns of the pADP derivatives hold nothing but
+   ! the dispersion correction. If "sf_dpos" is present its columns are
+   ! the position derivatives, one per pADP, and "sf_pos" is not used.
+      self :: INOUT
+      sf_e :: VEC{CPX}, IN
+      sf_pos,sf_sig :: MAT{CPX}, IN
+      sf_dpos :: MAT{CPX}, optional, IN
+
+   ENSURE(.xray_data.allocated, "no data")
+   ENSURE(.fragment_info_made, "no fragment info")
+   ENSURE(.TLS_basis.allocated, "no TLS model")
+   ENSURE(sf_e.dim==.n_unique_SF_k_pts, "sf_e: wrong dim")
+   ENSURE(sf_pos.dim2==.n_fragment_atoms, "sf_pos: wrong dim2")
+   ENSURE(sf_sig.dim2==.n_TLS_sigma, "sf_sig: wrong dim2")
+
+      sf_d,sf_t,dFc,dFt :: MAT{CPX}@
+      dFa,dFb,k_pts :: MAT{REAL}@
+      M :: MAT{REAL}(3,3)
+      kv :: VEC{REAL}(3)
+      n_k,n_X,n_refl,n_t,u,fu,f,a,base,k :: INT
+      refine_positions,refine_ADPs,refine_Uiso :: BIN
+
+      n_k    = .n_unique_SF_k_pts
+      n_X    = .asymmetric_unit_atom.no_of_pADPs
+      n_refl = .xray_data.reflections.dim
+      n_t    = .TLS_basis.dim2
+
+      ! Position derivatives of each unique fragment atom. Every fragment
+      ! atom which is an image of it moves with it, turned by the
+      ! symmetry operation between them.
+      k_pts.create(n_k,3)
+      .make_unique_X_SF_k_pts(k_pts)
+      sf_d.create(n_k,n_X)
+      sf_d = ZERO
+      if (present(sf_dpos)) then
+         sf_d = sf_dpos
+      else
+      do u = 1,.n_unique_frag_atoms
+         fu = .unique_frag_atom(u)
+         .refinement_flags_for_frag_atom(fu,refine_positions,refine_ADPs,refine_Uiso)
+         if (NOT refine_positions) cycle
+         base = .fragment_atom.no_of_pADPs_up_to_atom(u,.unique_frag_atom)
+         a = .asym_atom_for_frag_atom(fu)
+         do f = 1,.n_fragment_atoms
+            if (.asym_atom_for_frag_atom(f)/=a) cycle
+            M = transpose(.image_rotation(fu,f))
+            do k = 1,n_k
+               kv = matmul(M,k_pts(k,:))
+               sf_d(k,base+1:base+3) = sf_d(k,base+1:base+3) + IMAGIFY(kv)*sf_pos(k,f)
+            end
+         end
+      end
+      end
+      k_pts.destroy
+
+      ! Set F_pred with scale & extinction
+      .xray_data.reflections.reset_F_corr_to_F_exp ! We fit to F_corr
+      .make_F_predicted_from(sf_e)
+
+      ! Sum over the symmetry operations; derivatives of |F_calc|
+      dFc.create(n_refl,n_X)
+      .spacegroup.sum_unique_sf_derivs(dFc,sf_d,.xray_data.reflections)
+      sf_d.destroy
+      if (.xray_data.add_dispersion_to_F_calc) then
+         .add_D_dispersion_correction(dFc)
+      end
+      dFa.create(n_refl,n_X)
+      .xray_data.INQ:d_F_abs_dX(dFa,dFc)
+      dFc.destroy
+
+      ! The same for the TLS parameters p, Sigma = .TLS_basis p
+      sf_t.create(n_k,n_t)
+      sf_t = matmul(sf_sig,.TLS_basis)
+      dFt.create(n_refl,n_t)
+      .spacegroup.sum_unique_sf_derivs(dFt,sf_t,.xray_data.reflections)
+      sf_t.destroy
+      dFb.create(n_refl,n_t)
+      .xray_data.INQ:d_F_abs_dX(dFb,dFt)
+      dFt.destroy
+
+      ! Get the unique atom shifts, dX (leaky)
+      .set_TLS_restraints
+      .xray_data.SET:solve_normal_equations(dFa,dFb,.TLS_first_param)
+
+      dFb.destroy
+      dFa.destroy
 
    end
 
@@ -5400,45 +5907,30 @@ contains
    ENSURE(.TLS_basis.allocated,"no TLS model")
    ENSURE(.TLS_unique_response.allocated,"no TLS model")
 
-      Mt,MtM,Cp,CS,Sm,Esd :: MAT{REAL}@
-      y,p,rhs,sv,var :: VEC{REAL}@
+      Cp,CS,Sm,Esd,Csig :: MAT{REAL}@
+      sv,var :: VEC{REAL}@
       Um :: MAT{REAL}(3,3)
       L_evals :: VEC{REAL}(3)
       L_evecs :: MAT{REAL}(3,3)
       ang,deg2,adeg :: REAL
-      n_u,k,u,f,i,j,pp,qq,m,first :: INT
+      k,i,j,pp,qq,m,first :: INT
 
-      n_u = .n_unique_frag_atoms
       k   = .TLS_basis.dim2
       first = .TLS_first_param
 
-      ! The TLS part of each unique atom's ADP, and the fit to it
-      y.create(6*n_u)
-      do u = 1,n_u
-         f = .unique_frag_atom(u)
-         Um = .fragment_atom(f).ADP_tensor
-         if (.fragment_U_high.allocated) Um = Um - .fragment_U_high(:,:,f)
-         y(6*u-5:6*u) = [Um(1,1),Um(2,2),Um(3,3),Um(1,2),Um(1,3),Um(2,3)]
-      end
-      Mt = .TLS_unique_response
-      MtM.create(k,k)
-      MtM.to_product_of(Mt,Mt,transpose_a=TRUE)
-      rhs.create(k)
-      rhs.to_product_of(Mt,y,transpose_a=TRUE)
-      p.create(k)
-      MtM.solve_linear_equation(rhs,p)
-
       ! Sigma and its esds; the 21 upper-triangle elements
-      sv.create(.n_TLS_sigma)
-      sv.to_product_of(.TLS_basis,p)
+      .make_TLS_sigma_vector(sv)
       var.create(.n_TLS_sigma)
       var = ZERO
+      Csig.create(.n_TLS_sigma,.n_TLS_sigma)
+      Csig = ZERO
       if (.xray_data.ls.param_covariance.allocated) then
          Cp = .xray_data.ls.param_covariance(first:first+k-1,first:first+k-1)
          CS.create(.n_TLS_sigma,k)
          CS.to_product_of(.TLS_basis,Cp)
+         Csig = .xray_data.GoF2*matmul(CS,transpose(.TLS_basis))
          do i = 1,.n_TLS_sigma
-            var(i) = .xray_data.GoF2*dot_product(CS(i,:),.TLS_basis(i,:))
+            var(i) = Csig(i,i)
          end
          CS.destroy
          Cp.destroy
@@ -5494,6 +5986,18 @@ contains
       stdout.show("L eigenvalues /deg^2, largest   =",L_evals(3))
       stdout.show("rms libration /deg              =",sqrt(max(ZERO,sum(L_evals)/THREE)))
       stdout.flush
+      stdout.text("L axes, one in each row, smallest eigenvalue first:")
+      do i = 1,3
+         stdout.put(L_evecs(1,i)); stdout.put(L_evecs(2,i)); stdout.put(L_evecs(3,i))
+         stdout.flush
+      end
+      stdout.flush
+
+      ! The same tensors in axes fixed in the molecule
+      .put_TLS_in_inertial_axes(sv,Csig)
+
+      ! The uncorrelated coordinates of the whole motion
+      .put_TLS_principal_motions
 
       ! Soft modes, and their correlations
       if (.n_soft_modes>0) .put_soft_mode_results(sv(22:),var(22:))
@@ -5506,8 +6010,174 @@ contains
       ! Model selection
       .put_model_selection
 
+      Csig.destroy
       Esd.destroy; Sm.destroy; var.destroy; sv.destroy
-      p.destroy; rhs.destroy; MtM.destroy; Mt.destroy; y.destroy
+
+   end
+
+   put_TLS_in_inertial_axes(sv,Csig)
+   ! Put T, L and S, with esds, in the principal axes of inertia of the
+   ! TLS body about its centre of mass, which are fixed in the molecule
+   ! and do not depend on how the crystal axes were chosen. "sv" are the
+   ! elements of Sigma in the order of TLS_sigma_pairs and "Csig" their
+   ! covariance. Each rotated element is a linear combination of the
+   ! elements of Sigma, and its variance follows from "Csig".
+      self :: IN
+      sv :: VEC{REAL}, IN
+      Csig :: MAT{REAL}, IN
+
+      Im,ax,Rm :: MAT{REAL}(3,3)
+      mom,r :: VEC{REAL}(3)
+      Gm,Sm,Sr,Er :: MAT{REAL}(6,6)
+      c :: VEC{REAL}(21)
+      ang,deg2,adeg,small :: REAL
+      b,i,j,p,q,m,pp,qq :: INT
+
+      ! The inertia tensor of the TLS body, and its axes
+      Im = ZERO
+      do b = 1,.n_TLS_atoms
+         r = .fragment_atom(b).position - .TLS_origin
+         do i = 1,3
+            Im(i,i) = Im(i,i) + .fragment_atom(b).mass*dot_product(r,r)
+            do j = 1,3
+               Im(i,j) = Im(i,j) - .fragment_atom(b).mass*r(i)*r(j)
+            end
+         end
+      end
+      Im.solve_symmetric_eigenproblem(mom,ax)
+      Rm = transpose(ax)
+
+      ! Sigma of the rigid body, turned into those axes
+      Gm = ZERO
+      Gm(1:3,1:3) = Rm
+      Gm(4:6,4:6) = Rm
+      m = 0
+      do pp = 1,6
+      do qq = pp,6
+         m = m + 1
+         Sm(pp,qq) = sv(m); Sm(qq,pp) = sv(m)
+      end
+      end
+      Sr = matmul(Gm,matmul(Sm,transpose(Gm)))
+
+      ! The esd of each turned element
+      do p = 1,6
+      do q = 1,6
+         m = 0
+         do pp = 1,6
+         do qq = pp,6
+            m = m + 1
+            c(m) = Gm(p,pp)*Gm(q,qq)
+            if (pp/=qq) c(m) = c(m) + Gm(p,qq)*Gm(q,pp)
+         end
+         end
+         Er(p,q) = sqrt(max(ZERO,dot_product(c,matmul(Csig(1:21,1:21),c))))
+      end
+      end
+
+      ! An element that is zero by symmetry has rounding noise for its
+      ! esd, which prints differently from one machine to the next. Set
+      ! such an element and its esd to zero, in each of T, L and S.
+      do i = 1,4,3
+      do j = 1,4,3
+         small = TOL(8)*maxval(Er(i:i+2,j:j+2))
+         do p = i,i+2
+         do q = j,j+2
+            if (Er(p,q)>=small) cycle
+            Er(p,q) = ZERO
+            Sr(p,q) = ZERO
+         end
+         end
+      end
+      end
+
+      ang  = ANGSTROM_PER_BOHR
+      deg2 = (180d0/PI)**2
+      adeg = ANGSTROM_PER_BOHR*180d0/PI
+
+      stdout.flush
+      stdout.text("T, L and S in the principal axes of inertia of the TLS body, about its")
+      stdout.text("centre of mass. The axes, one in each row, smallest moment first:")
+      do i = 1,3
+         stdout.put(Rm(i,1)); stdout.put(Rm(i,2)); stdout.put(Rm(i,3))
+         stdout.flush
+      end
+      stdout.flush
+      stdout.text("T /A^2:")
+      do i = 1,3
+         stdout.text("   "//trim(.TLS_element_str(Sr(i,1:3)*ang*ang,Er(i,1:3)*ang*ang)))
+      end
+      stdout.flush
+      stdout.text("L /deg^2:")
+      do i = 4,6
+         stdout.text("   "//trim(.TLS_element_str(Sr(i,4:6)*deg2,Er(i,4:6)*deg2)))
+      end
+      stdout.flush
+      stdout.text("S /(A deg), rows lambda, columns t:")
+      do i = 4,6
+         stdout.text("   "//trim(.TLS_element_str(Sr(i,1:3)*adeg,Er(i,1:3)*adeg)))
+      end
+      stdout.flush
+
+   end
+
+   put_TLS_principal_motions
+   ! Put the principal coordinates of the TLS model's covariance Sigma:
+   ! the uncorrelated motions it is made of, from
+   ! make_TLS_principal_motions. For each: its root-mean-square
+   ! translation and the direction of that translation, and its
+   ! root-mean-square rotation about the TLS origin and the axis of that
+   ! rotation. With soft modes a coordinate also has soft-mode parts,
+   ! which are not shown.
+      self :: IN
+
+      V,W,evec :: MAT{REAL}@
+      a0 :: VEC{REAL}@
+      tr,rot :: VEC{REAL}(3)
+      rms,t_len,r_len :: REAL
+      j :: INT
+
+      .make_TLS_principal_motions(V,a0,W,evec)
+
+      stdout.flush
+      stdout.text("Principal coordinates of Sigma: uncorrelated motions, each a translation")
+      stdout.text("along the direction t together with a rotation about the axis r through")
+      stdout.text("the origin. Smallest mean square first.")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=8)
+      stdout.put("#",int_width=TRUE)
+      stdout.put("rms t /A")
+      stdout.put("t_x")
+      stdout.put("t_y")
+      stdout.put("t_z")
+      stdout.put("rms r /deg")
+      stdout.put("r_x")
+      stdout.put("r_y")
+      stdout.put("r_z")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=8)
+      do j = 1,a0.dim
+         rms = sqrt(max(ZERO,a0(j)))
+         tr  = evec(1:3,j)
+         rot = evec(4:6,j)
+         t_len = norm2(tr)
+         r_len = norm2(rot)
+         if (t_len>TOL(12)) tr  = tr/t_len
+         if (r_len>TOL(12)) rot = rot/r_len
+         stdout.put(j)
+         stdout.put(rms*t_len*ANGSTROM_PER_BOHR)
+         stdout.put(tr(1)); stdout.put(tr(2)); stdout.put(tr(3))
+         stdout.put(rms*r_len*180d0/PI)
+         stdout.put(rot(1)); stdout.put(rot(2)); stdout.put(rot(3))
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=8)
+      stdout.flush
+
+      evec.destroy
+      a0.destroy
+      W.destroy
+      V.destroy
 
    end
 

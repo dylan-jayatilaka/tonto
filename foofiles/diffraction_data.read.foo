@@ -93,6 +93,11 @@ contains
       case ("optimise_scale_factors=       "); .read_refine_scale
       case ("optimize_scale_factors=       "); .read_refine_scale
       case ("partition_model=              "); .read_partition_model
+      case ("tc_analytic_rigid_body=       "); .read_tc_analytic_rigid_body
+      case ("tc_integrate_rigid_body=      "); .read_tc_integrate_rigid_body
+      case ("tc_integrate_stiff_modes=     "); .read_tc_integrate_stiff_modes
+      case ("tc_position_derivs=           "); .read_tc_position_derivs
+      case ("tc_quadrature_points=         "); .read_tc_quadrature_points
       case ("exphar_power=                 "); .read_expHAR_power
       case ("ff_fit_s_max=                 "); .read_FF_fit_s_max
       case ("ff_fit_n_gaussians=           "); .read_FF_fit_n_gaussians
@@ -125,7 +130,8 @@ contains
       case ("refine_h_positions_only=      "); .read_refine_H_positions
       case ("refine_h_u_iso=               "); .read_refine_H_U_iso
       case ("adp_model=                    "); .read_ADP_model
-      case ("n_soft_modes=                 "); .read_n_soft_modes
+      case ("n_soft_modes=                 "); DIE("n_soft_modes= is gone: use refine_soft_modes= YES, which refines every mode below soft_mode_cutoff=")
+      case ("refine_soft_modes=            "); .read_refine_soft_modes
       case ("soft_mode_restraint=          "); .read_soft_mode_restraint
       case ("use_soft_mode_correlations=   "); .read_use_soft_mode_correlations
       case ("correlation_restraint=        "); .read_correlation_restraint
@@ -1240,6 +1246,11 @@ contains
       stdout.text("                       RI_exponent_ratio=. EXPERIMENTAL")
       stdout.text("     - tc-coppens, tc-stewart, tc-tanaka, two-center models,")
       stdout.text("                       not for structure refinement")
+      stdout.text("     - tc-tls,         two-center model in which each product of")
+      stdout.text("                       basis functions moves with its own centre,")
+      stdout.text("                       the motion taken from the TLS model. Sets")
+      stdout.text("                       adp_model= tls. EXPERIMENTAL: structure")
+      stdout.text("                       factors only, after a TLS refinement")
       stdout.text("     - none")
       stdout.flush
       stdout.text(". See Davidson et al (2023) Acta Cryst B 72 p. 312-32")
@@ -1397,6 +1408,77 @@ contains
       stdin.read(val)
       DIE_IF(val<=ONE,"RI_exponent_ratio= must be greater than 1")
       .set_RI_exponent_ratio(val)
+
+   end
+
+   read_tc_analytic_rigid_body :: private
+   ! Read whether partition_model= tc-tls averages each product of basis
+   ! functions over the rigid-body rotation to second order in the
+   ! rotation vector, by formula: the path of the product's centre is
+   ! curved, and the product turns with the molecule. No SCF is needed.
+   ! See docs/REPORT_ON_TC_TLS_AVERAGES.md section 8.
+      self :: INOUT
+
+      stdin.read(.tc_analytic_rigid_body)
+
+   end
+
+   read_tc_integrate_rigid_body :: private
+   ! Read whether partition_model= tc-tls averages the structure factors
+   ! over the rigid-body motion numerically, with the molecule turned
+   ! exactly and an SCF at each displaced geometry, so that each product
+   ! of basis functions turns with the molecule.
+   ! EXPERIMENTAL: see docs/TASK_ON_TC_TLS.md.
+      self :: INOUT
+
+      stdin.read(.tc_integrate_rigid_body)
+
+   end
+
+   read_tc_integrate_stiff_modes :: private
+   ! Read whether partition_model= tc-tls averages the structure factors
+   ! over each stiff internal mode numerically, with an SCF at each
+   ! displaced geometry, so that the change of the basis function
+   ! products and of the density matrix along the mode is included.
+   ! EXPERIMENTAL: see docs/TASK_ON_TC_TLS.md.
+      self :: INOUT
+
+      stdin.read(.tc_integrate_stiff_modes)
+
+   end
+
+   read_tc_quadrature_points :: private
+   ! Read the number of points of the Gauss-Hermite rule which
+   ! tc_integrate_stiff_modes= and tc_integrate_rigid_body= use for each
+   ! coordinate of the motion: an odd number, 3 or more. The undisplaced
+   ! point is one of them, so n points need n-1 SCFs for each coordinate.
+      self :: INOUT
+
+      stdin.read(.tc_quadrature_points)
+      DIE_IF(.tc_quadrature_points<3 OR mod(.tc_quadrature_points,2)==0,"tc_quadrature_points= must be odd, and at least 3")
+
+   end
+
+   read_tc_position_derivs :: private
+   ! Read how partition_model= tc-tls takes the derivative of the structure
+   ! factors with respect to an atom's position:
+   ! - "center":   only the centre of each product of basis functions moves;
+   !               its size and shape and the density matrix are held.
+   ! - "fixed-dm": the basis functions move with the atom and the density
+   !               matrix is held; by central differences.
+   ! - "scf":      as "fixed-dm" with an SCF at each displaced geometry,
+   !               so the density matrix follows; by central differences.
+   !               The default: the only one of the three that is the
+   !               whole derivative.
+   ! EXPERIMENTAL: see docs/TASK_ON_TC_TLS.md.
+      self :: INOUT
+
+      val :: STR
+
+      stdin.read(val)
+      val.to_lower_case
+      DIE_IF(NOT val.is_one_of(["center  ","fixed-dm","scf     "]),"tc_position_derivs= must be center, fixed-dm or scf")
+      .tc_position_derivs = val
 
    end
 
@@ -1771,10 +1853,11 @@ contains
       stdout.text("        about its centre of mass, plus each atom's U^high from")
       stdout.text("        its stiff internal modes (make_internal_adps; zero if")
       stdout.text("        not made). T, L and S keep the site symmetry. HAR only.")
-      stdout.text("        n_soft_modes= k adds the amplitudes of the k softest")
-      stdout.text("        internal modes (imaginary first), each restrained to its")
-      stdout.text("        harmonic value with sigma soft_mode_restraint= (0.5) of it;")
-      stdout.text("        imaginary modes are not restrained.")
+      stdout.text("        refine_soft_modes= YES adds the amplitudes of the soft")
+      stdout.text("        internal modes, those below soft_mode_cutoff= and any")
+      stdout.text("        imaginary ones, each restrained to its harmonic value with")
+      stdout.text("        sigma soft_mode_restraint= (0.5) of it; imaginary modes are")
+      stdout.text("        not restrained. By default they are left out of the model.")
       stdout.text("        use_soft_mode_correlations= TRUE also refines each soft mode's")
       stdout.text("        correlation with the rigid-body motion and with the other")
       stdout.text("        soft modes, each correlation coefficient restrained toward")
@@ -1784,12 +1867,14 @@ contains
       if (present(die)) stop
    end
 
-   read_n_soft_modes
-   ! Read the number of soft modes a TLS model refines.
+   read_refine_soft_modes
+   ! Read whether a TLS model refines the amplitudes of the soft internal
+   ! modes: every mode below the molecule's soft_mode_cutoff=, and any
+   ! imaginary one. If not, they are left out of the model.
       self :: INOUT
-      val :: INT
+      val :: BIN
       stdin.read(val)
-      .set_n_soft_modes(val)
+      .set_refine_soft_modes(val)
    end
 
    read_soft_mode_restraint

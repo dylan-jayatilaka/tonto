@@ -116,9 +116,76 @@ with the list.
 
 One procedure per format, chosen by `output_format=`. `table`: element, n, a_1 … a_n, b_1
 … b_n, c, one line per element, with a header saying the range and the model. `buster`:
-**format not yet known** — the public BUSTER manual's file-formats page and FAQ say nothing
-about scattering tables; it needs an example file from a BUSTER installation or the keyword
-from Global Phasing. Until it arrives the writer is a stub that `DIE`s with that message.
+**format known since 2026-10-13**, from Claus Flensburg of Global Phasing; his reply is kept
+as received in `~/Dropbox/tonto_data/buster_form_factors/flensburg_reply_2026-10.txt`. The
+writer is still a stub. What the reply says:
+
+- BUSTER takes only four Gaussians plus a constant. `fit_sph_atom_ffs` already fits that.
+- A form factor is one line of a text file in TNT format, the amplitude and exponent of each
+  Gaussian in turn and then the constant:
+  `FORMFACTOR <type>  A1 B1  A2 B2  A3 B3  A4 B4  C`, for example
+  `FORMFACTOR C       0.865000  51.651199    2.310000  20.843899    1.020000  10.207500    1.588600   0.568700    0.215600`.
+  The file holds the ordinary types (C, H, N, O, S ...) and then the new ones.
+- There is no form factor per atom label. An atom gets its own form factor by being given its
+  own *type*: the element-and-charge field at the end of its `ATOM`/`HETATM` record in the PDB
+  file, which ordinarily ends at column 80 (`C`, `C1+`), is extended to column 82 with a sign, a
+  digit, a decimal point and one more digit, as `C+0.1`, `C-0.2`, `C-1.2`. The same string is
+  the type on a `FORMFACTOR` line.
+- So two files are written: the form-factor file, and a PDB file with the atoms retyped.
+  BUSTER is told of the first with `refine FormfactorDat=/path/to/formfactor.dat ...`.
+- This rides on the "partial charges" feature of the July 2024 release of BUSTER
+  (<https://www.globalphasing.com/buster/ReleaseNotes/ReleaseNotes-BUSTER_snapshot_20240710.txt>).
+- **About 198 types of this kind for each element.** For more, other BUSTER tables (non-bonded
+  radii and the like) would have to be edited by hand. So this suits a ligand, not every atom
+  of a protein.
+- The TNT format: <https://www.uoxray.uoregon.edu/tnt/manual/node23.html#320>.
+
+**The columns**, measured from his example lines, which are aligned as the PDB format has them:
+occupancy in 55-60 and B in 61-66 as usual; the element right-justified in 77-78; then, in place
+of the two-character charge of 79-80, the four characters sign, digit, point, digit in 79-82.
+`C+0.1` is `C` in column 78 and `+0.1` in 79-82.
+
+To settle before writing it:
+- **Which 198 strings.** Presumably `-9.9` to `+9.9` without two of them; and whether BUSTER
+  uses the number as a charge anywhere, or only as a label. Read the release notes first.
+- **The exponent convention**: B multiplying (sin theta/lambda)^2, as in the International
+  Tables and SHELX `SFAC`, is assumed. The carbon line above is the International Tables
+  carbon with its Gaussians in another order, which supports it; the TNT manual page should
+  confirm it.
+- **Whether atoms of one kind should share a type**, to stay under 198: by symmetry first,
+  then by rounding the fitted coefficients.
+
+Also in the reply, on the aspherical fitted atoms (30 to 60 radial Gaussians, L up to 7): he
+finds them expensive but possible given the faster structure-factor sum, and asks whether the
+angular parts are kept in local coordinate systems, as DiSCaMB does, or in one global frame.
+Dylan's answer (2026-10-13): one global frame.
+
+**The Cartesian frame** (Claus, second reply, 2026-10-13, kept in the same file). Tonto and PDB
+files: x along a, y along c* x a, z along c* (`UNIT_CELL:make_direct_mx`, Giacovazzo). BUSTER
+uses the TNT frame: **x along a\*, y along b, z along a\* x b**. With cos(beta\*) =
+(cos alpha cos gamma - cos beta)/(sin alpha sin gamma), the cell vectors a, b, c in that frame are
+the columns of
+
+```
+   a sin(gamma) sin(beta*)    0    0
+   a cos(gamma)               b    c cos(alpha)
+  -a sin(gamma) cos(beta*)    0    c sin(alpha)
+```
+
+(checked numerically: same lengths and angles as Tonto's matrix, a* along x, b along y; also in
+the TeX notes `gaussian_pair_ft.tex`, section 4). The two frames differ by the rotation
+Q = C_TNT C_PDB^-1.
+
+- For the spherical form factors nothing is needed: BUSTER is given a PDB file, whose
+  coordinates are in the PDB frame, and a spherical atom has no orientation.
+- For aspherical atoms in one global frame, `UNIT_CELL` needs this second matrix and Q, and the
+  angular parts are turned by Q before they are written. Not coded.
+
+**The `FORMFACTOR` formula**, read from the images of the TNT manual page: f(s) = A exp(-B s^2) +
+C exp(-D s^2) + ..., the pair with the largest exponent first. The image for s is hard to read
+(it looks like "1/2 sin(theta)/lambda"). The carbon line Claus gave has the International
+Tables values of b, so B multiplies (sin theta/lambda)^2; confirm with him if it matters. The
+manual describes three Gaussians; BUSTER takes four and a constant.
 
 ## 3. The fit itself: what to expect
 
@@ -165,7 +232,7 @@ from Global Phasing. Until it arrives the writer is a stub that `DIE`s with that
 3. `make_sph_atom_FF_curve`, the `fit_sph_atom_ffs` keyword with its `FF_fit_*` settings,
    the `shelx` and `table` writers, test `long/urea_rhf_STO-3G_sph-TFVH_FF_fit`. Done,
    branch `exphar`.
-4. The BUSTER writer, when the format is in hand.
+4. The BUSTER writer. The format is in hand (§2d): a `FORMFACTOR` file and a retyped PDB file.
 5. The two-stage fit (§8), if the 0.02 e residual on C and N matters for the data.
 
 ## 7. What the first fits showed (urea, `sph-tfvh`, STO-3G, 2026-10-05)
