@@ -212,8 +212,9 @@ with $`\Sigma`$ refined and $`U_i^{\rm high}`$ fixed by the Hessian.
 
 ### 1.7 Soft modes
 
-The soft modes left out of (8) can be put back with refined amplitudes. Take the $`K`$ softest
-modes, imaginary ones first. Write $`\mathbf{d}_{ik} = \mathbf{l}_{ik}/\sqrt{m_i}`$ for the displacement of atom $`i`$
+The soft modes are left out of (8), and by default out of the model. They can be put back with
+refined amplitudes (`refine_soft_modes=`): all of them, the $`K`$ modes below the cutoff $`\omega_c`$,
+imaginary ones first. Write $`\mathbf{d}_{ik} = \mathbf{l}_{ik}/\sqrt{m_i}`$ for the displacement of atom $`i`$
 in mode $`k`$ per unit $`Q_k`$, and $`a_k = \langle Q_k^2\rangle`$ for the mode's mean-square amplitude. Each soft
 mode adds one generalised coordinate $`Q_k`$ to $`\mathbf{v}`$ and one column $`\mathbf{d}_{ik}`$ to $`B_i`$. The modes
 are taken as uncorrelated with each other and with the rigid-body motion, so only the amplitudes
@@ -223,11 +224,10 @@ enter, and (9) becomes
 U_i = U_i^{\rm high} + B_i\, \Sigma\, B_i^{\mathsf T} + \sum_{k=1}^{K} a_k\, \mathbf{d}_{ik}\mathbf{d}_{ik}^{\mathsf T} , \qquad (10)
 ```
 
-with $`\Sigma`$ the rigid-body covariance of §1.4 and $`a_1 \dots a_K`$ refined. A soft mode must have
-$`\omega_k`$ below the cutoff $`\omega_c`$ of (8), or it would be counted twice; raising the cutoff moves
-more modes from $`U^{\rm high}`$ into the refinement. The cutoff is compared with the scaled frequency
-(§1.9). Set it between the $`K`$-th and the next mode: a mode below the cutoff that is not among
-the $`K`$ refined is in neither term of (10).
+with $`\Sigma`$ the rigid-body covariance of §1.4 and $`a_1 \dots a_K`$ refined. The cutoff alone says
+which modes are refined: raising it moves more modes from $`U^{\rm high}`$ into the refinement, and
+no mode is in both terms of (10) or in neither. The cutoff is compared with the scaled frequency
+(§1.9). An imaginary mode is soft at any cutoff.
 
 **The harmonic amplitude** $`a_k^0`$ is (6) at the mode's frequency. An imaginary mode has none.
 
@@ -499,7 +499,7 @@ On the molecule (top level):
 | `normal_mode_analysis` | | the normal modes, rigid-body motion projected out |
 | `put_normal_modes` | | prints the Hessian and the modes |
 | `internal_adp_temperature=` | 0 | the temperature Θ in (6), Kelvin; 0 gives zero-point motion |
-| `soft_mode_cutoff=` | 200 | modes below this, cm⁻¹, are soft |
+| `soft_mode_cutoff=` | 200 | modes below this are soft; in cm⁻¹, or another unit if one follows the number |
 | `frequency_scale_factor=` | see §1.9 | scales the frequencies in (6) |
 | `make_internal_adps` | | makes U^high, eq. (8), and the soft modes of (10) |
 | `put_internal_adps` | | prints U^high and how many modes are soft, imaginary and stiff |
@@ -509,7 +509,7 @@ In `xray_data=`:
 | keyword | default | meaning |
 |---|---|---|
 | `adp_model=` | `free` | `free`: refine each atom's ADP; `tls`: the model (10), HAR only |
-| `n_soft_modes=` | 0 | $`K`$ in (10): how many of the softest modes have refined amplitudes |
+| `refine_soft_modes=` | `FALSE` | `TRUE` refines the amplitudes of all the soft modes, the $`K`$ of (10); otherwise they are left out |
 | `soft_mode_restraint=` | 0.5 | $`f_a`$ in §2.4: the amplitude restraint's $`\sigma`$ as a fraction of the harmonic amplitude |
 | `use_soft_mode_correlations=` | `FALSE` | `TRUE` refines the cross terms of (11) |
 | `correlation_restraint=` | 0.5 | $`f_\rho`$ in §2.4: the uncertainty of a correlation coefficient held toward 0 |
@@ -533,7 +533,7 @@ A TLS Hirshfeld atom refinement with U^high from a Hessian, and the four softest
       xray_data= {
          partition_model= oc-hirshfeld
          adp_model= tls
-         n_soft_modes= 4
+         refine_soft_modes= YES
          ...
       }
    }
@@ -726,7 +726,8 @@ the heavy atoms. The hydrogens move furthest in every mode, being lightest, so t
 size of the displacements, says what kind of motion a mode is.
 
 Hirshfeld partition, the model (10) with the $`K`$ softest modes refined, `soft_mode_restraint=`
-0.5. The cutoff is 200 cm⁻¹ for $`K \le 2`$, 600 for $`K = 3`$ and 700 for $`K = 4`$, so modes 3 and 4
+0.5. $`K = 1`$ takes the first of the two imaginary wags alone, which `refine_soft_modes=` cannot
+do: with it the two go in together. The cutoff is 200 cm⁻¹ for $`K \le 2`$, 600 for $`K = 3`$ and 700 for $`K = 4`$, so modes 3 and 4
 move from $`U^{\rm high}`$ into the refinement. $`K = 0`$ is TLS + U^high above.
 
 For each $`K`$: the parameter count, the effective count, the fit, AIC and BIC, and the

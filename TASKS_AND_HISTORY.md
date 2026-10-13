@@ -4465,8 +4465,16 @@ from the new printed tables: `h2o_rhf_STO-3G_FD_hessian`, `urea_rhf_6-31G(d)_int
 `HAR_TLS_cluster`; whether those are the Mac against the Linux references, or a change made on
 this branch, is not established.
 
-**Next, in this order:** (1) on achari2, check that the six differ from their references only by
-the new tables, the two numbers above included; (2) bless them there; (3) tests: a `tc-tls`
+**After that suite run:** `n_soft_modes=` was replaced by `refine_soft_modes=` (default NO), so
+that `soft_mode_cutoff=` alone says which modes are refined (Dylan; log in
+`docs/TASK_ON_MODE_FITTING.md`). The three tests that refine soft modes now have a cutoff of 600
+in place of 700, and their numbers change a little: a fifth mode that was in neither part of the
+model is now a stiff mode. Only the six TLS tests were rerun after it, not the whole suite.
+
+**Next, in this order:** (1) on achari2, check that `h2o_rhf_STO-3G_FD_hessian`,
+`urea_rhf_6-31G(d)_internal_ADPs` and `urea_rhf_STO-3G_HAR_TLS` differ from their references only
+by the new tables, the 0.12 % above included, and that the three soft-mode tests differ as
+described; (2) bless them there; (3) tests: a `tc-tls`
 refinement of urea STO-3G with and without the formula, and the pair weights with and without
 the petite list; (4) merge to `develop`.
 
@@ -4476,6 +4484,11 @@ groups; more molecules. Put off until the methods are settled (Dylan): the stiff
 against refined soft modes, and the comparison with a free ADP on every atom.
 
 ## ADPs as rigid-body motion plus soft modes, refined against F (Dylan, 2026-10-03)
+
+**2026-10-13, on branch `tc-tls`:** `soft_mode_cutoff=` alone now says which soft modes are
+refined, with `refine_soft_modes=` (default NO) in place of `n_soft_modes=`; the cutoff takes a
+unit, a bare number being cm^-1. Next on this item: refine the five soft modes of gly-L-ala; T, L
+and S printed at the centre of reaction. Log: `docs/TASK_ON_MODE_FITTING.md`, last entry.
 
 **Register row:** *ADPs as rigid-body motion plus soft modes*. Plan: `docs/TASK_ON_MODE_FITTING.md`
 (theory, the restraint generalisation of the eigenvalue filter, where the code goes, which procedures
