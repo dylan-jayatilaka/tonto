@@ -712,8 +712,77 @@ The rows with `scf` or an averaging have the SCF converged to 1e-7, the others t
   average, 6 for the rigid-body average, and 18 for both.
 
 
+## 11. Urea: against the multi-temperature analysis of Capelli, Förtsch and Bürgi
+
+Capelli, Förtsch and Bürgi (2000) fitted a dynamical model to the neutron ADPs of urea at 12, 60
+and 123 K: molecular translations and librations, one out-of-plane coordinate of the NH₂ groups
+coupled to them, and a temperature-independent part for the stiff internal modes. The
+refinements here use one X-ray data set at 123 K and a calculated Hessian for the stiff modes.
+The two can be compared at 123 K.
+
+**Axes.** Those of their paper, with the origin at the centre of mass: $`x`$ along the C=O bond,
+$`y`$ in the molecular plane, $`z`$ normal to the plane. $`L_{11}`$ is then the libration about the
+C=O bond.
+
+**The rigid-body tensors at 123 K.** Their model w1, the one they prefer, and the segmented
+rigid-body analysis of Swaminathan, Craven and McMullan (1984) that they quote, are from their
+Table 8. $`L`$ is in rad², $`T`$ in Å², $`S`$ in rad Å; the sign of $`S`$ depends on the direction chosen
+for the axes, so its size is given.
+
+| | Capelli et al., model w1 | Swaminathan et al. | def2-SVP, Hirshfeld atoms | def2-SVP, `tc-tls`, both averages | def2-TZVP, Hirshfeld atoms | def2-TZVP, `tc-tls`, both averages |
+|---|---|---|---|---|---|---|
+| in the plane | | | | | | |
+| $`L_{33}`$ | 0.0021(1) | 0.0019 | 0.0023 | 0.0023 | | |
+| $`T_{11}`$ | 0.0050(2) | 0.0067 | 0.0058 | 0.0058 | | |
+| $`T_{22}`$ | 0.0132(3) | 0.0148 | 0.0135 | 0.0134 | | |
+| $`\lvert S_{32}\rvert`$ | 0.0011(1) | 0.0011 | 0.0010 | 0.0010 | | |
+| out of the plane | | | | | | |
+| $`L_{11}`$ | 0.0149(3) | 0.0150 | 0.0134 | 0.0143 | | |
+| $`L_{22}`$ | 0.0038(3) | 0.0080 | 0.0098 | 0.0088 | | |
+| $`T_{33}`$ | 0.0136(4) | 0.0150 | 0.0143 | 0.0144 | | |
+| $`\lvert S_{23}\rvert`$ | 0.0016(2) | 0.0042 | 0.0052 | 0.0045 | | |
+
+The `tc-tls` column has the rigid-body motion and the stiff modes averaged with three points
+(§6, §7).
+
+- **The in-plane motion agrees**: $`L_{33}`$, $`T_{22}`$ and $`S_{32}`$ are within 0.0002 of model w1, and
+  $`T_{11}`$ lies between model w1 and Swaminathan et al.
+- **The libration about the C=O bond, $`L_{11}`$, agrees better with `tc-tls`** (0.0143) than with
+  Hirshfeld atoms (0.0134); both analyses of the neutron data give 0.015.
+- **$`L_{22}`$ and $`S_{23}`$ agree with the rigid-body analysis of Swaminathan et al., not with model
+  w1.** Model w1 has the out-of-plane NH₂ coordinate, and its coupling to the libration takes
+  over part of what a rigid body puts into $`L_{22}`$ and $`S_{23}`$. The refinements here have no such
+  coordinate: the two softest out-of-plane modes are below the cutoff and are not refined.
+
+**The temperature-independent part.** Their $`\varepsilon`$ tensors are refined, one for the hydrogens
+and one for the other atoms (their Table 5, model w1); their Table 7 gives values calculated
+from spectroscopic force fields and from an ab initio calculation. Here the same quantity is
+$`U^{A}_{\rm high}`$ of (M8), from the calculated Hessian with frequencies scaled by 0.8953, at 123 K.
+In units of 10⁻⁴ Å²; for a hydrogen, along the N–H bond, across it in the molecular plane, and
+out of the plane:
+
+| | Capelli et al., refined | their Table 7, calculated | def2-SVP | def2-TZVP |
+|---|---|---|---|---|
+| H, along N–H | 66(2) | 53 to 54 | 52 to 58 | 53 to 58 |
+| H, in the plane across N–H | 120(3) | 134 to 142 | 142 to 149 | 140 to 144 |
+| H, out of the plane | 263(6) | 240 to 265 | 25 and 195 | 221 and 266 |
+| C, N, O, in the plane | 13(1) to 15(1) | 7 to 9 | 7 to 10 | 8 to 10 |
+| C, N, O, out of the plane | 16(2) | 2 to 16 | 1 to 14 | 2 to 15 |
+
+- **In the plane the calculated stiff-mode ADPs agree with their calculated values**, and with
+  their refined ones to about 15 %.
+- **Out of the plane the hydrogens depend on which modes count as stiff.** At def2-SVP two
+  out-of-plane NH₂ modes are below the cutoff of 200 cm⁻¹ (one imaginary, one at 169 cm⁻¹ after
+  scaling), and are in neither the stiff part nor the refinement; one hydrogen then has only 25.
+  At def2-TZVP one of them is at 274 cm⁻¹, counts as stiff, and both hydrogens come out near
+  their values.
+
 ## References
 
+- H. B. Bürgi and S. C. Capelli, *Acta Cryst.* A56, 403 (2000), and S. C. Capelli, M. Förtsch and
+  H. B. Bürgi, *Acta Cryst.* A56, 413 (2000): molecular motion from multi-temperature ADPs; urea.
+- S. Swaminathan, B. M. Craven and R. K. McMullan, *Acta Cryst.* B40, 300 (1984): urea, neutron
+  diffraction at 12, 60 and 123 K.
 - V. Schomaker and K. N. Trueblood, *Acta Cryst.* B24, 63 (1968): rigid-body motion, T, L, S.
 - R. F. Stewart, *J. Chem. Phys.* 51, 4569 (1969), and K. Tanaka, *Acta Cryst.* A44, 1002 (1988):
   two-centre temperature factors.
