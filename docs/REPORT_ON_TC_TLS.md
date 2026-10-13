@@ -751,13 +751,14 @@ last two. They are neither among the stiff modes nor refined.
 |---|---|---|---|---|
 | Hirshfeld atoms | 3.5940 | 0.0353 | 3.5575 | 0.0344 |
 | `tc-tls` | 3.6131 | 0.0354 | 3.5750 | 0.0347 |
-| `tc-tls`, rigid-body motion averaged, 3 points | 3.6054 | 0.0354 | | |
+| `tc-tls`, rigid-body motion averaged, 3 points | 3.6054 | 0.0354 | 3.5689 | 0.0347 |
 | `tc-tls`, rigid-body motion averaged, 5 points | 3.6039 | 0.0354 | | |
 
 - **The two smearings differ much less than in urea**: `tc-tls` is 0.02 above Hirshfeld atoms in
   GoF at both basis sets, against 0.17.
-- **Averaging the rigid-body motion recovers about half of that**, and three and five points
-  agree to 0.002: a larger molecule librates less, and the rule is adequate.
+- **Averaging the rigid-body motion recovers a third to a half of that**: 0.006 of 0.018 at
+  def2-TZVP with three points, 0.009 of 0.019 at def2-SVP with five. At def2-SVP three and five
+  points agree to 0.002: a larger molecule librates less, and the rule is adequate.
 
 ## 11. Urea: against the multi-temperature analysis of Capelli, Förtsch and Bürgi
 

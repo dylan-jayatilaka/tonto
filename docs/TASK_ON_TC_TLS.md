@@ -874,3 +874,14 @@ Hessian, 17 parameters, release build:
 
 Not done: a debug build since the difference code went in; the test suite; def2-TZVP; a test in
 `tests/`. Michael and Koritsanszky (2015) found under References.
+
+### 2026-10-13: the TeX notes rewritten as one work; gly-L-ala def2-TZVP, three points
+
+- `~/Dropbox/tex/conference_talks/2026_gaussian_pair_FT/gaussian_pair_ft.tex` now carries the
+  whole theory of `REPORT_ON_TC_TLS` and `REPORT_ON_PAIR_STABILIZERS` in forward order, 28 pages,
+  every equation numbered and cited by number, with the references. The earlier nine pages are
+  kept as `gaussian_pair_ft_v1.tex`.
+- gly-L-ala def2-TZVP with the three-point rigid-body average: GoF 3.5689, R(F) 0.0347, against
+  3.5750 to first order and 3.5575 for Hirshfeld atoms. Added to the report. Still running: the
+  five-point run at def2-TZVP (`T3_def2-TZVP`) and rigid body plus stiff modes at def2-SVP
+  (`T2_def2-SVP`).
