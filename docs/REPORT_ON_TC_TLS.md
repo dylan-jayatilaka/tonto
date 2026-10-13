@@ -683,6 +683,9 @@ use RI-J and COSX.
 | `tc-tls` | 3.6578 | 3.2369 |
 | `tc-tls`, rigid-body motion averaged (§7), 3 points | 3.4876 | 3.2403 |
 | `tc-tls`, rigid-body motion averaged, 5 points | 3.4493 | 3.1201 |
+| `tc-tls`, rigid-body motion averaged, 7 points | 3.4483 | 3.1150 |
+| `tc-tls`, rigid-body motion averaged, 9 points | 3.4483 | 3.1148 |
+| `tc-tls`, rigid-body motion averaged, 11 points | 3.4483 | 3.1148 |
 | `tc-tls`, rigid-body motion and stiff modes (§6) averaged, 3 points | 3.4606 | 3.2795 |
 | `tc-tls`, rigid-body motion and stiff modes averaged, 5 points | 3.4227 | 3.1353 |
 
@@ -692,12 +695,16 @@ use RI-J and COSX.
   about 7° root mean square about the C=O bond. A Gaussian product with lobes must turn with the
   molecule, and without §7 it does not. Hirshfeld atoms do better there because density near a
   hydrogen is given to the hydrogen, with its large ADP.
-- **The size of that effect is not established: it depends on the number of points.** At
-  def2-TZVP three points give nothing and five give 0.12; at def2-SVP three give 0.17 and five
-  0.21. The outer points of the rule are at 13° to 22°, where moving on an arc and moving on a
-  straight line differ by a phase of order one at high angle, so the difference being integrated
-  is not small. With five points `tc-tls` is below Hirshfeld atoms at def2-SVP and above at
-  def2-TZVP.
+- **Three points are too few for the rigid-body average; seven are enough.** The GoF settles at
+  3.4483 at def2-SVP and 3.1148 at def2-TZVP, the same to four figures with 9 and 11 points.
+  Five points are within 0.005 of that; three are out by 0.04 at def2-SVP and by 0.13 at
+  def2-TZVP, where they show no gain at all. The outer points of the three-point rule are at 13°,
+  where moving on an arc and moving on a straight line differ by a phase of order one at high
+  angle.
+- **With the rigid-body average converged, `tc-tls` gains 0.21 in GoF at def2-SVP and 0.12 at
+  def2-TZVP.** That puts it 0.04 below Hirshfeld atoms at def2-SVP and 0.06 above at def2-TZVP.
+  So the rigid-body average removes most of the difference between the two smearings, and
+  which of the two then fits better depends on the basis set.
 - **Averaging the stiff modes helps at def2-SVP and hurts at def2-TZVP.** At def2-TZVP the stiff
   modes include an out-of-plane NH₂ mode at 274 cm⁻¹ in which a hydrogen moves by 0.2 Å root
   mean square; a straight-line displacement that large stretches the N–H bonds. At def2-SVP that

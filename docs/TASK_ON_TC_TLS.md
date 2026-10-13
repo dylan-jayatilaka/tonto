@@ -374,6 +374,39 @@ Runs in `~/tonto-runs/2026-10-12_tc_tls/{equal_U,pair_weights,rigid}`.
 - Comparison with Capelli, Fortsch and Burgi (2000) for urea is in the report, section 11; made
   with `~/tonto-runs/2026-10-12_tc_tls/compare/tls_table.py`.
 
+**2026-10-13, results at def2-TZVP, gly-L-ala, and the quadrature converged.**
+- A mistake in running: nine parallel tonto jobs each let OpenBLAS use every core (load average
+  130). Killed, restarted with `OPENBLAS_NUM_THREADS=1` through `queue.sh` (ten at a time). Use
+  that variable for any parallel batch.
+- `tc_quadrature_points=` takes any odd number (Golub-Welsch nodes, `make_gauss_hermite_pairs`).
+  Built in a second tree, `build-tc/`, so that jobs running from `release/` were not disturbed.
+- Urea GoF, `center` derivatives, rigid body averaged with n points:
+
+  | n | def2-SVP | def2-TZVP |
+  |---|---|---|
+  | none | 3.6578 | 3.2369 |
+  | 3 | 3.4876 | 3.2403 |
+  | 5 | 3.4493 | 3.1201 |
+  | 7 | 3.4483 | 3.1150 |
+  | 9 | 3.4483 | 3.1148 |
+  | 11 | 3.4483 | 3.1148 |
+  | Hirshfeld | 3.4855 | 3.0570 |
+
+  Converged at 7. Stiff modes on top, 5 points: 3.4227 (SVP), 3.1353 (TZVP, worse than without:
+  the 274 cm^-1 NH2 mode is stiff there and moves H by 0.2 A in a straight line).
+- Gly-L-ala GoF: def2-SVP Hirshfeld 3.5940, `tc-tls` 3.6131, rigid body 3 points 3.6054, 5 points
+  3.6039; def2-TZVP Hirshfeld 3.5575, `tc-tls` 3.5750; the def2-TZVP averaged runs and the
+  def2-SVP run with stiff modes were still going when this was written.
+- TLS output now prints T, L, S with esds in the principal axes of inertia; the comparison with
+  Capelli et al. in the report uses it (`compare/tls_esd.py`).
+- Dylan asked whether the rigid-body average can be done analytically and without an SCF. No SCF
+  is needed (F of the turned molecule is F at the turned k with a phase). Exact rotation gives
+  Bessel-function series; to second order in the rotation vector the phase is quadratic and the
+  Gaussian average is closed: det(1 - i L M)^(-1/2) exp[-(1/2) a^T (1 - i L M)^(-1) L a], a = P x k,
+  M = (k P^T + P k^T)/2 - (k.P) 1. Written from memory, NOT yet checked numerically; the
+  polynomial parts need derivatives of it. The converged numbers above are what to check it
+  against. Not started.
+
 ## 10. Symmetry: the stabiliser of an atom pair
 
 Dylan, 2026-10-13: the repetition factors are very old code, from Jayatilaka and Grimwood (2001);
