@@ -132,22 +132,33 @@ writer is still a stub. What the reply says:
   digit, a decimal point and one more digit, as `C+0.1`, `C-0.2`, `C-1.2`. The same string is
   the type on a `FORMFACTOR` line.
 - So two files are written: the form-factor file, and a PDB file with the atoms retyped.
-- His caution: this suits a ligand, and may give trouble when very many atoms each need their
-  own type.
+  BUSTER is told of the first with `refine FormfactorDat=/path/to/formfactor.dat ...`.
+- This rides on the "partial charges" feature of the July 2024 release of BUSTER
+  (<https://www.globalphasing.com/buster/ReleaseNotes/ReleaseNotes-BUSTER_snapshot_20240710.txt>).
+- **About 198 types of this kind for each element.** For more, other BUSTER tables (non-bonded
+  radii and the like) would have to be edited by hand. So this suits a ligand, not every atom
+  of a protein.
+- The TNT format: <https://www.uoxray.uoregon.edu/tnt/manual/node23.html#320>.
+
+**The columns**, measured from his example lines, which are aligned as the PDB format has them:
+occupancy in 55-60 and B in 61-66 as usual; the element right-justified in 77-78; then, in place
+of the two-character charge of 79-80, the four characters sign, digit, point, digit in 79-82.
+`C+0.1` is `C` in column 78 and `+0.1` in 79-82.
 
 To settle before writing it:
-- **How many types there can be.** With one digit each side of the point and a sign there are
-  at most 199 for an element (`-9.9` to `+9.9`), if every such string is accepted. Ask whether
-  the number is read as a charge and used for anything, or is only a label.
-- **The columns.** The reply says width 82; the example lines as pasted are longer, so the
-  spacing did not survive the paste. Take the columns from the PDB format (element in 77-78)
-  and check with a file BUSTER accepts.
+- **Which 198 strings.** Presumably `-9.9` to `+9.9` without two of them; and whether BUSTER
+  uses the number as a charge anywhere, or only as a label. Read the release notes first.
 - **The exponent convention**: B multiplying (sin theta/lambda)^2, as in the International
   Tables and SHELX `SFAC`, is assumed. The carbon line above is the International Tables
-  carbon with its Gaussians in another order, which supports it.
-- **Whether atoms of one kind should share a type**, to keep the number down: by symmetry
-  first, then by rounding the fitted coefficients.
-- The footnote on the TNT format, and the end of the reply, were not in what was pasted.
+  carbon with its Gaussians in another order, which supports it; the TNT manual page should
+  confirm it.
+- **Whether atoms of one kind should share a type**, to stay under 198: by symmetry first,
+  then by rounding the fitted coefficients.
+
+Also in the reply, on the aspherical fitted atoms (30 to 60 radial Gaussians, L up to 7): he
+finds them expensive but possible given the faster structure-factor sum, and asks whether the
+angular parts are kept in local coordinate systems, as DiSCaMB does, or in one global frame.
+That question is Dylan's to answer.
 
 ## 3. The fit itself: what to expect
 
