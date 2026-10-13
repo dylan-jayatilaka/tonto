@@ -956,12 +956,14 @@ the first build. The refinement then ends lower: urea def2-SVP 3.3586 -> **3.333
 - urea def2-SVP: 3.4855 / 3.6578 / 3.4483 / **3.3337**; C=O 1.2635, C-N 1.3482, N-H 1.030, 0.988 A.
 - urea def2-TZVP: 3.0570 / 3.2369 / 3.1148 / **2.9503**.
 - gly-L-ala def2-SVP: 3.5940 / 3.6131 / 3.6039 (5 points) / **3.6042**.
+- gly-L-ala def2-TZVP: 3.5575 / 3.5750 / 3.5689 (3 points) / **3.5673**.
 So with the formula `tc-tls` fits urea better than Hirshfeld atoms at both basis sets (by 0.15
-and 0.11), and gly-L-ala slightly worse (0.010). Not shown: that this holds for other molecules.
+and 0.11), and gly-L-ala slightly worse (0.010 at both). Not shown: that this holds for other molecules.
 
 **Time**, urea def2-SVP whole job, one core: 19 s first order; 49 s formula with first-order
-derivatives; 86 s formula with exact derivatives. The reverse pass is written with small arrays
-and has not been profiled; `make_turn_factors` was 30 % of the samples before it was added.
+derivatives; 80 s formula with exact derivatives. `make_turn_factors` is then 60 % of the samples
+(macOS `sample`); its reverse pass is written with small arrays, and writing it out in scalars as
+the forward pass is would be the next saving.
 
 **Documents.** `REPORT_ON_TC_TLS.md` was over GitHub's limit on math (396 expressions before
 today's additions). Sections 6 to 8 moved to `REPORT_ON_TC_TLS_AVERAGES.md` with their section

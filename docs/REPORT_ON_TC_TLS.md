@@ -560,7 +560,7 @@ four rows and to 1e-7 for the rest:
   the derivatives with respect to $`\Sigma`$ would be out by 34 % of the largest when the formula
   is on, and the refinement then stops at GoF 3.3586 instead of 3.3337.
 - **Time**, def2-SVP, one core, for the whole job with its SCFs: 19 seconds for `center`, and
-  86 seconds with the rigid-body average by formula. The numerical rigid-body average with
+  80 seconds with the rigid-body average by formula. The numerical rigid-body average with
   seven points takes 12 minutes.
 
 ### Glycyl-L-alanine
@@ -576,16 +576,17 @@ last two. They are neither among the stiff modes nor refined.
 | `tc-tls` | 3.6131 | 0.0354 | 3.5750 | 0.0347 |
 | `tc-tls`, rigid-body motion averaged, 3 points | 3.6054 | 0.0354 | 3.5689 | 0.0347 |
 | `tc-tls`, rigid-body motion averaged, 5 points | 3.6039 | 0.0354 | | |
-| `tc-tls`, rigid-body motion averaged by formula | 3.6042 | 0.0354 | | |
+| `tc-tls`, rigid-body motion averaged by formula | 3.6042 | 0.0354 | 3.5673 | 0.0347 |
 
 - **The two smearings differ much less than in urea**: `tc-tls` is 0.02 above Hirshfeld atoms in
   GoF at both basis sets, against 0.17.
 - **Averaging the rigid-body motion recovers a third to a half of that**: 0.006 of 0.018 at
   def2-TZVP with three points, 0.009 of 0.019 at def2-SVP with five. At def2-SVP three and five
   points agree to 0.002: a larger molecule librates less, and the rule is adequate.
-- **The formula gives the same as the numerical average here**, 3.6042 against 3.6039 at
-  def2-SVP, and `tc-tls` stays 0.010 above Hirshfeld atoms. The gain over Hirshfeld atoms
-  found for urea is not found for this molecule.
+- **The formula gives nearly the same as the numerical average here**: 3.6042 against 3.6039 at
+  def2-SVP, and 3.5673 against 3.5689 with three points at def2-TZVP. `tc-tls` stays 0.010
+  above Hirshfeld atoms at both basis sets. The gain over Hirshfeld atoms found for urea is not
+  found for this molecule.
 
 ## 12. Urea: against the multi-temperature analysis of Capelli, Förtsch and Bürgi
 
