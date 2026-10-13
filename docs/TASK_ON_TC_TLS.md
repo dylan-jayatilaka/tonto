@@ -578,6 +578,10 @@ the printed factors; not checked by a run with (26) coded.
 Written 2026-10-13 after the profile in the log of §9. Each step has a check that must pass
 before the next; every step keeps F the same to rounding unless it says otherwise.
 
+**Status, 2026-10-13:** steps 1, 2, 4 and 5 are done and step 3 was not needed; what was done
+differs from the text below in places. See the log entry *the faster kernel, the rigid-body
+average by formula, and its exact derivatives*. Step 6 is open.
+
 **Step 1. The derivative routine** (`MOLECULE.XTAL:make_FT_and_TLS_derivs`). Sum $`s_0, s_1, s_2`$ over
 the shell pairs of each atom pair into three arrays (n_k, n_atom_pairs), and contract with Sigma
 once per atom pair after the loop; make $`B^{A\dagger}\mathbf{k}`$ once per atom. Memory n_k x 3 x
@@ -895,3 +899,74 @@ Not done: a debug build since the difference code went in; the test suite; def2-
 - **The usual HAR with a free ADP on every atom**, for the GoF that the TLS restriction costs.
   The count is 27 parameters for urea and 181 for gly-L-ala, against 17 and 81 with TLS; the 27
   and 181 are counted by hand, not read from a run.
+
+### 2026-10-13: the faster kernel, the rigid-body average by formula, and its exact derivatives
+
+Dylan: "go ahead with the speedup plan and the analytical integration". What was done against
+the plan of §11, in `build-tc/`:
+
+**Steps 1 and 2, done differently from the plan.** A new kernel in `SHELL2`
+(`make_TLS_prefactors`, `make_FT_TLS`, `make_FT_TLS_moments`, `make_FT_TLS_c`,
+`make_ft_polynomials`) replaces the three calls of the old `make_ft` per shell pair:
+- one complex exponential per pair of primitives and k, holding the phase, the Gaussian and the
+  temperature factor together;
+- the powers of k made once per shell pair, the E coefficients once per pair of primitives;
+- the density matrix block traced inside the kernel, so `s_0`, `s_1`, `s_2` come out of one pass
+  (a spherical block is first turned into the block for Cartesian components);
+- the Sigma derivatives contracted once per atom pair (`MOLECULE.XTAL:add_TLS_sigma_derivs`),
+  with B^T k made once per atom.
+The whole urea def2-SVP `tc-tls` job (SCFs included) went from 33.2 s to 18.7 s with the same
+output (GoF 3.6578; only the printing of exact zeros differs). A first version that kept the
+matrix of every pair of components and added it three times was *slower* than the hand-written
+branches for s and p it replaced; tracing with the density matrix inside is what pays.
+Not done: the phase tables in the integer indices (plan step 2a). With the average by formula
+the phase gets a term that is not a product over the three indices, so a complex exponential is
+needed anyway. Tried and taken out again: sorting the k points by length so that a pair of
+diffuse primitives stops early (threshold e^-40) saved 1-4 % on urea, whose data reach
+9.6 bohr^-1.
+`make_TLS_TFs`, `scale_TFs_by_shift`, `make_pair_TFs` and `make_FT_pair_moments` are deleted.
+
+**Step 3, not needed.** The polynomials are not the cost.
+
+**Step 4, the average by formula** (`tc_analytic_rigid_body=`; `SHELL2:make_turn_factors`). Coded
+as the cheap form first, as planned: urea def2-SVP GoF 3.3633. The full second-order form
+reduces to 3x3 (TeX notes section 9.6; report equations (40) to (43)): GoF 3.3586 with the
+first-order Sigma derivatives. The cheap form is not kept.
+- **It does not reproduce the numerical target, and the target was wrong.** Plan: GoF 3.4483.
+  `check_two_center_average` (new keyword) compares the two corrections to F at the refined
+  Sigma: same RMS size, 0.0126, RMS difference 0.0028; below 2 bohr^-1, 0.0253 and 0.0013. The
+  numerical average takes the principal coordinates of Sigma one at a time, and that misses
+  second-order cross terms: with the complex weight the mean of each coordinate is not zero, so
+  the product of two different coordinates does not average to zero. Python, one p-p product
+  against the true three-dimensional average (`fast/` log; table in the TeX notes): one at a
+  time is within 1-4 % of the correction up to 2 bohr^-1 and out by up to 41 % at 4-6 bohr^-1;
+  the formula is within 2-4 %. So the numbers quoted earlier for the converged numerical
+  average (3.4483, 3.1148) carry this error.
+
+**Step 5, exact derivatives.** With the formula on, `check_two_center_derivs` (extended to
+change L and <lambda u^T> with Sigma) gave an error of 34 % of the largest Sigma derivative: the
+first-order derivative holds the rotation average fixed. Not small, as I had guessed. Done by
+reverse differentiation of the 3x3 algebra in `make_turn_factors` (prototype in Python checked
+against central differences to 1e-9; TeX notes section 9.7), giving for each term its
+derivative with respect to y (3) and L (6); these are summed per atom pair with weights 1 and
+w_A and contracted in `add_TLS_sigma_derivs` (report equations (44), (45)). Check: 1.9e-8, on
+the first build. The refinement then ends lower: urea def2-SVP 3.3586 -> **3.3337**.
+
+**Results** (GoF; Hirshfeld / first order / numerical 7 points / formula):
+- urea def2-SVP: 3.4855 / 3.6578 / 3.4483 / **3.3337**; C=O 1.2635, C-N 1.3482, N-H 1.030, 0.988 A.
+- urea def2-TZVP: 3.0570 / 3.2369 / 3.1148 / **2.9503**.
+- gly-L-ala def2-SVP: 3.5940 / 3.6131 / 3.6039 (5 points) / **3.6042**.
+So with the formula `tc-tls` fits urea better than Hirshfeld atoms at both basis sets (by 0.15
+and 0.11), and gly-L-ala slightly worse (0.010). Not shown: that this holds for other molecules.
+
+**Time**, urea def2-SVP whole job, one core: 19 s first order; 49 s formula with first-order
+derivatives; 86 s formula with exact derivatives. The reverse pass is written with small arrays
+and has not been profiled; `make_turn_factors` was 30 % of the samples before it was added.
+
+**Documents.** `REPORT_ON_TC_TLS.md` was over GitHub's limit on math (396 expressions before
+today's additions). Sections 6 to 8 moved to `REPORT_ON_TC_TLS_AVERAGES.md` with their section
+and equation numbers kept; the two pages now have 298 and 203 expressions and both render.
+
+**Open.** Position derivatives with the formula are still `center` (13 % left out). Debug build
+and suite; tests; re-blessing (plan step 6). The matrix path `make_FT_TLS` (used by the complex
+density and X-ray constrained routines) is not timed and with the formula on is slow.

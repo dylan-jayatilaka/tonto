@@ -2488,11 +2488,11 @@ contains
 
    end
 
-   make_temperature_factors(TF,model,k_pts,ADP_a,ADP_b,ADP_ab) :: PURE
+   make_temperature_factors(TF,model,k_pts,ADP_a,ADP_b) :: PURE
    ! Makes the temperature factors "TF" for a given "model" over all
    ! pairs of gaussians, using ADPs "ADP_a" and ADP_b" for the atoms
-   ! on which the pair of gaussians is centred. Model "tc-tls" also
-   ! needs "ADP_ab", the covariance <u_a u_b^T> of their displacements.
+   ! on which the pair of gaussians is centred. Model "tc-tls" is not
+   ! here: its factors are made by make_TLS_prefactors.
    ! See Jayatilaka & Grimwood (2001) Acta Cryst A 57 p76-86 sec 4.2.
       self  :: IN
       TF    :: MAT3{REAL}, OUT
@@ -2500,7 +2500,6 @@ contains
       k_pts :: MAT{REAL}, IN
       ADP_a :: MAT{REAL}(3,3), IN
       ADP_b :: MAT{REAL}(3,3), IN
-      ADP_ab :: MAT{REAL}(3,3), optional, IN
 
    ENSURE(TF.dim1==k_pts.dim1,"wrong dim2, TF")
    ENSURE(TF.dim2==.a.n_cc,"wrong dim2, TF")
@@ -2543,11 +2542,6 @@ contains
       case ("tc-tanaka ") 
          ! tf=exp[-HALF S (Ua*alpha + Ub*beta)/gamma S]
          .make_Tanaka_TFs(TF,k_pts,ADP_a,ADP_b)
-
-      case ("tc-tls    ")
-         ! tf=exp[-HALF S (Ua wa^2 + Ub wb^2 + (Uab+Uab^T) wa wb) S]
-         STOP_IF(NOT present(ADP_ab),"tc-tls needs ADP_ab")
-         .make_TLS_TFs(TF,k_pts,ADP_a,ADP_b,ADP_ab)
 
       end
 
@@ -4850,92 +4844,773 @@ contains
 
    end
 
-   make_TLS_TFs(TF,k_pts,Ua,Ub,Uab) :: pure
-   ! Make the two-center temperature factors "TF" for each pair of
-   ! gaussian primitives when the atoms move together: "Ua" and "Ub" are
-   ! the ADPs on each center and "Uab" the covariance <u_a u_b^T> of
-   ! their displacements. The product of primitives with exponents ea and
-   ! eb is centred at wa*A + wb*B, wa = ea/(ea+eb), wb = eb/(ea+eb), and
-   ! is smeared by the mean-square displacement of that point,
-   !    U = wa^2 Ua + wb^2 Ub + wa wb (Uab + Uab^T).
-   ! See docs/REPORT_ON_TC_TLS.md section 3.
+   make_TLS_prefactors(pre,wt,k_pts,part,Ua,Ub,Uab) :: PURE
+   ! Make "pre(k,i)", every scalar factor of the Fourier transform of
+   ! the pair of gaussian primitives "i" at the points "k_pts", for atoms
+   ! that move together:
+   !    pre = pi^(3/2) c_i part exp(-k^2/4g - k.U.k/2) exp(i k.P)
+   ! where c_i is the contraction prefactor, "part" the partition factor,
+   ! g the sum of the two exponents, P the centre of the product, and
+   !    U = wa^2 Ua + wb^2 Ub + wa wb (Uab + Uab^T),  wa = ea/(ea+eb),
+   ! from the ADPs "Ua", "Ub" and the covariance "Uab" of the two
+   ! displacements. "wt(i)" is wa. The order of "i" is primitives of
+   ! shell a in the inner loop. See docs/REPORT_ON_TC_TLS.md.
       self  :: IN
-      TF    :: MAT3{REAL}, OUT
+      pre   :: MAT{CPX}, OUT
+      wt    :: VEC{REAL}, OUT
       k_pts :: MAT{REAL}, IN
+      part  :: MAT{REAL}, IN
       Ua,Ub,Uab :: MAT{REAL}, IN
 
-      U,Uc :: MAT{REAL}(3,3)
-      ea,eb,wa,wb :: REAL
-      U11,U22,U33 :: REAL
-      U21_12      :: REAL
-      U31_13      :: REAL
-      U32_23      :: REAL
-      S1, S2, S3  :: REAL
-      a,b,k,k_max :: INT
+      k2,qa,qb,qc :: VEC{REAL}@
+      Uc :: MAT{REAL}(3,3)
+      p :: VEC{REAL}(3)
+      pi32,ea,eb,wa,wb,g4,fac,kx,ky,kz,re,ph :: REAL
+      a,b,i,k,k_max :: INT
 
+      pi32  = sqrt(PI)*PI
       k_max = size(k_pts,1)
+
+      ! What depends only on k
+      k2.create(k_max); qa.create(k_max); qb.create(k_max); qc.create(k_max)
       Uc = Uab + transpose(Uab)
+      do k = 1,k_max
+         kx = k_pts(k,1); ky = k_pts(k,2); kz = k_pts(k,3)
+         k2(k) = kx*kx + ky*ky + kz*kz
+         qa(k) = kx*(kx*Ua(1,1)+TWO*ky*Ua(2,1)+TWO*kz*Ua(3,1)) + ky*(ky*Ua(2,2)+TWO*kz*Ua(3,2)) + kz*kz*Ua(3,3)
+         qb(k) = kx*(kx*Ub(1,1)+TWO*ky*Ub(2,1)+TWO*kz*Ub(3,1)) + ky*(ky*Ub(2,2)+TWO*kz*Ub(3,2)) + kz*kz*Ub(3,3)
+         qc(k) = kx*(kx*Uc(1,1)+TWO*ky*Uc(2,1)+TWO*kz*Uc(3,1)) + ky*(ky*Uc(2,2)+TWO*kz*Uc(3,2)) + kz*kz*Uc(3,3)
+      end
 
-      do a = 1, .a.n_cc
-
-         ea = .a.exponent(a)
-
-         do b = 1, .b.n_cc
-
-            eb = .b.exponent(b)
+      ! Each pair of primitives: the Gaussian, the temperature factor
+      ! and the phase
+      i = 0
+      do b = 1,.b.n_cc
+         eb = .b.exponent(b)
+         do a = 1,.a.n_cc
+            ea = .a.exponent(a)
+            i  = i + 1
             wa = ea/(ea + eb)
             wb = eb/(ea + eb)
-
-            U = - HALF * (wa*wa*Ua + wb*wb*Ub + wa*wb*Uc)
-
-            U11    = U(1,1)
-            U22    = U(2,2)
-            U33    = U(3,3)
-            U21_12 = U(2,1) + U(1,2)
-            U31_13 = U(3,1) + U(1,3)
-            U32_23 = U(3,2) + U(2,3)
-
+            wt(i) = wa
+            g4  = QUARTER*.exponent_inv(i)
+            fac = pi32*.contraction_prefactor(i)*part(a,b)
+            p   = .pair_center(:,i)
             do k = 1,k_max
+               re = -g4*k2(k) - HALF*(wa*wa*qa(k) + wb*wb*qb(k) + wa*wb*qc(k))
+               ph = k_pts(k,1)*p(1) + k_pts(k,2)*p(2) + k_pts(k,3)*p(3)
+               pre(k,i) = fac*exp(cmplx(re,ph,kind=CPX_KIND))
+            end
+         end
+      end
 
-               S1 = k_pts(k,1)
-               S2 = k_pts(k,2)
-               S3 = k_pts(k,3)
+      qc.destroy; qb.destroy; qa.destroy; k2.destroy
 
-               ! S.U.S has been expanded to save multiplies and array accesses.
-               TF(k,a,b) = exp(S1*(S1*U11+S2*U21_12+S3*U31_13)+S2*(S2*U22+S3*U32_23)+S3*S3*U33)
+   end
 
+   make_turn_factors(efac,qv,Ym,k_pts,p,Gm,Lm,with_poly,t,gy,gL) :: pure
+   ! For one product of gaussian primitives in a rigid body, make what
+   ! its average over the rotation of the body needs, to second order in
+   ! the rotation vector lambda, at each of the "k_pts". "p" is the
+   ! centre of the product from the point the body turns about, "Gm"
+   ! the covariance <lambda u^T> of lambda with the displacement u of
+   ! that centre, and "Lm" is <lambda lambda^T>. With
+   !    M = (k p^T + p k^T)/2 - (k.p) 1,  D = (1 - i Lm.M)^-1,
+   !    y = Gm.k,  W = D.Lm - (D.y)(D.y)^T,
+   ! - "efac" multiplies the first-order transform, for the curvature of
+   !   the path of the centre: det(1 - i Lm.M)^(-1/2) exp(-i y.M.D.y/2).
+   ! - "qv" and "Ym", made only if "with_poly", go with the first and
+   !   second derivatives of the polynomial part of the transform with
+   !   respect to k, for the turning of the product about its centre:
+   !      qv = i k x (D.y) + [ W.k - tr(W) k ]/2
+   !      Ym = X.W.X^T/2,  X v = k x v,
+   !   "Ym" in the order xx, yy, zz, xy, xz, yz with the last three
+   !   doubled.
+   ! The averaged transform of the product is then, apart from scalar
+   ! factors, f = efac*S, where S = t(k,1) if not "with_poly", and
+   ! otherwise S = t(k,1) + sum_j qv(k,j) t(k,1+j) + sum_j Ym(k,j) t(k,4+j)
+   ! with "t(k,1)" the polynomial part and "t(k,2:10)" its first and
+   ! second derivatives. If "t", "gy" and "gL" are present, "gy(k,:)" is
+   ! the derivative of f with respect to y, and "gL(k,:)" with respect
+   ! to Lm, in the order xx, yy, zz, xy, xz, yz, an off-diagonal one
+   ! being for both elements together. They are made by working back
+   ! through the steps that make f.
+   ! See docs/REPORT_ON_TC_TLS_AVERAGES.md section 8.
+      self  :: IN
+      efac  :: VEC{CPX}, OUT
+      qv,Ym :: MAT{CPX}, OUT
+      k_pts :: MAT{REAL}, IN
+      p     :: VEC{REAL}(3), IN
+      Gm,Lm :: MAT{REAL}(3,3), IN
+      with_poly :: BIN, IN
+      t     :: MAT{CPX}, optional, IN
+      gy,gL :: MAT{CPX}, optional, OUT
+
+      a11,a12,a13,a21,a22,a23,a31,a32,a33 :: CPX
+      d11,d12,d13,d21,d22,d23,d31,d32,d33 :: CPX
+      w11,w12,w13,w22,w23,w33 :: CPX
+      t11,t12,t13,t21,t22,t23,t31,t32 :: CPX
+      v1,v2,v3,u1,u2,u3,rdet,trW :: CPX
+      im,sval,ug,qk,pv,kdv :: CPX
+      Dm,Dg,Lg,Gw,wg,Hg,Tm,MxD,Ag :: MAT{CPX}(3,3)
+      vv,vg,qg,yg,Mv,pD,kD,Ak,Ap :: VEC{CPX}(3)
+      Lp,kv,yv,My :: VEC{REAL}(3)
+      k1,k2,k3,y1,y2,y3,h1,h2,h3,kp,yk,yp :: REAL
+      k,m,n,j :: INT
+      with_grad :: BIN
+
+      im = cmplx(ZERO,ONE,kind=CPX_KIND)
+      Lp = matmul(Lm,p)
+      with_grad = present(t) AND present(gy) AND present(gL)
+
+      do k = 1,size(k_pts,1)
+
+         k1 = k_pts(k,1); k2 = k_pts(k,2); k3 = k_pts(k,3)
+         y1 = Gm(1,1)*k1 + Gm(1,2)*k2 + Gm(1,3)*k3
+         y2 = Gm(2,1)*k1 + Gm(2,2)*k2 + Gm(2,3)*k3
+         y3 = Gm(3,1)*k1 + Gm(3,2)*k2 + Gm(3,3)*k3
+         kp = k1*p(1) + k2*p(2) + k3*p(3)
+         yk = y1*k1 + y2*k2 + y3*k3
+         yp = y1*p(1) + y2*p(2) + y3*p(3)
+
+         ! A = 1 - i Lm.M, where Lm.M = [ (Lm.k) p^T + (Lm.p) k^T ]/2 - (k.p) Lm
+         h1 = HALF*(Lm(1,1)*k1 + Lm(1,2)*k2 + Lm(1,3)*k3)
+         h2 = HALF*(Lm(2,1)*k1 + Lm(2,2)*k2 + Lm(2,3)*k3)
+         h3 = HALF*(Lm(3,1)*k1 + Lm(3,2)*k2 + Lm(3,3)*k3)
+         a11 = cmplx(ONE, -(h1*p(1) + HALF*Lp(1)*k1 - kp*Lm(1,1)),kind=CPX_KIND)
+         a12 = cmplx(ZERO,-(h1*p(2) + HALF*Lp(1)*k2 - kp*Lm(1,2)),kind=CPX_KIND)
+         a13 = cmplx(ZERO,-(h1*p(3) + HALF*Lp(1)*k3 - kp*Lm(1,3)),kind=CPX_KIND)
+         a21 = cmplx(ZERO,-(h2*p(1) + HALF*Lp(2)*k1 - kp*Lm(2,1)),kind=CPX_KIND)
+         a22 = cmplx(ONE, -(h2*p(2) + HALF*Lp(2)*k2 - kp*Lm(2,2)),kind=CPX_KIND)
+         a23 = cmplx(ZERO,-(h2*p(3) + HALF*Lp(2)*k3 - kp*Lm(2,3)),kind=CPX_KIND)
+         a31 = cmplx(ZERO,-(h3*p(1) + HALF*Lp(3)*k1 - kp*Lm(3,1)),kind=CPX_KIND)
+         a32 = cmplx(ZERO,-(h3*p(2) + HALF*Lp(3)*k2 - kp*Lm(3,2)),kind=CPX_KIND)
+         a33 = cmplx(ONE, -(h3*p(3) + HALF*Lp(3)*k3 - kp*Lm(3,3)),kind=CPX_KIND)
+
+         ! D, the inverse of A, by cofactors
+         d11 = a22*a33 - a23*a32
+         d21 = a23*a31 - a21*a33
+         d31 = a21*a32 - a22*a31
+         d12 = a13*a32 - a12*a33
+         d22 = a11*a33 - a13*a31
+         d32 = a12*a31 - a11*a32
+         d13 = a12*a23 - a13*a22
+         d23 = a13*a21 - a11*a23
+         d33 = a11*a22 - a12*a21
+         rdet = ONE/(a11*d11 + a12*d21 + a13*d31)
+         d11 = d11*rdet; d12 = d12*rdet; d13 = d13*rdet
+         d21 = d21*rdet; d22 = d22*rdet; d23 = d23*rdet
+         d31 = d31*rdet; d32 = d32*rdet; d33 = d33*rdet
+
+         ! v = D.y, and the factor for the curvature of the path, with
+         ! y.M.v = [ (y.k)(p.v) + (y.p)(k.v) ]/2 - (k.p)(y.v)
+         v1 = d11*y1 + d12*y2 + d13*y3
+         v2 = d21*y1 + d22*y2 + d23*y3
+         v3 = d31*y1 + d32*y2 + d33*y3
+         u1 = HALF*yk*(p(1)*v1 + p(2)*v2 + p(3)*v3) + HALF*yp*(k1*v1 + k2*v2 + k3*v3) - kp*(y1*v1 + y2*v2 + y3*v3)
+         efac(k) = exp(-HALF*im*u1)*sqrt(rdet)
+
+         if (with_poly) then
+
+            ! W = D.Lm - v v^T, which is symmetric
+            w11 = d11*Lm(1,1) + d12*Lm(2,1) + d13*Lm(3,1) - v1*v1
+            w12 = d11*Lm(1,2) + d12*Lm(2,2) + d13*Lm(3,2) - v1*v2
+            w13 = d11*Lm(1,3) + d12*Lm(2,3) + d13*Lm(3,3) - v1*v3
+            w22 = d21*Lm(1,2) + d22*Lm(2,2) + d23*Lm(3,2) - v2*v2
+            w23 = d21*Lm(1,3) + d22*Lm(2,3) + d23*Lm(3,3) - v2*v3
+            w33 = d31*Lm(1,3) + d32*Lm(2,3) + d33*Lm(3,3) - v3*v3
+            trW = w11 + w22 + w33
+
+            ! qv = i k x v + [ W.k - tr(W) k ]/2
+            u1 = w11*k1 + w12*k2 + w13*k3
+            u2 = w12*k1 + w22*k2 + w23*k3
+            u3 = w13*k1 + w23*k2 + w33*k3
+            qv(k,1) = im*(k2*v3 - k3*v2) + HALF*(u1 - trW*k1)
+            qv(k,2) = im*(k3*v1 - k1*v3) + HALF*(u2 - trW*k2)
+            qv(k,3) = im*(k1*v2 - k2*v1) + HALF*(u3 - trW*k3)
+
+            ! Ym: T = X.W column by column, then X.W.X^T = T.X^T row by row
+            t11 = k2*w13 - k3*w12; t12 = k2*w23 - k3*w22; t13 = k2*w33 - k3*w23
+            t21 = k3*w11 - k1*w13; t22 = k3*w12 - k1*w23; t23 = k3*w13 - k1*w33
+            t31 = k1*w12 - k2*w11; t32 = k1*w22 - k2*w12
+            Ym(k,1) = HALF*(k2*t13 - k3*t12)
+            Ym(k,2) = HALF*(k3*t21 - k1*t23)
+            Ym(k,3) = HALF*(k1*t32 - k2*t31)
+            Ym(k,4) = k3*t11 - k1*t13
+            Ym(k,5) = k1*t12 - k2*t11
+            Ym(k,6) = k1*t22 - k2*t21
+
+         end
+
+         if (NOT with_grad) cycle
+
+         ! The derivatives of f = efac*S, working back from f. A name
+         ! ending in g is the derivative of f with respect to the
+         ! quantity of that name.
+         kv = [k1,k2,k3]
+         yv = [y1,y2,y3]
+         vv = [v1,v2,v3]
+         Dm = reshape([d11,d21,d31,d12,d22,d32,d13,d23,d33],[3,3])
+         vg = ZERO
+         Dg = ZERO
+         Lg = ZERO
+         sval = t(k,1)
+
+         if (with_poly) then
+
+            sval = sval + qv(k,1)*t(k,2) + qv(k,2)*t(k,3) + qv(k,3)*t(k,4) &
+                        + Ym(k,1)*t(k,5) + Ym(k,2)*t(k,6) + Ym(k,3)*t(k,7) &
+                        + Ym(k,4)*t(k,8) + Ym(k,5)*t(k,9) + Ym(k,6)*t(k,10)
+
+            ! From S back to qv and Ym
+            qg = efac(k)*t(k,2:4)
+            Hg(1,1) = efac(k)*t(k,5)
+            Hg(2,2) = efac(k)*t(k,6)
+            Hg(3,3) = efac(k)*t(k,7)
+            Hg(1,2) = efac(k)*t(k,8);  Hg(2,1) = Hg(1,2)
+            Hg(1,3) = efac(k)*t(k,9);  Hg(3,1) = Hg(1,3)
+            Hg(2,3) = efac(k)*t(k,10); Hg(3,2) = Hg(2,3)
+
+            ! From qv and Ym back to W: X.Hg.X^T/2 + [ qg k^T - (qg.k) 1 ]/2
+            do n = 1,3
+               Tm(1,n) = k2*Hg(3,n) - k3*Hg(2,n)
+               Tm(2,n) = k3*Hg(1,n) - k1*Hg(3,n)
+               Tm(3,n) = k1*Hg(2,n) - k2*Hg(1,n)
+            end
+            qk = qg(1)*k1 + qg(2)*k2 + qg(3)*k3
+            do m = 1,3
+               Gw(m,1) = HALF*(k2*Tm(m,3) - k3*Tm(m,2) + qg(m)*k1)
+               Gw(m,2) = HALF*(k3*Tm(m,1) - k1*Tm(m,3) + qg(m)*k2)
+               Gw(m,3) = HALF*(k1*Tm(m,2) - k2*Tm(m,1) + qg(m)*k3)
+               Gw(m,m) = Gw(m,m) - HALF*qk
+            end
+
+            ! Only the upper triangle of W was made
+            wg = ZERO
+            do m = 1,3
+               wg(m,m) = Gw(m,m)
+               do n = m+1,3
+                  wg(m,n) = Gw(m,n) + Gw(n,m)
+               end
+            end
+
+            ! From qv back to v, and from W back to D, Lm and v
+            vg(1) = im*(qg(2)*k3 - qg(3)*k2)
+            vg(2) = im*(qg(3)*k1 - qg(1)*k3)
+            vg(3) = im*(qg(1)*k2 - qg(2)*k1)
+            do m = 1,3
+            do n = m,3
+               Dg(m,:) = Dg(m,:) + wg(m,n)*Lm(:,n)
+               Lg(:,n) = Lg(:,n) + wg(m,n)*Dm(m,:)
+               vg(m)   = vg(m)   - wg(m,n)*vv(n)
+               vg(n)   = vg(n)   - wg(m,n)*vv(m)
+            end
             end
 
          end
+
+         ! From efac back to Lm, through the determinant, and to the
+         ! exponent u = y.M.v. M.D = [ k (p.D) + p (k.D) ]/2 - (k.p) D.
+         do j = 1,3
+            pD(j) = p(1)*Dm(1,j) + p(2)*Dm(2,j) + p(3)*Dm(3,j)
+            kD(j) = k1*Dm(1,j) + k2*Dm(2,j) + k3*Dm(3,j)
+         end
+         do j = 1,3
+         do n = 1,3
+            MxD(n,j) = HALF*(kv(n)*pD(j) + p(n)*kD(j)) - kp*Dm(n,j)
+            Lg(j,n)  = Lg(j,n) + HALF*im*sval*efac(k)*MxD(n,j)
+         end
+         end
+         ug = -HALF*im*sval*efac(k)
+
+         ! From u back to y and v
+         pv  = p(1)*v1 + p(2)*v2 + p(3)*v3
+         kdv = k1*v1 + k2*v2 + k3*v3
+         Mv  = HALF*(kv*pv + p*kdv) - kp*vv
+         My  = HALF*(kv*yp + p*yk) - kp*yv
+         yg  = ug*Mv
+         vg  = vg + ug*My
+
+         ! From v = D.y back to D and y
+         do j = 1,3
+            Dg(:,j) = Dg(:,j) + vg*yv(j)
+            yg(j)   = yg(j) + Dm(1,j)*vg(1) + Dm(2,j)*vg(2) + Dm(3,j)*vg(3)
+         end
+
+         ! From D = A^-1 back to A = 1 - i Lm.M, and to Lm
+         Ag = -matmul(transpose(Dm),matmul(Dg,transpose(Dm)))
+         Ak = Ag(:,1)*k1 + Ag(:,2)*k2 + Ag(:,3)*k3
+         Ap = Ag(:,1)*p(1) + Ag(:,2)*p(2) + Ag(:,3)*p(3)
+         do n = 1,3
+            Lg(:,n) = Lg(:,n) - im*(HALF*(Ak*p(n) + Ap*kv(n)) - kp*Ag(:,n))
+         end
+
+         gy(k,:) = yg
+         gL(k,1) = Lg(1,1)
+         gL(k,2) = Lg(2,2)
+         gL(k,3) = Lg(3,3)
+         gL(k,4) = Lg(1,2) + Lg(2,1)
+         gL(k,5) = Lg(1,3) + Lg(3,1)
+         gL(k,6) = Lg(2,3) + Lg(3,2)
 
       end
 
    end
 
-   scale_TFs_by_shift(TF,k_pts,da,db) :: pure
-   ! Multiply the temperature factors "TF" of each pair of gaussian
-   ! primitives by cos(k.d), where d = wa*da + wb*db is the displacement
-   ! of the centre of their product when the two centers are displaced
-   ! by "da" and "db", wa = ea/(ea+eb), wb = eb/(ea+eb). This is the
-   ! average of the phase factor over displacements +d and -d.
+   scale_prefactors_by_shift(pre,k_pts,da,db) :: pure
+   ! Multiply the factors "pre(k,i)" of each pair of gaussian primitives
+   ! "i", from make_TLS_prefactors, by cos(k.d), where d = wa*da + wb*db
+   ! is the displacement of the centre of their product when the two
+   ! centers are displaced by "da" and "db". This is the average of the
+   ! phase factor over displacements +d and -d.
       self  :: IN
-      TF    :: MAT3{REAL}, INOUT
+      pre   :: MAT{CPX}, INOUT
       k_pts :: MAT{REAL}, IN
       da,db :: VEC{REAL}(3), IN
 
       d :: VEC{REAL}(3)
       ea,eb :: REAL
-      a,b,k :: INT
+      a,b,i,k :: INT
 
-      do a = 1, .a.n_cc
-         ea = .a.exponent(a)
-         do b = 1, .b.n_cc
-            eb = .b.exponent(b)
+      i = 0
+      do b = 1,.b.n_cc
+         eb = .b.exponent(b)
+         do a = 1,.a.n_cc
+            ea = .a.exponent(a)
+            i  = i + 1
             d  = (ea*da + eb*db)/(ea + eb)
             do k = 1,size(k_pts,1)
-               TF(k,a,b) = TF(k,a,b)*cos(k_pts(k,1)*d(1) + k_pts(k,2)*d(2) + k_pts(k,3)*d(3))
+               pre(k,i) = pre(k,i)*cos(k_pts(k,1)*d(1) + k_pts(k,2)*d(2) + k_pts(k,3)*d(3))
             end
          end
+      end
+
+   end
+
+   make_FT_TLS(res,k_pts,pre,turned,Ga,Gb,Lm,origin) :: PURE
+   ! Make "res", the Fourier transform of this pair of contracted
+   ! shells at the "k_pts", from "pre(k,i)", the scalar factors of each
+   ! pair of primitives "i" made by make_TLS_prefactors. If "turned"
+   ! each product of primitives is averaged over the rotation of the
+   ! rigid body to second order in the rotation vector lambda: "Ga" and
+   ! "Gb" are the covariances <lambda u^T> of lambda with the
+   ! displacements of the two centers, "Lm" is <lambda lambda^T>, and
+   ! "origin" the point the body turns about; see make_FT_TLS_c.
+      self  :: IN
+      res   :: MAT3{CPX}, OUT
+      k_pts :: MAT{REAL}, IN
+      pre   :: MAT{CPX}, IN
+      turned :: BIN, IN
+      Ga,Gb,Lm :: MAT{REAL}(3,3), IN
+      origin :: VEC{REAL}(3), IN
+
+   ENSURE(res.dim1==k_pts.dim1,"incompatible dim1, res and k_pts")
+   ENSURE(pre.dim1==k_pts.dim1,"incompatible dim1, pre and k_pts")
+   ENSURE(pre.dim2==.n_gaussian_pairs,"wrong dim2, pre")
+
+      W :: MAT3{CPX}@
+      k,k_max :: INT
+
+      k_max = k_pts.dim1
+
+      if (NOT .is_spherical OR .l_max<2) then
+
+         ! Cartesian, or spherical s and p
+         .make_FT_TLS_c(k_pts,pre,turned,Ga,Gb,Lm,origin,res=res)
+
+      else
+
+         ! Spherical general
+         W.create(k_max,.a.n_comp,.b.n_comp)
+         .make_FT_TLS_c(k_pts,pre,turned,Ga,Gb,Lm,origin,res=W)
+         do k = 1,k_max
+            .change_to_spherical(W(k,:,:),res(k,:,:))
+         end
+         W.destroy
+
+      end
+
+   end
+
+   make_FT_TLS_moments(s0,s1,s2,dens,k_pts,pre,wt,turned,Ga,Gb,Lm,origin,ry0,ry1,rL) :: PURE
+   ! As make_FT_TLS, traced with the block "dens" of the density matrix
+   ! for this pair of shells: "s0" is the trace at each of the "k_pts",
+   ! and "s1" and "s2" are the same with each pair of primitives "i"
+   ! weighted by "wt(i)" and its square. If present, "ry0", "ry1" and
+   ! "rL" are for the derivatives of "s0" with respect to the rigid-body
+   ! covariance, beyond those that come through the temperature factor;
+   ! see make_FT_TLS_c.
+      self  :: IN
+      s0,s1,s2 :: VEC{CPX}, OUT
+      dens  :: MAT{REAL}, IN
+      k_pts :: MAT{REAL}, IN
+      pre   :: MAT{CPX}, IN
+      wt    :: VEC{REAL}, IN
+      turned :: BIN, IN
+      Ga,Gb,Lm :: MAT{REAL}(3,3), IN
+      origin :: VEC{REAL}(3), IN
+      ry0,ry1,rL :: MAT{CPX}, optional, OUT
+
+   ENSURE(s0.dim==k_pts.dim1,"incompatible dim, s0 and k_pts")
+   ENSURE(pre.dim1==k_pts.dim1,"incompatible dim1, pre and k_pts")
+   ENSURE(pre.dim2==.n_gaussian_pairs,"wrong dim2, pre")
+   ENSURE(wt.dim==.n_gaussian_pairs,"wrong dim, wt")
+
+      Dc,Sa,Sb :: MAT{REAL}@
+
+      if (NOT .is_spherical OR .l_max<2) then
+
+         ! Cartesian, or spherical s and p
+         .make_FT_TLS_c(k_pts,pre,turned,Ga,Gb,Lm,origin,dens=dens,wt=wt,s0=s0,s1=s1,s2=s2,ry0=ry0,ry1=ry1,rL=rL)
+
+      else
+
+         ! Spherical general: the density block for cartesian components
+         Dc.create(.a.n_comp,.b.n_comp)
+         if (.a.l>=2 AND .b.l>=2) then
+            Sa = GAUSSIAN_DATA::spherical_harmonics_for(.a.l).element
+            Sb = GAUSSIAN_DATA::spherical_harmonics_for(.b.l).element
+            Dc = matmul(matmul(Sa,dens),transpose(Sb))
+         else if (.b.l>=2) then
+            Sb = GAUSSIAN_DATA::spherical_harmonics_for(.b.l).element
+            Dc = matmul(dens,transpose(Sb))
+         else
+            Sa = GAUSSIAN_DATA::spherical_harmonics_for(.a.l).element
+            Dc = matmul(Sa,dens)
+         end
+         .make_FT_TLS_c(k_pts,pre,turned,Ga,Gb,Lm,origin,dens=Dc,wt=wt,s0=s0,s1=s1,s2=s2,ry0=ry0,ry1=ry1,rL=rL)
+         Dc.destroy
+
+      end
+
+   end
+
+   make_FT_TLS_c(k_pts,pre,turned,Ga,Gb,Lm,origin,res,dens,wt,s0,s1,s2,ry0,ry1,rL) :: PURE
+   ! The Fourier transform of this pair of contracted shells at the
+   ! "k_pts", for cartesian components, from the scalar factors
+   ! "pre(k,i)" of each pair of primitives "i" made by
+   ! make_TLS_prefactors. Either "res" is present, and is the transform
+   ! for each pair of components; or "dens", "wt", "s0", "s1" and "s2"
+   ! are, and "s0" is the transform traced with the block "dens" of the
+   ! density matrix, and "s1" and "s2" the same with each pair of
+   ! primitives weighted by "wt(i)" and its square.
+   ! The polynomial part of a pair of primitives is E = ex*ey*ez, a
+   ! product of polynomials in the three components of k. If "turned",
+   ! each product of primitives is averaged over the rotation of the
+   ! rigid body to second order in the rotation vector, with "Ga", "Gb",
+   ! "Lm" and "origin" as in make_FT_TLS: its transform is multiplied
+   ! by a factor for the curvature of the path of its centre, and E is
+   ! replaced by
+   !    E + sum_j (dE/dk_j) q_j + sum_jl (d2E/dk_j dk_l) Y_jl
+   ! for the turning of the product about its centre; the factor, q and
+   ! Y are from make_turn_factors.
+   ! If present with "dens", "ry0", "ry1" and "rL" are derivatives of
+   ! "s0": "ry0(k,:)" with respect to y = <lambda u^T> k of each product
+   ! of primitives, u the displacement of its centre, summed over the
+   ! products; "ry1" the same with each weighted by "wt(i)"; and
+   ! "rL(k,:)" with respect to Lm, in the order xx, yy, zz, xy, xz, yz.
+   ! They are zero if not "turned". See docs/REPORT_ON_TC_TLS_AVERAGES.md section 8.
+      self  :: IN
+      k_pts :: MAT{REAL}, IN
+      pre   :: MAT{CPX}, IN
+      turned :: BIN, IN
+      Ga,Gb,Lm :: MAT{REAL}(3,3), IN
+      origin :: VEC{REAL}(3), IN
+      res   :: MAT3{CPX}, optional, OUT
+      dens  :: MAT{REAL}, optional, IN
+      wt    :: VEC{REAL}, optional, IN
+      s0,s1,s2 :: VEC{CPX}, optional, OUT
+      ry0,ry1,rL :: MAT{CPX}, optional, OUT
+
+   ENSURE(present(res) NEQV present(dens),"give res, or dens and what goes with it")
+   ENSURE(present(dens) EQV present(wt),"wt goes with dens")
+   ENSURE(present(dens) EQV present(s0),"s0 goes with dens")
+   ENSURE(present(dens) EQV present(s1),"s1 goes with dens")
+   ENSURE(present(dens) EQV present(s2),"s2 goes with dens")
+
+      ft_x,ft_y,ft_z,dx1,dy1,dz1,dx2,dy2,dz2 :: MAT3{CPX}@
+      e :: MAT3{REAL}@
+      zx,zy,zz,t,qv,Ym,gy,gL :: MAT{CPX}@
+      term,efac :: VEC{CPX}@
+      ax,ay,az,bx,by,bz :: VEC{INT}@
+      Gm :: MAT{REAL}(3,3)
+      pc :: VEC{REAL}(3)
+      im,cx,cx1,cyz,cy1,cz1 :: CPX
+      AB1,AB2,AB3,ex_a,ex_b,g1,g2,wa,wb,d :: REAL
+      a,b,aa,bb,i,k,n,k_max,l_s,fa,la,fb,lb,xa,ya,za,xb,yb,zb :: INT
+      turn,traced,derivs :: BIN
+
+      k_max  = k_pts.dim1
+      l_s    = .l_sum
+      traced = present(dens)
+      turn   = turned AND l_s>0
+      derivs = traced AND present(ry0) AND present(ry1) AND present(rL)
+
+      AB1 = .a.position(1) - .b.position(1)
+      AB2 = .a.position(2) - .b.position(2)
+      AB3 = .a.position(3) - .b.position(3)
+
+      fa = .a.first_gaussian; la = .a.last_gaussian
+      fb = .b.first_gaussian; lb = .b.last_gaussian
+
+      ax = GAUSSIAN_DATA::px(fa:la)
+      ay = GAUSSIAN_DATA::py(fa:la)
+      az = GAUSSIAN_DATA::pz(fa:la)
+      bx = GAUSSIAN_DATA::px(fb:lb)
+      by = GAUSSIAN_DATA::py(fb:lb)
+      bz = GAUSSIAN_DATA::pz(fb:lb)
+
+      ! The powers (ik)^n of each component of k
+      im = cmplx(ZERO,ONE,kind=CPX_KIND)
+      zx.create([1,k_max],[0,l_s])
+      zy.create([1,k_max],[0,l_s])
+      zz.create([1,k_max],[0,l_s])
+      zx(:,0) = ONE
+      zy(:,0) = ONE
+      zz(:,0) = ONE
+      do n = 1,l_s
+         zx(:,n) = zx(:,n-1)*im*k_pts(:,1)
+         zy(:,n) = zy(:,n-1)*im*k_pts(:,2)
+         zz(:,n) = zz(:,n-1)*im*k_pts(:,3)
+      end
+
+      e.create([0,l_s],[0,.a.l],[0,.b.l])
+      ft_x.create([1,k_max],[0,.a.l],[0,.b.l])
+      ft_y.create([1,k_max],[0,.a.l],[0,.b.l])
+      ft_z.create([1,k_max],[0,.a.l],[0,.b.l])
+      term.create(k_max)
+
+      ! For the rigid-body rotation. "turn" is whether the polynomial
+      ! part depends on k, so that it turns.
+      n = 1
+      efac.create(k_max)
+      qv.create(k_max,3)
+      Ym.create(k_max,6)
+      if (turn) then
+         n = 10
+         dx1.create([1,k_max],[0,.a.l],[0,.b.l]); dx2.create([1,k_max],[0,.a.l],[0,.b.l])
+         dy1.create([1,k_max],[0,.a.l],[0,.b.l]); dy2.create([1,k_max],[0,.a.l],[0,.b.l])
+         dz1.create([1,k_max],[0,.a.l],[0,.b.l]); dz2.create([1,k_max],[0,.a.l],[0,.b.l])
+      end
+      t.create(k_max,n)
+
+      if (traced) then
+         s0 = ZERO
+         s1 = ZERO
+         s2 = ZERO
+      else
+         res = ZERO
+      end
+      if (derivs) then
+         ry0 = ZERO
+         ry1 = ZERO
+         rL  = ZERO
+         gy.create(k_max,3)
+         gL.create(k_max,6)
+      end
+
+      i = 0
+      do bb = 1,.b.n_cc
+         ex_b = .b.exponent(bb)
+         do aa = 1,.a.n_cc
+            ex_a = .a.exponent(aa)
+            i  = i + 1
+            g1 = .exponent_inv(i)
+            g2 = HALF*g1
+
+            ! The three polynomials, and for the turning their derivatives
+            .make_e_coeff(e,AB1,ex_a,ex_b,g1,g2)
+            if (turn) then; .make_ft_polynomials(e,zx,ft_x,dx1,dx2)
+            else;           .make_ft_polynomials(e,zx,ft_x)
+            end
+            .make_e_coeff(e,AB2,ex_a,ex_b,g1,g2)
+            if (turn) then; .make_ft_polynomials(e,zy,ft_y,dy1,dy2)
+            else;           .make_ft_polynomials(e,zy,ft_y)
+            end
+            .make_e_coeff(e,AB3,ex_a,ex_b,g1,g2)
+            if (turn) then; .make_ft_polynomials(e,zz,ft_z,dz1,dz2)
+            else;           .make_ft_polynomials(e,zz,ft_z)
+            end
+
+            ! For the rigid-body rotation: the factor for the curvature
+            ! of the path, and what goes with the derivatives. With the
+            ! density matrix this waits for the products below.
+            if (turned) then
+               wa = ex_a/(ex_a + ex_b)
+               wb = ex_b/(ex_a + ex_b)
+               Gm = wa*Ga + wb*Gb
+               pc = .pair_center(:,i) - origin
+               if (NOT traced) .make_turn_factors(efac,qv,Ym,k_pts,pc,Gm,Lm,turn)
+            end
+
+            ! The products of the polynomials, and of their derivatives,
+            ! for each pair of components: summed with the density
+            ! matrix, or one pair at a time
+            if (traced) t = ZERO
+            do b = 1,.b.n_comp
+               xb = bx(b); yb = by(b); zb = bz(b)
+               do a = 1,.a.n_comp
+                  xa = ax(a); ya = ay(a); za = az(a)
+
+                  d = ONE
+                  if (traced) then
+                     d = dens(a,b)
+                  else
+                     t = ZERO
+                  end
+
+                  if (turn) then
+                     do k = 1,k_max
+                        cx  = d*ft_x(k,xa,xb)
+                        cx1 = d*dx1(k,xa,xb)
+                        cyz = ft_y(k,ya,yb)*ft_z(k,za,zb)
+                        cy1 = dy1(k,ya,yb)*ft_z(k,za,zb)
+                        cz1 = ft_y(k,ya,yb)*dz1(k,za,zb)
+                        t(k,1)  = t(k,1)  + cx*cyz
+                        t(k,2)  = t(k,2)  + cx1*cyz
+                        t(k,3)  = t(k,3)  + cx*cy1
+                        t(k,4)  = t(k,4)  + cx*cz1
+                        t(k,5)  = t(k,5)  + d*dx2(k,xa,xb)*cyz
+                        t(k,6)  = t(k,6)  + cx*dy2(k,ya,yb)*ft_z(k,za,zb)
+                        t(k,7)  = t(k,7)  + cx*ft_y(k,ya,yb)*dz2(k,za,zb)
+                        t(k,8)  = t(k,8)  + cx1*cy1
+                        t(k,9)  = t(k,9)  + cx1*cz1
+                        t(k,10) = t(k,10) + cx*dy1(k,ya,yb)*dz1(k,za,zb)
+                     end
+                  else
+                     do k = 1,k_max
+                        t(k,1) = t(k,1) + d*ft_x(k,xa,xb)*ft_y(k,ya,yb)*ft_z(k,za,zb)
+                     end
+                  end
+
+                  if (NOT traced) then
+                     .put_turned_term(term,t,pre(:,i),turn,turned,efac,qv,Ym)
+                     res(:,a,b) = res(:,a,b) + term
+                  end
+
+               end
+            end
+
+            if (traced) then
+               if (turned AND derivs) then
+                  .make_turn_factors(efac,qv,Ym,k_pts,pc,Gm,Lm,turn,t,gy,gL)
+                  do n = 1,3
+                     ry0(:,n) = ry0(:,n) + pre(:,i)*gy(:,n)
+                     ry1(:,n) = ry1(:,n) + wt(i)*pre(:,i)*gy(:,n)
+                  end
+                  do n = 1,6
+                     rL(:,n) = rL(:,n) + pre(:,i)*gL(:,n)
+                  end
+               else if (turned) then
+                  .make_turn_factors(efac,qv,Ym,k_pts,pc,Gm,Lm,turn)
+               end
+               .put_turned_term(term,t,pre(:,i),turn,turned,efac,qv,Ym)
+               s0 = s0 + term
+               s1 = s1 + wt(i)*term
+               s2 = s2 + (wt(i)*wt(i))*term
+            end
+
+         end
+      end
+
+      t.destroy
+      if (turn) then
+         dz2.destroy; dz1.destroy
+         dy2.destroy; dy1.destroy
+         dx2.destroy; dx1.destroy
+      end
+      if (derivs) then
+         gL.destroy
+         gy.destroy
+      end
+      Ym.destroy
+      qv.destroy
+      efac.destroy
+      term.destroy
+      ft_z.destroy
+      ft_y.destroy
+      ft_x.destroy
+      e.destroy
+      zz.destroy
+      zy.destroy
+      zx.destroy
+
+   end
+
+   put_turned_term(term,t,pre,turn,turned,efac,qv,Ym) :: private, pure
+   ! Put together "term", the transform of one pair of primitives at
+   ! each k point, in make_FT_TLS_c: "t(k,1)" is the polynomial
+   ! part and "pre" the scalar factors. If "turn", "t(k,2:10)" are its
+   ! three first and six second derivatives with respect to k, and go
+   ! with "qv" and "Ym"; if "turned" the whole is multiplied by "efac".
+   ! See make_turn_factors.
+      self :: IN
+      term :: VEC{CPX}, OUT
+      t    :: MAT{CPX}, IN
+      pre  :: VEC{CPX}, IN
+      turn,turned :: BIN, IN
+      efac :: VEC{CPX}, IN
+      qv,Ym :: MAT{CPX}, IN
+
+      k :: INT
+
+      if (turn) then
+         do k = 1,term.dim
+            term(k) = pre(k)*efac(k)*( t(k,1) + qv(k,1)*t(k,2) + qv(k,2)*t(k,3) + qv(k,3)*t(k,4) &
+                                              + Ym(k,1)*t(k,5) + Ym(k,2)*t(k,6) + Ym(k,3)*t(k,7) &
+                                              + Ym(k,4)*t(k,8) + Ym(k,5)*t(k,9) + Ym(k,6)*t(k,10) )
+         end
+      else if (turned) then
+         do k = 1,term.dim
+            term(k) = pre(k)*efac(k)*t(k,1)
+         end
+      else
+         do k = 1,term.dim
+            term(k) = pre(k)*t(k,1)
+         end
+      end
+
+   end
+
+   make_ft_polynomials(e,zp,res,d1,d2) :: private, pure
+   ! Make "res(k,a,b)", the sum over n of e(n,a,b) (ik)^n, from the
+   ! McMurchie-Davidson coefficients "e" of one cartesian direction and
+   ! the powers "zp(k,n)" = (ik)^n of that component of the k points. If
+   ! present, "d1" and "d2" are the first and second derivatives of
+   ! "res" with respect to k.
+      self :: IN
+      e    :: MAT3{REAL}(0:,0:,0:), IN
+      zp   :: MAT{CPX}(1:,0:), IN
+      res  :: MAT3{CPX}(1:,0:,0:), OUT
+      d1,d2 :: MAT3{CPX}(1:,0:,0:), optional, OUT
+
+      im :: CPX
+      a,b,n :: INT
+
+      im = cmplx(ZERO,ONE,kind=CPX_KIND)
+
+      do b = 0,.b.l
+      do a = 0,.a.l
+         res(:,a,b) = e(0,a,b)
+         do n = 1,a+b
+            res(:,a,b) = res(:,a,b) + e(n,a,b)*zp(:,n)
+         end
+      end
+      end
+
+      if (NOT present(d1)) return
+
+      do b = 0,.b.l
+      do a = 0,.a.l
+         d1(:,a,b) = ZERO
+         d2(:,a,b) = ZERO
+         do n = 1,a+b
+            d1(:,a,b) = d1(:,a,b) + (n*e(n,a,b))*im*zp(:,n-1)
+         end
+         do n = 2,a+b
+            d2(:,a,b) = d2(:,a,b) - (n*(n-1)*e(n,a,b))*zp(:,n-2)
+         end
+      end
       end
 
    end

@@ -717,7 +717,7 @@ contains
    ! coordinate j, about "origin", already counted in "V" to first order
    ! as W x r: the displaced atoms are then turned exactly by s W, and
    ! the rest of V is added as it is. The atoms, MOs and density matrix
-   ! are put back. See docs/REPORT_ON_TC_TLS.md section 6.
+   ! are put back. See docs/REPORT_ON_TC_TLS_AVERAGES.md section 6.
       self :: INOUT
       dsf :: VEC{CPX}, OUT
       k_pts :: MAT{REAL}, IN
@@ -949,6 +949,8 @@ contains
 
    DIE_IF(NOT .crystal.allocated, "no crystal")
    DIE_IF(NOT .SCF_data.spinorbital_genre=="r ", "tc-tls refinement is for restricted wavefunctions")
+   DIE_IF(.crystal.xray_data.tc_analytic_rigid_body AND .crystal.xray_data.tc_integrate_rigid_body, "use tc_analytic_rigid_body= or tc_integrate_rigid_body=, not both")
+   DIE_IF(.crystal.xray_data.tc_analytic_rigid_body AND .crystal.n_TLS_atoms/=.atom.dim, "tc_analytic_rigid_body= is for a molecule, not a cluster")
 
       sf_e,dsf,dsf_rb :: VEC{CPX}@
       sf_pos,sf_sig,sf_dpos :: MAT{CPX}@
@@ -1042,6 +1044,99 @@ contains
 
    end
 
+   check_two_center_average :: leaky
+   ! Check the average over the rigid-body motion made by formula
+   ! (tc_analytic_rigid_body=) against the numerical one
+   ! (make_rigid_body_SF_correction, with tc_quadrature_points= points)
+   ! at the current TLS model, for partition_model= tc-tls. Puts the
+   ! largest and the root-mean-square size, over the k points, of the
+   ! numerical correction to the structure factors, of the correction
+   ! by formula, and of the difference of the two; and the last three
+   ! again for the k points shorter than 2 bohr^-1. The numerical
+   ! average takes the principal coordinates of the motion one at a
+   ! time, which is good only at low angle, so that is where the two
+   ! should agree. Needs a TLS model, so use it after a refinement.
+      self :: INOUT
+
+   DIE_IF(NOT .crystal.allocated, "no crystal")
+   DIE_IF(NOT .crystal.partition_model=="tc-tls", "partition_model must be tc-tls")
+   DIE_IF(.crystal.TLS_basis.deallocated, "no TLS model: refine first")
+
+      sf_0,sf_1,dsf :: VEC{CPX}@
+      k_pts :: MAT{REAL}@
+      by_formula :: BIN
+      val,v_n,v_f,v_d :: REAL
+      n_k,n_q,n_low,k :: INT
+
+      n_k = .crystal.n_unique_SF_k_pts
+      k_pts.create(n_k,3)
+      .crystal.make_unique_X_SF_k_pts(k_pts)
+      .make_r_density_mx
+      sf_0.create(n_k)
+      sf_1.create(n_k)
+      dsf.create(n_k)
+      by_formula = .crystal.xray_data.tc_analytic_rigid_body
+
+      ! To first order, and the numerical correction to it
+      .crystal.xray_data.tc_analytic_rigid_body = FALSE
+      .crystal.make_two_center_ADPs
+      .make_FT(sf_0,.density_mx.r,k_pts)
+      .make_rigid_body_SF_correction(dsf,k_pts)
+
+      ! By formula
+      .crystal.xray_data.tc_analytic_rigid_body = TRUE
+      .crystal.make_two_center_ADPs
+      .make_FT(sf_1,.density_mx.r,k_pts)
+      sf_1 = sf_1 - sf_0
+      .crystal.xray_data.tc_analytic_rigid_body = by_formula
+
+      stdout.flush
+      stdout.text("Check of the rigid-body average of the tc-tls structure factors:")
+      stdout.flush
+      n_q = .crystal.xray_data.tc_quadrature_points
+      stdout.show("No. of quadrature points          =",n_q)
+      val = maxval(abs(sf_0))
+      stdout.show("Largest F, first order            =",val)
+      val = maxval(abs(dsf))
+      stdout.show("Largest numerical correction      =",val)
+      val = maxval(abs(sf_1))
+      stdout.show("Largest correction by formula     =",val)
+      val = maxval(abs(sf_1-dsf))
+      stdout.show("Largest difference of the two     =",val)
+      val = sqrt(sum(abs(dsf)**2)/n_k)
+      stdout.show("RMS numerical correction          =",val)
+      val = sqrt(sum(abs(sf_1)**2)/n_k)
+      stdout.show("RMS correction by formula         =",val)
+      val = sqrt(sum(abs(sf_1-dsf)**2)/n_k)
+      stdout.show("RMS difference of the two         =",val)
+
+      ! The same at low angle
+      n_low = 0
+      v_n = ZERO; v_f = ZERO; v_d = ZERO
+      do k = 1,n_k
+         if (sum(k_pts(k,:)**2)>=FOUR) cycle
+         n_low = n_low + 1
+         v_n = v_n + abs(dsf(k))**2
+         v_f = v_f + abs(sf_1(k))**2
+         v_d = v_d + abs(sf_1(k)-dsf(k))**2
+      end
+      stdout.show("No. of k points below 2 bohr^-1   =",n_low)
+      if (n_low>0) then
+         val = sqrt(v_n/n_low)
+         stdout.show("RMS numerical correction, those   =",val)
+         val = sqrt(v_f/n_low)
+         stdout.show("RMS correction by formula, those  =",val)
+         val = sqrt(v_d/n_low)
+         stdout.show("RMS difference of the two, those  =",val)
+      end
+
+      dsf.destroy
+      sf_1.destroy
+      sf_0.destroy
+      k_pts.destroy
+
+   end
+
    check_two_center_derivs :: leaky
    ! Check the derivatives from make_FT_and_TLS_derivs against central
    ! differences of make_FT, for partition_model= tc-tls, and put the
@@ -1050,8 +1145,10 @@ contains
    ! should not: the derivative moves only the centre of each product of
    ! basis functions, and the difference also changes its size and
    ! shape, which the refinement leaves to the next SCF. So that number
-   ! is the size of what is left out. Needs a TLS model, so use it
-   ! after a refinement.
+   ! is the size of what is left out. With tc_analytic_rigid_body= the
+   ! average over the rotation depends on Sigma as well, so the check
+   ! changes what it is made from along with the two-center ADPs.
+   ! Needs a TLS model, so use it after a refinement.
       self :: INOUT
 
    DIE_IF(NOT .crystal.allocated, "no crystal")
@@ -1062,6 +1159,8 @@ contains
       sf_pos,sf_sig :: MAT{CPX}@
       k_pts,Ba,Bb,E :: MAT{REAL}@
       U0,dU :: MAT4{REAL}@
+      G0,dG :: MAT3{REAL}@
+      L0 :: MAT{REAL}@
       pr :: MAT{INT}@
       pos :: VEC{REAL}(3)
       step,err,big,err_pos,err_sig :: REAL
@@ -1111,6 +1210,9 @@ contains
       ! Sigma: change one element, and with it every two-center ADP
       .crystal.TLS_sigma_pairs(pr)
       U0 = .crystal.two_center_ADPs
+      G0 = .crystal.two_center_turn
+      L0 = .crystal.two_center_L
+      dG.create(3,3,n_f)
       dU.create(3,3,n_f,n_f)
       E.create(n_v,n_v)
       Ba.create(3,n_v)
@@ -1121,8 +1223,10 @@ contains
          E(pr(1,i),pr(2,i)) = ONE
          E(pr(2,i),pr(1,i)) = ONE
          dU = ZERO
+         dG = ZERO
          do a = 1,n_b
             Ba = .crystal.TLS_displacement_mx(a)
+            dG(:,:,a) = matmul(E(4:6,:),transpose(Ba))
             do b = 1,n_b
                Bb = .crystal.TLS_displacement_mx(b)
                dU(:,:,a,b) = matmul(Ba,matmul(E,transpose(Bb)))
@@ -1130,8 +1234,12 @@ contains
          end
          step = TOL(5)/maxval(abs(dU))
          .crystal.two_center_ADPs = U0 + step*dU
+         .crystal.two_center_turn = G0 + step*dG
+         .crystal.two_center_L    = L0 + step*E(4:6,4:6)
          .make_FT(sp,.density_mx.r,k_pts)
          .crystal.two_center_ADPs = U0 - step*dU
+         .crystal.two_center_turn = G0 - step*dG
+         .crystal.two_center_L    = L0 - step*E(4:6,4:6)
          .make_FT(sm,.density_mx.r,k_pts)
          sp = (sp - sm)/(TWO*step)
          err = maxval(abs(sp-sf_sig(:,i)))
@@ -1139,6 +1247,8 @@ contains
          err_sig = max(err_sig,err/big)
       end
       .crystal.two_center_ADPs = U0
+      .crystal.two_center_turn = G0
+      .crystal.two_center_L    = L0
 
       stdout.flush
       stdout.text("Two-center derivatives against central differences")
@@ -1152,6 +1262,9 @@ contains
       Ba.destroy
       E.destroy
       dU.destroy
+      dG.destroy
+      L0.destroy
+      G0.destroy
       U0.destroy
       pr.destroy
       sm.destroy

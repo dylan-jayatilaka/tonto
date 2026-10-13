@@ -190,7 +190,7 @@ $`w_A/n_s + w_B/n_s = 1/n_s`$, because $`w_A + w_B = 1`$.
 
 Urea is a whole molecule on a site of symmetry mm2, four operations, so by §7 the old and the new
 weights must agree, and the petite list must agree with all the pairs. A `tc-tls` refinement
-(RHF/def2-SVP, 817 reflections, 17 parameters; `docs/REPORT_ON_TC_TLS.md`, §10):
+(RHF/def2-SVP, 817 reflections, 17 parameters; `docs/REPORT_ON_TC_TLS.md`, §11):
 
 | weights | pairs with a weight | sum of the weights | GoF | R(F) |
 |---|---|---|---|---|

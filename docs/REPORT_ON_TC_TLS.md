@@ -403,221 +403,21 @@ Tonto offers three derivatives, which keep one, two or all three of these
 In all three a unique atom moves together with its symmetry images in the molecule. The
 derivatives of `fixed-dm` and `scf` are made once for each fit with a given density matrix.
 
-## 6. The stiff modes averaged numerically
+## 6 to 8. The averages beyond first order
 
-§3 made an approximation: two quantities that change when the atoms move were held at their
-values at the mean geometry. This section removes that approximation for the stiff modes, one
-mode at a time, by doing the average numerically (`tc_integrate_stiff_modes=`).
+Sections 6, 7 and 8, with equations (24) to (45), are in `docs/REPORT_ON_TC_TLS_AVERAGES.md`.
 
-**What changes when one mode moves.** Take one stiff mode $`k`$ and give its normal coordinate the
-value $`Q`$, all other motion aside for the moment. Atom $`A`$ is displaced by $`Q\,\mathbf{d}^A_k`$ (§M1.7).
-By (12), with $`\mathbf{u}^A = Q\,\mathbf{d}^A_k`$ and $`\mathbf{u}^B = Q\,\mathbf{d}^B_k`$, the Gaussian product $`g^{\mu\nu}_{ab}`$ contributes
+- **§6, the stiff modes averaged numerically** (`tc_integrate_stiff_modes=`): the structure
+  factor is made at geometries displaced along each stiff mode, with an SCF at each, and the
+  difference from what (15) gives is added as a correction, $`\Delta F`$ of (29).
+- **§7, the rigid-body motion averaged numerically** (`tc_integrate_rigid_body=`): the same along
+  each principal coordinate of $`\Sigma`$, the molecule being turned exactly; the correction is
+  $`\Delta F^{\rm rb}`$ of (33).
+- **§8, the rigid-body motion averaged by formula** (`tc_analytic_rigid_body=`): each term of (15)
+  is averaged over the rotation to second order, (43), all six coordinates together, with no
+  displaced geometry and no SCF; the derivatives with respect to $`\Sigma`$ gain (45).
 
-```math
-D_{\mu\nu}(Q)\; c^\mu_a c^\nu_b\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
-   e^{iQ\,\mathbf{k}\cdot\mathbf{d}^P_k}\;
-   \tilde g^{\mu\nu}_{ab}\big(\mathbf{k};\, \mathbf{R} + Q(\mathbf{d}^A_k - \mathbf{d}^B_k)\big), \qquad
-\mathbf{d}^P_k = w_A \mathbf{d}^A_k + w_B \mathbf{d}^B_k . \qquad (24)
-```
-
-Three things in (24) depend on $`Q`$:
-
-1. the phase $`e^{iQ\,\mathbf{k}\cdot\mathbf{d}^P_k}`$, because the centre of the Gaussian product moves by $`Q\,\mathbf{d}^P_k`$;
-2. the transform $`\tilde g^{\mu\nu}_{ab}`$, because the vector between the two atoms changes from $`\mathbf{R}`$
-   to $`\mathbf{R} + Q(\mathbf{d}^A_k - \mathbf{d}^B_k)`$. In (8) that vector enters through the factor $`e^{-\xi|\mathbf{R}|^2}`$,
-   which sets how large the product is, and through the two polynomials;
-3. the density matrix element $`D_{\mu\nu}(Q)`$, because the wavefunction at the displaced geometry is
-   not the one at the mean geometry.
-
-**Two structure factors as functions of $`Q`$.** The other motion smears each Gaussian product as before.
-Let $`W^{P(k)}`$ be the temperature factor of (15) with the term of mode $`k`$ taken out of
-$`U^P`$, (19). $`F^{\rm exact}_k(Q)`$ keeps all three dependences of (24); $`F^{\rm approx}_k(Q)`$
-keeps only the phase, as §3 does:
-
-```math
-\begin{aligned}
-W^{P(k)} &= \exp\!\Big[ -\tfrac12\, \mathbf{k}^{\dagger} \big( U^P - \langle Q_k^2\rangle\, \mathbf{d}^P_k\mathbf{d}^{P\dagger}_k \big)\, \mathbf{k} \Big] , \\
-F^{\rm exact}_k(Q) &= \sum_{\mu\nu} D_{\mu\nu}(Q) \sum_{ab} c^\mu_a c^\nu_b\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
-   e^{iQ\,\mathbf{k}\cdot\mathbf{d}^P_k}\;
-   \tilde g^{\mu\nu}_{ab}\big(\mathbf{k};\, \mathbf{R} + Q(\mathbf{d}^A_k - \mathbf{d}^B_k)\big)\; W^{P(k)} , \\
-F^{\rm approx}_k(Q) &= \sum_{\mu\nu} D_{\mu\nu}(0) \sum_{ab} c^\mu_a c^\nu_b\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
-   e^{iQ\,\mathbf{k}\cdot\mathbf{d}^P_k}\;
-   \tilde g^{\mu\nu}_{ab}(\mathbf{k};\, \mathbf{R})\; W^{P(k)} .
-\end{aligned}
-\qquad (25)
-```
-
-The two are equal at $`Q = 0`$.
-
-**The average of the approximate one is the structure factor of §3.** $`Q`$ has a Gaussian
-distribution with zero mean and mean square $`\langle Q_k^2\rangle`$, (M6), so
-$`\langle e^{iQ\theta}\rangle = e^{-\frac12 \langle Q_k^2\rangle \theta^2}`$ for any number $`\theta`$, as in (13). Averaging
-$`F^{\rm approx}_k`$ of (25) over $`Q`$:
-
-```math
-\begin{aligned}
-\langle F^{\rm approx}_k \rangle
- &= \sum_{\mu\nu} D_{\mu\nu}(0) \sum_{ab} c^\mu_a c^\nu_b\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
-   \tilde g^{\mu\nu}_{ab}(\mathbf{k};\, \mathbf{R})\; W^{P(k)}\; \big\langle e^{iQ\,\mathbf{k}\cdot\mathbf{d}^P_k} \big\rangle
-   && \text{only the phase depends on } Q \\
- &= \sum_{\mu\nu} D_{\mu\nu}(0) \sum_{ab} c^\mu_a c^\nu_b\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
-   \tilde g^{\mu\nu}_{ab}(\mathbf{k};\, \mathbf{R})\; W^{P(k)}\; e^{-\frac12 \langle Q_k^2\rangle (\mathbf{k}\cdot\mathbf{d}^P_k)^2}
-   && \text{with } \theta = \mathbf{k}\cdot\mathbf{d}^P_k \\
- &= \sum_{\mu\nu} D_{\mu\nu}(0) \sum_{ab} c^\mu_a c^\nu_b\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
-   \tilde g^{\mu\nu}_{ab}(\mathbf{k};\, \mathbf{R})\; e^{-\frac12 \mathbf{k}^{\dagger} U^P \mathbf{k}}
-   && \text{by the definition of } W^{P(k)} \\
- &= F \text{ of (15)} .
-\end{aligned}
-\qquad (26)
-```
-
-The average of $`F^{\rm exact}_k`$ cannot be done by formula, because $`D_{\mu\nu}(Q)`$ is known only by
-doing an SCF at each $`Q`$. That average is done numerically, with three points.
-
-**The three-point rule.** For any function $`g(Q)`$ of a Gaussian variable with zero mean and mean
-square $`\langle Q_k^2\rangle`$, the three-point Gauss–Hermite rule is
-
-```math
-\langle g \rangle \approx \tfrac23\, g(0) + \tfrac16\, g(+s_k) + \tfrac16\, g(-s_k), \qquad
-s_k = \big( 3\,\langle Q_k^2\rangle \big)^{1/2} , \qquad (27)
-```
-
-exact when $`g`$ is a polynomial of degree five or less.
-
-**The error of §3 for mode $`k`$.** The error is the difference of the two averages, $`\Delta_k`$. Applying
-the rule (27) to the difference $`g(Q) = F^{\rm exact}_k(Q) - F^{\rm approx}_k(Q)`$:
-
-```math
-\begin{aligned}
-\Delta_k &= \langle F^{\rm exact}_k \rangle - \langle F^{\rm approx}_k \rangle
-          = \big\langle\, F^{\rm exact}_k(Q) - F^{\rm approx}_k(Q) \,\big\rangle \\
- &\approx \tfrac23 \big[ F^{\rm exact}_k(0) - F^{\rm approx}_k(0) \big]
-        + \tfrac16 \big[ F^{\rm exact}_k(s_k) - F^{\rm approx}_k(s_k) \big]
-        + \tfrac16 \big[ F^{\rm exact}_k(-s_k) - F^{\rm approx}_k(-s_k) \big]
-   && \text{by (27)} \\
- &= \tfrac16 \big[ F^{\rm exact}_k(s_k) + F^{\rm exact}_k(-s_k) \big]
-  - \tfrac16 \big[ F^{\rm approx}_k(s_k) + F^{\rm approx}_k(-s_k) \big]
-   && \text{the two are equal at } Q = 0 \\
- &= \tfrac16 \big[ F^{\rm exact}_k(s_k) + F^{\rm exact}_k(-s_k) \big]
-  - \tfrac16 \sum_{\mu\nu} D_{\mu\nu}(0) \sum_{ab} c^\mu_a c^\nu_b\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
-   \tilde g^{\mu\nu}_{ab}(\mathbf{k}; \mathbf{R})\; W^{P(k)}\;
-   \big( e^{i s_k \mathbf{k}\cdot\mathbf{d}^P_k} + e^{-i s_k \mathbf{k}\cdot\mathbf{d}^P_k} \big)
-   && \text{by (25)} \\
- &= \tfrac16 \big[ \underbrace{F^{\rm exact}_k(s_k)}_{F_k^{+}} + \underbrace{F^{\rm exact}_k(-s_k)}_{F_k^{-}} \big]
-  - \tfrac13 \underbrace{ \sum_{\mu\nu} D_{\mu\nu}(0) \sum_{ab} c^\mu_a c^\nu_b\; e^{i\mathbf{k}\cdot\mathbf{P}}\;
-   \tilde g^{\mu\nu}_{ab}(\mathbf{k}; \mathbf{R})\; W^{P(k)}\;
-   \cos( s_k\, \mathbf{k}\cdot\mathbf{d}^P_k ) }_{F_k^{\cos}}
-   && e^{i\phi} + e^{-i\phi} = 2\cos\phi \\
- &= \tfrac16 \big( F_k^{+} + F_k^{-} \big) - \tfrac13\, F_k^{\cos} .
-\end{aligned}
-\qquad (28)
-```
-
-**How the three are made.**
-
-- $`F_k^{+}`$: move every atom $`A`$ by $`+s_k\,\mathbf{d}^A_k`$, do an SCF there, and make the structure factor
-  from (15) with the new positions, the new density matrix, and $`W^{P(k)}`$ as the temperature
-  factor. Moving the atoms with their basis functions puts in the phase and the change of
-  $`\tilde g^{\mu\nu}_{ab}`$; the SCF puts in $`D_{\mu\nu}(s_k)`$. That is $`F^{\rm exact}_k(s_k)`$ of (25).
-- $`F_k^{-}`$: the same with $`-s_k`$.
-- $`F_k^{\cos}`$: at the mean geometry with its own density matrix, the structure factor (15) with
-  $`W^{P(k)}`$ as the temperature factor and each Gaussian product multiplied by
-  $`\cos(s_k\,\mathbf{k}\cdot\mathbf{d}^P_k)`$.
-
-**The correction.** Adding the stiff modes,
-
-```math
-\Delta F = \sum_{\omega_k > \omega_c} \Delta_k = \sum_{\omega_k > \omega_c} \Big[ \tfrac16 \big( F_k^{+} + F_k^{-} \big) - \tfrac13\, F_k^{\cos} \Big] , \qquad (29)
-```
-
-and the structure factor used in the refinement is (15) plus $`\Delta F`$.
-
-- **Why the difference is integrated, not $`F^{\rm exact}_k`$ itself.** The phase in (25) varies
-  quickly with $`Q`$ at high angle, where three points are too few; (26) does that part exactly.
-  The difference is small and varies slowly, which is what the rule (27) is good for.
-- **Why the modes are added.** Each $`\Delta_k`$ is small, so the effect of one on another is small
-  twice over and is left out.
-- **Cost and limits.** Two SCFs for each stiff mode. $`\Delta F`$ is made once for each fit with a
-  given density matrix, and held fixed while the parameters shift. The correction is for a single molecule,
-  with the harmonic amplitudes (M6). The rigid-body motion and the refined soft modes are averaged
-  separately, in §7.
-
-## 7. The rigid-body motion averaged numerically
-
-The average of §6 can be applied to the rigid-body motion and the refined soft modes as well
-(`tc_integrate_rigid_body=`). The motion is first written in coordinates that are uncorrelated,
-as the stiff modes are; then each is averaged by (28).
-
-**Uncorrelated coordinates.** $`\Sigma`$ is symmetric, so it has orthonormal eigenvectors
-$`\mathbf{e}_j`$ with eigenvalues $`\lambda_j`$, $`\Sigma\,\mathbf{e}_j = \lambda_j \mathbf{e}_j`$. Write the generalised coordinates
-$`\mathbf{v}`$ of (M11) in terms of them, $`\mathbf{v} = \sum_j c_j \mathbf{e}_j`$ with $`c_j = \mathbf{e}_j^{\dagger}\mathbf{v}`$. The $`c_j`$ are the
-**principal coordinates** of the motion:
-
-```math
-\begin{aligned}
-\langle c_i c_j \rangle &= \mathbf{e}_i^{\dagger}\, \langle \mathbf{v}\mathbf{v}^{\dagger} \rangle\, \mathbf{e}_j && \text{since } c_j = \mathbf{e}_j^{\dagger}\mathbf{v} \\
- &= \mathbf{e}_i^{\dagger}\, \Sigma\, \mathbf{e}_j && \Sigma = \langle \mathbf{v}\mathbf{v}^{\dagger}\rangle \\
- &= \lambda_j\, \mathbf{e}_i^{\dagger} \mathbf{e}_j && \Sigma\,\mathbf{e}_j = \lambda_j \mathbf{e}_j \\
- &= \lambda_j\, \delta_{ij} && \text{the eigenvectors are orthonormal.}
-\end{aligned}
-\qquad (30)
-```
-
-So different principal coordinates are uncorrelated, and $`c_j`$ has mean square $`\lambda_j`$. The
-displacement of atom $`A`$, to first order, is
-
-```math
-\mathbf{u}^A = B^A \mathbf{v} = \sum_j c_j\, B^A \mathbf{e}_j = \sum_j c_j\, \mathbf{d}^A_j, \qquad \mathbf{d}^A_j = B^A \mathbf{e}_j , \qquad (31)
-```
-
-which has the form of the normal modes of §M1.5: $`\mathbf{d}^A_j`$ is the displacement of atom $`A`$ per unit
-of $`c_j`$. In (2) the rigid-body term is then
-$`B^A \Sigma B^{B\dagger} = \sum_j \lambda_j\, \mathbf{d}^A_j\mathbf{d}^{B\dagger}_j`$, the same form as the stiff-mode term. So §6
-applies to each principal coordinate as it stands, with $`\mathbf{d}^A_j`$ for $`\mathbf{d}^A_k`$, $`\lambda_j`$ for
-$`\langle Q_k^2\rangle`$, and $`s_j = (3\lambda_j)^{1/2}`$.
-
-**The displaced geometry is a true turn.** One thing is different. An eigenvector has a
-translation part, a rotation part and a soft-mode part,
-$`\mathbf{e}_j = (\boldsymbol{\tau}_j, \boldsymbol{\omega}_j, q_{j1} \dots q_{jK})`$. At the value $`c`$ of the coordinate the molecule has
-been turned through the angle $`|c\,\boldsymbol{\omega}_j|`$ about the axis along $`\boldsymbol{\omega}_j`$ through the origin $`\mathbf{O}`$
-of §M1.4. (31) replaces that turn by its first-order displacement $`c\,\boldsymbol{\omega}_j \times (\mathbf{R}^A - \mathbf{O})`$,
-(M4). For $`F^{\rm exact}_j`$ the atoms are put where the turn really takes them:
-
-```math
-\mathbf{R}^A(c) = \mathbf{O} + \mathsf{R}(c\,\boldsymbol{\omega}_j)\,(\mathbf{R}^A - \mathbf{O}) + c\,\boldsymbol{\tau}_j + c \sum_{k=1}^{K} q_{jk}\, \mathbf{d}^A_k , \qquad (32)
-```
-
-where $`\mathsf{R}(\boldsymbol{\theta})`$ is the rotation by the angle $`\theta = |\boldsymbol{\theta}|`$ about the unit vector
-$`\mathbf{n} = \boldsymbol{\theta}/\theta`$, which takes a vector $`\mathbf{r}`$ to
-$`\mathbf{r}\cos\theta + (\mathbf{n}\times\mathbf{r})\sin\theta + \mathbf{n}\,(\mathbf{n}\cdot\mathbf{r})(1-\cos\theta)`$. For a small angle (32) is
-$`\mathbf{R}^A + c\,\mathbf{d}^A_j`$.
-
-**The correction.** With the atoms at $`\mathbf{R}^A(\pm s_j)`$, an SCF there, and the structure factor
-made from (15) with $`W^{P(j)}`$ of (25) as the temperature factor, $`F_j^{+}`$ and $`F_j^{-}`$ are found as
-in §6. $`F_j^{\cos}`$ is (28)'s, with $`\mathbf{d}^P_j = w_A \mathbf{d}^A_j + w_B \mathbf{d}^B_j`$: it moves each Gaussian product's
-centre in a straight line and turns nothing. Then
-
-```math
-\Delta F^{\rm rb} = \sum_j \Big[ \tfrac16 \big( F_j^{+} + F_j^{-} \big) - \tfrac13\, F_j^{\cos} \Big] , \qquad (33)
-```
-
-summed over the principal coordinates, and the structure factor used in the refinement is (15)
-plus $`\Delta F`$ of (29) plus $`\Delta F^{\rm rb}`$.
-
-- **What the difference holds.** When the molecule turns, the wavefunction turns with it, so a
-  product of basis functions turns about its own centre, and its centre moves on an arc.
-  $`F_j^{\cos}`$ has neither. For a Gaussian product that is round, turning about its centre
-  changes nothing; for one with lobes, such as a p function on nitrogen pointing at a hydrogen,
-  it carries the lobe through a larger arc than the centre.
-- **A pure translation gives nothing.** If $`\boldsymbol{\omega}_j = 0`$ and there are no soft modes, moving the
-  molecule changes only the phases, which $`F_j^{\cos}`$ has exactly; $`F_j^{+} + F_j^{-} = 2F_j^{\cos}`$.
-- **The correction follows the refinement.** $`\Sigma`$ is refined, so $`\Delta F^{\rm rb}`$ is made at the start of each
-  fit from the $`\Sigma`$ of that moment and held fixed during it. The stiff-mode $`\Delta F`$ does not
-  change in this way, because its amplitudes come from the Hessian.
-- **Cost.** Two SCFs for each principal coordinate, twelve for a rigid body without soft modes.
-  The SCF is done for convenience: turning a molecule turns its density matrix and no more.
-
-## 8. Keywords
+## 9. Keywords
 
 In `xray_data=`:
 
@@ -627,16 +427,19 @@ In `xray_data=`:
 | `tc_position_derivs=` | `center` | the position derivative: `center` (23), `fixed-dm` or `scf` (§5) |
 | `tc_integrate_stiff_modes=` | `FALSE` | `TRUE` adds $`\Delta F`$ of (29) |
 | `tc_integrate_rigid_body=` | `FALSE` | `TRUE` adds $`\Delta F^{\rm rb}`$ of (33) |
+| `tc_analytic_rigid_body=` | `FALSE` | `TRUE` averages the rigid-body motion by (43), for a whole molecule; not with `tc_integrate_rigid_body=` |
+| `tc_quadrature_points=` | 3 | the number of points of the rule in §6 and §7: odd, 3 or more |
 
 On the molecule:
 
 | keyword | meaning |
 |---|---|
-| `check_two_center_derivs` | compares (22) and (23) with central differences of (15) and prints the largest disagreement; for (23) that is the size of what `center` leaves out |
+| `check_two_center_derivs` | compares the derivatives with respect to $`\Sigma`$, (22) with (45), and to the positions, (23), with central differences of the structure factor and prints the largest disagreement; for (23) that is the size of what `center` leaves out |
+| `check_two_center_average` | compares the average by formula, (43), with the numerical one, (33), at the refined $`\Sigma`$ |
 
 A Hessian from ORCA is turned into `force_constants=` by `scripts/orca_hessian_to_tonto.py`.
 
-## 9. Where it is implemented
+## 10. Where it is implemented
 
 | piece | procedure |
 |---|---|
@@ -645,16 +448,19 @@ A Hessian from ORCA is turned into `force_constants=` by `scripts/orca_hessian_t
 | $`B^A`$ of (1) | `CRYSTAL:TLS_displacement_mx` |
 | $`\Sigma`$ from the atoms' ADPs | `CRYSTAL:make_TLS_sigma_vector` |
 | $`U^{AB}`$, (2), for every atom pair | `CRYSTAL:make_two_center_ADPs` |
-| the transform $`\tilde g^{\mu\nu}_{ab}`$ of (10), with the temperature factor and the weight of each Gaussian product | `SHELL2:make_FT`, `GAUSSIAN2:make_e_coeff`, `GAUSSIAN2:make_ft_component` |
-| the temperature factor of (15) with (14), per pair of primitives | `SHELL2:make_TLS_TFs` |
-| the temperature factors of a shell pair, any two-centre model | `MOLECULE.XTAL:make_pair_TFs` |
-| $`s_0`$, $`s_1`$, $`s_2`$ of (21) for a shell pair | `MOLECULE.XTAL:make_FT_pair_moments` |
+| the phase, the Gaussian factor and the temperature factor of (15) with (14), for each pair of primitives | `SHELL2:make_TLS_prefactors` |
+| the polynomials of the transform (10) along each axis, and their derivatives | `SHELL2:make_e_coeff`, `SHELL2:make_ft_polynomials` |
+| $`\eta`$ of (41), $`\mathbf{q}`$ and $`Y`$ of (43), and the derivatives of a term with respect to $`\mathbf{y}`$ and $`L`$ | `SHELL2:make_turn_factors` |
+| the transform of a shell pair, for every pair of basis functions or traced with the density matrix | `SHELL2:make_FT_TLS`, `SHELL2:make_FT_TLS_moments` |
+| $`L`$ and $`\langle\boldsymbol{\lambda}\mathbf{u}^{A\dagger}\rangle`$ of (40) | `CRYSTAL:make_two_center_ADPs` |
+| $`s_0`$, $`s_1`$, $`s_2`$ of (21) for a shell pair | `MOLECULE.XTAL:make_FT_pair_TLS_moments` |
+| (22) and (45) for all the pairs of one atom with the others | `MOLECULE.XTAL:add_TLS_sigma_derivs` |
 | $`F`$ with (22) and the sums of (23) | `MOLECULE.XTAL:make_FT_and_TLS_derivs` |
 | the rotation between an atom and its image | `CRYSTAL:image_rotation` |
 | the shifts from those derivatives | `CRYSTAL:get_two_center_parameter_shifts` |
 | derivatives taken directly with respect to refined parameters | `DIFFRACTION_DATA.SET:solve_normal_equations` |
 | position derivatives by differences, `fixed-dm` and `scf` | `MOLECULE.HAR:make_two_center_position_derivs` |
-| the cosine factor in (28) | `SHELL2:scale_TFs_by_shift` |
+| the cosine factor in (28) | `SHELL2:scale_prefactors_by_shift` |
 | the average of one uncorrelated coordinate, (28) | `MOLECULE.HAR:make_mode_SF_correction` |
 | $`\Delta F`$, (29) | `MOLECULE.HAR:make_stiff_mode_SF_correction` |
 | the principal coordinates of $`\Sigma`$, (30) and (31) | `CRYSTAL:make_TLS_principal_motions` |
@@ -663,9 +469,10 @@ A Hessian from ORCA is turned into `force_constants=` by `scripts/orca_hessian_t
 | the parts of a fit shared with Hirshfeld atom refinement | `CRYSTAL:start_structure_fit`, `apply_parameter_shifts`, `finish_fit_cycle`, `finish_structure_fit` |
 | an SCF made ready at a new geometry | `MOLECULE.HAR:prepare_SCF_at_new_geometry` |
 | the check of the derivatives | `MOLECULE.HAR:check_two_center_derivs` |
+| the check of (43) against (33) | `MOLECULE.HAR:check_two_center_average` |
 
 
-## 10. Results
+## 11. Results
 
 All refinements use the TLS model with the stiff modes from a Hessian and no soft modes refined,
 RHF wavefunctions of the isolated molecule, and the `center` position derivative unless it is
@@ -686,6 +493,7 @@ use RI-J and COSX.
 | `tc-tls`, rigid-body motion averaged, 7 points | 3.4483 | 3.1150 |
 | `tc-tls`, rigid-body motion averaged, 9 points | 3.4483 | 3.1148 |
 | `tc-tls`, rigid-body motion averaged, 11 points | 3.4483 | 3.1148 |
+| `tc-tls`, rigid-body motion averaged by formula (§8) | 3.3337 | 2.9503 |
 | `tc-tls`, rigid-body motion and stiff modes (§6) averaged, 3 points | 3.4606 | 3.2795 |
 | `tc-tls`, rigid-body motion and stiff modes averaged, 5 points | 3.4227 | 3.1353 |
 
@@ -701,10 +509,20 @@ use RI-J and COSX.
   def2-TZVP, where they show no gain at all. The outer points of the three-point rule are at 13°,
   where moving on an arc and moving on a straight line differ by a phase of order one at high
   angle.
-- **With the rigid-body average converged, `tc-tls` gains 0.21 in GoF at def2-SVP and 0.12 at
-  def2-TZVP.** That puts it 0.04 below Hirshfeld atoms at def2-SVP and 0.06 above at def2-TZVP.
-  So the rigid-body average removes most of the difference between the two smearings, and
-  which of the two then fits better depends on the basis set.
+- **With the numerical rigid-body average converged, `tc-tls` gains 0.21 in GoF at def2-SVP and
+  0.12 at def2-TZVP.** That puts it 0.04 below Hirshfeld atoms at def2-SVP and 0.06 above at
+  def2-TZVP.
+- **Averaged by formula, `tc-tls` fits better than Hirshfeld atoms at both basis sets**: by 0.15
+  in GoF at def2-SVP and by 0.11 at def2-TZVP, with the same 17 parameters. It gains 0.32 and
+  0.29 on `tc-tls` without the average.
+- **The formula and the numerical average agree at low angle and differ at high angle.** At the
+  refined $`\Sigma`$, def2-SVP, the two corrections to the structure factors have the same
+  root-mean-square size, 0.013 electrons, and differ by 0.003, a fifth of it. For the 136
+  reflections with $`|\mathbf{k}|`$ below 2 bohr⁻¹ the correction is 0.025 and the difference
+  0.001, a twentieth. The numerical average takes the principal coordinates one at a time (§8).
+  For one product of two p functions, where the true average over all three rotations can be
+  done numerically, the one-at-a-time average is out by 1 to 4 % of the correction up to
+  2 bohr⁻¹ and by up to 40 % at 4 to 6 bohr⁻¹; the formula is within 2 to 4 % throughout.
 - **Averaging the stiff modes helps at def2-SVP and hurts at def2-TZVP.** At def2-TZVP the stiff
   modes include an out-of-plane NH₂ mode at 274 cm⁻¹ in which a hydrogen moves by 0.2 Å root
   mean square; a straight-line displacement that large stretches the N–H bonds. At def2-SVP that
@@ -721,13 +539,15 @@ four rows and to 1e-7 for the rest:
 | `tc-tls`, `scf` | 3.6292 | 0.0183 | 1.023 | 0.994 | 1.2562 | 1.3413 |
 | `tc-tls`, `center`, rigid body averaged, 3 points | 3.4876 | 0.0183 | 1.031 | 0.991 | 1.2620 | 1.3495 |
 | `tc-tls`, `center`, rigid body and stiff modes averaged, 3 points | 3.4606 | 0.0183 | 1.032 | 0.993 | 1.2619 | 1.3495 |
+| `tc-tls`, `center`, rigid body averaged by formula | 3.3337 | 0.0169 | 1.030 | 0.988 | 1.2635 | 1.3482 |
 
 - **Only the `scf` position derivative is right.** With `tc-tls` and the TLS parameters alone
   refined at the Hirshfeld geometry the GoF is 3.6377; `center` and `fixed-dm` end above that,
   `scf` below. `fixed-dm`, which moves the basis functions and holds the density matrix, is worse
   than `center`, which moves neither. N–H3 follows the derivative: 0.977, 1.013 and 0.994 Å.
 - **Averaging the rigid-body motion lengthens the bonds between the heavy atoms**: C=O by 0.006 Å
-  and C–N by 0.008 Å. In §7 the atoms move on arcs, so the refined positions are those of the
+  and C–N by 0.008 Å numerically, and by 0.008 and 0.007 Å by formula. In §7 and §8 the atoms
+  move on arcs, so the refined positions are those of the
   turning molecule itself; a refinement that moves atoms in straight lines places them closer
   together. The lengthening is the libration correction to a bond length, here part of the
   structure-factor model.
@@ -735,10 +555,13 @@ four rows and to 1e-7 for the rest:
   RHF/6-31G(d) Hessian, `tc-tls` gives GoF 3.6461 and `tc-tanaka`, which leaves the correlation
   out, 3.6561.
 - **The check of the derivatives** (`check_two_center_derivs`): those with respect to $`\Sigma`$
-  agree with central differences to 2 parts in 10⁸; what `center` leaves out of the position
-  derivatives is 13 % of the largest.
-- **Time**, def2-SVP, one core: 1 minute for `center`, 9 for `scf`; with `center`, 10 for the
-  stiff-mode average and 6 for the rigid-body average with three points.
+  agree with central differences to 2 parts in 10⁸, with and without the average by formula;
+  what `center` leaves out of the position derivatives is 13 % of the largest. Without (45)
+  the derivatives with respect to $`\Sigma`$ would be out by 34 % of the largest when the formula
+  is on, and the refinement then stops at GoF 3.3586 instead of 3.3337.
+- **Time**, def2-SVP, one core, for the whole job with its SCFs: 19 seconds for `center`, and
+  86 seconds with the rigid-body average by formula. The numerical rigid-body average with
+  seven points takes 12 minutes.
 
 ### Glycyl-L-alanine
 
@@ -753,14 +576,18 @@ last two. They are neither among the stiff modes nor refined.
 | `tc-tls` | 3.6131 | 0.0354 | 3.5750 | 0.0347 |
 | `tc-tls`, rigid-body motion averaged, 3 points | 3.6054 | 0.0354 | 3.5689 | 0.0347 |
 | `tc-tls`, rigid-body motion averaged, 5 points | 3.6039 | 0.0354 | | |
+| `tc-tls`, rigid-body motion averaged by formula | 3.6042 | 0.0354 | | |
 
 - **The two smearings differ much less than in urea**: `tc-tls` is 0.02 above Hirshfeld atoms in
   GoF at both basis sets, against 0.17.
 - **Averaging the rigid-body motion recovers a third to a half of that**: 0.006 of 0.018 at
   def2-TZVP with three points, 0.009 of 0.019 at def2-SVP with five. At def2-SVP three and five
   points agree to 0.002: a larger molecule librates less, and the rule is adequate.
+- **The formula gives the same as the numerical average here**, 3.6042 against 3.6039 at
+  def2-SVP, and `tc-tls` stays 0.010 above Hirshfeld atoms. The gain over Hirshfeld atoms
+  found for urea is not found for this molecule.
 
-## 11. Urea: against the multi-temperature analysis of Capelli, Förtsch and Bürgi
+## 12. Urea: against the multi-temperature analysis of Capelli, Förtsch and Bürgi
 
 Capelli, Förtsch and Bürgi (2000) fitted a dynamical model to the neutron ADPs of urea at 12, 60
 and 123 K: molecular translations and librations, one out-of-plane coordinate of the NH₂ groups
