@@ -116,9 +116,38 @@ with the list.
 
 One procedure per format, chosen by `output_format=`. `table`: element, n, a_1 … a_n, b_1
 … b_n, c, one line per element, with a header saying the range and the model. `buster`:
-**format not yet known** — the public BUSTER manual's file-formats page and FAQ say nothing
-about scattering tables; it needs an example file from a BUSTER installation or the keyword
-from Global Phasing. Until it arrives the writer is a stub that `DIE`s with that message.
+**format known since 2026-10-13**, from Claus Flensburg of Global Phasing; his reply is kept
+as received in `~/Dropbox/tonto_data/buster_form_factors/flensburg_reply_2026-10.txt`. The
+writer is still a stub. What the reply says:
+
+- BUSTER takes only four Gaussians plus a constant. `fit_sph_atom_ffs` already fits that.
+- A form factor is one line of a text file in TNT format, the amplitude and exponent of each
+  Gaussian in turn and then the constant:
+  `FORMFACTOR <type>  A1 B1  A2 B2  A3 B3  A4 B4  C`, for example
+  `FORMFACTOR C       0.865000  51.651199    2.310000  20.843899    1.020000  10.207500    1.588600   0.568700    0.215600`.
+  The file holds the ordinary types (C, H, N, O, S ...) and then the new ones.
+- There is no form factor per atom label. An atom gets its own form factor by being given its
+  own *type*: the element-and-charge field at the end of its `ATOM`/`HETATM` record in the PDB
+  file, which ordinarily ends at column 80 (`C`, `C1+`), is extended to column 82 with a sign, a
+  digit, a decimal point and one more digit, as `C+0.1`, `C-0.2`, `C-1.2`. The same string is
+  the type on a `FORMFACTOR` line.
+- So two files are written: the form-factor file, and a PDB file with the atoms retyped.
+- His caution: this suits a ligand, and may give trouble when very many atoms each need their
+  own type.
+
+To settle before writing it:
+- **How many types there can be.** With one digit each side of the point and a sign there are
+  at most 199 for an element (`-9.9` to `+9.9`), if every such string is accepted. Ask whether
+  the number is read as a charge and used for anything, or is only a label.
+- **The columns.** The reply says width 82; the example lines as pasted are longer, so the
+  spacing did not survive the paste. Take the columns from the PDB format (element in 77-78)
+  and check with a file BUSTER accepts.
+- **The exponent convention**: B multiplying (sin theta/lambda)^2, as in the International
+  Tables and SHELX `SFAC`, is assumed. The carbon line above is the International Tables
+  carbon with its Gaussians in another order, which supports it.
+- **Whether atoms of one kind should share a type**, to keep the number down: by symmetry
+  first, then by rounding the fitted coefficients.
+- The footnote on the TNT format, and the end of the reply, were not in what was pasted.
 
 ## 3. The fit itself: what to expect
 
@@ -165,7 +194,7 @@ from Global Phasing. Until it arrives the writer is a stub that `DIE`s with that
 3. `make_sph_atom_FF_curve`, the `fit_sph_atom_ffs` keyword with its `FF_fit_*` settings,
    the `shelx` and `table` writers, test `long/urea_rhf_STO-3G_sph-TFVH_FF_fit`. Done,
    branch `exphar`.
-4. The BUSTER writer, when the format is in hand.
+4. The BUSTER writer. The format is in hand (§2d): a `FORMFACTOR` file and a retyped PDB file.
 5. The two-stage fit (§8), if the 0.02 e residual on C and N matters for the data.
 
 ## 7. What the first fits showed (urea, `sph-tfvh`, STO-3G, 2026-10-05)
