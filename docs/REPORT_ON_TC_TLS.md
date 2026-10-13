@@ -144,7 +144,13 @@ of integration from $`\mathbf{r}`$ to $`\mathbf{s} = \mathbf{r} - \mathbf{P}`$ i
 ```
 
 The centre $`\mathbf{P}`$ appears only in the phase $`e^{i\mathbf{k}\cdot\mathbf{P}}`$; the transform
-$`\tilde g^{\mu\nu}_{ab}`$ depends on the two atoms only through $`\mathbf{R}`$. For two s functions, for example,
+$`\tilde g^{\mu\nu}_{ab}`$ depends on the two atoms only through $`\mathbf{R}`$. Tonto evaluates the transform by
+the method of McMurchie and Davidson (1978). Along each axis the two polynomial parts of (8)
+times the Gaussian are written as a sum of derivatives of the Gaussian $`e^{-\gamma s^2}`$ with
+respect to its centre, with coefficients $`E_t`$ that follow from $`\mathbf{R}`$ and the exponents by
+recursion. The Fourier transform of the $`t`$-th derivative is the transform of the Gaussian
+times $`(ik)^t`$, so each axis gives a polynomial in the component of $`\mathbf{k}`$ along that axis, and
+the three axes multiply. For two s functions, for example,
 $`\tilde g^{\mu\nu}_{ab} = (\pi/\gamma)^{3/2}\, e^{-\xi|\mathbf{R}|^2}\, e^{-|\mathbf{k}|^2/4\gamma}`$. With (5), the structure
 factor of the molecule with its atoms at rest is
 $`\sum_{\mu\nu} D_{\mu\nu} \sum_{ab} c^\mu_a c^\nu_b\, e^{i\mathbf{k}\cdot\mathbf{P}}\, \tilde g^{\mu\nu}_{ab}(\mathbf{k}; \mathbf{R})`$.
@@ -635,6 +641,7 @@ A Hessian from ORCA is turned into `force_constants=` by `scripts/orca_hessian_t
 | $`B^A`$ of (1) | `CRYSTAL:TLS_displacement_mx` |
 | $`\Sigma`$ from the atoms' ADPs | `CRYSTAL:make_TLS_sigma_vector` |
 | $`U^{AB}`$, (2), for every atom pair | `CRYSTAL:make_two_center_ADPs` |
+| the transform $`\tilde g^{\mu\nu}_{ab}`$ of (10), with the temperature factor and the weight of each Gaussian product | `SHELL2:make_FT`, `GAUSSIAN2:make_e_coeff`, `GAUSSIAN2:make_ft_component` |
 | the temperature factor of (15) with (14), per pair of primitives | `SHELL2:make_TLS_TFs` |
 | the temperature factors of a shell pair, any two-centre model | `MOLECULE.XTAL:make_pair_TFs` |
 | $`s_0`$, $`s_1`$, $`s_2`$ of (21) for a shell pair | `MOLECULE.XTAL:make_FT_pair_moments` |
@@ -707,6 +714,8 @@ The rows with `scf` or an averaging have the SCF converged to 1e-7, the others t
 - R. F. Stewart, *J. Chem. Phys.* 51, 4569 (1969), and K. Tanaka, *Acta Cryst.* A44, 1002 (1988):
   two-centre temperature factors.
 - D. Jayatilaka and D. J. Grimwood, *Acta Cryst.* A57, 76 (2001): the two-centre models in Tonto.
+- L. E. McMurchie and E. R. Davidson, *J. Comput. Phys.* 26, 218 (1978): the expansion of a
+  product of Cartesian Gaussians used for its Fourier transform.
 - J. R. Michael and T. Koritsanszky, *J. Math. Chem.* 53, 250 (2015): the ADP of a product of two
   Gaussians from the full covariance of the nuclear displacements, tested against an average
   over static densities.
