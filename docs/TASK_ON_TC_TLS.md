@@ -573,6 +573,65 @@ the printed factors; not checked by a run with (26) coded.
    gives the same intramolecular F as one molecule when the intermolecular density-matrix blocks
    are zeroed.
 
+## 11. Plan: a faster pair transform, then the analytic rigid-body average
+
+Written 2026-10-13 after the profile in the log of §9. Each step has a check that must pass
+before the next; every step keeps F the same to rounding unless it says otherwise.
+
+**Step 1. The derivative routine** (`MOLECULE.XTAL:make_FT_and_TLS_derivs`). Sum $`s_0, s_1, s_2`$ over
+the shell pairs of each atom pair into three arrays (n_k, n_atom_pairs), and contract with Sigma
+once per atom pair after the loop; make $`B^{A\dagger}\mathbf{k}`$ once per atom. Memory n_k x 3 x
+n_atom_pairs complex: 10^4 x 3 x 210 for gly-L-ala, 100 MB; for a large molecule contract in
+blocks of atom pairs. *Check:* `check_two_center_derivs` still 2e-8; refinement GoF unchanged to
+the last figure; time of one call before and after, from a job that only does
+`make_structure_factors` and one fit.
+
+**Step 2. One real exponential and two complex multiplications per primitive pair and k.** In
+`SHELL2:make_ft_c` every branch forms `exp(cmplx(-k^2/4 gamma, k.P))` and multiplies by the
+temperature factor, itself an exponential made earlier in `make_TLS_TFs`. Replace by
+(a) the phase from three tables in the integer indices of k after the symmetry operation,
+$`e^{2\pi i h_j u_{P,j}}`$, any cell; (b) one real exponential of
+$`-|\mathbf{k}|^2/4\gamma - \tfrac12\mathbf{k}^\dagger U^P\mathbf{k}`$, the Gaussian and the temperature
+factor together. Needs the integer indices and the reciprocal matrix passed down beside the k
+points (`VEC{REFLECTION}:make_unique_SF_k_pts` has them), and the prefactor of a primitive pair
+made in one routine that every angular-momentum branch calls. *Check:* F equal to 1e-12 on urea
+(tetragonal) and on a triclinic test cell; time before and after.
+
+**Step 3. Tables for the polynomial part when the cell allows.** Only if step 2 leaves the
+polynomials as a visible cost: for a reciprocal matrix that is diagonal, or block diagonal, in
+the Cartesian frame of the basis functions, tabulate the 1-D polynomials along the separate
+indices. The oblique monomial form (TeX notes, section 2) is not faster for d and f functions and
+is not planned.
+
+**Step 4. The analytic rigid-body average** (TeX notes, section 4), replacing
+`tc_integrate_rigid_body=` by quadrature, its SCFs and its dependence on the number of points.
+Two forms, both checked in `check_formulas.py` on one p-p product with urea-like T, L, S, against
+exact rotations (first-order, that is the present `tc-tls`, is off by 3-17 % there):
+- the full second-order form, a complex 3 x 3 inverse and determinant per primitive pair and k
+  once the translation is integrated out: within 1 %;
+- a cheap form, the arc term kept to first order in the exponent and the weight's mean and
+  covariance at zeroth order, only dot products: within 2 %.
+Start with the cheap form. The kernel needs, for each pair of Cartesian components, the
+polynomial part and its first and second derivatives with respect to k; `make_ft_component`
+gives the 1-D polynomials and the same E coefficients give their derivatives. This goes in the
+general branch of the kernel, not the hand-written low-angular-momentum branches. *Check:* one
+primitive pair against the Python formula; then the urea refinements against the converged
+quadrature, GoF 3.4483 (def2-SVP) and 3.1148 (def2-TZVP), and gly-L-ala 3.6039.
+
+**Step 5. Derivatives of the averaged F with respect to Sigma.** Today the correction is held
+fixed while Sigma shifts, the same kind of approximation that went wrong for the positions
+(`center` against `scf`). With the analytic form the derivative can be exact: differentiate the
+exponent of the cheap form with respect to Sigma. *Check:* `check_two_center_derivs` extended to
+the averaged F; the fit must not end above its starting GoF.
+
+**Step 6. Before any merge.** Debug build; the full suite on the Mac; new tests (a `tc-tls`
+refinement of urea STO-3G; pair weights with and without the petite list; kernel equality from
+step 2); references blessed again on achari2 for the four TLS tests whose printed output has
+grown. Ask before the suite and before blessing.
+
+**Not in this plan:** the stiff-mode average (kept as it is, by quadrature); segmented rigid
+bodies for methyl and NH3 groups; unrestricted wavefunctions; MPI.
+
 ## References
 
 - H. B. Burgi and S. C. Capelli, *Acta Cryst.* A56, 403 (2000), and S. C. Capelli, M. Fortsch and
