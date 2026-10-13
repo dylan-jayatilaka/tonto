@@ -1079,7 +1079,11 @@ three new short tests. Everything is in `docs/TASK_COSX_GRIDS.md`. **Result for 
 stay.** As the final-energy grid SG-1/2/3 give errors up to 0.8 mEh (CFCl3, zinc finger) where `high`
 gives under 0.03 on all nine jobs; the published pruning is what fails. SG-0 for the iterations
 matches `very_low` in error and time. **Dropped by Dylan the same day:** the XC trial of these grids and the questions for John Herbert.
-**Live:** ORCA's COSX grid parameters, asked of Helmich-Paris by email (register watch list). SG-0's
+**No longer waited for (Dylan, 2026-10-13):** ORCA's COSX grid parameters, asked of Helmich-Paris by
+email on 2026-10-06 with no reply; ORCA's licence rules out reading them from the program. In its
+place the register row *Calibrate our own COSX grids*: the recipe from the paper and from the
+recording of his talk that Dylan has, then our own fit against exact exchange, after the reset of
+the DFT grid levels and with its scanning scripts. SG-0's
 table came from Psi4's source: the Chien and Gill paper (J. Comput. Chem. 27, 730 (2006)) is not in
 `~/Dropbox/manuscripts`. Runs: `achari2:~/tonto_runs/sg_grids_2026-10-05/`; worktree
 `achari2:~/github/tonto-sg`. **A job is still running there, to be stopped by hand:**
