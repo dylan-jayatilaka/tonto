@@ -5893,7 +5893,7 @@ contains
    ENSURE(.TLS_basis.allocated,"no TLS model")
    ENSURE(.TLS_unique_response.allocated,"no TLS model")
 
-      Cp,CS,Sm,Esd :: MAT{REAL}@
+      Cp,CS,Sm,Esd,Csig :: MAT{REAL}@
       sv,var :: VEC{REAL}@
       Um :: MAT{REAL}(3,3)
       L_evals :: VEC{REAL}(3)
@@ -5908,12 +5908,15 @@ contains
       .make_TLS_sigma_vector(sv)
       var.create(.n_TLS_sigma)
       var = ZERO
+      Csig.create(.n_TLS_sigma,.n_TLS_sigma)
+      Csig = ZERO
       if (.xray_data.ls.param_covariance.allocated) then
          Cp = .xray_data.ls.param_covariance(first:first+k-1,first:first+k-1)
          CS.create(.n_TLS_sigma,k)
          CS.to_product_of(.TLS_basis,Cp)
+         Csig = .xray_data.GoF2*matmul(CS,transpose(.TLS_basis))
          do i = 1,.n_TLS_sigma
-            var(i) = .xray_data.GoF2*dot_product(CS(i,:),.TLS_basis(i,:))
+            var(i) = Csig(i,i)
          end
          CS.destroy
          Cp.destroy
@@ -5976,6 +5979,9 @@ contains
       end
       stdout.flush
 
+      ! The same tensors in axes fixed in the molecule
+      .put_TLS_in_inertial_axes(sv,Csig)
+
       ! The uncorrelated coordinates of the whole motion
       .put_TLS_principal_motions
 
@@ -5990,7 +5996,98 @@ contains
       ! Model selection
       .put_model_selection
 
+      Csig.destroy
       Esd.destroy; Sm.destroy; var.destroy; sv.destroy
+
+   end
+
+   put_TLS_in_inertial_axes(sv,Csig)
+   ! Put T, L and S, with esds, in the principal axes of inertia of the
+   ! TLS body about its centre of mass, which are fixed in the molecule
+   ! and do not depend on how the crystal axes were chosen. "sv" are the
+   ! elements of Sigma in the order of TLS_sigma_pairs and "Csig" their
+   ! covariance. Each rotated element is a linear combination of the
+   ! elements of Sigma, and its variance follows from "Csig".
+      self :: IN
+      sv :: VEC{REAL}, IN
+      Csig :: MAT{REAL}, IN
+
+      Im,ax,Rm :: MAT{REAL}(3,3)
+      mom,r :: VEC{REAL}(3)
+      Gm,Sm,Sr,Er :: MAT{REAL}(6,6)
+      c :: VEC{REAL}(21)
+      ang,deg2,adeg :: REAL
+      b,i,j,p,q,m,pp,qq :: INT
+
+      ! The inertia tensor of the TLS body, and its axes
+      Im = ZERO
+      do b = 1,.n_TLS_atoms
+         r = .fragment_atom(b).position - .TLS_origin
+         do i = 1,3
+            Im(i,i) = Im(i,i) + .fragment_atom(b).mass*dot_product(r,r)
+            do j = 1,3
+               Im(i,j) = Im(i,j) - .fragment_atom(b).mass*r(i)*r(j)
+            end
+         end
+      end
+      Im.solve_symmetric_eigenproblem(mom,ax)
+      Rm = transpose(ax)
+
+      ! Sigma of the rigid body, turned into those axes
+      Gm = ZERO
+      Gm(1:3,1:3) = Rm
+      Gm(4:6,4:6) = Rm
+      m = 0
+      do pp = 1,6
+      do qq = pp,6
+         m = m + 1
+         Sm(pp,qq) = sv(m); Sm(qq,pp) = sv(m)
+      end
+      end
+      Sr = matmul(Gm,matmul(Sm,transpose(Gm)))
+
+      ! The esd of each turned element
+      do p = 1,6
+      do q = 1,6
+         m = 0
+         do pp = 1,6
+         do qq = pp,6
+            m = m + 1
+            c(m) = Gm(p,pp)*Gm(q,qq)
+            if (pp/=qq) c(m) = c(m) + Gm(p,qq)*Gm(q,pp)
+         end
+         end
+         Er(p,q) = sqrt(max(ZERO,dot_product(c,matmul(Csig(1:21,1:21),c))))
+      end
+      end
+
+      ang  = ANGSTROM_PER_BOHR
+      deg2 = (180d0/PI)**2
+      adeg = ANGSTROM_PER_BOHR*180d0/PI
+
+      stdout.flush
+      stdout.text("T, L and S in the principal axes of inertia of the TLS body, about its")
+      stdout.text("centre of mass. The axes, one in each row, smallest moment first:")
+      do i = 1,3
+         stdout.put(Rm(i,1)); stdout.put(Rm(i,2)); stdout.put(Rm(i,3))
+         stdout.flush
+      end
+      stdout.flush
+      stdout.text("T /A^2:")
+      do i = 1,3
+         stdout.text("   "//trim(.TLS_element_str(Sr(i,1:3)*ang*ang,Er(i,1:3)*ang*ang)))
+      end
+      stdout.flush
+      stdout.text("L /deg^2:")
+      do i = 4,6
+         stdout.text("   "//trim(.TLS_element_str(Sr(i,4:6)*deg2,Er(i,4:6)*deg2)))
+      end
+      stdout.flush
+      stdout.text("S /(A deg), rows lambda, columns t:")
+      do i = 4,6
+         stdout.text("   "//trim(.TLS_element_str(Sr(i,1:3)*adeg,Er(i,1:3)*adeg)))
+      end
+      stdout.flush
 
    end
 
