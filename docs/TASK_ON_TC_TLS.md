@@ -407,6 +407,19 @@ Runs in `~/tonto-runs/2026-10-12_tc_tls/{equal_U,pair_weights,rigid}`.
   polynomial parts need derivatives of it. The converged numbers above are what to check it
   against. Not started.
 
+**2026-10-13, TeX notes extending the 1994 Letter.** `~/Dropbox/tex/conference_talks/2026_gaussian_pair_FT/`
+(`gaussian_pair_ft.tex`, 8 pages, and `check_formulas.py`), at Dylan's request. Contents: the
+formula of Jayatilaka, CPL 230, 228 (1994); a correction to its closing remark (the product of
+three terms is in the Cartesian components of k, so the grid saving holds only for a rectilinear
+grid; on oblique axes each factor depends on all of h, k, l) with the transform written as a
+polynomial in h, k, l; the two-centre ADP; and the rigid-body average to second order in the
+rotation vector in closed form, with the turning of the polynomial part. Checks: the
+McMurchie-Davidson transform against quadrature 2e-15; the oblique form 2e-16; the second-order
+rigid-body formula within 1 % of the average over exact rotations where the first-order (TLS)
+formula is out by 3-17 %, and the turning of the polynomial matters more than the arc. No SCF is
+needed for the rigid-body part. Not coded in Tonto; the converged numerical averages (urea GoF
+3.4483 at def2-SVP, 3.1148 at def2-TZVP) are what the coded formula must reproduce.
+
 ## 10. Symmetry: the stabiliser of an atom pair
 
 Dylan, 2026-10-13: the repetition factors are very old code, from Jayatilaka and Grimwood (2001);
