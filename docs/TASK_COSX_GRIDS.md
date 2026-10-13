@@ -287,6 +287,57 @@ are in `BECKE_GRID`, off by default, tested, for any element, and cost nothing w
   of H, He and Li for an SG kind. The 21-molecule job that hung was a Rys-root bug, since fixed
   (`TASKS_AND_HISTORY.md`).
 
+## 5a. Our own grids: what the talk gives (2026-10-13)
+
+Dylan, 2026-10-13: stop waiting for ORCA's parameters; no reply since 2026-10-06, and ORCA's
+licence rules out reading them from the program. Calibrate our own. Source for the recipe beyond
+the paper: the recording of B. Helmich-Paris, "Revision of COSX", ORCA user meeting 2020, day 3
+(`~/tonto-runs/cosx_talk/ORCAUM2020-Day3-4_RevisionOfCOSX_HelmichParis.mp4`, 28.5 minutes). The
+slides were read from frames (tool `frames` in that folder; frames in `scan/` and `grid/`). Only
+the slides were read, not the sound. The grid part is three slides, from 21:10 to 23:30.
+
+**What the slides say.**
+- The grid error is minimised as a function of **32 parameters**: "4 grid pruning regions x 6
+  rows of the PSE + 8 more parameters". So one number for each of four radial regions for each of
+  six rows of the periodic table, 24, and eight more that the slide does not name.
+- The function minimised is the product of the mean energy error and the mean number of grid
+  points, $`f_{\rm err}(\theta_1 \dots \theta_{32}) = \overline{\Delta E}\;\overline{n_{\rm grid}}`$. So accuracy
+  and cost are traded in one number, not accuracy at a fixed size.
+- The minimiser is differential evolution.
+- Training set: 351 atoms and molecules in different spin states, charges and bonding
+  situations, from G2, G3/99, G3/05 and S22, plus their own set of transition-metal atoms and
+  molecules.
+- Test: GMTKN55 and MOR41. The slide of results gives the total mean absolute deviation in
+  kcal/mol for the old grids (default, GRIDX6, GRIDX8) and the new (NG1, NG2, NG3) with SVP,
+  TZVP and their DKH forms, with a dashed line at 0.1 kcal/mol: NG2 and NG3 are under it in all
+  four, NG1 is at 0.1 to 0.4.
+- For TDDFT a much smaller exchange grid is enough, 20 % of the SCF grid.
+
+**The picture of the four regions** (credited to B. de Souza). A radial function of one atom,
+not named, peaking near 4.1 bohr, over r from 0 to 30 bohr, with four shaded bands. Read off the
+frame: region 1 from 0 to 1.7 bohr, region 2 from 1.7 to 2.9, region 3 from 2.9 to 5.8, region 4
+beyond. Region 3, which holds the peak, is shaded darkest, regions 2 and 4 less, region 1 least.
+So the densest angular grid sits on the valence maximum, with coarser ones inside and outside,
+as in SG-1 and its relatives; whether the boundaries are fixed lengths or scale with the atom
+the slide does not say (the paper speaks of Clementi radii).
+
+**What it does not give.** No numbers for any grid: not the radial counts, not the boundaries
+for each row, not the Lebedev order in each region, not what the other eight parameters are.
+
+**What follows for our own calibration.**
+- The form: four radial regions for each row, a Lebedev grid in each, boundaries as multiples of
+  an atomic radius. That is what `BECKE_GRID` already does for `sg-1` to `sg-3`, so the new
+  grids are new tables, not new code.
+- The eight further parameters are probably the radial counts or their dependence on the row,
+  and the scheme's scale factors; to be read from the paper again with this in mind.
+- The target: mean error times mean number of points, three grids of increasing size.
+- Their training set is far larger than ours can be at first. Start with the systems chosen for
+  the DFT grid levels and the two molecules already used for COSX, and test on the nine jobs of
+  section 4; widen it if the fitted grids do not carry over.
+- Differential evolution over 32 parameters needs many thousands of evaluations of every
+  training system. With exchange from a fixed density, one evaluation is one K build, so this
+  is feasible for small systems only; the fit should use fixed densities and small molecules.
+
 ## 6. Log
 
 - 2026-10-05. SG-2 and SG-3 transcribed and coded on `sg-grids`; not built.
