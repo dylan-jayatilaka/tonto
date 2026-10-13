@@ -317,9 +317,10 @@ U^P = \bar B^P\, \bar\Sigma\, \bar B^{P\dagger}
 B^P = w_A B^A + w_B B^B , \qquad (19)
 ```
 
-of which only the first term contains $`\Sigma`$. Second, $`\Sigma`$ is symmetric, and its element
-$`\Sigma_{pq}`$ with $`p \ne q`$ stands for the two equal elements $`\Sigma_{pq}`$ and $`\Sigma_{qp}`$. Then,
-differentiating (15),
+of which only the first term contains $`\Sigma`$. Second, $`\Sigma`$ is symmetric: its entries
+$`\Sigma_{pq}`$ and $`\Sigma_{qp}`$ are equal, so for $`p \ne q`$ the two are one independent parameter, not
+two. That parameter is called $`\Sigma_{pq}`$ with $`p \le q`$, and changing it changes both entries of
+the matrix together. Then, differentiating (15),
 
 ```math
 \begin{aligned}
@@ -349,7 +350,10 @@ differentiating (15),
 \qquad (20)
 ```
 
-Here $`\delta_{pq}`$ is the Kronecker delta, one if $`p = q`$ and zero otherwise. The last step uses
+Here $`\delta_{pq}`$ is the Kronecker delta, one if $`p = q`$ and zero otherwise. The factor
+$`2-\delta_{pq}`$ is the count of entries the parameter sets: in
+$`\mathbf{h}^{\dagger}\Sigma\,\mathbf{h} = \sum_{pq} h_p \Sigma_{pq} h_q`$ the parameter $`\Sigma_{pq}`$ with $`p \ne q`$ appears
+twice, as $`h_p \Sigma_{pq} h_q`$ and as $`h_q \Sigma_{qp} h_p`$, and a diagonal one appears once. The last step uses
 two things: $`\mathbf{h}^A`$ and $`\mathbf{h}^B`$ belong to the atoms and are the same for every
 primitive, so they come outside the sum over $`a, b`$; and $`w_B = 1 - w_A`$. The three sums in round
 brackets are all made of
