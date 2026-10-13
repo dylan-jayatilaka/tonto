@@ -420,6 +420,36 @@ formula is out by 3-17 %, and the turning of the polynomial matters more than th
 needed for the rigid-body part. Not coded in Tonto; the converged numerical averages (urea GoF
 3.4483 at def2-SVP, 3.1148 at def2-TZVP) are what the coded formula must reproduce.
 
+**2026-10-13, where the two-centre transform spends its time** (Dylan: would tabulating by index,
+the tensor transformation, speed up the pair transform?). Profile of a gly-L-ala def2-SVP
+`tc-tls` refinement without averaging (macOS `sample`, 70 s, release build, SCF with RI-J/COSX in
+the same run; samples at the top of the stack, idle threads left out):
+
+| where | samples |
+|---|---|
+| `MOLECULE.XTAL:make_FT_and_TLS_derivs`, own loops | 5780 |
+| `SHELL2:make_ft_c` and `make_ft_component` | 4670 |
+| `cexp`, `sin`, `cos` (the phase and Gaussian of each primitive pair at each k) | 4806 |
+| `exp` (temperature factors; part of it is the SCF) | 3272 |
+| `matmul` (from `matmul(k_pts,TLS_displacement_mx)` per shell pair) | 1198 |
+
+Read: (1) The derivative routine written for step 2 costs more than the transform. It contracts
+the 21 elements of Sigma for every *shell* pair; s_0, s_1, s_2 should be summed over the shell
+pairs of each *atom* pair first and contracted once, and the matmul done once per atom. (2) In
+the transform itself the complex exponential is about half the time. On any cell, oblique or
+not, the phase is a product of three factors in the integer indices (after the symmetry
+operation the indices are still integers), so three small tables per primitive pair replace it.
+(3) The Gaussian exp(-k^2/4 gamma) depends only on gamma and k: one table per distinct gamma,
+shared by every shell pair with those exponents. (4) The temperature factor is one real exp per
+primitive pair per k and is not separable (U^P has cross terms and depends on the pair through
+w_A); it could be tabulated as three 1-D and three 2-D tables per primitive pair, which pays only
+when there are many more k points than about 3(2 h_max + 1)^2. (5) The polynomial part is cheap
+already as a product of three 1-D polynomials in the Cartesian components; the oblique monomial
+form has up to (l+1)(l+2)(l+3)/6 terms and is slower for d and f functions. For a cell with
+orthogonal axes along the Cartesian axes everything but the temperature factor is three 1-D
+tables. Not coded. The X-ray constrained SCF uses the same kernel for its constraint matrix, so it
+would gain the same.
+
 ## 10. Symmetry: the stabiliser of an atom pair
 
 Dylan, 2026-10-13: the repetition factors are very old code, from Jayatilaka and Grimwood (2001);
