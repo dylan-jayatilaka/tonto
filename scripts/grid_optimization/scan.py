@@ -2,10 +2,11 @@
 """Write the grid scans for every system that has a converged density:
 <basis>/<system>/scan_<stage>.in, and scan_<stage>.json listing the grid
 settings of each evaluation in order.
-Usage: scan.py <basis> [partition=becke|salvador] [hchi=S] [variant=ionic]
+Usage: scan.py <basis> [partition=becke|salvador|stratmann_scuseria] [hchi=S] [variant=ionic]
                [systems=A,B,...] <stage>...
 With partition=salvador every grid uses partition_scheme= salvador and the
-files are scan_<stage>_salvador.*; the default is Becke's partition.
+files are scan_<stage>_salvador.*, and likewise for stratmann_scuseria; the
+default is Becke's partition.
 hchi=S adds partition_h_chi_scale= S to every Salvador grid, and hbecke=1
 partition_h_becke= TRUE (the mixed partition); stiff=K salvador_stiffness= K.
 variant=ionic builds the promolecule from the ions of systems.IONIC, and
@@ -40,7 +41,7 @@ HBECKE = False
 STIFF = None
 
 def partition_kw():
-    kw = 'partition_scheme= salvador ' if PARTITION == 'salvador' else ''
+    kw = '' if PARTITION == 'becke' else 'partition_scheme= %s ' % PARTITION
     if HCHI is not None:
         kw += 'partition_h_chi_scale= %g ' % HCHI
     if HBECKE:
@@ -104,7 +105,7 @@ def main():
         elif k == 'variant': variant = v
         elif k == 'systems': only = v.split(',')
         else: raise SystemExit('unknown option ' + a)
-    assert PARTITION in ('becke', 'salvador'), PARTITION
+    assert PARTITION in ('becke', 'salvador', 'stratmann_scuseria'), PARTITION
     assert variant in ('', 'ionic'), variant
     tag = '' if PARTITION == 'becke' else '_' + PARTITION
     if HCHI is not None: tag += '_hchi%g' % HCHI

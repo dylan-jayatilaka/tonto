@@ -25,6 +25,7 @@ CANDIDATES = {
     'becke':  dict(partition='becke'),
     'mixed4': dict(partition='salvador', hbecke=True),
     'mixed3': dict(partition='salvador', hbecke=True, stiff=3),
+    'ss':     dict(partition='stratmann_scuseria'),
 }
 RADIAL_TARGETS = [1e-4, 1e-5, 1e-6, 1e-7]
 TAUS = [1e-5, 1e-6, 1e-7, 1e-8]

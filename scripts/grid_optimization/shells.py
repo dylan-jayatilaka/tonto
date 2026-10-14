@@ -25,6 +25,7 @@ CANDIDATES = {
     'becke':  'partition_scheme= becke',
     'mixed4': 'partition_scheme= salvador partition_h_becke= TRUE',
     'mixed3': 'partition_scheme= salvador partition_h_becke= TRUE salvador_stiffness= 3',
+    'ss':     'partition_scheme= stratmann_scuseria',
 }
 REF_RADIAL = 'n_radial_pts= 100 n_extra_radial_pts= 0 10 20 40 60 80 80'
 BOHR_PER_ANGSTROM = 1.8897261
