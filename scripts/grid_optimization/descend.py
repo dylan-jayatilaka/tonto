@@ -8,13 +8,16 @@ single-step reduction (5 fewer radial points, or the next lower Lebedev
 order), all in one job per system; then all the passing reductions together,
 then the better half of them, then the best one alone. A grid passes if its
 largest E_xc error over the test systems, KF, LiF and ScO left out, is below
-MARGIN times the target. The start is the cheapest grid of assemble.py.
+MARGIN times the target. The start is the cheapest grid of assemble.py that
+passes; with the run spec candidate:level:rich it is instead the richest
+assembled grid (the tightest radial target and shell tolerance), to show
+whether the result depends on where the lowering starts.
 
 State is kept in the store (descent_<basis>.json) after every round, so a
 stopped run continues where it stopped; progress is written to
 descent_status.md in the run folder.
 
-Usage, from a run folder: descend.py <basis> [candidate:level ...]
+Usage, from a run folder: descend.py <basis> [candidate:level[:rich] ...]
 """
 import json, os, subprocess, sys, time
 from systems import SYSTEMS
@@ -42,16 +45,19 @@ def block(cand, g):
             '      zone_orders= %s\n      %s}' % (n, ' '.join(str(c - n) for c in counts),
                                                   ' '.join(str(o) for o in flat), scan.partition_kw()))
 
-def start(cand, level, target):
-    """The cheapest assembled grid meeting the target, as settings."""
+def start(cand, level, target, rich=False):
+    """The cheapest assembled grid whose error is below "target", as settings;
+    if "rich", the richest assembled grid, if it is below "target"."""
     best = None
     T.load(basis, **assemble.CANDIDATES[cand])
-    for rt in assemble.RADIAL_TARGETS:
-        for tau in assemble.TAUS:
-            b = assemble.block(cand, rt, tau)
-            m = measure(cand, b)
-            if m and m[0] < target and (best is None or m[1] < best[2]):
-                best = (rt, tau, m[1])
+    pairs = [(rt, tau) for rt in assemble.RADIAL_TARGETS for tau in assemble.TAUS]
+    if rich:
+        pairs = [(min(assemble.RADIAL_TARGETS), min(assemble.TAUS))]
+    for rt, tau in pairs:
+        b = assemble.block(cand, rt, tau)
+        m = measure(cand, b)
+        if m and m[0] < target and (best is None or m[1] < best[2]):
+            best = (rt, tau, m[1])
     if best is None:
         return None
     T.load(basis, **assemble.CANDIDATES[cand])
@@ -126,7 +132,8 @@ def status(state):
              '| candidate | level | round | done | largest error | points per atom | radial 1-4 | zone orders, periods 1-4 |',
              '|---|---|---|---|---|---|---|---|']
     for key, st in state.items():
-        c, l = key.split(':')
+        c, l = key.split(':')[:2]
+        if key.endswith(':rich'): c += ' (rich start)'
         lines.append('| %s | %s | %d | %s | %.1e | %.0f | %s | %s |' % (
             c, l, st['round'], st['done'], st['err'], st['ppa'], st['g']['r'],
             ' / '.join(' '.join(str(o) for o in z) for z in st['g']['z'])))
@@ -137,10 +144,11 @@ def main(runs):
     state = json.load(open(sfile)) if os.path.exists(sfile) else {}
     targets = dict(assemble.LEVELS)
     for run in runs:
-        cand, level = run.split(':')
+        cand, level = run.split(':')[:2]
+        rich = run.endswith(':rich')
         target = targets[level] * MARGIN
         if run not in state:
-            g = start(cand, level, targets[level])
+            g = start(cand, level, target, rich)
             if g is None:
                 print(run, 'no assembled grid meets the target'); continue
             b = block(cand, g); evaluate(cand, level, [b]); m = measure(cand, b)

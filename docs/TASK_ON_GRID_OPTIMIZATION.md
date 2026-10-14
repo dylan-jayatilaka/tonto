@@ -447,6 +447,41 @@ radii (`tfvp`).
   `descent_status.md`. Order: `medium`, `low`, `high`, `very_low`, each for mixed4, Becke, mixed3.
   Started 2026-10-14 evening under `caffeinate`; log `descent_run.log`.
 
+- **The lowering finished, 2026-10-14 17:23** (`descent_status.md`; state
+  `descent_def2-SVP.json` in the store). Points per atom, largest error below 0.9 times the target
+  on every system but KF, LiF and ScO:
+
+  | level (target) | today's grid (fails) | Becke | mixed3 | mixed4 | cheapest assembled |
+  |---|---|---|---|---|---|
+  | `very_low` (1e-3) | 1,586 | **1,350** | 1,658 | 1,847 | 4,074 |
+  | `low` (1e-4) | 3,028 | **4,296** | 5,544 | 9,272 | 9,272 |
+  | `medium` (1e-5) | 5,268 | 11,865 | 15,441 | **10,414** | 21,213 |
+  | `high` (1e-6) | 8,361 | **16,443** | 36,650 | 30,470 | 59,394 |
+
+  The lowering cut the assembled grids by two to four times; the grids now meet worst-case
+  targets at one to two times the cost of today's levels. **The ranking turned over:** Becke's
+  partition is the cheapest at three of four levels and needs about half the points at `high`,
+  with fewer radial points as well as lower zone orders (`high`: radial [35, 60, 95, 95] against
+  mixed4's [45, 75, 105, 85]). The per-shell tables had favoured the mixed partition at the
+  valence peak (at most order 53 against 101 on the metals); the lowering, which judges the
+  summed error, allows cancellation between shells, and Becke's shell errors probably cancel.
+  Not checked.
+- **Dylan, on the result:** a partition that is realistic for the density (Salvador, `tfvp`) is
+  not the best for quadrature; what matters is how compact and smooth each atom's share is on its
+  own grid. The choice of the Salvador partition for the grid is reopened by the data.
+  Stratmann-Scuseria (`partition_scheme= stratmann_scuseria`, already in `BECKE_GRID`) is
+  expected to behave like Becke in points and to cost less per point; to be measured.
+- **A bug in `descend.py`:** `start` chose the cheapest assembled grid meeting the target, but the
+  lowering accepts only grids below 0.9 times it. mixed4 at `low` started at 9.9e-5, between the
+  two, so no reduction could pass and it stopped after one round at its starting 9,272 points.
+  Fixed: the start must meet the margin too. Its result above is not a real minimum.
+- **Next (Dylan, 2026-10-14):** (1) these results here and on the register; (2) check the
+  lowering is not stuck: rerun mixed4 `low` with the fixed start, and rerun from the richest
+  assembled grid (radial target 1e-7, shell tolerance 1e-8; run spec `candidate:level:rich`) for
+  Becke `high` and mixed4 `medium`, the two closest calls. Then Stratmann-Scuseria and Laqua's
+  g1 to g7 as candidates, time as well as points, the choice of partition, def2-TZVP SCFs with
+  KF, LiF and ScO, then the COSX grids.
+
 ## Appendix A. The COSX grid record (formerly `docs/TASK_COSX_GRIDS.md`)
 
 The plan and log for adopting the published standard grids in Tonto, for COSX first: SG-0 (Chien
