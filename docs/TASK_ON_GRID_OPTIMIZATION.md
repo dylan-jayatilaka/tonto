@@ -393,6 +393,26 @@ radii (`tfvp`).
 - **Proposal:** carry three candidates (Becke; mixed, stiffness 4; mixed, stiffness 3) through the
   shell tables and the assembly of the levels, and choose on points per atom at equal accuracy;
   errors at today's levels, which were built for Becke, cannot settle it.
+- **Dylan, on the candidates:** carry all three, for diversity; uneasy with the mixed model's ad
+  hoc rule (H is small and its density is swamped or polarised by its bonded neighbour), so the
+  mixing deserves further study. The test set is small; widen it later, once the behaviour is
+  understood, not now. Work committed to branch `grid-optimization` (not merged; merging to
+  `develop` needs a good CI).
+- **The period-2 radial bump at stiffness 3 is the carbonyls**, not hydrogen: Cr(CO)6 needs 100
+  points and Ni(CO)4 95 for 1e-6, every other period-2 system 45 to 60. Their error alternates
+  in sign and decays slowly with the count, which points to the metal's density in the C and O
+  cells far from their nuclei, where the radial grid is sparse; a softer boundary gives those
+  cells more of it (Becke 60, stiffness 4 75, stiffness 3 100).
+- **Shell tables** (`shells.py`; store `shells_def2-SVP.csv`, 34,950 rows): `put_grid_shell_errors`
+  now compares orders 5 to 71 against 101 (was 5 to 29 against 59) and sets the grid up itself, so
+  it works with the Salvador partition; `partition_Salvador` stops with a message (`STOP_IF`)
+  where it crashed if the grid was not set up. Order needed for every shell within 1e-7 of L = 101,
+  largest over each element, zones in units of the Bragg–Slater radius $`R`$: inside $`0.5R`$ 5 to 17
+  everywhere; the peak is at 1 to 2 $`R`$, where Becke needs 101 on Na, Ti, Ni and 71 on Li, K, S, Cr,
+  mixed at stiffness 4 at most 53 on the metals (Cr 71 just inside), stiffness 3 between, with O at
+  101; beyond 3 $`R`$ low again, except H in the mixed partition (47, 41) and C (Becke 71). Table in
+  `~/tonto-runs/2026-10-13_grid_levels/shells_needs_1e-7.md`. A per-element zone scheme is well
+  supported.
 
 ## Appendix A. The COSX grid record (formerly `docs/TASK_COSX_GRIDS.md`)
 
