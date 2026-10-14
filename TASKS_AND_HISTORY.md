@@ -78,25 +78,51 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## START HERE (2026-10-15): the eigensolver and the BUSTER writer are merged; the interpolator tidy waits for review
+## START HERE (2026-10-14, overnight): three register rows done on three branches
 
-**Merged to `develop` on 2026-10-15** (branches `pure-eigensolver`, `buster-ff`; the handover of
-2026-10-14 overnight below has the detail): `MAT{REAL}:diagonalize_QR`, the pure Householder
-and QR eigensolver, now behind every refinement's normal equations, with the ctest
-`symmetric_eigensolver_known_answer`; and `FF_fit_format= buster`, the BUSTER `FORMFACTOR` file
-and retyped PDB file, with the long test `urea_rhf_STO-3G_sph-TFVH_FF_fit_buster` blessed on
-achari2. The report `docs/REPORT_ON_SAMS.md` describes the spherical models, the fit, the three
-formats, the least squares behind a refinement and what is left. CI on `develop` is the check.
+Three branches, each pushed, none merged, all built and tested on achari2 (`reference`, libxc on):
 
-**Waiting for Dylan's review, not merged: branch `interpolator-tidy`** (`INTERPOLATOR` as one
-table kind, the Slater and Coppens bases and the averaged atoms on it; 186 of 186 of
-`short long cx rgbi` on achari2). Its report, `docs/REPORT_ON_INTERPOLATOR.md`, is on the branch.
-Register row *Review and merge `interpolator-tidy`*, the last TODO.
+1. **`pure-eigensolver`** -- *A pure symmetric eigensolver for the normal equations*. New
+   `MAT{REAL}:diagonalize_QR`: Householder tridiagonalisation and the implicit symmetric QR
+   algorithm with the Wilkinson shift, Golub and van Loan (3rd ed.) Algorithms 8.3.1 to 8.3.3,
+   reusing `VEC{REAL}:Householder_vector`. It replaces `diagonalize_Jacobi` in
+   `solve_ill_linear_equations_v1` only, so every refinement's normal matrix (restrained or not)
+   goes through it; the 3 x 3 ADP and quadrupole tensors keep Jacobi and no printed axes move.
+   Self-check `check_QR_eigensolver`, program `run_eigensolver`, ctest
+   `symmetric_eigensolver_known_answer`. **Results:** `short long hart`, 145 of 145 reference tests
+   pass unchanged. Time to diagonalise a 322 x 322 normal matrix (the suite's largest refinement,
+   yq28): Jacobi 0.65 s, QR 0.097 s, netlib dsyev 0.072 s; the yq28 job 281 to 269 CPU s. The
+   book's Example 8.3.3 prints 12.831 for its last eigenvalue; it is 12.8437 (the trace is 16).
+   **One decision owed (Dylan):** any orthogonal reduction, dsyev included, gives each eigenvalue
+   to about epsilon times the largest, where Jacobi keeps relative accuracy on a graded matrix.
+   The restrained self-check's 1e12 weight showed it (7.6e-5 left in the free parameters against
+   a 1e-6 tolerance; the check now uses 1e8, which holds the parameter to 4e-8). The suite does
+   not see it. If it should matter -- a normal matrix mixes positions, ADPs and a scale factor --
+   the remedy is to scale the normal matrix by its diagonal before the eigen-filter, which also
+   makes the near-zero criterion unit-free; that changes `n_param_eff` and esds, so it is a
+   science decision, not taken here.
+2. **`buster-ff`** -- *Spherical form factors fitted to Gaussians, for protein refinement*: the
+   BUSTER writer, `FF_fit_format= buster`. Writes `<name>.sph_ff.buster` (`FORMFACTOR` lines in
+   TNT format, the elements from the International Tables then one type for each unique atom)
+   and `<name>.sph_ff.pdb` (the cell and every atom as a `HETATM` record typed as its unique
+   atom in columns 77-82, `C+0.1`, `C-0.1`, ...; 198 types for an element, a label not a charge).
+   Decisions taken on the branch are in `docs/TASK_SPHERICAL_FF_FIT.md` section 2d. New long
+   test `urea_rhf_STO-3G_sph-TFVH_FF_fit_buster`, which compares the PDB file and the stdout
+   (not the `FORMFACTOR` file: a degenerate pair of Gaussians can split differently between
+   machines); blessed on achari2.
+3. **`interpolator-tidy`** -- *Tidy `interpolator.foo`, and move the Slater and Coppens bases to
+   the new table*. `INTERPOLATOR` is one thing now, the octave table: 2566 lines to 470, 15 files,
+   3400 lines out. The Slater and Coppens bases, and the spherically averaged Hirshfeld and
+   bonded density atoms, use it; the old kinds, the function-argument builders and `saved_self`
+   are gone; the old `interpolator=` keywords are read and ignored so an old input (and
+   CrystalExplorer's) still runs. The line plots between atoms carry their own arrays. **Results:**
+   `short long cx rgbi`, 186 of 186 pass, so no reference moved outside the tolerance and nothing
+   was re-blessed. What is left of the density-tables entry is listed under *Science and features*.
 
-**Decision owed (Dylan):** whether to scale the normal matrix by its diagonal before the
-near-zero eigen-filter, now that the eigensolver's accuracy is epsilon times the largest
-eigenvalue (section 7 of the SAMS report). **Idea recorded:** replace gnuplot's fit of the form
-factors by Tonto's own Levenberg-Marquardt on `LEAST_SQUARES`, also in that section.
+Merge order does not matter; the three touch different files except `TASKS_AND_HISTORY.md`.
+On achari2 the worktrees `~/github/tonto-eig` (on `buster-ff`) and `~/github/tonto-interp` (on
+`interpolator-tidy`) each hold a built `reference/` tree; `~/tonto_jacobi` is the pre-eigensolver
+binary used for the timing; the scripts and logs `~/run_*.sh`, `~/run_*.log` can go.
 
 ## START HERE (2026-10-12, night): next is the reset of the grid levels
 
@@ -4381,13 +4407,13 @@ atomic density tables*). Left:
 
 1. **A heavy-atom structure:** the effect on a Hirshfeld weight and a structure factor. Needs
    a data set with an atom beyond Kr, which is also owed to the standardisation.
-2. **Move the Slater and Coppens bases, and the spherically averaged Hirshfeld atoms, to the
-   `octaves` kind,** then delete the kinds nothing uses.
-3. **Tidy `interpolator.foo`:** the sixteen pasted lookup loops (linear or spline, logged or
-   not, with a factor or not, set or add); the families of routines that take a function
-   argument (`_vs` for Slater shells, `_d_`, `_d2_`, `_general_`) and the `saved_self` device
-   that goes with them; every setting held as a string and as a flag; the copy of the whole
-   point array in each lookup; the commented `ENSURE`s.
+2. ~~Move the Slater and Coppens bases, and the spherically averaged Hirshfeld atoms, to the
+   `octaves` kind, then delete the kinds nothing uses.~~ Done, branch `interpolator-tidy`
+   (handover of 2026-10-14, overnight). The averaged atoms (`make_SAHA`, `make_averaged_BDAs`,
+   no test) use a coarser octave table, 64 cells to the power of two from 0.01 bohr, each point
+   costing a spherical shell of density evaluations; a decision taken on the branch.
+3. ~~Tidy `interpolator.foo`.~~ Done, same branch: one table kind, one lookup, no function
+   arguments, no `saved_self`; the old keywords are read and ignored.
 4. **One table for each kind of atom,** with the lightening of the derived types
    (*Re-engineering*): today it is copied to every atom, 0.4 MB each.
 5. **A line plot writes 75 of its 401 points** (`y_width= 0`, `z_width= 0`, `n_x= 401`), then
@@ -7271,6 +7297,39 @@ different question and the one that matters.
 ---
 
 # Done, resolved and closed (archive)
+
+## DONE 2026-10-14 (overnight): the eigensolver, the BUSTER writer, the interpolator tidy
+
+Three register rows taken together while Dylan was away; results and the one decision owed
+are in the handover of that date at the top. What is kept here is how each was checked.
+
+**Eigensolver.** `perf` is not permitted on achari2 (`perf_event_paranoid` 4), so the solve
+was timed two ways: the yq28 job (322 parameters) with the pre-branch binary and the branch
+binary, 281 and 269 CPU s; and the three solvers on a 322 x 322 normal matrix B^T B inside the
+self-check, printed not asserted. The algorithm was checked outside Tonto by transliterating the
+Fortran line for line into numpy (`qr_check.py`, in the session's scratch directory): the book's
+Example 8.3.3, a dense 60 x 60, split and repeated spectra, and the 322 x 322 all agree with
+LAPACK to 1e-14. That check is what found the book's misprint (12.831 for 12.8437) and the
+cause of the restrained check's failure: with the QR solver the 1e12 weight left 7.6e-5 in the
+free parameters; with 1e8, 6e-9 and the held parameter 4e-8 from its prior. The first suite run
+with the branch, before those two fixes, was already 145 of 145 on the reference tests.
+
+**BUSTER writer.** First run stopped in `BUFFER:put_str` with a 259-character line of garbage:
+`unique_index_for_frag_atom` is zero for an atom that is not itself unique, so the type of a
+symmetry-generated atom was read from element zero of the type list. The unique atom it comes
+from is `unique_atom_for_frag_atom`. Also `to_str` trims, so every fixed-width PDB field is
+right-justified by hand. The FORMFACTOR file is not compared by the test for the reason the
+`shelx` test does not compare its coefficients.
+
+**Interpolator tidy.** The edits were made by one anchored script (every replacement asserted
+against the exact text) and all fourteen modules translated on the Mac before the first remote
+build. Two slips found by the build and the diff: a routine that read the point count before the
+radius on the keyword line, and the unused-`self` idiom copied into a routine whose `self` is
+`IN` (gfortran: "Dummy argument 'self' with INTENT(IN) in variable definition context"). The four
+suites passed first time once it compiled, 186 of 186 -- the octave table is a closer
+approximation to the same density than the 0.1 bohr^2 sqrt table it replaces, and the loose
+criterion absorbs the difference. `SLATERBASIS:density_at_radius` looked its table up by r where
+the table was indexed by r^2; it now looks up r^2 (used only by `put_SA_cell_fn_between_atoms`).
 
 ## CLOSED (2026-10-12): the atomic density tables -- no spline, and a mesh that resolves the core
 
