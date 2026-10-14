@@ -86,7 +86,7 @@ and features*). The atomic density tables, second in that order, are done.
 
 **Merged to `develop` on 2026-10-13, pull request 54:** two-centre smearing with the motion model
 (`tc-tls`), with the rigid-body rotation averaged by formula, three new tests, and nine references
-blessed on achari2. Entry *Two-centre smearing with the motion model* under *Science and
+blessed on achari2. Entry *Rigid-body and soft-mode motion* under *Science and
 features* has what is left. Taken up out of the order of work, at Dylan's request. In the same
 merge: `refine_soft_modes=` in place of `n_soft_modes=`; the BUSTER form-factor format from Global
 Phasing (`docs/TASK_SPHERICAL_FF_FIT.md`); our own COSX grids in place of waiting for ORCA's
@@ -941,7 +941,7 @@ refinement refines p with X = J p (`DIFFRACTION_DATA.X_jacobian`, built by
 positions keep only their site-symmetric subspace, as exact constraints in the normal matrix.
 `MAT{REAL}:solve_restrained_linear_equations` is in place, unused, for the later steps (ctest
 `lsq_restraints`). Eleven references re-blessed on achari2 (`41a2f442`); the Mac passes all 158.
-Details in the entry *ADPs as rigid-body motion plus soft modes* under *Science and features*.
+Details in the entry *Rigid-body and soft-mode motion* under *Science and features*.
 **Next:** step 1 of that plan (ORCA Hessian reader, Eckart projection, `make_internal_ADPs`), then
 TLS against F. New science entry the same day: *Spherical atoms by the right ensemble*. Closed
 2026-10-04: the zinc spherical-guess defect (verified on the finger and Zn(SCH3)2) and the silent
@@ -4445,14 +4445,86 @@ mE_h (def2-SVP) and 17.9 mE_h (def2-TZVP) for urea. The XCW reaches those at lam
 0.008, GoF^2 4 to 8. Every statistical minimum costs 14 to 30 times urea's lattice energy of
 39 mE_h.
 
-## Two-centre smearing with the motion model, `tc-tls` (Dylan, 2026-10-12)
+## Rigid-body and soft-mode motion: the ADP model and two-centre smearing (Dylan, 2026-10-03; rows merged 2026-10-14)
 
-**Register row:** *Two-centre smearing with the motion model (`tc-tls`): what is left*.
-Plan and log: `docs/TASK_ON_TC_TLS.md`. Reports: `docs/REPORT_ON_TC_TLS.md`,
-`docs/REPORT_ON_TC_TLS_AVERAGES.md`, `docs/REPORT_ON_PAIR_STABILIZERS.md`. TeX notes:
-`~/Dropbox/tex/conference_talks/2026_gaussian_pair_FT/`. Runs: `~/tonto-runs/2026-10-12_tc_tls/`.
+**Register row:** *Rigid-body and soft-mode motion: the ADP model and two-centre smearing
+(`tc-tls`)*. Until 2026-10-14 these were two rows, *ADPs as rigid-body motion plus soft modes,
+refined against F* and *Two-centre smearing with the motion model (`tc-tls`): what is left*; Dylan
+merged them because `tc-tls` uses the motion model's Sigma and the two lists of what was left
+overlapped.
 
-**State, 2026-10-13.** Merged to `develop` (pull request 54). `partition_model= tc-tls` smears
+Plans and logs: `docs/TASK_ON_MODE_FITTING.md` (the ADP model: theory, steps 0-5, open questions in
+section 7) and `docs/TASK_ON_TC_TLS.md` (the smearing). Reports: `docs/REPORT_ON_MODE_FITTING.md`,
+`docs/REPORT_ON_TC_TLS.md`, `docs/REPORT_ON_TC_TLS_AVERAGES.md`, `docs/REPORT_ON_PAIR_STABILIZERS.md`.
+TeX notes: `~/Dropbox/tex/conference_talks/2026_gaussian_pair_FT/`. Runs:
+`~/tonto-runs/2026-10-12_tc_tls/`, and for the studies below `~/tonto-runs/2026-10-14_motion_studies/`.
+
+**Built, all on `develop`.** The ADP model, U_i = U_i^high + B_i Sigma B_i^T with Sigma refined
+against F: steps 0-4 of the plan (restraints and the Jacobian; the Hessian with the Eckart
+projection; T, L, S; soft modes, chosen by `soft_mode_cutoff=` and refined with
+`refine_soft_modes= YES`; their correlations, Sigma held positive; TLS on an explicit cluster).
+And `partition_model= tc-tls`, each product of two basis functions smeared by the motion of its own
+centre, the rotation averaged by formula (`tc_analytic_rigid_body=`).
+
+**Left, in order:**
+
+1. The multi-temperature test (Dylan, 2026-10-14; plan section 5a): refine Sigma at one
+   temperature, predict the ADPs at others from effective frequencies, and compare with the
+   diffraction data and neutron ADPs there, against naive scaling as the baseline. This measures
+   what the motion model knows, which a GoF at one temperature does not. Gly-L-ala first (X-ray at
+   six temperatures, neutron at four; only 150 K is on disk), then urea (neutron ADPs at 12, 60
+   and 123 K; Capelli, Förtsch and Bürgi's 64 cm^-1 mode).
+2. Separate rigid bodies for methyl and NH3 groups. This is the segmented TLS of step 6 of the plan.
+   On gly-L-ala the free ADPs fit far better than the motion model (studies below), which this
+   may close; whether it comes before item 1 is for Dylan.
+3. T, L and S printed at the centre of reaction as well as at the centre of mass (open question in
+   section 7 of the plan).
+4. More molecules: the gain of `tc-tls` over Hirshfeld atoms on urea is not found for gly-L-ala.
+
+Speed only, for `tc-tls`: the derivative pass of `SHELL2:make_turn_factors` in scalars (60 % of the
+time with the formula on); the time of the path the X-ray constrained fit uses, with the formula on.
+Longer term (step 6 of the plan): a joint fit to several temperatures, anharmonic torsions, TLS
+into the CIF.
+
+**Studies, 2026-10-14** (`build-tc/`, release; runs and `hamilton.py` in
+`~/tonto-runs/2026-10-14_motion_studies/`). Def2-SVP, Hessian RHF as before. GoF, then the Hamilton
+test at 1 %. Gly-L-ala, 2531 reflections:
+
+| gly-L-ala | N_p | Hirshfeld | `tc-tls` (formula, `center`) |
+|---|---|---|---|
+| TLS, cutoff 200, soft modes left out | 81 | 3.5940 | 3.6042 (earlier run) |
+| TLS, cutoff 100, soft modes left out | 81 | 3.0481 | 3.0562 |
+| TLS, cutoff 200, five soft modes refined | 86 | 2.6392 | 2.6534 |
+| free ADPs | 181 | 1.6330 | -- |
+
+- Refining the five soft modes beats the cutoff at 100: Hamilton ratio 1.156 against 1.003.
+- Free ADPs beat the soft modes by far: 1.649 against 1.028. The free GoF is close to 1, so the gap
+  is mostly motion the model lacks, not error the free ADPs absorb.
+- `tc-tls` is a little worse than Hirshfeld atoms in every row, as before for gly-L-ala.
+- Refined soft-mode amplitudes, Hirshfeld (harmonic, then refined, in (m_e^1/2 bohr)^2): 73 cm^-1
+  4478 -> 198(101); 91 cm^-1 2927 -> 1918(271); 124 cm^-1 1671 -> 4051(130); 142 cm^-1 1313 ->
+  243(124); 165 cm^-1 1004 -> 143(146). Three of the five go nearly to zero, against a restraint
+  of half the harmonic value, and the 124 cm^-1 mode grows 2.4 times. Gas-phase soft modes are not
+  the crystal's: hydrogen bonds stiffen some and the lattice couples others.
+- The step from cutoff 200 to 100 (3.59 -> 3.05, no new parameters) measures what dropping
+  modes costs: with `refine_soft_modes= NO` the soft modes are left out of the model, not fixed
+  at their harmonic amplitudes. The table of the three cases is now in
+  `docs/REPORT_ON_MODE_FITTING.md` (Dylan: keep the dropped state, as a diagnostic).
+
+Urea, 817 reflections, Hirshfeld: TLS 3.4855 (17); TLS plus one soft mode 3.4685 (18; Hamilton
+1.0055 against 1.0042, significant); free 3.3041 (27; against TLS plus soft mode 1.0557 against
+1.0137). The imaginary NH2 wag at 289i cm^-1 shows no amplitude and adds no parameter; probably
+the site symmetry forbids it, not checked.
+
+Literature found for the comparison (search on 2026-10-14; references in the plan, section 9):
+urea has neutron ADPs at 12, 60 and 123 K, a normal-mode fit to them (64 cm^-1 mode), coherent
+INS dispersion curves and TOSCA INS; gly-L-ala has X-ray at six temperatures and neutron at four
+(Capelli et al. 2014), a room-temperature THz/far-IR spectrum, and probably INS (Parker and Haris
+2008, abstract only).
+
+### The two-centre smearing, `tc-tls` (2026-10-12)
+
+**`tc-tls`, state 2026-10-13.** Merged to `develop` (pull request 54). `partition_model= tc-tls` smears
 each product of two basis functions by the motion of its own centre, from the TLS and mode
 model, with no cut into atoms. `tc_analytic_rigid_body=` averages each product over the
 rigid-body rotation to second order by formula, with exact derivatives with respect to Sigma.
@@ -4491,21 +4563,7 @@ Mac and on Linux, their esds being rounding noise; they are now set to zero befo
 (`75336a48`). The pull request was merged while two of its three checks were still running on
 the last commit, which changed only two reference files; the checks on `develop` follow.
 
-**Left:** the derivative pass of `SHELL2:make_turn_factors` in scalars; the time of the path
-the X-ray constrained fit uses, with the formula on; separate rigid bodies for methyl and NH3
-groups; more molecules. Put off until the methods are settled (Dylan): the stiff-mode cutoff
-against refined soft modes, and the comparison with a free ADP on every atom.
-
-## ADPs as rigid-body motion plus soft modes, refined against F (Dylan, 2026-10-03)
-
-**2026-10-13, on branch `tc-tls`:** `soft_mode_cutoff=` alone now says which soft modes are
-refined, with `refine_soft_modes=` (default NO) in place of `n_soft_modes=`; the cutoff takes a
-unit, a bare number being cm^-1. Next on this item: refine the five soft modes of gly-L-ala; T, L
-and S printed at the centre of reaction. Log: `docs/TASK_ON_MODE_FITTING.md`, last entry.
-
-**Register row:** *ADPs as rigid-body motion plus soft modes*. Plan: `docs/TASK_ON_MODE_FITTING.md`
-(theory, the restraint generalisation of the eigenvalue filter, where the code goes, which procedures
-change, the steps and their checks, and the record of the discussion). Nothing built.
+### The ADP model (2026-10-03)
 
 In one line: each atom's ADP becomes U_i = U_i^high + B_i Σ B_iᵀ, with the six rigid-body fields
 (T, L, S) and a few soft internal modes from an imported Hessian in B, the stiff modes' zero-point
