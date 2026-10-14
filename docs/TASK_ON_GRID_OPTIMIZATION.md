@@ -466,9 +466,14 @@ radii (`tfvp`).
   valence peak (at most order 53 against 101 on the metals); the lowering, which judges the
   summed error, allows cancellation between shells, and Becke's shell errors probably cancel.
   Not checked.
-- **Dylan, on the result:** a partition that is realistic for the density (Salvador, `tfvp`) is
-  not the best for quadrature; what matters is how compact and smooth each atom's share is on its
-  own grid. The choice of the Salvador partition for the grid is reopened by the data.
+- **Why Becke wins is not known.** The Salvador cell function (`make_Salvador_cell_fn`, eq. (4) of
+  Salvador 2013) is Becke's product of switching factors and goes exactly to zero like it; it
+  differs only in where the walls are (at the promolecule density minimum along each bond, through
+  `partition_chi`) and in the stiffness (4 for mixed4, 3 for mixed3 and Becke). Stiffness alone
+  does not explain it: mixed3 is not cheaper than mixed4 at `high`. Candidates: the moved walls
+  make a large atom's cell reach close to its neighbour's nucleus; or Becke's shell errors cancel
+  better. Test: split each system's error into atomic contributions, Becke against mixed4 on one
+  grid. The choice of the Salvador partition for the grid is reopened by the data (Dylan).
   Stratmann-Scuseria (`partition_scheme= stratmann_scuseria`, already in `BECKE_GRID`) is
   expected to behave like Becke in points and to cost less per point; to be measured.
 - **A bug in `descend.py`:** `start` chose the cheapest assembled grid meeting the target, but the
