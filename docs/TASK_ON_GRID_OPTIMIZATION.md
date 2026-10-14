@@ -487,6 +487,12 @@ radii (`tfvp`).
   g1 to g7 as candidates, time as well as points, the choice of partition, def2-TZVP SCFs with
   KF, LiF and ScO, then the COSX grids.
 
+- **Decision (Dylan, 2026-10-14): the grid uses Becke's partition**, not Salvador's, from the data:
+  cheaper at three of four levels, half the points at `high`, on all 22 systems. Why is left
+  for more data. Stratmann-Scuseria is Becke's partition with a cheaper switching function and
+  is the remaining challenger; Laqua's g1 to g7 are compared on Becke's partition. Go-ahead for
+  the overnight run of the next steps.
+
 ## Appendix A. The COSX grid record (formerly `docs/TASK_COSX_GRIDS.md`)
 
 The plan and log for adopting the published standard grids in Tonto, for COSX first: SG-0 (Chien
