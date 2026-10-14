@@ -24,6 +24,10 @@ to this one) and the record of the COSX grids (`docs/TASK_COSX_GRIDS.md`, now Ap
 5. **The work must survive stops.** Every evaluation is one row of a durable store, keyed so
    that a restart, a new system or a code change computes only what is missing.
 6. **Bugs found on the way are fixed** as they are found, each logged in §8.
+7. **The pass rule is the worst case over the test set** (Dylan, 2026-10-14): Tonto is used for
+   benchmark work deriving experimental observables, so every theoretical error must be bounded
+   and controllable; only experiment should contribute uncontrolled error. Published grids
+   quoted with mean errors are compared with that in mind.
 
 ## 2. The framework
 
