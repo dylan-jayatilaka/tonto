@@ -413,6 +413,22 @@ radii (`tfvp`).
   101; beyond 3 $`R`$ low again, except H in the mixed partition (47, 41) and C (Becke 71). Table in
   `~/tonto-runs/2026-10-13_grid_levels/shells_needs_1e-7.md`. A per-element zone scheme is well
   supported.
+- **Dylan: go ahead with the zone scheme.** Code change 3 written: `pruning_scheme= zones`
+  (`BECKE_GRID:apply_pruning_scheme_zones`), keywords `zone_radii=` (three boundaries in
+  Bragg–Slater radii, default 0.5, 1, 2.5) and `zone_orders=` (28 orders: four zones for each of
+  periods 1 to 7; 0 is the level's own order). The pruning dispatcher now takes the atomic number
+  (`Z=`) from the five callers that know their atom. Debug `ctest -L short` 86/86.
+- **Assembled grids** (`assemble.py`): radial counts per period for a radial target, zone orders
+  per period as the worst shell of any element at a per-shell tolerance, 16 combinations per
+  candidate on all systems. Cheapest meeting each target, points per atom (KF, LiF, ScO left out):
+  `very_low` Becke 5,408, mixed4 5,220, mixed3 4,074; `low` 14,490, 9,272, 11,976; `medium`
+  42,240, 21,213, 32,646; `high` 63,735, 67,639, 59,394; `very_high` none. Today's levels:
+  1,586, 3,028, 5,268, 8,361, 16,940, all missing their targets. Every target to 1e-6 is reached,
+  mixed4 is the cheapest at `low` and `medium` (half Becke's cost at `medium`), but the grids are
+  far too expensive, because the assembly takes the worst shell everywhere and allows no
+  cancellation. Report in the store, `zones_report_def2-SVP.md`.
+- **Proposal:** lower each setting (each zone order and each radial count, one period at a time)
+  from the assembled grid while the worst error still meets the target.
 
 ## Appendix A. The COSX grid record (formerly `docs/TASK_COSX_GRIDS.md`)
 

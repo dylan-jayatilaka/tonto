@@ -282,6 +282,8 @@ contains
 
       ! Below are not really necessary?
       .pruning_scheme             = std.pruning_scheme
+      .zone_radii                 = [HALF,ONE,2.5d0]
+      .zone_orders                = 0
       .basis_fn_cutoff            = std.basis_fn_cutoff
       .basis_fn_pair_cutoff       = std.basis_fn_pair_cutoff
       .partition_cutoff           = std.partition_cutoff
@@ -327,6 +329,8 @@ contains
       .l_bonding_angular_grid     = grid.l_bonding_angular_grid
 
       .pruning_scheme             = grid.pruning_scheme
+      .zone_radii                 = grid.zone_radii
+      .zone_orders                = grid.zone_orders
       .basis_fn_cutoff            = grid.basis_fn_cutoff
       .basis_fn_pair_cutoff       = grid.basis_fn_pair_cutoff
       .partition_cutoff           = grid.partition_cutoff
@@ -434,7 +438,7 @@ contains
    ! name and accepted the misspelled one (which then matched no case and did
    ! nothing). Release never saw it, ENSURE being compiled out there.
    ! "jayatilaka2" was removed 2026-08-14 -- see apply_pruning_scheme.
-   ENSURE(scheme.is_one_of(["none             ","jayatilaka0      ","jayatilaka1      ","treutler_ahlrichs","adaptive         "]),"unknown pruning scheme")
+   ENSURE(scheme.is_one_of(["none             ","jayatilaka0      ","jayatilaka1      ","treutler_ahlrichs","adaptive         ","zones            "]),"unknown pruning scheme")
 
       .pruning_scheme = scheme
       .pruning_scheme.to_lower_case
@@ -452,6 +456,7 @@ contains
       case ("jayatilaka1      ")
       case ("treutler_ahlrichs")
       case ("adaptive         ")
+      case ("zones            ")
       case default;             UNKNOWN(.pruning_scheme)
       end
 
@@ -835,6 +840,8 @@ contains
       case ("salvador_stiffness=       "); .read_Salvador_stiffness
       case ("partition_scaling_scheme= "); .read_partition_scaling_scheme
       case ("pruning_scheme=           "); .read_pruning_scheme
+      case ("zone_orders=              "); .read_zone_orders
+      case ("zone_radii=               "); .read_zone_radii
       case ("put                       "); .put
       case ("put_basics                "); .put_basics
       case ("put_atom_info             "); .put_atom_info
@@ -1006,6 +1013,32 @@ contains
 
       stdin.read(s)
       .set_partition_H_chi_scale(s)
+
+      .finalized = FALSE
+
+   end
+
+   read_zone_radii
+   ! Read .zone_radii, three numbers.
+      self :: INOUT
+
+      radii :: VEC{REAL}(3)
+
+      stdin.read(radii)
+      .set_zone_radii(radii)
+
+      .finalized = FALSE
+
+   end
+
+   read_zone_orders
+   ! Read .zone_orders, 28 numbers: the four zone orders of each period.
+      self :: INOUT
+
+      orders :: VEC{INT}(28)
+
+      stdin.read(orders)
+      .set_zone_orders(orders)
 
       .finalized = FALSE
 
@@ -1323,7 +1356,7 @@ contains
       p  = .period_of(a)
       nr = .no_of_radial_pts(p)
       .radial_shell_for_atom(a,i,r,w)
-      .apply_pruning_scheme(lebedev_grid,p,i,nr,r)
+      .apply_pruning_scheme(lebedev_grid,p,i,nr,r,Z=.atom(a).atomic_number)
       res = lebedev_grid.l
 
    end
@@ -1598,7 +1631,7 @@ contains
       ! Count the points
       np = 0
       do i = 1,nr
-         .apply_pruning_scheme(lebedev_grid,p,i,nr,zeta*.radial_grid(p).pts(i))
+         .apply_pruning_scheme(lebedev_grid,p,i,nr,zeta*.radial_grid(p).pts(i),Z=.atom(a).atomic_number)
          np = np + lebedev_grid.n_pts
       end
       .n_unscaled_pts = np
@@ -1626,7 +1659,7 @@ contains
          s = pi4*r*r*w
 
          ! Set the lebedev grid
-         .apply_pruning_scheme(lebedev_grid,p,i,nr,zeta*r)
+         .apply_pruning_scheme(lebedev_grid,p,i,nr,zeta*r,Z=.atom(a).atomic_number)
 
          do j = 1,lebedev_grid.n_pts ! <-- Loop on angular grid
             k = k + 1
@@ -1813,7 +1846,7 @@ contains
 
       ! Get grid
       .radial_shell_for_atom(a,i,r,w)
-      .apply_pruning_scheme(res,p,i,nr,r)
+      .apply_pruning_scheme(res,p,i,nr,r,Z=.atom(a).atomic_number)
 
    end
 
@@ -1898,7 +1931,7 @@ contains
          if (r>r_max) exit
 
          ! Set default lebedev grid
-         .apply_pruning_scheme(lebedev_grid,p,i,nr,r)
+         .apply_pruning_scheme(lebedev_grid,p,i,nr,r,Z=.atom(a).atomic_number)
 
          res = res + lebedev_grid.n_pts
 
@@ -1906,16 +1939,19 @@ contains
 
    end
 
-   apply_pruning_scheme(lebedev_grid,p,i,nr,r,scheme) :: private, PURE
+   apply_pruning_scheme(lebedev_grid,p,i,nr,r,scheme,Z) :: private, PURE
    ! Set the angular pruning scheme for "lebedev_grid" for an atom in
    ! row "p", for a radial point "i" in a set of "nr" radial points
    ! arranged in increasing distance, at scaled radius "r" (bohr). The
    ! default grid is .lebedev_grid. "scheme" overrides the default scheme.
+   ! "Z", the atomic number, is needed by "zones"; without it the first
+   ! element of the period is used.
       self :: IN
       lebedev_grid :: LEBEDEV@, OUT
       p,i,nr :: INT, IN
       r :: REAL, IN
       scheme :: STR, optional, IN
+      Z :: INT, optional, IN
 
    ENSURE(.lebedev_grid.allocated,"no lebedev_grid")
 
@@ -1944,6 +1980,10 @@ contains
          else;                  .apply_pruning_scheme_TA(lebedev_grid,p,i,nr)
          end
       case ("adaptive         "); .apply_pruning_scheme_adaptive(lebedev_grid,p,r)
+      case ("zones            ")
+         if (present(Z)) then; .apply_pruning_scheme_zones(lebedev_grid,p,r,Z)
+         else;                 .apply_pruning_scheme_zones(lebedev_grid,p,r,first_Z_of_period(p))
+         end
       case ("sg-0","sg-1","sg-2","sg-3"); .apply_pruning_scheme_SG(lebedev_grid,p,i)
       end
 
@@ -2441,6 +2481,74 @@ contains
 
    end
 
+   apply_pruning_scheme_zones(lebedev_grid,p,r,Z) :: private, leaky, PURE
+   ! Set the Lebedev order of "lebedev_grid" for a radial shell at scaled
+   ! radius "r" (bohr) of an atom with atomic number "Z" in period "p":
+   ! the shell is in zone k = 1 to 4 as r/R passes the three .zone_radii,
+   ! R being the Bragg-Slater radius of the element, and the order is
+   ! .zone_orders(k,p). An order of zero is the level's own order
+   ! (.l_angular_grid, or .l_H_angular_grid for H and He).
+      self :: IN
+      lebedev_grid :: LEBEDEV@, INOUT
+      p,Z :: INT, IN
+      r :: REAL, IN
+
+      x :: REAL
+      k,L :: INT
+
+      x = r/(bragg_slater_radius(Z)*BOHR_PER_ANGSTROM)
+      k = 1 + count(x>=.zone_radii)
+      L = .zone_orders(k,min(p,7))
+      if (L<=0) then
+         L = .l_angular_grid
+         if (p==1 AND .reduce_H_angular_grid) L = .l_H_angular_grid
+      end
+
+      lebedev_grid.destroy
+      lebedev_grid.create
+      lebedev_grid.set_l(L)
+
+   end
+
+   first_Z_of_period(p) result (res) :: selfless, PURE
+   ! The atomic number of the first element of period "p".
+      p :: INT, IN
+      res :: INT
+      select case (p)
+      case (1);     res = 1
+      case (2);     res = 3
+      case (3);     res = 11
+      case (4);     res = 19
+      case (5);     res = 37
+      case (6);     res = 55
+      case default; res = 87
+      end
+   end
+
+   set_zone_radii(radii) :: PURE
+   ! Set .zone_radii, the three zone boundaries of the "zones" pruning
+   ! scheme, in Bragg-Slater radii, increasing.
+      self :: INOUT
+      radii :: VEC{REAL}(3), IN
+
+   ENSURE(radii(1)>ZERO AND radii(2)>radii(1) AND radii(3)>radii(2),"zone radii must be positive and increasing")
+
+      .zone_radii = radii
+
+   end
+
+   set_zone_orders(orders) :: PURE
+   ! Set .zone_orders from "orders": the four zone orders of period 1,
+   ! then those of period 2, and so on to period 7.
+      self :: INOUT
+      orders :: VEC{INT}(28), IN
+
+   ENSURE(all(orders>=0),"zone orders must not be negative")
+
+      .zone_orders = reshape(orders,[4,7])
+
+   end
+
    apply_pruning_scheme_adaptive(lebedev_grid,p,r) :: private, leaky, PURE
    ! Set the Lebedev order of "lebedev_grid" from the scaled radius "r"
    ! (bohr) of a radial shell of an atom in row "p":
@@ -2717,7 +2825,7 @@ contains
          if (r>r_max_SS) exit ! Not unit weight
 
          ! Set lebedev grid
-         .apply_pruning_scheme(lebedev_grid,p,i,nr,r)
+         .apply_pruning_scheme(lebedev_grid,p,i,nr,r,Z=.atom(a).atomic_number)
 
          res = res + lebedev_grid.n_pts
 
