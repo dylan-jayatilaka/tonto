@@ -184,6 +184,7 @@ contains
 
       .atom_min_distance.destroy
       .atom_n1_SS.destroy
+      .partition_chi.destroy
 
       .unique_atom.destroy
       .unique_atom_for.destroy
@@ -250,6 +251,7 @@ contains
 
       .atom_min_distance.destroy
       .atom_n1_SS.destroy
+      .partition_chi.destroy
 
       .unique_atom.destroy
       .unique_atom_for.destroy
@@ -287,11 +289,14 @@ contains
       .prune_rho_cutoff           = std.prune_rho_cutoff
       .XC_batch_max_pts           = std.XC_batch_max_pts
       .XC_batch_box_edge          = std.XC_batch_box_edge
-      .n_extra_pts_per_shell      = std.n_extra_pts_per_shell
+      .set_n_extra_pts_per_shell(std.n_extra_pts_per_shell)
       .reduce_H_angular_grid      = std.reduce_H_angular_grid
       .scale_atomic_grids         = std.scale_atomic_grids
       .partition_power            = std.partition_power
       .partition_scheme           = std.partition_scheme
+      .partition_H_chi_scale      = std.partition_H_chi_scale
+      .partition_H_Becke          = std.partition_H_Becke
+      .Salvador_stiffness         = std.Salvador_stiffness
       .partition_scaling_scheme   = std.partition_scaling_scheme
       .finalized                  = FALSE
       .n_unscaled_pts             = 0
@@ -330,10 +335,14 @@ contains
       .XC_batch_max_pts           = grid.XC_batch_max_pts
       .XC_batch_box_edge          = grid.XC_batch_box_edge
       .n_extra_pts_per_shell      = grid.n_extra_pts_per_shell
+      .n_extra_radial_pts         = grid.n_extra_radial_pts
       .reduce_H_angular_grid      = grid.reduce_H_angular_grid
       .scale_atomic_grids         = grid.scale_atomic_grids
       .partition_power            = grid.partition_power
       .partition_scheme           = grid.partition_scheme
+      .partition_H_chi_scale      = grid.partition_H_chi_scale
+      .partition_H_Becke          = grid.partition_H_Becke
+      .Salvador_stiffness         = grid.Salvador_stiffness
       .partition_scaling_scheme   = grid.partition_scaling_scheme
       .stratmann_scuseria_A       = grid.stratmann_scuseria_A
 
@@ -385,6 +394,9 @@ contains
       case ("becke             ")
 
       case ("stratmann_scuseria")
+         .set_partition_scaling_scheme("none")
+
+      case ("salvador          ")
          .set_partition_scaling_scheme("none")
 
       case default;             UNKNOWN(.partition_scheme)
@@ -466,6 +478,69 @@ contains
       .Salvador_chi = ratio
    end
 
+   set_partition_H_chi_scale(s) :: PURE
+   ! Set .partition_H_chi_scale, the factor on the Salvador size adjustment
+   ! between H and a heavier atom, for partition_scheme= salvador.
+      self :: INOUT
+      s :: REAL, IN
+
+   ENSURE(s>ZERO,"s must be positive")
+
+      .partition_H_chi_scale = s
+
+   end
+
+   set_Salvador_stiffness(k) :: PURE
+   ! Set .Salvador_stiffness, for partition_scheme= salvador.
+      self :: INOUT
+      k :: INT, IN
+
+   ENSURE(k>=1,"k must be positive")
+
+      .Salvador_stiffness = k
+
+   end
+
+   set_partition_H_Becke(val) :: PURE
+   ! Set .partition_H_Becke.
+      self :: INOUT
+      val :: BIN, IN
+      .partition_H_Becke = val
+   end
+
+   Becke_boundary_chi(Z_a,Z_b) result (res) :: PURE
+   ! The Salvador size adjustment "chi" that puts the boundary between atoms
+   ! with atomic numbers "Z_a" and "Z_b" where Becke's size-adjusted
+   ! partition puts it. Becke (A4)-(A6): with c the ratio of Bragg-Slater
+   ! radii, w = (c-1)/(c+1) and a = w/(w^2-1), held in [-1/2,1/2], his
+   ! boundary is at u = (1-sqrt(1+4a^2))/(2a) in the elliptical coordinate;
+   ! Salvador's is at u = (chi-1)/(chi+1), so chi = (1+u)/(1-u).
+      self :: IN
+      Z_a,Z_b :: INT, IN
+      res :: REAL
+
+      c,w,a,u :: REAL
+
+      c = bragg_slater_radius(Z_a)/bragg_slater_radius(Z_b)
+      w = (c - ONE)/(c + ONE)
+      a = w/(w*w - ONE)
+      a = min(a, HALF)
+      a = max(a,-HALF)
+      if (abs(a)<TOL(12)) then; u = ZERO
+      else;                     u = (ONE - sqrt(ONE + FOUR*a*a))/(TWO*a)
+      end
+      res = (ONE + u)/(ONE - u)
+
+   end
+
+   set_partition_chi(ratio) :: leaky, PURE
+   ! Set the Salvador chi ratios of the grid's own partition,
+   ! partition_scheme= salvador.
+      self  :: INOUT
+      ratio :: MAT{REAL}, IN
+      .partition_chi = ratio
+   end
+
    set_zeta :: leaky, PURE
    ! Set the atom_zeta scaling parameters. We store them in case they need to be
    ! manually changed ...
@@ -523,7 +598,7 @@ contains
    set_accuracy(acc) :: PURE
    ! Set the accuracy. NOTE: the actual integration accuracy is affected not
    ! only by this keyword, but also by the switch .reduce_H_angular_grid. It
-   ! will also depend on .n_extra_pts_per_shell.
+   ! will also depend on .n_extra_radial_pts.
       self :: INOUT
       acc :: STR, IN
 
@@ -647,13 +722,28 @@ contains
    ! Set the number of extra radial points to use per n-shell over and above the
    ! default number .n_radial_pts wanted for the Hydrogen atom. Normally this
    ! is set to 5 according to Becke's rule of thumb. You might want to set it to
-   ! zero to get uniform grids for all the atoms.
+   ! zero to get uniform grids for all the atoms. This sets .n_extra_radial_pts
+   ! to "n" times 0, 1 and 2 for periods 1 to 3, and "n" times 9, 20 and 32 for
+   ! periods 4, 5 and 6 on, where the core needs many more points.
       self :: INOUT
       n :: INT, IN
 
    ENSURE(n>=0,"n must be non-negative")
 
       .n_extra_pts_per_shell = n
+      .n_extra_radial_pts    = n*[0,1,2,9,20,32,32]
+
+   end
+
+   set_n_extra_radial_pts(n) :: PURE
+   ! Set .n_extra_radial_pts to "n": for each of periods 1 to 7, the number
+   ! of radial points an atom has more than .n_radial_pts.
+      self :: INOUT
+      n :: VEC{INT}(7), IN
+
+   ENSURE(all(n>=0),"n must be non-negative")
+
+      .n_extra_radial_pts = n
 
    end
 
@@ -734,11 +824,15 @@ contains
       case ("l_bonding_angular_grid=   "); .read_l_bonding_angular_grid
       case ("l_h_angular_grid=         "); .read_l_H_angular_grid
       case ("n_extra_pts_per_shell=    "); .read_n_extra_pts_per_shell
+      case ("n_extra_radial_pts=       "); .read_n_extra_radial_pts
       case ("n_radial_pts=             "); .read_n_radial_pts
       case ("reduce_h_angular_grid=    "); .read_reduce_H_angular_grid
       case ("scale_atomic_grids=       "); .read_scale_atomic_grids
       case ("partition_cutoff=         "); .read_partition_cutoff
       case ("partition_scheme=         "); .read_partition_scheme
+      case ("partition_h_chi_scale=    "); .read_partition_H_chi_scale
+      case ("partition_h_becke=        "); .read_partition_H_Becke
+      case ("salvador_stiffness=       "); .read_Salvador_stiffness
       case ("partition_scaling_scheme= "); .read_partition_scaling_scheme
       case ("pruning_scheme=           "); .read_pruning_scheme
       case ("put                       "); .put
@@ -873,6 +967,58 @@ contains
 
       stdin.read(n)
       .set_n_extra_pts_per_shell(n)
+
+      .finalized = FALSE
+
+   end
+
+   read_Salvador_stiffness
+   ! Read .Salvador_stiffness.
+      self :: INOUT
+
+      k :: INT
+
+      stdin.read(k)
+      .set_Salvador_stiffness(k)
+
+      .finalized = FALSE
+
+   end
+
+   read_partition_H_Becke
+   ! Read .partition_H_Becke.
+      self :: INOUT
+
+      val :: BIN
+
+      stdin.read(val)
+      .set_partition_H_Becke(val)
+
+      .finalized = FALSE
+
+   end
+
+   read_partition_H_chi_scale
+   ! Read .partition_H_chi_scale.
+      self :: INOUT
+
+      s :: REAL
+
+      stdin.read(s)
+      .set_partition_H_chi_scale(s)
+
+      .finalized = FALSE
+
+   end
+
+   read_n_extra_radial_pts
+   ! Read .n_extra_radial_pts, seven numbers, one for each period.
+      self :: INOUT
+
+      n :: VEC{INT}(7)
+
+      stdin.read(n)
+      .set_n_extra_radial_pts(n)
 
       .finalized = FALSE
 
@@ -1128,7 +1274,7 @@ contains
 
    is_SG_kind result (res) :: pure
    ! Whether the grid is one of the published standard grids, SG-0 to
-   ! SG-3. See docs/TASK_COSX_GRIDS.md.
+   ! SG-3. See docs/TASK_ON_GRID_OPTIMIZATION.md, Appendix A.
       self :: IN
       res :: BIN
       res = .kind=="sg-0" OR .kind=="sg-1" OR .kind=="sg-2" OR .kind=="sg-3"
@@ -1184,27 +1330,17 @@ contains
 
    no_of_radial_pts(p) result (res) :: PURE
    ! Return the number of radial points in the grid for an atom in period "p" of
-   ! the periodic table: .n_radial_pts for H and He, and for every further
-   ! period .n_extra_pts_per_shell more, up to Ar. From K on the core needs
-   ! many more than that rule gives: 9, 20 and 32 times .n_extra_pts_per_shell
-   ! are added in periods 4, 5 and 6, so that a DFT energy is good to about
-   ! 1e-5 hartree at the default accuracy, as it is for the lighter atoms.
+   ! the periodic table: .n_radial_pts and, for that period,
+   ! .n_extra_radial_pts more. For the SG kinds "p" is the atomic number.
       self :: IN
       p   :: INT, IN
       res :: INT
       scheme :: STR
       length :: REAL
-      n_extra :: INT
       if (.is_SG_kind) then
-         BECKE_GRID::SG_radial_scheme(.kind,p,scheme,res,length) ! "p" is the atomic number
+         BECKE_GRID::SG_radial_scheme(.kind,p,scheme,res,length)
       else
-         select case (p)
-         case (:3);    n_extra = p - 1
-         case (4);     n_extra = 9
-         case (5);     n_extra = 20
-         case default; n_extra = 32
-         end
-         res = .n_radial_pts + .n_extra_pts_per_shell*n_extra
+         res = .n_radial_pts + .n_extra_radial_pts(p)
       end
    end
 
@@ -3370,9 +3506,11 @@ contains
 !  Atom weights only
 !  =================
 
-   make_Salvador_cell_fn(Wa,pts,a) :: PURE
+   make_Salvador_cell_fn(Wa,pts,a,chi,stiffness) :: PURE
    ! Make the *normalised* Salvador atom weights "Wa" for atom "a"
-   ! evaluated on the set of points "pts". 
+   ! evaluated on the set of points "pts", with the size adjustments
+   ! "chi" if present, else .Salvador_chi, and the step "stiffness" if
+   ! present, else Salvador's 4.
    ! See Eqn. (4) in Salvador (2013) JCP 139 p 071103.
    ! At each point, atom i's cell function P_i is a product of step
    ! factors, each <= 1, so it is at most the factor for the atom
@@ -3383,6 +3521,8 @@ contains
       Wa   :: VEC{REAL}, OUT
       pts  :: MAT{REAL}, IN
       a    :: INT, IN
+      chi  :: MAT{REAL}, optional, IN
+      stiffness :: INT, optional, IN
 
    ENSURE(.finalized,"call the set_grid_data routine")
    ENSURE(Wa.dim==pts.dim1,"incompatble dim1, Wa and pts")
@@ -3391,19 +3531,27 @@ contains
    ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
 
       D, Dk, inv_R  :: MAT{REAL}@
+      C             :: MAT{REAL}@
       Pa, Pi, Ps    :: VEC{REAL}@
       near, idx     :: VEC{INT}@
       keep          :: VEC{BIN}@
       ri, rj        :: VEC{REAL}(3)
       mu, eps       :: REAL
-      rij, chi      :: REAL
+      rij, c_ij     :: REAL
       n_atoms, i,j  :: INT
       n_pts, g,k,q  :: INT
       blk, b0,b1,nb :: INT
-      m             :: INT
+      m,stiff       :: INT
 
       eps = TOL(15)
       blk = 2048
+
+      ! The size adjustments and the stiffness
+      if (present(chi)) then; C = chi
+      else;                   C = .Salvador_chi
+      end
+      stiff = 4
+      if (present(stiffness)) stiff = stiffness
 
       ! Sizes
       n_atoms = .atom.dim
@@ -3458,7 +3606,7 @@ contains
                   keep(g) = TRUE
                else
                   mu = (D(g,i)-D(g,k))*inv_R(i,k)
-                  keep(g) = .Salvador_step(mu,.Salvador_chi(i,k))>eps
+                  keep(g) = .Salvador_step(mu,C(i,k),stiff)>eps
                end
             end
             m = count(keep(1:nb))
@@ -3478,10 +3626,10 @@ contains
             do j = 1,n_atoms
                if (i==j) cycle
                rij = inv_R(i,j)
-               chi = .Salvador_chi(i,j)
+               c_ij = C(i,j)
                do q = 1,m
                   mu = (Dk(q,i)-Dk(q,j))*rij
-                  Pi(q) = Pi(q) * .Salvador_step(mu,chi)
+                  Pi(q) = Pi(q) * .Salvador_step(mu,c_ij,stiff)
                end
             end
 
@@ -3505,25 +3653,28 @@ contains
       near.destroy
       Dk.destroy
       D.destroy
+      C.destroy
       inv_R.destroy
 
    end
 
-   Salvador_step(mu,chi) result (res) :: selfless, PURE
+   Salvador_step(mu,chi,k) result (res) :: selfless, PURE
    ! The Becke step factor s for the Salvador cell function, for
-   ! elliptical coordinate "mu" and size adjustment "chi". Eqs. (5), (9)
-   ! in Salvador (2013) JCP 139 p 071103, with stiffness 4.
+   ! elliptical coordinate "mu" and size adjustment "chi", with the
+   ! polynomial applied "k" times (the stiffness; Salvador uses 4).
+   ! Eqs. (5), (9) in Salvador (2013) JCP 139 p 071103.
       mu,chi :: REAL, IN
+      k      :: INT, IN
       res    :: REAL
 
       nu :: REAL
+      i :: INT
 
       nu  = (ONE+mu-chi*(ONE-mu)) / &
             (ONE+mu+chi*(ONE-mu))  ! Eq. (9) nu'
-      nu  = HALF*nu*(THREE-nu*nu)  ! Stiffness 4
-      nu  = HALF*nu*(THREE-nu*nu)
-      nu  = HALF*nu*(THREE-nu*nu)
-      nu  = HALF*nu*(THREE-nu*nu)
+      do i = 1,k
+         nu = HALF*nu*(THREE-nu*nu)
+      end
       res = HALF*(ONE-nu)          ! Eq. (5)
 
    end
@@ -4397,6 +4548,9 @@ contains
       ! case default;  UNKNOWN(.partition_scaling_scheme)
          end
 
+      case ("salvador          ")
+         .partition_Salvador(wt,pt,a,wt_is_0)
+
    ! case default; UNKNOWN(.partition_scheme)
 
       end
@@ -4635,6 +4789,32 @@ contains
          if (s>.partition_cutoff) cycle
          wt_is_0(n) = TRUE
       end
+
+   end
+
+   partition_Salvador(wt,pt,a,wt_is_0) :: private, PURE
+   ! Partition the atomic grid ("pt","wt") of atom "a" with the Salvador
+   ! cell function and the grid's own size adjustments .partition_chi,
+   ! made from the promolecule radii by MOLECULE.RHO:set_up_becke_grid.
+   ! Each boundary between bonded atoms then passes through the minimum
+   ! of the promolecule density along the bond. All atoms are used, not
+   ! only the overlapping ones. See Salvador (2013) JCP 139 p 071103.
+      self    :: IN
+      wt      :: VEC{REAL}, INOUT
+      pt      :: MAT{REAL}, IN
+      a       :: INT, IN
+      wt_is_0 :: VEC{BIN}, OUT
+
+   ENSURE(.partition_chi.allocated,"no partition_chi: set up the grid with MOLECULE.RHO:set_up_becke_grid")
+   ENSURE(pt.dim1==wt.dim, "pt and wt incompatible")
+
+      Wa :: VEC{REAL}@
+
+      Wa.create(wt.dim)
+      .make_Salvador_cell_fn(Wa,pt,a,.partition_chi,.Salvador_stiffness)
+      wt = wt*Wa
+      wt_is_0 = Wa<=.partition_cutoff
+      Wa.destroy
 
    end
 

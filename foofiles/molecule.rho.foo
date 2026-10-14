@@ -506,6 +506,9 @@ contains
 
       stdout.head("Numerically integrate the electron density")
 
+      ! The density is made from the natural orbitals
+      if (.NOs.deallocated) .make_NOs
+
       ! Make becke grid (leaky)
       .becke_grid.put
       .becke_grid.put_atom_info
@@ -1234,8 +1237,10 @@ contains
 
 ! For DFT
 
-   set_up_becke_grid :: leaky, PURE
-   ! Set up the Becke grids and overlapping atoms
+   set_up_becke_grid :: leaky
+   ! Set up the Becke grids and overlapping atoms. For partition_scheme=
+   ! salvador, also the grid's own Salvador size adjustments, from the
+   ! promolecule radii. Not PURE, because of add_ANO_densities.
       self :: INOUT
 
    ENSURE(.basis_info_made,"no basis info")
@@ -1248,6 +1253,9 @@ contains
       .becke_grid.set_atom_info(.atom) 
       .becke_grid.set_grid_data
       .destroy_XC_grid
+
+      ! The Salvador partition needs its size adjustments
+      if (.becke_grid.partition_scheme=="salvador") .make_grid_partition_chi
 
       ! ALWAYS make the overlapping atom lists
       .set_overlapping_atoms_for_atom
@@ -3747,22 +3755,110 @@ contains
    ENSURE(.Salvador_bonds_for.allocated,"no Salvador_bonds")
    ENSURE(.Salvador_radii_for.allocated,"no Salvador_radii")
 
+      .make_Salvador_chi(.Salvador_chi,.Salvador_bonds_for,.Salvador_radii_for)
+
+   end
+
+   make_Salvador_chi(chi,bonds_for,radii_for) :: leaky, PURE
+   ! Make the Salvador size adjustments "chi" from the neighbours
+   ! "bonds_for" and the radii "radii_for" of each atom: for atom a and
+   ! its neighbour b at distance R, with radius r, chi(a,b) = r/(R-r).
+   ! Atoms that are not neighbours have chi one.
+      self :: IN
+      chi :: MAT{REAL}@, OUT
+      bonds_for :: VEC{EVEC{INT}}, IN
+      radii_for :: VEC{EVEC{REAL}}, IN
+
       ra,rb :: VEC{REAL}(3)
       fac :: REAL
       a,b,n :: INT
 
-      .Salvador_chi.destroy
-      .Salvador_chi.create(.atom.dim,.atom.dim)
-      .Salvador_chi = ONE
+      chi.create(.atom.dim,.atom.dim)
+      chi = ONE
       do a = 1,.atom.dim
          ra = .atom(a).position
-         do n = 1,.Salvador_bonds_for(a).element.dim
-            b   = .Salvador_bonds_for(a)[n]
+         do n = 1,bonds_for(a).element.dim
+            b   = bonds_for(a)[n]
             rb  = .atom(b).position
-            fac = .Salvador_radii_for(a)[n]/norm2(rb-ra)
-            .Salvador_chi(a,b) = fac/(ONE-fac)
+            fac = radii_for(a)[n]/norm2(rb-ra)
+            chi(a,b) = fac/(ONE-fac)
          end
       end
+
+   end
+
+   make_grid_partition_chi :: leaky
+   ! Give the DFT grid its own Salvador size adjustments, for
+   ! partition_scheme= salvador: neighbours and radii from the promolecule
+   ! density, as make_Salvador_radii_promolecule makes them, but kept
+   ! apart from .Salvador_chi, which the Salvador atom properties set.
+   ! The ANOs must exist: MOLECULE.SCF:make_HA_info makes them first.
+   ! Not PURE, because of add_ANO_densities.
+      self :: INOUT
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.becke_grid.allocated,"no becke_grid")
+
+      bonds_for :: VEC{EVEC{INT}}@
+      radii_for :: VEC{EVEC{REAL}}@
+      chi :: MAT{REAL}@
+      DM :: OPMATRIX@
+      s :: REAL
+      a,b,n :: INT
+
+      ! One atom has the whole of space
+      if (.n_atom==1) then
+         chi.create(1,1)
+         chi = ONE
+         .becke_grid.set_partition_chi(chi)
+         chi.destroy
+         return
+      end
+
+      ! The promolecule density matrix
+      DIE_IF(NOT .has_all_ANO_matrices,"partition_scheme= salvador needs the atomic densities: put make_anos_and_interpolators first")
+      .add_ANO_densities(DM)
+      DM.r = HALF*DM.r
+
+      ! Neighbours, radii and size adjustments
+      .atom.make_Salvador_neighbours(bonds_for)
+      .make_Salvador_radii_pro(radii_for,bonds_for,DM.r)
+      .make_Salvador_chi(chi,bonds_for,radii_for)
+
+      ! Put the boundaries between H and its heavier neighbours where
+      ! Becke's partition has them, if asked
+      if (.becke_grid.partition_H_Becke) then
+         do a = 1,.n_atom
+            if (.atom(a).atomic_number/=1) cycle
+            do n = 1,bonds_for(a).element.dim
+               b = bonds_for(a)[n]
+               if (.atom(b).atomic_number==1) cycle
+               chi(a,b) = .becke_grid.Becke_boundary_chi(1,.atom(b).atomic_number)
+               chi(b,a) = ONE/chi(a,b)
+            end
+         end
+      end
+
+      ! Move the boundaries between H and its heavier neighbours, if asked;
+      ! pairs that are not neighbours keep chi = 1
+      s = .becke_grid.partition_H_chi_scale
+      if (s/=ONE) then
+         do a = 1,.n_atom
+            if (.atom(a).atomic_number/=1) cycle
+            do n = 1,bonds_for(a).element.dim
+               b = bonds_for(a)[n]
+               if (.atom(b).atomic_number==1) cycle
+               chi(a,b) = s*chi(a,b)
+               chi(b,a) = chi(b,a)/s
+            end
+         end
+      end
+      .becke_grid.set_partition_chi(chi)
+
+      chi.destroy
+      radii_for.destroy
+      bonds_for.destroy
+      DM.destroy
 
    end
 
@@ -4265,8 +4361,6 @@ contains
       n_sub     :: INT, optional, IN
 
    ENSURE(.atom.allocated,"no atoms")
-   ENSURE(.density_mx.allocated,"no density_mx")
-   ENSURE(.density_mx.r.allocated,"no restricted density_mx")
 
       n_atoms :: INT
       n_bonds :: INT

@@ -5908,6 +5908,44 @@ contains
 
    end
 
+   put_XC_energy_on_grid :: leaky
+   ! Print the exchange-correlation energy and the electron count of the
+   ! stored density matrix, integrated on the DFT grid as the settings in
+   ! .becke_grid now stand. The grid is built afresh, so this may follow a
+   ! "becke_grid= { ... }" block which changes it, any number of times in one
+   ! job. No Coulomb or exchange matrix is made. It leaves the XC energy and
+   ! the DFT energy correction in .SCF_data as those on this grid.
+      self :: INOUT
+
+   ENSURE(.SCF_data.allocated,"no SCF_data")
+   ENSURE(.SCF_data.is_DFT_calculation,"this is not a DFT calculation")
+   ENSURE(.density_mx.allocated, "no density matrix")
+   ENSURE(.SCF_data.using_batched_XC,"needs use_batched_xc= TRUE")
+
+      K :: OPMATRIX@
+
+      ! The grid as it now stands
+      .set_up_becke_grid
+
+      ! The XC matrix is made, and not kept
+      K.create(.n_bf,.SCF_data.spinorbital_genre)
+      K.set_to_zero
+      .add_XC_mx(K)
+      K.destroy
+
+      stdout.flush
+      stdout.text("=========================")
+      stdout.text("XC energy on the DFT grid")
+      stdout.text("=========================")
+      stdout.flush
+      stdout.show("Grid accuracy             =",.becke_grid.accuracy)
+      stdout.show("No. of grid points        =",.XC_pts.dim1)
+      stdout.show("No. before pruning        =",.XC_n_unpruned)
+      stdout.show("No. of electrons          =",.SCF_data.XC_n_electrons)
+      stdout.show("XC energy                 =",.SCF_data.XC_energy)
+
+   end
+
    add_u_XC_mx(Ka,Kb)
    ! Calculate the exchange correlation matrix numerically.
       self  :: INOUT
@@ -6426,6 +6464,7 @@ contains
       sh :: SHELL1
       gga,mgga :: BIN
       b,f,np,ns,q,p,j,ix,s,fs,ls,fa,na,off :: INT
+      n_e :: REAL
 
       gga  = .SCF_data.using_GGA_functional
       mgga = .SCF_data.using_meta_GGA_functional
@@ -6434,6 +6473,7 @@ contains
       if (.XC_batch_first.deallocated) .make_XC_batches
 
       E = ZERO
+      n_e = ZERO
       V.create(.n_bf,.n_bf)
       V = ZERO
 
@@ -6537,6 +6577,7 @@ contains
          end
          .set_XC_energy_and_potential(pot,den)
          E = E + sum(wt*pot.energy*den.rho(:,1))
+         n_e = n_e + sum(wt*den.rho(:,1))
          pot.v_rho(:,1) = HALF*wt*pot.v_rho(:,1)
          if (gga) then
             do ix = 1,3
@@ -6588,6 +6629,7 @@ contains
       ! Get DFT energy correction
       E_xc = E  ! the XC energy itself, before it becomes the energy correction
       E = E - HALF*V.trace_product_with(.density_mx.r)
+      .SCF_data.XC_n_electrons = n_e
 
       V.destroy
 
@@ -6621,6 +6663,7 @@ contains
       sh :: SHELL1
       gga,mgga :: BIN
       b,f,np,ns,q,p,j,ix,s,fs,ls,fa,na,off :: INT
+      n_e :: REAL
 
       gga  = .SCF_data.using_GGA_functional
       mgga = .SCF_data.using_meta_GGA_functional
@@ -6630,6 +6673,7 @@ contains
 
       Ea = ZERO
       Eb = ZERO
+      n_e = ZERO
       Va.create(.n_bf,.n_bf); Va = ZERO
       Vb.create(.n_bf,.n_bf); Vb = ZERO
 
@@ -6756,6 +6800,7 @@ contains
          .set_XC_energy_and_potential(pot,den)
          Ea = Ea + sum(wt*pot.energy*den.rho(:,1))
          Eb = Eb + sum(wt*pot.energy*den.rho(:,2))
+         n_e = n_e + sum(wt*(den.rho(:,1)+den.rho(:,2)))
          do s = 1,2
             pot.v_rho(:,s) = HALF*wt*pot.v_rho(:,s)
             if (NOT gga) cycle
@@ -6834,6 +6879,7 @@ contains
       Ea = Ea - HALF*Va.trace_product_with(.density_mx.a)
       Eb = Eb - HALF*Vb.trace_product_with(.density_mx.b)
       E  = Ea + Eb
+      .SCF_data.XC_n_electrons = n_e
 
       Vb.destroy
       Va.destroy
