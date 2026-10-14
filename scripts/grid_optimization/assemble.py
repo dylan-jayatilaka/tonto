@@ -28,7 +28,8 @@ CANDIDATES = {
 }
 RADIAL_TARGETS = [1e-4, 1e-5, 1e-6, 1e-7]
 TAUS = [1e-5, 1e-6, 1e-7, 1e-8]
-LEVELS = [('very_low', 1e-3), ('low', 1e-4), ('medium', 1e-5), ('high', 1e-6), ('very_high', 1e-7)]
+# very_high has no target: 1e-7 cannot be shown against the reference grid
+LEVELS = [('very_low', 1e-3), ('low', 1e-4), ('medium', 1e-5), ('high', 1e-6)]
 OUTLIERS = ('KF', 'LiF', 'ScO')
 ZONES = [0.0, 0.5, 1.0, 2.5, 1e9]
 

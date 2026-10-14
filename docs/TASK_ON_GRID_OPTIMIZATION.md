@@ -429,6 +429,19 @@ radii (`tfvp`).
   cancellation. Report in the store, `zones_report_def2-SVP.md`.
 - **Proposal:** lower each setting (each zone order and each radial count, one period at a time)
   from the assembled grid while the worst error still meets the target.
+- **Dylan: `very_high` dropped as unattainable** (noted in `BECKE_GRID:set_accuracy`): 1e-7 cannot
+  be shown against the reference grid for some systems. Targets now 1e-3 to 1e-6 for `very_low`
+  to `high`. Go-ahead for the lowering, unattended overnight. On Laqua's grids: they are published
+  in full in the paper (§8 table); only ORCA's COSX parameters are withheld. Their errors are, as
+  far as remembered, averages over G2, not the worst case as here: to check in the paper. g1 to g7
+  can be added as candidates in the zone machinery.
+- **The lowering** (`descend.py`): start from the cheapest assembled grid; each round tries every
+  single-step reduction (5 radial points, or one Lebedev order down, per period and zone) in one
+  job per system, then all passing reductions together, then the better half, then the best one;
+  a grid passes if its worst error (KF, LiF, ScO left out) is below 0.9 times the target. State in
+  the store, `descent_def2-SVP.json`, saved every round; progress in the run folder,
+  `descent_status.md`. Order: `medium`, `low`, `high`, `very_low`, each for mixed4, Becke, mixed3.
+  Started 2026-10-14 evening under `caffeinate`; log `descent_run.log`.
 
 ## Appendix A. The COSX grid record (formerly `docs/TASK_COSX_GRIDS.md`)
 

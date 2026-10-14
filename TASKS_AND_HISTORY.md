@@ -78,6 +78,17 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## START HERE (2026-10-14, night): the grid lowering ran overnight
+
+**First thing:** check the overnight run of `scripts/grid_optimization/descend.py` in
+`~/tonto-runs/2026-10-13_grid_levels/`: `descent_status.md` (one line per candidate and level:
+rounds, worst error, points per atom, settings), `descent_run.log`, and whether it is still
+running (`pgrep -fl descend`). It is restartable: run it again with the same arguments and it
+continues from `~/Dropbox/tonto_data/grid_optimization/descent_def2-SVP.json`. Plan and log:
+`docs/TASK_ON_GRID_OPTIMIZATION.md` §9, last entries. All work is on branch `grid-optimization`
+(pushed; not merged; merging to `develop` needs a good CI). Next after the lowering: compare the
+three candidates on points per atom; add Laqua's g1 to g7 as candidates.
+
 ## START HERE (2026-10-14): grid optimisation, XC and COSX together
 
 **Next action:** grid optimisation, `docs/TASK_ON_GRID_OPTIMIZATION.md` (entry *Grid
