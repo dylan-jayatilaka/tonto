@@ -7307,7 +7307,7 @@ are in the handover of that date at the top. What is kept here is how each was c
 was timed two ways: the yq28 job (322 parameters) with the pre-branch binary and the branch
 binary, 281 and 269 CPU s; and the three solvers on a 322 x 322 normal matrix B^T B inside the
 self-check, printed not asserted. The algorithm was checked outside Tonto by transliterating the
-Fortran line for line into numpy (`qr_check.py`, in the session's scratch directory): the book's
+Fortran line for line into numpy (`~/tonto-runs/2026-10-14_eigensolver/qr_check.py`; `restr.py` there is the restrained case): the book's
 Example 8.3.3, a dense 60 x 60, split and repeated spectra, and the 322 x 322 all agree with
 LAPACK to 1e-14. That check is what found the book's misprint (12.831 for 12.8437) and the
 cause of the restrained check's failure: with the QR solver the 1e12 weight left 7.6e-5 in the
