@@ -78,6 +78,16 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## START HERE (2026-10-14, late): Becke's partition chosen; Stratmann-Scuseria overnight
+
+The lowering finished at 17:23 (results and Dylan's decision for Becke's partition in
+`docs/TASK_ON_GRID_OPTIMIZATION.md` §9, last entries). Running overnight in
+`~/tonto-runs/2026-10-13_grid_levels/`: the relowering of Becke `high` and mixed4 `medium` from the
+richest assembled grid (`descent_run2.log`), then `overnight_ss.sh`, Stratmann-Scuseria through
+every stage (`overnight_ss.log`; `overnight_ss_done.flag` at the end). Progress table:
+`descent_status.md`. Next: compare ss with Becke; Laqua's g1 to g7 (how to fit them to the zone
+scheme is for Dylan); timing per point; choose the levels.
+
 ## START HERE (2026-10-14, night): the grid lowering ran overnight
 
 **First thing:** check the overnight run of `scripts/grid_optimization/descend.py` in
