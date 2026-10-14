@@ -116,9 +116,16 @@ with the list.
 
 One procedure per format, chosen by `output_format=`. `table`: element, n, a_1 … a_n, b_1
 … b_n, c, one line per element, with a header saying the range and the model. `buster`:
-**format known since 2026-10-13**, from Claus Flensburg of Global Phasing; his reply is kept
-as received in `~/Dropbox/tonto_data/buster_form_factors/flensburg_reply_2026-10.txt`. The
-writer is still a stub. What the reply says:
+**written 2026-10-14** (branch `buster-ff`), to the format Claus Flensburg of Global Phasing
+gave on 2026-10-13; his reply is kept as received in
+`~/Dropbox/tonto_data/buster_form_factors/flensburg_reply_2026-10.txt`. `FF_fit_format= buster`
+writes `<name>.sph_ff.buster`, the `FORMFACTOR` lines (the elements present, from the
+International Tables, then one type for each unique atom), and `<name>.sph_ff.pdb`, the cell
+and every atom as a `HETATM` record typed as its unique atom; the atom-to-type table is printed.
+Procedures `put_BUSTER_FORMFACTOR`, `BUSTER_type_label` and `PDB_atom_record` in
+`GAUSSIAN_FF_FIT`; test `long/urea_rhf_STO-3G_sph-TFVH_FF_fit_buster`, which compares the PDB
+file and the stdout but not the `FORMFACTOR` file (a degenerate pair of Gaussians can split
+differently from one machine to the next). What the reply says:
 
 - BUSTER takes only four Gaussians plus a constant. `fit_sph_atom_ffs` already fits that.
 - A form factor is one line of a text file in TNT format, the amplitude and exponent of each
@@ -145,15 +152,21 @@ occupancy in 55-60 and B in 61-66 as usual; the element right-justified in 77-78
 of the two-character charge of 79-80, the four characters sign, digit, point, digit in 79-82.
 `C+0.1` is `C` in column 78 and `+0.1` in 79-82.
 
-To settle before writing it:
-- **Which 198 strings.** Presumably `-9.9` to `+9.9` without two of them; and whether BUSTER
-  uses the number as a charge anywhere, or only as a label. Read the release notes first.
-- **The exponent convention**: B multiplying (sin theta/lambda)^2, as in the International
-  Tables and SHELX `SFAC`, is assumed. The carbon line above is the International Tables
-  carbon with its Gaussians in another order, which supports it; the TNT manual page should
-  confirm it.
-- **Whether atoms of one kind should share a type**, to stay under 198: by symmetry first,
-  then by rounding the fitted coefficients.
+Decisions taken in the writer (on the branch, to be overruled if wrong):
+- **The type strings** are `+0.1, -0.1, +0.2, -0.2, ... +9.9, -9.9`, 198 of them, given out in
+  that order within an element; `+0.0` and `-0.0` are not used. The label is not a charge and
+  nothing is read into it. A job with more than 198 unique atoms of one element stops with a
+  message before the fit.
+- **The exponent convention**: B multiplies (sin theta/lambda)^2 in 1/Angstrom^2, as in the
+  International Tables and SHELX `SFAC`; the pairs are written with the largest B first, as
+  the TNT manual and Claus's carbon line have them. Not confirmed with him.
+- **Atoms of one kind share a type**: every atom is typed as the unique atom it is generated
+  from, so symmetry-equivalent atoms share. Rounding the fitted coefficients to merge further
+  is not done.
+- **The PDB record**: residue name `compound_id` or `UNL`, chain `asym_id` or `A`, residue
+  number `compound_sequence_id` or 1; B = 8 pi^2 U_eq from the ADP tensor's trace, or U_iso.
+  Coordinates are Cartesian in Tonto's frame (a, c* x a, c*), the PDB frame; the header is
+  `CRYSTAL:put_pdb`'s `CRYST1` and `SCALE` lines.
 
 Also in the reply, on the aspherical fitted atoms (30 to 60 radial Gaussians, L up to 7): he
 finds them expensive but possible given the faster structure-factor sum, and asks whether the
@@ -232,7 +245,8 @@ manual describes three Gaussians; BUSTER takes four and a constant.
 3. `make_sph_atom_FF_curve`, the `fit_sph_atom_ffs` keyword with its `FF_fit_*` settings,
    the `shelx` and `table` writers, test `long/urea_rhf_STO-3G_sph-TFVH_FF_fit`. Done,
    branch `exphar`.
-4. The BUSTER writer. The format is in hand (§2d): a `FORMFACTOR` file and a retyped PDB file.
+4. The BUSTER writer, `FF_fit_format= buster`: a `FORMFACTOR` file and a retyped PDB file.
+   Done, branch `buster-ff` (§2d).
 5. The two-stage fit (§8), if the 0.02 e residual on C and N matters for the data.
 
 ## 7. What the first fits showed (urea, `sph-tfvh`, STO-3G, 2026-10-05)
