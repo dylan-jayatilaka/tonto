@@ -2474,9 +2474,9 @@ contains
       order.destroy
 
       ! The SIGN is deliberately NOT canonicalised here, though it is as
-      ! arbitrary as the order was. This routine diagonalises the ADP tensor
-      ! and the refinement normal equations, where the eigenvectors are used
-      ! in sign-invariant combinations (v v^T), so fixing the sign buys
+      ! arbitrary as the order was. This routine diagonalises the ADP tensor,
+      ! and diagonalize_QR the refinement normal equations: in both the
+      ! eigenvectors are used in sign-invariant combinations (v v^T), so fixing the sign buys
       ! nothing -- and where an eigenspace is degenerate it cannot help
       ! anyway, a degenerate subspace being arbitrary up to a rotation and
       ! not merely a sign. Measured: canonicalising here moved the ADP esds
@@ -2545,6 +2545,336 @@ contains
       G.destroy
       X.destroy
       W.destroy
+
+   end
+
+   diagonalize_QR(evals,evecs) :: PURE
+   ! Diagonalise the symmetric matrix "self". The eigenvalues come back
+   ! ascending in "evals", the eigenvectors as the columns of "evecs" in
+   ! the same order, with no fixed sign, as diagonalize_Jacobi (see the
+   ! note there). The matrix is reduced to tridiagonal form by Householder
+   ! reflections, then diagonalised by the implicit symmetric QR algorithm
+   ! with the Wilkinson shift: Golub and van Loan, Matrix Computations,
+   ! 3rd ed. (1996), Algorithms 8.3.1 to 8.3.3. About 9 n^3 flops. Pure,
+   ! so it serves where LAPACK's dsyev cannot be called.
+      self  :: IN
+      evals :: VEC{REAL}, OUT
+      evecs :: MAT{REAL}, OUT
+
+   ENSURE(.is_square, "self is not square")
+   ENSURE(.is_symmetric, "self is not symmetric")
+   ENSURE(evals.dim==.dim1,"wrong size, evals")
+   ENSURE(evecs.dim1==.dim1 AND evecs.dim2==.dim1,"wrong size, evecs")
+
+      e :: VEC{REAL}@
+      order :: VEC{INT}@
+      n :: INT
+
+      n = .dim1
+
+      ! Reduce to tridiagonal form, then diagonalise that
+      e.create(n)
+      .tridiagonalize(evals,e,evecs)
+      evecs.diagonalize_tridiagonal_QR(evals,e)
+      e.destroy
+
+      ! Sort ascending, the eigenvectors with the eigenvalues
+      order.create(n)
+      evals.quick_sort(order)
+      evals = evals(order)
+      evecs = evecs(:,order)
+      order.destroy
+
+   end
+
+   tridiagonalize(d,e,Q) :: PURE
+   ! Reduce the symmetric matrix "self" to tridiagonal form T = Q^T A Q
+   ! by Householder reflections: Golub and van Loan Algorithm 8.3.1.
+   ! "d" is the diagonal of T and "e" its subdiagonal, e(k) = T(k+1,k);
+   ! "Q" is the product of the reflections, formed from the last one back
+   ! as their section 5.1.6 recommends. "self" is left as it is.
+      self :: IN
+      d,e  :: VEC{REAL}, OUT
+      Q    :: MAT{REAL}, OUT
+
+   ENSURE(.is_square,"self is not square")
+   ENSURE(d.dim==.dim1,"wrong size, d")
+   ENSURE(e.dim>=.dim1-1,"wrong size, e")
+   ENSURE(Q.dim1==.dim1 AND Q.dim2==.dim1,"wrong size, Q")
+
+      A :: MAT{REAL}@
+      v,p,w,b :: VEC{REAL}@
+      beta :: REAL
+      n,k :: INT
+
+      n = .dim1
+      A = self
+      v.create(n); p.create(n); w.create(n); b.create(n)
+      b = ZERO
+
+      ! Reflect column k to zero below the subdiagonal, k = 1 .. n-2,
+      ! updating the trailing block as A - v w^T - w v^T. The essential
+      ! part of each reflection's vector is kept in that column of A,
+      ! as the book does, and its scale in b.
+      do k = 1,n-2
+         A(k+1:n,k).Householder_vector(v(k+1:n),beta)
+         b(k) = beta
+         p(k+1:n) = beta*matmul(A(k+1:n,k+1:n),v(k+1:n))
+         w(k+1:n) = p(k+1:n) - (HALF*beta*dot_product(p(k+1:n),v(k+1:n)))*v(k+1:n)
+         d(k) = A(k,k)
+         if (beta==ZERO) then; e(k) = A(k+1,k)         ! the column is in form already
+         else;                 e(k) = norm2(A(k+1:n,k))
+         end
+         A(k+1:n,k+1:n) = A(k+1:n,k+1:n) - v(k+1:n).outer_product_with(w(k+1:n)) &
+                                         - w(k+1:n).outer_product_with(v(k+1:n))
+         if (k+2<=n) A(k+2:n,k) = v(k+2:n)
+      end
+
+      ! The last 2 x 2 block is tridiagonal already
+      if (n>=2) then
+         d(n-1) = A(n-1,n-1)
+         e(n-1) = A(n,n-1)
+      end
+      d(n) = A(n,n)
+
+      ! Q = P_1 ... P_{n-2}, from the last reflection back: Q starts
+      ! as the identity and fills from the bottom corner
+      Q.to_unit_mx
+      do k = n-2,1,-1
+         v(k+1) = ONE
+         if (k+2<=n) v(k+2:n) = A(k+2:n,k)
+         beta = b(k)
+         Q(k+1:n,k+1:n) = Q(k+1:n,k+1:n) &
+                        - beta*v(k+1:n).outer_product_with(matmul(v(k+1:n),Q(k+1:n,k+1:n)))
+      end
+
+      b.destroy; w.destroy; p.destroy; v.destroy
+      A.destroy
+
+   end
+
+   diagonalize_tridiagonal_QR(d,e) :: PURE
+   ! Diagonalise the symmetric tridiagonal matrix with diagonal "d" and
+   ! subdiagonal "e" by the implicit symmetric QR algorithm with the
+   ! Wilkinson shift: Golub and van Loan Algorithms 8.3.2 and 8.3.3. On
+   ! return "d" holds the eigenvalues, in no particular order, and "self",
+   ! which on entry holds the Q of the tridiagonalisation, has been
+   ! multiplied on the right by every rotation, so its columns are the
+   ! eigenvectors of the original matrix.
+      self :: INOUT
+      d,e  :: VEC{REAL}, INOUT
+
+   ENSURE(.is_square,"self is not square")
+   ENSURE(d.dim==.dim1,"wrong size, d")
+   ENSURE(e.dim>=.dim1-1,"wrong size, e")
+
+      qk,qk1 :: VEC{REAL}@
+      tol,dd,mu,x,z,c,s,ak,ak1,bk :: REAL
+      n,lo,hi,k,i,iter,max_iter :: INT
+
+      n = .dim1
+      tol = epsilon(ONE)
+      max_iter = 30*n
+      iter = 0
+      qk.create(n); qk1.create(n)
+
+      hi = n
+      do
+
+         ! A subdiagonal element negligible against its two diagonal
+         ! neighbours is set to zero: the problem splits there
+         do i = 1,hi-1
+            if (abs(e(i))<=tol*(abs(d(i))+abs(d(i+1)))) e(i) = ZERO
+         end
+
+         ! Trailing rows already diagonal are finished; lo:hi is the
+         ! unreduced block just above them
+         do while (hi>1)
+            if (e(hi-1)/=ZERO) exit
+            hi = hi - 1
+         end
+         if (hi==1) exit
+         lo = hi - 1
+         do while (lo>1)
+            if (e(lo-1)==ZERO) exit
+            lo = lo - 1
+         end
+
+         iter = iter + 1
+         STOP_IF(iter>max_iter,"diagonalize_tridiagonal_QR: no convergence")
+
+         ! The Wilkinson shift: the eigenvalue of the trailing 2 x 2 block
+         ! of lo:hi closer to d(hi)
+         dd = HALF*(d(hi-1)-d(hi))
+         mu = d(hi) - e(hi-1)**2/(dd + sign(sqrt(dd*dd+e(hi-1)**2),dd))
+
+         ! One implicit QR step on the block. The first rotation, in the
+         ! plane (lo,lo+1), is the one that would start a QR factorisation
+         ! of T - mu I; it puts one element outside the band, which the
+         ! rotations after it chase down and off the bottom.
+         x = d(lo) - mu
+         z = e(lo)
+         do k = lo,hi-1
+            MAT{REAL}:Givens_rotation(x,z,c,s)
+            if (k>lo) e(k-1) = c*x - s*z
+            ak  = d(k)
+            ak1 = d(k+1)
+            bk  = e(k)
+            d(k)   = c*c*ak - TWO*c*s*bk + s*s*ak1
+            d(k+1) = s*s*ak + TWO*c*s*bk + c*c*ak1
+            e(k)   = c*s*(ak-ak1) + (c*c-s*s)*bk
+            if (k<hi-1) then
+               z = -s*e(k+1)
+               e(k+1) = c*e(k+1)
+               x = e(k)
+            end
+            qk  = self(:,k)
+            qk1 = self(:,k+1)
+            self(:,k)   = c*qk - s*qk1
+            self(:,k+1) = s*qk + c*qk1
+         end
+
+      end
+
+      qk1.destroy; qk.destroy
+
+   end
+
+   Givens_rotation(a,b,c,s) :: selfless, pure
+   ! The cosine "c" and sine "s" of the plane rotation that takes (a,b)
+   ! to (r,0), as [c s; -s c]^T (a,b)^T = (r,0)^T: Golub and van Loan
+   ! Algorithm 5.1.3, which cannot overflow.
+      a,b :: REAL, IN
+      c,s :: REAL, OUT
+
+      tau :: REAL
+
+      if (b==ZERO) then
+         c = ONE; s = ZERO
+      else if (abs(b)>abs(a)) then
+         tau = -a/b; s = ONE/sqrt(ONE+tau*tau); c = s*tau
+      else
+         tau = -b/a; c = ONE/sqrt(ONE+tau*tau); s = c*tau
+      end
+
+   end
+
+   check_QR_eigensolver result (n_failed) :: selfless, leaky
+   ! Check diagonalize_QR and return the number of failed checks: the
+   ! eigenvalues of Golub and van Loan's Example 8.3.3 to the four figures
+   ! they print; on a dense 60 x 60 matrix, A Q = Q D and Q^T Q = 1 to
+   ! roundoff, the eigenvalues ascending and agreeing with LAPACK's and
+   ! with the Jacobi method; and matrices that split, repeat an eigenvalue
+   ! or are 1 x 1.
+      n_failed :: INT
+
+      A,Q,R :: MAT{REAL}@
+      lam,lam_ref,book :: VEC{REAL}@
+      scale,tol :: REAL
+      n,i,j :: INT
+
+      n_failed = 0
+
+      ! 1. Example 8.3.3 of the book: a 4 x 4 tridiagonal matrix whose
+      !    eigenvalues they give as -2.4848, .7046, 4.9366, 12.831
+      A.create(4,4); A = ZERO
+      A(1,1) = ONE;   A(2,2) = THREE; A(3,3) = FIVE; A(4,4) = SEVEN
+      A(2,1) = TWO;   A(3,2) = FOUR;  A(4,3) = SIX
+      A(1,2) = TWO;   A(2,3) = FOUR;  A(3,4) = SIX
+      book = [-2.4848d0, 0.7046d0, 4.9366d0, 12.831d0]
+      lam.create(4); Q.create(4,4)
+      A.diagonalize_QR(lam,Q)
+      if (maxval(abs(lam-book))>1.0d-3) n_failed = n_failed + 1
+      n_failed = n_failed + MAT{REAL}:eigen_residual_failures(A,lam,Q)
+      Q.destroy; lam.destroy; book.destroy; A.destroy
+
+      ! 2. A dense symmetric matrix: residuals, order, and the eigenvalues
+      !    against LAPACK and against Jacobi
+      n = 60
+      A.create(n,n)
+      do i = 1,n
+      do j = 1,n
+         A(i,j) = cos(0.3d0*i*j)/(ONE+abs(i-j))
+      end
+      end
+      lam.create(n); Q.create(n,n)
+      A.diagonalize_QR(lam,Q)
+      n_failed = n_failed + MAT{REAL}:eigen_residual_failures(A,lam,Q)
+      if (any(lam(2:n)<lam(1:n-1))) n_failed = n_failed + 1
+      scale = maxval(abs(lam))
+      tol = 1.0d-10*scale
+      lam_ref.create(n); R.create(n,n)
+      A.solve_symmetric_eigenproblem(lam_ref,R)
+      if (maxval(abs(lam-lam_ref))>tol) n_failed = n_failed + 1
+      A.diagonalize_Jacobi(lam_ref,R)
+      if (maxval(abs(lam-lam_ref))>tol) n_failed = n_failed + 1
+      R.destroy; lam_ref.destroy
+      Q.destroy; lam.destroy; A.destroy
+
+      ! 3. Matrices that split or repeat: a diagonal one out of order, two
+      !    blocks joined by a zero, the identity, and a 1 x 1
+      A.create(3,3); A = ZERO
+      A(1,1) = THREE; A(2,2) = ONE; A(3,3) = TWO
+      lam.create(3); Q.create(3,3)
+      A.diagonalize_QR(lam,Q)
+      if (maxval(abs(lam-[ONE,TWO,THREE]))>1.0d-14) n_failed = n_failed + 1
+      n_failed = n_failed + MAT{REAL}:eigen_residual_failures(A,lam,Q)
+      Q.destroy; lam.destroy; A.destroy
+
+      A.create(4,4); A = ZERO
+      A(1,1) = TWO; A(1,2) = ONE; A(2,1) = ONE; A(2,2) = TWO
+      A(3,3) = FIVE; A(3,4) = -TWO; A(4,3) = -TWO; A(4,4) = FIVE
+      lam.create(4); Q.create(4,4)
+      A.diagonalize_QR(lam,Q)
+      if (maxval(abs(lam-[ONE,THREE,THREE,SEVEN]))>1.0d-13) n_failed = n_failed + 1
+      n_failed = n_failed + MAT{REAL}:eigen_residual_failures(A,lam,Q)
+      Q.destroy; lam.destroy; A.destroy
+
+      A.create(5,5); A.to_unit_mx
+      lam.create(5); Q.create(5,5)
+      A.diagonalize_QR(lam,Q)
+      if (maxval(abs(lam-ONE))>1.0d-14) n_failed = n_failed + 1
+      n_failed = n_failed + MAT{REAL}:eigen_residual_failures(A,lam,Q)
+      Q.destroy; lam.destroy; A.destroy
+
+      A.create(1,1); A = -FOUR
+      lam.create(1); Q.create(1,1)
+      A.diagonalize_QR(lam,Q)
+      if (abs(lam(1)+FOUR)>ZERO OR abs(abs(Q(1,1))-ONE)>ZERO) n_failed = n_failed + 1
+      Q.destroy; lam.destroy; A.destroy
+
+   end
+
+   eigen_residual_failures(A,lam,Q) result (n_failed) :: selfless, leaky
+   ! The number of failures among: A Q = Q diag(lam) and Q^T Q = 1, each to
+   ! within 1e-12 times the size of "A" (at least 1e-13) in the largest
+   ! element.
+      A   :: MAT{REAL}, IN
+      lam :: VEC{REAL}, IN
+      Q   :: MAT{REAL}, IN
+      n_failed :: INT
+
+      R :: MAT{REAL}@
+      tol :: REAL
+      n,j :: INT
+
+      n_failed = 0
+      n = A.dim1
+      tol = max(1.0d-12*maxval(abs(A)),1.0d-13)
+
+      R.create(n,n)
+      R = matmul(A,Q)
+      do j = 1,n
+         R(:,j) = R(:,j) - lam(j)*Q(:,j)
+      end
+      if (maxval(abs(R))>tol) n_failed = n_failed + 1
+
+      R = matmul(transpose(Q),Q)
+      do j = 1,n
+         R(j,j) = R(j,j) - ONE
+      end
+      if (maxval(abs(R))>tol) n_failed = n_failed + 1
+      R.destroy
 
    end
 
@@ -3389,7 +3719,7 @@ contains
       inv.create(d,d)
 
       ! Solve the eigenvalue problem
-      .diagonalize_Jacobi(eval,evec)
+      .diagonalize_QR(eval,evec)
 
       ! Count eigenvalues which are nearly zero (leaky)
       n0 = count(eval<=ZERO OR abs(eval)<=n0_tol)

@@ -815,6 +815,7 @@ set(RUN_SRC
     ${RUNFILE_DIR}/run_qr.foo
     ${RUNFILE_DIR}/run_quadrature.foo
     ${RUNFILE_DIR}/run_lsq_restraint.foo
+    ${RUNFILE_DIR}/run_eigensolver.foo
     ${RUNFILE_DIR}/run_gaussian_ff_fit.foo
     ${RUNFILE_DIR}/run_real.foo
     ${RUNFILE_DIR}/run_rys.foo
@@ -1255,6 +1256,9 @@ add_executable(run_quadrature    ${CMAKE_CURRENT_BINARY_DIR}/run_quadrature.F90)
 # refinement uses; the `restrained_least_squares_known_answer` ctest. Not EXCLUDE_FROM_ALL for the
 # same reason.
 add_executable(run_lsq_restraint ${CMAKE_CURRENT_BINARY_DIR}/run_lsq_restraint.F90)
+# run_eigensolver checks the pure symmetric eigensolver that solver uses; the
+# `symmetric_eigensolver_known_answer` ctest. Not EXCLUDE_FROM_ALL for the same reason.
+add_executable(run_eigensolver   ${CMAKE_CURRENT_BINARY_DIR}/run_eigensolver.F90)
 # run_libxc checks that Tonto can call libxc, against closed forms; the
 # `libxc_gives_slater_exchange` ctest. Built only with -DLIBXC=ON.
 if(LIBXC)
@@ -1311,6 +1315,7 @@ target_link_libraries(run_least_squares tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBR
 target_link_libraries(run_system_commands tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_quadrature    tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_lsq_restraint tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
+target_link_libraries(run_eigensolver   tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 target_link_libraries(run_gaussian_ff_fit tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
 if(WITH_MPI)
     target_link_libraries(run_mpi_test          tonto_lib ${LAPACK_LIBRARIES} ${MPI_LIBRARIES})
