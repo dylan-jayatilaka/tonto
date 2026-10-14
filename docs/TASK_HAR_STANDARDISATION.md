@@ -344,7 +344,7 @@ What is left, in this order. Each step changes numbers the later ones rest on.
    the partition; freeze the protocol and name it.
 8. Then the ADP-model studies, rerun under the protocol.
 
-Beside these, not in the order: speed work (SG grids, COSX; `docs/TASK_COSX_GRIDS.md`), which
+Beside these, not in the order: speed work (SG grids, COSX; `docs/TASK_ON_GRID_OPTIMIZATION.md` Appendix A), which
 does not change results; and the picture-change correction, a science option
 (`TASKS_AND_HISTORY.md`, *Picture-change correction of the density*).
 

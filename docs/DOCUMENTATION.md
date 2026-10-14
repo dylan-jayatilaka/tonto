@@ -35,6 +35,7 @@ parallel (MPI) builds for that platform.
 | [**Pair stabilisers in two-centre structure factors**](REPORT_ON_PAIR_STABILIZERS.md) | The weight of each pair of atoms when a fragment's structure factor is summed over the space group; the petite list |
 | [**Angular decomposition of electron density maps**](REPORT_ON_L_DECOMPOSITION_MAPS.md) | Local-moment maps from structure factors, the expansion about a centre, Hirshfeld atoms by angular character and their populations; keywords, code, checks, urea and gly-L-ala |
 | [**Relativity: the scalar X2C Hamiltonian**](REPORT_ON_RELATIVITY.md) | The equations and how they relate to Dyall's elimination of the small component; keywords, Gaussian nuclei, the routines, the checks against PySCF, what is left out |
+| [**Integration grids for DFT and COSX**](REPORT_ON_GRID_OPTIMIZATION.md) | How the XC and COSX grids are built from one set of parameters, how their error is measured on a fixed density, the partition, the test systems, and the results |
 | [**A sum of Gaussians for 1/r: where it wins**](REPORT_ON_GAUSSIAN_1_ON_R_FIT.md) | What a Gaussian expansion of the Coulomb kernel buys and costs: analytic integrals, grids, tensor hypercontraction, COSX, periodic systems |
 
 ## Learning
