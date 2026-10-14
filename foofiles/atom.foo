@@ -912,8 +912,6 @@ module ATOM
        "V  ", "0  ", "VAL"/ 
 
 
-   saved_self :: ATOM*, private  DEFAULT_NULL
-
 contains
 
 !  ==================
@@ -1117,10 +1115,6 @@ contains
 !  ===========
 !  Set methods
 !  ===========
-
-   set_saved_self :: get_from(OBJECT)
-   ! Set saved_self. This version has self a target.
-   end
 
 !  ============================
 !  Set labels, dummies, charges
@@ -8196,16 +8190,6 @@ contains
 
    end
 
-   density_value_at_radius(R) result (res) :: selfless, public, PURE
-   ! Return the density values at the radial value "R".
-   ! This assumes that the atomic density is spherical!
-      R :: REAL, IN
-      res :: REAL
-
-      res = saved_self.density_at_radius(R)
-
-   end
-
 !  ============
 !  Interpolator
 !  ============
@@ -8220,7 +8204,7 @@ contains
    end
 
    make_interpolator(interpolator) :: leaky
-   ! Make the .interpolator for the atom density. If present,
+   ! Make the .interpolator table of the atom density. If present,
    ! "interpolator" is used as a template to get the settings needed.
    ! NOTE: This is for a gaussian basis set; for slater or coppens
    ! bases use the interpolators stored in those bases.
@@ -8240,18 +8224,8 @@ contains
       ! If no template, create a default interpolator
       if (.interpolator.deallocated) .interpolator.create
 
-      ! An octave table is filled from the density at its own points
-      if (.interpolator.domain_is_octaves) then
-         .make_octave_interpolator
-         return
-      end
-
-      ! Set domain scale factor. May not be required.
-      .interpolator.set_domain_scale_factor(.bragg_slater_radius*BOHR_PER_ANGSTROM)
-
-      ! Set the interpolation table
-      .set_saved_self ! Used by ATOM: function below
-      .interpolator.set_even_spaced_data(ATOM::density_value_at_radius)
+      ! Fill it from the density at its own points
+      .make_octave_interpolator
 
    end
 
@@ -8261,7 +8235,7 @@ contains
       self :: INOUT
 
    ENSURE(.basis_kind=="gaussian","interpolation must be for a gaussian basis")
-   ENSURE(.interpolator.domain_is_octaves,"not an octave table")
+   ENSURE(.interpolator.allocated,"no interpolator")
 
       rho :: VEC{REAL}@
       pt  :: MAT{REAL}@
@@ -8293,19 +8267,21 @@ contains
 
    end
 
-   interpolator_table_length(tol) result (length)
-   ! Return the interpolator table "length" for a given tolerance "tol" for the
-   ! atom density. The interpolator is a default one.
+   density_cutoff_radius(tol) result (res) :: PURE
+   ! The distance at which the atom density first falls below "tol",
+   ! stepping out 0.02 bohr at a time, to 30 bohr at most. Used to set a
+   ! cluster radius.
       self :: IN
       tol :: REAL, IN
-      length :: REAL
+      res :: REAL
 
-      interpolator :: INTERPOLATOR@
+      i :: INT
 
-      interpolator.create
-      .set_saved_self   ! Used by function below ... NOT PURE
-      length = interpolator.the_table_length(ATOM::density_value_at_radius,tol)
-      interpolator.destroy
+      res = ZERO
+      do i = 1,1501
+         if (.density_at_radius(res)<tol) exit
+         res = res + 0.02d0
+      end
 
    end
 
@@ -8320,7 +8296,6 @@ contains
    ENSURE(pt.dim2==3,"wrong dimension for points array")
    ENSURE(density.dim==pt.dim1,"inconsistent number of points")
    ENSURE(.interpolator.allocated,"no interpolator defined!")
-   ENSURE(.interpolator.domain_mapping(1:4)=="sqrt" OR .interpolator.domain_is_octaves,"the table must be one looked up by squared distance")
 
       R2 :: VEC{REAL}@
       n_pt,n :: INT
@@ -8357,7 +8332,6 @@ contains
    ENSURE(pt.dim2==3,"wrong dimension for points array")
    ENSURE(density.dim==pt.dim1,"inconsistent number of points")
    ENSURE(.interpolator.allocated,"no interpolator defined!")
-   ENSURE(.interpolator.domain_mapping(1:4)=="sqrt" OR .interpolator.domain_is_octaves,"the table must be one looked up by squared distance")
 
       R2 :: VEC{REAL}@
       n_pt,n :: INT
@@ -10256,167 +10230,73 @@ contains
 
    end
 
-   FT_along_z_r(res,k_z) :: selfless
-   ! Real part of fourier transform of the density described by
-   ! ".density_mx" evaluated at a reciprocal space points
-   ! [0,0,k_z(i), i = 1,dim]
-      res :: VEC{REAL}, OUT
-      k_z :: VEC{REAL}, IN
-
-      tmp :: VEC{CPX}@
-
-      tmp.create(res.dim)
-      saved_self.make_FT_along_z(tmp,k_z)
-      res = RE(tmp)
-      tmp.destroy
-
-   end
-
-   FT_along_z_i(res,k_z) :: selfless
-   ! Imaginary part of fourier transform of the density described by
-   ! ".density_mx" evaluated at a reciprocal space points
-   ! [0,0,k_z(i), i = 1,dim]
-      res :: VEC{REAL}, OUT
-      k_z :: VEC{REAL}, IN
-
-      tmp :: VEC{CPX}@
-
-      tmp.create(res.dim)
-      saved_self.make_FT_along_z(tmp,k_z)
-      res = IM(tmp)
-      tmp.destroy
-
-   end
-
    put_FT_along_z_r(length,spacing) :: leaky
-   ! Put the real part of the spherical atomic form factors (along z
-   ! direction) NOTE: X axis is converted to Angstrom^-1
+   ! Put the real part of the spherical atomic form factor along z at
+   ! points "spacing" apart out to "length" (both in 1/bohr), against
+   ! sin(theta)/lambda in 1/Angstrom.
       self :: IN
       length  :: REAL, IN
       spacing :: REAL, IN
 
-      interpolator :: INTERPOLATOR@
-   ! points :: VEC{REAL}@
-     
-      ! Used below to make interpolator
-      .set_saved_self ! NOT PURE
-
-      ! Set the interpolation table
-      interpolator.create
-      interpolator.set_data(length,spacing,ATOM::FT_along_z_r)
-
-      ! Set H SDS points from the IT C table
-   ! points.create(23)
-   ! points = [ &
-    !    0.0000, &
-    !    0.0215, &
-    !    0.0429, &
-    !    0.0644, &
-    !    0.0859, &
-    !    0.1073, &
-    !    0.1288, &
-    !    0.1503, &
-    !    0.1718, &
-    !    0.1932, &
-    !    0.2147, &
-    !    0.2576, &
-    !    0.3006, &
-    !    0.3435, &
-    !    0.3864, &
-    !    0.4294, &
-    !    0.4723, &
-    !    0.5153, &
-    !    0.5582, &
-    !    0.6011, &
-    !    0.6441, &
-    !    0.6870, &
-    !    0.7300  ]
-   ! points = FOUR*PI * ANGSTROM_PER_BOHR * points ! in Bohr^-1
-   ! interpolator.create
-   ! interpolator.set_data_points(points)
-   ! interpolator.set_data(length,spacing,ATOM::FT_along_z_r)
-
-      ! Neutral H atom form factors points
-   ! points.create(46)
-   ! points = [ &
-    !    0.00,   &
-    !    0.01,   &
-    !    0.02,   &
-    !    0.03,   &
-    !    0.04,   &
-    !    0.05,   &
-    !    0.06,   &
-    !    0.07,   &
-    !    0.08,   &
-    !    0.09,   &
-    !    0.10,   &
-    !    0.11,   &
-    !    0.12,   &
-    !    0.13,   &
-    !    0.14,   &
-    !    0.15,   &
-    !    0.16,   &
-    !    0.17,   &
-    !    0.18,   &
-    !    0.19,   &
-    !    0.20,   &
-    !    0.22,   &
-    !    0.24,   &
-    !    0.25,   &
-    !    0.26,   &
-    !    0.28,   &
-    !    0.30,   &
-    !    0.32,   &
-    !    0.34,   &
-    !    0.35,   &
-    !    0.36,   &
-    !    0.38,   &
-    !    0.40,   &
-    !    0.42,   &
-    !    0.44,   &
-    !    0.45,   &
-    !    0.46,   &
-    !    0.48,   &
-    !    0.50,   &
-    !    0.55,   &
-    !    0.60,   &
-    !    0.65,   &
-    !    0.70,   &
-    !    0.80,   &
-    !    0.90,   &
-    !    1.00    ]
-   ! points = FOUR*PI * ANGSTROM_PER_BOHR * points ! in Bohr^-1
-   ! interpolator.create
-   ! interpolator.set_data_points(points)
-   ! interpolator.set_data(length,spacing,ATOM::FT_along_z_r)
-
-      ! Put
-      interpolator.put(fac=BOHR_PER_ANGSTROM/(FOUR*PI))
-
-      ! Clean
-      interpolator.destroy
+      .put_FT_along_z(length,spacing,real_part=TRUE)
 
    end
 
    put_FT_along_z_i(length,spacing) :: leaky
-   ! Put the imaginary part of the spherical atomic form factors
-   ! (along z direction) NOTE: X axis is converted to Angstrom^-1
+   ! Put the imaginary part of the spherical atomic form factor along z
+   ! at points "spacing" apart out to "length" (both in 1/bohr), against
+   ! sin(theta)/lambda in 1/Angstrom.
       self :: IN
       length  :: REAL, IN
       spacing :: REAL, IN
 
-      interpolator :: INTERPOLATOR@
-     
-      ! Set the interpolation table
-      .set_saved_self ! Used below
-      interpolator.create
-      interpolator.set_data(length,spacing,ATOM::FT_along_z_i)
+      .put_FT_along_z(length,spacing,real_part=FALSE)
 
-      ! Clean
-      interpolator.put(fac=BOHR_PER_ANGSTROM/(FOUR*PI))
+   end
 
-      ! Clean
-      interpolator.destroy
+   put_FT_along_z(length,spacing,real_part) :: leaky, private
+   ! Put the real or the imaginary part of the Fourier transform of the
+   ! density in ".density_mx" at the reciprocal points [0,0,k], k from 0
+   ! to "length" in steps of "spacing" (1/bohr), against sin(theta)/lambda
+   ! = k/(4 pi) in 1/Angstrom.
+      self :: IN
+      length  :: REAL, IN
+      spacing :: REAL, IN
+      real_part :: BIN, IN
+
+      k_z :: VEC{REAL}@
+      ft  :: VEC{CPX}@
+      n,i :: INT
+
+      n = ceiling(length/spacing) + 1
+      k_z.create(n)
+      do i = 1,n
+         k_z(i) = (i-1)*spacing
+      end
+      ft.create(n)
+      .make_FT_along_z(ft,k_z)
+
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=2)
+      stdout.put("#",int_width=TRUE)
+      stdout.put("stl/A^-1")
+      if (real_part) then; stdout.put("Re f")
+      else;                stdout.put("Im f")
+      end
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=2)
+      do i = 1,n
+         stdout.put(i)
+         stdout.put(k_z(i)*BOHR_PER_ANGSTROM/(FOUR*PI))
+         if (real_part) then; stdout.put(RE(ft(i)))
+         else;                stdout.put(IM(ft(i)))
+         end
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=2)
+
+      ft.destroy
+      k_z.destroy
 
    end
 
