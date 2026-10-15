@@ -78,19 +78,27 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## START HERE (2026-10-15, afternoon): LKO cutoff in, checked, lowered; decisions for Dylan
+## START HERE (2026-10-15, late afternoon): the cutoff is the default; lowering on two bases
 
-Both pipelines in `~/tonto-runs/2026-10-15_lko/` finished by 12:01 (`status.md`). Results and
-reading: `docs/TASK_ON_GRID_OPTIMIZATION.md` §9, entries of 2026-10-15. **Two decisions for
-Dylan:** (1) the LKO cutoff on by default at 5 bohr: the `lko5` lowering gives the same points
-as Becke at equal accuracy within the method's spread (1,646 / 3,978 / 9,321 / 17,593 against
-1,350 / 4,296 / 11,865 / 16,443), the argon curve is smooth and the weight build is local, so
-the recommendation is on; (2) the final lowering must pass on def2-TZVP too: the grids lowered
-on def2-SVP miss at def2-TZVP at `very_low` (1.1e-3, SF6) and `high` (3.8e-6, SF6 and Cr(CO)6)
-and hold at `low` and `medium`. Also: TiCl4 and ScO SCFs stopped (rc=1) at def2-TZVP, unread;
-`very_high` is limited on KF by `basis_fn_cutoff` (4e-6 at the default), not by the grid, and
-the way to test 0.1 µEh is in the same entry; the papers citing Laqua 2018 that matter are in
-§8 (Laikov's partition-quality measure first).
+**First thing:** `cat ~/tonto-runs/2026-10-15_lko/status.md`; the lines tagged `[default-on]`
+are the running stage (`lko_default_stage.sh`): the def2-TZVP SCFs of TiCl4 and ScO with Sc
+added to the damped guesses, their reference grids, then the `lko5` lowering against def2-SVP
+and def2-TZVP together (`descend.py`, `BASES=`), state key `lko5:<level>:def2-SVP+def2-TZVP`
+in the store's `descent_def2-SVP.json`, table in the 2026-10-13 folder's `descent_status.md`.
+"ALL DONE (default-on stage)" ends it.
+
+Decided today (Dylan): the LKO cutoff is on by default at 5 bohr (`types.foo`), after the
+`lko5` lowering matched Becke's points at equal accuracy (1,646 / 3,978 / 9,321 / 17,593
+against 1,350 / 4,296 / 11,865 / 16,443) with a smooth argon curve and a local weight build.
+Consequences: every DFT output has one more line and every DFT energy moves at 1e-6, so the
+DFT references need a re-bless on achari2, deferred to the bless the levels will need; until
+then the DFT tests of the short suite fail on the extra line. The grids lowered on def2-SVP
+alone miss on def2-TZVP at `very_low` (SF6, 1.1e-3) and `high` (SF6, Cr(CO)6, 3.8e-6), hence
+the two-basis lowering. Still open: `very_high` is limited on KF by `basis_fn_cutoff` (4e-6),
+not the grid, and the way to test 0.1 µEh is in the task document; a plain SCF with
+`partition_scheme= salvador` stops for want of radii; the papers citing Laqua 2018 that matter
+are in §8 of the task document, Laikov's partition-quality measure first. Results and reading:
+`docs/TASK_ON_GRID_OPTIMIZATION.md` §9, entries of 2026-10-15.
 
 In short: the LKO cutoff (Laqua, Kussmann and Ochsenfeld 2018) is implemented for Becke's and
 Salvador's partitions, keyword `lko_cutoff=` (bohr, 0 = off, the default), code change 8 of §5.

@@ -56,6 +56,14 @@ python3 $S/lko_timing.py <svp run folder>  # wall time of one E_xc evaluation an
 ```
 
 Each writes a Markdown table (`lko_check_<basis>.md`, `lko_curves.md`, `lko_timing.md`).
+Since the cutoff became the default (5 bohr), a grid block without `lko_cutoff=` means the
+cutoff is on; the rows stored before then without the keyword were computed with it off, and
+are read as such (the `becke` candidate). New scans should name the cutoff. The reference grids
+A and B are converged and do not depend on the partition. `descend.py` lowers a grid against
+several bases at once with `BASES=def2-SVP,def2-TZVP` in the environment: a grid must pass on
+every basis, the first one supplies the radial scan, shell tables and state file, and the state
+key names the bases.
+
 `assemble.py` and `descend.py` take the candidate `lko5` (Becke's partition with the cutoff at
 5 bohr; its radial scan and shell tables are Becke's). The job scripts run `NPAR` jobs at a time
 (default 8).

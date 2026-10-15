@@ -730,6 +730,40 @@ radii (`tfvp`).
   well, or be done on it. The def2-TZVP SCFs took under a minute each, so that is cheap. Why
   TiCl4 and ScO stopped: to read in `def2-TZVP/{TiCl4,ScO}/run.log`.
 
+- **Decision (Dylan, 2026-10-15): the LKO cutoff is on by default at 5 bohr.** `types.foo`
+  default 5.0, the grid summary prints it always. Every DFT output gains one line and every
+  DFT energy moves at the 1e-6 level, so the DFT references must be re-blessed on achari2; that
+  is deferred to the bless the levels (code change 6) will need anyway, and until then the
+  DFT tests of the short suite fail on the extra line (the numbers pass the loose rule). The
+  store: a block without `lko_cutoff=` now means the cutoff on, and the rows stored before this
+  without it were computed with it off (the `becke` candidate reads them); new scans name the
+  cutoff (`scripts/grid_optimization/README.md`). The `lko5` candidate carries on as the
+  working one.
+
+  **The cutoff moves the Salvador atom properties too.** The release short suite with the
+  default on: 7 of 87 fail, the six DFT tests on the extra line (numbers within the loose
+  rule) and `urea_ccsd_pob-TZVP_Salvador_properties` on its numbers: the Salvador atom charges
+  of urea move by 2e-3 (C 2.1696 against 2.1671, O −1.1912 against −1.1890), the N dipole by
+  6e-4 and the second moments by up to 9e-3 (O 8.6490 against 8.6402), 0.1 to 1.5 %. The
+  Hirshfeld rows are unchanged, as they must be. The cause: for a pair further apart than
+  5 bohr (in urea the O···H and H···H pairs) the switch is now 5 bohr wide instead of the pair
+  distance, so the far wall of each Salvador cell is a little sharper and sits where it did.
+  This is the atom model changing, not an integration error, and it follows from "all
+  models"; it will move the HAR Salvador references at the bless. **For Dylan:** keep the
+  cutoff on the atom models (one definition everywhere, local in a crystal) or give the atom
+  models their own switch and keep the published Salvador atom unchanged.
+
+  **Next stage, running** (`lko_default_stage.sh`, status lines tagged `[default-on]`): the
+  def2-TZVP SCFs of TiCl4 and ScO again with Sc added to the damped guesses and the damping
+  held to iteration 100; their reference grids; then the `lko5` lowering against def2-SVP and
+  def2-TZVP together (`descend.py` with `BASES=`; a grid passes only if it meets the target
+  on both; the state key is `lko5:<level>:def2-SVP+def2-TZVP`). The assembled `lko5` grids are
+  first evaluated on def2-TZVP, and the lowering starts from the cheapest that passes on both.
+  TiCl4 and ScO failed again at def2-TZVP with the molecule's damping held to iteration 100:
+  the message is from `MOLECULE.SCF:make_ANOs`, the atomic SCF behind the ANOs, which has its
+  own settings and does not converge for Ti and Sc in def2-TZVP. **Open bug**, logged here; the
+  two are left out of the def2-TZVP side of the pass rule (ScO is an outlier anyway).
+
   **On `very_high` and the reference (Dylan's question, 2026-10-15).** The two reference grids
   disagree (A − B, Becke, def2-SVP) by under 1e-8 on 14 systems, by 1e-7 to 4e-7 on NaCl, SF6,
   TiCl4 and LiF, and by 1.7e-6 and 8.8e-7 on KF and ScO; with mixed4, KF 6.2e-6, ScO 3.9e-6,

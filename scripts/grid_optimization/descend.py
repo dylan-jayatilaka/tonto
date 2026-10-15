@@ -25,6 +25,11 @@ import store, scan, assemble
 import tables_lib as T
 
 ORDERS = [5, 11, 17, 23, 29, 35, 41, 47, 53, 59, 71, 83, 101]
+# The bases a grid must pass on (BASES=def2-SVP,def2-TZVP in the environment);
+# the radial scan, shell tables and state file are always the first basis.
+BASES = [b for b in os.environ.get('BASES', '').split(',') if b]
+def bases():
+    return BASES or [basis]
 MARGIN = 0.9
 OUTLIERS = assemble.OUTLIERS
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -53,6 +58,7 @@ def start(cand, level, target, rich=False):
     pairs = [(rt, tau) for rt in assemble.RADIAL_TARGETS for tau in assemble.TAUS]
     if rich:
         pairs = [(min(assemble.RADIAL_TARGETS), min(assemble.TAUS))]
+    evaluate(cand, 'assembled', [assemble.block(cand, rt, tau) for rt, tau in pairs], tag='zones_%s' % cand)
     for rt, tau in pairs:
         b = assemble.block(cand, rt, tau)
         m = measure(cand, b)
@@ -67,28 +73,47 @@ def start(cand, level, target, rich=False):
     return {'r': [rc[p] for p in range(1, 5)], 'z': [zo[p] for p in range(1, 5)]}
 
 def measure(cand, b):
-    """(largest error without the outliers, points per atom) of block b, or None."""
-    T.load(basis, **assemble.CANDIDATES[cand])
+    """(largest error without the outliers over every basis, points per atom)
+    of block b, or None if a basis with a reference lacks it. A system with
+    no reference grid in a basis (its SCF failed there) is left out of that
+    basis; the points are counted in the first basis."""
     errs, pts, atoms = [], 0, 0
-    for s in SYSTEMS:
-        a = T.pick(s, 'ref', grid='A')
-        r = T.by[s].get(b)
-        if not (a and r):
-            return None
-        if s not in OUTLIERS:
-            errs.append(abs(T.E(r) - T.E(a)))
-        pts += int(r['n_points']); atoms += len(SYSTEMS[s][2])
+    for i, bas in enumerate(bases()):
+        T.load(bas, **assemble.CANDIDATES[cand])
+        for s in SYSTEMS:
+            a = T.pick(s, 'ref', grid='A')
+            if not a:
+                continue
+            r = T.by[s].get(b)
+            if not r:
+                return None
+            if s not in OUTLIERS:
+                errs.append(abs(T.E(r) - T.E(a)))
+            if i == 0:
+                pts += int(r['n_points']); atoms += len(SYSTEMS[s][2])
+    if not errs or not atoms:
+        return None
     return max(errs), pts / atoms
 
 def evaluate(cand, level, blocks, tag=None):
-    """Run whatever of these blocks is not yet stored, on every system.
-    The inputs are scan_<tag>.in, by default descent_<cand>_<level>."""
+    """Run whatever of these blocks is not yet stored, on every system, in
+    every basis of bases()."""
+    for bas in bases():
+        evaluate_in(bas, cand, level, blocks, tag)
+
+def evaluate_in(bas, cand, level, blocks, tag=None):
+    """Run whatever of these blocks is not yet stored in basis "bas", on
+    every system whose SCF converged there. The inputs are scan_<tag>.in,
+    by default descent_<cand>_<level>."""
     jobs = []
-    done = store.load(basis)
+    done = store.load(bas)
     for name, (q, m, atoms) in SYSTEMS.items():
-        d = os.path.join(basis, name)
+        d = os.path.join(bas, name)
+        out = os.path.join(d, 'stdout')
+        if not (os.path.exists(out) and 'SCF has converged' in open(out).read()):
+            continue
         geom = store.geom_hash(q, m, atoms)
-        ev = [b for b in blocks if store.key(basis, name, geom, b) not in done]
+        ev = [b for b in blocks if store.key(bas, name, geom, b) not in done]
         if not ev:
             continue
         genre = 'r' if m == 1 else 'u'
@@ -105,7 +130,7 @@ def evaluate(cand, level, blocks, tag=None):
     if not jobs:
         return
     open('scanlist.txt', 'w').write('\n'.join(jobs) + '\n')
-    subprocess.run([os.path.join(HERE, 'run_scans.sh'), basis], stdout=open('descent_runs.log', 'a'),
+    subprocess.run([os.path.join(HERE, 'run_scans.sh'), bas], stdout=open('descent_runs.log', 'a'),
                    stderr=subprocess.STDOUT, check=False)
 
 def moves(g):
@@ -137,6 +162,7 @@ def status(state):
     for key, st in state.items():
         c, l = key.split(':')[:2]
         if key.endswith(':rich'): c += ' (rich start)'
+        if len(key.split(':')) > 2 and '+' in key.split(':')[2]: c += ' (' + key.split(':')[2] + ')'
         lines.append('| %s | %s | %d | %s | %.1e | %.0f | %s | %s |' % (
             c, l, st['round'], st['done'], st['err'], st['ppa'], st['g']['r'],
             ' / '.join(' '.join(str(o) for o in z) for z in st['g']['z'])))
@@ -149,6 +175,8 @@ def main(runs):
     for run in runs:
         cand, level = run.split(':')[:2]
         rich = run.endswith(':rich')
+        if len(bases()) > 1:
+            run = '%s:%s:%s%s' % (cand, level, '+'.join(bases()), ':rich' if rich else '')
         target = targets[level] * MARGIN
         if run not in state:
             g = start(cand, level, target, rich)

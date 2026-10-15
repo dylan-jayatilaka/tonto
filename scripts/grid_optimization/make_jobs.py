@@ -13,8 +13,8 @@ def header(name, q, m, atoms):
     # The atomic SCF behind the starting density of Ti, Cr and Ni needs
     # damping and level shifting kept on well past the DIIS handover
     guess = ''
-    if any(a[0] in (22, 24, 28) for a in atoms):
-        guess = '\n      damp_factor= 0.5 damp_finish= 60 level_shift= 0.5 level_shift_finish= 60'
+    if any(a[0] in (21, 22, 24, 28) for a in atoms):
+        guess = '\n      damp_factor= 0.5 damp_finish= 100 level_shift= 0.5 level_shift_finish= 100'
     return '''{
    name= %s
    output_style_options= { real_precision= 10 }
