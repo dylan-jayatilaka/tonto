@@ -753,9 +753,13 @@ radii (`tfvp`).
   5 bohr (in urea the O···H and H···H pairs) the switch is now 5 bohr wide instead of the pair
   distance, so the far wall of each Salvador cell is a little sharper and sits where it did.
   This is the atom model changing, not an integration error, and it follows from "all
-  models"; it will move the HAR Salvador references at the bless. **For Dylan:** keep the
-  cutoff on the atom models (one definition everywhere, local in a crystal) or give the atom
-  models their own switch and keep the published Salvador atom unchanged.
+  models"; it will move the HAR Salvador references at the bless. **Dylan: keep the cutoff on
+  the atom models**, one definition everywhere; a separate switch would multiply the test
+  matrix. Measured the same afternoon on `tests/long/urea_rhf_STO-3G_TFVP_HAR` with the cutoff
+  off, 5 and 8 bohr: GoF 30.9155, 30.9154, 30.9155, R(F) 0.0400 throughout, every position and
+  ADP the same to the printed figure; the only change is in the fifth figure of one GoF² and
+  a column width. So the 0.1 to 1.5 % in the atomic moments does not reach the refinement, and
+  the cutoff stays at 5 bohr for the atom models as for the grid.
 
   **Next stage, running** (`lko_default_stage.sh`, status lines tagged `[default-on]`): the
   def2-TZVP SCFs of TiCl4 and ScO again with Sc added to the damped guesses and the damping

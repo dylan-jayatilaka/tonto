@@ -39,7 +39,10 @@ w_A(\mathbf r) = \frac{\rho^0_A(\mathbf r)^n}{\sum_B \rho^0_B(\mathbf r)^n} . \q
 $`n = 1`$ is Hirshfeld; a larger $`n`$ makes the atoms overlap less. The authors recommend $`n = 2`$.
 
 **Salvador** (`tfva`). The weight is Salvador's cell function, a Becke-like fuzzy Voronoi cell
-whose faces are moved along each bond. For a bonded pair $`A`$–$`B`$ the face cuts the bond at a
+whose faces are moved along each bond. As in the integration grid, a pair of atoms further
+apart than the grid's `lko_cutoff=` (5 bohr) switches within a slab that wide, and the cell
+function is exactly 0 or 1 outside it; this changes the atomic moments by up to 1.5 % and a
+refinement not at all. For a bonded pair $`A`$–$`B`$ the face cuts the bond at a
 distance $`R(A.B)`$ from $`A`$, and the model is fixed by the rule for that point. Mayer and
 Salvador put it at the minimum of the molecular density along the bond.
 
