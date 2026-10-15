@@ -170,6 +170,12 @@ systems is below the target. Error per atom is tabulated beside it.
    systems. Then the printed grid summary shows the seven radial numbers.
 7. Comments and pages: `types.foo:3121`, `becke_grid.foo:1186`, `docs/RUNNING_TONTO.md`,
    `docs/RUNNING_HART.md`, `docs/TONTO_KNOWN_ISSUES.md`, `scripts/check_dft_invariants.py`.
+8. Done (code). The LKO cutoff (Laqua, Kussmann and Ochsenfeld) on the partition, for Becke's
+   and for Salvador's: keyword `lko_cutoff=` (bohr; 0, the default, is off), a clipped
+   elliptical coordinate, and the exact-zero tests that make the weight build linear in the
+   number of atoms (`BECKE_GRID:partition_B_LKO`, `Becke_size_adjustment`, and the `lko`
+   branches of `make_Salvador_cell_fn`). Plan, checks and results in §9, entries of 2026-10-15.
+   Off by default until the lowering with the cutoff (candidate `lko5`) is compared with Becke's.
 
 Changes 1 to 5 leave every default energy unchanged and can be merged before the calibration.
 Change 6 moves most DFT references: a re-bless on achari2.
@@ -492,6 +498,196 @@ radii (`tfvp`).
   for more data. Stratmann-Scuseria is Becke's partition with a cheaper switching function and
   is the remaining challenger; Laqua's g1 to g7 are compared on Becke's partition. Go-ahead for
   the overnight run of the next steps.
+
+- **Considered and set aside (2026-10-15): extra grid centres at the mid-bond points or at the
+  critical points of the promolecule density** (Dylan's idea, to integrate "the sharp changes"
+  there). Assessment: the sharp feature at a mid-bond point is the partition weight, not the
+  density; the GGA integrand is at its flattest at the critical point, where the gradient
+  vanishes. The shell tables say the same: the needed order peaks at 1 to 2 Bragg–Slater radii,
+  where the walls are, and is 5 to 17 inside 0.5 radii, where the weight is flat. A mid-bond cell
+  turns one wall into two, each a full switch, moves the atom's wall from half the bond to a
+  quarter (about 0.5 radii for C–C, into the zone that is cheap today because the weight is flat
+  there, so the wall would cut the dense valence shell instead of the thin tail), and adds a cell
+  with its own radial grid, radius and zone orders, with the width a free parameter per bond type
+  that no paper gives. Ring and cage points would need the same again. Half of the idea has been
+  tested: a wall at the promolecule minimum is the `tfvp` partition, which lost to Becke on all 22
+  systems. The honest version of the idea is te Velde and Baerends, *J. Comput. Phys.* 99, 84
+  (1992): hard Voronoi polyhedra with product Gauss rules fitted to the faces, a different
+  integrator rather than an addition to a Becke grid. A cheap test, if ever wanted: a dummy atom
+  with no basis functions at the mid-bond of N2 and of one C–C bond of neopentane, given a
+  Bragg–Slater radius, with `put_xc_energy_on_grid` on the fixed density against grid A at
+  `medium` (not checked that the grid code takes a basis-less centre). Where to look instead is
+  what the entries above already say: the per-atom and per-shell split of Becke against mixed4,
+  and Gräfenstein's valence-zone radial points for the carbonyl bump. The wall-position remarks
+  went into `docs/REPORT_ON_SALVADOR_MODELS.md` §2, with a to-do in its §7 for the Becke and
+  Stratmann–Scuseria cells as atom models, untested so far.
+- **Laqua's partition, read from the paper (2026-10-15):** it is Becke's partition unchanged at
+  bonding distances and changes only pairs further apart than a cutoff. Eq. (7): the elliptical
+  coordinate is $`\mu = (r_i - r_j)/\min(R_{\rm cutoff}, R_{ij})`$, clipped to $`[-1, 1]`$, with
+  $`R_{\rm cutoff} = 5`$ bohr; $`k = 3`$ stays. For a pair closer than 5 bohr nothing changes;
+  for a pair further apart the switch happens in a slab 5 bohr wide about the midplane and the
+  weight is exactly 0 or 1 outside it, so a point near one atom cannot carry weight from a far
+  one. What it buys: smooth dissociation curves (argon dimer, L7, S22 at 1.2 to 2.0 times the
+  distance, where Becke's error stays at 1 to 40 µEh however fine the grid), 10 to 30 % fewer
+  points, and a linear-scaling weight build. What it does not buy: on the G2 molecules Becke
+  and modified Becke are the same to the figure (their figure 7), so it is not a lever for the
+  valence-wall error of the 22 test systems. The earlier remark that it is "the published way
+  of making the wall cheaper" was wrong. It bears on the stretched water dimer and on cost, and
+  it is cheap to add: one `min` in `partition_B_B_adj` and the clip.
+
+- **Stratmann–Scuseria, the overnight result** (`overnight_ss.log`, finished 2026-10-14 21:37;
+  `descent_status.md`). Points per atom, worst error below 0.9 times the target: `very_low`
+  1,768, `low` 5,571, `medium` 12,529, `high` no assembled grid meets the target (Becke 1,350,
+  4,296, 11,865, 16,443). It needs more radial points than Becke at every level (`medium`: 60, 85,
+  90, 65 against 30, 45, 80, 80): a hard wall costs radial points, as the stiffness scan found.
+  So Stratmann–Scuseria is out on points; a cheaper weight does not pay for a dearer grid. The
+  rich-start reruns: Becke `high` 16,942 (first run 16,443), mixed4 `medium` 12,680 (first
+  10,414). The lowering is not stuck, but where it ends depends on where it starts, so a
+  difference of 10 to 20 % between candidates is within the method; Becke's factor of two at
+  `high` is not.
+
+- **Plan: Laqua's cutoff on Becke's partition and on Salvador's (Dylan, 2026-10-15).** The
+  aim: smooth energy curves for far pairs, 10 to 30 % fewer points, a weight build linear in the
+  number of atoms, and no change at all for pairs closer than the cutoff, so the Becke levels
+  being calibrated carry over.
+
+  *The formula.* For the pair $`i, j`$ with separation $`R_{ij}`$ and a point at distances
+  $`r_i, r_j`$ from the two nuclei, the elliptical coordinate becomes
+  $`\mu_{ij} = (r_i - r_j)/\min(R_c, R_{ij})`$, clipped to $`[-1, 1]`$, their eqs. (7) and (8),
+  with $`R_c = 5`$ bohr in the paper. Nothing else changes: Becke's size adjustment
+  $`\nu = \mu + a(1-\mu^2)`$ leaves $`\pm 1`$ alone, and his switch $`g = h(h(h(\mu)))`$ with
+  $`h(x) = \tfrac32 x - \tfrac12 x^3`$ is flat at $`\pm 1`$, so the clip is smooth. For Salvador
+  the same $`\mu`$ goes into `Salvador_step`, whose map of $`\mu`$ with $`\chi`$ sends $`\pm 1`$
+  to $`\pm 1`$ and whose four applications of $`h`$ make it flat there too.
+
+  *Where the linear scaling comes from* (their algorithm, lines 7 to 17). For a point whose
+  nearest centre $`n`$ is at $`r_n`$: an atom $`i`$ with $`r_i - r_n \ge R_c`$ has
+  $`\mu_{in} \ge 1`$, its step factor is exactly 0 and its cell function $`P_i`$ is exactly 0, so
+  it is skipped. In a kept $`P_i`$, a factor $`j`$ with $`r_j - r_i \ge R_c`$ is exactly 1 and is
+  skipped. If the parent atom itself fails the first test the point's weight is zero. The
+  number of atoms within $`r_n + R_c`$ of a point is bounded, whatever the molecule's size, so
+  the whole build is linear in the number of atoms. The parent's loop over the other atoms,
+  sorted by distance, can stop at $`R_{pi} > r_{\max} + r_n + 2R_c`$.
+
+  *Code* (`BECKE_GRID`), in order:
+  1. Keyword `partition_range=` (the cutoff $`R_c`$ in bohr; 0 means no limit and is the default,
+     so every default is unchanged; the paper's value is 5). The name is open; not "cutoff",
+     which `partition_cutoff=` already uses for the weight threshold.
+  2. One small `PURE` function, the clipped $`\mu`$ above, called from
+     `partition_B_no_adj`, `partition_B_B_adj` and `partition_B_TA_adj` where
+     `uij = (dni - dnj)/dij` is now formed, and from `make_Salvador_cell_fn` before
+     `Salvador_step`. This alone gives the far-pair behaviour; the cost is unchanged.
+  3. The locality: in the three Becke routines, per point, the distance to the nearest centre
+     in the list; skip a centre that fails the first test, skip a factor that fails the second,
+     mark the point zero when the parent fails. In `make_Salvador_cell_fn` the same two tests
+     replace the present 1e-15 test on the nearest atom's factor. Then sort the centre list by
+     distance from the parent and stop at the bound above. What the list is today is set by
+     `set_overlapping_atoms_for_atom` (`molecule.fock.foo:2662`); read it before changing it.
+  4. Dropping the weight-zero points: `apply_partition` drops none and `prune_grid` after it
+     does; confirm the zero weights go, since the 10 to 30 % saving is those points.
+  5. For Dylan: the HAR atom model shares `make_Salvador_cell_fn`. The keyword is the grid's.
+     Whether the atom model takes a cutoff too is a separate decision; it would make the
+     crystal-environment partition local, and change the model where a pair is beyond $`R_c`$.
+
+  *Checks*, in order, each a row in the store:
+  - (a) Cutoff off: energies on the 22 systems identical to today's at every level.
+  - (b) Cutoff 5 bohr, Becke, the four chosen levels, 22 systems: the worst error against grid
+    A, expected unchanged within the 0.9 margin (their figure 7 shows Becke and modified Becke
+    identical on G2); points per atom, expected 10 to 30 % fewer; the three systems turned to a
+    general orientation. Pairs beyond 5 bohr exist in benzene, neopentane, SF6, P4 and the
+    carbonyls, so this is a real test.
+  - (c) The stretched water dimer, and the argon dimer from 5 to 10 Å at PBE/def2-TZVP, at
+    `medium` and `high`, Becke with and without the cutoff: flat with, wobbling without, as their
+    figure 1. A direct comparison with a published curve.
+  - (d) The kink: a pair crossing 5 bohr, the water dimer O···O from 4.5 to 6 bohr in 0.1-bohr
+    steps, at $`R_c`$ = 4, 5 and 6 bohr. The energy is continuous there and its slope is not;
+    the size of the step in slope is what to report, and whether $`\pm 1`$ bohr matters, as they
+    say it does not.
+  - (e) Grid build time and points: neopentane, Cr(CO)6, karrikinolide; Becke, Becke with the
+    cutoff, Salvador with the cutoff; `OPENBLAS_NUM_THREADS=1`. This is also the Salvador cost
+    measurement §2.2 asks for.
+  - (f) Salvador with the cutoff on (a) to (c), for the HAR partition's sake.
+
+  If (b) holds, the cutoff goes on by default at 5 bohr and the chosen Becke levels stand. The
+  keyword and its default go into `docs/RUNNING_TONTO.md` with the levels (§1, item 4).
+
+- **LKO implemented and checked on the fixed densities (2026-10-15).** Dylan: do it for all
+  models, call it LKO like SS; SS is out, agreed. Code as in item 8 of §5; the grid summary prints
+  the cutoff only when it is on, so no stored test output changes (the first build printed it
+  always and six short tests failed on the extra line; made conditional, release short suite
+  87/87). The HAR atom models reach the cutoff through the same `make_Salvador_cell_fn`, so
+  `lko_cutoff=` in the grid block covers them too; the Stratmann–Scuseria routines are untouched,
+  having a slab of their own. Scripts: `lko_check.py` (checks (a), (b), (f) on a fixed density),
+  `lko_curves.py` ((c), (d)), `lko_timing.py` ((e)), the `lko=R` option of `scan.py`, the
+  candidate `lko5` in `assemble.py` (Becke's radial scan and shell tables, through `BASE`), and
+  `NPAR` for the job scripts. Run folder `~/tonto-runs/2026-10-15_lko/`: `status.md` is the
+  progress of both pipelines, `lko_master.sh` (checks, then the def2-TZVP confirmation in the
+  2026-10-13 folder) and `lko_lowering.sh` (the `lko5` lowering in `lower/`, its own copy of the
+  densities so it never shares `scanlist.txt` with the other pipeline; both append to the one
+  store, a small risk accepted).
+
+  Results, def2-SVP fixed densities, the lowered grids of each level (`lko_check_def2-SVP.md`):
+  - (a) `lko_cutoff= 0` reproduces every stored energy and point count on every system and
+    level, Becke and mixed4 alike; the one flagged row (mixed4 `high` neopentane) has the same
+    energy and four points fewer, from a code change between the two binaries, not from this one.
+  - (b) Worst error (KF, LiF, ScO left out) and points per atom relative to no cutoff, Becke:
+
+    | level (target) | no cutoff | 4 bohr | 5 bohr | 6 bohr | points at 5 bohr |
+    |---|---|---|---|---|---|
+    | `very_low` (1e-3) | 7.6e-4 | 1.0e-3 | 7.6e-4 | 7.6e-4 | 0.998 |
+    | `low` (1e-4) | 9.0e-5 | 1.4e-4 | 9.5e-5 | 9.1e-5 | 0.997 |
+    | `medium` (1e-5) | 7.5e-6 | 6.9e-6 | 6.7e-6 | 6.7e-6 | 0.995 |
+    | `high` (1e-6) | 8.5e-7 | 6.9e-6 | 2.9e-6 | 1.1e-6 | 0.995 |
+
+    So the cutoff leaves bonded pairs alone, as it must, but it is not invisible on bonded
+    molecules: non-bonded pairs beyond 5 bohr inside a compact molecule change the error by
+    a few 1e-6, and the lowered grids sit at the margin, so `high` fails its target at 5 bohr
+    (neopentane 2.9e-6, Cr(CO)6 1.7e-6; at 6 bohr 1.1e-6 and 8.2e-7) and `low` misses the 0.9
+    margin by a hair. Mixed4 with the cutoff: `low` 1.1e-4 and `medium` 1.1e-5 fail, `very_low`
+    and `high` pass. The point saving is 0.2 to 3 % per atom, not the paper's 10 to 30 %: Tonto
+    already drops far points by the promolecule density (`prune_rho_cutoff`).
+  - (c) `lko_curves.md`, PBE/def2-TZVP full SCF on the lowered Becke `medium` grid. The argon
+    dimer from 5 to 10 Å: without the cutoff the curve wobbles by up to 80 µEh and changes slope
+    sign five times; with it the curve is monotonic and within 0.01 µEh of flat beyond 7.5 Å.
+    Laqua's figure 1 reproduced. The stretched water dimer differs by at most 0.5 µEh either way.
+  - (d) The kink: the water dimer shifted from −0.5 to 0.5 Å (O···O crosses 5 bohr at −0.26 Å),
+    cutoff off, 4, 5 and 6 bohr. The energy with the cutoff differs from without by 0.1 to 0.4 µEh
+    and the difference varies smoothly through the crossing; the step in slope is below the
+    0.01 µEh resolution of the table. The cutoff's value hardly matters, as the paper says.
+  - (e) `lko_timing.md`, one job at a time. One E_xc evaluation on the fixed density: neopentane
+    0.5 s with or without, Cr(CO)6 2.9 s with or without, 3 % fewer points. A full SCF on
+    karrikinolide (17 atoms, def2-SVP, lowered `medium`): 72 s either way. At this size the weight
+    build is not where the time goes. The Salvador row of that SCF died with the `STOP_IF` in
+    `partition_Salvador` ("the grid was not set up by `MOLECULE.RHO:set_up_becke_grid`"): a
+    plain SCF with `partition_scheme= salvador` does not set the radii; the fixed-density path
+    through `make_anos_and_interpolators` does. **Open bug**, outside this item.
+
+  **Reading.** The cutoff buys exactly what the paper claims, smooth curves for far pairs, and
+  not the point saving, which Tonto's density pruning already takes. Whether it costs accuracy
+  at a given grid size is not settled by (b), because those grids were lowered without it to
+  their margins. The fair comparison is running: the `lko5` candidate assembled and lowered
+  through the same machinery (`lower/zones_report_lko5.md`, then `lower/descent_status.md`),
+  to be set beside Becke's points at each level. If equal, the cutoff goes on by default at
+  5 bohr; if dearer, it stays a keyword for weakly bound systems.
+
+  **Also running** in the 2026-10-13 folder, after the checks: the def2-TZVP SCFs of the 22
+  systems on grid `best`, grids A and B, and the lowered Becke grids with the cutoff off and at
+  5 bohr (`lko_check_def2-TZVP.md`), which is the def2-TZVP confirmation of the levels with KF,
+  LiF and ScO included.
+
+- **The grid work after that, in order (proposed 2026-10-15):**
+  1. Split the error per atom and per shell, Becke against mixed4, on one grid. Why Becke wins is
+     the open question of the decision above; if its shell errors cancel, the lowering's result
+     rests on cancellation, and the three systems turned to a general orientation (§4, stage 8)
+     are the test of whether that cancellation survives a rotation.
+  2. The period-2 radial count at `high` is set by the carbonyls alone (Cr(CO)6 100, Ni(CO)4 95
+     for 1e-6; every other period-2 system 45 to 60): the metal's density far out in the C and O
+     cells. Try Gräfenstein's extra radial points in the valence zone, and a count per element
+     rather than per period, before accepting 95 radial points for every period-2 atom.
+  3. Laqua's g1 to g7 as candidates in the zone machinery: a published ladder on the same
+     partition, so a direct points-against-error comparison.
+  4. Time per point, choose the levels, the def2-TZVP full-SCF confirmation with KF, LiF and
+     ScO included, then the COSX grids (§4, stage 9).
 
 ## Appendix A. The COSX grid record (formerly `docs/TASK_COSX_GRIDS.md`)
 

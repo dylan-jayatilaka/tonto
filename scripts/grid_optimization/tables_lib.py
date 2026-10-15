@@ -8,9 +8,9 @@ import store, scan
 ALL = {**SYSTEMS, **EXTRAS}
 by = defaultdict(dict)
 
-def load(basis, partition='becke', hchi=None, variant='', hbecke=False, stiff=None):
+def load(basis, partition='becke', hchi=None, variant='', hbecke=False, stiff=None, lko=None):
     """Index the stored rows of one partition, its options and variant."""
-    scan.PARTITION, scan.HCHI, scan.HBECKE, scan.STIFF = partition, hchi, hbecke, stiff
+    scan.PARTITION, scan.HCHI, scan.HBECKE, scan.STIFF, scan.LKO = partition, hchi, hbecke, stiff, lko
     by.clear()
     for r in store.load(basis).values():
         if r['grid_code'] == store.GRID_CODE and r.get('integrand', 'xc') == 'xc' \
@@ -21,8 +21,17 @@ def periods(s):
     return sorted({scan.period(a[0]) for a in ALL[s][2]})
 
 def rows(s, stage):
-    """The stored rows of one stage for system s, as (label, row or None)."""
-    return [(lab, by[s].get(b)) for lab, b in scan.evaluations(stage, periods(s))]
+    """The stored rows of one stage for system s, as (label, row or None).
+    The reference grids carry no LKO cutoff: a converged grid gives the
+    same integral whatever the partition."""
+    saved = scan.LKO
+    if stage == 'ref':
+        scan.LKO = None
+    try:
+        ev = scan.evaluations(stage, periods(s))
+    finally:
+        scan.LKO = saved
+    return [(lab, by[s].get(b)) for lab, b in ev]
 
 def pick(s, stage, **kw):
     for lab, r in rows(s, stage):

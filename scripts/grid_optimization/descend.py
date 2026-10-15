@@ -79,8 +79,9 @@ def measure(cand, b):
         pts += int(r['n_points']); atoms += len(SYSTEMS[s][2])
     return max(errs), pts / atoms
 
-def evaluate(cand, level, blocks):
-    """Run whatever of these blocks is not yet stored, on every system."""
+def evaluate(cand, level, blocks, tag=None):
+    """Run whatever of these blocks is not yet stored, on every system.
+    The inputs are scan_<tag>.in, by default descent_<cand>_<level>."""
     jobs = []
     done = store.load(basis)
     for name, (q, m, atoms) in SYSTEMS.items():
@@ -92,7 +93,8 @@ def evaluate(cand, level, blocks):
         genre = 'r' if m == 1 else 'u'
         head = open(os.path.join(d, 'header')).read()
         body = ''.join('   %s\n   put_xc_energy_on_grid\n' % b for b in ev)
-        tag = 'descent_%s_%s' % (cand, level)
+        if tag is None:
+            tag = 'descent_%s_%s' % (cand, level)
         open(os.path.join(d, 'scan_%s.in' % tag), 'w').write(
             head + '   make_anos_and_interpolators\n   read_archive density_mx %s\n' % genre + body + '}\n')
         json.dump({'geom': geom, 'variant': '',

@@ -37,12 +37,28 @@ Options to `scan.py` and `tables.py`, after the basis:
 | option | effect |
 |---|---|
 | `partition=salvador` | grids with `partition_scheme= salvador`; files `scan_<stage>_salvador.*` |
+| `lko=R` | adds `lko_cutoff= R` (bohr) to every grid: the LKO cutoff on the partition |
 | `hchi=S` | adds `partition_h_chi_scale= S`: the Salvador boundary between H and a heavier atom moves away from H |
 | `variant=ionic` | the promolecule is built from the ions in `systems.IONIC` (`initial_atomic_states=`); only those systems |
 | `systems=A,B,...` | only these systems (`scan.py`) |
 
 All variants live side by side in the store. A row's `variant` names a change outside the grid
 block, and is part of its key.
+
+## The LKO cutoff checks
+
+Three drivers measure the LKO cutoff (`lko_cutoff=`) against no cutoff, from a run folder:
+
+```
+python3 $S/lko_check.py def2-SVP cutoffs=0,4,5,6 cands=becke,mixed4  # fixed density: error and points
+python3 $S/lko_curves.py level=medium      # argon dimer, stretched and shifted water dimer, full SCF
+python3 $S/lko_timing.py <svp run folder>  # wall time of one E_xc evaluation and of one SCF
+```
+
+Each writes a Markdown table (`lko_check_<basis>.md`, `lko_curves.md`, `lko_timing.md`).
+`assemble.py` and `descend.py` take the candidate `lko5` (Becke's partition with the cutoff at
+5 bohr; its radial scan and shell tables are Becke's). The job scripts run `NPAR` jobs at a time
+(default 8).
 
 ## Stopping, restarting, extending
 

@@ -299,6 +299,7 @@ contains
       .partition_H_chi_scale      = std.partition_H_chi_scale
       .partition_H_Becke          = std.partition_H_Becke
       .Salvador_stiffness         = std.Salvador_stiffness
+      .LKO_cutoff                 = std.LKO_cutoff
       .partition_scaling_scheme   = std.partition_scaling_scheme
       .finalized                  = FALSE
       .n_unscaled_pts             = 0
@@ -347,6 +348,7 @@ contains
       .partition_H_chi_scale      = grid.partition_H_chi_scale
       .partition_H_Becke          = grid.partition_H_Becke
       .Salvador_stiffness         = grid.Salvador_stiffness
+      .LKO_cutoff                 = grid.LKO_cutoff
       .partition_scaling_scheme   = grid.partition_scaling_scheme
       .stratmann_scuseria_A       = grid.stratmann_scuseria_A
 
@@ -503,6 +505,19 @@ contains
    ENSURE(k>=1,"k must be positive")
 
       .Salvador_stiffness = k
+
+   end
+
+   set_LKO_cutoff(rc) :: PURE
+   ! Set .LKO_cutoff, the LKO cutoff in bohr for the Becke and Salvador
+   ! partitions (Laqua, Kussmann and Ochsenfeld, JCP 149, 204111 (2018)).
+   ! Zero means no cutoff.
+      self :: INOUT
+      rc :: REAL, IN
+
+   ENSURE(rc>=ZERO,"cutoff must be non-negative")
+
+      .LKO_cutoff = rc
 
    end
 
@@ -842,6 +857,7 @@ contains
       case ("partition_h_chi_scale=    "); .read_partition_H_chi_scale
       case ("partition_h_becke=        "); .read_partition_H_Becke
       case ("salvador_stiffness=       "); .read_Salvador_stiffness
+      case ("lko_cutoff=               "); .read_LKO_cutoff
       case ("partition_scaling_scheme= "); .read_partition_scaling_scheme
       case ("pruning_scheme=           "); .read_pruning_scheme
       case ("zone_orders=              "); .read_zone_orders
@@ -991,6 +1007,19 @@ contains
 
       stdin.read(k)
       .set_Salvador_stiffness(k)
+
+      .finalized = FALSE
+
+   end
+
+   read_LKO_cutoff
+   ! Read .LKO_cutoff, in bohr.
+      self :: INOUT
+
+      rc :: REAL
+
+      stdin.read(rc)
+      .set_LKO_cutoff(rc)
 
       .finalized = FALSE
 
@@ -3649,14 +3678,20 @@ contains
       keep          :: VEC{BIN}@
       ri, rj        :: VEC{REAL}(3)
       mu, eps       :: REAL
-      rij, c_ij     :: REAL
+      rij, c_ij, rc :: REAL
       n_atoms, i,j  :: INT
       n_pts, g,k,q  :: INT
       blk, b0,b1,nb :: INT
       m,stiff       :: INT
+      lko           :: BIN
 
       eps = TOL(15)
       blk = 2048
+
+      ! The LKO cutoff: a pair further apart than rc switches in a slab
+      ! rc wide, and the step is exactly 0 or 1 outside it
+      rc  = .LKO_cutoff
+      lko = rc>ZERO
 
       ! The size adjustments and the stiffness
       if (present(chi)) then; C = chi
@@ -3669,7 +3704,7 @@ contains
       n_atoms = .atom.dim
       n_pts   = pts.dim1
 
-      ! Inverse interatomic distances
+      ! Inverse interatomic distances, capped at the cutoff
       inv_R.create(n_atoms,n_atoms)
       inv_R = ZERO
       do i = 1,n_atoms
@@ -3677,7 +3712,9 @@ contains
          do j = 1,n_atoms
             if (i==j) cycle
             rj = .atom(j).position
-            inv_R(i,j) = ONE/norm2(rj-ri)
+            if (lko) then; inv_R(i,j) = ONE/min(norm2(rj-ri),rc)
+            else;          inv_R(i,j) = ONE/norm2(rj-ri)
+            end
          end
       end
 
@@ -3718,6 +3755,7 @@ contains
                   keep(g) = TRUE
                else
                   mu = (D(g,i)-D(g,k))*inv_R(i,k)
+                  if (lko) mu = max(-ONE,min(ONE,mu))
                   keep(g) = .Salvador_step(mu,C(i,k),stiff)>eps
                end
             end
@@ -3733,15 +3771,26 @@ contains
                end
             end
 
-            ! P_i = Prod_j s(mu_ij), Eq. (4) RHS
+            ! P_i = Prod_j s(mu_ij), Eq. (4) RHS. With the cutoff, a
+            ! centre j beyond it from every kept point's distance to i
+            ! has step 1 everywhere and is skipped.
             Pi(1:m) = ONE
             do j = 1,n_atoms
                if (i==j) cycle
                rij = inv_R(i,j)
                c_ij = C(i,j)
-               do q = 1,m
-                  mu = (Dk(q,i)-Dk(q,j))*rij
-                  Pi(q) = Pi(q) * .Salvador_step(mu,c_ij,stiff)
+               if (lko) then
+                  if (minval(Dk(1:m,j)-Dk(1:m,i))>=rc) cycle
+                  do q = 1,m
+                     mu = (Dk(q,i)-Dk(q,j))*rij
+                     mu = max(-ONE,min(ONE,mu))
+                     Pi(q) = Pi(q) * .Salvador_step(mu,c_ij,stiff)
+                  end
+               else
+                  do q = 1,m
+                     mu = (Dk(q,i)-Dk(q,j))*rij
+                     Pi(q) = Pi(q) * .Salvador_step(mu,c_ij,stiff)
+                  end
                end
             end
 
@@ -4647,11 +4696,15 @@ contains
       select case (.partition_scheme)
 
       case ("becke            ")
+         if (.LKO_cutoff>ZERO) then
+            .partition_B_LKO(wt,pt,a,atoms,wt_is_0)
+         else
          select case (.partition_scaling_scheme)
          case ("none             "); .partition_B_no_adj(wt,pt,a,atoms,wt_is_0)
          case ("becke            "); .partition_B_B_adj( wt,pt,a,atoms,wt_is_0)
          case ("treutler_ahlrichs"); .partition_B_TA_adj(wt,pt,a,atoms,wt_is_0)
       ! case default; UNKNOWN(.partition_scaling_scheme)
+         end
          end
 
       case ("stratmann_scuseria")
@@ -4876,6 +4929,136 @@ contains
       ! Normalize the partitioning function and modify the grid weights
       .partition_wt(wt,partition,a,wt_is_0)
       partition.destroy
+
+   end
+
+   Becke_size_adjustment(ai,aj) result (res) :: PURE
+   ! Becke's size adjustment a_ij, eqs. (A4) to (A6) of Becke (1988), for
+   ! the grid's atoms "ai" and "aj", held in [-1/2,1/2]. The ratio of
+   ! Bragg-Slater radii is used as it is for .partition_scaling_scheme
+   ! "becke", its square root for "treutler_ahlrichs", and the adjustment
+   ! is zero for "none".
+      self :: IN
+      ai,aj :: INT, IN
+      res :: REAL
+
+      chi,w :: REAL
+
+      select case (.partition_scaling_scheme)
+      case ("none             "); chi = ONE
+      case ("becke            "); chi = bragg_slater_radius(.atom(ai).atomic_number)/bragg_slater_radius(.atom(aj).atomic_number)
+      case ("treutler_ahlrichs"); chi = sqrt(bragg_slater_radius(.atom(ai).atomic_number)/bragg_slater_radius(.atom(aj).atomic_number))
+      case default;               chi = ONE
+      end
+
+      w   = (chi - ONE)/(chi + ONE)
+      res = w/(w*w - ONE)
+      res = min(res, HALF)
+      res = max(res,-HALF)
+
+   end
+
+   partition_B_LKO(wt,pt,a,atoms,wt_is_0) :: private, PURE
+   ! Becke's partition with the LKO cutoff, for the atom "a" of the list
+   ! "atoms": partition the atomic grid ("pt","wt") as partition_B_B_adj
+   ! does, but with the elliptical coordinate of a pair further apart
+   ! than .LKO_cutoff taken as (r_i - r_j)/.LKO_cutoff, clipped to
+   ! [-1,1]. The weight then switches in a slab that wide about the
+   ! midplane and is exactly 0 or 1 outside it; a pair closer than the
+   ! cutoff is partitioned as by Becke. The size adjustment follows
+   ! .partition_scaling_scheme. The exact values make the cost per point
+   ! independent of the number of atoms: a centre further than the cutoff
+   ! beyond the point's nearest centre has cell function 0 and is skipped,
+   ! and a factor from a centre further than the cutoff beyond the cell's
+   ! own centre is 1 and is skipped.
+   ! References: A. D. Becke, J. Chem. Phys. 88, 2547 (1988);
+   ! H. Laqua, J. Kussmann and C. Ochsenfeld, J. Chem. Phys. 149, 204111
+   ! (2018), eqs. (7), (8) and their algorithm, lines 12 to 20.
+      self    :: IN
+      wt      :: VEC{REAL}, INOUT
+      pt      :: MAT{REAL}, IN
+      a       :: INT, IN
+      atoms   :: VEC{INT}, IN
+      wt_is_0 :: VEC{BIN}, OUT
+
+   ENSURE(.finalized,"call the set_grid_data routine")
+   ENSURE(pt.dim2==3,"pt incorrectly dimensioned")
+   ENSURE(pt.dim1==wt.dim, "pt and wt incompatible")
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(a.is_in_range([1,.atom.dim]),"`a' argument out of range")
+   ENSURE(.LKO_cutoff>ZERO,"no LKO cutoff")
+
+      n_centers,n_pts,i,j,n,m :: INT
+      rc,d_near,dij,uij,h,s,P_a,P_sum,p :: REAL
+      d     :: VEC{REAL}@
+      adj   :: MAT{REAL}@
+      R_eff :: MAT{REAL}@
+
+      rc = .LKO_cutoff
+      n_centers = atoms.dim
+      n_pts = wt.dim
+
+      ! Size adjustments, and pair distances capped at the cutoff
+      adj.create(n_centers,n_centers);   adj = ZERO
+      R_eff.create(n_centers,n_centers); R_eff = ONE
+      do i = 1,n_centers
+      do j = 1,n_centers
+         if (i==j) cycle
+         adj(i,j) = .Becke_size_adjustment(atoms(i),atoms(j))
+         dij = norm2(.atom(atoms(i)).position - .atom(atoms(j)).position)
+         R_eff(i,j) = min(dij,rc)
+      end
+      end
+
+      d.create(n_centers)
+      wt_is_0 = FALSE
+
+      do n = 1,n_pts
+
+         ! Distances to the centres, and the nearest
+         do i = 1,n_centers
+            d(i) = norm2(pt(n,:) - .atom(atoms(i)).position)
+         end
+         d_near = minval(d)
+
+         ! The parent's cell function is zero here: the point goes
+         if (d(a) - d_near >= rc) then
+            wt(n) = ZERO
+            wt_is_0(n) = TRUE
+            cycle
+         end
+
+         ! Cell functions of the centres that can be non-zero
+         P_a = ZERO; P_sum = ZERO
+         do i = 1,n_centers
+            if (d(i) - d_near >= rc) cycle
+            p = ONE
+            do j = 1,n_centers
+               if (i==j) cycle
+               if (d(j) - d(i) >= rc) cycle
+               uij = (d(i) - d(j))/R_eff(i,j)
+               uij = max(-ONE,min(ONE,uij))
+               h = uij + adj(i,j)*(ONE - uij*uij)
+               do m = 1,.partition_power
+                  h = 1.5d0*h - HALF*h*h*h
+               end
+               s = HALF*(ONE - h)
+               p = p*s
+            end
+            if (i==a) P_a = p
+            P_sum = P_sum + p
+         end
+
+         ! Normalise and apply
+         s = P_a/P_sum
+         wt(n) = wt(n)*s
+         if (s<=.partition_cutoff) wt_is_0(n) = TRUE
+
+      end
+
+      d.destroy
+      R_eff.destroy
+      adj.destroy
 
    end
 
@@ -5666,6 +5849,8 @@ contains
       stdout.show("Partition scheme          =",.partition_scheme)
       stdout.show("Partition scaling scheme  =",.partition_scaling_scheme)
       stdout.show("Partition cutoff          =",.partition_cutoff)
+      if (.LKO_cutoff>ZERO) &
+      stdout.show("LKO cutoff                =",.LKO_cutoff)
       stdout.show("Basis function cutoff     =",.basis_fn_cutoff)
       stdout.show("XC batch max points       =",.XC_batch_max_pts)
       stdout.show("XC batch box edge         =",.XC_batch_box_edge)

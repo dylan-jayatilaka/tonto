@@ -26,7 +26,11 @@ CANDIDATES = {
     'mixed4': dict(partition='salvador', hbecke=True),
     'mixed3': dict(partition='salvador', hbecke=True, stiff=3),
     'ss':     dict(partition='stratmann_scuseria'),
+    'lko5':   dict(partition='becke', lko=5.0),
 }
+# A candidate that adds the LKO cutoff to another takes that one's radial
+# scan and shell tables: the cutoff changes neither.
+BASE = {'lko5': 'becke'}
 RADIAL_TARGETS = [1e-4, 1e-5, 1e-6, 1e-7]
 TAUS = [1e-5, 1e-6, 1e-7, 1e-8]
 # very_high has no target: 1e-7 cannot be shown against the reference grid
@@ -64,9 +68,10 @@ def zone_orders(cand, tau):
     return orders
 
 def block(cand, rt, tau):
-    T.load(basis, **CANDIDATES[cand])
+    T.load(basis, **CANDIDATES[BASE.get(cand, cand)])
     rc = radial_counts(rt)
-    zo = zone_orders(cand, tau)
+    zo = zone_orders(BASE.get(cand, cand), tau)
+    T.load(basis, **CANDIDATES[cand])
     counts = [rc[1], rc[2], rc[3], rc[4], rc[4] + 20, rc[4] + 40, rc[4] + 40]
     n = min(counts)
     flat = []

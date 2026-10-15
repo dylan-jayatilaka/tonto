@@ -2,7 +2,7 @@
 """Write the grid scans for every system that has a converged density:
 <basis>/<system>/scan_<stage>.in, and scan_<stage>.json listing the grid
 settings of each evaluation in order.
-Usage: scan.py <basis> [partition=becke|salvador|stratmann_scuseria] [hchi=S] [variant=ionic]
+Usage: scan.py <basis> [partition=becke|salvador|stratmann_scuseria] [hchi=S] [lko=R] [variant=ionic]
                [systems=A,B,...] <stage>...
 With partition=salvador every grid uses partition_scheme= salvador and the
 files are scan_<stage>_salvador.*, and likewise for stratmann_scuseria; the
@@ -39,6 +39,7 @@ PARTITION = 'becke'
 HCHI = None
 HBECKE = False
 STIFF = None
+LKO = None      # the LKO cutoff in bohr (lko_cutoff=); None leaves the keyword out
 
 def partition_kw():
     kw = '' if PARTITION == 'becke' else 'partition_scheme= %s ' % PARTITION
@@ -48,6 +49,8 @@ def partition_kw():
         kw += 'partition_h_becke= TRUE '
     if STIFF is not None:
         kw += 'salvador_stiffness= %d ' % STIFF
+    if LKO is not None:
+        kw += 'lko_cutoff= %g ' % LKO
     return kw
 
 def grid(counts, l_heavy, l_H, pruning='none', extra=''):
@@ -93,13 +96,14 @@ def evaluations(stage, periods):
     return ev
 
 def main():
-    global PARTITION, HCHI, HBECKE, STIFF
+    global PARTITION, HCHI, HBECKE, STIFF, LKO
     basis, stages = sys.argv[1], sys.argv[2:]
     variant, only = '', None
     for a in [a for a in stages if '=' in a]:
         k, v = a.split('='); stages.remove(a)
         if k == 'partition': PARTITION = v
         elif k == 'hchi': HCHI = float(v)
+        elif k == 'lko': LKO = float(v)
         elif k == 'hbecke': HBECKE = v.lower() in ('1', 'true', 'yes')
         elif k == 'stiff': STIFF = int(v)
         elif k == 'variant': variant = v
@@ -109,6 +113,7 @@ def main():
     assert variant in ('', 'ionic'), variant
     tag = '' if PARTITION == 'becke' else '_' + PARTITION
     if HCHI is not None: tag += '_hchi%g' % HCHI
+    if LKO is not None: tag += '_lko%g' % LKO
     if HBECKE: tag += '_hbecke'
     if STIFF is not None: tag += '_stiff%d' % STIFF
     if variant: tag += '_' + variant
@@ -134,7 +139,7 @@ def main():
         geom = store.geom_hash(q, m, atoms)
         done = store.load(basis)
         for stage in stages:
-            ev = [(dict(lab, partition=PARTITION, variant=variant, hchi=HCHI, hbecke=HBECKE, stiff=STIFF), b)
+            ev = [(dict(lab, partition=PARTITION, variant=variant, hchi=HCHI, hbecke=HBECKE, stiff=STIFF, lko=LKO), b)
                   for lab, b in evaluations(stage, periods)
                   if store.key(basis, name, geom, b, variant=variant) not in done]
             if not ev:

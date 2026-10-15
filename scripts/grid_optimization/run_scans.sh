@@ -1,6 +1,6 @@
 #!/bin/bash
 # In the run folder (the current directory): run the scans in scanlist.txt,
-# 8 at a time, skipping finished outputs, then add them to the store.
+# NPAR (default 8) at a time, skipping finished outputs, then add them to the store.
 # Safe to stop and start again: run collect.py, scan.py and this again.
 S=$(cd "$(dirname "$0")" && pwd); T=$(cd "$S/../.." && pwd)
 B=${1:-def2-SVP}
@@ -15,6 +15,6 @@ run() {
   echo "$d $s rc=$? $(grep '^real' scan_$s.log) $(date +%H:%M:%S)"
 }
 export -f run
-xargs -P 8 -I{} bash -c 'run "{}"' < scanlist.txt
+xargs -P ${NPAR:-8} -I{} bash -c 'run "{}"' < scanlist.txt
 python3 "$S/collect.py" $B
 echo "== ALL DONE $(date)"

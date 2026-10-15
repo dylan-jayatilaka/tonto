@@ -78,6 +78,37 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## START HERE (2026-10-15, afternoon): LKO cutoff in; two pipelines running
+
+**First thing:** `cat ~/tonto-runs/2026-10-15_lko/status.md`. Two pipelines run there, both
+started 2026-10-15 about 11:15: `lko_master.sh` (the LKO checks, done, then the def2-TZVP
+confirmation of the lowered Becke grids in the 2026-10-13 folder: 22 SCFs on grid `best`, grids
+A and B, the four lowered grids with the cutoff off and at 5 bohr) and `lko_lowering.sh` (the
+`lko5` candidate, Becke's partition with the cutoff at 5 bohr, assembled and lowered in
+`lower/`). The last line of `status.md` says "ALL DONE" or "lko5 lowering done" when each is
+finished. Results and reading: `docs/TASK_ON_GRID_OPTIMIZATION.md` §9, entries of 2026-10-15.
+
+In short: the LKO cutoff (Laqua, Kussmann and Ochsenfeld 2018) is implemented for Becke's and
+Salvador's partitions, keyword `lko_cutoff=` (bohr, 0 = off, the default), code change 8 of §5.
+Check (a): the off path reproduces every stored energy. Check (b): the lowered Becke grids with
+the cutoff at 5 bohr keep `very_low` and `medium` inside their targets, miss `low`'s 0.9 margin
+by a hair and fail `high` (neopentane 2.9e-6, Cr(CO)6 1.7e-6 against 1e-6): non-bonded pairs
+beyond 5 bohr inside compact molecules do move the error by a few 1e-6. Points fall only 0.2 to
+3 %: Tonto's density pruning already takes the saving the paper reports. Checks (c), (d): the
+argon dimer curve is smooth with the cutoff and wobbles by 80 µEh without; no visible kink where
+a pair crosses 5 bohr. Check (e): no time difference at 17 atoms. **Decision pending Dylan,
+once the `lko5` lowering ends:** cutoff on by default at 5 bohr if `lko5` matches Becke's points
+at each level, else a keyword for weakly bound systems. Stratmann-Scuseria is out (Dylan
+agreed): more points than Becke at every level and no `high` grid. New open bug: a plain SCF
+with `partition_scheme= salvador` stops in `partition_Salvador` (no radii set up); the
+fixed-density path works.
+
+Also today: CI on `develop` fixed (commit ee7a795a, a module cycle from the eigensolver timing;
+moved into `run_eigensolver`); `docs/REPORT_ON_SALVADOR_MODELS.md` gained the wall-position
+paragraph in §2 and a to-do in §7 for the Becke and Stratmann-Scuseria cells as atom models.
+After the pipelines: the per-atom and per-shell split of Becke against mixed4, the carbonyl
+radial count, Laqua's g1 to g7 as candidates, timing per point, the levels, COSX.
+
 ## START HERE (2026-10-14, late): Becke's partition chosen; Stratmann-Scuseria overnight
 
 The lowering finished at 17:23 (results and Dylan's decision for Becke's partition in

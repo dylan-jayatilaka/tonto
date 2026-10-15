@@ -1,6 +1,6 @@
 #!/bin/bash
 # In the run folder (the current directory): run the SCF of every system in
-# joblist_<basis>.txt, 8 at a time, skipping any whose stdout says the SCF
+# joblist_<basis>.txt, NPAR (default 8) at a time, skipping any whose stdout says the SCF
 # converged. Safe to stop and start again.
 S=$(cd "$(dirname "$0")" && pwd); T=$(cd "$S/../.." && pwd)
 B=${1:-def2-SVP}
@@ -12,5 +12,5 @@ run() {
   echo "$1 rc=$? $(grep '^real' run.log) $(date +%H:%M:%S)"
 }
 export -f run
-xargs -P 8 -I{} bash -c 'run {}' < joblist_$B.txt
+xargs -P ${NPAR:-8} -I{} bash -c 'run {}' < joblist_$B.txt
 echo "== ALL DONE $(date)"
