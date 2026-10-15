@@ -72,6 +72,8 @@ residue moving into the pages above.
 | [**Developer reference**](TONTO_DEVELOPER_INFO.md) | writing parallel (MPI) code in Foo, and build and test traps |
 | [**Deblurring density maps with a benchmarked prior**](TASK_DEBLURRING_WITH_A_PRIOR.md) | a science idea filed for later: the arguments, the relation to density modification, the protein case, and the first test |
 | [**Tonto and MPI**](TASK_MPI.md) | the parallel build's numerics and its defect register |
+| [**A shared frame for plots and cell maps**](TASK_PLOT_AXES.md) | the `PLOT_AXES` type, the local-frame moments, and cube files that VESTA reads as whole molecules |
+| [**Options and data apart, for plots and cell maps**](TASK_PLOT_OPTIONS.md) | `PLOT_OPTIONS`, `CELL_MAP_OPTIONS` and `SCF_OPTIONS` as what a user types; `PLOT_GRID` and `CELL_MAP` as the light data types; the plan |
 | [**Dispersion corrections**](TASK_DISPERSION_CORRECTIONS.md) | anomalous dispersion, Bijvoet pairs, and the residual density map |
 | [**DFT standardisation**](TASK_DFT_STANDARDISATION.md) | the DFT machinery, its silent defects, and the libxc plan |
 | [**Extinction correction**](TASK_EXTINCTION_CORRECTION.md) | why it has been dormant, its defect register, and the plan to bring it back |

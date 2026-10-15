@@ -1,0 +1,100 @@
+# TASK: a shared frame for plots and cell maps, and cube files VESTA can use
+
+A working document: the plan, what was done, what was checked, and what is left.
+The user-facing result is in `docs/REPORT_ON_L_DECOMPOSITION_MAPS.md`, sections 2.1, 3 and 4.
+
+## 1. What was asked (2026-10-15)
+
+Dylan, looking at the urea $`l = 0, 1, 2`$ maps in VESTA, asked for three things:
+
+1. the $`m`$ components of the local moments, the radial functions and the Hirshfeld tables in a
+   local frame: a centre atom, $`x`$ along a bond, $`y`$ along a second bond made perpendicular,
+   $`z`$ orthogonal to both, as `PLOT_GRID` already does for plots; and that the axis code be
+   shared between `PLOT_GRID` and `CELL_MAP` rather than written twice;
+2. the cube writer fixed so that VESTA's cell is the true cell;
+3. cube files that list the complete molecules of the cell, so that VESTA draws whole
+   molecules and not fragments, and if possible a box around those molecules.
+
+## 2. Decisions
+
+- **No Wigner matrices.** Every $`m`$ component is a Fourier series whose coefficient carries
+  the solid harmonic of the scattering vector. Rotating the frame is evaluating the harmonic at
+  the components of $`\mathbf q`$ along the new axes; the phase factor is untouched. One extra
+  matrix product in each of the three routines. The norm over $`m`$ is unchanged, which is the
+  check.
+- **A component type, not `get_from`.** `get_from` copies a routine's text into each module
+  that asks for it and needs the same fields declared in both types; a block of state with its
+  own keywords is better as one type held by both. `PLOT_AXES` holds the centre, the centre
+  atom or atoms, the six axis atoms, the three axis vectors and their flags; it reads the
+  keywords, completes the frame, and gives the rotation matrix. `PLOT_GRID` keeps its widths and
+  origin, which the old axis setters mixed with the frame.
+- **The completion rule.** A given $`z`$ is kept and $`x`$, $`y`$ made orthogonal to it;
+  otherwise $`x`$ is kept and $`y`$, $`z`$ made orthogonal to it. This is what the old
+  `PLOT_GRID` code converged to in the common cases. When both $`y`$ and $`z`$ are given, $`z`$
+  wins; the old code let the last one read win.
+- **Atom indices are resolved late.** `PLOT_AXES` holds no atoms. `PLOT_GRID` resolves at read
+  time, as before, since its widths need the vector. `CELL_MAP` holds no atoms by design, so
+  `MOLECULE.MAIN:set_cell_map_axes` resolves against the molecule's atoms before every use. An
+  explicit `centre=` or `x_axis=` forgets the atoms that gave it.
+- **Cube atom lists.** `plot_atoms= box | unit_cell | molecules` in `plot_grid= { }`. `box` is
+  the old behaviour: the molecule's atoms inside the box, which for a cell map dropped the
+  atoms of the asymmetric unit outside the cell (urea's second hydrogen site). `molecules` is
+  the unit cell atoms with every bonded atom in neighbouring cells added until no bond leads
+  out, from `CRYSTAL.unit_cell_connection`. `use_molecules_as_bbox` boxes that list along the
+  current axes with `box_margin=` to spare; the density is a Fourier series and can be
+  evaluated on any box.
+- **`cell.cube` drops the repeated plane.** The grid on a cell has both ends of each axis;
+  VESTA takes the cell edge as the number of points times the spacing, so the old file drew
+  urea 1.9 % too large. The ordinary `gaussian.cube` is left alone, since Gaussian's own
+  convention is not periodic.
+
+## 3. What was done
+
+Branch `plot-axes`, from `grid-optimization`.
+
+| file | change |
+|---|---|
+| `foofiles/plot_axes.foo`, `types.foo` | the new type and module |
+| `foofiles/plot_grid.foo`, `types.foo` | the fifteen frame fields replaced by `axes :: PLOT_AXES`; the setters and readers forward to it; `complete_axes` in place of the three `set_xyz_axes_from_*`; `plot_atoms=`, `use_molecules_as_bbox`, `box_margin=`, `set_bbox_around` |
+| `foofiles/cell_map.foo`, `types.foo` | `centre` replaced by `axes`; the frame keywords forwarded; the harmonics of `make_moment_at` and `make_radial_functions` taken in the frame |
+| `foofiles/molecule.main.foo`, `molecule.rho.foo` | `MOLECULE.RHO:set_cell_map_axes` before every use of the block (it lives in RHO, not MAIN: MAIN uses RHO, and a call the other way is the submodule cycle of the developer page); the Hirshfeld quadrature takes the rotation matrix; the molecules box in `read_plot_grid` |
+| `foofiles/molecule.grid.foo`, `molecule.put.foo` | the centre atom now at `plot_grid.axes.center_atom`; the cube atom list chosen in `dump_plot_grid` |
+| `foofiles/molecule.plot.foo`, `cell_map.foo` | `m_maps= norm | all | auto`; with axes given a `plot` of a local moment writes every component (`_m<m>` after the label) and the norm from their squares under the label (`do_cell_map_component_plots`) |
+| `foofiles/crystal.foo` | `create_whole_molecule_atom_list` |
+| `foofiles/archive.foo` | `write_gaussian_cube` takes `all_atoms`; `write_gaussian_cell` writes one point fewer per axis |
+| `CMakeLists.txt` | `plot_axes.foo` in `FOO_SRC` and `plot_axes.F90` in `FORTRAN_SRC`: a new module goes in both lists, or it is translated but never compiled and the first module that uses it fails with "Cannot open module file" |
+
+## 4. Checks
+
+Urea, B3LYP/def2-TZVP HAR, maps of $`F_{\rm exp}`$ on the cell at 0.4 bohr, window 0.5 Å, frame
+$`x`$ from N2 to O and $`y`$ from N2 toward N1 (the indices meant C, but the molecule's atom
+list is the CIF's eight atoms, O, N1, N2, C, H1 to H4; the check holds in any frame). Job and
+cubes: `~/Dropbox/tonto_data/cell_maps/urea/axes_check/`.
+
+| # | what was compared with what | measure | result |
+|---|---|---|---|
+| 1 | the $`l = 1`$ and $`l = 2`$ norms made on their own (`m_maps= norm`), against the norm written with the components (the root of the sum of their squares) | largest difference over 16,767 points | 0 for both $`l`$ |
+| 2 | the same norms against the root sum of squares recomputed from the component cube files | largest difference | 1.2e-5 and 5.0e-5, the five printed decimals |
+| 3 | the $`l = 1`$, $`m = 1`$ component in the molecular frame against the one in the cartesian frame | largest difference, largest value | 0.70, 0.62: the frames differ as they must |
+| 4 | the radial functions about N2 with $`z`$ out of the plane | the odd columns $`(1,0)`$, $`(2,-1)`$, $`(2,1)`$ | zero at every radius, as the mirror plane requires |
+| 5 | the atoms in the cube headers | count | 16 on the cell by default; 64 with `plot_atoms= molecules`, eight complete molecules |
+
+The urea cell-map test of the long suite, run against the new binary, fails as expected and
+for no other reason: its two reference cubes have 4 atoms in the header where the new ones
+have 16 (the "16 vs 4" line of the comparison), and its stdout has the new `m maps` line and
+the frame block; the energies differ at 1e-6, which is the LKO cutoff now on by default
+(handover of 2026-10-15), not this work. Re-bless on achari2 with the DFT references.
+
+## 5. Log
+
+**2026-10-15.** Plan agreed with Dylan; code written. Seven build passes to a clean build:
+the new module in only one of CMake's two source lists; a stale module file on the dropped
+circular edge; `set_cell_map_axes` first put in MAIN and called from RHO, the documented
+submodule cycle; a second caller of the Hirshfeld quadrature. The checks of section 4 passed
+at the first run. Dylan then asked that every $`m`$ component be written when axes are given,
+with the norm as a by-product (`m_maps=`), and that the urea cubes on Dropbox be regenerated in
+the molecular frame; the old cubes there were deleted. A second set, `urea_f_exp_molecules*`,
+is the $`F_{\rm exp}`$ maps on a box around the eight complete molecules of the cell
+(`plot_atoms= molecules`, `use_molecules_as_bbox`, `box_margin= 1 angstrom`): 99 by 99 by 117
+points, 64 atoms in the header, 15 MB a file. The notes for Santosh were also placed in the
+IUCr journals template, `~/Dropbox/tex/conference_talks/2026_ED_angular_decomp_iucrj/`.

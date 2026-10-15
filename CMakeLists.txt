@@ -555,6 +555,7 @@ set(FOO_SRC
     ${FOO_DIR}/marchingcube.foo
     ${FOO_DIR}/capping_square.foo
     ${FOO_DIR}/isosurface.foo
+    ${FOO_DIR}/plot_axes.foo
     ${FOO_DIR}/plot_grid.foo
     ${FOO_DIR}/quadrature.foo
     ${FOO_DIR}/lebedev.foo
@@ -726,6 +727,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/output_style.F90
     ${CMAKE_CURRENT_BINARY_DIR}/opmatrix.F90
     ${CMAKE_CURRENT_BINARY_DIR}/opvector.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/plot_axes.F90
     ${CMAKE_CURRENT_BINARY_DIR}/plot_grid.F90
     ${CMAKE_CURRENT_BINARY_DIR}/pointgroup.F90
     ${CMAKE_CURRENT_BINARY_DIR}/quadrature.F90

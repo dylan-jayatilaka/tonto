@@ -1,0 +1,476 @@
+!===================================================================
+!
+! PLOT_AXES: a centre and a right-handed orthonormal frame, given as
+! vectors or by pairs of atoms, for plots and for the local moments of
+! a cell map. PLOT_GRID and CELL_MAP each hold one, so both read the
+! same keywords.
+!
+! Copyright (C) Dylan Jayatilaka, 2026
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!===================================================================
+
+module PLOT_AXES
+
+   implicit none
+
+contains
+
+!  ==========
+!  Allocation
+!  ==========
+
+   create :: get_from(OBJECT), leaky, PURE
+   ! Allocate an object
+   end
+
+   destroy :: get_from(OBJECT), leaky, PURE
+   ! Deallocate "self"
+   end
+
+   destroy_ptr_part :: leaky, PURE
+   ! Destroy the pointer parts
+      self :: INOUT
+
+      .center_atoms.destroy
+
+   end
+
+!  ===
+!  Set
+!  ===
+
+   set_defaults :: leaky, PURE
+   ! The cartesian frame centred at the origin, nothing given by atoms
+      self :: INOUT
+
+      .center         = ZERO
+      .center_atom    = 0
+      .center_atoms.destroy
+
+      .x_atom_1       = 0
+      .x_atom_2       = 0
+      .y_atom_1       = 0
+      .y_atom_2       = 0
+      .z_atom_1       = 0
+      .z_atom_2       = 0
+
+      .x_axis(:)      = [ ONE,ZERO,ZERO]
+      .y_axis(:)      = [ZERO, ONE,ZERO]
+      .z_axis(:)      = [ZERO,ZERO, ONE]
+
+      .x_axis_defined = FALSE
+      .y_axis_defined = FALSE
+      .z_axis_defined = FALSE
+
+   end
+
+   set_center(pos) :: leaky, PURE
+   ! Set the centre to "pos", and forget any atoms that gave it
+      self :: INOUT
+      pos :: VEC{REAL}(3), IN
+
+      .center = pos
+      .center_atom = 0
+      .center_atoms.destroy
+
+   end
+
+   set_center_from_atom(atom) :: PURE
+   ! Set the centre to the position of atom ".center_atom" of "atom"
+      self :: INOUT
+      atom :: VEC{ATOM}, IN
+
+   ENSURE(.center_atom>0,"no center_atom")
+   ENSURE(.center_atom<=atom.dim,"center_atom out of range")
+
+      .center = atom(.center_atom).position
+
+   end
+
+   set_center_from_atoms(atom) :: PURE
+   ! Set the centre to the mean position of the atoms ".center_atoms"
+      self :: INOUT
+      atom :: VEC{ATOM}, IN
+
+   ENSURE(.center_atoms.allocated,"no center_atoms")
+   ENSURE(.center_atoms.dim>0,"no center_atoms")
+   ENSURE(all(.center_atoms>0) AND all(.center_atoms<=atom.dim),"center_atoms out of range")
+
+      i :: INT
+
+      .center = ZERO
+      do i = 1,.center_atoms.dim
+         .center = .center + atom(.center_atoms(i)).position
+      end
+      .center = .center/REALIFY(.center_atoms.dim)
+
+   end
+
+   set_x_axis_from_atoms(atom) :: PURE
+   ! Set the x axis to run from atom ".x_atom_1" to atom ".x_atom_2". The
+   ! vector keeps its length until the frame is completed, so a caller
+   ! can size a plot by it.
+      self :: INOUT
+      atom :: VEC{ATOM}, IN
+
+   ENSURE(.x_atom_1>0 AND .x_atom_2>0,"no x axis atoms")
+   ENSURE(.x_atom_1<=atom.dim AND .x_atom_2<=atom.dim,"x axis atoms out of range")
+
+      .x_axis = atom(.x_atom_2).position - atom(.x_atom_1).position
+      .x_axis_defined = TRUE
+
+   end
+
+   set_y_axis_from_atoms(atom) :: PURE
+   ! Set the y axis to run from atom ".y_atom_1" to atom ".y_atom_2", as
+   ! for the x axis
+      self :: INOUT
+      atom :: VEC{ATOM}, IN
+
+   ENSURE(.y_atom_1>0 AND .y_atom_2>0,"no y axis atoms")
+   ENSURE(.y_atom_1<=atom.dim AND .y_atom_2<=atom.dim,"y axis atoms out of range")
+
+      .y_axis = atom(.y_atom_2).position - atom(.y_atom_1).position
+      .y_axis_defined = TRUE
+
+   end
+
+   set_z_axis_from_atoms(atom) :: PURE
+   ! Set the z axis to run from atom ".z_atom_1" to atom ".z_atom_2", as
+   ! for the x axis
+      self :: INOUT
+      atom :: VEC{ATOM}, IN
+
+   ENSURE(.z_atom_1>0 AND .z_atom_2>0,"no z axis atoms")
+   ENSURE(.z_atom_1<=atom.dim AND .z_atom_2<=atom.dim,"z axis atoms out of range")
+
+      .z_axis = atom(.z_atom_2).position - atom(.z_atom_1).position
+      .z_axis_defined = TRUE
+
+   end
+
+   set_from_atoms(atom) :: PURE
+   ! Resolve everything given by atom indices against the "atom" list,
+   ! then complete the frame. Call it before the frame is used, with the
+   ! atoms the indices refer to.
+      self :: INOUT
+      atom :: VEC{ATOM}, IN
+
+      if (.center_atom>0)         .set_center_from_atom(atom)
+      if (.center_atoms.allocated) .set_center_from_atoms(atom)
+      if (.x_atom_1>0)            .set_x_axis_from_atoms(atom)
+      if (.y_atom_1>0)            .set_y_axis_from_atoms(atom)
+      if (.z_atom_1>0)            .set_z_axis_from_atoms(atom)
+
+      .complete
+
+   end
+
+   complete :: PURE
+   ! Make the frame orthonormal and right-handed. A given z axis is kept
+   ! and x and y are made orthogonal to it; otherwise x is kept and y and
+   ! z are made orthogonal to it, so y is a given direction made
+   ! perpendicular to x, and z = x cross y.
+      self :: INOUT
+
+      .x_axis.normalize
+      .y_axis.normalize
+      .z_axis.normalize
+
+      if (.z_axis_defined) then
+         .orthonormalize_x_y_to_z_axis
+      else
+         .orthonormalize_y_z_to_x_axis
+      end
+
+   end
+
+   orthonormalize_x_y_to_z_axis :: private, PURE
+   ! Make x orthogonal to z, then y = z cross x
+      self :: INOUT
+
+      dot :: REAL
+
+      ! x must not lie along z
+      if (.x_axis.same_as(.z_axis)) .x_axis = .y_axis
+
+      ! x orthogonal to z
+      dot = dot_product(.z_axis,.x_axis)
+      .x_axis = .x_axis - dot*.z_axis
+      .x_axis.normalize
+   ENSURE(NOT .x_axis.is_zero,"x_axis is the same as z_axis")
+
+      ! y completes the frame
+      .y_axis.to_cross_product_of(.z_axis,.x_axis)
+
+   end
+
+   orthonormalize_y_z_to_x_axis :: private, PURE
+   ! Make y orthogonal to x, then z = x cross y
+      self :: INOUT
+
+      dot :: REAL
+
+      ! y must not lie along x
+      if (.y_axis.same_as(.x_axis)) .y_axis = .z_axis
+
+      ! y orthogonal to x
+      dot = dot_product(.x_axis,.y_axis)
+      .y_axis = .y_axis - dot*.x_axis
+      .y_axis.normalize
+   ENSURE(NOT .y_axis.is_zero,"y_axis is the same as x_axis")
+
+      ! z completes the frame
+      .z_axis.to_cross_product_of(.x_axis,.y_axis)
+
+   end
+
+!  =======
+!  Inquiry
+!  =======
+
+   matrix result (res) :: pure
+   ! The frame as a matrix, the axes its columns: it rotates local
+   ! components into the cartesian frame, and its transpose the other way
+      self :: IN
+      res :: MAT{REAL}(3,3)
+
+      res(:,1) = .x_axis
+      res(:,2) = .y_axis
+      res(:,3) = .z_axis
+
+   end
+
+   uses_atoms result (res) :: pure
+   ! TRUE if the centre or an axis is given by atom indices, so that
+   ! set_from_atoms must be called before use
+      self :: IN
+      res :: BIN
+
+      res = .center_atom>0 OR .center_atoms.allocated &
+         OR .x_atom_1>0 OR .y_atom_1>0 OR .z_atom_1>0
+
+   end
+
+   x_or_y_axes_defined result (res) :: pure
+   ! TRUE if the x or y axis was given
+      self :: IN
+      res :: BIN
+
+      res = .x_axis_defined OR .y_axis_defined
+
+   end
+
+   any_axis_defined result (res) :: pure
+   ! TRUE if any axis was given
+      self :: IN
+      res :: BIN
+
+      res = .x_axis_defined OR .y_axis_defined OR .z_axis_defined
+
+   end
+
+   is_cartesian result (res) :: pure
+   ! TRUE if the frame is the cartesian one, so a rotation by it does nothing
+      self :: IN
+      res :: BIN
+
+      res = NOT .any_axis_defined
+
+   end
+
+!  =====
+!  Input
+!  =====
+
+   read_keywords :: get_from(OBJECT), leaky
+   ! Read data from "stdin" using keyword style input.
+   end
+
+   process_keyword(keyword) :: leaky
+   ! Process command "keyword". Any required data needed by the "keyword" is
+   ! inputted from "stdin". The centre and the axes may be given as vectors
+   ! or by atom indices; the indices are resolved by set_from_atoms.
+      self :: INOUT
+      keyword :: STR, IN
+
+      word :: STR
+
+      word = keyword
+      word.to_lower_case
+
+      select case (word)
+      case ("}             ")  ! exit case
+      case ("center=       "); .read_center
+      case ("centre=       "); .read_center
+      case ("center_atom=  "); .read_center_atom
+      case ("centre_atom=  "); .read_center_atom
+      case ("center_atoms= "); .read_center_atoms
+      case ("centre_atoms= "); .read_center_atoms
+      case ("x_axis=       "); .read_x_axis
+      case ("x_axis_atoms= "); .read_x_axis_atoms
+      case ("y_axis=       "); .read_y_axis
+      case ("y_axis_atoms= "); .read_y_axis_atoms
+      case ("z_axis=       "); .read_z_axis
+      case ("z_axis_atoms= "); .read_z_axis_atoms
+      case default;         UNKNOWN(word)
+      end
+
+   end
+
+   read_center
+   ! Read the centre, a position with units
+      self :: INOUT
+
+      stdin.read_quantity(.center)
+      .center_atom = 0
+      .center_atoms.destroy
+
+   end
+
+   read_center_atom
+   ! Read the index of the atom at the centre
+      self :: INOUT
+
+      stdin.read(.center_atom)
+      .center_atoms.destroy
+
+   DIE_IF(.center_atom<1,"center_atom must be positive")
+
+   end
+
+   read_center_atoms :: leaky
+   ! Read the indices of the atoms whose mean position is the centre
+      self :: INOUT
+
+      .center_atoms.destroy
+      stdin.read_all(.center_atoms)
+      .center_atom = 0
+
+   DIE_IF(.center_atoms.dim==0,"no atoms specified in input")
+
+   end
+
+   read_x_axis
+   ! Read the x axis as a vector; the frame is completed about it
+      self :: INOUT
+
+      stdin.read(.x_axis)
+      .x_axis_defined = TRUE
+      .x_atom_1 = 0
+      .x_atom_2 = 0
+
+      .complete
+
+   end
+
+   read_x_axis_atoms
+   ! Read the two atoms the x axis runs between, from the first to the
+   ! second
+      self :: INOUT
+
+      stdin.read(.x_atom_1)
+      stdin.read(.x_atom_2)
+      .x_axis_defined = TRUE
+
+   DIE_IF(.x_atom_1==.x_atom_2,"cannot specify same x axis atoms")
+
+   end
+
+   read_y_axis
+   ! Read the y axis as a vector; it is made orthogonal to x
+      self :: INOUT
+
+      stdin.read(.y_axis)
+      .y_axis_defined = TRUE
+      .y_atom_1 = 0
+      .y_atom_2 = 0
+
+      .complete
+
+   end
+
+   read_y_axis_atoms
+   ! Read the two atoms the y axis runs between, from the first to the
+   ! second; it is made orthogonal to x
+      self :: INOUT
+
+      stdin.read(.y_atom_1)
+      stdin.read(.y_atom_2)
+      .y_axis_defined = TRUE
+
+   DIE_IF(.y_atom_1==.y_atom_2,"cannot specify same y axis atoms")
+
+   end
+
+   read_z_axis
+   ! Read the z axis as a vector; x and y are made orthogonal to it
+      self :: INOUT
+
+      stdin.read(.z_axis)
+      .z_axis_defined = TRUE
+      .z_atom_1 = 0
+      .z_atom_2 = 0
+
+      .complete
+
+   end
+
+   read_z_axis_atoms
+   ! Read the two atoms the z axis runs between, from the first to the
+   ! second; x and y are made orthogonal to it
+      self :: INOUT
+
+      stdin.read(.z_atom_1)
+      stdin.read(.z_atom_2)
+      .z_axis_defined = TRUE
+
+   DIE_IF(.z_atom_1==.z_atom_2,"cannot specify same z axis atoms")
+
+   end
+
+!  ======
+!  Output
+!  ======
+
+   put
+   ! Put the centre and the frame, and the atoms that gave them
+      self :: IN
+
+      axes :: MAT{REAL}(3,3)
+      wid :: INT
+
+      axes = .matrix
+      wid  = maxval(len_trim(axes.to_str("f",50,stdout.style.real_precision))) + 1
+
+      stdout.flush
+      stdout.text("Centre and axes:")
+      stdout.show("Centre                  =",.center,width=wid)
+      stdout.show("Axis vector columns     =",axes(1,:),width=wid)
+      stdout.show("                        =",axes(2,:),width=wid)
+      stdout.show("                        =",axes(3,:),width=wid)
+      stdout.show("Centre atom             =",.center_atom)
+      if (.center_atoms.allocated) then
+      stdout.show("Centre atoms            =",.center_atoms.to_concatenated_str)
+      end
+      stdout.show("X axis atoms            =",[.x_atom_1,.x_atom_2])
+      stdout.show("Y axis atoms            =",[.y_atom_1,.y_atom_2])
+      stdout.show("Z axis atoms            =",[.z_atom_1,.z_atom_2])
+
+   end
+
+end

@@ -61,6 +61,7 @@ contains
       .coeff.destroy
       .F_pro.destroy
       .atom_tags.destroy
+      .axes.destroy_ptr_part
 
    end
 
@@ -68,20 +69,21 @@ contains
 !  Set
 !  ===
 
-   set_defaults :: PURE
-   ! Set the defaults: a residual map, no angular filter
+   set_defaults :: leaky, PURE
+   ! Set the defaults: a residual map, no angular filter, the cartesian frame
       self :: INOUT
 
       .kind         = "residual"
       .l_value      = -1
       .m_value      = -99
+      .m_maps       = "auto"
       .window_width = 0.25*BOHR_PER_ANGSTROM
       .sharpen_U    = ZERO
       .sharpen_order   = 0
       .laplacian_order = 0
       .wiener_weight   = FALSE
       .l_max        = 2
-      .centre       = ZERO
+      .axes.set_defaults
       .n_radii      = 40
       .radius_max   = 2*BOHR_PER_ANGSTROM
       .volume       = ZERO
@@ -89,6 +91,27 @@ contains
       .direct_mx    = ZERO
       .density_source = "wavefunction"
       .atom_weight    = "hirshfeld"
+
+   end
+
+   set_m_value(m) :: pure
+   ! Set the component of a local-moment map; -99 for the norm over m
+      self :: INOUT
+      m :: INT, IN
+
+      .m_value = m
+
+   end
+
+   writes_all_m result (res) :: pure
+   ! TRUE if a plot of the local moment writes every m component and the
+   ! norm: m_maps= all, or by default when axes are given, unless m_value
+   ! picks one component. l = 0 has one component and is never split.
+      self :: IN
+      res :: BIN
+
+      res = .l_value>=1 AND .m_value==-99 &
+        AND (.m_maps=="all" OR (.m_maps=="auto" AND NOT .axes.is_cartesian))
 
    end
 
@@ -298,9 +321,9 @@ contains
    ! that order, a sum of Laplacian powers, bounded by the window for any
    ! U. With laplacian_order the map is multiplied by (-sigma^2 q^2)^k, its
    ! k-th Laplacian scaled by sigma^2k. With m_value set it is that
-   ! one component, in the frame of the cartesian axes; otherwise it is the
-   ! norm over m, which does not depend on the axes. l = 0 has one
-   ! component and keeps its sign.
+   ! one component, in the frame of ".axes" (the cartesian axes unless
+   ! axes were given); otherwise it is the norm over m, which does not
+   ! depend on the axes. l = 0 has one component and keeps its sign.
    ! m is the usual real-harmonic index, m > 0 cosine-like and m < 0
    ! sine-like: for l = 1, m = -1, 0, 1 are y, z, x, and the three maps are
    ! sqrt(3/4 pi) sigma times the gradient of the blurred density
@@ -317,7 +340,7 @@ contains
    ENSURE(.window_width>ZERO, "window_width not set")
    ENSURE(.sharpen_order>0 OR .sharpen_U<.window_width**2, "sharpen_U must be below window_width^2")
 
-      q,Y :: MAT{REAL}@
+      q,qr,Y :: MAT{REAL}@
       c   :: VEC{CPX}@
       comp :: VEC{REAL}@
       q2,sig,net :: REAL
@@ -336,11 +359,16 @@ contains
       net = sig*sig
       if (.sharpen_order==0) net = net - .sharpen_U
 
-      ! The scattering vectors, and the solid harmonics q^l Y_lm(q^) at them
+      ! The scattering vectors, and the solid harmonics q^l Y_lm(q^) at
+      ! them in the frame of the axes: the harmonics take the components of
+      ! q along the local axes, the columns of the frame's matrix
       q.create(n_refl,3)
       .make_scattering_vectors(q)
+      qr.create(n_refl,3)
+      qr = matmul(q,.axes.matrix)
       Y.create(n_refl,(lv+1)*(lv+1))
-      FOURIER_SUMS:make_solid_harmonics(Y,q,lv)
+      FOURIER_SUMS:make_solid_harmonics(Y,qr,lv)
+      qr.destroy
 
       ! Which components
       if (.m_value==-99) then
@@ -379,13 +407,14 @@ contains
 
    make_radial_functions(f,radii) :: leaky, PURE
    ! Set "f(i,lm)" to the radial functions rho_lm(s) of the density about
-   ! ".centre" at the radii "radii(i)", for l = 0 to ".l_max" and m = -l
+   ! ".axes.center" at the radii "radii(i)", for l = 0 to ".l_max" and m = -l
    ! to l, column lm = l^2 + l + m + 1:
    !
    !    rho_lm(s) = 4 pi (-i)^l sum_n coeff(n) exp(-i q_n.c) Y_lm(q^_n) j_l(q_n s),
    !
    ! the expansion of the density on each sphere about the centre c in
-   ! real harmonics, so that rho(c + s s^) = sum_lm rho_lm(s) Y_lm(s^).
+   ! real harmonics, so that rho(c + s s^) = sum_lm rho_lm(s) Y_lm(s^),
+   ! with s^ in the frame of ".axes".
    ! It is exact for the Fourier series, and is the reference that an
    ! angular quadrature about an atom is tested against. The factor of
    ! each reflection is real once the phase about the centre and (-i)^l
@@ -399,29 +428,33 @@ contains
    ENSURE(f.dim1==radii.dim, "f: wrong dim1")
    ENSURE(f.dim2==(.l_max+1)*(.l_max+1), "f: wrong dim2")
 
-      q,Y,A :: MAT{REAL}@
+      q,qr,Y,A :: MAT{REAL}@
       qn,j  :: VEC{REAL}@
       ph,fac :: CPX
       n_refl,n,i,lv,m,col,lm :: INT
 
       n_refl = .coeff.dim
 
-      ! The scattering vectors, their lengths, and the solid harmonics
+      ! The scattering vectors, their lengths, and the solid harmonics in
+      ! the frame of the axes (see make_moment_at)
       q.create(n_refl,3)
       .make_scattering_vectors(q)
       qn.create(n_refl)
       do n = 1,n_refl
          qn(n) = sqrt(q(n,1)*q(n,1) + q(n,2)*q(n,2) + q(n,3)*q(n,3))
       end
+      qr.create(n_refl,3)
+      qr = matmul(q,.axes.matrix)
       Y.create(n_refl,(.l_max+1)*(.l_max+1))
-      FOURIER_SUMS:make_solid_harmonics(Y,q,.l_max)
+      FOURIER_SUMS:make_solid_harmonics(Y,qr,.l_max)
+      qr.destroy
 
       ! A(n,lm) = Re[4 pi (-i)^l coeff(n) exp(-i q.c) Y_lm(q^)], the columns in
       ! the order l^2 + l + m + 1; Y_lm(q^) is the solid harmonic over q^l,
       ! and at q = 0 only l = 0 survives
       A.create(n_refl,(.l_max+1)*(.l_max+1))
       do n = 1,n_refl
-         ph = .coeff(n)*exp(-IMAGIFY(ONE)*(q(n,1)*.centre(1) + q(n,2)*.centre(2) + q(n,3)*.centre(3)))
+         ph = .coeff(n)*exp(-IMAGIFY(ONE)*(q(n,1)*.axes.center(1) + q(n,2)*.axes.center(2) + q(n,3)*.axes.center(3)))
          do lv = 0,.l_max
             fac = 4*PI*(-IMAGIFY(ONE))**lv*ph
             do m = -lv,lv
@@ -578,16 +611,27 @@ contains
       case ("kind=              "); .read_kind
       case ("l_value=           "); .read_l_value
       case ("m_value=           "); .read_m_value
+      case ("m_maps=            "); .read_m_maps
       case ("window_width=      "); .read_window_width
       case ("sharpen_u=         "); .read_sharpen_U
       case ("sharpen_order=     "); .read_sharpen_order
       case ("laplacian_order=   "); .read_laplacian_order
       case ("wiener_weight=     "); .read_wiener_weight
       case ("l_max=             "); .read_l_max
-      case ("centre=            "); .read_centre
-      case ("center=            "); .read_centre
+      case ("centre=            "); .axes.read_center
+      case ("center=            "); .axes.read_center
+      case ("centre_atom=       "); .axes.read_center_atom
+      case ("center_atom=       "); .axes.read_center_atom
+      case ("centre_atoms=      "); .axes.read_center_atoms
+      case ("center_atoms=      "); .axes.read_center_atoms
       case ("centre_fractional= "); .read_centre_fractional
       case ("center_fractional= "); .read_centre_fractional
+      case ("x_axis=            "); .axes.read_x_axis
+      case ("x_axis_atoms=      "); .axes.read_x_axis_atoms
+      case ("y_axis=            "); .axes.read_y_axis
+      case ("y_axis_atoms=      "); .axes.read_y_axis_atoms
+      case ("z_axis=            "); .axes.read_z_axis
+      case ("z_axis_atoms=      "); .axes.read_z_axis_atoms
       case ("n_radii=           "); .read_n_radii
       case ("radius_max=        "); .read_radius_max
       case ("density_source=    "); .read_density_source
@@ -633,6 +677,19 @@ contains
 
    DIE_IF(.l_value<0, "set l_value before m_value")
    DIE_IF(abs(.m_value)>.l_value, "m_value must lie between -l_value and l_value")
+
+   end
+
+   read_m_maps
+   ! Read what a plot of a local moment writes: "norm", the norm over m
+   ! alone; "all", every component m to its own file and the norm from
+   ! them; "auto", all when axes are given and the norm otherwise
+      self :: INOUT
+
+      stdin.read(.m_maps)
+      .m_maps.to_lower_case
+
+   DIE_IF(NOT .m_maps.is_one_of(["norm","all ","auto"]), "m_maps must be norm, all or auto")
 
    end
 
@@ -699,15 +756,7 @@ contains
 
    end
 
-   read_centre
-   ! Read the centre of the radial functions, cartesian, with units
-      self :: INOUT
-
-      stdin.read_quantity(.centre)
-
-   end
-
-   read_centre_fractional
+   read_centre_fractional :: leaky
    ! Read the centre of the radial functions in fractional coordinates.
    ! The cell must be known: give crystal= first.
       self :: INOUT
@@ -718,7 +767,7 @@ contains
 
    DIE_IF(.volume<=ZERO, "the cell is not set: give crystal= first")
 
-      .centre = matmul(.direct_mx,frac)
+      .axes.set_center(matmul(.direct_mx,frac))
 
    end
 
@@ -779,7 +828,7 @@ contains
 !  ======
 
    put_radial_functions :: leaky
-   ! Put the radial functions rho_lm(s) of the density about ".centre",
+   ! Put the radial functions rho_lm(s) of the density about ".axes.center",
    ! l = 0 to ".l_max", at ".n_radii" radii up to ".radius_max", in
    ! electrons per cubic Angstrom; then the power of each l, the sum of
    ! the squares over m, which does not depend on the axes.
@@ -808,7 +857,7 @@ contains
       stdout.text("====================================")
       stdout.flush
       stdout.show("Kind                    =",.kind)
-      stdout.show("Centre (Angstrom)       =",.centre*fac)
+      stdout.show("Centre (Angstrom)       =",.axes.center*fac)
       stdout.show("l_max                   =",.l_max)
       stdout.text(". rho_lm(s) in e/Angstrom^3, s in Angstrom; the density on the sphere")
       stdout.text("  of radius s is the sum over l, m of rho_lm(s) Y_lm, with Y_lm real")
@@ -865,6 +914,7 @@ contains
       stdout.show("l_value                 =",.l_value)
       if (.m_value/=-99) &
       stdout.show("m_value                 =",.m_value)
+      stdout.show("m maps                  =",.m_maps)
       stdout.show("Window width            =",.window_width)
       stdout.show("Sharpening U            =",.sharpen_U)
       stdout.show("Sharpening order        =",.sharpen_order)
@@ -872,9 +922,9 @@ contains
       stdout.show("Wiener weight?          =",.wiener_weight)
       end
       stdout.show("l_max                   =",.l_max)
-      stdout.show("Centre                  =",.centre)
       stdout.show("No. of radii            =",.n_radii)
       stdout.show("Largest radius          =",.radius_max)
+      .axes.put
 
    end
 

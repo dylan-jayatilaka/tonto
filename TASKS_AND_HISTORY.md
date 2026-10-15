@@ -78,6 +78,35 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## START HERE (2026-10-15, evening): local axes for the cell maps; cube files for VESTA
+
+Branch `plot-axes` (from `grid-optimization`, not merged). Dylan, looking at the urea
+$`l = 0, 1, 2`$ maps in VESTA, asked for the $`m`$ components in a frame fixed to the molecule
+(centre atom, $`x`$ along a bond, $`y`$ toward a second atom made perpendicular), the axis code
+shared between `PLOT_GRID` and `CELL_MAP`, the cube writer's cell corrected, and cube files that
+list whole molecules. Plan, decisions and the file-by-file change: `docs/TASK_PLOT_AXES.md`.
+In short: a new type `PLOT_AXES` held by both; the harmonics of the three routines taken at
+$`R^{\mathsf T}\mathbf q`$, no Wigner matrices; `plot_atoms= box | unit_cell | molecules`,
+`use_molecules_as_bbox`, `box_margin=`; `cell.cube` without its repeated plane; and a map on
+the unit cell now lists every atom of the cell (the old writer dropped the asymmetric-unit
+atoms outside the cell: urea's H3). **Consequence:** the two reference cubes of
+`tests/long/urea_rks_B3LYP_def2-TZVP_HAR_cell_maps` gain twelve atoms in their headers and need
+a re-bless on achari2. The check to run and its result are in the task document, section 4.
+Done the same evening: the build is clean on the Mac (`release/`), the checks in the task
+document's section 4 passed, and `m_maps=` was added at Dylan's request: with axes given, a
+`plot` of a local moment writes every $`m`$ component and the norm from them. The urea cubes
+on Dropbox (`~/Dropbox/tonto_data/cell_maps/urea/`, 36 of them, `urea_cubes.stdin`) were
+regenerated at 0.2 bohr in the molecular frame, $`x`$ along C=O, $`y`$ in the plane, $`z`$ out
+of it, for `f_calc`, `f_exp` and the residual, $`l = 0, 1, 2`$; the old cubes were deleted.
+**Not committed yet**, and the two reference cubes still need the achari2 re-bless.
+
+**Next, from 2026-10-16:** options and data apart. `PLOT_GRID` holds the plot options with the
+geometry and `CELL_MAP` holds its options with the coefficients; `SCF_DATA` is misnamed the same
+way. Dylan's decision: `PLOT_OPTIONS`, `CELL_MAP_OPTIONS`, `SCF_OPTIONS` as the blocks a user
+types (`plot_options= { }`, `cell_map_options= { }`, `scf_options= { }`), verbs `make_plot` and
+`make_cell_map`, `PLOT_AXES`, `PLOT_GRID` and `CELL_MAP` as the light data types; not nested.
+Plan and order of work: `docs/TASK_PLOT_OPTIONS.md`. Merge `plot-axes` first.
+
 ## START HERE (2026-10-15, late afternoon): the cutoff is the default; lowering on two bases
 
 **First thing:** `cat ~/tonto-runs/2026-10-15_lko/status.md`; the lines tagged `[default-on]`
