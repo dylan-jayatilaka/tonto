@@ -87,13 +87,41 @@ the frame block; the energies differ at 1e-6, which is the LKO cutoff now on by 
 
 ## 5. Log
 
+**2026-10-16, overnight.** Dylan asked for the Hirshfeld-atom maps summed over the molecule,
+comparable to the local-moment maps. Added: `make_rebuilt_atoms_grid` takes the frame of the
+`cell_map` axes and one `m_value`, and the atoms are expanded from the Fourier density when
+`density_source= cell_map`; `set_up_for_plot` resolves the axes and makes the cell map for the
+kinds `angular_hirshfeld` and `hirshfeld_amplitude`; the all-components plot loop covers those
+kinds, writing the sum over m under the plain label (a norm for a local moment); the rebuilt
+maps are now in e/Å³ (and its square root for the amplitude) like the cell maps. Checks on
+urea: the mirror-forbidden components ($`l=1, m=0`$; $`l=2, m=\pm1`$) are zero to 1e-14, each
+$`l`$ map is the sum of its components to 5e-5, the $`l=0`$ piece peaks at 51 e/Å³ like the
+density. Jobs: `*_hirshfeld_maps.stdin` beside the cubes, 22 cubes a molecule (`ha_*` the
+density pieces, `amp_*` the amplitudes). Rendered with `render_like.py`, which copies the tile
+rotation of the chosen session onto new maps. **Finding:** the summed pieces are dominated by
+concentric shells around the atoms at the neighbour distances, intramolecular and
+intermolecular: a Hirshfeld atom holds a sliver of each neighbouring core, and its expansion
+truncated at $`l \le 2`$ spreads that spike into a shell; the square root of the amplitude
+makes the shells larger still (a sliver $`w_A \rho`$ of 1 e/Å³ at a core of 100 is an amplitude
+of 1). The pictures are therefore not comparable with the local-moment maps as they stand; a
+radial cutoff per atom, a higher $`l_{\max}`$, or weights that fall faster are the options, for
+Dylan to decide. The three sets of cubes and the panels are on Dropbox; nothing was added to
+the manuscript.
+
 **2026-10-15.** Plan agreed with Dylan; code written. Seven build passes to a clean build:
 the new module in only one of CMake's two source lists; a stale module file on the dropped
 circular edge; `set_cell_map_axes` first put in MAIN and called from RHO, the documented
 submodule cycle; a second caller of the Hirshfeld quadrature. The checks of section 4 passed
 at the first run. Dylan then asked that every $`m`$ component be written when axes are given,
 with the norm as a by-product (`m_maps=`), and that the urea cubes on Dropbox be regenerated in
-the molecular frame; the old cubes there were deleted. A second set, `urea_f_exp_molecules*`,
+the molecular frame; the old cubes there were deleted. Later the same evening Dylan asked for
+double the resolution and a box around one molecule only: `plot_atoms= molecule` and
+`use_molecule_as_bbox` were added (the molecule containing the plot's centre atom), and all
+three molecules, urea, L-alanine and gly-L-ala, were run that way at 0.1 bohr, 36 cubes each,
+the earlier sets deleted. The maps are drawn in ChimeraX, installed that evening, by the three
+scripts of `scripts/cell_map_panels/` (a panel of the eleven F_exp maps with one camera, an
+autosave of the view, a renderer for the panel and the single images); the urea figure went
+into the IUCrJ manuscript. A second set, `urea_f_exp_molecules*`,
 is the $`F_{\rm exp}`$ maps on a box around the eight complete molecules of the cell
 (`plot_atoms= molecules`, `use_molecules_as_bbox`, `box_margin= 1 angstrom`): 99 by 99 by 117
 points, 64 atoms in the header, 15 MB a file. The notes for Santosh were also placed in the
