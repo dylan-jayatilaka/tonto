@@ -108,6 +108,27 @@ radial cutoff per atom, a higher $`l_{\max}`$, or weights that fall faster are t
 Dylan to decide. The three sets of cubes and the panels are on Dropbox; nothing was added to
 the manuscript.
 
+**2026-10-16, later the same night: two causes of the shells, one fix still wrong.**
+(1) The ribbing Dylan saw was series-termination ripple: the atoms were expanded from the raw
+Fourier density. Fixed and committed: `CELL_MAP:make_blurred_values_at`, the density through
+the window, is now the source when `density_source= cell_map`, so the atoms compare with the
+local moments. (2) The shells are mostly the weights: `make_stockholder_atom_weight` sums the
+denominator over `.atom`, the molecule's own eight atoms, so in the gap between molecules
+urea's atoms claim the neighbours' density. A crystal weight was written,
+`MOLECULE.RHO:make_crystal_stockholder_weight` (denominator over the unit-cell atoms translated
+through $`\pm 2`$ cells within 16 bohr, each with the free density of a molecule atom of the
+same element), and is used in `make_atom_lm_radial_functions` for the cell-map source. **It is
+wrong and uncommitted:** on urea the summed $`l = 0`$ piece is 13 times the windowed density at
+the median grid point and 100 times at worst (`urea_f_exp_l0.cube` times $`\sqrt{4\pi}`$ is the
+reference on the same grid), so the weights sum far above one. Suspects, unchecked: the
+interpolators of the non-unique atoms (`.atom` is the CIF's eight; the partition may build
+interpolators only for the five unique ones, which would make the numerator garbage for N2,
+H2, H4), or the frame of `unit_cell_atom` positions. Next: print $`\sum_A w_A`$ over all
+crystal atoms at a few points, or reuse the cluster weights HAR already uses
+(`oc-hirshfeld`). No Hirshfeld maps were stored on Dropbox from this run; the earlier
+`ha_*`/`amp_*` cubes and panels for urea, made with the molecule-only weights and the raw
+density, are still there and are not to be used.
+
 **2026-10-15.** Plan agreed with Dylan; code written. Seven build passes to a clean build:
 the new module in only one of CMake's two source lists; a stale module file on the dropped
 circular edge; `set_cell_map_axes` first put in MAIN and called from RHO, the documented
