@@ -543,10 +543,98 @@ use it. The TLS algebra needs only positions, so it is not a `CRYSTAL` method.
    §3.8's table: tr S as a restraint (still dropped exactly), special positions as restraints, the
    frequentist covariance alongside the Bayesian one. Also on this branch: TLS on an explicit
    cluster (the TLS body is the central molecule) and `create_cluster` keeping the auxiliary basis.
-5. **Later, not in this plan's first pass:** L1 by reweighting; multi-temperature data (frequency
-   against amplitude; Grüneisen, where `MULTI_T_ADP` is the reference); segmented TLS by bond
+5. **The multi-temperature test** (Dylan, 2026-10-14): refine Σ at one temperature, predict the
+   ADPs at others, and compare with data at those temperatures. This measures what the motion
+   model knows, which a GoF at one temperature cannot. Plan in the next subsection.
+6. **Later, not in this plan's first pass:** L1 by reweighting; a joint fit to several temperatures
+   with the frequencies as parameters (Grüneisen, where `MULTI_T_ADP` is the reference); segmented TLS by bond
    graph (Trueblood–Dunitz attached rigid groups); anharmonic torsions by a one-dimensional Boltzmann
    sum in the periodic potential, refining the barrier instead of the amplitude; TLS into the CIF.
+
+### 5a. The multi-temperature test: what the motion model knows
+
+**Why.** At one temperature a free ADP on every atom can fit better than the motion model: urea
+def2-SVP gives GoF 3.30 with 27 parameters against 3.47 with 18 (TLS plus one soft mode). But
+free ADPs describe one data set and predict nothing. The motion model claims more: its Σ comes
+from vibrations, so it fixes the ADPs at every other temperature. Whether that claim holds is the
+measure of the information the model carries.
+
+**Effective frequencies from a refined Σ.** The generalised coordinates Q of §2 are not all
+mass-weighted: the rigid-body ones are a translation and a rotation. Their kinetic energy is
+$`\tfrac12\dot{Q}^{\dagger}\mathbf{G}\,\dot{Q}`$, with the mass metric
+
+```math
+\mathbf{G} = \sum_{i=1}^{N} m_i\,\mathbf{B}_i^{\dagger}\mathbf{B}_i \qquad (5a.1)
+```
+
+where $`m_i`$ is the mass of atom $`i`$ and $`\mathbf{B}_i`$ is its $`3\times m`$ block of (1). For
+the internal columns, which are mass-weighted normal coordinates, $`\mathbf{G}`$ is the unit
+matrix; the Eckart conditions make the blocks between rigid-body and internal columns zero. Let
+$`\lambda_k`$ and $`\mathbf{v}_k`$ be the eigenvalues and eigenvectors of the refined covariance in
+mass-weighted form, $`\mathbf{G}^{1/2}\boldsymbol{\Sigma}\,\mathbf{G}^{1/2}`$. Each $`\lambda_k`$ is a
+mean-square amplitude $`\langle Q_k^2\rangle`$, so (3) gives one effective frequency $`\omega_k`$ for
+it, found by solving
+
+```math
+\lambda_k = \frac{\hbar}{2\omega_k}\coth\frac{\hbar\omega_k}{2k_{\rm B}T_1} \qquad (5a.2)
+```
+
+where $`T_1`$ is the temperature of the data, $`\hbar`$ is Planck's constant over $`2\pi`$ and
+$`k_{\rm B}`$ is Boltzmann's constant. The right side falls steadily as $`\omega_k`$ rises, so the
+root is unique. In the classical limit $`\omega_k = (k_{\rm B}T_1/\lambda_k)^{1/2}`$.
+
+**Prediction.** At another temperature $`T_2`$, keep the eigenvectors and frequencies and recompute
+each amplitude from (3):
+
+```math
+\boldsymbol{\Sigma}(T_2) = \mathbf{G}^{-1/2}\,\Big[\sum_k \mathbf{v}_k\,\langle Q_k^2\rangle(T_2)\,\mathbf{v}_k^{\dagger}\Big]\,\mathbf{G}^{-1/2} \qquad (5a.3)
+```
+
+and the stiff-mode part $`\mathbf{U}_i^{\rm high}`$ is recomputed from the Hessian at $`T_2`$. The ADPs
+at $`T_2`$ follow from (1).
+
+**The comparisons**, each against a baseline:
+
+1. **Against the diffraction data at $`T_2`$.** Fix the ADPs at the prediction and refine only the
+   positions and the scale (`refine_positions_only=`). Compare the GoF with a full fit at $`T_2`$.
+   The baseline is the naive prediction for free ADPs, each scaled by $`T_2/T_1`$ (classical,
+   no zero-point motion). The motion model has to beat it to show it knows anything.
+2. **Against neutron ADPs at $`T_2`$**, hydrogens especially. The same baseline. Compare first at
+   one temperature where X-ray and neutron data both exist, to measure the offset between the
+   two kinds of ADP before using it.
+3. **The effective frequencies against spectroscopy.** For urea: Capelli, Förtsch and Bürgi's
+   64 cm⁻¹ mode, libration about C–O mixed with NH₂ pyramidalisation; the dispersion curves of
+   Lefebvre et al.; the TOSCA spectrum of Johnson et al. For gly-L-ala: the room-temperature
+   THz/far-IR spectrum of Kutteruf et al. and, if confirmed, the INS of Parker and Haris.
+
+Both directions are worth running. Predicting down in temperature tests the zero-point motion;
+predicting up tests the low frequencies, where the amplitudes grow fastest.
+
+**What (5a.3) leaves out**, each a reason the prediction may fail: thermal expansion, which lowers
+the lattice frequencies as the crystal warms; anharmonicity, which matters most for the torsions
+and the softest librations; and the spread of frequencies over the Brillouin zone, which (5a.2)
+replaces with one Einstein frequency for each eigenvector. Acoustic modes follow a Debye
+spectrum, and at low temperature one Einstein frequency describes them poorly; Bürgi and Capelli
+treat this.
+
+**Data.**
+
+| molecule | data | temperatures | where |
+|---|---|---|---|
+| urea | X-ray, the data of the existing tests | 123 K | `svp_final` runs; source to confirm |
+| urea | neutron ADPs (Swaminathan, Craven and McMullan) | 12, 60, 123 K | the paper's tables; structure factors to look for |
+| gly-L-ala | X-ray (Capelli et al., *IUCrJ* 2014) | 12 to 295 K, six temperatures | 150 K in `~/Dropbox/tonto_data/xray_neutron_set`; the others to fetch from the paper's supporting information |
+| gly-L-ala | neutron (Capelli, Bürgi, Mason and Jayatilaka, *Acta Cryst. C* 2014) | 12, 50, 150, 295 K | to fetch |
+
+Gly-L-ala is the better first case: X-ray structure factors at six temperatures make comparison 1
+possible, and its five soft modes give more to transfer. Urea has only one X-ray temperature
+here, so for urea only comparisons 2 and 3 can be made.
+
+**Code.** One routine on `CRYSTAL`, next to `put_TLS_results`. It builds $`\mathbf{G}`$, finds the
+$`\omega_k`$ from (5a.2), prints them with their eigenvectors' rigid-body and soft-mode content,
+and writes the predicted ADPs for a list of temperatures (a keyword such as
+`predict_adps_at_temperatures=`). It also needs a way to start a fit from given ADPs and hold them
+fixed. Comparison 1 then needs no further code.
 
 ### Tests
 
@@ -660,6 +748,21 @@ eigenvalue filter. §3.8 and §4 state what the code does.
 - E. B. Wilson, J. C. Decius and P. C. Cross, *Molecular Vibrations* (1955). Normal coordinates,
   Eckart conditions, the l and L matrices.
 - C. K. Johnson, in *Crystallographic Computing* (1970). Curvilinear (libration) corrections.
+- J. Kutteruf, C. M. Brown, L. K. Iwaki, M. B. Campbell, T. M. Korter and E. J. Heilweil,
+  *Chem. Phys. Lett.* **375**, 337 (2003). THz/far-IR of gly-L-ala and other peptides, 298 K.
+- S. C. Capelli, A. Förtsch and H.-B. Bürgi, *Acta Cryst.* **A56**, 413 (2000). Normal modes of
+  urea fitted to multi-temperature neutron ADPs; the 64 cm⁻¹ mode.
+- S. Swaminathan, B. M. Craven and R. K. McMullan, *Acta Cryst.* **B40**, 300 (1984). Urea,
+  neutron diffraction at 12, 60 and 123 K.
+- A. W. Lefebvre, M. More, R. Fouret, B. Hennion and R. Currat, *J. Phys. C* **8**, 2011 (1975).
+  Phonon dispersion of deuterated urea by inelastic neutron scattering.
+- M. R. Johnson, K. Parlinski, I. Natkaniec and B. S. Hudson, *Chem. Phys.* **291**, 53 (2003).
+  INS of urea on TOSCA, with periodic DFT.
+- S. C. Capelli, H.-B. Bürgi, S. A. Mason and D. Jayatilaka, *Acta Cryst.* **C70**, 949 (2014).
+  Gly-L-ala, neutron diffraction at 12, 50, 150 and 295 K.
+- S. C. Capelli et al., *IUCrJ* **1**, 361 (2014). Gly-L-ala, X-ray HAR at six temperatures.
+- S. F. Parker and P. I. Haris, *Spectroscopy* **22**, 297 (2008). INS, IR and Raman of amino
+  acids and dipeptides, Gly-Ala among them (abstract only seen).
 
 ### 2026-10-13: the cutoff alone says which soft modes are refined (Dylan)
 

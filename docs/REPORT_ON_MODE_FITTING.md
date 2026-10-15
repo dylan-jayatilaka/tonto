@@ -515,6 +515,23 @@ In `xray_data=`:
 | `correlation_restraint=` | 0.5 | $`f_\rho`$ in §2.4: the uncertainty of a correlation coefficient held toward 0 |
 | `use_positive_tls_sigma=` | `TRUE` | holds Σ positive semidefinite (§2.4) |
 
+**Which modes are in the model.** `soft_mode_cutoff=` splits the internal modes, and
+`refine_soft_modes=` says what happens to those below it:
+
+| mode | `refine_soft_modes= NO` (default) | `refine_soft_modes= YES` |
+|---|---|---|
+| above the cutoff (stiff) | in U^high, fixed at its harmonic amplitude | the same |
+| below the cutoff (soft) | **left out of the model** | amplitude refined, restrained toward its harmonic value |
+| imaginary | left out of the model | amplitude refined, not restrained |
+
+The intended model has two states: stiff modes fixed, soft modes refined. That is
+`refine_soft_modes= YES`. The other settings are for diagnosis:
+
+- With `NO`, the soft modes are dropped, and T, L and S take up only the part of their motion
+  that looks rigid. Comparing with `YES` shows how much the soft modes matter.
+- A cutoff below the lowest real mode puts every real mode in U^high at its harmonic
+  amplitude, with nothing refined but T, L and S. This tests the Hessian alone.
+
 A TLS Hirshfeld atom refinement with U^high from a Hessian, and the four softest modes refined:
 
 ```

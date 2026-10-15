@@ -215,6 +215,15 @@ add_test(NAME "restrained_least_squares_known_answer"
     COMMAND ${PROJECT_BINARY_DIR}/run_lsq_restraint)
 set_tests_properties("restrained_least_squares_known_answer" PROPERTIES LABELS "short;selfcheck" SKIP_RETURN_CODE 77)
 
+# The pure symmetric eigensolver that solver diagonalises the normal matrix
+# with (Householder tridiagonalisation and implicit QR, Golub and van Loan
+# chapter 8): the book's own example, and residuals, order and agreement
+# with LAPACK on a dense matrix. Instant.
+add_test(NAME "symmetric_eigensolver_known_answer"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND ${PROJECT_BINARY_DIR}/run_eigensolver)
+set_tests_properties("symmetric_eigensolver_known_answer" PROPERTIES LABELS "short;selfcheck" SKIP_RETURN_CODE 77)
+
 # The fit of a spherical form factor to four Gaussians and a constant through
 # gnuplot, by a round trip on the carbon International Tables curve: the
 # coefficients must come back to 1e-4. Skipped (exit 77) where gnuplot is
