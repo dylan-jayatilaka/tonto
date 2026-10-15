@@ -113,6 +113,16 @@ $`\big(\sum_m M_{lm}^2\big)^{1/2}`$, does not: for $`l = 1`$ it is the magnitude
 gradient, for $`l = 2`$ the magnitude of its traceless curvature. That is the map made by
 default; one component is made on request.
 
+**Local axes.** A component is more telling in a frame fixed to the molecule than in the cell's:
+$`M_{11}`$ with $`x`$ along a bond is the rise of the density along that bond. The frame is
+given by atoms or vectors: $`x`$ from one atom to another, $`y`$ from one atom toward another
+made perpendicular to $`x`$, and $`z = x \times y`$; or $`z`$ given and $`x`$, $`y`$ made
+perpendicular to it. No rotation of the moments is needed. The harmonic in (6) is a function of
+the direction of $`\mathbf q`$, so the moment in the new frame is the same series with
+$`Y_{lm}`$ evaluated at the components of $`\mathbf q`$ along the new axes, $`R^{\mathsf T}\mathbf q`$
+with the axes the columns of $`R`$; the phase $`e^{-i\mathbf q\cdot\mathbf r}`$ is untouched. The
+same frame applies to the radial functions of section 2.2 and the atom tables of section 2.3.
+
 **Deformation moments.** Replacing $`F_n e^{i\alpha_n}`$ in (6) by $`F_n e^{i\alpha_n} - F_n^{\rm pro}`$,
 with $`F_n^{\rm pro}`$ the structure factors of the spherical atoms at the model's positions and
 ADPs, gives the local moments of the *dynamic* deformation density: the part that bonding adds
@@ -332,7 +342,8 @@ keyword at a time.
 |---|---|---|
 | `kind=` | `residual` | which structure factors the Fourier maps use: `residual` ($`F_{\rm exp} - F_{\rm calc}`$ with the model's phases), `f_exp` (observed magnitudes, model phases, $`F_{000}`$ added), `f_calc`, `deformation_calc` ($`F_{\rm calc} - F^{\rm pro}`$) and `deformation_exp` ($`F_{\rm exp} - F^{\rm pro}`$, model phases); the promolecule is made from the structure as it is when the block is read, so give the block after the refinement |
 | `l_value=` | $`-1`$ | for the Fourier maps: the plain density when negative, else the local moment of this $`l`$ (and this resets `m_value=`); for the rebuilt atoms: one $`l`$ alone |
-| `m_value=` | none | one component $`m`$ of the local moment, signed, in the frame of the Cartesian axes; without it the norm over $`m`$ |
+| `m_value=` | none | one component $`m`$ of the local moment, signed, in the frame of the axes below; without it the norm over $`m`$ |
+| `m_maps=` | `auto` | what a `plot` of a local moment writes: `norm`, the norm over $`m`$ alone; `all`, every component to its own file, named with `_m<m>` after the plot label, and the norm under the label itself; `auto` is `all` when axes are given and `norm` otherwise |
 | `window_width=` | 0.25 Å | $`\sigma`$ of equation (6), a length with units |
 | `sharpen_u=` | 0 | a mean ADP divided out of a local-moment map, an area with units (`angstrom^2`); must stay below `window_width` squared unless `sharpen_order=` is set |
 | `sharpen_order=` | 0 | the order $`J`$ of the polynomial (14) in place of the exact sharpening factor; 0 is exact |
@@ -341,6 +352,9 @@ keyword at a time.
 | `l_max=` | 2 | the highest $`l`$ of the radial functions and the rebuilt atoms |
 | `centre=` | the origin | the centre of the radial functions (7), Cartesian, with units; `center=` is accepted |
 | `centre_fractional=` | | the same in fractional coordinates (`crystal=` must come first) |
+| `centre_atom=`, `centre_atoms=` | | the centre as an atom, or the mean position of atoms in braces |
+| `x_axis_atoms=`, `y_axis_atoms=`, `z_axis_atoms=` | the Cartesian axes | the frame of the $`m`$ components and of the radial functions, each axis from the first atom to the second: $`y`$ is made perpendicular to $`x`$ and $`z = x \times y`$; a given $`z`$ is kept and $`x`$, $`y`$ made perpendicular to it |
+| `x_axis=`, `y_axis=`, `z_axis=` | | the same axes as vectors |
 | `n_radii=`, `radius_max=` | 40, 2 Å | the radii of the radial functions, equally spaced |
 | `density_source=` | `wavefunction` | the density the atoms are expanded from: the wavefunction's, or `cell_map`, the series (1) of the `kind` above |
 | `atom_weight=` | `hirshfeld` | `none` leaves the weight out of (9), for testing against (7) |
@@ -349,6 +363,9 @@ keyword at a time.
 | keyword | what it makes |
 |---|---|
 | `plot_grid= { kind= cell_map ... }` then `plot` | the Fourier map the block describes: the density of `kind=`, or with `l_value=` its local moment, equation (6) |
+| `plot_grid= { plot_format= cell.cube }` | a cube file that a viewer reads as one periodic cell: every atom of the cell in the header, and the repeated end plane of the grid left out |
+| `plot_grid= { plot_atoms= molecules }` | the cube file lists every molecule that has an atom in the cell, complete, so a viewer draws whole molecules; `unit_cell` lists the cell's atoms, `box` (the default) the molecule's atoms inside the box |
+| `plot_grid= { use_molecules_as_bbox  box_margin= 1 angstrom }` | the box is set around those complete molecules, with the margin to spare, when the block closes |
 | `plot_grid= { kind= angular_hirshfeld ... }` then `plot` | the density rebuilt from the Hirshfeld atoms, equation (10), up to `l_max=` or for `l_value=` alone, over the atoms of `atoms=` |
 | `plot_grid= { kind= hirshfeld_amplitude ... }` then `plot` | the same for the amplitudes, the sum over atoms of the expansion (11) |
 | `put_cell_map` | the block's settings, the number of reflections and the electron count of the map |
@@ -378,6 +395,18 @@ plot
 
 Each `plot` writes a Gaussian cube file named after the job, the plot's label and the kind, for
 VESTA or any cube viewer; `plot_grid= { plot_label= ... }` between plots keeps the files apart.
+A cube file carries no symmetry, so a viewer can only draw the atoms listed in it: for whole
+molecules in VESTA use `plot_atoms= molecules`, and `plot_format= cell.cube` when the box is
+the cell, so that VESTA's cell is the true one and the map repeats into neighbouring cells.
+The centre and axes keywords are the same in `plot_grid= { }` and `cell_map= { }`; the one
+type `PLOT_AXES` reads them for both. A job that makes the $`l = 1`$ component along C=O of
+urea, atoms C and O being 3 and 1 and N1 being 2:
+
+```
+cell_map= { kind= f_exp  l_value= 1  m_value= 1
+            centre_atom= 3  x_axis_atoms= 3 1  y_axis_atoms= 3 2 }
+plot
+```
 
 ## 4. Where it is implemented
 
@@ -392,6 +421,9 @@ VESTA or any cube viewer; `plot_grid= { plot_label= ... }` between plots keeps t
 | the local moments (6), one component or the norm over $`m`$; the sharpening, exact or by (14); the Laplacians | `CELL_MAP:make_moment_at`, `sharpening_polynomial`, through `make_map_at` |
 | the Wiener weight on the observed coefficients | `DIFFRACTION_DATA.SET:make_Fourier_coefficients` |
 | the solid harmonics $`q^l Y_{lm}(\hat{\mathbf q})`$ for all $`l \le l_{\max}`$ | `FOURIER_SUMS:make_solid_harmonics`, with `FOURIER_SUMS:harmonic_column` for the order of $`m`$ |
+| the centre and the local frame, by atoms or vectors; the frame completed | the type `PLOT_AXES` (`plot_axes.foo`), held by `CELL_MAP` and `PLOT_GRID`; resolved against the atoms by `MOLECULE.MAIN:set_cell_map_axes` |
+| the complete molecules of the cell, for a cube file's atom list | `CRYSTAL:create_whole_molecule_atom_list`, from the unit cell connection table |
+| the cube writers: the atoms in the box or every atom given; the periodic cell without its repeated plane | `ARCHIVE:write_gaussian_cube`, `ARCHIVE:write_gaussian_cell` |
 | the radial functions (7); the spherical Bessel functions | `CELL_MAP:make_radial_functions`, `FOURIER_SUMS:spherical_bessel` |
 | the angular quadrature (9) and (11) about a nucleus | `MOLECULE.RHO:make_atom_lm_radial_functions` |
 | the atom tables and populations | `MOLECULE.MAIN:put_angular_Hirshfeld_atoms` |
@@ -428,6 +460,8 @@ and itself tested against an angular quadrature of the series.
 | 7 | $`\sum_{l\le 2} n^A_l`$ of the amplitude, against the atom's electron count | urea, gly-L-ala, every atom | difference as a fraction of $`N_A`$ | 0.05 to 0.3 %, the remainder being $`l > 2`$ |
 | 8 | the rebuilt density (10) over all atoms, against the electron density on the same grid | urea, $`L = 0, 1, 2, 4, 6`$ | rms remainder as a fraction of the density's rms | see section 6 |
 | 9 | the model deformation map minus the experimental one, against the residual map; and the deformation maps' integrals | urea | rms over the cell; integral | 0.022, the residual's rms; zero |
+| 10 | the $`l = 1`$ and $`l = 2`$ norms made on their own, against the root sum of squares of the $`m`$ components made in a frame fixed to the molecule | urea, `f_exp`, 0.4-bohr grid | largest difference over the cell | 0 as written; 1e-5 from the printed cube files |
+| 11 | the radial functions about an atom with $`z`$ normal to the molecular plane | urea | the odd components $`(1,0)`$, $`(2,\pm1)`$ | zero at every radius, as the mirror plane requires |
 
 Beyond 1.5 Å from a nucleus check 6 fails, as it must: without the weight the sphere runs
 through neighbouring nuclei, and a 302-point Lebedev grid cannot integrate a 50 e/Å³ spike.
