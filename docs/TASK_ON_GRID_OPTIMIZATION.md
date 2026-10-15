@@ -244,6 +244,39 @@ Laqua 2018, Gräfenstein 2007.
   and cure it by changing the partition at long range. The water dimer in the test set, with one
   stretched geometry added, shows whether Tonto has that problem; changing the partition is not
   part of this task.
+- **Papers citing Laqua 2018** (Semantic Scholar, 2026-10-15; about forty, mostly the Ochsenfeld
+  group's own methods and GPU implementations). The ones that bear on this work, none yet in the
+  manuscript folder except Lehtola 2022:
+  - Laikov, arXiv 2006.05881 (2020): a quality measure of the partition weight, roughly the
+    average number of angular points needed for a given accuracy, used to compare and optimise
+    weighting functions in the two-centre case; a modification of Becke's cells; and
+    spherically symmetric unnormalised weights, a negative power times exp of minus the fourth
+    power of the scaled distance, simpler and linear scaling by construction. The direct
+    literature for the question why Becke's partition wins and what a wall costs in angular
+    points. Read before the per-shell split.
+  - Hesselmann, Werner and Knowles, JCP 157 (2022), doi 10.1063/5.0119622: fixed SG-x, Treutler–Ahlrichs
+    three-zone, Molpro's five-zone grid and a new adaptive grid on 408 molecules and 254
+    reactions; the adaptive grid wins, the SG-x grids are poor at high accuracy, meta-GGAs need
+    larger grids, and the grid error is nearly independent of the basis set. The closest study
+    to this one in scope; its five-zone grid is a published zone scheme to compare with.
+  - Lehtola and Marques, JCP 157, 174114 (2022), in the folder: which functionals are
+    numerically ill-behaved on grids; bears on r2SCAN.
+  - Sitkiewicz et al., JCTC 20 (2024): spurious oscillations in vibrational properties traced
+    to the numerical integration of specific exchange and correlation components; PBE is less
+    sensitive by cancellation. Bears on the argon-dimer wobble and on what a smooth partition
+    buys for frequencies.
+  - Laqua, Thompson, Kussmann and Ochsenfeld, JCTC 16, 1456 (2020): sn-LinK, the seminumerical
+    exchange with their grids and integral bounds; the published counterpart of the COSX grids of
+    Appendix A. Also Urban et al., JCTC 20 (2024), distance-dependent screening for the same.
+  - Laqua, Dittmer and Head-Gordon, JCP 162 (2025): diffuse basis sets destroy the sparsity of
+    the density matrix even on a grid. Bears on `basis_fn_cutoff`, which the cutoff scan shows
+    moves KF by 4e-6 at the default value.
+  - Ylla, Ugalde, Matito and Ramos-Cordoba, arXiv 2610.01598 (2026): the topological fuzzy
+    Voronoi cell formalism with extra centres placed along interatomic displacement vectors, to
+    resolve secondary maxima of intracule densities. Extra centres, as in the mid-bond idea set
+    aside above, but for an integrand that does have maxima between the atoms.
+  - Tehrani et al., JCP 160 (2024): the Grid Python library (Becke and other partitions,
+    Lebedev and radial grids); a reference implementation to check a partition weight against.
 - **Gräfenstein and Cremer 2007** (`Grafenstein_2007_JCP_127_p164113.pdf`) is narrower than its
   title suggested: a way to add radial points in the valence region only, tested on the argon
   dimer with a meta-GGA, where 100 augmented points match 250 ordinary ones. It gives no grid
