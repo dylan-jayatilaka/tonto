@@ -34,6 +34,7 @@ parallel (MPI) builds for that platform.
 | [**Smearing the density between two atoms: the averages beyond first order**](REPORT_ON_TC_TLS_AVERAGES.md) | Numerical averages over the stiff modes and the rigid-body motion, and the average over the rigid-body rotation by formula |
 | [**Pair stabilisers in two-centre structure factors**](REPORT_ON_PAIR_STABILIZERS.md) | The weight of each pair of atoms when a fragment's structure factor is summed over the space group; the petite list |
 | [**Angular decomposition of electron density maps**](REPORT_ON_L_DECOMPOSITION_MAPS.md) | Local-moment maps from structure factors, the expansion about a centre, Hirshfeld atoms by angular character and their populations; keywords, code, checks, urea and gly-L-ala |
+| [**The atomic density table: `INTERPOLATOR`**](REPORT_ON_INTERPOLATOR.md) | The octave table every kind of atom is kept on, the lookup without a search, how each atom fills it, the keywords, the cluster radius, the routines |
 | [**Relativity: the scalar X2C Hamiltonian**](REPORT_ON_RELATIVITY.md) | The equations and how they relate to Dyall's elimination of the small component; keywords, Gaussian nuclei, the routines, the checks against PySCF, what is left out |
 | [**A sum of Gaussians for 1/r: where it wins**](REPORT_ON_GAUSSIAN_1_ON_R_FIT.md) | What a Gaussian expansion of the Coulomb kernel buys and costs: analytic integrals, grids, tensor hypercontraction, COSX, periodic systems |
 
