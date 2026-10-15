@@ -277,6 +277,10 @@ Laqua 2018, Gräfenstein 2007.
     aside above, but for an integrand that does have maxima between the atoms.
   - Tehrani et al., JCP 160 (2024): the Grid Python library (Becke and other partitions,
     Lebedev and radial grids); a reference implementation to check a partition weight against.
+  - PySCF 2.14 implements the LKO partition too: `becke_scheme=becke_lko` in
+    `pyscf/dft/gen_grid.py` (the C routine `VXCgen_grid_lko`, with Becke's or Treutler's size
+    adjustment), in the venv at `~/tonto-runs/2026-10-11_x2c/venv`. An outside check of
+    Tonto's `partition_B_LKO` weights on a set of points, if ever wanted.
 - **Gräfenstein and Cremer 2007** (`Grafenstein_2007_JCP_127_p164113.pdf`) is narrower than its
   title suggested: a way to add radial points in the valence region only, tested on the argon
   dimer with a meta-GGA, where 100 augmented points match 250 ordinary ones. It gives no grid
