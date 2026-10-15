@@ -78,15 +78,19 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## START HERE (2026-10-15, afternoon): LKO cutoff in; two pipelines running
+## START HERE (2026-10-15, afternoon): LKO cutoff in, checked, lowered; decisions for Dylan
 
-**First thing:** `cat ~/tonto-runs/2026-10-15_lko/status.md`. Two pipelines run there, both
-started 2026-10-15 about 11:15: `lko_master.sh` (the LKO checks, done, then the def2-TZVP
-confirmation of the lowered Becke grids in the 2026-10-13 folder: 22 SCFs on grid `best`, grids
-A and B, the four lowered grids with the cutoff off and at 5 bohr) and `lko_lowering.sh` (the
-`lko5` candidate, Becke's partition with the cutoff at 5 bohr, assembled and lowered in
-`lower/`). The last line of `status.md` says "ALL DONE" or "lko5 lowering done" when each is
-finished. Results and reading: `docs/TASK_ON_GRID_OPTIMIZATION.md` §9, entries of 2026-10-15.
+Both pipelines in `~/tonto-runs/2026-10-15_lko/` finished by 12:01 (`status.md`). Results and
+reading: `docs/TASK_ON_GRID_OPTIMIZATION.md` §9, entries of 2026-10-15. **Two decisions for
+Dylan:** (1) the LKO cutoff on by default at 5 bohr: the `lko5` lowering gives the same points
+as Becke at equal accuracy within the method's spread (1,646 / 3,978 / 9,321 / 17,593 against
+1,350 / 4,296 / 11,865 / 16,443), the argon curve is smooth and the weight build is local, so
+the recommendation is on; (2) the final lowering must pass on def2-TZVP too: the grids lowered
+on def2-SVP miss at def2-TZVP at `very_low` (1.1e-3, SF6) and `high` (3.8e-6, SF6 and Cr(CO)6)
+and hold at `low` and `medium`. Also: TiCl4 and ScO SCFs stopped (rc=1) at def2-TZVP, unread;
+`very_high` is limited on KF by `basis_fn_cutoff` (4e-6 at the default), not by the grid, and
+the way to test 0.1 µEh is in the same entry; the papers citing Laqua 2018 that matter are in
+§8 (Laikov's partition-quality measure first).
 
 In short: the LKO cutoff (Laqua, Kussmann and Ochsenfeld 2018) is implemented for Becke's and
 Salvador's partitions, keyword `lko_cutoff=` (bohr, 0 = off, the default), code change 8 of §5.

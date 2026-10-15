@@ -703,10 +703,49 @@ radii (`tfvp`).
   to be set beside Becke's points at each level. If equal, the cutoff goes on by default at
   5 bohr; if dearer, it stays a keyword for weakly bound systems.
 
-  **Also running** in the 2026-10-13 folder, after the checks: the def2-TZVP SCFs of the 22
-  systems on grid `best`, grids A and B, and the lowered Becke grids with the cutoff off and at
-  5 bohr (`lko_check_def2-TZVP.md`), which is the def2-TZVP confirmation of the levels with KF,
-  LiF and ScO included.
+  **The `lko5` lowering finished** (2026-10-15, 12:00; `lower/descent_status.md`). Points per
+  atom at the same targets, Becke without and with the cutoff:
+
+  | level | Becke | `lko5` |
+  |---|---|---|
+  | `very_low` | 1,350 | 1,646 |
+  | `low` | 4,296 | 3,978 |
+  | `medium` | 11,865 | 9,321 |
+  | `high` | 16,443 | 17,593 |
+
+  Cheaper at two levels, dearer at two, all within the 10 to 20 % that the start of the
+  lowering moves a result by. So the cutoff costs nothing systematic at equal accuracy, and the
+  `high` failure of (b) was the margin, not the cutoff. **Recommendation:** on by default at
+  5 bohr, for the smooth far-pair behaviour and the local weight build; `high` may use a larger
+  cutoff if its grid is ever set with the cutoff off. Dylan's call.
+
+  **The def2-TZVP confirmation finished** (`lko_check_def2-TZVP.md`; 21 of 23 SCFs on grid
+  `best`, TiCl4 and ScO stopped with rc=1 and are not in it; grids A and B; the lowered Becke
+  grids, cutoff off and 5 bohr). Worst error without KF, LiF, ScO, off / 5 bohr: `very_low`
+  1.1e-3 / 1.1e-3 (SF6), `low` 6.8e-5 / 7.7e-5, `medium` 7.7e-6 / 5.3e-6, `high` 3.8e-6 /
+  3.8e-6 (SF6 −3.8e-6, Cr(CO)6 3.2e-6). So the grids lowered on def2-SVP hold at `low` and
+  `medium` on def2-TZVP, and miss at both ends, `high` by four times, on SF6 and Cr(CO)6: the
+  grid error is not independent of the basis at the 1e-6 level, against Hesselmann's finding at
+  coarser levels. Consequence for the method: the final lowering must pass on def2-TZVP as
+  well, or be done on it. The def2-TZVP SCFs took under a minute each, so that is cheap. Why
+  TiCl4 and ScO stopped: to read in `def2-TZVP/{TiCl4,ScO}/run.log`.
+
+  **On `very_high` and the reference (Dylan's question, 2026-10-15).** The two reference grids
+  disagree (A − B, Becke, def2-SVP) by under 1e-8 on 14 systems, by 1e-7 to 4e-7 on NaCl, SF6,
+  TiCl4 and LiF, and by 1.7e-6 and 8.8e-7 on KF and ScO; with mixed4, KF 6.2e-6, ScO 3.9e-6,
+  LiF 2.2e-6 and the rest under 3e-8. The cutoff scan on grid A says where part of that is:
+  tightening `basis_fn_cutoff` to 1e-14 moves KF by 4.1e-6, TiCl4 by 3.3e-8 and Cr(CO)6 by
+  1.9e-8, every other cutoff by under 1e-10. So on KF the reference is limited by the basis
+  function threshold, not by the grid, and 1e-7 was never testable there. To test 0.1 µEh
+  honestly: (1) tighten `basis_fn_cutoff` for the reference and for `high` and above, and
+  re-measure A − B; (2) where A and B still disagree, add a third grid and show the three
+  converge geometrically in the radial count and in the angular order separately; (3) on the
+  ionic three the wall sits in the dense shell of the cation and Becke needs order 101 there
+  (shell tables), so the reference needs order 131 or a partition that moves the wall. Whether
+  1e-7 is needed: for energies no (a reaction energy at 0.1 kcal/mol is 1.6e-4), for forces and
+  frequencies 1e-6 with a smooth partition is the standard, and for HAR the quantity that
+  matters is the form factor, a different integrand whose grid error is measured by the COSX-
+  style stage, not by $`E_{xc}`$.
 
 - **The grid work after that, in order (proposed 2026-10-15):**
   1. Split the error per atom and per shell, Becke against mixed4, on one grid. Why Becke wins is
