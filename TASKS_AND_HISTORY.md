@@ -78,6 +78,26 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## START HERE (2026-10-15): the eigensolver and the BUSTER writer are merged; the interpolator tidy waits for review
+
+**Merged to `develop` on 2026-10-15** (branches `pure-eigensolver`, `buster-ff`; the handover of
+2026-10-14 overnight below has the detail): `MAT{REAL}:diagonalize_QR`, the pure Householder
+and QR eigensolver, now behind every refinement's normal equations, with the ctest
+`symmetric_eigensolver_known_answer`; and `FF_fit_format= buster`, the BUSTER `FORMFACTOR` file
+and retyped PDB file, with the long test `urea_rhf_STO-3G_sph-TFVH_FF_fit_buster` blessed on
+achari2. The report `docs/REPORT_ON_SAMS.md` describes the spherical models, the fit, the three
+formats, the least squares behind a refinement and what is left. CI on `develop` is the check.
+
+**Waiting for Dylan's review, not merged: branch `interpolator-tidy`** (`INTERPOLATOR` as one
+table kind, the Slater and Coppens bases and the averaged atoms on it; 186 of 186 of
+`short long cx rgbi` on achari2). Its report, `docs/REPORT_ON_INTERPOLATOR.md`, is on the branch.
+Register row *Review and merge `interpolator-tidy`*, the last TODO.
+
+**Decision owed (Dylan):** whether to scale the normal matrix by its diagonal before the
+near-zero eigen-filter, now that the eigensolver's accuracy is epsilon times the largest
+eigenvalue (section 7 of the SAMS report). **Idea recorded:** replace gnuplot's fit of the form
+factors by Tonto's own Levenberg-Marquardt on `LEAST_SQUARES`, also in that section.
+
 ## START HERE (2026-10-12, night): next is the reset of the grid levels
 
 **Next action:** reset the DFT grid levels, first in the order of work of
