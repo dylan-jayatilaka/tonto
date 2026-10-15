@@ -60,9 +60,10 @@ def start(cand, level, target, rich=False):
             best = (rt, tau, m[1])
     if best is None:
         return None
-    T.load(basis, **assemble.CANDIDATES[cand])
+    base = assemble.BASE.get(cand, cand)       # the radial scan and shell tables to read
+    T.load(basis, **assemble.CANDIDATES[base])
     rc = assemble.radial_counts(best[0])
-    zo = assemble.zone_orders(cand, best[1])
+    zo = assemble.zone_orders(base, best[1])
     return {'r': [rc[p] for p in range(1, 5)], 'z': [zo[p] for p in range(1, 5)]}
 
 def measure(cand, b):
