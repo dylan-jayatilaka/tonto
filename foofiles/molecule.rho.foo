@@ -3487,6 +3487,104 @@ contains
 
    end
 
+   make_crystal_cluster_for_atom(cluster,ref,a,radius) :: leaky, PURE
+   ! Make "cluster", the atoms of the crystal within "radius" of molecule
+   ! atom "a", in the frame of the molecule's atoms, and "ref(i)", the index
+   ! of a molecule atom of the same kind as cluster atom "i", whose
+   ! spherical density stands for it. See CRYSTAL:create_cluster_atom_list.
+      self :: IN
+      cluster :: VEC{ATOM}@, OUT
+      ref :: VEC{INT}@, OUT
+      a :: INT, IN
+      radius :: REAL, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.crystal.allocated,"no crystal")
+   ENSURE(.crystal.unit_cell_atom_for_frag_atom.allocated,"no unit cell atom for the fragment atoms")
+
+      offset :: VEC{REAL}(3)
+      i,b,u :: INT
+
+      ! The offset taking the crystal's frame onto the molecule's
+      u = .crystal.unit_cell_atom_for_frag_atom(a)
+      offset = .atom(a).position - .crystal.unit_cell_atom(u).position
+      .crystal.create_cluster_atom_list(cluster,.atom(a).position,radius,offset)
+
+      ! A molecule atom of the same kind for each cluster atom
+      ref.create(cluster.dim)
+      ref = 0
+      do i = 1,cluster.dim
+         do b = 1,.n_atom
+            if (NOT .atom(b).is_same_kind_as(cluster(i))) cycle
+            ref(i) = b
+            exit
+         end
+      end
+      STOP_IF(any(ref==0),"a crystal atom has no molecule atom of its kind")
+
+   end
+
+   make_cluster_stockholder_weight(grid,a,pts,cluster,ref) :: leaky, PURE
+   ! Make the Hirshfeld weight "grid" of molecule atom "a" at the points
+   ! "pts" with every atom of "cluster" in the denominator, each with the
+   ! interpolated Gaussian density of molecule atom "ref(i)" moved to its
+   ! position (make_crystal_cluster_for_atom makes both). With a cluster
+   ! of the crystal around the atom this is the weight of an atom of the
+   ! crystal; the molecule's own weight would give its atoms the
+   ! neighbours' density. Needs the atoms' interpolators.
+      self :: IN
+      grid :: VEC{REAL}, OUT
+      a    :: INT, IN
+      pts  :: MAT{REAL}, IN
+      cluster :: VEC{ATOM}, IN
+      ref  :: VEC{INT}, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.atom.has_interpolators_any_kind,"missing atomic interpolators")
+   ENSURE(grid.dim==pts.dim1,"incompatible dim1, grid & pts")
+   ENSURE(ref.dim==cluster.dim,"ref: wrong dim")
+
+      rho_a,rho_b,denom :: VEC{REAL}@
+      shifted :: MAT{REAL}@
+      shift :: VEC{REAL}(3)
+      ex :: REAL
+      i,j,n_pts :: INT
+
+      n_pts = pts.dim1
+      ex    = .stockholder_exponent
+      rho_a.create(n_pts)
+      rho_b.create(n_pts)
+      denom.create(n_pts)
+      shifted.create(n_pts,3)
+
+      ! The numerator, atom "a"
+      .atom(a).make_interpolated_density(rho_a,pts)
+      if (ex/=ONE) rho_a = rho_a**ex
+
+      ! The denominator, every atom of the cluster, atom "a" among them
+      denom = ZERO
+      do i = 1,cluster.dim
+         shift = cluster(i).position - .atom(ref(i)).position
+         do j = 1,3
+            shifted(:,j) = pts(:,j) - shift(j)
+         end
+         .atom(ref(i)).make_interpolated_density(rho_b,shifted)
+         if (ex==ONE) then; denom = denom + rho_b
+         else;              denom = denom + rho_b**ex
+         end
+      end
+
+      ! The weight
+      grid = ZERO
+      where (denom>1.0d-30) grid = rho_a/denom
+
+      shifted.destroy
+      denom.destroy
+      rho_b.destroy
+      rho_a.destroy
+
+   end
+
    make_stockholder_atom_weight_acc(grid,a,pts) :: private, PURE
    ! Make the Hirshfeld stockholder weight density "grid" for the atom
    ! with index "a" using supplied points "pts".
@@ -6934,10 +7032,18 @@ contains
    ENSURE(NOT use_cell_map OR .cell_map.allocated, "no cell_map")
 
       lebedev :: LEBEDEV@
+      cluster :: VEC{ATOM}@
+      ref :: VEC{INT}@
       Y,shell,dirs :: MAT{REAL}@
       rho,wa  :: VEC{REAL}@
       ra :: VEC{REAL}(3)
       i,j,n_leb,lv,m,lm,col :: INT
+      crystal_weight :: BIN
+
+      ! The atom of a crystal density takes the crystal's atoms in its weight
+      crystal_weight = weighted AND use_cell_map AND .crystal.allocated
+      if (crystal_weight) &
+         .make_crystal_cluster_for_atom(cluster,ref,a,maxval(radii)+12.0d0)
 
       ! The angular grid, and the harmonics at its points in the frame of
       ! "R" (unit vectors, so the solid harmonics are the surface harmonics)
@@ -6968,7 +7074,10 @@ contains
          else
             .make_ED_grid_r(rho,shell)
          end
-         if (weighted) then
+         if (crystal_weight) then
+            .make_cluster_stockholder_weight(wa,a,shell,cluster,ref)
+            rho = wa*rho
+         else if (weighted) then
             .make_stockholder_atom_weight(wa,a,shell)
             rho = wa*rho
          end
@@ -6990,32 +7099,32 @@ contains
       shell.destroy
       Y.destroy
       lebedev.destroy
+      if (crystal_weight) then
+         ref.destroy
+         cluster.destroy
+      end
 
    end
 
    make_angular_Hirshfeld_grid(grid,pts) :: leaky, PURE
    ! The plot kind angular_hirshfeld: the density rebuilt from the
-   ! Hirshfeld atoms' radial functions, see make_rebuilt_atoms_grid, in
-   ! electrons per cubic Angstrom like the cell maps.
+   ! Hirshfeld atoms' radial functions, see make_rebuilt_atoms_grid.
       self :: IN
       grid :: VEC{REAL}, OUT
       pts  :: MAT{REAL}, IN
 
       .make_rebuilt_atoms_grid(grid,pts,amplitude=FALSE)
-      grid = BOHR_PER_ANGSTROM**3 * grid
 
    end
 
    make_Hirshfeld_amplitude_grid(grid,pts) :: leaky, PURE
    ! The plot kind hirshfeld_amplitude: the square roots of the Hirshfeld
-   ! atoms rebuilt from their radial functions, see make_rebuilt_atoms_grid,
-   ! in the square root of electrons per cubic Angstrom.
+   ! atoms rebuilt from their radial functions, see make_rebuilt_atoms_grid.
       self :: IN
       grid :: VEC{REAL}, OUT
       pts  :: MAT{REAL}, IN
 
       .make_rebuilt_atoms_grid(grid,pts,amplitude=TRUE)
-      grid = sqrt(BOHR_PER_ANGSTROM**3) * grid
 
    end
 
@@ -7036,8 +7145,7 @@ contains
    ! are those of the block's atoms= (indices or tags), or all of them. Each
    ! atom's radial functions are made on a table of radii 0.05 bohr apart
    ! to 10 bohr and interpolated cubically between them; beyond 10 bohr an
-   ! atom adds nothing. Values are in atomic units; the plot kinds convert
-   ! them.
+   ! atom adds nothing. Values are in atomic units.
       self :: IN
       grid :: VEC{REAL}, OUT
       pts  :: MAT{REAL}, IN
