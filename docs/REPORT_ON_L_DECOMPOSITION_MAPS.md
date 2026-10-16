@@ -344,7 +344,7 @@ keyword at a time.
 | `l_value=` | $`-1`$ | for the Fourier maps: the plain density when negative, else the local moment of this $`l`$ (and this resets `m_value=`); for the rebuilt atoms: one $`l`$ alone |
 | `m_value=` | none | one component $`m`$ of the local moment, signed, in the frame of the axes below; without it the norm over $`m`$ |
 | `m_maps=` | `auto` | what a `plot` of a local moment writes: `norm`, the norm over $`m`$ alone; `all`, every component to its own file, named with `_m<m>` after the plot label, and the norm under the label itself; `auto` is `all` when axes are given and `norm` otherwise |
-| `window_width=` | 0.25 Å | $`\sigma`$ of equation (6), a length with units |
+| `window_width=` | 0.25 Å | $`\sigma`$ of equation (6), a length with units; also the window of the density the Hirshfeld atoms are expanded from when `density_source= cell_map`, where 0 means the raw density; a local-moment map needs it positive |
 | `sharpen_u=` | 0 | a mean ADP divided out of a local-moment map, an area with units (`angstrom^2`); must stay below `window_width` squared unless `sharpen_order=` is set |
 | `sharpen_order=` | 0 | the order $`J`$ of the polynomial (14) in place of the exact sharpening factor; 0 is exact |
 | `laplacian_order=` | 0 | $`k`$ Laplacians applied to a local-moment map, scaled by $`\sigma^{2k}`$ |
@@ -356,7 +356,7 @@ keyword at a time.
 | `x_axis_atoms=`, `y_axis_atoms=`, `z_axis_atoms=` | the Cartesian axes | the frame of the $`m`$ components and of the radial functions, each axis from the first atom to the second: $`y`$ is made perpendicular to $`x`$ and $`z = x \times y`$; a given $`z`$ is kept and $`x`$, $`y`$ made perpendicular to it |
 | `x_axis=`, `y_axis=`, `z_axis=` | | the same axes as vectors |
 | `n_radii=`, `radius_max=` | 40, 2 Å | the radii of the radial functions, equally spaced |
-| `density_source=` | `wavefunction` | the density the atoms are expanded from: the wavefunction's, or `cell_map`, the series (1) of the `kind` above |
+| `density_source=` | `wavefunction` | the density the atoms are expanded from: the wavefunction's, or `cell_map`, the series (1) of the `kind` above with each term damped by $`e^{-\sigma^2 q^2/2}`$, $`\sigma`$ being `window_width=` (the density through the window of the local moments; 0 gives the raw series); with `cell_map` the Hirshfeld weights have every atom of the crystal near the atom in their denominator |
 | `atom_weight=` | `hirshfeld` | `none` leaves the weight out of (9), for testing against (7) |
 | `atoms= { ... }` | all | the atoms of a rebuilt map, by index or by tag, in braces |
 
