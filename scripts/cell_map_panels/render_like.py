@@ -23,6 +23,7 @@ outdir = os.path.abspath(os.environ["PANEL_OUT"])
 first = int(os.environ.get("PANEL_FIRST", 11))
 last = int(os.environ.get("PANEL_LAST", 21))
 levels = os.environ.get("PANEL_LEVELS")
+BLUE, GOLD = "#4a90d9", "#e8a33d"   # negative, positive
 os.makedirs(outdir, exist_ok=True)
 
 # The view chosen by hand is a rotation of the models, not of the camera: take it from
@@ -41,16 +42,17 @@ for m in session.models.list():
 if levels:
     l0, n1, c1, n2, c2 = levels.split()
     signed = os.environ.get("PANEL_SIGNED_SUMS")   # the l maps are signed sums, not norms
-    run(session, "volume #%d level %s" % (first, l0))
-    run(session, "volume #%d level %s%s" % (first + 1, ("-%s level " % n1) if signed else "", n1))
-    run(session, "volume #%d-%d level -%s level %s" % (first + 2, first + 4, c1, c1))
-    run(session, "volume #%d level %s%s" % (first + 5, ("-%s level " % n2) if signed else "", n2))
-    run(session, "volume #%d-%d level -%s level %s" % (first + 6, last, c2, c2))
+    run(session, "volume #%d level %s color %s" % (first, l0, GOLD))
+    run(session, ("volume #%d level -%s color %s level %s color %s" % (first + 1, n1, BLUE, n1, GOLD)) if signed else ("volume #%d level %s color %s" % (first + 1, n1, GOLD)))
+    run(session, "volume #%d-%d level -%s color %s level %s color %s" % (first + 2, first + 4, c1, BLUE, c1, GOLD))
+    run(session, ("volume #%d level -%s color %s level %s color %s" % (first + 5, n2, BLUE, n2, GOLD)) if signed else ("volume #%d level %s color %s" % (first + 5, n2, GOLD)))
+    run(session, "volume #%d-%d level -%s color %s level %s color %s" % (first + 6, last, c2, BLUE, c2, GOLD))
 
 with open(os.path.join(outdir, "levels.txt"), "w") as f:
     for v in session.models.list(type=Volume):
         f.write("%s %s %s\n" % (v.id_string, v.name, " ".join("%.3f" % s.level for s in v.surfaces)))
 
+run(session, "volume #%d-%d transparency %s" % (first, last, os.environ.get("PANEL_TRANSPARENCY", "0.25")))
 run(session, "tile #%d-%d columns 4 spacingFactor 1.3" % (first, last))
 run(session, "view")
 run(session, "save %s width 4800 height 4800 supersample 3" % os.path.join(outdir, "panel.png"))

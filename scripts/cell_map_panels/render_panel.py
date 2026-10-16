@@ -23,7 +23,10 @@ os.makedirs(outdir, exist_ok=True)
 
 run(session, "open %s" % session_file)
 run(session, "windowsize 1600 1600")
-run(session, "view mine")
+try:
+    run(session, "view mine")          # the named view, if the session has one
+except Exception:
+    pass                               # else the session's own orientation
 
 # The levels, for the caption
 with open(os.path.join(outdir, "levels.txt"), "w") as f:
