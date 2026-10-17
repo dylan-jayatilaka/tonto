@@ -91,9 +91,15 @@ the same gly-L-ala populations to every printed digit; merged as `8d52ae28`. **`
 is untouched and still unmerged.** The plot-axes merge broke `printed_labels_line_up` (a
 heading's rule one character long), fixed in `eeb8b5b3`.
 
-**Waiting (register, watch list):** re-bless `tests/long/urea_rks_B3LYP_def2-TZVP_HAR_cell_maps`
-on achari2 (cube headers with every cell atom; two new `put_cell_map` lines). The push CI does
-not run the long suite. **Decision owed (register):** a new name for `INTERPOLATOR`, which is
+**Waiting, first (register, watch list): `develop`'s push CI is red** (Linux-release, short suite
+67 of 70 by the loose criterion) until four tests are re-blessed on achari2. Three short tests
+fail by structure alone, because `PLOT_GRID:put` now prints the centre and the axis vectors in
+place of the old atom-centre lines: `h2o_rhf_cc-pVDZ_electron_density_plot`,
+`h2o_rhf_cc-pVDZ_electric_polarisation_density_plot`, `nh3_rhf_DZP_ED_grid` (their numbers
+differ from the references as they did before the merge, inside the loose bound; the cube
+headers are unchanged). And the long test `urea_rks_B3LYP_def2-TZVP_HAR_cell_maps` (cube headers
+with every cell atom; two new `put_cell_map` lines). The plot-axes branch was never run through
+the short suite before the merge; that is how these reached `develop`. **Decision owed (register):** a new name for `INTERPOLATOR`, which is
 now a table of a decaying spherical function; suggested `RADIAL_TABLE`, keeping the input
 keywords.
 
