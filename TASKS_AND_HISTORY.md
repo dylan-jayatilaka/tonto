@@ -78,7 +78,31 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## START HERE (2026-10-15, evening): local axes for the cell maps; cube files for VESTA
+## START HERE (2026-10-17): interpolator tidy and plot-axes merged to `develop`
+
+Dylan reviewed both branches and asked for them to be merged. **`interpolator-tidy`** is merged
+as it was (`3a61ee49`), and `docs/REPORT_ON_INTERPOLATOR.md` was rewritten shorter, about the
+numerical model and the floating-point intrinsics, at his request; its formula for the table
+points was a factor of two off and is corrected. **`plot-axes`** was started from
+`grid-optimization`, so a direct merge would have brought that branch's unreviewed commits
+(the LKO cutoff on by default among them). Only the nine plot-axes commits were replayed onto
+`develop`, as branch `plot-axes-develop`; it builds on top of the interpolator merge and gives
+the same gly-L-ala populations to every printed digit; merged as `8d52ae28`. **`grid-optimization`
+is untouched and still unmerged.** The plot-axes merge broke `printed_labels_line_up` (a
+heading's rule one character long), fixed in `eeb8b5b3`.
+
+**Waiting (register, watch list):** re-bless `tests/long/urea_rks_B3LYP_def2-TZVP_HAR_cell_maps`
+on achari2 (cube headers with every cell atom; two new `put_cell_map` lines). The push CI does
+not run the long suite. **Decision owed (register):** a new name for `INTERPOLATOR`, which is
+now a table of a decaying spherical function; suggested `RADIAL_TABLE`, keeping the input
+keywords.
+
+What the plot-axes work added on 2026-10-16, Riesz density maps (`moment_kind= riesz`) and
+missing reflections filled by the model (`fill_missing=`), is logged in
+`docs/TASK_PLOT_AXES.md`. The IUCrJ manuscript is in
+`~/Dropbox/tex/conference_talks/2026_ED_angular_decomp_iucrj/`; Dylan is reading it.
+
+## 2026-10-15, evening: local axes for the cell maps; cube files for VESTA
 
 Branch `plot-axes` (from `grid-optimization`, not merged). Dylan, looking at the urea
 $`l = 0, 1, 2`$ maps in VESTA, asked for the $`m`$ components in a frame fixed to the molecule
