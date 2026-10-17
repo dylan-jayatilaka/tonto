@@ -2589,35 +2589,30 @@ contains
          .use_interpolators = TRUE
       end
 
-      ! Set default template for atom interpolators
-      if (.interpolator.deallocated) then
-         .interpolator.create
-         .interpolator.set_interpolation_method("linear")
-         .interpolator.set_range_mapping("none")
-         .interpolator.set_domain_mapping("sqrt(x/(1-x))*scale")
-         .interpolator.set_table_length(ONE)
-         .interpolator.set_spacing(0.01d0)
-         .interpolator.set_table_eps(0.001d0)
-      end
-
       ! Reset ANO interpolators
       .destroy_interpolators
       .make_atom_partition_info
 
-      ! Copy ANO interpolators (which become IHA's)
+      ! The averaged atoms get coarser tables than the ANO's, 64 cells to
+      ! each power of two from 0.01 bohr, since each point costs a
+      ! spherical shell of density evaluations; the ANO density is their
+      ! start.
       interpolator.create(.n_atom)
-      do a = 1,.n_atom
-         interpolator(a) = .atom(a).interpolator
-      ! interpolator(a).put
-      end
-
-      ! Reassign fresh (non-ANO) interpolator copy;
-      ! Create averaged rho; set extrapolator.
-      .destroy_ANO_matrices
       rho_av.create(.n_atom)
       do a = 1,.n_atom
-         .atom(a).interpolator = interpolator(a)
+         interpolator(a) = .atom(a).interpolator
+         interpolator(a).set_octave_cells(64)
+         interpolator(a).set_octave_points(r_min=0.01d0)
          rho_av(a).element.create(interpolator(a).n_data)
+         .atom(a).interpolator.values_for(interpolator(a).data_point,rho_av(a).element)
+         interpolator(a).set_data_values(rho_av(a).element)
+         interpolator(a).finalize
+      end
+
+      ! Reassign fresh (non-ANO) interpolator copy
+      .destroy_ANO_matrices
+      do a = 1,.n_atom
+         .atom(a).interpolator = interpolator(a)
       end
       .atom.set_is_unique_kind(FALSE)
 
@@ -2657,10 +2652,13 @@ contains
 
          iteration = iteration + 1
 
-         ! Spherically average & extrapolate, for each atom
+         ! Spherically average & extrapolate, for each atom. The table
+         ! may have been shortened when it was finalized.
          eps = ZERO
          do a = 1,.n_atom
 
+            rho_av(a).element.destroy
+            rho_av(a).element.create(interpolator(a).n_data)
             .make_spherically_averaged_HA(rho_av(a).element,eps_a,a,interpolator(a),max_l)
 
             eps = max(eps,eps_a)
@@ -2752,14 +2750,10 @@ contains
       do i = 1,interpolator.n_data
 
          ! Table value r
-         r = interpolator.data_point(i)
+         r = sqrt(interpolator.data_point(i))
 
          ! Interpolator data valie
          old = interpolator.data_value(i)
-
-         ! Convert to actual r?
-         if (interpolator.domain_is_sqrt_x1x) &
-            r = sqrt(r/(1-r))*interpolator.domain_scale_factor
 
          ! For each r, make a spherical shell of points
          do n = 1,n_pts
@@ -2816,37 +2810,33 @@ contains
       eps,eps_a    :: REAL
       a,l_max,iteration :: INT
 
-      ! Set up the template for interpolators
-      if (.interpolator.deallocated) then
-         .interpolator.create
-         .interpolator.set_interpolation_method("cubic_spline")
-         .interpolator.set_range_mapping("none")
-         .interpolator.set_domain_mapping("sqrt(x/(1-x))*scale")
-         .interpolator.set_table_length(ONE)
-         .interpolator.set_spacing(0.001d0)
-         .interpolator.set_table_eps(cluster.atom_density_cutoff)
-      end
-
       ! Set up grids, atomic densities, and NO's
       .make_atom_partition_info
 
-      ! List of initial atom interpolators. Leaky
+      ! The averaged atoms get coarser tables than the ANO's, 64 cells to
+      ! each power of two from 0.01 bohr, since each point costs a
+      ! spherical shell of density evaluations; the ANO density is their
+      ! start.
       interpolator.create(.n_atom)
+      rho_av.create(.n_atom)
       do a = 1,.n_atom
          interpolator(a) = .atom(a).interpolator
+         interpolator(a).set_table_eps(cluster.atom_density_cutoff)
+         interpolator(a).set_octave_cells(64)
+         interpolator(a).set_octave_points(r_min=0.01d0)
+         rho_av(a).element.create(interpolator(a).n_data)
+         .atom(a).interpolator.values_for(interpolator(a).data_point,rho_av(a).element)
+         interpolator(a).set_data_values(rho_av(a).element)
+         interpolator(a).finalize
       end
 
       ! Destroy atom ANO data and interpolators. Leaky.
       .destroy_ANO_matrices
       .destroy_interpolators
 
-      ! The list of new atomic radial densities
-      rho_av.create(.n_atom)
-
-      ! Reassign fresh interpolator copy; create averaged rho
+      ! Reassign fresh interpolator copy
       do a = 1,.n_atom
          .atom(a).interpolator = interpolator(a)
-         rho_av(a).element.create(interpolator(a).n_data)
       end
 
       ! No of Gauss-Legendre integration points
@@ -2869,9 +2859,12 @@ contains
 
          stdout.show("Iteration =",iteration)
 
-         ! Spherically average each atom
+         ! Spherically average each atom. The table may have been
+         ! shortened when it was finalized.
          eps = ZERO
          do a = 1,.n_atom
+            rho_av(a).element.destroy
+            rho_av(a).element.create(interpolator(a).n_data)
             .make_averaged_BDAs(rho_av(a).element,eps_a,a,interpolator(a),l_max)
             eps = max(eps,eps_a)
          end
@@ -2971,14 +2964,10 @@ contains
       do i = 1,interpolator.n_data
 
          ! Table value r
-         r = interpolator.data_point(i)
+         r = sqrt(interpolator.data_point(i))
 
          ! Interpolator data valie
          old = interpolator.data_value(i)
-
-         ! Convert to actual r?
-         if (interpolator.domain_is_sqrt_x1x) &
-            r = sqrt(r/(1-r))*interpolator.domain_scale_factor
 
          ! For each r, make a spherical shell of points
          do n = 1,n_pts
