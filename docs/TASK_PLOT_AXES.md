@@ -147,3 +147,34 @@ is the $`F_{\rm exp}`$ maps on a box around the eight complete molecules of the 
 (`plot_atoms= molecules`, `use_molecules_as_bbox`, `box_margin= 1 angstrom`): 99 by 99 by 117
 points, 64 atoms in the header, 15 MB a file. The notes for Santosh were also placed in the
 IUCr journals template, `~/Dropbox/tex/conference_talks/2026_ED_angular_decomp_iucrj/`.
+
+**2026-10-16.** Three additions to the cell maps, all uncommitted at the time of writing.
+
+*Riesz density maps* (`cell_map= { moment_kind= riesz }`): each term of the series multiplied by
+$`(-i)^l Y_{lm}(\hat{\mathbf q})`$ alone, no window and no $`q^l`$; $`F_{000}`$ kept for
+$`l = 0`$ only. Suggested by Santosh Panjikar, first called Panjikar maps, renamed by Dylan to
+the mathematical name. Checked on urea: the $`l = 0`$ map equals $`\rho/\sqrt{4\pi}`$ to the
+cube's printed precision (4e-5 relative), and each norm equals the root of the summed squares
+of its components (2e-5). For $`l = 2`$ the map is $`-1/4\pi`$ times the electronic field
+gradient.
+
+*Missing reflections* (`cell_map= { fill_missing= TRUE }`). The gly-L-ala Hirshfeld populations
+were absurd (O 6 to 9, H up to 3.8, $`\sum n_0`$ 70 of 78). Ruled out, in order: the crystal
+weights (probe: about 1 at each nucleus, cluster complete, 575 atoms within 20 bohr as the cell
+volume predicts); series-termination ripple (0.21 and 0.25 A windows change nothing; urea cut to
+the gly resolution, 0.767 /A, gives correct populations); the measured data (F_calc gives the
+same failure); Friedel mates (removing them changes nothing); the weights against the density
+(wavefunction density with crystal weights is correct, 76.6). Cause: the gly-L-ala list lacks
+39 reflections within its resolution, eight of them strong and below 0.23 /A ((1 0 1), (0 0 2),
+(0 2 0), (0 2 1), (2 1 0), (1 2 2), (2 3 0), (3 2 0)). Adding them by hand with zero weight gave
+$`\sum n_0`$ 76.2, total 77.8. The keyword does this in code: CRYSTAL:make_missing_reflections
+finds them; MOLECULE.MAIN:make_filled_reflections values them with the refinement's form factors
+(HAR, or IAM after an IAM refinement) when the block is read; MOLECULE.RHO:make_cell_map appends
+them while a map is made. L-alanine lacks three low-angle ones, (0 5 1), (3 2 0), (3 0 2); urea
+none below 0.60 /A. A fast reproduction of the gly fault: IAM refinement plus an STO-3G SCF,
+one minute (`tmp/iam_pop_gly` in the session job directory).
+
+*Plane maps* through `plot_format= gnuplot.contour` work for the cell maps unchanged: urea
+$`|M_1|`$ on the molecular plane, linear levels, ChimeraX colours, in
+`~/Dropbox/tonto_data/cell_maps/urea/plane/`. Tonto's linear scale is always symmetric about
+zero, so a norm map uses half the colour bar.

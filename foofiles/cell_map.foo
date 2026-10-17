@@ -78,10 +78,12 @@ contains
       .m_value      = -99
       .m_maps       = "auto"
       .window_width = 0.25*BOHR_PER_ANGSTROM
+      .moment_kind  = "gaussian"
       .sharpen_U    = ZERO
       .sharpen_order   = 0
       .laplacian_order = 0
       .wiener_weight   = FALSE
+      .fill_missing    = FALSE
       .l_max        = 2
       .axes.set_defaults
       .n_radii      = 40
@@ -361,6 +363,12 @@ contains
    ! sine-like: for l = 1, m = -1, 0, 1 are y, z, x, and the three maps are
    ! sqrt(3/4 pi) sigma times the gradient of the blurred density
    ! (FOURIER_SUMS:harmonic_column maps m onto the columns).
+   !
+   ! With moment_kind "riesz" the factor is (-i)^l Y_lm(q^) alone, with no
+   ! window and no q^l: the Riesz density map Y_lm(nabla) (-nabla^2)^(-l/2) rho,
+   ! in the units of a density for every l. F(000) enters for l = 0 only,
+   ! where the map is rho/sqrt(4 pi); for l = 2 it is -1/(4 pi) times the
+   ! electric field gradient of the electron density, as harmonic components.
       self :: IN
       values :: VEC{REAL}, OUT
       pts    :: MAT{REAL}, IN
@@ -370,8 +378,9 @@ contains
    ENSURE(pts.dim2==3, "pts: wrong dim2")
    ENSURE(.l_value>=0, "l_value not set")
    ENSURE(.m_value==-99 OR abs(.m_value)<=.l_value, "m_value out of range")
-   ENSURE(.window_width>ZERO, "window_width not set")
-   ENSURE(.sharpen_order>0 OR .sharpen_U<.window_width**2, "sharpen_U must be below window_width^2")
+   ENSURE(.moment_kind=="riesz" OR .window_width>ZERO, "window_width not set")
+   ENSURE(.moment_kind=="riesz" OR .sharpen_order>0 OR .sharpen_U<.window_width**2, "sharpen_U must be below window_width^2")
+   ENSURE(.moment_kind=="gaussian" OR (.sharpen_U==ZERO AND .sharpen_order==0 AND .laplacian_order==0), "a Riesz map has no sharpening or Laplacian")
 
       q,qr,Y :: MAT{REAL}@
       c   :: VEC{CPX}@
@@ -379,11 +388,14 @@ contains
       q2,sig,net :: REAL
       fac :: CPX
       n_refl,n,lv,m,m_lo,m_hi,col :: INT
+      riesz :: BIN
 
       n_refl = .coeff.dim
       lv  = .l_value
       sig = .window_width
+      riesz = .moment_kind=="riesz"
       fac = (-IMAGIFY(ONE))**lv * sig**lv
+      if (riesz) fac = (-IMAGIFY(ONE))**lv
 
       ! The net blur: the window less the mean ADP divided out, when the
       ! sharpening is exact; with a Taylor polynomial of order sharpen_order
@@ -418,6 +430,17 @@ contains
          col = FOURIER_SUMS:harmonic_column(lv,m)
          do n = 1,n_refl
             q2   = q(n,1)*q(n,1) + q(n,2)*q(n,2) + q(n,3)*q(n,3)
+            if (riesz) then
+               ! Y_lm(q^) = q^l Y_lm(q^) / q^l; at q = 0 only l = 0 survives
+               if (lv==0) then
+                  c(n) = .coeff(n)*Y(n,col)
+               else if (q2>ZERO) then
+                  c(n) = .coeff(n)*fac*Y(n,col)/sqrt(q2)**lv
+               else
+                  c(n) = ZERO
+               end
+               cycle
+            end
             c(n) = .coeff(n)*fac*Y(n,col)*exp(-net*q2/2)
             if (.sharpen_order>0)   c(n) = c(n)*.sharpening_polynomial(q2)
             if (.laplacian_order>0) c(n) = c(n)*(-sig*sig*q2)**.laplacian_order
@@ -646,10 +669,12 @@ contains
       case ("m_value=           "); .read_m_value
       case ("m_maps=            "); .read_m_maps
       case ("window_width=      "); .read_window_width
+      case ("moment_kind=       "); .read_moment_kind
       case ("sharpen_u=         "); .read_sharpen_U
       case ("sharpen_order=     "); .read_sharpen_order
       case ("laplacian_order=   "); .read_laplacian_order
       case ("wiener_weight=     "); .read_wiener_weight
+      case ("fill_missing=      "); .read_fill_missing
       case ("l_max=             "); .read_l_max
       case ("centre=            "); .axes.read_center
       case ("center=            "); .axes.read_center
@@ -736,6 +761,32 @@ contains
       stdin.read_quantity(.window_width)
 
    DIE_IF(.window_width<ZERO, "window_width must not be negative")
+
+   end
+
+   read_fill_missing :: leaky
+   ! Read whether the reflections missing from the data within its
+   ! resolution are added to the maps, valued by the refined model. Reading
+   ! it drops any filled reflections already made, so that they are made
+   ! again from the model as it now is
+      self :: INOUT
+
+      stdin.read(.fill_missing)
+
+      if (.filled.allocated) .filled.destroy
+
+   end
+
+   read_moment_kind
+   ! Read the kind of a local-moment map: "gaussian", the moment through a
+   ! Gaussian window of width window_width; "riesz", the Riesz density map,
+   ! with no window and the factor q^l left out (see make_moment_at)
+      self :: INOUT
+
+      stdin.read(.moment_kind)
+      .moment_kind.to_lower_case
+
+   DIE_IF(NOT .moment_kind.is_one_of(["gaussian","riesz   "]), "moment_kind must be gaussian or riesz")
 
    end
 
@@ -944,6 +995,9 @@ contains
       stdout.flush
       stdout.show("Kind                    =",.kind)
       stdout.show("No. of reflections      =",.n_reflections)
+      stdout.show("Fill missing?           =",.fill_missing)
+      if (.filled.allocated) &
+      stdout.show("No. filled              =",.filled.dim)
       stdout.show("Cell volume             =",.volume)
       stdout.show("Electron count          =",.electron_count)
       if (.l_value>=0) then
@@ -951,6 +1005,8 @@ contains
       if (.m_value/=-99) &
       stdout.show("m_value                 =",.m_value)
       stdout.show("m maps                  =",.m_maps)
+      stdout.show("Moment kind             =",.moment_kind)
+      if (.moment_kind=="gaussian") &
       stdout.show("Window width            =",.window_width)
       stdout.show("Sharpening U            =",.sharpen_U)
       stdout.show("Sharpening order        =",.sharpen_order)
