@@ -11768,6 +11768,92 @@ contains
 
    end
 
+   make_missing_reflections(hkl) :: leaky, PURE
+   ! Set "hkl", one row per reflection, to the Miller indices of the
+   ! reflections missing from the data: within its largest sin(theta)/lambda,
+   ! not systematically absent, and with neither a symmetry equivalent nor a
+   ! Friedel mate of one in the list. One reflection of each missing set of
+   ! equivalents is given, the one whose Miller_index_key is largest.
+      self :: IN
+      hkl :: MAT{INT}@, OUT
+
+   ENSURE(.xray_data.allocated, "no diffraction data")
+   ENSURE(.xray_data.reflections.allocated, "no reflections")
+
+      key,sorted_key :: VEC{INT}@
+      list :: MAT{INT}@
+      R :: MAT{REAL}(3,3)
+      t,hv :: VEC{REAL}(3)
+      h,g,h_max :: VEC{INT}(3)
+      stl_max,stl,ph :: REAL
+      i,s,n_refl,n_seitz,n_box,n_miss,h1,h2,h3,k0 :: INT
+      absent,listed,first :: BIN
+
+      n_refl  = .xray_data.reflections.dim
+      n_seitz = .spacegroup.n_seitz
+      stl_max = .xray_data.reflections.max_stl(.unit_cell)
+
+      ! Keys of the listed reflections, sorted for bisection
+      key.create(n_refl)
+      do i = 1,n_refl
+         key(i) = .Miller_index_key(.xray_data.reflections(i).Miller_indices)
+      end
+      sorted_key.create(n_refl)
+      sorted_key = key
+      sorted_key.sort
+
+      ! The box of indices that can lie within stl_max: |h_i| <= 2 stl_max a_i
+      h_max = ceiling(2*stl_max*.unit_cell.length)
+      n_box = product(2*h_max+1)
+      list.create(n_box,3)
+
+      ! Each index in the box: inside the sphere, present, a new set, and
+      ! represented by its largest key
+      n_miss = 0
+      do h1 = -h_max(1),h_max(1)
+      do h2 = -h_max(2),h_max(2)
+      do h3 = -h_max(3),h_max(3)
+
+         h = [h1,h2,h3]
+         if (all(h==0)) cycle
+         hv  = matmul(.unit_cell.reciprocal_mx,h)
+         stl = HALF*norm2(hv)
+         if (stl>stl_max*(ONE+1.0d-8)) cycle
+
+         absent = FALSE
+         listed = FALSE
+         first  = TRUE
+         k0 = .Miller_index_key(h)
+         do s = 1,n_seitz
+            R = transpose(.spacegroup.seitz(1:3,1:3,s))
+            t = .spacegroup.seitz(1:3,4,s)
+            g = nint(matmul(R,h))
+            if (all(g==h)) then
+               ph = dot_product(h,t)
+               if (abs(ph-nint(ph))>1.0d-6) absent = TRUE
+            end
+            if (.sorted_key_has(sorted_key,.Miller_index_key(g)))  listed = TRUE
+            if (.sorted_key_has(sorted_key,.Miller_index_key(-g))) listed = TRUE
+            if (.Miller_index_key(g)>k0 OR .Miller_index_key(-g)>k0) first = FALSE
+         end
+         if (absent OR listed OR NOT first) cycle
+
+         n_miss = n_miss + 1
+         list(n_miss,:) = h
+
+      end
+      end
+      end
+
+      hkl.create(n_miss,3)
+      hkl = list(1:n_miss,:)
+
+      list.destroy
+      sorted_key.destroy
+      key.destroy
+
+   end
+
    sorted_key_has(key,val) result (res) :: PURE
    ! Return TRUE if the increasing-order list "key" contains "val".
    ! Bisection: "key" must be sorted.

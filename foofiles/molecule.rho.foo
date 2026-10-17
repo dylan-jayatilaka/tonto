@@ -3489,7 +3489,7 @@ contains
 
    make_crystal_cluster_for_atom(cluster,ref,a,radius) :: leaky, PURE
    ! Make "cluster", the atoms of the crystal within "radius" of molecule
-   ! atom "a", in the frame of the molecule's atoms, and "ref(i)", the index
+   ! atom "a", whose position is in the crystal's frame, and "ref(i)", the index
    ! of a molecule atom of the same kind as cluster atom "i", whose
    ! spherical density stands for it. See CRYSTAL:create_cluster_atom_list.
       self :: IN
@@ -3500,15 +3500,18 @@ contains
 
    ENSURE(.atom.allocated,"no atoms")
    ENSURE(.crystal.allocated,"no crystal")
-   ENSURE(.crystal.unit_cell_atom_for_frag_atom.allocated,"no unit cell atom for the fragment atoms")
-
       offset :: VEC{REAL}(3)
-      i,b,u :: INT
+      i,b,n_on :: INT
 
-      ! The offset taking the crystal's frame onto the molecule's
-      u = .crystal.unit_cell_atom_for_frag_atom(a)
-      offset = .atom(a).position - .crystal.unit_cell_atom(u).position
+      ! The molecule's atoms are in the crystal's frame, so no offset; one
+      ! cluster atom, and only one, must then sit on atom "a"
+      offset = ZERO
       .crystal.create_cluster_atom_list(cluster,.atom(a).position,radius,offset)
+      n_on = 0
+      do i = 1,cluster.dim
+         if (norm2(cluster(i).position-.atom(a).position)<1.0d-3) n_on = n_on + 1
+      end
+      STOP_IF(n_on/=1,"the crystal cluster does not have exactly one atom on the molecule atom")
 
       ! A molecule atom of the same kind for each cluster atom
       ref.create(cluster.dim)
@@ -7349,6 +7352,31 @@ contains
 
    end
 
+   make_cell_map :: leaky
+   ! Fill ".cell_map" with the Fourier coefficients of its kind from the
+   ! crystal's diffraction data, and with "fill_missing" set from the
+   ! reflections missing from the data as well, valued by the refined model
+   ! (MOLECULE.MAIN:make_filled_reflections, done when the block is read).
+   ! The refinement's reflections are left as they were.
+      self :: INOUT
+
+   DIE_IF(.crystal.deallocated, "no crystal")
+   DIE_IF(.cell_map.fill_missing AND .cell_map.filled.deallocated, "fill_missing: the filled reflections were not made")
+
+      saved :: VEC{REFLECTION}@
+
+      if (.cell_map.fill_missing) then
+         saved = .crystal.xray_data.reflections
+         .crystal.xray_data.reflections.append(.cell_map.filled)
+         .crystal.make_cell_map(.cell_map)
+         .crystal.xray_data.reflections = saved
+         saved.destroy
+      else
+         .crystal.make_cell_map(.cell_map)
+      end
+
+   end
+
    make_cell_map_grid(grid,pts) :: leaky
    ! Make the map described by ".cell_map" at the cartesian points "pts",
    ! one row per point: the residual, observed or model density of the
@@ -7367,11 +7395,11 @@ contains
       if (.cell_map.deallocated) .cell_map.create
 
    DIE_IF(.cell_map.sharpen_U>ZERO AND .cell_map.l_value<0, "sharpen_u needs a window: set l_value")
-   DIE_IF(.cell_map.l_value>=0 AND .cell_map.window_width<=ZERO, "a local-moment map needs a positive window_width")
+   DIE_IF(.cell_map.l_value>=0 AND .cell_map.moment_kind=="gaussian" AND .cell_map.window_width<=ZERO, "a local-moment map needs a positive window_width")
    DIE_IF(.cell_map.is_deformation_kind AND .cell_map.F_pro.deallocated, "a deformation kind needs the promolecule: give cell_map= after the structure factors")
 
       .set_cell_map_axes
-      .crystal.make_cell_map(.cell_map)
+      .make_cell_map
       .cell_map.make_map_at(grid,pts)
 
       ! Change to /A3
