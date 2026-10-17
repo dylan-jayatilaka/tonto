@@ -2200,6 +2200,28 @@ contains
 !  Plot printing and deletion
 !  ==========================
 
+   create_centre_molecule_atom_list(atom)
+   ! Create "atom", the complete molecule of the crystal that contains the
+   ! plot grid's centre atom, placed where that atom is in ".atom"
+      self :: IN
+      atom :: VEC{ATOM}@, OUT
+
+   ENSURE(.plot_grid.allocated,"no plot grid")
+   ENSURE(.atom.allocated,"no atoms")
+   DIE_IF(.crystal.deallocated,"plot_atoms= molecule needs a crystal")
+   DIE_IF(.plot_grid.axes.center_atom<1,"plot_atoms= molecule needs centre_atom= in plot_grid")
+   DIE_IF(.crystal.unit_cell_atom_for_frag_atom.deallocated,"no unit cell atom for the fragment atoms")
+
+      shift :: VEC{REAL}(3)
+      a,u :: INT
+
+      a = .plot_grid.axes.center_atom
+      u = .crystal.unit_cell_atom_for_frag_atom(a)
+      shift = .atom(a).position - .crystal.unit_cell_atom(u).position
+      .crystal.create_molecule_atom_list(atom,u,shift)
+
+   end
+
    dump_plot_grid(grid,name,form)
    ! Dump (write) out the plot "grid" to an appropriate file with
    ! "name", in various formats "form", otherwise (like most things)
@@ -2213,11 +2235,13 @@ contains
    ENSURE(.atom.allocated, "no atoms")
 
       pos :: MAT{REAL}@
+      plot_atom :: VEC{ATOM}@
       valid :: VEC{INT}@
       bonds :: VEC{EVEC{INT}}@
       arch :: ARCHIVE
       title,fmt :: STR
       fac,z_range :: REAL
+      all_atoms :: BIN
 
       if (.plot_grid.plot_units/=" ") then
          fac = .plot_grid.plot_units.conversion_factor
@@ -2249,6 +2273,30 @@ contains
       fmt = .plot_grid.plot_format
       if (present(form)) fmt = form
 
+      ! The atoms a cube file lists: those of the molecule in the box, every
+      ! atom of the unit cell, or every molecule with an atom in the cell,
+      ! complete. A map on the unit cell lists the cell's atoms unless told
+      ! otherwise: the molecule's atoms are only part of them.
+      all_atoms = .plot_grid.plot_atoms/="box"
+      select case (.plot_grid.plot_atoms)
+      case ("box")
+         if (fmt=="cell.cube" OR .plot_grid.use_unit_cell_as_bbox) then
+            DIE_IF(.crystal.deallocated,"a map on the unit cell needs a crystal")
+            plot_atom = .crystal.unit_cell_atom
+            all_atoms = TRUE
+         else
+            plot_atom = .atom
+         end
+      case ("unit_cell")
+         DIE_IF(.crystal.deallocated,"plot_atoms= unit_cell needs a crystal")
+         plot_atom = .crystal.unit_cell_atom
+      case ("molecules")
+         DIE_IF(.crystal.deallocated,"plot_atoms= molecules needs a crystal")
+         .crystal.create_whole_molecule_atom_list(plot_atom)
+      case ("molecule")
+         .create_centre_molecule_atom_list(plot_atom)
+      end
+
       ! Dump all formats if none specified
       if (fmt=="all") then
 
@@ -2259,7 +2307,7 @@ contains
          arch.set(title,name,format="gnuplot")
          arch.write_gnuplot(grid,.plot_grid.n_x,.plot_grid.n_y,.plot_grid.n_z)
          arch.set(title,name,format="gaussian.cube")
-         arch.write_gaussian_cube(grid,.plot_grid,.atom,name)
+         arch.write_gaussian_cube(grid,.plot_grid,plot_atom,name,all_atoms)
          arch.set(title,name,format="mathematica")
          arch.write_mathematica(grid,.plot_grid.n_x,.plot_grid.n_y,.plot_grid.n_z)
          arch.set(title,name,format="spackman")
@@ -2299,7 +2347,7 @@ contains
          case ("cube")
 
             arch.set(title,name,format="gaussian.cube")
-            arch.write_gaussian_cube(grid,.plot_grid,.atom,name)
+            arch.write_gaussian_cube(grid,.plot_grid,plot_atom,name,all_atoms)
 
          case ("drishti")
 
@@ -2309,12 +2357,12 @@ contains
          case ("gaussian","gaussian.cube")
 
             arch.set(title,name,format="gaussian.cube")
-            arch.write_gaussian_cube(grid,.plot_grid,.atom,name)
+            arch.write_gaussian_cube(grid,.plot_grid,plot_atom,name,all_atoms)
 
          case ("cell.cube")
 
             arch.set(title,name,format="cell.cube")
-            arch.write_gaussian_cell(grid,.plot_grid,.crystal.unit_cell_atom,name)
+            arch.write_gaussian_cell(grid,.plot_grid,plot_atom,name)
 
          case ("gnuplot")
 
@@ -2385,6 +2433,8 @@ contains
          end
 
       end
+
+      plot_atom.destroy
 
    end
 

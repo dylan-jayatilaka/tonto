@@ -83,6 +83,15 @@ contains
       name :: STR
       grid :: VEC{REAL}@
 
+      ! A local moment, or the rebuilt atoms of one l, in a given frame:
+      ! every m component, and the norm or the sum over m
+      if (.plot_kind_has_m_components AND .cell_map.allocated) then
+      if (.cell_map.writes_all_m) then
+         .do_cell_map_component_plots
+         return
+      end
+      end
+
       ! Property values.
       grid.create(.plot_grid.n_pt)
 
@@ -94,6 +103,72 @@ contains
       .dump_plot_grid(grid,name)
 
       ! Clean up
+      grid.destroy
+
+   end
+
+   plot_kind_has_m_components result (res) :: pure
+   ! TRUE if the plot kind has m components the cell_map block's m_value
+   ! selects: the local moments, and the rebuilt atoms of one l
+      self :: IN
+      res :: BIN
+
+      res = .plot_grid.allocated
+      if (res) res = .plot_grid.plot_kind=="cell_map" &
+                  OR .plot_grid.plot_kind=="angular_hirshfeld" &
+                  OR .plot_grid.plot_kind=="hirshfeld_amplitude"
+
+   end
+
+   do_cell_map_component_plots :: leaky
+   ! Write every m component of the local moment of ".cell_map", or of the
+   ! rebuilt atoms of its l, each to its own file with "_m<m>" after the
+   ! plot label, and then, under the plot label itself, the norm over m
+   ! for a local moment (the root of the sum of the squares) or the sum
+   ! over m for the rebuilt atoms (the density of that l).
+      self :: INOUT
+
+   ENSURE(.plot_grid.allocated, "no grid")
+   ENSURE(.cell_map.allocated, "no cell_map")
+   ENSURE(.cell_map.l_value>=1, "l_value must be at least 1")
+
+      label,name :: STR
+      grid,norm :: VEC{REAL}@
+      lv,m :: INT
+      is_moment :: BIN
+
+      lv    = .cell_map.l_value
+      label = .plot_grid.plot_label
+      is_moment = .plot_grid.plot_kind=="cell_map"
+
+      grid.create(.plot_grid.n_pt)
+      norm.create(.plot_grid.n_pt)
+      norm = ZERO
+
+      ! Each component, to its own file
+      do m = -lv,lv
+         .cell_map.set_m_value(m)
+         if (label==" ") then
+            .plot_grid.set_plot_label("m"//trim(m.to_str))
+         else
+            .plot_grid.set_plot_label(trim(label)//"_m"//trim(m.to_str))
+         end
+         .do_plot(grid)
+         if (is_moment) then; norm = norm + grid*grid
+         else;                norm = norm + grid
+         end
+         name = .plot_grid.plot_file_name(.n_a)
+         .dump_plot_grid(grid,name)
+      end
+
+      ! The norm, or the sum, under the plain label
+      if (is_moment) norm = sqrt(norm)
+      .cell_map.set_m_value(-99)
+      .plot_grid.set_plot_label(label)
+      name = .plot_grid.plot_file_name(.n_a)
+      .dump_plot_grid(norm,name)
+
+      norm.destroy
       grid.destroy
 
    end
@@ -501,9 +576,17 @@ contains
       ! Set up densities & integrals for plot
       .set_integrals_for_plot(plot_kind)
 
-      ! Hirshfeld weights for the rebuilt-atoms plots
+      ! Hirshfeld weights for the rebuilt-atoms plots; their frame; and the
+      ! Fourier density when the atoms are to be expanded from it
       if (plot_kind=="angular_hirshfeld" OR plot_kind=="hirshfeld_amplitude") then
          .make_atom_partition_info
+         if (.cell_map.allocated) then
+            .set_cell_map_axes
+            if (.cell_map.density_source=="cell_map") then
+               DIE_IF(.crystal.deallocated,"density_source= cell_map needs a crystal")
+               .make_cell_map
+            end
+         end
       end
 
       ! Make sure group densities & MOs are there

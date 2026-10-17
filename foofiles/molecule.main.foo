@@ -1077,8 +1077,108 @@ contains
 
       .cell_map.read_keywords
 
+      ! The reflections missing from the data, valued by the model
+      if (.cell_map.fill_missing AND .cell_map.filled.deallocated) .make_filled_reflections
+
       ! The promolecule, for a deformation kind
       if (.cell_map.is_deformation_kind) .set_cell_map_promolecule
+
+   end
+
+   make_filled_reflections :: leaky
+   ! Make ".cell_map.filled", the reflections missing from the data within
+   ! its resolution (CRYSTAL:make_missing_reflections), each valued by the
+   ! refined model: F_calc from the form factors of the refinement, the
+   ! Hirshfeld atoms' or after an IAM refinement the spherical atoms', at
+   ! the model's positions and ADPs, and an observed magnitude equal to the
+   ! predicted one, so that it adds F_calc to the f_exp and f_calc maps and
+   ! nothing to the residual map. The refinement's reflections are left as
+   ! they were. The filled reflections are listed.
+      self :: INOUT
+
+   DIE_IF(.crystal.deallocated, "no crystal")
+   DIE_IF(.crystal.xray_data.deallocated, "no diffraction data")
+   DIE_IF(NOT .crystal.fragment_info_made, "no crystal fragment info")
+
+      hkl :: MAT{INT}@
+      saved,fill :: VEC{REFLECTION}@
+      ff :: MAT{CPX}@
+      ext :: VEC{REAL}@
+      F,fac :: REAL
+      n,n_miss :: INT
+
+      ! The missing reflections and their geometry
+      .crystal.make_missing_reflections(hkl)
+      n_miss = hkl.dim1
+      fill.create(n_miss)
+      do n = 1,n_miss
+         fill(n).set_miller_indices(hkl(n,:))
+      end
+      fill.set_d_and_theta(.crystal.unit_cell,.crystal.xray_data.wavelength)
+      fill.set_equivalence_factors(.crystal.spacegroup)
+
+      ! Their model structure factors, with them in place of the data
+      saved = .crystal.xray_data.reflections
+      .crystal.xray_data.reflections = fill
+      if (.crystal.xray_data.is_IAM_refinement) then
+         if (NOT .crystal.xray_data.use_IAM_ITC_FFs) .make_ANOs_and_interpolators
+         .make_unique_IAM_atom_FFs(ff)
+      else
+         .make_atom_partition_info
+         .make_aspherical_atomic_FFs(ff)
+         .crystal.symmetrize_FFs(ff)
+      end
+      .crystal.set_F_calc_from(ff)
+      ext.create(n_miss)
+      ext = .crystal.xray_data.F_scale_and_extn_correction
+      fill = .crystal.xray_data.reflections
+      .crystal.xray_data.reflections = saved
+
+      ! Observed equal to predicted, with no error
+      do n = 1,n_miss
+         F = abs(fill(n).F_calc)*ext(n)
+         fill(n).set_F_pred(F)
+         fill(n).set_F_exp(F)
+         fill(n).set_F_sigma(ZERO)
+      end
+      .cell_map.filled = fill
+
+      ! List them
+      fac = BOHR_PER_ANGSTROM
+      stdout.flush
+      stdout.text("==========================================")
+      stdout.text("Reflections missing from the data, filled")
+      stdout.text("==========================================")
+      stdout.flush
+      stdout.show("No. of reflections filled =",n_miss)
+      stdout.text(". one of each set of equivalents, within the largest sin(theta)/lambda")
+      stdout.text("  of the data; F_calc on the absolute scale, phase in degrees")
+      stdout.flush
+      stdout.dash(int_fields=3,real_fields=3)
+      stdout.put("h",int_width=TRUE)
+      stdout.put("k",int_width=TRUE)
+      stdout.put("l",int_width=TRUE)
+      stdout.put("stl/A^-1")
+      stdout.put("|F_calc|")
+      stdout.put("phase")
+      stdout.flush
+      stdout.dash(int_fields=3,real_fields=3)
+      do n = 1,n_miss
+         stdout.put(fill(n).h1)
+         stdout.put(fill(n).h2)
+         stdout.put(fill(n).h3)
+         stdout.put(fill(n).stl*fac)
+         stdout.put(abs(fill(n).F_calc))
+         stdout.put(fill(n).F_phase_angle_in_degrees)
+         stdout.flush
+      end
+      stdout.dash(int_fields=3,real_fields=3)
+
+      ext.destroy
+      ff.destroy
+      saved.destroy
+      fill.destroy
+      hkl.destroy
 
    end
 
@@ -1098,16 +1198,25 @@ contains
 
       ff :: MAT{CPX}@
       F  :: VEC{CPX}@
+      saved :: VEC{REFLECTION}@
 
       if (NOT .crystal.xray_data.use_IAM_ITC_FFs) then
          .make_ANOs_and_interpolators
          .atom.set_use_IAM_ITC_FFs(FALSE)
       end
 
+      ! Over the filled reflections too, in the order make_cell_map takes them
+      if (.cell_map.fill_missing) then
+         saved = .crystal.xray_data.reflections
+         .crystal.xray_data.reflections.append(.cell_map.filled)
+      end
+
       .make_unique_IAM_atom_FFs(ff)
       F.create(.crystal.xray_data.reflections.dim)
       .crystal.make_F_calc(F,ff)
       .cell_map.set_promolecule_F(F)
+
+      if (.cell_map.fill_missing) .crystal.xray_data.reflections = saved
 
       F.destroy
       ff.destroy
@@ -1124,7 +1233,8 @@ contains
       if (.cell_map.deallocated) .cell_map.create
 
       if (.cell_map.is_deformation_kind) .set_cell_map_promolecule
-      .crystal.make_cell_map(.cell_map)
+      .set_cell_map_axes
+      .make_cell_map
       .cell_map.put
 
    end
@@ -1148,6 +1258,7 @@ contains
       f :: MAT{REAL}@
       radii,wts,power :: VEC{REAL}@
       rgrid :: QUADRATURE@
+      R :: MAT{REAL}(3,3)
       total :: REAL
       fac,fac3 :: REAL
       n_u,u,a,n_rad,i,lv,m,lm,n_lm,l_max,l_leb :: INT
@@ -1158,9 +1269,11 @@ contains
       GAUSSIAN_DATA:set_indices(l_max)
       weighted     = .cell_map.atom_weight=="hirshfeld"
       use_cell_map = .cell_map.density_source=="cell_map"
+      .set_cell_map_axes
+      R = .cell_map.axes.matrix
       if (use_cell_map) then
          DIE_IF(.crystal.deallocated, "density_source= cell_map needs a crystal")
-         .crystal.make_cell_map(.cell_map)
+         .make_cell_map
       end
 
       ! Hirshfeld weights, interpolators and the Becke grid
@@ -1191,7 +1304,8 @@ contains
       stdout.show("Atom weight             =",.cell_map.atom_weight)
       stdout.text(". f_lm(s) in e/Angstrom^3 (its square root for the amplitude), s in Angstrom;")
       stdout.text("  the atom on the sphere of radius s is the sum over l, m of f_lm(s) Y_lm,")
-      stdout.text("  with Y_lm real harmonics of unit integral; m = -1, 0, 1 are y, z, x.")
+      stdout.text("  with Y_lm real harmonics of unit integral; m = -1, 0, 1 are y, z, x")
+      stdout.text("  of the cell_map block's axes, the cartesian axes unless some were given.")
       stdout.text(". P_l = sum over m of the integral of f_lm(s)^2 s^2 ds: for the density")
       stdout.text("  its l = 0 value is 1/(4 pi) times (electron count)^2 only if the atom is")
       stdout.text("  spherical, so P_l are compared between atoms, not with a count; for the")
@@ -1222,7 +1336,7 @@ contains
          end
 
          f.create(n_rad,n_lm)
-         .make_atom_lm_radial_functions(f,radii,a,l_max,l_leb,amplitude,weighted,use_cell_map)
+         .make_atom_lm_radial_functions(f,radii,a,l_max,l_leb,R,amplitude,weighted,use_cell_map)
 
          stdout.flush
          stdout.text("Atom "//trim(.atom(a).label)//", f_lm(s), columns (l,m):")
@@ -1293,7 +1407,8 @@ contains
       if (.cell_map.deallocated) .cell_map.create
 
       if (.cell_map.is_deformation_kind) .set_cell_map_promolecule
-      .crystal.make_cell_map(.cell_map)
+      .set_cell_map_axes
+      .make_cell_map
       .cell_map.put_radial_functions
 
    end
@@ -2263,12 +2378,27 @@ contains
    ! Read in the plot grid data
       self :: INOUT
 
+      mol_atom :: VEC{ATOM}@
+
       ! Set up a defualt grid
       if (.plot_grid.deallocated) .plot_grid.create(.atom)
 
       ! Read options
       .plot_grid.read_keywords
-      
+
+      ! A box around the complete molecules of the cell, or around the one
+      ! containing the centre atom
+      if (.plot_grid.use_molecules_as_bbox) then
+         DIE_IF(.crystal.deallocated,"use_molecules_as_bbox set, but no crystal= info given")
+         .crystal.create_whole_molecule_atom_list(mol_atom)
+         .plot_grid.set_bbox_around(mol_atom,.plot_grid.box_margin)
+         mol_atom.destroy
+      else if (.plot_grid.use_molecule_as_bbox) then
+         .create_centre_molecule_atom_list(mol_atom)
+         .plot_grid.set_bbox_around(mol_atom,.plot_grid.box_margin)
+         mol_atom.destroy
+      end
+
       if (.plot_grid.use_unit_cell_as_bbox) then
          DIE_IF(.crystal.deallocated,"unit_cell_as_bbox set, but no crystal= info given! Fair go!")
          .plot_grid.set_bbox_from_unit_cell(.crystal.unit_cell,midpt_is_center=FALSE)

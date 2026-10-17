@@ -2101,9 +2101,9 @@ contains
       ! Shift coordinates to grid center and rotate
       ! Plot only atoms which are within the plot grid box.
       ! To do this we have to change into the plot axis system.
-      axes(1,:) = grid.x_axis
-      axes(2,:) = grid.y_axis
-      axes(3,:) = grid.z_axis
+      axes(1,:) = grid.axes.x_axis
+      axes(2,:) = grid.axes.y_axis
+      axes(3,:) = grid.axes.z_axis
       units = "angstrom"
       fac = units.conversion_factor
       do n = 1,atom.dim
@@ -2164,9 +2164,9 @@ contains
       axes :: MAT{REAL}(3,3)
       has_axis_atoms :: BIN
 
-      has_axis_atoms = grid.x_atom_1/=0 AND grid.x_atom_2/=0 &
-                   AND grid.y_atom_1/=0 AND grid.y_atom_2/=0 &
-                   AND grid.y_atom_1==grid.x_atom_1
+      has_axis_atoms = grid.axes.x_atom_1/=0 AND grid.axes.x_atom_2/=0 &
+                   AND grid.axes.y_atom_1/=0 AND grid.axes.y_atom_2/=0 &
+                   AND grid.axes.y_atom_1==grid.axes.x_atom_1
 
       if (has_axis_atoms) then
 
@@ -2211,16 +2211,16 @@ contains
          .Afile.set_real_fortran_fmt("f")
          .Afile.set_real_width(10)
          .Afile.set_real_precision(5)
-         axes(1,:) = grid.x_axis
-         axes(2,:) = grid.y_axis
-         axes(3,:) = grid.z_axis
-         atm = [grid.x_atom_1,grid.x_atom_2,grid.y_atom_2]
+         axes(1,:) = grid.axes.x_axis
+         axes(2,:) = grid.axes.y_axis
+         axes(3,:) = grid.axes.z_axis
+         atm = [grid.axes.x_atom_1,grid.axes.x_atom_2,grid.axes.y_atom_2]
          do n = 1,atom(atm).dim
             l = min(len_trim(atom(atm(n)).label),8)
             .Afile.put(atom(atm(n)).label,width=l)
             .Afile.tab(width=8-l)
             v = atom(atm(n)).position
-            v = v - grid.center
+            v = v - grid.axes.center
             vec.to_product_of(axes,v)
             vec.convert_to("angstrom")
             .Afile.put(vec(1))
@@ -2231,14 +2231,14 @@ contains
          end
 
          do n = 1,atom.dim
-            if (n==grid.x_atom_1) cycle
-            if (n==grid.x_atom_2) cycle
-            if (n==grid.y_atom_2) cycle
+            if (n==grid.axes.x_atom_1) cycle
+            if (n==grid.axes.x_atom_2) cycle
+            if (n==grid.axes.y_atom_2) cycle
             l = min(len_trim(atom(n).label),8)
             .Afile.put(atom(n).label,width=l)
             .Afile.tab(width=8-l)
             v = atom(n).position
-            v = v - grid.center
+            v = v - grid.axes.center
             vec.to_product_of(axes,v)
             vec.convert_to("angstrom")
             .Afile.put(vec(1))
@@ -2342,26 +2342,31 @@ contains
 
    end
 
-   write_gaussian_cube(density,grid,atom,title)
-   ! Write a "density" vector corresponding to a grid with dimensions
-   ! "n_x", "n_y", "n_z" in the gaussian cube format. This also
-   ! requires the "atom" list and plot "grid" as well.
+   write_gaussian_cube(density,grid,atom,title,all_atoms)
+   ! Write a "density" vector on the plot "grid" in the gaussian cube
+   ! format, with the atoms of "atom" that lie in the box in the header,
+   ! or every atom of the list if "all_atoms" is TRUE.
       self :: INOUT
       density :: VEC{REAL}, IN
       grid :: PLOT_GRID, IN
       atom :: VEC{ATOM}, IN
       title :: STR, IN
+      all_atoms :: BIN, optional, IN
 
    ENSURE(grid.n_z>0,"there are no points to print")
-   ENSURE(REAL:equals(grid.x_axis.norm,ONE),"grid x axis is not normalized")
-   ENSURE(REAL:equals(grid.y_axis.norm,ONE),"grid y axis is not normalized")
-   ENSURE(REAL:equals(grid.z_axis.norm,ONE),"grid z axis is not normalized")
+   ENSURE(REAL:equals(grid.axes.x_axis.norm,ONE),"grid x axis is not normalized")
+   ENSURE(REAL:equals(grid.axes.y_axis.norm,ONE),"grid y axis is not normalized")
+   ENSURE(REAL:equals(grid.axes.z_axis.norm,ONE),"grid z axis is not normalized")
 
       n,n_atom,x,y,z :: INT
+      keep_all :: BIN
       an :: REAL
       axes,orth,trans :: MAT{REAL}(3,3)
       low,high,pos,por :: VEC{REAL}(3)
       reverse :: MAT3{REAL}@
+
+      keep_all = FALSE
+      if (present(all_atoms)) keep_all = all_atoms
 
       .open_for("writing",ascii=TRUE)
       .Afile.set_real_fortran_fmt("f")
@@ -2388,10 +2393,10 @@ contains
       do n = 1,atom.dim
 
          ! Rotated position
-         pos = atom(n).position - grid.center
+         pos = atom(n).position - grid.axes.center
          por.to_product_of(trans,pos)
 
-         if (NOT por.is_in_range(low,high)) cycle
+         if (NOT keep_all AND NOT por.is_in_range(low,high)) cycle
 
          an = atom(n).atomic_number
          if (an<1) cycle
@@ -2436,10 +2441,10 @@ contains
       do n = 1,atom.dim
 
          ! Rotated position
-         pos = atom(n).position - grid.center
+         pos = atom(n).position - grid.axes.center
          por.to_product_of(trans,pos)       
 
-         if (NOT por.is_in_range(low,high)) cycle
+         if (NOT keep_all AND NOT por.is_in_range(low,high)) cycle
 
          an = atom(n).atomic_number
          if (an<1) cycle
@@ -2480,10 +2485,12 @@ contains
    end
 
    write_gaussian_cell(density,grid,atom,title)
-   ! Write a "density" vector corresponding to a grid with dimensions
-   ! "n_x", "n_y", "n_z" in the gaussian cube format *but* for cases
-   ! when a unit cell is needed. This requires the unit cell "atom"
-   ! list and plot "grid" as well.
+   ! Write a "density" vector on a plot "grid" that spans one unit cell
+   ! in the gaussian cube format, with every atom of the "atom" list in
+   ! the header. The grid has both ends of each cell axis, so the last
+   ! plane on each axis repeats the first and is left out: a viewer that
+   ! takes the box to be the number of points times the spacing (VESTA
+   ! does) then gets the cell exactly.
       self :: INOUT
       density :: VEC{REAL}, IN
       grid :: PLOT_GRID, IN
@@ -2491,9 +2498,9 @@ contains
       title :: STR, IN
 
    ENSURE(grid.n_z>0,"there are no points to print")
-   ENSURE(REAL:equals(grid.x_axis.norm,ONE),"grid x axis is not normalized")
-   ENSURE(REAL:equals(grid.y_axis.norm,ONE),"grid y axis is not normalized")
-   ENSURE(REAL:equals(grid.z_axis.norm,ONE),"grid z axis is not normalized")
+   ENSURE(REAL:equals(grid.axes.x_axis.norm,ONE),"grid x axis is not normalized")
+   ENSURE(REAL:equals(grid.axes.y_axis.norm,ONE),"grid y axis is not normalized")
+   ENSURE(REAL:equals(grid.axes.z_axis.norm,ONE),"grid z axis is not normalized")
 
       n,n_atom, nx,ny,nz, x,y,z :: INT
       an :: REAL
@@ -2521,9 +2528,11 @@ contains
       axes(:,2) = axes(:,2) * grid.del_y
       axes(:,3) = axes(:,3) * grid.del_z
 
-      nx = grid.n_x
-      ny = grid.n_y
-      nz = grid.n_z
+      ! The points written: the repeated end plane is dropped
+      nx = grid.n_x - 1
+      ny = grid.n_y - 1
+      nz = grid.n_z - 1
+   ENSURE(nx>0 AND ny>0 AND nz>0,"need at least two points on each axis")
 
       .Afile.put(nx,width=5)
       .Afile.put(axes(1,1))
@@ -2561,13 +2570,12 @@ contains
       .Afile.set_real_width(13)
       .Afile.set_real_precision(5)
 
-      reverse.create(nx,ny,nz)
-      reverse = reshape(density,[nx,ny,nz])
+      reverse.create(grid.n_x,grid.n_y,grid.n_z)
+      reverse = reshape(density,[grid.n_x,grid.n_y,grid.n_z])
 
-      ! Hard coded crap. Sorry.
       where (abs(reverse)<TOL(99)) reverse = ZERO
 
-      ! Write, fortran style
+      ! Write, fortran style, z fastest, without the last plane on each axis
       if (tonto.is_master_processor) write(.Afile.unit,"(*(6e13.5,/))") ( ( (reverse(x,y,z), z=1,nz), y=1,ny), x=1,nx)
 
       ! Clean
@@ -2605,15 +2613,15 @@ contains
       ! Plot only atoms which are within the plot grid box.
       ! To do this we have to change into the plot axis system.
       .Afile.text("ATOMS")
-      axes(1,:) = grid.x_axis
-      axes(2,:) = grid.y_axis
-      axes(3,:) = grid.z_axis
+      axes(1,:) = grid.axes.x_axis
+      axes(2,:) = grid.axes.y_axis
+      axes(3,:) = grid.axes.z_axis
       units = "angstrom"
       fac = units.conversion_factor
       low  = -HALF*grid.width * fac ! bottom left front in plot axis system
       high =  HALF*grid.width * fac ! top right back ....
       do n = 1,atom.dim
-         p = atom(n).position - grid.center
+         p = atom(n).position - grid.axes.center
          pos.to_scaled_product_of(axes,p,fac)
          if (NOT pos(:).is_in_range(low,high)) cycle
          an = atom(n).atomic_number

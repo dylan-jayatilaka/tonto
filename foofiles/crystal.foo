@@ -11768,6 +11768,92 @@ contains
 
    end
 
+   make_missing_reflections(hkl) :: leaky, PURE
+   ! Set "hkl", one row per reflection, to the Miller indices of the
+   ! reflections missing from the data: within its largest sin(theta)/lambda,
+   ! not systematically absent, and with neither a symmetry equivalent nor a
+   ! Friedel mate of one in the list. One reflection of each missing set of
+   ! equivalents is given, the one whose Miller_index_key is largest.
+      self :: IN
+      hkl :: MAT{INT}@, OUT
+
+   ENSURE(.xray_data.allocated, "no diffraction data")
+   ENSURE(.xray_data.reflections.allocated, "no reflections")
+
+      key,sorted_key :: VEC{INT}@
+      list :: MAT{INT}@
+      R :: MAT{REAL}(3,3)
+      t,hv :: VEC{REAL}(3)
+      h,g,h_max :: VEC{INT}(3)
+      stl_max,stl,ph :: REAL
+      i,s,n_refl,n_seitz,n_box,n_miss,h1,h2,h3,k0 :: INT
+      absent,listed,first :: BIN
+
+      n_refl  = .xray_data.reflections.dim
+      n_seitz = .spacegroup.n_seitz
+      stl_max = .xray_data.reflections.max_stl(.unit_cell)
+
+      ! Keys of the listed reflections, sorted for bisection
+      key.create(n_refl)
+      do i = 1,n_refl
+         key(i) = .Miller_index_key(.xray_data.reflections(i).Miller_indices)
+      end
+      sorted_key.create(n_refl)
+      sorted_key = key
+      sorted_key.sort
+
+      ! The box of indices that can lie within stl_max: |h_i| <= 2 stl_max a_i
+      h_max = ceiling(2*stl_max*.unit_cell.length)
+      n_box = product(2*h_max+1)
+      list.create(n_box,3)
+
+      ! Each index in the box: inside the sphere, present, a new set, and
+      ! represented by its largest key
+      n_miss = 0
+      do h1 = -h_max(1),h_max(1)
+      do h2 = -h_max(2),h_max(2)
+      do h3 = -h_max(3),h_max(3)
+
+         h = [h1,h2,h3]
+         if (all(h==0)) cycle
+         hv  = matmul(.unit_cell.reciprocal_mx,h)
+         stl = HALF*norm2(hv)
+         if (stl>stl_max*(ONE+1.0d-8)) cycle
+
+         absent = FALSE
+         listed = FALSE
+         first  = TRUE
+         k0 = .Miller_index_key(h)
+         do s = 1,n_seitz
+            R = transpose(.spacegroup.seitz(1:3,1:3,s))
+            t = .spacegroup.seitz(1:3,4,s)
+            g = nint(matmul(R,h))
+            if (all(g==h)) then
+               ph = dot_product(h,t)
+               if (abs(ph-nint(ph))>1.0d-6) absent = TRUE
+            end
+            if (.sorted_key_has(sorted_key,.Miller_index_key(g)))  listed = TRUE
+            if (.sorted_key_has(sorted_key,.Miller_index_key(-g))) listed = TRUE
+            if (.Miller_index_key(g)>k0 OR .Miller_index_key(-g)>k0) first = FALSE
+         end
+         if (absent OR listed OR NOT first) cycle
+
+         n_miss = n_miss + 1
+         list(n_miss,:) = h
+
+      end
+      end
+      end
+
+      hkl.create(n_miss,3)
+      hkl = list(1:n_miss,:)
+
+      list.destroy
+      sorted_key.destroy
+      key.destroy
+
+   end
+
    sorted_key_has(key,val) result (res) :: PURE
    ! Return TRUE if the increasing-order list "key" contains "val".
    ! Bisection: "key" must be sorted.
@@ -13791,6 +13877,175 @@ contains
 
    end
 
+
+   create_whole_molecule_atom_list(atom) :: leaky, PURE
+   ! Create "atom", the atoms of every molecule that has an atom in the
+   ! unit cell, each molecule complete: the unit cell atoms, with the atoms
+   ! they are bonded to in neighbouring cells added until no bond leads out
+   ! of the list. Positions are cartesian. Needs the unit cell connection
+   ! table, which the fragment info makes.
+      self :: IN
+      atom :: VEC{ATOM}@, OUT
+
+   ENSURE(.unit_cell_atom.allocated,"no unit_cell_atom list")
+   ENSURE(.unit_cell_connection.allocated,"no unit cell connection table")
+
+      code :: VEC{INT}@
+      u :: INT
+
+      ! Start with the unit cell atoms, in the home cell
+      code.create(.n_unit_cell_atoms)
+      do u = 1,.n_unit_cell_atoms
+         code(u) = CLUSTER_AT_CODE(0,0,0,u)
+      end
+
+      .complete_molecules(code)
+      .make_atom_list_from_codes(atom,code)
+
+      code.destroy
+
+   end
+
+   create_cluster_atom_list(atom,centre,radius,offset) :: leaky, PURE
+   ! Create "atom", every atom of the crystal within "radius" of "centre":
+   ! the unit cell atoms translated through as many cells as that needs,
+   ! each moved by "offset" so that the list is in the frame of the caller's
+   ! atoms (the offset that takes a unit cell atom onto the caller's copy of
+   ! it). Positions are cartesian. A cluster for Hirshfeld weights in the
+   ! crystal: the weight of an atom of the crystal has these atoms in its
+   ! denominator.
+      self :: IN
+      atom :: VEC{ATOM}@, OUT
+      centre,offset :: VEC{REAL}(3), IN
+      radius :: REAL, IN
+
+   ENSURE(.unit_cell_atom.allocated,"no unit_cell_atom list")
+   ENSURE(radius>ZERO,"radius must be positive")
+
+      pos,shift :: VEC{REAL}(3)
+      code :: VEC{INT}@
+      hmax :: VEC{INT}(3)
+      u,h1,h2,h3,k :: INT
+
+      ! Enough cells on each axis to reach "radius" from the cell
+      do k = 1,3
+         hmax(k) = ceiling(radius/.unit_cell.length(k)) + 1
+      end
+
+      ! The atoms in range, as cluster codes
+      code.create(0)
+      do u = 1,.n_unit_cell_atoms
+      do h1 = -hmax(1),hmax(1)
+      do h2 = -hmax(2),hmax(2)
+      do h3 = -hmax(3),hmax(3)
+         shift = h1*.unit_cell.direct_mx(:,1) &
+               + h2*.unit_cell.direct_mx(:,2) &
+               + h3*.unit_cell.direct_mx(:,3)
+         pos = .unit_cell_atom(u).position + shift + offset
+         if (norm2(pos-centre)>radius) cycle
+         code.append(CLUSTER_AT_CODE(h1,h2,h3,u))
+      end
+      end
+      end
+      end
+
+      ! The atoms, moved into the caller's frame
+      .make_atom_list_from_codes(atom,code)
+      do k = 1,atom.dim
+         atom(k).set_position(atom(k).position + offset)
+      end
+
+      code.destroy
+
+   end
+
+   create_molecule_atom_list(atom,u,shift) :: leaky, PURE
+   ! Create "atom", the complete molecule that contains unit cell atom
+   ! "u", moved by "shift", a lattice vector, so that it sits where the
+   ! caller's copy of that atom sits. Positions are cartesian.
+      self :: IN
+      atom :: VEC{ATOM}@, OUT
+      u :: INT, IN
+      shift :: VEC{REAL}(3), IN
+
+   ENSURE(.unit_cell_atom.allocated,"no unit_cell_atom list")
+   ENSURE(.unit_cell_connection.allocated,"no unit cell connection table")
+   ENSURE(u>=1 AND u<=.n_unit_cell_atoms,"unit cell atom out of range")
+
+      code :: VEC{INT}@
+      i :: INT
+
+      code.create(1)
+      code(1) = CLUSTER_AT_CODE(0,0,0,u)
+
+      .complete_molecules(code)
+      .make_atom_list_from_codes(atom,code)
+      do i = 1,atom.dim
+         atom(i).set_position(atom(i).position + shift)
+      end
+
+      code.destroy
+
+   end
+
+   complete_molecules(code) :: private, leaky, PURE
+   ! Add to the list of cluster codes "code" every atom bonded to one in
+   ! the list, in whatever cell, until none is new: the molecules of the
+   ! atoms given, complete.
+      self :: IN
+      code :: VEC{INT}@, INOUT
+
+   ENSURE(.unit_cell_connection.allocated,"no unit cell connection table")
+
+      con :: VEC{INT}@
+      i,c,u,h1,h2,h3,new :: INT
+
+      i = 0
+      do
+         i = i + 1
+         if (i>code.dim) exit
+         u  = CLUSTER_UA_FROM_CODE(code(i))
+         h1 = CLUSTER_H1_FROM_CODE(code(i))
+         h2 = CLUSTER_H2_FROM_CODE(code(i))
+         h3 = CLUSTER_H3_FROM_CODE(code(i))
+         do c = 1,.unit_cell_connection(u).element.dim
+            con = .unit_cell_connection(u)[c].element
+            new = CLUSTER_AT_CODE(h1+con(1),h2+con(2),h3+con(3),con(4))
+            if (code.index_of_value(new)>0) cycle
+            code.append(new)
+         end
+      end
+
+      con.destroy
+
+   end
+
+   make_atom_list_from_codes(atom,code) :: private, leaky, PURE
+   ! Create "atom" from the cluster codes "code": copies of the unit cell
+   ! atoms, moved by whole cells
+      self :: IN
+      atom :: VEC{ATOM}@, OUT
+      code :: VEC{INT}, IN
+
+   ENSURE(.unit_cell_atom.allocated,"no unit_cell_atom list")
+
+      shift :: VEC{REAL}(3)
+      i,u,h1,h2,h3 :: INT
+
+      atom.create(code.dim)
+      do i = 1,code.dim
+         u  = CLUSTER_UA_FROM_CODE(code(i))
+         h1 = CLUSTER_H1_FROM_CODE(code(i))
+         h2 = CLUSTER_H2_FROM_CODE(code(i))
+         h3 = CLUSTER_H3_FROM_CODE(code(i))
+         shift = h1*.unit_cell.direct_mx(:,1) &
+               + h2*.unit_cell.direct_mx(:,2) &
+               + h3*.unit_cell.direct_mx(:,3)
+         atom(i) = .unit_cell_atom(u)
+         atom(i).set_position(.unit_cell_atom(u).position + shift)
+      end
+
+   end
 
    create_fragment_atom_list(fragment_atom) :: leaky, PURE
    ! Create the "fragment_atom" list.
