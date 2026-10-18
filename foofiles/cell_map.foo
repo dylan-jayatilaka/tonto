@@ -85,6 +85,8 @@ contains
       .wiener_weight   = FALSE
       .fill_missing    = FALSE
       .in_sigma_units  = FALSE
+      .use_FFT         = FALSE
+      .fft_sampling    = 6
       .l_max        = 2
       .axes.set_defaults
       .n_radii      = 40
@@ -286,7 +288,7 @@ contains
 
    end
 
-   make_values_at(values,pts) :: PURE
+   make_values_at(values,pts) :: leaky, PURE
    ! Set "values" to the density at the cartesian points "pts", one row
    ! per point, by summing the Fourier series at each point.
       self :: IN
@@ -302,7 +304,7 @@ contains
       q.create(.coeff.dim,3)
       .make_scattering_vectors(q)
 
-      FOURIER_SUMS:fourier_series_at(values,q,.coeff,pts)
+      .sum_series_at(values,q,.coeff,pts)
 
       q.destroy
 
@@ -339,7 +341,7 @@ contains
          q2   = q(n,1)*q(n,1) + q(n,2)*q(n,2) + q(n,3)*q(n,3)
          c(n) = .coeff(n)*exp(-net*q2/2)
       end
-      FOURIER_SUMS:fourier_series_at(values,q,c,pts)
+      .sum_series_at(values,q,c,pts)
       c.destroy
       q.destroy
 
@@ -367,6 +369,144 @@ contains
          noise = .noise_level(.m_value)
          STOP_IF(noise<=ZERO, "in_sigma_units: the map has no measurement noise")
          values = values/noise
+      end
+
+   end
+
+   sum_series_at(values,q,c,pts) :: leaky, PURE, private
+   ! Set "values" to the real part of the Fourier series with coefficients
+   ! "c", one per reflection with scattering vector a row of "q", at the
+   ! cartesian points "pts", one row per point: by FFT when "use_FFT" is
+   ! set (make_series_by_FFT), otherwise by a sum at each point.
+      self :: IN
+      values :: VEC{REAL}, OUT
+      q      :: MAT{REAL}, IN
+      c      :: VEC{CPX}, IN
+      pts    :: MAT{REAL}, IN
+
+      if (.use_FFT) then
+         .make_series_by_FFT(values,c,pts)
+      else
+         FOURIER_SUMS:fourier_series_at(values,q,c,pts)
+      end
+
+   end
+
+   make_series_by_FFT(values,c,pts) :: leaky, PURE, private
+   ! Set "values" to the real part of the Fourier series with coefficients
+   ! "c", one per reflection (h1,h2,h3), at the cartesian points "pts", one
+   ! row per point. The series is put on a grid over the cell by one fast
+   ! Fourier transform and interpolated to the points by a cubic B-spline.
+   ! Each axis has at least "fft_sampling" grid points per period of its
+   ! highest Miller index, and more than twice that index. Coefficient h
+   ! is divided first by
+   !
+   !    b(h1/n1) b(h2/n2) b(h3/n3),   b(t) = (2 + cos(2 pi t))/3,
+   !
+   ! with n1, n2, n3 the grid sizes: b is the transform of the spline's
+   ! values at the grid points, so the transform gives the spline's
+   ! coefficients and the spline passes exactly through the series at
+   ! every grid point. Between them the error in a wave with k grid points
+   ! per period is about (2 pi/k)^4/720 of its amplitude: 3e-2 at k = 3,
+   ! 2e-3 at the default k = 6.
+   ! The cost is one transform of the grid plus 64 terms per point,
+   ! instead of one term per reflection per point. Needs -DFFTW=ON.
+      self :: IN
+      values :: VEC{REAL}, OUT
+      c      :: VEC{CPX}, IN
+      pts    :: MAT{REAL}, IN
+
+   ENSURE(c.dim==.h1.dim, "c: wrong dim")
+   ENSURE(values.dim==pts.dim1, "values: wrong dim")
+   ENSURE(pts.dim2==3, "pts: wrong dim2")
+   ENSURE(.fft_sampling>=2, "fft_sampling must be at least 2")
+
+      interface
+         tonto_fft_3d(a,n1,n2,n3,sign) :: pure
+            a :: VEC{CPX}(*), INOUT
+            n1,n2,n3,sign :: INT, IN
+         end
+      end
+
+      g :: VEC{CPX}@
+      w :: MAT{REAL}(4,3)
+      x,t :: VEC{REAL}(3)
+      nn,i0,hmax :: VEC{INT}(3)
+      b,val :: REAL
+      i,n,p,j1,j2,j3,a1,a2,a3 :: INT
+
+#ifdef FFTW
+      ! The grid
+      hmax = [maxval(abs(.h1)),maxval(abs(.h2)),maxval(abs(.h3))]
+      do i = 1,3
+         nn(i) = .FFT_size(max(ceiling(.fft_sampling*hmax(i)),2*hmax(i)+1))
+      end
+
+      ! The spline coefficients, from the series divided by b
+      g.create(product(nn))
+      g = ZERO
+      do n = 1,c.dim
+         j1 = modulo(.h1(n),nn(1))
+         j2 = modulo(.h2(n),nn(2))
+         j3 = modulo(.h3(n),nn(3))
+         b  = (2+cos(2*PI*j1/nn(1)))*(2+cos(2*PI*j2/nn(2)))*(2+cos(2*PI*j3/nn(3)))/27
+         p  = 1 + j1 + nn(1)*(j2 + nn(2)*j3)
+         g(p) = g(p) + c(n)/b
+      end
+      call tonto_fft_3d(g,nn(1),nn(2),nn(3),-1)
+
+      ! The spline at each point, from the 4x4x4 grid points around it
+      do i = 1,pts.dim1
+         x  = matmul(pts(i,:),.reciprocal_mx)*nn
+         i0 = floor(x)
+         t  = x - i0
+         w(1,:) = (1-t)**3/6
+         w(2,:) = (3*t**3 - 6*t**2 + 4)/6
+         w(3,:) = (-3*t**3 + 3*t**2 + 3*t + 1)/6
+         w(4,:) = t**3/6
+         val = ZERO
+         do a3 = 1,4
+            j3 = modulo(i0(3)+a3-2,nn(3))
+            do a2 = 1,4
+               j2 = modulo(i0(2)+a2-2,nn(2))
+               do a1 = 1,4
+                  j1 = modulo(i0(1)+a1-2,nn(1))
+                  p  = 1 + j1 + nn(1)*(j2 + nn(2)*j3)
+                  val = val + w(a1,1)*w(a2,2)*w(a3,3)*REALIFY(g(p))
+               end
+            end
+         end
+         values(i) = val
+      end
+
+      g.destroy
+#else
+      values = ZERO
+      STOP_IF(TRUE,"use_fft needs a Tonto built with FFTW; configure with -DFFTW=ON")
+#endif
+
+   end
+
+   FFT_size(n) result (res) :: pure, private
+   ! Return the smallest integer not less than "n" with no prime factor
+   ! above 7: a length FFTW transforms quickly.
+      self :: IN
+      n :: INT, IN
+      res :: INT
+
+      m,f :: INT
+
+      res = max(n,1)
+      do
+         m = res
+         do f = 2,7
+            do
+               if (modulo(m,f)/=0) exit
+               m = m/f
+            end
+         end
+         if (m==1) exit
+         res = res + 1
       end
 
    end
@@ -443,7 +583,7 @@ contains
       do m = m_lo,m_hi
          .make_moment_factors(f,q,m)
          c = .coeff*f
-         FOURIER_SUMS:fourier_series_at(comp,q,c,pts)
+         .sum_series_at(comp,q,c,pts)
          if (m_lo==m_hi) then
             values = comp
          else
@@ -879,6 +1019,8 @@ contains
       case ("wiener_weight=     "); .read_wiener_weight
       case ("fill_missing=      "); .read_fill_missing
       case ("in_sigma_units=    "); .read_in_sigma_units
+      case ("use_fft=           "); .read_use_FFT
+      case ("fft_sampling=      "); .read_fft_sampling
       case ("l_max=             "); .read_l_max
       case ("centre=            "); .axes.read_center
       case ("center=            "); .axes.read_center
@@ -978,6 +1120,27 @@ contains
       stdin.read(.fill_missing)
 
       if (.filled.allocated) .filled.destroy
+
+   end
+
+   read_use_FFT
+   ! Read whether a map is summed by FFT onto a grid over the cell and then
+   ! interpolated to the points (make_series_by_FFT), which is much faster
+   ! for many reflections and many points; needs a Tonto built with FFTW
+      self :: INOUT
+
+      stdin.read(.use_FFT)
+
+   end
+
+   read_fft_sampling
+   ! Read the number of FFT grid points per period of the highest Miller
+   ! index on each axis; at least 2. The default, 6, keeps the interpolation
+   ! error near 2e-3 of the amplitude of the finest wave
+      self :: INOUT
+
+      stdin.read(.fft_sampling)
+   DIE_IF(.fft_sampling<2, "fft_sampling must be at least 2")
 
    end
 
@@ -1246,6 +1409,10 @@ contains
          comp.destroy
       end
       stdout.show("In sigma units?         =",.in_sigma_units)
+      end
+      if (.use_FFT) then
+      stdout.show("Use FFT?                =",.use_FFT)
+      stdout.show("FFT points per period   =",.fft_sampling)
       end
       stdout.show("Map r.m.s./(e A^-3)     =",.rms_over_cell(.m_value)*BOHR_PER_ANGSTROM**3)
       stdout.show("l_max                   =",.l_max)

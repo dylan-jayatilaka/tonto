@@ -109,6 +109,10 @@ Configure a separate directory for each type you keep.
   from the copy in `external/libxc`, which `git clone --recursive` fetches, and
   needs a C compiler. Without it Tonto has the LDA, BLYP and B3LYP functionals.
   See [`RUNNING_TONTO.md`](RUNNING_TONTO.md).
+- **FFTW goes with any of them:** add `-DFFTW=ON` to make maps of the unit cell by
+  fast Fourier transform (`use_fft=` in a `cell_map=` block). FFTW 3.3.10 is
+  downloaded when CMake configures, checked, and built; set `-DFFTW_URL=` to a local
+  copy of the tarball to build without a network. It needs a C compiler.
 - **`release` and `fast` link OpenBLAS and `reference` links netlib, on every
   platform**, so a build type means the same library everywhere. OpenBLAS is
   faster where it matters, in density functional jobs; netlib gives the same
