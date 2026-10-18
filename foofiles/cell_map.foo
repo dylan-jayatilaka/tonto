@@ -84,6 +84,7 @@ contains
       .laplacian_order = 0
       .wiener_weight   = FALSE
       .fill_missing    = FALSE
+      .in_sigma_units  = FALSE
       .l_max        = 2
       .axes.set_defaults
       .n_radii      = 40
@@ -201,6 +202,29 @@ contains
       .h2 = h2
       .h3 = h3
       .coeff = coeff/.volume
+
+   end
+
+   set_coefficient_sigmas(sigma,source) :: leaky, PURE
+   ! Take "sigma", the standard deviation of each coefficient as a complex
+   ! number: the coefficient its measured reflection would give with |F|
+   ! replaced by F_sigma, with the symmetry phase, multiplicity and site
+   ! factor of the expansion; and "source", the measured reflection each
+   ! coefficient comes from, 0 for F(000). Copies of one measurement have
+   ! the same error; different measurements independent ones. In the order
+   ! and on the scale given to set_coefficients; divided by the cell volume
+   ! here, as the coefficients are.
+      self :: INOUT
+      sigma :: VEC{CPX}, IN
+      source :: VEC{INT}, IN
+
+   ENSURE(.volume>ZERO, "set the cell first")
+   ENSURE(.coeff.allocated, "set the coefficients first")
+   ENSURE(sigma.dim==.coeff.dim, "sigma: wrong dim")
+   ENSURE(source.dim==.coeff.dim, "source: wrong dim")
+
+      .coeff_sigma = sigma/.volume
+      .coeff_source = source
 
    end
 
@@ -324,15 +348,25 @@ contains
    make_map_at(values,pts) :: leaky, PURE
    ! Set "values" to the map these settings describe, at the cartesian
    ! points "pts", one row per point: the density itself when l_value is
-   ! negative, otherwise the local moment of angular momentum l_value.
+   ! negative, otherwise the local moment of angular momentum l_value;
+   ! divided by its noise level when "in_sigma_units" is set.
       self :: IN
       values :: VEC{REAL}, OUT
       pts    :: MAT{REAL}, IN
+
+      noise :: REAL
 
       if (.l_value<0) then
          .make_values_at(values,pts)
       else
          .make_moment_at(values,pts)
+      end
+
+      ! As significances
+      if (.in_sigma_units) then
+         noise = .noise_level(.m_value)
+         STOP_IF(noise<=ZERO, "in_sigma_units: the map has no measurement noise")
+         values = values/noise
       end
 
    end
@@ -382,15 +416,69 @@ contains
    ENSURE(.moment_kind=="riesz" OR .sharpen_order>0 OR .sharpen_U<.window_width**2, "sharpen_U must be below window_width^2")
    ENSURE(.moment_kind=="gaussian" OR (.sharpen_U==ZERO AND .sharpen_order==0 AND .laplacian_order==0), "a Riesz map has no sharpening or Laplacian")
 
-      q,qr,Y :: MAT{REAL}@
-      c   :: VEC{CPX}@
+      q :: MAT{REAL}@
+      f,c :: VEC{CPX}@
       comp :: VEC{REAL}@
-      q2,sig,net :: REAL
-      fac :: CPX
-      n_refl,n,lv,m,m_lo,m_hi,col :: INT
-      riesz :: BIN
+      n_refl,lv,m,m_lo,m_hi :: INT
 
       n_refl = .coeff.dim
+      lv = .l_value
+
+      ! The scattering vectors
+      q.create(n_refl,3)
+      .make_scattering_vectors(q)
+
+      ! Which components
+      if (.m_value==-99) then
+         m_lo = -lv; m_hi = lv
+      else
+         m_lo = .m_value; m_hi = .m_value
+      end
+
+      ! Each component's series, squared and added
+      f.create(n_refl)
+      c.create(n_refl)
+      comp.create(values.dim)
+      values = ZERO
+      do m = m_lo,m_hi
+         .make_moment_factors(f,q,m)
+         c = .coeff*f
+         FOURIER_SUMS:fourier_series_at(comp,q,c,pts)
+         if (m_lo==m_hi) then
+            values = comp
+         else
+            values = values + comp*comp
+         end
+      end
+      if (m_lo/=m_hi) values = sqrt(values)
+
+      comp.destroy
+      c.destroy
+      f.destroy
+      q.destroy
+
+   end
+
+   make_moment_factors(f,q,m) :: leaky, PURE
+   ! Set "f(n)", the factor that multiplies coefficient n in the local
+   ! moment of component "m" of angular momentum l_value (make_moment_at),
+   ! for the scattering vectors "q", one row per coefficient: the Gaussian
+   ! window's (-i)^l sigma^l q^l Y_lm(q^) exp(-sigma^2 q^2/2), with the
+   ! sharpening and Laplacian options, or the Riesz map's (-i)^l Y_lm(q^).
+      self :: IN
+      f :: VEC{CPX}, OUT
+      q :: MAT{REAL}, IN
+      m :: INT, IN
+
+   ENSURE(f.dim==q.dim1, "f: wrong dim")
+   ENSURE(abs(m)<=.l_value, "m out of range")
+
+      qr,Y :: MAT{REAL}@
+      q2,sig,net :: REAL
+      fac :: CPX
+      n,lv,col :: INT
+      riesz :: BIN
+
       lv  = .l_value
       sig = .window_width
       riesz = .moment_kind=="riesz"
@@ -404,60 +492,175 @@ contains
       net = sig*sig
       if (.sharpen_order==0) net = net - .sharpen_U
 
-      ! The scattering vectors, and the solid harmonics q^l Y_lm(q^) at
-      ! them in the frame of the axes: the harmonics take the components of
-      ! q along the local axes, the columns of the frame's matrix
-      q.create(n_refl,3)
-      .make_scattering_vectors(q)
-      qr.create(n_refl,3)
+      ! The solid harmonics q^l Y_lm(q^) in the frame of the axes: the
+      ! harmonics take the components of q along the local axes, the
+      ! columns of the frame's matrix
+      qr.create(q.dim1,3)
       qr = matmul(q,.axes.matrix)
-      Y.create(n_refl,(lv+1)*(lv+1))
+      Y.create(q.dim1,(lv+1)*(lv+1))
       FOURIER_SUMS:make_solid_harmonics(Y,qr,lv)
+      col = FOURIER_SUMS:harmonic_column(lv,m)
+
+      do n = 1,q.dim1
+         q2 = q(n,1)*q(n,1) + q(n,2)*q(n,2) + q(n,3)*q(n,3)
+         if (riesz) then
+            ! Y_lm(q^) = q^l Y_lm(q^) / q^l; at q = 0 only l = 0 survives
+            if (lv==0) then
+               f(n) = Y(n,col)
+            else if (q2>ZERO) then
+               f(n) = fac*Y(n,col)/sqrt(q2)**lv
+            else
+               f(n) = ZERO
+            end
+            cycle
+         end
+         f(n) = fac*Y(n,col)*exp(-net*q2/2)
+         if (.sharpen_order>0)   f(n) = f(n)*.sharpening_polynomial(q2)
+         if (.laplacian_order>0) f(n) = f(n)*(-sig*sig*q2)**.laplacian_order
+      end
+
+      Y.destroy
       qr.destroy
 
-      ! Which components
-      if (.m_value==-99) then
-         m_lo = -lv; m_hi = lv
+   end
+
+   noise_level(m) result (res) :: leaky, PURE
+   ! The noise level of the map these settings describe: the root mean
+   ! square, over the cell, of the map of the random errors of the measured
+   ! |F|, with the phases held fixed. The map is the real part of
+   ! sum_n f_n c_n exp(-i q_n.r), f_n the filter factor (one for the plain
+   ! density). An error in a measured |F| moves all the coefficients copied
+   ! from it together, those with the same wave vector, or opposite ones,
+   ! adding as amplitudes; errors of different measurements are independent
+   ! and add as squares (filtered_root_power). Near a special position the
+   ! noise is larger, as for any density map. For a local moment, "m"
+   ! selects the component; m = -99 gives the noise of the norm over m, the
+   ! root of the sum of the components' variances. Zero when the
+   ! coefficients have no standard deviations, as for f_calc.
+      self :: IN
+      m :: INT, IN
+      res :: REAL
+
+   ENSURE(.coeff.allocated, "no coefficients")
+
+      res = ZERO
+      if (.coeff_sigma.deallocated) return
+      res = .filtered_root_power(.coeff_sigma,.coeff_source,m)
+
+   end
+
+   rms_over_cell(m) result (res) :: leaky, PURE
+   ! The root mean square over the cell of the map these settings describe,
+   ! its mean left out: by Parseval's theorem the root of 1/2 sum |D_g|^2
+   ! over the distinct wave vectors g, D_g the coefficients of g and -g
+   ! combined (filtered_root_power with every coefficient from one source).
+   ! "m" is as for noise_level.
+      self :: IN
+      m :: INT, IN
+      res :: REAL
+
+   ENSURE(.coeff.allocated, "no coefficients")
+
+      source :: VEC{INT}@
+
+      source.create(.coeff.dim)
+      source = 1
+      res = .filtered_root_power(.coeff,source,m)
+      source.destroy
+
+   end
+
+   filtered_root_power(x,source,m) result (res) :: leaky, PURE, private
+   ! The root of 1/2 sum_g sum_s |a_gs|^2, with a_gs = sum of f_n x(n) over
+   ! the coefficients n of wave vector g and source s, plus the complex
+   ! conjugate of that sum over the coefficients of -g: the mean square over
+   ! the cell of the real part of sum_n f_n x(n) exp(-i q_n.r) when the
+   ! terms of one source are fixed together and those of different sources
+   ! vary independently. f_n is the filter factor of component "m"
+   ! (make_moment_factors), or one for the plain density; m = -99 sums the
+   ! components of a local moment. The term g = 0 is left out.
+      self :: IN
+      x :: VEC{CPX}, IN
+      source :: VEC{INT}, IN
+      m :: INT, IN
+      res :: REAL
+
+   ENSURE(x.dim==.coeff.dim, "x: wrong dim")
+   ENSURE(source.dim==.coeff.dim, "source: wrong dim")
+
+      q :: MAT{REAL}@
+      f,t :: VEC{CPX}@
+      key,order :: VEC{INT}@
+      tie :: MAT{INT}@
+      run :: CPX
+      var :: REAL
+      n,i,j,mm,m_lo,m_hi,k_plus,k_minus,k0 :: INT
+      flip :: BIN
+
+      n = .coeff.dim
+
+      ! Each wave vector and its negative share one key; a coefficient of
+      ! the negative one enters as its complex conjugate
+      key.create(n)
+      t.create(n)
+      f.create(n)
+      tie.create(n,1)
+      tie(:,1) = source
+      k0 = ((512)*1024 + 512)*1024 + 512
+      q.create(n,3)
+      .make_scattering_vectors(q)
+
+      if (.l_value<0) then
+         m_lo = 0; m_hi = 0
+      else if (m==-99) then
+         m_lo = -.l_value; m_hi = .l_value
       else
-         m_lo = .m_value; m_hi = .m_value
+         m_lo = m; m_hi = m
       end
 
-      ! Each component's series, squared and added
-      c.create(n_refl)
-      comp.create(values.dim)
-      values = ZERO
-      do m = m_lo,m_hi
-         col = FOURIER_SUMS:harmonic_column(lv,m)
-         do n = 1,n_refl
-            q2   = q(n,1)*q(n,1) + q(n,2)*q(n,2) + q(n,3)*q(n,3)
-            if (riesz) then
-               ! Y_lm(q^) = q^l Y_lm(q^) / q^l; at q = 0 only l = 0 survives
-               if (lv==0) then
-                  c(n) = .coeff(n)*Y(n,col)
-               else if (q2>ZERO) then
-                  c(n) = .coeff(n)*fac*Y(n,col)/sqrt(q2)**lv
-               else
-                  c(n) = ZERO
-               end
-               cycle
+      var = ZERO
+      do mm = m_lo,m_hi
+
+         if (.l_value<0) then; f = ONE
+         else;                 .make_moment_factors(f,q,mm)
+         end
+         t = f*x
+
+         do i = 1,n
+            k_plus  = ((.h1(i)+512)*1024 + (.h2(i)+512))*1024 + (.h3(i)+512)
+            k_minus = ((-.h1(i)+512)*1024 + (-.h2(i)+512))*1024 + (-.h3(i)+512)
+            flip = k_minus>k_plus
+            key(i) = max(k_plus,k_minus)
+            if (flip) t(i) = conjg(t(i))
+         end
+
+         ! Runs of one key and one source, summed as amplitudes
+         order.create(n)
+         key.quick_sort(order,then_by=tie)
+         i = 1
+         do
+            if (i>n) exit
+            j = i
+            run = t(order(i))
+            do
+               if (j+1>n) exit
+               if (key(order(j+1))/=key(order(i)) OR source(order(j+1))/=source(order(i))) exit
+               j = j + 1
+               run = run + t(order(j))
             end
-            c(n) = .coeff(n)*fac*Y(n,col)*exp(-net*q2/2)
-            if (.sharpen_order>0)   c(n) = c(n)*.sharpening_polynomial(q2)
-            if (.laplacian_order>0) c(n) = c(n)*(-sig*sig*q2)**.laplacian_order
+            if (key(order(i))/=k0) var = var + HALF*abs(run)**2
+            i = j + 1
          end
-         FOURIER_SUMS:fourier_series_at(comp,q,c,pts)
-         if (m_lo==m_hi) then
-            values = comp
-         else
-            values = values + comp*comp
-         end
-      end
-      if (m_lo/=m_hi) values = sqrt(values)
+         order.destroy
 
-      comp.destroy
-      c.destroy
-      Y.destroy
+      end
+      res = sqrt(var)
+
       q.destroy
+      tie.destroy
+      f.destroy
+      t.destroy
+      key.destroy
 
    end
 
@@ -675,6 +878,7 @@ contains
       case ("laplacian_order=   "); .read_laplacian_order
       case ("wiener_weight=     "); .read_wiener_weight
       case ("fill_missing=      "); .read_fill_missing
+      case ("in_sigma_units=    "); .read_in_sigma_units
       case ("l_max=             "); .read_l_max
       case ("centre=            "); .axes.read_center
       case ("center=            "); .axes.read_center
@@ -774,6 +978,15 @@ contains
       stdin.read(.fill_missing)
 
       if (.filled.allocated) .filled.destroy
+
+   end
+
+   read_in_sigma_units
+   ! Read whether a map is written divided by its noise level (see
+   ! noise_level), so that its values are significances
+      self :: INOUT
+
+      stdin.read(.in_sigma_units)
 
    end
 
@@ -988,6 +1201,10 @@ contains
    ! Put the settings and the size of the map
       self :: IN
 
+      comp :: VEC{REAL}@
+      noise :: REAL
+      m :: INT
+
       stdout.flush
       stdout.text("=============")
       stdout.text("Cell map data")
@@ -1013,6 +1230,24 @@ contains
       stdout.show("Laplacian order         =",.laplacian_order)
       stdout.show("Wiener weight?          =",.wiener_weight)
       end
+
+      ! The noise level, from the coefficients' standard deviations; in
+      ! atomic units, and in electrons per cubic angstrom for the output
+      if (.coeff_sigma.allocated) then
+      noise = .noise_level(.m_value)
+      stdout.show("Noise level             =",noise)
+      stdout.show("Noise level/(e A^-3)    =",noise*BOHR_PER_ANGSTROM**3)
+      if (.l_value>0 AND .m_value==-99) then
+         comp.create(2*.l_value+1)
+         do m = -.l_value,.l_value
+            comp(m+.l_value+1) = .noise_level(m)*BOHR_PER_ANGSTROM**3
+         end
+      stdout.show("Noise per m/(e A^-3)    =",comp)
+         comp.destroy
+      end
+      stdout.show("In sigma units?         =",.in_sigma_units)
+      end
+      stdout.show("Map r.m.s./(e A^-3)     =",.rms_over_cell(.m_value)*BOHR_PER_ANGSTROM**3)
       stdout.show("l_max                   =",.l_max)
       stdout.show("No. of radii            =",.n_radii)
       stdout.show("Largest radius          =",.radius_max)

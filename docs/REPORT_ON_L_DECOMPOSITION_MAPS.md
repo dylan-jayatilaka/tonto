@@ -349,6 +349,7 @@ keyword at a time.
 | `sharpen_u=` | 0 | a mean ADP divided out of a local-moment map, an area with units (`angstrom^2`); must stay below `window_width` squared unless `sharpen_order=` is set |
 | `sharpen_order=` | 0 | the order $`J`$ of the polynomial (14) in place of the exact sharpening factor; 0 is exact |
 | `laplacian_order=` | 0 | $`k`$ Laplacians applied to a local-moment map, scaled by $`\sigma^{2k}`$ |
+| `in_sigma_units=` | `FALSE` | write a map divided by its noise level, so its values are significances; `put_cell_map` reports the noise level, the root mean square over the cell of the map of the random errors of the measured $`|F|`$ with the phases held fixed, for the map and for each component $`m`$, and the map's own root mean square; copies of one measurement add as amplitudes, different measurements as squares |
 | `fill_missing=` | `FALSE` | add to every Fourier map the reflections missing from the data within its largest $`\sin\theta/\lambda`$, one of each set of equivalents, valued by the refined model: $`F_{\rm calc}`$ from the form factors of the refinement at the model's positions and ADPs, so a filled reflection adds $`F_{\rm calc}`$ to the `f_exp` and `f_calc` maps and nothing to the `residual` map; they are made, and listed, when the block is read, so give the block after the refinement; the refinement's own reflections are not changed |
 | `wiener_weight=` | `FALSE` | weight each observed coefficient by $`F^2/(F^2+\sigma_F^2)`$ |
 | `l_max=` | 2 | the highest $`l`$ of the radial functions and the rebuilt atoms |
