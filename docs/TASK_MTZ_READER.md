@@ -95,3 +95,16 @@ roughly two days of work. Whole-cell maps of 6MU9 need the FFT build (`-DFFTW=ON
 ## Log
 
 - 2026-10-19: branch made; data downloaded and inspected; plan written.
+- 2026-10-20: stages 1–4 done. `mtz= { file_name= ... put }`, `process_mtz` and
+  `pdb_file=` read 6MU9 in 17 s. Three things found on the way:
+  - `STR:remove_blanks` loops for ever on a blank-padded string (it replaces " " by ""
+    and the padding is blanks); the MTZ reader uses its own helper.
+  - The translator drops a kind on a declaration: `rval4 :: REAL(REAL_4_KIND)` comes
+    out as `REAL`. The CPP macros `REAL_4` and `INT_4` pass through and work. This means
+    `archive.foo`'s "single precision" stream writers have been writing doubles; not fixed
+    here.
+  - `CRYSTAL:make_list_of_equivalents_v2` compared every reflection with every other and
+    took 8 minutes on 108 445 reflections; it now sorts a symmetry-reduced key (heap sort:
+    the library quick sort recurses n deep on sorted input and overflowed the stack).
+    `update_atom_basis_group_info` after a PDB read built a molecule with fragment info
+    for every connected group, waters included, 7 minutes; the PDB path skips the groups.

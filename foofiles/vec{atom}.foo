@@ -2735,6 +2735,110 @@ contains
 
    end
 
+! PDB
+
+   read_PDB(file) :: leaky
+   ! Read the atoms from the Protein Data Bank coordinate "file": every
+   ! ATOM and HETATM record, with its position, occupancy, element and
+   ! residue, and its ADP from the ANISOU record that follows it, or an
+   ! isotropic ADP from its B value. Positions are cartesian, in the frame
+   ! of the file. Alternate conformers are kept as separate atoms, each
+   ! with its occupancy. The label is name-serial-residue-number, as for
+   ! an mmCIF file, so that every label is unique.
+   ! NOTE: self is destroyed and created from this file!
+      self :: allocatable, OUT
+      file :: TEXTFILE, INOUT
+
+   ENSURE(file.is_open, "PDB file is not open")
+
+      line,lab,symbol,name,resname :: STR
+      pos :: VEC{REAL}(3)
+      U :: VEC{REAL}(6)
+      occ,B,U_iso :: REAL
+      i,n_atoms,n,serial,resseq,j :: INT
+
+      ! Count the atoms
+      n_atoms = 0
+      do i = 1,file.no_of_lines
+         file.move_to_line(i)
+         if (file.buffer.exhausted) cycle
+         line = file.buffer.string
+         if (line(1:6)=="ATOM  " OR line(1:6)=="HETATM") n_atoms = n_atoms + 1
+      end
+      DIE_IF(n_atoms==0, "no ATOM or HETATM records in PDB file "//trim(file.name))
+
+      .destroy
+      .create(n_atoms)
+      .set_pos_axis_system_to("cartesian")
+
+      ! Read them
+      n = 0
+      do i = 1,file.no_of_lines
+         file.move_to_line(i)
+         if (file.buffer.exhausted) cycle
+         line = file.buffer.string
+
+         if (line(1:6)=="ATOM  " OR line(1:6)=="HETATM") then
+
+            n = n + 1
+            serial  = line(7:11).to_int
+            name    = adjustl(line(13:16))
+            resname = adjustl(line(18:20))
+            resseq  = line(23:26).to_int
+            pos(1)  = line(31:38).to_real
+            pos(2)  = line(39:46).to_real
+            pos(3)  = line(47:54).to_real
+            occ     = ONE
+            if (line(55:60)/=" ") occ = line(55:60).to_real
+            B       = ZERO
+            if (line(61:66)/=" ") B = line(61:66).to_real
+
+            ! The element: the last columns, or else the name
+            symbol = adjustl(line(77:78))
+            if (symbol==" ") then
+               if (line(13:13)==" ") then; symbol = line(14:14)
+               else;                       symbol = line(13:14)
+               end
+            end
+            symbol(1:1).to_upper_case
+            if (len_trim(symbol)>1) symbol(2:2).to_lower_case
+
+            ! Residue data, as for an mmCIF file
+            self(n).set_atom_sequence_id(serial)
+            self(n).set_compound_id(resname)
+            self(n).set_compound_sequence_id(resseq)
+            self(n).set_group(resseq)
+            self(n).set_asym_id(line(22:22))
+
+            ! The label, Tonto style: CA-2-MET-1, with the conformer letter if any
+            lab = trim(name)//"-"//trim(serial.to_str)//"-"//trim(resname)//"-"//trim(resseq.to_str)
+            if (line(17:17)/=" ") lab = trim(lab)//"-"//line(17:17)
+            self(n).set_label(lab,skip_mass=TRUE)
+            self(n).set_atomic_number_and_mass(symbol)
+
+            ! Position, occupancy and an isotropic ADP from B
+            pos = pos*BOHR_PER_ANGSTROM
+            self(n).set_position(pos)
+            self(n).set_site_occupancy(occ)
+            U_iso = B/(8*PI*PI)*BOHR_PER_ANGSTROM**2
+            U = [U_iso,U_iso,U_iso,ZERO,ZERO,ZERO]
+            self(n).set_ADP_tensor(U)
+
+         else if (line(1:6)=="ANISOU") then
+
+            ! U11 U22 U33 U12 U13 U23 in 1e-4 A^2, for the atom just read
+            DIE_IF(n==0, "ANISOU record before any atom in PDB file "//trim(file.name))
+            do j = 1,6
+               U(j) = line(29+7*(j-1):35+7*(j-1)).to_real
+            end
+            U = U*1.0d-4*BOHR_PER_ANGSTROM**2
+            self(n).set_ADP_tensor(U)
+
+         end
+      end
+
+   end
+
 ! mmCIF
 
    read_mmCIF(cif) :: leaky

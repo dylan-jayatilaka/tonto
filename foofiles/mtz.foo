@@ -1,0 +1,565 @@
+!---------------------------------------------------------------------------
+!
+! MTZ: a CCP4 MTZ reflection file, read whole into memory.
+!
+! An MTZ file holds the unit cell, the space group with its symmetry
+! operators, and columns of reflection data, one row per reflection: the
+! Miller indices and, for a REFMAC output file, the measured amplitudes
+! and their sigmas, the model structure factors and the map coefficients.
+! It holds no atoms; the model comes from a PDB or mmCIF file.
+!
+! The format is binary: a 4-byte tag "MTZ ", a 4-byte integer giving the
+! word at which the header starts, a 4-byte machine stamp whose first byte
+! gives the byte order of the numbers, then the data as 32-bit floats,
+! n_col per reflection, from word 21, and then the header as 80-character
+! lines: VERS, TITLE, NCOL, CELL, SORT, SYMINF, SYMM, RESO, VALM, COLUMN,
+! the dataset lines, and END. Missing values are NaN, or the number VALM
+! gives. See the CCP4 documentation of the MTZ format.
+!
+! The file is read on the master process and broadcast.
+!
+! Copyright (C) Dylan Jayatilaka, 2026
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+!---------------------------------------------------------------------------
+
+module MTZ
+
+   implicit none
+
+contains
+
+!  ==========
+!  Allocation
+!  ==========
+
+   create :: get_from(OBJECT), leaky, PURE
+   ! Allocate an object
+   end
+
+   destroy :: get_from(OBJECT), leaky, PURE
+   ! Deallocate "self"
+   end
+
+   create(name) :: leaky
+   ! Create an object for the MTZ file called "name"
+      self :: allocatable, OUT
+      name :: STR, IN
+
+      .create
+      .set_file_name(name)
+
+   end
+
+   destroy_ptr_part :: leaky, PURE
+   ! Destroy the pointer parts
+      self :: INOUT
+
+      .symop.destroy
+      .column_label.destroy
+      .column_type.destroy
+      .data.destroy
+      .missing.destroy
+
+   end
+
+!  ===
+!  Set
+!  ===
+
+   set_defaults :: pure
+   ! Set the defaults: an empty file
+      self :: INOUT
+
+      .file_name = " "
+      .title = " "
+      .n_col = 0
+      .n_refl = 0
+      .cell_length = ZERO
+      .cell_angle = ZERO
+      .spacegroup_number = 0
+      .spacegroup_symbol = " "
+      .resolution_low = ZERO
+      .resolution_high = ZERO
+      .F_column = "FP"
+      .F_sigma_column = "SIGFP"
+      .F_calc_column = "FC_ALL"
+      .phase_column = "PHIC_ALL"
+
+   end
+
+   set_file_name(name) :: pure
+   ! Set the name of the file to read
+      self :: INOUT
+      name :: STR, IN
+
+      .file_name = name
+
+   end
+
+!  =====
+!  Input
+!  =====
+
+   read_keywords :: get_from(OBJECT), leaky
+   ! Read data from "stdin" using keyword style input.
+   end
+
+   process_keyword(keyword) :: leaky
+   ! Process command "keyword". Any required data needed by the "keyword" is
+   ! inputted from "stdin".
+      self :: INOUT
+      keyword :: STR, IN
+
+      word :: STR
+
+      word = keyword
+      word.to_lower_case
+
+      select case (word)
+      case ("}                  ")  ! exit case
+      case ("f_calc_column=     "); stdin.read(.F_calc_column)
+      case ("f_column=          "); stdin.read(.F_column)
+      case ("f_sigma_column=    "); stdin.read(.F_sigma_column)
+      case ("file_name=         "); .read_file_name
+      case ("phase_column=      "); stdin.read(.phase_column)
+      case ("put                "); .put
+      case default; UNKNOWN(word)
+      end
+
+   end
+
+   read_file_name :: leaky
+   ! Read the file name, and read the file
+      self :: INOUT
+
+      name :: STR
+
+      stdin.read(name)
+      .set_file_name(name)
+      .read
+
+   end
+
+!  ================
+!  Reading the file
+!  ================
+
+   read :: leaky
+   ! Read the whole file called ".file_name": the header into the cell,
+   ! space group, resolution and column descriptions, and the data into
+   ! ".data", with ".missing" marking the absent values. The master
+   ! process reads; every process gets the result.
+      self :: INOUT
+
+   ENSURE(.file_name/=" ", "no file name")
+
+      lines :: VEC{STR}@
+      n_lines :: INT
+
+      .destroy_ptr_part
+
+      ! The header: a list of 80-character lines
+      lines.create(MTZ_MAX_HEADER_LINES)
+      lines = " "
+      n_lines = 0
+      if (IO_IS_ALLOWED) .read_header_lines(lines,n_lines)
+      PARALLEL_BROADCAST_IO(n_lines,tonto.master_processor)
+      PARALLEL_BROADCAST_IO(lines,tonto.master_processor)
+      .process_header_lines(lines(1:n_lines))
+      lines.destroy
+
+      ! The data
+      .data.create(.n_refl,.n_col)
+      .missing.create(.n_refl,.n_col)
+      if (IO_IS_ALLOWED) .read_data
+      PARALLEL_BROADCAST_IO(.data,tonto.master_processor)
+      PARALLEL_BROADCAST_IO(.missing,tonto.master_processor)
+
+   end
+
+   read_header_lines(lines,n_lines) :: private
+   ! Set "lines" to the 80-character header lines of the file, up to and
+   ! including the END line, and "n_lines" to how many there are. Also
+   ! finds the byte order of the file.
+      self :: INOUT
+      lines :: VEC{STR}, OUT
+      n_lines :: INT, OUT
+
+      s4 :: STR(len=4)
+      line :: STR(len=80)
+      u,ios,header_word,pos :: INT
+
+      open(newunit=u,file=trim(.file_name),access="stream",form="unformatted",status="old",iostat=ios)
+      DIE_IF(ios/=0, "cannot open MTZ file "//trim(.file_name))
+
+      ! The tag, the header position and the byte order
+      read(u,pos=1,iostat=ios) s4
+      DIE_IF(ios/=0 OR s4/="MTZ ", "not an MTZ file: "//trim(.file_name))
+      read(u,pos=9) s4
+      .set_byte_order(s4)
+      read(u,pos=5) s4
+      header_word = .to_int(s4)
+
+      ! The header lines, to END
+      n_lines = 0
+      pos = (header_word-1)*4 + 1
+      do
+         read(u,pos=pos,iostat=ios) line
+         if (ios/=0) exit
+         n_lines = n_lines + 1
+         DIE_IF(n_lines>lines.dim, "too many header lines in MTZ file "//trim(.file_name))
+         lines(n_lines) = line
+         if (line(1:4)=="END ") exit
+         pos = pos + 80
+      end
+      DIE_IF(n_lines==0, "no header in MTZ file "//trim(.file_name))
+      DIE_IF(lines(n_lines)(1:4)/="END ", "MTZ header has no END line: "//trim(.file_name))
+
+      close(u)
+
+   end
+
+   read_data :: private
+   ! Read the data block, n_refl rows of n_col 32-bit floats from word 21,
+   ! into ".data", and mark the missing values in ".missing".
+      self :: INOUT
+
+   ENSURE(.data.allocated, "data not created")
+   ENSURE(.missing.allocated, "missing not created")
+
+      s4 :: STR(len=4)
+      u,ios,n,c :: INT
+
+      open(newunit=u,file=trim(.file_name),access="stream",form="unformatted",status="old",iostat=ios)
+      DIE_IF(ios/=0, "cannot open MTZ file "//trim(.file_name))
+
+      read(u,pos=81,iostat=ios) s4
+      DIE_IF(ios/=0, "MTZ file has no data: "//trim(.file_name))
+      do n = 1,.n_refl
+      do c = 1,.n_col
+         if (n>1 OR c>1) read(u,iostat=ios) s4
+         DIE_IF(ios/=0, "MTZ file ends before its data: "//trim(.file_name))
+         .missing(n,c) = .is_nan(s4)
+         if (.missing(n,c)) then; .data(n,c) = ZERO
+         else;                    .data(n,c) = .to_real(s4)
+         end
+         if (.missing_is_a_number) .missing(n,c) = .data(n,c)==.missing_value
+      end
+      end
+
+      close(u)
+
+   end
+
+   process_header_lines(lines) :: leaky, private
+   ! Set the cell, space group, resolution and column descriptions from
+   ! the header "lines".
+      self :: INOUT
+      lines :: VEC{STR}, IN
+
+      line,key,rest :: STR
+      i,n_sym,n_batch,c,q1,q2 :: INT
+      lo,hi :: REAL
+
+      ! How many of each, first
+      .n_col = 0
+      n_sym = 0
+      do i = 1,lines.dim
+         if (lines(i)(1:7)=="COLUMN ") .n_col = .n_col + 1
+         if (lines(i)(1:5)=="SYMM ")   n_sym = n_sym + 1
+      end
+      DIE_IF(.n_col==0, "no COLUMN lines in MTZ file "//trim(.file_name))
+      .column_label.create(.n_col)
+      .column_type.create(.n_col)
+      .symop.create(max(n_sym,1))
+      .symop = "X,Y,Z"
+      .missing_is_a_number = FALSE
+      .missing_value = ZERO
+
+      c = 0
+      n_sym = 0
+      do i = 1,lines.dim
+         line = lines(i)
+         key  = MTZ::first_word(line)
+         rest = adjustl(line(len_trim(key)+1:))
+         select case (key)
+         case ("TITLE")
+            .title = rest
+         case ("NCOL")
+            read(rest,*) .n_col,.n_refl,n_batch
+            DIE_IF(n_batch/=0, "MTZ file holds unmerged batches, which are not read: "//trim(.file_name))
+         case ("CELL")
+            read(rest,*) .cell_length,.cell_angle
+         case ("SYMINF")
+            ! n_symop n_primitive lattice number 'symbol' pointgroup
+            read(rest,*) n_batch,n_batch,key,.spacegroup_number
+            q1 = index(rest,"'")
+            q2 = index(rest,"'",back=TRUE)
+            if (q1>0 AND q2>q1) .spacegroup_symbol = rest(q1+1:q2-1)
+         case ("SYMM")
+            n_sym = n_sym + 1
+            .symop(n_sym) = MTZ::without_blanks(rest)
+         case ("RESO")
+            ! The limits are 1/d^2
+            read(rest,*) lo,hi
+            if (lo>ZERO) .resolution_low  = ONE/sqrt(lo)
+            if (hi>ZERO) .resolution_high = ONE/sqrt(hi)
+         case ("VALM")
+            if (rest(1:3)/="NAN") then
+               .missing_is_a_number = TRUE
+               read(rest,*) .missing_value
+            end
+         case ("COLUMN")
+            ! label type min max dataset
+            c = c + 1
+            .column_label(c) = MTZ::first_word(rest)
+            rest = adjustl(rest(len_trim(.column_label(c))+1:))
+            .column_type(c) = rest(1:1)
+         case default
+            ! VERS, SORT, NDIF, PROJECT, CRYSTAL, DATASET, DCELL, DWAVEL, BATCH, END
+         end
+      end
+      DIE_IF(c/=.n_col, "COLUMN lines do not match NCOL in MTZ file "//trim(.file_name))
+
+   end
+
+   first_word(line) result (res) :: selfless, pure, private
+   ! The first blank-separated word of "line"
+      line :: STR, IN
+      res :: STR
+
+      s :: STR
+      i :: INT
+
+      s = adjustl(line)
+      i = index(s," ")
+      if (i==0) then; res = s
+      else;           res = s(1:i-1)
+      end
+
+   end
+
+   without_blanks(line) result (res) :: selfless, pure, private
+   ! "line" with every blank removed
+      line :: STR, IN
+      res :: STR
+
+      i,n :: INT
+
+      res = " "
+      n = 0
+      do i = 1,len_trim(line)
+         if (line(i:i)==" ") cycle
+         n = n + 1
+         res(n:n) = line(i:i)
+      end
+
+   end
+
+!  =============
+!  Byte handling
+!  =============
+
+   set_byte_order(stamp) :: private
+   ! Set ".swap_bytes" from the machine "stamp" of the file, whose first
+   ! byte is 0x44 for a little-endian file and 0x11 for big-endian, and
+   ! from the byte order of this machine.
+      self :: INOUT
+      stamp :: STR(len=4), IN
+
+      s4 :: STR(len=4)
+      ival4 :: INT_4
+      file_little,host_little :: BIN
+
+      select case (iachar(stamp(1:1)))
+      case (68);     file_little = TRUE    ! 0x44
+      case (17);     file_little = FALSE   ! 0x11
+      case default;  DIE("unknown byte order in MTZ file "//trim(.file_name))
+      end
+
+      ival4 = 1
+      s4 = transfer(ival4,s4)
+      host_little = iachar(s4(1:1))==1
+
+      .swap_bytes = file_little NEQV host_little
+
+   end
+
+   ordered(s4) result (res) :: pure, private
+   ! The four bytes "s4" of the file in this machine's order
+      self :: IN
+      s4 :: STR(len=4), IN
+      res :: STR(len=4)
+
+      if (.swap_bytes) then
+         res = s4(4:4)//s4(3:3)//s4(2:2)//s4(1:1)
+      else
+         res = s4
+      end
+
+   end
+
+   to_int(s4) result (res) :: pure, private
+   ! The 32-bit integer held in the four bytes "s4" of the file
+      self :: IN
+      s4 :: STR(len=4), IN
+      res :: INT
+
+      ival4 :: INT_4
+
+      ival4 = transfer(.ordered(s4),ival4)
+      res = ival4
+
+   end
+
+   to_real(s4) result (res) :: pure, private
+   ! The 32-bit float held in the four bytes "s4" of the file
+      self :: IN
+      s4 :: STR(len=4), IN
+      res :: REAL
+
+      rval4 :: REAL_4
+
+      rval4 = transfer(.ordered(s4),rval4)
+      res = rval4
+
+   end
+
+   is_nan(s4) result (res) :: pure, private
+   ! TRUE if the four bytes "s4" of the file hold a NaN: exponent bits all
+   ! one and a non-zero mantissa. Tested on the bits, so that no compiler
+   ! setting can remove the test.
+      self :: IN
+      s4 :: STR(len=4), IN
+      res :: BIN
+
+      ival4 :: INT_4
+      bits,expo,mant :: INT
+
+      ival4 = transfer(.ordered(s4),ival4)
+      bits = ival4
+      expo = iand(bits,2139095040)   ! 0x7F800000
+      mant = iand(bits,8388607)      ! 0x007FFFFF
+      res  = expo==2139095040 AND mant/=0
+
+   end
+
+!  =======
+!  Columns
+!  =======
+
+   column_index(label) result (res) :: pure
+   ! The index of the column called "label", or 0 if there is none.
+   ! The comparison ignores case.
+      self :: IN
+      label :: STR, IN
+      res :: INT
+
+      want,have :: STR
+      c :: INT
+
+      res = 0
+      if (.column_label.deallocated) return
+      want = label
+      want.to_lower_case
+      do c = 1,.n_col
+         have = .column_label(c)
+         have.to_lower_case
+         if (have==want) then
+            res = c
+            exit
+         end
+      end
+
+   end
+
+   has_column(label) result (res) :: pure
+   ! TRUE if there is a column called "label"
+      self :: IN
+      label :: STR, IN
+      res :: BIN
+
+      res = .column_index(label)>0
+
+   end
+
+   column(label) result (res) :: pure
+   ! The index of the column called "label"; stops if there is none
+      self :: IN
+      label :: STR, IN
+      res :: INT
+
+      res = .column_index(label)
+      STOP_IF(res==0, "no column called "//trim(label)//" in MTZ file")
+
+   end
+
+!  ======
+!  Output
+!  ======
+
+   put
+   ! Put out the header: the cell, space group, resolution and columns
+      self :: IN
+
+      c :: INT
+
+      stdout.flush
+      stdout.text("MTZ file")
+      stdout.text("========")
+      stdout.flush
+      stdout.show("File name               =",.file_name)
+      stdout.show("Title                   =",.title)
+      stdout.show("No. of reflections      =",.n_refl)
+      stdout.show("No. of columns          =",.n_col)
+      stdout.show("Cell lengths/A          =",.cell_length)
+      stdout.show("Cell angles/deg         =",.cell_angle)
+      stdout.show("Spacegroup number       =",.spacegroup_number)
+      stdout.show("Spacegroup symbol       =",.spacegroup_symbol)
+      stdout.show("No. of symops           =",.symop.dim)
+      stdout.show("Resolution low/A        =",.resolution_low)
+      stdout.show("Resolution high/A       =",.resolution_high)
+      stdout.flush
+      stdout.text("Columns:")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=3,width=10)
+      stdout.put("Column",int_width=TRUE)
+      stdout.put("Type")
+      stdout.put("Missing")
+      stdout.put("Minimum")
+      stdout.put("Maximum")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=3,width=10)
+      do c = 1,.n_col
+         stdout.put(.column_label(c),int_width=TRUE)
+         stdout.put(.column_type(c))
+         stdout.put(count(.missing(:,c)))
+         if (all(.missing(:,c))) then
+            stdout.put("-")
+            stdout.put("-")
+         else
+            stdout.put(minval(.data(:,c),mask=NOT .missing(:,c)))
+            stdout.put(maxval(.data(:,c),mask=NOT .missing(:,c)))
+         end
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=3,width=10)
+
+   end
+
+end

@@ -878,6 +878,47 @@ contains
 
    end
 
+   read_MTZ_spacegroup_and_cell(mtz) :: leaky
+   ! Set the spacegroup and unit cell from the MTZ file "mtz": the cell
+   ! from its CELL line and the spacegroup from its Hermann-Mauguin symbol.
+      self :: INOUT
+      mtz :: MTZ, IN
+
+   ENSURE(mtz.n_refl>0, "the MTZ file has not been read")
+   ENSURE(mtz.spacegroup_symbol/=" ", "the MTZ file has no spacegroup symbol")
+
+      ! The unit cell, in Angstrom and degrees in the file
+      .unit_cell.set_defaults
+      .unit_cell.set_units_to("cif")
+      .unit_cell.set_lengths(mtz.cell_length)
+      .unit_cell.set_angles(mtz.cell_angle)
+      .unit_cell.set_units_to("au")
+      .unit_cell.update
+
+      ! The spacegroup
+      .spacegroup.set_HM_symbol(mtz.spacegroup_symbol)
+      .spacegroup.analyze
+
+   end
+
+   read_MTZ_xray_data(mtz) :: leaky
+   ! Read only the xray_data information from the MTZ file "mtz".
+      self :: INOUT
+      mtz :: MTZ, IN
+
+   ENSURE(.unit_cell.info_made,"enter unit cell information before the MTZ reflections!")
+   ENSURE(.spacegroup.analyzed,"enter spacegroup information before the MTZ reflections!")
+
+      if (.xray_data.deallocated) .xray_data.SET:create
+      .xray_data.SET:set_data_kind("x-ray")
+      .xray_data.READ:read_MTZ(mtz)
+      .update_xray_data
+
+      ! Update
+      .update_diffraction_data
+
+   end
+
    read_CIF_xray_data(cif) :: leaky
    ! Read only the xray_data information from "cif".
       self :: INOUT
@@ -3562,6 +3603,10 @@ contains
    ! the i-th reflection.  "n_unique" is returned as the number of
    ! unique reflections, where list(i) == i.
    ! NOTE: Includes inversions, if the spacegroup is centrosymmetric.
+   ! Each reflection is given a key, the smallest of its symmetry
+   ! images in lexical order of (h,k,l), and the keys are sorted, so
+   ! that the cost grows as n log n and not as n^2: a protein data set
+   ! of 10^5 reflections takes a second, not minutes.
       self :: IN
       list :: VEC{INT}@, OUT
       n_unique :: INT, OUT
@@ -3569,10 +3614,10 @@ contains
    ENSURE(.xray_data.allocated,"no diffraction data")
    ENSURE(.xray_data.reflections.allocated,"no reflection data")
 
-      i,j,g, n_refl :: INT
-      p,q,r :: VEC{INT}(3)
+      key,order :: VEC{INT}@
+      q,r,best :: VEC{INT}(3)
       seitz :: MAT{REAL}(3,3)
-      same :: BIN
+      i,g,m,n_refl,h_max,base,this,prev :: INT
 
       n_refl = .xray_data.reflections.dim
 
@@ -3580,34 +3625,116 @@ contains
       list.create(n_refl) ! leaky
       list.to_sequence(1,n_refl)
 
-      n_unique = 0
-
-      ! Loop reflection indices "p"
+      ! Pack an index triple into one integer, in lexical order
+      h_max = 0
       do i = 1,n_refl
+         h_max = max(h_max,maxval(abs(.xray_data.reflections(i).Miller_indices)))
+      end
+      base = 2*h_max + 2
 
-         p = .xray_data.reflections(i).Miller_indices
-
-         ! Find equivalents
-         same = FALSE
-         refl: do j = i+1,n_refl
-            q = .xray_data.reflections(j).Miller_indices
-            do g = 1,.spacegroup.n_seitz
-               ! Get symmetry equivalent indices "r"
-               seitz = transpose(.spacegroup.seitz(1:3,1:3,g))
-               r = nint(matmul(seitz,q))
-               ! Equivalent?
-               same = p.same_as(r)
-               if (same) then
-                  list(j) = i ! Set here
-                  exit refl
-               end
+      ! The key of each reflection: its lowest symmetry image
+      key.create(n_refl)
+      do i = 1,n_refl
+         q = .xray_data.reflections(i).Miller_indices
+         best = q
+         do g = 1,.spacegroup.n_seitz
+            seitz = transpose(.spacegroup.seitz(1:3,1:3,g))
+            r = nint(matmul(seitz,q))
+            if (r(1)<best(1)) then
+               best = r
+            else if (r(1)==best(1) AND r(2)<best(2)) then
+               best = r
+            else if (r(1)==best(1) AND r(2)==best(2) AND r(3)<best(3)) then
+               best = r
             end
          end
-
-         ! Increment
-         if (NOT same) n_unique = n_unique + 1
-
+         key(i) = ((best(1)+h_max)*base + (best(2)+h_max))*base + (best(3)+h_max)
       end
+
+      ! Sort by key, equal keys in order of reflection; each run of one
+      ! key is one set of equivalents, and each points back to the one
+      ! before it. A heap sort: the keys of a data file are usually in
+      ! order already, which drives a quick sort to its worst case.
+      order.create(n_refl)
+      .heap_sort_keys(key,order)
+      n_unique = 0
+      prev = 0
+      do m = 1,n_refl
+         this = order(m)
+         if (m>1) then
+         if (key(this)==key(prev)) then
+            list(this) = prev
+            prev = this
+            cycle
+         end
+         end
+         n_unique = n_unique + 1
+         prev = this
+      end
+
+      order.destroy
+      key.destroy
+
+   end
+
+   heap_sort_keys(key,order) :: selfless, pure, private
+   ! Set "order" so that key(order(1)), key(order(2)), ... increases,
+   ! equal keys in increasing order of their index: a heap sort, whose
+   ! cost is n log n whatever the order of the keys.
+      key :: VEC{INT}, IN
+      order :: VEC{INT}, OUT
+
+      n,i,t :: INT
+
+      n = key.dim
+      do i = 1,n
+         order(i) = i
+      end
+      if (n<2) return
+
+      ! Build the heap, then pull the largest to the end, one by one
+      do i = n/2,1,-1
+         CRYSTAL::sift_down(key,order,i,n)
+      end
+      do i = n,2,-1
+         t = order(1); order(1) = order(i); order(i) = t
+         CRYSTAL::sift_down(key,order,1,i-1)
+      end
+
+   end
+
+   sift_down(key,order,root,last) :: selfless, pure, private
+   ! Restore the heap property below "root" in order(1:last), the larger
+   ! of two entries being the one with the larger key, or the larger
+   ! index when the keys are equal.
+      key :: VEC{INT}, IN
+      order :: VEC{INT}, INOUT
+      root,last :: INT, IN
+
+      i,child,t :: INT
+
+      i = root
+      do
+         child = 2*i
+         if (child>last) exit
+         if (child<last) then
+            if (CRYSTAL::key_less(key,order(child),order(child+1))) child = child + 1
+         end
+         if (NOT CRYSTAL::key_less(key,order(i),order(child))) exit
+         t = order(i); order(i) = order(child); order(child) = t
+         i = child
+      end
+
+   end
+
+   key_less(key,a,b) result (res) :: selfless, pure, private
+   ! TRUE if entry "a" sorts before entry "b": a smaller key, or the
+   ! same key and a smaller index
+      key :: VEC{INT}, IN
+      a,b :: INT, IN
+      res :: BIN
+
+      res = key(a)<key(b) OR (key(a)==key(b) AND a<b)
 
    end
 
