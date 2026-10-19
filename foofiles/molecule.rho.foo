@@ -7352,6 +7352,7 @@ contains
       stdout.show("- distance to it        = ",mind*fac)
       end
       stdout.show("RMS                     = ",rmsp)
+      .put_residual_density_analysis(map_mat3(1:nx-1,1:ny-1,1:nz-1))
       end
 
       ! Write cube file
@@ -7394,6 +7395,197 @@ contains
       ! Clean
 !     pt.destroy
 !     map.destroy
+
+   end
+
+   put_residual_density_analysis(rho) :: leaky
+   ! Put the residual-density analysis of Meindl & Henn (2008, Acta Cryst.
+   ! A64, 404) of "rho", the residual density in e/A^3 on a grid over one
+   ! unit cell without its repeated end planes: the gross and net residual
+   ! electrons, the flatness rho0_max - rho0_min, and the fractal dimension
+   ! of the iso-surface of each value x of rho in steps of 0.01 e/A^3, by
+   ! their line-counting algorithm,
+   !
+   !    d^f(x) = log N(x) / log(1/eps),   eps = n_pairs^(-1/3),
+   !
+   ! N(x) the number of pairs of neighbouring grid points along the three
+   ! axes whose values span x. For Gaussian noise alone d^f is a parabola
+   ! in x. d^f(0) depends on the grid spacing, so compare it only between
+   ! grids of one spacing. Writes <name>.fractal_dimension, its gnuplot
+   ! script, and the picture if gnuplot is installed.
+      self :: IN
+      rho :: MAT3{REAL}, IN
+
+      n_cross :: VEC{INT}@
+      level,df :: VEC{REAL}@
+      head,data,script,image,aa :: STR
+      step,vol,e_gross,e_net,rmin,rmax,df0,neg2,pos2,log_inv_eps,half,y :: REAL
+      nx,ny,nz,i,j,k,kmin,kmax,n_lev,n_pairs,n_pt,m :: INT
+
+      step = 0.01
+      nx = rho.dim1
+      ny = rho.dim2
+      nz = rho.dim3
+      n_pt = nx*ny*nz
+
+      ! The global descriptors
+      vol  = .crystal.unit_cell.volume*ANGSTROM_PER_BOHR**3
+      rmin = minval(rho)
+      rmax = maxval(rho)
+      e_gross = vol/(2*n_pt)*sum(abs(rho))
+      e_net   = vol/n_pt*sum(rho)
+
+      ! The pairs spanning each level, added as +1 at the lowest level a
+      ! pair spans and -1 just above its highest, then summed upward
+      kmin = ceiling(rmin/step)
+      kmax = floor(rmax/step)
+      n_cross.create(kmax-kmin+2)
+      n_cross = 0
+      do k = 1,nz
+      do j = 1,ny
+      do i = 1,nx
+         if (i<nx) .add_level_span(n_cross,rho(i,j,k),rho(i+1,j,k),kmin,step)
+         if (j<ny) .add_level_span(n_cross,rho(i,j,k),rho(i,j+1,k),kmin,step)
+         if (k<nz) .add_level_span(n_cross,rho(i,j,k),rho(i,j,k+1),kmin,step)
+      end
+      end
+      end
+      do k = 2,n_cross.dim
+         n_cross(k) = n_cross(k) + n_cross(k-1)
+      end
+
+      ! The fractal dimension at each level that is crossed
+      n_pairs = (nx-1)*ny*nz + nx*(ny-1)*nz + nx*ny*(nz-1)
+      log_inv_eps = log(real(n_pairs,kind=kind(ONE)))/3
+      n_lev = count(n_cross(1:kmax-kmin+1)>0)
+      level.create(n_lev)
+      df.create(n_lev)
+      m = 0
+      do k = kmin,kmax
+         if (n_cross(k-kmin+1)<=0) cycle
+         m = m + 1
+         level(m) = k*step
+         df(m)    = log(real(n_cross(k-kmin+1),kind=kind(ONE)))/log_inv_eps
+      end
+
+      ! d^f at zero, and the levels either side where it falls below 2
+      df0 = ZERO
+      neg2 = ZERO
+      pos2 = ZERO
+      do m = 1,n_lev
+         if (abs(level(m))<step/2) df0 = df(m)
+      end
+      do m = n_lev,2,-1
+         if (level(m)>ZERO) cycle
+         if (df(m)>=2 AND df(m-1)<2) then
+            neg2 = level(m) - step*(df(m)-2)/(df(m)-df(m-1))
+            exit
+         end
+      end
+      do m = 1,n_lev-1
+         if (level(m)<ZERO) cycle
+         if (df(m)>=2 AND df(m+1)<2) then
+            pos2 = level(m) + step*(df(m)-2)/(df(m)-df(m+1))
+            exit
+         end
+      end
+
+      ! The descriptors
+      stdout.flush
+      stdout.text("Residual-density analysis (Meindl & Henn, 2008):")
+      stdout.flush
+      stdout.show("d^f(0)                  =",df0)
+      stdout.show("Flatness/(e A^-3)       =",rmax-rmin)
+      stdout.show("d^f=2 below 0/(e A^-3)  =",neg2)
+      stdout.show("d^f=2 above 0/(e A^-3)  =",pos2)
+      stdout.show("Gross residual e        =",e_gross)
+      stdout.show("Net residual e          =",e_net)
+
+      ! The data file
+      head = "stdout"
+      if (.name/=" " AND .name/="unknown") head = .name
+      data   = trim(head)//".fractal_dimension"
+      script = trim(data)//".gnuplot"
+      image  = trim(data)//".png"
+      stdout.redirect(data)
+      stdout.text("# Fractal dimension distribution of the residual density")
+      stdout.text("# Meindl & Henn (2008) Acta Cryst A 64 p. 404")
+      stdout.text("# ")
+      stdout.text("# 1st column: rho0, the residual density (e/A^3)")
+      stdout.text("# 2nd column: d^f, the fractal dimension of its iso-surface")
+      stdout.text("# ")
+      do m = 1,n_lev
+         stdout.put(level(m))
+         stdout.put(df(m))
+         stdout.flush
+      end
+      stdout.revert
+
+      ! The gnuplot script, labelled as their Fig. 3, with the descriptors
+      aa   = achar(195)//achar(133)
+      half = ceiling(10*max(abs(rmin),abs(rmax)))/TEN
+      y    = 0.95
+      stdout.redirect(script)
+      stdout.text("# ==================")
+      stdout.text("# Gnuplot input file")
+      stdout.text("# ==================")
+      stdout.text("#")
+      stdout.text("# To see this plot type:")
+      stdout.text("#")
+      stdout.text("#    gnuplot -persist '"//trim(script)//"'")
+      stdout.flush
+      stdout.text("set encoding utf8")
+      stdout.text("set title 'fractal dimension (d^f) vs. residual density ({/Symbol r}_0)'")
+      stdout.text("set xlabel '{/Symbol r}_0 [e"//trim(aa)//"^{-3}]'")
+      stdout.text("set ylabel 'd^f'")
+      stdout.text("set xrange ["//trim((-half).to_str("f6.2",left_justify=TRUE))//":"// &
+                                 trim(half.to_str("f6.2",left_justify=TRUE))//"]")
+      stdout.text("set yrange [0:3.3]")
+      stdout.text("set ytics 1 format '%.1f'")
+      stdout.text("set grid ytics")
+      stdout.text("unset key")
+      stdout.text("set arrow from 0,0 to 0,3.3 nohead lc rgb 'gray'")
+      stdout.text("set label 1 'd^f(0) = "//trim(df0.to_str("f6.2",left_justify=TRUE))// &
+                  "' at graph 0.02, graph 0.95")
+      stdout.text("set label 2 '{/Symbol Dr}_0 = "//trim((rmax-rmin).to_str("f7.3",left_justify=TRUE))// &
+                  " e"//trim(aa)//"^{-3}' at graph 0.02, graph 0.90")
+      stdout.text("set label 3 '{/Symbol r}_{0,min} = "//trim(rmin.to_str("f7.3",left_justify=TRUE))// &
+                  ",  {/Symbol r}_{0,max} = "//trim(rmax.to_str("f7.3",left_justify=TRUE))// &
+                  "' at graph 0.02, graph 0.85")
+      stdout.text("set label 4 'd^f = 2 at {/Symbol r}_0 = "//trim(neg2.to_str("f7.3",left_justify=TRUE))// &
+                  ", "//trim(pos2.to_str("f7.3",left_justify=TRUE))//"' at graph 0.02, graph 0.80")
+      stdout.text("set label 5 'e_{gross} = "//trim(e_gross.to_str("f7.2",left_justify=TRUE))// &
+                  " e,  e_{net} = "//trim(e_net.to_str("f7.2",left_justify=TRUE))// &
+                  " e' at graph 0.02, graph 0.75")
+      stdout.text("plot '"//trim(data)//"' using 1:2 with points pt 7 ps 0.5 lc rgb '#1f4e9c'")
+      stdout.revert
+      tonto.call_gnuplot(script,image)
+      stdout.show("Fractal dimension plot  =",trim(image))
+
+      df.destroy
+      level.destroy
+      n_cross.destroy
+
+   end
+
+   add_level_span(n_cross,a,b,kmin,step) :: pure
+   ! Add one to "n_cross" at the lowest level k*step, k >= "kmin", that the
+   ! pair of values "a" and "b" spans, and subtract one just above the
+   ! highest, so that the running sum of "n_cross" is the number of pairs
+   ! spanning each level (put_residual_density_analysis).
+      self :: IN
+      n_cross :: VEC{INT}, INOUT
+      a,b :: REAL, IN
+      kmin :: INT, IN
+      step :: REAL, IN
+
+      k1,k2 :: INT
+
+      k1 = ceiling(min(a,b)/step)
+      k2 = floor(max(a,b)/step)
+      if (k1>k2) return
+      n_cross(k1-kmin+1) = n_cross(k1-kmin+1) + 1
+      n_cross(k2-kmin+2) = n_cross(k2-kmin+2) - 1
 
    end
 
