@@ -108,3 +108,32 @@ roughly two days of work. Whole-cell maps of 6MU9 need the FFT build (`-DFFTW=ON
     the library quick sort recurses n deep on sorted input and overflowed the stack).
     `update_atom_basis_group_info` after a PDB read built a molecule with fragment info
     for every connected group, waters included, 7 minutes; the PDB path skips the groups.
+- 2026-10-20, later: stages 5 and 6 done; the paper's 6MU9 descriptors reproduced.
+  `cell_map= { kind= mtz  mtz_columns= FWT PHWT }` gives r.m.s. 0.5364 e/Å³ and noise
+  0.0093 for the 2mFo−DFc map, 0.5203 for the model map, each equal to
+  $`\sqrt{2\sum F^2}/V`$ from an independent parse of the file. `put_cell_map_sphere_averages`
+  averages the dipolar Riesz field in spheres about the 263 backbone carbonyl O atoms
+  (waters and sulfates left out of the comparison by residue name in `compare.py`):
+
+  | | this work | paper |
+  |---|---|---|
+  | r₀ = 0.6 Å: data–model angle, median (90th percentile) | 10.3° (20.4°) | 9.7° (19.3°) |
+  | r₀ = 0.6 Å: angle of ⟨d⟩ to C→O, median | 158° | 160° |
+  | r₀ = 0.6 Å: O299 data–model angle, rank of 263 | 33.5°, 6th | 30.8°, 2nd |
+  | r₀ = 0.3 Å: data–model angle, median (90th) | 14.5° (34.8°) | 12.4° (28.3°) |
+  | r₀ = 0.3 Å: O299 | 27.5°, 40th | 39.5°, 2nd |
+
+  At 0.6 Å the agreement is close; the six largest angles are Lys75, Asn123, Val302, Pro184,
+  Ala298 and Lys299, which are the residues the paper discusses (O298 and O302 are its
+  neighbours of O299). At 0.3 Å the two differ more: the paper's maps are on a grid of
+  3 points per $`d_{\min}`$, 0.32 Å, so a 0.3 Å sphere holds one to four of its grid
+  points and the result depends on where the atom falls on the grid; Tonto's values are
+  interpolated from a finer FFT grid at 895 points per sphere of 0.1 Å spacing. The
+  inputs, outputs and the comparison script are in
+  `~/Dropbox/tonto_data/6mu9_santosh/tonto_check/`. The run takes 38 s.
+- Found on the way: a call from MOLECULE.RHO to `set_cell_map_promolecule` (MOLECULE.MAIN)
+  closed a module-use cycle MAIN→FOCK→RHO→MAIN, and CMake then never compiled
+  `molecule.fock` ("Circular ... dependency dropped", "Cannot open module file"), even
+  from `make clean`. The call was not needed. Stale `*.provides.build` markers in the
+  build tree can give the same symptom after an interrupted build; delete them.
+

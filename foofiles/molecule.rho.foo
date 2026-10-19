@@ -7185,6 +7185,214 @@ contains
 
    end
 
+   put_cell_map_sphere_averages :: leaky
+   ! For every atom named ".cell_map.sphere_atom" (the first part of its
+   ! label, "O" for the carbonyl oxygen of a PDB residue), average the
+   ! three l = 1 Riesz or local-moment components of the cell map, x, y
+   ! and z in the cartesian frame, over the points of a cubic lattice of
+   ! spacing ".cell_map.sphere_spacing" within ".cell_map.sphere_radius"
+   ! of the atom. Put, for each atom, the mean vector in e/A^3, its
+   ! length, and its angle to the bond from the atom named
+   ! ".cell_map.sphere_bond_atom" of the same residue and chain ("C",
+   ! so the angle is to the C->O direction), as a table and as the file
+   ! <name>.<kind>.sphere_<radius>A, one line per atom. The atoms are
+   ! numbered as in the atom list. This is the local descriptor of the
+   ! dipolar field used for the carbonyl groups of a protein.
+      self :: INOUT
+
+   DIE_IF(.crystal.deallocated, "no crystal")
+   DIE_IF(.atom.deallocated, "no atoms")
+
+      pts :: MAT{REAL}@
+      values :: VEC{REAL}@
+      d :: MAT{REAL}@
+      sel,bond :: VEC{INT}@
+      off :: MAT{REAL}@
+      b :: VEC{REAL}(3)
+      file :: STR
+      r,h,x,y,z,r2,norm,angle,fac3 :: REAL
+      n_sel,n_off,n,i,j,k,m,a,p,c,n_side :: INT
+      m_of :: VEC{INT}(3)
+
+      if (.cell_map.deallocated) .cell_map.create
+   DIE_IF(.cell_map.is_deformation_kind AND .cell_map.F_pro.deallocated, "a deformation kind needs the promolecule: give cell_map= after the structure factors")
+      .set_cell_map_axes
+      .make_cell_map
+
+      ! The atoms to average about, and the bond atom of each
+      sel.create(.n_atom)
+      bond.create(.n_atom)
+      n_sel = 0
+      do a = 1,.n_atom
+         if (.label_head(a)/=.cell_map.sphere_atom) cycle
+         n_sel = n_sel + 1
+         sel(n_sel)  = a
+         bond(n_sel) = 0
+         do c = 1,.n_atom
+            if (.label_head(c)/=.cell_map.sphere_bond_atom) cycle
+            if (.atom(c).compound_sequence_id/=.atom(a).compound_sequence_id) cycle
+            if (.atom(c).asym_id/=.atom(a).asym_id) cycle
+            bond(n_sel) = c
+            exit
+         end
+      end
+      DIE_IF(n_sel==0, "no atoms named "//trim(.cell_map.sphere_atom))
+
+      ! The lattice of offsets within the sphere
+      r = .cell_map.sphere_radius
+      h = .cell_map.sphere_spacing
+      n_side = floor(r/h)
+      off.create((2*n_side+1)**3,3)
+      n_off = 0
+      do i = -n_side,n_side
+      do j = -n_side,n_side
+      do k = -n_side,n_side
+         x = i*h; y = j*h; z = k*h
+         r2 = x*x + y*y + z*z
+         if (r2>r*r) cycle
+         n_off = n_off + 1
+         off(n_off,:) = [x,y,z]
+      end
+      end
+      end
+
+      ! The points, sphere by sphere
+      pts.create(n_sel*n_off,3)
+      p = 0
+      do n = 1,n_sel
+         do m = 1,n_off
+            p = p + 1
+            pts(p,:) = .atom(sel(n)).position + off(m,:)
+         end
+      end
+
+      ! The three components at the points, averaged over each sphere
+      m_of = [1,-1,0]   ! m = +1, -1, 0 are x, y, z
+      fac3 = BOHR_PER_ANGSTROM**3
+      .cell_map.l_value = 1
+      GAUSSIAN_DATA:set_indices(1)
+      values.create(pts.dim1)
+      d.create(n_sel,3)
+      do c = 1,3
+         .cell_map.m_value = m_of(c)
+         .cell_map.make_map_at(values,pts)
+         p = 0
+         do n = 1,n_sel
+            d(n,c) = ZERO
+            do m = 1,n_off
+               p = p + 1
+               d(n,c) = d(n,c) + values(p)
+            end
+            d(n,c) = d(n,c)*fac3/n_off
+         end
+      end
+      .cell_map.m_value = -99
+
+      ! The table, and the file
+      file = trim(.name)//"."//trim(.cell_map.kind)
+      if (.cell_map.kind=="mtz") file = trim(file)//"."//trim(.cell_map.mtz_amplitude_column)
+      file = trim(file)//".sphere_"//trim((r*ANGSTROM_PER_BOHR).to_str("f4.2"))//"A"
+
+      stdout.flush
+      stdout.text("=======================================")
+      stdout.text("Sphere averages of the l = 1 components")
+      stdout.text("=======================================")
+      stdout.flush
+      stdout.show("Kind                    =",.cell_map.kind)
+      if (.cell_map.kind=="mtz") then
+      stdout.show("MTZ columns             =",trim(.cell_map.mtz_amplitude_column)//" "//trim(.cell_map.mtz_phase_column))
+      end
+      stdout.show("Moment kind             =",.cell_map.moment_kind)
+      stdout.show("Atoms named             =",.cell_map.sphere_atom)
+      stdout.show("Bond atom named         =",.cell_map.sphere_bond_atom)
+      stdout.show("Sphere radius/A         =",r*ANGSTROM_PER_BOHR)
+      stdout.show("Point spacing/A         =",h*ANGSTROM_PER_BOHR)
+      stdout.show("Points per sphere       =",n_off)
+      stdout.show("No. of atoms            =",n_sel)
+      stdout.show("Written to              =",trim(file))
+      stdout.text(". <d> in e/A^3, the mean of the x, y, z components over the sphere;")
+      stdout.text("  the angle is between <d> and the bond vector, bond atom to atom")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=5)
+      stdout.put("Atom",int_width=TRUE)
+      stdout.put("Label",int_width=TRUE)
+      stdout.put("<d_x>")
+      stdout.put("<d_y>")
+      stdout.put("<d_z>")
+      stdout.put("|<d>|")
+      stdout.put("Angle/deg")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=5)
+      do n = 1,n_sel
+         a = sel(n)
+         norm = norm2(d(n,:))
+         angle = -ONE
+         if (bond(n)>0) then
+            b = .atom(a).position - .atom(bond(n)).position
+            if (norm>ZERO) angle = acos(max(-ONE,min(ONE,dot_product(d(n,:),b)/(norm*norm2(b)))))*DEGREE_PER_RADIAN
+         end
+         .put_sphere_average_line(a,d(n,:),norm,angle)
+      end
+      stdout.dash(int_fields=2,real_fields=5)
+
+      ! The same lines to the file
+      stdout.redirect(file)
+      stdout.text("# Sphere averages of the l = 1 components of the cell map: atom index,")
+      stdout.text("# label, <d_x> <d_y> <d_z> |<d>| in e/A^3, angle in degrees to the bond")
+      stdout.text("# from "//trim(.cell_map.sphere_bond_atom)//" to "//trim(.cell_map.sphere_atom)//"; -1 if no bond atom")
+      do n = 1,n_sel
+         a = sel(n)
+         norm = norm2(d(n,:))
+         angle = -ONE
+         if (bond(n)>0) then
+            b = .atom(a).position - .atom(bond(n)).position
+            if (norm>ZERO) angle = acos(max(-ONE,min(ONE,dot_product(d(n,:),b)/(norm*norm2(b)))))*DEGREE_PER_RADIAN
+         end
+         .put_sphere_average_line(a,d(n,:),norm,angle)
+      end
+      stdout.revert
+
+      d.destroy
+      values.destroy
+      pts.destroy
+      off.destroy
+      bond.destroy
+      sel.destroy
+
+   end
+
+   put_sphere_average_line(a,d,norm,angle) :: private
+   ! Put one line of the sphere-average table: atom "a", its label, the
+   ! mean vector "d", its length "norm" and its "angle" to the bond
+      self :: IN
+      a :: INT, IN
+      d :: VEC{REAL}(3), IN
+      norm,angle :: REAL, IN
+
+      stdout.put(a)
+      stdout.put(.atom(a).label,int_width=TRUE)
+      stdout.put(d(1)); stdout.put(d(2)); stdout.put(d(3))
+      stdout.put(norm)
+      stdout.put(angle)
+      stdout.flush
+
+   end
+
+   label_head(a) result (res) :: pure, private
+   ! The first part of the label of atom "a", before the first "-": the
+   ! atom name of a PDB or mmCIF model
+      self :: IN
+      a :: INT, IN
+      res :: STR
+
+      i :: INT
+
+      res = .atom(a).label
+      i = index(res,"-")
+      if (i>1) res = res(1:i-1)
+
+   end
+
    make_cell_map_grid(grid,pts) :: leaky
    ! Make the map described by ".cell_map" at the cartesian points "pts",
    ! one row per point: the residual, observed or model density of the

@@ -340,7 +340,10 @@ keyword at a time.
 
 | in `cell_map= { }` | default | meaning |
 |---|---|---|
-| `kind=` | `residual` | which structure factors the Fourier maps use: `residual` ($`F_{\rm exp} - F_{\rm calc}`$ with the model's phases), `f_exp` (observed magnitudes, model phases, $`F_{000}`$ added), `f_calc`, `deformation_calc` ($`F_{\rm calc} - F^{\rm pro}`$) and `deformation_exp` ($`F_{\rm exp} - F^{\rm pro}`$, model phases); the promolecule is made from the structure as it is when the block is read, so give the block after the refinement |
+| `kind=` | `residual` | which structure factors the Fourier maps use: `residual` ($`F_{\rm exp} - F_{\rm calc}`$ with the model's phases), `f_exp` (observed magnitudes, model phases, $`F_{000}`$ added), `f_calc`, `deformation_calc` ($`F_{\rm calc} - F^{\rm pro}`$) and `deformation_exp` ($`F_{\rm exp} - F^{\rm pro}`$, model phases); the promolecule is made from the structure as it is when the block is read, so give the block after the refinement; and `mtz`, the coefficients of two columns of an MTZ file (below) |
+| `mtz_columns=` | `FWT PHWT` | for `kind= mtz`: the MTZ columns of the amplitude and of the phase in degrees, e.g. `FWT PHWT` for REFMAC's $`2mF_o - DF_c`$ map, `DELFWT PHDELWT` for its difference map, `FC_ALL PHIC_ALL` for the model; the file is the one read by `mtz=` (see *A protein from an MTZ file* below); no $`F_{000}`$ is added |
+| `mtz_sigma_column=` | `SIGFP` | for `kind= mtz`: the column of standard deviations for the noise level, or `none` |
+| `sphere_atom=`, `sphere_bond_atom=`, `sphere_radius=`, `sphere_spacing=` | `O`, `C`, 0.6 Å, 0.1 Å | for `put_cell_map_sphere_averages`: the dipolar ($`\ell = 1`$) components of the map, averaged over a lattice of points within the radius of every atom named `sphere_atom` (the first part of a PDB or mmCIF label, so `O` is each residue's carbonyl oxygen), with the angle of the mean vector to the bond from the atom named `sphere_bond_atom` of the same residue; a table, and the file `<name>.<kind>.sphere_<radius>A` |
 | `l_value=` | $`-1`$ | for the Fourier maps: the plain density when negative, else the local moment of this $`l`$ (and this resets `m_value=`); for the rebuilt atoms: one $`l`$ alone |
 | `m_value=` | none | one component $`m`$ of the local moment, signed, in the frame of the axes below; without it the norm over $`m`$ |
 | `m_maps=` | `auto` | what a `plot` of a local moment writes: `norm`, the norm over $`m`$ alone; `all`, every component to its own file, named with `_m<m>` after the plot label, and the norm under the label itself; `auto` is `all` when axes are given and `norm` otherwise |
@@ -413,6 +416,33 @@ cell_map= { kind= f_exp  l_value= 1  m_value= 1
             centre_atom= 3  x_axis_atoms= 3 1  y_axis_atoms= 3 2 }
 plot
 ```
+
+### A protein from an MTZ file
+
+A protein's data come as a REFMAC MTZ file and its model as a PDB file; neither is a CIF.
+Three keywords read them, in this order:
+
+```
+mtz= { file_name= 6mu9_final.mtz  put }
+process_mtz
+pdb_file= 6mu9_final.pdb
+```
+
+`mtz=` reads the whole file and, with `put`, lists its cell, space group, resolution and
+columns with their ranges. `process_mtz` sets the crystal's cell and space group from it and
+reads the measured reflections: `f_column=`, `f_sigma_column=`, `f_calc_column=` and
+`phase_column=` in the `mtz=` block name the columns, `FP SIGFP FC_ALL PHIC_ALL` unless set,
+and a reflection without a measurement is left out. `pdb_file=` reads the atoms with their
+occupancies and ADPs (anisotropic from `ANISOU`, else isotropic from $`B`$), alternate
+conformers kept as separate atoms, labelled `name-serial-residue-number` as an mmCIF atom
+is. The MTZ file holds no atoms, and the PDB file's cell is not used.
+
+The maps of `cell_map=` then work as for a small molecule, and `kind= mtz` takes the map
+coefficients straight from two named columns, so that the $`2mF_o - DF_c`$ map is
+`cell_map= { kind= mtz  mtz_columns= FWT PHWT }` and the model map is
+`mtz_columns= FC_ALL PHIC_ALL  mtz_sigma_column= none`. A whole-cell map of a protein
+needs `use_fft= TRUE` (a Tonto built with `-DFFTW=ON`): 6MU9 has 108 445 reflections and
+a 61 000 Å³ cell, and the direct sum takes a quarter of an hour per component.
 
 ## 4. Where it is implemented
 
