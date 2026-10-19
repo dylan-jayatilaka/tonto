@@ -36,6 +36,7 @@ set(BASIS_SETS ${CMAKE_CURRENT_SOURCE_DIR}/basis_sets
 option(MPI "Use MPI" OFF)
 option(COMPILE_LAPACK "Use the reference implementation of lapack provided" OFF)
 option(LIBXC "Build libxc (external/libxc) and use it for density functionals" OFF)
+option(FFTW "Build FFTW and use it for maps of the unit cell" OFF)
 
 # Java and ANTLR4
 find_package(Java REQUIRED COMPONENTS Runtime Development)
@@ -314,6 +315,46 @@ if(LIBXC)
     target_link_libraries(tonto_libxc PUBLIC xc)
     add_compile_definitions(LIBXC=1)
     message(STATUS "libxc: building external/libxc with ${CMAKE_C_COMPILER}")
+endif()
+
+# FFTW
+# Built from the pinned release tarball, checked by its SHA256, never taken
+# from the system, for the same reason as libxc. The tarball is used rather
+# than FFTW's git repository because the repository lacks the generated
+# transform code. Set FFTW_URL to a local copy to build without a network.
+# Only the double-precision C library is built, with no SIMD and no threads,
+# so the result does not depend on the processor. Tonto reaches it through
+# csrc/tonto_fftw.c. FFTW's build files ask for CMake 3.0, which CMake 4
+# refuses unless CMAKE_POLICY_VERSION_MINIMUM is set.
+if(FFTW)
+    include(FetchContent)
+    set(FFTW_URL "https://www.fftw.org/fftw-3.3.10.tar.gz" CACHE STRING
+        "Where to get the FFTW 3.3.10 release tarball")
+    FetchContent_Declare(fftw3
+        URL ${FFTW_URL}
+        URL_HASH SHA256=56c932549852cddcfafdab3820b0200c7742675be92179e59e6215b340e26467
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "FFTW is linked statically" FORCE)
+    set(BUILD_TESTS OFF CACHE BOOL "FFTW: no tests" FORCE)
+    set(DISABLE_FORTRAN ON CACHE BOOL "FFTW: no Fortran wrappers" FORCE)
+    set(_tonto_policy_min ${CMAKE_POLICY_VERSION_MINIMUM})
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+    set(_tonto_build_type ${CMAKE_BUILD_TYPE})
+    set(CMAKE_BUILD_TYPE Release)
+    FetchContent_GetProperties(fftw3)
+    if(NOT fftw3_POPULATED)
+        FetchContent_Populate(fftw3)
+        add_subdirectory(${fftw3_SOURCE_DIR} ${fftw3_BINARY_DIR} EXCLUDE_FROM_ALL)
+    endif()
+    set(CMAKE_BUILD_TYPE ${_tonto_build_type})
+    set(CMAKE_POLICY_VERSION_MINIMUM ${_tonto_policy_min})
+    target_compile_options(fftw3 PRIVATE -O2)
+    add_library(tonto_fftw STATIC ${CMAKE_CURRENT_SOURCE_DIR}/csrc/tonto_fftw.c)
+    target_compile_options(tonto_fftw PRIVATE -O2)
+    target_include_directories(tonto_fftw PRIVATE ${fftw3_SOURCE_DIR}/api)
+    target_link_libraries(tonto_fftw PUBLIC fftw3)
+    add_compile_definitions(FFTW=1)
+    message(STATUS "FFTW: building FFTW 3.3.10 with ${CMAKE_C_COMPILER}")
 endif()
 
 # MPI
@@ -1202,6 +1243,10 @@ add_dependencies(tonto_lib antlr4-fortran)
 # DFT_FUNCTIONAL calls the libxc glue, so every program that links Tonto needs it.
 if(LIBXC)
     target_link_libraries(tonto_lib tonto_libxc)
+endif()
+# CELL_MAP calls the FFTW glue.
+if(FFTW)
+    target_link_libraries(tonto_lib tonto_fftw)
 endif()
 if(COMPILE_LAPACK)
 	target_link_libraries(tonto_lib lapack blas ${MPI_Fortran_LIBRARIES})

@@ -111,6 +111,8 @@ For `--job urea`:
 | `urea.cartesian.cif2`, `urea.HBB.cif2`, `urea.fractional.cif1` | Enhanced Tonto CIFs; the `.cif2` is what a restart needs. |
 | `urea.archive.fcf`, `urea.archive.fco`, `urea.fcf6` | Structure-factor files. |
 | `urea.QQ_plot*`, `urea.F_z_*`, `urea.Delta_F_*` | Data, gnuplot script and `.png` for each diagnostic plot. |
+| `urea.residual_density,cell.cube` | The residual density over one unit cell, on a grid no coarser than 0.1 Å. |
+| `urea.fractal_dimension*` | Meindl & Henn's (2008) analysis of that residual density: the fractal dimension $`d^f`$ of each of its iso-surfaces against its value $`\rho_0`$, as data, gnuplot script and `.png`. For noise alone the curve is a parabola; a long tail on one side points to a systematic error. The descriptors, $`d^f(0)`$, the flatness $`\rho_{0,\max} - \rho_{0,\min}`$ and the gross and net residual electrons, are in `urea.out`. |
 
 ## 4. How `hart` is tested
 
