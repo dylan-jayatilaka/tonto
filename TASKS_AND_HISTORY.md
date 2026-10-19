@@ -78,6 +78,26 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## START HERE (2026-10-19): cell-map noise, FFT maps and the residual-density analysis merged to `develop`
+
+Branch **`cell-map-noise`** merged as `97337c47`; CI green on all four workflows. It adds:
+the noise level of every cell map from the measured sigma(F) by Parseval's theorem, and maps
+in units of it (`in_sigma_units=`); the noise at each point (`noise_map=`, Rees 1976: 2.00 times
+the general value on the mm2 sites of urea, as Cruickshank & Rollett give); an optional FFTW build
+(`-DFFTW=ON`, release tarball by FetchContent with SHA256) with `use_fft=` for cell maps, a cubic
+B-spline fitted exactly in Fourier space (`fft_sampling=` default 6, r.m.s. error 4e-4 e/A^3 on
+urea, 60-170 times faster than the direct sum there); and, after every HAR that writes the
+residual cube, the Meindl & Henn (2008) residual-density analysis with its gnuplot plot
+(`<name>.fractal_dimension*`), also as `scripts/residual_density_analysis.py` for any cube.
+Nine references re-blessed on achari2 (`8446a666`): the full suites were run there first, and
+only the nine expected tests failed, each differing only by the new lines.
+
+Overnight cube files of 2026-10-18 (deformation, Laplacian and significance maps for urea,
+L-alanine and Gly-Ala) are in `~/tonto-runs/2026-10-18_overnight_maps/`. The IUCrJ manuscript is
+now `~/Dropbox/tex/conference_talks/2026_ED_L_decomp/merged_iucrj.tex` with `merged_iucrj.bib`;
+it is about twice IUCrJ's seven-page guideline, and Dylan is deciding what moves to the
+supplement.
+
 ## START HERE (2026-10-17): interpolator tidy and plot-axes merged to `develop`
 
 Dylan reviewed both branches and asked for them to be merged. **`interpolator-tidy`** is merged
