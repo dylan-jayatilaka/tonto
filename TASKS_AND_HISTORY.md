@@ -78,7 +78,7 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## START HERE (2026-10-20): branch `mtz-reader`, a protein's MTZ and PDB files in Tonto; not merged
+## START HERE (2026-10-20): `mtz-reader` merged to `develop`: a protein's MTZ and PDB files in Tonto
 
 Done on `mtz-reader` (from `develop` at `0f145210`), plan and log in `docs/TASK_MTZ_READER.md`:
 `mtz= { file_name= }` reads a CCP4 MTZ file whole (both byte orders, missing values);
@@ -94,8 +94,8 @@ key instead of comparing every pair (8 min → 1 s on 10⁵ reflections), with a
 skips the connected-group molecules. Short test `mtz_and_pdb_read` added, its reference from the
 Mac, and it passes unchanged on achari2. **The full suites pass on achari2** (195 of 195,
 2 skipped, in `~/github/tonto-interp/reference` on 2026-10-20) and the short suite on the Mac,
-so the equivalents change leaves every reference as it was. **Ready to merge to `develop`**
-once Dylan has looked; not merged.
+so the equivalents change leaves every reference as it was. Merged as `9d346e81` at Dylan's
+word; CI green on all four workflows. The branch can be deleted.
 
 Found on the way, not fixed: the translator drops a declared kind (`REAL(REAL_4_KIND)` →
 `REAL`), so `archive.foo`'s single-precision stream writers write doubles; `STR:remove_blanks`
