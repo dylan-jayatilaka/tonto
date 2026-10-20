@@ -136,4 +136,8 @@ roughly two days of work. Whole-cell maps of 6MU9 need the FFT build (`-DFFTW=ON
   `molecule.fock` ("Circular ... dependency dropped", "Cannot open module file"), even
   from `make clean`. The call was not needed. Stale `*.provides.build` markers in the
   build tree can give the same symptom after an interrupted build; delete them.
+- 2026-10-20, 02:40: stage 7 done. `tests/short/mtz_and_pdb_read` (little- and big-endian
+  MTZ, PDB with ANISOU and a conformer, maps from columns, sphere averages); its reference,
+  made on the Mac, passes on achari2 unchanged. Full suites on achari2: 195 of 195 pass;
+  Mac short suite 88 of 88. Branch ready to merge.
 

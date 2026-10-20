@@ -92,9 +92,10 @@ Two speed-ups were needed and are in shared code: `CRYSTAL:make_list_of_equivale
 key instead of comparing every pair (8 min → 1 s on 10⁵ reflections), with a new
 `VEC{INT}:heap_sort` because the quick sort overflows the stack on sorted keys; and the PDB path
 skips the connected-group molecules. Short test `mtz_and_pdb_read` added, its reference from the
-Mac pending the achari2 bless. **Before merging:** the full suites on achari2 (started
-2026-10-20 00:00 UTC in `~/github/tonto-interp/reference`, log `~/mtz_reader.log`), bless the
-new test there, and check that the equivalents change leaves the nh3 references unchanged.
+Mac, and it passes unchanged on achari2. **The full suites pass on achari2** (195 of 195,
+2 skipped, in `~/github/tonto-interp/reference` on 2026-10-20) and the short suite on the Mac,
+so the equivalents change leaves every reference as it was. **Ready to merge to `develop`**
+once Dylan has looked; not merged.
 
 Found on the way, not fixed: the translator drops a declared kind (`REAL(REAL_4_KIND)` →
 `REAL`), so `archive.foo`'s single-precision stream writers write doubles; `STR:remove_blanks`
