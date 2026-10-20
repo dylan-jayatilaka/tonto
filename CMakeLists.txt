@@ -568,6 +568,7 @@ set(FOO_SRC
     ${FOO_DIR}/file.foo
     ${FOO_DIR}/archive.foo
     ${FOO_DIR}/cif.foo
+    ${FOO_DIR}/mtz.foo
     ${FOO_DIR}/cluster.foo
     ${FOO_DIR}/colour.foo
     ${FOO_DIR}/colour_function.foo
@@ -685,6 +686,7 @@ set(FORTRAN_SRC
     ${CMAKE_CURRENT_BINARY_DIR}/buffer.F90
     ${CMAKE_CURRENT_BINARY_DIR}/capping_square.F90
     ${CMAKE_CURRENT_BINARY_DIR}/cif.F90
+    ${CMAKE_CURRENT_BINARY_DIR}/mtz.F90
     ${CMAKE_CURRENT_BINARY_DIR}/cluster.F90
     ${CMAKE_CURRENT_BINARY_DIR}/colour.F90
     ${CMAKE_CURRENT_BINARY_DIR}/colour_function.F90

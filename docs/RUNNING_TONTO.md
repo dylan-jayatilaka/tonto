@@ -30,6 +30,11 @@ set — see [`RUNNING_HART.md`](RUNNING_HART.md).
   delete afterwards. For an argv-driven program such as `hart` it also carries
   `program:` and `args:` keys.
 
+A protein comes as an MTZ reflection file and a PDB model rather than a CIF: `mtz=`,
+`process_mtz` and `pdb_file=` read them, see
+[`REPORT_ON_L_DECOMPOSITION_MAPS.md`](REPORT_ON_L_DECOMPOSITION_MAPS.md), *A protein from an
+MTZ file*.
+
 ## Where to keep the executable and the basis sets
 
 The executable can go anywhere. Two things help:

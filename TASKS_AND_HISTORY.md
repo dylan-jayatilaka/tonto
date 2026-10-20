@@ -78,6 +78,35 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## START HERE (2026-10-20): branch `mtz-reader`, a protein's MTZ and PDB files in Tonto; not merged
+
+Done on `mtz-reader` (from `develop` at `0f145210`), plan and log in `docs/TASK_MTZ_READER.md`:
+`mtz= { file_name= }` reads a CCP4 MTZ file whole (both byte orders, missing values);
+`process_mtz` sets the cell and spacegroup and reads the reflections; `pdb_file=` reads a PDB
+model with ADPs and alternate conformers; `cell_map= { kind= mtz  mtz_columns= FWT PHWT }` makes
+a cell map straight from two columns, with the noise level from SIGFP; and
+`put_cell_map_sphere_averages` averages the dipolar field in spheres about named atoms. On
+Santosh's 6MU9 it reproduces the paper's carbonyl descriptors at $`r_0 = 0.6`$ Å (data–model
+angle median 10.3° against 9.7°, O299 33.5° against 30.8°); the table is in the task document.
+Two speed-ups were needed and are in shared code: `CRYSTAL:make_list_of_equivalents_v2` sorts a
+key instead of comparing every pair (8 min → 1 s on 10⁵ reflections), with a new
+`VEC{INT}:heap_sort` because the quick sort overflows the stack on sorted keys; and the PDB path
+skips the connected-group molecules. Short test `mtz_and_pdb_read` added, its reference from the
+Mac, and it passes unchanged on achari2. **The full suites pass on achari2** (195 of 195,
+2 skipped, in `~/github/tonto-interp/reference` on 2026-10-20) and the short suite on the Mac,
+so the equivalents change leaves every reference as it was. **Ready to merge to `develop`**
+once Dylan has looked; not merged.
+
+Found on the way, not fixed: the translator drops a declared kind (`REAL(REAL_4_KIND)` →
+`REAL`), so `archive.foo`'s single-precision stream writers write doubles; `STR:remove_blanks`
+never returns on a blank-padded string; a new call from one MOLECULE submodule to another can
+close a module-use cycle that CMake cannot build (`docs/TASK_MTZ_READER.md`).
+
+The paper goes to **Acta Cryst. A** (Santosh's revision of 2026-10-19, package in
+`~/Dropbox/tonto_data/6mu9_santosh/`); Dylan is reading it. The merged IUCrJ draft
+(`2026_ED_L_decomp/merged_iucrj.tex`) now uses Racah's normalisation, which Tonto does not yet:
+rescale the maps (×3.54, 2.05, 1.59 for ℓ = 0, 1, 2) before redrawing figures.
+
 ## START HERE (2026-10-19): cell-map noise, FFT maps and the residual-density analysis merged to `develop`
 
 Branch **`cell-map-noise`** merged as `97337c47`; CI green on all four workflows. It adds:
