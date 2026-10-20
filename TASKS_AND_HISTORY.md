@@ -107,7 +107,13 @@ the two new tests got their references; the two `Salvador_properties` references
 after checking that they differ only by the renamed text line, the new stiffness line and the
 urea test's known 1-ulp Hirshfeld-moment marginal; then the short suite passed 89 of 89 (the
 usual rgbi-doctor skip) and the eight long Salvador/TFV tests 8 of 8. References committed as
-`d5f20f9d` and pulled here. **Ready to merge to `develop`.** Not done: `l4` and beyond (case
+`d5f20f9d` and pulled here; **merged to `develop` the same evening** (fast-forward to `125095a7`,
+branch deleted, CI green). Then ninety refinements — urea, L-alanine, glycyl-L-alanine × RHF,
+B3LYP, PBE0 × def2-SVP, def2-TZVP × full atom, `l0`…`l3` — on the Mac and achari2
+(`~/tonto-runs/2026-10-20_ln_tfvc/`, assembled by its `assemble.sh`) went into the new page
+**`docs/REPORT_ON_LN_TFVC.md`**: every multipole job converges, `l3-tfvc` is within GoF ×1.15–1.4
+and 0.03 Å (mean X–H) of the full atom everywhere, and the wavefunction and basis change the
+numbers but not the pattern. Not done: `l4` and beyond (case
 rows stop at 3), `l<n>` with the `tfvp`/`tfvh`/`exphar` radii, the FF-fit/BUSTER writer stays
 l = 0.
 

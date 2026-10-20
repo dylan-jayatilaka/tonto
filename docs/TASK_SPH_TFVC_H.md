@@ -118,6 +118,18 @@ make it worse than `sph-tfvc`.
   `tests/long/urea_rhf_STO-3G_l1-TFVC_HAR` (reference to be blessed on achari2).
 - Not done: `l4` and beyond (the case tables stop at 3; a numeric suffix would need parsing);
   `l<n>` variants of `tfvp`/`tfvh`/`exphar` radii; the FF-fit writer stays $`l = 0`$.
+- 2026-10-20, evening, after the merge: Dylan asked for results on glycyl-L-alanine and
+  L-alanine ("L_glycine" in his message; the data set has no glycine) as well as urea, at
+  def2-TZVP as well as def2-SVP, and with B3LYP and PBE0 as well as RHF, in a new page
+  `docs/REPORT_ON_LN_TFVC.md`. Ninety refinements: `~/tonto-runs/2026-10-20_ln_tfvc/` (inputs
+  from `gen.py`, runner `run_batch.sh`/`run_one.sh`, `summ2.py` → `results.csv`, `tables.py` →
+  `tables.md`, `assemble.sh` builds the report from `head.md` + `tables.md` + `tail.md`). The
+  gly-L-ala jobs ran on the Mac (8 at a time, 20–26 min each at def2-TZVP), urea and L-alanine on
+  achari2 (6 at a time, `~/tonto-runs/2026-10-20_ln_tfvc` there too). Every job exit 0; the
+  spherical atom hit the 25-cycle cap on all six urea jobs and "GoF rose" on three L-alanine
+  ones. The urea working CIF is the test suite's (817 reflections); the amino-acid CIFs are the
+  working copies from `~/tonto-runs/2026-10-18_overnight_maps/`. The model text and the urea
+  table moved from `REPORT_ON_SALVADOR_MODELS.md` to the new page, which that page now points to.
 - Earlier note, now done: the general multipole, `sph-tfvc+l2` and beyond — `FOURIER_SUMS:make_solid_
   harmonics(Y,pts,l_max)` already gives real harmonics at points, so each shell projects onto
   $`Y_{lm}`$ and transforms with $`j_l`$: $`f = \sum_l 4\pi i^l \sum_m Y_{lm}(\hat k)\int 4\pi r^2
