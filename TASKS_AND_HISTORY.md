@@ -78,6 +78,39 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## START HERE (2026-10-20, evening): spherical Salvador atoms — the multipole family `l<n>-tfvc` on branch `sph-tfvc-h`
+
+The day's question was the non-convergence of the spherically averaged Salvador atom. Plan,
+measurements and log in `docs/TASK_SPH_TFVC_H.md`; the models and the urea results in
+`docs/REPORT_ON_SALVADOR_MODELS.md` §1 and §4. On `sph-tfvc-h` (from `develop` at `4211c2b8`),
+commit `2fa63d55`:
+
+- **TFVA → TFVC** everywhere (topological fuzzy Voronoi *cell* atom, Salvador and Ramos-Cordoba):
+  keywords `tfvc`, `sph-tfvc`, `oc-sph-tfvc`; the old spellings are gone. Two
+  `Salvador_properties` references change by one line of text.
+- **`sph-tfvc+h`** (each H averaged about its density maximum on the bond, a colleague's idea with
+  Sheldrick's resonance): offsets 0.05 Å (def2-SVP) to 0.1 Å (STO-3G); **does not cure** the
+  divergence — H3 goes to 0.39 Å from N1 by cycle 3. `tfvc+h` reproduces `oc-salvador` exactly,
+  as the argument says it must (the centre does not enter a rigid aspherical atom's factor).
+- **`l1-tfvc`, `l2-tfvc`, `l3-tfvc`** (`l0-tfvc` = `sph-tfvc`): each atom's density expanded in
+  real spherical harmonics about its nucleus, truncated at l = n, Fourier–Bessel transformed;
+  nothing fitted. Dylan's conclusion: this is the consistent model and a minimal "RI" correction a
+  protein program could carry (one radial curve per atom type plus a direction). Urea RHF/def2-SVP:
+  every term converges, every column monotonic in l; `l3-tfvc` GoF 4.1 against 3.5 for the full
+  atom, N–H within 0.013 / 0.041 Å. The general code at l = 1 equals a hand-written dipole
+  implementation to every digit. **Judge these models on def2-SVP at least, not STO-3G.**
+- `becke_grid= { salvador_stiffness= k }` (default 4) for softer cell walls.
+- Tests `tests/long/urea_rhf_STO-3G_TFVC+H_HAR` and `urea_rhf_STO-3G_l1-TFVC_HAR`.
+
+**Blessed and green on achari2** (`~/github/tonto-interp` on `sph-tfvc-h`, reference build):
+the two new tests got their references; the two `Salvador_properties` references were re-blessed
+after checking that they differ only by the renamed text line, the new stiffness line and the
+urea test's known 1-ulp Hirshfeld-moment marginal; then the short suite passed 89 of 89 (the
+usual rgbi-doctor skip) and the eight long Salvador/TFV tests 8 of 8. References committed as
+`d5f20f9d` and pulled here. **Ready to merge to `develop`.** Not done: `l4` and beyond (case
+rows stop at 3), `l<n>` with the `tfvp`/`tfvh`/`exphar` radii, the FF-fit/BUSTER writer stays
+l = 0.
+
 ## START HERE (2026-10-20): `mtz-reader` merged to `develop`: a protein's MTZ and PDB files in Tonto
 
 Done on `mtz-reader` (from `develop` at `0f145210`), plan and log in `docs/TASK_MTZ_READER.md`:
