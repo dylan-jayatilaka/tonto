@@ -102,10 +102,22 @@ Found on the way, not fixed: the translator drops a declared kind (`REAL(REAL_4_
 never returns on a blank-padded string; a new call from one MOLECULE submodule to another can
 close a module-use cycle that CMake cannot build (`docs/TASK_MTZ_READER.md`).
 
-The paper goes to **Acta Cryst. A** (Santosh's revision of 2026-10-19, package in
-`~/Dropbox/tonto_data/6mu9_santosh/`); Dylan is reading it. The merged IUCrJ draft
-(`2026_ED_L_decomp/merged_iucrj.tex`) now uses Racah's normalisation, which Tonto does not yet:
-rescale the maps (×3.54, 2.05, 1.59 for ℓ = 0, 1, 2) before redrawing figures.
+**The paper** goes to **Acta Cryst. A** (Santosh's revision of 2026-10-19, due 2 November,
+package in `~/Dropbox/tonto_data/6mu9_santosh/ib5132_for_Dylan_2026-10-19/`). Two documents are
+to be merged: that package and Dylan's draft `~/Dropbox/tex/conference_talks/2026_ED_L_decomp/merged_iucrj.tex`
+(+ `merged_iucrj.bib`), whose Theory was rewritten this session in the draft's notation with
+Racah's normalisation, derivations in Supplementary Section S10. Dylan reads Santosh's text and
+talks to him before deciding how to combine. Tonto's maps are not yet in Racah's normalisation:
+rescale them (×3.54, 2.05, 1.59 for ℓ = 0, 1, 2) before redrawing the figures, which are still
+in the old scale (a `% CHECK` in the tex marks it). Overnight cube files of 2026-10-18
+(deformation, Laplacian, significance maps for urea, L-alanine, Gly–Ala) are in
+`~/tonto-runs/2026-10-18_overnight_maps/`, undrawn.
+
+Branches cleaned 2026-10-20: `mtz-reader`, `cell-map-noise`, `interpolator-tidy`, `plot-axes`,
+`plot-axes-develop`, `pure-eigensolver`, `tc-tls`, `xcw-wandering` and `buster-ff` deleted, all
+their content being in `develop`; the `~/tonto-wt/*` worktrees for them removed. Kept:
+`grid-optimization`, `damping-repair`, `exact-final-energy` (unmerged work), the `wip/*`
+snapshots, `Lolo*`, `Nice-branch`, `gh-pages`, `develop-gfortran-16`.
 
 ## START HERE (2026-10-19): cell-map noise, FFT maps and the residual-density analysis merged to `develop`
 
