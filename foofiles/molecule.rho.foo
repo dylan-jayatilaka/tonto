@@ -3815,7 +3815,7 @@ contains
    make_Salvador_radii_orig(bonds_for,radii_for,chi,n_div,n_sub) :: leaky, PURE
    ! Make the Mayer-Salvador atom radii corresponding to the
    ! bonded neighbours (which are also calculated) for the Topological
-   ! Fuzzy Voronoi Atoms.
+   ! fuzzy Voronoi cell (TFVC) atoms.
       self      :: IN
       bonds_for :: VEC{EVEC{INT}}@, OUT
       radii_for :: VEC{EVEC{REAL}}@, OUT
@@ -3861,7 +3861,7 @@ contains
 
    Mayer_Salvador_radius_for(a,b,n_div,n_sub) result (res) :: PURE
    ! Return the Mayer-Salvador radius R(a.b) for atoms "a" and "b" in
-   ! the direction a->b, used to make Topological Fuzzy Voronoi atoms.
+   ! the direction a->b, used to make topological fuzzy Voronoi cell atoms.
    ! The code is accurate to 1/200-th of the bond length R(a-b).
    ! The code also ensures that R(a.b) + R(b.a) = R(a-b).
    ! Options:
@@ -4049,7 +4049,7 @@ contains
 
    Mayer_Salvador_radius_for(a,b,n_div,n_sub,DM) result (res) :: PURE
    ! Return the Mayer-Salvador radius R(a.b) for atoms "a" and "b" in
-   ! the direction a->b, used to make Topological Fuzzy Voronoi atoms.
+   ! the direction a->b, used to make topological fuzzy Voronoi cell atoms.
    ! "DM" is the density matrix used to calculated the electron
    ! density. The code is accurate to 1/2000-th of the separation
    ! R(a-b). The code ensures that R(a.b) + R(b.a) = R(a-b). 
@@ -4301,7 +4301,7 @@ contains
    make_Salvador_radii_pro(radii_for,bonds_for,DM,n_div,n_sub) :: leaky, PURE
    ! Make the Mayer-Salvador atom radii corresponding to the
    ! bonded neighbours (previously calculated!) for the Topological
-   ! Fuzzy Voronoi Atoms, for the electron density obtained from
+   ! fuzzy Voronoi cell (TFVC) atoms, for the electron density obtained from
    ! density matrix "DM".
       self      :: IN
       radii_for :: VEC{EVEC{REAL}}@, OUT
@@ -4430,6 +4430,12 @@ contains
 
       ! Put table
       .atom.put_Salvador_radii_table(.Salvador_bonds_for,.Salvador_radii_for,radii_pro,radii_hir)
+
+      ! The cell-function stiffness, if the grid is there
+      if (.becke_grid.allocated) then
+         stdout.flush
+         stdout.show("Salvador stiffness (Becke steps) =",.becke_grid.Salvador_stiffness)
+      end
 
       ! Clean
       radii_hir.destroy
@@ -4598,6 +4604,96 @@ contains
 
    end
 
+   make_H_center_offsets :: leaky
+   ! Set "sph_center_offset" for every atom: zero for a heavy atom, and
+   ! for a hydrogen the vector from its nucleus to the maximum of its
+   ! Salvador atom density w_H rho along the bond to its nearest
+   ! Salvador neighbour. The maximum is found on a line of points and
+   ! refined by the parabola through the three points about it. This is
+   ! the "+h" correction; the offsets are printed in a table.
+      self :: INOUT
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.Salvador_bonds_for.allocated,"no Salvador bonds")
+
+      line      :: VEC{REAL}@
+      neigh     :: VEC{INT}@
+      rh,rx,del :: VEC{REAL}(3)
+      r_hx,dist :: REAL
+      y0,y1,y2  :: REAL
+      s,t       :: REAL
+      n_pts     :: INT
+      h,x,i,m   :: INT
+
+      n_pts = 201
+
+      ! Table header
+      stdout.flush
+      stdout.text("Hydrogen atom density maxima on the bond (the +h correction)")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=4)
+      stdout.put("H",int_width=TRUE)
+      stdout.put("Bonded",int_width=TRUE)
+      stdout.put("R(H-X)/A")
+      stdout.put("Offset/A")
+      stdout.put("rho(H)")
+      stdout.put("rho(max)")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=4)
+
+      do h = 1,.n_atom
+
+         .atom(h).set_sph_center_offset([ZERO,ZERO,ZERO])
+         if (.atom(h).atomic_number/=1) cycle
+
+         ! Nearest Salvador neighbour "x"
+         neigh = .Salvador_bonds_for(h).element
+         x = 0
+         r_hx = huge(ONE)
+         do i = 1,neigh.dim
+            dist = .atom.distance_between(h,neigh(i))
+            if (dist>=r_hx) cycle
+            x = neigh(i)
+            r_hx = dist
+         end
+         if (x==0) cycle
+
+         ! Salvador H density along H -> X, and its maximum
+         line = .SA_ED_between_atoms(h,x,n_pts)
+         m = line.index_of_maximum
+
+         ! Fraction "s" of the way to X, from the parabola about point "m"
+         t = ZERO
+         if (m>1 AND m<n_pts) then
+            y0 = line(m-1); y1 = line(m); y2 = line(m+1)
+            if (y0-TWO*y1+y2<ZERO) t = HALF*(y0-y2)/(y0-TWO*y1+y2)
+         end
+         s = (m-1+t)/(n_pts-1)
+
+         ! The offset
+         rh  = .atom(h).position
+         rx  = .atom(x).position
+         del = s*(rx-rh)
+         .atom(h).set_sph_center_offset(del)
+
+         ! Table row
+         stdout.put(.atom(h).label,int_width=TRUE)
+         stdout.put(.atom(x).label,int_width=TRUE)
+         stdout.put(r_hx*ANGSTROM_PER_BOHR)
+         stdout.put(norm2(del)*ANGSTROM_PER_BOHR)
+         stdout.put(line(1))
+         stdout.put(line(m))
+         stdout.flush
+
+         line.destroy
+         neigh.destroy
+
+      end
+
+      stdout.dash(int_fields=2,real_fields=4)
+
+   end
+
 
    make_sph_avgd_SA_ED_v0(avg,pts,c) :: PURE
    ! Make "avg", the spherically averaged Salvador atom electron
@@ -4702,28 +4798,36 @@ contains
 
    end
 
-   make_sph_avgd_SA_ED_v1(avg,pts,c) :: PURE
+   make_sph_avgd_SA_ED_v1(avg,pts,c,avg_lm,l_max) :: PURE
    ! Make "avg", the spherically averaged Salvador atom electron
    ! densities for atom "c" at the radii "pts" of its Becke radial
    ! shells, averaging over each shell's Lebedev grid. The Becke
    ! partition weights are not used: the average is over the whole
    ! sphere, and the Salvador weight takes it to zero at other nuclei.
+   ! If "avg_lm" and "l_max" are present, avg_lm(i,:) is set to the
+   ! real spherical harmonic components of the density on shell i,
+   ! rho_lm(r) = 4 pi sum_j w_j W_j rho_j Y_lm(r^_j) for l up to l_max,
+   ! in the column order of FOURIER_SUMS:make_solid_harmonics.
       self :: IN
       avg  :: VEC{REAL}, OUT
       pts  :: VEC{REAL}, IN
       c    :: INT, IN
+      avg_lm :: MAT{REAL}, OUT, optional
+      l_max  :: INT, IN, optional
 
    ENSURE(avg.dim==pts.dim,"incompatible size, avg & pts")
    ENSURE(.becke_grid.allocated,"no becke_grid")
    ENSURE(.becke_grid.finalized,"becke_grid not finalized")
+   ENSURE(present(avg_lm) EQV present(l_max),"avg_lm and l_max go together")
 
       rc      :: VEC{REAL}(3)
       Wc,N0   :: VEC{REAL}@
-      shell   :: MAT{REAL}@
+      shell,Y :: MAT{REAL}@
       lebedev :: LEBEDEV@
       i,j     :: INT
 
-      rc = .atom(c).position
+      ! Centre of the average: the nucleus, or its +h offset
+      rc = .atom(c).position + .atom(c).sph_center_offset
 
       do i = 1,pts.dim
 
@@ -4742,6 +4846,14 @@ contains
 
          ! Average: the Lebedev weights sum to one
          avg(i) = sum(lebedev.wts*Wc*N0)
+
+         ! The harmonic components: the Lebedev points are unit vectors
+         if (present(avg_lm)) then
+            Y.create(shell.dim1,(l_max+1)*(l_max+1))
+            FOURIER_SUMS:make_solid_harmonics(Y,lebedev.pts,l_max)
+            avg_lm(i,:) = FOUR*PI*matmul(lebedev.wts*Wc*N0,Y)
+            Y.destroy
+         end
 
          N0.destroy
          Wc.destroy
@@ -4773,7 +4885,8 @@ contains
       lebedev :: LEBEDEV@
       i,j     :: INT
 
-      rc = .atom(c).position
+      ! Centre of the average: the nucleus, or its +h offset
+      rc = .atom(c).position + .atom(c).sph_center_offset
 
       do i = 1,pts.dim
 
@@ -5039,17 +5152,21 @@ contains
 
    end
 
-   make_sph_avgd_SA_ED_grid(N0,pts,c) :: PURE
+   make_sph_avgd_SA_ED_grid(N0,pts,c,N_lm,l_max) :: PURE
    ! Return "N0", the spherically averaged Salvador atom electron
    ! density (ED) grid for atom "c" *weighted* by the Becke radial
    ! grid wts; and return the radial grid points as well on which N0
-   ! is evaluated. 
+   ! is evaluated. If "N_lm" and "l_max" are present, N_lm is set to
+   ! the harmonic components of the density on each shell up to l_max
+   ! (see make_sph_avgd_SA_ED_v1), weighted the same way.
    ! NOTE: the radial grid points are from the origin.
-   ! NOTE: sum(N0) is the electron population for atom "c". 
+   ! NOTE: sum(N0) is the electron population for atom "c".
       self :: IN
       N0   :: VEC{REAL}@, OUT
       pts  :: VEC{REAL}@, OUT
       c    :: INT, IN
+      N_lm :: MAT{REAL}@, OUT, optional
+      l_max :: INT, IN, optional
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.allocated,  "no atom list")
@@ -5072,9 +5189,17 @@ contains
          .becke_grid.radial_shell_for_atom(c,i,pts(i),wts(i))
       end
 
-      ! Averaged densities
+      ! Averaged densities, and the harmonic components if asked for
       N0.create(n)
-      .make_sph_avgd_SA_ED_v1(N0,pts,c)
+      if (present(N_lm)) then
+         N_lm.create(n,(l_max+1)*(l_max+1))
+         .make_sph_avgd_SA_ED_v1(N0,pts,c,N_lm,l_max)
+         do i = 1,n
+            N_lm(i,:) = N_lm(i,:)*wts(i)
+         end
+      else
+         .make_sph_avgd_SA_ED_v1(N0,pts,c)
+      end
 
       ! N0 x radial weights
       N0 = N0*wts
@@ -5318,7 +5443,7 @@ contains
    end
 
    make_SA_info(output) :: leaky
-   ! Make the TFVA atomic charges & moments.
+   ! Make the TFVC atomic charges & moments.
    ! Set up Becke grid before (if not there) ready for integration.
    ! The latter need Salvador neighbors & radii which are also made.
       self   :: INOUT
@@ -5614,9 +5739,14 @@ contains
       case("oc-salvador   "); .make_Salvador_atom_FFs(ff)
       case("oc-tfvp       "); .make_Salvador_atom_FFs(ff)
       case("oc-tfvh       "); .make_Salvador_atom_FFs(ff)
-      case("oc-sph-tfvp   "); .make_sph_TFVA_atom_FFs(ff)
-      case("oc-sph-tfvh   "); .make_sph_TFVA_atom_FFs(ff)
-      case("oc-sph-tfva   "); .make_sph_TFVA_atom_FFs(ff)
+      case("oc-sph-tfvp   "); .make_sph_TFVC_atom_FFs(ff)
+      case("oc-sph-tfvh   "); .make_sph_TFVC_atom_FFs(ff)
+      case("oc-sph-tfvc   "); .make_sph_TFVC_atom_FFs(ff)
+      case("oc-tfvc+h     "); .make_Salvador_atom_FFs(ff)
+      case("oc-sph-tfvc+h "); .make_sph_TFVC_atom_FFs(ff)
+      case("oc-l1-tfvc    "); .make_sph_TFVC_atom_FFs(ff)
+      case("oc-l2-tfvc    "); .make_sph_TFVC_atom_FFs(ff)
+      case("oc-l3-tfvc    "); .make_sph_TFVC_atom_FFs(ff)
       end
 
    end
@@ -5766,7 +5896,7 @@ contains
    end
 
    make_Salvador_atom_FFs(ff) :: leaky, NON_MPI_PURE
-   ! Make "ff", the static Salvador (TFVA) atom form factors for the
+   ! Make "ff", the static Salvador (TFVC) atom form factors for the
    ! symmetry related K points with *no* thermal smearing, for every
    ! unique fragment atom.
    ! NOTE: "ff" is the FT rho_a(r), eqn (3) in Jayatilaka 2008,
@@ -5851,10 +5981,12 @@ contains
 
    end
 
-   make_sph_TFVA_atom_FFs(ff) :: leaky, NON_MPI_PURE
-   ! Make "ff", the static Hirshfeld atom form factors for the
-   ! symmetry related K points with *no* thermal smearing, for every
-   ! unique fragment atom.
+   make_sph_TFVC_atom_FFs(ff) :: leaky, NON_MPI_PURE
+   ! Make "ff", the static spherically averaged Salvador atom form
+   ! factors for the symmetry related K points with *no* thermal
+   ! smearing, for every unique fragment atom. For the oc-l<n>-tfvc
+   ! models the harmonic components of each atom's density up to
+   ! l = n are added to the spherical one.
    ! NOTE: "ff" is the FT rho_a(r), eqn (3) in Jayatilaka 2008,
    ! Acta Cryst A 64 p. 383-393. It is also f_a(q) in eqn (11) except
    ! without the thermal smearing factor.
@@ -5865,20 +5997,24 @@ contains
    ENSURE(.atom.allocated,"no atom list")
    ENSURE(.density_mx.allocated, "no density matrix")
    ENSURE(.crystal.allocated, "no crystal")
-   ENSURE(.crystal.xray_data.allocated, "no reflection data")
    ENSURE(.crystal.xray_data.allocated, "no x-ray reflection data")
-   ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
    ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
 
       rc          :: VEC{REAL}(3)
       rho, pt     :: VEC{REAL}@
+      rho_lm      :: MAT{REAL}@
+      sf_lm       :: VEC{CPX}@
       k_pts       :: MAT{REAL}@
       cutoff      :: REAL
       ss,sc,s2    :: REAL
       kk, sf      :: VEC{REAL}@
       kc          :: REAL
+      l_max       :: INT
       n_atom, u,c :: INT
       n_k,  k     :: INT
+
+      ! Highest harmonic of each atom to add, 0 for the spherical atom
+      l_max = .crystal.xray_data.TFVC_l_max
 
       ! Asymmetric unit atoms
       n_atom = .crystal.asymmetric_unit_atom.dim
@@ -5912,7 +6048,9 @@ contains
       parallel do u = 1,.crystal.n_unique_frag_atoms
 
          c  = .crystal.unique_frag_atom(u)
-         rc = .atom(c).position
+
+         ! Centre of the average: the nucleus, or its +h offset
+         rc = .atom(c).position + .atom(c).sph_center_offset
 
          ! Site-symmetry factor for this atom
          ss = .crystal.frag_atom_sym_factor(c)
@@ -5922,17 +6060,26 @@ contains
 
          ! Get the Becke grid for atom "c" (leaky)
          ! Note: "pt" is around the origin, not "rc"
-         .make_sph_avgd_SA_ED_grid(rho,pt,c)
+         if (l_max>0) then; .make_sph_avgd_SA_ED_grid(rho,pt,c,rho_lm,l_max)
+         else;              .make_sph_avgd_SA_ED_grid(rho,pt,c)
+         end
 
-         ! The (unique) atomic form factors, times the position phase
+         ! The spherical form factor, and the l = 1 to l_max transforms
          sf.create(n_k)
          FOURIER_SUMS:sinc_kr_sums(sf,kk,pt,rho)
+         sf_lm.create(n_k)
+         sf_lm = ZERO
+         if (l_max>0) FOURIER_SUMS:multipole_kr_sums(sf_lm,k_pts,pt,rho_lm,1,l_max)
+
+         ! The (unique) atomic form factors, times the position phase
          do k = 1,n_k
             kc = dot_product(k_pts(k,:),rc)
-            ff(k,u) = sf(k) * exp(IMAGIFY(kc)) * s2 * .atom(c).site_occupancy
+            ff(k,u) = (sf(k) + sf_lm(k)) * exp(IMAGIFY(kc)) * s2 * .atom(c).site_occupancy
          end
 
          ! Clean up
+         if (l_max>0) rho_lm.destroy
+         sf_lm.destroy
          sf.destroy
          rho.destroy
          pt.destroy
@@ -5955,7 +6102,7 @@ contains
    ! "s" = sin(theta)/lambda in 1/Angstrom: FF_fit_n_points evenly
    ! spaced from 0 to FF_fit_s_max. The atom is the one of the sph-
    ! partition model in force: the spherically averaged Salvador atom
-   ! (oc-sph-tfva, oc-sph-tfvp, oc-sph-tfvh) or the spherically
+   ! (oc-sph-tfvc, oc-sph-tfvp, oc-sph-tfvh) or the spherically
    ! averaged (exponential) Hirshfeld atom (oc-sph-exphar). "f" and "s"
    ! are created here.
       self :: INOUT
@@ -5984,7 +6131,8 @@ contains
       ! The averaged density on the radial grid, times its weights
       .make_r_density_mx
       select case (.crystal.xray_data.partition_model)
-      case("oc-sph-tfva   ","oc-sph-tfvp   ","oc-sph-tfvh   ")
+      case("oc-sph-tfvc   ","oc-sph-tfvp   ","oc-sph-tfvh   ","oc-sph-tfvc+h ", &
+           "oc-l1-tfvc    ","oc-l2-tfvc    ","oc-l3-tfvc    ")
          .make_sph_avgd_SA_ED_grid(rho,pt,c)
       case("oc-sph-exphar ")
          .make_sph_avgd_HA_ED_grid(rho,pt,c)
@@ -6063,7 +6211,9 @@ contains
       parallel do u = 1,.crystal.n_unique_frag_atoms
 
          c  = .crystal.unique_frag_atom(u)
-         rc = .atom(c).position
+
+         ! Centre of the average: the nucleus, or its +h offset
+         rc = .atom(c).position + .atom(c).sph_center_offset
 
          ! Site-symmetry factor for this atom
          ss = .crystal.frag_atom_sym_factor(c)

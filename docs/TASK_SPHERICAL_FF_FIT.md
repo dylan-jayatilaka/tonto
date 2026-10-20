@@ -1,13 +1,13 @@
 # Plan: fitting spherical atomic form factors to a few Gaussians
 
 A working document (see `CLAUDE.md` §1). It plans the fit of Tonto's spherical atom form
-factors — `sph-tfva`, `sph-tfvp`, `sph-tfvh` — to the International Tables form, for use
+factors — `sph-tfvc`, `sph-tfvp`, `sph-tfvh` — to the International Tables form, for use
 in protein refinement programs, and is deleted when the item closes.
 
 ## 1. What is wanted
 
 A protein refinement needs a form factor for every atom type at millions of reflections.
-Tonto's spherically averaged Salvador atoms (`partition_model= oc-sph-tfva`, `oc-sph-tfvp`,
+Tonto's spherically averaged Salvador atoms (`partition_model= oc-sph-tfvc`, `oc-sph-tfvp`,
 `oc-sph-tfvh`) give such a form factor, f(s), as a sum over the atom's radial grid
 (`MOLECULE.RHO:make_sph_avgd_SA_ED_grid`, then `FOURIER_SUMS:sinc_kr_sums`). That is too
 slow to call per reflection, so f(s) is to be fitted once to the form every protein program
@@ -48,7 +48,7 @@ evenly spaced s in [0, s_max]. Default `n_s` = 201, so a step of 0.01 Å⁻¹ at
 range. Any s costs one sinc sum, so the grid is free to choose; the Mura–Knowles radial
 points are only the quadrature behind it.
 
-Which radii are used follows `partition_model=` as it does now: `oc-sph-tfva` the molecular
+Which radii are used follows `partition_model=` as it does now: `oc-sph-tfvc` the molecular
 density minimum, `oc-sph-tfvp` the promolecule minimum, `oc-sph-tfvh` the equal-density
 point (`uses_promolecule_Salvador_radii`, `uses_Hirshfeld_Salvador_radii`).
 

@@ -17,7 +17,7 @@ cluster (`docs/REPORT_ON_MODE_FITTING.md`). Measured effect of each choice on a 
 | basis, def2-SVP to def2-TZVP | 0.25–0.40 | up to 0.006 Å |
 | method, RHF to B3LYP | 0.5–0.7 | about 0.01 Å |
 | crystal environment: none, cluster charges, 7-molecule cluster | 0.1–0.2 | 0.01–0.02 Å |
-| partition, Hirshfeld or TFVA | about 0.2 | 0.01–0.04 Å |
+| partition, Hirshfeld or TFVC | about 0.2 | 0.01–0.04 Å |
 | ADP model: free, TLS, soft modes | 0.05–0.2 | under 0.01 Å |
 | spherical-atom model: rotational average or ensemble | 0.002–0.003 | no printed digit |
 | exact exchange or RI-J with COSX | 0.0004 | under 0.001 Å |

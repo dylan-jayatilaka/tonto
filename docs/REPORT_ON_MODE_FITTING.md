@@ -639,7 +639,7 @@ Hirshfeld atom refinement against the 123 K X-ray data (817 reflections), with R
 densities in the def2-SVP and def2-TZVP basis sets. Every urea refinement on this page uses
 spherical basis functions (`use_spherical_basis= TRUE`), the form the def2 sets were made for.
 There are two partitions of the density into atoms: Hirshfeld (`oc-hirshfeld`) and the
-topological fuzzy Voronoi atoms of Salvador, TFVA (`oc-salvador`). There are three ADP models:
+topological fuzzy Voronoi cell atoms of Salvador and Ramos-Cordoba, TFVC (`oc-salvador`). There are three ADP models:
 - free: six parameters per atom;
 - TLS with $`U^{\rm high} = 0`$: the rigid-body model (5) alone;
 - TLS + U^high: the model (9), with $`U^{\rm high}`$ as above.
@@ -655,26 +655,26 @@ hydrogens' U_iso.
 | def2-SVP | Hirshfeld | free | 27 | 3.179 | 0.0177 | 1.024(5) | 0.983(6) | 1.2558(4) | 0.054(4) / 0.048(3) |
 | def2-SVP | Hirshfeld | TLS, U^high = 0 | 17 | 3.750 | 0.0181 | 1.022(5) | 0.991(5) | 1.2562(5) | 0.0336(14) / 0.0328(12) |
 | def2-SVP | Hirshfeld | TLS + U^high | 17 | 3.408 | 0.0177 | 1.025(5) | 0.991(5) | 1.2559(4) | 0.0449(14) / 0.0398(12) |
-| def2-SVP | TFVA | free | 27 | 3.461 | 0.0188 | 1.036(5) | 1.025(5) | 1.2556(4) | 0.049(4) / 0.042(2) |
-| def2-SVP | TFVA | TLS, U^high = 0 | 17 | 3.815 | 0.0182 | 1.032(5) | 1.035(4) | 1.2564(5) | 0.0340(13) / 0.0331(12) |
-| def2-SVP | TFVA | TLS + U^high | 17 | 3.565 | 0.0185 | 1.037(5) | 1.028(4) | 1.2560(4) | 0.0458(14) / 0.0397(12) |
+| def2-SVP | TFVC | free | 27 | 3.461 | 0.0188 | 1.036(5) | 1.025(5) | 1.2556(4) | 0.049(4) / 0.042(2) |
+| def2-SVP | TFVC | TLS, U^high = 0 | 17 | 3.815 | 0.0182 | 1.032(5) | 1.035(4) | 1.2564(5) | 0.0340(13) / 0.0331(12) |
+| def2-SVP | TFVC | TLS + U^high | 17 | 3.565 | 0.0185 | 1.037(5) | 1.028(4) | 1.2560(4) | 0.0458(14) / 0.0397(12) |
 | def2-TZVP | Hirshfeld | free | 27 | 2.925 | 0.0166 | 1.024(4) | 0.988(5) | 1.2560(4) | 0.054(3) / 0.046(2) |
 | def2-TZVP | Hirshfeld | TLS, U^high = 0 | 17 | 3.460 | 0.0168 | 1.021(4) | 0.992(5) | 1.2564(4) | 0.0344(13) / 0.0325(11) |
 | def2-TZVP | Hirshfeld | TLS + U^high | 17 | 3.092 | 0.0163 | 1.024(4) | 0.992(4) | 1.2561(4) | 0.0459(13) / 0.0393(11) |
-| def2-TZVP | TFVA | free | 27 | 3.098 | 0.0170 | 1.032(4) | 1.017(4) | 1.2560(4) | 0.049(3) / 0.0399(19) |
-| def2-TZVP | TFVA | TLS, U^high = 0 | 17 | 3.446 | 0.0166 | 1.027(4) | 1.024(4) | 1.2566(4) | 0.0348(12) / 0.0325(10) |
-| def2-TZVP | TFVA | TLS + U^high | 17 | 3.165 | 0.0168 | 1.033(4) | 1.019(3) | 1.2562(4) | 0.0468(12) / 0.0390(10) |
+| def2-TZVP | TFVC | free | 27 | 3.098 | 0.0170 | 1.032(4) | 1.017(4) | 1.2560(4) | 0.049(3) / 0.0399(19) |
+| def2-TZVP | TFVC | TLS, U^high = 0 | 17 | 3.446 | 0.0166 | 1.027(4) | 1.024(4) | 1.2566(4) | 0.0348(12) / 0.0325(10) |
+| def2-TZVP | TFVC | TLS + U^high | 17 | 3.165 | 0.0168 | 1.033(4) | 1.019(3) | 1.2562(4) | 0.0468(12) / 0.0390(10) |
 | neutron | | | | | | 1.006 | 1.000 | | |
 
 - **def2-TZVP fits better than def2-SVP** in every partition and ADP model, by 0.25–0.40 in GoF.
-- **Hirshfeld fits better than TFVA** with free ADPs and with TLS + U^high. With TLS alone the
+- **Hirshfeld fits better than TFVC** with free ADPs and with TLS + U^high. With TLS alone the
   two differ by less than 0.07.
 - **The stiff modes always help:** TLS + U^high has a lower GoF than TLS alone in all four
   basis and partition pairs.
 - **Free ADPs fit significantly better than TLS + U^high** in all four. The Hamilton ratios (15)
   for the ten extra parameters are 1.079, 1.036, 1.064 and 1.028, against 1.016 needed at
   $`\alpha = 0.005`$.
-- **N–H bond lengths depend on the partition, not the ADP model.** TFVA makes them 0.01–0.04 Å
+- **N–H bond lengths depend on the partition, not the ADP model.** TFVC makes them 0.01–0.04 Å
   longer than Hirshfeld does, and further from neutron. The ADP model moves no N–H bond by more
   than 0.01 Å.
 - **R(F) would mislead.** It ranks TLS + U^high level with free ADPs (0.0177 for both with
@@ -705,21 +705,21 @@ hydrogens, H1 and H3.
 | def2-SVP | Hirshfeld | free | 3.179 | 1.48 | 6.69 | 1.45 | 8.09 |
 | def2-SVP | Hirshfeld | TLS, U^high = 0 | 3.750 | 0.93 | 1.54 | 0.98 | 2.81 |
 | def2-SVP | Hirshfeld | TLS + U^high | 3.408 | 1.22 | 0.77 | 1.19 | 0.49 |
-| def2-SVP | TFVA | free | 3.461 | 1.36 | 3.42 | 1.26 | 1.18 |
-| def2-SVP | TFVA | TLS, U^high = 0 | 3.815 | 0.93 | 1.69 | 0.99 | 2.74 |
-| def2-SVP | TFVA | TLS + U^high | 3.565 | 1.26 | 0.88 | 1.19 | 0.46 |
+| def2-SVP | TFVC | free | 3.461 | 1.36 | 3.42 | 1.26 | 1.18 |
+| def2-SVP | TFVC | TLS, U^high = 0 | 3.815 | 0.93 | 1.69 | 0.99 | 2.74 |
+| def2-SVP | TFVC | TLS + U^high | 3.565 | 1.26 | 0.88 | 1.19 | 0.46 |
 | def2-TZVP | Hirshfeld | free | 2.925 | 1.47 | 5.11 | 1.38 | 5.15 |
 | def2-TZVP | Hirshfeld | TLS, U^high = 0 | 3.460 | 0.94 | 1.85 | 0.97 | 2.91 |
 | def2-TZVP | Hirshfeld | TLS + U^high | 3.092 | 1.25 | 0.88 | 1.18 | 0.43 |
-| def2-TZVP | TFVA | free | 3.098 | 1.34 | 2.28 | 1.20 | 0.66 |
-| def2-TZVP | TFVA | TLS, U^high = 0 | 3.446 | 0.95 | 1.81 | 0.98 | 2.82 |
-| def2-TZVP | TFVA | TLS + U^high | 3.165 | 1.28 | 1.02 | 1.17 | 0.38 |
+| def2-TZVP | TFVC | free | 3.098 | 1.34 | 2.28 | 1.20 | 0.66 |
+| def2-TZVP | TFVC | TLS, U^high = 0 | 3.446 | 0.95 | 1.81 | 0.98 | 2.82 |
+| def2-TZVP | TFVC | TLS + U^high | 3.165 | 1.28 | 1.02 | 1.17 | 0.38 |
 
 O, N and C agree with neutron in every refinement: U_iso ratios 0.99–1.02, S12 at most 0.03.
 
 - **The ADP model decides the hydrogen ADPs**; the basis and partition matter much less.
 - **Free hydrogens are 20–48 % too large.** Their shapes are poor with Hirshfeld (S12 5.1–8.1)
-  and better with TFVA (S12 0.7–3.4).
+  and better with TFVC (S12 0.7–3.4).
 - **TLS + U^high gives the best hydrogen shapes**, S12 0.4–1.0 in every case, with sizes 17–28 %
   too large.
 - **TLS alone** gets the hydrogen sizes within 7 %, but the shapes are worse (S12 1.5–2.9).

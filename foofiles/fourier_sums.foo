@@ -267,6 +267,119 @@ contains
 
    end
 
+   spherical_bessels(x,jl) :: selfless, PURE
+   ! Set "jl(l+1)" to the spherical Bessel function j_l(x) for l = 0 to
+   ! jl.dim-1. Below x = 1/2 the power series is summed; above it, j_0
+   ! and j_1 are formed from sin and cos and the rest by the upward
+   ! recurrence j_{l+1} = (2l+1)/x j_l - j_{l-1}, which loses nothing
+   ! for the few l used here.
+      x  :: REAL, IN
+      jl :: VEC{REAL}, OUT
+
+      s,c,term :: REAL
+      l,n,l_max :: INT
+
+      l_max = jl.dim - 1
+
+      if (x<HALF) then
+         do l = 0,l_max
+            term = ONE
+            do n = 1,l
+               term = term*x/(2*n+1)
+            end
+            jl(l+1) = term
+            do n = 1,6
+               term = -term*x*x/(2*n*(2*l+2*n+1))
+               jl(l+1) = jl(l+1) + term
+            end
+         end
+      else
+         FOURIER_SUMS::sin_cos(x,s,c)
+         jl(1) = s/x
+         if (l_max>=1) jl(2) = (s - x*c)/(x*x)
+         do l = 1,l_max-1
+            jl(l+2) = (2*l+1)/x*jl(l+1) - jl(l)
+         end
+      end
+
+   end
+
+   multipole_kr_sums(res,k_pts,r,rho_lm,l_min,l_max) :: selfless, PURE
+   ! Set "res(k)" to the transform at the scattering vectors "k_pts" of a
+   ! density given on shells of radius "r" by its real spherical harmonic
+   ! components "rho_lm", summed over l = "l_min" to "l_max":
+   !   res(k) = sum_lm i^l Y_lm(k^) sum_i rho_lm(i,lm) j_l(k r_i).
+   ! "rho_lm(i,lm)" must carry the shell's radial weight 4 pi r^2 dr and
+   ! the factor 4 pi of the projection 4 pi sum_j w_j rho_j Y_lm(r^_j),
+   ! so that the l = 0 term alone is the usual sinc transform. Columns
+   ! are in the order of make_solid_harmonics; the Y_lm are normalised
+   ! to one over the sphere.
+      res    :: VEC{CPX}, OUT
+      k_pts  :: MAT{REAL}, IN
+      r      :: VEC{REAL}, IN
+      rho_lm :: MAT{REAL}, IN
+      l_min,l_max :: INT, IN
+
+   ENSURE(res.dim==k_pts.dim1,"res and k_pts: different lengths")
+   ENSURE(k_pts.dim2==3,"k_pts: need 3 columns")
+   ENSURE(rho_lm.dim1==r.dim,"rho_lm and r: different lengths")
+   ENSURE(rho_lm.dim2==(l_max+1)*(l_max+1),"rho_lm: wrong number of columns")
+   ENSURE(l_min>=0 AND l_min<=l_max,"bad l_min")
+
+      khat   :: MAT{REAL}@
+      Yk     :: MAT{REAL}@
+      jl,acc :: VEC{REAL}@
+      il     :: VEC{CPX}(4)
+      kk     :: REAL
+      k,i,l,m,lm,n_lm :: INT
+
+      ! i^l for l = 0,1,2,3 (mod 4)
+      il(1) = COMPLEXIFY( ONE,ZERO)
+      il(2) = COMPLEXIFY(ZERO, ONE)
+      il(3) = COMPLEXIFY(-ONE,ZERO)
+      il(4) = COMPLEXIFY(ZERO,-ONE)
+
+      ! Unit k vectors; the zero vector for k = 0, where only l = 0 survives
+      n_lm = (l_max+1)*(l_max+1)
+      khat.create(k_pts.dim1,3)
+      do k = 1,k_pts.dim1
+         kk = norm2(k_pts(k,:))
+         if (kk>ZERO) then; khat(k,:) = k_pts(k,:)/kk
+         else;              khat(k,:) = ZERO
+         end
+      end
+
+      ! Y_lm(k^), and the sums
+      Yk.create(k_pts.dim1,n_lm)
+      FOURIER_SUMS::make_solid_harmonics(Yk,khat,l_max)
+      jl.create(l_max+1)
+      acc.create(n_lm)
+      do k = 1,k_pts.dim1
+         kk = norm2(k_pts(k,:))
+         acc = ZERO
+         do i = 1,r.dim
+            FOURIER_SUMS::spherical_bessels(kk*r(i),jl)
+            do l = l_min,l_max
+            do m = l*l+1,(l+1)*(l+1)
+               acc(m) = acc(m) + rho_lm(i,m)*jl(l+1)
+            end
+            end
+         end
+         res(k) = ZERO
+         do l = l_min,l_max
+            do lm = l*l+1,(l+1)*(l+1)
+               res(k) = res(k) + il(mod(l,4)+1)*Yk(k,lm)*acc(lm)
+            end
+         end
+      end
+
+      acc.destroy
+      jl.destroy
+      Yk.destroy
+      khat.destroy
+
+   end
+
    fitted_exp_ikr_sums(res,k_pts,pt,w,centre,alpha,l_max,fit) :: selfless, leaky, PURE
    ! Set "res(k)" to the transform, sum over i of w(i)*exp(i k.r_i) as in
    ! exp_ikr_sums, but of a fit to the density rather than of the points.

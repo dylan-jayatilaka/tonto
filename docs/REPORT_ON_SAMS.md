@@ -13,13 +13,13 @@ in a refinement against the aspherical ones is in
 
 A spherically averaged atom model (SAM) is an aspherical atom of the molecule, averaged over
 angle about its nucleus. The aspherical atoms available are the Salvador atom (a topological
-fuzzy Voronoi atom) in three variants that differ in where the boundary between two bonded
+fuzzy Voronoi cell atom) in three variants that differ in where the boundary between two bonded
 atoms is put, and the exponential Hirshfeld atom of Chodkiewicz and Woźniak. Their spherical
 averages are chosen with `partition_model=`:
 
 | `partition_model=` | the atom averaged |
 |---|---|
-| `sph-tfva` | Salvador atom, boundaries from the atomic radii |
+| `sph-tfvc` | Salvador atom, boundaries from the atomic radii |
 | `sph-tfvp` | Salvador atom, boundaries from the promolecule density |
 | `sph-tfvh` | Salvador atom, boundaries where the two atoms' densities are equal |
 | `sph-exphar` | exponential Hirshfeld atom |

@@ -2,7 +2,7 @@
 
 Hirshfeld atom refinement needs the molecular density divided into atoms. This page compares
 ways of doing that, on urea and on YLID: the Hirshfeld atom, the Salvador atom (a topological
-fuzzy Voronoi atom), three variants of the Salvador atom that differ in where the boundary
+fuzzy Voronoi cell atom), three variants of the Salvador atom that differ in where the boundary
 between two bonded atoms is put, the exponential Hirshfeld atom of Chodkiewicz and Woźniak, and
 the spherical average of each. The main findings:
 
@@ -38,7 +38,8 @@ w_A(\mathbf r) = \frac{\rho^0_A(\mathbf r)^n}{\sum_B \rho^0_B(\mathbf r)^n} . \q
 
 $`n = 1`$ is Hirshfeld; a larger $`n`$ makes the atoms overlap less. The authors recommend $`n = 2`$.
 
-**Salvador** (`tfva`). The weight is Salvador's cell function, a Becke-like fuzzy Voronoi cell
+**Salvador** (`tfvc`, the topological fuzzy Voronoi cell atom of Salvador and Ramos-Cordoba).
+The weight is Salvador's cell function, a Becke-like fuzzy Voronoi cell
 whose faces are moved along each bond. For a bonded pair $`A`$–$`B`$ the face cuts the bond at a
 distance $`R(A.B)`$ from $`A`$, and the model is fixed by the rule for that point. Mayer and
 Salvador put it at the minimum of the molecular density along the bond.
@@ -53,7 +54,7 @@ Hirshfeld weight agree on where the atoms meet. The point always exists and is u
 one density falls and the other rises along the bond. The half-weight surface of the full
 promolecule would not do: on most bonds those surfaces of $`A`$ and $`B`$ do not touch.
 
-**The spherical average** (`sph-tfva`, `sph-tfvp`, `sph-tfvh`, `sph-exphar`). The atom's density
+**The spherical average** (`sph-tfvc`, `sph-tfvp`, `sph-tfvh`, `sph-exphar`). The atom's density
 is averaged over each sphere about its nucleus,
 
 ```math
@@ -70,6 +71,66 @@ f_A(\mathbf k) = e^{i \mathbf k\cdot\mathbf r_A} \int_0^\infty 4\pi r^2\, \bar\r
 It keeps the atom's charge and the radial shape of its density, taken from the wavefunction,
 and loses everything aspherical: bonding density and lone pairs.
 
+**The hydrogen correction** (`sph-tfvc+h`, and `tfvc+h`). A hydrogen atom has no core, and the
+maximum of its Salvador density $`w_H\rho`$ is not at the nucleus but a little way along the bond
+towards the atom it is bonded to — in urea 0.05 Å (def2-SVP) to 0.1 Å (STO-3G) from the nucleus
+on the N–H bonds. `sph-tfvc+h` averages each hydrogen about that maximum instead of the nucleus:
+the maximum of $`w_H\rho`$ is found on a line from the nucleus to the nearest Salvador neighbour,
+the offset $`\boldsymbol\delta`$ from nucleus to maximum is stored, and (3) and (4) use
+$`\mathbf r_H + \boldsymbol\delta`$ as the centre. The refined parameter is still the nucleus:
+$`\boldsymbol\delta`$ is held fixed through the least-squares step, so a shift of the nucleus is the
+same shift of the averaged atom, and it is recomputed from the new wavefunction and geometry at the
+start of each refinement cycle. The offsets are printed each cycle. For an aspherical atom the
+centre does not enter the structure factor at all — thermal smearing is a convolution, and a
+shift is the same phase factor whichever point is called the centre — so `tfvc+h` refines exactly as
+`oc-salvador` does and only adds the table of offsets.
+
+**The dipolar term** (`l1-tfvc`). The same idea applied uniformly to every atom, without
+moving anything: the atom's density on each sphere is kept to its $`l = 0`$ and $`l = 1`$ parts,
+
+```math
+\rho_A(r,\hat{\mathbf r}) \approx \bar\rho_A(r) + 3\,\mathbf d_A(r)\cdot\hat{\mathbf r},
+\qquad
+\mathbf d_A(r) = \frac{1}{4\pi}\oint \hat{\mathbf r}\, w_A(\mathbf r)\,\rho(\mathbf r)\, d\Omega , \qquad (5)
+```
+
+taken from the same Lebedev shells as (3), and the form factor gains an imaginary term along
+$`\hat{\mathbf k}`$:
+
+```math
+f_A(\mathbf k) = e^{i \mathbf k\cdot\mathbf r_A} \left[ \int_0^\infty 4\pi r^2\, \bar\rho_A(r)\, \frac{\sin kr}{kr}\, dr
+\;+\; 3i\,\hat{\mathbf k}\cdot \int_0^\infty 4\pi r^2\, \mathbf d_A(r)\, j_1(kr)\, dr \right] , \qquad (6)
+```
+
+with $`j_1(x) = (\sin x - x\cos x)/x^2`$. A hydrogen's shifted sphere is a special case: moving
+$`\bar\rho_H`$ by $`\boldsymbol\delta`$ gives $`\mathbf d_H = -\tfrac13\boldsymbol\delta\, d\bar\rho_H/dr`$ to first
+order. The $`l = 1`$ term is not refined; it comes from the wavefunction, like the spherical part.
+The spherical-form-factor fit (`FF_fit`) uses the $`l = 0`$ part only.
+
+**The multipole family** (`l0-tfvc`, `l1-tfvc`, `l2-tfvc`, `l3-tfvc`). (5) and (6) are the
+first two terms of the expansion of each atom's density on its shells in real spherical harmonics
+$`Y_{lm}`$ normalised to one over the sphere,
+
+```math
+\rho_A(r,\hat{\mathbf r}) = \sum_{lm} \rho_{A,lm}(r)\, Y_{lm}(\hat{\mathbf r}), \qquad
+\rho_{A,lm}(r) = \oint Y_{lm}(\hat{\mathbf r})\, w_A(\mathbf r)\,\rho(\mathbf r)\, d\Omega , \qquad (7)
+```
+
+cut off at $`l = n`$, and the form factor is the sum of their Fourier–Bessel transforms,
+
+```math
+f_A(\mathbf k) = e^{i \mathbf k\cdot\mathbf r_A} \sum_{l=0}^{n} i^l \sum_{m} Y_{lm}(\hat{\mathbf k})
+\int_0^\infty 4\pi r^2\, \rho_{A,lm}(r)\, j_l(kr)\, dr . \qquad (8)
+```
+
+`l0-tfvc` is `sph-tfvc`; `l1-tfvc` is (6). Nothing is fitted: the model is the Salvador atom with
+its density truncated at $`l = n`$ about its own nucleus, a multipole model whose radial
+functions are the wavefunction's.
+
+**The wall stiffness.** The Salvador cell function is Becke's step function applied
+`salvador_stiffness=` times (in the `becke_grid=` block; 4, Salvador's value, by default). Fewer
+steps make a softer wall between atoms.
+
 | `partition_model=` | weight | boundary on a bond | spherical average |
 |---|---|---|---|
 | `oc-hirshfeld` | (1) | | no |
@@ -77,7 +138,10 @@ and loses everything aspherical: bonding density and lone pairs.
 | `oc-salvador` | cell function | minimum of the molecular density | no |
 | `tfvp` | cell function | minimum of the promolecule density | no |
 | `tfvh` | cell function | equal free-atom densities | no |
-| `sph-exphar`, `sph-tfva`, `sph-tfvp`, `sph-tfvh` | as the model named | | yes |
+| `sph-exphar`, `sph-tfvc`, `sph-tfvp`, `sph-tfvh` | as the model named | | yes |
+| `tfvc+h` | cell function | minimum of the molecular density | no; H offsets printed |
+| `sph-tfvc+h` | cell function | minimum of the molecular density | yes, H about its density maximum |
+| `l1-tfvc`, `l2-tfvc`, `l3-tfvc` | cell function | minimum of the molecular density | yes, plus each atom's harmonics to $`l = 1, 2, 3`$ |
 
 The independent atom model (IAM) is the comparison throughout: International Tables form factors
 for the neutral heavy atoms and the Stewart–Davidson–Simpson bonded-atom form factor for H.
@@ -210,16 +274,16 @@ lengths are those of Swaminathan, Craven and McMullan (1984) at 123 K, as tabula
 |---|---|---|
 | Salvador | R 0.038, converges (7 cycles) | R 0.0190, GoF 3.54, converges (8) |
 | spherical H, aspherical C/N/O | R 0.041, converges (5) | R 0.0209, GoF 3.86, converges (6) |
-| `sph-tfva`, all spherical | H1 runs away, R = 1 | R 0.044, GoF 11.6, never converges |
-| `sph-tfva`, H with isotropic U | reaches R 0.0533, then oscillates | |
-| `sph-tfva`, H fixed | R 0.096 | |
+| `sph-tfvc`, all spherical | H1 runs away, R = 1 | R 0.044, GoF 11.6, never converges |
+| `sph-tfvc`, H with isotropic U | reaches R 0.0533, then oscillates | |
+| `sph-tfvc`, H fixed | R 0.096 | |
 
 Spherical hydrogens are harmless: the Salvador hydrogen is nearly spherical already. Spherical
 C, N and O are not: without their bonding density the fit rebuilds it by moving the hydrogens
 and inflating their U. The oscillations are between two states of the outer loop of SCF and
 fit; in def2-SVP H1 moves 0.034 bohr back and forth.
 
-**The size of the atom decides.** `sph-tfva` does not converge in any basis. `sph-tfvp`
+**The size of the atom decides.** `sph-tfvc` does not converge in any basis. `sph-tfvp`
 converges, with GoF 8.16 in def2-SVP. `sph-tfvh` gives 5.87. That is the order of growing carbon
 and hydrogen atoms (§2): the more of the bond density lies inside the atom being averaged, the
 less the averaging loses.
@@ -262,6 +326,34 @@ less the averaging loses.
   (+0.004 Å) and 0.019 Å short on N–H3; `sph-tfvh` is +0.016 and −0.007 Å, and gives the neutron
   C=O length. Either can supply the form factors for the Gaussian fit of `fit_sph_atom_ffs`.
 
+**The hydrogen correction and the dipolar term.** Urea, RHF/def2-SVP, from the CIF geometry, the
+same job as above:
+
+| model | converges | R(F) | GoF | N1–H1 / Å | N1–H3 / Å | U_iso(H1), U_iso(H3) / Å² |
+|---|---|---|---|---|---|---|
+| `oc-salvador` | yes, 8 cycles | 0.0190 | 3.54 | 1.038 | 1.026 | 0.050, 0.042 |
+| `sph-tfvc` | no, oscillates | 0.044 | 11.6 | 1.149 | 0.967 | 0.10, 0.080 |
+| `sph-tfvc+h` | no, 100 cycles | 0.042 | 9.8 | 1.006 | 0.389 | 0.018, 0.43 |
+| `l1-tfvc` | yes | 0.0327 | 7.71 | 0.982 | 0.892 | 0.12, 0.078 |
+| `l2-tfvc` | yes | 0.0274 | 6.22 | 1.007 | 0.948 | 0.061, 0.054 |
+| `l3-tfvc` | yes | 0.0216 | 4.12 | 1.025 | 0.985 | 0.072, 0.060 |
+
+- **Centring the hydrogen on its density maximum does not rescue the spherical model.** The
+  offsets are 0.05 Å on both bonds, and from the third cycle H3 sits 0.4 Å from N1 and stays
+  there; the hydrogens are chasing the heavy atoms' missing density, and a hydrogen shift
+  cannot supply it.
+- **The dipolar term does: `l1-tfvc` converges**, and takes R from 0.044 to 0.033 and GoF
+  from 11.6 to 7.7, nearly half-way to the aspherical atom. The hydrogens still compensate —
+  N–H short by 0.06 and 0.13 Å with U_iso two to three times Salvador's — which is what the
+  $`l = 2`$ part of sp² C, N and O would leave behind.
+- **Each harmonic closes most of what is left.** `l2-tfvc` takes GoF to 6.2 and `l3-tfvc` to
+  4.1, against 3.5 for the full Salvador atom; with $`l = 3`$ the N–H bonds are within 0.013
+  and 0.041 Å of Salvador's and the hydrogen U_iso within 0.02 Å². The sequence is monotonic
+  in every column, so the terms are being added with the right sign and weight.
+- In STO-3G the same order holds: `l1-tfvc` R 0.044, GoF 8.7; `l2-tfvc` 0.042, 7.5;
+  `l3-tfvc` 0.041, 7.2; Salvador 0.038, 7.0. A softer wall helps too: `l1-tfvc` with
+  `salvador_stiffness= 2` gives R 0.040, GoF 7.8, N–H 1.040 and 0.929 Å.
+
 ## 5. Urea: every model against neutron
 
 | model | basis | N–H1 /Å | N–H3 /Å | O=C /Å | R(F) | GoF |
@@ -276,7 +368,7 @@ less the averaging loses.
 | `sph-tfvh` | def2-TZVP | 1.022(8) | 0.993(9) | 1.2570(7) | 0.0294 | 5.65 |
 | `sph-exphar` n=2 | def2-TZVP | 1.010(7) | 0.981(8) | 1.2581(7) | 0.0282 | 5.38 |
 | `sph-tfvp` | def2-TZVP | 1.045(10) | 0.977(12) | 1.2553(9) | 0.0316 | 7.06 |
-| `sph-tfva` | def2-TZVP | 1.11(2) | 0.954(19) | 1.2518(14) | 0.0422 | 11.0 (no convergence) |
+| `sph-tfvc` | def2-TZVP | 1.11(2) | 0.954(19) | 1.2518(14) | 0.0422 | 11.0 (no convergence) |
 | Hirshfeld | def2-SVP | 1.028(5) | 0.986(6) | 1.2558(4) | 0.0181 | 3.30 |
 | `exphar` n=2 | def2-SVP | 1.032(4) | 1.010(4) | 1.2557(4) | 0.0183 | 3.37 |
 | Salvador | def2-SVP | 1.038(5) | 1.026(5) | 1.2557(4) | 0.0190 | 3.54 |
@@ -287,8 +379,8 @@ less the averaging loses.
 | `sph-tfvp` | def2-SVP | 1.069(12) | 0.981(15) | 1.2545(10) | 0.0341 | 8.16 |
 | `sph-tfvh` | STO-3G | 1.050(12) | 0.994(13) | 1.2571(11) | 0.0447 | 8.52 |
 | `sph-tfvp` | STO-3G | 1.048(15) | 0.944(15) | 1.2542(13) | 0.0455 | 10.5 |
-| `sph-tfva` | def2-SVP | does not converge (oscillates) | | | 0.044 | 11.6 |
-| `sph-tfva` | STO-3G | does not converge (H1 runs away) | | | 1.0 | |
+| `sph-tfvc` | def2-SVP | does not converge (oscillates) | | | 0.044 | 11.6 |
+| `sph-tfvc` | STO-3G | does not converge (H1 runs away) | | | 1.0 | |
 
 Differences from the neutron values, in Å:
 
@@ -400,7 +492,7 @@ def2-TZVP:
 - The spherical models on YLID and on a larger molecule.
 - `sph-exphar` with $`n`$ below 2: a softer atom should suit the Gaussian form-factor fit.
 - A crystal of nearly spherical atoms (an ionic solid, a simple metal, a rare-gas solid), where
-  `sph-tfva` might work.
+  `sph-tfvc` might work.
 - "Spherical hydrogens only" as a model of its own.
 - These refinements with spherical basis functions and a crystal environment.
 

@@ -526,10 +526,10 @@ use it. The TLS algebra needs only positions, so it is not a `CRYSTAL` method.
    isolated-molecule density). Next test: the same sequence with cluster charges. The planned
    check on a molecule with a methyl torsion (gly_ala) is not yet run.
 
-   Step-2 comparison done at the same time (def2-SVP/TZVP x Hirshfeld/TFVA x free/TLS/TLS+U^high,
-   research document §5): TZVP lowers GoF by 0.37–0.47 everywhere; Hirshfeld beats TFVA by GoF;
+   Step-2 comparison done at the same time (def2-SVP/TZVP x Hirshfeld/TFVC x free/TLS/TLS+U^high,
+   research document §5): TZVP lowers GoF by 0.37–0.47 everywhere; Hirshfeld beats TFVC by GoF;
    free beats TLS+U^high significantly in all four; TLS+U^high gives the best hydrogen shapes
-   (S12 0.4–1.0); TFVA lengthens N–H by 0.01–0.04 Å, away from neutron.
+   (S12 0.4–1.0); TFVC lengthens N–H by 0.01–0.04 Å, away from neutron.
 4. **DONE on `tls-step4` (2026-10-05). Full Σ.** `use_soft_mode_correlations=` adds every cross term of
    a soft mode (C_t, C_λ, off-diagonal Σ_int); the element order is `CRYSTAL:TLS_sigma_pairs` (21
    rigid-body, K amplitudes, then cross terms), so the default model is unchanged.
