@@ -38,6 +38,7 @@ parallel (MPI) builds for that platform.
 | [**Spherically averaged atom models and their form factors**](REPORT_ON_SAMS.md) | The `sph-` models, the form factor and its fit to four Gaussians, the SHELX, table and BUSTER formats, the least squares and the eigensolver behind a refinement, what is not done |
 | [**The atomic density table: `INTERPOLATOR`**](REPORT_ON_INTERPOLATOR.md) | The octave table every kind of atom is kept on, the lookup without a search, how each atom fills it, the keywords, the cluster radius, the routines |
 | [**Relativity: the scalar X2C Hamiltonian**](REPORT_ON_RELATIVITY.md) | The equations and how they relate to Dyall's elimination of the small component; keywords, Gaussian nuclei, the routines, the checks against PySCF, what is left out |
+| [**Integration grids for DFT and COSX**](REPORT_ON_GRID_OPTIMIZATION.md) | How the XC and COSX grids are built from one set of parameters, how their error is measured on a fixed density, the partition, the test systems, and the results |
 | [**A sum of Gaussians for 1/r: where it wins**](REPORT_ON_GAUSSIAN_1_ON_R_FIT.md) | What a Gaussian expansion of the Coulomb kernel buys and costs: analytic integrals, grids, tensor hypercontraction, COSX, periodic systems |
 
 ## Learning

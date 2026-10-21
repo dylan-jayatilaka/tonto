@@ -302,11 +302,83 @@ On achari2 the worktrees `~/github/tonto-eig` (on `buster-ff`) and `~/github/ton
 `interpolator-tidy`) each hold a built `reference/` tree; `~/tonto_jacobi` is the pre-eigensolver
 binary used for the timing; the scripts and logs `~/run_*.sh`, `~/run_*.log` can go.
 
-## START HERE (2026-10-12, night): next is the reset of the grid levels
+## START HERE (2026-10-15, late afternoon): the cutoff is the default; lowering on two bases
 
-**Next action:** reset the DFT grid levels, first in the order of work of
-`docs/TASK_HAR_STANDARDISATION.md` section 7 (entry *Tune the DFT grid levels* under *Science
-and features*). The atomic density tables, second in that order, are done.
+**First thing:** `cat ~/tonto-runs/2026-10-15_lko/status.md`; the lines tagged `[default-on]`
+are the running stage (`lko_default_stage.sh`): the def2-TZVP SCFs of TiCl4 and ScO with Sc
+added to the damped guesses, their reference grids, then the `lko5` lowering against def2-SVP
+and def2-TZVP together (`descend.py`, `BASES=`), state key `lko5:<level>:def2-SVP+def2-TZVP`
+in the store's `descent_def2-SVP.json`, table in the 2026-10-13 folder's `descent_status.md`.
+"ALL DONE (default-on stage)" ends it.
+
+Decided today (Dylan): the LKO cutoff is on by default at 5 bohr (`types.foo`), after the
+`lko5` lowering matched Becke's points at equal accuracy (1,646 / 3,978 / 9,321 / 17,593
+against 1,350 / 4,296 / 11,865 / 16,443) with a smooth argon curve and a local weight build.
+Consequences: every DFT output has one more line and every DFT energy moves at 1e-6, so the
+DFT references need a re-bless on achari2, deferred to the bless the levels will need; until
+then the DFT tests of the short suite fail on the extra line. The grids lowered on def2-SVP
+alone miss on def2-TZVP at `very_low` (SF6, 1.1e-3) and `high` (SF6, Cr(CO)6, 3.8e-6), hence
+the two-basis lowering. Still open: `very_high` is limited on KF by `basis_fn_cutoff` (4e-6),
+not the grid, and the way to test 0.1 µEh is in the task document; a plain SCF with
+`partition_scheme= salvador` stops for want of radii; the papers citing Laqua 2018 that matter
+are in §8 of the task document, Laikov's partition-quality measure first. Results and reading:
+`docs/TASK_ON_GRID_OPTIMIZATION.md` §9, entries of 2026-10-15.
+
+In short: the LKO cutoff (Laqua, Kussmann and Ochsenfeld 2018) is implemented for Becke's and
+Salvador's partitions, keyword `lko_cutoff=` (bohr, 0 = off, the default), code change 8 of §5.
+Check (a): the off path reproduces every stored energy. Check (b): the lowered Becke grids with
+the cutoff at 5 bohr keep `very_low` and `medium` inside their targets, miss `low`'s 0.9 margin
+by a hair and fail `high` (neopentane 2.9e-6, Cr(CO)6 1.7e-6 against 1e-6): non-bonded pairs
+beyond 5 bohr inside compact molecules do move the error by a few 1e-6. Points fall only 0.2 to
+3 %: Tonto's density pruning already takes the saving the paper reports. Checks (c), (d): the
+argon dimer curve is smooth with the cutoff and wobbles by 80 µEh without; no visible kink where
+a pair crosses 5 bohr. Check (e): no time difference at 17 atoms. **Decision pending Dylan,
+once the `lko5` lowering ends:** cutoff on by default at 5 bohr if `lko5` matches Becke's points
+at each level, else a keyword for weakly bound systems. Stratmann-Scuseria is out (Dylan
+agreed): more points than Becke at every level and no `high` grid. New open bug: a plain SCF
+with `partition_scheme= salvador` stops in `partition_Salvador` (no radii set up); the
+fixed-density path works.
+
+Also today: CI on `develop` fixed (commit ee7a795a, a module cycle from the eigensolver timing;
+moved into `run_eigensolver`); `docs/REPORT_ON_SALVADOR_MODELS.md` gained the wall-position
+paragraph in §2 and a to-do in §7 for the Becke and Stratmann-Scuseria cells as atom models.
+After the pipelines: the per-atom and per-shell split of Becke against mixed4, the carbonyl
+radial count, Laqua's g1 to g7 as candidates, timing per point, the levels, COSX.
+
+## START HERE (2026-10-14, late): Becke's partition chosen; Stratmann-Scuseria overnight
+
+The lowering finished at 17:23 (results and Dylan's decision for Becke's partition in
+`docs/TASK_ON_GRID_OPTIMIZATION.md` §9, last entries). Running overnight in
+`~/tonto-runs/2026-10-13_grid_levels/`: the relowering of Becke `high` and mixed4 `medium` from the
+richest assembled grid (`descent_run2.log`), then `overnight_ss.sh`, Stratmann-Scuseria through
+every stage (`overnight_ss.log`; `overnight_ss_done.flag` at the end). Progress table:
+`descent_status.md`. Next: compare ss with Becke; Laqua's g1 to g7 (how to fit them to the zone
+scheme is for Dylan); timing per point; choose the levels.
+
+## START HERE (2026-10-14, night): the grid lowering ran overnight
+
+**First thing:** check the overnight run of `scripts/grid_optimization/descend.py` in
+`~/tonto-runs/2026-10-13_grid_levels/`: `descent_status.md` (one line per candidate and level:
+rounds, worst error, points per atom, settings), `descent_run.log`, and whether it is still
+running (`pgrep -fl descend`). It is restartable: run it again with the same arguments and it
+continues from `~/Dropbox/tonto_data/grid_optimization/descent_def2-SVP.json`. Plan and log:
+`docs/TASK_ON_GRID_OPTIMIZATION.md` §9, last entries. All work is on branch `grid-optimization`
+(pushed; not merged; merging to `develop` needs a good CI). Next after the lowering: compare the
+three candidates on points per atom; add Laqua's g1 to g7 as candidates.
+
+## START HERE (2026-10-14): grid optimisation, XC and COSX together
+
+**Next action:** grid optimisation, `docs/TASK_ON_GRID_OPTIMIZATION.md` (entry *Grid
+optimisation: the DFT levels and the COSX grids* under *Science and features*). On 2026-10-14
+Dylan merged the DFT grid levels and our own COSX grids into one item with one framework, and
+chose the Salvador atom with promolecule radii (`tfvp`) as the grid partition. Scans with Becke's
+partition are running in `~/tonto-runs/2026-10-13_grid_levels/`; the store is
+`~/Dropbox/tonto_data/grid_optimization/`; restart from `scripts/grid_optimization/README.md`.
+Uncommitted on `develop`: code changes 1 and 2 of the plan, and a fix to `ARCHIVE:read` for
+unrestricted matrices. New open bug: *The SCF prints nothing for some molecules* (*Correctness*).
+
+**Earlier (2026-10-12):** reset the DFT grid levels, first in the order of work of
+`docs/TASK_HAR_STANDARDISATION.md` section 7. The atomic density tables, second in that order, are done.
 
 **Merged to `develop` on 2026-10-13, pull request 54:** two-centre smearing with the motion model
 (`tc-tls`), with the rigid-body rotation averaged by formula, three new tests, and nine references
@@ -1301,7 +1373,7 @@ and numerics*.
 **Merged 2026-10-06 (`sg-grids`): the published standard grids,** `becke_grid= { kind= sg-0 | sg-1 |
 sg-2 | sg-3 }`, also in `cosx_grid= { }` and `cosx_final_grid= { }`; off by default; every element
 (unpruned beyond the published tables). achari2: debug, release and reference builds, suite 179/179,
-three new short tests. Everything is in `docs/TASK_COSX_GRIDS.md`. **Result for COSX: the defaults
+three new short tests. Everything is in `docs/TASK_COSX_GRIDS.md` (now Appendix A of `docs/TASK_ON_GRID_OPTIMIZATION.md`). **Result for COSX: the defaults
 stay.** As the final-energy grid SG-1/2/3 give errors up to 0.8 mEh (CFCl3, zinc finger) where `high`
 gives under 0.03 on all nine jobs; the published pruning is what fails. SG-0 for the iterations
 matches `very_low` in error and time. **Dropped by Dylan the same day:** the XC trial of these grids and the questions for John Herbert.
@@ -2774,6 +2846,29 @@ dead keyword line from `develop` and leave the work on its two tags, as was done
 `datafile.foo`. That is a decision for Dylan, not a default.
 
 # Correctness — open bugs that give wrong answers
+
+## The atomic SCF of Cu+ and Sc+ lands in a core-excited state (found 2026-10-14)
+
+`scfdata= { initial_atomic_states= { 1 1 -1 1 } }` for CuCl (Cu+, Cl-), def2-SVP: the atomic UHF
+for Cu+ behind the promolecule settles at -1635.616 hartree with a DIIS error stuck at 3.17,
+about 3 hartree above the Hartree-Fock energy of Cu+, and the job stops (*atomic SCF for the ANOs
+did not converge*). Damping and level shifting to iteration 60, and pFON (3000 K), do not help.
+Sc+ (triplet) the same. Neutral Cu, Sc, Ti, Cr and Ni converge (the last three with damping). The
+starting guess for an ion is the likely cause; try starting from the neutral atom's orbitals.
+Inputs: `~/tonto-runs/2026-10-13_grid_levels/def2-SVP/CuCl/t_pfon2.in`. Found during the grid work,
+`docs/TASK_ON_GRID_OPTIMIZATION.md` §9.
+
+## The SCF prints nothing for some molecules unless `output= TRUE` (found 2026-10-14)
+
+PBE/def2-SVP on the `best` grid, `initial_density= promolecule`: for KF, the water dimer, ScO
+and TiCl4 the `scf` keyword printed no SCF table and no convergence line, and the job went on to
+the next keyword; with `output= TRUE` in `scfdata=` the same job prints everything and has
+converged. H2O, N2, benzene and others print as usual. The output appears to stop after
+*Making gaussian ANO data*, so the guess SCF's `set_output(guess_output)` probably reaches the
+parent's `SCF_data`, perhaps through a shared pointer (`MOLECULE.SET:set_SCF_defaults_from`).
+Not a wrong answer, but a job that hides its SCF cannot be checked. Inputs:
+`~/tonto-runs/2026-10-13_grid_levels/def2-SVP/KF/` (remove the `output= TRUE` line). Found during
+the grid work, `docs/TASK_ON_GRID_OPTIMIZATION.md` §9.
 
 ## Dispersion: what is still open after the 2026-09-05 fix
 
@@ -4623,12 +4718,33 @@ integrals can be recovered and the algebra rewritten, which is short; the IOTC a
 be. Check against the 2016 paper's numbers, and against PySCF, which has picture-change
 corrected properties for X2C.
 
-## Tune the DFT grid levels to 1e-3, 1e-4 and 1e-5 hartree (Dylan, 2026-10-12)
+## Grid optimisation: the DFT levels and the COSX grids (Dylan, 2026-10-12; merged 2026-10-14)
 
-**The plan is `docs/TASK_GRID_LEVELS.md`** (2026-10-12): five levels, 1e-3 to 1e-7, the test
-systems, the method, the time. Not started.
+**Plan and log: `docs/TASK_ON_GRID_OPTIMIZATION.md`.** Report: `docs/REPORT_ON_GRID_OPTIMIZATION.md`.
+Drivers: `scripts/grid_optimization/`. Store: `~/Dropbox/tonto_data/grid_optimization/`. Run
+folder: `~/tonto-runs/2026-10-13_grid_levels/`. **Register row:** *Grid optimisation: the DFT
+levels and the COSX grids*, which replaces *Tune the DFT grid levels* and *Calibrate our own COSX
+grids*.
 
-**Register row** of the same name. **First in the order of work** of
+**Decided 2026-10-14 (Dylan):** one framework for both grids, with a table of parameters for each
+integrand; the grid partition becomes the Salvador atom with promolecule radii (`tfvp`); all 22
+test systems throughout; the new keywords stay; the work must survive stops (a durable store);
+bugs found on the way are fixed. The COSX record, formerly `docs/TASK_COSX_GRIDS.md`, is Appendix A
+of the plan.
+
+**State, 2026-10-14.** Uncommitted on `develop`: code changes 1, 2 and 4 of the plan
+(`put_xc_energy_on_grid`, `n_extra_radial_pts=`, `partition_scheme= salvador` for the grid) and
+four bug fixes (unrestricted archive read; a missing archive read as zeros; a job named after an
+element losing its archives; a debug-only check in `make_Salvador_radii_pro`). Debug build:
+`ctest -L short` 86 of 86. The Becke scans are done (1,500 evaluations in the store) and show the
+present levels far off target: largest errors 1.1e-2, 1.3e-3, 5.4e-4, 1.5e-4, 3.8e-5 hartree for
+`very_low` to `very_high`. The Salvador scans are running. **Open:** the electron count on the
+reference grid is short by up to 8.6e-4 (KF) where two atoms' cells meet; cause not found, see the
+plan §9. Next: the shell tables by atom, then assemble the levels.
+
+What follows is the entry as it was before the merge.
+
+**First in the order of work** of
 `docs/TASK_HAR_STANDARDISATION.md` section 7. The targets for a GGA energy are 1e-3 hartree at
 `accuracy= very_low`, 1e-4 at `low` and 1e-5 at `medium`, the default, for every element to Rn.
 The levels are not there. PBE against PySCF on very fine grids, `x2c-SVPall`, X2C beyond Kr, after

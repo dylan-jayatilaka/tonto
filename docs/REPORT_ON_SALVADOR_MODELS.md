@@ -40,7 +40,10 @@ $`n = 1`$ is Hirshfeld; a larger $`n`$ makes the atoms overlap less. The authors
 
 **Salvador** (`tfvc`, the topological fuzzy Voronoi cell atom of Salvador and Ramos-Cordoba).
 The weight is Salvador's cell function, a Becke-like fuzzy Voronoi cell
-whose faces are moved along each bond. For a bonded pair $`A`$–$`B`$ the face cuts the bond at a
+whose faces are moved along each bond. As in the integration grid, a pair of atoms further
+apart than the grid's `lko_cutoff=` (5 bohr) switches within a slab that wide, and the cell
+function is exactly 0 or 1 outside it; this changes the atomic moments by up to 1.5 % and a
+refinement not at all. For a bonded pair $`A`$–$`B`$ the face cuts the bond at a
 distance $`R(A.B)`$ from $`A`$, and the model is fixed by the rule for that point. Mayer and
 Salvador put it at the minimum of the molecular density along the bond.
 
@@ -130,6 +133,24 @@ of the three.
 
 The Salvador atoms carry charges of the size QTAIM atoms do, the density minimum being close to
 the zero-flux surface along a bond. `tfvh` is about half-way between Salvador and Hirshfeld.
+
+**What moving the wall does.** Every cell model uses the same kind of switching function, so
+the walls are equally sharp. The models differ in where the wall meets the bond, and that
+decides two things: how much density lies at the wall, and which atom keeps the bond's density.
+At the density minimum the wall cuts the bond where the density is smallest and flattest along
+it, so each atom's edge is as gentle as the switching function allows, and the sharp change in
+the atom's density is confined to where there is least of it. A wall moved toward a nucleus
+sits on the rising flank of that atom's density: that atom gets a sharper edge and gives up
+part of its bonding density, and its partner becomes larger and less spherical. The
+equal-density rule moves the wall toward the more electronegative atom, so in `tfvh` the C and
+H atoms are the larger ones and carry more of the bond. A Becke cell is different again: its
+wall is set by the Bragg–Slater radii alone, shifted toward the smaller atom, and does not
+depend on the density at all; the Stratmann–Scuseria cell puts its wall in the same place but
+switches within a slab about the wall and is exactly 0 or 1 outside it, so its atoms have the
+sharpest edge of any cell model. For the spherical average only the second effect matters: the
+average keeps whatever lies inside the atom's own cell, so a rule that puts the wall nearer the
+partner leaves the atom more of its bonding density to keep. That is why the spherical atom
+with equal-density walls converges where the one with walls at the density minimum does not.
 
 ## 3. Urea: the aspherical models
 
@@ -410,6 +431,11 @@ def2-TZVP:
 
 ## 7. What is not done
 
+- **To do: the Becke cell and the Stratmann–Scuseria cell as atom models**, aspherical and
+  spherically averaged. Neither is a `partition_model=` value yet; both exist only as grid
+  partitions (`partition_scheme=` in the grid block). Their walls do not depend on the density
+  (section 2), so they are the test of whether where the wall falls, rather than how it is
+  found, is what matters to the fit.
 - The spherical models on YLID and on a larger molecule.
 - `sph-exphar` with $`n`$ below 2: a softer atom should suit the Gaussian form-factor fit.
 - A crystal of nearly spherical atoms (an ionic solid, a simple metal, a rare-gas solid), where
