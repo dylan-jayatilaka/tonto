@@ -78,6 +78,26 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## START HERE (2026-10-21): `grid-optimization` merged to `develop`; the LKO cutoff is on by default
+
+Merged as `593fd1e8` at Dylan's word, references re-blessed on achari2 as `8cddb76b`; CI green on
+all four workflows. `develop` now has the LKO cutoff (Laqua, Kussmann and Ochsenfeld 2018;
+`becke_grid= { lko_cutoff= }`, 5 bohr, on by default) for the grid partition **and the Salvador
+atom**, `partition_scheme= salvador` for the grid, the zone pruning, `n_extra_radial_pts=`,
+`put_xc_energy_on_grid` and the bug fixes of `138b781a`.
+
+- **Conflict:** both branches had added `salvador_stiffness=`. The branch's form is kept
+  (stiffness passed to `Salvador_step`); the cell function falls back to `.Salvador_stiffness`,
+  not a hard-coded 4, so the keyword still changes the TFVC atom; a negative value is a `DIE_IF`.
+- **Eleven references re-blessed**, each first rerun with `lko_cutoff= 0`: five Salvador-family
+  tests and the gly-ala fragment HAR change only through the cutoff (Salvador moments by up to
+  1.56%); six DFT/grid short tests gain a "LKO cutoff" line and their energy components move
+  inside the SCF tolerance with total energies unchanged, because the promolecule's atomic SCFs
+  now inherit the main SCF settings. Suites on achari2 before blessing: 138/149, 2 skipped.
+- **Consequence:** the ninety refinements of `docs/REPORT_ON_LN_TFVC.md` were made without the
+  cutoff; a rerun on today's `develop` needs `lko_cutoff= 0` to reproduce them.
+- Branch `grid-optimization` is fully contained in `develop` and can be deleted.
+
 ## START HERE (2026-10-20, evening): spherical Salvador atoms — the multipole family `l<n>-tfvc` on branch `sph-tfvc-h`
 
 The day's question was the non-convergence of the spherically averaged Salvador atom. Plan,
