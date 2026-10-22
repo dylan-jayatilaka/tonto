@@ -86,6 +86,7 @@ crystals are on their own page, [The multipole Salvador atoms](REPORT_ON_LN_TFVC
 | `oc-salvador` | cell function | minimum of the molecular density | no |
 | `tfvp` | cell function | minimum of the promolecule density | no |
 | `tfvh` | cell function | equal free-atom densities | no |
+| `tpfvc` | cell function | minimum of the molecular electrostatic potential | no |
 | `sph-exphar`, `sph-tfvc`, `sph-tfvp`, `sph-tfvh` | as the model named | | yes |
 | `tfvc-l1`, `tfvc-l2`, `tfvc-l3` | cell function | minimum of the molecular density | see [the multipole page](REPORT_ON_LN_TFVC.md) |
 
