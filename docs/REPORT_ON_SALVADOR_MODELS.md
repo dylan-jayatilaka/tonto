@@ -75,9 +75,8 @@ It keeps the atom's charge and the radial shape of its density, taken from the w
 and loses everything aspherical: bonding density and lone pairs.
 
 **Between the spherical and the full atom.** The atom's density on each sphere can be kept to
-its spherical harmonics up to $`l = n`$ — `l0-tfvc` (= `sph-tfvc`), `l1-tfvc`, `l2-tfvc`,
-`l3-tfvc` — and a hydrogen can be averaged about its density maximum instead of its nucleus
-(`sph-tfvc+h`). Those models, the `salvador_stiffness=` keyword, and their results on three
+its spherical harmonics up to $`l = n`$ — `tfvc-l0` (= `sph-tfvc`), `tfvc-l1`, `tfvc-l2`,
+`tfvc-l3`. Those models, the `salvador_stiffness=` keyword, and their results on three
 crystals are on their own page, [The multipole Salvador atoms](REPORT_ON_LN_TFVC.md).
 
 | `partition_model=` | weight | boundary on a bond | spherical average |
@@ -88,7 +87,7 @@ crystals are on their own page, [The multipole Salvador atoms](REPORT_ON_LN_TFVC
 | `tfvp` | cell function | minimum of the promolecule density | no |
 | `tfvh` | cell function | equal free-atom densities | no |
 | `sph-exphar`, `sph-tfvc`, `sph-tfvp`, `sph-tfvh` | as the model named | | yes |
-| `l1-tfvc`, `l2-tfvc`, `l3-tfvc`, `sph-tfvc+h` | cell function | minimum of the molecular density | see [the multipole page](REPORT_ON_LN_TFVC.md) |
+| `tfvc-l1`, `tfvc-l2`, `tfvc-l3` | cell function | minimum of the molecular density | see [the multipole page](REPORT_ON_LN_TFVC.md) |
 
 The independent atom model (IAM) is the comparison throughout: International Tables form factors
 for the neutral heavy atoms and the Stewart–Davidson–Simpson bonded-atom form factor for H.
@@ -291,7 +290,7 @@ less the averaging loses.
   (+0.004 Å) and 0.019 Å short on N–H3; `sph-tfvh` is +0.016 and −0.007 Å, and gives the neutron
   C=O length. Either can supply the form factors for the Gaussian fit of `fit_sph_atom_ffs`.
 
-**Between the spherical and the full atom.** The multipole models `l1-tfvc` to `l3-tfvc` all
+**Between the spherical and the full atom.** The multipole models `tfvc-l1` to `tfvc-l3` all
 converge on this job and close most of the gap to the Salvador atom (GoF 7.7, 6.2, 4.1 against 3.5
 in def2-SVP); centring the hydrogens on their density maxima does not. The tables are on
 [The multipole Salvador atoms](REPORT_ON_LN_TFVC.md).
