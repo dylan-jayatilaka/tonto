@@ -134,6 +134,24 @@ make it worse than `sph-tfvc`.
   harmonics(Y,pts,l_max)` already gives real harmonics at points, so each shell projects onto
   $`Y_{lm}`$ and transforms with $`j_l`$: $`f = \sum_l 4\pi i^l \sum_m Y_{lm}(\hat k)\int 4\pi r^2
   \rho_{lm}(r) j_l(kr)\,dr`$. Check the harmonics' normalisation first.
+- 2026-10-22, the centroid models (branch `sph-tfvc-centroid`, c48e746b): `sph-tfvc+c` centres
+  every atom's spherical average on its TFVC electron centroid $`\boldsymbol\delta_A=-\boldsymbol\mu_A/N_A`$,
+  `sph-tfvc+hc` only the H atoms (`MOLECULE.RHO:make_centroid_offsets`). Motivation: the
+  density maximum of `+h` is a Gaussian-basis artefact (the exact density has a cusp and falls
+  monotonically from H to the bond minimum), and the centroid removes the atomic dipole.
+  - Zero-ADP urea RHF/def2-SVP against `tc-stewart` (Σ|ΔF|/Σ|F|): TFVC(0) 2.19%, TFVC(1) 2.18%,
+    `+hc` 2.38%, `+c` **17.4%** (rms |ΔF| 0.80 e above sinθ/λ 0.9). Moving a heavy atom's
+    spherical density moves its core; offsets O, N 0.03 Å, C 0.004 Å are enough to wreck high angle.
+  - The TFVC H centroid lies **away** from the bonded atom, 0.16–0.17 Å: the TFVC wall is at the
+    density minimum, ~0.42 bohr from H on N–H, so the H atom is cut off on the bond side. The H
+    dipole is parallel to H→N (cos 0.999), i.e. electrons displaced outward. Not a sign error.
+  - Refinements, the 18 TFVC(0) cases with LKO (`~/tonto-runs/2026-10-22_sph_tfvc_centroid/`):
+    `+c` converges sensibly in 5 of 18, `+hc` in 10 (TFVC(0): 9); four DFT/SVP jobs end in
+    SCF failure or GoF near 100–240 with collapsed H. GoF is worse than TFVC(0) in nearly every
+    case. X–H come out **shorter** than TFVC(0) (L-alanine 0.96–0.99 Å against 1.05–1.08; full
+    atom 1.07–1.08): with the H density pushed outward the nucleus moves in to compensate.
+  - Conclusion: the centroid does not cure the spherical atom, and is worse than the nucleus as
+    centre. TFVC(1) remains the smallest model that converges everywhere.
 
 ## 5. Open
 
