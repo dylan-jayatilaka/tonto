@@ -152,6 +152,12 @@ make it worse than `sph-tfvc`.
     atom 1.07–1.08): with the H density pushed outward the nucleus moves in to compensate.
   - Conclusion: the centroid does not cure the spherical atom, and is worse than the nucleus as
     centre. TFVC(1) remains the smallest model that converges everywhere.
+- 2026-10-22, Dylan: the idea has not worked; the code for `+h`, `+c` and `+hc` is removed
+  (`make_H_center_offsets`, `make_centroid_offsets`, `ATOM.sph_center_offset`), with the test
+  `urea_rhf_STO-3G_TFVC+H_HAR`. The findings go to the SAM paper's Supporting Information for
+  Martí. The multipole keywords are renamed to match the paper: `tfvc-l0` … `tfvc-l3`
+  (internal `oc-tfvc-l1` … `oc-tfvc-l3`; `tfvc-l0` is `oc-sph-tfvc`); the old `l<n>-tfvc`
+  spellings are not accepted.
 
 ## 5. Open
 

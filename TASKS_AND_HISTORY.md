@@ -120,7 +120,7 @@ commit `2fa63d55`:
   atom, N–H within 0.013 / 0.041 Å. The general code at l = 1 equals a hand-written dipole
   implementation to every digit. **Judge these models on def2-SVP at least, not STO-3G.**
 - `becke_grid= { salvador_stiffness= k }` (default 4) for softer cell walls.
-- Tests `tests/long/urea_rhf_STO-3G_TFVC+H_HAR` and `urea_rhf_STO-3G_l1-TFVC_HAR`.
+- Tests `tests/long/urea_rhf_STO-3G_TFVC-l1_HAR` (renamed from `l1-TFVC`; the `TFVC+H` test was removed with the `+h` code on 2026-10-22).
 
 **Blessed and green on achari2** (`~/github/tonto-interp` on `sph-tfvc-h`, reference build):
 the two new tests got their references; the two `Salvador_properties` references were re-blessed
