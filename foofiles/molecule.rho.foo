@@ -3702,13 +3702,16 @@ contains
    ! Put the Salvador & Ramos-Cordoba radii for each atom. For the
    ! "oc-tfvp" partition model they are found on the promolecule density
    ! rather than the molecular one; for "oc-tfvh" where the two atoms'
-   ! spherical densities are equal.
+   ! spherical densities are equal; for "oc-tpfvc" at the minimum of the
+   ! molecular electrostatic potential.
       self :: INOUT
 
    ENSURE(.atom.allocated,"no atoms")
 
       if (.uses_Hirshfeld_Salvador_radii) then
          .make_Salvador_radii_hirshfeld
+      else if (.uses_ESP_Salvador_radii) then
+         .make_Salvador_radii_ESP
       else if (.uses_promolecule_Salvador_radii) then
          .make_Salvador_radii_promolecule
       else
@@ -3745,6 +3748,39 @@ contains
       if (.crystal.xray_data.deallocated) return
       res = .crystal.xray_data.partition_model=="oc-tfvh" OR &
             .crystal.xray_data.partition_model=="oc-sph-tfvh"
+
+   end
+
+   uses_ESP_Salvador_radii result (res) :: pure
+   ! Return TRUE if each Salvador radius is to be put at the minimum of
+   ! the molecular electrostatic potential on the bond: the "oc-tpfvc"
+   ! partition model.
+      self :: IN
+      res  :: BIN
+
+      res = FALSE
+      if (.crystal.deallocated) return
+      if (.crystal.xray_data.deallocated) return
+      res = .crystal.xray_data.partition_model=="oc-tpfvc"
+
+   end
+
+   make_Salvador_radii_ESP :: leaky
+   ! Make the Salvador neighbours, and the radii and size adjustments
+   ! "chi" with each pair's boundary at the minimum of the molecular
+   ! electrostatic potential on the line between the two nuclei.
+      self :: INOUT
+
+   ENSURE(.atom.allocated,"no atoms")
+
+      ! Neighbours
+      .atom.make_Salvador_neighbours(.Salvador_bonds_for)
+
+      ! Radii
+      .make_Salvador_radii_ESP(.Salvador_radii_for,.Salvador_bonds_for)
+
+      ! Size adjustments
+      .make_Salvador_chi
 
    end
 
@@ -4433,6 +4469,90 @@ contains
             radii_for(a)[n] = fac*norm2(rb-ra)
          end
       end
+
+   end
+
+   make_Salvador_radii_ESP(radii_for,bonds_for) :: leaky
+   ! Make the atom radii for the bonded neighbours (previously
+   ! calculated) with each boundary at the minimum of the molecular
+   ! electrostatic potential on the line between the two nuclei.
+      self      :: IN
+      radii_for :: VEC{EVEC{REAL}}@, OUT
+      bonds_for :: VEC{EVEC{INT}}@, IN
+
+   ENSURE(.atom.allocated,"no atoms")
+
+      ra,rb :: VEC{REAL}(3)
+      n_atoms,n_bonds,a,b,n :: INT
+
+      ! Create radii table
+      n_atoms = .atom.dim
+      radii_for.create(n_atoms)
+
+      ! Atom a and its neighbours b
+      do a = 1,n_atoms
+         n_bonds = bonds_for(a).element.dim
+         radii_for(a).element.create(n_bonds)
+         ra = .atom(a).position
+         do n = 1,n_bonds
+            b  = bonds_for(a)[n]
+            rb = .atom(b).position
+            radii_for(a)[n] = .ESP_minimum_for(a,b)*norm2(rb-ra)
+         end
+      end
+
+   end
+
+   ESP_minimum_for(a,b) result (res) :: NON_MPI_PURE
+   ! Return the fraction "res" of the way from atom "a" to atom "b" at
+   ! which the molecular electrostatic potential on the line between the
+   ! two nuclei is least. The potential is found on 199 interior points,
+   ! the nuclei themselves left out, and the minimum is refined by the
+   ! parabola through the three points about it. The points are placed
+   ! symmetrically, so the fractions for a->b and b->a add to one. Atoms
+   ! more than 10 bohr apart are divided half-way.
+      self :: IN
+      a,b  :: INT, IN
+      res  :: REAL
+
+   ENSURE(a/=b,"atoms should not be the same")
+   ENSURE(.density_mx.allocated,"no density_mx")
+   ENSURE(.density_mx.r.allocated,"no restricted density_mx")
+
+      ra,rb      :: VEC{REAL}(3)
+      pt         :: MAT{REAL}@
+      V          :: VEC{REAL}@
+      t,y0,y1,y2 :: REAL
+      n_pts,k,m  :: INT
+
+      ! Atoms too far apart?
+      ra = .atom(a).position
+      rb = .atom(b).position
+      if (norm2(rb-ra)>TEN) then
+         res = HALF
+         return
+      end
+
+      ! The potential on the interior points
+      n_pts = 199
+      pt.create(n_pts,3)
+      V.create(n_pts)
+      do k = 1,n_pts
+         pt(k,:) = ra + (rb-ra)*(k*ONE/(n_pts+1))
+      end
+      .make_EP_grid_r(V,pt,.density_mx.r)
+
+      ! The minimum, refined by the parabola about point "m"
+      m = V.index_of_minimum
+      t = ZERO
+      if (m>1 AND m<n_pts) then
+         y0 = V(m-1); y1 = V(m); y2 = V(m+1)
+         if (y0-TWO*y1+y2>ZERO) t = HALF*(y0-y2)/(y0-TWO*y1+y2)
+      end
+      res = (m+t)/(n_pts+1)
+
+      V.destroy
+      pt.destroy
 
    end
 
@@ -5744,6 +5864,7 @@ contains
       case("oc-salvador   "); .make_Salvador_atom_FFs(ff)
       case("oc-tfvp       "); .make_Salvador_atom_FFs(ff)
       case("oc-tfvh       "); .make_Salvador_atom_FFs(ff)
+      case("oc-tpfvc      "); .make_Salvador_atom_FFs(ff)
       case("oc-sph-tfvp   "); .make_sph_TFVC_atom_FFs(ff)
       case("oc-sph-tfvh   "); .make_sph_TFVC_atom_FFs(ff)
       case("oc-sph-tfvc   "); .make_sph_TFVC_atom_FFs(ff)
