@@ -601,6 +601,505 @@ contains
 
    end
 
+   put_TFVC_wall_scans :: leaky
+   ! For each bonded pair of atoms A and B, move the TFVC wall between
+   ! them and put how well atom A follows its nucleus when the nucleus
+   ! moves along the unit vector "e" from A to B. For each trial wall, at
+   ! a fraction t of the bond from A, and for walls of each sharpness
+   ! (Becke's polynomial applied 1 to 4 times), three numbers are put:
+   !
+   !   eps   = int |d - m|^2 dr / int |d|^2 dr,   in real space
+   !   eps_k = sum_k |D - M|^2 / sum_k |D|^2,      over the reflections
+   !   dN/dR = the change in the electron population of atom A per unit
+   !           move of its nucleus
+   !
+   ! Here d = e.(d rho/d R_A) is the change in the molecular density per
+   ! unit move of nucleus A, m = -e.grad rho_A is that change if atom A
+   ! moved rigidly, and D and M are their Fourier transforms at the
+   ! symmetry-generated k points of the reflection data, if there are
+   ! any. eps = 0 means atom A follows its nucleus exactly, and eps = 1
+   ! is the size of the change itself. dN/dR is the charge that crosses
+   ! the walls of A as they move with the atoms. The same numbers are put
+   ! for the Hirshfeld atom A, which has no wall. d and dN/dR are central
+   ! differences between two SCFs, with A moved by +-0.01 bohr, so the
+   ! SCF should be tightly converged; m is a central difference of rho_A
+   ! at the reference geometry. The other walls stay at the density
+   ! minima, and the integrals are on the molecular DFT grid. Each
+   ! ordered pair and sharpness n writes "wall_scan_A_B_n.gnu" and the
+   ! gnuplot script "plot_wall_scan_A_B_n.gnu". The atoms and the
+   ! wavefunction are put back.
+      self :: INOUT
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.density_mx.is_allocated_with_genre("r "),"needs a restricted density")
+   ENSURE(.MOs.allocated,"no MOs")
+
+      bonds_for :: VEC{EVEC{INT}}@
+      radii_rho,radii_esp :: VEC{EVEC{REAL}}@
+      chi0,chi,pos0,pt,ptp,ptm,D0,Q,Fr,Fi,kp :: MAT{REAL}@
+      eps_r,eps_k,dNdR :: MAT{REAL}@
+      MOs0 :: OPMATRIX@
+      wt,Wc,Wp,Wm,rho_p,rho_m,rho0_p,rho0_m,d,mA :: VEC{REAL}@
+      frac,N_p,N_m,R_pair,f_rho,f_V :: VEC{REAL}@
+      pair_a,pair_b :: VEC{INT}@
+      stiff :: VEC{INT}(4)
+      e :: VEC{REAL}(3)
+      R_AB,del,sgn,D2,K2 :: REAL
+      n_t,n_w,n_s,n_c,n_g,n_k,n_pair,p,a,b,n,k,s,c,side :: INT
+      do_k :: BIN
+
+      del   = 0.01d0
+      n_t   = 29
+      n_w   = n_t + 2
+      stiff = [1,2,3,4]
+      n_s   = 4
+      n_c   = n_s*n_w + 1
+
+      ! Walls at the density and the potential minima
+      .make_Salvador_radii
+      bonds_for = .Salvador_bonds_for
+      radii_rho = .Salvador_radii_for
+      chi0      = .Salvador_chi
+      .make_Salvador_radii_ESP(radii_esp,bonds_for)
+
+      ! The ordered pairs
+      n_pair = 0
+      do a = 1,.atom.dim
+         n_pair = n_pair + bonds_for(a).element.dim
+      end
+      pair_a.create(n_pair); pair_b.create(n_pair)
+      R_pair.create(n_pair); f_rho.create(n_pair); f_V.create(n_pair)
+      p = 0
+      do a = 1,.atom.dim
+      do n = 1,bonds_for(a).element.dim
+         p = p + 1
+         b = bonds_for(a)[n]
+         pair_a(p) = a
+         pair_b(p) = b
+         R_pair(p) = .atom.distance_between(a,b)
+         f_rho(p)  = radii_rho(a)[n]/R_pair(p)
+         f_V(p)    = radii_esp(a)[n]/R_pair(p)
+      end
+      end
+
+      ! The k points of the reflection data, if any
+      do_k = FALSE
+      if (.crystal.allocated) then
+      if (.crystal.xray_data.allocated) then
+      if (.crystal.xray_data.reflections.allocated) then
+         do_k = TRUE
+         n_k = .crystal.n_unique_SF_k_pts
+         kp.create(n_k,3)
+         .crystal.make_unique_X_SF_k_pts(kp)
+      end
+      end
+      end
+
+      ! The reference geometry, wavefunction and grid
+      pos0.create(3,.atom.dim)
+      do a = 1,.atom.dim
+         pos0(:,a) = .atom(a).position
+      end
+      MOs0 = .MOs
+      D0   = .density_mx.r
+      .set_up_becke_grid
+      .becke_grid.make_grid(pt,wt)
+
+      ! Work space. Column c of the scans is wall k of sharpness s,
+      ! c = (s-1)*n_w + k; the last column is the Hirshfeld atom.
+      n_g = pt.dim1
+      ptp.create(n_g,3);  ptm.create(n_g,3)
+      Wc.create(n_g);     Wp.create(n_g);     Wm.create(n_g)
+      rho_p.create(n_g);  rho_m.create(n_g)
+      rho0_p.create(n_g); rho0_m.create(n_g)
+      d.create(n_g);      mA.create(n_g)
+      frac.create(n_w)
+      N_p.create(n_c);    N_m.create(n_c)
+      eps_r.create(n_pair,n_c); eps_k.create(n_pair,n_c); dNdR.create(n_pair,n_c)
+      Q.create(n_g,n_c+1)
+      eps_k = -ONE
+      do k = 1,n_t
+         frac(k) = 0.15d0 + 0.7d0*(k-1)/(n_t-1)
+      end
+
+      ! Each ordered pair: A moves towards B
+      do p = 1,n_pair
+
+         a = pair_a(p)
+         b = pair_b(p)
+         e = (pos0(:,b) - pos0(:,a))/R_pair(p)
+         frac(n_t+1) = f_rho(p)
+         frac(n_t+2) = f_V(p)
+
+         ! The displaced SCFs: the density, and the population of A
+         ! with its walls moving with the atoms
+         do side = 1,2
+            sgn = ONE
+            if (side==2) sgn = -ONE
+            .atom(a).set_position(pos0(:,a) + sgn*del*e)
+            .MOs = MOs0
+            .prepare_SCF_at_new_geometry
+            .SCF
+            .make_r_density_mx
+            .set_up_becke_grid
+            if (side==1) then; .make_ED_grid_r(rho_p,pt)
+            else;              .make_ED_grid_r(rho_m,pt)
+            end
+            do c = 1,n_c
+               if (c==n_c) then
+                  .make_stockholder_atom_weight(Wc,a,pt)
+               else
+                  s = (c-1)/n_w + 1
+                  k = c - (s-1)*n_w
+                  .make_TFVC_wall_chi(chi,chi0,a,b,frac(k))
+                  .becke_grid.make_Salvador_cell_fn(Wc,pt,a,chi,stiff(s))
+               end
+               if (side==1) then; N_p(c) = sum(wt*Wc*rho_p)
+               else;              N_m(c) = sum(wt*Wc*rho_m)
+               end
+            end
+         end
+         .atom(a).set_position(pos0(:,a))
+         .set_up_becke_grid
+
+         ! The true change of density per unit move
+         d = (rho_p - rho_m)/(TWO*del)
+         D2 = sum(wt*d*d)
+         dNdR(p,:) = (N_p - N_m)/(TWO*del)
+         Q(:,1) = wt*d
+
+         ! The rigid-atom change, from the reference density, and eps
+         do k = 1,3
+            ptm(:,k) = pt(:,k) - del*e(k)
+            ptp(:,k) = pt(:,k) + del*e(k)
+         end
+         .make_ED_grid_r(rho0_m,ptm,D0)
+         .make_ED_grid_r(rho0_p,ptp,D0)
+         do c = 1,n_c
+            if (c==n_c) then
+               .make_stockholder_atom_weight(Wm,a,ptm)
+               .make_stockholder_atom_weight(Wp,a,ptp)
+            else
+               s = (c-1)/n_w + 1
+               k = c - (s-1)*n_w
+               .make_TFVC_wall_chi(chi,chi0,a,b,frac(k))
+               .becke_grid.make_Salvador_cell_fn(Wm,ptm,a,chi,stiff(s))
+               .becke_grid.make_Salvador_cell_fn(Wp,ptp,a,chi,stiff(s))
+            end
+            mA = (Wm*rho0_m - Wp*rho0_p)/(TWO*del)
+            eps_r(p,c) = sum(wt*(d-mA)**2)/D2
+            Q(:,c+1) = wt*mA
+         end
+
+         ! The same over the reflections
+         if (do_k) then
+            Fr.create(n_k,n_c+1)
+            Fi.create(n_k,n_c+1)
+            .make_grid_FTs(Fr,Fi,Q,pt,kp)
+            K2 = sum(Fr(:,1)**2 + Fi(:,1)**2)
+            do c = 1,n_c
+               eps_k(p,c) = sum((Fr(:,1)-Fr(:,c+1))**2 + (Fi(:,1)-Fi(:,c+1))**2)/K2
+            end
+            Fi.destroy
+            Fr.destroy
+         end
+
+         ! The data files and gnuplot scripts
+         do s = 1,n_s
+            .put_TFVC_wall_scan_files(a,b,stiff(s),frac,R_pair(p) &
+                                     ,eps_r(p,(s-1)*n_w+1:s*n_w)  &
+                                     ,eps_k(p,(s-1)*n_w+1:s*n_w)  &
+                                     ,dNdR(p,(s-1)*n_w+1:s*n_w))
+         end
+
+      end
+
+      ! The summary tables
+      do s = 1,n_s
+         .put_TFVC_wall_scan_table(stiff(s),pair_a,pair_b,R_pair,f_rho,f_V,frac(1:n_t) &
+                                  ,eps_r(:,(s-1)*n_w+1:s*n_w)                          &
+                                  ,eps_k(:,(s-1)*n_w+1:s*n_w)                          &
+                                  ,dNdR(:,(s-1)*n_w+1:s*n_w))
+      end
+      .put_Hirshfeld_following_table(pair_a,pair_b,R_pair,eps_r(:,n_c),eps_k(:,n_c),dNdR(:,n_c))
+
+      ! Put the wavefunction back
+      .MOs = MOs0
+      .prepare_SCF_at_new_geometry
+      .SCF
+      .make_r_density_mx
+
+      ! Clean
+      Q.destroy; dNdR.destroy; eps_k.destroy; eps_r.destroy
+      N_m.destroy; N_p.destroy; frac.destroy
+      mA.destroy; d.destroy; rho0_m.destroy; rho0_p.destroy
+      rho_m.destroy; rho_p.destroy; Wm.destroy; Wp.destroy; Wc.destroy
+      ptm.destroy; ptp.destroy; wt.destroy; pt.destroy
+      D0.destroy; MOs0.destroy; pos0.destroy; kp.destroy
+      f_V.destroy; f_rho.destroy; R_pair.destroy; pair_b.destroy; pair_a.destroy
+      chi.destroy; chi0.destroy
+      radii_esp.destroy; radii_rho.destroy; bonds_for.destroy
+
+   end
+
+   make_grid_FTs(Fr,Fi,Q,pt,kp) :: leaky, PURE
+   ! Make the real and imaginary parts "Fr" and "Fi" of the Fourier
+   ! transforms, at the k points "kp", of the functions whose values on
+   ! the points "pt", times the integration weights, are the columns of
+   ! "Q": F(k) = sum_g Q(g) exp(i k.r_g). Done in blocks of points, each
+   ! block a matrix product.
+      self  :: IN
+      Fr,Fi :: MAT{REAL}, OUT
+      Q     :: MAT{REAL}, IN
+      pt    :: MAT{REAL}, IN
+      kp    :: MAT{REAL}, IN
+
+   ENSURE(Q.dim1==pt.dim1,"Q and pt: incompatible")
+   ENSURE(Fr.dim1==kp.dim1 AND Fr.dim2==Q.dim2,"Fr: wrong shape")
+   ENSURE(Fi.dim1==kp.dim1 AND Fi.dim2==Q.dim2,"Fi: wrong shape")
+
+      Cs,Sn,T :: MAT{REAL}@
+      x :: REAL
+      blk,b0,b1,nb,n_k,g,k :: INT
+
+      blk = 512
+      n_k = kp.dim1
+      Fr = ZERO
+      Fi = ZERO
+
+      do b0 = 1,pt.dim1,blk
+
+         b1 = min(b0+blk-1,pt.dim1)
+         nb = b1 - b0 + 1
+
+         ! The phases of this block of points
+         Cs.create(nb,n_k)
+         Sn.create(nb,n_k)
+         do k = 1,n_k
+         do g = 1,nb
+            x = kp(k,1)*pt(b0+g-1,1) + kp(k,2)*pt(b0+g-1,2) + kp(k,3)*pt(b0+g-1,3)
+            Cs(g,k) = cos(x)
+            Sn(g,k) = sin(x)
+         end
+         end
+
+         ! Add the block's part of the transforms
+         T.create(n_k,Q.dim2)
+         T.to_product_of_BLAS(Cs,Q(b0:b1,:),transpose_a=TRUE)
+         Fr = Fr + T
+         T.to_product_of_BLAS(Sn,Q(b0:b1,:),transpose_a=TRUE)
+         Fi = Fi + T
+         T.destroy
+
+         Sn.destroy
+         Cs.destroy
+
+      end
+
+   end
+
+   put_TFVC_wall_scan_files(a,b,stiffness,frac,R_AB,eps,eps_k,dNdR)
+   ! Write the scan of the wall between atoms "a" and "b", of sharpness
+   ! "stiffness", to "wall_scan_A_B_n.gnu", and its gnuplot script to
+   ! "plot_wall_scan_A_B_n.gnu". "frac" are the walls as fractions of the
+   ! bond length "R_AB" from "a"; the last two are the walls at the
+   ! density and the potential minima, which the script marks. "eps",
+   ! "eps_k" and "dNdR" are as put_TFVC_wall_scans makes them; eps_k is
+   ! left out if it is negative.
+      self      :: IN
+      a,b       :: INT, IN
+      stiffness :: INT, IN
+      frac      :: VEC{REAL}, IN
+      R_AB      :: REAL, IN
+      eps,eps_k,dNdR :: VEC{REAL}, IN
+
+      lab,datafile,plotfile,str_rho,str_V :: STR
+      x_rho,x_V :: REAL
+      n_t,k :: INT
+
+      n_t = frac.dim - 2
+
+      ! The data file: wall from A in Angstrom, t, eps, eps_k, dN/dR per Angstrom
+      lab = trim(.atom(a).label)//"_"//trim(.atom(b).label)//"_"//trim(stiffness.to_str)
+      datafile = "wall_scan_"//trim(lab)//".gnu"
+      stdout.redirect(datafile)
+      stdout.text("# TFVC wall scan, atom "//trim(.atom(a).label)//" moving towards " &
+                  //trim(.atom(b).label)//", wall sharpness "//trim(stiffness.to_str))
+      stdout.text("# wall from A/Angstrom, fraction t, eps, eps_k, dN/dR in e/Angstrom")
+      do k = 1,n_t
+         stdout.put(frac(k)*R_AB*ANGSTROM_PER_BOHR)
+         stdout.put(frac(k))
+         stdout.put(eps(k),fmt="e")
+         stdout.put(eps_k(k),fmt="e")
+         stdout.put(dNdR(k)*BOHR_PER_ANGSTROM)
+         stdout.flush
+      end
+      stdout.revert
+
+      ! The gnuplot script, the density and potential walls marked
+      x_rho = frac(n_t+1)*R_AB*ANGSTROM_PER_BOHR
+      x_V   = frac(n_t+2)*R_AB*ANGSTROM_PER_BOHR
+      str_rho = trim(x_rho.to_str("f10.4"))
+      str_V   = trim(x_V.to_str("f10.4"))
+      plotfile = "plot_"//trim(datafile)
+      stdout.redirect(plotfile)
+      stdout.text("set title 'Atom "//trim(.atom(a).label)//" moving towards " &
+                  //trim(.atom(b).label)//", wall sharpness "//trim(stiffness.to_str)//"'")
+      stdout.text("set xlabel 'wall distance from "//trim(.atom(a).label)//"/Angstrom'")
+      stdout.text("set ylabel 'eps'")
+      stdout.text("set logscale y")
+      stdout.text("set y2label 'dN/dR in e/Angstrom'")
+      stdout.text("set ytics nomirror")
+      stdout.text("set y2tics")
+      stdout.text("set grid xtics ytics")
+      stdout.text("set arrow 1 from "//trim(str_rho)//",graph 0 to "//trim(str_rho)//",graph 1 nohead dt 2")
+      stdout.text("set arrow 2 from "//trim(str_V)//",graph 0 to "//trim(str_V)//",graph 1 nohead dt 3")
+      stdout.text("set label 1 'rho' at "//trim(str_rho)//",graph 0.95")
+      stdout.text("set label 2 'V' at "//trim(str_V)//",graph 0.95")
+      stdout.text("set terminal qt")
+      if (eps_k(1)<ZERO) then
+         stdout.text("plot '"//trim(datafile)//"' using 1:3 with linespoints title 'eps', \")
+      else
+         stdout.text("plot '"//trim(datafile)//"' using 1:3 with linespoints title 'eps', \")
+         stdout.text("     '"//trim(datafile)//"' using 1:4 with linespoints title 'eps_k', \")
+      end
+      stdout.text("     '"//trim(datafile)//"' using 1:5 axes x1y2 with linespoints title 'dN/dR'")
+      stdout.revert
+
+   end
+
+   put_TFVC_wall_scan_table(stiffness,pair_a,pair_b,R_pair,f_rho,f_V,frac,eps,eps_k,dNdR)
+   ! Put the summary of the TFVC wall scans of sharpness "stiffness":
+   ! for each ordered pair "pair_a" -> "pair_b", of bond length "R_pair",
+   ! the walls at the density and the potential minima (fractions "f_rho"
+   ! and "f_V" of the bond), the walls at the least "eps" and "eps_k",
+   ! found on the scan walls "frac" and refined by a parabola, and eps and
+   ! eps_k at each. Columns n_t+1 and n_t+2 of "eps", "eps_k" and "dNdR"
+   ! are the density and potential walls; n_t = frac.dim.
+      self :: IN
+      stiffness :: INT, IN
+      pair_a,pair_b :: VEC{INT}, IN
+      R_pair,f_rho,f_V,frac :: VEC{REAL}, IN
+      eps,eps_k,dNdR :: MAT{REAL}, IN
+
+      t_r,y_r,t_k,y_k,R :: REAL
+      n_t,p :: INT
+
+      n_t = frac.dim
+
+      stdout.flush
+      stdout.text("TFVC wall scans, wall sharpness "//trim(stiffness.to_str)//": how each atom follows its nucleus")
+      stdout.flush
+      stdout.text("eps   = int |d - m|^2 / int |d|^2 in real space, d the true and m the")
+      stdout.text("        rigid-atom change of density per unit move of A towards B")
+      stdout.text("eps_k = the same over the reflections; -1 if there are none")
+      stdout.text("Walls are distances from A, in Angstrom")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=11)
+      stdout.put("A",int_width=TRUE)
+      stdout.put("B",int_width=TRUE)
+      stdout.put("R(A-B)")
+      stdout.put("wall,rho")
+      stdout.put("wall,V")
+      stdout.put("wall,eps")
+      stdout.put("wall,eps_k")
+      stdout.put("eps,rho")
+      stdout.put("eps,V")
+      stdout.put("eps,min")
+      stdout.put("eps_k,rho")
+      stdout.put("eps_k,V")
+      stdout.put("eps_k,min")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=11)
+
+      do p = 1,pair_a.dim
+         R = R_pair(p)*ANGSTROM_PER_BOHR
+         .scan_minimum(eps(p,1:n_t),frac,t_r,y_r)
+         .scan_minimum(eps_k(p,1:n_t),frac,t_k,y_k)
+         stdout.put(.atom(pair_a(p)).label,int_width=TRUE)
+         stdout.put(.atom(pair_b(p)).label,int_width=TRUE)
+         stdout.put(R)
+         stdout.put(f_rho(p)*R)
+         stdout.put(f_V(p)*R)
+         stdout.put(t_r*R)
+         stdout.put(t_k*R)
+         stdout.put(eps(p,n_t+1),fmt="e")
+         stdout.put(eps(p,n_t+2),fmt="e")
+         stdout.put(y_r,fmt="e")
+         stdout.put(eps_k(p,n_t+1),fmt="e")
+         stdout.put(eps_k(p,n_t+2),fmt="e")
+         stdout.put(y_k,fmt="e")
+         stdout.flush
+      end
+
+      stdout.dash(int_fields=2,real_fields=11)
+
+   end
+
+   put_Hirshfeld_following_table(pair_a,pair_b,R_pair,eps,eps_k,dNdR)
+   ! Put, for the Hirshfeld atom A of each ordered pair "pair_a" ->
+   ! "pair_b" of bond length "R_pair", "eps", "eps_k" and "dNdR" as
+   ! put_TFVC_wall_scans makes them, for a move of A towards B.
+      self :: IN
+      pair_a,pair_b :: VEC{INT}, IN
+      R_pair,eps,eps_k,dNdR :: VEC{REAL}, IN
+
+      p :: INT
+
+      stdout.flush
+      stdout.text("Hirshfeld atoms: how each atom follows its nucleus")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=4)
+      stdout.put("A",int_width=TRUE)
+      stdout.put("B",int_width=TRUE)
+      stdout.put("R(A-B)/A")
+      stdout.put("eps")
+      stdout.put("eps_k")
+      stdout.put("dN/dR,e/A")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=4)
+
+      do p = 1,pair_a.dim
+         stdout.put(.atom(pair_a(p)).label,int_width=TRUE)
+         stdout.put(.atom(pair_b(p)).label,int_width=TRUE)
+         stdout.put(R_pair(p)*ANGSTROM_PER_BOHR)
+         stdout.put(eps(p),fmt="e")
+         stdout.put(eps_k(p),fmt="e")
+         stdout.put(dNdR(p)*BOHR_PER_ANGSTROM)
+         stdout.flush
+      end
+
+      stdout.dash(int_fields=2,real_fields=4)
+
+   end
+
+   scan_minimum(y,t,t_min,y_min) :: PURE
+   ! Set "t_min" and "y_min" to the least of "y" on the evenly spaced
+   ! points "t", refined by the parabola through the three points about
+   ! it when the least is not at an end.
+      self  :: IN
+      y,t   :: VEC{REAL}, IN
+      t_min,y_min :: REAL, OUT
+
+   ENSURE(y.dim==t.dim,"y and t: incompatible")
+
+      y0,y1,y2,s :: REAL
+      m :: INT
+
+      m = minloc(y,1)
+      s = ZERO
+      y_min = y(m)
+      if (m>1 AND m<y.dim) then
+         y0 = y(m-1); y1 = y(m); y2 = y(m+1)
+         if (y0-TWO*y1+y2>ZERO) then
+            s = HALF*(y0-y2)/(y0-TWO*y1+y2)
+            y_min = y1 - QUARTER*(y0-y2)*s
+         end
+      end
+      t_min = t(m) + s*(t(2)-t(1))
+
+   end
+
    make_stiff_mode_SF_correction(dsf,k_pts) :: leaky
    ! Make "dsf", a correction to the tc-tls structure factors at the
    ! "k_pts" for what that model leaves out along the stiff internal
