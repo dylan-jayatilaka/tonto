@@ -19,12 +19,12 @@ averages are chosen with `partition_model=`:
 
 | `partition_model=` | the atom averaged |
 |---|---|
-| `sph-tfvc` | Salvador atom, boundaries from the atomic radii |
-| `sph-tfvp` | Salvador atom, boundaries from the promolecule density |
-| `sph-tfvh` | Salvador atom, boundaries where the two atoms' densities are equal |
+| `tfvc-l0` | Salvador atom, boundaries from the atomic radii |
+| `tfvc-p-l0` | Salvador atom, boundaries from the promolecule density |
+| `tfvc-h-l0` | Salvador atom, boundaries where the two atoms' densities are equal |
 | `sph-exphar` | exponential Hirshfeld atom |
 
-The `oc-` prefix (`oc-sph-tfvh` and so on) makes the atom from the density of the molecule in
+The `oc-` prefix (`oc-tfvc-h-l0` and so on) makes the atom from the density of the molecule in
 its crystal environment, with cluster charges, as the Hirshfeld atoms of a refinement are.
 
 The average is a sum over the atom's radial grid: `MOLECULE.RHO:make_sph_avgd_SA_ED_grid`
@@ -80,7 +80,7 @@ all nine coefficients to $`10^{-4}`$: `GAUSSIAN_FF_FIT:check_round_trip`, the ct
 ```
 crystal= {
    xray_data= {
-      partition_model= oc-sph-tfvh
+      partition_model= oc-tfvc-h-l0
       FF_fit_s_max=       2.0      ! 1/Angstrom; the fit range is [0, s_max]
       FF_fit_n_gaussians= 4        ! only 4 so far: the start is the International Tables entry
       FF_fit_n_points=    201

@@ -1,8 +1,8 @@
 # The multipole Salvador atoms: `tfvc-l0` to `tfvc-l3`
 
-The Salvador atom (the topological fuzzy Voronoi cell atom, `oc-salvador`, described with its
+The Salvador atom (the topological fuzzy Voronoi cell atom, `oc-tfvc`, described with its
 variants in [Variants of the Salvador atom model](REPORT_ON_SALVADOR_MODELS.md)) can be used
-whole, or spherically averaged about its nucleus (`sph-tfvc`). The spherical atom fits badly and
+whole, or spherically averaged about its nucleus (`tfvc-l0`). The spherical atom fits badly and
 often does not converge. This page describes a family of models between the two — the atom's
 density kept to its spherical harmonics up to $`l = n`$, nothing fitted — and compares them on
 three crystals, with three wavefunctions and two basis sets. In short:
@@ -22,7 +22,7 @@ three crystals, with three wavefunctions and two basis sets. In short:
 ## 1. The models
 
 The Salvador weight $`w_A(\mathbf r)`$ divides the molecular density $`\rho`$ into atoms,
-$`\rho_A = w_A\rho`$. The aspherical model (`oc-salvador`) transforms $`\rho_A`$ as it is. The
+$`\rho_A = w_A\rho`$. The aspherical model (`oc-tfvc`) transforms $`\rho_A`$ as it is. The
 spherical model averages it over each sphere about the nucleus,
 
 ```math
@@ -54,7 +54,7 @@ f_A(\mathbf k) = e^{i \mathbf k\cdot\mathbf r_A} \sum_{l=0}^{n} i^l \sum_{m} Y_{
 ```
 
 with $`j_l`$ the spherical Bessel function ($`j_0(x) = \sin x/x`$, $`j_1(x) = (\sin x -
-x\cos x)/x^2`$, …). `tfvc-l0` is `sph-tfvc`, (2). For $`l = 1`$ the three functions are
+x\cos x)/x^2`$, …). `tfvc-l0` is `tfvc-l0`, (2). For $`l = 1`$ the three functions are
 $`p`$-like, $`x/r`$, $`y/r`$, $`z/r`$, and the term is $`i\,[\hat k_x F_x(k) + \hat k_y F_y(k) +
 \hat k_z F_z(k)]`$: three dipolar form factors, each a real function of $`|\mathbf k|`$, times the
 direction cosines of $`\hat{\mathbf k}`$, and imaginary because a dipole is odd. The $`l = 2`$ and
@@ -91,7 +91,7 @@ RHF/def2-SVP, from the published geometry:
 
 | model | converges | R(F) | GoF | N1–H1 / Å | N1–H3 / Å | U_iso(H1), U_iso(H3) / Å² |
 |---|---|---|---|---|---|---|
-| `oc-salvador` | yes, 8 cycles | 0.0190 | 3.54 | 1.038 | 1.026 | 0.050, 0.042 |
+| `oc-tfvc` | yes, 8 cycles | 0.0190 | 3.54 | 1.038 | 1.026 | 0.050, 0.042 |
 | `tfvc-l0` | no, oscillates | 0.044 | 11.6 | 1.149 | 0.967 | 0.10, 0.080 |
 | `tfvc-l1` | yes | 0.0327 | 7.71 | 0.982 | 0.892 | 0.12, 0.078 |
 | `tfvc-l2` | yes | 0.0274 | 6.22 | 1.007 | 0.948 | 0.061, 0.054 |
@@ -119,32 +119,32 @@ refinement's own stop when a cycle makes the fit worse.
 
 | method | basis | model | converged | R(F) | GoF | mean X–H / Å | Δ mean vs Salvador / Å | max \|Δ\| per bond / Å | mean U_iso(H) / Å² |
 |---|---|---|---|---|---|---|---|---|---|
-| RHF | def2-SVP | `oc-salvador` | yes | 0.0190 | 3.54 | 1.0320 | +0.000 | 0.000 | 0.0460 |
+| RHF | def2-SVP | `oc-tfvc` | yes | 0.0190 | 3.54 | 1.0320 | +0.000 | 0.000 | 0.0460 |
 | RHF | def2-SVP | `tfvc-l0` | no, 25 cycles | 0.0442 | 11.57 | 1.0514 | +0.019 | 0.108 | 0.0900 |
 | RHF | def2-SVP | `tfvc-l1` | yes | 0.0327 | 7.71 | 0.9374 | -0.095 | 0.134 | 0.0995 |
 | RHF | def2-SVP | `tfvc-l2` | yes | 0.0274 | 6.22 | 0.9774 | -0.055 | 0.078 | 0.0575 |
 | RHF | def2-SVP | `tfvc-l3` | yes | 0.0216 | 4.12 | 1.0050 | -0.027 | 0.041 | 0.0660 |
-| RHF | def2-TZVP | `oc-salvador` | yes | 0.0170 | 3.10 | 1.0258 | +0.000 | 0.000 | 0.0446 |
+| RHF | def2-TZVP | `oc-tfvc` | yes | 0.0170 | 3.10 | 1.0258 | +0.000 | 0.000 | 0.0446 |
 | RHF | def2-TZVP | `tfvc-l0` | no, 25 cycles | 0.0422 | 11.06 | 1.0309 | +0.005 | 0.074 | 0.0930 |
 | RHF | def2-TZVP | `tfvc-l1` | yes | 0.0324 | 7.41 | 0.9317 | -0.094 | 0.134 | 0.0935 |
 | RHF | def2-TZVP | `tfvc-l2` | yes | 0.0263 | 5.83 | 0.9740 | -0.052 | 0.070 | 0.0555 |
 | RHF | def2-TZVP | `tfvc-l3` | yes | 0.0207 | 3.91 | 1.0028 | -0.023 | 0.034 | 0.0615 |
-| B3LYP | def2-SVP | `oc-salvador` | yes | 0.0167 | 2.87 | 1.0223 | +0.000 | 0.000 | 0.0419 |
+| B3LYP | def2-SVP | `oc-tfvc` | yes | 0.0167 | 2.87 | 1.0223 | +0.000 | 0.000 | 0.0419 |
 | B3LYP | def2-SVP | `tfvc-l0` | no, 25 cycles | 0.0386 | 8.85 | 0.6601 | -0.362 | 0.665 | 0.2225 |
 | B3LYP | def2-SVP | `tfvc-l1` | yes | 0.0309 | 6.85 | 0.9327 | -0.090 | 0.133 | 0.0835 |
 | B3LYP | def2-SVP | `tfvc-l2` | yes | 0.0257 | 5.62 | 0.9722 | -0.050 | 0.072 | 0.0515 |
 | B3LYP | def2-SVP | `tfvc-l3` | yes | 0.0205 | 3.69 | 0.9990 | -0.023 | 0.038 | 0.0580 |
-| B3LYP | def2-TZVP | `oc-salvador` | yes | 0.0157 | 2.68 | 1.0131 | +0.000 | 0.000 | 0.0401 |
+| B3LYP | def2-TZVP | `oc-tfvc` | yes | 0.0157 | 2.68 | 1.0131 | +0.000 | 0.000 | 0.0401 |
 | B3LYP | def2-TZVP | `tfvc-l0` | no, 25 cycles | 0.0383 | 9.15 | 0.9677 | -0.045 | 0.139 | 0.2040 |
 | B3LYP | def2-TZVP | `tfvc-l1` | yes | 0.0294 | 6.24 | 0.9291 | -0.084 | 0.122 | 0.0725 |
 | B3LYP | def2-TZVP | `tfvc-l2` | yes | 0.0242 | 5.11 | 0.9691 | -0.044 | 0.059 | 0.0495 |
 | B3LYP | def2-TZVP | `tfvc-l3` | yes | 0.0197 | 3.64 | 0.9966 | -0.016 | 0.027 | 0.0525 |
-| PBE0 | def2-SVP | `oc-salvador` | yes | 0.0170 | 2.92 | 1.0296 | +0.000 | 0.000 | 0.0420 |
+| PBE0 | def2-SVP | `oc-tfvc` | yes | 0.0170 | 2.92 | 1.0296 | +0.000 | 0.000 | 0.0420 |
 | PBE0 | def2-SVP | `tfvc-l0` | no, 25 cycles | 0.0399 | 9.18 | 0.6575 | -0.372 | 0.679 | 0.2365 |
 | PBE0 | def2-SVP | `tfvc-l1` | yes | 0.0312 | 6.94 | 0.9380 | -0.092 | 0.136 | 0.0845 |
 | PBE0 | def2-SVP | `tfvc-l2` | yes | 0.0261 | 5.77 | 0.9788 | -0.051 | 0.073 | 0.0515 |
 | PBE0 | def2-SVP | `tfvc-l3` | yes | 0.0208 | 3.81 | 1.0057 | -0.024 | 0.039 | 0.0580 |
-| PBE0 | def2-TZVP | `oc-salvador` | yes | 0.0157 | 2.63 | 1.0209 | +0.000 | 0.000 | 0.0402 |
+| PBE0 | def2-TZVP | `oc-tfvc` | yes | 0.0157 | 2.63 | 1.0209 | +0.000 | 0.000 | 0.0402 |
 | PBE0 | def2-TZVP | `tfvc-l0` | no, 25 cycles | 0.0386 | 9.29 | 0.9342 | -0.087 | 0.216 | 0.2280 |
 | PBE0 | def2-TZVP | `tfvc-l1` | yes | 0.0299 | 6.39 | 0.9343 | -0.087 | 0.127 | 0.0760 |
 | PBE0 | def2-TZVP | `tfvc-l2` | yes | 0.0246 | 5.25 | 0.9758 | -0.045 | 0.061 | 0.0495 |
@@ -154,32 +154,32 @@ refinement's own stop when a cycle makes the fit worse.
 
 | method | basis | model | converged | R(F) | GoF | mean X–H / Å | Δ mean vs Salvador / Å | max \|Δ\| per bond / Å | mean U_iso(H) / Å² |
 |---|---|---|---|---|---|---|---|---|---|
-| RHF | def2-SVP | `oc-salvador` | yes | 0.0209 | 1.32 | 1.0840 | +0.000 | 0.000 | 0.0191 |
+| RHF | def2-SVP | `oc-tfvc` | yes | 0.0209 | 1.32 | 1.0840 | +0.000 | 0.000 | 0.0191 |
 | RHF | def2-SVP | `tfvc-l0` | no, GoF rose | 0.0333 | 2.95 | 1.0713 | -0.013 | 0.085 | 0.1356 |
 | RHF | def2-SVP | `tfvc-l1` | yes | 0.0306 | 2.50 | 1.0338 | -0.050 | 0.115 | 0.0383 |
 | RHF | def2-SVP | `tfvc-l2` | yes | 0.0278 | 2.14 | 1.0253 | -0.059 | 0.116 | 0.0317 |
 | RHF | def2-SVP | `tfvc-l3` | yes | 0.0232 | 1.52 | 1.0706 | -0.013 | 0.028 | 0.0283 |
-| RHF | def2-TZVP | `oc-salvador` | yes | 0.0199 | 1.21 | 1.0827 | +0.000 | 0.000 | 0.0209 |
+| RHF | def2-TZVP | `oc-tfvc` | yes | 0.0199 | 1.21 | 1.0827 | +0.000 | 0.000 | 0.0209 |
 | RHF | def2-TZVP | `tfvc-l0` | no, GoF rose | 0.0324 | 2.81 | 1.0720 | -0.011 | 0.072 | 0.1230 |
 | RHF | def2-TZVP | `tfvc-l1` | yes | 0.0299 | 2.42 | 1.0316 | -0.051 | 0.108 | 0.0396 |
 | RHF | def2-TZVP | `tfvc-l2` | yes | 0.0270 | 2.06 | 1.0268 | -0.056 | 0.098 | 0.0331 |
 | RHF | def2-TZVP | `tfvc-l3` | yes | 0.0225 | 1.44 | 1.0716 | -0.011 | 0.019 | 0.0294 |
-| B3LYP | def2-SVP | `oc-salvador` | yes | 0.0195 | 1.17 | 1.0732 | +0.000 | 0.000 | 0.0183 |
+| B3LYP | def2-SVP | `oc-tfvc` | yes | 0.0195 | 1.17 | 1.0732 | +0.000 | 0.000 | 0.0183 |
 | B3LYP | def2-SVP | `tfvc-l0` | yes | 0.0322 | 2.76 | 1.0730 | -0.000 | 0.055 | 0.0613 |
 | B3LYP | def2-SVP | `tfvc-l1` | yes | 0.0295 | 2.33 | 1.0270 | -0.046 | 0.099 | 0.0371 |
 | B3LYP | def2-SVP | `tfvc-l2` | yes | 0.0271 | 2.05 | 1.0212 | -0.052 | 0.095 | 0.0314 |
 | B3LYP | def2-SVP | `tfvc-l3` | yes | 0.0223 | 1.41 | 1.0623 | -0.011 | 0.021 | 0.0277 |
-| B3LYP | def2-TZVP | `oc-salvador` | yes | 0.0192 | 1.14 | 1.0689 | +0.000 | 0.000 | 0.0206 |
+| B3LYP | def2-TZVP | `oc-tfvc` | yes | 0.0192 | 1.14 | 1.0689 | +0.000 | 0.000 | 0.0206 |
 | B3LYP | def2-TZVP | `tfvc-l0` | yes | 0.0307 | 2.56 | 1.0531 | -0.016 | 0.060 | 0.0403 |
 | B3LYP | def2-TZVP | `tfvc-l1` | yes | 0.0285 | 2.21 | 1.0243 | -0.045 | 0.097 | 0.0396 |
 | B3LYP | def2-TZVP | `tfvc-l2` | yes | 0.0260 | 1.95 | 1.0209 | -0.048 | 0.084 | 0.0341 |
 | B3LYP | def2-TZVP | `tfvc-l3` | yes | 0.0218 | 1.38 | 1.0606 | -0.008 | 0.015 | 0.0286 |
-| PBE0 | def2-SVP | `oc-salvador` | yes | 0.0197 | 1.18 | 1.0776 | +0.000 | 0.000 | 0.0179 |
+| PBE0 | def2-SVP | `oc-tfvc` | yes | 0.0197 | 1.18 | 1.0776 | +0.000 | 0.000 | 0.0179 |
 | PBE0 | def2-SVP | `tfvc-l0` | no, GoF rose | 0.0326 | 2.80 | 1.0776 | +0.000 | 0.090 | 0.1197 |
 | PBE0 | def2-SVP | `tfvc-l1` | yes | 0.0297 | 2.36 | 1.0311 | -0.046 | 0.101 | 0.0369 |
 | PBE0 | def2-SVP | `tfvc-l2` | yes | 0.0272 | 2.07 | 1.0248 | -0.053 | 0.098 | 0.0311 |
 | PBE0 | def2-SVP | `tfvc-l3` | yes | 0.0225 | 1.43 | 1.0665 | -0.011 | 0.020 | 0.0271 |
-| PBE0 | def2-TZVP | `oc-salvador` | yes | 0.0191 | 1.13 | 1.0743 | +0.000 | 0.000 | 0.0199 |
+| PBE0 | def2-TZVP | `oc-tfvc` | yes | 0.0191 | 1.13 | 1.0743 | +0.000 | 0.000 | 0.0199 |
 | PBE0 | def2-TZVP | `tfvc-l0` | yes | 0.0311 | 2.61 | 1.0597 | -0.015 | 0.058 | 0.0426 |
 | PBE0 | def2-TZVP | `tfvc-l1` | yes | 0.0288 | 2.24 | 1.0288 | -0.046 | 0.100 | 0.0391 |
 | PBE0 | def2-TZVP | `tfvc-l2` | yes | 0.0262 | 1.97 | 1.0253 | -0.049 | 0.086 | 0.0336 |
@@ -189,32 +189,32 @@ refinement's own stop when a cycle makes the fit worse.
 
 | method | basis | model | converged | R(F) | GoF | mean X–H / Å | Δ mean vs Salvador / Å | max \|Δ\| per bond / Å | mean U_iso(H) / Å² |
 |---|---|---|---|---|---|---|---|---|---|
-| RHF | def2-SVP | `oc-salvador` | yes | 0.0192 | 1.68 | 1.0888 | +0.000 | 0.000 | 0.0308 |
+| RHF | def2-SVP | `oc-tfvc` | yes | 0.0192 | 1.68 | 1.0888 | +0.000 | 0.000 | 0.0308 |
 | RHF | def2-SVP | `tfvc-l0` | yes | 0.0382 | 4.43 | 0.9753 | -0.114 | 0.273 | 0.0721 |
 | RHF | def2-SVP | `tfvc-l1` | yes | 0.0352 | 3.99 | 1.0061 | -0.083 | 0.211 | 0.0491 |
 | RHF | def2-SVP | `tfvc-l2` | yes | 0.0317 | 3.46 | 1.0134 | -0.075 | 0.210 | 0.0403 |
 | RHF | def2-SVP | `tfvc-l3` | yes | 0.0225 | 2.14 | 1.0690 | -0.020 | 0.068 | 0.0393 |
-| RHF | def2-TZVP | `oc-salvador` | yes | 0.0180 | 1.57 | 1.0840 | +0.000 | 0.000 | 0.0321 |
+| RHF | def2-TZVP | `oc-tfvc` | yes | 0.0180 | 1.57 | 1.0840 | +0.000 | 0.000 | 0.0321 |
 | RHF | def2-TZVP | `tfvc-l0` | yes | 0.0367 | 4.27 | 0.9792 | -0.105 | 0.256 | 0.0729 |
 | RHF | def2-TZVP | `tfvc-l1` | yes | 0.0343 | 3.94 | 0.9968 | -0.087 | 0.194 | 0.0493 |
 | RHF | def2-TZVP | `tfvc-l2` | yes | 0.0307 | 3.39 | 1.0084 | -0.076 | 0.187 | 0.0414 |
 | RHF | def2-TZVP | `tfvc-l3` | yes | 0.0216 | 2.10 | 1.0687 | -0.015 | 0.042 | 0.0409 |
-| B3LYP | def2-SVP | `oc-salvador` | yes | 0.0174 | 1.49 | 1.0769 | +0.000 | 0.000 | 0.0291 |
+| B3LYP | def2-SVP | `oc-tfvc` | yes | 0.0174 | 1.49 | 1.0769 | +0.000 | 0.000 | 0.0291 |
 | B3LYP | def2-SVP | `tfvc-l0` | yes | 0.0364 | 4.16 | 0.9834 | -0.093 | 0.243 | 0.0695 |
 | B3LYP | def2-SVP | `tfvc-l1` | yes | 0.0333 | 3.73 | 0.9986 | -0.078 | 0.179 | 0.0457 |
 | B3LYP | def2-SVP | `tfvc-l2` | yes | 0.0302 | 3.27 | 1.0089 | -0.068 | 0.177 | 0.0388 |
 | B3LYP | def2-SVP | `tfvc-l3` | yes | 0.0208 | 1.97 | 1.0614 | -0.016 | 0.052 | 0.0379 |
-| B3LYP | def2-TZVP | `oc-salvador` | yes | 0.0160 | 1.37 | 1.0689 | +0.000 | 0.000 | 0.0316 |
+| B3LYP | def2-TZVP | `oc-tfvc` | yes | 0.0160 | 1.37 | 1.0689 | +0.000 | 0.000 | 0.0316 |
 | B3LYP | def2-TZVP | `tfvc-l0` | yes | 0.0345 | 3.94 | 0.9829 | -0.086 | 0.214 | 0.0629 |
 | B3LYP | def2-TZVP | `tfvc-l1` | yes | 0.0314 | 3.51 | 0.9948 | -0.074 | 0.159 | 0.0459 |
 | B3LYP | def2-TZVP | `tfvc-l2` | yes | 0.0282 | 3.08 | 1.0065 | -0.062 | 0.149 | 0.0408 |
 | B3LYP | def2-TZVP | `tfvc-l3` | yes | 0.0197 | 1.91 | 1.0581 | -0.011 | 0.034 | 0.0392 |
-| PBE0 | def2-SVP | `oc-salvador` | yes | 0.0177 | 1.51 | 1.0804 | +0.000 | 0.000 | 0.0290 |
+| PBE0 | def2-SVP | `oc-tfvc` | yes | 0.0177 | 1.51 | 1.0804 | +0.000 | 0.000 | 0.0290 |
 | PBE0 | def2-SVP | `tfvc-l0` | yes | 0.0368 | 4.22 | 0.9838 | -0.097 | 0.254 | 0.0705 |
 | PBE0 | def2-SVP | `tfvc-l1` | yes | 0.0337 | 3.77 | 1.0017 | -0.079 | 0.182 | 0.0456 |
 | PBE0 | def2-SVP | `tfvc-l2` | yes | 0.0305 | 3.31 | 1.0123 | -0.068 | 0.181 | 0.0389 |
 | PBE0 | def2-SVP | `tfvc-l3` | yes | 0.0211 | 2.00 | 1.0645 | -0.016 | 0.055 | 0.0376 |
-| PBE0 | def2-TZVP | `oc-salvador` | yes | 0.0162 | 1.38 | 1.0731 | +0.000 | 0.000 | 0.0309 |
+| PBE0 | def2-TZVP | `oc-tfvc` | yes | 0.0162 | 1.38 | 1.0731 | +0.000 | 0.000 | 0.0309 |
 | PBE0 | def2-TZVP | `tfvc-l0` | yes | 0.0351 | 4.02 | 0.9834 | -0.090 | 0.235 | 0.0645 |
 | PBE0 | def2-TZVP | `tfvc-l1` | yes | 0.0321 | 3.60 | 0.9971 | -0.076 | 0.164 | 0.0457 |
 | PBE0 | def2-TZVP | `tfvc-l2` | yes | 0.0288 | 3.14 | 1.0094 | -0.064 | 0.155 | 0.0404 |
@@ -283,7 +283,7 @@ electrostatics and not for the refinement.
 ## 7. What is not done
 
 - `l4-tfvc` and beyond; the keywords stop at 3.
-- The `l<n>` forms of the other radii (`tfvp`, `tfvh`) and of the exponential Hirshfeld atom.
+- The `l<n>` forms of the other radii (`tfvc-p`, `tfvc-h`) and of the exponential Hirshfeld atom.
 - The spherical-form-factor fit (`FF_fit`) and the BUSTER writer use the $`l = 0`$ part only; the
   $`l = 1`$ curves and directions are not written out.
 - The comparison against neutron positions and ADPs, when the neutron data for these three
