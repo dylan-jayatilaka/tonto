@@ -78,6 +78,21 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## 2026-10-24: Coulomb embedding planned; r2SCAN added to the neutron benchmark
+
+- **Coulomb embedding** of the HAR molecule by its nearest neighbours' density, taken from its
+  own density matrix (atoms, groups or whole molecules; no exchange): plan in
+  `docs/TASK_J_EMBEDDING.md`, not started. Chosen over a CPCM continuum (Brux et al. 2025,
+  Struct. Dyn. 12, 054101), which Dylan judged too rough. Its last section records the later
+  step, a Shukla-style crystal SCF with exchange and orthogonality; read Manby et al. (2012)
+  on the projector first.
+- **r2SCAN** (Brux et al. recommend it over B3LYP): the 72 jobs of the 2026-10-23 benchmark
+  repeated with `dft_functional= r2scan`, in `~/tonto-runs/2026-10-24_r2scan/` (README there).
+  On urea r2SCAN refines like PBE0; with exact integrals it is not cheaper than B3LYP in Tonto.
+  A tight SCF (1e-6, DIIS 1e-5) gives the same urea structure as the benchmark's 1e-4 and 1e-3.
+- **Later:** benchmark and tune RIJCOSX for accuracy and speed on the molecular clusters,
+  together with the Gaussian form-factor method.
+
 ## START HERE (2026-10-21): `grid-optimization` merged to `develop`; the LKO cutoff is on by default
 
 Merged as `593fd1e8` at Dylan's word, references re-blessed on achari2 as `8cddb76b`; CI green on
