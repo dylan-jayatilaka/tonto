@@ -10,7 +10,7 @@ the spherical average of each. The main findings:
   exponential Hirshfeld atom are within 0.2 in GoF of it and give the same heavy-atom geometry.
 - **They differ in the polar N–H bonds**, by up to 0.04 Å, and not in C–H bonds.
 - **A spherical atom works only if it is large enough to hold its own bonding density.** The
-  spherical Salvador atom does not converge; with equal-density boundaries (`sph-tfvh`), or as a
+  spherical Salvador atom does not converge; with equal-density boundaries (`tfvc-h-l0`), or as a
   spherical exponential Hirshfeld atom (`sph-exphar`), it fits as well as the independent atom
   model and puts the hydrogens within 0.02 Å of the neutron positions, where the independent
   atom model is 0.1 Å short.
@@ -47,17 +47,17 @@ refinement not at all. For a bonded pair $`A`$–$`B`$ the face cuts the bond at
 distance $`R(A.B)`$ from $`A`$, and the model is fixed by the rule for that point. Mayer and
 Salvador put it at the minimum of the molecular density along the bond.
 
-**Salvador with promolecule radii** (`tfvp`). The same, with the minimum taken on the
+**Salvador with promolecule radii** (`tfvc-p`). The same, with the minimum taken on the
 promolecule density. The partition then depends on the geometry alone, not on the wavefunction.
 
-**Salvador with equal-density radii** (`tfvh`). The boundary is where the two free atoms'
+**Salvador with equal-density radii** (`tfvc-h`). The boundary is where the two free atoms'
 densities are equal, $`\rho^0_A = \rho^0_B`$ on the bond. There the Hirshfeld weight of the pair
 alone, $`\rho^0_A/(\rho^0_A + \rho^0_B)`$, is one half, so the cell function and the pair's
 Hirshfeld weight agree on where the atoms meet. The point always exists and is unique, because
 one density falls and the other rises along the bond. The half-weight surface of the full
 promolecule would not do: on most bonds those surfaces of $`A`$ and $`B`$ do not touch.
 
-**The spherical average** (`sph-tfvc`, `sph-tfvp`, `sph-tfvh`, `sph-exphar`). The atom's density
+**The spherical average** (`tfvc-l0`, `tfvc-p-l0`, `tfvc-h-l0`, `sph-exphar`). The atom's density
 is averaged over each sphere about its nucleus,
 
 ```math
@@ -75,20 +75,24 @@ It keeps the atom's charge and the radial shape of its density, taken from the w
 and loses everything aspherical: bonding density and lone pairs.
 
 **Between the spherical and the full atom.** The atom's density on each sphere can be kept to
-its spherical harmonics up to $`l = n`$ — `tfvc-l0` (= `sph-tfvc`), `tfvc-l1`, `tfvc-l2`,
+its spherical harmonics up to $`l = n`$ — `tfvc-l0` (= `tfvc-l0`), `tfvc-l1`, `tfvc-l2`,
 `tfvc-l3`. Those models, the `salvador_stiffness=` keyword, and their results on three
 crystals are on their own page, [The multipole Salvador atoms](REPORT_ON_LN_TFVC.md).
 
-| `partition_model=` | weight | boundary on a bond | spherical average |
-|---|---|---|---|
-| `oc-hirshfeld` | (1) | | no |
-| `exphar`, with `exphar_power=` $`n`$ (default 2) | (2) | | no |
-| `oc-salvador` | cell function | minimum of the molecular density | no |
-| `tfvp` | cell function | minimum of the promolecule density | no |
-| `tfvh` | cell function | equal free-atom densities | no |
-| `tpfvc` | cell function | minimum of the molecular electrostatic potential | no |
-| `sph-exphar`, `sph-tfvc`, `sph-tfvp`, `sph-tfvh` | as the model named | | yes |
-| `tfvc-l1`, `tfvc-l2`, `tfvc-l3` | cell function | minimum of the molecular density | see [the multipole page](REPORT_ON_LN_TFVC.md) |
+| `partition_model=` | name | weight | wall on a bond | spherical average |
+|---|---|---|---|---|
+| `oc-hirshfeld` | Hirshfeld | (1) | | no |
+| `exphar`, with `exphar_power=` $`n`$ (default 2) | expHAR | (2) | | no |
+| `oc-tfvc` | TFVC | cell function | minimum of the molecular density | no |
+| `tfvc-v` | TFVC(V) | cell function | minimum of the molecular electrostatic potential | no |
+| `tfvc-p` | TFVC(P) | cell function | minimum of the promolecule density | no |
+| `tfvc-h` | TFVC(H) | cell function | equal free-atom densities | no |
+| `tfvc-l0`, `tfvc-p-l0`, `tfvc-h-l0`, `sph-exphar` | TFVC(0), TFVC(P,0), TFVC(H,0), sph-expHAR | as the model named | | yes |
+| `tfvc-l1`, `tfvc-l2`, `tfvc-l3` | TFVC(1), TFVC(2), TFVC(3) | cell function | minimum of the molecular density | see [the multipole page](REPORT_ON_LN_TFVC.md) |
+
+The letter in a name says which function fixes the walls; the number is the highest order
+$`l_{\max}`$ kept in the angular expansion. The older keywords `salvador`, `tpfvc`, `tfvp`,
+`tfvh`, `sph-tfvc`, `sph-tfvp` and `sph-tfvh` are still accepted.
 
 The independent atom model (IAM) is the comparison throughout: International Tables form factors
 for the neutral heavy atoms and the Stewart–Davidson–Simpson bonded-atom form factor for H.
@@ -118,12 +122,12 @@ Urea, CCSD/pob-TZVP density at the CIF geometry, all three rules:
 
 The equal-density point is well away from the density minimum, toward the more electronegative
 atom: the carbon atom grows by 0.13 and 0.14 Å along C–O and C–N, and the hydrogen's part of the
-N–H bond grows from 0.15 to 0.27 Å. So `tfvh` has the largest hydrogens and the largest carbon
+N–H bond grows from 0.15 to 0.27 Å. So `tfvc-h` has the largest hydrogens and the largest carbon
 of the three.
 
 **Charges** from the same density, nucleus included:
 
-| atom | Hirshfeld | Salvador | `tfvp` | `tfvh` |
+| atom | Hirshfeld | Salvador | `tfvc-p` | `tfvc-h` |
 |---|---|---|---|---|
 | C | +0.198 | +2.167 | +1.695 | +0.908 |
 | O | −0.396 | −1.189 | −1.118 | −0.740 |
@@ -132,7 +136,7 @@ of the three.
 | H2 | +0.109 | +0.643 | +0.585 | +0.353 |
 
 The Salvador atoms carry charges of the size QTAIM atoms do, the density minimum being close to
-the zero-flux surface along a bond. `tfvh` is about half-way between Salvador and Hirshfeld.
+the zero-flux surface along a bond. `tfvc-h` is about half-way between Salvador and Hirshfeld.
 
 **What moving the wall does.** Every cell model uses the same kind of switching function, so
 the walls are equally sharp. The models differ in where the wall meets the bond, and that
@@ -142,7 +146,7 @@ it, so each atom's edge is as gentle as the switching function allows, and the s
 the atom's density is confined to where there is least of it. A wall moved toward a nucleus
 sits on the rising flank of that atom's density: that atom gets a sharper edge and gives up
 part of its bonding density, and its partner becomes larger and less spherical. The
-equal-density rule moves the wall toward the more electronegative atom, so in `tfvh` the C and
+equal-density rule moves the wall toward the more electronegative atom, so in `tfvc-h` the C and
 H atoms are the larger ones and carry more of the bond. A Becke cell is different again: its
 wall is set by the Bragg–Slater radii alone, shifted toward the smaller atom, and does not
 depend on the density at all; the Stratmann–Scuseria cell puts its wall in the same place but
@@ -159,7 +163,7 @@ reflections), RHF, isolated molecule, with only `partition_model=` changed. The 
 lengths are those of Swaminathan, Craven and McMullan (1984) at 123 K, as tabulated by Wall
 (2016), without esds: N–H1 1.006, N–H3 1.000 and C=O 1.257 Å.
 
-| | Hirshfeld | Salvador | `tfvp` | `tfvh` |
+| | Hirshfeld | Salvador | `tfvc-p` | `tfvc-h` |
 |---|---|---|---|---|
 | **def2-SVP** | | | | |
 | R(F) | 0.0181 | 0.0190 | 0.0188 | 0.0186 |
@@ -189,20 +193,20 @@ lengths are those of Swaminathan, Craven and McMullan (1984) at 123 K, as tabula
 | U_iso H3 /Å² | 0.046(2) | 0.0402(19) | 0.0400(19) | 0.0392(18) |
 | time /s | 53 | 77 | 73 | 77 |
 
-- **The three Salvador variants form a sequence,** Salvador, `tfvp`, `tfvh`, along which the
+- **The three Salvador variants form a sequence,** Salvador, `tfvc-p`, `tfvc-h`, along which the
   N–H bonds shorten (def2-TZVP: N–H3 1.017, 1.017, 1.013 Å), the fit improves a little (GoF
   3.10, 3.07, 3.06), and every step is toward Hirshfeld.
-- **`tfvp` reproduces the Salvador refinement,** every heavy-atom parameter within one esd,
+- **`tfvc-p` reproduces the Salvador refinement,** every heavy-atom parameter within one esd,
   although its C–N boundary is 0.1 Å away. The partition can be fixed by the geometry alone at
   no cost.
 - **Hirshfeld fits best** (GoF 2.94 in def2-TZVP). Its N–H3 is 0.011 Å short of neutron where
-  every Salvador variant is long; averaged over the two bonds `tfvh` and Hirshfeld are about
+  every Salvador variant is long; averaged over the two bonds `tfvc-h` and Hirshfeld are about
   equally far from neutron (0.018 and 0.015 Å).
 - **The heavy atoms do not depend on the model:** bonds within 0.0008 Å and ADPs within one or
   two esds across the four.
 - **The hydrogen U_iso falls along the sequence,** 0.054, 0.050, 0.048, 0.046 Å² for H1 in
   def2-SVP. A larger hydrogen atom in the partition leaves less of the bond density to be
-  modelled as hydrogen motion. The hydrogen esds are smallest with `tfvh`, 0.003 Å.
+  modelled as hydrogen motion. The hydrogen esds are smallest with `tfvc-h`, 0.003 Å.
 - **A Salvador refinement costs about 1.5 times a Hirshfeld one** on this job.
 
 **The exponential Hirshfeld atom**, for several powers $`n`$:
@@ -227,8 +231,8 @@ lengths are those of Swaminathan, Craven and McMullan (1984) at 123 K, as tabula
 - **The fit hardly changes:** R(F) is the same and GoF rises by 0.05. The hydrogen esds fall
   from 0.004–0.005 to 0.003 Å and the hydrogen U_iso by 10 %. Each step in $`n`$ costs a cycle
   or two.
-- **`exphar` with $`n = 2`$ lies between Hirshfeld and `tfvh`** on every hydrogen quantity
-  (N–H3: 0.989, 1.007, 1.013, 1.017 Å for Hirshfeld, `exphar`, `tfvh`, Salvador in def2-TZVP),
+- **`exphar` with $`n = 2`$ lies between Hirshfeld and `tfvc-h`** on every hydrogen quantity
+  (N–H3: 0.989, 1.007, 1.013, 1.017 Å for Hirshfeld, `exphar`, `tfvc-h`, Salvador in def2-TZVP),
   at 1.1 times the cost of Hirshfeld.
 
 ## 4. Urea: the spherical models
@@ -239,21 +243,21 @@ lengths are those of Swaminathan, Craven and McMullan (1984) at 123 K, as tabula
 |---|---|---|
 | Salvador | R 0.038, converges (7 cycles) | R 0.0190, GoF 3.54, converges (8) |
 | spherical H, aspherical C/N/O | R 0.041, converges (5) | R 0.0209, GoF 3.86, converges (6) |
-| `sph-tfvc`, all spherical | H1 runs away, R = 1 | R 0.044, GoF 11.6, never converges |
-| `sph-tfvc`, H with isotropic U | reaches R 0.0533, then oscillates | |
-| `sph-tfvc`, H fixed | R 0.096 | |
+| `tfvc-l0`, all spherical | H1 runs away, R = 1 | R 0.044, GoF 11.6, never converges |
+| `tfvc-l0`, H with isotropic U | reaches R 0.0533, then oscillates | |
+| `tfvc-l0`, H fixed | R 0.096 | |
 
 Spherical hydrogens are harmless: the Salvador hydrogen is nearly spherical already. Spherical
 C, N and O are not: without their bonding density the fit rebuilds it by moving the hydrogens
 and inflating their U. The oscillations are between two states of the outer loop of SCF and
 fit; in def2-SVP H1 moves 0.034 bohr back and forth.
 
-**The size of the atom decides.** `sph-tfvc` does not converge in any basis. `sph-tfvp`
-converges, with GoF 8.16 in def2-SVP. `sph-tfvh` gives 5.87. That is the order of growing carbon
+**The size of the atom decides.** `tfvc-l0` does not converge in any basis. `tfvc-p-l0`
+converges, with GoF 8.16 in def2-SVP. `tfvc-h-l0` gives 5.87. That is the order of growing carbon
 and hydrogen atoms (§2): the more of the bond density lies inside the atom being averaged, the
 less the averaging loses.
 
-`sph-tfvh` in three basis sets; every run converges in 4–5 cycles:
+`tfvc-h-l0` in three basis sets; every run converges in 4–5 cycles:
 
 | urea | STO-3G | def2-SVP | def2-TZVP |
 |---|---|---|---|
@@ -272,23 +276,23 @@ less the averaging loses.
 | model | N–H1 /Å | N–H3 /Å | R(F) | GoF |
 |---|---|---|---|---|
 | IAM (SDS H) | 0.905(10) | 0.888(12) | 0.0284 | 6.50 |
-| `sph-tfvp`, STO-3G | 1.048(15) | 0.944(15) | 0.0455 | 10.5 |
-| `sph-tfvp`, def2-SVP | 1.069(12) | 0.981(15) | 0.0341 | 8.16 |
+| `tfvc-p-l0`, STO-3G | 1.048(15) | 0.944(15) | 0.0455 | 10.5 |
+| `tfvc-p-l0`, def2-SVP | 1.069(12) | 0.981(15) | 0.0341 | 8.16 |
 | Hirshfeld, def2-SVP | 1.028(5) | 0.986(6) | 0.0181 | 3.30 |
 | Salvador, def2-SVP | 1.038(5) | 1.026(5) | 0.0190 | 3.54 |
-| `tfvp`, def2-SVP | 1.036(4) | 1.023(4) | 0.0188 | 3.48 |
+| `tfvc-p`, def2-SVP | 1.036(4) | 1.023(4) | 0.0188 | 3.48 |
 
 - **The IAM shortens N–H by 0.1 Å; the spherical models do not.** A spherical average of the
   molecular density about the hydrogen nucleus includes the density drawn into the bond; a
   free-atom hydrogen does not.
-- **A lower R is not a better geometry.** The IAM fits better than `sph-tfvp` (R 0.028 against
+- **A lower R is not a better geometry.** The IAM fits better than `tfvc-p-l0` (R 0.028 against
   0.034) by moving the hydrogens and adjusting the U, which is how it gets the bonds wrong.
-- **`sph-tfvh` and `sph-exphar` fit as well as the IAM** (R 0.0294 and 0.0282 against 0.0284 in
+- **`tfvc-h-l0` and `sph-exphar` fit as well as the IAM** (R 0.0294 and 0.0282 against 0.0284 in
   def2-TZVP, next section) with the hydrogens near the neutron positions. They are still
   spherical models: GoF 5.4–5.7 against 3.0 for the aspherical ones, and hydrogen esds twice as
   large.
 - **The two err in opposite directions on N–H3.** `sph-exphar` is best of any model on N–H1
-  (+0.004 Å) and 0.019 Å short on N–H3; `sph-tfvh` is +0.016 and −0.007 Å, and gives the neutron
+  (+0.004 Å) and 0.019 Å short on N–H3; `tfvc-h-l0` is +0.016 and −0.007 Å, and gives the neutron
   C=O length. Either can supply the form factors for the Gaussian fit of `fit_sph_atom_ffs`.
 
 **Between the spherical and the full atom.** The multipole models `tfvc-l1` to `tfvc-l3` all
@@ -305,24 +309,24 @@ in def2-SVP); centring the hydrogens on their density maxima does not. The table
 | Hirshfeld | def2-TZVP | 1.025(4) | 0.989(5) | 1.2560(4) | 0.0167 | 2.94 |
 | `exphar` n=2 | def2-TZVP | 1.027(3) | 1.007(4) | 1.2559(4) | 0.0167 | 2.99 |
 | Salvador | def2-TZVP | 1.033(4) | 1.017(4) | 1.2560(4) | 0.0170 | 3.10 |
-| `tfvp` | def2-TZVP | 1.032(4) | 1.017(4) | 1.2558(4) | 0.0170 | 3.07 |
-| `tfvh` | def2-TZVP | 1.029(3) | 1.013(3) | 1.2559(4) | 0.0169 | 3.06 |
-| `sph-tfvh` | def2-TZVP | 1.022(8) | 0.993(9) | 1.2570(7) | 0.0294 | 5.65 |
+| `tfvc-p` | def2-TZVP | 1.032(4) | 1.017(4) | 1.2558(4) | 0.0170 | 3.07 |
+| `tfvc-h` | def2-TZVP | 1.029(3) | 1.013(3) | 1.2559(4) | 0.0169 | 3.06 |
+| `tfvc-h-l0` | def2-TZVP | 1.022(8) | 0.993(9) | 1.2570(7) | 0.0294 | 5.65 |
 | `sph-exphar` n=2 | def2-TZVP | 1.010(7) | 0.981(8) | 1.2581(7) | 0.0282 | 5.38 |
-| `sph-tfvp` | def2-TZVP | 1.045(10) | 0.977(12) | 1.2553(9) | 0.0316 | 7.06 |
-| `sph-tfvc` | def2-TZVP | 1.11(2) | 0.954(19) | 1.2518(14) | 0.0422 | 11.0 (no convergence) |
+| `tfvc-p-l0` | def2-TZVP | 1.045(10) | 0.977(12) | 1.2553(9) | 0.0316 | 7.06 |
+| `tfvc-l0` | def2-TZVP | 1.11(2) | 0.954(19) | 1.2518(14) | 0.0422 | 11.0 (no convergence) |
 | Hirshfeld | def2-SVP | 1.028(5) | 0.986(6) | 1.2558(4) | 0.0181 | 3.30 |
 | `exphar` n=2 | def2-SVP | 1.032(4) | 1.010(4) | 1.2557(4) | 0.0183 | 3.37 |
 | Salvador | def2-SVP | 1.038(5) | 1.026(5) | 1.2557(4) | 0.0190 | 3.54 |
-| `tfvp` | def2-SVP | 1.036(4) | 1.023(4) | 1.2555(4) | 0.0188 | 3.48 |
-| `tfvh` | def2-SVP | 1.034(4) | 1.018(4) | 1.2556(4) | 0.0186 | 3.46 |
-| `sph-tfvh` | def2-SVP | 1.033(9) | 1.001(10) | 1.2570(7) | 0.0297 | 5.87 |
+| `tfvc-p` | def2-SVP | 1.036(4) | 1.023(4) | 1.2555(4) | 0.0188 | 3.48 |
+| `tfvc-h` | def2-SVP | 1.034(4) | 1.018(4) | 1.2556(4) | 0.0186 | 3.46 |
+| `tfvc-h-l0` | def2-SVP | 1.033(9) | 1.001(10) | 1.2570(7) | 0.0297 | 5.87 |
 | `sph-exphar` n=2 | def2-SVP | 1.020(8) | 0.989(8) | 1.2582(7) | 0.0283 | 5.55 |
-| `sph-tfvp` | def2-SVP | 1.069(12) | 0.981(15) | 1.2545(10) | 0.0341 | 8.16 |
-| `sph-tfvh` | STO-3G | 1.050(12) | 0.994(13) | 1.2571(11) | 0.0447 | 8.52 |
-| `sph-tfvp` | STO-3G | 1.048(15) | 0.944(15) | 1.2542(13) | 0.0455 | 10.5 |
-| `sph-tfvc` | def2-SVP | does not converge (oscillates) | | | 0.044 | 11.6 |
-| `sph-tfvc` | STO-3G | does not converge (H1 runs away) | | | 1.0 | |
+| `tfvc-p-l0` | def2-SVP | 1.069(12) | 0.981(15) | 1.2545(10) | 0.0341 | 8.16 |
+| `tfvc-h-l0` | STO-3G | 1.050(12) | 0.994(13) | 1.2571(11) | 0.0447 | 8.52 |
+| `tfvc-p-l0` | STO-3G | 1.048(15) | 0.944(15) | 1.2542(13) | 0.0455 | 10.5 |
+| `tfvc-l0` | def2-SVP | does not converge (oscillates) | | | 0.044 | 11.6 |
+| `tfvc-l0` | STO-3G | does not converge (H1 runs away) | | | 1.0 | |
 
 Differences from the neutron values, in Å:
 
@@ -333,25 +337,25 @@ Differences from the neutron values, in Å:
 | `exphar` n=2, def2-TZVP | +0.021 | +0.007 |
 | `sph-exphar` n=2, def2-TZVP | +0.004 | −0.019 |
 | Salvador, def2-TZVP | +0.027 | +0.017 |
-| `tfvp`, def2-TZVP | +0.026 | +0.017 |
-| `tfvh`, def2-TZVP | +0.023 | +0.013 |
-| `sph-tfvh`, def2-TZVP | +0.016 | −0.007 |
-| `sph-tfvp`, def2-TZVP | +0.039 | −0.023 |
+| `tfvc-p`, def2-TZVP | +0.026 | +0.017 |
+| `tfvc-h`, def2-TZVP | +0.023 | +0.013 |
+| `tfvc-h-l0`, def2-TZVP | +0.016 | −0.007 |
+| `tfvc-p-l0`, def2-TZVP | +0.039 | −0.023 |
 | Hirshfeld, def2-SVP | +0.022 | −0.014 |
 | `exphar` n=2, def2-SVP | +0.026 | +0.010 |
 | `sph-exphar` n=2, def2-SVP | +0.014 | −0.011 |
 | Salvador, def2-SVP | +0.032 | +0.026 |
-| `tfvp`, def2-SVP | +0.030 | +0.023 |
-| `tfvh`, def2-SVP | +0.028 | +0.018 |
-| `sph-tfvh`, def2-SVP | +0.027 | +0.001 |
-| `sph-tfvp`, def2-SVP | +0.063 | −0.019 |
+| `tfvc-p`, def2-SVP | +0.030 | +0.023 |
+| `tfvc-h`, def2-SVP | +0.028 | +0.018 |
+| `tfvc-h-l0`, def2-SVP | +0.027 | +0.001 |
+| `tfvc-p-l0`, def2-SVP | +0.063 | −0.019 |
 
 - **Hirshfeld is closest among the aspherical models** (def2-TZVP within 0.019 Å). The Salvador
-  variants are 0.02–0.03 Å long, `tfvh` the least; `exphar` with $`n = 2`$ is 0.021 and 0.007 Å
+  variants are 0.02–0.03 Å long, `tfvc-h` the least; `exphar` with $`n = 2`$ is 0.021 and 0.007 Å
   long.
 - **def2-TZVP moves every aspherical model a few mÅ toward neutron** and lowers R(F) by about
   0.002.
-- **C=O is 3 esds short with Hirshfeld,** 1.2558(4) against 1.257 Å; `sph-tfvh` gives 1.2570(7)
+- **C=O is 3 esds short with Hirshfeld,** 1.2558(4) against 1.257 Å; `tfvc-h-l0` gives 1.2570(7)
   in both basis sets.
 - These are isolated-molecule densities in small basis sets. The comparison between models at
   the same basis is the point, not the absolute values; with a crystal environment and B3LYP
@@ -369,7 +373,7 @@ for methyl C–H (Allen and Bruno, 2010).
 
 def2-SVP:
 
-| | Hirshfeld | Salvador | `tfvp` | `tfvh` |
+| | Hirshfeld | Salvador | `tfvc-p` | `tfvc-h` |
 |---|---|---|---|---|
 | R(F) | 0.0231 | 0.0232 | 0.0233 | 0.0233 |
 | GoF | 7.250 | 7.284 | 7.287 | 7.284 |
@@ -394,7 +398,7 @@ def2-SVP:
 
 def2-TZVP:
 
-| | Hirshfeld | Salvador | `tfvp` | `tfvh` |
+| | Hirshfeld | Salvador | `tfvc-p` | `tfvc-h` |
 |---|---|---|---|---|
 | R(F) | 0.0228 | 0.0229 | 0.0229 | 0.0229 |
 | GoF | 7.185 | 7.232 | 7.230 | 7.226 |
@@ -418,7 +422,7 @@ def2-TZVP:
 | mean U_iso H esd /Å² | 0.006 | 0.004 | 0.004 | 0.004 |
 
 - **The N–H effect does not appear in C–H.** In def2-SVP the Salvador mean C–H is 0.005 Å
-  shorter than Hirshfeld's and `tfvh`'s 0.007 Å longer, and every bond agrees between the models
+  shorter than Hirshfeld's and `tfvc-h`'s 0.007 Å longer, and every bond agrees between the models
   within one esd. The urea disagreement belongs to the polar N–H bond.
 - **The models cannot be ranked on these hydrogens.** All four are 0.01–0.02 Å long against the
   neutron means, with esds of 0.015–0.02 Å: Cu Kα data to $`\sin\theta/\lambda \approx 0.6`$ Å⁻¹,
@@ -439,7 +443,7 @@ def2-TZVP:
 - The spherical models on YLID and on a larger molecule.
 - `sph-exphar` with $`n`$ below 2: a softer atom should suit the Gaussian form-factor fit.
 - A crystal of nearly spherical atoms (an ionic solid, a simple metal, a rare-gas solid), where
-  `sph-tfvc` might work.
+  `tfvc-l0` might work.
 - "Spherical hydrogens only" as a model of its own.
 - These refinements with spherical basis functions and a crystal environment.
 

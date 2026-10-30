@@ -79,7 +79,7 @@ to bring the SCF to the same answer.
 
 Tonto's grids use Becke's partition by default: smoothed Voronoi cells, adjusted for atoms of
 different size. The alternative described here is the Salvador atom with promolecule radii
-(`tfvp`, the same cell function as `partition_model= tfvp`). Its boundary between two bonded atoms
+(`tfvc-p`, the same cell function as `partition_model= tfvc-p`). Its boundary between two bonded atoms
 passes through the minimum of the promolecule density along the bond. That point lies close to
 the bond critical point of the real density, where the density is small and nearly flat along
 the bond. A partition weight changes fastest near its cell boundary, so the boundary adds angular
