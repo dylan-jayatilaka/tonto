@@ -639,7 +639,7 @@ Hirshfeld atom refinement against the 123 K X-ray data (817 reflections), with R
 densities in the def2-SVP and def2-TZVP basis sets. Every urea refinement on this page uses
 spherical basis functions (`use_spherical_basis= TRUE`), the form the def2 sets were made for.
 There are two partitions of the density into atoms: Hirshfeld (`oc-hirshfeld`) and the
-topological fuzzy Voronoi cell atoms of Salvador and Ramos-Cordoba, TFVC (`oc-salvador`). There are three ADP models:
+topological fuzzy Voronoi cell atoms of Salvador and Ramos-Cordoba, TFVC (`oc-tfvc`). There are three ADP models:
 - free: six parameters per atom;
 - TLS with $`U^{\rm high} = 0`$: the rigid-body model (5) alone;
 - TLS + U^high: the model (9), with $`U^{\rm high}`$ as above.

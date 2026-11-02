@@ -98,10 +98,12 @@ atom**, `partition_scheme= salvador` for the grid, the zone pruning, `n_extra_ra
   cutoff; a rerun on today's `develop` needs `lko_cutoff= 0` to reproduce them.
 - Branch `grid-optimization` is fully contained in `develop` and can be deleted.
 
-## START HERE (2026-10-20, evening): spherical Salvador atoms — the multipole family `l<n>-tfvc` on branch `sph-tfvc-h`
+## TFVC refinement and the SAM paper: see `docs/TASK_ON_TFVC_REFINEMENT.md` (record and to-do, 2026-11-02)
+
+## Earlier (2026-10-20, evening): spherical Salvador atoms — the multipole family `l<n>-tfvc` on branch `sph-tfvc-h`
 
 The day's question was the non-convergence of the spherically averaged Salvador atom. Plan,
-measurements and log in `docs/TASK_SPH_TFVC_H.md`; the models and the urea results in
+measurements and log were in `docs/TASK_SPH_TFVC_H.md`, now subsumed by `docs/TASK_ON_TFVC_REFINEMENT.md`; the models and the urea results in
 `docs/REPORT_ON_SALVADOR_MODELS.md` §1 and §4. On `sph-tfvc-h` (from `develop` at `4211c2b8`),
 commit `2fa63d55`:
 
