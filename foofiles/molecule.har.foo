@@ -601,7 +601,36 @@ contains
 
    end
 
-   put_TFVC_wall_scans :: leaky
+   is_XH_bond(a,b) result (res)
+   ! TRUE if atoms "a" and "b" are a hydrogen and a non-hydrogen atom
+   ! less than 1.3 Angstrom apart, i.e. a covalent X-H bond.
+      self :: IN
+      a,b :: INT, IN
+      res :: BIN
+
+      n_H :: INT
+
+      n_H = 0
+      if (.atom(a).atomic_number==1) n_H = n_H + 1
+      if (.atom(b).atomic_number==1) n_H = n_H + 1
+      res = n_H==1 AND .atom.distance_between(a,b)<1.3d0*BOHR_PER_ANGSTROM
+
+   end
+
+   is_polar_H_move(a,b) result (res)
+   ! TRUE if atom "a" is a hydrogen covalently bonded to atom "b", and
+   ! "b" is neither hydrogen nor carbon: a move of a polar hydrogen
+   ! towards its own atom.
+      self :: IN
+      a,b :: INT, IN
+      res :: BIN
+
+      res = .atom(a).atomic_number==1 AND .atom(b).atomic_number/=6 &
+            AND .is_XH_bond(a,b)
+
+   end
+
+   put_TFVC_wall_scans(XH_only,polar_H_only) :: leaky
    ! For each bonded pair of atoms A and B, move the TFVC wall between
    ! them and put how well atom A follows its nucleus when the nucleus
    ! moves along the unit vector "e" from A to B. For each trial wall, at
@@ -627,8 +656,11 @@ contains
    ! minima, and the integrals are on the molecular DFT grid. Each
    ! ordered pair and sharpness n writes "wall_scan_A_B_n.gnu" and the
    ! gnuplot script "plot_wall_scan_A_B_n.gnu". The atoms and the
-   ! wavefunction are put back.
+   ! wavefunction are put back. If "XH_only" is TRUE only the X-H bonds
+   ! are scanned, in both directions; if "polar_H_only" is TRUE only a
+   ! hydrogen moving towards its own non-carbon atom is scanned.
       self :: INOUT
+      XH_only,polar_H_only :: BIN, optional, IN
 
    ENSURE(.atom.allocated,"no atoms")
    ENSURE(.density_mx.is_allocated_with_genre("r "),"needs a restricted density")
@@ -646,7 +678,12 @@ contains
       e :: VEC{REAL}(3)
       R_AB,del,sgn,D2,K2 :: REAL
       n_t,n_w,n_s,n_c,n_g,n_k,n_pair,p,a,b,n,k,s,c,side :: INT
-      do_k :: BIN
+      do_k,only_XH,only_polar :: BIN
+
+      only_XH = FALSE
+      if (present(XH_only)) only_XH = XH_only
+      only_polar = FALSE
+      if (present(polar_H_only)) only_polar = polar_H_only
 
       del   = 0.01d0
       n_t   = 29
@@ -665,15 +702,22 @@ contains
       ! The ordered pairs
       n_pair = 0
       do a = 1,.atom.dim
-         n_pair = n_pair + bonds_for(a).element.dim
+      do n = 1,bonds_for(a).element.dim
+         b = bonds_for(a)[n]
+         if (only_XH    AND NOT .is_XH_bond(a,b))      cycle
+         if (only_polar AND NOT .is_polar_H_move(a,b)) cycle
+         n_pair = n_pair + 1
+      end
       end
       pair_a.create(n_pair); pair_b.create(n_pair)
       R_pair.create(n_pair); f_rho.create(n_pair); f_V.create(n_pair)
       p = 0
       do a = 1,.atom.dim
       do n = 1,bonds_for(a).element.dim
-         p = p + 1
          b = bonds_for(a)[n]
+         if (only_XH    AND NOT .is_XH_bond(a,b))      cycle
+         if (only_polar AND NOT .is_polar_H_move(a,b)) cycle
+         p = p + 1
          pair_a(p) = a
          pair_b(p) = b
          R_pair(p) = .atom.distance_between(a,b)
