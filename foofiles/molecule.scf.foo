@@ -1308,6 +1308,273 @@ contains
 
    end
 
+   make_embedding_neighbours(R,t,op,cell,d_min) :: leaky
+   ! Make the neighbours of the molecule for the Coulomb embedding: each
+   ! symmetry copy of the molecule, other than the molecule itself, with
+   ! an atom within .SCF_data.embedding_radius of one of its atoms. For
+   ! neighbour "n", "R(:,:,n)" and "t(:,n)" are the Cartesian rotation
+   ! and shift that make it: its atom "a" is at R(:,:,n) x_a + t(:,n),
+   ! with x_a the position of atom "a" of the molecule, so its atoms are
+   ! in the molecule's order. "op(n)" is the index of the Seitz matrix
+   ! and "cell(:,n)" the lattice shift that make it, and "d_min(n)" its
+   ! shortest distance to the molecule. A copy made by several symops is
+   ! kept once.
+      self :: IN
+      R :: MAT3{REAL}@, OUT
+      t :: MAT{REAL}@, OUT
+      op :: VEC{INT}@, OUT
+      cell :: MAT{INT}@, OUT
+      d_min :: VEC{REAL}@, OUT
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.crystal.allocated,"no crystal")
+   ENSURE(.crystal.spacegroup.seitz.allocated,"no Seitz matrices")
+   ENSURE(.SCF_data.allocated,"no SCF_data")
+   ENSURE(.SCF_data.embedding_radius>ZERO,"embedding_radius= must be positive")
+
+      xyz,R_all :: MAT3{REAL}@
+      x,f,y,z,t_all :: MAT{REAL}@
+      cell_all :: MAT{INT}@
+      op_all :: VEC{INT}@
+      d_all :: VEC{REAL}@
+      base :: VEC{INT}(3)
+      c :: VEC{REAL}(3)
+      radius,r_mol,d :: REAL
+      n_a,n_s,n_max,n_nb,s,h1,h2,h3,a,b,k,m1,m2,m3 :: INT
+      found :: BIN
+
+      n_a = .atom.dim
+      n_s = .crystal.spacegroup.n_seitz
+      radius = .SCF_data.embedding_radius
+
+      ! The molecule in Cartesian and fractional coordinates
+      x.create(3,n_a)
+      do a = 1,n_a
+         x(:,a) = .atom(a).position
+      end
+      f.create(3,n_a)
+      f = matmul(.crystal.unit_cell.inverse_mx,x)
+
+      ! Lattice shifts to try about each copy: enough to reach any copy
+      ! with an atom within "radius"
+      c = sum(x,dim=2)/n_a
+      r_mol = ZERO
+      do a = 1,n_a
+         r_mol = max(r_mol,norm2(x(:,a)-c))
+      end
+      m1 = ceiling((TWO*r_mol+radius)/norm2(.crystal.unit_cell.direct_mx(:,1))) + 1
+      m2 = ceiling((TWO*r_mol+radius)/norm2(.crystal.unit_cell.direct_mx(:,2))) + 1
+      m3 = ceiling((TWO*r_mol+radius)/norm2(.crystal.unit_cell.direct_mx(:,3))) + 1
+
+      ! Work space
+      xyz = .crystal.xyz_seitz_matrices
+      n_max = n_s*(2*m1+1)*(2*m2+1)*(2*m3+1)
+      R_all.create(3,3,n_max); t_all.create(3,n_max)
+      op_all.create(n_max);    cell_all.create(3,n_max)
+      d_all.create(n_max)
+      y.create(3,n_a); z.create(3,n_a)
+      c = sum(f,dim=2)/n_a
+
+      ! Every copy made by a symop and a nearby lattice shift
+      n_nb = 0
+      do s = 1,n_s
+      base = nint(c - matmul(.crystal.spacegroup.seitz(1:3,1:3,s),c) &
+                    - .crystal.spacegroup.seitz(1:3,4,s))
+      do h1 = base(1)-m1,base(1)+m1
+      do h2 = base(2)-m2,base(2)+m2
+      do h3 = base(3)-m3,base(3)+m3
+
+         ! The copy
+         do a = 1,n_a
+            y(:,a) = matmul(.crystal.spacegroup.seitz(1:3,1:3,s),f(:,a)) &
+                   + .crystal.spacegroup.seitz(1:3,4,s) + [h1,h2,h3]
+         end
+         y = matmul(.crystal.unit_cell.direct_mx,y)
+
+         ! Keep it if it is near, is not the molecule, and is new
+         d = huge(ONE)
+         do a = 1,n_a
+         do b = 1,n_a
+            d = min(d,norm2(y(:,a)-x(:,b)))
+         end
+         end
+         if (d>=radius) cycle
+         if (.same_atom_sets(x,y)) cycle
+         found = FALSE
+         do k = 1,n_nb
+            z = matmul(R_all(:,:,k),x)
+            do a = 1,n_a
+               z(:,a) = z(:,a) + t_all(:,k)
+            end
+            found = .same_atom_sets(z,y)
+            if (found) exit
+         end
+         if (found) cycle
+
+         n_nb = n_nb + 1
+         R_all(:,:,n_nb) = xyz(:,:,s)
+         t_all(:,n_nb)   = y(:,1) - matmul(xyz(:,:,s),x(:,1))
+         op_all(n_nb)    = s
+         cell_all(:,n_nb) = [h1,h2,h3]
+         d_all(n_nb)     = d
+
+      end
+      end
+      end
+      end
+
+      ! The neighbours found
+      R.create(3,3,n_nb); t.create(3,n_nb)
+      op.create(n_nb);    cell.create(3,n_nb)
+      d_min.create(n_nb)
+      R     = R_all(:,:,1:n_nb)
+      t     = t_all(:,1:n_nb)
+      op    = op_all(1:n_nb)
+      cell  = cell_all(:,1:n_nb)
+      d_min = d_all(1:n_nb)
+
+      ! Clean
+      d_all.destroy; cell_all.destroy; op_all.destroy
+      t_all.destroy; R_all.destroy; xyz.destroy
+      z.destroy; y.destroy; f.destroy; x.destroy
+
+   end
+
+   same_atom_sets(x,y) result (res) :: PURE
+   ! TRUE if every position "y(:,a)" lies within 0.001 bohr of a position
+   ! "x(:,b)" of an atom with the same atomic number as atom "a": the
+   ! two copies of the molecule's atoms coincide, in any order.
+      self :: IN
+      x,y :: MAT{REAL}, IN
+      res :: BIN
+
+   ENSURE(x.dim2==.atom.dim AND y.dim2==.atom.dim,"wrong number of positions")
+
+      a,b :: INT
+      match :: BIN
+
+      res = FALSE
+      do a = 1,.atom.dim
+         match = FALSE
+         do b = 1,.atom.dim
+            if (.atom(a).atomic_number/=.atom(b).atomic_number) cycle
+            if (norm2(y(:,a)-x(:,b))<0.001d0) then
+               match = TRUE
+               exit
+            end
+         end
+         if (NOT match) return
+      end
+      res = TRUE
+
+   end
+
+   put_embedding_neighbours :: leaky
+   ! Put the neighbours of make_embedding_neighbours, and check the
+   ! density matrix of each, rotated from the molecule's. At points about
+   ! the atoms of neighbour "n", its density from the rotated density
+   ! matrix must equal the molecule's density at the same points carried
+   ! back by the inverse symop: rho_n(r) = rho(R^T (r - t)). The largest
+   ! difference is put for each neighbour.
+      self :: INOUT
+
+   ENSURE(.atom.allocated,"no atoms")
+   ENSURE(.density_mx.is_allocated_with_genre("r "),"needs a restricted density")
+   DIE_IF(.use_spherical_basis,"the embedding rotates cartesian shells only")
+
+      R :: MAT3{REAL}@
+      t,x0,P,pt,pt0 :: MAT{REAL}@
+      cell :: MAT{INT}@
+      op :: VEC{INT}@
+      d_min,rho_n,rho0 :: VEC{REAL}@
+      dx :: VEC{REAL}(3)
+      n_a,n_pt,n,a,k,i,j :: INT
+
+      .make_embedding_neighbours(R,t,op,cell,d_min)
+      n_a  = .atom.dim
+      n_pt = 6*n_a
+
+      ! Work space
+      x0.create(3,n_a)
+      do a = 1,n_a
+         x0(:,a) = .atom(a).position
+      end
+      P.create(.n_bf,.n_bf)
+      pt.create(n_pt,3); pt0.create(n_pt,3)
+      rho_n.create(n_pt); rho0.create(n_pt)
+
+      stdout.flush
+      stdout.text("Coulomb embedding: the neighbour molecules")
+      stdout.flush
+      stdout.show("Embedding radius               =",.SCF_data.embedding_radius*ANGSTROM_PER_BOHR)
+      stdout.show("No. of neighbours              =",op.dim)
+      stdout.flush
+      stdout.dash(int_fields=5,real_fields=3)
+      stdout.put("n",int_width=TRUE)
+      stdout.put("symop",int_width=TRUE)
+      stdout.put("h1",int_width=TRUE)
+      stdout.put("h2",int_width=TRUE)
+      stdout.put("h3",int_width=TRUE)
+      stdout.put("d_min/A")
+      stdout.put("max rho")
+      stdout.put("max|drho|")
+      stdout.flush
+      stdout.dash(int_fields=5,real_fields=3)
+
+      do n = 1,op.dim
+
+         ! The neighbour's density matrix
+         P = .density_mx.r
+         .rotate_density_mx_r(P,R(:,:,n))
+
+         ! Points 0.4 bohr either side of each neighbour atom, and the
+         ! same points carried back to the molecule
+         k = 0
+         do a = 1,n_a
+         do i = 1,3
+         do j = 1,2
+            k = k + 1
+            dx = ZERO
+            dx(i) = 0.4d0*(2*j-3)
+            pt(k,:)  = matmul(R(:,:,n),x0(:,a)) + t(:,n) + dx
+            pt0(k,:) = matmul(transpose(R(:,:,n)),pt(k,:) - t(:,n))
+         end
+         end
+         end
+
+         ! The molecule's density at the carried-back points
+         .make_ED_grid_r(rho0,pt0,.density_mx.r)
+
+         ! The neighbour's density, with the atoms moved onto it
+         do a = 1,n_a
+            .atom(a).set_position(matmul(R(:,:,n),x0(:,a)) + t(:,n))
+         end
+         .make_ED_grid_r(rho_n,pt,P)
+         do a = 1,n_a
+            .atom(a).set_position(x0(:,a))
+         end
+
+         stdout.put(n)
+         stdout.put(op(n))
+         stdout.put(cell(1,n))
+         stdout.put(cell(2,n))
+         stdout.put(cell(3,n))
+         stdout.put(d_min(n)*ANGSTROM_PER_BOHR)
+         stdout.put(maxval(rho0),fmt="e")
+         stdout.put(maxval(abs(rho_n-rho0)),fmt="e")
+         stdout.flush
+
+      end
+
+      stdout.dash(int_fields=5,real_fields=3)
+
+      ! Clean
+      rho0.destroy; rho_n.destroy; pt0.destroy; pt.destroy
+      P.destroy; x0.destroy
+      d_min.destroy; op.destroy; cell.destroy; t.destroy; R.destroy
+
+   end
+
    make_Lorentz_core(Z)
    ! Add the local electric fields "F" to the core matrix, made from
    ! the Lorentz factor tensors
