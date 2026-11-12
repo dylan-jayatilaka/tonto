@@ -78,6 +78,23 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## WATCH (2026-11-11): GitHub Actions blocked by an account lock — ticket #4988445
+
+Since 2026-11-06 every CI job on `master` and `develop` is refused before it starts: "The job
+was not started because your account is locked due to a billing issue." The account owes
+nothing: GitHub Free, no payment method on file, Actions usage $9.95 gross and $0 billed (all
+from the public `tonto`), no budgets. So the CI badges are red without any test having run.
+Ticket #4988445 is open with GitHub Support (support.github.com/tickets).
+
+- **When the lock is lifted:** re-run `develop`'s CI from the Actions page, then merge `develop`
+  to `master` once it is green.
+- **`develop` carries two fixes that CI has not yet seen:** `881babfa` breaks the RHO↔GRID use
+  cycle that failed every Linux build of `develop` since the tpfvc merge (`1d67842b`, 2026-10-22;
+  "Circular ... molecule_rho_module.mod.stamp dependency dropped"); `822009af` moves the five
+  macOS workflows from `macos-14`, which GitHub no longer offers, to `macos-15`. Checked on the
+  Mac: clean release build with no circular warning, `ctest -L short` 88/88, and the two
+  `Salvador_properties` tests and `urea_rhf_STO-3G_TPFVC_HAR` pass.
+
 ## START HERE (2026-10-21): `grid-optimization` merged to `develop`; the LKO cutoff is on by default
 
 Merged as `593fd1e8` at Dylan's word, references re-blessed on achari2 as `8cddb76b`; CI green on

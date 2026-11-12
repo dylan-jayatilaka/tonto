@@ -114,7 +114,7 @@ cited are in `~/Dropbox/manuscripts/` (Medvedev 2017, Brux 2025, Chodkiewicz 202
 | which partitions need the TFVC data; structure-factor route | `foofiles/molecule.scf.foo` (two case tables) |
 | form factors: full atom, spherical and multipole atoms | `foofiles/molecule.rho.foo`, `make_Salvador_atom_FFs`, `make_sph_TFVC_atom_FFs`, `make_sph_avgd_SA_ED_v1`, `make_sph_avgd_SA_ED_grid` |
 | radial transforms $`j_l(kr)`$ and harmonics | `foofiles/fourier_sums.foo`, `multipole_kr_sums`, `spherical_bessels`, `make_solid_harmonics` |
-| radii at the density minimum and at the potential minimum | `make_Salvador_radii`, `make_Salvador_radii_ESP`, `ESP_minimum_for`, `put_Salvador_radii`, `make_SA_info`: in `molecule.rho.foo` on `develop`; moved to `molecule.grid.foo` on `fix-rho-grid-cycle` (§6) |
+| radii at the density minimum and at the potential minimum | `make_Salvador_radii`, `make_Salvador_radii_ESP`, `ESP_minimum_for`, `put_Salvador_radii`, `make_SA_info`: `molecule.grid.foo` on `develop`; still in `molecule.rho.foo` on `tfvc-names` until it is merged with `develop` |
 | potential on a grid, used for the V wall | `foofiles/molecule.grid.foo`, `make_EP_grid_r` |
 | wall stiffness and the wall step | `foofiles/becke_grid.foo`, `read_Salvador_stiffness`, `Salvador_step` |
 | wall scans, $`\varepsilon`$, $`N'`$ | `foofiles/molecule.har.foo`, `put_TFVC_wall_scans` and helpers |
@@ -124,13 +124,15 @@ cited are in `~/Dropbox/manuscripts/` (Medvedev 2017, Brux 2025, Chodkiewicz 202
 
 | branch | state |
 |---|---|
-| `develop` | has TFVC, TFVC(V) as `oc-tpfvc`, `tfvc-l0`–`l3`, `salvador_stiffness=`, LKO |
+| `develop` | has TFVC, TFVC(V) as `oc-tpfvc`, `tfvc-l0`–`l3`, `salvador_stiffness=`, LKO, and the fix of the RHO↔GRID use cycle (881babfa, fast-forwarded 2026-11-11 after a clean build, `ctest -L short` 88/88 and the three Salvador/TPFVC tests on the Mac) |
 | `tfvc-response` | adds `put_tfvc_wall_scans` (318c8dde), not merged |
-| `tfvc-names` | 318c8dde plus **uncommitted** renames: `oc-tpfvc` → `oc-tfvc-v`, `tfvp`/`tfvh` → `tfvc-p`/`tfvc-h`, docs updated; the old spellings still accepted |
-| `fix-rho-grid-cycle` (worktree `~/tonto-wt/fix-rho-grid-cycle`) | **uncommitted**: moves the six radii routines from RHO to GRID to break the RHO↔GRID use cycle; builds clean, 3 related tests pass; waiting for the go-ahead to commit, run the short suite and merge |
+| `tfvc-names` | 318c8dde plus the renames (ce0b3dbc, pushed): `oc-tpfvc` → `oc-tfvc-v`, `tfvp`/`tfvh` → `tfvc-p`/`tfvc-h`, docs updated; the old spellings still accepted. Not merged |
+| `fix-rho-grid-cycle` (worktree `~/tonto-wt/fix-rho-grid-cycle`) | merged into `develop`; the branch and worktree can be deleted |
 | worktree `~/tonto-wt/wall-scans-xh` | **uncommitted** `put_tfvc_wall_scans_xh`; its own build log says FAILED (the scans used a build made earlier) |
 
-Merging `tfvc-names` after `fix-rho-grid-cycle` conflicts only on comments in two moved routines.
+Merging `develop` into `tfvc-names` conflicts only on comments in two of the moved routines.
+GitHub CI cannot check any of this until the account lock is lifted (GitHub Support ticket
+#4988445; see the watch list of the task register).
 
 ## 5. What was found
 
@@ -239,9 +241,9 @@ together with the Gaussian form factors.
 
 ### Code
 
-12. `fix-rho-grid-cycle`: commit, run `ctest -L short`, merge to `develop` (ask first).
-13. `tfvc-names`: commit the renames, bless the changed outputs on achari2 (never on the Mac),
-    merge after 12.
+12. Done 2026-11-11: `fix-rho-grid-cycle` merged to `develop`.
+13. `tfvc-names`: merge `develop` in (comment conflicts only), bless the changed outputs on
+    achari2 (never on the Mac), then merge to `develop`.
 14. Merge `tfvc-response` (the wall scans) and decide whether `put_tfvc_wall_scans_xh` is kept.
     If it is, fix its build.
 15. Not done from the old task: $`l \ge 4`$; `l<n>` variants of `tfvc-p`/`tfvc-h`/`exphar`; the
