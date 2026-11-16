@@ -801,6 +801,14 @@ contains
          .make_cluster_charge_mx(Z) ! leaky
          .core_mx.r = .core_mx.r + Z
          Z.destroy
+         ! The embedding neighbours, from the first density available
+         if (.SCF_data.embedding_radius>ZERO) then
+            if (.embedding_mx.deallocated AND .density_mx.is_allocated_with_genre("r ")) then
+               .embedding_mx.create(.n_bf,.n_bf)
+               .make_r_embedding_mx(.embedding_mx)
+            end
+            if (.embedding_mx.allocated) .core_mx.r = .core_mx.r + .embedding_mx
+         end
       else if (.SCF_data.using_SC_Lorentz_fields) then
          ! Add Lorentz fields if needed
          if (NOT .partition_info_made) then
@@ -1266,6 +1274,12 @@ contains
          DIE_IF(charge.is_zero,"every cluster charge is zero: the Hirshfeld atom moments were not made")
       end
 
+      ! The embedding neighbours enter by their density, not by charges
+      if (.SCF_data.embedding_radius>ZERO) then
+         DIE_IF(.SCF_data.using_qq_cluster_charges,"the embedding works with dipole cluster charges only")
+         .remove_embedded_cluster_charges(pos,charge)
+      end
+
       ! Make the charge contribution to one electron Hamiltonian
       Z = ZERO
 
@@ -1440,6 +1454,88 @@ contains
 
    end
 
+   make_r_embedding_mx(V) :: leaky
+   ! Set "V" to the Coulomb potential matrix of all the embedding
+   ! neighbours of make_embedding_neighbours, each a copy of this molecule
+   ! with its density matrix rotated from the present one.
+      self :: INOUT
+      V :: MAT{REAL}, OUT
+
+   ENSURE(.density_mx.is_allocated_with_genre("r "),"needs a restricted density")
+   DIE_IF(.use_spherical_basis,"the embedding rotates cartesian shells only")
+
+      R :: MAT3{REAL}@
+      t,x,y,P :: MAT{REAL}@
+      cell :: MAT{INT}@
+      op :: VEC{INT}@
+      d_min :: VEC{REAL}@
+      n,a :: INT
+
+      .make_embedding_neighbours(R,t,op,cell,d_min)
+
+      x.create(3,.n_atom); y.create(3,.n_atom)
+      do a = 1,.n_atom
+         x(:,a) = .atom(a).position
+      end
+      P.create(.n_bf,.n_bf)
+
+      V = ZERO
+      do n = 1,op.dim
+         P = .density_mx.r
+         .rotate_density_mx_r(P,R(:,:,n))
+         y = matmul(R(:,:,n),x)
+         do a = 1,.n_atom
+            y(:,a) = y(:,a) + t(:,n)
+         end
+         .add_r_embedding_mx(V,self,P,y)
+      end
+
+      P.destroy; y.destroy; x.destroy
+      d_min.destroy; op.destroy; cell.destroy; t.destroy; R.destroy
+
+   end
+
+   remove_embedded_cluster_charges(pos,charge) :: leaky
+   ! Set to zero the cluster charges "charge" at "pos" that stand for
+   ! atoms of the embedding neighbours, which enter by their density
+   ! instead. Each cluster atom has three charges, the first at the atom.
+      self :: IN
+      pos :: MAT{REAL}, IN
+      charge :: VEC{REAL}, INOUT
+
+   ENSURE(charge.dim==pos.dim2,"pos and charge: incompatible")
+   ENSURE(mod(charge.dim,3)==0,"three charges per cluster atom expected")
+
+      R :: MAT3{REAL}@
+      t :: MAT{REAL}@
+      cell :: MAT{INT}@
+      op :: VEC{INT}@
+      d_min :: VEC{REAL}@
+      ya :: VEC{REAL}(3)
+      n,a,i,n_removed :: INT
+
+      .make_embedding_neighbours(R,t,op,cell,d_min)
+
+      n_removed = 0
+      do n = 1,op.dim
+      do a = 1,.n_atom
+         ya = matmul(R(:,:,n),.atom(a).position) + t(:,n)
+         do i = 1,charge.dim,3
+            if (norm2(pos(:,i)-ya)<0.001d0) then
+               charge(i:i+2) = ZERO
+               n_removed = n_removed + 1
+               exit
+            end
+         end
+      end
+      end
+
+      DIE_IF(n_removed/=op.dim*.n_atom,"an embedded atom is missing from the cluster charges: raise cluster_radius=")
+
+      d_min.destroy; op.destroy; cell.destroy; t.destroy; R.destroy
+
+   end
+
    same_atom_sets(x,y) result (res) :: PURE
    ! TRUE if every position "y(:,a)" lies within 0.001 bohr of a position
    ! "x(:,b)" of an atom with the same atomic number as atom "a": the
@@ -1470,12 +1566,16 @@ contains
    end
 
    put_embedding_neighbours :: leaky
-   ! Put the neighbours of make_embedding_neighbours, and check the
-   ! density matrix of each, rotated from the molecule's. At points about
-   ! the atoms of neighbour "n", its density from the rotated density
-   ! matrix must equal the molecule's density at the same points carried
-   ! back by the inverse symop: rho_n(r) = rho(R^T (r - t)). The largest
-   ! difference is put for each neighbour.
+   ! Put the neighbours of make_embedding_neighbours and check each one.
+   ! Its density matrix, rotated from the molecule's: at points about its
+   ! atoms, its density must equal the molecule's at the same points
+   ! carried back by the inverse symop, rho_n(r) = rho(R^T (r - t)). Its
+   ! embedding matrix V from add_r_embedding_mx: the interaction of the
+   ! molecule's electrons with the neighbour's electrons, E_J = tr(V_J P),
+   ! must equal -int rho(r) phi_n(r) dr on the molecular grid, phi_n being
+   ! the neighbour's electronic potential; and with its nuclei,
+   ! E_N = tr(V_N P), must equal sum_A Z_A phi(y_A), phi being the
+   ! molecule's own electronic potential at the neighbour's nuclei y_A.
       self :: INOUT
 
    ENSURE(.atom.allocated,"no atoms")
@@ -1483,49 +1583,63 @@ contains
    DIE_IF(.use_spherical_basis,"the embedding rotates cartesian shells only")
 
       R :: MAT3{REAL}@
-      t,x0,P,pt,pt0 :: MAT{REAL}@
+      t,x0,y,P,pt,pt0,grid_pt,V,y_pt :: MAT{REAL}@
       cell :: MAT{INT}@
       op :: VEC{INT}@
-      d_min,rho_n,rho0 :: VEC{REAL}@
+      d_min,rho_n,rho0,wt,rho_g,phi_n,phi_y :: VEC{REAL}@
       dx :: VEC{REAL}(3)
+      E_J,E_J_grid,E_N,E_N_direct :: REAL
       n_a,n_pt,n,a,k,i,j :: INT
 
       .make_embedding_neighbours(R,t,op,cell,d_min)
       n_a  = .atom.dim
       n_pt = 6*n_a
 
-      ! Work space
-      x0.create(3,n_a)
+      ! Work space, and the molecule's density on its grid
+      x0.create(3,n_a); y.create(3,n_a)
       do a = 1,n_a
          x0(:,a) = .atom(a).position
       end
-      P.create(.n_bf,.n_bf)
+      P.create(.n_bf,.n_bf); V.create(.n_bf,.n_bf)
       pt.create(n_pt,3); pt0.create(n_pt,3)
       rho_n.create(n_pt); rho0.create(n_pt)
+      y_pt.create(n_a,3); phi_y.create(n_a)
+      .set_up_becke_grid
+      .becke_grid.make_grid(grid_pt,wt)
+      rho_g.create(wt.dim); phi_n.create(wt.dim)
+      .make_ED_grid_r(rho_g,grid_pt,.density_mx.r)
 
       stdout.flush
       stdout.text("Coulomb embedding: the neighbour molecules")
       stdout.flush
       stdout.show("Embedding radius               =",.SCF_data.embedding_radius*ANGSTROM_PER_BOHR)
       stdout.show("No. of neighbours              =",op.dim)
+      stdout.show("Electrons on the grid          =",sum(wt*rho_g))
       stdout.flush
-      stdout.dash(int_fields=5,real_fields=3)
+      stdout.dash(int_fields=5,real_fields=6)
       stdout.put("n",int_width=TRUE)
       stdout.put("symop",int_width=TRUE)
       stdout.put("h1",int_width=TRUE)
       stdout.put("h2",int_width=TRUE)
       stdout.put("h3",int_width=TRUE)
       stdout.put("d_min/A")
-      stdout.put("max rho")
       stdout.put("max|drho|")
+      stdout.put("E_J")
+      stdout.put("E_J grid")
+      stdout.put("E_N")
+      stdout.put("E_N direct")
       stdout.flush
-      stdout.dash(int_fields=5,real_fields=3)
+      stdout.dash(int_fields=5,real_fields=6)
 
       do n = 1,op.dim
 
-         ! The neighbour's density matrix
+         ! The neighbour's density matrix and atoms
          P = .density_mx.r
          .rotate_density_mx_r(P,R(:,:,n))
+         y = matmul(R(:,:,n),x0)
+         do a = 1,n_a
+            y(:,a) = y(:,a) + t(:,n)
+         end
 
          ! Points 0.4 bohr either side of each neighbour atom, and the
          ! same points carried back to the molecule
@@ -1536,23 +1650,40 @@ contains
             k = k + 1
             dx = ZERO
             dx(i) = 0.4d0*(2*j-3)
-            pt(k,:)  = matmul(R(:,:,n),x0(:,a)) + t(:,n) + dx
+            pt(k,:)  = y(:,a) + dx
             pt0(k,:) = matmul(transpose(R(:,:,n)),pt(k,:) - t(:,n))
          end
          end
          end
-
-         ! The molecule's density at the carried-back points
          .make_ED_grid_r(rho0,pt0,.density_mx.r)
 
-         ! The neighbour's density, with the atoms moved onto it
+         ! The embedding matrix, electrons and nuclei apart
+         V = ZERO
+         .add_r_embedding_mx(V,self,P,y,nuclei=FALSE)
+         E_J = sum(V*.density_mx.r)
+         V = ZERO
+         .add_r_embedding_mx(V,self,P,y,electrons=FALSE)
+         E_N = sum(V*.density_mx.r)
+
+         ! The molecule's electronic potential at the neighbour's nuclei
+         y_pt = transpose(y)
+         .make_electronic_pot_grid_r(phi_y,y_pt,.density_mx.r)
+         E_N_direct = ZERO
          do a = 1,n_a
-            .atom(a).set_position(matmul(R(:,:,n),x0(:,a)) + t(:,n))
+            E_N_direct = E_N_direct + .atom(a).atomic_number*phi_y(a)
+         end
+
+         ! With the atoms moved onto the neighbour: its density at the
+         ! test points, and its electronic potential on the grid
+         do a = 1,n_a
+            .atom(a).set_position(y(:,a))
          end
          .make_ED_grid_r(rho_n,pt,P)
+         .make_electronic_pot_grid_r(phi_n,grid_pt,P)
          do a = 1,n_a
             .atom(a).set_position(x0(:,a))
          end
+         E_J_grid = -sum(wt*rho_g*phi_n)
 
          stdout.put(n)
          stdout.put(op(n))
@@ -1560,17 +1691,22 @@ contains
          stdout.put(cell(2,n))
          stdout.put(cell(3,n))
          stdout.put(d_min(n)*ANGSTROM_PER_BOHR)
-         stdout.put(maxval(rho0),fmt="e")
          stdout.put(maxval(abs(rho_n-rho0)),fmt="e")
+         stdout.put(E_J)
+         stdout.put(E_J_grid)
+         stdout.put(E_N)
+         stdout.put(E_N_direct)
          stdout.flush
 
       end
 
-      stdout.dash(int_fields=5,real_fields=3)
+      stdout.dash(int_fields=5,real_fields=6)
 
       ! Clean
+      phi_n.destroy; rho_g.destroy; wt.destroy; grid_pt.destroy
+      phi_y.destroy; y_pt.destroy
       rho0.destroy; rho_n.destroy; pt0.destroy; pt.destroy
-      P.destroy; x0.destroy
+      V.destroy; P.destroy; y.destroy; x0.destroy
       d_min.destroy; op.destroy; cell.destroy; t.destroy; R.destroy
 
    end

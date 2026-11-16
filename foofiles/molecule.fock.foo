@@ -3677,6 +3677,107 @@ contains
 
    end
 
+   add_r_embedding_mx(V,src,P,y,electrons,nuclei) :: leaky, PURE
+   ! Add to "V", over the basis of this molecule, the Coulomb potential
+   ! matrix of one embedding neighbour: molecule "src" with its atoms at
+   ! the positions "y(:,a)" and with density matrix "P" over its basis,
+   !    V_ab += sum_cd (ab|cd) P_cd - sum_A Z_A <a| 1/|r - y_A| |b> .
+   ! The electrons, the first term, are added unless "electrons" is
+   ! FALSE; the nuclei unless "nuclei" is FALSE. The neighbour's atoms
+   ! must not lie on this molecule's. The integral work arrays are sized
+   ! for each molecule's own shell pairs, which covers src = self.
+      self :: IN
+      V :: MAT{REAL}, INOUT
+      src :: MOLECULE, IN
+      P :: MAT{REAL}, IN
+      y :: MAT{REAL}, IN
+      electrons,nuclei :: BIN, optional, IN
+
+   ENSURE(V.dim1==.n_bf AND V.dim2==.n_bf,"V: wrong shape")
+   ENSURE(P.dim1==src.n_bf AND P.dim2==src.n_bf,"P: wrong shape")
+   ENSURE(y.dim1==3 AND y.dim2==src.n_atom,"y: wrong shape")
+
+      Z,Z_c :: MAT{REAL}@
+      sh4 :: SHELL1QUARTET
+      sh :: SHELL2
+      work :: ERI_SCRATCH
+      do_e,do_n :: BIN
+      ab,cd,aa,bb,cc,dd,sc,sd,abcd,q,k :: INT
+      a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld,na,nb,nc,nd :: INT
+      atom_a,atom_b,atom_c,atom_d :: INT
+      P_cd,val :: REAL
+
+      do_e = TRUE
+      if (present(electrons)) do_e = electrons
+      do_n = TRUE
+      if (present(nuclei)) do_n = nuclei
+
+      ! The electrons: every shell pair of this molecule with every shell
+      ! pair of the neighbour; no permutational symmetry between the two
+      if (do_e) then
+
+      work.set_sizes_for(.basis_shell1pair)
+      work.set_sizes_for(src.basis_shell1pair)
+
+      do ab = 1,.n_shell_pairs
+
+         .set_shell2_indices_from(ab,aa,bb,fa,la,na,fb,lb,nb,atom_a,atom_b)
+         .set_shell1q_ab_from(aa,bb,sh4,skip=FALSE)
+
+         do cd = 1,src.n_shell_pairs
+
+            src.set_shell2_indices_from(cd,cc,dd,fc,lc,nc,fd,ld,nd,atom_c,atom_d)
+            sc = src.basis_shell_for_shell(cc)
+            sd = src.basis_shell_for_shell(dd)
+            sh4.set_cd_new(src.basis_shell1pair(sc,sd),y(:,atom_c),y(:,atom_d),atom_c==atom_d,FALSE)
+            SHELL1QUARTET::make_ERI_into(sh4,work)
+
+            ! A block of two different shells holds one order of (c,d)
+            abcd = 0
+            do d = fd,ld
+            do c = fc,lc
+               P_cd = P(c,d)
+               if (cc/=dd) P_cd = P_cd + P(d,c)
+               do b = fb,lb
+               do a = fa,la
+                  abcd = abcd + 1
+                  val = work.abcd(abcd)*P_cd
+                  V(a,b) = V(a,b) + val
+                  if (aa/=bb) V(b,a) = V(b,a) + val
+               end
+               end
+            end
+            end
+
+         end
+
+      end
+
+      end
+
+      ! The nuclei, as point charges
+      if (do_n) then
+
+      Z.create(.n_bf,.n_bf)
+      Z = ZERO
+      do q = 1,.n_shell_pairs
+         .set_shell2_from(q,sh,fa,la,na,fb,lb,nb)
+         Z_c.create(na,nb)
+         do k = 1,src.n_atom
+            sh.get_nuc(Z_c,ZERO,y(:,k))
+            Z(fa:la,fb:lb) = Z(fa:la,fb:lb) - src.atom(k).atomic_number*Z_c
+         end
+         Z_c.destroy
+         sh.destroy_ptr_part
+      end
+      Z.symmetric_reflect
+      V = V + Z
+      Z.destroy
+
+      end
+
+   end
+
    make_r_JK_nosym(J,K,P) :: PURE
    ! Make the real coulomb matrix "J" and exchange matrix "K" matrix
    ! from the density matrix "P" which has no permutational symmetry.
