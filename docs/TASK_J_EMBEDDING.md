@@ -1,6 +1,36 @@
 # TASK: Coulomb embedding by the density of the nearest neighbours
 
-Working document, opened 2026-10-24. No branch yet.
+Working document, opened 2026-10-24. Branch `j-embedding`, worktree `~/tonto-wt/j-embedding`.
+The method, the keywords, the code table, the checks done and the literature are in
+[`REPORT_ON_CRYSTAL_EMBEDDING.md`](REPORT_ON_CRYSTAL_EMBEDDING.md); this page keeps the plan, the
+log and what is still open.
+
+## Status (2026-11-16)
+
+| stage | state |
+|---|---|
+| 1. neighbours, rotated density matrices | done, `ed0862d0`; checks in `~/tonto-runs/2026-11-13_j_embedding_stage1` |
+| 2. Coulomb integrals, nuclei, removal from the cluster charges, `embedding_radius=` | done, `3ef3dcd0`; checks in `~/tonto-runs/2026-11-13_j_embedding_stage2` |
+| 3. update in the self-consistent loop | open; see below |
+| 4. refinements against neutron | open |
+| fragment HAR | open; needs the TFVC path in fragment HAR first (it segfaults, `~/tonto-runs/2026-11-13_fraghar_tfvc_test`) |
+
+Decided on the way (Dylan, 2026-11-12 to 13): whole molecules only, so the atoms and groups
+levels below are not implemented; the source molecule is an argument of the integral routine so
+fragment HAR can reuse it; no supermolecule HAR for ion pairs or hydrates (8-hydroxyquinolinium
+hydrogen maleate, N-acetyl-L-4-hydroxyproline monohydrate wait for embedded fragment HAR).
+
+Stage 3, the design question: the self-consistent cluster charges are remade at every SCF
+iteration (`make_core_mx` is called after each Fock build). Remaking the embedding as often costs
+about ten Fock builds per iteration. Proposed: an outer loop inside the SCF. Make the embedding
+from the current density, converge the SCF, remake the embedding from the converged density,
+continue from the converged orbitals, and stop when the largest change of the embedding matrix
+falls below a tolerance. In HAR the outer loop restarts from the previous cycle's density, so
+after the first cycle it should take one or two passes.
+
+Open for fragment HAR: `ERI_SCRATCH:set_sizes_for` is called once for each molecule's own shell
+pairs, which covers src = self but not a mixed quartet whose bra and ket come from two bases with
+different largest pairs; size for the mixed quartets before reusing `add_r_embedding_mx`.
 
 ## Goal
 
@@ -25,85 +55,11 @@ repulsion in this task; they are the subject of the last section.
 
 ## The method
 
-The core matrix of the central molecule gains one term,
-
-```math
-F_{\mu\nu} = h_{\mu\nu} + V^{\mathrm{cc}}_{\mu\nu} + V^{\mathrm{emb}}_{\mu\nu} + G_{\mu\nu}[P] \qquad (1)
-```
-
-where $`\mu,\nu`$ label basis functions of the central molecule, $`h`$ is the usual core
-matrix, $`V^{\mathrm{cc}}`$ the cluster-charge matrix, $`G[P]`$ the two-electron part from the
-molecule's own density matrix $`P`$, and
-
-```math
-V^{\mathrm{emb}}_{\mu\nu} = \sum_{n} \Big[ \sum_{\lambda\sigma \in n} (\mu\nu|\lambda\sigma)\, P^{(n)}_{\lambda\sigma}
- \;-\; \sum_{A \in n} Z_A \,\langle \mu | \, |\mathbf r - \mathbf R_A|^{-1} | \nu \rangle \Big] \qquad (2)
-```
-
-Here $`n`$ runs over the near fragments, $`\lambda,\sigma`$ over the basis functions placed on
-the atoms of fragment $`n`$, $`(\mu\nu|\lambda\sigma)`$ is the two-electron Coulomb integral,
-$`Z_A`$ and $`\mathbf R_A`$ are the charge and position of nucleus $`A`$ of the fragment, and
-$`P^{(n)}`$ is the fragment's density matrix:
-
-```math
-P^{(n)} = T(R_n)\, P_{nn}\, T(R_n)^{\mathsf T} \qquad (3)
-```
-
-where $`P_{nn}`$ is the block of $`P`$ for the parent atoms of the fragment, and $`T(R_n)`$ is
-the block-diagonal matrix that rotates each shell of basis functions by the rotation part
-$`R_n`$ of the symmetry operation that makes the fragment from its parent atoms. The
-translation part only moves the shell centres.
-
-Since $`P^{(n)}`$ is held fixed during an SCF, $`V^{\mathrm{emb}}`$ is a one-electron operator
-for the central molecule and is added to the core matrix, beside $`V^{\mathrm{cc}}`$. It is
-remade from the latest $`P`$ wherever the self-consistent cluster charges are remade.
-
-The atoms of the near fragments are removed from the cluster charges, so no atom is counted twice.
-
-### Three levels of fragment
-
-| level | fragment | net charge of the fragment |
-|---|---|---|
-| atoms | each hydrogen-bond partner atom, diagonal block of $`P`$ only | Mulliken charge: basis-dependent, not what the cluster charges use |
-| groups | the donor or acceptor group (O–H, N–H, C=O), with the off-diagonal blocks inside it | Mulliken charge of the group |
-| molecules | every molecule with an atom within a set distance of the central molecule | zero |
-
-Whole molecules are the clean choice (neutral, no cut through bonds); atoms and groups are the
-cheap ones. Which level is enough is the main question this task answers.
-
-### Cost
-
-For $`N`$ basis functions per molecule and $`m`$ neighbour molecules, the integrals of
-Eq. (2) number about $`\tfrac12 N^2 \times \tfrac12 m N^2`$ before screening, about
-$`1.5\,N^4`$ for $`m = 6`$, against $`\tfrac18 N^4`$ for one Fock build of the molecule and
-$`\tfrac18 (7N)^4 \approx 300\,N^4`$ per iteration for the explicit 7-molecule cluster. They are
-made once per update of $`P^{(n)}`$, not once per SCF iteration. Schwarz screening removes most of
-them, since most neighbour functions are far from most central ones. Expect the cost of a few
-extra SCF iterations; measure it.
+In [`REPORT_ON_CRYSTAL_EMBEDDING.md`](REPORT_ON_CRYSTAL_EMBEDDING.md).
 
 ## Where it goes in the code
 
-- **Core matrix:** `molecule.scf.foo`, the routine that makes `.core_mx`, beside
-  `make_cluster_charge_mx(Z)`. Same shape: create a matrix, fill it, add it, destroy it.
-- **The neighbours:** `CLUSTER` made `within_radius` with `defragment` FALSE for atoms and
-  groups, TRUE for whole molecules. `make_non_fragment_mu_charges` already maps each cluster atom
-  to its parent atom and symmetry operation (it rotates the atomic dipoles); reuse that mapping.
-  `molecule_for_atom` gives the whole molecules.
-- **Rotating the block:** `rotate_density_mx_r` in `molecule.base.foo` rotates a density matrix
-  shell by shell with `GAUSSIAN_DATA:make_gaussian_xyz_matrices`; the fragment version applies
-  the same matrices to the block $`P_{nn}`$ only.
-- **The integrals:** a new `make_r_J_embedding(V)` in `molecule.fock.foo`, a trimmed copy of
-  `make_r_J_nosym`: the outer loop over the central molecule's shell pairs, the inner loop over the
-  fragment's shell pairs (shells copied from the parent atoms, placed at the fragment atom
-  positions), no exchange, no permutational factors between the two sets. `SHELL1QUARTET` takes
-  shells at any centre.
-- **The nuclei:** the point-charge matrix code of `make_cluster_charge_mx`, with charges $`Z_A`$.
-- **Keywords** in `scfdata= { }`, names to be settled: `embedding_fragments= none | atoms |
-  groups | molecules` (default `none`), `embedding_radius=` (distance from any atom of the
-  molecule, default perhaps 3 Å for atoms and groups).
-
-Mind the module-use cycles among the MOLECULE submodules (`docs/TASK_MTZ_READER.md`, the
-`molecule.fock` episode): put the new builder in FOCK and call it from SCF, which already uses FOCK.
+In [`REPORT_ON_CRYSTAL_EMBEDDING.md`](REPORT_ON_CRYSTAL_EMBEDDING.md).
 
 ## Checks
 
@@ -114,6 +70,11 @@ Mind the module-use cycles among the MOLECULE submodules (`docs/TASK_MTZ_READER.
 2. **Far limit.** For a fragment moved far away, $`V^{\mathrm{emb}}`$ must approach the field of
    its cluster charges.
 3. **Rotation.** A space group with rotations (L-alanine, $`P2_12_12_1`$), not only translations.
+
+Done instead of check 1 so far: the rotated density against the molecule's at carried-back
+points, the nuclear term against the molecule's potential at the neighbour's nuclei (exact), and
+the electronic term against the same interaction on the DFT grid ($`2\times10^{-6}`$), on urea and
+L-alanine; check 3 is covered by L-alanine. Checks 1 and 2 are still to do.
 
 ## Tests against experiment
 
@@ -141,21 +102,5 @@ and against the explicit cluster. Then xylitol and Gly–Ala if the gain is clea
 
 ## Later: exchange and orthogonality
 
-With whole-molecule fragments the next step is a complete crystal SCF in the manner of Shukla,
-Dolg, Fulde and Stoll (Chem. Phys. Lett. 262, 213 (1996); Phys. Rev. B 57, 1471 (1998); in
-`~/Dropbox/manuscripts/`): the neighbours' exchange (exact integrals or COSX for a hybrid or HF;
-the exchange-correlation of the total density on the grid for DFT) and orthogonality of the
-central orbitals to the neighbours' occupied orbitals. Shukla imposes orthogonality by a
-level-shift projector, $`\lambda \sum_k |\gamma_k\rangle\langle\gamma_k|`$ over the
-neighbours' occupied orbitals with $`\lambda`$ of $`10^3`$ to $`10^4`$ hartree, and adds basis
-functions on the neighbours to carry the orthogonalisation tails. The alternative is to project
-the neighbours' occupied orbitals out of the central basis functions, which gives the tails
-directly but makes some functions nearly dependent, to be removed by filtering small eigenvalues
-of the overlap.
+In [`REPORT_ON_CRYSTAL_EMBEDDING.md`](REPORT_ON_CRYSTAL_EMBEDDING.md).
 
-**Read Manby, Stella, Goodpaster and Miller, J. Chem. Theory Comput. 8, 2564 (2012) first**
-(`Manby_2012_JCTC_8_p2564-8.pdf`), and Goodpaster et al., J. Chem. Phys. 140, 18A507 (2014), on
-the basis. Their projection-based embedding is Shukla's projector,
-$`f^A = h + J[\gamma_A+\gamma_B] + v_{xc}[\gamma_A+\gamma_B] + \mu P^B`$, with the practical
-choices worked out, including a correction that removes nearly all dependence on $`\mu`$.
-Dylan's view: if they have worked out the projection step, it is better than eigenvalue filtering.

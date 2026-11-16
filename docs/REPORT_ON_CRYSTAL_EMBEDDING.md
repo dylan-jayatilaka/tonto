@@ -1,0 +1,262 @@
+# Embedding the molecule of a HAR in its crystal
+
+In a Hirshfeld atom refinement the wavefunction is made for one molecule. The crystal around it
+enters as self-consistent point charges and dipoles on the atoms of the molecules within a set
+radius (`use_SC_cluster_charges=`, `cluster_radius=`). Point charges give the far field well. At a
+hydrogen bond, 1.8 to 2.0 Å from the molecule, they do not: there the neighbour's density overlaps
+the molecule's, and its field is not that of a point charge and dipole. This page describes the
+Coulomb embedding, which replaces the charges of the nearest neighbours by their density and
+nuclei, and the later step, which adds their exchange and keeps the molecule's orbitals
+orthogonal to theirs.
+
+Units are atomic units; vectors are columns; ᵀ is the transpose.
+
+
+## 1. The Coulomb embedding
+
+The Fock matrix of the molecule gains one term,
+
+```math
+F_{\mu\nu} = h_{\mu\nu} + V^{\mathrm{cc}}_{\mu\nu} + V^{\mathrm{emb}}_{\mu\nu} + G_{\mu\nu}[P] \qquad (1)
+```
+
+where $`\mu,\nu`$ label the basis functions of the molecule, $`h`$ is the core matrix,
+$`V^{\mathrm{cc}}`$ the matrix of the cluster charges, $`P`$ the molecule's density matrix and
+$`G[P]`$ its two-electron part. The embedding matrix is
+
+```math
+V^{\mathrm{emb}}_{\mu\nu} = \sum_{n} \Big[ \sum_{\lambda\sigma \in n} (\mu\nu|\lambda\sigma)\, P^{(n)}_{\lambda\sigma}
+ \;-\; \sum_{A \in n} Z_A \,\langle \mu | \, |\mathbf{r} - \mathbf{y}_A|^{-1} | \nu \rangle \Big] \qquad (2)
+```
+
+Here $`n`$ runs over the neighbour molecules, $`\lambda,\sigma`$ over the basis functions on the
+atoms of neighbour $`n`$, $`(\mu\nu|\lambda\sigma)`$ is the two-electron Coulomb integral, and
+$`Z_A`$ and $`\mathbf{y}_A`$ are the charge and position of nucleus $`A`$ of the neighbour.
+
+**The neighbours** are the symmetry copies of the molecule, other than the molecule itself, with
+an atom within the distance $`r_{\mathrm{emb}}`$ (`embedding_radius=`) of an atom of the
+molecule. The selection follows the shape of the molecule: it is a shell of roughly constant
+thickness around it. A copy that several symmetry operations make, as for a molecule on a special
+position, is taken once. Copy $`n`$ is made by a rotation $`R_n`$ and a shift $`\mathbf{t}_n`$,
+both Cartesian, and its atom $`a`$ is at
+
+```math
+\mathbf{y}_a = R_n\, \mathbf{x}_a + \mathbf{t}_n \qquad (3)
+```
+
+with $`\mathbf{x}_a`$ the position of atom $`a`$ of the molecule, so its atoms are in the
+molecule's order.
+
+**Their density** is the molecule's own, carried into place:
+
+```math
+P^{(n)} = T(R_n)\, P\, T(R_n)^{\mathsf T} \qquad (4)
+```
+
+where $`T(R_n)`$ is block diagonal, each block rotating the Cartesian functions of one shell by
+$`R_n`$. The shift moves only the centres of the shells.
+
+**The cluster charges** of the atoms of the neighbours are removed, so no atom enters twice. The
+neighbours are neutral molecules, so the charges that remain carry the far field as before.
+
+Since $`P^{(n)}`$ is held fixed during an SCF, $`V^{\mathrm{emb}}`$ is a one-electron operator for
+the molecule and is added to the core matrix. It is a Coulomb operator only: the neighbours'
+electrons repel the molecule's, but there is no exchange with them and nothing stops the
+molecule's orbitals from spreading into their region. Exchange and orthogonality are §3.
+
+**Cost.** For $`N`$ basis functions per molecule and $`m`$ neighbours there are about
+$`\tfrac{1}{2}N^2 \times \tfrac{1}{2}mN^2`$ integrals, against $`\tfrac{1}{8}N^4`$ for one Fock build
+of the molecule: about twelve Fock builds for $`m = 6`$, before screening.
+
+
+## 2. Fragment HAR
+
+In fragment HAR the asymmetric unit holds several molecules or ions, each with its own SCF. The
+neighbours of fragment $`g`$ are then copies of every fragment $`h`$, its own and the others; the
+other fragments of the same asymmetric unit are neighbours by the identity operation. In (2) the
+basis functions $`\lambda,\sigma`$ and the density matrix are those of fragment $`h`$, rotated by (4)
+with $`h`$'s shells. The integral routine takes the source molecule as an argument for this
+reason. The embedding of each fragment is made from the other fragments' densities of the
+previous macro-iteration.
+
+
+## 3. Exchange and orthogonality
+
+With whole molecules as neighbours, the next step is an SCF of the molecule in the full field of
+its neighbours: their Coulomb field, their exchange, and orthogonality of the molecule's occupied
+orbitals to theirs. Shukla, Dolg, Stoll and Fulde (1996) gave this for crystals. The Fock operator
+of the central cluster contains the Coulomb and exchange operators of the environment, and a
+projection operator
+
+```math
+\hat{P}^{\mathrm{env}} = \lambda \sum_{k} |\gamma_k\rangle\langle\gamma_k| \qquad (5)
+```
+
+over the occupied orbitals $`\gamma_k`$ of the environment, with $`\lambda`$ of $`10^3`$ to
+$`10^4`$ hartree, which pushes any component of the cluster's orbitals along the environment's
+occupied orbitals far up in energy. Functions placed on the environment atoms carry the tails
+that orthogonality adds to the cluster's orbitals.
+
+Manby, Stella, Goodpaster and Miller (2012) use the same projector in their projection-based
+embedding,
+
+```math
+\hat{f}^{A} = \hat{h} + \hat{J}[\gamma^A + \gamma^B] + \hat{v}_{\mathrm{xc}}[\gamma^A + \gamma^B]
+ + \mu\, \hat{P}^{B} \qquad (6)
+```
+
+where $`\gamma^A`$ and $`\gamma^B`$ are the density matrices of the embedded subsystem and its
+environment, $`\hat{J}`$ the Coulomb operator, $`\hat{v}_{\mathrm{xc}}`$ the exchange-correlation
+potential of the total density, and $`\hat{P}^{B}`$ the projector onto the environment's occupied
+orbitals. They give a first-order correction that removes nearly all of the dependence on
+$`\mu`$, and Goodpaster et al. (2014) treat the truncation of the basis. Huzinaga's operator
+(Huzinaga and Cantu 1971) is the parameter-free alternative. For a hybrid functional or
+Hartree–Fock the exchange part of (6) is the exact exchange with the neighbours, by integrals or
+by COSX.
+
+The projector keeps the whole basis. The alternative, projecting the neighbours' occupied
+orbitals out of the molecule's basis functions, gives the orthogonality tails directly but makes
+some of the projected functions nearly linearly dependent, and they must be removed by filtering
+small eigenvalues of the overlap matrix. The level shift of (5) removes nothing: components along
+the neighbours' orbitals are only raised in energy, and the error of a finite shift is what the
+first-order correction of Manby et al. estimates.
+
+
+## 4. What has been done elsewhere
+
+| subject | what exists |
+|---|---|
+| Embedded-cluster Hartree–Fock of crystals with exchange and projection | Shukla, Dolg, Stoll and Fulde (1996), lithium hydride; Shukla, Dolg, Fulde and Stoll (1998), LiF and LiCl, through Wannier functions; Shukla, Dolg and Stoll (1998), polyethylene; correlated calculations on these wavefunctions (Shukla et al. 1999). Ionic and covalent solids, not molecular crystals |
+| Correlation in solids by increments | Stoll (1992), diamond; Stoll, Paulus and Fulde (2005) |
+| Embedded-cluster codes for solids | EMBED (Pisani and coworkers) |
+| Projection-based embedding | Manby et al. (2012); Goodpaster et al. (2014); review by Lee, Welborn, Manby and Miller (2019). Periodic environments: Libisch, Marsman, Burgdörfer and Kresse (2017); Chulhai and Goodpaster (2018), with the Huzinaga operator; applications to surfaces and bulk solids, not to molecular crystals |
+| Frozen-density embedding | Wesolowski and Warshel (1993); periodic subsystem DFT, Genova, Ceresoli and Pavanello (2014), and the eQE code (2017), applied to a pentacene supercell; a frozen periodic host at the cost of a gas-phase calculation, Sharma and Sierka (arXiv 2026), on surfaces and solvents |
+| Molecular crystals in fields of self-consistent charges | QM/MM with self-consistent electrostatic embedding, Bjornsson and Bühl (2012); monomers and dimers in self-consistent atomic charges and dipoles for MP2 and beyond, Hirata (2008), solid formic acid |
+| The crystal in HAR | Self-consistent cluster charges and dipoles (Jayatilaka and Dittrich 2008; Capelli et al. 2014); a cluster of multipoles (Chodkiewicz, Woińska and Woźniak 2020); the neighbours as frozen extremely localized molecular orbitals, QM/ELMO (Wieduwilt, Macetti and Genoni 2021); ESP-derived charges in one or more layers (Landeros-Rivera and Kleemiss 2026); explicit clusters of molecules |
+| Periodic wavefunctions in HAR | Projector-augmented waves (Ruth, Herbst-Irmer and Stalke 2022); a periodic Gaussian-basis calculation with CRYSTAL (Chu, Jayatilaka et al. 2026) |
+
+Of the HAR schemes, QM/ELMO is the closest to §3: the neighbours enter as frozen localized
+orbitals, with their Coulomb and exchange fields and orthogonality to them. It needs ELMOs
+transferred from a library or made for each neighbour. The Coulomb embedding of §1 takes the
+neighbours' density from the molecule's own density matrix, so it needs nothing else and stays
+self-consistent with the molecule. A Coulomb embedding of this kind, with the neighbours' density
+rotated from the molecule's own, has not been used in HAR or, as far as we know, for molecular
+crystals elsewhere; nor has projection-based embedding in the sense of (5) and (6).
+
+Manby et al. (2012) cite Stoll's incremental scheme and Huzinaga's operator, but not the work of
+Shukla, Dolg, Stoll and Fulde, which used the same level-shift projector sixteen years earlier.
+
+
+## 5. Keywords
+
+In `scfdata=`:
+
+| keyword | default | meaning |
+|---|---|---|
+| `embedding_radius=` | 0 (off) | the neighbours of §1 are the copies with an atom within this distance of an atom of the molecule; takes units, e.g. `3.5 angstrom` |
+| `use_SC_cluster_charges=` | `FALSE` | must be `TRUE`: the embedding replaces the charges of the neighbours' atoms |
+| `cluster_radius=` | 6 Å | must reach every atom of every neighbour; the job stops if one is missing |
+
+The embedding works with dipole cluster charges only (not `use_qq_cluster_charges=`) and with
+Cartesian basis functions only (not `use_spherical_basis=`), since only Cartesian shells are
+rotated in (4).
+
+On the molecule:
+
+| keyword | meaning |
+|---|---|
+| `put_embedding_neighbours` | lists the neighbours (symmetry operation, lattice shift, shortest distance) and checks each: its rotated density against the molecule's at the carried-back points, its nuclear term against the molecule's electronic potential at its nuclei, and its electronic term against the same interaction on the DFT grid (§7) |
+
+
+## 6. Example input
+
+```
+{
+   name= urea
+   basis_name= def2-SVP
+   charge= 0
+   multiplicity= 1
+   CIF= { file_name= urea.cif }
+   process_CIF
+   crystal= { xray_data= { partition_model= oc-tfvc } }
+   scfdata= {
+      initial_density=        promolecule
+      kind=                   rks
+      dft_functional=         b3lyp
+      use_SC_cluster_charges= TRUE
+      cluster_radius=         8 angstrom
+      embedding_radius=       3.5 angstrom
+   }
+   scf
+   put_embedding_neighbours
+   HAR_refinement
+}
+```
+
+
+## 7. Checks
+
+`put_embedding_neighbours` on urea ($`P\bar{4}2_1m`$, the molecule on a special position) and
+L-alanine ($`P2_12_12_1`$), RHF/def2-SVP, $`r_{\mathrm{emb}}`$ = 3.5 Å:
+
+| | urea | L-alanine |
+|---|---|---|
+| neighbours within 3.5 Å | 10 | 12 |
+| neighbours within 2.5 Å | 6 | 8 |
+| largest density difference, translated copies | $`8\times10^{-15}`$ | $`2\times10^{-14}`$ |
+| largest density difference, rotated copies | $`1\times10^{-12}`$ | $`3\times10^{-12}`$ |
+| nuclear term against the molecule's potential at the nuclei | equal to every printed digit | equal to every printed digit |
+| electronic term against the DFT grid, relative | $`2\times10^{-6}`$ | $`2\times10^{-6}`$ |
+
+The density differences are taken at six points about each atom of each neighbour, where the
+largest density is 1.6 to 1.7. Within 2.5 Å the neighbours are those of the explicit clusters of
+7 and 9 molecules used for these crystals. Copies related by symmetry give equal interaction
+energies.
+
+
+## 8. Where it is implemented
+
+| piece | procedure |
+|---|---|
+| the keyword | `SCF_DATA:set_embedding_radius`, `read_embedding_radius` |
+| the neighbours, $`R_n`$ and $`\mathbf{t}_n`$ of (3) | `MOLECULE.SCF:make_embedding_neighbours` |
+| whether two copies coincide | `MOLECULE.SCF:same_atom_sets` |
+| $`P^{(n)}`$ of (4) | `MOLECULE.BASE:rotate_density_mx_r` |
+| one neighbour's term of (2), from a source molecule, its density matrix and its atom positions | `MOLECULE.FOCK:add_r_embedding_mx` |
+| the sum over the neighbours | `MOLECULE.SCF:make_r_embedding_mx` |
+| removal of the neighbours' atoms from the cluster charges | `MOLECULE.SCF:remove_embedded_cluster_charges`, called from `make_cluster_charge_mx` |
+| $`V^{\mathrm{emb}}`$ in the core matrix, kept in `.embedding_mx` | `MOLECULE.SCF:make_core_mx` |
+| the checks of §7 | `MOLECULE.SCF:put_embedding_neighbours` |
+
+The embedding matrix is made from the first density available and then kept; it is not yet
+remade as the density changes.
+
+
+## References
+
+- Bjornsson R., Bühl M., *J. Chem. Theory Comput.* **8**, 498 (2012).
+- Capelli S. C., Bürgi H.-B., Dittrich B., Grabowsky S., Jayatilaka D., *IUCrJ* **1**, 361 (2014).
+- Chodkiewicz M. L., Woińska M., Woźniak K., *IUCrJ* **7**, 1199 (2020).
+- Chu K., Jayatilaka D., Malaspina L. A., Genoni A., Cametti G., Mebs S., Lentz D., Bürgi H.-B., Churakov S. V., Grabowsky S., *J. Phys. Chem. Lett.* **17**, 3170 (2026).
+- Chulhai D. V., Goodpaster J. D., *J. Chem. Theory Comput.* **14**, 1928 (2018).
+- Genova A., Ceresoli D., Pavanello M., *J. Chem. Phys.* **141**, 174101 (2014).
+- Genova A., Ceresoli D., Krishtal A., Andreussi O., DiStasio R. A., Pavanello M., *Int. J. Quantum Chem.* **117**, e25401 (2017).
+- Goodpaster J. D., Barnes T. A., Manby F. R., Miller T. F., *J. Chem. Phys.* **140**, 18A507 (2014).
+- Hirata S., *J. Chem. Phys.* **129**, 204104 (2008).
+- Huzinaga S., Cantu A. A., *J. Chem. Phys.* **55**, 5543 (1971).
+- Jayatilaka D., Dittrich B., *Acta Cryst.* A**64**, 383 (2008).
+- Landeros-Rivera B., Kleemiss F., *J. Appl. Cryst.* **59**, 1467 (2026).
+- Lee S. J. R., Welborn M., Manby F. R., Miller T. F., *Acc. Chem. Res.* **52**, 1359 (2019).
+- Libisch F., Marsman M., Burgdörfer J., Kresse G., *J. Chem. Phys.* **147**, 034110 (2017).
+- Manby F. R., Stella M., Goodpaster J. D., Miller T. F., *J. Chem. Theory Comput.* **8**, 2564 (2012).
+- Pisani C. (ed.), *Quantum-Mechanical Ab-initio Calculation of the Properties of Crystalline Materials*, Lecture Notes in Chemistry **67**, Springer (1996).
+- Ruth P. N., Herbst-Irmer R., Stalke D., *IUCrJ* **9**, 286 (2022).
+- Sharma M., Sierka M., arXiv:2611.12399 (2026).
+- Shukla A., Dolg M., Stoll H., Fulde P., *Chem. Phys. Lett.* **262**, 213 (1996).
+- Shukla A., Dolg M., Fulde P., Stoll H., *Phys. Rev. B* **57**, 1471 (1998).
+- Shukla A., Dolg M., Stoll H., *Chem. Phys. Lett.* **294**, 126 (1998).
+- Shukla A., Dolg M., Fulde P., Stoll H., *Phys. Rev. B* **60**, 5211 (1999).
+- Stoll H., *Phys. Rev. B* **46**, 6700 (1992).
+- Stoll H., Paulus B., Fulde P., *J. Chem. Phys.* **123**, 144108 (2005).
+- Wesolowski T. A., Warshel A., *J. Phys. Chem.* **97**, 8050 (1993).
+- Wieduwilt E. K., Macetti G., Genoni A., *J. Phys. Chem. Lett.* **12**, 463 (2021).
