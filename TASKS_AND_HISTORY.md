@@ -78,22 +78,49 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
-## WATCH (2026-11-11): GitHub Actions blocked by an account lock — ticket #4988445
+## START HERE (2026-11-17): J embedding stages 1–3 done on `j-embedding`; fragment HAR next
 
-Since 2026-11-06 every CI job on `master` and `develop` is refused before it starts: "The job
-was not started because your account is locked due to a billing issue." The account owes
-nothing: GitHub Free, no payment method on file, Actions usage $9.95 gross and $0 billed (all
-from the public `tonto`), no budgets. So the CI badges are red without any test having run.
-Ticket #4988445 is open with GitHub Support (support.github.com/tickets).
+**Where the work is.** Branch `j-embedding` (pushed, head `98e27f4b`), worktree
+`~/tonto-wt/j-embedding`, release build in `release/`. It carries `tfvc-names` (the TFVC rename,
+`put_tfvc_wall_scans`, the polar X–H scans) and the ADP measures, merged on top of `develop`.
+Not merged to `develop` yet: Dylan decides when.
 
-- **When the lock is lifted:** re-run `develop`'s CI from the Actions page, then merge `develop`
-  to `master` once it is green.
-- **`develop` carries two fixes that CI has not yet seen:** `881babfa` breaks the RHO↔GRID use
-  cycle that failed every Linux build of `develop` since the tpfvc merge (`1d67842b`, 2026-10-22;
-  "Circular ... molecule_rho_module.mod.stamp dependency dropped"); `822009af` moves the five
-  macOS workflows from `macos-14`, which GitHub no longer offers, to `macos-15`. Checked on the
-  Mac: clean release build with no circular warning, `ctest -L short` 88/88, and the two
-  `Salvador_properties` tests and `urea_rhf_STO-3G_TPFVC_HAR` pass.
+**Done this session (details in `docs/TASK_J_EMBEDDING.md` and
+`docs/REPORT_ON_CRYSTAL_EMBEDDING.md`):**
+- Schwarz screening of the embedding integrals, with the neighbour's (cd|cd) bounds made at its
+  rotated position; `use_embedding_schwarz_test=` (default TRUE). Results unchanged to 1e-6.
+- Stage 3, a self-consistent embedding: the matrix had been built once, from the promolecule at
+  SCF iteration 0, and never remade (4.9 mEh in tr(VP) on urea). Now it is remade when the
+  density has moved by more than `embedding_update_tolerance=` (default 1e-5, chosen from a
+  series on urea and L-alanine), and afresh at the start of every SCF, so it follows the atoms
+  in a refinement.
+- New test `tests/long/nh3_rhf_DZP_HAR_J-embedding` (5 s, two refinement cycles), blessed on
+  achari2 (worktree `~/github/tonto-jemb`, `reference/` with libxc). Same commit reblessed four
+  references: three TFVC-rename labels, and `urea_rhf_STO-3G_sph-TFVH_FF_fit_buster`, whose
+  reference predated the LKO default and was stale on `develop` too. Suites short + long there:
+  139 of 146 passed, two usual skips, and the five failures were these blessed references (the
+  suite was not rerun after blessing).
+- CI on `master` and `develop` green at `822009af`; the account lock is closed (archive).
+
+**Next, in order:**
+1. **Stage 5, the embedding in fragment HAR**, first case NAC monohydrate (Lübben 2014, data in
+   `~/Dropbox/tonto_data/xray_neutron_set/`). Plan with steps 0–5 and checks (a)–(d) in
+   `docs/TASK_J_EMBEDDING.md`, *Stage 5*. Step 0 is the fragment HAR + TFVC segfault
+   (`~/tonto-runs/2026-11-13_fraghar_tfvc_test`). Estimate about six hours plus runs.
+2. Stage 4, refinements against neutron with the embedding (urea, L-alanine first).
+3. The checks still open from stage 1: the explicit-cluster exactness check and the far limit.
+
+**In parallel, a separate session: the TFVC paper** (results only, no jobs). Start from the
+memory note `tfvc-paper-results-index`. Awaiting Dylan there: the tighter rewrite of
+"Non-rigid atoms"; whether to code eps_own/eps_nb; the abstract still calls eps_AB
+"non-rigidity".
+
+**Smaller items noted on the way:** carbamazepine III neutron data are in the supporting
+information of Sovago et al., Acta Cryst. B 72, 39 (2016), `bi5051sup1.cif` (block
+`formIII_NEUTRON`) and `bi5051formIII_NEUTRONsup6.hkl`; Dylan downloads them (IUCr blocks
+scripts). A far-field scheme to replace the two radii (near: exact embedding; far: atom
+multipoles to quadrupoles, whose integrals exist; Ewald for the lattice) is an idea, not yet
+planned; estimate two to four weeks.
 
 ## 2026-10-24: Coulomb embedding planned; r2SCAN added to the neutron benchmark
 
@@ -7645,6 +7672,29 @@ different question and the one that matters.
 ---
 
 # Done, resolved and closed (archive)
+
+## CLOSED 2026-11-16: GitHub Actions blocked by an account lock — ticket #4988445
+
+From 2026-11-06 every CI job was refused ("account is locked due to a billing issue") though
+nothing was owed. GitHub Support replied that an expired coupon had caused it and lifted the
+lock. `develop`'s CI then ran green at `822009af` (the RHO/GRID cycle fix and macOS-15), and
+`master` was fast-forwarded to it; `master`'s CI is green there too. The register row was
+removed on 2026-11-17. The watch entry as it stood:
+
+> Since 2026-11-06 every CI job on `master` and `develop` is refused before it starts: "The job
+> was not started because your account is locked due to a billing issue." The account owes
+> nothing: GitHub Free, no payment method on file, Actions usage $9.95 gross and $0 billed (all
+> from the public `tonto`), no budgets. So the CI badges are red without any test having run.
+> Ticket #4988445 is open with GitHub Support (support.github.com/tickets).
+>
+> - **When the lock is lifted:** re-run `develop`'s CI from the Actions page, then merge `develop`
+>   to `master` once it is green.
+> - **`develop` carries two fixes that CI has not yet seen:** `881babfa` breaks the RHO↔GRID use
+>   cycle that failed every Linux build of `develop` since the tpfvc merge (`1d67842b`, 2026-10-22;
+>   "Circular ... molecule_rho_module.mod.stamp dependency dropped"); `822009af` moves the five
+>   macOS workflows from `macos-14`, which GitHub no longer offers, to `macos-15`. Checked on the
+>   Mac: clean release build with no circular warning, `ctest -L short` 88/88, and the two
+>   `Salvador_properties` tests and `urea_rhf_STO-3G_TPFVC_HAR` pass.
 
 ## DONE 2026-10-14 (overnight): the eigensolver, the BUSTER writer, the interpolator tidy
 
