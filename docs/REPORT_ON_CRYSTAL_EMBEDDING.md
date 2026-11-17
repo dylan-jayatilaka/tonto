@@ -59,10 +59,28 @@ $`R_n`$. The shift moves only the centres of the shells.
 **The cluster charges** of the atoms of the neighbours are removed, so no atom enters twice. The
 neighbours are neutral molecules, so the charges that remain carry the far field as before.
 
-Since $`P^{(n)}`$ is held fixed during an SCF, $`V^{\mathrm{emb}}`$ is a one-electron operator for
-the molecule and is added to the core matrix. It is a Coulomb operator only: the neighbours'
+$`V^{\mathrm{emb}}`$ is added to the core matrix. It is a Coulomb operator only: the neighbours'
 electrons repel the molecule's, but there is no exchange with them and nothing stops the
 molecule's orbitals from spreading into their region. Exchange and orthogonality are §3.
+
+**Self-consistency.** The neighbours' density follows the molecule's as the SCF proceeds, as
+the cluster charges do. With $`V^{\mathrm{emb}}`$ is kept the density matrix $`P_{\mathrm{emb}}`$ it
+was made from, and at each Fock build $`V^{\mathrm{emb}}`$ is made again from the current $`P`$ when
+any element of $`P - P_{\mathrm{emb}}`$ exceeds $`\tau`$ (`embedding_update_tolerance=`) in size.
+When the SCF stops, the neighbours' density is the converged one to within $`\tau`$. Each SCF
+starts with a fresh build, so in a refinement the neighbours follow the atoms as they move.
+
+| $`\tau`$ | builds, urea | builds, L-alanine | error, urea / Eh | error, L-alanine / Eh |
+|---|---|---|---|---|
+| 0 (every Fock build) | 13 | 15 | 0 | 0 |
+| $`10^{-5}`$ (default) | 10 | 11 | $`2\times10^{-6}`$ | $`7\times10^{-6}`$ |
+| $`10^{-4}`$ | 8 | 9 | $`4\times10^{-5}`$ | $`9\times10^{-5}`$ |
+| $`10^{-3}`$ | 7 | 8 | $`4\times10^{-5}`$ | $`3\times10^{-4}`$ |
+| $`10^{-2}`$ | 5 | 6 | $`3\times10^{-4}`$ | $`2\times10^{-3}`$ |
+
+The error is $`\mathrm{tr}\,(V^{\mathrm{emb}} P)`$ of the stored matrix less that of one made from the
+converged density; RHF/def2-SVP from the promolecule, $`r_{\mathrm{emb}}`$ = 3.5 Å, cluster charges
+to 8 Å, SCF converged to $`10^{-6}`$ Eh.
 
 **Cost.** For $`N`$ basis functions per molecule and $`m`$ neighbours there are about
 $`\tfrac{1}{2}N^2 \times \tfrac{1}{2}mN^2`$ integrals, against $`\tfrac{1}{8}N^4`$ for one Fock build
@@ -168,6 +186,7 @@ In `scfdata=`:
 | keyword | default | meaning |
 |---|---|---|
 | `embedding_radius=` | 0 (off) | the neighbours of §1 are the copies with an atom within this distance of an atom of the molecule; takes units, e.g. `3.5 angstrom` |
+| `embedding_update_tolerance=` | $`10^{-5}`$ | remake the embedding when an element of the density matrix has moved by more than this since it was made (§1); 0 remakes it at every Fock build |
 | `use_embedding_schwarz_test=` | `TRUE` | skip the embedding integrals that the Schwarz test (5) shows to be negligible; `FALSE` computes them all |
 | `use_SC_cluster_charges=` | `FALSE` | must be `TRUE`: the embedding replaces the charges of the neighbours' atoms |
 | `cluster_radius=` | 6 Å | must reach every atom of every neighbour; the job stops if one is missing |
@@ -228,24 +247,26 @@ largest density is 1.6 to 1.7. Within 2.5 Å the neighbours are those of the exp
 7 and 9 molecules used for these crystals. Copies related by symmetry give equal interaction
 energies.
 
+`put_embedding_neighbours` also prints $`\mathrm{tr}\,(V^{\mathrm{emb}} P)`$ for the stored matrix and
+for one made from the present density, the error of the table in §1. In a two-cycle refinement of
+ammonia (`tests/long/nh3_rhf_DZP_HAR_J-embedding`), in which the H atom moves by 0.03 Å, the two
+agree to $`6\times10^{-7}`$ Eh: the embedding follows the atoms.
+
 
 ## 8. Where it is implemented
 
 | piece | procedure |
 |---|---|
-| the keywords | `SCF_DATA:set_embedding_radius`, `read_embedding_radius`, `set_using_embedding_Schwarz_test`, `read_using_embedding_Schwarz_test` |
+| the keywords | `SCF_DATA:set_embedding_radius`, `set_embedding_update_tolerance`, `set_using_embedding_Schwarz_test`, and their `read_` routines |
 | the neighbours, $`R_n`$ and $`\mathbf{t}_n`$ of (3) | `MOLECULE.SCF:make_embedding_neighbours` |
 | whether two copies coincide | `MOLECULE.SCF:same_atom_sets` |
 | $`P^{(n)}`$ of (4) | `MOLECULE.BASE:rotate_density_mx_r` |
 | one neighbour's term of (2), from a source molecule, its density matrix and its atom positions, with the test (5) | `MOLECULE.FOCK:add_r_embedding_mx` |
 | the sum over the neighbours | `MOLECULE.SCF:make_r_embedding_mx` |
 | removal of the neighbours' atoms from the cluster charges | `MOLECULE.SCF:remove_embedded_cluster_charges`, called from `make_cluster_charge_mx` |
-| $`V^{\mathrm{emb}}`$ in the core matrix, kept in `.embedding_mx` | `MOLECULE.SCF:make_core_mx` |
+| $`V^{\mathrm{emb}}`$ in the core matrix, kept in `.embedding_mx` with $`P_{\mathrm{emb}}`$ in `.embedding_density`, and the test for remaking it | `MOLECULE.SCF:make_r_core_mx` |
+| the fresh build at the start of each SCF | `MOLECULE.SCF:initialize_SCF` |
 | the checks of §7 | `MOLECULE.SCF:put_embedding_neighbours` |
-
-The embedding matrix is made once, at the first Fock build that has a density, usually the
-starting density, and is then kept for every later SCF, even after the atoms move. The cluster
-charges, by contrast, are remade from the current density at every Fock build.
 
 
 ## References

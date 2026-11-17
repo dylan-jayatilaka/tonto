@@ -763,6 +763,7 @@ contains
    ENSURE(.SCF_data.allocated,  "no SCF_data")
 
       Z :: MAT{REAL}@
+      rebuild :: BIN
 
       ! Is it already there?
       if (.core_mx.allocated) then
@@ -801,11 +802,22 @@ contains
          .make_cluster_charge_mx(Z) ! leaky
          .core_mx.r = .core_mx.r + Z
          Z.destroy
-         ! The embedding neighbours, from the first density available
+         ! The embedding neighbours: remade when any element of the
+         ! density matrix has moved by more than the tolerance since
          if (.SCF_data.embedding_radius>ZERO) then
-            if (.embedding_mx.deallocated AND .density_mx.is_allocated_with_genre("r ")) then
-               .embedding_mx.create(.n_bf,.n_bf)
-               .make_r_embedding_mx(.embedding_mx)
+            if (.density_mx.is_allocated_with_genre("r ")) then
+               rebuild = .embedding_mx.deallocated
+               if (NOT rebuild) rebuild = maxval(abs(.density_mx.r-.embedding_density)) &
+                                          > .SCF_data.embedding_update_tolerance
+               if (rebuild) then
+                  .embedding_mx.destroy
+                  .embedding_mx.create(.n_bf,.n_bf)
+                  .make_r_embedding_mx(.embedding_mx)
+                  .embedding_density.destroy
+                  .embedding_density.create(.n_bf,.n_bf)
+                  .embedding_density = .density_mx.r
+                  .SCF_data.n_embedding_builds = .SCF_data.n_embedding_builds + 1
+               end
             end
             if (.embedding_mx.allocated) .core_mx.r = .core_mx.r + .embedding_mx
          end
@@ -1589,7 +1601,7 @@ contains
       op :: VEC{INT}@
       d_min,rho_n,rho0,wt,rho_g,phi_n,phi_y :: VEC{REAL}@
       dx :: VEC{REAL}(3)
-      E_J,E_J_grid,E_N,E_N_direct :: REAL
+      E_J,E_J_grid,E_N,E_N_direct,E_sum,E_stored :: REAL
       n_a,n_pt,n,a,k,i,j :: INT
 
       .make_embedding_neighbours(R,t,op,cell,d_min)
@@ -1633,6 +1645,7 @@ contains
       stdout.flush
       stdout.dash(int_fields=5,real_fields=6)
 
+      E_sum = ZERO
       do n = 1,op.dim
 
          ! The neighbour's density matrix and atoms
@@ -1699,10 +1712,19 @@ contains
          stdout.put(E_N)
          stdout.put(E_N_direct)
          stdout.flush
+         E_sum = E_sum + E_J + E_N
 
       end
 
       stdout.dash(int_fields=5,real_fields=6)
+
+      ! The stored embedding against one made from the present density
+      if (.embedding_mx.allocated) then
+         stdout.flush
+         E_stored = sum(.embedding_mx*.density_mx.r)
+         stdout.show("Embedding energy, stored matrix =",E_stored)
+         stdout.show("Embedding energy, this density  =",E_sum)
+      end
 
       ! Clean
       phi_n.destroy; rho_g.destroy; wt.destroy; grid_pt.destroy
@@ -2337,6 +2359,11 @@ contains
    ENSURE(.SCF_data.allocated,"no SCF_data")
 
       t0,t1 :: REAL
+
+      ! The embedding is made afresh, at the present atom positions
+      .embedding_mx.destroy
+      .embedding_density.destroy
+      .SCF_data.n_embedding_builds = 0
 
       .SCF_data.time_1e        = ZERO
       .SCF_data.time_grid      = ZERO

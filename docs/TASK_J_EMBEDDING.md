@@ -12,7 +12,7 @@ log and what is still open.
 | 1. neighbours, rotated density matrices | done, `ed0862d0`; checks in `~/tonto-runs/2026-11-13_j_embedding_stage1` |
 | 2. Coulomb integrals, nuclei, removal from the cluster charges, `embedding_radius=` | done, `3ef3dcd0`; checks in `~/tonto-runs/2026-11-13_j_embedding_stage2` |
 | 2b. Schwarz screening, `use_embedding_schwarz_test=` | done, `eaa20647`, `1561bbbc`; `~/tonto-runs/2026-11-13_j_embedding_schwarz` |
-| 3. update in the self-consistent loop | planned below, in progress |
+| 3. update in the self-consistent loop, `embedding_update_tolerance=` | done 2026-11-17 (commit below); `~/tonto-runs/2026-11-17_j_embedding_stage3`; test `tests/long/nh3_rhf_DZP_HAR_J-embedding` |
 | 4. refinements against neutron | open |
 | fragment HAR | open; needs the TFVC path in fragment HAR first (it segfaults, `~/tonto-runs/2026-11-13_fraghar_tfvc_test`) |
 
@@ -22,6 +22,27 @@ fragment HAR can reuse it; no supermolecule HAR for ion pairs or hydrates (8-hyd
 hydrogen maleate, N-acetyl-L-4-hydroxyproline monohydrate wait for embedded fragment HAR).
 
 ## Stage 3: a self-consistent embedding
+
+**Outcome (2026-11-17).** Implemented as designed below; the test (1) sits in
+`MOLECULE.SCF:make_r_core_mx` (not `make_core_mx`, which calls it), the fresh build in
+`initialize_SCF`. Tolerance series, RHF/def2-SVP from the promolecule, 3.5 Å, cluster charges to
+8 Å, SCF to 1e-6 (errors in Eh, against the τ = 0 run, which rebuilds at every Fock build):
+
+| τ | urea builds | stored-matrix error | ΔE | L-Ala builds | stored-matrix error | ΔE | L-Ala job time |
+|---|---|---|---|---|---|---|---|
+| 0 | 13 | 0 | 0 | 15 | 0 | 0 | 388 s |
+| 1e-5 | 10 | 2e-6 | −3e-6 | 11 | 7e-6 | −9e-6 | 334 s |
+| 1e-4 | 8 | 3.5e-5 | −5.9e-5 | 9 | 8.5e-5 | +1.2e-4 | 310 s |
+| 1e-3 | 7 | 3.8e-5 | +1.0e-5 | 8 | 3.2e-4 | +4.5e-4 | 297 s |
+| 1e-2 | 5 | 3.3e-4 | +9.7e-4 | 6 | 1.6e-3 | +2.2e-3 | 273 s |
+
+Job times include about two minutes (L-Ala) of `put_embedding_neighbours` grid checks. Urea is not
+monotonic between 1e-4 and 1e-3 (sign cancellation); L-alanine, the zwitterion, is monotonic and
+about ten times more sensitive. Default chosen: **τ = 1e-5**, the largest value keeping the error
+below 1e-5 Eh, the SCF convergence the HAR jobs use. The SCF needed no extra convergence test:
+the iteration tables end smoothly. Moved-atom check (check 3 below): a two-cycle NH3 HAR, H moved
+0.03 Å, stored and fresh embedding agree to 6e-7 Eh (`nh3_fullprec`). The NH3 test takes 5 s and
+its refined positions differ from `nh3_rhf-consistent-cluster-charge_DZP_HAR`.
 
 **What is wrong now (confirmed 2026-11-17).** `make_core_mx` builds `.embedding_mx` only if it
 does not exist, and nothing destroys it. A probe line showed it is built at SCF iteration 0, so
