@@ -12,9 +12,9 @@ log and what is still open.
 | 1. neighbours, rotated density matrices | done, `ed0862d0`; checks in `~/tonto-runs/2026-11-13_j_embedding_stage1` |
 | 2. Coulomb integrals, nuclei, removal from the cluster charges, `embedding_radius=` | done, `3ef3dcd0`; checks in `~/tonto-runs/2026-11-13_j_embedding_stage2` |
 | 2b. Schwarz screening, `use_embedding_schwarz_test=` | done, `eaa20647`, `1561bbbc`; `~/tonto-runs/2026-11-13_j_embedding_schwarz` |
-| 3. update in the self-consistent loop, `embedding_update_tolerance=` | done 2026-11-17 (commit below); `~/tonto-runs/2026-11-17_j_embedding_stage3`; test `tests/long/nh3_rhf_DZP_HAR_J-embedding` |
+| 3. update in the self-consistent loop, `embedding_update_tolerance=` | done 2026-11-17, `c71a4a20`; `~/tonto-runs/2026-11-17_j_embedding_stage3`; test `tests/long/nh3_rhf_DZP_HAR_J-embedding` |
 | 4. refinements against neutron | open |
-| fragment HAR | open; needs the TFVC path in fragment HAR first (it segfaults, `~/tonto-runs/2026-11-13_fraghar_tfvc_test`) |
+| 5. fragment HAR | planned below; needs the TFVC path in fragment HAR first (it segfaults, `~/tonto-runs/2026-11-13_fraghar_tfvc_test`) |
 
 Decided on the way (Dylan, 2026-11-12 to 13): whole molecules only, so the atoms and groups
 levels below are not implemented; the source molecule is an argument of the integral routine so
@@ -119,9 +119,70 @@ the whole interaction $`\mathrm{tr}\,(V^{\mathrm{emb}} P)`$, twice the share of 
 pair interaction of a lattice energy. HAR uses only the density, so this does not matter for
 refinement, but the printed energy is not a lattice energy.
 
-Open for fragment HAR: `ERI_SCRATCH:set_sizes_for` is called once for each molecule's own shell
-pairs, which covers src = self but not a mixed quartet whose bra and ket come from two bases with
-different largest pairs; size for the mixed quartets before reusing `add_r_embedding_mx`.
+## Stage 5: the embedding in fragment HAR (planned 2026-11-17)
+
+Aim: embedded fragment HAR for crystals with several molecules or ions in the asymmetric unit.
+First case: NAC monohydrate, two fragments (NAC and water), Lübben 2014, X-ray and neutron at
+9 K, `~/Dropbox/tonto_data/xray_neutron_set/NAC_monohydrate_9K_{xray,neutron}_Lubben2014.cif`.
+Then 8-hydroxyquinolinium hydrogen maleate (Malaspina, same folder), an ion pair. Rough effort
+about six hours of work plus runs, the least certain part being step 0.
+
+**How fragment HAR runs today.** `MOLECULE.SCF:fragment_SCF_norm` (and `_para`) loops over the
+groups `.atom_group(g)`. Each fragment is its own MOLECULE `.mol(g)`, with its own `crystal`
+(from `update_fragment_info` with that fragment's atoms) and its own `SCF_data`, and gets its own
+`usual_SCF`. With `restart` the fragment SCFs of later refinement cycles start from their
+previous MOs. So if `embedding_radius=` reached a fragment today, `make_embedding_neighbours`
+would apply the symmetry operations to that fragment's own atoms only: each fragment would be
+embedded in copies of itself, and the other fragments would stay as cluster charges. Not tested;
+first find out whether `.mol(g).SCF_data` inherits the keyword at all.
+
+**Step 0. The fragment HAR + TFVC segfault.** `~/tonto-runs/2026-11-13_fraghar_tfvc_test`:
+`fraghar_oc-salvador` (urea as one fragment) and `glyala_fraghar_oc-salvador` exit 139;
+`glyala_fraghar_oc-hirshfeld` runs, `fraghar_oc-hirshfeld` exits 1. Debug build, `-fbacktrace`,
+start from the Gly-Ala case (it isolates TFVC from the urea one-fragment problem). The urea
+exit 1 needs its own look: a one-fragment fragment HAR is check (a) below.
+
+**Step 1. Neighbours across fragments.** For fragment $`g`$, the neighbours are the copies
+$`(h, R_n, \mathbf{t}_n)`$ of every fragment $`h`$, its own included, with an atom within
+$`r_{\mathrm{emb}}`$ of an atom of $`g`$, except $`g`$ itself. The other fragments of the same
+asymmetric unit are neighbours by the identity and zero shift. Generalise
+`make_embedding_neighbours` to take the source atoms (fragment $`h`$'s) and return $`h`$ with each
+copy; `same_atom_sets` as now, per $`h`$.
+
+**Step 2. The source density.** The neighbour's density is $`T(R_n) P_h T(R_n)^{\mathsf T}`$ with
+fragment $`h`$'s density matrix and its own shells: call `rotate_density_mx_r` on `.mol(h)` and
+`add_r_embedding_mx(V, .mol(h), P, y)`, which already takes the source molecule. The Schwarz
+bounds of the source are made inside the routine, so they carry over.
+
+**Step 3. Integral workspace for mixed quartets.** `ERI_SCRATCH:set_sizes_for` is called once for
+each molecule's own shell pairs, which covers src = self but not a quartet whose bra and ket
+come from two bases with different largest pairs; size it for the mixed quartets.
+
+**Step 4. Cluster charges.** `remove_embedded_cluster_charges` matches the atoms of copies of the
+molecule itself. Generalise it to take the list of embedded positions from step 1. Check first
+how a fragment's cluster charges are made: `CLUSTER:make_non_fragment_mu_charges` takes each
+atom's charge and dipole from its asymmetric-unit atom, so which fragment's Hirshfeld moments
+reach the other fragments' atoms is to be confirmed in the code.
+
+**Step 5. Updating.** Split the embedding of fragment $`g`$ into the part from copies of itself,
+updated during its own SCF as in stage 3, and the part from the other fragments, whose densities
+change only between fragment SCFs. Keep one $`P_{\mathrm{emb}}`$ per source fragment; at the start
+of $`g`$'s SCF rebuild the other-fragment part when any source density has moved by more than
+$`\tau`$. Find out whether fragment HAR already repeats the fragment SCFs until they agree with
+each other (through the cluster charges); if not, the refinement cycles do it.
+
+**Checks.**
+- (a) Urea, or L-alanine, as a one-fragment fragment HAR with the embedding must reproduce the
+  stage 3 HAR to the SCF convergence.
+- (b) NAC monohydrate: `put_embedding_neighbours` (generalised) must list the water copies among
+  the NAC's neighbours and the NAC copies among the water's, with the density, nuclear and grid
+  checks as now.
+- (c) Symmetry of the pair interaction: with converged densities, the interaction of $`g`$ with a
+  copy of $`h`$ must equal that of $`h`$ with the inverse copy of $`g`$.
+- (d) A test job: `tests/long/gly_ala_fragHAR_rhf_STO-3G` exists; add an embedded variant, two
+  refinement cycles, as for `nh3_rhf_DZP_HAR_J-embedding`.
+
+Then the refinements of NAC monohydrate against its neutron structure, per wavefunction.
 
 ## Goal
 
