@@ -68,6 +68,20 @@ molecule's orbitals from spreading into their region. Exchange and orthogonality
 $`\tfrac{1}{2}N^2 \times \tfrac{1}{2}mN^2`$ integrals, against $`\tfrac{1}{8}N^4`$ for one Fock build
 of the molecule: about twelve Fock builds for $`m = 6`$, before screening.
 
+**Screening.** An integral block is skipped by the Schwarz test when
+
+```math
+\sqrt{(\mu\nu|\mu\nu)}\;\sqrt{(\lambda\sigma|\lambda\sigma)}\;\max\,|P^{(n)}_{\lambda\sigma} + P^{(n)}_{\sigma\lambda}| < \epsilon \qquad (5)
+```
+
+with the maximum taken over the functions of the shell pair, and $`\epsilon`$ the cutoff
+`ERI_Schwarz_cutoff=` ($`10^{-9}`$). The bounds $`(\lambda\sigma|\lambda\sigma)`$ are made for each
+neighbour at its own atom positions, because a rotation mixes the functions of a p or d shell and
+the molecule's bounds do not bound the rotated ones. The test removes pairs whose functions barely
+overlap; it does not become stronger as a neighbour moves away, since the Coulomb interaction of
+two distant pairs falls off only as the inverse distance. `use_embedding_schwarz_test= FALSE`
+computes every integral.
+
 
 ## 2. Fragment HAR
 
@@ -89,7 +103,7 @@ of the central cluster contains the Coulomb and exchange operators of the enviro
 projection operator
 
 ```math
-\hat{P}^{\mathrm{env}} = \lambda \sum_{k} |\gamma_k\rangle\langle\gamma_k| \qquad (5)
+\hat{P}^{\mathrm{env}} = \lambda \sum_{k} |\gamma_k\rangle\langle\gamma_k| \qquad (6)
 ```
 
 over the occupied orbitals $`\gamma_k`$ of the environment, with $`\lambda`$ of $`10^3`$ to
@@ -102,7 +116,7 @@ embedding,
 
 ```math
 \hat{f}^{A} = \hat{h} + \hat{J}[\gamma^A + \gamma^B] + \hat{v}_{\mathrm{xc}}[\gamma^A + \gamma^B]
- + \mu\, \hat{P}^{B} \qquad (6)
+ + \mu\, \hat{P}^{B} \qquad (7)
 ```
 
 where $`\gamma^A`$ and $`\gamma^B`$ are the density matrices of the embedded subsystem and its
@@ -111,13 +125,13 @@ potential of the total density, and $`\hat{P}^{B}`$ the projector onto the envir
 orbitals. They give a first-order correction that removes nearly all of the dependence on
 $`\mu`$, and Goodpaster et al. (2014) treat the truncation of the basis. Huzinaga's operator
 (Huzinaga and Cantu 1971) is the parameter-free alternative. For a hybrid functional or
-Hartree–Fock the exchange part of (6) is the exact exchange with the neighbours, by integrals or
+Hartree–Fock the exchange part of (7) is the exact exchange with the neighbours, by integrals or
 by COSX.
 
 The projector keeps the whole basis. The alternative, projecting the neighbours' occupied
 orbitals out of the molecule's basis functions, gives the orthogonality tails directly but makes
 some of the projected functions nearly linearly dependent, and they must be removed by filtering
-small eigenvalues of the overlap matrix. The level shift of (5) removes nothing: components along
+small eigenvalues of the overlap matrix. The level shift of (6) removes nothing: components along
 the neighbours' orbitals are only raised in energy, and the error of a finite shift is what the
 first-order correction of Manby et al. estimates.
 
@@ -141,7 +155,7 @@ transferred from a library or made for each neighbour. The Coulomb embedding of 
 neighbours' density from the molecule's own density matrix, so it needs nothing else and stays
 self-consistent with the molecule. A Coulomb embedding of this kind, with the neighbours' density
 rotated from the molecule's own, has not been used in HAR or, as far as we know, for molecular
-crystals elsewhere; nor has projection-based embedding in the sense of (5) and (6).
+crystals elsewhere; nor has projection-based embedding in the sense of (6) and (7).
 
 Manby et al. (2012) cite Stoll's incremental scheme and Huzinaga's operator, but not the work of
 Shukla, Dolg, Stoll and Fulde, which used the same level-shift projector sixteen years earlier.
@@ -154,6 +168,7 @@ In `scfdata=`:
 | keyword | default | meaning |
 |---|---|---|
 | `embedding_radius=` | 0 (off) | the neighbours of §1 are the copies with an atom within this distance of an atom of the molecule; takes units, e.g. `3.5 angstrom` |
+| `use_embedding_schwarz_test=` | `TRUE` | skip the embedding integrals that the Schwarz test (5) shows to be negligible; `FALSE` computes them all |
 | `use_SC_cluster_charges=` | `FALSE` | must be `TRUE`: the embedding replaces the charges of the neighbours' atoms |
 | `cluster_radius=` | 6 Å | must reach every atom of every neighbour; the job stops if one is missing |
 
@@ -218,18 +233,19 @@ energies.
 
 | piece | procedure |
 |---|---|
-| the keyword | `SCF_DATA:set_embedding_radius`, `read_embedding_radius` |
+| the keywords | `SCF_DATA:set_embedding_radius`, `read_embedding_radius`, `set_using_embedding_Schwarz_test`, `read_using_embedding_Schwarz_test` |
 | the neighbours, $`R_n`$ and $`\mathbf{t}_n`$ of (3) | `MOLECULE.SCF:make_embedding_neighbours` |
 | whether two copies coincide | `MOLECULE.SCF:same_atom_sets` |
 | $`P^{(n)}`$ of (4) | `MOLECULE.BASE:rotate_density_mx_r` |
-| one neighbour's term of (2), from a source molecule, its density matrix and its atom positions | `MOLECULE.FOCK:add_r_embedding_mx` |
+| one neighbour's term of (2), from a source molecule, its density matrix and its atom positions, with the test (5) | `MOLECULE.FOCK:add_r_embedding_mx` |
 | the sum over the neighbours | `MOLECULE.SCF:make_r_embedding_mx` |
 | removal of the neighbours' atoms from the cluster charges | `MOLECULE.SCF:remove_embedded_cluster_charges`, called from `make_cluster_charge_mx` |
 | $`V^{\mathrm{emb}}`$ in the core matrix, kept in `.embedding_mx` | `MOLECULE.SCF:make_core_mx` |
 | the checks of §7 | `MOLECULE.SCF:put_embedding_neighbours` |
 
-The embedding matrix is made from the first density available and then kept; it is not yet
-remade as the density changes.
+The embedding matrix is made once, at the first Fock build that has a density, usually the
+starting density, and is then kept for every later SCF, even after the atoms move. The cluster
+charges, by contrast, are remade from the current density at every Fock build.
 
 
 ## References

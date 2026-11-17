@@ -3686,9 +3686,9 @@ contains
    ! FALSE; the nuclei unless "nuclei" is FALSE. The neighbour's atoms
    ! must not lie on this molecule's. The integral work arrays are sized
    ! for each molecule's own shell pairs, which covers src = self.
-   ! Quartets are skipped by the Schwarz test, with the neighbour's
-   ! (cd|cd) bounds made at the positions "y"; the molecule's own bounds
-   ! ".max_I" must exist.
+   ! Unless use_embedding_schwarz_test= is FALSE, quartets are skipped by
+   ! the Schwarz test, with the neighbour's (cd|cd) bounds made at the
+   ! positions "y"; the molecule's own bounds ".max_I" must then exist.
       self :: IN
       V :: MAT{REAL}, INOUT
       src :: MOLECULE, IN
@@ -3699,14 +3699,14 @@ contains
    ENSURE(V.dim1==.n_bf AND V.dim2==.n_bf,"V: wrong shape")
    ENSURE(P.dim1==src.n_bf AND P.dim2==src.n_bf,"P: wrong shape")
    ENSURE(y.dim1==3 AND y.dim2==src.n_atom,"y: wrong shape")
-   ENSURE(.max_I.allocated,"no Schwarz bounds, max_I")
+   ENSURE(NOT .SCF_data.using_embedding_Schwarz_test OR .max_I.allocated,"no Schwarz bounds, max_I")
 
       Z,Z_c :: MAT{REAL}@
       I_cd,P_cd_max :: VEC{REAL}@
       sh4 :: SHELL1QUARTET
       sh :: SHELL2
       work :: ERI_SCRATCH
-      do_e,do_n :: BIN
+      do_e,do_n,screen :: BIN
       ab,cd,aa,bb,cc,dd,sc,sd,abcd,q,k,i,n_cd :: INT
       a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld,na,nb,nc,nd :: INT
       atom_a,atom_b,atom_c,atom_d :: INT
@@ -3727,6 +3727,8 @@ contains
       ! Schwarz bounds of the neighbour: the square root of the largest
       ! diagonal (cd|cd) of each shell pair where it stands, and the
       ! largest |P| of each pair, doubled for P_cd + P_dc
+      screen = .SCF_data.using_embedding_Schwarz_test
+      if (screen) then
       I_cd.create(src.n_shell_pairs)
       P_cd_max.create(src.n_shell_pairs)
       src.make_max_density_elements(P_cd_max,P)
@@ -3747,17 +3749,22 @@ contains
       end
       cutoff = .SCF_data.ERI_Schwarz_cutoff
       IP_max = maxval(I_cd*P_cd_max)
+      end
 
       do ab = 1,.n_shell_pairs
 
-         if (.max_I(ab)*IP_max < cutoff) cycle
+         if (screen) then
+            if (.max_I(ab)*IP_max < cutoff) cycle
+         end
 
          .set_shell2_indices_from(ab,aa,bb,fa,la,na,fb,lb,nb,atom_a,atom_b)
          .set_shell1q_ab_from(aa,bb,sh4,skip=FALSE)
 
          do cd = 1,src.n_shell_pairs
 
-            if (.max_I(ab)*I_cd(cd)*P_cd_max(cd) < cutoff) cycle
+            if (screen) then
+               if (.max_I(ab)*I_cd(cd)*P_cd_max(cd) < cutoff) cycle
+            end
 
             src.set_shell2_indices_from(cd,cc,dd,fc,lc,nc,fd,ld,nd,atom_c,atom_d)
             sc = src.basis_shell_for_shell(cc)
@@ -3786,8 +3793,10 @@ contains
 
       end
 
-      P_cd_max.destroy
-      I_cd.destroy
+      if (screen) then
+         P_cd_max.destroy
+         I_cd.destroy
+      end
 
       end
 
