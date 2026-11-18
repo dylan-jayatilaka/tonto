@@ -14,7 +14,7 @@ log and what is still open.
 | 2b. Schwarz screening, `use_embedding_schwarz_test=` | done, `eaa20647`, `1561bbbc`; `~/tonto-runs/2026-11-13_j_embedding_schwarz` |
 | 3. update in the self-consistent loop, `embedding_update_tolerance=` | done 2026-11-17, `c71a4a20`; `~/tonto-runs/2026-11-17_j_embedding_stage3`; test `tests/long/nh3_rhf_DZP_HAR_J-embedding` |
 | 4. refinements against neutron | open |
-| 5. fragment HAR | coded and checked 2026-11-18, `366926cc`, `3188e064` and the commit after; `~/tonto-runs/2026-11-17_fraghar_embedding`; two new tests wait for their references (achari2) |
+| 5. fragment HAR | coded and checked 2026-11-18, `366926cc`, `3188e064` and the commit after; `~/tonto-runs/2026-11-17_fraghar_embedding`; two new tests, blessed on achari2; merged to `develop` 2026-11-18 |
 
 Decided on the way (Dylan, 2026-11-12 to 13): whole molecules only, so the atoms and groups
 levels below are not implemented; the source molecule is an argument of the integral routine so
@@ -245,9 +245,11 @@ converge with STO-3G is not looked at.
 
 **Still open in stage 5.**
 
-- The references of the two new tests, on achari2: `tests/long/nh3_rhf_DZP_fragHAR_J-embedding`
-  (one fragment, two cycles) and `tests/long/nh3_P21_rhf_DZP_fragment_SCF_J-embedding` (two
-  fragments, SCF and `put_fragment_neighbours`). Both run in a debug build on the Mac (10 s each).
+- Done 2026-11-18: the two new tests, `tests/long/nh3_rhf_DZP_fragHAR_J-embedding` (one
+  fragment, two cycles) and `tests/long/nh3_P21_rhf_DZP_fragment_SCF_J-embedding` (two
+  fragments, SCF and `put_fragment_neighbours`), are blessed on achari2 (`~/github/tonto-jemb`,
+  `reference/`, libxc on). Suites short + long there: 146 of 148 passed, the two usual skips, no
+  failure. Both also pass on the Mac and run in a debug build (10 s each).
   Check (d) asked for an embedded Gly-Ala variant; Gly-Ala's fragments are capped residues of one
   molecule, which have no crystal surroundings of their own, so the code stops for capped fragments.
 - **A trap for DFT fragments, older than this work.** `kind= fragment-rks` with

@@ -81,11 +81,9 @@ because by then it held far more than deferred items.)*
 ## START HERE (2026-11-18): J embedding stage 5, fragment HAR with surroundings, coded on `j-embedding`
 
 **Where the work is.** Branch `j-embedding`, worktree `~/tonto-wt/j-embedding`, release build in
-`release/`, debug build in `debug/` (both gfortran-14, libxc on). **Five new commits are local
-only, not pushed** (`366926cc`, `3188e064`, `4649791e`, `ccd0dba3` and the results commit after
-it). Dylan
-gave leave on 2026-11-17 to work unattended in this tree; nothing was pushed, and achari2 was not
-touched.
+`release/`, debug build in `debug/` (both gfortran-14, libxc on). Pushed, the two new tests
+blessed on achari2, and **merged to `develop`** on 2026-11-18, on Dylan's word. That merge also
+takes `tfvc-names` and the ADP measures, which the branch carried, to `develop`.
 
 **Done (details in `docs/TASK_J_EMBEDDING.md`, *Stage 5*, and `docs/REPORT_ON_CRYSTAL_EMBEDDING.md`
 §2, §7):**
@@ -111,10 +109,9 @@ touched.
   larger basis, other radii.
 
 **For Dylan to decide.**
-1. **Push `j-embedding` and bless the two new tests on achari2** (worktree `~/github/tonto-jemb`):
-   `tests/long/nh3_rhf_DZP_fragHAR_J-embedding` and
-   `tests/long/nh3_P21_rhf_DZP_fragment_SCF_J-embedding`. They have no reference `stdout` yet, so
-   they fail in `ctest` until blessed.
+1. Done 2026-11-18: `tests/long/nh3_rhf_DZP_fragHAR_J-embedding` and
+   `tests/long/nh3_P21_rhf_DZP_fragment_SCF_J-embedding` blessed on achari2 (worktree
+   `~/github/tonto-jemb`); suites short + long there 146 of 148, the two usual skips, no failure.
 2. **`kind= fragment-rks` runs the fragments at RHF** unless `use_default_guess_options= FALSE` is
    also given. Older than this work, and it means any earlier "DFT" fragment HAR without that
    keyword was Hartree–Fock. Proposed fix in `docs/TASK_J_EMBEDDING.md`; it changes what existing
