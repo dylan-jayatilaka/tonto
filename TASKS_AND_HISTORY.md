@@ -81,8 +81,9 @@ because by then it held far more than deferred items.)*
 ## START HERE (2026-11-18): J embedding stage 5, fragment HAR with surroundings, coded on `j-embedding`
 
 **Where the work is.** Branch `j-embedding`, worktree `~/tonto-wt/j-embedding`, release build in
-`release/`, debug build in `debug/` (both gfortran-14, libxc on). **Four new commits are local
-only, not pushed** (`366926cc`, `3188e064`, `4649791e` and the documents commit after them). Dylan
+`release/`, debug build in `debug/` (both gfortran-14, libxc on). **Five new commits are local
+only, not pushed** (`366926cc`, `3188e064`, `4649791e`, `ccd0dba3` and the results commit after
+it). Dylan
 gave leave on 2026-11-17 to work unattended in this tree; nothing was pushed, and achari2 was not
 touched.
 
@@ -99,8 +100,15 @@ touched.
   the subgroup P2₁ as two fragments gives that energy for each; pair sums symmetric; NAC
   monohydrate neighbour lists and pair sums right. Short suite 89 of 89 on the Mac (release), and
   the ten J-embedding, fragHAR, cluster-charge and quartz tests.
-- NAC monohydrate fragment HARs, RHF and B3LYP, def2-SVP, Hirshfeld atoms, three surroundings,
-  against neutron: `~/tonto-runs/2026-11-17_fraghar_embedding` (README, `compare_nac.out`).
+- Fragment HARs against neutron, RHF and B3LYP, def2-SVP, Hirshfeld atoms: NAC monohydrate
+  (isolated, charges, density + charges) and 8-hydroxyquinolinium hydrogen maleate (charges,
+  density + charges), ten refinements, all converged; `~/tonto-runs/2026-11-17_fraghar_embedding`
+  (README, `compare_nac.out`, `compare_hqm.out`), tables in `docs/TASK_J_EMBEDDING.md`.
+  **Result: no gain from the embedding over cluster charges on these two crystals.** The GoF
+  changes by 0.002 or less in all four pairs (e.g. NAC, B3LYP: 1.5155 charges, 1.5175 density +
+  charges; isolated 1.5257), and the polar X–H bonds move by about 0.01 Å, towards neutron in one
+  pair and away in three. The embedded jobs take 2.7 times as long. Not tried: TFVC atoms, a
+  larger basis, other radii.
 
 **For Dylan to decide.**
 1. **Push `j-embedding` and bless the two new tests on achari2** (worktree `~/github/tonto-jemb`):
@@ -117,7 +125,8 @@ touched.
    geometry before the last step).
 
 **Next, in order:**
-1. 8-hydroxyquinolinium hydrogen maleate (ion pair), same three surroundings.
+1. The same two crystals with TFVC atoms and def2-TZVP, to see whether the null result above holds
+   (the Gly-Ala TFVC fragment run with STO-3G stopped at its cycle limit, so check convergence).
 2. Fewer passes: each costs one embedding build per fragment; try an extrapolation over the
    passes. Then the embedded fragment SCF under MPI (it stops at present).
 3. Stage 4, refinements against neutron with the embedding (urea, L-alanine), and the two checks

@@ -134,13 +134,15 @@ fragment has surroundings made from densities within $`\tau`$ of the final ones.
 largest $`\Delta_h`$. In a refinement the passes of each cycle start from the densities of the
 cycle before.
 
-| crystal, RHF | fragments | surroundings | passes |
-|---|---|---|---|
-| ammonia, DZP | 1 | density to 3.5 Å, charges to 8 Å | 5 |
-| N-acetyl-L-4-hydroxyproline monohydrate, def2-SVP | 2 | charges to 8 Å | 7 |
-| N-acetyl-L-4-hydroxyproline monohydrate, def2-SVP | 2 | density to 3.5 Å, charges to 8 Å | 7 |
+| crystal, RHF | fragments | surroundings | passes from the promolecule | passes in the later refinement cycles |
+|---|---|---|---|---|
+| ammonia, DZP | 1 | density to 3.5 Å, charges to 8 Å | 5 | 4, 3, 2, 2, 1 |
+| N-acetyl-L-4-hydroxyproline monohydrate, def2-SVP | 2 | charges to 8 Å | 7 | 6, 4, 4, 3, 2, 1 |
+| N-acetyl-L-4-hydroxyproline monohydrate, def2-SVP | 2 | density to 3.5 Å, charges to 8 Å | 7 | 6, 4, 3, 2, 2 |
+| 8-hydroxyquinolinium hydrogen maleate, def2-SVP | 2 ions | density to 3.5 Å, charges to 8 Å | 8 | 6, 4, 3, 2, 1 |
 
-Each pass makes one embedding matrix for each fragment, which is most of its cost.
+Each pass makes one embedding matrix for each fragment, which is most of its cost. A refinement
+with the embedding takes about 2.7 times as long as one with cluster charges alone.
 
 **Limits.** Fragments with capping atoms (`use_Ryde_capping=`, the nearest-neighbour fragments
 of a network solid) have no surroundings: the job stops. So does a parallel run. The fragment

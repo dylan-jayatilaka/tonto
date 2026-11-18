@@ -204,7 +204,44 @@ The energies count the fragment's electrons in the field of the surroundings but
 in that field, so they are not interaction energies. Each pass shrinks the density change four
 to five times (ten times for NH3).
 
-NAC_HAR_RESULT
+**Fragment HARs against neutron** (same folder; `compare_neutron.py`, outputs `compare_nac.out`
+and `compare_hqm.out`). def2-SVP, Hirshfeld atoms, charges to 8 Å, density to 3.5 Å, all converged.
+$`\Delta`$ is the refined bond length less the neutron one, in Å, averaged over the bonds named;
+S12 is the Whitten–Spackman measure for the hydrogen ADPs (×100, smaller is better), the neutron
+ADPs shifted by one overall tensor. Per wavefunction, not pooled.
+
+NAC monohydrate (4 O–H, 9 C–H bonds; X-ray and neutron at 9 K):
+
+| wavefunction | surroundings | GoF | R(F) | mean Δ(O–H) | mean Δ(C–H) | mean abs Δ(X–H) | S12 H | time / s | passes in each cycle |
+|---|---|---|---|---|---|---|---|---|---|
+| RHF | none | 1.5703 | 0.0271 | −0.027 | −0.015 | 0.019 | 8.3 | 338 | |
+| RHF | charges | 1.5716 | 0.0270 | −0.008 | −0.010 | 0.013 | 11.5 | 1367 | 7 6 4 4 3 2 1 |
+| RHF | density + charges | 1.5728 | 0.0270 | −0.015 | −0.010 | 0.015 | 12.4 | 3079 | 7 6 4 3 2 2 |
+| B3LYP | none | 1.5257 | 0.0267 | −0.038 | −0.020 | 0.026 | 6.6 | 401 | |
+| B3LYP | charges | 1.5155 | 0.0265 | −0.021 | −0.017 | 0.019 | 6.3 | 1126 | 7 5 4 3 2 |
+| B3LYP | density + charges | 1.5175 | 0.0265 | −0.029 | −0.017 | 0.021 | 7.0 | 3205 | 7 6 4 3 2 2 |
+
+8-hydroxyquinolinium hydrogen maleate (O–H, N–H and the acid O–H as the three polar bonds, 8 C–H;
+X-ray 15 K, neutron 12 K; no isolated-ion runs, as decided on 2026-11-12):
+
+| wavefunction | surroundings | GoF | R(F) | mean Δ(polar X–H) | mean Δ(C–H) | mean abs Δ(X–H) | S12 H | time / s | passes in each cycle |
+|---|---|---|---|---|---|---|---|---|---|
+| RHF | charges | 1.6694 | 0.0337 | +0.017 | −0.001 | 0.011 | 6.3 | 1113 | 8 6 4 3 2 1 |
+| RHF | density + charges | 1.6686 | 0.0337 | +0.009 | −0.001 | 0.008 | 6.0 | 2661 | 8 6 4 3 2 1 |
+| B3LYP | charges | 1.5819 | 0.0329 | −0.012 | −0.007 | 0.008 | 6.9 | 1011 | 8 5 4 2 2 |
+| B3LYP | density + charges | 1.5817 | 0.0329 | −0.019 | −0.007 | 0.011 | 6.9 | 2588 | 8 6 4 3 2 |
+
+What the numbers say, and no more: with Hirshfeld atoms and def2-SVP, replacing the charges of the
+neighbours within 3.5 Å by their density changes the GoF by 0.002 or less in all four pairs, and
+moves the polar X–H bonds by about 0.01 Å, towards neutron in one pair (8HQ, RHF) and away in
+the other three. Cluster charges against isolated fragments is the larger step (NAC, B3LYP: GoF
+1.526 to 1.516, O–H from −0.038 to −0.021 Å). So on these two crystals the Coulomb embedding
+shows no gain over cluster charges. Not yet tried here: TFVC atoms, a larger basis, other radii.
+The embedded jobs take about 2.7 times as long as the cluster-charge ones.
+
+Gly-Ala with TFVC atoms (step 0): the GoF 3.3495 quoted above is where that refinement stopped at
+its cycle limit ("too many iterations"); the Hirshfeld run converged. Why the TFVC run does not
+converge with STO-3G is not looked at.
 
 **Still open in stage 5.**
 
