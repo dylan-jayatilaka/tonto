@@ -377,6 +377,7 @@ contains
 
    ENSURE(.crystal.allocated, "no crystal")
    ENSURE(.crystal.xray_data.allocated, "no reflection data")
+   DIE_IF(.uses_TFVC_atoms,"with use_disk_SFs= the TFVC atoms are coded for a fragment HAR only")
 
       ! Get atomic form factors
       .get_Hirshfeld_atom_FFs_disk
@@ -790,6 +791,9 @@ contains
 
       ! No cluster charges for SCF guess
       if (.SCF_data.is_guess)  return
+
+      ! The surroundings of a fragment, made by its parent molecule
+      if (.external_potential_mx.allocated) .core_mx.r = .core_mx.r + .external_potential_mx
 
       if (.SCF_data.using_cluster_charges) then
          ! Add cluster charges if needed
@@ -1243,12 +1247,8 @@ contains
    ENSURE(.partition_info_made, "no Hirshfeld atom moments")
 
       charge  :: VEC{REAL}@
-      Z_c,pos :: MAT{REAL}@
-      n_charges,q,c :: INT
-      fa,la,na :: INT
-      fb,lb,nb :: INT
-      q_c :: REAL
-      sh :: SHELL2
+      pos :: MAT{REAL}@
+      n_charges :: INT
 
       ! Set up the cluster ... leaky
       .SCF_data.cluster.destroy
@@ -1293,6 +1293,42 @@ contains
       end
 
       ! Make the charge contribution to one electron Hamiltonian
+      .make_point_charge_mx(Z,pos,charge)
+
+      if (.SCF_data.save_cluster_charges) then
+         if (.SCF_data.save_20_cluster_charges) then
+            ! For test jobs only, reduces output
+            .SCF_data.cluster_charges          = charge(1:20)
+            .SCF_data.cluster_charge_positions = pos(:,1:20)
+         else
+            .SCF_data.cluster_charges          = charge
+            .SCF_data.cluster_charge_positions = pos
+         end
+      else
+         pos.destroy
+         charge.destroy
+      end
+
+   end
+
+   make_point_charge_mx(Z,pos,charge) :: leaky
+   ! Set "Z" to the potential energy matrix of an electron in the field
+   ! of the point charges "charge(c)" at the positions "pos(:,c)".
+      self :: INOUT
+      Z :: MAT{REAL}, OUT
+      pos :: MAT{REAL}, IN
+      charge :: VEC{REAL}, IN
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(charge.dim==pos.dim2,"pos and charge: incompatible")
+
+      Z_c :: MAT{REAL}@
+      q,c :: INT
+      fa,la,na :: INT
+      fb,lb,nb :: INT
+      q_c :: REAL
+      sh :: SHELL2
+
       Z = ZERO
 
       parallel do q = 1,.n_shell_pairs
@@ -1318,39 +1354,28 @@ contains
          Z.symmetric_reflect
       end
 
-      if (.SCF_data.save_cluster_charges) then
-         if (.SCF_data.save_20_cluster_charges) then
-            ! For test jobs only, reduces output
-            .SCF_data.cluster_charges          = charge(1:20)
-            .SCF_data.cluster_charge_positions = pos(:,1:20)
-         else
-            .SCF_data.cluster_charges          = charge
-            .SCF_data.cluster_charge_positions = pos
-         end
-      else
-         pos.destroy
-         charge.destroy
-      end
-
    end
 
-   make_embedding_neighbours(R,t,op,cell,d_min) :: leaky
+   make_embedding_neighbours(R,t,op,cell,d_min,src) :: leaky
    ! Make the neighbours of the molecule for the Coulomb embedding: each
-   ! symmetry copy of the molecule, other than the molecule itself, with
-   ! an atom within .SCF_data.embedding_radius of one of its atoms. For
+   ! symmetry copy of the molecule "src", or of this molecule if "src" is
+   ! absent, with an atom within .SCF_data.embedding_radius of one of
+   ! this molecule's atoms. This molecule itself is not a neighbour. For
    ! neighbour "n", "R(:,:,n)" and "t(:,n)" are the Cartesian rotation
    ! and shift that make it: its atom "a" is at R(:,:,n) x_a + t(:,n),
-   ! with x_a the position of atom "a" of the molecule, so its atoms are
-   ! in the molecule's order. "op(n)" is the index of the Seitz matrix
-   ! and "cell(:,n)" the lattice shift that make it, and "d_min(n)" its
-   ! shortest distance to the molecule. A copy made by several symops is
-   ! kept once.
+   ! with x_a the position of atom "a" of the copied molecule, so its
+   ! atoms are in that molecule's order. "op(n)" is the index of the
+   ! Seitz matrix and "cell(:,n)" the lattice shift that make it, and
+   ! "d_min(n)" its shortest distance to this molecule. A copy made by
+   ! several symops is kept once. "src", if present, must be another
+   ! molecule of the same crystal, sharing no atom with this one.
       self :: IN
       R :: MAT3{REAL}@, OUT
       t :: MAT{REAL}@, OUT
       op :: VEC{INT}@, OUT
       cell :: MAT{INT}@, OUT
       d_min :: VEC{REAL}@, OUT
+      src :: MOLECULE, optional, IN
 
    ENSURE(.atom.allocated,"no atoms")
    ENSURE(.crystal.allocated,"no crystal")
@@ -1359,87 +1384,112 @@ contains
    ENSURE(.SCF_data.embedding_radius>ZERO,"embedding_radius= must be positive")
 
       xyz,R_all :: MAT3{REAL}@
-      x,f,y,z,t_all :: MAT{REAL}@
+      x,xs,f,y,z,t_all :: MAT{REAL}@
       cell_all :: MAT{INT}@
       op_all :: VEC{INT}@
       d_all :: VEC{REAL}@
       base :: VEC{INT}(3)
-      c :: VEC{REAL}(3)
-      radius,r_mol,d :: REAL
-      n_a,n_s,n_max,n_nb,s,h1,h2,h3,a,b,k,m1,m2,m3 :: INT
+      c,cs :: VEC{REAL}(3)
+      radius,r_mol,r_src,reach,d :: REAL
+      n_a,n_b,n_s,n_max,n_nb,s,h1,h2,h3,a,b,k,m1,m2,m3 :: INT
       found :: BIN
 
       n_a = .atom.dim
       n_s = .crystal.spacegroup.n_seitz
       radius = .SCF_data.embedding_radius
 
-      ! The molecule in Cartesian and fractional coordinates
+      ! This molecule, in Cartesian coordinates
       x.create(3,n_a)
       do a = 1,n_a
          x(:,a) = .atom(a).position
       end
-      f.create(3,n_a)
-      f = matmul(.crystal.unit_cell.inverse_mx,x)
+
+      ! The molecule to copy, in Cartesian and fractional coordinates
+      if (present(src)) then
+         n_b = src.atom.dim
+         xs.create(3,n_b)
+         do b = 1,n_b
+            xs(:,b) = src.atom(b).position
+         end
+      else
+         n_b = n_a
+         xs.create(3,n_b)
+         xs = x
+      end
+      f.create(3,n_b)
+      f = matmul(.crystal.unit_cell.inverse_mx,xs)
 
       ! Lattice shifts to try about each copy: enough to reach any copy
-      ! with an atom within "radius"
+      ! with an atom within "radius". The lattice planes normal to
+      ! reciprocal axis "i" are 1/|row i of the inverse cell matrix| apart.
       c = sum(x,dim=2)/n_a
       r_mol = ZERO
       do a = 1,n_a
          r_mol = max(r_mol,norm2(x(:,a)-c))
       end
-      m1 = ceiling((TWO*r_mol+radius)/norm2(.crystal.unit_cell.direct_mx(:,1))) + 1
-      m2 = ceiling((TWO*r_mol+radius)/norm2(.crystal.unit_cell.direct_mx(:,2))) + 1
-      m3 = ceiling((TWO*r_mol+radius)/norm2(.crystal.unit_cell.direct_mx(:,3))) + 1
+      cs = sum(xs,dim=2)/n_b
+      r_src = ZERO
+      do b = 1,n_b
+         r_src = max(r_src,norm2(xs(:,b)-cs))
+      end
+      reach = r_mol + r_src + radius
+      m1 = ceiling(reach*norm2(.crystal.unit_cell.inverse_mx(1,:))) + 1
+      m2 = ceiling(reach*norm2(.crystal.unit_cell.inverse_mx(2,:))) + 1
+      m3 = ceiling(reach*norm2(.crystal.unit_cell.inverse_mx(3,:))) + 1
 
-      ! Work space
+      ! Work space, and the two centres in fractional coordinates
       xyz = .crystal.xyz_seitz_matrices
       n_max = n_s*(2*m1+1)*(2*m2+1)*(2*m3+1)
       R_all.create(3,3,n_max); t_all.create(3,n_max)
       op_all.create(n_max);    cell_all.create(3,n_max)
       d_all.create(n_max)
-      y.create(3,n_a); z.create(3,n_a)
-      c = sum(f,dim=2)/n_a
+      y.create(3,n_b); z.create(3,n_b)
+      c  = matmul(.crystal.unit_cell.inverse_mx,c)
+      cs = matmul(.crystal.unit_cell.inverse_mx,cs)
 
       ! Every copy made by a symop and a nearby lattice shift
       n_nb = 0
       do s = 1,n_s
-      base = nint(c - matmul(.crystal.spacegroup.seitz(1:3,1:3,s),c) &
+      base = nint(c - matmul(.crystal.spacegroup.seitz(1:3,1:3,s),cs) &
                     - .crystal.spacegroup.seitz(1:3,4,s))
       do h1 = base(1)-m1,base(1)+m1
       do h2 = base(2)-m2,base(2)+m2
       do h3 = base(3)-m3,base(3)+m3
 
          ! The copy
-         do a = 1,n_a
-            y(:,a) = matmul(.crystal.spacegroup.seitz(1:3,1:3,s),f(:,a)) &
+         do b = 1,n_b
+            y(:,b) = matmul(.crystal.spacegroup.seitz(1:3,1:3,s),f(:,b)) &
                    + .crystal.spacegroup.seitz(1:3,4,s) + [h1,h2,h3]
          end
          y = matmul(.crystal.unit_cell.direct_mx,y)
 
-         ! Keep it if it is near, is not the molecule, and is new
+         ! Keep it if it is near, is not this molecule, and is new
          d = huge(ONE)
+         do b = 1,n_b
          do a = 1,n_a
-         do b = 1,n_a
-            d = min(d,norm2(y(:,a)-x(:,b)))
+            d = min(d,norm2(y(:,b)-x(:,a)))
          end
          end
          if (d>=radius) cycle
-         if (.same_atom_sets(x,y)) cycle
+         if (NOT present(src)) then
+            if (.same_atom_sets(x,y)) cycle
+         end
          found = FALSE
          do k = 1,n_nb
-            z = matmul(R_all(:,:,k),x)
-            do a = 1,n_a
-               z(:,a) = z(:,a) + t_all(:,k)
+            z = matmul(R_all(:,:,k),xs)
+            do b = 1,n_b
+               z(:,b) = z(:,b) + t_all(:,k)
             end
-            found = .same_atom_sets(z,y)
+            if (present(src)) then; found = src.same_atom_sets(z,y)
+            else;                   found = .same_atom_sets(z,y)
+            end
             if (found) exit
          end
          if (found) cycle
 
          n_nb = n_nb + 1
          R_all(:,:,n_nb) = xyz(:,:,s)
-         t_all(:,n_nb)   = y(:,1) - matmul(xyz(:,:,s),x(:,1))
+         t_all(:,n_nb)   = y(:,1) - matmul(xyz(:,:,s),xs(:,1))
          op_all(n_nb)    = s
          cell_all(:,n_nb) = [h1,h2,h3]
          d_all(n_nb)     = d
@@ -1462,7 +1512,7 @@ contains
       ! Clean
       d_all.destroy; cell_all.destroy; op_all.destroy
       t_all.destroy; R_all.destroy; xyz.destroy
-      z.destroy; y.destroy; f.destroy; x.destroy
+      z.destroy; y.destroy; f.destroy; xs.destroy; x.destroy
 
    end
 
@@ -1474,6 +1524,25 @@ contains
       V :: MAT{REAL}, OUT
 
    ENSURE(.density_mx.is_allocated_with_genre("r "),"needs a restricted density")
+
+      if (.max_I.deallocated) .initialize_max_I
+
+      V = ZERO
+      .add_r_embedding_of(V)
+
+   end
+
+   add_r_embedding_of(V,src) :: leaky
+   ! Add to "V" the Coulomb potential matrix of the embedding neighbours
+   ! of make_embedding_neighbours that are copies of the molecule "src",
+   ! or of this molecule if "src" is absent. Each has the present density
+   ! matrix of the molecule it copies, rotated. The Schwarz bounds
+   ! ".max_I" of this molecule must exist.
+      self :: IN
+      V :: MAT{REAL}, INOUT
+      src :: MOLECULE, optional, IN
+
+   ENSURE(.density_mx.is_allocated_with_genre("r "),"needs a restricted density")
    DIE_IF(.use_spherical_basis,"the embedding rotates cartesian shells only")
 
       R :: MAT3{REAL}@
@@ -1481,58 +1550,95 @@ contains
       cell :: MAT{INT}@
       op :: VEC{INT}@
       d_min :: VEC{REAL}@
-      n,a :: INT
+      n,a,n_a :: INT
 
-      .make_embedding_neighbours(R,t,op,cell,d_min)
-      if (.max_I.deallocated) .initialize_max_I
-
-      x.create(3,.n_atom); y.create(3,.n_atom)
-      do a = 1,.n_atom
-         x(:,a) = .atom(a).position
+      ! The neighbours, and the atoms and density of the molecule copied
+      if (present(src)) then
+         DIE_IF(NOT src.density_mx.is_allocated_with_genre("r "),"the neighbour needs a restricted density")
+         DIE_IF(src.use_spherical_basis,"the embedding rotates cartesian shells only")
+         .make_embedding_neighbours(R,t,op,cell,d_min,src)
+         n_a = src.n_atom
+         x.create(3,n_a)
+         do a = 1,n_a
+            x(:,a) = src.atom(a).position
+         end
+         P.create(src.n_bf,src.n_bf)
+      else
+         .make_embedding_neighbours(R,t,op,cell,d_min)
+         n_a = .n_atom
+         x.create(3,n_a)
+         do a = 1,n_a
+            x(:,a) = .atom(a).position
+         end
+         P.create(.n_bf,.n_bf)
       end
-      P.create(.n_bf,.n_bf)
+      y.create(3,n_a)
 
-      V = ZERO
+      ! Each neighbour: its rotated density at its moved atoms
       do n = 1,op.dim
-         P = .density_mx.r
-         .rotate_density_mx_r(P,R(:,:,n))
          y = matmul(R(:,:,n),x)
-         do a = 1,.n_atom
+         do a = 1,n_a
             y(:,a) = y(:,a) + t(:,n)
          end
-         .add_r_embedding_mx(V,self,P,y)
+         if (present(src)) then
+            P = src.density_mx.r
+            src.rotate_density_mx_r(P,R(:,:,n))
+            .add_r_embedding_mx(V,src,P,y)
+         else
+            P = .density_mx.r
+            .rotate_density_mx_r(P,R(:,:,n))
+            .add_r_embedding_mx(V,self,P,y)
+         end
       end
 
-      P.destroy; y.destroy; x.destroy
+      y.destroy; P.destroy; x.destroy
       d_min.destroy; op.destroy; cell.destroy; t.destroy; R.destroy
 
    end
 
-   remove_embedded_cluster_charges(pos,charge) :: leaky
+   remove_embedded_cluster_charges(pos,charge,src) :: leaky
    ! Set to zero the cluster charges "charge" at "pos" that stand for
    ! atoms of the embedding neighbours, which enter by their density
-   ! instead. Each cluster atom has three charges, the first at the atom.
+   ! instead: the neighbours that are copies of the molecule "src", or of
+   ! this molecule if "src" is absent. Each cluster atom has three
+   ! charges, the first at the atom.
       self :: IN
       pos :: MAT{REAL}, IN
       charge :: VEC{REAL}, INOUT
+      src :: MOLECULE, optional, IN
 
    ENSURE(charge.dim==pos.dim2,"pos and charge: incompatible")
    ENSURE(mod(charge.dim,3)==0,"three charges per cluster atom expected")
 
       R :: MAT3{REAL}@
-      t :: MAT{REAL}@
+      t,x :: MAT{REAL}@
       cell :: MAT{INT}@
       op :: VEC{INT}@
       d_min :: VEC{REAL}@
       ya :: VEC{REAL}(3)
-      n,a,i,n_removed :: INT
+      n,a,i,n_a,n_removed :: INT
 
-      .make_embedding_neighbours(R,t,op,cell,d_min)
+      ! The neighbours, and the atoms of the molecule copied
+      if (present(src)) then
+         .make_embedding_neighbours(R,t,op,cell,d_min,src)
+         n_a = src.n_atom
+         x.create(3,n_a)
+         do a = 1,n_a
+            x(:,a) = src.atom(a).position
+         end
+      else
+         .make_embedding_neighbours(R,t,op,cell,d_min)
+         n_a = .n_atom
+         x.create(3,n_a)
+         do a = 1,n_a
+            x(:,a) = .atom(a).position
+         end
+      end
 
       n_removed = 0
       do n = 1,op.dim
-      do a = 1,.n_atom
-         ya = matmul(R(:,:,n),.atom(a).position) + t(:,n)
+      do a = 1,n_a
+         ya = matmul(R(:,:,n),x(:,a)) + t(:,n)
          do i = 1,charge.dim,3
             if (norm2(pos(:,i)-ya)<0.001d0) then
                charge(i:i+2) = ZERO
@@ -1543,8 +1649,9 @@ contains
       end
       end
 
-      DIE_IF(n_removed/=op.dim*.n_atom,"an embedded atom is missing from the cluster charges: raise cluster_radius=")
+      DIE_IF(n_removed/=op.dim*n_a,"an embedded atom is missing from the cluster charges: raise cluster_radius=")
 
+      x.destroy
       d_min.destroy; op.destroy; cell.destroy; t.destroy; R.destroy
 
    end
@@ -1732,6 +1839,153 @@ contains
       rho0.destroy; rho_n.destroy; pt0.destroy; pt.destroy
       V.destroy; P.destroy; y.destroy; x0.destroy
       d_min.destroy; op.destroy; cell.destroy; t.destroy; R.destroy
+
+   end
+
+   put_fragment_neighbours :: leaky
+   ! Put, for each fragment .mol(g), its embedding neighbours: the copies
+   ! of every fragment "h" from make_embedding_neighbours, each with its
+   ! symop, lattice shift and shortest distance to "g", and the
+   ! interaction of the electrons of "g" with its electrons,
+   ! E_J = tr(V_J P_g), and with its nuclei, E_N = tr(V_N P_g). Then the
+   ! sum of E_J over the copies, for each pair of fragments. The copies
+   ! of "h" about "g" and the copies of "g" about "h" are the same pairs
+   ! of molecules, so that table must be symmetric. The fragments must
+   ! have their densities, from a fragment SCF.
+      self :: INOUT
+
+   ENSURE(.atom_group.allocated,"no atom groups")
+   ENSURE(.mol.allocated,"no fragment molecules")
+   DIE_IF(.SCF_data.embedding_radius<=ZERO,"embedding_radius= is not set")
+
+      R :: MAT3{REAL}@
+      t,x,y,P,V,E_pair :: MAT{REAL}@
+      cell :: MAT{INT}@
+      op :: VEC{INT}@
+      d_min :: VEC{REAL}@
+      E_J,E_N :: REAL
+      n_g,g,h,n,a,n_a,n_bf :: INT
+
+      n_g = .atom_group.dim
+      E_pair.create(n_g,n_g)
+      E_pair = ZERO
+
+      stdout.flush
+      stdout.text("Coulomb embedding: the neighbours of each fragment")
+      stdout.flush
+      stdout.show("Embedding radius/A             =",.SCF_data.embedding_radius*ANGSTROM_PER_BOHR)
+      stdout.flush
+      stdout.dash(int_fields=7,real_fields=3)
+      stdout.put("frag",int_width=TRUE)
+      stdout.put("of",int_width=TRUE)
+      stdout.put("n",int_width=TRUE)
+      stdout.put("symop",int_width=TRUE)
+      stdout.put("h1",int_width=TRUE)
+      stdout.put("h2",int_width=TRUE)
+      stdout.put("h3",int_width=TRUE)
+      stdout.put("d_min/A")
+      stdout.put("E_J")
+      stdout.put("E_N")
+      stdout.flush
+      stdout.dash(int_fields=7,real_fields=3)
+
+      do g = 1,n_g
+
+         if (.mol(g).no_of_electrons < 1) cycle
+         DIE_IF(NOT .mol(g).density_mx.is_allocated_with_genre("r "),"a fragment has no restricted density")
+
+         ! Fragment "g" takes the embedding options of this molecule
+         .mol(g).SCF_data.set_embedding_radius(.SCF_data.embedding_radius)
+         .mol(g).SCF_data.set_using_embedding_Schwarz_test(.SCF_data.using_embedding_Schwarz_test)
+         if (.mol(g).max_I.deallocated) .mol(g).initialize_max_I
+         n_bf = .mol(g).n_bf
+         V.create(n_bf,n_bf)
+
+         do h = 1,n_g
+
+            if (.mol(h).no_of_electrons < 1) cycle
+            DIE_IF(NOT .mol(h).density_mx.is_allocated_with_genre("r "),"a fragment has no restricted density")
+
+            ! The copies of fragment "h" about fragment "g"
+            if (h==g) then; .mol(g).make_embedding_neighbours(R,t,op,cell,d_min)
+            else;           .mol(g).make_embedding_neighbours(R,t,op,cell,d_min,.mol(h))
+            end
+            n_a = .mol(h).n_atom
+            x.create(3,n_a); y.create(3,n_a)
+            do a = 1,n_a
+               x(:,a) = .mol(h).atom(a).position
+            end
+            P.create(.mol(h).n_bf,.mol(h).n_bf)
+
+            do n = 1,op.dim
+
+               ! The copy's density matrix and atoms
+               P = .mol(h).density_mx.r
+               .mol(h).rotate_density_mx_r(P,R(:,:,n))
+               y = matmul(R(:,:,n),x)
+               do a = 1,n_a
+                  y(:,a) = y(:,a) + t(:,n)
+               end
+
+               ! Its embedding matrix, electrons and nuclei apart
+               V = ZERO
+               .mol(g).add_r_embedding_mx(V,.mol(h),P,y,nuclei=FALSE)
+               E_J = sum(V*.mol(g).density_mx.r)
+               V = ZERO
+               .mol(g).add_r_embedding_mx(V,.mol(h),P,y,electrons=FALSE)
+               E_N = sum(V*.mol(g).density_mx.r)
+               E_pair(g,h) = E_pair(g,h) + E_J
+
+               stdout.put(g)
+               stdout.put(h)
+               stdout.put(n)
+               stdout.put(op(n))
+               stdout.put(cell(1,n))
+               stdout.put(cell(2,n))
+               stdout.put(cell(3,n))
+               stdout.put(d_min(n)*ANGSTROM_PER_BOHR)
+               stdout.put(E_J)
+               stdout.put(E_N)
+               stdout.flush
+
+            end
+
+            P.destroy; y.destroy; x.destroy
+            d_min.destroy; op.destroy; cell.destroy; t.destroy; R.destroy
+
+         end
+
+         V.destroy
+
+      end
+
+      stdout.dash(int_fields=7,real_fields=3)
+
+      ! The pair sums, which must be symmetric
+      stdout.flush
+      stdout.text("Sum of E_J over the copies of fragment h about fragment g:")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=3)
+      stdout.put("g",int_width=TRUE)
+      stdout.put("h",int_width=TRUE)
+      stdout.put("E_J(g,h)")
+      stdout.put("E_J(h,g)")
+      stdout.put("difference")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=3)
+      do g = 1,n_g
+      do h = 1,g
+         stdout.put(g)
+         stdout.put(h)
+         stdout.put(E_pair(g,h))
+         stdout.put(E_pair(h,g))
+         stdout.put(E_pair(g,h)-E_pair(h,g),fmt="e")
+         stdout.flush
+      end
+      end
+      stdout.dash(int_fields=2,real_fields=3)
+
+      E_pair.destroy
 
    end
 
@@ -7801,7 +8055,10 @@ contains
       ! precede the .mol(g).initialize_DFT_grids calls in both routines below
       .set_group_becke_grids
 
-      if (tonto.n_processors<=1) then
+      if (.SCF_data.embedding_radius>ZERO OR .SCF_data.using_cluster_charges) then
+         DIE_IF(tonto.n_processors>1,"the surroundings of a fragment are not made in parallel yet")
+         .fragment_SCF_embedded(restart,do_SFs,spin_density)
+      else if (tonto.n_processors<=1) then
          .fragment_SCF_norm(restart,do_SFs,spin_density)
       else
          .fragment_SCF_para(restart,do_SFs,spin_density)
@@ -7842,9 +8099,8 @@ contains
 ! ENSURE(.crystal.allocated,"no crystal")
 ! ENSURE(.cif.allocated,"no cif specified")
 
-      n_group,g :: INT
+      g :: INT
       SFs :: BIN
-      name,guess :: STR
 
       ! Do structure factors?
       SFs = TRUE
@@ -7867,61 +8123,387 @@ contains
          ! Skip SCF for atoms without electrons
          if (.mol(g).no_of_electrons < 1) cycle
 
-         ! Make crystal
-         if (.mol(g).crystal.deallocated) then
-            .mol(g).crystal.update_fragment_info( .mol(g).atom)
-         end
+         ! Its SCF, and its atomic form factors
+         .fragment_SCF_for(g,restart)
+         if (SFs) .put_fragment_SFs_for(g,spin_density)
 
-         ! Set up SCF options
-      ! mol.set_SCF_guess_defaults_from(.SCF_data)
-      ! if (.SCF_data.SCF_kind=="fragment-rks") then
-      !    mol.becke_grid.destroy
-      !    mol.make_atom_partition_info
-      !  ! mol.set_up_becke_grid
-      ! end
-
-         .mol(g).SCF_data.set_output(TRUE)
-         if (.mol(g).atom.dim==1) then
-            .mol(g).SCF_data.set_initial_density("core")
-         else 
-            .mol(g).SCF_data.set_initial_MOs(.SCF_data.initial_MOs)
-            .mol(g).SCF_data.set_initial_density(.SCF_data.initial_density)
-         end
-
-         if (present(restart)) then
-         if (restart) then
-            guess = .mol(g).SCF_data.spinorbital_genre
-            .mol(g).SCF_data.set_initial_density(guess)
-         end
-         end
-
-         ! SCF !!!!!!!!!!!!!!!!!!!!!!!!!!!!
-         tonto.set_per_rank_IO_allowed(TRUE)
-         name = trim(.mol(g).name)
-         stdout.redirect(name)
-         stdout.move_to_end
-         .mol(g).usual_SCF ! <<<
-         stdout.revert
-         tonto.set_per_rank_IO_allowed(FALSE)
-         !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-         if (SFs) then
-            ! NOTE: change DFT -> becke
-            .mol(g).initialize_DFT_grids
-           
-            ! Assign previously made ANOs
-            .mol(g).resolve_ANOs_from(self)
-           
-            ! Write SFs for each fragment to disk - in parallel
-            n_group = .atom_group(g).atom_index.dim
-            tonto.set_per_rank_IO_allowed(TRUE)
-            .mol(g).get_Hirshfeld_atom_FFs_disk(spin_density=spin_density)
-         ! .mol(g).get_Hirshfeld_atom_FFs(n_group,spin_density)
-            tonto.set_per_rank_IO_allowed(FALSE)
-
-         end
-      
       end
+
+   end
+
+   fragment_SCF_for(g,restart) :: leaky
+   ! Do the SCF of fragment .mol(g), with its output in the file named
+   ! after the fragment. If "restart" is present and TRUE the SCF starts
+   ! from the fragment's previous MOs; otherwise as the SCF data of this
+   ! molecule ask, most likely from the promolecule.
+      self    :: INOUT
+      g       :: INT, IN
+      restart :: BIN, optional, IN
+
+      name,guess :: STR
+
+      ! Make crystal
+      if (.mol(g).crystal.deallocated) then
+         .mol(g).crystal.update_fragment_info( .mol(g).atom)
+      end
+
+      ! Set up SCF options
+      .mol(g).SCF_data.set_output(TRUE)
+      if (.mol(g).atom.dim==1) then
+         .mol(g).SCF_data.set_initial_density("core")
+      else 
+         .mol(g).SCF_data.set_initial_MOs(.SCF_data.initial_MOs)
+         .mol(g).SCF_data.set_initial_density(.SCF_data.initial_density)
+      end
+
+      if (present(restart)) then
+      if (restart) then
+         guess = .mol(g).SCF_data.spinorbital_genre
+         .mol(g).SCF_data.set_initial_density(guess)
+      end
+      end
+
+      ! SCF !!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      tonto.set_per_rank_IO_allowed(TRUE)
+      name = trim(.mol(g).name)
+      stdout.redirect(name)
+      stdout.move_to_end
+      .mol(g).usual_SCF ! <<<
+      stdout.revert
+      tonto.set_per_rank_IO_allowed(FALSE)
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+   end
+
+   put_fragment_SFs_for(g,spin_density) :: leaky
+   ! Write to disk the atomic form factors of fragment .mol(g), from its
+   ! present density. The ANOs of this molecule must have been made.
+      self :: INOUT
+      g    :: INT, IN
+      spin_density :: BIN, optional, IN
+
+      ! NOTE: change DFT -> becke
+      .mol(g).initialize_DFT_grids
+     
+      ! Assign previously made ANOs
+      .mol(g).resolve_ANOs_from(self)
+     
+      ! TFVC atoms: their walls, on the fragment's density
+      if (.mol(g).uses_TFVC_atoms) .mol(g).make_SA_walls
+
+      ! Write SFs for each fragment to disk - in parallel
+      tonto.set_per_rank_IO_allowed(TRUE)
+      .mol(g).get_Hirshfeld_atom_FFs_disk(spin_density=spin_density)
+      tonto.set_per_rank_IO_allowed(FALSE)
+
+   end
+
+   fragment_SCF_embedded(restart,do_SFs,spin_density) :: leaky
+   ! Do the SCF of each fragment .mol(g) in the field of its surroundings
+   ! in the crystal, and calculate the structure factors. The
+   ! surroundings of a fragment are made by make_fragment_surroundings
+   ! from the present densities and atomic moments of all the fragments.
+   ! So the fragment SCFs are repeated, in passes over the fragments,
+   ! until no density matrix element of any fragment has moved by more
+   ! than .SCF_data.embedding_update_tolerance since the surroundings of
+   ! every fragment were last made. The passes start from the fragment
+   ! densities of the previous call, read from disk, if "restart" is
+   ! present and TRUE; otherwise from SCFs without surroundings. "do_SFs"
+   ! and "spin_density" are as for fragment_SCF_norm. A table of the
+   ! passes is added to the file <name>.fragment_SCF_passes.
+      self    :: INOUT
+      restart :: BIN, optional, IN
+      do_SFs  :: BIN, optional, IN
+      spin_density :: BIN, optional, IN
+
+   DIE_IF(.crystal.use_Ryde_capping,"capped fragments have no surroundings: remove the embedding and the cluster charges")
+   DIE_IF(.crystal.use_NN,"capped fragments have no surroundings: remove the embedding and the cluster charges")
+
+      stale :: VEC{BIN}@
+      drift,P_old :: MAT{REAL}@
+      delta,delta_max,tol :: REAL
+      n_g,g,pass,n_done :: INT
+      SFs,from_disk :: BIN
+
+      ! Do structure factors?
+      SFs = TRUE
+      if (present(do_SFs)) SFs = do_SFs
+
+      ! Start from the stored densities?
+      from_disk = FALSE
+      if (present(restart)) from_disk = restart
+
+      ! The ANOs, for the atomic moments and the form factors
+      .make_ANOs_and_interpolators
+      if (SFs) .delete_Hirshfeld_atom_FFs
+
+      ! Output details?
+      .put_atom_group_mols
+
+      n_g = .atom_group.dim
+      tol = .SCF_data.embedding_update_tolerance
+
+      ! Every fragment starts with a density and atomic moments
+      do g = 1,n_g
+
+         .mol(g).name = .atom_group(g).name
+
+         if (.mol(g).no_of_electrons >= 1) then
+            ! The surroundings come from this molecule, never from the
+            ! fragment's own SCF options
+            .mol(g).SCF_data.set_using_SC_cluster_charges(FALSE)
+            .mol(g).SCF_data.set_using_cluster_charges(FALSE)
+            if (.mol(g).density_mx.is_allocated_with_genre("r ")) then
+               ! It has one
+            else if (from_disk) then
+               .mol(g).read_archive("density_mx","r ")
+            else
+               .mol(g).external_potential_mx.destroy
+               .fragment_SCF_for(g)
+            end
+            DIE_IF(NOT .mol(g).density_mx.is_allocated_with_genre("r "),"the fragment SCFs must be restricted")
+         end
+
+         .put_fragment_moments_to_atoms(g)
+
+      end
+
+      .put_fragment_SCF_pass(0,0,ZERO,append=from_disk)
+
+      ! Passes over the fragments. "drift(g,h)" bounds how far the density
+      ! of fragment "h" has moved since the surroundings of "g" were made.
+      stale.create(n_g)
+      stale = TRUE
+      drift.create(n_g,n_g)
+      drift = ZERO
+
+      pass = 0
+      do
+
+         pass = pass + 1
+         n_done = 0
+         delta_max = ZERO
+
+         do g = 1,n_g
+
+            if (.mol(g).no_of_electrons < 1) cycle
+            if (NOT stale(g)) cycle
+
+            ! The surroundings of fragment "g", as they are now
+            .make_fragment_surroundings(g)
+            stale(g) = FALSE
+            drift(g,:) = ZERO
+
+            ! Its SCF, and how far its density moved
+            P_old.create(.mol(g).n_bf,.mol(g).n_bf)
+            P_old = .mol(g).density_mx.r
+            .fragment_SCF_for(g,restart=TRUE)
+            delta = maxval(abs(.mol(g).density_mx.r-P_old))
+            P_old.destroy
+            .put_fragment_moments_to_atoms(g)
+
+            ! Which surroundings are now out of date? Its own too: it is
+            ! surrounded by copies of itself
+            drift(:,g) = drift(:,g) + delta
+            stale = stale OR drift(:,g)>tol
+            n_done = n_done + 1
+            delta_max = max(delta_max,delta)
+
+         end
+
+         if (n_done==0) exit
+
+         .put_fragment_SCF_pass(pass,n_done,delta_max,append=TRUE)
+
+         if (pass>=40) then
+            stdout.flush
+            stdout.text("WARNING: the fragment densities still move after 40 passes")
+            exit
+         end
+
+      end
+
+      drift.destroy
+      stale.destroy
+
+      ! The atomic form factors
+      if (SFs) then
+         do g = 1,n_g
+            if (.mol(g).no_of_electrons < 1) cycle
+            .put_fragment_SFs_for(g,spin_density)
+         end
+      end
+
+   end
+
+   put_fragment_SCF_pass(pass,n_SCF,dP,append) :: leaky
+   ! Put one line of the table of fragment SCF passes in the file
+   ! <name>.fragment_SCF_passes: the pass number "pass", the number of
+   ! fragment SCFs done in it "n_SCF", and the largest change of a
+   ! fragment density matrix element "dP". Pass 0 puts the table heading.
+   ! The line is added to the end of the file if "append" is TRUE and the
+   ! file is there; otherwise the file is started afresh.
+      self   :: IN
+      pass   :: INT, IN
+      n_SCF  :: INT, IN
+      dP     :: REAL, IN
+      append :: BIN, IN
+
+      file :: STR
+      there :: BIN
+
+      file  = trim(.name)//".fragment_SCF_passes"
+      there = stdout.exists(file)
+      stdout.redirect(file)
+      if (append AND there) stdout.move_to_end
+
+      if (pass==0) then
+         stdout.text("Fragment SCFs in their crystal surroundings")
+         stdout.flush
+         stdout.show("Embedding radius/A             =",.SCF_data.embedding_radius*ANGSTROM_PER_BOHR)
+         stdout.show("Using cluster charges          =",.SCF_data.using_cluster_charges)
+         stdout.show("Cluster radius/A               =",.SCF_data.cluster_radius*ANGSTROM_PER_BOHR)
+         stdout.show("Density update tolerance       =",.SCF_data.embedding_update_tolerance)
+         stdout.flush
+         stdout.put("Pass",int_width=TRUE)
+         stdout.put("SCFs",int_width=TRUE)
+         stdout.put("max|dP|")
+         stdout.flush
+      else
+         stdout.put(pass)
+         stdout.put(n_SCF)
+         stdout.put(dP,fmt="e")
+         stdout.flush
+      end
+
+      stdout.revert
+
+   end
+
+   put_fragment_moments_to_atoms(g) :: leaky
+   ! Make the atomic charges and dipoles of fragment .mol(g) from its
+   ! present density, by the partition model, and copy them to its atoms
+   ! in ".atom". The ANOs of this molecule must have been made. A
+   ! fragment with no electrons has its nuclear charges only.
+      self :: INOUT
+      g    :: INT, IN
+
+   ENSURE(.mol(g).atom.dim==.atom_group(g).atom_index.dim,"fragment atoms and group atoms: incompatible")
+
+      i,a :: INT
+
+      if (.mol(g).no_of_electrons >= 1) then
+         .mol(g).resolve_ANOs_from(self)
+         .mol(g).partition_info_made = FALSE
+         .mol(g).make_atom_partition_info(need_moments=TRUE)
+      end
+
+      do i = 1,.atom_group(g).atom_index.dim
+         a = .atom_group(g).atom_index(i)
+         if (.mol(g).no_of_electrons >= 1) then
+            .atom(a).set_charge(.mol(g).atom(i).charge)
+            .atom(a).set_dipole(.mol(g).atom(i).dipole)
+         else
+            .atom(a).set_charge(ONE*.atom(a).atomic_number)
+            .atom(a).set_dipole([ZERO,ZERO,ZERO])
+         end
+      end
+
+   end
+
+   make_fragment_surroundings(g) :: leaky
+   ! Set .mol(g).external_potential_mx to the potential of the
+   ! surroundings of fragment "g" in the crystal. Near: every symmetry
+   ! copy of a fragment, "g" included, with an atom within
+   ! .SCF_data.embedding_radius of an atom of "g" enters by its density
+   ! and nuclei. Far: if cluster charges are in use, every other atom of
+   ! the crystal within .SCF_data.cluster_radius of "g" enters by its
+   ! charge and dipole, as three point charges. The densities are the
+   ! fragments' present ones, and the charges and dipoles those of
+   ! ".atom", from put_fragment_moments_to_atoms.
+      self :: INOUT
+      g    :: INT, IN
+
+   DIE_IF(.SCF_data.using_qq_cluster_charges,"the surroundings of a fragment take dipole cluster charges only")
+
+      cr :: CRYSTAL@
+      cluster :: CLUSTER@
+      V,Z,pos :: MAT{REAL}@
+      charge :: VEC{REAL}@
+      n_bf,n_charges,h :: INT
+      embed :: BIN
+
+      n_bf  = .mol(g).n_bf
+      embed = .SCF_data.embedding_radius>ZERO
+      V.create(n_bf,n_bf)
+      V = ZERO
+
+      ! Near: the neighbour copies of every fragment, by their densities
+      if (embed) then
+         .mol(g).SCF_data.set_embedding_radius(.SCF_data.embedding_radius)
+         .mol(g).SCF_data.set_using_embedding_Schwarz_test(.SCF_data.using_embedding_Schwarz_test)
+         if (.mol(g).max_I.deallocated) .mol(g).initialize_max_I
+         do h = 1,.atom_group.dim
+            if (.mol(h).no_of_electrons < 1) cycle
+            if (h==g) then; .mol(g).add_r_embedding_of(V)
+            else;           .mol(g).add_r_embedding_of(V,.mol(h))
+            end
+         end
+      end
+
+      ! Far: the other atoms, by their charges and dipoles
+      if (.SCF_data.using_cluster_charges) then
+
+         ! A crystal of all the atoms with their moments, whose fragment
+         ! is fragment "g"
+         cr.create
+         cr.set_minimal_copy(.crystal)
+         cr.update_fragment_info(.atom)
+         cr.update_fragment_info(.mol(g).atom)
+
+         ! The cluster of atoms about fragment "g"
+         cluster.create
+         cluster.set_defaults(cr)
+         cluster.set_generation_method("within_radius")
+         cluster.set_defragment(.SCF_data.defragment)
+         cluster.set_radius(.SCF_data.cluster_radius)
+         cluster.update_info
+
+         ! Their charges
+         n_charges = 3*(cluster.n_atoms - cluster.n_fragment_atoms)
+         charge.create(n_charges)
+         pos.create(3,n_charges)
+         cluster.make_non_fragment_mu_charges(pos,charge)
+         if (n_charges>0) then
+            DIE_IF(charge.is_zero,"every cluster charge is zero: the atomic moments were not made")
+         end
+
+         ! Not those of the atoms that entered by their density
+         if (embed) then
+            do h = 1,.atom_group.dim
+               if (.mol(h).no_of_electrons < 1) cycle
+               if (h==g) then; .mol(g).remove_embedded_cluster_charges(pos,charge)
+               else;           .mol(g).remove_embedded_cluster_charges(pos,charge,.mol(h))
+               end
+            end
+         end
+
+         Z.create(n_bf,n_bf)
+         .mol(g).make_point_charge_mx(Z,pos,charge)
+         V = V + Z
+
+         Z.destroy
+         pos.destroy
+         charge.destroy
+         cluster.destroy
+         cr.destroy
+
+      end
+
+      .mol(g).external_potential_mx.destroy
+      .mol(g).external_potential_mx.create(n_bf,n_bf)
+      .mol(g).external_potential_mx = V
+      V.destroy
 
    end
 
@@ -8101,6 +8683,7 @@ contains
 
                ! Write SFs for each fragment to disk - in parallel
                n_group = .atom_group(g).atom_index.dim
+               if (.mol(g).uses_TFVC_atoms) .mol(g).make_SA_walls
                .mol(g).get_Hirshfeld_atom_FFs_disk(spin_density=spin_density)
 
             end
@@ -8176,6 +8759,7 @@ contains
 
                ! Write SFs for each fragment to disk - in parallel
                n_group = .atom_group(g).atom_index.dim
+               if (.mol(g).uses_TFVC_atoms) .mol(g).make_SA_walls
                .mol(g).get_Hirshfeld_atom_FFs_disk(spin_density=spin_density)
 
             end
