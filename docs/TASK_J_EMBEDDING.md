@@ -5,7 +5,7 @@ The method, the keywords, the code table, the checks done and the literature are
 [`REPORT_ON_CRYSTAL_EMBEDDING.md`](REPORT_ON_CRYSTAL_EMBEDDING.md); this page keeps the plan, the
 log and what is still open.
 
-## Status (2026-11-17)
+## Status (2026-11-18)
 
 | stage | state |
 |---|---|
@@ -14,7 +14,7 @@ log and what is still open.
 | 2b. Schwarz screening, `use_embedding_schwarz_test=` | done, `eaa20647`, `1561bbbc`; `~/tonto-runs/2026-11-13_j_embedding_schwarz` |
 | 3. update in the self-consistent loop, `embedding_update_tolerance=` | done 2026-11-17, `c71a4a20`; `~/tonto-runs/2026-11-17_j_embedding_stage3`; test `tests/long/nh3_rhf_DZP_HAR_J-embedding` |
 | 4. refinements against neutron | open |
-| 5. fragment HAR | planned below; needs the TFVC path in fragment HAR first (it segfaults, `~/tonto-runs/2026-11-13_fraghar_tfvc_test`) |
+| 5. fragment HAR | coded and checked 2026-11-18, `366926cc`, `3188e064` and the commit after; `~/tonto-runs/2026-11-17_fraghar_embedding`; two new tests wait for their references (achari2) |
 
 Decided on the way (Dylan, 2026-11-12 to 13): whole molecules only, so the atoms and groups
 levels below are not implemented; the source molecule is an argument of the integral routine so
@@ -119,7 +119,117 @@ the whole interaction $`\mathrm{tr}\,(V^{\mathrm{emb}} P)`$, twice the share of 
 pair interaction of a lattice energy. HAR uses only the density, so this does not matter for
 refinement, but the printed energy is not a lattice energy.
 
-## Stage 5: the embedding in fragment HAR (planned 2026-11-17)
+## Stage 5: the embedding in fragment HAR
+
+### Outcome (2026-11-18)
+
+**What the code questions turned up.**
+
+- The fragments did not inherit `embedding_radius=`, nor the cluster charges, nor anything else
+  but a few convergence options: `set_SCF_guess_defaults_from` gives each `.mol(g)` default SCF
+  options unless `use_default_guess_options= FALSE`. So every fragment HAR so far has used
+  isolated fragments, whatever the `scfdata=` said about cluster charges.
+- Had the cluster charges reached a fragment, they would have been wrong: `make_atomic_moments`
+  rebuilds the fragment's crystal from the fragment's own atoms, so its asymmetric unit, and
+  its cluster, hold copies of that fragment only.
+- Fragment HAR does not repeat the fragment SCFs until they agree. It does one SCF per fragment
+  per refinement cycle.
+- `update_atom_groups` deallocates and remakes every `.mol(g)` each refinement cycle. The
+  fragment densities survive only as the archive files on disk, which is what `restart` reads.
+
+**Step 0, the segfault.** Not a TFVC bug: fragment HAR had no TFVC code at all.
+`fragHAR_refinement` called `make_atom_partition_info` on the whole structure, which for a TFVC
+model looks for the cell walls on a density the whole structure does not have (the ENSURE
+"no density_mx" in a debug build, a segfault in release). And `get_Hirshfeld_atom_FFs_disk` used
+Hirshfeld weights whatever the model. Now the whole structure makes only the grid and the ANOs,
+and each fragment makes its own walls (`MOLECULE.GRID:make_SA_walls`) and TFVC form factors.
+Gly-Ala, two capped fragments, RHF/STO-3G, release: GoF 3.3495 with `oc-tfvc`, 3.3535 with
+`oc-hirshfeld`. The spherical TFVC models stop with a message. In a debug build the Gly-Ala
+STO-3G job stops at "no minima found between the atoms" for an N–H bond: with STO-3G the density
+along that bond has no minimum (`Mayer_Salvador_radius_for`). That is the basis set. The urea
+one-fragment exit 1 of 2026-11-13 was "no binary archive" (`ARCHIVE:read_5`), not looked at
+further: the NH3 one-fragment jobs below run.
+
+**The design that was built**, which departs from steps 1 to 5 below in one way: the fragment
+does nothing itself. The molecule that owns the fragments makes one matrix for fragment $`g`$,
+the potential of all its surroundings, and the fragment's SCF adds it to its core matrix
+(`.external_potential_mx`). It holds
+
+- near, the copies of every fragment $`h`$, $`g`$ included, with an atom within
+  $`r_{\mathrm{emb}}`$ of $`g`$, by density and nuclei (steps 1 to 3 as planned);
+- far, with cluster charges on, every other atom within `cluster_radius=`, by the charge and
+  dipole its own fragment gave it, on a copy of the crystal that holds all the atoms (step 4).
+
+Step 5 became an outer loop: `fragment_SCF_embedded` repeats the fragment SCFs in passes. With
+$`\Delta_h`$ the largest change of a density matrix element of fragment $`h`$ in its last SCF, a
+fragment $`g`$ is done again when
+
+```math
+\sum_{\text{SCFs of } h \text{ since the surroundings of } g \text{ were made}} \Delta_h > \tau \qquad (2)
+```
+
+for any $`h`$, $`g`$ itself included, with $`\tau`$ = `embedding_update_tolerance=`. The sum bounds
+how far the density of $`h`$ has moved. The passes stop when no fragment needs doing. The copies
+of $`g`$ itself are updated by the same loop, not inside its SCF as in stage 3: that needs the
+fragment to know its crystal, and the passes are needed for the other fragments anyway. Stage 3
+rejected an outer loop for one molecule; here there is no way round it.
+
+**Checks.**
+
+| check | result |
+|---|---|
+| (a) NH3 as one fragment against the stage 3 molecule, RHF/DZP, 3.5 Å, charges to 8 Å, all tolerances $`10^{-9}`$ | SCF energy −56.37683994 Eh by both routes, equal to all 8 digits printed |
+| (a) the same, refined to convergence at the default tolerances | GoF 0.85145 (fragment) against 0.85142 (molecule); 0.85144503 against 0.85141749 with tolerances $`10^{-8}`$ |
+| the same without surroundings | fragment and molecule refinements agree to all 8 digits (GoF 0.87830647) |
+| new: NH3 in the subgroup $`P2_1`$, two independent molecules as two fragments, tolerances $`10^{-9}`$ | both fragments −56.37683994 Eh, the one-fragment energy; this tests the cross-fragment code exactly |
+| (c) pair sums of $`E_J`$, same job | (1,2) and (2,1) both 116.523313, difference $`10^{-14}`$; the three sums add to the one-fragment 174.784974 |
+| (b), (c) NAC monohydrate | within 3.5 Å the NAC has 10 NAC copies and 7 water copies, the water 7 NAC copies and no water; the seven NAC–water pairs appear in both lists with equal $`E_J`$; pair sums 647.175608 Eh both ways, difference $`6\times10^{-8}`$ (the integral cutoff is $`10^{-9}`$ per integral); shortest contact 1.63 Å (NAC–NAC), 1.65 Å (NAC–water) |
+| ten ctest jobs matching `J-embedding`, `fragHAR`, `consistent-cluster`, `quartz_NN`, release, Mac | pass |
+
+The two-cycle GoF of the one-fragment NH3 job (0.853) differs from the stage 3 test's (0.851).
+Run to convergence they agree, so the difference is in the starting point, not the method. My
+reading, not checked: the stage 3 job makes its first form factors after an SCF that starts
+from the isolated molecule's density, the fragment job after the passes have converged.
+
+**NAC monohydrate, RHF/def2-SVP, Hirshfeld atoms** (`~/tonto-runs/2026-11-17_fraghar_embedding`,
+README there). Fragment SCFs at the X-ray geometry, passes to $`\tau = 10^{-5}`$:
+
+| surroundings | passes | job time | NAC energy / Eh | water energy / Eh |
+|---|---|---|---|---|
+| none | 1 | 78 s | −624.968067 | −75.961864 |
+| cluster charges to 8 Å | 7 | 380 s | −625.323030 | −76.108499 |
+| density within 3.5 Å, charges to 8 Å | 7 | 925 s | −625.320493 | −76.071404 |
+
+The energies count the fragment's electrons in the field of the surroundings but not its nuclei
+in that field, so they are not interaction energies. Each pass shrinks the density change four
+to five times (ten times for NH3).
+
+NAC_HAR_RESULT
+
+**Still open in stage 5.**
+
+- The references of the two new tests, on achari2: `tests/long/nh3_rhf_DZP_fragHAR_J-embedding`
+  (one fragment, two cycles) and `tests/long/nh3_P21_rhf_DZP_fragment_SCF_J-embedding` (two
+  fragments, SCF and `put_fragment_neighbours`). Both run in a debug build on the Mac (10 s each).
+  Check (d) asked for an embedded Gly-Ala variant; Gly-Ala's fragments are capped residues of one
+  molecule, which have no crystal surroundings of their own, so the code stops for capped fragments.
+- **A trap for DFT fragments, older than this work.** `kind= fragment-rks` with
+  `dft_functional= b3lyp` runs the fragments at **RHF** unless `use_default_guess_options= FALSE`
+  is also given: only then do the fragments copy the `scfdata=`. On the two-fragment NH3 job the
+  fragment files say `SCF kind rhf` and give the RHF energy (−56.376840) without it, and
+  `SCF kind rks`, −56.736389 Eh for both fragments, with it (B3LYP/DZP, with the surroundings,
+  6 passes; `nh3_P21_b3lyp` and `nh3_P21_b3lyp_default_options` in the run folder). In `set_SCF_guess_defaults_from` and
+  `set_molecule_from_atom_group` the branches that would copy the options test for a kind
+  beginning `fraghar`, a name no SCF kind has any more. Proposed fix, for Dylan to decide since it
+  changes what existing fragment jobs do: test for `fragment-` there, and give the fragments the
+  kind that follows the prefix. Either way the fragments converge to `guess_convergence=`
+  ($`10^{-8}`$ in the energy), not to `convergence=`.
+- Parallel runs: `fragment_SCF_embedded` stops under MPI.
+- Fewer passes: each pass costs one embedding build per fragment, most of the time. An
+  extrapolation over the passes (DIIS on the fragment densities) is the obvious next step.
+- 8-hydroxyquinolinium hydrogen maleate; then the refinements against neutron, per wavefunction.
+
+### The plan as written on 2026-11-17
 
 Aim: embedded fragment HAR for crystals with several molecules or ions in the asymmetric unit.
 First case: NAC monohydrate, two fragments (NAC and water), Lübben 2014, X-ray and neutron at

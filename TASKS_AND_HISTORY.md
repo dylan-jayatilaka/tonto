@@ -78,6 +78,55 @@ because by then it held far more than deferred items.)*
 | [Re-engineering](#re-engineering-flattening-the-object-model-and-first-class-parallelism) | Flattening the object hierarchy inside Foo, and the move to a language with first-class parallelism |
 | [Archive](#done-resolved-and-closed-archive) | Done, resolved, and won't-do — kept for the reasoning |
 
+## START HERE (2026-11-18): J embedding stage 5, fragment HAR with surroundings, coded on `j-embedding`
+
+**Where the work is.** Branch `j-embedding`, worktree `~/tonto-wt/j-embedding`, release build in
+`release/`, debug build in `debug/` (both gfortran-14, libxc on). **Four new commits are local
+only, not pushed** (`366926cc`, `3188e064`, `4649791e` and the documents commit after them). Dylan
+gave leave on 2026-11-17 to work unattended in this tree; nothing was pushed, and achari2 was not
+touched.
+
+**Done (details in `docs/TASK_J_EMBEDDING.md`, *Stage 5*, and `docs/REPORT_ON_CRYSTAL_EMBEDDING.md`
+§2, §7):**
+- Step 0: fragment HAR with TFVC atoms. It was never coded (the segfault was the whole structure
+  being asked for TFVC walls with no density); now each fragment makes its own TFVC atoms.
+- With `embedding_radius=` or cluster charges in the `scfdata=` of a fragment SCF, each fragment
+  has its surroundings: copies of every fragment within the radius by density and nuclei, the
+  other atoms within `cluster_radius=` by charges and dipoles. Before, fragments were always
+  isolated, whatever the input said. The fragment SCFs are repeated in passes until the densities
+  agree (`<name>.fragment_SCF_passes`). New keyword `put_fragment_neighbours`.
+- Checks: NH3 as one fragment equals the stage 3 molecule to 8 digits in the SCF energy; NH3 in
+  the subgroup P2₁ as two fragments gives that energy for each; pair sums symmetric; NAC
+  monohydrate neighbour lists and pair sums right. Short suite 89 of 89 on the Mac (release), and
+  the ten J-embedding, fragHAR, cluster-charge and quartz tests.
+- NAC monohydrate fragment HARs, RHF and B3LYP, def2-SVP, Hirshfeld atoms, three surroundings,
+  against neutron: `~/tonto-runs/2026-11-17_fraghar_embedding` (README, `compare_nac.out`).
+
+**For Dylan to decide.**
+1. **Push `j-embedding` and bless the two new tests on achari2** (worktree `~/github/tonto-jemb`):
+   `tests/long/nh3_rhf_DZP_fragHAR_J-embedding` and
+   `tests/long/nh3_P21_rhf_DZP_fragment_SCF_J-embedding`. They have no reference `stdout` yet, so
+   they fail in `ctest` until blessed.
+2. **`kind= fragment-rks` runs the fragments at RHF** unless `use_default_guess_options= FALSE` is
+   also given. Older than this work, and it means any earlier "DFT" fragment HAR without that
+   keyword was Hartree–Fock. Proposed fix in `docs/TASK_J_EMBEDDING.md`; it changes what existing
+   fragment jobs do, so it waits for a yes.
+3. Two behaviour changes made on the way, both in the commits: an ordinary HAR with
+   `use_disk_SFs=` and a TFVC model now stops with a message (it used Hirshfeld weights silently);
+   and `fragHAR_refinement` updates the fragments' atoms before its last SCF (it ran at the
+   geometry before the last step).
+
+**Next, in order:**
+1. 8-hydroxyquinolinium hydrogen maleate (ion pair), same three surroundings.
+2. Fewer passes: each costs one embedding build per fragment; try an extrapolation over the
+   passes. Then the embedded fragment SCF under MPI (it stops at present).
+3. Stage 4, refinements against neutron with the embedding (urea, L-alanine), and the two checks
+   still open from stage 1.
+
+**A note on overnight jobs on the Mac.** With the lid closed or the display asleep the Mac went
+into maintenance sleep: a release rebuild took over an hour and a job got 14% of a processor.
+Start builds and jobs under `caffeinate -i -s` (it holds only while they run).
+
 ## START HERE (2026-11-17): J embedding stages 1–3 done on `j-embedding`; fragment HAR next
 
 **Where the work is.** Branch `j-embedding` (pushed, head `98e27f4b`), worktree

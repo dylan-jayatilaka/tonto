@@ -103,13 +103,48 @@ computes every integral.
 
 ## 2. Fragment HAR
 
-In fragment HAR the asymmetric unit holds several molecules or ions, each with its own SCF. The
-neighbours of fragment $`g`$ are then copies of every fragment $`h`$, its own and the others; the
-other fragments of the same asymmetric unit are neighbours by the identity operation. In (2) the
-basis functions $`\lambda,\sigma`$ and the density matrix are those of fragment $`h`$, rotated by (4)
-with $`h`$'s shells. The integral routine takes the source molecule as an argument for this
-reason. The embedding of each fragment is made from the other fragments' densities of the
-previous macro-iteration.
+In fragment HAR the asymmetric unit holds several molecules or ions, the fragments, each with
+its own SCF (`kind= fragment-rhf`, `atom_groups=`, `fraghar_refinement`). With
+`embedding_radius=` or cluster charges in `scfdata=`, each fragment has its surroundings in the
+crystal. The Fock matrix of fragment $`g`$ is (1) with
+
+- $`V^{\mathrm{emb}}`$ summed over the copies of every fragment $`h`$, its own and the others,
+  with an atom within $`r_{\mathrm{emb}}`$ of an atom of $`g`$, the fragment $`g`$ itself left
+  out. Another fragment of the same asymmetric unit is a neighbour by the identity operation. In
+  (2) the basis functions $`\lambda,\sigma`$, the nuclei and the density matrix are those of
+  fragment $`h`$, rotated by (4) with the shells of $`h`$;
+- $`V^{\mathrm{cc}}`$ from the charges and dipoles of every other atom of the crystal within
+  `cluster_radius=` of $`g`$, each atom with the charge and dipole it has in its own fragment.
+
+Either part can be used alone.
+
+**Self-consistency.** The surroundings of a fragment depend on the densities of all the
+fragments, so the fragment SCFs are repeated in passes. Let $`\Delta_h`$ be the largest change
+of a density matrix element of fragment $`h`$ in one of its SCFs. Fragment $`g`$ has its
+surroundings made again, and its SCF repeated, when for some fragment $`h`$, $`g`$ included,
+
+```math
+\sum \Delta_h > \tau \qquad (6)
+```
+
+the sum being over the SCFs of $`h`$ since the surroundings of $`g`$ were last made, and $`\tau`$
+being `embedding_update_tolerance=`. The passes end when no fragment needs repeating. Then every
+fragment has surroundings made from densities within $`\tau`$ of the final ones. The file
+`<name>.fragment_SCF_passes` lists, for each pass, the number of fragment SCFs done and the
+largest $`\Delta_h`$. In a refinement the passes of each cycle start from the densities of the
+cycle before.
+
+| crystal, RHF | fragments | surroundings | passes |
+|---|---|---|---|
+| ammonia, DZP | 1 | density to 3.5 Å, charges to 8 Å | 5 |
+| N-acetyl-L-4-hydroxyproline monohydrate, def2-SVP | 2 | charges to 8 Å | 7 |
+| N-acetyl-L-4-hydroxyproline monohydrate, def2-SVP | 2 | density to 3.5 Å, charges to 8 Å | 7 |
+
+Each pass makes one embedding matrix for each fragment, which is most of its cost.
+
+**Limits.** Fragments with capping atoms (`use_Ryde_capping=`, the nearest-neighbour fragments
+of a network solid) have no surroundings: the job stops. So does a parallel run. The fragment
+SCFs must be restricted.
 
 
 ## 3. Exchange and orthogonality
@@ -121,7 +156,7 @@ of the central cluster contains the Coulomb and exchange operators of the enviro
 projection operator
 
 ```math
-\hat{P}^{\mathrm{env}} = \lambda \sum_{k} |\gamma_k\rangle\langle\gamma_k| \qquad (6)
+\hat{P}^{\mathrm{env}} = \lambda \sum_{k} |\gamma_k\rangle\langle\gamma_k| \qquad (7)
 ```
 
 over the occupied orbitals $`\gamma_k`$ of the environment, with $`\lambda`$ of $`10^3`$ to
@@ -134,7 +169,7 @@ embedding,
 
 ```math
 \hat{f}^{A} = \hat{h} + \hat{J}[\gamma^A + \gamma^B] + \hat{v}_{\mathrm{xc}}[\gamma^A + \gamma^B]
- + \mu\, \hat{P}^{B} \qquad (7)
+ + \mu\, \hat{P}^{B} \qquad (8)
 ```
 
 where $`\gamma^A`$ and $`\gamma^B`$ are the density matrices of the embedded subsystem and its
@@ -143,13 +178,13 @@ potential of the total density, and $`\hat{P}^{B}`$ the projector onto the envir
 orbitals. They give a first-order correction that removes nearly all of the dependence on
 $`\mu`$, and Goodpaster et al. (2014) treat the truncation of the basis. Huzinaga's operator
 (Huzinaga and Cantu 1971) is the parameter-free alternative. For a hybrid functional or
-Hartree–Fock the exchange part of (7) is the exact exchange with the neighbours, by integrals or
+Hartree–Fock the exchange part of (8) is the exact exchange with the neighbours, by integrals or
 by COSX.
 
 The projector keeps the whole basis. The alternative, projecting the neighbours' occupied
 orbitals out of the molecule's basis functions, gives the orthogonality tails directly but makes
 some of the projected functions nearly linearly dependent, and they must be removed by filtering
-small eigenvalues of the overlap matrix. The level shift of (6) removes nothing: components along
+small eigenvalues of the overlap matrix. The level shift of (7) removes nothing: components along
 the neighbours' orbitals are only raised in energy, and the error of a finite shift is what the
 first-order correction of Manby et al. estimates.
 
@@ -173,7 +208,7 @@ transferred from a library or made for each neighbour. The Coulomb embedding of 
 neighbours' density from the molecule's own density matrix, so it needs nothing else and stays
 self-consistent with the molecule. A Coulomb embedding of this kind, with the neighbours' density
 rotated from the molecule's own, has not been used in HAR or, as far as we know, for molecular
-crystals elsewhere; nor has projection-based embedding in the sense of (6) and (7).
+crystals elsewhere; nor has projection-based embedding in the sense of (7) and (8).
 
 Manby et al. (2012) cite Stoll's incremental scheme and Huzinaga's operator, but not the work of
 Shukla, Dolg, Stoll and Fulde, which used the same level-shift projector sixteen years earlier.
@@ -195,11 +230,18 @@ The embedding works with dipole cluster charges only (not `use_qq_cluster_charge
 Cartesian basis functions only (not `use_spherical_basis=`), since only Cartesian shells are
 rotated in (4).
 
+In a fragment SCF (§2) the same keywords apply to every fragment, with two differences:
+`use_SC_cluster_charges=` and `embedding_radius=` may each be used without the other, and the
+SCFs may start from the promolecule. For DFT fragments give `kind= fragment-rks`, the
+`dft_functional=` and `use_default_guess_options= FALSE`; without the last the fragments are
+done at Hartree–Fock.
+
 On the molecule:
 
 | keyword | meaning |
 |---|---|
 | `put_embedding_neighbours` | lists the neighbours (symmetry operation, lattice shift, shortest distance) and checks each: its rotated density against the molecule's at the carried-back points, its nuclear term against the molecule's electronic potential at its nuclei, and its electronic term against the same interaction on the DFT grid (§7) |
+| `put_fragment_neighbours` | after a fragment SCF: lists the neighbours of each fragment, each with the interaction of the fragment's electrons with its electrons, $`E_J`$, and with its nuclei, $`E_N`$; then the sum of $`E_J`$ over the copies for each pair of fragments, a table that must be symmetric (§7) |
 
 
 ## 6. Example input
@@ -224,6 +266,33 @@ On the molecule:
    scf
    put_embedding_neighbours
    HAR_refinement
+}
+```
+
+
+A fragment HAR of a monohydrate, the water being atoms 5, 25 and 26:
+
+```
+{
+   name= NAC
+   basis_name= def2-SVP
+   CIF= { file_name= NAC_monohydrate.cif }
+   process_CIF
+   atom_groups= {
+      keys= { name= atom_indices= }
+      data= {
+         nac   { 1 2 3 4 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 }
+         water { 5 25 26 }
+      }
+   }
+   scfdata= {
+      kind=                   fragment-rhf
+      initial_density=        promolecule
+      use_SC_cluster_charges= TRUE
+      cluster_radius=         8 angstrom
+      embedding_radius=       3.5 angstrom
+   }
+   fraghar_refinement
 }
 ```
 
@@ -253,6 +322,26 @@ ammonia (`tests/long/nh3_rhf_DZP_HAR_J-embedding`), in which the H atom moves by
 agree to $`6\times10^{-7}`$ Eh: the embedding follows the atoms.
 
 
+**Fragments.** Three checks of §2, RHF/DZP on ammonia ($`P2_13`$), $`r_{\mathrm{emb}}`$ = 3.5 Å,
+cluster charges to 8 Å, all tolerances $`10^{-9}`$:
+
+| check | result |
+|---|---|
+| the molecule as the one fragment of a fragment SCF, against the molecule's own SCF of §1 | −56.37683994 Eh both ways |
+| ammonia described in the subgroup $`P2_1`$, where two molecules are independent, as two fragments | −56.37683994 Eh for each fragment |
+| the same: the sum of $`E_J`$ over the copies of fragment 2 about fragment 1, and of 1 about 2 | 116.523313 Eh both, equal to $`10^{-14}`$ |
+
+For N-acetyl-L-4-hydroxyproline monohydrate (RHF/def2-SVP, 3.5 Å) the molecule has ten copies
+of itself and seven of the water as neighbours, and the water seven copies of the molecule. Each
+of the seven molecule–water pairs has the same $`E_J`$ in both lists, and the two sums agree to
+$`6\times10^{-8}`$ Eh.
+
+Refined to convergence at the default tolerances, the one-fragment refinement gives GoF 0.85145
+and the molecule's 0.85142. Without surroundings the two refinements agree to eight digits.
+The tests are `tests/long/nh3_rhf_DZP_fragHAR_J-embedding` and
+`tests/long/nh3_P21_rhf_DZP_fragment_SCF_J-embedding`.
+
+
 ## 8. Where it is implemented
 
 | piece | procedure |
@@ -267,6 +356,11 @@ agree to $`6\times10^{-7}`$ Eh: the embedding follows the atoms.
 | $`V^{\mathrm{emb}}`$ in the core matrix, kept in `.embedding_mx` with $`P_{\mathrm{emb}}`$ in `.embedding_density`, and the test for remaking it | `MOLECULE.SCF:make_r_core_mx` |
 | the fresh build at the start of each SCF | `MOLECULE.SCF:initialize_SCF` |
 | the checks of §7 | `MOLECULE.SCF:put_embedding_neighbours` |
+| the copies of another molecule as neighbours | the optional argument `src` of `make_embedding_neighbours`, `add_r_embedding_of` and `remove_embedded_cluster_charges` |
+| the potential of the surroundings of fragment $`g`$, kept in `.mol(g).external_potential_mx` and added to the fragment's core matrix | `MOLECULE.SCF:make_fragment_surroundings`; `make_r_core_mx` |
+| each fragment's atomic charges and dipoles, copied to the atoms of the whole structure | `MOLECULE.SCF:put_fragment_moments_to_atoms` |
+| the passes and the test (6) | `MOLECULE.SCF:fragment_SCF_embedded`, called from `fragment_SCF` |
+| the fragment checks of §7 | `MOLECULE.SCF:put_fragment_neighbours` |
 
 
 ## References
