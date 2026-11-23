@@ -3938,9 +3938,11 @@ contains
       a,b,n   :: INT
       ra,rb   :: VEC{REAL}(3)
       fac     :: REAL
+      src_a,src_n :: VEC{EVEC{INT}}@
 
-      ! Neighbours first
+      ! Neighbours first, and which walls must be searched for
       .atom.make_Salvador_neighbours(bonds_for)
+      .make_Salvador_pair_sources(bonds_for,src_a,src_n)
 
       ! Create radii table
       n_atoms = .atom.dim
@@ -3948,18 +3950,179 @@ contains
       chi.create(n_atoms,n_atoms)
       chi = ONE
 
-      ! Atom a
+      ! The wall fractions: search, then copy the rest
       do a = 1,n_atoms
          n_bonds = bonds_for(a).element.dim
          radii_for(a).element.create(n_bonds)
-         ra = .atom(a).position
-         ! Neighbours b
          do n = 1,n_bonds
+            if (src_a(a)[n]/=0) cycle
+            b = bonds_for(a)[n]
+            radii_for(a)[n] = .Mayer_Salvador_radius_for(a,b,n_div,n_sub)
+         end
+      end
+      .copy_Salvador_fractions(radii_for,bonds_for,src_a,src_n)
+
+      ! Fractions to radii and size ratios
+      do a = 1,n_atoms
+         ra = .atom(a).position
+         do n = 1,bonds_for(a).element.dim
             b   = bonds_for(a)[n]
-            rb  = .atom(b).position 
-            fac = .Mayer_Salvador_radius_for(a,b,n_div,n_sub)
+            rb  = .atom(b).position
+            fac = radii_for(a)[n]
             radii_for(a)[n] = fac*norm2(rb-ra)
             chi(a,b)        = fac/(ONE-fac)
+         end
+      end
+
+      src_n.destroy
+      src_a.destroy
+
+   end
+
+   make_Salvador_pair_sources(bonds_for,src_a,src_n) :: leaky, PURE
+   ! For atom "a" and its "n"-th bonded neighbour "b", say where the wall
+   ! fraction from "a" towards "b" comes from. If "src_a(a)[n]" is zero
+   ! the wall is searched for. Otherwise it is copied from the pair
+   ! (|src_a(a)[n]|, src_n(a)[n]), as one minus that fraction if
+   ! "src_a(a)[n]" is negative. Each bond is searched once, from its
+   ! lower-numbered atom; the reversed bond is one minus it. In a cluster
+   ! made by "create_cluster" the central molecule comes first; a bond
+   ! between two outer atoms is copied from a searched bond between the
+   ! same two asymmetric-unit atoms, of the same length, preferring one
+   ! inside the central molecule. If there is none it is searched.
+      self      :: IN
+      bonds_for :: VEC{EVEC{INT}}, IN
+      src_a     :: VEC{EVEC{INT}}@, OUT
+      src_n     :: VEC{EVEC{INT}}@, OUT
+
+   ENSURE(.atom.allocated,"no atoms")
+
+      is_central   :: VEC{BIN}@
+      asym         :: VEC{INT}@
+      n_atoms      :: INT
+      n_central    :: INT
+      a,b,n,m,c,d,k :: INT
+      want         :: INT
+      dab,dcd      :: REAL
+      use_symmetry :: BIN
+      found        :: BIN
+
+      ! The central molecule of a cluster, and the asymmetric-unit atoms
+      n_atoms = .atom.dim
+      n_central = n_atoms
+      if (.saved.allocated) then
+      if (.saved.atom.allocated) then
+         if (.saved.atom.dim<n_atoms) n_central = .saved.atom.dim
+      end
+      end
+      is_central.create(n_atoms)
+      is_central = FALSE
+      is_central(1:n_central) = TRUE
+      asym.create(n_atoms)
+      asym = 0
+      use_symmetry = FALSE
+      if (n_central<n_atoms AND .crystal.allocated) then
+      if (.crystal.asym_atom_for_frag_atom.allocated) then
+      if (.crystal.asym_atom_for_frag_atom.dim==n_atoms) then
+         use_symmetry = TRUE
+         asym = .crystal.asym_atom_for_frag_atom
+      end
+      end
+      end
+
+      ! Every wall searched to begin with
+      src_a.create(n_atoms)
+      src_n.create(n_atoms)
+      do a = 1,n_atoms
+         src_a(a).element.create(bonds_for(a).element.dim)
+         src_n(a).element.create(bonds_for(a).element.dim)
+         src_a(a).element = 0
+         src_n(a).element = 0
+      end
+
+      ! Bonds from the higher-numbered atom: one minus the reverse
+      do a = 1,n_atoms
+         do n = 1,bonds_for(a).element.dim
+            b = bonds_for(a)[n]
+            if (b>a) cycle
+            do m = 1,bonds_for(b).element.dim
+               if (bonds_for(b)[m]/=a) cycle
+               src_a(a)[n] = -b
+               src_n(a)[n] = m
+               exit
+            end
+         end
+      end
+
+      ! Bonds between two outer atoms: copy an equivalent searched bond,
+      ! with both atoms in the central molecule if possible
+      if (use_symmetry) then
+         do a = 1,n_atoms
+            do n = 1,bonds_for(a).element.dim
+               b = bonds_for(a)[n]
+               if (b<a) cycle
+               if (is_central(a) OR is_central(b)) cycle
+               if (asym(a)==asym(b)) cycle
+               dab = norm2(.atom(b).position-.atom(a).position)
+               found = FALSE
+               do want = 2,1,-1
+                  do c = 1,n_central
+                     do k = 1,bonds_for(c).element.dim
+                        d = bonds_for(c)[k]
+                        if (d<c) cycle
+                        if (want==2 AND NOT is_central(d)) cycle
+                        dcd = norm2(.atom(d).position-.atom(c).position)
+                        if (abs(dcd-dab)>TOL(4)) cycle
+                        if (asym(c)==asym(a) AND asym(d)==asym(b)) then
+                           src_a(a)[n] = c
+                           src_n(a)[n] = k
+                           found = TRUE
+                        else if (asym(c)==asym(b) AND asym(d)==asym(a)) then
+                           src_a(a)[n] = -c
+                           src_n(a)[n] = k
+                           found = TRUE
+                        end
+                        if (found) exit
+                     end
+                     if (found) exit
+                  end
+                  if (found) exit
+               end
+            end
+         end
+      end
+
+      asym.destroy
+      is_central.destroy
+
+   end
+
+   copy_Salvador_fractions(frac_for,bonds_for,src_a,src_n) :: PURE
+   ! Fill in the wall fractions "frac_for" which were not searched for,
+   ! from the sources made by "make_Salvador_pair_sources". Bonds from
+   ! the lower-numbered atom are done first, since the reversed bonds
+   ! copy them.
+      self      :: IN
+      frac_for  :: VEC{EVEC{REAL}}, INOUT
+      bonds_for :: VEC{EVEC{INT}}, IN
+      src_a     :: VEC{EVEC{INT}}, IN
+      src_n     :: VEC{EVEC{INT}}, IN
+
+      a,b,n,c,k,pass :: INT
+
+      do pass = 1,2
+         do a = 1,frac_for.dim
+            do n = 1,bonds_for(a).element.dim
+               b = bonds_for(a)[n]
+               if (pass==1 AND b<a) cycle
+               if (pass==2 AND b>a) cycle
+               c = src_a(a)[n]
+               if (c==0) cycle
+               k = src_n(a)[n]
+               if (c>0) then; frac_for(a)[n] = frac_for(c)[k]
+               else;          frac_for(a)[n] = ONE - frac_for(-c)[k]
+               end
+            end
          end
       end
 
