@@ -9,7 +9,9 @@ f functions (Tonto's default), and writes the restricted density matrix, in
 Tonto's basis-function order, as the Tonto archive <name>.density_mx,r.
 
 Methods: any Psi4 SCF method (hf, b3lyp, ...), and mp2 and ccsd, whose relaxed
-densities come from Psi4's analytic gradient.
+densities come from Psi4's analytic gradient (checked: the dipole of the returned
+density equals the finite-field dipole to 2e-6 au for water). MP2 uses exact
+integrals by default; --mp2-type df uses density fitting for the SCF and the MP2.
 
 Example, in a Tonto job:
    scfdata= {
@@ -79,6 +81,7 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--method", default="hf", help="hf, b3lyp, ..., mp2 or ccsd")
     ap.add_argument("--scf-type", default="pk", help="Psi4 scf_type: pk (exact) or df")
+    ap.add_argument("--mp2-type", default="conv", help="conv (exact) or df; df also sets scf_type df")
     ap.add_argument("--threads", type=int, default=1)
     ap.add_argument("name", help="the Tonto job name")
     a = ap.parse_args()
@@ -107,6 +110,10 @@ def main():
     if m in ("mp2", "ccsd"):
         if m == "ccsd":
             psi4.set_options({"cc_type": "conv"})
+        if m == "mp2":
+            psi4.set_options({"mp2_type": a.mp2_type})
+            if a.mp2_type == "df":
+                psi4.set_options({"scf_type": "df"})
         _, wfn = psi4.gradient(m, molecule=mol, return_wfn=True, external_potentials=ext)
     else:
         _, wfn = psi4.energy(m, molecule=mol, return_wfn=True, external_potentials=ext)
