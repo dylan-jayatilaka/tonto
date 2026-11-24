@@ -12,6 +12,8 @@ Methods: any Psi4 SCF method (hf, b3lyp, ...), and mp2 and ccsd, whose relaxed
 densities come from Psi4's analytic gradient (checked: the dipole of the returned
 density equals the finite-field dipole to 2e-6 au for water). MP2 uses exact
 integrals by default; --mp2-type df uses density fitting for the SCF and the MP2.
+CCSD is conventional by default; --cc-type df uses density fitting for the SCF
+and the CCSD (its density is also relaxed: same dipole check, 2e-6 au).
 
 Example, in a Tonto job:
    scfdata= {
@@ -85,6 +87,7 @@ def main():
     ap.add_argument("--method", default="hf", help="hf, b3lyp, ..., mp2 or ccsd")
     ap.add_argument("--scf-type", default="pk", help="Psi4 scf_type: pk (exact) or df")
     ap.add_argument("--mp2-type", default="conv", help="conv (exact) or df; df also sets scf_type df")
+    ap.add_argument("--cc-type", default="conv", help="conv or df; df also sets scf_type df")
     ap.add_argument("--threads", type=int, default=1)
     ap.add_argument("name", help="the Tonto job name")
     a = ap.parse_args()
@@ -112,7 +115,9 @@ def main():
     m = a.method.lower()
     if m in ("mp2", "ccsd"):
         if m == "ccsd":
-            psi4.set_options({"cc_type": "conv"})
+            psi4.set_options({"cc_type": a.cc_type})
+            if a.cc_type == "df":
+                psi4.set_options({"scf_type": "df"})
         if m == "mp2":
             psi4.set_options({"mp2_type": a.mp2_type})
             if a.mp2_type == "df":
