@@ -74,6 +74,13 @@ behind. They converge as the refinement does.
   Psi4's overlap matrix, so reordered, equals Tonto's to 2e-10 (the printed precision). A Psi4
   density matrix moves into Tonto's basis by the same reordering of rows and columns, with no
   scale factors.
+- **Step 2 done (water, def2-SVP, RHF):** Psi4 with `puream false`, `scf_type pk`, its alpha
+  density doubled and reordered as in step 1, equals Tonto's own converged density to 1.4e-10
+  (Tonto's `density_mx,r` archive is the total density, trace(PS) = 10). Written as a Tonto archive
+  and read with `initial_density= restricted`, it gives a DIIS gradient of 2e-10 at iteration 0, and
+  Tonto stops after one cycle at -75.9622444320 Eh, equal to Psi4's energy to every printed digit.
+- **Tonto's binary archive** `<name>.density_mx,r` is one Fortran sequential unformatted record:
+  a 4-byte length, the n x n matrix in column order as 8-byte reals, the 4-byte length again.
 - `put_overlap_matrix` must be preceded by `make_overlap_matrix`; otherwise, in a release build,
   it prints column numbers without end (the check that the matrix exists is compiled out).
 
@@ -81,3 +88,5 @@ behind. They converge as the refinement does.
 
 - 2026-11-23: plan written; step 1 (overlap matrix) started.
 - 2026-11-24: step 1 done (table above). Next: step 2, the HF density.
+- 2026-11-24: step 2 done (scratchpad `hf2/`: `psi_hf.py`, the archive writer). Next: step 3, the
+  driver script and an HF refinement of urea through it, against Tonto's own.
