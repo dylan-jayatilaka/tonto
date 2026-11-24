@@ -89,6 +89,7 @@ def main():
     ap.add_argument("--mp2-type", default="conv", help="conv (exact) or df; df also sets scf_type df")
     ap.add_argument("--cc-type", default="conv", help="conv or df; df also sets scf_type df")
     ap.add_argument("--threads", type=int, default=1)
+    ap.add_argument("--memory", default="2 GB", help="Psi4 memory, e.g. \"12 GB\"")
     ap.add_argument("name", help="the Tonto job name")
     a = ap.parse_args()
 
@@ -98,7 +99,7 @@ def main():
     d = read_input(a.name)
     psi4.set_output_file(a.name + ".psi4.out", False)
     psi4.set_num_threads(a.threads)
-    psi4.set_memory("2 GB")
+    psi4.set_memory(a.memory)
 
     # The molecule exactly as Tonto has it
     geom = [f"{d['charge']} {d['multiplicity']}"]
