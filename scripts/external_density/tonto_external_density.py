@@ -25,11 +25,14 @@ import sys
 
 import numpy as np
 
-# Psi4 -> Tonto order of the components of a Cartesian shell.
-# Tonto: d xx yy zz xy xz yz;  f xxx yyy zzz xxy xxz xyy yyz xzz yzz xyz.
-# Psi4:  d xx xy xz yy yz zz;  f xxx xxy xxz xyy xyz xzz yyy yyz yzz zzz.
+# Psi4 -> Tonto order of the components of a Cartesian shell (found by matching
+# the two programs' overlap matrices; they then agree to 2e-10).
+# Tonto: d xx yy zz xy xz yz;  f xxx yyy zzz xxy xxz xyy yyz xzz yzz xyz;
+#        g xxxx yyyy zzzz xxxy xxxz xyyy yyyz xzzz yzzz xxyy xxzz yyzz xxyz xyyz xyzz.
+# Psi4 orders the components of every shell lexically: xx xy xz yy yz zz, ...
 PSI4_TO_TONTO = {0: [0], 1: [0, 1, 2], 2: [0, 3, 5, 1, 2, 4],
-                 3: [0, 6, 9, 1, 2, 3, 7, 5, 8, 4]}
+                 3: [0, 6, 9, 1, 2, 3, 7, 5, 8, 4],
+                 4: [0, 10, 14, 1, 2, 6, 11, 9, 13, 3, 5, 12, 4, 7, 8]}
 
 
 def read_input(name):
