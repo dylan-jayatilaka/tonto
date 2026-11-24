@@ -81,8 +81,23 @@ behind. They converge as the refinement does.
   Tonto stops after one cycle at -75.9622444320 Eh, equal to Psi4's energy to every printed digit.
 - **Tonto's binary archive** `<name>.density_mx,r` is one Fortran sequential unformatted record:
   a 4-byte length, the n x n matrix in column order as 8-byte reals, the 4-byte length again.
-- `put_overlap_matrix` must be preceded by `make_overlap_matrix`; otherwise, in a release build,
-  it prints column numbers without end (the check that the matrix exists is compiled out).
+- `put_overlap_matrix` used to need a preceding `make_overlap_matrix`; in a release build it printed
+  column numbers without end, because the check that the matrix exists is compiled out. It now
+  makes the matrix itself.
+- **Step 3 done (urea, RHF/def2-SVP, oc-salvador k = 4, ~/tonto-runs/2026-11-24_external_density_step3):**
+  `scfdata= { external_density_command= "..." }` makes `MOLECULE.SCF:SCF` call
+  `external_density_SCF`, which writes `<name>.external_input` (basis, charge, multiplicity, atoms
+  and cluster charges in bohr), runs the command with the job name appended, and reads
+  `<name>.density_mx,r`. The driver is `scripts/external_density/tonto_external_density.py`
+  (Psi4, `puream false`, `scf_type pk`).
+  - Isolated molecule: the refinement through Psi4 equals Tonto's own in every printed digit of
+    the coordinates and ADPs; GoF 3.540631 against 3.540632. Every density read back has 32.000000
+    electrons.
+  - Self-consistent cluster charges (8 A): again every printed digit of the coordinates and ADPs;
+    GoF 3.439974 against 3.439958, the cost of the charges lagging one Psi4 run behind. 10 Psi4
+    runs for the refinement.
+  - The cluster charges between runs come from the archive the command wrote last, because the
+    refinement deletes the in-memory density at each new geometry.
 
 ## Log
 
@@ -90,3 +105,6 @@ behind. They converge as the refinement does.
 - 2026-11-24: step 1 done (table above). Next: step 2, the HF density.
 - 2026-11-24: step 2 done (scratchpad `hf2/`: `psi_hf.py`, the archive writer). Next: step 3, the
   driver script and an HF refinement of urea through it, against Tonto's own.
+- 2026-11-24: step 3 done (above). Next: step 4, MP2 and CCSD relaxed densities through the driver
+  (check first that Psi4's `wfn.Da()` after the gradient is the relaxed density), urea and
+  L-alanine; ORCA as a faster MP2 route later.

@@ -2398,10 +2398,16 @@ contains
    SCF :: leaky
    ! Do an SCF calculation. The following :
    !   .MOs, .MO_energies, .density_mx
-   ! are produced as results.
+   ! are produced as results. If .SCF_data.external_density_command is set,
+   ! the density matrix is made by that command instead.
       self :: INOUT
 
    ENSURE(.SCF_data.allocated,"no SCF_data provided")
+
+      if (.SCF_data.external_density_command/=" ") then
+         .external_density_SCF
+         return
+      end
 
       select case (.SCF_data.SCF_kind)
 
@@ -2427,6 +2433,116 @@ contains
          .usual_SCF
 
       end
+
+   end
+
+   external_density_SCF :: leaky
+   ! Make the restricted density matrix with the shell command
+   ! ".SCF_data.external_density_command", in place of Tonto's own SCF.
+   ! The molecule and, if they are used, the cluster charges are written
+   ! to "<name>.external_input" (see put_external_density_input); the
+   ! command is run with the job name as its last argument, and must write
+   ! the density matrix, in Tonto's basis functions and their order, as
+   ! the archive "<name>.density_mx,r". The cluster charges come from the
+   ! density of the previous run, read back from that archive, so they
+   ! lag one run behind; the first run, which has no previous density, is
+   ! made once without them and once with them. The natural orbitals of
+   ! the density are put in .MOs.
+      self :: INOUT
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.allocated,"no atom list")
+   ENSURE(.SCF_data.allocated,"no SCF_data")
+
+      command :: STR
+      use_cc,with_cc :: BIN
+      pass,n_pass :: INT
+
+      DIE_IF(.SCF_data.spinorbital_genre/="r ","the external density must be restricted")
+      DIE_IF(.SCF_data.embedding_radius>ZERO,"the external density does not take the embedding")
+      DIE_IF(tonto.n_processors>1,"the external density runs on one processor only")
+
+      ! Cluster charges need a previous density
+      use_cc = .SCF_data.using_cluster_charges AND NOT .SCF_data.is_guess
+      n_pass = 1
+      if (use_cc AND .SCF_data.n_external_density_runs==0) n_pass = 2
+      if (.overlap_mx.deallocated) .make_overlap_mx
+
+      do pass = 1,n_pass
+
+         ! The cluster charges from the latest density
+         with_cc = use_cc AND (pass==2 OR n_pass==1)
+         if (with_cc) then
+            if (.density_mx.deallocated) .read_archive("density_mx",genre="r ")
+            .make_cluster_charges
+         end
+
+         ! Write the input, run the command, read the density
+         .put_external_density_input(with_cc)
+         command = trim(.SCF_data.external_density_command)//" "//trim(.name)
+         stdout.flush
+         stdout.show("External density command     =",trim(command))
+         tonto.execute(command)
+         DIE_IF(tonto.command_failed,"the external density command failed: "//trim(command))
+         .SCF_data.n_external_density_runs = .SCF_data.n_external_density_runs + 1
+         .density_mx.destroy
+         .read_archive("density_mx",genre="r ")
+         stdout.show("Electrons in the density     =",sum(.density_mx.r*.overlap_mx))
+
+      end
+
+      ! Natural orbitals as the MOs
+      .make_r_NOs
+      .MOs.destroy
+      .MOs.create(.n_bf,"r ")
+      .MOs.r = .NOs.r
+      .SCF_data.set_converged(TRUE)
+
+   end
+
+   put_external_density_input(with_cc) :: leaky
+   ! Write "<name>.external_input" for the external density command: the
+   ! job name, basis set name, charge and multiplicity; then the atoms in
+   ! Tonto's order, each as label, atomic number and position in bohr;
+   ! then, if "with_cc" is TRUE, the cluster charges, each as charge and
+   ! position in bohr, else a count of zero.
+      self :: INOUT
+      with_cc :: BIN, IN
+
+   ENSURE(.atom.allocated,"no atom list")
+
+      file :: STR
+      pos :: VEC{REAL}(3)
+      n_q,a,q :: INT
+
+      n_q = 0
+      if (with_cc) n_q = .SCF_data.cluster_charges.dim
+
+      file = trim(.name)//".external_input"
+      stdout.redirect(file)
+      stdout.text("name "//trim(.name))
+      stdout.text("basis "//trim(.basis_name))
+      stdout.text("charge "//trim(.charge.to_str))
+      stdout.text("multiplicity "//trim(.spin_multiplicity.to_str))
+      stdout.text("atoms "//trim(.atom.dim.to_str))
+      do a = 1,.atom.dim
+         pos = .atom(a).position
+         stdout.put(.atom(a).label)
+         stdout.put(.atom(a).atomic_number)
+         stdout.put(pos(1),fmt="e",width=26,precision=16)
+         stdout.put(pos(2),fmt="e",width=26,precision=16)
+         stdout.put(pos(3),fmt="e",width=26,precision=16)
+         stdout.flush
+      end
+      stdout.text("charges "//trim(n_q.to_str))
+      do q = 1,n_q
+         stdout.put(.SCF_data.cluster_charges(q),fmt="e",width=26,precision=16)
+         stdout.put(.SCF_data.cluster_charge_positions(1,q),fmt="e",width=26,precision=16)
+         stdout.put(.SCF_data.cluster_charge_positions(2,q),fmt="e",width=26,precision=16)
+         stdout.put(.SCF_data.cluster_charge_positions(3,q),fmt="e",width=26,precision=16)
+         stdout.flush
+      end
+      stdout.revert
 
    end
 
