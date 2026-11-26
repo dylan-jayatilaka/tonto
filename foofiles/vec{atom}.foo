@@ -3509,7 +3509,7 @@ contains
       do a = 1,.dim
          symbol(a) = self(a).chemical_symbol
       end
-      symbol.quick_sort
+      symbol.sort
 
       ! Make the chemical symbol
       res = " "
@@ -4341,6 +4341,147 @@ contains
       pm :: VEC{REAL}(3)
 
       .make_principal_moments(pm,axes)
+
+   end
+
+   make_inertial_axes(axes,ref) :: PURE
+   ! Make the inertial "axes" of these atoms: the columns of "axes" are
+   ! unit vectors along the principal axes of the inertia tensor about the
+   ! centre of mass, in order of increasing principal moment, and form a
+   ! right-handed set. The columns of "ref" are reference directions, such
+   ! as the unit cell axes, which remove the ambiguity in the axes. Each
+   ! axis is given the sign that makes it point along the reference
+   ! direction closest to it. Where two moments are equal (a linear
+   ! molecule or a symmetric top) or all three are (a spherical top), the
+   ! axes in the degenerate plane or space are those closest to the
+   ! reference directions.
+      self :: IN
+      axes :: MAT{REAL}(3,3), OUT
+      ref  :: MAT{REAL}(3,3), IN
+
+   ENSURE(abs(ref.determinant)>TOL(6),"reference directions are not independent")
+
+      it :: MAT{REAL}(3,3)
+      pm,pn,u,v :: VEC{REAL}(3)
+      tol :: REAL
+      deg12,deg23 :: BIN
+      i,weakest :: INT
+
+      ! Principal axes, in order of increasing moment
+      .make_inertia_tensor(it)
+      it.diagonalize_Jacobi(pm,axes)
+
+      ! Which moments are equal?
+      tol = TOL(5)
+      pn = ZERO
+      if (maxval(abs(pm))>ZERO) pn = pm/maxval(abs(pm))
+      deg12 = abs(pn(2)-pn(1))<tol
+      deg23 = abs(pn(3)-pn(2))<tol
+
+      if (deg12 AND deg23) then
+
+         ! Spherical top, or one atom: the reference directions, orthonormalised
+         axes(:,1) = ref(:,1)/norm2(ref(:,1))
+         u = ref(:,2) - dot_product(ref(:,2),axes(:,1))*axes(:,1)
+         axes(:,2) = u/norm2(u)
+         axes(:,3) = axes(:,1).cross(axes(:,2))
+
+      else if (deg12) then
+
+         ! Symmetric top whose unique axis has the largest moment
+         u = ::aligned_with_closest(axes(:,3),ref)
+         v = ::closest_perpendicular_to(u,ref)
+         axes(:,1) = v
+         axes(:,2) = u.cross(v)
+         axes(:,3) = u
+
+      else if (deg23) then
+
+         ! Linear molecule, or symmetric top whose unique axis has the smallest moment
+         u = ::aligned_with_closest(axes(:,1),ref)
+         v = ::closest_perpendicular_to(u,ref)
+         axes(:,1) = u
+         axes(:,2) = v
+         axes(:,3) = u.cross(v)
+
+      else
+
+         ! Asymmetric top: each axis points along its closest reference direction
+         do i = 1,3
+            axes(:,i) = ::aligned_with_closest(axes(:,i),ref)
+         end
+
+         ! Right-handed: reverse the axis least well aligned with any reference
+         if (axes.determinant<ZERO) then
+            weakest = 1
+            do i = 2,3
+               if (::alignment_with_closest(axes(:,i),ref) < &
+                   ::alignment_with_closest(axes(:,weakest),ref)) weakest = i
+            end
+            axes(:,weakest) = -axes(:,weakest)
+         end
+
+      end
+
+   end
+
+   aligned_with_closest(u,ref) result (res) :: selfless, private, PURE
+   ! Return the unit vector "u", reversed if need be so that it points
+   ! along the column of "ref" to which it is most nearly parallel or
+   ! antiparallel.
+      u   :: VEC{REAL}(3), IN
+      ref :: MAT{REAL}(3,3), IN
+      res :: VEC{REAL}(3)
+
+      c :: VEC{REAL}(3)
+      j :: INT
+
+      do j = 1,3
+         c(j) = dot_product(u,ref(:,j))/norm2(ref(:,j))
+      end
+      j = maxloc(abs(c),dim=1)
+      res = sign(ONE,c(j))*u
+
+   end
+
+   alignment_with_closest(u,ref) result (res) :: selfless, private, PURE
+   ! Return the largest |cosine| of the angle between the unit vector "u"
+   ! and the columns of "ref".
+      u   :: VEC{REAL}(3), IN
+      ref :: MAT{REAL}(3,3), IN
+      res :: REAL
+
+      j :: INT
+
+      res = ZERO
+      do j = 1,3
+         res = max(res,abs(dot_product(u,ref(:,j)))/norm2(ref(:,j)))
+      end
+
+   end
+
+   closest_perpendicular_to(u,ref) result (res) :: selfless, private, PURE
+   ! Return the unit vector perpendicular to the unit vector "u" that is
+   ! closest to a column of "ref": the column whose projection onto the
+   ! plane perpendicular to "u" is the longest, projected and normalised.
+      u   :: VEC{REAL}(3), IN
+      ref :: MAT{REAL}(3,3), IN
+      res :: VEC{REAL}(3)
+
+      w :: VEC{REAL}(3)
+      best :: REAL
+      j :: INT
+
+      best = -ONE
+      do j = 1,3
+         w = ref(:,j)/norm2(ref(:,j))
+         w = w - dot_product(w,u)*u
+         if (norm2(w)>best) then
+            best = norm2(w)
+            res  = w
+         end
+      end
+      res = res/norm2(res)
 
    end
 
@@ -5982,7 +6123,7 @@ contains
 
       ! Sorted unique atomic numvers
       unique_Z.to_unique_elements_of(Z)
-      unique_Z.quick_sort(decreasing_order=TRUE)
+      unique_Z.sort(decreasing_order=TRUE)
 
       ! Assign each atom to its kind in
       ! decreasing order
@@ -6739,7 +6880,7 @@ contains
       ENSURE(neighbour.dim==4,"must have four neighbours, n = "//trim(n.to_str))
 
       Z = self(neighbour).atomic_number
-      Z.quick_sort(order)
+      Z.sort(order)
       neighbour = neighbour(order)
 
       p2 = self(neighbour(2)).position - self(a).position
@@ -6811,7 +6952,7 @@ contains
       Z = self(neighbour).atomic_number
       .allred_rochow_bond_orders(a,neighbour,bond,bonds)
       Z = 1000*bond + Z
-      Z.quick_sort(order,decreasing_order=TRUE)
+      Z.sort(order,decreasing_order=TRUE)
       neighbour = neighbour(order)
       bond  = bond(order)
       bonds = bonds(order)
@@ -6871,7 +7012,7 @@ contains
             Z2 = self(neighbour2).atomic_number
             .allred_rochow_bond_orders(neighbour(i),neighbour2,bond2,bonds2)
             Z2 = 1000*bond2 + Z2
-            Z2.quick_sort(order2,decreasing_order=TRUE)
+            Z2.sort(order2,decreasing_order=TRUE)
             neighbour2 = neighbour2(order2)
             Z2 = Z2(order2)
             bond2 = bond2(order2)
@@ -6904,7 +7045,7 @@ contains
          ! Now reorder the mesomer strings according to ZZ
          if (l2>f2) then
             order.create(f2,l2)
-            ZZ.quick_sort(order,decreasing_order=TRUE)
+            ZZ.sort(order,decreasing_order=TRUE)
             order = order + f2 - 1
             neighbour(f2:l2) = neighbour(order)
             mesomer(f2:l2) = mesomer(order)
@@ -7057,7 +7198,7 @@ contains
       Z = self(neighbour).atomic_number
       .smiles_bond_orders(a,neighbour,bond,bonds)
       Z = 1000*bond + Z
-      Z.quick_sort(order,decreasing_order=TRUE)
+      Z.sort(order,decreasing_order=TRUE)
       neighbour = neighbour(order)
       bond  = bond(order)
       bonds = bonds(order)
@@ -7114,7 +7255,7 @@ contains
             Z2 = self(neighbour2).atomic_number
             .smiles_bond_orders(neighbour(i),neighbour2,bond2,bonds2)
             Z2 = 1000*bond2 + Z2
-            Z2.quick_sort(order2,decreasing_order=TRUE)
+            Z2.sort(order2,decreasing_order=TRUE)
             neighbour2 = neighbour2(order2)
             Z2 = Z2(order2)
             bond2 = bond2(order2)
@@ -7147,7 +7288,7 @@ contains
          ! Now reorder the mesomer strings according to ZZ
          if (l2>f2) then
             order.create(f2,l2)
-            ZZ.quick_sort(order,decreasing_order=TRUE)
+            ZZ.sort(order,decreasing_order=TRUE)
             order = order + f2 - 1
             neighbour(f2:l2) = neighbour(order)
             mesomer(f2:l2) = mesomer(order)
@@ -12522,20 +12663,25 @@ contains
 !  ADP's
 !  =====
 
-   put_ADPs(no_header,covariance)
+   put_ADPs(no_header,covariance,ref_axes)
    ! Output the ADP information
    ! Output position and ADP errors if there.
    ! Always use Angstrom units for display.
+   ! With "covariance", also put the ADPs, with esds, in each atom's ADP2
+   ! principal axis frame; with "ref_axes" as well, also in the inertial
+   ! axis frame of the atoms, made unambiguous by the reference
+   ! directions "ref_axes" (e.g. the unit cell axes).
       self :: IN
       covariance :: MAT{REAL}, optional, IN
       no_header :: BIN, optional, IN
+      ref_axes :: MAT{REAL}(3,3), optional, IN
 
-      ! If there are errors, tghese should have been
+      ! If there are errors, these should have been
       ! made beforehand and stored in pADP_errors.
       .put_ADP2s(no_header)
 
       if (present(covariance)) then
-      ! .put_ADP2s_in_inertial_axes(covariance)
+         if (present(ref_axes)) .put_ADP2s_in_inertial_axes(covariance,ref_axes)
          .put_ADP2s_in_ADP2_principal_axes(covariance)
       end
 
@@ -12543,8 +12689,8 @@ contains
       if (.has_any_ADP3s_and_errors) then
          .put_ADP3s
          if (present(covariance)) then
-      ! .put_ADP3s_in_inertial_axes(covariance)
-         .put_ADP3s_in_ADP2_principal_axes(covariance)
+            if (present(ref_axes)) .put_ADP3s_in_inertial_axes(covariance,ref_axes)
+            .put_ADP3s_in_ADP2_principal_axes(covariance)
          end
       end
 
@@ -12552,8 +12698,8 @@ contains
       if (.has_any_ADP4s_and_errors) then
          .put_ADP4s
          if (present(covariance)) then
-      ! .put_ADP4s_in_inertial_axes(covariance)
-         .put_ADP4s_in_ADP2_principal_axes(covariance)
+            if (present(ref_axes)) .put_ADP4s_in_inertial_axes(covariance,ref_axes)
+            .put_ADP4s_in_ADP2_principal_axes(covariance)
          end
       end
 
@@ -12698,87 +12844,61 @@ contains
    end
 
    get_ADP2s_in_new_axes_in(U,dU,axes,cov) :: leaky
-   ! Rotate the ADP2s for each atom into the principal axis frame of
-   ! each atom, where "cov" is the covariance matrix for all the
-   ! parameters in the concatenated pADP vectors. 
+   ! Rotate the ADP2s of each atom into the frame whose axes are the columns
+   ! of "axes", with esds from "cov", the covariance matrix of all the
+   ! parameters in the concatenated pADP vectors.
       self :: IN
-      U   :: MAT{REAL}@, OUT
-      dU   :: MAT{REAL}@, OUT
+      U,dU :: MAT{REAL}@, OUT
       axes :: MAT{REAL}(3,3), IN
       cov  :: MAT{REAL}, IN
 
-   ENSURE(cov.is_square,"covariance matrix is not square!")
-   ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
-
-      adp2,new2 :: MAT{REAL}(3,3)
-      vec2,lex2 :: VEC{REAL}(6)
-      rcm :: MAT{REAL}(6,6)
-      tol :: REAL
-      a,n :: INT
-
-      ! Create columns
-      n = .dim
-      U.create(n,6)
-      dU.create(n,6)
-
-      ! Loop over atoms
-      do a = 1,.dim
-
-         ! Change ADP2s to new coord system
-         adp2 = self(a).ADP_tensor
-         adp2.change_basis_to(new2,axes)
-         new2.zip_lower_triangle_to(vec2)
-         GAUSSIAN_DATA:lower_pyramid_to_lexical_2(vec2,lex2)
-         U(a,1:6) = lex2
-
-         ! Rotate whole covariance matrix by "axes"
-         rcm = .rotated_U2_covariance_mx_for_atom(a,axes,cov)
-
-         ! Extract diagonal elements as errors
-         rcm.put_diagonal_to(dU(a,1:6))
-
-      end
-
-      ! Square root sigma^2 -- see the note in
-      ! get_ADP2s_in_ADP2_principal_axes_in for why the clamp is needed.
-      tol = 1.0d-9*maxval(abs(dU))
-      DIE_IF(any(dU<-tol),"negative variance in the rotated ADP2 covariance matrix")
-      where (dU<tol) dU = ZERO
-      dU = sqrt(dU)
+      .get_ADPs_in_axes_in(2,U,dU,cov,axes)
 
    end
 
-   put_ADP2s_in_inertial_axes(cov)
-   ! Rotate the ADP2s for each atom into the inertial axis frame,
-   ! where "cov" is the covariance matrix for all the parameters in
-   ! the concatenated pADP vectors. 
-   ! WARNING: PROBLEM WITH THIS ROUTINE? Dylan 25/11/2024
+   put_ADP2s_in_inertial_axes(cov,ref)
+   ! Put the ADP2s of each atom, with esds, in the inertial axis frame of
+   ! the atoms, made unambiguous by the reference directions "ref" (the
+   ! columns, e.g. the unit cell axes). "cov" is the covariance matrix of
+   ! all the parameters in the concatenated pADP vectors.
       self :: IN
-      cov  :: MAT{REAL}, IN
+      cov :: MAT{REAL}, IN
+      ref :: MAT{REAL}(3,3), IN
 
    ENSURE(cov.is_square,"covariance matrix is not square!")
    ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
 
       U,dU :: MAT{REAL}@
       axes :: MAT{REAL}(3,3)
+      pm :: VEC{REAL}(3)
+      pa :: MAT{REAL}(3,3)
 
-      .make_inertial_axes(axes)
-      .get_ADP2s_in_new_axes_in(U,dU,axes,cov) 
+      .make_inertial_axes(axes,ref)
+      .make_principal_moments(pm,pa)
+      .get_ADPs_in_axes_in(2,U,dU,cov,axes)
 
       ! Title
       stdout.flush
-      stdout.text("=============================")
-      stdout.text("ADP2s in inertial axis system")
-      stdout.text("=============================")
-      stdout.flush
-      stdout.text(". ADPs are referred to cartesian axes.")
+      stdout.text("============================")
+      stdout.text("ADP2s in inertial axis frame")
+      stdout.text("============================")
 
       stdout.flush
-      stdout.text("Inertial axes in the cartesian system:")
+      stdout.text(". The axes are the principal axes of inertia of these atoms,")
+      stdout.text("  about their centre of mass, in order of increasing moment.")
+      stdout.text(". Each axis points along the unit cell axis closest to it; where")
+      stdout.text("  moments are equal, the axes are those closest to the cell axes.")
+      stdout.text(". ESUs have been obtained from the covariances.")
+
+      stdout.flush
+      stdout.text("Inertial axes (columns) in the cartesian frame:")
       stdout.put(axes)
 
-      ! Finally ... print table
-      ! This routine scales the U & dU
+      stdout.flush
+      stdout.text("Principal moments of inertia (amu A^2):")
+      stdout.put(pm*ANGSTROM_PER_BOHR**2)
+
+      ! Table, in Angstrom units
       .put_ADP2s_helper(U,dU)
 
       ! Clean
@@ -12788,76 +12908,14 @@ contains
    end
 
    get_ADP2s_in_ADP2_principal_axes_in(U,dU,cov) :: leaky
-   ! Rotate the ADP2s for each atom into the principal axis frame of
-   ! each atoms ADP2, where "cov" is the covariance matrix for all the
-   ! parameters in the concatenated pADP vectors. 
+   ! Rotate the ADP2s of each atom into the principal axis frame of its own
+   ! ADP2, with esds from "cov", the covariance matrix of all the
+   ! parameters in the concatenated pADP vectors.
       self :: IN
-      U   :: MAT{REAL}@, OUT
-      dU   :: MAT{REAL}@, OUT
+      U,dU :: MAT{REAL}@, OUT
       cov  :: MAT{REAL}, IN
 
-   ENSURE(cov.is_square,"covariance matrix is not square!")
-   ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
-
-      adp2,new2 :: MAT{REAL}(3,3)
-      vec2,lex2 :: VEC{REAL}(6)
-      eval :: VEC{REAL}(3)
-      R   :: MAT{REAL}(3,3)
-      rcm :: MAT{REAL}(6,6)
-      tol :: REAL
-      a,n :: INT
-
-      ! Create columns
-      n = .dim
-      U.create(n,6)
-      dU.create(n,6)
-
-      ! ADP2 atom index
-      n  = 0
-
-      ! Loop over atoms
-      do a = 1,.dim
-
-         ! ADP2 atom index
-         n = n + 1
-
-         ! Get ADP2 principal axes into "R"
-      ! self(a).ADP_tensor.solve_symmetric_eigenproblem(eval,R)
-         self(a).ADP_tensor.diagonalize_Jacobi(eval,R)
-
-         ! Change ADP2s to new coord system
-         adp2 = self(a).ADP_tensor
-         adp2.change_basis_to(new2,R)
-         new2.zip_lower_triangle_to(vec2)
-         GAUSSIAN_DATA:lower_pyramid_to_lexical_2(vec2,lex2)
-         U(n,1:6) = lex2
-
-         ! Rotate whole covariance matrix by "R"
-         rcm = .rotated_U2_covariance_mx_for_atom(a,R,cov)
-
-         ! Extract diagonal elements as errors
-         rcm.put_diagonal_to(dU(n,1:6))
-
-      end
-
-      ! Square root sigma^2.
-      ! In this frame the three off-diagonal ADP2 *values* vanish by
-      ! construction (each atom's tensor has been diagonalized). Their
-      ! *variances* need not: they measure how well determined the
-      ! principal axis directions are, so they are genuinely non-zero for
-      ! an atom whose axes are free to rotate, and zero for one whose axes
-      ! are fixed by site symmetry. In the latter case the computed value
-      ! is round-off about zero -- of order 1e-23 against 1e-6 for the
-      ! genuine variances -- with an arbitrary sign; sqrt then turns the
-      ! ones that land negative into NaN, which printed as a confident
-      ! "(0)" esd. Clamp those, symmetrically, so the result does not
-      ! depend on which side of zero the noise fell (i.e. on the platform).
-      ! A negative variance that is *not* round-off means the covariance
-      ! matrix itself is wrong, and must not be silently square-rooted away.
-      tol = 1.0d-9*maxval(abs(dU))
-      DIE_IF(any(dU<-tol),"negative variance in the rotated ADP2 covariance matrix")
-      where (dU<tol) dU = ZERO
-      dU = sqrt(dU)
+      .get_ADPs_in_axes_in(2,U,dU,cov)
 
    end
 
@@ -12894,37 +12952,115 @@ contains
 
    end
 
-   rotated_U2_covariance_mx_for_atom(a,R,fcm) result (rcm) :: PURE
-   ! Given index of atom "a", and given a 3x3 rotation matrix "R" and
-   ! given the *full* covariance matrix "fcm", return in "rcm" the U2
-   ! covariance matrix for atom "a" rotated by matrix "R".
+   get_ADPs_in_axes_in(order,U,dU,cov,axes) :: leaky
+   ! Rotate the ADPs of the given "order" (2, 3 or 4) of each atom that has
+   ! them into a new axis frame. Return the values in "U" and their esds
+   ! in "dU", one row per atom, in lexical order and in atomic units. The
+   ! new axes are the columns of "axes" if present; otherwise each atom's
+   ! own ADP2 principal axes. "cov" is the covariance matrix of all the
+   ! parameters in the concatenated pADP vectors.
+   ! The values and their covariance are rotated by the same product
+   ! matrix W, U' = W U and C' = W C W^T, so they cannot disagree. W is the
+   ! product matrix for R^T, since the components of a tensor T in the
+   ! frame whose axes are the columns of R are those of R^T T R.
       self :: IN
-      a   :: INT, IN
-      R   :: MAT{REAL}(3,3), IN
-      fcm :: MAT{REAL}, IN
-      rcm :: MAT{REAL}(6,6)
+      order :: INT, IN
+      U,dU :: MAT{REAL}@, OUT
+      cov  :: MAT{REAL}, IN
+      axes :: MAT{REAL}(3,3), optional, IN
 
-   ENSURE(R.dim1==3,"wrong dim1, R")
-   ENSURE(R.dim2==3,"wrong dim2, R")
-   ENSURE(fcm.is_square,"full covariance matrix is not square")
-   ENSURE(fcm.dim1==.no_of_pADPs,"wrong dimension, fcm")
+   ENSURE(order>=2 AND order<=4,"order must be 2, 3 or 4")
+   ENSURE(cov.is_square,"covariance matrix is not square!")
+   ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
 
-      old,RR :: MAT{REAL}(6,6)
-      off,f,l :: INT
+      W,C,rcm :: MAT{REAL}@
+      X :: VEC{REAL}@
+      R :: MAT{REAL}(3,3)
+      eval :: VEC{REAL}(3)
+      has :: VEC{BIN}@
+      tol :: REAL
+      n_c,off,f,l,a,n :: INT
 
-      ! Offset into diagonal block
-      off = .no_of_pADPs_up_to_atom(a) + 3
-      f   = off + 1
-      l   = off + 6
+      ! No. of components, and their offset in each atom's pADP vector
+      select case (order)
+         case (2); n_c = 6;  off = 3
+         case (3); n_c = 10; off = 9
+         case (4); n_c = 15; off = 19
+      end
 
-      ! Get the cov. matrix block
-      old = fcm(f:l,f:l)
+      ! Which atoms have ADPs of this order
+      has.create(.dim)
+      do a = 1,.dim
+         select case (order)
+            case (2); has(a) = TRUE
+            case (3); has(a) = self(a).has_ADP3s_and_errors
+            case (4); has(a) = self(a).has_ADP4s_and_errors
+         end
+      end
 
-      ! Get transformation matrix "RR"
-      GAUSSIAN_DATA:symmetric_tensor_2_product_mx(RR,R)
+      ! Create
+      n = count(has)
+      U.create(n,n_c)
+      dU.create(n,n_c)
+      W.create(n_c,n_c)
+      C.create(n_c,n_c)
+      rcm.create(n_c,n_c)
+      X.create(n_c)
 
-      ! Get the rotated U3 covariance matrix
-      old.back_transform_to(rcm,RR)
+      ! Loop over atoms
+      n = 0
+      do a = 1,.dim
+
+         if (NOT has(a)) cycle
+         n = n + 1
+
+         ! The new axes, as columns of R
+         if (present(axes)) then; R = axes
+         else;                    self(a).ADP_tensor.diagonalize_Jacobi(eval,R)
+         end
+
+         ! Product matrix for R^T
+         select case (order)
+            case (2); GAUSSIAN_DATA:symmetric_tensor_2_product_mx(W,transpose(R))
+            case (3); GAUSSIAN_DATA:symmetric_tensor_3_product_mx(W,transpose(R))
+            case (4); GAUSSIAN_DATA:symmetric_tensor_4_product_mx(W,transpose(R))
+         end
+
+         ! Rotate the values
+         if (order==2) then; self(a).put_ADP2_vector_to(X)
+         else;               X = self(a).pADP_vector(off+1:off+n_c)
+         end
+         U(n,:) = matmul(W,X)
+
+         ! In its own ADP2 principal frame an ADP2 must be diagonal
+         if (order==2 AND NOT present(axes)) then
+         ENSURE(maxval(abs(U(n,4:6)))<=TOL(6)*maxval(abs(U(n,1:3))),"rotated ADP2 is not diagonal")
+         end
+
+         ! Rotate the covariance block; the variances are on its diagonal
+         f = .no_of_pADPs_up_to_atom(a) + off + 1
+         l = f + n_c - 1
+         C = cov(f:l,f:l)
+         rcm = matmul(W,matmul(C,transpose(W)))
+         rcm.put_diagonal_to(dU(n,:))
+
+      end
+
+      ! Square root of the variances. A variance that should be zero (e.g.
+      ! an off-diagonal ADP2 in a frame fixed by site symmetry) comes out as
+      ! round-off of either sign; clamp it, so the esd does not depend on the
+      ! platform. A clearly negative variance means the covariance is wrong.
+      tol = 1.0d-9*maxval(abs(dU))
+      DIE_IF(any(dU<-tol),"negative variance in the rotated ADP covariance matrix")
+      where (dU<tol) dU = ZERO
+      dU = sqrt(dU)
+
+      ! Clean
+      X.destroy
+      rcm.destroy
+      C.destroy
+      W.destroy
+      has.destroy
 
    end
 
@@ -13037,68 +13173,27 @@ contains
 
    end
 
-   get_ADP3s_in_new_axes_in(U,dU,axes,cov) :: leaky, PURE
-   ! Rotate the ADP3s for each atom into the principal axis frame of
-   ! each atom, where "cov" is the covariance matrix for all the
-   ! parameters in the concatenated pADP vectors. 
+   get_ADP3s_in_new_axes_in(U,dU,axes,cov) :: leaky
+   ! Rotate the ADP3s of each atom into the frame whose axes are the columns
+   ! of "axes", with esds from "cov", the covariance matrix of all the
+   ! parameters in the concatenated pADP vectors.
       self :: IN
-      U   :: MAT{REAL}@, OUT
-      dU   :: MAT{REAL}@, OUT
+      U,dU :: MAT{REAL}@, OUT
       axes :: MAT{REAL}(3,3), IN
       cov  :: MAT{REAL}, IN
 
-   ENSURE(cov.is_square,"covariance matrix is not square!")
-   ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
-
-      adp3,new3 :: MAT3{REAL}(3,3,3)
-      vec3,lex3 :: VEC{REAL}(10)
-      rcm :: MAT{REAL}(10,10)
-      a,n :: INT
-
-      if (NOT .has_any_ADP3s_and_errors) return
-
-      ! Create columns
-      n = .no_of_ADP3_atoms
-      U.create(n,10)
-      dU.create(n,10)
-
-      ! ADP3 atom index
-      n  = 0
-
-      ! Loop over atoms
-      do a = 1,.dim
-
-         if (NOT self(a).has_ADP3s_and_errors) cycle
-
-         ! ADP3 atom index
-         n = n + 1
-
-         ! Change ADP3s to new coord system
-         self(a).put_ADP3_vector_to(adp3)
-         adp3.change_basis_to(new3,axes)
-         new3.compress_to_pyramid(vec3)
-         GAUSSIAN_DATA:lower_pyramid_to_lexical_3(vec3,lex3)
-         U(n,1:10) = lex3
-
-         ! Rotate whole covariance matrix by "axes"
-         rcm = .rotated_U3_covariance_mx_for_atom(a,axes,cov)
-
-         ! Extract diagonal elements as errors
-         rcm.put_diagonal_to(dU(n,1:10))
-
-      end
-
-      ! Square root sigma^2
-      dU = sqrt(dU)
+      .get_ADPs_in_axes_in(3,U,dU,cov,axes)
 
    end
 
-   put_ADP3s_in_inertial_axes(cov)
-   ! Rotate the ADP3s for each atom into the inertial axis frame,
-   ! where "cov" is the covariance matrix for all the parameters in
-   ! the concatenated pADP vectors. 
+   put_ADP3s_in_inertial_axes(cov,ref)
+   ! Put the ADP3s of each atom, with esds, in the inertial axis frame of
+   ! the atoms, made unambiguous by the reference directions "ref" (the
+   ! columns, e.g. the unit cell axes). "cov" is the covariance matrix of
+   ! all the parameters in the concatenated pADP vectors.
       self :: IN
-      cov  :: MAT{REAL}, IN
+      cov :: MAT{REAL}, IN
+      ref :: MAT{REAL}(3,3), IN
 
    ENSURE(cov.is_square,"covariance matrix is not square!")
    ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
@@ -13108,23 +13203,20 @@ contains
 
       if (NOT .has_any_ADP3s_and_errors) return
 
-      .make_inertial_axes(axes)
-      .get_ADP3s_in_new_axes_in(U,dU,axes,cov) 
+      .make_inertial_axes(axes,ref)
+      .get_ADPs_in_axes_in(3,U,dU,cov,axes)
 
       ! Title
       stdout.flush
-      stdout.text("=============================")
-      stdout.text("ADP3s in inertial axis system")
-      stdout.text("=============================")
-      stdout.flush
-      stdout.text(". ADPs are referred to cartesian axes.")
+      stdout.text("============================")
+      stdout.text("ADP3s in inertial axis frame")
+      stdout.text("============================")
 
       stdout.flush
-      stdout.text("Inertial axes in the cartesian system:")
-      stdout.put(axes)
+      stdout.text(". The axes are the inertial axes given with the ADP2s above.")
+      stdout.text(". ESUs have been obtained from the covariances.")
 
-      ! Finally ... print table
-      ! This routine scales the U & dU
+      ! Table, in Angstrom units
       .put_ADP3s(U,dU)
 
       ! Clean
@@ -13133,64 +13225,15 @@ contains
 
    end
 
-   get_ADP3s_in_ADP2_principal_axes_in(U,dU,cov) :: leaky, PURE
-   ! Rotate the ADP3s for each atom into the principal axis frame of
-   ! each atom, where "cov" is the covariance matrix for all the
-   ! parameters in the concatenated pADP vectors. 
+   get_ADP3s_in_ADP2_principal_axes_in(U,dU,cov) :: leaky
+   ! Rotate the ADP3s of each atom into the principal axis frame of its own
+   ! ADP2, with esds from "cov", the covariance matrix of all the
+   ! parameters in the concatenated pADP vectors.
       self :: IN
-      U   :: MAT{REAL}@, OUT
-      dU   :: MAT{REAL}@, OUT
+      U,dU :: MAT{REAL}@, OUT
       cov  :: MAT{REAL}, IN
 
-   ENSURE(cov.is_square,"covariance matrix is not square!")
-   ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
-
-      adp3,new3 :: MAT3{REAL}(3,3,3)
-      vec3,lex3 :: VEC{REAL}(10)
-      eval :: VEC{REAL}(3)
-      R   :: MAT{REAL}(3,3)
-      rcm :: MAT{REAL}(10,10)
-      a,n :: INT
-
-      if (NOT .has_any_ADP3s_and_errors) return
-
-      ! Create columns
-      n = .no_of_ADP3_atoms
-      U.create(n,10)
-      dU.create(n,10)
-
-      ! ADP3 atom index
-      n  = 0
-
-      ! Loop over atoms
-      do a = 1,.dim
-
-         if (NOT self(a).has_ADP3s_and_errors) cycle
-
-         ! ADP3 atom index
-         n = n + 1
-
-         ! Get ADP2 principal axes into "R"
-      ! self(a).ADP_tensor.solve_symmetric_eigenproblem(eval,R)
-         self(a).ADP_tensor.diagonalize_Jacobi(eval,R)
-
-         ! Change ADP3s to new coord system
-         self(a).put_ADP3_vector_to(adp3)
-         adp3.change_basis_to(new3,R)
-         new3.compress_to_pyramid(vec3)
-         GAUSSIAN_DATA:lower_pyramid_to_lexical_3(vec3,lex3)
-         U(n,1:10) = lex3
-
-         ! Rotate whole covariance matrix by "R"
-         rcm = .rotated_U3_covariance_mx_for_atom(a,R,cov)
-
-         ! Extract diagonal elements as errors
-         rcm.put_diagonal_to(dU(n,1:10))
-
-      end
-
-      ! Square root sigma^2
-      dU = sqrt(dU)
+      .get_ADPs_in_axes_in(3,U,dU,cov)
 
    end
 
@@ -13206,9 +13249,6 @@ contains
 
       U,dU :: MAT{REAL}@
 
-      ! NOT WORKING - CHEcK - dylan
-      return
-
       if (NOT .has_any_ADP3s_and_errors) return
 
       .get_ADP3s_in_ADP2_principal_axes_in(U,dU,cov) 
@@ -13220,6 +13260,7 @@ contains
       stdout.text("==================================")
       stdout.flush
       stdout.text(". ADPs are referred to cartesian axes.")
+      stdout.text(". ESUs have been obtained from the covariances.")
 
       ! Finally ... print table
       ! This routine scales the U & dU
@@ -13228,40 +13269,6 @@ contains
       ! Clean
       dU.destroy
       U.destroy
-
-   end
-
-   rotated_U3_covariance_mx_for_atom(a,R,fcm) result (rcm) :: PURE
-   ! Given index of atom "a", and given a 3x3 rotation matrix "R" and
-   ! given the *full* covariance matrix "fcm", return in "rcm" the U3
-   ! covariance matrix for atom "a" rotated by matrix "R".
-      self :: IN
-      a   :: INT, IN
-      R   :: MAT{REAL}(3,3), IN
-      fcm :: MAT{REAL}, IN
-      rcm :: MAT{REAL}(10,10)
-
-   ENSURE(R.dim1==3,"wrong dim1, R")
-   ENSURE(R.dim2==3,"wrong dim2, R")
-   ENSURE(fcm.is_square,"full covariance matrix is not square")
-   ENSURE(fcm.dim1==.no_of_pADPs,"wrong dimension, fcm")
-
-      old,RR :: MAT{REAL}(10,10)
-      off,f,l :: INT
-
-      ! Offset into diagonal block
-      off = .no_of_pADPs_up_to_atom(a) + 9
-      f   = off + 1
-      l   = off + 10
-
-      ! Get the cov. matrix block
-      old = fcm(f:l,f:l)
-
-      ! Get transformation matrix "RR"
-      GAUSSIAN_DATA:symmetric_tensor_3_product_mx(RR,R)
-
-      ! Get the rotated U3 covariance matrix
-      old.back_transform_to(rcm,RR)
 
    end
 
@@ -13496,68 +13503,27 @@ contains
 
    end
 
-   get_ADP4s_in_new_axes_in(U,dU,axes,cov) :: leaky, PURE
-   ! Rotate the ADP4s for each atom into the principal axis frame of
-   ! each atom, where "cov" is the covariance matrix for all the
-   ! parameters in the concatenated pADP vectors. 
+   get_ADP4s_in_new_axes_in(U,dU,axes,cov) :: leaky
+   ! Rotate the ADP4s of each atom into the frame whose axes are the columns
+   ! of "axes", with esds from "cov", the covariance matrix of all the
+   ! parameters in the concatenated pADP vectors.
       self :: IN
-      U   :: MAT{REAL}@, OUT
-      dU   :: MAT{REAL}@, OUT
+      U,dU :: MAT{REAL}@, OUT
       axes :: MAT{REAL}(3,3), IN
       cov  :: MAT{REAL}, IN
 
-   ENSURE(cov.is_square,"covariance matrix is not square!")
-   ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
-
-      adp4,new4 :: MAT4{REAL}(3,3,3,3)
-      vec4,lex4 :: VEC{REAL}(15)
-      rcm :: MAT{REAL}(15,15)
-      a,n :: INT
-
-      if (NOT .has_any_ADP4s_and_errors) return
-
-      ! Create columns
-      n = .no_of_ADP4_atoms
-      U.create(n,15)
-      dU.create(n,15)
-
-      ! ADP4 atom index
-      n  = 0
-
-      ! Loop over atoms
-      do a = 1,.dim
-
-         if (NOT self(a).has_ADP4s_and_errors) cycle
-
-         ! ADP4 atom index
-         n = n + 1
-
-         ! Change ADP4s to new coord system
-         self(a).put_ADP4_vector_to(adp4)
-         adp4.change_basis_to(new4,axes)
-         new4.compress_to_pyramid(vec4)
-         GAUSSIAN_DATA:lower_pyramid_to_lexical_4(vec4,lex4)
-         U(n,1:15) = lex4
-
-         ! Rotate whole covariance matrix by "axes"
-         rcm = .rotated_U4_covariance_mx_for_atom(a,axes,cov)
-
-         ! Extract diagonal elements as errors
-         rcm.put_diagonal_to(dU(n,1:15))
-
-      end
-
-      ! Square root sigma^2
-      dU = sqrt(dU)
+      .get_ADPs_in_axes_in(4,U,dU,cov,axes)
 
    end
 
-   put_ADP4s_in_inertial_axes(cov)
-   ! Rotate the ADP4s for each atom into the principal axis frame of
-   ! each atom, where "cov" is the covariance matrix for all the
-   ! parameters in the concatenated pADP vectors. 
+   put_ADP4s_in_inertial_axes(cov,ref)
+   ! Put the ADP4s of each atom, with esds, in the inertial axis frame of
+   ! the atoms, made unambiguous by the reference directions "ref" (the
+   ! columns, e.g. the unit cell axes). "cov" is the covariance matrix of
+   ! all the parameters in the concatenated pADP vectors.
       self :: IN
       cov :: MAT{REAL}, IN
+      ref :: MAT{REAL}(3,3), IN
 
    ENSURE(cov.is_square,"covariance matrix is not square!")
    ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
@@ -13567,23 +13533,20 @@ contains
 
       if (NOT .has_any_ADP4s_and_errors) return
 
-      .make_inertial_axes(axes)
-      .get_ADP4s_in_new_axes_in(U,dU,axes,cov)
+      .make_inertial_axes(axes,ref)
+      .get_ADPs_in_axes_in(4,U,dU,cov,axes)
 
       ! Title
       stdout.flush
-      stdout.text("=============================")
-      stdout.text("ADP4s in inertial axis system")
-      stdout.text("=============================")
-      stdout.flush
-      stdout.text(". ADPs are referred to cartesian axes.")
+      stdout.text("============================")
+      stdout.text("ADP4s in inertial axis frame")
+      stdout.text("============================")
 
       stdout.flush
-      stdout.text("Inertial axes in the cartesian system:")
-      stdout.put(axes)
+      stdout.text(". The axes are the inertial axes given with the ADP2s above.")
+      stdout.text(". ESUs have been obtained from the covariances.")
 
-      ! Finally ... print table
-      ! This routine scales the U & dU
+      ! Table, in Angstrom units
       .put_ADP4s(U,dU)
 
       ! Clean
@@ -13592,64 +13555,15 @@ contains
 
    end
 
-   get_ADP4s_in_ADP2_principal_axes_in(U,dU,cov) :: leaky, PURE
-   ! Rotate the ADP4s for each atom into the principal axis frame of
-   ! each atom, where "cov" is the covariance matrix for all the
-   ! parameters in the concatenated pADP vectors. 
+   get_ADP4s_in_ADP2_principal_axes_in(U,dU,cov) :: leaky
+   ! Rotate the ADP4s of each atom into the principal axis frame of its own
+   ! ADP2, with esds from "cov", the covariance matrix of all the
+   ! parameters in the concatenated pADP vectors.
       self :: IN
-      U   :: MAT{REAL}@, OUT
-      dU   :: MAT{REAL}@, OUT
+      U,dU :: MAT{REAL}@, OUT
       cov  :: MAT{REAL}, IN
 
-   ENSURE(cov.is_square,"covariance matrix is not square!")
-   ENSURE(cov.dim1==.no_of_pADPs,"wrong size, covariance matrix!")
-
-      adp4,new4 :: MAT4{REAL}(3,3,3,3)
-      vec4,lex4 :: VEC{REAL}(15)
-      eval :: VEC{REAL}(3)
-      R   :: MAT{REAL}(3,3)
-      rcm :: MAT{REAL}(15,15)
-      a,n :: INT
-
-      if (NOT .has_any_ADP4s_and_errors) return
-
-      ! Create columns
-      n = .no_of_ADP4_atoms
-      U.create(n,15)
-      dU.create(n,15)
-
-      ! ADP4 atom index
-      n  = 0
-
-      ! Loop over atoms
-      do a = 1,.dim
-
-         if (NOT self(a).has_ADP4s_and_errors) cycle
-
-         ! ADP4 atom index
-         n = n + 1
-
-         ! Get ADP2 principal axes into "R"
-      ! self(a).ADP_tensor.solve_symmetric_eigenproblem(eval,R)
-         self(a).ADP_tensor.diagonalize_Jacobi(eval,R)
-
-         ! Change ADP4s to new coord system
-         self(a).put_ADP4_vector_to(adp4)
-         adp4.back_transform_to(new4,R)
-         new4.compress_to_pyramid(vec4)
-         GAUSSIAN_DATA:lower_pyramid_to_lexical_4(vec4,lex4)
-         U(n,1:15) = lex4
-
-         ! Rotate whole covariance matrix by "R"
-         rcm = .rotated_U4_covariance_mx_for_atom(a,R,cov)
-
-         ! Extract diagonal elements as errors
-         rcm.put_diagonal_to(dU(n,1:15))
-
-      end
-
-      ! Square root sigma^2
-      dU = sqrt(dU)
+      .get_ADPs_in_axes_in(4,U,dU,cov)
 
    end
 
@@ -13665,9 +13579,6 @@ contains
 
       U,dU :: MAT{REAL}@
 
-      ! NOT WORKING - CHEcK - dylan
-      return
-
       if (NOT .has_any_ADP4s_and_errors) return
 
       .get_ADP4s_in_ADP2_principal_axes_in(U,dU,cov)
@@ -13679,6 +13590,7 @@ contains
       stdout.text("==================================")
       stdout.flush
       stdout.text(". ADPs are referred to cartesian axes.")
+      stdout.text(". ESUs have been obtained from the covariances.")
 
       ! Finally ... print table
       ! This routine scales the U & dU
@@ -13687,40 +13599,6 @@ contains
       ! Clean
       dU.destroy
       U.destroy
-
-   end
-
-   rotated_U4_covariance_mx_for_atom(a,R,fcm) result (rcm) :: PURE
-   ! Given index of atom "a", and given a 3x3 rotation matrix "R" and
-   ! given the *full* covariance matrix "fcm", return in "rcm" the U3
-   ! covariance matrix for atom "a" rotated by matrix "R".
-      self :: IN
-      a   :: INT, IN
-      R   :: MAT{REAL}(3,3), IN
-      fcm :: MAT{REAL}, IN
-      rcm :: MAT{REAL}(15,15)
-
-   ENSURE(R.dim1==3,"wrong dim1, R")
-   ENSURE(R.dim2==3,"wrong dim2, R")
-   ENSURE(fcm.is_square,"full covariance matrix is not square")
-   ENSURE(fcm.dim1==.no_of_pADPs,"wrong dimension, fcm")
-
-      old,RR :: MAT{REAL}(15,15)
-      off,f,l :: INT
-
-      ! Offset into diagonal block
-      off = .no_of_pADPs_up_to_atom(a) + 19
-      f   = off + 1
-      l   = off + 15
-
-      ! Get the cov. matrix block
-      old = fcm(f:l,f:l)
-
-      ! Get transformation matrix "RR"
-      GAUSSIAN_DATA:symmetric_tensor_4_product_mx(RR,R)
-
-      ! Get the rotated U3 covariance matrix
-      old.back_transform_to(rcm,RR)
 
    end
 
