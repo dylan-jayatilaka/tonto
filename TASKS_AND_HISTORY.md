@@ -7659,6 +7659,15 @@ A science idea from the angular-decomposition work, written up with its argument
 to density modification, the protein case at 0.8 to 1.1 Å and the first test that would decide
 it, in `docs/TASK_DEBLURRING_WITH_A_PRIOR.md`. Not being pursued; not counted as open.
 
+## LATER (Dylan, 2026-11-27): refinement on F² by default, and French–Wilson amplitudes
+
+Tonto refines on |F| and zeroes negative intensities when it reads them; refinement on F²
+(`refine_F= FALSE`) stops with a DIE. Plan: F² with every reflection becomes the default, and
+French–Wilson amplitudes become an option for `refine_F= TRUE` and for map coefficients. The
+plan, where each piece of code goes, the integrals, and the discussion of why macromolecular
+refinement uses F are in `docs/TASK_ON_FRENCH_WILSON.md`. Comes after the Blessing merge and the
+move of the zeroing of negative intensities. Not counted as open.
+
 # Re-engineering: flattening the object model, and first-class parallelism
 
 **LATER (Dylan, 2026-10-07): moved to the later list of the register, with the hoist of `CRYSTAL`;
